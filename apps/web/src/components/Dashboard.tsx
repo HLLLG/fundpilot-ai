@@ -58,13 +58,14 @@ export function Dashboard() {
     void loadHistory();
   }, []);
 
-  const handleParse = async () => {
+  const handleParse = async (fileOverride?: File) => {
     setIsParsing(true);
     setMessage(null);
     try {
       const formData = new FormData();
-      if (file) {
-        formData.append("file", file);
+      const fileToUpload = fileOverride ?? file;
+      if (fileToUpload) {
+        formData.append("file", fileToUpload);
       }
       if (rawText.trim()) {
         formData.append("raw_text", rawText);
@@ -72,12 +73,20 @@ export function Dashboard() {
       const result = await parseOcr(formData);
       setRawText(result.raw_text);
       setHoldings(result.holdings);
-      setMessage(result.holdings.length ? "识别完成，请校对持仓。" : "未识别到基金代码，可以手动新增持仓。");
+      setMessage(
+        result.error ??
+          (result.holdings.length ? "识别完成，请校对持仓。" : "未识别到基金代码，可以手动新增持仓。"),
+      );
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "OCR 识别失败，请改用手动文本。");
     } finally {
       setIsParsing(false);
     }
+  };
+
+  const handleFileSelect = (selectedFile: File) => {
+    setFile(selectedFile);
+    void handleParse(selectedFile);
   };
 
   const handleAnalyze = async () => {
@@ -148,8 +157,9 @@ export function Dashboard() {
               <UploadDropzone
                 rawText={rawText}
                 isBusy={isParsing}
+                selectedFileName={file?.name ?? null}
                 onRawTextChange={setRawText}
-                onFileChange={setFile}
+                onFileSelect={handleFileSelect}
                 onParse={handleParse}
                 onLoadSample={() => setRawText(sampleText)}
               />

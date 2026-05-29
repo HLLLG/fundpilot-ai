@@ -52,6 +52,7 @@ export type OcrResponse = {
   raw_text: string;
   upload_path: string | null;
   holdings: Holding[];
+  error?: string;
 };
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";

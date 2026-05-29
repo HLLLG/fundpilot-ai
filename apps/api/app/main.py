@@ -45,7 +45,15 @@ async def parse_ocr(
         upload_path = settings.upload_dir / Path(file.filename).name
         upload_path.write_bytes(await file.read())
         if not text:
-            text = OcrEngine().extract_text(upload_path)
+            try:
+                text = OcrEngine().extract_text(upload_path)
+            except Exception as exc:
+                return {
+                    "raw_text": "",
+                    "upload_path": str(upload_path),
+                    "holdings": [],
+                    "error": f"OCR 识别失败：{exc}",
+                }
 
     holdings = parse_holdings_from_text(text)
     return {

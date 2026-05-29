@@ -59,3 +59,22 @@ def test_ocr_endpoint_accepts_text_fallback():
 
     assert response.status_code == 200
     assert response.json()["holdings"][0]["fund_code"] == "000001"
+
+
+def test_ocr_endpoint_returns_clear_error_when_local_ocr_is_missing(monkeypatch):
+    from app.services.ocr_engine import OcrEngine
+
+    def raise_missing_ocr(self, image_path):
+        raise TypeError("PaddleOCR.predict() got an unexpected keyword argument 'cls'")
+
+    monkeypatch.setattr(OcrEngine, "extract_text", raise_missing_ocr)
+
+    response = client.post(
+        "/api/ocr",
+        files={"file": ("fund.png", b"not-a-real-image", "image/png")},
+    )
+
+    body = response.json()
+    assert response.status_code == 200
+    assert body["holdings"] == []
+    assert "OCR 识别失败" in body["error"]
