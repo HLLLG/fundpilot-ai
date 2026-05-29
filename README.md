@@ -36,7 +36,7 @@ NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
 后端：
 
 ```powershell
-cd D:\Code\HL_Project\apps\api
+cd D:\Code\HL_Project\fundpilot-ai\apps\api
 D:\Users\hegl\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
@@ -44,14 +44,14 @@ D:\Users\hegl\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\py
 前端：
 
 ```powershell
-cd D:\Code\HL_Project\apps\web
+cd D:\Code\HL_Project\fundpilot-ai\apps\web
 npm install
 ```
 
 可选 OCR：
 
 ```powershell
-cd D:\Code\HL_Project\apps\api
+cd D:\Code\HL_Project\fundpilot-ai\apps\api
 .\.venv\Scripts\python.exe -m pip install -r requirements-ocr.txt
 ```
 
@@ -62,14 +62,14 @@ PaddleOCR 依赖较大，首次安装和首次识别会比较慢。你也可以�
 后端：
 
 ```powershell
-cd D:\Code\HL_Project\apps\api
+cd D:\Code\HL_Project\fundpilot-ai\apps\api
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
 前端：
 
 ```powershell
-cd D:\Code\HL_Project\apps\web
+cd D:\Code\HL_Project\fundpilot-ai\apps\web
 npm run dev
 ```
 
@@ -84,14 +84,14 @@ http://127.0.0.1:3000
 后端：
 
 ```powershell
-cd D:\Code\HL_Project\apps\api
+cd D:\Code\HL_Project\fundpilot-ai\apps\api
 .\.venv\Scripts\python.exe -m pytest tests -v
 ```
 
 前端：
 
 ```powershell
-cd D:\Code\HL_Project\apps\web
+cd D:\Code\HL_Project\fundpilot-ai\apps\web
 npm run lint
 npm run typecheck
 ```
