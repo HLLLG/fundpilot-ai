@@ -1,0 +1,4 @@
+# Optional OCR dependencies. Install only when you want local screenshot OCR.
+# PaddleOCR/PaddlePaddle are large packages and may need a compatible Python build.
+paddlepaddle>=3.0.0
+paddleocr>=3.0.0

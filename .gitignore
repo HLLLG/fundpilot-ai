@@ -1,0 +1,17 @@
+.env
+.venv/
+node_modules/
+.next/
+artifacts/
+dist/
+build/
+__pycache__/
+.pytest_cache/
+*.pyc
+*.tsbuildinfo
+data/*.db
+uploads/*
+!uploads/.gitkeep
+apps/api/.venv/
+apps/web/.next/
+apps/web/node_modules/

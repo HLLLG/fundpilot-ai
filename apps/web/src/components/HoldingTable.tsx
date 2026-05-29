@@ -1,0 +1,136 @@
+"use client";
+
+import { Plus, Trash2 } from "lucide-react";
+import type { Holding } from "@/lib/api";
+
+type HoldingTableProps = {
+  holdings: Holding[];
+  onChange: (holdings: Holding[]) => void;
+};
+
+export function HoldingTable({ holdings, onChange }: HoldingTableProps) {
+  const updateHolding = (index: number, patch: Partial<Holding>) => {
+    onChange(
+      holdings.map((holding, itemIndex) =>
+        itemIndex === index ? { ...holding, ...patch } : holding,
+      ),
+    );
+  };
+
+  const addHolding = () => {
+    onChange([
+      ...holdings,
+      {
+        fund_code: "000000",
+        fund_name: "新基金",
+        holding_amount: 0,
+        return_percent: 0,
+      },
+    ]);
+  };
+
+  const removeHolding = (index: number) => {
+    onChange(holdings.filter((_, itemIndex) => itemIndex !== index));
+  };
+
+  return (
+    <section className="glass-panel min-w-0 rounded-[28px] p-6">
+      <div className="mb-5 flex items-center justify-between gap-4">
+        <div>
+          <h2 className="text-xl font-black text-slate-950">持仓校对</h2>
+          <p className="mt-1 text-sm text-slate-500">OCR 只负责草稿，最终以你确认的表格为准。</p>
+        </div>
+        <button
+          type="button"
+          onClick={addHolding}
+          className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full bg-slate-950 px-4 py-2 text-sm font-bold text-white transition hover:bg-blue-700"
+        >
+          <Plus size={16} />
+          新增
+        </button>
+      </div>
+
+      <div className="max-w-full overflow-x-auto">
+        <table className="w-full min-w-[720px] border-separate border-spacing-y-3">
+          <thead>
+            <tr className="text-left text-xs font-bold uppercase text-slate-400">
+              <th className="px-3">基金代码</th>
+              <th className="px-3">基金名称</th>
+              <th className="px-3">持有金额</th>
+              <th className="px-3">收益率</th>
+              <th className="px-3">备注</th>
+              <th className="px-3 text-right">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {holdings.map((holding, index) => (
+              <tr key={`${holding.fund_code}-${index}`} className="bg-white shadow-sm">
+                <td className="rounded-l-2xl px-3 py-3">
+                  <input
+                    value={holding.fund_code}
+                    onChange={(event) => updateHolding(index, { fund_code: event.target.value })}
+                    className="w-24 rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold outline-none focus:border-blue-400"
+                  />
+                </td>
+                <td className="px-3 py-3">
+                  <input
+                    value={holding.fund_name}
+                    onChange={(event) => updateHolding(index, { fund_name: event.target.value })}
+                    className="w-full min-w-52 rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400"
+                  />
+                </td>
+                <td className="px-3 py-3">
+                  <input
+                    value={holding.holding_amount}
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    onChange={(event) =>
+                      updateHolding(index, { holding_amount: Number(event.target.value) })
+                    }
+                    className="w-32 rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400"
+                  />
+                </td>
+                <td className="px-3 py-3">
+                  <input
+                    value={holding.return_percent}
+                    type="number"
+                    step="0.01"
+                    onChange={(event) =>
+                      updateHolding(index, { return_percent: Number(event.target.value) })
+                    }
+                    className="w-28 rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400"
+                  />
+                </td>
+                <td className="px-3 py-3">
+                  <input
+                    value={holding.user_note ?? ""}
+                    onChange={(event) => updateHolding(index, { user_note: event.target.value })}
+                    className="w-full min-w-44 rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400"
+                    placeholder="如：不追高 / 观察"
+                  />
+                </td>
+                <td className="rounded-r-2xl px-3 py-3 text-right">
+                  <button
+                    type="button"
+                    onClick={() => removeHolding(index)}
+                    className="inline-flex h-10 w-10 items-center justify-center rounded-full text-slate-400 transition hover:bg-rose-50 hover:text-rose-600"
+                    aria-label="删除持仓"
+                  >
+                    <Trash2 size={18} />
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {holdings.length === 0 ? (
+        <div className="rounded-3xl border border-dashed border-slate-200 bg-white px-5 py-8 text-center text-sm text-slate-500">
+          暂无持仓。上传截图、粘贴 OCR 文本，或手动新增一行。
+        </div>
+      ) : null}
+    </section>
+  );
+}
