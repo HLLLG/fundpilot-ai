@@ -35,14 +35,18 @@ class DeepSeekClient:
             response.raise_for_status()
             content = response.json()["choices"][0]["message"]["content"]
             parsed = _parse_model_json(content)
+            fallback = _offline_report(request, risk, snapshots)
             return Report(
                 title=parsed.get("title", "每日基金操作日报"),
                 risk=risk,
                 holdings=request.holdings,
                 snapshots=snapshots,
-                summary=parsed.get("summary", "模型未返回摘要，已保留风险规则结果。"),
-                recommendations=parsed.get("recommendations", []),
-                caveats=parsed.get("caveats", []),
+                summary=parsed.get("summary") or fallback.summary,
+                recommendations=_non_empty_list(
+                    parsed.get("recommendations"),
+                    fallback.recommendations,
+                ),
+                caveats=_non_empty_list(parsed.get("caveats"), fallback.caveats),
                 provider=self.settings.deepseek_model,
             )
         except Exception as exc:
@@ -94,6 +98,12 @@ def _parse_model_json(content: str) -> dict:
             "recommendations": [],
             "caveats": ["模型返回了非 JSON 内容，建议人工复核。"],
         }
+
+
+def _non_empty_list(value: object, default: list[str]) -> list[str]:
+    if isinstance(value, list) and value:
+        return [str(item) for item in value]
+    return default
 
 
 def _offline_report(

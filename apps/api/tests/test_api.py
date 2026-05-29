@@ -1,5 +1,6 @@
 from fastapi.testclient import TestClient
 
+from app.config import refresh_settings
 from app.main import app
 
 
@@ -15,6 +16,8 @@ def test_health_endpoint_returns_ok():
 
 def test_analyze_manual_holdings_returns_persisted_report(tmp_path, monkeypatch):
     monkeypatch.setenv("FUND_AI_DB_PATH", str(tmp_path / "app.db"))
+    monkeypatch.setenv("FUND_AI_DEEPSEEK_API_KEY", "")
+    refresh_settings()
     payload = {
         "holdings": [
             {
