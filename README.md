@@ -2,6 +2,14 @@
 
 私人基金投研助手 MVP：上传支付宝基金截图，校对持仓，按个人风控规则生成 DeepSeek V4 Pro 投研日报。
 
+你的默认终端路径是：
+
+```bash
+/d/Code/HL_Project/fundpilot-ai
+```
+
+所以下面的命令都按 **Git Bash / MINGW64** 写法提供。
+
 ## 功能
 
 - 支持上传截图或粘贴 OCR 文本。
@@ -23,7 +31,13 @@ scripts    本地启动脚本
 
 ## 环境变量
 
-复制 `.env.example` 为 `.env`，填入你的 DeepSeek API Key：
+在项目根目录复制模板：
+
+```bash
+cp .env.example .env
+```
+
+编辑 `.env`，填入你的 DeepSeek API Key：
 
 ```text
 FUND_AI_DEEPSEEK_API_KEY=sk-your-deepseek-key
@@ -31,45 +45,50 @@ FUND_AI_DEEPSEEK_MODEL=deepseek-v4-pro
 NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
 ```
 
+`.env` 已被 `.gitignore` 忽略，不会提交到 Git。
+
 ## 安装
 
 后端：
 
-```powershell
-cd D:\Code\HL_Project\fundpilot-ai\apps\api
-D:\Users\hegl\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```bash
+cd /d/Code/HL_Project/fundpilot-ai/apps/api
+
+# 如果 .venv 已存在，可以跳过这行
+/d/Users/hegl/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe -m venv .venv
+
+./.venv/Scripts/python.exe -m pip install -r requirements.txt
 ```
 
 前端：
 
-```powershell
-cd D:\Code\HL_Project\fundpilot-ai\apps\web
+```bash
+cd /d/Code/HL_Project/fundpilot-ai/apps/web
 npm install
 ```
 
 可选 OCR：
 
-```powershell
-cd D:\Code\HL_Project\fundpilot-ai\apps\api
-.\.venv\Scripts\python.exe -m pip install -r requirements-ocr.txt
+```bash
+cd /d/Code/HL_Project/fundpilot-ai/apps/api
+./.venv/Scripts/python.exe -m pip install -r requirements-ocr.txt
 ```
 
 PaddleOCR 依赖较大，首次安装和首次识别会比较慢。你也可以先用文本粘贴和手动校对跑完整流程。
 
 ## 启动
 
-后端：
+开第一个 Git Bash 终端启动后端：
 
-```powershell
-cd D:\Code\HL_Project\fundpilot-ai\apps\api
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```bash
+cd /d/Code/HL_Project/fundpilot-ai/apps/api
+./.venv/Scripts/python.exe -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-前端：
+开第二个 Git Bash 终端启动前端：
 
-```powershell
-cd D:\Code\HL_Project\fundpilot-ai\apps\web
+```bash
+cd /d/Code/HL_Project/fundpilot-ai/apps/web
 npm run dev
 ```
 
@@ -83,17 +102,38 @@ http://127.0.0.1:3000
 
 后端：
 
-```powershell
-cd D:\Code\HL_Project\fundpilot-ai\apps\api
-.\.venv\Scripts\python.exe -m pytest tests -v
+```bash
+cd /d/Code/HL_Project/fundpilot-ai/apps/api
+./.venv/Scripts/python.exe -m pytest tests -v
 ```
 
 前端：
 
-```powershell
-cd D:\Code\HL_Project\fundpilot-ai\apps\web
+```bash
+cd /d/Code/HL_Project/fundpilot-ai/apps/web
 npm run lint
 npm run typecheck
+npm run build
+```
+
+## 常见 Git Bash 路径写法
+
+Git Bash 里不要写：
+
+```bash
+cd D:\Code\HL_Project\fundpilot-ai
+```
+
+要写成：
+
+```bash
+cd /d/Code/HL_Project/fundpilot-ai
+```
+
+Windows 可执行文件路径也要用 `/d/...` 形式，或者使用已有虚拟环境里的：
+
+```bash
+./.venv/Scripts/python.exe
 ```
 
 ## 隐私和边界
