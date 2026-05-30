@@ -87,6 +87,40 @@ def test_resolve_overview_holding_with_saved_profile(tmp_path, monkeypatch):
     assert "基金档案" in resolved.user_note
 
 
+def test_resolve_truncated_overview_names_with_profile_aliases(tmp_path, monkeypatch):
+    monkeypatch.setenv("FUND_AI_DB_PATH", str(tmp_path / "app.db"))
+    refresh_settings()
+    service = FundProfileService()
+    service.save_profile(
+        parse_profile_from_text(
+            "华夏人工智能ETF联接C\n008586\n持有金额\n7,427.01\n4,221.57\n25.99%"
+        )
+    )
+    service.save_profile(
+        parse_profile_from_text(
+            "易方达国防军工混合C\n015945\n持有金额\n1,846.93\n922.08\n6.46%"
+        )
+    )
+
+    artificial = service.resolve_holding(
+        Holding(
+            fund_code="000000",
+            fund_name="华夏人工智能ETF.",
+            holding_amount=7701.83,
+        )
+    )
+    defense = service.resolve_holding(
+        Holding(
+            fund_code="000000",
+            fund_name="易方达国防军工混...",
+            holding_amount=1949.28,
+        )
+    )
+
+    assert artificial.fund_code == "008586"
+    assert defense.fund_code == "015945"
+
+
 def test_create_profile_from_text_endpoint_and_use_it_in_analysis(tmp_path, monkeypatch):
     monkeypatch.setenv("FUND_AI_DB_PATH", str(tmp_path / "app.db"))
     monkeypatch.setenv("FUND_AI_DEEPSEEK_API_KEY", "")

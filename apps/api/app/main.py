@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
-from app.database import get_report, list_reports, save_report
+from app.database import get_ocr_text_cache, get_report, list_reports, save_ocr_text_cache, save_report
 from app.models import AnalysisRequest
 from app.services.deepseek_client import DeepSeekClient
 from app.services.fund_data import FundDataService
@@ -41,27 +42,37 @@ async def parse_ocr(
 ) -> dict:
     text = raw_text or ""
     upload_path: Path | None = None
+    cache_hit = False
 
     if file is not None and file.filename:
         settings.upload_dir.mkdir(parents=True, exist_ok=True)
         upload_path = settings.upload_dir / Path(file.filename).name
-        upload_path.write_bytes(await file.read())
+        file_bytes = await file.read()
+        upload_path.write_bytes(file_bytes)
+        cache_key = hashlib.sha256(file_bytes).hexdigest()
         if not text:
-            try:
-                text = OcrEngine().extract_text(upload_path)
-            except Exception as exc:
-                return {
-                    "raw_text": "",
-                    "upload_path": str(upload_path),
-                    "holdings": [],
-                    "error": f"OCR 识别失败：{exc}",
-                }
+            cached_text = get_ocr_text_cache(cache_key)
+            if cached_text is not None:
+                text = cached_text
+                cache_hit = True
+            else:
+                try:
+                    text = OcrEngine().extract_text(upload_path)
+                    save_ocr_text_cache(cache_key, text)
+                except Exception as exc:
+                    return {
+                        "raw_text": "",
+                        "upload_path": str(upload_path),
+                        "holdings": [],
+                        "error": f"OCR 识别失败：{exc}",
+                    }
 
-    holdings = parse_holdings_from_text(text)
+    holdings = FundProfileService().resolve_holdings(parse_holdings_from_text(text))
     return {
         "raw_text": text,
         "upload_path": str(upload_path) if upload_path else None,
         "holdings": [holding.model_dump() for holding in holdings],
+        "cache_hit": cache_hit,
     }
 
 

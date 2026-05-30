@@ -41,6 +41,15 @@ def _connect() -> sqlite3.Connection:
         )
         """
     )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS ocr_text_cache (
+            cache_key TEXT PRIMARY KEY,
+            raw_text TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
     connection.commit()
     return connection
 
@@ -102,3 +111,26 @@ def list_fund_profiles() -> list[FundProfile]:
             "SELECT payload FROM fund_profiles ORDER BY updated_at DESC"
         ).fetchall()
     return [FundProfile.model_validate(json.loads(row["payload"])) for row in rows]
+
+
+def get_ocr_text_cache(cache_key: str) -> str | None:
+    with _connect() as connection:
+        row = connection.execute(
+            "SELECT raw_text FROM ocr_text_cache WHERE cache_key = ?",
+            (cache_key,),
+        ).fetchone()
+    if row is None:
+        return None
+    return str(row["raw_text"])
+
+
+def save_ocr_text_cache(cache_key: str, raw_text: str) -> None:
+    with _connect() as connection:
+        connection.execute(
+            """
+            INSERT OR REPLACE INTO ocr_text_cache (cache_key, raw_text, updated_at)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+            """,
+            (cache_key, raw_text),
+        )
+        connection.commit()

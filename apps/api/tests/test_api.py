@@ -61,6 +61,53 @@ def test_ocr_endpoint_accepts_text_fallback():
     assert response.json()["holdings"][0]["fund_code"] == "000001"
 
 
+def test_ocr_endpoint_resolves_holdings_with_saved_profiles(tmp_path, monkeypatch):
+    from app.services.fund_profile import FundProfileService, parse_profile_from_text
+
+    monkeypatch.setenv("FUND_AI_DB_PATH", str(tmp_path / "app.db"))
+    refresh_settings()
+    profile = parse_profile_from_text(
+        "华夏中证电网设备主题ETF联接A\n025856\n持有金额\n15,075.46\n10,645.76\n52.76%"
+    )
+    assert profile is not None
+    FundProfileService().save_profile(profile)
+
+    response = client.post(
+        "/api/ocr",
+        data={
+            "raw_text": "华夏中证电网设备...\n0.87%\n+488.03\n￥15,161.69\n中证电网设备\n+3.33%"
+        },
+    )
+
+    body = response.json()
+    assert response.status_code == 200
+    assert body["holdings"][0]["fund_code"] == "025856"
+    assert body["holdings"][0]["fund_name"] == "华夏中证电网设备主题ETF联接A"
+
+
+def test_ocr_endpoint_caches_image_text(tmp_path, monkeypatch):
+    from app.services.ocr_engine import OcrEngine
+
+    monkeypatch.setenv("FUND_AI_DB_PATH", str(tmp_path / "app.db"))
+    refresh_settings()
+    calls = {"count": 0}
+
+    def fake_extract(self, image_path):
+        calls["count"] += 1
+        return "测试基金A\n000001\n持有金额 1000\n持有收益率 1.5%"
+
+    monkeypatch.setattr(OcrEngine, "extract_text", fake_extract)
+
+    for _ in range(2):
+        response = client.post(
+            "/api/ocr",
+            files={"file": ("same.png", b"same-image-bytes", "image/png")},
+        )
+        assert response.status_code == 200
+
+    assert calls["count"] == 1
+
+
 def test_ocr_endpoint_returns_clear_error_when_local_ocr_is_missing(monkeypatch):
     from app.services.ocr_engine import OcrEngine
 
