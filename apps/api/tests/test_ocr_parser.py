@@ -77,6 +77,11 @@ def test_parse_alipay_screenshot_without_fund_codes_as_editable_drafts():
     assert holdings[0].fund_code == "000000"
     assert holdings[0].fund_name == "华夏中证电网设备..."
     assert holdings[0].holding_amount == 15161.69
-    assert holdings[0].return_percent == 3.33
+    assert holdings[0].return_percent == 0.87
+    assert holdings[0].daily_profit == 488.03
+    assert holdings[0].sector_name == "中证电网设备"
+    assert holdings[0].sector_return_percent == 3.33
     assert holdings[2].fund_name == "银河创新成长混合A"
-    assert holdings[3].return_percent == -2.54
+    assert holdings[3].daily_profit == -50.72
+    assert holdings[3].sector_name == "商业航天"
+    assert holdings[3].sector_return_percent == -2.54

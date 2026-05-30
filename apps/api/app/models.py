@@ -17,6 +17,8 @@ class Holding(BaseModel):
     holding_amount: float = Field(..., ge=0)
     return_percent: float = 0
     daily_profit: float | None = None
+    sector_name: str | None = None
+    sector_return_percent: float | None = None
     user_note: str | None = None
 
 

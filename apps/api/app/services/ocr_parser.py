@@ -10,6 +10,7 @@ AMOUNT_RE = re.compile(r"(?:持有金额|金额|资产)[^\d-]*([\d,]+(?:\.\d+)?)
 RETURN_RE = re.compile(r"(?:持有收益率|收益率|收益)[^\d+-]*([+-]?\d+(?:\.\d+)?)%")
 YUAN_AMOUNT_RE = re.compile(r"￥\s*([\d,]+(?:\.\d+)?)")
 PERCENT_RE = re.compile(r"([+-]?\d+(?:\.\d+)?)%")
+SIGNED_AMOUNT_RE = re.compile(r"^[+-]\d+(?:\.\d+)?$")
 FUND_NAME_HINTS = ("...", "ETF", "混合", "基金", "联接", "债券", "指数")
 
 
@@ -94,13 +95,19 @@ def _parse_alipay_drafts_without_codes(lines: list[str]) -> list[Holding]:
             for line in block_lines
             for match in PERCENT_RE.finditer(line)
         ]
-        return_percent = percentages[-1] if percentages else 0
+        return_percent = percentages[0] if percentages else 0
+        sector_return_percent = percentages[-1] if len(percentages) > 1 else None
+        daily_profit = _extract_signed_amount(block_lines)
+        sector_name = _extract_sector_name(block_lines, amount)
         drafts.append(
             Holding(
                 fund_code="000000",
                 fund_name=lines[index],
                 holding_amount=amount,
                 return_percent=return_percent,
+                daily_profit=daily_profit,
+                sector_name=sector_name,
+                sector_return_percent=sector_return_percent,
                 user_note="OCR 未识别到基金代码，请手动补全。",
             )
         )
@@ -115,3 +122,31 @@ def _looks_like_alipay_fund_name(line: str) -> bool:
         return False
     has_chinese = any("\u4e00" <= char <= "\u9fff" for char in line)
     return has_chinese and any(hint in line for hint in FUND_NAME_HINTS)
+
+
+def _extract_signed_amount(lines: list[str]) -> float | None:
+    for line in lines:
+        cleaned = line.replace(",", "").strip()
+        if SIGNED_AMOUNT_RE.match(cleaned):
+            return float(cleaned)
+    return None
+
+
+def _extract_sector_name(lines: list[str], amount: float) -> str | None:
+    amount_text = f"{amount:,.2f}"
+    for index, line in enumerate(lines):
+        if amount_text in line or f"￥{amount_text}" in line:
+            for candidate in lines[index + 1 :]:
+                if _looks_like_sector_name(candidate):
+                    return candidate
+    return None
+
+
+def _looks_like_sector_name(line: str) -> bool:
+    if not any("\u4e00" <= char <= "\u9fff" for char in line):
+        return False
+    if any(hint in line for hint in FUND_NAME_HINTS):
+        return False
+    if any(noise in line for noise in ("账户", "支付宝", "收益", "持有", "新增", "批量")):
+        return False
+    return not PERCENT_RE.search(line) and not YUAN_AMOUNT_RE.search(line)

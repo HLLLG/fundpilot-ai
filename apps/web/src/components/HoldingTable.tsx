@@ -20,12 +20,15 @@ export function HoldingTable({ holdings, onChange }: HoldingTableProps) {
   const addHolding = () => {
     onChange([
       ...holdings,
-      {
-        fund_code: "000000",
-        fund_name: "新基金",
-        holding_amount: 0,
-        return_percent: 0,
-      },
+        {
+          fund_code: "000000",
+          fund_name: "新基金",
+          holding_amount: 0,
+          return_percent: 0,
+          daily_profit: null,
+          sector_name: "",
+          sector_return_percent: null,
+        },
     ]);
   };
 
@@ -51,13 +54,16 @@ export function HoldingTable({ holdings, onChange }: HoldingTableProps) {
       </div>
 
       <div className="max-w-full overflow-x-auto">
-        <table className="w-full min-w-[720px] border-separate border-spacing-y-3">
+        <table className="w-full min-w-[1080px] border-separate border-spacing-y-3">
           <thead>
             <tr className="text-left text-xs font-bold uppercase text-slate-400">
               <th className="px-3">基金代码</th>
               <th className="px-3">基金名称</th>
               <th className="px-3">持有金额</th>
               <th className="px-3">收益率</th>
+              <th className="px-3">当日收益</th>
+              <th className="px-3">关联板块</th>
+              <th className="px-3">板块涨跌</th>
               <th className="px-3">备注</th>
               <th className="px-3 text-right">操作</th>
             </tr>
@@ -77,6 +83,44 @@ export function HoldingTable({ holdings, onChange }: HoldingTableProps) {
                     value={holding.fund_name}
                     onChange={(event) => updateHolding(index, { fund_name: event.target.value })}
                     className="w-full min-w-52 rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400"
+                  />
+                </td>
+                <td className="px-3 py-3">
+                  <input
+                    value={holding.daily_profit ?? ""}
+                    type="number"
+                    step="0.01"
+                    onChange={(event) =>
+                      updateHolding(index, {
+                        daily_profit:
+                          event.target.value === "" ? null : Number(event.target.value),
+                      })
+                    }
+                    className="w-28 rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400"
+                    placeholder="如 488.03"
+                  />
+                </td>
+                <td className="px-3 py-3">
+                  <input
+                    value={holding.sector_name ?? ""}
+                    onChange={(event) => updateHolding(index, { sector_name: event.target.value })}
+                    className="w-36 rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400"
+                    placeholder="如 半导体"
+                  />
+                </td>
+                <td className="px-3 py-3">
+                  <input
+                    value={holding.sector_return_percent ?? ""}
+                    type="number"
+                    step="0.01"
+                    onChange={(event) =>
+                      updateHolding(index, {
+                        sector_return_percent:
+                          event.target.value === "" ? null : Number(event.target.value),
+                      })
+                    }
+                    className="w-28 rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400"
+                    placeholder="如 3.33"
                   />
                 </td>
                 <td className="px-3 py-3">

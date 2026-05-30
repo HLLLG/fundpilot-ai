@@ -117,6 +117,22 @@ export function ReportPanel({ report }: ReportPanelProps) {
           ))}
         </div>
       </div>
+
+      <div className="mt-5 rounded-[24px] bg-white p-5 shadow-sm">
+        <div className="mb-4 text-sm font-black text-slate-950">养基宝核心指标</div>
+        <div className="grid gap-3 md:grid-cols-2">
+          {report.holdings.map((holding) => (
+            <div key={`${holding.fund_name}-${holding.holding_amount}`} className="rounded-2xl border border-slate-100 px-4 py-3">
+              <div className="text-sm font-black text-slate-950">{holding.fund_name}</div>
+              <div className="mt-2 grid grid-cols-3 gap-2 text-xs text-slate-500">
+                <span>当日收益 {holding.daily_profit ?? "-"}</span>
+                <span>板块 {holding.sector_name || "-"}</span>
+                <span>板块涨跌 {holding.sector_return_percent ?? "-"}%</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
     </section>
   );
 }
