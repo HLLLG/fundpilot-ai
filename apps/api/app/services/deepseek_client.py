@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
 
 import httpx
@@ -139,21 +140,150 @@ def _build_payload(
 
 
 def _parse_model_json(content: str) -> dict:
-    try:
-        return json.loads(content)
-    except json.JSONDecodeError:
-        return {
-            "title": "每日基金操作日报",
-            "summary": content,
-            "recommendations": [],
-            "caveats": ["模型返回了非 JSON 内容，建议人工复核。"],
-        }
+    for candidate in _json_candidates(content):
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
 
+    salvaged = _salvage_partial_json(content)
+    if salvaged:
+        return salvaged
+
+    summary = content.strip()
+    if _looks_like_json(summary):
+        summary = "模型返回的 JSON 不完整，已使用本地规则补齐操作候选，请重新生成以获取完整模型建议。"
+
+    return {
+        "title": "每日基金操作日报",
+        "summary": summary,
+        "recommendations": [],
+        "caveats": ["模型返回内容无法解析为完整 JSON，已使用本地规则补齐候选。"],
+    }
+
+
+def _json_candidates(content: str) -> list[str]:
+    stripped = content.strip()
+    candidates = [stripped]
+    candidates.extend(
+        re.findall(r"```(?:json)?\s*(\{.*?\})\s*```", stripped, re.DOTALL)
+    )
+    extracted = _extract_first_json_object(stripped)
+    if extracted:
+        candidates.append(extracted)
+    return candidates
+
+
+def _extract_first_json_object(content: str) -> str | None:
+    start = content.find("{")
+    if start < 0:
+        return None
+
+    in_string = False
+    escaped = False
+    depth = 0
+    for index in range(start, len(content)):
+        char = content[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return content[start : index + 1]
+
+    return None
+
+
+def _salvage_partial_json(content: str) -> dict | None:
+    if not _looks_like_json(content):
+        return None
+
+    title = _extract_json_string_field(content, "title") or "每日基金操作日报"
+    summary = _extract_json_string_field(content, "summary")
+    if not summary:
+        return None
+
+    return {
+        "title": title,
+        "summary": summary,
+        "recommendations": [],
+        "caveats": ["模型返回的 JSON 被截断，已提取标题和摘要，并使用本地规则补齐操作候选。"],
+    }
+
+
+def _extract_json_string_field(content: str, field: str) -> str | None:
+    match = re.search(rf'"{re.escape(field)}"\s*:\s*"', content)
+    if not match:
+        return None
+
+    value_start = match.end()
+    escaped = False
+    value_chars: list[str] = []
+    for char in content[value_start:]:
+        if escaped:
+            value_chars.append("\\" + char)
+            escaped = False
+        elif char == "\\":
+            escaped = True
+        elif char == '"':
+            raw = "".join(value_chars)
+            try:
+                return json.loads(f'"{raw}"')
+            except json.JSONDecodeError:
+                return raw
+        else:
+            value_chars.append(char)
+
+    return None
+
+
+def _looks_like_json(content: str) -> bool:
+    stripped = content.strip()
+    return (
+        stripped.startswith("{")
+        or stripped.startswith("```json")
+        or '"title"' in stripped
+    )
 
 def _non_empty_list(value: object, default: list[str]) -> list[str]:
     if isinstance(value, list) and value:
         return [str(item) for item in value]
     return default
+
+
+def _format_decision_recommendation(
+    *,
+    fund_name: str,
+    action: str,
+    weight: float,
+    daily: str,
+    daily_return: str,
+    holding_profit: str,
+    holding_return: str,
+    sector: str,
+    sector_change: str,
+    fund_code: str,
+) -> str:
+    code_gap = "；需补全基金代码后核对净值/公告" if fund_code == "000000" else ""
+    return (
+        f"{fund_name}｜决策：{action}｜依据：仓位{weight:.1f}%，"
+        f"当日{daily}/{daily_return}，持有{holding_profit}/{holding_return}，"
+        f"板块{sector}{sector_change}｜触发：集中度、当日异动与持有收益背离复核"
+        f"｜风险：追涨、单一主题拥挤和数据缺口{code_gap}"
+    )
 
 
 def _offline_report(
@@ -205,10 +335,18 @@ def _offline_report(
             else f"{holding.sector_return_percent:.2f}%"
         )
         recommendations.append(
-            f"{holding.fund_name}：{action}。当前占比 {weight:.1f}%，"
-            f"当日收益 {daily}/{daily_return}，累计持有收益 {holding_profit}/{holding_return}，"
-            f"关联板块 {sector} 当日涨跌 {sector_change}。"
-            "若后续补全基金代码，可结合净值、公告和同类基金表现再复核。"
+            _format_decision_recommendation(
+                fund_name=holding.fund_name,
+                action=action,
+                weight=weight,
+                daily=daily,
+                daily_return=daily_return,
+                holding_profit=holding_profit,
+                holding_return=holding_return,
+                sector=sector,
+                sector_change=sector_change,
+                fund_code=holding.fund_code,
+            )
         )
 
     if not recommendations:

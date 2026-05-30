@@ -70,7 +70,7 @@ export function ReportPanel({ report }: ReportPanelProps) {
         <div className="rounded-[24px] bg-white p-5 shadow-sm">
           <div className="mb-4 flex items-center gap-2 text-sm font-black text-slate-950">
             <Sparkles size={18} className="text-blue-600" />
-            操作候选
+            决策建议
           </div>
           <div className="space-y-3">
             {report.recommendations.map((item, index) => (

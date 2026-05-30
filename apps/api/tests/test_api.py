@@ -165,5 +165,6 @@ def test_analyze_unknown_code_keeps_yangjibao_snapshot_and_rich_recommendations(
     assert body["market_context"]
     assert any(item["topic"] == "中证电网设备" for item in body["market_context"])
     assert len(body["recommendations"]) >= 3
+    assert any("决策：" in item and "触发：" in item for item in body["recommendations"])
     assert any("中证电网设备" in item for item in body["recommendations"])
     assert any("半导体" in item for item in body["recommendations"])
