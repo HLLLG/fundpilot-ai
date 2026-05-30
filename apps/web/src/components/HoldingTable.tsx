@@ -26,6 +26,9 @@ export function HoldingTable({ holdings, onChange }: HoldingTableProps) {
           holding_amount: 0,
           return_percent: 0,
           daily_profit: null,
+          daily_return_percent: null,
+          holding_profit: null,
+          holding_return_percent: null,
           sector_name: "",
           sector_return_percent: null,
         },
@@ -54,16 +57,18 @@ export function HoldingTable({ holdings, onChange }: HoldingTableProps) {
       </div>
 
       <div className="max-w-full overflow-x-auto">
-        <table className="w-full min-w-[1080px] border-separate border-spacing-y-3">
+        <table className="w-full min-w-[1420px] border-separate border-spacing-y-3">
           <thead>
             <tr className="text-left text-xs font-bold uppercase text-slate-400">
               <th className="px-3">基金代码</th>
               <th className="px-3">基金名称</th>
               <th className="px-3">持有金额</th>
-              <th className="px-3">收益率</th>
-              <th className="px-3">当日收益</th>
+              <th className="px-3">当日收益额</th>
+              <th className="px-3">当日收益率</th>
               <th className="px-3">关联板块</th>
               <th className="px-3">板块涨跌</th>
+              <th className="px-3">持有收益额</th>
+              <th className="px-3">持有收益率</th>
               <th className="px-3">备注</th>
               <th className="px-3 text-right">操作</th>
             </tr>
@@ -99,17 +104,6 @@ export function HoldingTable({ holdings, onChange }: HoldingTableProps) {
                 </td>
                 <td className="px-3 py-3">
                   <input
-                    value={holding.return_percent}
-                    type="number"
-                    step="0.01"
-                    onChange={(event) =>
-                      updateHolding(index, { return_percent: Number(event.target.value) })
-                    }
-                    className="w-28 rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400"
-                  />
-                </td>
-                <td className="px-3 py-3">
-                  <input
                     value={holding.daily_profit ?? ""}
                     type="number"
                     step="0.01"
@@ -120,7 +114,22 @@ export function HoldingTable({ holdings, onChange }: HoldingTableProps) {
                       })
                     }
                     className="w-28 rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400"
-                    placeholder="如 488.03"
+                    placeholder="如 -86.23"
+                  />
+                </td>
+                <td className="px-3 py-3">
+                  <input
+                    value={holding.daily_return_percent ?? ""}
+                    type="number"
+                    step="0.01"
+                    onChange={(event) =>
+                      updateHolding(index, {
+                        daily_return_percent:
+                          event.target.value === "" ? null : Number(event.target.value),
+                      })
+                    }
+                    className="w-28 rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400"
+                    placeholder="如 -0.57"
                   />
                 </td>
                 <td className="px-3 py-3">
@@ -144,6 +153,37 @@ export function HoldingTable({ holdings, onChange }: HoldingTableProps) {
                     }
                     className="w-28 rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400"
                     placeholder="如 3.33"
+                  />
+                </td>
+                <td className="px-3 py-3">
+                  <input
+                    value={holding.holding_profit ?? ""}
+                    type="number"
+                    step="0.01"
+                    onChange={(event) =>
+                      updateHolding(index, {
+                        holding_profit:
+                          event.target.value === "" ? null : Number(event.target.value),
+                      })
+                    }
+                    className="w-28 rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400"
+                    placeholder="如 401.80"
+                  />
+                </td>
+                <td className="px-3 py-3">
+                  <input
+                    value={holding.holding_return_percent ?? holding.return_percent}
+                    type="number"
+                    step="0.01"
+                    onChange={(event) => {
+                      const value = Number(event.target.value);
+                      updateHolding(index, {
+                        holding_return_percent: value,
+                        return_percent: value,
+                      });
+                    }}
+                    className="w-28 rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400"
+                    placeholder="如 2.74"
                   />
                 </td>
                 <td className="px-3 py-3">

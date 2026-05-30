@@ -4,6 +4,9 @@ export type Holding = {
   holding_amount: number;
   return_percent: number;
   daily_profit?: number | null;
+  daily_return_percent?: number | null;
+  holding_profit?: number | null;
+  holding_return_percent?: number | null;
   sector_name?: string | null;
   sector_return_percent?: number | null;
   user_note?: string | null;

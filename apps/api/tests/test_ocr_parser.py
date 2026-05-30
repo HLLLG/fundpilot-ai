@@ -46,29 +46,37 @@ def test_parser_returns_empty_list_when_no_fund_code_exists():
 def test_parse_alipay_screenshot_without_fund_codes_as_editable_drafts():
     text = """
     华夏中证电网设备...
-    0.87%
-    +488.03
+    -86.23
+    -0.59%
+    +401.80
     ￥15,161.69
+    -0.57%
     中证电网设备
-    +3.33%
+    +2.74%
     华夏人工智能ETF.
-    -3.88%
-    +190.86
-    ￥7,701.83
+    274.82
+    3.75%
+    -83.96
+    ￥7,427.01
+    -3.57%
     中证人工智能
-    +2.54%
+    -1.12%
     银河创新成长混合A
-    5.20%
-    +299.18
-    ￥4,458.63
+    235.67
+    -4.88%
+    +63.51
+    ￥4,222.96
+    -5.29%
     半导体
-    +7.19%
+    +1.53%
     易方达国防军工混...
-    -6.30%
-    -50.72
-    ￥1,949.28
+    -102.35
+    -6.07%
+    -153.07
+    ￥1,846.93
+    -5.25%
     商业航天
-    -2.54%
+    -7.65%
     """
 
     holdings = parse_holdings_from_text(text)
@@ -77,11 +85,18 @@ def test_parse_alipay_screenshot_without_fund_codes_as_editable_drafts():
     assert holdings[0].fund_code == "000000"
     assert holdings[0].fund_name == "华夏中证电网设备..."
     assert holdings[0].holding_amount == 15161.69
-    assert holdings[0].return_percent == 0.87
-    assert holdings[0].daily_profit == 488.03
+    assert holdings[0].return_percent == 2.74
+    assert holdings[0].daily_profit == -86.23
+    assert holdings[0].daily_return_percent == -0.57
+    assert holdings[0].holding_profit == 401.80
+    assert holdings[0].holding_return_percent == 2.74
     assert holdings[0].sector_name == "中证电网设备"
-    assert holdings[0].sector_return_percent == 3.33
+    assert holdings[0].sector_return_percent == -0.59
     assert holdings[2].fund_name == "银河创新成长混合A"
-    assert holdings[3].daily_profit == -50.72
+    assert holdings[3].holding_amount == 1846.93
+    assert holdings[3].daily_profit == -102.35
+    assert holdings[3].daily_return_percent == -5.25
+    assert holdings[3].holding_profit == -153.07
+    assert holdings[3].holding_return_percent == -7.65
     assert holdings[3].sector_name == "商业航天"
-    assert holdings[3].sector_return_percent == -2.54
+    assert holdings[3].sector_return_percent == -6.07

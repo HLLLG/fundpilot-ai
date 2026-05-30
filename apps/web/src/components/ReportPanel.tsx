@@ -125,9 +125,10 @@ export function ReportPanel({ report }: ReportPanelProps) {
             <div key={`${holding.fund_code}-${holding.fund_name}-${index}`} className="rounded-2xl border border-slate-100 px-4 py-3">
               <div className="text-sm font-black text-slate-950">{holding.fund_name}</div>
               <div className="mt-2 grid grid-cols-3 gap-2 text-xs text-slate-500">
-                <span>当日收益 {holding.daily_profit ?? "-"}</span>
+                <span>当日 {holding.daily_profit ?? "-"} / {holding.daily_return_percent ?? "-"}%</span>
                 <span>板块 {holding.sector_name || "-"}</span>
                 <span>板块涨跌 {holding.sector_return_percent ?? "-"}%</span>
+                <span>持有 {holding.holding_profit ?? "-"} / {holding.holding_return_percent ?? holding.return_percent}%</span>
               </div>
             </div>
           ))}

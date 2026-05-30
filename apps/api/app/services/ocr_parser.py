@@ -90,14 +90,14 @@ def _parse_alipay_drafts_without_codes(lines: list[str]) -> list[Holding]:
         if amount is None:
             continue
 
-        percentages = [
-            float(match.group(1))
-            for line in block_lines
-            for match in PERCENT_RE.finditer(line)
-        ]
-        return_percent = percentages[0] if percentages else 0
-        sector_return_percent = percentages[-1] if len(percentages) > 1 else None
-        daily_profit = _extract_signed_amount(block_lines)
+        metrics = _extract_yangjibao_metrics(block_lines, amount)
+        percentages = metrics["percentages"]
+        return_percent = metrics["holding_return_percent"]
+        sector_return_percent = metrics["sector_return_percent"]
+        daily_return_percent = metrics["daily_return_percent"]
+        holding_return_percent = metrics["holding_return_percent"]
+        daily_profit = metrics["daily_profit"]
+        holding_profit = metrics["holding_profit"]
         sector_name = _extract_sector_name(block_lines, amount)
         drafts.append(
             Holding(
@@ -106,6 +106,9 @@ def _parse_alipay_drafts_without_codes(lines: list[str]) -> list[Holding]:
                 holding_amount=amount,
                 return_percent=return_percent,
                 daily_profit=daily_profit,
+                daily_return_percent=daily_return_percent,
+                holding_profit=holding_profit,
+                holding_return_percent=holding_return_percent,
                 sector_name=sector_name,
                 sector_return_percent=sector_return_percent,
                 user_note="OCR 未识别到基金代码，请手动补全。",
@@ -129,6 +132,52 @@ def _extract_signed_amount(lines: list[str]) -> float | None:
         cleaned = line.replace(",", "").strip()
         if SIGNED_AMOUNT_RE.match(cleaned):
             return float(cleaned)
+    return None
+
+
+def _extract_yangjibao_metrics(lines: list[str], amount: float) -> dict:
+    amount_index = _find_amount_index(lines, amount)
+    before_amount = lines[:amount_index] if amount_index is not None else lines
+    after_amount = lines[amount_index + 1 :] if amount_index is not None else []
+
+    before_numbers = [
+        float(line.replace(",", ""))
+        for line in before_amount
+        if SIGNED_AMOUNT_RE.match(line.replace(",", "").strip())
+    ]
+    before_percents = [
+        float(match.group(1))
+        for line in before_amount
+        for match in PERCENT_RE.finditer(line)
+    ]
+    after_percents = [
+        float(match.group(1))
+        for line in after_amount
+        for match in PERCENT_RE.finditer(line)
+    ]
+
+    daily_profit = before_numbers[0] if before_numbers else None
+    holding_profit = before_numbers[-1] if before_numbers else None
+    daily_return_percent = after_percents[0] if after_percents else None
+    holding_return_percent = after_percents[-1] if after_percents else (before_percents[-1] if before_percents else 0)
+    sector_return_percent = before_percents[-1] if before_percents else None
+    holding_profit = before_numbers[-1] if before_numbers else None
+
+    return {
+        "percentages": before_percents + after_percents,
+        "daily_return_percent": daily_return_percent,
+        "daily_profit": daily_profit,
+        "sector_return_percent": sector_return_percent,
+        "holding_profit": holding_profit,
+        "holding_return_percent": holding_return_percent,
+    }
+
+
+def _find_amount_index(lines: list[str], amount: float) -> int | None:
+    amount_text = f"{amount:,.2f}"
+    for index, line in enumerate(lines):
+        if amount_text in line:
+            return index
     return None
 
 

@@ -116,8 +116,9 @@ def _build_payload(
             "recommendations 至少 6 条，至少包含每只基金的动作建议",
             "recommendations 每条不超过 120 个中文字符，避免冗长",
             "每条建议必须包含：动作（观察/暂停加仓/分批加仓/减仓评估）、理由、触发条件、风险点",
-            "重点使用养基宝指标：daily_profit、sector_name、sector_return_percent、return_percent、holding_amount",
-            "如果 sector_return_percent 当日大涨但基金仍亏损，提示不要追涨，建议等待回落或分批",
+            "重点使用养基宝指标：daily_profit、daily_return_percent、sector_name、sector_return_percent、holding_profit、holding_return_percent、holding_amount",
+            "区分当日收益和持有收益：daily_* 是今天表现，holding_* 是累计表现",
+            "如果 sector_return_percent 当日大涨但 daily_return_percent 或 holding_return_percent 较弱，提示不要追涨，建议等待回落或分批",
             "如果单只持仓集中度超过阈值，优先提示仓位风险",
             "如果基金代码为 000000，说明需要补全代码才能获取净值和公告",
             "market_context 是需要你围绕近期公开消息重点核查的主题，请在建议中体现这些主题的消息面不确定性",
@@ -178,19 +179,35 @@ def _offline_report(
             action = "暂停加仓/减仓评估"
         elif holding.sector_return_percent is not None and holding.sector_return_percent > 5:
             action = "暂停追涨，等待回落后再分批"
-        elif holding.return_percent < -5 and request.profile.prefer_dca:
+        elif (holding.holding_return_percent or holding.return_percent) < -5 and request.profile.prefer_dca:
             action = "小额分批观察，不一次性加仓"
 
         sector = holding.sector_name or "未知板块"
         daily = "-" if holding.daily_profit is None else f"{holding.daily_profit:.2f}"
+        daily_return = (
+            "-"
+            if holding.daily_return_percent is None
+            else f"{holding.daily_return_percent:.2f}%"
+        )
+        holding_profit = (
+            "-"
+            if holding.holding_profit is None
+            else f"{holding.holding_profit:.2f}"
+        )
+        holding_return = (
+            "-"
+            if holding.holding_return_percent is None
+            else f"{holding.holding_return_percent:.2f}%"
+        )
         sector_change = (
             "-"
             if holding.sector_return_percent is None
             else f"{holding.sector_return_percent:.2f}%"
         )
         recommendations.append(
-            f"{holding.fund_name}：{action}。当前占比 {weight:.1f}%，持有收益率 {holding.return_percent:.2f}%，"
-            f"当日收益 {daily}，关联板块 {sector} 当日涨跌 {sector_change}。"
+            f"{holding.fund_name}：{action}。当前占比 {weight:.1f}%，"
+            f"当日收益 {daily}/{daily_return}，累计持有收益 {holding_profit}/{holding_return}，"
+            f"关联板块 {sector} 当日涨跌 {sector_change}。"
             "若后续补全基金代码，可结合净值、公告和同类基金表现再复核。"
         )
 
