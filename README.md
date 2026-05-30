@@ -92,6 +92,8 @@ cd /d/Code/HL_Project/fundpilot-ai/apps/web
 npm run dev
 ```
 
+前端 dev 脚本使用 Next.js 的 webpack 模式，避开 Windows 下偶发的 Turbopack panic。
+
 浏览器打开：
 
 ```text

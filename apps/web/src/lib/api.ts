@@ -4,6 +4,8 @@ export type Holding = {
   holding_amount: number;
   return_percent: number;
   daily_profit?: number | null;
+  sector_name?: string | null;
+  sector_return_percent?: number | null;
   user_note?: string | null;
 };
 
@@ -52,6 +54,7 @@ export type OcrResponse = {
   raw_text: string;
   upload_path: string | null;
   holdings: Holding[];
+  error?: string;
 };
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";

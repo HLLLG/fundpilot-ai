@@ -5,8 +5,9 @@ import { FileImage, ScanLine, WandSparkles } from "lucide-react";
 type UploadDropzoneProps = {
   rawText: string;
   isBusy: boolean;
+  selectedFileName: string | null;
   onRawTextChange: (value: string) => void;
-  onFileChange: (file: File | null) => void;
+  onFileSelect: (file: File) => void;
   onParse: () => void;
   onLoadSample: () => void;
 };
@@ -14,11 +15,20 @@ type UploadDropzoneProps = {
 export function UploadDropzone({
   rawText,
   isBusy,
+  selectedFileName,
   onRawTextChange,
-  onFileChange,
+  onFileSelect,
   onParse,
   onLoadSample,
 }: UploadDropzoneProps) {
+  const handleDrop = (event: React.DragEvent<HTMLLabelElement>) => {
+    event.preventDefault();
+    const droppedFile = event.dataTransfer.files.item(0);
+    if (droppedFile) {
+      onFileSelect(droppedFile);
+    }
+  };
+
   return (
     <section className="glass-panel min-w-0 rounded-[28px] p-6">
       <div className="flex flex-col gap-5">
@@ -43,15 +53,32 @@ export function UploadDropzone({
           </button>
         </div>
 
-        <label className="group flex min-h-40 flex-col items-center justify-center rounded-[24px] border border-dashed border-blue-300 bg-white/80 px-5 py-8 text-center transition hover:border-blue-500 hover:bg-blue-50/70">
+        <label
+          className="group flex min-h-40 flex-col items-center justify-center rounded-[24px] border border-dashed border-blue-300 bg-white/80 px-5 py-8 text-center transition hover:border-blue-500 hover:bg-blue-50/70"
+          onDragOver={(event) => event.preventDefault()}
+          onDrop={handleDrop}
+        >
           <FileImage className="mb-3 text-blue-600" size={34} />
           <span className="text-base font-black text-slate-950">选择支付宝基金截图</span>
-          <span className="mt-1 text-sm text-slate-500">PNG / JPG，资产截图只保存在本地项目目录</span>
+          <span className="mt-1 text-sm text-slate-500">
+            点击选择或拖拽 PNG / JPG，选择后会自动上传识别
+          </span>
+          {selectedFileName ? (
+            <span className="mt-3 rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700">
+              已选择：{selectedFileName}
+            </span>
+          ) : null}
           <input
             type="file"
             accept="image/*"
             className="sr-only"
-            onChange={(event) => onFileChange(event.target.files?.[0] ?? null)}
+            onChange={(event) => {
+              const selectedFile = event.target.files?.[0];
+              if (selectedFile) {
+                onFileSelect(selectedFile);
+              }
+              event.currentTarget.value = "";
+            }}
           />
         </label>
 
@@ -64,7 +91,7 @@ export function UploadDropzone({
 
         <button
           type="button"
-          onClick={onParse}
+          onClick={() => onParse()}
           disabled={isBusy}
           data-testid="parse-ocr"
           className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-blue-600 px-5 py-3 text-sm font-black text-white shadow-[0_16px_36px_rgba(23,119,255,0.28)] transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
