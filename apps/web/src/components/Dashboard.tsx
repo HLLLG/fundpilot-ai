@@ -1,7 +1,18 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ArrowRight, BadgeCheck, BrainCircuit, LockKeyhole, TrendingUp } from "lucide-react";
+import {
+  ArrowRight,
+  BadgeCheck,
+  BookMarked,
+  BrainCircuit,
+  Camera,
+  FileText,
+  History,
+  LockKeyhole,
+  Table2,
+  TrendingUp,
+} from "lucide-react";
 import type { FundProfile, Holding, InvestorProfile, Report } from "@/lib/api";
 import { analyzeHoldings, listFundProfiles, listReports, parseFundProfile, parseOcr } from "@/lib/api";
 import { FundProfilePanel } from "@/components/FundProfilePanel";
@@ -31,6 +42,46 @@ const defaultProfile: InvestorProfile = {
   avoid_chasing: true,
 };
 
+type TabId = "capture" | "profiles" | "holdings" | "analysis" | "history";
+
+const tabs: Array<{
+  id: TabId;
+  label: string;
+  description: string;
+  icon: React.ReactNode;
+}> = [
+  {
+    id: "capture",
+    label: "截图识别",
+    description: "上传总览截图并设置风控",
+    icon: <Camera size={17} />,
+  },
+  {
+    id: "profiles",
+    label: "基金档案",
+    description: "一次建档，后续自动匹配",
+    icon: <BookMarked size={17} />,
+  },
+  {
+    id: "holdings",
+    label: "持仓校对",
+    description: "确认 OCR 结果和关键指标",
+    icon: <Table2 size={17} />,
+  },
+  {
+    id: "analysis",
+    label: "分析报告",
+    description: "生成并查看每日操作建议",
+    icon: <FileText size={17} />,
+  },
+  {
+    id: "history",
+    label: "历史日报",
+    description: "回看已保存报告",
+    icon: <History size={17} />,
+  },
+];
+
 export function Dashboard() {
   const [file, setFile] = useState<File | null>(null);
   const [rawText, setRawText] = useState("");
@@ -44,6 +95,7 @@ export function Dashboard() {
   const [isParsing, setIsParsing] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isProfiling, setIsProfiling] = useState(false);
+  const [activeTab, setActiveTab] = useState<TabId>("capture");
 
   const totalAmount = useMemo(
     () => holdings.reduce((sum, holding) => sum + Number(holding.holding_amount || 0), 0),
@@ -86,6 +138,9 @@ export function Dashboard() {
       const result = await parseOcr(formData);
       setRawText(result.raw_text);
       setHoldings(result.holdings);
+      if (result.holdings.length) {
+        setActiveTab("holdings");
+      }
       setMessage(
         result.error ??
           (result.holdings.length ? "识别完成，请校对持仓。" : "未识别到基金代码，可以手动新增持仓。"),
@@ -109,6 +164,7 @@ export function Dashboard() {
       const result = await analyzeHoldings(holdings, profile, rawText);
       setReport(result);
       await loadHistory();
+      setActiveTab("analysis");
       setMessage("日报已生成并保存到历史记录。");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "生成日报失败。");
@@ -124,6 +180,7 @@ export function Dashboard() {
       const profileResult = await parseFundProfile(formData);
       setDetailText(profileResult.raw_text ?? "");
       await loadProfiles();
+      setActiveTab("profiles");
       setMessage(`基金档案已保存：${profileResult.fund_name}（${profileResult.fund_code}）`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "基金详情建档失败。");
@@ -147,7 +204,7 @@ export function Dashboard() {
   return (
     <main className="premium-bg min-h-screen">
       <div className="mx-auto flex min-h-screen w-full max-w-[1480px] flex-col px-4 py-5 sm:px-6 lg:px-8">
-        <nav className="mb-8 flex items-center justify-between gap-4 rounded-full border border-white/70 bg-white px-4 py-3 shadow-sm">
+        <nav className="mb-5 flex items-center justify-between gap-4 rounded-full border border-white/70 bg-white px-4 py-3 shadow-sm">
           <div className="flex items-center gap-3">
             <div className="flex h-11 w-11 items-center justify-center rounded-full bg-blue-600 text-white shadow-[0_12px_28px_rgba(23,119,255,0.28)]">
               <BrainCircuit size={22} />
@@ -164,16 +221,16 @@ export function Dashboard() {
           </div>
         </nav>
 
-        <header className="mb-8 grid gap-6 lg:grid-cols-[1.2fr_0.8fr] lg:items-end">
+        <header className="mb-5 grid gap-5 lg:grid-cols-[1.2fr_0.8fr] lg:items-end">
           <div>
-            <div className="mb-4 flex flex-wrap items-center gap-2">
+            <div className="mb-3 flex flex-wrap items-center gap-2">
               <StatusPill tone="dark">MVP 工作台</StatusPill>
               <StatusPill tone="blue">截图到日报</StatusPill>
             </div>
-            <h1 className="max-w-4xl text-4xl font-black leading-tight text-slate-950 sm:text-5xl">
+            <h1 className="max-w-4xl text-3xl font-black leading-tight text-slate-950 sm:text-4xl">
               把支付宝基金截图，变成一份可追溯的每日操作日报。
             </h1>
-            <p className="mt-4 max-w-3xl text-base leading-7 text-slate-600">
+            <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-600">
               先识别持仓，再套你的稳健风控线，最后让模型做研究员。它不会替你下单，只帮你把“该不该动”讲清楚。
             </p>
           </div>
@@ -185,15 +242,17 @@ export function Dashboard() {
         </header>
 
         {message ? (
-          <div className="mb-6 flex items-center justify-between gap-3 rounded-3xl border border-blue-100 bg-white px-5 py-4 text-sm font-semibold text-slate-700 shadow-sm">
+          <div className="mb-4 flex items-center justify-between gap-3 rounded-3xl border border-blue-100 bg-white px-5 py-4 text-sm font-semibold text-slate-700 shadow-sm">
             <span>{message}</span>
             <ArrowRight className="text-blue-600" size={18} />
           </div>
         ) : null}
 
-        <div className="grid min-w-0 flex-1 gap-6 xl:grid-cols-[1fr_360px]">
-          <div className="min-w-0 space-y-6">
-            <div className="grid min-w-0 gap-6 lg:grid-cols-[0.85fr_1.15fr]">
+        <TabNav activeTab={activeTab} onSelect={setActiveTab} />
+
+        <div className="min-w-0 flex-1">
+          {activeTab === "capture" ? (
+            <div className="grid min-w-0 gap-6 lg:grid-cols-[0.9fr_1.1fr]">
               <UploadDropzone
                 rawText={rawText}
                 isBusy={isParsing}
@@ -210,6 +269,9 @@ export function Dashboard() {
                 isBusy={isAnalyzing}
               />
             </div>
+          ) : null}
+
+          {activeTab === "profiles" ? (
             <FundProfilePanel
               profiles={profiles}
               detailText={detailText}
@@ -219,13 +281,78 @@ export function Dashboard() {
               onParseText={handleProfileText}
               onRefresh={loadProfiles}
             />
+          ) : null}
+
+          {activeTab === "holdings" ? (
             <HoldingTable holdings={holdings} onChange={setHoldings} />
-            <ReportPanel report={report} />
-          </div>
-          <HistoryRail reports={reports} onRefresh={loadHistory} onSelect={setReport} />
+          ) : null}
+
+          {activeTab === "analysis" ? (
+            <div className="grid min-w-0 gap-6 xl:grid-cols-[380px_minmax(0,1fr)]">
+              <RiskControls
+                profile={profile}
+                onChange={setProfile}
+                onAnalyze={handleAnalyze}
+                isBusy={isAnalyzing}
+              />
+              <ReportPanel report={report} />
+            </div>
+          ) : null}
+
+          {activeTab === "history" ? (
+            <HistoryRail reports={reports} onRefresh={loadHistory} onSelect={(selectedReport) => {
+              setReport(selectedReport);
+              setActiveTab("analysis");
+            }} />
+          ) : null}
         </div>
       </div>
     </main>
+  );
+}
+
+function TabNav({
+  activeTab,
+  onSelect,
+}: {
+  activeTab: TabId;
+  onSelect: (tab: TabId) => void;
+}) {
+  return (
+    <div className="glass-panel mb-5 overflow-x-auto rounded-[24px] p-2">
+      <div className="grid min-w-[760px] grid-cols-5 gap-2">
+        {tabs.map((tab) => {
+          const active = tab.id === activeTab;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => onSelect(tab.id)}
+              aria-current={active ? "page" : undefined}
+              className={`flex items-center gap-3 rounded-[18px] px-4 py-3 text-left transition ${
+                active
+                  ? "bg-blue-600 text-white shadow-[0_14px_32px_rgba(23,119,255,0.24)]"
+                  : "bg-white text-slate-600 hover:bg-blue-50 hover:text-blue-700"
+              }`}
+            >
+              <span
+                className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl ${
+                  active ? "bg-white/15 text-white" : "bg-blue-50 text-blue-600"
+                }`}
+              >
+                {tab.icon}
+              </span>
+              <span className="min-w-0">
+                <span className="block text-sm font-black">{tab.label}</span>
+                <span className={`mt-0.5 block truncate text-xs ${active ? "text-slate-300" : "text-slate-400"}`}>
+                  {tab.description}
+                </span>
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
