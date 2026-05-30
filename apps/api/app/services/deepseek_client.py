@@ -24,7 +24,14 @@ class DeepSeekClient:
             return _offline_report(request, risk, snapshots, market_context or [])
 
         market_context = market_context or []
-        payload = _build_payload(request, risk, snapshots, market_context, self.settings.deepseek_model)
+        payload = _build_payload(
+            request,
+            risk,
+            snapshots,
+            market_context,
+            self.settings.deepseek_model,
+            self.settings.deepseek_max_tokens,
+        )
         try:
             response = httpx.post(
                 f"{self.settings.deepseek_base_url.rstrip('/')}/chat/completions",
@@ -33,7 +40,12 @@ class DeepSeekClient:
                     "Content-Type": "application/json",
                 },
                 json=payload,
-                timeout=60,
+                timeout=httpx.Timeout(
+                    connect=10,
+                    read=self.settings.deepseek_timeout_seconds,
+                    write=30,
+                    pool=10,
+                ),
             )
             response.raise_for_status()
             content = response.json()["choices"][0]["message"]["content"]
@@ -53,6 +65,23 @@ class DeepSeekClient:
                 caveats=_non_empty_list(parsed.get("caveats"), fallback.caveats),
                 provider=self.settings.deepseek_model,
             )
+        except httpx.TimeoutException as exc:
+            fallback = _offline_report(request, risk, snapshots, market_context or [])
+            fallback.summary = (
+                f"{fallback.summary}\n\nDeepSeek 调用超时：{exc}。"
+                f"当前 read timeout 为 {self.settings.deepseek_timeout_seconds:.0f} 秒。"
+                "可以调大 FUND_AI_DEEPSEEK_TIMEOUT_SECONDS，或将模型切换为 deepseek-v4-flash 提升速度。"
+            )
+            fallback.provider = "offline-fallback"
+            return fallback
+        except httpx.HTTPStatusError as exc:
+            fallback = _offline_report(request, risk, snapshots, market_context or [])
+            fallback.summary = (
+                f"{fallback.summary}\n\nDeepSeek HTTP 错误：{exc.response.status_code} "
+                f"{exc.response.text[:300]}"
+            )
+            fallback.provider = "offline-fallback"
+            return fallback
         except Exception as exc:
             fallback = _offline_report(request, risk, snapshots, market_context or [])
             fallback.summary = f"{fallback.summary}\n\nDeepSeek 调用失败，已使用本地规则生成报告：{exc}"
@@ -66,6 +95,7 @@ def _build_payload(
     snapshots: list[FundSnapshot],
     market_context: list[MarketItem],
     model: str,
+    max_tokens: int,
 ) -> dict:
     system = (
         "你是个人基金投研助手，只能提供个人研究和风险提示，不能承诺收益。"
@@ -84,6 +114,7 @@ def _build_payload(
         "requirements": [
             "输出 title、summary、recommendations、caveats 四个字段",
             "recommendations 至少 6 条，至少包含每只基金的动作建议",
+            "recommendations 每条不超过 120 个中文字符，避免冗长",
             "每条建议必须包含：动作（观察/暂停加仓/分批加仓/减仓评估）、理由、触发条件、风险点",
             "重点使用养基宝指标：daily_profit、sector_name、sector_return_percent、return_percent、holding_amount",
             "如果 sector_return_percent 当日大涨但基金仍亏损，提示不要追涨，建议等待回落或分批",
@@ -101,6 +132,7 @@ def _build_payload(
             {"role": "user", "content": json.dumps(user, ensure_ascii=False)},
         ],
         "temperature": 0.2,
+        "max_tokens": max_tokens,
         "response_format": {"type": "json_object"},
     }
 

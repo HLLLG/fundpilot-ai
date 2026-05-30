@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     deepseek_api_key: str | None = None
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-v4-pro"
+    deepseek_timeout_seconds: float = 180
+    deepseek_max_tokens: int = 1800
 
     model_config = SettingsConfigDict(
         env_file=PROJECT_ROOT / ".env",

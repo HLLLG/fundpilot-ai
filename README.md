@@ -44,10 +44,16 @@ cp .env.example .env
 ```text
 FUND_AI_DEEPSEEK_API_KEY=sk-your-deepseek-key
 FUND_AI_DEEPSEEK_MODEL=deepseek-v4-pro
+FUND_AI_DEEPSEEK_TIMEOUT_SECONDS=180
+FUND_AI_DEEPSEEK_MAX_TOKENS=1800
 NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
 ```
 
 `.env` 已被 `.gitignore` 忽略，不会提交到 Git。
+
+如果 DeepSeek 报 `read operation timed out`，通常是 `deepseek-v4-pro` 响应较慢。可以先把
+`FUND_AI_DEEPSEEK_TIMEOUT_SECONDS` 调大，例如 `300`；如果你更看重速度，也可以把
+`FUND_AI_DEEPSEEK_MODEL` 改成 `deepseek-v4-flash`。
 
 ## 安装
 
