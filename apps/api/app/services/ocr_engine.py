@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 
 class OcrEngine:
     def extract_text(self, image_path: Path) -> str:
+        os.environ.setdefault("DISABLE_MODEL_SOURCE_CHECK", "True")
         try:
             from paddleocr import PaddleOCR  # type: ignore[import-not-found]
         except Exception as exc:
@@ -12,7 +14,12 @@ class OcrEngine:
                 "PaddleOCR 未安装或无法加载，请先使用手动文本输入，或按 README 安装可选 OCR 依赖。"
             ) from exc
 
-        ocr = PaddleOCR(use_textline_orientation=True, lang="ch")
+        ocr = PaddleOCR(
+            lang="ch",
+            use_doc_orientation_classify=False,
+            use_doc_unwarping=False,
+            use_textline_orientation=False,
+        )
         result = ocr.predict(str(image_path))
         return _extract_lines(result)
 

@@ -91,7 +91,7 @@ export function UploadDropzone({
 
         <button
           type="button"
-          onClick={onParse}
+          onClick={() => onParse()}
           disabled={isBusy}
           data-testid="parse-ocr"
           className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-blue-600 px-5 py-3 text-sm font-black text-white shadow-[0_16px_36px_rgba(23,119,255,0.28)] transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
