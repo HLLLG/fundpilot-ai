@@ -78,3 +78,45 @@ def test_ocr_endpoint_returns_clear_error_when_local_ocr_is_missing(monkeypatch)
     assert response.status_code == 200
     assert body["holdings"] == []
     assert "OCR 识别失败" in body["error"]
+
+
+def test_analyze_unknown_code_keeps_yangjibao_snapshot_and_rich_recommendations(tmp_path, monkeypatch):
+    monkeypatch.setenv("FUND_AI_DB_PATH", str(tmp_path / "app.db"))
+    monkeypatch.setenv("FUND_AI_DEEPSEEK_API_KEY", "")
+    refresh_settings()
+
+    response = client.post(
+        "/api/analyze",
+        json={
+            "holdings": [
+                {
+                    "fund_code": "000000",
+                    "fund_name": "华夏中证电网设备...",
+                    "holding_amount": 15161.69,
+                    "return_percent": 0.87,
+                    "daily_profit": 488.03,
+                    "sector_name": "中证电网设备",
+                    "sector_return_percent": 3.33,
+                },
+                {
+                    "fund_code": "000000",
+                    "fund_name": "银河创新成长混合A",
+                    "holding_amount": 4458.63,
+                    "return_percent": 5.2,
+                    "daily_profit": 299.18,
+                    "sector_name": "半导体",
+                    "sector_return_percent": 7.19,
+                },
+            ]
+        },
+    )
+
+    body = response.json()
+    assert response.status_code == 200
+    assert body["snapshots"][0]["source"] == "yangjibao-ocr"
+    assert "补全代码" in body["snapshots"][0]["note"]
+    assert body["market_context"]
+    assert any(item["topic"] == "中证电网设备" for item in body["market_context"])
+    assert len(body["recommendations"]) >= 3
+    assert any("中证电网设备" in item for item in body["recommendations"])
+    assert any("半导体" in item for item in body["recommendations"])

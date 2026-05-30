@@ -44,6 +44,12 @@ export type Report = {
     source: string;
     note?: string | null;
   }>;
+  market_context: Array<{
+    topic: string;
+    query: string;
+    source: string;
+    note: string;
+  }>;
   summary: string;
   recommendations: string[];
   caveats: string[];

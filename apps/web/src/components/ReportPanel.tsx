@@ -104,8 +104,8 @@ export function ReportPanel({ report }: ReportPanelProps) {
           基金数据快照
         </div>
         <div className="grid gap-3 md:grid-cols-2">
-          {report.snapshots.map((snapshot) => (
-            <div key={snapshot.fund_code} className="rounded-2xl border border-slate-100 px-4 py-3">
+          {report.snapshots.map((snapshot, index) => (
+            <div key={`${snapshot.fund_code}-${snapshot.source}-${snapshot.nav_date ?? "none"}-${index}`} className="rounded-2xl border border-slate-100 px-4 py-3">
               <div className="text-sm font-black text-slate-950">{snapshot.fund_name}</div>
               <div className="mt-1 text-xs text-slate-500">
                 {snapshot.fund_code} · {snapshot.source}
@@ -121,14 +121,27 @@ export function ReportPanel({ report }: ReportPanelProps) {
       <div className="mt-5 rounded-[24px] bg-white p-5 shadow-sm">
         <div className="mb-4 text-sm font-black text-slate-950">养基宝核心指标</div>
         <div className="grid gap-3 md:grid-cols-2">
-          {report.holdings.map((holding) => (
-            <div key={`${holding.fund_name}-${holding.holding_amount}`} className="rounded-2xl border border-slate-100 px-4 py-3">
+          {report.holdings.map((holding, index) => (
+            <div key={`${holding.fund_code}-${holding.fund_name}-${index}`} className="rounded-2xl border border-slate-100 px-4 py-3">
               <div className="text-sm font-black text-slate-950">{holding.fund_name}</div>
               <div className="mt-2 grid grid-cols-3 gap-2 text-xs text-slate-500">
                 <span>当日收益 {holding.daily_profit ?? "-"}</span>
                 <span>板块 {holding.sector_name || "-"}</span>
                 <span>板块涨跌 {holding.sector_return_percent ?? "-"}%</span>
               </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="mt-5 rounded-[24px] bg-white p-5 shadow-sm">
+        <div className="mb-4 text-sm font-black text-slate-950">近期消息核查主题</div>
+        <div className="grid gap-3 md:grid-cols-2">
+          {report.market_context.map((item, index) => (
+            <div key={`${item.topic}-${index}`} className="rounded-2xl border border-slate-100 px-4 py-3">
+              <div className="text-sm font-black text-slate-950">{item.topic}</div>
+              <div className="mt-1 text-xs leading-5 text-slate-500">{item.query}</div>
+              <div className="mt-2 text-xs leading-5 text-slate-500">{item.note}</div>
             </div>
           ))}
         </div>

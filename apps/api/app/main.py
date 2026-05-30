@@ -10,6 +10,7 @@ from app.database import get_report, list_reports, save_report
 from app.models import AnalysisRequest
 from app.services.deepseek_client import DeepSeekClient
 from app.services.fund_data import FundDataService
+from app.services.market_context import MarketContextService
 from app.services.ocr_engine import OcrEngine
 from app.services.ocr_parser import parse_holdings_from_text
 from app.services.risk import evaluate_portfolio_risk
@@ -70,7 +71,8 @@ def analyze(request: AnalysisRequest) -> dict:
 
     risk = evaluate_portfolio_risk(request.holdings, request.profile)
     snapshots = FundDataService().get_snapshots(request.holdings)
-    report = DeepSeekClient().generate_report(request, risk, snapshots)
+    market_context = MarketContextService().collect(request.holdings)
+    report = DeepSeekClient().generate_report(request, risk, snapshots, market_context)
     save_report(report)
     return report.model_dump(mode="json")
 

@@ -51,6 +51,13 @@ class AnalysisRequest(BaseModel):
     ocr_text: str | None = None
 
 
+class MarketItem(BaseModel):
+    topic: str
+    query: str
+    source: str
+    note: str
+
+
 class FundSnapshot(BaseModel):
     fund_code: str
     fund_name: str
@@ -67,6 +74,7 @@ class Report(BaseModel):
     risk: RiskAssessment
     holdings: list[Holding]
     snapshots: list[FundSnapshot] = Field(default_factory=list)
+    market_context: list[MarketItem] = Field(default_factory=list)
     summary: str
     recommendations: list[str]
     caveats: list[str]

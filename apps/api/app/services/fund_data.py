@@ -8,6 +8,14 @@ class FundDataService:
         return [self._snapshot_for_holding(holding) for holding in holdings]
 
     def _snapshot_for_holding(self, holding: Holding) -> FundSnapshot:
+        if holding.fund_code == "000000":
+            return FundSnapshot(
+                fund_code=holding.fund_code,
+                fund_name=holding.fund_name,
+                source="yangjibao-ocr",
+                note="OCR 未识别到基金代码，已使用养基宝截图指标；补全代码后可拉取净值快照。",
+            )
+
         try:
             return self._from_akshare(holding)
         except Exception as exc:
