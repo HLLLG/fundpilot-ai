@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from app.config import get_settings
-from app.models import Report
+from app.models import FundProfile, Report
 
 
 def _db_path() -> Path:
@@ -28,6 +28,16 @@ def _connect() -> sqlite3.Connection:
             id TEXT PRIMARY KEY,
             created_at TEXT NOT NULL,
             payload TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS fund_profiles (
+            fund_code TEXT PRIMARY KEY,
+            fund_name TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
         """
     )
@@ -66,3 +76,29 @@ def get_report(report_id: str) -> dict[str, Any] | None:
     if row is None:
         return None
     return json.loads(row["payload"])
+
+
+def save_fund_profile(profile: FundProfile) -> FundProfile:
+    payload = profile.model_dump(mode="json")
+    with _connect() as connection:
+        connection.execute(
+            """
+            INSERT OR REPLACE INTO fund_profiles (fund_code, fund_name, payload, updated_at)
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+            """,
+            (
+                profile.fund_code,
+                profile.fund_name,
+                json.dumps(payload, ensure_ascii=False),
+            ),
+        )
+        connection.commit()
+    return profile
+
+
+def list_fund_profiles() -> list[FundProfile]:
+    with _connect() as connection:
+        rows = connection.execute(
+            "SELECT payload FROM fund_profiles ORDER BY updated_at DESC"
+        ).fetchall()
+    return [FundProfile.model_validate(json.loads(row["payload"])) for row in rows]

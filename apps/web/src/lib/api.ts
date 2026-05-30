@@ -56,6 +56,26 @@ export type Report = {
   provider: string;
 };
 
+export type FundProfile = {
+  fund_code: string;
+  fund_name: string;
+  aliases: string[];
+  holding_amount?: number | null;
+  holding_shares?: number | null;
+  position_percent?: number | null;
+  holding_profit?: number | null;
+  holding_return_percent?: number | null;
+  holding_cost?: number | null;
+  daily_profit?: number | null;
+  yesterday_profit?: number | null;
+  holding_days?: number | null;
+  sector_name?: string | null;
+  sector_return_percent?: number | null;
+  source: string;
+  raw_text?: string;
+  upload_path?: string | null;
+};
+
 export type OcrResponse = {
   raw_text: string;
   upload_path: string | null;
@@ -96,6 +116,27 @@ export async function analyzeHoldings(
 
 export async function listReports(): Promise<Report[]> {
   const response = await fetch(`${API_BASE}/api/reports`, {
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export async function parseFundProfile(formData: FormData): Promise<FundProfile> {
+  const response = await fetch(`${API_BASE}/api/fund-profiles/ocr`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export async function listFundProfiles(): Promise<FundProfile[]> {
+  const response = await fetch(`${API_BASE}/api/fund-profiles`, {
     cache: "no-store",
   });
   if (!response.ok) {

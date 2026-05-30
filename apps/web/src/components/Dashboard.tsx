@@ -2,8 +2,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { ArrowRight, BadgeCheck, BrainCircuit, LockKeyhole, TrendingUp } from "lucide-react";
-import type { Holding, InvestorProfile, Report } from "@/lib/api";
-import { analyzeHoldings, listReports, parseOcr } from "@/lib/api";
+import type { FundProfile, Holding, InvestorProfile, Report } from "@/lib/api";
+import { analyzeHoldings, listFundProfiles, listReports, parseFundProfile, parseOcr } from "@/lib/api";
+import { FundProfilePanel } from "@/components/FundProfilePanel";
 import { HistoryRail } from "@/components/HistoryRail";
 import { HoldingTable } from "@/components/HoldingTable";
 import { ReportPanel } from "@/components/ReportPanel";
@@ -37,9 +38,12 @@ export function Dashboard() {
   const [profile, setProfile] = useState<InvestorProfile>(defaultProfile);
   const [report, setReport] = useState<Report | null>(null);
   const [reports, setReports] = useState<Report[]>([]);
+  const [profiles, setProfiles] = useState<FundProfile[]>([]);
+  const [detailText, setDetailText] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [isParsing, setIsParsing] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isProfiling, setIsProfiling] = useState(false);
 
   const totalAmount = useMemo(
     () => holdings.reduce((sum, holding) => sum + Number(holding.holding_amount || 0), 0),
@@ -54,8 +58,17 @@ export function Dashboard() {
     }
   };
 
+  const loadProfiles = async () => {
+    try {
+      setProfiles(await listFundProfiles());
+    } catch {
+      setProfiles([]);
+    }
+  };
+
   useEffect(() => {
     void loadHistory();
+    void loadProfiles();
   }, []);
 
   const handleParse = async (fileOverride?: File) => {
@@ -102,6 +115,33 @@ export function Dashboard() {
     } finally {
       setIsAnalyzing(false);
     }
+  };
+
+  const handleProfileForm = async (formData: FormData) => {
+    setIsProfiling(true);
+    setMessage(null);
+    try {
+      const profileResult = await parseFundProfile(formData);
+      setDetailText(profileResult.raw_text ?? "");
+      await loadProfiles();
+      setMessage(`基金档案已保存：${profileResult.fund_name}（${profileResult.fund_code}）`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "基金详情建档失败。");
+    } finally {
+      setIsProfiling(false);
+    }
+  };
+
+  const handleProfileFile = (selectedFile: File) => {
+    const formData = new FormData();
+    formData.append("file", selectedFile);
+    void handleProfileForm(formData);
+  };
+
+  const handleProfileText = () => {
+    const formData = new FormData();
+    formData.append("raw_text", detailText);
+    void handleProfileForm(formData);
   };
 
   return (
@@ -170,6 +210,15 @@ export function Dashboard() {
                 isBusy={isAnalyzing}
               />
             </div>
+            <FundProfilePanel
+              profiles={profiles}
+              detailText={detailText}
+              isBusy={isProfiling}
+              onDetailTextChange={setDetailText}
+              onFileSelect={handleProfileFile}
+              onParseText={handleProfileText}
+              onRefresh={loadProfiles}
+            />
             <HoldingTable holdings={holdings} onChange={setHoldings} />
             <ReportPanel report={report} />
           </div>

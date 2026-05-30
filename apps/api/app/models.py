@@ -58,6 +58,24 @@ class MarketItem(BaseModel):
     note: str
 
 
+class FundProfile(BaseModel):
+    fund_code: str = Field(..., min_length=6, max_length=6)
+    fund_name: str
+    aliases: list[str] = Field(default_factory=list)
+    holding_amount: float | None = None
+    holding_shares: float | None = None
+    position_percent: float | None = None
+    holding_profit: float | None = None
+    holding_return_percent: float | None = None
+    holding_cost: float | None = None
+    daily_profit: float | None = None
+    yesterday_profit: float | None = None
+    holding_days: int | None = None
+    sector_name: str | None = None
+    sector_return_percent: float | None = None
+    source: str = "yangjibao-detail"
+
+
 class FundSnapshot(BaseModel):
     fund_code: str
     fund_name: str
