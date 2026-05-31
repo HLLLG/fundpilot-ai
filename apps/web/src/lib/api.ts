@@ -142,35 +142,6 @@ export type OcrResponse = {
   cache_hit?: boolean;
 };
 
-export type AutomationStatus = {
-  inbox_enabled: boolean;
-  inbox_dir: string;
-  inbox_poll_seconds: number;
-  schedule_enabled: boolean;
-  schedule_time: string;
-  schedule_weekdays_only: boolean;
-  schedule_auto_analyze: boolean;
-  pending_inbox_events: number;
-};
-
-export type InboxEvent = {
-  id: string;
-  kind: "ocr_ready" | "schedule_reminder";
-  status: "pending" | "consumed" | "failed";
-  file_name: string | null;
-  file_path: string | null;
-  payload: {
-    raw_text?: string;
-    holdings?: Holding[];
-    error?: string | null;
-    message?: string;
-    inbox_path?: string;
-  };
-  error: string | null;
-  created_at: string;
-  updated_at: string;
-};
-
 export type AnalysisJob = {
   id: string;
   status: "pending" | "running" | "completed" | "failed";
@@ -205,25 +176,6 @@ function analysisPayload(
     ocr_text: ocrText,
     analysis_mode: analysisMode,
   };
-}
-
-export async function analyzeHoldings(
-  holdings: Holding[],
-  profile: InvestorProfile,
-  ocrText?: string,
-  analysisMode: AnalysisMode = "deep",
-): Promise<Report> {
-  const response = await fetch(`${API_BASE}/api/analyze`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(analysisPayload(holdings, profile, ocrText, analysisMode)),
-  });
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  return response.json();
 }
 
 export async function startAnalyzeJob(
@@ -270,53 +222,6 @@ export async function waitForAnalysisJob(
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
   throw new Error("分析任务超时，请稍后在历史记录中查看。");
-}
-
-export async function fetchAutomationStatus(): Promise<AutomationStatus> {
-  const response = await fetch(`${API_BASE}/api/automation/status`, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  return response.json();
-}
-
-export async function listInboxEvents(status = "pending"): Promise<InboxEvent[]> {
-  const response = await fetch(`${API_BASE}/api/inbox/events?status=${status}`, {
-    cache: "no-store",
-  });
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  return response.json();
-}
-
-export async function consumeInboxEvent(eventId: string): Promise<InboxEvent> {
-  const response = await fetch(`${API_BASE}/api/inbox/events/${eventId}/consume`, {
-    method: "POST",
-  });
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  return response.json();
-}
-
-export async function analyzeInboxEvent(
-  eventId: string,
-  holdings: Holding[],
-  profile: InvestorProfile,
-  ocrText?: string,
-  analysisMode: AnalysisMode = "deep",
-): Promise<string> {
-  const response = await fetch(`${API_BASE}/api/inbox/events/${eventId}/analyze`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(analysisPayload(holdings, profile, ocrText, analysisMode)),
-  });
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  const body = await response.json();
-  return body.job_id as string;
 }
 
 export async function listReports(): Promise<Report[]> {
