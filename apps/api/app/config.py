@@ -8,6 +8,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
+# DeepSeek V4 系列 API 文档：单次输出上限 384K tokens
+DEEPSEEK_MAX_OUTPUT_TOKENS = 384_000
+
 
 class Settings(BaseSettings):
     app_name: str = "Fund AI Assistant"
@@ -19,8 +22,13 @@ class Settings(BaseSettings):
     deepseek_api_key: str | None = None
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-v4-pro"
-    deepseek_timeout_seconds: float = 180
-    deepseek_max_tokens: int = 3600
+    deepseek_timeout_seconds: float = 300
+    deepseek_max_tokens: int = DEEPSEEK_MAX_OUTPUT_TOKENS
+    deepseek_max_tokens_report: int = DEEPSEEK_MAX_OUTPUT_TOKENS
+    news_enabled: bool = True
+    news_max_topics: int = 5
+    news_per_topic: int = 5
+    news_tool_max_rounds: int = 3
 
     model_config = SettingsConfigDict(
         env_file=PROJECT_ROOT / ".env",

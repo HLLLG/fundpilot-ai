@@ -83,8 +83,7 @@ def test_resolve_overview_holding_with_saved_profile(tmp_path, monkeypatch):
 
     assert resolved.fund_code == "025856"
     assert resolved.fund_name == "华夏中证电网设备主题ETF联接A"
-    assert resolved.user_note is not None
-    assert "基金档案" in resolved.user_note
+    assert resolved.user_note is None
 
 
 def test_resolve_truncated_overview_names_with_profile_aliases(tmp_path, monkeypatch):

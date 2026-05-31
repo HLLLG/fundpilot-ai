@@ -111,7 +111,6 @@ def _parse_alipay_drafts_without_codes(lines: list[str]) -> list[Holding]:
                 holding_return_percent=holding_return_percent,
                 sector_name=sector_name,
                 sector_return_percent=sector_return_percent,
-                user_note="OCR 未识别到基金代码，请手动补全。",
             )
         )
 

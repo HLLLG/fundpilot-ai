@@ -7,67 +7,110 @@ from datetime import datetime
 import httpx
 
 from app.config import get_settings
-from app.models import AnalysisRequest, FundSnapshot, MarketItem, Report, RiskAssessment
+from app.models import (
+    AnalysisRequest,
+    FundRecommendation,
+    FundSnapshot,
+    MarketItem,
+    NewsItem,
+    Report,
+    RiskAssessment,
+)
+from app.services.news_service import NewsService, _dedupe_news
+from app.services.recommendations import (
+    build_offline_fund_recommendation,
+    enrich_fund_recommendations,
+    group_strings_to_fund_recommendations,
+    parse_fund_recommendations_raw,
+    portfolio_recommendation_lines,
+)
+
+FETCH_MARKET_NEWS_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "fetch_market_news",
+        "description": (
+            "从东方财富检索板块/主题新闻。优先返回当日消息，前几日可作背景。"
+            "用户通常在交易日 14:30 左右分析、15:00 收盘前决策，请优先拉取当日新闻。"
+            "主题用板块名（如电网设备、半导体）或 6 位基金代码。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "topic": {
+                    "type": "string",
+                    "description": "检索主题，例如「电网设备」「半导体」或基金代码",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "返回新闻条数，默认 5，最大 10",
+                },
+            },
+            "required": ["topic"],
+        },
+    },
+}
 
 
 class DeepSeekClient:
     def __init__(self) -> None:
         self.settings = get_settings()
+        self.news_service = NewsService()
 
     def generate_report(
         self,
         request: AnalysisRequest,
         risk: RiskAssessment,
         snapshots: list[FundSnapshot],
-        market_context: list[MarketItem] | None = None,
     ) -> Report:
-        if not self.settings.deepseek_api_key:
-            return _offline_report(request, risk, snapshots, market_context or [])
+        market_news = self.news_service.prefetch_for_holdings(request.holdings)
 
-        market_context = market_context or []
-        payload = _build_payload(
-            request,
-            risk,
-            snapshots,
-            market_context,
-            self.settings.deepseek_model,
-            self.settings.deepseek_max_tokens,
-        )
-        try:
-            response = httpx.post(
-                f"{self.settings.deepseek_base_url.rstrip('/')}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {self.settings.deepseek_api_key}",
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-                timeout=httpx.Timeout(
-                    connect=10,
-                    read=self.settings.deepseek_timeout_seconds,
-                    write=30,
-                    pool=10,
-                ),
+        if not self.settings.deepseek_api_key:
+            return _offline_report(
+                request,
+                risk,
+                snapshots,
+                market_news=market_news,
             )
-            response.raise_for_status()
-            content = response.json()["choices"][0]["message"]["content"]
-            parsed = _parse_model_json(content)
-            fallback = _offline_report(request, risk, snapshots, market_context)
+
+        try:
+            parsed, market_news = self._generate_with_tools(
+                request,
+                risk,
+                snapshots,
+                market_news,
+            )
+            fallback = _offline_report(
+                request,
+                risk,
+                snapshots,
+                market_news=market_news,
+            )
+            portfolio_recs, fund_recs = _finalize_recommendations(
+                parsed, fallback, request, market_news
+            )
             return Report(
                 title=parsed.get("title", "每日基金操作日报"),
                 risk=risk,
                 holdings=request.holdings,
                 snapshots=snapshots,
-                market_context=market_context,
+                market_context=[],
+                market_news=market_news,
+                fund_recommendations=fund_recs,
                 summary=parsed.get("summary") or fallback.summary,
-                recommendations=_non_empty_list(
-                    parsed.get("recommendations"),
-                    fallback.recommendations,
+                recommendations=portfolio_recs,
+                caveats=_user_facing_caveats(
+                    _non_empty_list(parsed.get("caveats"), fallback.caveats)
                 ),
-                caveats=_non_empty_list(parsed.get("caveats"), fallback.caveats),
                 provider=self.settings.deepseek_model,
             )
         except httpx.TimeoutException as exc:
-            fallback = _offline_report(request, risk, snapshots, market_context or [])
+            fallback = _offline_report(
+                request,
+                risk,
+                snapshots,
+                market_news=market_news,
+            )
             fallback.summary = (
                 f"{fallback.summary}\n\nDeepSeek 调用超时：{exc}。"
                 f"当前 read timeout 为 {self.settings.deepseek_timeout_seconds:.0f} 秒。"
@@ -76,7 +119,12 @@ class DeepSeekClient:
             fallback.provider = "offline-fallback"
             return fallback
         except httpx.HTTPStatusError as exc:
-            fallback = _offline_report(request, risk, snapshots, market_context or [])
+            fallback = _offline_report(
+                request,
+                risk,
+                snapshots,
+                market_news=market_news,
+            )
             fallback.summary = (
                 f"{fallback.summary}\n\nDeepSeek HTTP 错误：{exc.response.status_code} "
                 f"{exc.response.text[:300]}"
@@ -84,59 +132,271 @@ class DeepSeekClient:
             fallback.provider = "offline-fallback"
             return fallback
         except Exception as exc:
-            fallback = _offline_report(request, risk, snapshots, market_context or [])
-            fallback.summary = f"{fallback.summary}\n\nDeepSeek 调用失败，已使用本地规则生成报告：{exc}"
+            fallback = _offline_report(
+                request,
+                risk,
+                snapshots,
+                market_news=market_news,
+            )
+            fallback.summary = (
+                f"{fallback.summary}\n\nDeepSeek 调用失败，已使用本地规则生成报告：{exc}"
+            )
             fallback.provider = "offline-fallback"
             return fallback
+
+    def _generate_with_tools(
+        self,
+        request: AnalysisRequest,
+        risk: RiskAssessment,
+        snapshots: list[FundSnapshot],
+        prefetched_news: list[NewsItem],
+    ) -> tuple[dict, list[NewsItem]]:
+        collected: list[NewsItem] = list(prefetched_news)
+        messages: list[dict] = [
+            {"role": "system", "content": _system_prompt(self.settings.news_enabled)},
+            {
+                "role": "user",
+                "content": json.dumps(
+                    _user_payload(request, risk, snapshots, prefetched_news),
+                    ensure_ascii=False,
+                ),
+            },
+        ]
+        tools = [FETCH_MARKET_NEWS_TOOL] if self.settings.news_enabled else None
+        max_rounds = min(self.settings.news_tool_max_rounds, 1) if tools else 0
+
+        final_content = ""
+        for round_index in range(max_rounds + 1):
+            allow_tools = tools is not None and round_index < max_rounds
+            message = self._chat_completion(
+                messages=messages,
+                tools=tools if allow_tools else None,
+                response_format=None if allow_tools else {"type": "json_object"},
+                max_tokens=(
+                    self.settings.deepseek_max_tokens
+                    if allow_tools
+                    else self.settings.deepseek_max_tokens_report
+                ),
+            )
+            tool_calls = message.get("tool_calls")
+
+            if tool_calls and allow_tools:
+                messages.append(message)
+                for tool_call in tool_calls:
+                    result = _execute_fetch_market_news(
+                        tool_call,
+                        self.news_service,
+                        collected,
+                    )
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tool_call["id"],
+                            "content": result,
+                        }
+                    )
+                continue
+
+            final_content = message.get("content") or ""
+            break
+        else:
+            message = self._chat_completion(
+                messages=messages,
+                tools=None,
+                response_format={"type": "json_object"},
+                max_tokens=self.settings.deepseek_max_tokens_report,
+            )
+            final_content = message.get("content") or ""
+
+        parsed = _parse_model_json(final_content)
+        if _response_incomplete(parsed):
+            retry_message = self._chat_completion(
+                messages=messages
+                + [
+                    {
+                        "role": "user",
+                        "content": (
+                            "上次 JSON 输出不完整。请仅输出完整 JSON，"
+                            "包含 title、summary、fund_recommendations、caveats；"
+                            "每只基金一条，points 每条不超过 60 字，总输出尽量精炼。"
+                        ),
+                    }
+                ],
+                tools=None,
+                response_format={"type": "json_object"},
+                max_tokens=self.settings.deepseek_max_tokens_report,
+            )
+            parsed = _parse_model_json(retry_message.get("content") or "")
+
+        return parsed, _dedupe_news(collected)
+
+    def _chat_completion(
+        self,
+        *,
+        messages: list[dict],
+        tools: list[dict] | None,
+        response_format: dict | None,
+        max_tokens: int | None = None,
+    ) -> dict:
+        payload = _build_chat_payload(
+            messages=messages,
+            model=self.settings.deepseek_model,
+            max_tokens=max_tokens or self.settings.deepseek_max_tokens,
+            tools=tools,
+            response_format=response_format,
+        )
+        response = httpx.post(
+            f"{self.settings.deepseek_base_url.rstrip('/')}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {self.settings.deepseek_api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=httpx.Timeout(
+                connect=10,
+                read=self.settings.deepseek_timeout_seconds,
+                write=30,
+                pool=10,
+            ),
+        )
+        response.raise_for_status()
+        return response.json()["choices"][0]["message"]
+
+
+def _system_prompt(news_enabled: bool) -> str:
+    now = datetime.now()
+    base = (
+        "你是个人基金投研助手，只能提供个人研究和风险提示，不能承诺收益。"
+        f"当前分析时点约为 {now.strftime('%Y-%m-%d %H:%M')}，用户通常在交易日 14:30 左右上传养基宝截图，"
+        "需要在 15:00 A 股收盘前给出当日是否加仓/减仓/观察的决策。"
+        "必须结合持仓、当日收益、板块涨跌、集中度、净值快照与新闻（优先当日）做分析。"
+    )
+    if news_enabled:
+        base += (
+            "用户消息中 prefetched_news 已预拉东方财富新闻（含 is_today 标记）；"
+            "优先采用当日新闻，前几日仅作背景并标注日期，避免用旧闻主导结论。"
+            "如需补充可调用 fetch_market_news，但不要重复拉取已有主题。"
+        )
+    else:
+        base += "若无新闻数据，须说明信息缺口并给出条件化方案。"
+    base += "最终回复必须是完整 JSON，不要 Markdown，控制篇幅避免截断。"
+    return base
+
+
+def _user_payload(
+    request: AnalysisRequest,
+    risk: RiskAssessment,
+    snapshots: list[FundSnapshot],
+    prefetched_news: list[NewsItem],
+) -> dict:
+    return {
+        "today": datetime.now().date().isoformat(),
+        "analysis_session": "trading_day_pre_close",
+        "profile": request.profile.model_dump(),
+        "holdings": [holding.model_dump() for holding in request.holdings],
+        "risk": risk.model_dump(),
+        "fund_snapshots": [snapshot.model_dump() for snapshot in snapshots],
+        "ocr_text": request.ocr_text,
+        "prefetched_news": [item.model_dump() for item in prefetched_news],
+        "requirements": [
+            "输出 title、summary、fund_recommendations、caveats 四个字段",
+            "fund_recommendations 每只基金恰好 1 条",
+            "每条字段：fund_code、fund_name、action、amount_yuan（可选）、amount_note（可选）、news_bullish（利好标题数组）、news_bearish（利空/风险标题数组）、points（1-3 条，每条≤60字）",
+            "news_bullish/news_bearish 必须来自 prefetched_news 或工具结果，注明日期；无则写「暂无明确利好/利空」",
+            "收盘前决策：写清今日收盘前建议（观察/暂停加仓/分批加仓/减仓评估）及触发条件",
+            "涉及加仓/减仓须给 amount_yuan 或 amount_note（结合 holding_amount 与 concentration_limit_percent）",
+            "recommendations 可省略或仅 1 条组合级说明，禁止长新闻摘要堆砌",
+            "旧新闻仅作参考，当日 sector_return_percent 与 daily_return_percent 权重更高",
+            "基金代码 000000 须提示补全代码",
+            "偏稳健，避免追涨，不做实盘交易指令",
+        ],
+    }
+
+
+def _build_chat_payload(
+    *,
+    messages: list[dict],
+    model: str,
+    max_tokens: int,
+    tools: list[dict] | None,
+    response_format: dict | None,
+) -> dict:
+    payload: dict = {
+        "model": model,
+        "messages": messages,
+        "temperature": 0.2,
+        "max_tokens": max_tokens,
+    }
+    if tools:
+        payload["tools"] = tools
+    if response_format:
+        payload["response_format"] = response_format
+    return payload
+
+
+def _execute_fetch_market_news(
+    tool_call: dict,
+    news_service: NewsService,
+    collected: list[NewsItem],
+) -> str:
+    function = tool_call.get("function") or {}
+    name = function.get("name")
+    if name != "fetch_market_news":
+        return json.dumps({"error": f"unknown tool: {name}"}, ensure_ascii=False)
+
+    raw_args = function.get("arguments") or "{}"
+    try:
+        args = json.loads(raw_args)
+    except json.JSONDecodeError:
+        args = {}
+
+    topic = str(args.get("topic", "")).strip()
+    if not topic:
+        return json.dumps({"error": "topic is required"}, ensure_ascii=False)
+
+    limit_raw = args.get("limit", news_service.settings.news_per_topic)
+    try:
+        limit = int(limit_raw)
+    except (TypeError, ValueError):
+        limit = news_service.settings.news_per_topic
+    limit = max(1, min(limit, 10))
+
+    items = news_service.search(topic, limit=limit)
+    collected.extend(items)
+    return json.dumps(
+        {
+            "topic": topic,
+            "count": len(items),
+            "items": [item.model_dump() for item in items],
+        },
+        ensure_ascii=False,
+    )
 
 
 def _build_payload(
     request: AnalysisRequest,
     risk: RiskAssessment,
     snapshots: list[FundSnapshot],
-    market_context: list[MarketItem],
     model: str,
     max_tokens: int,
 ) -> dict:
-    system = (
-        "你是个人基金投研助手，只能提供个人研究和风险提示，不能承诺收益。"
-        "你必须结合持仓、当日收益、关联板块涨跌、组合集中度、基金净值快照和近期行业/市场消息做分析。"
-        "如果没有实时新闻工具或基金代码缺失，必须明确说明信息缺口，并基于已知数据给出条件化操作方案。"
-        "输出必须是 JSON，不要 Markdown。"
+    """Legacy single-shot payload (tests)."""
+    return _build_chat_payload(
+        messages=[
+            {"role": "system", "content": _system_prompt(get_settings().news_enabled)},
+            {
+                "role": "user",
+                "content": json.dumps(
+                    _user_payload(request, risk, snapshots, []),
+                    ensure_ascii=False,
+                ),
+            },
+        ],
+        model=model,
+        max_tokens=max_tokens,
+        tools=None,
+        response_format={"type": "json_object"},
     )
-    user = {
-        "today": datetime.now().date().isoformat(),
-        "profile": request.profile.model_dump(),
-        "holdings": [holding.model_dump() for holding in request.holdings],
-        "risk": risk.model_dump(),
-        "fund_snapshots": [snapshot.model_dump() for snapshot in snapshots],
-        "ocr_text": request.ocr_text,
-        "market_context": [item.model_dump() for item in market_context],
-        "requirements": [
-            "输出 title、summary、recommendations、caveats 四个字段",
-            "recommendations 至少 6 条，至少包含每只基金的动作建议",
-            "recommendations 每条不超过 120 个中文字符，避免冗长",
-            "每条建议必须包含：动作（观察/暂停加仓/分批加仓/减仓评估）、理由、触发条件、风险点",
-            "重点使用养基宝指标：daily_profit、daily_return_percent、sector_name、sector_return_percent、holding_profit、holding_return_percent、holding_amount",
-            "区分当日收益和持有收益：daily_* 是今天表现，holding_* 是累计表现",
-            "如果 sector_return_percent 当日大涨但 daily_return_percent 或 holding_return_percent 较弱，提示不要追涨，建议等待回落或分批",
-            "如果单只持仓集中度超过阈值，优先提示仓位风险",
-            "如果基金代码为 000000，说明需要补全代码才能获取净值和公告",
-            "market_context 是需要你围绕近期公开消息重点核查的主题，请在建议中体现这些主题的消息面不确定性",
-            "不要只给组合级结论，必须逐只基金输出",
-            "偏稳健，避免追涨，不做实盘交易指令",
-        ],
-    }
-    return {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": json.dumps(user, ensure_ascii=False)},
-        ],
-        "temperature": 0.2,
-        "max_tokens": max_tokens,
-        "response_format": {"type": "json_object"},
-    }
 
 
 def _parse_model_json(content: str) -> dict:
@@ -160,7 +420,8 @@ def _parse_model_json(content: str) -> dict:
         "title": "每日基金操作日报",
         "summary": summary,
         "recommendations": [],
-        "caveats": ["模型返回内容无法解析为完整 JSON，已使用本地规则补齐候选。"],
+        "caveats": [],
+        "_truncated": True,
     }
 
 
@@ -220,7 +481,8 @@ def _salvage_partial_json(content: str) -> dict | None:
         "title": title,
         "summary": summary,
         "recommendations": [],
-        "caveats": ["模型返回的 JSON 被截断，已提取标题和摘要，并使用本地规则补齐操作候选。"],
+        "caveats": [],
+        "_truncated": True,
     }
 
 
@@ -258,10 +520,59 @@ def _looks_like_json(content: str) -> bool:
         or '"title"' in stripped
     )
 
+
 def _non_empty_list(value: object, default: list[str]) -> list[str]:
     if isinstance(value, list) and value:
         return [str(item) for item in value]
     return default
+
+
+_INTERNAL_CAVEAT_MARKERS = (
+    "JSON 被截断",
+    "无法解析为完整 JSON",
+    "已使用本地规则补齐",
+)
+
+
+def _user_facing_caveats(caveats: list[str]) -> list[str]:
+    return [line for line in caveats if not any(marker in line for marker in _INTERNAL_CAVEAT_MARKERS)]
+
+
+def _response_incomplete(parsed: dict) -> bool:
+    if parsed.get("_truncated"):
+        return True
+    if not parse_fund_recommendations_raw(parsed.get("fund_recommendations")):
+        return bool(parsed.get("summary"))
+    return False
+
+
+def _finalize_recommendations(
+    parsed: dict,
+    fallback: Report,
+    request: AnalysisRequest,
+    market_news: list[NewsItem] | None = None,
+) -> tuple[list[str], list[FundRecommendation]]:
+    raw_lines = parsed.get("recommendations")
+    if isinstance(raw_lines, list) and raw_lines:
+        all_lines = [str(item) for item in raw_lines]
+    else:
+        all_lines = list(fallback.recommendations)
+
+    portfolio = portfolio_recommendation_lines(all_lines, request.holdings)
+    if not portfolio:
+        portfolio = portfolio_recommendation_lines(fallback.recommendations, request.holdings)
+
+    fund_recs = parse_fund_recommendations_raw(parsed.get("fund_recommendations"))
+    if not fund_recs:
+        fund_recs = group_strings_to_fund_recommendations(all_lines, request.holdings)
+    if not fund_recs:
+        fund_recs = list(fallback.fund_recommendations)
+
+    if _response_incomplete(parsed):
+        fund_recs = list(fallback.fund_recommendations)
+
+    fund_recs = enrich_fund_recommendations(fund_recs, request, market_news)
+    return portfolio, fund_recs
 
 
 def _format_decision_recommendation(
@@ -290,7 +601,7 @@ def _offline_report(
     request: AnalysisRequest,
     risk: RiskAssessment,
     snapshots: list[FundSnapshot],
-    market_context: list[MarketItem] | None = None,
+    market_news: list[NewsItem] | None = None,
 ) -> Report:
     recommendations = []
     if risk.suggested_action == "risk_review":
@@ -301,70 +612,43 @@ def _offline_report(
     for alert in risk.alerts:
         recommendations.append(alert.message)
 
+    news = market_news or []
     total_amount = sum(holding.holding_amount for holding in request.holdings) or 1
-    for holding in request.holdings:
-        weight = holding.holding_amount / total_amount * 100
-        action = "观察"
-        if weight > request.profile.concentration_limit_percent:
-            action = "暂停加仓/减仓评估"
-        elif holding.sector_return_percent is not None and holding.sector_return_percent > 5:
-            action = "暂停追涨，等待回落后再分批"
-        elif (holding.holding_return_percent or holding.return_percent) < -5 and request.profile.prefer_dca:
-            action = "小额分批观察，不一次性加仓"
+    fund_recommendations = [
+        build_offline_fund_recommendation(
+            holding,
+            holding.holding_amount / total_amount * 100,
+            total_amount,
+            request.profile,
+            market_news=news,
+        )
+        for holding in request.holdings
+    ]
 
-        sector = holding.sector_name or "未知板块"
-        daily = "-" if holding.daily_profit is None else f"{holding.daily_profit:.2f}"
-        daily_return = (
-            "-"
-            if holding.daily_return_percent is None
-            else f"{holding.daily_return_percent:.2f}%"
-        )
-        holding_profit = (
-            "-"
-            if holding.holding_profit is None
-            else f"{holding.holding_profit:.2f}"
-        )
-        holding_return = (
-            "-"
-            if holding.holding_return_percent is None
-            else f"{holding.holding_return_percent:.2f}%"
-        )
-        sector_change = (
-            "-"
-            if holding.sector_return_percent is None
-            else f"{holding.sector_return_percent:.2f}%"
-        )
-        recommendations.append(
-            _format_decision_recommendation(
-                fund_name=holding.fund_name,
-                action=action,
-                weight=weight,
-                daily=daily,
-                daily_return=daily_return,
-                holding_profit=holding_profit,
-                holding_return=holding_return,
-                sector=sector,
-                sector_change=sector_change,
-                fund_code=holding.fund_code,
-            )
-        )
-
-    if not recommendations:
+    if not fund_recommendations and not recommendations:
         recommendations.append("当前信息不足以支持新增买入，建议等待净值、公告和市场信息更新。")
+
+    caveats = [
+        "本报告仅用于个人投研辅助，不构成投资建议。",
+        "OCR、第三方数据和模型分析都可能出错，实际操作前请人工核对。",
+    ]
+    if not news and get_settings().news_enabled:
+        caveats.append("本次未能拉取到有效新闻条目，政策与资金面判断请结合公开信息人工复核。")
 
     return Report(
         title="每日基金操作日报",
         risk=risk,
         holdings=request.holdings,
         snapshots=snapshots,
-        market_context=market_context or [],
+        market_context=[],
+        market_news=news,
         summary=(
             f"本地规则评估：组合加权收益率 {risk.weighted_return_percent:.2f}%，"
             f"风险等级为 {risk.level}。"
+            + (f" 已抓取 {len(news)} 条近期新闻供参考。" if news else "")
         ),
+        fund_recommendations=fund_recommendations,
         recommendations=recommendations,
-        caveats=[
-            "本报告仅用于个人投研辅助，不构成投资建议。",
-            "OCR、第三方数据和模型分析都可能出错，实际操作前请人工核对。",
-        ],
+        caveats=caveats,
+        provider="offline",
     )

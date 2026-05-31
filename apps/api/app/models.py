@@ -61,6 +61,16 @@ class MarketItem(BaseModel):
     note: str
 
 
+class NewsItem(BaseModel):
+    topic: str
+    title: str
+    published_at: str | None = None
+    source: str | None = None
+    url: str | None = None
+    snippet: str | None = None
+    is_today: bool = False
+
+
 class FundProfile(BaseModel):
     fund_code: str = Field(..., min_length=6, max_length=6)
     fund_name: str
@@ -88,6 +98,17 @@ class FundSnapshot(BaseModel):
     note: str | None = None
 
 
+class FundRecommendation(BaseModel):
+    fund_code: str
+    fund_name: str
+    action: str
+    amount_yuan: float | None = None
+    amount_note: str | None = None
+    news_bullish: list[str] = Field(default_factory=list)
+    news_bearish: list[str] = Field(default_factory=list)
+    points: list[str] = Field(default_factory=list)
+
+
 class Report(BaseModel):
     id: str = Field(default_factory=lambda: uuid4().hex)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -96,6 +117,8 @@ class Report(BaseModel):
     holdings: list[Holding]
     snapshots: list[FundSnapshot] = Field(default_factory=list)
     market_context: list[MarketItem] = Field(default_factory=list)
+    market_news: list[NewsItem] = Field(default_factory=list)
+    fund_recommendations: list[FundRecommendation] = Field(default_factory=list)
     summary: str
     recommendations: list[str]
     caveats: list[str]

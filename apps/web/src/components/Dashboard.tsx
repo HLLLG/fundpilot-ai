@@ -42,7 +42,7 @@ const defaultProfile: InvestorProfile = {
   avoid_chasing: true,
 };
 
-type TabId = "capture" | "profiles" | "holdings" | "analysis" | "history";
+type TabId = "capture" | "profiles" | "analysis" | "history";
 
 const tabs: Array<{
   id: TabId;
@@ -53,7 +53,7 @@ const tabs: Array<{
   {
     id: "capture",
     label: "截图识别",
-    description: "上传总览截图并设置风控",
+    description: "识别总览并校对持仓",
     icon: <Camera size={17} />,
   },
   {
@@ -61,12 +61,6 @@ const tabs: Array<{
     label: "基金档案",
     description: "一次建档，后续自动匹配",
     icon: <BookMarked size={17} />,
-  },
-  {
-    id: "holdings",
-    label: "持仓校对",
-    description: "确认 OCR 结果和关键指标",
-    icon: <Table2 size={17} />,
   },
   {
     id: "analysis",
@@ -138,12 +132,9 @@ export function Dashboard() {
       const result = await parseOcr(formData);
       setRawText(result.raw_text);
       setHoldings(result.holdings);
-      if (result.holdings.length) {
-        setActiveTab("holdings");
-      }
       setMessage(
         result.error ??
-          (result.holdings.length ? "识别完成，请校对持仓。" : "未识别到基金代码，可以手动新增持仓。"),
+          (result.holdings.length ? "识别完成，请在下方校对持仓。" : "未识别到基金代码，可以手动新增持仓。"),
       );
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "OCR 识别失败，请改用手动文本。");
@@ -252,22 +243,33 @@ export function Dashboard() {
 
         <div className="min-w-0 flex-1">
           {activeTab === "capture" ? (
-            <div className="grid min-w-0 gap-6 lg:grid-cols-[0.9fr_1.1fr]">
-              <UploadDropzone
-                rawText={rawText}
-                isBusy={isParsing}
-                selectedFileName={file?.name ?? null}
-                onRawTextChange={setRawText}
-                onFileSelect={handleFileSelect}
-                onParse={handleParse}
-                onLoadSample={() => setRawText(sampleText)}
-              />
-              <RiskControls
-                profile={profile}
-                onChange={setProfile}
-                onAnalyze={handleAnalyze}
-                isBusy={isAnalyzing}
-              />
+            <div className="grid min-w-0 gap-6">
+              <div className="grid min-w-0 gap-6 lg:grid-cols-[0.9fr_1.1fr]">
+                <UploadDropzone
+                  rawText={rawText}
+                  isBusy={isParsing}
+                  selectedFileName={file?.name ?? null}
+                  onRawTextChange={setRawText}
+                  onFileSelect={handleFileSelect}
+                  onParse={handleParse}
+                  onLoadSample={() => setRawText(sampleText)}
+                />
+                <RiskControls
+                  profile={profile}
+                  onChange={setProfile}
+                  onAnalyze={handleAnalyze}
+                  isBusy={isAnalyzing}
+                />
+              </div>
+              {holdings.length > 0 || rawText ? (
+                <div className="min-w-0">
+                  <div className="mb-3 flex items-center gap-2 text-sm font-black text-slate-950">
+                    <Table2 size={18} className="text-blue-600" />
+                    持仓校对
+                  </div>
+                  <HoldingTable holdings={holdings} onChange={setHoldings} />
+                </div>
+              ) : null}
             </div>
           ) : null}
 
@@ -283,12 +285,8 @@ export function Dashboard() {
             />
           ) : null}
 
-          {activeTab === "holdings" ? (
-            <HoldingTable holdings={holdings} onChange={setHoldings} />
-          ) : null}
-
           {activeTab === "analysis" ? (
-            <div className="grid min-w-0 gap-6 xl:grid-cols-[380px_minmax(0,1fr)]">
+            <div className="flex min-w-0 flex-col gap-6">
               <RiskControls
                 profile={profile}
                 onChange={setProfile}
@@ -300,10 +298,19 @@ export function Dashboard() {
           ) : null}
 
           {activeTab === "history" ? (
-            <HistoryRail reports={reports} onRefresh={loadHistory} onSelect={(selectedReport) => {
-              setReport(selectedReport);
-              setActiveTab("analysis");
-            }} />
+            <HistoryRail
+              reports={reports}
+              onRefresh={loadHistory}
+              onSelect={(selectedReport) => {
+                setReport(selectedReport);
+                setActiveTab("analysis");
+              }}
+              onDeleted={(reportId) => {
+                if (report?.id === reportId) {
+                  setReport(null);
+                }
+              }}
+            />
           ) : null}
         </div>
       </div>
@@ -320,7 +327,7 @@ function TabNav({
 }) {
   return (
     <div className="glass-panel mb-5 overflow-x-auto rounded-[24px] p-2">
-      <div className="grid min-w-[760px] grid-cols-5 gap-2">
+      <div className="grid min-w-[640px] grid-cols-4 gap-2">
         {tabs.map((tab) => {
           const active = tab.id === activeTab;
           return (

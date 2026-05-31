@@ -22,7 +22,6 @@ def test_deepseek_payload_limits_response_tokens():
             alerts=[],
         ),
         snapshots=[],
-        market_context=[],
         model="deepseek-v4-pro",
         max_tokens=1800,
     )
@@ -51,5 +50,5 @@ def test_parse_model_json_salvages_truncated_json_without_showing_raw_object():
     assert parsed["title"] == "2026-05-29 Portfolio"
     assert parsed["summary"] == "Grid concentration is too high. Pause AI adds."
     assert parsed["recommendations"] == []
-    assert parsed["caveats"]
+    assert parsed.get("_truncated") is True
     assert not parsed["summary"].lstrip().startswith("{")

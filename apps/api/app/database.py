@@ -87,6 +87,16 @@ def get_report(report_id: str) -> dict[str, Any] | None:
     return json.loads(row["payload"])
 
 
+def delete_report(report_id: str) -> bool:
+    with _connect() as connection:
+        cursor = connection.execute(
+            "DELETE FROM reports WHERE id = ?",
+            (report_id,),
+        )
+        connection.commit()
+    return cursor.rowcount > 0
+
+
 def save_fund_profile(profile: FundProfile) -> FundProfile:
     payload = profile.model_dump(mode="json")
     with _connect() as connection:

@@ -1,16 +1,20 @@
 "use client";
 
-import { History, RefreshCw } from "lucide-react";
+import { useState } from "react";
+import { History, RefreshCw, Trash2 } from "lucide-react";
 import type { Report } from "@/lib/api";
+import { deleteReport } from "@/lib/api";
 import { StatusPill } from "@/components/StatusPill";
 
 type HistoryRailProps = {
   reports: Report[];
   onRefresh: () => void;
   onSelect: (report: Report) => void;
+  onDeleted?: (reportId: string) => void;
 };
 
-export function HistoryRail({ reports, onRefresh, onSelect }: HistoryRailProps) {
+export function HistoryRail({ reports, onRefresh, onSelect, onDeleted }: HistoryRailProps) {
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   return (
     <aside className="glass-panel min-w-0 rounded-[28px] p-5">
       <div className="mb-5 flex items-center justify-between">
@@ -34,22 +38,50 @@ export function HistoryRail({ reports, onRefresh, onSelect }: HistoryRailProps) 
           </div>
         ) : null}
         {reports.map((report) => (
-          <button
-            type="button"
+          <div
             key={report.id}
-            onClick={() => onSelect(report)}
-            className="block w-full rounded-2xl bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+            className="flex items-stretch gap-2 rounded-2xl bg-white p-2 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
           >
-            <div className="mb-2 flex items-center justify-between gap-3">
-              <span className="line-clamp-1 text-sm font-black text-slate-950">{report.title}</span>
-              <StatusPill tone={report.risk.level === "high" ? "red" : "amber"}>
-                {report.risk.level}
-              </StatusPill>
-            </div>
-            <div className="text-xs leading-5 text-slate-500">
-              {new Date(report.created_at).toLocaleString("zh-CN")}
-            </div>
-          </button>
+            <button
+              type="button"
+              onClick={() => onSelect(report)}
+              className="min-w-0 flex-1 rounded-xl px-3 py-2 text-left"
+            >
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <span className="line-clamp-1 text-sm font-black text-slate-950">{report.title}</span>
+                <StatusPill tone={report.risk.level === "high" ? "red" : "amber"}>
+                  {report.risk.level}
+                </StatusPill>
+              </div>
+              <div className="text-xs leading-5 text-slate-500">
+                {new Date(report.created_at).toLocaleString("zh-CN")}
+              </div>
+            </button>
+            <button
+              type="button"
+              disabled={deletingId === report.id}
+              aria-label={`删除日报 ${report.title}`}
+              onClick={async (event) => {
+                event.stopPropagation();
+                if (!window.confirm(`确定删除这份日报吗？\n${report.title}`)) {
+                  return;
+                }
+                setDeletingId(report.id);
+                try {
+                  await deleteReport(report.id);
+                  onDeleted?.(report.id);
+                  await onRefresh();
+                } catch {
+                  window.alert("删除失败，请稍后重试。");
+                } finally {
+                  setDeletingId(null);
+                }
+              }}
+              className="inline-flex w-11 shrink-0 items-center justify-center rounded-xl text-slate-400 transition hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50"
+            >
+              <Trash2 size={16} />
+            </button>
+          </div>
         ))}
       </div>
     </aside>

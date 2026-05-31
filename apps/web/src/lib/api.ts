@@ -53,6 +53,25 @@ export type Report = {
     source: string;
     note: string;
   }>;
+  market_news: Array<{
+    topic: string;
+    title: string;
+    published_at?: string | null;
+    source?: string | null;
+    url?: string | null;
+    snippet?: string | null;
+    is_today?: boolean;
+  }>;
+  fund_recommendations: Array<{
+    fund_code: string;
+    fund_name: string;
+    action: string;
+    amount_yuan?: number | null;
+    amount_note?: string | null;
+    news_bullish?: string[];
+    news_bearish?: string[];
+    points: string[];
+  }>;
   summary: string;
   recommendations: string[];
   caveats: string[];
@@ -126,6 +145,15 @@ export async function listReports(): Promise<Report[]> {
     throw new Error(await response.text());
   }
   return response.json();
+}
+
+export async function deleteReport(reportId: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/api/reports/${reportId}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
 }
 
 export async function parseFundProfile(formData: FormData): Promise<FundProfile> {

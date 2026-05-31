@@ -57,7 +57,7 @@ export function HoldingTable({ holdings, onChange }: HoldingTableProps) {
       </div>
 
       <div className="max-w-full overflow-x-auto">
-        <table className="w-full min-w-[1420px] border-separate border-spacing-y-3">
+        <table className="w-full min-w-[1280px] border-separate border-spacing-y-3">
           <thead>
             <tr className="text-left text-xs font-bold uppercase text-slate-400">
               <th className="px-3">基金代码</th>
@@ -69,7 +69,6 @@ export function HoldingTable({ holdings, onChange }: HoldingTableProps) {
               <th className="px-3">板块涨跌</th>
               <th className="px-3">持有收益额</th>
               <th className="px-3">持有收益率</th>
-              <th className="px-3">备注</th>
               <th className="px-3 text-right">操作</th>
             </tr>
           </thead>
@@ -184,14 +183,6 @@ export function HoldingTable({ holdings, onChange }: HoldingTableProps) {
                     }}
                     className="w-28 rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400"
                     placeholder="如 2.74"
-                  />
-                </td>
-                <td className="px-3 py-3">
-                  <input
-                    value={holding.user_note ?? ""}
-                    onChange={(event) => updateHolding(index, { user_note: event.target.value })}
-                    className="w-full min-w-44 rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400"
-                    placeholder="如：不追高 / 观察"
                   />
                 </td>
                 <td className="rounded-r-2xl px-3 py-3 text-right">

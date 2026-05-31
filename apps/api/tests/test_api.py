@@ -14,10 +14,30 @@ def test_health_endpoint_returns_ok():
     assert response.json()["status"] == "ok"
 
 
+def _mock_news_search(monkeypatch):
+    from app.models import NewsItem
+    from app.services.news_service import NewsService
+
+    def fake_search(self, topic: str, limit: int | None = None):
+        return [
+            NewsItem(
+                topic=topic,
+                title=f"{topic}相关新闻",
+                published_at="2026-05-30 09:00:00",
+                source="eastmoney",
+                url=f"http://example.com/{topic}",
+                snippet="测试摘要",
+            )
+        ]
+
+    monkeypatch.setattr(NewsService, "search", fake_search)
+
+
 def test_analyze_manual_holdings_returns_persisted_report(tmp_path, monkeypatch):
     monkeypatch.setenv("FUND_AI_DB_PATH", str(tmp_path / "app.db"))
     monkeypatch.setenv("FUND_AI_DEEPSEEK_API_KEY", "")
     refresh_settings()
+    _mock_news_search(monkeypatch)
     payload = {
         "holdings": [
             {
@@ -45,6 +65,8 @@ def test_analyze_manual_holdings_returns_persisted_report(tmp_path, monkeypatch)
     assert body["risk"]["level"] == "medium"
     assert body["holdings"][0]["fund_code"] == "015608"
     assert body["recommendations"]
+    assert body["market_news"]
+    assert any("相关新闻" in item["title"] for item in body["market_news"])
 
     reports_response = client.get("/api/reports")
     assert reports_response.status_code == 200
@@ -131,6 +153,7 @@ def test_analyze_unknown_code_keeps_yangjibao_snapshot_and_rich_recommendations(
     monkeypatch.setenv("FUND_AI_DB_PATH", str(tmp_path / "app.db"))
     monkeypatch.setenv("FUND_AI_DEEPSEEK_API_KEY", "")
     refresh_settings()
+    _mock_news_search(monkeypatch)
 
     response = client.post(
         "/api/analyze",
@@ -162,9 +185,47 @@ def test_analyze_unknown_code_keeps_yangjibao_snapshot_and_rich_recommendations(
     assert response.status_code == 200
     assert body["snapshots"][0]["source"] == "yangjibao-ocr"
     assert "补全代码" in body["snapshots"][0]["note"]
-    assert body["market_context"]
-    assert any(item["topic"] == "中证电网设备" for item in body["market_context"])
-    assert len(body["recommendations"]) >= 3
-    assert any("决策：" in item and "触发：" in item for item in body["recommendations"])
-    assert any("中证电网设备" in item for item in body["recommendations"])
-    assert any("半导体" in item for item in body["recommendations"])
+    assert body["market_context"] == []
+    assert body["market_news"]
+    assert len(body["fund_recommendations"]) >= 2
+    assert any(
+        "电网" in item["fund_name"] or "电网" in " ".join(item.get("points", []))
+        for item in body["fund_recommendations"]
+    )
+    assert any(
+        "半导体" in item["fund_name"]
+        or any("半导体" in point for point in item.get("points", []))
+        for item in body["fund_recommendations"]
+    )
+
+
+def test_delete_report_endpoint(tmp_path, monkeypatch):
+    monkeypatch.setenv("FUND_AI_DB_PATH", str(tmp_path / "app.db"))
+    monkeypatch.setenv("FUND_AI_DEEPSEEK_API_KEY", "")
+    refresh_settings()
+    _mock_news_search(monkeypatch)
+
+    create = client.post(
+        "/api/analyze",
+        json={
+            "holdings": [
+                {
+                    "fund_code": "015608",
+                    "fund_name": "测试基金",
+                    "holding_amount": 1000,
+                    "return_percent": 1.0,
+                }
+            ]
+        },
+    )
+    report_id = create.json()["id"]
+
+    delete = client.delete(f"/api/reports/{report_id}")
+    assert delete.status_code == 200
+    assert delete.json()["ok"] is True
+
+    missing = client.delete(f"/api/reports/{report_id}")
+    assert missing.status_code == 404
+
+    reports = client.get("/api/reports").json()
+    assert not any(item["id"] == report_id for item in reports)

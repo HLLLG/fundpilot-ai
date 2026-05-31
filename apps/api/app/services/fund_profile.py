@@ -27,8 +27,6 @@ class FundProfileService:
         if profile is None:
             return holding
 
-        note = holding.user_note or ""
-        suffix = "已根据基金档案自动补全基金代码。"
         return holding.model_copy(
             update={
                 "fund_code": profile.fund_code,
@@ -37,7 +35,6 @@ class FundProfileService:
                 "sector_return_percent": holding.sector_return_percent
                 if holding.sector_return_percent is not None
                 else profile.sector_return_percent,
-                "user_note": f"{note} {suffix}".strip(),
             }
         )
 
