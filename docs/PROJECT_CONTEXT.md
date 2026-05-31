@@ -4,13 +4,13 @@
 >
 > **维护：** 功能或架构有实质变化时，同步更新「能力清单」「数据流」「API」「目录」「环境变量」。
 
-**文档版本：** 2026-05（含阶段 1 体验优化 + 阶段 2 自动化）
+**文档版本：** 2026-05（删除自动化工作流，统一异步分析 + 悬浮任务面板）
 
 ---
 
 ## 一句话
 
-**FundPilot AI** 是面向个人自用的本地基金投研助手：养基宝总览/详情截图 → OCR → 校对持仓 → 稳健风控 → 东方财富新闻（AkShare）+ DeepSeek V4 生成**逐基金操作建议**日报；支持收件箱拖图、后台异步分析、定时提醒。数据默认留在本机。
+**FundPilot AI** 是面向个人自用的本地基金投研助手：养基宝总览/详情截图 → OCR → 校对持仓 → 稳健风控 → 东方财富新闻（AkShare）+ DeepSeek V4 生成**逐基金操作建议**日报；点击"生成报告"后台异步执行，右下角悬浮面板查看进度。数据默认留在本机。
 
 ---
 
@@ -23,8 +23,8 @@
 | 报告 | 组合摘要 + `fund_recommendations` + 新闻列表；离线规则兜底 |
 | 分析模式 | **快速**（Flash + 仅预取新闻）/ **深度**（Pro + 可选新闻 Tool） |
 | 体验 | 今日一键、报告 vs 昨日 diff、导出 Markdown、档案 JSON 导入导出 |
-| 自动化 | `uploads/inbox` 监视 OCR、`/api/analyze/async` 后台任务、工作日 14:25 提醒 |
-| 前端偏好 | localStorage：风控参数、分析模式、自动分析、异步分析、已读收件箱事件 |
+| 异步分析 | `/api/analyze/async` 后台任务，右下角 `JobStatusFloat` 悬浮面板查看进度 |
+| 前端偏好 | localStorage：风控参数、分析模式 |
 
 ---
 
@@ -46,7 +46,7 @@
 |----|------|
 | 前端 | Next.js、React、TypeScript、Tailwind、Lucide；浏览器 `Notification` |
 | 后端 | FastAPI、Pydantic v2、uvicorn；`lifespan` 启后台线程 |
-| 存储 | SQLite：`reports`、`fund_profiles`、`ocr_text_cache`、`analysis_jobs`、`inbox_events` |
+| 存储 | SQLite：`reports`、`fund_profiles`、`ocr_text_cache`、`analysis_jobs` |
 | AI | DeepSeek API；`fetch_market_news` Function Calling |
 | OCR（可选） | PaddleOCR |
 | 数据 | AkShare：净值 + `stock_news_em` / 基金公告 |
@@ -61,7 +61,7 @@
 fundpilot-ai/
 ├── apps/api/app/
 │   ├── main.py              # 路由
-│   ├── lifespan.py          # 启动 inbox 监视 + 定时器
+│   ├── lifespan.py          # 应用启动（仅 yield，无后台线程）
 │   ├── config.py / models.py / database.py
 │   └── services/
 │       ├── ocr_engine.py / ocr_parser.py
@@ -71,21 +71,17 @@ fundpilot-ai/
 │       ├── analysis_runtime.py    # fast/deep 运行时参数
 │       ├── analyze_pipeline.py    # 同步分析入口
 │       ├── job_store.py           # 异步分析任务
-│       ├── inbox_processor.py / inbox_store.py / inbox_watcher.py
-│       ├── scheduler.py
 │       ├── report_diff.py / report_export.py
 │       └── market_context.py      # 遗留，主流程未用
 ├── apps/web/src/
 │   ├── lib/api.ts / storage.ts / notifications.ts
 │   └── components/
 │       ├── Dashboard.tsx
-│       ├── AutomationPanel.tsx / DailyWorkflowBar.tsx
+│       ├── JobStatusFloat.tsx     # 右下角悬浮任务面板
 │       ├── AnalysisModeToggle.tsx / ReportDiffPanel.tsx
 │       ├── UploadDropzone / HoldingTable / RiskControls
 │       ├── ReportPanel / HistoryRail / FundProfilePanel
 ├── uploads/
-│   ├── inbox/           # 拖入总览截图 → 自动 OCR
-│   └── inbox/processed/ # 已处理文件
 ├── data/app.db
 ├── scripts/dev.sh / dev.ps1
 ├── docs/PROJECT_CONTEXT.md   # 本文
@@ -96,22 +92,12 @@ fundpilot-ai/
 
 ## 推荐使用流程
 
-### 路径 A：收件箱（阶段 2，步数最少）
-
 ```text
 1. bash scripts/dev.sh → 打开 http://127.0.0.1:3000
-2. 「自动化」→ 开启桌面通知；可选「识别完成后自动分析」
-3. 养基宝总览截图 → 保存到 uploads/inbox/（面板显示绝对路径）
-4. 数秒内：OCR → 浏览器通知 → 持仓载入 capture 页
-5. 校对（建议）→ 自动或手动生成日报 → 通知完成
-```
-
-### 路径 B：网页上传（阶段 1）
-
-```text
-1. capture 页上传或粘贴 → 自动 OCR
-2. 校对 HoldingTable → 选快速/深度 → 生成日报
-3. analysis 页查看 diff、导出 Markdown
+2. capture 页上传或粘贴 → 自动 OCR
+3. 校对 HoldingTable → 选快速/深度 → 点击"生成报告"
+4. 右下角悬浮面板显示进度 → 完成后点击"查看报告"
+5. analysis 页查看 diff、导出 Markdown
 ```
 
 ### 首次：基金档案
@@ -124,10 +110,10 @@ profiles 页 → 单基金详情截图 → POST /api/fund-profiles/ocr → SQLit
 
 ## 核心业务流
 
-### 同步分析
+### 同步分析（兜底，前端不主动调用）
 
 ```text
-POST /api/analyze（或 async 见下）
+POST /api/analyze
   → FundProfileService.resolve_holdings
   → evaluate_portfolio_risk
   → FundDataService.get_snapshots
@@ -135,31 +121,13 @@ POST /api/analyze（或 async 见下）
   → save_report
 ```
 
-### 异步分析（阶段 2）
+### 异步分析（主流程）
 
 ```text
 POST /api/analyze/async → job_id
   → 线程池 run_analysis()
-  → GET /api/jobs/{id} 轮询 → status=completed 时含 report
-```
-
-### 收件箱（阶段 2）
-
-```text
-新图片落入 FUND_AI_INBOX_DIR
-  → inbox_watcher 轮询
-  → inbox_processor：OCR → resolve_holdings → inbox_events（pending）
-  → 文件移到 inbox/processed/
-  → 前端轮询 GET /api/inbox/events
-```
-
-### 定时提醒（阶段 2）
-
-```text
-scheduler 每 30s 检查本地时间
-  → 工作日 FUND_AI_SCHEDULE_TIME（默认 14:25）
-  → inbox_events: schedule_reminder
-  → 若 SCHEDULE_AUTO_ANALYZE=true 且有待处理 ocr_ready → create_analysis_job（fast）
+  → GET /api/jobs/{id} 轮询（JobStatusFloat 内部，1.5s 间隔）
+  → status=completed 时含 report → onComplete 回调 → 切换报告 Tab
 ```
 
 ---
@@ -182,14 +150,10 @@ scheduler 每 30s 检查本地时间
 | 方法 | 路径 | 作用 |
 |------|------|------|
 | GET | `/health` | 健康检查 |
-| GET | `/api/automation/status` | 收件箱/定时配置、待处理事件数 |
 | POST | `/api/ocr` | 截图/文本 → holdings |
-| POST | `/api/analyze` | 同步生成 Report |
+| POST | `/api/analyze` | 同步生成 Report（兜底） |
 | POST | `/api/analyze/async` | `{ job_id, status }` |
 | GET | `/api/jobs/{id}` | 任务状态；完成时含 `report` |
-| GET | `/api/inbox/events` | `?status=pending` 收件箱事件 |
-| POST | `/api/inbox/events/{id}/consume` | 标记已处理 |
-| POST | `/api/inbox/events/{id}/analyze` | 从事件提交异步分析 |
 | GET | `/api/reports` | 最近 50 条 |
 | GET | `/api/reports/{id}` | 详情 |
 | DELETE | `/api/reports/{id}` | 删除 |
@@ -228,10 +192,11 @@ scheduler 每 30s 检查本地时间
 
 ## 前端要点
 
-- **capture：** `DailyWorkflowBar`、`AutomationPanel`、`UploadDropzone`、校对表。
+- **capture：** `UploadDropzone`、校对表、`RiskControls`（含"生成报告"按钮）。
 - **analysis：** `ReportPanel`（含 `ReportDiffPanel`、导出 Markdown）。
-- **偏好：** `lib/storage.ts`（profile、mode、autoAnalyze、async、inbox seen）。
-- **通知：** `lib/notifications.ts`；收件箱每 4s 轮询。
+- **悬浮面板：** `JobStatusFloat`，固定右下角，内部轮询 job 状态，完成后回调 Dashboard。
+- **偏好：** `lib/storage.ts`（profile、analysisMode）。
+- **通知：** `lib/notifications.ts`；分析完成时触发桌面通知。
 
 ---
 
@@ -247,18 +212,6 @@ scheduler 每 30s 检查本地时间
 | `FUND_AI_NEWS_ENABLED` | true | 关闭则不注册 Tool |
 | `FUND_AI_NEWS_TOOL_MAX_ROUNDS` | 3 | Tool 轮数上限 |
 
-### 自动化（阶段 2）
-
-| 变量 | 默认 | 含义 |
-|------|------|------|
-| `FUND_AI_INBOX_ENABLED` | true | 是否监视收件箱 |
-| `FUND_AI_INBOX_DIR` | `uploads/inbox` | 拖放截图目录 |
-| `FUND_AI_INBOX_POLL_SECONDS` | 3 | 扫描间隔 |
-| `FUND_AI_SCHEDULE_ENABLED` | true | 定时提醒 |
-| `FUND_AI_SCHEDULE_TIME` | 14:25 | 本地时间 HH:MM |
-| `FUND_AI_SCHEDULE_WEEKDAYS_ONLY` | true | 仅周一至周五 |
-| `FUND_AI_SCHEDULE_AUTO_ANALYZE` | false | 到点自动分析收件箱待处理持仓 |
-
 修改 `.env` 后需重启 API。
 
 ---
@@ -271,7 +224,7 @@ bash scripts/dev.sh    # 或 scripts/dev.ps1
 ```
 
 ```bash
-cd apps/api && ./.venv/Scripts/python.exe -m pytest tests -v   # 当前约 38 项
+cd apps/api && ./.venv/Scripts/python.exe -m pytest tests -v   # 当前约 35 项
 cd apps/web && npm run lint && npm run typecheck && npm run build
 ```
 
@@ -281,8 +234,8 @@ cd apps/web && npm run lint && npm run typecheck && npm run build
 
 1. 改 API：`models.py` → `main.py` → `api.ts` → 组件 → `tests/`。
 2. 改报告结构：同步 `deepseek_client` JSON、`recommendations`、`_offline_report`、`Report` 类型。
-3. 改自动化：注意 `lifespan` 线程与 SQLite 表 `analysis_jobs` / `inbox_events`。
-4. 历史 MVP 计划：`docs/superpowers/plans/2026-05-29-fund-ai-mvp.md`（以代码为准）。
+3. 改异步流程：`job_store.py`（后端）→ `JobStatusFloat.tsx`（前端轮询）→ `Dashboard.tsx`（回调）。
+4. 历史 MVP 计划：`docs/superpowers/plans/2026-05-31-remove-automation-async-float.md`（以代码为准）。
 
 ---
 
