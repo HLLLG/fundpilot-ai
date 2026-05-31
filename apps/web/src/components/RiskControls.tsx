@@ -1,17 +1,27 @@
 "use client";
 
 import { ShieldCheck, SlidersHorizontal } from "lucide-react";
-import type { InvestorProfile } from "@/lib/api";
+import type { AnalysisMode, InvestorProfile } from "@/lib/api";
+import { AnalysisModeToggle } from "@/components/AnalysisModeToggle";
 import { StatusPill } from "@/components/StatusPill";
 
 type RiskControlsProps = {
   profile: InvestorProfile;
+  analysisMode: AnalysisMode;
+  onAnalysisModeChange: (mode: AnalysisMode) => void;
   onChange: (profile: InvestorProfile) => void;
   onAnalyze: () => void;
   isBusy: boolean;
 };
 
-export function RiskControls({ profile, onChange, onAnalyze, isBusy }: RiskControlsProps) {
+export function RiskControls({
+  profile,
+  analysisMode,
+  onAnalysisModeChange,
+  onChange,
+  onAnalyze,
+  isBusy,
+}: RiskControlsProps) {
   return (
     <section className="glass-panel min-w-0 rounded-[28px] p-6">
       <div className="mb-5 flex items-start justify-between gap-4">
@@ -99,6 +109,10 @@ export function RiskControls({ profile, onChange, onAnalyze, isBusy }: RiskContr
             className="h-5 w-5 accent-rose-500"
           />
         </label>
+      </div>
+
+      <div className="mt-4">
+        <AnalysisModeToggle mode={analysisMode} onChange={onAnalysisModeChange} />
       </div>
 
       <button

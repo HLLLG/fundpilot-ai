@@ -12,6 +12,9 @@ __pycache__/
 data/*.db
 uploads/*
 !uploads/.gitkeep
+!uploads/inbox/
+uploads/inbox/*
+!uploads/inbox/.gitkeep
 apps/api/.venv/
 apps/web/.next/
 apps/web/node_modules/

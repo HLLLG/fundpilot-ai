@@ -48,10 +48,14 @@ class RiskAssessment(BaseModel):
     alerts: list[RiskAlert]
 
 
+AnalysisMode = Literal["fast", "deep"]
+
+
 class AnalysisRequest(BaseModel):
     holdings: list[Holding]
     profile: InvestorProfile = Field(default_factory=InvestorProfile)
     ocr_text: str | None = None
+    analysis_mode: AnalysisMode = "deep"
 
 
 class MarketItem(BaseModel):

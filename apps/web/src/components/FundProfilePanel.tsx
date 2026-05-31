@@ -1,6 +1,6 @@
 "use client";
 
-import { BookMarked, FileImage, RefreshCw } from "lucide-react";
+import { BookMarked, Download, FileImage, RefreshCw, Upload } from "lucide-react";
 import type { FundProfile } from "@/lib/api";
 
 type FundProfilePanelProps = {
@@ -11,6 +11,8 @@ type FundProfilePanelProps = {
   onFileSelect: (file: File) => void;
   onParseText: () => void;
   onRefresh: () => void;
+  onExport: () => void;
+  onImport: (file: File) => void;
 };
 
 export function FundProfilePanel({
@@ -21,6 +23,8 @@ export function FundProfilePanel({
   onFileSelect,
   onParseText,
   onRefresh,
+  onExport,
+  onImport,
 }: FundProfilePanelProps) {
   return (
     <section className="glass-panel min-w-0 rounded-[28px] p-6">
@@ -77,6 +81,33 @@ export function FundProfilePanel({
       >
         {isBusy ? "正在建档..." : "从详情文本建档"}
       </button>
+
+      <div className="mt-4 grid gap-2 sm:grid-cols-2">
+        <button
+          type="button"
+          onClick={onExport}
+          className="inline-flex items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 transition hover:border-indigo-300 hover:text-indigo-700"
+        >
+          <Download size={16} />
+          导出档案 JSON
+        </button>
+        <label className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 transition hover:border-indigo-300 hover:text-indigo-700">
+          <Upload size={16} />
+          导入档案 JSON
+          <input
+            type="file"
+            accept="application/json,.json"
+            className="sr-only"
+            onChange={(event) => {
+              const selected = event.target.files?.[0];
+              if (selected) {
+                onImport(selected);
+              }
+              event.currentTarget.value = "";
+            }}
+          />
+        </label>
+      </div>
 
       <div className="mt-5 space-y-3">
         {profiles.length === 0 ? (

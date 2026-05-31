@@ -87,6 +87,14 @@ def get_report(report_id: str) -> dict[str, Any] | None:
     return json.loads(row["payload"])
 
 
+def get_previous_report(report_id: str) -> dict[str, Any] | None:
+    reports = list_reports()
+    for index, report in enumerate(reports):
+        if report.get("id") == report_id and index + 1 < len(reports):
+            return reports[index + 1]
+    return None
+
+
 def delete_report(report_id: str) -> bool:
     with _connect() as connection:
         cursor = connection.execute(

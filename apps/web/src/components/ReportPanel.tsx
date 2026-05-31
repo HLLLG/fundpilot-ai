@@ -1,7 +1,10 @@
 "use client";
 
-import { AlertTriangle, BarChart3, Sparkles } from "lucide-react";
-import type { Report } from "@/lib/api";
+import { useEffect, useState } from "react";
+import { AlertTriangle, BarChart3, Download, Sparkles } from "lucide-react";
+import type { Report, ReportDiff } from "@/lib/api";
+import { fetchReportDiff, fetchReportMarkdown } from "@/lib/api";
+import { ReportDiffPanel } from "@/components/ReportDiffPanel";
 import { StatusPill } from "@/components/StatusPill";
 
 type ReportPanelProps = {
@@ -135,6 +138,38 @@ function displayFundRecommendations(report: Report) {
 }
 
 export function ReportPanel({ report }: ReportPanelProps) {
+  const [diff, setDiff] = useState<ReportDiff | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
+
+  useEffect(() => {
+    if (!report?.id) {
+      setDiff(null);
+      return;
+    }
+    void fetchReportDiff(report.id)
+      .then((response) => setDiff(response.has_previous && response.diff ? response.diff : null))
+      .catch(() => setDiff(null));
+  }, [report?.id]);
+
+  const handleExportMarkdown = async () => {
+    if (!report) {
+      return;
+    }
+    setIsExporting(true);
+    try {
+      const markdown = await fetchReportMarkdown(report.id);
+      const blob = new Blob([markdown], { type: "text/markdown;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `${report.title || "fund-report"}.md`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   if (!report) {
     return (
       <section className="glass-panel signal-grid min-w-0 rounded-[28px] p-6">
@@ -177,14 +212,27 @@ export function ReportPanel({ report }: ReportPanelProps) {
           <h2 className="text-2xl font-black text-slate-950">{report.title}</h2>
           <p className="mt-2 text-sm leading-6 text-slate-600">{report.summary}</p>
         </div>
-        <div className="rounded-3xl bg-slate-950 px-5 py-4 text-white">
-          <div className="flex items-center gap-2 text-xs font-bold text-slate-300">
-            <BarChart3 size={16} />
-            加权收益率
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
+          <div className="rounded-3xl bg-slate-950 px-5 py-4 text-white">
+            <div className="flex items-center gap-2 text-xs font-bold text-slate-300">
+              <BarChart3 size={16} />
+              加权收益率
+            </div>
+            <div className="mt-2 text-3xl font-black">{report.risk.weighted_return_percent}%</div>
           </div>
-          <div className="mt-2 text-3xl font-black">{report.risk.weighted_return_percent}%</div>
+          <button
+            type="button"
+            onClick={() => void handleExportMarkdown()}
+            disabled={isExporting}
+            className="inline-flex items-center justify-center gap-2 rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-700 shadow-sm transition hover:border-blue-300 hover:text-blue-700 disabled:opacity-50"
+          >
+            <Download size={16} />
+            {isExporting ? "导出中..." : "导出 Markdown"}
+          </button>
         </div>
       </div>
+
+      {diff ? <ReportDiffPanel diff={diff} /> : null}
 
       <div className="rounded-[24px] bg-white p-5 shadow-sm">
         <div className="mb-4 flex items-center gap-2 text-sm font-black text-slate-950">

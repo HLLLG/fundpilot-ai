@@ -3,6 +3,8 @@ import json
 import httpx
 
 from app.models import AnalysisRequest, Holding, InvestorProfile, NewsItem, RiskAssessment
+from app.config import get_settings
+from app.services.analysis_runtime import resolve_analysis_runtime
 from app.services.deepseek_client import DeepSeekClient, _execute_fetch_market_news
 
 
@@ -113,26 +115,30 @@ def test_generate_with_tools_parses_final_json(monkeypatch):
 
     prefetched = [NewsItem(topic="电网设备", title="电网设备新闻", is_today=True)]
     client = DeepSeekClient()
+    request = AnalysisRequest(
+        holdings=[
+            Holding(
+                fund_code="015608",
+                fund_name="测试基金",
+                holding_amount=1000,
+                return_percent=1.0,
+            )
+        ],
+        profile=InvestorProfile(),
+        analysis_mode="deep",
+    )
+    runtime = resolve_analysis_runtime(get_settings(), request.analysis_mode)
     parsed, news = client._generate_with_tools(
-        AnalysisRequest(
-            holdings=[
-                Holding(
-                    fund_code="015608",
-                    fund_name="测试基金",
-                    holding_amount=1000,
-                    return_percent=1.0,
-                )
-            ],
-            profile=InvestorProfile(),
-        ),
+        request,
         RiskAssessment(
             level="low",
             suggested_action="watch",
             weighted_return_percent=1.0,
             alerts=[],
         ),
-        snapshots=[],
-        prefetched_news=prefetched,
+        [],
+        prefetched,
+        runtime,
     )
 
     assert parsed["title"] == "带新闻的日报"

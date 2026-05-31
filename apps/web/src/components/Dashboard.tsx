@@ -13,8 +13,44 @@ import {
   Table2,
   TrendingUp,
 } from "lucide-react";
-import type { FundProfile, Holding, InvestorProfile, Report } from "@/lib/api";
-import { analyzeHoldings, listFundProfiles, listReports, parseFundProfile, parseOcr } from "@/lib/api";
+import type {
+  AnalysisMode,
+  AutomationStatus,
+  FundProfile,
+  Holding,
+  InvestorProfile,
+  InboxEvent,
+  Report,
+} from "@/lib/api";
+import {
+  analyzeHoldings,
+  consumeInboxEvent,
+  exportFundProfiles,
+  fetchAutomationStatus,
+  importFundProfiles,
+  listFundProfiles,
+  listInboxEvents,
+  listReports,
+  parseFundProfile,
+  parseOcr,
+  startAnalyzeJob,
+  waitForAnalysisJob,
+} from "@/lib/api";
+import { ensureNotificationPermission, notifyDesktop } from "@/lib/notifications";
+import {
+  loadAnalysisMode,
+  loadAutoAnalyzeOnOcr,
+  loadInboxSeenIds,
+  loadInvestorProfile,
+  loadUseAsyncAnalyze,
+  saveAnalysisMode,
+  saveAutoAnalyzeOnOcr,
+  saveInboxSeenIds,
+  saveInvestorProfile,
+  saveUseAsyncAnalyze,
+} from "@/lib/storage";
+import { AutomationPanel } from "@/components/AutomationPanel";
+import { DailyWorkflowBar } from "@/components/DailyWorkflowBar";
 import { FundProfilePanel } from "@/components/FundProfilePanel";
 import { HistoryRail } from "@/components/HistoryRail";
 import { HoldingTable } from "@/components/HoldingTable";
@@ -90,6 +126,16 @@ export function Dashboard() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isProfiling, setIsProfiling] = useState(false);
   const [activeTab, setActiveTab] = useState<TabId>("capture");
+  const [analysisMode, setAnalysisMode] = useState<AnalysisMode>("deep");
+  const [profileReady, setProfileReady] = useState(false);
+  const [automationStatus, setAutomationStatus] = useState<AutomationStatus | null>(null);
+  const [inboxEvents, setInboxEvents] = useState<InboxEvent[]>([]);
+  const [autoAnalyzeOnOcr, setAutoAnalyzeOnOcr] = useState(false);
+  const [useAsyncAnalyze, setUseAsyncAnalyze] = useState(true);
+  const [notificationPermission, setNotificationPermission] = useState<
+    NotificationPermission | "unsupported"
+  >("unsupported");
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
 
   const totalAmount = useMemo(
     () => holdings.reduce((sum, holding) => sum + Number(holding.holding_amount || 0), 0),
@@ -113,9 +159,56 @@ export function Dashboard() {
   };
 
   useEffect(() => {
+    setProfile(loadInvestorProfile(defaultProfile));
+    setAnalysisMode(loadAnalysisMode("deep"));
+    setAutoAnalyzeOnOcr(loadAutoAnalyzeOnOcr());
+    setUseAsyncAnalyze(loadUseAsyncAnalyze());
+    setProfileReady(true);
     void loadHistory();
     void loadProfiles();
+    void fetchAutomationStatus().then(setAutomationStatus).catch(() => setAutomationStatus(null));
+    if (typeof window !== "undefined" && "Notification" in window) {
+      setNotificationPermission(Notification.permission);
+    }
   }, []);
+
+  useEffect(() => {
+    if (!profileReady) {
+      return;
+    }
+    saveInvestorProfile(profile);
+  }, [profile, profileReady]);
+
+  useEffect(() => {
+    if (!profileReady) {
+      return;
+    }
+    saveAnalysisMode(analysisMode);
+  }, [analysisMode, profileReady]);
+
+  useEffect(() => {
+    if (!profileReady) {
+      return;
+    }
+    saveAutoAnalyzeOnOcr(autoAnalyzeOnOcr);
+  }, [autoAnalyzeOnOcr, profileReady]);
+
+  useEffect(() => {
+    if (!profileReady) {
+      return;
+    }
+    saveUseAsyncAnalyze(useAsyncAnalyze);
+  }, [useAsyncAnalyze, profileReady]);
+
+  const workflowStep = useMemo<1 | 2 | 3>(() => {
+    if (isAnalyzing) {
+      return 3;
+    }
+    if (holdings.length > 0) {
+      return 2;
+    }
+    return 1;
+  }, [holdings.length, isAnalyzing]);
 
   const handleParse = async (fileOverride?: File) => {
     setIsParsing(true);
@@ -136,6 +229,9 @@ export function Dashboard() {
         result.error ??
           (result.holdings.length ? "识别完成，请在下方校对持仓。" : "未识别到基金代码，可以手动新增持仓。"),
       );
+      if (autoAnalyzeOnOcr && result.holdings.length > 0 && !result.error) {
+        await runAnalyze(result.holdings);
+      }
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "OCR 识别失败，请改用手动文本。");
     } finally {
@@ -148,19 +244,202 @@ export function Dashboard() {
     void handleParse(selectedFile);
   };
 
-  const handleAnalyze = async () => {
+  const runAnalyze = async (targetHoldings: Holding[]) => {
+    if (!targetHoldings.length) {
+      setMessage("请先上传截图或录入至少一条持仓。");
+      return;
+    }
     setIsAnalyzing(true);
-    setMessage(null);
+    setMessage(useAsyncAnalyze ? "分析任务已提交，后台生成中…" : null);
     try {
-      const result = await analyzeHoldings(holdings, profile, rawText);
+      let result: Report;
+      if (useAsyncAnalyze) {
+        const jobId = await startAnalyzeJob(targetHoldings, profile, rawText, analysisMode);
+        setActiveJobId(jobId);
+        result = await waitForAnalysisJob(jobId);
+        setActiveJobId(null);
+      } else {
+        result = await analyzeHoldings(targetHoldings, profile, rawText, analysisMode);
+      }
       setReport(result);
       await loadHistory();
       setActiveTab("analysis");
-      setMessage("日报已生成并保存到历史记录。");
+      notifyDesktop("FundPilot 日报已生成", { body: result.title });
+      setMessage(
+        analysisMode === "fast"
+          ? "快速模式日报已生成（Flash + 预取新闻）。"
+          : "日报已生成并保存到历史记录。",
+      );
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "生成日报失败。");
+      notifyDesktop("FundPilot 分析失败", {
+        body: error instanceof Error ? error.message : "请查看页面提示",
+      });
     } finally {
       setIsAnalyzing(false);
+      setActiveJobId(null);
+    }
+  };
+
+  const runAnalyzeFromInbox = async (event: InboxEvent) => {
+    const eventHoldings = event.payload.holdings ?? [];
+    if (!eventHoldings.length) {
+      return;
+    }
+    setHoldings(eventHoldings);
+    setRawText(event.payload.raw_text ?? "");
+    await runAnalyze(eventHoldings);
+    await consumeInboxEvent(event.id);
+    void pollInboxEvents();
+  };
+
+  const handleAnalyze = async () => {
+    await runAnalyze(holdings);
+  };
+
+  const parseHoldingsFromInput = async (fileOverride?: File): Promise<Holding[]> => {
+    const formData = new FormData();
+    const fileToUpload = fileOverride ?? file;
+    if (fileToUpload) {
+      formData.append("file", fileToUpload);
+    }
+    if (rawText.trim()) {
+      formData.append("raw_text", rawText);
+    }
+    const result = await parseOcr(formData);
+    setRawText(result.raw_text);
+    setHoldings(result.holdings);
+    setMessage(
+      result.error ??
+        (result.holdings.length ? "识别完成，请在下方校对持仓。" : "未识别到基金，请手动新增或检查截图。"),
+    );
+    if (autoAnalyzeOnOcr && result.holdings.length > 0 && !result.error) {
+      await runAnalyze(result.holdings);
+    }
+    return result.holdings;
+  };
+
+  const handleApplyInboxEvent = (event: InboxEvent) => {
+    setHoldings(event.payload.holdings ?? []);
+    setRawText(event.payload.raw_text ?? "");
+    setActiveTab("capture");
+    setMessage(`已载入收件箱截图：${event.file_name ?? ""}`);
+    void consumeInboxEvent(event.id).then(() => pollInboxEvents());
+  };
+
+  const handleAnalyzeInboxEvent = (event: InboxEvent) => {
+    void runAnalyzeFromInbox(event);
+  };
+
+  const handleDismissInboxEvent = (event: InboxEvent) => {
+    void consumeInboxEvent(event.id).then(() => pollInboxEvents());
+  };
+
+  const handleRequestNotifications = async () => {
+    const permission = await ensureNotificationPermission();
+    setNotificationPermission(permission);
+    if (permission === "granted") {
+      notifyDesktop("FundPilot 通知已开启", { body: "分析完成或收件箱有新截图时会提醒。" });
+    }
+  };
+
+  const pollInboxEvents = async () => {
+    try {
+      const events = await listInboxEvents("pending");
+      setInboxEvents(events);
+      const seen = loadInboxSeenIds();
+      for (const event of events) {
+        if (seen.has(event.id)) {
+          continue;
+        }
+        seen.add(event.id);
+        if (event.kind === "schedule_reminder") {
+          notifyDesktop("FundPilot 交易日提醒", { body: event.payload.message });
+          continue;
+        }
+        if (event.kind === "ocr_ready") {
+          notifyDesktop("FundPilot 收件箱", {
+            body: `已识别 ${event.payload.holdings?.length ?? 0} 条持仓：${event.file_name ?? "截图"}`,
+          });
+          setHoldings(event.payload.holdings ?? []);
+          setRawText(event.payload.raw_text ?? "");
+          setActiveTab("capture");
+          setMessage("收件箱已识别新截图，请校对或直接分析。");
+          if (autoAnalyzeOnOcr && (event.payload.holdings?.length ?? 0) > 0) {
+            await runAnalyzeFromInbox(event);
+          }
+        }
+      }
+      saveInboxSeenIds(seen);
+    } catch {
+      // API may be offline during startup
+    }
+  };
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      void pollInboxEvents();
+    }, 4000);
+    void pollInboxEvents();
+    return () => window.clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- poll when automation prefs change
+  }, [autoAnalyzeOnOcr, useAsyncAnalyze, analysisMode]);
+
+  const handleRunDaily = async () => {
+    setMessage(null);
+    try {
+      let nextHoldings = holdings;
+      if (!nextHoldings.length) {
+        if (!file && !rawText.trim()) {
+          setMessage("请先上传养基宝总览截图，或粘贴 OCR 文本。");
+          return;
+        }
+        setIsParsing(true);
+        nextHoldings = await parseHoldingsFromInput();
+        setIsParsing(false);
+      }
+      if (!nextHoldings.length) {
+        return;
+      }
+      await runAnalyze(nextHoldings);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "今日一键分析失败。");
+      setIsParsing(false);
+      setIsAnalyzing(false);
+    }
+  };
+
+  const handleExportProfiles = async () => {
+    try {
+      const payload = await exportFundProfiles();
+      const blob = new Blob([JSON.stringify(payload, null, 2)], {
+        type: "application/json;charset=utf-8",
+      });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `fund-profiles-${new Date().toISOString().slice(0, 10)}.json`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+      setMessage(`已导出 ${payload.profiles.length} 条基金档案。`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "导出档案失败。");
+    }
+  };
+
+  const handleImportProfiles = async (selectedFile: File) => {
+    try {
+      const text = await selectedFile.text();
+      const payload = JSON.parse(text) as { profiles?: FundProfile[] };
+      const profilesToImport = payload.profiles ?? (Array.isArray(payload) ? payload : []);
+      if (!Array.isArray(profilesToImport) || profilesToImport.length === 0) {
+        throw new Error("JSON 中未找到 profiles 数组。");
+      }
+      const result = await importFundProfiles(profilesToImport);
+      await loadProfiles();
+      setMessage(`已导入 ${result.saved} 条基金档案。`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "导入档案失败。");
     }
   };
 
@@ -244,6 +523,32 @@ export function Dashboard() {
         <div className="min-w-0 flex-1">
           {activeTab === "capture" ? (
             <div className="grid min-w-0 gap-6">
+              <DailyWorkflowBar
+                step={workflowStep}
+                holdingsCount={holdings.length}
+                isParsing={isParsing}
+                isAnalyzing={isAnalyzing}
+                canAnalyze={Boolean(file || rawText.trim() || holdings.length > 0)}
+                onRunDaily={() => void handleRunDaily()}
+              />
+              <AutomationPanel
+                status={automationStatus}
+                events={inboxEvents}
+                autoAnalyzeOnOcr={autoAnalyzeOnOcr}
+                useAsyncAnalyze={useAsyncAnalyze}
+                notificationPermission={notificationPermission}
+                onAutoAnalyzeOnOcrChange={setAutoAnalyzeOnOcr}
+                onUseAsyncAnalyzeChange={setUseAsyncAnalyze}
+                onRequestNotifications={() => void handleRequestNotifications()}
+                onApplyEvent={handleApplyInboxEvent}
+                onAnalyzeEvent={handleAnalyzeInboxEvent}
+                onDismissEvent={handleDismissInboxEvent}
+              />
+              {activeJobId ? (
+                <div className="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-800">
+                  后台任务进行中（{activeJobId.slice(0, 8)}…），可先浏览页面，完成后会通知你。
+                </div>
+              ) : null}
               <div className="grid min-w-0 gap-6 lg:grid-cols-[0.9fr_1.1fr]">
                 <UploadDropzone
                   rawText={rawText}
@@ -256,8 +561,10 @@ export function Dashboard() {
                 />
                 <RiskControls
                   profile={profile}
+                  analysisMode={analysisMode}
+                  onAnalysisModeChange={setAnalysisMode}
                   onChange={setProfile}
-                  onAnalyze={handleAnalyze}
+                  onAnalyze={() => void handleAnalyze()}
                   isBusy={isAnalyzing}
                 />
               </div>
@@ -282,6 +589,8 @@ export function Dashboard() {
               onFileSelect={handleProfileFile}
               onParseText={handleProfileText}
               onRefresh={loadProfiles}
+              onExport={() => void handleExportProfiles()}
+              onImport={(selectedFile) => void handleImportProfiles(selectedFile)}
             />
           ) : null}
 
@@ -289,8 +598,10 @@ export function Dashboard() {
             <div className="flex min-w-0 flex-col gap-6">
               <RiskControls
                 profile={profile}
+                analysisMode={analysisMode}
+                onAnalysisModeChange={setAnalysisMode}
                 onChange={setProfile}
-                onAnalyze={handleAnalyze}
+                onAnalyze={() => void handleAnalyze()}
                 isBusy={isAnalyzing}
               />
               <ReportPanel report={report} />

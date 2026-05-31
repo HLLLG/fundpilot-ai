@@ -229,3 +229,65 @@ def test_delete_report_endpoint(tmp_path, monkeypatch):
 
     reports = client.get("/api/reports").json()
     assert not any(item["id"] == report_id for item in reports)
+
+
+def test_report_diff_and_markdown_endpoints(tmp_path, monkeypatch):
+    monkeypatch.setenv("FUND_AI_DB_PATH", str(tmp_path / "app.db"))
+    monkeypatch.setenv("FUND_AI_DEEPSEEK_API_KEY", "")
+    refresh_settings()
+    _mock_news_search(monkeypatch)
+
+    first = client.post(
+        "/api/analyze",
+        json={
+            "holdings": [
+                {
+                    "fund_code": "015608",
+                    "fund_name": "基金A",
+                    "holding_amount": 1000,
+                    "return_percent": 1.0,
+                }
+            ]
+        },
+    ).json()
+    second = client.post(
+        "/api/analyze",
+        json={
+            "holdings": [
+                {
+                    "fund_code": "015608",
+                    "fund_name": "基金A",
+                    "holding_amount": 1200,
+                    "return_percent": -1.0,
+                }
+            ],
+            "analysis_mode": "fast",
+        },
+    ).json()
+
+    diff = client.get(f"/api/reports/{second['id']}/diff")
+    assert diff.status_code == 200
+    body = diff.json()
+    assert body["has_previous"] is True
+    assert body["diff"]["previous_report_id"] == first["id"]
+
+    markdown = client.get(f"/api/reports/{second['id']}/markdown")
+    assert markdown.status_code == 200
+    assert "# " in markdown.json()["markdown"]
+
+
+def test_fund_profiles_export_import(tmp_path, monkeypatch):
+    from app.services.fund_profile import FundProfileService, parse_profile_from_text
+
+    monkeypatch.setenv("FUND_AI_DB_PATH", str(tmp_path / "app.db"))
+    refresh_settings()
+    profile = parse_profile_from_text("测试基金\n015608\n持有金额\n1000\n1.2%")
+    assert profile is not None
+    FundProfileService().save_profile(profile)
+
+    exported = client.get("/api/fund-profiles/export").json()
+    assert exported["count"] >= 1
+
+    client.post("/api/fund-profiles/import", json={"profiles": exported["profiles"]})
+    listed = client.get("/api/fund-profiles").json()
+    assert any(item["fund_code"] == "015608" for item in listed)

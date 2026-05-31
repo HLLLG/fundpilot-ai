@@ -14,9 +14,14 @@ class NewsService:
     def __init__(self) -> None:
         self.settings = get_settings()
 
-    def topics_from_holdings(self, holdings: list[Holding]) -> list[str]:
+    def topics_from_holdings(
+        self,
+        holdings: list[Holding],
+        max_topics: int | None = None,
+    ) -> list[str]:
         seen: set[str] = set()
         topics: list[str] = []
+        limit = max_topics if max_topics is not None else self.settings.news_max_topics
 
         for holding in holdings:
             candidates = [
@@ -29,7 +34,7 @@ class NewsService:
                 seen.add(topic)
                 topics.append(topic)
 
-        return topics[: self.settings.news_max_topics]
+        return topics[:limit]
 
     def search(self, topic: str, limit: int | None = None) -> list[NewsItem]:
         topic = topic.strip()
@@ -55,8 +60,12 @@ class NewsService:
             collected.extend(self.search(topic))
         return _rank_news_by_recency(_dedupe_news(collected))
 
-    def prefetch_for_holdings(self, holdings: list[Holding]) -> list[NewsItem]:
-        return self.prefetch_topics(self.topics_from_holdings(holdings))
+    def prefetch_for_holdings(
+        self,
+        holdings: list[Holding],
+        max_topics: int | None = None,
+    ) -> list[NewsItem]:
+        return self.prefetch_topics(self.topics_from_holdings(holdings, max_topics=max_topics))
 
     def _from_eastmoney(self, topic: str, limit: int) -> list[NewsItem]:
         try:

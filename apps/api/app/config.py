@@ -29,6 +29,13 @@ class Settings(BaseSettings):
     news_max_topics: int = 5
     news_per_topic: int = 5
     news_tool_max_rounds: int = 3
+    inbox_enabled: bool = True
+    inbox_dir: Path = PROJECT_ROOT / "uploads" / "inbox"
+    inbox_poll_seconds: float = 3.0
+    schedule_enabled: bool = True
+    schedule_time: str = "14:25"
+    schedule_weekdays_only: bool = True
+    schedule_auto_analyze: bool = False
 
     model_config = SettingsConfigDict(
         env_file=PROJECT_ROOT / ".env",

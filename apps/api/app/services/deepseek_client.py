@@ -16,6 +16,7 @@ from app.models import (
     Report,
     RiskAssessment,
 )
+from app.services.analysis_runtime import AnalysisRuntime, resolve_analysis_runtime
 from app.services.news_service import NewsService, _dedupe_news
 from app.services.recommendations import (
     build_offline_fund_recommendation,
@@ -63,7 +64,11 @@ class DeepSeekClient:
         risk: RiskAssessment,
         snapshots: list[FundSnapshot],
     ) -> Report:
-        market_news = self.news_service.prefetch_for_holdings(request.holdings)
+        runtime = resolve_analysis_runtime(self.settings, request.analysis_mode)
+        market_news = self.news_service.prefetch_for_holdings(
+            request.holdings,
+            max_topics=runtime.news_max_topics,
+        )
 
         if not self.settings.deepseek_api_key:
             return _offline_report(
@@ -79,6 +84,7 @@ class DeepSeekClient:
                 risk,
                 snapshots,
                 market_news,
+                runtime,
             )
             fallback = _offline_report(
                 request,
@@ -102,7 +108,7 @@ class DeepSeekClient:
                 caveats=_user_facing_caveats(
                     _non_empty_list(parsed.get("caveats"), fallback.caveats)
                 ),
-                provider=self.settings.deepseek_model,
+                provider=runtime.model,
             )
         except httpx.TimeoutException as exc:
             fallback = _offline_report(
@@ -150,10 +156,12 @@ class DeepSeekClient:
         risk: RiskAssessment,
         snapshots: list[FundSnapshot],
         prefetched_news: list[NewsItem],
+        runtime: AnalysisRuntime,
     ) -> tuple[dict, list[NewsItem]]:
         collected: list[NewsItem] = list(prefetched_news)
+        news_enabled = runtime.news_enabled
         messages: list[dict] = [
-            {"role": "system", "content": _system_prompt(self.settings.news_enabled)},
+            {"role": "system", "content": _system_prompt(news_enabled)},
             {
                 "role": "user",
                 "content": json.dumps(
@@ -162,8 +170,8 @@ class DeepSeekClient:
                 ),
             },
         ]
-        tools = [FETCH_MARKET_NEWS_TOOL] if self.settings.news_enabled else None
-        max_rounds = min(self.settings.news_tool_max_rounds, 1) if tools else 0
+        tools = [FETCH_MARKET_NEWS_TOOL] if news_enabled and runtime.news_tool_max_rounds > 0 else None
+        max_rounds = min(runtime.news_tool_max_rounds, 1) if tools else 0
 
         final_content = ""
         for round_index in range(max_rounds + 1):
@@ -177,6 +185,7 @@ class DeepSeekClient:
                     if allow_tools
                     else self.settings.deepseek_max_tokens_report
                 ),
+                model=runtime.model,
             )
             tool_calls = message.get("tool_calls")
 
@@ -205,6 +214,7 @@ class DeepSeekClient:
                 tools=None,
                 response_format={"type": "json_object"},
                 max_tokens=self.settings.deepseek_max_tokens_report,
+                model=runtime.model,
             )
             final_content = message.get("content") or ""
 
@@ -225,6 +235,7 @@ class DeepSeekClient:
                 tools=None,
                 response_format={"type": "json_object"},
                 max_tokens=self.settings.deepseek_max_tokens_report,
+                model=runtime.model,
             )
             parsed = _parse_model_json(retry_message.get("content") or "")
 
@@ -237,10 +248,11 @@ class DeepSeekClient:
         tools: list[dict] | None,
         response_format: dict | None,
         max_tokens: int | None = None,
+        model: str | None = None,
     ) -> dict:
         payload = _build_chat_payload(
             messages=messages,
-            model=self.settings.deepseek_model,
+            model=model or self.settings.deepseek_model,
             max_tokens=max_tokens or self.settings.deepseek_max_tokens,
             tools=tools,
             response_format=response_format,
