@@ -4,7 +4,7 @@
 >
 > **维护：** 功能或架构有实质变化时，同步更新「能力清单」「数据流」「API」「目录」「环境变量」。
 
-**文档版本：** 2026-05（删除自动化工作流，统一异步分析 + 悬浮任务面板）
+**文档版本：** 2026-05-31（异步分析 + 报告追问对话）
 
 ---
 
@@ -23,8 +23,9 @@
 | 报告 | 组合摘要 + `fund_recommendations` + 新闻列表；离线规则兜底 |
 | 分析模式 | **快速**（Flash + 仅预取新闻）/ **深度**（Pro + 可选新闻 Tool） |
 | 体验 | 今日一键、报告 vs 昨日 diff、导出 Markdown、档案 JSON 导入导出 |
+| 报告追问 | 决策建议右侧 SSE 流式对话；快速 Flash / 深度 Pro+新闻 Tool；导出对话 Markdown |
 | 异步分析 | `/api/analyze/async` 后台任务，右下角 `JobStatusFloat` 悬浮面板查看进度 |
-| 前端偏好 | localStorage：风控参数、分析模式 |
+| 前端偏好 | localStorage：风控参数、分析模式、追问模式（`fundpilot-report-chat-mode`） |
 
 ---
 
@@ -46,7 +47,7 @@
 |----|------|
 | 前端 | Next.js、React、TypeScript、Tailwind、Lucide；浏览器 `Notification` |
 | 后端 | FastAPI、Pydantic v2、uvicorn；`lifespan` 启后台线程 |
-| 存储 | SQLite：`reports`、`fund_profiles`、`ocr_text_cache`、`analysis_jobs` |
+| 存储 | SQLite：`reports`、`fund_profiles`、`ocr_text_cache`、`analysis_jobs`、`report_chat_messages` |
 | AI | DeepSeek API；`fetch_market_news` Function Calling |
 | OCR（可选） | PaddleOCR |
 | 数据 | AkShare：净值 + `stock_news_em` / 基金公告 |
@@ -72,6 +73,9 @@ fundpilot-ai/
 │       ├── analyze_pipeline.py    # 同步分析入口
 │       ├── job_store.py           # 异步分析任务
 │       ├── report_diff.py / report_export.py
+│       ├── report_chat.py         # 追问 SSE + Tool 轮次
+│       ├── report_chat_runtime.py # 追问 fast/deep
+│       ├── report_chat_export.py  # 对话 Markdown
 │       └── market_context.py      # 遗留，主流程未用
 ├── apps/web/src/
 │   ├── lib/api.ts / storage.ts / notifications.ts
@@ -80,7 +84,7 @@ fundpilot-ai/
 │       ├── JobStatusFloat.tsx     # 右下角悬浮任务面板
 │       ├── AnalysisModeToggle.tsx / ReportDiffPanel.tsx
 │       ├── UploadDropzone / HoldingTable / RiskControls
-│       ├── ReportPanel / HistoryRail / FundProfilePanel
+│       ├── ReportPanel / ReportChatPanel / HistoryRail / FundProfilePanel
 ├── uploads/
 ├── data/app.db
 ├── scripts/dev.sh / dev.ps1
@@ -97,7 +101,8 @@ fundpilot-ai/
 2. capture 页上传或粘贴 → 自动 OCR
 3. 校对 HoldingTable → 选快速/深度 → 点击"生成报告"
 4. 右下角悬浮面板显示进度 → 完成后点击"查看报告"
-5. analysis 页查看 diff、导出 Markdown
+5. analysis 页查看 diff、导出日报 Markdown
+6. 决策建议右侧追问（SSE）；可导出对话 Markdown
 ```
 
 ### 首次：基金档案
@@ -145,6 +150,28 @@ POST /api/analyze/async → job_id
 
 ---
 
+## 报告追问：快速 vs 深度
+
+| | 快速 `fast` | 深度 `deep` |
+|---|-------------|-------------|
+| 模型 | `deepseek-v4-flash` | `.env` 中 `FUND_AI_DEEPSEEK_MODEL` |
+| 上下文 | 已生成日报 Markdown + 历史对话 | 同上 |
+| `fetch_market_news` | **关闭** | 按需调用（受 `NEWS_TOOL_MAX_ROUNDS` 限制） |
+| 传输 | SSE：`user_message` → `status`（深度）→ `token` → `done` | 同上 |
+| 存储 | SQLite `report_chat_messages`，按 `report_id` | 同上 |
+
+实现：`report_chat_runtime.resolve_report_chat_runtime()`；`POST /api/reports/{id}/chat` body 含 `chat_mode`。
+
+```text
+POST /api/reports/{id}/chat  { message, chat_mode }
+  → save user message
+  → [deep] 非流式 Tool 轮次（fetch_market_news）
+  → 流式 chat/completions
+  → save assistant message
+```
+
+---
+
 ## HTTP API
 
 | 方法 | 路径 | 作用 |
@@ -159,6 +186,9 @@ POST /api/analyze/async → job_id
 | DELETE | `/api/reports/{id}` | 删除 |
 | GET | `/api/reports/{id}/diff` | 与上一份对比 |
 | GET | `/api/reports/{id}/markdown` | 导出 Markdown |
+| GET | `/api/reports/{id}/chat` | 报告追问历史 |
+| POST | `/api/reports/{id}/chat` | SSE 流式追问（body: `{ message, chat_mode }`） |
+| GET | `/api/reports/{id}/chat/markdown` | 导出追问对话 Markdown |
 | GET/POST | `/api/fund-profiles/export` `import` | 档案 JSON |
 | POST | `/api/fund-profiles/ocr` | 详情页建档 |
 | GET | `/api/fund-profiles` | 列表 |
@@ -177,6 +207,8 @@ POST /api/analyze/async → job_id
 | **NewsItem** | topic、title、is_today |
 | **Report** | 含 fund_recommendations、market_news；market_context 恒 `[]` |
 | **AnalysisRequest** | holdings、profile、ocr_text、**analysis_mode** |
+| **ChatMessage** | report_id、role、content |
+| **ReportChatRequest** | message、**chat_mode**（fast \| deep） |
 
 占位码 `000000`：总览 OCR 无代码时，靠 `FundProfileService` 按名称匹配档案补全。
 
@@ -193,9 +225,9 @@ POST /api/analyze/async → job_id
 ## 前端要点
 
 - **capture：** `UploadDropzone`、校对表、`RiskControls`（含"生成报告"按钮）。
-- **analysis：** `ReportPanel`（含 `ReportDiffPanel`、导出 Markdown）。
+- **analysis：** `ReportPanel`（含 `ReportDiffPanel`、`ReportChatPanel` 追问、导出 Markdown）。
 - **悬浮面板：** `JobStatusFloat`，固定右下角，内部轮询 job 状态，完成后回调 Dashboard。
-- **偏好：** `lib/storage.ts`（profile、analysisMode）。
+- **偏好：** `lib/storage.ts`（profile、analysisMode、reportChatMode）。
 - **通知：** `lib/notifications.ts`；分析完成时触发桌面通知。
 
 ---
@@ -224,7 +256,7 @@ bash scripts/dev.sh    # 或 scripts/dev.ps1
 ```
 
 ```bash
-cd apps/api && ./.venv/Scripts/python.exe -m pytest tests -v   # 当前约 35 项
+cd apps/api && ./.venv/Scripts/python.exe -m pytest tests -v   # 当前约 41 项
 cd apps/web && npm run lint && npm run typecheck && npm run build
 ```
 
@@ -235,7 +267,8 @@ cd apps/web && npm run lint && npm run typecheck && npm run build
 1. 改 API：`models.py` → `main.py` → `api.ts` → 组件 → `tests/`。
 2. 改报告结构：同步 `deepseek_client` JSON、`recommendations`、`_offline_report`、`Report` 类型。
 3. 改异步流程：`job_store.py`（后端）→ `JobStatusFloat.tsx`（前端轮询）→ `Dashboard.tsx`（回调）。
-4. 历史 MVP 计划：`docs/superpowers/plans/2026-05-31-remove-automation-async-float.md`（以代码为准）。
+4. 改追问：`report_chat.py` / `report_chat_runtime.py` → `main.py` chat 路由 → `ReportChatPanel.tsx` → `tests/test_report_chat*.py`。
+5. 历史 MVP 计划：`docs/superpowers/plans/2026-05-31-remove-automation-async-float.md`（以代码为准）。
 
 ---
 

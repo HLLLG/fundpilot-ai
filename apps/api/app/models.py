@@ -127,3 +127,19 @@ class Report(BaseModel):
     recommendations: list[str]
     caveats: list[str]
     provider: str = "offline"
+
+
+ChatRole = Literal["user", "assistant"]
+
+
+class ChatMessage(BaseModel):
+    id: str = Field(default_factory=lambda: uuid4().hex)
+    report_id: str
+    role: ChatRole
+    content: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class ReportChatRequest(BaseModel):
+    message: str = Field(..., min_length=1, max_length=4000)
+    chat_mode: AnalysisMode = "fast"

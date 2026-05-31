@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from app.config import get_settings
-from app.models import FundProfile, Report
+from app.models import ChatMessage, FundProfile, Report
 
 
 def _db_path() -> Path:
@@ -48,6 +48,23 @@ def _connect() -> sqlite3.Connection:
             raw_text TEXT NOT NULL,
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS report_chat_messages (
+            id TEXT PRIMARY KEY,
+            report_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_report_chat_report_id
+        ON report_chat_messages (report_id, created_at)
         """
     )
     connection.commit()
@@ -140,6 +157,48 @@ def get_ocr_text_cache(cache_key: str) -> str | None:
     if row is None:
         return None
     return str(row["raw_text"])
+
+
+def list_report_chat_messages(report_id: str) -> list[dict[str, Any]]:
+    with _connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT id, report_id, role, content, created_at
+            FROM report_chat_messages
+            WHERE report_id = ?
+            ORDER BY created_at ASC
+            """,
+            (report_id,),
+        ).fetchall()
+    return [
+        {
+            "id": row["id"],
+            "report_id": row["report_id"],
+            "role": row["role"],
+            "content": row["content"],
+            "created_at": row["created_at"],
+        }
+        for row in rows
+    ]
+
+
+def save_chat_message(message: ChatMessage) -> ChatMessage:
+    with _connect() as connection:
+        connection.execute(
+            """
+            INSERT INTO report_chat_messages (id, report_id, role, content, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                message.id,
+                message.report_id,
+                message.role,
+                message.content,
+                message.created_at.isoformat(),
+            ),
+        )
+        connection.commit()
+    return message
 
 
 def save_ocr_text_cache(cache_key: str, raw_text: str) -> None:

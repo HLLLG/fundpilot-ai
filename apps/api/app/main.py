@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 
 from app.config import get_settings
 from app.database import (
@@ -16,13 +18,16 @@ from app.database import (
     save_ocr_text_cache,
 )
 from app.lifespan import app_lifespan
-from app.models import AnalysisRequest, FundProfile
+from app.database import list_report_chat_messages
+from app.models import AnalysisRequest, FundProfile, ReportChatRequest
 from app.services.analyze_pipeline import run_analysis
 from app.services.fund_profile import FundProfileService, parse_profile_from_text
 from app.services.job_store import create_analysis_job, get_job_response
 from app.services.ocr_engine import OcrEngine
 from app.services.ocr_parser import parse_holdings_from_text
 from app.services.report_diff import diff_reports
+from app.services.report_chat import stream_report_chat
+from app.services.report_chat_export import report_chat_to_markdown
 from app.services.report_export import report_to_markdown
 
 
@@ -142,6 +147,51 @@ def report_markdown(report_id: str) -> dict:
     if report is None:
         raise HTTPException(status_code=404, detail="报告不存在")
     return {"markdown": report_to_markdown(report)}
+
+
+@app.get("/api/reports/{report_id}/chat")
+def report_chat_history(report_id: str) -> dict:
+    report = get_report(report_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="报告不存在")
+    return {"messages": list_report_chat_messages(report_id)}
+
+
+@app.post("/api/reports/{report_id}/chat")
+def report_chat(report_id: str, body: ReportChatRequest) -> StreamingResponse:
+    report = get_report(report_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="报告不存在")
+
+    def event_stream():
+        try:
+            for payload in stream_report_chat(
+                report_id,
+                body.message.strip(),
+                chat_mode=body.chat_mode,
+            ):
+                yield f"data: {payload}\n\n"
+        except ValueError as exc:
+            yield f"data: {{\"type\":\"error\",\"message\":{json.dumps(str(exc), ensure_ascii=False)}}}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.get("/api/reports/{report_id}/chat/markdown")
+def report_chat_markdown(report_id: str) -> dict:
+    report = get_report(report_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="报告不存在")
+    messages = list_report_chat_messages(report_id)
+    return {"markdown": report_chat_to_markdown(report, messages)}
 
 
 @app.delete("/api/reports/{report_id}")

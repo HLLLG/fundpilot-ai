@@ -151,6 +151,23 @@ export type AnalysisJob = {
   report?: Report;
 };
 
+export type ReportChatMessage = {
+  id: string;
+  report_id: string;
+  role: "user" | "assistant";
+  content: string;
+  created_at: string;
+};
+
+export type ReportChatMode = AnalysisMode;
+
+type ReportChatStreamEvent =
+  | { type: "user_message"; message: ReportChatMessage }
+  | { type: "token"; content: string }
+  | { type: "status"; content: string }
+  | { type: "done"; message: ReportChatMessage; chat_mode?: ReportChatMode; model?: string }
+  | { type: "error"; message: string };
+
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
 
 export async function parseOcr(formData: FormData): Promise<OcrResponse> {
@@ -251,6 +268,97 @@ export async function fetchReportDiff(reportId: string): Promise<ReportDiffRespo
     throw new Error(await response.text());
   }
   return response.json();
+}
+
+export async function fetchReportChatHistory(reportId: string): Promise<ReportChatMessage[]> {
+  const response = await fetch(`${API_BASE}/api/reports/${reportId}/chat`, {
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  const body = await response.json();
+  return body.messages as ReportChatMessage[];
+}
+
+function parseSsePayload(line: string): ReportChatStreamEvent | null {
+  if (!line.startsWith("data: ")) {
+    return null;
+  }
+  try {
+    return JSON.parse(line.slice(6)) as ReportChatStreamEvent;
+  } catch {
+    return null;
+  }
+}
+
+export async function streamReportChat(
+  reportId: string,
+  message: string,
+  chatMode: ReportChatMode,
+  handlers: {
+    onUserMessage?: (message: ReportChatMessage) => void;
+    onStatus?: (content: string) => void;
+    onToken: (chunk: string) => void;
+    onDone: (message: ReportChatMessage) => void;
+    onError?: (message: string) => void;
+  },
+): Promise<void> {
+  const response = await fetch(`${API_BASE}/api/reports/${reportId}/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message, chat_mode: chatMode }),
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  const reader = response.body?.getReader();
+  if (!reader) {
+    throw new Error("浏览器不支持流式响应");
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    buffer += decoder.decode(value, { stream: true });
+    const parts = buffer.split("\n\n");
+    buffer = parts.pop() ?? "";
+    for (const part of parts) {
+      for (const line of part.split("\n")) {
+        const event = parseSsePayload(line);
+        if (!event) {
+          continue;
+        }
+        if (event.type === "user_message") {
+          handlers.onUserMessage?.(event.message);
+        } else if (event.type === "status") {
+          handlers.onStatus?.(event.content);
+        } else if (event.type === "token") {
+          handlers.onToken(event.content);
+        } else if (event.type === "done") {
+          handlers.onDone(event.message);
+        } else if (event.type === "error") {
+          handlers.onError?.(event.message);
+        }
+      }
+    }
+  }
+}
+
+export async function fetchReportChatMarkdown(reportId: string): Promise<string> {
+  const response = await fetch(`${API_BASE}/api/reports/${reportId}/chat/markdown`, {
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  const body = await response.json();
+  return body.markdown as string;
 }
 
 export async function fetchReportMarkdown(reportId: string): Promise<string> {

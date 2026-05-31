@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { AlertTriangle, BarChart3, Download, Sparkles } from "lucide-react";
 import type { Report, ReportDiff } from "@/lib/api";
 import { fetchReportDiff, fetchReportMarkdown } from "@/lib/api";
+import { ReportChatPanel } from "@/components/ReportChatPanel";
 import { ReportDiffPanel } from "@/components/ReportDiffPanel";
 import { StatusPill } from "@/components/StatusPill";
 
@@ -239,22 +240,25 @@ export function ReportPanel({ report }: ReportPanelProps) {
           <Sparkles size={18} className="text-blue-600" />
           决策建议
         </div>
-        <div className="space-y-3">
-          {portfolioRecommendations.map((item, index) => (
-            <div
-              key={`portfolio-${index}`}
-              className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-700"
-            >
-              {item}
-            </div>
-          ))}
-          {fundRecommendations.map((item) => (
-            <FundRecommendationCard
-              key={item.fund_code}
-              item={item}
-              snapshots={report.snapshots}
-            />
-          ))}
+        <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(280px,360px)]">
+          <div className="min-w-0 space-y-3">
+            {portfolioRecommendations.map((item, index) => (
+              <div
+                key={`portfolio-${index}`}
+                className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-700"
+              >
+                {item}
+              </div>
+            ))}
+            {fundRecommendations.map((item) => (
+              <FundRecommendationCard
+                key={item.fund_code}
+                item={item}
+                snapshots={report.snapshots}
+              />
+            ))}
+          </div>
+          <ReportChatPanel reportId={report.id} reportTitle={report.title} />
         </div>
       </div>
 

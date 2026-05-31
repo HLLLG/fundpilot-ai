@@ -2,8 +2,10 @@ import type { InvestorProfile } from "@/lib/api";
 
 const PROFILE_KEY = "fundpilot-investor-profile";
 const MODE_KEY = "fundpilot-analysis-mode";
+const CHAT_MODE_KEY = "fundpilot-report-chat-mode";
 
 export type AnalysisMode = "fast" | "deep";
+export type ReportChatMode = AnalysisMode;
 
 export function loadInvestorProfile(fallback: InvestorProfile): InvestorProfile {
   if (typeof window === "undefined") {
@@ -40,4 +42,19 @@ export function saveAnalysisMode(mode: AnalysisMode) {
     return;
   }
   window.localStorage.setItem(MODE_KEY, mode);
+}
+
+export function loadReportChatMode(fallback: ReportChatMode = "fast"): ReportChatMode {
+  if (typeof window === "undefined") {
+    return fallback;
+  }
+  const raw = window.localStorage.getItem(CHAT_MODE_KEY);
+  return raw === "fast" || raw === "deep" ? raw : fallback;
+}
+
+export function saveReportChatMode(mode: ReportChatMode) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.localStorage.setItem(CHAT_MODE_KEY, mode);
 }
