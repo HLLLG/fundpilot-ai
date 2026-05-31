@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
@@ -16,10 +16,9 @@ from app.database import (
     save_ocr_text_cache,
 )
 from app.lifespan import app_lifespan
-from app.models import AnalysisRequest, FundProfile, InvestorProfile
+from app.models import AnalysisRequest, FundProfile
 from app.services.analyze_pipeline import run_analysis
 from app.services.fund_profile import FundProfileService, parse_profile_from_text
-from app.services.inbox_store import get_inbox_event, list_inbox_events, update_inbox_event_status
 from app.services.job_store import create_analysis_job, get_job_response
 from app.services.ocr_engine import OcrEngine
 from app.services.ocr_parser import parse_holdings_from_text
@@ -42,21 +41,6 @@ app.add_middleware(
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
-
-
-@app.get("/api/automation/status")
-def automation_status() -> dict:
-    settings = get_settings()
-    return {
-        "inbox_enabled": settings.inbox_enabled,
-        "inbox_dir": str(settings.inbox_dir),
-        "inbox_poll_seconds": settings.inbox_poll_seconds,
-        "schedule_enabled": settings.schedule_enabled,
-        "schedule_time": settings.schedule_time,
-        "schedule_weekdays_only": settings.schedule_weekdays_only,
-        "schedule_auto_analyze": settings.schedule_auto_analyze,
-        "pending_inbox_events": len(list_inbox_events(status="pending", limit=100)),
-    }
 
 
 @app.post("/api/ocr")
@@ -123,58 +107,6 @@ def job_status(job_id: str) -> dict:
     if job is None:
         raise HTTPException(status_code=404, detail="任务不存在")
     return job
-
-
-@app.get("/api/inbox/events")
-def inbox_events(status: str | None = "pending", limit: int = 20) -> list[dict]:
-    if status not in {None, "pending", "consumed", "failed"}:
-        raise HTTPException(status_code=400, detail="无效的状态筛选")
-    return list_inbox_events(status=status, limit=min(limit, 50))  # type: ignore[arg-type]
-
-
-@app.post("/api/inbox/events/{event_id}/consume")
-def consume_inbox_event(event_id: str) -> dict:
-    event = get_inbox_event(event_id)
-    if event is None:
-        raise HTTPException(status_code=404, detail="事件不存在")
-    updated = update_inbox_event_status(event_id, "consumed")
-    return updated or event
-
-
-@app.post("/api/inbox/events/{event_id}/analyze")
-def analyze_inbox_event(
-    event_id: str,
-    request: AnalysisRequest | None = Body(default=None),
-) -> dict:
-    event = get_inbox_event(event_id)
-    if event is None:
-        raise HTTPException(status_code=404, detail="事件不存在")
-    if event["kind"] != "ocr_ready":
-        raise HTTPException(status_code=400, detail="仅 OCR 事件可触发分析")
-
-    payload = event["payload"]
-    holdings = payload.get("holdings") or []
-    if not holdings:
-        raise HTTPException(status_code=400, detail="事件中没有可分析的持仓")
-
-    if request is None:
-        analysis_request = AnalysisRequest(
-            holdings=holdings,
-            profile=InvestorProfile(),
-            ocr_text=payload.get("raw_text"),
-            analysis_mode="fast",
-        )
-    else:
-        analysis_request = request.model_copy(
-            update={
-                "holdings": request.holdings or holdings,
-                "ocr_text": request.ocr_text or payload.get("raw_text"),
-            }
-        )
-
-    job_id = create_analysis_job(analysis_request)
-    update_inbox_event_status(event_id, "consumed")
-    return {"job_id": job_id, "status": "pending", "event_id": event_id}
 
 
 @app.get("/api/reports")
