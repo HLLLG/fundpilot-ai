@@ -229,36 +229,6 @@ export function Dashboard() {
     await runAnalyze(holdings);
   };
 
-  const handleRunDaily = async () => {
-    setMessage(null);
-    try {
-      let nextHoldings = holdings;
-      if (!nextHoldings.length) {
-        if (!file && !rawText.trim()) {
-          setMessage("请先上传养基宝总览截图，或粘贴 OCR 文本。");
-          return;
-        }
-        setIsParsing(true);
-        const formData = new FormData();
-        if (file) formData.append("file", file);
-        if (rawText.trim()) formData.append("raw_text", rawText);
-        const result = await parseOcr(formData);
-        setRawText(result.raw_text);
-        setHoldings(result.holdings);
-        nextHoldings = result.holdings;
-        setIsParsing(false);
-      }
-      if (!nextHoldings.length) {
-        return;
-      }
-      await runAnalyze(nextHoldings);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "今日一键分析失败。");
-      setIsParsing(false);
-      setIsSubmitting(false);
-    }
-  };
-
   const handleExportProfiles = async () => {
     try {
       const payload = await exportFundProfiles();
@@ -351,7 +321,7 @@ export function Dashboard() {
               把支付宝基金截图，变成一份可追溯的每日操作日报。
             </h1>
             <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-600">
-              先识别持仓，再套你的稳健风控线，最后让模型做研究员。它不会替你下单，只帮你把"该不该动"讲清楚。
+              先识别持仓，再套你的稳健风控线，最后让模型做研究员。它不会替你下单，只帮你把&ldquo;该不该动&rdquo;讲清楚。
             </p>
           </div>
           <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-1">
