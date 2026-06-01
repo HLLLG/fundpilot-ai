@@ -23,7 +23,13 @@ from app.models import AnalysisRequest, FundProfile, ReportChatRequest
 from app.services.analyze_pipeline import run_analysis
 from app.database import get_portfolio_summary, save_portfolio_summary
 from app.services.fund_profile import FundProfileService, parse_profile_from_text
+from app.services.holding_validation import build_holding_review
 from app.services.portfolio_parser import parse_portfolio_summary_from_text
+from app.services.portfolio_snapshot import (
+    build_dashboard_payload,
+    get_previous_holdings_for_review,
+    save_daily_snapshot,
+)
 from app.services.job_store import create_analysis_job, get_job_response
 from app.services.ocr_engine import OcrEngine
 from app.services.ocr_parser import parse_holdings_from_text
@@ -89,6 +95,7 @@ async def parse_ocr(
 
     profile_service = FundProfileService()
     holdings = profile_service.resolve_holdings(parse_holdings_from_text(text))
+    previous_holdings = get_previous_holdings_for_review()
     profile_sync = profile_service.sync_profiles_from_holdings(holdings).model_dump()
 
     portfolio_summary = parse_portfolio_summary_from_text(text)
@@ -97,6 +104,15 @@ async def parse_ocr(
             update={"holding_count": len(holdings)}
         )
         save_portfolio_summary(portfolio_summary)
+
+    holding_review = build_holding_review(
+        holdings,
+        previous_holdings=previous_holdings,
+        portfolio_summary=portfolio_summary,
+    )
+
+    if holdings:
+        save_daily_snapshot(holdings, portfolio_summary)
 
     return {
         "raw_text": text,
@@ -107,6 +123,7 @@ async def parse_ocr(
         "portfolio_summary": (
             portfolio_summary.model_dump(mode="json") if portfolio_summary else None
         ),
+        **holding_review,
     }
 
 
@@ -289,6 +306,15 @@ def fund_profiles() -> list[dict]:
         profile.model_dump(mode="json")
         for profile in FundProfileService().list_profiles()
     ]
+
+
+@app.get("/api/portfolio/dashboard")
+def portfolio_dashboard() -> dict:
+    profiles = FundProfileService().list_profiles()
+    summary = get_portfolio_summary()
+    payload = build_dashboard_payload(summary=summary, profiles=profiles)
+    payload["profiles"] = [profile.model_dump(mode="json") for profile in profiles]
+    return payload
 
 
 @app.get("/api/portfolio/summary")

@@ -9,7 +9,7 @@ from typing import Any
 from app.config import get_settings
 from datetime import datetime, timezone
 
-from app.models import ChatMessage, FundProfile, PortfolioSummary, Report
+from app.models import ChatMessage, FundProfile, PortfolioDailySnapshot, PortfolioSummary, Report
 
 
 def _db_path() -> Path:
@@ -56,6 +56,15 @@ def _connect() -> sqlite3.Connection:
         """
         CREATE TABLE IF NOT EXISTS portfolio_state (
             id INTEGER PRIMARY KEY CHECK (id = 1),
+            payload TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS portfolio_daily_snapshots (
+            snapshot_date TEXT PRIMARY KEY,
             payload TEXT NOT NULL,
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
@@ -192,6 +201,54 @@ def save_portfolio_summary(summary: PortfolioSummary) -> PortfolioSummary:
         )
         connection.commit()
     return summary
+
+
+def save_portfolio_daily_snapshot(snapshot: PortfolioDailySnapshot) -> PortfolioDailySnapshot:
+    payload = snapshot.model_dump(mode="json")
+    with _connect() as connection:
+        connection.execute(
+            """
+            INSERT OR REPLACE INTO portfolio_daily_snapshots (snapshot_date, payload, updated_at)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+            """,
+            (
+                snapshot.snapshot_date,
+                json.dumps(payload, ensure_ascii=False),
+            ),
+        )
+        connection.commit()
+    return snapshot
+
+
+def list_portfolio_daily_snapshots(*, limit: int = 30) -> list[dict[str, Any]]:
+    with _connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT payload FROM portfolio_daily_snapshots
+            ORDER BY snapshot_date DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    results: list[dict[str, Any]] = []
+    for row in rows:
+        data = json.loads(row["payload"])
+        results.append(
+            {
+                "snapshot_date": data.get("snapshot_date"),
+                "total_assets": data.get("total_assets"),
+                "daily_profit": data.get("daily_profit"),
+                "daily_return_percent": data.get("daily_return_percent"),
+                "holdings": data.get("holdings") or [],
+                "captured_at": data.get("captured_at"),
+            }
+        )
+    return results
+
+
+def get_most_recent_portfolio_snapshot() -> dict[str, Any] | None:
+    rows = list_portfolio_daily_snapshots(limit=1)
+    return rows[0] if rows else None
 
 
 def get_portfolio_summary() -> PortfolioSummary | None:

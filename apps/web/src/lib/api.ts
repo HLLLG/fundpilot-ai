@@ -193,6 +193,47 @@ export type PortfolioSummary = {
   profiles?: FundProfile[];
 };
 
+export type HoldingFieldWarning = {
+  index: number;
+  field: string;
+  code: string;
+  message: string;
+  severity: "error" | "warn" | "info";
+};
+
+export type HoldingListDiff = {
+  index?: number | null;
+  fund_code: string;
+  fund_name: string;
+  change_type: "added" | "removed" | "changed" | "unchanged";
+  messages: string[];
+};
+
+export type PortfolioHistoryPoint = {
+  date: string;
+  total_assets?: number | null;
+  daily_profit?: number | null;
+  daily_return_percent?: number | null;
+};
+
+export type PortfolioAllocationRow = {
+  fund_code: string;
+  fund_name: string;
+  holding_amount: number;
+  weight_percent: number;
+  daily_profit?: number | null;
+  holding_return_percent?: number | null;
+};
+
+export type PortfolioDashboardData = {
+  summary: PortfolioSummary;
+  history: PortfolioHistoryPoint[];
+  allocation: PortfolioAllocationRow[];
+  snapshot_count: number;
+  latest_snapshot_date?: string | null;
+  profiles?: FundProfile[];
+};
+
 export type OcrResponse = {
   raw_text: string;
   upload_path: string | null;
@@ -201,6 +242,10 @@ export type OcrResponse = {
   cache_hit?: boolean;
   profile_sync?: ProfileSyncResult;
   portfolio_summary?: PortfolioSummary | null;
+  holding_warnings?: HoldingFieldWarning[];
+  holding_diffs?: HoldingListDiff[];
+  previous_holdings?: Holding[];
+  warning_count?: number;
 };
 
 export type AnalysisJob = {
@@ -488,6 +533,14 @@ export async function parseFundProfile(formData: FormData): Promise<FundProfile>
 
 export async function fetchPortfolioSummary(): Promise<PortfolioSummary> {
   const response = await fetch(`${API_BASE}/api/portfolio/summary`, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export async function fetchPortfolioDashboard(): Promise<PortfolioDashboardData> {
+  const response = await fetch(`${API_BASE}/api/portfolio/dashboard`, { cache: "no-store" });
   if (!response.ok) {
     throw new Error(await response.text());
   }

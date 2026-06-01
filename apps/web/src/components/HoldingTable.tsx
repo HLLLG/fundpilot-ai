@@ -1,11 +1,29 @@
 "use client";
 
-import { Plus, Trash2 } from "lucide-react";
-import type { Holding } from "@/lib/api";
+import { AlertTriangle, History, Plus, Trash2 } from "lucide-react";
+import type { Holding, HoldingFieldWarning, HoldingListDiff } from "@/lib/api";
+import {
+  countActionableWarnings,
+  diffForRow,
+  globalWarnings,
+  warningsForCell,
+} from "@/lib/holdingReview";
 import {
   computeEstimatedDailyReturnPercent,
   holdingDailyReturnIsEstimated,
 } from "@/lib/holdingMetrics";
+
+function fieldInputClass(hasIssue: boolean, severity?: string) {
+  const base =
+    "w-full rounded-xl border px-3 py-2 text-sm outline-none focus:ring-4 ";
+  if (!hasIssue) {
+    return `${base} border-slate-200 focus:border-blue-400 focus:ring-blue-100`;
+  }
+  if (severity === "error") {
+    return `${base} border-rose-300 bg-rose-50/80 focus:border-rose-400 focus:ring-rose-100`;
+  }
+  return `${base} border-amber-300 bg-amber-50/80 focus:border-amber-400 focus:ring-amber-100`;
+}
 
 function EstimatedDailyReturnCell({ holding }: { holding: Holding }) {
   const estimated = computeEstimatedDailyReturnPercent(holding);
@@ -47,9 +65,22 @@ function EstimatedDailyReturnCell({ holding }: { holding: Holding }) {
 type HoldingTableProps = {
   holdings: Holding[];
   onChange: (holdings: Holding[]) => void;
+  warnings?: HoldingFieldWarning[];
+  diffs?: HoldingListDiff[];
+  canApplyPreviousStructure?: boolean;
+  onApplyPreviousStructure?: () => void;
 };
 
-export function HoldingTable({ holdings, onChange }: HoldingTableProps) {
+export function HoldingTable({
+  holdings,
+  onChange,
+  warnings = [],
+  diffs = [],
+  canApplyPreviousStructure = false,
+  onApplyPreviousStructure,
+}: HoldingTableProps) {
+  const actionableCount = countActionableWarnings(warnings);
+  const accountWarnings = globalWarnings(warnings);
   const updateHolding = (index: number, patch: Partial<Holding>) => {
     onChange(
       holdings.map((holding, itemIndex) =>
@@ -89,15 +120,43 @@ export function HoldingTable({ holdings, onChange }: HoldingTableProps) {
             OCR 只负责草稿，最终以你确认的表格为准。无「当日收益率」时，估算列 = 板块涨跌 + 持有收益率。
           </p>
         </div>
-        <button
-          type="button"
-          onClick={addHolding}
-          className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full bg-slate-950 px-4 py-2 text-sm font-bold text-white transition hover:bg-blue-700"
-        >
-          <Plus size={16} />
-          新增
-        </button>
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          {canApplyPreviousStructure && onApplyPreviousStructure ? (
+            <button
+              type="button"
+              onClick={onApplyPreviousStructure}
+              className="inline-flex items-center gap-2 whitespace-nowrap rounded-full border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-bold text-indigo-800 transition hover:bg-indigo-100"
+            >
+              <History size={16} />
+              沿用上次基金列表
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={addHolding}
+            className="inline-flex items-center gap-2 whitespace-nowrap rounded-full bg-slate-950 px-4 py-2 text-sm font-bold text-white transition hover:bg-blue-700"
+          >
+            <Plus size={16} />
+            新增
+          </button>
+        </div>
       </div>
+
+      {actionableCount > 0 || accountWarnings.length > 0 ? (
+        <div className="mb-4 space-y-2 rounded-2xl border border-amber-200 bg-amber-50/90 px-4 py-3">
+          <div className="flex items-start gap-2 text-sm font-bold text-amber-950">
+            <AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-600" />
+            <span>
+              发现 {actionableCount} 处需核对（已高亮单元格），优先检查当日收益额与板块涨跌的负号。
+            </span>
+          </div>
+          {accountWarnings.map((item) => (
+            <p key={item.code} className="pl-7 text-xs font-semibold text-amber-900">
+              {item.message}
+            </p>
+          ))}
+        </div>
+      ) : null}
 
       <div className="max-w-full overflow-x-auto">
         <table className="w-full min-w-[1420px] border-separate border-spacing-y-3">
@@ -119,14 +178,28 @@ export function HoldingTable({ holdings, onChange }: HoldingTableProps) {
             </tr>
           </thead>
           <tbody>
-            {holdings.map((holding, index) => (
+            {holdings.map((holding, index) => {
+              const rowDiff = diffForRow(diffs, index);
+              const codeWarning = warningsForCell(warnings, index, "fund_code");
+              const dailyProfitWarning = warningsForCell(warnings, index, "daily_profit");
+              const sectorWarning = warningsForCell(warnings, index, "sector_return_percent");
+
+              return (
               <tr key={`${holding.fund_code}-${index}`} className="bg-white shadow-sm">
                 <td className="rounded-l-2xl px-3 py-3">
                   <input
                     value={holding.fund_code}
                     onChange={(event) => updateHolding(index, { fund_code: event.target.value })}
-                    className="w-24 rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold outline-none focus:border-blue-400"
+                    title={codeWarning?.message}
+                    className={`w-24 ${fieldInputClass(Boolean(codeWarning), codeWarning?.severity)} font-bold`}
                   />
+                  {rowDiff && rowDiff.change_type !== "unchanged" ? (
+                    <div className="mt-1 text-[10px] font-bold text-indigo-600">
+                      {rowDiff.change_type === "added"
+                        ? "新增"
+                        : rowDiff.messages[0] ?? "有变动"}
+                    </div>
+                  ) : null}
                 </td>
                 <td className="px-3 py-3">
                   <input
@@ -158,7 +231,8 @@ export function HoldingTable({ holdings, onChange }: HoldingTableProps) {
                           event.target.value === "" ? null : Number(event.target.value),
                       })
                     }
-                    className="w-28 rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400"
+                    title={dailyProfitWarning?.message}
+                    className={`w-28 ${fieldInputClass(Boolean(dailyProfitWarning), dailyProfitWarning?.severity)}`}
                     placeholder="如 -86.23"
                   />
                 </td>
@@ -196,7 +270,8 @@ export function HoldingTable({ holdings, onChange }: HoldingTableProps) {
                           event.target.value === "" ? null : Number(event.target.value),
                       })
                     }
-                    className="w-28 rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400"
+                    title={sectorWarning?.message}
+                    className={`w-28 ${fieldInputClass(Boolean(sectorWarning), sectorWarning?.severity)}`}
                     placeholder="如 3.33"
                   />
                 </td>
@@ -245,7 +320,8 @@ export function HoldingTable({ holdings, onChange }: HoldingTableProps) {
                   </button>
                 </td>
               </tr>
-            ))}
+            );
+            })}
           </tbody>
         </table>
       </div>

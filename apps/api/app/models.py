@@ -102,6 +102,31 @@ class PortfolioSummary(BaseModel):
     updated_at: datetime | None = None
 
 
+class PortfolioDailySnapshot(BaseModel):
+    snapshot_date: str
+    total_assets: float | None = None
+    daily_profit: float | None = None
+    daily_return_percent: float | None = None
+    holdings: list[dict] = Field(default_factory=list)
+    captured_at: datetime | None = None
+
+
+class HoldingFieldWarning(BaseModel):
+    index: int
+    field: str
+    code: str
+    message: str
+    severity: str = "warn"
+
+
+class HoldingListDiff(BaseModel):
+    fund_code: str
+    fund_name: str
+    change_type: str
+    index: int | None = None
+    messages: list[str] = Field(default_factory=list)
+
+
 class ProfileSyncResult(BaseModel):
     updated: int = 0
     created: int = 0

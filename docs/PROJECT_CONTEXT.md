@@ -4,7 +4,7 @@
 >
 > **维护：** 功能或架构有实质变化时，同步更新「能力清单」「数据流」「API」「目录」「环境变量」。
 
-**文档版本：** 2026-06-01（持仓档案、P1/P2 守卫、养基宝 OCR 负号修复）
+**文档版本：** 2026-06-01（仪表盘走势、校对高亮与沿用上次列表）
 
 ---
 
@@ -19,8 +19,9 @@
 | 类别 | 能力 |
 |------|------|
 | 输入 | 养基宝总览 OCR（无代码草稿解析）；当日列为 `-` 时不填当日收益；**OCR 漏负号**时规则补符号（见下）；`holding_metrics` 估算当日涨跌 |
-| 校对 | `HoldingTable` 含**估算当日收益率**（板块涨跌 + 持有收益率）；`lib/holdingMetrics.ts` |
+| 校对 | `HoldingTable` 含**估算当日收益率**；OCR 返回 `holding_warnings` / `holding_diffs`，异常单元格高亮；**沿用上次基金列表** |
 | 档案 | 详情截图建档；总览 OCR **自动同步**档案（金额/收益/板块）；`GET /api/portfolio/summary` 登录展示 |
+| 仪表盘 | **仪表盘** Tab：`GET /api/portfolio/dashboard` — 资产/当日收益走势（`portfolio_daily_snapshots`）、持仓分布条 |
 | 持仓总览 | 基金档案 Tab：账户资产/当日收益/基金卡片；顶栏指标来自持久化数据 |
 | 风控 | 浮亏线、单只集中度、定投偏好、拒绝追高（`InvestorProfile`） |
 | 报告 | 组合摘要 + `fund_recommendations` + 新闻列表；`analysis_facts` 只读事实块；`recommendation_guard` + `news_citation` + 深度 `report_judge` |
@@ -73,6 +74,8 @@ fundpilot-ai/
 │   └── services/
 │       ├── ocr_engine.py / ocr_parser.py   # 养基宝版式、负号恢复、账户级符号校验
 │       ├── portfolio_parser.py             # 账户资产/当日收益
+│       ├── portfolio_snapshot.py           # 每日快照与仪表盘数据
+│       ├── holding_validation.py           # 校对警告、与上次持仓 diff
 │       ├── holding_metrics.py              # estimated_daily_return_percent
 │       ├── deepseek_http.py              # 鉴权头、401 友好错误
 │       ├── fund_profile.py / risk.py / fund_data.py
@@ -91,8 +94,8 @@ fundpilot-ai/
 ├── apps/web/src/
 │   ├── lib/api.ts / storage.ts / holdingMetrics.ts / notifications.ts
 │   └── components/
-│       ├── Dashboard.tsx          # 今日 / 基金档案 / 历史
-│       ├── TodayWorkflowSteps / PortfolioSummaryCard / FundProfileCard
+│       ├── Dashboard.tsx          # 今日 / 仪表盘 / 基金档案 / 历史
+│       ├── PortfolioDashboard / TodayWorkflowSteps / PortfolioSummaryCard / FundProfileCard
 │       ├── JobStatusFloat.tsx     # 右下角悬浮任务面板
 │       ├── AnalysisModeToggle.tsx / ReportDiffPanel.tsx
 │       ├── UploadDropzone / HoldingTable / RiskControls
@@ -223,6 +226,7 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | POST | `/api/fund-profiles/ocr` | 详情页建档 |
 | GET | `/api/fund-profiles` | 列表 |
 | GET | `/api/portfolio/summary` | 账户汇总 + 全部档案 |
+| GET | `/api/portfolio/dashboard` | 走势历史 + 持仓分布（仪表盘） |
 | GET | `/api/reports/{id}/outcomes` | 上一份日报建议复盘 |
 | GET | `/api/reports/{id}/rebalance-simulation` | 按报告示意金额模拟调仓 |
 
@@ -301,7 +305,7 @@ bash scripts/dev.sh    # 或 scripts/dev.ps1
 ```
 
 ```bash
-cd apps/api && ./.venv/Scripts/python.exe -m pytest tests -v   # 当前约 64 项
+cd apps/api && ./.venv/Scripts/python.exe -m pytest tests -v   # 当前约 71 项
 cd apps/web && npm run lint && npm run typecheck && npm run build
 ```
 

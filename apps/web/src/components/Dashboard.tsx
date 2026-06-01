@@ -7,6 +7,7 @@ import {
   BookMarked,
   BrainCircuit,
   History,
+  LayoutDashboard,
   LockKeyhole,
   Sun,
   Table2,
@@ -16,6 +17,8 @@ import type {
   AnalysisMode,
   FundProfile,
   Holding,
+  HoldingFieldWarning,
+  HoldingListDiff,
   InvestorProfile,
   Report,
 } from "@/lib/api";
@@ -41,6 +44,8 @@ import { FundProfilePanel } from "@/components/FundProfilePanel";
 import { HistoryRail } from "@/components/HistoryRail";
 import { HoldingTable } from "@/components/HoldingTable";
 import { JobStatusFloat } from "@/components/JobStatusFloat";
+import { mergeHoldingsWithPrevious } from "@/lib/holdingReview";
+import { PortfolioDashboard } from "@/components/PortfolioDashboard";
 import { PortfolioSummaryCard } from "@/components/PortfolioSummaryCard";
 import { ReportPanel } from "@/components/ReportPanel";
 import { RiskControls } from "@/components/RiskControls";
@@ -67,7 +72,7 @@ const defaultProfile: InvestorProfile = {
   avoid_chasing: true,
 };
 
-type TabId = "today" | "profiles" | "history";
+type TabId = "today" | "dashboard" | "profiles" | "history";
 
 const tabs: Array<{
   id: TabId;
@@ -82,9 +87,15 @@ const tabs: Array<{
     icon: <Sun size={17} />,
   },
   {
+    id: "dashboard",
+    label: "仪表盘",
+    description: "资产走势与持仓分布",
+    icon: <LayoutDashboard size={17} />,
+  },
+  {
     id: "profiles",
     label: "基金档案",
-    description: "持仓总览与详情建档",
+    description: "详情建档与待补全",
     icon: <BookMarked size={17} />,
   },
   {
@@ -110,6 +121,9 @@ export function Dashboard() {
   const [reports, setReports] = useState<Report[]>([]);
   const [profiles, setProfiles] = useState<FundProfile[]>([]);
   const [portfolioSummary, setPortfolioSummary] = useState<PortfolioSummary | null>(null);
+  const [holdingWarnings, setHoldingWarnings] = useState<HoldingFieldWarning[]>([]);
+  const [holdingDiffs, setHoldingDiffs] = useState<HoldingListDiff[]>([]);
+  const [previousHoldings, setPreviousHoldings] = useState<Holding[]>([]);
   const [detailText, setDetailText] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [isParsing, setIsParsing] = useState(false);
@@ -198,6 +212,16 @@ export function Dashboard() {
       const result = await parseOcr(formData);
       setRawText(result.raw_text);
       setHoldings(result.holdings);
+      setHoldingWarnings(result.holding_warnings ?? []);
+      setHoldingDiffs(result.holding_diffs ?? []);
+      setPreviousHoldings(result.previous_holdings ?? []);
+      if (result.portfolio_summary) {
+        setPortfolioSummary(result.portfolio_summary);
+      }
+      const warningHint =
+        (result.warning_count ?? 0) > 0
+          ? `有 ${result.warning_count} 处已高亮，请优先核对负号。`
+          : "请在下方校对持仓。";
       if (result.profile_sync && (result.profile_sync.updated || result.profile_sync.created)) {
         await loadPortfolioSummary();
         const syncParts = [];
@@ -207,11 +231,11 @@ export function Dashboard() {
         if (result.profile_sync.created) {
           syncParts.push(`新建 ${result.profile_sync.created} 条`);
         }
-        setMessage(`识别完成，基金档案已同步（${syncParts.join("，")}）。请在下方校对持仓。`);
+        setMessage(`识别完成，档案已同步（${syncParts.join("，")}）。${warningHint}`);
       } else {
         setMessage(
           result.error ??
-            (result.holdings.length ? "识别完成，请在下方校对持仓。" : "未识别到基金代码，可以手动新增持仓。"),
+            (result.holdings.length ? `识别完成。${warningHint}` : "未识别到基金代码，可以手动新增持仓。"),
         );
       }
     } catch (error) {
@@ -436,7 +460,17 @@ export function Dashboard() {
                     <Table2 size={18} className="text-blue-600" />
                     持仓校对
                   </div>
-                  <HoldingTable holdings={holdings} onChange={setHoldings} />
+                  <HoldingTable
+                    holdings={holdings}
+                    onChange={setHoldings}
+                    warnings={holdingWarnings}
+                    diffs={holdingDiffs}
+                    canApplyPreviousStructure={previousHoldings.length > 0}
+                    onApplyPreviousStructure={() => {
+                      setHoldings(mergeHoldingsWithPrevious(previousHoldings, holdings));
+                      setMessage("已沿用昨日基金列表，并保留本次 OCR 的金额与收益。请再扫一眼高亮格子。");
+                    }}
+                  />
                 </div>
               ) : null}
               <div ref={reportSectionRef} className="min-w-0">
@@ -445,6 +479,8 @@ export function Dashboard() {
               </div>
             </div>
           ) : null}
+
+          {activeTab === "dashboard" ? <PortfolioDashboard /> : null}
 
           {activeTab === "profiles" ? (
             <FundProfilePanel
@@ -504,7 +540,7 @@ function TabNav({
 }) {
   return (
     <div className="glass-panel mb-5 overflow-x-auto rounded-[24px] p-2">
-      <div className="grid min-w-[480px] grid-cols-3 gap-2">
+      <div className="grid min-w-[640px] grid-cols-4 gap-2">
         {tabs.map((tab) => {
           const active = tab.id === activeTab;
           return (
