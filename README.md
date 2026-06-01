@@ -63,10 +63,10 @@ docs            项目文档（含 AI 上下文）
 cp .env.example .env
 ```
 
-编辑 `.env`，填入 DeepSeek 控制台复制的**真实** API Key（不要用模板里的 `sk-your-deepseek-key` 占位符，否则会 401）：
+编辑 `.env`，将 DeepSeek 控制台复制的 API Key 填入 `FUND_AI_DEEPSEEK_API_KEY`（勿提交到 Git）：
 
 ```text
-FUND_AI_DEEPSEEK_API_KEY=sk-xxxxxxxx
+FUND_AI_DEEPSEEK_API_KEY=
 FUND_AI_DEEPSEEK_MODEL=deepseek-v4-pro
 FUND_AI_DEEPSEEK_MODEL_FAST=deepseek-v4-flash
 FUND_AI_DEEPSEEK_TIMEOUT_SECONDS=300

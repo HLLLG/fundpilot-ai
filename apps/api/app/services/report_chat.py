@@ -32,7 +32,7 @@ REPORT_CHAT_MAX_TOKENS = 4096
 OFFLINE_REPLY = (
     "当前未配置有效的 DeepSeek API Key，无法在线追问。"
     "请在项目根目录 `.env` 中设置真实的 `FUND_AI_DEEPSEEK_API_KEY`（不要使用 "
-    "`.env.example` 里的 sk-your-deepseek-key 占位符），保存后重启 API。"
+    "`.env` 中填入真实 Key），保存后重启 API。"
     "在此之前可先查看上方日报中的组合建议、逐基金建议与风险提醒。"
 )
 

@@ -41,10 +41,9 @@ def test_execute_fetch_market_news(monkeypatch):
 
 
 def test_generate_with_tools_parses_final_json(monkeypatch):
-    monkeypatch.setenv(
-        "FUND_AI_DEEPSEEK_API_KEY",
-        "sk-1234567890abcdef1234567890abcdef",
-    )
+    from tests.conftest import PYTEST_VALID_DEEPSEEK_KEY
+
+    monkeypatch.setenv("FUND_AI_DEEPSEEK_API_KEY", PYTEST_VALID_DEEPSEEK_KEY)
     from app.config import refresh_settings
 
     refresh_settings()

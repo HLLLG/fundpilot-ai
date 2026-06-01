@@ -37,7 +37,7 @@ def format_deepseek_http_error(exc: httpx.HTTPStatusError) -> str:
         return (
             "DeepSeek API 认证失败（401）：请检查项目根目录 `.env` 中的 "
             "`FUND_AI_DEEPSEEK_API_KEY` 是否为控制台复制的真实 Key（不是 "
-            "`.env.example` 里的 sk-your-deepseek-key 占位符）。修改后需重启 API。"
+            "`.env` 中填入真实 Key 并重启 API。"
         )
     if status == 402:
         return "DeepSeek 账户余额不足（402），请充值后再试。"
