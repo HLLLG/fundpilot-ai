@@ -20,10 +20,12 @@ from app.models import (
     NewsItem,
     Report,
     RiskAssessment,
+    TopicBrief,
 )
 from app.services.analysis_runtime import AnalysisRuntime, resolve_analysis_runtime
 from app.services.holding_metrics import HOLDING_RETURN_SEMANTICS, holding_analysis_payload
 from app.services.news_service import NewsService, _dedupe_news
+from app.services.news_summarizer import summarize_all_topics
 from app.services.analysis_facts import build_analysis_facts
 from app.services.news_citation import apply_news_citation_guards
 from app.services.recommendation_guard import apply_recommendation_guards
@@ -79,6 +81,8 @@ class DeepSeekClient:
             request.holdings,
             max_topics=runtime.news_max_topics,
         )
+        topic_briefs = _build_topic_briefs(market_news, self.settings)
+        initial_news_count = len(market_news)
 
         if not self.settings.deepseek_configured:
             return _offline_report(
@@ -86,6 +90,7 @@ class DeepSeekClient:
                 risk,
                 snapshots,
                 market_news=market_news,
+                topic_briefs=topic_briefs,
             )
 
         try:
@@ -94,21 +99,33 @@ class DeepSeekClient:
                 risk,
                 snapshots,
                 market_news,
+                topic_briefs,
                 runtime,
             )
+            if len(market_news) > initial_news_count:
+                topic_briefs = _build_topic_briefs(market_news, self.settings)
             parsed = judge_parsed_report(parsed, request, risk, snapshots, runtime)
             fallback = _offline_report(
                 request,
                 risk,
                 snapshots,
                 market_news=market_news,
+                topic_briefs=topic_briefs,
             )
             portfolio_recs, fund_recs = _finalize_recommendations(
-                parsed, fallback, request, risk, market_news
+                parsed, fallback, request, risk, market_news, topic_briefs
             )
             facts = build_analysis_facts(
-                request.holdings, risk, snapshots, request.profile
+                request.holdings,
+                risk,
+                snapshots,
+                request.profile,
+                topic_briefs,
             )
+            caveats = _user_facing_caveats(
+                _non_empty_list(parsed.get("caveats"), fallback.caveats)
+            )
+            caveats = _append_news_pipeline_caveats(caveats, topic_briefs, market_news)
             return Report(
                 title=parsed.get("title", "每日基金操作日报"),
                 risk=risk,
@@ -116,12 +133,11 @@ class DeepSeekClient:
                 snapshots=snapshots,
                 market_context=[],
                 market_news=market_news,
+                topic_briefs=topic_briefs,
                 fund_recommendations=fund_recs,
                 summary=parsed.get("summary") or fallback.summary,
                 recommendations=portfolio_recs,
-                caveats=_user_facing_caveats(
-                    _non_empty_list(parsed.get("caveats"), fallback.caveats)
-                ),
+                caveats=caveats,
                 provider=runtime.model,
                 analysis_facts=facts,
             )
@@ -131,6 +147,7 @@ class DeepSeekClient:
                 risk,
                 snapshots,
                 market_news=market_news,
+                topic_briefs=topic_briefs,
             )
             fallback.summary = (
                 f"{fallback.summary}\n\nDeepSeek 调用超时：{exc}。"
@@ -145,6 +162,7 @@ class DeepSeekClient:
                 risk,
                 snapshots,
                 market_news=market_news,
+                topic_briefs=topic_briefs,
             )
             fallback.summary = (
                 f"{fallback.summary}\n\nDeepSeek HTTP 错误：{exc.response.status_code} "
@@ -158,6 +176,7 @@ class DeepSeekClient:
                 risk,
                 snapshots,
                 market_news=market_news,
+                topic_briefs=topic_briefs,
             )
             fallback.summary = (
                 f"{fallback.summary}\n\nDeepSeek 调用失败，已使用本地规则生成报告：{exc}"
@@ -171,6 +190,7 @@ class DeepSeekClient:
         risk: RiskAssessment,
         snapshots: list[FundSnapshot],
         prefetched_news: list[NewsItem],
+        topic_briefs: list[TopicBrief],
         runtime: AnalysisRuntime,
     ) -> tuple[dict, list[NewsItem]]:
         collected: list[NewsItem] = list(prefetched_news)
@@ -180,7 +200,9 @@ class DeepSeekClient:
             {
                 "role": "user",
                 "content": json.dumps(
-                    _user_payload(request, risk, snapshots, prefetched_news),
+                    _user_payload(
+                        request, risk, snapshots, prefetched_news, topic_briefs
+                    ),
                     ensure_ascii=False,
                 ),
             },
@@ -296,7 +318,8 @@ def _system_prompt(news_enabled: bool) -> str:
     )
     if news_enabled:
         base += (
-            "用户消息中 prefetched_news 已预拉东方财富新闻（含 is_today 标记）；"
+            "用户消息中 topic_briefs 为按主题预摘要（优先阅读），prefetched_news 为原始出处列表；"
+            "利好/利空标题须能在 prefetched_news 或 topic_briefs.points.source_titles 中找到对应。"
             "优先采用当日新闻，前几日仅作背景并标注日期，避免用旧闻主导结论。"
             "如需补充可调用 fetch_market_news，但不要重复拉取已有主题。"
         )
@@ -306,13 +329,40 @@ def _system_prompt(news_enabled: bool) -> str:
     return base
 
 
+def _build_topic_briefs(
+    market_news: list[NewsItem],
+    settings: object | None = None,
+) -> list[TopicBrief]:
+    resolved = settings or get_settings()
+    if not market_news or not getattr(resolved, "news_summarize", True):
+        return []
+    return summarize_all_topics(market_news, resolved)  # type: ignore[arg-type]
+
+
+def _append_news_pipeline_caveats(
+    caveats: list[str],
+    topic_briefs: list[TopicBrief],
+    market_news: list[NewsItem],
+) -> list[str]:
+    result = list(caveats)
+    if market_news and not topic_briefs and get_settings().news_summarize:
+        result.append("新闻主题摘要未生成（已回退为标题列表），结论请结合 prefetched_news 人工核对。")
+    elif topic_briefs and any(brief.provider == "rule-fallback" for brief in topic_briefs):
+        result.append("部分新闻主题为规则摘要（模型不可用或超时），请以原始新闻标题为准交叉验证。")
+    return result
+
+
 def _user_payload(
     request: AnalysisRequest,
     risk: RiskAssessment,
     snapshots: list[FundSnapshot],
     prefetched_news: list[NewsItem],
+    topic_briefs: list[TopicBrief] | None = None,
 ) -> dict:
-    facts = build_analysis_facts(request.holdings, risk, snapshots, request.profile)
+    briefs = topic_briefs or []
+    facts = build_analysis_facts(
+        request.holdings, risk, snapshots, request.profile, briefs
+    )
     return {
         "today": datetime.now().date().isoformat(),
         "analysis_session": "trading_day_pre_close",
@@ -324,12 +374,13 @@ def _user_payload(
         "fund_snapshots": [snapshot.model_dump() for snapshot in snapshots],
         "ocr_text": request.ocr_text,
         "prefetched_news": [item.model_dump() for item in prefetched_news],
+        "topic_briefs": [item.model_dump(mode="json") for item in briefs],
         "requirements": [
             "analysis_facts 为系统计算的只读事实，不得改写其中任何数字",
             "输出 title、summary、fund_recommendations、caveats 四个字段",
             "fund_recommendations 每只基金恰好 1 条",
             "每条字段：fund_code、fund_name、action、amount_yuan（可选）、amount_note（可选）、news_bullish（利好标题数组）、news_bearish（利空/风险标题数组）、points（1-3 条，每条≤60字）",
-            "news_bullish/news_bearish 必须来自 prefetched_news 或工具结果，注明日期；无则写「暂无明确利好/利空」",
+            "优先依据 topic_briefs 理解板块与宏观背景；news_bullish/news_bearish 须来自 prefetched_news 标题或 topic_briefs.points.source_titles；无则写「暂无明确利好/利空」",
             "收盘前决策：action 仅限 观察/暂停追涨/分批加仓/减仓评估/风控复核 五选一",
             "若 risk.suggested_action 为 risk_review 或 level 为 high，禁止给出加仓类 action",
             "涉及加仓/减仓须给 amount_yuan 或 amount_note（结合 holding_amount 与 concentration_limit_percent）",
@@ -581,6 +632,7 @@ def _finalize_recommendations(
     request: AnalysisRequest,
     risk: RiskAssessment,
     market_news: list[NewsItem] | None = None,
+    topic_briefs: list[TopicBrief] | None = None,
 ) -> tuple[list[str], list[FundRecommendation]]:
     raw_lines = parsed.get("recommendations")
     if isinstance(raw_lines, list) and raw_lines:
@@ -601,11 +653,13 @@ def _finalize_recommendations(
     if _response_incomplete(parsed):
         fund_recs = list(fallback.fund_recommendations)
 
-    fund_recs = enrich_fund_recommendations(fund_recs, request, market_news)
+    fund_recs = enrich_fund_recommendations(
+        fund_recs, request, market_news, topic_briefs
+    )
     portfolio, fund_recs = apply_recommendation_guards(
         fund_recs, portfolio, request, risk, market_news
     )
-    fund_recs = apply_news_citation_guards(fund_recs, market_news)
+    fund_recs = apply_news_citation_guards(fund_recs, market_news, topic_briefs)
     return portfolio, fund_recs
 
 
@@ -636,6 +690,7 @@ def _offline_report(
     risk: RiskAssessment,
     snapshots: list[FundSnapshot],
     market_news: list[NewsItem] | None = None,
+    topic_briefs: list[TopicBrief] | None = None,
 ) -> Report:
     recommendations = []
     if risk.suggested_action == "risk_review":
@@ -647,6 +702,7 @@ def _offline_report(
         recommendations.append(alert.message)
 
     news = market_news or []
+    briefs = topic_briefs if topic_briefs is not None else _build_topic_briefs(news)
     total_amount = sum(holding.holding_amount for holding in request.holdings) or 1
     fund_recommendations = [
         build_offline_fund_recommendation(
@@ -669,7 +725,9 @@ def _offline_report(
         risk,
         news,
     )
-    fund_recommendations = apply_news_citation_guards(fund_recommendations, news)
+    fund_recommendations = apply_news_citation_guards(
+        fund_recommendations, news, briefs
+    )
 
     caveats = [
         "本报告仅用于个人投研辅助，不构成投资建议。",
@@ -677,8 +735,11 @@ def _offline_report(
     ]
     if not news and get_settings().news_enabled:
         caveats.append("本次未能拉取到有效新闻条目，政策与资金面判断请结合公开信息人工复核。")
+    caveats = _append_news_pipeline_caveats(caveats, briefs, news)
 
-    facts = build_analysis_facts(request.holdings, risk, snapshots, request.profile)
+    facts = build_analysis_facts(
+        request.holdings, risk, snapshots, request.profile, briefs
+    )
     return Report(
         title="每日基金操作日报",
         risk=risk,
@@ -686,10 +747,16 @@ def _offline_report(
         snapshots=snapshots,
         market_context=[],
         market_news=news,
+        topic_briefs=briefs,
         summary=(
             f"本地规则评估：组合加权收益率 {risk.weighted_return_percent:.2f}%，"
             f"风险等级为 {risk.level}。"
-            + (f" 已抓取 {len(news)} 条近期新闻供参考。" if news else "")
+            + (f" 已抓取 {len(news)} 条近期新闻" if news else "")
+            + (
+                f"（{len(briefs)} 个主题摘要）。"
+                if briefs
+                else ("供参考。" if news else "")
+            )
         ),
         fund_recommendations=fund_recommendations,
         recommendations=recommendations,

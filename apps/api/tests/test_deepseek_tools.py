@@ -140,6 +140,7 @@ def test_generate_with_tools_parses_final_json(monkeypatch):
         ),
         [],
         prefetched,
+        [],
         runtime,
     )
 

@@ -9,6 +9,7 @@ import { ReportDiffPanel } from "@/components/ReportDiffPanel";
 import { RebalanceSimulationPanel } from "@/components/RebalanceSimulationPanel";
 import { ReportExecutiveSummary } from "@/components/ReportExecutiveSummary";
 import { ReportFactsPanel } from "@/components/ReportFactsPanel";
+import { ReportNewsBriefPanel } from "@/components/ReportNewsBriefPanel";
 import { ReportOutcomesPanel } from "@/components/ReportOutcomesPanel";
 import { StatusPill } from "@/components/StatusPill";
 
@@ -317,9 +318,15 @@ export function ReportPanel({ report }: ReportPanelProps) {
         </div>
       ) : null}
 
+      {report.topic_briefs && report.topic_briefs.length > 0 ? (
+        <div className="mt-5">
+          <ReportNewsBriefPanel briefs={report.topic_briefs} />
+        </div>
+      ) : null}
+
       {report.market_news.length > 0 ? (
         <div className="mt-5 rounded-[24px] bg-white p-5 shadow-sm">
-          <div className="mb-4 text-sm font-black text-slate-950">已抓取新闻（优先当日）</div>
+          <div className="mb-4 text-sm font-black text-slate-950">新闻原文出处（优先当日）</div>
           <div className="space-y-3">
             {report.market_news.map((item, index) => (
               <div

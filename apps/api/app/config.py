@@ -40,6 +40,12 @@ class Settings(BaseSettings):
     news_max_topics: int = 5
     news_per_topic: int = 5
     news_tool_max_rounds: int = 3
+    news_sources: str = "eastmoney,announcement,macro"
+    news_summarize: bool = True
+    news_summarize_model: str | None = None
+    news_summarize_max_points: int = 5
+    news_summarize_timeout_seconds: float = 60.0
+    news_macro_topic: str = "上证指数"
 
     model_config = SettingsConfigDict(
         env_file=PROJECT_ROOT / ".env",
@@ -67,6 +73,18 @@ class Settings(BaseSettings):
     @property
     def deepseek_configured(self) -> bool:
         return bool(self.deepseek_api_key)
+
+    @property
+    def news_source_set(self) -> set[str]:
+        return {
+            part.strip().lower()
+            for part in self.news_sources.split(",")
+            if part.strip()
+        }
+
+    @property
+    def resolved_news_summarize_model(self) -> str:
+        return self.news_summarize_model or self.deepseek_model_fast
 
     @property
     def cors_origin_list(self) -> list[str]:

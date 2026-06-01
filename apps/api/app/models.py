@@ -75,6 +75,26 @@ class NewsItem(BaseModel):
     is_today: bool = False
 
 
+NewsSentiment = Literal["bullish", "bearish", "neutral"]
+
+
+class TopicBriefPoint(BaseModel):
+    headline: str
+    sentiment: NewsSentiment = "neutral"
+    is_today: bool = False
+    source_titles: list[str] = Field(default_factory=list)
+    source_urls: list[str] = Field(default_factory=list)
+
+
+class TopicBrief(BaseModel):
+    topic: str
+    summary: str
+    points: list[TopicBriefPoint] = Field(default_factory=list)
+    news_count: int = 0
+    summarized_at: datetime | None = None
+    provider: str = "deepseek-flash"
+
+
 class FundProfile(BaseModel):
     fund_code: str = Field(..., min_length=6, max_length=6)
     fund_name: str
@@ -166,6 +186,7 @@ class Report(BaseModel):
     snapshots: list[FundSnapshot] = Field(default_factory=list)
     market_context: list[MarketItem] = Field(default_factory=list)
     market_news: list[NewsItem] = Field(default_factory=list)
+    topic_briefs: list[TopicBrief] = Field(default_factory=list)
     fund_recommendations: list[FundRecommendation] = Field(default_factory=list)
     summary: str
     recommendations: list[str]

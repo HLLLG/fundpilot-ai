@@ -58,9 +58,26 @@ def report_to_markdown(report: dict[str, Any]) -> str:
             lines.append(f"- {item}")
         lines.append("")
 
+    briefs = report.get("topic_briefs") or []
+    if briefs:
+        lines.extend(["## 主题要闻摘要", ""])
+        for brief in briefs:
+            topic = brief.get("topic", "")
+            summary = brief.get("summary", "")
+            lines.append(f"### {topic}")
+            lines.append("")
+            if summary:
+                lines.append(summary)
+                lines.append("")
+            for point in brief.get("points") or []:
+                sentiment = point.get("sentiment", "neutral")
+                headline = point.get("headline", "")
+                lines.append(f"- [{sentiment}] {headline}")
+            lines.append("")
+
     news = report.get("market_news") or []
     if news:
-        lines.extend(["## 相关新闻", ""])
+        lines.extend(["## 相关新闻（原文出处）", ""])
         for item in news:
             title = item.get("title", "")
             url = item.get("url")

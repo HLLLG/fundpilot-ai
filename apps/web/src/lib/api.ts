@@ -64,6 +64,23 @@ export type RiskAlert = {
   evidence: string;
 };
 
+export type TopicBriefPoint = {
+  headline: string;
+  sentiment: "bullish" | "bearish" | "neutral";
+  is_today: boolean;
+  source_titles: string[];
+  source_urls?: string[];
+};
+
+export type TopicBrief = {
+  topic: string;
+  summary: string;
+  points: TopicBriefPoint[];
+  news_count: number;
+  summarized_at?: string | null;
+  provider: string;
+};
+
 export type Report = {
   id: string;
   created_at: string;
@@ -103,6 +120,7 @@ export type Report = {
     snippet?: string | null;
     is_today?: boolean;
   }>;
+  topic_briefs?: TopicBrief[];
   fund_recommendations: Array<{
     fund_code: string;
     fund_name: string;

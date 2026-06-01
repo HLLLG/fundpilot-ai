@@ -34,6 +34,12 @@ class NewsService:
                 seen.add(topic)
                 topics.append(topic)
 
+        sources = self.settings.news_source_set
+        if holdings and "macro" in sources:
+            macro = self.settings.news_macro_topic.strip()
+            if macro and macro not in seen:
+                topics.insert(0, macro)
+
         return topics[:limit]
 
     def search(self, topic: str, limit: int | None = None) -> list[NewsItem]:
@@ -44,10 +50,15 @@ class NewsService:
         per_topic = limit if limit is not None else self.settings.news_per_topic
         per_topic = max(1, min(per_topic, 10))
 
+        sources = self.settings.news_source_set
         items: list[NewsItem] = []
-        if re.fullmatch(r"\d{6}", topic):
+
+        if re.fullmatch(r"\d{6}", topic) and "announcement" in sources:
             items.extend(self._from_fund_announcements(topic, per_topic))
-        items.extend(self._from_eastmoney(topic, per_topic * 2))
+
+        if "eastmoney" in sources or "macro" in sources:
+            items.extend(self._from_eastmoney(topic, per_topic * 2))
+
         ranked = _rank_news_by_recency(_dedupe_news(items))
         return ranked[:per_topic]
 
@@ -65,7 +76,8 @@ class NewsService:
         holdings: list[Holding],
         max_topics: int | None = None,
     ) -> list[NewsItem]:
-        return self.prefetch_topics(self.topics_from_holdings(holdings, max_topics=max_topics))
+        topics = self.topics_from_holdings(holdings, max_topics=max_topics)
+        return self.prefetch_topics(topics)
 
     def _from_eastmoney(self, topic: str, limit: int) -> list[NewsItem]:
         try:
@@ -91,7 +103,7 @@ class NewsService:
                     topic=topic,
                     title=str(title).strip(),
                     published_at=published,
-                    source=_optional_str(_cell(row, "文章来源", "mediaName")),
+                    source=_optional_str(_cell(row, "文章来源", "mediaName")) or "eastmoney",
                     url=_optional_str(_cell(row, "新闻链接", "url")),
                     snippet=_truncate(snippet),
                     is_today=_is_today(published, today),

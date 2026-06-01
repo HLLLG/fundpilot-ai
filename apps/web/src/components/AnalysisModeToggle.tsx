@@ -26,7 +26,7 @@ export function AnalysisModeToggle({ mode, onChange }: AnalysisModeToggleProps) 
           <span>
             快速
             <span className={`mt-0.5 block text-[10px] font-semibold ${mode === "fast" ? "text-amber-100" : "text-slate-400"}`}>
-              Flash · 仅预取新闻
+              Flash · 预取+主题摘要
             </span>
           </span>
         </button>
@@ -43,7 +43,7 @@ export function AnalysisModeToggle({ mode, onChange }: AnalysisModeToggleProps) 
           <span>
             深度
             <span className={`mt-0.5 block text-[10px] font-semibold ${mode === "deep" ? "text-blue-100" : "text-slate-400"}`}>
-              Pro · 可拉新闻 Tool
+              Pro · 摘要+新闻 Tool
             </span>
           </span>
         </button>

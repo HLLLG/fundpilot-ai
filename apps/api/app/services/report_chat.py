@@ -57,7 +57,7 @@ def _report_chat_system_prompt(
     )
     if news_tool_enabled:
         base += (
-            "日报中的 market_news 可能已过时；若用户追问最新动态、当日新闻或日报未覆盖的主题，"
+            "日报中含「主题要闻摘要」与「新闻原文出处」；若用户追问最新动态或日报未覆盖的主题，"
             "可调用 fetch_market_news 从东方财富检索，优先采用当日消息并标注日期。"
             "无需为每个问题都拉新闻，仅在信息不足时调用。"
         )

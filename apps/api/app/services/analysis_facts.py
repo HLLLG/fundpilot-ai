@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.models import FundSnapshot, Holding, InvestorProfile, RiskAssessment
+from app.models import FundSnapshot, Holding, InvestorProfile, RiskAssessment, TopicBrief
 from app.services.holding_metrics import (
     compute_estimated_daily_return_percent,
     holding_daily_return_is_estimated,
@@ -12,6 +12,7 @@ def build_analysis_facts(
     risk: RiskAssessment,
     snapshots: list[FundSnapshot],
     profile: InvestorProfile,
+    topic_briefs: list[TopicBrief] | None = None,
 ) -> dict:
     total_amount = sum(item.holding_amount for item in holdings) or 0.0
     snapshot_by_code = {item.fund_code: item for item in snapshots}
@@ -63,4 +64,13 @@ def build_analysis_facts(
         "alerts": [alert.model_dump() for alert in risk.alerts],
         "holdings": per_fund,
         "allowed_actions": ["观察", "暂停追涨", "分批加仓", "减仓评估", "风控复核"],
+        "news": {
+            "topic_brief_count": len(topic_briefs or []),
+            "today_point_count": sum(
+                1
+                for brief in topic_briefs or []
+                for point in brief.points
+                if point.is_today
+            ),
+        },
     }

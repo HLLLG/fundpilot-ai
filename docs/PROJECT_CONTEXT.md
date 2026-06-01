@@ -24,7 +24,7 @@
 | 仪表盘 | **仪表盘** Tab：`GET /api/portfolio/dashboard` — 资产/当日收益走势（`portfolio_daily_snapshots`）、持仓分布条 |
 | 持仓总览 | 基金档案 Tab：账户资产/当日收益/基金卡片；顶栏指标来自持久化数据 |
 | 风控 | 浮亏线、单只集中度、定投偏好、拒绝追高（`InvestorProfile`） |
-| 报告 | 组合摘要 + `fund_recommendations` + 新闻列表；`analysis_facts` 只读事实块；`recommendation_guard` + `news_citation` + 深度 `report_judge` |
+| 报告 | 组合摘要 + `fund_recommendations` + `topic_briefs`（Flash 按主题摘要）+ `market_news` 原文；`analysis_facts`；`recommendation_guard` + `news_citation` + 深度 `report_judge` |
 | 今日工作台 | 单 Tab：上传/校对/日报；报告首屏「三行结论」 |
 | 复盘/模拟 | `GET .../outcomes` 对比上一份建议；`GET .../rebalance-simulation` 示意调仓 |
 | 基金诊断 | AkShare 概况/累计收益 → 类型、费率、近1年收益、最大回撤 |
@@ -81,7 +81,8 @@ fundpilot-ai/
 │       ├── fund_profile.py / risk.py / fund_data.py
 │       ├── recommendation_guard.py / analysis_facts.py / news_citation.py
 │       ├── recommendation_outcomes.py / rebalance_simulator.py / report_judge.py
-│       ├── news_service.py / recommendations.py
+│       ├── news_service.py / news_summarizer.py / news_citation.py
+│       ├── recommendations.py
 │       ├── deepseek_client.py
 │       ├── analysis_runtime.py    # fast/deep 运行时参数
 │       ├── analyze_pipeline.py    # 同步分析入口
@@ -99,7 +100,7 @@ fundpilot-ai/
 │       ├── JobStatusFloat.tsx     # 右下角悬浮任务面板
 │       ├── AnalysisModeToggle.tsx / ReportDiffPanel.tsx
 │       ├── UploadDropzone / HoldingTable / RiskControls
-│       ├── ReportPanel / ReportExecutiveSummary / ReportFactsPanel / ReportOutcomesPanel
+│       ├── ReportPanel / ReportNewsBriefPanel / ReportExecutiveSummary / ReportFactsPanel
 │       ├── RebalanceSimulationPanel / ReportChatPanel / ChatMarkdown / HistoryRail / FundProfilePanel
 ├── uploads/
 ├── data/app.db
@@ -264,8 +265,11 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 
 ## 新闻与 DeepSeek
 
-- **预取：** `NewsService.prefetch_for_holdings`（两种模式都做）。
-- **Tool：** 仅深度模式且 `news_tool_max_rounds > 0` 时注册 `fetch_market_news`。
+- **数据源（`FUND_AI_NEWS_SOURCES`）：** `eastmoney`（东财 `stock_news_em`）、`announcement`（基金公告）、`macro`（宏观主题，默认「上证指数」）。
+- **预取：** `NewsService.prefetch_for_holdings` → `market_news`（标题 + ≤200 字 snippet + 链接）。
+- **按主题摘要：** `news_summarizer.summarize_all_topics`（Flash，每主题 1 次）→ `topic_briefs`；失败 → `rule-fallback`；关闭：`FUND_AI_NEWS_SUMMARIZE=false`。
+- **喂模型：** `_user_payload` 含 `topic_briefs` + `prefetched_news`；`news_citation` 校验利好/利空须命中原文标题或 `source_titles`。
+- **Tool：** 仅深度模式且 `news_tool_max_rounds > 0` 时注册 `fetch_market_news`；补拉后若条数增加会重新摘要。
 - **兜底：** JSON 解析失败 → `_offline_report` + `recommendations.enrich_*`。
 
 ---
@@ -292,6 +296,9 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | `FUND_AI_DEEPSEEK_TIMEOUT_SECONDS` | 300 | 读超时 |
 | `FUND_AI_NEWS_ENABLED` | true | 关闭则不注册 Tool |
 | `FUND_AI_NEWS_TOOL_MAX_ROUNDS` | 3 | Tool 轮数上限 |
+| `FUND_AI_NEWS_SOURCES` | eastmoney,announcement,macro | 新闻源 |
+| `FUND_AI_NEWS_SUMMARIZE` | true | Flash 按主题摘要 |
+| `FUND_AI_NEWS_MACRO_TOPIC` | 上证指数 | 宏观检索主题 |
 
 修改 `.env` 后需重启 API。
 
@@ -305,7 +312,7 @@ bash scripts/dev.sh    # 或 scripts/dev.ps1
 ```
 
 ```bash
-cd apps/api && ./.venv/Scripts/python.exe -m pytest tests -v   # 当前约 71 项
+cd apps/api && ./.venv/Scripts/python.exe -m pytest tests -v   # 当前约 78 项
 cd apps/web && npm run lint && npm run typecheck && npm run build
 ```
 
@@ -329,4 +336,5 @@ cd apps/web && npm run lint && npm run typecheck && npm run build
 | `README.md` | 安装、启动、环境变量、流程 |
 | `docs/PROJECT_CONTEXT.md` | 本文 |
 | `docs/design/2026-06-01-portfolio-holdings.md` | 持仓档案、总览同步、OCR 验收 |
+| `docs/design/2026-06-02-news-sources-and-topic-briefs.md` | 多源新闻 + 主题摘要设计 |
 | `.env.example` | 环境变量模板 |

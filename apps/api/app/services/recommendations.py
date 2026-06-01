@@ -3,7 +3,14 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from app.models import AnalysisRequest, FundRecommendation, Holding, InvestorProfile, NewsItem
+from app.models import (
+    AnalysisRequest,
+    FundRecommendation,
+    Holding,
+    InvestorProfile,
+    NewsItem,
+    TopicBrief,
+)
 from app.services.holding_metrics import compute_estimated_daily_return_percent
 
 _BULLISH_HINTS = ("涨", "拉升", "利好", "突破", "创新高", "增持", "流入", "涨停", "走强", "反弹")
@@ -73,6 +80,53 @@ def attach_sector_news(
     recommendation.news_bullish = bullish
     recommendation.news_bearish = bearish
     return recommendation
+
+
+def attach_news_from_briefs(
+    recommendation: FundRecommendation,
+    holding: Holding,
+    topic_briefs: list[TopicBrief],
+    market_news: list[NewsItem],
+) -> FundRecommendation:
+    brief = _find_brief_for_holding(holding, topic_briefs)
+    if brief is None:
+        return attach_sector_news(recommendation, holding, market_news)
+
+    bullish: list[str] = []
+    bearish: list[str] = []
+    for point in brief.points:
+        label = point.headline
+        for title in point.source_titles:
+            dated = f"{title}（{brief.topic}）"
+            if point.sentiment == "bearish":
+                if dated not in bearish:
+                    bearish.append(dated)
+            elif point.sentiment == "bullish":
+                if dated not in bullish:
+                    bullish.append(dated)
+            elif point.is_today and dated not in bullish:
+                bullish.append(f"{dated}（中性/待核实）")
+
+    if bullish or bearish:
+        recommendation.news_bullish = bullish[:3]
+        recommendation.news_bearish = bearish[:3]
+        return recommendation
+
+    return attach_sector_news(recommendation, holding, market_news)
+
+
+def _find_brief_for_holding(holding: Holding, topic_briefs: list[TopicBrief]) -> TopicBrief | None:
+    sector = holding.sector_name or ""
+    for brief in topic_briefs:
+        topic = brief.topic
+        if topic == holding.fund_code:
+            return brief
+        if sector and (topic in sector or sector in topic):
+            return brief
+        for token in ("人工智能", "电网设备", "半导体", "国防军工", "商业航天"):
+            if token in holding.fund_name and token in topic:
+                return brief
+    return None
 
 
 def classify_sector_news(
@@ -333,6 +387,7 @@ def enrich_fund_recommendations(
     items: list[FundRecommendation],
     request: AnalysisRequest,
     market_news: list[NewsItem] | None = None,
+    topic_briefs: list[TopicBrief] | None = None,
 ) -> list[FundRecommendation]:
     total_amount = sum(holding.holding_amount for holding in request.holdings) or 1
     holding_by_code = {h.fund_code: h for h in request.holdings}
@@ -353,7 +408,12 @@ def enrich_fund_recommendations(
                 copy.amount_yuan = amount_yuan
                 copy.amount_note = amount_note
             if market_news and not copy.news_bullish and not copy.news_bearish:
-                copy = attach_sector_news(copy, holding, market_news)
+                if topic_briefs:
+                    copy = attach_news_from_briefs(
+                        copy, holding, topic_briefs, market_news
+                    )
+                else:
+                    copy = attach_sector_news(copy, holding, market_news)
         enriched.append(copy)
     return merge_fund_recommendations(enriched)
 

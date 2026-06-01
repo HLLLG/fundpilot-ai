@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from app.models import FundRecommendation, NewsItem
+from app.models import FundRecommendation, NewsItem, TopicBrief
 
 _NO_NEWS_BULLISH = "暂无明确利好"
 _NO_NEWS_BEARISH = "暂无明确利空"
@@ -12,8 +12,9 @@ _PLACEHOLDER_MARKERS = ("暂无", "无明确", "未检索", "未能")
 def apply_news_citation_guards(
     fund_recs: list[FundRecommendation],
     market_news: list[NewsItem] | None,
+    topic_briefs: list[TopicBrief] | None = None,
 ) -> list[FundRecommendation]:
-    titles = _news_titles(market_news or [])
+    titles = _collect_citable_titles(market_news or [], topic_briefs or [])
     guarded: list[FundRecommendation] = []
     for rec in fund_recs:
         copy = rec.model_copy(deep=True)
@@ -23,8 +24,15 @@ def apply_news_citation_guards(
     return guarded
 
 
-def _news_titles(market_news: list[NewsItem]) -> list[str]:
-    return [item.title.strip() for item in market_news if item.title.strip()]
+def _collect_citable_titles(
+    market_news: list[NewsItem],
+    topic_briefs: list[TopicBrief],
+) -> list[str]:
+    titles = [item.title.strip() for item in market_news if item.title.strip()]
+    for brief in topic_briefs:
+        for point in brief.points:
+            titles.extend(title.strip() for title in point.source_titles if title.strip())
+    return titles
 
 
 def _sanitize_headlines(
