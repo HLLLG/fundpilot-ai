@@ -22,7 +22,7 @@ def resolve_analysis_runtime(settings: Settings, mode: AnalysisMode = "deep") ->
     if mode == "fast":
         return AnalysisRuntime(
             mode="fast",
-            model="deepseek-v4-flash",
+            model=settings.deepseek_model_fast,
             news_enabled=settings.news_enabled,
             news_max_topics=min(3, settings.news_max_topics),
             news_tool_max_rounds=0,

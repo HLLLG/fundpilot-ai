@@ -8,6 +8,12 @@ from typing import Any
 import httpx
 
 from app.config import get_settings
+from app.services.deepseek_http import (
+    deepseek_chat_url,
+    deepseek_request_headers,
+    deepseek_timeout,
+    format_deepseek_http_error,
+)
 from app.database import get_report, list_report_chat_messages, save_chat_message
 from app.models import AnalysisMode, ChatMessage
 from app.services.deepseek_client import (
@@ -18,14 +24,16 @@ from app.services.deepseek_client import (
 from app.services.deepseek_client import DeepSeekClient
 from app.services.news_service import NewsService
 from app.services.report_chat_runtime import resolve_report_chat_runtime
+from app.services.holding_metrics import HOLDING_RETURN_SEMANTICS
 from app.services.report_export import report_to_markdown
 
 REPORT_CHAT_MAX_TOKENS = 4096
 
 OFFLINE_REPLY = (
-    "当前未配置 DeepSeek API Key，无法在线追问。"
-    "请查看上方日报中的组合建议、逐基金建议与风险提醒；"
-    "配置 FUND_AI_DEEPSEEK_API_KEY 并重启 API 后可在此继续对话。"
+    "当前未配置有效的 DeepSeek API Key，无法在线追问。"
+    "请在项目根目录 `.env` 中设置真实的 `FUND_AI_DEEPSEEK_API_KEY`（不要使用 "
+    "`.env.example` 里的 sk-your-deepseek-key 占位符），保存后重启 API。"
+    "在此之前可先查看上方日报中的组合建议、逐基金建议与风险提醒。"
 )
 
 
@@ -43,6 +51,9 @@ def _report_chat_system_prompt(
         "若用户问及日报未覆盖的信息，应明确说明信息缺口并给出条件化分析思路。"
         "使用简洁中文，可用 Markdown 列表；单条回复尽量控制在 800 字以内。"
         "不要重复粘贴整份日报，针对问题作答即可。"
+        "持仓收益率语义：板块涨跌 sector_return_percent 为当日实时；持有收益率 holding_return_percent "
+        "多为昨日结算。当日基金涨跌若无 daily_return_percent，可用 "
+        "estimated_daily_return_percent（≈板块涨跌+持有收益率）近似，并说明为估算。"
     )
     if news_tool_enabled:
         base += (
@@ -52,7 +63,14 @@ def _report_chat_system_prompt(
         )
     else:
         base += "仅使用日报中已有新闻与数据作答，不要声称已获取日报之外的实时新闻。"
-    return base + "\n\n## 已生成日报\n\n" + report_markdown
+    semantics = "\n".join(f"- {key}: {text}" for key, text in HOLDING_RETURN_SEMANTICS.items())
+    return (
+        base
+        + "\n\n## 持仓收益率字段说明\n\n"
+        + semantics
+        + "\n\n## 已生成日报\n\n"
+        + report_markdown
+    )
 
 
 def _build_api_messages(
@@ -120,18 +138,10 @@ def _iter_stream_completion(
 
     with httpx.stream(
         "POST",
-        f"{settings.deepseek_base_url.rstrip('/')}/chat/completions",
-        headers={
-            "Authorization": f"Bearer {settings.deepseek_api_key}",
-            "Content-Type": "application/json",
-        },
+        deepseek_chat_url(settings),
+        headers=deepseek_request_headers(settings),
         json=payload,
-        timeout=httpx.Timeout(
-            connect=10,
-            read=settings.deepseek_timeout_seconds,
-            write=30,
-            pool=10,
-        ),
+        timeout=deepseek_timeout(settings),
     ) as response:
         response.raise_for_status()
         for line in response.iter_lines():
@@ -155,7 +165,7 @@ def iter_report_chat_completion(
     chat_mode: AnalysisMode = "fast",
 ) -> Iterator[str]:
     settings = get_settings()
-    if not settings.deepseek_api_key:
+    if not settings.deepseek_configured:
         yield OFFLINE_REPLY
         return
 
@@ -249,6 +259,10 @@ def stream_report_chat(
         ):
             assistant_parts.append(chunk)
             yield json.dumps({"type": "token", "content": chunk}, ensure_ascii=False)
+    except httpx.HTTPStatusError as exc:
+        error_text = format_deepseek_http_error(exc)
+        assistant_parts.append(error_text)
+        yield json.dumps({"type": "token", "content": error_text}, ensure_ascii=False)
     except httpx.HTTPError as exc:
         error_text = f"模型请求失败：{exc}"
         assistant_parts.append(error_text)

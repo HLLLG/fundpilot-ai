@@ -20,7 +20,7 @@ def resolve_report_chat_runtime(
     if mode == "fast":
         return ReportChatRuntime(
             mode="fast",
-            model="deepseek-v4-flash",
+            model=settings.deepseek_model_fast,
             news_tool_max_rounds=0,
         )
     tool_rounds = settings.news_tool_max_rounds if settings.news_enabled else 0

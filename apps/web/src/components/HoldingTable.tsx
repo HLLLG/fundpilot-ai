@@ -2,6 +2,47 @@
 
 import { Plus, Trash2 } from "lucide-react";
 import type { Holding } from "@/lib/api";
+import {
+  computeEstimatedDailyReturnPercent,
+  holdingDailyReturnIsEstimated,
+} from "@/lib/holdingMetrics";
+
+function EstimatedDailyReturnCell({ holding }: { holding: Holding }) {
+  const estimated = computeEstimatedDailyReturnPercent(holding);
+  const isEstimated = holdingDailyReturnIsEstimated(holding);
+
+  if (holding.daily_return_percent != null) {
+    return (
+      <div
+        className="w-32 rounded-xl border border-emerald-100 bg-emerald-50/80 px-3 py-2 text-sm font-medium text-emerald-800"
+        title="已填写明确当日收益率，不再使用估算"
+      >
+        {holding.daily_return_percent.toFixed(2)}%
+        <span className="mt-0.5 block text-[10px] font-semibold text-emerald-600">已填当日</span>
+      </div>
+    );
+  }
+
+  if (estimated == null) {
+    return (
+      <div className="w-32 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-400">
+        —
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="w-32 rounded-xl border border-amber-100 bg-amber-50/90 px-3 py-2 text-sm font-semibold text-amber-900"
+      title="估算当日收益率 ≈ 板块涨跌 + 持有收益率（昨日结算）"
+    >
+      {isEstimated ? `≈${estimated.toFixed(2)}%` : `${estimated.toFixed(2)}%`}
+      {isEstimated ? (
+        <span className="mt-0.5 block text-[10px] font-semibold text-amber-700">板块+持有</span>
+      ) : null}
+    </div>
+  );
+}
 
 type HoldingTableProps = {
   holdings: Holding[];
@@ -44,7 +85,9 @@ export function HoldingTable({ holdings, onChange }: HoldingTableProps) {
       <div className="mb-5 flex items-center justify-between gap-4">
         <div>
           <h2 className="text-xl font-black text-slate-950">持仓校对</h2>
-          <p className="mt-1 text-sm text-slate-500">OCR 只负责草稿，最终以你确认的表格为准。</p>
+          <p className="mt-1 text-sm text-slate-500">
+            OCR 只负责草稿，最终以你确认的表格为准。无「当日收益率」时，估算列 = 板块涨跌 + 持有收益率。
+          </p>
         </div>
         <button
           type="button"
@@ -57,7 +100,7 @@ export function HoldingTable({ holdings, onChange }: HoldingTableProps) {
       </div>
 
       <div className="max-w-full overflow-x-auto">
-        <table className="w-full min-w-[1280px] border-separate border-spacing-y-3">
+        <table className="w-full min-w-[1420px] border-separate border-spacing-y-3">
           <thead>
             <tr className="text-left text-xs font-bold uppercase text-slate-400">
               <th className="px-3">基金代码</th>
@@ -69,6 +112,9 @@ export function HoldingTable({ holdings, onChange }: HoldingTableProps) {
               <th className="px-3">板块涨跌</th>
               <th className="px-3">持有收益额</th>
               <th className="px-3">持有收益率</th>
+              <th className="px-3" title="无当日收益率时 ≈ 板块涨跌 + 持有收益率">
+                估算当日收益率
+              </th>
               <th className="px-3 text-right">操作</th>
             </tr>
           </thead>
@@ -184,6 +230,9 @@ export function HoldingTable({ holdings, onChange }: HoldingTableProps) {
                     className="w-28 rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400"
                     placeholder="如 2.74"
                   />
+                </td>
+                <td className="px-3 py-3">
+                  <EstimatedDailyReturnCell holding={holding} />
                 </td>
                 <td className="rounded-r-2xl px-3 py-3 text-right">
                   <button

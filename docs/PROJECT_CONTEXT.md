@@ -4,7 +4,7 @@
 >
 > **维护：** 功能或架构有实质变化时，同步更新「能力清单」「数据流」「API」「目录」「环境变量」。
 
-**文档版本：** 2026-05-31（异步分析 + 报告追问对话）
+**文档版本：** 2026-06-01（养基宝 OCR 增强 + 估算当日收益 + 追问 UI）
 
 ---
 
@@ -18,12 +18,14 @@
 
 | 类别 | 能力 |
 |------|------|
-| 输入 | 页面上传/粘贴 OCR；可选 PaddleOCR；基金档案补全 `000000` 占位码 |
+| 输入 | 养基宝总览 OCR（无代码草稿解析）；当日列为 `-` 时不填当日收益；`holding_metrics` 估算当日涨跌 |
+| 校对 | `HoldingTable` 含**估算当日收益率**（板块涨跌 + 持有收益率）；`lib/holdingMetrics.ts` |
+| 档案 | 页面上传/粘贴 OCR；可选 PaddleOCR；基金档案补全 `000000` 占位码 |
 | 风控 | 浮亏线、单只集中度、定投偏好、拒绝追高（`InvestorProfile`） |
 | 报告 | 组合摘要 + `fund_recommendations` + 新闻列表；离线规则兜底 |
 | 分析模式 | **快速**（Flash + 仅预取新闻）/ **深度**（Pro + 可选新闻 Tool） |
 | 体验 | 今日一键、报告 vs 昨日 diff、导出 Markdown、档案 JSON 导入导出 |
-| 报告追问 | 决策建议右侧 SSE 流式对话；快速 Flash / 深度 Pro+新闻 Tool；导出对话 Markdown |
+| 报告追问 | `ReportChatPanel` + `ChatMarkdown`（react-markdown）；SSE；快速/深度；导出对话 Markdown |
 | 异步分析 | `/api/analyze/async` 后台任务，右下角 `JobStatusFloat` 悬浮面板查看进度 |
 | 前端偏好 | localStorage：风控参数、分析模式、追问模式（`fundpilot-report-chat-mode`） |
 
@@ -65,7 +67,9 @@ fundpilot-ai/
 │   ├── lifespan.py          # 应用启动（仅 yield，无后台线程）
 │   ├── config.py / models.py / database.py
 │   └── services/
-│       ├── ocr_engine.py / ocr_parser.py
+│       ├── ocr_engine.py / ocr_parser.py   # 养基宝版式：当日占位、页脚截断、无符号金额
+│       ├── holding_metrics.py              # estimated_daily_return_percent
+│       ├── deepseek_http.py              # 鉴权头、401 友好错误
 │       ├── fund_profile.py / risk.py / fund_data.py
 │       ├── news_service.py / recommendations.py
 │       ├── deepseek_client.py
@@ -78,13 +82,13 @@ fundpilot-ai/
 │       ├── report_chat_export.py  # 对话 Markdown
 │       └── market_context.py      # 遗留，主流程未用
 ├── apps/web/src/
-│   ├── lib/api.ts / storage.ts / notifications.ts
+│   ├── lib/api.ts / storage.ts / holdingMetrics.ts / notifications.ts
 │   └── components/
 │       ├── Dashboard.tsx
 │       ├── JobStatusFloat.tsx     # 右下角悬浮任务面板
 │       ├── AnalysisModeToggle.tsx / ReportDiffPanel.tsx
 │       ├── UploadDropzone / HoldingTable / RiskControls
-│       ├── ReportPanel / ReportChatPanel / HistoryRail / FundProfilePanel
+│       ├── ReportPanel / ReportChatPanel / ChatMarkdown / HistoryRail / FundProfilePanel
 ├── uploads/
 ├── data/app.db
 ├── scripts/dev.sh / dev.ps1
@@ -201,7 +205,7 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 
 | 模型 | 要点 |
 |------|------|
-| **Holding** | 6 位代码、金额、持有/当日收益、板块 |
+| **Holding** | 6 位代码、金额、持有/当日收益、板块；模型侧见 `holding_analysis_payload` |
 | **InvestorProfile** | 稳健默认；浮亏 8%、集中度 35% |
 | **FundRecommendation** | action、amount_*、news_bullish/bearish、points |
 | **NewsItem** | topic、title、is_today |
@@ -211,6 +215,17 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | **ReportChatRequest** | message、**chat_mode**（fast \| deep） |
 
 占位码 `000000`：总览 OCR 无代码时，靠 `FundProfileService` 按名称匹配档案补全。
+
+### 养基宝收益率语义（传给 DeepSeek）
+
+| 字段 | 含义 |
+|------|------|
+| `sector_return_percent` | 关联板块**当日**实时涨跌 |
+| `holding_return_percent` | 持有收益率，多为**昨日结算** |
+| `daily_return_percent` | 明确当日基金收益率（有则优先） |
+| `estimated_daily_return_percent` | 无当日时 ≈ `sector_return_percent + holding_return_percent`（估算，须在报告中注明） |
+
+实现：`app/services/holding_metrics.py`；`deepseek_client._user_payload` 含 `holding_return_semantics`。
 
 ---
 
@@ -238,8 +253,9 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 
 | 变量 | 默认 | 含义 |
 |------|------|------|
-| `FUND_AI_DEEPSEEK_API_KEY` | — | 无则离线报告 |
+| `FUND_AI_DEEPSEEK_API_KEY` | — | 无/占位符则离线；校验见 `config.normalize_deepseek_api_key` |
 | `FUND_AI_DEEPSEEK_MODEL` | deepseek-v4-pro | 深度模式模型 |
+| `FUND_AI_DEEPSEEK_MODEL_FAST` | deepseek-v4-flash | 快速模式（日报/追问） |
 | `FUND_AI_DEEPSEEK_TIMEOUT_SECONDS` | 300 | 读超时 |
 | `FUND_AI_NEWS_ENABLED` | true | 关闭则不注册 Tool |
 | `FUND_AI_NEWS_TOOL_MAX_ROUNDS` | 3 | Tool 轮数上限 |
@@ -256,7 +272,7 @@ bash scripts/dev.sh    # 或 scripts/dev.ps1
 ```
 
 ```bash
-cd apps/api && ./.venv/Scripts/python.exe -m pytest tests -v   # 当前约 41 项
+cd apps/api && ./.venv/Scripts/python.exe -m pytest tests -v   # 当前约 49 项
 cd apps/web && npm run lint && npm run typecheck && npm run build
 ```
 
@@ -267,8 +283,9 @@ cd apps/web && npm run lint && npm run typecheck && npm run build
 1. 改 API：`models.py` → `main.py` → `api.ts` → 组件 → `tests/`。
 2. 改报告结构：同步 `deepseek_client` JSON、`recommendations`、`_offline_report`、`Report` 类型。
 3. 改异步流程：`job_store.py`（后端）→ `JobStatusFloat.tsx`（前端轮询）→ `Dashboard.tsx`（回调）。
-4. 改追问：`report_chat.py` / `report_chat_runtime.py` → `main.py` chat 路由 → `ReportChatPanel.tsx` → `tests/test_report_chat*.py`。
-5. 历史 MVP 计划：`docs/superpowers/plans/2026-05-31-remove-automation-async-float.md`（以代码为准）。
+4. 改追问：`report_chat.py` / `report_chat_runtime.py` → `main.py` chat 路由 → `ReportChatPanel.tsx` / `ChatMarkdown.tsx` → `tests/test_report_chat*.py`。
+5. 改 OCR/估算收益：`ocr_parser.py` → `holding_metrics.py` → `HoldingTable` / `holdingMetrics.ts` → `tests/test_ocr_parser.py`、`tests/fixtures/`。
+6. 历史 MVP 计划：`docs/superpowers/plans/2026-05-31-remove-automation-async-float.md`（以代码为准）。
 
 ---
 

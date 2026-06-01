@@ -240,7 +240,7 @@ export function ReportPanel({ report }: ReportPanelProps) {
           <Sparkles size={18} className="text-blue-600" />
           决策建议
         </div>
-        <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(280px,360px)]">
+        <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(360px,500px)]">
           <div className="min-w-0 space-y-3">
             {portfolioRecommendations.map((item, index) => (
               <div

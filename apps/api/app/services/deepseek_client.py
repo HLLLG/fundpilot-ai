@@ -7,6 +7,11 @@ from datetime import datetime
 import httpx
 
 from app.config import get_settings
+from app.services.deepseek_http import (
+    deepseek_chat_url,
+    deepseek_request_headers,
+    deepseek_timeout,
+)
 from app.models import (
     AnalysisRequest,
     FundRecommendation,
@@ -17,6 +22,7 @@ from app.models import (
     RiskAssessment,
 )
 from app.services.analysis_runtime import AnalysisRuntime, resolve_analysis_runtime
+from app.services.holding_metrics import HOLDING_RETURN_SEMANTICS, holding_analysis_payload
 from app.services.news_service import NewsService, _dedupe_news
 from app.services.recommendations import (
     build_offline_fund_recommendation,
@@ -70,7 +76,7 @@ class DeepSeekClient:
             max_topics=runtime.news_max_topics,
         )
 
-        if not self.settings.deepseek_api_key:
+        if not self.settings.deepseek_configured:
             return _offline_report(
                 request,
                 risk,
@@ -258,18 +264,10 @@ class DeepSeekClient:
             response_format=response_format,
         )
         response = httpx.post(
-            f"{self.settings.deepseek_base_url.rstrip('/')}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {self.settings.deepseek_api_key}",
-                "Content-Type": "application/json",
-            },
+            deepseek_chat_url(self.settings),
+            headers=deepseek_request_headers(self.settings),
             json=payload,
-            timeout=httpx.Timeout(
-                connect=10,
-                read=self.settings.deepseek_timeout_seconds,
-                write=30,
-                pool=10,
-            ),
+            timeout=deepseek_timeout(self.settings),
         )
         response.raise_for_status()
         return response.json()["choices"][0]["message"]
@@ -282,6 +280,10 @@ def _system_prompt(news_enabled: bool) -> str:
         f"当前分析时点约为 {now.strftime('%Y-%m-%d %H:%M')}，用户通常在交易日 14:30 左右上传养基宝截图，"
         "需要在 15:00 A 股收盘前给出当日是否加仓/减仓/观察的决策。"
         "必须结合持仓、当日收益、板块涨跌、集中度、净值快照与新闻（优先当日）做分析。"
+        "养基宝截图中：关联板块涨跌为当日实时值；持有收益率为昨日结算值。"
+        "若 holdings 中 daily_return_percent 为空，请用 estimated_daily_return_percent"
+        "（≈ sector_return_percent + holding_return_percent）近似当日基金涨跌，"
+        "并在 points 中注明为估算；勿与 holding_return_percent 重复当作当日涨跌。"
     )
     if news_enabled:
         base += (
@@ -305,7 +307,8 @@ def _user_payload(
         "today": datetime.now().date().isoformat(),
         "analysis_session": "trading_day_pre_close",
         "profile": request.profile.model_dump(),
-        "holdings": [holding.model_dump() for holding in request.holdings],
+        "holding_return_semantics": HOLDING_RETURN_SEMANTICS,
+        "holdings": [holding_analysis_payload(holding) for holding in request.holdings],
         "risk": risk.model_dump(),
         "fund_snapshots": [snapshot.model_dump() for snapshot in snapshots],
         "ocr_text": request.ocr_text,
@@ -318,7 +321,8 @@ def _user_payload(
             "收盘前决策：写清今日收盘前建议（观察/暂停加仓/分批加仓/减仓评估）及触发条件",
             "涉及加仓/减仓须给 amount_yuan 或 amount_note（结合 holding_amount 与 concentration_limit_percent）",
             "recommendations 可省略或仅 1 条组合级说明，禁止长新闻摘要堆砌",
-            "旧新闻仅作参考，当日 sector_return_percent 与 daily_return_percent 权重更高",
+            "旧新闻仅作参考；判断当日涨跌优先 daily_return_percent，否则用 estimated_daily_return_percent",
+            "引用当日涨跌时区分：板块 sector_return_percent、昨日结算 holding_return_percent、估算/实际当日收益",
             "基金代码 000000 须提示补全代码",
             "偏稳健，避免追涨，不做实盘交易指令",
         ],

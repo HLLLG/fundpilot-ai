@@ -1,4 +1,8 @@
+from pathlib import Path
+
 from app.services.ocr_parser import parse_holdings_from_text
+
+FIXTURES = Path(__file__).parent / "fixtures"
 
 
 def test_parse_fund_code_name_amount_and_return_from_ocr_text():
@@ -100,3 +104,52 @@ def test_parse_alipay_screenshot_without_fund_codes_as_editable_drafts():
     assert holdings[3].holding_return_percent == -7.65
     assert holdings[3].sector_name == "商业航天"
     assert holdings[3].sector_return_percent == -6.07
+
+
+def test_parse_yangjibao_when_daily_column_is_placeholder_dash():
+    text = (FIXTURES / "yangjibao_holdings_no_daily_ocr.txt").read_text(encoding="utf-8")
+
+    holdings = parse_holdings_from_text(text)
+
+    assert len(holdings) == 4
+    assert [holding.fund_name for holding in holdings] == [
+        "华夏中证电网设备..",
+        "华夏人工智能ETF.",
+        "易方达国防军工混..",
+        "银河创新成长混合A",
+    ]
+    assert holdings[0].holding_amount == 15075.46
+    assert holdings[0].daily_profit is None
+    assert holdings[0].daily_return_percent is None
+    assert holdings[0].holding_profit == 401.80
+    assert holdings[0].holding_return_percent == 2.74
+    assert holdings[0].sector_return_percent == -0.09
+    assert holdings[1].daily_profit is None
+    assert holdings[1].holding_profit == -83.96
+    assert holdings[1].holding_return_percent == -1.12
+    assert holdings[2].holding_amount == 1846.93
+    assert holdings[2].daily_profit is None
+    assert holdings[2].holding_profit == -153.07
+    assert holdings[2].holding_return_percent == -7.65
+    assert holdings[2].sector_name == "商业航天"
+    assert holdings[3].daily_profit is None
+    assert holdings[3].holding_profit == 63.51
+    assert holdings[3].holding_return_percent == 1.53
+    assert holdings[3].sector_return_percent == -3.88
+
+
+def test_parse_holding_profit_when_ocr_drops_minus_sign():
+    text = """
+    易方达国防军工混..
+    2.67%
+    153.07
+    ￥1,846.93
+    商业航天
+    -7.65%
+    """
+
+    holdings = parse_holdings_from_text(text)
+
+    assert len(holdings) == 1
+    assert holdings[0].holding_profit == -153.07
+    assert holdings[0].holding_return_percent == -7.65

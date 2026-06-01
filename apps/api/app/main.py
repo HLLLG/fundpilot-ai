@@ -44,8 +44,11 @@ app.add_middleware(
 
 
 @app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
+def health() -> dict[str, str | bool]:
+    return {
+        "status": "ok",
+        "deepseek_configured": settings.deepseek_configured,
+    }
 
 
 @app.post("/api/ocr")

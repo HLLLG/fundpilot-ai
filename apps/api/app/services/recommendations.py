@@ -4,6 +4,7 @@ import re
 from typing import Any
 
 from app.models import AnalysisRequest, FundRecommendation, Holding, InvestorProfile, NewsItem
+from app.services.holding_metrics import compute_estimated_daily_return_percent
 
 _BULLISH_HINTS = ("涨", "拉升", "利好", "突破", "创新高", "增持", "流入", "涨停", "走强", "反弹")
 _BEARISH_HINTS = (
@@ -140,6 +141,17 @@ def build_offline_fund_recommendation(
         points.append(
             f"关联板块当日 +{holding.sector_return_percent:.2f}%，避免追高，等待回落再考虑分批。"
         )
+    estimated_daily = compute_estimated_daily_return_percent(holding)
+    if (
+        estimated_daily is not None
+        and holding.daily_return_percent is None
+        and estimated_daily > 5
+        and action == "观察"
+    ):
+        action = "暂停追涨"
+        points.append(
+            f"估算当日涨跌约 +{estimated_daily:.2f}%（板块+昨日持有收益率），避免追涨。"
+        )
     elif (holding.holding_return_percent or holding.return_percent) < -5 and profile.prefer_dca:
         action = "分批加仓"
         points.append("持有收益偏弱且风格偏定投，仅考虑小额分批，不一次性补仓。")
@@ -148,11 +160,12 @@ def build_offline_fund_recommendation(
 
     sector = holding.sector_name or "未知板块"
     daily = "-" if holding.daily_profit is None else f"{holding.daily_profit:.2f}"
-    daily_return = (
-        "-"
-        if holding.daily_return_percent is None
-        else f"{holding.daily_return_percent:.2f}%"
-    )
+    if holding.daily_return_percent is not None:
+        daily_return = f"{holding.daily_return_percent:.2f}%"
+    elif estimated_daily is not None:
+        daily_return = f"≈{estimated_daily:.2f}%（板块+持有收益率估算）"
+    else:
+        daily_return = "-"
     holding_return = (
         "-"
         if holding.holding_return_percent is None

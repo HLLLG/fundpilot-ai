@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Download, Gauge, Loader2, MessageCircle, Send, Zap } from "lucide-react";
 import type { ReportChatMessage, ReportChatMode } from "@/lib/api";
+import { ChatMarkdown } from "@/components/ChatMarkdown";
 import { fetchReportChatHistory, fetchReportChatMarkdown, streamReportChat } from "@/lib/api";
 import { loadReportChatMode, saveReportChatMode } from "@/lib/storage";
 
@@ -157,7 +158,7 @@ export function ReportChatPanel({ reportId, reportTitle }: ReportChatPanelProps)
 
   return (
     <div
-      className="flex min-h-[420px] flex-col rounded-[20px] border border-slate-200 bg-slate-50/80"
+      className="flex h-[min(88vh,920px)] min-h-[680px] flex-col rounded-[20px] border border-slate-200 bg-slate-50/80 xl:min-h-[720px]"
       data-testid="report-chat-panel"
     >
       <div className="border-b border-slate-200 px-3 py-3">
@@ -220,7 +221,10 @@ export function ReportChatPanel({ reportId, reportTitle }: ReportChatPanelProps)
         </div>
       </div>
 
-      <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto px-3 py-3">
+      <div
+        ref={scrollRef}
+        className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-3 py-3"
+      >
         {isLoadingHistory ? (
           <div className="flex items-center justify-center gap-2 py-8 text-sm text-slate-500">
             <Loader2 size={16} className="animate-spin" />
@@ -229,23 +233,32 @@ export function ReportChatPanel({ reportId, reportTitle }: ReportChatPanelProps)
         ) : null}
 
         {!isLoadingHistory && messages.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-slate-200 bg-white/70 px-3 py-4 text-xs leading-5 text-slate-600">
+          <div className="rounded-xl border border-dashed border-slate-200 bg-white/70 px-3 py-4 text-xs leading-6 text-slate-600">
             针对上方决策建议继续提问。深度模式可在需要时调用东方财富新闻 Tool 补充最新信息。
           </div>
         ) : null}
 
-        {messages.map((message) => (
-          <div
-            key={message.id}
-            className={
-              message.role === "user"
-                ? "ml-6 rounded-2xl bg-blue-600 px-3 py-2 text-sm leading-6 text-white"
-                : "mr-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm leading-6 text-slate-700"
-            }
-          >
-            {message.content || (message.pending ? "思考中…" : "")}
-          </div>
-        ))}
+        {messages.map((message) =>
+          message.role === "user" ? (
+            <div
+              key={message.id}
+              className="ml-4 whitespace-pre-wrap rounded-2xl bg-blue-600 px-3.5 py-3.5 text-sm leading-7 text-white"
+            >
+              {message.content}
+            </div>
+          ) : (
+            <div
+              key={message.id}
+              className="mr-1 rounded-2xl border border-slate-200 bg-white px-4 py-3.5"
+            >
+              {message.content ? (
+                <ChatMarkdown content={message.content} />
+              ) : message.pending ? (
+                <p className="text-sm leading-7 text-slate-500">思考中…</p>
+              ) : null}
+            </div>
+          ),
+        )}
 
         {statusHint ? (
           <p className="text-center text-[11px] text-slate-500">{statusHint}</p>
