@@ -208,7 +208,9 @@ def parse_fund_recommendations_raw(raw: object) -> list[FundRecommendation]:
             continue
         fund_code = str(entry.get("fund_code", "")).strip()
         fund_name = str(entry.get("fund_name", "")).strip()
-        action = str(entry.get("action", "观察")).strip() or "观察"
+        from app.services.recommendation_guard import normalize_action_text
+
+        action = normalize_action_text(str(entry.get("action", "观察")))
         if not fund_code and not fund_name:
             continue
 

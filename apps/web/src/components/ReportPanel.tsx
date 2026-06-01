@@ -6,6 +6,10 @@ import type { Report, ReportDiff } from "@/lib/api";
 import { fetchReportDiff, fetchReportMarkdown } from "@/lib/api";
 import { ReportChatPanel } from "@/components/ReportChatPanel";
 import { ReportDiffPanel } from "@/components/ReportDiffPanel";
+import { RebalanceSimulationPanel } from "@/components/RebalanceSimulationPanel";
+import { ReportExecutiveSummary } from "@/components/ReportExecutiveSummary";
+import { ReportFactsPanel } from "@/components/ReportFactsPanel";
+import { ReportOutcomesPanel } from "@/components/ReportOutcomesPanel";
 import { StatusPill } from "@/components/StatusPill";
 
 type ReportPanelProps = {
@@ -29,6 +33,29 @@ const INTERNAL_CAVEAT_MARKERS = ["JSON 被截断", "无法解析为完整 JSON",
 
 function userFacingCaveats(caveats: string[]) {
   return caveats.filter((line) => !INTERNAL_CAVEAT_MARKERS.some((marker) => line.includes(marker)));
+}
+
+function FundDiagnosticHint({
+  fundCode,
+  snapshots,
+}: {
+  fundCode: string;
+  snapshots: Report["snapshots"];
+}) {
+  const match = snapshots.find((snapshot) => snapshot.fund_code === fundCode);
+  if (!match) {
+    return null;
+  }
+  const hints: string[] = [];
+  if (match.fund_type) hints.push(`类型 ${match.fund_type}`);
+  if (match.management_fee) hints.push(`管理费 ${match.management_fee}`);
+  if (match.return_1y_percent != null) hints.push(`近1年 ${match.return_1y_percent}%`);
+  if (match.max_drawdown_1y_percent != null)
+    hints.push(`最大回撤 ${match.max_drawdown_1y_percent}%`);
+  if (!hints.length) {
+    return null;
+  }
+  return <p className="mt-1 text-xs text-indigo-700">{hints.join(" · ")}</p>;
 }
 
 function navHintForFund(fundCode: string, snapshots: Report["snapshots"]): string | null {
@@ -71,6 +98,7 @@ function FundRecommendationCard({
         <StatusPill tone="blue">{item.action}</StatusPill>
       </div>
       {navHint ? <p className="mt-1.5 text-xs text-slate-500">{navHint}</p> : null}
+      <FundDiagnosticHint fundCode={item.fund_code} snapshots={snapshots} />
       {item.amount_note || item.amount_yuan != null ? (
         <div className="mt-2 rounded-xl bg-white/80 px-3 py-2 text-sm font-bold text-blue-800">
           {item.amount_note ??
@@ -234,6 +262,12 @@ export function ReportPanel({ report }: ReportPanelProps) {
       </div>
 
       {diff ? <ReportDiffPanel diff={diff} /> : null}
+
+      <ReportExecutiveSummary report={report} />
+
+      <ReportFactsPanel facts={report.analysis_facts} />
+      <ReportOutcomesPanel reportId={report.id} />
+      <RebalanceSimulationPanel reportId={report.id} />
 
       <div className="rounded-[24px] bg-white p-5 shadow-sm">
         <div className="mb-4 flex items-center gap-2 text-sm font-black text-slate-950">

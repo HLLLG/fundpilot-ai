@@ -1,15 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight,
   BadgeCheck,
   BookMarked,
   BrainCircuit,
-  Camera,
-  FileText,
   History,
   LockKeyhole,
+  Sun,
   Table2,
   TrendingUp,
 } from "lucide-react";
@@ -22,12 +21,14 @@ import type {
 } from "@/lib/api";
 import {
   exportFundProfiles,
+  fetchPortfolioSummary,
   importFundProfiles,
   listFundProfiles,
   listReports,
   parseFundProfile,
   parseOcr,
   startAnalyzeJob,
+  type PortfolioSummary,
 } from "@/lib/api";
 import { notifyDesktop } from "@/lib/notifications";
 import {
@@ -40,9 +41,11 @@ import { FundProfilePanel } from "@/components/FundProfilePanel";
 import { HistoryRail } from "@/components/HistoryRail";
 import { HoldingTable } from "@/components/HoldingTable";
 import { JobStatusFloat } from "@/components/JobStatusFloat";
+import { PortfolioSummaryCard } from "@/components/PortfolioSummaryCard";
 import { ReportPanel } from "@/components/ReportPanel";
 import { RiskControls } from "@/components/RiskControls";
 import { StatusPill } from "@/components/StatusPill";
+import { TodayWorkflowSteps } from "@/components/TodayWorkflowSteps";
 import { UploadDropzone } from "@/components/UploadDropzone";
 
 const sampleText = `华夏中证电网设备主题ETF发起式联接A
@@ -64,7 +67,7 @@ const defaultProfile: InvestorProfile = {
   avoid_chasing: true,
 };
 
-type TabId = "capture" | "profiles" | "analysis" | "history";
+type TabId = "today" | "profiles" | "history";
 
 const tabs: Array<{
   id: TabId;
@@ -73,22 +76,16 @@ const tabs: Array<{
   icon: React.ReactNode;
 }> = [
   {
-    id: "capture",
-    label: "截图识别",
-    description: "识别总览并校对持仓",
-    icon: <Camera size={17} />,
+    id: "today",
+    label: "今日",
+    description: "上传截图、校对、生成日报",
+    icon: <Sun size={17} />,
   },
   {
     id: "profiles",
     label: "基金档案",
-    description: "一次建档，后续自动匹配",
+    description: "持仓总览与详情建档",
     icon: <BookMarked size={17} />,
-  },
-  {
-    id: "analysis",
-    label: "分析报告",
-    description: "生成并查看每日操作建议",
-    icon: <FileText size={17} />,
   },
   {
     id: "history",
@@ -98,6 +95,12 @@ const tabs: Array<{
   },
 ];
 
+const riskLevelLabel = {
+  low: "低",
+  medium: "中",
+  high: "高",
+} as const;
+
 export function Dashboard() {
   const [file, setFile] = useState<File | null>(null);
   const [rawText, setRawText] = useState("");
@@ -106,24 +109,36 @@ export function Dashboard() {
   const [report, setReport] = useState<Report | null>(null);
   const [reports, setReports] = useState<Report[]>([]);
   const [profiles, setProfiles] = useState<FundProfile[]>([]);
+  const [portfolioSummary, setPortfolioSummary] = useState<PortfolioSummary | null>(null);
   const [detailText, setDetailText] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [isParsing, setIsParsing] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isProfiling, setIsProfiling] = useState(false);
-  const [activeTab, setActiveTab] = useState<TabId>("capture");
+  const [activeTab, setActiveTab] = useState<TabId>("today");
   const [analysisMode, setAnalysisMode] = useState<AnalysisMode>("deep");
   const [profileReady, setProfileReady] = useState(false);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const reportSectionRef = useRef<HTMLDivElement>(null);
+  const didHydrateReport = useRef(false);
 
-  const totalAmount = useMemo(
+  const sessionTotal = useMemo(
     () => holdings.reduce((sum, holding) => sum + Number(holding.holding_amount || 0), 0),
     [holdings],
   );
 
+  const totalAmount = portfolioSummary?.total_assets ?? (sessionTotal || null);
+  const dailyProfit = portfolioSummary?.daily_profit;
+  const displayReport = report ?? reports[0] ?? null;
+
   const loadHistory = async () => {
     try {
-      setReports(await listReports());
+      const items = await listReports();
+      setReports(items);
+      if (items.length > 0 && !didHydrateReport.current) {
+        didHydrateReport.current = true;
+        setReport(items[0]);
+      }
     } catch {
       setReports([]);
     }
@@ -137,12 +152,25 @@ export function Dashboard() {
     }
   };
 
+  const loadPortfolioSummary = async () => {
+    try {
+      const summary = await fetchPortfolioSummary();
+      setPortfolioSummary(summary);
+      if (summary.profiles?.length) {
+        setProfiles(summary.profiles);
+      }
+    } catch {
+      setPortfolioSummary(null);
+    }
+  };
+
   useEffect(() => {
     setProfile(loadInvestorProfile(defaultProfile));
     setAnalysisMode(loadAnalysisMode("deep"));
     setProfileReady(true);
     void loadHistory();
     void loadProfiles();
+    void loadPortfolioSummary();
   }, []);
 
   useEffect(() => {
@@ -170,10 +198,22 @@ export function Dashboard() {
       const result = await parseOcr(formData);
       setRawText(result.raw_text);
       setHoldings(result.holdings);
-      setMessage(
-        result.error ??
-          (result.holdings.length ? "识别完成，请在下方校对持仓。" : "未识别到基金代码，可以手动新增持仓。"),
-      );
+      if (result.profile_sync && (result.profile_sync.updated || result.profile_sync.created)) {
+        await loadPortfolioSummary();
+        const syncParts = [];
+        if (result.profile_sync.updated) {
+          syncParts.push(`更新 ${result.profile_sync.updated} 条`);
+        }
+        if (result.profile_sync.created) {
+          syncParts.push(`新建 ${result.profile_sync.created} 条`);
+        }
+        setMessage(`识别完成，基金档案已同步（${syncParts.join("，")}）。请在下方校对持仓。`);
+      } else {
+        setMessage(
+          result.error ??
+            (result.holdings.length ? "识别完成，请在下方校对持仓。" : "未识别到基金代码，可以手动新增持仓。"),
+        );
+      }
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "OCR 识别失败，请改用手动文本。");
     } finally {
@@ -210,8 +250,11 @@ export function Dashboard() {
   const handleJobComplete = async (completedReport: Report) => {
     setReport(completedReport);
     await loadHistory();
-    setActiveTab("analysis");
+    setActiveTab("today");
     setActiveJobId(null);
+    requestAnimationFrame(() => {
+      reportSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
     notifyDesktop("FundPilot 日报已生成", { body: completedReport.title });
     setMessage(
       analysisMode === "fast"
@@ -270,6 +313,7 @@ export function Dashboard() {
       const profileResult = await parseFundProfile(formData);
       setDetailText(profileResult.raw_text ?? "");
       await loadProfiles();
+      await loadPortfolioSummary();
       setActiveTab("profiles");
       setMessage(`基金档案已保存：${profileResult.fund_name}（${profileResult.fund_code}）`);
     } catch (error) {
@@ -325,8 +369,30 @@ export function Dashboard() {
             </p>
           </div>
           <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-1">
-            <MetricCard icon={<TrendingUp size={18} />} label="持仓总额" value={`¥${totalAmount.toLocaleString("zh-CN")}`} />
-            <MetricCard icon={<LockKeyhole size={18} />} label="风险底线" value={`${profile.max_drawdown_percent}%`} />
+            <MetricCard
+              icon={<TrendingUp size={18} />}
+              label="持仓总额"
+              value={
+                totalAmount !== null && totalAmount !== undefined
+                  ? `¥${totalAmount.toLocaleString("zh-CN")}`
+                  : "—"
+              }
+              hint={
+                dailyProfit !== null && dailyProfit !== undefined
+                  ? `当日 ${dailyProfit > 0 ? "+" : ""}${dailyProfit.toLocaleString("zh-CN")}`
+                  : undefined
+              }
+            />
+            <MetricCard
+              icon={<LockKeyhole size={18} />}
+              label="最新风险"
+              value={
+                displayReport
+                  ? `${riskLevelLabel[displayReport.risk.level]} · ${displayReport.risk.weighted_return_percent}%`
+                  : `底线 ${profile.max_drawdown_percent}%`
+              }
+              hint={displayReport ? "来自最近日报" : "生成日报后更新"}
+            />
             <MetricCard icon={<BadgeCheck size={18} />} label="日报数量" value={`${reports.length}`} />
           </div>
         </header>
@@ -341,8 +407,10 @@ export function Dashboard() {
         <TabNav activeTab={activeTab} onSelect={setActiveTab} />
 
         <div className="min-w-0 flex-1">
-          {activeTab === "capture" ? (
+          {activeTab === "today" ? (
             <div className="grid min-w-0 gap-6">
+              <PortfolioSummaryCard summary={portfolioSummary} />
+              <TodayWorkflowSteps hasHoldings={holdings.length > 0} hasReport={Boolean(displayReport)} />
               <div className="grid min-w-0 gap-6 lg:grid-cols-[0.9fr_1.1fr]">
                 <UploadDropzone
                   rawText={rawText}
@@ -371,35 +439,29 @@ export function Dashboard() {
                   <HoldingTable holdings={holdings} onChange={setHoldings} />
                 </div>
               ) : null}
+              <div ref={reportSectionRef} className="min-w-0">
+                <div className="mb-3 text-sm font-black text-slate-950">今日日报</div>
+                <ReportPanel report={report} />
+              </div>
             </div>
           ) : null}
 
           {activeTab === "profiles" ? (
             <FundProfilePanel
               profiles={profiles}
+              portfolioSummary={portfolioSummary}
               detailText={detailText}
               isBusy={isProfiling}
               onDetailTextChange={setDetailText}
               onFileSelect={handleProfileFile}
               onParseText={handleProfileText}
-              onRefresh={loadProfiles}
+              onRefresh={() => {
+                void loadProfiles();
+                void loadPortfolioSummary();
+              }}
               onExport={() => void handleExportProfiles()}
               onImport={(selectedFile) => void handleImportProfiles(selectedFile)}
             />
-          ) : null}
-
-          {activeTab === "analysis" ? (
-            <div className="flex min-w-0 flex-col gap-6">
-              <RiskControls
-                profile={profile}
-                analysisMode={analysisMode}
-                onAnalysisModeChange={setAnalysisMode}
-                onChange={setProfile}
-                onAnalyze={() => void handleAnalyze()}
-                isBusy={isSubmitting}
-              />
-              <ReportPanel report={report} />
-            </div>
           ) : null}
 
           {activeTab === "history" ? (
@@ -408,7 +470,10 @@ export function Dashboard() {
               onRefresh={loadHistory}
               onSelect={(selectedReport) => {
                 setReport(selectedReport);
-                setActiveTab("analysis");
+                setActiveTab("today");
+                requestAnimationFrame(() => {
+                  reportSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+                });
               }}
               onDeleted={(reportId) => {
                 if (report?.id === reportId) {
@@ -439,7 +504,7 @@ function TabNav({
 }) {
   return (
     <div className="glass-panel mb-5 overflow-x-auto rounded-[24px] p-2">
-      <div className="grid min-w-[640px] grid-cols-4 gap-2">
+      <div className="grid min-w-[480px] grid-cols-3 gap-2">
         {tabs.map((tab) => {
           const active = tab.id === activeTab;
           return (
@@ -479,10 +544,12 @@ function MetricCard({
   icon,
   label,
   value,
+  hint,
 }: {
   icon: React.ReactNode;
   label: string;
   value: string;
+  hint?: string;
 }) {
   return (
     <div className="glass-panel rounded-[24px] px-5 py-4">
@@ -491,6 +558,7 @@ function MetricCard({
         {label}
       </div>
       <div className="mt-2 text-2xl font-black text-slate-950">{value}</div>
+      {hint ? <div className="mt-1 text-xs font-semibold text-slate-500">{hint}</div> : null}
     </div>
   );
 }

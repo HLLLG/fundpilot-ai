@@ -21,13 +21,17 @@ from app.lifespan import app_lifespan
 from app.database import list_report_chat_messages
 from app.models import AnalysisRequest, FundProfile, ReportChatRequest
 from app.services.analyze_pipeline import run_analysis
+from app.database import get_portfolio_summary, save_portfolio_summary
 from app.services.fund_profile import FundProfileService, parse_profile_from_text
+from app.services.portfolio_parser import parse_portfolio_summary_from_text
 from app.services.job_store import create_analysis_job, get_job_response
 from app.services.ocr_engine import OcrEngine
 from app.services.ocr_parser import parse_holdings_from_text
 from app.services.report_diff import diff_reports
 from app.services.report_chat import stream_report_chat
 from app.services.report_chat_export import report_chat_to_markdown
+from app.services.rebalance_simulator import simulate_rebalance
+from app.services.recommendation_outcomes import build_recommendation_outcomes
 from app.services.report_export import report_to_markdown
 
 
@@ -83,12 +87,26 @@ async def parse_ocr(
                         "error": f"OCR 识别失败：{exc}",
                     }
 
-    holdings = FundProfileService().resolve_holdings(parse_holdings_from_text(text))
+    profile_service = FundProfileService()
+    holdings = profile_service.resolve_holdings(parse_holdings_from_text(text))
+    profile_sync = profile_service.sync_profiles_from_holdings(holdings).model_dump()
+
+    portfolio_summary = parse_portfolio_summary_from_text(text)
+    if portfolio_summary is not None:
+        portfolio_summary = portfolio_summary.model_copy(
+            update={"holding_count": len(holdings)}
+        )
+        save_portfolio_summary(portfolio_summary)
+
     return {
         "raw_text": text,
         "upload_path": str(upload_path) if upload_path else None,
         "holdings": [holding.model_dump() for holding in holdings],
         "cache_hit": cache_hit,
+        "profile_sync": profile_sync,
+        "portfolio_summary": (
+            portfolio_summary.model_dump(mode="json") if portfolio_summary else None
+        ),
     }
 
 
@@ -128,6 +146,38 @@ def report_detail(report_id: str) -> dict:
     if report is None:
         raise HTTPException(status_code=404, detail="报告不存在")
     return report
+
+
+@app.get("/api/reports/{report_id}/outcomes")
+def report_outcomes(report_id: str) -> dict:
+    current = get_report(report_id)
+    if current is None:
+        raise HTTPException(status_code=404, detail="报告不存在")
+    previous = get_previous_report(report_id)
+    return build_recommendation_outcomes(current, previous)
+
+
+@app.get("/api/reports/{report_id}/rebalance-simulation")
+def report_rebalance_simulation(report_id: str) -> dict:
+    report = get_report(report_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="报告不存在")
+
+    from app.models import AnalysisRequest, FundRecommendation, Holding, InvestorProfile
+
+    holdings_raw = report.get("holdings", [])
+    if not holdings_raw:
+        raise HTTPException(status_code=400, detail="报告中无持仓数据")
+
+    request = AnalysisRequest(
+        holdings=[Holding.model_validate(item) for item in holdings_raw],
+        profile=InvestorProfile(),
+    )
+    recs = [
+        FundRecommendation.model_validate(item)
+        for item in report.get("fund_recommendations", [])
+    ]
+    return simulate_rebalance(request, recs)
 
 
 @app.get("/api/reports/{report_id}/diff")
@@ -239,6 +289,30 @@ def fund_profiles() -> list[dict]:
         profile.model_dump(mode="json")
         for profile in FundProfileService().list_profiles()
     ]
+
+
+@app.get("/api/portfolio/summary")
+def portfolio_summary() -> dict:
+    profiles = FundProfileService().list_profiles()
+    summary = get_portfolio_summary()
+    total_from_profiles = sum(
+        profile.holding_amount or 0 for profile in profiles if profile.holding_amount
+    )
+    daily_from_profiles = sum(
+        profile.daily_profit or 0
+        for profile in profiles
+        if profile.daily_profit is not None
+    )
+    payload = summary.model_dump(mode="json") if summary else {}
+    if not payload.get("total_assets") and total_from_profiles:
+        payload["total_assets"] = round(total_from_profiles, 2)
+    if payload.get("daily_profit") is None and any(
+        profile.daily_profit is not None for profile in profiles
+    ):
+        payload["daily_profit"] = round(daily_from_profiles, 2)
+    payload["holding_count"] = len(profiles)
+    payload["profiles"] = [profile.model_dump(mode="json") for profile in profiles]
+    return payload
 
 
 @app.get("/api/fund-profiles/export")

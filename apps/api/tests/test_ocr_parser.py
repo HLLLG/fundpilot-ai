@@ -138,6 +138,47 @@ def test_parse_yangjibao_when_daily_column_is_placeholder_dash():
     assert holdings[3].sector_return_percent == -3.88
 
 
+def test_parse_overview_restores_negative_daily_profit_and_sector_when_ocr_drops_signs():
+    text = (FIXTURES / "yangjibao_overview_signed_daily_ocr.txt").read_text(encoding="utf-8")
+
+    holdings = parse_holdings_from_text(text)
+
+    ai = next(item for item in holdings if "人工智能" in item.fund_name)
+    assert ai.daily_profit == -176.88
+    assert ai.daily_return_percent == -2.38
+    assert ai.sector_return_percent == -2.52
+    assert ai.holding_profit == -260.85
+
+    defense = next(item for item in holdings if "国防军工" in item.fund_name)
+    assert defense.daily_profit == -53.48
+    assert defense.sector_return_percent == -3.19
+
+    galaxy = next(item for item in holdings if "银河创新" in item.fund_name)
+    assert galaxy.daily_profit == -251.64
+    assert galaxy.sector_return_percent == -4.57
+
+
+def test_parse_negative_marker_on_separate_line():
+    text = """
+    华夏人工智能ETF.
+    -
+    176.88
+    -
+    2.38%
+    ￥7,250.12
+    中证人工智能
+  -
+    2.52%
+    """
+
+    holdings = parse_holdings_from_text(text)
+
+    assert len(holdings) == 1
+    assert holdings[0].daily_profit == -176.88
+    assert holdings[0].daily_return_percent == -2.38
+    assert holdings[0].sector_return_percent == -2.52
+
+
 def test_parse_holding_profit_when_ocr_drops_minus_sign():
     text = """
     易方达国防军工混..

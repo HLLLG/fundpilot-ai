@@ -4,7 +4,7 @@
 >
 > **维护：** 功能或架构有实质变化时，同步更新「能力清单」「数据流」「API」「目录」「环境变量」。
 
-**文档版本：** 2026-06-01（养基宝 OCR 增强 + 估算当日收益 + 追问 UI）
+**文档版本：** 2026-06-01（持仓档案、P1/P2 守卫、养基宝 OCR 负号修复）
 
 ---
 
@@ -18,11 +18,15 @@
 
 | 类别 | 能力 |
 |------|------|
-| 输入 | 养基宝总览 OCR（无代码草稿解析）；当日列为 `-` 时不填当日收益；`holding_metrics` 估算当日涨跌 |
+| 输入 | 养基宝总览 OCR（无代码草稿解析）；当日列为 `-` 时不填当日收益；**OCR 漏负号**时规则补符号（见下）；`holding_metrics` 估算当日涨跌 |
 | 校对 | `HoldingTable` 含**估算当日收益率**（板块涨跌 + 持有收益率）；`lib/holdingMetrics.ts` |
-| 档案 | 页面上传/粘贴 OCR；可选 PaddleOCR；基金档案补全 `000000` 占位码 |
+| 档案 | 详情截图建档；总览 OCR **自动同步**档案（金额/收益/板块）；`GET /api/portfolio/summary` 登录展示 |
+| 持仓总览 | 基金档案 Tab：账户资产/当日收益/基金卡片；顶栏指标来自持久化数据 |
 | 风控 | 浮亏线、单只集中度、定投偏好、拒绝追高（`InvestorProfile`） |
-| 报告 | 组合摘要 + `fund_recommendations` + 新闻列表；离线规则兜底 |
+| 报告 | 组合摘要 + `fund_recommendations` + 新闻列表；`analysis_facts` 只读事实块；`recommendation_guard` + `news_citation` + 深度 `report_judge` |
+| 今日工作台 | 单 Tab：上传/校对/日报；报告首屏「三行结论」 |
+| 复盘/模拟 | `GET .../outcomes` 对比上一份建议；`GET .../rebalance-simulation` 示意调仓 |
+| 基金诊断 | AkShare 概况/累计收益 → 类型、费率、近1年收益、最大回撤 |
 | 分析模式 | **快速**（Flash + 仅预取新闻）/ **深度**（Pro + 可选新闻 Tool） |
 | 体验 | 今日一键、报告 vs 昨日 diff、导出 Markdown、档案 JSON 导入导出 |
 | 报告追问 | `ReportChatPanel` + `ChatMarkdown`（react-markdown）；SSE；快速/深度；导出对话 Markdown |
@@ -67,10 +71,13 @@ fundpilot-ai/
 │   ├── lifespan.py          # 应用启动（仅 yield，无后台线程）
 │   ├── config.py / models.py / database.py
 │   └── services/
-│       ├── ocr_engine.py / ocr_parser.py   # 养基宝版式：当日占位、页脚截断、无符号金额
+│       ├── ocr_engine.py / ocr_parser.py   # 养基宝版式、负号恢复、账户级符号校验
+│       ├── portfolio_parser.py             # 账户资产/当日收益
 │       ├── holding_metrics.py              # estimated_daily_return_percent
 │       ├── deepseek_http.py              # 鉴权头、401 友好错误
 │       ├── fund_profile.py / risk.py / fund_data.py
+│       ├── recommendation_guard.py / analysis_facts.py / news_citation.py
+│       ├── recommendation_outcomes.py / rebalance_simulator.py / report_judge.py
 │       ├── news_service.py / recommendations.py
 │       ├── deepseek_client.py
 │       ├── analysis_runtime.py    # fast/deep 运行时参数
@@ -84,11 +91,13 @@ fundpilot-ai/
 ├── apps/web/src/
 │   ├── lib/api.ts / storage.ts / holdingMetrics.ts / notifications.ts
 │   └── components/
-│       ├── Dashboard.tsx
+│       ├── Dashboard.tsx          # 今日 / 基金档案 / 历史
+│       ├── TodayWorkflowSteps / PortfolioSummaryCard / FundProfileCard
 │       ├── JobStatusFloat.tsx     # 右下角悬浮任务面板
 │       ├── AnalysisModeToggle.tsx / ReportDiffPanel.tsx
 │       ├── UploadDropzone / HoldingTable / RiskControls
-│       ├── ReportPanel / ReportChatPanel / ChatMarkdown / HistoryRail / FundProfilePanel
+│       ├── ReportPanel / ReportExecutiveSummary / ReportFactsPanel / ReportOutcomesPanel
+│       ├── RebalanceSimulationPanel / ReportChatPanel / ChatMarkdown / HistoryRail / FundProfilePanel
 ├── uploads/
 ├── data/app.db
 ├── scripts/dev.sh / dev.ps1
@@ -101,19 +110,36 @@ fundpilot-ai/
 ## 推荐使用流程
 
 ```text
-1. bash scripts/dev.sh → 打开 http://127.0.0.1:3000
-2. capture 页上传或粘贴 → 自动 OCR
+1. bash scripts/dev.sh → 打开 http://127.0.0.1:3000（默认「今日」Tab）
+2. 上传养基宝总览 → 自动 OCR + 同步基金档案
 3. 校对 HoldingTable → 选快速/深度 → 点击"生成报告"
-4. 右下角悬浮面板显示进度 → 完成后点击"查看报告"
-5. analysis 页查看 diff、导出日报 Markdown
-6. 决策建议右侧追问（SSE）；可导出对话 Markdown
+4. 右下角悬浮面板显示进度 → 完成后自动滚动到「今日日报」
+5. 报告顶部「今日三行结论」+ 逐基建议（规则守卫会压过过激 LLM 动作）
+6. 追问、diff、导出 Markdown；基金档案在「基金档案」Tab
 ```
 
-### 首次：基金档案
+### 基金档案与持仓总览
 
 ```text
-profiles 页 → 单基金详情截图 → POST /api/fund-profiles/ocr → SQLite fund_profiles
+profiles 页 → 单基金详情截图 → POST /api/fund-profiles/ocr → SQLite fund_profiles（完整字段）
+capture 页 → 养基宝总览 → POST /api/ocr → sync_profiles_from_holdings + portfolio_state
+打开应用 → GET /api/portfolio/summary → 顶栏 + 基金档案 Tab 展示
 ```
+
+设计说明见 `docs/design/2026-06-01-portfolio-holdings.md`。
+
+### 养基宝 OCR：负号与符号一致性（2026-06-01）
+
+养基宝亏损为**绿色 + 减号**；PaddleOCR 常只识别数字，导致「当日收益额」「板块涨跌」为正而「当日收益率」已为负。
+
+`ocr_parser.py` 在解析后依次：
+
+1. **独立行减号**：`-` 单独成行时，绑定下一行数字/百分比。
+2. **行内对齐**：`daily_profit` / `holding_profit` 与对应收益率同号；`sector_return_percent` 与 `daily_return_percent` 同号。
+3. **账户级校验**：顶部「当日收益」为负且各行金额加总符号矛盾时，批量修正当日收益额符号。
+4. **两种列表版式**：区分 ￥ 前「当日+持有」双金额 vs 仅「当日」单金额，避免误把持有收益当日化。
+
+回归：`tests/fixtures/yangjibao_overview_signed_daily_ocr.txt`、`test_parse_overview_restores_negative_daily_profit_and_sector_when_ocr_drops_signs`。
 
 ---
 
@@ -196,6 +222,9 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | GET/POST | `/api/fund-profiles/export` `import` | 档案 JSON |
 | POST | `/api/fund-profiles/ocr` | 详情页建档 |
 | GET | `/api/fund-profiles` | 列表 |
+| GET | `/api/portfolio/summary` | 账户汇总 + 全部档案 |
+| GET | `/api/reports/{id}/outcomes` | 上一份日报建议复盘 |
+| GET | `/api/reports/{id}/rebalance-simulation` | 按报告示意金额模拟调仓 |
 
 前端封装：`apps/web/src/lib/api.ts`。
 
@@ -209,7 +238,7 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | **InvestorProfile** | 稳健默认；浮亏 8%、集中度 35% |
 | **FundRecommendation** | action、amount_*、news_bullish/bearish、points |
 | **NewsItem** | topic、title、is_today |
-| **Report** | 含 fund_recommendations、market_news；market_context 恒 `[]` |
+| **Report** | 含 fund_recommendations、market_news、`analysis_facts`；market_context 恒 `[]` |
 | **AnalysisRequest** | holdings、profile、ocr_text、**analysis_mode** |
 | **ChatMessage** | report_id、role、content |
 | **ReportChatRequest** | message、**chat_mode**（fast \| deep） |
@@ -272,7 +301,7 @@ bash scripts/dev.sh    # 或 scripts/dev.ps1
 ```
 
 ```bash
-cd apps/api && ./.venv/Scripts/python.exe -m pytest tests -v   # 当前约 49 项
+cd apps/api && ./.venv/Scripts/python.exe -m pytest tests -v   # 当前约 64 项
 cd apps/web && npm run lint && npm run typecheck && npm run build
 ```
 
@@ -295,4 +324,5 @@ cd apps/web && npm run lint && npm run typecheck && npm run build
 |------|------|
 | `README.md` | 安装、启动、环境变量、流程 |
 | `docs/PROJECT_CONTEXT.md` | 本文 |
+| `docs/design/2026-06-01-portfolio-holdings.md` | 持仓档案、总览同步、OCR 验收 |
 | `.env.example` | 环境变量模板 |

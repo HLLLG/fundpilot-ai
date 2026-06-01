@@ -19,3 +19,4 @@ def run_analysis(request: AnalysisRequest) -> Report:
     report = DeepSeekClient().generate_report(enriched_request, risk, snapshots)
     save_report(report)
     return report
+

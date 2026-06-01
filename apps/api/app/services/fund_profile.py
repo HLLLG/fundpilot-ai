@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import hashlib
 import re
 
-from app.database import list_fund_profiles, save_fund_profile
-from app.models import FundProfile, Holding
+from app.database import (
+    delete_fund_profile,
+    get_fund_profile_by_code,
+    list_fund_profiles,
+    save_fund_profile,
+)
+from app.models import FundProfile, Holding, ProfileSyncResult
 
 
 CODE_RE = re.compile(r"(?<!\d)(\d{6})(?!\d)")
@@ -14,6 +20,15 @@ SECTOR_RE = re.compile(r"^(.+?)[▼▲]([+-]?\d+(?:\.\d+)?)%$")
 
 class FundProfileService:
     def save_profile(self, profile: FundProfile) -> FundProfile:
+        existing = self.find_match(profile.fund_name)
+        if (
+            existing is not None
+            and existing.is_provisional
+            and existing.fund_code != profile.fund_code
+        ):
+            delete_fund_profile(existing.fund_code)
+        if profile.source == "yangjibao-detail":
+            profile = profile.model_copy(update={"is_provisional": False})
         return save_fund_profile(profile)
 
     def list_profiles(self) -> list[FundProfile]:
@@ -50,6 +65,100 @@ class FundProfileService:
             if any(_is_name_match(target, _normalize_name(candidate)) for candidate in candidates):
                 return profile
         return None
+
+    def sync_profiles_from_holdings(self, holdings: list[Holding]) -> ProfileSyncResult:
+        if not holdings:
+            return ProfileSyncResult()
+
+        total_amount = sum(holding.holding_amount for holding in holdings)
+        updated = 0
+        created = 0
+
+        for holding in holdings:
+            profile = self._find_profile_for_holding(holding)
+            if profile is None:
+                if holding.fund_code == "000000":
+                    profile = _holding_to_provisional_profile(holding)
+                else:
+                    profile = _holding_to_provisional_profile(
+                        holding,
+                        fund_code=holding.fund_code,
+                        is_provisional=False,
+                    )
+                save_fund_profile(profile)
+                created += 1
+                continue
+
+            merged = merge_holding_into_profile(
+                profile,
+                holding,
+                total_amount=total_amount if total_amount > 0 else None,
+            )
+            save_fund_profile(merged)
+            updated += 1
+
+        return ProfileSyncResult(updated=updated, created=created)
+
+    def _find_profile_for_holding(self, holding: Holding) -> FundProfile | None:
+        if holding.fund_code != "000000":
+            by_code = get_fund_profile_by_code(holding.fund_code)
+            if by_code is not None:
+                return by_code
+        return self.find_match(holding.fund_name)
+
+
+def merge_holding_into_profile(
+    profile: FundProfile,
+    holding: Holding,
+    *,
+    total_amount: float | None = None,
+) -> FundProfile:
+    updates: dict = {
+        "fund_name": profile.fund_name if not profile.is_provisional else holding.fund_name,
+        "holding_amount": holding.holding_amount,
+    }
+    if holding.holding_profit is not None:
+        updates["holding_profit"] = holding.holding_profit
+    if holding.holding_return_percent is not None:
+        updates["holding_return_percent"] = holding.holding_return_percent
+    elif holding.return_percent:
+        updates["holding_return_percent"] = holding.return_percent
+    if holding.daily_profit is not None:
+        updates["daily_profit"] = holding.daily_profit
+    if holding.sector_name:
+        updates["sector_name"] = holding.sector_name
+    if holding.sector_return_percent is not None:
+        updates["sector_return_percent"] = holding.sector_return_percent
+    if total_amount and holding.holding_amount > 0:
+        updates["position_percent"] = round(holding.holding_amount / total_amount * 100, 2)
+    return profile.model_copy(update=updates)
+
+
+def _holding_to_provisional_profile(
+    holding: Holding,
+    *,
+    fund_code: str | None = None,
+    is_provisional: bool = True,
+) -> FundProfile:
+    code = fund_code or provisional_code_for_name(holding.fund_name)
+    return FundProfile(
+        fund_code=code,
+        fund_name=holding.fund_name,
+        aliases=_aliases_for_name(holding.fund_name),
+        holding_amount=holding.holding_amount,
+        holding_profit=holding.holding_profit,
+        holding_return_percent=holding.holding_return_percent or holding.return_percent or None,
+        daily_profit=holding.daily_profit,
+        sector_name=holding.sector_name,
+        sector_return_percent=holding.sector_return_percent,
+        source="yangjibao-overview",
+        is_provisional=is_provisional,
+    )
+
+
+def provisional_code_for_name(fund_name: str) -> str:
+    digest = hashlib.sha256(_normalize_name(fund_name).encode("utf-8")).hexdigest()
+    return f"9{int(digest[:8], 16) % 100000:05d}"
 
 
 def parse_profile_from_text(text: str) -> FundProfile | None:

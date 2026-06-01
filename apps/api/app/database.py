@@ -7,7 +7,9 @@ from pathlib import Path
 from typing import Any
 
 from app.config import get_settings
-from app.models import ChatMessage, FundProfile, Report
+from datetime import datetime, timezone
+
+from app.models import ChatMessage, FundProfile, PortfolioSummary, Report
 
 
 def _db_path() -> Path:
@@ -46,6 +48,15 @@ def _connect() -> sqlite3.Connection:
         CREATE TABLE IF NOT EXISTS ocr_text_cache (
             cache_key TEXT PRIMARY KEY,
             raw_text TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS portfolio_state (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            payload TEXT NOT NULL,
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
         """
@@ -146,6 +157,54 @@ def list_fund_profiles() -> list[FundProfile]:
             "SELECT payload FROM fund_profiles ORDER BY updated_at DESC"
         ).fetchall()
     return [FundProfile.model_validate(json.loads(row["payload"])) for row in rows]
+
+
+def delete_fund_profile(fund_code: str) -> bool:
+    with _connect() as connection:
+        cursor = connection.execute(
+            "DELETE FROM fund_profiles WHERE fund_code = ?",
+            (fund_code,),
+        )
+        connection.commit()
+    return cursor.rowcount > 0
+
+
+def get_fund_profile_by_code(fund_code: str) -> FundProfile | None:
+    with _connect() as connection:
+        row = connection.execute(
+            "SELECT payload FROM fund_profiles WHERE fund_code = ?",
+            (fund_code,),
+        ).fetchone()
+    if row is None:
+        return None
+    return FundProfile.model_validate(json.loads(row["payload"]))
+
+
+def save_portfolio_summary(summary: PortfolioSummary) -> PortfolioSummary:
+    payload = summary.model_dump(mode="json")
+    with _connect() as connection:
+        connection.execute(
+            """
+            INSERT OR REPLACE INTO portfolio_state (id, payload, updated_at)
+            VALUES (1, ?, CURRENT_TIMESTAMP)
+            """,
+            (json.dumps(payload, ensure_ascii=False),),
+        )
+        connection.commit()
+    return summary
+
+
+def get_portfolio_summary() -> PortfolioSummary | None:
+    with _connect() as connection:
+        row = connection.execute(
+            "SELECT payload FROM portfolio_state WHERE id = 1"
+        ).fetchone()
+    if row is None:
+        return None
+    data = json.loads(row["payload"])
+    if data.get("updated_at") is None:
+        data["updated_at"] = datetime.now(timezone.utc).isoformat()
+    return PortfolioSummary.model_validate(data)
 
 
 def get_ocr_text_cache(cache_key: str) -> str | None:

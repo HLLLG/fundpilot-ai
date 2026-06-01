@@ -24,6 +24,10 @@ from app.models import (
 from app.services.analysis_runtime import AnalysisRuntime, resolve_analysis_runtime
 from app.services.holding_metrics import HOLDING_RETURN_SEMANTICS, holding_analysis_payload
 from app.services.news_service import NewsService, _dedupe_news
+from app.services.analysis_facts import build_analysis_facts
+from app.services.news_citation import apply_news_citation_guards
+from app.services.recommendation_guard import apply_recommendation_guards
+from app.services.report_judge import judge_parsed_report
 from app.services.recommendations import (
     build_offline_fund_recommendation,
     enrich_fund_recommendations,
@@ -92,6 +96,7 @@ class DeepSeekClient:
                 market_news,
                 runtime,
             )
+            parsed = judge_parsed_report(parsed, request, risk, snapshots, runtime)
             fallback = _offline_report(
                 request,
                 risk,
@@ -99,7 +104,10 @@ class DeepSeekClient:
                 market_news=market_news,
             )
             portfolio_recs, fund_recs = _finalize_recommendations(
-                parsed, fallback, request, market_news
+                parsed, fallback, request, risk, market_news
+            )
+            facts = build_analysis_facts(
+                request.holdings, risk, snapshots, request.profile
             )
             return Report(
                 title=parsed.get("title", "每日基金操作日报"),
@@ -115,6 +123,7 @@ class DeepSeekClient:
                     _non_empty_list(parsed.get("caveats"), fallback.caveats)
                 ),
                 provider=runtime.model,
+                analysis_facts=facts,
             )
         except httpx.TimeoutException as exc:
             fallback = _offline_report(
@@ -303,22 +312,26 @@ def _user_payload(
     snapshots: list[FundSnapshot],
     prefetched_news: list[NewsItem],
 ) -> dict:
+    facts = build_analysis_facts(request.holdings, risk, snapshots, request.profile)
     return {
         "today": datetime.now().date().isoformat(),
         "analysis_session": "trading_day_pre_close",
         "profile": request.profile.model_dump(),
         "holding_return_semantics": HOLDING_RETURN_SEMANTICS,
+        "analysis_facts": facts,
         "holdings": [holding_analysis_payload(holding) for holding in request.holdings],
         "risk": risk.model_dump(),
         "fund_snapshots": [snapshot.model_dump() for snapshot in snapshots],
         "ocr_text": request.ocr_text,
         "prefetched_news": [item.model_dump() for item in prefetched_news],
         "requirements": [
+            "analysis_facts 为系统计算的只读事实，不得改写其中任何数字",
             "输出 title、summary、fund_recommendations、caveats 四个字段",
             "fund_recommendations 每只基金恰好 1 条",
             "每条字段：fund_code、fund_name、action、amount_yuan（可选）、amount_note（可选）、news_bullish（利好标题数组）、news_bearish（利空/风险标题数组）、points（1-3 条，每条≤60字）",
             "news_bullish/news_bearish 必须来自 prefetched_news 或工具结果，注明日期；无则写「暂无明确利好/利空」",
-            "收盘前决策：写清今日收盘前建议（观察/暂停加仓/分批加仓/减仓评估）及触发条件",
+            "收盘前决策：action 仅限 观察/暂停追涨/分批加仓/减仓评估/风控复核 五选一",
+            "若 risk.suggested_action 为 risk_review 或 level 为 high，禁止给出加仓类 action",
             "涉及加仓/减仓须给 amount_yuan 或 amount_note（结合 holding_amount 与 concentration_limit_percent）",
             "recommendations 可省略或仅 1 条组合级说明，禁止长新闻摘要堆砌",
             "旧新闻仅作参考；判断当日涨跌优先 daily_return_percent，否则用 estimated_daily_return_percent",
@@ -566,6 +579,7 @@ def _finalize_recommendations(
     parsed: dict,
     fallback: Report,
     request: AnalysisRequest,
+    risk: RiskAssessment,
     market_news: list[NewsItem] | None = None,
 ) -> tuple[list[str], list[FundRecommendation]]:
     raw_lines = parsed.get("recommendations")
@@ -588,6 +602,10 @@ def _finalize_recommendations(
         fund_recs = list(fallback.fund_recommendations)
 
     fund_recs = enrich_fund_recommendations(fund_recs, request, market_news)
+    portfolio, fund_recs = apply_recommendation_guards(
+        fund_recs, portfolio, request, risk, market_news
+    )
+    fund_recs = apply_news_citation_guards(fund_recs, market_news)
     return portfolio, fund_recs
 
 
@@ -644,6 +662,15 @@ def _offline_report(
     if not fund_recommendations and not recommendations:
         recommendations.append("当前信息不足以支持新增买入，建议等待净值、公告和市场信息更新。")
 
+    recommendations, fund_recommendations = apply_recommendation_guards(
+        fund_recommendations,
+        recommendations,
+        request,
+        risk,
+        news,
+    )
+    fund_recommendations = apply_news_citation_guards(fund_recommendations, news)
+
     caveats = [
         "本报告仅用于个人投研辅助，不构成投资建议。",
         "OCR、第三方数据和模型分析都可能出错，实际操作前请人工核对。",
@@ -651,6 +678,7 @@ def _offline_report(
     if not news and get_settings().news_enabled:
         caveats.append("本次未能拉取到有效新闻条目，政策与资金面判断请结合公开信息人工复核。")
 
+    facts = build_analysis_facts(request.holdings, risk, snapshots, request.profile)
     return Report(
         title="每日基金操作日报",
         risk=risk,
@@ -667,4 +695,5 @@ def _offline_report(
         recommendations=recommendations,
         caveats=caveats,
         provider="offline",
+        analysis_facts=facts,
     )

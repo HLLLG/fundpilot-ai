@@ -1,10 +1,13 @@
 "use client";
 
 import { BookMarked, Download, FileImage, RefreshCw, Upload } from "lucide-react";
-import type { FundProfile } from "@/lib/api";
+import type { FundProfile, PortfolioSummary } from "@/lib/api";
+import { FundProfileCard } from "@/components/FundProfileCard";
+import { PortfolioSummaryCard } from "@/components/PortfolioSummaryCard";
 
 type FundProfilePanelProps = {
   profiles: FundProfile[];
+  portfolioSummary: PortfolioSummary | null;
   detailText: string;
   isBusy: boolean;
   onDetailTextChange: (value: string) => void;
@@ -17,6 +20,7 @@ type FundProfilePanelProps = {
 
 export function FundProfilePanel({
   profiles,
+  portfolioSummary,
   detailText,
   isBusy,
   onDetailTextChange,
@@ -35,7 +39,7 @@ export function FundProfilePanel({
           </div>
           <h2 className="text-xl font-black text-slate-950">基金档案库</h2>
           <p className="mt-2 text-sm leading-6 text-slate-600">
-            单基金详情截图只需要建档一次。之后总览截图里的简称会自动匹配完整名称和基金代码。
+            详情截图建档一次；在「截图识别」上传总览后，会自动同步持有金额与收益。未建档基金会生成简略档案。
           </p>
         </div>
         <button
@@ -109,28 +113,20 @@ export function FundProfilePanel({
         </label>
       </div>
 
-      <div className="mt-5 space-y-3">
+      <div className="mt-5 space-y-4">
+        <PortfolioSummaryCard summary={portfolioSummary} />
+
         {profiles.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-5 text-center text-sm text-slate-500">
-            暂无档案。先上传一张单基金详情截图。
+            暂无档案。先上传单基金详情截图，或在「截图识别」上传养基宝总览自动生成简略档案。
           </div>
-        ) : null}
-        {profiles.map((profile) => (
-          <div key={profile.fund_code} className="rounded-2xl bg-white px-4 py-3 shadow-sm">
-            <div className="text-sm font-black text-slate-950">{profile.fund_name}</div>
-            <div className="mt-1 text-xs text-slate-500">
-              {profile.fund_code}
-              {profile.position_percent ? ` · 仓位 ${profile.position_percent}%` : ""}
-              {profile.holding_cost ? ` · 成本 ${profile.holding_cost}` : ""}
-            </div>
-            <div className="mt-2 text-xs text-slate-500">
-              {profile.sector_name || "未知板块"}
-              {profile.sector_return_percent !== null && profile.sector_return_percent !== undefined
-                ? ` · ${profile.sector_return_percent}%`
-                : ""}
-            </div>
+        ) : (
+          <div className="space-y-3">
+            {profiles.map((profile) => (
+              <FundProfileCard key={profile.fund_code} profile={profile} />
+            ))}
           </div>
-        ))}
+        )}
       </div>
     </section>
   );

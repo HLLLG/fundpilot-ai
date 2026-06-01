@@ -82,6 +82,11 @@ export type Report = {
     nav_date?: string | null;
     source: string;
     note?: string | null;
+    fund_type?: string | null;
+    management_fee?: string | null;
+    fund_scale_yi?: number | null;
+    return_1y_percent?: number | null;
+    max_drawdown_1y_percent?: number | null;
   }>;
   market_context: Array<{
     topic: string;
@@ -112,6 +117,45 @@ export type Report = {
   recommendations: string[];
   caveats: string[];
   provider: string;
+  analysis_facts?: Record<string, unknown>;
+};
+
+export type ReportOutcomes = {
+  has_baseline: boolean;
+  message?: string;
+  previous_report_id?: string;
+  previous_created_at?: string;
+  portfolio_return_delta?: number | null;
+  items: Array<{
+    fund_code: string;
+    fund_name: string;
+    previous_action?: string;
+    current_action?: string;
+    holding_return_before?: number | null;
+    holding_return_after?: number | null;
+    holding_return_delta?: number | null;
+    assessment: string;
+  }>;
+};
+
+export type RebalanceSimulation = {
+  assumption: string;
+  current_total: number;
+  simulated_total: number;
+  concentration_limit_percent: number;
+  warnings: string[];
+  rows: Array<{
+    fund_code: string;
+    fund_name: string;
+    action: string;
+    current_amount: number;
+    delta_yuan: number;
+    simulated_amount: number;
+    current_weight_percent: number;
+    simulated_weight_percent: number;
+    weight_delta_percent: number;
+    amount_note?: string | null;
+  }>;
 };
 
 export type FundProfile = {
@@ -130,8 +174,23 @@ export type FundProfile = {
   sector_name?: string | null;
   sector_return_percent?: number | null;
   source: string;
+  is_provisional?: boolean;
   raw_text?: string;
   upload_path?: string | null;
+};
+
+export type ProfileSyncResult = {
+  updated: number;
+  created: number;
+};
+
+export type PortfolioSummary = {
+  total_assets?: number | null;
+  daily_profit?: number | null;
+  daily_return_percent?: number | null;
+  holding_count?: number;
+  updated_at?: string | null;
+  profiles?: FundProfile[];
 };
 
 export type OcrResponse = {
@@ -140,6 +199,8 @@ export type OcrResponse = {
   holdings: Holding[];
   error?: string;
   cache_hit?: boolean;
+  profile_sync?: ProfileSyncResult;
+  portfolio_summary?: PortfolioSummary | null;
 };
 
 export type AnalysisJob = {
@@ -258,6 +319,26 @@ export async function deleteReport(reportId: string): Promise<void> {
   if (!response.ok) {
     throw new Error(await response.text());
   }
+}
+
+export async function fetchReportOutcomes(reportId: string): Promise<ReportOutcomes> {
+  const response = await fetch(`${API_BASE}/api/reports/${reportId}/outcomes`, {
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export async function fetchRebalanceSimulation(reportId: string): Promise<RebalanceSimulation> {
+  const response = await fetch(`${API_BASE}/api/reports/${reportId}/rebalance-simulation`, {
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
 }
 
 export async function fetchReportDiff(reportId: string): Promise<ReportDiffResponse> {
@@ -399,6 +480,14 @@ export async function parseFundProfile(formData: FormData): Promise<FundProfile>
     method: "POST",
     body: formData,
   });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export async function fetchPortfolioSummary(): Promise<PortfolioSummary> {
+  const response = await fetch(`${API_BASE}/api/portfolio/summary`, { cache: "no-store" });
   if (!response.ok) {
     throw new Error(await response.text());
   }

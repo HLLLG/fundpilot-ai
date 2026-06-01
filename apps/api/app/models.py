@@ -91,6 +91,20 @@ class FundProfile(BaseModel):
     sector_name: str | None = None
     sector_return_percent: float | None = None
     source: str = "yangjibao-detail"
+    is_provisional: bool = False
+
+
+class PortfolioSummary(BaseModel):
+    total_assets: float | None = None
+    daily_profit: float | None = None
+    daily_return_percent: float | None = None
+    holding_count: int = 0
+    updated_at: datetime | None = None
+
+
+class ProfileSyncResult(BaseModel):
+    updated: int = 0
+    created: int = 0
 
 
 class FundSnapshot(BaseModel):
@@ -100,6 +114,11 @@ class FundSnapshot(BaseModel):
     nav_date: str | None = None
     source: str
     note: str | None = None
+    fund_type: str | None = None
+    management_fee: str | None = None
+    fund_scale_yi: float | None = None
+    return_1y_percent: float | None = None
+    max_drawdown_1y_percent: float | None = None
 
 
 class FundRecommendation(BaseModel):
@@ -127,6 +146,7 @@ class Report(BaseModel):
     recommendations: list[str]
     caveats: list[str]
     provider: str = "offline"
+    analysis_facts: dict = Field(default_factory=dict)
 
 
 ChatRole = Literal["user", "assistant"]
