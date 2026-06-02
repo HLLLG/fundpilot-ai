@@ -4,6 +4,7 @@ import type { FundProfile } from "@/lib/api";
 
 type FundProfileCardProps = {
   profile: FundProfile;
+  onOpenDetail?: () => void;
 };
 
 function formatMoney(value: number | null | undefined) {
@@ -28,9 +29,28 @@ function profitClass(value: number | null | undefined) {
   return value > 0 ? "text-rose-600" : "text-emerald-600";
 }
 
-export function FundProfileCard({ profile }: FundProfileCardProps) {
+export function FundProfileCard({ profile, onOpenDetail }: FundProfileCardProps) {
+  const canOpen = Boolean(onOpenDetail) && profile.fund_code !== "000000";
+
   return (
-    <article className="rounded-2xl bg-white px-4 py-4 shadow-sm ring-1 ring-slate-100">
+    <article
+      className={`rounded-2xl bg-white px-4 py-4 shadow-sm ring-1 ring-slate-100 ${
+        canOpen ? "cursor-pointer transition hover:ring-blue-200 hover:shadow-md" : ""
+      }`}
+      onClick={canOpen ? onOpenDetail : undefined}
+      onKeyDown={
+        canOpen
+          ? (event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                onOpenDetail?.();
+              }
+            }
+          : undefined
+      }
+      role={canOpen ? "button" : undefined}
+      tabIndex={canOpen ? 0 : undefined}
+    >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <h3 className="truncate text-sm font-black text-slate-950">{profile.fund_name}</h3>
@@ -99,6 +119,12 @@ export function FundProfileCard({ profile }: FundProfileCardProps) {
           </span>
         ) : null}
       </div>
+
+      {canOpen ? (
+        <p className="mt-3 text-xs font-bold text-blue-600">点击查看净值走势 →</p>
+      ) : profile.fund_code === "000000" ? (
+        <p className="mt-3 text-xs text-amber-700">补全基金代码后可查看净值走势</p>
+      ) : null}
     </article>
   );
 }

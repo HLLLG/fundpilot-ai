@@ -11,6 +11,7 @@ from fastapi.responses import StreamingResponse
 from app.config import get_settings
 from app.database import (
     delete_report,
+    get_fund_profile_by_code,
     get_ocr_text_cache,
     get_previous_report,
     get_report,
@@ -22,6 +23,7 @@ from app.database import list_report_chat_messages
 from app.models import AnalysisRequest, FundProfile, ReportChatRequest
 from app.services.analyze_pipeline import run_analysis
 from app.database import get_portfolio_summary, save_portfolio_summary
+from app.services.fund_data import FundDataService
 from app.services.fund_profile import FundProfileService, parse_profile_from_text
 from app.services.holding_validation import build_holding_review
 from app.services.portfolio_parser import parse_portfolio_summary_from_text
@@ -306,6 +308,19 @@ def fund_profiles() -> list[dict]:
         profile.model_dump(mode="json")
         for profile in FundProfileService().list_profiles()
     ]
+
+
+@app.get("/api/fund-profiles/{fund_code}/nav-history")
+def fund_nav_history(fund_code: str, days: int = 90) -> dict:
+    profile = get_fund_profile_by_code(fund_code)
+    fund_name = profile.fund_name if profile else ""
+    trading_days = max(20, min(days, 365))
+    history = FundDataService().get_nav_history(
+        fund_code,
+        fund_name,
+        trading_days=trading_days,
+    )
+    return history.model_dump(mode="json")
 
 
 @app.get("/api/portfolio/dashboard")

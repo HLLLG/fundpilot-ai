@@ -13,7 +13,9 @@ def build_analysis_facts(
     snapshots: list[FundSnapshot],
     profile: InvestorProfile,
     topic_briefs: list[TopicBrief] | None = None,
+    nav_trends_by_code: dict[str, dict] | None = None,
 ) -> dict:
+    nav_trends = nav_trends_by_code or {}
     total_amount = sum(item.holding_amount for item in holdings) or 0.0
     snapshot_by_code = {item.fund_code: item for item in snapshots}
 
@@ -46,6 +48,7 @@ def build_analysis_facts(
                 "max_drawdown_1y_percent": snapshot.max_drawdown_1y_percent if snapshot else None,
                 "management_fee": snapshot.management_fee if snapshot else None,
                 "fund_scale_yi": snapshot.fund_scale_yi if snapshot else None,
+                "nav_trend": nav_trends.get(holding.fund_code),
             }
         )
 

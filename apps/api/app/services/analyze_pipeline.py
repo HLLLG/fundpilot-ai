@@ -15,8 +15,12 @@ def run_analysis(request: AnalysisRequest) -> Report:
     resolved_holdings = FundProfileService().resolve_holdings(request.holdings)
     enriched_request = request.model_copy(update={"holdings": resolved_holdings})
     risk = evaluate_portfolio_risk(enriched_request.holdings, enriched_request.profile)
-    snapshots = FundDataService().get_snapshots(enriched_request.holdings)
-    report = DeepSeekClient().generate_report(enriched_request, risk, snapshots)
+    snapshots, nav_trends = FundDataService().get_snapshots_with_nav_trends(
+        enriched_request.holdings
+    )
+    report = DeepSeekClient().generate_report(
+        enriched_request, risk, snapshots, nav_trends_by_code=nav_trends
+    )
     save_report(report)
     return report
 

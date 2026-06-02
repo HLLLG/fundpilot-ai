@@ -226,6 +226,7 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | GET/POST | `/api/fund-profiles/export` `import` | 档案 JSON |
 | POST | `/api/fund-profiles/ocr` | 详情页建档 |
 | GET | `/api/fund-profiles` | 列表 |
+| GET | `/api/fund-profiles/{code}/nav-history?days=` | 单位净值走势（AkShare，默认 90 交易日） |
 | GET | `/api/portfolio/summary` | 账户汇总 + 全部档案 |
 | GET | `/api/portfolio/dashboard` | 走势历史 + 持仓分布（仪表盘） |
 | GET | `/api/reports/{id}/outcomes` | 上一份日报建议复盘 |
@@ -260,6 +261,20 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | `estimated_daily_return_percent` | 无当日时 ≈ `sector_return_percent + holding_return_percent`（估算，须在报告中注明） |
 
 实现：`app/services/holding_metrics.py`；`deepseek_client._user_payload` 含 `holding_return_semantics`。
+
+### 净值走势摘要（传给 DeepSeek，非完整 K 线）
+
+生成报告时 `FundDataService.get_snapshots_with_nav_trends` 与 AkShare 快照**同一次拉取**近 N 日净值，经 `nav_trend_summary.summarize_nav_history` 压缩后写入 `analysis_facts.holdings[].nav_trend`：
+
+| 字段 | 含义 |
+|------|------|
+| `period_change_percent` | 区间内涨跌幅 |
+| `recent_5d_change_percent` | 近 5 交易日涨跌 |
+| `distance_from_high_percent` / `distance_from_low_percent` | 距区间高/低点 |
+| `trend_label` | 区间 + 近 5 日综合标签（如「区间震荡，近5日走弱」） |
+| `recent_nav_series` | 最近若干日 `date` + `nav` 采样（默认 8 点） |
+
+配置：`FUND_AI_NAV_TREND_DAYS`（默认 66）、`FUND_AI_NAV_TREND_RECENT_SAMPLE`（默认 8）。前端 `GET /api/fund-profiles/{code}/nav-history` 仍用于完整折线图，与 AI 摘要独立。
 
 ---
 
@@ -299,6 +314,8 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | `FUND_AI_NEWS_SOURCES` | eastmoney,announcement,macro | 新闻源 |
 | `FUND_AI_NEWS_SUMMARIZE` | true | Flash 按主题摘要 |
 | `FUND_AI_NEWS_MACRO_TOPIC` | 上证指数 | 宏观检索主题 |
+| `FUND_AI_NAV_TREND_DAYS` | 66 | 报告生成时拉取净值交易日数 |
+| `FUND_AI_NAV_TREND_RECENT_SAMPLE` | 8 | `nav_trend.recent_nav_series` 采样点数 |
 
 修改 `.env` 后需重启 API。
 

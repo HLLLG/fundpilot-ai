@@ -46,6 +46,8 @@ class Settings(BaseSettings):
     news_summarize_max_points: int = 5
     news_summarize_timeout_seconds: float = 60.0
     news_macro_topic: str = "上证指数"
+    nav_trend_days: int = 66
+    nav_trend_recent_sample: int = 8
 
     model_config = SettingsConfigDict(
         env_file=PROJECT_ROOT / ".env",

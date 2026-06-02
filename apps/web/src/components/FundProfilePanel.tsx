@@ -1,8 +1,10 @@
 "use client";
 
+import { useState } from "react";
 import { BookMarked, Download, FileImage, RefreshCw, Upload } from "lucide-react";
 import type { FundProfile, PortfolioSummary } from "@/lib/api";
 import { FundProfileCard } from "@/components/FundProfileCard";
+import { FundProfileDetailModal } from "@/components/FundProfileDetailModal";
 import { PortfolioSummaryCard } from "@/components/PortfolioSummaryCard";
 
 type FundProfilePanelProps = {
@@ -30,6 +32,8 @@ export function FundProfilePanel({
   onExport,
   onImport,
 }: FundProfilePanelProps) {
+  const [selectedProfile, setSelectedProfile] = useState<FundProfile | null>(null);
+
   return (
     <section className="glass-panel min-w-0 rounded-[28px] p-6">
       <div className="mb-5 flex items-start justify-between gap-4">
@@ -123,11 +127,22 @@ export function FundProfilePanel({
         ) : (
           <div className="space-y-3">
             {profiles.map((profile) => (
-              <FundProfileCard key={profile.fund_code} profile={profile} />
+              <FundProfileCard
+                key={profile.fund_code}
+                profile={profile}
+                onOpenDetail={() => setSelectedProfile(profile)}
+              />
             ))}
           </div>
         )}
       </div>
+
+      {selectedProfile ? (
+        <FundProfileDetailModal
+          profile={selectedProfile}
+          onClose={() => setSelectedProfile(null)}
+        />
+      ) : null}
     </section>
   );
 }

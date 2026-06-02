@@ -75,7 +75,9 @@ class DeepSeekClient:
         request: AnalysisRequest,
         risk: RiskAssessment,
         snapshots: list[FundSnapshot],
+        nav_trends_by_code: dict[str, dict] | None = None,
     ) -> Report:
+        nav_trends = nav_trends_by_code or {}
         runtime = resolve_analysis_runtime(self.settings, request.analysis_mode)
         market_news = self.news_service.prefetch_for_holdings(
             request.holdings,
@@ -91,6 +93,7 @@ class DeepSeekClient:
                 snapshots,
                 market_news=market_news,
                 topic_briefs=topic_briefs,
+                nav_trends_by_code=nav_trends,
             )
 
         try:
@@ -101,6 +104,7 @@ class DeepSeekClient:
                 market_news,
                 topic_briefs,
                 runtime,
+                nav_trends,
             )
             if len(market_news) > initial_news_count:
                 topic_briefs = _build_topic_briefs(market_news, self.settings)
@@ -111,6 +115,7 @@ class DeepSeekClient:
                 snapshots,
                 market_news=market_news,
                 topic_briefs=topic_briefs,
+                nav_trends_by_code=nav_trends,
             )
             portfolio_recs, fund_recs = _finalize_recommendations(
                 parsed, fallback, request, risk, market_news, topic_briefs
@@ -121,6 +126,7 @@ class DeepSeekClient:
                 snapshots,
                 request.profile,
                 topic_briefs,
+                nav_trends,
             )
             caveats = _user_facing_caveats(
                 _non_empty_list(parsed.get("caveats"), fallback.caveats)
@@ -148,6 +154,7 @@ class DeepSeekClient:
                 snapshots,
                 market_news=market_news,
                 topic_briefs=topic_briefs,
+                nav_trends_by_code=nav_trends,
             )
             fallback.summary = (
                 f"{fallback.summary}\n\nDeepSeek 调用超时：{exc}。"
@@ -163,6 +170,7 @@ class DeepSeekClient:
                 snapshots,
                 market_news=market_news,
                 topic_briefs=topic_briefs,
+                nav_trends_by_code=nav_trends,
             )
             fallback.summary = (
                 f"{fallback.summary}\n\nDeepSeek HTTP 错误：{exc.response.status_code} "
@@ -177,6 +185,7 @@ class DeepSeekClient:
                 snapshots,
                 market_news=market_news,
                 topic_briefs=topic_briefs,
+                nav_trends_by_code=nav_trends,
             )
             fallback.summary = (
                 f"{fallback.summary}\n\nDeepSeek 调用失败，已使用本地规则生成报告：{exc}"
@@ -192,7 +201,9 @@ class DeepSeekClient:
         prefetched_news: list[NewsItem],
         topic_briefs: list[TopicBrief],
         runtime: AnalysisRuntime,
+        nav_trends_by_code: dict[str, dict] | None = None,
     ) -> tuple[dict, list[NewsItem]]:
+        nav_trends = nav_trends_by_code or {}
         collected: list[NewsItem] = list(prefetched_news)
         news_enabled = runtime.news_enabled
         messages: list[dict] = [
@@ -201,7 +212,12 @@ class DeepSeekClient:
                 "role": "user",
                 "content": json.dumps(
                     _user_payload(
-                        request, risk, snapshots, prefetched_news, topic_briefs
+                        request,
+                        risk,
+                        snapshots,
+                        prefetched_news,
+                        topic_briefs,
+                        nav_trends,
                     ),
                     ensure_ascii=False,
                 ),
@@ -310,7 +326,7 @@ def _system_prompt(news_enabled: bool) -> str:
         "你是个人基金投研助手，只能提供个人研究和风险提示，不能承诺收益。"
         f"当前分析时点约为 {now.strftime('%Y-%m-%d %H:%M')}，用户通常在交易日 14:30 左右上传养基宝截图，"
         "需要在 15:00 A 股收盘前给出当日是否加仓/减仓/观察的决策。"
-        "必须结合持仓、当日收益、板块涨跌、集中度、净值快照与新闻（优先当日）做分析。"
+        "必须结合持仓、当日收益、板块涨跌、集中度、净值快照、analysis_facts 中的 nav_trend（近 N 日净值摘要）与新闻（优先当日）做分析。"
         "养基宝截图中：关联板块涨跌为当日实时值；持有收益率为昨日结算值。"
         "若 holdings 中 daily_return_percent 为空，请用 estimated_daily_return_percent"
         "（≈ sector_return_percent + holding_return_percent）近似当日基金涨跌，"
@@ -358,10 +374,17 @@ def _user_payload(
     snapshots: list[FundSnapshot],
     prefetched_news: list[NewsItem],
     topic_briefs: list[TopicBrief] | None = None,
+    nav_trends_by_code: dict[str, dict] | None = None,
 ) -> dict:
     briefs = topic_briefs or []
+    nav_trends = nav_trends_by_code or {}
     facts = build_analysis_facts(
-        request.holdings, risk, snapshots, request.profile, briefs
+        request.holdings,
+        risk,
+        snapshots,
+        request.profile,
+        briefs,
+        nav_trends,
     )
     return {
         "today": datetime.now().date().isoformat(),
@@ -389,6 +412,8 @@ def _user_payload(
             "引用当日涨跌时区分：板块 sector_return_percent、昨日结算 holding_return_percent、估算/实际当日收益",
             "基金代码 000000 须提示补全代码",
             "偏稳健，避免追涨，不做实盘交易指令",
+            "analysis_facts.holdings[].nav_trend 为近 N 交易日净值摘要（含 trend_label、距高点距离、recent_nav_series），用于判断反弹/回落与区间位置；不得编造未给出的净值序列",
+            "若 nav_trend 为空（如基金代码 000000），须在 points 中说明无法使用净值走势",
         ],
     }
 
@@ -691,6 +716,7 @@ def _offline_report(
     snapshots: list[FundSnapshot],
     market_news: list[NewsItem] | None = None,
     topic_briefs: list[TopicBrief] | None = None,
+    nav_trends_by_code: dict[str, dict] | None = None,
 ) -> Report:
     recommendations = []
     if risk.suggested_action == "risk_review":
@@ -738,7 +764,12 @@ def _offline_report(
     caveats = _append_news_pipeline_caveats(caveats, briefs, news)
 
     facts = build_analysis_facts(
-        request.holdings, risk, snapshots, request.profile, briefs
+        request.holdings,
+        risk,
+        snapshots,
+        request.profile,
+        briefs,
+        nav_trends_by_code,
     )
     return Report(
         title="每日基金操作日报",

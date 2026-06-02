@@ -574,3 +574,34 @@ export async function listFundProfiles(): Promise<FundProfile[]> {
   }
   return response.json();
 }
+
+export type FundNavPoint = {
+  date: string;
+  nav: number;
+  daily_return_percent?: number | null;
+};
+
+export type FundNavHistory = {
+  fund_code: string;
+  fund_name: string;
+  source: string;
+  points: FundNavPoint[];
+  latest_nav?: number | null;
+  latest_date?: string | null;
+  period_change_percent?: number | null;
+  note?: string | null;
+};
+
+export async function fetchFundNavHistory(
+  fundCode: string,
+  days = 90,
+): Promise<FundNavHistory> {
+  const response = await fetch(
+    `${API_BASE}/api/fund-profiles/${encodeURIComponent(fundCode)}/nav-history?days=${days}`,
+    { cache: "no-store" },
+  );
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}

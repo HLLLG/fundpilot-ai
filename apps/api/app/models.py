@@ -152,6 +152,23 @@ class ProfileSyncResult(BaseModel):
     created: int = 0
 
 
+class FundNavPoint(BaseModel):
+    date: str
+    nav: float
+    daily_return_percent: float | None = None
+
+
+class FundNavHistory(BaseModel):
+    fund_code: str
+    fund_name: str
+    source: str
+    points: list[FundNavPoint] = Field(default_factory=list)
+    latest_nav: float | None = None
+    latest_date: str | None = None
+    period_change_percent: float | None = None
+    note: str | None = None
+
+
 class FundSnapshot(BaseModel):
     fund_code: str
     fund_name: str
