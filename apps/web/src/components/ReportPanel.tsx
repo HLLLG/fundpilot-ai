@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { AlertTriangle, BarChart3, Download, Sparkles } from "lucide-react";
+import { BarChart3, Download, Sparkles, Workflow } from "lucide-react";
 import type { Report, ReportDiff } from "@/lib/api";
 import { fetchReportDiff, fetchReportMarkdown } from "@/lib/api";
+import { actionBadgeClass, actionCardClass } from "@/lib/actionStyles";
 import { ReportChatPanel } from "@/components/ReportChatPanel";
+import { ReportCollapsibleSection } from "@/components/ReportCollapsibleSection";
 import { ReportDiffPanel } from "@/components/ReportDiffPanel";
 import { RebalanceSimulationPanel } from "@/components/RebalanceSimulationPanel";
 import { ReportExecutiveSummary } from "@/components/ReportExecutiveSummary";
@@ -91,12 +93,16 @@ function FundRecommendationCard({
   const navHint = navHintForFund(item.fund_code, snapshots);
 
   return (
-    <div className="rounded-2xl border border-blue-100 bg-blue-50/60 px-4 py-3">
+    <div className={`rounded-2xl border px-4 py-3 ${actionCardClass(item.action)}`}>
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-sm font-black text-slate-950">
           {item.fund_code} · {item.fund_name}
         </span>
-        <StatusPill tone="blue">{item.action}</StatusPill>
+        <span
+          className={`inline-flex rounded-full border px-2.5 py-0.5 text-xs font-bold ${actionBadgeClass(item.action)}`}
+        >
+          {item.action}
+        </span>
       </div>
       {navHint ? <p className="mt-1.5 text-xs text-slate-500">{navHint}</p> : null}
       <FundDiagnosticHint fundCode={item.fund_code} snapshots={snapshots} />
@@ -165,6 +171,37 @@ function displayFundRecommendations(report: Report) {
     }
   }
   return [...byCode.values()];
+}
+
+function ReportPipelineBanner({ facts }: { facts?: Record<string, unknown> }) {
+  const pipeline = (facts?.pipeline ?? {}) as Record<string, unknown>;
+  const trend = (facts?.portfolio_trend ?? {}) as Record<string, unknown>;
+  const session = (facts?.session ?? {}) as Record<string, unknown>;
+  if (!pipeline.analysis_mode && !trend.summary_line && !session.decision_window) {
+    return null;
+  }
+
+  return (
+    <div className="mb-5 rounded-[24px] border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-700">
+      <div className="mb-1 flex items-center gap-2 font-black text-slate-950">
+        <Workflow size={16} className="text-blue-600" />
+        分析上下文
+      </div>
+      {pipeline.analysis_mode ? (
+        <p>
+          模式 {String(pipeline.analysis_mode)} · 模型 {String(pipeline.model ?? "—")}
+          {pipeline.llm_judge_applied ? " · 深度审校已应用" : null}
+          {typeof pipeline.today_news_count === "number"
+            ? ` · 当日要闻 ${pipeline.today_news_count} 条`
+            : null}
+        </p>
+      ) : null}
+      {session.decision_window ? (
+        <p className="mt-1 text-xs text-slate-500">{String(session.decision_window)}</p>
+      ) : null}
+      {trend.summary_line ? <p className="mt-1 font-semibold text-slate-800">{String(trend.summary_line)}</p> : null}
+    </div>
+  );
 }
 
 export function ReportPanel({ report }: ReportPanelProps) {
@@ -262,20 +299,21 @@ export function ReportPanel({ report }: ReportPanelProps) {
         </div>
       </div>
 
-      {diff ? <ReportDiffPanel diff={diff} /> : null}
-
       <ReportExecutiveSummary report={report} />
+      <ReportPipelineBanner facts={report.analysis_facts} />
 
-      <ReportFactsPanel facts={report.analysis_facts} />
-      <ReportOutcomesPanel reportId={report.id} />
-      <RebalanceSimulationPanel reportId={report.id} />
+      {diff ? (
+        <ReportCollapsibleSection title="与上一份日报对比" className="mb-5">
+          <ReportDiffPanel diff={diff} />
+        </ReportCollapsibleSection>
+      ) : null}
 
-      <div className="rounded-[24px] bg-white p-5 shadow-sm">
+      <div className="mb-5 rounded-[24px] bg-white p-5 shadow-sm">
         <div className="mb-4 flex items-center gap-2 text-sm font-black text-slate-950">
           <Sparkles size={18} className="text-blue-600" />
           决策建议
         </div>
-        <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(360px,500px)]">
+        <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(320px,480px)]">
           <div className="min-w-0 space-y-3">
             {portfolioRecommendations.map((item, index) => (
               <div
@@ -293,16 +331,30 @@ export function ReportPanel({ report }: ReportPanelProps) {
               />
             ))}
           </div>
-          <ReportChatPanel reportId={report.id} reportTitle={report.title} />
+          <div className="min-w-0 xl:sticky xl:top-4">
+            <ReportChatPanel reportId={report.id} reportTitle={report.title} />
+          </div>
         </div>
       </div>
 
+      <ReportCollapsibleSection
+        title="建议复盘"
+        defaultOpen
+        className="mb-5"
+      >
+        <ReportOutcomesPanel reportId={report.id} embedded />
+      </ReportCollapsibleSection>
+
+      <ReportCollapsibleSection title="调仓示意模拟" className="mb-5">
+        <RebalanceSimulationPanel reportId={report.id} embedded />
+      </ReportCollapsibleSection>
+
+      <ReportCollapsibleSection title="系统计算事实" className="mb-5">
+        <ReportFactsPanel facts={report.analysis_facts} embedded />
+      </ReportCollapsibleSection>
+
       {[...report.risk.alerts.map((alert) => alert.message), ...caveatLines].length > 0 ? (
-        <div className="mt-5 rounded-[24px] bg-white p-5 shadow-sm">
-          <div className="mb-4 flex items-center gap-2 text-sm font-black text-slate-950">
-            <AlertTriangle size={18} className="text-amber-500" />
-            风险提醒
-          </div>
+        <ReportCollapsibleSection title="风险提醒与说明" className="mb-5">
           <div className="space-y-3">
             {[...report.risk.alerts.map((alert) => alert.message), ...caveatLines].map(
               (item, index) => (
@@ -315,18 +367,17 @@ export function ReportPanel({ report }: ReportPanelProps) {
               ),
             )}
           </div>
-        </div>
+        </ReportCollapsibleSection>
       ) : null}
 
       {report.topic_briefs && report.topic_briefs.length > 0 ? (
-        <div className="mt-5">
+        <ReportCollapsibleSection title="主题要闻摘要" className="mb-5">
           <ReportNewsBriefPanel briefs={report.topic_briefs} />
-        </div>
+        </ReportCollapsibleSection>
       ) : null}
 
       {report.market_news.length > 0 ? (
-        <div className="mt-5 rounded-[24px] bg-white p-5 shadow-sm">
-          <div className="mb-4 text-sm font-black text-slate-950">新闻原文出处（优先当日）</div>
+        <ReportCollapsibleSection title="新闻原文出处（优先当日）">
           <div className="space-y-3">
             {report.market_news.map((item, index) => (
               <div
@@ -361,7 +412,7 @@ export function ReportPanel({ report }: ReportPanelProps) {
               </div>
             ))}
           </div>
-        </div>
+        </ReportCollapsibleSection>
       ) : null}
     </section>
   );

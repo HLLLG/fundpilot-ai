@@ -6,9 +6,13 @@ import { fetchRebalanceSimulation, type RebalanceSimulation } from "@/lib/api";
 
 type RebalanceSimulationPanelProps = {
   reportId: string;
+  embedded?: boolean;
 };
 
-export function RebalanceSimulationPanel({ reportId }: RebalanceSimulationPanelProps) {
+export function RebalanceSimulationPanel({
+  reportId,
+  embedded = false,
+}: RebalanceSimulationPanelProps) {
   const [simulation, setSimulation] = useState<RebalanceSimulation | null>(null);
 
   useEffect(() => {
@@ -21,12 +25,8 @@ export function RebalanceSimulationPanel({ reportId }: RebalanceSimulationPanelP
     return null;
   }
 
-  return (
-    <div className="mb-5 rounded-[24px] border border-emerald-100 bg-emerald-50/50 p-5">
-      <div className="mb-2 flex items-center gap-2 text-sm font-black text-slate-950">
-        <SlidersHorizontal size={18} className="text-emerald-700" />
-        模拟调仓（按报告示意金额）
-      </div>
+  const inner = (
+    <>
       <p className="mb-3 text-xs leading-5 text-slate-600">{simulation.assumption}</p>
       <div className="mb-3 flex flex-wrap gap-4 text-sm font-semibold text-slate-700">
         <span>当前总额 ¥{simulation.current_total.toLocaleString("zh-CN")}</span>
@@ -73,6 +73,20 @@ export function RebalanceSimulationPanel({ reportId }: RebalanceSimulationPanelP
           </tbody>
         </table>
       </div>
+    </>
+  );
+
+  if (embedded) {
+    return inner;
+  }
+
+  return (
+    <div className="mb-5 rounded-[24px] border border-emerald-100 bg-emerald-50/50 p-5">
+      <div className="mb-2 flex items-center gap-2 text-sm font-black text-slate-950">
+        <SlidersHorizontal size={18} className="text-emerald-700" />
+        模拟调仓（按报告示意金额）
+      </div>
+      {inner}
     </div>
   );
 }

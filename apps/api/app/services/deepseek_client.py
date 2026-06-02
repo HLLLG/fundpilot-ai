@@ -28,8 +28,11 @@ from app.services.news_service import NewsService, _dedupe_news
 from app.services.news_summarizer import summarize_all_topics
 from app.services.analysis_facts import build_analysis_facts
 from app.services.news_citation import apply_news_citation_guards
+from app.services.portfolio_snapshot import build_portfolio_trend_context
 from app.services.recommendation_guard import apply_recommendation_guards
 from app.services.report_judge import judge_parsed_report
+from app.services.report_pipeline import build_pipeline_metadata
+from app.services.trading_session import build_trading_session
 from app.services.recommendations import (
     build_offline_fund_recommendation,
     enrich_fund_recommendations,
@@ -108,7 +111,7 @@ class DeepSeekClient:
             )
             if len(market_news) > initial_news_count:
                 topic_briefs = _build_topic_briefs(market_news, self.settings)
-            parsed = judge_parsed_report(parsed, request, risk, snapshots, runtime)
+            parsed, judge_meta = judge_parsed_report(parsed, request, risk, snapshots, runtime)
             fallback = _offline_report(
                 request,
                 risk,
@@ -120,18 +123,21 @@ class DeepSeekClient:
             portfolio_recs, fund_recs = _finalize_recommendations(
                 parsed, fallback, request, risk, market_news, topic_briefs
             )
-            facts = build_analysis_facts(
-                request.holdings,
-                risk,
-                snapshots,
-                request.profile,
-                topic_briefs,
-                nav_trends,
+            facts = _compose_analysis_facts(
+                request=request,
+                risk=risk,
+                snapshots=snapshots,
+                topic_briefs=topic_briefs,
+                nav_trends=nav_trends,
+                runtime=runtime,
+                market_news=market_news,
+                judge_meta=judge_meta,
             )
             caveats = _user_facing_caveats(
                 _non_empty_list(parsed.get("caveats"), fallback.caveats)
             )
             caveats = _append_news_pipeline_caveats(caveats, topic_briefs, market_news)
+            caveats = _append_pipeline_caveats(caveats, facts)
             return Report(
                 title=parsed.get("title", "每日基金操作日报"),
                 risk=risk,
@@ -378,6 +384,7 @@ def _user_payload(
 ) -> dict:
     briefs = topic_briefs or []
     nav_trends = nav_trends_by_code or {}
+    session = build_trading_session()
     facts = build_analysis_facts(
         request.holdings,
         risk,
@@ -385,10 +392,13 @@ def _user_payload(
         request.profile,
         briefs,
         nav_trends,
+        session=session,
+        portfolio_trend=build_portfolio_trend_context(),
     )
     return {
         "today": datetime.now().date().isoformat(),
-        "analysis_session": "trading_day_pre_close",
+        "analysis_session": session["session_kind"],
+        "session": session,
         "profile": request.profile.model_dump(),
         "holding_return_semantics": HOLDING_RETURN_SEMANTICS,
         "analysis_facts": facts,
@@ -404,6 +414,7 @@ def _user_payload(
             "fund_recommendations 每只基金恰好 1 条",
             "每条字段：fund_code、fund_name、action、amount_yuan（可选）、amount_note（可选）、news_bullish（利好标题数组）、news_bearish（利空/风险标题数组）、points（1-3 条，每条≤60字）",
             "优先依据 topic_briefs 理解板块与宏观背景；news_bullish/news_bearish 须来自 prefetched_news 标题或 topic_briefs.points.source_titles；无则写「暂无明确利好/利空」",
+            "须遵循 session.decision_window 与 session.session_kind 调整措辞，非 trading_day_pre_close 时不要写「收盘前必须今日下单」",
             "收盘前决策：action 仅限 观察/暂停追涨/分批加仓/减仓评估/风控复核 五选一",
             "若 risk.suggested_action 为 risk_review 或 level 为 high，禁止给出加仓类 action",
             "涉及加仓/减仓须给 amount_yuan 或 amount_note（结合 holding_amount 与 concentration_limit_percent）",
@@ -682,10 +693,67 @@ def _finalize_recommendations(
         fund_recs, request, market_news, topic_briefs
     )
     portfolio, fund_recs = apply_recommendation_guards(
-        fund_recs, portfolio, request, risk, market_news
+        fund_recs, portfolio, request, risk, market_news, topic_briefs
     )
     fund_recs = apply_news_citation_guards(fund_recs, market_news, topic_briefs)
     return portfolio, fund_recs
+
+
+def _compose_analysis_facts(
+    *,
+    request: AnalysisRequest,
+    risk: RiskAssessment,
+    snapshots: list[FundSnapshot],
+    topic_briefs: list[TopicBrief] | None,
+    nav_trends: dict[str, dict],
+    runtime: AnalysisRuntime,
+    market_news: list[NewsItem] | None,
+    judge_meta: dict,
+) -> dict:
+    return build_analysis_facts(
+        request.holdings,
+        risk,
+        snapshots,
+        request.profile,
+        topic_briefs,
+        nav_trends,
+        session=build_trading_session(),
+        pipeline=build_pipeline_metadata(
+            runtime=runtime,
+            market_news=market_news,
+            topic_briefs=topic_briefs,
+            judge_meta=judge_meta,
+        ),
+        portfolio_trend=build_portfolio_trend_context(),
+    )
+
+
+def _append_pipeline_caveats(caveats: list[str], facts: dict) -> list[str]:
+    result = list(caveats)
+    pipeline = facts.get("pipeline") or {}
+    session = facts.get("session") or {}
+    mode = pipeline.get("analysis_mode")
+    model = pipeline.get("model")
+    if mode and model:
+        judge_note = ""
+        if pipeline.get("llm_judge_applied"):
+            judge_note = "，深度审校已应用"
+        elif pipeline.get("llm_judge_attempted"):
+            judge_note = "，深度审校未生效"
+        result.append(
+            f"分析管线：{mode} 模式 / 模型 {model}{judge_note}；"
+            f"当日要闻 {pipeline.get('today_news_count', 0)} 条。"
+        )
+    if pipeline.get("has_today_market_signal") is False and get_settings().news_require_today_for_add:
+        result.append("当日无已标注「今日」的要闻，系统已限制激进加仓类建议。")
+    window = session.get("decision_window")
+    if window and window not in result:
+        result.append(window)
+    trend = facts.get("portfolio_trend") or {}
+    summary_line = trend.get("summary_line")
+    if trend.get("has_history") and summary_line:
+        result.append(summary_line)
+    return result
 
 
 def _format_decision_recommendation(
@@ -744,12 +812,14 @@ def _offline_report(
     if not fund_recommendations and not recommendations:
         recommendations.append("当前信息不足以支持新增买入，建议等待净值、公告和市场信息更新。")
 
+    runtime = resolve_analysis_runtime(get_settings(), request.analysis_mode)
     recommendations, fund_recommendations = apply_recommendation_guards(
         fund_recommendations,
         recommendations,
         request,
         risk,
         news,
+        briefs,
     )
     fund_recommendations = apply_news_citation_guards(
         fund_recommendations, news, briefs
@@ -763,14 +833,17 @@ def _offline_report(
         caveats.append("本次未能拉取到有效新闻条目，政策与资金面判断请结合公开信息人工复核。")
     caveats = _append_news_pipeline_caveats(caveats, briefs, news)
 
-    facts = build_analysis_facts(
-        request.holdings,
-        risk,
-        snapshots,
-        request.profile,
-        briefs,
-        nav_trends_by_code,
+    facts = _compose_analysis_facts(
+        request=request,
+        risk=risk,
+        snapshots=snapshots,
+        topic_briefs=briefs,
+        nav_trends=nav_trends_by_code or {},
+        runtime=runtime,
+        market_news=news,
+        judge_meta={},
     )
+    caveats = _append_pipeline_caveats(caveats, facts)
     return Report(
         title="每日基金操作日报",
         risk=risk,

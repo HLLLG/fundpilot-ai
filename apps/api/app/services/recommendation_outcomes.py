@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.models import FundRecommendation
+from app.services.holding_metrics import compute_estimated_daily_return_percent
 
 
 def build_recommendation_outcomes(
@@ -43,11 +43,20 @@ def build_recommendation_outcomes(
 
         return_before = _holding_return(before)
         return_after = _holding_return(after)
-        delta = (
+        holding_delta = (
             round(return_after - return_before, 2)
             if return_before is not None and return_after is not None
             else None
         )
+
+        daily_before = _daily_return(before)
+        daily_after = _daily_return(after)
+        daily_delta = (
+            round(daily_after - daily_before, 2)
+            if daily_before is not None and daily_after is not None
+            else None
+        )
+
         items.append(
             {
                 "fund_code": code,
@@ -56,8 +65,15 @@ def build_recommendation_outcomes(
                 "current_action": rec.get("action"),
                 "holding_return_before": return_before,
                 "holding_return_after": return_after,
-                "holding_return_delta": delta,
-                "assessment": _assess_outcome(prev_rec.get("action", ""), delta),
+                "holding_return_delta": holding_delta,
+                "daily_return_before": daily_before,
+                "daily_return_after": daily_after,
+                "daily_return_delta": daily_delta,
+                "assessment": _assess_outcome(
+                    prev_rec.get("action", ""),
+                    holding_delta,
+                    daily_delta,
+                ),
             }
         )
 
@@ -69,11 +85,16 @@ def build_recommendation_outcomes(
             2,
         )
 
+    prev_trend = (previous.get("analysis_facts") or {}).get("portfolio_trend") or {}
+    curr_trend = (current.get("analysis_facts") or {}).get("portfolio_trend") or {}
+
     return {
         "has_baseline": True,
         "previous_report_id": previous.get("id"),
         "previous_created_at": previous.get("created_at"),
         "portfolio_return_delta": portfolio_delta,
+        "portfolio_trend_summary": curr_trend.get("summary_line"),
+        "portfolio_assets_delta_percent": curr_trend.get("assets_delta_percent"),
         "items": items,
     }
 
@@ -98,18 +119,59 @@ def _holding_return(holding: dict) -> float | None:
     return float(value)
 
 
-def _assess_outcome(previous_action: str, delta: float | None) -> str:
-    if delta is None:
-        return "数据不足"
+def _daily_return(holding: dict) -> float | None:
+    if holding.get("daily_return_percent") is not None:
+        return float(holding["daily_return_percent"])
+    estimated = compute_estimated_daily_return_percent(_holding_like(holding))
+    return estimated
+
+
+def _holding_like(holding: dict) -> Any:
+    from app.models import Holding
+
+    return Holding(
+        fund_code=str(holding.get("fund_code") or "000000"),
+        fund_name=str(holding.get("fund_name") or ""),
+        holding_amount=float(holding.get("holding_amount") or 0),
+        return_percent=float(holding.get("return_percent") or 0),
+        daily_return_percent=holding.get("daily_return_percent"),
+        holding_return_percent=holding.get("holding_return_percent"),
+        sector_return_percent=holding.get("sector_return_percent"),
+    )
+
+
+def _assess_outcome(
+    previous_action: str,
+    holding_delta: float | None,
+    daily_delta: float | None,
+) -> str:
+    primary_delta = daily_delta if daily_delta is not None else holding_delta
+    if primary_delta is None:
+        return "数据不足，无法对比上一份建议后的涨跌"
+
+    metric_label = "估算/实际当日涨跌" if daily_delta is not None else "持有收益率"
     action = previous_action or ""
+
     if any(token in action for token in ("减仓", "复核", "暂停")):
-        if delta <= 0:
-            return "保守建议与后续走势一致（持有收益未继续恶化）"
-        return "保守建议后持有收益回升，可结合当时新闻复核是否过早"
+        if primary_delta <= 0:
+            return (
+                f"保守建议后{metric_label}未继续走弱（{primary_delta:+.2f}%），"
+                "与控风险意图大体一致"
+            )
+        return (
+            f"保守建议后{metric_label}回升（{primary_delta:+.2f}%），"
+            "可结合当时要闻复核是否过保守"
+        )
     if "加仓" in action or "定投" in action:
-        if delta >= 0:
-            return "加仓类建议后持有收益改善或企稳"
-        return "加仓类建议后持有收益走弱，宜缩小下次额度"
-    if delta >= 0:
-        return "观望后持有收益改善"
-    return "观望后持有收益走弱"
+        if primary_delta >= 0:
+            return (
+                f"加仓类建议后{metric_label}改善或企稳（{primary_delta:+.2f}%），"
+                "可保留类似节奏"
+            )
+        return (
+            f"加仓类建议后{metric_label}走弱（{primary_delta:+.2f}%），"
+            "宜缩小下次额度或等待板块企稳"
+        )
+    if primary_delta >= 0:
+        return f"观望后{metric_label}改善（{primary_delta:+.2f}%）"
+    return f"观望后{metric_label}走弱（{primary_delta:+.2f}%），可复盘是否应更早减仓"

@@ -14,6 +14,10 @@ def build_analysis_facts(
     profile: InvestorProfile,
     topic_briefs: list[TopicBrief] | None = None,
     nav_trends_by_code: dict[str, dict] | None = None,
+    *,
+    session: dict | None = None,
+    pipeline: dict | None = None,
+    portfolio_trend: dict | None = None,
 ) -> dict:
     nav_trends = nav_trends_by_code or {}
     total_amount = sum(item.holding_amount for item in holdings) or 0.0
@@ -52,7 +56,7 @@ def build_analysis_facts(
             }
         )
 
-    return {
+    facts: dict = {
         "readonly": True,
         "instruction": "以下数字由系统计算，分析时不得改写；仅可基于它们做解释与建议。",
         "portfolio": {
@@ -77,3 +81,10 @@ def build_analysis_facts(
             ),
         },
     }
+    if session:
+        facts["session"] = session
+    if pipeline:
+        facts["pipeline"] = pipeline
+    if portfolio_trend:
+        facts["portfolio_trend"] = portfolio_trend
+    return facts

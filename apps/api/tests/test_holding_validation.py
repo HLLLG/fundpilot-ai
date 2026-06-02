@@ -1,7 +1,11 @@
 from app.models import Holding
+from app.models import PortfolioSummary
 from app.services.holding_validation import (
     build_holding_review,
+    can_allocate_penetration_daily,
     diff_holdings,
+    enrich_portfolio_summary_source,
+    infer_daily_profit_source,
     merge_holdings_with_previous,
     validate_holdings,
 )
@@ -33,6 +37,40 @@ def test_validate_account_daily_sum_mismatch():
     holdings = [_holding(daily_profit=100.0), _holding(fund_code="015945", fund_name="易方达国防军工", daily_profit=50.0)]
     warnings = validate_holdings(holdings, account_daily_profit=-482.0)
     assert any(item.code == "account_daily_sum_mismatch" for item in warnings)
+
+
+def test_infer_penetration_when_account_has_daily_but_rows_empty():
+    holdings = [
+        _holding(daily_profit=None, daily_return_percent=None, sector_return_percent=2.0),
+    ]
+    summary = PortfolioSummary(total_assets=10000, daily_profit=369.84)
+
+    assert infer_daily_profit_source(summary, holdings) == "penetration_estimate"
+    assert can_allocate_penetration_daily(summary, holdings) is True
+
+    enriched = enrich_portfolio_summary_source(summary, holdings)
+    assert enriched is not None
+    assert enriched.daily_profit_source == "penetration_estimate"
+
+
+def test_pre_close_penetration_estimate_no_sum_mismatch_warn():
+    holdings = [
+        _holding(daily_profit=None, daily_return_percent=None, sector_return_percent=2.87),
+        _holding(
+            fund_code="015945",
+            fund_name="易方达国防军工",
+            daily_profit=None,
+            daily_return_percent=None,
+            sector_return_percent=0.51,
+        ),
+    ]
+    warnings = validate_holdings(
+        holdings,
+        account_daily_profit=369.84,
+        account_daily_profit_source="penetration_estimate",
+    )
+    assert not any(item.code == "account_daily_sum_mismatch" for item in warnings)
+    assert any(item.code == "account_daily_penetration_estimate" for item in warnings)
 
 
 def test_diff_detects_added_and_removed():

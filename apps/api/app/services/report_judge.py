@@ -22,11 +22,21 @@ def judge_parsed_report(
     risk: RiskAssessment,
     snapshots: list[FundSnapshot],
     runtime: AnalysisRuntime,
-) -> dict:
+) -> tuple[dict, dict]:
     judged = _rule_judge(parsed, request, risk, snapshots)
-    if runtime.analysis_mode != "deep" or not get_settings().deepseek_configured:
-        return judged
-    return _llm_judge(judged, request, risk, snapshots, runtime)
+    meta = {
+        "rule_judge": True,
+        "llm_judge_attempted": False,
+        "llm_judge_applied": False,
+    }
+    if runtime.mode != "deep" or not get_settings().deepseek_configured:
+        return judged, meta
+    meta["llm_judge_attempted"] = True
+    reviewed = _llm_judge(judged, request, risk, snapshots, runtime)
+    if reviewed is not judged and reviewed.get("fund_recommendations"):
+        meta["llm_judge_applied"] = True
+        return reviewed, meta
+    return judged, meta
 
 
 def _rule_judge(

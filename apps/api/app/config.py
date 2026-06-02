@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     news_macro_topic: str = "上证指数"
     nav_trend_days: int = 66
     nav_trend_recent_sample: int = 8
+    news_require_today_for_add: bool = True
 
     model_config = SettingsConfigDict(
         env_file=PROJECT_ROOT / ".env",

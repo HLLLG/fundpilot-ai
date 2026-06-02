@@ -49,6 +49,7 @@ class RiskAssessment(BaseModel):
 
 
 AnalysisMode = Literal["fast", "deep"]
+DailyProfitSource = Literal["settled", "penetration_estimate"]
 
 
 class AnalysisRequest(BaseModel):
@@ -56,6 +57,12 @@ class AnalysisRequest(BaseModel):
     profile: InvestorProfile = Field(default_factory=InvestorProfile)
     ocr_text: str | None = None
     analysis_mode: AnalysisMode = "deep"
+
+
+class AllocatePenetrationRequest(BaseModel):
+    holdings: list[Holding] = Field(min_length=1)
+    account_daily_profit: float
+    account_daily_profit_source: DailyProfitSource | None = "penetration_estimate"
 
 
 class MarketItem(BaseModel):
@@ -118,6 +125,7 @@ class PortfolioSummary(BaseModel):
     total_assets: float | None = None
     daily_profit: float | None = None
     daily_return_percent: float | None = None
+    daily_profit_source: DailyProfitSource | None = None
     holding_count: int = 0
     updated_at: datetime | None = None
 

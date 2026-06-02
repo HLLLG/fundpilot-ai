@@ -77,7 +77,77 @@ def build_dashboard_payload(
         "allocation": allocation,
         "snapshot_count": len(history_rows),
         "latest_snapshot_date": latest["snapshot_date"] if latest else None,
+        "trend_context": build_portfolio_trend_context(history_rows),
     }
+
+
+def build_portfolio_trend_context(
+  history_rows: list[dict] | None = None,
+  *,
+  lookback_days: int = 7,
+) -> dict:
+    rows = history_rows if history_rows is not None else list_portfolio_daily_snapshots(
+        limit=lookback_days
+    )
+    if len(rows) < 2:
+        return {
+            "has_history": False,
+            "lookback_days": lookback_days,
+            "message": "历史快照不足，无法计算近一周组合走势。",
+        }
+
+    latest = rows[0]
+    oldest = rows[min(len(rows) - 1, lookback_days - 1)]
+    latest_assets = latest.get("total_assets")
+    oldest_assets = oldest.get("total_assets")
+    assets_delta_percent = None
+    if latest_assets and oldest_assets and oldest_assets > 0:
+        assets_delta_percent = round(
+            (float(latest_assets) - float(oldest_assets)) / float(oldest_assets) * 100,
+            2,
+        )
+
+    daily_returns = [
+        row["daily_return_percent"]
+        for row in rows[:lookback_days]
+        if row.get("daily_return_percent") is not None
+    ]
+    cumulative_return_percent = (
+        round(sum(float(value) for value in daily_returns), 2) if daily_returns else None
+    )
+
+    summary_line = _format_trend_summary(
+        span_days=min(len(rows), lookback_days),
+        assets_delta_percent=assets_delta_percent,
+        cumulative_return_percent=cumulative_return_percent,
+        latest_date=str(latest.get("snapshot_date") or ""),
+    )
+
+    return {
+        "has_history": True,
+        "lookback_days": lookback_days,
+        "snapshot_count": len(rows),
+        "latest_snapshot_date": latest.get("snapshot_date"),
+        "oldest_snapshot_date_in_window": oldest.get("snapshot_date"),
+        "assets_delta_percent": assets_delta_percent,
+        "cumulative_daily_return_percent": cumulative_return_percent,
+        "summary_line": summary_line,
+    }
+
+
+def _format_trend_summary(
+    *,
+    span_days: int,
+    assets_delta_percent: float | None,
+    cumulative_return_percent: float | None,
+    latest_date: str,
+) -> str:
+    parts: list[str] = [f"近 {span_days} 个交易日（至 {latest_date}）"]
+    if assets_delta_percent is not None:
+        parts.append(f"组合资产变化约 {assets_delta_percent:+.2f}%")
+    if cumulative_return_percent is not None:
+        parts.append(f"累计当日收益率合计约 {cumulative_return_percent:+.2f}%（为日度相加近似）")
+    return "，".join(parts) + "。"
 
 
 def _build_allocation(

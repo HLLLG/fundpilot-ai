@@ -1,4 +1,43 @@
-import type { Holding, HoldingFieldWarning, HoldingListDiff } from "@/lib/api";
+import type { Holding, HoldingFieldWarning, HoldingListDiff, PortfolioSummary } from "@/lib/api";
+
+export function holdingsHaveSettledDaily(holdings: Holding[]): boolean {
+  return holdings.some(
+    (holding) => holding.daily_profit != null || holding.daily_return_percent != null,
+  );
+}
+
+export function resolveDailyProfitSource(
+  summary: PortfolioSummary | null,
+  holdings: Holding[],
+): PortfolioSummary["daily_profit_source"] {
+  if (summary?.daily_profit == null) {
+    return null;
+  }
+  if (summary.daily_profit_source) {
+    return summary.daily_profit_source;
+  }
+  if (!holdingsHaveSettledDaily(holdings)) {
+    return "penetration_estimate";
+  }
+  return "settled";
+}
+
+export function canAllocatePenetrationDaily(
+  summary: PortfolioSummary | null,
+  holdings: Holding[],
+): boolean {
+  if (!holdings.length || summary?.daily_profit == null) {
+    return false;
+  }
+  return resolveDailyProfitSource(summary, holdings) === "penetration_estimate";
+}
+
+export function isPenetrationEstimateDisplay(
+  summary: PortfolioSummary | null,
+  holdings: Holding[],
+): boolean {
+  return resolveDailyProfitSource(summary, holdings) === "penetration_estimate";
+}
 
 export function mergeHoldingsWithPrevious(previous: Holding[], current: Holding[]): Holding[] {
   if (!previous.length) {
@@ -64,6 +103,14 @@ export function warningsForCell(
 
 export function globalWarnings(warnings: HoldingFieldWarning[]): HoldingFieldWarning[] {
   return warnings.filter((item) => item.index < 0);
+}
+
+export function accountInfoWarnings(warnings: HoldingFieldWarning[]): HoldingFieldWarning[] {
+  return globalWarnings(warnings).filter((item) => item.severity === "info");
+}
+
+export function accountActionWarnings(warnings: HoldingFieldWarning[]): HoldingFieldWarning[] {
+  return globalWarnings(warnings).filter((item) => item.severity !== "info");
 }
 
 export function diffForRow(diffs: HoldingListDiff[], index: number): HoldingListDiff | undefined {

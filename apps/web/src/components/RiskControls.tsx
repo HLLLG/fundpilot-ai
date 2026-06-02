@@ -12,6 +12,8 @@ type RiskControlsProps = {
   onChange: (profile: InvestorProfile) => void;
   onAnalyze: () => void;
   isBusy: boolean;
+  ocrWarningCount?: number;
+  hasBlockingErrors?: boolean;
 };
 
 export function RiskControls({
@@ -21,6 +23,8 @@ export function RiskControls({
   onChange,
   onAnalyze,
   isBusy,
+  ocrWarningCount = 0,
+  hasBlockingErrors = false,
 }: RiskControlsProps) {
   return (
     <section className="glass-panel min-w-0 rounded-[28px] p-6">
@@ -115,15 +119,28 @@ export function RiskControls({
         <AnalysisModeToggle mode={analysisMode} onChange={onAnalysisModeChange} />
       </div>
 
+      {ocrWarningCount > 0 ? (
+        <p className="mt-4 rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3 text-xs font-semibold leading-5 text-amber-900">
+          校对表有 {ocrWarningCount} 处高亮待确认。
+          {hasBlockingErrors
+            ? "存在严重项，建议修正后再生成。"
+            : "确认无误后可继续生成。"}
+        </p>
+      ) : null}
+
       <button
         type="button"
         onClick={onAnalyze}
-        disabled={isBusy}
+        disabled={isBusy || hasBlockingErrors}
         data-testid="analyze"
         className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-full bg-slate-950 px-5 py-3 text-sm font-black text-white shadow-[0_16px_36px_rgba(15,23,42,0.22)] transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
       >
         <SlidersHorizontal size={18} />
-        {isBusy ? "正在生成投研日报..." : "生成今日基金操作日报"}
+        {isBusy
+          ? "正在生成投研日报..."
+          : hasBlockingErrors
+            ? "请先处理检查清单中的严重项"
+            : "生成今日基金操作日报"}
       </button>
     </section>
   );

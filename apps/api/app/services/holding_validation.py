@@ -3,7 +3,8 @@ from __future__ import annotations
 import re
 from typing import Literal
 
-from app.models import Holding, HoldingFieldWarning, HoldingListDiff, PortfolioSummary
+from app.models import DailyProfitSource, Holding, HoldingFieldWarning, HoldingListDiff, PortfolioSummary
+from app.services.holding_metrics import compute_estimated_daily_return_percent
 
 WarningSeverity = Literal["error", "warn", "info"]
 
@@ -18,14 +19,34 @@ def validate_holdings(
     holdings: list[Holding],
     *,
     account_daily_profit: float | None = None,
+    account_daily_profit_source: DailyProfitSource | None = None,
 ) -> list[HoldingFieldWarning]:
     warnings: list[HoldingFieldWarning] = []
     for index, holding in enumerate(holdings):
         warnings.extend(_warnings_for_holding(index, holding))
 
-    if account_daily_profit is not None:
+    if account_daily_profit is not None and holdings:
         row_sum = sum(h.daily_profit or 0 for h in holdings if h.daily_profit is not None)
-        if holdings and _significant_mismatch(row_sum, account_daily_profit):
+        has_settled_daily = _holdings_have_settled_daily(holdings)
+        source = account_daily_profit_source or (
+            "penetration_estimate" if not has_settled_daily else "settled"
+        )
+
+        if not has_settled_daily and source == "penetration_estimate":
+            warnings.append(
+                HoldingFieldWarning(
+                    index=-1,
+                    field="daily_profit",
+                    code="account_daily_penetration_estimate",
+                    message=(
+                        f"收盘前养基宝各行「当日收益」多为「-」尚未结算；账户顶部 "
+                        f"{account_daily_profit:+.2f} 为场内穿透估算，可作参考。"
+                        f"收盘后若截图带出分基金当日收益，将以实际值为准并参与合计校验。"
+                    ),
+                    severity="info",
+                )
+            )
+        elif has_settled_daily and _significant_mismatch(row_sum, account_daily_profit):
             warnings.append(
                 HoldingFieldWarning(
                     index=-1,
@@ -156,7 +177,14 @@ def build_holding_review(
     account_daily = (
         portfolio_summary.daily_profit if portfolio_summary is not None else None
     )
-    warnings = validate_holdings(holdings, account_daily_profit=account_daily)
+    account_source = (
+        portfolio_summary.daily_profit_source if portfolio_summary is not None else None
+    )
+    warnings = validate_holdings(
+        holdings,
+        account_daily_profit=account_daily,
+        account_daily_profit_source=account_source,
+    )
     diffs = diff_holdings(previous_holdings or [], holdings)
     return {
         "holding_warnings": [item.model_dump() for item in warnings],
@@ -247,6 +275,53 @@ def _match_holding(
         ):
             return index, candidate
     return None, None
+
+
+def holdings_have_settled_daily(holdings: list[Holding]) -> bool:
+    return _holdings_have_settled_daily(holdings)
+
+
+def infer_daily_profit_source(
+    portfolio_summary: PortfolioSummary | None,
+    holdings: list[Holding],
+) -> DailyProfitSource | None:
+    if portfolio_summary is None or portfolio_summary.daily_profit is None:
+        return None
+    if portfolio_summary.daily_profit_source:
+        return portfolio_summary.daily_profit_source
+    if not _holdings_have_settled_daily(holdings):
+        return "penetration_estimate"
+    return "settled"
+
+
+def can_allocate_penetration_daily(
+    portfolio_summary: PortfolioSummary | None,
+    holdings: list[Holding],
+) -> bool:
+    if not holdings:
+        return False
+    return infer_daily_profit_source(portfolio_summary, holdings) == "penetration_estimate"
+
+
+def enrich_portfolio_summary_source(
+    portfolio_summary: PortfolioSummary | None,
+    holdings: list[Holding],
+) -> PortfolioSummary | None:
+    if portfolio_summary is None:
+        return None
+    if portfolio_summary.daily_profit_source is not None:
+        return portfolio_summary
+    inferred = infer_daily_profit_source(portfolio_summary, holdings)
+    if inferred is None:
+        return portfolio_summary
+    return portfolio_summary.model_copy(update={"daily_profit_source": inferred})
+
+
+def _holdings_have_settled_daily(holdings: list[Holding]) -> bool:
+    return any(
+        holding.daily_profit is not None or holding.daily_return_percent is not None
+        for holding in holdings
+    )
 
 
 def _significant_mismatch(a: float, b: float, *, tolerance: float = 1.0) -> bool:

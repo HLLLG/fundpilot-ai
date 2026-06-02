@@ -14,6 +14,38 @@ def test_health_endpoint_returns_ok():
     assert response.json()["status"] == "ok"
 
 
+def test_allocate_penetration_daily_endpoint():
+    response = client.post(
+        "/api/holdings/allocate-penetration-daily",
+        json={
+            "holdings": [
+                {
+                    "fund_code": "008586",
+                    "fund_name": "华夏人工智能",
+                    "holding_amount": 8000,
+                    "return_percent": -3,
+                    "sector_return_percent": 2.5,
+                },
+                {
+                    "fund_code": "015945",
+                    "fund_name": "国防军工",
+                    "holding_amount": 2000,
+                    "return_percent": -5,
+                    "sector_return_percent": 0.5,
+                },
+            ],
+            "account_daily_profit": 369.84,
+            "account_daily_profit_source": "penetration_estimate",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["allocated_total"] == 369.84
+    assert len(body["holdings"]) == 2
+    assert all(item.get("daily_profit") is not None for item in body["holdings"])
+
+
 def _mock_news_search(monkeypatch):
     from app.models import NewsItem
     from app.services.news_service import NewsService

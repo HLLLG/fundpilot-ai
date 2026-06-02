@@ -45,6 +45,8 @@ import { HistoryRail } from "@/components/HistoryRail";
 import { HoldingTable } from "@/components/HoldingTable";
 import { JobStatusFloat } from "@/components/JobStatusFloat";
 import { mergeHoldingsWithPrevious } from "@/lib/holdingReview";
+import { buildWorkflowBlockers, hasBlockingErrors } from "@/lib/workflowBlockers";
+import { TodayBlockingChecklist } from "@/components/TodayBlockingChecklist";
 import { PortfolioDashboard } from "@/components/PortfolioDashboard";
 import { PortfolioSummaryCard } from "@/components/PortfolioSummaryCard";
 import { ReportPanel } from "@/components/ReportPanel";
@@ -144,6 +146,23 @@ export function Dashboard() {
   const totalAmount = portfolioSummary?.total_assets ?? (sessionTotal || null);
   const dailyProfit = portfolioSummary?.daily_profit;
   const displayReport = report ?? reports[0] ?? null;
+
+  const workflowBlockers = useMemo(
+    () =>
+      buildWorkflowBlockers({
+        holdings,
+        warnings: holdingWarnings,
+        profile,
+        portfolioSummary,
+        hasReportToday: Boolean(
+          report?.created_at?.slice(0, 10) === new Date().toISOString().slice(0, 10),
+        ),
+      }),
+    [holdings, holdingWarnings, profile, portfolioSummary, report?.created_at],
+  );
+
+  const ocrWarningCount = holdingWarnings.length;
+  const blockingErrors = hasBlockingErrors(workflowBlockers);
 
   const loadHistory = async () => {
     try {
@@ -433,8 +452,9 @@ export function Dashboard() {
         <div className="min-w-0 flex-1">
           {activeTab === "today" ? (
             <div className="grid min-w-0 gap-6">
-              <PortfolioSummaryCard summary={portfolioSummary} />
+              <PortfolioSummaryCard summary={portfolioSummary} holdings={holdings} />
               <TodayWorkflowSteps hasHoldings={holdings.length > 0} hasReport={Boolean(displayReport)} />
+              <TodayBlockingChecklist blockers={workflowBlockers} />
               <div className="grid min-w-0 gap-6 lg:grid-cols-[0.9fr_1.1fr]">
                 <UploadDropzone
                   rawText={rawText}
@@ -452,6 +472,8 @@ export function Dashboard() {
                   onChange={setProfile}
                   onAnalyze={() => void handleAnalyze()}
                   isBusy={isSubmitting}
+                  ocrWarningCount={ocrWarningCount}
+                  hasBlockingErrors={blockingErrors}
                 />
               </div>
               {holdings.length > 0 || rawText ? (
@@ -464,12 +486,15 @@ export function Dashboard() {
                     holdings={holdings}
                     onChange={setHoldings}
                     warnings={holdingWarnings}
+                    onWarningsChange={setHoldingWarnings}
+                    portfolioSummary={portfolioSummary}
                     diffs={holdingDiffs}
                     canApplyPreviousStructure={previousHoldings.length > 0}
                     onApplyPreviousStructure={() => {
                       setHoldings(mergeHoldingsWithPrevious(previousHoldings, holdings));
                       setMessage("已沿用昨日基金列表，并保留本次 OCR 的金额与收益。请再扫一眼高亮格子。");
                     }}
+                    onAllocateMessage={setMessage}
                   />
                 </div>
               ) : null}

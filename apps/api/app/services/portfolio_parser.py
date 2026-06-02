@@ -38,10 +38,17 @@ def parse_portfolio_summary_from_text(text: str) -> PortfolioSummary | None:
     if daily_return_percent is None and daily_profit is not None and total_assets:
         daily_return_percent = round(daily_profit / total_assets * 100, 4)
 
+    daily_profit_source = None
+    if daily_profit is not None:
+        daily_profit_source = (
+            "penetration_estimate" if "场内穿透" in text else "settled"
+        )
+
     return PortfolioSummary(
         total_assets=total_assets,
         daily_profit=daily_profit,
         daily_return_percent=daily_return_percent,
+        daily_profit_source=daily_profit_source,
         updated_at=datetime.now(timezone.utc),
     )
 

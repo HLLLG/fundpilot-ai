@@ -1,6 +1,15 @@
 from __future__ import annotations
 
-from app.models import AnalysisRequest, FundRecommendation, Holding, NewsItem, RiskAssessment
+from app.config import get_settings
+from app.models import (
+    AnalysisRequest,
+    FundRecommendation,
+    Holding,
+    NewsItem,
+    RiskAssessment,
+    TopicBrief,
+)
+from app.services.market_signal import has_today_market_signal
 from app.services.recommendations import build_offline_fund_recommendation
 
 # 动作激进度：数值越低越保守（减仓/复核 < 观察 < 暂停 < 加仓）
@@ -25,9 +34,12 @@ def apply_recommendation_guards(
     request: AnalysisRequest,
     risk: RiskAssessment,
     market_news: list[NewsItem] | None = None,
+    topic_briefs: list[TopicBrief] | None = None,
 ) -> tuple[list[str], list[FundRecommendation]]:
     total_amount = sum(holding.holding_amount for holding in request.holdings) or 1
     offline_map = _offline_by_holding(request, total_amount, market_news)
+    settings = get_settings()
+    today_signal = has_today_market_signal(market_news, topic_briefs)
 
     guarded: list[FundRecommendation] = []
     for rec in fund_recs:
@@ -44,8 +56,23 @@ def apply_recommendation_guards(
         if _action_bucket(normalized) > max_bucket:
             normalized = _BUCKET_TO_LABEL[_bucket_name(max_bucket)]
 
+        if (
+            settings.news_require_today_for_add
+            and not today_signal
+            and _action_bucket(normalized) >= 3
+        ):
+            normalized = "暂停追涨"
+            max_bucket = min(max_bucket, 2)
+
         note = None
-        if offline is not None and normalized != rec.action.strip():
+        if (
+            settings.news_require_today_for_add
+            and not today_signal
+            and _action_bucket(rec.action.strip()) >= 3
+            and normalized != rec.action.strip()
+        ):
+            note = "无当日可引用要闻，已限制激进加仓类动作（更贴盘面、防幻觉）。"
+        elif offline is not None and normalized != rec.action.strip():
             note = f"已按风控规则将「{rec.action.strip()}」调整为「{normalized}」（对照本地规则：{offline.action}）。"
         elif normalized != rec.action.strip():
             note = f"已规范动作表述为「{normalized}」。"
@@ -56,6 +83,10 @@ def apply_recommendation_guards(
         guarded.append(copy)
 
     portfolio = _guard_portfolio_lines(portfolio_lines, risk)
+    if settings.news_require_today_for_add and not today_signal:
+        hint = "当日无已引用要闻支撑，组合级建议以观察/控风险为主，不宜激进加仓。"
+        if not portfolio or hint not in portfolio[0]:
+            portfolio = [hint, *portfolio]
     return portfolio, guarded
 
 

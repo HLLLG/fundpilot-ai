@@ -1,11 +1,16 @@
 "use client";
 
-import { AlertTriangle, History, Plus, Trash2 } from "lucide-react";
-import type { Holding, HoldingFieldWarning, HoldingListDiff } from "@/lib/api";
+import { useState } from "react";
+import { AlertTriangle, History, Plus, Sparkles, Trash2 } from "lucide-react";
+import type { Holding, HoldingFieldWarning, HoldingListDiff, PortfolioSummary } from "@/lib/api";
+import { allocatePenetrationDaily } from "@/lib/api";
 import {
+  accountActionWarnings,
+  accountInfoWarnings,
+  canAllocatePenetrationDaily,
   countActionableWarnings,
   diffForRow,
-  globalWarnings,
+  resolveDailyProfitSource,
   warningsForCell,
 } from "@/lib/holdingReview";
 import {
@@ -13,9 +18,11 @@ import {
   holdingDailyReturnIsEstimated,
 } from "@/lib/holdingMetrics";
 
+const PENETRATION_NOTE = "穿透拆分参考";
+
 function fieldInputClass(hasIssue: boolean, severity?: string) {
   const base =
-    "w-full rounded-xl border px-3 py-2 text-sm outline-none focus:ring-4 ";
+    "w-full min-w-0 rounded-xl border px-3 py-2 text-sm tabular-nums outline-none focus:ring-4 ";
   if (!hasIssue) {
     return `${base} border-slate-200 focus:border-blue-400 focus:ring-blue-100`;
   }
@@ -29,21 +36,37 @@ function EstimatedDailyReturnCell({ holding }: { holding: Holding }) {
   const estimated = computeEstimatedDailyReturnPercent(holding);
   const isEstimated = holdingDailyReturnIsEstimated(holding);
 
+  const fromPenetration = holding.user_note?.includes(PENETRATION_NOTE);
+
   if (holding.daily_return_percent != null) {
     return (
       <div
-        className="w-32 rounded-xl border border-emerald-100 bg-emerald-50/80 px-3 py-2 text-sm font-medium text-emerald-800"
-        title="已填写明确当日收益率，不再使用估算"
+        className={`w-full rounded-xl border px-3 py-2 text-sm font-medium tabular-nums ${
+          fromPenetration
+            ? "border-blue-200 bg-blue-50/80 text-blue-900"
+            : "border-emerald-100 bg-emerald-50/80 text-emerald-800"
+        }`}
+        title={
+          fromPenetration
+            ? "由场内穿透按板块权重拆分，可编辑"
+            : "已填写明确当日收益率，不再使用估算"
+        }
       >
         {holding.daily_return_percent.toFixed(2)}%
-        <span className="mt-0.5 block text-[10px] font-semibold text-emerald-600">已填当日</span>
+        <span
+          className={`mt-0.5 block text-[10px] font-semibold ${
+            fromPenetration ? "text-blue-700" : "text-emerald-600"
+          }`}
+        >
+          {fromPenetration ? "穿透拆分" : "已填当日"}
+        </span>
       </div>
     );
   }
 
   if (estimated == null) {
     return (
-      <div className="w-32 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-400">
+      <div className="w-full rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-400">
         —
       </div>
     );
@@ -51,7 +74,7 @@ function EstimatedDailyReturnCell({ holding }: { holding: Holding }) {
 
   return (
     <div
-      className="w-32 rounded-xl border border-amber-100 bg-amber-50/90 px-3 py-2 text-sm font-semibold text-amber-900"
+      className="w-full rounded-xl border border-amber-100 bg-amber-50/90 px-3 py-2 text-sm font-semibold tabular-nums text-amber-900"
       title="估算当日收益率 ≈ 板块涨跌 + 持有收益率（昨日结算）"
     >
       {isEstimated ? `≈${estimated.toFixed(2)}%` : `${estimated.toFixed(2)}%`}
@@ -66,21 +89,29 @@ type HoldingTableProps = {
   holdings: Holding[];
   onChange: (holdings: Holding[]) => void;
   warnings?: HoldingFieldWarning[];
+  onWarningsChange?: (warnings: HoldingFieldWarning[]) => void;
   diffs?: HoldingListDiff[];
+  portfolioSummary?: PortfolioSummary | null;
   canApplyPreviousStructure?: boolean;
   onApplyPreviousStructure?: () => void;
+  onAllocateMessage?: (message: string) => void;
 };
 
 export function HoldingTable({
   holdings,
   onChange,
   warnings = [],
+  onWarningsChange,
   diffs = [],
+  portfolioSummary = null,
   canApplyPreviousStructure = false,
   onApplyPreviousStructure,
+  onAllocateMessage,
 }: HoldingTableProps) {
+  const [isAllocating, setIsAllocating] = useState(false);
   const actionableCount = countActionableWarnings(warnings);
-  const accountWarnings = globalWarnings(warnings);
+  const accountInfos = accountInfoWarnings(warnings);
+  const accountWarnings = accountActionWarnings(warnings);
   const updateHolding = (index: number, patch: Partial<Holding>) => {
     onChange(
       holdings.map((holding, itemIndex) =>
@@ -111,6 +142,33 @@ export function HoldingTable({
     onChange(holdings.filter((_, itemIndex) => itemIndex !== index));
   };
 
+  const canAllocatePenetration = canAllocatePenetrationDaily(portfolioSummary, holdings);
+
+  const handleAllocatePenetration = async () => {
+    if (portfolioSummary?.daily_profit == null) {
+      return;
+    }
+    setIsAllocating(true);
+    try {
+      const result = await allocatePenetrationDaily(
+        holdings,
+        portfolioSummary.daily_profit,
+        resolveDailyProfitSource(portfolioSummary, holdings) ?? "penetration_estimate",
+      );
+      onChange(result.holdings);
+      onWarningsChange?.(result.holding_warnings);
+      onAllocateMessage?.(
+        `已按板块涨跌权重拆分账户当日收益 ${result.account_daily_profit >= 0 ? "+" : ""}${result.account_daily_profit.toFixed(2)} 元（各行合计 ${result.allocated_total >= 0 ? "+" : ""}${result.allocated_total.toFixed(2)}），仅供参考，可继续手动修改。`,
+      );
+    } catch (error) {
+      onAllocateMessage?.(
+        error instanceof Error ? error.message : "拆分当日收益失败，请稍后重试。",
+      );
+    } finally {
+      setIsAllocating(false);
+    }
+  };
+
   return (
     <section className="glass-panel min-w-0 rounded-[28px] p-6">
       <div className="mb-5 flex items-center justify-between gap-4">
@@ -121,6 +179,17 @@ export function HoldingTable({
           </p>
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2">
+          {canAllocatePenetration ? (
+            <button
+              type="button"
+              onClick={() => void handleAllocatePenetration()}
+              disabled={isAllocating}
+              className="inline-flex items-center gap-2 whitespace-nowrap rounded-full border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-bold text-blue-800 transition hover:bg-blue-100 disabled:opacity-60"
+            >
+              <Sparkles size={16} />
+              {isAllocating ? "拆分中..." : "一键填充估算当日收益"}
+            </button>
+          ) : null}
           {canApplyPreviousStructure && onApplyPreviousStructure ? (
             <button
               type="button"
@@ -142,6 +211,21 @@ export function HoldingTable({
         </div>
       </div>
 
+      {accountInfos.length > 0 ? (
+        <div className="mb-4 space-y-2 rounded-2xl border border-blue-200 bg-blue-50/90 px-4 py-3">
+          {accountInfos.map((item) => (
+            <p key={item.code} className="text-sm font-semibold leading-6 text-blue-950">
+              {item.message}
+            </p>
+          ))}
+          {canAllocatePenetration ? (
+            <p className="text-xs leading-5 text-blue-800/90">
+              可使用「一键填充估算当日收益」：按「持有金额 × 板块涨跌」权重拆分账户场内穿透收益，并自动计算各行当日收益率。
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
       {actionableCount > 0 || accountWarnings.length > 0 ? (
         <div className="mb-4 space-y-2 rounded-2xl border border-amber-200 bg-amber-50/90 px-4 py-3">
           <div className="flex items-start gap-2 text-sm font-bold text-amber-950">
@@ -151,15 +235,28 @@ export function HoldingTable({
             </span>
           </div>
           {accountWarnings.map((item) => (
-            <p key={item.code} className="pl-7 text-xs font-semibold text-amber-900">
+            <p key={item.code} className="pl-7 text-xs font-semibold leading-5 text-amber-900">
               {item.message}
             </p>
           ))}
         </div>
       ) : null}
 
-      <div className="max-w-full overflow-x-auto">
-        <table className="w-full min-w-[1420px] border-separate border-spacing-y-3">
+      <div className="max-w-full overflow-x-auto overscroll-x-contain">
+        <table className="w-full min-w-[1720px] table-fixed border-separate border-spacing-y-3">
+          <colgroup>
+            <col className="w-[7.5rem]" />
+            <col className="w-[14rem]" />
+            <col className="w-[8.5rem]" />
+            <col className="w-[8.5rem]" />
+            <col className="w-[7.5rem]" />
+            <col className="w-[9.5rem]" />
+            <col className="w-[7rem]" />
+            <col className="w-[8.5rem]" />
+            <col className="w-[7.5rem]" />
+            <col className="w-[9.5rem]" />
+            <col className="w-[4.5rem]" />
+          </colgroup>
           <thead>
             <tr className="text-left text-xs font-bold uppercase text-slate-400">
               <th className="px-3">基金代码</th>
@@ -191,7 +288,7 @@ export function HoldingTable({
                     value={holding.fund_code}
                     onChange={(event) => updateHolding(index, { fund_code: event.target.value })}
                     title={codeWarning?.message}
-                    className={`w-24 ${fieldInputClass(Boolean(codeWarning), codeWarning?.severity)} font-bold`}
+                    className={`${fieldInputClass(Boolean(codeWarning), codeWarning?.severity)} font-bold`}
                   />
                   {rowDiff && rowDiff.change_type !== "unchanged" ? (
                     <div className="mt-1 text-[10px] font-bold text-indigo-600">
@@ -205,7 +302,7 @@ export function HoldingTable({
                   <input
                     value={holding.fund_name}
                     onChange={(event) => updateHolding(index, { fund_name: event.target.value })}
-                    className="w-full min-w-52 rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400"
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400"
                   />
                 </td>
                 <td className="px-3 py-3">
@@ -217,7 +314,7 @@ export function HoldingTable({
                     onChange={(event) =>
                       updateHolding(index, { holding_amount: Number(event.target.value) })
                     }
-                    className="w-32 rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400"
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm tabular-nums outline-none focus:border-blue-400"
                   />
                 </td>
                 <td className="px-3 py-3">
@@ -231,9 +328,13 @@ export function HoldingTable({
                           event.target.value === "" ? null : Number(event.target.value),
                       })
                     }
-                    title={dailyProfitWarning?.message}
-                    className={`w-28 ${fieldInputClass(Boolean(dailyProfitWarning), dailyProfitWarning?.severity)}`}
-                    placeholder="如 -86.23"
+                    title={dailyProfitWarning?.message ?? "收盘前养基宝常为「-」，可留空"}
+                    className={`${fieldInputClass(Boolean(dailyProfitWarning), dailyProfitWarning?.severity)} ${
+                      holding.user_note?.includes(PENETRATION_NOTE)
+                        ? "border-blue-200 bg-blue-50/50"
+                        : ""
+                    }`}
+                    placeholder={holding.daily_profit == null ? "收盘前暂无" : "如 -86.23"}
                   />
                 </td>
                 <td className="px-3 py-3">
@@ -247,15 +348,19 @@ export function HoldingTable({
                           event.target.value === "" ? null : Number(event.target.value),
                       })
                     }
-                    className="w-28 rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400"
-                    placeholder="如 -0.57"
+                    className={`w-full rounded-xl border px-3 py-2 text-sm tabular-nums outline-none focus:border-blue-400 ${
+                      holding.user_note?.includes(PENETRATION_NOTE)
+                        ? "border-blue-200 bg-blue-50/50"
+                        : "border-slate-200"
+                    }`}
+                    placeholder={holding.daily_return_percent == null ? "收盘前暂无" : "如 -0.57"}
                   />
                 </td>
                 <td className="px-3 py-3">
                   <input
                     value={holding.sector_name ?? ""}
                     onChange={(event) => updateHolding(index, { sector_name: event.target.value })}
-                    className="w-36 rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400"
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400"
                     placeholder="如 半导体"
                   />
                 </td>
@@ -271,8 +376,8 @@ export function HoldingTable({
                       })
                     }
                     title={sectorWarning?.message}
-                    className={`w-28 ${fieldInputClass(Boolean(sectorWarning), sectorWarning?.severity)}`}
-                    placeholder="如 3.33"
+                    className={fieldInputClass(Boolean(sectorWarning), sectorWarning?.severity)}
+                    placeholder="如 2.87"
                   />
                 </td>
                 <td className="px-3 py-3">
@@ -286,8 +391,8 @@ export function HoldingTable({
                           event.target.value === "" ? null : Number(event.target.value),
                       })
                     }
-                    className="w-28 rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400"
-                    placeholder="如 401.80"
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm tabular-nums outline-none focus:border-blue-400"
+                    placeholder="如 -260.85"
                   />
                 </td>
                 <td className="px-3 py-3">
@@ -302,8 +407,8 @@ export function HoldingTable({
                         return_percent: value,
                       });
                     }}
-                    className="w-28 rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400"
-                    placeholder="如 2.74"
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm tabular-nums outline-none focus:border-blue-400"
+                    placeholder="如 -3.14"
                   />
                 </td>
                 <td className="px-3 py-3">

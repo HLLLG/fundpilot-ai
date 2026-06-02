@@ -1,10 +1,12 @@
 "use client";
 
 import { TrendingDown, TrendingUp, Wallet } from "lucide-react";
-import type { PortfolioSummary } from "@/lib/api";
+import type { Holding, PortfolioSummary } from "@/lib/api";
+import { isPenetrationEstimateDisplay } from "@/lib/holdingReview";
 
 type PortfolioSummaryCardProps = {
   summary: PortfolioSummary | null;
+  holdings?: Holding[];
 };
 
 function formatMoney(value: number | null | undefined) {
@@ -21,9 +23,10 @@ function profitTone(value: number | null | undefined) {
   return value > 0 ? "text-rose-600" : "text-emerald-600";
 }
 
-export function PortfolioSummaryCard({ summary }: PortfolioSummaryCardProps) {
+export function PortfolioSummaryCard({ summary, holdings = [] }: PortfolioSummaryCardProps) {
   const dailyProfit = summary?.daily_profit;
   const dailyReturn = summary?.daily_return_percent;
+  const showPenetrationBadge = isPenetrationEstimateDisplay(summary, holdings);
   const updatedAt = summary?.updated_at
     ? new Date(summary.updated_at).toLocaleString("zh-CN")
     : null;
@@ -40,8 +43,15 @@ export function PortfolioSummaryCard({ summary }: PortfolioSummaryCardProps) {
           <div className="mt-1 text-2xl font-black text-slate-950">{formatMoney(summary?.total_assets)}</div>
         </div>
         <div>
-          <div className="text-xs font-semibold text-slate-500">当日收益</div>
-          <div className={`mt-1 flex items-center gap-1 text-2xl font-black ${profitTone(dailyProfit)}`}>
+          <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-500">
+            <span>当日收益</span>
+            {showPenetrationBadge ? (
+              <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-bold text-blue-800">
+                场内穿透估算
+              </span>
+            ) : null}
+          </div>
+          <div className={`mt-1 flex items-center gap-1 text-2xl font-black tabular-nums ${profitTone(dailyProfit)}`}>
             {dailyProfit !== null && dailyProfit !== undefined && dailyProfit > 0 ? (
               <TrendingUp size={20} />
             ) : dailyProfit !== null && dailyProfit !== undefined && dailyProfit < 0 ? (

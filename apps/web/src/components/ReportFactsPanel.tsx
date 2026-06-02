@@ -1,13 +1,12 @@
 "use client";
 
 import { Database } from "lucide-react";
-import type { Report } from "@/lib/api";
-
 type ReportFactsPanelProps = {
   facts: Record<string, unknown> | undefined;
+  embedded?: boolean;
 };
 
-export function ReportFactsPanel({ facts }: ReportFactsPanelProps) {
+export function ReportFactsPanel({ facts, embedded = false }: ReportFactsPanelProps) {
   if (!facts || !facts.portfolio) {
     return null;
   }
@@ -15,13 +14,9 @@ export function ReportFactsPanel({ facts }: ReportFactsPanelProps) {
   const portfolio = facts.portfolio as Record<string, number | string>;
   const holdings = (facts.holdings as Array<Record<string, unknown>>) ?? [];
 
-  return (
-    <details className="mb-5 rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm">
-      <summary className="flex cursor-pointer list-none items-center gap-2 text-sm font-black text-slate-950">
-        <Database size={18} className="text-indigo-600" />
-        系统计算事实（只读，模型不得改写）
-      </summary>
-      <div className="mt-4 grid gap-3 sm:grid-cols-3">
+  const content = (
+    <>
+      <div className="grid gap-3 sm:grid-cols-3">
         <Fact label="账户总额" value={`¥${portfolio.total_amount}`} />
         <Fact label="加权收益率" value={`${portfolio.weighted_return_percent}%`} />
         <Fact label="风险等级" value={String(portfolio.risk_level)} />
@@ -53,6 +48,20 @@ export function ReportFactsPanel({ facts }: ReportFactsPanelProps) {
           </tbody>
         </table>
       </div>
+    </>
+  );
+
+  if (embedded) {
+    return content;
+  }
+
+  return (
+    <details className="mb-5 rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm">
+      <summary className="flex cursor-pointer list-none items-center gap-2 text-sm font-black text-slate-950">
+        <Database size={18} className="text-indigo-600" />
+        系统计算事实（只读，模型不得改写）
+      </summary>
+      <div className="mt-4">{content}</div>
     </details>
   );
 }

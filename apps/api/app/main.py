@@ -20,12 +20,17 @@ from app.database import (
 )
 from app.lifespan import app_lifespan
 from app.database import list_report_chat_messages
-from app.models import AnalysisRequest, FundProfile, ReportChatRequest
+from app.models import AllocatePenetrationRequest, AnalysisRequest, FundProfile, ReportChatRequest
 from app.services.analyze_pipeline import run_analysis
 from app.database import get_portfolio_summary, save_portfolio_summary
 from app.services.fund_data import FundDataService
 from app.services.fund_profile import FundProfileService, parse_profile_from_text
-from app.services.holding_validation import build_holding_review
+from app.services.holding_validation import (
+    build_holding_review,
+    enrich_portfolio_summary_source,
+    validate_holdings,
+)
+from app.services.penetration_daily_allocator import allocate_penetration_daily_profit
 from app.services.portfolio_parser import parse_portfolio_summary_from_text
 from app.services.portfolio_snapshot import (
     build_dashboard_payload,
@@ -102,6 +107,7 @@ async def parse_ocr(
 
     portfolio_summary = parse_portfolio_summary_from_text(text)
     if portfolio_summary is not None:
+        portfolio_summary = enrich_portfolio_summary_source(portfolio_summary, holdings)
         portfolio_summary = portfolio_summary.model_copy(
             update={"holding_count": len(holdings)}
         )
@@ -126,6 +132,28 @@ async def parse_ocr(
             portfolio_summary.model_dump(mode="json") if portfolio_summary else None
         ),
         **holding_review,
+    }
+
+
+@app.post("/api/holdings/allocate-penetration-daily")
+def allocate_penetration_daily(request: AllocatePenetrationRequest) -> dict:
+    updated = allocate_penetration_daily_profit(
+        request.holdings,
+        request.account_daily_profit,
+    )
+    warnings = validate_holdings(
+        updated,
+        account_daily_profit=request.account_daily_profit,
+        account_daily_profit_source=request.account_daily_profit_source,
+    )
+    row_sum = round(sum(h.daily_profit or 0 for h in updated), 2)
+    return {
+        "holdings": [holding.model_dump() for holding in updated],
+        "holding_warnings": [item.model_dump() for item in warnings],
+        "warning_count": len([w for w in warnings if w.severity != "info"]),
+        "allocated_total": row_sum,
+        "account_daily_profit": round(request.account_daily_profit, 2),
+        "method": "sector_weighted",
     }
 
 

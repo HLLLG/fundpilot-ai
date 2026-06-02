@@ -144,6 +144,8 @@ export type ReportOutcomes = {
   previous_report_id?: string;
   previous_created_at?: string;
   portfolio_return_delta?: number | null;
+  portfolio_trend_summary?: string | null;
+  portfolio_assets_delta_percent?: number | null;
   items: Array<{
     fund_code: string;
     fund_name: string;
@@ -152,6 +154,9 @@ export type ReportOutcomes = {
     holding_return_before?: number | null;
     holding_return_after?: number | null;
     holding_return_delta?: number | null;
+    daily_return_before?: number | null;
+    daily_return_after?: number | null;
+    daily_return_delta?: number | null;
     assessment: string;
   }>;
 };
@@ -206,6 +211,7 @@ export type PortfolioSummary = {
   total_assets?: number | null;
   daily_profit?: number | null;
   daily_return_percent?: number | null;
+  daily_profit_source?: "settled" | "penetration_estimate" | null;
   holding_count?: number;
   updated_at?: string | null;
   profiles?: FundProfile[];
@@ -293,6 +299,35 @@ type ReportChatStreamEvent =
   | { type: "error"; message: string };
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+
+export type AllocatePenetrationResult = {
+  holdings: Holding[];
+  holding_warnings: HoldingFieldWarning[];
+  warning_count: number;
+  allocated_total: number;
+  account_daily_profit: number;
+  method: string;
+};
+
+export async function allocatePenetrationDaily(
+  holdings: Holding[],
+  accountDailyProfit: number,
+  accountDailyProfitSource: PortfolioSummary["daily_profit_source"] = "penetration_estimate",
+): Promise<AllocatePenetrationResult> {
+  const response = await fetch(`${API_BASE}/api/holdings/allocate-penetration-daily`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      holdings,
+      account_daily_profit: accountDailyProfit,
+      account_daily_profit_source: accountDailyProfitSource,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
 
 export async function parseOcr(formData: FormData): Promise<OcrResponse> {
   const response = await fetch(`${API_BASE}/api/ocr`, {
