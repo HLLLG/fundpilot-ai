@@ -110,7 +110,7 @@ const riskLevelLabel = {
 } as const;
 
 export function Dashboard() {
-  const [rawText, setRawText] = useState("");
+  const [rawText] = useState("");
   const [holdings, setHoldings] = useState<Holding[]>([]);
   const [profile, setProfile] = useState<InvestorProfile>(defaultProfile);
   const [report, setReport] = useState<Report | null>(null);
@@ -118,8 +118,8 @@ export function Dashboard() {
   const [profiles, setProfiles] = useState<FundProfile[]>([]);
   const [portfolioSummary, setPortfolioSummary] = useState<PortfolioSummary | null>(null);
   const [holdingWarnings, setHoldingWarnings] = useState<HoldingFieldWarning[]>([]);
-  const [holdingDiffs, setHoldingDiffs] = useState<HoldingListDiff[]>([]);
-  const [previousHoldings, setPreviousHoldings] = useState<Holding[]>([]);
+  const [holdingDiffs] = useState<HoldingListDiff[]>([]);
+  const [previousHoldings] = useState<Holding[]>([]);
   const [detailText, setDetailText] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -432,10 +432,10 @@ export function Dashboard() {
               <StatusPill tone="blue">截图 → 日报</StatusPill>
             </div>
             <h1 className="max-w-3xl text-2xl font-black leading-tight tracking-tight text-slate-950 sm:text-3xl lg:text-[2rem]">
-              养基宝式持仓看板，实时估算当日涨跌
+              养基宝式持仓看板，真实板块优先，失败时估值兜底
             </h1>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
-              首页自动恢复持仓，刷新即可更新板块涨跌。更新持有金额请上传单基金详情截图至「基金档案」。
+              首页自动恢复持仓，刷新会先尝试真实关联板块涨跌；取不到时明确使用天天基金估值兜底。更新持有金额请上传单基金详情截图至「基金档案」。
             </p>
           </div>
           <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-2">

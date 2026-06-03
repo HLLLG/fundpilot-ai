@@ -1,4 +1,5 @@
 from app.models import Holding
+from app.services.sector_quote_provider import SpotBoardFetchResult
 from app.services.sector_quote_resolver import SectorResolveResult
 from app.services.sector_quote_service import refresh_holdings_sector_quotes
 
@@ -13,12 +14,15 @@ def test_refresh_uses_on_demand_for_missing_concept(tmp_path, monkeypatch):
         lambda *_args, **_kwargs: None,
     )
     monkeypatch.setattr(
-        "app.services.sector_quote_service.fetch_spot_boards",
-        lambda **kwargs: {
-            "index": {"人工智能": 5.5},
-            "concept": {},
-            "industry": {"半导体": 4.2},
-        },
+        "app.services.sector_quote_service.fetch_spot_boards_result",
+        lambda **kwargs: SpotBoardFetchResult(
+            boards={
+                "index": {"人工智能": 5.5},
+                "concept": {},
+                "industry": {"半导体": 4.2},
+            },
+            provider_path="eastmoney_live",
+        ),
     )
     monkeypatch.setattr(
         "app.services.sector_quote_service.get_sector_mapping",

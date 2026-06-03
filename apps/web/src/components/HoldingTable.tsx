@@ -24,27 +24,44 @@ import {
   computeEstimatedDailyReturnPercent,
   holdingDailyReturnIsEstimated,
 } from "@/lib/holdingMetrics";
+import {
+  buildSectorRefreshNotice,
+  isEstimateFallbackMeta,
+  sectorQuoteBadgeLabel,
+} from "@/lib/sectorQuoteStatus";
 import { useSectorQuoteRefresh } from "@/lib/useSectorQuoteRefresh";
 
 const PENETRATION_NOTE = "穿透拆分参考";
 
 function sectorSourceBadge(meta?: SectorQuoteMeta) {
   if (!meta) return null;
-  if (meta.source === "live") {
+
+  const label = sectorQuoteBadgeLabel(meta);
+  if (!label) return null;
+
+  if (isEstimateFallbackMeta(meta)) {
     return (
-      <span className="mt-1 block text-[10px] font-bold text-emerald-700">
-        实时
+      <span className="mt-1 block text-[10px] font-bold text-amber-700">
+        {label}
         {meta.fetched_at ? ` · ${meta.fetched_at.slice(11, 16)}` : ""}
       </span>
     );
   }
+
+  if (meta.source === "live") {
+    return (
+      <span className="mt-1 block text-[10px] font-bold text-emerald-700">
+        {label}
+        {meta.fetched_at ? ` · ${meta.fetched_at.slice(11, 16)}` : ""}
+      </span>
+    );
+  }
+
   if (meta.confidence === "low") {
-    return <span className="mt-1 block text-[10px] font-bold text-amber-700">待选映射</span>;
+    return <span className="mt-1 block text-[10px] font-bold text-amber-700">{label}</span>;
   }
-  if (meta.confidence === "none") {
-    return <span className="mt-1 block text-[10px] font-bold text-slate-400">未匹配</span>;
-  }
-  return <span className="mt-1 block text-[10px] font-bold text-slate-400">OCR</span>;
+
+  return <span className="mt-1 block text-[10px] font-bold text-slate-400">{label}</span>;
 }
 
 function fieldInputClass(hasIssue: boolean, severity?: string) {
@@ -62,7 +79,6 @@ function fieldInputClass(hasIssue: boolean, severity?: string) {
 function EstimatedDailyReturnCell({ holding }: { holding: Holding }) {
   const estimated = computeEstimatedDailyReturnPercent(holding);
   const isEstimated = holdingDailyReturnIsEstimated(holding);
-
   const fromPenetration = holding.user_note?.includes(PENETRATION_NOTE);
 
   if (holding.daily_return_percent != null) {
@@ -75,8 +91,8 @@ function EstimatedDailyReturnCell({ holding }: { holding: Holding }) {
         }`}
         title={
           fromPenetration
-            ? "由场内穿透按板块权重拆分，可编辑"
-            : "已填写明确当日收益率，不再使用估算"
+            ? "由场内穿透按板块权重拆分，可继续手动微调"
+            : "已填写明确的当日收益率，不再使用估算"
         }
       >
         {holding.daily_return_percent.toFixed(2)}%
@@ -160,11 +176,14 @@ export function HoldingTable({
     selectMapping: handleSelectMapping,
     dismissMapping,
     toggleAutoRefresh,
+    lastRefreshResult,
   } = sectorRefresh;
 
   const actionableCount = countActionableWarnings(warnings);
   const accountInfos = accountInfoWarnings(warnings);
   const accountWarnings = accountActionWarnings(warnings);
+  const refreshNotice = buildSectorRefreshNotice(lastRefreshResult);
+
   const updateHolding = (index: number, patch: Partial<Holding>) => {
     onChange(
       holdings.map((holding, itemIndex) =>
@@ -176,18 +195,18 @@ export function HoldingTable({
   const addHolding = () => {
     onChange([
       ...holdings,
-        {
-          fund_code: "000000",
-          fund_name: "新基金",
-          holding_amount: 0,
-          return_percent: 0,
-          daily_profit: null,
-          daily_return_percent: null,
-          holding_profit: null,
-          holding_return_percent: null,
-          sector_name: "",
-          sector_return_percent: null,
-        },
+      {
+        fund_code: "000000",
+        fund_name: "新基金",
+        holding_amount: 0,
+        return_percent: 0,
+        daily_profit: null,
+        daily_return_percent: null,
+        holding_profit: null,
+        holding_return_percent: null,
+        sector_name: "",
+        sector_return_percent: null,
+      },
     ]);
   };
 
@@ -228,7 +247,7 @@ export function HoldingTable({
         <div>
           <h2 className="text-xl font-black text-slate-950">持仓校对</h2>
           <p className="mt-1 text-sm text-slate-500">
-            OCR 只负责草稿，最终以你确认的表格为准。无「当日收益率」时，估算列 = 板块涨跌 + 持有收益率。
+            OCR 只负责草稿，最终以你确认的表格为准。没有“当日收益率”时，估算列 = 板块涨跌 + 持有收益率。
           </p>
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2">
@@ -285,6 +304,21 @@ export function HoldingTable({
         </div>
       </div>
 
+      {refreshNotice ? (
+        <div
+          className={`mb-4 rounded-2xl border px-4 py-3 text-sm leading-6 ${
+            refreshNotice.tone === "amber"
+              ? "border-amber-200 bg-amber-50/90 text-amber-950"
+              : refreshNotice.tone === "blue"
+                ? "border-blue-200 bg-blue-50/90 text-blue-950"
+                : "border-slate-200 bg-slate-50 text-slate-700"
+          }`}
+        >
+          <div className="font-bold">{refreshNotice.title}</div>
+          <div className="mt-1 text-xs opacity-90">{refreshNotice.description}</div>
+        </div>
+      ) : null}
+
       {accountInfos.length > 0 ? (
         <div className="mb-4 space-y-2 rounded-2xl border border-blue-200 bg-blue-50/90 px-4 py-3">
           {accountInfos.map((item) => (
@@ -294,7 +328,7 @@ export function HoldingTable({
           ))}
           {canAllocatePenetration ? (
             <p className="text-xs leading-5 text-blue-800/90">
-              可使用「一键填充估算当日收益」：按「持有金额 × 板块涨跌」权重拆分账户场内穿透收益，并自动计算各行当日收益率。
+              可使用“一键填充估算当日收益”：按“持有金额 × 板块涨跌”权重拆分账户场内穿透收益，并自动计算各行当日收益率。
             </p>
           ) : null}
         </div>
@@ -356,151 +390,148 @@ export function HoldingTable({
               const sectorWarning = warningsForCell(warnings, index, "sector_return_percent");
 
               return (
-              <tr key={`${holding.fund_code}-${index}`} className="bg-white shadow-sm">
-                <td className="rounded-l-2xl px-3 py-3">
-                  <input
-                    value={holding.fund_code}
-                    onChange={(event) => updateHolding(index, { fund_code: event.target.value })}
-                    title={codeWarning?.message}
-                    className={`${fieldInputClass(Boolean(codeWarning), codeWarning?.severity)} font-bold`}
-                  />
-                  {rowDiff && rowDiff.change_type !== "unchanged" ? (
-                    <div className="mt-1 text-[10px] font-bold text-indigo-600">
-                      {rowDiff.change_type === "added"
-                        ? "新增"
-                        : rowDiff.messages[0] ?? "有变动"}
-                    </div>
-                  ) : null}
-                </td>
-                <td className="px-3 py-3">
-                  <input
-                    value={holding.fund_name}
-                    onChange={(event) => updateHolding(index, { fund_name: event.target.value })}
-                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400"
-                  />
-                </td>
-                <td className="px-3 py-3">
-                  <input
-                    value={holding.holding_amount}
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    onChange={(event) =>
-                      updateHolding(index, { holding_amount: Number(event.target.value) })
-                    }
-                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm tabular-nums outline-none focus:border-blue-400"
-                  />
-                </td>
-                <td className="px-3 py-3">
-                  <input
-                    value={holding.daily_profit ?? ""}
-                    type="number"
-                    step="0.01"
-                    onChange={(event) =>
-                      updateHolding(index, {
-                        daily_profit:
-                          event.target.value === "" ? null : Number(event.target.value),
-                      })
-                    }
-                    title={dailyProfitWarning?.message ?? "收盘前养基宝常为「-」，可留空"}
-                    className={`${fieldInputClass(Boolean(dailyProfitWarning), dailyProfitWarning?.severity)} ${
-                      holding.user_note?.includes(PENETRATION_NOTE)
-                        ? "border-blue-200 bg-blue-50/50"
-                        : ""
-                    }`}
-                    placeholder={holding.daily_profit == null ? "收盘前暂无" : "如 -86.23"}
-                  />
-                </td>
-                <td className="px-3 py-3">
-                  <input
-                    value={holding.daily_return_percent ?? ""}
-                    type="number"
-                    step="0.01"
-                    onChange={(event) =>
-                      updateHolding(index, {
-                        daily_return_percent:
-                          event.target.value === "" ? null : Number(event.target.value),
-                      })
-                    }
-                    className={`w-full rounded-xl border px-3 py-2 text-sm tabular-nums outline-none focus:border-blue-400 ${
-                      holding.user_note?.includes(PENETRATION_NOTE)
-                        ? "border-blue-200 bg-blue-50/50"
-                        : "border-slate-200"
-                    }`}
-                    placeholder={holding.daily_return_percent == null ? "收盘前暂无" : "如 -0.57"}
-                  />
-                </td>
-                <td className="px-3 py-3">
-                  <input
-                    value={holding.sector_name ?? ""}
-                    onChange={(event) => updateHolding(index, { sector_name: event.target.value })}
-                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400"
-                    placeholder="如 半导体"
-                  />
-                </td>
-                <td className="px-3 py-3">
-                  <input
-                    value={holding.sector_return_percent ?? ""}
-                    type="number"
-                    step="0.01"
-                    onChange={(event) =>
-                      updateHolding(index, {
-                        sector_return_percent:
-                          event.target.value === "" ? null : Number(event.target.value),
-                      })
-                    }
-                    title={sectorWarning?.message ?? sectorMetaByIndex[index]?.message ?? undefined}
-                    className={fieldInputClass(Boolean(sectorWarning), sectorWarning?.severity)}
-                    placeholder="如 2.87"
-                  />
-                  {sectorSourceBadge(sectorMetaByIndex[index])}
-                </td>
-                <td className="px-3 py-3">
-                  <input
-                    value={holding.holding_profit ?? ""}
-                    type="number"
-                    step="0.01"
-                    onChange={(event) =>
-                      updateHolding(index, {
-                        holding_profit:
-                          event.target.value === "" ? null : Number(event.target.value),
-                      })
-                    }
-                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm tabular-nums outline-none focus:border-blue-400"
-                    placeholder="如 -260.85"
-                  />
-                </td>
-                <td className="px-3 py-3">
-                  <input
-                    value={holding.holding_return_percent ?? holding.return_percent}
-                    type="number"
-                    step="0.01"
-                    onChange={(event) => {
-                      const value = Number(event.target.value);
-                      updateHolding(index, {
-                        holding_return_percent: value,
-                        return_percent: value,
-                      });
-                    }}
-                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm tabular-nums outline-none focus:border-blue-400"
-                    placeholder="如 -3.14"
-                  />
-                </td>
-                <td className="px-3 py-3">
-                  <EstimatedDailyReturnCell holding={holding} />
-                </td>
-                <td className="rounded-r-2xl px-3 py-3 text-right">
-                  <button
-                    type="button"
-                    onClick={() => removeHolding(index)}
-                    className="inline-flex h-10 w-10 items-center justify-center rounded-full text-slate-400 transition hover:bg-rose-50 hover:text-rose-600"
-                    aria-label="删除持仓"
-                  >
-                    <Trash2 size={18} />
-                  </button>
-                </td>
-              </tr>
-            );
+                <tr key={`${holding.fund_code}-${index}`} className="bg-white shadow-sm">
+                  <td className="rounded-l-2xl px-3 py-3">
+                    <input
+                      value={holding.fund_code}
+                      onChange={(event) => updateHolding(index, { fund_code: event.target.value })}
+                      title={codeWarning?.message}
+                      className={`${fieldInputClass(Boolean(codeWarning), codeWarning?.severity)} font-bold`}
+                    />
+                    {rowDiff && rowDiff.change_type !== "unchanged" ? (
+                      <div className="mt-1 text-[10px] font-bold text-indigo-600">
+                        {rowDiff.change_type === "added" ? "新增" : rowDiff.messages[0] ?? "有变动"}
+                      </div>
+                    ) : null}
+                  </td>
+                  <td className="px-3 py-3">
+                    <input
+                      value={holding.fund_name}
+                      onChange={(event) => updateHolding(index, { fund_name: event.target.value })}
+                      className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400"
+                    />
+                  </td>
+                  <td className="px-3 py-3">
+                    <input
+                      value={holding.holding_amount}
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      onChange={(event) =>
+                        updateHolding(index, { holding_amount: Number(event.target.value) })
+                      }
+                      className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm tabular-nums outline-none focus:border-blue-400"
+                    />
+                  </td>
+                  <td className="px-3 py-3">
+                    <input
+                      value={holding.daily_profit ?? ""}
+                      type="number"
+                      step="0.01"
+                      onChange={(event) =>
+                        updateHolding(index, {
+                          daily_profit: event.target.value === "" ? null : Number(event.target.value),
+                        })
+                      }
+                      title={dailyProfitWarning?.message ?? "收盘前养基宝常为“--”，可以留空"}
+                      className={`${fieldInputClass(Boolean(dailyProfitWarning), dailyProfitWarning?.severity)} ${
+                        holding.user_note?.includes(PENETRATION_NOTE)
+                          ? "border-blue-200 bg-blue-50/50"
+                          : ""
+                      }`}
+                      placeholder={holding.daily_profit == null ? "收盘前可留空" : "如 -86.23"}
+                    />
+                  </td>
+                  <td className="px-3 py-3">
+                    <input
+                      value={holding.daily_return_percent ?? ""}
+                      type="number"
+                      step="0.01"
+                      onChange={(event) =>
+                        updateHolding(index, {
+                          daily_return_percent:
+                            event.target.value === "" ? null : Number(event.target.value),
+                        })
+                      }
+                      className={`w-full rounded-xl border px-3 py-2 text-sm tabular-nums outline-none focus:border-blue-400 ${
+                        holding.user_note?.includes(PENETRATION_NOTE)
+                          ? "border-blue-200 bg-blue-50/50"
+                          : "border-slate-200"
+                      }`}
+                      placeholder={holding.daily_return_percent == null ? "收盘前可留空" : "如 -0.57"}
+                    />
+                  </td>
+                  <td className="px-3 py-3">
+                    <input
+                      value={holding.sector_name ?? ""}
+                      onChange={(event) => updateHolding(index, { sector_name: event.target.value })}
+                      className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400"
+                      placeholder="如 半导体"
+                    />
+                  </td>
+                  <td className="px-3 py-3">
+                    <input
+                      value={holding.sector_return_percent ?? ""}
+                      type="number"
+                      step="0.01"
+                      onChange={(event) =>
+                        updateHolding(index, {
+                          sector_return_percent:
+                            event.target.value === "" ? null : Number(event.target.value),
+                        })
+                      }
+                      title={sectorWarning?.message ?? sectorMetaByIndex[index]?.message ?? undefined}
+                      className={fieldInputClass(Boolean(sectorWarning), sectorWarning?.severity)}
+                      placeholder="如 2.87"
+                    />
+                    {sectorSourceBadge(sectorMetaByIndex[index])}
+                  </td>
+                  <td className="px-3 py-3">
+                    <input
+                      value={holding.holding_profit ?? ""}
+                      type="number"
+                      step="0.01"
+                      onChange={(event) =>
+                        updateHolding(index, {
+                          holding_profit:
+                            event.target.value === "" ? null : Number(event.target.value),
+                        })
+                      }
+                      className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm tabular-nums outline-none focus:border-blue-400"
+                      placeholder="如 -260.85"
+                    />
+                  </td>
+                  <td className="px-3 py-3">
+                    <input
+                      value={holding.holding_return_percent ?? holding.return_percent}
+                      type="number"
+                      step="0.01"
+                      onChange={(event) => {
+                        const value = Number(event.target.value);
+                        updateHolding(index, {
+                          holding_return_percent: value,
+                          return_percent: value,
+                        });
+                      }}
+                      className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm tabular-nums outline-none focus:border-blue-400"
+                      placeholder="如 -3.14"
+                    />
+                  </td>
+                  <td className="px-3 py-3">
+                    <EstimatedDailyReturnCell holding={holding} />
+                  </td>
+                  <td className="rounded-r-2xl px-3 py-3 text-right">
+                    <button
+                      type="button"
+                      onClick={() => removeHolding(index)}
+                      className="inline-flex h-10 w-10 items-center justify-center rounded-full text-slate-400 transition hover:bg-rose-50 hover:text-rose-600"
+                      aria-label="删除持仓"
+                    >
+                      <Trash2 size={18} />
+                    </button>
+                  </td>
+                </tr>
+              );
             })}
           </tbody>
         </table>

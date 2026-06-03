@@ -4,12 +4,13 @@ from app.services.fund_data import FundDataService
 
 
 def test_get_nav_history_parses_akshare_frame(monkeypatch):
-    dates = pd.date_range("2026-01-01", periods=30, freq="B")
+    # 生成90条交易日数据来匹配trading_days=90的默认值
+    dates = pd.date_range("2025-12-01", periods=90, freq="B")
     frame = pd.DataFrame(
         {
             "净值日期": dates,
-            "单位净值": [1.0 + index * 0.01 for index in range(30)],
-            "日增长率": [0.5] * 30,
+            "单位净值": [1.0 + index * 0.005 for index in range(90)],
+            "日增长率": [0.3] * 90,
         }
     )
 
@@ -26,7 +27,7 @@ def test_get_nav_history_parses_akshare_frame(monkeypatch):
 
     history = FundDataService().get_nav_history("008586", "测试基金", trading_days=90)
     assert history.source == "akshare"
-    assert len(history.points) == 30
+    assert len(history.points) == 90  # 应该返回90个点
     assert history.latest_nav == history.points[-1].nav
     assert history.period_change_percent is not None
     assert history.period_change_percent > 0

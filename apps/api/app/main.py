@@ -145,9 +145,11 @@ def allocate_penetration_daily(request: AllocatePenetrationRequest) -> dict:
 def refresh_sector_quotes(request: RefreshSectorQuotesRequest) -> dict:
     if not get_settings().sector_quotes_enabled:
         raise HTTPException(status_code=503, detail="板块实时行情已关闭")
+    # 前端同步调用设置5秒超时，快速返回快照而不等待AkShare
     result = refresh_holdings_sector_quotes(
         request.holdings,
         force_refresh=request.force_refresh,
+        timeout_seconds=5.0,  # 快速超时，使用缓存兜底
     )
     if result.get("ok") and result.get("holdings"):
         refreshed = [Holding.model_validate(item) for item in result["holdings"]]

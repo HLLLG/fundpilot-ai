@@ -48,31 +48,42 @@ def _frame_to_board(frame: Any, name_col: str, change_col: str) -> SpotBoard:
 
 def _fetch_board_kind_subprocess(kind: str) -> SpotBoard:
     script = f"""
-import json, os
+import json, os, sys
+# 清除所有代理环境变量，确保子进程直连
 for key in list(os.environ):
-    if "proxy" in key.lower():
-        os.environ.pop(key)
+    if "proxy" in key.lower() or "http" in key.lower():
+        os.environ.pop(key, None)
 os.environ["NO_PROXY"] = "*"
-import akshare as ak
-kind = {kind!r}
-result = {{}}
-if kind == "concept":
-    frame = ak.stock_board_concept_name_em()
-    cols = ("板块名称", "涨跌幅")
-elif kind == "industry":
-    frame = ak.stock_board_industry_name_em()
-    cols = ("板块名称", "涨跌幅")
-else:
-    raise SystemExit(1)
-for _, row in frame.iterrows():
-    name = str(row[cols[0]]).strip()
-    if not name:
-        continue
-    try:
-        result[name] = round(float(row[cols[1]]), 4)
-    except (TypeError, ValueError):
-        continue
-print(json.dumps(result))
+os.environ.pop("REQUESTS_CA_BUNDLE", None)
+os.environ.pop("CURL_CA_BUNDLE", None)
+
+try:
+    import akshare as ak
+    kind = {kind!r}
+    result = {{}}
+    if kind == "concept":
+        frame = ak.stock_board_concept_name_em()
+        cols = ("板块名称", "涨跌幅")
+    elif kind == "industry":
+        frame = ak.stock_board_industry_name_em()
+        cols = ("板块名称", "涨跌幅")
+    else:
+        raise SystemExit(1)
+    if frame is None or frame.empty:
+        print(json.dumps(result))
+        sys.exit(0)
+    for _, row in frame.iterrows():
+        name = str(row[cols[0]]).strip()
+        if not name:
+            continue
+        try:
+            result[name] = round(float(row[cols[1]]), 4)
+        except (TypeError, ValueError):
+            continue
+    print(json.dumps(result))
+except Exception as e:
+    print(json.dumps({{}}))
+    sys.exit(1)
 """
     completed = subprocess.run(
         [sys.executable, "-c", script],
@@ -82,10 +93,12 @@ print(json.dumps(result))
         check=False,
     )
     if completed.returncode != 0 or not completed.stdout.strip():
+        logger.debug("akshare subprocess failed: %s", completed.stderr[:200] if completed.stderr else "no output")
         return {}
     try:
         payload = json.loads(completed.stdout.strip())
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as e:
+        logger.debug("akshare subprocess JSON parse failed: %s", e)
         return {}
     if not isinstance(payload, dict):
         return {}

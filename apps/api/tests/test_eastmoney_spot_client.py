@@ -69,3 +69,34 @@ def test_fetch_eastmoney_boards_merges_index_sources(monkeypatch):
     boards = fetch_eastmoney_boards()
     assert boards["concept"]["半导体"] == 4.59
     assert boards["index"]["中证人工智能"] == 5.54
+
+
+def test_fetch_eastmoney_boards_limits_hosts_for_short_budget(monkeypatch):
+    calls = []
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get(self, url, params=None):
+            calls.append(url)
+            raise RuntimeError("blocked")
+
+    monkeypatch.setattr(
+        "app.services.eastmoney_spot_client.httpx.Client",
+        FakeClient,
+    )
+
+    from app.services.eastmoney_spot_client import fetch_eastmoney_boards
+
+    boards = fetch_eastmoney_boards(timeout=0.2, max_retries=1, max_hosts=1)
+
+    assert boards == {"concept": {}, "industry": {}, "index": {}}
+    assert calls
+    assert all("://79.push2.eastmoney.com/" in url for url in calls)

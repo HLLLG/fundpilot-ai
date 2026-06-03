@@ -357,9 +357,12 @@ def _find_detail_sector_fields(
             board, ret = _parse_related_board_line(cleaned)
             if board and _is_valid_sector_label(board):
                 last_board_summary = (board, ret)
-            elif cleaned in _DETAIL_TAB_LABELS:
+            else:
+                # "关联板块"单独成行，或无效格式时扫描后续行
                 board, ret = _related_board_after_heading(lines, index)
                 if board:
+                    # 这里board可能是指数名（中证/上证/深证开头）
+                    # 在关联板块上下文中接受它作为板块名
                     last_board_summary = (board, ret)
 
     if last_board_summary is not None:
@@ -417,6 +420,11 @@ def _parse_name_percent_line(text: str) -> tuple[str | None, float | None]:
 
 
 def _parse_related_board_line(line: str) -> tuple[str | None, float | None]:
+    """解析'关联板块'行，支持多种格式：
+    1. 关联板块：板块名 +3.2%
+    2. 关联板块：板块名 （涨跌可能在下行）
+    3. 关联板块 +3.2% （板块名在前面或后面）
+    """
     match = re.match(
         r"^关联板块[：:\s]+(.+?)(?:\s*([+-]?\d+(?:\.\d+)?)%)?\s*$",
         line.strip(),
@@ -431,13 +439,22 @@ def _parse_related_board_line(line: str) -> tuple[str | None, float | None]:
     if _looks_like_index_name(tail):
         return None, None
     ret = float(match.group(2)) if match.group(2) else None
+
+    # 尝试从tail中提取 "名称 百分比" 的完整格式
     pct_inline = re.search(r"^(.+?)\s*([+-]?\d+(?:\.\d+)?)%\s*$", tail)
     if pct_inline:
         inline_name = pct_inline.group(1).strip()
         if _looks_like_board_label(inline_name):
             return inline_name, float(pct_inline.group(2))
+
+    # tail本身可能是板块名（即使没有百分比）
     if _looks_like_board_label(tail):
         return tail, ret
+
+    # 最后的备选：即使tail不完全匹配板块标签，但包含中文且长度合理
+    if any("一" <= char <= "鿿" for char in tail) and 2 <= len(tail) <= 20:
+        return tail, ret
+
     return None, None
 
 
@@ -445,19 +462,60 @@ def _related_board_after_heading(
     lines: list[str],
     index: int,
 ) -> tuple[str | None, float | None]:
-    for line in lines[index + 1 : index + 12]:
+    """扫描关联板块标签后的行，支持：(1) 名称+涨跌同行 (2) 仅名称，涨跌在下行 (3) 无涨跌但有百分比标记"""
+    name_candidate: str | None = None
+    tab_count = 0
+
+    for offset in range(1, 12):
+        if index + offset >= len(lines):
+            break
+        line = lines[index + offset]
         cleaned = _normalize_ocr_line(line)
         if not cleaned:
             continue
+
+        # tab标签后继续扫描（但超过2个就break）
         if cleaned in _DETAIL_TAB_LABELS:
-            return None, None
+            tab_count += 1
+            if tab_count > 2:
+                break
+            continue
+
+        # 复位tab计数
+        tab_count = 0
+
         if "同类基金" in cleaned:
             cleaned = re.split(r"\d*只同类基金", cleaned)[0].strip()
+
+        # 先尝试完整格式：名称 + 百分比
         name, change = _parse_name_percent_line(cleaned)
         if name and _looks_like_board_label(name):
             return name, change
-        if _looks_like_board_label(cleaned):
-            return cleaned, None
+
+        # 特殊处理：中证/上证/深证开头的需要作为板块名处理
+        if not name and (cleaned.startswith("中证") or cleaned.startswith("上证") or cleaned.startswith("深证")):
+            # 从本行提取百分比
+            pct_match = re.search(r"([+-]?\d+(?:\.\d+)?)%", cleaned)
+            change = float(pct_match.group(1)) if pct_match else None
+            if change is not None:
+                return cleaned, change
+            # 即使没有百分比也保留为候选
+            name_candidate = cleaned
+            continue
+
+        # 备选：仅看是否是有效的板块标签
+        if not name_candidate and _looks_like_board_label(cleaned):
+            name_candidate = cleaned
+            continue
+
+        # 如果已有板块名，尝试从本行或下行提取百分比
+        if name_candidate:
+            # 本行中查找百分比
+            pct_match = re.search(r"([+-]?\d+(?:\.\d+)?)%", cleaned)
+            if pct_match:
+                change = float(pct_match.group(1))
+                return name_candidate, change
+
     return None, None
 
 
@@ -468,7 +526,19 @@ def _is_valid_sector_label(name: str | None) -> bool:
 
 
 def _sanitize_profile_sector_fields(profile: FundProfile) -> FundProfile:
-    sector_name = profile.sector_name if _is_valid_sector_label(profile.sector_name) else None
+    # 板块名验证：允许中证/上证/深证开头的、或符合board label规则的
+    sector_name = None
+    if profile.sector_name:
+        is_valid = _is_valid_sector_label(profile.sector_name)
+        # 特殊允许：中证/上证/深证开头的指数风格的名称在关联板块上下文中
+        is_index_style = (
+            profile.sector_name.startswith("中证")
+            or profile.sector_name.startswith("上证")
+            or profile.sector_name.startswith("深证")
+        )
+        if is_valid or (is_index_style and 2 <= len(profile.sector_name) <= 16):
+            sector_name = profile.sector_name
+
     intraday_index_name = (
         profile.intraday_index_name
         if profile.intraday_index_name and _looks_like_index_name(profile.intraday_index_name)

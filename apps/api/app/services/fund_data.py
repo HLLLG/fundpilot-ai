@@ -125,13 +125,28 @@ class FundDataService:
         *,
         trading_days: int,
     ) -> FundNavHistory:
-        import akshare as ak  # type: ignore[import-not-found]
+        from app.services.akshare_subprocess import fetch_fund_nav_history
 
-        frame = ak.fund_open_fund_info_em(symbol=fund_code, indicator="单位净值走势")
-        if frame is None or frame.empty:
-            raise ValueError("AkShare 返回空数据")
+        result = fetch_fund_nav_history(fund_code, trading_days=trading_days)
+        if result is None or "data" not in result:
+            raise ValueError("AkShare 获取净值数据失败或返回空数据")
 
-        points = points_from_nav_frame(frame, trading_days=trading_days)
+        data = result["data"]
+        if not data:
+            raise ValueError("未能解析净值数据")
+
+        points = []
+        for item in data:
+            if item["date"] and item["nav"] is not None:
+                try:
+                    from app.models import FundNavPoint
+                    points.append(FundNavPoint(
+                        date=item["date"],
+                        nav=round(item["nav"], 4),
+                    ))
+                except (ValueError, TypeError):
+                    continue
+
         if not points:
             raise ValueError("未能解析净值数据")
 
@@ -156,32 +171,49 @@ class FundDataService:
         *,
         trading_days: int,
     ) -> tuple[FundSnapshot, FundNavHistory]:
-        import akshare as ak  # type: ignore[import-not-found]
+        from app.services.akshare_subprocess import fetch_fund_nav_history
 
-        frame = ak.fund_open_fund_info_em(
-            symbol=holding.fund_code, indicator="单位净值走势"
-        )
-        if frame is None or frame.empty:
-            raise ValueError("AkShare 返回空数据")
+        result = fetch_fund_nav_history(holding.fund_code, trading_days=trading_days)
+        if result is None or "data" not in result:
+            raise ValueError("AkShare 获取净值数据失败")
 
-        points = points_from_nav_frame(frame, trading_days=trading_days)
+        data = result["data"]
+        if not data:
+            raise ValueError("未能解析净值数据")
+
+        points = []
+        for item in data:
+            if item["date"] and item["nav"] is not None:
+                try:
+                    from app.models import FundNavPoint
+                    points.append(FundNavPoint(
+                        date=item["date"],
+                        nav=round(item["nav"], 4),
+                    ))
+                except (ValueError, TypeError):
+                    continue
+
         if not points:
             raise ValueError("未能解析净值数据")
 
-        latest_row = frame.iloc[-1]
-        nav_value = latest_row.get("单位净值")
-        nav_date = latest_row.get("净值日期")
         latest_point = points[-1]
         period_change = None
         if points[0].nav > 0:
             period_change = round((latest_point.nav / points[0].nav - 1) * 100, 2)
 
-        diagnostics = _load_fund_diagnostics(ak, holding.fund_code)
+        # 获取基金诊断信息（这会单独调用AkShare）
+        diagnostics = {}
+        try:
+            import akshare as ak  # type: ignore[import-not-found]
+            diagnostics = _load_fund_diagnostics(ak, holding.fund_code)
+        except Exception:
+            pass  # 诊断信息失败不影响主逻辑
+
         snapshot = FundSnapshot(
             fund_code=holding.fund_code,
             fund_name=holding.fund_name,
-            latest_nav=float(nav_value) if nav_value is not None else latest_point.nav,
-            nav_date=str(nav_date) if nav_date is not None else latest_point.date,
+            latest_nav=latest_point.nav,
+            nav_date=latest_point.date,
             source="akshare",
             fund_type=diagnostics.get("fund_type"),
             management_fee=diagnostics.get("management_fee"),

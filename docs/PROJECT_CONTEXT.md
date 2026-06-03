@@ -270,10 +270,15 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | 层级 | 实现 |
 |------|------|
 | 1 | `eastmoney_spot_client` httpx 直连 push2（多 host、分页保留部分结果、`trust_env=False`） |
-| 2 | `akshare_spot_client` 子进程补全稀疏/空 concept/industry |
-| 3 | `sector_on_demand` 单板块 AkShare 子进程（如商业航天） |
+| 2 | `sector_quote_relay_provider` 可选服务端中继（适合 PC 直连东财受限，但另一台服务器/代理可访问的场景） |
+| 3 | `sector_quote_browser_provider` 可选浏览器命令链路（接入本机浏览器态/Playwright 脚本，尽量逼近养基宝 WebView 效果） |
+| 4 | `akshare_spot_client` 子进程补全稀疏/空 concept/industry（仅无前端短预算时使用，避免首页卡顿） |
+| 5 | `sector_on_demand` 单板块 AkShare 子进程（如商业航天；短预算刷新会跳过） |
+| 兜底 | `fund_estimate_provider` 天天基金基金估值，仅在真实板块不足或未匹配时补位；前端明确标记“估值兜底”，不当作真实板块行情 |
 | 解析 | `sector_quote_resolver` 自动匹配中证人工智能、电网→电力设备主题、半导体、商业航天等 |
 | 缓存 | `sector_quote_cache` 按日 TTL；`force_refresh` 跳过持久化映射 |
+| 快刷 | `/api/holdings/refresh-sector-quotes` 前端同步预算 5s；短预算下东财每表仅试首个 host、单请求 0.5s，依次尝试中继/浏览器命令，跳过 AkShare 慢兜底，再用天天基金估值补位 |
+| 元数据 | 刷新响应含 `provider_path`、`from_stale_cache`、`provider_elapsed_seconds`、`summary.estimate_fallback`、`summary.board_matched`；旧快照提示为“已用上次快照更新”，估值补位提示为“当前使用天天基金估值兜底” |
 
 设计说明：`docs/design/2026-06-02-live-sector-quotes.md`。
 
@@ -335,6 +340,11 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | `FUND_AI_SECTOR_QUOTES_TTL_SECONDS` | 60 | spot 缓存 TTL |
 | `FUND_AI_SECTOR_QUOTES_AUTO_INTERVAL_SECONDS` | 120 | 前端自动刷新间隔 |
 | `FUND_AI_SECTOR_QUOTES_DISCREPANCY_WARN` | 0.5 | OCR vs 实时板块相差阈值（百分点） |
+| `FUND_AI_SECTOR_QUOTES_RELAY_URL` | — | 可选真实板块行情中继地址；返回 `boards` / `data` / 直接 `{ index, concept, industry }` 均可 |
+| `FUND_AI_SECTOR_QUOTES_RELAY_TIMEOUT_SECONDS` | 2.5 | 中继请求超时 |
+| `FUND_AI_SECTOR_QUOTES_BROWSER_ENABLED` | false | 是否启用浏览器命令链路 |
+| `FUND_AI_SECTOR_QUOTES_BROWSER_COMMAND` | — | 浏览器命令，例如 `node scripts/sector-quote-browser-command.mjs` |
+| `FUND_AI_SECTOR_QUOTES_BROWSER_TIMEOUT_SECONDS` | 4 | 浏览器命令超时 |
 
 ### DeepSeek / 新闻
 

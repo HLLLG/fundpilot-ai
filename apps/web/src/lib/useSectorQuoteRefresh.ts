@@ -11,6 +11,7 @@ import {
   applySectorMapping,
   fetchSectorQuotesStatus,
   refreshSectorQuotes,
+  type RefreshSectorQuotesResult,
 } from "@/lib/api";
 import { enrichHoldingComputedFields } from "@/lib/holdingMetrics";
 import { loadSectorAutoRefresh, saveSectorAutoRefresh } from "@/lib/storage";
@@ -46,6 +47,7 @@ export function useSectorQuoteRefresh({
   const [autoIntervalMs, setAutoIntervalMs] = useState(120_000);
   const [mappingQueue, setMappingQueue] = useState<MappingQueueItem[]>([]);
   const [refreshError, setRefreshError] = useState<string | null>(null);
+  const [lastRefreshResult, setLastRefreshResult] = useState<RefreshSectorQuotesResult | null>(null);
   const holdingsRef = useRef(holdings);
   const warningsRef = useRef(warnings);
 
@@ -83,6 +85,7 @@ export function useSectorQuoteRefresh({
         }
       }
       setSectorMetaByIndex(metaMap);
+      setLastRefreshResult(result);
       if (result.ok) {
         setRefreshError(null);
         setLastFetchedAt(result.fetched_at ?? new Date().toISOString());
@@ -193,6 +196,7 @@ export function useSectorQuoteRefresh({
     autoIntervalMs,
     mappingQueue,
     refreshError,
+    lastRefreshResult,
     refresh,
     selectMapping,
     dismissMapping,

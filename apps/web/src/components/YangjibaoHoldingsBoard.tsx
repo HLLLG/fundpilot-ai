@@ -17,6 +17,11 @@ import {
   sumHoldingAmount,
   withoutTestHoldings,
 } from "@/lib/holdingMetrics";
+import {
+  buildSectorRefreshNotice,
+  isEstimateFallbackMeta,
+  sectorQuoteBadgeLabel,
+} from "@/lib/sectorQuoteStatus";
 import type { useSectorQuoteRefresh } from "@/lib/useSectorQuoteRefresh";
 
 type SectorRefreshControl = ReturnType<typeof useSectorQuoteRefresh>;
@@ -70,13 +75,23 @@ function sectorLiveLabel(meta: SectorRefreshControl["sectorMetaByIndex"][number]
   if (!meta) {
     return null;
   }
+  return sectorQuoteBadgeLabel(meta);
+}
+
+function sectorLiveTone(meta: SectorRefreshControl["sectorMetaByIndex"][number]) {
+  if (!meta) {
+    return "text-slate-400";
+  }
+  if (isEstimateFallbackMeta(meta)) {
+    return "text-amber-600";
+  }
   if (meta.source === "live") {
-    return "实时";
+    return "text-emerald-600";
   }
   if (meta.confidence === "low") {
-    return "待选";
+    return "text-amber-600";
   }
-  return null;
+  return "text-slate-400";
 }
 
 export function YangjibaoHoldingsBoard({
@@ -103,6 +118,7 @@ export function YangjibaoHoldingsBoard({
     selectMapping,
     dismissMapping,
     toggleAutoRefresh,
+    lastRefreshResult,
   } = sectorRefresh;
 
   useEffect(() => {
@@ -111,13 +127,11 @@ export function YangjibaoHoldingsBoard({
   }, []);
 
   const displayHoldings = useMemo(() => withoutTestHoldings(holdings), [holdings]);
+  const refreshNotice = buildSectorRefreshNotice(lastRefreshResult);
 
   const computedTotal = sumHoldingAmount(displayHoldings);
   const computedDaily = sumDailyProfit(displayHoldings);
-  const totalAssets =
-    computedTotal ||
-    portfolioSummary?.total_assets ||
-  null;
+  const totalAssets = computedTotal || portfolioSummary?.total_assets || null;
   const dailyProfit = displayHoldings.length > 0 ? computedDaily : null;
   const dailyReturn = accountDailyReturnPercent(dailyProfit, totalAssets);
 
@@ -154,8 +168,8 @@ export function YangjibaoHoldingsBoard({
             <p className="mt-6 text-3xl font-black text-slate-300">—</p>
             <p className="mt-6 text-sm leading-6 text-slate-400">
               {isLoading
-                ? "正在从基金档案恢复持仓并刷新板块涨跌…"
-                : "暂无持仓。请先在「基金档案」上传单基金详情截图建档，或在校对表手动录入。"}
+                ? "正在从基金档案恢复持仓，并尝试刷新真实板块涨跌..."
+                : "暂无持仓。请先在“基金档案”上传单基金详情截图建档，或在校对表手动录入。"}
             </p>
             {!isLoading && onOpenCapture ? (
               <button
@@ -175,12 +189,11 @@ export function YangjibaoHoldingsBoard({
   return (
     <section className={`mx-auto w-full ${sectionClassName}`}>
       <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_8px_30px_rgba(15,23,42,0.06)]">
-        {/* 账户总览 */}
         <div className="border-b border-slate-100 px-5 pb-4 pt-5">
           <div className="mb-4 flex items-center justify-between">
             <div className="flex items-center gap-3 text-sm font-bold text-slate-800">
               <span className="border-b-2 border-slate-900 pb-0.5">账户汇总</span>
-              <span className="text-slate-400">养基宝</span>
+              <span className="text-slate-400">养基宝式</span>
             </div>
             <div className="flex items-center gap-2">
               <button
@@ -188,13 +201,13 @@ export function YangjibaoHoldingsBoard({
                 onClick={() => void refresh(false)}
                 disabled={isRefreshing}
                 className="inline-flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 disabled:opacity-50"
-                title="刷新板块涨跌"
+                title="刷新真实板块涨跌；取不到时使用天天基金估值兜底"
               >
                 <RefreshCw size={16} className={isRefreshing ? "animate-spin" : ""} />
               </button>
               <label
                 className="inline-flex cursor-pointer items-center gap-1.5 rounded-full bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-600"
-                title={`每 ${Math.round(autoIntervalMs / 1000)} 秒自动刷新板块`}
+                title={`每 ${Math.round(autoIntervalMs / 1000)} 秒自动尝试真实板块；取不到时估值兜底`}
               >
                 <input
                   type="checkbox"
@@ -226,18 +239,25 @@ export function YangjibaoHoldingsBoard({
                 <div className="mt-2 rounded-xl border border-rose-100 bg-rose-50 px-3 py-2 text-[11px] leading-5 text-rose-700">
                   {refreshError}
                 </div>
+              ) : refreshNotice ? (
+                <div
+                  className={`mt-2 rounded-xl border px-3 py-2 text-[11px] leading-5 ${
+                    refreshNotice.tone === "amber"
+                      ? "border-amber-200 bg-amber-50 text-amber-800"
+                      : "border-blue-200 bg-blue-50 text-blue-800"
+                  }`}
+                >
+                  <div className="font-bold">{refreshNotice.title}</div>
+                  <div className="mt-0.5 opacity-90">{refreshNotice.description}</div>
+                </div>
               ) : null}
             </div>
             <div className="text-right">
               <div className="text-[11px] font-semibold text-slate-400">当日收益</div>
-              <div
-                className={`mt-0.5 text-lg font-black tabular-nums ${cnProfitClass(dailyProfit)}`}
-              >
+              <div className={`mt-0.5 text-lg font-black tabular-nums ${cnProfitClass(dailyProfit)}`}>
                 {formatSignedMoney(dailyProfit)}
                 {dailyReturn != null ? (
-                  <span className="ml-1 text-sm font-bold">
-                    ({formatSignedPercent(dailyReturn)})
-                  </span>
+                  <span className="ml-1 text-sm font-bold">({formatSignedPercent(dailyReturn)})</span>
                 ) : null}
               </div>
               <div className="mt-0.5 text-[11px] tabular-nums text-slate-400">{formatClock(now)}</div>
@@ -245,7 +265,6 @@ export function YangjibaoHoldingsBoard({
           </div>
         </div>
 
-        {/* 表头 */}
         <div className="grid grid-cols-[1fr_5.5rem_5.5rem] gap-2 border-b border-slate-100 bg-slate-50/80 px-4 py-2.5 text-[11px] font-bold text-slate-500">
           <div className="flex items-center gap-1.5">
             <Settings2 size={12} className="text-slate-400" />
@@ -255,7 +274,6 @@ export function YangjibaoHoldingsBoard({
           <div className="text-right">持有收益</div>
         </div>
 
-        {/* 持仓列表 */}
         <ul className="divide-y divide-slate-100">
           {sortedHoldings.map(({ holding, index }) => {
             const daily = computeDailyProfit(holding);
@@ -281,7 +299,7 @@ export function YangjibaoHoldingsBoard({
                       {daily != null ? (
                         <span
                           className={`font-bold tabular-nums ${cnProfitClass(daily)}`}
-                          title="由最新板块涨跌估算"
+                          title="由当前显示的真实板块或天天基金估值兜底估算"
                         >
                           ≈{formatSignedMoney(daily)}
                         </span>
@@ -290,44 +308,35 @@ export function YangjibaoHoldingsBoard({
                   </div>
 
                   <div className="text-right">
-                    <div
-                      className={`text-[15px] font-black tabular-nums ${cnProfitClass(sectorReturn)}`}
-                    >
+                    <div className={`text-[15px] font-black tabular-nums ${cnProfitClass(sectorReturn)}`}>
                       {formatSignedPercent(sectorReturn)}
                     </div>
                     <div className="mt-0.5 truncate text-[10px] text-slate-400">
                       {holdingRelatedBoardLabel(holding)}
                       {holding.intraday_index_name ? (
-                        <span className="ml-0.5 text-slate-400" title="养基宝以场内指数涨跌估算当日收益">
-                          ·{holding.intraday_index_name}
+                        <span className="ml-0.5 text-slate-400" title="有场内指数时，优先用指数涨跌估算当日收益">
+                          · {holding.intraday_index_name}
                         </span>
                       ) : null}
                       {meta?.matched_name &&
                       (holding.intraday_index_name || holding.sector_name) &&
-                      meta.matched_name !==
-                        (holding.intraday_index_name || holding.sector_name) ? (
-                        <span className="ml-0.5 text-slate-400" title="行情源名称">
-                          →{meta.matched_name}
+                      meta.matched_name !== (holding.intraday_index_name || holding.sector_name) ? (
+                        <span className="ml-0.5 text-slate-400" title="行情源标准名称">
+                          → {meta.matched_name}
                         </span>
                       ) : null}
                       {liveTag ? (
-                        <span className="ml-1 font-bold text-emerald-600">{liveTag}</span>
-                      ) : meta?.confidence === "low" ? (
-                        <span className="ml-1 font-bold text-amber-600">待选</span>
+                        <span className={`ml-1 font-bold ${sectorLiveTone(meta)}`}>{liveTag}</span>
                       ) : null}
                     </div>
                   </div>
 
                   <div className="text-right">
-                    <div
-                      className={`text-[15px] font-black tabular-nums ${cnProfitClass(holdingProfit)}`}
-                    >
+                    <div className={`text-[15px] font-black tabular-nums ${cnProfitClass(holdingProfit)}`}>
                       {formatSignedMoney(holdingProfit)}
                     </div>
                     {holdingReturn != null ? (
-                      <div
-                        className={`mt-0.5 text-[11px] font-bold tabular-nums ${cnProfitClass(holdingReturn)}`}
-                      >
+                      <div className={`mt-0.5 text-[11px] font-bold tabular-nums ${cnProfitClass(holdingReturn)}`}>
                         {holdingProfitIsEstimated(holding) ? "≈" : ""}
                         ({formatSignedPercent(holdingReturn)})
                       </div>
@@ -341,7 +350,6 @@ export function YangjibaoHoldingsBoard({
           })}
         </ul>
 
-        {/* 底部操作 */}
         <div className="grid grid-cols-2 gap-px border-t border-slate-100 bg-slate-100">
           <button
             type="button"

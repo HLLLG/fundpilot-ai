@@ -336,6 +336,7 @@ export type SectorQuoteMeta = {
   confidence: "high" | "medium" | "low" | "none";
   matched_name?: string | null;
   source_type?: "index" | "concept" | "industry" | null;
+  source_code?: string | null;
   fetched_at?: string | null;
   previous_percent?: number | null;
   delta_vs_previous?: number | null;
@@ -352,6 +353,18 @@ export type SectorMappingCandidate = {
 export type RefreshSectorQuotesResult = {
   ok: boolean;
   message: string;
+  provider_path?:
+    | "eastmoney_live"
+    | "relay_live"
+    | "browser_live"
+    | "akshare_live"
+    | "fund_estimate_live"
+    | "fresh_cache"
+    | "stale_cache"
+    | "empty"
+    | "disabled";
+  from_stale_cache?: boolean;
+  provider_elapsed_seconds?: number;
   holdings: Holding[];
   items: Array<{
     index: number;
@@ -366,6 +379,10 @@ export type RefreshSectorQuotesResult = {
     matched: number;
     unresolved: number;
     needs_mapping: number;
+    estimate_fallback?: number;
+    board_matched?: number;
+    provider_path?: RefreshSectorQuotesResult["provider_path"];
+    from_stale_cache?: boolean;
   };
   fetched_at?: string;
 };

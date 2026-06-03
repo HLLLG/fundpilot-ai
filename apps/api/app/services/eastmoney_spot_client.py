@@ -30,7 +30,12 @@ _COMMON_PARAMS = {
 _HOST_POOL = ("79", "88", "48", "17", "33", "91")
 
 
-def fetch_eastmoney_boards(*, timeout: float = 25.0, max_retries: int = 3) -> dict[str, dict[str, float]]:
+def fetch_eastmoney_boards(
+    *,
+    timeout: float = 25.0,
+    max_retries: int = 3,
+    max_hosts: int | None = None,
+) -> dict[str, dict[str, float]]:
     """拉取东财概念/行业/指数板块列表（含涨跌幅），直连且不走系统代理。"""
     specs = [
         ("concept", {
@@ -99,7 +104,12 @@ def fetch_eastmoney_boards(*, timeout: float = 25.0, max_retries: int = 3) -> di
     ) as client:
         for key, params in specs:
             try:
-                fetched = _fetch_paginated_board(client, params, max_retries=max_retries)
+                fetched = _fetch_paginated_board(
+                    client,
+                    params,
+                    max_retries=max_retries,
+                    max_hosts=max_hosts,
+                )
             except Exception as exc:
                 failed_specs.append(key)
                 logger.debug("eastmoney board fetch failed (%s): %s", key, exc)
@@ -126,9 +136,10 @@ def _fetch_paginated_board(
     base_params: dict[str, str],
     *,
     max_retries: int,
+    max_hosts: int | None = None,
 ) -> dict[str, float]:
     params = {**base_params, "pn": "1"}
-    first = _request_board_page(client, params, max_retries=max_retries)
+    first = _request_board_page(client, params, max_retries=max_retries, max_hosts=max_hosts)
     rows = list(first.get("diff") or [])
     total = int(first.get("total") or 0)
     page_size = max(len(rows), 1)
@@ -139,7 +150,12 @@ def _fetch_paginated_board(
     for page in range(2, total_pages + 1):
         page_params = {**params, "pn": str(page)}
         try:
-            payload = _request_board_page(client, page_params, max_retries=max_retries)
+            payload = _request_board_page(
+                client,
+                page_params,
+                max_retries=max_retries,
+                max_hosts=max_hosts,
+            )
             _absorb_board_rows(payload.get("diff") or [], result)
         except Exception as exc:
             logger.debug(
@@ -160,10 +176,12 @@ def _request_board_page(
     params: dict[str, str],
     *,
     max_retries: int,
+    max_hosts: int | None = None,
 ) -> dict[str, Any]:
     last_error: Exception | None = None
+    host_pool = _HOST_POOL[:max_hosts] if max_hosts is not None else _HOST_POOL
     for attempt in range(max_retries):
-        for host in _HOST_POOL:
+        for host in host_pool:
             url = f"https://{host}.push2.eastmoney.com/api/qt/clist/get"
             try:
                 response = client.get(url, params=params)

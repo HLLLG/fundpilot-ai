@@ -55,6 +55,11 @@ class Settings(BaseSettings):
     sector_quotes_respect_manual: bool = False
     sector_quotes_discrepancy_warn: float = 0.5
     sector_quotes_auto_interval_seconds: int = 120
+    sector_quotes_relay_url: str | None = None
+    sector_quotes_relay_timeout_seconds: float = 2.5
+    sector_quotes_browser_enabled: bool = False
+    sector_quotes_browser_command: str | None = None
+    sector_quotes_browser_timeout_seconds: float = 4.0
 
     @field_validator("db_auto_import_path", mode="before")
     @classmethod

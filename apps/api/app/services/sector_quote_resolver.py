@@ -139,7 +139,11 @@ def mapping_record_from_result(
     sector_name: str | None,
     result: SectorResolveResult,
 ) -> dict | None:
-    if result.confidence not in {"high", "medium"} or result.matched_name is None:
+    if (
+        result.confidence not in {"high", "medium"}
+        or result.matched_name is None
+        or result.source_type not in {"index", "concept", "industry"}
+    ):
         return None
     return {
         "sector_label": sector_label_key(sector_name),
