@@ -19,9 +19,9 @@
 | 类别 | 能力 |
 |------|------|
 | 输入 | 养基宝总览 OCR（无代码草稿解析）；当日列为 `-` 时不填当日收益；**OCR 漏负号**时规则补符号；总览上传在「基金档案」Tab |
-| 当日收益 | **刷新时按关联板块实时涨跌估算**：`holding_amount × sector_return%`；**忽略** OCR/截图中的当日利润；账户合计 = 各行之和 |
+| 当日收益 | **刷新时按板块涨跌估算**（养基宝规则：有**场内指数**用指数，否则用**关联板块**）；`holding_amount × sector_return%`；忽略 OCR 当日利润 |
 | 校对 | `HoldingTable` 含估算当日收益率；OCR 返回 `holding_warnings` / `holding_diffs`；**沿用上次基金列表** |
-| 档案 | 详情截图建档；总览 OCR **自动同步**档案；`000000` 仅通过**已保存档案**按名称补码（不在分析/OCR 流程中 AkShare 自动查码） |
+| 档案 | 详情 OCR 解析「场内指数 + 关联板块」；`POST /api/fund-profiles/repair-sectors` 清理误识别（如 `+`）；总览自动同步档案；`000000` 靠档案按名称补码 |
 | 首页看板 | **今日** Tab：`YangjibaoHoldingsBoard` 养基宝式卡片；启动 `GET /api/portfolio/holdings` 恢复持仓并自动刷新板块；点击行打开 `YangjibaoFundDetail` |
 | 仪表盘 | **仪表盘** Tab：`GET /api/portfolio/dashboard` — 资产/当日收益走势、持仓分布条 |
 | 风控 | 浮亏线、单只集中度、定投偏好、拒绝追高（`InvestorProfile`） |
@@ -33,7 +33,7 @@
 | 板块实时 | 东财 httpx 直连 + AkShare 子进程补全 + **单板块按需拉取**（`sector_on_demand`）；120s 自动 + 手动；低置信度 `SectorMappingModal`；分时 `GET /api/sector-quotes/intraday` |
 | 阻塞清单 | `TodayBlockingChecklist` + `workflowBlockers` |
 | 数据备份 | SQLite export/import；`DatabaseBackupPanel` |
-| CI / E2E | GitHub Actions：pytest（**130** 项）+ lint/typecheck/build + Playwright |
+| CI / E2E | GitHub Actions：pytest（**145+** 项）+ lint/typecheck/build + Playwright |
 | 基金诊断 | AkShare 概况/累计收益；详情页可 AkShare **按名称查码**并持久化 |
 | 分析模式 | 快速 / 深度 |
 | 体验 | 报告 diff、Markdown 导出、档案 JSON、桌面通知、Plus Jakarta 字体 UI |

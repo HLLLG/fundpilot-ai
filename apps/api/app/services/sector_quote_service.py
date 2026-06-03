@@ -132,6 +132,8 @@ def refresh_holdings_sector_quotes(
                     "fund_code": holding.fund_code,
                     "fund_name": holding.fund_name,
                     "sector_name": holding.sector_name,
+                    "intraday_index_name": holding.intraday_index_name,
+                    "sector_quote_label": lookup_label,
                     "sector_quote_meta": meta.model_dump(mode="json"),
                     "mapping_candidates": [
                         SectorMappingCandidate.model_validate(
@@ -159,6 +161,8 @@ def refresh_holdings_sector_quotes(
                 "fund_code": holding.fund_code,
                 "fund_name": holding.fund_name,
                 "sector_name": holding.sector_name,
+                "intraday_index_name": holding.intraday_index_name,
+                "sector_quote_label": lookup_label,
                 "sector_quote_meta": meta.model_dump(mode="json"),
                 "mapping_candidates": [],
             }

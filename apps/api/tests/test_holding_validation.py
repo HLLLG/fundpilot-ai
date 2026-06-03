@@ -26,6 +26,11 @@ def _holding(**kwargs) -> Holding:
     return Holding(**base)
 
 
+def test_validate_invalid_sector_label():
+    warnings = validate_holdings([_holding(sector_name="+")])
+    assert any(item.code == "invalid_sector_label" for item in warnings)
+
+
 def test_validate_daily_profit_sign_mismatch():
     holding = _holding(daily_profit=176.88, daily_return_percent=-2.38)
     warnings = validate_holdings([holding])

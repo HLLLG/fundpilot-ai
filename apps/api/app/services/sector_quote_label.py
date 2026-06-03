@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.models import FundProfile, Holding
+from app.services.fund_profile import _is_valid_sector_label
 from app.services.sector_labels import normalize_sector_label
 
 
@@ -25,9 +26,11 @@ def sector_quote_lookup_label(
 
 def sector_display_label(holding: Holding) -> str | None:
     """UI 展示用：优先关联板块短名，否则场内指数/sector_name。"""
-    if holding.sector_name:
+    if _is_valid_sector_label(holding.sector_name):
         return holding.sector_name
-    return holding.intraday_index_name
+    if holding.intraday_index_name:
+        return holding.intraday_index_name
+    return None
 
 
 def profile_quote_fields(profile: FundProfile) -> dict[str, str | None]:

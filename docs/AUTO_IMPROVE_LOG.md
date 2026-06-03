@@ -27,3 +27,14 @@
 ### 测试
 - `test_repair_fund_profiles.py`
 - `test_portfolio_persistence_overlay.py`
+
+## 迭代 3 — 校验、文档与 API 元数据（2026-06-03）
+
+### 问题修复
+- 持仓校验：`sector_name` 为 `+` 等无效值时给出 `invalid_sector_label` 警告
+- 板块刷新 API 返回 `sector_quote_label` / `intraday_index_name` 便于排查
+- `sector_display_label` 与前端 `profileSector.ts` 一致过滤无效名
+- 更新 `docs/PROJECT_CONTEXT.md` 养基宝场内指数规则说明
+
+### 测试
+- `test_holding_validation.py::test_validate_invalid_sector_label`

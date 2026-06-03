@@ -4,6 +4,7 @@ import re
 from typing import Literal
 
 from app.models import DailyProfitSource, Holding, HoldingFieldWarning, HoldingListDiff, PortfolioSummary
+from app.services.fund_profile import _is_valid_sector_label
 from app.services.holding_metrics import compute_estimated_daily_return_percent
 
 WarningSeverity = Literal["error", "warn", "info"]
@@ -223,6 +224,20 @@ def _warnings_for_holding(index: int, holding: Holding) -> list[HoldingFieldWarn
                     severity="error",
                 )
             )
+
+    if holding.sector_name and not _is_valid_sector_label(holding.sector_name):
+        warnings.append(
+            HoldingFieldWarning(
+                index=index,
+                field="sector_name",
+                code="invalid_sector_label",
+                message=(
+                    f"关联板块「{holding.sector_name}」无效，请在基金档案重新上传详情"
+                    "或使用「修复无效关联板块」。"
+                ),
+                severity="warn",
+            )
+        )
 
     sector_pct = holding.sector_return_percent
     if daily_pct is not None and sector_pct is not None:
