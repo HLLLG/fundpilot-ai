@@ -238,11 +238,16 @@ def save_fund_profile(profile: FundProfile) -> FundProfile:
 
 
 def list_fund_profiles() -> list[FundProfile]:
+    from app.services.fund_profile import _sanitize_profile_sector_fields
+
     with _connect() as connection:
         rows = connection.execute(
             "SELECT payload FROM fund_profiles ORDER BY updated_at DESC"
         ).fetchall()
-    return [FundProfile.model_validate(json.loads(row["payload"])) for row in rows]
+    return [
+        _sanitize_profile_sector_fields(FundProfile.model_validate(json.loads(row["payload"])))
+        for row in rows
+    ]
 
 
 def delete_fund_profile(fund_code: str) -> bool:
@@ -263,7 +268,11 @@ def get_fund_profile_by_code(fund_code: str) -> FundProfile | None:
         ).fetchone()
     if row is None:
         return None
-    return FundProfile.model_validate(json.loads(row["payload"]))
+    from app.services.fund_profile import _sanitize_profile_sector_fields
+
+    return _sanitize_profile_sector_fields(
+        FundProfile.model_validate(json.loads(row["payload"]))
+    )
 
 
 def save_portfolio_summary(summary: PortfolioSummary) -> PortfolioSummary:

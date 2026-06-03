@@ -22,6 +22,7 @@ class Holding(BaseModel):
     holding_return_percent: float | None = None
     sector_name: str | None = None
     sector_return_percent: float | None = None
+    intraday_index_name: str | None = None
     user_note: str | None = None
 
 
@@ -117,6 +118,7 @@ class FundProfile(BaseModel):
     holding_days: int | None = None
     sector_name: str | None = None
     sector_return_percent: float | None = None
+    intraday_index_name: str | None = None
     source: str = "yangjibao-detail"
     is_provisional: bool = False
 

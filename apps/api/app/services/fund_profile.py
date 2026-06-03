@@ -18,7 +18,12 @@ from app.services.fund_name_utils import is_fund_name_match, normalize_fund_name
 CODE_RE = re.compile(r"(?<!\d)(\d{6})(?!\d)")
 NUMBER_RE = re.compile(r"^[+-]?\d[\d,]*(?:\.\d+)?$")
 PERCENT_RE = re.compile(r"^([+-]?\d+(?:\.\d+)?)%$")
-SECTOR_RE = re.compile(r"^(.+?)[▼▲]([+-]?\d+(?:\.\d+)?)%$")
+SECTOR_RE = re.compile(r"^(.+?)[▼▲]([+-]?\d+(?:\.\d+)?)%\s*[>＞]?$")
+NAME_PERCENT_RE = re.compile(r"^(.+?)\s*([+-]?\d+(?:\.\d+)?)%\s*[>＞]?$")
+_RELATED_BOARD_SUMMARY_RE = re.compile(
+    r"^关联板块[：:]\s*(.+?)\s*([+-]?\d+(?:\.\d+)?)%\s*[>＞]?\s*$"
+)
+_DETAIL_TAB_LABELS = frozenset({"关联板块", "业绩走势", "我的收益"})
 
 
 class FundProfileService:
@@ -30,6 +35,12 @@ class FundProfileService:
             and existing.fund_code != profile.fund_code
         ):
             delete_fund_profile(existing.fund_code)
+        by_code = get_fund_profile_by_code(profile.fund_code)
+        if by_code is not None and (existing is None or by_code.fund_code == profile.fund_code):
+            existing = by_code
+        elif existing is not None and existing.fund_code != profile.fund_code:
+            existing = None
+        profile = merge_detail_profile(existing, profile)
         if profile.source == "yangjibao-detail":
             profile = profile.model_copy(update={"is_provisional": False})
         return save_fund_profile(profile)
@@ -38,23 +49,37 @@ class FundProfileService:
         return list_fund_profiles()
 
     def resolve_holding(self, holding: Holding) -> Holding:
-        if holding.fund_code != "000000":
+        profile = (
+            get_fund_profile_by_code(holding.fund_code)
+            if holding.fund_code != "000000"
+            else None
+        )
+        if profile is None:
+            profile = self.find_match(holding.fund_name)
+        if profile is None:
             return holding
 
-        profile = self.find_match(holding.fund_name)
-        if profile is not None:
-            return holding.model_copy(
-                update={
-                    "fund_code": profile.fund_code,
-                    "fund_name": profile.fund_name,
-                    "sector_name": holding.sector_name or profile.sector_name,
-                    "sector_return_percent": holding.sector_return_percent
-                    if holding.sector_return_percent is not None
-                    else profile.sector_return_percent,
-                }
-            )
+        sector_name = holding.sector_name
+        if not _is_valid_sector_label(sector_name):
+            sector_name = profile.sector_name if _is_valid_sector_label(profile.sector_name) else None
+        elif not sector_name and _is_valid_sector_label(profile.sector_name):
+            sector_name = profile.sector_name
 
-        return holding
+        index_name = holding.intraday_index_name
+        if not index_name or not _looks_like_index_name(index_name):
+            index_name = profile.intraday_index_name
+
+        updates: dict = {
+            "sector_name": sector_name,
+            "intraday_index_name": index_name,
+            "sector_return_percent": holding.sector_return_percent
+            if holding.sector_return_percent is not None
+            else profile.sector_return_percent,
+        }
+        if holding.fund_code == "000000" and profile.fund_code != "000000":
+            updates["fund_code"] = profile.fund_code
+            updates["fund_name"] = profile.fund_name
+        return holding.model_copy(update=updates)
 
     def resolve_holdings(self, holdings: list[Holding]) -> list[Holding]:
         return [self.resolve_holding(holding) for holding in holdings]
@@ -110,6 +135,53 @@ class FundProfileService:
         return self.find_match(holding.fund_name)
 
 
+def merge_detail_profile(existing: FundProfile | None, incoming: FundProfile) -> FundProfile:
+    """详情 OCR 再次上传时保留已有板块/指数字段，避免整份覆盖成空。"""
+    incoming = _sanitize_profile_sector_fields(incoming)
+    if existing is not None:
+        existing = _sanitize_profile_sector_fields(existing)
+    if incoming.intraday_index_name and not incoming.sector_name:
+        incoming = incoming.model_copy(
+            update={"sector_name": _infer_related_board_label(incoming.intraday_index_name)}
+        )
+    if existing is None:
+        return incoming
+
+    def pick_sector_name(new: str | None, old: str | None) -> str | None:
+        if _is_valid_sector_label(new) and new not in _DETAIL_TAB_LABELS:
+            return new
+        if _is_valid_sector_label(old) and old not in _DETAIL_TAB_LABELS:
+            return old
+        return None
+
+    def pick_index_name(new: str | None, old: str | None) -> str | None:
+        if new and _looks_like_index_name(new):
+            return new
+        if old and _looks_like_index_name(old):
+            return old
+        return None
+
+    def pick_float(new: float | None, old: float | None) -> float | None:
+        return new if new is not None else old
+
+    return incoming.model_copy(
+        update={
+            "aliases": sorted(set(existing.aliases) | set(incoming.aliases)),
+            "sector_name": pick_sector_name(incoming.sector_name, existing.sector_name),
+            "intraday_index_name": pick_index_name(
+                incoming.intraday_index_name, existing.intraday_index_name
+            ),
+            "sector_return_percent": pick_float(
+                incoming.sector_return_percent, existing.sector_return_percent
+            ),
+            "holding_shares": pick_float(incoming.holding_shares, existing.holding_shares),
+            "holding_cost": pick_float(incoming.holding_cost, existing.holding_cost),
+            "yesterday_profit": pick_float(incoming.yesterday_profit, existing.yesterday_profit),
+            "holding_days": incoming.holding_days if incoming.holding_days is not None else existing.holding_days,
+        }
+    )
+
+
 def merge_holding_into_profile(
     profile: FundProfile,
     holding: Holding,
@@ -128,8 +200,10 @@ def merge_holding_into_profile(
         updates["holding_return_percent"] = holding.return_percent
     if holding.daily_profit is not None:
         updates["daily_profit"] = holding.daily_profit
-    if holding.sector_name:
+    if _is_valid_sector_label(holding.sector_name):
         updates["sector_name"] = holding.sector_name
+    if holding.intraday_index_name and _looks_like_index_name(holding.intraday_index_name):
+        updates["intraday_index_name"] = holding.intraday_index_name
     if holding.sector_return_percent is not None:
         updates["sector_return_percent"] = holding.sector_return_percent
     if total_amount and holding.holding_amount > 0:
@@ -154,6 +228,7 @@ def _holding_to_provisional_profile(
         daily_profit=holding.daily_profit,
         sector_name=holding.sector_name,
         sector_return_percent=holding.sector_return_percent,
+        intraday_index_name=holding.intraday_index_name,
         source="yangjibao-overview",
         is_provisional=is_provisional,
     )
@@ -186,9 +261,14 @@ def parse_profile_from_text(text: str) -> FundProfile | None:
     amount_group = _numbers_after_label(lines, "持有金额", 3)
     profit_group = _numbers_after_label(lines, "持有收益", 3)
     daily_group = _numbers_after_label(lines, "当日收益", 3)
-    sector_name, sector_return = _find_sector(lines)
+    (
+        intraday_index_name,
+        intraday_index_return,
+        sector_name,
+        sector_return,
+    ) = _find_detail_sector_fields(lines)
 
-    return FundProfile(
+    profile = FundProfile(
         fund_code=code,
         fund_name=fund_name,
         aliases=_aliases_for_name(fund_name),
@@ -203,7 +283,9 @@ def parse_profile_from_text(text: str) -> FundProfile | None:
         holding_days=int(daily_group[2]) if len(daily_group) > 2 and daily_group[2] is not None else None,
         sector_name=sector_name,
         sector_return_percent=sector_return,
+        intraday_index_name=intraday_index_name,
     )
+    return _sanitize_profile_sector_fields(profile)
 
 
 def _find_code(lines: list[str]) -> tuple[int | None, str | None]:
@@ -241,9 +323,230 @@ def _numbers_after_label(lines: list[str], label: str, count: int) -> list[float
     return values
 
 
-def _find_sector(lines: list[str]) -> tuple[str | None, float | None]:
+def _find_detail_sector_fields(
+    lines: list[str],
+) -> tuple[str | None, float | None, str | None, float | None]:
+    """解析养基宝详情：场内指数（涨跌口径）+ 关联板块（展示）。"""
+    intraday_index_name: str | None = None
+    intraday_index_return: float | None = None
+    sector_name: str | None = None
+    sector_return: float | None = None
+    last_board_summary: tuple[str, float | None] | None = None
+
+    for index, line in enumerate(lines):
+        cleaned = _normalize_ocr_line(line)
+        if cleaned.startswith("场内指数"):
+            inline = cleaned.removeprefix("场内指数").strip(" ：: \t")
+            if inline:
+                name, change = _parse_name_percent_line(inline)
+                if name and _looks_like_index_name(name):
+                    intraday_index_name = name
+                    intraday_index_return = change
+            if intraday_index_name is None:
+                name, change = _name_percent_after(lines, index + 1, limit=8)
+                if name:
+                    intraday_index_name = name
+                    intraday_index_return = change
+        if cleaned.startswith("关联板块"):
+            summary = _RELATED_BOARD_SUMMARY_RE.match(cleaned)
+            if summary:
+                board = summary.group(1).strip()
+                if _looks_like_board_label(board):
+                    last_board_summary = (board, float(summary.group(2)))
+                continue
+            board, ret = _parse_related_board_line(cleaned)
+            if board and _is_valid_sector_label(board):
+                last_board_summary = (board, ret)
+            elif cleaned in _DETAIL_TAB_LABELS:
+                board, ret = _related_board_after_heading(lines, index)
+                if board:
+                    last_board_summary = (board, ret)
+
+    if last_board_summary is not None:
+        sector_name, sector_return = last_board_summary
+
     for line in lines:
-        match = SECTOR_RE.match(line)
-        if match:
-            return match.group(1).strip(), float(match.group(2))
+        cleaned = _normalize_ocr_line(line)
+        match = SECTOR_RE.match(cleaned) or NAME_PERCENT_RE.match(cleaned)
+        if not match:
+            continue
+        name = match.group(1).strip()
+        change = float(match.group(2))
+        if _looks_like_index_name(name):
+            if intraday_index_name is None:
+                intraday_index_name = name
+                intraday_index_return = change
+        elif sector_name is None and _looks_like_board_label(name):
+            sector_name = name
+            sector_return = change
+
+    return _finalize_sector_fields(
+        intraday_index_name,
+        intraday_index_return,
+        sector_name,
+        sector_return,
+    )
+
+
+def _normalize_ocr_line(line: str) -> str:
+    return re.sub(r"\s*[>＞]+\s*$", "", line.strip())
+
+
+def _finalize_sector_fields(
+    intraday_index_name: str | None,
+    intraday_index_return: float | None,
+    sector_name: str | None,
+    sector_return: float | None,
+) -> tuple[str | None, float | None, str | None, float | None]:
+    if intraday_index_name and sector_name is None:
+        sector_name = _infer_related_board_label(intraday_index_name)
+    # 养基宝有场内指数时，涨跌口径以指数为准（非关联板块概念涨跌）
+    if intraday_index_name and intraday_index_return is not None:
+        sector_return = intraday_index_return
+    elif sector_return is None:
+        sector_return = intraday_index_return
+    return intraday_index_name, intraday_index_return, sector_name, sector_return
+
+
+def _parse_name_percent_line(text: str) -> tuple[str | None, float | None]:
+    text = _normalize_ocr_line(text)
+    match = SECTOR_RE.match(text) or NAME_PERCENT_RE.match(text)
+    if not match:
+        return None, None
+    return match.group(1).strip(), float(match.group(2))
+
+
+def _parse_related_board_line(line: str) -> tuple[str | None, float | None]:
+    match = re.match(
+        r"^关联板块[：:\s]+(.+?)(?:\s*([+-]?\d+(?:\.\d+)?)%)?\s*$",
+        line.strip(),
+    )
+    if not match:
+        return None, None
+    tail = match.group(1).strip()
+    if "同类基金" in tail:
+        tail = re.split(r"\d*只同类基金", tail)[0].strip()
+    if not tail or tail in _DETAIL_TAB_LABELS:
+        return None, None
+    if _looks_like_index_name(tail):
+        return None, None
+    ret = float(match.group(2)) if match.group(2) else None
+    pct_inline = re.search(r"^(.+?)\s*([+-]?\d+(?:\.\d+)?)%\s*$", tail)
+    if pct_inline:
+        inline_name = pct_inline.group(1).strip()
+        if _looks_like_board_label(inline_name):
+            return inline_name, float(pct_inline.group(2))
+    if _looks_like_board_label(tail):
+        return tail, ret
     return None, None
+
+
+def _related_board_after_heading(
+    lines: list[str],
+    index: int,
+) -> tuple[str | None, float | None]:
+    for line in lines[index + 1 : index + 12]:
+        cleaned = _normalize_ocr_line(line)
+        if not cleaned:
+            continue
+        if cleaned in _DETAIL_TAB_LABELS:
+            return None, None
+        if "同类基金" in cleaned:
+            cleaned = re.split(r"\d*只同类基金", cleaned)[0].strip()
+        name, change = _parse_name_percent_line(cleaned)
+        if name and _looks_like_board_label(name):
+            return name, change
+        if _looks_like_board_label(cleaned):
+            return cleaned, None
+    return None, None
+
+
+def _is_valid_sector_label(name: str | None) -> bool:
+    if not name:
+        return False
+    return _looks_like_board_label(name.strip())
+
+
+def _sanitize_profile_sector_fields(profile: FundProfile) -> FundProfile:
+    sector_name = profile.sector_name if _is_valid_sector_label(profile.sector_name) else None
+    intraday_index_name = (
+        profile.intraday_index_name
+        if profile.intraday_index_name and _looks_like_index_name(profile.intraday_index_name)
+        else None
+    )
+    if sector_name == profile.sector_name and intraday_index_name == profile.intraday_index_name:
+        return profile
+    return profile.model_copy(
+        update={
+            "sector_name": sector_name,
+            "intraday_index_name": intraday_index_name,
+        }
+    )
+
+
+def _looks_like_board_label(name: str) -> bool:
+    if not name or len(name) < 2 or len(name) > 16:
+        return False
+    if name.strip() in _DETAIL_TAB_LABELS or name.strip() in {"场内指数", "数据来源"}:
+        return False
+    if not re.search(r"[\u4e00-\u9fff]", name):
+        return False
+    if _looks_like_index_name(name):
+        return False
+    if re.fullmatch(r"[+-]?\d[\d,]*(?:\.\d+)?", name.replace(",", "")):
+        return False
+    skip_tokens = (
+        "同类基金",
+        "看涨",
+        "看跌",
+        "持有人数",
+        "排名",
+        "日期",
+        "国产算力",
+    )
+    if name in {"算力", "军工", "设备"}:
+        return False
+    return not any(token in name for token in skip_tokens)
+
+
+def _name_percent_after(
+    lines: list[str],
+    start: int,
+    *,
+    limit: int = 6,
+) -> tuple[str | None, float | None]:
+    for line in lines[start : start + limit]:
+        cleaned = _normalize_ocr_line(line)
+        if not cleaned or cleaned in {"关联板块", "业绩走势", "我的收益"}:
+            break
+        match = SECTOR_RE.match(cleaned) or NAME_PERCENT_RE.match(cleaned)
+        if match and _looks_like_index_name(match.group(1).strip()):
+            change = float(match.group(2))
+            return match.group(1).strip(), change
+    return None, None
+
+
+def _looks_like_index_name(name: str) -> bool:
+    if name.startswith("中证") or name.startswith("上证") or name.startswith("深证"):
+        return True
+    return name.endswith("指数") or "ETF" in name
+
+
+def _infer_related_board_label(index_name: str) -> str:
+    if "电网设备" in index_name:
+        return "电网设备"
+    if "人工智能" in index_name:
+        return "人工智能"
+    if "半导体" in index_name:
+        return "半导体"
+    for prefix in ("中证", "国证", "上证", "深证"):
+        if index_name.startswith(prefix) and len(index_name) > len(prefix):
+            return index_name[len(prefix) :]
+    return index_name
+
+
+def _find_sector(lines: list[str]) -> tuple[str | None, float | None]:
+    fields = _find_detail_sector_fields(lines)
+    lookup = fields[0] or fields[2]
+    ret = fields[1] if fields[0] else fields[3]
+    return lookup, ret

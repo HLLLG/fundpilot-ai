@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from app.models import Holding, PortfolioSummary
-from app.services.fund_profile import FundProfileService
+from app.services.fund_profile import FundProfileService, _is_valid_sector_label
 from app.services.holding_estimates import enrich_holdings_estimates, sum_daily_profit
 from app.services.sector_quote_service import refresh_holdings_sector_quotes
 
@@ -17,8 +17,12 @@ def enrich_holdings_from_profiles(holdings: list[Holding]) -> list[Holding]:
             continue
 
         patch: dict = {}
-        if not resolved.sector_name and profile.sector_name:
+        if not _is_valid_sector_label(resolved.sector_name) and _is_valid_sector_label(
+            profile.sector_name
+        ):
             patch["sector_name"] = profile.sector_name
+        if not resolved.intraday_index_name and profile.intraday_index_name:
+            patch["intraday_index_name"] = profile.intraday_index_name
         if resolved.sector_return_percent is None and profile.sector_return_percent is not None:
             patch["sector_return_percent"] = profile.sector_return_percent
         if resolved.holding_return_percent is None and profile.holding_return_percent is not None:

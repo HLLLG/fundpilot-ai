@@ -92,8 +92,8 @@ print(json.dumps(result))
     return {str(k): float(v) for k, v in payload.items()}
 
 
-def fetch_boards_via_akshare() -> dict[str, SpotBoard]:
-    """httpx 直连失败时，用 AkShare 列表接口兜底（概念/行业/指数）。"""
+def fetch_boards_via_akshare(*, include_index: bool = True) -> dict[str, SpotBoard]:
+    """httpx 直连失败时，用 AkShare 列表接口兜底（概念/行业；指数可选且较慢）。"""
     boards: dict[str, SpotBoard] = {"concept": {}, "industry": {}, "index": {}}
 
     for kind in ("concept", "industry"):
@@ -104,6 +104,9 @@ def fetch_boards_via_akshare() -> dict[str, SpotBoard]:
                 break
             if attempt + 1 < 3:
                 time.sleep(0.8 * (attempt + 1))
+
+    if not include_index:
+        return boards
 
     saved = _clear_proxy_env()
     try:

@@ -1,6 +1,7 @@
 "use client";
 
 import type { FundProfile } from "@/lib/api";
+import { profileRelatedBoardLabel, showIntradayIndexHint } from "@/lib/profileSector";
 
 type FundProfileCardProps = {
   profile: FundProfile;
@@ -82,12 +83,6 @@ export function FundProfileCard({ profile, onOpenDetail }: FundProfileCardProps)
           </dd>
         </div>
         <div>
-          <dt className="text-slate-400">当日收益</dt>
-          <dd className={`font-bold ${profitClass(profile.daily_profit)}`}>
-            {formatSigned(profile.daily_profit)}
-          </dd>
-        </div>
-        <div>
           <dt className="text-slate-400">持有份额</dt>
           <dd className="font-semibold text-slate-700">
             {profile.holding_shares?.toLocaleString("zh-CN") ?? "—"}
@@ -107,18 +102,18 @@ export function FundProfileCard({ profile, onOpenDetail }: FundProfileCardProps)
               : "—"}
           </dd>
         </div>
+        <div className="sm:col-span-1">
+          <dt className="text-slate-400">关联板块</dt>
+          <dd className="font-semibold text-slate-700">
+            {profileRelatedBoardLabel(profile)}
+            {showIntradayIndexHint(profile) ? (
+              <span className="mt-0.5 block text-[10px] font-normal text-slate-400">
+                场内指数 {profile.intraday_index_name}
+              </span>
+            ) : null}
+          </dd>
+        </div>
       </dl>
-
-      <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-500">
-        <span className="rounded-full bg-slate-100 px-2 py-0.5 font-semibold">
-          {profile.sector_name || "未知板块"}
-        </span>
-        {profile.sector_return_percent !== null && profile.sector_return_percent !== undefined ? (
-          <span className={`font-bold ${profitClass(profile.sector_return_percent)}`}>
-            板块 {formatSigned(profile.sector_return_percent, "%")}
-          </span>
-        ) : null}
-      </div>
 
       {canOpen ? (
         <p className="mt-3 text-xs font-bold text-blue-600">点击查看净值走势 →</p>

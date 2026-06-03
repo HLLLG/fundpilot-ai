@@ -9,6 +9,7 @@ export type Holding = {
   holding_return_percent?: number | null;
   sector_name?: string | null;
   sector_return_percent?: number | null;
+  intraday_index_name?: string | null;
   user_note?: string | null;
 };
 
@@ -220,6 +221,7 @@ export type FundProfile = {
   holding_days?: number | null;
   sector_name?: string | null;
   sector_return_percent?: number | null;
+  intraday_index_name?: string | null;
   source: string;
   is_provisional?: boolean;
   raw_text?: string;
@@ -843,7 +845,12 @@ export async function importFundProfiles(profiles: FundProfile[]): Promise<{ sav
   return response.json();
 }
 
-export async function parseFundProfile(formData: FormData): Promise<FundProfile> {
+export type ParseFundProfileResult = FundProfile & {
+  synced_holdings?: Holding[];
+  portfolio_summary?: PortfolioSummary | null;
+};
+
+export async function parseFundProfile(formData: FormData): Promise<ParseFundProfileResult> {
   const response = await fetch(`${API_BASE}/api/fund-profiles/ocr`, {
     method: "POST",
     body: formData,

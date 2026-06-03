@@ -123,7 +123,11 @@ export function YangjibaoFundDetail({
   const latestNav = detail?.latest_nav ?? null;
   const yearReturn = detail?.year_return_percent ?? null;
 
-  const sectorName = sectorMeta?.matched_name ?? activeHolding.sector_name ?? "—";
+  const sectorBoardLabel =
+    activeHolding.sector_name ?? activeHolding.intraday_index_name ?? "—";
+  const sectorQuoteLabel =
+    activeHolding.intraday_index_name ?? activeHolding.sector_name ?? "—";
+  const sectorName = sectorMeta?.matched_name ?? sectorQuoteLabel;
   const sectorReturn = activeHolding.sector_return_percent;
 
   const canGoPrev = holdingIndex > 0;
@@ -407,6 +411,13 @@ export function YangjibaoFundDetail({
               ) : (
                 <IntradayPercentChart points={intradayPoints} />
               )}
+              {activeHolding.intraday_index_name &&
+              activeHolding.sector_name &&
+              activeHolding.intraday_index_name !== activeHolding.sector_name ? (
+                <p className="mt-2 text-center text-xs text-slate-400">
+                  关联板块 {sectorBoardLabel} · 涨跌按场内指数 {activeHolding.intraday_index_name}
+                </p>
+              ) : null}
               {intradayNote ? (
                 <p className="mt-2 text-center text-xs text-slate-400">{intradayNote}</p>
               ) : null}

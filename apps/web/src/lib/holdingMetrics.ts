@@ -1,5 +1,20 @@
 import type { Holding } from "@/lib/api";
 
+const TEST_FUND_CODES = new Set(["000001"]);
+const TEST_NAME_PREFIXES = ["测试", "新基金"];
+
+export function isTestHolding(holding: Holding): boolean {
+  if (TEST_FUND_CODES.has(holding.fund_code)) {
+    return true;
+  }
+  const name = (holding.fund_name || "").trim();
+  return TEST_NAME_PREFIXES.some((prefix) => name.startsWith(prefix));
+}
+
+export function withoutTestHoldings(holdings: Holding[]): Holding[] {
+  return holdings.filter((holding) => !isTestHolding(holding));
+}
+
 function round2(value: number) {
   return Math.round(value * 100) / 100;
 }

@@ -1,0 +1,94 @@
+from __future__ import annotations
+
+from datetime import datetime, timezone
+
+from app.database import get_most_recent_portfolio_snapshot, get_portfolio_summary, save_portfolio_summary
+from app.models import Holding, PortfolioSummary
+from app.services.holding_estimates import enrich_holdings_estimates, sum_daily_profit
+from app.services.holding_filters import without_test_holdings
+from app.services.portfolio_snapshot import save_daily_snapshot
+
+
+def _overlay_sector_fields(base: Holding, patch: Holding) -> Holding:
+    updates: dict = {}
+    if patch.sector_return_percent is not None:
+        updates["sector_return_percent"] = patch.sector_return_percent
+    if patch.daily_profit is not None:
+        updates["daily_profit"] = patch.daily_profit
+    if patch.daily_return_percent is not None:
+        updates["daily_return_percent"] = patch.daily_return_percent
+    return base.model_copy(update=updates) if updates else base
+
+
+def merge_holdings_with_snapshot(incoming: list[Holding]) -> list[Holding]:
+    """刷新持久化时：若当前请求只有部分持仓，与上一版快照合并，避免覆盖掉其余基金。"""
+    snapshot = get_most_recent_portfolio_snapshot()
+    if not snapshot:
+        return incoming
+    previous = [Holding.model_validate(item) for item in snapshot.get("holdings", [])]
+    if not previous or len(incoming) >= len(previous):
+        return incoming
+
+    by_code = {
+        holding.fund_code: holding
+        for holding in incoming
+        if holding.fund_code != "000000"
+    }
+    by_name = {holding.fund_name: holding for holding in incoming}
+
+    merged: list[Holding] = []
+    for prev in previous:
+        patch = by_code.get(prev.fund_code) or by_name.get(prev.fund_name)
+        merged.append(_overlay_sector_fields(prev, patch) if patch else prev)
+
+    return merged
+
+
+def enrich_loaded_holdings(holdings: list[Holding]) -> list[Holding]:
+    """恢复持仓时按已保存的板块涨跌重算当日收益，避免展示 OCR 旧值。"""
+    if not holdings:
+        return holdings
+    return enrich_holdings_estimates(holdings)
+
+
+def persist_holdings_after_sector_refresh(
+    holdings: list[Holding],
+    *,
+    fetched_at: datetime | None = None,
+) -> list[Holding]:
+    """板块刷新成功后写回日快照与账户汇总，重启后保留最新当日收益。"""
+    merged = without_test_holdings(merge_holdings_with_snapshot(holdings))
+    enriched = enrich_holdings_estimates(merged)
+    if not enriched:
+        return enriched
+
+    summary = get_portfolio_summary()
+    total_assets = round(sum(h.holding_amount for h in enriched), 2)
+    daily_profit = sum_daily_profit(enriched)
+    daily_return_percent = None
+    if total_assets > daily_profit > 0:
+        previous = total_assets - daily_profit
+        if previous > 0:
+            daily_return_percent = round(daily_profit / previous * 100, 2)
+
+    if summary is None:
+        summary = PortfolioSummary(
+            total_assets=total_assets,
+            daily_profit=daily_profit,
+            daily_return_percent=daily_return_percent,
+            holding_count=len(enriched),
+            updated_at=fetched_at or datetime.now(timezone.utc),
+        )
+    else:
+        patch: dict = {
+            "total_assets": total_assets,
+            "holding_count": len(enriched),
+            "daily_profit": daily_profit,
+            "daily_return_percent": daily_return_percent,
+            "updated_at": fetched_at or datetime.now(timezone.utc),
+        }
+        summary = summary.model_copy(update=patch)
+
+    save_portfolio_summary(summary)
+    save_daily_snapshot(enriched, summary)
+    return enriched

@@ -47,16 +47,32 @@ def test_resolve_prefers_index_ai_for_csi_ai_label():
     assert result.change_percent == 5.54
 
 
-def test_resolve_prefers_power_equipment_theme_for_grid_label():
+def test_resolve_prefers_csi_grid_index_for_intraday_label():
     boards = {
-        "index": {"电力设备主题": 1.5, "中证全指电网": 0.97},
-        "concept": {},
-        "industry": {"电网设备": -0.58},
+        "index": {"中证电网设备": 1.59, "电力设备主题": 1.5, "中证全指电网": 0.97},
+        "concept": {"电网设备": -0.58},
+        "industry": {},
     }
-    result = resolve_sector_quote("中证电网设备", boards)
+    result = resolve_sector_quote(
+        "电网设备",
+        boards,
+        quote_label="中证电网设备",
+    )
     assert result.confidence == "high"
-    assert result.matched_name == "电力设备主题"
-    assert result.change_percent == 1.5
+    assert result.matched_name == "中证电网设备"
+    assert result.change_percent == 1.59
+
+
+def test_resolve_grid_related_board_without_index_uses_concept():
+    boards = {
+        "index": {"电力设备主题": 1.5},
+        "concept": {"电网设备": 0.42},
+        "industry": {},
+    }
+    result = resolve_sector_quote("电网设备", boards)
+    assert result.confidence == "high"
+    assert result.matched_name == "电网设备"
+    assert result.change_percent == 0.42
 
 
 def test_resolve_prefers_concept_commercial_aerospace():

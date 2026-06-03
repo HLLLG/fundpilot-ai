@@ -2,14 +2,12 @@
 
 import { useState } from "react";
 import { BookMarked, Download, FileImage, RefreshCw, Upload } from "lucide-react";
-import type { FundProfile, PortfolioSummary } from "@/lib/api";
+import type { FundProfile } from "@/lib/api";
 import { FundProfileCard } from "@/components/FundProfileCard";
 import { FundProfileDetailModal } from "@/components/FundProfileDetailModal";
-import { PortfolioSummaryCard } from "@/components/PortfolioSummaryCard";
 
 type FundProfilePanelProps = {
   profiles: FundProfile[];
-  portfolioSummary: PortfolioSummary | null;
   detailText: string;
   isBusy: boolean;
   onDetailTextChange: (value: string) => void;
@@ -22,7 +20,6 @@ type FundProfilePanelProps = {
 
 export function FundProfilePanel({
   profiles,
-  portfolioSummary,
   detailText,
   isBusy,
   onDetailTextChange,
@@ -43,7 +40,7 @@ export function FundProfilePanel({
           </div>
           <h2 className="text-xl font-black text-slate-950">基金档案库</h2>
           <p className="mt-2 text-sm leading-6 text-slate-600">
-            上传养基宝/支付宝「账户汇总」截图，识别后会写入基金档案并同步到首页看板。
+            上传养基宝单基金「详情」截图，用于更新代码、持有金额、成本与关联板块。实时涨跌与当日收益请在「今日」账户汇总查看。
           </p>
         </div>
         <button
@@ -58,8 +55,10 @@ export function FundProfilePanel({
 
       <label className="group flex min-h-28 flex-col items-center justify-center rounded-[24px] border border-dashed border-indigo-300 bg-white/80 px-5 py-6 text-center transition hover:border-indigo-500 hover:bg-indigo-50/70">
         <FileImage className="mb-2 text-indigo-600" size={30} />
-        <span className="text-sm font-black text-slate-950">上传单基金详情截图建档</span>
-        <span className="mt-1 text-xs text-slate-500">识别基金代码、成本、份额、持仓占比和关联板块</span>
+        <span className="text-sm font-black text-slate-950">上传单基金详情截图</span>
+        <span className="mt-1 text-xs text-slate-500">
+          识别基金代码、持有金额、份额、成本、关联板块（OCR 约 1–3 分钟）
+        </span>
         <input
           type="file"
           accept="image/*"
@@ -118,11 +117,9 @@ export function FundProfilePanel({
       </div>
 
       <div className="mt-5 space-y-4">
-        <PortfolioSummaryCard summary={portfolioSummary} />
-
         {profiles.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-5 text-center text-sm text-slate-500">
-            暂无档案。先在上方上传养基宝总览，或上传单基金详情截图建档。
+            暂无档案。请上传单基金详情截图建档。
           </div>
         ) : (
           <div className="space-y-3">

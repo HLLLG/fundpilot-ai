@@ -184,6 +184,141 @@ def _request_board_page(
     return {"diff": [], "total": 0}
 
 
+def fetch_eastmoney_quote_by_secid(
+    secid: str,
+    *,
+    timeout: float = 8.0,
+    max_retries: int = 2,
+) -> tuple[str | None, float | None]:
+    """按东财 secid 拉单板块/指数涨跌幅（如商业航天 90.BK0963）。"""
+    cleaned = str(secid).strip()
+    if not cleaned:
+        return None, None
+
+    params = {
+        "secid": cleaned,
+        "fields": "f14,f3",
+        "ut": _COMMON_PARAMS["ut"],
+        "fltt": "2",
+        "invt": "2",
+    }
+
+    with httpx.Client(
+        headers=_EASTMONEY_HEADERS,
+        timeout=timeout,
+        trust_env=False,
+        follow_redirects=True,
+        http2=False,
+    ) as client:
+        last_error: Exception | None = None
+        for attempt in range(max_retries):
+            for host in _HOST_POOL:
+                url = f"https://{host}.push2.eastmoney.com/api/qt/stock/get"
+                try:
+                    response = client.get(url, params=params)
+                    response.raise_for_status()
+                    data = response.json().get("data") or {}
+                    name = data.get("f14")
+                    change = data.get("f3")
+                    if change in (None, "-"):
+                        return (str(name).strip() if name else None), None
+                    return (
+                        str(name).strip() if name else None,
+                        round(float(change), 4),
+                    )
+                except Exception as exc:
+                    last_error = exc
+                    logger.debug("eastmoney secid %s host=%s failed: %s", cleaned, host, exc)
+            if attempt + 1 < max_retries:
+                time.sleep(0.35 * (attempt + 1))
+        if last_error:
+            logger.info("eastmoney secid quote %s failed: %s", cleaned, last_error)
+    return None, None
+
+
+def fetch_eastmoney_sector_quote(
+    sector_name: str,
+    *,
+    source_type: str = "concept",
+    timeout: float = 10.0,
+    max_pages: int = 12,
+) -> float | None:
+    """按板块名称精确匹配单条涨跌幅（分页早停，用于商业航天等补拉）。"""
+    cleaned = str(sector_name).strip()
+    if not cleaned:
+        return None
+
+    if source_type == "industry":
+        params = {
+            **_COMMON_PARAMS,
+            "pz": "100",
+            "fid": "f3",
+            "fs": "m:90 t:2 f:!50",
+            "fields": "f3,f14",
+        }
+    else:
+        params = {
+            **_COMMON_PARAMS,
+            "pz": "100",
+            "fid": "f12",
+            "fs": "m:90 t:3 f:!50",
+            "fields": "f3,f14",
+        }
+
+    with httpx.Client(
+        headers=_EASTMONEY_HEADERS,
+        timeout=timeout,
+        trust_env=False,
+        follow_redirects=True,
+        http2=False,
+    ) as client:
+        page_params = {**params, "pn": "1"}
+        try:
+            first = _request_board_page(client, page_params, max_retries=2)
+        except Exception as exc:
+            logger.debug("eastmoney single sector fetch failed: %s", exc)
+            return None
+
+        rows = list(first.get("diff") or [])
+        hit = _find_sector_row(rows, cleaned)
+        if hit is not None:
+            return hit
+
+        total = int(first.get("total") or 0)
+        page_size = max(len(rows), 1)
+        total_pages = min(max(1, math.ceil(total / page_size)), max_pages)
+
+        for page in range(2, total_pages + 1):
+            try:
+                payload = _request_board_page(
+                    client,
+                    {**page_params, "pn": str(page)},
+                    max_retries=2,
+                )
+                hit = _find_sector_row(payload.get("diff") or [], cleaned)
+                if hit is not None:
+                    return hit
+            except Exception:
+                break
+            time.sleep(0.08)
+    return None
+
+
+def _find_sector_row(rows: list[dict[str, Any]], sector_name: str) -> float | None:
+    for row in rows:
+        name = row.get("f14")
+        change = row.get("f3")
+        if name is None or change in (None, "-"):
+            continue
+        if str(name).strip() != sector_name:
+            continue
+        try:
+            return round(float(change), 4)
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
 def _absorb_board_rows(rows: list[dict[str, Any]], target: dict[str, float]) -> None:
     for row in rows:
         name = row.get("f14")

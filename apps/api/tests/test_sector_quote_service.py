@@ -35,7 +35,7 @@ def test_refresh_sector_quotes_auto_maps_csi_grid_equipment(monkeypatch):
     monkeypatch.setattr(
         "app.services.sector_quote_service.fetch_spot_boards",
         lambda **kwargs: {
-            "index": {"电力设备主题": 1.5, "中证全指电网": 0.97},
+            "index": {"中证电网设备": 1.59, "电力设备主题": 1.5, "中证全指电网": 0.97},
             "concept": {"电网设备": 1.1, "电网设备ETF": 1.2},
             "industry": {"电网设备": 0.9},
         },
@@ -49,10 +49,11 @@ def test_refresh_sector_quotes_auto_maps_csi_grid_equipment(monkeypatch):
             fund_name="测试",
             holding_amount=1000,
             return_percent=1,
-            sector_name="中证电网设备",
+            sector_name="电网设备",
+            intraday_index_name="中证电网设备",
             sector_return_percent=0.5,
         )
     ]
     result = refresh_holdings_sector_quotes(holdings)
     assert result["summary"]["matched"] == 1
-    assert result["holdings"][0]["sector_return_percent"] == 1.5
+    assert result["holdings"][0]["sector_return_percent"] == 1.59

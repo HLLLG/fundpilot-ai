@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
+from app.services.sector_canonical import fetch_canonical_sector_quote
 from app.services.sector_labels import build_sector_candidates, normalize_sector_label, sector_label_key
 from app.services.sector_quote_provider import SpotBoard
 
@@ -33,10 +34,13 @@ def resolve_sector_quote(
     boards: dict[str, SpotBoard],
     *,
     persisted_mapping: dict | None = None,
+    quote_label: str | None = None,
 ) -> SectorResolveResult:
-    label = normalize_sector_label(sector_name)
-    if not label:
+    lookup_label = normalize_sector_label(quote_label or sector_name)
+    display_label = normalize_sector_label(sector_name)
+    if not lookup_label:
         return SectorResolveResult(confidence="none", message="未识别关联板块名称")
+    label = lookup_label
 
     if persisted_mapping:
         source_type = str(persisted_mapping.get("source_type", ""))
@@ -50,6 +54,17 @@ def resolve_sector_quote(
                 source_type=source_type,
                 source_code=persisted_mapping.get("source_code"),
             )
+
+    canonical = fetch_canonical_sector_quote(label, boards)
+    if canonical is not None:
+        return SectorResolveResult(
+            confidence="high",
+            change_percent=canonical.change_percent,
+            matched_name=canonical.matched_name,
+            source_type=canonical.source_type,
+            source_code=canonical.source_code,
+            message=canonical.message,
+        )
 
     exact_matches: list[SectorMappingCandidate] = []
     fuzzy_matches: list[SectorMappingCandidate] = []
@@ -65,14 +80,15 @@ def resolve_sector_quote(
                     )
                 )
             for spot_name, change in board.items():
-                if candidate_label in spot_name or spot_name in candidate_label:
-                    fuzzy_matches.append(
-                        SectorMappingCandidate(
-                            source_type=source_type,
-                            source_name=spot_name,
-                            change_percent=change,
-                        )
+                if not _fuzzy_sector_match(candidate_label, spot_name):
+                    continue
+                fuzzy_matches.append(
+                    SectorMappingCandidate(
+                        source_type=source_type,
+                        source_name=spot_name,
+                        change_percent=change,
                     )
+                )
 
     unique = _dedupe_candidates(exact_matches + fuzzy_matches)
     if not unique:
@@ -135,6 +151,23 @@ def mapping_record_from_result(
     }
 
 
+def _fuzzy_sector_match(candidate_label: str, spot_name: str) -> bool:
+    """收紧模糊匹配，避免「商业航天」命中「航天装备」等误匹配。"""
+    if candidate_label == spot_name:
+        return True
+    if len(candidate_label) < 3:
+        return False
+    if "商业航天" in candidate_label:
+        return "商业航天" in spot_name
+    if "国防军工" in candidate_label:
+        return "国防军工" in spot_name or spot_name == "军工"
+    if candidate_label in spot_name:
+        return len(spot_name) - len(candidate_label) <= 6
+    if spot_name in candidate_label:
+        return True
+    return False
+
+
 def _dedupe_candidates(items: list[SectorMappingCandidate]) -> list[SectorMappingCandidate]:
     seen: set[tuple[str, str]] = set()
     unique: list[SectorMappingCandidate] = []
@@ -170,8 +203,23 @@ def _auto_pick_candidate(
                 change_percent=index_board["人工智能"],
             )
 
-    if "电网设备" in label:
+    if "电网设备" in label or label == "电网设备":
+        concept_board = boards.get("concept") or {}
+        is_index_label = label.startswith("中证") or label.startswith("上证") or label.startswith("深证")
+        if not is_index_label and label == "电网设备" and "电网设备" in concept_board:
+            return SectorMappingCandidate(
+                source_type="concept",
+                source_name="电网设备",
+                change_percent=concept_board["电网设备"],
+            )
         index_board = boards.get("index") or {}
+        for preferred in ("中证电网设备", "中证全指电网", "电力设备主题", "电网设备"):
+            if preferred in index_board:
+                return SectorMappingCandidate(
+                    source_type="index",
+                    source_name=preferred,
+                    change_percent=index_board[preferred],
+                )
         for spot_name, change in index_board.items():
             if "电力设备" in spot_name and "主题" in spot_name:
                 return SectorMappingCandidate(

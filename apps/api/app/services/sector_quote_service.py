@@ -8,6 +8,7 @@ from app.models import Holding, HoldingFieldWarning, SectorMappingCandidate, Sec
 from app.services.sector_labels import sector_label_key
 from app.services.sector_on_demand import fetch_sector_on_demand
 from app.services.sector_quote_provider import fetch_spot_boards
+from app.services.sector_quote_label import sector_quote_lookup_label
 from app.services.sector_quote_resolver import (
     mapping_record_from_result,
     resolve_sector_quote,
@@ -54,11 +55,25 @@ def refresh_holdings_sector_quotes(
     needs_mapping = 0
 
     for index, holding in enumerate(holdings):
-        label_key = sector_label_key(holding.sector_name)
+        lookup_label = sector_quote_lookup_label(holding)
+        label_key = sector_label_key(lookup_label)
         persisted = None if force_refresh else (get_sector_mapping(label_key) if label_key else None)
-        result = resolve_sector_quote(holding.sector_name, boards, persisted_mapping=persisted)
-        if result.confidence not in {"high", "medium"}:
-            on_demand = fetch_sector_on_demand(holding.sector_name, boards)
+        result = resolve_sector_quote(
+            holding.sector_name,
+            boards,
+            persisted_mapping=persisted,
+            quote_label=lookup_label,
+        )
+        label_boards = (boards.get("concept") or {}) | (boards.get("industry") or {}) | (
+            boards.get("index") or {}
+        )
+        needs_on_demand = result.confidence not in {"high", "medium"} or (
+            label_key
+            and label_key not in label_boards
+            and result.matched_name != label_key
+        )
+        if needs_on_demand:
+            on_demand = fetch_sector_on_demand(lookup_label, boards)
             if on_demand is not None and on_demand.change_percent is not None:
                 result = on_demand
                 if on_demand.source_type and on_demand.matched_name:
@@ -88,7 +103,7 @@ def refresh_holdings_sector_quotes(
                 else None
             )
             matched += 1
-            record = mapping_record_from_result(holding.sector_name, result)
+            record = mapping_record_from_result(lookup_label, result)
             if record is not None:
                 save_sector_mapping(record)
             if (
@@ -182,9 +197,9 @@ def apply_sector_mapping_choice(
         raise ValueError("所选映射在当前行情中不存在")
 
     holding = holdings[index]
-    label_key = sector_label_key(holding.sector_name)
+    label_key = sector_label_key(sector_quote_lookup_label(holding))
     if not label_key:
-        raise ValueError("该持仓缺少关联板块名称")
+        raise ValueError("该持仓缺少关联板块或场内指数名称")
 
     save_sector_mapping(
         {

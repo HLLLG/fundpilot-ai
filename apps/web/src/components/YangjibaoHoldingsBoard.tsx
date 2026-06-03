@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronUp, Plus, RefreshCw, Settings2 } from "lucide-react";
 import type { Holding, PortfolioSummary } from "@/lib/api";
+import { holdingRelatedBoardLabel } from "@/lib/profileSector";
 import { SectorMappingModal } from "@/components/SectorMappingModal";
 import {
   cnProfitClass,
@@ -14,6 +15,7 @@ import {
   resolveHoldingReturnPercent,
   sumDailyProfit,
   sumHoldingAmount,
+  withoutTestHoldings,
 } from "@/lib/holdingMetrics";
 import type { useSectorQuoteRefresh } from "@/lib/useSectorQuoteRefresh";
 
@@ -108,10 +110,15 @@ export function YangjibaoHoldingsBoard({
     return () => window.clearInterval(timer);
   }, []);
 
-  const computedTotal = sumHoldingAmount(holdings);
-  const computedDaily = sumDailyProfit(holdings);
-  const totalAssets = portfolioSummary?.total_assets ?? (computedTotal || null);
-  const dailyProfit = holdings.length ? computedDaily : null;
+  const displayHoldings = useMemo(() => withoutTestHoldings(holdings), [holdings]);
+
+  const computedTotal = sumHoldingAmount(displayHoldings);
+  const computedDaily = sumDailyProfit(displayHoldings);
+  const totalAssets =
+    computedTotal ||
+    portfolioSummary?.total_assets ||
+  null;
+  const dailyProfit = displayHoldings.length > 0 ? computedDaily : null;
   const dailyReturn = accountDailyReturnPercent(dailyProfit, totalAssets);
 
   const refreshTimeLabel = lastFetchedAt
@@ -125,15 +132,20 @@ export function YangjibaoHoldingsBoard({
 
   const sortedHoldings = useMemo(
     () =>
-      holdings
-        .map((holding, index) => ({ holding, index }))
+      displayHoldings
+        .map((holding) => {
+          const index = holdings.findIndex(
+            (item) => item.fund_code === holding.fund_code && item.fund_name === holding.fund_name,
+          );
+          return { holding, index: index >= 0 ? index : 0 };
+        })
         .sort((left, right) => right.holding.holding_amount - left.holding.holding_amount),
-    [holdings],
+    [displayHoldings, holdings],
   );
 
   const sectionClassName = className ?? "max-w-lg";
 
-  if (!holdings.length) {
+  if (!displayHoldings.length) {
     return (
       <section className={`mx-auto w-full ${sectionClassName}`}>
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
@@ -143,7 +155,7 @@ export function YangjibaoHoldingsBoard({
             <p className="mt-6 text-sm leading-6 text-slate-400">
               {isLoading
                 ? "正在从基金档案恢复持仓并刷新板块涨跌…"
-                : "暂无持仓。请先在「基金档案」上传养基宝总览，或手动录入基金档案。"}
+                : "暂无持仓。请先在「基金档案」上传单基金详情截图建档，或在校对表手动录入。"}
             </p>
             {!isLoading && onOpenCapture ? (
               <button
@@ -151,7 +163,7 @@ export function YangjibaoHoldingsBoard({
                 onClick={onOpenCapture}
                 className="mt-5 rounded-full bg-blue-600 px-4 py-2 text-sm font-bold text-white transition hover:bg-blue-700"
               >
-                去上传总览截图
+                去上传详情截图
               </button>
             ) : null}
           </div>
@@ -173,7 +185,7 @@ export function YangjibaoHoldingsBoard({
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={() => void refresh(true)}
+                onClick={() => void refresh(false)}
                 disabled={isRefreshing}
                 className="inline-flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 disabled:opacity-50"
                 title="刷新板块涨跌"
@@ -201,7 +213,7 @@ export function YangjibaoHoldingsBoard({
                 {formatMoney(totalAssets)}
               </div>
               <div className="mt-1 text-xs text-slate-400">
-                {holdings.length} 只基金
+                {displayHoldings.length} 只基金
                 {refreshError ? (
                   <span className="ml-1 font-semibold text-rose-600" title={refreshError}>
                     · 刷新失败
@@ -284,9 +296,24 @@ export function YangjibaoHoldingsBoard({
                       {formatSignedPercent(sectorReturn)}
                     </div>
                     <div className="mt-0.5 truncate text-[10px] text-slate-400">
-                      {holding.sector_name || "—"}
+                      {holdingRelatedBoardLabel(holding)}
+                      {holding.intraday_index_name ? (
+                        <span className="ml-0.5 text-slate-400" title="养基宝以场内指数涨跌估算当日收益">
+                          ·{holding.intraday_index_name}
+                        </span>
+                      ) : null}
+                      {meta?.matched_name &&
+                      (holding.intraday_index_name || holding.sector_name) &&
+                      meta.matched_name !==
+                        (holding.intraday_index_name || holding.sector_name) ? (
+                        <span className="ml-0.5 text-slate-400" title="行情源名称">
+                          →{meta.matched_name}
+                        </span>
+                      ) : null}
                       {liveTag ? (
                         <span className="ml-1 font-bold text-emerald-600">{liveTag}</span>
+                      ) : meta?.confidence === "low" ? (
+                        <span className="ml-1 font-bold text-amber-600">待选</span>
                       ) : null}
                     </div>
                   </div>

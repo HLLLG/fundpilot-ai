@@ -1,0 +1,15 @@
+# 自主优化日志（养基宝板块 / 档案 OCR）
+
+## 迭代 1 — 板块解析与档案合并（2026-06-03）
+
+### 问题修复
+- 养基宝详情 OCR：区分「场内指数」与「关联板块」，四只基金布局回归测试
+- 拒绝将 `+` / `-`、纯涨跌幅行、`关联板块` Tab 标签误存为板块名
+- 档案合并：部分 OCR 时保留已有 `sector_name` / `intraday_index_name`
+- `resolve_holding`：已知基金代码时从档案修复错误板块（如 `+` → `半导体`）
+- 板块涨跌：有场内指数时优先用指数口径（`sector_quote_lookup_label`）
+- 读取档案时 `_sanitize_profile_sector_fields` 清理历史脏数据
+
+### 测试
+- `test_yangjibao_four_funds.py`（025856 / 015945 / 008586 / 519674）
+- `test_resolve_holding_sectors.py`

@@ -57,8 +57,97 @@ def test_parse_yangjibao_detail_profile_text():
     assert profile.holding_cost == 1.3784
     assert profile.daily_profit == -85.93
     assert profile.holding_days == 95
-    assert profile.sector_name == "中证电网设备"
+    assert profile.intraday_index_name == "中证电网设备"
+    assert profile.sector_name == "电网设备"
     assert profile.sector_return_percent == -0.59
+
+
+DETAIL_WITH_INDEX_AND_BOARD = """
+华夏中证电网设备主题ETF联接A
+025856
+持有金额
+12,406.59
+场内指数
+中证电网设备 +1.59%
+关联板块：电网设备 +1.52%
+"""
+
+
+def test_parse_detail_with_intraday_index_and_related_board():
+    profile = parse_profile_from_text(DETAIL_WITH_INDEX_AND_BOARD)
+    assert profile is not None
+    assert profile.intraday_index_name == "中证电网设备"
+    assert profile.sector_name == "电网设备"
+    assert profile.sector_return_percent == 1.59
+
+
+COMMERCIAL_AEROSPACE_DETAIL = """
+易方达国防军工混合C
+015945
+持有金额
+1,188.96
+关联板块：商业航天 +3.52%
+"""
+
+
+YANGJIBAO_BOTTOM_LAYOUT = """
+华夏中证电网设备主题ETF联接A
+025856
+持有金额
+12,406.59
+8,721.07
+47.89%
+持有收益
+582.94
+4.85%
+1.3784
+关联板块
+业绩走势
+我的收益
+06-03
+中证电网设备 +1.59%
+场内指数
+中证电网设备 +1.59%
+关联板块
+电网设备
+9只同类基金
+"""
+
+
+def test_parse_detail_without_intraday_index_uses_related_board():
+    profile = parse_profile_from_text(COMMERCIAL_AEROSPACE_DETAIL)
+    assert profile is not None
+    assert profile.intraday_index_name is None
+    assert profile.sector_name == "商业航天"
+    assert profile.sector_return_percent == 3.52
+
+
+def test_parse_yangjibao_bottom_section_layout():
+    profile = parse_profile_from_text(YANGJIBAO_BOTTOM_LAYOUT)
+    assert profile is not None
+    assert profile.intraday_index_name == "中证电网设备"
+    assert profile.sector_name == "电网设备"
+    assert profile.sector_return_percent == 1.59
+
+
+def test_merge_detail_profile_preserves_sector_when_ocr_misses(tmp_path, monkeypatch):
+    monkeypatch.setenv("FUND_AI_DB_PATH", str(tmp_path / "app.db"))
+    from app.config import refresh_settings
+
+    refresh_settings()
+    service = FundProfileService()
+    full = parse_profile_from_text(YANGJIBAO_BOTTOM_LAYOUT)
+    assert full is not None
+    service.save_profile(full)
+
+    partial = parse_profile_from_text(
+        "华夏中证电网设备主题ETF联接A\n025856\n持有金额\n12,500.00\n8,800.00\n48.00%"
+    )
+    assert partial is not None
+    assert partial.sector_name is None
+    merged = service.save_profile(partial)
+    assert merged.sector_name == "电网设备"
+    assert merged.intraday_index_name == "中证电网设备"
 
 
 def test_resolve_overview_holding_with_saved_profile(tmp_path, monkeypatch):

@@ -7,6 +7,8 @@ import sys
 import time
 from typing import Any
 
+from app.services.sector_canonical import fetch_canonical_sector_quote
+from app.services.eastmoney_spot_client import fetch_eastmoney_sector_quote
 from app.services.sector_labels import normalize_sector_label
 from app.services.sector_quote_provider import SpotBoard
 from app.services.sector_quote_resolver import SectorResolveResult
@@ -135,6 +137,28 @@ def fetch_sector_on_demand(
             matched_name=label,
             source_type="industry",
         )
+
+    canonical = fetch_canonical_sector_quote(sector_name, boards)
+    if canonical is not None:
+        return SectorResolveResult(
+            confidence="high",
+            change_percent=canonical.change_percent,
+            matched_name=canonical.matched_name,
+            source_type=canonical.source_type,
+            source_code=canonical.source_code,
+            message=canonical.message,
+        )
+
+    for source_type in ("concept", "industry"):
+        change = fetch_eastmoney_sector_quote(label, source_type=source_type)
+        if change is not None:
+            boards.setdefault(source_type, {})[label] = change
+            return SectorResolveResult(
+                confidence="high",
+                change_percent=change,
+                matched_name=label,
+                source_type=source_type,
+            )
 
     for source_type in ("concept", "industry"):
         payload = _fetch_via_subprocess(label, source_type)

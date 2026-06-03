@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -28,6 +29,7 @@ from app.models import (
     AllocatePenetrationRequest,
     AnalysisRequest,
     FundProfile,
+    Holding,
     HoldingDetailRequest,
     RefreshSectorQuotesRequest,
     ReportChatRequest,
@@ -43,7 +45,12 @@ from app.services.holding_validation import (
     validate_holdings,
 )
 from app.services.penetration_daily_allocator import allocate_penetration_daily_profit
-from app.services.portfolio_holdings_service import load_persisted_holdings
+from app.services.holding_estimates import sum_daily_profit
+from app.services.portfolio_holdings_service import (
+    load_persisted_holdings,
+    sync_portfolio_from_profiles,
+)
+from app.services.portfolio_persistence import enrich_loaded_holdings, persist_holdings_after_sector_refresh
 from app.services.portfolio_snapshot import (
     build_dashboard_payload,
     get_previous_holdings_for_review,
@@ -138,10 +145,18 @@ def allocate_penetration_daily(request: AllocatePenetrationRequest) -> dict:
 def refresh_sector_quotes(request: RefreshSectorQuotesRequest) -> dict:
     if not get_settings().sector_quotes_enabled:
         raise HTTPException(status_code=503, detail="板块实时行情已关闭")
-    return refresh_holdings_sector_quotes(
+    result = refresh_holdings_sector_quotes(
         request.holdings,
         force_refresh=request.force_refresh,
     )
+    if result.get("ok") and result.get("holdings"):
+        refreshed = [Holding.model_validate(item) for item in result["holdings"]]
+        fetched_at = None
+        if result.get("fetched_at"):
+            fetched_at = datetime.fromisoformat(str(result["fetched_at"]))
+        enriched = persist_holdings_after_sector_refresh(refreshed, fetched_at=fetched_at)
+        result["holdings"] = [holding.model_dump() for holding in enriched]
+    return result
 
 
 @app.post("/api/sector-mappings/apply")
@@ -422,9 +437,13 @@ async def parse_fund_profile(
         raise HTTPException(status_code=422, detail="未能从截图中识别基金代码和档案字段")
 
     FundProfileService().save_profile(profile)
+    synced = sync_portfolio_from_profiles(refresh_sectors=True)
+    summary = get_portfolio_summary()
     payload = profile.model_dump(mode="json")
     payload["raw_text"] = text
     payload["upload_path"] = str(upload_path) if upload_path else None
+    payload["synced_holdings"] = [holding.model_dump() for holding in synced]
+    payload["portfolio_summary"] = summary.model_dump(mode="json") if summary else None
     return payload
 
 
@@ -461,12 +480,22 @@ def portfolio_dashboard() -> dict:
 @app.get("/api/portfolio/holdings")
 def portfolio_holdings() -> dict:
     holdings, source, snapshot_date = load_persisted_holdings()
+    holdings = enrich_loaded_holdings(holdings)
     summary = get_portfolio_summary()
     profiles = FundProfileService().list_profiles()
     payload = summary.model_dump(mode="json") if summary else {}
     total_from_holdings = round(sum(holding.holding_amount for holding in holdings), 2)
-    if not payload.get("total_assets") and total_from_holdings:
+    if total_from_holdings:
         payload["total_assets"] = total_from_holdings
+    if holdings:
+        payload["daily_profit"] = sum_daily_profit(holdings)
+        if total_from_holdings > (payload["daily_profit"] or 0):
+            previous = total_from_holdings - float(payload["daily_profit"])
+            if previous > 0:
+                payload["daily_return_percent"] = round(
+                    float(payload["daily_profit"]) / previous * 100,
+                    2,
+                )
     payload["holding_count"] = len(holdings)
     return {
         "holdings": [holding.model_dump() for holding in holdings],

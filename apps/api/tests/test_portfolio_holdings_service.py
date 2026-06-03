@@ -38,6 +38,10 @@ def test_load_persisted_holdings_prefers_snapshot(tmp_path, monkeypatch):
         },
     )
     monkeypatch.setattr(
+        "app.services.portfolio_holdings_service.list_fund_profiles",
+        lambda: [],
+    )
+    monkeypatch.setattr(
         "app.services.portfolio_holdings_service.enrich_holdings_from_profiles",
         lambda holdings: holdings,
     )
