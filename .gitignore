@@ -11,7 +11,8 @@ __pycache__/
 .pytest_cache/
 *.pyc
 *.tsbuildinfo
-data/*.db
+data/*
+!data/.gitkeep
 uploads/*
 !uploads/.gitkeep
 !uploads/inbox/
