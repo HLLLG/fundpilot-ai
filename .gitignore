@@ -19,6 +19,8 @@ uploads/*
 uploads/inbox/*
 !uploads/inbox/.gitkeep
 apps/api/.venv/
+apps/api/.uvicorn-*.log
+.tmp-*.html
 apps/web/.next/
 apps/web/node_modules/
 apps/web/test-results/
