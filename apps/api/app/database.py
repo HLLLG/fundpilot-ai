@@ -220,6 +220,9 @@ def delete_report(report_id: str) -> bool:
 
 
 def save_fund_profile(profile: FundProfile) -> FundProfile:
+    from app.services.fund_profile import _sanitize_profile_sector_fields
+
+    profile = _sanitize_profile_sector_fields(profile)
     payload = profile.model_dump(mode="json")
     with _connect() as connection:
         connection.execute(

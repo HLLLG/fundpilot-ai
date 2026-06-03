@@ -903,6 +903,20 @@ export async function listFundProfiles(): Promise<FundProfile[]> {
   return response.json();
 }
 
+export async function repairFundProfileSectors(): Promise<{
+  ok: boolean;
+  repaired: number;
+  synced_holdings?: Holding[];
+}> {
+  const response = await fetch(`${API_BASE}/api/fund-profiles/repair-sectors`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
 export type FundNavPoint = {
   date: string;
   nav: number;

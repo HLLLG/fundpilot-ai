@@ -13,3 +13,17 @@
 ### 测试
 - `test_yangjibao_four_funds.py`（025856 / 015945 / 008586 / 519674）
 - `test_resolve_holding_sectors.py`
+
+## 迭代 2 — 持久化、修复接口与前端（2026-06-03）
+
+### 问题修复
+- 快照合并时同步 `sector_name` / `intraday_index_name`（有效值才覆盖）
+- `save_fund_profile` / 读取档案时统一 sanitize
+- `POST /api/fund-profiles/repair-sectors` 清理库内历史脏数据（如 `+`）
+- 前端档案库增加「修复无效关联板块」按钮
+- `resolve_holding` 对已识别基金代码同样从档案补全板块
+- 合并档案时 `pick_index_name` 保留场内指数
+
+### 测试
+- `test_repair_fund_profiles.py`
+- `test_portfolio_persistence_overlay.py`

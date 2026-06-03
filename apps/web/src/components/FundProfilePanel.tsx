@@ -14,6 +14,7 @@ type FundProfilePanelProps = {
   onFileSelect: (file: File) => void;
   onParseText: () => void;
   onRefresh: () => void;
+  onRepairSectors?: () => void;
   onExport: () => void;
   onImport: (file: File) => void;
 };
@@ -26,6 +27,7 @@ export function FundProfilePanel({
   onFileSelect,
   onParseText,
   onRefresh,
+  onRepairSectors,
   onExport,
   onImport,
 }: FundProfilePanelProps) {
@@ -88,6 +90,17 @@ export function FundProfilePanel({
       >
         {isBusy ? "正在建档..." : "从详情文本建档"}
       </button>
+
+      {onRepairSectors ? (
+        <button
+          type="button"
+          onClick={onRepairSectors}
+          disabled={isBusy}
+          className="mt-3 w-full rounded-full border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm font-bold text-amber-900 transition hover:bg-amber-100 disabled:opacity-50"
+        >
+          修复无效关联板块（如显示为 +）
+        </button>
+      ) : null}
 
       <div className="mt-4 grid gap-2 sm:grid-cols-2">
         <button

@@ -5,12 +5,18 @@ from datetime import datetime, timezone
 from app.database import get_most_recent_portfolio_snapshot, get_portfolio_summary, save_portfolio_summary
 from app.models import Holding, PortfolioSummary
 from app.services.holding_estimates import enrich_holdings_estimates, sum_daily_profit
+from app.services.fund_profile import _is_valid_sector_label
+from app.services.fund_profile import _looks_like_index_name
 from app.services.holding_filters import without_test_holdings
 from app.services.portfolio_snapshot import save_daily_snapshot
 
 
 def _overlay_sector_fields(base: Holding, patch: Holding) -> Holding:
     updates: dict = {}
+    if _is_valid_sector_label(patch.sector_name):
+        updates["sector_name"] = patch.sector_name
+    if patch.intraday_index_name and _looks_like_index_name(patch.intraday_index_name):
+        updates["intraday_index_name"] = patch.intraday_index_name
     if patch.sector_return_percent is not None:
         updates["sector_return_percent"] = patch.sector_return_percent
     if patch.daily_profit is not None:

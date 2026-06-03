@@ -455,6 +455,37 @@ def fund_profiles() -> list[dict]:
     ]
 
 
+@app.post("/api/fund-profiles/repair-sectors")
+def repair_fund_profile_sectors() -> dict:
+    """将历史档案中的无效板块名（如 OCR 误识别为 +）清理并写回数据库。"""
+    import json
+
+    from app.database import _connect, save_fund_profile
+    from app.models import FundProfile
+    from app.services.fund_profile import _sanitize_profile_sector_fields
+
+    repaired = 0
+    with _connect() as connection:
+        rows = connection.execute("SELECT payload FROM fund_profiles").fetchall()
+    for row in rows:
+        raw = FundProfile.model_validate(json.loads(row["payload"]))
+        cleaned = _sanitize_profile_sector_fields(raw)
+        if (
+            raw.sector_name != cleaned.sector_name
+            or raw.intraday_index_name != cleaned.intraday_index_name
+        ):
+            save_fund_profile(cleaned)
+            repaired += 1
+    synced_holdings: list[dict] = []
+    if repaired:
+        from app.services.portfolio_holdings_service import sync_portfolio_from_profiles
+
+        synced_holdings = [
+            h.model_dump() for h in sync_portfolio_from_profiles(refresh_sectors=True)
+        ]
+    return {"ok": True, "repaired": repaired, "synced_holdings": synced_holdings}
+
+
 @app.get("/api/fund-profiles/{fund_code}/nav-history")
 def fund_nav_history(fund_code: str, days: int = 90) -> dict:
     profile = get_fund_profile_by_code(fund_code)

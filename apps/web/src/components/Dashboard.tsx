@@ -27,6 +27,7 @@ import {
   fetchPortfolioSummary,
   importFundProfiles,
   listFundProfiles,
+  repairFundProfileSectors,
   listReports,
   parseFundProfile,
   startAnalyzeJob,
@@ -380,6 +381,30 @@ export function Dashboard() {
     void handleProfileForm(formData);
   };
 
+  const handleRepairProfileSectors = async () => {
+    setIsProfiling(true);
+    setMessage(null);
+    try {
+      const result = await repairFundProfileSectors();
+      await loadProfiles();
+      if (result.synced_holdings?.length) {
+        setHoldings(result.synced_holdings);
+        await loadPortfolioSummary();
+      } else {
+        await hydratePortfolio();
+      }
+      setMessage(
+        result.repaired > 0
+          ? `已修复 ${result.repaired} 条档案的无效关联板块，请重新上传仍缺失板块的基金详情。`
+          : "未发现需要修复的无效板块名；若仍显示异常，请重新上传该基金详情截图。",
+      );
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "修复关联板块失败。");
+    } finally {
+      setIsProfiling(false);
+    }
+  };
+
   return (
     <main className="premium-bg min-h-screen">
       <div className="mx-auto flex min-h-screen w-full max-w-[1520px] flex-col px-4 py-4 sm:px-6 lg:px-8 lg:py-6">
@@ -560,6 +585,7 @@ export function Dashboard() {
                   void loadProfiles();
                   void loadPortfolioSummary();
                 }}
+                onRepairSectors={() => void handleRepairProfileSectors()}
                 onExport={() => void handleExportProfiles()}
                 onImport={(selectedFile) => void handleImportProfiles(selectedFile)}
               />

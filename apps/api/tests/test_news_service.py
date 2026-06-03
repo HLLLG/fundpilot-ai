@@ -11,7 +11,9 @@ def test_dedupe_news_by_url():
 
 
 def test_search_maps_akshare_frame(monkeypatch):
-    import pandas as pd
+    pytest = __import__("pytest")
+    pd = pytest.importorskip("pandas")
+
 
     class FakeRow:
         def __init__(self, data: dict):
