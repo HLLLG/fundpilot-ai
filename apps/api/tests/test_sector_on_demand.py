@@ -3,7 +3,15 @@ from app.services.sector_quote_resolver import SectorResolveResult
 from app.services.sector_quote_service import refresh_holdings_sector_quotes
 
 
-def test_refresh_uses_on_demand_for_missing_concept(monkeypatch):
+def test_refresh_uses_on_demand_for_missing_concept(tmp_path, monkeypatch):
+    from app.config import refresh_settings
+
+    monkeypatch.setenv("FUND_AI_DB_PATH", str(tmp_path / "app.db"))
+    refresh_settings()
+    monkeypatch.setattr(
+        "app.services.sector_quote_resolver.fetch_canonical_sector_quote",
+        lambda *_args, **_kwargs: None,
+    )
     monkeypatch.setattr(
         "app.services.sector_quote_service.fetch_spot_boards",
         lambda **kwargs: {

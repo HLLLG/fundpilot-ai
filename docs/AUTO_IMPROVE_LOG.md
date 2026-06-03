@@ -38,3 +38,9 @@
 
 ### 测试
 - `test_holding_validation.py::test_validate_invalid_sector_label`
+
+## 迭代 4 — 测试稳定性（2026-06-03）
+
+- 移除模糊 canonical「人工智能」，修复 `test_resolve_low_confidence_multiple`
+- `test_sector_on_demand` 使用独立 DB 并禁用 canonical 副作用
+- 全量 pytest：**146 passed**, 1 skipped

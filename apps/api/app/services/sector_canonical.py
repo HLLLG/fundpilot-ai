@@ -45,13 +45,6 @@ _CANONICAL_BY_LABEL: dict[str, CanonicalSector] = {
         eastmoney_secid="90.BK1036",
         source_code="BK1036",
     ),
-    "人工智能": CanonicalSector(
-        label="人工智能",
-        source_type="index",
-        source_name="人工智能",
-        eastmoney_secid="1.000935",
-        source_code="000935",
-    ),
     "国防军工": CanonicalSector(
         label="国防军工",
         source_type="concept",
