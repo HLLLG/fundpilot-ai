@@ -37,9 +37,9 @@ export function UploadDropzone({
             <div className="mb-3 inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-blue-600 text-white">
               <ScanLine size={22} />
             </div>
-            <h2 className="text-xl font-black text-slate-950">截图识别工作台</h2>
+            <h2 className="text-xl font-black text-slate-950">上传养基宝总览</h2>
             <p className="mt-2 max-w-xl text-sm leading-6 text-slate-600">
-              上传支付宝基金截图，或先粘贴 OCR 文本。识别结果会进入下方校对表，再由风控规则和 DeepSeek 生成日报。
+              上传养基宝「账户汇总」截图即可。系统会自动识别持仓、写入基金档案，并按关联板块实时涨跌估算当日收益。
             </p>
           </div>
           <button
@@ -59,9 +59,9 @@ export function UploadDropzone({
           onDrop={handleDrop}
         >
           <FileImage className="mb-3 text-blue-600" size={34} />
-          <span className="text-base font-black text-slate-950">选择支付宝基金截图</span>
+          <span className="text-base font-black text-slate-950">选择养基宝总览截图</span>
           <span className="mt-1 text-sm text-slate-500">
-            点击选择或拖拽 PNG / JPG，选择后会自动上传识别
+            点击选择或拖拽 PNG / JPG，选择后会自动上传识别（首次 OCR 约 1–3 分钟，请耐心等待）
           </span>
           {selectedFileName ? (
             <span className="mt-3 rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700">

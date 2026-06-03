@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { CheckCircle, Loader2, XCircle } from "lucide-react";
 import type { Report } from "@/lib/api";
-import { waitForAnalysisJob } from "@/lib/api";
+import { fetchAnalysisJob } from "@/lib/api";
 
 type JobState = "running" | "completed" | "failed";
 
@@ -14,10 +14,18 @@ interface JobStatusFloatProps {
   onRetry: () => void;
 }
 
+function etaHint(analysisMode?: string) {
+  return analysisMode === "deep"
+    ? "深度模式预计 30 秒–3 分钟，可继续操作页面"
+    : "快速模式预计 15–45 秒，可继续操作页面";
+}
+
 export function JobStatusFloat({ jobId, onComplete, onClose, onRetry }: JobStatusFloatProps) {
   const [state, setState] = useState<JobState>("running");
   const [error, setError] = useState<string | null>(null);
   const [report, setReport] = useState<Report | null>(null);
+  const [stageLabel, setStageLabel] = useState("正在生成报告…");
+  const [analysisMode, setAnalysisMode] = useState<string>("fast");
 
   useEffect(() => {
     if (!jobId) {
@@ -26,19 +34,43 @@ export function JobStatusFloat({ jobId, onComplete, onClose, onRetry }: JobStatu
     setState("running");
     setError(null);
     setReport(null);
+    setStageLabel("排队中…");
 
     let cancelled = false;
-    waitForAnalysisJob(jobId)
-      .then((result) => {
-        if (cancelled) return;
-        setReport(result);
-        setState("completed");
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return;
-        setError(err instanceof Error ? err.message : "分析失败，请重试。");
-        setState("failed");
-      });
+    const poll = async () => {
+      while (!cancelled) {
+        try {
+          const job = await fetchAnalysisJob(jobId);
+          if (cancelled) return;
+
+          if (job.analysis_mode) {
+            setAnalysisMode(job.analysis_mode);
+          }
+          if (job.stage_label) {
+            setStageLabel(job.stage_label);
+          }
+
+          if (job.status === "completed" && job.report) {
+            setReport(job.report);
+            setState("completed");
+            return;
+          }
+          if (job.status === "failed") {
+            setError(job.error ?? "分析失败，请重试。");
+            setState("failed");
+            return;
+          }
+        } catch (err: unknown) {
+          if (cancelled) return;
+          setError(err instanceof Error ? err.message : "分析失败，请重试。");
+          setState("failed");
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+      }
+    };
+
+    void poll();
 
     return () => {
       cancelled = true;
@@ -55,8 +87,8 @@ export function JobStatusFloat({ jobId, onComplete, onClose, onRetry }: JobStatu
         <div className="flex items-start gap-3">
           <Loader2 size={20} className="mt-0.5 shrink-0 animate-spin text-blue-600" />
           <div>
-            <div className="text-sm font-bold text-slate-900">正在生成报告…</div>
-            <div className="mt-0.5 text-xs text-slate-500">预计 10–30 秒，可继续操作页面</div>
+            <div className="text-sm font-bold text-slate-900">{stageLabel}</div>
+            <div className="mt-0.5 text-xs text-slate-500">{etaHint(analysisMode)}</div>
           </div>
         </div>
       )}

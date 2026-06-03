@@ -161,6 +161,30 @@ export type ReportOutcomes = {
   }>;
 };
 
+export type ReportWeeklyOutcomes = ReportOutcomes & {
+  baseline_days?: number;
+  baseline_report_id?: string;
+  baseline_created_at?: string;
+  summary?: string | null;
+  hit_count?: number;
+  miss_count?: number;
+};
+
+export type TradingSession = {
+  timezone: string;
+  local_datetime: string;
+  calendar_date: string;
+  is_trading_day: boolean;
+  session_kind:
+    | "non_trading_day"
+    | "trading_day_intraday"
+    | "trading_day_pre_close"
+    | "trading_day_after_close";
+  minutes_to_close?: number | null;
+  decision_window: string;
+  market_close_time: string;
+};
+
 export type RebalanceSimulation = {
   assumption: string;
   current_total: number;
@@ -265,6 +289,7 @@ export type OcrResponse = {
   error?: string;
   cache_hit?: boolean;
   profile_sync?: ProfileSyncResult;
+  sector_refresh?: RefreshSectorQuotesResult | null;
   portfolio_summary?: PortfolioSummary | null;
   holding_warnings?: HoldingFieldWarning[];
   holding_diffs?: HoldingListDiff[];
@@ -276,6 +301,9 @@ export type AnalysisJob = {
   id: string;
   status: "pending" | "running" | "completed" | "failed";
   error?: string | null;
+  stage?: string | null;
+  stage_label?: string | null;
+  analysis_mode?: AnalysisMode;
   created_at: string;
   updated_at: string;
   report?: Report;
@@ -299,6 +327,54 @@ type ReportChatStreamEvent =
   | { type: "error"; message: string };
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+
+export type SectorQuoteMeta = {
+  source: "live" | "ocr" | "manual";
+  provider?: string;
+  confidence: "high" | "medium" | "low" | "none";
+  matched_name?: string | null;
+  source_type?: "index" | "concept" | "industry" | null;
+  fetched_at?: string | null;
+  previous_percent?: number | null;
+  delta_vs_previous?: number | null;
+  message?: string | null;
+};
+
+export type SectorMappingCandidate = {
+  source_type: "index" | "concept" | "industry";
+  source_name: string;
+  change_percent: number;
+  source_code?: string | null;
+};
+
+export type RefreshSectorQuotesResult = {
+  ok: boolean;
+  message: string;
+  holdings: Holding[];
+  items: Array<{
+    index: number;
+    fund_code: string;
+    fund_name: string;
+    sector_name?: string | null;
+    sector_quote_meta: SectorQuoteMeta;
+    mapping_candidates: SectorMappingCandidate[];
+  }>;
+  holding_warnings?: HoldingFieldWarning[];
+  summary: {
+    matched: number;
+    unresolved: number;
+    needs_mapping: number;
+  };
+  fetched_at?: string;
+};
+
+export type SectorQuotesStatus = {
+  enabled: boolean;
+  ttl_seconds: number;
+  auto_interval_seconds: number;
+  auto_refresh_allowed: boolean;
+  session: TradingSession;
+};
 
 export type AllocatePenetrationResult = {
   holdings: Holding[];
@@ -329,15 +405,155 @@ export async function allocatePenetrationDaily(
   return response.json();
 }
 
-export async function parseOcr(formData: FormData): Promise<OcrResponse> {
-  const response = await fetch(`${API_BASE}/api/ocr`, {
+export async function refreshSectorQuotes(
+  holdings: Holding[],
+  options?: { forceRefresh?: boolean },
+): Promise<RefreshSectorQuotesResult> {
+  const response = await fetch(`${API_BASE}/api/holdings/refresh-sector-quotes`, {
     method: "POST",
-    body: formData,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      holdings,
+      force_refresh: options?.forceRefresh ?? false,
+    }),
   });
   if (!response.ok) {
     throw new Error(await response.text());
   }
   return response.json();
+}
+
+export async function applySectorMapping(
+  holdings: Holding[],
+  payload: {
+    index: number;
+    source_type: SectorMappingCandidate["source_type"];
+    source_name: string;
+    source_code?: string | null;
+  },
+): Promise<RefreshSectorQuotesResult> {
+  const response = await fetch(`${API_BASE}/api/sector-mappings/apply`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      holdings,
+      index: payload.index,
+      source_type: payload.source_type,
+      source_name: payload.source_name,
+      source_code: payload.source_code ?? null,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export async function fetchSectorQuotesStatus(): Promise<SectorQuotesStatus> {
+  const response = await fetch(`${API_BASE}/api/sector-quotes/status`, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export type SectorIntradayPoint = {
+  time: string;
+  percent: number;
+};
+
+export type SectorIntradayResult = {
+  points: SectorIntradayPoint[];
+  note?: string | null;
+  session_date?: string | null;
+  source_type: string;
+  source_name: string;
+};
+
+export type HoldingDetail = {
+  index: number;
+  holding: Holding;
+  holding_shares?: number | null;
+  holding_cost?: number | null;
+  yesterday_profit?: number | null;
+  holding_days?: number | null;
+  latest_nav?: number | null;
+  nav_date?: string | null;
+  year_return_percent?: number | null;
+  fund_code_resolved: boolean;
+  fund_code_source?: string | null;
+  provenance: Record<string, string>;
+};
+
+export async function fetchHoldingDetail(payload: {
+  holdings: Holding[];
+  index: number;
+  portfolio_summary?: PortfolioSummary | null;
+  sector_quote_meta?: SectorQuoteMeta | null;
+}): Promise<HoldingDetail> {
+  const response = await fetch(`${API_BASE}/api/holdings/detail`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      holdings: payload.holdings,
+      index: payload.index,
+      portfolio_summary: payload.portfolio_summary ?? null,
+      sector_quote_meta: payload.sector_quote_meta ?? null,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export async function fetchSectorIntraday(payload: {
+  source_type: "index" | "concept" | "industry";
+  source_name: string;
+}): Promise<SectorIntradayResult> {
+  const params = new URLSearchParams({
+    source_type: payload.source_type,
+    source_name: payload.source_name,
+  });
+  const response = await fetch(`${API_BASE}/api/sector-quotes/intraday?${params}`, {
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export async function parseOcr(
+  formData: FormData,
+  options?: { timeoutMs?: number },
+): Promise<OcrResponse> {
+  const timeoutMs = options?.timeoutMs ?? 180_000;
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(`${API_BASE}/api/ocr`, {
+      method: "POST",
+      body: formData,
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      throw new Error(await response.text());
+    }
+    return response.json();
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error(
+        "识别超时（首次 OCR 可能要 1–3 分钟）。请确认 API 在运行后重试，或改用手动粘贴文本。",
+      );
+    }
+    if (error instanceof TypeError) {
+      throw new Error("无法连接后端 API（127.0.0.1:8000），请检查 dev 服务是否仍在运行。");
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timer);
+  }
 }
 
 function analysisPayload(
@@ -422,6 +638,60 @@ export async function deleteReport(reportId: string): Promise<void> {
 export async function fetchReportOutcomes(reportId: string): Promise<ReportOutcomes> {
   const response = await fetch(`${API_BASE}/api/reports/${reportId}/outcomes`, {
     cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export async function fetchReportWeeklyOutcomes(
+  reportId: string,
+  days = 7,
+): Promise<ReportWeeklyOutcomes> {
+  const response = await fetch(
+    `${API_BASE}/api/reports/${reportId}/outcomes-weekly?days=${days}`,
+    { cache: "no-store" },
+  );
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export async function fetchTradingSession(): Promise<TradingSession> {
+  const response = await fetch(`${API_BASE}/api/trading-session`, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export async function exportDatabase(): Promise<void> {
+  const response = await fetch(`${API_BASE}/api/database/export`, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = "fundpilot-app.db";
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+export async function importDatabase(file: File): Promise<{
+  ok: boolean;
+  imported_from: string;
+  target: string;
+  backup_path: string;
+}> {
+  const form = new FormData();
+  form.append("file", file);
+  const response = await fetch(`${API_BASE}/api/database/import`, {
+    method: "POST",
+    body: form,
   });
   if (!response.ok) {
     throw new Error(await response.text());
@@ -578,6 +848,22 @@ export async function parseFundProfile(formData: FormData): Promise<FundProfile>
     method: "POST",
     body: formData,
   });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export type PortfolioHoldingsPayload = {
+  holdings: Holding[];
+  source: "snapshot" | "profiles" | "empty";
+  snapshot_date?: string | null;
+  portfolio_summary?: PortfolioSummary | null;
+  profile_count?: number;
+};
+
+export async function fetchPortfolioHoldings(): Promise<PortfolioHoldingsPayload> {
+  const response = await fetch(`${API_BASE}/api/portfolio/holdings`, { cache: "no-store" });
   if (!response.ok) {
     throw new Error(await response.text());
   }

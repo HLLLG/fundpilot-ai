@@ -217,3 +217,27 @@ def summarize_all_topics(
 
     briefs.sort(key=lambda item: item.topic)
     return briefs
+
+
+def merge_topic_briefs(
+    existing: list[TopicBrief],
+    items: list[NewsItem],
+    settings: Settings | None = None,
+) -> list[TopicBrief]:
+    """仅对新增或条数变化的主题重新 Flash 摘要，其余保留已有 brief。"""
+    resolved = settings or get_settings()
+    if not items:
+        return list(existing)
+
+    grouped = group_news_by_topic(items)
+    by_topic = {brief.topic: brief for brief in existing}
+    merged: list[TopicBrief] = []
+
+    for topic, group_items in sorted(grouped.items()):
+        prior = by_topic.get(topic)
+        if prior is not None and prior.news_count == len(group_items):
+            merged.append(prior)
+            continue
+        merged.append(summarize_topic(topic, group_items, resolved))
+
+    return merged

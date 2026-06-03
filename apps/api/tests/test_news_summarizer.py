@@ -6,9 +6,11 @@ from app.models import NewsItem
 from app.services.news_summarizer import (
     build_topic_briefs_offline,
     group_news_by_topic,
+    merge_topic_briefs,
     summarize_all_topics,
     summarize_topic,
 )
+from app.models import TopicBrief
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -88,3 +90,35 @@ def test_summarize_all_topics_offline_when_no_key(monkeypatch):
     briefs = summarize_all_topics(items)
     assert len(briefs) == 1
     assert briefs[0].provider == "rule-fallback"
+
+
+def test_merge_topic_briefs_reuses_unchanged_topics(monkeypatch):
+    existing = [
+        TopicBrief(
+            topic="半导体",
+            summary="已有摘要",
+            points=[],
+            news_count=1,
+            provider="cached",
+        )
+    ]
+    items = [
+        NewsItem(topic="半导体", title="A"),
+        NewsItem(topic="人工智能", title="B"),
+    ]
+
+    def fake_summarize(topic, group_items, settings=None):
+        return TopicBrief(
+            topic=topic,
+            summary=f"新-{topic}",
+            points=[],
+            news_count=len(group_items),
+            provider="flash",
+        )
+
+    monkeypatch.setattr("app.services.news_summarizer.summarize_topic", fake_summarize)
+    merged = merge_topic_briefs(existing, items)
+    topics = {brief.topic: brief for brief in merged}
+
+    assert topics["半导体"].summary == "已有摘要"
+    assert topics["人工智能"].summary == "新-人工智能"

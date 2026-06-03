@@ -99,6 +99,54 @@ def build_recommendation_outcomes(
     }
 
 
+def build_weekly_recommendation_outcomes(
+    current: dict[str, Any],
+    baseline: dict[str, Any] | None,
+    *,
+    baseline_days: int = 7,
+) -> dict[str, Any]:
+    if baseline is None:
+        return {
+            "has_baseline": False,
+            "baseline_days": baseline_days,
+            "message": f"暂无 {baseline_days} 天前的日报，无法生成周度建议复盘。",
+            "items": [],
+            "summary": None,
+        }
+
+    core = build_recommendation_outcomes(current, baseline)
+    items = core.get("items") or []
+    aligned = [item for item in items if item.get("assessment")]
+    hit_count = sum(
+        1
+        for item in aligned
+        if "一致" in str(item.get("assessment"))
+        or "改善" in str(item.get("assessment"))
+        or "保留" in str(item.get("assessment"))
+    )
+    miss_count = sum(
+        1
+        for item in aligned if "走弱" in str(item.get("assessment")) or "过保守" in str(item.get("assessment"))
+    )
+
+    summary = (
+        f"对比 {baseline_days} 天前日报（{baseline.get('created_at', '')[:10]}），"
+        f"共 {len(items)} 只可比基金；"
+        f"方向大体吻合 {hit_count} 只，需复盘 {miss_count} 只。"
+    )
+
+    return {
+        **core,
+        "has_baseline": True,
+        "baseline_days": baseline_days,
+        "baseline_report_id": baseline.get("id"),
+        "baseline_created_at": baseline.get("created_at"),
+        "summary": summary,
+        "hit_count": hit_count,
+        "miss_count": miss_count,
+    }
+
+
 def _recs_by_code(recommendations: list) -> dict[str, dict]:
     mapping: dict[str, dict] = {}
     for entry in recommendations:

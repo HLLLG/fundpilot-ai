@@ -58,3 +58,23 @@ export function saveReportChatMode(mode: ReportChatMode) {
   }
   window.localStorage.setItem(CHAT_MODE_KEY, mode);
 }
+
+const SECTOR_AUTO_KEY = "fundpilot-sector-auto-refresh";
+
+export function loadSectorAutoRefresh(fallback = true): boolean {
+  if (typeof window === "undefined") {
+    return fallback;
+  }
+  const raw = window.localStorage.getItem(SECTOR_AUTO_KEY);
+  if (raw === null) {
+    return fallback;
+  }
+  return raw === "true";
+}
+
+export function saveSectorAutoRefresh(enabled: boolean) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.localStorage.setItem(SECTOR_AUTO_KEY, String(enabled));
+}

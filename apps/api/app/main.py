@@ -1,26 +1,38 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 from app.config import get_settings
 from app.database import (
     delete_report,
+    database_file_path,
+    get_baseline_report_by_days,
     get_fund_profile_by_code,
     get_ocr_text_cache,
     get_previous_report,
     get_report,
+    import_database_file,
     list_reports,
     save_ocr_text_cache,
 )
 from app.lifespan import app_lifespan
 from app.database import list_report_chat_messages
-from app.models import AllocatePenetrationRequest, AnalysisRequest, FundProfile, ReportChatRequest
+from app.models import (
+    AllocatePenetrationRequest,
+    AnalysisRequest,
+    FundProfile,
+    HoldingDetailRequest,
+    RefreshSectorQuotesRequest,
+    ReportChatRequest,
+    SaveSectorMappingRequest,
+)
 from app.services.analyze_pipeline import run_analysis
 from app.database import get_portfolio_summary, save_portfolio_summary
 from app.services.fund_data import FundDataService
@@ -31,7 +43,7 @@ from app.services.holding_validation import (
     validate_holdings,
 )
 from app.services.penetration_daily_allocator import allocate_penetration_daily_profit
-from app.services.portfolio_parser import parse_portfolio_summary_from_text
+from app.services.portfolio_holdings_service import load_persisted_holdings
 from app.services.portfolio_snapshot import (
     build_dashboard_payload,
     get_previous_holdings_for_review,
@@ -39,13 +51,21 @@ from app.services.portfolio_snapshot import (
 )
 from app.services.job_store import create_analysis_job, get_job_response
 from app.services.ocr_engine import OcrEngine
+from app.services.ocr_pipeline import run_ocr_upload_pipeline
 from app.services.ocr_parser import parse_holdings_from_text
 from app.services.report_diff import diff_reports
 from app.services.report_chat import stream_report_chat
 from app.services.report_chat_export import report_chat_to_markdown
 from app.services.rebalance_simulator import simulate_rebalance
-from app.services.recommendation_outcomes import build_recommendation_outcomes
+from app.services.recommendation_outcomes import (
+    build_recommendation_outcomes,
+    build_weekly_recommendation_outcomes,
+)
 from app.services.report_export import report_to_markdown
+from app.services.sector_quote_service import apply_sector_mapping_choice, refresh_holdings_sector_quotes
+from app.services.sector_intraday_provider import fetch_sector_intraday
+from app.services.holding_detail_service import build_holding_detail
+from app.services.trading_session import build_trading_session
 
 
 settings = get_settings()
@@ -68,71 +88,28 @@ def health() -> dict[str, str | bool]:
     }
 
 
+@app.get("/api/trading-session")
+def trading_session() -> dict:
+    return build_trading_session()
+
+
 @app.post("/api/ocr")
 async def parse_ocr(
     raw_text: str | None = Form(default=None),
     file: UploadFile | None = File(default=None),
 ) -> dict:
-    text = raw_text or ""
-    upload_path: Path | None = None
-    cache_hit = False
-
+    file_bytes: bytes | None = None
+    filename: str | None = None
     if file is not None and file.filename:
-        settings.upload_dir.mkdir(parents=True, exist_ok=True)
-        upload_path = settings.upload_dir / Path(file.filename).name
         file_bytes = await file.read()
-        upload_path.write_bytes(file_bytes)
-        cache_key = hashlib.sha256(file_bytes).hexdigest()
-        if not text:
-            cached_text = get_ocr_text_cache(cache_key)
-            if cached_text is not None:
-                text = cached_text
-                cache_hit = True
-            else:
-                try:
-                    text = OcrEngine().extract_text(upload_path)
-                    save_ocr_text_cache(cache_key, text)
-                except Exception as exc:
-                    return {
-                        "raw_text": "",
-                        "upload_path": str(upload_path),
-                        "holdings": [],
-                        "error": f"OCR 识别失败：{exc}",
-                    }
+        filename = file.filename
 
-    profile_service = FundProfileService()
-    holdings = profile_service.resolve_holdings(parse_holdings_from_text(text))
-    previous_holdings = get_previous_holdings_for_review()
-    profile_sync = profile_service.sync_profiles_from_holdings(holdings).model_dump()
-
-    portfolio_summary = parse_portfolio_summary_from_text(text)
-    if portfolio_summary is not None:
-        portfolio_summary = enrich_portfolio_summary_source(portfolio_summary, holdings)
-        portfolio_summary = portfolio_summary.model_copy(
-            update={"holding_count": len(holdings)}
-        )
-        save_portfolio_summary(portfolio_summary)
-
-    holding_review = build_holding_review(
-        holdings,
-        previous_holdings=previous_holdings,
-        portfolio_summary=portfolio_summary,
+    return await asyncio.to_thread(
+        run_ocr_upload_pipeline,
+        text=raw_text or "",
+        file_bytes=file_bytes,
+        filename=filename,
     )
-
-    if holdings:
-        save_daily_snapshot(holdings, portfolio_summary)
-
-    return {
-        "raw_text": text,
-        "upload_path": str(upload_path) if upload_path else None,
-        "holdings": [holding.model_dump() for holding in holdings],
-        "cache_hit": cache_hit,
-        "profile_sync": profile_sync,
-        "portfolio_summary": (
-            portfolio_summary.model_dump(mode="json") if portfolio_summary else None
-        ),
-        **holding_review,
-    }
 
 
 @app.post("/api/holdings/allocate-penetration-daily")
@@ -155,6 +132,85 @@ def allocate_penetration_daily(request: AllocatePenetrationRequest) -> dict:
         "account_daily_profit": round(request.account_daily_profit, 2),
         "method": "sector_weighted",
     }
+
+
+@app.post("/api/holdings/refresh-sector-quotes")
+def refresh_sector_quotes(request: RefreshSectorQuotesRequest) -> dict:
+    if not get_settings().sector_quotes_enabled:
+        raise HTTPException(status_code=503, detail="板块实时行情已关闭")
+    return refresh_holdings_sector_quotes(
+        request.holdings,
+        force_refresh=request.force_refresh,
+    )
+
+
+@app.post("/api/sector-mappings/apply")
+def apply_sector_mapping(request: SaveSectorMappingRequest) -> dict:
+    if not get_settings().sector_quotes_enabled:
+        raise HTTPException(status_code=503, detail="板块实时行情已关闭")
+    try:
+        return apply_sector_mapping_choice(
+            request.holdings,
+            index=request.index,
+            source_type=request.source_type,
+            source_name=request.source_name,
+            source_code=request.source_code,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/sector-quotes/status")
+def sector_quotes_status() -> dict:
+    settings = get_settings()
+    session = build_trading_session()
+    auto_allowed = session["session_kind"] in {
+        "trading_day_intraday",
+        "trading_day_pre_close",
+    }
+    return {
+        "enabled": settings.sector_quotes_enabled,
+        "ttl_seconds": settings.sector_quotes_ttl_seconds,
+        "auto_interval_seconds": settings.sector_quotes_auto_interval_seconds,
+        "auto_refresh_allowed": auto_allowed,
+        "session": session,
+    }
+
+
+@app.get("/api/sector-quotes/intraday")
+def sector_quotes_intraday(
+    source_type: str,
+    source_name: str,
+    force_refresh: bool = False,
+) -> dict:
+    if not get_settings().sector_quotes_enabled:
+        raise HTTPException(status_code=503, detail="板块实时行情已关闭")
+    points, note, session_date = fetch_sector_intraday(
+        source_type,
+        source_name,
+        force_refresh=force_refresh,
+    )
+    return {
+        "source_type": source_type,
+        "source_name": source_name,
+        "points": points,
+        "note": note,
+        "session_date": session_date,
+    }
+
+
+@app.post("/api/holdings/detail")
+def holding_detail(request: HoldingDetailRequest) -> dict:
+    try:
+        detail = build_holding_detail(
+            request.holdings,
+            request.index,
+            portfolio_summary=request.portfolio_summary,
+            sector_quote_meta=request.sector_quote_meta,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return detail.model_dump(mode="json")
 
 
 @app.post("/api/analyze")
@@ -202,6 +258,48 @@ def report_outcomes(report_id: str) -> dict:
         raise HTTPException(status_code=404, detail="报告不存在")
     previous = get_previous_report(report_id)
     return build_recommendation_outcomes(current, previous)
+
+
+@app.get("/api/reports/{report_id}/outcomes-weekly")
+def report_outcomes_weekly(report_id: str, days: int = 7) -> dict:
+    current = get_report(report_id)
+    if current is None:
+        raise HTTPException(status_code=404, detail="报告不存在")
+    window = max(3, min(days, 30))
+    baseline = get_baseline_report_by_days(report_id, days=window)
+    return build_weekly_recommendation_outcomes(current, baseline, baseline_days=window)
+
+
+@app.get("/api/database/export")
+def export_database() -> FileResponse:
+    db_path = database_file_path()
+    if not db_path.exists():
+        raise HTTPException(status_code=404, detail="数据库文件不存在")
+    return FileResponse(
+        path=db_path,
+        filename="fundpilot-app.db",
+        media_type="application/octet-stream",
+    )
+
+
+@app.post("/api/database/import")
+async def import_database(file: UploadFile = File(...)) -> dict:
+    if not file.filename or not file.filename.endswith(".db"):
+        raise HTTPException(status_code=400, detail="请上传 .db 文件")
+
+    settings.upload_dir.mkdir(parents=True, exist_ok=True)
+    staging = settings.upload_dir / f"import-{file.filename}"
+    staging.write_bytes(await file.read())
+
+    try:
+        result = import_database_file(staging, backup_current=True)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"导入失败：{exc}") from exc
+    finally:
+        if staging.exists():
+            staging.unlink()
+
+    return {"ok": True, **result}
 
 
 @app.get("/api/reports/{report_id}/rebalance-simulation")
@@ -358,6 +456,25 @@ def portfolio_dashboard() -> dict:
     payload = build_dashboard_payload(summary=summary, profiles=profiles)
     payload["profiles"] = [profile.model_dump(mode="json") for profile in profiles]
     return payload
+
+
+@app.get("/api/portfolio/holdings")
+def portfolio_holdings() -> dict:
+    holdings, source, snapshot_date = load_persisted_holdings()
+    summary = get_portfolio_summary()
+    profiles = FundProfileService().list_profiles()
+    payload = summary.model_dump(mode="json") if summary else {}
+    total_from_holdings = round(sum(holding.holding_amount for holding in holdings), 2)
+    if not payload.get("total_assets") and total_from_holdings:
+        payload["total_assets"] = total_from_holdings
+    payload["holding_count"] = len(holdings)
+    return {
+        "holdings": [holding.model_dump() for holding in holdings],
+        "source": source,
+        "snapshot_date": snapshot_date,
+        "portfolio_summary": payload or None,
+        "profile_count": len(profiles),
+    }
 
 
 @app.get("/api/portfolio/summary")

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from datetime import datetime
 
 import httpx
@@ -25,7 +26,7 @@ from app.models import (
 from app.services.analysis_runtime import AnalysisRuntime, resolve_analysis_runtime
 from app.services.holding_metrics import HOLDING_RETURN_SEMANTICS, holding_analysis_payload
 from app.services.news_service import NewsService, _dedupe_news
-from app.services.news_summarizer import summarize_all_topics
+from app.services.news_summarizer import merge_topic_briefs, summarize_all_topics
 from app.services.analysis_facts import build_analysis_facts
 from app.services.news_citation import apply_news_citation_guards
 from app.services.portfolio_snapshot import build_portfolio_trend_context
@@ -40,6 +41,17 @@ from app.services.recommendations import (
     parse_fund_recommendations_raw,
     portfolio_recommendation_lines,
 )
+
+ProgressCallback = Callable[[str, str], None]
+
+JOB_STAGES: dict[str, str] = {
+    "fund_data": "正在拉取净值与诊断数据…",
+    "news_prefetch": "正在检索市场新闻…",
+    "news_summarize": "正在生成主题要闻摘要…",
+    "generating": "正在生成 AI 日报…",
+    "judging": "正在审校报告…",
+    "saving": "正在保存报告…",
+}
 
 FETCH_MARKET_NEWS_TOOL = {
     "type": "function",
@@ -79,13 +91,20 @@ class DeepSeekClient:
         risk: RiskAssessment,
         snapshots: list[FundSnapshot],
         nav_trends_by_code: dict[str, dict] | None = None,
+        on_progress: ProgressCallback | None = None,
     ) -> Report:
+        def progress(stage: str) -> None:
+            if on_progress is not None:
+                on_progress(stage, JOB_STAGES.get(stage, stage))
+
         nav_trends = nav_trends_by_code or {}
         runtime = resolve_analysis_runtime(self.settings, request.analysis_mode)
+        progress("news_prefetch")
         market_news = self.news_service.prefetch_for_holdings(
             request.holdings,
             max_topics=runtime.news_max_topics,
         )
+        progress("news_summarize")
         topic_briefs = _build_topic_briefs(market_news, self.settings)
         initial_news_count = len(market_news)
 
@@ -100,6 +119,7 @@ class DeepSeekClient:
             )
 
         try:
+            progress("generating")
             parsed, market_news = self._generate_with_tools(
                 request,
                 risk,
@@ -110,7 +130,8 @@ class DeepSeekClient:
                 nav_trends,
             )
             if len(market_news) > initial_news_count:
-                topic_briefs = _build_topic_briefs(market_news, self.settings)
+                topic_briefs = merge_topic_briefs(topic_briefs, market_news, self.settings)
+            progress("judging")
             parsed, judge_meta = judge_parsed_report(parsed, request, risk, snapshots, runtime)
             fallback = _offline_report(
                 request,
@@ -230,7 +251,7 @@ class DeepSeekClient:
             },
         ]
         tools = [FETCH_MARKET_NEWS_TOOL] if news_enabled and runtime.news_tool_max_rounds > 0 else None
-        max_rounds = min(runtime.news_tool_max_rounds, 1) if tools else 0
+        max_rounds = runtime.news_tool_max_rounds if tools else 0
 
         final_content = ""
         for round_index in range(max_rounds + 1):

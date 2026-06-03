@@ -234,3 +234,63 @@ class ChatMessage(BaseModel):
 class ReportChatRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=4000)
     chat_mode: AnalysisMode = "fast"
+
+
+SectorQuoteSource = Literal["live", "ocr", "manual"]
+SectorQuoteConfidence = Literal["high", "medium", "low", "none"]
+SectorSourceType = Literal["index", "concept", "industry"]
+
+
+class SectorMappingCandidate(BaseModel):
+    source_type: SectorSourceType
+    source_name: str
+    change_percent: float
+    source_code: str | None = None
+
+
+class SectorQuoteMeta(BaseModel):
+    source: SectorQuoteSource = "ocr"
+    provider: str = "eastmoney-akshare"
+    confidence: SectorQuoteConfidence = "none"
+    matched_name: str | None = None
+    source_type: SectorSourceType | None = None
+    source_code: str | None = None
+    fetched_at: datetime | None = None
+    previous_percent: float | None = None
+    delta_vs_previous: float | None = None
+    message: str | None = None
+
+
+class HoldingDetailRequest(BaseModel):
+    holdings: list[Holding] = Field(min_length=1)
+    index: int = Field(ge=0)
+    portfolio_summary: PortfolioSummary | None = None
+    sector_quote_meta: SectorQuoteMeta | None = None
+
+
+class HoldingDetailResponse(BaseModel):
+    index: int
+    holding: Holding
+    holding_shares: float | None = None
+    holding_cost: float | None = None
+    yesterday_profit: float | None = None
+    holding_days: int | None = None
+    latest_nav: float | None = None
+    nav_date: str | None = None
+    year_return_percent: float | None = None
+    fund_code_resolved: bool = False
+    fund_code_source: str | None = None
+    provenance: dict[str, str] = Field(default_factory=dict)
+
+
+class RefreshSectorQuotesRequest(BaseModel):
+    holdings: list[Holding] = Field(min_length=1)
+    force_refresh: bool = False
+
+
+class SaveSectorMappingRequest(BaseModel):
+    holdings: list[Holding] = Field(min_length=1)
+    index: int = Field(ge=0)
+    source_type: SectorSourceType
+    source_name: str
+    source_code: str | None = None

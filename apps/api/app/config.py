@@ -49,6 +49,21 @@ class Settings(BaseSettings):
     nav_trend_days: int = 66
     nav_trend_recent_sample: int = 8
     news_require_today_for_add: bool = True
+    db_auto_import_path: Path | None = None
+    sector_quotes_enabled: bool = True
+    sector_quotes_ttl_seconds: int = 60
+    sector_quotes_respect_manual: bool = False
+    sector_quotes_discrepancy_warn: float = 0.5
+    sector_quotes_auto_interval_seconds: int = 120
+
+    @field_validator("db_auto_import_path", mode="before")
+    @classmethod
+    def normalize_db_auto_import_path(cls, value: object) -> Path | None:
+        if value is None:
+            return None
+        if isinstance(value, str) and not value.strip():
+            return None
+        return Path(value)
 
     model_config = SettingsConfigDict(
         env_file=PROJECT_ROOT / ".env",

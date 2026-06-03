@@ -5,6 +5,7 @@ from datetime import date
 
 from app.config import get_settings
 from app.models import Holding, NewsItem
+from app.services.news_cache import get_cached_news, save_cached_news
 
 _SNIPPET_MAX_LEN = 200
 _TOPIC_ALIASES = ("人工智能", "电网设备", "半导体", "国防军工", "商业航天")
@@ -50,6 +51,10 @@ class NewsService:
         per_topic = limit if limit is not None else self.settings.news_per_topic
         per_topic = max(1, min(per_topic, 10))
 
+        cached = get_cached_news(topic)
+        if cached is not None:
+            return cached[:per_topic]
+
         sources = self.settings.news_source_set
         items: list[NewsItem] = []
 
@@ -59,8 +64,10 @@ class NewsService:
         if "eastmoney" in sources or "macro" in sources:
             items.extend(self._from_eastmoney(topic, per_topic * 2))
 
-        ranked = _rank_news_by_recency(_dedupe_news(items))
-        return ranked[:per_topic]
+        ranked = _rank_news_by_recency(_dedupe_news(items))[:per_topic]
+        if ranked:
+            save_cached_news(topic, ranked)
+        return ranked
 
     def prefetch_topics(self, topics: list[str]) -> list[NewsItem]:
         if not self.settings.news_enabled:

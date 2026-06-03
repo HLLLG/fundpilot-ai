@@ -8,9 +8,9 @@ type TodayWorkflowStepsProps = {
 };
 
 const steps = [
-  { id: 1, label: "上传养基宝总览截图" },
-  { id: 2, label: "校对持仓并确认风控" },
-  { id: 3, label: "生成并查看今日日报" },
+  { id: 1, label: "查看持仓涨跌" },
+  { id: 2, label: "确认持仓并生成日报" },
+  { id: 3, label: "查看今日日报" },
 ];
 
 export function TodayWorkflowSteps({ hasHoldings, hasReport }: TodayWorkflowStepsProps) {

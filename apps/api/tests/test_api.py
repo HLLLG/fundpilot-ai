@@ -323,3 +323,94 @@ def test_fund_profiles_export_import(tmp_path, monkeypatch):
     client.post("/api/fund-profiles/import", json={"profiles": exported["profiles"]})
     listed = client.get("/api/fund-profiles").json()
     assert any(item["fund_code"] == "015608" for item in listed)
+
+
+def test_trading_session_endpoint():
+    response = client.get("/api/trading-session")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["session_kind"]
+    assert body["decision_window"]
+
+
+def test_database_export_and_import(tmp_path, monkeypatch):
+    db_path = tmp_path / "app.db"
+    monkeypatch.setenv("FUND_AI_DB_PATH", str(db_path))
+    refresh_settings()
+
+    client.post(
+        "/api/analyze",
+        json={
+            "holdings": [
+                {
+                    "fund_code": "015608",
+                    "fund_name": "测试",
+                    "holding_amount": 1000,
+                    "return_percent": 1,
+                }
+            ],
+            "profile": {
+                "style": "稳健",
+                "horizon": "半年到一年",
+                "max_drawdown_percent": 8,
+                "concentration_limit_percent": 35,
+                "prefer_dca": True,
+                "avoid_chasing": True,
+            },
+        },
+    )
+
+    export = client.get("/api/database/export")
+    assert export.status_code == 200
+    assert export.content
+
+    import_path = tmp_path / "imported.db"
+    import_path.write_bytes(export.content)
+    upload = client.post(
+        "/api/database/import",
+        files={"file": ("fundpilot-app.db", import_path.read_bytes(), "application/octet-stream")},
+    )
+    assert upload.status_code == 200
+    assert upload.json()["ok"] is True
+
+
+def test_async_job_returns_stage(tmp_path, monkeypatch):
+    monkeypatch.setenv("FUND_AI_DB_PATH", str(tmp_path / "app.db"))
+    monkeypatch.setenv("FUND_AI_DEEPSEEK_API_KEY", "")
+    refresh_settings()
+
+    started = client.post(
+        "/api/analyze/async",
+        json={
+            "holdings": [
+                {
+                    "fund_code": "015608",
+                    "fund_name": "测试",
+                    "holding_amount": 1000,
+                    "return_percent": 1,
+                }
+            ],
+            "profile": {
+                "style": "稳健",
+                "horizon": "半年到一年",
+                "max_drawdown_percent": 8,
+                "concentration_limit_percent": 35,
+                "prefer_dca": True,
+                "avoid_chasing": True,
+            },
+            "analysis_mode": "fast",
+        },
+    )
+    job_id = started.json()["job_id"]
+
+    import time
+
+    for _ in range(40):
+        job = client.get(f"/api/jobs/{job_id}").json()
+        if job["status"] in {"completed", "failed"}:
+            assert job.get("stage_label")
+            assert job.get("analysis_mode") == "fast"
+            return
+        time.sleep(0.1)
+
+    raise AssertionError("job did not finish in time")

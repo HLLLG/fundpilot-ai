@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 
 import httpx
 
@@ -14,6 +15,8 @@ from app.services.deepseek_http import (
 )
 from app.models import AnalysisRequest, FundSnapshot, RiskAssessment
 from app.services.recommendation_guard import normalize_action_text
+
+logger = logging.getLogger(__name__)
 
 
 def judge_parsed_report(
@@ -125,8 +128,8 @@ def _llm_judge(
         reviewed = _parse_model_json(content)
         if reviewed.get("fund_recommendations"):
             return reviewed
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("llm judge failed, using rule-judged report: %s", exc)
     return parsed
 
 

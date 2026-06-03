@@ -87,6 +87,18 @@ def _connect() -> sqlite3.Connection:
         ON report_chat_messages (report_id, created_at)
         """
     )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS sector_mappings (
+            sector_label TEXT PRIMARY KEY,
+            source_type TEXT NOT NULL,
+            source_code TEXT,
+            source_name TEXT NOT NULL,
+            confidence TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
     connection.commit()
     return connection
 
@@ -130,6 +142,71 @@ def get_previous_report(report_id: str) -> dict[str, Any] | None:
         if report.get("id") == report_id and index + 1 < len(reports):
             return reports[index + 1]
     return None
+
+
+def get_baseline_report_by_days(report_id: str, days: int = 7) -> dict[str, Any] | None:
+    """返回不晚于当前报告、且间隔至少 days 天的最近一份日报。"""
+    reports = list_reports()
+    current_index = next(
+        (index for index, report in enumerate(reports) if report.get("id") == report_id),
+        None,
+    )
+    if current_index is None:
+        return None
+
+    current = reports[current_index]
+    current_created = _parse_report_datetime(current.get("created_at"))
+    if current_created is None:
+        return None
+
+    for report in reports[current_index + 1 :]:
+        created = _parse_report_datetime(report.get("created_at"))
+        if created is None:
+            continue
+        delta_days = (current_created - created).days
+        if delta_days >= days:
+            return report
+    return None
+
+
+def _parse_report_datetime(value: object) -> datetime | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    normalized = text.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def database_file_path() -> Path:
+    return _db_path()
+
+
+def import_database_file(source: Path, *, backup_current: bool = True) -> dict[str, str]:
+    target = _db_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    if not source.exists():
+        raise FileNotFoundError(f"数据库文件不存在：{source}")
+
+    backup_path: Path | None = None
+    if backup_current and target.exists():
+        backup_path = target.with_suffix(".db.bak")
+        backup_path.write_bytes(target.read_bytes())
+
+    target.write_bytes(source.read_bytes())
+    return {
+        "imported_from": str(source),
+        "target": str(target),
+        "backup_path": str(backup_path) if backup_path else "",
+    }
 
 
 def delete_report(report_id: str) -> bool:
@@ -327,3 +404,43 @@ def save_ocr_text_cache(cache_key: str, raw_text: str) -> None:
             (cache_key, raw_text),
         )
         connection.commit()
+
+
+def get_sector_mapping(sector_label: str) -> dict[str, Any] | None:
+    with _connect() as connection:
+        row = connection.execute(
+            "SELECT * FROM sector_mappings WHERE sector_label = ?",
+            (sector_label,),
+        ).fetchone()
+    if row is None:
+        return None
+    return {
+        "sector_label": row["sector_label"],
+        "source_type": row["source_type"],
+        "source_code": row["source_code"],
+        "source_name": row["source_name"],
+        "confidence": row["confidence"],
+        "updated_at": row["updated_at"],
+    }
+
+
+def save_sector_mapping(record: dict[str, Any]) -> dict[str, Any]:
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as connection:
+        connection.execute(
+            """
+            INSERT OR REPLACE INTO sector_mappings
+            (sector_label, source_type, source_code, source_name, confidence, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                record["sector_label"],
+                record["source_type"],
+                record.get("source_code"),
+                record["source_name"],
+                record.get("confidence", "high"),
+                record.get("updated_at", now),
+            ),
+        )
+        connection.commit()
+    return get_sector_mapping(record["sector_label"]) or record

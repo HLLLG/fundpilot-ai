@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta
-from functools import lru_cache
 from zoneinfo import ZoneInfo
+
+from app.services.trade_calendar_cache import get_trade_date_set
 
 CN_TZ = ZoneInfo("Asia/Shanghai")
 MARKET_CLOSE = time(15, 0)
@@ -48,22 +49,10 @@ def build_trading_session(when: datetime | None = None) -> dict:
     }
 
 
-@lru_cache(maxsize=1)
-def _trade_date_set() -> frozenset[str] | None:
-    try:
-        import akshare as ak
-
-        frame = ak.tool_trade_date_hist_sina()
-        column = "trade_date" if "trade_date" in frame.columns else frame.columns[0]
-        return frozenset(str(value)[:10] for value in frame[column].tolist())
-    except Exception:
-        return None
-
-
 def _is_trading_day(day: date) -> bool:
     if day.weekday() >= 5:
         return False
-    trade_dates = _trade_date_set()
+    trade_dates = get_trade_date_set()
     if trade_dates is None:
         return True
     return day.isoformat() in trade_dates

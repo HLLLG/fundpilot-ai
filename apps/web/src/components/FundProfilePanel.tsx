@@ -43,7 +43,7 @@ export function FundProfilePanel({
           </div>
           <h2 className="text-xl font-black text-slate-950">基金档案库</h2>
           <p className="mt-2 text-sm leading-6 text-slate-600">
-            详情截图建档一次；在「截图识别」上传总览后，会自动同步持有金额与收益。未建档基金会生成简略档案。
+            上传养基宝/支付宝「账户汇总」截图，识别后会写入基金档案并同步到首页看板。
           </p>
         </div>
         <button
@@ -122,7 +122,7 @@ export function FundProfilePanel({
 
         {profiles.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-5 text-center text-sm text-slate-500">
-            暂无档案。先上传单基金详情截图，或在「截图识别」上传养基宝总览自动生成简略档案。
+            暂无档案。先在上方上传养基宝总览，或上传单基金详情截图建档。
           </div>
         ) : (
           <div className="space-y-3">

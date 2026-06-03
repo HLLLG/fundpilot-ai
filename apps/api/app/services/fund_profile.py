@@ -12,6 +12,9 @@ from app.database import (
 from app.models import FundProfile, Holding, ProfileSyncResult
 
 
+from app.services.fund_name_utils import is_fund_name_match, normalize_fund_name
+
+
 CODE_RE = re.compile(r"(?<!\d)(\d{6})(?!\d)")
 NUMBER_RE = re.compile(r"^[+-]?\d[\d,]*(?:\.\d+)?$")
 PERCENT_RE = re.compile(r"^([+-]?\d+(?:\.\d+)?)%$")
@@ -39,30 +42,30 @@ class FundProfileService:
             return holding
 
         profile = self.find_match(holding.fund_name)
-        if profile is None:
-            return holding
+        if profile is not None:
+            return holding.model_copy(
+                update={
+                    "fund_code": profile.fund_code,
+                    "fund_name": profile.fund_name,
+                    "sector_name": holding.sector_name or profile.sector_name,
+                    "sector_return_percent": holding.sector_return_percent
+                    if holding.sector_return_percent is not None
+                    else profile.sector_return_percent,
+                }
+            )
 
-        return holding.model_copy(
-            update={
-                "fund_code": profile.fund_code,
-                "fund_name": profile.fund_name,
-                "sector_name": holding.sector_name or profile.sector_name,
-                "sector_return_percent": holding.sector_return_percent
-                if holding.sector_return_percent is not None
-                else profile.sector_return_percent,
-            }
-        )
+        return holding
 
     def resolve_holdings(self, holdings: list[Holding]) -> list[Holding]:
         return [self.resolve_holding(holding) for holding in holdings]
 
     def find_match(self, fund_name: str) -> FundProfile | None:
-        target = _normalize_name(fund_name)
+        target = normalize_fund_name(fund_name)
         if not target:
             return None
         for profile in self.list_profiles():
             candidates = [profile.fund_name, *profile.aliases]
-            if any(_is_name_match(target, _normalize_name(candidate)) for candidate in candidates):
+            if any(is_fund_name_match(target, normalize_fund_name(candidate)) for candidate in candidates):
                 return profile
         return None
 
@@ -156,8 +159,17 @@ def _holding_to_provisional_profile(
     )
 
 
+def _aliases_for_name(name: str) -> list[str]:
+    compact = normalize_fund_name(name)
+    aliases = {name}
+    for length in (6, 8, 10):
+        if len(compact) >= length:
+            aliases.add(compact[:length])
+    return sorted(aliases)
+
+
 def provisional_code_for_name(fund_name: str) -> str:
-    digest = hashlib.sha256(_normalize_name(fund_name).encode("utf-8")).hexdigest()
+    digest = hashlib.sha256(normalize_fund_name(fund_name).encode("utf-8")).hexdigest()
     return f"9{int(digest[:8], 16) % 100000:05d}"
 
 
@@ -235,28 +247,3 @@ def _find_sector(lines: list[str]) -> tuple[str | None, float | None]:
         if match:
             return match.group(1).strip(), float(match.group(2))
     return None, None
-
-
-def _aliases_for_name(name: str) -> list[str]:
-    compact = _normalize_name(name)
-    aliases = {name}
-    for length in (6, 8, 10):
-        if len(compact) >= length:
-            aliases.add(compact[:length])
-    return sorted(aliases)
-
-
-def _normalize_name(name: str) -> str:
-    return (
-        name.replace("...", "")
-        .replace(".", "")
-        .replace("·", "")
-        .replace(" ", "")
-        .strip()
-    )
-
-
-def _is_name_match(left: str, right: str) -> bool:
-    if not left or not right:
-        return False
-    return left in right or right in left

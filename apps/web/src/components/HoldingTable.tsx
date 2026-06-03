@@ -1,9 +1,16 @@
 "use client";
 
 import { useState } from "react";
-import { AlertTriangle, History, Plus, Sparkles, Trash2 } from "lucide-react";
-import type { Holding, HoldingFieldWarning, HoldingListDiff, PortfolioSummary } from "@/lib/api";
+import { AlertTriangle, History, Plus, RefreshCw, Sparkles, Trash2 } from "lucide-react";
+import type {
+  Holding,
+  HoldingFieldWarning,
+  HoldingListDiff,
+  PortfolioSummary,
+  SectorQuoteMeta,
+} from "@/lib/api";
 import { allocatePenetrationDaily } from "@/lib/api";
+import { SectorMappingModal } from "@/components/SectorMappingModal";
 import {
   accountActionWarnings,
   accountInfoWarnings,
@@ -17,8 +24,28 @@ import {
   computeEstimatedDailyReturnPercent,
   holdingDailyReturnIsEstimated,
 } from "@/lib/holdingMetrics";
+import { useSectorQuoteRefresh } from "@/lib/useSectorQuoteRefresh";
 
 const PENETRATION_NOTE = "穿透拆分参考";
+
+function sectorSourceBadge(meta?: SectorQuoteMeta) {
+  if (!meta) return null;
+  if (meta.source === "live") {
+    return (
+      <span className="mt-1 block text-[10px] font-bold text-emerald-700">
+        实时
+        {meta.fetched_at ? ` · ${meta.fetched_at.slice(11, 16)}` : ""}
+      </span>
+    );
+  }
+  if (meta.confidence === "low") {
+    return <span className="mt-1 block text-[10px] font-bold text-amber-700">待选映射</span>;
+  }
+  if (meta.confidence === "none") {
+    return <span className="mt-1 block text-[10px] font-bold text-slate-400">未匹配</span>;
+  }
+  return <span className="mt-1 block text-[10px] font-bold text-slate-400">OCR</span>;
+}
 
 function fieldInputClass(hasIssue: boolean, severity?: string) {
   const base =
@@ -85,6 +112,8 @@ function EstimatedDailyReturnCell({ holding }: { holding: Holding }) {
   );
 }
 
+type SectorRefreshControl = ReturnType<typeof useSectorQuoteRefresh>;
+
 type HoldingTableProps = {
   holdings: Holding[];
   onChange: (holdings: Holding[]) => void;
@@ -95,6 +124,8 @@ type HoldingTableProps = {
   canApplyPreviousStructure?: boolean;
   onApplyPreviousStructure?: () => void;
   onAllocateMessage?: (message: string) => void;
+  sectorRefresh?: SectorRefreshControl;
+  showSectorRefreshControls?: boolean;
 };
 
 export function HoldingTable({
@@ -107,8 +138,30 @@ export function HoldingTable({
   canApplyPreviousStructure = false,
   onApplyPreviousStructure,
   onAllocateMessage,
+  sectorRefresh: externalSectorRefresh,
+  showSectorRefreshControls = true,
 }: HoldingTableProps) {
   const [isAllocating, setIsAllocating] = useState(false);
+  const internalSectorRefresh = useSectorQuoteRefresh({
+    holdings,
+    onChange,
+    warnings,
+    onWarningsChange,
+    onMessage: onAllocateMessage,
+  });
+  const sectorRefresh = externalSectorRefresh ?? internalSectorRefresh;
+  const {
+    isRefreshing: isRefreshingSectors,
+    sectorMetaByIndex,
+    autoRefreshEnabled,
+    autoIntervalMs,
+    mappingQueue,
+    refresh: handleRefreshSectors,
+    selectMapping: handleSelectMapping,
+    dismissMapping,
+    toggleAutoRefresh,
+  } = sectorRefresh;
+
   const actionableCount = countActionableWarnings(warnings);
   const accountInfos = accountInfoWarnings(warnings);
   const accountWarnings = accountActionWarnings(warnings);
@@ -179,6 +232,27 @@ export function HoldingTable({
           </p>
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2">
+          {showSectorRefreshControls && holdings.length > 0 ? (
+            <>
+              <button
+                type="button"
+                onClick={() => void handleRefreshSectors(true)}
+                disabled={isRefreshingSectors}
+                className="inline-flex items-center gap-2 whitespace-nowrap rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-bold text-emerald-900 transition hover:bg-emerald-100 disabled:opacity-60"
+              >
+                <RefreshCw size={16} className={isRefreshingSectors ? "animate-spin" : ""} />
+                {isRefreshingSectors ? "刷新中..." : "刷新板块涨跌"}
+              </button>
+              <label className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={autoRefreshEnabled}
+                  onChange={(event) => toggleAutoRefresh(event.target.checked)}
+                />
+                自动 {Math.round(autoIntervalMs / 1000)}s
+              </label>
+            </>
+          ) : null}
           {canAllocatePenetration ? (
             <button
               type="button"
@@ -375,10 +449,11 @@ export function HoldingTable({
                           event.target.value === "" ? null : Number(event.target.value),
                       })
                     }
-                    title={sectorWarning?.message}
+                    title={sectorWarning?.message ?? sectorMetaByIndex[index]?.message ?? undefined}
                     className={fieldInputClass(Boolean(sectorWarning), sectorWarning?.severity)}
                     placeholder="如 2.87"
                   />
+                  {sectorSourceBadge(sectorMetaByIndex[index])}
                 </td>
                 <td className="px-3 py-3">
                   <input
@@ -435,6 +510,17 @@ export function HoldingTable({
         <div className="rounded-3xl border border-dashed border-slate-200 bg-white px-5 py-8 text-center text-sm text-slate-500">
           暂无持仓。上传截图、粘贴 OCR 文本，或手动新增一行。
         </div>
+      ) : null}
+
+      {!externalSectorRefresh ? (
+        <SectorMappingModal
+          open={mappingQueue.length > 0}
+          fundName={mappingQueue[0]?.fundName ?? ""}
+          sectorName={mappingQueue[0]?.sectorName}
+          candidates={mappingQueue[0]?.candidates ?? []}
+          onClose={dismissMapping}
+          onSelect={(candidate) => void handleSelectMapping(candidate)}
+        />
       ) : null}
     </section>
   );

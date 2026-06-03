@@ -4,13 +4,13 @@
 >
 > **维护：** 功能或架构有实质变化时，同步更新「能力清单」「数据流」「API」「目录」「环境变量」。
 
-**文档版本：** 2026-06-01（仪表盘走势、校对高亮与沿用上次列表）
+**文档版本：** 2026-06-03（养基宝持仓看板、板块实时三层兜底、首页持久化恢复、UI 双栏布局）
 
 ---
 
 ## 一句话
 
-**FundPilot AI** 是面向个人自用的本地基金投研助手：养基宝总览/详情截图 → OCR → 校对持仓 → 稳健风控 → 东方财富新闻（AkShare）+ DeepSeek V4 生成**逐基金操作建议**日报；点击"生成报告"后台异步执行，右下角悬浮面板查看进度。数据默认留在本机。
+**FundPilot AI** 是面向个人自用的本地基金投研助手：养基宝总览/详情截图 → OCR → **板块实时涨跌估算当日收益** → 校对持仓 → 稳健风控 → 东方财富新闻（AkShare）+ DeepSeek V4 生成**逐基金操作建议**日报；首页自动恢复持仓，点击刷新更新板块；点击「生成报告」后台异步执行，右下角悬浮面板查看进度。数据默认留在本机。
 
 ---
 
@@ -18,21 +18,28 @@
 
 | 类别 | 能力 |
 |------|------|
-| 输入 | 养基宝总览 OCR（无代码草稿解析）；当日列为 `-` 时不填当日收益；**OCR 漏负号**时规则补符号（见下）；`holding_metrics` 估算当日涨跌 |
-| 校对 | `HoldingTable` 含**估算当日收益率**；OCR 返回 `holding_warnings` / `holding_diffs`，异常单元格高亮；**沿用上次基金列表** |
-| 档案 | 详情截图建档；总览 OCR **自动同步**档案（金额/收益/板块）；`GET /api/portfolio/summary` 登录展示 |
-| 仪表盘 | **仪表盘** Tab：`GET /api/portfolio/dashboard` — 资产/当日收益走势（`portfolio_daily_snapshots`）、持仓分布条 |
-| 持仓总览 | 基金档案 Tab：账户资产/当日收益/基金卡片；顶栏指标来自持久化数据 |
+| 输入 | 养基宝总览 OCR（无代码草稿解析）；当日列为 `-` 时不填当日收益；**OCR 漏负号**时规则补符号；总览上传在「基金档案」Tab |
+| 当日收益 | **刷新时按关联板块实时涨跌估算**：`holding_amount × sector_return%`；**忽略** OCR/截图中的当日利润；账户合计 = 各行之和 |
+| 校对 | `HoldingTable` 含估算当日收益率；OCR 返回 `holding_warnings` / `holding_diffs`；**沿用上次基金列表** |
+| 档案 | 详情截图建档；总览 OCR **自动同步**档案；`000000` 仅通过**已保存档案**按名称补码（不在分析/OCR 流程中 AkShare 自动查码） |
+| 首页看板 | **今日** Tab：`YangjibaoHoldingsBoard` 养基宝式卡片；启动 `GET /api/portfolio/holdings` 恢复持仓并自动刷新板块；点击行打开 `YangjibaoFundDetail` |
+| 仪表盘 | **仪表盘** Tab：`GET /api/portfolio/dashboard` — 资产/当日收益走势、持仓分布条 |
 | 风控 | 浮亏线、单只集中度、定投偏好、拒绝追高（`InvestorProfile`） |
-| 报告 | 组合摘要 + `fund_recommendations` + `topic_briefs`（Flash 按主题摘要）+ `market_news` 原文；`analysis_facts`；`recommendation_guard` + `news_citation` + 深度 `report_judge` |
-| 今日工作台 | 单 Tab：上传/校对/日报；报告首屏「三行结论」 |
-| 复盘/模拟 | `GET .../outcomes` 对比上一份建议；`GET .../rebalance-simulation` 示意调仓 |
-| 基金诊断 | AkShare 概况/累计收益 → 类型、费率、近1年收益、最大回撤 |
-| 分析模式 | **快速**（Flash + 仅预取新闻）/ **深度**（Pro + 可选新闻 Tool） |
-| 体验 | 今日一键、报告 vs 昨日 diff、导出 Markdown、档案 JSON 导入导出 |
-| 报告追问 | `ReportChatPanel` + `ChatMarkdown`（react-markdown）；SSE；快速/深度；导出对话 Markdown |
-| 异步分析 | `/api/analyze/async` 后台任务，右下角 `JobStatusFloat` 悬浮面板查看进度 |
-| 前端偏好 | localStorage：风控参数、分析模式、追问模式（`fundpilot-report-chat-mode`） |
+| 报告 | 组合摘要 + `fund_recommendations` + `topic_briefs` + `market_news`；`analysis_facts`；守卫 + 深度 `report_judge` |
+| 今日工作台 | 双栏布局（大屏）：左侧 sticky 持仓看板，右侧工作流/风控/日报 |
+| 复盘/模拟 | outcomes / outcomes-weekly / rebalance-simulation |
+| 交易日语义 | `trading_session.py` + `trade_calendar_cache`（子进程拉日历，避免主进程 `py_mini_racer`）；`TradingSessionBar` |
+| 穿透估算 | 未收盘时按板块权重分配账户当日收益 |
+| 板块实时 | 东财 httpx 直连 + AkShare 子进程补全 + **单板块按需拉取**（`sector_on_demand`）；120s 自动 + 手动；低置信度 `SectorMappingModal`；分时 `GET /api/sector-quotes/intraday` |
+| 阻塞清单 | `TodayBlockingChecklist` + `workflowBlockers` |
+| 数据备份 | SQLite export/import；`DatabaseBackupPanel` |
+| CI / E2E | GitHub Actions：pytest（**130** 项）+ lint/typecheck/build + Playwright |
+| 基金诊断 | AkShare 概况/累计收益；详情页可 AkShare **按名称查码**并持久化 |
+| 分析模式 | 快速 / 深度 |
+| 体验 | 报告 diff、Markdown 导出、档案 JSON、桌面通知、Plus Jakarta 字体 UI |
+| 报告追问 | SSE + ChatMarkdown |
+| 异步分析 | `/api/analyze/async` + `JobStatusFloat` |
+| 前端偏好 | localStorage：风控、分析模式、板块自动刷新 |
 
 ---
 
@@ -53,8 +60,8 @@
 | 层 | 技术 |
 |----|------|
 | 前端 | Next.js、React、TypeScript、Tailwind、Lucide；浏览器 `Notification` |
-| 后端 | FastAPI、Pydantic v2、uvicorn；`lifespan` 启后台线程 |
-| 存储 | SQLite：`reports`、`fund_profiles`、`ocr_text_cache`、`analysis_jobs`、`report_chat_messages` |
+| 后端 | FastAPI、Pydantic v2、uvicorn；`lifespan` 可选 DB 自动导入 |
+| 存储 | SQLite：`reports`、`fund_profiles`、`ocr_text_cache`、`analysis_jobs`、`report_chat_messages`、`portfolio_*`、`news_cache` |
 | AI | DeepSeek API；`fetch_market_news` Function Calling |
 | OCR（可选） | PaddleOCR |
 | 数据 | AkShare：净值 + `stock_news_em` / 基金公告 |
@@ -69,39 +76,37 @@
 fundpilot-ai/
 ├── apps/api/app/
 │   ├── main.py              # 路由
-│   ├── lifespan.py          # 应用启动（仅 yield，无后台线程）
+│   ├── lifespan.py          # 启动时可选 DB 自动导入
 │   ├── config.py / models.py / database.py
 │   └── services/
-│       ├── ocr_engine.py / ocr_parser.py   # 养基宝版式、负号恢复、账户级符号校验
-│       ├── portfolio_parser.py             # 账户资产/当日收益
-│       ├── portfolio_snapshot.py           # 每日快照与仪表盘数据
-│       ├── holding_validation.py           # 校对警告、与上次持仓 diff
-│       ├── holding_metrics.py              # estimated_daily_return_percent
-│       ├── deepseek_http.py              # 鉴权头、401 友好错误
-│       ├── fund_profile.py / risk.py / fund_data.py
+│       ├── ocr_engine.py / ocr_parser.py / ocr_pipeline.py / overview_pipeline.py
+│       ├── portfolio_parser.py / portfolio_snapshot.py / portfolio_holdings_service.py
+│       ├── holding_validation.py / holding_metrics.py / holding_estimates.py / holding_detail_service.py
+│       ├── sector_quote_service.py / sector_quote_provider.py / sector_quote_resolver.py
+│       ├── eastmoney_spot_client.py / akshare_spot_client.py / sector_on_demand.py / sector_intraday_provider.py
+│       ├── trade_calendar_cache.py / sector_labels.py / sector_quote_cache.py
+│       ├── fund_code_resolver.py / fund_name_utils.py
+│       ├── deepseek_http.py / fund_profile.py / risk.py / fund_data.py
 │       ├── recommendation_guard.py / analysis_facts.py / news_citation.py
 │       ├── recommendation_outcomes.py / rebalance_simulator.py / report_judge.py
-│       ├── news_service.py / news_summarizer.py / news_citation.py
-│       ├── recommendations.py
-│       ├── deepseek_client.py
-│       ├── analysis_runtime.py    # fast/deep 运行时参数
-│       ├── analyze_pipeline.py    # 同步分析入口
-│       ├── job_store.py           # 异步分析任务
+│       ├── news_service.py / news_summarizer.py / news_cache.py
+│       ├── penetration_daily_allocator.py / market_signal.py / trading_session.py
+│       ├── db_backup.py
+│       ├── job_store.py           # 异步分析任务（含 stage）
 │       ├── report_diff.py / report_export.py
 │       ├── report_chat.py         # 追问 SSE + Tool 轮次
 │       ├── report_chat_runtime.py # 追问 fast/deep
 │       ├── report_chat_export.py  # 对话 Markdown
-│       └── market_context.py      # 遗留，主流程未用
+│       ├── deepseek_client.py / analysis_runtime.py / analyze_pipeline.py
+│       └── recommendations.py
 ├── apps/web/src/
-│   ├── lib/api.ts / storage.ts / holdingMetrics.ts / notifications.ts
+│   ├── lib/api.ts / storage.ts / holdingMetrics.ts / useSectorQuoteRefresh.ts / workflowBlockers.ts
 │   └── components/
 │       ├── Dashboard.tsx          # 今日 / 仪表盘 / 基金档案 / 历史
-│       ├── PortfolioDashboard / TodayWorkflowSteps / PortfolioSummaryCard / FundProfileCard
-│       ├── JobStatusFloat.tsx     # 右下角悬浮任务面板
-│       ├── AnalysisModeToggle.tsx / ReportDiffPanel.tsx
-│       ├── UploadDropzone / HoldingTable / RiskControls
-│       ├── ReportPanel / ReportNewsBriefPanel / ReportExecutiveSummary / ReportFactsPanel
-│       ├── RebalanceSimulationPanel / ReportChatPanel / ChatMarkdown / HistoryRail / FundProfilePanel
+│       ├── YangjibaoHoldingsBoard / YangjibaoFundDetail / SectorMappingModal / IntradayPercentChart
+│       ├── TradingSessionBar / TodayBlockingChecklist / DatabaseBackupPanel
+│       ├── PortfolioDashboard / UploadDropzone / HoldingTable / RiskControls
+│       ├── ReportPanel / JobStatusFloat / HistoryRail / FundProfilePanel
 ├── uploads/
 ├── data/app.db
 ├── scripts/dev.sh / dev.ps1
@@ -115,19 +120,18 @@ fundpilot-ai/
 
 ```text
 1. bash scripts/dev.sh → 打开 http://127.0.0.1:3000（默认「今日」Tab）
-2. 上传养基宝总览 → 自动 OCR + 同步基金档案
-3. 校对 HoldingTable → 选快速/深度 → 点击"生成报告"
-4. 右下角悬浮面板显示进度 → 完成后自动滚动到「今日日报」
-5. 报告顶部「今日三行结论」+ 逐基建议（规则守卫会压过过激 LLM 动作）
-6. 追问、diff、导出 Markdown；基金档案在「基金档案」Tab
+2. 首页自动恢复上次持仓；点刷新更新板块涨跌 → 当日收益按板块估算
+3. 需更新金额时 →「基金档案」上传养基宝总览 OCR，或展开校对表手动改
+4. 校对 → 选快速/深度 →「生成报告」→ JobStatusFloat 进度 → 今日日报
+5. 点击持仓行 → 基金详情（净值、板块分时）；低置信度板块 → 映射弹窗
 ```
 
 ### 基金档案与持仓总览
 
 ```text
-profiles 页 → 单基金详情截图 → POST /api/fund-profiles/ocr → SQLite fund_profiles（完整字段）
-capture 页 → 养基宝总览 → POST /api/ocr → sync_profiles_from_holdings + portfolio_state
-打开应用 → GET /api/portfolio/summary → 顶栏 + 基金档案 Tab 展示
+profiles 页 → 养基宝总览截图 → POST /api/ocr → sync_profiles + sector_refresh
+profiles 页 → 单基金详情截图 → POST /api/fund-profiles/ocr
+打开应用 → GET /api/portfolio/holdings → 恢复 holdings + 可选自动 refresh-sector-quotes
 ```
 
 设计说明见 `docs/design/2026-06-01-portfolio-holdings.md`。
@@ -165,7 +169,7 @@ POST /api/analyze
 ```text
 POST /api/analyze/async → job_id
   → 线程池 run_analysis()
-  → GET /api/jobs/{id} 轮询（JobStatusFloat 内部，1.5s 间隔）
+  → GET /api/jobs/{id} 轮询（JobStatusFloat，1.5s；含 stage_label）
   → status=completed 时含 report → onComplete 回调 → 切换报告 Tab
 ```
 
@@ -214,7 +218,11 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | POST | `/api/ocr` | 截图/文本 → holdings |
 | POST | `/api/analyze` | 同步生成 Report（兜底） |
 | POST | `/api/analyze/async` | `{ job_id, status }` |
-| GET | `/api/jobs/{id}` | 任务状态；完成时含 `report` |
+| GET | `/api/trading-session` | 交易日/收盘窗口语义 |
+| GET | `/api/reports/{id}/outcomes-weekly?days=7` | 7 日建议复盘 |
+| GET | `/api/database/export` | 下载 SQLite |
+| POST | `/api/database/import` | 上传替换 DB（自动备份 `.db.bak`） |
+| GET | `/api/jobs/{id}` | 任务状态；含 `stage`/`stage_label`/`analysis_mode`；完成时含 `report` |
 | GET | `/api/reports` | 最近 50 条 |
 | GET | `/api/reports/{id}` | 详情 |
 | DELETE | `/api/reports/{id}` | 删除 |
@@ -227,8 +235,14 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | POST | `/api/fund-profiles/ocr` | 详情页建档 |
 | GET | `/api/fund-profiles` | 列表 |
 | GET | `/api/fund-profiles/{code}/nav-history?days=` | 单位净值走势（AkShare，默认 90 交易日） |
+| POST | `/api/holdings/refresh-sector-quotes` | 刷新板块涨跌；返回 `sector_quote_meta`、映射候选 |
+| POST | `/api/sector-mappings/apply` | 持久化板块映射选择 |
+| GET | `/api/sector-quotes/status` | 自动刷新开关/间隔/交易时段 |
+| GET | `/api/sector-quotes/intraday` | 板块分时涨跌 |
+| POST | `/api/holdings/detail` | 单只持仓详情（含 AkShare 查码、净值） |
+| GET | `/api/portfolio/holdings` | 恢复首页持仓（快照优先，否则档案） |
 | GET | `/api/portfolio/summary` | 账户汇总 + 全部档案 |
-| GET | `/api/portfolio/dashboard` | 走势历史 + 持仓分布（仪表盘） |
+| GET | `/api/portfolio/dashboard` | 走势历史 + 持仓分布 |
 | GET | `/api/reports/{id}/outcomes` | 上一份日报建议复盘 |
 | GET | `/api/reports/{id}/rebalance-simulation` | 按报告示意金额模拟调仓 |
 
@@ -244,14 +258,26 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | **InvestorProfile** | 稳健默认；浮亏 8%、集中度 35% |
 | **FundRecommendation** | action、amount_*、news_bullish/bearish、points |
 | **NewsItem** | topic、title、is_today |
-| **Report** | 含 fund_recommendations、market_news、`analysis_facts`；market_context 恒 `[]` |
+| **Report** | 含 `fund_recommendations`、`market_news`、`topic_briefs`、`analysis_facts`；`market_context` 保留字段恒 `[]` |
 | **AnalysisRequest** | holdings、profile、ocr_text、**analysis_mode** |
 | **ChatMessage** | report_id、role、content |
 | **ReportChatRequest** | message、**chat_mode**（fast \| deep） |
 
-占位码 `000000`：总览 OCR 无代码时，靠 `FundProfileService` 按名称匹配档案补全。
+占位码 `000000`：总览 OCR 无代码时，**仅**通过已保存 `FundProfile` 按名称补全；未知代码分析时保留 `yangjibao-ocr` 快照。用户在详情页打开基金时可 AkShare 按名称查码。
 
-### 养基宝收益率语义（传给 DeepSeek）
+### 板块实时行情（2026-06-03）
+
+| 层级 | 实现 |
+|------|------|
+| 1 | `eastmoney_spot_client` httpx 直连 push2（多 host、分页保留部分结果、`trust_env=False`） |
+| 2 | `akshare_spot_client` 子进程补全稀疏/空 concept/industry |
+| 3 | `sector_on_demand` 单板块 AkShare 子进程（如商业航天） |
+| 解析 | `sector_quote_resolver` 自动匹配中证人工智能、电网→电力设备主题、半导体、商业航天等 |
+| 缓存 | `sector_quote_cache` 按日 TTL；`force_refresh` 跳过持久化映射 |
+
+设计说明：`docs/design/2026-06-02-live-sector-quotes.md`。
+
+### 养基宝收益率语义（传给 DeepSeek / 首页展示）
 
 | 字段 | 含义 |
 |------|------|
@@ -284,22 +310,31 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 - **预取：** `NewsService.prefetch_for_holdings` → `market_news`（标题 + ≤200 字 snippet + 链接）。
 - **按主题摘要：** `news_summarizer.summarize_all_topics`（Flash，每主题 1 次）→ `topic_briefs`；失败 → `rule-fallback`；关闭：`FUND_AI_NEWS_SUMMARIZE=false`。
 - **喂模型：** `_user_payload` 含 `topic_briefs` + `prefetched_news`；`news_citation` 校验利好/利空须命中原文标题或 `source_titles`。
-- **Tool：** 仅深度模式且 `news_tool_max_rounds > 0` 时注册 `fetch_market_news`；补拉后若条数增加会重新摘要。
+- **Tool：** 仅深度模式且 `news_tool_max_rounds > 0` 时注册 `fetch_market_news`（默认最多 3 轮）；Tool 补拉后 `merge_topic_briefs` 增量摘要。
+- **缓存：** `news_cache` 表按 `topic+date` 同日复用。
 - **兜底：** JSON 解析失败 → `_offline_report` + `recommendations.enrich_*`。
 
 ---
 
 ## 前端要点
 
-- **capture：** `UploadDropzone`、校对表、`RiskControls`（含"生成报告"按钮）。
-- **analysis：** `ReportPanel`（含 `ReportDiffPanel`、`ReportChatPanel` 追问、导出 Markdown）。
-- **悬浮面板：** `JobStatusFloat`，固定右下角，内部轮询 job 状态，完成后回调 Dashboard。
-- **偏好：** `lib/storage.ts`（profile、analysisMode、reportChatMode）。
-- **通知：** `lib/notifications.ts`；分析完成时触发桌面通知。
+- **今日 Tab：** `YangjibaoHoldingsBoard` + `useSectorQuoteRefresh`（120s 自动刷新）；大屏 `xl:grid-cols` 双栏。
+- **基金档案 Tab：** `UploadDropzone` 总览 OCR；`FundProfilePanel` 详情建档。
+- **分析：** `ReportPanel` + `JobStatusFloat` 异步轮询。
+- **偏好：** `lib/storage.ts`（profile、analysisMode、sectorAutoRefresh）。
 
 ---
 
 ## 环境变量
+
+### 板块实时
+
+| 变量 | 默认 | 含义 |
+|------|------|------|
+| `FUND_AI_SECTOR_QUOTES_ENABLED` | true | 关闭则不走 live 板块 |
+| `FUND_AI_SECTOR_QUOTES_TTL_SECONDS` | 60 | spot 缓存 TTL |
+| `FUND_AI_SECTOR_QUOTES_AUTO_INTERVAL_SECONDS` | 120 | 前端自动刷新间隔 |
+| `FUND_AI_SECTOR_QUOTES_DISCREPANCY_WARN` | 0.5 | OCR vs 实时板块相差阈值（百分点） |
 
 ### DeepSeek / 新闻
 
@@ -316,6 +351,8 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | `FUND_AI_NEWS_MACRO_TOPIC` | 上证指数 | 宏观检索主题 |
 | `FUND_AI_NAV_TREND_DAYS` | 66 | 报告生成时拉取净值交易日数 |
 | `FUND_AI_NAV_TREND_RECENT_SAMPLE` | 8 | `nav_trend.recent_nav_series` 采样点数 |
+| `FUND_AI_NEWS_REQUIRE_TODAY_FOR_ADD` | true | 无当日新闻时守卫压过加仓建议 |
+| `FUND_AI_DB_AUTO_IMPORT_PATH` | — | 启动时若文件存在则自动导入 DB（会先备份当前库） |
 
 修改 `.env` 后需重启 API。
 
@@ -329,8 +366,9 @@ bash scripts/dev.sh    # 或 scripts/dev.ps1
 ```
 
 ```bash
-cd apps/api && ./.venv/Scripts/python.exe -m pytest tests -v   # 当前约 78 项
+cd apps/api && ./.venv/Scripts/python.exe -m pytest tests -q   # 当前 130 项
 cd apps/web && npm run lint && npm run typecheck && npm run build
+cd apps/web && npm run test:e2e   # Playwright 冒烟
 ```
 
 ---
@@ -354,4 +392,5 @@ cd apps/web && npm run lint && npm run typecheck && npm run build
 | `docs/PROJECT_CONTEXT.md` | 本文 |
 | `docs/design/2026-06-01-portfolio-holdings.md` | 持仓档案、总览同步、OCR 验收 |
 | `docs/design/2026-06-02-news-sources-and-topic-briefs.md` | 多源新闻 + 主题摘要设计 |
+| `docs/design/2026-06-02-live-sector-quotes.md` | 板块实时行情、映射与兜底 |
 | `.env.example` | 环境变量模板 |
