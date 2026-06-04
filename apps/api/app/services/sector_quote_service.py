@@ -6,7 +6,9 @@ from typing import Any
 from app.config import get_settings
 from app.database import get_sector_mapping, save_sector_mapping
 from app.models import Holding, HoldingFieldWarning, SectorMappingCandidate, SectorQuoteMeta
+from app.services.fund_profile import FundProfileService
 from app.services.fund_estimate_provider import fetch_fund_estimate_quotes
+from app.services.sector_canonical import prefetch_canonical_secid_quotes
 from app.services.sector_labels import sector_label_key
 from app.services.sector_on_demand import fetch_sector_on_demand
 from app.services.sector_quote_label import sector_quote_lookup_label
@@ -48,6 +50,7 @@ def refresh_holdings_sector_quotes(
                 "needs_mapping": 0,
                 "estimate_fallback": 0,
                 "board_matched": 0,
+                "secid_matched": 0,
             },
             "session": session,
         }
@@ -57,8 +60,18 @@ def refresh_holdings_sector_quotes(
         timeout_seconds=timeout_seconds,
     )
     boards = fetch_result.boards
+    profile_service = FundProfileService()
+    holdings = [profile_service.resolve_holding(holding) for holding in holdings]
+    lookup_labels = [sector_quote_lookup_label(holding) for holding in holdings]
+    if timeout_seconds is not None:
+        prefetch_canonical_secid_quotes(
+            lookup_labels,
+            boards,
+            timeout_seconds=timeout_seconds,
+        )
     estimate_quotes = _maybe_fetch_estimate_quotes(
         holdings,
+        boards=boards,
         fetch_result=fetch_result,
         timeout_seconds=timeout_seconds,
     )
@@ -76,6 +89,7 @@ def refresh_holdings_sector_quotes(
                 "needs_mapping": 0,
                 "estimate_fallback": 0,
                 "board_matched": 0,
+                "secid_matched": 0,
                 "provider_path": fetch_result.provider_path,
                 "from_stale_cache": fetch_result.from_stale_cache,
             },
@@ -91,6 +105,7 @@ def refresh_holdings_sector_quotes(
     unresolved = 0
     needs_mapping = 0
     estimate_fallback = 0
+    secid_matched = 0
 
     for index, holding in enumerate(holdings):
         lookup_label = sector_quote_lookup_label(holding)
@@ -116,6 +131,7 @@ def refresh_holdings_sector_quotes(
                     boards.setdefault(on_demand.source_type, {})[on_demand.matched_name] = on_demand.change_percent
 
         estimate_quote = None
+        used_secid_quote = False
         if result.confidence not in {"high", "medium"}:
             if timeout_seconds is not None and not estimate_quotes_loaded:
                 estimate_quotes = fetch_fund_estimate_quotes(
@@ -126,6 +142,8 @@ def refresh_holdings_sector_quotes(
             estimate_quote = estimate_quotes.get(holding.fund_code)
             if estimate_quote is not None and estimate_quote.get("change_percent") is not None:
                 result = _EstimateResult(holding, estimate_quote)
+        elif result.message and result.message.startswith("东财 "):
+            used_secid_quote = True
 
         previous = holding.sector_return_percent
         meta = SectorQuoteMeta(
@@ -148,6 +166,8 @@ def refresh_holdings_sector_quotes(
             matched += 1
             if estimate_quote is not None:
                 estimate_fallback += 1
+            elif used_secid_quote:
+                secid_matched += 1
             record = mapping_record_from_result(lookup_label, result)
             if record is not None:
                 save_sector_mapping(record)
@@ -228,6 +248,7 @@ def refresh_holdings_sector_quotes(
             "needs_mapping": needs_mapping,
             "estimate_fallback": estimate_fallback,
             "board_matched": max(0, matched - estimate_fallback),
+            "secid_matched": secid_matched,
             "provider_path": provider_path,
             "from_stale_cache": fetch_result.from_stale_cache,
         },
@@ -296,12 +317,24 @@ def _refresh_message(
 def _maybe_fetch_estimate_quotes(
     holdings: list[Holding],
     *,
+    boards: dict[str, dict[str, float]],
     fetch_result: SpotBoardFetchResult,
     timeout_seconds: float | None,
 ) -> dict[str, dict]:
     if timeout_seconds is None:
         return {}
-    if _board_entry_count(fetch_result.boards) >= 8:
+    entry_count = _board_entry_count(boards)
+    if entry_count >= 8:
+        return {}
+    if entry_count > 0 and fetch_result.provider_path in {
+        "eastmoney_live",
+        "relay_live",
+        "browser_live",
+        "fresh_cache",
+        "stale_cache",
+    }:
+        return {}
+    if entry_count > 0:
         return {}
     return fetch_fund_estimate_quotes(holdings, timeout_seconds=timeout_seconds)
 

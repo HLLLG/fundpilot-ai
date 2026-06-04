@@ -1,0 +1,11 @@
+services:
+  sector-relay:
+    build:
+      context: ../..
+      dockerfile: apps/sector-relay/Dockerfile
+    ports:
+      - "8787:8787"
+    environment:
+      # Optional: set a token and pass Authorization: Bearer <token> from FundPilot API
+      RELAY_TOKEN: ""
+      CACHE_TTL_SECONDS: "60"

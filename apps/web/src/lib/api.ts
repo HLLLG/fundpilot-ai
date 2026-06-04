@@ -371,6 +371,8 @@ export type RefreshSectorQuotesResult = {
     fund_code: string;
     fund_name: string;
     sector_name?: string | null;
+    intraday_index_name?: string | null;
+    sector_quote_label?: string | null;
     sector_quote_meta: SectorQuoteMeta;
     mapping_candidates: SectorMappingCandidate[];
   }>;
@@ -381,6 +383,7 @@ export type RefreshSectorQuotesResult = {
     needs_mapping: number;
     estimate_fallback?: number;
     board_matched?: number;
+    secid_matched?: number;
     provider_path?: RefreshSectorQuotesResult["provider_path"];
     from_stale_cache?: boolean;
   };
@@ -426,7 +429,7 @@ export async function allocatePenetrationDaily(
 
 export async function refreshSectorQuotes(
   holdings: Holding[],
-  options?: { forceRefresh?: boolean },
+  options?: { forceRefresh?: boolean; budget?: "fast" | "accurate" },
 ): Promise<RefreshSectorQuotesResult> {
   const response = await fetch(`${API_BASE}/api/holdings/refresh-sector-quotes`, {
     method: "POST",
@@ -434,6 +437,7 @@ export async function refreshSectorQuotes(
     body: JSON.stringify({
       holdings,
       force_refresh: options?.forceRefresh ?? false,
+      budget: options?.budget ?? "fast",
     }),
   });
   if (!response.ok) {

@@ -68,6 +68,12 @@ class FundProfileService:
         index_name = holding.intraday_index_name
         if not index_name or not _looks_like_index_name(index_name):
             index_name = profile.intraday_index_name
+        if not index_name or not _looks_like_index_name(index_name):
+            index_name = infer_intraday_index_from_fund_name(
+                holding.fund_name or profile.fund_name
+            )
+
+        sector_name, index_name = _normalize_index_and_board_fields(sector_name, index_name)
 
         updates: dict = {
             "sector_name": sector_name,
@@ -526,24 +532,31 @@ def _is_valid_sector_label(name: str | None) -> bool:
 
 
 def _sanitize_profile_sector_fields(profile: FundProfile) -> FundProfile:
-    # 板块名验证：允许中证/上证/深证开头的、或符合board label规则的
-    sector_name = None
-    if profile.sector_name:
-        is_valid = _is_valid_sector_label(profile.sector_name)
-        # 特殊允许：中证/上证/深证开头的指数风格的名称在关联板块上下文中
-        is_index_style = (
-            profile.sector_name.startswith("中证")
-            or profile.sector_name.startswith("上证")
-            or profile.sector_name.startswith("深证")
-        )
-        if is_valid or (is_index_style and 2 <= len(profile.sector_name) <= 16):
-            sector_name = profile.sector_name
-
+    sector_name = profile.sector_name if _is_valid_sector_label(profile.sector_name) else None
     intraday_index_name = (
         profile.intraday_index_name
         if profile.intraday_index_name and _looks_like_index_name(profile.intraday_index_name)
         else None
     )
+    if sector_name and _looks_like_index_name(sector_name):
+        if not intraday_index_name:
+            intraday_index_name = sector_name
+        board = _infer_related_board_label(intraday_index_name)
+        sector_name = board if _is_valid_sector_label(board) else None
+
+    sector_name, intraday_index_name = _normalize_index_and_board_fields(
+        sector_name,
+        intraday_index_name,
+    )
+    if not intraday_index_name:
+        inferred = infer_intraday_index_from_fund_name(profile.fund_name)
+        if inferred:
+            intraday_index_name = inferred
+            if not sector_name:
+                board = _infer_related_board_label(inferred)
+                if _is_valid_sector_label(board):
+                    sector_name = board
+
     if sector_name == profile.sector_name and intraday_index_name == profile.intraday_index_name:
         return profile
     return profile.model_copy(
@@ -600,6 +613,51 @@ def _looks_like_index_name(name: str) -> bool:
     if name.startswith("中证") or name.startswith("上证") or name.startswith("深证"):
         return True
     return name.endswith("指数") or "ETF" in name
+
+
+def infer_intraday_index_from_fund_name(fund_name: str | None) -> str | None:
+    """从 ETF 联接/主题基金名称推断场内指数（档案 OCR 漏识别时补全）。"""
+    if not fund_name:
+        return None
+    normalized = fund_name.replace("...", "").strip()
+    compact = re.sub(r"\s+", "", normalized)
+    for token in (
+        "中证电网设备",
+        "中证人工智能",
+        "中证半导体",
+        "中证新能源",
+        "中证军工",
+    ):
+        if token in normalized:
+            return token
+    _feeder_theme_to_index = {
+        "人工智能": "中证人工智能",
+        "电网设备": "中证电网设备",
+        "半导体": "中证半导体",
+        "新能源": "中证新能源",
+        "军工": "中证军工",
+    }
+    for theme, index_name in _feeder_theme_to_index.items():
+        if f"{theme}ETF" in compact:
+            return index_name
+    match = re.search(r"(中证[\u4e00-\u9fff]{2,12})(?:主题|ETF|指数|联接)", normalized)
+    if match and _looks_like_index_name(match.group(1)):
+        return match.group(1)
+    return None
+
+
+def _normalize_index_and_board_fields(
+    sector_name: str | None,
+    intraday_index_name: str | None,
+) -> tuple[str | None, str | None]:
+    """列表 OCR 常把场内指数误写入 sector_name；拆成指数 + 关联板块短名。"""
+    if sector_name and _looks_like_index_name(sector_name):
+        if not intraday_index_name:
+            intraday_index_name = sector_name
+        board = _infer_related_board_label(intraday_index_name)
+        if sector_name == intraday_index_name or not _is_valid_sector_label(sector_name):
+            sector_name = board if _is_valid_sector_label(board) else sector_name
+    return sector_name, intraday_index_name
 
 
 def _infer_related_board_label(index_name: str) -> str:

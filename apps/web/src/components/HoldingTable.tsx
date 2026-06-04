@@ -26,6 +26,7 @@ import {
 } from "@/lib/holdingMetrics";
 import {
   buildSectorRefreshNotice,
+  formatSectorQuoteFetchedAt,
   isEstimateFallbackMeta,
   sectorQuoteBadgeLabel,
 } from "@/lib/sectorQuoteStatus";
@@ -39,20 +40,29 @@ function sectorSourceBadge(meta?: SectorQuoteMeta) {
   const label = sectorQuoteBadgeLabel(meta);
   if (!label) return null;
 
+  const fetchedClock = formatSectorQuoteFetchedAt(meta.fetched_at);
+  const fetchedSuffix = fetchedClock ? ` · ${fetchedClock}` : "";
+
   if (isEstimateFallbackMeta(meta)) {
     return (
-      <span className="mt-1 block text-[10px] font-bold text-amber-700">
+      <span
+        className="mt-1 block text-[10px] font-bold text-amber-700"
+        title={fetchedClock ? `数据更新时间（本地）${fetchedClock}` : undefined}
+      >
         {label}
-        {meta.fetched_at ? ` · ${meta.fetched_at.slice(11, 16)}` : ""}
+        {fetchedSuffix}
       </span>
     );
   }
 
   if (meta.source === "live") {
     return (
-      <span className="mt-1 block text-[10px] font-bold text-emerald-700">
+      <span
+        className="mt-1 block text-[10px] font-bold text-emerald-700"
+        title={fetchedClock ? `数据更新时间（本地）${fetchedClock}` : undefined}
+      >
         {label}
-        {meta.fetched_at ? ` · ${meta.fetched_at.slice(11, 16)}` : ""}
+        {fetchedSuffix}
       </span>
     );
   }
@@ -168,7 +178,7 @@ export function HoldingTable({
   const sectorRefresh = externalSectorRefresh ?? internalSectorRefresh;
   const {
     isRefreshing: isRefreshingSectors,
-    sectorMetaByIndex,
+    sectorMetaByFundCode,
     autoRefreshEnabled,
     autoIntervalMs,
     mappingQueue,
@@ -480,11 +490,15 @@ export function HoldingTable({
                             event.target.value === "" ? null : Number(event.target.value),
                         })
                       }
-                      title={sectorWarning?.message ?? sectorMetaByIndex[index]?.message ?? undefined}
+                      title={
+                        sectorWarning?.message ??
+                        sectorMetaByFundCode[holding.fund_code]?.message ??
+                        undefined
+                      }
                       className={fieldInputClass(Boolean(sectorWarning), sectorWarning?.severity)}
                       placeholder="如 2.87"
                     />
-                    {sectorSourceBadge(sectorMetaByIndex[index])}
+                    {sectorSourceBadge(sectorMetaByFundCode[holding.fund_code])}
                   </td>
                   <td className="px-3 py-3">
                     <input

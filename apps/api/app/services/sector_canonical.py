@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 
 from app.services.eastmoney_spot_client import (
@@ -56,11 +57,25 @@ _CANONICAL_BY_LABEL: dict[str, CanonicalSector] = {
         label="中证电网设备",
         source_type="index",
         source_name="中证电网设备",
-        eastmoney_secid="0.931151",
-        source_code="931151",
+        eastmoney_secid="2.931994",
+        source_code="931994",
     ),
     "中证人工智能": CanonicalSector(
         label="中证人工智能",
+        source_type="index",
+        source_name="中证人工智能",
+        eastmoney_secid="1.930713",
+        source_code="930713",
+    ),
+    "电网设备": CanonicalSector(
+        label="电网设备",
+        source_type="index",
+        source_name="中证电网设备",
+        eastmoney_secid="2.931994",
+        source_code="931994",
+    ),
+    "人工智能": CanonicalSector(
+        label="人工智能",
         source_type="index",
         source_name="中证人工智能",
         eastmoney_secid="1.930713",
@@ -130,5 +145,86 @@ def fetch_canonical_sector_quote(
             source_code=canon.source_code,
         )
 
+    if canon.source_type == "index":
+        change = _fetch_index_quote_via_akshare(canon.source_name)
+        if change is not None:
+            boards.setdefault("index", {})[canon.source_name] = change
+            return CanonicalQuoteResult(
+                change_percent=change,
+                matched_name=canon.source_name,
+                source_type="index",
+                source_code=canon.source_code,
+                message=f"AkShare 指数 {canon.source_name}",
+            )
+
     logger.info("canonical sector %s (%s) quote miss", canon.label, canon.eastmoney_secid)
     return None
+
+
+def _fetch_index_quote_via_akshare(index_name: str) -> float | None:
+    """东财 secid/批量表缺失时，按指数名称从 AkShare 中证系列补拉。"""
+    try:
+        import akshare as ak  # type: ignore[import-not-found]
+
+        for symbol in ("中证系列指数", "沪深重要指数", "上证系列指数"):
+            frame = ak.stock_zh_index_spot_em(symbol=symbol)
+            if frame is None or getattr(frame, "empty", True):
+                continue
+            if "名称" not in frame.columns or "涨跌幅" not in frame.columns:
+                continue
+            matched = frame.loc[frame["名称"] == index_name]
+            if matched.empty:
+                continue
+            return round(float(matched.iloc[0]["涨跌幅"]), 4)
+    except Exception as exc:
+        logger.info("akshare index quote %s failed: %s", index_name, exc)
+    return None
+
+
+def prefetch_canonical_secid_quotes(
+    labels: list[str | None],
+    boards: dict[str, SpotBoard],
+    *,
+    timeout_seconds: float | None = None,
+) -> int:
+    """Concurrent secid fetch for canonical labels missing from spot boards."""
+    unique_labels: list[str] = []
+    seen: set[str] = set()
+    for raw in labels:
+        label = normalize_sector_label(raw)
+        if not label or label in seen or get_canonical_sector(label) is None:
+            continue
+        seen.add(label)
+        unique_labels.append(label)
+    if not unique_labels:
+        return 0
+
+    per_call_timeout = 8.0 if timeout_seconds is None else max(0.8, min(2.5, timeout_seconds * 0.3))
+    max_workers = min(6, len(unique_labels))
+    matched = 0
+
+    def fetch_one(label: str) -> int:
+        canon = get_canonical_sector(label)
+        if canon is None:
+            return 0
+        board = boards.get(canon.source_type) or {}
+        if canon.source_name in board:
+            return 0
+        _name, change = fetch_eastmoney_quote_by_secid(
+            canon.eastmoney_secid,
+            timeout=per_call_timeout,
+            max_retries=1,
+        )
+        if change is not None:
+            boards.setdefault(canon.source_type, {})[canon.source_name] = change
+            return 1
+        return 0
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [executor.submit(fetch_one, label) for label in unique_labels]
+        for future in as_completed(futures):
+            try:
+                matched += int(future.result())
+            except Exception as exc:
+                logger.info("prefetch canonical secid worker failed: %s", exc)
+    return matched

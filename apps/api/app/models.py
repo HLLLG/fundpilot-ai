@@ -288,6 +288,7 @@ class HoldingDetailResponse(BaseModel):
 class RefreshSectorQuotesRequest(BaseModel):
     holdings: list[Holding] = Field(min_length=1)
     force_refresh: bool = False
+    budget: Literal["fast", "accurate"] = "fast"
 
 
 class SaveSectorMappingRequest(BaseModel):

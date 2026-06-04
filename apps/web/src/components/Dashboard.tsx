@@ -1,17 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  ArrowRight,
-  BadgeCheck,
-  BookMarked,
-  BrainCircuit,
-  History,
-  LayoutDashboard,
-  LockKeyhole,
-  Sun,
-  X,
-} from "lucide-react";
+import { ArrowRight, BrainCircuit, FileText, Sun, X } from "lucide-react";
 import type {
   AnalysisMode,
   FundProfile,
@@ -22,12 +12,10 @@ import type {
   Report,
 } from "@/lib/api";
 import {
-  exportFundProfiles,
   fetchPortfolioHoldings,
   fetchPortfolioSummary,
   importFundProfiles,
   listFundProfiles,
-  repairFundProfileSectors,
   listReports,
   parseFundProfile,
   startAnalyzeJob,
@@ -60,6 +48,7 @@ import { YangjibaoFundDetail } from "@/components/YangjibaoFundDetail";
 import { RiskControls } from "@/components/RiskControls";
 import { StatusPill } from "@/components/StatusPill";
 import { TodayWorkflowSteps } from "@/components/TodayWorkflowSteps";
+import { UserMenu } from "@/components/UserMenu";
 const defaultProfile: InvestorProfile = {
   style: "稳健",
   horizon: "半年到一年",
@@ -69,10 +58,10 @@ const defaultProfile: InvestorProfile = {
   avoid_chasing: true,
 };
 
-type TabId = "today" | "dashboard" | "profiles" | "history";
+type TabId = "today" | "report" | "history" | "dashboard" | "profiles";
 
-const tabs: Array<{
-  id: TabId;
+const primaryTabs: Array<{
+  id: Extract<TabId, "today" | "report">;
   label: string;
   description: string;
   icon: React.ReactNode;
@@ -80,34 +69,16 @@ const tabs: Array<{
   {
     id: "today",
     label: "今日",
-    description: "持仓涨跌与日报",
+    description: "账户汇总与板块涨跌",
     icon: <Sun size={17} />,
   },
   {
-    id: "dashboard",
-    label: "仪表盘",
-    description: "资产走势与持仓分布",
-    icon: <LayoutDashboard size={17} />,
-  },
-  {
-    id: "profiles",
-    label: "基金档案",
-    description: "详情截图建档",
-    icon: <BookMarked size={17} />,
-  },
-  {
-    id: "history",
-    label: "历史日报",
-    description: "回看已保存报告",
-    icon: <History size={17} />,
+    id: "report",
+    label: "生成日报",
+    description: "校对持仓与 AI 日报",
+    icon: <FileText size={17} />,
   },
 ];
-
-const riskLevelLabel = {
-  low: "低",
-  medium: "中",
-  high: "高",
-} as const;
 
 export function Dashboard() {
   const [rawText] = useState("");
@@ -120,7 +91,6 @@ export function Dashboard() {
   const [holdingWarnings, setHoldingWarnings] = useState<HoldingFieldWarning[]>([]);
   const [holdingDiffs] = useState<HoldingListDiff[]>([]);
   const [previousHoldings] = useState<Holding[]>([]);
-  const [detailText, setDetailText] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isProfiling, setIsProfiling] = useState(false);
@@ -289,7 +259,7 @@ export function Dashboard() {
   const handleJobComplete = async (completedReport: Report) => {
     setReport(completedReport);
     await loadHistory();
-    setActiveTab("today");
+    setActiveTab("report");
     setActiveJobId(null);
     requestAnimationFrame(() => {
       reportSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -309,24 +279,6 @@ export function Dashboard() {
   const handleJobRetry = async () => {
     setActiveJobId(null);
     await runAnalyze(holdings);
-  };
-
-  const handleExportProfiles = async () => {
-    try {
-      const payload = await exportFundProfiles();
-      const blob = new Blob([JSON.stringify(payload, null, 2)], {
-        type: "application/json;charset=utf-8",
-      });
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = `fund-profiles-${new Date().toISOString().slice(0, 10)}.json`;
-      anchor.click();
-      URL.revokeObjectURL(url);
-      setMessage(`已导出 ${payload.profiles.length} 条基金档案。`);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "导出档案失败。");
-    }
   };
 
   const handleImportProfiles = async (selectedFile: File) => {
@@ -350,7 +302,6 @@ export function Dashboard() {
     setMessage(null);
     try {
       const profileResult = await parseFundProfile(formData);
-      setDetailText(profileResult.raw_text ?? "");
       await loadProfiles();
       if (profileResult.synced_holdings?.length) {
         setHoldings(profileResult.synced_holdings);
@@ -375,40 +326,10 @@ export function Dashboard() {
     void handleProfileForm(formData);
   };
 
-  const handleProfileText = () => {
-    const formData = new FormData();
-    formData.append("raw_text", detailText);
-    void handleProfileForm(formData);
-  };
-
-  const handleRepairProfileSectors = async () => {
-    setIsProfiling(true);
-    setMessage(null);
-    try {
-      const result = await repairFundProfileSectors();
-      await loadProfiles();
-      if (result.synced_holdings?.length) {
-        setHoldings(result.synced_holdings);
-        await loadPortfolioSummary();
-      } else {
-        await hydratePortfolio();
-      }
-      setMessage(
-        result.repaired > 0
-          ? `已修复 ${result.repaired} 条档案的无效关联板块，请重新上传仍缺失板块的基金详情。`
-          : "未发现需要修复的无效板块名；若仍显示异常，请重新上传该基金详情截图。",
-      );
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "修复关联板块失败。");
-    } finally {
-      setIsProfiling(false);
-    }
-  };
-
   return (
     <main className="premium-bg min-h-screen">
       <div className="mx-auto flex min-h-screen w-full max-w-[1520px] flex-col px-4 py-4 sm:px-6 lg:px-8 lg:py-6">
-        <nav className="animate-fade-up mb-4 flex items-center justify-between gap-4 rounded-2xl border border-white/80 bg-white/90 px-4 py-3 shadow-sm backdrop-blur-sm lg:mb-5 lg:rounded-full">
+        <nav className="animate-fade-up relative z-40 mb-4 flex items-center justify-between gap-4 rounded-2xl border border-white/80 bg-white/90 px-4 py-3 shadow-sm backdrop-blur-sm lg:mb-5 lg:rounded-full">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--brand)] text-white shadow-[0_10px_24px_rgba(21,101,232,0.28)] lg:h-11 lg:w-11 lg:rounded-full">
               <BrainCircuit size={20} />
@@ -418,39 +339,26 @@ export function Dashboard() {
               <div className="text-xs text-slate-500">私人基金投研助手</div>
             </div>
           </div>
-          <div className="hidden items-center gap-2 md:flex">
-            <StatusPill tone="blue">本地优先</StatusPill>
-            <StatusPill tone="green">DeepSeek V4 Pro</StatusPill>
-            <StatusPill tone="amber">人工确认</StatusPill>
+          <div className="flex items-center gap-2">
+            <div className="hidden items-center gap-2 md:flex">
+              <StatusPill tone="blue">本地优先</StatusPill>
+              <StatusPill tone="green">DeepSeek V4 Pro</StatusPill>
+            </div>
+            <UserMenu onNavigate={setActiveTab} />
           </div>
         </nav>
 
-        <header className="animate-fade-up mb-4 grid gap-4 lg:mb-5 lg:grid-cols-[1.15fr_0.85fr] lg:items-end lg:gap-5">
-          <div>
-            <div className="mb-2 flex flex-wrap items-center gap-2">
-              <StatusPill tone="dark">工作台</StatusPill>
-              <StatusPill tone="blue">截图 → 日报</StatusPill>
-            </div>
-            <h1 className="max-w-3xl text-2xl font-black leading-tight tracking-tight text-slate-950 sm:text-3xl lg:text-[2rem]">
-              养基宝式持仓看板，真实板块优先，失败时估值兜底
-            </h1>
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
-              首页自动恢复持仓，刷新会先尝试真实关联板块涨跌；取不到时明确使用天天基金估值兜底。更新持有金额请上传单基金详情截图至「基金档案」。
-            </p>
+        <header className="animate-fade-up mb-4 lg:mb-5">
+          <div className="mb-2 flex flex-wrap items-center gap-2">
+            <StatusPill tone="dark">工作台</StatusPill>
+            <StatusPill tone="blue">截图 → 日报</StatusPill>
           </div>
-          <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-2">
-            <MetricCard
-              icon={<LockKeyhole size={18} />}
-              label="最新风险"
-              value={
-                displayReport
-                  ? `${riskLevelLabel[displayReport.risk.level]} · ${displayReport.risk.weighted_return_percent}%`
-                  : `底线 ${profile.max_drawdown_percent}%`
-              }
-              hint={displayReport ? "来自最近日报" : "生成日报后更新"}
-            />
-            <MetricCard icon={<BadgeCheck size={18} />} label="日报数量" value={`${reports.length}`} />
-          </div>
+          <h1 className="max-w-3xl text-2xl font-black leading-tight tracking-tight text-slate-950 sm:text-3xl lg:text-[2rem]">
+            养基宝式持仓看板，真实板块优先，失败时估值兜底
+          </h1>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
+            「今日」只看账户汇总；生成 AI 日报请切到「生成日报」。历史报告、档案与仪表盘在右上角用户菜单。
+          </p>
         </header>
 
         {message ? (
@@ -477,95 +385,101 @@ export function Dashboard() {
 
         <div className="min-w-0 flex-1">
           {activeTab === "today" ? (
-            <div className="grid min-w-0 gap-5 xl:grid-cols-[minmax(360px,400px)_minmax(0,1fr)] xl:items-start xl:gap-6">
-              <div className="xl:sticky xl:top-5">
-                <YangjibaoHoldingsBoard
-                  holdings={holdings}
-                  portfolioSummary={portfolioSummary}
-                  sectorRefresh={sectorRefresh}
-                  isLoading={isHydratingHoldings}
-                  className="max-w-none"
-                  onOpenCapture={() => setActiveTab("profiles")}
-                  onAddHolding={addEmptyHolding}
-                  onExpandReview={() => setReviewTableOpen(true)}
-                  onSelectHolding={setSelectedHoldingIndex}
-                />
-              </div>
+            <div className="mx-auto w-full max-w-xl">
+              <YangjibaoHoldingsBoard
+                holdings={holdings}
+                portfolioSummary={portfolioSummary}
+                sectorRefresh={sectorRefresh}
+                isLoading={isHydratingHoldings}
+                className="max-w-none"
+                onOpenCapture={() => setActiveTab("profiles")}
+                onAddHolding={() => {
+                  addEmptyHolding();
+                  setActiveTab("report");
+                }}
+                onExpandReview={() => {
+                  setReviewTableOpen(true);
+                  setActiveTab("report");
+                }}
+                onSelectHolding={setSelectedHoldingIndex}
+              />
+            </div>
+          ) : null}
 
-              <div className="grid min-w-0 gap-5 lg:gap-6">
-                <TradingSessionBar />
-                <TodayWorkflowSteps hasHoldings={holdings.length > 0} hasReport={Boolean(displayReport)} />
-                <TodayBlockingChecklist blockers={workflowBlockers} />
-                <div className="grid min-w-0 gap-5 lg:grid-cols-2 lg:gap-6">
-                  <RiskControls
-                    profile={profile}
-                    analysisMode={analysisMode}
-                    onAnalysisModeChange={setAnalysisMode}
-                    onChange={setProfile}
-                    onAnalyze={() => void handleAnalyze()}
-                    isBusy={isSubmitting}
-                    ocrWarningCount={ocrWarningCount}
-                    hasBlockingErrors={blockingErrors}
-                  />
-                  <div className="glass-panel rounded-[24px] p-5 lg:rounded-[28px]">
-                    <div className="mb-2 text-sm font-black text-slate-950">快捷操作</div>
-                    <p className="text-sm leading-6 text-slate-600">
-                      需要更新持有金额？前往「基金档案」上传单基金详情截图，或在下方校对表手动修改。
-                    </p>
-                    <div className="mt-4 flex flex-wrap gap-2">
+          {activeTab === "report" ? (
+            <div className="grid min-w-0 gap-5 lg:gap-6">
+              <TradingSessionBar />
+              <TodayWorkflowSteps hasHoldings={holdings.length > 0} hasReport={Boolean(displayReport)} />
+              <TodayBlockingChecklist blockers={workflowBlockers} />
+              <div className="grid min-w-0 gap-5 lg:grid-cols-2 lg:gap-6">
+                <RiskControls
+                  profile={profile}
+                  analysisMode={analysisMode}
+                  onAnalysisModeChange={setAnalysisMode}
+                  onChange={setProfile}
+                  onAnalyze={() => void handleAnalyze()}
+                  isBusy={isSubmitting}
+                  ocrWarningCount={ocrWarningCount}
+                  hasBlockingErrors={blockingErrors}
+                />
+                <div className="glass-panel rounded-[24px] p-5 lg:rounded-[28px]">
+                  <div className="mb-2 text-sm font-black text-slate-950">快捷操作</div>
+                  <p className="text-sm leading-6 text-slate-600">
+                    需要更新持有金额？在右上角用户菜单打开「基金档案」上传详情截图，或在下方校对表手动修改。
+                  </p>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab("profiles")}
+                      className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 transition hover:border-blue-200 hover:text-blue-700"
+                    >
+                      上传详情截图
+                    </button>
+                    {holdings.length > 0 ? (
                       <button
                         type="button"
-                        onClick={() => setActiveTab("profiles")}
+                        onClick={() => setReviewTableOpen(true)}
                         className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 transition hover:border-blue-200 hover:text-blue-700"
                       >
-                        上传详情截图
+                        校对持仓
                       </button>
-                      {holdings.length > 0 ? (
-                        <button
-                          type="button"
-                          onClick={() => setReviewTableOpen(true)}
-                          className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 transition hover:border-blue-200 hover:text-blue-700"
-                        >
-                          校对持仓
-                        </button>
-                      ) : null}
-                    </div>
+                    ) : null}
                   </div>
                 </div>
-                {holdings.length > 0 || rawText ? (
-                  <CollapsibleReviewSection
-                    open={reviewTableOpen}
-                    onToggle={() => setReviewTableOpen((open) => !open)}
-                    warningCount={ocrWarningCount}
-                  >
-                    <HoldingTable
-                      holdings={holdings}
-                      onChange={setHoldings}
-                      warnings={holdingWarnings}
-                      onWarningsChange={setHoldingWarnings}
-                      portfolioSummary={portfolioSummary}
-                      diffs={holdingDiffs}
-                      canApplyPreviousStructure={previousHoldings.length > 0}
-                      onApplyPreviousStructure={() => {
-                        setHoldings(mergeHoldingsWithPrevious(previousHoldings, holdings));
-                        setMessage("已沿用昨日基金列表，并保留本次 OCR 的金额与收益。请再扫一眼高亮格子。");
-                      }}
-                      onAllocateMessage={setMessage}
-                      sectorRefresh={sectorRefresh}
-                      showSectorRefreshControls={false}
-                    />
-                  </CollapsibleReviewSection>
-                ) : null}
-                <div ref={reportSectionRef} className="min-w-0">
-                  <div className="mb-3 text-sm font-black text-slate-950">今日日报</div>
-                  {todayReport ? (
-                    <ReportPanel report={todayReport} />
-                  ) : (
-                    <div className="glass-panel rounded-[24px] border border-dashed border-slate-200 px-5 py-8 text-center text-sm leading-6 text-slate-500">
-                      今日尚未生成日报。确认持仓后点击「生成今日基金操作日报」；历史报告请在「历史日报」查看。
-                    </div>
-                  )}
-                </div>
+              </div>
+              {holdings.length > 0 || rawText ? (
+                <CollapsibleReviewSection
+                  open={reviewTableOpen}
+                  onToggle={() => setReviewTableOpen((open) => !open)}
+                  warningCount={ocrWarningCount}
+                >
+                  <HoldingTable
+                    holdings={holdings}
+                    onChange={setHoldings}
+                    warnings={holdingWarnings}
+                    onWarningsChange={setHoldingWarnings}
+                    portfolioSummary={portfolioSummary}
+                    diffs={holdingDiffs}
+                    canApplyPreviousStructure={previousHoldings.length > 0}
+                    onApplyPreviousStructure={() => {
+                      setHoldings(mergeHoldingsWithPrevious(previousHoldings, holdings));
+                      setMessage("已沿用昨日基金列表，并保留本次 OCR 的金额与收益。请再扫一眼高亮格子。");
+                    }}
+                    onAllocateMessage={setMessage}
+                    sectorRefresh={sectorRefresh}
+                    showSectorRefreshControls={false}
+                  />
+                </CollapsibleReviewSection>
+              ) : null}
+              <div ref={reportSectionRef} className="min-w-0">
+                <div className="mb-3 text-sm font-black text-slate-950">今日日报</div>
+                {todayReport ? (
+                  <ReportPanel report={todayReport} />
+                ) : (
+                  <div className="glass-panel rounded-[24px] border border-dashed border-slate-200 px-5 py-8 text-center text-sm leading-6 text-slate-500">
+                    今日尚未生成日报。确认持仓后点击「生成今日基金操作日报」；历史报告请在右上角用户菜单打开。
+                  </div>
+                )}
               </div>
             </div>
           ) : null}
@@ -576,17 +490,12 @@ export function Dashboard() {
             <div className="grid min-w-0 gap-6">
               <FundProfilePanel
                 profiles={profiles}
-                detailText={detailText}
                 isBusy={isProfiling}
-                onDetailTextChange={setDetailText}
                 onFileSelect={handleProfileFile}
-                onParseText={handleProfileText}
                 onRefresh={() => {
                   void loadProfiles();
                   void loadPortfolioSummary();
                 }}
-                onRepairSectors={() => void handleRepairProfileSectors()}
-                onExport={() => void handleExportProfiles()}
                 onImport={(selectedFile) => void handleImportProfiles(selectedFile)}
               />
             </div>
@@ -605,7 +514,7 @@ export function Dashboard() {
               onRefresh={loadHistory}
               onSelect={(selectedReport) => {
                 setReport(selectedReport);
-                setActiveTab("today");
+                setActiveTab("report");
                 requestAnimationFrame(() => {
                   reportSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
                 });
@@ -634,12 +543,13 @@ export function Dashboard() {
           holdingIndex={selectedHoldingIndex}
           holdings={holdings}
           portfolioSummary={portfolioSummary}
-          sectorMeta={sectorRefresh.sectorMetaByIndex[selectedHoldingIndex]}
+          sectorMeta={sectorRefresh.sectorMetaByFundCode[holdings[selectedHoldingIndex].fund_code]}
           onClose={() => setSelectedHoldingIndex(null)}
           onNavigate={setSelectedHoldingIndex}
           onEdit={() => {
             setSelectedHoldingIndex(null);
             setReviewTableOpen(true);
+            setActiveTab("report");
           }}
           onHoldingResolved={(index, resolved) => {
             setHoldings((current) =>
@@ -657,13 +567,16 @@ function TabNav({
   onSelect,
 }: {
   activeTab: TabId;
-  onSelect: (tab: TabId) => void;
+  onSelect: (tab: Extract<TabId, "today" | "report">) => void;
 }) {
+  const highlightedTab =
+    activeTab === "today" || activeTab === "report" ? activeTab : null;
+
   return (
     <div className="glass-panel mb-4 overflow-x-auto rounded-[20px] p-1.5 lg:mb-5 lg:rounded-[24px] lg:p-2">
-      <div className="grid min-w-[560px] grid-cols-4 gap-1.5 lg:min-w-0 lg:gap-2">
-        {tabs.map((tab) => {
-          const active = tab.id === activeTab;
+      <div className="grid min-w-[280px] grid-cols-2 gap-1.5 lg:min-w-0 lg:gap-2">
+        {primaryTabs.map((tab) => {
+          const active = tab.id === highlightedTab;
           return (
             <button
               key={tab.id}
@@ -695,29 +608,6 @@ function TabNav({
           );
         })}
       </div>
-    </div>
-  );
-}
-
-function MetricCard({
-  icon,
-  label,
-  value,
-  hint,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  value: string;
-  hint?: string;
-}) {
-  return (
-    <div className="glass-panel rounded-[20px] px-4 py-3 lg:rounded-[24px] lg:px-5 lg:py-4">
-      <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wide text-slate-500 lg:text-xs lg:normal-case lg:tracking-normal">
-        <span className="text-[var(--brand)]">{icon}</span>
-        {label}
-      </div>
-      <div className="mt-1.5 text-xl font-black tabular-nums text-slate-950 lg:mt-2 lg:text-2xl">{value}</div>
-      {hint ? <div className="mt-1 text-[11px] font-semibold text-slate-500 lg:text-xs">{hint}</div> : null}
     </div>
   );
 }

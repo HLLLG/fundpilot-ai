@@ -24,6 +24,7 @@ def fetch_boards_via_browser_command(
     timeout = _browser_timeout(settings.sector_quotes_browser_timeout_seconds, timeout_seconds)
     env = os.environ.copy()
     env["FUND_AI_SECTOR_QUOTES_TIMEOUT_SECONDS"] = str(timeout)
+    env.setdefault("PYTHONIOENCODING", "utf-8")
 
     try:
         result = subprocess.run(
@@ -32,6 +33,8 @@ def fetch_boards_via_browser_command(
             cwd=str(_browser_workdir()),
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout,
             env=env,
             check=False,
@@ -59,7 +62,8 @@ def fetch_boards_via_browser_command(
 def _browser_timeout(default_timeout: float, timeout_seconds: float | None) -> float:
     if timeout_seconds is None:
         return default_timeout
-    return round(max(1.0, min(default_timeout, timeout_seconds * 0.7)), 3)
+    # Playwright 脚本通常需 10–20s，不要用 0.7 倍再压短子进程超时
+    return round(max(1.0, min(default_timeout, timeout_seconds)), 3)
 
 
 def _browser_workdir() -> Path:

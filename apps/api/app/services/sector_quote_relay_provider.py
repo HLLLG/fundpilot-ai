@@ -26,9 +26,14 @@ def fetch_boards_via_relay(*, timeout_seconds: float | None = None) -> dict[str,
         return _empty_boards()
 
     timeout = _relay_timeout(settings.sector_quotes_relay_timeout_seconds, timeout_seconds)
+    headers = dict(_HEADERS)
+    token = str(settings.sector_quotes_relay_token or "").strip()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+        headers["X-Relay-Token"] = token
     try:
         with httpx.Client(
-            headers=_HEADERS,
+            headers=headers,
             timeout=timeout,
             trust_env=False,
             follow_redirects=True,

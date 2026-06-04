@@ -3,14 +3,17 @@
 import { useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronUp, Plus, RefreshCw, Settings2 } from "lucide-react";
 import type { Holding, PortfolioSummary } from "@/lib/api";
-import { holdingRelatedBoardLabel } from "@/lib/profileSector";
+import { holdingRelatedBoardLabel, sectorQuoteLookupLabel } from "@/lib/profileSector";
 import { SectorMappingModal } from "@/components/SectorMappingModal";
 import {
   cnProfitClass,
   computeDailyProfit,
+  computeEstimatedDailyReturnPercent,
   computeHoldingProfit,
+  dailyProfitIsEstimated,
   formatSignedMoney,
   formatSignedPercent,
+  holdingDailyReturnIsEstimated,
   holdingProfitIsEstimated,
   resolveHoldingReturnPercent,
   sumDailyProfit,
@@ -71,14 +74,14 @@ function accountDailyReturnPercent(
   return Math.round((dailyProfit / previousTotal) * 10000) / 100;
 }
 
-function sectorLiveLabel(meta: SectorRefreshControl["sectorMetaByIndex"][number]) {
+function sectorLiveLabel(meta: SectorRefreshControl["sectorMetaByFundCode"][string] | undefined) {
   if (!meta) {
     return null;
   }
   return sectorQuoteBadgeLabel(meta);
 }
 
-function sectorLiveTone(meta: SectorRefreshControl["sectorMetaByIndex"][number]) {
+function sectorLiveTone(meta: SectorRefreshControl["sectorMetaByFundCode"][string] | undefined) {
   if (!meta) {
     return "text-slate-400";
   }
@@ -108,7 +111,7 @@ export function YangjibaoHoldingsBoard({
   const [now, setNow] = useState(() => new Date());
   const {
     isRefreshing,
-    sectorMetaByIndex,
+    sectorMetaByFundCode,
     lastFetchedAt,
     refreshError,
     autoRefreshEnabled,
@@ -265,11 +268,12 @@ export function YangjibaoHoldingsBoard({
           </div>
         </div>
 
-        <div className="grid grid-cols-[1fr_5.5rem_5.5rem] gap-2 border-b border-slate-100 bg-slate-50/80 px-4 py-2.5 text-[11px] font-bold text-slate-500">
+        <div className="grid grid-cols-[minmax(0,1fr)_4.75rem_4.75rem_4.75rem] gap-1.5 border-b border-slate-100 bg-slate-50/80 px-3 py-2.5 text-[11px] font-bold text-slate-500 sm:gap-2 sm:px-4">
           <div className="flex items-center gap-1.5">
             <Settings2 size={12} className="text-slate-400" />
             <span>基金 / 持有金额</span>
           </div>
+          <div className="text-right">估算当日</div>
           <div className="text-right">关联板块</div>
           <div className="text-right">持有收益</div>
         </div>
@@ -277,10 +281,12 @@ export function YangjibaoHoldingsBoard({
         <ul className="divide-y divide-slate-100">
           {sortedHoldings.map(({ holding, index }) => {
             const daily = computeDailyProfit(holding);
+            const estimatedDailyReturn = computeEstimatedDailyReturnPercent(holding);
             const holdingProfit = computeHoldingProfit(holding);
             const holdingReturn = resolveHoldingReturnPercent(holding);
             const sectorReturn = holding.sector_return_percent;
-            const meta = sectorMetaByIndex[index];
+            const meta = sectorMetaByFundCode[holding.fund_code];
+            const quoteLabel = sectorQuoteLookupLabel(holding);
             const liveTag = sectorLiveLabel(meta);
 
             return (
@@ -288,23 +294,34 @@ export function YangjibaoHoldingsBoard({
                 <button
                   type="button"
                   onClick={() => onSelectHolding?.(index)}
-                  className="grid w-full grid-cols-[1fr_5.5rem_5.5rem] gap-2 px-4 py-3.5 text-left transition hover:bg-slate-50 active:bg-slate-100"
+                  className="grid w-full grid-cols-[minmax(0,1fr)_4.75rem_4.75rem_4.75rem] gap-1.5 px-3 py-3.5 text-left transition hover:bg-slate-50 active:bg-slate-100 sm:gap-2 sm:px-4"
                 >
                   <div className="min-w-0">
                     <div className="truncate text-[15px] font-bold leading-snug text-slate-900">
                       {holding.fund_name}
                     </div>
-                    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-slate-500">
-                      <span className="tabular-nums">¥ {formatMoney(holding.holding_amount)}</span>
-                      {daily != null ? (
-                        <span
-                          className={`font-bold tabular-nums ${cnProfitClass(daily)}`}
-                          title="由当前显示的真实板块或天天基金估值兜底估算"
-                        >
-                          ≈{formatSignedMoney(daily)}
-                        </span>
-                      ) : null}
+                    <div className="mt-1 text-xs text-slate-500 tabular-nums">¥ {formatMoney(holding.holding_amount)}</div>
+                  </div>
+
+                  <div
+                    className="text-right"
+                    title="由关联板块或场内指数涨跌估算；取不到真实板块时可能为天天基金估值兜底"
+                  >
+                    <div className={`text-[15px] font-black tabular-nums ${cnProfitClass(daily)}`}>
+                      {daily != null
+                        ? `${dailyProfitIsEstimated(holding) ? "≈" : ""}${formatSignedMoney(daily)}`
+                        : "—"}
                     </div>
+                    {estimatedDailyReturn != null ? (
+                      <div
+                        className={`mt-0.5 text-[11px] font-bold tabular-nums ${cnProfitClass(estimatedDailyReturn)}`}
+                      >
+                        {holdingDailyReturnIsEstimated(holding) ? "≈" : ""}
+                        {formatSignedPercent(estimatedDailyReturn)}
+                      </div>
+                    ) : (
+                      <div className="mt-0.5 text-[11px] text-slate-300">—</div>
+                    )}
                   </div>
 
                   <div className="text-right">
@@ -318,9 +335,7 @@ export function YangjibaoHoldingsBoard({
                           · {holding.intraday_index_name}
                         </span>
                       ) : null}
-                      {meta?.matched_name &&
-                      (holding.intraday_index_name || holding.sector_name) &&
-                      meta.matched_name !== (holding.intraday_index_name || holding.sector_name) ? (
+                      {meta?.matched_name && quoteLabel && meta.matched_name !== quoteLabel ? (
                         <span className="ml-0.5 text-slate-400" title="行情源标准名称">
                           → {meta.matched_name}
                         </span>

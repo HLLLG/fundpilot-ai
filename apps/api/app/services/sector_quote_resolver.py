@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from app.services.sector_canonical import fetch_canonical_sector_quote
+from app.services.sector_canonical import fetch_canonical_sector_quote, get_canonical_sector
 from app.services.sector_labels import build_sector_candidates, normalize_sector_label, sector_label_key
 from app.services.sector_quote_provider import SpotBoard
 
@@ -42,6 +42,15 @@ def resolve_sector_quote(
         return SectorResolveResult(confidence="none", message="未识别关联板块名称")
     label = lookup_label
 
+    canon_for_label = get_canonical_sector(label)
+    if (
+        persisted_mapping
+        and canon_for_label is not None
+        and canon_for_label.source_type == "index"
+        and str(persisted_mapping.get("source_type", "")) != "index"
+    ):
+        persisted_mapping = None
+
     if persisted_mapping:
         source_type = str(persisted_mapping.get("source_type", ""))
         source_name = str(persisted_mapping.get("source_name", ""))
@@ -65,6 +74,18 @@ def resolve_sector_quote(
             source_code=canonical.source_code,
             message=canonical.message,
         )
+
+    canon_spec = get_canonical_sector(label)
+    if canon_spec is not None and canon_spec.source_type == "index":
+        index_board = boards.get("index") or {}
+        if canon_spec.source_name in index_board:
+            return SectorResolveResult(
+                confidence="high",
+                change_percent=index_board[canon_spec.source_name],
+                matched_name=canon_spec.source_name,
+                source_type="index",
+                source_code=canon_spec.source_code,
+            )
 
     exact_matches: list[SectorMappingCandidate] = []
     fuzzy_matches: list[SectorMappingCandidate] = []
@@ -91,7 +112,49 @@ def resolve_sector_quote(
                 )
 
     unique = _dedupe_candidates(exact_matches + fuzzy_matches)
+    if canon_spec is not None and canon_spec.source_type == "index":
+        unique = [
+            candidate
+            for candidate in unique
+            if not (
+                candidate.source_type in {"concept", "industry"}
+                and candidate.source_name == label
+                and label == canon_spec.label
+                and label != canon_spec.source_name
+            )
+        ]
+        if label in {canon_spec.label, canon_spec.source_name}:
+            preferred_names = {canon_spec.source_name}
+            if canon_spec.source_name.startswith("中证") and len(canon_spec.source_name) > 2:
+                preferred_names.add(canon_spec.source_name[2:])
+            index_exact = [
+                candidate
+                for candidate in unique
+                if candidate.source_type == "index" and candidate.source_name in preferred_names
+            ]
+            if len(index_exact) == 1:
+                item = index_exact[0]
+                return SectorResolveResult(
+                    confidence="high",
+                    change_percent=item.change_percent,
+                    matched_name=item.source_name,
+                    source_type=item.source_type,
+                    source_code=item.source_code,
+                )
+            if not any(
+                candidate.source_type == "index" and candidate.source_name in preferred_names
+                for candidate in unique
+            ):
+                return SectorResolveResult(
+                    confidence="none",
+                    message=f"指数「{canon_spec.source_name}」暂无行情",
+                )
     if not unique:
+        if canon_spec is not None and canon_spec.source_type == "index":
+            return SectorResolveResult(
+                confidence="none",
+                message=f"指数「{canon_spec.source_name}」暂无行情",
+            )
         return SectorResolveResult(
             confidence="none",
             message=f"未在东财行情中找到「{label}」",
@@ -192,6 +255,14 @@ def _auto_pick_candidate(
 ) -> SectorMappingCandidate | None:
     """养基宝常见板块名的默认映射，避免多候选时刷新无法更新。"""
     if "人工智能" in label:
+        index_board = boards.get("index") or {}
+        for preferred in ("中证人工智能", "人工智能"):
+            if preferred in index_board:
+                return SectorMappingCandidate(
+                    source_type="index",
+                    source_name=preferred,
+                    change_percent=index_board[preferred],
+                )
         index_ai = [
             candidate
             for candidate in exact_matches
@@ -199,18 +270,29 @@ def _auto_pick_candidate(
         ]
         if index_ai:
             return index_ai[0]
-        index_board = boards.get("index") or {}
-        if "人工智能" in index_board:
+        concept_board = boards.get("concept") or {}
+        canon = get_canonical_sector(label)
+        if (
+            label == "人工智能"
+            and "人工智能" in concept_board
+            and (canon is None or canon.source_type != "index")
+        ):
             return SectorMappingCandidate(
-                source_type="index",
+                source_type="concept",
                 source_name="人工智能",
-                change_percent=index_board["人工智能"],
+                change_percent=concept_board["人工智能"],
             )
 
     if "电网设备" in label or label == "电网设备":
         concept_board = boards.get("concept") or {}
         is_index_label = label.startswith("中证") or label.startswith("上证") or label.startswith("深证")
-        if not is_index_label and label == "电网设备" and "电网设备" in concept_board:
+        canon = get_canonical_sector(label)
+        if (
+            not is_index_label
+            and label == "电网设备"
+            and "电网设备" in concept_board
+            and (canon is None or canon.source_type != "index")
+        ):
             return SectorMappingCandidate(
                 source_type="concept",
                 source_name="电网设备",

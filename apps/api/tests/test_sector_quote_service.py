@@ -141,6 +141,12 @@ def test_refresh_sector_quotes_skips_on_demand_when_timeout_budget_is_set(monkey
 
     monkeypatch.setattr(service, "fetch_sector_on_demand", fake_on_demand)
     monkeypatch.setattr(service, "fetch_fund_estimate_quotes", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(service, "prefetch_canonical_secid_quotes", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(service.FundProfileService, "resolve_holding", lambda self, holding: holding)
+    monkeypatch.setattr(
+        "app.services.sector_quote_resolver.fetch_canonical_sector_quote",
+        lambda *_args, **_kwargs: None,
+    )
 
     result = refresh_holdings_sector_quotes([holding], force_refresh=True, timeout_seconds=5.0)
 
@@ -213,7 +219,7 @@ def test_refresh_sector_quotes_prefers_real_boards_before_fund_estimate(monkeypa
     def fake_fetch_boards(**_kwargs):
         board_fetch_called["value"] = True
         return SpotBoardFetchResult(
-            boards={"concept": {"人工智能": 1.68}, "industry": {}, "index": {}},
+            boards={"concept": {}, "industry": {}, "index": {"人工智能": 1.68}},
             provider_path="eastmoney_live",
             live_attempted=True,
             elapsed_seconds=0.2,
@@ -222,6 +228,11 @@ def test_refresh_sector_quotes_prefers_real_boards_before_fund_estimate(monkeypa
     monkeypatch.setattr(service, "fetch_spot_boards_result", fake_fetch_boards)
     monkeypatch.setattr(service, "get_sector_mapping", lambda _key: None)
     monkeypatch.setattr(service, "save_sector_mapping", lambda _record: None)
+    monkeypatch.setattr(service.FundProfileService, "resolve_holding", lambda self, holding: holding)
+    monkeypatch.setattr(
+        "app.services.sector_quote_resolver.fetch_canonical_sector_quote",
+        lambda *_args, **_kwargs: None,
+    )
     monkeypatch.setattr(
         service,
         "fetch_fund_estimate_quotes",
@@ -240,6 +251,68 @@ def test_refresh_sector_quotes_prefers_real_boards_before_fund_estimate(monkeypa
     assert board_fetch_called["value"] is True
     assert result["items"][0]["sector_quote_meta"]["provider"] == "eastmoney-akshare"
     assert result["message"] == "已刷新 1 只，0 只需选择映射，0 只未匹配"
+
+
+def test_refresh_sector_quotes_uses_secid_before_fund_estimate(monkeypatch):
+    from app.services import sector_quote_service as service
+
+    holding = Holding(
+        fund_code="015945",
+        fund_name="易方达国防军工混合C",
+        holding_amount=1188.96,
+        return_percent=-7.43,
+        sector_name="商业航天",
+        sector_return_percent=2.29,
+    )
+
+    monkeypatch.setattr(
+        service,
+        "fetch_spot_boards_result",
+        lambda **_: SpotBoardFetchResult(
+            boards={"concept": {}, "industry": {}, "index": {}},
+            provider_path="empty",
+            live_attempted=True,
+            elapsed_seconds=0.2,
+        ),
+    )
+    monkeypatch.setattr(service, "get_sector_mapping", lambda _key: None)
+    monkeypatch.setattr(service, "save_sector_mapping", lambda _record: None)
+    monkeypatch.setattr(service, "prefetch_canonical_secid_quotes", lambda *_args, **_kwargs: 1)
+    monkeypatch.setattr(
+        service,
+        "fetch_fund_estimate_quotes",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("should not fetch estimates")),
+    )
+
+    def fake_resolve(sector_name, boards, *, persisted_mapping=None, quote_label=None):
+        if boards.get("concept", {}).get("商业航天") == 2.35:
+            from app.services.sector_quote_resolver import SectorResolveResult
+
+            return SectorResolveResult(
+                confidence="high",
+                change_percent=2.35,
+                matched_name="商业航天",
+                source_type="concept",
+                source_code="BK0963",
+                message="东财 90.BK0963",
+            )
+        from app.services.sector_quote_resolver import SectorResolveResult
+
+        return SectorResolveResult(confidence="none", message="miss")
+
+    def fake_prefetch(labels, boards, *, timeout_seconds=None):
+        boards.setdefault("concept", {})["商业航天"] = 2.35
+        return 1
+
+    monkeypatch.setattr(service, "prefetch_canonical_secid_quotes", fake_prefetch)
+    monkeypatch.setattr(service, "resolve_sector_quote", fake_resolve)
+
+    result = refresh_holdings_sector_quotes([holding], force_refresh=True, timeout_seconds=8.0)
+
+    assert result["summary"]["matched"] == 1
+    assert result["summary"]["estimate_fallback"] == 0
+    assert result["summary"]["secid_matched"] == 1
+    assert result["holdings"][0]["sector_return_percent"] == 2.35
 
 
 def test_refresh_sector_quotes_uses_estimate_for_unmatched_holding_with_dense_boards(monkeypatch):

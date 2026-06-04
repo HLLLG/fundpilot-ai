@@ -1,34 +1,24 @@
 "use client";
 
 import { useState } from "react";
-import { BookMarked, Download, FileImage, RefreshCw, Upload } from "lucide-react";
+import { BookMarked, FileImage, RefreshCw, Upload } from "lucide-react";
 import type { FundProfile } from "@/lib/api";
 import { FundProfileCard } from "@/components/FundProfileCard";
 import { FundProfileDetailModal } from "@/components/FundProfileDetailModal";
 
 type FundProfilePanelProps = {
   profiles: FundProfile[];
-  detailText: string;
   isBusy: boolean;
-  onDetailTextChange: (value: string) => void;
   onFileSelect: (file: File) => void;
-  onParseText: () => void;
   onRefresh: () => void;
-  onRepairSectors?: () => void;
-  onExport: () => void;
-  onImport: (file: File) => void;
+  onImport?: (file: File) => void;
 };
 
 export function FundProfilePanel({
   profiles,
-  detailText,
   isBusy,
-  onDetailTextChange,
   onFileSelect,
-  onParseText,
   onRefresh,
-  onRepairSectors,
-  onExport,
   onImport,
 }: FundProfilePanelProps) {
   const [selectedProfile, setSelectedProfile] = useState<FundProfile | null>(null);
@@ -55,9 +45,13 @@ export function FundProfilePanel({
         </button>
       </div>
 
-      <label className="group flex min-h-28 flex-col items-center justify-center rounded-[24px] border border-dashed border-indigo-300 bg-white/80 px-5 py-6 text-center transition hover:border-indigo-500 hover:bg-indigo-50/70">
+      <label
+        className={`group flex min-h-28 flex-col items-center justify-center rounded-[24px] border border-dashed border-indigo-300 bg-white/80 px-5 py-6 text-center transition hover:border-indigo-500 hover:bg-indigo-50/70 ${isBusy ? "pointer-events-none opacity-60" : ""}`}
+      >
         <FileImage className="mb-2 text-indigo-600" size={30} />
-        <span className="text-sm font-black text-slate-950">上传单基金详情截图</span>
+        <span className="text-sm font-black text-slate-950">
+          {isBusy ? "正在识别截图..." : "上传单基金详情截图"}
+        </span>
         <span className="mt-1 text-xs text-slate-500">
           识别基金代码、持有金额、份额、成本、关联板块（OCR 约 1–3 分钟）
         </span>
@@ -65,6 +59,7 @@ export function FundProfilePanel({
           type="file"
           accept="image/*"
           className="sr-only"
+          disabled={isBusy}
           onChange={(event) => {
             const file = event.target.files?.[0];
             if (file) {
@@ -75,45 +70,10 @@ export function FundProfilePanel({
         />
       </label>
 
-      <textarea
-        value={detailText}
-        onChange={(event) => onDetailTextChange(event.target.value)}
-        placeholder="也可以粘贴单基金详情页 OCR 文本..."
-        className="mt-4 min-h-24 w-full resize-y rounded-3xl border border-slate-200 bg-white px-5 py-4 text-sm leading-6 text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
-      />
-
-      <button
-        type="button"
-        onClick={onParseText}
-        disabled={isBusy}
-        className="mt-4 inline-flex w-full items-center justify-center rounded-full bg-indigo-600 px-5 py-3 text-sm font-black text-white shadow-[0_16px_36px_rgba(79,70,229,0.24)] transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
-      >
-        {isBusy ? "正在建档..." : "从详情文本建档"}
-      </button>
-
-      {onRepairSectors ? (
-        <button
-          type="button"
-          onClick={onRepairSectors}
-          disabled={isBusy}
-          className="mt-3 w-full rounded-full border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm font-bold text-amber-900 transition hover:bg-amber-100 disabled:opacity-50"
-        >
-          修复无效关联板块（如显示为 +）
-        </button>
-      ) : null}
-
-      <div className="mt-4 grid gap-2 sm:grid-cols-2">
-        <button
-          type="button"
-          onClick={onExport}
-          className="inline-flex items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 transition hover:border-indigo-300 hover:text-indigo-700"
-        >
-          <Download size={16} />
-          导出档案 JSON
-        </button>
-        <label className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 transition hover:border-indigo-300 hover:text-indigo-700">
+      {onImport ? (
+        <label className="mt-4 inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-600 transition hover:border-indigo-300 hover:text-indigo-700">
           <Upload size={16} />
-          导入档案 JSON
+          从 JSON 恢复档案（换机备用）
           <input
             type="file"
             accept="application/json,.json"
@@ -127,7 +87,7 @@ export function FundProfilePanel({
             }}
           />
         </label>
-      </div>
+      ) : null}
 
       <div className="mt-5 space-y-4">
         {profiles.length === 0 ? (

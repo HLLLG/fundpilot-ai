@@ -41,10 +41,10 @@ export function useSectorQuoteRefresh({
   enrichComputed = true,
 }: UseSectorQuoteRefreshOptions) {
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [sectorMetaByIndex, setSectorMetaByIndex] = useState<Record<number, SectorQuoteMeta>>({});
+  const [sectorMetaByFundCode, setSectorMetaByFundCode] = useState<Record<string, SectorQuoteMeta>>({});
   const [lastFetchedAt, setLastFetchedAt] = useState<string | null>(null);
   const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
-  const [autoIntervalMs, setAutoIntervalMs] = useState(120_000);
+  const [autoIntervalMs, setAutoIntervalMs] = useState(300_000);
   const [mappingQueue, setMappingQueue] = useState<MappingQueueItem[]>([]);
   const [refreshError, setRefreshError] = useState<string | null>(null);
   const [lastRefreshResult, setLastRefreshResult] = useState<RefreshSectorQuotesResult | null>(null);
@@ -71,10 +71,12 @@ export function useSectorQuoteRefresh({
         const kept = warningsRef.current.filter((warning) => !sectorCodes.has(warning.code));
         onWarningsChange?.([...kept, ...result.holding_warnings]);
       }
-      const metaMap: Record<number, SectorQuoteMeta> = {};
+      const metaMap: Record<string, SectorQuoteMeta> = {};
       const pending: MappingQueueItem[] = [];
       for (const item of result.items) {
-        metaMap[item.index] = item.sector_quote_meta;
+        if (item.fund_code) {
+          metaMap[item.fund_code] = item.sector_quote_meta;
+        }
         if (item.mapping_candidates.length > 0) {
           pending.push({
             index: item.index,
@@ -84,7 +86,7 @@ export function useSectorQuoteRefresh({
           });
         }
       }
-      setSectorMetaByIndex(metaMap);
+      setSectorMetaByFundCode(metaMap);
       setLastRefreshResult(result);
       if (result.ok) {
         setRefreshError(null);
@@ -102,13 +104,13 @@ export function useSectorQuoteRefresh({
   );
 
   const refresh = useCallback(
-    async (forceRefresh = false) => {
+    async (forceRefresh = false, budget: "fast" | "accurate" = "fast") => {
       if (!holdingsRef.current.length) {
         return;
       }
       setIsRefreshing(true);
       try {
-        const result = await refreshSectorQuotes(holdingsRef.current, { forceRefresh });
+        const result = await refreshSectorQuotes(holdingsRef.current, { forceRefresh, budget });
         applyRefreshResult(result);
       } catch (error) {
         const message = error instanceof Error ? error.message : "刷新板块涨跌失败。";
@@ -176,7 +178,7 @@ export function useSectorQuoteRefresh({
         if (!status.auto_refresh_allowed) {
           return;
         }
-        await refresh(false);
+        await refresh(false, "accurate");
       } catch {
         // background refresh errors are non-fatal
       }
@@ -190,7 +192,7 @@ export function useSectorQuoteRefresh({
 
   return {
     isRefreshing,
-    sectorMetaByIndex,
+    sectorMetaByFundCode,
     lastFetchedAt,
     autoRefreshEnabled,
     autoIntervalMs,

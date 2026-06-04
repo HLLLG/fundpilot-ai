@@ -1,4 +1,5 @@
-import type { FundProfile, Holding } from "@/lib/api";
+import type { FundProfile, Holding, SectorQuoteMeta } from "@/lib/api";
+import { isEstimateFallbackMeta } from "@/lib/sectorQuoteStatus";
 
 /** 档案/持仓展示用：关联板块短名 */
 export function profileRelatedBoardLabel(
@@ -25,6 +26,21 @@ export function holdingRelatedBoardLabel(
   return "—";
 }
 
+/** 与后端 sector_quote_lookup_label 一致：有场内指数用指数名，否则用关联板块名 */
+export function sectorQuoteLookupLabel(
+  holding: Pick<Holding, "sector_name" | "intraday_index_name">,
+): string | null {
+  const indexName = holding.intraday_index_name?.trim();
+  if (indexName && !isInvalidSectorLabel(indexName)) {
+    return indexName;
+  }
+  const boardName = holding.sector_name?.trim();
+  if (boardName && !isInvalidSectorLabel(boardName)) {
+    return boardName;
+  }
+  return null;
+}
+
 export function isInvalidSectorLabel(name: string | null | undefined): boolean {
   if (!name) {
     return true;
@@ -37,6 +53,55 @@ export function isInvalidSectorLabel(name: string | null | undefined): boolean {
     return true;
   }
   return !/[\u4e00-\u9fff]/.test(trimmed);
+}
+
+export type IntradayQuery = {
+  source_type: "index" | "concept" | "industry";
+  source_name: string;
+};
+
+/** 详情弹窗分时图：优先 live 板块映射，估值兜底时回退到场内指数/关联板块 */
+export function resolveIntradayQuery(
+  holding: Pick<Holding, "fund_name" | "sector_name" | "intraday_index_name">,
+  sectorMeta?: SectorQuoteMeta | null,
+): IntradayQuery | null {
+  const metaName = sectorMeta?.matched_name?.trim();
+  const metaType = sectorMeta?.source_type;
+  const fundHint = (holding.fund_name || "").trim();
+  const metaLooksLikeFund =
+    Boolean(metaName) &&
+    Boolean(fundHint) &&
+    (metaName === fundHint ||
+      metaName!.includes("ETF") ||
+      metaName!.includes("联接") ||
+      metaName!.includes("发起"));
+
+  if (
+    metaType &&
+    metaName &&
+    !isInvalidSectorLabel(metaName) &&
+    !isEstimateFallbackMeta(sectorMeta) &&
+    !metaLooksLikeFund
+  ) {
+    return { source_type: metaType, source_name: metaName };
+  }
+
+  const label = sectorQuoteLookupLabel(holding);
+  if (!label) {
+    return null;
+  }
+
+  const indexName = holding.intraday_index_name?.trim();
+  if (indexName && !isInvalidSectorLabel(indexName)) {
+    return { source_type: "index", source_name: indexName };
+  }
+
+  const boardName = holding.sector_name?.trim();
+  if (boardName && !isInvalidSectorLabel(boardName)) {
+    return { source_type: "concept", source_name: boardName };
+  }
+
+  return { source_type: "index", source_name: label };
 }
 
 export function showIntradayIndexHint(

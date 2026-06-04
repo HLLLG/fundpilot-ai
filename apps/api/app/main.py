@@ -69,6 +69,7 @@ from app.services.recommendation_outcomes import (
     build_weekly_recommendation_outcomes,
 )
 from app.services.report_export import report_to_markdown
+from app.services.sector_quote_diagnostic import run_sector_quote_diagnostic
 from app.services.sector_quote_service import apply_sector_mapping_choice, refresh_holdings_sector_quotes
 from app.services.sector_intraday_provider import fetch_sector_intraday
 from app.services.holding_detail_service import build_holding_detail
@@ -145,11 +146,11 @@ def allocate_penetration_daily(request: AllocatePenetrationRequest) -> dict:
 def refresh_sector_quotes(request: RefreshSectorQuotesRequest) -> dict:
     if not get_settings().sector_quotes_enabled:
         raise HTTPException(status_code=503, detail="板块实时行情已关闭")
-    # 前端同步调用设置5秒超时，快速返回快照而不等待AkShare
+    timeout_seconds = None if request.budget == "accurate" else 8.0
     result = refresh_holdings_sector_quotes(
         request.holdings,
         force_refresh=request.force_refresh,
-        timeout_seconds=5.0,  # 快速超时，使用缓存兜底
+        timeout_seconds=timeout_seconds,
     )
     if result.get("ok") and result.get("holdings"):
         refreshed = [Holding.model_validate(item) for item in result["holdings"]]
@@ -175,6 +176,13 @@ def apply_sector_mapping(request: SaveSectorMappingRequest) -> dict:
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/sector-quotes/diagnostic")
+def sector_quotes_diagnostic(timeout_seconds: float = 8.0) -> dict:
+    if not get_settings().sector_quotes_enabled:
+        raise HTTPException(status_code=503, detail="板块实时行情已关闭")
+    return run_sector_quote_diagnostic(timeout_seconds=timeout_seconds)
 
 
 @app.get("/api/sector-quotes/status")
@@ -464,7 +472,7 @@ def repair_fund_profile_sectors() -> dict:
 
     from app.database import _connect, save_fund_profile
     from app.models import FundProfile
-    from app.services.fund_profile import _sanitize_profile_sector_fields
+    from app.services.fund_profile import _sanitize_profile_sector_fields, infer_intraday_index_from_fund_name
 
     repaired = 0
     with _connect() as connection:
@@ -472,6 +480,15 @@ def repair_fund_profile_sectors() -> dict:
     for row in rows:
         raw = FundProfile.model_validate(json.loads(row["payload"]))
         cleaned = _sanitize_profile_sector_fields(raw)
+        inferred_index = infer_intraday_index_from_fund_name(cleaned.fund_name)
+        if inferred_index and not cleaned.intraday_index_name:
+            cleaned = cleaned.model_copy(update={"intraday_index_name": inferred_index})
+            if not cleaned.sector_name:
+                from app.services.fund_profile import _infer_related_board_label
+
+                cleaned = cleaned.model_copy(
+                    update={"sector_name": _infer_related_board_label(inferred_index)}
+                )
         if (
             raw.sector_name != cleaned.sector_name
             or raw.intraday_index_name != cleaned.intraday_index_name
@@ -513,6 +530,7 @@ def portfolio_dashboard() -> dict:
 @app.get("/api/portfolio/holdings")
 def portfolio_holdings() -> dict:
     holdings, source, snapshot_date = load_persisted_holdings()
+    holdings = FundProfileService().resolve_holdings(holdings)
     holdings = enrich_loaded_holdings(holdings)
     summary = get_portfolio_summary()
     profiles = FundProfileService().list_profiles()

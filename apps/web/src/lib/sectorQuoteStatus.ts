@@ -4,6 +4,22 @@ export function isEstimateFallbackMeta(meta?: SectorQuoteMeta | null): boolean {
   return meta?.provider === "tiantian-fund-estimate";
 }
 
+/** 板块行情拉取时间（后端 UTC ISO → 本地 HH:mm，供持仓校对展示） */
+export function formatSectorQuoteFetchedAt(iso: string | null | undefined): string | null {
+  if (!iso?.trim()) {
+    return null;
+  }
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) {
+    return iso.length >= 16 ? iso.slice(11, 16) : null;
+  }
+  return date.toLocaleTimeString("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+
 export function sectorQuoteBadgeLabel(meta?: SectorQuoteMeta | null): string | null {
   if (!meta) {
     return null;
@@ -31,7 +47,20 @@ export function buildSectorRefreshNotice(
   }
 
   const estimateFallback = result.summary.estimate_fallback ?? 0;
+  const boardMatched = result.summary.board_matched ?? 0;
   if (estimateFallback > 0) {
+    const partialReal =
+      boardMatched > 0 &&
+      (result.provider_path === "relay_live" ||
+        result.provider_path === "browser_live" ||
+        result.provider_path === "eastmoney_live");
+    if (partialReal) {
+      return {
+        tone: "amber",
+        title: "部分基金仍使用天天基金估值兜底",
+        description: `${boardMatched} 只已用真实关联板块涨跌，${estimateFallback} 只仍未匹配到板块行情，已改用天天基金估值补位。可运行诊断脚本检查东财/中继/浏览器链路。`,
+      };
+    }
     return {
       tone: "amber",
       title: "当前使用天天基金估值兜底",

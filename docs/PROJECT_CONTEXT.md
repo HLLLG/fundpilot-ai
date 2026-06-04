@@ -4,7 +4,9 @@
 >
 > **维护：** 功能或架构有实质变化时，同步更新「能力清单」「数据流」「API」「目录」「环境变量」。
 
-**文档版本：** 2026-06-03（养基宝持仓看板、板块实时三层兜底、首页持久化恢复、UI 双栏布局）
+**文档版本：** 2026-06-04（关联板块分时、931994 指数映射、东财 push2 排查记录）
+
+**分时 / push2 排查：** 见 [docs/design/2026-06-04-eastmoney-intraday-troubleshooting.md](design/2026-06-04-eastmoney-intraday-troubleshooting.md)（025856 → 中证电网设备主题 **931994**；`ERR_EMPTY_RESPONSE` 与缓存策略）。
 
 ---
 
@@ -30,7 +32,7 @@
 | 复盘/模拟 | outcomes / outcomes-weekly / rebalance-simulation |
 | 交易日语义 | `trading_session.py` + `trade_calendar_cache`（子进程拉日历，避免主进程 `py_mini_racer`）；`TradingSessionBar` |
 | 穿透估算 | 未收盘时按板块权重分配账户当日收益 |
-| 板块实时 | 东财 httpx 直连 + AkShare 子进程补全 + **单板块按需拉取**（`sector_on_demand`）；120s 自动 + 手动；低置信度 `SectorMappingModal`；分时 `GET /api/sector-quotes/intraday` |
+| 板块实时 | 东财 httpx 直连 + AkShare 子进程补全 + **单板块按需拉取**（`sector_on_demand`）；300s 自动 + 手动；低置信度 `SectorMappingModal`；分时 `GET /api/sector-quotes/intraday`（push2 `kline/get`，相对开盘；电网设备 **931994**） |
 | 阻塞清单 | `TodayBlockingChecklist` + `workflowBlockers` |
 | 数据备份 | SQLite export/import；`DatabaseBackupPanel` |
 | CI / E2E | GitHub Actions：pytest（**145+** 项）+ lint/typecheck/build + Playwright |
@@ -323,8 +325,8 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 
 ## 前端要点
 
-- **今日 Tab：** `YangjibaoHoldingsBoard` + `useSectorQuoteRefresh`（120s 自动刷新）；大屏 `xl:grid-cols` 双栏。
-- **基金档案 Tab：** `UploadDropzone` 总览 OCR；`FundProfilePanel` 详情建档。
+- **今日 / 生成日报 Tab：** 持仓看板 vs 工作流+风控+校对+`ReportPanel`。
+- **用户菜单：** 基金档案、仪表盘、历史日报（含 `HistoryRail`）；`FundProfilePanel` 详情建档。
 - **分析：** `ReportPanel` + `JobStatusFloat` 异步轮询。
 - **偏好：** `lib/storage.ts`（profile、analysisMode、sectorAutoRefresh）。
 
@@ -338,7 +340,7 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 |------|------|------|
 | `FUND_AI_SECTOR_QUOTES_ENABLED` | true | 关闭则不走 live 板块 |
 | `FUND_AI_SECTOR_QUOTES_TTL_SECONDS` | 60 | spot 缓存 TTL |
-| `FUND_AI_SECTOR_QUOTES_AUTO_INTERVAL_SECONDS` | 120 | 前端自动刷新间隔 |
+| `FUND_AI_SECTOR_QUOTES_AUTO_INTERVAL_SECONDS` | 300 | 前端自动刷新间隔 |
 | `FUND_AI_SECTOR_QUOTES_DISCREPANCY_WARN` | 0.5 | OCR vs 实时板块相差阈值（百分点） |
 | `FUND_AI_SECTOR_QUOTES_RELAY_URL` | — | 可选真实板块行情中继地址；返回 `boards` / `data` / 直接 `{ index, concept, industry }` 均可 |
 | `FUND_AI_SECTOR_QUOTES_RELAY_TIMEOUT_SECONDS` | 2.5 | 中继请求超时 |

@@ -1,0 +1,123 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import { BookMarked, ChevronDown, History, LayoutDashboard, User } from "lucide-react";
+
+export type UserMenuTarget = "profiles" | "dashboard" | "history";
+
+type UserMenuProps = {
+  onNavigate: (target: UserMenuTarget) => void;
+};
+
+const mockUser = {
+  name: "投研用户",
+  subtitle: "本地自用 · 稳健型",
+};
+
+export function UserMenu({ onNavigate }: UserMenuProps) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    const onPointerDown = (event: MouseEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  return (
+    <div ref={rootRef} className="relative z-50">
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        className="flex items-center gap-2 rounded-full border border-slate-200 bg-white py-1 pl-1 pr-2.5 shadow-sm transition hover:border-blue-200 hover:bg-blue-50/40"
+        aria-expanded={open}
+        aria-haspopup="menu"
+      >
+        <span className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-blue-600 to-indigo-500 text-sm font-black text-white shadow-[0_6px_16px_rgba(37,99,235,0.28)]">
+          {mockUser.name.slice(0, 1)}
+        </span>
+        <span className="hidden text-left sm:block">
+          <span className="block text-xs font-black text-slate-900">{mockUser.name}</span>
+          <span className="block max-w-[8rem] truncate text-[10px] font-semibold text-slate-500">
+            {mockUser.subtitle}
+          </span>
+        </span>
+        <ChevronDown
+          size={16}
+          className={`hidden text-slate-400 transition sm:block ${open ? "rotate-180" : ""}`}
+        />
+      </button>
+
+      {open ? (
+        <div
+          role="menu"
+          className="absolute right-0 z-[60] mt-2 w-56 overflow-hidden rounded-2xl border border-slate-200 bg-white py-1.5 shadow-[0_16px_40px_rgba(15,23,42,0.12)]"
+        >
+          <div className="border-b border-slate-100 px-3 py-2.5">
+            <div className="flex items-center gap-2.5">
+              <span className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-blue-600 to-indigo-500 text-white">
+                <User size={18} />
+              </span>
+              <div className="min-w-0">
+                <div className="truncate text-sm font-black text-slate-950">{mockUser.name}</div>
+                <div className="truncate text-[11px] font-semibold text-slate-500">{mockUser.subtitle}</div>
+              </div>
+            </div>
+          </div>
+          <button
+            type="button"
+            role="menuitem"
+            className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-bold text-slate-700 transition hover:bg-slate-50"
+            onClick={() => {
+              setOpen(false);
+              onNavigate("profiles");
+            }}
+          >
+            <BookMarked size={16} className="text-blue-600" />
+            基金档案
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-bold text-slate-700 transition hover:bg-slate-50"
+            onClick={() => {
+              setOpen(false);
+              onNavigate("dashboard");
+            }}
+          >
+            <LayoutDashboard size={16} className="text-blue-600" />
+            仪表盘
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-bold text-slate-700 transition hover:bg-slate-50"
+            onClick={() => {
+              setOpen(false);
+              onNavigate("history");
+            }}
+          >
+            <History size={16} className="text-blue-600" />
+            历史日报
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
