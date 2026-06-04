@@ -21,7 +21,14 @@
 
 旧链 `zs931151.html` 会 404，且代码本身不是电网设备主题。
 
-**东财 API：** 分钟 K 线优先 `secid=2.931994`（`kline/get`），与 spot 用的 `0.xxx` 可能不同。
+**东财 API：** 分钟 K 线 `secid=2.931994`，路径 `api/qt/stock/kline/get`。
+
+| 场景 | Host | 关键参数 |
+|------|------|----------|
+| 浏览器日 K（zz 页） | **`push2his.eastmoney.com`** | `klt=101`、`fqt=1`、`ut=fa5fd1943…` → 按**日**的 klines |
+| FundPilot 分时 | **优先 `push2his`**，再 `push2` | `klt=1`、`fqt=0` → 09:30–15:00 **分钟** |
+
+侧边报价 `ulist/get` 走 `push2.eastmoney.com`，易 `ERR_EMPTY_RESPONSE`；**分时以 `kline/get` 为准**。
 
 ### 2. 分时语义（养基宝对齐）
 

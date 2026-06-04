@@ -17,12 +17,18 @@ _HEADERS = {
     "Accept": "*/*",
 }
 
-# 与 spot 一致走 push2；少 host 降低并发，避免 ERR_EMPTY_RESPONSE / 限流
-_PUSH2_HOSTS = ("79", "88", "48")
+# 指数页 K 线走 push2his（与 zz/2.931994 浏览器一致）；push2 在部分网络下 ERR_EMPTY_RESPONSE
+_KLINE_URLS = (
+    "https://push2his.eastmoney.com/api/qt/stock/kline/get",
+    "https://79.push2his.eastmoney.com/api/qt/stock/kline/get",
+    "https://79.push2.eastmoney.com/api/qt/stock/kline/get",
+    "https://88.push2.eastmoney.com/api/qt/stock/kline/get",
+)
 
 _PUSH2HIS_HOSTS = ("push2his.eastmoney.com", "79.push2his.eastmoney.com")
 
-_KLINE_UT = "7eea3edcaed734bea9cbfc24409ed989"
+# 浏览器 zz 页 kline 用 fa5fd…；旧 push2 分钟接口用 7eea…
+_KLINE_UTS = ("fa5fd1943c7b386f172d6893dbfba10b", "7eea3edcaed734bea9cbfc24409ed989")
 _TRENDS_UT = "bd1d9ddb04089700cf9c27f6f7426281"
 
 IntradayPoint = dict[str, str | float]
@@ -102,9 +108,9 @@ def _fetch_kline_intraday(
     max_retries: int,
     proxies: dict[str, None],
 ) -> list[IntradayPoint]:
-    params = {
+    """分钟 K：klt=1（勿用页面日 K 的 klt=101）。"""
+    base_params = {
         "secid": secid,
-        "ut": _KLINE_UT,
         "fields1": "f1,f2,f3,f4,f5,f6",
         "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
         "klt": "1",
@@ -114,17 +120,18 @@ def _fetch_kline_intraday(
     }
     last_error: Exception | None = None
     for attempt in range(max_retries):
-        for host in _PUSH2_HOSTS:
-            url = f"https://{host}.push2.eastmoney.com/api/qt/stock/kline/get"
-            try:
-                response = session.get(url, params=params, timeout=timeout, proxies=proxies)
-                response.raise_for_status()
-                points = _parse_kline_payload(response.json(), trade_date=trade_date)
-                if points:
-                    return points
-            except Exception as exc:
-                last_error = exc
-                logger.debug("eastmoney kline %s host=%s failed: %s", secid, host, exc)
+        for ut in _KLINE_UTS:
+            params = {**base_params, "ut": ut}
+            for url in _KLINE_URLS:
+                try:
+                    response = session.get(url, params=params, timeout=timeout, proxies=proxies)
+                    response.raise_for_status()
+                    points = _parse_kline_payload(response.json(), trade_date=trade_date)
+                    if points:
+                        return points
+                except Exception as exc:
+                    last_error = exc
+                    logger.debug("eastmoney kline %s url=%s failed: %s", secid, url, exc)
         if attempt + 1 < max_retries:
             time.sleep(0.4 * (attempt + 1))
     if last_error:

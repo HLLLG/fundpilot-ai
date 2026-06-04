@@ -93,7 +93,9 @@ def test_fetch_eastmoney_intraday_trends_kline_path(monkeypatch):
 
         def get(self, url, params=None, timeout=None, proxies=None):
             assert "kline/get" in url
+            assert "push2his" in url
             assert params["secid"] == "2.931994"
+            assert params["klt"] == "1"
             return FakeResponse(
                 {
                     "data": {
