@@ -24,3 +24,5 @@ apps/api/.uvicorn-*.log
 apps/web/.next/
 apps/web/node_modules/
 apps/web/test-results/
+CLEANUP_REPORT.md
+COMMIT_EDITMSG_TMP
