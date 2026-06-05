@@ -137,12 +137,14 @@ def _load_intraday_from_network(
         stale = get_spot_snapshot(cache_key, ttl_seconds=_INTRADAY_STALE_TTL_SECONDS)
         stale_points = stale.get("points", []) if stale else []
         if len(stale_points) >= _MIN_INTRADAY_POINTS_TO_CACHE:
-            return (
-                stale_points,
-                stale.get("note") or f"展示 {trade_date} 缓存分时（数据源暂不可用）",
-                trade_date,
-                stale.get("close_change_percent"),
-            )
+            stale_max_abs = max(abs(p.get("percent", 0) or 0) for p in stale_points)
+            if stale_max_abs >= 0.1:
+                return (
+                    stale_points,
+                    stale.get("note") or f"展示 {trade_date} 缓存分时（数据源暂不可用）",
+                    trade_date,
+                    stale.get("close_change_percent"),
+                )
 
     if not points:
         note = note or "暂无分时数据（数据源未返回或板块未映射）"
@@ -158,15 +160,16 @@ def _load_intraday_from_network(
             close_change_percent = float(last_percent)
 
     if len(points) >= _MIN_INTRADAY_POINTS_TO_CACHE:
-        # 健全性检查：所有点都在 ±0.1 范围内说明 percent 没有乘以 100，拒绝写缓存
+        # 健全性检查：所有点都在 ±0.1 范围内说明 percent 没有乘以 100，拒绝写缓存也不返回
         max_abs = max(abs(p.get("percent", 0) or 0) for p in points)
         if max_abs < 0.1:
             logger.warning(
                 "intraday points for %s look like fractions not percentages "
-                "(max_abs=%.5f), skipping cache write",
+                "(max_abs=%.5f), discarding",
                 cache_key,
                 max_abs,
             )
+            points = []
         else:
             save_spot_snapshot(
                 cache_key,
@@ -177,6 +180,20 @@ def _load_intraday_from_network(
                     "close_change_percent": close_change_percent,
                 },
             )
+
+    if not points:
+        stale = get_spot_snapshot(cache_key, ttl_seconds=_INTRADAY_STALE_TTL_SECONDS)
+        stale_points = stale.get("points", []) if stale else []
+        if len(stale_points) >= _MIN_INTRADAY_POINTS_TO_CACHE:
+            stale_max_abs = max(abs(p.get("percent", 0) or 0) for p in stale_points)
+            if stale_max_abs >= 0.1:
+                return (
+                    stale_points,
+                    stale.get("note") or f"展示 {trade_date} 缓存分时（数据源暂不可用）",
+                    trade_date,
+                    stale.get("close_change_percent"),
+                )
+
     return points, note, trade_date, close_change_percent
 
 

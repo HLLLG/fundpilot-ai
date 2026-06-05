@@ -24,6 +24,7 @@ _EM_COMMON_PARAMS = {"invt": "2", "fltt": "2"}
 
 # 指数页 K 线走 push2his（与 zz/2.931994 浏览器一致）；push2 在部分网络下 ERR_EMPTY_RESPONSE
 _KLINE_URLS = (
+    "https://push2delay.eastmoney.com/api/qt/stock/kline/get",
     "https://push2his.eastmoney.com/api/qt/stock/kline/get",
     "https://79.push2his.eastmoney.com/api/qt/stock/kline/get",
     "https://79.push2.eastmoney.com/api/qt/stock/kline/get",
@@ -207,7 +208,14 @@ def _apply_referer(
 def _kline_beg_end(trade_date: str | None) -> tuple[str, str]:
     if trade_date:
         ymd = trade_date.replace("-", "")
-        return ymd, ymd
+        # 往前多取 7 天，确保 klines 包含昨收行（_prior_close_from_klines 需要）
+        from datetime import date, timedelta
+        try:
+            d = date.fromisoformat(trade_date)
+            beg = (d - timedelta(days=7)).strftime("%Y%m%d")
+        except Exception:
+            beg = ymd
+        return beg, ymd
     return "0", "20500000"
 
 
