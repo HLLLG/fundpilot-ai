@@ -1,6 +1,7 @@
-# 东财 push2 分时与指数映射（2026-06-04，持续更新）
+# 东财 push2 分时与指数映射
 
-> 供换机自测、后续改 `eastmoney_trends_client` / `sector_canonical` 时查阅。
+**状态：** 运维参考（架构摘要见 [PROJECT_CONTEXT.md](../PROJECT_CONTEXT.md)）  
+> 供换机自测、改 `eastmoney_trends_client` / `sector_canonical` 时查阅。
 
 ## 问题现象
 

@@ -98,8 +98,10 @@ export function IntradayPercentChart({ points, height = 200 }: IntradayPercentCh
     );
   }
 
+  const closing = chart.coords[chart.coords.length - 1];
   const activeIndex = hoverIndex ?? chart.coords.length - 1;
   const active = chart.coords[activeIndex];
+  const showClosingHint = hoverIndex != null && hoverIndex !== chart.coords.length - 1;
 
   return (
     <div ref={containerRef} className="relative w-full">
@@ -173,6 +175,11 @@ export function IntradayPercentChart({ points, height = 200 }: IntradayPercentCh
       </svg>
       <div className="absolute left-2 top-2 rounded-lg bg-white/90 px-2 py-1 text-[11px] font-bold tabular-nums text-slate-700 shadow-sm">
         {formatTimeLabel(active.time)} · {formatRangePercent(active.percent)}
+        {showClosingHint ? (
+          <span className="ml-1.5 font-semibold text-slate-400">
+            （收盘 {formatTimeLabel(closing.time)} {formatRangePercent(closing.percent)}）
+          </span>
+        ) : null}
       </div>
     </div>
   );

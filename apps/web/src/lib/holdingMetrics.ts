@@ -150,28 +150,6 @@ export function computeHoldingWeight(
   return round2((holding.holding_amount / totalAssets) * 100);
 }
 
-/** 持有份额与单位成本（需最新净值） */
-export function computeHoldingUnits(
-  holding: Holding,
-  latestNav: number | null | undefined,
-): { shares: number; unitCost: number } | null {
-  if (!latestNav || latestNav <= 0 || holding.holding_amount <= 0) {
-    return null;
-  }
-  const costBasis = computeCostBasis(holding);
-  if (costBasis == null) {
-    return null;
-  }
-  const shares = round2(holding.holding_amount / latestNav);
-  if (shares <= 0) {
-    return null;
-  }
-  return {
-    shares,
-    unitCost: round2(costBasis / shares),
-  };
-}
-
 export function formatPlainMoney(value: number | null | undefined) {
   if (value === null || value === undefined) {
     return "—";

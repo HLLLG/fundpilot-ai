@@ -149,7 +149,6 @@ def test_fund_519674_semiconductor_primary_not_domestic_compute():
     profile = parse_profile_from_text(FUND_519674)
     assert profile is not None
     assert profile.fund_code == "519674"
-    assert profile.intraday_index_name is None
     assert profile.sector_name == "半导体"
     assert profile.sector_return_percent == 4.01
 
@@ -161,6 +160,35 @@ def test_fund_519674_semiconductor_primary_not_domestic_compute():
         sector_name=profile.sector_name,
     )
     assert sector_quote_lookup_label(holding) == "半导体"
+
+
+def test_fund_519674_intraday_index_from_sector_on_resolve(tmp_path, monkeypatch):
+    from app.database import save_fund_profile
+    from app.models import FundProfile
+    from app.services.fund_profile import FundProfileService
+
+    db_path = tmp_path / "test.db"
+    monkeypatch.setenv("FUND_AI_DB_PATH", str(db_path))
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+
+    save_fund_profile(
+        FundProfile(
+            fund_code="519674",
+            fund_name="银河创新成长混合A",
+            sector_name="半导体",
+        )
+    )
+    holding = Holding(
+        fund_code="519674",
+        fund_name="银河创新成长混合A",
+        holding_amount=4042.24,
+        return_percent=1.94,
+        sector_name="半导体",
+    )
+    resolved = FundProfileService().resolve_holding(holding)
+    assert resolved.intraday_index_name == "中证半导体"
 
 
 def test_reject_percent_only_related_board_line(tmp_path, monkeypatch):

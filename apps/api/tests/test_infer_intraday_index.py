@@ -1,5 +1,9 @@
 from app.models import Holding
-from app.services.fund_profile import FundProfileService, infer_intraday_index_from_fund_name
+from app.services.fund_profile import (
+    FundProfileService,
+    infer_intraday_index_from_fund_name,
+    infer_intraday_index_from_sector,
+)
 from app.services.sector_quote_label import sector_quote_lookup_label
 
 
@@ -9,6 +13,14 @@ def test_infer_intraday_index_from_etf_feeder_name():
 
 def test_infer_intraday_index_from_ai_etf_feeder_without_csi_prefix():
     assert infer_intraday_index_from_fund_name("华夏人工智能ETF联接C") == "中证人工智能"
+
+
+def test_infer_intraday_index_from_semiconductor_board():
+    assert infer_intraday_index_from_sector("半导体") == "中证半导体"
+
+
+def test_infer_intraday_index_from_commercial_aerospace_has_no_csi_index():
+    assert infer_intraday_index_from_sector("商业航天") is None
 
 
 def test_resolve_holding_restores_csi_grid_index_for_025856(tmp_path, monkeypatch):

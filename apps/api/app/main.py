@@ -16,12 +16,10 @@ from app.database import (
     database_file_path,
     get_baseline_report_by_days,
     get_fund_profile_by_code,
-    get_ocr_text_cache,
     get_previous_report,
     get_report,
     import_database_file,
     list_reports,
-    save_ocr_text_cache,
 )
 from app.lifespan import app_lifespan
 from app.database import list_report_chat_messages
@@ -36,14 +34,10 @@ from app.models import (
     SaveSectorMappingRequest,
 )
 from app.services.analyze_pipeline import run_analysis
-from app.database import get_portfolio_summary, save_portfolio_summary
+from app.database import get_portfolio_summary
 from app.services.fund_data import FundDataService
 from app.services.fund_profile import FundProfileService, parse_profile_from_text
-from app.services.holding_validation import (
-    build_holding_review,
-    enrich_portfolio_summary_source,
-    validate_holdings,
-)
+from app.services.holding_validation import validate_holdings
 from app.services.penetration_daily_allocator import allocate_penetration_daily_profit
 from app.services.holding_estimates import sum_daily_profit
 from app.services.portfolio_holdings_service import (
@@ -51,15 +45,10 @@ from app.services.portfolio_holdings_service import (
     sync_portfolio_from_profiles,
 )
 from app.services.portfolio_persistence import enrich_loaded_holdings, persist_holdings_after_sector_refresh
-from app.services.portfolio_snapshot import (
-    build_dashboard_payload,
-    get_previous_holdings_for_review,
-    save_daily_snapshot,
-)
+from app.services.portfolio_snapshot import build_dashboard_payload
 from app.services.job_store import create_analysis_job, get_job_response
 from app.services.ocr_engine import OcrEngine
 from app.services.ocr_pipeline import run_ocr_upload_pipeline
-from app.services.ocr_parser import parse_holdings_from_text
 from app.services.report_diff import diff_reports
 from app.services.report_chat import stream_report_chat
 from app.services.report_chat_export import report_chat_to_markdown
@@ -210,7 +199,7 @@ def sector_quotes_intraday(
 ) -> dict:
     if not get_settings().sector_quotes_enabled:
         raise HTTPException(status_code=503, detail="板块实时行情已关闭")
-    points, note, session_date = fetch_sector_intraday(
+    points, note, session_date, close_change_percent = fetch_sector_intraday(
         source_type,
         source_name,
         force_refresh=force_refresh,
@@ -221,6 +210,7 @@ def sector_quotes_intraday(
         "points": points,
         "note": note,
         "session_date": session_date,
+        "close_change_percent": close_change_percent,
     }
 
 
@@ -472,7 +462,11 @@ def repair_fund_profile_sectors() -> dict:
 
     from app.database import _connect, save_fund_profile
     from app.models import FundProfile
-    from app.services.fund_profile import _sanitize_profile_sector_fields, infer_intraday_index_from_fund_name
+    from app.services.fund_profile import (
+        _sanitize_profile_sector_fields,
+        infer_intraday_index_from_fund_name,
+        infer_intraday_index_from_sector,
+    )
 
     repaired = 0
     with _connect() as connection:
@@ -480,7 +474,9 @@ def repair_fund_profile_sectors() -> dict:
     for row in rows:
         raw = FundProfile.model_validate(json.loads(row["payload"]))
         cleaned = _sanitize_profile_sector_fields(raw)
-        inferred_index = infer_intraday_index_from_fund_name(cleaned.fund_name)
+        inferred_index = infer_intraday_index_from_sector(cleaned.sector_name)
+        if not inferred_index:
+            inferred_index = infer_intraday_index_from_fund_name(cleaned.fund_name)
         if inferred_index and not cleaned.intraday_index_name:
             cleaned = cleaned.model_copy(update={"intraday_index_name": inferred_index})
             if not cleaned.sector_name:

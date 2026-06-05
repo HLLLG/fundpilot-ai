@@ -292,10 +292,6 @@ def _match_holding(
     return None, None
 
 
-def holdings_have_settled_daily(holdings: list[Holding]) -> bool:
-    return _holdings_have_settled_daily(holdings)
-
-
 def infer_daily_profit_source(
     portfolio_summary: PortfolioSummary | None,
     holdings: list[Holding],

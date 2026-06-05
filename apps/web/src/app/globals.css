@@ -4,12 +4,8 @@
   --background: #f4f7fc;
   --foreground: #0f172a;
   --panel: rgba(255, 255, 255, 0.94);
-  --panel-strong: #ffffff;
   --line: rgba(15, 23, 42, 0.08);
   --brand: #1565e8;
-  --mint: #0d9488;
-  --coral: #e85d4a;
-  --gold: #d97706;
 }
 
 * {

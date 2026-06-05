@@ -69,6 +69,10 @@ class FundProfileService:
         if not index_name or not _looks_like_index_name(index_name):
             index_name = profile.intraday_index_name
         if not index_name or not _looks_like_index_name(index_name):
+            index_name = infer_intraday_index_from_sector(sector_name)
+        if not index_name or not _looks_like_index_name(index_name):
+            index_name = infer_intraday_index_from_sector(profile.sector_name)
+        if not index_name or not _looks_like_index_name(index_name):
             index_name = infer_intraday_index_from_fund_name(
                 holding.fund_name or profile.fund_name
             )
@@ -549,6 +553,10 @@ def _sanitize_profile_sector_fields(profile: FundProfile) -> FundProfile:
         intraday_index_name,
     )
     if not intraday_index_name:
+        inferred = infer_intraday_index_from_sector(sector_name)
+        if inferred:
+            intraday_index_name = inferred
+    if not intraday_index_name:
         inferred = infer_intraday_index_from_fund_name(profile.fund_name)
         if inferred:
             intraday_index_name = inferred
@@ -613,6 +621,19 @@ def _looks_like_index_name(name: str) -> bool:
     if name.startswith("中证") or name.startswith("上证") or name.startswith("深证"):
         return True
     return name.endswith("指数") or "ETF" in name
+
+
+def infer_intraday_index_from_sector(sector_name: str | None) -> str | None:
+    """关联板块短名 → 东财 zz 指数（如 半导体→中证半导体 931865）。"""
+    if not sector_name or not _is_valid_sector_label(sector_name):
+        return None
+    from app.services.sector_canonical import _BOARD_TO_INTRADAY_INDEX
+    from app.services.sector_labels import normalize_sector_label
+
+    label = normalize_sector_label(sector_name)
+    if not label:
+        return None
+    return _BOARD_TO_INTRADAY_INDEX.get(label)
 
 
 def infer_intraday_index_from_fund_name(fund_name: str | None) -> str | None:

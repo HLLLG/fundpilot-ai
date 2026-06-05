@@ -39,11 +39,18 @@ def _is_trading_hours() -> bool:
     return session.get("session_kind") == "trading_day_intraday"
 
 
-def _get_today_trade_date() -> str:
-    from datetime import datetime
+def _get_last_trade_date() -> str:
+    """Return the most recent trading date in CN timezone (walks back from today on weekends/holidays)."""
+    from datetime import datetime, timedelta
     from zoneinfo import ZoneInfo
+    from app.services.trading_session import _is_trading_day
     cn_tz = ZoneInfo("Asia/Shanghai")
-    return datetime.now(cn_tz).strftime("%Y-%m-%d")
+    candidate = datetime.now(cn_tz).date()
+    for _ in range(7):
+        if _is_trading_day(candidate):
+            return candidate.isoformat()
+        candidate -= timedelta(days=1)
+    return candidate.isoformat()
 
 
 def refresh_holdings_sector_quotes(
@@ -222,7 +229,7 @@ def refresh_holdings_sector_quotes(
 
         new_holding = holding
         if result.confidence in {"high", "medium"} and result.change_percent is not None:
-            trade_date = _get_today_trade_date()
+            trade_date = _get_last_trade_date()
             nav_return = get_official_nav_return(holding.fund_code, trade_date) if holding.fund_code else None
 
             if nav_return is not None:

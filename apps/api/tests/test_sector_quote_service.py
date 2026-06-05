@@ -7,7 +7,7 @@ from app.services.sector_quote_service import refresh_holdings_sector_quotes
 
 @pytest.fixture(autouse=True)
 def disable_live_kline_quotes(monkeypatch):
-    """单测不访问东财 K 线；需 K 线行为的用例自行覆盖 mock。"""
+    """单测不访问东财 K 线或官方净值；需相关行为的用例自行覆盖 mock。"""
     monkeypatch.setattr(
         "app.services.sector_canonical.fetch_eastmoney_kline_close_percent",
         lambda *args, **kwargs: None,
@@ -15,6 +15,10 @@ def disable_live_kline_quotes(monkeypatch):
     monkeypatch.setattr(
         "app.services.sector_quote_service.prefetch_canonical_kline_quotes",
         lambda *_args, **_kwargs: 0,
+    )
+    monkeypatch.setattr(
+        "app.services.sector_quote_service.get_official_nav_return",
+        lambda fund_code, trade_date: None,
     )
 
 

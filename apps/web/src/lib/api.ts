@@ -229,11 +229,6 @@ export type FundProfile = {
   upload_path?: string | null;
 };
 
-export type ProfileSyncResult = {
-  updated: number;
-  created: number;
-};
-
 export type PortfolioSummary = {
   total_assets?: number | null;
   daily_profit?: number | null;
@@ -283,21 +278,6 @@ export type PortfolioDashboardData = {
   snapshot_count: number;
   latest_snapshot_date?: string | null;
   profiles?: FundProfile[];
-};
-
-export type OcrResponse = {
-  raw_text: string;
-  upload_path: string | null;
-  holdings: Holding[];
-  error?: string;
-  cache_hit?: boolean;
-  profile_sync?: ProfileSyncResult;
-  sector_refresh?: RefreshSectorQuotesResult | null;
-  portfolio_summary?: PortfolioSummary | null;
-  holding_warnings?: HoldingFieldWarning[];
-  holding_diffs?: HoldingListDiff[];
-  previous_holdings?: Holding[];
-  warning_count?: number;
 };
 
 export type AnalysisJob = {
@@ -556,38 +536,6 @@ export async function fetchSectorIntraday(
   return response.json();
 }
 
-export async function parseOcr(
-  formData: FormData,
-  options?: { timeoutMs?: number },
-): Promise<OcrResponse> {
-  const timeoutMs = options?.timeoutMs ?? 180_000;
-  const controller = new AbortController();
-  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(`${API_BASE}/api/ocr`, {
-      method: "POST",
-      body: formData,
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      throw new Error(await response.text());
-    }
-    return response.json();
-  } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") {
-      throw new Error(
-        "识别超时（首次 OCR 可能要 1–3 分钟）。请确认 API 在运行后重试，或改用手动粘贴文本。",
-      );
-    }
-    if (error instanceof TypeError) {
-      throw new Error("无法连接后端 API（127.0.0.1:8000），请检查 dev 服务是否仍在运行。");
-    }
-    throw error;
-  } finally {
-    window.clearTimeout(timer);
-  }
-}
-
 function analysisPayload(
   holdings: Holding[],
   profile: InvestorProfile,
@@ -626,26 +574,6 @@ export async function fetchAnalysisJob(jobId: string): Promise<AnalysisJob> {
     throw new Error(await response.text());
   }
   return response.json();
-}
-
-export async function waitForAnalysisJob(
-  jobId: string,
-  options?: { intervalMs?: number; timeoutMs?: number },
-): Promise<Report> {
-  const intervalMs = options?.intervalMs ?? 1500;
-  const timeoutMs = options?.timeoutMs ?? 600_000;
-  const started = Date.now();
-  while (Date.now() - started < timeoutMs) {
-    const job = await fetchAnalysisJob(jobId);
-    if (job.status === "completed" && job.report) {
-      return job.report;
-    }
-    if (job.status === "failed") {
-      throw new Error(job.error ?? "分析任务失败");
-    }
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
-  }
-  throw new Error("分析任务超时，请稍后在历史记录中查看。");
 }
 
 export async function listReports(): Promise<Report[]> {
@@ -853,16 +781,6 @@ export async function fetchReportMarkdown(reportId: string): Promise<string> {
   return body.markdown as string;
 }
 
-export async function exportFundProfiles(): Promise<{ profiles: FundProfile[] }> {
-  const response = await fetch(`${API_BASE}/api/fund-profiles/export`, {
-    cache: "no-store",
-  });
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  return response.json();
-}
-
 export async function importFundProfiles(profiles: FundProfile[]): Promise<{ saved: number }> {
   const response = await fetch(`${API_BASE}/api/fund-profiles/import`, {
     method: "POST",
@@ -926,20 +844,6 @@ export async function fetchPortfolioDashboard(): Promise<PortfolioDashboardData>
 export async function listFundProfiles(): Promise<FundProfile[]> {
   const response = await fetch(`${API_BASE}/api/fund-profiles`, {
     cache: "no-store",
-  });
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  return response.json();
-}
-
-export async function repairFundProfileSectors(): Promise<{
-  ok: boolean;
-  repaired: number;
-  synced_holdings?: Holding[];
-}> {
-  const response = await fetch(`${API_BASE}/api/fund-profiles/repair-sectors`, {
-    method: "POST",
   });
   if (!response.ok) {
     throw new Error(await response.text());

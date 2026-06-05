@@ -60,6 +60,7 @@ class Settings(BaseSettings):
     sector_quotes_relay_token: str | None = None
     sector_quotes_browser_enabled: bool = False
     sector_quotes_browser_command: str | None = None
+    sector_intraday_browser_command: str | None = None
     sector_quotes_browser_timeout_seconds: float = 4.0
 
     @field_validator("db_auto_import_path", mode="before")

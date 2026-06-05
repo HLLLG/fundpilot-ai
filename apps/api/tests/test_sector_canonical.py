@@ -13,6 +13,16 @@ def test_fetch_canonical_commercial_aerospace(monkeypatch):
     assert boards["concept"]["商业航天"] == 3.88
 
 
+def test_intraday_canonical_maps_semiconductor_board_to_csi_index():
+    from app.services.sector_canonical import get_intraday_canonical_sector
+
+    canon = get_intraday_canonical_sector("半导体")
+    assert canon is not None
+    assert canon.source_type == "index"
+    assert canon.source_code == "931865"
+    assert canon.eastmoney_secid == "2.931865"
+
+
 def test_fuzzy_match_blocks_wrong_aerospace_name():
     from app.services.sector_quote_resolver import _fuzzy_sector_match
 

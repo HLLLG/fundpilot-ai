@@ -81,7 +81,6 @@ const primaryTabs: Array<{
 ];
 
 export function Dashboard() {
-  const [rawText] = useState("");
   const [holdings, setHoldings] = useState<Holding[]>([]);
   const [profile, setProfile] = useState<InvestorProfile>(defaultProfile);
   const [report, setReport] = useState<Report | null>(null);
@@ -243,7 +242,7 @@ export function Dashboard() {
     setIsSubmitting(true);
     setMessage(null);
     try {
-      const jobId = await startAnalyzeJob(targetHoldings, profile, rawText, analysisMode);
+      const jobId = await startAnalyzeJob(targetHoldings, profile, undefined, analysisMode);
       setActiveJobId(jobId);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "提交分析任务失败。");
@@ -447,7 +446,7 @@ export function Dashboard() {
                   </div>
                 </div>
               </div>
-              {holdings.length > 0 || rawText ? (
+              {holdings.length > 0 ? (
                 <CollapsibleReviewSection
                   open={reviewTableOpen}
                   onToggle={() => setReviewTableOpen((open) => !open)}

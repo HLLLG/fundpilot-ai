@@ -65,17 +65,6 @@ def _fetch_fund_estimate_quote_for_code(
         return _fetch_fund_estimate_quote(session, fund_code, timeout_seconds=timeout_seconds)
 
 
-
-def fetch_fund_estimate_quote(
-    fund_code: str,
-    *,
-    timeout_seconds: float = 6.0,
-) -> dict[str, Any] | None:
-    with _build_session() as session:
-        return _fetch_fund_estimate_quote(session, fund_code, timeout_seconds=timeout_seconds)
-
-
-
 def _build_session() -> requests.Session:
     session = requests.Session()
     session.headers.update(_HEADERS)

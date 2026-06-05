@@ -60,11 +60,36 @@ export type IntradayQuery = {
   source_name: string;
 };
 
-/** 详情弹窗分时图：优先 live 板块映射，估值兜底时回退到场内指数/关联板块 */
+/** 关联板块短名 → 东财 zz 指数分时（与 apps/api sector_canonical 一致） */
+const BOARD_TO_INTRADAY_INDEX: Record<string, string> = {
+  半导体: "中证半导体",
+  电网设备: "中证电网设备",
+  人工智能: "中证人工智能",
+};
+
+function intradayIndexForBoard(boardName: string | null | undefined): string | null {
+  const trimmed = boardName?.trim();
+  if (!trimmed || isInvalidSectorLabel(trimmed)) {
+    return null;
+  }
+  return BOARD_TO_INTRADAY_INDEX[trimmed] ?? null;
+}
+
+/** 详情弹窗分时图：有场内指数则走指数 K 线（008586→中证人工智能），概念板块名无分钟线 */
 export function resolveIntradayQuery(
   holding: Pick<Holding, "fund_name" | "sector_name" | "intraday_index_name">,
   sectorMeta?: SectorQuoteMeta | null,
 ): IntradayQuery | null {
+  const indexName = holding.intraday_index_name?.trim();
+  if (indexName && !isInvalidSectorLabel(indexName)) {
+    return { source_type: "index", source_name: indexName };
+  }
+
+  const boardIndex = intradayIndexForBoard(holding.sector_name);
+  if (boardIndex) {
+    return { source_type: "index", source_name: boardIndex };
+  }
+
   const metaName = sectorMeta?.matched_name?.trim();
   const metaType = sectorMeta?.source_type;
   const fundHint = (holding.fund_name || "").trim();
@@ -81,8 +106,13 @@ export function resolveIntradayQuery(
     metaName &&
     !isInvalidSectorLabel(metaName) &&
     !isEstimateFallbackMeta(sectorMeta) &&
-    !metaLooksLikeFund
+    !metaLooksLikeFund &&
+    metaType !== "concept"
   ) {
+    const mappedIndex = intradayIndexForBoard(metaName);
+    if (mappedIndex) {
+      return { source_type: "index", source_name: mappedIndex };
+    }
     return { source_type: metaType, source_name: metaName };
   }
 
@@ -91,13 +121,12 @@ export function resolveIntradayQuery(
     return null;
   }
 
-  const indexName = holding.intraday_index_name?.trim();
-  if (indexName && !isInvalidSectorLabel(indexName)) {
-    return { source_type: "index", source_name: indexName };
-  }
-
   const boardName = holding.sector_name?.trim();
   if (boardName && !isInvalidSectorLabel(boardName)) {
+    const mappedIndex = intradayIndexForBoard(boardName);
+    if (mappedIndex) {
+      return { source_type: "index", source_name: mappedIndex };
+    }
     return { source_type: "concept", source_name: boardName };
   }
 

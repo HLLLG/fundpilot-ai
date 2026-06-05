@@ -6,10 +6,6 @@ from app.services.nav_trend_summary import summarize_nav_history
 
 
 class FundDataService:
-    def get_snapshots(self, holdings: list[Holding]) -> list[FundSnapshot]:
-        snapshots, _ = self.get_snapshots_with_nav_trends(holdings)
-        return snapshots
-
     def get_snapshots_with_nav_trends(
         self,
         holdings: list[Holding],
@@ -30,17 +26,6 @@ class FundDataService:
                     trend, recent_sample=sample
                 ) or {}
         return snapshots, trends
-
-    def get_nav_trends_for_holdings(
-        self,
-        holdings: list[Holding],
-        *,
-        trading_days: int | None = None,
-    ) -> dict[str, dict]:
-        _, trends = self.get_snapshots_with_nav_trends(
-            holdings, trading_days=trading_days
-        )
-        return trends
 
     def get_nav_history(
         self,
@@ -67,25 +52,6 @@ class FundDataService:
                 fund_name=fund_name,
                 source="error",
                 note=f"暂未获取到净值走势：{exc}",
-            )
-
-    def _snapshot_for_holding(self, holding: Holding) -> FundSnapshot:
-        if holding.fund_code == "000000":
-            return FundSnapshot(
-                fund_code=holding.fund_code,
-                fund_name=holding.fund_name,
-                source="yangjibao-ocr",
-                note="OCR 未识别到基金代码，已使用养基宝截图指标；补全代码后可拉取净值快照。",
-            )
-
-        try:
-            return self._from_akshare(holding)
-        except Exception as exc:
-            return FundSnapshot(
-                fund_code=holding.fund_code,
-                fund_name=holding.fund_name,
-                source="manual",
-                note=f"暂未获取到实时净值数据：{exc}",
             )
 
     def _snapshot_and_trend_for_holding(
@@ -233,30 +199,6 @@ class FundDataService:
         return snapshot, history
 
 
-def points_from_nav_frame(frame, *, trading_days: int) -> list[FundNavPoint]:
-    if frame is None or frame.empty:
-        return []
-
-    limit = max(10, min(trading_days, 365))
-    tail = frame.tail(limit)
-    points: list[FundNavPoint] = []
-    for _, row in tail.iterrows():
-        nav = _parse_nav_value(row)
-        if nav is None:
-            continue
-        date_value = _parse_nav_date(row)
-        if not date_value:
-            continue
-        points.append(
-            FundNavPoint(
-                date=date_value,
-                nav=nav,
-                daily_return_percent=_parse_daily_return(row),
-            )
-        )
-    return points
-
-
 def _load_fund_diagnostics(ak: object, fund_code: str) -> dict:
     diagnostics: dict = {}
     try:
@@ -339,43 +281,6 @@ def _parse_return_frame(frame) -> dict:
         "return_1y_percent": return_1y,
         "max_drawdown_1y_percent": round(max_drawdown, 2),
     }
-
-
-def _parse_nav_value(row) -> float | None:
-    for key in ("单位净值", "净值", "nav"):
-        if hasattr(row, "index") and key in row.index:  # type: ignore[attr-defined]
-            try:
-                return float(row[key])  # type: ignore[index]
-            except (TypeError, ValueError):
-                continue
-    return None
-
-
-def _parse_nav_date(row) -> str | None:
-    for key in ("净值日期", "日期", "date"):
-        if hasattr(row, "index") and key in row.index:  # type: ignore[attr-defined]
-            value = row[key]  # type: ignore[index]
-            if value is None:
-                continue
-            if hasattr(value, "isoformat"):
-                return value.isoformat()[:10]
-            text = str(value).strip()
-            return text[:10] if text else None
-    return None
-
-
-def _parse_daily_return(row) -> float | None:
-    for key in ("日增长率", "日涨跌幅", "涨跌幅", "daily_return"):
-        if hasattr(row, "index") and key in row.index:  # type: ignore[attr-defined]
-            raw = row[key]  # type: ignore[index]
-            if raw is None:
-                continue
-            text = str(raw).replace("%", "").strip()
-            try:
-                return round(float(text), 4)
-            except ValueError:
-                continue
-    return None
 
 
 def _parse_scale_yi(text: str) -> float | None:

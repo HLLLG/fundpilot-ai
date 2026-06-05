@@ -4,11 +4,13 @@
 >
 > **维护：** 功能或架构有实质变化时，同步更新「能力清单」「数据流」「API」「目录」「环境变量」。
 
-**文档版本：** 2026-06-06（官方净值收益叠加、日期修复、完整 NAV 源管理）
+**文档版本：** 2026-06-06（文档整理；官方净值、canonical 板块、分时 push2 均已落地）
 
 **更新记录：**
-- **官方净值收益（2026-06-06）：** 收盘后自动以官方 T-day NAV 收益率替换板块估算，支持三层源标签（"板块实时" / "收盘估算" / "官方净值"）；修复周末日期回溯逻辑。
-- **分时 / push2 排查：** 见 [docs/design/2026-06-04-eastmoney-intraday-troubleshooting.md](design/2026-06-04-eastmoney-intraday-troubleshooting.md)（025856 → 中证电网设备主题 **931994**；`ERR_EMPTY_RESPONSE` 与缓存策略）。
+- **文档整理（2026-06-06）：** 合并历史迭代要点；`docs/design/` 仅保留分时 push2 运维 runbook，其余设计稿删除，以本文为准。
+- **官方净值收益：** 收盘后以官方 T-day NAV 收益率替换板块估算；三层源标签（板块实时 / 收盘估算 / 官方净值）；修复周末日期回溯。
+- **板块 canonical：** 养基宝常见板块名 → 东财 `secid` 硬编码映射（`sector_canonical.py`）；涨跌与分时统一走 push2 K 线。
+- **分时 / push2：** 见 [design/2026-06-04-eastmoney-intraday-troubleshooting.md](design/2026-06-04-eastmoney-intraday-troubleshooting.md)（931994 电网设备、push2delay、骨架点与小数形式防御）。
 
 ---
 
@@ -25,7 +27,7 @@
 | 输入 | 养基宝总览 OCR（无代码草稿解析）；当日列为 `-` 时不填当日收益；**OCR 漏负号**时规则补符号；总览上传在「基金档案」Tab |
 | 当日收益 | **刷新时按板块涨跌估算**（养基宝规则：有**场内指数**用指数，否则用**关联板块**）；`holding_amount × sector_return%`；忽略 OCR 当日利润 |
 | 校对 | `HoldingTable` 含估算当日收益率；OCR 返回 `holding_warnings` / `holding_diffs`；**沿用上次基金列表** |
-| 档案 | 详情 OCR 解析「场内指数 + 关联板块」；`POST /api/fund-profiles/repair-sectors` 清理误识别（如 `+`）；总览自动同步档案；`000000` 靠档案按名称补码 |
+| 档案 | 详情 OCR 解析「场内指数 + 关联板块」；拒绝 `+`/`-`/Tab 标签误存为板块名；`POST /api/fund-profiles/repair-sectors` 清理历史脏数据；读取/保存时 `_sanitize_profile_sector_fields`；总览自动同步档案；`000000` 靠档案按名称补码 |
 | 首页看板 | **今日** Tab：`YangjibaoHoldingsBoard` 养基宝式卡片；启动 `GET /api/portfolio/holdings` 恢复持仓并自动刷新板块；点击行打开 `YangjibaoFundDetail` |
 | 仪表盘 | **仪表盘** Tab：`GET /api/portfolio/dashboard` — 资产/当日收益走势、持仓分布条 |
 | 风控 | 浮亏线、单只集中度、定投偏好、拒绝追高（`InvestorProfile`） |
@@ -34,10 +36,12 @@
 | 复盘/模拟 | outcomes / outcomes-weekly / rebalance-simulation |
 | 交易日语义 | `trading_session.py` + `trade_calendar_cache`（子进程拉日历，避免主进程 `py_mini_racer`）；`TradingSessionBar` |
 | 穿透估算 | 未收盘时按板块权重分配账户当日收益 |
-| 板块实时 | 东财 httpx 直连 + AkShare 子进程补全 + **单板块按需拉取**（`sector_on_demand`）；300s 自动 + 手动；低置信度 `SectorMappingModal`；分时 `GET /api/sector-quotes/intraday`（push2 `kline/get`，相对开盘；电网设备 **931994**）；**收盘后自动用官方 T-day NAV 收益率替换板块估算**（`fund_nav_service`，AkShare `fund_open_fund_info_em`；3 层源标签：板块实时 / 收盘估算 / 官方净值） |
+| 板块实时 | **canonical 映射优先**（`sector_canonical` → 东财 `secid` K 线）；未知板块再走 spot 批量表 + `sector_quote_resolver` + `sector_on_demand`；可选中继/浏览器命令；300s 自动 + 手动；低置信度 `SectorMappingModal`；有场内指数时优先指数口径（`sector_quote_lookup_label`） |
+| 分时图 | `GET /api/sector-quotes/intraday`；push2delay 首选；相对**昨收**对齐养基宝；骨架点 &lt;30 不写缓存；可选 `sector_intraday_browser_command` 浏览器兜底 |
+| 官方净值 | 收盘后以 AkShare `fund_open_fund_info_em` 覆盖板块估算（`fund_nav_service`）；源标签：板块实时 / 收盘估算 / 官方净值 |
 | 阻塞清单 | `TodayBlockingChecklist` + `workflowBlockers` |
 | 数据备份 | SQLite export/import；`DatabaseBackupPanel` |
-| CI / E2E | GitHub Actions：pytest（**145+** 项，含官方净值、板块实时、OCR 等）+ lint/typecheck/build + Playwright |
+| CI / E2E | GitHub Actions：pytest（**221** 项）+ lint/typecheck/build + Playwright |
 | 基金诊断 | AkShare 概况/累计收益；详情页可 AkShare **按名称查码**并持久化 |
 | 分析模式 | 快速 / 深度 |
 | 体验 | 报告 diff、Markdown 导出、档案 JSON、桌面通知、Plus Jakarta 字体 UI |
@@ -86,8 +90,10 @@ fundpilot-ai/
 │       ├── ocr_engine.py / ocr_parser.py / ocr_pipeline.py / overview_pipeline.py
 │       ├── portfolio_parser.py / portfolio_snapshot.py / portfolio_holdings_service.py
 │       ├── holding_validation.py / holding_metrics.py / holding_estimates.py / holding_detail_service.py
-│       ├── sector_quote_service.py / sector_quote_provider.py / sector_quote_resolver.py / fund_nav_service.py
-│       ├── eastmoney_spot_client.py / akshare_spot_client.py / sector_on_demand.py / sector_intraday_provider.py
+│       ├── sector_quote_service.py / sector_quote_provider.py / sector_quote_resolver.py / sector_canonical.py
+│       ├── fund_nav_service.py / eastmoney_spot_client.py / eastmoney_trends_client.py
+│       ├── akshare_spot_client.py / sector_on_demand.py / sector_intraday_provider.py
+│       ├── sector_intraday_browser_provider.py / sector_quote_browser_provider.py / sector_quote_relay_provider.py
 │       ├── trade_calendar_cache.py / sector_labels.py / sector_quote_cache.py
 │       ├── fund_code_resolver.py / fund_name_utils.py
 │       ├── deepseek_http.py / fund_profile.py / risk.py / fund_data.py
@@ -109,7 +115,7 @@ fundpilot-ai/
 │       ├── Dashboard.tsx          # 今日 / 仪表盘 / 基金档案 / 历史
 │       ├── YangjibaoHoldingsBoard / YangjibaoFundDetail / SectorMappingModal / IntradayPercentChart
 │       ├── TradingSessionBar / TodayBlockingChecklist / DatabaseBackupPanel
-│       ├── PortfolioDashboard / UploadDropzone / HoldingTable / RiskControls
+│       ├── PortfolioDashboard / HoldingTable / RiskControls
 │       ├── ReportPanel / JobStatusFloat / HistoryRail / FundProfilePanel
 ├── uploads/
 ├── data/app.db
@@ -138,20 +144,11 @@ profiles 页 → 单基金详情截图 → POST /api/fund-profiles/ocr
 打开应用 → GET /api/portfolio/holdings → 恢复 holdings + 可选自动 refresh-sector-quotes
 ```
 
-设计说明见 `docs/design/2026-06-01-portfolio-holdings.md`。
+**档案合并规则：** 总览有、档案无 → 自动简略档案（`is_provisional`）；总览消失 → 保留档案不删；总览更新金额/收益/板块，不覆盖详情才有的份额/成本/持有天数。
 
-### 养基宝 OCR：负号与符号一致性（2026-06-01）
+### 养基宝 OCR：负号与符号一致性
 
-养基宝亏损为**绿色 + 减号**；PaddleOCR 常只识别数字，导致「当日收益额」「板块涨跌」为正而「当日收益率」已为负。
-
-`ocr_parser.py` 在解析后依次：
-
-1. **独立行减号**：`-` 单独成行时，绑定下一行数字/百分比。
-2. **行内对齐**：`daily_profit` / `holding_profit` 与对应收益率同号；`sector_return_percent` 与 `daily_return_percent` 同号。
-3. **账户级校验**：顶部「当日收益」为负且各行金额加总符号矛盾时，批量修正当日收益额符号。
-4. **两种列表版式**：区分 ￥ 前「当日+持有」双金额 vs 仅「当日」单金额，避免误把持有收益当日化。
-
-回归：`tests/fixtures/yangjibao_overview_signed_daily_ocr.txt`、`test_parse_overview_restores_negative_daily_profit_and_sector_when_ocr_drops_signs`。
+养基宝亏损为绿色减号；PaddleOCR 常漏负号。`ocr_parser.py` 规则层补符号（独立行 `-`、收益额与收益率对齐、账户总收益交叉校验、双/单金额版式）。回归：`tests/fixtures/yangjibao_overview_signed_daily_ocr.txt`。
 
 ---
 
@@ -163,7 +160,7 @@ profiles 页 → 单基金详情截图 → POST /api/fund-profiles/ocr
 POST /api/analyze
   → FundProfileService.resolve_holdings
   → evaluate_portfolio_risk
-  → FundDataService.get_snapshots
+  → FundDataService.get_snapshots_with_nav_trends
   → DeepSeekClient.generate_report（analysis_mode: fast | deep）
   → save_report
 ```
@@ -269,22 +266,24 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 
 占位码 `000000`：总览 OCR 无代码时，**仅**通过已保存 `FundProfile` 按名称补全；未知代码分析时保留 `yangjibao-ocr` 快照。用户在详情页打开基金时可 AkShare 按名称查码。
 
-### 板块实时行情（2026-06-03）
+### 板块实时行情
 
-| 层级 | 实现 |
-|------|------|
-| 1 | `eastmoney_spot_client` httpx 直连 push2（多 host、分页保留部分结果、`trust_env=False`） |
-| 2 | `sector_quote_relay_provider` 可选服务端中继（适合 PC 直连东财受限，但另一台服务器/代理可访问的场景） |
-| 3 | `sector_quote_browser_provider` 可选浏览器命令链路（接入本机浏览器态/Playwright 脚本，尽量逼近养基宝 WebView 效果） |
-| 4 | `akshare_spot_client` 子进程补全稀疏/空 concept/industry（仅无前端短预算时使用，避免首页卡顿） |
-| 5 | `sector_on_demand` 单板块 AkShare 子进程（如商业航天；短预算刷新会跳过） |
-| 兜底 | `fund_estimate_provider` 天天基金基金估值，仅在真实板块不足或未匹配时补位；前端明确标记“估值兜底”，不当作真实板块行情 |
-| 解析 | `sector_quote_resolver` 自动匹配中证人工智能、电网→电力设备主题、半导体、商业航天等 |
+**解析优先级：**
+
+1. **Canonical（首选）** — `sector_canonical.get_canonical_sector`：养基宝常见名（商业航天、半导体、中证电网设备等）→ 固定东财 `secid`；涨跌经 `prefetch_canonical_kline_quotes` 拉 K 线收盘涨跌幅。
+2. **持久化映射** — SQLite `sector_mappings`（用户曾在 `SectorMappingModal` 点选）。
+3. **Spot 批量表** — `eastmoney_spot_client` push2 全市场 concept/industry/index；`sector_quote_resolver` 模糊匹配。
+4. **按需补拉** — `sector_on_demand` 单板块 AkShare 子进程（短预算刷新会跳过）。
+5. **可选中继/浏览器** — `sector_quote_relay_provider`、`sector_quote_browser_provider`（板块 spot）；`sector_intraday_browser_provider`（分时 push2 全断时）。
+6. **兜底** — `fund_estimate_provider` 天天基金估值；前端标记「估值兜底」，不当作真实板块行情。
+
+| 项 | 说明 |
+|----|------|
+| 场内指数 | 有 `intraday_index_name` 时优先用指数口径（`sector_quote_lookup_label`） |
+| 快刷预算 | `/api/holdings/refresh-sector-quotes` 前端同步 5s；短预算下东财单 host 0.5s，跳过 AkShare 慢路径 |
 | 缓存 | `sector_quote_cache` 按日 TTL；`force_refresh` 跳过持久化映射 |
-| 快刷 | `/api/holdings/refresh-sector-quotes` 前端同步预算 5s；短预算下东财每表仅试首个 host、单请求 0.5s，依次尝试中继/浏览器命令，跳过 AkShare 慢兜底，再用天天基金估值补位 |
-| 元数据 | 刷新响应含 `provider_path`、`from_stale_cache`、`provider_elapsed_seconds`、`summary.estimate_fallback`、`summary.board_matched`；旧快照提示为“已用上次快照更新”，估值补位提示为“当前使用天天基金估值兜底” |
-
-设计说明：`docs/design/2026-06-02-live-sector-quotes.md`。
+| 元数据 | 响应含 `provider_path`、`from_stale_cache`、`summary.secid_matched` / `board_matched` / `estimate_fallback` |
+| 分时 | `eastmoney_trends_client` + `sector_intraday_provider`；换机排查见 [design/2026-06-04-eastmoney-intraday-troubleshooting.md](design/2026-06-04-eastmoney-intraday-troubleshooting.md) |
 
 ### 养基宝收益率语义（传给 DeepSeek / 首页展示）
 
@@ -333,8 +332,6 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 
 **缓存策略：** 内存 dict `_NAV_CACHE[f"{fund_code}:{trade_date}"]` → `(value, expires_at)`，避免重复调 AkShare。缓存过期后自动重试。
 
-**设计说明：** `docs/superpowers/plans/2026-06-06-official-nav-return.md`。
-
 ## 新闻与 DeepSeek
 
 - **数据源（`FUND_AI_NEWS_SOURCES`）：** `eastmoney`（东财 `stock_news_em`）、`announcement`（基金公告）、`macro`（宏观主题，默认「上证指数」）。
@@ -366,11 +363,13 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | `FUND_AI_SECTOR_QUOTES_TTL_SECONDS` | 60 | spot 缓存 TTL |
 | `FUND_AI_SECTOR_QUOTES_AUTO_INTERVAL_SECONDS` | 300 | 前端自动刷新间隔 |
 | `FUND_AI_SECTOR_QUOTES_DISCREPANCY_WARN` | 0.5 | OCR vs 实时板块相差阈值（百分点） |
-| `FUND_AI_SECTOR_QUOTES_RELAY_URL` | — | 可选真实板块行情中继地址；返回 `boards` / `data` / 直接 `{ index, concept, industry }` 均可 |
+| `FUND_AI_SECTOR_QUOTES_RELAY_URL` | — | 可选真实板块行情中继地址；PC 直连东财失败时在 VPS/NAS 部署 `apps/sector-relay`（`docker compose up -d`），将 URL 填入此项 |
 | `FUND_AI_SECTOR_QUOTES_RELAY_TIMEOUT_SECONDS` | 2.5 | 中继请求超时 |
 | `FUND_AI_SECTOR_QUOTES_BROWSER_ENABLED` | false | 是否启用浏览器命令链路 |
 | `FUND_AI_SECTOR_QUOTES_BROWSER_COMMAND` | — | 浏览器命令，例如 `node scripts/sector-quote-browser-command.mjs` |
-| `FUND_AI_SECTOR_QUOTES_BROWSER_TIMEOUT_SECONDS` | 4 | 浏览器命令超时 |
+| `FUND_AI_SECTOR_QUOTES_BROWSER_TIMEOUT_SECONDS` | 4 | 板块 spot 浏览器命令超时 |
+| `FUND_AI_SECTOR_QUOTES_RELAY_TOKEN` | — | 中继可选鉴权 Bearer |
+| `FUND_AI_SECTOR_INTRADAY_BROWSER_COMMAND` | — | 分时浏览器兜底，如 `node scripts/sector-intraday-browser-command.mjs` |
 
 ### DeepSeek / 新闻
 
@@ -402,7 +401,7 @@ bash scripts/dev.sh    # 或 scripts/dev.ps1
 ```
 
 ```bash
-cd apps/api && ./.venv/Scripts/python.exe -m pytest tests -q   # 当前 145+ 项（含新增 fund_nav_service 7 项）
+cd apps/api && ./.venv/Scripts/python.exe -m pytest tests -q   # 当前 221 项
 cd apps/web && npm run lint && npm run typecheck && npm run build
 cd apps/web && npm run test:e2e   # Playwright 冒烟
 ```
@@ -416,8 +415,8 @@ cd apps/web && npm run test:e2e   # Playwright 冒烟
 3. 改异步流程：`job_store.py`（后端）→ `JobStatusFloat.tsx`（前端轮询）→ `Dashboard.tsx`（回调）。
 4. 改追问：`report_chat.py` / `report_chat_runtime.py` → `main.py` chat 路由 → `ReportChatPanel.tsx` / `ChatMarkdown.tsx` → `tests/test_report_chat*.py`。
 5. 改 OCR/估算收益：`ocr_parser.py` → `holding_metrics.py` → `HoldingTable` / `holdingMetrics.ts` → `tests/test_ocr_parser.py`、`tests/fixtures/`。
-6. 改板块收益源：`fund_nav_service.py`（NAV 拉取 + 缓存）→ `sector_quote_service.py`（叠加逻辑）→ `YangjibaoFundDetail.tsx`（标签渲染）→ `tests/test_fund_nav_service.py`、`test_sector_quote_service.py`。
-7. 历史 MVP 计划：`docs/superpowers/plans/2026-05-31-remove-automation-async-float.md`（以代码为准）。
+6. 改板块收益源：`sector_canonical.py`（映射）→ `sector_quote_service.py`（刷新 + NAV 叠加）→ `fund_nav_service.py` → `YangjibaoFundDetail.tsx` → 相关 tests。
+7. 改分时：`eastmoney_trends_client.py` → `sector_intraday_provider.py` → `IntradayPercentChart.tsx`；换机排查见 design 分时文档。
 
 ---
 
@@ -425,12 +424,14 @@ cd apps/web && npm run test:e2e   # Playwright 冒烟
 
 | 文件 | 内容 |
 |------|------|
-| `README.md` | 安装、启动、环境变量、流程 |
-| `docs/PROJECT_CONTEXT.md` | 本文 |
-| `docs/design/2026-06-01-portfolio-holdings.md` | 持仓档案、总览同步、OCR 验收 |
-| `docs/design/2026-06-02-news-sources-and-topic-briefs.md` | 多源新闻 + 主题摘要设计 |
-| `docs/design/2026-06-02-live-sector-quotes.md` | 板块实时行情、映射与兜底 |
-| `docs/design/2026-06-04-eastmoney-intraday-troubleshooting.md` | 分时 push2 排查（931994 电网设备） |
-| `docs/superpowers/plans/2026-06-06-official-nav-return.md` | 官方净值收益覆盖实现计划 |
-| `docs/superpowers/specs/2026-06-06-official-nav-return-design.md` | 官方净值收益设计规范 |
+| `README.md` | 安装、启动、环境变量、用户流程 |
+| `docs/PROJECT_CONTEXT.md` | **本文** — 架构、API、数据流、环境变量（维护主入口） |
+| `docs/SECURITY.md` | API Key 与 Secret Scanning |
+| `docs/design/2026-06-04-eastmoney-intraday-troubleshooting.md` | 分时 push2 换机自测、指数映射、脏缓存清理（仅运维时查阅） |
 | `.env.example` | 环境变量模板 |
+
+### 文档维护约定
+
+- **改功能先改 `PROJECT_CONTEXT.md`**：能力清单、API、环境变量、目录结构须与代码同步。
+- **`docs/design/`** 仅保留运维 runbook（当前仅分时 push2 排查）；产品决策与实现细节以本文为准。
+- **不保留** 已完成的一次性实现计划、清理报告、迭代日志。
