@@ -153,7 +153,7 @@ export function YangjibaoFundDetail({
         ? "收盘估算"
         : "板块实时";
   const sectorLabelClass =
-    source === "official_nav" ? "text-blue-300" : undefined;
+    source === "official_nav" ? "text-blue-300" : "text-white/50";
   const sectorTooltip =
     source === "official_nav"
       ? "已更新为基金官方公布净值涨幅"
