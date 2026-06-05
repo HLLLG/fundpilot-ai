@@ -22,6 +22,7 @@ class Holding(BaseModel):
     holding_return_percent: float | None = None
     sector_name: str | None = None
     sector_return_percent: float | None = None
+    sector_return_percent_source: str | None = None  # "realtime" | "closing_estimate" | "official_nav"
     intraday_index_name: str | None = None
     user_note: str | None = None
 

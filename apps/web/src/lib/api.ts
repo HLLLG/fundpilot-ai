@@ -9,6 +9,7 @@ export type Holding = {
   holding_return_percent?: number | null;
   sector_name?: string | null;
   sector_return_percent?: number | null;
+  sector_return_percent_source?: string | null;
   intraday_index_name?: string | null;
   user_note?: string | null;
 };
@@ -489,6 +490,8 @@ export type SectorIntradayResult = {
   points: SectorIntradayPoint[];
   note?: string | null;
   session_date?: string | null;
+  /** 东财 K 线收盘涨跌幅（相对昨收），与分时 15:00 一致 */
+  close_change_percent?: number | null;
   source_type: string;
   source_name: string;
 };
@@ -530,14 +533,20 @@ export async function fetchHoldingDetail(payload: {
   return response.json();
 }
 
-export async function fetchSectorIntraday(payload: {
-  source_type: "index" | "concept" | "industry";
-  source_name: string;
-}): Promise<SectorIntradayResult> {
+export async function fetchSectorIntraday(
+  payload: {
+    source_type: "index" | "concept" | "industry";
+    source_name: string;
+  },
+  options?: { forceRefresh?: boolean },
+): Promise<SectorIntradayResult> {
   const params = new URLSearchParams({
     source_type: payload.source_type,
     source_name: payload.source_name,
   });
+  if (options?.forceRefresh) {
+    params.set("force_refresh", "true");
+  }
   const response = await fetch(`${API_BASE}/api/sector-quotes/intraday?${params}`, {
     cache: "no-store",
   });
