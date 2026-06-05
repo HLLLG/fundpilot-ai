@@ -36,7 +36,7 @@ class _EstimateResult:
 
 def _is_trading_hours() -> bool:
     session = build_trading_session()
-    return session.get("session_kind") == "trading"
+    return session.get("session_kind") == "trading_day_intraday"
 
 
 def _get_today_trade_date() -> str:
