@@ -4,9 +4,11 @@
 >
 > **维护：** 功能或架构有实质变化时，同步更新「能力清单」「数据流」「API」「目录」「环境变量」。
 
-**文档版本：** 2026-06-04（关联板块分时、931994 指数映射、东财 push2 排查记录）
+**文档版本：** 2026-06-06（官方净值收益叠加、日期修复、完整 NAV 源管理）
 
-**分时 / push2 排查：** 见 [docs/design/2026-06-04-eastmoney-intraday-troubleshooting.md](design/2026-06-04-eastmoney-intraday-troubleshooting.md)（025856 → 中证电网设备主题 **931994**；`ERR_EMPTY_RESPONSE` 与缓存策略）。
+**更新记录：**
+- **官方净值收益（2026-06-06）：** 收盘后自动以官方 T-day NAV 收益率替换板块估算，支持三层源标签（"板块实时" / "收盘估算" / "官方净值"）；修复周末日期回溯逻辑。
+- **分时 / push2 排查：** 见 [docs/design/2026-06-04-eastmoney-intraday-troubleshooting.md](design/2026-06-04-eastmoney-intraday-troubleshooting.md)（025856 → 中证电网设备主题 **931994**；`ERR_EMPTY_RESPONSE` 与缓存策略）。
 
 ---
 
@@ -32,10 +34,10 @@
 | 复盘/模拟 | outcomes / outcomes-weekly / rebalance-simulation |
 | 交易日语义 | `trading_session.py` + `trade_calendar_cache`（子进程拉日历，避免主进程 `py_mini_racer`）；`TradingSessionBar` |
 | 穿透估算 | 未收盘时按板块权重分配账户当日收益 |
-| 板块实时 | 东财 httpx 直连 + AkShare 子进程补全 + **单板块按需拉取**（`sector_on_demand`）；300s 自动 + 手动；低置信度 `SectorMappingModal`；分时 `GET /api/sector-quotes/intraday`（push2 `kline/get`，相对开盘；电网设备 **931994**） |
+| 板块实时 | 东财 httpx 直连 + AkShare 子进程补全 + **单板块按需拉取**（`sector_on_demand`）；300s 自动 + 手动；低置信度 `SectorMappingModal`；分时 `GET /api/sector-quotes/intraday`（push2 `kline/get`，相对开盘；电网设备 **931994**）；**收盘后自动用官方 T-day NAV 收益率替换板块估算**（`fund_nav_service`，AkShare `fund_open_fund_info_em`；3 层源标签：板块实时 / 收盘估算 / 官方净值） |
 | 阻塞清单 | `TodayBlockingChecklist` + `workflowBlockers` |
 | 数据备份 | SQLite export/import；`DatabaseBackupPanel` |
-| CI / E2E | GitHub Actions：pytest（**145+** 项）+ lint/typecheck/build + Playwright |
+| CI / E2E | GitHub Actions：pytest（**145+** 项，含官方净值、板块实时、OCR 等）+ lint/typecheck/build + Playwright |
 | 基金诊断 | AkShare 概况/累计收益；详情页可 AkShare **按名称查码**并持久化 |
 | 分析模式 | 快速 / 深度 |
 | 体验 | 报告 diff、Markdown 导出、档案 JSON、桌面通知、Plus Jakarta 字体 UI |
@@ -84,7 +86,7 @@ fundpilot-ai/
 │       ├── ocr_engine.py / ocr_parser.py / ocr_pipeline.py / overview_pipeline.py
 │       ├── portfolio_parser.py / portfolio_snapshot.py / portfolio_holdings_service.py
 │       ├── holding_validation.py / holding_metrics.py / holding_estimates.py / holding_detail_service.py
-│       ├── sector_quote_service.py / sector_quote_provider.py / sector_quote_resolver.py
+│       ├── sector_quote_service.py / sector_quote_provider.py / sector_quote_resolver.py / fund_nav_service.py
 │       ├── eastmoney_spot_client.py / akshare_spot_client.py / sector_on_demand.py / sector_intraday_provider.py
 │       ├── trade_calendar_cache.py / sector_labels.py / sector_quote_cache.py
 │       ├── fund_code_resolver.py / fund_name_utils.py
@@ -256,7 +258,7 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 
 | 模型 | 要点 |
 |------|------|
-| **Holding** | 6 位代码、金额、持有/当日收益、板块；模型侧见 `holding_analysis_payload` |
+| **Holding** | 6 位代码、金额、持有/当日收益、板块；**新增** `sector_return_percent_source`（源标签：realtime / closing_estimate / official_nav）；模型侧见 `holding_analysis_payload` |
 | **InvestorProfile** | 稳健默认；浮亏 8%、集中度 35% |
 | **FundRecommendation** | action、amount_*、news_bullish/bearish、points |
 | **NewsItem** | topic、title、is_today |
@@ -288,7 +290,8 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 
 | 字段 | 含义 |
 |------|------|
-| `sector_return_percent` | 关联板块**当日**实时涨跌 |
+| `sector_return_percent` | 关联板块**当日**实时涨跌 OR 官方基金净值收益率（若已发布） |
+| `sector_return_percent_source` | 数据源类型：`"realtime"` 板块实时 / `"closing_estimate"` 收盘估算 / `"official_nav"` 官方净值 |
 | `holding_return_percent` | 持有收益率，多为**昨日结算** |
 | `daily_return_percent` | 明确当日基金收益率（有则优先） |
 | `estimated_daily_return_percent` | 无当日时 ≈ `sector_return_percent + holding_return_percent`（估算，须在报告中注明） |
@@ -309,7 +312,28 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 
 配置：`FUND_AI_NAV_TREND_DAYS`（默认 66）、`FUND_AI_NAV_TREND_RECENT_SAMPLE`（默认 8）。前端 `GET /api/fund-profiles/{code}/nav-history` 仍用于完整折线图，与 AI 摘要独立。
 
----
+### 官方净值收益覆盖（2026-06-06）
+
+**背景：** 养基宝收盘后仅显示板块涨幅估算，不是基金官方净值。在 15:00 后、官方 NAV 发布前（通常 21:00）期间，显示板块估算误导性强。需在 NAV 发布后自动替换。
+
+**流程：**
+
+| 时段 | 源标签 | 数据 | 实现 |
+|------|--------|------|------|
+| 09:30–15:00（盘中） | `"realtime"` "板块实时" | 东财板块实时涨幅 | `sector_quote_service` 查 `result.change_percent` |
+| 15:00 后、NAV 前 | `"closing_estimate"` "收盘估算" | 东财/AkShare 板块收盘涨幅 | `_is_trading_hours() == False` 且 `get_official_nav_return() == None` |
+| NAV 发布后（~21:00） | `"official_nav"` "官方净值" | AkShare `fund_open_fund_info_em` 日增长率 | `get_official_nav_return(fund_code, trade_date)` 返回非 None |
+
+**关键实现：**
+
+- **`fund_nav_service.py`：** 调用 AkShare `fund_open_fund_info_em(symbol=fund_code, indicator="单位净值走势")`，取最新行的 `日增长率`；缓存 24h（TTL_HIT）/ 5min 重试（TTL_MISS）；NaN 作为未发布。
+- **`_get_last_trade_date()`：** 从今天起向后查找最近交易日（用 `_is_trading_day()`）。修复周末/假期日期回溯问题。
+- **`sector_quote_service.refresh_holdings_sector_quotes()`：** 在板块匹配成功后，查询官方 NAV；若存在则覆盖 `sector_return_percent` + 设 `sector_return_percent_source = "official_nav"`；否则按交易时段判断 `"realtime"` vs `"closing_estimate"`。
+- **前端 `YangjibaoFundDetail.tsx`：** 读 `sector_return_percent_source` 动态渲染标签颜色（`"official_nav"` → 蓝色 `text-blue-300`）+ 工具提示。
+
+**缓存策略：** 内存 dict `_NAV_CACHE[f"{fund_code}:{trade_date}"]` → `(value, expires_at)`，避免重复调 AkShare。缓存过期后自动重试。
+
+**设计说明：** `docs/superpowers/plans/2026-06-06-official-nav-return.md`。
 
 ## 新闻与 DeepSeek
 
@@ -378,7 +402,7 @@ bash scripts/dev.sh    # 或 scripts/dev.ps1
 ```
 
 ```bash
-cd apps/api && ./.venv/Scripts/python.exe -m pytest tests -q   # 当前 130 项
+cd apps/api && ./.venv/Scripts/python.exe -m pytest tests -q   # 当前 145+ 项（含新增 fund_nav_service 7 项）
 cd apps/web && npm run lint && npm run typecheck && npm run build
 cd apps/web && npm run test:e2e   # Playwright 冒烟
 ```
@@ -392,7 +416,8 @@ cd apps/web && npm run test:e2e   # Playwright 冒烟
 3. 改异步流程：`job_store.py`（后端）→ `JobStatusFloat.tsx`（前端轮询）→ `Dashboard.tsx`（回调）。
 4. 改追问：`report_chat.py` / `report_chat_runtime.py` → `main.py` chat 路由 → `ReportChatPanel.tsx` / `ChatMarkdown.tsx` → `tests/test_report_chat*.py`。
 5. 改 OCR/估算收益：`ocr_parser.py` → `holding_metrics.py` → `HoldingTable` / `holdingMetrics.ts` → `tests/test_ocr_parser.py`、`tests/fixtures/`。
-6. 历史 MVP 计划：`docs/superpowers/plans/2026-05-31-remove-automation-async-float.md`（以代码为准）。
+6. 改板块收益源：`fund_nav_service.py`（NAV 拉取 + 缓存）→ `sector_quote_service.py`（叠加逻辑）→ `YangjibaoFundDetail.tsx`（标签渲染）→ `tests/test_fund_nav_service.py`、`test_sector_quote_service.py`。
+7. 历史 MVP 计划：`docs/superpowers/plans/2026-05-31-remove-automation-async-float.md`（以代码为准）。
 
 ---
 
@@ -405,4 +430,7 @@ cd apps/web && npm run test:e2e   # Playwright 冒烟
 | `docs/design/2026-06-01-portfolio-holdings.md` | 持仓档案、总览同步、OCR 验收 |
 | `docs/design/2026-06-02-news-sources-and-topic-briefs.md` | 多源新闻 + 主题摘要设计 |
 | `docs/design/2026-06-02-live-sector-quotes.md` | 板块实时行情、映射与兜底 |
+| `docs/design/2026-06-04-eastmoney-intraday-troubleshooting.md` | 分时 push2 排查（931994 电网设备） |
+| `docs/superpowers/plans/2026-06-06-official-nav-return.md` | 官方净值收益覆盖实现计划 |
+| `docs/superpowers/specs/2026-06-06-official-nav-return-design.md` | 官方净值收益设计规范 |
 | `.env.example` | 环境变量模板 |
