@@ -8,13 +8,19 @@ from app.database import get_sector_mapping, save_sector_mapping
 from app.models import Holding, HoldingFieldWarning, SectorMappingCandidate, SectorQuoteMeta
 from app.services.fund_profile import FundProfileService
 from app.services.fund_estimate_provider import fetch_fund_estimate_quotes
-from app.services.sector_canonical import prefetch_canonical_secid_quotes
+from app.services.sector_canonical import (
+    get_canonical_sector,
+    labels_need_spot_boards,
+    prefetch_canonical_kline_quotes,
+)
+from app.services.sector_labels import normalize_sector_label
 from app.services.sector_labels import sector_label_key
 from app.services.sector_on_demand import fetch_sector_on_demand
 from app.services.sector_quote_label import sector_quote_lookup_label
 from app.services.sector_quote_provider import SpotBoardFetchResult, fetch_spot_boards, fetch_spot_boards_result
 from app.services.sector_quote_resolver import mapping_record_from_result, resolve_sector_quote
 from app.services.trading_session import build_trading_session
+from app.services.fund_nav_service import get_official_nav_return
 
 
 class _EstimateResult:
@@ -26,6 +32,18 @@ class _EstimateResult:
         self.source_code = holding.fund_code
         self.message = "天天基金估值"
         self.candidates = []
+
+
+def _is_trading_hours() -> bool:
+    session = build_trading_session()
+    return session.get("session_kind") == "trading"
+
+
+def _get_today_trade_date() -> str:
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    cn_tz = ZoneInfo("Asia/Shanghai")
+    return datetime.now(cn_tz).strftime("%Y-%m-%d")
 
 
 def refresh_holdings_sector_quotes(
@@ -55,29 +73,65 @@ def refresh_holdings_sector_quotes(
             "session": session,
         }
 
-    fetch_result = fetch_spot_boards_result(
-        force_refresh=force_refresh,
-        timeout_seconds=timeout_seconds,
-    )
-    boards = fetch_result.boards
     profile_service = FundProfileService()
     holdings = [profile_service.resolve_holding(holding) for holding in holdings]
     lookup_labels = [sector_quote_lookup_label(holding) for holding in holdings]
-    if timeout_seconds is not None:
-        prefetch_canonical_secid_quotes(
-            lookup_labels,
-            boards,
-            timeout_seconds=timeout_seconds,
-        )
-    estimate_quotes = _maybe_fetch_estimate_quotes(
-        holdings,
-        boards=boards,
-        fetch_result=fetch_result,
+
+    boards: dict[str, dict[str, float]] = {
+        "index": {},
+        "concept": {},
+        "industry": {},
+    }
+    kline_prefetched = prefetch_canonical_kline_quotes(
+        lookup_labels,
+        boards,
         timeout_seconds=timeout_seconds,
     )
-    estimate_quotes_loaded = timeout_seconds is not None and _board_entry_count(fetch_result.boards) < 8
 
-    if not any(boards.values()) and not estimate_quotes:
+    canonical_label_count = len(
+        {
+            normalize_sector_label(label)
+            for label in lookup_labels
+            if label and get_canonical_sector(label)
+        }
+    )
+    need_spot_boards = labels_need_spot_boards(lookup_labels) or (
+        canonical_label_count > 0 and kline_prefetched < canonical_label_count
+    )
+
+    if need_spot_boards:
+        fetch_result = fetch_spot_boards_result(
+            force_refresh=force_refresh,
+            timeout_seconds=timeout_seconds,
+        )
+        for board_type in ("index", "concept", "industry"):
+            merged = boards.get(board_type) or {}
+            merged.update(fetch_result.boards.get(board_type) or {})
+            boards[board_type] = merged
+            fetch_result.boards[board_type] = merged
+    else:
+        fetch_result = SpotBoardFetchResult(
+            boards=boards,
+            provider_path="eastmoney_kline",
+            live_attempted=True,
+            elapsed_seconds=0.0,
+        )
+
+    estimate_quotes: dict[str, dict] = {}
+    if need_spot_boards:
+        estimate_quotes = _maybe_fetch_estimate_quotes(
+            holdings,
+            boards=boards,
+            fetch_result=fetch_result,
+            timeout_seconds=timeout_seconds,
+        )
+    estimate_quotes_loaded = (
+        need_spot_boards
+        and timeout_seconds is not None
+        and _board_entry_count(fetch_result.boards) < 8
+    )
+
+    if not any(boards.values()) and not estimate_quotes and kline_prefetched == 0:
         return {
             "ok": False,
             "message": "板块行情拉取失败（网络/代理），且没有可用快照，请稍后重试",
@@ -142,13 +196,21 @@ def refresh_holdings_sector_quotes(
             estimate_quote = estimate_quotes.get(holding.fund_code)
             if estimate_quote is not None and estimate_quote.get("change_percent") is not None:
                 result = _EstimateResult(holding, estimate_quote)
-        elif result.message and result.message.startswith("东财 "):
+        elif result.message and result.message.startswith("东财K线"):
             used_secid_quote = True
 
         previous = holding.sector_return_percent
         meta = SectorQuoteMeta(
             source="ocr",
-            provider=("tiantian-fund-estimate" if estimate_quote is not None else "eastmoney-akshare"),
+            provider=(
+                "tiantian-fund-estimate"
+                if estimate_quote is not None
+                else (
+                    "eastmoney-kline"
+                    if result.message and result.message.startswith("东财K线")
+                    else "eastmoney-akshare"
+                )
+            ),
             confidence=result.confidence,
             matched_name=result.matched_name,
             source_type=result.source_type if result.source_type in {"index", "concept", "industry"} else None,
@@ -160,7 +222,24 @@ def refresh_holdings_sector_quotes(
 
         new_holding = holding
         if result.confidence in {"high", "medium"} and result.change_percent is not None:
-            new_holding = holding.model_copy(update={"sector_return_percent": result.change_percent})
+            trade_date = _get_today_trade_date()
+            nav_return = get_official_nav_return(holding.fund_code, trade_date) if holding.fund_code else None
+
+            if nav_return is not None:
+                new_holding = holding.model_copy(update={
+                    "sector_return_percent": nav_return,
+                    "sector_return_percent_source": "official_nav",
+                })
+            elif _is_trading_hours():
+                new_holding = holding.model_copy(update={
+                    "sector_return_percent": result.change_percent,
+                    "sector_return_percent_source": "realtime",
+                })
+            else:
+                new_holding = holding.model_copy(update={
+                    "sector_return_percent": result.change_percent,
+                    "sector_return_percent_source": "closing_estimate",
+                })
             meta.source = "live"
             meta.delta_vs_previous = round(result.change_percent - previous, 4) if previous is not None else None
             matched += 1

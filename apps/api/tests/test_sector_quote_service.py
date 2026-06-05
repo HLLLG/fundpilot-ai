@@ -1,6 +1,21 @@
+import pytest
+
 from app.models import Holding
 from app.services.sector_quote_provider import SpotBoardFetchResult
 from app.services.sector_quote_service import refresh_holdings_sector_quotes
+
+
+@pytest.fixture(autouse=True)
+def disable_live_kline_quotes(monkeypatch):
+    """单测不访问东财 K 线；需 K 线行为的用例自行覆盖 mock。"""
+    monkeypatch.setattr(
+        "app.services.sector_canonical.fetch_eastmoney_kline_close_percent",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "app.services.sector_quote_service.prefetch_canonical_kline_quotes",
+        lambda *_args, **_kwargs: 0,
+    )
 
 
 def test_refresh_sector_quotes_updates_matched(monkeypatch):
@@ -141,7 +156,7 @@ def test_refresh_sector_quotes_skips_on_demand_when_timeout_budget_is_set(monkey
 
     monkeypatch.setattr(service, "fetch_sector_on_demand", fake_on_demand)
     monkeypatch.setattr(service, "fetch_fund_estimate_quotes", lambda *_args, **_kwargs: {})
-    monkeypatch.setattr(service, "prefetch_canonical_secid_quotes", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(service, "prefetch_canonical_kline_quotes", lambda *_args, **_kwargs: 0)
     monkeypatch.setattr(service.FundProfileService, "resolve_holding", lambda self, holding: holding)
     monkeypatch.setattr(
         "app.services.sector_quote_resolver.fetch_canonical_sector_quote",
@@ -277,7 +292,7 @@ def test_refresh_sector_quotes_uses_secid_before_fund_estimate(monkeypatch):
     )
     monkeypatch.setattr(service, "get_sector_mapping", lambda _key: None)
     monkeypatch.setattr(service, "save_sector_mapping", lambda _record: None)
-    monkeypatch.setattr(service, "prefetch_canonical_secid_quotes", lambda *_args, **_kwargs: 1)
+    monkeypatch.setattr(service, "prefetch_canonical_kline_quotes", lambda *_args, **_kwargs: 1)
     monkeypatch.setattr(
         service,
         "fetch_fund_estimate_quotes",
@@ -294,7 +309,7 @@ def test_refresh_sector_quotes_uses_secid_before_fund_estimate(monkeypatch):
                 matched_name="商业航天",
                 source_type="concept",
                 source_code="BK0963",
-                message="东财 90.BK0963",
+                message="东财K线收盘 90.BK0963",
             )
         from app.services.sector_quote_resolver import SectorResolveResult
 
@@ -304,7 +319,7 @@ def test_refresh_sector_quotes_uses_secid_before_fund_estimate(monkeypatch):
         boards.setdefault("concept", {})["商业航天"] = 2.35
         return 1
 
-    monkeypatch.setattr(service, "prefetch_canonical_secid_quotes", fake_prefetch)
+    monkeypatch.setattr(service, "prefetch_canonical_kline_quotes", fake_prefetch)
     monkeypatch.setattr(service, "resolve_sector_quote", fake_resolve)
 
     result = refresh_holdings_sector_quotes([holding], force_refresh=True, timeout_seconds=8.0)
@@ -315,17 +330,65 @@ def test_refresh_sector_quotes_uses_secid_before_fund_estimate(monkeypatch):
     assert result["holdings"][0]["sector_return_percent"] == 2.35
 
 
-def test_refresh_sector_quotes_uses_estimate_for_unmatched_holding_with_dense_boards(monkeypatch):
+def test_refresh_sector_quotes_skips_spot_boards_when_all_canonical(monkeypatch):
+    from app.services import sector_quote_service as service
+
+    board_fetch_called = {"value": False}
+
+    def fail_board_fetch(**_kwargs):
+        board_fetch_called["value"] = True
+        raise AssertionError("should not fetch full spot boards")
+
+    monkeypatch.setattr(service, "fetch_spot_boards_result", fail_board_fetch)
+    monkeypatch.setattr(service, "get_sector_mapping", lambda _key: None)
+    monkeypatch.setattr(service, "save_sector_mapping", lambda _record: None)
+
+    def fake_kline_prefetch(_labels, boards, **_kwargs):
+        boards.setdefault("index", {})["中证电网设备"] = 0.1549
+        return 1
+
+    monkeypatch.setattr(service, "prefetch_canonical_kline_quotes", fake_kline_prefetch)
+    monkeypatch.setattr(
+        "app.services.sector_canonical.fetch_eastmoney_kline_close_percent",
+        lambda *_args, **_kwargs: 0.1549,
+    )
+    monkeypatch.setattr(
+        service,
+        "fetch_fund_estimate_quotes",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("no estimate")),
+    )
+
+    holding = Holding(
+        fund_code="025856",
+        fund_name="华夏电网联接",
+        holding_amount=9000,
+        return_percent=4,
+        sector_name="电网设备",
+        intraday_index_name="中证电网设备",
+        sector_return_percent=0.1,
+    )
+
+    result = refresh_holdings_sector_quotes([holding], force_refresh=True, timeout_seconds=8.0)
+
+    assert board_fetch_called["value"] is False
+    assert result["summary"]["matched"] == 1
+    assert result["holdings"][0]["sector_return_percent"] == 0.1549
+    assert result["provider_path"] == "eastmoney_kline"
+    assert result["items"][0]["sector_quote_meta"]["provider"] == "eastmoney-kline"
+
+
+def test_refresh_sector_quotes_uses_estimate_for_unmatched_non_canonical(monkeypatch):
     from app.services import sector_quote_service as service
 
     holding = Holding(
         fund_code="008586",
-        fund_name="华夏人工智能ETF联接C",
+        fund_name="某冷门主题基金",
         holding_amount=8270.43,
         return_percent=2.77,
-        sector_name="人工智能",
+        sector_name="稀有金属",
         sector_return_percent=-2.52,
     )
+    monkeypatch.setattr(service, "prefetch_canonical_kline_quotes", lambda *_args, **_kwargs: 0)
     dense_unrelated_boards = {
         "concept": {f"无关板块{index}": 0.1 for index in range(8)},
         "industry": {},
@@ -359,3 +422,83 @@ def test_refresh_sector_quotes_uses_estimate_for_unmatched_holding_with_dense_bo
     assert result["summary"]["estimate_fallback"] == 1
     assert result["holdings"][0]["sector_return_percent"] == 3.27
     assert result["items"][0]["sector_quote_meta"]["provider"] == "tiantian-fund-estimate"
+
+
+def test_official_nav_overlays_sector_return(monkeypatch):
+    """When official NAV is published, sector_return_percent becomes nav value and source = official_nav."""
+    from app.services import sector_quote_service as service
+    from app.services.sector_quote_service import refresh_holdings_sector_quotes
+    from app.models import Holding
+
+    monkeypatch.setattr(
+        service,
+        "fetch_spot_boards_result",
+        lambda **_: SpotBoardFetchResult(
+            boards={
+                "index": {},
+                "concept": {"商业航天": 1.36},
+                "industry": {},
+            },
+            provider_path="eastmoney_live",
+        ),
+    )
+    monkeypatch.setattr(service, "get_sector_mapping", lambda _key: None)
+    monkeypatch.setattr(service, "save_sector_mapping", lambda _record: None)
+    monkeypatch.setattr(service, "get_official_nav_return", lambda fund_code, trade_date: -2.45)
+
+    holdings = [
+        Holding(
+            fund_code="015945",
+            fund_name="易方达国防军工混合C",
+            holding_amount=10000,
+            sector_name="商业航天",
+            sector_return_percent=1.36,
+        )
+    ]
+
+    result = refresh_holdings_sector_quotes(holdings, force_refresh=True)
+    assert result["ok"] is True
+    updated = [Holding.model_validate(h) for h in result["holdings"]]
+    fund = next(h for h in updated if h.fund_code == "015945")
+    assert fund.sector_return_percent == pytest.approx(-2.45)
+    assert fund.sector_return_percent_source == "official_nav"
+
+
+def test_closing_estimate_source_when_nav_not_published(monkeypatch):
+    """When official NAV is not yet published and market is closed, source = closing_estimate."""
+    from app.services import sector_quote_service as service
+    from app.services.sector_quote_service import refresh_holdings_sector_quotes
+    from app.models import Holding
+
+    monkeypatch.setattr(
+        service,
+        "fetch_spot_boards_result",
+        lambda **_: SpotBoardFetchResult(
+            boards={
+                "index": {},
+                "concept": {"商业航天": 1.36},
+                "industry": {},
+            },
+            provider_path="eastmoney_live",
+        ),
+    )
+    monkeypatch.setattr(service, "get_sector_mapping", lambda _key: None)
+    monkeypatch.setattr(service, "save_sector_mapping", lambda _record: None)
+    monkeypatch.setattr(service, "get_official_nav_return", lambda fund_code, trade_date: None)
+    monkeypatch.setattr(service, "_is_trading_hours", lambda: False)
+
+    holdings = [
+        Holding(
+            fund_code="015945",
+            fund_name="易方达国防军工混合C",
+            holding_amount=10000,
+            sector_name="商业航天",
+            sector_return_percent=1.36,
+        )
+    ]
+
+    result = refresh_holdings_sector_quotes(holdings, force_refresh=True)
+    assert result["ok"] is True
+    updated = [Holding.model_validate(h) for h in result["holdings"]]
+    fund = next(h for h in updated if h.fund_code == "015945")
+    assert fund.sector_return_percent_source == "closing_estimate"
