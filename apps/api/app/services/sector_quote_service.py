@@ -251,7 +251,8 @@ def refresh_holdings_sector_quotes(
             if record is not None:
                 save_sector_mapping(record)
             if (
-                estimate_quote is None
+                nav_return is None
+                and estimate_quote is None
                 and result.source_type in {"index", "concept", "industry"}
                 and previous is not None
                 and meta.delta_vs_previous is not None
