@@ -22,7 +22,7 @@ class Holding(BaseModel):
     holding_return_percent: float | None = None
     sector_name: str | None = None
     sector_return_percent: float | None = None
-    sector_return_percent_source: str | None = None  # "realtime" | "closing_estimate" | "official_nav"
+    sector_return_percent_source: SectorReturnSource | None = None
     intraday_index_name: str | None = None
     user_note: str | None = None
 
@@ -52,6 +52,7 @@ class RiskAssessment(BaseModel):
 
 AnalysisMode = Literal["fast", "deep"]
 DailyProfitSource = Literal["settled", "penetration_estimate"]
+SectorReturnSource = Literal["realtime", "closing_estimate", "official_nav"]
 
 
 class AnalysisRequest(BaseModel):
