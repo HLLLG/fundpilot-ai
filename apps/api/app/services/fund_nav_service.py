@@ -1,3 +1,4 @@
+import math
 import time
 import logging
 import pandas as pd
@@ -13,7 +14,7 @@ _NAV_CACHE: dict[str, tuple[float | None, float]] = {}
 
 def _fetch_nav_df(fund_code: str) -> pd.DataFrame:
     import akshare as ak
-    return ak.fund_open_fund_info_em(fund=fund_code, indicator="单位净值走势")
+    return ak.fund_open_fund_info_em(symbol=fund_code, indicator="单位净值走势")
 
 
 def get_official_nav_return(fund_code: str, trade_date: str) -> float | None:
@@ -40,6 +41,9 @@ def get_official_nav_return(fund_code: str, trade_date: str) -> float | None:
             return None
 
         nav_return = float(latest["日增长率"])
+        if math.isnan(nav_return):
+            _NAV_CACHE[key] = (None, now + TTL_MISS)
+            return None
         _NAV_CACHE[key] = (nav_return, now + TTL_HIT)
         return nav_return
 

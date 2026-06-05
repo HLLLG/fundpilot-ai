@@ -1,3 +1,4 @@
+import math
 import pytest
 from unittest.mock import patch, MagicMock
 import pandas as pd
@@ -65,3 +66,15 @@ def test_does_not_cache_none_result_indefinitely():
         _NAV_CACHE[key] = (_NAV_CACHE[key][0], 0)  # set expires_at=0 (already expired)
         get_official_nav_return("015945", "2026-06-05")
     assert mock_fetch.call_count == 2
+
+
+def test_returns_none_when_growth_rate_is_nan():
+    """NaN growth rate is treated as unpublished, not as a valid float."""
+    with patch("app.services.fund_nav_service._fetch_nav_df") as mock_fetch:
+        mock_fetch.return_value = pd.DataFrame({
+            "净值日期": ["2026-06-05"],
+            "单位净值": [1.234],
+            "日增长率": [float("nan")],
+        })
+        result = get_official_nav_return("015945", "2026-06-05")
+    assert result is None
