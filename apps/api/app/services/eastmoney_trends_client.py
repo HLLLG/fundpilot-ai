@@ -32,6 +32,7 @@ _KLINE_URLS = (
 )
 
 _TRENDS2_URLS = (
+    "https://push2delay.eastmoney.com/api/qt/stock/trends2/get",
     "https://push2his.eastmoney.com/api/qt/stock/trends2/get",
     "https://79.push2his.eastmoney.com/api/qt/stock/trends2/get",
     "https://push2.eastmoney.com/api/qt/stock/trends2/get",

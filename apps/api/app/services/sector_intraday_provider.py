@@ -22,6 +22,9 @@ _INTRADAY_LIVE_TTL_SECONDS = 60.0
 _INTRADAY_CLOSED_TTL_SECONDS = 86400.0
 _INTRADAY_STALE_TTL_SECONDS = 86400.0 * 7
 
+# 低于此点数视为骨架点（东财 kline 有时仅返回开盘+收盘 2 点），不写缓存也不用作 stale 兜底
+_MIN_INTRADAY_POINTS_TO_CACHE = 30
+
 # 合并并发请求，避免详情页连打东财导致偶发空数据
 _INTRADAY_COALESCE_LOCK = threading.Lock()
 _INTRADAY_COALESCE_WAITERS: dict[str, threading.Event] = {}
@@ -132,9 +135,10 @@ def _load_intraday_from_network(
 
     if not points:
         stale = get_spot_snapshot(cache_key, ttl_seconds=_INTRADAY_STALE_TTL_SECONDS)
-        if stale and stale.get("points"):
+        stale_points = stale.get("points", []) if stale else []
+        if len(stale_points) >= _MIN_INTRADAY_POINTS_TO_CACHE:
             return (
-                stale.get("points", []),
+                stale_points,
                 stale.get("note") or f"展示 {trade_date} 缓存分时（数据源暂不可用）",
                 trade_date,
                 stale.get("close_change_percent"),
@@ -153,7 +157,7 @@ def _load_intraday_from_network(
         if last_percent is not None:
             close_change_percent = float(last_percent)
 
-    if points:
+    if len(points) >= _MIN_INTRADAY_POINTS_TO_CACHE:
         save_spot_snapshot(
             cache_key,
             {
