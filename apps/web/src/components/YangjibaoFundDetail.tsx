@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronDown,
   ChevronLeft,
@@ -56,18 +56,22 @@ type YangjibaoFundDetailProps = {
 
 function CompactStat({
   label,
+  labelClass,
   value,
   valueClass = "text-slate-900",
   sub,
+  title,
 }: {
   label: string;
+  labelClass?: string;
   value: string;
   valueClass?: string;
   sub?: string;
+  title?: string;
 }) {
   return (
-    <div className="px-2 py-1.5">
-      <div className="truncate text-[10px] text-slate-400">{label}</div>
+    <div className="px-2 py-1.5" title={title}>
+      <div className={`truncate text-[10px] ${labelClass ?? "text-slate-400"}`}>{label}</div>
       <div className={`mt-0.5 truncate text-[13px] font-black tabular-nums leading-tight ${valueClass}`}>
         {value}
       </div>
@@ -103,8 +107,11 @@ export function YangjibaoFundDetail({
   const [navPeriodChange, setNavPeriodChange] = useState<number | null>(null);
   const [intradayLoading, setIntradayLoading] = useState(false);
   const [intradayPoints, setIntradayPoints] = useState<Array<{ time: string; percent: number }>>([]);
+  const [intradayClosePercent, setIntradayClosePercent] = useState<number | null>(null);
   const [intradayNote, setIntradayNote] = useState<string | null>(null);
+  const [intradayRefreshing, setIntradayRefreshing] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
+  const intradayRequestSeq = useRef(0);
 
   const activeHolding = detail?.holding ?? holding;
   const provenance = detail?.provenance ?? {};
@@ -116,8 +123,6 @@ export function YangjibaoFundDetail({
   const holdingReturn = resolveHoldingReturnPercent(activeHolding);
   const holdingProfit = computeHoldingProfit(activeHolding);
   const dailyProfit = computeDailyProfit(activeHolding);
-  const dailyReturn =
-    activeHolding.daily_return_percent ?? computeEstimatedDailyReturnPercent(activeHolding);
   const costBasis = computeCostBasis(activeHolding);
   const weight = computeHoldingWeight(activeHolding, totalAssets);
 
@@ -132,12 +137,43 @@ export function YangjibaoFundDetail({
     activeHolding.sector_name ?? activeHolding.intraday_index_name ?? "—";
   const sectorQuoteLabel =
     activeHolding.intraday_index_name ?? activeHolding.sector_name ?? "—";
-  const sectorName = sectorMeta?.matched_name ?? sectorQuoteLabel;
+  const sectorChartLabel =
+    activeHolding.intraday_index_name?.trim() || sectorQuoteLabel;
+  const sectorName = sectorChartLabel !== "—" ? sectorChartLabel : sectorMeta?.matched_name ?? "—";
   const sectorReturn = activeHolding.sector_return_percent;
+  const emKlineClose =
+    intradayClosePercent ??
+    (intradayPoints.length > 0 ? intradayPoints[intradayPoints.length - 1].percent : null);
+  const displaySectorReturn = emKlineClose ?? sectorReturn;
+  const source = activeHolding.sector_return_percent_source;
+  const sectorLabel =
+    source === "official_nav"
+      ? "官方净值"
+      : source === "closing_estimate"
+        ? "收盘估算"
+        : "板块实时";
+  const sectorLabelClass =
+    source === "official_nav" ? "text-blue-300" : undefined;
+  const sectorTooltip =
+    source === "official_nav"
+      ? "已更新为基金官方公布净值涨幅"
+      : source === "closing_estimate"
+        ? "基于板块收盘涨幅估算，官方净值公布后自动更新"
+        : "基于关联板块实时涨幅估算";
+  const displayDailyReturn =
+    emKlineClose != null && sectorMeta?.source === "live"
+      ? emKlineClose
+      : activeHolding.daily_return_percent ?? computeEstimatedDailyReturnPercent(activeHolding);
 
   const intradayQuery = useMemo(
     () => resolveIntradayQuery(activeHolding, sectorMeta),
-    [activeHolding, sectorMeta],
+    [
+      activeHolding.intraday_index_name,
+      activeHolding.sector_name,
+      activeHolding.fund_name,
+      sectorMeta?.matched_name,
+      sectorMeta?.source_type,
+    ],
   );
 
   const canGoPrev = holdingIndex > 0;
@@ -231,34 +267,85 @@ export function YangjibaoFundDetail({
     }
     if (!intradayQuery) {
       setIntradayPoints([]);
+      setIntradayClosePercent(null);
       setIntradayNote("暂无板块映射，请先在「今日」刷新板块或上传详情截图建档");
       setIntradayLoading(false);
+      setIntradayRefreshing(false);
       return;
     }
-    let cancelled = false;
-    setIntradayLoading(true);
+
+    const requestId = ++intradayRequestSeq.current;
+    setIntradayPoints([]);
+    setIntradayClosePercent(null);
     setIntradayNote(null);
-    void fetchSectorIntraday(intradayQuery)
-      .then((result) => {
-        if (cancelled) {
+    setIntradayLoading(true);
+    setIntradayRefreshing(false);
+
+    const applyIntraday = (result: {
+      points: Array<{ time: string; percent: number }>;
+      close_change_percent?: number | null;
+      note?: string | null;
+    }) => {
+      setIntradayPoints(result.points);
+      setIntradayClosePercent(result.close_change_percent ?? null);
+      setIntradayNote(result.note ?? null);
+    };
+
+    void (async () => {
+      let showedCache = false;
+
+      try {
+        const cached = await fetchSectorIntraday(intradayQuery);
+        if (requestId !== intradayRequestSeq.current) {
           return;
         }
-        setIntradayPoints(result.points);
-        setIntradayNote(result.note ?? null);
-      })
-      .catch(() => {
-        if (!cancelled) {
+        if (cached.points.length >= 2) {
+          applyIntraday(cached);
+          showedCache = true;
+          setIntradayLoading(false);
+        } else if (cached.note) {
+          setIntradayNote(cached.note);
+        }
+      } catch {
+        if (requestId !== intradayRequestSeq.current) {
+          return;
+        }
+      }
+
+      if (requestId !== intradayRequestSeq.current) {
+        return;
+      }
+      setIntradayRefreshing(true);
+
+      try {
+        const fresh = await fetchSectorIntraday(intradayQuery, { forceRefresh: true });
+        if (requestId !== intradayRequestSeq.current) {
+          return;
+        }
+        if (fresh.points.length >= 2) {
+          applyIntraday(fresh);
+        } else if (!showedCache) {
+          applyIntraday(fresh);
+        }
+      } catch {
+        if (requestId !== intradayRequestSeq.current) {
+          return;
+        }
+        if (!showedCache) {
           setIntradayPoints([]);
+          setIntradayClosePercent(null);
           setIntradayNote("分时数据暂不可用");
         }
-      })
-      .finally(() => {
-        if (!cancelled) {
+      } finally {
+        if (requestId === intradayRequestSeq.current) {
+          setIntradayRefreshing(false);
           setIntradayLoading(false);
         }
-      });
+      }
+    })();
+
     return () => {
-      cancelled = true;
+      intradayRequestSeq.current += 1;
     };
   }, [tab, intradayQuery]);
 
@@ -332,8 +419,8 @@ export function YangjibaoFundDetail({
           <div className="mt-2 grid grid-cols-3 divide-x divide-white/20 rounded-lg bg-white/10 text-center">
             <CompactStat
               label="当日涨幅"
-              value={formatSignedPercent(dailyReturn)}
-              valueClass={cnProfitClass(dailyReturn)}
+              value={formatSignedPercent(displayDailyReturn)}
+              valueClass={cnProfitClass(displayDailyReturn)}
             />
             <CompactStat
               label="近1年"
@@ -343,15 +430,19 @@ export function YangjibaoFundDetail({
               valueClass={cnProfitClass(yearReturn)}
             />
             <CompactStat
-              label="板块实时"
-              value={formatSignedPercent(sectorReturn)}
-              valueClass={cnProfitClass(sectorReturn)}
+              label={sectorLabel}
+              labelClass={sectorLabelClass}
+              value={formatSignedPercent(displaySectorReturn)}
+              valueClass={cnProfitClass(displaySectorReturn)}
+              title={sectorTooltip}
               sub={
                 isEstimateFallbackMeta(sectorMeta)
                   ? "估值兜底"
-                  : sectorMeta?.source === "live"
-                    ? "东财"
-                    : undefined
+                  : source === "official_nav"
+                    ? undefined
+                    : sectorMeta?.source === "live"
+                      ? "东财"
+                      : undefined
               }
             />
           </div>
@@ -452,11 +543,19 @@ export function YangjibaoFundDetail({
           {tab === "sector" ? (
             <div>
               <div className="mb-2 flex items-center justify-between gap-2">
-                <div className="min-w-0 truncate text-xs font-bold text-slate-700">
-                  {todayLabel} · {sectorName}
+                <div className="min-w-0">
+                  <div className="truncate text-xs font-bold text-slate-700">
+                    {todayLabel} · {sectorName}
+                  </div>
+                  {intradayRefreshing ? (
+                    <div className="mt-0.5 flex items-center gap-1 text-[10px] text-slate-400">
+                      <Loader2 size={10} className="animate-spin" />
+                      更新分时…
+                    </div>
+                  ) : null}
                 </div>
-                <div className={`shrink-0 text-base font-black tabular-nums ${cnProfitClass(sectorReturn)}`}>
-                  {formatSignedPercent(sectorReturn)}
+                <div className={`shrink-0 text-base font-black tabular-nums ${cnProfitClass(displaySectorReturn)}`}>
+                  {formatSignedPercent(displaySectorReturn)}
                 </div>
               </div>
               {intradayLoading ? (
@@ -464,12 +563,21 @@ export function YangjibaoFundDetail({
                   <Loader2 size={18} className="mr-2 animate-spin" />
                   加载分时…
                 </div>
+              ) : intradayPoints.length < 2 ? (
+                <div className="flex h-[168px] flex-col items-center justify-center gap-1 px-4 text-center text-sm text-slate-400">
+                  <span>{intradayNote ?? "暂无分时数据"}</span>
+                  {intradayQuery ? (
+                    <span className="text-[11px] text-slate-300">
+                      数据源：东财 {intradayQuery.source_name}（{intradayQuery.source_type}）
+                    </span>
+                  ) : null}
+                </div>
               ) : (
                 <IntradayPercentChart points={intradayPoints} height={168} />
               )}
               {intradayPoints.length >= 2 ? (
                 <p className="mt-1 text-center text-[11px] text-slate-400">
-                  分时按当日开盘价绘制；右上角为相对昨收涨跌
+                  分时与右上角均为相对昨收涨跌
                 </p>
               ) : null}
               {activeHolding.intraday_index_name &&
