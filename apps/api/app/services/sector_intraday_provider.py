@@ -158,15 +158,25 @@ def _load_intraday_from_network(
             close_change_percent = float(last_percent)
 
     if len(points) >= _MIN_INTRADAY_POINTS_TO_CACHE:
-        save_spot_snapshot(
-            cache_key,
-            {
-                "points": points,
-                "note": note,
-                "session_date": trade_date,
-                "close_change_percent": close_change_percent,
-            },
-        )
+        # 健全性检查：所有点都在 ±0.1 范围内说明 percent 没有乘以 100，拒绝写缓存
+        max_abs = max(abs(p.get("percent", 0) or 0) for p in points)
+        if max_abs < 0.1:
+            logger.warning(
+                "intraday points for %s look like fractions not percentages "
+                "(max_abs=%.5f), skipping cache write",
+                cache_key,
+                max_abs,
+            )
+        else:
+            save_spot_snapshot(
+                cache_key,
+                {
+                    "points": points,
+                    "note": note,
+                    "session_date": trade_date,
+                    "close_change_percent": close_change_percent,
+                },
+            )
     return points, note, trade_date, close_change_percent
 
 
