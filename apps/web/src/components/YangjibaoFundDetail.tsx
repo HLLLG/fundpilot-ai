@@ -167,13 +167,7 @@ export function YangjibaoFundDetail({
 
   const intradayQuery = useMemo(
     () => resolveIntradayQuery(activeHolding, sectorMeta),
-    [
-      activeHolding.intraday_index_name,
-      activeHolding.sector_name,
-      activeHolding.fund_name,
-      sectorMeta?.matched_name,
-      sectorMeta?.source_type,
-    ],
+    [activeHolding, sectorMeta],
   );
 
   const canGoPrev = holdingIndex > 0;

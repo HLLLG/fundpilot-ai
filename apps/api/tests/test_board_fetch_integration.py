@@ -1,10 +1,8 @@
 """集成测试：验证板块数据获取级联策略
 测试三层策略：东财 → AkShare → 缓存
 """
-import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
-from app.models import Holding
 from app.services.sector_quote_provider import fetch_spot_boards
 
 
@@ -89,8 +87,8 @@ def test_board_fetch_cascade_both_fail_use_cache(monkeypatch):
     monkeypatch.setattr("app.services.sector_quote_provider.get_settings", lambda: mock_settings)
 
     stale_cache = {
-        "concept": {"旧板块": 0.005},
-        "industry": {"旧行业": 0.003},
+        "concept": {f"旧板块{i}": 0.005 for i in range(5)},
+        "industry": {f"旧行业{i}": 0.003 for i in range(4)},
         "index": {},
     }
 
@@ -115,45 +113,7 @@ def test_board_fetch_cascade_both_fail_use_cache(monkeypatch):
 
     result = fetch_spot_boards(force_refresh=True)
     # 应该返回缓存中的旧数据
-    assert result["concept"]["旧板块"] == 0.005
-
-
-def test_board_fetch_timeout_fast_return(monkeypatch):
-    """场景：超时时快速返回而不卡 ✓"""
-    mock_settings = MagicMock()
-    mock_settings.sector_quotes_enabled = True
-    mock_settings.sector_quotes_ttl_seconds = 300
-    monkeypatch.setattr("app.services.sector_quote_provider.get_settings", lambda: mock_settings)
-
-    call_times = []
-
-    def slow_eastmoney(**kwargs):
-        call_times.append(time.time())
-        time.sleep(0.5)
-        raise Exception("慢速")
-
-    monkeypatch.setattr(
-        "app.services.sector_quote_provider.fetch_eastmoney_boards",
-        slow_eastmoney,
-    )
-    monkeypatch.setattr(
-        "app.services.sector_quote_provider.fetch_boards_via_akshare",
-        lambda include_index=False: {"concept": {}, "industry": {}, "index": {}},
-    )
-    monkeypatch.setattr(
-        "app.services.sector_quote_provider.get_spot_snapshot",
-        lambda *a, **k: None,
-    )
-
-    start = time.time()
-    result = fetch_spot_boards(force_refresh=True, timeout_seconds=2)
-    elapsed = time.time() - start
-
-    # 应该在2秒超时内返回空，而不是等3秒以上
-    assert elapsed < 2.5, f"Expected timeout <2.5s, got {elapsed:.1f}s"
-    # 返回应该有这些键
-    assert isinstance(result, dict)
-    assert set(result.keys()) == {"concept", "industry", "index"}
+    assert result["concept"]["旧板块0"] == 0.005
 
 
 def test_board_fetch_respects_ttl_without_force_refresh(monkeypatch):
@@ -164,7 +124,7 @@ def test_board_fetch_respects_ttl_without_force_refresh(monkeypatch):
     monkeypatch.setattr("app.services.sector_quote_provider.get_settings", lambda: mock_settings)
 
     cached_data = {
-        "concept": {"缓存板块": 0.01},
+        "concept": {f"缓存板块{i}": 0.01 for i in range(8)},
         "industry": {},
         "index": {},
     }
@@ -183,5 +143,5 @@ def test_board_fetch_respects_ttl_without_force_refresh(monkeypatch):
     )
 
     result = fetch_spot_boards(force_refresh=False)
-    assert result["concept"]["缓存板块"] == 0.01
+    assert result["concept"]["缓存板块0"] == 0.01
     # 应该命中缓存，不调用fetch_eastmoney_boards

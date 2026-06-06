@@ -144,7 +144,8 @@ def test_merge_detail_profile_preserves_sector_when_ocr_misses(tmp_path, monkeyp
         "华夏中证电网设备主题ETF联接A\n025856\n持有金额\n12,500.00\n8,800.00\n48.00%"
     )
     assert partial is not None
-    assert partial.sector_name is None
+    assert partial.sector_name == "电网设备"
+    assert partial.intraday_index_name == "中证电网设备"
     merged = service.save_profile(partial)
     assert merged.sector_name == "电网设备"
     assert merged.intraday_index_name == "中证电网设备"
@@ -281,7 +282,8 @@ def test_parse_detail_multiline_related_board_name_separate():
     """关联板块标签和板块名在不同行（OCR多行分割）"""
     profile = parse_profile_from_text(DETAIL_MULTILINE_BOARD_NAME_SEPARATE)
     assert profile is not None
-    assert profile.sector_name == "中证人工智能"
+    assert profile.sector_name == "人工智能"
+    assert profile.intraday_index_name == "中证人工智能"
     assert profile.sector_return_percent == 3.27
 
 
@@ -341,5 +343,6 @@ def test_parse_detail_strips_trailing_fund_count_label():
     """关联板块名后跟'9只同类基金'标签的情况"""
     profile = parse_profile_from_text(DETAIL_WITH_TRAILING_LIKE_LABELS)
     assert profile is not None
-    assert profile.sector_name == "中证电网设备"
+    assert profile.sector_name == "电网设备"
+    assert profile.intraday_index_name == "中证电网设备"
     assert profile.sector_return_percent == 0.91

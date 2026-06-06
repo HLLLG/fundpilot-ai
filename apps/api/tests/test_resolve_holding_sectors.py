@@ -23,4 +23,4 @@ def test_resolve_holding_replaces_invalid_sector_from_profile(tmp_path, monkeypa
         )
     )
     assert resolved.sector_name == "半导体"
-    assert resolved.intraday_index_name is None
+    assert resolved.intraday_index_name == "中证半导体"

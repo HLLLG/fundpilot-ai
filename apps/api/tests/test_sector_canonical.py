@@ -3,8 +3,8 @@ def test_fetch_canonical_commercial_aerospace(monkeypatch):
 
     monkeypatch.setattr(
         mod,
-        "fetch_eastmoney_quote_by_secid",
-        lambda secid, **kwargs: ("商业航天", 3.88) if secid == "90.BK0963" else (None, None),
+        "fetch_eastmoney_kline_close_percent",
+        lambda secid, **kwargs: 3.88 if secid == "90.BK0963" else None,
     )
     boards: dict[str, dict[str, float]] = {"concept": {}, "industry": {}, "index": {}}
     result = mod.fetch_canonical_sector_quote("商业航天", boards)
@@ -37,8 +37,8 @@ def test_resolve_commercial_aerospace_uses_canonical(monkeypatch):
 
     monkeypatch.setattr(
         canon_mod,
-        "fetch_eastmoney_quote_by_secid",
-        lambda secid, **kwargs: ("商业航天", 4.12) if secid == "90.BK0963" else (None, None),
+        "fetch_eastmoney_kline_close_percent",
+        lambda secid, **kwargs: 4.12 if secid == "90.BK0963" else None,
     )
     boards = {"concept": {}, "industry": {}, "index": {}}
     result = resolve_sector_quote("商业航天", boards)
