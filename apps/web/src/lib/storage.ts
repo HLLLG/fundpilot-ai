@@ -59,22 +59,18 @@ export function saveReportChatMode(mode: ReportChatMode) {
   window.localStorage.setItem(CHAT_MODE_KEY, mode);
 }
 
-const SECTOR_AUTO_KEY = "fundpilot-sector-auto-refresh";
+const AMOUNTS_HIDDEN_KEY = "fundpilot-amounts-hidden";
 
-export function loadSectorAutoRefresh(fallback = true): boolean {
+export function loadAmountsHidden(fallback = false): boolean {
   if (typeof window === "undefined") {
     return fallback;
   }
-  const raw = window.localStorage.getItem(SECTOR_AUTO_KEY);
-  if (raw === null) {
-    return fallback;
-  }
-  return raw === "true";
+  return window.localStorage.getItem(AMOUNTS_HIDDEN_KEY) === "true";
 }
 
-export function saveSectorAutoRefresh(enabled: boolean) {
+export function saveAmountsHidden(hidden: boolean) {
   if (typeof window === "undefined") {
     return;
   }
-  window.localStorage.setItem(SECTOR_AUTO_KEY, String(enabled));
+  window.localStorage.setItem(AMOUNTS_HIDDEN_KEY, String(hidden));
 }

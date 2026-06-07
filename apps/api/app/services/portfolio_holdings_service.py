@@ -23,6 +23,7 @@ def profile_to_holding(profile: FundProfile) -> Holding:
         sector_return_percent=profile.sector_return_percent,
         intraday_index_name=profile.intraday_index_name,
         daily_profit=profile.daily_profit,
+        yesterday_profit=profile.yesterday_profit,
     )
 
 
@@ -78,6 +79,10 @@ def _overlay_profile_onto_holding(base: Holding, profile: FundProfile) -> Holdin
         patch["holding_amount"] = profile.holding_amount
     if profile.holding_profit is not None:
         patch["holding_profit"] = profile.holding_profit
+    if profile.daily_profit is not None:
+        patch["daily_profit"] = profile.daily_profit
+    if profile.yesterday_profit is not None:
+        patch["yesterday_profit"] = profile.yesterday_profit
     if holding_return is not None:
         patch["holding_return_percent"] = holding_return
         patch["return_percent"] = holding_return

@@ -20,6 +20,14 @@ export function formatSectorQuoteFetchedAt(iso: string | null | undefined): stri
   });
 }
 
+/** 后台自动/手动刷新成功后的统计文案，无需打扰用户。 */
+export function isRoutineSectorRefreshMessage(message: string | null | undefined): boolean {
+  if (!message?.trim()) {
+    return false;
+  }
+  return message.startsWith("已刷新 ") || message.startsWith("已用上次快照更新 ");
+}
+
 export function sectorQuoteBadgeLabel(meta?: SectorQuoteMeta | null): string | null {
   if (!meta) {
     return null;

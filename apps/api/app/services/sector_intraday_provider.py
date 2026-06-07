@@ -13,7 +13,7 @@ from app.services.sector_intraday_browser_provider import fetch_intraday_via_bro
 logger = logging.getLogger(__name__)
 from app.services.sector_canonical import get_canonical_sector, get_intraday_canonical_sector
 from app.services.sector_quote_cache import get_spot_snapshot, save_spot_snapshot
-from app.services.trading_session import CN_TZ, build_trading_session
+from app.services.trading_session import CN_TZ, build_trading_session, get_effective_trade_date
 
 IntradayPoint = dict[str, str | float]
 
@@ -44,7 +44,7 @@ def fetch_sector_intraday(
 
     session = build_trading_session()
     session_kind = session["session_kind"]
-    trade_date = _effective_trade_date(session)
+    trade_date = get_effective_trade_date(session_kind=session_kind)
     closed_session = session_kind in {"trading_day_after_close", "non_trading_day"}
 
     # v2：分时基准改为昨收（preKPrice）；旧键 intraday: 含开盘基准脏数据
@@ -204,27 +204,6 @@ def _should_fetch_intraday(session_kind: str) -> bool:
         "trading_day_pre_close",
         "trading_day_after_close",
     }
-
-
-def _effective_trade_date(session: dict) -> str:
-    moment = datetime.now(CN_TZ)
-    today = moment.date()
-    if session["session_kind"] in {
-        "trading_day_intraday",
-        "trading_day_pre_close",
-        "trading_day_after_close",
-    }:
-        return today.isoformat()
-
-    cursor = today
-    for _ in range(14):
-        cursor -= timedelta(days=1)
-        probe = build_trading_session(
-            datetime.combine(cursor, datetime.min.time(), tzinfo=CN_TZ).replace(hour=12)
-        )
-        if probe["is_trading_day"]:
-            return cursor.isoformat()
-    return today.isoformat()
 
 
 def _fetch_index_intraday(source_name: str, *, trade_date: str | None = None) -> list[IntradayPoint]:

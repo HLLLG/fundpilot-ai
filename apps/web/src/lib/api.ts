@@ -10,6 +10,8 @@ export type Holding = {
   sector_name?: string | null;
   sector_return_percent?: number | null;
   sector_return_percent_source?: string | null;
+  daily_return_percent_source?: string | null;
+  yesterday_profit?: number | null;
   intraday_index_name?: string | null;
   user_note?: string | null;
 };
@@ -176,6 +178,7 @@ export type TradingSession = {
   timezone: string;
   local_datetime: string;
   calendar_date: string;
+  effective_trade_date: string;
   is_trading_day: boolean;
   session_kind:
     | "non_trading_day"

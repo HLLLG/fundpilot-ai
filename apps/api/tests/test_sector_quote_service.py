@@ -428,8 +428,8 @@ def test_refresh_sector_quotes_uses_estimate_for_unmatched_non_canonical(monkeyp
     assert result["items"][0]["sector_quote_meta"]["provider"] == "tiantian-fund-estimate"
 
 
-def test_official_nav_overlays_sector_return(monkeypatch):
-    """When official NAV is published, sector_return_percent becomes nav value and source = official_nav."""
+def test_official_nav_applies_to_daily_not_sector(monkeypatch):
+    """Official NAV updates daily return only; sector_return_percent stays on East Money board quote."""
     from app.services import sector_quote_service as service
     from app.services.sector_quote_service import refresh_holdings_sector_quotes
     from app.models import Holding
@@ -464,8 +464,11 @@ def test_official_nav_overlays_sector_return(monkeypatch):
     assert result["ok"] is True
     updated = [Holding.model_validate(h) for h in result["holdings"]]
     fund = next(h for h in updated if h.fund_code == "015945")
-    assert fund.sector_return_percent == pytest.approx(-2.45)
-    assert fund.sector_return_percent_source == "official_nav"
+    assert fund.sector_return_percent == pytest.approx(1.36)
+    assert fund.sector_return_percent_source == "closing_estimate"
+    assert fund.daily_return_percent == pytest.approx(-2.45)
+    assert fund.daily_return_percent_source == "official_nav"
+    assert fund.daily_profit == pytest.approx(-251.15)
 
 
 def test_closing_estimate_source_when_nav_not_published(monkeypatch):

@@ -5,12 +5,19 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
   Edit3,
   Loader2,
+  RefreshCw,
   X,
 } from "lucide-react";
 import type { Holding, HoldingDetail, PortfolioSummary, SectorQuoteMeta } from "@/lib/api";
-import { fetchFundNavHistory, fetchHoldingDetail, fetchSectorIntraday } from "@/lib/api";
+import {
+  fetchFundNavHistory,
+  fetchHoldingDetail,
+  fetchSectorIntraday,
+  fetchTradingSession,
+} from "@/lib/api";
 import { IntradayPercentChart } from "@/components/IntradayPercentChart";
 import { NavLineChart } from "@/components/NavLineChart";
 import {
@@ -18,18 +25,18 @@ import {
   computeCostBasis,
   computeDailyProfit,
   computeEstimatedDailyReturnPercent,
+  computeEstimatedHoldingReturnPercent,
   computeHoldingProfit,
   computeHoldingWeight,
-  dailyProfitIsEstimated,
   formatPlainMoney,
   formatPlainPercent,
   formatSignedMoney,
   formatSignedPercent,
-  holdingProfitIsEstimated,
-  resolveHoldingReturnPercent,
+  resolveSectorBoardReturnPercent,
 } from "@/lib/holdingMetrics";
-import { resolveIntradayQuery } from "@/lib/profileSector";
+import { resolveIntradayQuery, sectorQuoteLookupLabel } from "@/lib/profileSector";
 import { isEstimateFallbackMeta } from "@/lib/sectorQuoteStatus";
+import { formatTradeDateShort } from "@/lib/tradeDateLabel";
 
 type DetailTab = "sector" | "performance" | "profit";
 
@@ -54,28 +61,38 @@ type YangjibaoFundDetailProps = {
   onHoldingResolved?: (index: number, holding: Holding) => void;
 };
 
-function CompactStat({
+function HeaderStat({
   label,
-  labelClass,
   value,
-  valueClass = "text-slate-900",
-  sub,
-  title,
+  valueClass = "text-white",
 }: {
   label: string;
-  labelClass?: string;
   value: string;
   valueClass?: string;
-  sub?: string;
-  title?: string;
 }) {
   return (
-    <div className="px-2 py-1.5" title={title}>
-      <div className={`truncate text-[10px] ${labelClass ?? "text-slate-400"}`}>{label}</div>
-      <div className={`mt-0.5 truncate text-[13px] font-black tabular-nums leading-tight ${valueClass}`}>
+    <div className="px-2 py-2 text-center">
+      <div className="text-[11px] text-white/75">{label}</div>
+      <div className={`mt-1 text-lg font-black tabular-nums leading-none ${valueClass}`}>{value}</div>
+    </div>
+  );
+}
+
+function GridStat({
+  label,
+  value,
+  valueClass = "text-slate-900",
+}: {
+  label: string;
+  value: string;
+  valueClass?: string;
+}) {
+  return (
+    <div className="px-2 py-3 text-center">
+      <div className="text-[11px] text-slate-400">{label}</div>
+      <div className={`mt-1.5 text-[15px] font-black tabular-nums leading-tight ${valueClass}`}>
         {value}
       </div>
-      {sub ? <div className="truncate text-[9px] text-slate-400">{sub}</div> : null}
     </div>
   );
 }
@@ -111,6 +128,8 @@ export function YangjibaoFundDetail({
   const [intradayNote, setIntradayNote] = useState<string | null>(null);
   const [intradayRefreshing, setIntradayRefreshing] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
+  const [holdingsExpanded, setHoldingsExpanded] = useState(true);
+  const [quoteTradeDate, setQuoteTradeDate] = useState<string | null>(null);
   const intradayRequestSeq = useRef(0);
 
   const activeHolding = detail?.holding ?? holding;
@@ -120,7 +139,7 @@ export function YangjibaoFundDetail({
     portfolioSummary?.total_assets ??
     (holdings.reduce((sum, item) => sum + item.holding_amount, 0) || null);
 
-  const holdingReturn = resolveHoldingReturnPercent(activeHolding);
+  const holdingReturn = computeEstimatedHoldingReturnPercent(activeHolding);
   const holdingProfit = computeHoldingProfit(activeHolding);
   const dailyProfit = computeDailyProfit(activeHolding);
   const costBasis = computeCostBasis(activeHolding);
@@ -133,37 +152,19 @@ export function YangjibaoFundDetail({
   const latestNav = detail?.latest_nav ?? null;
   const yearReturn = detail?.year_return_percent ?? null;
 
-  const sectorBoardLabel =
-    activeHolding.sector_name ?? activeHolding.intraday_index_name ?? "—";
-  const sectorQuoteLabel =
-    activeHolding.intraday_index_name ?? activeHolding.sector_name ?? "—";
-  const sectorChartLabel =
-    activeHolding.intraday_index_name?.trim() || sectorQuoteLabel;
-  const sectorName = sectorChartLabel !== "—" ? sectorChartLabel : sectorMeta?.matched_name ?? "—";
-  const sectorReturn = activeHolding.sector_return_percent;
+  const quoteLabel = sectorQuoteLookupLabel(activeHolding) ?? sectorMeta?.matched_name ?? "—";
+  const sectorReturn = resolveSectorBoardReturnPercent(activeHolding);
   const emKlineClose =
     intradayClosePercent ??
     (intradayPoints.length > 0 ? intradayPoints[intradayPoints.length - 1].percent : null);
   const displaySectorReturn = emKlineClose ?? sectorReturn;
-  const source = activeHolding.sector_return_percent_source;
-  const sectorLabel =
-    source === "official_nav"
-      ? "官方净值"
-      : source === "closing_estimate"
-        ? "收盘估算"
-        : "板块实时";
-  const sectorLabelClass =
-    source === "official_nav" ? "text-blue-300" : "text-white/50";
-  const sectorTooltip =
-    source === "official_nav"
-      ? "已更新为基金官方公布净值涨幅"
-      : source === "closing_estimate"
-        ? "基于板块收盘涨幅估算，官方净值公布后自动更新"
-        : "基于关联板块实时涨幅估算";
+  const dataSourceLabel = isEstimateFallbackMeta(sectorMeta)
+    ? "估值兜底"
+    : sectorMeta?.provider === "eastmoney-kline" || sectorMeta?.source === "live"
+      ? "东财"
+      : "数据源";
   const displayDailyReturn =
-    emKlineClose != null && sectorMeta?.source === "live"
-      ? emKlineClose
-      : activeHolding.daily_return_percent ?? computeEstimatedDailyReturnPercent(activeHolding);
+    activeHolding.daily_return_percent ?? computeEstimatedDailyReturnPercent(activeHolding);
 
   const intradayQuery = useMemo(
     () => resolveIntradayQuery(activeHolding, sectorMeta),
@@ -343,10 +344,13 @@ export function YangjibaoFundDetail({
     };
   }, [tab, intradayQuery]);
 
-  const todayLabel = useMemo(() => {
-    const now = new Date();
-    return `${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  useEffect(() => {
+    void fetchTradingSession()
+      .then((session) => setQuoteTradeDate(formatTradeDateShort(session.effective_trade_date)))
+      .catch(() => setQuoteTradeDate(null));
   }, []);
+
+  const tradeDateLabel = quoteTradeDate ?? "—";
 
   return (
     <div
@@ -410,34 +414,22 @@ export function YangjibaoFundDetail({
             </div>
           </div>
 
-          <div className="mt-2 grid grid-cols-3 divide-x divide-white/20 rounded-lg bg-white/10 text-center">
-            <CompactStat
-              label="当日涨幅"
+          <div className="mt-3 grid grid-cols-3 divide-x divide-white/25">
+            <HeaderStat
+              label={`当日涨幅 ${tradeDateLabel}`}
               value={formatSignedPercent(displayDailyReturn)}
               valueClass={cnProfitClass(displayDailyReturn)}
             />
-            <CompactStat
+            <HeaderStat
               label="近1年"
               value={
                 yearReturn != null ? formatSignedPercent(yearReturn) : detailLoading ? "…" : "—"
               }
               valueClass={cnProfitClass(yearReturn)}
             />
-            <CompactStat
-              label={sectorLabel}
-              labelClass={sectorLabelClass}
-              value={formatSignedPercent(displaySectorReturn)}
-              valueClass={cnProfitClass(displaySectorReturn)}
-              title={sectorTooltip}
-              sub={
-                isEstimateFallbackMeta(sectorMeta)
-                  ? "估值兜底"
-                  : source === "official_nav"
-                    ? undefined
-                    : sectorMeta?.source === "live"
-                      ? "东财"
-                      : undefined
-              }
+            <HeaderStat
+              label="持仓占比"
+              value={weight != null ? formatPlainPercent(weight) : "—"}
             />
           </div>
         </header>
@@ -448,68 +440,68 @@ export function YangjibaoFundDetail({
           </div>
         ) : null}
 
-        <details className="group border-b border-slate-100 bg-white" open>
-          <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2 text-xs font-bold text-slate-600 marker:content-none [&::-webkit-details-marker]:hidden">
-            <span>持仓明细</span>
-            <ChevronDown
-              size={16}
-              className="text-slate-400 transition group-open:rotate-180"
-            />
-          </summary>
-          <div className="border-t border-slate-100">
-            <div className="grid grid-cols-4 divide-x divide-slate-100 border-b border-slate-100">
-              <CompactStat label="持有金额" value={formatPlainMoney(activeHolding.holding_amount)} />
-              <CompactStat
-                label="持有份额"
-                value={shares != null ? formatPlainMoney(shares) : detailLoading ? "…" : "—"}
-                sub={sourceHint(provenance, "holding_shares")}
-              />
-              <CompactStat label="持仓占比" value={weight != null ? formatPlainPercent(weight) : "—"} />
-              <CompactStat
-                label="持仓成本"
-                value={unitCost != null ? unitCost.toFixed(4) : detailLoading ? "…" : "—"}
-                sub={sourceHint(provenance, "holding_cost")}
-              />
+        <div className="border-b border-slate-100 bg-white">
+          {holdingsExpanded ? (
+            <div className="divide-y divide-slate-100">
+              <div className="grid grid-cols-3 divide-x divide-slate-100">
+                <GridStat label="持有金额" value={formatPlainMoney(activeHolding.holding_amount)} />
+                <GridStat
+                  label="持有份额"
+                  value={shares != null ? formatPlainMoney(shares) : detailLoading ? "…" : "—"}
+                />
+                <GridStat
+                  label="持仓占比"
+                  value={weight != null ? formatPlainPercent(weight) : "—"}
+                />
+              </div>
+              <div className="grid grid-cols-3 divide-x divide-slate-100">
+                <GridStat
+                  label="持有收益"
+                  value={formatSignedMoney(holdingProfit)}
+                  valueClass={cnProfitClass(holdingProfit)}
+                />
+                <GridStat
+                  label="持有收益率"
+                  value={formatSignedPercent(holdingReturn)}
+                  valueClass={cnProfitClass(holdingReturn)}
+                />
+                <GridStat
+                  label="持仓成本"
+                  value={unitCost != null ? unitCost.toFixed(4) : detailLoading ? "…" : "—"}
+                />
+              </div>
+              <div className="grid grid-cols-3 divide-x divide-slate-100">
+                <GridStat
+                  label="当日收益"
+                  value={formatSignedMoney(dailyProfit)}
+                  valueClass={cnProfitClass(dailyProfit)}
+                />
+                <GridStat
+                  label="昨日收益"
+                  value={
+                    yesterdayProfit != null ? formatSignedMoney(yesterdayProfit) : detailLoading ? "…" : "—"
+                  }
+                  valueClass={cnProfitClass(yesterdayProfit)}
+                />
+                <GridStat
+                  label="持有天数"
+                  value={holdingDays != null ? `${holdingDays}` : detailLoading ? "…" : "—"}
+                />
+              </div>
             </div>
-            <div className="grid grid-cols-4 divide-x divide-slate-100 border-b border-slate-100">
-              <CompactStat
-                label="持有收益"
-                value={`${holdingProfitIsEstimated(activeHolding) ? "≈" : ""}${formatSignedMoney(holdingProfit)}`}
-                valueClass={cnProfitClass(holdingProfit)}
-              />
-              <CompactStat
-                label="持有收益率"
-                value={formatSignedPercent(holdingReturn)}
-                valueClass={cnProfitClass(holdingReturn)}
-              />
-              <CompactStat
-                label="当日收益"
-                value={`${dailyProfitIsEstimated(activeHolding) ? "≈" : ""}${formatSignedMoney(dailyProfit)}`}
-                valueClass={cnProfitClass(dailyProfit)}
-              />
-              <CompactStat
-                label="昨日收益"
-                value={yesterdayProfit != null ? formatSignedMoney(yesterdayProfit) : detailLoading ? "…" : "—"}
-                valueClass={cnProfitClass(yesterdayProfit)}
-                sub={sourceHint(provenance, "yesterday_profit")}
-              />
-            </div>
-            <div className="grid grid-cols-2 divide-x divide-slate-100">
-              <CompactStat
-                label="持有天数"
-                value={holdingDays != null ? `${holdingDays} 天` : detailLoading ? "…" : "—"}
-                sub={sourceHint(provenance, "holding_days")}
-              />
-              <CompactStat
-                label="成本总额"
-                value={costBasis != null ? formatPlainMoney(costBasis) : "—"}
-              />
-            </div>
-          </div>
-        </details>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => setHoldingsExpanded((current) => !current)}
+            className="flex w-full items-center justify-center py-1.5 text-slate-300 transition hover:text-slate-500"
+            aria-label={holdingsExpanded ? "收起持仓明细" : "展开持仓明细"}
+          >
+            {holdingsExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+          </button>
+        </div>
 
-        <div className="border-b border-slate-100 bg-white px-3">
-          <div className="flex gap-5 text-sm font-bold">
+        <div className="border-b border-slate-100 bg-white px-4">
+          <div className="flex gap-6 text-[15px] font-bold">
             {(
               [
                 ["sector", "关联板块"],
@@ -521,10 +513,10 @@ export function YangjibaoFundDetail({
                 key={id}
                 type="button"
                 onClick={() => setTab(id)}
-                className={`border-b-2 py-2.5 transition ${
+                className={`border-b-[2.5px] py-3 transition ${
                   tab === id
                     ? "border-[#3d7eff] text-[#3d7eff]"
-                    : "border-transparent text-slate-400"
+                    : "border-transparent text-slate-500"
                 }`}
               >
                 {label}
@@ -536,53 +528,54 @@ export function YangjibaoFundDetail({
         <div className="px-3 py-3">
           {tab === "sector" ? (
             <div>
-              <div className="mb-2 flex items-center justify-between gap-2">
-                <div className="min-w-0">
-                  <div className="truncate text-xs font-bold text-slate-700">
-                    {todayLabel} · {sectorName}
-                  </div>
-                  {intradayRefreshing ? (
-                    <div className="mt-0.5 flex items-center gap-1 text-[10px] text-slate-400">
-                      <Loader2 size={10} className="animate-spin" />
-                      更新分时…
-                    </div>
-                  ) : null}
-                </div>
-                <div className={`shrink-0 text-base font-black tabular-nums ${cnProfitClass(displaySectorReturn)}`}>
+              <div className="mb-1 flex items-center gap-2 border-b border-slate-100 pb-2 text-xs">
+                <span className="shrink-0 text-slate-400">日期 {tradeDateLabel}</span>
+                <span className="flex min-w-0 flex-1 items-center justify-center gap-0.5 truncate font-bold text-slate-800">
+                  {quoteLabel}
+                  <ChevronDown size={12} className="shrink-0 text-slate-400" />
+                </span>
+                <span
+                  className={`shrink-0 text-sm font-black tabular-nums ${cnProfitClass(displaySectorReturn)}`}
+                >
                   {formatSignedPercent(displaySectorReturn)}
-                </div>
+                </span>
+                <span className="flex shrink-0 items-center gap-0.5 text-[10px] text-slate-400">
+                  {dataSourceLabel}
+                  {intradayRefreshing ? (
+                    <Loader2 size={10} className="animate-spin" />
+                  ) : (
+                    <RefreshCw size={10} />
+                  )}
+                </span>
               </div>
               {intradayLoading ? (
-                <div className="flex h-[168px] items-center justify-center text-sm text-slate-400">
+                <div className="flex h-[200px] items-center justify-center text-sm text-slate-400">
                   <Loader2 size={18} className="mr-2 animate-spin" />
                   加载分时…
                 </div>
               ) : intradayPoints.length < 2 ? (
-                <div className="flex h-[168px] flex-col items-center justify-center gap-1 px-4 text-center text-sm text-slate-400">
+                <div className="flex h-[200px] flex-col items-center justify-center gap-1 px-4 text-center text-sm text-slate-400">
                   <span>{intradayNote ?? "暂无分时数据"}</span>
-                  {intradayQuery ? (
-                    <span className="text-[11px] text-slate-300">
-                      数据源：东财 {intradayQuery.source_name}（{intradayQuery.source_type}）
-                    </span>
-                  ) : null}
                 </div>
               ) : (
-                <IntradayPercentChart points={intradayPoints} height={168} />
+                <IntradayPercentChart points={intradayPoints} height={200} />
               )}
-              {intradayPoints.length >= 2 ? (
-                <p className="mt-1 text-center text-[11px] text-slate-400">
-                  分时与右上角均为相对昨收涨跌
-                </p>
-              ) : null}
-              {activeHolding.intraday_index_name &&
-              activeHolding.sector_name &&
-              activeHolding.intraday_index_name !== activeHolding.sector_name ? (
-                <p className="mt-1.5 text-center text-[11px] text-slate-400">
-                  关联板块 {sectorBoardLabel} · 涨跌按场内指数 {activeHolding.intraday_index_name}
-                </p>
-              ) : null}
-              {intradayNote ? (
-                <p className="mt-1.5 text-center text-[11px] text-slate-400">{intradayNote}</p>
+              <div className="mt-2 border-t border-slate-100">
+                <div className="flex items-center justify-between gap-2 py-3 text-sm">
+                  <span className="text-slate-500">关联板块</span>
+                  <div className="flex min-w-0 flex-1 items-center justify-end gap-1">
+                    <span className="truncate font-bold text-slate-800">{quoteLabel}</span>
+                    <span
+                      className={`shrink-0 font-black tabular-nums ${cnProfitClass(displaySectorReturn)}`}
+                    >
+                      {formatSignedPercent(displaySectorReturn)}
+                    </span>
+                    <ChevronRight size={14} className="shrink-0 text-slate-300" />
+                  </div>
+                </div>
+              </div>
+              {intradayNote && intradayPoints.length >= 2 ? (
+                <p className="pb-1 text-center text-[11px] text-slate-400">{intradayNote}</p>
               ) : null}
             </div>
           ) : null}
@@ -637,7 +630,6 @@ export function YangjibaoFundDetail({
                 label="持有收益"
                 value={formatSignedMoney(holdingProfit)}
                 valueClass={cnProfitClass(holdingProfit)}
-                hint={holdingProfitIsEstimated(activeHolding) ? "由持有收益率估算" : undefined}
               />
               <ProfitRow
                 label="昨日收益"
@@ -655,20 +647,21 @@ export function YangjibaoFundDetail({
           ) : null}
         </div>
 
-        <footer className="sticky bottom-0 z-10 grid shrink-0 grid-cols-2 gap-px border-t border-slate-100 bg-slate-100">
+        <footer className="sticky bottom-0 z-10 grid shrink-0 grid-cols-2 divide-x divide-slate-100 border-t border-slate-100 bg-white">
           <button
             type="button"
             onClick={onEdit}
-            className="flex items-center justify-center gap-2 bg-white py-3 text-sm font-bold text-slate-700 hover:bg-slate-50"
+            className="flex flex-col items-center justify-center gap-1 py-3 text-[11px] font-semibold text-slate-600 hover:bg-slate-50"
           >
-            <Edit3 size={16} />
+            <Edit3 size={18} className="text-slate-500" />
             修改持仓
           </button>
           <button
             type="button"
             onClick={onClose}
-            className="bg-white py-3 text-sm font-bold text-slate-700 hover:bg-slate-50"
+            className="flex flex-col items-center justify-center gap-1 py-3 text-[11px] font-semibold text-slate-600 hover:bg-slate-50"
           >
+            <ChevronLeft size={18} className="text-slate-500" />
             返回列表
           </button>
         </footer>

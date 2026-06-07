@@ -331,6 +331,7 @@ def test_trading_session_endpoint():
     body = response.json()
     assert body["session_kind"]
     assert body["decision_window"]
+    assert body["effective_trade_date"]
 
 
 def test_database_export_and_import(tmp_path, monkeypatch):

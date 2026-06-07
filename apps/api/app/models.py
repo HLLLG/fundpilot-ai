@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Any, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 Action = Literal["watch", "pause_add", "staggered_add", "risk_review"]
@@ -23,8 +23,17 @@ class Holding(BaseModel):
     sector_name: str | None = None
     sector_return_percent: float | None = None
     sector_return_percent_source: SectorReturnSource | None = None
+    daily_return_percent_source: DailyReturnSource | None = None
+    yesterday_profit: float | None = None
     intraday_index_name: str | None = None
     user_note: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_official_nav_sector(cls, data: Any) -> Any:
+        from app.services.holding_migration import migrate_legacy_holding_payload
+
+        return migrate_legacy_holding_payload(data)
 
 
 class InvestorProfile(BaseModel):
@@ -52,7 +61,8 @@ class RiskAssessment(BaseModel):
 
 AnalysisMode = Literal["fast", "deep"]
 DailyProfitSource = Literal["settled", "penetration_estimate"]
-SectorReturnSource = Literal["realtime", "closing_estimate", "official_nav"]
+SectorReturnSource = Literal["realtime", "closing_estimate"]
+DailyReturnSource = Literal["sector_estimate", "official_nav"]
 
 
 class AnalysisRequest(BaseModel):

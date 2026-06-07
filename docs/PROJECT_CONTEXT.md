@@ -4,9 +4,11 @@
 >
 > **维护：** 功能或架构有实质变化时，同步更新「能力清单」「数据流」「API」「目录」「环境变量」。
 
-**文档版本：** 2026-06-06（文档整理；官方净值、canonical 板块、分时 push2 均已落地）
+**文档版本：** 2026-06-07（官方净值当日收益公式修正；昨日收益；持有收益展示）
 
 **更新记录：**
+- **官方净值当日收益（2026-06-07）：** NAV 发布后 `daily_return_percent` 用官方日增长率，`daily_profit = 现金额 × r / (100 + r)`（结算前金额 × 涨幅，对齐支付宝）；`sector_return_percent` 仍仅展示东财板块涨跌；前端刷新不再用板块覆盖官方净值；账户汇总展示「昨日收益」。
+- **持有收益展示（2026-06-07）：** 盘中 `持有收益 ≈ 昨日结算 + 板块涨跌`；官方净值公布后直接使用 OCR/档案中的含当日总值，不再叠加当日收益。
 - **文档整理（2026-06-06）：** 合并历史迭代要点；`docs/design/` 仅保留分时 push2 运维 runbook，其余设计稿删除，以本文为准。
 - **官方净值收益：** 收盘后以官方 T-day NAV 收益率替换板块估算；三层源标签（板块实时 / 收盘估算 / 官方净值）；修复周末日期回溯。
 - **板块 canonical：** 养基宝常见板块名 → 东财 `secid` 硬编码映射（`sector_canonical.py`）；涨跌与分时统一走 push2 K 线。
@@ -25,7 +27,7 @@
 | 类别 | 能力 |
 |------|------|
 | 输入 | 养基宝总览 OCR（无代码草稿解析）；当日列为 `-` 时不填当日收益；**OCR 漏负号**时规则补符号；总览上传在「基金档案」Tab |
-| 当日收益 | **刷新时按板块涨跌估算**（养基宝规则：有**场内指数**用指数，否则用**关联板块**）；`holding_amount × sector_return%`；忽略 OCR 当日利润 |
+| 当日收益 | 盘中/净值未公布：**板块涨跌估算**（`holding_amount × sector_return%`）；NAV 发布后：**官方日增长率** + `daily_profit = amount × r / (100 + r)`；关联板块列始终东财涨跌；账户汇总附「昨日收益」 |
 | 校对 | `HoldingTable` 含估算当日收益率；OCR 返回 `holding_warnings` / `holding_diffs`；**沿用上次基金列表** |
 | 档案 | 详情 OCR 解析「场内指数 + 关联板块」；拒绝 `+`/`-`/Tab 标签误存为板块名；`POST /api/fund-profiles/repair-sectors` 清理历史脏数据；读取/保存时 `_sanitize_profile_sector_fields`；总览自动同步档案；`000000` 靠档案按名称补码 |
 | 首页看板 | **今日** Tab：`YangjibaoHoldingsBoard` 养基宝式卡片；启动 `GET /api/portfolio/holdings` 恢复持仓并自动刷新板块；点击行打开 `YangjibaoFundDetail` |
@@ -38,7 +40,7 @@
 | 穿透估算 | 未收盘时按板块权重分配账户当日收益 |
 | 板块实时 | **canonical 映射优先**（`sector_canonical` → 东财 `secid` K 线）；未知板块再走 spot 批量表 + `sector_quote_resolver` + `sector_on_demand`；可选中继/浏览器命令；300s 自动 + 手动；低置信度 `SectorMappingModal`；有场内指数时优先指数口径（`sector_quote_lookup_label`） |
 | 分时图 | `GET /api/sector-quotes/intraday`；push2delay 首选；相对**昨收**对齐养基宝；骨架点 &lt;30 不写缓存；可选 `sector_intraday_browser_command` 浏览器兜底 |
-| 官方净值 | 收盘后以 AkShare `fund_open_fund_info_em` 覆盖板块估算（`fund_nav_service`）；源标签：板块实时 / 收盘估算 / 官方净值 |
+| 官方净值 | AkShare `fund_open_fund_info_em` 覆盖**当日收益**（非板块列）；源标签：板块实时 / 收盘估算 / 官方净值；昨日收益取再上一交易日官方净值或 OCR |
 | 阻塞清单 | `TodayBlockingChecklist` + `workflowBlockers` |
 | 数据备份 | SQLite export/import；`DatabaseBackupPanel` |
 | CI / E2E | GitHub Actions：pytest（**221** 项）+ lint/typecheck/build + Playwright |
@@ -255,7 +257,7 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 
 | 模型 | 要点 |
 |------|------|
-| **Holding** | 6 位代码、金额、持有/当日收益、板块；**新增** `sector_return_percent_source`（源标签：realtime / closing_estimate / official_nav）；模型侧见 `holding_analysis_payload` |
+| **Holding** | 6 位代码、金额、持有/当日/昨日收益、板块；`sector_return_percent_source`（realtime / closing_estimate）；`daily_return_percent_source`（sector_estimate / official_nav）；`yesterday_profit`；见 `holding_analysis_payload` |
 | **InvestorProfile** | 稳健默认；浮亏 8%、集中度 35% |
 | **FundRecommendation** | action、amount_*、news_bullish/bearish、points |
 | **NewsItem** | topic、title、is_today |
@@ -289,13 +291,16 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 
 | 字段 | 含义 |
 |------|------|
-| `sector_return_percent` | 关联板块**当日**实时涨跌 OR 官方基金净值收益率（若已发布） |
-| `sector_return_percent_source` | 数据源类型：`"realtime"` 板块实时 / `"closing_estimate"` 收盘估算 / `"official_nav"` 官方净值 |
-| `holding_return_percent` | 持有收益率，多为**昨日结算** |
-| `daily_return_percent` | 明确当日基金收益率（有则优先） |
-| `estimated_daily_return_percent` | 无当日时 ≈ `sector_return_percent + holding_return_percent`（估算，须在报告中注明） |
+| `sector_return_percent` | 关联板块/场内指数**当日**东财涨跌（展示用，不用官方净值替换） |
+| `sector_return_percent_source` | `"realtime"` 板块实时 / `"closing_estimate"` 收盘估算 |
+| `daily_return_percent` | 当日基金收益率：官方净值或板块估算 |
+| `daily_return_percent_source` | `"sector_estimate"` 板块估算 / `"official_nav"` 官方净值 |
+| `daily_profit` | 当日收益额；官方净值时 `amount × r / (100 + r)`，盘中估算时 `amount × sector% / 100` |
+| `yesterday_profit` | 再上一交易日官方净值收益（或 OCR）；账户汇总「昨」行 |
+| `holding_return_percent` | 持有收益率；OCR 多为**昨日结算**；净值公布后展示层用含当日总值 |
+| `estimated_daily_return_percent` | 无 `daily_return_percent` 时 ≈ `sector_return_percent + holding_return_percent`（估算） |
 
-实现：`app/services/holding_metrics.py`；`deepseek_client._user_payload` 含 `holding_return_semantics`。
+实现：`holding_estimates.py`（展示层收益计算）、`holding_metrics.py`（报告语义）、`holdingMetrics.ts`（前端镜像）；`deepseek_client._user_payload` 含 `holding_return_semantics`。
 
 ### 净值走势摘要（传给 DeepSeek，非完整 K 线）
 
@@ -311,26 +316,38 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 
 配置：`FUND_AI_NAV_TREND_DAYS`（默认 66）、`FUND_AI_NAV_TREND_RECENT_SAMPLE`（默认 8）。前端 `GET /api/fund-profiles/{code}/nav-history` 仍用于完整折线图，与 AI 摘要独立。
 
-### 官方净值收益覆盖（2026-06-06）
+### 官方净值收益覆盖（2026-06-07）
 
-**背景：** 养基宝收盘后仅显示板块涨幅估算，不是基金官方净值。在 15:00 后、官方 NAV 发布前（通常 21:00）期间，显示板块估算误导性强。需在 NAV 发布后自动替换。
+**背景：** 养基宝收盘后仅显示板块涨幅估算；NAV 发布前（通常 ~21:00）用板块估算，发布后须切官方净值。养基宝周末界面用**结算后金额** × 涨幅会低估当日收益（如 -166.40），支付宝/正确口径为**结算前金额** × 涨幅（如 -169.04）。
 
 **流程：**
 
-| 时段 | 源标签 | 数据 | 实现 |
-|------|--------|------|------|
-| 09:30–15:00（盘中） | `"realtime"` "板块实时" | 东财板块实时涨幅 | `sector_quote_service` 查 `result.change_percent` |
-| 15:00 后、NAV 前 | `"closing_estimate"` "收盘估算" | 东财/AkShare 板块收盘涨幅 | `_is_trading_hours() == False` 且 `get_official_nav_return() == None` |
-| NAV 发布后（~21:00） | `"official_nav"` "官方净值" | AkShare `fund_open_fund_info_em` 日增长率 | `get_official_nav_return(fund_code, trade_date)` 返回非 None |
+| 时段 | 当日收益源 | 板块列 | 实现 |
+|------|-----------|--------|------|
+| 09:30–15:00（盘中） | 板块实时估算 | 东财实时 | `sector_return_percent_source = "realtime"` |
+| 15:00 后、NAV 前 | 板块收盘估算 | 东财收盘 | `"closing_estimate"` |
+| NAV 发布后 | **官方净值** | 仍东财板块 | `daily_return_percent_source = "official_nav"` |
+
+**当日收益公式：**
+
+| 场景 | 公式 |
+|------|------|
+| 官方净值已公布 | `daily_profit = holding_amount × daily_return% / (100 + daily_return%)` |
+| 盘中板块估算 | `daily_profit ≈ holding_amount × sector_return% / 100` |
+
+**昨日收益：** 再上一交易日官方净值涨跌（`compute_yesterday_profit_from_official_nav`），账户汇总「估算当日」列下展示「昨 ±xx」；OCR 详情页 `yesterday_profit` 作兜底。
+
+**持有收益展示：** 盘中 `≈ 昨日结算持有收益 + 当日板块估算`；官方净值公布后直接使用 OCR/档案 `holding_profit`（已含当日），不再叠加 `daily_profit`。
 
 **关键实现：**
 
-- **`fund_nav_service.py`：** 调用 AkShare `fund_open_fund_info_em(symbol=fund_code, indicator="单位净值走势")`，取最新行的 `日增长率`；缓存 24h（TTL_HIT）/ 5min 重试（TTL_MISS）；NaN 作为未发布。
-- **`_get_last_trade_date()`：** 从今天起向后查找最近交易日（用 `_is_trading_day()`）。修复周末/假期日期回溯问题。
-- **`sector_quote_service.refresh_holdings_sector_quotes()`：** 在板块匹配成功后，查询官方 NAV；若存在则覆盖 `sector_return_percent` + 设 `sector_return_percent_source = "official_nav"`；否则按交易时段判断 `"realtime"` vs `"closing_estimate"`。
-- **前端 `YangjibaoFundDetail.tsx`：** 读 `sector_return_percent_source` 动态渲染标签颜色（`"official_nav"` → 蓝色 `text-blue-300`）+ 工具提示。
+- **`fund_nav_service.py`：** `get_official_nav_return()` 取 AkShare 日增长率；`compute_yesterday_profit_from_official_nav()` 算上一交易日收益。
+- **`sector_quote_service.refresh_holdings_sector_quotes()`：** 官方 NAV 写入 `daily_return_percent` / `daily_profit` / `daily_return_percent_source`；**不**覆盖 `sector_return_percent`。
+- **`holding_estimates.py`：** `overlay_official_nav_returns`（恢复持仓时补官方净值）、`compute_official_daily_profit`、`enrich_holdings_yesterday_profits`。
+- **`holdingMetrics.ts`：** `applySectorDailyEstimate` 保留 `official_nav`；`computeDailyProfit` / `computeHoldingProfit` 与后端一致。
+- **`YangjibaoHoldingsBoard`：** 估算当日 + 昨日收益子行；关联板块列独立展示东财涨跌。
 
-**缓存策略：** 内存 dict `_NAV_CACHE[f"{fund_code}:{trade_date}"]` → `(value, expires_at)`，避免重复调 AkShare。缓存过期后自动重试。
+**缓存策略：** `_NAV_CACHE[f"{fund_code}:{trade_date}"]` TTL 24h（命中）/ 5min（未发布重试）。
 
 ## 新闻与 DeepSeek
 
@@ -415,7 +432,7 @@ cd apps/web && npm run test:e2e   # Playwright 冒烟
 3. 改异步流程：`job_store.py`（后端）→ `JobStatusFloat.tsx`（前端轮询）→ `Dashboard.tsx`（回调）。
 4. 改追问：`report_chat.py` / `report_chat_runtime.py` → `main.py` chat 路由 → `ReportChatPanel.tsx` / `ChatMarkdown.tsx` → `tests/test_report_chat*.py`。
 5. 改 OCR/估算收益：`ocr_parser.py` → `holding_metrics.py` → `HoldingTable` / `holdingMetrics.ts` → `tests/test_ocr_parser.py`、`tests/fixtures/`。
-6. 改板块收益源：`sector_canonical.py`（映射）→ `sector_quote_service.py`（刷新 + NAV 叠加）→ `fund_nav_service.py` → `YangjibaoFundDetail.tsx` → 相关 tests。
+6. 改板块/净值收益：`sector_canonical.py` → `sector_quote_service.py`（板块 + 官方 NAV 写入 daily）→ `fund_nav_service.py` → `holding_estimates.py` / `holdingMetrics.ts` → `YangjibaoHoldingsBoard.tsx` → 相关 tests。
 7. 改分时：`eastmoney_trends_client.py` → `sector_intraday_provider.py` → `IntradayPercentChart.tsx`；换机排查见 design 分时文档。
 
 ---

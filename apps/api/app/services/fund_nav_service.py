@@ -51,3 +51,43 @@ def get_official_nav_return(fund_code: str, trade_date: str) -> float | None:
         logger.exception("Failed to fetch official NAV return for %s on %s", fund_code, trade_date)
         _NAV_CACHE[key] = (None, now + TTL_MISS)
         return None
+
+
+def compute_yesterday_profit_from_official_nav(
+    fund_code: str,
+    holding_amount: float,
+    trade_date: str,
+) -> float | None:
+    """上一交易日官方净值收益额：上一交易日收盘金额 × 上一交易日净值涨跌幅。"""
+    if not fund_code or fund_code == "000000" or holding_amount <= 0:
+        return None
+    try:
+        df = _fetch_nav_df(fund_code)
+        if df is None or df.empty:
+            return None
+        frame = df.copy()
+        frame["_date"] = frame["净值日期"].astype(str).str[:10]
+        matches = frame.index[frame["_date"] == trade_date].tolist()
+        if not matches:
+            return None
+        latest_idx = matches[-1]
+        pos = frame.index.get_loc(latest_idx)
+        if isinstance(pos, slice):
+            pos = pos.start or 0
+        if pos < 1:
+            return None
+        latest_row = frame.iloc[pos]
+        prev_row = frame.iloc[pos - 1]
+        latest_return = float(latest_row["日增长率"])
+        prev_return = float(prev_row["日增长率"])
+        if math.isnan(latest_return) or math.isnan(prev_return):
+            return None
+        amount_before_latest = holding_amount / (1 + latest_return / 100)
+        return round(amount_before_latest * prev_return / 100, 2)
+    except Exception:
+        logger.exception(
+            "Failed to compute yesterday profit from NAV for %s on %s",
+            fund_code,
+            trade_date,
+        )
+        return None

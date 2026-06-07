@@ -19,7 +19,7 @@ function round2(value: number) {
   return Math.round(value * 100) / 100;
 }
 
-/** 持有收益率（优先 holding_return_percent） */
+/** 持有收益率（昨日结算，不含今日涨跌） */
 export function resolveHoldingReturnPercent(holding: Holding): number | null {
   if (holding.holding_return_percent != null) {
     return holding.holding_return_percent;
@@ -30,11 +30,50 @@ export function resolveHoldingReturnPercent(holding: Holding): number | null {
   return null;
 }
 
+/** 当日涨跌分量：官方净值已公布时用净值，否则用关联板块涨跌。 */
+export function resolveIntradayReturnPercent(holding: Holding): number | null {
+  if (
+    holding.daily_return_percent_source === "official_nav" &&
+    holding.daily_return_percent != null
+  ) {
+    return holding.daily_return_percent;
+  }
+  if (holding.sector_return_percent != null) {
+    return holding.sector_return_percent;
+  }
+  if (holding.daily_return_percent != null) {
+    return holding.daily_return_percent;
+  }
+  return null;
+}
+
 /**
- * 持有收益额：优先 OCR；否则由 持有金额 × 持有收益率 反推。
- * 公式：profit = amount × r / (100 + r)，r 为持有收益率（相对成本）。
+ * 持有收益率展示：
+ * - 官方净值已公布：OCR/档案中的持有收益率已是含当日的总值
+ * - 盘中/净值未公布：昨日结算 + 板块涨跌估算
  */
-export function computeHoldingProfit(holding: Holding): number | null {
+export function computeEstimatedHoldingReturnPercent(holding: Holding): number | null {
+  const settled = resolveHoldingReturnPercent(holding);
+  if (holding.daily_return_percent_source === "official_nav") {
+    if (settled != null) {
+      return round2(settled);
+    }
+    if (holding.daily_return_percent != null) {
+      return round2(holding.daily_return_percent);
+    }
+    return null;
+  }
+  const intraday = resolveIntradayReturnPercent(holding);
+  if (settled == null) {
+    return null;
+  }
+  if (intraday == null) {
+    return settled;
+  }
+  return round2(settled + intraday);
+}
+
+function resolveSettledHoldingProfit(holding: Holding): number | null {
   if (holding.holding_profit != null) {
     return holding.holding_profit;
   }
@@ -46,29 +85,88 @@ export function computeHoldingProfit(holding: Holding): number | null {
 }
 
 /**
+ * 持有收益额展示：
+ * - 官方净值已公布：OCR/档案中的持有收益已是含当日的总值
+ * - 盘中/净值未公布：昨日结算持有收益 + 当日收益（板块估算）
+ */
+export function computeHoldingProfit(holding: Holding): number | null {
+  if (holding.daily_return_percent_source === "official_nav") {
+    if (holding.holding_profit != null) {
+      return holding.holding_profit;
+    }
+    const totalReturn = computeEstimatedHoldingReturnPercent(holding);
+    if (totalReturn != null && holding.holding_amount > 0) {
+      return round2((holding.holding_amount * totalReturn) / (100 + totalReturn));
+    }
+    return null;
+  }
+  const settledProfit = resolveSettledHoldingProfit(holding);
+  const dailyProfit = computeDailyProfit(holding);
+  if (settledProfit != null && dailyProfit != null) {
+    return round2(settledProfit + dailyProfit);
+  }
+  if (settledProfit != null) {
+    return settledProfit;
+  }
+  const estimatedReturn = computeEstimatedHoldingReturnPercent(holding);
+  if (estimatedReturn == null || holding.holding_amount <= 0) {
+    return null;
+  }
+  return round2((holding.holding_amount * estimatedReturn) / (100 + estimatedReturn));
+}
+
+/**
  * 板块刷新后重算当日收益（忽略 OCR 截图里的当日收益）。
- * 公式：当日收益 ≈ 持有金额 × 板块涨跌%
+ * 若后端已写入官方净值当日收益率，则保留。
  */
 export function applySectorDailyEstimate(holding: Holding): Holding {
+  if (holding.daily_return_percent_source === "official_nav") {
+    return holding;
+  }
   const sector = holding.sector_return_percent;
   if (sector == null || holding.holding_amount <= 0) {
     return {
       ...holding,
       daily_profit: null,
       daily_return_percent: null,
+      daily_return_percent_source: null,
     };
   }
   return {
     ...holding,
     daily_profit: round2((holding.holding_amount * sector) / 100),
     daily_return_percent: sector,
+    daily_return_percent_source: "sector_estimate",
   };
 }
 
 /**
- * 当日收益额：优先已写入的 daily_profit；否则用板块涨跌估算（展示层 fallback）。
+ * 当日收益额：优先已写入的 daily_profit；官方净值或板块涨跌估算。
  */
+/** 官方净值当日收益：结算前金额 × 日涨幅 = 现金额 × r / (100 + r)。 */
+export function computeOfficialDailyProfit(
+  holdingAmount: number,
+  dailyReturnPercent: number,
+): number {
+  return round2((holdingAmount * dailyReturnPercent) / (100 + dailyReturnPercent));
+}
+
+/** 昨日收益：由后端写入上一交易日官方净值收益，或 OCR 兜底。 */
+export function computeYesterdayProfit(holding: Holding): number | null {
+  return holding.yesterday_profit ?? null;
+}
+
 export function computeDailyProfit(holding: Holding): number | null {
+  if (
+    holding.daily_return_percent_source === "official_nav" &&
+    holding.daily_return_percent != null &&
+    holding.holding_amount > 0
+  ) {
+    return computeOfficialDailyProfit(
+      holding.holding_amount,
+      holding.daily_return_percent,
+    );
+  }
   if (holding.daily_profit != null) {
     return holding.daily_profit;
   }
@@ -76,6 +174,11 @@ export function computeDailyProfit(holding: Holding): number | null {
     return round2((holding.holding_amount * holding.sector_return_percent) / 100);
   }
   return null;
+}
+
+/** 关联板块列：始终展示东财板块/指数涨跌，不用官方净值。 */
+export function resolveSectorBoardReturnPercent(holding: Holding): number | null {
+  return holding.sector_return_percent ?? null;
 }
 
 export function computeEstimatedDailyReturnPercent(holding: Holding): number | null {
@@ -93,6 +196,9 @@ export function computeEstimatedDailyReturnPercent(holding: Holding): number | n
 }
 
 export function holdingDailyReturnIsEstimated(holding: Holding): boolean {
+  if (holding.daily_return_percent_source === "official_nav") {
+    return false;
+  }
   return (
     holding.daily_return_percent == null &&
     holding.sector_return_percent != null &&
@@ -101,18 +207,30 @@ export function holdingDailyReturnIsEstimated(holding: Holding): boolean {
 }
 
 export function dailyProfitIsEstimated(holding: Holding): boolean {
+  if (holding.daily_return_percent_source === "official_nav") {
+    return false;
+  }
+  if (holding.daily_profit != null) {
+    return false;
+  }
   return holding.sector_return_percent != null && holding.holding_amount > 0;
 }
 
 export function holdingProfitIsEstimated(holding: Holding): boolean {
+  if (holding.daily_return_percent_source === "official_nav") {
+    return holding.holding_profit == null;
+  }
+  if (resolveIntradayReturnPercent(holding) != null) {
+    return true;
+  }
   return holding.holding_profit == null && computeHoldingProfit(holding) != null;
 }
 
-/** 板块刷新后补全持有收益等（当日收益由 applySectorDailyEstimate 负责） */
+/** 板块刷新后补全可持久化字段（当日收益由 applySectorDailyEstimate 负责） */
 export function enrichHoldingComputedFields(holding: Holding): Holding {
   const withDaily = applySectorDailyEstimate(holding);
   const holdingReturn = resolveHoldingReturnPercent(withDaily);
-  const holdingProfit = computeHoldingProfit(withDaily);
+  const holdingProfit = resolveSettledHoldingProfit(withDaily);
   return {
     ...withDaily,
     holding_return_percent: holdingReturn,

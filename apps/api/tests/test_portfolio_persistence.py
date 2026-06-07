@@ -2,7 +2,11 @@ from app.models import Holding, PortfolioSummary
 from app.services.portfolio_persistence import enrich_loaded_holdings
 
 
-def test_enrich_loaded_holdings_recomputes_daily_from_sector():
+def test_enrich_loaded_holdings_recomputes_daily_from_sector(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.fund_nav_service.get_official_nav_return",
+        lambda fund_code, trade_date: None,
+    )
     holdings = [
         Holding(
             fund_code="015945",

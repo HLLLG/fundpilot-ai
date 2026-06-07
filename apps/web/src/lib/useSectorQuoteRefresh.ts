@@ -14,7 +14,8 @@ import {
   type RefreshSectorQuotesResult,
 } from "@/lib/api";
 import { enrichHoldingComputedFields } from "@/lib/holdingMetrics";
-import { loadSectorAutoRefresh, saveSectorAutoRefresh } from "@/lib/storage";
+import { isRoutineSectorRefreshMessage } from "@/lib/sectorQuoteStatus";
+const DEFAULT_AUTO_INTERVAL_MS = 180_000;
 
 type MappingQueueItem = {
   index: number;
@@ -43,8 +44,7 @@ export function useSectorQuoteRefresh({
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [sectorMetaByFundCode, setSectorMetaByFundCode] = useState<Record<string, SectorQuoteMeta>>({});
   const [lastFetchedAt, setLastFetchedAt] = useState<string | null>(null);
-  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
-  const [autoIntervalMs, setAutoIntervalMs] = useState(300_000);
+  const [autoIntervalMs, setAutoIntervalMs] = useState(DEFAULT_AUTO_INTERVAL_MS);
   const [mappingQueue, setMappingQueue] = useState<MappingQueueItem[]>([]);
   const [refreshError, setRefreshError] = useState<string | null>(null);
   const [lastRefreshResult, setLastRefreshResult] = useState<RefreshSectorQuotesResult | null>(null);
@@ -97,7 +97,9 @@ export function useSectorQuoteRefresh({
       if (pending.length) {
         setMappingQueue((queue) => [...queue, ...pending]);
       }
-      onMessage?.(result.message);
+      if (result.message && !isRoutineSectorRefreshMessage(result.message)) {
+        onMessage?.(result.message);
+      }
       return result;
     },
     [enrichComputed, onChange, onWarningsChange, onMessage],
@@ -152,20 +154,14 @@ export function useSectorQuoteRefresh({
     setMappingQueue((queue) => queue.slice(1));
   }, []);
 
-  const toggleAutoRefresh = useCallback((enabled: boolean) => {
-    setAutoRefreshEnabled(enabled);
-    saveSectorAutoRefresh(enabled);
-  }, []);
-
   useEffect(() => {
-    setAutoRefreshEnabled(loadSectorAutoRefresh(true));
     void fetchSectorQuotesStatus()
       .then((status) => setAutoIntervalMs(status.auto_interval_seconds * 1000))
       .catch(() => undefined);
   }, []);
 
   useEffect(() => {
-    if (!autoRefreshEnabled || !holdings.length) {
+    if (!holdings.length) {
       return;
     }
     let cancelled = false;
@@ -188,21 +184,18 @@ export function useSectorQuoteRefresh({
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [autoRefreshEnabled, autoIntervalMs, holdings.length, refresh]);
+  }, [autoIntervalMs, holdings.length, refresh]);
 
   return {
     isRefreshing,
     sectorMetaByFundCode,
     lastFetchedAt,
-    autoRefreshEnabled,
-    autoIntervalMs,
     mappingQueue,
     refreshError,
     lastRefreshResult,
     refresh,
     selectMapping,
     dismissMapping,
-    toggleAutoRefresh,
     applyServerRefresh: applyRefreshResult,
   };
 }

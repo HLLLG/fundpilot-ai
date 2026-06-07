@@ -179,13 +179,10 @@ export function HoldingTable({
   const {
     isRefreshing: isRefreshingSectors,
     sectorMetaByFundCode,
-    autoRefreshEnabled,
-    autoIntervalMs,
     mappingQueue,
     refresh: handleRefreshSectors,
     selectMapping: handleSelectMapping,
     dismissMapping,
-    toggleAutoRefresh,
     lastRefreshResult,
   } = sectorRefresh;
 
@@ -272,14 +269,6 @@ export function HoldingTable({
                 <RefreshCw size={16} className={isRefreshingSectors ? "animate-spin" : ""} />
                 {isRefreshingSectors ? "刷新中..." : "刷新板块涨跌"}
               </button>
-              <label className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600">
-                <input
-                  type="checkbox"
-                  checked={autoRefreshEnabled}
-                  onChange={(event) => toggleAutoRefresh(event.target.checked)}
-                />
-                自动 {Math.round(autoIntervalMs / 1000)}s
-              </label>
             </>
           ) : null}
           {canAllocatePenetration ? (

@@ -37,16 +37,60 @@ def build_trading_session(when: datetime | None = None) -> dict:
         session_kind = "trading_day_intraday"
         decision_window = "盘中：板块涨跌为实时值，持有收益多为昨日结算；收盘前需再次确认当日收益列。"
 
+    effective_trade_date = get_effective_trade_date(session_kind=session_kind, today=today)
+
     return {
         "timezone": "Asia/Shanghai",
         "local_datetime": moment.strftime("%Y-%m-%d %H:%M"),
         "calendar_date": today.isoformat(),
+        "effective_trade_date": effective_trade_date,
         "is_trading_day": is_trading_day,
         "session_kind": session_kind,
         "minutes_to_close": minutes_to_close,
         "decision_window": decision_window,
         "market_close_time": "15:00",
     }
+
+
+def get_effective_trade_date(
+    *,
+    session_kind: str | None = None,
+    today: date | None = None,
+) -> str:
+    """板块涨跌/估算当日收益所对应的交易日（非交易日回溯至上一交易日）。"""
+    moment = datetime.now(CN_TZ)
+    anchor = today or moment.date()
+    kind = session_kind
+    if kind is None:
+        kind = build_trading_session(moment)["session_kind"]
+
+    if kind in {
+        "trading_day_intraday",
+        "trading_day_pre_close",
+        "trading_day_after_close",
+    }:
+        return anchor.isoformat()
+
+    cursor = anchor
+    for _ in range(14):
+        cursor -= timedelta(days=1)
+        if _is_trading_day(cursor):
+            return cursor.isoformat()
+    return anchor.isoformat()
+
+
+def get_previous_trade_date(effective_trade_date: str | None = None) -> str | None:
+    """给定有效交易日，返回其上一交易日（养基宝「昨日收益」日期语义）。"""
+    anchor = effective_trade_date or get_effective_trade_date()
+    try:
+        cursor = date.fromisoformat(anchor)
+    except ValueError:
+        return None
+    for _ in range(14):
+        cursor -= timedelta(days=1)
+        if _is_trading_day(cursor):
+            return cursor.isoformat()
+    return None
 
 
 def _is_trading_day(day: date) -> bool:

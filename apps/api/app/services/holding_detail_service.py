@@ -7,6 +7,7 @@ from app.models import FundProfile, Holding, HoldingDetailResponse, PortfolioSum
 from app.services.fund_code_resolver import lookup_fund_code_by_name
 from app.services.fund_data import FundDataService
 from app.services.fund_profile import FundProfileService, _aliases_for_name, merge_holding_into_profile
+from app.services.holding_estimates import compute_yesterday_profit
 
 
 def build_holding_detail(
@@ -89,7 +90,7 @@ def build_holding_detail(
                     provenance["holding_cost"] = "computed"
 
             if yesterday_profit is None:
-                yesterday_profit = _yesterday_profit_from_nav(history, resolved.holding_amount)
+                yesterday_profit = compute_yesterday_profit(resolved)
                 if yesterday_profit is not None:
                     provenance["yesterday_profit"] = "nav"
 
@@ -98,6 +99,10 @@ def build_holding_detail(
         if snapshot_value is not None:
             yesterday_profit = snapshot_value
             provenance["yesterday_profit"] = "snapshot"
+        else:
+            yesterday_profit = compute_yesterday_profit(resolved)
+            if yesterday_profit is not None:
+                provenance["yesterday_profit"] = "computed"
 
     if holding_days is None:
         holding_days = _holding_days_from_snapshots(resolved)
@@ -131,15 +136,6 @@ def _cost_basis(holding: Holding) -> float | None:
     if return_percent is None or holding.holding_amount <= 0:
         return None
     return round(holding.holding_amount / (1 + return_percent / 100), 2)
-
-
-def _yesterday_profit_from_nav(history, holding_amount: float) -> float | None:
-    if holding_amount <= 0 or len(history.points) < 2:
-        return None
-    previous = history.points[-2]
-    if previous.daily_return_percent is None:
-        return None
-    return round(holding_amount * previous.daily_return_percent / 100, 2)
 
 
 def _yesterday_profit_from_snapshots(holding: Holding) -> float | None:

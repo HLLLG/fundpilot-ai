@@ -4,7 +4,11 @@ from datetime import datetime, timezone
 
 from app.database import get_most_recent_portfolio_snapshot, get_portfolio_summary, save_portfolio_summary
 from app.models import Holding, PortfolioSummary
-from app.services.holding_estimates import enrich_holdings_estimates, sum_daily_profit
+from app.services.holding_estimates import (
+    enrich_holdings_estimates,
+    overlay_official_nav_returns,
+    sum_daily_profit,
+)
 from app.services.fund_profile import _is_valid_sector_label
 from app.services.fund_profile import _looks_like_index_name
 from app.services.holding_filters import without_test_holdings
@@ -19,10 +23,16 @@ def _overlay_sector_fields(base: Holding, patch: Holding) -> Holding:
         updates["intraday_index_name"] = patch.intraday_index_name
     if patch.sector_return_percent is not None:
         updates["sector_return_percent"] = patch.sector_return_percent
+    if patch.sector_return_percent_source is not None:
+        updates["sector_return_percent_source"] = patch.sector_return_percent_source
     if patch.daily_profit is not None:
         updates["daily_profit"] = patch.daily_profit
     if patch.daily_return_percent is not None:
         updates["daily_return_percent"] = patch.daily_return_percent
+    if patch.daily_return_percent_source is not None:
+        updates["daily_return_percent_source"] = patch.daily_return_percent_source
+    if patch.yesterday_profit is not None:
+        updates["yesterday_profit"] = patch.yesterday_profit
     return base.model_copy(update=updates) if updates else base
 
 
@@ -51,10 +61,10 @@ def merge_holdings_with_snapshot(incoming: list[Holding]) -> list[Holding]:
 
 
 def enrich_loaded_holdings(holdings: list[Holding]) -> list[Holding]:
-    """恢复持仓时按已保存的板块涨跌重算当日收益，避免展示 OCR 旧值。"""
+    """恢复持仓时优先官方净值当日收益，否则按板块涨跌重算，避免展示 OCR 旧值。"""
     if not holdings:
         return holdings
-    return enrich_holdings_estimates(holdings)
+    return enrich_holdings_estimates(overlay_official_nav_returns(holdings))
 
 
 def persist_holdings_after_sector_refresh(

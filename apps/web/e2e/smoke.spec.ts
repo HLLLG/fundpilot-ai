@@ -13,6 +13,7 @@ test("trading session endpoint returns session kind", async ({ request }) => {
   const body = await response.json();
   expect(body.session_kind).toBeTruthy();
   expect(body.decision_window).toBeTruthy();
+  expect(body.effective_trade_date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
 });
 
 test("offline analyze persists report", async ({ request }) => {

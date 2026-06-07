@@ -21,6 +21,7 @@ from app.services.sector_quote_provider import SpotBoardFetchResult, fetch_spot_
 from app.services.sector_quote_resolver import mapping_record_from_result, resolve_sector_quote
 from app.services.trading_session import build_trading_session
 from app.services.fund_nav_service import get_official_nav_return
+from app.services.holding_estimates import compute_official_daily_profit
 
 
 class _EstimateResult:
@@ -232,21 +233,23 @@ def refresh_holdings_sector_quotes(
             trade_date = _get_last_trade_date()
             nav_return = get_official_nav_return(holding.fund_code, trade_date) if holding.fund_code else None
 
+            sector_source = "realtime" if _is_trading_hours() else "closing_estimate"
+            update: dict = {
+                "sector_return_percent": result.change_percent,
+                "sector_return_percent_source": sector_source,
+            }
             if nav_return is not None:
-                new_holding = holding.model_copy(update={
-                    "sector_return_percent": nav_return,
-                    "sector_return_percent_source": "official_nav",
-                })
-            elif _is_trading_hours():
-                new_holding = holding.model_copy(update={
-                    "sector_return_percent": result.change_percent,
-                    "sector_return_percent_source": "realtime",
-                })
+                update["daily_return_percent"] = nav_return
+                update["daily_profit"] = compute_official_daily_profit(
+                    holding.holding_amount,
+                    nav_return,
+                )
+                update["daily_return_percent_source"] = "official_nav"
             else:
-                new_holding = holding.model_copy(update={
-                    "sector_return_percent": result.change_percent,
-                    "sector_return_percent_source": "closing_estimate",
-                })
+                update["daily_return_percent"] = None
+                update["daily_profit"] = None
+                update["daily_return_percent_source"] = None
+            new_holding = holding.model_copy(update=update)
             meta.source = "live"
             meta.delta_vs_previous = round(result.change_percent - previous, 4) if previous is not None else None
             matched += 1
