@@ -416,9 +416,22 @@ def test_database_export_and_import(tmp_path, monkeypatch):
 
 
 def test_async_job_returns_stage(tmp_path, monkeypatch):
+    from app.models import FundSnapshot
+    from app.services.fund_data import FundDataService
+
     monkeypatch.setenv("FUND_AI_DB_PATH", str(tmp_path / "app.db"))
     monkeypatch.setenv("FUND_AI_DEEPSEEK_API_KEY", "")
     refresh_settings()
+    _mock_news_search(monkeypatch)
+
+    def fake_snapshots(self, holdings, **kwargs):
+        snapshots = [
+            FundSnapshot(fund_code=holding.fund_code, fund_name=holding.fund_name, source="test")
+            for holding in holdings
+        ]
+        return snapshots, {}
+
+    monkeypatch.setattr(FundDataService, "get_snapshots_with_nav_trends", fake_snapshots)
 
     started = client.post(
         "/api/analyze/async",
@@ -446,7 +459,7 @@ def test_async_job_returns_stage(tmp_path, monkeypatch):
 
     import time
 
-    for _ in range(40):
+    for _ in range(60):
         job = client.get(f"/api/jobs/{job_id}").json()
         if job["status"] in {"completed", "failed"}:
             assert job.get("stage_label")
@@ -454,4 +467,6 @@ def test_async_job_returns_stage(tmp_path, monkeypatch):
             return
         time.sleep(0.1)
 
-    raise AssertionError("job did not finish in time")
+    raise AssertionError(
+        f"job did not finish in time (last status={job.get('status')}, stage={job.get('stage')})"
+    )
