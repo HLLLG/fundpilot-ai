@@ -53,16 +53,12 @@ def build_holding_detail(
     holding_shares = profile.holding_shares if profile else None
     holding_cost = profile.holding_cost if profile else None
     yesterday_profit = profile.yesterday_profit if profile else None
-    holding_days = profile.holding_days if profile else None
-
     if holding_shares is not None:
         provenance["holding_shares"] = "ocr_detail"
     if holding_cost is not None:
         provenance["holding_cost"] = "ocr_detail"
     if yesterday_profit is not None:
         provenance["yesterday_profit"] = "ocr_detail"
-    if holding_days is not None:
-        provenance["holding_days"] = "ocr_detail"
 
     latest_nav: float | None = None
     nav_date: str | None = None
@@ -104,10 +100,10 @@ def build_holding_detail(
             if yesterday_profit is not None:
                 provenance["yesterday_profit"] = "computed"
 
-    if holding_days is None:
-        holding_days = _holding_days_from_snapshots(resolved)
-        if holding_days is not None:
-            provenance["holding_days"] = "snapshot"
+    holding_days, holding_days_source = _resolve_holding_days(profile, resolved)
+    if holding_days_source is not None:
+        provenance["holding_days"] = holding_days_source
+    first_purchase_date = profile.first_purchase_date if profile else None
 
     total_assets = portfolio_summary.total_assets if portfolio_summary else None
     if total_assets is None:
@@ -120,6 +116,7 @@ def build_holding_detail(
         holding_cost=holding_cost,
         yesterday_profit=yesterday_profit,
         holding_days=holding_days,
+        first_purchase_date=first_purchase_date,
         latest_nav=latest_nav,
         nav_date=nav_date,
         year_return_percent=year_return_percent,
@@ -153,6 +150,51 @@ def _yesterday_profit_from_snapshots(holding: Holding) -> float | None:
                 if daily_profit is not None:
                     return round(float(daily_profit), 2)
     return None
+
+
+def _resolve_holding_days(
+    profile: FundProfile | None,
+    holding: Holding,
+) -> tuple[int | None, str | None]:
+    if profile and profile.first_purchase_date:
+        try:
+            purchase = date.fromisoformat(profile.first_purchase_date)
+            return max(0, (date.today() - purchase).days), "user"
+        except ValueError:
+            pass
+
+    snapshot_days = _holding_days_from_snapshots(holding)
+    ocr_days = profile.holding_days if profile else None
+    aged_ocr_days: int | None = None
+
+    if ocr_days is not None:
+        as_of = _holding_days_as_of_date(profile)
+        if as_of is not None:
+            aged_ocr_days = ocr_days + max(0, (date.today() - as_of).days)
+        else:
+            aged_ocr_days = ocr_days
+
+    if snapshot_days is not None and aged_ocr_days is not None:
+        if snapshot_days >= aged_ocr_days:
+            return snapshot_days, "snapshot"
+        return aged_ocr_days, "ocr_detail"
+    if aged_ocr_days is not None:
+        return aged_ocr_days, "ocr_detail"
+    if snapshot_days is not None:
+        return snapshot_days, "snapshot"
+    return None, None
+
+
+def _holding_days_as_of_date(profile: FundProfile | None) -> date | None:
+    if profile is None or profile.holding_days is None:
+        return None
+    if profile.holding_days_as_of:
+        try:
+            return date.fromisoformat(profile.holding_days_as_of)
+        except ValueError:
+            pass
+    # Legacy profiles: anchor aging from today so the value starts growing tomorrow.
+    return date.today()
 
 
 def _holding_days_from_snapshots(holding: Holding) -> int | None:

@@ -4,9 +4,13 @@
 >
 > **维护：** 功能或架构有实质变化时，同步更新「能力清单」「数据流」「API」「目录」「环境变量」。
 
-**文档版本：** 2026-06-07（官方净值当日收益公式修正；昨日收益；持有收益展示）
+**文档版本：** 2026-06-08（支付宝持仓 OCR；业绩走势；持有天数；分时/净值图表优化）
 
 **更新记录：**
+- **支付宝持仓 OCR（2026-06-08）：** 支持上传支付宝「我的基金」列表截图；`alipay_holdings_parser.py` 解析三列交错 OCR 文本并自动匹配基金代码；`POST /api/ocr?preview=true` 预览、`POST /api/portfolio/apply-holdings` 确认写入；OCR 预热与 mobile 模型加速（`.env` `FUND_AI_OCR_*`）。
+- **业绩走势（2026-06-08）：** 基金详情「业绩走势」Tab：近1月/3月/6月/1年/3年区间；本基金 vs 沪深300 区间涨跌对比折线图；成本价图例；历史净值表默认近1月预览，「查看历史净值」弹窗滚动分页加载（`GET /api/fund-profiles/{code}/nav-history/page`）；沪深300 日线优先新浪接口（`index_daily_client.py`），AkShare 备用。
+- **持有天数（2026-06-08）：** 详情页点击「持有天数」弹出滚轮日期选择器设置首次购入日（`PATCH /api/fund-profiles/{code}` `first_purchase_date`）；OCR 详情天数随日历递增；持仓明细网格默认收起。
+- **图表体验（2026-06-08）：** 分时图边框/虚线基准/十字辅助线；业绩走势图细线、Y 轴留白；日涨幅 `0%` 正确展示（修复 AkShare 日增长率为 0 时被丢弃）。
 - **官方净值当日收益（2026-06-07）：** NAV 发布后 `daily_return_percent` 用官方日增长率，`daily_profit = 现金额 × r / (100 + r)`（结算前金额 × 涨幅，对齐支付宝）；`sector_return_percent` 仍仅展示东财板块涨跌；前端刷新不再用板块覆盖官方净值；账户汇总展示「昨日收益」。
 - **持有收益展示（2026-06-07）：** 盘中 `持有收益 ≈ 昨日结算 + 板块涨跌`；官方净值公布后直接使用 OCR/档案中的含当日总值，不再叠加当日收益。
 - **文档整理（2026-06-06）：** 合并历史迭代要点；`docs/design/` 仅保留分时 push2 运维 runbook，其余设计稿删除，以本文为准。
@@ -26,11 +30,12 @@
 
 | 类别 | 能力 |
 |------|------|
-| 输入 | 养基宝总览 OCR（无代码草稿解析）；当日列为 `-` 时不填当日收益；**OCR 漏负号**时规则补符号；总览上传在「基金档案」Tab |
+| 输入 | 养基宝总览 OCR（无代码草稿解析）；**支付宝持有列表 OCR**（预览确认后写入）；当日列为 `-` 时不填当日收益；**OCR 漏负号**时规则补符号；总览上传在「基金档案」Tab |
 | 当日收益 | 盘中/净值未公布：**板块涨跌估算**（`holding_amount × sector_return%`）；NAV 发布后：**官方日增长率** + `daily_profit = amount × r / (100 + r)`；关联板块列始终东财涨跌；账户汇总附「昨日收益」 |
 | 校对 | `HoldingTable` 含估算当日收益率；OCR 返回 `holding_warnings` / `holding_diffs`；**沿用上次基金列表** |
 | 档案 | 详情 OCR 解析「场内指数 + 关联板块」；拒绝 `+`/`-`/Tab 标签误存为板块名；`POST /api/fund-profiles/repair-sectors` 清理历史脏数据；读取/保存时 `_sanitize_profile_sector_fields`；总览自动同步档案；`000000` 靠档案按名称补码 |
-| 首页看板 | **今日** Tab：`YangjibaoHoldingsBoard` 养基宝式卡片；启动 `GET /api/portfolio/holdings` 恢复持仓并自动刷新板块；点击行打开 `YangjibaoFundDetail` |
+| 首页看板 | **今日** Tab：`YangjibaoHoldingsBoard` 养基宝式卡片（含支付宝截图上传）；启动 `GET /api/portfolio/holdings` 恢复持仓并自动刷新板块；点击行打开 `YangjibaoFundDetail` |
+| 基金详情 | 关联板块分时图（边框/十字线）；**业绩走势**（区间涨跌 vs 沪深300、历史净值分页）；**我的收益**；持有天数滚轮选购入日；持仓明细默认收起 |
 | 仪表盘 | **仪表盘** Tab：`GET /api/portfolio/dashboard` — 资产/当日收益走势、持仓分布条 |
 | 风控 | 浮亏线、单只集中度、定投偏好、拒绝追高（`InvestorProfile`） |
 | 报告 | 组合摘要 + `fund_recommendations` + `topic_briefs` + `market_news`；`analysis_facts`；守卫 + 深度 `report_judge` |
@@ -89,7 +94,8 @@ fundpilot-ai/
 │   ├── lifespan.py          # 启动时可选 DB 自动导入
 │   ├── config.py / models.py / database.py
 │   └── services/
-│       ├── ocr_engine.py / ocr_parser.py / ocr_pipeline.py / overview_pipeline.py
+│       ├── ocr_engine.py / ocr_parser.py / ocr_pipeline.py / alipay_holdings_parser.py / overview_pipeline.py
+│       ├── index_daily_client.py   # 沪深300等指数日线（新浪优先）
 │       ├── portfolio_parser.py / portfolio_snapshot.py / portfolio_holdings_service.py
 │       ├── holding_validation.py / holding_metrics.py / holding_estimates.py / holding_detail_service.py
 │       ├── sector_quote_service.py / sector_quote_provider.py / sector_quote_resolver.py / sector_canonical.py
@@ -115,7 +121,9 @@ fundpilot-ai/
 │   ├── lib/api.ts / storage.ts / holdingMetrics.ts / useSectorQuoteRefresh.ts / workflowBlockers.ts
 │   └── components/
 │       ├── Dashboard.tsx          # 今日 / 仪表盘 / 基金档案 / 历史
-│       ├── YangjibaoHoldingsBoard / YangjibaoFundDetail / SectorMappingModal / IntradayPercentChart
+│       ├── YangjibaoHoldingsBoard / YangjibaoFundDetail / AlipayOcrConfirmModal
+│       ├── PerformanceTrendPanel / PerformanceReturnChart / NavHistoryListModal / WheelDatePicker
+│       ├── SectorMappingModal / IntradayPercentChart
 │       ├── TradingSessionBar / TodayBlockingChecklist / DatabaseBackupPanel
 │       ├── PortfolioDashboard / HoldingTable / RiskControls
 │       ├── ReportPanel / JobStatusFloat / HistoryRail / FundProfilePanel
@@ -135,7 +143,8 @@ fundpilot-ai/
 2. 首页自动恢复上次持仓；点刷新更新板块涨跌 → 当日收益按板块估算
 3. 需更新金额时 →「基金档案」上传养基宝总览 OCR，或展开校对表手动改
 4. 校对 → 选快速/深度 →「生成报告」→ JobStatusFloat 进度 → 今日日报
-5. 点击持仓行 → 基金详情（净值、板块分时）；低置信度板块 → 映射弹窗
+5. 点击持仓行 → 基金详情（板块分时、业绩走势、我的收益）；低置信度板块 → 映射弹窗
+6. 今日页可上传**支付宝持有列表**截图 → 预览确认 → 写入持仓
 ```
 
 ### 基金档案与持仓总览
@@ -143,7 +152,16 @@ fundpilot-ai/
 ```text
 profiles 页 → 养基宝总览截图 → POST /api/ocr → sync_profiles + sector_refresh
 profiles 页 → 单基金详情截图 → POST /api/fund-profiles/ocr
+今日页 → 支付宝持有列表截图 → POST /api/ocr?preview=true → POST /api/portfolio/apply-holdings
 打开应用 → GET /api/portfolio/holdings → 恢复 holdings + 可选自动 refresh-sector-quotes
+```
+
+### 基金详情：业绩走势与持有天数
+
+```text
+业绩走势 Tab → 默认近3月；切换近1月/6月/1年/3年；蓝线本基金、橙线沪深300
+下方近1月净值预览 →「查看历史净值」→ 滚动加载更早记录（每页 30 条）
+点击「持有天数」→ 滚轮选择首次购入日 → PATCH /api/fund-profiles/{code} → 天数按日历递增
 ```
 
 **档案合并规则：** 总览有、档案无 → 自动简略档案（`is_provisional`）；总览消失 → 保留档案不删；总览更新金额/收益/板块，不覆盖详情才有的份额/成本/持有天数。
@@ -218,7 +236,8 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | 方法 | 路径 | 作用 |
 |------|------|------|
 | GET | `/health` | 健康检查 |
-| POST | `/api/ocr` | 截图/文本 → holdings |
+| POST | `/api/ocr` | 截图/文本 → holdings；`preview=true` 仅解析不写入；支持支付宝列表 |
+| POST | `/api/portfolio/apply-holdings` | 确认 OCR 预览结果写入持仓与快照 |
 | POST | `/api/analyze` | 同步生成 Report（兜底） |
 | POST | `/api/analyze/async` | `{ job_id, status }` |
 | GET | `/api/trading-session` | 交易日/收盘窗口语义 |
@@ -237,7 +256,10 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | GET/POST | `/api/fund-profiles/export` `import` | 档案 JSON |
 | POST | `/api/fund-profiles/ocr` | 详情页建档 |
 | GET | `/api/fund-profiles` | 列表 |
-| GET | `/api/fund-profiles/{code}/nav-history?days=` | 单位净值走势（AkShare，默认 90 交易日） |
+| GET | `/api/fund-profiles/{code}/nav-history?days=` | 单位净值走势（AkShare，最长约 800 交易日，含日增长率） |
+| GET | `/api/fund-profiles/{code}/nav-history/page` | 历史净值分页（`limit`、`before_date`，最新在前） |
+| PATCH | `/api/fund-profiles/{code}` | 更新档案字段（如 `first_purchase_date` 首次购入日） |
+| GET | `/api/market/index-daily?symbol=000300&days=` | 指数日线（沪深300 等，新浪优先） |
 | POST | `/api/holdings/refresh-sector-quotes` | 刷新板块涨跌；返回 `sector_quote_meta`、映射候选 |
 | POST | `/api/sector-mappings/apply` | 持久化板块映射选择 |
 | GET | `/api/sector-quotes/status` | 自动刷新开关/间隔/交易时段 |
@@ -405,6 +427,9 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | `FUND_AI_NAV_TREND_RECENT_SAMPLE` | 8 | `nav_trend.recent_nav_series` 采样点数 |
 | `FUND_AI_NEWS_REQUIRE_TODAY_FOR_ADD` | true | 无当日新闻时守卫压过加仓建议 |
 | `FUND_AI_DB_AUTO_IMPORT_PATH` | — | 启动时若文件存在则自动导入 DB（会先备份当前库） |
+| `FUND_AI_OCR_PRELOAD` | false | 启动时预热 PaddleOCR |
+| `FUND_AI_OCR_USE_MOBILE_MODELS` | false | 使用 mobile 模型（更快，适合列表截图） |
+| `FUND_AI_OCR_MAX_IMAGE_SIDE` | — | OCR 前缩放最长边（像素） |
 
 修改 `.env` 后需重启 API。
 

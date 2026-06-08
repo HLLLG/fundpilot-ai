@@ -13,13 +13,18 @@ import {
 } from "lucide-react";
 import type { Holding, HoldingDetail, PortfolioSummary, SectorQuoteMeta } from "@/lib/api";
 import {
-  fetchFundNavHistory,
   fetchHoldingDetail,
   fetchSectorIntraday,
   fetchTradingSession,
+  updateFundProfilePurchaseDate,
 } from "@/lib/api";
 import { IntradayPercentChart } from "@/components/IntradayPercentChart";
-import { NavLineChart } from "@/components/NavLineChart";
+import { PerformanceTrendPanel } from "@/components/PerformanceTrendPanel";
+import {
+  resolveInitialPurchaseDate,
+  todayIsoDate,
+  WheelDatePicker,
+} from "@/components/WheelDatePicker";
 import {
   cnProfitClass,
   computeCostBasis,
@@ -47,6 +52,7 @@ const PROVENANCE_LABEL: Record<string, string> = {
   computed: "公式估算",
   profile: "基金档案",
   akshare: "AkShare 匹配",
+  user: "手动设置",
 };
 
 type YangjibaoFundDetailProps = {
@@ -64,16 +70,20 @@ type YangjibaoFundDetailProps = {
 function HeaderStat({
   label,
   value,
-  valueClass = "text-white",
+  valueClass,
 }: {
   label: string;
   value: string;
   valueClass?: string;
 }) {
   return (
-    <div className="px-2 py-2 text-center">
-      <div className="text-[11px] text-white/75">{label}</div>
-      <div className={`mt-1 text-lg font-black tabular-nums leading-none ${valueClass}`}>{value}</div>
+    <div className="px-2 py-2.5 text-center">
+      <div className="text-[11px] text-slate-400">{label}</div>
+      <div
+        className={`mt-1 text-lg font-black tabular-nums leading-none ${valueClass ?? "text-slate-900"}`}
+      >
+        {value}
+      </div>
     </div>
   );
 }
@@ -82,19 +92,42 @@ function GridStat({
   label,
   value,
   valueClass = "text-slate-900",
+  onClick,
+  clickable,
 }: {
   label: string;
   value: string;
   valueClass?: string;
+  onClick?: () => void;
+  clickable?: boolean;
 }) {
-  return (
-    <div className="px-2 py-3 text-center">
+  const content = (
+    <>
       <div className="text-[11px] text-slate-400">{label}</div>
-      <div className={`mt-1.5 text-[15px] font-black tabular-nums leading-tight ${valueClass}`}>
+      <div
+        className={`mt-1.5 text-[15px] font-black tabular-nums leading-tight ${valueClass} ${
+          clickable ? "underline decoration-dotted decoration-slate-300 underline-offset-2" : ""
+        }`}
+      >
         {value}
       </div>
-    </div>
+    </>
   );
+
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        className="w-full px-2 py-3 text-center transition hover:bg-slate-100/70 active:bg-slate-100"
+        title="点击设置首次购入日期"
+      >
+        {content}
+      </button>
+    );
+  }
+
+  return <div className="px-2 py-3 text-center">{content}</div>;
 }
 
 function sourceHint(provenance: Record<string, string>, field: string) {
@@ -119,17 +152,17 @@ export function YangjibaoFundDetail({
   const [tab, setTab] = useState<DetailTab>("sector");
   const [detail, setDetail] = useState<HoldingDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(true);
-  const [navLoading, setNavLoading] = useState(false);
-  const [navPoints, setNavPoints] = useState<Array<{ date: string; nav: number }>>([]);
-  const [navPeriodChange, setNavPeriodChange] = useState<number | null>(null);
   const [intradayLoading, setIntradayLoading] = useState(false);
   const [intradayPoints, setIntradayPoints] = useState<Array<{ time: string; percent: number }>>([]);
   const [intradayClosePercent, setIntradayClosePercent] = useState<number | null>(null);
   const [intradayNote, setIntradayNote] = useState<string | null>(null);
   const [intradayRefreshing, setIntradayRefreshing] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
-  const [holdingsExpanded, setHoldingsExpanded] = useState(true);
+  const [holdingsExpanded, setHoldingsExpanded] = useState(false);
   const [quoteTradeDate, setQuoteTradeDate] = useState<string | null>(null);
+  const [purchaseDateSaving, setPurchaseDateSaving] = useState(false);
+  const [purchaseDateError, setPurchaseDateError] = useState<string | null>(null);
+  const [purchaseDatePickerOpen, setPurchaseDatePickerOpen] = useState(false);
   const intradayRequestSeq = useRef(0);
 
   const activeHolding = detail?.holding ?? holding;
@@ -149,6 +182,9 @@ export function YangjibaoFundDetail({
   const unitCost = detail?.holding_cost ?? null;
   const yesterdayProfit = detail?.yesterday_profit ?? null;
   const holdingDays = detail?.holding_days ?? null;
+  const firstPurchaseDate = detail?.first_purchase_date ?? "";
+  const canEditPurchaseDate =
+    detail?.fund_code_resolved === true && activeHolding.fund_code !== "000000";
   const latestNav = detail?.latest_nav ?? null;
   const yearReturn = detail?.year_return_percent ?? null;
 
@@ -173,6 +209,33 @@ export function YangjibaoFundDetail({
 
   const canGoPrev = holdingIndex > 0;
   const canGoNext = holdingIndex < holdings.length - 1;
+
+  async function handlePurchaseDateChange(nextDate: string) {
+    if (!canEditPurchaseDate || purchaseDateSaving) {
+      return;
+    }
+    const normalized = nextDate || null;
+    if (normalized === (detail?.first_purchase_date ?? null)) {
+      return;
+    }
+    setPurchaseDateSaving(true);
+    setPurchaseDateError(null);
+    try {
+      await updateFundProfilePurchaseDate(activeHolding.fund_code, normalized);
+      const result = await fetchHoldingDetail({
+        holdings,
+        index: holdingIndex,
+        portfolio_summary: portfolioSummary,
+        sector_quote_meta: sectorMeta,
+      });
+      setDetail(result);
+      setPurchaseDatePickerOpen(false);
+    } catch (error) {
+      setPurchaseDateError(error instanceof Error ? error.message : "保存购入日期失败");
+    } finally {
+      setPurchaseDateSaving(false);
+    }
+  }
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -226,35 +289,6 @@ export function YangjibaoFundDetail({
       cancelled = true;
     };
   }, [holdingIndex, holdings, portfolioSummary, sectorMeta, onHoldingResolved]);
-
-  useEffect(() => {
-    if (tab !== "performance" || !detail?.fund_code_resolved) {
-      return;
-    }
-    let cancelled = false;
-    setNavLoading(true);
-    void fetchFundNavHistory(activeHolding.fund_code, 252)
-      .then((history) => {
-        if (cancelled) {
-          return;
-        }
-        setNavPoints(history.points.map((point) => ({ date: point.date, nav: point.nav })));
-        setNavPeriodChange(history.period_change_percent ?? null);
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setNavPoints([]);
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setNavLoading(false);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [tab, activeHolding.fund_code, detail?.fund_code_resolved]);
 
   useEffect(() => {
     if (tab !== "sector") {
@@ -365,74 +399,78 @@ export function YangjibaoFundDetail({
         className="flex max-h-[min(100dvh,920px)] w-full max-w-lg flex-col overflow-y-auto overscroll-contain bg-white shadow-2xl sm:max-h-[min(92dvh,860px)] sm:rounded-2xl"
         onClick={(event) => event.stopPropagation()}
       >
-        <header className="sticky top-0 z-10 shrink-0 bg-[#3d7eff] px-3 pb-2.5 pt-3 text-white shadow-sm">
-          <div className="flex items-center justify-between gap-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-full hover:bg-white/15"
-              aria-label="返回"
-            >
-              <ChevronLeft size={20} />
-            </button>
-            <div className="min-w-0 flex-1 text-center">
-              <div id="fund-detail-title" className="truncate text-sm font-bold leading-tight">
-                {activeHolding.fund_name}
-              </div>
-              <div className="text-[10px] text-white/80">
-                {activeHolding.fund_code}
-                {detail?.fund_code_source === "akshare" ? " · 已自动匹配代码" : ""}
-              </div>
-            </div>
-            <div className="flex items-center gap-0.5">
-              <button
-                type="button"
-                disabled={!canGoPrev}
-                onClick={() => onNavigate(holdingIndex - 1)}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-full hover:bg-white/15 disabled:opacity-30"
-                aria-label="上一只"
-              >
-                <ChevronLeft size={16} />
-              </button>
-              <button
-                type="button"
-                disabled={!canGoNext}
-                onClick={() => onNavigate(holdingIndex + 1)}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-full hover:bg-white/15 disabled:opacity-30"
-                aria-label="下一只"
-              >
-                <ChevronRight size={16} />
-              </button>
+        <div className="sticky top-0 z-10 shrink-0">
+          <header className="bg-[#3d7eff] px-3 pb-3 pt-3 text-white shadow-sm">
+            <div className="flex items-center justify-between gap-2">
               <button
                 type="button"
                 onClick={onClose}
                 className="inline-flex h-8 w-8 items-center justify-center rounded-full hover:bg-white/15"
-                aria-label="关闭"
+                aria-label="返回"
               >
-                <X size={16} />
+                <ChevronLeft size={20} />
               </button>
+              <div className="min-w-0 flex-1 text-center">
+                <div id="fund-detail-title" className="truncate text-sm font-bold leading-tight">
+                  {activeHolding.fund_name}
+                </div>
+                <div className="text-[10px] text-white/80">
+                  {activeHolding.fund_code}
+                  {detail?.fund_code_source === "akshare" ? " · 已自动匹配代码" : ""}
+                </div>
+              </div>
+              <div className="flex items-center gap-0.5">
+                <button
+                  type="button"
+                  disabled={!canGoPrev}
+                  onClick={() => onNavigate(holdingIndex - 1)}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-full hover:bg-white/15 disabled:opacity-30"
+                  aria-label="上一只"
+                >
+                  <ChevronLeft size={16} />
+                </button>
+                <button
+                  type="button"
+                  disabled={!canGoNext}
+                  onClick={() => onNavigate(holdingIndex + 1)}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-full hover:bg-white/15 disabled:opacity-30"
+                  aria-label="下一只"
+                >
+                  <ChevronRight size={16} />
+                </button>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-full hover:bg-white/15"
+                  aria-label="关闭"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            </div>
+          </header>
+
+          <div className="border-b border-slate-100 bg-white">
+            <div className="grid grid-cols-3 divide-x divide-slate-100">
+              <HeaderStat
+                label={`当日涨幅 ${tradeDateLabel}`}
+                value={formatSignedPercent(displayDailyReturn)}
+                valueClass={cnProfitClass(displayDailyReturn)}
+              />
+              <HeaderStat
+                label="近1年"
+                value={
+                  yearReturn != null ? formatSignedPercent(yearReturn) : detailLoading ? "…" : "—"
+                }
+                valueClass={cnProfitClass(yearReturn)}
+              />
+              <HeaderStat
+                label="持仓占比"
+                value={weight != null ? formatPlainPercent(weight) : "—"}
+              />
             </div>
           </div>
-
-          <div className="mt-3 grid grid-cols-3 divide-x divide-white/25">
-            <HeaderStat
-              label={`当日涨幅 ${tradeDateLabel}`}
-              value={formatSignedPercent(displayDailyReturn)}
-              valueClass={cnProfitClass(displayDailyReturn)}
-            />
-            <HeaderStat
-              label="近1年"
-              value={
-                yearReturn != null ? formatSignedPercent(yearReturn) : detailLoading ? "…" : "—"
-              }
-              valueClass={cnProfitClass(yearReturn)}
-            />
-            <HeaderStat
-              label="持仓占比"
-              value={weight != null ? formatPlainPercent(weight) : "—"}
-            />
-          </div>
-        </header>
+        </div>
 
         {detailError ? (
           <div className="border-b border-rose-100 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">
@@ -440,9 +478,9 @@ export function YangjibaoFundDetail({
           </div>
         ) : null}
 
-        <div className="border-b border-slate-100 bg-white">
+        <div className="border-b border-slate-100 bg-slate-50">
           {holdingsExpanded ? (
-            <div className="divide-y divide-slate-100">
+            <div className="divide-y divide-slate-100/80">
               <div className="grid grid-cols-3 divide-x divide-slate-100">
                 <GridStat label="持有金额" value={formatPlainMoney(activeHolding.holding_amount)} />
                 <GridStat
@@ -486,6 +524,15 @@ export function YangjibaoFundDetail({
                 <GridStat
                   label="持有天数"
                   value={holdingDays != null ? `${holdingDays}` : detailLoading ? "…" : "—"}
+                  clickable={canEditPurchaseDate}
+                  onClick={
+                    canEditPurchaseDate
+                      ? () => {
+                          setPurchaseDateError(null);
+                          setPurchaseDatePickerOpen(true);
+                        }
+                      : undefined
+                  }
                 />
               </div>
             </div>
@@ -581,32 +628,12 @@ export function YangjibaoFundDetail({
           ) : null}
 
           {tab === "performance" ? (
-            <div>
-              {navLoading ? (
-                <div className="flex h-[200px] items-center justify-center text-sm text-slate-400">
-                  <Loader2 size={18} className="mr-2 animate-spin" />
-                  加载净值走势…
-                </div>
-              ) : navPoints.length >= 2 ? (
-                <NavLineChart
-                  points={navPoints}
-                  periodChangePercent={navPeriodChange ?? yearReturn}
-                  height={200}
-                />
-              ) : (
-                <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-400">
-                  {!detail?.fund_code_resolved
-                    ? "正在匹配基金代码，或请上传详情页 OCR 补全"
-                    : "暂无净值历史数据"}
-                </div>
-              )}
-              {latestNav != null ? (
-                <p className="mt-1.5 text-center text-[11px] text-slate-400">
-                  最新净值 {latestNav.toFixed(4)}
-                  {detail?.nav_date ? ` · ${detail.nav_date}` : ""}
-                </p>
-              ) : null}
-            </div>
+            <PerformanceTrendPanel
+              fundCode={activeHolding.fund_code}
+              fundName={activeHolding.fund_name}
+              costPrice={unitCost}
+              enabled={detail?.fund_code_resolved === true}
+            />
           ) : null}
 
           {tab === "profit" ? (
@@ -665,6 +692,18 @@ export function YangjibaoFundDetail({
             返回列表
           </button>
         </footer>
+
+        <PurchaseDatePickerModal
+          open={purchaseDatePickerOpen}
+          firstPurchaseDate={firstPurchaseDate}
+          holdingDays={holdingDays}
+          holdingDaysSource={provenance.holding_days}
+          hint={sourceHint(provenance, "holding_days")}
+          saving={purchaseDateSaving}
+          error={purchaseDateError}
+          onClose={() => setPurchaseDatePickerOpen(false)}
+          onDateChange={handlePurchaseDateChange}
+        />
       </div>
     </div>
   );
@@ -688,6 +727,151 @@ function ProfitRow({
         {hint ? <div className="truncate text-[10px] text-slate-400">{hint}</div> : null}
       </div>
       <div className={`shrink-0 text-sm font-black tabular-nums ${valueClass}`}>{value}</div>
+    </div>
+  );
+}
+
+function PurchaseDatePickerModal({
+  open,
+  firstPurchaseDate,
+  holdingDays,
+  holdingDaysSource,
+  hint,
+  saving,
+  error,
+  onClose,
+  onDateChange,
+}: {
+  open: boolean;
+  firstPurchaseDate: string;
+  holdingDays: number | null;
+  holdingDaysSource?: string;
+  hint?: string;
+  saving: boolean;
+  error: string | null;
+  onClose: () => void;
+  onDateChange: (value: string) => void;
+}) {
+  const [draftDate, setDraftDate] = useState<string | null>(null);
+  const [pickerSession, setPickerSession] = useState(0);
+
+  useEffect(() => {
+    if (!open) {
+      setDraftDate(null);
+      return;
+    }
+    const initialDate = resolveInitialPurchaseDate(
+      holdingDays,
+      firstPurchaseDate,
+      holdingDaysSource,
+    );
+    setDraftDate(initialDate);
+    setPickerSession((current) => current + 1);
+  }, [firstPurchaseDate, holdingDays, holdingDaysSource, open]);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open, onClose]);
+
+  if (!open || !draftDate) {
+    return null;
+  }
+
+  const previewDays = draftDate
+    ? Math.max(
+        0,
+        Math.floor(
+          (Date.parse(`${todayIsoDate()}T00:00:00`) - Date.parse(`${draftDate}T00:00:00`)) /
+            86_400_000,
+        ),
+      )
+    : null;
+
+  return (
+    <div
+      className="fixed inset-0 z-[80] flex items-end justify-center bg-slate-950/40 p-0 sm:items-center sm:p-4"
+      onClick={onClose}
+      role="presentation"
+    >
+      <div
+        className="w-full max-w-sm rounded-t-3xl bg-white p-5 shadow-2xl sm:rounded-2xl"
+        onClick={(event) => event.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="purchase-date-title"
+      >
+        <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-slate-200 sm:hidden" />
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h3 id="purchase-date-title" className="text-base font-bold text-slate-900">
+              选择首次购入日期
+            </h3>
+            <p className="mt-1 text-xs text-slate-500">滑动选择年月日，保存后每天自动递增</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-full p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+            aria-label="关闭"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="mt-4 rounded-xl border border-slate-100 bg-slate-50 px-4 py-3 text-center">
+          <div className="text-[11px] text-slate-400">
+            {previewDays != null ? "预计持有天数" : "当前持有天数"}
+          </div>
+          <div className="mt-1 text-2xl font-black tabular-nums text-slate-900">
+            {(previewDays ?? holdingDays) != null ? `${previewDays ?? holdingDays} 天` : "—"}
+          </div>
+          {hint && !previewDays ? <div className="mt-1 text-[10px] text-slate-400">{hint}</div> : null}
+        </div>
+
+        <div className="mt-4">
+          <WheelDatePicker
+            key={pickerSession}
+            value={draftDate}
+            max={todayIsoDate()}
+            onChange={setDraftDate}
+          />
+        </div>
+
+        {error ? <p className="mt-2 text-xs font-medium text-rose-500">{error}</p> : null}
+
+        <div className="mt-4 flex gap-2">
+          {firstPurchaseDate ? (
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => onDateChange("")}
+              className="flex-1 rounded-xl border border-slate-200 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              清除日期
+            </button>
+          ) : null}
+          <button
+            type="button"
+            disabled={saving || !draftDate}
+            onClick={() => onDateChange(draftDate)}
+            className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-[#3d7eff] py-2.5 text-sm font-semibold text-white hover:bg-[#356fe0] disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {saving ? <Loader2 size={16} className="animate-spin" /> : null}
+            完成
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

@@ -105,6 +105,46 @@ def test_analyze_manual_holdings_returns_persisted_report(tmp_path, monkeypatch)
     assert any(report["id"] == body["id"] for report in reports_response.json())
 
 
+def test_ocr_preview_skips_sector_refresh(monkeypatch):
+    from pathlib import Path
+
+    fixture = (
+        Path(__file__).parent / "fixtures" / "alipay_holdings_list_ocr.txt"
+    ).read_text(encoding="utf-8")
+    called = {"count": 0}
+
+    def fake_refresh(*args, **kwargs):
+        called["count"] += 1
+        return {"ok": True, "holdings": [], "items": [], "summary": {}}
+
+    monkeypatch.setattr(
+        "app.services.overview_pipeline.refresh_holdings_sector_quotes",
+        fake_refresh,
+    )
+    monkeypatch.setattr(
+        "app.services.fund_code_resolver._fund_name_table",
+        lambda: [
+            ("519674", "银河创新成长混合A"),
+            ("008586", "华夏人工智能ETF联接C"),
+            ("025856", "华夏中证电网设备主题ETF联接A"),
+            ("015945", "易方达国防军工混合C"),
+        ],
+    )
+
+    response = client.post(
+        "/api/ocr",
+        data={"raw_text": fixture, "preview": "true"},
+    )
+
+    body = response.json()
+    assert response.status_code == 200
+    assert body["preview"] is True
+    assert body["sector_refresh"]["skipped"] is True
+    assert called["count"] == 0
+    assert len(body["holdings"]) == 4
+    assert body["holdings"][0]["fund_code"] == "519674"
+
+
 def test_ocr_endpoint_accepts_text_fallback():
     response = client.post(
         "/api/ocr",

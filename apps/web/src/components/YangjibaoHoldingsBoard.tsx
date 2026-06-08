@@ -8,6 +8,7 @@ import {
   ChevronUp,
   Eye,
   EyeOff,
+  ImageUp,
   Plus,
   RefreshCw,
   Settings2,
@@ -48,6 +49,8 @@ type YangjibaoHoldingsBoardProps = {
   isLoading?: boolean;
   className?: string;
   onOpenCapture?: () => void;
+  onUploadOverview?: (file: File) => void;
+  isUploadingOverview?: boolean;
   onAddHolding?: () => void;
   onExpandReview?: () => void;
   onSelectHolding?: (index: number) => void;
@@ -169,6 +172,8 @@ export function YangjibaoHoldingsBoard({
   isLoading = false,
   className,
   onOpenCapture,
+  onUploadOverview,
+  isUploadingOverview = false,
   onAddHolding,
   onExpandReview,
   onSelectHolding,
@@ -243,14 +248,39 @@ export function YangjibaoHoldingsBoard({
                 ? "正在从基金档案恢复持仓，并尝试刷新真实板块涨跌..."
                 : "暂无持仓。请先在“基金档案”上传单基金详情截图建档，或在校对表手动录入。"}
             </p>
-            {!isLoading && onOpenCapture ? (
-              <button
-                type="button"
-                onClick={onOpenCapture}
-                className="mt-5 rounded-full bg-blue-600 px-4 py-2 text-sm font-bold text-white transition hover:bg-blue-700"
-              >
-                去上传详情截图
-              </button>
+            {!isLoading ? (
+              <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+                {onUploadOverview ? (
+                  <label
+                    className={`inline-flex cursor-pointer items-center gap-2 rounded-full bg-blue-600 px-4 py-2 text-sm font-bold text-white transition hover:bg-blue-700 ${isUploadingOverview ? "pointer-events-none opacity-60" : ""}`}
+                  >
+                    <ImageUp size={16} />
+                    {isUploadingOverview ? "识别中..." : "上传支付宝截图"}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="sr-only"
+                      disabled={isUploadingOverview}
+                      onChange={(event) => {
+                        const file = event.target.files?.[0];
+                        if (file) {
+                          onUploadOverview(file);
+                        }
+                        event.currentTarget.value = "";
+                      }}
+                    />
+                  </label>
+                ) : null}
+                {onOpenCapture ? (
+                  <button
+                    type="button"
+                    onClick={onOpenCapture}
+                    className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 transition hover:border-blue-200 hover:text-blue-700"
+                  >
+                    去上传详情截图
+                  </button>
+                ) : null}
+              </div>
             ) : null}
           </div>
         </div>
@@ -281,15 +311,38 @@ export function YangjibaoHoldingsBoard({
                 {amountsHidden ? <EyeOff size={15} /> : <Eye size={15} />}
               </button>
             </div>
-            <button
-              type="button"
-              onClick={() => void refresh(false)}
-              disabled={isRefreshing}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 disabled:opacity-50"
-              title="刷新板块涨跌"
-            >
-              <RefreshCw size={16} className={isRefreshing ? "animate-spin" : ""} />
-            </button>
+            <div className="flex items-center gap-1">
+              {onUploadOverview ? (
+                <label
+                  className={`inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 ${isUploadingOverview ? "pointer-events-none opacity-50" : ""}`}
+                  title="上传支付宝总览截图"
+                >
+                  <ImageUp size={16} />
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="sr-only"
+                    disabled={isUploadingOverview}
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      if (file) {
+                        onUploadOverview(file);
+                      }
+                      event.currentTarget.value = "";
+                    }}
+                  />
+                </label>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => void refresh(false)}
+                disabled={isRefreshing}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 disabled:opacity-50"
+                title="刷新板块涨跌"
+              >
+                <RefreshCw size={16} className={isRefreshing ? "animate-spin" : ""} />
+              </button>
+            </div>
           </div>
 
           <div className="flex items-start justify-between gap-4">

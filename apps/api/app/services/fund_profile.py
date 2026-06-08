@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from datetime import date
 
 from app.database import (
     delete_fund_profile,
@@ -88,7 +89,14 @@ class FundProfileService:
         }
         if holding.fund_code == "000000" and profile.fund_code != "000000":
             updates["fund_code"] = profile.fund_code
-            updates["fund_name"] = profile.fund_name
+        if profile.fund_name and normalize_fund_name(holding.fund_name) != normalize_fund_name(
+            profile.fund_name
+        ):
+            if is_fund_name_match(
+                normalize_fund_name(holding.fund_name),
+                normalize_fund_name(profile.fund_name),
+            ):
+                updates["fund_name"] = profile.fund_name
         return holding.model_copy(update=updates)
 
     def resolve_holdings(self, holdings: list[Holding]) -> list[Holding]:
@@ -188,6 +196,12 @@ def merge_detail_profile(existing: FundProfile | None, incoming: FundProfile) ->
             "holding_cost": pick_float(incoming.holding_cost, existing.holding_cost),
             "yesterday_profit": pick_float(incoming.yesterday_profit, existing.yesterday_profit),
             "holding_days": incoming.holding_days if incoming.holding_days is not None else existing.holding_days,
+            "holding_days_as_of": (
+                date.today().isoformat()
+                if incoming.holding_days is not None
+                else existing.holding_days_as_of
+            ),
+            "first_purchase_date": existing.first_purchase_date,
         }
     )
 
@@ -291,6 +305,11 @@ def parse_profile_from_text(text: str) -> FundProfile | None:
         daily_profit=daily_group[0] if len(daily_group) > 0 else None,
         yesterday_profit=daily_group[1] if len(daily_group) > 1 else None,
         holding_days=int(daily_group[2]) if len(daily_group) > 2 and daily_group[2] is not None else None,
+        holding_days_as_of=(
+            date.today().isoformat()
+            if len(daily_group) > 2 and daily_group[2] is not None
+            else None
+        ),
         sector_name=sector_name,
         sector_return_percent=sector_return,
         intraday_index_name=intraday_index_name,

@@ -62,6 +62,9 @@ class Settings(BaseSettings):
     sector_quotes_browser_command: str | None = None
     sector_intraday_browser_command: str | None = None
     sector_quotes_browser_timeout_seconds: float = 4.0
+    ocr_preload: bool = True
+    ocr_use_mobile_models: bool = True
+    ocr_max_image_side: int = 1280
 
     @field_validator("db_auto_import_path", mode="before")
     @classmethod

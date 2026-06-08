@@ -128,6 +128,8 @@ class FundProfile(BaseModel):
     daily_profit: float | None = None
     yesterday_profit: float | None = None
     holding_days: int | None = None
+    holding_days_as_of: str | None = None
+    first_purchase_date: str | None = None
     sector_name: str | None = None
     sector_return_percent: float | None = None
     intraday_index_name: str | None = None
@@ -289,12 +291,17 @@ class HoldingDetailResponse(BaseModel):
     holding_cost: float | None = None
     yesterday_profit: float | None = None
     holding_days: int | None = None
+    first_purchase_date: str | None = None
     latest_nav: float | None = None
     nav_date: str | None = None
     year_return_percent: float | None = None
     fund_code_resolved: bool = False
     fund_code_source: str | None = None
     provenance: dict[str, str] = Field(default_factory=dict)
+
+
+class UpdateFundProfileRequest(BaseModel):
+    first_purchase_date: str | None = None
 
 
 class RefreshSectorQuotesRequest(BaseModel):

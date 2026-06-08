@@ -33,6 +33,19 @@ def test_get_nav_history_parses_akshare_frame(monkeypatch):
     assert history.period_change_percent > 0
 
 
+def test_parse_nav_points_preserves_zero_daily_growth():
+    from app.services.fund_data import _parse_nav_points
+
+    points = _parse_nav_points(
+        [
+            {"date": "2026-05-30", "nav": 1.2, "daily_growth": 0.15},
+            {"date": "2026-06-01", "nav": 1.2, "daily_growth": 0},
+        ]
+    )
+    assert len(points) == 2
+    assert points[1].daily_return_percent == 0
+
+
 def test_get_nav_history_rejects_placeholder_code():
     history = FundDataService().get_nav_history("000000", "未知")
     assert history.source == "unavailable"

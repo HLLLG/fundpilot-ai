@@ -223,6 +223,8 @@ export type FundProfile = {
   daily_profit?: number | null;
   yesterday_profit?: number | null;
   holding_days?: number | null;
+  holding_days_as_of?: string | null;
+  first_purchase_date?: string | null;
   sector_name?: string | null;
   sector_return_percent?: number | null;
   intraday_index_name?: string | null;
@@ -486,6 +488,7 @@ export type HoldingDetail = {
   holding_cost?: number | null;
   yesterday_profit?: number | null;
   holding_days?: number | null;
+  first_purchase_date?: string | null;
   latest_nav?: number | null;
   nav_date?: string | null;
   year_return_percent?: number | null;
@@ -812,6 +815,69 @@ export async function parseFundProfile(formData: FormData): Promise<ParseFundPro
   return response.json();
 }
 
+export type FundCodeResolution = {
+  fund_name: string;
+  fund_code: string | null;
+  source: string | null;
+  resolved: boolean;
+};
+
+export type OcrAmountSemantics = {
+  source: string;
+  holding_amount: string;
+  daily_profit: string;
+  note?: string;
+};
+
+export type ParseOcrUploadResult = {
+  raw_text: string;
+  upload_path?: string | null;
+  holdings: Holding[];
+  cache_hit?: boolean;
+  ocr_source?: string;
+  fund_code_resolutions?: FundCodeResolution[];
+  amount_semantics?: OcrAmountSemantics;
+  trading_session?: Record<string, unknown>;
+  portfolio_summary?: PortfolioSummary | null;
+  holding_warnings?: HoldingFieldWarning[];
+  holding_diffs?: HoldingListDiff[];
+  profile_sync?: { updated: number; created: number };
+  sector_refresh?: Record<string, unknown> | null;
+  error?: string;
+};
+
+export async function parseOcrUpload(
+  formData: FormData,
+  options?: { preview?: boolean },
+): Promise<ParseOcrUploadResult> {
+  if (options?.preview) {
+    formData.set("preview", "true");
+  }
+  const response = await fetch(`${API_BASE}/api/ocr`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export async function applyPortfolioHoldings(holdings: Holding[]): Promise<{
+  holdings: Holding[];
+  portfolio_summary?: PortfolioSummary | null;
+}> {
+  const response = await fetch(`${API_BASE}/api/portfolio/apply-holdings`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(holdings),
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
 export type PortfolioHoldingsPayload = {
   holdings: Holding[];
   source: "snapshot" | "profiles" | "empty";
@@ -854,6 +920,21 @@ export async function listFundProfiles(): Promise<FundProfile[]> {
   return response.json();
 }
 
+export async function updateFundProfilePurchaseDate(
+  fundCode: string,
+  firstPurchaseDate: string | null,
+): Promise<FundProfile> {
+  const response = await fetch(`${API_BASE}/api/fund-profiles/${encodeURIComponent(fundCode)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ first_purchase_date: firstPurchaseDate }),
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
 export type FundNavPoint = {
   date: string;
   nav: number;
@@ -879,6 +960,67 @@ export async function fetchFundNavHistory(
     `${API_BASE}/api/fund-profiles/${encodeURIComponent(fundCode)}/nav-history?days=${days}`,
     { cache: "no-store" },
   );
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export type FundNavHistoryPage = {
+  fund_code: string;
+  fund_name: string;
+  source: string;
+  points: FundNavPoint[];
+  has_more: boolean;
+  next_before?: string | null;
+  note?: string | null;
+};
+
+export async function fetchFundNavHistoryPage(
+  fundCode: string,
+  options?: { limit?: number; before?: string | null },
+): Promise<FundNavHistoryPage> {
+  const params = new URLSearchParams({
+    limit: String(options?.limit ?? 30),
+  });
+  if (options?.before) {
+    params.set("before_date", options.before);
+  }
+  const response = await fetch(
+    `${API_BASE}/api/fund-profiles/${encodeURIComponent(fundCode)}/nav-history/page?${params}`,
+    { cache: "no-store" },
+  );
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export type IndexDailyPoint = {
+  date: string;
+  close: number;
+};
+
+export type IndexDailyHistory = {
+  symbol: string;
+  name: string;
+  source: string;
+  points: IndexDailyPoint[];
+  period_change_percent?: number | null;
+  note?: string | null;
+};
+
+export async function fetchIndexDailyHistory(
+  symbol = "000300",
+  days = 252,
+): Promise<IndexDailyHistory> {
+  const params = new URLSearchParams({
+    symbol,
+    days: String(days),
+  });
+  const response = await fetch(`${API_BASE}/api/market/index-daily?${params}`, {
+    cache: "no-store",
+  });
   if (!response.ok) {
     throw new Error(await response.text());
   }

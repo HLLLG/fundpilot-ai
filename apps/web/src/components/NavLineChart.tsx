@@ -315,7 +315,7 @@ export function NavLineChart({
           <polyline
             fill="none"
             stroke={colors.line}
-            strokeWidth="2.5"
+            strokeWidth="1"
             strokeLinecap="round"
             strokeLinejoin="round"
             points={chart.linePath}

@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 
 from app.models import Holding
+from app.services.alipay_holdings_parser import is_alipay_holdings_page, parse_alipay_holdings_page
 
 
 FUND_CODE_RE = re.compile(r"(?<!\d)(\d{6})(?!\d)")
@@ -24,7 +25,6 @@ FUND_NAME_HINTS = (
     "ETF",
     "混合",
     "混",
-    "基金",
     "联接",
     "债券",
     "指数",
@@ -33,7 +33,43 @@ FUND_NAME_HINTS = (
     "军工",
     "成长",
 )
+FUND_SHARE_CLASS_SUFFIX_RE = re.compile(
+    r"(混合|联接|债券|ETF|指数|主题|发起|货币|理财)[A-CEH]?\s*$",
+    re.IGNORECASE,
+)
+ALIPAY_PROMO_MARKERS = (
+    "基金经理说",
+    "市场解读",
+    "的重要性",
+    "正在被",
+    "资讯",
+    "报道",
+    "点评",
+)
 BLOCK_FOOTER_MARKERS = ("上证指数", "新增持有", "批量加减仓", "批量")
+ALIPAY_HOLDINGS_MARKERS = (
+    "我的持有",
+    "金额/昨日收益",
+    "持有收益/率",
+    "更新时间排序",
+)
+ALIPAY_TAG_NOISE = (
+    "金选",
+    "超额收益",
+    "指数基金",
+    "基金经理说",
+    "市场解读",
+    "偏股",
+    "偏债",
+    "指数",
+    "黄金",
+    "全球",
+    "全部",
+    "基金市场",
+    "机会",
+    "自选",
+    "持有",
+)
 FUND_NAME_BLOCKLIST = frozenset(
     {
         "基金",
@@ -89,6 +125,11 @@ def parse_holdings_from_text(text: str) -> list[Holding]:
     if holdings:
         return holdings
 
+    if is_alipay_holdings_page(lines):
+        alipay_holdings = parse_alipay_holdings_page(text)
+        if alipay_holdings:
+            return alipay_holdings
+
     drafts = _parse_alipay_drafts_without_codes(lines)
     account_daily = _parse_account_daily_profit(lines)
     return _reconcile_daily_profit_signs(drafts, account_daily)
@@ -120,6 +161,123 @@ def _extract_float(block: str, pattern: re.Pattern[str]) -> float | None:
     if not match:
         return None
     return float(match.group(1).replace(",", ""))
+
+
+def detect_ocr_source(text: str) -> str:
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if any(marker in line for line in lines for marker in ALIPAY_HOLDINGS_MARKERS):
+        return "alipay_holdings"
+    if any("养基宝" in line for line in lines):
+        return "yangjibao_overview"
+    if any(marker in line for line in lines for marker in ("账户汇总", "账户资产")):
+        return "yangjibao_overview"
+    if is_alipay_holdings_page(lines):
+        return "alipay_holdings"
+    return "unknown"
+
+
+def _looks_like_alipay_holdings_list(lines: list[str]) -> bool:
+    joined = "\n".join(lines)
+    if any(marker in joined for marker in ALIPAY_HOLDINGS_MARKERS):
+        return True
+    name_indexes = [
+        index for index, line in enumerate(lines) if _looks_like_alipay_fund_name(line)
+    ]
+    if len(name_indexes) < 2:
+        return False
+    plain_amount_blocks = 0
+    for position, index in enumerate(name_indexes):
+        next_index = name_indexes[position + 1] if position + 1 < len(name_indexes) else len(lines)
+        block = _trim_alipay_noise_lines(lines[index + 1 : next_index])
+        if _extract_alipay_holdings_metrics(block)["holding_amount"] is not None:
+            plain_amount_blocks += 1
+    return plain_amount_blocks >= 2 and "￥" not in joined
+
+
+def _parse_alipay_holdings_list(lines: list[str]) -> list[Holding]:
+    name_indexes = [
+        index for index, line in enumerate(lines) if _looks_like_alipay_fund_name(line)
+    ]
+    holdings: list[Holding] = []
+
+    for position, index in enumerate(name_indexes):
+        next_index = name_indexes[position + 1] if position + 1 < len(name_indexes) else len(lines)
+        block_lines = _trim_alipay_noise_lines(lines[index + 1 : next_index])
+        metrics = _extract_alipay_holdings_metrics(block_lines)
+        amount = metrics["holding_amount"]
+        if amount is None:
+            continue
+
+        holding_profit = metrics["holding_profit"]
+        holding_return_percent = metrics["holding_return_percent"]
+        yesterday_profit = metrics["yesterday_profit"]
+
+        holdings.append(
+            Holding(
+                fund_code="000000",
+                fund_name=lines[index],
+                holding_amount=amount,
+                return_percent=holding_return_percent if holding_return_percent is not None else 0,
+                holding_profit=holding_profit,
+                holding_return_percent=holding_return_percent,
+                yesterday_profit=yesterday_profit,
+            )
+        )
+
+    return holdings
+
+
+def _trim_alipay_noise_lines(block_lines: list[str]) -> list[str]:
+    trimmed: list[str] = []
+    for line in block_lines:
+        cleaned = line.strip()
+        if not cleaned:
+            continue
+        if any(marker in cleaned for marker in BLOCK_FOOTER_MARKERS):
+            break
+        if cleaned in FUND_NAME_BLOCKLIST:
+            continue
+        if any(noise in cleaned for noise in ALIPAY_TAG_NOISE) and not PERCENT_RE.search(cleaned):
+            if not _parse_amount_token(cleaned.replace(",", "")):
+                continue
+        trimmed.append(cleaned)
+    return trimmed
+
+
+def _extract_alipay_holdings_metrics(block_lines: list[str]) -> dict:
+    numbers = _extract_signed_numbers(block_lines)
+    percents = _extract_signed_percents(block_lines)
+
+    holding_amount = numbers[0] if numbers else None
+    holding_return_percent = percents[-1] if percents else None
+    tail_numbers = numbers[1:] if numbers else []
+
+    yesterday_profit: float | None = None
+    holding_profit: float | None = None
+
+    if len(tail_numbers) >= 2:
+        yesterday_profit = tail_numbers[0]
+        holding_profit = tail_numbers[1]
+    elif len(tail_numbers) == 1:
+        lone = tail_numbers[0]
+        if lone == 0 and holding_return_percent is not None and holding_return_percent != 0:
+            yesterday_profit = lone
+        else:
+            holding_profit = lone
+
+    holding_profit = _align_profit_sign_with_return(holding_profit, holding_return_percent)
+    if holding_profit is None and holding_return_percent is not None and holding_amount:
+        holding_profit = _round2(
+            holding_amount * holding_return_percent / (100 + holding_return_percent)
+        )
+        holding_profit = _align_profit_sign_with_return(holding_profit, holding_return_percent)
+
+    return {
+        "holding_amount": holding_amount,
+        "yesterday_profit": yesterday_profit,
+        "holding_profit": holding_profit,
+        "holding_return_percent": holding_return_percent,
+    }
 
 
 def _parse_alipay_drafts_without_codes(lines: list[str]) -> list[Holding]:
@@ -176,12 +334,42 @@ def _looks_like_alipay_fund_name(line: str) -> bool:
         return False
     if any(noise in cleaned for noise in ("账户", "支付宝", "上证指数", "新增持有", "批量")):
         return False
+    if _looks_like_alipay_promo_text(cleaned):
+        return False
     has_chinese = any("\u4e00" <= char <= "\u9fff" for char in cleaned)
     if not has_chinese:
         return False
     if len(cleaned) < 4 and not any(hint in cleaned for hint in ("..", "...", "ETF", "混")):
         return False
-    return any(hint in cleaned for hint in FUND_NAME_HINTS)
+    return _has_fund_product_name_shape(cleaned)
+
+
+def _looks_like_alipay_promo_text(line: str) -> bool:
+    if any(marker in line for marker in ALIPAY_PROMO_MARKERS):
+        return True
+    if ("，" in line or "。" in line or "？" in line) and not _has_fund_share_class_suffix(line):
+        return True
+    if len(line) > 22 and not _has_fund_share_class_suffix(line):
+        return any(marker in line for marker in ("时代", "重要", "认为", "表示", "观点"))
+    return False
+
+
+def _has_fund_share_class_suffix(line: str) -> bool:
+    if FUND_SHARE_CLASS_SUFFIX_RE.search(line.rstrip(".…")):
+        return True
+    if line.endswith(("...", "..", ".")):
+        return any(hint in line for hint in ("混合", "ETF", "联接", "债券", "指数", "主题", "军工", "成长"))
+    return False
+
+
+def _has_fund_product_name_shape(line: str) -> bool:
+    if _has_fund_share_class_suffix(line):
+        return True
+    return any(hint in line for hint in FUND_NAME_HINTS)
+
+
+def _round2(value: float) -> float:
+    return round(value, 2)
 
 
 def _extract_yangjibao_metrics(lines: list[str], amount: float) -> dict:

@@ -101,17 +101,7 @@ class FundDataService:
         if not data:
             raise ValueError("未能解析净值数据")
 
-        points = []
-        for item in data:
-            if item["date"] and item["nav"] is not None:
-                try:
-                    from app.models import FundNavPoint
-                    points.append(FundNavPoint(
-                        date=item["date"],
-                        nav=round(item["nav"], 4),
-                    ))
-                except (ValueError, TypeError):
-                    continue
+        points = _parse_nav_points(data)
 
         if not points:
             raise ValueError("未能解析净值数据")
@@ -147,17 +137,7 @@ class FundDataService:
         if not data:
             raise ValueError("未能解析净值数据")
 
-        points = []
-        for item in data:
-            if item["date"] and item["nav"] is not None:
-                try:
-                    from app.models import FundNavPoint
-                    points.append(FundNavPoint(
-                        date=item["date"],
-                        nav=round(item["nav"], 4),
-                    ))
-                except (ValueError, TypeError):
-                    continue
+        points = _parse_nav_points(data)
 
         if not points:
             raise ValueError("未能解析净值数据")
@@ -197,6 +177,122 @@ class FundDataService:
             period_change_percent=period_change,
         )
         return snapshot, history
+
+    def get_nav_history_page(
+        self,
+        fund_code: str,
+        fund_name: str = "",
+        *,
+        limit: int = 30,
+        before_date: str | None = None,
+        pool_days: int = 800,
+    ) -> dict:
+        history = self.get_nav_history(fund_code, fund_name, trading_days=pool_days)
+        if not history.points:
+            return {
+                "fund_code": fund_code,
+                "fund_name": history.fund_name,
+                "source": history.source,
+                "points": [],
+                "has_more": False,
+                "next_before": None,
+                "note": history.note,
+            }
+
+        points = sorted(history.points, key=lambda point: point.date, reverse=True)
+        if before_date:
+            cutoff = before_date[:10]
+            points = [point for point in points if point.date < cutoff]
+
+        page = points[:limit]
+        has_more = len(points) > limit
+        next_before = page[-1].date if has_more and page else None
+        return {
+            "fund_code": fund_code,
+            "fund_name": history.fund_name,
+            "source": history.source,
+            "points": [point.model_dump(mode="json") for point in page],
+            "has_more": has_more,
+            "next_before": next_before,
+            "note": history.note,
+        }
+
+    def get_index_daily_history(
+        self,
+        index_symbol: str = "000300",
+        *,
+        trading_days: int = 252,
+    ) -> dict:
+        from app.services.index_daily_client import (
+            fetch_index_daily_history as fetch_index_daily,
+        )
+        from app.services.index_daily_client import index_display_name
+
+        result = fetch_index_daily(index_symbol, trading_days=trading_days)
+        if result is None:
+            from app.services.akshare_subprocess import fetch_index_daily_history as fetch_ak
+
+            result = fetch_ak(index_symbol, trading_days=trading_days)
+
+        if result is None or "data" not in result:
+            return {
+                "symbol": index_symbol,
+                "name": index_display_name(index_symbol),
+                "source": "unavailable",
+                "points": [],
+                "note": "暂未获取到指数走势数据",
+            }
+
+        points = []
+        for item in result["data"]:
+            if not item.get("date") or item.get("close") is None:
+                continue
+            try:
+                points.append(
+                    {
+                        "date": str(item["date"])[:10],
+                        "close": round(float(item["close"]), 4),
+                    }
+                )
+            except (TypeError, ValueError):
+                continue
+
+        period_change = None
+        if len(points) >= 2 and points[0]["close"] > 0:
+            period_change = round((points[-1]["close"] / points[0]["close"] - 1) * 100, 2)
+
+        return {
+            "symbol": index_symbol,
+            "name": index_display_name(index_symbol),
+            "source": str(result.get("source") or "akshare"),
+            "points": points,
+            "period_change_percent": period_change,
+        }
+
+
+def _parse_nav_points(data: list[dict]) -> list[FundNavPoint]:
+    points: list[FundNavPoint] = []
+    for item in data:
+        if not item.get("date") or item.get("nav") is None:
+            continue
+        daily_return_percent = None
+        daily_growth = item.get("daily_growth")
+        if daily_growth is not None:
+            try:
+                daily_return_percent = round(float(daily_growth), 2)
+            except (TypeError, ValueError):
+                daily_return_percent = None
+        try:
+            points.append(
+                FundNavPoint(
+                    date=str(item["date"])[:10],
+                    nav=round(float(item["nav"]), 4),
+                    daily_return_percent=daily_return_percent,
+                )
+            )
+        except (ValueError, TypeError):
+            continue
+    return points
 
 
 def _load_fund_diagnostics(ak: object, fund_code: str) -> dict:

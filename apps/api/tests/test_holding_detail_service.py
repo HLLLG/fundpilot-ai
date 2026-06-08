@@ -1,6 +1,9 @@
-from app.models import Holding
+from datetime import date, timedelta
+
+from app.models import FundProfile, Holding
 from app.services.holding_detail_service import (
     _holding_days_from_snapshots,
+    _resolve_holding_days,
     _yesterday_profit_from_snapshots,
     build_holding_detail,
 )
@@ -52,6 +55,56 @@ def test_holding_days_from_snapshots(monkeypatch):
     days = _holding_days_from_snapshots(holding)
     assert days is not None
     assert days >= 0
+
+
+def test_resolve_holding_days_prefers_user_purchase_date(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.holding_detail_service.list_portfolio_daily_snapshots",
+        lambda limit=365: [
+            {
+                "snapshot_date": "2026-06-03",
+                "holdings": [{"fund_code": "025856", "fund_name": "测试基金"}],
+            }
+        ],
+    )
+    profile = FundProfile(
+        fund_code="025856",
+        fund_name="测试基金",
+        holding_days=200,
+        holding_days_as_of=date.today().isoformat(),
+        first_purchase_date=(date.today() - timedelta(days=30)).isoformat(),
+    )
+    holding = Holding(
+        fund_code="025856",
+        fund_name="测试基金",
+        holding_amount=1000,
+        return_percent=1.0,
+    )
+    days, source = _resolve_holding_days(profile, holding)
+    assert days == 30
+    assert source == "user"
+
+
+def test_resolve_holding_days_ages_ocr_detail(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.holding_detail_service.list_portfolio_daily_snapshots",
+        lambda limit=365: [],
+    )
+    profile = FundProfile(
+        fund_code="025856",
+        fund_name="华夏中证电网设备主题ETF联接A",
+        holding_days=95,
+        holding_days_as_of=(date.today() - timedelta(days=10)).isoformat(),
+    )
+    holding = Holding(
+        fund_code="025856",
+        fund_name="华夏中证电网设备主题ETF联接A",
+        holding_amount=15000,
+        return_percent=2.0,
+    )
+    days, source = _resolve_holding_days(profile, holding)
+    assert days == 105
+    assert source == "ocr_detail"
 
 
 def test_build_holding_detail_uses_profile_fields(tmp_path, monkeypatch):

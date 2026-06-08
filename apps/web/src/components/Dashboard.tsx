@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowRight, BrainCircuit, FileText, Sun, X } from "lucide-react";
 import type {
   AnalysisMode,
+  FundCodeResolution,
   FundProfile,
   Holding,
   HoldingFieldWarning,
@@ -18,9 +19,12 @@ import {
   listFundProfiles,
   listReports,
   parseFundProfile,
+  applyPortfolioHoldings,
+  parseOcrUpload,
   startAnalyzeJob,
   type PortfolioSummary,
 } from "@/lib/api";
+import { AlipayOcrConfirmModal } from "@/components/AlipayOcrConfirmModal";
 import { notifyDesktop } from "@/lib/notifications";
 import {
   loadAnalysisMode,
@@ -102,6 +106,11 @@ export function Dashboard() {
   const reportSectionRef = useRef<HTMLDivElement>(null);
   const shouldRefreshOnLoad = useRef(false);
   const [isHydratingHoldings, setIsHydratingHoldings] = useState(true);
+  const [isOcrUploading, setIsOcrUploading] = useState(false);
+  const [pendingOcrHoldings, setPendingOcrHoldings] = useState<Holding[] | null>(null);
+  const [pendingOcrResolutions, setPendingOcrResolutions] = useState<FundCodeResolution[]>([]);
+  const [pendingOcrNote, setPendingOcrNote] = useState<string | null>(null);
+  const [isConfirmingOcr, setIsConfirmingOcr] = useState(false);
 
   const todayIso = new Date().toISOString().slice(0, 10);
   const todayReport = useMemo(() => {
@@ -325,6 +334,55 @@ export function Dashboard() {
     void handleProfileForm(formData);
   };
 
+  const handleOverviewUpload = async (selectedFile: File) => {
+    setIsOcrUploading(true);
+    setMessage(null);
+    try {
+      const formData = new FormData();
+      formData.append("file", selectedFile);
+      const result = await parseOcrUpload(formData, { preview: true });
+      if (result.error) {
+        throw new Error(result.error);
+      }
+      if (!result.holdings.length) {
+        throw new Error("未识别到基金持仓，请确认截图为支付宝「我的持有」或养基宝总览。");
+      }
+      setPendingOcrHoldings(result.holdings);
+      setPendingOcrResolutions(result.fund_code_resolutions ?? []);
+      setPendingOcrNote(result.amount_semantics?.note ?? null);
+      setHoldingWarnings(result.holding_warnings ?? []);
+      setActiveTab("today");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "总览截图识别失败。");
+    } finally {
+      setIsOcrUploading(false);
+    }
+  };
+
+  const handleConfirmOcrHoldings = async () => {
+    if (!pendingOcrHoldings?.length) {
+      return;
+    }
+    const count = pendingOcrHoldings.length;
+    setIsConfirmingOcr(true);
+    try {
+      const applied = await applyPortfolioHoldings(pendingOcrHoldings);
+      setHoldings(applied.holdings);
+      if (applied.portfolio_summary) {
+        setPortfolioSummary(applied.portfolio_summary);
+      }
+      setPendingOcrHoldings(null);
+      setPendingOcrResolutions([]);
+      setPendingOcrNote(null);
+      await loadProfiles();
+      setMessage(`已更新 ${count} 只基金的账户汇总，板块涨跌已刷新。`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "确认更新失败。");
+    } finally {
+      setIsConfirmingOcr(false);
+    }
+  };
+
   return (
     <main className="premium-bg min-h-screen">
       <div className="mx-auto flex min-h-screen w-full max-w-[1520px] flex-col px-4 py-4 sm:px-6 lg:px-8 lg:py-6">
@@ -391,6 +449,8 @@ export function Dashboard() {
                 sectorRefresh={sectorRefresh}
                 isLoading={isHydratingHoldings}
                 className="max-w-none"
+                onUploadOverview={(file) => void handleOverviewUpload(file)}
+                isUploadingOverview={isOcrUploading}
                 onOpenCapture={() => setActiveTab("profiles")}
                 onAddHolding={() => {
                   addEmptyHolding();
@@ -554,6 +614,22 @@ export function Dashboard() {
             setHoldings((current) =>
               current.map((item, itemIndex) => (itemIndex === index ? resolved : item)),
             );
+          }}
+        />
+      ) : null}
+
+      {pendingOcrHoldings ? (
+        <AlipayOcrConfirmModal
+          holdings={pendingOcrHoldings}
+          fundCodeResolutions={pendingOcrResolutions}
+          amountSemanticsNote={pendingOcrNote}
+          isBusy={isConfirmingOcr}
+          onChange={setPendingOcrHoldings}
+          onConfirm={() => void handleConfirmOcrHoldings()}
+          onClose={() => {
+            setPendingOcrHoldings(null);
+            setPendingOcrResolutions([]);
+            setPendingOcrNote(null);
           }}
         />
       ) : null}

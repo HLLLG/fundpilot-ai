@@ -1,49 +1,24 @@
 "use client";
 
 import { useId, useMemo, useRef, useState } from "react";
+import type { PerformanceSeriesPoint } from "@/lib/performanceTrend";
+import { formatSignedPercent } from "@/lib/performanceTrend";
 
-export type IntradayPoint = {
-  time: string;
-  percent: number;
-};
+const Y_AXIS_HEADROOM_RATIO = 0.12;
+const FUND_COLOR = "#3d7eff";
+const BENCH_COLOR = "#f59e0b";
 
-type IntradayPercentChartProps = {
-  points: IntradayPoint[];
+type PerformanceReturnChartProps = {
+  points: PerformanceSeriesPoint[];
   height?: number;
+  showBenchmark?: boolean;
 };
 
-function formatTimeLabel(time: string) {
-  if (time.length >= 5) {
-    return time.slice(0, 5);
-  }
-  return time;
-}
-
-function formatRangePercent(value: number) {
-  const rounded = Math.round(value * 100) / 100;
-  return `${rounded > 0 ? "+" : ""}${rounded.toFixed(2)}%`;
-}
-
-/** Y 轴上下各预留约 15% 空位，避免极值贴边。 */
-const Y_AXIS_HEADROOM_RATIO = 0.15;
-
-/** 养基宝同款 Y 轴：max(|最高|, |最低|)，以 0 为中心对称 [-span, +span]。 */
-function computeSymmetricSpan(points: IntradayPoint[]): number {
-  const values = points.map((point) => point.percent);
-  if (!values.length) {
-    return 0.15;
-  }
-  const peak = Math.max(Math.abs(Math.max(...values)), Math.abs(Math.min(...values)));
-  const padded = peak * (1 + Y_AXIS_HEADROOM_RATIO);
-  return Math.max(padded, 0.1);
-}
-
-const CROSSHAIR = {
-  vertical: "#6366f1",
-  horizontal: "#0ea5e9",
-};
-
-export function IntradayPercentChart({ points, height = 200 }: IntradayPercentChartProps) {
+export function PerformanceReturnChart({
+  points,
+  height = 220,
+  showBenchmark = true,
+}: PerformanceReturnChartProps) {
   const gradientId = useId().replace(/:/g, "");
   const containerRef = useRef<HTMLDivElement>(null);
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
@@ -52,28 +27,55 @@ export function IntradayPercentChart({ points, height = 200 }: IntradayPercentCh
     if (points.length < 2) {
       return null;
     }
-    const halfSpan = computeSymmetricSpan(points);
-    const min = -halfSpan;
-    const max = halfSpan;
+
+    const values = points.flatMap((point) =>
+      [point.fundPercent, point.benchPercent].filter((value): value is number => value != null),
+    );
+    const rawMin = Math.min(...values, 0);
+    const rawMax = Math.max(...values, 0);
+    const span = rawMax - rawMin || 1;
+    const pad = span * Y_AXIS_HEADROOM_RATIO;
+    const min = rawMin - pad;
+    const max = rawMax + pad;
+    const range = max - min || 1;
+
     const padding = { top: 14, right: 10, bottom: 26, left: 8 };
     const width = 360;
     const chartWidth = width - padding.left - padding.right;
     const chartHeight = height - padding.top - padding.bottom;
-    const range = max - min || 1;
     const plotTop = padding.top;
     const plotBottom = padding.top + chartHeight;
-
-    const coords = points.map((point, index) => {
-      const x = padding.left + (index / (points.length - 1)) * chartWidth;
-      const rawY = plotBottom - ((point.percent - min) / range) * chartHeight;
-      const y = Math.max(plotTop, Math.min(plotBottom, rawY));
-      return { ...point, x, y, index };
-    });
-
-    const linePath = coords.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`).join(" ");
-    const baselineY = padding.top + chartHeight / 2;
     const plotLeft = padding.left;
     const plotRight = padding.left + chartWidth;
+
+    const toY = (percent: number) =>
+      plotBottom - ((percent - min) / range) * chartHeight;
+
+    const coords = points.map((point, index) => {
+      const x = plotLeft + (index / (points.length - 1)) * chartWidth;
+      return {
+        ...point,
+        x,
+        fundY: toY(point.fundPercent),
+        benchY: point.benchPercent != null ? toY(point.benchPercent) : null,
+        index,
+      };
+    });
+
+    const fundPath = coords
+      .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.fundY}`)
+      .join(" ");
+    const benchPath =
+      showBenchmark && coords.filter((point) => point.benchY != null).length >= 2
+        ? coords
+            .filter((point) => point.benchY != null)
+            .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.benchY}`)
+            .join(" ")
+        : null;
+    const areaPath = `${fundPath} L ${coords[coords.length - 1].x} ${plotBottom} L ${coords[0].x} ${plotBottom} Z`;
+
+    const baselineY =
+      max >= 0 && min <= 0 ? toY(0) : null;
     const verticalGridXs = [
       plotLeft,
       plotLeft + chartWidth * 0.25,
@@ -81,13 +83,7 @@ export function IntradayPercentChart({ points, height = 200 }: IntradayPercentCh
       plotLeft + chartWidth * 0.75,
       plotRight,
     ];
-    const areaPath = `${linePath} L ${coords[coords.length - 1].x} ${plotBottom} L ${coords[0].x} ${plotBottom} Z`;
-    const latest = coords[coords.length - 1];
-    const trend = latest.percent >= 0 ? "up" : "down";
-    const colors =
-      trend === "up"
-        ? { line: "#e11d48", fillStart: "rgba(225,29,72,0.22)", fillEnd: "rgba(225,29,72,0.03)" }
-        : { line: "#059669", fillStart: "rgba(5,150,105,0.2)", fillEnd: "rgba(5,150,105,0.03)" };
+    const midDateIndex = Math.floor((points.length - 1) / 2);
 
     return {
       width,
@@ -95,17 +91,19 @@ export function IntradayPercentChart({ points, height = 200 }: IntradayPercentCh
       padding,
       chartWidth,
       chartHeight,
-      coords,
-      linePath,
-      areaPath,
-      baselineY,
       plotTop,
       plotBottom,
       plotLeft,
       plotRight,
+      coords,
+      fundPath,
+      benchPath,
+      areaPath,
+      baselineY,
       verticalGridXs,
-      halfSpan,
-      colors,
+      min,
+      max,
+      midDateIndex,
     };
   }, [height, points]);
 
@@ -115,26 +113,24 @@ export function IntradayPercentChart({ points, height = 200 }: IntradayPercentCh
         className="flex items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-400"
         style={{ height }}
       >
-        暂无分时数据
+        净值数据不足，无法绘制走势图
       </div>
     );
   }
 
   const isHovering = hoverIndex != null;
   const active = isHovering ? chart.coords[hoverIndex] : null;
-  const yLabelX = chart.plotLeft + 4;
-  const yTopLabelY = chart.plotTop + 8;
-  const yBottomLabelY = chart.plotBottom - 3;
 
   return (
     <div ref={containerRef} className="relative w-full">
-      <svg viewBox={`0 0 ${chart.width} ${chart.height}`} className="w-full" role="img">
+      <svg viewBox={`0 0 ${chart.width} ${chart.height}`} className="w-full touch-none select-none" role="img">
         <defs>
           <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={chart.colors.fillStart} />
-            <stop offset="100%" stopColor={chart.colors.fillEnd} />
+            <stop offset="0%" stopColor="rgba(61, 126, 255, 0.18)" />
+            <stop offset="100%" stopColor="rgba(61, 126, 255, 0.02)" />
           </linearGradient>
         </defs>
+
         <rect
           x={chart.plotLeft}
           y={chart.plotTop}
@@ -155,35 +151,34 @@ export function IntradayPercentChart({ points, height = 200 }: IntradayPercentCh
             strokeWidth={1}
           />
         ))}
-        <line
-          x1={chart.plotLeft}
-          y1={chart.baselineY}
-          x2={chart.plotRight}
-          y2={chart.baselineY}
-          stroke="#cbd5e1"
-          strokeWidth={1}
-          strokeDasharray="4 4"
-        />
-        <path d={chart.areaPath} fill={`url(#${gradientId})`} />
-        <path d={chart.linePath} fill="none" stroke={chart.colors.line} strokeWidth={0.9} />
+        {chart.baselineY != null ? (
+          <line
+            x1={chart.plotLeft}
+            y1={chart.baselineY}
+            x2={chart.plotRight}
+            y2={chart.baselineY}
+            stroke="#cbd5e1"
+            strokeWidth={1}
+            strokeDasharray="4 4"
+          />
+        ) : null}
 
-        <text
-          x={yLabelX}
-          y={yTopLabelY}
-          textAnchor="start"
-          className="fill-slate-400 font-medium tabular-nums"
-          fontSize={8}
-        >
-          {formatRangePercent(chart.halfSpan)}
+        <path d={chart.areaPath} fill={`url(#${gradientId})`} />
+        {chart.benchPath ? (
+          <path d={chart.benchPath} fill="none" stroke={BENCH_COLOR} strokeWidth={0.9} />
+        ) : null}
+        <path d={chart.fundPath} fill="none" stroke={FUND_COLOR} strokeWidth={1} />
+
+        <text x={chart.plotLeft + 4} y={chart.plotTop + 8} fontSize={8} className="fill-slate-400 font-medium tabular-nums">
+          {formatSignedPercent(chart.max)}
         </text>
         <text
-          x={yLabelX}
-          y={yBottomLabelY}
-          textAnchor="start"
-          className="fill-slate-400 font-medium tabular-nums"
+          x={chart.plotLeft + 4}
+          y={chart.plotBottom - 3}
           fontSize={8}
+          className="fill-slate-400 font-medium tabular-nums"
         >
-          {formatRangePercent(-chart.halfSpan)}
+          {formatSignedPercent(chart.min)}
         </text>
 
         {isHovering && active ? (
@@ -193,23 +188,26 @@ export function IntradayPercentChart({ points, height = 200 }: IntradayPercentCh
               y1={chart.plotTop}
               x2={active.x}
               y2={chart.plotBottom}
-              stroke={CROSSHAIR.vertical}
+              stroke="#6366f1"
               strokeWidth={1}
               strokeDasharray="4 3"
             />
             <line
               x1={chart.plotLeft}
-              y1={active.y}
+              y1={active.fundY}
               x2={chart.plotRight}
-              y2={active.y}
-              stroke={CROSSHAIR.horizontal}
+              y2={active.fundY}
+              stroke="#0ea5e9"
               strokeWidth={1}
               strokeDasharray="4 3"
             />
-            <circle cx={active.x} cy={active.y} r={3} fill={chart.colors.line} stroke="#fff" strokeWidth={1} />
+            <circle cx={active.x} cy={active.fundY} r={3} fill={FUND_COLOR} stroke="#fff" strokeWidth={1} />
+            {active.benchY != null ? (
+              <circle cx={active.x} cy={active.benchY} r={2.5} fill={BENCH_COLOR} stroke="#fff" strokeWidth={1} />
+            ) : null}
             <rect
               x={chart.plotLeft + 1}
-              y={active.y - 8}
+              y={active.fundY - 8}
               width={40}
               height={14}
               rx={2}
@@ -217,14 +215,13 @@ export function IntradayPercentChart({ points, height = 200 }: IntradayPercentCh
               fillOpacity={0.92}
             />
             <text
-              x={yLabelX}
-              y={active.y + 3}
-              textAnchor="start"
-              className="font-semibold tabular-nums"
+              x={chart.plotLeft + 4}
+              y={active.fundY + 3}
               fontSize={8}
-              fill={CROSSHAIR.horizontal}
+              className="font-semibold tabular-nums"
+              fill="#0ea5e9"
             >
-              {formatRangePercent(active.percent)}
+              {formatSignedPercent(active.fundPercent)}
             </text>
             <rect
               x={active.x - 17}
@@ -239,34 +236,35 @@ export function IntradayPercentChart({ points, height = 200 }: IntradayPercentCh
               x={active.x}
               y={chart.plotBottom - 5}
               textAnchor="middle"
-              className="font-semibold tabular-nums"
               fontSize={8}
-              fill={CROSSHAIR.vertical}
+              className="font-semibold tabular-nums"
+              fill="#6366f1"
             >
-              {formatTimeLabel(active.time)}
+              {active.date.slice(5)}
             </text>
           </>
         ) : null}
 
-        <text x={chart.padding.left} y={chart.height - 8} className="fill-slate-400 text-[10px]">
-          09:30
+        <text x={chart.plotLeft} y={chart.height - 8} className="fill-slate-400 text-[10px]">
+          {points[0].date}
         </text>
         <text
-          x={chart.padding.left + chart.chartWidth / 2}
+          x={chart.plotLeft + chart.chartWidth / 2}
           y={chart.height - 8}
           textAnchor="middle"
           className="fill-slate-400 text-[10px]"
         >
-          11:30/13:00
+          {points[chart.midDateIndex].date}
         </text>
         <text
-          x={chart.width - chart.padding.right}
+          x={chart.plotRight}
           y={chart.height - 8}
           textAnchor="end"
           className="fill-slate-400 text-[10px]"
         >
-          15:00
+          {points[points.length - 1].date}
         </text>
+
         <rect
           x={chart.plotLeft}
           y={chart.plotTop}

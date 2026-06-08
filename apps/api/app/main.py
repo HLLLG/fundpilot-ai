@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -32,6 +32,7 @@ from app.models import (
     RefreshSectorQuotesRequest,
     ReportChatRequest,
     SaveSectorMappingRequest,
+    UpdateFundProfileRequest,
 )
 from app.services.analyze_pipeline import run_analysis
 from app.database import get_portfolio_summary
@@ -48,7 +49,7 @@ from app.services.portfolio_persistence import enrich_loaded_holdings, persist_h
 from app.services.portfolio_snapshot import build_dashboard_payload
 from app.services.job_store import create_analysis_job, get_job_response
 from app.services.ocr_engine import OcrEngine
-from app.services.ocr_pipeline import run_ocr_upload_pipeline
+from app.services.ocr_pipeline import apply_confirmed_holdings, run_ocr_upload_pipeline
 from app.services.report_diff import diff_reports
 from app.services.report_chat import stream_report_chat
 from app.services.report_chat_export import report_chat_to_markdown
@@ -94,6 +95,7 @@ def trading_session() -> dict:
 async def parse_ocr(
     raw_text: str | None = Form(default=None),
     file: UploadFile | None = File(default=None),
+    preview: bool = Form(default=False),
 ) -> dict:
     file_bytes: bytes | None = None
     filename: str | None = None
@@ -106,7 +108,15 @@ async def parse_ocr(
         text=raw_text or "",
         file_bytes=file_bytes,
         filename=filename,
+        preview=preview,
     )
+
+
+@app.post("/api/portfolio/apply-holdings")
+def apply_portfolio_holdings(holdings: list[Holding]) -> dict:
+    if not holdings:
+        raise HTTPException(status_code=400, detail="持仓不能为空")
+    return apply_confirmed_holdings(holdings)
 
 
 @app.post("/api/holdings/allocate-penetration-daily")
@@ -455,6 +465,23 @@ def fund_profiles() -> list[dict]:
     ]
 
 
+@app.patch("/api/fund-profiles/{fund_code}")
+def patch_fund_profile(fund_code: str, payload: UpdateFundProfileRequest) -> dict:
+    profile = get_fund_profile_by_code(fund_code)
+    if profile is None:
+        raise HTTPException(status_code=404, detail="基金档案不存在")
+    if payload.first_purchase_date:
+        try:
+            date.fromisoformat(payload.first_purchase_date)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="首次购入日期格式无效") from exc
+    from app.database import save_fund_profile
+
+    updated = profile.model_copy(update={"first_purchase_date": payload.first_purchase_date})
+    save_fund_profile(updated)
+    return updated.model_dump(mode="json")
+
+
 @app.post("/api/fund-profiles/repair-sectors")
 def repair_fund_profile_sectors() -> dict:
     """将历史档案中的无效板块名（如 OCR 误识别为 +）清理并写回数据库。"""
@@ -505,13 +532,42 @@ def repair_fund_profile_sectors() -> dict:
 def fund_nav_history(fund_code: str, days: int = 90) -> dict:
     profile = get_fund_profile_by_code(fund_code)
     fund_name = profile.fund_name if profile else ""
-    trading_days = max(20, min(days, 365))
+    trading_days = max(20, min(days, 800))
     history = FundDataService().get_nav_history(
         fund_code,
         fund_name,
         trading_days=trading_days,
     )
     return history.model_dump(mode="json")
+
+
+@app.get("/api/fund-profiles/{fund_code}/nav-history/page")
+def fund_nav_history_page(
+    fund_code: str,
+    limit: int = 30,
+    before_date: str | None = None,
+    pool_days: int = 800,
+) -> dict:
+    profile = get_fund_profile_by_code(fund_code)
+    fund_name = profile.fund_name if profile else ""
+    page_limit = max(10, min(limit, 60))
+    pool = max(60, min(pool_days, 800))
+    return FundDataService().get_nav_history_page(
+        fund_code,
+        fund_name,
+        limit=page_limit,
+        before_date=before_date,
+        pool_days=pool,
+    )
+
+
+@app.get("/api/market/index-daily")
+def index_daily_history(symbol: str = "000300", days: int = 252) -> dict:
+    trading_days = max(20, min(days, 800))
+    return FundDataService().get_index_daily_history(
+        index_symbol=symbol,
+        trading_days=trading_days,
+    )
 
 
 @app.get("/api/portfolio/dashboard")

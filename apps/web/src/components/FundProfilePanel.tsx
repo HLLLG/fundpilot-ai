@@ -53,7 +53,7 @@ export function FundProfilePanel({
           {isBusy ? "正在识别截图..." : "上传单基金详情截图"}
         </span>
         <span className="mt-1 text-xs text-slate-500">
-          识别基金代码、持有金额、份额、成本、关联板块（OCR 约 1–3 分钟）
+          识别基金代码、持有金额、份额、成本、关联板块（首次约 10–30 秒，之后通常数秒）
         </span>
         <input
           type="file"
