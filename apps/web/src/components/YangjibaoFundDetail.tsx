@@ -185,7 +185,6 @@ export function YangjibaoFundDetail({
   const firstPurchaseDate = detail?.first_purchase_date ?? "";
   const canEditPurchaseDate =
     detail?.fund_code_resolved === true && activeHolding.fund_code !== "000000";
-  const latestNav = detail?.latest_nav ?? null;
   const yearReturn = detail?.year_return_percent ?? null;
 
   const quoteLabel = sectorQuoteLookupLabel(activeHolding) ?? sectorMeta?.matched_name ?? "—";

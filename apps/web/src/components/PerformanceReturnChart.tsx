@@ -105,7 +105,7 @@ export function PerformanceReturnChart({
       max,
       midDateIndex,
     };
-  }, [height, points]);
+  }, [height, points, showBenchmark]);
 
   if (!chart) {
     return (
