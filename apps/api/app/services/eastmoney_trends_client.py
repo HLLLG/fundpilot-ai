@@ -48,6 +48,8 @@ _TRENDS_UT = "bd1d9ddb04089700cf9c27f6f7426281"
 
 # kline 返回点数低于此阈值时视为稀疏骨架，继续尝试 trends2
 _MIN_RICH_INTRADAY_POINTS = 30
+# A 股板块/指数单日涨跌幅极少超过此值；超出视为东财 preKPrice 占位等脏数据
+_MAX_PLAUSIBLE_DAILY_CHANGE = 15.0
 
 IntradayPoint = dict[str, str | float]
 
@@ -391,6 +393,59 @@ def _fetch_trends2_intraday(
     return []
 
 
+def is_plausible_daily_change(value: float | None) -> bool:
+    return value is not None and abs(value) <= _MAX_PLAUSIBLE_DAILY_CHANGE
+
+
+def _pick_day_change_percent(
+    *,
+    close: float,
+    pre_close: float | None,
+    change_pct: float | None,
+    klines: list[Any],
+    trade_date: str | None,
+    day_token: str,
+) -> float | None:
+    """日 K 涨跌幅：昨收锚点 > preKPrice 比值 > 行内涨跌列（概念板块 preKPrice=1000 占位）。"""
+    from_prior: float | None = None
+    prior_date = trade_date or day_token
+    if prior_date:
+        prior = _prior_close_from_klines(klines, trade_date=prior_date)
+        if prior and prior > 0:
+            from_prior = round((close / prior - 1) * 100, 4)
+
+    computed: float | None = None
+    if pre_close and pre_close > 0:
+        computed = round((close / pre_close - 1) * 100, 4)
+
+    if not pre_close or pre_close <= 0:
+        if is_plausible_daily_change(change_pct):
+            return change_pct
+        return from_prior or change_pct
+
+    if computed is not None and not is_plausible_daily_change(computed):
+        if is_plausible_daily_change(change_pct):
+            return change_pct
+        return from_prior
+
+    if from_prior is not None and is_plausible_daily_change(from_prior):
+        if change_pct is not None and abs(from_prior - change_pct) <= 0.3:
+            return change_pct
+        if computed is not None and abs(from_prior - computed) <= 0.3:
+            return computed
+        return from_prior
+
+    if computed is not None and is_plausible_daily_change(computed):
+        if change_pct is not None and abs(computed - change_pct) > 1.0:
+            return computed
+        if change_pct is None or abs(computed - change_pct) <= 0.5:
+            return computed
+
+    if is_plausible_daily_change(change_pct):
+        return change_pct
+    return computed or from_prior
+
+
 def _parse_kline_day_close_percent(
     payload: dict[str, Any], *, trade_date: str | None = None
 ) -> float | None:
@@ -400,14 +455,15 @@ def _parse_kline_day_close_percent(
     pre_close = _resolve_pre_close(data, klines, trade_date=trade_date)
 
     target: list[str] | None = None
+    day_token = ""
     for raw in reversed(klines):
         if not isinstance(raw, str):
             continue
         parts = raw.split(",")
         if len(parts) < 3:
             continue
-        day = parts[0].strip().split(" ")[0]
-        if trade_date and day != trade_date:
+        day_token = parts[0].strip().split(" ")[0]
+        if trade_date and day_token != trade_date:
             continue
         target = parts
         break
@@ -419,15 +475,14 @@ def _parse_kline_day_close_percent(
     change_pct = _as_float(target[8]) if len(target) > 8 else None
     if close is None or close <= 0:
         return change_pct
-    if pre_close and pre_close > 0:
-        return round((close / pre_close - 1) * 100, 4)
-    if change_pct is not None:
-        return change_pct
-    if trade_date:
-        prior = _prior_close_from_klines(klines, trade_date=trade_date)
-        if prior and prior > 0:
-            return round((close / prior - 1) * 100, 4)
-    return change_pct
+    return _pick_day_change_percent(
+        close=close,
+        pre_close=pre_close,
+        change_pct=change_pct,
+        klines=klines,
+        trade_date=trade_date,
+        day_token=day_token,
+    )
 
 
 def _parse_kline_payload(payload: dict[str, Any], *, trade_date: str | None = None) -> list[IntradayPoint]:

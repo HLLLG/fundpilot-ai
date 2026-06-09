@@ -23,3 +23,16 @@ def test_resolve_holding_fund_code_prefers_existing_code():
     code, source = resolve_holding_fund_code("任意名称", existing_code="110020")
     assert code == "110020"
     assert source is None
+
+
+def test_fund_name_table_uses_subprocess_payload(monkeypatch):
+    from app.services.fund_code_resolver import _fund_name_table
+
+    _fund_name_table.cache_clear()
+    monkeypatch.setattr(
+        "app.services.fund_code_resolver._fetch_fund_name_table_subprocess",
+        lambda: [("519674", "银河创新成长混合A")],
+    )
+
+    assert _fund_name_table() == [("519674", "银河创新成长混合A")]
+    _fund_name_table.cache_clear()

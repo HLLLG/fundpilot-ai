@@ -12,6 +12,13 @@ ALIPAY_PAGE_MARKERS = (
     "持有收益/率",
     "更新时间排序",
 )
+# 支付宝「全部持有」总览页：名称/金额 | 日收益 | 持有收益 | 累计收益（2025+ 版式）
+ALIPAY_OVERVIEW_MARKERS = (
+    "全部持有",
+    "名称/金额",
+    "日收益",
+    "持有收益排序",
+)
 ALIPAY_HEADER_MARKERS = (
     "名称",
     "金额/昨日收益",
@@ -45,8 +52,15 @@ COMPLETE_FUND_NAME_RE = re.compile(
 )
 
 
+def is_alipay_overview_holdings_page(lines: list[str]) -> bool:
+    joined = "\n".join(lines)
+    return all(marker in joined for marker in ("全部持有", "名称/金额", "日收益"))
+
+
 def is_alipay_holdings_page(lines: list[str]) -> bool:
     joined = "\n".join(lines)
+    if is_alipay_overview_holdings_page(lines):
+        return True
     if "我的持有" in joined or "金额/昨日收益" in joined:
         return True
     percent_blocks = sum(1 for line in lines if _extract_percent(line) is not None)
@@ -55,6 +69,10 @@ def is_alipay_holdings_page(lines: list[str]) -> bool:
 
 def parse_alipay_holdings_page(text: str) -> list[Holding]:
     lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if is_alipay_overview_holdings_page(lines):
+        overview = _parse_alipay_overview_holdings(lines)
+        if overview:
+            return overview
     if not is_alipay_holdings_page(lines):
         return []
 
@@ -65,6 +83,75 @@ def parse_alipay_holdings_page(text: str) -> list[Holding]:
         if holding is not None:
             holdings.append(holding)
     return holdings
+
+
+def _parse_alipay_overview_holdings(lines: list[str]) -> list[Holding]:
+    """解析「全部持有」四列版式：金额、日收益、持有收益、累计收益 + 占比 + 持有收益率。"""
+    name_indexes = [
+        index for index, line in enumerate(lines) if is_alipay_fund_name(line)
+    ]
+    if not name_indexes:
+        return []
+
+    holdings: list[Holding] = []
+    for position, name_index in enumerate(name_indexes):
+        next_index = (
+            name_indexes[position + 1] if position + 1 < len(name_indexes) else len(lines)
+        )
+        block_lines = [
+            line
+            for line in lines[name_index + 1 : next_index]
+            if line and not _is_noise_line(line)
+        ]
+        holding = _parse_overview_fund_block(lines[name_index], block_lines)
+        if holding is not None:
+            holdings.append(holding)
+    return holdings
+
+
+def _parse_overview_fund_block(fund_name: str, block_lines: list[str]) -> Holding | None:
+    numbers: list[float] = []
+    holding_return_percent: float | None = None
+
+    for line in block_lines:
+        if _is_portfolio_weight_line(line):
+            continue
+        percent = _extract_percent(line)
+        if percent is not None:
+            holding_return_percent = percent
+            continue
+        numbers.extend(_numbers_from_line(line))
+
+    if not numbers:
+        return None
+
+    holding_amount = numbers[0]
+    # 四列：金额 | 日收益 | 持有收益 | 累计收益
+    holding_profit = numbers[2] if len(numbers) >= 3 else None
+    if holding_profit is None and len(numbers) >= 2:
+        holding_profit = numbers[1]
+
+    holding_profit = align_profit_sign(holding_profit, holding_return_percent)
+    if holding_profit is None and holding_amount and holding_return_percent is not None:
+        holding_profit = round(
+            holding_amount * holding_return_percent / (100 + holding_return_percent),
+            2,
+        )
+        holding_profit = align_profit_sign(holding_profit, holding_return_percent)
+
+    return Holding(
+        fund_code="000000",
+        fund_name=fund_name,
+        holding_amount=holding_amount,
+        return_percent=holding_return_percent or 0,
+        holding_profit=holding_profit,
+        holding_return_percent=holding_return_percent,
+    )
+
+
+def _is_portfolio_weight_line(line: str) -> bool:
+    cleaned = line.strip()
+    return cleaned.startswith("占比") and PERCENT_LINE_RE.search(cleaned) is not None
 
 
 def _split_fund_blocks(lines: list[str]) -> list[list[str]]:
@@ -263,7 +350,14 @@ def _is_noise_line(line: str) -> bool:
 
 def is_alipay_tag_line(line: str) -> bool:
     cleaned = line.strip()
-    tag_words = ("金选", "超额收益", "指数基金", "金选超额收益", "金选指数基金")
+    tag_words = (
+        "金选",
+        "超额收益",
+        "指数基金",
+        "金选超额收益",
+        "金选指数基金",
+        "进阶理财",
+    )
     if cleaned in tag_words:
         return True
     remainder = cleaned

@@ -25,5 +25,5 @@ Start-Process powershell -WindowStyle Hidden -ArgumentList @(
 )
 
 Write-Host "API: http://127.0.0.1:8000"
-Write-Host "Web: http://127.0.0.1:3000"
+Write-Host "Web: http://127.0.0.1:3001"
 Write-Host "Hidden server windows were started. Stop them from Task Manager or by closing their PowerShell processes."

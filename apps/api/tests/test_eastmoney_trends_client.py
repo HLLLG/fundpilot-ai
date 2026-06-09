@@ -43,6 +43,21 @@ def test_read_em_json_strips_jsonp_wrapper():
     assert payload["data"]["preKPrice"] == 100
 
 
+def test_parse_kline_day_close_percent_ignores_concept_board_pre_k_price_placeholder():
+    """东财概念板块日 K 常带 preKPrice=1000 占位，须回落行内涨跌列。"""
+    payload = {
+        "data": {
+            "preKPrice": 1000.0,
+            "klines": [
+                "2026-06-08,2600,2627.98,2630,2590,0,0,0,-1.2,0,0,0",
+                "2026-06-09,2665.92,2683.24,2684.69,2627.98,83698232,248177535206.00,2.15,1.74,45.91,3.06",
+            ],
+        }
+    }
+    change = _parse_kline_day_close_percent(payload, trade_date="2026-06-09")
+    assert change == 1.74
+
+
 def test_parse_kline_day_close_percent_matches_intraday_close():
     payload = {
         "data": {

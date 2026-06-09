@@ -29,7 +29,7 @@ API_PID=$!
 WEB_PID=$!
 
 echo "API: http://127.0.0.1:8000"
-echo "Web: http://127.0.0.1:3000"
+echo "Web: http://127.0.0.1:3001"
 echo "Press Ctrl+C to stop both servers."
 
 wait

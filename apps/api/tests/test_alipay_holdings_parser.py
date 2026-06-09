@@ -148,6 +148,46 @@ def test_parse_tags_on_separate_lines_not_treated_as_funds():
     assert holdings[3].holding_profit == -74.59
 
 
+def test_parse_alipay_overview_all_holdings_layout():
+    """支付宝「全部持有」四列版式：勿将总金额误识别为首只基金持有金额。"""
+    text = (FIXTURES / "alipay_overview_holdings_ocr.txt").read_text(encoding="utf-8")
+    holdings = parse_alipay_holdings_page(text)
+
+    assert len(holdings) == 4
+    by_name = {item.fund_name: item for item in holdings}
+
+    grid = by_name["华夏中证电网设备主题ETF联接A"]
+    assert grid.holding_amount == 9272.35
+    assert grid.holding_profit == -10.49
+    assert grid.holding_return_percent == -0.11
+
+    defense = by_name["易方达国防军工混合C"]
+    assert defense.holding_amount == 783.15
+    assert defense.holding_profit == -105.73
+    assert defense.holding_return_percent == -11.90
+
+    galaxy = by_name["银河创新成长混合A"]
+    assert galaxy.holding_amount == 3798.94
+    assert galaxy.holding_profit == -360.51
+    assert galaxy.holding_return_percent == -8.67
+
+    ai = by_name["华夏人工智能ETF联接C"]
+    assert ai.holding_amount == 7900.60
+    assert ai.holding_profit == -410.37
+    assert ai.holding_return_percent == -4.94
+
+
+def test_parse_alipay_overview_via_holdings_from_text():
+    text = (FIXTURES / "alipay_overview_holdings_ocr.txt").read_text(encoding="utf-8")
+    holdings = parse_holdings_from_text(text)
+
+    assert len(holdings) == 4
+    grid = next(item for item in holdings if "电网设备" in item.fund_name)
+    assert grid.holding_amount == 9272.35
+    assert grid.holding_profit == -10.49
+    assert grid.holding_return_percent == -0.11
+
+
 def test_infer_profit_when_only_percent_survives_ocr():
     text = """
     我的持有

@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     app_name: str = "Fund AI Assistant"
     api_host: str = "127.0.0.1"
     api_port: int = 8000
-    cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
+    cors_origins: str = "http://localhost:3001,http://127.0.0.1:3001"
     db_path: Path = PROJECT_ROOT / "data" / "app.db"
     upload_dir: Path = PROJECT_ROOT / "uploads"
     deepseek_api_key: str | None = None

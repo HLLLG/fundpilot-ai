@@ -7,7 +7,11 @@ from dataclasses import dataclass
 from app.services.eastmoney_spot_client import (
     fetch_eastmoney_quote_by_secid,
 )
-from app.services.eastmoney_trends_client import fetch_eastmoney_kline_close_percent
+from app.services.eastmoney_trends_client import (
+    fetch_eastmoney_kline_close_percent,
+    is_plausible_daily_change,
+)
+from app.services.trading_session import build_trading_session
 from app.services.sector_labels import normalize_sector_label
 
 logger = logging.getLogger(__name__)
@@ -162,10 +166,20 @@ def fetch_canonical_sector_quote(
     if canon is None:
         return None
 
+    trade_date = build_trading_session().get("effective_trade_date")
     kline_change = fetch_eastmoney_kline_close_percent(
         canon.eastmoney_secid,
         source_code=canon.source_code,
+        trade_date=trade_date,
     )
+    if kline_change is not None and not is_plausible_daily_change(kline_change):
+        logger.info(
+            "canonical sector %s (%s) kline change %.4f out of range, ignored",
+            canon.label,
+            canon.eastmoney_secid,
+            kline_change,
+        )
+        kline_change = None
     if kline_change is not None:
         boards.setdefault(canon.source_type, {})[canon.source_name] = kline_change
         return CanonicalQuoteResult(
@@ -222,6 +236,7 @@ def prefetch_canonical_kline_quotes(
     per_call_timeout = 12.0 if timeout_seconds is None else max(1.0, min(8.0, timeout_seconds * 0.45))
     max_workers = min(6, len(unique_labels))
     matched = 0
+    trade_date = build_trading_session().get("effective_trade_date")
 
     def fetch_one(label: str) -> int:
         canon = get_canonical_sector(label)
@@ -230,9 +245,12 @@ def prefetch_canonical_kline_quotes(
         change = fetch_eastmoney_kline_close_percent(
             canon.eastmoney_secid,
             source_code=canon.source_code,
+            trade_date=trade_date,
             timeout=per_call_timeout,
             max_retries=1,
         )
+        if change is not None and not is_plausible_daily_change(change):
+            return 0
         if change is not None:
             boards.setdefault(canon.source_type, {})[canon.source_name] = change
             return 1

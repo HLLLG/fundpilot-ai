@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
 from functools import lru_cache
 
 from app.services.fund_name_utils import is_fund_name_match, normalize_fund_name
+
+_SUBPROCESS_TIMEOUT = 120
 
 
 def preload_fund_name_table() -> None:
@@ -13,27 +18,51 @@ def preload_fund_name_table() -> None:
         pass
 
 
+def _fetch_fund_name_table_subprocess() -> list[tuple[str, str]] | None:
+    """在独立子进程拉取东财基金名称表，避免 py_mini_racer 与 PaddleOCR 同进程 crash。"""
+    script = """
+import akshare as ak
+import json
+
+try:
+    frame = ak.fund_name_em()
+    if frame is None or frame.empty:
+        print(json.dumps([]))
+    else:
+        code_col = "基金代码" if "基金代码" in frame.columns else frame.columns[0]
+        name_col = "基金简称" if "基金简称" in frame.columns else frame.columns[1]
+        rows = []
+        for _, row in frame.iterrows():
+            code = str(row[code_col]).strip().zfill(6)
+            name = str(row[name_col]).strip()
+            if code and name:
+                rows.append([code, name])
+        print(json.dumps(rows, ensure_ascii=False))
+except Exception:
+    print(json.dumps([]))
+"""
+    try:
+        completed = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            timeout=_SUBPROCESS_TIMEOUT,
+            check=False,
+        )
+        if completed.returncode != 0 or not completed.stdout.strip():
+            return None
+        payload = json.loads(completed.stdout.strip())
+        if not isinstance(payload, list):
+            return None
+        return [(str(code), str(name)) for code, name in payload if code and name]
+    except Exception:
+        return None
+
+
 @lru_cache(maxsize=1)
 def _fund_name_table() -> list[tuple[str, str]]:
-    try:
-        import akshare as ak  # type: ignore[import-not-found]
-
-        frame = ak.fund_name_em()
-    except Exception:
-        return []
-
-    if frame is None or frame.empty:
-        return []
-
-    code_col = "基金代码" if "基金代码" in frame.columns else frame.columns[0]
-    name_col = "基金简称" if "基金简称" in frame.columns else frame.columns[1]
-    rows: list[tuple[str, str]] = []
-    for _, row in frame.iterrows():
-        code = str(row[code_col]).strip().zfill(6)
-        name = str(row[name_col]).strip()
-        if code and name:
-            rows.append((code, name))
-    return rows
+    fetched = _fetch_fund_name_table_subprocess()
+    return fetched or []
 
 
 def resolve_holding_fund_code(

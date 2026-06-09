@@ -18,10 +18,15 @@ from app.services.sector_labels import sector_label_key
 from app.services.sector_on_demand import fetch_sector_on_demand
 from app.services.sector_quote_label import sector_quote_lookup_label
 from app.services.sector_quote_provider import SpotBoardFetchResult, fetch_spot_boards, fetch_spot_boards_result
-from app.services.sector_quote_resolver import mapping_record_from_result, resolve_sector_quote
+from app.services.sector_quote_resolver import (
+    SectorResolveResult,
+    mapping_record_from_result,
+    resolve_sector_quote,
+)
 from app.services.trading_session import build_trading_session
 from app.services.fund_nav_service import get_official_nav_return
 from app.services.holding_estimates import compute_official_daily_profit
+from app.services.eastmoney_trends_client import is_plausible_daily_change
 
 
 class _EstimateResult:
@@ -194,6 +199,15 @@ def refresh_holdings_sector_quotes(
 
         estimate_quote = None
         used_secid_quote = False
+        if (
+            result.confidence in {"high", "medium"}
+            and result.change_percent is not None
+            and not is_plausible_daily_change(result.change_percent)
+        ):
+            result = SectorResolveResult(
+                confidence="none",
+                message=f"板块涨跌 {result.change_percent:+.2f}% 超出合理范围，已忽略",
+            )
         if result.confidence not in {"high", "medium"}:
             if timeout_seconds is not None and not estimate_quotes_loaded:
                 estimate_quotes = fetch_fund_estimate_quotes(
