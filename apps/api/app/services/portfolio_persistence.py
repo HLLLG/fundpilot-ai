@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 from app.database import get_most_recent_portfolio_snapshot, get_portfolio_summary, save_portfolio_summary
 from app.models import Holding, PortfolioSummary
+from app.services.holding_amount_sync import sync_holding_amounts_from_shares
 from app.services.holding_estimates import (
     enrich_holdings_estimates,
     overlay_official_nav_returns,
@@ -61,10 +62,11 @@ def merge_holdings_with_snapshot(incoming: list[Holding]) -> list[Holding]:
 
 
 def enrich_loaded_holdings(holdings: list[Holding]) -> list[Holding]:
-    """恢复持仓时优先官方净值当日收益，否则按板块涨跌重算，避免展示 OCR 旧值。"""
+    """恢复持仓时同步份额×净值金额，再覆盖官方净值当日收益，避免展示 OCR 旧值。"""
     if not holdings:
         return holdings
-    return enrich_holdings_estimates(overlay_official_nav_returns(holdings))
+    synced = sync_holding_amounts_from_shares(holdings)
+    return enrich_holdings_estimates(overlay_official_nav_returns(synced))
 
 
 def persist_holdings_after_sector_refresh(
@@ -74,7 +76,8 @@ def persist_holdings_after_sector_refresh(
 ) -> list[Holding]:
     """板块刷新成功后写回日快照与账户汇总，重启后保留最新当日收益。"""
     merged = without_test_holdings(merge_holdings_with_snapshot(holdings))
-    enriched = enrich_holdings_estimates(merged)
+    synced = sync_holding_amounts_from_shares(merged)
+    enriched = enrich_holdings_estimates(overlay_official_nav_returns(synced))
     if not enriched:
         return enriched
 

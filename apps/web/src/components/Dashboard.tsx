@@ -484,7 +484,7 @@ export function Dashboard() {
                 <div className="glass-panel rounded-[24px] p-5 lg:rounded-[28px]">
                   <div className="mb-2 text-sm font-black text-slate-950">快捷操作</div>
                   <p className="text-sm leading-6 text-slate-600">
-                    需要更新持有金额？在右上角用户菜单打开「基金档案」上传详情截图，或在下方校对表手动修改。
+                    上传一次支付宝总览截图后，系统会按交易日自动更新持有金额与当日收益。只有加仓/减仓或需要覆盖数据时，再上传总览或详情截图。
                   </p>
                   <div className="mt-4 flex flex-wrap gap-2">
                     <button
@@ -492,7 +492,7 @@ export function Dashboard() {
                       onClick={() => setActiveTab("profiles")}
                       className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 transition hover:border-blue-200 hover:text-blue-700"
                     >
-                      上传详情截图
+                      覆盖更新（详情截图）
                     </button>
                     {holdings.length > 0 ? (
                       <button

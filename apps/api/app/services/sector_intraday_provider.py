@@ -45,7 +45,11 @@ def fetch_sector_intraday(
     session = build_trading_session()
     session_kind = session["session_kind"]
     trade_date = get_effective_trade_date(session_kind=session_kind)
-    closed_session = session_kind in {"trading_day_after_close", "non_trading_day"}
+    closed_session = session_kind in {
+        "trading_day_after_close",
+        "non_trading_day",
+        "trading_day_pre_open",
+    }
 
     # v2：分时基准改为昨收（preKPrice）；旧键 intraday: 含开盘基准脏数据
     cache_key = f"intraday:v2:{source_type}:{label}:{trade_date}"
@@ -198,11 +202,13 @@ def _load_intraday_from_network(
 
 
 def _should_fetch_intraday(session_kind: str) -> bool:
-    """收盘后仍需拉取当日完整分时（养基宝同款：展示 9:00–15:00 已定曲线）。"""
+    """收盘后/开盘前仍需拉取已定曲线（养基宝同款：展示上一交易日或当日 09:30–15:00）。"""
     return session_kind in {
         "trading_day_intraday",
         "trading_day_pre_close",
         "trading_day_after_close",
+        "trading_day_pre_open",
+        "non_trading_day",
     }
 
 

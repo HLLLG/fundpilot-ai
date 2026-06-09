@@ -4,6 +4,10 @@ from app.services.portfolio_persistence import enrich_loaded_holdings
 
 def test_enrich_loaded_holdings_recomputes_daily_from_sector(monkeypatch):
     monkeypatch.setattr(
+        "app.services.portfolio_persistence.sync_holding_amounts_from_shares",
+        lambda holdings, **kwargs: holdings,
+    )
+    monkeypatch.setattr(
         "app.services.fund_nav_service.get_official_nav_return",
         lambda fund_code, trade_date: None,
     )

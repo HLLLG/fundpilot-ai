@@ -91,6 +91,7 @@ def run_ocr_upload_pipeline(
                     holdings,
                     portfolio_summary=portfolio_summary,
                     force_sector_refresh=True,
+                    from_user_upload=True,
                 )
             except Exception as exc:
                 logger.exception("sector refresh failed during OCR")
@@ -184,6 +185,7 @@ def apply_confirmed_holdings(holdings: list) -> dict:
         typed,
         portfolio_summary=portfolio_summary,
         force_sector_refresh=True,
+        from_user_upload=True,
     )
     save_portfolio_summary(portfolio_summary)
     save_daily_snapshot(processed, portfolio_summary)

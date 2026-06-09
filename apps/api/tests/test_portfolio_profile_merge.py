@@ -2,7 +2,7 @@ from app.models import FundProfile, Holding
 from app.services.portfolio_holdings_service import merge_holdings_with_profiles
 
 
-def test_merge_overwrites_holding_amount_from_profile():
+def test_merge_keeps_snapshot_amounts_and_sector_fields():
     snapshot = [
         Holding(
             fund_code="008586",
@@ -20,13 +20,14 @@ def test_merge_overwrites_holding_amount_from_profile():
             holding_amount=9100.5,
             holding_return_percent=-0.3,
             holding_profit=-20.0,
-            sector_name="中证人工智能",
+            sector_name="半导体",
         )
     ]
     merged = merge_holdings_with_profiles(snapshot, profiles=profiles)
     assert len(merged) == 1
-    assert merged[0].holding_amount == 9100.5
-    assert merged[0].holding_profit == -20.0
+    assert merged[0].holding_amount == 8000.0
+    assert merged[0].holding_profit is None
+    assert merged[0].sector_name == "半导体"
     assert merged[0].sector_return_percent == 4.2
 
 

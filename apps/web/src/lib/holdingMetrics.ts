@@ -115,6 +115,25 @@ export function computeHoldingProfit(holding: Holding): number | null {
   return round2((holding.holding_amount * estimatedReturn) / (100 + estimatedReturn));
 }
 
+/** 持有金额是否已含当日涨跌（份额×净值同步后） */
+export function holdingAmountIncludesTodayReturn(holding: Holding): boolean {
+  if (holding.amount_includes_today != null) {
+    return holding.amount_includes_today;
+  }
+  return holding.daily_return_percent_source === "official_nav";
+}
+
+export function computeDailyProfitFromRate(
+  holdingAmount: number,
+  dailyReturnPercent: number,
+  amountIncludesToday: boolean,
+): number {
+  if (amountIncludesToday) {
+    return computeOfficialDailyProfit(holdingAmount, dailyReturnPercent);
+  }
+  return round2((holdingAmount * dailyReturnPercent) / 100);
+}
+
 /**
  * 板块刷新后重算当日收益（忽略 OCR 截图里的当日收益）。
  * 若后端已写入官方净值当日收益率，则保留。
@@ -132,9 +151,10 @@ export function applySectorDailyEstimate(holding: Holding): Holding {
       daily_return_percent_source: null,
     };
   }
+  const includesToday = holdingAmountIncludesTodayReturn(holding);
   return {
     ...holding,
-    daily_profit: round2((holding.holding_amount * sector) / 100),
+    daily_profit: computeDailyProfitFromRate(holding.holding_amount, sector, includesToday),
     daily_return_percent: sector,
     daily_return_percent_source: "sector_estimate",
   };
@@ -157,23 +177,25 @@ export function computeYesterdayProfit(holding: Holding): number | null {
 }
 
 export function computeDailyProfit(holding: Holding): number | null {
-  if (
-    holding.daily_return_percent_source === "official_nav" &&
-    holding.daily_return_percent != null &&
-    holding.holding_amount > 0
-  ) {
-    return computeOfficialDailyProfit(
-      holding.holding_amount,
+  const amount = holding.holding_amount;
+  if (amount <= 0) {
+    return holding.daily_profit ?? null;
+  }
+
+  const includesToday = holdingAmountIncludesTodayReturn(holding);
+  if (holding.daily_return_percent != null) {
+    return computeDailyProfitFromRate(
+      amount,
       holding.daily_return_percent,
+      includesToday || holding.daily_return_percent_source === "official_nav",
     );
   }
-  if (holding.daily_profit != null) {
-    return holding.daily_profit;
+
+  if (holding.sector_return_percent != null) {
+    return computeDailyProfitFromRate(amount, holding.sector_return_percent, includesToday);
   }
-  if (holding.sector_return_percent != null && holding.holding_amount > 0) {
-    return round2((holding.holding_amount * holding.sector_return_percent) / 100);
-  }
-  return null;
+
+  return holding.daily_profit ?? null;
 }
 
 /** 关联板块列：始终展示东财板块/指数涨跌，不用官方净值。 */

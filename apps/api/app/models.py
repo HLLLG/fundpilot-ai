@@ -27,6 +27,7 @@ class Holding(BaseModel):
     yesterday_profit: float | None = None
     intraday_index_name: str | None = None
     user_note: str | None = None
+    amount_includes_today: bool | None = None
 
     @model_validator(mode="before")
     @classmethod

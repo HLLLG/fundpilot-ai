@@ -23,9 +23,12 @@ from app.services.sector_quote_resolver import (
     mapping_record_from_result,
     resolve_sector_quote,
 )
-from app.services.trading_session import build_trading_session
+from app.services.trading_session import build_trading_session, get_effective_trade_date
 from app.services.fund_nav_service import get_official_nav_return
-from app.services.holding_estimates import compute_official_daily_profit
+from app.services.holding_estimates import (
+    _amount_includes_today_return,
+    compute_daily_profit_from_rate,
+)
 from app.services.eastmoney_trends_client import is_plausible_daily_change
 
 
@@ -46,17 +49,8 @@ def _is_trading_hours() -> bool:
 
 
 def _get_last_trade_date() -> str:
-    """Return the most recent trading date in CN timezone (walks back from today on weekends/holidays)."""
-    from datetime import datetime, timedelta
-    from zoneinfo import ZoneInfo
-    from app.services.trading_session import _is_trading_day
-    cn_tz = ZoneInfo("Asia/Shanghai")
-    candidate = datetime.now(cn_tz).date()
-    for _ in range(7):
-        if _is_trading_day(candidate):
-            return candidate.isoformat()
-        candidate -= timedelta(days=1)
-    return candidate.isoformat()
+    """板块涨跌/官方净值所对应的有效交易日（开盘前与周末回溯上一交易日）。"""
+    return get_effective_trade_date()
 
 
 def refresh_holdings_sector_quotes(
@@ -254,9 +248,10 @@ def refresh_holdings_sector_quotes(
             }
             if nav_return is not None:
                 update["daily_return_percent"] = nav_return
-                update["daily_profit"] = compute_official_daily_profit(
+                update["daily_profit"] = compute_daily_profit_from_rate(
                     holding.holding_amount,
                     nav_return,
+                    amount_includes_today=_amount_includes_today_return(holding),
                 )
                 update["daily_return_percent_source"] = "official_nav"
             else:

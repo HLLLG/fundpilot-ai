@@ -5,6 +5,7 @@ import { AlertCircle, Clock3 } from "lucide-react";
 import { fetchTradingSession, type TradingSession } from "@/lib/api";
 
 const sessionTone: Record<string, string> = {
+  trading_day_pre_open: "border-slate-200 bg-slate-50 text-slate-800",
   trading_day_pre_close: "border-amber-200 bg-amber-50 text-amber-950",
   trading_day_after_close: "border-slate-200 bg-slate-50 text-slate-800",
   trading_day_intraday: "border-blue-200 bg-blue-50 text-blue-950",
@@ -12,6 +13,7 @@ const sessionTone: Record<string, string> = {
 };
 
 const sessionLabel: Record<string, string> = {
+  trading_day_pre_open: "开盘前",
   trading_day_pre_close: "收盘前决策窗口",
   trading_day_after_close: "已收盘",
   trading_day_intraday: "盘中",

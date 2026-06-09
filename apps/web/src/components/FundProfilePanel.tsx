@@ -32,7 +32,7 @@ export function FundProfilePanel({
           </div>
           <h2 className="text-xl font-black text-slate-950">基金档案库</h2>
           <p className="mt-2 text-sm leading-6 text-slate-600">
-            上传养基宝单基金「详情」截图，用于更新代码、持有金额、成本与关联板块。实时涨跌与当日收益请在「今日」账户汇总查看。
+            上传养基宝/支付宝单基金「详情」截图，用于覆盖份额、成本与关联板块。日常持有金额与收益由「今日」账户汇总自动更新。
           </p>
         </div>
         <button

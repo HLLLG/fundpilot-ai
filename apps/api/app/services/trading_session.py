@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 from app.services.trade_calendar_cache import get_trade_date_set
 
 CN_TZ = ZoneInfo("Asia/Shanghai")
+MARKET_OPEN = time(9, 30)
 MARKET_CLOSE = time(15, 0)
 PRE_CLOSE_FOCUS = time(14, 30)
 
@@ -20,13 +21,22 @@ def build_trading_session(when: datetime | None = None) -> dict:
     today = moment.date()
     is_trading_day = _is_trading_day(today)
     close_dt = datetime.combine(today, MARKET_CLOSE, tzinfo=CN_TZ)
-    minutes_to_close = (
-        int((close_dt - moment).total_seconds() // 60) if is_trading_day else None
+    market_open = datetime.combine(today, MARKET_OPEN, tzinfo=CN_TZ)
+    in_session = (
+        is_trading_day
+        and moment.time() >= MARKET_OPEN
+        and moment.time() < MARKET_CLOSE
     )
+    minutes_to_close = int((close_dt - moment).total_seconds() // 60) if in_session else None
 
     if not is_trading_day:
         session_kind = "non_trading_day"
         decision_window = "非交易日：结论供复盘与下一交易日预案，勿当作收盘前即时指令。"
+    elif moment.time() < MARKET_OPEN:
+        session_kind = "trading_day_pre_open"
+        decision_window = (
+            "开盘前：展示上一交易日结算数据；当日板块涨跌与分时将于 9:30 开盘后更新。"
+        )
     elif moment.time() >= MARKET_CLOSE:
         session_kind = "trading_day_after_close"
         decision_window = "已收盘：可复盘当日表现，加仓/减仓指令默认顺延至下一交易日开盘前后再评估。"
@@ -49,6 +59,7 @@ def build_trading_session(when: datetime | None = None) -> dict:
         "minutes_to_close": minutes_to_close,
         "decision_window": decision_window,
         "market_close_time": "15:00",
+        "market_open_time": "09:30",
     }
 
 

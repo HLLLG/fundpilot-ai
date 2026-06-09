@@ -211,6 +211,12 @@ export function YangjibaoHoldingsBoard({
   const totalAssets = computedTotal || portfolioSummary?.total_assets || null;
   const dailyProfit = displayHoldings.length > 0 ? computedDaily : null;
   const dailyReturn = accountDailyReturnPercent(dailyProfit, totalAssets);
+  const officialDailyCount = displayHoldings.filter(
+    (holding) => holding.daily_return_percent_source === "official_nav",
+  ).length;
+  const allOfficialDaily =
+    displayHoldings.length > 0 && officialDailyCount === displayHoldings.length;
+  const dailyColumnLabel = allOfficialDaily ? "当日收益" : "估算当日";
 
   const handleSort = (columnKey: Exclude<HoldingsSortKey, "amount">) => {
     if (sortKey === columnKey) {
@@ -246,7 +252,7 @@ export function YangjibaoHoldingsBoard({
             <p className="mt-6 text-sm leading-6 text-slate-400">
               {isLoading
                 ? "正在从基金档案恢复持仓，并尝试刷新真实板块涨跌..."
-                : "暂无持仓。请先在“基金档案”上传单基金详情截图建档，或在校对表手动录入。"}
+                : "暂无持仓。请上传一次支付宝总览截图建立持仓，之后系统会按交易日自动更新。"}
             </p>
             {!isLoading ? (
               <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
@@ -378,6 +384,11 @@ export function YangjibaoHoldingsBoard({
               <div className="text-[11px] font-semibold text-slate-400">
                 {dailyDisplayMode === "amount" ? "当日收益" : "当日收益率"}
                 {quoteTradeDate ? ` ${quoteTradeDate}` : ""}
+                {allOfficialDaily ? (
+                  <span className="ml-1.5 inline-flex rounded border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[10px] font-bold text-blue-700">
+                    已更新
+                  </span>
+                ) : null}
               </div>
               <div
                 className={`mt-0.5 text-lg font-black tabular-nums ${cnProfitClass(
@@ -400,7 +411,7 @@ export function YangjibaoHoldingsBoard({
             <span>基金 / 持有金额</span>
           </div>
           <SortableColumnHeader
-            label="估算当日"
+            label={dailyColumnLabel}
             date={quoteTradeDate}
             columnKey="daily"
             activeSortKey={sortKey}
@@ -433,6 +444,7 @@ export function YangjibaoHoldingsBoard({
             const holdingProfit = computeHoldingProfit(holding);
             const holdingReturn = computeEstimatedHoldingReturnPercent(holding);
             const dailyIsEstimated = dailyProfitIsEstimated(holding);
+            const isOfficialDaily = holding.daily_return_percent_source === "official_nav";
             const sectorReturn = resolveSectorBoardReturnPercent(holding);
             const quoteLabel = sectorQuoteLookupLabel(holding);
 
@@ -444,8 +456,15 @@ export function YangjibaoHoldingsBoard({
                   className="grid w-full grid-cols-[minmax(0,1fr)_5rem_5rem_5rem] gap-1.5 px-3 py-3.5 text-left transition hover:bg-slate-50 active:bg-slate-100 sm:gap-2 sm:px-4"
                 >
                   <div className="min-w-0">
-                    <div className="truncate text-[15px] font-bold leading-snug text-slate-900">
-                      {holding.fund_name}
+                    <div className="flex items-center gap-1.5">
+                      <div className="truncate text-[15px] font-bold leading-snug text-slate-900">
+                        {holding.fund_name}
+                      </div>
+                      {isOfficialDaily ? (
+                        <span className="shrink-0 rounded border border-slate-200 bg-slate-50 px-1 py-0.5 text-[10px] font-bold text-slate-500">
+                          已更新
+                        </span>
+                      ) : null}
                     </div>
                     {!amountsHidden ? (
                       <div className="mt-1 text-xs text-slate-500 tabular-nums">
@@ -469,7 +488,7 @@ export function YangjibaoHoldingsBoard({
                       <div
                         className={`mt-0.5 text-[11px] font-bold tabular-nums ${cnProfitClass(estimatedDailyReturn)}`}
                       >
-                        {dailyIsEstimated ? "≈" : ""}
+                        {!isOfficialDaily && dailyIsEstimated ? "≈" : ""}
                         {formatSignedPercent(estimatedDailyReturn)}
                       </div>
                     ) : (

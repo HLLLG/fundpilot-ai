@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from app.models import Holding, PortfolioSummary
 from app.services.fund_profile import FundProfileService, _is_valid_sector_label
-from app.services.holding_estimates import enrich_holdings_estimates, sum_daily_profit
+from app.services.holding_amount_sync import bootstrap_holding_baselines, sync_holding_amounts_from_shares
+from app.services.holding_estimates import (
+    enrich_holdings_estimates,
+    overlay_official_nav_returns,
+    sum_daily_profit,
+)
 from app.services.sector_quote_service import refresh_holdings_sector_quotes
 
 
@@ -46,23 +51,33 @@ def process_overview_holdings(
     *,
     portfolio_summary: PortfolioSummary | None = None,
     force_sector_refresh: bool = True,
+    from_user_upload: bool = False,
 ) -> tuple[list[Holding], dict, PortfolioSummary | None]:
-    """支付宝总览 OCR 后：合并档案 → 刷新板块 → 按最新板块涨跌重算当日收益。"""
+    """支付宝总览 OCR 后：锁定份额基线 → 刷新板块 → 按净值/板块自动推算全部金额。"""
     if not holdings:
         return holdings, {"ok": False, "message": "无持仓", "items": []}, portfolio_summary
 
     merged = enrich_holdings_from_profiles(holdings)
+    if from_user_upload:
+        merged = bootstrap_holding_baselines(merged, force_reset_shares=True)
     sector_result = refresh_holdings_sector_quotes(merged, force_refresh=force_sector_refresh)
     refreshed = [Holding.model_validate(item) for item in sector_result["holdings"]]
-    estimated = enrich_holdings_estimates(refreshed)
+    synced = sync_holding_amounts_from_shares(refreshed, persist_profiles=False)
+    estimated = enrich_holdings_estimates(overlay_official_nav_returns(synced))
 
     updated_summary = portfolio_summary
     if updated_summary is not None:
+        total_assets = round(sum(holding.holding_amount for holding in estimated), 2)
         row_sum = sum_daily_profit(estimated)
-        patch: dict = {"daily_profit": row_sum if estimated else None}
-        if updated_summary.total_assets and row_sum and updated_summary.total_assets > row_sum:
-            previous = updated_summary.total_assets - row_sum
-            patch["daily_return_percent"] = round(row_sum / previous * 100, 2)
+        patch: dict = {
+            "total_assets": total_assets,
+            "daily_profit": row_sum if estimated else None,
+            "holding_count": len(estimated),
+        }
+        if total_assets > (row_sum or 0) > 0:
+            previous = total_assets - row_sum
+            if previous > 0:
+                patch["daily_return_percent"] = round(row_sum / previous * 100, 2)
         updated_summary = updated_summary.model_copy(update=patch)
 
     sector_result["holdings"] = [holding.model_dump() for holding in estimated]

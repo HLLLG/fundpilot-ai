@@ -79,7 +79,11 @@ def test_migrate_legacy_official_nav_on_sector_field():
     assert holding.sector_return_percent_source is None
 
 
-def test_holding_profit_adds_settled_and_intraday_sector():
+def test_holding_profit_adds_settled_and_intraday_sector(monkeypatch):
+    monkeypatch.setattr(
+        "app.database.get_fund_profile_by_code",
+        lambda code: None,
+    )
     holding = Holding(
         fund_code="008586",
         fund_name="华夏人工智能ETF联接C",
@@ -178,3 +182,46 @@ def test_apply_sector_daily_estimates_preserves_official_nav():
     assert result.daily_return_percent == -2.45
     assert result.daily_profit == -245.0
     assert result.sector_return_percent == 1.36
+
+
+def test_daily_profit_matches_yangjibao_when_amount_includes_today(monkeypatch):
+    """养基宝已更新：346.16 ≈ 9618.51 × 3.73% / (100 + 3.73%)，不是 ×3.73%。"""
+    from app.models import FundProfile
+
+    profile = FundProfile(
+        fund_code="025856",
+        fund_name="华夏中证电网设备主题ETF联接A",
+        holding_amount=9618.51,
+        holding_shares=6734.71,
+        source="test",
+    )
+    monkeypatch.setattr(
+        "app.database.get_fund_profile_by_code",
+        lambda code: profile if code == "025856" else None,
+    )
+    holding = Holding(
+        fund_code="025856",
+        fund_name="华夏中证电网设备主题ETF联接A",
+        holding_amount=9618.51,
+        daily_return_percent=3.73,
+        daily_return_percent_source="official_nav",
+        amount_includes_today=True,
+    )
+    assert compute_daily_profit(holding) == pytest.approx(346.16, abs=0.5)
+    wrong = round(9618.51 * 3.73 / 100, 2)
+    assert wrong == pytest.approx(358.77, abs=0.1)
+    assert compute_daily_profit(holding) != wrong
+
+
+def test_daily_profit_uses_settlement_formula_without_shares(monkeypatch):
+    monkeypatch.setattr(
+        "app.database.get_fund_profile_by_code",
+        lambda code: None,
+    )
+    holding = Holding(
+        fund_code="025856",
+        fund_name="华夏中证电网设备主题ETF联接A",
+        holding_amount=9508.74,
+        sector_return_percent=3.5,
+    )
+    assert compute_daily_profit(holding) == pytest.approx(332.81)

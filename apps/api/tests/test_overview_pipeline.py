@@ -25,6 +25,18 @@ def test_process_overview_uses_sector_sum_not_ocr_account_daily(monkeypatch):
         "app.services.overview_pipeline.enrich_holdings_from_profiles",
         lambda holdings: holdings,
     )
+    monkeypatch.setattr(
+        "app.services.overview_pipeline.bootstrap_holding_baselines",
+        lambda holdings, **kwargs: holdings,
+    )
+    monkeypatch.setattr(
+        "app.services.overview_pipeline.sync_holding_amounts_from_shares",
+        lambda holdings, **kwargs: holdings,
+    )
+    monkeypatch.setattr(
+        "app.services.overview_pipeline.overlay_official_nav_returns",
+        lambda holdings: holdings,
+    )
 
     holdings = [
         Holding(
@@ -84,6 +96,22 @@ def test_process_overview_enriches_daily_from_sector_when_no_account_daily(monke
     monkeypatch.setattr(
         "app.services.overview_pipeline.enrich_holdings_from_profiles",
         lambda holdings: holdings,
+    )
+    monkeypatch.setattr(
+        "app.services.overview_pipeline.bootstrap_holding_baselines",
+        lambda holdings, **kwargs: holdings,
+    )
+    monkeypatch.setattr(
+        "app.services.overview_pipeline.sync_holding_amounts_from_shares",
+        lambda holdings, **kwargs: holdings,
+    )
+    monkeypatch.setattr(
+        "app.services.overview_pipeline.overlay_official_nav_returns",
+        lambda holdings: holdings,
+    )
+    monkeypatch.setattr(
+        "app.database.get_fund_profile_by_code",
+        lambda code: None,
     )
 
     holdings = [

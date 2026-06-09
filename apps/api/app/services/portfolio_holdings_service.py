@@ -3,6 +3,7 @@ from __future__ import annotations
 from app.database import get_most_recent_portfolio_snapshot, list_fund_profiles
 from app.models import FundProfile, Holding
 from app.services.fund_profile import FundProfileService, _is_valid_sector_label
+from app.services.holding_amount_sync import sync_holding_amounts_from_shares
 from app.services.holding_estimates import enrich_holdings_estimates
 from app.services.holding_filters import is_test_holding, without_test_holdings
 from app.services.overview_pipeline import enrich_holdings_from_profiles
@@ -70,22 +71,11 @@ def _should_recover_from_profiles(
 
 
 def _overlay_profile_onto_holding(base: Holding, profile: FundProfile) -> Holding:
-    holding_return = profile.holding_return_percent
+    """合并档案中的结构性字段；金额/收益由份额×净值与官方净值自动推算，不用 OCR 快照覆盖。"""
     patch: dict = {
         "fund_code": profile.fund_code,
         "fund_name": profile.fund_name,
     }
-    if profile.holding_amount and profile.holding_amount > 0:
-        patch["holding_amount"] = profile.holding_amount
-    if profile.holding_profit is not None:
-        patch["holding_profit"] = profile.holding_profit
-    if profile.daily_profit is not None:
-        patch["daily_profit"] = profile.daily_profit
-    if profile.yesterday_profit is not None:
-        patch["yesterday_profit"] = profile.yesterday_profit
-    if holding_return is not None:
-        patch["holding_return_percent"] = holding_return
-        patch["return_percent"] = holding_return
     if _is_valid_sector_label(profile.sector_name):
         patch["sector_name"] = profile.sector_name
     elif _is_valid_sector_label(base.sector_name):
@@ -102,7 +92,7 @@ def merge_holdings_with_profiles(
     *,
     profiles: list[FundProfile] | None = None,
 ) -> list[Holding]:
-    """以基金档案为准合并：详情页更新的持有金额会覆盖日快照。"""
+    """以基金档案为准合并持仓列表；金额/收益不在此覆盖，由自动同步负责。"""
     if profiles is None:
         profiles = [
             profile
@@ -150,12 +140,13 @@ def sync_portfolio_from_profiles(*, refresh_sectors: bool = True) -> list[Holdin
 
     merged = without_test_holdings(merge_holdings_with_profiles(base))
     merged = enrich_holdings_from_profiles(merged)
+    merged = sync_holding_amounts_from_shares(merged)
 
     if refresh_sectors and merged:
         sector_result = refresh_holdings_sector_quotes(merged, force_refresh=False)
         merged = [Holding.model_validate(item) for item in sector_result["holdings"]]
 
-    return persist_holdings_after_sector_refresh(enrich_holdings_estimates(merged))
+    return persist_holdings_after_sector_refresh(merged)
 
 
 def load_persisted_holdings() -> tuple[list[Holding], str, str | None]:

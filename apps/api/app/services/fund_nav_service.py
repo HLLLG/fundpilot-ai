@@ -10,6 +10,7 @@ TTL_MISS = 300    # 5min — nav not yet published, retry soon
 
 # In-memory cache: key -> (value: float | None, expires_at: float)
 _NAV_CACHE: dict[str, tuple[float | None, float]] = {}
+_UNIT_NAV_CACHE: dict[str, tuple[float | None, float]] = {}
 
 
 def _fetch_nav_df(fund_code: str) -> pd.DataFrame:
@@ -50,6 +51,37 @@ def get_official_nav_return(fund_code: str, trade_date: str) -> float | None:
     except Exception:
         logger.exception("Failed to fetch official NAV return for %s on %s", fund_code, trade_date)
         _NAV_CACHE[key] = (None, now + TTL_MISS)
+        return None
+
+
+def get_latest_unit_nav(fund_code: str) -> float | None:
+    """Return the latest published unit NAV from AkShare."""
+    key = f"unit:{fund_code}"
+    now = time.monotonic()
+
+    cached = _UNIT_NAV_CACHE.get(key)
+    if cached is not None:
+        value, expires_at = cached
+        if now < expires_at:
+            return value
+
+    try:
+        df = _fetch_nav_df(fund_code)
+        if df is None or df.empty:
+            _UNIT_NAV_CACHE[key] = (None, now + TTL_MISS)
+            return None
+
+        unit_nav = float(df.iloc[-1]["单位净值"])
+        if math.isnan(unit_nav) or unit_nav <= 0:
+            _UNIT_NAV_CACHE[key] = (None, now + TTL_MISS)
+            return None
+
+        rounded = round(unit_nav, 4)
+        _UNIT_NAV_CACHE[key] = (rounded, now + TTL_HIT)
+        return rounded
+    except Exception:
+        logger.exception("Failed to fetch latest unit NAV for %s", fund_code)
+        _UNIT_NAV_CACHE[key] = (None, now + TTL_MISS)
         return None
 
 

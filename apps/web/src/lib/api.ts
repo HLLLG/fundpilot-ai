@@ -14,6 +14,8 @@ export type Holding = {
   yesterday_profit?: number | null;
   intraday_index_name?: string | null;
   user_note?: string | null;
+  /** 持有金额是否已含当日涨跌（份额×净值同步后） */
+  amount_includes_today?: boolean | null;
 };
 
 export type InvestorProfile = {
@@ -182,9 +184,11 @@ export type TradingSession = {
   is_trading_day: boolean;
   session_kind:
     | "non_trading_day"
+    | "trading_day_pre_open"
     | "trading_day_intraday"
     | "trading_day_pre_close"
     | "trading_day_after_close";
+  market_open_time: string;
   minutes_to_close?: number | null;
   decision_window: string;
   market_close_time: string;
