@@ -42,6 +42,7 @@ class InvestorProfile(BaseModel):
     horizon: str = "半年到一年"
     max_drawdown_percent: float = 8
     concentration_limit_percent: float = 35
+    expected_investment_amount: float | None = None
     prefer_dca: bool = True
     avoid_chasing: bool = True
 

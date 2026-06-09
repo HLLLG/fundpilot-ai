@@ -4,9 +4,12 @@
 >
 > **维护：** 功能或架构有实质变化时，同步更新「能力清单」「数据流」「API」「目录」「环境变量」。
 
-**文档版本：** 2026-06-10（开盘前交易日语义；份额×净值持有金额同步）
+**文档版本：** 2026-06-10（账户汇总简化；期望投入额；风控画像持久化）
 
 **更新记录：**
+- **账户汇总与日报流程简化（2026-06-10）：** 隐藏 `000000`/待录入占位行；官方净值「已更新」浅蓝标签（含右上角当日收益）；移除「详细校对」与「生成日报」页 `HoldingTable`；AI 分析直接使用账户汇总 `displayableHoldings`；移除「快捷操作」侧栏。
+- **期望投入总额（2026-06-10）：** `InvestorProfile.expected_investment_amount` 滑条默认 3 万、1–10 万步进 5 千；持仓占比/集中度/减仓建议以期望投入为分母（`risk.resolve_weight_denominator`），避免减仓后占比误判偏高。
+- **风控画像持久化（2026-06-10）：** SQLite `investor_profile_state` + `GET/PUT /api/investor-profile`；前端 `localStorage` 作缓存，启动时 API 优先、修改后双写。
 - **开盘前交易日语义（2026-06-10）：** 对齐养基宝：`trading_day_pre_open`（当日 9:30 前）`effective_trade_date` 回溯上一交易日；账户汇总/板块涨跌/分时图日期统一；修复开盘前东财无当日 K 线导致「板块拉取失败」「暂无分时数据」；`GET /api/trading-session` 新增 `market_open_time`、`session_kind: trading_day_pre_open`。
 - **持有金额自动同步（2026-06-10）：** `holding_amount_sync.py` — OCR 确认时 `bootstrap_holding_baselines` 锁定份额/成本；盘中/恢复持仓时 `sync_holding_amounts_from_shares` 按档案份额 × 估值或官方净值更新 `holding_amount` 并重算持有收益；`amount_includes_today` 语义与 `holding_estimates.compute_daily_profit_from_rate` 联动。
 - **支付宝持仓 OCR（2026-06-08）：** 支持上传支付宝「我的基金」列表截图；`alipay_holdings_parser.py` 解析三列交错 OCR 文本并自动匹配基金代码；`POST /api/ocr?preview=true` 预览、`POST /api/portfolio/apply-holdings` 确认写入；OCR 预热与 mobile 模型加速（`.env` `FUND_AI_OCR_*`）。
@@ -24,7 +27,7 @@
 
 ## 一句话
 
-**FundPilot AI** 是面向个人自用的本地基金投研助手：养基宝总览/详情截图 → OCR → **板块实时涨跌估算当日收益** → 校对持仓 → 稳健风控 → 东方财富新闻（AkShare）+ DeepSeek V4 生成**逐基金操作建议**日报；首页自动恢复持仓，点击刷新更新板块；点击「生成报告」后台异步执行，右下角悬浮面板查看进度。数据默认留在本机。
+**FundPilot AI** 是面向个人自用的本地基金投研助手：支付宝/养基宝截图 → OCR → **账户汇总**（板块涨跌估算当日收益）→ 个人风控画像 → 东方财富新闻（AkShare）+ DeepSeek V4 生成**逐基金操作建议**日报；首页自动恢复持仓并刷新板块；「生成日报」Tab 配置风控后直接异步生成报告。数据默认留在本机 SQLite。
 
 ---
 
@@ -34,12 +37,12 @@
 |------|------|
 | 输入 | 养基宝总览 OCR（无代码草稿解析）；**支付宝持有列表 OCR**（预览确认后写入）；当日列为 `-` 时不填当日收益；**OCR 漏负号**时规则补符号；总览上传在「基金档案」Tab |
 | 当日收益 | 盘中/净值未公布：**板块涨跌估算**（`holding_amount × sector_return%`）；NAV 发布后：**官方日增长率** + `daily_profit = amount × r / (100 + r)`；关联板块列始终东财涨跌；账户汇总附「昨日收益」；**份额×净值**自动更新持有金额（`holding_amount_sync`） |
-| 校对 | `HoldingTable` 含估算当日收益率；OCR 返回 `holding_warnings` / `holding_diffs`；**沿用上次基金列表** |
+| OCR 校验 | OCR 返回 `holding_warnings`；账户汇总为唯一持仓展示与日报输入源（`displayableHoldings` 过滤占位行） |
 | 档案 | 详情 OCR 解析「场内指数 + 关联板块」；拒绝 `+`/`-`/Tab 标签误存为板块名；`POST /api/fund-profiles/repair-sectors` 清理历史脏数据；读取/保存时 `_sanitize_profile_sector_fields`；总览自动同步档案；`000000` 靠档案按名称补码 |
 | 首页看板 | **今日** Tab：`YangjibaoHoldingsBoard` 养基宝式卡片（含支付宝截图上传）；启动 `GET /api/portfolio/holdings` 恢复持仓并自动刷新板块；点击行打开 `YangjibaoFundDetail` |
 | 基金详情 | 关联板块分时图（边框/十字线）；**业绩走势**（区间涨跌 vs 沪深300、历史净值分页）；**我的收益**；持有天数滚轮选购入日；持仓明细默认收起 |
 | 仪表盘 | **仪表盘** Tab：`GET /api/portfolio/dashboard` — 资产/当日收益走势、持仓分布条 |
-| 风控 | 浮亏线、单只集中度、定投偏好、拒绝追高（`InvestorProfile`） |
+| 风控 | 浮亏线、单只集中度、**期望投入总额**（滑条 1–10 万）、定投偏好、拒绝追高；`InvestorProfile` 持久化 SQLite + localStorage |
 | 报告 | 组合摘要 + `fund_recommendations` + `topic_briefs` + `market_news`；`analysis_facts`；守卫 + 深度 `report_judge` |
 | 今日工作台 | 双栏布局（大屏）：左侧 sticky 持仓看板，右侧工作流/风控/日报 |
 | 复盘/模拟 | outcomes / outcomes-weekly / rebalance-simulation |
@@ -50,7 +53,7 @@
 | 官方净值 | AkShare `fund_open_fund_info_em` 覆盖**当日收益**（非板块列）；源标签：板块实时 / 收盘估算 / 官方净值；昨日收益取再上一交易日官方净值或 OCR |
 | 阻塞清单 | `TodayBlockingChecklist` + `workflowBlockers` |
 | 数据备份 | SQLite export/import；`DatabaseBackupPanel` |
-| CI / E2E | GitHub Actions：pytest（**254** 项）+ lint/typecheck/build + Playwright |
+| CI / E2E | GitHub Actions：pytest（**256** 项）+ lint/typecheck/build + Playwright |
 | 基金诊断 | AkShare 概况/累计收益；详情页可 AkShare **按名称查码**并持久化 |
 | 分析模式 | 快速 / 深度 |
 | 体验 | 报告 diff、Markdown 导出、档案 JSON、桌面通知、Plus Jakarta 字体 UI |
@@ -143,8 +146,8 @@ fundpilot-ai/
 ```text
 1. bash scripts/dev.sh → 打开 http://127.0.0.1:3000（默认「今日」Tab）
 2. 首页自动恢复上次持仓；点刷新更新板块涨跌 → 当日收益按板块估算
-3. 需更新金额时 →「基金档案」上传养基宝总览 OCR，或展开校对表手动改
-4. 校对 → 选快速/深度 →「生成报告」→ JobStatusFloat 进度 → 今日日报
+3. 需更新金额时 →「今日」上传支付宝总览，或「基金档案」上传详情截图
+4. 「生成日报」Tab 确认风控画像 → 选快速/深度 →「生成今日基金操作日报」→ JobStatusFloat 进度
 5. 点击持仓行 → 基金详情（板块分时、业绩走势、我的收益）；低置信度板块 → 映射弹窗
 6. 今日页可上传**支付宝持有列表**截图 → 预览确认 → 写入持仓
 ```
@@ -243,6 +246,8 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | POST | `/api/analyze` | 同步生成 Report（兜底） |
 | POST | `/api/analyze/async` | `{ job_id, status }` |
 | GET | `/api/trading-session` | 交易日/收盘窗口语义 |
+| GET | `/api/investor-profile` | 读取持久化风控画像（未保存时 404） |
+| PUT | `/api/investor-profile` | 保存风控画像至 SQLite |
 | GET | `/api/reports/{id}/outcomes-weekly?days=7` | 7 日建议复盘 |
 | GET | `/api/database/export` | 下载 SQLite |
 | POST | `/api/database/import` | 上传替换 DB（自动备份 `.db.bak`） |
@@ -282,7 +287,7 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | 模型 | 要点 |
 |------|------|
 | **Holding** | 6 位代码、金额、持有/当日/昨日收益、板块；`sector_return_percent_source`（realtime / closing_estimate）；`daily_return_percent_source`（sector_estimate / official_nav）；`yesterday_profit`；见 `holding_analysis_payload` |
-| **InvestorProfile** | 稳健默认；浮亏 8%、集中度 35% |
+| **InvestorProfile** | 稳健默认；浮亏 8%、集中度 35%、期望投入 3 万（可配置）；`prefer_dca` / `avoid_chasing`；持久化 `investor_profile_state` |
 | **FundRecommendation** | action、amount_*、news_bullish/bearish、points |
 | **NewsItem** | topic、title、is_today |
 | **Report** | 含 `fund_recommendations`、`market_news`、`topic_briefs`、`analysis_facts`；`market_context` 保留字段恒 `[]` |
@@ -393,10 +398,10 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 
 ## 前端要点
 
-- **今日 / 生成日报 Tab：** 持仓看板 vs 工作流+风控+校对+`ReportPanel`。
+- **今日 / 生成日报 Tab：** 账户汇总看板 vs 交易日历+风控画像+`ReportPanel`。
 - **用户菜单：** 基金档案、仪表盘、历史日报（含 `HistoryRail`）；`FundProfilePanel` 详情建档。
 - **分析：** `ReportPanel` + `JobStatusFloat` 异步轮询。
-- **偏好：** `lib/storage.ts`（profile、analysisMode、sectorAutoRefresh）。
+- **偏好：** `lib/storage.ts`（profile 缓存、analysisMode、sectorAutoRefresh）；风控画像主存 SQLite `PUT /api/investor-profile`。
 
 ---
 
@@ -451,7 +456,7 @@ bash scripts/dev.sh    # 或 scripts/dev.ps1
 ```
 
 ```bash
-cd apps/api && ./.venv/Scripts/python.exe -m pytest tests -q   # 当前 254 项
+cd apps/api && ./.venv/Scripts/python.exe -m pytest tests -q   # 当前 256 项
 cd apps/web && npm run lint && npm run typecheck && npm run build
 cd apps/web && npm run test:e2e   # Playwright 冒烟
 ```
@@ -469,6 +474,8 @@ cd apps/web && npm run test:e2e   # Playwright 冒烟
 7. 改分时：`eastmoney_trends_client.py` → `sector_intraday_provider.py` → `IntradayPercentChart.tsx`；换机排查见 design 分时文档。
 8. 改交易日/开盘前日期：`trading_session.py` → `sector_quote_service.py` / `sector_intraday_provider.py` / `holding_amount_sync.py` → `YangjibaoHoldingsBoard.tsx` / `TradingSessionBar.tsx` → `tests/test_trading_session.py`。
 9. 改持有金额同步：`holding_amount_sync.py` → `portfolio_persistence.py` / `overview_pipeline.py` / `portfolio_holdings_service.py` → `holding_estimates.py` → `tests/test_holding_amount_sync.py`。
+10. 改风控画像/期望投入：`models.py` `InvestorProfile` → `database.py` / `main.py` `/api/investor-profile` → `risk.py` / `analysis_facts.py` → `RiskControls.tsx` / `storage.ts` → `tests/test_api.py` `test_investor_profile_persistence`。
+11. 改账户汇总展示：`holdingMetrics.ts` `displayableHoldings` → `YangjibaoHoldingsBoard.tsx` → `Dashboard.tsx`（日报直接喂 `displayableHoldings`）。
 
 ---
 

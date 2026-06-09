@@ -4,8 +4,6 @@ import { useEffect, useMemo, useState } from "react";
 import {
   ArrowDown,
   ArrowUp,
-  ChevronDown,
-  ChevronUp,
   Eye,
   EyeOff,
   ImageUp,
@@ -30,7 +28,7 @@ import {
   resolveSectorBoardReturnPercent,
   sumDailyProfit,
   sumHoldingAmount,
-  withoutTestHoldings,
+  displayableHoldings,
 } from "@/lib/holdingMetrics";
 import { buildSectorRefreshNotice } from "@/lib/sectorQuoteStatus";
 import { loadAmountsHidden, saveAmountsHidden } from "@/lib/storage";
@@ -52,9 +50,15 @@ type YangjibaoHoldingsBoardProps = {
   onUploadOverview?: (file: File) => void;
   isUploadingOverview?: boolean;
   onAddHolding?: () => void;
-  onExpandReview?: () => void;
   onSelectHolding?: (index: number) => void;
 };
+
+const updatedBadgeClassName =
+  "shrink-0 rounded border border-blue-200 bg-blue-50 px-1 py-0.5 text-[10px] font-bold text-blue-700";
+
+function UpdatedBadge({ className = "" }: { className?: string }) {
+  return <span className={`${updatedBadgeClassName} ${className}`.trim()}>已更新</span>;
+}
 
 function formatMoney(value: number | null | undefined) {
   if (value === null || value === undefined) {
@@ -175,7 +179,6 @@ export function YangjibaoHoldingsBoard({
   onUploadOverview,
   isUploadingOverview = false,
   onAddHolding,
-  onExpandReview,
   onSelectHolding,
 }: YangjibaoHoldingsBoardProps) {
   const [quoteTradeDate, setQuoteTradeDate] = useState<string | null>(null);
@@ -203,7 +206,7 @@ export function YangjibaoHoldingsBoard({
       });
   }, []);
 
-  const displayHoldings = useMemo(() => withoutTestHoldings(holdings), [holdings]);
+  const displayHoldings = useMemo(() => displayableHoldings(holdings), [holdings]);
   const refreshNotice = buildSectorRefreshNotice(lastRefreshResult);
 
   const computedTotal = sumHoldingAmount(displayHoldings);
@@ -384,11 +387,7 @@ export function YangjibaoHoldingsBoard({
               <div className="text-[11px] font-semibold text-slate-400">
                 {dailyDisplayMode === "amount" ? "当日收益" : "当日收益率"}
                 {quoteTradeDate ? ` ${quoteTradeDate}` : ""}
-                {allOfficialDaily ? (
-                  <span className="ml-1.5 inline-flex rounded border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[10px] font-bold text-blue-700">
-                    已更新
-                  </span>
-                ) : null}
+                {allOfficialDaily ? <UpdatedBadge className="ml-1.5 inline-flex px-1.5" /> : null}
               </div>
               <div
                 className={`mt-0.5 text-lg font-black tabular-nums ${cnProfitClass(
@@ -460,11 +459,7 @@ export function YangjibaoHoldingsBoard({
                       <div className="truncate text-[15px] font-bold leading-snug text-slate-900">
                         {holding.fund_name}
                       </div>
-                      {isOfficialDaily ? (
-                        <span className="shrink-0 rounded border border-slate-200 bg-slate-50 px-1 py-0.5 text-[10px] font-bold text-slate-500">
-                          已更新
-                        </span>
-                      ) : null}
+                      {isOfficialDaily ? <UpdatedBadge /> : null}
                     </div>
                     {!amountsHidden ? (
                       <div className="mt-1 text-xs text-slate-500 tabular-nums">
@@ -532,21 +527,14 @@ export function YangjibaoHoldingsBoard({
           })}
         </ul>
 
-        <div className="grid grid-cols-2 gap-px border-t border-slate-100 bg-slate-100">
+        <div className="border-t border-slate-100">
           <button
             type="button"
             onClick={onAddHolding}
-            className="flex items-center justify-center gap-1.5 bg-white py-3.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50"
+            className="flex w-full items-center justify-center gap-1.5 bg-white py-3.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50"
           >
             <Plus size={16} />
             新增持有
-          </button>
-          <button
-            type="button"
-            onClick={onExpandReview}
-            className="flex items-center justify-center gap-1.5 bg-white py-3.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50"
-          >
-            详细校对
           </button>
         </div>
       </div>
@@ -563,35 +551,3 @@ export function YangjibaoHoldingsBoard({
   );
 }
 
-export function CollapsibleReviewSection({
-  open,
-  onToggle,
-  children,
-  warningCount = 0,
-}: {
-  open: boolean;
-  onToggle: () => void;
-  children: React.ReactNode;
-  warningCount?: number;
-}) {
-  return (
-    <div className="min-w-0">
-      <button
-        type="button"
-        onClick={onToggle}
-        className="mb-3 flex w-full items-center justify-between gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left text-sm font-black text-slate-950 shadow-sm transition hover:bg-slate-50"
-      >
-        <span className="flex items-center gap-2">
-          持仓详细校对
-          {warningCount > 0 ? (
-            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800">
-              {warningCount} 处待核
-            </span>
-          ) : null}
-        </span>
-        {open ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
-      </button>
-      {open ? children : null}
-    </div>
-  );
-}

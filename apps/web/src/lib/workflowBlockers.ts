@@ -1,4 +1,5 @@
 import type { Holding, HoldingFieldWarning, InvestorProfile, PortfolioSummary } from "@/lib/api";
+import { displayableHoldings } from "@/lib/holdingMetrics";
 
 export type WorkflowBlocker = {
   id: string;
@@ -14,7 +15,8 @@ export function buildWorkflowBlockers(input: {
   hasReportToday: boolean;
 }): WorkflowBlocker[] {
   const blockers: WorkflowBlocker[] = [];
-  const { holdings, warnings, profile, portfolioSummary } = input;
+  const { warnings, profile, portfolioSummary } = input;
+  const holdings = displayableHoldings(input.holdings);
 
   if (!holdings.length) {
     blockers.push({
@@ -42,15 +44,6 @@ export function buildWorkflowBlockers(input: {
     });
   }
 
-  const placeholderCodes = holdings.filter((h) => h.fund_code === "000000");
-  if (placeholderCodes.length) {
-    blockers.push({
-      id: "missing-codes",
-      severity: "warn",
-      message: `${placeholderCodes.length} 只基金缺少代码，请在「基金档案」补全详情截图。`,
-    });
-  }
-
   const missingSector = holdings.filter((h) => !h.sector_name?.trim());
   if (missingSector.length) {
     blockers.push({
@@ -60,9 +53,13 @@ export function buildWorkflowBlockers(input: {
     });
   }
 
-  const total = holdings.reduce((sum, h) => sum + h.holding_amount, 0) || 1;
+  const actualTotal = holdings.reduce((sum, h) => sum + h.holding_amount, 0);
+  const weightDenominator =
+    profile.expected_investment_amount != null && profile.expected_investment_amount > 0
+      ? profile.expected_investment_amount
+      : actualTotal || 1;
   const overLimit = holdings.filter(
-    (h) => h.holding_amount / total * 100 > profile.concentration_limit_percent,
+    (h) => h.holding_amount / weightDenominator * 100 > profile.concentration_limit_percent,
   );
   if (overLimit.length) {
     blockers.push({
@@ -84,7 +81,7 @@ export function buildWorkflowBlockers(input: {
     blockers.push({
       id: "no-report",
       severity: "info",
-      message: "今日尚未生成日报，完成校对后点击「生成今日基金操作日报」。",
+      message: "今日尚未生成日报，确认账户汇总后点击「生成今日基金操作日报」。",
     });
   }
 

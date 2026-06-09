@@ -9,7 +9,14 @@ from typing import Any
 from app.config import get_settings
 from datetime import datetime, timezone
 
-from app.models import ChatMessage, FundProfile, PortfolioDailySnapshot, PortfolioSummary, Report
+from app.models import (
+    ChatMessage,
+    FundProfile,
+    InvestorProfile,
+    PortfolioDailySnapshot,
+    PortfolioSummary,
+    Report,
+)
 
 
 def _db_path() -> Path:
@@ -96,6 +103,15 @@ def _connect() -> sqlite3.Connection:
             source_name TEXT NOT NULL,
             confidence TEXT NOT NULL,
             updated_at TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS investor_profile_state (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            payload TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
         """
     )
@@ -338,6 +354,30 @@ def list_portfolio_daily_snapshots(*, limit: int = 30) -> list[dict[str, Any]]:
 def get_most_recent_portfolio_snapshot() -> dict[str, Any] | None:
     rows = list_portfolio_daily_snapshots(limit=1)
     return rows[0] if rows else None
+
+
+def get_investor_profile() -> InvestorProfile | None:
+    with _connect() as connection:
+        row = connection.execute(
+            "SELECT payload FROM investor_profile_state WHERE id = 1"
+        ).fetchone()
+    if row is None:
+        return None
+    return InvestorProfile.model_validate(json.loads(row["payload"]))
+
+
+def save_investor_profile(profile: InvestorProfile) -> InvestorProfile:
+    payload = profile.model_dump(mode="json")
+    with _connect() as connection:
+        connection.execute(
+            """
+            INSERT OR REPLACE INTO investor_profile_state (id, payload, updated_at)
+            VALUES (1, ?, CURRENT_TIMESTAMP)
+            """,
+            (json.dumps(payload, ensure_ascii=False),),
+        )
+        connection.commit()
+    return profile
 
 
 def get_portfolio_summary() -> PortfolioSummary | None:

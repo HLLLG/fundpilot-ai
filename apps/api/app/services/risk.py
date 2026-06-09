@@ -3,11 +3,35 @@ from __future__ import annotations
 from app.models import Holding, InvestorProfile, RiskAlert, RiskAssessment
 
 
+def resolve_weight_denominator(
+    holdings: list[Holding],
+    profile: InvestorProfile,
+) -> float:
+    """持仓占比分母：优先用期望投入额（减仓后仍按计划规模算集中度）。"""
+    actual_total = sum(holding.holding_amount for holding in holdings)
+    expected = profile.expected_investment_amount
+    if expected is not None and expected > 0:
+        return expected
+    return actual_total
+
+
+def holding_weight_percent(
+    holding: Holding,
+    holdings: list[Holding],
+    profile: InvestorProfile,
+) -> float:
+    denominator = resolve_weight_denominator(holdings, profile)
+    if denominator <= 0:
+        return 0.0
+    return holding.holding_amount / denominator * 100
+
+
 def evaluate_portfolio_risk(
     holdings: list[Holding],
     profile: InvestorProfile,
 ) -> RiskAssessment:
     total_amount = sum(holding.holding_amount for holding in holdings)
+    weight_denominator = resolve_weight_denominator(holdings, profile)
     weighted_return = _weighted_return_percent(holdings, total_amount)
     alerts: list[RiskAlert] = []
 
@@ -21,10 +45,17 @@ def evaluate_portfolio_risk(
             )
         )
 
-    if total_amount > 0:
+    if weight_denominator > 0:
         for holding in holdings:
-            weight = holding.holding_amount / total_amount * 100
+            weight = holding_weight_percent(holding, holdings, profile)
             if weight > profile.concentration_limit_percent:
+                evidence = f"{holding.holding_amount:.2f} / {weight_denominator:.2f}"
+                if (
+                    profile.expected_investment_amount
+                    and profile.expected_investment_amount > 0
+                    and abs(weight_denominator - total_amount) > 0.01
+                ):
+                    evidence += f"（期望投入 {profile.expected_investment_amount:.2f}）"
                 alerts.append(
                     RiskAlert(
                         code="CONCENTRATION",
@@ -33,7 +64,7 @@ def evaluate_portfolio_risk(
                             f"{holding.fund_name} 当前占比 {weight:.1f}%，"
                             f"超过 {profile.concentration_limit_percent:.1f}% 集中度上限。"
                         ),
-                        evidence=f"{holding.holding_amount:.2f} / {total_amount:.2f}",
+                        evidence=evidence,
                     )
                 )
 

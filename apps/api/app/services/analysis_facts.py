@@ -5,6 +5,7 @@ from app.services.holding_metrics import (
     compute_estimated_daily_return_percent,
     holding_daily_return_is_estimated,
 )
+from app.services.risk import holding_weight_percent, resolve_weight_denominator
 
 
 def build_analysis_facts(
@@ -21,11 +22,12 @@ def build_analysis_facts(
 ) -> dict:
     nav_trends = nav_trends_by_code or {}
     total_amount = sum(item.holding_amount for item in holdings) or 0.0
+    weight_denominator = resolve_weight_denominator(holdings, profile)
     snapshot_by_code = {item.fund_code: item for item in snapshots}
 
     per_fund: list[dict] = []
     for holding in holdings:
-        weight = (holding.holding_amount / total_amount * 100) if total_amount else 0.0
+        weight = holding_weight_percent(holding, holdings, profile)
         estimated_daily = compute_estimated_daily_return_percent(holding)
         snapshot = snapshot_by_code.get(holding.fund_code)
         per_fund.append(
@@ -61,6 +63,8 @@ def build_analysis_facts(
         "instruction": "以下数字由系统计算，分析时不得改写；仅可基于它们做解释与建议。",
         "portfolio": {
             "total_amount": round(total_amount, 2),
+            "weight_denominator": round(weight_denominator, 2),
+            "expected_investment_amount": profile.expected_investment_amount,
             "holding_count": len(holdings),
             "weighted_return_percent": risk.weighted_return_percent,
             "risk_level": risk.level,

@@ -23,6 +23,7 @@ export type InvestorProfile = {
   horizon: string;
   max_drawdown_percent: number;
   concentration_limit_percent: number;
+  expected_investment_amount?: number | null;
   prefer_dca: boolean;
   avoid_chasing: boolean;
 };
@@ -900,6 +901,26 @@ export async function fetchPortfolioHoldings(): Promise<PortfolioHoldingsPayload
 
 export async function fetchPortfolioSummary(): Promise<PortfolioSummary> {
   const response = await fetch(`${API_BASE}/api/portfolio/summary`, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export async function fetchInvestorProfile(): Promise<InvestorProfile> {
+  const response = await fetch(`${API_BASE}/api/investor-profile`, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export async function saveInvestorProfileRemote(profile: InvestorProfile): Promise<InvestorProfile> {
+  const response = await fetch(`${API_BASE}/api/investor-profile`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(profile),
+  });
   if (!response.ok) {
     throw new Error(await response.text());
   }

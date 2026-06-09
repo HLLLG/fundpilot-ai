@@ -16,10 +16,12 @@ from app.database import (
     database_file_path,
     get_baseline_report_by_days,
     get_fund_profile_by_code,
+    get_investor_profile,
     get_previous_report,
     get_report,
     import_database_file,
     list_reports,
+    save_investor_profile,
 )
 from app.lifespan import app_lifespan
 from app.database import list_report_chat_messages
@@ -29,6 +31,7 @@ from app.models import (
     FundProfile,
     Holding,
     HoldingDetailRequest,
+    InvestorProfile,
     RefreshSectorQuotesRequest,
     ReportChatRequest,
     SaveSectorMappingRequest,
@@ -607,6 +610,20 @@ def portfolio_holdings() -> dict:
         "portfolio_summary": payload or None,
         "profile_count": len(profiles),
     }
+
+
+@app.get("/api/investor-profile")
+def investor_profile_get() -> dict:
+    profile = get_investor_profile()
+    if profile is None:
+        raise HTTPException(status_code=404, detail="尚未保存风控画像")
+    return profile.model_dump()
+
+
+@app.put("/api/investor-profile")
+def investor_profile_put(profile: InvestorProfile) -> dict:
+    saved = save_investor_profile(profile)
+    return saved.model_dump()
 
 
 @app.get("/api/portfolio/summary")

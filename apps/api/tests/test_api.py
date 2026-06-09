@@ -374,6 +374,33 @@ def test_trading_session_endpoint():
     assert body["effective_trade_date"]
 
 
+def test_investor_profile_persistence(tmp_path, monkeypatch):
+    db_path = tmp_path / "investor_profile.db"
+    monkeypatch.setenv("FUND_AI_DB_PATH", str(db_path))
+    refresh_settings()
+
+    missing = client.get("/api/investor-profile")
+    assert missing.status_code == 404
+
+    payload = {
+        "style": "进取",
+        "horizon": "一年以上",
+        "max_drawdown_percent": 12,
+        "concentration_limit_percent": 40,
+        "expected_investment_amount": 45000,
+        "prefer_dca": False,
+        "avoid_chasing": True,
+    }
+    saved = client.put("/api/investor-profile", json=payload)
+    assert saved.status_code == 200
+    assert saved.json()["expected_investment_amount"] == 45000
+
+    loaded = client.get("/api/investor-profile")
+    assert loaded.status_code == 200
+    assert loaded.json()["style"] == "进取"
+    assert loaded.json()["max_drawdown_percent"] == 12
+
+
 def test_database_export_and_import(tmp_path, monkeypatch):
     db_path = tmp_path / "app.db"
     monkeypatch.setenv("FUND_AI_DB_PATH", str(db_path))

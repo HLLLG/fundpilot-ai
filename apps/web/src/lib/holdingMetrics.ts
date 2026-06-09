@@ -15,6 +15,20 @@ export function withoutTestHoldings(holdings: Holding[]): Holding[] {
   return holdings.filter((holding) => !isTestHolding(holding));
 }
 
+/** OCR 草稿占位行（000000 / 待录入），不在账户汇总与日报中展示。 */
+export function isPlaceholderHolding(holding: Holding): boolean {
+  if (holding.fund_code === "000000") {
+    return true;
+  }
+  const name = (holding.fund_name || "").trim();
+  return name === "待录入基金" || name.startsWith("待录入");
+}
+
+/** 账户汇总 / 生成日报使用的有效持仓列表。 */
+export function displayableHoldings(holdings: Holding[]): Holding[] {
+  return withoutTestHoldings(holdings).filter((holding) => !isPlaceholderHolding(holding));
+}
+
 function round2(value: number) {
   return Math.round(value * 100) / 100;
 }

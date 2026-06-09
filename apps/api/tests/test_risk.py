@@ -45,6 +45,28 @@ def test_single_holding_above_concentration_limit_is_flagged():
     assert "主题成长混合" in concentration.message
 
 
+def test_concentration_uses_expected_investment_denominator():
+    profile = InvestorProfile(concentration_limit_percent=35, expected_investment_amount=30000)
+    holdings = [
+        Holding(
+            fund_code="000001",
+            fund_name="主题成长混合",
+            holding_amount=10000,
+            return_percent=1.5,
+        ),
+        Holding(
+            fund_code="000002",
+            fund_name="债券增强",
+            holding_amount=8000,
+            return_percent=0.8,
+        ),
+    ]
+
+    result = evaluate_portfolio_risk(holdings, profile)
+
+    assert not any(alert.code == "CONCENTRATION" for alert in result.alerts)
+
+
 def test_balanced_portfolio_returns_watch_action():
     profile = InvestorProfile(max_drawdown_percent=8, concentration_limit_percent=35)
     holdings = [

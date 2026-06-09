@@ -818,12 +818,14 @@ def _offline_report(
 
     news = market_news or []
     briefs = topic_briefs if topic_briefs is not None else _build_topic_briefs(news)
-    total_amount = sum(holding.holding_amount for holding in request.holdings) or 1
+    from app.services.risk import holding_weight_percent, resolve_weight_denominator
+
+    weight_denominator = resolve_weight_denominator(request.holdings, request.profile) or 1
     fund_recommendations = [
         build_offline_fund_recommendation(
             holding,
-            holding.holding_amount / total_amount * 100,
-            total_amount,
+            holding_weight_percent(holding, request.holdings, request.profile),
+            weight_denominator,
             request.profile,
             market_news=news,
         )

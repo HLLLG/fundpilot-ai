@@ -11,6 +11,7 @@ from app.models import (
 )
 from app.services.market_signal import has_today_market_signal
 from app.services.recommendations import build_offline_fund_recommendation
+from app.services.risk import holding_weight_percent, resolve_weight_denominator
 
 # 动作激进度：数值越低越保守（减仓/复核 < 观察 < 暂停 < 加仓）
 _ACTION_BUCKET = {
@@ -36,8 +37,8 @@ def apply_recommendation_guards(
     market_news: list[NewsItem] | None = None,
     topic_briefs: list[TopicBrief] | None = None,
 ) -> tuple[list[str], list[FundRecommendation]]:
-    total_amount = sum(holding.holding_amount for holding in request.holdings) or 1
-    offline_map = _offline_by_holding(request, total_amount, market_news)
+    weight_denominator = resolve_weight_denominator(request.holdings, request.profile) or 1
+    offline_map = _offline_by_holding(request, weight_denominator, market_news)
     settings = get_settings()
     today_signal = has_today_market_signal(market_news, topic_briefs)
 
@@ -110,16 +111,16 @@ def conservative_action_text(llm_action: str, offline_action: str) -> str:
 
 def _offline_by_holding(
     request: AnalysisRequest,
-    total_amount: float,
+    weight_denominator: float,
     market_news: list[NewsItem] | None,
 ) -> dict[str, FundRecommendation]:
     mapping: dict[str, FundRecommendation] = {}
     for holding in request.holdings:
-        weight = holding.holding_amount / total_amount * 100
+        weight = holding_weight_percent(holding, request.holdings, request.profile)
         offline = build_offline_fund_recommendation(
             holding,
             weight,
-            total_amount,
+            weight_denominator,
             request.profile,
             market_news=market_news,
         )

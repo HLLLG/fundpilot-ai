@@ -8,11 +8,11 @@ import type {
   FundProfile,
   Holding,
   HoldingFieldWarning,
-  HoldingListDiff,
   InvestorProfile,
   Report,
 } from "@/lib/api";
 import {
+  fetchInvestorProfile,
   fetchPortfolioHoldings,
   fetchPortfolioSummary,
   importFundProfiles,
@@ -21,6 +21,7 @@ import {
   parseFundProfile,
   applyPortfolioHoldings,
   parseOcrUpload,
+  saveInvestorProfileRemote,
   startAnalyzeJob,
   type PortfolioSummary,
 } from "@/lib/api";
@@ -29,14 +30,14 @@ import { notifyDesktop } from "@/lib/notifications";
 import {
   loadAnalysisMode,
   loadInvestorProfile,
+  normalizeInvestorProfile,
   saveAnalysisMode,
   saveInvestorProfile,
 } from "@/lib/storage";
 import { FundProfilePanel } from "@/components/FundProfilePanel";
 import { HistoryRail } from "@/components/HistoryRail";
-import { HoldingTable } from "@/components/HoldingTable";
 import { JobStatusFloat } from "@/components/JobStatusFloat";
-import { mergeHoldingsWithPrevious } from "@/lib/holdingReview";
+import { displayableHoldings } from "@/lib/holdingMetrics";
 import { useSectorQuoteRefresh } from "@/lib/useSectorQuoteRefresh";
 import { buildWorkflowBlockers, hasBlockingErrors } from "@/lib/workflowBlockers";
 import { TodayBlockingChecklist } from "@/components/TodayBlockingChecklist";
@@ -44,10 +45,7 @@ import { TradingSessionBar } from "@/components/TradingSessionBar";
 import { DatabaseBackupPanel } from "@/components/DatabaseBackupPanel";
 import { PortfolioDashboard } from "@/components/PortfolioDashboard";
 import { ReportPanel } from "@/components/ReportPanel";
-import {
-  CollapsibleReviewSection,
-  YangjibaoHoldingsBoard,
-} from "@/components/YangjibaoHoldingsBoard";
+import { YangjibaoHoldingsBoard } from "@/components/YangjibaoHoldingsBoard";
 import { YangjibaoFundDetail } from "@/components/YangjibaoFundDetail";
 import { RiskControls } from "@/components/RiskControls";
 import { StatusPill } from "@/components/StatusPill";
@@ -58,6 +56,7 @@ const defaultProfile: InvestorProfile = {
   horizon: "半年到一年",
   max_drawdown_percent: 8,
   concentration_limit_percent: 35,
+  expected_investment_amount: 30_000,
   prefer_dca: true,
   avoid_chasing: true,
 };
@@ -79,21 +78,21 @@ const primaryTabs: Array<{
   {
     id: "report",
     label: "生成日报",
-    description: "校对持仓与 AI 日报",
+    description: "风控画像与 AI 日报",
     icon: <FileText size={17} />,
   },
 ];
 
 export function Dashboard() {
   const [holdings, setHoldings] = useState<Holding[]>([]);
-  const [profile, setProfile] = useState<InvestorProfile>(defaultProfile);
+  const [profile, setProfile] = useState<InvestorProfile>(() =>
+    loadInvestorProfile(defaultProfile),
+  );
   const [report, setReport] = useState<Report | null>(null);
   const [reports, setReports] = useState<Report[]>([]);
   const [profiles, setProfiles] = useState<FundProfile[]>([]);
   const [portfolioSummary, setPortfolioSummary] = useState<PortfolioSummary | null>(null);
   const [holdingWarnings, setHoldingWarnings] = useState<HoldingFieldWarning[]>([]);
-  const [holdingDiffs] = useState<HoldingListDiff[]>([]);
-  const [previousHoldings] = useState<Holding[]>([]);
   const [message, setMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isProfiling, setIsProfiling] = useState(false);
@@ -101,10 +100,10 @@ export function Dashboard() {
   const [analysisMode, setAnalysisMode] = useState<AnalysisMode>("deep");
   const [profileReady, setProfileReady] = useState(false);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
-  const [reviewTableOpen, setReviewTableOpen] = useState(false);
   const [selectedHoldingIndex, setSelectedHoldingIndex] = useState<number | null>(null);
   const reportSectionRef = useRef<HTMLDivElement>(null);
   const shouldRefreshOnLoad = useRef(false);
+  const profilePersistReady = useRef(false);
   const [isHydratingHoldings, setIsHydratingHoldings] = useState(true);
   const [isOcrUploading, setIsOcrUploading] = useState(false);
   const [pendingOcrHoldings, setPendingOcrHoldings] = useState<Holding[] | null>(null);
@@ -145,25 +144,6 @@ export function Dashboard() {
     onWarningsChange: setHoldingWarnings,
     onMessage: setMessage,
   });
-
-  const addEmptyHolding = () => {
-    setHoldings([
-      ...holdings,
-      {
-        fund_code: "000000",
-        fund_name: "待录入基金",
-        holding_amount: 0,
-        return_percent: 0,
-        daily_profit: null,
-        daily_return_percent: null,
-        holding_profit: null,
-        holding_return_percent: null,
-        sector_name: "",
-        sector_return_percent: null,
-      },
-    ]);
-    setReviewTableOpen(true);
-  };
 
   const loadHistory = async () => {
     try {
@@ -214,9 +194,20 @@ export function Dashboard() {
   };
 
   useEffect(() => {
-    setProfile(loadInvestorProfile(defaultProfile));
     setAnalysisMode(loadAnalysisMode("deep"));
-    setProfileReady(true);
+    void (async () => {
+      try {
+        const remote = await fetchInvestorProfile();
+        const normalized = normalizeInvestorProfile(remote, defaultProfile);
+        setProfile(normalized);
+        saveInvestorProfile(normalized);
+      } catch {
+        setProfile((current) => normalizeInvestorProfile(current, defaultProfile));
+      } finally {
+        profilePersistReady.current = true;
+        setProfileReady(true);
+      }
+    })();
     void loadHistory();
     void hydratePortfolio();
     // Mount-only bootstrap; avoid re-fetching on callback identity changes.
@@ -234,8 +225,12 @@ export function Dashboard() {
   }, [holdings.length]);
 
   useEffect(() => {
-    if (!profileReady) return;
-    saveInvestorProfile(profile);
+    if (!profileReady || !profilePersistReady.current) return;
+    const normalized = normalizeInvestorProfile(profile, defaultProfile);
+    saveInvestorProfile(normalized);
+    void saveInvestorProfileRemote(normalized).catch(() => {
+      // 离线时仍保留 localStorage；下次启动会从本地缓存恢复。
+    });
   }, [profile, profileReady]);
 
   useEffect(() => {
@@ -261,7 +256,7 @@ export function Dashboard() {
   };
 
   const handleAnalyze = async () => {
-    await runAnalyze(holdings);
+    await runAnalyze(displayableHoldings(holdings));
   };
 
   const handleJobComplete = async (completedReport: Report) => {
@@ -286,7 +281,7 @@ export function Dashboard() {
 
   const handleJobRetry = async () => {
     setActiveJobId(null);
-    await runAnalyze(holdings);
+    await runAnalyze(displayableHoldings(holdings));
   };
 
   const handleImportProfiles = async (selectedFile: File) => {
@@ -452,14 +447,7 @@ export function Dashboard() {
                 onUploadOverview={(file) => void handleOverviewUpload(file)}
                 isUploadingOverview={isOcrUploading}
                 onOpenCapture={() => setActiveTab("profiles")}
-                onAddHolding={() => {
-                  addEmptyHolding();
-                  setActiveTab("report");
-                }}
-                onExpandReview={() => {
-                  setReviewTableOpen(true);
-                  setActiveTab("report");
-                }}
+                onAddHolding={() => setActiveTab("profiles")}
                 onSelectHolding={setSelectedHoldingIndex}
               />
             </div>
@@ -470,73 +458,23 @@ export function Dashboard() {
               <TradingSessionBar />
               <TodayWorkflowSteps hasHoldings={holdings.length > 0} hasReport={Boolean(displayReport)} />
               <TodayBlockingChecklist blockers={workflowBlockers} />
-              <div className="grid min-w-0 gap-5 lg:grid-cols-2 lg:gap-6">
-                <RiskControls
-                  profile={profile}
-                  analysisMode={analysisMode}
-                  onAnalysisModeChange={setAnalysisMode}
-                  onChange={setProfile}
-                  onAnalyze={() => void handleAnalyze()}
-                  isBusy={isSubmitting}
-                  ocrWarningCount={ocrWarningCount}
-                  hasBlockingErrors={blockingErrors}
-                />
-                <div className="glass-panel rounded-[24px] p-5 lg:rounded-[28px]">
-                  <div className="mb-2 text-sm font-black text-slate-950">快捷操作</div>
-                  <p className="text-sm leading-6 text-slate-600">
-                    上传一次支付宝总览截图后，系统会按交易日自动更新持有金额与当日收益。只有加仓/减仓或需要覆盖数据时，再上传总览或详情截图。
-                  </p>
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab("profiles")}
-                      className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 transition hover:border-blue-200 hover:text-blue-700"
-                    >
-                      覆盖更新（详情截图）
-                    </button>
-                    {holdings.length > 0 ? (
-                      <button
-                        type="button"
-                        onClick={() => setReviewTableOpen(true)}
-                        className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 transition hover:border-blue-200 hover:text-blue-700"
-                      >
-                        校对持仓
-                      </button>
-                    ) : null}
-                  </div>
-                </div>
-              </div>
-              {holdings.length > 0 ? (
-                <CollapsibleReviewSection
-                  open={reviewTableOpen}
-                  onToggle={() => setReviewTableOpen((open) => !open)}
-                  warningCount={ocrWarningCount}
-                >
-                  <HoldingTable
-                    holdings={holdings}
-                    onChange={setHoldings}
-                    warnings={holdingWarnings}
-                    onWarningsChange={setHoldingWarnings}
-                    portfolioSummary={portfolioSummary}
-                    diffs={holdingDiffs}
-                    canApplyPreviousStructure={previousHoldings.length > 0}
-                    onApplyPreviousStructure={() => {
-                      setHoldings(mergeHoldingsWithPrevious(previousHoldings, holdings));
-                      setMessage("已沿用昨日基金列表，并保留本次 OCR 的金额与收益。请再扫一眼高亮格子。");
-                    }}
-                    onAllocateMessage={setMessage}
-                    sectorRefresh={sectorRefresh}
-                    showSectorRefreshControls={false}
-                  />
-                </CollapsibleReviewSection>
-              ) : null}
+              <RiskControls
+                profile={profile}
+                analysisMode={analysisMode}
+                onAnalysisModeChange={setAnalysisMode}
+                onChange={setProfile}
+                onAnalyze={() => void handleAnalyze()}
+                isBusy={isSubmitting}
+                ocrWarningCount={ocrWarningCount}
+                hasBlockingErrors={blockingErrors}
+              />
               <div ref={reportSectionRef} className="min-w-0">
                 <div className="mb-3 text-sm font-black text-slate-950">今日日报</div>
                 {todayReport ? (
                   <ReportPanel report={todayReport} />
                 ) : (
                   <div className="glass-panel rounded-[24px] border border-dashed border-slate-200 px-5 py-8 text-center text-sm leading-6 text-slate-500">
-                    今日尚未生成日报。确认持仓后点击「生成今日基金操作日报」；历史报告请在右上角用户菜单打开。
+                    今日尚未生成日报。确认账户汇总数据后点击「生成今日基金操作日报」；历史报告请在右上角用户菜单打开。
                   </div>
                 )}
               </div>
@@ -607,8 +545,7 @@ export function Dashboard() {
           onNavigate={setSelectedHoldingIndex}
           onEdit={() => {
             setSelectedHoldingIndex(null);
-            setReviewTableOpen(true);
-            setActiveTab("report");
+            setActiveTab("profiles");
           }}
           onHoldingResolved={(index, resolved) => {
             setHoldings((current) =>

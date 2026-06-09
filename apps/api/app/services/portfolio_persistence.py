@@ -12,7 +12,7 @@ from app.services.holding_estimates import (
 )
 from app.services.fund_profile import _is_valid_sector_label
 from app.services.fund_profile import _looks_like_index_name
-from app.services.holding_filters import without_test_holdings
+from app.services.holding_filters import without_placeholder_holdings, without_test_holdings
 from app.services.portfolio_snapshot import save_daily_snapshot
 
 
@@ -75,7 +75,9 @@ def persist_holdings_after_sector_refresh(
     fetched_at: datetime | None = None,
 ) -> list[Holding]:
     """板块刷新成功后写回日快照与账户汇总，重启后保留最新当日收益。"""
-    merged = without_test_holdings(merge_holdings_with_snapshot(holdings))
+    merged = without_placeholder_holdings(
+        without_test_holdings(merge_holdings_with_snapshot(holdings))
+    )
     synced = sync_holding_amounts_from_shares(merged)
     enriched = enrich_holdings_estimates(overlay_official_nav_returns(synced))
     if not enriched:

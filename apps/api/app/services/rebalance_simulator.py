@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from app.models import AnalysisRequest, FundRecommendation, InvestorProfile
 from app.services.recommendations import suggest_trade_amount
+from app.services.risk import holding_weight_percent, resolve_weight_denominator
 
 
 def simulate_rebalance(
@@ -9,12 +10,13 @@ def simulate_rebalance(
     fund_recommendations: list[FundRecommendation],
 ) -> dict:
     total_amount = sum(holding.holding_amount for holding in request.holdings) or 1.0
+    weight_denominator = resolve_weight_denominator(request.holdings, request.profile) or 1.0
     rec_by_code = {rec.fund_code: rec for rec in fund_recommendations}
     rows: list[dict] = []
     simulated_total = 0.0
 
     for holding in request.holdings:
-        weight = holding.holding_amount / total_amount * 100
+        weight = holding_weight_percent(holding, request.holdings, request.profile)
         rec = rec_by_code.get(holding.fund_code)
         action = rec.action if rec else "观察"
         amount_yuan = rec.amount_yuan if rec else None
@@ -24,7 +26,7 @@ def simulate_rebalance(
             amount_yuan, amount_note = suggest_trade_amount(
                 holding,
                 weight,
-                total_amount,
+                weight_denominator,
                 request.profile,
                 action,
             )

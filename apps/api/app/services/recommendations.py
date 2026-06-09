@@ -12,6 +12,7 @@ from app.models import (
     TopicBrief,
 )
 from app.services.holding_metrics import compute_estimated_daily_return_percent
+from app.services.risk import holding_weight_percent, resolve_weight_denominator
 
 _BULLISH_HINTS = ("涨", "拉升", "利好", "突破", "创新高", "增持", "流入", "涨停", "走强", "反弹")
 _BEARISH_HINTS = (
@@ -37,16 +38,16 @@ _LEGACY_PIPE_RE = re.compile(r"^(.+?)｜决策：([^｜]+)｜")
 def suggest_trade_amount(
     holding: Holding,
     weight_percent: float,
-    total_amount: float,
+    weight_denominator: float,
     profile: InvestorProfile,
     action: str,
 ) -> tuple[float | None, str | None]:
     limit = profile.concentration_limit_percent
-    if total_amount <= 0:
+    if weight_denominator <= 0:
         return None, None
 
     if "减仓" in action or weight_percent > limit:
-        target_value = total_amount * limit / 100
+        target_value = weight_denominator * limit / 100
         reduce_yuan = holding.holding_amount - target_value
         if reduce_yuan >= 100:
             rounded = round(reduce_yuan, 0)
@@ -57,7 +58,7 @@ def suggest_trade_amount(
         return None, None
 
     if "加仓" in action or "定投" in action or "分批" in action:
-        target_value = total_amount * limit / 100
+        target_value = weight_denominator * limit / 100
         room = max(target_value - holding.holding_amount, 0)
         if room < 100:
             return None, None
@@ -178,7 +179,7 @@ def _contains_any(text: str, hints: tuple[str, ...]) -> bool:
 def build_offline_fund_recommendation(
     holding: Holding,
     weight_percent: float,
-    total_amount: float,
+    weight_denominator: float,
     profile: InvestorProfile,
     market_news: list[NewsItem] | None = None,
 ) -> FundRecommendation:
@@ -238,7 +239,7 @@ def build_offline_fund_recommendation(
         points.append("基金代码未补全，补全后可核对净值与公告。")
 
     amount_yuan, amount_note = suggest_trade_amount(
-        holding, weight_percent, total_amount, profile, action
+        holding, weight_percent, weight_denominator, profile, action
     )
 
     rec = FundRecommendation(
@@ -389,7 +390,7 @@ def enrich_fund_recommendations(
     market_news: list[NewsItem] | None = None,
     topic_briefs: list[TopicBrief] | None = None,
 ) -> list[FundRecommendation]:
-    total_amount = sum(holding.holding_amount for holding in request.holdings) or 1
+    weight_denominator = resolve_weight_denominator(request.holdings, request.profile) or 1
     holding_by_code = {h.fund_code: h for h in request.holdings}
     holding_by_name = {h.fund_name: h for h in request.holdings}
 
@@ -400,10 +401,10 @@ def enrich_fund_recommendations(
         if holding:
             copy.fund_code = holding.fund_code
             copy.fund_name = holding.fund_name
-            weight = holding.holding_amount / total_amount * 100
+            weight = holding_weight_percent(holding, request.holdings, request.profile)
             if copy.amount_yuan is None and copy.amount_note is None:
                 amount_yuan, amount_note = suggest_trade_amount(
-                    holding, weight, total_amount, request.profile, copy.action
+                    holding, weight, weight_denominator, request.profile, copy.action
                 )
                 copy.amount_yuan = amount_yuan
                 copy.amount_note = amount_note
