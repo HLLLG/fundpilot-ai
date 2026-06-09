@@ -73,9 +73,7 @@ def test_fetch_index_intraday_uses_browser_when_eastmoney_empty(monkeypatch):
 
 
 def test_fetch_sector_intraday_uses_stale_cache_when_live_fetch_empty(monkeypatch):
-    import datetime
-    today = datetime.date.today().isoformat()
-    yesterday = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
+    trade_date = "2026-06-10"
 
     monkeypatch.setattr(
         "app.services.sector_intraday_provider.build_trading_session",
@@ -85,14 +83,18 @@ def test_fetch_sector_intraday_uses_stale_cache_when_live_fetch_empty(monkeypatc
         },
     )
     monkeypatch.setattr(
+        "app.services.sector_intraday_provider.get_effective_trade_date",
+        lambda **kwargs: trade_date,
+    )
+    monkeypatch.setattr(
         "app.services.sector_intraday_provider._fetch_index_intraday",
         lambda *args, **kwargs: [],
     )
     # stale 缓存必须有 ≥30 点才会被用作回退（骨架点不算有效缓存）
     stale_points = [{"time": f"09:{30 + i:02d}", "percent": round(i * 0.01, 4)} for i in range(30)]
-    # stale key 需与 fetch_sector_intraday 实际使用的今日 trade_date 匹配
+    # stale key 需与 fetch_sector_intraday 实际使用的 trade_date 匹配（CN 时区，非 UTC date.today）
     save_spot_snapshot(
-        f"intraday:v2:index:中证电网设备:{today}",
+        f"intraday:v2:index:中证电网设备:{trade_date}",
         {
             "points": stale_points,
             "note": "展示缓存分时",
