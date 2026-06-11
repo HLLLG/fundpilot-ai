@@ -106,7 +106,6 @@ export function Dashboard() {
     }
     return null;
   }, [report, todayIso]);
-  const displayReport = todayReport;
 
   const workflowBlockers = useMemo(
     () =>

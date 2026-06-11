@@ -26,6 +26,7 @@ import {
   sumHoldingAmount,
   displayableHoldings,
 } from "@/lib/holdingMetrics";
+import { holdingRelatedBoardLabel } from "@/lib/profileSector";
 import { buildSectorRefreshNotice } from "@/lib/sectorQuoteStatus";
 import { loadAmountsHidden, saveAmountsHidden } from "@/lib/storage";
 import { formatTradeDateShort } from "@/lib/tradeDateLabel";
@@ -341,7 +342,7 @@ export function YangjibaoHoldingsBoard({
             行情日 {quoteTradeDate}
           </div>
         ) : null}
-        <div className="grid grid-cols-[minmax(0,1fr)_4.25rem_3.75rem_4.25rem] gap-1 border-b border-slate-100 bg-slate-50/80 px-3 py-1.5 text-[10px] font-bold text-slate-500 sm:px-4">
+        <div className="grid grid-cols-[minmax(0,1fr)_4.25rem_minmax(3.5rem,5rem)_4.25rem] gap-1 border-b border-slate-100 bg-slate-50/80 px-3 py-1.5 text-[10px] font-bold text-slate-500 sm:px-4">
           <span>基金</span>
           <SortableColumnHeader
             label={dailyColumnLabel}
@@ -378,12 +379,13 @@ export function YangjibaoHoldingsBoard({
             const dailyIsEstimated = dailyProfitIsEstimated(holding);
             const isOfficialDaily = holding.daily_return_percent_source === "official_nav";
             const sectorReturn = resolveSectorBoardReturnPercent(holding);
+            const sectorLabel = holdingRelatedBoardLabel(holding);
             return (
               <li key={`${holding.fund_code}-${index}`}>
                 <button
                   type="button"
                   onClick={() => onSelectHolding?.(index)}
-                  className="grid w-full grid-cols-[minmax(0,1fr)_4.25rem_3.75rem_4.25rem] gap-1 px-3 py-2 text-left transition hover:bg-slate-50 active:bg-slate-100 sm:px-4"
+                  className="grid w-full grid-cols-[minmax(0,1fr)_4.25rem_minmax(3.5rem,5rem)_4.25rem] gap-1 px-3 py-2 text-left transition hover:bg-slate-50 active:bg-slate-100 sm:px-4"
                 >
                   <div className="min-w-0">
                     <div className="flex items-center gap-1">
@@ -418,10 +420,16 @@ export function YangjibaoHoldingsBoard({
                     ) : null}
                   </div>
 
-                  <div className="text-right leading-tight">
+                  <div
+                    className="min-w-0 text-right leading-tight"
+                    title={sectorLabel !== "—" ? sectorLabel : undefined}
+                  >
                     <div className={`text-[13px] font-black tabular-nums ${cnProfitClass(sectorReturn)}`}>
                       {formatSignedPercent(sectorReturn)}
                     </div>
+                    {sectorLabel !== "—" ? (
+                      <div className="truncate text-[10px] font-semibold text-slate-500">{sectorLabel}</div>
+                    ) : null}
                   </div>
 
                   <div className="text-right leading-tight">

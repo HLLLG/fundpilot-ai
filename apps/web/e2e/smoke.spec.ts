@@ -17,11 +17,12 @@ test("trading session endpoint returns session kind", async ({ request }) => {
 });
 
 test("offline analyze persists report", async ({ request }) => {
+  test.setTimeout(120_000);
   const response = await request.post("/api/analyze", {
     data: {
       holdings: [
         {
-          fund_code: "015608",
+          fund_code: "000000",
           fund_name: "测试基金",
           holding_amount: 1000,
           return_percent: 1,

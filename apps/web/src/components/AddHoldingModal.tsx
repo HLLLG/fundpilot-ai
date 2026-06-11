@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
 import {
   ChevronDown,
@@ -395,10 +396,12 @@ function AlipayPhoneGuide({ src }: { src: string }) {
       <div className="rounded-[2.25rem] border-[7px] border-slate-900 bg-slate-900 p-[5px] shadow-[0_24px_48px_rgba(15,23,42,0.18)]">
         <div className="relative overflow-hidden rounded-[1.65rem] bg-white">
           <div className="pointer-events-none absolute left-1/2 top-0 z-10 h-[22px] w-[34%] -translate-x-1/2 rounded-b-[14px] bg-slate-900" />
-          <img
+          <Image
             src={src}
             alt="支付宝全部持有页面示意图"
-            className="aspect-[390/844] w-full object-cover object-top"
+            width={390}
+            height={844}
+            className="aspect-[390/844] h-auto w-full object-cover object-top"
             draggable={false}
           />
         </div>
