@@ -16,12 +16,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip
-          cache-dependency-path: apps/api/requirements.txt
       - name: Install backend dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          python -m pip install --upgrade pip setuptools wheel
+          pip install --retries 10 --default-timeout=120 --no-cache-dir -r requirements.txt
       - name: Run pytest
         run: python -m pytest tests -q
 
@@ -65,8 +63,8 @@ jobs:
       - name: Install backend
         working-directory: apps/api
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          python -m pip install --upgrade pip setuptools wheel
+          pip install --retries 10 --default-timeout=120 --no-cache-dir -r requirements.txt
       - name: Install frontend
         run: npm ci
       - name: Install Playwright
