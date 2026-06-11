@@ -13,6 +13,7 @@ import { ReportExecutiveSummary } from "@/components/ReportExecutiveSummary";
 import { ReportFactsPanel } from "@/components/ReportFactsPanel";
 import { ReportNewsBriefPanel } from "@/components/ReportNewsBriefPanel";
 import { ReportOutcomesPanel } from "@/components/ReportOutcomesPanel";
+import { ReportSignalBacktestPanel } from "@/components/ReportSignalBacktestPanel";
 import { StatusPill } from "@/components/StatusPill";
 
 type ReportPanelProps = {
@@ -301,6 +302,7 @@ export function ReportPanel({ report }: ReportPanelProps) {
 
       <ReportExecutiveSummary report={report} />
       <ReportPipelineBanner facts={report.analysis_facts} />
+      <ReportSignalBacktestPanel facts={report.analysis_facts} />
 
       {diff ? (
         <ReportCollapsibleSection title="与上一份日报对比" className="mb-5">

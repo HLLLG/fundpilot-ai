@@ -29,6 +29,10 @@ export function normalizeInvestorProfile(
     expected_investment_amount: expected,
     prefer_dca: source.prefer_dca ?? fallback.prefer_dca,
     avoid_chasing: source.avoid_chasing ?? fallback.avoid_chasing,
+    decision_style:
+      source.decision_style === "tactical" || source.decision_style === "conservative"
+        ? source.decision_style
+        : fallback.decision_style ?? "conservative",
   };
 }
 

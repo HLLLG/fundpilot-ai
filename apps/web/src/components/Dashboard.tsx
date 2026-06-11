@@ -1,11 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowRight, BrainCircuit, FileText, Sun, X } from "lucide-react";
+import { BrainCircuit, X } from "lucide-react";
 import type {
   AnalysisMode,
   FundCodeResolution,
-  FundProfile,
   Holding,
   HoldingFieldWarning,
   InvestorProfile,
@@ -15,16 +14,14 @@ import {
   fetchInvestorProfile,
   fetchPortfolioHoldings,
   fetchPortfolioSummary,
-  importFundProfiles,
-  listFundProfiles,
   listReports,
-  parseFundProfile,
   applyPortfolioHoldings,
   parseOcrUpload,
   saveInvestorProfileRemote,
   startAnalyzeJob,
   type PortfolioSummary,
 } from "@/lib/api";
+import { AddHoldingModal } from "@/components/AddHoldingModal";
 import { AlipayOcrConfirmModal } from "@/components/AlipayOcrConfirmModal";
 import { notifyDesktop } from "@/lib/notifications";
 import {
@@ -34,7 +31,6 @@ import {
   saveAnalysisMode,
   saveInvestorProfile,
 } from "@/lib/storage";
-import { FundProfilePanel } from "@/components/FundProfilePanel";
 import { HistoryRail } from "@/components/HistoryRail";
 import { JobStatusFloat } from "@/components/JobStatusFloat";
 import { displayableHoldings } from "@/lib/holdingMetrics";
@@ -47,9 +43,11 @@ import { PortfolioDashboard } from "@/components/PortfolioDashboard";
 import { ReportPanel } from "@/components/ReportPanel";
 import { YangjibaoHoldingsBoard } from "@/components/YangjibaoHoldingsBoard";
 import { YangjibaoFundDetail } from "@/components/YangjibaoFundDetail";
+import { NewsPreviewPanel } from "@/components/NewsPreviewPanel";
+import { RecommendationAccuracyPanel } from "@/components/RecommendationAccuracyPanel";
+import { SectorSignalBacktestPanel } from "@/components/SectorSignalBacktestPanel";
 import { RiskControls } from "@/components/RiskControls";
-import { StatusPill } from "@/components/StatusPill";
-import { TodayWorkflowSteps } from "@/components/TodayWorkflowSteps";
+import { DiagnosticsAccordion } from "@/components/DiagnosticsAccordion";
 import { UserMenu } from "@/components/UserMenu";
 const defaultProfile: InvestorProfile = {
   style: "稳健",
@@ -59,28 +57,18 @@ const defaultProfile: InvestorProfile = {
   expected_investment_amount: 30_000,
   prefer_dca: true,
   avoid_chasing: true,
+  decision_style: "conservative",
 };
 
-type TabId = "today" | "report" | "history" | "dashboard" | "profiles";
+type TabId = "today" | "report" | "history" | "dashboard";
 
 const primaryTabs: Array<{
-  id: Extract<TabId, "today" | "report">;
+  id: Extract<TabId, "today" | "dashboard" | "report">;
   label: string;
-  description: string;
-  icon: React.ReactNode;
 }> = [
-  {
-    id: "today",
-    label: "今日",
-    description: "账户汇总与板块涨跌",
-    icon: <Sun size={17} />,
-  },
-  {
-    id: "report",
-    label: "生成日报",
-    description: "风控画像与 AI 日报",
-    icon: <FileText size={17} />,
-  },
+  { id: "today", label: "持有" },
+  { id: "dashboard", label: "盈亏分析" },
+  { id: "report", label: "生成日报" },
 ];
 
 export function Dashboard() {
@@ -90,12 +78,10 @@ export function Dashboard() {
   );
   const [report, setReport] = useState<Report | null>(null);
   const [reports, setReports] = useState<Report[]>([]);
-  const [profiles, setProfiles] = useState<FundProfile[]>([]);
   const [portfolioSummary, setPortfolioSummary] = useState<PortfolioSummary | null>(null);
   const [holdingWarnings, setHoldingWarnings] = useState<HoldingFieldWarning[]>([]);
   const [message, setMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isProfiling, setIsProfiling] = useState(false);
   const [activeTab, setActiveTab] = useState<TabId>("today");
   const [analysisMode, setAnalysisMode] = useState<AnalysisMode>("deep");
   const [profileReady, setProfileReady] = useState(false);
@@ -110,6 +96,8 @@ export function Dashboard() {
   const [pendingOcrResolutions, setPendingOcrResolutions] = useState<FundCodeResolution[]>([]);
   const [pendingOcrNote, setPendingOcrNote] = useState<string | null>(null);
   const [isConfirmingOcr, setIsConfirmingOcr] = useState(false);
+  const [showAddHoldingModal, setShowAddHoldingModal] = useState(false);
+  const [isManualAdding, setIsManualAdding] = useState(false);
 
   const todayIso = new Date().toISOString().slice(0, 10);
   const todayReport = useMemo(() => {
@@ -126,12 +114,11 @@ export function Dashboard() {
         holdings,
         warnings: holdingWarnings,
         profile,
-        portfolioSummary,
         hasReportToday: Boolean(
           report?.created_at?.slice(0, 10) === new Date().toISOString().slice(0, 10),
         ),
       }),
-    [holdings, holdingWarnings, profile, portfolioSummary, report?.created_at],
+    [holdings, holdingWarnings, profile, report?.created_at],
   );
 
   const ocrWarningCount = holdingWarnings.length;
@@ -153,21 +140,9 @@ export function Dashboard() {
     }
   };
 
-  const loadProfiles = async () => {
-    try {
-      setProfiles(await listFundProfiles());
-    } catch {
-      setProfiles([]);
-    }
-  };
-
   const loadPortfolioSummary = async () => {
     try {
-      const summary = await fetchPortfolioSummary();
-      setPortfolioSummary(summary);
-      if (summary.profiles?.length) {
-        setProfiles(summary.profiles);
-      }
+      setPortfolioSummary(await fetchPortfolioSummary());
     } catch {
       setPortfolioSummary(null);
     }
@@ -184,10 +159,8 @@ export function Dashboard() {
         setHoldings(payload.holdings);
         shouldRefreshOnLoad.current = true;
       }
-      await loadProfiles();
     } catch {
       await loadPortfolioSummary();
-      await loadProfiles();
     } finally {
       setIsHydratingHoldings(false);
     }
@@ -284,51 +257,6 @@ export function Dashboard() {
     await runAnalyze(displayableHoldings(holdings));
   };
 
-  const handleImportProfiles = async (selectedFile: File) => {
-    try {
-      const text = await selectedFile.text();
-      const payload = JSON.parse(text) as { profiles?: FundProfile[] };
-      const profilesToImport = payload.profiles ?? (Array.isArray(payload) ? payload : []);
-      if (!Array.isArray(profilesToImport) || profilesToImport.length === 0) {
-        throw new Error("JSON 中未找到 profiles 数组。");
-      }
-      const result = await importFundProfiles(profilesToImport);
-      await loadProfiles();
-      setMessage(`已导入 ${result.saved} 条基金档案。`);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "导入档案失败。");
-    }
-  };
-
-  const handleProfileForm = async (formData: FormData) => {
-    setIsProfiling(true);
-    setMessage(null);
-    try {
-      const profileResult = await parseFundProfile(formData);
-      await loadProfiles();
-      if (profileResult.synced_holdings?.length) {
-        setHoldings(profileResult.synced_holdings);
-        if (profileResult.portfolio_summary) {
-          setPortfolioSummary(profileResult.portfolio_summary);
-        }
-      } else {
-        await hydratePortfolio();
-      }
-      setActiveTab("today");
-      setMessage(`基金档案已保存：${profileResult.fund_name}（${profileResult.fund_code}），账户汇总已同步。`);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "基金详情建档失败。");
-    } finally {
-      setIsProfiling(false);
-    }
-  };
-
-  const handleProfileFile = (selectedFile: File) => {
-    const formData = new FormData();
-    formData.append("file", selectedFile);
-    void handleProfileForm(formData);
-  };
-
   const handleOverviewUpload = async (selectedFile: File) => {
     setIsOcrUploading(true);
     setMessage(null);
@@ -346,11 +274,38 @@ export function Dashboard() {
       setPendingOcrResolutions(result.fund_code_resolutions ?? []);
       setPendingOcrNote(result.amount_semantics?.note ?? null);
       setHoldingWarnings(result.holding_warnings ?? []);
+      setShowAddHoldingModal(false);
       setActiveTab("today");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "总览截图识别失败。");
     } finally {
       setIsOcrUploading(false);
+    }
+  };
+
+  const handleManualAddHoldings = async (newHoldings: Holding[]) => {
+    if (!newHoldings.length) {
+      return;
+    }
+    setIsManualAdding(true);
+    setMessage(null);
+    try {
+      const merged = [...displayableHoldings(holdings), ...newHoldings];
+      const applied = await applyPortfolioHoldings(merged);
+      setHoldings(applied.holdings);
+      if (applied.portfolio_summary) {
+        setPortfolioSummary(applied.portfolio_summary);
+      }
+      setShowAddHoldingModal(false);
+      setMessage(
+        newHoldings.length === 1
+          ? `已添加 ${newHoldings[0].fund_name} 到账户汇总。`
+          : `已添加 ${newHoldings.length} 只基金到账户汇总。`,
+      );
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "手动添加失败。");
+    } finally {
+      setIsManualAdding(false);
     }
   };
 
@@ -369,7 +324,6 @@ export function Dashboard() {
       setPendingOcrHoldings(null);
       setPendingOcrResolutions([]);
       setPendingOcrNote(null);
-      await loadProfiles();
       setMessage(`已更新 ${count} 只基金的账户汇总，板块涨跌已刷新。`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "确认更新失败。");
@@ -380,83 +334,54 @@ export function Dashboard() {
 
   return (
     <main className="premium-bg min-h-screen">
-      <div className="mx-auto flex min-h-screen w-full max-w-[1520px] flex-col px-4 py-4 sm:px-6 lg:px-8 lg:py-6">
-        <nav className="animate-fade-up relative z-40 mb-4 flex items-center justify-between gap-4 rounded-2xl border border-white/80 bg-white/90 px-4 py-3 shadow-sm backdrop-blur-sm lg:mb-5 lg:rounded-full">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--brand)] text-white shadow-[0_10px_24px_rgba(21,101,232,0.28)] lg:h-11 lg:w-11 lg:rounded-full">
-              <BrainCircuit size={20} />
+      <div className="mx-auto flex min-h-screen w-full max-w-3xl flex-col px-4 py-3 sm:px-5 sm:py-4">
+        <nav className="relative z-40 mb-3 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[var(--brand)] text-white">
+              <BrainCircuit size={18} />
             </div>
-            <div>
-              <div className="text-sm font-black text-slate-950">FundPilot AI</div>
-              <div className="text-xs text-slate-500">私人基金投研助手</div>
-            </div>
+            <span className="text-sm font-black tracking-tight text-slate-950">FundPilot</span>
           </div>
-          <div className="flex items-center gap-2">
-            <div className="hidden items-center gap-2 md:flex">
-              <StatusPill tone="blue">本地优先</StatusPill>
-              <StatusPill tone="green">DeepSeek V4 Pro</StatusPill>
-            </div>
-            <UserMenu onNavigate={setActiveTab} />
-          </div>
+          <UserMenu onNavigate={setActiveTab} />
         </nav>
-
-        <header className="animate-fade-up mb-4 lg:mb-5">
-          <div className="mb-2 flex flex-wrap items-center gap-2">
-            <StatusPill tone="dark">工作台</StatusPill>
-            <StatusPill tone="blue">截图 → 日报</StatusPill>
-          </div>
-          <h1 className="max-w-3xl text-2xl font-black leading-tight tracking-tight text-slate-950 sm:text-3xl lg:text-[2rem]">
-            养基宝式持仓看板，真实板块优先，失败时估值兜底
-          </h1>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
-            「今日」只看账户汇总；生成 AI 日报请切到「生成日报」。历史报告、档案与仪表盘在右上角用户菜单。
-          </p>
-        </header>
-
-        {message ? (
-          <div
-            className="animate-fade-up mb-4 flex items-start justify-between gap-3 rounded-2xl border border-blue-100 bg-white px-4 py-3 text-sm font-semibold text-slate-700 shadow-sm lg:rounded-3xl lg:px-5 lg:py-4"
-            role="status"
-          >
-            <span className="leading-6">{message}</span>
-            <div className="flex shrink-0 items-center gap-2">
-              <ArrowRight className="hidden text-blue-600 sm:block" size={18} />
-              <button
-                type="button"
-                onClick={() => setMessage(null)}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
-                aria-label="关闭提示"
-              >
-                <X size={16} />
-              </button>
-            </div>
-          </div>
-        ) : null}
 
         <TabNav activeTab={activeTab} onSelect={setActiveTab} />
 
-        <div className="min-w-0 flex-1">
+        {message ? (
+          <div
+            className="mb-3 flex items-start justify-between gap-3 rounded-xl border border-blue-100 bg-white px-3 py-2.5 text-sm text-slate-700"
+            role="status"
+          >
+            <span className="leading-6">{message}</span>
+            <button
+              type="button"
+              onClick={() => setMessage(null)}
+              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-slate-400 hover:bg-slate-100"
+              aria-label="关闭提示"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        ) : null}
+
+        <div className="min-w-0 flex-1 pb-6">
           {activeTab === "today" ? (
-            <div className="mx-auto w-full max-w-xl">
+            <div className="w-full">
               <YangjibaoHoldingsBoard
                 holdings={holdings}
                 portfolioSummary={portfolioSummary}
                 sectorRefresh={sectorRefresh}
                 isLoading={isHydratingHoldings}
                 className="max-w-none"
-                onUploadOverview={(file) => void handleOverviewUpload(file)}
-                isUploadingOverview={isOcrUploading}
-                onOpenCapture={() => setActiveTab("profiles")}
-                onAddHolding={() => setActiveTab("profiles")}
+                onAddHolding={() => setShowAddHoldingModal(true)}
                 onSelectHolding={setSelectedHoldingIndex}
               />
             </div>
           ) : null}
 
           {activeTab === "report" ? (
-            <div className="grid min-w-0 gap-5 lg:gap-6">
+            <div className="grid min-w-0 gap-4">
               <TradingSessionBar />
-              <TodayWorkflowSteps hasHoldings={holdings.length > 0} hasReport={Boolean(displayReport)} />
               <TodayBlockingChecklist blockers={workflowBlockers} />
               <RiskControls
                 profile={profile}
@@ -469,37 +394,35 @@ export function Dashboard() {
                 hasBlockingErrors={blockingErrors}
               />
               <div ref={reportSectionRef} className="min-w-0">
-                <div className="mb-3 text-sm font-black text-slate-950">今日日报</div>
                 {todayReport ? (
                   <ReportPanel report={todayReport} />
                 ) : (
-                  <div className="glass-panel rounded-[24px] border border-dashed border-slate-200 px-5 py-8 text-center text-sm leading-6 text-slate-500">
-                    今日尚未生成日报。确认账户汇总数据后点击「生成今日基金操作日报」；历史报告请在右上角用户菜单打开。
+                  <div className="section-card px-4 py-10 text-center text-sm text-slate-500">
+                    确认持仓后，点击上方按钮生成今日操作建议。
                   </div>
                 )}
               </div>
+              <DiagnosticsAccordion>
+                <NewsPreviewPanel holdings={displayableHoldings(holdings)} profile={profile} />
+                <RecommendationAccuracyPanel />
+                <SectorSignalBacktestPanel
+                  sectorLabels={[
+                    ...new Set(
+                      displayableHoldings(holdings)
+                        .map((item) => item.sector_name?.trim())
+                        .filter((name): name is string => Boolean(name)),
+                    ),
+                  ]}
+                />
+              </DiagnosticsAccordion>
             </div>
           ) : null}
 
           {activeTab === "dashboard" ? <PortfolioDashboard /> : null}
 
-          {activeTab === "profiles" ? (
-            <div className="grid min-w-0 gap-6">
-              <FundProfilePanel
-                profiles={profiles}
-                isBusy={isProfiling}
-                onFileSelect={handleProfileFile}
-                onRefresh={() => {
-                  void loadProfiles();
-                  void loadPortfolioSummary();
-                }}
-                onImport={(selectedFile) => void handleImportProfiles(selectedFile)}
-              />
-            </div>
-          ) : null}
-
           {activeTab === "history" ? (
             <div className="grid gap-6">
+              <SectorSignalBacktestPanel title="板块信号历史回测（全部 canonical）" />
               <DatabaseBackupPanel
               onImported={() => {
                 void loadHistory();
@@ -543,10 +466,6 @@ export function Dashboard() {
           sectorMeta={sectorRefresh.sectorMetaByFundCode[holdings[selectedHoldingIndex].fund_code]}
           onClose={() => setSelectedHoldingIndex(null)}
           onNavigate={setSelectedHoldingIndex}
-          onEdit={() => {
-            setSelectedHoldingIndex(null);
-            setActiveTab("profiles");
-          }}
           onHoldingResolved={(index, resolved) => {
             setHoldings((current) =>
               current.map((item, itemIndex) => (itemIndex === index ? resolved : item)),
@@ -554,6 +473,15 @@ export function Dashboard() {
           }}
         />
       ) : null}
+
+      <AddHoldingModal
+        open={showAddHoldingModal}
+        onClose={() => setShowAddHoldingModal(false)}
+        onUpload={(file) => void handleOverviewUpload(file)}
+        onManualSubmit={(items) => handleManualAddHoldings(items)}
+        isUploading={isOcrUploading}
+        isSubmitting={isManualAdding}
+      />
 
       {pendingOcrHoldings ? (
         <AlipayOcrConfirmModal
@@ -579,47 +507,26 @@ function TabNav({
   onSelect,
 }: {
   activeTab: TabId;
-  onSelect: (tab: Extract<TabId, "today" | "report">) => void;
+  onSelect: (tab: Extract<TabId, "today" | "dashboard" | "report">) => void;
 }) {
   const highlightedTab =
-    activeTab === "today" || activeTab === "report" ? activeTab : null;
+    activeTab === "today" || activeTab === "dashboard" || activeTab === "report"
+      ? activeTab
+      : null;
 
   return (
-    <div className="glass-panel mb-4 overflow-x-auto rounded-[20px] p-1.5 lg:mb-5 lg:rounded-[24px] lg:p-2">
-      <div className="grid min-w-[280px] grid-cols-2 gap-1.5 lg:min-w-0 lg:gap-2">
-        {primaryTabs.map((tab) => {
-          const active = tab.id === highlightedTab;
-          return (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => onSelect(tab.id)}
-              aria-current={active ? "page" : undefined}
-              className={`flex items-center gap-2.5 rounded-[16px] px-3 py-2.5 text-left transition lg:gap-3 lg:rounded-[18px] lg:px-4 lg:py-3 ${
-                active
-                  ? "bg-[var(--brand)] text-white shadow-[0_12px_28px_rgba(21,101,232,0.22)]"
-                  : "bg-white text-slate-600 hover:bg-blue-50 hover:text-blue-700"
-              }`}
-            >
-              <span
-                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl lg:h-9 lg:w-9 lg:rounded-2xl ${
-                  active ? "bg-white/15 text-white" : "bg-blue-50 text-blue-600"
-                }`}
-              >
-                {tab.icon}
-              </span>
-              <span className="min-w-0">
-                <span className="block text-sm font-black">{tab.label}</span>
-                <span
-                  className={`mt-0.5 hidden truncate text-xs sm:block ${active ? "text-slate-300" : "text-slate-400"}`}
-                >
-                  {tab.description}
-                </span>
-              </span>
-            </button>
-          );
-        })}
-      </div>
+    <div className="tab-segment mb-3">
+      {primaryTabs.map((tab) => (
+        <button
+          key={tab.id}
+          type="button"
+          onClick={() => onSelect(tab.id)}
+          aria-current={tab.id === highlightedTab ? "page" : undefined}
+          className="tab-segment-btn"
+        >
+          {tab.label}
+        </button>
+      ))}
     </div>
   );
 }

@@ -13,6 +13,7 @@ from app.services.holding_estimates import (
 from app.services.fund_profile import _is_valid_sector_label
 from app.services.fund_profile import _looks_like_index_name
 from app.services.holding_filters import without_placeholder_holdings, without_test_holdings
+from app.services.portfolio_profit_analysis import persist_intraday_curve
 from app.services.portfolio_snapshot import save_daily_snapshot
 
 
@@ -112,4 +113,14 @@ def persist_holdings_after_sector_refresh(
 
     save_portfolio_summary(summary)
     save_daily_snapshot(enriched, summary)
+    from app.database import get_fund_profile_by_code
+    from app.models import FundProfile
+
+    profiles_by_code: dict[str, FundProfile] = {}
+    for holding in enriched:
+        if holding.fund_code and holding.fund_code != "000000":
+            profile = get_fund_profile_by_code(holding.fund_code)
+            if profile is not None:
+                profiles_by_code[holding.fund_code] = profile
+    persist_intraday_curve(enriched, profiles_by_code)
     return enriched

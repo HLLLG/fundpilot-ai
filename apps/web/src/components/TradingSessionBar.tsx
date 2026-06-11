@@ -40,9 +40,8 @@ export function TradingSessionBar() {
 
   if (loadState === "loading") {
     return (
-      <div className="animate-pulse rounded-2xl border border-slate-200 bg-white/70 px-4 py-3">
-        <div className="h-4 w-40 rounded bg-slate-200" />
-        <div className="mt-2 h-3 w-64 rounded bg-slate-100" />
+      <div className="animate-pulse section-card h-9 px-4 py-2">
+        <div className="h-3 w-32 rounded bg-slate-200" />
       </div>
     );
   }
@@ -65,18 +64,15 @@ export function TradingSessionBar() {
   const label = sessionLabel[session.session_kind] ?? "交易日";
 
   return (
-    <div className={`rounded-2xl border px-4 py-3 ${tone}`}>
-      <div className="flex flex-wrap items-center gap-2 text-sm font-bold">
-        <Clock3 size={16} />
-        <span>{label}</span>
-        <span className="font-normal opacity-80">· {session.local_datetime}</span>
-        {session.minutes_to_close != null && session.minutes_to_close >= 0 ? (
-          <span className="rounded-full bg-white/70 px-2 py-0.5 text-xs font-semibold">
-            距收盘约 {session.minutes_to_close} 分钟
-          </span>
-        ) : null}
-      </div>
-      <p className="mt-1 text-xs leading-5 opacity-90">{session.decision_window}</p>
+    <div className={`section-card flex flex-wrap items-center gap-2 border px-3 py-2 text-xs font-semibold ${tone}`}>
+      <Clock3 size={14} className="shrink-0" />
+      <span>{label}</span>
+      <span className="font-normal opacity-75">{session.effective_trade_date}</span>
+      {session.minutes_to_close != null && session.minutes_to_close >= 0 ? (
+        <span className="rounded-md bg-white/60 px-1.5 py-0.5 text-[11px]">
+          距收盘 {session.minutes_to_close} 分
+        </span>
+      ) : null}
     </div>
   );
 }

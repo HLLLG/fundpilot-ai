@@ -100,6 +100,18 @@ _CANONICAL_BY_LABEL: dict[str, CanonicalSector] = {
 }
 
 
+def list_canonical_sector_labels() -> list[str]:
+    """返回已硬编码映射的板块/指数标签（去重、稳定排序）。"""
+    seen: set[str] = set()
+    labels: list[str] = []
+    for label in sorted(_CANONICAL_BY_LABEL):
+        if label in seen:
+            continue
+        seen.add(label)
+        labels.append(label)
+    return labels
+
+
 def get_canonical_sector(sector_name: str | None) -> CanonicalSector | None:
     label = normalize_sector_label(sector_name)
     if not label:
@@ -264,6 +276,3 @@ def prefetch_canonical_kline_quotes(
             except Exception as exc:
                 logger.info("prefetch canonical kline worker failed: %s", exc)
     return matched
-
-
-# 兼容旧调用名

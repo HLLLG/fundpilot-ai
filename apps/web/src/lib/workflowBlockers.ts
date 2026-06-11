@@ -1,4 +1,4 @@
-import type { Holding, HoldingFieldWarning, InvestorProfile, PortfolioSummary } from "@/lib/api";
+import type { Holding, HoldingFieldWarning, InvestorProfile } from "@/lib/api";
 import { displayableHoldings } from "@/lib/holdingMetrics";
 
 export type WorkflowBlocker = {
@@ -11,11 +11,10 @@ export function buildWorkflowBlockers(input: {
   holdings: Holding[];
   warnings: HoldingFieldWarning[];
   profile: InvestorProfile;
-  portfolioSummary: PortfolioSummary | null;
   hasReportToday: boolean;
 }): WorkflowBlocker[] {
   const blockers: WorkflowBlocker[] = [];
-  const { warnings, profile, portfolioSummary } = input;
+  const { warnings, profile } = input;
   const holdings = displayableHoldings(input.holdings);
 
   if (!holdings.length) {
@@ -66,14 +65,6 @@ export function buildWorkflowBlockers(input: {
       id: "concentration",
       severity: "warn",
       message: `${overLimit.length} 只超过集中度上限 ${profile.concentration_limit_percent}%，报告可能建议减仓评估。`,
-    });
-  }
-
-  if (portfolioSummary?.profiles?.length === 0) {
-    blockers.push({
-      id: "no-profiles",
-      severity: "info",
-      message: "尚未建立基金档案，总览缺代码时无法自动补全名称。",
     });
   }
 

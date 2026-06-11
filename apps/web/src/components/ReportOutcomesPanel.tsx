@@ -76,6 +76,12 @@ export function ReportOutcomesPanel({ reportId, embedded = false }: ReportOutcom
   const body = (
     <div className="space-y-5">
       {outcomes ? <OutcomeItems outcomes={outcomes} /> : null}
+      {weekly?.reversal_stats?.summary_line ? (
+        <div className="rounded-2xl border border-amber-100 bg-amber-50/60 p-4 text-sm text-amber-950">
+          <div className="font-black">涨后回吐复盘</div>
+          <p className="mt-1 leading-6">{weekly.reversal_stats.summary_line}</p>
+        </div>
+      ) : null}
       {weekly ? (
         <div className="rounded-2xl border border-indigo-100 bg-indigo-50/50 p-4">
           <div className="mb-2 flex items-center gap-2 text-sm font-black text-slate-950">

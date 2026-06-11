@@ -26,17 +26,59 @@ export function holdingRelatedBoardLabel(
   return "—";
 }
 
-/** 与后端 sector_quote_lookup_label 一致：有场内指数用指数名，否则用关联板块名 */
+const FUND_NAME_INDEX_TOKENS = [
+  "中证电网设备",
+  "中证人工智能",
+  "中证半导体",
+  "中证新能源",
+  "中证军工",
+] as const;
+
+const FEEDER_THEME_TO_INDEX: Record<string, string> = {
+  人工智能: "中证人工智能",
+  电网设备: "中证电网设备",
+  半导体: "中证半导体",
+  新能源: "中证新能源",
+  军工: "中证军工",
+};
+
+function inferIndexFromFundName(fundName: string | null | undefined): string | null {
+  const normalized = (fundName || "").replace("...", "").trim();
+  if (!normalized) {
+    return null;
+  }
+  for (const token of FUND_NAME_INDEX_TOKENS) {
+    if (normalized.includes(token)) {
+      return token;
+    }
+  }
+  const compact = normalized.replace(/\s+/g, "");
+  if (!compact.includes("ETF联接") && !compact.includes("ETF连接")) {
+    return null;
+  }
+  for (const [theme, index] of Object.entries(FEEDER_THEME_TO_INDEX)) {
+    if (normalized.includes(theme)) {
+      return index;
+    }
+  }
+  return null;
+}
+
+/** 与后端 sector_quote_lookup_label 一致：ETF 联接 / OCR 场内指数 → 指数；否则关联板块短名 */
 export function sectorQuoteLookupLabel(
-  holding: Pick<Holding, "sector_name" | "intraday_index_name">,
+  holding: Pick<Holding, "fund_name" | "sector_name" | "intraday_index_name">,
 ): string | null {
-  const indexName = holding.intraday_index_name?.trim();
-  if (indexName && !isInvalidSectorLabel(indexName)) {
-    return indexName;
+  const fromFund = inferIndexFromFundName(holding.fund_name);
+  if (fromFund) {
+    return fromFund;
   }
   const boardName = holding.sector_name?.trim();
   if (boardName && !isInvalidSectorLabel(boardName)) {
     return boardName;
+  }
+  const indexName = holding.intraday_index_name?.trim();
+  if (indexName && !isInvalidSectorLabel(indexName)) {
+    return indexName;
   }
   return null;
 }

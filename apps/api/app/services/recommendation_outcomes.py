@@ -57,6 +57,13 @@ def build_recommendation_outcomes(
             else None
         )
 
+        reversal = _detect_reversal_scenario(before, after)
+        assessment = _assess_outcome(
+            prev_rec.get("action", ""),
+            holding_delta,
+            daily_delta,
+            reversal_scenario=reversal,
+        )
         items.append(
             {
                 "fund_code": code,
@@ -69,11 +76,8 @@ def build_recommendation_outcomes(
                 "daily_return_before": daily_before,
                 "daily_return_after": daily_after,
                 "daily_return_delta": daily_delta,
-                "assessment": _assess_outcome(
-                    prev_rec.get("action", ""),
-                    holding_delta,
-                    daily_delta,
-                ),
+                "reversal_scenario": reversal,
+                "assessment": assessment,
             }
         )
 
@@ -135,6 +139,8 @@ def build_weekly_recommendation_outcomes(
         f"方向大体吻合 {hit_count} 只，需复盘 {miss_count} 只。"
     )
 
+    reversal_stats = _summarize_reversal_outcomes(items)
+
     return {
         **core,
         "has_baseline": True,
@@ -144,6 +150,7 @@ def build_weekly_recommendation_outcomes(
         "summary": summary,
         "hit_count": hit_count,
         "miss_count": miss_count,
+        "reversal_stats": reversal_stats,
     }
 
 
@@ -188,10 +195,54 @@ def _holding_like(holding: dict) -> Any:
     )
 
 
+def _detect_reversal_scenario(before: dict, after: dict) -> str | None:
+    daily_before = _daily_return(before)
+    daily_after = _daily_return(after)
+    if daily_before is None or daily_after is None:
+        return None
+    if daily_before >= 1.0 and daily_after <= -0.8:
+        return "up_then_down"
+    if daily_before <= -1.0 and daily_after >= 0.8:
+        return "down_then_up"
+    return None
+
+
+def _summarize_reversal_outcomes(items: list[dict[str, Any]]) -> dict[str, Any]:
+    reversal_items = [item for item in items if item.get("reversal_scenario")]
+    up_then_down = [item for item in reversal_items if item["reversal_scenario"] == "up_then_down"]
+    conservative_hit = sum(
+        1
+        for item in up_then_down
+        if any(
+            token in str(item.get("previous_action", ""))
+            for token in ("减仓", "复核", "暂停", "观察")
+        )
+    )
+    aggressive_miss = sum(
+        1
+        for item in up_then_down
+        if "加仓" in str(item.get("previous_action", ""))
+    )
+    return {
+        "reversal_count": len(reversal_items),
+        "up_then_down_count": len(up_then_down),
+        "up_then_down_conservative_aligned": conservative_hit,
+        "up_then_down_aggressive_miss": aggressive_miss,
+        "summary_line": (
+            f"涨后回吐场景 {len(up_then_down)} 只："
+            f"保守/观望类建议 {conservative_hit} 只，追涨加仓 {aggressive_miss} 只。"
+            if up_then_down
+            else "本期未检测到明显的「涨一天跌一天」场景。"
+        ),
+    }
+
+
 def _assess_outcome(
     previous_action: str,
     holding_delta: float | None,
     daily_delta: float | None,
+    *,
+    reversal_scenario: str | None = None,
 ) -> str:
     primary_delta = daily_delta if daily_delta is not None else holding_delta
     if primary_delta is None:
@@ -199,6 +250,18 @@ def _assess_outcome(
 
     metric_label = "估算/实际当日涨跌" if daily_delta is not None else "持有收益率"
     action = previous_action or ""
+
+    if reversal_scenario == "up_then_down":
+        if any(token in action for token in ("减仓", "复核", "暂停", "观察")):
+            return (
+                f"涨后回吐（前日涨、当日跌 {primary_delta:+.2f}%），"
+                "保守/观望建议与短线回撤风险大体一致"
+            )
+        if "加仓" in action:
+            return (
+                f"涨后回吐（前日涨、当日跌 {primary_delta:+.2f}%），"
+                "前日加仓类建议在次日回撤中承压，战术模式宜缩小额度或等回踩"
+            )
 
     if any(token in action for token in ("减仓", "复核", "暂停")):
         if primary_delta <= 0:

@@ -1,203 +1,196 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { BarChart3, LineChart, PieChart } from "lucide-react";
-import type { PortfolioDashboardData } from "@/lib/api";
+import { useCallback, useEffect, useState } from "react";
+import type { PortfolioDashboardData, ProfitRange } from "@/lib/api";
 import { fetchPortfolioDashboard } from "@/lib/api";
-import { PortfolioSummaryCard } from "@/components/PortfolioSummaryCard";
+import { DailyProfitTop5 } from "@/components/DailyProfitTop5";
+import { HoldingDonutChart } from "@/components/HoldingDonutChart";
+import { ProfitAnalysisTrendChart } from "@/components/ProfitAnalysisTrendChart";
+import { ProfitLossCalendar } from "@/components/ProfitLossCalendar";
+
+const RANGE_TABS: Array<{ id: ProfitRange; label: string }> = [
+  { id: "today", label: "当日" },
+  { id: "week", label: "本周" },
+  { id: "month", label: "本月" },
+  { id: "year", label: "今年" },
+  { id: "all", label: "全部" },
+];
 
 function formatMoney(value: number | null | undefined) {
   if (value === null || value === undefined) {
     return "—";
   }
-  return `¥${value.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const rounded = Math.round(value * 100) / 100;
+  return `${rounded > 0 ? "+" : ""}${rounded.toLocaleString("zh-CN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+function formatPercent(value: number | null | undefined) {
+  if (value == null) {
+    return "—";
+  }
+  const rounded = Math.round(value * 100) / 100;
+  return `${rounded > 0 ? "+" : ""}${rounded.toFixed(2)}%`;
 }
 
 function profitClass(value: number | null | undefined) {
-  if (value === null || value === undefined || value === 0) {
+  if (value == null || value === 0) {
     return "text-slate-500";
   }
-  return value > 0 ? "text-rose-600" : "text-emerald-600";
-}
-
-type SparklineProps = {
-  points: Array<{ label: string; value: number | null | undefined }>;
-  strokeClass?: string;
-  formatValue?: (value: number) => string;
-};
-
-function Sparkline({ points, strokeClass = "stroke-blue-600", formatValue }: SparklineProps) {
-  const values = points.map((point) => point.value).filter((v): v is number => v != null);
-  if (values.length < 2) {
-    return (
-      <div className="flex h-36 items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-500">
-        上传总览截图后会自动记录，满 2 天即可看到走势
-      </div>
-    );
-  }
-
-  const width = 320;
-  const height = 120;
-  const padding = 12;
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const range = max - min || 1;
-  const coords = values.map((value, index) => {
-    const x = padding + (index / (values.length - 1)) * (width - padding * 2);
-    const y = height - padding - ((value - min) / range) * (height - padding * 2);
-    return `${x},${y}`;
-  });
-
-  return (
-    <div>
-      <svg viewBox={`0 0 ${width} ${height}`} className="h-36 w-full">
-        <polyline
-          fill="none"
-          className={strokeClass}
-          strokeWidth="2.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          points={coords.join(" ")}
-        />
-        {values.map((value, index) => {
-          const [x, y] = coords[index].split(",").map(Number);
-          return <circle key={index} cx={x} cy={y} r="3.5" className="fill-white stroke-blue-600" strokeWidth="2" />;
-        })}
-      </svg>
-      <div className="mt-2 flex justify-between text-[10px] font-semibold text-slate-400">
-        <span>{points[0]?.label}</span>
-        <span>{points[points.length - 1]?.label}</span>
-      </div>
-      {formatValue ? (
-        <div className="mt-1 text-xs text-slate-500">
-          最新 {formatValue(values[values.length - 1])}
-        </div>
-      ) : null}
-    </div>
-  );
+  return value > 0 ? "profit-up" : "profit-down";
 }
 
 export function PortfolioDashboard() {
   const [data, setData] = useState<PortfolioDashboardData | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [profitRange, setProfitRange] = useState<ProfitRange>("today");
+  const [calendarYear, setCalendarYear] = useState(() => new Date().getFullYear());
+  const [calendarMonth, setCalendarMonth] = useState(() => new Date().getMonth() + 1);
+  const [calendarShowReturn, setCalendarShowReturn] = useState(false);
+  const [showReturnHeader, setShowReturnHeader] = useState(false);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     try {
-      setData(await fetchPortfolioDashboard());
+      setData(
+        await fetchPortfolioDashboard({
+          range: profitRange,
+          calendarYear,
+          calendarMonth,
+        }),
+      );
       setError(null);
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "加载仪表盘失败");
+      setError(loadError instanceof Error ? loadError.message : "加载盈亏分析失败");
     }
-  };
+  }, [calendarMonth, calendarYear, profitRange]);
 
   useEffect(() => {
     void load();
-  }, []);
+  }, [load]);
 
   const summary = data?.summary ?? null;
-  const history = data?.history ?? [];
-  const allocation = data?.allocation ?? [];
+  const footer = data?.profit_trend_footer;
+  const headerValue = showReturnHeader ? summary?.daily_return_percent : summary?.daily_profit;
+  const displayTone = showReturnHeader ? summary?.daily_return_percent : summary?.daily_profit;
+  const alpha = footer?.alpha_percent;
+  const portfolioLineColor =
+    (footer?.portfolio_return_percent ?? 0) > 0
+      ? "#e11d48"
+      : (footer?.portfolio_return_percent ?? 0) < 0
+        ? "#059669"
+        : "#64748b";
 
   return (
-    <div className="grid gap-6">
-      <PortfolioSummaryCard summary={summary} />
+    <div className="pl-page">
+      <div className="pl-hero">
+        <div className="pl-hero-label">
+          {profitRange === "today" ? "当日收益" : `${RANGE_TABS.find((t) => t.id === profitRange)?.label ?? ""}累计`}
+        </div>
+        <div className={`pl-hero-value ${profitClass(displayTone)}`}>
+          {showReturnHeader ? formatPercent(headerValue) : formatMoney(headerValue)}
+        </div>
+        {!showReturnHeader && summary?.daily_return_percent != null && profitRange === "today" ? (
+          <div className={`pl-hero-sub ${profitClass(summary.daily_return_percent)}`}>
+            {formatPercent(summary.daily_return_percent)}
+          </div>
+        ) : null}
+        <div className="pl-toggle">
+          <button
+            type="button"
+            aria-pressed={!showReturnHeader}
+            className="pl-toggle-btn"
+            onClick={() => setShowReturnHeader(false)}
+          >
+            收益额
+          </button>
+          <button
+            type="button"
+            aria-pressed={showReturnHeader}
+            className="pl-toggle-btn"
+            onClick={() => setShowReturnHeader(true)}
+          >
+            收益率
+          </button>
+        </div>
+      </div>
+
+      <div className="pl-range-bar" role="tablist" aria-label="时间范围">
+        {RANGE_TABS.map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            role="tab"
+            aria-selected={profitRange === tab.id}
+            onClick={() => setProfitRange(tab.id)}
+            className="pl-range-tab"
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
 
       {error ? (
-        <div className="rounded-2xl border border-rose-100 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+        <div className="mt-3 rounded-xl border border-rose-100 bg-rose-50 px-3 py-2 text-sm text-rose-700">
           {error}
         </div>
       ) : null}
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <section className="glass-panel rounded-[24px] p-5">
-          <div className="mb-3 flex items-center gap-2 text-sm font-black text-slate-950">
-            <LineChart size={18} className="text-blue-600" />
-            账户资产走势
+      <section className="pl-panel">
+        <div className="pl-panel-head">
+          <div className="pl-panel-title">收益走势</div>
+          <div className="pl-legend">
+            <span className="pl-legend-item">
+              <span className="pl-legend-dot" style={{ background: portfolioLineColor }} />
+              我的收益 {formatPercent(footer?.portfolio_return_percent)}
+            </span>
+            <span className="pl-legend-item">
+              <span className="pl-legend-dot" style={{ background: INDEX_COLOR }} />
+              上证 {formatPercent(footer?.index_return_percent)}
+            </span>
           </div>
-          <Sparkline
-            points={history.map((row) => ({
-              label: row.date.slice(5),
-              value: row.total_assets,
-            }))}
-            formatValue={(value) => formatMoney(value)}
-          />
-        </section>
-
-        <section className="glass-panel rounded-[24px] p-5">
-          <div className="mb-3 flex items-center gap-2 text-sm font-black text-slate-950">
-            <BarChart3 size={18} className="text-indigo-600" />
-            当日收益走势
-          </div>
-          <Sparkline
-            points={history.map((row) => ({
-              label: row.date.slice(5),
-              value: row.daily_profit,
-            }))}
-            strokeClass="stroke-indigo-600"
-            formatValue={(value) => formatMoney(value)}
-          />
-        </section>
-      </div>
-
-      <section className="glass-panel rounded-[24px] p-5">
-        <div className="mb-4 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2 text-sm font-black text-slate-950">
-            <PieChart size={18} className="text-violet-600" />
-            持仓分布
-          </div>
-          {data?.latest_snapshot_date ? (
-            <span className="text-xs text-slate-400">数据日 {data.latest_snapshot_date}</span>
-          ) : null}
         </div>
 
-        {allocation.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
-            暂无分布数据。在「今日」上传养基宝总览后会自动记录。
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {allocation.map((row) => (
-              <div key={`${row.fund_code}-${row.fund_name}`} className="rounded-2xl bg-white px-4 py-3 shadow-sm">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-bold text-slate-900">{row.fund_name}</div>
-                    <div className="text-xs text-slate-400">{row.fund_code}</div>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-sm font-black text-slate-950">{formatMoney(row.holding_amount)}</div>
-                    <div className="text-xs font-bold text-slate-500">{row.weight_percent.toFixed(1)}%</div>
-                  </div>
-                </div>
-                <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100">
-                  <div
-                    className="h-full rounded-full bg-gradient-to-r from-blue-500 to-indigo-500"
-                    style={{ width: `${Math.min(row.weight_percent, 100)}%` }}
-                  />
-                </div>
-                <div className="mt-2 flex justify-between text-xs">
-                  <span className={profitClass(row.daily_profit)}>
-                    当日 {row.daily_profit != null ? formatMoney(row.daily_profit) : "—"}
-                  </span>
-                  <span className={profitClass(row.holding_return_percent)}>
-                    持有{" "}
-                    {row.holding_return_percent != null
-                      ? `${row.holding_return_percent > 0 ? "+" : ""}${row.holding_return_percent.toFixed(2)}%`
-                      : "—"}
-                  </span>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
+        <ProfitAnalysisTrendChart trend={data?.profit_trend} />
+
+        <div className="pl-chart-footer">
+          <span>
+            {profitRange === "today" ? "当日收益率" : "区间累计"}：
+            <strong className={profitClass(footer?.portfolio_return_percent)}>
+              {formatPercent(footer?.portfolio_return_percent)}
+            </strong>
+          </span>
+          {alpha != null ? (
+            <span>
+              {alpha >= 0 ? "跑赢" : "跑输"}上证指数：
+              <strong className={profitClass(alpha)}>{formatPercent(Math.abs(alpha))}</strong>
+            </span>
+          ) : null}
+        </div>
       </section>
 
-      <button
-        type="button"
-        onClick={() => void load()}
-        className="justify-self-start rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-bold text-slate-600 transition hover:border-blue-300 hover:text-blue-700"
-      >
-        刷新仪表盘
-      </button>
+      <div className="mt-3 grid gap-3">
+        <ProfitLossCalendar
+          calendar={data?.profit_calendar}
+          showReturnPercent={calendarShowReturn}
+          onToggleMode={() => setCalendarShowReturn((value) => !value)}
+          onMonthChange={(year, month) => {
+            setCalendarYear(year);
+            setCalendarMonth(month);
+          }}
+        />
+        <DailyProfitTop5
+          gainers={data?.daily_top5?.gainers ?? []}
+          losers={data?.daily_top5?.losers ?? []}
+        />
+        <section className="pl-panel">
+          <div className="pl-panel-title mb-3">持仓分布</div>
+          <HoldingDonutChart rows={data?.allocation ?? []} />
+        </section>
+      </div>
     </div>
   );
 }
+
+const INDEX_COLOR = "#5B8DEF";

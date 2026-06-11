@@ -450,6 +450,7 @@ def test_official_nav_applies_to_daily_not_sector(monkeypatch):
     monkeypatch.setattr(service, "save_sector_mapping", lambda _record: None)
     monkeypatch.setattr(service, "get_official_nav_return", lambda fund_code, trade_date: -2.45)
     monkeypatch.setattr(service, "_amount_includes_today_return", lambda _holding: True)
+    monkeypatch.setattr(service, "_is_trading_hours", lambda: False)
 
     holdings = [
         Holding(

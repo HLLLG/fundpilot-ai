@@ -64,6 +64,9 @@ class NewsService:
         if "eastmoney" in sources or "macro" in sources:
             items.extend(self._from_eastmoney(topic, per_topic * 2))
 
+        if "cls" in sources:
+            items.extend(self._from_cls(topic, per_topic))
+
         ranked = _rank_news_by_recency(_dedupe_news(items))[:per_topic]
         if ranked:
             save_cached_news(topic, ranked)
@@ -117,6 +120,14 @@ class NewsService:
                 )
             )
         return items
+
+    def _from_cls(self, topic: str, limit: int) -> list[NewsItem]:
+        try:
+            from app.services.cls_news_client import search_cls_news
+
+            return search_cls_news(topic, limit=limit)
+        except Exception:
+            return []
 
     def _from_fund_announcements(self, fund_code: str, limit: int) -> list[NewsItem]:
         try:

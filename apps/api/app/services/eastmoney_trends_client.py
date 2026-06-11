@@ -99,6 +99,145 @@ def fetch_eastmoney_kline_close_percent(
     return None
 
 
+DailyKlineBar = dict[str, str | float | None]
+
+
+def fetch_eastmoney_daily_kline_series(
+    secid: str,
+    *,
+    source_code: str | None = None,
+    max_days: int = 150,
+    timeout: float = 12.0,
+    max_retries: int = 2,
+) -> list[DailyKlineBar]:
+    """拉取日 K 序列（时间正序），供板块信号回测；每项含 date / change_percent / high_change_percent。"""
+    cleaned = str(secid).strip()
+    if not cleaned and not source_code:
+        return []
+
+    days = max(20, min(max_days, 800))
+    proxies = {"http": None, "https": None}
+    session = requests.Session()
+    session.headers.update(_HEADERS)
+
+    for candidate in _secid_candidates(cleaned, source_code):
+        _apply_referer(session, candidate, source_code)
+        series = _fetch_daily_kline_series(
+            session,
+            candidate,
+            max_days=days,
+            timeout=timeout,
+            max_retries=max_retries,
+            proxies=proxies,
+        )
+        if series:
+            return series
+    return []
+
+
+def _fetch_daily_kline_series(
+    session: requests.Session,
+    secid: str,
+    *,
+    max_days: int,
+    timeout: float,
+    max_retries: int,
+    proxies: dict[str, None],
+) -> list[DailyKlineBar]:
+    fqt = "1" if secid.startswith("2.") else "0"
+    base_params = {
+        **_EM_COMMON_PARAMS,
+        "secid": secid,
+        "fields1": "f1,f2,f3,f4,f5,f6",
+        "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
+        "klt": "101",
+        "fqt": fqt,
+        "beg": "0",
+        "end": "20500000",
+    }
+    last_error: Exception | None = None
+    for attempt in range(max_retries):
+        for ut in _KLINE_UTS:
+            params = {**base_params, "ut": ut}
+            for url in _KLINE_URLS:
+                try:
+                    response = session.get(
+                        url, params=params, timeout=timeout, proxies=proxies
+                    )
+                    response.raise_for_status()
+                    series = _parse_daily_kline_series(
+                        _read_em_json(response), max_days=max_days
+                    )
+                    if series:
+                        return series
+                except Exception as exc:
+                    last_error = exc
+                    logger.debug("eastmoney daily kline %s failed: %s", secid, exc)
+                    if _is_connection_drop(exc):
+                        break
+        if attempt + 1 < max_retries:
+            time.sleep(0.4 * (attempt + 1))
+    if last_error:
+        logger.debug("eastmoney daily kline %s exhausted: %s", secid, last_error)
+    return []
+
+
+def _parse_daily_kline_series(
+    payload: dict[str, Any], *, max_days: int
+) -> list[DailyKlineBar]:
+    klines = (payload.get("data") or {}).get("klines") or []
+    rows: list[DailyKlineBar] = []
+    prior_close: float | None = None
+
+    for raw in klines:
+        if not isinstance(raw, str):
+            continue
+        parts = raw.split(",")
+        if len(parts) < 4:
+            continue
+        day = parts[0].strip().split(" ")[0]
+        close = _as_float(parts[2])
+        high = _as_float(parts[3])
+        change_pct = _as_float(parts[8]) if len(parts) > 8 else None
+        if close is None or close <= 0:
+            continue
+
+        if prior_close and prior_close > 0:
+            change = round((close / prior_close - 1) * 100, 4)
+            high_change = (
+                round((high / prior_close - 1) * 100, 4)
+                if high is not None and high > 0
+                else None
+            )
+        elif change_pct is not None and prior_close is None:
+            prior_close = close
+            continue
+        elif change_pct is not None and is_plausible_daily_change(change_pct):
+            change = change_pct
+            high_change = None
+        else:
+            prior_close = close
+            continue
+
+        if not is_plausible_daily_change(change):
+            prior_close = close
+            continue
+
+        rows.append(
+            {
+                "date": day,
+                "change_percent": change,
+                "high_change_percent": high_change,
+                "close": close,
+            }
+        )
+        prior_close = close
+
+    if len(rows) > max_days:
+        rows = rows[-max_days:]
+    return rows
+
+
 def fetch_eastmoney_intraday_trends(
     secid: str,
     *,

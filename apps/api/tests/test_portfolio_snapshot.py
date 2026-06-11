@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 
 from app.config import refresh_settings
-from app.database import list_portfolio_daily_snapshots
+from app.database import delete_portfolio_snapshots_on_or_before, list_portfolio_daily_snapshots
 from app.models import Holding, PortfolioSummary
 from app.services.portfolio_snapshot import (
     build_dashboard_payload,
@@ -40,6 +40,31 @@ def test_snapshot_roundtrip_and_dashboard(tmp_path, monkeypatch):
     assert len(payload["history"]) == 1
     assert len(payload["allocation"]) == 1
     assert payload["allocation"][0]["weight_percent"] > 0
+
+
+def test_delete_snapshots_on_or_before(tmp_path, monkeypatch):
+    monkeypatch.setenv("FUND_AI_DB_PATH", str(tmp_path / "app.db"))
+    refresh_settings()
+
+    from app.database import save_portfolio_daily_snapshot
+    from app.models import PortfolioDailySnapshot
+
+    for day, profit in [("2026-06-08", 10), ("2026-06-09", 20), ("2026-06-10", -5)]:
+        save_portfolio_daily_snapshot(
+            PortfolioDailySnapshot(
+                snapshot_date=day,
+                total_assets=1000,
+                daily_profit=profit,
+                holdings=[],
+            )
+        )
+
+    purge = delete_portfolio_snapshots_on_or_before("2026-06-09")
+    assert purge["daily_snapshots_deleted"] == 2
+
+    remaining = list_portfolio_daily_snapshots(limit=10)
+    assert len(remaining) == 1
+    assert remaining[0]["snapshot_date"] == "2026-06-10"
 
 
 def test_snapshot_date_key_uses_utc_date():

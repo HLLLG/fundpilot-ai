@@ -28,6 +28,7 @@ def resolve_intraday_return_percent(holding: Holding) -> float | None:
 
 def compute_estimated_holding_return_percent(holding: Holding) -> float | None:
     """持有收益率：净值公布后 OCR 值为含当日总值；盘中为昨日结算 + 板块涨跌。"""
+    holding = _repair_corrupted_settled_profit(holding)
     settled = resolve_holding_return_percent(holding)
     if holding.daily_return_percent_source == "official_nav":
         if settled is not None:
@@ -43,16 +44,69 @@ def compute_estimated_holding_return_percent(holding: Holding) -> float | None:
     return round(settled + intraday, 4)
 
 
-def resolve_settled_holding_profit(holding: Holding) -> float | None:
-    if holding.holding_profit is not None:
-        return holding.holding_profit
-    return_percent = resolve_holding_return_percent(holding)
-    if return_percent is None or holding.holding_amount <= 0:
+def _expected_settled_profit(holding: Holding, return_percent: float) -> float | None:
+    if holding.holding_amount <= 0:
         return None
     return _round2((holding.holding_amount * return_percent) / (100 + return_percent))
 
 
+def _repair_corrupted_settled_profit(holding: Holding) -> Holding:
+    """份额同步曾误写持有收益时，按昨日结算收益率修复。"""
+    from app.database import get_fund_profile_by_code
+
+    profile = get_fund_profile_by_code(holding.fund_code) if holding.fund_code else None
+    settled_return = resolve_holding_return_percent(holding)
+    if profile and profile.holding_return_percent is not None:
+        profile_return = profile.holding_return_percent
+    else:
+        profile_return = None
+
+    if settled_return is None and profile_return is None:
+        return holding
+    if holding.holding_profit is None and profile_return is None:
+        return holding
+
+    reference_return = profile_return if profile_return is not None else settled_return
+    if reference_return is None:
+        return holding
+    expected = _expected_settled_profit(holding, reference_return)
+    if expected is None:
+        return holding
+
+    current_profit = holding.holding_profit
+    if current_profit is None:
+        return holding
+    delta = abs(current_profit - expected)
+    if delta <= max(25.0, abs(expected) * 0.35):
+        return holding
+
+    restored_profit = (
+        profile.holding_profit
+        if profile and profile.holding_profit is not None
+        else expected
+    )
+    patch: dict = {"holding_profit": restored_profit}
+    if profile_return is not None:
+        patch["holding_return_percent"] = profile_return
+        patch["return_percent"] = profile_return
+    elif settled_return is not None:
+        patch["holding_return_percent"] = settled_return
+        patch["return_percent"] = settled_return
+    return holding.model_copy(update=patch)
+
+
+def resolve_settled_holding_profit(holding: Holding) -> float | None:
+    holding = _repair_corrupted_settled_profit(holding)
+    if holding.holding_profit is not None:
+        return holding.holding_profit
+    return_percent = resolve_holding_return_percent(holding)
+    if return_percent is None:
+        return None
+    return _expected_settled_profit(holding, return_percent)
+
+
 def compute_holding_profit(holding: Holding) -> float | None:
+    holding = _repair_corrupted_settled_profit(holding)
     if holding.daily_return_percent_source == "official_nav":
         if holding.holding_profit is not None:
             return holding.holding_profit
@@ -167,6 +221,7 @@ def overlay_official_nav_returns(holdings: list[Holding]) -> list[Holding]:
 
 def enrich_holding_estimates(holding: Holding) -> Holding:
     """补全可持久化字段；含当日涨跌的持有收益仅在展示/分析层计算。"""
+    holding = _repair_corrupted_settled_profit(holding)
     includes_today = _amount_includes_today_return(holding)
     holding = apply_sector_daily_estimates(holding)
     daily_profit = compute_daily_profit(holding)

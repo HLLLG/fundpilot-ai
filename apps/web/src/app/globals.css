@@ -1,11 +1,15 @@
 @import "tailwindcss";
 
 :root {
-  --background: #f4f7fc;
-  --foreground: #0f172a;
-  --panel: rgba(255, 255, 255, 0.94);
-  --line: rgba(15, 23, 42, 0.08);
-  --brand: #1565e8;
+  --background: #f0f2f5;
+  --foreground: #111827;
+  --panel: #ffffff;
+  --line: rgba(15, 23, 42, 0.07);
+  --brand: #1456d8;
+  --brand-soft: rgba(20, 86, 216, 0.08);
+  --profit-up: #e11d48;
+  --profit-down: #059669;
+  --muted: #6b7280;
 }
 
 * {
@@ -48,19 +52,236 @@ button:disabled {
 }
 
 .premium-bg {
-  background:
-    radial-gradient(circle at 8% 12%, rgba(21, 101, 232, 0.14), transparent 32%),
-    radial-gradient(circle at 92% 8%, rgba(13, 148, 136, 0.12), transparent 28%),
-    linear-gradient(180deg, #f8fbff 0%, #eef3fb 45%, #f9fbff 100%);
+  background: linear-gradient(180deg, #f5f7fa 0%, var(--background) 100%);
 }
 
 .glass-panel {
   border: 1px solid var(--line);
   background: var(--panel);
-  backdrop-filter: blur(10px);
-  box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.8) inset,
-    0 18px 48px rgba(15, 23, 42, 0.08);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.section-card {
+  border: 1px solid var(--line);
+  background: var(--panel);
+  border-radius: 16px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.section-title {
+  font-size: 0.8125rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--foreground);
+}
+
+.tab-segment {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  padding: 4px;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.05);
+}
+
+.tab-segment-btn {
+  border-radius: 9px;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  color: var(--muted);
+  transition: color 0.15s, background 0.15s, box-shadow 0.15s;
+}
+
+.tab-segment-btn[aria-current="page"],
+.tab-segment-btn[aria-pressed="true"] {
+  background: #fff;
+  color: var(--foreground);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+}
+
+.profit-up {
+  color: var(--profit-up);
+}
+
+.profit-down {
+  color: var(--profit-down);
+}
+
+.kpi-value {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.03em;
+  font-weight: 800;
+}
+
+/* ── 盈亏分析页 ── */
+.pl-page {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.pl-hero {
+  padding: 1.25rem 1rem 1rem;
+  text-align: center;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 16px 16px 0 0;
+}
+
+.pl-hero-label {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.pl-hero-value {
+  margin-top: 0.375rem;
+  font-size: 2.25rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.04em;
+  line-height: 1.1;
+}
+
+.pl-hero-sub {
+  margin-top: 0.25rem;
+  font-size: 0.875rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.pl-toggle {
+  display: inline-flex;
+  margin-top: 0.75rem;
+  padding: 2px;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.05);
+}
+
+.pl-toggle-btn {
+  border-radius: 6px;
+  padding: 0.25rem 0.625rem;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  color: var(--muted);
+  transition: background 0.15s, color 0.15s;
+}
+
+.pl-toggle-btn[aria-pressed="true"] {
+  background: #fff;
+  color: var(--foreground);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+}
+
+.pl-range-bar {
+  display: flex;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-top: none;
+  border-radius: 0 0 12px 12px;
+}
+
+.pl-range-tab {
+  position: relative;
+  flex: 1;
+  padding: 0.625rem 0.25rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--muted);
+  text-align: center;
+  transition: color 0.15s;
+}
+
+.pl-range-tab:hover {
+  color: var(--foreground);
+}
+
+.pl-range-tab[aria-selected="true"] {
+  color: var(--foreground);
+  font-weight: 800;
+}
+
+.pl-range-tab[aria-selected="true"]::after {
+  content: "";
+  position: absolute;
+  right: 18%;
+  bottom: 0;
+  left: 18%;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--brand);
+}
+
+.pl-panel {
+  margin-top: 0.75rem;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--panel);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.pl-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.pl-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 0.9375rem;
+  font-weight: 800;
+  color: var(--foreground);
+}
+
+.pl-panel-title::before {
+  content: "";
+  width: 3px;
+  height: 0.875rem;
+  border-radius: 2px;
+  background: var(--brand);
+}
+
+.pl-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.pl-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.pl-legend-dot {
+  width: 8px;
+  height: 3px;
+  border-radius: 1px;
+}
+
+.pl-chart-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid rgba(15, 23, 42, 0.05);
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.pl-chart-footer strong {
+  font-weight: 800;
 }
 
 .signal-grid {

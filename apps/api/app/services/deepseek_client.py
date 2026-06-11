@@ -142,7 +142,13 @@ class DeepSeekClient:
                 nav_trends_by_code=nav_trends,
             )
             portfolio_recs, fund_recs = _finalize_recommendations(
-                parsed, fallback, request, risk, market_news, topic_briefs
+                parsed,
+                fallback,
+                request,
+                risk,
+                market_news,
+                topic_briefs,
+                nav_trends_by_code=nav_trends,
             )
             facts = _compose_analysis_facts(
                 request=request,
@@ -234,7 +240,7 @@ class DeepSeekClient:
         collected: list[NewsItem] = list(prefetched_news)
         news_enabled = runtime.news_enabled
         messages: list[dict] = [
-            {"role": "system", "content": _system_prompt(news_enabled)},
+            {"role": "system", "content": _system_prompt(news_enabled, request.profile.decision_style)},
             {
                 "role": "user",
                 "content": json.dumps(
@@ -347,13 +353,15 @@ class DeepSeekClient:
         return response.json()["choices"][0]["message"]
 
 
-def _system_prompt(news_enabled: bool) -> str:
+def _system_prompt(news_enabled: bool, decision_style: str = "conservative") -> str:
     now = datetime.now()
+    tactical = decision_style == "tactical"
     base = (
         "你是个人基金投研助手，只能提供个人研究和风险提示，不能承诺收益。"
         f"当前分析时点约为 {now.strftime('%Y-%m-%d %H:%M')}，用户通常在交易日 14:30 左右上传养基宝截图，"
-        "需要在 15:00 A 股收盘前给出当日是否加仓/减仓/观察的决策。"
-        "必须结合持仓、当日收益、板块涨跌、集中度、净值快照、analysis_facts 中的 nav_trend（近 N 日净值摘要）与新闻（优先当日）做分析。"
+        "需要在 15:00 A 股收盘前给出当日是否加仓/减仓/观察的决策，并在 points 中简要说明下一交易日开盘前后的情景预案（非承诺收益）。"
+        "必须结合持仓、当日收益、板块涨跌、集中度、净值快照、analysis_facts 中的 nav_trend、sector_momentum 与 news（优先当日）做分析。"
+        "news.freshness_label 反映预取要闻时效：fresh 可支撑战术判断，stale/empty 须声明信息缺口。"
         "养基宝截图中：关联板块涨跌为当日实时值；持有收益率为昨日结算值。"
         "若 holdings 中 daily_return_percent 为空，请用 estimated_daily_return_percent"
         "（≈ sector_return_percent + holding_return_percent）近似当日基金涨跌，"
@@ -368,6 +376,23 @@ def _system_prompt(news_enabled: bool) -> str:
         )
     else:
         base += "若无新闻数据，须说明信息缺口并给出条件化方案。"
+    if tactical:
+        base += (
+            "当前为战术短线模式：在遵守集中度与风险复核前提下，优先最大化当日收盘前与下一交易日的战术收益空间；"
+            "须结合 sector_intraday（分时形态）、sector_momentum（涨后回吐等）、market_flow（北向资金）与 news.freshness_label；"
+            "对「涨一天跌一天」场景须明确次日冲高回落时的止盈/观望条件，但仍不得承诺收益。"
+        )
+        settings = get_settings()
+        if settings.tactical_prompt_tuning_enabled:
+            from app.services.prompt_tuning import resolve_prompt_tuning_hints
+
+            tuning = resolve_prompt_tuning_hints(
+                lookback_reports=settings.tactical_prompt_tuning_lookback_reports,
+            )
+            for hint in tuning.get("hints") or []:
+                base += hint
+    else:
+        base += "当前为稳健模式：偏保守，避免追涨，加仓需有当日要闻或明确盘面支撑。"
     base += "最终回复必须是完整 JSON，不要 Markdown，控制篇幅避免截断。"
     return base
 
@@ -413,6 +438,7 @@ def _user_payload(
         request.profile,
         briefs,
         nav_trends,
+        prefetched_news,
         session=session,
         portfolio_trend=build_portfolio_trend_context(),
     )
@@ -443,9 +469,16 @@ def _user_payload(
             "旧新闻仅作参考；判断当日涨跌优先 daily_return_percent，否则用 estimated_daily_return_percent",
             "引用当日涨跌时区分：板块 sector_return_percent、昨日结算 holding_return_percent、估算/实际当日收益",
             "基金代码 000000 须提示补全代码",
-            "偏稳健，避免追涨，不做实盘交易指令",
+            "decision_style=tactical 时可更积极运用 sector_intraday/sector_momentum；conservative 时偏稳健、避免追涨",
+            "不做实盘交易指令",
             "analysis_facts.holdings[].nav_trend 为近 N 交易日净值摘要（含 trend_label、距高点距离、recent_nav_series），用于判断反弹/回落与区间位置；不得编造未给出的净值序列",
+            "analysis_facts.holdings[].sector_momentum 为短线模式提示（如 two_day_reversal_down 涨后回吐），须纳入当日与下一交易日预案",
+            "analysis_facts.holdings[].sector_intraday 为板块分时形态（如 intraday_pullback 冲高回落）",
+            "analysis_facts.market_flow 含北向资金 interpretation，战术模式须参考",
+            "analysis_facts.news 含 freshness_label 与 interpretation，须在 summary 或 caveats 中体现对决策置信度的影响",
+            "prefetched_news 中 source=cls 为财联社快讯，时效通常优于纯东财检索",
             "若 nav_trend 为空（如基金代码 000000），须在 points 中说明无法使用净值走势",
+            "收盘前窗口：每只基金 points 至少 1 条写「下一交易日」条件化预案（如板块延续强势/冲高回落则如何动作）",
         ],
     }
 
@@ -690,7 +723,13 @@ def _finalize_recommendations(
     risk: RiskAssessment,
     market_news: list[NewsItem] | None = None,
     topic_briefs: list[TopicBrief] | None = None,
+    *,
+    nav_trends_by_code: dict[str, dict] | None = None,
 ) -> tuple[list[str], list[FundRecommendation]]:
+    from app.services.market_flow_client import build_market_flow_context
+
+    flow = build_market_flow_context()
+    northbound = flow.get("northbound_net_yi") if flow.get("available") else None
     raw_lines = parsed.get("recommendations")
     if isinstance(raw_lines, list) and raw_lines:
         all_lines = [str(item) for item in raw_lines]
@@ -714,7 +753,14 @@ def _finalize_recommendations(
         fund_recs, request, market_news, topic_briefs
     )
     portfolio, fund_recs = apply_recommendation_guards(
-        fund_recs, portfolio, request, risk, market_news, topic_briefs
+        fund_recs,
+        portfolio,
+        request,
+        risk,
+        market_news,
+        topic_briefs,
+        nav_trends_by_code=nav_trends_by_code,
+        northbound_net_yi=northbound,
     )
     fund_recs = apply_news_citation_guards(fund_recs, market_news, topic_briefs)
     return portfolio, fund_recs
@@ -738,6 +784,7 @@ def _compose_analysis_facts(
         request.profile,
         topic_briefs,
         nav_trends,
+        market_news,
         session=build_trading_session(),
         pipeline=build_pipeline_metadata(
             runtime=runtime,
@@ -765,8 +812,15 @@ def _append_pipeline_caveats(caveats: list[str], facts: dict) -> list[str]:
             f"分析管线：{mode} 模式 / 模型 {model}{judge_note}；"
             f"当日要闻 {pipeline.get('today_news_count', 0)} 条。"
         )
-    if pipeline.get("has_today_market_signal") is False and get_settings().news_require_today_for_add:
+    decision_style = (facts.get("portfolio") or {}).get("decision_style", "conservative")
+    if (
+        decision_style != "tactical"
+        and pipeline.get("has_today_market_signal") is False
+        and get_settings().news_require_today_for_add
+    ):
         result.append("当日无已标注「今日」的要闻，系统已限制激进加仓类建议。")
+    elif decision_style == "tactical":
+        result.append("战术短线模式已启用：守卫未因缺少当日要闻而压制加仓类建议，请自行承担短线波动风险。")
     window = session.get("decision_window")
     if window and window not in result:
         result.append(window)
@@ -774,6 +828,13 @@ def _append_pipeline_caveats(caveats: list[str], facts: dict) -> list[str]:
     summary_line = trend.get("summary_line")
     if trend.get("has_history") and summary_line:
         result.append(summary_line)
+    guard_policy = facts.get("guard_policy") or {}
+    for line in guard_policy.get("backtest_summary_lines") or []:
+        if line and line not in result:
+            result.append(f"板块信号回测：{line}")
+    policy_reason = guard_policy.get("reason")
+    if policy_reason and policy_reason not in result:
+        result.append(str(policy_reason))
     return result
 
 
@@ -821,6 +882,11 @@ def _offline_report(
     from app.services.risk import holding_weight_percent, resolve_weight_denominator
 
     weight_denominator = resolve_weight_denominator(request.holdings, request.profile) or 1
+    nav_trends = nav_trends_by_code or {}
+    from app.services.market_flow_client import build_market_flow_context
+
+    flow = build_market_flow_context()
+    northbound = flow.get("northbound_net_yi") if flow.get("available") else None
     fund_recommendations = [
         build_offline_fund_recommendation(
             holding,
@@ -828,6 +894,8 @@ def _offline_report(
             weight_denominator,
             request.profile,
             market_news=news,
+            nav_trend=nav_trends.get(holding.fund_code),
+            northbound_net_yi=northbound,
         )
         for holding in request.holdings
     ]
@@ -843,6 +911,8 @@ def _offline_report(
         risk,
         news,
         briefs,
+        nav_trends_by_code=nav_trends,
+        northbound_net_yi=northbound,
     )
     fund_recommendations = apply_news_citation_guards(
         fund_recommendations, news, briefs

@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, model_validator
 
 Action = Literal["watch", "pause_add", "staggered_add", "risk_review"]
 RiskLevel = Literal["low", "medium", "high"]
+DecisionStyle = Literal["conservative", "tactical"]
 
 
 class Holding(BaseModel):
@@ -45,6 +46,7 @@ class InvestorProfile(BaseModel):
     expected_investment_amount: float | None = None
     prefer_dca: bool = True
     avoid_chasing: bool = True
+    decision_style: DecisionStyle = "conservative"
 
 
 class RiskAlert(BaseModel):

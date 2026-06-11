@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 
 from app.config import get_settings
 from app.database import (
+    delete_portfolio_snapshots_on_or_before,
     delete_report,
     database_file_path,
     get_baseline_report_by_days,
@@ -28,7 +29,6 @@ from app.database import list_report_chat_messages
 from app.models import (
     AllocatePenetrationRequest,
     AnalysisRequest,
-    FundProfile,
     Holding,
     HoldingDetailRequest,
     InvestorProfile,
@@ -40,23 +40,21 @@ from app.models import (
 from app.services.analyze_pipeline import run_analysis
 from app.database import get_portfolio_summary
 from app.services.fund_data import FundDataService
-from app.services.fund_profile import FundProfileService, parse_profile_from_text
+from app.services.fund_profile import FundProfileService
 from app.services.holding_validation import validate_holdings
 from app.services.penetration_daily_allocator import allocate_penetration_daily_profit
 from app.services.holding_estimates import sum_daily_profit
-from app.services.portfolio_holdings_service import (
-    load_persisted_holdings,
-    sync_portfolio_from_profiles,
-)
+from app.services.portfolio_holdings_service import load_persisted_holdings
 from app.services.portfolio_persistence import enrich_loaded_holdings, persist_holdings_after_sector_refresh
 from app.services.portfolio_snapshot import build_dashboard_payload
 from app.services.job_store import create_analysis_job, get_job_response
-from app.services.ocr_engine import OcrEngine
 from app.services.ocr_pipeline import apply_confirmed_holdings, run_ocr_upload_pipeline
 from app.services.report_diff import diff_reports
 from app.services.report_chat import stream_report_chat
 from app.services.report_chat_export import report_chat_to_markdown
 from app.services.rebalance_simulator import simulate_rebalance
+from app.services.recommendation_accuracy import build_recommendation_accuracy
+from app.services.sector_signal_backtest import build_sector_signal_backtest
 from app.services.recommendation_outcomes import (
     build_recommendation_outcomes,
     build_weekly_recommendation_outcomes,
@@ -66,6 +64,8 @@ from app.services.sector_quote_diagnostic import run_sector_quote_diagnostic
 from app.services.sector_quote_service import apply_sector_mapping_choice, refresh_holdings_sector_quotes
 from app.services.sector_intraday_provider import fetch_sector_intraday
 from app.services.holding_detail_service import build_holding_detail
+from app.services.news_freshness import build_news_pipeline_context
+from app.services.news_service import NewsService
 from app.services.trading_session import build_trading_session
 
 
@@ -92,6 +92,40 @@ def health() -> dict[str, str | bool]:
 @app.get("/api/trading-session")
 def trading_session() -> dict:
     return build_trading_session()
+
+
+@app.get("/api/reports/recommendation-accuracy")
+def recommendation_accuracy(days: int = 30) -> dict:
+    limit = max(2, min(days, 50))
+    return build_recommendation_accuracy(limit_reports=limit)
+
+
+@app.get("/api/diagnostics/sector-signal-backtest")
+def sector_signal_backtest(
+    days: int = 120,
+    sectors: str | None = None,
+) -> dict:
+    """板块短线信号 T→T+1 回测（canonical 板块日线；不传 sectors 时用全部硬编码映射）。"""
+    labels = [part.strip() for part in (sectors or "").split(",") if part.strip()]
+    return build_sector_signal_backtest(
+        labels or None,
+        lookback_days=days,
+    )
+
+
+@app.post("/api/news/preview")
+def news_preview(body: AnalysisRequest) -> dict:
+    """预取要闻并返回时效诊断（不调用 DeepSeek，供生成日报前自检）。"""
+    service = NewsService()
+    topics = service.topics_from_holdings(body.holdings)
+    items = service.prefetch_for_holdings(body.holdings)
+    freshness = build_news_pipeline_context(items)
+    return {
+        "topics": topics,
+        "items": [item.model_dump() for item in items],
+        "freshness": freshness,
+        "trading_session": build_trading_session(),
+    }
 
 
 @app.post("/api/ocr")
@@ -427,39 +461,6 @@ def remove_report(report_id: str) -> dict:
     return {"ok": True, "id": report_id}
 
 
-@app.post("/api/fund-profiles/ocr")
-async def parse_fund_profile(
-    raw_text: str | None = Form(default=None),
-    file: UploadFile | None = File(default=None),
-) -> dict:
-    text = raw_text or ""
-    upload_path: Path | None = None
-
-    if file is not None and file.filename:
-        settings.upload_dir.mkdir(parents=True, exist_ok=True)
-        upload_path = settings.upload_dir / Path(file.filename).name
-        upload_path.write_bytes(await file.read())
-        if not text:
-            try:
-                text = OcrEngine().extract_text(upload_path)
-            except Exception as exc:
-                raise HTTPException(status_code=422, detail=f"基金详情 OCR 失败：{exc}") from exc
-
-    profile = parse_profile_from_text(text)
-    if profile is None:
-        raise HTTPException(status_code=422, detail="未能从截图中识别基金代码和档案字段")
-
-    FundProfileService().save_profile(profile)
-    synced = sync_portfolio_from_profiles(refresh_sectors=True)
-    summary = get_portfolio_summary()
-    payload = profile.model_dump(mode="json")
-    payload["raw_text"] = text
-    payload["upload_path"] = str(upload_path) if upload_path else None
-    payload["synced_holdings"] = [holding.model_dump() for holding in synced]
-    payload["portfolio_summary"] = summary.model_dump(mode="json") if summary else None
-    return payload
-
-
 @app.get("/api/fund-profiles")
 def fund_profiles() -> list[dict]:
     return [
@@ -472,7 +473,7 @@ def fund_profiles() -> list[dict]:
 def patch_fund_profile(fund_code: str, payload: UpdateFundProfileRequest) -> dict:
     profile = get_fund_profile_by_code(fund_code)
     if profile is None:
-        raise HTTPException(status_code=404, detail="基金档案不存在")
+        raise HTTPException(status_code=404, detail="持仓元数据不存在")
     if payload.first_purchase_date:
         try:
             date.fromisoformat(payload.first_purchase_date)
@@ -573,11 +574,32 @@ def index_daily_history(symbol: str = "000300", days: int = 252) -> dict:
     )
 
 
+@app.delete("/api/portfolio/snapshots")
+def purge_portfolio_snapshots(on_or_before: str) -> dict:
+    """清除指定日期（含）及更早的盈亏日快照，保留之后记录。"""
+    try:
+        datetime.strptime(on_or_before, "%Y-%m-%d")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="on_or_before 须为 YYYY-MM-DD") from exc
+    return delete_portfolio_snapshots_on_or_before(on_or_before)
+
+
 @app.get("/api/portfolio/dashboard")
-def portfolio_dashboard() -> dict:
+def portfolio_dashboard(
+    range: str = "today",
+    calendar_year: int | None = None,
+    calendar_month: int | None = None,
+) -> dict:
     profiles = FundProfileService().list_profiles()
     summary = get_portfolio_summary()
-    payload = build_dashboard_payload(summary=summary, profiles=profiles)
+    profit_range = range if range in {"today", "week", "month", "year", "all"} else "today"
+    payload = build_dashboard_payload(
+        summary=summary,
+        profiles=profiles,
+        profit_range=profit_range,  # type: ignore[arg-type]
+        calendar_year=calendar_year,
+        calendar_month=calendar_month,
+    )
     payload["profiles"] = [profile.model_dump(mode="json") for profile in profiles]
     return payload
 
@@ -650,26 +672,3 @@ def portfolio_summary() -> dict:
     return payload
 
 
-@app.get("/api/fund-profiles/export")
-def export_fund_profiles() -> dict:
-    profiles = FundProfileService().list_profiles()
-    return {
-        "version": 1,
-        "count": len(profiles),
-        "profiles": [profile.model_dump(mode="json") for profile in profiles],
-    }
-
-
-@app.post("/api/fund-profiles/import")
-def import_fund_profiles(payload: dict) -> dict:
-    raw_profiles = payload.get("profiles")
-    if not isinstance(raw_profiles, list):
-        raise HTTPException(status_code=400, detail="profiles 必须是数组")
-
-    service = FundProfileService()
-    saved = 0
-    for item in raw_profiles:
-        profile = FundProfile.model_validate(item)
-        service.save_profile(profile)
-        saved += 1
-    return {"ok": True, "saved": saved}

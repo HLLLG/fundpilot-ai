@@ -40,7 +40,12 @@ class Settings(BaseSettings):
     news_max_topics: int = 5
     news_per_topic: int = 5
     news_tool_max_rounds: int = 3
-    news_sources: str = "eastmoney,announcement,macro"
+    news_sources: str = "eastmoney,cls,announcement,macro"
+    tactical_prompt_tuning_enabled: bool = True
+    tactical_prompt_tuning_lookback_reports: int = 30
+    sector_signal_backtest_enabled: bool = True
+    sector_signal_backtest_days: int = 120
+    sector_signal_backtest_min_triggers: int = 10
     news_summarize: bool = True
     news_summarize_model: str | None = None
     news_summarize_max_points: int = 5

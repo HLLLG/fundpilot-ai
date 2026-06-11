@@ -179,10 +179,10 @@ def _resolve_unit_nav(
     return get_latest_unit_nav(fund_code)
 
 
-def _cost_basis(holding: Holding, profile: FundProfile | None) -> float | None:
-    if profile and profile.holding_cost and profile.holding_shares:
-        return round(profile.holding_cost * profile.holding_shares, 2)
+_COST_BASIS_DRIFT_TOLERANCE = 0.05
 
+
+def _cost_basis_from_return(holding: Holding) -> float | None:
     return_percent = holding.holding_return_percent
     if return_percent is None:
         return_percent = holding.return_percent
@@ -191,16 +191,35 @@ def _cost_basis(holding: Holding, profile: FundProfile | None) -> float | None:
     return round(holding.holding_amount / (1 + return_percent / 100), 2)
 
 
+def _cost_basis(holding: Holding, profile: FundProfile | None) -> float | None:
+    """成本基数：档案单位成本×份额须与 OCR 昨日结算收益率一致，否则以收益率为准。"""
+    derived = _cost_basis_from_return(holding)
+    if profile and profile.holding_cost and profile.holding_shares:
+        profile_basis = round(profile.holding_cost * profile.holding_shares, 2)
+        if derived is not None and derived > 0:
+            drift = abs(profile_basis - derived) / derived
+            if drift > _COST_BASIS_DRIFT_TOLERANCE:
+                logger.info(
+                    "cost basis drift for %s: profile=%.2f derived=%.2f, using derived",
+                    holding.fund_code,
+                    profile_basis,
+                    derived,
+                )
+                return derived
+        return profile_basis
+    return derived
+
+
 def _apply_amount_update(
     holding: Holding,
     new_amount: float,
     cost_basis: float | None,
 ) -> Holding:
-    patch: dict = {"holding_amount": new_amount}
-    if cost_basis is not None and cost_basis > 0:
-        profit = round(new_amount - cost_basis, 2)
-        return_percent = round((new_amount / cost_basis - 1) * 100, 2)
-        patch["holding_profit"] = profit
-        patch["holding_return_percent"] = return_percent
-        patch["return_percent"] = return_percent
-    return holding.model_copy(update=patch)
+    """仅同步持有金额；昨日结算持有收益/收益率由 OCR 保留，展示层叠加当日估算。"""
+    _ = cost_basis
+    return holding.model_copy(
+        update={
+            "holding_amount": new_amount,
+            "amount_includes_today": True,
+        }
+    )

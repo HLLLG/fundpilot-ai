@@ -348,7 +348,7 @@ def test_report_diff_and_markdown_endpoints(tmp_path, monkeypatch):
     assert "# " in markdown.json()["markdown"]
 
 
-def test_fund_profiles_export_import(tmp_path, monkeypatch):
+def test_fund_profiles_list_after_save(tmp_path, monkeypatch):
     from app.services.fund_profile import FundProfileService, parse_profile_from_text
 
     monkeypatch.setenv("FUND_AI_DB_PATH", str(tmp_path / "app.db"))
@@ -357,10 +357,6 @@ def test_fund_profiles_export_import(tmp_path, monkeypatch):
     assert profile is not None
     FundProfileService().save_profile(profile)
 
-    exported = client.get("/api/fund-profiles/export").json()
-    assert exported["count"] >= 1
-
-    client.post("/api/fund-profiles/import", json={"profiles": exported["profiles"]})
     listed = client.get("/api/fund-profiles").json()
     assert any(item["fund_code"] == "015608" for item in listed)
 

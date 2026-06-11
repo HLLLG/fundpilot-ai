@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { BookMarked, ChevronDown, History, LayoutDashboard, User } from "lucide-react";
+import { ChevronDown, History } from "lucide-react";
 
-export type UserMenuTarget = "profiles" | "dashboard" | "history";
+export type UserMenuTarget = "history";
 
 type UserMenuProps = {
   onNavigate: (target: UserMenuTarget) => void;
@@ -52,15 +52,9 @@ export function UserMenu({ onNavigate }: UserMenuProps) {
         <span className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-blue-600 to-indigo-500 text-sm font-black text-white shadow-[0_6px_16px_rgba(37,99,235,0.28)]">
           {mockUser.name.slice(0, 1)}
         </span>
-        <span className="hidden text-left sm:block">
-          <span className="block text-xs font-black text-slate-900">{mockUser.name}</span>
-          <span className="block max-w-[8rem] truncate text-[10px] font-semibold text-slate-500">
-            {mockUser.subtitle}
-          </span>
-        </span>
         <ChevronDown
           size={16}
-          className={`hidden text-slate-400 transition sm:block ${open ? "rotate-180" : ""}`}
+          className={`text-slate-400 transition ${open ? "rotate-180" : ""}`}
         />
       </button>
 
@@ -69,41 +63,6 @@ export function UserMenu({ onNavigate }: UserMenuProps) {
           role="menu"
           className="absolute right-0 z-[60] mt-2 w-56 overflow-hidden rounded-2xl border border-slate-200 bg-white py-1.5 shadow-[0_16px_40px_rgba(15,23,42,0.12)]"
         >
-          <div className="border-b border-slate-100 px-3 py-2.5">
-            <div className="flex items-center gap-2.5">
-              <span className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-blue-600 to-indigo-500 text-white">
-                <User size={18} />
-              </span>
-              <div className="min-w-0">
-                <div className="truncate text-sm font-black text-slate-950">{mockUser.name}</div>
-                <div className="truncate text-[11px] font-semibold text-slate-500">{mockUser.subtitle}</div>
-              </div>
-            </div>
-          </div>
-          <button
-            type="button"
-            role="menuitem"
-            className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-bold text-slate-700 transition hover:bg-slate-50"
-            onClick={() => {
-              setOpen(false);
-              onNavigate("profiles");
-            }}
-          >
-            <BookMarked size={16} className="text-blue-600" />
-            基金档案
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-bold text-slate-700 transition hover:bg-slate-50"
-            onClick={() => {
-              setOpen(false);
-              onNavigate("dashboard");
-            }}
-          >
-            <LayoutDashboard size={16} className="text-blue-600" />
-            仪表盘
-          </button>
           <button
             type="button"
             role="menuitem"

@@ -1,4 +1,4 @@
-from app.models import Holding
+from app.models import FundProfile, Holding
 from app.services.sector_quote_label import sector_display_label, sector_quote_lookup_label
 
 
@@ -11,7 +11,13 @@ def test_lookup_prefers_intraday_index_over_related_board():
         sector_name="电网设备",
         intraday_index_name="中证电网设备",
     )
-    assert sector_quote_lookup_label(holding) == "中证电网设备"
+    profile = FundProfile(
+        fund_code="025856",
+        fund_name=holding.fund_name,
+        sector_name="电网设备",
+        intraday_index_name="中证电网设备",
+    )
+    assert sector_quote_lookup_label(holding, profile=profile) == "中证电网设备"
     assert sector_display_label(holding) == "电网设备"
 
 

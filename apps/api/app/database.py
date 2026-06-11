@@ -79,6 +79,15 @@ def _connect() -> sqlite3.Connection:
     )
     connection.execute(
         """
+        CREATE TABLE IF NOT EXISTS portfolio_intraday_curves (
+            trade_date TEXT PRIMARY KEY,
+            payload TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    connection.execute(
+        """
         CREATE TABLE IF NOT EXISTS report_chat_messages (
             id TEXT PRIMARY KEY,
             report_id TEXT NOT NULL,
@@ -354,6 +363,56 @@ def list_portfolio_daily_snapshots(*, limit: int = 30) -> list[dict[str, Any]]:
 def get_most_recent_portfolio_snapshot() -> dict[str, Any] | None:
     rows = list_portfolio_daily_snapshots(limit=1)
     return rows[0] if rows else None
+
+
+def save_portfolio_intraday_curve(trade_date: str, points: list[dict[str, Any]]) -> None:
+    with _connect() as connection:
+        connection.execute(
+            """
+            INSERT OR REPLACE INTO portfolio_intraday_curves (trade_date, payload, updated_at)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+            """,
+            (trade_date, json.dumps({"points": points}, ensure_ascii=False)),
+        )
+        connection.commit()
+
+
+def delete_portfolio_snapshots_on_or_before(cutoff_date: str) -> dict[str, int]:
+    """删除 cutoff_date 当日及更早的日快照与分时曲线（用于纠正历史脏数据）。"""
+    with _connect() as connection:
+        daily = connection.execute(
+            """
+            DELETE FROM portfolio_daily_snapshots WHERE snapshot_date <= ?
+            """,
+            (cutoff_date,),
+        )
+        intraday = connection.execute(
+            """
+            DELETE FROM portfolio_intraday_curves WHERE trade_date <= ?
+            """,
+            (cutoff_date,),
+        )
+        connection.commit()
+    return {
+        "daily_snapshots_deleted": daily.rowcount,
+        "intraday_curves_deleted": intraday.rowcount,
+        "cutoff_date": cutoff_date,
+    }
+
+
+def get_portfolio_intraday_curve(trade_date: str) -> list[dict[str, Any]] | None:
+    with _connect() as connection:
+        row = connection.execute(
+            """
+            SELECT payload FROM portfolio_intraday_curves WHERE trade_date = ?
+            """,
+            (trade_date,),
+        ).fetchone()
+    if row is None:
+        return None
+    payload = json.loads(row["payload"])
+    points = payload.get("points")
+    return points if isinstance(points, list) else None
 
 
 def get_investor_profile() -> InvestorProfile | None:

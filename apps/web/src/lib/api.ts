@@ -18,6 +18,8 @@ export type Holding = {
   amount_includes_today?: boolean | null;
 };
 
+export type DecisionStyle = "conservative" | "tactical";
+
 export type InvestorProfile = {
   style: string;
   horizon: string;
@@ -26,6 +28,7 @@ export type InvestorProfile = {
   expected_investment_amount?: number | null;
   prefer_dca: boolean;
   avoid_chasing: boolean;
+  decision_style?: DecisionStyle;
 };
 
 export type AnalysisMode = "fast" | "deep";
@@ -168,6 +171,14 @@ export type ReportOutcomes = {
   }>;
 };
 
+export type ReversalStats = {
+  reversal_count: number;
+  up_then_down_count: number;
+  up_then_down_conservative_aligned: number;
+  up_then_down_aggressive_miss: number;
+  summary_line: string;
+};
+
 export type ReportWeeklyOutcomes = ReportOutcomes & {
   baseline_days?: number;
   baseline_report_id?: string;
@@ -175,6 +186,7 @@ export type ReportWeeklyOutcomes = ReportOutcomes & {
   summary?: string | null;
   hit_count?: number;
   miss_count?: number;
+  reversal_stats?: ReversalStats;
 };
 
 export type TradingSession = {
@@ -257,14 +269,6 @@ export type HoldingFieldWarning = {
   severity: "error" | "warn" | "info";
 };
 
-export type HoldingListDiff = {
-  index?: number | null;
-  fund_code: string;
-  fund_name: string;
-  change_type: "added" | "removed" | "changed" | "unchanged";
-  messages: string[];
-};
-
 export type PortfolioHistoryPoint = {
   date: string;
   total_assets?: number | null;
@@ -281,6 +285,53 @@ export type PortfolioAllocationRow = {
   holding_return_percent?: number | null;
 };
 
+export type ProfitRange = "today" | "week" | "month" | "year" | "all";
+
+export type ProfitTrendPoint = {
+  time?: string;
+  date?: string;
+  portfolio_percent?: number | null;
+  index_percent?: number | null;
+};
+
+export type ProfitTrend = {
+  kind: "intraday" | "daily";
+  trade_date?: string | null;
+  points: ProfitTrendPoint[];
+};
+
+export type ProfitTrendFooter = {
+  portfolio_return_percent?: number | null;
+  index_return_percent?: number | null;
+  alpha_percent?: number | null;
+};
+
+export type ProfitCalendarDay = {
+  date: string;
+  day: number;
+  weekday: number;
+  is_trading_day: boolean;
+  is_today: boolean;
+  is_holiday: boolean;
+  daily_profit?: number | null;
+  daily_return_percent?: number | null;
+};
+
+export type ProfitCalendar = {
+  year: number;
+  month: number;
+  days: ProfitCalendarDay[];
+  month_cumulative_profit?: number | null;
+  month_index_return_percent?: number | null;
+  month_cumulative_return_percent?: number | null;
+};
+
+export type DailyProfitTop5Row = {
+  fund_code: string;
+  fund_name: string;
+  daily_profit: number;
+};
+
 export type PortfolioDashboardData = {
   summary: PortfolioSummary;
   history: PortfolioHistoryPoint[];
@@ -288,6 +339,11 @@ export type PortfolioDashboardData = {
   snapshot_count: number;
   latest_snapshot_date?: string | null;
   profiles?: FundProfile[];
+  profit_range?: ProfitRange;
+  profit_trend?: ProfitTrend;
+  profit_trend_footer?: ProfitTrendFooter;
+  profit_calendar?: ProfitCalendar;
+  daily_top5?: { gainers: DailyProfitTop5Row[]; losers: DailyProfitTop5Row[] };
 };
 
 export type AnalysisJob = {
@@ -388,35 +444,6 @@ export type SectorQuotesStatus = {
   auto_refresh_allowed: boolean;
   session: TradingSession;
 };
-
-export type AllocatePenetrationResult = {
-  holdings: Holding[];
-  holding_warnings: HoldingFieldWarning[];
-  warning_count: number;
-  allocated_total: number;
-  account_daily_profit: number;
-  method: string;
-};
-
-export async function allocatePenetrationDaily(
-  holdings: Holding[],
-  accountDailyProfit: number,
-  accountDailyProfitSource: PortfolioSummary["daily_profit_source"] = "penetration_estimate",
-): Promise<AllocatePenetrationResult> {
-  const response = await fetch(`${API_BASE}/api/holdings/allocate-penetration-daily`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      holdings,
-      account_daily_profit: accountDailyProfit,
-      account_daily_profit_source: accountDailyProfitSource,
-    }),
-  });
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  return response.json();
-}
 
 export async function refreshSectorQuotes(
   holdings: Holding[],
@@ -638,6 +665,130 @@ export async function fetchTradingSession(): Promise<TradingSession> {
   return response.json();
 }
 
+export type NewsFreshness = {
+  as_of: string;
+  calendar_date: string;
+  total_items: number;
+  today_items: number;
+  today_ratio: number;
+  freshness_label: string;
+  median_age_minutes: number | null;
+  interpretation: string;
+  has_today_signal: boolean;
+};
+
+export type NewsPreviewResponse = {
+  topics: string[];
+  items: Array<{
+    topic: string;
+    title: string;
+    published_at?: string | null;
+    is_today: boolean;
+  }>;
+  freshness: NewsFreshness;
+  trading_session: TradingSession;
+};
+
+export type RecommendationAccuracyBucket = {
+  decision_style: string;
+  paired_count: number;
+  hit_count: number;
+  miss_count: number;
+  hit_rate_percent: number;
+  reversal?: ReversalStats & { aggressive_miss_rate_percent?: number | null };
+  items?: Array<{
+    fund_code?: string;
+    fund_name?: string;
+    previous_action?: string;
+    assessment?: string;
+    reversal_scenario?: string | null;
+  }>;
+};
+
+export type RecommendationAccuracy = {
+  has_enough_data: boolean;
+  message?: string;
+  paired_days?: number;
+  report_count?: number;
+  by_style?: Record<string, RecommendationAccuracyBucket>;
+  summary_lines?: string[];
+};
+
+export async function fetchRecommendationAccuracy(
+  limitReports = 30,
+): Promise<RecommendationAccuracy> {
+  const response = await fetch(
+    `${API_BASE}/api/reports/recommendation-accuracy?days=${limitReports}`,
+    { cache: "no-store" },
+  );
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export type SectorSignalBacktestRule = {
+  rule_id: string;
+  label: string;
+  trigger_count: number;
+  hit_count: number;
+  hit_rate_percent: number | null;
+  beats_random?: boolean | null;
+};
+
+export type SectorSignalBacktestSector = {
+  sector_label: string;
+  sample_days?: number;
+  by_rule?: Record<string, SectorSignalBacktestRule>;
+  resolved?: boolean;
+  message?: string;
+};
+
+export type SectorSignalBacktest = {
+  enabled?: boolean;
+  has_data: boolean;
+  lookback_days?: number;
+  sector_count?: number;
+  by_rule?: Record<string, SectorSignalBacktestRule>;
+  sectors?: SectorSignalBacktestSector[];
+  summary_lines?: string[];
+  message?: string;
+};
+
+export async function fetchSectorSignalBacktest(
+  days = 120,
+  sectors?: string[],
+): Promise<SectorSignalBacktest> {
+  const params = new URLSearchParams({ days: String(days) });
+  if (sectors?.length) {
+    params.set("sectors", sectors.join(","));
+  }
+  const response = await fetch(
+    `${API_BASE}/api/diagnostics/sector-signal-backtest?${params.toString()}`,
+    { cache: "no-store" },
+  );
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export async function previewNewsForHoldings(
+  holdings: Holding[],
+  profile: InvestorProfile,
+): Promise<NewsPreviewResponse> {
+  const response = await fetch(`${API_BASE}/api/news/preview`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ holdings, profile }),
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
 export async function exportDatabase(): Promise<void> {
   const response = await fetch(`${API_BASE}/api/database/export`, { cache: "no-store" });
   if (!response.ok) {
@@ -792,34 +943,6 @@ export async function fetchReportMarkdown(reportId: string): Promise<string> {
   return body.markdown as string;
 }
 
-export async function importFundProfiles(profiles: FundProfile[]): Promise<{ saved: number }> {
-  const response = await fetch(`${API_BASE}/api/fund-profiles/import`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ profiles }),
-  });
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  return response.json();
-}
-
-export type ParseFundProfileResult = FundProfile & {
-  synced_holdings?: Holding[];
-  portfolio_summary?: PortfolioSummary | null;
-};
-
-export async function parseFundProfile(formData: FormData): Promise<ParseFundProfileResult> {
-  const response = await fetch(`${API_BASE}/api/fund-profiles/ocr`, {
-    method: "POST",
-    body: formData,
-  });
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  return response.json();
-}
-
 export type FundCodeResolution = {
   fund_name: string;
   fund_code: string | null;
@@ -845,7 +968,6 @@ export type ParseOcrUploadResult = {
   trading_session?: Record<string, unknown>;
   portfolio_summary?: PortfolioSummary | null;
   holding_warnings?: HoldingFieldWarning[];
-  holding_diffs?: HoldingListDiff[];
   profile_sync?: { updated: number; created: number };
   sector_refresh?: Record<string, unknown> | null;
   error?: string;
@@ -927,18 +1049,26 @@ export async function saveInvestorProfileRemote(profile: InvestorProfile): Promi
   return response.json();
 }
 
-export async function fetchPortfolioDashboard(): Promise<PortfolioDashboardData> {
-  const response = await fetch(`${API_BASE}/api/portfolio/dashboard`, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(await response.text());
+export async function fetchPortfolioDashboard(options?: {
+  range?: ProfitRange;
+  calendarYear?: number;
+  calendarMonth?: number;
+}): Promise<PortfolioDashboardData> {
+  const params = new URLSearchParams();
+  if (options?.range) {
+    params.set("range", options.range);
   }
-  return response.json();
-}
-
-export async function listFundProfiles(): Promise<FundProfile[]> {
-  const response = await fetch(`${API_BASE}/api/fund-profiles`, {
-    cache: "no-store",
-  });
+  if (options?.calendarYear) {
+    params.set("calendar_year", String(options.calendarYear));
+  }
+  if (options?.calendarMonth) {
+    params.set("calendar_month", String(options.calendarMonth));
+  }
+  const query = params.toString();
+  const response = await fetch(
+    `${API_BASE}/api/portfolio/dashboard${query ? `?${query}` : ""}`,
+    { cache: "no-store" },
+  );
   if (!response.ok) {
     throw new Error(await response.text());
   }

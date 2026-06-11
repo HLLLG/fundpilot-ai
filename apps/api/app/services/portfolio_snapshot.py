@@ -7,7 +7,15 @@ from app.database import (
     list_portfolio_daily_snapshots,
     save_portfolio_daily_snapshot,
 )
-from app.models import Holding, PortfolioDailySnapshot, PortfolioSummary
+from app.models import FundProfile, Holding, PortfolioDailySnapshot, PortfolioSummary
+from app.services.portfolio_profit_analysis import (
+    ProfitRange,
+    build_calendar_month,
+    build_daily_top5,
+    build_profit_trend,
+    default_calendar_anchor,
+    summarize_trend_footer,
+)
 
 
 def snapshot_date_key(when: datetime | None = None) -> str:
@@ -44,8 +52,11 @@ def build_dashboard_payload(
     *,
     summary: PortfolioSummary | None,
     profiles: list,
+    profit_range: ProfitRange = "today",
+    calendar_year: int | None = None,
+    calendar_month: int | None = None,
 ) -> dict:
-    history_rows = list_portfolio_daily_snapshots(limit=30)
+    history_rows = list_portfolio_daily_snapshots(limit=400)
     history = [
         {
             "date": row["snapshot_date"],
@@ -71,6 +82,45 @@ def build_dashboard_payload(
 
     allocation = _build_allocation(allocation_source, profiles, total_assets)
 
+    holdings_models = [Holding.model_validate(item) for item in allocation_source]
+    if not holdings_models and profiles:
+        holdings_models = [
+            Holding(
+                fund_code=profile.fund_code,
+                fund_name=profile.fund_name,
+                holding_amount=profile.holding_amount or 0,
+                daily_profit=profile.daily_profit,
+                holding_return_percent=profile.holding_return_percent,
+                return_percent=profile.holding_return_percent,
+            )
+            for profile in profiles
+            if isinstance(profile, FundProfile) and (profile.holding_amount or 0) > 0
+        ]
+
+    profiles_by_code = {
+        profile.fund_code: profile
+        for profile in profiles
+        if isinstance(profile, FundProfile)
+    }
+
+    year, month = (
+        (calendar_year, calendar_month)
+        if calendar_year and calendar_month
+        else default_calendar_anchor()
+    )
+    profit_trend = build_profit_trend(
+        profit_range=profit_range,
+        snapshots=history_rows,
+        holdings=holdings_models,
+        profiles_by_code=profiles_by_code,
+    )
+    trend_footer = summarize_trend_footer(
+        profit_trend,
+        summary_daily_return=summary.daily_return_percent if summary else None,
+    )
+    calendar = build_calendar_month(year=year, month=month, snapshots=history_rows)
+    daily_top5 = build_daily_top5(holdings_models)
+
     return {
         "summary": summary.model_dump(mode="json") if summary else {},
         "history": history,
@@ -78,6 +128,11 @@ def build_dashboard_payload(
         "snapshot_count": len(history_rows),
         "latest_snapshot_date": latest["snapshot_date"] if latest else None,
         "trend_context": build_portfolio_trend_context(history_rows),
+        "profit_range": profit_range,
+        "profit_trend": profit_trend,
+        "profit_trend_footer": trend_footer,
+        "profit_calendar": calendar,
+        "daily_top5": daily_top5,
     }
 
 

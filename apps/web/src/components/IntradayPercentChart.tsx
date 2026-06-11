@@ -1,6 +1,7 @@
 "use client";
 
 import { useId, useMemo, useRef, useState } from "react";
+import { clockToSessionRatio } from "@/lib/intradayChartTime";
 
 export type IntradayPoint = {
   time: string;
@@ -64,10 +65,11 @@ export function IntradayPercentChart({ points, height = 200 }: IntradayPercentCh
     const plotBottom = padding.top + chartHeight;
 
     const coords = points.map((point, index) => {
-      const x = padding.left + (index / (points.length - 1)) * chartWidth;
+      const sessionRatio = clockToSessionRatio(point.time);
+      const x = padding.left + sessionRatio * chartWidth;
       const rawY = plotBottom - ((point.percent - min) / range) * chartHeight;
       const y = Math.max(plotTop, Math.min(plotBottom, rawY));
-      return { ...point, x, y, index };
+      return { ...point, x, y, index, sessionRatio };
     });
 
     const linePath = coords.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`).join(" ");
@@ -276,8 +278,16 @@ export function IntradayPercentChart({ points, height = 200 }: IntradayPercentCh
           onMouseMove={(event) => {
             const rect = event.currentTarget.getBoundingClientRect();
             const ratio = (event.clientX - rect.left) / rect.width;
-            const index = Math.round(ratio * (chart.coords.length - 1));
-            setHoverIndex(Math.max(0, Math.min(chart.coords.length - 1, index)));
+            let bestIndex = 0;
+            let bestDistance = Number.POSITIVE_INFINITY;
+            for (const point of chart.coords) {
+              const distance = Math.abs(point.sessionRatio - ratio);
+              if (distance < bestDistance) {
+                bestDistance = distance;
+                bestIndex = point.index;
+              }
+            }
+            setHoverIndex(bestIndex);
           }}
           onMouseLeave={() => setHoverIndex(null)}
         />

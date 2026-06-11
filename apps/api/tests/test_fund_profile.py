@@ -210,19 +210,18 @@ def test_resolve_truncated_overview_names_with_profile_aliases(tmp_path, monkeyp
     assert defense.fund_code == "015945"
 
 
-def test_create_profile_from_text_endpoint_and_use_it_in_analysis(tmp_path, monkeypatch):
+def test_save_profile_from_text_and_use_it_in_analysis(tmp_path, monkeypatch):
+    from app.services.fund_profile import FundProfileService, parse_profile_from_text
+
     monkeypatch.setenv("FUND_AI_DB_PATH", str(tmp_path / "app.db"))
     monkeypatch.setenv("FUND_AI_DEEPSEEK_API_KEY", "")
     refresh_settings()
     client = TestClient(app)
 
-    profile_response = client.post(
-        "/api/fund-profiles/ocr",
-        data={"raw_text": DETAIL_TEXT},
-    )
-
-    assert profile_response.status_code == 200
-    assert profile_response.json()["fund_code"] == "025856"
+    profile = parse_profile_from_text(DETAIL_TEXT)
+    assert profile is not None
+    assert profile.fund_code == "025856"
+    FundProfileService().save_profile(profile)
 
     list_response = client.get("/api/fund-profiles")
     assert list_response.status_code == 200

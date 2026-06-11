@@ -6,7 +6,6 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronUp,
-  Edit3,
   Loader2,
   RefreshCw,
   X,
@@ -39,7 +38,7 @@ import {
   formatSignedPercent,
   resolveSectorBoardReturnPercent,
 } from "@/lib/holdingMetrics";
-import { resolveIntradayQuery, sectorQuoteLookupLabel } from "@/lib/profileSector";
+import { holdingRelatedBoardLabel, resolveIntradayQuery } from "@/lib/profileSector";
 import { isEstimateFallbackMeta } from "@/lib/sectorQuoteStatus";
 import { formatTradeDateShort } from "@/lib/tradeDateLabel";
 
@@ -50,7 +49,7 @@ const PROVENANCE_LABEL: Record<string, string> = {
   nav: "净值推算",
   snapshot: "历史快照",
   computed: "公式估算",
-  profile: "基金档案",
+  profile: "自动维护",
   akshare: "AkShare 匹配",
   user: "手动设置",
 };
@@ -63,7 +62,6 @@ type YangjibaoFundDetailProps = {
   sectorMeta?: SectorQuoteMeta;
   onClose: () => void;
   onNavigate: (index: number) => void;
-  onEdit?: () => void;
   onHoldingResolved?: (index: number, holding: Holding) => void;
 };
 
@@ -146,7 +144,6 @@ export function YangjibaoFundDetail({
   sectorMeta,
   onClose,
   onNavigate,
-  onEdit,
   onHoldingResolved,
 }: YangjibaoFundDetailProps) {
   const [tab, setTab] = useState<DetailTab>("sector");
@@ -154,7 +151,6 @@ export function YangjibaoFundDetail({
   const [detailLoading, setDetailLoading] = useState(true);
   const [intradayLoading, setIntradayLoading] = useState(false);
   const [intradayPoints, setIntradayPoints] = useState<Array<{ time: string; percent: number }>>([]);
-  const [intradayClosePercent, setIntradayClosePercent] = useState<number | null>(null);
   const [intradayNote, setIntradayNote] = useState<string | null>(null);
   const [intradayRefreshing, setIntradayRefreshing] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
@@ -187,12 +183,9 @@ export function YangjibaoFundDetail({
     detail?.fund_code_resolved === true && activeHolding.fund_code !== "000000";
   const yearReturn = detail?.year_return_percent ?? null;
 
-  const quoteLabel = sectorQuoteLookupLabel(activeHolding) ?? sectorMeta?.matched_name ?? "—";
+  const quoteLabel = holdingRelatedBoardLabel(activeHolding) || sectorMeta?.matched_name || "—";
   const sectorReturn = resolveSectorBoardReturnPercent(activeHolding);
-  const emKlineClose =
-    intradayClosePercent ??
-    (intradayPoints.length > 0 ? intradayPoints[intradayPoints.length - 1].percent : null);
-  const displaySectorReturn = emKlineClose ?? sectorReturn;
+  const displaySectorReturn = sectorReturn;
   const dataSourceLabel = isEstimateFallbackMeta(sectorMeta)
     ? "估值兜底"
     : sectorMeta?.provider === "eastmoney-kline" || sectorMeta?.source === "live"
@@ -295,7 +288,6 @@ export function YangjibaoFundDetail({
     }
     if (!intradayQuery) {
       setIntradayPoints([]);
-      setIntradayClosePercent(null);
       setIntradayNote("暂无板块映射，请先在「今日」刷新板块或上传详情截图建档");
       setIntradayLoading(false);
       setIntradayRefreshing(false);
@@ -304,18 +296,15 @@ export function YangjibaoFundDetail({
 
     const requestId = ++intradayRequestSeq.current;
     setIntradayPoints([]);
-    setIntradayClosePercent(null);
     setIntradayNote(null);
     setIntradayLoading(true);
     setIntradayRefreshing(false);
 
     const applyIntraday = (result: {
       points: Array<{ time: string; percent: number }>;
-      close_change_percent?: number | null;
       note?: string | null;
     }) => {
       setIntradayPoints(result.points);
-      setIntradayClosePercent(result.close_change_percent ?? null);
       setIntradayNote(result.note ?? null);
     };
 
@@ -361,7 +350,6 @@ export function YangjibaoFundDetail({
         }
         if (!showedCache) {
           setIntradayPoints([]);
-          setIntradayClosePercent(null);
           setIntradayNote("分时数据暂不可用");
         }
       } finally {
@@ -673,19 +661,11 @@ export function YangjibaoFundDetail({
           ) : null}
         </div>
 
-        <footer className="sticky bottom-0 z-10 grid shrink-0 grid-cols-2 divide-x divide-slate-100 border-t border-slate-100 bg-white">
-          <button
-            type="button"
-            onClick={onEdit}
-            className="flex flex-col items-center justify-center gap-1 py-3 text-[11px] font-semibold text-slate-600 hover:bg-slate-50"
-          >
-            <Edit3 size={18} className="text-slate-500" />
-            修改持仓
-          </button>
+        <footer className="sticky bottom-0 z-10 shrink-0 border-t border-slate-100 bg-white">
           <button
             type="button"
             onClick={onClose}
-            className="flex flex-col items-center justify-center gap-1 py-3 text-[11px] font-semibold text-slate-600 hover:bg-slate-50"
+            className="flex w-full flex-col items-center justify-center gap-1 py-3 text-[11px] font-semibold text-slate-600 hover:bg-slate-50"
           >
             <ChevronLeft size={18} className="text-slate-500" />
             返回列表

@@ -206,7 +206,7 @@ def _warnings_for_holding(index: int, holding: Holding) -> list[HoldingFieldWarn
                 index=index,
                 field="fund_code",
                 code="missing_fund_code",
-                message="缺少基金代码，建议在基金档案中补全详情。",
+                message="缺少基金代码，请重新上传账户汇总截图或手动录入完整名称。",
                 severity="warn",
             )
         )
@@ -232,7 +232,7 @@ def _warnings_for_holding(index: int, holding: Holding) -> list[HoldingFieldWarn
                 field="sector_name",
                 code="invalid_sector_label",
                 message=(
-                    f"关联板块「{holding.sector_name}」无效，请在基金档案重新上传详情"
+                    f"关联板块「{holding.sector_name}」无效，请在基金详情中修正板块映射"
                     "或使用「修复无效关联板块」。"
                 ),
                 severity="warn",

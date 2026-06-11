@@ -67,7 +67,8 @@ export function resolveIntradayReturnPercent(holding: Holding): number | null {
  * - 盘中/净值未公布：昨日结算 + 板块涨跌估算
  */
 export function computeEstimatedHoldingReturnPercent(holding: Holding): number | null {
-  const settled = resolveHoldingReturnPercent(holding);
+  const repaired = repairCorruptedSettledProfit(holding);
+  const settled = resolveHoldingReturnPercent(repaired);
   if (holding.daily_return_percent_source === "official_nav") {
     if (settled != null) {
       return round2(settled);
@@ -77,7 +78,7 @@ export function computeEstimatedHoldingReturnPercent(holding: Holding): number |
     }
     return null;
   }
-  const intraday = resolveIntradayReturnPercent(holding);
+  const intraday = resolveIntradayReturnPercent(repaired);
   if (settled == null) {
     return null;
   }
@@ -87,15 +88,48 @@ export function computeEstimatedHoldingReturnPercent(holding: Holding): number |
   return round2(settled + intraday);
 }
 
-function resolveSettledHoldingProfit(holding: Holding): number | null {
-  if (holding.holding_profit != null) {
-    return holding.holding_profit;
-  }
-  const returnPercent = resolveHoldingReturnPercent(holding);
-  if (returnPercent == null || holding.holding_amount <= 0) {
+function expectedSettledProfit(holding: Holding, returnPercent: number): number | null {
+  if (holding.holding_amount <= 0) {
     return null;
   }
   return round2((holding.holding_amount * returnPercent) / (100 + returnPercent));
+}
+
+function repairCorruptedSettledProfit(holding: Holding): Holding {
+  if (holding.holding_profit == null) {
+    return holding;
+  }
+  const profileReturn = holding.holding_return_percent ?? holding.return_percent;
+  const referenceReturn = profileReturn;
+  if (referenceReturn == null) {
+    return holding;
+  }
+  const expected = expectedSettledProfit(holding, referenceReturn);
+  if (expected == null) {
+    return holding;
+  }
+  const delta = Math.abs(holding.holding_profit - expected);
+  if (delta <= Math.max(25, Math.abs(expected) * 0.35)) {
+    return holding;
+  }
+  return {
+    ...holding,
+    holding_profit: expected,
+    holding_return_percent: referenceReturn,
+    return_percent: referenceReturn,
+  };
+}
+
+function resolveSettledHoldingProfit(holding: Holding): number | null {
+  const repaired = repairCorruptedSettledProfit(holding);
+  if (repaired.holding_profit != null) {
+    return repaired.holding_profit;
+  }
+  const returnPercent = resolveHoldingReturnPercent(repaired);
+  if (returnPercent == null) {
+    return null;
+  }
+  return expectedSettledProfit(repaired, returnPercent);
 }
 
 /**
@@ -104,29 +138,30 @@ function resolveSettledHoldingProfit(holding: Holding): number | null {
  * - 盘中/净值未公布：昨日结算持有收益 + 当日收益（板块估算）
  */
 export function computeHoldingProfit(holding: Holding): number | null {
-  if (holding.daily_return_percent_source === "official_nav") {
-    if (holding.holding_profit != null) {
-      return holding.holding_profit;
+  const repaired = repairCorruptedSettledProfit(holding);
+  if (repaired.daily_return_percent_source === "official_nav") {
+    if (repaired.holding_profit != null) {
+      return repaired.holding_profit;
     }
-    const totalReturn = computeEstimatedHoldingReturnPercent(holding);
-    if (totalReturn != null && holding.holding_amount > 0) {
-      return round2((holding.holding_amount * totalReturn) / (100 + totalReturn));
+    const totalReturn = computeEstimatedHoldingReturnPercent(repaired);
+    if (totalReturn != null && repaired.holding_amount > 0) {
+      return round2((repaired.holding_amount * totalReturn) / (100 + totalReturn));
     }
     return null;
   }
-  const settledProfit = resolveSettledHoldingProfit(holding);
-  const dailyProfit = computeDailyProfit(holding);
+  const settledProfit = resolveSettledHoldingProfit(repaired);
+  const dailyProfit = computeDailyProfit(repaired);
   if (settledProfit != null && dailyProfit != null) {
     return round2(settledProfit + dailyProfit);
   }
   if (settledProfit != null) {
     return settledProfit;
   }
-  const estimatedReturn = computeEstimatedHoldingReturnPercent(holding);
-  if (estimatedReturn == null || holding.holding_amount <= 0) {
+  const estimatedReturn = computeEstimatedHoldingReturnPercent(repaired);
+  if (estimatedReturn == null || repaired.holding_amount <= 0) {
     return null;
   }
-  return round2((holding.holding_amount * estimatedReturn) / (100 + estimatedReturn));
+  return round2((repaired.holding_amount * estimatedReturn) / (100 + estimatedReturn));
 }
 
 /** 持有金额是否已含当日涨跌（份额×净值同步后） */

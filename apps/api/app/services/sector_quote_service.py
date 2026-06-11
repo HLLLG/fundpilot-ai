@@ -82,7 +82,13 @@ def refresh_holdings_sector_quotes(
 
     profile_service = FundProfileService()
     holdings = [profile_service.resolve_holding(holding) for holding in holdings]
-    lookup_labels = [sector_quote_lookup_label(holding) for holding in holdings]
+    lookup_labels = [
+        sector_quote_lookup_label(
+            holding,
+            profile=profile_service._find_profile_for_holding(holding),
+        )
+        for holding in holdings
+    ]
 
     boards: dict[str, dict[str, float]] = {
         "index": {},
@@ -169,7 +175,10 @@ def refresh_holdings_sector_quotes(
     secid_matched = 0
 
     for index, holding in enumerate(holdings):
-        lookup_label = sector_quote_lookup_label(holding)
+        lookup_label = sector_quote_lookup_label(
+            holding,
+            profile=profile_service._find_profile_for_holding(holding),
+        )
         label_key = sector_label_key(lookup_label)
         persisted = None if force_refresh else (get_sector_mapping(label_key) if label_key else None)
         result = resolve_sector_quote(

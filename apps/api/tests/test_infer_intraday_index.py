@@ -69,8 +69,8 @@ def test_resolve_holding_restores_csi_ai_index_for_008586(tmp_path, monkeypatch)
         FundProfile(
             fund_code="008586",
             fund_name="华夏人工智能ETF联接C",
-            sector_name="中证人工智能",
-            intraday_index_name=None,
+            sector_name="人工智能",
+            intraday_index_name="中证人工智能",
         )
     )
 
@@ -79,7 +79,7 @@ def test_resolve_holding_restores_csi_ai_index_for_008586(tmp_path, monkeypatch)
         fund_name="华夏人工智能ETF联接C",
         holding_amount=8527.77,
         return_percent=1.8,
-        sector_name="中证人工智能",
+        sector_name="人工智能",
         intraday_index_name=None,
     )
     resolved = FundProfileService().resolve_holding(holding)

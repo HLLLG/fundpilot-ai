@@ -583,6 +583,10 @@ def _sanitize_profile_sector_fields(profile: FundProfile) -> FundProfile:
                 board = _infer_related_board_label(inferred)
                 if _is_valid_sector_label(board):
                     sector_name = board
+    if intraday_index_name and infer_intraday_index_from_fund_name(profile.fund_name) is None:
+        inferred_board_index = infer_intraday_index_from_sector(sector_name)
+        if inferred_board_index and intraday_index_name == inferred_board_index:
+            intraday_index_name = None
 
     if sector_name == profile.sector_name and intraday_index_name == profile.intraday_index_name:
         return profile
