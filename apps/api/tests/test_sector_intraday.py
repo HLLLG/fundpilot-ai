@@ -119,10 +119,9 @@ def test_fetch_sector_intraday_endpoint(monkeypatch):
             1.2,
         ),
     )
-    from fastapi.testclient import TestClient
-    from app.main import app
+    from tests.conftest import authenticated_test_client
 
-    client = TestClient(app)
+    client = authenticated_test_client()
     response = client.get(
         "/api/sector-quotes/intraday",
         params={"source_type": "index", "source_name": "中证人工智能"},

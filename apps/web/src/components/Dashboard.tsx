@@ -36,7 +36,6 @@ import { JobStatusFloat } from "@/components/JobStatusFloat";
 import { displayableHoldings } from "@/lib/holdingMetrics";
 import { useSectorQuoteRefresh } from "@/lib/useSectorQuoteRefresh";
 import { buildWorkflowBlockers, hasBlockingErrors } from "@/lib/workflowBlockers";
-import { TodayBlockingChecklist } from "@/components/TodayBlockingChecklist";
 import { TradingSessionBar } from "@/components/TradingSessionBar";
 import { DatabaseBackupPanel } from "@/components/DatabaseBackupPanel";
 import { PortfolioDashboard } from "@/components/PortfolioDashboard";
@@ -372,7 +371,6 @@ export function Dashboard() {
           {activeTab === "report" ? (
             <div className="grid min-w-0 gap-4">
               <TradingSessionBar />
-              <TodayBlockingChecklist blockers={workflowBlockers} />
               <RiskControls
                 profile={profile}
                 analysisMode={analysisMode}
@@ -383,15 +381,11 @@ export function Dashboard() {
                 ocrWarningCount={ocrWarningCount}
                 hasBlockingErrors={blockingErrors}
               />
-              <div ref={reportSectionRef} className="min-w-0">
-                {report ? (
+              {report ? (
+                <div ref={reportSectionRef} className="min-w-0">
                   <ReportPanel report={report} />
-                ) : (
-                  <div className="section-card px-4 py-10 text-center text-sm text-slate-500">
-                    确认持仓后，点击上方按钮生成今日操作建议。
-                  </div>
-                )}
-              </div>
+                </div>
+              ) : null}
               <DiagnosticsAccordion>
                 <NewsPreviewPanel holdings={displayableHoldings(holdings)} profile={profile} />
                 <RecommendationAccuracyPanel />

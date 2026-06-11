@@ -1,15 +1,15 @@
 import json
 
 from app.config import refresh_settings
-from app.database import save_fund_profile, _connect
-from app.main import app
+from app.database import _connect
 from app.models import FundProfile
-from fastapi.testclient import TestClient
+from tests.conftest import auth_client_for_db
 
 
 def test_repair_fund_profile_sectors_clears_plus_label(tmp_path, monkeypatch):
-    monkeypatch.setenv("FUND_AI_DB_PATH", str(tmp_path / "app.db"))
     refresh_settings()
+    client = auth_client_for_db(monkeypatch, tmp_path / "app.db")
+    user_id = client.get("/api/auth/me").json()["id"]
 
     dirty = FundProfile(
         fund_code="519674",
@@ -24,10 +24,11 @@ def test_repair_fund_profile_sectors_clears_plus_label(tmp_path, monkeypatch):
     with _connect() as connection:
         connection.execute(
             """
-            INSERT INTO fund_profiles (fund_code, fund_name, payload, updated_at)
-            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+            INSERT INTO fund_profiles (userId, fund_code, fund_name, payload, updated_at)
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
             """,
             (
+                user_id,
                 dirty.fund_code,
                 dirty.fund_name,
                 json.dumps(dirty.model_dump(mode="json"), ensure_ascii=False),
@@ -35,15 +36,14 @@ def test_repair_fund_profile_sectors_clears_plus_label(tmp_path, monkeypatch):
         )
         connection.commit()
 
-    client = TestClient(app)
     response = client.post("/api/fund-profiles/repair-sectors")
     assert response.status_code == 200
     assert response.json()["repaired"] == 1
 
     with _connect() as connection:
         row = connection.execute(
-            "SELECT payload FROM fund_profiles WHERE fund_code = ?",
-            ("519674",),
+            "SELECT payload FROM fund_profiles WHERE userId = ? AND fund_code = ?",
+            (user_id, "519674"),
         ).fetchone()
     payload = json.loads(row["payload"])
     assert payload["sector_name"] is None

@@ -16,10 +16,9 @@ def test_refresh_sector_quotes_endpoint(monkeypatch):
 
     monkeypatch.setattr("app.main.refresh_holdings_sector_quotes", fake_refresh)
 
-    from fastapi.testclient import TestClient
-    from app.main import app
+    from tests.conftest import authenticated_test_client
 
-    client = TestClient(app)
+    client = authenticated_test_client()
     response = client.post(
         "/api/holdings/refresh-sector-quotes",
         json={
@@ -54,10 +53,9 @@ def test_refresh_sector_quotes_accurate_budget_uses_no_timeout(monkeypatch):
 
     monkeypatch.setattr("app.main.refresh_holdings_sector_quotes", fake_refresh)
 
-    from fastapi.testclient import TestClient
-    from app.main import app
+    from tests.conftest import authenticated_test_client
 
-    client = TestClient(app)
+    client = authenticated_test_client()
     response = client.post(
         "/api/holdings/refresh-sector-quotes",
         json={
@@ -79,11 +77,10 @@ def test_refresh_sector_quotes_accurate_budget_uses_no_timeout(monkeypatch):
 
 
 def test_sector_quotes_status_endpoint():
-    from fastapi.testclient import TestClient
     from app.config import get_settings
-    from app.main import app
+    from tests.conftest import authenticated_test_client
 
-    client = TestClient(app)
+    client = authenticated_test_client()
     response = client.get("/api/sector-quotes/status")
     assert response.status_code == 200
     body = response.json()

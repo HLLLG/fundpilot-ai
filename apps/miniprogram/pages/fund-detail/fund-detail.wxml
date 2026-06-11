@@ -1,0 +1,26 @@
+<view class="page">
+  <view wx:if="{{loading}}" class="hint">加载中…</view>
+  <view wx:elif="{{error}}" class="error">{{error}}</view>
+  <view wx:elif="{{detail}}" class="card">
+    <text class="name">{{detail.fund_name}}</text>
+    <text class="code">{{detail.fund_code}}</text>
+    <view class="grid">
+      <view class="item">
+        <text class="label">持有金额</text>
+        <text class="value">¥{{detail.holding_amount}}</text>
+      </view>
+      <view class="item">
+        <text class="label">持有收益</text>
+        <text class="value">{{detail.holding_return_percent}}%</text>
+      </view>
+      <view class="item" wx:if="{{detail.sector_name}}">
+        <text class="label">关联板块</text>
+        <text class="value">{{detail.sector_name}}</text>
+      </view>
+      <view class="item" wx:if="{{detail.unit_nav}}">
+        <text class="label">单位净值</text>
+        <text class="value">{{detail.unit_nav}}</text>
+      </view>
+    </view>
+  </view>
+</view>

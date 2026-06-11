@@ -1,20 +1,20 @@
 from fastapi.testclient import TestClient
 
 from app.config import refresh_settings
-from app.main import app
-
-
-client = TestClient(app)
+from tests.conftest import auth_client_for_db
 
 
 def test_health_endpoint_returns_ok():
+    from app.main import app
+
+    client = TestClient(app)
     response = client.get("/health")
 
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
 
 
-def test_allocate_penetration_daily_endpoint():
+def test_allocate_penetration_daily_endpoint(client: TestClient):
     response = client.post(
         "/api/holdings/allocate-penetration-daily",
         json={
@@ -66,9 +66,9 @@ def _mock_news_search(monkeypatch):
 
 
 def test_analyze_manual_holdings_returns_persisted_report(tmp_path, monkeypatch):
-    monkeypatch.setenv("FUND_AI_DB_PATH", str(tmp_path / "app.db"))
     monkeypatch.setenv("FUND_AI_DEEPSEEK_API_KEY", "")
     refresh_settings()
+    client = auth_client_for_db(monkeypatch, tmp_path / "app.db")
     _mock_news_search(monkeypatch)
     payload = {
         "holdings": [
@@ -105,7 +105,7 @@ def test_analyze_manual_holdings_returns_persisted_report(tmp_path, monkeypatch)
     assert any(report["id"] == body["id"] for report in reports_response.json())
 
 
-def test_ocr_preview_skips_sector_refresh(monkeypatch):
+def test_ocr_preview_skips_sector_refresh(client: TestClient, monkeypatch):
     from pathlib import Path
 
     fixture = (
@@ -145,7 +145,7 @@ def test_ocr_preview_skips_sector_refresh(monkeypatch):
     assert body["holdings"][0]["fund_code"] == "519674"
 
 
-def test_ocr_endpoint_accepts_text_fallback():
+def test_ocr_endpoint_accepts_text_fallback(client: TestClient):
     response = client.post(
         "/api/ocr",
         data={"raw_text": "测试基金A\n000001\n持有金额 1000\n持有收益率 -1.5%"},
@@ -156,15 +156,20 @@ def test_ocr_endpoint_accepts_text_fallback():
 
 
 def test_ocr_endpoint_resolves_holdings_with_saved_profiles(tmp_path, monkeypatch):
+    from app.request_context import reset_request_user_id, set_request_user_id
     from app.services.fund_profile import FundProfileService, parse_profile_from_text
 
-    monkeypatch.setenv("FUND_AI_DB_PATH", str(tmp_path / "app.db"))
-    refresh_settings()
+    client = auth_client_for_db(monkeypatch, tmp_path / "app.db")
+    user_id = client.get("/api/auth/me").json()["id"]
     profile = parse_profile_from_text(
         "华夏中证电网设备主题ETF联接A\n025856\n持有金额\n15,075.46\n10,645.76\n52.76%"
     )
     assert profile is not None
-    FundProfileService().save_profile(profile)
+    token = set_request_user_id(user_id)
+    try:
+        FundProfileService().save_profile(profile)
+    finally:
+        reset_request_user_id(token)
 
     response = client.post(
         "/api/ocr",
@@ -182,8 +187,7 @@ def test_ocr_endpoint_resolves_holdings_with_saved_profiles(tmp_path, monkeypatc
 def test_ocr_endpoint_caches_image_text(tmp_path, monkeypatch):
     from app.services.ocr_engine import OcrEngine
 
-    monkeypatch.setenv("FUND_AI_DB_PATH", str(tmp_path / "app.db"))
-    refresh_settings()
+    client = auth_client_for_db(monkeypatch, tmp_path / "app.db")
     calls = {"count": 0}
 
     def fake_extract(self, image_path):
@@ -202,7 +206,10 @@ def test_ocr_endpoint_caches_image_text(tmp_path, monkeypatch):
     assert calls["count"] == 1
 
 
-def test_ocr_endpoint_returns_clear_error_when_local_ocr_is_missing(monkeypatch):
+def test_ocr_endpoint_returns_clear_error_when_local_ocr_is_missing(
+    client: TestClient,
+    monkeypatch,
+):
     from app.services.ocr_engine import OcrEngine
 
     def raise_missing_ocr(self, image_path):
@@ -221,10 +228,13 @@ def test_ocr_endpoint_returns_clear_error_when_local_ocr_is_missing(monkeypatch)
     assert "OCR 识别失败" in body["error"]
 
 
-def test_analyze_unknown_code_keeps_yangjibao_snapshot_and_rich_recommendations(tmp_path, monkeypatch):
-    monkeypatch.setenv("FUND_AI_DB_PATH", str(tmp_path / "app.db"))
+def test_analyze_unknown_code_keeps_yangjibao_snapshot_and_rich_recommendations(
+    tmp_path,
+    monkeypatch,
+):
     monkeypatch.setenv("FUND_AI_DEEPSEEK_API_KEY", "")
     refresh_settings()
+    client = auth_client_for_db(monkeypatch, tmp_path / "app.db")
     _mock_news_search(monkeypatch)
 
     response = client.post(
@@ -272,9 +282,9 @@ def test_analyze_unknown_code_keeps_yangjibao_snapshot_and_rich_recommendations(
 
 
 def test_delete_report_endpoint(tmp_path, monkeypatch):
-    monkeypatch.setenv("FUND_AI_DB_PATH", str(tmp_path / "app.db"))
     monkeypatch.setenv("FUND_AI_DEEPSEEK_API_KEY", "")
     refresh_settings()
+    client = auth_client_for_db(monkeypatch, tmp_path / "app.db")
     _mock_news_search(monkeypatch)
 
     create = client.post(
@@ -304,9 +314,9 @@ def test_delete_report_endpoint(tmp_path, monkeypatch):
 
 
 def test_report_diff_and_markdown_endpoints(tmp_path, monkeypatch):
-    monkeypatch.setenv("FUND_AI_DB_PATH", str(tmp_path / "app.db"))
     monkeypatch.setenv("FUND_AI_DEEPSEEK_API_KEY", "")
     refresh_settings()
+    client = auth_client_for_db(monkeypatch, tmp_path / "app.db")
     _mock_news_search(monkeypatch)
 
     first = client.post(
@@ -349,19 +359,27 @@ def test_report_diff_and_markdown_endpoints(tmp_path, monkeypatch):
 
 
 def test_fund_profiles_list_after_save(tmp_path, monkeypatch):
+    from app.request_context import reset_request_user_id, set_request_user_id
     from app.services.fund_profile import FundProfileService, parse_profile_from_text
 
-    monkeypatch.setenv("FUND_AI_DB_PATH", str(tmp_path / "app.db"))
-    refresh_settings()
+    client = auth_client_for_db(monkeypatch, tmp_path / "app.db")
+    user_id = client.get("/api/auth/me").json()["id"]
     profile = parse_profile_from_text("测试基金\n015608\n持有金额\n1000\n1.2%")
     assert profile is not None
-    FundProfileService().save_profile(profile)
+    token = set_request_user_id(user_id)
+    try:
+        FundProfileService().save_profile(profile)
+    finally:
+        reset_request_user_id(token)
 
     listed = client.get("/api/fund-profiles").json()
     assert any(item["fund_code"] == "015608" for item in listed)
 
 
 def test_trading_session_endpoint():
+    from app.main import app
+
+    client = TestClient(app)
     response = client.get("/api/trading-session")
     assert response.status_code == 200
     body = response.json()
@@ -371,9 +389,7 @@ def test_trading_session_endpoint():
 
 
 def test_investor_profile_persistence(tmp_path, monkeypatch):
-    db_path = tmp_path / "investor_profile.db"
-    monkeypatch.setenv("FUND_AI_DB_PATH", str(db_path))
-    refresh_settings()
+    client = auth_client_for_db(monkeypatch, tmp_path / "investor_profile.db")
 
     missing = client.get("/api/investor-profile")
     assert missing.status_code == 404
@@ -398,9 +414,9 @@ def test_investor_profile_persistence(tmp_path, monkeypatch):
 
 
 def test_database_export_and_import(tmp_path, monkeypatch):
-    db_path = tmp_path / "app.db"
-    monkeypatch.setenv("FUND_AI_DB_PATH", str(db_path))
+    monkeypatch.setenv("FUND_AI_DEEPSEEK_API_KEY", "")
     refresh_settings()
+    client = auth_client_for_db(monkeypatch, tmp_path / "app.db")
 
     client.post(
         "/api/analyze",
@@ -442,9 +458,9 @@ def test_async_job_returns_stage(tmp_path, monkeypatch):
     from app.models import FundSnapshot
     from app.services.fund_data import FundDataService
 
-    monkeypatch.setenv("FUND_AI_DB_PATH", str(tmp_path / "app.db"))
     monkeypatch.setenv("FUND_AI_DEEPSEEK_API_KEY", "")
     refresh_settings()
+    client = auth_client_for_db(monkeypatch, tmp_path / "app.db")
     _mock_news_search(monkeypatch)
 
     def fake_snapshots(self, holdings, **kwargs):

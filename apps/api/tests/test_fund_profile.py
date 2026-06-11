@@ -213,15 +213,22 @@ def test_resolve_truncated_overview_names_with_profile_aliases(tmp_path, monkeyp
 def test_save_profile_from_text_and_use_it_in_analysis(tmp_path, monkeypatch):
     from app.services.fund_profile import FundProfileService, parse_profile_from_text
 
-    monkeypatch.setenv("FUND_AI_DB_PATH", str(tmp_path / "app.db"))
     monkeypatch.setenv("FUND_AI_DEEPSEEK_API_KEY", "")
     refresh_settings()
-    client = TestClient(app)
+    from tests.conftest import auth_client_for_db
+
+    from app.request_context import reset_request_user_id, set_request_user_id
+    client = auth_client_for_db(monkeypatch, tmp_path / "app.db")
+    user_id = client.get("/api/auth/me").json()["id"]
 
     profile = parse_profile_from_text(DETAIL_TEXT)
     assert profile is not None
     assert profile.fund_code == "025856"
-    FundProfileService().save_profile(profile)
+    ctx = set_request_user_id(user_id)
+    try:
+        FundProfileService().save_profile(profile)
+    finally:
+        reset_request_user_id(ctx)
 
     list_response = client.get("/api/fund-profiles")
     assert list_response.status_code == 200

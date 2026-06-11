@@ -1,0 +1,39 @@
+# 本地模拟 CloudBase 云托管 + MySQL（可选）
+services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: fundpilot_root
+      MYSQL_DATABASE: fundpilot
+      MYSQL_USER: fundpilot
+      MYSQL_PASSWORD: fundpilot_pass
+    ports:
+      - "3306:3306"
+    volumes:
+      - fundpilot_mysql:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      FUND_AI_DATABASE_URL: mysql://fundpilot:fundpilot_pass@mysql:3306/fundpilot
+      FUND_AI_JWT_SECRET: ${FUND_AI_JWT_SECRET:-fundpilot-dev-jwt-secret-change-me-32chars}
+      FUND_AI_DEEPSEEK_API_KEY: ${FUND_AI_DEEPSEEK_API_KEY:-}
+      FUND_AI_CORS_ORIGINS: ${FUND_AI_CORS_ORIGINS:-http://127.0.0.1:3001}
+      FUND_AI_CLOUDBASE_AUTH_DEV_MODE: ${FUND_AI_CLOUDBASE_AUTH_DEV_MODE:-true}
+    depends_on:
+      mysql:
+        condition: service_healthy
+    volumes:
+      - ./uploads:/app/uploads
+
+volumes:
+  fundpilot_mysql:

@@ -70,6 +70,31 @@ class Settings(BaseSettings):
     ocr_preload: bool = True
     ocr_use_mobile_models: bool = True
     ocr_max_image_side: int = 1280
+    jwt_secret: str = "fundpilot-dev-jwt-secret-change-me-32chars"
+    jwt_access_expire_minutes: int = 120
+    database_url: str | None = None
+    cloudbase_env_id: str | None = None
+    cloudbase_custom_login_key_path: Path | None = None
+    cloudbase_api_base_url: str = "https://tcb-api.tencentcloudapi.com"
+    cloudbase_auth_dev_mode: bool = False
+
+    @field_validator("cloudbase_custom_login_key_path", mode="before")
+    @classmethod
+    def normalize_cloudbase_key_path(cls, value: object) -> Path | None:
+        if value is None:
+            return None
+        if isinstance(value, str) and not value.strip():
+            return None
+        return Path(value)
+
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def normalize_database_url(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, str) and not value.strip():
+            return None
+        return str(value).strip()
 
     @field_validator("db_auto_import_path", mode="before")
     @classmethod
@@ -122,6 +147,10 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def uses_mysql(self) -> bool:
+        return bool(self.database_url and self.database_url.startswith("mysql"))
 
 
 @lru_cache

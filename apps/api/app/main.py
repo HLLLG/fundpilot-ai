@@ -10,7 +10,17 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 
+from app.auth.middleware import AuthMiddleware
+from app.auth.models import BindWechatRequest, LoginRequest, RegisterRequest, WechatLoginRequest
+from app.auth.service import (
+    bind_wechat_user,
+    get_current_user_public,
+    login_user,
+    register_user,
+    wechat_login_user,
+)
 from app.config import get_settings
+from app.request_context import get_request_user_id
 from app.database import (
     delete_portfolio_snapshots_on_or_before,
     delete_report,
@@ -79,6 +89,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(AuthMiddleware)
 
 
 @app.get("/health")
@@ -92,6 +103,51 @@ def health() -> dict[str, str | bool]:
 @app.get("/api/trading-session")
 def trading_session() -> dict:
     return build_trading_session()
+
+
+@app.post("/api/auth/register")
+def auth_register(body: RegisterRequest) -> dict:
+    try:
+        result = register_user(body)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return result.model_dump()
+
+
+@app.post("/api/auth/login")
+def auth_login(body: LoginRequest) -> dict:
+    try:
+        result = login_user(body)
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    return result.model_dump()
+
+
+@app.get("/api/auth/me")
+def auth_me() -> dict:
+    try:
+        user = get_current_user_public(get_request_user_id())
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return user.model_dump()
+
+
+@app.post("/api/auth/wechat-login")
+def auth_wechat_login(body: WechatLoginRequest) -> dict:
+    try:
+        result = wechat_login_user(body)
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    return result.model_dump()
+
+
+@app.post("/api/auth/bind-wechat")
+def auth_bind_wechat(body: BindWechatRequest) -> dict:
+    try:
+        user = bind_wechat_user(get_request_user_id(), body)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return user.model_dump()
 
 
 @app.get("/api/reports/recommendation-accuracy")
@@ -500,8 +556,12 @@ def repair_fund_profile_sectors() -> dict:
     )
 
     repaired = 0
+    user_id = get_request_user_id()
     with _connect() as connection:
-        rows = connection.execute("SELECT payload FROM fund_profiles").fetchall()
+        rows = connection.execute(
+            "SELECT payload FROM fund_profiles WHERE userId = ?",
+            (user_id,),
+        ).fetchall()
     for row in rows:
         raw = FundProfile.model_validate(json.loads(row["payload"]))
         cleaned = _sanitize_profile_sector_fields(raw)

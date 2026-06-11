@@ -43,10 +43,9 @@ def test_run_sector_quote_diagnostic_mocks_providers(monkeypatch):
 
 
 def test_diagnostic_api_returns_json():
-    from fastapi.testclient import TestClient
-    from app.main import app
+    from tests.conftest import authenticated_test_client
 
-    client = TestClient(app)
+    client = authenticated_test_client()
     response = client.get("/api/sector-quotes/diagnostic?timeout_seconds=1")
     assert response.status_code == 200
     payload = response.json()

@@ -1,0 +1,45 @@
+<view class="page">
+  <view class="header" wx:if="{{summary}}">
+    <text class="label">总资产</text>
+    <text class="amount">¥{{summary.total_assets || 0}}</text>
+    <text class="daily" wx:if="{{summary.daily_profit != null}}">
+      当日 {{summary.daily_profit >= 0 ? '+' : ''}}{{summary.daily_profit}}
+    </text>
+  </view>
+
+  <view class="toolbar">
+    <button size="mini" loading="{{refreshing}}" bindtap="onRefreshSectors">刷新板块</button>
+    <button size="mini" bindtap="onLogout">退出</button>
+  </view>
+
+  <view wx:if="{{loading}}" class="hint">加载中…</view>
+  <view wx:elif="{{error}}" class="error">{{error}}</view>
+  <view wx:elif="{{!holdings.length}}" class="hint">暂无持仓，请先在 Web 端录入</view>
+
+  <block wx:else>
+    <view
+      class="card"
+      wx:for="{{holdings}}"
+      wx:key="fund_code"
+      data-index="{{index}}"
+      bindtap="onOpenDetail"
+    >
+      <view class="row">
+        <text class="name">{{item.fund_name}}</text>
+        <text class="code">{{item.fund_code}}</text>
+      </view>
+      <view class="row">
+        <text>金额 ¥{{item.holding_amount}}</text>
+        <text class="{{item.return_percent >= 0 ? 'up' : 'down'}}">
+          {{item.return_percent}}%
+        </text>
+      </view>
+      <view class="sector" wx:if="{{item.sector_name}}">
+        {{item.sector_name}}
+        <text wx:if="{{item.sector_return_percent != null}}">
+          {{item.sector_return_percent}}%
+        </text>
+      </view>
+    </view>
+  </block>
+</view>

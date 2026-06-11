@@ -30,6 +30,8 @@
 - **SQLite 全库备份/恢复**（历史页）；风控参数、分析模式、追问模式保存在浏览器本地，风控画像同步至 SQLite。
 - SQLite 本地保存历史日报，支持在历史侧栏删除旧报告。
 - 基金详情页：**业绩走势**（近1月～3年、本基金 vs 沪深300）、历史净值滚动加载；**持有天数**可点选首次购入日期；关联板块分时图。
+- **邮箱注册/登录**（JWT）；用户菜单 → **账号设置** 可绑定微信，与小程序共享持仓。
+- **微信小程序**（`apps/miniprogram`）：微信登录、持有列表、基金详情（只读）；云端部署见 [docs/deploy/cloudbase.md](docs/deploy/cloudbase.md)。
 
 **分析模式（生成日报）：**
 
@@ -48,12 +50,13 @@
 ## 目录
 
 ```text
-apps/api        FastAPI 后端
-apps/web        Next.js 前端
-data            SQLite 数据库
+apps/api        FastAPI 后端（含 auth/、Dockerfile）
+apps/web        Next.js 前端（/login、/register、/settings）
+apps/miniprogram  微信小程序
+data            SQLite 数据库（云端可迁 MySQL）
 uploads         本地上传截图
-scripts         dev.sh / dev.ps1 一键启动
-docs            项目文档（含 AI 上下文）
+scripts         dev.sh / dev.ps1 / migrate_sqlite_to_mysql.py
+docs            项目文档（含 AI 上下文、CloudBase 部署）
 ```
 
 面向 AI 或新开发者的架构与业务说明见 **[docs/PROJECT_CONTEXT.md](docs/PROJECT_CONTEXT.md)**，可在新对话开头 `@` 该文件，避免重复扫描全仓库。
@@ -83,7 +86,17 @@ FUND_AI_NEWS_SOURCES=eastmoney,announcement,macro
 FUND_AI_NEWS_SUMMARIZE=true
 FUND_AI_NEWS_MACRO_TOPIC=上证指数
 NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
+FUND_AI_JWT_SECRET=change-me-to-a-random-secret-at-least-32-chars
 ```
+
+鉴权与云端（可选，详见 `.env.example` 与 [docs/deploy/cloudbase.md](docs/deploy/cloudbase.md)）：
+
+| 变量 | 说明 |
+|------|------|
+| `FUND_AI_JWT_SECRET` | JWT 签名密钥（本地开发也建议设置） |
+| `FUND_AI_DATABASE_URL` | 设则使用 MySQL；省略则用 `data/app.db` |
+| `FUND_AI_CLOUDBASE_ENV_ID` | 云开发环境 ID（微信登录） |
+| `FUND_AI_CLOUDBASE_AUTH_DEV_MODE` | `true` 时小程序本地联调可用开发 UID |
 
 `.env` 已被 `.gitignore` 忽略，不会提交到 Git。
 
@@ -174,6 +187,7 @@ http://127.0.0.1:3000
 ## 推荐使用流程
 
 ```text
+0. 首次使用在 /register 注册账号，或 /login 登录（需在 .env 配置 FUND_AI_JWT_SECRET）
 1. bash scripts/dev.sh → 打开 http://127.0.0.1:3000（默认「持有」Tab）
 2. 启动后自动恢复上次持仓；需更新金额时点击「新增持有」上传支付宝/养基宝总览截图
 3. 预览确认后写入账户汇总，并自动同步份额、查码、刷新板块涨跌
@@ -183,6 +197,17 @@ http://127.0.0.1:3000
 7. 右下角 JobStatusFloat 查看进度；完成后可在报告页追问（可选深度模式拉最新新闻）
 8. 换机迁移：用户菜单 → 历史日报 → SQLite 备份导出/导入
 9. 需要留存时可导出日报 Markdown 或导出对话 Markdown
+10. 使用小程序：用户菜单 → 账号设置 → 绑定微信；详见 apps/miniprogram/README.md
+```
+
+## 云端部署（可选）
+
+面向 ≤5 人私有部署：FastAPI 云托管 + CloudBase MySQL + 静态 Web + 微信小程序。完整步骤见 **[docs/deploy/cloudbase.md](docs/deploy/cloudbase.md)**。
+
+```bash
+# 本地验证 Docker 镜像
+export FUND_AI_JWT_SECRET=your-secret-32chars-minimum
+docker compose -f docker-compose.cloud.yml up --build
 ```
 
 ## 验证

@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ChevronDown, History } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { ChevronDown, History, LogOut, Settings } from "lucide-react";
+import { useAuth } from "@/components/AuthProvider";
 
 export type UserMenuTarget = "history";
 
@@ -9,12 +11,9 @@ type UserMenuProps = {
   onNavigate: (target: UserMenuTarget) => void;
 };
 
-const mockUser = {
-  name: "投研用户",
-  subtitle: "本地自用 · 稳健型",
-};
-
 export function UserMenu({ onNavigate }: UserMenuProps) {
+  const { user, logout } = useAuth();
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -40,6 +39,9 @@ export function UserMenu({ onNavigate }: UserMenuProps) {
     };
   }, [open]);
 
+  const displayName = user?.username || user?.userAccount || "用户";
+  const initial = displayName.slice(0, 1).toUpperCase();
+
   return (
     <div ref={rootRef} className="relative z-50">
       <button
@@ -49,9 +51,18 @@ export function UserMenu({ onNavigate }: UserMenuProps) {
         aria-expanded={open}
         aria-haspopup="menu"
       >
-        <span className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-blue-600 to-indigo-500 text-sm font-black text-white shadow-[0_6px_16px_rgba(37,99,235,0.28)]">
-          {mockUser.name.slice(0, 1)}
-        </span>
+        {user?.avatarUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={user.avatarUrl}
+            alt=""
+            className="h-9 w-9 rounded-full object-cover"
+          />
+        ) : (
+          <span className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-blue-600 to-indigo-500 text-sm font-black text-white shadow-[0_6px_16px_rgba(37,99,235,0.28)]">
+            {initial}
+          </span>
+        )}
         <ChevronDown
           size={16}
           className={`text-slate-400 transition ${open ? "rotate-180" : ""}`}
@@ -63,6 +74,27 @@ export function UserMenu({ onNavigate }: UserMenuProps) {
           role="menu"
           className="absolute right-0 z-[60] mt-2 w-56 overflow-hidden rounded-2xl border border-slate-200 bg-white py-1.5 shadow-[0_16px_40px_rgba(15,23,42,0.12)]"
         >
+          <div className="border-b border-slate-100 px-3 py-2.5">
+            <p className="truncate text-sm font-bold text-slate-800">{displayName}</p>
+            <p className="truncate text-xs text-slate-500">{user?.userAccount}</p>
+          </div>
+          <button
+            type="button"
+            role="menuitem"
+            className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-bold text-slate-700 transition hover:bg-slate-50"
+            onClick={() => {
+              setOpen(false);
+              router.push("/settings");
+            }}
+          >
+            <Settings size={16} className="text-blue-600" />
+            账号设置
+            {user?.wechatBound ? null : (
+              <span className="ml-auto rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700">
+                未绑微信
+              </span>
+            )}
+          </button>
           <button
             type="button"
             role="menuitem"
@@ -74,6 +106,18 @@ export function UserMenu({ onNavigate }: UserMenuProps) {
           >
             <History size={16} className="text-blue-600" />
             历史日报
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-bold text-slate-700 transition hover:bg-slate-50"
+            onClick={() => {
+              setOpen(false);
+              logout();
+            }}
+          >
+            <LogOut size={16} className="text-slate-500" />
+            退出登录
           </button>
         </div>
       ) : null}

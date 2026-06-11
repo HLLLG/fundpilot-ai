@@ -4,9 +4,10 @@
 >
 > **维护：** 功能或架构有实质变化时，同步更新「能力清单」「数据流」「API」「目录」「环境变量」。
 
-**文档版本：** 2026-06-11（盈亏分析页；导航与死代码清理）
+**文档版本：** 2026-06-11（用户认证与多租户数据隔离）
 
 **更新记录：**
+- **用户认证（2026-06-11）：** 邮箱注册/登录 + JWT；`users` 表（驼峰字段）；业务数据按 `userId` 隔离；Web `/login` `/register` `/settings`（绑定微信）；`GET /api/auth/me` 返回 `wechatBound`；`POST /api/auth/wechat-login`、`/api/auth/bind-wechat`；微信小程序 `apps/miniprogram`；MySQL/`FUND_AI_DATABASE_URL` + Docker 云托管；部署见 `docs/deploy/cloudbase.md`；pytest **302** 项。
 - **盈亏分析 Tab（2026-06-11）：** 主 Tab 为「持有 | 盈亏分析 | 生成日报」；`PortfolioDashboard` 含收益走势（我的收益 vs 沪深300、不对称 Y 轴）、盈亏日历、当日 TOP5、持仓甜甜圈；`GET /api/portfolio/dashboard?range=&calendar_year=&calendar_month=`；`portfolio_profit_analysis.py` + `portfolio_intraday_curves` 表；`DELETE /api/portfolio/snapshots?on_or_before=` 清理历史日快照。
 - **UI 精简（2026-06-11）：** 用户菜单仅保留「历史日报」；生成日报页诊断折叠为 `DiagnosticsAccordion`；风控收进「高级设置」；移除废弃组件 `HoldingTable` / `PortfolioSummaryCard` / `TodayWorkflowSteps` / `NavLineChart` / `holdingReview.ts`。
 - **风控偏好语义（2026-06-11）：** `prefer_dca` / `avoid_chasing` 随 `profile` 传入模型；`avoid_chasing` 在 `recommendation_guard` 中板块大涨时限制加仓档；`prefer_dca` 在离线规则中弱持有收益时倾向分批加仓。
@@ -31,7 +32,7 @@
 
 ## 一句话
 
-**FundPilot AI** 是面向个人自用的本地基金投研助手：支付宝/养基宝截图 → OCR → **账户汇总**（板块涨跌估算当日收益）→ 个人风控画像 → 东方财富新闻（AkShare）+ DeepSeek V4 生成**逐基金操作建议**日报；首页自动恢复持仓并刷新板块；「生成日报」Tab 配置风控后直接异步生成报告。数据默认留在本机 SQLite。
+**FundPilot AI** 是面向 ≤5 人私有部署的基金投研助手：邮箱登录（Web）+ 可选微信小程序；支付宝/养基宝截图 → OCR → **账户汇总**（板块涨跌估算当日收益）→ 个人风控画像 → 东方财富新闻（AkShare）+ DeepSeek V4 生成**逐基金操作建议**日报；首页自动恢复持仓并刷新板块；「生成日报」Tab 配置风控后直接异步生成报告。本地默认 SQLite；云端可迁 CloudBase MySQL（见 `docs/deploy/cloudbase.md`）。
 
 ---
 
@@ -39,6 +40,7 @@
 
 | 类别 | 能力 |
 |------|------|
+| 鉴权 | 邮箱注册/登录（JWT）；Web `/login` `/register`；`/settings` 绑定微信（`cloudbaseUid`）；`UserMenu` 显示「未绑微信」；小程序 `POST /api/auth/wechat-login`；开发模式 `FUND_AI_CLOUDBASE_AUTH_DEV_MODE` |
 | 输入 | 养基宝总览 OCR（无代码草稿解析）；**支付宝持有列表 OCR**（预览确认后写入）；当日列为 `-` 时不填当日收益；**OCR 漏负号**时规则补符号；总览上传在「今日」账户汇总 |
 | 当日收益 | 盘中/净值未公布：**板块涨跌估算**（`holding_amount × sector_return%`）；NAV 发布后：**官方日增长率** + `daily_profit = amount × r / (100 + r)`；关联板块列始终东财涨跌；账户汇总附「昨日收益」；**份额×净值**自动更新持有金额（`holding_amount_sync`） |
 | OCR 校验 | OCR 返回 `holding_warnings`；账户汇总为唯一持仓展示与日报输入源（`displayableHoldings` 过滤占位行） |
@@ -56,9 +58,11 @@
 | 板块实时 | **canonical 映射优先**（`sector_canonical` → 东财 `secid` K 线）；未知板块再走 spot 批量表 + `sector_quote_resolver` + `sector_on_demand`；可选中继/浏览器命令；300s 自动 + 手动；低置信度 `SectorMappingModal`；有场内指数时优先指数口径（`sector_quote_lookup_label`） |
 | 分时图 | `GET /api/sector-quotes/intraday`；push2delay 首选；相对**昨收**对齐养基宝；骨架点 &lt;30 不写缓存；可选 `sector_intraday_browser_command` 浏览器兜底 |
 | 官方净值 | AkShare `fund_open_fund_info_em` 覆盖**当日收益**（非板块列）；源标签：板块实时 / 收盘估算 / 官方净值；昨日收益取再上一交易日官方净值或 OCR |
-| 阻塞清单 | `TodayBlockingChecklist` + `workflowBlockers` |
+| 工作流阻塞 | `workflowBlockers`（生成日报前校验，无独立阻塞清单组件） |
 | 数据备份 | SQLite export/import；`DatabaseBackupPanel` |
-| CI / E2E | GitHub Actions：pytest（**296** 项）+ lint/typecheck/build + Playwright |
+| 小程序 | `apps/miniprogram`：登录、持有列表、基金详情（只读）；与 Web 经 `bind-wechat` 共享 `userId` |
+| 云部署 | `apps/api/Dockerfile`、`docker-compose.cloud.yml`；`scripts/migrate_sqlite_to_mysql.py`；见 `docs/deploy/cloudbase.md` |
+| CI / E2E | GitHub Actions：pytest（**302** 项）+ lint/typecheck/build + Playwright |
 | 基金诊断 | AkShare 概况/累计收益；详情页可 AkShare **按名称查码**并持久化 |
 | 分析模式 | 快速 / 深度 |
 | 体验 | 报告 diff、Markdown 导出、SQLite 备份、桌面通知、Plus Jakarta 字体 UI |
@@ -72,7 +76,8 @@
 
 | 会做 | 不会做 |
 |------|--------|
-| OCR、校对、风控、AI 日报、示意金额 | 自动下单、券商对接、多用户 SaaS |
+| OCR、校对、风控、AI 日报、示意金额 | 自动下单、券商对接 |
+| 邮箱登录、按用户隔离持仓（私有部署） | 公开大规模 SaaS |
 | 本地 SQLite / 上传目录 | 默认把原始截图发往云端 |
 | 公开新闻标题/摘要供模型参考 | 投资建议（报告须有 caveats） |
 
@@ -86,7 +91,8 @@
 |----|------|
 | 前端 | Next.js、React、TypeScript、Tailwind、Lucide；浏览器 `Notification` |
 | 后端 | FastAPI、Pydantic v2、uvicorn；`lifespan` 可选 DB 自动导入 |
-| 存储 | SQLite：`reports`、`fund_profiles`、`ocr_text_cache`、`analysis_jobs`、`report_chat_messages`、`portfolio_*`、`news_cache` |
+| 存储 | SQLite（本地）/ CloudBase MySQL（目标）：`users`、`reports`、`fund_profiles`、`portfolio_*` 等；业务表均含 `userId` |
+| 鉴权 | JWT（邮箱密码 + 微信/CloudBase）；`FUND_AI_JWT_SECRET`；`app/auth/`（middleware、cloudbase_auth、routes） |
 | AI | DeepSeek API；`fetch_market_news` Function Calling |
 | OCR（可选） | PaddleOCR |
 | 数据 | AkShare：净值 + `stock_news_em` / 基金公告 |
@@ -102,7 +108,9 @@ fundpilot-ai/
 ├── apps/api/app/
 │   ├── main.py              # 路由
 │   ├── lifespan.py          # 启动时可选 DB 自动导入
-│   ├── config.py / models.py / database.py
+│   ├── config.py / models.py / database.py / db_connect.py / db_migrations.py
+│   ├── auth/                # JWT 中间件、邮箱/微信登录、bind-wechat
+│   ├── mysql_bootstrap.py   # MySQL 建表（可选）
 │   └── services/
 │       ├── ocr_engine.py / ocr_parser.py / ocr_pipeline.py / alipay_holdings_parser.py / overview_pipeline.py
 │       ├── index_daily_client.py   # 沪深300等指数日线（新浪优先）
@@ -132,20 +140,26 @@ fundpilot-ai/
 │       ├── deepseek_client.py / analysis_runtime.py / analyze_pipeline.py
 │       └── recommendations.py
 ├── apps/web/src/
-│   ├── lib/api.ts / storage.ts / holdingMetrics.ts / useSectorQuoteRefresh.ts / workflowBlockers.ts
+│   ├── app/login/ register/ settings/   # 认证与账号设置
+│   ├── lib/api.ts / auth.ts / storage.ts / holdingMetrics.ts / useSectorQuoteRefresh.ts / workflowBlockers.ts
 │   └── components/
+│       ├── AuthProvider.tsx       # JWT 与 /api/auth/me
 │       ├── Dashboard.tsx          # 持有 / 盈亏分析 / 生成日报 / 历史
 │       ├── YangjibaoHoldingsBoard / YangjibaoFundDetail / AddHoldingModal / AlipayOcrConfirmModal
 │       ├── PortfolioDashboard / ProfitAnalysisTrendChart / ProfitLossCalendar / DailyProfitTop5 / HoldingDonutChart
 │       ├── PerformanceTrendPanel / PerformanceReturnChart / NavHistoryListModal / WheelDatePicker
 │       ├── SectorMappingModal / IntradayPercentChart
-│       ├── TradingSessionBar / TodayBlockingChecklist / DatabaseBackupPanel
+│       ├── TradingSessionBar / DatabaseBackupPanel
 │       ├── RiskControls / DiagnosticsAccordion / NewsPreviewPanel / SectorSignalBacktestPanel
 │       ├── ReportPanel / JobStatusFloat / HistoryRail / UserMenu
+├── apps/miniprogram/          # 微信小程序（登录、持有、详情）
+├── apps/api/Dockerfile
+├── docker-compose.cloud.yml
 ├── uploads/
 ├── data/app.db
-├── scripts/dev.sh / dev.ps1
+├── scripts/dev.sh / dev.ps1 / migrate_sqlite_to_mysql.py
 ├── docs/PROJECT_CONTEXT.md   # 本文
+├── docs/deploy/cloudbase.md  # CloudBase 部署
 └── README.md
 ```
 
@@ -154,6 +168,7 @@ fundpilot-ai/
 ## 推荐使用流程
 
 ```text
+0. 首次使用 → http://127.0.0.1:3000/register 注册；已有账号 → /login
 1. bash scripts/dev.sh → 打开 http://127.0.0.1:3000（默认「持有」Tab）
 2. 启动自动恢复上次持仓；点刷新更新板块涨跌 → 当日收益按板块估算
 3. 需更新金额时 →「持有」页「新增持有」上传支付宝/养基宝总览截图
@@ -161,6 +176,7 @@ fundpilot-ai/
 5. 「生成日报」Tab 确认风控画像（含偏定投/拒绝追高）→ 选快速/深度 → 生成日报 → JobStatusFloat 进度
 6. 点击持仓行 → 基金详情（板块分时、业绩走势、我的收益）；低置信度板块 → 映射弹窗
 7. 可上传**支付宝持有列表**截图 → 预览确认 → 写入持仓
+8. 需与小程序共用持仓 → 用户菜单「账号设置」→ 绑定 CloudBase UID（或 API `bind-wechat`）
 ```
 
 ### 账户汇总与持仓元数据
@@ -252,6 +268,11 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | 方法 | 路径 | 作用 |
 |------|------|------|
 | GET | `/health` | 健康检查 |
+| POST | `/api/auth/register` | 邮箱注册 |
+| POST | `/api/auth/login` | 邮箱登录 |
+| POST | `/api/auth/wechat-login` | 微信小程序 / CloudBase 登录 |
+| POST | `/api/auth/bind-wechat` | 已登录用户绑定微信（需 JWT） |
+| GET | `/api/auth/me` | 当前用户（需 JWT） |
 | POST | `/api/ocr` | 截图/文本 → holdings；`preview=true` 仅解析不写入；支持支付宝列表 |
 | POST | `/api/portfolio/apply-holdings` | 确认 OCR 预览结果写入持仓与快照 |
 | POST | `/api/analyze` | 同步生成 Report（兜底） |
@@ -411,13 +432,26 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 ## 前端要点
 
 - **今日 / 生成日报 Tab：** 账户汇总看板 vs 交易日历+风控画像+`ReportPanel`。
-- **用户菜单：** 仪表盘、历史日报（含 `HistoryRail`、SQLite 备份）；持仓元数据由 OCR 自动维护，无独立档案页。
+- **认证：** `AuthProvider` 注入 JWT；未登录访问受保护页会跳转 `/login`；`apiFetch` 自动带 `Authorization: Bearer`。
+- **用户菜单：** 历史日报（含 `HistoryRail`、SQLite 备份）、**账号设置**（`/settings` 绑定微信）；未绑微信时显示角标；持仓元数据由 OCR 自动维护，无独立档案页。
 - **分析：** `ReportPanel` + `JobStatusFloat` 异步轮询。
 - **偏好：** `lib/storage.ts`（profile 缓存、analysisMode、sectorAutoRefresh）；风控画像主存 SQLite `PUT /api/investor-profile`。
 
 ---
 
 ## 环境变量
+
+### 鉴权与数据库
+
+| 变量 | 默认 | 含义 |
+|------|------|------|
+| `FUND_AI_JWT_SECRET` | — | JWT 签名密钥（生产必填，≥32 字符） |
+| `FUND_AI_JWT_EXPIRE_HOURS` | 168 | Token 有效期（小时） |
+| `FUND_AI_DATABASE_URL` | — | 设则使用 MySQL（`mysql://user:pass@host:3306/db`）；否则 SQLite `data/app.db` |
+| `FUND_AI_CLOUDBASE_ENV_ID` | — | 云开发环境 ID（微信登录校验） |
+| `FUND_AI_CLOUDBASE_CUSTOM_LOGIN_KEY` | — | 自定义登录私钥 JSON 路径 |
+| `FUND_AI_CLOUDBASE_AUTH_DEV_MODE` | false | `true` 时小程序可用开发 UID（仅本地联调） |
+| `FUND_AI_CORS_ORIGINS` | `*` | 生产建议设为 Web 静态托管域名 |
 
 ### 板块实时
 
@@ -471,7 +505,7 @@ bash scripts/dev.sh    # 或 scripts/dev.ps1
 ```
 
 ```bash
-cd apps/api && ./.venv/Scripts/python.exe -m pytest tests -q   # 当前 296 项
+cd apps/api && ./.venv/Scripts/python.exe -m pytest tests -q   # 当前 302 项
 cd apps/web && npm run lint && npm run typecheck && npm run build
 cd apps/web && npm run test:e2e   # Playwright 冒烟
 ```
@@ -501,6 +535,8 @@ cd apps/web && npm run test:e2e   # Playwright 冒烟
 |------|------|
 | `README.md` | 安装、启动、环境变量、用户流程 |
 | `docs/PROJECT_CONTEXT.md` | **本文** — 架构、API、数据流、环境变量（维护主入口） |
+| `docs/deploy/cloudbase.md` | CloudBase 云托管 + MySQL + 小程序上线 |
+| `apps/miniprogram/README.md` | 小程序本地联调与合法域名 |
 | `docs/SECURITY.md` | API Key 与 Secret Scanning |
 | `docs/design/2026-06-04-eastmoney-intraday-troubleshooting.md` | 分时 push2 换机自测、指数映射、脏缓存清理（仅运维时查阅） |
 | `.env.example` | 环境变量模板 |

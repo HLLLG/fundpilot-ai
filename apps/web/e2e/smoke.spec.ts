@@ -1,4 +1,20 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type APIRequestContext } from "@playwright/test";
+
+const API_BASE = process.env.PLAYWRIGHT_API_BASE_URL ?? "http://127.0.0.1:8000";
+
+async function registerAndGetToken(request: APIRequestContext) {
+  const email = `e2e-${Date.now()}@example.com`;
+  const response = await request.post(`${API_BASE}/api/auth/register`, {
+    data: {
+      userAccount: email,
+      password: "E2eTest123!",
+      username: "E2E",
+    },
+  });
+  expect(response.ok()).toBeTruthy();
+  const body = await response.json();
+  return body.accessToken as string;
+}
 
 test("health endpoint returns ok", async ({ request }) => {
   const response = await request.get("/health");
@@ -18,7 +34,9 @@ test("trading session endpoint returns session kind", async ({ request }) => {
 
 test("offline analyze persists report", async ({ request }) => {
   test.setTimeout(120_000);
+  const token = await registerAndGetToken(request);
   const response = await request.post("/api/analyze", {
+    headers: { Authorization: `Bearer ${token}` },
     data: {
       holdings: [
         {

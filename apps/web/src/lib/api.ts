@@ -375,7 +375,95 @@ type ReportChatStreamEvent =
   | { type: "done"; message: ReportChatMessage; chat_mode?: ReportChatMode; model?: string }
   | { type: "error"; message: string };
 
+import { clearAccessToken, getAccessToken, type AuthSession, type AuthUser } from "@/lib/auth";
+
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+
+export type { AuthSession, AuthUser };
+
+async function apiFetch(input: string, init?: RequestInit): Promise<Response> {
+  const headers = new Headers(init?.headers);
+  const token = getAccessToken();
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+  const response = await apiFetch(input, { ...init, headers });
+  if (response.status === 401 && typeof window !== "undefined") {
+    clearAccessToken();
+    const path = window.location.pathname;
+    if (path !== "/login" && path !== "/register") {
+      const redirect = encodeURIComponent(path + window.location.search);
+      window.location.href = `/login?redirect=${redirect}`;
+    }
+  }
+  return response;
+}
+
+export async function registerUser(payload: {
+  userAccount: string;
+  password: string;
+  username?: string;
+}): Promise<AuthSession> {
+  const response = await apiFetch(`${API_BASE}/api/auth/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    const detail = body.detail;
+    throw new Error(
+      typeof detail === "string"
+        ? detail
+        : Array.isArray(detail)
+          ? detail.map((item: { msg?: string }) => item.msg).filter(Boolean).join("；") || "注册失败"
+          : "注册失败",
+    );
+  }
+  return response.json();
+}
+
+export async function loginUser(payload: {
+  userAccount: string;
+  password: string;
+}): Promise<AuthSession> {
+  const response = await apiFetch(`${API_BASE}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(typeof body.detail === "string" ? body.detail : "登录失败");
+  }
+  return response.json();
+}
+
+export async function fetchCurrentUser(): Promise<AuthUser> {
+  const response = await apiFetch(`${API_BASE}/api/auth/me`, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error("未登录");
+  }
+  return response.json();
+}
+
+export async function bindWechatAccount(payload: {
+  cloudbaseUid?: string;
+  cloudbaseAccessToken?: string;
+  cloudbaseTicket?: string;
+}): Promise<AuthUser> {
+  const response = await apiFetch(`${API_BASE}/api/auth/bind-wechat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    const detail = body.detail;
+    throw new Error(typeof detail === "string" ? detail : "绑定失败");
+  }
+  return response.json();
+}
 
 export type SectorQuoteMeta = {
   source: "live" | "ocr" | "manual";
@@ -449,7 +537,7 @@ export async function refreshSectorQuotes(
   holdings: Holding[],
   options?: { forceRefresh?: boolean; budget?: "fast" | "accurate" },
 ): Promise<RefreshSectorQuotesResult> {
-  const response = await fetch(`${API_BASE}/api/holdings/refresh-sector-quotes`, {
+  const response = await apiFetch(`${API_BASE}/api/holdings/refresh-sector-quotes`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -473,7 +561,7 @@ export async function applySectorMapping(
     source_code?: string | null;
   },
 ): Promise<RefreshSectorQuotesResult> {
-  const response = await fetch(`${API_BASE}/api/sector-mappings/apply`, {
+  const response = await apiFetch(`${API_BASE}/api/sector-mappings/apply`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -491,7 +579,7 @@ export async function applySectorMapping(
 }
 
 export async function fetchSectorQuotesStatus(): Promise<SectorQuotesStatus> {
-  const response = await fetch(`${API_BASE}/api/sector-quotes/status`, { cache: "no-store" });
+  const response = await apiFetch(`${API_BASE}/api/sector-quotes/status`, { cache: "no-store" });
   if (!response.ok) {
     throw new Error(await response.text());
   }
@@ -535,7 +623,7 @@ export async function fetchHoldingDetail(payload: {
   portfolio_summary?: PortfolioSummary | null;
   sector_quote_meta?: SectorQuoteMeta | null;
 }): Promise<HoldingDetail> {
-  const response = await fetch(`${API_BASE}/api/holdings/detail`, {
+  const response = await apiFetch(`${API_BASE}/api/holdings/detail`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -565,7 +653,7 @@ export async function fetchSectorIntraday(
   if (options?.forceRefresh) {
     params.set("force_refresh", "true");
   }
-  const response = await fetch(`${API_BASE}/api/sector-quotes/intraday?${params}`, {
+  const response = await apiFetch(`${API_BASE}/api/sector-quotes/intraday?${params}`, {
     cache: "no-store",
   });
   if (!response.ok) {
@@ -594,7 +682,7 @@ export async function startAnalyzeJob(
   ocrText?: string,
   analysisMode: AnalysisMode = "deep",
 ): Promise<string> {
-  const response = await fetch(`${API_BASE}/api/analyze/async`, {
+  const response = await apiFetch(`${API_BASE}/api/analyze/async`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(analysisPayload(holdings, profile, ocrText, analysisMode)),
@@ -607,7 +695,7 @@ export async function startAnalyzeJob(
 }
 
 export async function fetchAnalysisJob(jobId: string): Promise<AnalysisJob> {
-  const response = await fetch(`${API_BASE}/api/jobs/${jobId}`, { cache: "no-store" });
+  const response = await apiFetch(`${API_BASE}/api/jobs/${jobId}`, { cache: "no-store" });
   if (!response.ok) {
     throw new Error(await response.text());
   }
@@ -615,7 +703,7 @@ export async function fetchAnalysisJob(jobId: string): Promise<AnalysisJob> {
 }
 
 export async function listReports(): Promise<Report[]> {
-  const response = await fetch(`${API_BASE}/api/reports`, {
+  const response = await apiFetch(`${API_BASE}/api/reports`, {
     cache: "no-store",
   });
   if (!response.ok) {
@@ -625,7 +713,7 @@ export async function listReports(): Promise<Report[]> {
 }
 
 export async function deleteReport(reportId: string): Promise<void> {
-  const response = await fetch(`${API_BASE}/api/reports/${reportId}`, {
+  const response = await apiFetch(`${API_BASE}/api/reports/${reportId}`, {
     method: "DELETE",
   });
   if (!response.ok) {
@@ -634,7 +722,7 @@ export async function deleteReport(reportId: string): Promise<void> {
 }
 
 export async function fetchReportOutcomes(reportId: string): Promise<ReportOutcomes> {
-  const response = await fetch(`${API_BASE}/api/reports/${reportId}/outcomes`, {
+  const response = await apiFetch(`${API_BASE}/api/reports/${reportId}/outcomes`, {
     cache: "no-store",
   });
   if (!response.ok) {
@@ -647,7 +735,7 @@ export async function fetchReportWeeklyOutcomes(
   reportId: string,
   days = 7,
 ): Promise<ReportWeeklyOutcomes> {
-  const response = await fetch(
+  const response = await apiFetch(
     `${API_BASE}/api/reports/${reportId}/outcomes-weekly?days=${days}`,
     { cache: "no-store" },
   );
@@ -658,7 +746,7 @@ export async function fetchReportWeeklyOutcomes(
 }
 
 export async function fetchTradingSession(): Promise<TradingSession> {
-  const response = await fetch(`${API_BASE}/api/trading-session`, { cache: "no-store" });
+  const response = await apiFetch(`${API_BASE}/api/trading-session`, { cache: "no-store" });
   if (!response.ok) {
     throw new Error(await response.text());
   }
@@ -717,7 +805,7 @@ export type RecommendationAccuracy = {
 export async function fetchRecommendationAccuracy(
   limitReports = 30,
 ): Promise<RecommendationAccuracy> {
-  const response = await fetch(
+  const response = await apiFetch(
     `${API_BASE}/api/reports/recommendation-accuracy?days=${limitReports}`,
     { cache: "no-store" },
   );
@@ -763,7 +851,7 @@ export async function fetchSectorSignalBacktest(
   if (sectors?.length) {
     params.set("sectors", sectors.join(","));
   }
-  const response = await fetch(
+  const response = await apiFetch(
     `${API_BASE}/api/diagnostics/sector-signal-backtest?${params.toString()}`,
     { cache: "no-store" },
   );
@@ -777,7 +865,7 @@ export async function previewNewsForHoldings(
   holdings: Holding[],
   profile: InvestorProfile,
 ): Promise<NewsPreviewResponse> {
-  const response = await fetch(`${API_BASE}/api/news/preview`, {
+  const response = await apiFetch(`${API_BASE}/api/news/preview`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ holdings, profile }),
@@ -790,7 +878,7 @@ export async function previewNewsForHoldings(
 }
 
 export async function exportDatabase(): Promise<void> {
-  const response = await fetch(`${API_BASE}/api/database/export`, { cache: "no-store" });
+  const response = await apiFetch(`${API_BASE}/api/database/export`, { cache: "no-store" });
   if (!response.ok) {
     throw new Error(await response.text());
   }
@@ -811,7 +899,7 @@ export async function importDatabase(file: File): Promise<{
 }> {
   const form = new FormData();
   form.append("file", file);
-  const response = await fetch(`${API_BASE}/api/database/import`, {
+  const response = await apiFetch(`${API_BASE}/api/database/import`, {
     method: "POST",
     body: form,
   });
@@ -822,7 +910,7 @@ export async function importDatabase(file: File): Promise<{
 }
 
 export async function fetchRebalanceSimulation(reportId: string): Promise<RebalanceSimulation> {
-  const response = await fetch(`${API_BASE}/api/reports/${reportId}/rebalance-simulation`, {
+  const response = await apiFetch(`${API_BASE}/api/reports/${reportId}/rebalance-simulation`, {
     cache: "no-store",
   });
   if (!response.ok) {
@@ -832,7 +920,7 @@ export async function fetchRebalanceSimulation(reportId: string): Promise<Rebala
 }
 
 export async function fetchReportDiff(reportId: string): Promise<ReportDiffResponse> {
-  const response = await fetch(`${API_BASE}/api/reports/${reportId}/diff`, {
+  const response = await apiFetch(`${API_BASE}/api/reports/${reportId}/diff`, {
     cache: "no-store",
   });
   if (!response.ok) {
@@ -842,7 +930,7 @@ export async function fetchReportDiff(reportId: string): Promise<ReportDiffRespo
 }
 
 export async function fetchReportChatHistory(reportId: string): Promise<ReportChatMessage[]> {
-  const response = await fetch(`${API_BASE}/api/reports/${reportId}/chat`, {
+  const response = await apiFetch(`${API_BASE}/api/reports/${reportId}/chat`, {
     cache: "no-store",
   });
   if (!response.ok) {
@@ -875,7 +963,7 @@ export async function streamReportChat(
     onError?: (message: string) => void;
   },
 ): Promise<void> {
-  const response = await fetch(`${API_BASE}/api/reports/${reportId}/chat`, {
+  const response = await apiFetch(`${API_BASE}/api/reports/${reportId}/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ message, chat_mode: chatMode }),
@@ -922,7 +1010,7 @@ export async function streamReportChat(
 }
 
 export async function fetchReportChatMarkdown(reportId: string): Promise<string> {
-  const response = await fetch(`${API_BASE}/api/reports/${reportId}/chat/markdown`, {
+  const response = await apiFetch(`${API_BASE}/api/reports/${reportId}/chat/markdown`, {
     cache: "no-store",
   });
   if (!response.ok) {
@@ -933,7 +1021,7 @@ export async function fetchReportChatMarkdown(reportId: string): Promise<string>
 }
 
 export async function fetchReportMarkdown(reportId: string): Promise<string> {
-  const response = await fetch(`${API_BASE}/api/reports/${reportId}/markdown`, {
+  const response = await apiFetch(`${API_BASE}/api/reports/${reportId}/markdown`, {
     cache: "no-store",
   });
   if (!response.ok) {
@@ -980,7 +1068,7 @@ export async function parseOcrUpload(
   if (options?.preview) {
     formData.set("preview", "true");
   }
-  const response = await fetch(`${API_BASE}/api/ocr`, {
+  const response = await apiFetch(`${API_BASE}/api/ocr`, {
     method: "POST",
     body: formData,
   });
@@ -994,7 +1082,7 @@ export async function applyPortfolioHoldings(holdings: Holding[]): Promise<{
   holdings: Holding[];
   portfolio_summary?: PortfolioSummary | null;
 }> {
-  const response = await fetch(`${API_BASE}/api/portfolio/apply-holdings`, {
+  const response = await apiFetch(`${API_BASE}/api/portfolio/apply-holdings`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(holdings),
@@ -1014,7 +1102,7 @@ export type PortfolioHoldingsPayload = {
 };
 
 export async function fetchPortfolioHoldings(): Promise<PortfolioHoldingsPayload> {
-  const response = await fetch(`${API_BASE}/api/portfolio/holdings`, { cache: "no-store" });
+  const response = await apiFetch(`${API_BASE}/api/portfolio/holdings`, { cache: "no-store" });
   if (!response.ok) {
     throw new Error(await response.text());
   }
@@ -1022,7 +1110,7 @@ export async function fetchPortfolioHoldings(): Promise<PortfolioHoldingsPayload
 }
 
 export async function fetchPortfolioSummary(): Promise<PortfolioSummary> {
-  const response = await fetch(`${API_BASE}/api/portfolio/summary`, { cache: "no-store" });
+  const response = await apiFetch(`${API_BASE}/api/portfolio/summary`, { cache: "no-store" });
   if (!response.ok) {
     throw new Error(await response.text());
   }
@@ -1030,7 +1118,7 @@ export async function fetchPortfolioSummary(): Promise<PortfolioSummary> {
 }
 
 export async function fetchInvestorProfile(): Promise<InvestorProfile> {
-  const response = await fetch(`${API_BASE}/api/investor-profile`, { cache: "no-store" });
+  const response = await apiFetch(`${API_BASE}/api/investor-profile`, { cache: "no-store" });
   if (!response.ok) {
     throw new Error(await response.text());
   }
@@ -1038,7 +1126,7 @@ export async function fetchInvestorProfile(): Promise<InvestorProfile> {
 }
 
 export async function saveInvestorProfileRemote(profile: InvestorProfile): Promise<InvestorProfile> {
-  const response = await fetch(`${API_BASE}/api/investor-profile`, {
+  const response = await apiFetch(`${API_BASE}/api/investor-profile`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(profile),
@@ -1065,7 +1153,7 @@ export async function fetchPortfolioDashboard(options?: {
     params.set("calendar_month", String(options.calendarMonth));
   }
   const query = params.toString();
-  const response = await fetch(
+  const response = await apiFetch(
     `${API_BASE}/api/portfolio/dashboard${query ? `?${query}` : ""}`,
     { cache: "no-store" },
   );
@@ -1079,7 +1167,7 @@ export async function updateFundProfilePurchaseDate(
   fundCode: string,
   firstPurchaseDate: string | null,
 ): Promise<FundProfile> {
-  const response = await fetch(`${API_BASE}/api/fund-profiles/${encodeURIComponent(fundCode)}`, {
+  const response = await apiFetch(`${API_BASE}/api/fund-profiles/${encodeURIComponent(fundCode)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ first_purchase_date: firstPurchaseDate }),
@@ -1111,7 +1199,7 @@ export async function fetchFundNavHistory(
   fundCode: string,
   days = 90,
 ): Promise<FundNavHistory> {
-  const response = await fetch(
+  const response = await apiFetch(
     `${API_BASE}/api/fund-profiles/${encodeURIComponent(fundCode)}/nav-history?days=${days}`,
     { cache: "no-store" },
   );
@@ -1141,7 +1229,7 @@ export async function fetchFundNavHistoryPage(
   if (options?.before) {
     params.set("before_date", options.before);
   }
-  const response = await fetch(
+  const response = await apiFetch(
     `${API_BASE}/api/fund-profiles/${encodeURIComponent(fundCode)}/nav-history/page?${params}`,
     { cache: "no-store" },
   );
@@ -1173,7 +1261,7 @@ export async function fetchIndexDailyHistory(
     symbol,
     days: String(days),
   });
-  const response = await fetch(`${API_BASE}/api/market/index-daily?${params}`, {
+  const response = await apiFetch(`${API_BASE}/api/market/index-daily?${params}`, {
     cache: "no-store",
   });
   if (!response.ok) {

@@ -82,7 +82,7 @@ export function RiskControls({
         {isBusy
           ? "正在生成..."
           : hasBlockingErrors
-            ? "请先处理检查清单"
+            ? "请先处理严重项"
             : "生成今日操作建议"}
       </button>
 

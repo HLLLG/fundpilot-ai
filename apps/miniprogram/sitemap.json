@@ -1,0 +1,4 @@
+{
+  "desc": "FundPilot 小程序索引",
+  "rules": [{ "action": "allow", "page": "*" }]
+}

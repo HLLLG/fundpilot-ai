@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import secrets
 import sqlite3
 from pathlib import Path
 from typing import Any
 
 from app.config import get_settings
+from app.db_migrations import run_migrations
+from app.request_context import get_request_user_id
 from datetime import datetime, timezone
 
 from app.models import (
@@ -26,7 +30,23 @@ def _db_path() -> Path:
     return get_settings().db_path
 
 
-def _connect() -> sqlite3.Connection:
+def _uid() -> int:
+    return get_request_user_id()
+
+
+def _row_to_dict(row: object) -> dict[str, object]:
+    if row is None:
+        return {}
+    if isinstance(row, dict):
+        return row
+    return dict(row)
+
+
+def _connect():
+    from app.db_connect import connect, uses_mysql
+
+    if uses_mysql():
+        return connect()
     path = _db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(path)
@@ -124,37 +144,181 @@ def _connect() -> sqlite3.Connection:
         )
         """
     )
+    run_migrations(connection)
     connection.commit()
-    return connection
+    from app.db_connect import DbConnection
+
+    return DbConnection(connection, "sqlite")
+
+
+def create_user(
+    *,
+    user_account: str,
+    password_hash: str,
+    username: str,
+    user_role: str = "user",
+) -> dict[str, object]:
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as connection:
+        cursor = connection.execute(
+            """
+            INSERT INTO users (
+                userRole, username, userAccount, passwordHash,
+                bio, avatarUrl, cloudbaseUid, createdAt, updatedAt, isDeleted, deletedAt
+            ) VALUES (?, ?, ?, ?, '', '', NULL, ?, ?, 0, NULL)
+            """,
+            (user_role, username, user_account, password_hash, now, now),
+        )
+        connection.commit()
+        user_id = int(cursor.lastrowid)
+    user = get_user_by_id(user_id)
+    if user is None:
+        raise RuntimeError("创建用户失败")
+    return user
+
+
+def get_user_by_id(user_id: int) -> dict[str, object] | None:
+    with _connect() as connection:
+        row = connection.execute(
+            """
+            SELECT id, userRole, username, userAccount, passwordHash,
+                   bio, avatarUrl, cloudbaseUid, createdAt, updatedAt, isDeleted, deletedAt
+            FROM users WHERE id = ? AND isDeleted = 0
+            """,
+            (user_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    return _row_to_dict(row)
+
+
+def get_user_by_account(user_account: str) -> dict[str, object] | None:
+    with _connect() as connection:
+        row = connection.execute(
+            """
+            SELECT id, userRole, username, userAccount, passwordHash,
+                   bio, avatarUrl, cloudbaseUid, createdAt, updatedAt, isDeleted, deletedAt
+            FROM users WHERE userAccount = ?
+            """,
+            (user_account,),
+        ).fetchone()
+    if row is None:
+        return None
+    return _row_to_dict(row)
+
+
+def get_user_by_cloudbase_uid(cloudbase_uid: str) -> dict[str, object] | None:
+    with _connect() as connection:
+        row = connection.execute(
+            """
+            SELECT id, userRole, username, userAccount, passwordHash,
+                   bio, avatarUrl, cloudbaseUid, createdAt, updatedAt, isDeleted, deletedAt
+            FROM users WHERE cloudbaseUid = ? AND isDeleted = 0
+            """,
+            (cloudbase_uid,),
+        ).fetchone()
+    if row is None:
+        return None
+    return _row_to_dict(row)
+
+
+def _wechat_placeholder_account(cloudbase_uid: str) -> str:
+    digest = hashlib.sha256(cloudbase_uid.encode("utf-8")).hexdigest()[:16]
+    return f"wx_{digest}@wechat.fundpilot"
+
+
+def create_wechat_user(*, cloudbase_uid: str, username: str) -> dict[str, object]:
+    from app.auth.passwords import hash_password
+
+    account = _wechat_placeholder_account(cloudbase_uid)
+    now = datetime.now(timezone.utc).isoformat()
+    display_name = username.strip() or "微信用户"
+    with _connect() as connection:
+        cursor = connection.execute(
+            """
+            INSERT INTO users (
+                userRole, username, userAccount, passwordHash,
+                bio, avatarUrl, cloudbaseUid, createdAt, updatedAt, isDeleted, deletedAt
+            ) VALUES (?, ?, ?, ?, '', '', ?, ?, ?, 0, NULL)
+            """,
+            (
+                "user",
+                display_name,
+                account,
+                hash_password(secrets.token_urlsafe(32)),
+                cloudbase_uid,
+                now,
+                now,
+            ),
+        )
+        connection.commit()
+        user_id = int(cursor.lastrowid)
+    user = get_user_by_id(user_id)
+    if user is None:
+        raise RuntimeError("创建微信用户失败")
+    return user
+
+
+def bind_user_cloudbase_uid(user_id: int, cloudbase_uid: str) -> dict[str, object]:
+    existing = get_user_by_cloudbase_uid(cloudbase_uid)
+    if existing is not None and int(existing["id"]) != user_id:
+        raise ValueError("该微信账号已绑定其他用户")
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as connection:
+        connection.execute(
+            """
+            UPDATE users SET cloudbaseUid = ?, updatedAt = ?
+            WHERE id = ? AND isDeleted = 0
+            """,
+            (cloudbase_uid, now, user_id),
+        )
+        connection.commit()
+    user = get_user_by_id(user_id)
+    if user is None:
+        raise ValueError("用户不存在")
+    return user
 
 
 def save_report(report: Report) -> Report:
     payload = report.model_dump(mode="json")
+    user_id = _uid()
     with _connect() as connection:
         connection.execute(
             """
-            INSERT OR REPLACE INTO reports (id, created_at, payload)
-            VALUES (?, ?, ?)
+            INSERT OR REPLACE INTO reports (id, created_at, payload, userId)
+            VALUES (?, ?, ?, ?)
             """,
-            (report.id, report.created_at.isoformat(), json.dumps(payload, ensure_ascii=False)),
+            (
+                report.id,
+                report.created_at.isoformat(),
+                json.dumps(payload, ensure_ascii=False),
+                user_id,
+            ),
         )
         connection.commit()
     return report
 
 
 def list_reports() -> list[dict[str, Any]]:
+    user_id = _uid()
     with _connect() as connection:
         rows = connection.execute(
-            "SELECT payload FROM reports ORDER BY created_at DESC LIMIT 50"
+            """
+            SELECT payload FROM reports
+            WHERE userId = ?
+            ORDER BY created_at DESC LIMIT 50
+            """,
+            (user_id,),
         ).fetchall()
     return [json.loads(row["payload"]) for row in rows]
 
 
 def get_report(report_id: str) -> dict[str, Any] | None:
+    user_id = _uid()
     with _connect() as connection:
         row = connection.execute(
-            "SELECT payload FROM reports WHERE id = ?",
-            (report_id,),
+            "SELECT payload FROM reports WHERE id = ? AND userId = ?",
+            (report_id, user_id),
         ).fetchone()
     if row is None:
         return None
@@ -235,10 +399,11 @@ def import_database_file(source: Path, *, backup_current: bool = True) -> dict[s
 
 
 def delete_report(report_id: str) -> bool:
+    user_id = _uid()
     with _connect() as connection:
         cursor = connection.execute(
-            "DELETE FROM reports WHERE id = ?",
-            (report_id,),
+            "DELETE FROM reports WHERE id = ? AND userId = ?",
+            (report_id, user_id),
         )
         connection.commit()
     return cursor.rowcount > 0
@@ -249,13 +414,15 @@ def save_fund_profile(profile: FundProfile) -> FundProfile:
 
     profile = _sanitize_profile_sector_fields(profile)
     payload = profile.model_dump(mode="json")
+    user_id = _uid()
     with _connect() as connection:
         connection.execute(
             """
-            INSERT OR REPLACE INTO fund_profiles (fund_code, fund_name, payload, updated_at)
-            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+            INSERT OR REPLACE INTO fund_profiles (userId, fund_code, fund_name, payload, updated_at)
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
             """,
             (
+                user_id,
                 profile.fund_code,
                 profile.fund_name,
                 json.dumps(payload, ensure_ascii=False),
@@ -268,9 +435,15 @@ def save_fund_profile(profile: FundProfile) -> FundProfile:
 def list_fund_profiles() -> list[FundProfile]:
     from app.services.fund_profile import _sanitize_profile_sector_fields
 
+    user_id = _uid()
     with _connect() as connection:
         rows = connection.execute(
-            "SELECT payload FROM fund_profiles ORDER BY updated_at DESC"
+            """
+            SELECT payload FROM fund_profiles
+            WHERE userId = ?
+            ORDER BY updated_at DESC
+            """,
+            (user_id,),
         ).fetchall()
     return [
         _sanitize_profile_sector_fields(FundProfile.model_validate(json.loads(row["payload"])))
@@ -279,20 +452,22 @@ def list_fund_profiles() -> list[FundProfile]:
 
 
 def delete_fund_profile(fund_code: str) -> bool:
+    user_id = _uid()
     with _connect() as connection:
         cursor = connection.execute(
-            "DELETE FROM fund_profiles WHERE fund_code = ?",
-            (fund_code,),
+            "DELETE FROM fund_profiles WHERE userId = ? AND fund_code = ?",
+            (user_id, fund_code),
         )
         connection.commit()
     return cursor.rowcount > 0
 
 
 def get_fund_profile_by_code(fund_code: str) -> FundProfile | None:
+    user_id = _uid()
     with _connect() as connection:
         row = connection.execute(
-            "SELECT payload FROM fund_profiles WHERE fund_code = ?",
-            (fund_code,),
+            "SELECT payload FROM fund_profiles WHERE userId = ? AND fund_code = ?",
+            (user_id, fund_code),
         ).fetchone()
     if row is None:
         return None
@@ -305,13 +480,14 @@ def get_fund_profile_by_code(fund_code: str) -> FundProfile | None:
 
 def save_portfolio_summary(summary: PortfolioSummary) -> PortfolioSummary:
     payload = summary.model_dump(mode="json")
+    user_id = _uid()
     with _connect() as connection:
         connection.execute(
             """
-            INSERT OR REPLACE INTO portfolio_state (id, payload, updated_at)
-            VALUES (1, ?, CURRENT_TIMESTAMP)
+            INSERT OR REPLACE INTO portfolio_state (userId, payload, updated_at)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
             """,
-            (json.dumps(payload, ensure_ascii=False),),
+            (user_id, json.dumps(payload, ensure_ascii=False)),
         )
         connection.commit()
     return summary
@@ -319,13 +495,15 @@ def save_portfolio_summary(summary: PortfolioSummary) -> PortfolioSummary:
 
 def save_portfolio_daily_snapshot(snapshot: PortfolioDailySnapshot) -> PortfolioDailySnapshot:
     payload = snapshot.model_dump(mode="json")
+    user_id = _uid()
     with _connect() as connection:
         connection.execute(
             """
-            INSERT OR REPLACE INTO portfolio_daily_snapshots (snapshot_date, payload, updated_at)
-            VALUES (?, ?, CURRENT_TIMESTAMP)
+            INSERT OR REPLACE INTO portfolio_daily_snapshots (userId, snapshot_date, payload, updated_at)
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
             """,
             (
+                user_id,
                 snapshot.snapshot_date,
                 json.dumps(payload, ensure_ascii=False),
             ),
@@ -335,14 +513,16 @@ def save_portfolio_daily_snapshot(snapshot: PortfolioDailySnapshot) -> Portfolio
 
 
 def list_portfolio_daily_snapshots(*, limit: int = 30) -> list[dict[str, Any]]:
+    user_id = _uid()
     with _connect() as connection:
         rows = connection.execute(
             """
             SELECT payload FROM portfolio_daily_snapshots
+            WHERE userId = ?
             ORDER BY snapshot_date DESC
             LIMIT ?
             """,
-            (limit,),
+            (user_id, limit),
         ).fetchall()
     results: list[dict[str, Any]] = []
     for row in rows:
@@ -366,31 +546,35 @@ def get_most_recent_portfolio_snapshot() -> dict[str, Any] | None:
 
 
 def save_portfolio_intraday_curve(trade_date: str, points: list[dict[str, Any]]) -> None:
+    user_id = _uid()
     with _connect() as connection:
         connection.execute(
             """
-            INSERT OR REPLACE INTO portfolio_intraday_curves (trade_date, payload, updated_at)
-            VALUES (?, ?, CURRENT_TIMESTAMP)
+            INSERT OR REPLACE INTO portfolio_intraday_curves (userId, trade_date, payload, updated_at)
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
             """,
-            (trade_date, json.dumps({"points": points}, ensure_ascii=False)),
+            (user_id, trade_date, json.dumps({"points": points}, ensure_ascii=False)),
         )
         connection.commit()
 
 
 def delete_portfolio_snapshots_on_or_before(cutoff_date: str) -> dict[str, int]:
     """删除 cutoff_date 当日及更早的日快照与分时曲线（用于纠正历史脏数据）。"""
+    user_id = _uid()
     with _connect() as connection:
         daily = connection.execute(
             """
-            DELETE FROM portfolio_daily_snapshots WHERE snapshot_date <= ?
+            DELETE FROM portfolio_daily_snapshots
+            WHERE userId = ? AND snapshot_date <= ?
             """,
-            (cutoff_date,),
+            (user_id, cutoff_date),
         )
         intraday = connection.execute(
             """
-            DELETE FROM portfolio_intraday_curves WHERE trade_date <= ?
+            DELETE FROM portfolio_intraday_curves
+            WHERE userId = ? AND trade_date <= ?
             """,
-            (cutoff_date,),
+            (user_id, cutoff_date),
         )
         connection.commit()
     return {
@@ -401,12 +585,14 @@ def delete_portfolio_snapshots_on_or_before(cutoff_date: str) -> dict[str, int]:
 
 
 def get_portfolio_intraday_curve(trade_date: str) -> list[dict[str, Any]] | None:
+    user_id = _uid()
     with _connect() as connection:
         row = connection.execute(
             """
-            SELECT payload FROM portfolio_intraday_curves WHERE trade_date = ?
+            SELECT payload FROM portfolio_intraday_curves
+            WHERE userId = ? AND trade_date = ?
             """,
-            (trade_date,),
+            (user_id, trade_date),
         ).fetchone()
     if row is None:
         return None
@@ -416,9 +602,11 @@ def get_portfolio_intraday_curve(trade_date: str) -> list[dict[str, Any]] | None
 
 
 def get_investor_profile() -> InvestorProfile | None:
+    user_id = _uid()
     with _connect() as connection:
         row = connection.execute(
-            "SELECT payload FROM investor_profile_state WHERE id = 1"
+            "SELECT payload FROM investor_profile_state WHERE userId = ?",
+            (user_id,),
         ).fetchone()
     if row is None:
         return None
@@ -427,22 +615,25 @@ def get_investor_profile() -> InvestorProfile | None:
 
 def save_investor_profile(profile: InvestorProfile) -> InvestorProfile:
     payload = profile.model_dump(mode="json")
+    user_id = _uid()
     with _connect() as connection:
         connection.execute(
             """
-            INSERT OR REPLACE INTO investor_profile_state (id, payload, updated_at)
-            VALUES (1, ?, CURRENT_TIMESTAMP)
+            INSERT OR REPLACE INTO investor_profile_state (userId, payload, updated_at)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
             """,
-            (json.dumps(payload, ensure_ascii=False),),
+            (user_id, json.dumps(payload, ensure_ascii=False)),
         )
         connection.commit()
     return profile
 
 
 def get_portfolio_summary() -> PortfolioSummary | None:
+    user_id = _uid()
     with _connect() as connection:
         row = connection.execute(
-            "SELECT payload FROM portfolio_state WHERE id = 1"
+            "SELECT payload FROM portfolio_state WHERE userId = ?",
+            (user_id,),
         ).fetchone()
     if row is None:
         return None
@@ -453,10 +644,11 @@ def get_portfolio_summary() -> PortfolioSummary | None:
 
 
 def get_ocr_text_cache(cache_key: str) -> str | None:
+    user_id = _uid()
     with _connect() as connection:
         row = connection.execute(
-            "SELECT raw_text FROM ocr_text_cache WHERE cache_key = ?",
-            (cache_key,),
+            "SELECT raw_text FROM ocr_text_cache WHERE userId = ? AND cache_key = ?",
+            (user_id, cache_key),
         ).fetchone()
     if row is None:
         return None
@@ -464,6 +656,8 @@ def get_ocr_text_cache(cache_key: str) -> str | None:
 
 
 def list_report_chat_messages(report_id: str) -> list[dict[str, Any]]:
+    if get_report(report_id) is None:
+        return []
     with _connect() as connection:
         rows = connection.execute(
             """
@@ -506,22 +700,27 @@ def save_chat_message(message: ChatMessage) -> ChatMessage:
 
 
 def save_ocr_text_cache(cache_key: str, raw_text: str) -> None:
+    user_id = _uid()
     with _connect() as connection:
         connection.execute(
             """
-            INSERT OR REPLACE INTO ocr_text_cache (cache_key, raw_text, updated_at)
-            VALUES (?, ?, CURRENT_TIMESTAMP)
+            INSERT OR REPLACE INTO ocr_text_cache (userId, cache_key, raw_text, updated_at)
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
             """,
-            (cache_key, raw_text),
+            (user_id, cache_key, raw_text),
         )
         connection.commit()
 
 
 def get_sector_mapping(sector_label: str) -> dict[str, Any] | None:
+    user_id = _uid()
     with _connect() as connection:
         row = connection.execute(
-            "SELECT * FROM sector_mappings WHERE sector_label = ?",
-            (sector_label,),
+            """
+            SELECT * FROM sector_mappings
+            WHERE userId = ? AND sector_label = ?
+            """,
+            (user_id, sector_label),
         ).fetchone()
     if row is None:
         return None
@@ -537,14 +736,16 @@ def get_sector_mapping(sector_label: str) -> dict[str, Any] | None:
 
 def save_sector_mapping(record: dict[str, Any]) -> dict[str, Any]:
     now = datetime.now(timezone.utc).isoformat()
+    user_id = _uid()
     with _connect() as connection:
         connection.execute(
             """
             INSERT OR REPLACE INTO sector_mappings
-            (sector_label, source_type, source_code, source_name, confidence, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            (userId, sector_label, source_type, source_code, source_name, confidence, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
+                user_id,
                 record["sector_label"],
                 record["source_type"],
                 record.get("source_code"),

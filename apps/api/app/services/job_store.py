@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from app.database import _connect
 from app.models import AnalysisRequest, Report
+from app.request_context import get_request_user_id, reset_request_user_id, set_request_user_id
 from app.services.analyze_pipeline import run_analysis
 
 JobStatus = Literal["pending", "running", "completed", "failed"]
@@ -43,53 +44,62 @@ def _ensure_jobs_table(connection: sqlite3.Connection) -> None:
         connection.execute("ALTER TABLE analysis_jobs ADD COLUMN stage_label TEXT")
     except sqlite3.OperationalError:
         pass
+    try:
+        connection.execute("ALTER TABLE analysis_jobs ADD COLUMN userId INTEGER NOT NULL DEFAULT 1")
+    except sqlite3.OperationalError:
+        pass
 
 
 def create_analysis_job(request: AnalysisRequest) -> str:
     job_id = uuid4().hex
     now = datetime.now(timezone.utc).isoformat()
     payload = request.model_dump(mode="json")
+    user_id = get_request_user_id()
     with _lock:
         with _connect() as connection:
             _ensure_jobs_table(connection)
             connection.execute(
                 """
                 INSERT INTO analysis_jobs (
-                    id, status, request_payload, stage, stage_label, created_at, updated_at
+                    id, status, request_payload, stage, stage_label, userId, created_at, updated_at
                 )
-                VALUES (?, 'pending', ?, 'queued', '排队中…', ?, ?)
+                VALUES (?, 'pending', ?, 'queued', '排队中…', ?, ?, ?)
                 """,
-                (job_id, json.dumps(payload, ensure_ascii=False), now, now),
+                (job_id, json.dumps(payload, ensure_ascii=False), user_id, now, now),
             )
             connection.commit()
-    _executor.submit(_run_job, job_id)
+    _executor.submit(_run_job, job_id, user_id)
     return job_id
 
 
-def _run_job(job_id: str) -> None:
-    _update_job(job_id, status="running", stage="fund_data", stage_label="正在拉取净值与诊断数据…")
+def _run_job(job_id: str, user_id: int) -> None:
+    ctx_token = set_request_user_id(user_id)
     try:
-        request = _load_request(job_id)
+        _update_job(job_id, status="running", stage="fund_data", stage_label="正在拉取净值与诊断数据…")
+        try:
+            request = _load_request(job_id)
 
-        def on_progress(stage: str, label: str) -> None:
-            _update_job(job_id, status="running", stage=stage, stage_label=label)
+            def on_progress(stage: str, label: str) -> None:
+                _update_job(job_id, status="running", stage=stage, stage_label=label)
 
-        report = run_analysis(request, on_progress=on_progress)
-        _update_job(
-            job_id,
-            status="completed",
-            report_id=report.id,
-            stage="completed",
-            stage_label="报告已生成",
-        )
-    except Exception as exc:
-        _update_job(
-            job_id,
-            status="failed",
-            error=str(exc),
-            stage="failed",
-            stage_label="分析失败",
-        )
+            report = run_analysis(request, on_progress=on_progress)
+            _update_job(
+                job_id,
+                status="completed",
+                report_id=report.id,
+                stage="completed",
+                stage_label="报告已生成",
+            )
+        except Exception as exc:
+            _update_job(
+                job_id,
+                status="failed",
+                error=str(exc),
+                stage="failed",
+                stage_label="分析失败",
+            )
+    finally:
+        reset_request_user_id(ctx_token)
 
 
 def _load_request(job_id: str) -> AnalysisRequest:
@@ -138,11 +148,12 @@ def _update_job(
 
 
 def get_job(job_id: str) -> dict[str, Any] | None:
+    user_id = get_request_user_id()
     with _connect() as connection:
         _ensure_jobs_table(connection)
         row = connection.execute(
-            "SELECT * FROM analysis_jobs WHERE id = ?",
-            (job_id,),
+            "SELECT * FROM analysis_jobs WHERE id = ? AND userId = ?",
+            (job_id, user_id),
         ).fetchone()
     if row is None:
         return None
