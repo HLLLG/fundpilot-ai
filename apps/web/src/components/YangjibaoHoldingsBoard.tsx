@@ -234,7 +234,7 @@ export function YangjibaoHoldingsBoard({
     [displayHoldings, holdings, sortDir, sortKey],
   );
 
-  const sectionClassName = className ?? "max-w-lg";
+  const sectionClassName = className ?? "max-w-none";
 
   if (!displayHoldings.length) {
     return (

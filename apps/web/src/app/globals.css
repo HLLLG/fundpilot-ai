@@ -305,3 +305,46 @@ button:disabled {
 .animate-fade-up {
   animation: fade-up 0.45s ease-out both;
 }
+
+/* ── 日报：决策建议 + 追问（容器宽度驱动，避免窄壳里硬分两栏）── */
+.report-shell {
+  container-type: inline-size;
+  container-name: report-shell;
+}
+
+.report-decision-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1.25rem;
+  align-items: start;
+}
+
+@container report-shell (min-width: 52rem) {
+  .report-decision-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(260px, 22rem);
+    gap: 1.5rem;
+  }
+
+  .report-chat-sticky {
+    position: sticky;
+    top: 0.75rem;
+  }
+}
+
+.report-panel {
+  border-radius: 1.25rem;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.report-panel-header {
+  border-bottom: 1px solid var(--line);
+  padding: 0.875rem 1rem 1rem;
+}
+
+@media (min-width: 640px) {
+  .report-panel-header {
+    padding: 1rem 1.25rem 1.125rem;
+  }
+}

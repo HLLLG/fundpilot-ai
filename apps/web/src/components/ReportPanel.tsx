@@ -94,7 +94,7 @@ function FundRecommendationCard({
   const navHint = navHintForFund(item.fund_code, snapshots);
 
   return (
-    <div className={`rounded-2xl border px-4 py-3 ${actionCardClass(item.action)}`}>
+    <div className={`rounded-xl border px-4 py-3.5 ${actionCardClass(item.action)}`}>
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-sm font-black text-slate-950">
           {item.fund_code} · {item.fund_name}
@@ -269,8 +269,9 @@ export function ReportPanel({ report }: ReportPanelProps) {
       : report.recommendations.filter((line) => !/^\[\d{6}\s*[·｜|]/.test(line.trim()));
 
   return (
-    <section className="glass-panel min-w-0 rounded-[28px] p-6" data-testid="report-ready">
-      <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+    <section className="report-shell min-w-0 animate-fade-up" data-testid="report-ready">
+      <div className="report-panel mb-5 p-4 sm:p-5">
+      <div className="mb-5 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <div className="mb-3 flex flex-wrap items-center gap-2">
             <StatusPill tone={riskTone[report.risk.level]}>风险 {report.risk.level}</StatusPill>
@@ -299,6 +300,7 @@ export function ReportPanel({ report }: ReportPanelProps) {
           </button>
         </div>
       </div>
+      </div>
 
       <ReportExecutiveSummary report={report} />
       <ReportPipelineBanner facts={report.analysis_facts} />
@@ -310,17 +312,22 @@ export function ReportPanel({ report }: ReportPanelProps) {
         </ReportCollapsibleSection>
       ) : null}
 
-      <div className="mb-5 rounded-[24px] bg-white p-5 shadow-sm">
-        <div className="mb-4 flex items-center gap-2 text-sm font-black text-slate-950">
-          <Sparkles size={18} className="text-blue-600" />
-          决策建议
+      <div className="report-panel mb-5 overflow-hidden">
+        <div className="report-panel-header">
+          <div className="flex items-center gap-2 text-sm font-black text-slate-950">
+            <Sparkles size={18} className="text-blue-600" />
+            决策建议
+          </div>
+          <p className="mt-1 text-xs leading-5 text-slate-500">
+            逐基金操作建议与依据；宽屏时右侧可追问，窄屏时追问在下方。
+          </p>
         </div>
-        <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(320px,480px)]">
+        <div className="report-decision-grid p-4 sm:p-5">
           <div className="min-w-0 space-y-3">
             {portfolioRecommendations.map((item, index) => (
               <div
                 key={`portfolio-${index}`}
-                className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-700"
+                className="rounded-xl border border-slate-200 bg-slate-50/90 px-4 py-3 text-sm leading-6 text-slate-700"
               >
                 {item}
               </div>
@@ -333,8 +340,12 @@ export function ReportPanel({ report }: ReportPanelProps) {
               />
             ))}
           </div>
-          <div className="min-w-0 xl:sticky xl:top-4">
-            <ReportChatPanel reportId={report.id} reportTitle={report.title} />
+          <div className="report-chat-sticky min-w-0">
+            <ReportChatPanel
+              reportId={report.id}
+              reportTitle={report.title}
+              compact
+            />
           </div>
         </div>
       </div>

@@ -99,14 +99,6 @@ export function Dashboard() {
   const [showAddHoldingModal, setShowAddHoldingModal] = useState(false);
   const [isManualAdding, setIsManualAdding] = useState(false);
 
-  const todayIso = new Date().toISOString().slice(0, 10);
-  const todayReport = useMemo(() => {
-    if (report?.created_at?.slice(0, 10) === todayIso) {
-      return report;
-    }
-    return null;
-  }, [report, todayIso]);
-
   const workflowBlockers = useMemo(
     () =>
       buildWorkflowBlockers({
@@ -333,7 +325,7 @@ export function Dashboard() {
 
   return (
     <main className="premium-bg min-h-screen">
-      <div className="mx-auto flex min-h-screen w-full max-w-3xl flex-col px-4 py-3 sm:px-5 sm:py-4">
+      <div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col px-4 py-3 sm:px-5 sm:py-4">
         <nav className="relative z-40 mb-3 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2.5">
             <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[var(--brand)] text-white">
@@ -371,7 +363,6 @@ export function Dashboard() {
                 portfolioSummary={portfolioSummary}
                 sectorRefresh={sectorRefresh}
                 isLoading={isHydratingHoldings}
-                className="max-w-none"
                 onAddHolding={() => setShowAddHoldingModal(true)}
                 onSelectHolding={setSelectedHoldingIndex}
               />
@@ -393,8 +384,8 @@ export function Dashboard() {
                 hasBlockingErrors={blockingErrors}
               />
               <div ref={reportSectionRef} className="min-w-0">
-                {todayReport ? (
-                  <ReportPanel report={todayReport} />
+                {report ? (
+                  <ReportPanel report={report} />
                 ) : (
                   <div className="section-card px-4 py-10 text-center text-sm text-slate-500">
                     确认持仓后，点击上方按钮生成今日操作建议。

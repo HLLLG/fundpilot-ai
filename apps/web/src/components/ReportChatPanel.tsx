@@ -10,6 +10,8 @@ import { loadReportChatMode, saveReportChatMode } from "@/lib/storage";
 type ReportChatPanelProps = {
   reportId: string;
   reportTitle?: string;
+  /** 侧栏模式：更矮、更紧凑，给决策建议让出宽度 */
+  compact?: boolean;
 };
 
 type LocalMessage = ReportChatMessage & { pending?: boolean };
@@ -20,7 +22,7 @@ const SUGGESTED_PROMPTS = [
   "新闻里对持仓影响最大的是哪条？",
 ];
 
-export function ReportChatPanel({ reportId, reportTitle }: ReportChatPanelProps) {
+export function ReportChatPanel({ reportId, reportTitle, compact = false }: ReportChatPanelProps) {
   const [messages, setMessages] = useState<LocalMessage[]>([]);
   const [input, setInput] = useState("");
   const [chatMode, setChatMode] = useState<ReportChatMode>("fast");
@@ -158,7 +160,11 @@ export function ReportChatPanel({ reportId, reportTitle }: ReportChatPanelProps)
 
   return (
     <div
-      className="flex h-[min(88vh,920px)] min-h-[680px] flex-col rounded-[20px] border border-slate-200 bg-slate-50/80 xl:min-h-[720px]"
+      className={`flex flex-col rounded-2xl border border-slate-200 bg-slate-50/90 ${
+        compact
+          ? "h-[min(52vh,520px)] min-h-[360px]"
+          : "h-[min(72vh,720px)] min-h-[480px]"
+      }`}
       data-testid="report-chat-panel"
     >
       <div className="border-b border-slate-200 px-3 py-3">
