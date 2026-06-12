@@ -1,0 +1,24 @@
+apps/api/Dockerfile
+  s_8a6e96495b5945::t_33ccf6e92d2989 8,11-13,20
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.10-trip",
+  "base_commit_sha": "197d0c48d7567e30ed7e56a50407b4795a6c889f",
+  "prompts": {},
+  "humans": {
+    "h_375fc341ff3baa": {
+      "author": "hegl <HLLLG@github.com>"
+    }
+  },
+  "sessions": {
+    "s_8a6e96495b5945": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "2e8c9e04-ebb2-4373-8114-40e8e392547e",
+        "model": "composer-2.5"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
