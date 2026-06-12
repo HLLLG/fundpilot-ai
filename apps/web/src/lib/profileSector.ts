@@ -1,6 +1,48 @@
 import type { FundProfile, Holding, SectorQuoteMeta } from "@/lib/api";
 import { isEstimateFallbackMeta } from "@/lib/sectorQuoteStatus";
 
+const FUND_NAME_TOPIC_TOKENS = [
+  "国防军工",
+  "商业航天",
+  "人工智能",
+  "电网设备",
+  "半导体",
+  "新能源",
+  "红利",
+] as const;
+
+export function inferSectorLabelFromFundName(fundName: string | null | undefined): string | null {
+  const normalized = (fundName || "").replace("...", "").replace(/\s+/g, "");
+  if (!normalized) {
+    return null;
+  }
+  for (const token of FUND_NAME_TOPIC_TOKENS) {
+    if (normalized.includes(token)) {
+      return token;
+    }
+  }
+  return null;
+}
+
+/** 持仓列表「板块」列展示名：档案/OCR → 基金名推断 → 估值兜底提示 */
+export function holdingDisplaySectorLabel(
+  holding: Pick<Holding, "fund_name" | "sector_name" | "intraday_index_name">,
+  sectorMeta?: SectorQuoteMeta | null,
+): string {
+  const base = holdingRelatedBoardLabel(holding);
+  if (base !== "—") {
+    return base;
+  }
+  const inferred = inferSectorLabelFromFundName(holding.fund_name);
+  if (inferred) {
+    return inferred;
+  }
+  if (isEstimateFallbackMeta(sectorMeta)) {
+    return "基金估值";
+  }
+  return "—";
+}
+
 /** 档案/持仓展示用：关联板块短名 */
 export function profileRelatedBoardLabel(
   profile: Pick<FundProfile, "sector_name" | "intraday_index_name">,

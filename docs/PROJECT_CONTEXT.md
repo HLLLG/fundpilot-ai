@@ -4,9 +4,13 @@
 >
 > **维护：** 功能或架构有实质变化时，同步更新「能力清单」「数据流」「API」「目录」「环境变量」。
 
-**文档版本：** 2026-06-11（用户认证与多租户数据隔离）
+**文档版本：** 2026-06-12（fund_code→主关联板块、养基宝 OCR 对齐）
 
 **更新记录：**
+- **fund_code → 主关联板块（2026-06-12）：** SQLite/MySQL 表 `fund_primary_sectors`（schema v3）；`fund_primary_sector_service.py` — 详情 OCR / 养基宝总览沉淀、全局种子（519674→半导体、015945→商业航天 等）、AkShare 季报重仓关键词投票推荐；支付宝导入确认后按 **code 查表**补全 `sector_name`，禁用「国防军工」等名称推断覆盖混合基；`GET /api/funds/{code}/primary-sector`、`POST .../refresh-holdings`、`POST /api/fund-primary-sectors/sync-from-profiles`；`GET /api/funds/search` 东财名称表模糊查码。
+- **养基宝详情 OCR + 代码纠错（2026-06-12）：** 识别养基宝详情页（含 6 位代码、关联板块）；`ApplyHoldingsRequest.detail_profiles`；`PATCH /api/fund-profiles/{code}` 支持改 `fund_code`/`fund_name`；前端 `FundCodeEditModal`、OCR 确认弹窗可编辑 code/名称/金额并东财搜索；`AddHoldingModal` 三分栏（支付宝 / 养基宝总览 / 养基宝详情）。
+- **支付宝 OCR 查码增强（2026-06-12）：** `fund_code_resolver` — 「发起式」归一、C 类优先、provisional 9xxxxx 清理、`reconcile_holding_fund_codes`；总览无 6 位码时走 AkShare `fund_name_em` 名称表。
+- **板块涨跌口径说明（2026-06-12）：** 持仓列表「关联板块」列 **始终**东财板块/指数（`sector_return_percent`）；「当日」列官方净值优先、否则板块估算。混合基 015945/519674 的板块曲线 **不应相同**（商业航天 `BK0963` vs 半导体概念 `BK1036`）；519674 涨跌走概念半导体、分时图走中证半导体 `931865`。养基宝详情偶见「曲线相同但收盘数字不同」——多为 **基金估值/净值** 与 **板块涨跌** 口径混用，对比时请以总览「关联板块」列为准。见 [design/2026-06-04-eastmoney-intraday-troubleshooting.md](design/2026-06-04-eastmoney-intraday-troubleshooting.md#养基宝关联板块曲线-vs-收盘数字)。
 - **用户认证（2026-06-11）：** 邮箱注册/登录 + JWT；`users` 表（驼峰字段）；业务数据按 `userId` 隔离；Web `/login` `/register` `/settings`（绑定微信）；`GET /api/auth/me` 返回 `wechatBound`；`POST /api/auth/wechat-login`、`/api/auth/bind-wechat`；微信小程序 `apps/miniprogram`；MySQL/`FUND_AI_DATABASE_URL` + Docker 云托管；部署见 `docs/deploy/cloudbase.md`；pytest **302** 项。
 - **盈亏分析 Tab（2026-06-11）：** 主 Tab 为「持有 | 盈亏分析 | 生成日报」；`PortfolioDashboard` 含收益走势（我的收益 vs 沪深300、不对称 Y 轴）、盈亏日历、当日 TOP5、持仓甜甜圈；`GET /api/portfolio/dashboard?range=&calendar_year=&calendar_month=`；`portfolio_profit_analysis.py` + `portfolio_intraday_curves` 表；`DELETE /api/portfolio/snapshots?on_or_before=` 清理历史日快照。
 - **UI 精简（2026-06-11）：** 用户菜单仅保留「历史日报」；生成日报页诊断折叠为 `DiagnosticsAccordion`；风控收进「高级设置」；移除废弃组件 `HoldingTable` / `PortfolioSummaryCard` / `TodayWorkflowSteps` / `NavLineChart` / `holdingReview.ts`。
@@ -41,10 +45,11 @@
 | 类别 | 能力 |
 |------|------|
 | 鉴权 | 邮箱注册/登录（JWT）；Web `/login` `/register`；`/settings` 绑定微信（`cloudbaseUid`）；`UserMenu` 显示「未绑微信」；小程序 `POST /api/auth/wechat-login`；开发模式 `FUND_AI_CLOUDBASE_AUTH_DEV_MODE` |
-| 输入 | 养基宝总览 OCR（无代码草稿解析）；**支付宝持有列表 OCR**（预览确认后写入）；当日列为 `-` 时不填当日收益；**OCR 漏负号**时规则补符号；总览上传在「今日」账户汇总 |
+| 输入 | 养基宝**总览 / 详情** OCR（详情含 6 位代码与关联板块）；**支付宝持有列表 OCR**（预览确认后写入）；确认弹窗可编辑 code/名称/金额并东财搜索；当日列为 `-` 时不填当日收益；**OCR 漏负号**时规则补符号 |
+| 主关联板块 | `fund_primary_sectors` 表 + 全局种子 + 季报重仓推荐；支付宝导入后 **按 fund_code 查表**补板块名（非名称推断）；详情 OCR 自动沉淀 |
 | 当日收益 | 盘中/净值未公布：**板块涨跌估算**（`holding_amount × sector_return%`）；NAV 发布后：**官方日增长率** + `daily_profit = amount × r / (100 + r)`；关联板块列始终东财涨跌；账户汇总附「昨日收益」；**份额×净值**自动更新持有金额（`holding_amount_sync`） |
 | OCR 校验 | OCR 返回 `holding_warnings`；账户汇总为唯一持仓展示与日报输入源（`displayableHoldings` 过滤占位行） |
-| 持仓元数据 | SQLite `fund_profiles` 由账户汇总 OCR **自动维护**（份额、成本、板块、购入日）；拒绝 `+`/`-`/Tab 标签误存为板块名；`POST /api/fund-profiles/repair-sectors` 清理历史脏数据；查码优先 AkShare、档案按名称兜底；无独立「基金档案」页 |
+| 持仓元数据 | SQLite `fund_profiles` + `fund_primary_sectors` 由 OCR **自动维护**（份额、成本、板块、购入日）；拒绝 `+`/`-`/Tab 标签误存为板块名；`POST /api/fund-profiles/repair-sectors` 清理历史脏数据；查码走东财名称表 + 档案兜底；详情页铅笔改代码 |
 | 首页看板 | **持有** Tab：`YangjibaoHoldingsBoard` 养基宝式卡片（`AddHoldingModal` 上传支付宝/养基宝截图）；启动 `GET /api/portfolio/holdings` 恢复持仓并自动刷新板块；点击行打开 `YangjibaoFundDetail` |
 | 基金详情 | 关联板块分时图（边框/十字线）；**业绩走势**（区间涨跌 vs 沪深300、历史净值分页）；**我的收益**；持有天数滚轮选购入日；持仓明细默认收起 |
 | 盈亏分析 | **盈亏分析** Tab：`PortfolioDashboard` — 收益走势（当日/周/月/年/全部）、盈亏日历、当日 TOP5、持仓甜甜圈；`GET /api/portfolio/dashboard` |
@@ -274,7 +279,11 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | POST | `/api/auth/bind-wechat` | 已登录用户绑定微信（需 JWT） |
 | GET | `/api/auth/me` | 当前用户（需 JWT） |
 | POST | `/api/ocr` | 截图/文本 → holdings；`preview=true` 仅解析不写入；支持支付宝列表 |
-| POST | `/api/portfolio/apply-holdings` | 确认 OCR 预览结果写入持仓与快照 |
+| POST | `/api/portfolio/apply-holdings` | 确认 OCR 预览结果写入持仓与快照；body 可选 `detail_profiles`（养基宝详情 OCR 档案） |
+| GET | `/api/funds/search?q=` | 东财基金名称表模糊查码（OCR 确认 / 改码 picker） |
+| GET | `/api/funds/{code}/primary-sector` | 查询 fund_code→主关联板块（DB / 档案 / 种子） |
+| POST | `/api/funds/{code}/primary-sector/refresh-holdings` | AkShare 季报重仓推荐板块并写入表 |
+| POST | `/api/fund-primary-sectors/sync-from-profiles` | 从已有 `fund_profiles` 批量同步板块映射 |
 | POST | `/api/analyze` | 同步生成 Report（兜底） |
 | POST | `/api/analyze/async` | `{ job_id, status }` |
 | GET | `/api/trading-session` | 交易日/收盘窗口语义 |
@@ -297,7 +306,7 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | GET | `/api/fund-profiles` | 持仓元数据列表（内部/调试） |
 | GET | `/api/fund-profiles/{code}/nav-history?days=` | 单位净值走势（AkShare，最长约 800 交易日，含日增长率） |
 | GET | `/api/fund-profiles/{code}/nav-history/page` | 历史净值分页（`limit`、`before_date`，最新在前） |
-| PATCH | `/api/fund-profiles/{code}` | 更新档案字段（如 `first_purchase_date` 首次购入日） |
+| PATCH | `/api/fund-profiles/{code}` | 更新档案字段（`first_purchase_date`、`fund_code`、`fund_name`） |
 | GET | `/api/market/index-daily?symbol=000300&days=` | 指数日线（沪深300 等，新浪优先） |
 | POST | `/api/holdings/refresh-sector-quotes` | 刷新板块涨跌；返回 `sector_quote_meta`、映射候选 |
 | POST | `/api/sector-mappings/apply` | 持久化板块映射选择 |
@@ -328,7 +337,19 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | **ChatMessage** | report_id、role、content |
 | **ReportChatRequest** | message、**chat_mode**（fast \| deep） |
 
-占位码 `000000`：总览 OCR 无代码时，**仅**通过已保存 `FundProfile` 按名称补全；未知代码分析时保留 `yangjibao-ocr` 快照。用户在详情页打开基金时可 AkShare 按名称查码。
+占位码 `000000`：总览 OCR 无代码时，**仅**通过已保存 `FundProfile` 按名称补全；未知代码分析时保留 `yangjibao-ocr` 快照。用户在详情页打开基金时可东财名称表 / AkShare 按名称查码。
+
+### fund_code → 主关联板块
+
+混合基（如 015945 国防军工→**商业航天**、519674 创新成长→**半导体**）不能从基金名推断板块。解析优先级：
+
+1. **用户表** — `fund_primary_sectors`（OCR 沉淀 / 手动 refresh-holdings）
+2. **档案** — `fund_profiles.sector_name`（养基宝详情 OCR）
+3. **全局种子** — `GLOBAL_FUND_SECTOR_SEEDS`（常见四只基）
+4. **重仓推荐** — `fund_portfolio_hold_em` + 关键词投票（`POST .../refresh-holdings`）
+5. ~~名称推断~~ — 支付宝导入路径 **禁用**（避免「国防军工」≠「商业航天」）
+
+实现：`fund_primary_sector_service.py`；接入 `overview_pipeline`、`ocr_pipeline`、`fund_profile.save_profile`。
 
 ### 板块实时行情
 

@@ -387,7 +387,7 @@ async function apiFetch(input: string, init?: RequestInit): Promise<Response> {
   if (token) {
     headers.set("Authorization", `Bearer ${token}`);
   }
-  const response = await apiFetch(input, { ...init, headers });
+  const response = await fetch(input, { ...init, headers });
   if (response.status === 401 && typeof window !== "undefined") {
     clearAccessToken();
     const path = window.location.pathname;
@@ -1050,7 +1050,9 @@ export type ParseOcrUploadResult = {
   upload_path?: string | null;
   holdings: Holding[];
   cache_hit?: boolean;
+  preview?: boolean;
   ocr_source?: string;
+  detail_profile?: FundProfile | null;
   fund_code_resolutions?: FundCodeResolution[];
   amount_semantics?: OcrAmountSemantics;
   trading_session?: Record<string, unknown>;
@@ -1078,19 +1080,42 @@ export async function parseOcrUpload(
   return response.json();
 }
 
-export async function applyPortfolioHoldings(holdings: Holding[]): Promise<{
+export async function applyPortfolioHoldings(
+  holdings: Holding[],
+  options?: { detailProfiles?: FundProfile[] },
+): Promise<{
   holdings: Holding[];
   portfolio_summary?: PortfolioSummary | null;
 }> {
   const response = await apiFetch(`${API_BASE}/api/portfolio/apply-holdings`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(holdings),
+    body: JSON.stringify({
+      holdings,
+      detail_profiles: options?.detailProfiles ?? [],
+    }),
   });
   if (!response.ok) {
     throw new Error(await response.text());
   }
   return response.json();
+}
+
+export type FundSearchItem = {
+  fund_code: string;
+  fund_name: string;
+};
+
+export async function searchFunds(query: string, limit = 12): Promise<FundSearchItem[]> {
+  const params = new URLSearchParams({ q: query, limit: String(limit) });
+  const response = await apiFetch(`${API_BASE}/api/funds/search?${params.toString()}`, {
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  const body = (await response.json()) as { items: FundSearchItem[] };
+  return body.items ?? [];
 }
 
 export type PortfolioHoldingsPayload = {
@@ -1167,10 +1192,21 @@ export async function updateFundProfilePurchaseDate(
   fundCode: string,
   firstPurchaseDate: string | null,
 ): Promise<FundProfile> {
+  return updateFundProfile(fundCode, { first_purchase_date: firstPurchaseDate });
+}
+
+export async function updateFundProfile(
+  fundCode: string,
+  patch: {
+    first_purchase_date?: string | null;
+    fund_code?: string;
+    fund_name?: string;
+  },
+): Promise<FundProfile> {
   const response = await apiFetch(`${API_BASE}/api/fund-profiles/${encodeURIComponent(fundCode)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ first_purchase_date: firstPurchaseDate }),
+    body: JSON.stringify(patch),
   });
   if (!response.ok) {
     throw new Error(await response.text());

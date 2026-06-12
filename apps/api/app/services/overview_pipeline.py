@@ -26,6 +26,20 @@ def enrich_holdings_from_profiles(holdings: list[Holding]) -> list[Holding]:
             profile.sector_name
         ):
             patch["sector_name"] = profile.sector_name
+        elif not _is_valid_sector_label(resolved.sector_name):
+            from app.services.fund_primary_sector_service import resolve_primary_sector
+
+            code = resolved.fund_code if resolved.fund_code != "000000" else profile.fund_code
+            if code and code != "000000":
+                record = resolve_primary_sector(
+                    code,
+                    fund_name=resolved.fund_name or profile.fund_name,
+                    allow_name_infer=False,
+                )
+                if record:
+                    patch["sector_name"] = record.sector_name
+                    if record.intraday_index_name and not resolved.intraday_index_name:
+                        patch["intraday_index_name"] = record.intraday_index_name
         if not resolved.intraday_index_name and profile.intraday_index_name:
             patch["intraday_index_name"] = profile.intraday_index_name
         if resolved.sector_return_percent is None and profile.sector_return_percent is not None:
@@ -38,7 +52,11 @@ def enrich_holdings_from_profiles(holdings: list[Holding]) -> list[Holding]:
             patch["holding_return_percent"] = profile.holding_return_percent
         if resolved.holding_profit is None and profile.holding_profit is not None:
             patch["holding_profit"] = profile.holding_profit
-        if resolved.fund_code == "000000" and profile.fund_code != "000000":
+        if (
+            resolved.fund_code == "000000"
+            and profile.fund_code != "000000"
+            and not profile.is_provisional
+        ):
             patch["fund_code"] = profile.fund_code
             patch["fund_name"] = profile.fund_name
 

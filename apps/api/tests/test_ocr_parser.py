@@ -220,6 +220,32 @@ def test_parse_alipay_holdings_ignores_fund_manager_promo_line():
     assert grid.holding_profit == 225.90
 
 
+def test_parse_alipay_holdings_ignores_investment_tip_promo_line():
+    text = (FIXTURES / "alipay_holdings_investment_tip_promo_ocr.txt").read_text(
+        encoding="utf-8"
+    )
+
+    holdings = parse_holdings_from_text(text)
+
+    assert len(holdings) == 4
+    assert [item.fund_name for item in holdings] == [
+        "银河创新成长混合A",
+        "华夏人工智能ETF联接C",
+        "华夏中证电网设备主题ETF联接A",
+        "易方达国防军工混合C",
+    ]
+    assert all("投资锦囊" not in item.fund_name for item in holdings)
+    assert all("市场解读" not in item.fund_name for item in holdings)
+    assert holdings[0].holding_amount == 3932.74
+    assert holdings[0].holding_profit == -226.71
+    assert holdings[1].holding_amount == 7800.29
+    assert holdings[1].holding_profit == -510.68
+    assert holdings[2].holding_amount == 6912.84
+    assert holdings[2].holding_profit == -49.29
+    assert holdings[3].holding_amount == 804.05
+    assert holdings[3].holding_profit == -84.83
+
+
 def test_parse_alipay_holdings_negative_marker_on_separate_line():
     text = """
     我的持有

@@ -1,7 +1,10 @@
+import logging
 import math
 import time
-import logging
+
 import pandas as pd
+
+from app.services.akshare_subprocess import fetch_fund_nav_history
 
 logger = logging.getLogger(__name__)
 
@@ -14,8 +17,19 @@ _UNIT_NAV_CACHE: dict[str, tuple[float | None, float]] = {}
 
 
 def _fetch_nav_df(fund_code: str) -> pd.DataFrame:
-    import akshare as ak
-    return ak.fund_open_fund_info_em(symbol=fund_code, indicator="单位净值走势")
+    """经子进程拉取净值，避免与 PaddleOCR 同进程加载 py_mini_racer 导致 crash。"""
+    payload = fetch_fund_nav_history(fund_code, trading_days=120)
+    if payload is None or not payload.get("data"):
+        return pd.DataFrame()
+
+    rows = payload["data"]
+    return pd.DataFrame(
+        {
+            "净值日期": [row.get("date") for row in rows],
+            "单位净值": [row.get("nav") for row in rows],
+            "日增长率": [row.get("daily_growth") for row in rows],
+        }
+    )
 
 
 def get_official_nav_return(fund_code: str, trade_date: str) -> float | None:

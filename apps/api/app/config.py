@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 from pathlib import Path
 
@@ -7,7 +8,22 @@ from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
+def _resolve_project_root() -> Path:
+    """Monorepo dev uses repo root; Docker image uses /app (see apps/api/Dockerfile)."""
+    override = os.getenv("FUND_AI_PROJECT_ROOT")
+    if override:
+        return Path(override)
+
+    here = Path(__file__).resolve()
+    for ancestor in here.parents:
+        if (ancestor / "apps" / "api").is_dir() and (ancestor / "apps" / "web").is_dir():
+            return ancestor
+
+    # Standalone container: /app/app/config.py -> /app
+    return here.parents[1]
+
+
+PROJECT_ROOT = _resolve_project_root()
 
 # DeepSeek V4 系列 API 文档：单次输出上限 384K tokens
 DEEPSEEK_MAX_OUTPUT_TOKENS = 384_000

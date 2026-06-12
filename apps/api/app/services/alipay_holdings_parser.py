@@ -3,6 +3,13 @@ from __future__ import annotations
 import re
 
 from app.models import Holding
+from app.services.fund_name_utils import looks_like_fund_product_name, sanitize_fund_name
+from app.services.ocr_text_utils import (
+    align_profit_sign,
+    extract_percent,
+    infer_holding_profit,
+    is_near_zero,
+)
 
 # 支付宝「我的持有」三列排版，OCR 常按行交错读出：
 # 基金名(可拆行) | 金额、昨日 | 持有收益、持有收益率
@@ -34,17 +41,23 @@ ALIPAY_HEADER_MARKERS = (
 )
 ALIPAY_FOOTER_MARKERS = ("基金市场", "上证指数", "新增持有", "批量")
 ALIPAY_NOISE_MARKERS = (
+    "投资锦囊",
     "基金经理说",
     "市场解读",
     "财富号",
     "的重要性",
     "正在被",
     "厄尔尼诺",
+    "北美云厂商",
+    "持续加大资本支出",
 )
 PERCENT_LINE_RE = re.compile(r"([+-]?\d+(?:\.\d+)?)\s*%")
 NUMBER_TOKEN_RE = re.compile(r"(?<![\d.])([+-]?\d[\d,]*(?:\.\d+)?)(?![\d.])")
 NEGATIVE_LINE_RE = re.compile(r"^[-—－―+]$")
 NAME_FRAGMENT_RE = re.compile(r"^[\u4e00-\u9fffA-Za-z0-9·]{1,40}$")
+INLINE_TWO_COLUMN_RE = re.compile(
+    r"^\s*([+-]?\d[\d,]*(?:\.\d+)?)\s+([+-]?\d[\d,]*(?:\.\d+)?)\s*$"
+)
 COMPLETE_FUND_NAME_RE = re.compile(
     r"^[\u4e00-\u9fffA-Za-z0-9·]{4,40}"
     r"(?:混合[A-CEH]|联接[A-CEH]|ETF联接[A-CEH]|主题ETF联接[A-CEH])$",
@@ -63,7 +76,7 @@ def is_alipay_holdings_page(lines: list[str]) -> bool:
         return True
     if "我的持有" in joined or "金额/昨日收益" in joined:
         return True
-    percent_blocks = sum(1 for line in lines if _extract_percent(line) is not None)
+    percent_blocks = sum(1 for line in lines if extract_percent(line) is not None)
     return percent_blocks >= 2 and "￥" not in joined
 
 
@@ -72,23 +85,227 @@ def parse_alipay_holdings_page(text: str) -> list[Holding]:
     if is_alipay_overview_holdings_page(lines):
         overview = _parse_alipay_overview_holdings(lines)
         if overview:
-            return overview
+            return _reconcile_alipay_profit_signs(overview)
     if not is_alipay_holdings_page(lines):
         return []
 
+    # 养基宝思路：以基金名为锚点切 block，再从持有收益率行向上解析三列数值
+    holdings = _parse_my_holdings_name_anchored(lines)
+    if len(holdings) >= 2:
+        return _reconcile_alipay_profit_signs(holdings)
+
     blocks = _split_fund_blocks(lines)
-    holdings: list[Holding] = []
+    holdings = []
     for block in blocks:
         holding = _parse_fund_block(block)
+        if holding is not None:
+            holdings.append(holding)
+    return _reconcile_alipay_profit_signs(holdings)
+
+
+def _parse_my_holdings_name_anchored(lines: list[str]) -> list[Holding]:
+    start = 0
+    for index, line in enumerate(lines):
+        if "持有收益/率" in line or "金额/昨日收益" in line:
+            start = index + 1
+            break
+
+    anchors = _find_my_holdings_name_anchors(lines, start)
+    if not anchors:
+        return []
+
+    holdings: list[Holding] = []
+    for position, (anchor_index, _) in enumerate(anchors):
+        next_index = anchors[position + 1][0] if position + 1 < len(anchors) else len(lines)
+        block_lines = lines[anchor_index:next_index]
+        holding = _parse_my_holdings_block(block_lines)
         if holding is not None:
             holdings.append(holding)
     return holdings
 
 
+def _find_my_holdings_name_anchors(
+    lines: list[str],
+    start: int,
+) -> list[tuple[int, str]]:
+    anchors: list[tuple[int, str]] = []
+    for index in range(start, len(lines)):
+        line = lines[index]
+        if _is_footer_line(line):
+            break
+        if _is_noise_line(line):
+            continue
+        if _is_fund_name_anchor(line):
+            anchors.append((index, line))
+    return anchors
+
+
+def _is_fund_name_anchor(line: str) -> bool:
+    cleaned = line.strip()
+    if cleaned.startswith(("题", "接")) and not any(
+        issuer in cleaned for issuer in ("华夏", "易方达", "银河", "广发", "中欧", "招商")
+    ):
+        return False
+    if re.fullmatch(r"[A-CEH]", cleaned):
+        return False
+    if COMPLETE_FUND_NAME_RE.match(cleaned):
+        return True
+    if looks_like_fund_product_name(cleaned):
+        return True
+    return False
+
+
+def _parse_my_holdings_block(block_lines: list[str]) -> Holding | None:
+    cleaned = [line for line in block_lines if line and not _is_footer_line(line)]
+    if not cleaned:
+        return None
+
+    percent_index, holding_return_percent, percent_pending_negative = _find_holding_return_percent(cleaned)
+    if holding_return_percent is None or percent_index is None:
+        return None
+
+    metric_lines = cleaned[:percent_index]
+    if percent_pending_negative and metric_lines:
+        metric_lines = metric_lines[:-1]
+
+    name_fragments: list[str] = []
+    metric_only_lines: list[str] = []
+    for line in metric_lines:
+        if _looks_like_name_fragment(line) and not _numbers_from_line(line):
+            if not _is_promo_fragment(line):
+                name_fragments.append(line)
+            continue
+        metric_only_lines.append(line)
+
+    holding_amount, yesterday_profit, holding_profit = _extract_my_holdings_metrics(
+        metric_only_lines,
+        percent_line=cleaned[percent_index],
+        percent_pending_negative=percent_pending_negative,
+    )
+
+    fund_name = sanitize_fund_name(_merge_name_fragments(name_fragments))
+    if not fund_name or holding_amount is None:
+        return None
+
+    holding_profit = infer_holding_profit(
+        holding_amount=holding_amount,
+        holding_return_percent=holding_return_percent,
+        holding_profit=holding_profit,
+    )
+
+    return Holding(
+        fund_code="000000",
+        fund_name=fund_name,
+        holding_amount=holding_amount,
+        return_percent=holding_return_percent or 0,
+        holding_profit=holding_profit,
+        holding_return_percent=holding_return_percent,
+        yesterday_profit=yesterday_profit,
+    )
+
+
+def _find_holding_return_percent(
+    lines: list[str],
+) -> tuple[int | None, float | None, bool]:
+    for index in range(len(lines) - 1, -1, -1):
+        line = lines[index]
+        percent = extract_percent(line)
+        if percent is None:
+            continue
+        pending_negative = index >= 1 and NEGATIVE_LINE_RE.match(lines[index - 1].strip()) is not None
+        if pending_negative and percent > 0:
+            percent = -percent
+        return index, percent, pending_negative
+    return None, None, False
+
+
+def _extract_my_holdings_metrics(
+    metric_lines: list[str],
+    *,
+    percent_line: str,
+    percent_pending_negative: bool,
+) -> tuple[float | None, float | None, float | None]:
+    """从持有收益率行向上解析：金额 | 昨日收益 | 持有收益（养基宝式 bottom-up）。"""
+    inline_profit_numbers = _numbers_from_line(
+        PERCENT_LINE_RE.sub("", percent_line),
+        pending_negative=percent_pending_negative,
+    )
+
+    numbers_bottom_up: list[float] = []
+    for line in reversed(metric_lines):
+        if _is_noise_line(line):
+            continue
+        inline_match = INLINE_TWO_COLUMN_RE.match(line.replace(",", ""))
+        if inline_match:
+            numbers_bottom_up.extend(
+                [float(inline_match.group(2)), float(inline_match.group(1))]
+            )
+            continue
+        line_numbers = _numbers_from_line(line)
+        numbers_bottom_up.extend(reversed(line_numbers))
+
+    holding_amount: float | None = None
+    for line in metric_lines:
+        if _is_noise_line(line):
+            continue
+        for value in _numbers_from_line(line):
+            if _is_holding_amount(value, line):
+                if holding_amount is None or abs(value) > abs(holding_amount):
+                    holding_amount = value
+
+    yesterday_profit: float | None = None
+    holding_profit: float | None = None
+
+    metric_numbers = [value for value in numbers_bottom_up if value != holding_amount]
+    if metric_numbers:
+        if is_near_zero(metric_numbers[0]) and len(metric_numbers) >= 2:
+            yesterday_profit = metric_numbers[0]
+            holding_profit = metric_numbers[1]
+        else:
+            holding_profit = metric_numbers[0]
+            if len(metric_numbers) >= 2:
+                yesterday_profit = metric_numbers[1]
+
+    if holding_profit is None and inline_profit_numbers:
+        for value in inline_profit_numbers:
+            if not is_near_zero(value) and value != holding_amount:
+                holding_profit = value
+                break
+    elif is_near_zero(holding_profit) and inline_profit_numbers:
+        for value in inline_profit_numbers:
+            if not is_near_zero(value) and value != holding_amount:
+                holding_profit = value
+                break
+
+    return holding_amount, yesterday_profit, holding_profit
+
+
+def _reconcile_alipay_profit_signs(holdings: list[Holding]) -> list[Holding]:
+    """对齐持有收益/昨日收益符号与收益率（养基宝 account-level 思路的 per-fund 版）。"""
+    reconciled: list[Holding] = []
+    for holding in holdings:
+        holding_profit = align_profit_sign(
+            holding.holding_profit,
+            holding.holding_return_percent,
+        )
+        yesterday_profit = holding.yesterday_profit
+        reconciled.append(
+            holding.model_copy(
+                update={
+                    "holding_profit": holding_profit,
+                    "yesterday_profit": yesterday_profit,
+                }
+            )
+        )
+    return reconciled
+
+
 def _parse_alipay_overview_holdings(lines: list[str]) -> list[Holding]:
     """解析「全部持有」四列版式：金额、日收益、持有收益、累计收益 + 占比 + 持有收益率。"""
     name_indexes = [
-        index for index, line in enumerate(lines) if is_alipay_fund_name(line)
+        index
+        for index, line in enumerate(lines)
+        if is_alipay_fund_name(line) or looks_like_fund_product_name(line)
     ]
     if not name_indexes:
         return []
@@ -116,7 +333,7 @@ def _parse_overview_fund_block(fund_name: str, block_lines: list[str]) -> Holdin
     for line in block_lines:
         if _is_portfolio_weight_line(line):
             continue
-        percent = _extract_percent(line)
+        percent = extract_percent(line)
         if percent is not None:
             holding_return_percent = percent
             continue
@@ -126,26 +343,25 @@ def _parse_overview_fund_block(fund_name: str, block_lines: list[str]) -> Holdin
         return None
 
     holding_amount = numbers[0]
-    # 四列：金额 | 日收益 | 持有收益 | 累计收益
+    yesterday_profit = numbers[1] if len(numbers) >= 2 else None
     holding_profit = numbers[2] if len(numbers) >= 3 else None
     if holding_profit is None and len(numbers) >= 2:
         holding_profit = numbers[1]
 
-    holding_profit = align_profit_sign(holding_profit, holding_return_percent)
-    if holding_profit is None and holding_amount and holding_return_percent is not None:
-        holding_profit = round(
-            holding_amount * holding_return_percent / (100 + holding_return_percent),
-            2,
-        )
-        holding_profit = align_profit_sign(holding_profit, holding_return_percent)
+    holding_profit = infer_holding_profit(
+        holding_amount=holding_amount,
+        holding_return_percent=holding_return_percent,
+        holding_profit=holding_profit,
+    )
 
     return Holding(
         fund_code="000000",
-        fund_name=fund_name,
+        fund_name=sanitize_fund_name(fund_name),
         holding_amount=holding_amount,
         return_percent=holding_return_percent or 0,
         holding_profit=holding_profit,
         holding_return_percent=holding_return_percent,
+        yesterday_profit=yesterday_profit,
     )
 
 
@@ -158,7 +374,7 @@ def _split_fund_blocks(lines: list[str]) -> list[list[str]]:
     percent_indexes = [
         index
         for index, line in enumerate(lines)
-        if _extract_percent(line) is not None and not _is_header_line(line)
+        if extract_percent(line) is not None and not _is_header_line(line)
     ]
     if not percent_indexes:
         return []
@@ -189,81 +405,38 @@ def _parse_fund_block(block_lines: list[str]) -> Holding | None:
     if not cleaned:
         return None
 
-    percent_line = cleaned[-1]
-    percent_pending_negative = (
-        len(cleaned) >= 2 and NEGATIVE_LINE_RE.match(cleaned[-2].strip()) is not None
-    )
-    holding_return_percent = _extract_percent(percent_line)
-    if holding_return_percent is None:
+    percent_index, holding_return_percent, percent_pending_negative = _find_holding_return_percent(cleaned)
+    if holding_return_percent is None or percent_index is None:
         return None
-    if percent_pending_negative and holding_return_percent > 0:
-        holding_return_percent = -holding_return_percent
 
-    inline_profit_numbers = _numbers_from_line(
-        PERCENT_LINE_RE.sub("", percent_line),
-        pending_negative=percent_pending_negative,
-    )
-    body = cleaned[:-1]
-    if percent_pending_negative:
-        body = cleaned[:-2]
-    yesterday_profit: float | None = None
-    if body and _is_near_zero_line(body[-1]):
-        yesterday_profit = _first_number(body[-1])
-        body = body[:-1]
+    metric_lines = cleaned[:percent_index]
+    if percent_pending_negative and metric_lines:
+        metric_lines = metric_lines[:-1]
 
-    ordered_numbers: list[float] = []
     name_fragments: list[str] = []
-    pending_negative = False
-    for line in body:
-        if _is_noise_line(line):
+    metric_only_lines: list[str] = []
+    for line in metric_lines:
+        if _looks_like_name_fragment(line) and not _numbers_from_line(line):
+            if not _is_promo_fragment(line):
+                name_fragments.append(line)
             continue
-        if NEGATIVE_LINE_RE.match(line.strip()):
-            pending_negative = True
-            continue
-        numbers = _numbers_from_line(line, pending_negative=pending_negative)
-        pending_negative = False
-        if numbers:
-            ordered_numbers.extend(numbers)
-            continue
-        if _looks_like_name_fragment(line):
-            name_fragments.append(line)
+        metric_only_lines.append(line)
 
-    holding_amount = None
-    holding_profit = None
-    yesterday_from_body: float | None = None
-    for value in ordered_numbers:
-        if holding_amount is None and _is_holding_amount(value, ""):
-            holding_amount = value
-            continue
-        if holding_amount is None:
-            continue
-        if _is_near_zero(value):
-            yesterday_from_body = value
-            continue
-        if holding_profit is None:
-            holding_profit = value
-            break
+    holding_amount, yesterday_profit, holding_profit = _extract_my_holdings_metrics(
+        metric_only_lines,
+        percent_line=cleaned[percent_index],
+        percent_pending_negative=percent_pending_negative,
+    )
 
-    if yesterday_profit is None:
-        yesterday_profit = yesterday_from_body
-
-    if holding_profit is None and inline_profit_numbers:
-        for value in inline_profit_numbers:
-            if not _is_near_zero(value) and value != holding_amount:
-                holding_profit = value
-                break
-
-    holding_profit = align_profit_sign(holding_profit, holding_return_percent)
-    if holding_profit is None and holding_amount and holding_return_percent is not None:
-        holding_profit = round(
-            holding_amount * holding_return_percent / (100 + holding_return_percent),
-            2,
-        )
-        holding_profit = align_profit_sign(holding_profit, holding_return_percent)
-
-    fund_name = _merge_name_fragments(name_fragments)
+    fund_name = sanitize_fund_name(_merge_name_fragments(name_fragments))
     if not fund_name or holding_amount is None:
         return None
+
+    holding_profit = infer_holding_profit(
+        holding_amount=holding_amount,
+        holding_return_percent=holding_return_percent,
+        holding_profit=holding_profit,
+    )
 
     return Holding(
         fund_code="000000",
@@ -323,6 +496,28 @@ def _looks_like_name_fragment(line: str) -> bool:
     if cleaned.endswith("》"):
         return False
     return any("\u4e00" <= char <= "\u9fff" for char in cleaned)
+
+
+def _is_promo_fragment(line: str) -> bool:
+    cleaned = line.strip()
+    if not cleaned:
+        return True
+    if COMPLETE_FUND_NAME_RE.match(cleaned):
+        return False
+    if looks_like_fund_product_name(cleaned):
+        return False
+    if any(marker in cleaned for marker in ALIPAY_NOISE_MARKERS):
+        return True
+    if len(cleaned) > 18 and not _has_fund_product_suffix(cleaned):
+        return any(
+            keyword in cleaned
+            for keyword in ("持续", "加大", "机会", "来袭", "重要", "资本支出", "云厂商")
+        )
+    return False
+
+
+def _has_fund_product_suffix(line: str) -> bool:
+    return bool(COMPLETE_FUND_NAME_RE.search(line.strip()))
 
 
 def _is_noise_line(line: str) -> bool:
@@ -386,15 +581,6 @@ def _is_holding_amount(value: float, line: str) -> bool:
     return value >= 10 and "." in line
 
 
-def _is_near_zero_line(line: str) -> bool:
-    numbers = _numbers_from_line(line)
-    return len(numbers) == 1 and _is_near_zero(numbers[0]) and not PERCENT_LINE_RE.search(line)
-
-
-def _is_near_zero(value: float) -> bool:
-    return abs(value) < 0.0001
-
-
 def _numbers_from_line(line: str, *, pending_negative: bool = False) -> list[float]:
     values: list[float] = []
     if NEGATIVE_LINE_RE.match(line.strip()):
@@ -417,29 +603,6 @@ def _numbers_from_line(line: str, *, pending_negative: bool = False) -> list[flo
         pending_negative = False
         values.append(value)
     return values
-
-
-def _first_number(line: str) -> float | None:
-    numbers = _numbers_from_line(line)
-    return numbers[0] if numbers else None
-
-
-def _extract_percent(line: str) -> float | None:
-    match = PERCENT_LINE_RE.search(line)
-    if not match:
-        return None
-    return float(match.group(1))
-
-
-def align_profit_sign(
-    profit: float | None,
-    return_percent: float | None,
-) -> float | None:
-    if profit is None or return_percent is None or profit == 0 or return_percent == 0:
-        return profit
-    if (profit > 0) > (return_percent > 0):
-        return -abs(profit)
-    return profit
 
 
 # 兼容旧测试与 ocr_parser 检测

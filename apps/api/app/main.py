@@ -39,6 +39,7 @@ from app.database import list_report_chat_messages
 from app.models import (
     AllocatePenetrationRequest,
     AnalysisRequest,
+    ApplyHoldingsRequest,
     Holding,
     HoldingDetailRequest,
     InvestorProfile,
@@ -50,10 +51,11 @@ from app.models import (
 from app.services.analyze_pipeline import run_analysis
 from app.database import get_portfolio_summary
 from app.services.fund_data import FundDataService
-from app.services.fund_profile import FundProfileService
+from app.services.fund_profile import FundProfileService, migrate_fund_profile_code
 from app.services.holding_validation import validate_holdings
 from app.services.penetration_daily_allocator import allocate_penetration_daily_profit
 from app.services.holding_estimates import sum_daily_profit
+from app.services.fund_code_resolver import reconcile_holding_fund_codes, search_funds_by_keyword
 from app.services.portfolio_holdings_service import load_persisted_holdings
 from app.services.portfolio_persistence import enrich_loaded_holdings, persist_holdings_after_sector_refresh
 from app.services.portfolio_snapshot import build_dashboard_payload
@@ -206,10 +208,43 @@ async def parse_ocr(
 
 
 @app.post("/api/portfolio/apply-holdings")
-def apply_portfolio_holdings(holdings: list[Holding]) -> dict:
-    if not holdings:
+def apply_portfolio_holdings(payload: ApplyHoldingsRequest) -> dict:
+    if not payload.holdings:
         raise HTTPException(status_code=400, detail="持仓不能为空")
-    return apply_confirmed_holdings(holdings)
+    return apply_confirmed_holdings(
+        payload.holdings,
+        detail_profiles=payload.detail_profiles,
+    )
+
+
+@app.get("/api/funds/search")
+def search_funds(q: str = "", limit: int = 12) -> dict:
+    items = search_funds_by_keyword(q, limit=min(max(limit, 1), 30))
+    return {"query": q, "items": items}
+
+
+@app.get("/api/funds/{fund_code}/primary-sector")
+def get_fund_primary_sector_mapping(fund_code: str, fund_name: str | None = None) -> dict:
+    from app.services.fund_primary_sector_service import primary_sector_row_for_api
+
+    return primary_sector_row_for_api(fund_code, fund_name=fund_name)
+
+
+@app.post("/api/funds/{fund_code}/primary-sector/refresh-holdings")
+def refresh_fund_primary_sector_from_holdings(fund_code: str, fund_name: str | None = None) -> dict:
+    from app.services.fund_primary_sector_service import refresh_primary_sector_for_fund
+
+    return refresh_primary_sector_for_fund(fund_code, fund_name=fund_name)
+
+
+@app.post("/api/fund-primary-sectors/sync-from-profiles")
+def sync_fund_primary_sectors_from_profiles() -> dict:
+    from app.services.fund_primary_sector_service import sync_primary_sectors_from_profiles
+    from app.services.fund_profile import FundProfileService
+
+    profiles = FundProfileService().list_profiles()
+    synced = sync_primary_sectors_from_profiles(profiles)
+    return {"ok": True, "synced": synced}
 
 
 @app.post("/api/holdings/allocate-penetration-daily")
@@ -530,16 +565,37 @@ def patch_fund_profile(fund_code: str, payload: UpdateFundProfileRequest) -> dic
     profile = get_fund_profile_by_code(fund_code)
     if profile is None:
         raise HTTPException(status_code=404, detail="持仓元数据不存在")
-    if payload.first_purchase_date:
-        try:
-            date.fromisoformat(payload.first_purchase_date)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail="首次购入日期格式无效") from exc
-    from app.database import save_fund_profile
 
-    updated = profile.model_copy(update={"first_purchase_date": payload.first_purchase_date})
-    save_fund_profile(updated)
-    return updated.model_dump(mode="json")
+    updates: dict = {}
+    if payload.first_purchase_date is not None:
+        if payload.first_purchase_date:
+            try:
+                date.fromisoformat(payload.first_purchase_date)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail="首次购入日期格式无效") from exc
+        updates["first_purchase_date"] = payload.first_purchase_date
+
+    if payload.fund_name is not None and payload.fund_name.strip():
+        updates["fund_name"] = payload.fund_name.strip()
+
+    if payload.fund_code is not None:
+        new_code = payload.fund_code.strip().zfill(6)
+        if len(new_code) != 6 or not new_code.isdigit():
+            raise HTTPException(status_code=400, detail="基金代码格式无效")
+        if new_code != fund_code:
+            try:
+                profile = migrate_fund_profile_code(fund_code, new_code, fund_name=updates.get("fund_name"))
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            fund_code = new_code
+
+    if updates:
+        from app.database import save_fund_profile
+
+        profile = profile.model_copy(update=updates)
+        profile = save_fund_profile(profile)
+
+    return profile.model_dump(mode="json")
 
 
 @app.post("/api/fund-profiles/repair-sectors")
@@ -667,6 +723,7 @@ def portfolio_dashboard(
 @app.get("/api/portfolio/holdings")
 def portfolio_holdings() -> dict:
     holdings, source, snapshot_date = load_persisted_holdings()
+    holdings = reconcile_holding_fund_codes(holdings)
     holdings = FundProfileService().resolve_holdings(holdings)
     holdings = enrich_loaded_holdings(holdings)
     summary = get_portfolio_summary()
@@ -698,7 +755,7 @@ def portfolio_holdings() -> dict:
 def investor_profile_get() -> dict:
     profile = get_investor_profile()
     if profile is None:
-        raise HTTPException(status_code=404, detail="尚未保存风控画像")
+        profile = InvestorProfile()
     return profile.model_dump()
 
 

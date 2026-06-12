@@ -5,6 +5,7 @@ import { BrainCircuit, X } from "lucide-react";
 import type {
   AnalysisMode,
   FundCodeResolution,
+  FundProfile,
   Holding,
   HoldingFieldWarning,
   InvestorProfile,
@@ -94,6 +95,8 @@ export function Dashboard() {
   const [pendingOcrHoldings, setPendingOcrHoldings] = useState<Holding[] | null>(null);
   const [pendingOcrResolutions, setPendingOcrResolutions] = useState<FundCodeResolution[]>([]);
   const [pendingOcrNote, setPendingOcrNote] = useState<string | null>(null);
+  const [pendingOcrSource, setPendingOcrSource] = useState<string | null>(null);
+  const [pendingDetailProfile, setPendingDetailProfile] = useState<FundProfile | null>(null);
   const [isConfirmingOcr, setIsConfirmingOcr] = useState(false);
   const [showAddHoldingModal, setShowAddHoldingModal] = useState(false);
   const [isManualAdding, setIsManualAdding] = useState(false);
@@ -151,6 +154,7 @@ export function Dashboard() {
       }
     } catch {
       await loadPortfolioSummary();
+      setMessage("持仓加载失败，请确认后端 API 正常运行后刷新页面。");
     } finally {
       setIsHydratingHoldings(false);
     }
@@ -247,7 +251,7 @@ export function Dashboard() {
     await runAnalyze(displayableHoldings(holdings));
   };
 
-  const handleOverviewUpload = async (selectedFile: File) => {
+  const handleOcrUpload = async (selectedFile: File) => {
     setIsOcrUploading(true);
     setMessage(null);
     try {
@@ -258,16 +262,20 @@ export function Dashboard() {
         throw new Error(result.error);
       }
       if (!result.holdings.length) {
-        throw new Error("未识别到基金持仓，请确认截图为支付宝「我的持有」或养基宝总览。");
+        throw new Error(
+          "未识别到基金持仓，请确认截图为支付宝「我的持有」、养基宝总览或养基宝单基金详情。",
+        );
       }
       setPendingOcrHoldings(result.holdings);
       setPendingOcrResolutions(result.fund_code_resolutions ?? []);
       setPendingOcrNote(result.amount_semantics?.note ?? null);
+      setPendingOcrSource(result.ocr_source ?? null);
+      setPendingDetailProfile(result.detail_profile ?? null);
       setHoldingWarnings(result.holding_warnings ?? []);
       setShowAddHoldingModal(false);
       setActiveTab("today");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "总览截图识别失败。");
+      setMessage(error instanceof Error ? error.message : "截图识别失败。");
     } finally {
       setIsOcrUploading(false);
     }
@@ -306,7 +314,31 @@ export function Dashboard() {
     const count = pendingOcrHoldings.length;
     setIsConfirmingOcr(true);
     try {
-      const applied = await applyPortfolioHoldings(pendingOcrHoldings);
+      const detailProfiles =
+        pendingDetailProfile && pendingOcrHoldings[0]
+          ? [
+              {
+                ...pendingDetailProfile,
+                fund_code:
+                  pendingOcrHoldings[0].fund_code !== "000000"
+                    ? pendingOcrHoldings[0].fund_code
+                    : pendingDetailProfile.fund_code,
+                fund_name: pendingOcrHoldings[0].fund_name,
+                holding_amount: pendingOcrHoldings[0].holding_amount,
+                holding_profit: pendingOcrHoldings[0].holding_profit,
+                sector_name:
+                  pendingOcrHoldings[0].sector_name ?? pendingDetailProfile.sector_name,
+                sector_return_percent:
+                  pendingOcrHoldings[0].sector_return_percent ??
+                  pendingDetailProfile.sector_return_percent,
+              },
+            ]
+          : pendingDetailProfile
+            ? [pendingDetailProfile]
+            : [];
+      const applied = await applyPortfolioHoldings(pendingOcrHoldings, {
+        detailProfiles,
+      });
       setHoldings(applied.holdings);
       if (applied.portfolio_summary) {
         setPortfolioSummary(applied.portfolio_summary);
@@ -314,7 +346,13 @@ export function Dashboard() {
       setPendingOcrHoldings(null);
       setPendingOcrResolutions([]);
       setPendingOcrNote(null);
-      setMessage(`已更新 ${count} 只基金的账户汇总，板块涨跌已刷新。`);
+      setPendingOcrSource(null);
+      setPendingDetailProfile(null);
+      setMessage(
+        pendingOcrSource === "yangjibao_detail"
+          ? "详情页已建档并刷新板块涨跌。"
+          : `已更新 ${count} 只基金的账户汇总，板块涨跌已刷新。`,
+      );
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "确认更新失败。");
     } finally {
@@ -450,6 +488,18 @@ export function Dashboard() {
           sectorMeta={sectorRefresh.sectorMetaByFundCode[holdings[selectedHoldingIndex].fund_code]}
           onClose={() => setSelectedHoldingIndex(null)}
           onNavigate={setSelectedHoldingIndex}
+          onUploadDetailScreenshot={(file) => void handleOcrUpload(file)}
+          isDetailOcrUploading={isOcrUploading}
+          onFundCodeUpdated={async (index, updated) => {
+            const next = holdings.map((item, itemIndex) => (itemIndex === index ? updated : item));
+            setHoldings(next);
+            try {
+              await applyPortfolioHoldings(next);
+              setMessage(`基金代码已更新为 ${updated.fund_code}`);
+            } catch (error) {
+              setMessage(error instanceof Error ? error.message : "持仓持久化失败，请刷新后重试");
+            }
+          }}
           onHoldingResolved={(index, resolved) => {
             setHoldings((current) =>
               current.map((item, itemIndex) => (itemIndex === index ? resolved : item)),
@@ -461,7 +511,7 @@ export function Dashboard() {
       <AddHoldingModal
         open={showAddHoldingModal}
         onClose={() => setShowAddHoldingModal(false)}
-        onUpload={(file) => void handleOverviewUpload(file)}
+        onUpload={(file) => void handleOcrUpload(file)}
         onManualSubmit={(items) => handleManualAddHoldings(items)}
         isUploading={isOcrUploading}
         isSubmitting={isManualAdding}
@@ -472,6 +522,7 @@ export function Dashboard() {
           holdings={pendingOcrHoldings}
           fundCodeResolutions={pendingOcrResolutions}
           amountSemanticsNote={pendingOcrNote}
+          ocrSource={pendingOcrSource}
           isBusy={isConfirmingOcr}
           onChange={setPendingOcrHoldings}
           onConfirm={() => void handleConfirmOcrHoldings()}
@@ -479,6 +530,8 @@ export function Dashboard() {
             setPendingOcrHoldings(null);
             setPendingOcrResolutions([]);
             setPendingOcrNote(null);
+            setPendingOcrSource(null);
+            setPendingDetailProfile(null);
           }}
         />
       ) : null}

@@ -756,3 +756,80 @@ def save_sector_mapping(record: dict[str, Any]) -> dict[str, Any]:
         )
         connection.commit()
     return get_sector_mapping(record["sector_label"]) or record
+
+
+def get_fund_primary_sector(fund_code: str) -> dict[str, Any] | None:
+    user_id = _uid()
+    code = fund_code.strip().zfill(6)
+    with _connect() as connection:
+        row = connection.execute(
+            """
+            SELECT fund_code, sector_name, intraday_index_name, source, confidence, detail, updated_at
+            FROM fund_primary_sectors
+            WHERE userId = ? AND fund_code = ?
+            """,
+            (user_id, code),
+        ).fetchone()
+    if row is None:
+        return None
+    return _row_to_dict(row)
+
+
+def save_fund_primary_sector(
+    *,
+    fund_code: str,
+    sector_name: str,
+    intraday_index_name: str | None = None,
+    source: str,
+    confidence: float | None = None,
+    detail: dict | None = None,
+) -> dict[str, Any]:
+    now = datetime.now(timezone.utc).isoformat()
+    user_id = _uid()
+    code = fund_code.strip().zfill(6)
+    detail_json = json.dumps(detail, ensure_ascii=False) if detail else None
+    with _connect() as connection:
+        connection.execute(
+            """
+            INSERT OR REPLACE INTO fund_primary_sectors (
+                userId, fund_code, sector_name, intraday_index_name,
+                source, confidence, detail, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                user_id,
+                code,
+                sector_name,
+                intraday_index_name,
+                source,
+                confidence,
+                detail_json,
+                now,
+            ),
+        )
+        connection.commit()
+    return get_fund_primary_sector(code) or {
+        "fund_code": code,
+        "sector_name": sector_name,
+        "intraday_index_name": intraday_index_name,
+        "source": source,
+        "confidence": confidence,
+        "detail": detail,
+        "updated_at": now,
+    }
+
+
+def list_fund_primary_sectors() -> list[dict[str, Any]]:
+    user_id = _uid()
+    with _connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT fund_code, sector_name, intraday_index_name, source, confidence, detail, updated_at
+            FROM fund_primary_sectors
+            WHERE userId = ?
+            ORDER BY updated_at DESC
+            """,
+            (user_id,),
+        ).fetchall()
+    return [_row_to_dict(row) for row in rows]

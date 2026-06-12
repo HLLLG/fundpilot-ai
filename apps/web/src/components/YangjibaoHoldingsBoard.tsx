@@ -26,7 +26,8 @@ import {
   sumHoldingAmount,
   displayableHoldings,
 } from "@/lib/holdingMetrics";
-import { holdingRelatedBoardLabel } from "@/lib/profileSector";
+import type { SectorQuoteMeta } from "@/lib/api";
+import { holdingDisplaySectorLabel } from "@/lib/profileSector";
 import { buildSectorRefreshNotice } from "@/lib/sectorQuoteStatus";
 import { loadAmountsHidden, saveAmountsHidden } from "@/lib/storage";
 import { formatTradeDateShort } from "@/lib/tradeDateLabel";
@@ -185,6 +186,7 @@ export function YangjibaoHoldingsBoard({
     selectMapping,
     dismissMapping,
     lastRefreshResult,
+    sectorMetaByFundCode,
   } = sectorRefresh;
 
   useEffect(() => {
@@ -379,7 +381,8 @@ export function YangjibaoHoldingsBoard({
             const dailyIsEstimated = dailyProfitIsEstimated(holding);
             const isOfficialDaily = holding.daily_return_percent_source === "official_nav";
             const sectorReturn = resolveSectorBoardReturnPercent(holding);
-            const sectorLabel = holdingRelatedBoardLabel(holding);
+            const sectorMeta = sectorMetaByFundCode[holding.fund_code] as SectorQuoteMeta | undefined;
+            const sectorLabel = holdingDisplaySectorLabel(holding, sectorMeta);
             return (
               <li key={`${holding.fund_code}-${index}`}>
                 <button

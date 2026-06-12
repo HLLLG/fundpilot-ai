@@ -1,5 +1,22 @@
-from app.config import refresh_settings
+from app.config import PROJECT_ROOT, _resolve_project_root, refresh_settings
 from tests.conftest import PYTEST_PLACEHOLDER_DEEPSEEK_KEY, PYTEST_VALID_DEEPSEEK_KEY
+
+
+def test_project_root_resolves_in_monorepo():
+    assert (PROJECT_ROOT / "apps" / "api").is_dir()
+    assert (PROJECT_ROOT / "apps" / "web").is_dir()
+
+
+def test_project_root_resolves_for_docker_layout(tmp_path, monkeypatch):
+    docker_root = tmp_path / "app"
+    fake_config = docker_root / "app" / "config.py"
+    fake_config.parent.mkdir(parents=True)
+    fake_config.touch()
+
+    monkeypatch.delenv("FUND_AI_PROJECT_ROOT", raising=False)
+    monkeypatch.setattr("app.config.__file__", str(fake_config))
+
+    assert _resolve_project_root() == docker_root
 
 
 def test_placeholder_deepseek_key_is_treated_as_unconfigured(monkeypatch):

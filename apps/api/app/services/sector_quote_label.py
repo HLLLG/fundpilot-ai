@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from app.models import FundProfile, Holding
 from app.services.fund_profile import (
+    _infer_related_board_label,
     _is_valid_sector_label,
+    _looks_like_index_name,
     infer_intraday_index_from_fund_name,
     infer_intraday_index_from_sector,
 )
-from app.services.sector_labels import normalize_sector_label
+from app.services.sector_labels import infer_sector_label_from_fund_name, normalize_sector_label
 
 
 def _profile_index_quote_label(profile: FundProfile | None) -> str | None:
@@ -66,15 +68,26 @@ def sector_quote_lookup_label(
         index_name = holding.intraday_index_name or index_name
     if index_name and normalize_sector_label(index_name):
         return normalize_sector_label(index_name)
+
+    inferred = infer_sector_label_from_fund_name(fund_name)
+    if inferred:
+        return inferred
     return None
 
 
 def sector_display_label(holding: Holding) -> str | None:
-    """UI 展示用：优先关联板块短名，否则场内指数/sector_name。"""
+    """UI 展示用：优先关联板块短名，否则场内指数，否则从基金名推断。"""
     if _is_valid_sector_label(holding.sector_name):
         return holding.sector_name
     if holding.intraday_index_name:
+        if _looks_like_index_name(holding.intraday_index_name):
+            board = _infer_related_board_label(holding.intraday_index_name)
+            if _is_valid_sector_label(board):
+                return board
         return holding.intraday_index_name
+    inferred = infer_sector_label_from_fund_name(holding.fund_name)
+    if inferred:
+        return inferred
     return None
 
 

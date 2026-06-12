@@ -5,7 +5,12 @@ import subprocess
 import sys
 from functools import lru_cache
 
-from app.services.fund_name_utils import is_fund_name_match, normalize_fund_name
+from app.services.fund_name_utils import (
+    extract_share_class_letter,
+    is_fund_name_match,
+    lookup_match_score,
+    normalize_fund_name_for_lookup,
+)
 
 _SUBPROCESS_TIMEOUT = 120
 
@@ -70,31 +75,135 @@ def resolve_holding_fund_code(
     *,
     existing_code: str | None = None,
 ) -> tuple[str | None, str | None]:
-    """按名称查码。返回 (code, source)；source 为 akshare | None。"""
-    if existing_code and existing_code != "000000":
-        return existing_code, None
-    code = lookup_fund_code_by_name(fund_name)
-    if code:
-        return code, "akshare"
+    """按名称查码。名称表命中时优先于 profile/OCR 遗留代码。"""
+    looked_up = lookup_fund_code_by_name(fund_name)
+    if looked_up:
+        return looked_up, "akshare"
+    if existing_code and existing_code != "000000" and not is_provisional_fund_code(existing_code):
+        return existing_code, "profile"
     return None, None
 
 
 def lookup_fund_code_by_name(fund_name: str) -> str | None:
-    target = normalize_fund_name(fund_name)
+    target = normalize_fund_name_for_lookup(fund_name)
     if not target:
         return None
 
-    best_code: str | None = None
-    best_score = 0
+    target_class = extract_share_class_letter(fund_name)
+
     for code, name in _fund_name_table():
-        normalized = normalize_fund_name(name)
-        if not normalized:
-            continue
-        if target == normalized:
+        normalized = normalize_fund_name_for_lookup(name)
+        if normalized and target == normalized:
             return code
-        if is_fund_name_match(target, normalized):
-            score = min(len(target), len(normalized))
-            if score > best_score:
-                best_score = score
-                best_code = code
-    return best_code
+
+    candidates: list[tuple[int, str]] = []
+    for code, name in _fund_name_table():
+        normalized = normalize_fund_name_for_lookup(name)
+        if not normalized or not is_fund_name_match(target, normalized):
+            continue
+        table_class = extract_share_class_letter(name)
+        if target_class and table_class and target_class != table_class:
+            continue
+        score = lookup_match_score(target, normalized)
+        if score > 0:
+            candidates.append((score, code))
+
+    if not candidates:
+        return None
+
+    if target_class is None:
+        class_by_code = {
+            code: extract_share_class_letter(name)
+            for code, name in _fund_name_table()
+        }
+        c_only = [item for item in candidates if class_by_code.get(item[1]) == "C"]
+        # 支付宝总览常见 C 类份额；仅在 A/C 并存且 OCR 未识别份额时启用
+        if len(c_only) == 1 and len(candidates) >= 2:
+            return c_only[0][1]
+
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    best_score = candidates[0][0]
+    top = [code for score, code in candidates if score == best_score]
+    if len(top) == 1:
+        return top[0]
+    return None
+
+
+def lookup_fund_name_by_code(fund_code: str) -> str | None:
+    code = fund_code.strip().zfill(6)
+    if len(code) != 6 or not code.isdigit():
+        return None
+    for table_code, name in _fund_name_table():
+        if table_code == code:
+            return name
+    return None
+
+
+def search_funds_by_keyword(keyword: str, *, limit: int = 12) -> list[dict[str, str]]:
+    """东财基金表模糊搜索，供确认页手动选码（养基宝式核对）。"""
+    query = keyword.strip()
+    if not query:
+        return []
+
+    table = _fund_name_table()
+    results: list[tuple[int, str, str]] = []
+
+    if query.isdigit() and len(query) <= 6:
+        code_query = query.zfill(6)
+        for code, name in table:
+            if code == code_query:
+                return [{"fund_code": code, "fund_name": name}]
+            if code.startswith(query):
+                results.append((900_000 + len(query), code, name))
+
+    query_norm = normalize_fund_name_for_lookup(query)
+    for code, name in table:
+        if query in name:
+            score = 500_000 + len(query)
+        elif query_norm:
+            score = lookup_match_score(query_norm, normalize_fund_name_for_lookup(name))
+        else:
+            score = 0
+        if score > 0:
+            results.append((score, code, name))
+
+    results.sort(key=lambda item: item[0], reverse=True)
+    seen: set[str] = set()
+    payload: list[dict[str, str]] = []
+    for _, code, name in results:
+        if code in seen:
+            continue
+        seen.add(code)
+        payload.append({"fund_code": code, "fund_name": name})
+        if len(payload) >= limit:
+            break
+    return payload
+
+
+def is_provisional_fund_code(fund_code: str | None) -> bool:
+    """9xxxxx 为名称查码失败时的临时占位，不是真实基金代码。"""
+    if not fund_code or len(fund_code) != 6:
+        return False
+    return fund_code.startswith("9") and fund_code != "000000"
+
+
+def reconcile_holding_fund_codes(holdings: list) -> list:
+    """页面加载/OCR 后：用东财名称表纠正临时码或旧 profile 误码。"""
+    from app.models import Holding
+    from app.services.fund_name_utils import sanitize_fund_name
+
+    reconciled: list = []
+    for holding in holdings:
+        item = holding if isinstance(holding, Holding) else Holding.model_validate(holding)
+        clean_name = sanitize_fund_name(item.fund_name)
+        existing = item.fund_code
+        if is_provisional_fund_code(existing):
+            existing = None
+        code, _ = resolve_holding_fund_code(clean_name, existing_code=existing)
+        updates: dict = {}
+        if clean_name and clean_name != item.fund_name:
+            updates["fund_name"] = clean_name
+        if code and code != item.fund_code:
+            updates["fund_code"] = code
+        reconciled.append(item.model_copy(update=updates) if updates else item)
+    return reconciled

@@ -6,7 +6,9 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronUp,
+  ImageUp,
   Loader2,
+  Pencil,
   RefreshCw,
   X,
 } from "lucide-react";
@@ -15,8 +17,10 @@ import {
   fetchHoldingDetail,
   fetchSectorIntraday,
   fetchTradingSession,
+  updateFundProfile,
   updateFundProfilePurchaseDate,
 } from "@/lib/api";
+import { FundCodeEditModal, isProvisionalFundCode } from "@/components/FundCodeEditModal";
 import { IntradayPercentChart } from "@/components/IntradayPercentChart";
 import { PerformanceTrendPanel } from "@/components/PerformanceTrendPanel";
 import {
@@ -63,6 +67,9 @@ type YangjibaoFundDetailProps = {
   onClose: () => void;
   onNavigate: (index: number) => void;
   onHoldingResolved?: (index: number, holding: Holding) => void;
+  onFundCodeUpdated?: (index: number, holding: Holding) => void | Promise<void>;
+  onUploadDetailScreenshot?: (file: File) => void | Promise<void>;
+  isDetailOcrUploading?: boolean;
 };
 
 function HeaderStat({
@@ -145,7 +152,11 @@ export function YangjibaoFundDetail({
   onClose,
   onNavigate,
   onHoldingResolved,
+  onFundCodeUpdated,
+  onUploadDetailScreenshot,
+  isDetailOcrUploading = false,
 }: YangjibaoFundDetailProps) {
+  const detailFileInputRef = useRef<HTMLInputElement>(null);
   const [tab, setTab] = useState<DetailTab>("sector");
   const [detail, setDetail] = useState<HoldingDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(true);
@@ -159,6 +170,9 @@ export function YangjibaoFundDetail({
   const [purchaseDateSaving, setPurchaseDateSaving] = useState(false);
   const [purchaseDateError, setPurchaseDateError] = useState<string | null>(null);
   const [purchaseDatePickerOpen, setPurchaseDatePickerOpen] = useState(false);
+  const [fundCodeEditOpen, setFundCodeEditOpen] = useState(false);
+  const [fundCodeSaving, setFundCodeSaving] = useState(false);
+  const [fundCodeError, setFundCodeError] = useState<string | null>(null);
   const intradayRequestSeq = useRef(0);
 
   const activeHolding = detail?.holding ?? holding;
@@ -228,6 +242,59 @@ export function YangjibaoFundDetail({
       setPurchaseDateSaving(false);
     }
   }
+
+  async function handleFundCodeSave(nextCode: string, nextName: string) {
+    if (fundCodeSaving) {
+      return;
+    }
+    const oldCode = activeHolding.fund_code;
+    if (nextCode === oldCode && nextName === activeHolding.fund_name) {
+      setFundCodeEditOpen(false);
+      return;
+    }
+
+    setFundCodeSaving(true);
+    setFundCodeError(null);
+    try {
+      if (oldCode !== "000000") {
+        try {
+          await updateFundProfile(oldCode, {
+            fund_code: nextCode !== oldCode ? nextCode : undefined,
+            fund_name: nextName !== activeHolding.fund_name ? nextName : undefined,
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "更新档案失败";
+          if (!message.includes("404") && !message.includes("不存在")) {
+            throw error;
+          }
+        }
+      }
+
+      const updatedHolding: Holding = {
+        ...activeHolding,
+        fund_code: nextCode,
+        fund_name: nextName,
+      };
+      await onFundCodeUpdated?.(holdingIndex, updatedHolding);
+      onHoldingResolved?.(holdingIndex, updatedHolding);
+
+      const result = await fetchHoldingDetail({
+        holdings: holdings.map((item, index) => (index === holdingIndex ? updatedHolding : item)),
+        index: holdingIndex,
+        portfolio_summary: portfolioSummary,
+        sector_quote_meta: sectorMeta,
+      });
+      setDetail(result);
+      setFundCodeEditOpen(false);
+    } catch (error) {
+      setFundCodeError(error instanceof Error ? error.message : "保存基金代码失败");
+    } finally {
+      setFundCodeSaving(false);
+    }
+  }
+
+  const needsCodeAttention =
+    activeHolding.fund_code === "000000" || isProvisionalFundCode(activeHolding.fund_code);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -402,11 +469,57 @@ export function YangjibaoFundDetail({
                   {activeHolding.fund_name}
                 </div>
                 <div className="text-[10px] text-white/80">
-                  {activeHolding.fund_code}
-                  {detail?.fund_code_source === "akshare" ? " · 已自动匹配代码" : ""}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFundCodeError(null);
+                      setFundCodeEditOpen(true);
+                    }}
+                    className={`inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 transition hover:bg-white/15 ${
+                      needsCodeAttention ? "bg-amber-400/25 text-amber-100" : ""
+                    }`}
+                    title="修正基金代码"
+                  >
+                    <span className="tabular-nums">{activeHolding.fund_code}</span>
+                    <Pencil size={10} />
+                  </button>
+                  {detail?.fund_code_source === "akshare" ? " · 已自动匹配" : null}
+                  {needsCodeAttention ? " · 建议修正代码" : null}
                 </div>
               </div>
               <div className="flex items-center gap-0.5">
+                {onUploadDetailScreenshot ? (
+                  <>
+                    <input
+                      ref={detailFileInputRef}
+                      type="file"
+                      accept="image/*"
+                      className="sr-only"
+                      disabled={isDetailOcrUploading}
+                      onChange={(event) => {
+                        const file = event.target.files?.[0];
+                        if (file) {
+                          void onUploadDetailScreenshot(file);
+                        }
+                        event.currentTarget.value = "";
+                      }}
+                    />
+                    <button
+                      type="button"
+                      disabled={isDetailOcrUploading}
+                      onClick={() => detailFileInputRef.current?.click()}
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-full hover:bg-white/15 disabled:opacity-40"
+                      aria-label="上传详情截图"
+                      title="上传养基宝详情截图（含代码、板块）"
+                    >
+                      {isDetailOcrUploading ? (
+                        <Loader2 size={16} className="animate-spin" />
+                      ) : (
+                        <ImageUp size={16} />
+                      )}
+                    </button>
+                  </>
+                ) : null}
                 <button
                   type="button"
                   disabled={!canGoPrev}
@@ -682,6 +795,21 @@ export function YangjibaoFundDetail({
           error={purchaseDateError}
           onClose={() => setPurchaseDatePickerOpen(false)}
           onDateChange={handlePurchaseDateChange}
+        />
+
+        <FundCodeEditModal
+          open={fundCodeEditOpen}
+          fundCode={activeHolding.fund_code}
+          fundName={activeHolding.fund_name}
+          saving={fundCodeSaving}
+          error={fundCodeError}
+          onClose={() => {
+            if (!fundCodeSaving) {
+              setFundCodeEditOpen(false);
+              setFundCodeError(null);
+            }
+          }}
+          onSave={handleFundCodeSave}
         />
       </div>
     </div>

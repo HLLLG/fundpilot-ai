@@ -76,7 +76,8 @@ def test_user_data_isolation():
         "/api/investor-profile",
         headers={"Authorization": f"Bearer {token_b}"},
     )
-    assert missing.status_code == 404
+    assert missing.status_code == 200
+    assert missing.json()["style"] == "稳健"
 
     found = client.get(
         "/api/investor-profile",

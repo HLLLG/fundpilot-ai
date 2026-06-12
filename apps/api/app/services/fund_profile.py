@@ -44,7 +44,11 @@ class FundProfileService:
         profile = merge_detail_profile(existing, profile)
         if profile.source == "yangjibao-detail":
             profile = profile.model_copy(update={"is_provisional": False})
-        return save_fund_profile(profile)
+        saved = save_fund_profile(profile)
+        from app.services.fund_primary_sector_service import upsert_primary_sector_from_profile
+
+        upsert_primary_sector_from_profile(saved)
+        return saved
 
     def list_profiles(self) -> list[FundProfile]:
         return list_fund_profiles()
@@ -58,13 +62,26 @@ class FundProfileService:
         if profile is None:
             profile = self.find_match(holding.fund_name)
         if profile is None:
+            from app.services.fund_primary_sector_service import primary_sector_fields_for_holding
+
+            fields = primary_sector_fields_for_holding(holding, allow_name_infer=False)
+            if fields:
+                return holding.model_copy(update=fields)
             return holding
 
         sector_name = holding.sector_name
         if not _is_valid_sector_label(sector_name):
-            sector_name = profile.sector_name if _is_valid_sector_label(profile.sector_name) else None
-        elif not sector_name and _is_valid_sector_label(profile.sector_name):
-            sector_name = profile.sector_name
+            from app.services.fund_primary_sector_service import primary_sector_fields_for_holding
+
+            fields = primary_sector_fields_for_holding(
+                holding,
+                fallback_code=profile.fund_code,
+                allow_name_infer=False,
+            )
+            if fields.get("sector_name"):
+                sector_name = fields["sector_name"]
+            elif _is_valid_sector_label(profile.sector_name):
+                sector_name = profile.sector_name
 
         index_name = holding.intraday_index_name
         if not index_name or not _looks_like_index_name(index_name):
@@ -87,7 +104,11 @@ class FundProfileService:
             if holding.sector_return_percent is not None
             else profile.sector_return_percent,
         }
-        if holding.fund_code == "000000" and profile.fund_code != "000000":
+        if (
+            holding.fund_code == "000000"
+            and profile.fund_code != "000000"
+            and not profile.is_provisional
+        ):
             updates["fund_code"] = profile.fund_code
         if profile.fund_name and normalize_fund_name(holding.fund_name) != normalize_fund_name(
             profile.fund_name
@@ -122,6 +143,15 @@ class FundProfileService:
 
         for holding in holdings:
             profile = self._find_profile_for_holding(holding)
+            if (
+                profile is not None
+                and holding.fund_code != "000000"
+                and profile.fund_code != holding.fund_code
+            ):
+                # 早期 OCR 可能把错误代码写进 profile，确认后用东财查码结果覆盖
+                delete_fund_profile(profile.fund_code)
+                profile = None
+
             if profile is None:
                 if holding.fund_code == "000000":
                     profile = _holding_to_provisional_profile(holding)
@@ -270,6 +300,38 @@ def _aliases_for_name(name: str) -> list[str]:
 def provisional_code_for_name(fund_name: str) -> str:
     digest = hashlib.sha256(normalize_fund_name(fund_name).encode("utf-8")).hexdigest()
     return f"9{int(digest[:8], 16) % 100000:05d}"
+
+
+def migrate_fund_profile_code(
+    old_code: str,
+    new_code: str,
+    *,
+    fund_name: str | None = None,
+) -> FundProfile:
+    """将档案从旧代码迁移到新代码（纠正 OCR 误码 / 临时代码）。"""
+    from app.database import delete_fund_profile, get_fund_profile_by_code, save_fund_profile
+
+    old = get_fund_profile_by_code(old_code)
+    if old is None:
+        raise ValueError("原基金档案不存在")
+
+    new_code = new_code.strip().zfill(6)
+    if len(new_code) != 6 or not new_code.isdigit():
+        raise ValueError("新基金代码格式无效")
+
+    existing = get_fund_profile_by_code(new_code)
+    merged = old.model_copy(
+        update={
+            "fund_code": new_code,
+            "fund_name": fund_name or old.fund_name,
+            "is_provisional": False,
+        },
+    )
+    if existing is not None and existing.fund_code != old_code:
+        merged = merge_detail_profile(existing, merged)
+
+    delete_fund_profile(old_code)
+    return save_fund_profile(merged)
 
 
 def parse_profile_from_text(text: str) -> FundProfile | None:

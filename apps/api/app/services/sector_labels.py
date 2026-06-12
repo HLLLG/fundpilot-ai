@@ -13,10 +13,6 @@ def normalize_sector_label(label: str | None) -> str:
     return cleaned
 
 
-def sector_label_key(label: str | None) -> str:
-    return normalize_sector_label(label).lower()
-
-
 def build_sector_candidates(label: str | None) -> list[str]:
     base = normalize_sector_label(label)
     if not base:
@@ -42,3 +38,20 @@ def build_sector_candidates(label: str | None) -> list[str]:
         if token in base:
             add(token)
     return candidates
+
+
+def sector_label_key(label: str | None) -> str:
+    return normalize_sector_label(label).lower()
+
+
+def infer_sector_label_from_fund_name(fund_name: str | None) -> str | None:
+    """总览 OCR 无关联板块时，从基金名称推断主题短名（如 国防军工混合 → 国防军工）。"""
+    if not fund_name:
+        return None
+    normalized = normalize_sector_label(fund_name.replace("...", ""))
+    if not normalized:
+        return None
+    for token in sorted(_TOPIC_ALIASES, key=len, reverse=True):
+        if token in normalized:
+            return token
+    return None

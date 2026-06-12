@@ -6,7 +6,7 @@ from typing import Any
 from app.config import get_settings
 from app.database import get_sector_mapping, save_sector_mapping
 from app.models import Holding, HoldingFieldWarning, SectorMappingCandidate, SectorQuoteMeta
-from app.services.fund_profile import FundProfileService
+from app.services.fund_profile import FundProfileService, _is_valid_sector_label
 from app.services.fund_estimate_provider import fetch_fund_estimate_quotes
 from app.services.sector_canonical import (
     get_canonical_sector,
@@ -16,7 +16,7 @@ from app.services.sector_canonical import (
 from app.services.sector_labels import normalize_sector_label
 from app.services.sector_labels import sector_label_key
 from app.services.sector_on_demand import fetch_sector_on_demand
-from app.services.sector_quote_label import sector_quote_lookup_label
+from app.services.sector_quote_label import sector_display_label, sector_quote_lookup_label
 from app.services.sector_quote_provider import SpotBoardFetchResult, fetch_spot_boards, fetch_spot_boards_result
 from app.services.sector_quote_resolver import (
     SectorResolveResult,
@@ -255,6 +255,18 @@ def refresh_holdings_sector_quotes(
                 "sector_return_percent": result.change_percent,
                 "sector_return_percent_source": sector_source,
             }
+            display_sector = sector_display_label(holding)
+            if _is_valid_sector_label(display_sector) and not _is_valid_sector_label(
+                holding.sector_name
+            ):
+                update["sector_name"] = display_sector
+            elif _is_valid_sector_label(result.matched_name) and not _is_valid_sector_label(
+                holding.sector_name
+            ):
+                canonical = get_canonical_sector(result.matched_name or "")
+                update["sector_name"] = (
+                    canonical.label if canonical else result.matched_name
+                )
             if nav_return is not None:
                 update["daily_return_percent"] = nav_return
                 update["daily_profit"] = compute_daily_profit_from_rate(

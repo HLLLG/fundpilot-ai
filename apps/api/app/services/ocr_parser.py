@@ -4,6 +4,7 @@ import re
 
 from app.models import Holding
 from app.services.alipay_holdings_parser import is_alipay_holdings_page, parse_alipay_holdings_page
+from app.services.fund_name_utils import sanitize_fund_name
 
 
 FUND_CODE_RE = re.compile(r"(?<!\d)(\d{6})(?!\d)")
@@ -38,6 +39,7 @@ FUND_SHARE_CLASS_SUFFIX_RE = re.compile(
     re.IGNORECASE,
 )
 ALIPAY_PROMO_MARKERS = (
+    "投资锦囊",
     "基金经理说",
     "市场解读",
     "的重要性",
@@ -45,6 +47,8 @@ ALIPAY_PROMO_MARKERS = (
     "资讯",
     "报道",
     "点评",
+    "北美云厂商",
+    "持续加大资本支出",
 )
 BLOCK_FOOTER_MARKERS = ("上证指数", "新增持有", "批量加减仓", "批量")
 ALIPAY_HOLDINGS_MARKERS = (
@@ -98,6 +102,12 @@ FUND_NAME_BLOCKLIST = frozenset(
 
 def parse_holdings_from_text(text: str) -> list[Holding]:
     lines = [line.strip() for line in text.splitlines() if line.strip()]
+
+    if is_alipay_holdings_page(lines):
+        alipay_holdings = parse_alipay_holdings_page(text)
+        if alipay_holdings:
+            return alipay_holdings
+
     holdings: list[Holding] = []
 
     for index, line in enumerate(lines):
@@ -107,7 +117,7 @@ def parse_holdings_from_text(text: str) -> list[Holding]:
 
         fund_code = code_match.group(1)
         block = _holding_block(lines, index)
-        fund_name = _guess_fund_name(lines, index, fund_code)
+        fund_name = sanitize_fund_name(_guess_fund_name(lines, index, fund_code))
         amount = _extract_float(block, AMOUNT_RE)
         return_percent = _extract_float(block, RETURN_RE)
 
@@ -127,11 +137,6 @@ def parse_holdings_from_text(text: str) -> list[Holding]:
 
     if holdings:
         return holdings
-
-    if is_alipay_holdings_page(lines):
-        alipay_holdings = parse_alipay_holdings_page(text)
-        if alipay_holdings:
-            return alipay_holdings
 
     drafts = _parse_alipay_drafts_without_codes(lines)
     account_daily = _parse_account_daily_profit(lines)
@@ -168,6 +173,8 @@ def _extract_float(block: str, pattern: re.Pattern[str]) -> float | None:
 
 def detect_ocr_source(text: str) -> str:
     lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if is_yangjibao_detail_page(lines):
+        return "yangjibao_detail"
     if any(marker in line for line in lines for marker in ALIPAY_HOLDINGS_MARKERS):
         return "alipay_holdings"
     if any("养基宝" in line for line in lines):
@@ -177,6 +184,20 @@ def detect_ocr_source(text: str) -> str:
     if is_alipay_holdings_page(lines):
         return "alipay_holdings"
     return "unknown"
+
+
+def is_yangjibao_detail_page(lines: list[str]) -> bool:
+    """养基宝单基金详情页：含 6 位代码 + 持有份额/关联板块等字段。"""
+    joined = "\n".join(lines)
+    if not FUND_CODE_RE.search(joined):
+        return False
+    if "持有份额" in joined and "持有金额" in joined:
+        return True
+    if "关联板块" in joined and ("业绩走势" in joined or "我的收益" in joined):
+        return True
+    if "持仓占比" in joined and "持有收益" in joined and "持有金额" in joined:
+        return True
+    return False
 
 
 def _looks_like_alipay_holdings_list(lines: list[str]) -> bool:

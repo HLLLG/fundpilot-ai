@@ -306,6 +306,13 @@ class HoldingDetailResponse(BaseModel):
 
 class UpdateFundProfileRequest(BaseModel):
     first_purchase_date: str | None = None
+    fund_code: str | None = None
+    fund_name: str | None = None
+
+
+class ApplyHoldingsRequest(BaseModel):
+    holdings: list[Holding] = Field(min_length=1)
+    detail_profiles: list[FundProfile] = Field(default_factory=list)
 
 
 class RefreshSectorQuotesRequest(BaseModel):

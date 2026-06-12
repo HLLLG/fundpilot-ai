@@ -392,7 +392,9 @@ def test_investor_profile_persistence(tmp_path, monkeypatch):
     client = auth_client_for_db(monkeypatch, tmp_path / "investor_profile.db")
 
     missing = client.get("/api/investor-profile")
-    assert missing.status_code == 404
+    assert missing.status_code == 200
+    assert missing.json()["style"] == "稳健"
+    assert missing.json()["max_drawdown_percent"] == 8
 
     payload = {
         "style": "进取",

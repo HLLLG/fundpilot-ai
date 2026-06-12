@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import {
   ChevronDown,
@@ -14,6 +15,47 @@ import {
 import type { Holding } from "@/lib/api";
 
 const ALIPAY_GUIDE_IMAGE = "/guides/alipay-holdings-overview.png";
+
+type UploadChannel = "alipay" | "yangjibao_overview" | "yangjibao_detail";
+
+const UPLOAD_CHANNEL_COPY: Record<
+  UploadChannel,
+  { title: string; hint: ReactNode; showGuide: boolean }
+> = {
+  alipay: {
+    title: "导入持有",
+    showGuide: true,
+    hint: (
+      <>
+        上传支付宝
+        <span className="font-bold text-[#4a86e8]">「我的持有」</span>
+        总览截图即可同步持仓
+      </>
+    ),
+  },
+  yangjibao_overview: {
+    title: "养基宝总览",
+    showGuide: false,
+    hint: (
+      <>
+        上传养基宝
+        <span className="font-bold text-[#3d7eff]">「账户汇总 / 持有列表」</span>
+        截图，自动识别金额与收益
+      </>
+    ),
+  },
+  yangjibao_detail: {
+    title: "养基宝详情",
+    showGuide: false,
+    hint: (
+      <>
+        上传养基宝
+        <span className="font-bold text-[#3d7eff]">单只基金详情页</span>
+        截图，识别代码、份额、关联板块并建档
+      </>
+    ),
+  },
+};
 
 type AddHoldingModalProps = {
   open: boolean;
@@ -51,6 +93,7 @@ export function AddHoldingModal({
   isSubmitting = false,
 }: AddHoldingModalProps) {
   const [mode, setMode] = useState<"chooser" | "manual">("chooser");
+  const [uploadChannel, setUploadChannel] = useState<UploadChannel>("alipay");
   const [entries, setEntries] = useState<ManualEntry[]>([createManualEntry()]);
   const [formError, setFormError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -58,6 +101,7 @@ export function AddHoldingModal({
   useEffect(() => {
     if (!open) {
       setMode("chooser");
+      setUploadChannel("alipay");
       setEntries([createManualEntry()]);
       setFormError(null);
     }
@@ -112,6 +156,8 @@ export function AddHoldingModal({
     onClose();
   };
 
+  const channelCopy = UPLOAD_CHANNEL_COPY[uploadChannel];
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/40 sm:items-center sm:p-4"
@@ -143,19 +189,46 @@ export function AddHoldingModal({
             <ChevronLeft size={22} strokeWidth={2.25} />
           </button>
           <h2 id="add-holding-modal-title" className="text-base font-bold text-slate-900">
-            {mode === "manual" ? "新增到持有" : "支付宝-批量导入持有"}
+            {mode === "manual" ? "新增到持有" : channelCopy.title}
           </h2>
         </header>
 
         {mode === "chooser" ? (
           <>
+            <div className="flex gap-2 border-b border-slate-200/70 bg-white px-4 py-2.5">
+              {(Object.keys(UPLOAD_CHANNEL_COPY) as UploadChannel[]).map((channel) => (
+                <button
+                  key={channel}
+                  type="button"
+                  disabled={busy}
+                  onClick={() => setUploadChannel(channel)}
+                  className={`flex-1 rounded-full px-2 py-1.5 text-[11px] font-bold transition ${
+                    uploadChannel === channel
+                      ? "bg-[#3d7eff] text-white"
+                      : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                  }`}
+                >
+                  {channel === "alipay"
+                    ? "支付宝"
+                    : channel === "yangjibao_overview"
+                      ? "养基宝总览"
+                      : "养基宝详情"}
+                </button>
+              ))}
+            </div>
             <div className="flex min-h-0 flex-1 flex-col items-center overflow-y-auto px-5 pb-2 pt-6">
-              <AlipayPhoneGuide src={ALIPAY_GUIDE_IMAGE} />
-              <p className="mt-6 text-center text-[15px] leading-7 text-slate-800">
-                上传
-                <span className="font-bold text-[#4a86e8]">「持仓」</span>
-                截图即可同步持仓
-              </p>
+              {channelCopy.showGuide ? <AlipayPhoneGuide src={ALIPAY_GUIDE_IMAGE} /> : (
+                <div className="flex h-48 w-full max-w-[220px] flex-col items-center justify-center rounded-3xl border border-dashed border-[#3d7eff]/40 bg-[#eef4ff] px-4 text-center">
+                  <div className="text-4xl">📱</div>
+                  <div className="mt-3 text-sm font-bold text-[#3d7eff]">养基宝 App</div>
+                  <div className="mt-1 text-xs leading-5 text-slate-500">
+                    {uploadChannel === "yangjibao_detail"
+                      ? "打开单只基金详情页后截图"
+                      : "打开持有总览页后截图"}
+                  </div>
+                </div>
+              )}
+              <p className="mt-6 text-center text-[15px] leading-7 text-slate-800">{channelCopy.hint}</p>
             </div>
 
             <div className="space-y-3 bg-[#f5f7fa] px-5 pb-8 pt-3">

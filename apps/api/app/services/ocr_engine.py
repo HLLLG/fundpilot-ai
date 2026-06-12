@@ -93,6 +93,10 @@ def schedule_ocr_preload() -> None:
 
     def _run() -> None:
         try:
+            # 错开 AkShare 子进程预热，降低与 py_mini_racer 同进程竞态概率
+            import time
+
+            time.sleep(8)
             preload_ocr_engine()
         except Exception:
             pass
