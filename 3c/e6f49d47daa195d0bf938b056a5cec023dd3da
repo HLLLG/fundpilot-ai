@@ -1,0 +1,24 @@
+Dockerfile
+  s_8a6e96495b5945::t_70a9c7d1c48314 1-25
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.10-trip",
+  "base_commit_sha": "3ce6f49d47daa195d0bf938b056a5cec023dd3da",
+  "prompts": {},
+  "humans": {
+    "h_375fc341ff3baa": {
+      "author": "hegl <HLLLG@github.com>"
+    }
+  },
+  "sessions": {
+    "s_8a6e96495b5945": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "2e8c9e04-ebb2-4373-8114-40e8e392547e",
+        "model": "composer-2.5"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
