@@ -95,14 +95,21 @@ function FundCodeSearchPanel({
 
   return (
     <div className="absolute left-0 right-0 top-full z-20 mt-1 max-h-48 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-lg">
-      <div className="border-b border-slate-100 px-3 py-2">
+      <div className="flex items-center gap-2 border-b border-slate-100 px-3 py-2">
         <input
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder="输入基金名称或代码"
-          className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-xs outline-none focus:border-blue-400"
+          className="min-w-0 flex-1 rounded-lg border border-slate-200 px-2 py-1.5 text-xs outline-none focus:border-blue-400"
           autoFocus
         />
+        <button
+          type="button"
+          onClick={onClose}
+          className="shrink-0 rounded-lg px-2 py-1.5 text-xs font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
+        >
+          取消
+        </button>
       </div>
       {loading ? <div className="px-3 py-3 text-xs text-slate-400">搜索中...</div> : null}
       {error ? <div className="px-3 py-3 text-xs text-rose-600">{error}</div> : null}
