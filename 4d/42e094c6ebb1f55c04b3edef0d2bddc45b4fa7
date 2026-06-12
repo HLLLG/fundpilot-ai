@@ -1,0 +1,26 @@
+apps/api/app/services/fund_code_resolver.py
+  s_4afaabd8816b94::t_0319c72afe7cbf 78-95
+apps/api/tests/test_fund_code_resolver.py
+  s_4afaabd8816b94::t_1097f07d9bb50c 43-80
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.10-trip",
+  "base_commit_sha": "4d42e094c6ebb1f55c04b3edef0d2bddc45b4fa7",
+  "prompts": {},
+  "humans": {
+    "h_375fc341ff3baa": {
+      "author": "hegl <HLLLG@github.com>"
+    }
+  },
+  "sessions": {
+    "s_4afaabd8816b94": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "16a09333-7baa-4a05-a549-dc565f6a0b13",
+        "model": "composer-2.5"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
