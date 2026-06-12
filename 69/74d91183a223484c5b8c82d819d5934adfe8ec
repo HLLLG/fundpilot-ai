@@ -1,0 +1,25 @@
+apps/api/app/services/job_store.py
+  s_8a6e96495b5945::t_10d94594e25cba 13
+  s_8a6e96495b5945::t_2dd90b7b87a095 40-42
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.10-trip",
+  "base_commit_sha": "6974d91183a223484c5b8c82d819d5934adfe8ec",
+  "prompts": {},
+  "humans": {
+    "h_375fc341ff3baa": {
+      "author": "hegl <HLLLG@github.com>"
+    }
+  },
+  "sessions": {
+    "s_8a6e96495b5945": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "2e8c9e04-ebb2-4373-8114-40e8e392547e",
+        "model": "composer-2.5"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
