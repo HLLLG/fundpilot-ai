@@ -1,0 +1,24 @@
+.gitignore
+  s_4afaabd8816b94::t_5b5b434064d572 25
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.10-trip",
+  "base_commit_sha": "67fcc5217a4aadd845cfecfd46aeda4bfd117d39",
+  "prompts": {},
+  "humans": {
+    "h_375fc341ff3baa": {
+      "author": "hegl <HLLLG@github.com>"
+    }
+  },
+  "sessions": {
+    "s_4afaabd8816b94": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "16a09333-7baa-4a05-a549-dc565f6a0b13",
+        "model": "composer-2.5"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
