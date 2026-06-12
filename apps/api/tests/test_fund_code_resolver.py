@@ -40,6 +40,44 @@ def test_resolve_holding_fund_code_prefers_name_lookup_over_stale_profile_code(m
     assert source == "akshare"
 
 
+def test_resolve_holding_fund_code_prefers_saved_profile_when_share_class_ambiguous(monkeypatch):
+    table = [
+        ("025856", "华夏中证电网设备主题ETF发起式联接A"),
+        ("025857", "华夏中证电网设备主题ETF联接C"),
+    ]
+    monkeypatch.setattr(
+        "app.services.fund_code_resolver._fund_name_table",
+        lambda: table,
+    )
+
+    assert lookup_fund_code_by_name("华夏中证电网设备...") == "025857"
+
+    code, source = resolve_holding_fund_code(
+        "华夏中证电网设备...",
+        existing_code="025856",
+    )
+    assert code == "025856"
+    assert source == "profile"
+
+
+def test_resolve_holding_fund_code_uses_lookup_when_ocr_specifies_different_share_class(monkeypatch):
+    table = [
+        ("025856", "华夏中证电网设备主题ETF发起式联接A"),
+        ("025857", "华夏中证电网设备主题ETF联接C"),
+    ]
+    monkeypatch.setattr(
+        "app.services.fund_code_resolver._fund_name_table",
+        lambda: table,
+    )
+
+    code, source = resolve_holding_fund_code(
+        "华夏中证电网设备主题ETF联接C",
+        existing_code="025856",
+    )
+    assert code == "025857"
+    assert source == "akshare"
+
+
 def test_resolve_holding_fund_code_keeps_profile_when_lookup_fails():
     code, source = resolve_holding_fund_code("任意名称", existing_code="110020")
     assert code == "110020"

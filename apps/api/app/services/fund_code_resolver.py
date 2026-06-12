@@ -75,7 +75,24 @@ def resolve_holding_fund_code(
     *,
     existing_code: str | None = None,
 ) -> tuple[str | None, str | None]:
-    """按名称查码。名称表命中时优先于 profile/OCR 遗留代码。"""
+    """按名称查码。已有非临时档案码且 OCR 未指明不同份额时，优先沿用档案。"""
+    target = normalize_fund_name_for_lookup(fund_name)
+    ocr_share_class = extract_share_class_letter(fund_name)
+
+    if (
+        existing_code
+        and existing_code != "000000"
+        and not is_provisional_fund_code(existing_code)
+        and target
+    ):
+        profile_name = lookup_fund_name_by_code(existing_code)
+        if profile_name and is_fund_name_match(
+            target, normalize_fund_name_for_lookup(profile_name)
+        ):
+            profile_share_class = extract_share_class_letter(profile_name)
+            if ocr_share_class is None or ocr_share_class == profile_share_class:
+                return existing_code, "profile"
+
     looked_up = lookup_fund_code_by_name(fund_name)
     if looked_up:
         return looked_up, "akshare"
