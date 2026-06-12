@@ -10,6 +10,7 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from app.database import _connect
+from app.db_connect import uses_mysql
 from app.models import AnalysisRequest, Report
 from app.request_context import get_request_user_id, reset_request_user_id, set_request_user_id
 from app.services.analyze_pipeline import run_analysis
@@ -36,6 +37,9 @@ def _ensure_jobs_table(connection: sqlite3.Connection) -> None:
         )
         """
     )
+    # MySQL schema is created with all columns in mysql_bootstrap.ensure_mysql_schema.
+    if uses_mysql():
+        return
     try:
         connection.execute("ALTER TABLE analysis_jobs ADD COLUMN stage TEXT")
     except sqlite3.OperationalError:
