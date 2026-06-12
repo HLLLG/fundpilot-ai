@@ -1,0 +1,26 @@
+apps/web/next.config.ts
+  s_8a6e96495b5945::t_52a07df6e5a27c 5-8
+.gitignore
+  s_8a6e96495b5945::t_dfcd8ccfd7cabb 25
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.10-trip",
+  "base_commit_sha": "f8fb63a949e3b601bcdcf4cee90b69806dcebaab",
+  "prompts": {},
+  "humans": {
+    "h_375fc341ff3baa": {
+      "author": "hegl <HLLLG@github.com>"
+    }
+  },
+  "sessions": {
+    "s_8a6e96495b5945": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "2e8c9e04-ebb2-4373-8114-40e8e392547e",
+        "model": "composer-2.5"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
