@@ -1,0 +1,28 @@
+docs/deploy/cloudbase.md
+  s_de8a061ebf2b59::t_07d2a71683550a 68-82,89-95
+apps/web/cloudbaserc.json
+  s_de8a061ebf2b59::t_1340b6fce8c9c2 1-12
+.github/workflows/deploy-web.yml
+  s_de8a061ebf2b59::t_3ea0cd65151757 1-55
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.10-trip",
+  "base_commit_sha": "ac1a7f61018120641e4918a155c40b8e936c8e40",
+  "prompts": {},
+  "humans": {
+    "h_375fc341ff3baa": {
+      "author": "hegl <HLLLG@github.com>"
+    }
+  },
+  "sessions": {
+    "s_de8a061ebf2b59": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "5d73a719-255d-4786-bdc3-473d5fb16aa7",
+        "model": "composer-2.5"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
