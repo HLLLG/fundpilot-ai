@@ -1,0 +1,12 @@
+{
+  "version": "2.0",
+  "envId": "fundpilot-ai-d1g1j23iof248e1ec",
+  "app": {
+    "serviceName": "fundpilot-web",
+    "framework": "static",
+    "installCommand": "",
+    "buildCommand": "",
+    "outputDir": "out",
+    "deployPath": "/"
+  }
+}

@@ -65,13 +65,34 @@ docker compose -f docker-compose.cloud.yml up --build
 
 ## 4. 部署 Web 前端
 
+### 自动部署（推荐）
+
+`main` 分支 CI 通过后，GitHub Actions 会自动构建并发布到 CloudBase 静态应用 `fundpilot-web`（见 `.github/workflows/deploy-web.yml`）。
+
+在 GitHub 仓库 **Settings → Secrets and variables → Actions** 添加：
+
+| Secret | 说明 |
+|--------|------|
+| `TCB_SECRET_ID` | [腾讯云 API 密钥](https://console.cloud.tencent.com/cam/capi) 的 SecretId |
+| `TCB_SECRET_KEY` | 同上 SecretKey |
+
+环境 ID、API 地址、站点名已写在 workflow / `apps/web/cloudbaserc.json` 中。也可在 Actions 页手动运行 **Deploy Web to CloudBase**。
+
+### 手动部署
+
 ```bash
 cd apps/web
 # 构建时指定 API 地址
 NEXT_PUBLIC_API_BASE_URL=https://你的云托管API域名 npm run build
 ```
 
-将 `apps/web/out` 或 `.next/static` 产物上传到 **CloudBase 静态网站托管**。
+将 `apps/web/out` 上传到 **CloudBase 静态网站托管**，或使用 CLI：
+
+```bash
+npm i -g @cloudbase/cli
+tcb login
+tcb app deploy --force
+```
 
 ## 5. 微信小程序
 
