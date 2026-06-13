@@ -28,6 +28,12 @@ export function DiscoveryChatPanel({ reportId, reportTitle }: DiscoveryChatPanel
   const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const localMessageIdRef = useRef(0);
+
+  const allocLocalMessageId = (prefix: string) => {
+    localMessageIdRef.current += 1;
+    return `${prefix}-${localMessageIdRef.current}`;
+  };
 
   useEffect(() => {
     setChatMode(loadReportChatMode("fast"));
@@ -67,11 +73,11 @@ export function DiscoveryChatPanel({ reportId, reportTitle }: DiscoveryChatPanel
     if (!trimmed || isStreaming) return;
     setError(null);
     setIsStreaming(true);
-    const draftId = `draft-${Date.now()}`;
+    const draftId = allocLocalMessageId("draft");
     setMessages((prev) => [
       ...prev,
       {
-        id: `user-${Date.now()}`,
+        id: allocLocalMessageId("user"),
         discovery_report_id: reportId,
         role: "user",
         content: trimmed,
