@@ -63,4 +63,24 @@ jobs:
       - name: Deploy to fundpilot-web
         env:
           CI: "true"
-        run: tcb app deploy --force --yes
+          TCB_ENV_ID: ${{ env.TCB_ENV_ID }}
+        run: |
+          set -euo pipefail
+          bundle_dir="$RUNNER_TEMP/fundpilot-web-deploy"
+          rm -rf "$bundle_dir"
+          mkdir -p "$bundle_dir/out"
+          cp -r out/. "$bundle_dir/out/"
+          cp cloudbaserc.json "$bundle_dir/"
+          cd "$bundle_dir"
+          echo "Deploy bundle size: $(du -sh . | cut -f1)"
+          for attempt in 1 2 3 4 5; do
+            echo "Deploy attempt $attempt/5 ..."
+            if tcb app deploy --force --yes; then
+              echo "Deploy succeeded."
+              exit 0
+            fi
+            echo "Deploy failed, waiting 30s before retry ..."
+            sleep 30
+          done
+          echo "::error::Deploy failed after 5 attempts"
+          exit 1
