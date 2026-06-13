@@ -1,0 +1,25 @@
+apps/web/src/components/DiscoveryChatPanel.tsx
+  s_de8a061ebf2b59::t_c998118376d22f 31-36
+  s_de8a061ebf2b59::t_8cb1a571825d26 76,80
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.10-trip",
+  "base_commit_sha": "06bd8d7a50f0342e34a8ed2b37b101d0aca794dd",
+  "prompts": {},
+  "humans": {
+    "h_375fc341ff3baa": {
+      "author": "hegl <HLLLG@github.com>"
+    }
+  },
+  "sessions": {
+    "s_de8a061ebf2b59": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "5d73a719-255d-4786-bdc3-473d5fb16aa7",
+        "model": "composer-2.5"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
