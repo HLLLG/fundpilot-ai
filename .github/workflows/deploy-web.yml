@@ -46,10 +46,21 @@ jobs:
           NEXT_PUBLIC_API_BASE_URL: ${{ env.NEXT_PUBLIC_API_BASE_URL }}
 
       - name: Install CloudBase CLI
-        run: npm install -g @cloudbase/cli
+        run: npm install -g @cloudbase/cli@3.5.6
 
       - name: Login CloudBase CLI
-        run: tcb login --apiKeyId ${{ secrets.TCB_SECRET_ID }} --apiKey ${{ secrets.TCB_SECRET_KEY }}
+        env:
+          TCB_SECRET_ID: ${{ secrets.TCB_SECRET_ID }}
+          TCB_SECRET_KEY: ${{ secrets.TCB_SECRET_KEY }}
+          CI: "true"
+        run: |
+          if [ -z "$TCB_SECRET_ID" ] || [ -z "$TCB_SECRET_KEY" ]; then
+            echo "::error::TCB_SECRET_ID / TCB_SECRET_KEY 为空，请在仓库 Settings → Secrets 中配置。"
+            exit 1
+          fi
+          printf 'n\n' | tcb login --apiKeyId "$TCB_SECRET_ID" --apiKey "$TCB_SECRET_KEY" --yes
 
       - name: Deploy to fundpilot-web
-        run: tcb app deploy --force
+        env:
+          CI: "true"
+        run: tcb app deploy --force --yes
