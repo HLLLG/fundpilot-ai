@@ -1,0 +1,24 @@
+.github/workflows/deploy-web.yml
+  s_de8a061ebf2b59::t_bb97bc43b53e7a 49,52-61,64-66
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.10-trip",
+  "base_commit_sha": "cec041e657ec73e84b76486f5546ce102c707100",
+  "prompts": {},
+  "humans": {
+    "h_375fc341ff3baa": {
+      "author": "hegl <HLLLG@github.com>"
+    }
+  },
+  "sessions": {
+    "s_de8a061ebf2b59": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "5d73a719-255d-4786-bdc3-473d5fb16aa7",
+        "model": "composer-2.5"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
