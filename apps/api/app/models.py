@@ -74,6 +74,11 @@ class AnalysisRequest(BaseModel):
     profile: InvestorProfile = Field(default_factory=InvestorProfile)
     ocr_text: str | None = None
     analysis_mode: AnalysisMode = "deep"
+    system_role_prompt: str | None = Field(default=None, max_length=4000)
+
+
+class AnalysisPromptSaveRequest(BaseModel):
+    role_prompt: str | None = Field(default=None, max_length=4000)
 
 
 class AllocatePenetrationRequest(BaseModel):
@@ -252,6 +257,57 @@ class ChatMessage(BaseModel):
 
 
 class ReportChatRequest(BaseModel):
+    message: str = Field(..., min_length=1, max_length=4000)
+    chat_mode: AnalysisMode = "fast"
+
+
+class DiscoveryRecommendation(BaseModel):
+    fund_code: str
+    fund_name: str
+    sector_name: str
+    action: str
+    suggested_amount_yuan: float | None = None
+    amount_note: str | None = None
+    hold_horizon: str = ""
+    confidence: str = "中"
+    points: list[str] = Field(default_factory=list)
+    risks: list[str] = Field(default_factory=list)
+    news_bullish: list[str] = Field(default_factory=list)
+
+
+class FundDiscoveryReport(BaseModel):
+    id: str = Field(default_factory=lambda: uuid4().hex)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    title: str
+    summary: str = ""
+    market_view: str = ""
+    focus_sectors: list[str] = Field(default_factory=list)
+    target_sectors: list[str] = Field(default_factory=list)
+    candidate_pool: list[dict] = Field(default_factory=list)
+    recommendations: list[DiscoveryRecommendation] = Field(default_factory=list)
+    discovery_facts: dict = Field(default_factory=dict)
+    caveats: list[str] = Field(default_factory=list)
+    provider: str = "offline"
+    analysis_mode: AnalysisMode = "deep"
+
+
+class DiscoveryRequest(BaseModel):
+    profile: InvestorProfile
+    analysis_mode: AnalysisMode = "deep"
+    focus_sectors: list[str] = Field(default_factory=list, max_length=3)
+    budget_yuan: float | None = None
+    holdings: list[Holding] = Field(default_factory=list)
+
+
+class DiscoveryChatMessage(BaseModel):
+    id: str = Field(default_factory=lambda: uuid4().hex)
+    discovery_report_id: str
+    role: ChatRole
+    content: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class DiscoveryChatRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=4000)
     chat_mode: AnalysisMode = "fast"
 

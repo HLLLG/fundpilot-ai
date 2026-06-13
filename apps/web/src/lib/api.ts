@@ -33,6 +33,12 @@ export type InvestorProfile = {
 
 export type AnalysisMode = "fast" | "deep";
 
+export type AnalysisPromptConfig = {
+  role_prompt: string;
+  is_custom: boolean;
+  default_role_prompt: string;
+};
+
 export type ReportDiff = {
   previous_report_id: string;
   previous_title: string;
@@ -356,6 +362,51 @@ export type AnalysisJob = {
   created_at: string;
   updated_at: string;
   report?: Report;
+  job_kind?: "analysis" | "discovery";
+  discovery_report?: FundDiscoveryReport;
+};
+
+export type DiscoveryRecommendation = {
+  fund_code: string;
+  fund_name: string;
+  sector_name: string;
+  action: string;
+  suggested_amount_yuan?: number | null;
+  amount_note?: string | null;
+  hold_horizon?: string;
+  confidence?: string;
+  points?: string[];
+  risks?: string[];
+  news_bullish?: string[];
+};
+
+export type FundDiscoveryReport = {
+  id: string;
+  created_at: string;
+  title: string;
+  summary: string;
+  market_view?: string;
+  focus_sectors: string[];
+  target_sectors: string[];
+  recommendations: DiscoveryRecommendation[];
+  caveats: string[];
+  provider: string;
+  analysis_mode?: AnalysisMode;
+};
+
+export type DiscoverySectorHeat = {
+  sector_label: string;
+  change_1d_percent?: number | null;
+  change_5d_percent?: number | null;
+  heat_score?: number | null;
+};
+
+export type DiscoveryChatMessage = {
+  id: string;
+  discovery_report_id: string;
+  role: "user" | "assistant";
+  content: string;
+  created_at: string;
 };
 
 export type ReportChatMessage = {
@@ -667,12 +718,14 @@ function analysisPayload(
   profile: InvestorProfile,
   ocrText?: string,
   analysisMode: AnalysisMode = "deep",
+  systemRolePrompt?: string | null,
 ) {
   return {
     holdings,
     profile,
     ocr_text: ocrText,
     analysis_mode: analysisMode,
+    system_role_prompt: systemRolePrompt?.trim() || null,
   };
 }
 
@@ -681,11 +734,14 @@ export async function startAnalyzeJob(
   profile: InvestorProfile,
   ocrText?: string,
   analysisMode: AnalysisMode = "deep",
+  systemRolePrompt?: string | null,
 ): Promise<string> {
   const response = await apiFetch(`${API_BASE}/api/analyze/async`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(analysisPayload(holdings, profile, ocrText, analysisMode)),
+    body: JSON.stringify(
+      analysisPayload(holdings, profile, ocrText, analysisMode, systemRolePrompt),
+    ),
   });
   if (!response.ok) {
     throw new Error(await response.text());
@@ -700,6 +756,102 @@ export async function fetchAnalysisJob(jobId: string): Promise<AnalysisJob> {
     throw new Error(await response.text());
   }
   return response.json();
+}
+
+export async function fetchDiscoverySectors(): Promise<DiscoverySectorHeat[]> {
+  const response = await apiFetch(`${API_BASE}/api/fund-discovery/sectors`, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  const body = await response.json();
+  return body.sectors ?? [];
+}
+
+export async function startDiscoveryJob(
+  holdings: Holding[],
+  profile: InvestorProfile,
+  options?: {
+    analysisMode?: AnalysisMode;
+    focusSectors?: string[];
+    budgetYuan?: number | null;
+  },
+): Promise<string> {
+  const response = await apiFetch(`${API_BASE}/api/fund-discovery/async`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      holdings,
+      profile,
+      analysis_mode: options?.analysisMode ?? "deep",
+      focus_sectors: options?.focusSectors ?? [],
+      budget_yuan: options?.budgetYuan ?? null,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  const body = await response.json();
+  return body.job_id as string;
+}
+
+export async function listDiscoveryReports(): Promise<FundDiscoveryReport[]> {
+  const response = await apiFetch(`${API_BASE}/api/fund-discovery/reports`, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export async function fetchDiscoveryChatHistory(
+  reportId: string,
+): Promise<DiscoveryChatMessage[]> {
+  const response = await apiFetch(`${API_BASE}/api/fund-discovery/reports/${reportId}/chat`, {
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  const body = await response.json();
+  return body.messages ?? [];
+}
+
+type DiscoveryChatStreamEvent =
+  | { type: "user_message"; message: DiscoveryChatMessage }
+  | { type: "token"; content: string }
+  | { type: "status"; content: string }
+  | { type: "done"; message: DiscoveryChatMessage; chat_mode?: AnalysisMode; model?: string }
+  | { type: "error"; message: string };
+
+export async function streamDiscoveryChat(
+  reportId: string,
+  message: string,
+  chatMode: AnalysisMode,
+  onEvent: (event: DiscoveryChatStreamEvent) => void,
+): Promise<void> {
+  const response = await apiFetch(`${API_BASE}/api/fund-discovery/reports/${reportId}/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message, chat_mode: chatMode }),
+  });
+  if (!response.ok || !response.body) {
+    throw new Error(await response.text());
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const parts = buffer.split("\n\n");
+    buffer = parts.pop() ?? "";
+    for (const part of parts) {
+      const line = part.trim();
+      if (!line.startsWith("data: ")) continue;
+      const payload = JSON.parse(line.slice(6)) as DiscoveryChatStreamEvent;
+      onEvent(payload);
+    }
+  }
 }
 
 export async function listReports(): Promise<Report[]> {
@@ -1155,6 +1307,28 @@ export async function saveInvestorProfileRemote(profile: InvestorProfile): Promi
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(profile),
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export async function fetchAnalysisPrompt(): Promise<AnalysisPromptConfig> {
+  const response = await apiFetch(`${API_BASE}/api/analysis-prompt`, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export async function saveAnalysisPromptRemote(
+  rolePrompt: string | null,
+): Promise<AnalysisPromptConfig> {
+  const response = await apiFetch(`${API_BASE}/api/analysis-prompt`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ role_prompt: rolePrompt }),
   });
   if (!response.ok) {
     throw new Error(await response.text());

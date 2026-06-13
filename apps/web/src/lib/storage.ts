@@ -1,6 +1,7 @@
-import type { InvestorProfile } from "@/lib/api";
+import type { AnalysisPromptConfig, InvestorProfile } from "@/lib/api";
 
 const PROFILE_KEY = "fundpilot-investor-profile";
+const ANALYSIS_PROMPT_KEY = "fundpilot-analysis-prompt";
 const MODE_KEY = "fundpilot-analysis-mode";
 const CHAT_MODE_KEY = "fundpilot-report-chat-mode";
 
@@ -56,6 +57,50 @@ export function saveInvestorProfile(profile: InvestorProfile) {
     return;
   }
   window.localStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
+}
+
+export function loadAnalysisPrompt(
+  fallback: Pick<AnalysisPromptConfig, "role_prompt" | "default_role_prompt">,
+): AnalysisPromptConfig {
+  if (typeof window === "undefined") {
+    return {
+      role_prompt: fallback.role_prompt,
+      is_custom: false,
+      default_role_prompt: fallback.default_role_prompt,
+    };
+  }
+  try {
+    const raw = window.localStorage.getItem(ANALYSIS_PROMPT_KEY);
+    if (!raw) {
+      return {
+        role_prompt: fallback.role_prompt,
+        is_custom: false,
+        default_role_prompt: fallback.default_role_prompt,
+      };
+    }
+    const parsed = JSON.parse(raw) as Partial<AnalysisPromptConfig>;
+    const rolePrompt = parsed.role_prompt?.trim() || fallback.role_prompt;
+    const defaultRolePrompt =
+      parsed.default_role_prompt?.trim() || fallback.default_role_prompt;
+    return {
+      role_prompt: rolePrompt,
+      is_custom: Boolean(parsed.is_custom),
+      default_role_prompt: defaultRolePrompt,
+    };
+  } catch {
+    return {
+      role_prompt: fallback.role_prompt,
+      is_custom: false,
+      default_role_prompt: fallback.default_role_prompt,
+    };
+  }
+}
+
+export function saveAnalysisPrompt(config: AnalysisPromptConfig) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.localStorage.setItem(ANALYSIS_PROMPT_KEY, JSON.stringify(config));
 }
 
 export function loadAnalysisMode(fallback: AnalysisMode = "deep"): AnalysisMode {

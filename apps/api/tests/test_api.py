@@ -415,6 +415,30 @@ def test_investor_profile_persistence(tmp_path, monkeypatch):
     assert loaded.json()["max_drawdown_percent"] == 12
 
 
+def test_analysis_prompt_persistence(tmp_path, monkeypatch):
+    client = auth_client_for_db(monkeypatch, tmp_path / "analysis_prompt.db")
+
+    missing = client.get("/api/analysis-prompt")
+    assert missing.status_code == 200
+    assert missing.json()["is_custom"] is False
+    default_prompt = missing.json()["default_role_prompt"]
+    assert "已有持仓" in default_prompt
+
+    saved = client.put("/api/analysis-prompt", json={"role_prompt": "我是自定义投研角色。"})
+    assert saved.status_code == 200
+    assert saved.json()["is_custom"] is True
+    assert saved.json()["role_prompt"] == "我是自定义投研角色。"
+
+    loaded = client.get("/api/analysis-prompt")
+    assert loaded.status_code == 200
+    assert loaded.json()["role_prompt"] == "我是自定义投研角色。"
+
+    reset = client.put("/api/analysis-prompt", json={"role_prompt": None})
+    assert reset.status_code == 200
+    assert reset.json()["is_custom"] is False
+    assert reset.json()["role_prompt"] == default_prompt
+
+
 def test_database_export_and_import(tmp_path, monkeypatch):
     monkeypatch.setenv("FUND_AI_DEEPSEEK_API_KEY", "")
     refresh_settings()
@@ -511,3 +535,82 @@ def test_async_job_returns_stage(tmp_path, monkeypatch):
     raise AssertionError(
         f"job did not finish in time (last status={job.get('status')}, stage={job.get('stage')})"
     )
+
+
+def test_fund_discovery_sectors(client):
+    response = client.get("/api/fund-discovery/sectors")
+    assert response.status_code == 200
+    body = response.json()
+    assert "sectors" in body
+
+
+def test_fund_discovery_async_offline(client, monkeypatch):
+    monkeypatch.setattr(
+        "app.services.discovery_pipeline.build_sector_heat_ranking",
+        lambda: [{"sector_label": "半导体", "heat_score": 1.0, "change_1d_percent": 1.0}],
+    )
+    monkeypatch.setattr(
+        "app.services.discovery_pipeline.build_candidate_pool",
+        lambda *args, **kwargs: [
+            {
+                "fund_code": "519674",
+                "fund_name": "银河创新成长",
+                "sector_label": "半导体",
+                "return_1y_percent": 10.0,
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        "app.services.discovery_pipeline.enrich_candidates",
+        lambda pool: pool,
+    )
+    monkeypatch.setattr(
+        "app.services.discovery_pipeline.NewsService",
+        lambda: type(
+            "NS",
+            (),
+            {"prefetch_topics": staticmethod(lambda topics: [])},
+        )(),
+    )
+    monkeypatch.setattr(
+        "app.services.discovery_pipeline.summarize_all_topics",
+        lambda topics, news: [],
+    )
+    monkeypatch.setattr(
+        "app.services.discovery_client.get_settings",
+        lambda: type("S", (), {"deepseek_api_key": None})(),
+    )
+
+    started = client.post(
+        "/api/fund-discovery/async",
+        json={
+            "profile": {
+                "style": "稳健",
+                "horizon": "半年到一年",
+                "max_drawdown_percent": 8,
+                "concentration_limit_percent": 35,
+                "prefer_dca": True,
+                "avoid_chasing": True,
+            },
+            "focus_sectors": ["半导体"],
+            "holdings": [],
+        },
+    )
+    assert started.status_code == 200
+    job_id = started.json()["job_id"]
+
+    import time
+
+    for _ in range(80):
+        job = client.get(f"/api/jobs/{job_id}").json()
+        if job["status"] == "completed":
+            assert job.get("job_kind") == "discovery"
+            assert job.get("discovery_report")
+            report_id = job["discovery_report"]["id"]
+            detail = client.get(f"/api/fund-discovery/reports/{report_id}")
+            assert detail.status_code == 200
+            return
+        if job["status"] == "failed":
+            raise AssertionError(job.get("error"))
+        time.sleep(0.1)
+    raise AssertionError("discovery job timeout")

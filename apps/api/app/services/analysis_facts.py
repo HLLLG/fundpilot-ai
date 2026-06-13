@@ -10,6 +10,7 @@ from app.models import (
 )
 from app.services.holding_metrics import (
     compute_estimated_daily_return_percent,
+    compute_sector_fund_gap_percent,
     holding_daily_return_is_estimated,
 )
 from app.services.market_flow_client import build_market_flow_context
@@ -38,6 +39,7 @@ def build_analysis_facts(
     session: dict | None = None,
     pipeline: dict | None = None,
     portfolio_trend: dict | None = None,
+    for_llm: bool = False,
 ) -> dict:
     nav_trends = nav_trends_by_code or {}
     total_amount = sum(item.holding_amount for item in holdings) or 0.0
@@ -52,8 +54,7 @@ def build_analysis_facts(
         weight = holding_weight_percent(holding, holdings, profile)
         estimated_daily = compute_estimated_daily_return_percent(holding)
         snapshot = snapshot_by_code.get(holding.fund_code)
-        per_fund.append(
-            {
+        row: dict = {
                 "fund_code": holding.fund_code,
                 "fund_name": holding.fund_name,
                 "holding_amount": round(holding.holding_amount, 2),
@@ -62,7 +63,9 @@ def build_analysis_facts(
                 if holding.holding_return_percent is not None
                 else holding.return_percent,
                 "sector_return_percent": holding.sector_return_percent,
+                "sector_return_percent_source": holding.sector_return_percent_source,
                 "daily_return_percent": holding.daily_return_percent,
+                "daily_return_percent_source": holding.daily_return_percent_source,
                 "estimated_daily_return_percent": estimated_daily,
                 "daily_return_is_estimated": holding_daily_return_is_estimated(holding),
                 "daily_profit": holding.daily_profit,
@@ -87,7 +90,9 @@ def build_analysis_facts(
                     signal_backtest,
                 ),
             }
-        )
+        if for_llm:
+            row["sector_fund_gap_percent"] = compute_sector_fund_gap_percent(holding)
+        per_fund.append(row)
 
     facts: dict = {
         "readonly": True,

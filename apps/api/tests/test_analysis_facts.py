@@ -85,6 +85,22 @@ def test_build_analysis_facts_includes_nav_trend():
     assert facts["holdings"][0]["latest_nav"] == 1.05
 
 
+def test_build_analysis_facts_includes_sector_fund_gap_for_llm():
+    holdings = [
+        Holding(
+            fund_code="015608",
+            fund_name="基金A",
+            holding_amount=5000,
+            sector_return_percent=4.0,
+            daily_return_percent=1.5,
+        ),
+    ]
+    profile = InvestorProfile()
+    risk = evaluate_portfolio_risk(holdings, profile)
+    facts = build_analysis_facts(holdings, risk, [], profile, for_llm=True)
+    assert facts["holdings"][0]["sector_fund_gap_percent"] == 2.5
+
+
 def test_build_analysis_facts_includes_signal_backtest(monkeypatch):
     holdings = [
         Holding(

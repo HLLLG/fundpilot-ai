@@ -15,6 +15,8 @@ from datetime import datetime, timezone
 
 from app.models import (
     ChatMessage,
+    DiscoveryChatMessage,
+    FundDiscoveryReport,
     FundProfile,
     InvestorProfile,
     PortfolioDailySnapshot,
@@ -628,6 +630,42 @@ def save_investor_profile(profile: InvestorProfile) -> InvestorProfile:
     return profile
 
 
+def get_analysis_role_prompt() -> str | None:
+    user_id = _uid()
+    with _connect() as connection:
+        row = connection.execute(
+            "SELECT role_prompt FROM analysis_prompt_state WHERE userId = ?",
+            (user_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    value = row["role_prompt"]
+    return value if isinstance(value, str) and value.strip() else None
+
+
+def save_analysis_role_prompt(role_prompt: str | None) -> str | None:
+    from app.services.analysis_prompt import normalize_role_prompt
+
+    normalized = normalize_role_prompt(role_prompt)
+    user_id = _uid()
+    with _connect() as connection:
+        if normalized is None:
+            connection.execute(
+                "DELETE FROM analysis_prompt_state WHERE userId = ?",
+                (user_id,),
+            )
+        else:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO analysis_prompt_state (userId, role_prompt, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                """,
+                (user_id, normalized),
+            )
+        connection.commit()
+    return normalized
+
+
 def get_portfolio_summary() -> PortfolioSummary | None:
     user_id = _uid()
     with _connect() as connection:
@@ -833,3 +871,113 @@ def list_fund_primary_sectors() -> list[dict[str, Any]]:
             (user_id,),
         ).fetchall()
     return [_row_to_dict(row) for row in rows]
+
+
+def save_discovery_report(report: FundDiscoveryReport) -> FundDiscoveryReport:
+    payload = report.model_dump(mode="json")
+    user_id = _uid()
+    with _connect() as connection:
+        connection.execute(
+            """
+            INSERT OR REPLACE INTO fund_discovery_reports (id, created_at, payload, userId)
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                report.id,
+                report.created_at.isoformat(),
+                json.dumps(payload, ensure_ascii=False),
+                user_id,
+            ),
+        )
+        connection.commit()
+    return report
+
+
+def list_discovery_reports(*, limit: int = 30) -> list[dict[str, Any]]:
+    user_id = _uid()
+    with _connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT payload FROM fund_discovery_reports
+            WHERE userId = ?
+            ORDER BY created_at DESC LIMIT ?
+            """,
+            (user_id, limit),
+        ).fetchall()
+    return [json.loads(row["payload"]) for row in rows]
+
+
+def get_discovery_report(report_id: str) -> dict[str, Any] | None:
+    user_id = _uid()
+    with _connect() as connection:
+        row = connection.execute(
+            """
+            SELECT payload FROM fund_discovery_reports
+            WHERE id = ? AND userId = ?
+            """,
+            (report_id, user_id),
+        ).fetchone()
+    if row is None:
+        return None
+    return json.loads(row["payload"])
+
+
+def delete_discovery_report(report_id: str) -> bool:
+    user_id = _uid()
+    with _connect() as connection:
+        cursor = connection.execute(
+            "DELETE FROM fund_discovery_reports WHERE id = ? AND userId = ?",
+            (report_id, user_id),
+        )
+        connection.execute(
+            "DELETE FROM discovery_chat_messages WHERE discovery_report_id = ?",
+            (report_id,),
+        )
+        connection.commit()
+    return cursor.rowcount > 0
+
+
+def list_discovery_chat_messages(discovery_report_id: str) -> list[dict[str, Any]]:
+    if get_discovery_report(discovery_report_id) is None:
+        return []
+    with _connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT id, discovery_report_id, role, content, created_at
+            FROM discovery_chat_messages
+            WHERE discovery_report_id = ?
+            ORDER BY created_at ASC
+            """,
+            (discovery_report_id,),
+        ).fetchall()
+    return [
+        {
+            "id": row["id"],
+            "discovery_report_id": row["discovery_report_id"],
+            "role": row["role"],
+            "content": row["content"],
+            "created_at": row["created_at"],
+        }
+        for row in rows
+    ]
+
+
+def save_discovery_chat_message(message: DiscoveryChatMessage) -> DiscoveryChatMessage:
+    with _connect() as connection:
+        connection.execute(
+            """
+            INSERT INTO discovery_chat_messages (
+                id, discovery_report_id, role, content, created_at
+            )
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                message.id,
+                message.discovery_report_id,
+                message.role,
+                message.content,
+                message.created_at.isoformat(),
+            ),
+        )
+        connection.commit()
+    return message

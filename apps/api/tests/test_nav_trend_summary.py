@@ -25,6 +25,7 @@ def test_summarize_nav_history_computes_period_and_recent_changes():
     assert summary["recent_5d_change_percent"] == 4.95
     assert summary["distance_from_high_percent"] == 0.0
     assert len(summary["recent_nav_series"]) == 4
+    assert summary["recent_5d_daily_change_percent"] == [0.99, 0.98, 0.97, 0.96, 0.95]
     assert "上行" in summary["trend_label"] or "上升" in summary["trend_label"]
 
 

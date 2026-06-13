@@ -25,21 +25,30 @@ from app.database import (
     delete_portfolio_snapshots_on_or_before,
     delete_report,
     database_file_path,
+    delete_discovery_report,
     get_baseline_report_by_days,
+    get_discovery_report,
     get_fund_profile_by_code,
     get_investor_profile,
+    get_analysis_role_prompt,
     get_previous_report,
     get_report,
     import_database_file,
+    list_discovery_chat_messages,
+    list_discovery_reports,
     list_reports,
+    save_analysis_role_prompt,
     save_investor_profile,
 )
 from app.lifespan import app_lifespan
 from app.database import list_report_chat_messages
 from app.models import (
     AllocatePenetrationRequest,
+    AnalysisPromptSaveRequest,
     AnalysisRequest,
     ApplyHoldingsRequest,
+    DiscoveryChatRequest,
+    DiscoveryRequest,
     Holding,
     HoldingDetailRequest,
     InvestorProfile,
@@ -60,6 +69,10 @@ from app.services.portfolio_holdings_service import load_persisted_holdings
 from app.services.portfolio_persistence import enrich_loaded_holdings, persist_holdings_after_sector_refresh
 from app.services.portfolio_snapshot import build_dashboard_payload
 from app.services.job_store import create_analysis_job, get_job_response
+from app.services.discovery_job_store import create_discovery_job, get_discovery_job_response
+from app.services.discovery_chat import stream_discovery_chat
+from app.services.discovery_export import discovery_report_to_markdown
+from app.services.discovery_sector_heat import build_sector_heat_ranking
 from app.services.ocr_pipeline import apply_confirmed_holdings, run_ocr_upload_pipeline
 from app.services.report_diff import diff_reports
 from app.services.report_chat import stream_report_chat
@@ -386,9 +399,90 @@ def analyze_async(request: AnalysisRequest) -> dict:
 @app.get("/api/jobs/{job_id}")
 def job_status(job_id: str) -> dict:
     job = get_job_response(job_id)
-    if job is None:
+    if job is not None:
+        return job
+    discovery_job = get_discovery_job_response(job_id)
+    if discovery_job is None:
         raise HTTPException(status_code=404, detail="任务不存在")
-    return job
+    return discovery_job
+
+
+@app.get("/api/fund-discovery/sectors")
+def fund_discovery_sectors() -> dict:
+    return {"sectors": build_sector_heat_ranking()}
+
+
+@app.post("/api/fund-discovery/async")
+def fund_discovery_async(request: DiscoveryRequest) -> dict:
+    if not request.holdings:
+        loaded, _, _ = load_persisted_holdings()
+        request = request.model_copy(update={"holdings": loaded})
+    job_id = create_discovery_job(request)
+    return {"job_id": job_id, "status": "pending"}
+
+
+@app.get("/api/fund-discovery/reports")
+def fund_discovery_reports() -> list[dict]:
+    return list_discovery_reports()
+
+
+@app.get("/api/fund-discovery/reports/{report_id}")
+def fund_discovery_report_detail(report_id: str) -> dict:
+    report = get_discovery_report(report_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="报告不存在")
+    return report
+
+
+@app.delete("/api/fund-discovery/reports/{report_id}")
+def fund_discovery_report_delete(report_id: str) -> dict:
+    if not delete_discovery_report(report_id):
+        raise HTTPException(status_code=404, detail="报告不存在")
+    return {"deleted": True}
+
+
+@app.get("/api/fund-discovery/reports/{report_id}/markdown")
+def fund_discovery_report_markdown(report_id: str) -> dict:
+    report = get_discovery_report(report_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="报告不存在")
+    return {"markdown": discovery_report_to_markdown(report)}
+
+
+@app.get("/api/fund-discovery/reports/{report_id}/chat")
+def fund_discovery_chat_history(report_id: str) -> dict:
+    report = get_discovery_report(report_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="报告不存在")
+    return {"messages": list_discovery_chat_messages(report_id)}
+
+
+@app.post("/api/fund-discovery/reports/{report_id}/chat")
+def fund_discovery_chat(report_id: str, body: DiscoveryChatRequest) -> StreamingResponse:
+    report = get_discovery_report(report_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="报告不存在")
+
+    def event_stream():
+        try:
+            for payload in stream_discovery_chat(
+                report_id,
+                body.message.strip(),
+                chat_mode=body.chat_mode,
+            ):
+                yield f"data: {payload}\n\n"
+        except ValueError as exc:
+            yield f"data: {{\"type\":\"error\",\"message\":{json.dumps(str(exc), ensure_ascii=False)}}}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.get("/api/reports")
@@ -763,6 +857,21 @@ def investor_profile_get() -> dict:
 def investor_profile_put(profile: InvestorProfile) -> dict:
     saved = save_investor_profile(profile)
     return saved.model_dump()
+
+
+@app.get("/api/analysis-prompt")
+def analysis_prompt_get() -> dict:
+    from app.services.analysis_prompt import build_prompt_config
+
+    return build_prompt_config(get_analysis_role_prompt()).model_dump()
+
+
+@app.put("/api/analysis-prompt")
+def analysis_prompt_put(body: AnalysisPromptSaveRequest) -> dict:
+    from app.services.analysis_prompt import build_prompt_config
+
+    saved = save_analysis_role_prompt(body.role_prompt)
+    return build_prompt_config(saved).model_dump()
 
 
 @app.get("/api/portfolio/summary")

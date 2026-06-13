@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { BrainCircuit, X } from "lucide-react";
 import type {
   AnalysisMode,
+  AnalysisPromptConfig,
   FundCodeResolution,
   FundProfile,
   Holding,
@@ -12,12 +13,14 @@ import type {
   Report,
 } from "@/lib/api";
 import {
+  fetchAnalysisPrompt,
   fetchInvestorProfile,
   fetchPortfolioHoldings,
   fetchPortfolioSummary,
   listReports,
   applyPortfolioHoldings,
   parseOcrUpload,
+  saveAnalysisPromptRemote,
   saveInvestorProfileRemote,
   startAnalyzeJob,
   type PortfolioSummary,
@@ -27,9 +30,11 @@ import { AlipayOcrConfirmModal } from "@/components/AlipayOcrConfirmModal";
 import { notifyDesktop } from "@/lib/notifications";
 import {
   loadAnalysisMode,
+  loadAnalysisPrompt,
   loadInvestorProfile,
   normalizeInvestorProfile,
   saveAnalysisMode,
+  saveAnalysisPrompt,
   saveInvestorProfile,
 } from "@/lib/storage";
 import { HistoryRail } from "@/components/HistoryRail";
@@ -48,6 +53,7 @@ import { RecommendationAccuracyPanel } from "@/components/RecommendationAccuracy
 import { SectorSignalBacktestPanel } from "@/components/SectorSignalBacktestPanel";
 import { RiskControls } from "@/components/RiskControls";
 import { DiagnosticsAccordion } from "@/components/DiagnosticsAccordion";
+import { FundDiscoveryPanel } from "@/components/FundDiscoveryPanel";
 import { UserMenu } from "@/components/UserMenu";
 const defaultProfile: InvestorProfile = {
   style: "稳健",
@@ -60,21 +66,31 @@ const defaultProfile: InvestorProfile = {
   decision_style: "conservative",
 };
 
-type TabId = "today" | "report" | "history" | "dashboard";
+type TabId = "today" | "report" | "history" | "dashboard" | "discovery";
 
 const primaryTabs: Array<{
-  id: Extract<TabId, "today" | "dashboard" | "report">;
+  id: Extract<TabId, "today" | "dashboard" | "discovery" | "report">;
   label: string;
 }> = [
   { id: "today", label: "持有" },
   { id: "dashboard", label: "盈亏分析" },
+  { id: "discovery", label: "推荐基金" },
   { id: "report", label: "生成日报" },
 ];
+
+const defaultAnalysisPrompt: AnalysisPromptConfig = {
+  role_prompt: "",
+  is_custom: false,
+  default_role_prompt: "",
+};
 
 export function Dashboard() {
   const [holdings, setHoldings] = useState<Holding[]>([]);
   const [profile, setProfile] = useState<InvestorProfile>(() =>
     loadInvestorProfile(defaultProfile),
+  );
+  const [analysisPrompt, setAnalysisPrompt] = useState<AnalysisPromptConfig>(() =>
+    loadAnalysisPrompt(defaultAnalysisPrompt),
   );
   const [report, setReport] = useState<Report | null>(null);
   const [reports, setReports] = useState<Report[]>([]);
@@ -85,11 +101,13 @@ export function Dashboard() {
   const [activeTab, setActiveTab] = useState<TabId>("today");
   const [analysisMode, setAnalysisMode] = useState<AnalysisMode>("deep");
   const [profileReady, setProfileReady] = useState(false);
+  const [promptReady, setPromptReady] = useState(false);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [selectedHoldingIndex, setSelectedHoldingIndex] = useState<number | null>(null);
   const reportSectionRef = useRef<HTMLDivElement>(null);
   const shouldRefreshOnLoad = useRef(false);
   const profilePersistReady = useRef(false);
+  const promptPersistReady = useRef(false);
   const [isHydratingHoldings, setIsHydratingHoldings] = useState(true);
   const [isOcrUploading, setIsOcrUploading] = useState(false);
   const [pendingOcrHoldings, setPendingOcrHoldings] = useState<Holding[] | null>(null);
@@ -175,6 +193,18 @@ export function Dashboard() {
         setProfileReady(true);
       }
     })();
+    void (async () => {
+      try {
+        const remote = await fetchAnalysisPrompt();
+        setAnalysisPrompt(remote);
+        saveAnalysisPrompt(remote);
+      } catch {
+        setAnalysisPrompt((current) => loadAnalysisPrompt(current));
+      } finally {
+        promptPersistReady.current = true;
+        setPromptReady(true);
+      }
+    })();
     void loadHistory();
     void hydratePortfolio();
     // Mount-only bootstrap; avoid re-fetching on callback identity changes.
@@ -201,6 +231,15 @@ export function Dashboard() {
   }, [profile, profileReady]);
 
   useEffect(() => {
+    if (!promptReady || !promptPersistReady.current) return;
+    saveAnalysisPrompt(analysisPrompt);
+    const storedValue = analysisPrompt.is_custom ? analysisPrompt.role_prompt : null;
+    void saveAnalysisPromptRemote(storedValue).catch(() => {
+      // 离线时仍保留 localStorage。
+    });
+  }, [analysisPrompt, promptReady]);
+
+  useEffect(() => {
     if (!profileReady) return;
     saveAnalysisMode(analysisMode);
   }, [analysisMode, profileReady]);
@@ -213,7 +252,13 @@ export function Dashboard() {
     setIsSubmitting(true);
     setMessage(null);
     try {
-      const jobId = await startAnalyzeJob(targetHoldings, profile, undefined, analysisMode);
+      const jobId = await startAnalyzeJob(
+        targetHoldings,
+        profile,
+        undefined,
+        analysisMode,
+        analysisPrompt.role_prompt,
+      );
       setActiveJobId(jobId);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "提交分析任务失败。");
@@ -412,8 +457,24 @@ export function Dashboard() {
               <RiskControls
                 profile={profile}
                 analysisMode={analysisMode}
+                rolePrompt={analysisPrompt.role_prompt}
+                isRolePromptCustom={analysisPrompt.is_custom}
                 onAnalysisModeChange={setAnalysisMode}
                 onChange={setProfile}
+                onRolePromptChange={(value) =>
+                  setAnalysisPrompt((current) => ({
+                    ...current,
+                    role_prompt: value.slice(0, 4000),
+                    is_custom: value.trim() !== current.default_role_prompt.trim(),
+                  }))
+                }
+                onRolePromptReset={() =>
+                  setAnalysisPrompt((current) => ({
+                    ...current,
+                    role_prompt: current.default_role_prompt,
+                    is_custom: false,
+                  }))
+                }
                 onAnalyze={() => void handleAnalyze()}
                 isBusy={isSubmitting}
                 ocrWarningCount={ocrWarningCount}
@@ -441,6 +502,15 @@ export function Dashboard() {
           ) : null}
 
           {activeTab === "dashboard" ? <PortfolioDashboard /> : null}
+
+          {activeTab === "discovery" ? (
+            <FundDiscoveryPanel
+              holdings={holdings}
+              profile={profile}
+              analysisMode={analysisMode}
+              onAnalysisModeChange={setAnalysisMode}
+            />
+          ) : null}
 
           {activeTab === "history" ? (
             <div className="grid gap-6">
@@ -544,10 +614,13 @@ function TabNav({
   onSelect,
 }: {
   activeTab: TabId;
-  onSelect: (tab: Extract<TabId, "today" | "dashboard" | "report">) => void;
+  onSelect: (tab: Extract<TabId, "today" | "dashboard" | "discovery" | "report">) => void;
 }) {
   const highlightedTab =
-    activeTab === "today" || activeTab === "dashboard" || activeTab === "report"
+    activeTab === "today" ||
+    activeTab === "dashboard" ||
+    activeTab === "discovery" ||
+    activeTab === "report"
       ? activeTab
       : null;
 

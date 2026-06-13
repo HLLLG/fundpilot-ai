@@ -81,6 +81,13 @@ def ensure_mysql_schema(connection: Any) -> None:
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """,
         """
+        CREATE TABLE IF NOT EXISTS analysis_prompt_state (
+            userId BIGINT PRIMARY KEY,
+            role_prompt LONGTEXT NOT NULL,
+            updated_at VARCHAR(64) NOT NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """,
+        """
         CREATE TABLE IF NOT EXISTS sector_mappings (
             userId BIGINT NOT NULL,
             sector_label VARCHAR(255) NOT NULL,
@@ -136,6 +143,39 @@ def ensure_mysql_schema(connection: Any) -> None:
             userId BIGINT NOT NULL DEFAULT 1,
             created_at VARCHAR(64) NOT NULL,
             updated_at VARCHAR(64) NOT NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS fund_discovery_reports (
+            id VARCHAR(64) PRIMARY KEY,
+            created_at VARCHAR(64) NOT NULL,
+            payload LONGTEXT NOT NULL,
+            userId BIGINT NOT NULL DEFAULT 1,
+            INDEX idx_discovery_user_created (userId, created_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS discovery_jobs (
+            id VARCHAR(64) PRIMARY KEY,
+            status VARCHAR(32) NOT NULL,
+            request_payload LONGTEXT NOT NULL,
+            discovery_report_id VARCHAR(64) NULL,
+            error LONGTEXT NULL,
+            stage VARCHAR(64) NULL,
+            stage_label VARCHAR(255) NULL,
+            userId BIGINT NOT NULL DEFAULT 1,
+            created_at VARCHAR(64) NOT NULL,
+            updated_at VARCHAR(64) NOT NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS discovery_chat_messages (
+            id VARCHAR(64) PRIMARY KEY,
+            discovery_report_id VARCHAR(64) NOT NULL,
+            role VARCHAR(32) NOT NULL,
+            content LONGTEXT NOT NULL,
+            created_at VARCHAR(64) NOT NULL,
+            INDEX idx_discovery_chat_report (discovery_report_id, created_at)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """,
         """

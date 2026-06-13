@@ -41,11 +41,13 @@ def summarize_nav_history(
         {"date": point.date, "nav": round(point.nav, 4)}
         for point in points[-sample_size:]
     ]
+    recent_5d_daily_change_percent = _recent_daily_nav_changes(points, max_days=5)
 
     return {
         "period_days": len(points),
         "period_change_percent": period_change,
         "recent_5d_change_percent": recent_5d_change,
+        "recent_5d_daily_change_percent": recent_5d_daily_change_percent,
         "latest_nav": latest.nav,
         "latest_date": latest.date,
         "high_nav": round(high_nav, 4),
@@ -89,3 +91,15 @@ def _trend_label(
         return f"{base}，近5日回落"
 
     return base
+
+
+def _recent_daily_nav_changes(points: list[FundNavPoint], *, max_days: int = 5) -> list[float]:
+    changes: list[float] = []
+    start_index = max(1, len(points) - max_days)
+    for index in range(start_index, len(points)):
+        prev = points[index - 1].nav
+        curr = points[index].nav
+        if prev <= 0:
+            continue
+        changes.append(round((curr / prev - 1) * 100, 2))
+    return changes

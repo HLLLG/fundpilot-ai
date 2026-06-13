@@ -4,9 +4,13 @@
 >
 > **维护：** 功能或架构有实质变化时，同步更新「能力清单」「数据流」「API」「目录」「环境变量」。
 
-**文档版本：** 2026-06-12（fund_code→主关联板块、养基宝 OCR 对齐）
+**文档版本：** 2026-06-13（推荐基金 Tab MVP）
 
 **更新记录：**
+- **推荐基金 Tab（2026-06-13）：** 新增「推荐基金」主 Tab：窄池候选（板块热度 + 种子/排行/映射，15~25 只）+ 可选 `focus_sectors`（最多 3 个）；`POST /api/fund-discovery/async` 异步生成 `FundDiscoveryReport`；`discovery_guard` 白名单/追高/预算守卫；报告 SSE 追问；独立表 `fund_discovery_reports` / `discovery_jobs` / `discovery_chat_messages`（schema v5）。与「生成日报」职责分离。
+- **LLM 数据包质量对齐（2026-06-13）：** 在瘦身基础上经 `scripts/ab_compare_reports.py` A/B 验证（4 只持仓、fast 模式、真实 DeepSeek）：slim user JSON **约 -50%** 体积且 rubric 评分与 legacy 持平或略优。改进点：`news_titles` 当日不足 12 条时回填近几日标题，并合并 `topic_briefs.points.source_titles`；恢复 `holding_return_semantics`；稳健模式保留精简版 `sector_intraday`（`pattern_label`/`pattern_hint` 等 4 字段）；`news_bullish`/`news_bearish` 强制 JSON 数组；`requirements` 6 条。完整报告仍存全量 `analysis_facts`（不经 slim）；`news_citation` 守卫仍用完整 `market_news`。
+- **AI 角色设定（2026-06-13）：** 「生成日报」Tab `RiskControls` 新增 **AI 角色设定** 多行输入（`data-testid=analysis-role-prompt`）；`analysis_prompt.py` 定义 `DEFAULT_ROLE_PROMPT`（仅分析 **已有持仓**，不荐新基；`fund_code`/`fund_name` 须与 `holdings` 一致）；`AnalysisRequest.system_role_prompt` 随异步分析传入；`deepseek_client._system_prompt()` 在角色层后拼接时间戳、新闻规则、稳健/战术、`prompt_tuning`、JSON 约束；SQLite/MySQL `analysis_prompt_state`（schema v4）+ `GET/PUT /api/analysis-prompt`；前端 `localStorage` 缓存 + API 双写（模式同风控画像）。**荐新基**规划为独立 Tab，不在日报角色 Prompt 内实现。
+- **LLM 数据包瘦身（2026-06-13）：** `analysis_payload.py` `build_user_payload()` — user JSON 去重（移除顶层 `holdings`/`risk`/`fund_snapshots`/`ocr_text`/`analysis_session`）；`prefetched_news` → `news_titles`（仅标题）；完整输出约束迁入 system `OUTPUT_REQUIREMENTS_SYSTEM`；稳健模式裁剪 `market_flow`/`signal_backtest`/`prompt_tuning`；快速模式再裁 `portfolio_trend` 与精简 `topic_briefs`；`analysis_facts` 新增 `sector_fund_gap_percent`、`nav_trend.recent_5d_daily_change_percent`，`recent_nav_series` 喂模型时 cap 5 点；对比脚本 `scripts/compare_analysis_payload.py`（初版约 **-65%** JSON 体积）。A/B 对照实现见 `analysis_payload_legacy.py`。
 - **fund_code → 主关联板块（2026-06-12）：** SQLite/MySQL 表 `fund_primary_sectors`（schema v3）；`fund_primary_sector_service.py` — 详情 OCR / 养基宝总览沉淀、全局种子（519674→半导体、015945→商业航天 等）、AkShare 季报重仓关键词投票推荐；支付宝导入确认后按 **code 查表**补全 `sector_name`，禁用「国防军工」等名称推断覆盖混合基；`GET /api/funds/{code}/primary-sector`、`POST .../refresh-holdings`、`POST /api/fund-primary-sectors/sync-from-profiles`；`GET /api/funds/search` 东财名称表模糊查码。
 - **养基宝详情 OCR + 代码纠错（2026-06-12）：** 识别养基宝详情页（含 6 位代码、关联板块）；`ApplyHoldingsRequest.detail_profiles`；`PATCH /api/fund-profiles/{code}` 支持改 `fund_code`/`fund_name`；前端 `FundCodeEditModal`、OCR 确认弹窗可编辑 code/名称/金额并东财搜索；`AddHoldingModal` 三分栏（支付宝 / 养基宝总览 / 养基宝详情）。
 - **支付宝 OCR 查码增强（2026-06-12）：** `fund_code_resolver` — 「发起式」归一、C 类优先、provisional 9xxxxx 清理、`reconcile_holding_fund_codes`；总览无 6 位码时走 AkShare `fund_name_em` 名称表。
@@ -36,7 +40,7 @@
 
 ## 一句话
 
-**FundPilot AI** 是面向 ≤5 人私有部署的基金投研助手：邮箱登录（Web）+ 可选微信小程序；支付宝/养基宝截图 → OCR → **账户汇总**（板块涨跌估算当日收益）→ 个人风控画像 → 东方财富新闻（AkShare）+ DeepSeek V4 生成**逐基金操作建议**日报；首页自动恢复持仓并刷新板块；「生成日报」Tab 配置风控后直接异步生成报告。本地默认 SQLite；云端可迁 CloudBase MySQL（见 `docs/deploy/cloudbase.md`）。
+**FundPilot AI** 是面向 ≤5 人私有部署的基金投研助手：邮箱登录（Web）+ 可选微信小程序；支付宝/养基宝截图 → OCR → **账户汇总**（板块涨跌估算当日收益）→ 个人风控画像 + **可编辑 AI 角色设定** → 东方财富新闻（AkShare）+ DeepSeek V4 生成**逐持仓基金**操作建议日报；**推荐基金** Tab 从窄池候选中精选新基机会（持有期/金额/风险）；首页自动恢复持仓并刷新板块。本地默认 SQLite；云端可迁 CloudBase MySQL（见 `docs/deploy/cloudbase.md`）。
 
 ---
 
@@ -55,7 +59,10 @@
 | 盈亏分析 | **盈亏分析** Tab：`PortfolioDashboard` — 收益走势（当日/周/月/年/全部）、盈亏日历、当日 TOP5、持仓甜甜圈；`GET /api/portfolio/dashboard` |
 | 风控 | 浮亏线、单只集中度、**期望投入总额**（滑条 1–10 万）、**偏定投** / **拒绝追高**（规则守卫 + 传入模型 `profile`）；`InvestorProfile` 持久化 SQLite + localStorage |
 | 报告 | 组合摘要 + `fund_recommendations` + `topic_briefs` + `market_news`；`analysis_facts`；守卫 + 深度 `report_judge` |
-| 生成日报 | 「生成日报」Tab：`RiskControls`（高级设置折叠）+ `NewsPreviewPanel` / `SectorSignalBacktestPanel` / `RecommendationAccuracyPanel`；诊断项收进 `DiagnosticsAccordion` |
+| 喂模型数据包 | `analysis_payload.build_user_payload()` 瘦身 user JSON（约 -50%）；落库仍全量 `analysis_facts`；A/B 脚本 `ab_compare_reports.py` |
+| 生成日报 | 「生成日报」Tab：`RiskControls`（**AI 角色设定**可编辑 + 高级设置折叠风控）+ `NewsPreviewPanel` / `SectorSignalBacktestPanel` / `RecommendationAccuracyPanel`；诊断项收进 `DiagnosticsAccordion`；日报 **仅分析已有持仓**，荐新基见独立 Tab |
+| 推荐基金 | 「推荐基金」Tab：`FundDiscoveryPanel` — 可选关注方向、预算、快速/深度；窄池扫描 → `DiscoveryReportPanel` + `DiscoveryChatPanel` 追问；`GET /api/fund-discovery/sectors` |
+| AI 角色 Prompt | `analysis_prompt.py` `DEFAULT_ROLE_PROMPT`；用户自定义 `role_prompt`（≤4000 字）持久化 `analysis_prompt_state`；`GET/PUT /api/analysis-prompt`；生成时 `system_role_prompt` 传入 `POST /api/analyze/async` |
 | 复盘/模拟 | outcomes / outcomes-weekly / rebalance-simulation / recommendation-accuracy |
 | 信号诊断 | `GET /api/diagnostics/sector-signal-backtest` — 板块短线规则历史命中率（东财日 K） |
 | 交易日语义 | `trading_session.py` + `trade_calendar_cache`；**9:30 前** `trading_day_pre_open` 展示上一交易日（对齐养基宝，周末/节假日同理）；`TradingSessionBar` |
@@ -67,13 +74,13 @@
 | 数据备份 | SQLite export/import；`DatabaseBackupPanel` |
 | 小程序 | `apps/miniprogram`：登录、持有列表、基金详情（只读）；与 Web 经 `bind-wechat` 共享 `userId` |
 | 云部署 | `apps/api/Dockerfile`、`docker-compose.cloud.yml`；`scripts/migrate_sqlite_to_mysql.py`；见 `docs/deploy/cloudbase.md` |
-| CI / E2E | GitHub Actions：pytest（**302** 项）+ lint/typecheck/build + Playwright |
+| CI / E2E | GitHub Actions：pytest（**356** 项）+ lint/typecheck/build + Playwright |
 | 基金诊断 | AkShare 概况/累计收益；详情页可 AkShare **按名称查码**并持久化 |
 | 分析模式 | 快速 / 深度 |
 | 体验 | 报告 diff、Markdown 导出、SQLite 备份、桌面通知、Plus Jakarta 字体 UI |
 | 报告追问 | SSE + ChatMarkdown |
 | 异步分析 | `/api/analyze/async` + `JobStatusFloat` |
-| 前端偏好 | localStorage：风控、分析模式、板块自动刷新 |
+| 前端偏好 | localStorage：风控、**AI 角色 Prompt**、分析模式、板块自动刷新 |
 
 ---
 
@@ -81,7 +88,7 @@
 
 | 会做 | 不会做 |
 |------|--------|
-| OCR、校对、风控、AI 日报、示意金额 | 自动下单、券商对接 |
+| OCR、校对、风控、AI 日报（逐持仓）、可编辑角色 Prompt、**推荐基金 Tab**（窄池荐新基）、示意金额 | 自动下单、券商对接 |
 | 邮箱登录、按用户隔离持仓（私有部署） | 公开大规模 SaaS |
 | 本地 SQLite / 上传目录 | 默认把原始截图发往云端 |
 | 公开新闻标题/摘要供模型参考 | 投资建议（报告须有 caveats） |
@@ -136,6 +143,9 @@ fundpilot-ai/
 │       ├── cls_news_client.py / market_flow_client.py / news_freshness.py
 │       ├── sector_momentum.py / sector_intraday_summary.py / sector_signal_*.py
 │       ├── tactical_recommendations.py / prompt_tuning.py / recommendation_accuracy.py
+│       ├── analysis_prompt.py     # 日报角色 Prompt 默认模板与持久化配置
+│       ├── analysis_payload.py    # 喂模型 user JSON 瘦身与按模式裁剪
+│       ├── analysis_payload_legacy.py  # legacy user JSON（A/B 对照，非生产路径）
 │       ├── db_backup.py
 │       ├── job_store.py           # 异步分析任务（含 stage）
 │       ├── report_diff.py / report_export.py
@@ -143,13 +153,15 @@ fundpilot-ai/
 │       ├── report_chat_runtime.py # 追问 fast/deep
 │       ├── report_chat_export.py  # 对话 Markdown
 │       ├── deepseek_client.py / analysis_runtime.py / analyze_pipeline.py
+│       ├── discovery_*.py           # 推荐基金：窄池、守卫、pipeline、chat、job_store
 │       └── recommendations.py
 ├── apps/web/src/
 │   ├── app/login/ register/ settings/   # 认证与账号设置
 │   ├── lib/api.ts / auth.ts / storage.ts / holdingMetrics.ts / useSectorQuoteRefresh.ts / workflowBlockers.ts
 │   └── components/
 │       ├── AuthProvider.tsx       # JWT 与 /api/auth/me
-│       ├── Dashboard.tsx          # 持有 / 盈亏分析 / 生成日报 / 历史
+│       ├── Dashboard.tsx          # 持有 / 盈亏分析 / 推荐基金 / 生成日报 / 历史
+│       ├── FundDiscoveryPanel / DiscoveryReportPanel / DiscoveryChatPanel / DiscoveryJobStatusFloat
 │       ├── YangjibaoHoldingsBoard / YangjibaoFundDetail / AddHoldingModal / AlipayOcrConfirmModal
 │       ├── PortfolioDashboard / ProfitAnalysisTrendChart / ProfitLossCalendar / DailyProfitTop5 / HoldingDonutChart
 │       ├── PerformanceTrendPanel / PerformanceReturnChart / NavHistoryListModal / WheelDatePicker
@@ -163,7 +175,11 @@ fundpilot-ai/
 ├── uploads/
 ├── data/app.db
 ├── scripts/dev.sh / dev.ps1 / migrate_sqlite_to_mysql.py
+├── scripts/compare_analysis_payload.py   # legacy vs slim JSON 体积对比
+├── scripts/ab_compare_reports.py       # legacy vs slim 报告质量 A/B（DeepSeek）
 ├── docs/PROJECT_CONTEXT.md   # 本文
+├── docs/superpowers/specs/2026-06-13-fund-discovery-design.md
+├── docs/superpowers/plans/2026-06-13-fund-discovery.md
 ├── docs/deploy/cloudbase.md  # CloudBase 部署
 └── README.md
 ```
@@ -178,10 +194,11 @@ fundpilot-ai/
 2. 启动自动恢复上次持仓；点刷新更新板块涨跌 → 当日收益按板块估算
 3. 需更新金额时 →「持有」页「新增持有」上传支付宝/养基宝总览截图
 4. 「盈亏分析」Tab 查看收益走势、盈亏日历、当日 TOP5、持仓分布
-5. 「生成日报」Tab 确认风控画像（含偏定投/拒绝追高）→ 选快速/深度 → 生成日报 → JobStatusFloat 进度
-6. 点击持仓行 → 基金详情（板块分时、业绩走势、我的收益）；低置信度板块 → 映射弹窗
-7. 可上传**支付宝持有列表**截图 → 预览确认 → 写入持仓
-8. 需与小程序共用持仓 → 用户菜单「账号设置」→ 绑定 CloudBase UID（或 API `bind-wechat`）
+5. 「推荐基金」Tab 可选关注板块与预算 → **扫描今日机会** → 查看推荐报告并可追问细化
+6. 「生成日报」Tab 确认 **AI 角色设定**（可选）与风控画像（含偏定投/拒绝追高）→ 选快速/深度 → 生成日报 → JobStatusFloat 进度
+7. 点击持仓行 → 基金详情（板块分时、业绩走势、我的收益）；低置信度板块 → 映射弹窗
+8. 可上传**支付宝持有列表**截图 → 预览确认 → 写入持仓
+9. 需与小程序共用持仓 → 用户菜单「账号设置」→ 绑定 CloudBase UID（或 API `bind-wechat`）
 ```
 
 ### 账户汇总与持仓元数据
@@ -225,10 +242,20 @@ POST /api/analyze
 ### 异步分析（主流程）
 
 ```text
-POST /api/analyze/async → job_id
+POST /api/analyze/async { holdings, profile, analysis_mode, system_role_prompt? } → job_id
   → 线程池 run_analysis()
+  → DeepSeekClient._system_prompt(role + OUTPUT_REQUIREMENTS_SYSTEM) + build_user_payload()
   → GET /api/jobs/{id} 轮询（JobStatusFloat，1.5s；含 stage_label）
   → status=completed 时含 report → onComplete 回调 → 切换报告 Tab
+```
+
+### 推荐基金（异步）
+
+```text
+POST /api/fund-discovery/async { holdings, profile, focus_sectors?, budget_yuan?, analysis_mode }
+  → discovery_pipeline: 板块热度 → 窄池候选(15~25) → 新闻 → DeepSeek → discovery_guard
+  → GET /api/jobs/{id} 轮询（job_kind=discovery；完成时含 discovery_report）
+  → DiscoveryReportPanel 展示；POST .../chat SSE 追问
 ```
 
 ---
@@ -287,14 +314,24 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | POST | `/api/analyze` | 同步生成 Report（兜底） |
 | POST | `/api/analyze/async` | `{ job_id, status }` |
 | GET | `/api/trading-session` | 交易日/收盘窗口语义 |
-| GET | `/api/investor-profile` | 读取持久化风控画像（未保存时 404） |
+| GET | `/api/investor-profile` | 读取持久化风控画像（未保存时返回默认） |
 | PUT | `/api/investor-profile` | 保存风控画像至 SQLite |
+| GET | `/api/analysis-prompt` | 读取 AI 角色设定；含 `role_prompt`、`is_custom`、`default_role_prompt` |
+| PUT | `/api/analysis-prompt` | 保存角色设定；body `{ role_prompt }`，`null`/空串恢复默认 |
 | GET | `/api/reports/{id}/outcomes-weekly?days=7` | 7 日建议复盘 |
 | GET | `/api/reports/recommendation-accuracy?days=30` | 相邻日报建议命中率（战术/稳健） |
 | GET | `/api/diagnostics/sector-signal-backtest?days=120&sectors=半导体,商业航天` | 板块信号 T→T+1 回测；`sectors` 省略时用全部 canonical |
 | GET | `/api/database/export` | 下载 SQLite |
 | POST | `/api/database/import` | 上传替换 DB（自动备份 `.db.bak`） |
-| GET | `/api/jobs/{id}` | 任务状态；含 `stage`/`stage_label`/`analysis_mode`；完成时含 `report` |
+| GET | `/api/jobs/{id}` | 任务状态（日报或推荐基金）；含 `stage`/`stage_label`/`analysis_mode`/`job_kind`；完成时含 `report` 或 `discovery_report` |
+| GET | `/api/fund-discovery/sectors` | canonical 板块热度（当日 + 近5日） |
+| POST | `/api/fund-discovery/async` | 创建推荐基金异步任务；body `DiscoveryRequest` |
+| GET | `/api/fund-discovery/reports` | 最近 30 条推荐报告 |
+| GET | `/api/fund-discovery/reports/{id}` | 推荐报告详情 |
+| DELETE | `/api/fund-discovery/reports/{id}` | 删除推荐报告 |
+| GET | `/api/fund-discovery/reports/{id}/markdown` | 导出 Markdown |
+| GET | `/api/fund-discovery/reports/{id}/chat` | 推荐报告追问历史 |
+| POST | `/api/fund-discovery/reports/{id}/chat` | SSE 流式追问（body: `{ message, chat_mode }`） |
 | GET | `/api/reports` | 最近 50 条 |
 | GET | `/api/reports/{id}` | 详情 |
 | DELETE | `/api/reports/{id}` | 删除 |
@@ -333,7 +370,11 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | **FundRecommendation** | action、amount_*、news_bullish/bearish、points |
 | **NewsItem** | topic、title、is_today |
 | **Report** | 含 `fund_recommendations`、`market_news`、`topic_briefs`、`analysis_facts`；`market_context` 保留字段恒 `[]` |
-| **AnalysisRequest** | holdings、profile、ocr_text、**analysis_mode** |
+| **AnalysisRequest** | holdings、profile、ocr_text、**analysis_mode**、**system_role_prompt**（可选，≤4000 字；缺省用 `DEFAULT_ROLE_PROMPT`） |
+| **AnalysisPromptConfig** | `role_prompt`、`is_custom`、`default_role_prompt`；持久化 `analysis_prompt_state` 按 `userId` |
+| **DiscoveryRequest** | `profile`、`analysis_mode`、`focus_sectors`（≤3）、`budget_yuan`、`holdings` |
+| **DiscoveryRecommendation** | `action`、`suggested_amount_yuan`、`hold_horizon`、`confidence`、`points`、`risks` |
+| **FundDiscoveryReport** | 推荐报告；含 `candidate_pool`、`discovery_facts`、`recommendations`；表 `fund_discovery_reports` |
 | **ChatMessage** | report_id、role、content |
 | **ReportChatRequest** | message、**chat_mode**（fast \| deep） |
 
@@ -383,7 +424,7 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | `holding_return_percent` | 持有收益率；OCR 多为**昨日结算**；净值公布后展示层用含当日总值 |
 | `estimated_daily_return_percent` | 无 `daily_return_percent` 时 ≈ `sector_return_percent + holding_return_percent`（估算） |
 
-实现：`holding_estimates.py`（展示层收益计算）、`holding_metrics.py`（报告语义）、`holdingMetrics.ts`（前端镜像）；`deepseek_client._user_payload` 含 `holding_return_semantics`。
+实现：`holding_estimates.py`（展示层收益计算）、`holding_metrics.py`（报告语义）、`holdingMetrics.ts`（前端镜像）；喂模型 user JSON 经 `analysis_payload.build_user_payload()` 含 `holding_return_semantics`（`HOLDING_RETURN_SEMANTICS` 四字段时间义）。
 
 ### 净值走势摘要（传给 DeepSeek，非完整 K 线）
 
@@ -395,7 +436,9 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | `recent_5d_change_percent` | 近 5 交易日涨跌 |
 | `distance_from_high_percent` / `distance_from_low_percent` | 距区间高/低点 |
 | `trend_label` | 区间 + 近 5 日综合标签（如「区间震荡，近5日走弱」） |
-| `recent_nav_series` | 最近若干日 `date` + `nav` 采样（默认 8 点） |
+| `recent_nav_series` | 最近若干日 `date` + `nav` 采样（默认 8 点；**喂模型时 cap 5 点**） |
+| `recent_5d_daily_change_percent` | 近 5 交易日逐日涨跌幅数组（仅 `for_llm`） |
+| `sector_fund_gap_percent` | 基金当日涨跌 − 板块涨跌（背离度，仅 `for_llm`） |
 
 配置：`FUND_AI_NAV_TREND_DAYS`（默认 66）、`FUND_AI_NAV_TREND_RECENT_SAMPLE`（默认 8）。前端 `GET /api/fund-profiles/{code}/nav-history` 仍用于完整折线图，与 AI 摘要独立。
 
@@ -440,10 +483,44 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 
 ## 新闻与 DeepSeek
 
+### 日报 Prompt 分层
+
+生成日报时 DeepSeek **system** 消息由多层拼接，避免用户角色设定与工程约束冲突：
+
+| 层级 | 来源 | 内容 |
+|------|------|------|
+| **角色设定** | `AnalysisRequest.system_role_prompt` 或 `analysis_prompt.DEFAULT_ROLE_PROMPT`；Web「AI 角色设定」可编辑 | 投顾人设、任务边界（**仅已有持仓、不荐新基**）、数据口径（板块/持有收益/估算）、反幻觉（`fund_code`/`fund_name` 须来自 `holdings`） |
+| **系统后缀** | `deepseek_client._system_prompt()` + `OUTPUT_REQUIREMENTS_SYSTEM` | 当前时间戳、新闻/Tool 规则、`decision_style` 稳健/战术、`prompt_tuning` 动态提示、完整 JSON 输出约束 |
+| **用户消息** | `analysis_payload.build_user_payload()` | 见下表「喂模型 user JSON」 |
+
+**分工约定：** 风险偏好、浮亏线、期望投入等数值走 `profile`（高级设置滑条），**不要**写进角色 Prompt；荐新基、宽基/行业配仓规划为**未来独立 Tab**，与日报角色 Prompt 分离。
+
+默认角色模板见 `apps/api/app/services/analysis_prompt.py` 中 `DEFAULT_ROLE_PROMPT`。
+
 - **数据源（`FUND_AI_NEWS_SOURCES`）：** `eastmoney`（东财 `stock_news_em`）、`announcement`（基金公告）、`macro`（宏观主题，默认「上证指数」）。
 - **预取：** `NewsService.prefetch_for_holdings` → `market_news`（标题 + ≤200 字 snippet + 链接）。
 - **按主题摘要：** `news_summarizer.summarize_all_topics`（Flash，每主题 1 次）→ `topic_briefs`；失败 → `rule-fallback`；关闭：`FUND_AI_NEWS_SUMMARIZE=false`。
-- **喂模型：** `_user_payload` 含 `topic_briefs` + `prefetched_news`；`news_citation` 校验利好/利空须命中原文标题或 `source_titles`。
+- **喂模型（user JSON）：** `build_user_payload()` 结构如下；**落库报告**仍用 `_compose_analysis_facts()` 全量事实，不经 slim。
+
+| 字段 | 说明 |
+|------|------|
+| `today` | 分析日期 ISO |
+| `profile` | 精简风控（`decision_style`、`prefer_dca`、`avoid_chasing`、浮亏/集中度/期望投入） |
+| `holding_return_semantics` | 板块/持有收益/当日/估算四字段时间义 |
+| `analysis_facts` | 系统只读事实（`trim_analysis_facts_for_llm` 按模式裁剪） |
+| `news_titles` | 可引用标题列表：优先当日，不足 12 条回填近几日；合并 `topic_briefs.source_titles`；含 `is_today` |
+| `topic_briefs` | 按主题摘要；fast 模式省略 `source_urls` |
+| `requirements` | 6 条精简提醒（完整规则在 system） |
+
+**`analysis_facts` 裁剪规则（phase 3）：**
+
+| 条件 | 裁剪 |
+|------|------|
+| 全部模式 | 持仓去掉 `management_fee`/`fund_scale_yi`/`fund_type`；`news.topics` 去掉；`nav_trend` 去 `source`、`recent_nav_series` cap 5 |
+| `decision_style=conservative` | 去掉 `market_flow`、`signal_backtest`（持仓级与组合级）、`prompt_tuning`；**保留**精简 `sector_intraday`（4 字段） |
+| `analysis_mode=fast` | 再去 `portfolio_trend`；`topic_briefs` 为 minimal |
+
+- **引用校验：** `news_citation` 守卫用完整 `market_news` 列表校验 `news_bullish`/`news_bearish`，不依赖 slim 后的 `news_titles`。
 - **Tool：** 仅深度模式且 `news_tool_max_rounds > 0` 时注册 `fetch_market_news`（默认最多 3 轮）；Tool 补拉后 `merge_topic_briefs` 增量摘要。
 - **缓存：** `news_cache` 表按 `topic+date` 同日复用。
 - **兜底：** JSON 解析失败 → `_offline_report` + `recommendations.enrich_*`。
@@ -452,11 +529,11 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 
 ## 前端要点
 
-- **今日 / 生成日报 Tab：** 账户汇总看板 vs 交易日历+风控画像+`ReportPanel`。
+- **今日 / 生成日报 Tab：** 持有看板 vs 交易日历 + **AI 角色设定** + 风控画像 + `ReportPanel`。
 - **认证：** `AuthProvider` 注入 JWT；未登录访问受保护页会跳转 `/login`；`apiFetch` 自动带 `Authorization: Bearer`。
 - **用户菜单：** 历史日报（含 `HistoryRail`、SQLite 备份）、**账号设置**（`/settings` 绑定微信）；未绑微信时显示角标；持仓元数据由 OCR 自动维护，无独立档案页。
-- **分析：** `ReportPanel` + `JobStatusFloat` 异步轮询。
-- **偏好：** `lib/storage.ts`（profile 缓存、analysisMode、sectorAutoRefresh）；风控画像主存 SQLite `PUT /api/investor-profile`。
+- **分析：** `ReportPanel` + `JobStatusFloat` 异步轮询；提交时携带 `system_role_prompt`。
+- **偏好：** `lib/storage.ts`（profile、**analysisPrompt** 缓存、analysisMode、sectorAutoRefresh）；风控与角色 Prompt 主存 SQLite（`investor_profile_state` / `analysis_prompt_state`）。
 
 ---
 
@@ -526,7 +603,7 @@ bash scripts/dev.sh    # 或 scripts/dev.ps1
 ```
 
 ```bash
-cd apps/api && ./.venv/Scripts/python.exe -m pytest tests -q   # 当前 302 项
+cd apps/api && ./.venv/Scripts/python.exe -m pytest tests -q   # 当前 356 项
 cd apps/web && npm run lint && npm run typecheck && npm run build
 cd apps/web && npm run test:e2e   # Playwright 冒烟
 ```
@@ -547,6 +624,9 @@ cd apps/web && npm run test:e2e   # Playwright 冒烟
 10. 改持有金额同步：`holding_amount_sync.py` → `portfolio_persistence.py` / `overview_pipeline.py` / `portfolio_holdings_service.py` → `holding_estimates.py` → `tests/test_holding_amount_sync.py`。
 11. 改风控画像/期望投入：`models.py` `InvestorProfile` → `database.py` / `main.py` `/api/investor-profile` → `risk.py` / `analysis_facts.py` → `RiskControls.tsx` / `storage.ts` → `tests/test_api.py` `test_investor_profile_persistence`。
 12. 改账户汇总展示：`holdingMetrics.ts` `displayableHoldings` → `YangjibaoHoldingsBoard.tsx` → `Dashboard.tsx`（日报直接喂 `displayableHoldings`）。
+13. 改日报角色 Prompt：`analysis_prompt.py` `DEFAULT_ROLE_PROMPT` → `deepseek_client._system_prompt` → `models.py` `AnalysisRequest.system_role_prompt` → `database.py` `analysis_prompt_state` → `main.py` `/api/analysis-prompt` → `RiskControls.tsx` / `storage.ts` / `api.ts` → `tests/test_analysis_prompt.py`、`tests/test_api.py` `test_analysis_prompt_persistence`。
+14. 改喂模型数据包：`analysis_payload.py` `build_user_payload` / `compact_news_titles` / `trim_analysis_facts_for_llm` → `analysis_facts.py`（`for_llm`、`sector_fund_gap_percent`）→ `nav_trend_summary.py` → `deepseek_client._generate_with_tools`（`append_output_requirements_to_system`）→ `tests/test_analysis_payload.py`；体积对比 `scripts/compare_analysis_payload.py`；报告质量 A/B `scripts/ab_compare_reports.py`（输出 `data/ab_report_compare.json`）。
+15. 改推荐基金：`discovery_pipeline.py` → `discovery_candidate_pool.py` / `discovery_guard.py` / `discovery_client.py` → `main.py` `/api/fund-discovery/*` → `FundDiscoveryPanel.tsx` / `api.ts` → `tests/test_discovery_*.py`；设计见 `docs/superpowers/specs/2026-06-13-fund-discovery-design.md`。
 
 ---
 

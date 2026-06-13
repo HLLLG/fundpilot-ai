@@ -5,7 +5,7 @@ import sqlite3
 from datetime import datetime, timezone
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 5
 
 
 def _now() -> str:
@@ -249,6 +249,75 @@ def _migrate_fund_primary_sectors(connection: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_analysis_prompt_state(connection: sqlite3.Connection) -> None:
+    if _table_exists(connection, "analysis_prompt_state"):
+        return
+    connection.execute(
+        """
+        CREATE TABLE analysis_prompt_state (
+            userId INTEGER NOT NULL PRIMARY KEY,
+            role_prompt TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+
+
+def _migrate_discovery_tables(connection: sqlite3.Connection) -> None:
+    if not _table_exists(connection, "fund_discovery_reports"):
+        connection.execute(
+            """
+            CREATE TABLE fund_discovery_reports (
+                id TEXT PRIMARY KEY,
+                created_at TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                userId INTEGER NOT NULL DEFAULT 1
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_fund_discovery_reports_user_created
+            ON fund_discovery_reports (userId, created_at DESC)
+            """
+        )
+    if not _table_exists(connection, "discovery_jobs"):
+        connection.execute(
+            """
+            CREATE TABLE discovery_jobs (
+                id TEXT PRIMARY KEY,
+                status TEXT NOT NULL,
+                request_payload TEXT NOT NULL,
+                discovery_report_id TEXT,
+                error TEXT,
+                stage TEXT,
+                stage_label TEXT,
+                userId INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+    if not _table_exists(connection, "discovery_chat_messages"):
+        connection.execute(
+            """
+            CREATE TABLE discovery_chat_messages (
+                id TEXT PRIMARY KEY,
+                discovery_report_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_discovery_chat_report_id
+            ON discovery_chat_messages (discovery_report_id, created_at)
+            """
+        )
+
+
 def run_migrations(connection: sqlite3.Connection) -> None:
     version = _get_schema_version(connection)
     if version >= SCHEMA_VERSION:
@@ -303,6 +372,8 @@ def run_migrations(connection: sqlite3.Connection) -> None:
         _migrate_reports(connection)
     _migrate_analysis_jobs(connection)
     _migrate_fund_primary_sectors(connection)
+    _migrate_analysis_prompt_state(connection)
+    _migrate_discovery_tables(connection)
 
     _ensure_migration_user(connection)
     _set_schema_version(connection, SCHEMA_VERSION)

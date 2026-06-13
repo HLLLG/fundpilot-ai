@@ -1,9 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronDown, ShieldCheck, SlidersHorizontal } from "lucide-react";
+import { ChevronDown, RotateCcw, ShieldCheck, SlidersHorizontal, Sparkles } from "lucide-react";
 import type { AnalysisMode, DecisionStyle, InvestorProfile } from "@/lib/api";
 import { AnalysisModeToggle } from "@/components/AnalysisModeToggle";
+import { RolePromptEditor } from "@/components/RolePromptEditor";
 import { StatusPill } from "@/components/StatusPill";
 
 const EXPECTED_INVESTMENT_MIN = 10_000;
@@ -30,8 +31,12 @@ function profileSummary(profile: InvestorProfile): string {
 type RiskControlsProps = {
   profile: InvestorProfile;
   analysisMode: AnalysisMode;
+  rolePrompt: string;
+  isRolePromptCustom: boolean;
   onAnalysisModeChange: (mode: AnalysisMode) => void;
   onChange: (profile: InvestorProfile) => void;
+  onRolePromptChange: (value: string) => void;
+  onRolePromptReset: () => void;
   onAnalyze: () => void;
   isBusy: boolean;
   ocrWarningCount?: number;
@@ -41,8 +46,12 @@ type RiskControlsProps = {
 export function RiskControls({
   profile,
   analysisMode,
+  rolePrompt,
+  isRolePromptCustom,
   onAnalysisModeChange,
   onChange,
+  onRolePromptChange,
+  onRolePromptReset,
   onAnalyze,
   isBusy,
   ocrWarningCount = 0,
@@ -63,6 +72,28 @@ export function RiskControls({
       </div>
 
       <AnalysisModeToggle mode={analysisMode} onChange={onAnalysisModeChange} compact />
+
+      <div className="mt-4 overflow-hidden rounded-xl border border-slate-100">
+        <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-3 py-2.5">
+          <div className="flex items-center gap-2">
+            <Sparkles size={15} className="text-violet-600" />
+            <span className="text-xs font-bold text-slate-700">AI 角色设定</span>
+          </div>
+          {isRolePromptCustom ? (
+            <button
+              type="button"
+              onClick={onRolePromptReset}
+              className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-bold text-slate-600 transition hover:bg-slate-50"
+            >
+              <RotateCcw size={12} />
+              恢复默认
+            </button>
+          ) : (
+            <span className="text-[11px] font-semibold text-slate-400">默认模板</span>
+          )}
+        </div>
+        <RolePromptEditor value={rolePrompt} onChange={onRolePromptChange} />
+      </div>
 
       {ocrWarningCount > 0 ? (
         <p className="mt-3 rounded-xl border border-amber-100 bg-amber-50 px-3 py-2 text-xs font-semibold leading-5 text-amber-900">

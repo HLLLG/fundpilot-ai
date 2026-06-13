@@ -41,6 +41,19 @@ def holding_daily_return_is_estimated(holding: Holding) -> bool:
     )
 
 
+def compute_sector_fund_gap_percent(holding: Holding) -> float | None:
+    """板块涨跌与基金当日/估算涨跌之差（百分点），正数表示板块强于基金表现。"""
+    sector = holding.sector_return_percent
+    if sector is None:
+        return None
+    fund_daily = holding.daily_return_percent
+    if fund_daily is None:
+        fund_daily = compute_estimated_daily_return_percent(holding)
+    if fund_daily is None:
+        return None
+    return round(sector - fund_daily, 4)
+
+
 def holding_analysis_payload(holding: Holding) -> dict:
     estimated = compute_estimated_daily_return_percent(holding)
     payload = holding.model_dump()
