@@ -233,3 +233,65 @@ except Exception as e:
     except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError) as exc:
         logger.warning("akshare fund rank exception: %s", exc)
         return None
+
+
+def fetch_new_fund_offerings(*, limit: int = 300) -> list[dict] | None:
+    """新发/成立不久基金列表（东财 fund_new_found_em），子进程拉取。"""
+    cap = max(50, min(limit, 800))
+    script = f"""
+import akshare as ak
+import json
+try:
+    frame = ak.fund_new_found_em()
+    if frame is None or frame.empty:
+        print(json.dumps({{"error": "empty"}}))
+    else:
+        rows = []
+        for _, row in frame.head({cap}).iterrows():
+            code = str(row.get("基金代码", "")).strip().zfill(6)
+            name = str(row.get("基金简称", "")).strip()
+            if not code.isdigit() or len(code) != 6:
+                continue
+            established = row.get("成立日期")
+            if established is not None:
+                established = str(established)[:10]
+            status = str(row.get("申购状态", "")).strip()
+            if status and "开放" not in status and "申购" not in status:
+                continue
+            def _num(key):
+                raw = row.get(key)
+                if raw is None or str(raw).strip().lower() in ("", "nan", "--"):
+                    return None
+                try:
+                    return float(raw)
+                except (TypeError, ValueError):
+                    return None
+            rows.append({{
+                "fund_code": code,
+                "fund_name": name,
+                "established_date": established,
+                "return_since_issue_percent": _num("成立来涨幅"),
+                "fund_company": str(row.get("基金公司", "")).strip() or None,
+            }})
+        print(json.dumps({{"data": rows}}))
+except Exception as e:
+    print(json.dumps({{"error": str(e)}}))
+"""
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            timeout=_SUBPROCESS_TIMEOUT,
+            check=False,
+        )
+        if result.returncode != 0 or not result.stdout.strip():
+            logger.warning("akshare new fund subprocess failed: %s", result.stderr)
+            return None
+        output = json.loads(result.stdout.strip())
+        if output.get("error"):
+            return None
+        return output.get("data") or []
+    except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError) as exc:
+        logger.warning("akshare new fund exception: %s", exc)
+        return None

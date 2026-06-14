@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from app.database import list_fund_primary_sectors
 from app.models import Holding
+from app.services.discovery_selection_strategy import SelectionStrategy, pick_sector_candidates
 from app.services.fund_data import FundDataService
 from app.services.fund_primary_sector_service import GLOBAL_FUND_SECTOR_SEEDS
 from app.services.sector_canonical import get_canonical_sector
-from app.services.akshare_subprocess import fetch_open_fund_rank
+from app.services.akshare_subprocess import fetch_new_fund_offerings, fetch_open_fund_rank
 
 _POOL_CAP = 25
 _PER_SECTOR = 5
@@ -16,11 +17,18 @@ def build_candidate_pool(
     target_sectors: list[str],
     *,
     exclude_codes: set[str] | None = None,
+    fund_type_preference: str = "any",
+    selection_strategy: SelectionStrategy = "balanced",
     fetch_rank=fetch_open_fund_rank,
+    fetch_new_funds=fetch_new_fund_offerings,
 ) -> list[dict]:
     excluded = {code.strip().zfill(6) for code in (exclude_codes or set())}
     rank_rows = fetch_rank(limit=300) or []
     primary_rows = list_fund_primary_sectors()
+    new_issue_rows: list[dict] = []
+    if selection_strategy == "with_new_issue":
+        new_issue_rows = fetch_new_funds(limit=300) or []
+
     collected: list[dict] = []
     seen_codes: set[str] = set()
 
@@ -29,21 +37,19 @@ def build_candidate_pool(
             sector_label,
             rank_rows=rank_rows,
             primary_rows=primary_rows,
+            new_issue_rows=new_issue_rows,
             excluded=excluded,
             seen_codes=seen_codes,
+            fund_type_preference=fund_type_preference,
+            selection_strategy=selection_strategy,
         )
         collected.extend(sector_candidates[:_PER_SECTOR])
 
     if len(collected) < 3:
-        for row in rank_rows:
-            code = str(row.get("fund_code", "")).zfill(6)
-            if code in excluded or code in seen_codes:
-                continue
-            if not _passes_quality(row):
-                continue
-            entry = _entry_from_rank(row, sector_label="综合", selection_reason="排行补位")
+        fallback_ranked = rank_candidates_balanced_fallback(rank_rows, excluded, seen_codes, fund_type_preference)
+        for entry in fallback_ranked:
             collected.append(entry)
-            seen_codes.add(code)
+            seen_codes.add(str(entry.get("fund_code", "")).zfill(6))
             if len(collected) >= _POOL_CAP:
                 break
 
@@ -81,12 +87,15 @@ def _candidates_for_sector(
     *,
     rank_rows: list[dict],
     primary_rows: list[dict],
+    new_issue_rows: list[dict],
     excluded: set[str],
     seen_codes: set[str],
+    fund_type_preference: str = "any",
+    selection_strategy: SelectionStrategy = "balanced",
 ) -> list[dict]:
     canon = get_canonical_sector(sector_label)
     keywords = _sector_keywords(sector_label, canon)
-    results: list[dict] = []
+    fixed_entries: list[dict] = []
 
     for code, seed in GLOBAL_FUND_SECTOR_SEEDS.items():
         if seed.get("sector_name") != sector_label:
@@ -94,7 +103,7 @@ def _candidates_for_sector(
         normalized = code.zfill(6)
         if normalized in excluded or normalized in seen_codes:
             continue
-        results.append(
+        fixed_entries.append(
             {
                 "fund_code": normalized,
                 "fund_name": f"种子基金 {normalized}",
@@ -110,7 +119,7 @@ def _candidates_for_sector(
         code = str(row.get("fund_code", "")).zfill(6)
         if code in excluded or code in seen_codes:
             continue
-        results.append(
+        fixed_entries.append(
             {
                 "fund_code": code,
                 "fund_name": code,
@@ -120,7 +129,7 @@ def _candidates_for_sector(
         )
         seen_codes.add(code)
 
-    ranked: list[dict] = []
+    ranked_entries: list[dict] = []
     for row in rank_rows:
         code = str(row.get("fund_code", "")).zfill(6)
         if code in excluded or code in seen_codes:
@@ -130,15 +139,44 @@ def _candidates_for_sector(
             continue
         if not _passes_quality(row):
             continue
-        ranked.append(_entry_from_rank(row, sector_label=sector_label, selection_reason="排行筛选"))
-        seen_codes.add(code)
+        if not _matches_fund_type_preference(name, fund_type_preference):
+            continue
+        ranked_entries.append(_entry_from_rank(row, sector_label=sector_label, selection_reason="排行筛选"))
 
-    ranked.sort(
-        key=lambda item: item.get("return_1y_percent") or -999,
-        reverse=True,
+    return pick_sector_candidates(
+        sector_label=sector_label,
+        fixed_entries=fixed_entries,
+        ranked_entries=ranked_entries,
+        new_issue_rows=new_issue_rows,
+        keywords=keywords,
+        excluded=excluded,
+        seen_codes=seen_codes,
+        fund_type_preference=fund_type_preference,
+        selection_strategy=selection_strategy,
+        name_matches_sector=_name_matches_sector,
+        matches_fund_type=_matches_fund_type_preference,
     )
-    results.extend(ranked)
-    return results
+
+
+def rank_candidates_balanced_fallback(
+    rank_rows: list[dict],
+    excluded: set[str],
+    seen_codes: set[str],
+    fund_type_preference: str,
+) -> list[dict]:
+    from app.services.discovery_selection_strategy import rank_candidates_balanced
+
+    candidates: list[dict] = []
+    for row in rank_rows:
+        code = str(row.get("fund_code", "")).zfill(6)
+        if code in excluded or code in seen_codes:
+            continue
+        if not _passes_quality(row):
+            continue
+        if not _matches_fund_type_preference(str(row.get("fund_name", "")), fund_type_preference):
+            continue
+        candidates.append(_entry_from_rank(row, sector_label="综合", selection_reason="排行补位"))
+    return rank_candidates_balanced(candidates)
 
 
 def _entry_from_rank(row: dict, *, sector_label: str, selection_reason: str) -> dict:
@@ -148,6 +186,8 @@ def _entry_from_rank(row: dict, *, sector_label: str, selection_reason: str) -> 
         "sector_label": sector_label,
         "selection_reason": selection_reason,
         "return_1y_percent": row.get("return_1y_percent"),
+        "return_6m_percent": row.get("return_6m_percent"),
+        "return_3m_percent": row.get("return_3m_percent"),
         "max_drawdown_1y_percent": row.get("max_drawdown_1y_percent"),
         "fund_scale_yi": row.get("fund_scale_yi"),
     }
@@ -178,4 +218,24 @@ def _passes_quality(row: dict) -> bool:
     scale = row.get("fund_scale_yi")
     if scale is not None and float(scale) < _MIN_SCALE_YI:
         return False
+    return True
+
+
+def _is_etf_link_fund(name: str) -> bool:
+    text = name.strip()
+    return "联接" in text or "链接" in text or "ETF" in text.upper()
+
+
+def _is_c_class_fund(name: str) -> bool:
+    text = name.strip()
+    if "C类" in text or text.endswith("C"):
+        return True
+    return False
+
+
+def _matches_fund_type_preference(name: str, preference: str) -> bool:
+    if preference == "no_c_class":
+        return not _is_c_class_fund(name)
+    if preference == "etf_link":
+        return _is_etf_link_fund(name)
     return True

@@ -666,6 +666,50 @@ def save_analysis_role_prompt(role_prompt: str | None) -> str | None:
     return normalized
 
 
+def get_discovery_role_prompt() -> str | None:
+    user_id = _uid()
+    with _connect() as connection:
+        row = connection.execute(
+            "SELECT role_prompt FROM discovery_prompt_state WHERE userId = ?",
+            (user_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    value = row["role_prompt"]
+    return value if isinstance(value, str) and value.strip() else None
+
+
+def save_discovery_role_prompt(role_prompt: str | None) -> str | None:
+    from app.services.analysis_prompt import normalize_role_prompt
+
+    normalized = normalize_role_prompt(role_prompt)
+    user_id = _uid()
+    with _connect() as connection:
+        if normalized is None:
+            connection.execute(
+                "DELETE FROM discovery_prompt_state WHERE userId = ?",
+                (user_id,),
+            )
+        else:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO discovery_prompt_state (userId, role_prompt, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                """,
+                (user_id, normalized),
+            )
+        connection.commit()
+    return normalized
+
+
+def get_previous_discovery_report(report_id: str) -> dict[str, Any] | None:
+    reports = list_discovery_reports()
+    for index, report in enumerate(reports):
+        if report.get("id") == report_id and index + 1 < len(reports):
+            return reports[index + 1]
+    return None
+
+
 def get_portfolio_summary() -> PortfolioSummary | None:
     user_id = _uid()
     with _connect() as connection:

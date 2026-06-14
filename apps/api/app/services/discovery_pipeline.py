@@ -47,7 +47,12 @@ def run_discovery(
     held_codes = {h.fund_code.strip().zfill(6) for h in holdings if h.fund_code}
 
     progress("candidate_pool")
-    pool = build_candidate_pool(target_sectors, exclude_codes=held_codes)
+    pool = build_candidate_pool(
+        target_sectors,
+        exclude_codes=held_codes,
+        fund_type_preference=request.fund_type_preference,
+        selection_strategy=request.selection_strategy,
+    )
     pool = enrich_candidates(pool)
 
     progress("news")
@@ -56,7 +61,7 @@ def run_discovery(
     if not topics:
         topics = ["上证指数"]
     market_news = news_service.prefetch_topics(topics)
-    topic_briefs = summarize_all_topics(topics, market_news)
+    topic_briefs = summarize_all_topics(market_news)
 
     total_amount = sum(item.holding_amount for item in holdings) or 0.0
     denominator = resolve_weight_denominator(holdings, request.profile)
@@ -74,9 +79,11 @@ def run_discovery(
         market_news=market_news,
         topic_briefs=topic_briefs,
         budget_yuan=budget,
+        selection_strategy=request.selection_strategy,
     )
 
     progress("generating")
+    role_prompt = request.system_role_prompt
     report = DiscoveryClient().generate_report(
         target_sectors=target_sectors,
         focus_sectors=list(request.focus_sectors),
@@ -89,6 +96,7 @@ def run_discovery(
         market_news=market_news,
         topic_briefs=topic_briefs,
         analysis_mode=request.analysis_mode,
+        system_role_prompt=role_prompt,
     )
     progress("guarding")
     progress("saving")

@@ -291,12 +291,23 @@ class FundDiscoveryReport(BaseModel):
     analysis_mode: AnalysisMode = "deep"
 
 
+FundTypePreference = Literal["any", "etf_link", "no_c_class"]
+SelectionStrategy = Literal["balanced", "with_new_issue"]
+
+
+class DiscoveryPromptSaveRequest(BaseModel):
+    role_prompt: str | None = Field(default=None, max_length=4000)
+
+
 class DiscoveryRequest(BaseModel):
     profile: InvestorProfile
     analysis_mode: AnalysisMode = "deep"
     focus_sectors: list[str] = Field(default_factory=list, max_length=3)
     budget_yuan: float | None = None
     holdings: list[Holding] = Field(default_factory=list)
+    fund_type_preference: FundTypePreference = "any"
+    selection_strategy: SelectionStrategy = "balanced"
+    system_role_prompt: str | None = Field(default=None, max_length=4000)
 
 
 class DiscoveryChatMessage(BaseModel):

@@ -18,6 +18,7 @@ def build_discovery_facts(
     market_news: list[NewsItem] | None = None,
     topic_briefs: list[TopicBrief] | None = None,
     budget_yuan: float | None = None,
+    selection_strategy: str = "balanced",
 ) -> dict:
     total_amount = sum(item.holding_amount for item in holdings) or 0.0
     denominator = resolve_weight_denominator(holdings, profile)
@@ -54,6 +55,7 @@ def build_discovery_facts(
         "signal_backtest": signal_backtest,
         "news": build_news_pipeline_context(market_news, topic_briefs),
         "candidate_pool": candidate_pool,
+        "selection_strategy": selection_strategy,
     }
 
 

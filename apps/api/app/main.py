@@ -31,6 +31,8 @@ from app.database import (
     get_fund_profile_by_code,
     get_investor_profile,
     get_analysis_role_prompt,
+    get_discovery_role_prompt,
+    get_previous_discovery_report,
     get_previous_report,
     get_report,
     import_database_file,
@@ -38,6 +40,7 @@ from app.database import (
     list_discovery_reports,
     list_reports,
     save_analysis_role_prompt,
+    save_discovery_role_prompt,
     save_investor_profile,
 )
 from app.lifespan import app_lifespan
@@ -48,6 +51,7 @@ from app.models import (
     AnalysisRequest,
     ApplyHoldingsRequest,
     DiscoveryChatRequest,
+    DiscoveryPromptSaveRequest,
     DiscoveryRequest,
     Holding,
     HoldingDetailRequest,
@@ -68,10 +72,16 @@ from app.services.fund_code_resolver import reconcile_holding_fund_codes, search
 from app.services.portfolio_holdings_service import load_persisted_holdings
 from app.services.portfolio_persistence import enrich_loaded_holdings, persist_holdings_after_sector_refresh
 from app.services.portfolio_snapshot import build_dashboard_payload
-from app.services.job_store import create_analysis_job, get_job_response
-from app.services.discovery_job_store import create_discovery_job, get_discovery_job_response
+from app.services.job_status_service import resolve_job_status_single_connection
+from app.services.job_store import create_analysis_job
+from app.services.discovery_job_store import create_discovery_job
 from app.services.discovery_chat import stream_discovery_chat
 from app.services.discovery_export import discovery_report_to_markdown
+from app.services.discovery_diff import diff_discovery_reports
+from app.services.discovery_outcomes import (
+    build_discovery_outcomes,
+    build_discovery_recommendation_accuracy,
+)
 from app.services.discovery_sector_heat import build_sector_heat_ranking
 from app.services.ocr_pipeline import apply_confirmed_holdings, run_ocr_upload_pipeline
 from app.services.report_diff import diff_reports
@@ -97,6 +107,7 @@ from app.services.trading_session import build_trading_session
 settings = get_settings()
 app = FastAPI(title=settings.app_name, lifespan=app_lifespan)
 
+app.add_middleware(AuthMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,
@@ -104,7 +115,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-app.add_middleware(AuthMiddleware)
 
 
 @app.get("/health")
@@ -398,13 +408,7 @@ def analyze_async(request: AnalysisRequest) -> dict:
 
 @app.get("/api/jobs/{job_id}")
 def job_status(job_id: str) -> dict:
-    job = get_job_response(job_id)
-    if job is not None:
-        return job
-    discovery_job = get_discovery_job_response(job_id)
-    if discovery_job is None:
-        raise HTTPException(status_code=404, detail="任务不存在")
-    return discovery_job
+    return resolve_job_status_single_connection(job_id)
 
 
 @app.get("/api/fund-discovery/sectors")
@@ -439,6 +443,33 @@ def fund_discovery_report_delete(report_id: str) -> dict:
     if not delete_discovery_report(report_id):
         raise HTTPException(status_code=404, detail="报告不存在")
     return {"deleted": True}
+
+
+@app.get("/api/fund-discovery/reports/{report_id}/diff")
+def fund_discovery_report_diff(report_id: str) -> dict:
+    current = get_discovery_report(report_id)
+    if current is None:
+        raise HTTPException(status_code=404, detail="报告不存在")
+    previous = get_previous_discovery_report(report_id)
+    if previous is None:
+        return {"has_previous": False, "message": "暂无上一份推荐报告"}
+    return {"has_previous": True, **diff_discovery_reports(current, previous)}
+
+
+@app.get("/api/fund-discovery/reports/{report_id}/outcomes")
+def fund_discovery_report_outcomes(report_id: str, days: int = 7) -> dict:
+    report = get_discovery_report(report_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="报告不存在")
+    window = max(1, min(days, 60))
+    return build_discovery_outcomes(report, days=window)
+
+
+@app.get("/api/fund-discovery/recommendation-accuracy")
+def fund_discovery_recommendation_accuracy(days: int = 30) -> dict:
+    window = max(7, min(days, 90))
+    reports = list_discovery_reports(limit=30)
+    return build_discovery_recommendation_accuracy(reports, days=window)
 
 
 @app.get("/api/fund-discovery/reports/{report_id}/markdown")
@@ -871,6 +902,21 @@ def analysis_prompt_put(body: AnalysisPromptSaveRequest) -> dict:
     from app.services.analysis_prompt import build_prompt_config
 
     saved = save_analysis_role_prompt(body.role_prompt)
+    return build_prompt_config(saved).model_dump()
+
+
+@app.get("/api/discovery-prompt")
+def discovery_prompt_get() -> dict:
+    from app.services.discovery_prompt import build_prompt_config
+
+    return build_prompt_config(get_discovery_role_prompt()).model_dump()
+
+
+@app.put("/api/discovery-prompt")
+def discovery_prompt_put(body: DiscoveryPromptSaveRequest) -> dict:
+    from app.services.discovery_prompt import build_prompt_config
+
+    saved = save_discovery_role_prompt(body.role_prompt)
     return build_prompt_config(saved).model_dump()
 
 

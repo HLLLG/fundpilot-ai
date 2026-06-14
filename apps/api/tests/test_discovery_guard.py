@@ -22,6 +22,33 @@ def test_discovery_guard_rejects_pool_outsider():
     assert any("池外" in line for line in caveats)
 
 
+def test_discovery_guard_avoid_chasing_high_1y():
+    rec = DiscoveryRecommendation(
+        fund_code="519674",
+        fund_name="银河创新成长",
+        sector_name="半导体",
+        action="分批买入",
+    )
+    pool = [
+        {
+            "fund_code": "519674",
+            "fund_name": "银河创新成长",
+            "return_1y_percent": 120.0,
+            "nav_trend": {"distance_from_high_percent": -2.0},
+        }
+    ]
+    profile = InvestorProfile(avoid_chasing=True)
+    guarded, _ = apply_discovery_guards(
+        [rec],
+        candidate_pool=pool,
+        held_codes=set(),
+        profile=profile,
+        budget_yuan=10000,
+        sector_heat=[],
+    )
+    assert guarded[0].action == "等待回调"
+
+
 def test_discovery_guard_avoid_chasing():
     rec = DiscoveryRecommendation(
         fund_code="519674",

@@ -88,6 +88,13 @@ def ensure_mysql_schema(connection: Any) -> None:
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """,
         """
+        CREATE TABLE IF NOT EXISTS discovery_prompt_state (
+            userId BIGINT PRIMARY KEY,
+            role_prompt LONGTEXT NOT NULL,
+            updated_at VARCHAR(64) NOT NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """,
+        """
         CREATE TABLE IF NOT EXISTS sector_mappings (
             userId BIGINT NOT NULL,
             sector_label VARCHAR(255) NOT NULL,

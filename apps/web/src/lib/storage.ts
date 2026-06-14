@@ -1,7 +1,8 @@
-import type { AnalysisPromptConfig, InvestorProfile } from "@/lib/api";
+import type { AnalysisPromptConfig, DiscoveryPromptConfig, InvestorProfile } from "@/lib/api";
 
 const PROFILE_KEY = "fundpilot-investor-profile";
 const ANALYSIS_PROMPT_KEY = "fundpilot-analysis-prompt";
+const DISCOVERY_PROMPT_KEY = "fundpilot-discovery-prompt";
 const MODE_KEY = "fundpilot-analysis-mode";
 const CHAT_MODE_KEY = "fundpilot-report-chat-mode";
 
@@ -101,6 +102,50 @@ export function saveAnalysisPrompt(config: AnalysisPromptConfig) {
     return;
   }
   window.localStorage.setItem(ANALYSIS_PROMPT_KEY, JSON.stringify(config));
+}
+
+export function loadDiscoveryPrompt(
+  fallback: Pick<DiscoveryPromptConfig, "role_prompt" | "default_role_prompt">,
+): DiscoveryPromptConfig {
+  if (typeof window === "undefined") {
+    return {
+      role_prompt: fallback.role_prompt,
+      is_custom: false,
+      default_role_prompt: fallback.default_role_prompt,
+    };
+  }
+  try {
+    const raw = window.localStorage.getItem(DISCOVERY_PROMPT_KEY);
+    if (!raw) {
+      return {
+        role_prompt: fallback.role_prompt,
+        is_custom: false,
+        default_role_prompt: fallback.default_role_prompt,
+      };
+    }
+    const parsed = JSON.parse(raw) as Partial<DiscoveryPromptConfig>;
+    const rolePrompt = parsed.role_prompt?.trim() || fallback.role_prompt;
+    const defaultRolePrompt =
+      parsed.default_role_prompt?.trim() || fallback.default_role_prompt;
+    return {
+      role_prompt: rolePrompt,
+      is_custom: Boolean(parsed.is_custom),
+      default_role_prompt: defaultRolePrompt,
+    };
+  } catch {
+    return {
+      role_prompt: fallback.role_prompt,
+      is_custom: false,
+      default_role_prompt: fallback.default_role_prompt,
+    };
+  }
+}
+
+export function saveDiscoveryPrompt(config: DiscoveryPromptConfig) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.localStorage.setItem(DISCOVERY_PROMPT_KEY, JSON.stringify(config));
 }
 
 export function loadAnalysisMode(fallback: AnalysisMode = "deep"): AnalysisMode {

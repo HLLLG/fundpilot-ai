@@ -79,7 +79,9 @@ def _open_mysql() -> DbConnection:
 
     settings = get_settings()
     assert settings.database_url
-    conn = pymysql.connect(**_parse_mysql_url(settings.database_url))
+    conn = pymysql.connect(
+        **(_parse_mysql_url(settings.database_url) | {"connect_timeout": 10, "read_timeout": 30, "write_timeout": 30}),
+    )
     ensure_mysql_schema(conn)
     return DbConnection(conn, "mysql")
 

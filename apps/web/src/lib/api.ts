@@ -380,6 +380,44 @@ export type DiscoveryRecommendation = {
   news_bullish?: string[];
 };
 
+export type FundTypePreference = "any" | "etf_link" | "no_c_class";
+
+export type SelectionStrategy = "balanced" | "with_new_issue";
+
+export type DiscoveryPromptConfig = {
+  role_prompt: string;
+  is_custom: boolean;
+  default_role_prompt: string;
+};
+
+export type DiscoveryCandidatePoolItem = {
+  fund_code: string;
+  fund_name: string;
+  sector_label?: string;
+  selection_reason?: string;
+  return_1y_percent?: number | null;
+  return_3m_percent?: number | null;
+  return_6m_percent?: number | null;
+  fund_scale_yi?: number | null;
+  is_new_issue?: boolean;
+};
+
+export type DiscoveryOutcomeItem = {
+  fund_code: string;
+  fund_name: string;
+  action: string;
+  period_change_percent?: number | null;
+  direction_aligned?: boolean;
+  assessment?: string;
+};
+
+export type DiscoveryOutcomesPayload = {
+  has_data: boolean;
+  days?: number;
+  message: string;
+  items: DiscoveryOutcomeItem[];
+};
+
 export type FundDiscoveryReport = {
   id: string;
   created_at: string;
@@ -388,6 +426,7 @@ export type FundDiscoveryReport = {
   market_view?: string;
   focus_sectors: string[];
   target_sectors: string[];
+  candidate_pool?: DiscoveryCandidatePoolItem[];
   recommendations: DiscoveryRecommendation[];
   caveats: string[];
   provider: string;
@@ -774,6 +813,9 @@ export async function startDiscoveryJob(
     analysisMode?: AnalysisMode;
     focusSectors?: string[];
     budgetYuan?: number | null;
+    fundTypePreference?: FundTypePreference;
+    selectionStrategy?: SelectionStrategy;
+    systemRolePrompt?: string | null;
   },
 ): Promise<string> {
   const response = await apiFetch(`${API_BASE}/api/fund-discovery/async`, {
@@ -785,6 +827,9 @@ export async function startDiscoveryJob(
       analysis_mode: options?.analysisMode ?? "deep",
       focus_sectors: options?.focusSectors ?? [],
       budget_yuan: options?.budgetYuan ?? null,
+      fund_type_preference: options?.fundTypePreference ?? "any",
+      selection_strategy: options?.selectionStrategy ?? "balanced",
+      system_role_prompt: options?.systemRolePrompt ?? null,
     }),
   });
   if (!response.ok) {
@@ -796,6 +841,74 @@ export async function startDiscoveryJob(
 
 export async function listDiscoveryReports(): Promise<FundDiscoveryReport[]> {
   const response = await apiFetch(`${API_BASE}/api/fund-discovery/reports`, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export async function deleteDiscoveryReport(reportId: string): Promise<void> {
+  const response = await apiFetch(`${API_BASE}/api/fund-discovery/reports/${reportId}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+}
+
+export async function fetchDiscoveryReportDiff(reportId: string): Promise<Record<string, unknown>> {
+  const response = await apiFetch(`${API_BASE}/api/fund-discovery/reports/${reportId}/diff`, {
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export async function fetchDiscoveryOutcomes(
+  reportId: string,
+  days = 7,
+): Promise<DiscoveryOutcomesPayload> {
+  const response = await apiFetch(
+    `${API_BASE}/api/fund-discovery/reports/${reportId}/outcomes?days=${days}`,
+    { cache: "no-store" },
+  );
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export async function fetchDiscoveryRecommendationAccuracy(
+  days = 30,
+): Promise<Record<string, unknown>> {
+  const response = await apiFetch(
+    `${API_BASE}/api/fund-discovery/recommendation-accuracy?days=${days}`,
+    { cache: "no-store" },
+  );
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export async function fetchDiscoveryPrompt(): Promise<DiscoveryPromptConfig> {
+  const response = await apiFetch(`${API_BASE}/api/discovery-prompt`, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export async function saveDiscoveryPromptRemote(
+  rolePrompt: string | null,
+): Promise<DiscoveryPromptConfig> {
+  const response = await apiFetch(`${API_BASE}/api/discovery-prompt`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ role_prompt: rolePrompt }),
+  });
   if (!response.ok) {
     throw new Error(await response.text());
   }

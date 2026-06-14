@@ -33,10 +33,12 @@ export function DiscoveryJobStatusFloat({
     setStageLabel("排队中…");
 
     let cancelled = false;
+    let transientFailures = 0;
     const poll = async () => {
       while (!cancelled) {
         try {
           const job = await fetchAnalysisJob(jobId);
+          transientFailures = 0;
           if (cancelled) return;
           if (job.stage_label) setStageLabel(job.stage_label);
           if (job.status === "completed" && job.discovery_report) {
@@ -51,6 +53,12 @@ export function DiscoveryJobStatusFloat({
           }
         } catch (err: unknown) {
           if (cancelled) return;
+          transientFailures += 1;
+          if (transientFailures < 8) {
+            setStageLabel("连接波动，正在重试…");
+            await new Promise((resolve) => setTimeout(resolve, 2000));
+            continue;
+          }
           setError(err instanceof Error ? err.message : "扫描失败，请重试。");
           setState("failed");
           return;

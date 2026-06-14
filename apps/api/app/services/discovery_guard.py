@@ -16,6 +16,9 @@ def apply_discovery_guards(
     topic_briefs: list[TopicBrief] | None = None,
 ) -> tuple[list[DiscoveryRecommendation], list[str]]:
     allowed_codes = {str(item.get("fund_code", "")).zfill(6) for item in candidate_pool}
+    pool_by_code = {
+        str(item.get("fund_code", "")).zfill(6): item for item in candidate_pool
+    }
     heat_by_sector = {
         str(row.get("sector_label", "")): row.get("change_1d_percent")
         for row in sector_heat
@@ -40,6 +43,22 @@ def apply_discovery_guards(
                 copy.action = "等待回调"
                 copy.points = list(copy.points) + [
                     f"板块当日 {sector_move:+.2f}% 偏热，拒绝追高模式下建议等待回调。"
+                ]
+
+        if profile.avoid_chasing and copy.action == "分批买入":
+            pool_item = pool_by_code.get(code, {})
+            r1y = pool_item.get("return_1y_percent")
+            nav_trend = pool_item.get("nav_trend") or {}
+            dist_high = nav_trend.get("distance_from_high_percent")
+            if r1y is not None and float(r1y) >= 100.0:
+                copy.action = "等待回调"
+                copy.points = list(copy.points) + [
+                    f"近1年涨幅 {float(r1y):+.1f}% 偏高，拒绝追高模式下建议等待回调。"
+                ]
+            elif dist_high is not None and float(dist_high) > -5.0:
+                copy.action = "等待回调"
+                copy.points = list(copy.points) + [
+                    f"净值距区间高点仅 {float(dist_high):+.1f}%，短线追高风险偏高。"
                 ]
 
         max_single = budget_yuan * profile.concentration_limit_percent / 100

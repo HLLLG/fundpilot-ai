@@ -1,5 +1,38 @@
 from app.models import Holding
-from app.services.discovery_candidate_pool import build_candidate_pool
+from app.services.discovery_candidate_pool import _matches_fund_type_preference, build_candidate_pool
+
+
+def test_build_candidate_pool_balanced_prefers_moderate_1y(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.discovery_candidate_pool.list_fund_primary_sectors",
+        lambda: [],
+    )
+    rank_rows = [
+        {
+            "fund_code": "000001",
+            "fund_name": "热门半导体A",
+            "return_1y_percent": 150.0,
+            "return_6m_percent": 40.0,
+            "return_3m_percent": 10.0,
+            "fund_scale_yi": 50.0,
+        },
+        {
+            "fund_code": "000002",
+            "fund_name": "稳健半导体B",
+            "return_1y_percent": 35.0,
+            "return_6m_percent": 28.0,
+            "return_3m_percent": 18.0,
+            "fund_scale_yi": 50.0,
+        },
+    ]
+    pool = build_candidate_pool(
+        ["半导体"],
+        exclude_codes=set(),
+        selection_strategy="balanced",
+        fetch_rank=lambda **kwargs: rank_rows,
+    )
+    codes = [item["fund_code"] for item in pool if item.get("selection_reason") == "排行筛选"]
+    assert codes and codes[0] == "000002"
 
 
 def test_build_candidate_pool_excludes_held_codes(monkeypatch):
@@ -59,3 +92,10 @@ def test_build_candidate_pool_uses_seed(monkeypatch):
     )
     codes = {item["fund_code"] for item in pool}
     assert "519674" in codes
+
+
+def test_matches_fund_type_preference():
+    assert _matches_fund_type_preference("华夏半导体ETF联接A", "etf_link") is True
+    assert _matches_fund_type_preference("华夏半导体ETF联接A", "no_c_class") is True
+    assert _matches_fund_type_preference("某某成长混合C", "no_c_class") is False
+    assert _matches_fund_type_preference("某某成长混合A", "any") is True

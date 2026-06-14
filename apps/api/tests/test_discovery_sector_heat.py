@@ -11,7 +11,19 @@ def test_select_target_sectors_prioritizes_focus():
     assert sectors[0] == "商业航天"
 
 
-def test_build_sector_heat_ranking_with_mock_series(monkeypatch):
+def test_build_sector_heat_ranking_with_close_percent_only(monkeypatch):
+    from app.services import discovery_sector_heat as module
+
+    monkeypatch.setattr(module, "fetch_eastmoney_daily_kline_series", lambda *_a, **_k: [])
+    rows = module.build_sector_heat_ranking(
+        fetch_close_percent=lambda *_a, **_k: 1.5,
+        fetch_series=lambda *_a, **_k: [],
+    )
+    assert rows
+    assert rows[0]["change_1d_percent"] == 1.5
+    assert rows[0]["heat_score"] == 1.5
+
+
     from app.services import discovery_sector_heat as module
 
     def fake_series(_secid, **kwargs):
@@ -21,7 +33,13 @@ def test_build_sector_heat_ranking_with_mock_series(monkeypatch):
             {"date": "2026-06-11", "change_percent": 2.0},
         ]
 
+    def fake_close_percent(_secid, **kwargs):
+        return 2.0
+
     monkeypatch.setattr(module, "fetch_eastmoney_daily_kline_series", fake_series)
-    rows = module.build_sector_heat_ranking(fetch_series=fake_series)
+    rows = module.build_sector_heat_ranking(
+        fetch_close_percent=fake_close_percent,
+        fetch_series=fake_series,
+    )
     assert rows
     assert "sector_label" in rows[0]

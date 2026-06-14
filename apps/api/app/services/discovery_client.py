@@ -18,7 +18,7 @@ from app.services.deepseek_client import _parse_model_json
 from app.services.discovery_guard import apply_discovery_guards
 from app.services.discovery_offline import build_offline_discovery_report
 from app.services.discovery_payload import append_output_requirements_to_system, build_user_payload
-from app.services.discovery_prompt import DEFAULT_DISCOVERY_ROLE_PROMPT
+from app.services.discovery_prompt import DEFAULT_DISCOVERY_ROLE_PROMPT, resolve_discovery_role_prompt
 
 _DISCLAIMER = "仅供参考，不构成投资建议；基金有风险，决策需结合自身承受能力。"
 
@@ -41,6 +41,7 @@ class DiscoveryClient:
         market_news: list[NewsItem] | None = None,
         topic_briefs: list[TopicBrief] | None = None,
         analysis_mode: str = "deep",
+        system_role_prompt: str | None = None,
     ) -> FundDiscoveryReport:
         if not self.settings.deepseek_api_key:
             return build_offline_discovery_report(
@@ -59,7 +60,7 @@ class DiscoveryClient:
             focus_sectors=focus_sectors,
         )
         system_prompt = append_output_requirements_to_system(
-            self._system_prompt(runtime.news_tool_max_rounds > 0)
+            self._system_prompt(runtime.news_tool_max_rounds > 0, system_role_prompt)
         )
         parsed = self._call_model(system_prompt, user_payload, runtime.model)
         recommendations = _parse_recommendations(parsed.get("recommendations"))
@@ -92,10 +93,11 @@ class DiscoveryClient:
             analysis_mode=analysis_mode,  # type: ignore[arg-type]
         )
 
-    def _system_prompt(self, news_tool_enabled: bool) -> str:
+    def _system_prompt(self, news_tool_enabled: bool, role_prompt: str | None = None) -> str:
         now = datetime.now().strftime("%Y-%m-%d %H:%M")
+        base_role = resolve_discovery_role_prompt(role_prompt)
         base = (
-            f"{DEFAULT_DISCOVERY_ROLE_PROMPT}\n\n当前时间：{now}。"
+            f"{base_role}\n\n当前时间：{now}。"
             "你只能提供个人研究与风险提示，不能承诺收益。"
         )
         if news_tool_enabled:

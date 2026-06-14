@@ -439,6 +439,23 @@ def test_analysis_prompt_persistence(tmp_path, monkeypatch):
     assert reset.json()["role_prompt"] == default_prompt
 
 
+def test_discovery_prompt_persistence(tmp_path, monkeypatch):
+    client = auth_client_for_db(monkeypatch, tmp_path / "discovery_prompt.db")
+
+    missing = client.get("/api/discovery-prompt")
+    assert missing.status_code == 200
+    assert missing.json()["is_custom"] is False
+    default_prompt = missing.json()["default_role_prompt"]
+    assert "candidate_pool" in default_prompt
+
+    saved = client.put("/api/discovery-prompt", json={"role_prompt": "我是自定义荐基角色。"})
+    assert saved.status_code == 200
+    assert saved.json()["is_custom"] is True
+
+    loaded = client.get("/api/discovery-prompt")
+    assert loaded.json()["role_prompt"] == "我是自定义荐基角色。"
+
+
 def test_database_export_and_import(tmp_path, monkeypatch):
     monkeypatch.setenv("FUND_AI_DEEPSEEK_API_KEY", "")
     refresh_settings()
@@ -574,7 +591,7 @@ def test_fund_discovery_async_offline(client, monkeypatch):
     )
     monkeypatch.setattr(
         "app.services.discovery_pipeline.summarize_all_topics",
-        lambda topics, news: [],
+        lambda news, settings=None: [],
     )
     monkeypatch.setattr(
         "app.services.discovery_client.get_settings",

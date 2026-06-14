@@ -5,7 +5,7 @@ import sqlite3
 from datetime import datetime, timezone
 
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 def _now() -> str:
@@ -318,6 +318,20 @@ def _migrate_discovery_tables(connection: sqlite3.Connection) -> None:
         )
 
 
+def _migrate_discovery_prompt_state(connection: sqlite3.Connection) -> None:
+    if _table_exists(connection, "discovery_prompt_state"):
+        return
+    connection.execute(
+        """
+        CREATE TABLE discovery_prompt_state (
+            userId INTEGER NOT NULL PRIMARY KEY,
+            role_prompt TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+
+
 def run_migrations(connection: sqlite3.Connection) -> None:
     version = _get_schema_version(connection)
     if version >= SCHEMA_VERSION:
@@ -374,6 +388,7 @@ def run_migrations(connection: sqlite3.Connection) -> None:
     _migrate_fund_primary_sectors(connection)
     _migrate_analysis_prompt_state(connection)
     _migrate_discovery_tables(connection)
+    _migrate_discovery_prompt_state(connection)
 
     _ensure_migration_user(connection)
     _set_schema_version(connection, SCHEMA_VERSION)
