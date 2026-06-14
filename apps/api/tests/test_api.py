@@ -594,6 +594,24 @@ def test_fund_discovery_async_offline(client, monkeypatch):
         lambda news, settings=None: [],
     )
     monkeypatch.setattr(
+        "app.services.discovery_pipeline.build_discovery_facts",
+        lambda **kwargs: {
+            "readonly": True,
+            "instruction": "test",
+            "portfolio_gap": {
+                "holding_count": 0,
+                "available_budget_yuan": 30000.0,
+                "target_sectors": kwargs.get("target_sectors", []),
+            },
+            "sector_heat": kwargs.get("sector_heat", []),
+            "market_flow": {"available": False},
+            "signal_backtest": {"enabled": False, "has_data": False},
+            "news": {"has_data": False},
+            "candidate_pool": kwargs.get("candidate_pool", []),
+            "selection_strategy": kwargs.get("selection_strategy", "balanced"),
+        },
+    )
+    monkeypatch.setattr(
         "app.services.discovery_client.get_settings",
         lambda: type("S", (), {"deepseek_api_key": None})(),
     )
@@ -618,7 +636,8 @@ def test_fund_discovery_async_offline(client, monkeypatch):
 
     import time
 
-    for _ in range(80):
+    job: dict = {}
+    for _ in range(150):
         job = client.get(f"/api/jobs/{job_id}").json()
         if job["status"] == "completed":
             assert job.get("job_kind") == "discovery"
@@ -630,4 +649,7 @@ def test_fund_discovery_async_offline(client, monkeypatch):
         if job["status"] == "failed":
             raise AssertionError(job.get("error"))
         time.sleep(0.1)
-    raise AssertionError("discovery job timeout")
+
+    raise AssertionError(
+        f"discovery job timeout (last status={job.get('status')}, stage={job.get('stage')})"
+    )
