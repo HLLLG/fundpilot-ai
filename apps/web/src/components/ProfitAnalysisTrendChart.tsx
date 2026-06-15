@@ -5,6 +5,8 @@ import type { ProfitTrend } from "@/lib/api";
 import { clockToSessionRatio } from "@/lib/intradayChartTime";
 
 const INDEX_COLOR = "#5B8DEF";
+const AXIS_FONT_SIZE = 10;
+const AXIS_LABEL_CLASS = "fill-slate-400 tabular-nums";
 
 type ProfitAnalysisTrendChartProps = {
   trend: ProfitTrend | null | undefined;
@@ -103,7 +105,7 @@ export function ProfitAnalysisTrendChart({ trend, height = 200 }: ProfitAnalysis
     const { min, max } = computeAxisBounds(axisValues);
     const yTickValues = buildYTicks(min, max);
     const leftPad = leftPaddingForLabels(Math.max(Math.abs(min), Math.abs(max)));
-    const padding = { top: 12, right: 10, bottom: 22, left: leftPad };
+    const padding = { top: 12, right: 10, bottom: 14, left: leftPad };
     const width = 360 + (leftPad - 46);
     const chartWidth = width - padding.left - padding.right;
     const chartHeight = height - padding.top - padding.bottom;
@@ -201,7 +203,7 @@ export function ProfitAnalysisTrendChart({ trend, height = 200 }: ProfitAnalysis
   const active = hoverIndex != null ? chart.coords[hoverIndex] : chart.coords[chart.coords.length - 1];
 
   return (
-    <div ref={containerRef} className="relative w-full select-none">
+    <div className="relative w-full select-none">
       <svg
         viewBox={`0 0 ${chart.width} ${chart.height}`}
         className="w-full overflow-visible"
@@ -250,8 +252,8 @@ export function ProfitAnalysisTrendChart({ trend, height = 200 }: ProfitAnalysis
               x={chart.plotLeft - 8}
               y={tick.y + 3}
               textAnchor="end"
-              className="fill-slate-400 tabular-nums"
-              style={{ fontSize: 8.5, fontWeight: 600 }}
+              className={AXIS_LABEL_CLASS}
+              style={{ fontSize: AXIS_FONT_SIZE, fontWeight: 600 }}
             >
               {tick.label}
             </text>
@@ -322,13 +324,58 @@ export function ProfitAnalysisTrendChart({ trend, height = 200 }: ProfitAnalysis
           }}
           onMouseLeave={() => setHoverIndex(null)}
         />
-      </svg>
 
-      <div className="mt-1 flex justify-between px-1 text-[10px] font-semibold tabular-nums text-slate-400">
-        {chart.xLabels.map((label) => (
-          <span key={label}>{label}</span>
-        ))}
-      </div>
+        {trend?.kind === "intraday" ? (
+          <>
+            <text
+              x={chart.plotLeft}
+              y={chart.height - 4}
+              className={AXIS_LABEL_CLASS}
+              style={{ fontSize: AXIS_FONT_SIZE, fontWeight: 600 }}
+            >
+              09:30
+            </text>
+            <text
+              x={chart.plotLeft + chart.chartWidth / 2}
+              y={chart.height - 4}
+              textAnchor="middle"
+              className={AXIS_LABEL_CLASS}
+              style={{ fontSize: AXIS_FONT_SIZE, fontWeight: 600 }}
+            >
+              11:30/13:00
+            </text>
+            <text
+              x={chart.plotRight}
+              y={chart.height - 4}
+              textAnchor="end"
+              className={AXIS_LABEL_CLASS}
+              style={{ fontSize: AXIS_FONT_SIZE, fontWeight: 600 }}
+            >
+              15:00
+            </text>
+          </>
+        ) : (
+          <>
+            <text
+              x={chart.plotLeft}
+              y={chart.height - 4}
+              className={AXIS_LABEL_CLASS}
+              style={{ fontSize: AXIS_FONT_SIZE, fontWeight: 600 }}
+            >
+              {chart.xLabels[0]}
+            </text>
+            <text
+              x={chart.plotRight}
+              y={chart.height - 4}
+              textAnchor="end"
+              className={AXIS_LABEL_CLASS}
+              style={{ fontSize: AXIS_FONT_SIZE, fontWeight: 600 }}
+            >
+              {chart.xLabels[chart.xLabels.length - 1]}
+            </text>
+          </>
+        )}
+      </svg>
 
       {hoverIndex != null && active ? (
         <div className="pointer-events-none absolute left-1/2 top-2 -translate-x-1/2 rounded-lg border border-slate-200/80 bg-white/95 px-2.5 py-1.5 text-[11px] font-bold shadow-sm backdrop-blur-sm">
