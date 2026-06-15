@@ -130,14 +130,25 @@ def blend_portfolio_intraday(
         )
 
     index_points, *_ = fetch_sector_intraday("index", "上证指数")
-    index_map = {str(point["time"]): float(point["percent"]) for point in index_points}
-    for row in portfolio_rows:
-        time_key = str(row["time"])
-        row["index_percent"] = index_map.get(time_key)
-        if row["index_percent"] is None:
-            row["index_percent"] = round(_percent_at_time(index_map, time_key), 4) if index_map else None
+    return _merge_index_intraday(portfolio_rows, index_points)
 
-    return portfolio_rows
+
+def _merge_index_intraday(
+    portfolio_rows: list[dict[str, float | str | None]],
+    index_points: list[dict],
+) -> list[dict[str, float | str | None]]:
+    if not portfolio_rows:
+        return portfolio_rows
+    index_map = {str(point["time"]): float(point["percent"]) for point in index_points}
+    merged: list[dict[str, float | str | None]] = []
+    for row in portfolio_rows:
+        copy = dict(row)
+        time_key = str(copy.get("time") or "")
+        copy["index_percent"] = index_map.get(time_key)
+        if copy["index_percent"] is None and index_map:
+            copy["index_percent"] = round(_percent_at_time(index_map, time_key), 4)
+        merged.append(copy)
+    return merged
 
 
 def persist_intraday_curve(
@@ -160,7 +171,8 @@ def load_or_build_intraday_curve(
     trade_date = get_effective_trade_date(session_kind=session["session_kind"])
     cached = get_portfolio_intraday_curve(trade_date)
     if cached and len(cached) >= 2:
-        return cached, trade_date
+        index_points, *_ = fetch_sector_intraday("index", "上证指数")
+        return _merge_index_intraday(cached, index_points), trade_date
     points = blend_portfolio_intraday(holdings, profiles_by_code)
     if points:
         save_portfolio_intraday_curve(trade_date, points)

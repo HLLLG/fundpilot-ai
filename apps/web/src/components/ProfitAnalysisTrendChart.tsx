@@ -29,10 +29,11 @@ function formatAxisLabel(value: number) {
   return `${rounded > 0 ? "+" : ""}${rounded.toFixed(2)}%`;
 }
 
-/** 按「我的收益」极值非对称定轴：亏得多向下扩，赚得多向上扩，步长对齐 0.75。 */
-function computePortfolioAxisBounds(portfolioValues: number[], step: number = Y_AXIS_STEP) {
-  const dataMin = portfolioValues.length ? Math.min(...portfolioValues, 0) : -step;
-  const dataMax = portfolioValues.length ? Math.max(...portfolioValues, 0) : step;
+/** 按组合收益 + 上证曲线极值非对称定轴，避免指数线被裁切。 */
+function computeAxisBounds(values: number[], step: number = Y_AXIS_STEP) {
+  const safeValues = values.length ? values : [0];
+  const dataMin = Math.min(...safeValues, 0);
+  const dataMax = Math.max(...safeValues, 0);
 
   const downExtent = Math.abs(Math.min(dataMin, 0));
   const upExtent = Math.max(dataMax, 0);
@@ -96,7 +97,11 @@ export function ProfitAnalysisTrendChart({ trend, height = 200 }: ProfitAnalysis
     }
 
     const portfolioValues = points.map((point) => point.portfolio_percent ?? 0);
-    const { min, max } = computePortfolioAxisBounds(portfolioValues);
+    const indexValues = points
+      .map((point) => point.index_percent)
+      .filter((value): value is number => value != null && !Number.isNaN(value));
+    const axisValues = [...portfolioValues, ...indexValues];
+    const { min, max } = computeAxisBounds(axisValues);
     const yTickValues = buildYTicks(min, max);
     const leftPad = leftPaddingForLabels(Math.max(Math.abs(min), Math.abs(max)));
     const padding = { top: 12, right: 10, bottom: 22, left: leftPad };
@@ -202,6 +207,15 @@ export function ProfitAnalysisTrendChart({ trend, height = 200 }: ProfitAnalysis
             <stop offset="0%" stopColor={chart.colors.fillStart} />
             <stop offset="100%" stopColor={chart.colors.fillEnd} />
           </linearGradient>
+          <clipPath id={`${gradientId}-plot`}>
+            <rect
+              x={chart.plotLeft}
+              y={chart.plotTop}
+              width={chart.chartWidth}
+              height={chart.plotBottom - chart.plotTop}
+              rx={4}
+            />
+          </clipPath>
         </defs>
 
         <rect
@@ -238,7 +252,7 @@ export function ProfitAnalysisTrendChart({ trend, height = 200 }: ProfitAnalysis
           </g>
         ))}
 
-        <path d={chart.portfolioArea} fill={`url(#${gradientId})`} />
+        <path d={chart.portfolioArea} fill={`url(#${gradientId})`} clipPath={`url(#${gradientId}-plot)`} />
         {chart.indexPath ? (
           <path
             d={chart.indexPath}
@@ -248,6 +262,7 @@ export function ProfitAnalysisTrendChart({ trend, height = 200 }: ProfitAnalysis
             strokeLinecap="round"
             strokeLinejoin="round"
             opacity={0.85}
+            clipPath={`url(#${gradientId}-plot)`}
           />
         ) : null}
         <path
@@ -257,6 +272,7 @@ export function ProfitAnalysisTrendChart({ trend, height = 200 }: ProfitAnalysis
           strokeWidth={1.1}
           strokeLinecap="round"
           strokeLinejoin="round"
+          clipPath={`url(#${gradientId}-plot)`}
         />
 
         {active ? (

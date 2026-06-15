@@ -20,6 +20,12 @@ def test_secid_candidates_puts_configured_secid_first():
     assert "0.930713" in candidates
 
 
+def test_secid_candidates_includes_shanghai_composite_prefix():
+    candidates = _secid_candidates("", "000001")
+    assert candidates[0] == "1.000001"
+    assert "2.000001" in candidates
+
+
 def test_parse_kline_day_close_percent_when_pre_k_price_zero_uses_row_change():
     payload = {
         "data": {

@@ -314,6 +314,10 @@ def _secid_candidates(secid: str, source_code: str | None) -> list[str]:
         # 页面 zz/2.{code} 与 unify/r/2.{code}；canonical 配置的 secid 优先
         if secid and "." in secid:
             ordered.append(secid)
+        if code.startswith("39"):
+            ordered.append(f"0.{code}")
+        elif code.startswith("000"):
+            ordered.append(f"1.{code}")
         for prefix in ("2", "0"):
             ordered.append(f"{prefix}.{code}")
     elif secid:

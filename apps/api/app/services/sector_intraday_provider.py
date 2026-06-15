@@ -212,13 +212,43 @@ def _should_fetch_intraday(session_kind: str) -> bool:
     }
 
 
+def _eastmoney_secid_for_index_symbol(symbol: str | None) -> str:
+    """东财分时 secid：上证/深证主流指数与 CSI 前缀不同。"""
+    code = (symbol or "").strip()
+    if not code:
+        return ""
+    mapping = {
+        "000001": "1.000001",
+        "000016": "1.000016",
+        "000300": "1.000300",
+        "000688": "1.000688",
+        "000905": "1.000905",
+        "000852": "1.000852",
+        "399001": "0.399001",
+        "399006": "0.399006",
+    }
+    if code in mapping:
+        return mapping[code]
+    if code.startswith("93"):
+        return f"2.{code}"
+    if code.startswith("39"):
+        return f"0.{code}"
+    if code.startswith("000"):
+        return f"1.{code}"
+    return ""
+
+
 def _fetch_index_intraday(source_name: str, *, trade_date: str | None = None) -> list[IntradayPoint]:
     canon = get_intraday_canonical_sector(source_name) or get_canonical_sector(source_name)
     symbol = (
         (canon.source_code if canon is not None else None)
         or _index_symbol_for_name(source_name)
     )
-    secid = canon.eastmoney_secid if canon is not None else ""
+    secid = (
+        (canon.eastmoney_secid if canon is not None else None)
+        or _eastmoney_secid_for_index_symbol(symbol)
+        or ""
+    )
     source_code = canon.source_code if canon is not None else symbol
 
     points = _fetch_intraday_minute_chain(
@@ -287,7 +317,9 @@ def _fetch_intraday_minute_chain(
                 if candidate_code.upper().startswith("BK"):
                     resolved_secid = f"90.{candidate_code}"
                 elif candidate_code.isdigit():
-                    resolved_secid = f"2.{candidate_code}"
+                    resolved_secid = _eastmoney_secid_for_index_symbol(candidate_code) or (
+                        f"2.{candidate_code}"
+                    )
             if resolved_secid:
                 points = fetch_intraday_via_browser_command(
                     resolved_secid,

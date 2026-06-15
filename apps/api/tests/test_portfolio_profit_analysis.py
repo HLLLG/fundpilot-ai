@@ -74,3 +74,39 @@ def test_summarize_trend_footer_alpha():
     }
     footer = summarize_trend_footer(trend, summary_daily_return=-1.25)
     assert footer["alpha_percent"] == -0.72
+
+
+def test_load_or_build_intraday_curve_refreshes_index_on_cache(monkeypatch):
+    from app.services.portfolio_profit_analysis import load_or_build_intraday_curve
+
+    monkeypatch.setattr(
+        "app.services.portfolio_profit_analysis.get_portfolio_intraday_curve",
+        lambda trade_date: [
+            {"time": "09:31", "portfolio_percent": 1.0, "index_percent": -0.9},
+            {"time": "15:00", "portfolio_percent": 2.0, "index_percent": -0.9},
+        ],
+    )
+    monkeypatch.setattr(
+        "app.services.portfolio_profit_analysis.fetch_sector_intraday",
+        lambda *args, **kwargs: (
+            [
+                {"time": "09:31", "percent": 0.5},
+                {"time": "15:00", "percent": 1.01},
+            ],
+            None,
+            "2026-06-14",
+            1.01,
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.portfolio_profit_analysis.build_trading_session",
+        lambda: {"session_kind": "trading_day_after_close"},
+    )
+    monkeypatch.setattr(
+        "app.services.portfolio_profit_analysis.get_effective_trade_date",
+        lambda **kwargs: "2026-06-14",
+    )
+
+    points, trade_date = load_or_build_intraday_curve([], {})
+    assert trade_date == "2026-06-14"
+    assert points[-1]["index_percent"] == 1.01
