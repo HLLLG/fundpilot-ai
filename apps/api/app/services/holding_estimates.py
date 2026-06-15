@@ -26,6 +26,28 @@ def resolve_intraday_return_percent(holding: Holding) -> float | None:
     return None
 
 
+def resolve_effective_holding_return_percent(holding: Holding) -> float:
+    """与前端 computeEstimatedHoldingReturnPercent 一致，供风控/分析/LLM 使用。"""
+    estimated = compute_estimated_holding_return_percent(holding)
+    if estimated is not None:
+        return float(estimated)
+    settled = resolve_holding_return_percent(holding)
+    if settled is not None:
+        return float(settled)
+    return float(holding.return_percent)
+
+
+def build_holding_display_metrics(holding: Holding) -> dict[str, float | bool | None]:
+    """界面「持有」列与 analysis_facts 共用口径。"""
+    settled = resolve_holding_return_percent(holding)
+    return {
+        "holding_return_percent_settled": settled if settled is not None else holding.return_percent,
+        "estimated_holding_return_percent": resolve_effective_holding_return_percent(holding),
+        "estimated_holding_profit": compute_holding_profit(holding),
+        "holding_return_is_estimated": holding_profit_is_estimated(holding),
+    }
+
+
 def compute_estimated_holding_return_percent(holding: Holding) -> float | None:
     """持有收益率：净值公布后 OCR 值为含当日总值；盘中为昨日结算 + 板块涨跌。"""
     holding = _repair_corrupted_settled_profit(holding)

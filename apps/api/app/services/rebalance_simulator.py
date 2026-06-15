@@ -22,16 +22,25 @@ def simulate_rebalance(
         amount_yuan = rec.amount_yuan if rec else None
         amount_note = rec.amount_note if rec else None
 
-        if amount_yuan is None and rec is None:
-            amount_yuan, amount_note = suggest_trade_amount(
+        if amount_yuan is None:
+            suggested_yuan, suggested_note = suggest_trade_amount(
                 holding,
                 weight,
                 weight_denominator,
                 request.profile,
                 action,
             )
+            if amount_yuan is None and suggested_yuan is not None:
+                amount_yuan = suggested_yuan
+            if amount_note is None and suggested_note is not None:
+                amount_note = suggested_note
 
-        delta = _delta_for_action(action, amount_yuan)
+        delta = _delta_for_action(
+            action,
+            amount_yuan,
+            weight_percent=weight,
+            concentration_limit=request.profile.concentration_limit_percent,
+        )
         new_amount = max(holding.holding_amount + delta, 0.0)
         simulated_total += new_amount
         rows.append(
@@ -65,12 +74,26 @@ def simulate_rebalance(
     }
 
 
-def _delta_for_action(action: str, amount_yuan: float | None) -> float:
+def _delta_for_action(
+    action: str,
+    amount_yuan: float | None,
+    *,
+    weight_percent: float | None = None,
+    concentration_limit: float | None = None,
+) -> float:
     amount = amount_yuan or 0.0
+    if amount <= 0:
+        return 0.0
     if any(token in action for token in ("减仓", "复核")):
         return -abs(amount)
     if any(token in action for token in ("加仓", "定投", "分批")):
         return abs(amount)
+    if (
+        weight_percent is not None
+        and concentration_limit is not None
+        and weight_percent > concentration_limit
+    ):
+        return -abs(amount)
     return 0.0
 
 

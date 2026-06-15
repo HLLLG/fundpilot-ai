@@ -8,16 +8,19 @@ HOLDING_RETURN_SEMANTICS: dict[str, str] = {
     ),
     "holding_return_percent": (
         "养基宝「持有收益」中的收益率：通常为昨日结算后的累计持有收益率，"
-        "不含今日盘中涨跌。"
+        "不含今日盘中涨跌；勿用于浮亏/风控判断。"
+    ),
+    "estimated_holding_return_percent": (
+        "与界面「持有」列一致：官方净值已公布时用结算持有收益率；"
+        "盘中/净值未公布时为昨日结算 + 板块涨跌估算。"
     ),
     "daily_return_percent": (
         "明确的当日基金收益率（OCR 有当日收益列或收盘后更新时才有）。"
         "有则优先使用，勿与估算值叠加。"
     ),
     "estimated_daily_return_percent": (
-        "当 daily_return_percent 为空时：estimated ≈ sector_return_percent + "
-        "holding_return_percent。板块涨跌与基金涨跌高度相关但非精确相等，"
-        "仅作收盘前决策的近似参考，须在分析中说明为估算。"
+        "当日基金涨跌：优先 daily_return_percent；否则用 sector_return_percent 估算。"
+        "勿与 estimated_holding_return_percent 混淆（后者为累计持有收益）。"
     ),
 }
 
@@ -55,8 +58,15 @@ def compute_sector_fund_gap_percent(holding: Holding) -> float | None:
 
 
 def holding_analysis_payload(holding: Holding) -> dict:
+    from app.services.holding_estimates import build_holding_display_metrics
+
     estimated = compute_estimated_daily_return_percent(holding)
+    display = build_holding_display_metrics(holding)
     payload = holding.model_dump()
     payload["estimated_daily_return_percent"] = estimated
     payload["daily_return_is_estimated"] = holding_daily_return_is_estimated(holding)
+    payload["holding_return_percent"] = display["holding_return_percent_settled"]
+    payload["estimated_holding_return_percent"] = display["estimated_holding_return_percent"]
+    payload["estimated_holding_profit"] = display["estimated_holding_profit"]
+    payload["holding_return_is_estimated"] = display["holding_return_is_estimated"]
     return payload

@@ -191,3 +191,29 @@ def test_build_analysis_facts_includes_news_freshness_and_momentum():
     )
     assert facts["news"]["today_items"] == 1
     assert facts["holdings"][0]["sector_momentum"] is not None
+
+
+def test_build_analysis_facts_aligns_estimated_holding_return_with_ui():
+    holdings = [
+        Holding(
+            fund_code="015945",
+            fund_name="易方达国防军工混合C",
+            holding_amount=815.57,
+            return_percent=-9.08,
+            holding_return_percent=-9.08,
+            holding_profit=-81.0,
+            sector_return_percent=2.48,
+            daily_return_percent=2.48,
+            daily_return_percent_source="sector_estimate",
+        )
+    ]
+    profile = InvestorProfile(max_drawdown_percent=8)
+    risk = evaluate_portfolio_risk(holdings, profile)
+    facts = build_analysis_facts(holdings, risk, [], profile)
+    row = facts["holdings"][0]
+
+    assert row["holding_return_percent"] == pytest.approx(-9.08)
+    assert row["estimated_holding_return_percent"] == pytest.approx(-6.6, abs=0.05)
+    assert row["holding_return_is_estimated"] is True
+    assert row["over_drawdown_limit"] is False
+    assert facts["portfolio"]["weighted_return_percent"] == pytest.approx(-6.6, abs=0.05)

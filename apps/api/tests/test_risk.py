@@ -1,3 +1,5 @@
+import pytest
+
 from app.models import Holding, InvestorProfile
 from app.services.risk import evaluate_portfolio_risk
 
@@ -79,3 +81,69 @@ def test_balanced_portfolio_returns_watch_action():
 
     assert result.level == "medium"
     assert result.suggested_action == "watch"
+
+
+def test_drawdown_uses_estimated_holding_return_with_sector_rebound():
+    """盘中反弹后：结算 -9.08% + 板块 +2.48% ≈ -6.60%，不应触发 8% 浮亏线。"""
+    profile = InvestorProfile(max_drawdown_percent=8)
+    holdings = [
+        Holding(
+            fund_code="015945",
+            fund_name="易方达国防军工混合C",
+            holding_amount=815.57,
+            return_percent=-9.08,
+            holding_return_percent=-9.08,
+            sector_return_percent=2.48,
+            daily_return_percent=2.48,
+            daily_return_percent_source="sector_estimate",
+        )
+    ]
+
+    result = evaluate_portfolio_risk(holdings, profile)
+
+    assert result.level == "medium"
+    assert result.weighted_return_percent == pytest.approx(-6.6, abs=0.05)
+    assert not any(alert.code == "MAX_DRAWDOWN" for alert in result.alerts)
+    assert not any(alert.code == "HOLDING_DRAWDOWN" for alert in result.alerts)
+
+
+def test_no_holding_drawdown_after_intraday_sector_rebound():
+    profile = InvestorProfile(max_drawdown_percent=8)
+    holdings = [
+        Holding(
+            fund_code="015945",
+            fund_name="易方达国防军工混合C",
+            holding_amount=815.57,
+            return_percent=-9.08,
+            holding_return_percent=-9.08,
+            sector_return_percent=2.48,
+            daily_return_percent=2.48,
+            daily_return_percent_source="sector_estimate",
+        )
+    ]
+
+    result = evaluate_portfolio_risk(holdings, profile)
+
+    assert not any(alert.code == "HOLDING_DRAWDOWN" for alert in result.alerts)
+
+
+def test_holding_drawdown_alert_when_effective_return_breaches_limit():
+    profile = InvestorProfile(max_drawdown_percent=8)
+    holdings = [
+        Holding(
+            fund_code="015945",
+            fund_name="易方达国防军工混合C",
+            holding_amount=815.57,
+            return_percent=-9.08,
+            holding_return_percent=-9.08,
+            sector_return_percent=-0.5,
+            daily_return_percent=-0.5,
+            daily_return_percent_source="sector_estimate",
+        )
+    ]
+
+    result = evaluate_portfolio_risk(holdings, profile)
+
+    holding_alert = next(alert for alert in result.alerts if alert.code == "HOLDING_DRAWDOWN")
+    assert "易方达国防军工混合C" in holding_alert.message
+    assert "-9.58" in holding_alert.message or "-9.5" in holding_alert.message

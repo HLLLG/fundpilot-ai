@@ -592,9 +592,18 @@ def report_rebalance_simulation(report_id: str) -> dict:
     if not holdings_raw:
         raise HTTPException(status_code=400, detail="报告中无持仓数据")
 
+    portfolio = (report.get("analysis_facts") or {}).get("portfolio") or {}
+    profile = InvestorProfile(
+        concentration_limit_percent=float(
+            portfolio.get("concentration_limit_percent") or 35
+        ),
+        max_drawdown_percent=float(portfolio.get("max_drawdown_limit_percent") or 8),
+        expected_investment_amount=portfolio.get("expected_investment_amount"),
+    )
+
     request = AnalysisRequest(
         holdings=[Holding.model_validate(item) for item in holdings_raw],
-        profile=InvestorProfile(),
+        profile=profile,
     )
     recs = [
         FundRecommendation.model_validate(item)

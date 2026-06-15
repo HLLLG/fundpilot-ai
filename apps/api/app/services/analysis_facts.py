@@ -8,6 +8,7 @@ from app.models import (
     RiskAssessment,
     TopicBrief,
 )
+from app.services.holding_estimates import build_holding_display_metrics
 from app.services.holding_metrics import (
     compute_estimated_daily_return_percent,
     compute_sector_fund_gap_percent,
@@ -50,18 +51,23 @@ def build_analysis_facts(
     guard_policy = resolve_signal_guard_policy(holdings)
 
     per_fund: list[dict] = []
+    drawdown_limit = abs(profile.max_drawdown_percent)
     for holding in holdings:
         weight = holding_weight_percent(holding, holdings, profile)
         estimated_daily = compute_estimated_daily_return_percent(holding)
+        display = build_holding_display_metrics(holding)
+        effective_return = float(display["estimated_holding_return_percent"] or 0)
         snapshot = snapshot_by_code.get(holding.fund_code)
         row: dict = {
                 "fund_code": holding.fund_code,
                 "fund_name": holding.fund_name,
                 "holding_amount": round(holding.holding_amount, 2),
                 "weight_percent": round(weight, 2),
-                "holding_return_percent": holding.holding_return_percent
-                if holding.holding_return_percent is not None
-                else holding.return_percent,
+                "holding_return_percent": display["holding_return_percent_settled"],
+                "estimated_holding_return_percent": round(effective_return, 4),
+                "estimated_holding_profit": display["estimated_holding_profit"],
+                "holding_return_is_estimated": display["holding_return_is_estimated"],
+                "over_drawdown_limit": effective_return <= -drawdown_limit,
                 "sector_return_percent": holding.sector_return_percent,
                 "sector_return_percent_source": holding.sector_return_percent_source,
                 "daily_return_percent": holding.daily_return_percent,
@@ -96,7 +102,11 @@ def build_analysis_facts(
 
     facts: dict = {
         "readonly": True,
-        "instruction": "以下数字由系统计算，分析时不得改写；仅可基于它们做解释与建议。",
+        "instruction": (
+            "以下数字由系统计算，分析时不得改写；仅可基于它们做解释与建议。"
+            "浮亏/持有收益判断须用 estimated_holding_return_percent 与 portfolio.weighted_return_percent，"
+            "勿用 holding_return_percent（昨日结算）。"
+        ),
         "portfolio": {
             "total_amount": round(total_amount, 2),
             "weight_denominator": round(weight_denominator, 2),

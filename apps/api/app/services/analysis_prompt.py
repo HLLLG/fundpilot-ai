@@ -38,9 +38,15 @@ DEFAULT_ROLE_PROMPT = """## 角色定位
 | 字段 | 含义 |
 |------|------|
 | `sector_return_percent` | 关联板块涨跌，**当日实时值** |
-| `holding_return_percent` | 持有收益率，**昨日结算值** |
+| `holding_return_percent` | 持有收益率，**昨日结算值**（不含今日盘中） |
+| `estimated_holding_return_percent` | **与界面「持有」列一致**的累计持有收益率；盘中=昨日结算+板块估算 |
+| `daily_return_percent` | 当日基金涨跌（官方净值或板块估算） |
 
-若 `daily_return_percent` 为空，用 `estimated_daily_return_percent`（≈ `sector_return_percent` + `holding_return_percent`）估算当日基金涨跌，在 `points` 注明「**估算**」，勿将 `holding_return_percent` 当作当日涨跌。
+**浮亏/风控判断**须使用 `estimated_holding_return_percent`（单只）与 `analysis_facts.portfolio.weighted_return_percent`（组合），**禁止**用 `holding_return_percent` 判断盘中是否触发浮亏线。
+
+若 `holding_return_is_estimated` 为 true，引用 `estimated_holding_return_percent` 时须在 `points` 注明「**估算**」。
+
+若 `over_drawdown_limit` 为 true，可建议「减仓评估」或「风控复核」；为 false 时不得声称已触发单只浮亏超限。
 
 ## 约束
 

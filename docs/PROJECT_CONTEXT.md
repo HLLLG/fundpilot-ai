@@ -4,11 +4,13 @@
 >
 > **维护：** 功能或架构有实质变化时，同步更新「能力清单」「数据流」「API」「目录」「环境变量」。
 
-**文档版本：** 2026-06-15（全市场荐基 + 数据缓存 + JWT 30 天）
+**文档版本：** 2026-06-15（持有收益口径对齐 + 调仓示意修复）
 
 **更新记录：**
-- **推荐基金全市场扫描（2026-06-15）：** 板块库扩展至 **19 个**（互联网、有色金属、新能源车、医药、证券、银行、白酒、光伏、锂电池、消费电子、机器人、云计算、5G、医疗器械等）；`DiscoveryRequest.scan_mode`：`full_market`（默认，热度 Top 8 多板块横向对比）| `portfolio_gap`（持仓缺口补充）；`discovery_target_sectors.py` / `discovery_payload.py` / `FundDiscoveryPanel` 扫描模式切换。设计见 `docs/superpowers/specs/2026-06-15-fund-discovery-full-market-design.md`。
+- **调仓示意模拟修复（2026-06-15）：** `rebalance_simulator.py` 在报告未填 `amount_yuan` 时自动补算示意金额；超集中度「观察」也应用负变动；非集中度「减仓评估」按持仓 15% 给 fallback；`GET /api/reports/{id}/rebalance-simulation` 从 `analysis_facts.portfolio` 恢复集中度上限；前端 `RebalanceSimulationPanel` 展示 `amount_note`。
+- **日报持有收益口径对齐（2026-06-15）：** `analysis_facts` 新增 `estimated_holding_return_percent` / `estimated_holding_profit` / `over_drawdown_limit`，与前端「持有」列一致；组合/单只浮亏风控改用有效持有收益率（盘中含板块估算），不再误用昨日结算 `holding_return_percent`。
 - **数据缓存优化（2026-06-15）：** 前端 `clientCache.ts` + `useCachedFetch.ts`（SWR：盈亏分析 dashboard、业绩走势、持仓详情）；板块后台轮询改 `fast` 预算、手动刷新 `accurate`；分时图去掉无条件 forceRefresh；服务端指数日线 1h TTL、组合分时 fingerprint 并行、新闻盘中 15min 过期、信号回测 24h 缓存。设计见 `docs/superpowers/specs/2026-06-15-data-caching-optimization-design.md`。
+- **推荐基金全市场扫描（2026-06-15）：** 板块库扩展至 **19 个**；`DiscoveryRequest.scan_mode`：`full_market`（默认）| `portfolio_gap`；设计见 `docs/superpowers/specs/2026-06-15-fund-discovery-full-market-design.md`。
 - **JWT 登录有效期（2026-06-15）：** `FUND_AI_JWT_ACCESS_EXPIRE_MINUTES` 默认 **43200**（30 天）；前端 token 仍存 `localStorage`。
 - **推荐基金 V3 选基策略（2026-06-14）：** 扫描区新增 **选基策略**：`均衡潜力`（默认，综合近3/6月强弱、惩罚极端近1年涨幅）与 `含新发观察`（每板块约2只近6月新发 + 均衡老基）；`DiscoveryRequest.selection_strategy`；`discovery_selection_strategy.py` + `fetch_new_fund_offerings`；守卫在 `avoid_chasing` 时对近1年≥100%或贴近区间高点降档；候选池面板展示近3/6月与「新发」标记。设计见 `docs/superpowers/specs/2026-06-14-fund-discovery-v3-selection-strategy-design.md`。
 - **推荐基金 V2（2026-06-14）：** Tab 扩展：右侧 **历史推荐**（`DiscoveryHistoryRail`）；可编辑 **荐基 AI 角色设定**（`discovery_prompt_state`，schema v6，`GET/PUT /api/discovery-prompt`）；**基金类型偏好**（`any` / `etf_link` / `no_c_class`）；报告内 **候选池面板**、**7 日推荐复盘**（`DiscoveryOutcomesPanel`）；推荐卡片可打开 **基金详情预览**；`GET .../diff`、`GET .../outcomes`、`GET /api/fund-discovery/recommendation-accuracy`。设计见 `docs/superpowers/specs/2026-06-14-fund-discovery-v2-design.md`。
@@ -378,7 +380,7 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | GET | `/api/portfolio/dashboard` | 盈亏分析：`range` 为 today/week/month/year/all；可选 `calendar_year`、`calendar_month`；含 profit_trend、profit_calendar、daily_top5、持仓分布 |
 | DELETE | `/api/portfolio/snapshots` | 清除 `on_or_before`（含）及更早的日快照（运维/重置盈亏历史） |
 | GET | `/api/reports/{id}/outcomes` | 上一份日报建议复盘 |
-| GET | `/api/reports/{id}/rebalance-simulation` | 按报告示意金额模拟调仓 |
+| GET | `/api/reports/{id}/rebalance-simulation` | 按报告动作 + 示意金额模拟调仓（缺 `amount_yuan` 时自动补算；超集中度「观察」也会减） |
 
 前端封装：`apps/web/src/lib/api.ts`。
 
@@ -445,8 +447,9 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | `daily_return_percent_source` | `"sector_estimate"` 板块估算 / `"official_nav"` 官方净值 |
 | `daily_profit` | 当日收益额；官方净值时 `amount × r / (100 + r)`，盘中估算时 `amount × sector% / 100` |
 | `yesterday_profit` | 再上一交易日官方净值收益（或 OCR）；账户汇总「昨」行 |
-| `holding_return_percent` | 持有收益率；OCR 多为**昨日结算**；净值公布后展示层用含当日总值 |
-| `estimated_daily_return_percent` | 无 `daily_return_percent` 时 ≈ `sector_return_percent + holding_return_percent`（估算） |
+| `holding_return_percent` | 持有收益率；OCR 多为**昨日结算**（不含今日盘中） |
+| `estimated_holding_return_percent` | **与界面「持有」列一致**；盘中=昨日结算+板块估算；浮亏/风控判断用此字段 |
+| `estimated_daily_return_percent` | 当日基金涨跌：优先 `daily_return_percent`，否则 `sector_return_percent` 估算 |
 
 实现：`holding_estimates.py`（展示层收益计算）、`holding_metrics.py`（报告语义）、`holdingMetrics.ts`（前端镜像）；喂模型 user JSON 经 `analysis_payload.build_user_payload()` 含 `holding_return_semantics`（`HOLDING_RETURN_SEMANTICS` 四字段时间义）。
 

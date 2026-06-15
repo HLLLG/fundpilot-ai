@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.models import Holding, InvestorProfile, RiskAlert, RiskAssessment
+from app.services.holding_estimates import resolve_effective_holding_return_percent
 
 
 def resolve_weight_denominator(
@@ -41,9 +42,25 @@ def evaluate_portfolio_risk(
                 code="MAX_DRAWDOWN",
                 severity="high",
                 message=f"组合浮亏 {weighted_return:.2f}% 已触及 {profile.max_drawdown_percent:.1f}% 风险复核线。",
-                evidence="按当前录入持仓金额加权计算。",
+                evidence="按持仓金额加权，使用与界面一致的估算持有收益率。",
             )
         )
+
+    drawdown_limit = abs(profile.max_drawdown_percent)
+    for holding in holdings:
+        effective_return = resolve_effective_holding_return_percent(holding)
+        if effective_return <= -drawdown_limit:
+            alerts.append(
+                RiskAlert(
+                    code="HOLDING_DRAWDOWN",
+                    severity="medium",
+                    message=(
+                        f"{holding.fund_name} 估算持有收益 {effective_return:.2f}% 已触及"
+                        f" {profile.max_drawdown_percent:.1f}% 单只浮亏复核线。"
+                    ),
+                    evidence="与界面「持有」列一致（盘中含板块估算）。",
+                )
+            )
 
     if weight_denominator > 0:
         for holding in holdings:
@@ -97,5 +114,6 @@ def _weighted_return_percent(holdings: list[Holding], total_amount: float) -> fl
     if total_amount <= 0:
         return 0
     return sum(
-        holding.holding_amount * holding.return_percent for holding in holdings
+        holding.holding_amount * resolve_effective_holding_return_percent(holding)
+        for holding in holdings
     ) / total_amount

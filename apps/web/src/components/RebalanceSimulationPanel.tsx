@@ -56,8 +56,15 @@ export function RebalanceSimulationPanel({
                 <td className="px-3 py-2 font-semibold">{row.fund_name}</td>
                 <td className="px-3 py-2">{row.action}</td>
                 <td className="px-3 py-2">
-                  {row.delta_yuan > 0 ? "+" : ""}
-                  {row.delta_yuan.toLocaleString("zh-CN")}
+                  <div>
+                    {row.delta_yuan > 0 ? "+" : ""}
+                    {row.delta_yuan.toLocaleString("zh-CN")}
+                  </div>
+                  {row.amount_note ? (
+                    <div className="mt-0.5 max-w-[12rem] text-[10px] leading-4 text-slate-400">
+                      {row.amount_note}
+                    </div>
+                  ) : null}
                 </td>
                 <td className="px-3 py-2">{row.current_weight_percent}</td>
                 <td className="px-3 py-2">

@@ -6,24 +6,24 @@ from app.services.fund_data import FundDataService
 def test_get_nav_history_parses_akshare_frame(monkeypatch):
     # 生成90条交易日数据来匹配trading_days=90的默认值
     dates = pd.date_range("2025-12-01", periods=90, freq="B")
-    frame = pd.DataFrame(
+    payload = [
         {
-            "净值日期": dates,
-            "单位净值": [1.0 + index * 0.005 for index in range(90)],
-            "日增长率": [0.3] * 90,
+            "date": date.strftime("%Y-%m-%d"),
+            "nav": 1.0 + index * 0.005,
+            "daily_growth": 0.3,
         }
+        for index, date in enumerate(dates)
+    ]
+
+    def fake_fetch_fund_nav_history(fund_code: str, trading_days: int = 90):
+        assert fund_code == "008586"
+        assert trading_days == 90
+        return {"data": payload}
+
+    monkeypatch.setattr(
+        "app.services.akshare_subprocess.fetch_fund_nav_history",
+        fake_fetch_fund_nav_history,
     )
-
-    def fake_fund_open_fund_info_em(symbol: str, indicator: str):
-        assert symbol == "008586"
-        assert indicator == "单位净值走势"
-        return frame
-
-    import sys
-
-    fake_ak = type(sys)("akshare")
-    fake_ak.fund_open_fund_info_em = fake_fund_open_fund_info_em
-    monkeypatch.setitem(sys.modules, "akshare", fake_ak)
 
     history = FundDataService().get_nav_history("008586", "测试基金", trading_days=90)
     assert history.source == "akshare"

@@ -46,7 +46,7 @@ def suggest_trade_amount(
     if weight_denominator <= 0:
         return None, None
 
-    if "减仓" in action or weight_percent > limit:
+    if weight_percent > limit:
         target_value = weight_denominator * limit / 100
         reduce_yuan = holding.holding_amount - target_value
         if reduce_yuan >= 100:
@@ -54,6 +54,14 @@ def suggest_trade_amount(
             return rounded, (
                 f"减仓约 {rounded:,.0f} 元，可将占比从 {weight_percent:.1f}% "
                 f"降至约 {limit:.0f}% 以内（示意金额，请结合到账与费率调整）"
+            )
+
+    if "减仓" in action or "复核" in action:
+        partial = round(holding.holding_amount * 0.15, 0)
+        if partial >= 100:
+            return partial, (
+                f"示意减仓约 {partial:,.0f} 元（约为当前持仓 15%，"
+                "请结合浮亏、流动性与费率自行调整）"
             )
         return None, None
 
@@ -420,12 +428,14 @@ def enrich_fund_recommendations(
             copy.fund_code = holding.fund_code
             copy.fund_name = holding.fund_name
             weight = holding_weight_percent(holding, request.holdings, request.profile)
-            if copy.amount_yuan is None and copy.amount_note is None:
+            if copy.amount_yuan is None:
                 amount_yuan, amount_note = suggest_trade_amount(
                     holding, weight, weight_denominator, request.profile, copy.action
                 )
-                copy.amount_yuan = amount_yuan
-                copy.amount_note = amount_note
+                if copy.amount_yuan is None and amount_yuan is not None:
+                    copy.amount_yuan = amount_yuan
+                if copy.amount_note is None and amount_note is not None:
+                    copy.amount_note = amount_note
             if market_news and not copy.news_bullish and not copy.news_bearish:
                 if topic_briefs:
                     copy = attach_news_from_briefs(
