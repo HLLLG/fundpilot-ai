@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useMemo, useRef, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import type { ProfitTrend } from "@/lib/api";
 import { clockToSessionRatio } from "@/lib/intradayChartTime";
 
@@ -87,7 +87,6 @@ function portfolioColors(latest: number) {
 
 export function ProfitAnalysisTrendChart({ trend, height = 200 }: ProfitAnalysisTrendChartProps) {
   const gradientId = useId().replace(/:/g, "");
-  const containerRef = useRef<HTMLDivElement>(null);
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
 
   const chart = useMemo(() => {
@@ -117,13 +116,20 @@ export function ProfitAnalysisTrendChart({ trend, height = 200 }: ProfitAnalysis
     const toY = (percent: number) => plotBottom - ((percent - min) / range) * chartHeight;
 
     const coords = points.map((point, index) => {
+      const sessionRatio =
+        trend?.kind === "intraday"
+          ? clockToSessionRatio(point.time ?? "09:30")
+          : points.length > 1
+            ? index / (points.length - 1)
+            : 0;
       const x =
         trend?.kind === "intraday"
-          ? plotLeft + clockToSessionRatio(point.time ?? "09:30") * chartWidth
-          : plotLeft + (index / (points.length - 1)) * chartWidth;
+          ? plotLeft + sessionRatio * chartWidth
+          : plotLeft + sessionRatio * chartWidth;
       return {
         ...point,
         x,
+        sessionRatio,
         portfolioY: toY(point.portfolio_percent ?? 0),
         indexY: point.index_percent != null ? toY(point.index_percent) : null,
         index,
@@ -293,6 +299,29 @@ export function ProfitAnalysisTrendChart({ trend, height = 200 }: ProfitAnalysis
             ) : null}
           </>
         ) : null}
+
+        <rect
+          x={chart.plotLeft}
+          y={chart.plotTop}
+          width={chart.chartWidth}
+          height={chart.plotBottom - chart.plotTop}
+          fill="transparent"
+          onMouseMove={(event) => {
+            const rect = event.currentTarget.getBoundingClientRect();
+            const ratio = (event.clientX - rect.left) / rect.width;
+            let bestIndex = 0;
+            let bestDistance = Number.POSITIVE_INFINITY;
+            for (const point of chart.coords) {
+              const distance = Math.abs(point.sessionRatio - ratio);
+              if (distance < bestDistance) {
+                bestDistance = distance;
+                bestIndex = point.index;
+              }
+            }
+            setHoverIndex(bestIndex);
+          }}
+          onMouseLeave={() => setHoverIndex(null)}
+        />
       </svg>
 
       <div className="mt-1 flex justify-between px-1 text-[10px] font-semibold tabular-nums text-slate-400">
@@ -300,20 +329,6 @@ export function ProfitAnalysisTrendChart({ trend, height = 200 }: ProfitAnalysis
           <span key={label}>{label}</span>
         ))}
       </div>
-
-      <div
-        className="absolute inset-0 bottom-6"
-        onMouseLeave={() => setHoverIndex(null)}
-        onMouseMove={(event) => {
-          const rect = containerRef.current?.getBoundingClientRect();
-          if (!rect) {
-            return;
-          }
-          const ratio = (event.clientX - rect.left) / rect.width;
-          const index = Math.round(ratio * (chart.coords.length - 1));
-          setHoverIndex(Math.max(0, Math.min(chart.coords.length - 1, index)));
-        }}
-      />
 
       {hoverIndex != null && active ? (
         <div className="pointer-events-none absolute left-1/2 top-2 -translate-x-1/2 rounded-lg border border-slate-200/80 bg-white/95 px-2.5 py-1.5 text-[11px] font-bold shadow-sm backdrop-blur-sm">
