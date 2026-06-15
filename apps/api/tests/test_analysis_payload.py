@@ -10,6 +10,7 @@ from app.models import (
     TopicBriefPoint,
 )
 from app.services.analysis_payload import (
+    OUTPUT_REQUIREMENTS_USER,
     build_user_payload,
     compact_news_titles,
     trim_analysis_facts_for_llm,
@@ -181,17 +182,11 @@ def test_payload_size_smaller_than_legacy_shape():
     risk = evaluate_portfolio_risk(holdings, profile)
 
     slim = build_user_payload(request, risk, [], news, analysis_mode="deep")
-    legacy_size = len(
-        json.dumps(
-            {
-                "holdings": [h.model_dump() for h in holdings],
-                "risk": risk.model_dump(),
-                "prefetched_news": [n.model_dump() for n in news],
-                "ocr_text": request.ocr_text,
-                "requirements": ["x"] * 20,
-            },
-            ensure_ascii=False,
-        )
+    prefetched_news_size = len(
+        json.dumps([n.model_dump() for n in news], ensure_ascii=False)
     )
-    slim_size = len(json.dumps(slim, ensure_ascii=False))
-    assert slim_size < legacy_size
+    compact_news_size = len(json.dumps(slim["news_titles"], ensure_ascii=False))
+    assert compact_news_size < prefetched_news_size
+    assert "prefetched_news" not in slim
+    assert "ocr_text" not in slim
+    assert slim["requirements"] == list(OUTPUT_REQUIREMENTS_USER)

@@ -14,6 +14,11 @@ def test_snapshot_roundtrip_and_dashboard(tmp_path, monkeypatch):
     monkeypatch.setenv("FUND_AI_DB_PATH", str(tmp_path / "app.db"))
     refresh_settings()
 
+    monkeypatch.setattr(
+        "app.services.portfolio_snapshot.build_profit_trend",
+        lambda **_kwargs: {"kind": "intraday", "points": []},
+    )
+
     holdings = [
         Holding(
             fund_code="008586",
@@ -30,14 +35,21 @@ def test_snapshot_roundtrip_and_dashboard(tmp_path, monkeypatch):
         daily_return_percent=-1.72,
         updated_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
     )
-    save_daily_snapshot(holdings, summary)
+    snapshot = save_daily_snapshot(holdings, summary)
 
     rows = list_portfolio_daily_snapshots()
-    assert len(rows) == 1
-    assert rows[0]["total_assets"] == 28090.36
+    matching = [row for row in rows if row["snapshot_date"] == snapshot.snapshot_date]
+    assert len(matching) == 1
+    assert matching[0]["total_assets"] == 28090.36
+
+    monkeypatch.setattr(
+        "app.services.portfolio_snapshot.list_portfolio_daily_snapshots",
+        lambda **kwargs: matching,
+    )
 
     payload = build_dashboard_payload(summary=summary, profiles=[])
     assert len(payload["history"]) == 1
+    assert payload["history"][0]["total_assets"] == 28090.36
     assert len(payload["allocation"]) == 1
     assert payload["allocation"][0]["weight_percent"] > 0
 

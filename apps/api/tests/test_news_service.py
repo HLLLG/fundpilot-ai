@@ -52,7 +52,10 @@ def test_search_maps_akshare_frame(monkeypatch):
     fake_ak = type(sys)("akshare")
     fake_ak.stock_news_em = fake_stock_news_em
     monkeypatch.setitem(sys.modules, "akshare", fake_ak)
-    monkeypatch.setattr("app.services.news_service.get_cached_news", lambda _topic: None)
+    monkeypatch.setattr(
+        "app.services.news_service.get_cached_news",
+        lambda _topic, max_age_seconds=None: None,
+    )
     monkeypatch.setattr(NewsService, "_from_cls", lambda self, topic, limit: [])
 
     items = NewsService().search("电网设备", limit=3)

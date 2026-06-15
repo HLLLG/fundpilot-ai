@@ -15,8 +15,8 @@ def test_offline_pipeline_caps_aggressive_actions_under_risk_review(tmp_path, mo
                 fund_name="高集中基金",
                 holding_amount=9000,
                 return_percent=-9,
-                sector_return_percent=6,
-                holding_return_percent=-8,
+                holding_return_percent=-9,
+                daily_return_percent_source="official_nav",
             ),
             Holding(
                 fund_code="008114",
