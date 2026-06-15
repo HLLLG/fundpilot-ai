@@ -13,6 +13,25 @@ def test_fetch_canonical_commercial_aerospace(monkeypatch):
     assert boards["concept"]["商业航天"] == 3.88
 
 
+def test_fetch_canonical_semiconductor_uses_csi_index_for_quote(monkeypatch):
+    from app.services import sector_canonical as mod
+
+    calls: list[str] = []
+
+    def fake_kline(secid, **kwargs):
+        calls.append(secid)
+        return 3.37 if secid == "2.931865" else 4.35
+
+    monkeypatch.setattr(mod, "fetch_eastmoney_kline_close_percent", fake_kline)
+    boards: dict[str, dict[str, float]] = {"concept": {}, "industry": {}, "index": {}}
+    result = mod.fetch_canonical_sector_quote("半导体", boards)
+    assert result is not None
+    assert result.change_percent == 3.37
+    assert result.source_code == "931865"
+    assert calls == ["2.931865"]
+    assert boards["index"]["中证半导体"] == 3.37
+
+
 def test_intraday_canonical_maps_semiconductor_board_to_csi_index():
     from app.services.sector_canonical import get_intraday_canonical_sector
 

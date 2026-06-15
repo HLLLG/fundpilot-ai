@@ -1,8 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import type { PortfolioDashboardData, ProfitRange } from "@/lib/api";
 import { fetchPortfolioDashboard } from "@/lib/api";
+import { buildClientCacheKey } from "@/lib/clientCache";
+import { useCachedFetch } from "@/lib/useCachedFetch";
 import { DailyProfitTop5 } from "@/components/DailyProfitTop5";
 import { HoldingDonutChart } from "@/components/HoldingDonutChart";
 import { ProfitAnalysisTrendChart } from "@/components/ProfitAnalysisTrendChart";
@@ -43,32 +45,31 @@ function profitClass(value: number | null | undefined) {
 }
 
 export function PortfolioDashboard() {
-  const [data, setData] = useState<PortfolioDashboardData | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [profitRange, setProfitRange] = useState<ProfitRange>("today");
   const [calendarYear, setCalendarYear] = useState(() => new Date().getFullYear());
   const [calendarMonth, setCalendarMonth] = useState(() => new Date().getMonth() + 1);
   const [calendarShowReturn, setCalendarShowReturn] = useState(false);
   const [showReturnHeader, setShowReturnHeader] = useState(false);
 
-  const load = useCallback(async () => {
-    try {
-      setData(
-        await fetchPortfolioDashboard({
-          range: profitRange,
-          calendarYear,
-          calendarMonth,
-        }),
-      );
-      setError(null);
-    } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "加载盈亏分析失败");
-    }
-  }, [calendarMonth, calendarYear, profitRange]);
+  const cacheKey = buildClientCacheKey("portfolio-dashboard", profitRange, calendarYear, calendarMonth);
+  const staleTimeMs = profitRange === "today" ? 60_000 : 300_000;
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  const {
+    data,
+    error: fetchError,
+  } = useCachedFetch<PortfolioDashboardData>({
+    cacheKey,
+    staleTimeMs,
+    storage: "session",
+    fetcher: () =>
+      fetchPortfolioDashboard({
+        range: profitRange,
+        calendarYear,
+        calendarMonth,
+      }),
+  });
+
+  const error = fetchError;
 
   const summary = data?.summary ?? null;
   const footer = data?.profit_trend_footer;

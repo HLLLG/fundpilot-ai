@@ -87,7 +87,7 @@ class Settings(BaseSettings):
     ocr_use_mobile_models: bool = True
     ocr_max_image_side: int = 1280
     jwt_secret: str = "fundpilot-dev-jwt-secret-change-me-32chars"
-    jwt_access_expire_minutes: int = 120
+    jwt_access_expire_minutes: int = 43_200  # 30 days
     database_url: str | None = None
     cloudbase_env_id: str | None = None
     cloudbase_custom_login_key_path: Path | None = None

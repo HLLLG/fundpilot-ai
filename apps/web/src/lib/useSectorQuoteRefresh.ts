@@ -174,7 +174,7 @@ export function useSectorQuoteRefresh({
         if (!status.auto_refresh_allowed) {
           return;
         }
-        await refresh(false, "accurate");
+        await refresh(false, "fast");
       } catch {
         // background refresh errors are non-fatal
       }

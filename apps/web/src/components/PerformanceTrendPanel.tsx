@@ -7,6 +7,7 @@ import { NavHistoryTable } from "@/components/NavHistoryTable";
 import { PerformanceReturnChart } from "@/components/PerformanceReturnChart";
 import type { FundNavHistory, IndexDailyHistory } from "@/lib/api";
 import { fetchFundNavHistory, fetchFundNavHistoryPage, fetchIndexDailyHistory } from "@/lib/api";
+import { buildClientCacheKey, readClientCache, writeClientCache } from "@/lib/clientCache";
 import {
   buildPerformanceSeries,
   cnSignedPercent,
@@ -15,6 +16,9 @@ import {
 } from "@/lib/performanceTrend";
 
 const PREVIEW_LIMIT = 22;
+const NAV_HISTORY_TTL_MS = 24 * 60 * 60 * 1000;
+const INDEX_DAILY_TTL_MS = 60 * 60 * 1000;
+const NAV_PREVIEW_TTL_MS = 24 * 60 * 60 * 1000;
 
 type PerformanceTrendPanelProps = {
   fundCode: string;
@@ -43,21 +47,35 @@ export function PerformanceTrendPanel({
       return;
     }
     let cancelled = false;
-    setLoading(true);
+    const fundCacheKey = buildClientCacheKey("fund-nav-history", fundCode, days);
+    const benchCacheKey = buildClientCacheKey("index-daily", "000300", days);
+    const cachedFund = readClientCache<FundNavHistory>(fundCacheKey, NAV_HISTORY_TTL_MS);
+    const cachedBench = readClientCache<IndexDailyHistory>(benchCacheKey, INDEX_DAILY_TTL_MS);
+
+    if (cachedFund) {
+      setFundHistory(cachedFund);
+    }
+    if (cachedBench) {
+      setBenchHistory(cachedBench);
+    }
+    setLoading(!cachedFund || !cachedBench);
     setError(null);
+
     void Promise.all([
-      fetchFundNavHistory(fundCode, days),
-      fetchIndexDailyHistory("000300", days),
+      cachedFund ? Promise.resolve(cachedFund) : fetchFundNavHistory(fundCode, days),
+      cachedBench ? Promise.resolve(cachedBench) : fetchIndexDailyHistory("000300", days),
     ])
       .then(([fund, bench]) => {
         if (cancelled) {
           return;
         }
+        writeClientCache(fundCacheKey, fund);
+        writeClientCache(benchCacheKey, bench);
         setFundHistory(fund);
         setBenchHistory(bench);
       })
       .catch((loadError) => {
-        if (!cancelled) {
+        if (!cancelled && !cachedFund && !cachedBench) {
           setError(loadError instanceof Error ? loadError.message : "加载业绩走势失败");
           setFundHistory(null);
           setBenchHistory(null);
@@ -78,24 +96,35 @@ export function PerformanceTrendPanel({
       return;
     }
     let cancelled = false;
-    setPreviewLoading(true);
+    const previewCacheKey = buildClientCacheKey("fund-nav-preview", fundCode, PREVIEW_LIMIT);
+    const cachedPreview = readClientCache<
+      ReturnType<typeof buildPerformanceSeries>
+    >(previewCacheKey, NAV_PREVIEW_TTL_MS);
+
+    if (cachedPreview?.length) {
+      setPreviewSeries(cachedPreview);
+      setPreviewLoading(false);
+    } else {
+      setPreviewLoading(true);
+    }
+
     void fetchFundNavHistoryPage(fundCode, { limit: PREVIEW_LIMIT })
       .then((page) => {
         if (cancelled) {
           return;
         }
-        setPreviewSeries(
-          page.points.map((point) => ({
-            date: point.date.slice(0, 10),
-            nav: point.nav,
-            dailyReturn: point.daily_return_percent ?? null,
-            fundPercent: 0,
-            benchPercent: null,
-          })),
-        );
+        const nextSeries = page.points.map((point) => ({
+          date: point.date.slice(0, 10),
+          nav: point.nav,
+          dailyReturn: point.daily_return_percent ?? null,
+          fundPercent: 0,
+          benchPercent: null,
+        }));
+        writeClientCache(previewCacheKey, nextSeries);
+        setPreviewSeries(nextSeries);
       })
       .catch(() => {
-        if (!cancelled) {
+        if (!cancelled && !cachedPreview?.length) {
           setPreviewSeries([]);
         }
       })

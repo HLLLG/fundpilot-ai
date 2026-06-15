@@ -43,7 +43,10 @@ def run_discovery(
         request.focus_sectors,
         sector_heat,
         request.profile,
+        scan_mode=request.scan_mode,
     )
+    per_sector = 3 if request.scan_mode == "full_market" else 5
+    pool_cap = 25
     held_codes = {h.fund_code.strip().zfill(6) for h in holdings if h.fund_code}
 
     progress("candidate_pool")
@@ -52,6 +55,8 @@ def run_discovery(
         exclude_codes=held_codes,
         fund_type_preference=request.fund_type_preference,
         selection_strategy=request.selection_strategy,
+        per_sector=per_sector,
+        pool_cap=pool_cap,
     )
     pool = enrich_candidates(pool)
 
@@ -80,6 +85,7 @@ def run_discovery(
         topic_briefs=topic_briefs,
         budget_yuan=budget,
         selection_strategy=request.selection_strategy,
+        scan_mode=request.scan_mode,
     )
 
     progress("generating")
@@ -87,6 +93,7 @@ def run_discovery(
     report = DiscoveryClient().generate_report(
         target_sectors=target_sectors,
         focus_sectors=list(request.focus_sectors),
+        scan_mode=request.scan_mode,
         candidate_pool=pool,
         discovery_facts=discovery_facts,
         profile=request.profile,

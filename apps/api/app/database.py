@@ -547,15 +547,23 @@ def get_most_recent_portfolio_snapshot() -> dict[str, Any] | None:
     return rows[0] if rows else None
 
 
-def save_portfolio_intraday_curve(trade_date: str, points: list[dict[str, Any]]) -> None:
+def save_portfolio_intraday_curve(
+    trade_date: str,
+    points: list[dict[str, Any]],
+    *,
+    holdings_fingerprint: str | None = None,
+) -> None:
     user_id = _uid()
+    payload: dict[str, Any] = {"points": points}
+    if holdings_fingerprint:
+        payload["holdings_fingerprint"] = holdings_fingerprint
     with _connect() as connection:
         connection.execute(
             """
             INSERT OR REPLACE INTO portfolio_intraday_curves (userId, trade_date, payload, updated_at)
             VALUES (?, ?, ?, CURRENT_TIMESTAMP)
             """,
-            (user_id, trade_date, json.dumps({"points": points}, ensure_ascii=False)),
+            (user_id, trade_date, json.dumps(payload, ensure_ascii=False)),
         )
         connection.commit()
 
@@ -586,7 +594,7 @@ def delete_portfolio_snapshots_on_or_before(cutoff_date: str) -> dict[str, int]:
     }
 
 
-def get_portfolio_intraday_curve(trade_date: str) -> list[dict[str, Any]] | None:
+def get_portfolio_intraday_curve_entry(trade_date: str) -> dict[str, Any] | None:
     user_id = _uid()
     with _connect() as connection:
         row = connection.execute(
@@ -600,7 +608,18 @@ def get_portfolio_intraday_curve(trade_date: str) -> list[dict[str, Any]] | None
         return None
     payload = json.loads(row["payload"])
     points = payload.get("points")
-    return points if isinstance(points, list) else None
+    if not isinstance(points, list):
+        return None
+    fingerprint = payload.get("holdings_fingerprint")
+    return {
+        "points": points,
+        "holdings_fingerprint": str(fingerprint) if fingerprint else None,
+    }
+
+
+def get_portfolio_intraday_curve(trade_date: str) -> list[dict[str, Any]] | None:
+    entry = get_portfolio_intraday_curve_entry(trade_date)
+    return entry["points"] if entry else None
 
 
 def get_investor_profile() -> InvestorProfile | None:

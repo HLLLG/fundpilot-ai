@@ -19,6 +19,7 @@ def build_discovery_facts(
     topic_briefs: list[TopicBrief] | None = None,
     budget_yuan: float | None = None,
     selection_strategy: str = "balanced",
+    scan_mode: str = "full_market",
 ) -> dict:
     total_amount = sum(item.holding_amount for item in holdings) or 0.0
     denominator = resolve_weight_denominator(holdings, profile)
@@ -49,6 +50,7 @@ def build_discovery_facts(
             "available_budget_yuan": round(available_budget, 2),
             "held_sectors": _held_sector_summary(holdings),
             "target_sectors": target_sectors,
+            "scan_mode": scan_mode,
         },
         "sector_heat": sector_heat,
         "market_flow": build_market_flow_context(session.get("effective_trade_date")),

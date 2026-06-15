@@ -21,12 +21,31 @@ OUTPUT_DISCOVERY_REQUIREMENTS = """
 - 不得承诺收益；示意金额须结合 available_budget_yuan 与 concentration_limit_percent
 """
 
+_FULL_MARKET_REQUIREMENTS = [
+    "仅从 candidate_pool 选 3~5 只",
+    "基于 sector_heat 全市场横向对比，从多个板块角度分析当前值得入场的方向",
+    "portfolio_gap/已持仓板块仅作背景参考，不要以「持仓缺口」为主叙事框架",
+    "market_view 须覆盖当日热度靠前板块与相对冷门但有机会的方向",
+    "每只须含 hold_horizon 与 risks",
+    "news_bullish 仅引用 news 中已有标题",
+    "不得推荐用户已持有基金（见 portfolio_gap）",
+]
+
+_GAP_REQUIREMENTS = [
+    "仅从 candidate_pool 选 3~5 只",
+    "结合 portfolio_gap 解释为何关注该板块/基金（缺口补全视角）",
+    "每只须含 hold_horizon 与 risks",
+    "news_bullish 仅引用 news 中已有标题",
+    "不得推荐用户已持有基金（见 portfolio_gap）",
+]
+
 
 def build_user_payload(
     *,
     discovery_facts: dict,
     profile: InvestorProfile,
     focus_sectors: list[str],
+    scan_mode: str = "full_market",
 ) -> dict:
     pool = discovery_facts.get("candidate_pool") or []
     slim_pool = []
@@ -42,9 +61,11 @@ def build_user_payload(
                 "selection_reason": item.get("selection_reason"),
             }
         )
+    requirements = _FULL_MARKET_REQUIREMENTS if scan_mode == "full_market" else _GAP_REQUIREMENTS
     return {
         "today": date.today().isoformat(),
         "focus_sectors": focus_sectors,
+        "scan_mode": scan_mode,
         "profile": discovery_facts.get("profile") or profile.model_dump(mode="json"),
         "discovery_facts": {
             "portfolio_gap": discovery_facts.get("portfolio_gap"),
@@ -54,13 +75,7 @@ def build_user_payload(
             "news": discovery_facts.get("news"),
             "candidate_pool": slim_pool,
         },
-        "requirements": [
-            "仅从 candidate_pool 选 3~5 只",
-            "结合 portfolio_gap 解释为何关注该板块/基金",
-            "每只须含 hold_horizon 与 risks",
-            "news_bullish 仅引用 news 中已有标题",
-            "不得推荐用户已持有基金（见 portfolio_gap）",
-        ],
+        "requirements": requirements,
     }
 
 

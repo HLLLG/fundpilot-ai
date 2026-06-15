@@ -80,23 +80,25 @@ def test_load_or_build_intraday_curve_refreshes_index_on_cache(monkeypatch):
     from app.services.portfolio_profit_analysis import load_or_build_intraday_curve
 
     monkeypatch.setattr(
-        "app.services.portfolio_profit_analysis.get_portfolio_intraday_curve",
-        lambda trade_date: [
-            {"time": "09:31", "portfolio_percent": 1.0, "index_percent": -0.9},
-            {"time": "15:00", "portfolio_percent": 2.0, "index_percent": -0.9},
-        ],
+        "app.services.portfolio_profit_analysis.get_portfolio_intraday_curve_entry",
+        lambda trade_date: {
+            "points": [
+                {"time": "09:31", "portfolio_percent": 1.0, "index_percent": None},
+                {"time": "15:00", "portfolio_percent": 2.0, "index_percent": None},
+            ],
+            "holdings_fingerprint": "0000000000000000",
+        },
     )
     monkeypatch.setattr(
-        "app.services.portfolio_profit_analysis.fetch_sector_intraday",
-        lambda *args, **kwargs: (
-            [
-                {"time": "09:31", "percent": 0.5},
-                {"time": "15:00", "percent": 1.01},
-            ],
-            None,
-            "2026-06-14",
-            1.01,
-        ),
+        "app.services.portfolio_profit_analysis._holdings_intraday_fingerprint",
+        lambda *_args, **_kwargs: "0000000000000000",
+    )
+    monkeypatch.setattr(
+        "app.services.portfolio_profit_analysis._fetch_cached_index_intraday",
+        lambda: [
+            {"time": "09:31", "percent": 0.5},
+            {"time": "15:00", "percent": 1.01},
+        ],
     )
     monkeypatch.setattr(
         "app.services.portfolio_profit_analysis.build_trading_session",

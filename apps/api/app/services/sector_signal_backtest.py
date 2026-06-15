@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+import json
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -19,9 +22,54 @@ from app.services.trade_calendar_cache import get_trade_date_set
 FetchSeriesFn = Callable[[str, str | None], list[DailyKlineBar]]
 
 _DEFAULT_RULES = ("reversal_down", "sector_weak", "intraday_pullback", "baseline_momentum")
+_BACKTEST_RESPONSE_TTL_SECONDS = 86400
+_BACKTEST_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+
+
+def _backtest_cache_key(
+    sector_labels: list[str] | None,
+    lookback_days: int,
+    rules: tuple[str, ...] | None,
+) -> str:
+    labels = sorted(sector_labels or [])
+    active_rules = rules or _DEFAULT_RULES
+    payload = json.dumps(
+        {"labels": labels, "lookback_days": lookback_days, "rules": list(active_rules)},
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode()).hexdigest()
 
 
 def build_sector_signal_backtest(
+    sector_labels: list[str] | None = None,
+    *,
+    lookback_days: int = 120,
+    rules: tuple[str, ...] | None = None,
+    fetch_series: FetchSeriesFn | None = None,
+) -> dict[str, Any]:
+    if fetch_series is None:
+        cache_key = _backtest_cache_key(sector_labels, lookback_days, rules)
+        now = time.time()
+        cached = _BACKTEST_CACHE.get(cache_key)
+        if cached is not None and now - cached[0] < _BACKTEST_RESPONSE_TTL_SECONDS:
+            return cached[1]
+    else:
+        cache_key = None
+
+    result = _build_sector_signal_backtest_impl(
+        sector_labels,
+        lookback_days=lookback_days,
+        rules=rules,
+        fetch_series=fetch_series,
+    )
+
+    if fetch_series is None:
+        _BACKTEST_CACHE[cache_key] = (time.time(), result)
+    return result
+
+
+def _build_sector_signal_backtest_impl(
     sector_labels: list[str] | None = None,
     *,
     lookback_days: int = 120,

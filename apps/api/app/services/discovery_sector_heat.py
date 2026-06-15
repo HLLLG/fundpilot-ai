@@ -6,19 +6,60 @@ from app.services.eastmoney_trends_client import (
     fetch_eastmoney_daily_kline_series,
     fetch_eastmoney_kline_close_percent,
 )
-from app.services.sector_canonical import get_canonical_sector, list_canonical_sector_labels
+from app.services.sector_canonical import (
+    get_canonical_sector,
+    get_quote_canonical_sector,
+    list_discovery_sector_labels,
+)
+from app.services.sector_quote_cache import get_spot_snapshot, save_spot_snapshot
 from app.services.trading_session import build_trading_session
+
+_HEAT_LIVE_TTL_SECONDS = 60.0
+_HEAT_CLOSED_TTL_SECONDS = 3600.0
 
 
 def build_sector_heat_ranking(
     *,
     fetch_close_percent=fetch_eastmoney_kline_close_percent,
     fetch_series=fetch_eastmoney_daily_kline_series,
+    force_refresh: bool = False,
 ) -> list[dict]:
-    """canonical 板块按当日涨跌 + 近5日涨跌综合排序（降序）。"""
+    """canonical 板块按当日涨跌 + 近5日涨跌综合排序（降序）；结果按交易日缓存。"""
     session = build_trading_session()
     trade_date = session.get("effective_trade_date")
-    labels = list_canonical_sector_labels()
+    session_kind = session.get("session_kind", "")
+    cache_ttl = (
+        _HEAT_LIVE_TTL_SECONDS
+        if session_kind in {"trading_day_intraday", "trading_day_pre_close"}
+        else _HEAT_CLOSED_TTL_SECONDS
+    )
+    cache_key = f"discovery:sector_heat:v1:{trade_date}"
+
+    if not force_refresh:
+        cached = get_spot_snapshot(cache_key, ttl_seconds=cache_ttl)
+        if cached and cached.get("sectors"):
+            return list(cached["sectors"])
+
+    rows = _build_sector_heat_rows(
+        trade_date=trade_date,
+        fetch_close_percent=fetch_close_percent,
+        fetch_series=fetch_series,
+    )
+    if rows:
+        save_spot_snapshot(
+            cache_key,
+            {"sectors": rows, "trade_date": trade_date, "session_kind": session_kind},
+        )
+    return rows
+
+
+def _build_sector_heat_rows(
+    *,
+    trade_date: str | None,
+    fetch_close_percent,
+    fetch_series,
+) -> list[dict]:
+    labels = list_discovery_sector_labels()
     rows: list[dict] = []
 
     with ThreadPoolExecutor(max_workers=min(6, max(len(labels), 1))) as executor:
@@ -53,7 +94,7 @@ def _sector_heat_row(
     fetch_close_percent,
     fetch_series,
 ) -> dict | None:
-    canon = get_canonical_sector(label)
+    canon = get_quote_canonical_sector(label) or get_canonical_sector(label)
     if canon is None:
         return None
     change_1d = fetch_close_percent(
@@ -75,6 +116,7 @@ def _sector_heat_row(
         "change_5d_percent": change_5d,
         "heat_score": _heat_score(change_1d, change_5d),
     }
+
 
 def _heat_score(change_1d: float | None, change_5d: float | None) -> float | None:
     if change_1d is None and change_5d is None:

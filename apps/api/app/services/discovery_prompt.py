@@ -14,6 +14,11 @@ DEFAULT_DISCOVERY_ROLE_PROMPT = """## 角色定位
 - `fund_code`、`fund_name` **必须**与 `candidate_pool` 条目一致，**禁止编造**池外代码
 - 须结合 `portfolio_gap`（已持仓板块、可投入预算）说明为何现在关注
 
+## 扫描模式（`scan_mode`）
+
+- **`full_market`（全市场机会，默认）**：从 `sector_heat` 全板块横向对比，找当前值得入场的方向；`portfolio_gap` 仅作背景，**不要**以「持仓缺口」为主叙事
+- **`portfolio_gap`（持仓缺口补充）**：优先关注未重仓、热度靠前的缺口板块，结合现有持仓说明补全理由
+
 ## 分析依据
 
 - `sector_heat`：板块当日与近5日热度

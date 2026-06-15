@@ -5,7 +5,7 @@ import type { ProfitTrend } from "@/lib/api";
 import { clockToSessionRatio } from "@/lib/intradayChartTime";
 
 const INDEX_COLOR = "#5B8DEF";
-const AXIS_FONT_SIZE = 9;
+const AXIS_FONT_SIZE = 5;
 const AXIS_LABEL_CLASS = "fill-slate-400 tabular-nums";
 
 type ProfitAnalysisTrendChartProps = {

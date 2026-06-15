@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from functools import lru_cache
 
 import requests
 
 logger = logging.getLogger(__name__)
+
+INDEX_DAILY_RESPONSE_TTL_SECONDS = 3600
+_INDEX_TTL_CACHE: dict[str, tuple[float, dict | None]] = {}
 
 _HEADERS = {
     "User-Agent": (
@@ -38,7 +42,7 @@ def _sina_symbol(index_symbol: str) -> str:
 
 
 @lru_cache(maxsize=64)
-def fetch_index_daily_history(index_symbol: str, trading_days: int = 252) -> dict | None:
+def _fetch_index_daily_history_impl(index_symbol: str, trading_days: int = 252) -> dict | None:
     """拉取指数日线收盘价，优先新浪（AkShare 指数接口在部分网络下不稳定）。"""
     days = max(20, min(trading_days, 800))
     symbol = _sina_symbol(index_symbol)
@@ -84,3 +88,14 @@ def fetch_index_daily_history(index_symbol: str, trading_days: int = 252) -> dic
         data = data[-days:]
 
     return {"data": data, "source": "sina"}
+
+
+def fetch_index_daily_history(index_symbol: str, trading_days: int = 252) -> dict | None:
+    key = f"{index_symbol.strip()}:{max(20, min(trading_days, 800))}"
+    now = time.time()
+    cached = _INDEX_TTL_CACHE.get(key)
+    if cached is not None and now - cached[0] < INDEX_DAILY_RESPONSE_TTL_SECONDS:
+        return cached[1]
+    result = _fetch_index_daily_history_impl(index_symbol, trading_days)
+    _INDEX_TTL_CACHE[key] = (now, result)
+    return result

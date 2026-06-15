@@ -290,7 +290,7 @@ export function YangjibaoHoldingsBoard({
             </button>
             <button
               type="button"
-              onClick={() => void refresh(false)}
+              onClick={() => void refresh(true, "accurate")}
               disabled={isRefreshing}
               className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 disabled:opacity-50"
               title="刷新板块涨跌"

@@ -43,6 +43,7 @@ import {
   resolveSectorBoardReturnPercent,
 } from "@/lib/holdingMetrics";
 import { holdingRelatedBoardLabel, resolveIntradayQuery } from "@/lib/profileSector";
+import { buildClientCacheKey, readClientCache, writeClientCache } from "@/lib/clientCache";
 import { isEstimateFallbackMeta } from "@/lib/sectorQuoteStatus";
 import { formatTradeDateShort } from "@/lib/tradeDateLabel";
 
@@ -162,6 +163,7 @@ export function YangjibaoFundDetail({
   const [detailLoading, setDetailLoading] = useState(true);
   const [intradayLoading, setIntradayLoading] = useState(false);
   const [intradayPoints, setIntradayPoints] = useState<Array<{ time: string; percent: number }>>([]);
+  const [intradayClosePercent, setIntradayClosePercent] = useState<number | null>(null);
   const [intradayNote, setIntradayNote] = useState<string | null>(null);
   const [intradayRefreshing, setIntradayRefreshing] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
@@ -173,6 +175,7 @@ export function YangjibaoFundDetail({
   const [fundCodeEditOpen, setFundCodeEditOpen] = useState(false);
   const [fundCodeSaving, setFundCodeSaving] = useState(false);
   const [fundCodeError, setFundCodeError] = useState<string | null>(null);
+  const [intradayForceSeq, setIntradayForceSeq] = useState(0);
   const intradayRequestSeq = useRef(0);
 
   const activeHolding = detail?.holding ?? holding;
@@ -199,7 +202,9 @@ export function YangjibaoFundDetail({
 
   const quoteLabel = holdingRelatedBoardLabel(activeHolding) || sectorMeta?.matched_name || "—";
   const sectorReturn = resolveSectorBoardReturnPercent(activeHolding);
-  const displaySectorReturn = sectorReturn;
+  // 盘中优先用分时末点（与曲线同源），避免板块刷新缓存与分时不同步
+  const displaySectorReturn =
+    tab === "sector" && intradayClosePercent != null ? intradayClosePercent : sectorReturn;
   const dataSourceLabel = isEstimateFallbackMeta(sectorMeta)
     ? "估值兜底"
     : sectorMeta?.provider === "eastmoney-kline" || sectorMeta?.source === "live"
@@ -313,7 +318,18 @@ export function YangjibaoFundDetail({
 
   useEffect(() => {
     let cancelled = false;
-    setDetailLoading(true);
+    const detailCacheKey = buildClientCacheKey(
+      "holding-detail",
+      holdings[holdingIndex]?.fund_code,
+      holdingIndex,
+    );
+    const cachedDetail = readClientCache<HoldingDetail>(detailCacheKey, 5 * 60 * 1000);
+    if (cachedDetail) {
+      setDetail(cachedDetail);
+      setDetailLoading(false);
+    } else {
+      setDetailLoading(true);
+    }
     setDetailError(null);
     void fetchHoldingDetail({
       holdings,
@@ -325,6 +341,7 @@ export function YangjibaoFundDetail({
         if (cancelled) {
           return;
         }
+        writeClientCache(detailCacheKey, result);
         setDetail(result);
         if (
           result.fund_code_resolved &&
@@ -334,7 +351,7 @@ export function YangjibaoFundDetail({
         }
       })
       .catch((error) => {
-        if (!cancelled) {
+        if (!cancelled && !cachedDetail) {
           setDetail(null);
           setDetailError(error instanceof Error ? error.message : "基金详情加载失败");
         }
@@ -355,6 +372,7 @@ export function YangjibaoFundDetail({
     }
     if (!intradayQuery) {
       setIntradayPoints([]);
+      setIntradayClosePercent(null);
       setIntradayNote("暂无板块映射，请先在「今日」刷新板块或上传详情截图建档");
       setIntradayLoading(false);
       setIntradayRefreshing(false);
@@ -363,6 +381,7 @@ export function YangjibaoFundDetail({
 
     const requestId = ++intradayRequestSeq.current;
     setIntradayPoints([]);
+    setIntradayClosePercent(null);
     setIntradayNote(null);
     setIntradayLoading(true);
     setIntradayRefreshing(false);
@@ -370,16 +389,29 @@ export function YangjibaoFundDetail({
     const applyIntraday = (result: {
       points: Array<{ time: string; percent: number }>;
       note?: string | null;
+      close_change_percent?: number | null;
     }) => {
       setIntradayPoints(result.points);
       setIntradayNote(result.note ?? null);
+      const lastPoint = result.points[result.points.length - 1]?.percent;
+      const close =
+        result.close_change_percent != null
+          ? result.close_change_percent
+          : lastPoint != null
+            ? lastPoint
+            : null;
+      setIntradayClosePercent(close);
     };
 
     void (async () => {
       let showedCache = false;
+      const forceRefresh = intradayForceSeq > 0;
 
       try {
-        const cached = await fetchSectorIntraday(intradayQuery);
+        const cached = await fetchSectorIntraday(
+          intradayQuery,
+          forceRefresh ? { forceRefresh: true } : undefined,
+        );
         if (requestId !== intradayRequestSeq.current) {
           return;
         }
@@ -387,6 +419,9 @@ export function YangjibaoFundDetail({
           applyIntraday(cached);
           showedCache = true;
           setIntradayLoading(false);
+          if (!forceRefresh) {
+            return;
+          }
         } else if (cached.note) {
           setIntradayNote(cached.note);
         }
@@ -399,6 +434,11 @@ export function YangjibaoFundDetail({
       if (requestId !== intradayRequestSeq.current) {
         return;
       }
+      if (showedCache && !forceRefresh) {
+        setIntradayLoading(false);
+        return;
+      }
+
       setIntradayRefreshing(true);
 
       try {
@@ -430,7 +470,7 @@ export function YangjibaoFundDetail({
     return () => {
       intradayRequestSeq.current += 1;
     };
-  }, [tab, intradayQuery]);
+  }, [tab, intradayQuery, intradayForceSeq]);
 
   useEffect(() => {
     void fetchTradingSession()
@@ -686,13 +726,22 @@ export function YangjibaoFundDetail({
                 >
                   {formatSignedPercent(displaySectorReturn)}
                 </span>
-                <span className="flex shrink-0 items-center gap-0.5 text-[10px] text-slate-400">
+                <span className="flex shrink-0 items-center gap-1 text-[10px] text-slate-400">
                   {dataSourceLabel}
-                  {intradayRefreshing ? (
-                    <Loader2 size={10} className="animate-spin" />
-                  ) : (
-                    <RefreshCw size={10} />
-                  )}
+                  <button
+                    type="button"
+                    onClick={() => setIntradayForceSeq((value) => value + 1)}
+                    disabled={intradayRefreshing || intradayLoading}
+                    className="inline-flex items-center hover:text-slate-600 disabled:opacity-50"
+                    title="刷新分时"
+                    aria-label="刷新分时"
+                  >
+                    {intradayRefreshing ? (
+                      <Loader2 size={10} className="animate-spin" />
+                    ) : (
+                      <RefreshCw size={10} />
+                    )}
+                  </button>
                 </span>
               </div>
               {intradayLoading ? (

@@ -51,8 +51,8 @@ def fetch_sector_intraday(
         "trading_day_pre_open",
     }
 
-    # v2：分时基准改为昨收（preKPrice）；旧键 intraday: 含开盘基准脏数据
-    cache_key = f"intraday:v2:{source_type}:{label}:{trade_date}"
+    # v3：概念/行业板块优先东财 trends2（昨收基准）；v2 曾误用 AkShare 概念分钟优先
+    cache_key = f"intraday:v3:{source_type}:{label}:{trade_date}"
     cache_ttl = _INTRADAY_CLOSED_TTL_SECONDS if closed_session else _INTRADAY_LIVE_TTL_SECONDS
 
     if not force_refresh:
@@ -350,15 +350,8 @@ def _fetch_board_intraday(
             return points
 
     canon = get_canonical_sector(source_name)
-    if canon is not None and canon.source_type == "concept":
-        try:
-            frame = _call_akshare_board_min("concept", canon.source_name)
-            parsed = _points_from_minute_frame(frame)
-            if parsed:
-                return parsed
-        except Exception as exc:
-            logger.debug("akshare concept intraday for %s: %s", canon.source_name, exc)
 
+    # 东财 trends2/分钟 K（昨收 preKPrice，养基宝同款）优先于 AkShare 概念/行业分钟
     if canon is not None:
         points = _fetch_intraday_minute_chain(
             canon.eastmoney_secid,
@@ -376,12 +369,21 @@ def _fetch_board_intraday(
     if points:
         return points
 
-    try:
-        frame = _call_akshare_board_min(source_type, source_name)
-        return _points_from_minute_frame(frame)
-    except Exception as exc:
-        logger.debug("akshare board intraday fallback failed for %s: %s", source_name, exc)
-        return []
+    akshare_type = canon.source_type if canon is not None else source_type
+    akshare_label = canon.source_name if canon is not None else source_name
+    if akshare_type in {"concept", "industry"}:
+        try:
+            frame = _call_akshare_board_min(akshare_type, akshare_label)
+            parsed = _points_from_minute_frame(frame)
+            if parsed:
+                return parsed
+        except Exception as exc:
+            logger.debug(
+                "akshare board intraday fallback failed for %s: %s",
+                akshare_label,
+                exc,
+            )
+    return []
 
 
 def _call_akshare_index_min(symbol: str):

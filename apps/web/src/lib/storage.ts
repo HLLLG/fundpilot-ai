@@ -1,8 +1,9 @@
-import type { AnalysisPromptConfig, DiscoveryPromptConfig, InvestorProfile } from "@/lib/api";
+import type { AnalysisPromptConfig, DiscoveryPromptConfig, DiscoverySectorHeat, InvestorProfile } from "@/lib/api";
 
 const PROFILE_KEY = "fundpilot-investor-profile";
 const ANALYSIS_PROMPT_KEY = "fundpilot-analysis-prompt";
 const DISCOVERY_PROMPT_KEY = "fundpilot-discovery-prompt";
+const DISCOVERY_SECTORS_KEY = "fundpilot-discovery-sectors";
 const MODE_KEY = "fundpilot-analysis-mode";
 const CHAT_MODE_KEY = "fundpilot-report-chat-mode";
 
@@ -192,4 +193,45 @@ export function saveAmountsHidden(hidden: boolean) {
     return;
   }
   window.localStorage.setItem(AMOUNTS_HIDDEN_KEY, String(hidden));
+}
+
+type DiscoverySectorHeatCache = {
+  fetchedAt: number;
+  sectors: DiscoverySectorHeat[];
+};
+
+/** 推荐基金关注方向：本地缓存，进入 Tab 时先展示再后台刷新 */
+export function loadDiscoverySectorHeatCache(
+  maxAgeMs = 30 * 60 * 1000,
+): DiscoverySectorHeat[] | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  try {
+    const raw = window.localStorage.getItem(DISCOVERY_SECTORS_KEY);
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw) as DiscoverySectorHeatCache;
+    if (!Array.isArray(parsed.sectors) || !parsed.sectors.length) {
+      return null;
+    }
+    if (Date.now() - parsed.fetchedAt > maxAgeMs) {
+      return null;
+    }
+    return parsed.sectors;
+  } catch {
+    return null;
+  }
+}
+
+export function saveDiscoverySectorHeatCache(sectors: DiscoverySectorHeat[]) {
+  if (typeof window === "undefined" || !sectors.length) {
+    return;
+  }
+  const payload: DiscoverySectorHeatCache = {
+    fetchedAt: Date.now(),
+    sectors,
+  };
+  window.localStorage.setItem(DISCOVERY_SECTORS_KEY, JSON.stringify(payload));
 }

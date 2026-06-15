@@ -5,7 +5,8 @@ from datetime import date
 
 from app.config import get_settings
 from app.models import Holding, NewsItem
-from app.services.news_cache import get_cached_news, save_cached_news
+from app.services.news_cache import NEWS_CACHE_STALE_SECONDS, get_cached_news, save_cached_news
+from app.services.trading_session import build_trading_session
 
 _SNIPPET_MAX_LEN = 200
 _TOPIC_ALIASES = ("人工智能", "电网设备", "半导体", "国防军工", "商业航天")
@@ -51,7 +52,7 @@ class NewsService:
         per_topic = limit if limit is not None else self.settings.news_per_topic
         per_topic = max(1, min(per_topic, 10))
 
-        cached = get_cached_news(topic)
+        cached = get_cached_news(topic, max_age_seconds=_news_cache_max_age_seconds())
         if cached is not None:
             return cached[:per_topic]
 
@@ -231,3 +232,11 @@ def _dedupe_news(items: list[NewsItem]) -> list[NewsItem]:
         seen.add(key)
         unique.append(item)
     return unique
+
+
+def _news_cache_max_age_seconds() -> int | None:
+    session = build_trading_session()
+    session_kind = str(session.get("session_kind") or "")
+    if session_kind in {"trading_day_intraday", "trading_day_pre_open"}:
+        return NEWS_CACHE_STALE_SECONDS
+    return None

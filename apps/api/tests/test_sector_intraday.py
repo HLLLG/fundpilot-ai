@@ -94,7 +94,7 @@ def test_fetch_sector_intraday_uses_stale_cache_when_live_fetch_empty(monkeypatc
     stale_points = [{"time": f"09:{30 + i:02d}", "percent": round(i * 0.01, 4)} for i in range(30)]
     # stale key 需与 fetch_sector_intraday 实际使用的 trade_date 匹配（CN 时区，非 UTC date.today）
     save_spot_snapshot(
-        f"intraday:v2:index:中证电网设备:{trade_date}",
+        f"intraday:v3:index:中证电网设备:{trade_date}",
         {
             "points": stale_points,
             "note": "展示缓存分时",
@@ -107,6 +107,88 @@ def test_fetch_sector_intraday_uses_stale_cache_when_live_fetch_empty(monkeypatc
     assert len(points) == 30
     assert close == 0.29
     assert note and "缓存" in note
+
+
+def test_fetch_board_intraday_prefers_eastmoney_over_akshare_for_concept(monkeypatch):
+    em_points = [
+        {"time": f"09:{30 + i:02d}", "percent": round(-0.92 + i * 0.01, 4)}
+        for i in range(35)
+    ]
+    akshare_calls: list[tuple[str, str]] = []
+
+    def fake_minute_chain(secid, *, source_code=None, trade_date=None):
+        if secid == "90.BK0963":
+            return em_points
+        return []
+
+    def fake_akshare_board_min(source_type, source_name):
+        akshare_calls.append((source_type, source_name))
+        return None
+
+    monkeypatch.setattr(
+        "app.services.sector_intraday_provider._fetch_intraday_minute_chain",
+        fake_minute_chain,
+    )
+    monkeypatch.setattr(
+        "app.services.sector_intraday_provider._call_akshare_board_min",
+        fake_akshare_board_min,
+    )
+
+    from app.services.sector_intraday_provider import _fetch_board_intraday
+
+    points = _fetch_board_intraday("concept", "商业航天", trade_date="2026-06-15")
+    assert len(points) == 35
+    assert points[-1]["percent"] == em_points[-1]["percent"]
+    assert akshare_calls == []
+
+
+def test_fetch_board_intraday_falls_back_to_akshare_when_eastmoney_empty(monkeypatch):
+    akshare_points = [{"time": "09:31", "percent": 0.5}, {"time": "15:00", "percent": -0.92}]
+
+    class Row:
+        def __init__(self, data):
+            self.index = list(data.keys())
+            self._data = data
+
+        def __getitem__(self, key):
+            return self._data[key]
+
+    class Frame:
+        def __init__(self, rows):
+            self._rows = rows
+
+        @property
+        def empty(self):
+            return not self._rows
+
+        def iterrows(self):
+            for idx, row in enumerate(self._rows):
+                yield idx, row
+
+        def iloc(self, index):
+            return self._rows[index]
+
+    frame = Frame(
+        [
+            Row({"时间": "09:31", "涨跌幅": "0.5"}),
+            Row({"时间": "15:00", "涨跌幅": "-0.92"}),
+        ]
+    )
+
+    monkeypatch.setattr(
+        "app.services.sector_intraday_provider._fetch_intraday_minute_chain",
+        lambda *args, **kwargs: [],
+    )
+    monkeypatch.setattr(
+        "app.services.sector_intraday_provider._call_akshare_board_min",
+        lambda source_type, source_name: frame,
+    )
+
+    from app.services.sector_intraday_provider import _fetch_board_intraday
+
+    points = _fetch_board_intraday("concept", "商业航天", trade_date="2026-06-15")
+    assert len(points) == 2
+    assert points[-1]["percent"] == -0.92
 
 
 def test_fetch_sector_intraday_endpoint(monkeypatch):

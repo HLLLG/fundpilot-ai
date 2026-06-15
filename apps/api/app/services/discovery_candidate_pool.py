@@ -19,6 +19,8 @@ def build_candidate_pool(
     exclude_codes: set[str] | None = None,
     fund_type_preference: str = "any",
     selection_strategy: SelectionStrategy = "balanced",
+    per_sector: int = _PER_SECTOR,
+    pool_cap: int = _POOL_CAP,
     fetch_rank=fetch_open_fund_rank,
     fetch_new_funds=fetch_new_fund_offerings,
 ) -> list[dict]:
@@ -43,17 +45,17 @@ def build_candidate_pool(
             fund_type_preference=fund_type_preference,
             selection_strategy=selection_strategy,
         )
-        collected.extend(sector_candidates[:_PER_SECTOR])
+        collected.extend(sector_candidates[:per_sector])
 
     if len(collected) < 3:
         fallback_ranked = rank_candidates_balanced_fallback(rank_rows, excluded, seen_codes, fund_type_preference)
         for entry in fallback_ranked:
             collected.append(entry)
             seen_codes.add(str(entry.get("fund_code", "")).zfill(6))
-            if len(collected) >= _POOL_CAP:
+            if len(collected) >= pool_cap:
                 break
 
-    return collected[:_POOL_CAP]
+    return collected[:pool_cap]
 
 
 def enrich_candidates(pool: list[dict]) -> list[dict]:
@@ -204,6 +206,20 @@ def _sector_keywords(sector_label: str, canon) -> tuple[str, ...]:
         "国防军工": ("军工", "国防", "航天"),
         "电网设备": ("电网", "电力设备"),
         "人工智能": ("人工智能", "AI", "智能"),
+        "互联网": ("互联网", "网络", "游戏", "传媒"),
+        "有色金属": ("有色", "金属", "铜", "铝", "锂矿"),
+        "新能源车": ("新能源", "汽车", "电动车", "锂电"),
+        "医药": ("医药", "生物", "制药", "医疗"),
+        "证券": ("证券", "券商"),
+        "银行": ("银行",),
+        "白酒": ("白酒", "酒"),
+        "光伏": ("光伏", "太阳能"),
+        "锂电池": ("锂电池", "电池"),
+        "消费电子": ("消费电子", "电子", "消费"),
+        "机器人": ("机器人", "自动化"),
+        "云计算": ("云计算", "云"),
+        "5G": ("5G", "通信"),
+        "医疗器械": ("医疗器械", "器械"),
     }
     extra = mapping.get(sector_label, ())
     return tuple(names) + extra

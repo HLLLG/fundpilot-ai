@@ -12,6 +12,7 @@ import type {
   Holding,
   InvestorProfile,
   SelectionStrategy,
+  DiscoveryScanMode,
 } from "@/lib/api";
 import {
   fetchDiscoveryPrompt,
@@ -26,7 +27,40 @@ import { DiscoveryReportPanel } from "@/components/DiscoveryReportPanel";
 import { RolePromptEditor } from "@/components/RolePromptEditor";
 import { YangjibaoFundDetail } from "@/components/YangjibaoFundDetail";
 import { displayableHoldings } from "@/lib/holdingMetrics";
-import { loadDiscoveryPrompt, saveDiscoveryPrompt } from "@/lib/storage";
+import { loadDiscoveryPrompt, loadDiscoverySectorHeatCache, saveDiscoveryPrompt, saveDiscoverySectorHeatCache } from "@/lib/storage";
+
+function heldSectorLabels(holdings: Holding[]): Set<string> {
+  const labels = new Set<string>();
+  for (const holding of holdings) {
+    const name = holding.sector_name?.trim();
+    if (name) {
+      labels.add(name);
+    }
+  }
+  return labels;
+}
+
+/** 全市场模式按热度排序；缺口模式未持仓板块排前 */
+function orderDiscoverySectorsForChips(
+  rows: DiscoverySectorHeat[],
+  holdings: Holding[],
+  scanMode: DiscoveryScanMode,
+): DiscoverySectorHeat[] {
+  const byHeat = (a: DiscoverySectorHeat, b: DiscoverySectorHeat) =>
+    (b.heat_score ?? -999) - (a.heat_score ?? -999);
+  if (scanMode === "full_market") {
+    return [...rows].sort(byHeat);
+  }
+  const held = heldSectorLabels(holdings);
+  const unheld = rows.filter((row) => !held.has(row.sector_label)).sort(byHeat);
+  const heldRows = rows.filter((row) => held.has(row.sector_label)).sort(byHeat);
+  return [...unheld, ...heldRows];
+}
+
+const SCAN_MODE_OPTIONS: { id: DiscoveryScanMode; label: string; hint: string }[] = [
+  { id: "full_market", label: "全市场机会", hint: "多板块横向对比，不限于持仓缺口" },
+  { id: "portfolio_gap", label: "持仓缺口补充", hint: "优先未重仓、热度靠前的缺口板块" },
+];
 
 const FUND_TYPE_OPTIONS: { id: FundTypePreference; label: string }[] = [
   { id: "any", label: "不限" },
@@ -56,6 +90,7 @@ export function FundDiscoveryPanel({
   const [focusSectors, setFocusSectors] = useState<string[]>([]);
   const [fundTypePreference, setFundTypePreference] = useState<FundTypePreference>("any");
   const [selectionStrategy, setSelectionStrategy] = useState<SelectionStrategy>("balanced");
+  const [scanMode, setScanMode] = useState<DiscoveryScanMode>("full_market");
   const [budgetYuan, setBudgetYuan] = useState<string>("");
   const [report, setReport] = useState<FundDiscoveryReport | null>(null);
   const [historyReports, setHistoryReports] = useState<FundDiscoveryReport[]>([]);
@@ -68,25 +103,35 @@ export function FundDiscoveryPanel({
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [loadingSectors, setLoadingSectors] = useState(true);
+  const [loadingSectors, setLoadingSectors] = useState(() => loadDiscoverySectorHeatCache() == null);
   const [sectorsError, setSectorsError] = useState<string | null>(null);
   const [previewHolding, setPreviewHolding] = useState<Holding | null>(null);
   const promptPersistReady = useRef(false);
   const [promptReady, setPromptReady] = useState(false);
 
   const loadSectors = useCallback(async () => {
-    setLoadingSectors(true);
+    const cached = loadDiscoverySectorHeatCache();
+    if (cached?.length) {
+      setSectors(orderDiscoverySectorsForChips(cached, holdings, scanMode));
+      setLoadingSectors(false);
+    } else {
+      setLoadingSectors(true);
+    }
     setSectorsError(null);
     try {
       const rows = await fetchDiscoverySectors();
-      setSectors(rows);
+      const ordered = orderDiscoverySectorsForChips(rows, holdings, scanMode);
+      setSectors(ordered);
+      saveDiscoverySectorHeatCache(rows);
     } catch (loadError) {
-      setSectors([]);
-      setSectorsError(loadError instanceof Error ? loadError.message : "加载板块热度失败");
+      if (!cached?.length) {
+        setSectors([]);
+        setSectorsError(loadError instanceof Error ? loadError.message : "加载板块热度失败");
+      }
     } finally {
       setLoadingSectors(false);
     }
-  }, []);
+  }, [holdings, scanMode]);
 
   const loadHistory = useCallback(async () => {
     try {
@@ -112,7 +157,7 @@ export function FundDiscoveryPanel({
         setPromptReady(true);
       }
     })();
-  }, [loadHistory, loadSectors]);
+  }, [holdings, loadHistory, loadSectors]);
 
   useEffect(() => {
     if (!promptReady || !promptPersistReady.current) return;
@@ -144,6 +189,7 @@ export function FundDiscoveryPanel({
         budgetYuan: parsedBudget && !Number.isNaN(parsedBudget) ? parsedBudget : null,
         fundTypePreference,
         selectionStrategy,
+        scanMode,
         systemRolePrompt: discoveryPrompt.is_custom ? discoveryPrompt.role_prompt : null,
       });
       setActiveJobId(jobId);
@@ -175,7 +221,7 @@ export function FundDiscoveryPanel({
             <h2 className="text-base font-black text-slate-950">推荐基金</h2>
           </div>
           <p className="mt-2 text-sm leading-6 text-slate-600">
-            基于板块热度与组合缺口，从受控候选池中精选 3~5 只值得关注的机会。默认「均衡潜力」避免追近1年冠军；可选「含新发观察」混入新发基金。仅供参考，不构成投资建议。
+            从扩展板块库（含互联网、有色、新能源车等）中按热度构建候选池，由 AI 精选 3~5 只值得关注的机会。默认「全市场机会」横向对比多板块；也可切换「持仓缺口补充」。仅供参考，不构成投资建议。
           </p>
 
           <div className="mt-4 overflow-hidden rounded-xl border border-slate-100">
@@ -213,6 +259,30 @@ export function FundDiscoveryPanel({
                 }))
               }
             />
+          </div>
+
+          <div className="mt-4">
+            <div className="mb-2 text-xs font-semibold text-slate-700">扫描模式</div>
+            <div className="flex flex-wrap gap-2">
+              {SCAN_MODE_OPTIONS.map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  title={option.hint}
+                  onClick={() => setScanMode(option.id)}
+                  className={`rounded-full border px-3 py-1.5 text-xs font-medium transition ${
+                    scanMode === option.id
+                      ? "border-violet-600 bg-violet-600 text-white"
+                      : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
+                  }`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+            <p className="mt-1.5 text-[11px] leading-5 text-slate-500">
+              {SCAN_MODE_OPTIONS.find((item) => item.id === scanMode)?.hint}
+            </p>
           </div>
 
           <div className="mt-4">

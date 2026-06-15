@@ -1,4 +1,4 @@
-"""519674 等：关联板块涨跌走概念半导体，分时图仍走中证半导体指数。"""
+"""519674 等：展示名仍为「半导体」，涨跌与分时均走中证半导体指数。"""
 
 from app.models import FundProfile, Holding
 from app.services.fund_profile import FundProfileService

@@ -384,6 +384,8 @@ export type FundTypePreference = "any" | "etf_link" | "no_c_class";
 
 export type SelectionStrategy = "balanced" | "with_new_issue";
 
+export type DiscoveryScanMode = "full_market" | "portfolio_gap";
+
 export type DiscoveryPromptConfig = {
   role_prompt: string;
   is_custom: boolean;
@@ -815,6 +817,7 @@ export async function startDiscoveryJob(
     budgetYuan?: number | null;
     fundTypePreference?: FundTypePreference;
     selectionStrategy?: SelectionStrategy;
+    scanMode?: DiscoveryScanMode;
     systemRolePrompt?: string | null;
   },
 ): Promise<string> {
@@ -829,6 +832,7 @@ export async function startDiscoveryJob(
       budget_yuan: options?.budgetYuan ?? null,
       fund_type_preference: options?.fundTypePreference ?? "any",
       selection_strategy: options?.selectionStrategy ?? "balanced",
+      scan_mode: options?.scanMode ?? "full_market",
       system_role_prompt: options?.systemRolePrompt ?? null,
     }),
   });

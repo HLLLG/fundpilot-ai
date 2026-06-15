@@ -293,6 +293,7 @@ class FundDiscoveryReport(BaseModel):
 
 FundTypePreference = Literal["any", "etf_link", "no_c_class"]
 SelectionStrategy = Literal["balanced", "with_new_issue"]
+DiscoveryScanMode = Literal["full_market", "portfolio_gap"]
 
 
 class DiscoveryPromptSaveRequest(BaseModel):
@@ -307,6 +308,7 @@ class DiscoveryRequest(BaseModel):
     holdings: list[Holding] = Field(default_factory=list)
     fund_type_preference: FundTypePreference = "any"
     selection_strategy: SelectionStrategy = "balanced"
+    scan_mode: DiscoveryScanMode = "full_market"
     system_role_prompt: str | None = Field(default=None, max_length=4000)
 
 

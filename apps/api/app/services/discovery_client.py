@@ -32,6 +32,7 @@ class DiscoveryClient:
         *,
         target_sectors: list[str],
         focus_sectors: list[str],
+        scan_mode: str = "full_market",
         candidate_pool: list[dict],
         discovery_facts: dict,
         profile: InvestorProfile,
@@ -58,6 +59,7 @@ class DiscoveryClient:
             discovery_facts=discovery_facts,
             profile=profile,
             focus_sectors=focus_sectors,
+            scan_mode=scan_mode,
         )
         system_prompt = append_output_requirements_to_system(
             self._system_prompt(runtime.news_tool_max_rounds > 0, system_role_prompt)

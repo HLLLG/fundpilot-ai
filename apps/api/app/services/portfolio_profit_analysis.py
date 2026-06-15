@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import calendar
+import hashlib
+import json
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
 from typing import Literal
 
-from app.database import get_portfolio_intraday_curve, save_portfolio_intraday_curve
+from app.database import get_portfolio_intraday_curve_entry, save_portfolio_intraday_curve
 from app.models import FundProfile, Holding
 from app.services.fund_profile import infer_intraday_index_from_sector
 from app.services.index_daily_client import fetch_index_daily_history
@@ -23,6 +27,9 @@ _RANGE_LIMITS: dict[str, int] = {
     "year": 366,
     "all": 800,
 }
+
+_INDEX_INTRADAY_CACHE: tuple[float, list[dict]] | None = None
+_INDEX_INTRADAY_TTL_SECONDS = 60
 
 
 def _parse_clock_minutes(time: str) -> int:
@@ -84,7 +91,58 @@ def _resolve_intraday_for_holding(
     return "index", label
 
 
-def blend_portfolio_intraday(
+def _holdings_intraday_fingerprint(
+    holdings: list[Holding],
+    profiles_by_code: dict[str, FundProfile] | None = None,
+) -> str:
+    profiles_by_code = profiles_by_code or {}
+    rows: list[dict[str, object]] = []
+    for holding in sorted(holdings, key=lambda item: item.fund_code):
+        profile = profiles_by_code.get(holding.fund_code)
+        query = _resolve_intraday_for_holding(holding, profile)
+        rows.append(
+            {
+                "fund_code": holding.fund_code,
+                "amount": round(float(holding.holding_amount), 2),
+                "sector": holding.sector_name,
+                "index": holding.intraday_index_name,
+                "query": query,
+            }
+        )
+    payload = json.dumps(rows, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(payload.encode()).hexdigest()[:16]
+
+
+def _fetch_cached_index_intraday() -> list[dict]:
+    global _INDEX_INTRADAY_CACHE
+    now = time.time()
+    if (
+        _INDEX_INTRADAY_CACHE is not None
+        and now - _INDEX_INTRADAY_CACHE[0] < _INDEX_INTRADAY_TTL_SECONDS
+    ):
+        return _INDEX_INTRADAY_CACHE[1]
+    points, *_ = fetch_sector_intraday("index", "上证指数")
+    _INDEX_INTRADAY_CACHE = (now, points)
+    return points
+
+
+def _fetch_weighted_intraday_map(
+    holding: Holding,
+    profile: FundProfile | None,
+    total: float,
+) -> tuple[float, dict[str, float]] | None:
+    query = _resolve_intraday_for_holding(holding, profile)
+    if query is None:
+        return None
+    source_type, source_name = query
+    points, *_ = fetch_sector_intraday(source_type, source_name)
+    if len(points) < 2:
+        return None
+    time_map = {str(point["time"]): float(point["percent"]) for point in points}
+    return (holding.holding_amount / total, time_map)
+
+
+def _blend_portfolio_rows(
     holdings: list[Holding],
     profiles_by_code: dict[str, FundProfile] | None = None,
 ) -> list[dict[str, float | str | None]]:
@@ -93,20 +151,25 @@ def blend_portfolio_intraday(
     if total <= 0:
         return []
 
+    jobs = [
+        (holding, profiles_by_code.get(holding.fund_code))
+        for holding in holdings
+        if holding.holding_amount > 0
+    ]
     weighted_maps: list[tuple[float, dict[str, float]]] = []
-    for holding in holdings:
-        if holding.holding_amount <= 0:
-            continue
-        profile = profiles_by_code.get(holding.fund_code)
-        query = _resolve_intraday_for_holding(holding, profile)
-        if query is None:
-            continue
-        source_type, source_name = query
-        points, *_ = fetch_sector_intraday(source_type, source_name)
-        if len(points) < 2:
-            continue
-        time_map = {str(point["time"]): float(point["percent"]) for point in points}
-        weighted_maps.append((holding.holding_amount / total, time_map))
+    if not jobs:
+        return []
+
+    max_workers = min(8, len(jobs))
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = [
+            pool.submit(_fetch_weighted_intraday_map, holding, profile, total)
+            for holding, profile in jobs
+        ]
+        for future in as_completed(futures):
+            result = future.result()
+            if result is not None:
+                weighted_maps.append(result)
 
     if not weighted_maps:
         return []
@@ -128,8 +191,17 @@ def blend_portfolio_intraday(
                 "index_percent": None,
             }
         )
+    return portfolio_rows
 
-    index_points, *_ = fetch_sector_intraday("index", "上证指数")
+
+def blend_portfolio_intraday(
+    holdings: list[Holding],
+    profiles_by_code: dict[str, FundProfile] | None = None,
+) -> list[dict[str, float | str | None]]:
+    portfolio_rows = _blend_portfolio_rows(holdings, profiles_by_code)
+    if not portfolio_rows:
+        return []
+    index_points = _fetch_cached_index_intraday()
     return _merge_index_intraday(portfolio_rows, index_points)
 
 
@@ -157,10 +229,15 @@ def persist_intraday_curve(
 ) -> list[dict[str, float | str | None]]:
     session = build_trading_session()
     trade_date = get_effective_trade_date(session_kind=session["session_kind"])
-    points = blend_portfolio_intraday(holdings, profiles_by_code)
-    if points:
-        save_portfolio_intraday_curve(trade_date, points)
-    return points
+    fingerprint = _holdings_intraday_fingerprint(holdings, profiles_by_code)
+    portfolio_rows = _blend_portfolio_rows(holdings, profiles_by_code)
+    if portfolio_rows:
+        save_portfolio_intraday_curve(
+            trade_date,
+            portfolio_rows,
+            holdings_fingerprint=fingerprint,
+        )
+    return blend_portfolio_intraday(holdings, profiles_by_code)
 
 
 def load_or_build_intraday_curve(
@@ -169,14 +246,22 @@ def load_or_build_intraday_curve(
 ) -> tuple[list[dict[str, float | str | None]], str | None]:
     session = build_trading_session()
     trade_date = get_effective_trade_date(session_kind=session["session_kind"])
-    cached = get_portfolio_intraday_curve(trade_date)
-    if cached and len(cached) >= 2:
-        index_points, *_ = fetch_sector_intraday("index", "上证指数")
-        return _merge_index_intraday(cached, index_points), trade_date
-    points = blend_portfolio_intraday(holdings, profiles_by_code)
-    if points:
-        save_portfolio_intraday_curve(trade_date, points)
-    return points, trade_date
+    fingerprint = _holdings_intraday_fingerprint(holdings, profiles_by_code)
+    cached_entry = get_portfolio_intraday_curve_entry(trade_date)
+    if cached_entry and len(cached_entry["points"]) >= 2:
+        if cached_entry.get("holdings_fingerprint") == fingerprint:
+            index_points = _fetch_cached_index_intraday()
+            return _merge_index_intraday(cached_entry["points"], index_points), trade_date
+    portfolio_rows = _blend_portfolio_rows(holdings, profiles_by_code)
+    if portfolio_rows:
+        save_portfolio_intraday_curve(
+            trade_date,
+            portfolio_rows,
+            holdings_fingerprint=fingerprint,
+        )
+        index_points = _fetch_cached_index_intraday()
+        return _merge_index_intraday(portfolio_rows, index_points), trade_date
+    return [], trade_date
 
 
 def filter_snapshots_by_range(

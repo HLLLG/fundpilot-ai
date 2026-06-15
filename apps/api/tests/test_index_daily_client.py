@@ -1,3 +1,4 @@
+from app.services import index_daily_client
 from app.services.index_daily_client import fetch_index_daily_history, index_display_name
 
 
@@ -19,7 +20,8 @@ def test_fetch_index_daily_history_parses_rows(monkeypatch):
         "app.services.index_daily_client.requests.get",
         lambda *args, **kwargs: FakeResponse(),
     )
-    fetch_index_daily_history.cache_clear()
+    index_daily_client._INDEX_TTL_CACHE.clear()
+    index_daily_client._fetch_index_daily_history_impl.cache_clear()
     result = fetch_index_daily_history("000300", 30)
     assert result is not None
     assert result["source"] == "sina"

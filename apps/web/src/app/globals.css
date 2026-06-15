@@ -76,19 +76,24 @@ button:disabled {
 }
 
 .tab-segment {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 4px;
-  padding: 4px;
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 3px;
+  padding: 3px;
   border-radius: 12px;
   background: rgba(15, 23, 42, 0.05);
 }
 
 .tab-segment-btn {
+  flex: 1 1 0;
+  min-width: 0;
   border-radius: 9px;
-  padding: 0.5rem 0.75rem;
-  font-size: 0.8125rem;
+  padding: 0.375rem 0.25rem;
+  font-size: 0.75rem;
   font-weight: 700;
+  line-height: 1.25;
+  text-align: center;
+  white-space: nowrap;
   color: var(--muted);
   transition: color 0.15s, background 0.15s, box-shadow 0.15s;
 }

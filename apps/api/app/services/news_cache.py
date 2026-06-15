@@ -6,6 +6,7 @@ from datetime import date, datetime, timezone
 
 from app.database import _connect
 from app.models import NewsItem
+NEWS_CACHE_STALE_SECONDS = 900
 
 
 def _ensure_cache_table(connection: sqlite3.Connection) -> None:
@@ -25,16 +26,30 @@ def _cache_key(topic: str, cache_date: str | None = None) -> str:
     return f"{topic.strip().lower()}:{day}"
 
 
-def get_cached_news(topic: str, cache_date: str | None = None) -> list[NewsItem] | None:
+def get_cached_news(
+    topic: str,
+    cache_date: str | None = None,
+    *,
+    max_age_seconds: int | None = None,
+) -> list[NewsItem] | None:
     key = _cache_key(topic, cache_date)
     with _connect() as connection:
         _ensure_cache_table(connection)
         row = connection.execute(
-            "SELECT payload FROM news_cache WHERE cache_key = ?",
+            "SELECT payload, updated_at FROM news_cache WHERE cache_key = ?",
             (key,),
         ).fetchone()
     if row is None:
         return None
+    if max_age_seconds is not None:
+        updated_at = str(row["updated_at"] or "")
+        try:
+            parsed = datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
+            age = (datetime.now(timezone.utc) - parsed.astimezone(timezone.utc)).total_seconds()
+            if age > max_age_seconds:
+                return None
+        except ValueError:
+            return None
     raw = json.loads(row["payload"])
     return [NewsItem.model_validate(item) for item in raw]
 
