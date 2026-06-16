@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, RotateCcw, Sparkles, Target } from "lucide-react";
 import type {
   AnalysisMode,
@@ -99,7 +99,9 @@ export function FundDiscoveryPanel({
   onPendingDiscoveryReportApplied,
   onRegisterDiscoveryScanRetry,
 }: FundDiscoveryPanelProps) {
-  const [sectors, setSectors] = useState<DiscoverySectorHeat[]>([]);
+  const [rawSectors, setRawSectors] = useState<DiscoverySectorHeat[]>(
+    () => loadDiscoverySectorHeatCache() ?? [],
+  );
   const [focusSectors, setFocusSectors] = useState<string[]>([]);
   const [fundTypePreference, setFundTypePreference] = useState<FundTypePreference>("any");
   const [selectionStrategy, setSelectionStrategy] = useState<SelectionStrategy>("balanced");
@@ -115,7 +117,9 @@ export function FundDiscoveryPanel({
   );
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [loadingSectors, setLoadingSectors] = useState(() => loadDiscoverySectorHeatCache() == null);
+  const [loadingSectors, setLoadingSectors] = useState(
+    () => (loadDiscoverySectorHeatCache() ?? []).length === 0,
+  );
   const [sectorsError, setSectorsError] = useState<string | null>(null);
   const [previewHolding, setPreviewHolding] = useState<Holding | null>(null);
   const promptPersistReady = useRef(false);
@@ -129,39 +133,50 @@ export function FundDiscoveryPanel({
 
   const loadSectors = useCallback(async () => {
     const cached = loadDiscoverySectorHeatCache();
+    const hadSectors = (cached?.length ?? 0) > 0;
     if (cached?.length) {
-      setSectors(orderDiscoverySectorsForChips(cached, holdings, scanMode));
-      setLoadingSectors(false);
-    } else {
+      setRawSectors(cached);
+    }
+    if (!hadSectors) {
       setLoadingSectors(true);
     }
     setSectorsError(null);
     try {
       const rows = await fetchDiscoverySectors();
-      const ordered = orderDiscoverySectorsForChips(rows, holdings, scanMode);
-      setSectors(ordered);
-      saveDiscoverySectorHeatCache(rows);
+      if (rows.length > 0) {
+        setRawSectors(rows);
+        saveDiscoverySectorHeatCache(rows);
+      } else if (!hadSectors) {
+        setSectorsError("板块热度为空，请稍后重试");
+      }
     } catch (loadError) {
-      if (!cached?.length) {
-        setSectors([]);
+      if (!hadSectors) {
         setSectorsError(loadError instanceof Error ? loadError.message : "加载板块热度失败");
       }
     } finally {
       setLoadingSectors(false);
     }
-  }, [holdings, scanMode]);
+  }, []);
+
+  const sectors = useMemo(
+    () => orderDiscoverySectorsForChips(rawSectors, holdings, scanMode),
+    [rawSectors, holdings, scanMode],
+  );
 
   const loadHistory = useCallback(async () => {
     try {
       const rows = await listDiscoveryReports();
       setHistoryReports(rows);
     } catch {
-      setHistoryReports([]);
+      // 网络抖动时保留已有列表，避免误显示为空
     }
   }, []);
 
   useEffect(() => {
     void loadSectors();
+  }, [loadSectors]);
+
+  useEffect(() => {
     void loadHistory();
     void (async () => {
       try {
@@ -175,7 +190,7 @@ export function FundDiscoveryPanel({
         setPromptReady(true);
       }
     })();
-  }, [holdings, loadHistory, loadSectors]);
+  }, [loadHistory]);
 
   useEffect(() => {
     if (!promptReady || !promptPersistReady.current) return;

@@ -143,6 +143,10 @@ def _stub_market_data_fetches(monkeypatch):
         "app.main.build_sector_heat_ranking",
         lambda: list(_STUB_SECTOR_HEAT),
     )
+    monkeypatch.setattr(
+        "app.main.build_sector_heat_ranking_for_ui",
+        lambda: list(_STUB_SECTOR_HEAT),
+    )
 
 
 @pytest.fixture(autouse=True)

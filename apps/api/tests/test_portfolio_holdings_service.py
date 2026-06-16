@@ -91,3 +91,34 @@ def test_load_persisted_holdings_falls_back_to_profiles(tmp_path, monkeypatch):
     assert snapshot_date is None
     assert len(holdings) == 1
     assert holdings[0].fund_name == "银河创新成长混合A"
+
+
+def test_enrich_loaded_holdings_skips_network_by_default(monkeypatch):
+    from app.services.portfolio_persistence import enrich_loaded_holdings
+
+    holding = Holding(
+        fund_code="519674",
+        fund_name="银河创新成长混合A",
+        holding_amount=4042.24,
+        return_percent=-2.82,
+        sector_return_percent=1.5,
+    )
+
+    def _fail_sync(*_args, **_kwargs):
+        raise AssertionError("sync_holding_amounts_from_shares should not run on fast load")
+
+    def _fail_overlay(*_args, **_kwargs):
+        raise AssertionError("overlay_official_nav_returns should not run on fast load")
+
+    monkeypatch.setattr(
+        "app.services.portfolio_persistence.sync_holding_amounts_from_shares",
+        _fail_sync,
+    )
+    monkeypatch.setattr(
+        "app.services.portfolio_persistence.overlay_official_nav_returns",
+        _fail_overlay,
+    )
+
+    enriched = enrich_loaded_holdings([holding])
+    assert enriched[0].fund_code == "519674"
+    assert enriched[0].daily_profit is not None

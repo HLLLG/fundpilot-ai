@@ -856,12 +856,26 @@ export async function fetchAnalysisJob(jobId: string): Promise<AnalysisJob> {
 }
 
 export async function fetchDiscoverySectors(): Promise<DiscoverySectorHeat[]> {
-  const response = await apiFetch(`${API_BASE}/api/fund-discovery/sectors`, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(await response.text());
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), 20_000);
+  try {
+    const response = await apiFetch(`${API_BASE}/api/fund-discovery/sectors`, {
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      throw new Error(await response.text());
+    }
+    const body = await response.json();
+    return body.sectors ?? [];
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error("加载板块热度超时，请点重试");
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeoutId);
   }
-  const body = await response.json();
-  return body.sectors ?? [];
 }
 
 export async function startDiscoveryJob(

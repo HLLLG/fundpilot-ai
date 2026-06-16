@@ -71,7 +71,7 @@ from app.services.penetration_daily_allocator import allocate_penetration_daily_
 from app.services.holding_estimates import sum_daily_profit
 from app.services.fund_code_resolver import reconcile_holding_fund_codes, search_funds_by_keyword
 from app.services.portfolio_holdings_service import load_persisted_holdings
-from app.services.portfolio_persistence import enrich_loaded_holdings, persist_holdings_after_sector_refresh
+from app.services.portfolio_persistence import persist_holdings_after_sector_refresh
 from app.services.portfolio_snapshot import build_dashboard_payload
 from app.services.job_status_service import resolve_job_status_single_connection
 from app.services.job_store import create_analysis_job
@@ -83,7 +83,7 @@ from app.services.discovery_outcomes import (
     build_discovery_outcomes,
     build_discovery_recommendation_accuracy,
 )
-from app.services.discovery_sector_heat import build_sector_heat_ranking
+from app.services.discovery_sector_heat import build_sector_heat_ranking, build_sector_heat_ranking_for_ui
 from app.services.ocr_pipeline import apply_confirmed_holdings, run_ocr_upload_pipeline
 from app.services.report_diff import diff_reports
 from app.services.report_chat import stream_report_chat
@@ -414,7 +414,7 @@ def job_status(job_id: str) -> dict:
 
 @app.get("/api/fund-discovery/sectors")
 def fund_discovery_sectors() -> dict:
-    return {"sectors": build_sector_heat_ranking()}
+    return {"sectors": build_sector_heat_ranking_for_ui()}
 
 
 @app.post("/api/fund-discovery/async")
@@ -860,7 +860,6 @@ def portfolio_holdings() -> dict:
     holdings, source, snapshot_date = load_persisted_holdings()
     holdings = reconcile_holding_fund_codes(holdings)
     holdings = FundProfileService().resolve_holdings(holdings)
-    holdings = enrich_loaded_holdings(holdings)
     summary = get_portfolio_summary()
     profiles = FundProfileService().list_profiles()
     payload = summary.model_dump(mode="json") if summary else {}

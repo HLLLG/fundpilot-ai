@@ -4,14 +4,15 @@
 >
 > **维护：** 功能或架构有实质变化时，同步更新「能力清单」「数据流」「API」「目录」「环境变量」。
 
-**文档版本：** 2026-06-16（CI 测试加速 + 单元测试精简）
+**文档版本：** 2026-06-16（持仓恢复加速 + 荐基关注方向修复 + 历史推荐批量删除）
 
 **更新记录：**
+- **持仓恢复与荐基体验修复（2026-06-16）：** `GET /api/portfolio/holdings` 默认 `enrich_loaded_holdings(with_network=False)` 快速返回快照/档案，移除 `main.py` 重复 enrich；份额×净值与官方净值覆盖仍由 `POST /api/holdings/refresh-sector-quotes` 完成。`GET /api/fund-discovery/sectors` 改 `build_sector_heat_ranking_for_ui()`（轻量当日涨跌、12s 总预算、超时仍返回 19 个板块标签）；`FundDiscoveryPanel` 关注方向仅挂载时拉取、本地缓存 + 20s 超时，持仓刷新不再反复请求；历史列表请求失败保留已有数据。`DiscoveryHistoryRail` 对齐 `HistoryRail` 支持**批量删除**；单测新增 `test_discovery_sector_heat.py`（**203** 项总量）。
 - **CI / 单元测试加速（2026-06-16）：** GitHub Actions `api` job 使用 `pytest-xdist` 并行（`-n auto --dist loadscope`）、pip 缓存、CI 环境关闭 OCR 预加载/新闻/回测/战术调优；`tests/conftest.py` 统一 stub 交易日历、东财行情、板块热度，强制 SQLite（`FUND_AI_DATABASE_URL=""`）；移除重复/集成慢测，保留核心 API/OCR/持仓/荐基守卫等 **199** 项；单测超时 30s；本地串行约 40s。详见 README「验证」与 `.github/workflows/ci.yml`。
 - **激进波段投资风格（2026-06-16）：** `InvestorProfile.decision_style` 新增 `aggressive`；顶部 **投资预设**（`conservative_hold` | `aggressive_swing`）一键切换浮亏/集中度/持有天数/手续费/净赚目标；日报离线规则 `aggressive_swing_recommendations.py`（跌深加仓 + 扣费后止盈减仓）；荐基选基策略 `dip_rebound`；`discovery_guard` 激进时放宽追高；**盘中盯盘** `POST /api/swing-alerts/evaluate` + `GET /api/swing-alerts/today`；持有 Tab `SwingAlertsPanel` + `useSwingAlerts`（15min 评估 + 浏览器通知）；设计见 `docs/superpowers/specs/2026-06-16-aggressive-swing-style-design.md`。
 - **荐基候选池名称修复（2026-06-16）：** `discovery_candidate_pool._resolve_fund_name()` — 全局种子/主关联板块映射不再使用 `种子基金 {code}` 占位，改东财名称表 `lookup_fund_name_by_code` → 档案 → 代码回退。
 - **后台任务浮层（2026-06-16）：** `BackgroundJobsStack` 于 `Dashboard` 层堆叠 `JobStatusFloat` + `DiscoveryJobStatusFloat`；荐基 `discoveryJobId` 提升为 Dashboard 状态，切 Tab 不丢进度、不与日报浮层互相遮挡；扫描中按钮显示「扫描进行中…」。
-- **持仓金额同步说明（2026-06-16）：** `enrich_loaded_holdings` 会按档案份额×净值重算 `holding_amount`（与 OCR 快照可能略有偏差）；重新上传总览截图可 `force_reset_shares` 对齐养基宝。
+- **持仓金额同步说明（2026-06-16）：** OCR/板块刷新路径下 `enrich_loaded_holdings(with_network=True)` 会按档案份额×净值重算 `holding_amount`；**启动恢复**默认 `with_network=False` 用快照展示，避免 AkShare 子进程拖慢首页。重新上传总览截图可 `force_reset_shares` 对齐养基宝。
 - **板块信号回测修复（2026-06-16）：** 概念板块日 K 改优先 `push2his`（`91.push2his` + AkShare 同款 `smplmt`/`lmt`/日期范围）；拉取链：**东财 → sector-relay `/kline/daily` → AkShare 子进程**；**仅 `has_data=true` 时缓存 24h**（避免空结果被锁一天）；`SectorSignalBacktestPanel` 仍在「生成日报」诊断区，日报正文已移除快照面板。
 - **日报 UI 精简（2026-06-16）：** 移除日报内「今日三行结论」「分析上下文」「板块信号回测快照」「与上一份日报对比」「系统计算事实 + 风险提醒」；`建议复盘` 移至调仓示意下方且默认折叠；主题要闻标题可点原文、去掉底部「新闻原文出处」；移除前端 `DatabaseBackupPanel`（后端 export/import API 仍保留）。
 - **追问侧栏体验（2026-06-16）：** `useChatAutoScroll` — 用户上滑时不强制贴底，右下角「回到底部」；侧栏加高/加宽；设计见 `docs/superpowers/specs/2026-06-16-chat-ux-optimization-design.md`。
@@ -81,7 +82,7 @@
 | 报告 | 组合摘要 + `fund_recommendations` + `topic_briefs` + `market_news`；`analysis_facts`；守卫 + 深度 `report_judge` |
 | 喂模型数据包 | `analysis_payload.build_user_payload()` 瘦身 user JSON（约 -50%）；落库仍全量 `analysis_facts`；A/B 脚本 `ab_compare_reports.py` |
 | 生成日报 | 「生成日报」Tab：`RiskControls`（**AI 角色设定**可编辑 + 高级设置折叠风控）+ `NewsPreviewPanel` / `SectorSignalBacktestPanel` / `RecommendationAccuracyPanel`；诊断项收进 `DiagnosticsAccordion`；日报 **仅分析已有持仓**，荐新基见独立 Tab |
-| 推荐基金 | 「推荐基金」Tab：`FundDiscoveryPanel` — **扫描模式**、**19 个**关注方向、**选基策略**（含 `dip_rebound` 跌深反弹）、荐基角色、基金类型偏好、预算、快速/深度；窄池候选名称走东财查表；`DiscoveryReportPanel` + `DiscoveryHistoryRail` + `DiscoveryChatPanel` |
+| 推荐基金 | 「推荐基金」Tab：`FundDiscoveryPanel` — **扫描模式**、**19 个**关注方向（`build_sector_heat_ranking_for_ui` 限时拉取 + localStorage 缓存）、**选基策略**（含 `dip_rebound` 跌深反弹）、荐基角色、基金类型偏好、预算、快速/深度；窄池候选名称走东财查表；`DiscoveryReportPanel` + `DiscoveryHistoryRail`（含批量删除）+ `DiscoveryChatPanel` |
 | AI 角色 Prompt（日报） | `analysis_prompt.py` `DEFAULT_ROLE_PROMPT`；用户自定义 `role_prompt`（≤4000 字）持久化 `analysis_prompt_state`；`GET/PUT /api/analysis-prompt`；生成时 `system_role_prompt` 传入 `POST /api/analyze/async` |
 | AI 角色 Prompt（荐基） | `discovery_prompt.py` `DEFAULT_DISCOVERY_ROLE_PROMPT`；持久化 `discovery_prompt_state`（schema v6）；`GET/PUT /api/discovery-prompt`；扫描时 `DiscoveryRequest.system_role_prompt` 传入 `discovery_client` |
 | 复盘/模拟 | outcomes / outcomes-weekly / rebalance-simulation / recommendation-accuracy |
@@ -95,7 +96,7 @@
 | 数据备份 | SQLite export/import API（`GET/POST /api/database/*`）；Web 面板已移除 |
 | 小程序 | `apps/miniprogram`：登录、持有列表、基金详情（只读）；与 Web 经 `bind-wechat` 共享 `userId` |
 | 云部署 | `apps/api/Dockerfile`、`docker-compose.cloud.yml`；`scripts/migrate_sqlite_to_mysql.py`；见 `docs/deploy/cloudbase.md` |
-| CI / E2E | GitHub Actions：`api` 并行 pytest（**199** 项，~1min 量级）+ `web` lint/typecheck/build + Playwright 冒烟 |
+| CI / E2E | GitHub Actions：`api` 并行 pytest（**203** 项，~1min 量级）+ `web` lint/typecheck/build + Playwright 冒烟 |
 | 基金诊断 | AkShare 概况/累计收益；详情页可 AkShare **按名称查码**并持久化 |
 | 分析模式 | 快速 / 深度 |
 | 体验 | Markdown 导出、桌面通知、Plus Jakarta 字体 UI；**客户端 SWR 缓存**（盈亏分析/详情/业绩走势）；板块刷新 fast 轮询 + accurate 手动；追问侧栏智能滚动 |
@@ -361,7 +362,7 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | GET | `/api/jobs/{id}` | 任务状态（日报或推荐基金）；`job_status_service` 单连接先查 `discovery_jobs`；含 `job_kind`、`stage`/`stage_label`；完成时含 `report` 或 `discovery_report`；DB 不可用 503 |
 | GET | `/api/discovery-prompt` | 读取荐基 AI 角色设定；含 `role_prompt`、`is_custom`、`default_role_prompt` |
 | PUT | `/api/discovery-prompt` | 保存荐基角色设定；body `{ role_prompt }`，`null`/空串恢复默认 |
-| GET | `/api/fund-discovery/sectors` | canonical 板块热度（当日 + 近5日；`fetch_eastmoney_kline_close_percent`） |
+| GET | `/api/fund-discovery/sectors` | 荐基关注方向 chips：`build_sector_heat_ranking_for_ui()`（当日涨跌轻量拉取、12s 预算；超时回退全部标签）；扫描 pipeline 仍用完整 `build_sector_heat_ranking()` |
 | POST | `/api/fund-discovery/async` | 创建推荐基金异步任务；body `DiscoveryRequest` |
 | GET | `/api/fund-discovery/reports` | 最近 30 条推荐报告 |
 | GET | `/api/fund-discovery/reports/{id}` | 推荐报告详情 |
@@ -572,7 +573,7 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 ## 前端要点
 
 - **今日 / 生成日报 Tab：** 持有看板 vs 交易日历 + **AI 角色设定** + 风控画像 + `ReportPanel`。
-- **推荐基金 Tab：** `FundDiscoveryPanel`（**扫描模式**、19 板块关注方向、荐基角色、基金类型偏好）+ `DiscoveryReportPanel` + `DiscoveryHistoryRail` + `DiscoveryChatPanel`；`DiscoveryJobStatusFloat` 轮询失败自动重试。
+- **推荐基金 Tab：** `FundDiscoveryPanel`（**扫描模式**、19 板块关注方向、localStorage 热度缓存、荐基角色、基金类型偏好）+ `DiscoveryReportPanel` + `DiscoveryHistoryRail`（批量删除）+ `DiscoveryChatPanel`；`DiscoveryJobStatusFloat` 轮询失败自动重试。
 - **缓存：** `clientCache.ts` / `useCachedFetch.ts` — 盈亏分析 `sessionStorage`、详情/NAV `memory`；`loadDiscoverySectorHeatCache` 板块热度 30min；板块 `useSectorQuoteRefresh` 后台 `fast`、手动 `accurate`。
 - **认证：** `AuthProvider` 注入 JWT；未登录访问受保护页会跳转 `/login`；`apiFetch` 自动带 `Authorization: Bearer`；CORS 中间件置于最外层（含 401 响应）。
 - **用户菜单：** 历史日报（`HistoryRail` 支持批量删除）、**账号设置**（`/settings` 绑定微信）；未绑微信时显示角标；持仓元数据由 OCR 自动维护，无独立档案页。
@@ -648,7 +649,7 @@ bash scripts/dev.sh    # 或 scripts/dev.ps1
 ```
 
 ```bash
-cd apps/api && ./.venv/Scripts/python.exe -m pytest tests -q          # 199 项，串行 ~40s
+cd apps/api && ./.venv/Scripts/python.exe -m pytest tests -q          # 203 项，串行 ~40s
 cd apps/api && ./.venv/Scripts/python.exe -m pytest tests -q -n auto --dist loadscope  # 与 CI 一致
 cd apps/web && npm run lint && npm run typecheck && npm run build
 cd apps/web && npm run test:e2e   # Playwright 冒烟
@@ -658,7 +659,7 @@ cd apps/web && npm run test:e2e   # Playwright 冒烟
 
 | 项 | 说明 |
 |----|------|
-| 规模 | **199** 项单元测试（自 ~400+ 精简；去掉重复集成测与纯网络拉取测） |
+| 规模 | **203** 项单元测试（自 ~400+ 精简；去掉重复集成测与纯网络拉取测） |
 | 离线 | `conftest.py` autouse stub：交易日历、基金名称表、东财 spot/K 线、板块刷新、`build_sector_heat_ranking` 等 |
 | 数据库 | 测试强制 `FUND_AI_DATABASE_URL=""` → SQLite 文件库；勿在 pytest 期间连生产 MySQL |
 | 超时 | `pytest.ini`：`timeout = 30` |

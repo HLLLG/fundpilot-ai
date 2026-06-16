@@ -62,10 +62,20 @@ def merge_holdings_with_snapshot(incoming: list[Holding]) -> list[Holding]:
     return merged
 
 
-def enrich_loaded_holdings(holdings: list[Holding]) -> list[Holding]:
-    """恢复持仓时同步份额×净值金额，再覆盖官方净值当日收益，避免展示 OCR 旧值。"""
+def enrich_loaded_holdings(
+    holdings: list[Holding],
+    *,
+    with_network: bool = False,
+) -> list[Holding]:
+    """恢复持仓时补全展示字段。
+
+    默认 ``with_network=False``：仅用快照/档案已有字段做估算，避免 AkShare 子进程拖慢
+    ``GET /api/portfolio/holdings``。份额×净值与官方净值覆盖由前端触发的板块刷新完成。
+    """
     if not holdings:
         return holdings
+    if not with_network:
+        return enrich_holdings_estimates(holdings)
     synced = sync_holding_amounts_from_shares(holdings)
     return enrich_holdings_estimates(overlay_official_nav_returns(synced))
 

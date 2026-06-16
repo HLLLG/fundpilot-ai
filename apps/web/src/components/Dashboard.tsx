@@ -173,7 +173,7 @@ export function Dashboard() {
     try {
       setReports(await listReports());
     } catch {
-      setReports([]);
+      // 网络抖动时保留已有列表
     }
   };
 

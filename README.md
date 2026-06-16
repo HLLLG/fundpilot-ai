@@ -32,7 +32,7 @@
 - 基金详情页：**业绩走势**（近1月～3年、本基金 vs 沪深300）、历史净值滚动加载；**持有天数**可点选首次购入日期；关联板块分时图。
 - **邮箱注册/登录**（JWT，默认 30 天有效）；用户菜单 → **账号设置** 可绑定微信，与小程序共享持仓。
 - **微信小程序**（`apps/miniprogram`）：微信登录、持有列表、基金详情（只读）；云端部署见 [docs/deploy/cloudbase.md](docs/deploy/cloudbase.md)。
-- **推荐基金** Tab：默认 **全市场机会** 模式，从 19 个板块热度 Top 8 建窄池并 AI 横向精选；可切换 **持仓缺口补充**；选基策略、关注方向、预算、基金类型偏好；历史推荐、候选池、7 日复盘与追问。详见下文「推荐基金」。
+- **推荐基金** Tab：默认 **全市场机会** 模式，从 19 个板块热度 Top 8 建窄池并 AI 横向精选；可切换 **持仓缺口补充**；选基策略、关注方向（限时拉取 + 本地缓存）、预算、基金类型偏好；历史推荐（含批量删除）、候选池、7 日复盘与追问。详见下文「推荐基金」。
 - **页面缓存**：盈亏分析、业绩走势、持仓详情等采用客户端 SWR 缓存；板块涨跌后台轻量轮询，手动刷新走精确模式。
 - **日报数据口径**：AI 分析使用 `estimated_holding_return_percent`，与持有页「持有」列一致（盘中含板块估算）。
 - **调仓示意**：报告页展开「调仓示意模拟」；AI 未填金额时按集中度或减仓动作自动补算变动额。
@@ -105,7 +105,7 @@
 | 分析对象 | 已有持仓 | 窄池新基候选 |
 | AI 角色 | `analysis-prompt` | `discovery-prompt` |
 | 输出 | `fund_recommendations` 调仓建议 | `FundDiscoveryReport` 荐基报告 |
-| 历史 | 历史日报侧栏 | 推荐基金右侧 `DiscoveryHistoryRail` |
+| 历史 | 历史日报侧栏（批量删除） | 推荐基金右侧 `DiscoveryHistoryRail`（批量删除） |
 
 设计细节见 [V2 设计](docs/superpowers/specs/2026-06-14-fund-discovery-v2-design.md)、[V3 选基策略](docs/superpowers/specs/2026-06-14-fund-discovery-v3-selection-strategy-design.md)、[全市场扫描](docs/superpowers/specs/2026-06-15-fund-discovery-full-market-design.md)；API 与架构见 [docs/PROJECT_CONTEXT.md](docs/PROJECT_CONTEXT.md)。
 
@@ -276,7 +276,7 @@ docker compose -f docker-compose.cloud.yml up --build
 
 ## 验证
 
-后端单元测试（约 **199** 项，本地串行 ~40s；默认离线 stub，不访问东财/AkShare/MySQL）：
+后端单元测试（约 **203** 项，本地串行 ~40s；默认离线 stub，不访问东财/AkShare/MySQL）：
 
 ```bash
 cd /d/Code/HL_Project/fundpilot-ai/apps/api

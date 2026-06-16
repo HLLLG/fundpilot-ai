@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from app.services.eastmoney_trends_client import (
@@ -16,6 +17,38 @@ from app.services.trading_session import build_trading_session
 
 _HEAT_LIVE_TTL_SECONDS = 60.0
 _HEAT_CLOSED_TTL_SECONDS = 3600.0
+_DEFAULT_NETWORK_TIMEOUT = 12.0
+_UI_NETWORK_TIMEOUT = 4.0
+_UI_BUDGET_SECONDS = 12.0
+
+
+def fallback_sector_heat_rows() -> list[dict]:
+    """无网络数据时仍返回全部关注方向标签，供前端展示可选 chips。"""
+    return [
+        {
+            "sector_label": label,
+            "change_1d_percent": None,
+            "change_5d_percent": None,
+            "heat_score": None,
+        }
+        for label in list_discovery_sector_labels()
+    ]
+
+
+def _merge_sector_heat_rows(partial: list[dict]) -> list[dict]:
+    by_label = {row["sector_label"]: row for row in partial}
+    merged: list[dict] = []
+    for label in list_discovery_sector_labels():
+        merged.append(
+            by_label.get(label)
+            or {
+                "sector_label": label,
+                "change_1d_percent": None,
+                "change_5d_percent": None,
+                "heat_score": None,
+            }
+        )
+    return merged
 
 
 def build_sector_heat_ranking(
@@ -23,6 +56,9 @@ def build_sector_heat_ranking(
     fetch_close_percent=fetch_eastmoney_kline_close_percent,
     fetch_series=fetch_eastmoney_daily_kline_series,
     force_refresh: bool = False,
+    lightweight: bool = False,
+    network_timeout: float = _DEFAULT_NETWORK_TIMEOUT,
+    budget_seconds: float | None = None,
 ) -> list[dict]:
     """canonical 板块按当日涨跌 + 近5日涨跌综合排序（降序）；结果按交易日缓存。"""
     session = build_trading_session()
@@ -44,13 +80,26 @@ def build_sector_heat_ranking(
         trade_date=trade_date,
         fetch_close_percent=fetch_close_percent,
         fetch_series=fetch_series,
+        lightweight=lightweight,
+        network_timeout=network_timeout,
+        budget_seconds=budget_seconds,
     )
+    merged = _merge_sector_heat_rows(rows) if rows else fallback_sector_heat_rows()
     if rows:
         save_spot_snapshot(
             cache_key,
-            {"sectors": rows, "trade_date": trade_date, "session_kind": session_kind},
+            {"sectors": merged, "trade_date": trade_date, "session_kind": session_kind},
         )
-    return rows
+    return merged
+
+
+def build_sector_heat_ranking_for_ui() -> list[dict]:
+    """推荐基金 Tab 关注方向：限时轻量拉取，超时仍返回全部板块标签。"""
+    return build_sector_heat_ranking(
+        lightweight=True,
+        network_timeout=_UI_NETWORK_TIMEOUT,
+        budget_seconds=_UI_BUDGET_SECONDS,
+    )
 
 
 def _build_sector_heat_rows(
@@ -58,9 +107,13 @@ def _build_sector_heat_rows(
     trade_date: str | None,
     fetch_close_percent,
     fetch_series,
+    lightweight: bool = False,
+    network_timeout: float = _DEFAULT_NETWORK_TIMEOUT,
+    budget_seconds: float | None = None,
 ) -> list[dict]:
     labels = list_discovery_sector_labels()
     rows: list[dict] = []
+    deadline = time.monotonic() + budget_seconds if budget_seconds else None
 
     with ThreadPoolExecutor(max_workers=min(6, max(len(labels), 1))) as executor:
         futures = [
@@ -70,10 +123,14 @@ def _build_sector_heat_rows(
                 trade_date,
                 fetch_close_percent,
                 fetch_series,
+                lightweight,
+                network_timeout,
             )
             for label in labels
         ]
         for future in as_completed(futures):
+            if deadline is not None and time.monotonic() >= deadline:
+                break
             row = future.result()
             if row is not None:
                 rows.append(row)
@@ -93,6 +150,8 @@ def _sector_heat_row(
     trade_date: str | None,
     fetch_close_percent,
     fetch_series,
+    lightweight: bool = False,
+    network_timeout: float = _DEFAULT_NETWORK_TIMEOUT,
 ) -> dict | None:
     canon = get_quote_canonical_sector(label) or get_canonical_sector(label)
     if canon is None:
@@ -101,14 +160,21 @@ def _sector_heat_row(
         canon.eastmoney_secid,
         source_code=canon.source_code,
         trade_date=trade_date,
+        timeout=network_timeout,
+        max_retries=1 if lightweight else 2,
     )
-    series = fetch_series(
-        canon.eastmoney_secid,
-        source_code=canon.source_code,
-        max_days=12,
-    )
-    change_5d = _rolling_change_percent(series, days=5)
-    if change_1d is None:
+    change_5d = None
+    series: list[dict] = []
+    if not lightweight:
+        series = fetch_series(
+            canon.eastmoney_secid,
+            source_code=canon.source_code,
+            max_days=12,
+            timeout=network_timeout,
+            max_retries=1 if lightweight else 2,
+        )
+        change_5d = _rolling_change_percent(series, days=5)
+    if change_1d is None and series:
         change_1d = _latest_change_percent(series, trade_date)
     return {
         "sector_label": label,
