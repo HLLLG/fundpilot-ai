@@ -373,6 +373,7 @@ def _system_prompt(
 
     now = datetime.now()
     tactical = decision_style == "tactical"
+    aggressive = decision_style == "aggressive"
     base = resolve_role_prompt(system_role_prompt)
     base += f"当前分析时点约为 {now.strftime('%Y-%m-%d %H:%M')}。"
     if news_enabled:
@@ -384,7 +385,14 @@ def _system_prompt(
         )
     else:
         base += "若无新闻数据，须说明信息缺口并给出条件化方案。"
-    if tactical:
+    if aggressive:
+        base += (
+            "当前为激进波段模式：持有周期约 3～7 天，跌深企稳可分批买入，"
+            "持有收益达扣费止盈线（手续费 + 净赚目标，见 profile 或 analysis_facts.portfolio.take_profit_threshold_percent）"
+            "优先减仓落袋；须结合 nav_trend.recent_5d_change_percent、sector_intraday 分时企稳与 sector_return_percent；"
+            "不追涨当日大涨板块，不得承诺收益。"
+        )
+    elif tactical:
         base += (
             "当前为战术短线模式：在遵守集中度与风险复核前提下，优先最大化当日收盘前与下一交易日的战术收益空间；"
             "须结合 sector_intraday（分时形态）、sector_momentum（涨后回吐等）、market_flow（北向资金）与 news.freshness_label；"
@@ -781,13 +789,18 @@ def _append_pipeline_caveats(caveats: list[str], facts: dict) -> list[str]:
         )
     decision_style = (facts.get("portfolio") or {}).get("decision_style", "conservative")
     if (
-        decision_style != "tactical"
+        decision_style not in {"tactical", "aggressive"}
         and pipeline.get("has_today_market_signal") is False
         and get_settings().news_require_today_for_add
     ):
         result.append("当日无已标注「今日」的要闻，系统已限制激进加仓类建议。")
     elif decision_style == "tactical":
         result.append("战术短线模式已启用：守卫未因缺少当日要闻而压制加仓类建议，请自行承担短线波动风险。")
+    elif decision_style == "aggressive":
+        threshold = (facts.get("portfolio") or {}).get("take_profit_threshold_percent", 2.5)
+        result.append(
+            f"激进波段模式已启用：跌深买入、达 {threshold}% 扣费止盈线优先减仓，请自行承担短线波动风险。"
+        )
     window = session.get("decision_window")
     if window and window not in result:
         result.append(window)

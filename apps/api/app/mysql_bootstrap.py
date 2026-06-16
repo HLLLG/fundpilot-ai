@@ -186,6 +186,17 @@ def ensure_mysql_schema(connection: Any) -> None:
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """,
         """
+        CREATE TABLE IF NOT EXISTS swing_alert_fired (
+            userId BIGINT NOT NULL,
+            trade_date VARCHAR(16) NOT NULL,
+            alert_key VARCHAR(255) NOT NULL,
+            payload LONGTEXT NOT NULL,
+            fired_at VARCHAR(64) NOT NULL,
+            PRIMARY KEY (userId, trade_date, alert_key),
+            INDEX idx_swing_alert_user_date (userId, trade_date, fired_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """,
+        """
         CREATE TABLE IF NOT EXISTS refresh_tokens (
             id VARCHAR(64) PRIMARY KEY,
             userId BIGINT NOT NULL,

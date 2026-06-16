@@ -2,8 +2,10 @@ from datetime import date, timedelta
 
 from app.services.discovery_selection_strategy import (
     balanced_score,
+    dip_rebound_score,
     pick_sector_candidates,
     rank_candidates_balanced,
+    rank_candidates_dip_rebound,
 )
 
 
@@ -19,6 +21,35 @@ def test_rank_candidates_balanced_orders_by_score():
         {"fund_code": "000002", "return_1y_percent": 30.0, "return_6m_percent": 25.0, "return_3m_percent": 15.0},
     ]
     ranked = rank_candidates_balanced(rows)
+    assert ranked[0]["fund_code"] == "000002"
+
+
+def test_dip_rebound_score_prefers_recent_pullback():
+    pullback = {
+        "return_1y_percent": 25.0,
+        "nav_trend": {"recent_5d_change_percent": -6.0, "distance_from_high_percent": -12.0},
+    }
+    hot = {
+        "return_1y_percent": 90.0,
+        "nav_trend": {"recent_5d_change_percent": 4.0, "distance_from_high_percent": -1.0},
+    }
+    assert dip_rebound_score(pullback) > dip_rebound_score(hot)
+
+
+def test_rank_candidates_dip_rebound_orders_by_score():
+    rows = [
+        {
+            "fund_code": "000001",
+            "return_1y_percent": 80.0,
+            "nav_trend": {"recent_5d_change_percent": 2.0},
+        },
+        {
+            "fund_code": "000002",
+            "return_1y_percent": 30.0,
+            "nav_trend": {"recent_5d_change_percent": -5.0, "distance_from_high_percent": -8.0},
+        },
+    ]
+    ranked = rank_candidates_dip_rebound(rows)
     assert ranked[0]["fund_code"] == "000002"
 
 

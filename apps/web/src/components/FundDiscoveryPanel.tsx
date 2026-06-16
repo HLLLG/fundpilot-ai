@@ -22,8 +22,8 @@ import {
   startDiscoveryJob,
 } from "@/lib/api";
 import { DiscoveryHistoryRail } from "@/components/DiscoveryHistoryRail";
-import { DiscoveryJobStatusFloat } from "@/components/DiscoveryJobStatusFloat";
 import { DiscoveryReportPanel } from "@/components/DiscoveryReportPanel";
+import { InvestmentPresetSelector } from "@/components/InvestmentPresetSelector";
 import { RolePromptEditor } from "@/components/RolePromptEditor";
 import { YangjibaoFundDetail } from "@/components/YangjibaoFundDetail";
 import { displayableHoldings } from "@/lib/holdingMetrics";
@@ -71,20 +71,33 @@ const FUND_TYPE_OPTIONS: { id: FundTypePreference; label: string }[] = [
 const SELECTION_STRATEGY_OPTIONS: { id: SelectionStrategy; label: string; hint: string }[] = [
   { id: "balanced", label: "均衡潜力", hint: "近3~6月走强、避免追年度冠军" },
   { id: "with_new_issue", label: "含新发观察", hint: "混入近6月新发 + 均衡老基" },
+  { id: "dip_rebound", label: "跌深反弹", hint: "近5日回调较深、距高点有反弹空间" },
 ];
 
 type FundDiscoveryPanelProps = {
   holdings: Holding[];
   profile: InvestorProfile;
+  onProfileChange: (profile: InvestorProfile) => void;
   analysisMode: AnalysisMode;
   onAnalysisModeChange: (mode: AnalysisMode) => void;
+  discoveryJobId: string | null;
+  onDiscoveryJobIdChange: (jobId: string | null) => void;
+  pendingDiscoveryReport: FundDiscoveryReport | null;
+  onPendingDiscoveryReportApplied: () => void;
+  onRegisterDiscoveryScanRetry: (retry: (() => void) | null) => void;
 };
 
 export function FundDiscoveryPanel({
   holdings,
   profile,
+  onProfileChange,
   analysisMode,
   onAnalysisModeChange,
+  discoveryJobId,
+  onDiscoveryJobIdChange,
+  pendingDiscoveryReport,
+  onPendingDiscoveryReportApplied,
+  onRegisterDiscoveryScanRetry,
 }: FundDiscoveryPanelProps) {
   const [sectors, setSectors] = useState<DiscoverySectorHeat[]>([]);
   const [focusSectors, setFocusSectors] = useState<string[]>([]);
@@ -100,7 +113,6 @@ export function FundDiscoveryPanel({
       default_role_prompt: "",
     }),
   );
-  const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loadingSectors, setLoadingSectors] = useState(() => loadDiscoverySectorHeatCache() == null);
@@ -108,6 +120,12 @@ export function FundDiscoveryPanel({
   const [previewHolding, setPreviewHolding] = useState<Holding | null>(null);
   const promptPersistReady = useRef(false);
   const [promptReady, setPromptReady] = useState(false);
+
+  useEffect(() => {
+    if (profile.decision_style === "aggressive") {
+      setSelectionStrategy("dip_rebound");
+    }
+  }, [profile.decision_style]);
 
   const loadSectors = useCallback(async () => {
     const cached = loadDiscoverySectorHeatCache();
@@ -168,6 +186,13 @@ export function FundDiscoveryPanel({
     });
   }, [discoveryPrompt, promptReady]);
 
+  useEffect(() => {
+    if (!pendingDiscoveryReport) return;
+    setReport(pendingDiscoveryReport);
+    void loadHistory();
+    onPendingDiscoveryReportApplied();
+  }, [pendingDiscoveryReport, loadHistory, onPendingDiscoveryReportApplied]);
+
   const toggleSector = (label: string) => {
     setFocusSectors((current) => {
       if (current.includes(label)) {
@@ -178,7 +203,7 @@ export function FundDiscoveryPanel({
     });
   };
 
-  const handleScan = async () => {
+  const handleScan = useCallback(async () => {
     setIsSubmitting(true);
     setError(null);
     try {
@@ -192,13 +217,32 @@ export function FundDiscoveryPanel({
         scanMode,
         systemRolePrompt: discoveryPrompt.is_custom ? discoveryPrompt.role_prompt : null,
       });
-      setActiveJobId(jobId);
+      onDiscoveryJobIdChange(jobId);
     } catch (scanError) {
       setError(scanError instanceof Error ? scanError.message : "提交失败");
     } finally {
       setIsSubmitting(false);
     }
-  };
+  }, [
+    analysisMode,
+    budgetYuan,
+    discoveryPrompt.is_custom,
+    discoveryPrompt.role_prompt,
+    focusSectors,
+    fundTypePreference,
+    holdings,
+    onDiscoveryJobIdChange,
+    profile,
+    scanMode,
+    selectionStrategy,
+  ]);
+
+  useEffect(() => {
+    onRegisterDiscoveryScanRetry(() => {
+      void handleScan();
+    });
+    return () => onRegisterDiscoveryScanRetry(null);
+  }, [handleScan, onRegisterDiscoveryScanRetry]);
 
   const handleOpenFund = (recommendation: DiscoveryRecommendation) => {
     setPreviewHolding({
@@ -223,6 +267,11 @@ export function FundDiscoveryPanel({
           <p className="mt-2 text-sm leading-6 text-slate-600">
             从扩展板块库（含互联网、有色、新能源车等）中按热度构建候选池，由 AI 精选 3~5 只值得关注的机会。默认「全市场机会」横向对比多板块；也可切换「持仓缺口补充」。仅供参考，不构成投资建议。
           </p>
+
+          <div className="mt-4">
+            <p className="mb-2 text-[11px] font-bold text-slate-400">投资风格预设</p>
+            <InvestmentPresetSelector profile={profile} onChange={onProfileChange} compact />
+          </div>
 
           <div className="mt-4 overflow-hidden rounded-xl border border-slate-100">
             <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-3 py-2.5">
@@ -427,29 +476,22 @@ export function FundDiscoveryPanel({
           <button
             type="button"
             data-testid="discovery-scan-button"
-            disabled={isSubmitting || Boolean(activeJobId)}
+            disabled={isSubmitting || Boolean(discoveryJobId)}
             onClick={() => void handleScan()}
             className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-3 text-sm font-bold text-white hover:bg-indigo-700 disabled:opacity-60 sm:w-auto"
           >
-            {isSubmitting ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
-            扫描今日机会
+            {isSubmitting || discoveryJobId ? (
+              <Loader2 size={16} className="animate-spin" />
+            ) : (
+              <Sparkles size={16} />
+            )}
+            {discoveryJobId ? "扫描进行中…" : "扫描今日机会"}
           </button>
         </section>
 
         {report ? (
           <DiscoveryReportPanel report={report} onOpenFund={handleOpenFund} />
         ) : null}
-
-        <DiscoveryJobStatusFloat
-          jobId={activeJobId}
-          onComplete={(completed) => {
-            setReport(completed);
-            setActiveJobId(null);
-            void loadHistory();
-          }}
-          onClose={() => setActiveJobId(null)}
-          onRetry={() => void handleScan()}
-        />
       </div>
 
       <DiscoveryHistoryRail

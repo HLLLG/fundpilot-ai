@@ -4,9 +4,13 @@
 >
 > **维护：** 功能或架构有实质变化时，同步更新「能力清单」「数据流」「API」「目录」「环境变量」。
 
-**文档版本：** 2026-06-16（日报 UI 精简 + 板块信号回测修复 + 追问体验）
+**文档版本：** 2026-06-16（激进波段预设 + 荐基名称修复 + 后台任务浮层）
 
 **更新记录：**
+- **激进波段投资风格（2026-06-16）：** `InvestorProfile.decision_style` 新增 `aggressive`；顶部 **投资预设**（`conservative_hold` | `aggressive_swing`）一键切换浮亏/集中度/持有天数/手续费/净赚目标；日报离线规则 `aggressive_swing_recommendations.py`（跌深加仓 + 扣费后止盈减仓）；荐基选基策略 `dip_rebound`；`discovery_guard` 激进时放宽追高；**盘中盯盘** `POST /api/swing-alerts/evaluate` + `GET /api/swing-alerts/today`；持有 Tab `SwingAlertsPanel` + `useSwingAlerts`（15min 评估 + 浏览器通知）；设计见 `docs/superpowers/specs/2026-06-16-aggressive-swing-style-design.md`。
+- **荐基候选池名称修复（2026-06-16）：** `discovery_candidate_pool._resolve_fund_name()` — 全局种子/主关联板块映射不再使用 `种子基金 {code}` 占位，改东财名称表 `lookup_fund_name_by_code` → 档案 → 代码回退。
+- **后台任务浮层（2026-06-16）：** `BackgroundJobsStack` 于 `Dashboard` 层堆叠 `JobStatusFloat` + `DiscoveryJobStatusFloat`；荐基 `discoveryJobId` 提升为 Dashboard 状态，切 Tab 不丢进度、不与日报浮层互相遮挡；扫描中按钮显示「扫描进行中…」。
+- **持仓金额同步说明（2026-06-16）：** `enrich_loaded_holdings` 会按档案份额×净值重算 `holding_amount`（与 OCR 快照可能略有偏差）；重新上传总览截图可 `force_reset_shares` 对齐养基宝。
 - **板块信号回测修复（2026-06-16）：** 概念板块日 K 改优先 `push2his`（`91.push2his` + AkShare 同款 `smplmt`/`lmt`/日期范围）；拉取链：**东财 → sector-relay `/kline/daily` → AkShare 子进程**；**仅 `has_data=true` 时缓存 24h**（避免空结果被锁一天）；`SectorSignalBacktestPanel` 仍在「生成日报」诊断区，日报正文已移除快照面板。
 - **日报 UI 精简（2026-06-16）：** 移除日报内「今日三行结论」「分析上下文」「板块信号回测快照」「与上一份日报对比」「系统计算事实 + 风险提醒」；`建议复盘` 移至调仓示意下方且默认折叠；主题要闻标题可点原文、去掉底部「新闻原文出处」；移除前端 `DatabaseBackupPanel`（后端 export/import API 仍保留）。
 - **追问侧栏体验（2026-06-16）：** `useChatAutoScroll` — 用户上滑时不强制贴底，右下角「回到底部」；侧栏加高/加宽；设计见 `docs/superpowers/specs/2026-06-16-chat-ux-optimization-design.md`。
@@ -71,11 +75,12 @@
 | 首页看板 | **持有** Tab：`YangjibaoHoldingsBoard` 养基宝式卡片（`AddHoldingModal` 上传支付宝/养基宝截图）；启动 `GET /api/portfolio/holdings` 恢复持仓并自动刷新板块；点击行打开 `YangjibaoFundDetail` |
 | 基金详情 | 关联板块分时图（边框/十字线）；**业绩走势**（区间涨跌 vs 沪深300、历史净值分页）；**我的收益**；持有天数滚轮选购入日；持仓明细默认收起 |
 | 盈亏分析 | **盈亏分析** Tab：`PortfolioDashboard` — 收益走势（当日/周/月/年/全部）、盈亏日历、当日 TOP5、持仓甜甜圈；`GET /api/portfolio/dashboard` |
-| 风控 | 浮亏线、单只集中度、**期望投入总额**（滑条 1–10 万）、**偏定投** / **拒绝追高**（规则守卫 + 传入模型 `profile`）；`InvestorProfile` 持久化 SQLite + localStorage |
+| 风控 | 浮亏线、单只集中度、**期望投入总额**（滑条 1–10 万）、**投资预设**（稳健持有 / 激进波段）、`decision_style`（`conservative` / `tactical` / **`aggressive`**）、扣费止盈参数、**偏定投** / **拒绝追高**；`InvestorProfile` 持久化 + localStorage |
+| 波段盯盘 | `swing_alert_engine` + `swing_alert_service`；`POST /api/swing-alerts/evaluate`、`GET /api/swing-alerts/today`；持有 Tab `SwingAlertsPanel`；`useSwingAlerts` 15min 自动评估 + 桌面通知；高级设置：手续费%/净赚%/盯盘范围 |
 | 报告 | 组合摘要 + `fund_recommendations` + `topic_briefs` + `market_news`；`analysis_facts`；守卫 + 深度 `report_judge` |
 | 喂模型数据包 | `analysis_payload.build_user_payload()` 瘦身 user JSON（约 -50%）；落库仍全量 `analysis_facts`；A/B 脚本 `ab_compare_reports.py` |
 | 生成日报 | 「生成日报」Tab：`RiskControls`（**AI 角色设定**可编辑 + 高级设置折叠风控）+ `NewsPreviewPanel` / `SectorSignalBacktestPanel` / `RecommendationAccuracyPanel`；诊断项收进 `DiagnosticsAccordion`；日报 **仅分析已有持仓**，荐新基见独立 Tab |
-| 推荐基金 | 「推荐基金」Tab：`FundDiscoveryPanel` — **扫描模式**（全市场机会 / 持仓缺口补充）、**19 个**关注方向 chips（东财涨跌）、**选基策略**、荐基角色、基金类型偏好、预算、快速/深度；窄池扫描 → `DiscoveryReportPanel` + `DiscoveryHistoryRail` + `DiscoveryChatPanel`；`GET /api/fund-discovery/sectors` |
+| 推荐基金 | 「推荐基金」Tab：`FundDiscoveryPanel` — **扫描模式**、**19 个**关注方向、**选基策略**（含 `dip_rebound` 跌深反弹）、荐基角色、基金类型偏好、预算、快速/深度；窄池候选名称走东财查表；`DiscoveryReportPanel` + `DiscoveryHistoryRail` + `DiscoveryChatPanel` |
 | AI 角色 Prompt（日报） | `analysis_prompt.py` `DEFAULT_ROLE_PROMPT`；用户自定义 `role_prompt`（≤4000 字）持久化 `analysis_prompt_state`；`GET/PUT /api/analysis-prompt`；生成时 `system_role_prompt` 传入 `POST /api/analyze/async` |
 | AI 角色 Prompt（荐基） | `discovery_prompt.py` `DEFAULT_DISCOVERY_ROLE_PROMPT`；持久化 `discovery_prompt_state`（schema v6）；`GET/PUT /api/discovery-prompt`；扫描时 `DiscoveryRequest.system_role_prompt` 传入 `discovery_client` |
 | 复盘/模拟 | outcomes / outcomes-weekly / rebalance-simulation / recommendation-accuracy |
@@ -89,12 +94,12 @@
 | 数据备份 | SQLite export/import API（`GET/POST /api/database/*`）；Web 面板已移除 |
 | 小程序 | `apps/miniprogram`：登录、持有列表、基金详情（只读）；与 Web 经 `bind-wechat` 共享 `userId` |
 | 云部署 | `apps/api/Dockerfile`、`docker-compose.cloud.yml`；`scripts/migrate_sqlite_to_mysql.py`；见 `docs/deploy/cloudbase.md` |
-| CI / E2E | GitHub Actions：pytest（**370** 项）+ lint/typecheck/build + Playwright |
+| CI / E2E | GitHub Actions：pytest（**406** 项）+ lint/typecheck/build + Playwright |
 | 基金诊断 | AkShare 概况/累计收益；详情页可 AkShare **按名称查码**并持久化 |
 | 分析模式 | 快速 / 深度 |
 | 体验 | Markdown 导出、桌面通知、Plus Jakarta 字体 UI；**客户端 SWR 缓存**（盈亏分析/详情/业绩走势）；板块刷新 fast 轮询 + accurate 手动；追问侧栏智能滚动 |
 | 报告追问 | SSE + ChatMarkdown；`useChatAutoScroll` 贴底/回到底部 |
-| 异步任务 | `/api/analyze/async` + `JobStatusFloat`；`/api/fund-discovery/async` + `DiscoveryJobStatusFloat`；`GET /api/jobs/{id}` 经 `job_status_service` 统一查询（`job_kind` 区分日报/荐基） |
+| 异步任务 | `/api/analyze/async` + `/api/fund-discovery/async`；`Dashboard` 层 `BackgroundJobsStack` 堆叠 `JobStatusFloat` + `DiscoveryJobStatusFloat`（切 Tab 持续轮询）；`GET /api/jobs/{id}`（`job_kind` 区分日报/荐基） |
 | 前端偏好 | localStorage：风控、**日报/荐基 AI 角色 Prompt**、分析模式、板块自动刷新 |
 
 ---
@@ -199,7 +204,8 @@ fundpilot-ai/
 ├── docs/superpowers/specs/2026-06-13-fund-discovery-design.md
 ├── docs/superpowers/specs/2026-06-14-fund-discovery-v2-design.md
 ├── docs/superpowers/specs/2026-06-14-fund-discovery-v3-selection-strategy-design.md
-├── docs/superpowers/specs/2026-06-15-data-caching-optimization-design.md
+├── docs/superpowers/specs/2026-06-16-aggressive-swing-style-design.md
+├── docs/superpowers/specs/2026-06-16-chat-ux-optimization-design.md
 ├── docs/superpowers/specs/2026-06-15-fund-discovery-full-market-design.md
 ├── docs/superpowers/plans/2026-06-13-fund-discovery.md
 ├── docs/superpowers/plans/2026-06-14-fund-discovery-v2.md
@@ -217,8 +223,8 @@ fundpilot-ai/
 2. 启动自动恢复上次持仓；点刷新更新板块涨跌 → 当日收益按板块估算
 3. 需更新金额时 →「持有」页「新增持有」上传支付宝/养基宝总览截图
 4. 「盈亏分析」Tab 查看收益走势、盈亏日历、当日 TOP5、持仓分布
-5. 「推荐基金」Tab 可选关注板块、基金类型偏好与预算 → 可编辑荐基角色 → **扫描今日机会** → 历史推荐 / 候选池 / 复盘 / 追问
-6. 「生成日报」Tab 确认 **AI 角色设定**（可选）与风控画像（含偏定投/拒绝追高）→ 选快速/深度 → 生成日报 → JobStatusFloat 进度
+5. 「推荐基金」Tab 可选关注板块、投资预设/选基策略、预算 → **扫描今日机会**（可与日报并行，右下角双浮层进度）
+6. 「生成日报」Tab 确认投资预设与 **AI 角色设定** → 选快速/深度 → 生成日报
 7. 点击持仓行 → 基金详情（板块分时、业绩走势、我的收益）；低置信度板块 → 映射弹窗
 8. 可上传**支付宝持有列表**截图 → 预览确认 → 写入持仓
 9. 需与小程序共用持仓 → 用户菜单「账号设置」→ 绑定 CloudBase UID（或 API `bind-wechat`）
@@ -341,7 +347,9 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | POST | `/api/analyze/async` | `{ job_id, status }` |
 | GET | `/api/trading-session` | 交易日/收盘窗口语义 |
 | GET | `/api/investor-profile` | 读取持久化风控画像（未保存时返回默认） |
-| PUT | `/api/investor-profile` | 保存风控画像至 SQLite |
+| PUT | `/api/investor-profile` | 保存风控画像（含 `decision_style`、`investment_preset`、激进波段参数、盯盘开关） |
+| POST | `/api/swing-alerts/evaluate` | 评估持仓/全市场波段信号（服务端去重写入 `swing_alert_fired`） |
+| GET | `/api/swing-alerts/today` | 当日已触发波段提醒列表 |
 | GET | `/api/analysis-prompt` | 读取 AI 角色设定；含 `role_prompt`、`is_custom`、`default_role_prompt` |
 | PUT | `/api/analysis-prompt` | 保存角色设定；body `{ role_prompt }`，`null`/空串恢复默认 |
 | GET | `/api/reports/{id}/outcomes-weekly?days=7` | 7 日建议复盘 |
@@ -639,7 +647,7 @@ bash scripts/dev.sh    # 或 scripts/dev.ps1
 ```
 
 ```bash
-cd apps/api && ./.venv/Scripts/python.exe -m pytest tests -q   # 当前 370 项
+cd apps/api && ./.venv/Scripts/python.exe -m pytest tests -q   # 当前 406 项
 cd apps/web && npm run lint && npm run typecheck && npm run build
 cd apps/web && npm run test:e2e   # Playwright 冒烟
 ```

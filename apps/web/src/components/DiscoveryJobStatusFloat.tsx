@@ -75,7 +75,7 @@ export function DiscoveryJobStatusFloat({
   if (!jobId) return null;
 
   return (
-    <div className="fixed bottom-6 right-6 z-50 w-72 rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_8px_32px_rgba(0,0,0,0.12)]">
+    <div className="w-full rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_8px_32px_rgba(0,0,0,0.12)]">
       {state === "running" ? (
         <div className="flex items-start gap-3">
           <Loader2 size={20} className="mt-0.5 shrink-0 animate-spin text-indigo-600" />

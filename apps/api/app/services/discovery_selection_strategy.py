@@ -40,6 +40,29 @@ def rank_candidates_balanced(candidates: list[dict]) -> list[dict]:
     return [item for _, item in scored]
 
 
+def dip_rebound_score(row: dict) -> float:
+    """Prefer recent pullback with room to rebound; avoid extreme 1y chasers."""
+    nav_trend = row.get("nav_trend") or {}
+    recent_5d = _num(nav_trend.get("recent_5d_change_percent")) or 0.0
+    r1y = _num(row.get("return_1y_percent")) or 0.0
+    dist_high = _num(nav_trend.get("distance_from_high_percent"))
+
+    dip_depth = max(0.0, -recent_5d)
+    room_bonus = 0.0
+    if dist_high is not None and dist_high < 0:
+        room_bonus = min(15.0, abs(dist_high) * 0.35)
+    chase_penalty = max(0.0, r1y - 60.0) * 0.45
+    moderate_1y = 8.0 if 5.0 <= r1y <= 55.0 else 0.0
+
+    return dip_depth * 2.2 + room_bonus + moderate_1y - chase_penalty
+
+
+def rank_candidates_dip_rebound(candidates: list[dict]) -> list[dict]:
+    scored = [(dip_rebound_score(item), item) for item in candidates]
+    scored.sort(key=lambda pair: pair[0], reverse=True)
+    return [item for _, item in scored]
+
+
 def pick_sector_candidates(
     *,
     sector_label: str,
@@ -78,7 +101,10 @@ def pick_sector_candidates(
     if remaining <= 0:
         return results[:_PER_SECTOR]
 
-    ranked = rank_candidates_balanced(ranked_entries)
+    if selection_strategy == "dip_rebound":
+        ranked = rank_candidates_dip_rebound(ranked_entries)
+    else:
+        ranked = rank_candidates_balanced(ranked_entries)
     for entry in ranked:
         code = str(entry.get("fund_code", "")).zfill(6)
         if code in seen_codes:

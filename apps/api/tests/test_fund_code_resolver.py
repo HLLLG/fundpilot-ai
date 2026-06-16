@@ -78,7 +78,11 @@ def test_resolve_holding_fund_code_uses_lookup_when_ocr_specifies_different_shar
     assert source == "akshare"
 
 
-def test_resolve_holding_fund_code_keeps_profile_when_lookup_fails():
+def test_resolve_holding_fund_code_keeps_profile_when_lookup_fails(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.fund_code_resolver._fund_name_table",
+        lambda: [],
+    )
     code, source = resolve_holding_fund_code("任意名称", existing_code="110020")
     assert code == "110020"
     assert source == "profile"

@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BrainCircuit, X } from "lucide-react";
 import type {
   AnalysisMode,
   AnalysisPromptConfig,
   FundCodeResolution,
+  FundDiscoveryReport,
   FundProfile,
   Holding,
   HoldingFieldWarning,
@@ -38,9 +39,13 @@ import {
   saveInvestorProfile,
 } from "@/lib/storage";
 import { HistoryRail } from "@/components/HistoryRail";
+import { BackgroundJobsStack } from "@/components/BackgroundJobsStack";
+import { DiscoveryJobStatusFloat } from "@/components/DiscoveryJobStatusFloat";
 import { JobStatusFloat } from "@/components/JobStatusFloat";
 import { displayableHoldings } from "@/lib/holdingMetrics";
 import { useSectorQuoteRefresh } from "@/lib/useSectorQuoteRefresh";
+import { useSwingAlerts } from "@/lib/useSwingAlerts";
+import { SwingAlertsPanel } from "@/components/SwingAlertsPanel";
 import { buildWorkflowBlockers, hasBlockingErrors } from "@/lib/workflowBlockers";
 import { TradingSessionBar } from "@/components/TradingSessionBar";
 import { PortfolioDashboard } from "@/components/PortfolioDashboard";
@@ -63,6 +68,11 @@ const defaultProfile: InvestorProfile = {
   prefer_dca: true,
   avoid_chasing: true,
   decision_style: "conservative",
+  investment_preset: "conservative_hold",
+  round_trip_fee_percent: 1.5,
+  min_net_profit_percent: 1.0,
+  swing_alerts_enabled: false,
+  swing_monitor_scope: "both",
 };
 
 type TabId = "today" | "report" | "history" | "dashboard" | "discovery";
@@ -102,6 +112,11 @@ export function Dashboard() {
   const [profileReady, setProfileReady] = useState(false);
   const [promptReady, setPromptReady] = useState(false);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const [discoveryJobId, setDiscoveryJobId] = useState<string | null>(null);
+  const [pendingDiscoveryReport, setPendingDiscoveryReport] = useState<FundDiscoveryReport | null>(
+    null,
+  );
+  const discoveryScanRetryRef = useRef<(() => void) | null>(null);
   const [selectedHoldingIndex, setSelectedHoldingIndex] = useState<number | null>(null);
   const reportSectionRef = useRef<HTMLDivElement>(null);
   const shouldRefreshOnLoad = useRef(false);
@@ -140,6 +155,18 @@ export function Dashboard() {
     warnings: holdingWarnings,
     onWarningsChange: setHoldingWarnings,
     onMessage: setMessage,
+  });
+
+  const swingAlerts = useSwingAlerts({
+    holdings,
+    profile,
+    onBeforeEvaluate: async () => {
+      if (holdings.length === 0) {
+        return undefined;
+      }
+      const result = await sectorRefresh.refresh(false, "fast");
+      return result?.holdings;
+    },
   });
 
   const loadHistory = async () => {
@@ -295,6 +322,32 @@ export function Dashboard() {
     await runAnalyze(displayableHoldings(holdings));
   };
 
+  const handleDiscoveryJobComplete = (completedReport: FundDiscoveryReport) => {
+    setPendingDiscoveryReport(completedReport);
+    setDiscoveryJobId(null);
+    setActiveTab("discovery");
+    notifyDesktop("FundPilot 推荐报告已生成", {
+      body: completedReport.title ?? "推荐基金扫描已完成",
+    });
+  };
+
+  const handleDiscoveryJobClose = () => {
+    setDiscoveryJobId(null);
+  };
+
+  const handleDiscoveryJobRetry = () => {
+    setDiscoveryJobId(null);
+    discoveryScanRetryRef.current?.();
+  };
+
+  const registerDiscoveryScanRetry = useCallback((retry: (() => void) | null) => {
+    discoveryScanRetryRef.current = retry;
+  }, []);
+
+  const clearPendingDiscoveryReport = useCallback(() => {
+    setPendingDiscoveryReport(null);
+  }, []);
+
   const handleOcrUpload = async (selectedFile: File) => {
     setIsOcrUploading(true);
     setMessage(null);
@@ -439,6 +492,15 @@ export function Dashboard() {
         <div className="min-w-0 flex-1 pb-6">
           {activeTab === "today" ? (
             <div className="w-full">
+              {swingAlerts.alertsActive ? (
+                <SwingAlertsPanel
+                  items={swingAlerts.items}
+                  sessionKind={swingAlerts.sessionKind}
+                  isEvaluating={swingAlerts.isEvaluating}
+                  error={swingAlerts.error}
+                  onRefresh={() => void swingAlerts.evaluate()}
+                />
+              ) : null}
               <YangjibaoHoldingsBoard
                 holdings={holdings}
                 portfolioSummary={portfolioSummary}
@@ -506,8 +568,14 @@ export function Dashboard() {
             <FundDiscoveryPanel
               holdings={holdings}
               profile={profile}
+              onProfileChange={setProfile}
               analysisMode={analysisMode}
               onAnalysisModeChange={setAnalysisMode}
+              discoveryJobId={discoveryJobId}
+              onDiscoveryJobIdChange={setDiscoveryJobId}
+              pendingDiscoveryReport={pendingDiscoveryReport}
+              onPendingDiscoveryReportApplied={clearPendingDiscoveryReport}
+              onRegisterDiscoveryScanRetry={registerDiscoveryScanRetry}
             />
           ) : null}
 
@@ -535,12 +603,26 @@ export function Dashboard() {
         </div>
       </div>
 
-      <JobStatusFloat
-        jobId={activeJobId}
-        onComplete={(completedReport) => void handleJobComplete(completedReport)}
-        onClose={handleJobClose}
-        onRetry={() => void handleJobRetry()}
-      />
+      <BackgroundJobsStack>
+        {activeJobId ? (
+          <JobStatusFloat
+            key={`analysis-${activeJobId}`}
+            jobId={activeJobId}
+            onComplete={(completedReport) => void handleJobComplete(completedReport)}
+            onClose={handleJobClose}
+            onRetry={() => void handleJobRetry()}
+          />
+        ) : null}
+        {discoveryJobId ? (
+          <DiscoveryJobStatusFloat
+            key={`discovery-${discoveryJobId}`}
+            jobId={discoveryJobId}
+            onComplete={handleDiscoveryJobComplete}
+            onClose={handleDiscoveryJobClose}
+            onRetry={handleDiscoveryJobRetry}
+          />
+        ) : null}
+      </BackgroundJobsStack>
 
       {selectedHoldingIndex !== null && holdings[selectedHoldingIndex] ? (
         <YangjibaoFundDetail

@@ -89,10 +89,10 @@ def _decision_style(report: dict) -> str:
     facts = report.get("analysis_facts") or {}
     portfolio = facts.get("portfolio") or {}
     style = portfolio.get("decision_style")
-    if style in {"tactical", "conservative"}:
+    if style in {"tactical", "conservative", "aggressive"}:
         return style
     profile = report.get("profile") or {}
-    if profile.get("decision_style") in {"tactical", "conservative"}:
+    if profile.get("decision_style") in {"tactical", "conservative", "aggressive"}:
         return profile["decision_style"]
     return "conservative"
 
@@ -100,7 +100,13 @@ def _decision_style(report: dict) -> str:
 def _summary_lines(buckets: dict[str, dict]) -> list[str]:
     lines: list[str] = []
     for style, bucket in buckets.items():
-        label = "战术短线" if style == "tactical" else "稳健"
+        label = (
+            "战术短线"
+            if style == "tactical"
+            else "激进波段"
+            if style == "aggressive"
+            else "稳健"
+        )
         lines.append(
             f"{label}：{bucket['paired_count']} 组相邻日报，"
             f"方向吻合约 {bucket['hit_rate_percent']}%（{bucket['hit_count']}/{bucket['paired_count']}）。"

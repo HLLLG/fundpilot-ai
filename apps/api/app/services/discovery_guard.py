@@ -38,7 +38,8 @@ def apply_discovery_guards(
 
         copy = rec.model_copy(deep=True)
         sector_move = heat_by_sector.get(copy.sector_name)
-        if profile.avoid_chasing and sector_move is not None and sector_move >= 4.0:
+        chase_threshold = 6.0 if profile.decision_style == "aggressive" else 4.0
+        if profile.avoid_chasing and sector_move is not None and sector_move >= chase_threshold:
             if copy.action == "分批买入":
                 copy.action = "等待回调"
                 copy.points = list(copy.points) + [

@@ -11,6 +11,7 @@ from app.models import (
     RiskAssessment,
     TopicBrief,
 )
+from app.services.investment_presets import is_short_term_style, take_profit_threshold_percent
 from app.services.analysis_facts import build_analysis_facts
 from app.services.holding_metrics import HOLDING_RETURN_SEMANTICS
 from app.services.analysis_runtime import AnalysisMode
@@ -160,7 +161,7 @@ def compact_topic_briefs(
 
 
 def slim_profile_for_llm(profile: InvestorProfile) -> dict[str, Any]:
-    return {
+    payload: dict[str, Any] = {
         "decision_style": profile.decision_style,
         "prefer_dca": profile.prefer_dca,
         "avoid_chasing": profile.avoid_chasing,
@@ -168,6 +169,16 @@ def slim_profile_for_llm(profile: InvestorProfile) -> dict[str, Any]:
         "concentration_limit_percent": profile.concentration_limit_percent,
         "expected_investment_amount": profile.expected_investment_amount,
     }
+    if profile.decision_style == "aggressive":
+        payload.update(
+            {
+                "round_trip_fee_percent": profile.round_trip_fee_percent,
+                "min_net_profit_percent": profile.min_net_profit_percent,
+                "take_profit_threshold_percent": take_profit_threshold_percent(profile),
+                "hold_days_target": profile.hold_days_target,
+            }
+        )
+    return payload
 
 
 def trim_analysis_facts_for_llm(
@@ -185,7 +196,7 @@ def trim_analysis_facts_for_llm(
         copy = dict(row)
         for key in _HOLDING_LLM_DROP_KEYS:
             copy.pop(key, None)
-        if phase >= 2 and decision_style != "tactical":
+        if phase >= 2 and not is_short_term_style(decision_style):
             copy.pop("signal_backtest", None)
         if phase >= 1:
             nav = copy.get("nav_trend")
@@ -219,7 +230,7 @@ def trim_analysis_facts_for_llm(
         news_copy = {k: news[k] for k in news if k != "topics"}
         trimmed["news"] = news_copy
 
-    if phase >= 2 and decision_style != "tactical":
+    if phase >= 2 and not is_short_term_style(decision_style):
         trimmed.pop("market_flow", None)
         trimmed.pop("signal_backtest", None)
         trimmed.pop("prompt_tuning", None)

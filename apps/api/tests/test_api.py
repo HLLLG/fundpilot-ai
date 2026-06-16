@@ -159,6 +159,11 @@ def test_ocr_endpoint_resolves_holdings_with_saved_profiles(tmp_path, monkeypatc
     from app.request_context import reset_request_user_id, set_request_user_id
     from app.services.fund_profile import FundProfileService, parse_profile_from_text
 
+    monkeypatch.setattr(
+        "app.services.fund_code_resolver._fund_name_table",
+        lambda: [("025856", "华夏中证电网设备主题ETF联接A")],
+    )
+
     client = auth_client_for_db(monkeypatch, tmp_path / "app.db")
     user_id = client.get("/api/auth/me").json()["id"]
     profile = parse_profile_from_text(

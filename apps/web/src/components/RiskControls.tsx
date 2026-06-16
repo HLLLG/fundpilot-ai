@@ -2,8 +2,10 @@
 
 import { useState } from "react";
 import { ChevronDown, RotateCcw, ShieldCheck, SlidersHorizontal, Sparkles } from "lucide-react";
-import type { AnalysisMode, DecisionStyle, InvestorProfile } from "@/lib/api";
+import type { AnalysisMode, DecisionStyle, InvestorProfile, SwingMonitorScope } from "@/lib/api";
+import { takeProfitThresholdPercent } from "@/lib/investmentPresets";
 import { AnalysisModeToggle } from "@/components/AnalysisModeToggle";
+import { InvestmentPresetSelector } from "@/components/InvestmentPresetSelector";
 import { RolePromptEditor } from "@/components/RolePromptEditor";
 import { StatusPill } from "@/components/StatusPill";
 
@@ -24,7 +26,12 @@ function profileSummary(profile: InvestorProfile): string {
   const invest = resolveExpectedInvestmentAmount(profile);
   const investLabel =
     invest >= 10_000 ? `${Math.round(invest / 10_000)}万` : `${invest}`;
-  const style = profile.decision_style === "tactical" ? "战术" : "稳健";
+  const style =
+    profile.decision_style === "tactical"
+      ? "战术"
+      : profile.decision_style === "aggressive"
+        ? "激进"
+        : "稳健";
   return `${style} · 浮亏 ${profile.max_drawdown_percent}% · 集中度 ${profile.concentration_limit_percent}% · 计划投入 ${investLabel}`;
 }
 
@@ -66,12 +73,29 @@ export function RiskControls({
           <ShieldCheck size={18} className="text-emerald-600" />
           <h2 className="section-title">生成日报</h2>
         </div>
-        <StatusPill tone={profile.decision_style === "tactical" ? "amber" : "green"}>
-          {profile.decision_style === "tactical" ? "战术" : "稳健"}
+        <StatusPill
+          tone={
+            profile.decision_style === "aggressive"
+              ? "red"
+              : profile.decision_style === "tactical"
+                ? "amber"
+                : "green"
+          }
+        >
+          {profile.decision_style === "aggressive"
+            ? "激进"
+            : profile.decision_style === "tactical"
+              ? "战术"
+              : "稳健"}
         </StatusPill>
       </div>
 
       <AnalysisModeToggle mode={analysisMode} onChange={onAnalysisModeChange} compact />
+
+      <div className="mt-4">
+        <p className="mb-2 text-[11px] font-bold text-slate-400">投资风格预设</p>
+        <InvestmentPresetSelector profile={profile} onChange={onChange} compact />
+      </div>
 
       <div className="mt-4 overflow-hidden rounded-xl border border-slate-100">
         <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-3 py-2.5">
@@ -208,11 +232,12 @@ export function RiskControls({
             </label>
             <label className="block rounded-xl border border-slate-100 bg-slate-50/50 p-3 sm:col-span-2">
               <span className="text-[11px] font-bold text-slate-400">决策风格</span>
-              <div className="mt-2 grid grid-cols-2 gap-2">
+              <div className="mt-2 grid grid-cols-3 gap-2">
                 {(
                   [
                     ["conservative", "稳健"],
                     ["tactical", "战术短线"],
+                    ["aggressive", "激进波段"],
                   ] as const satisfies Array<[DecisionStyle, string]>
                 ).map(([value, label]) => (
                   <button
@@ -221,9 +246,11 @@ export function RiskControls({
                     onClick={() => onChange({ ...profile, decision_style: value })}
                     className={`rounded-lg border px-2 py-1.5 text-xs font-bold transition ${
                       (profile.decision_style ?? "conservative") === value
-                        ? value === "tactical"
-                          ? "border-amber-300 bg-amber-50 text-amber-900"
-                          : "border-emerald-300 bg-emerald-50 text-emerald-900"
+                        ? value === "aggressive"
+                          ? "border-rose-300 bg-rose-50 text-rose-900"
+                          : value === "tactical"
+                            ? "border-amber-300 bg-amber-50 text-amber-900"
+                            : "border-emerald-300 bg-emerald-50 text-emerald-900"
                         : "border-slate-200 bg-white text-slate-600"
                     }`}
                   >
@@ -232,8 +259,93 @@ export function RiskControls({
                 ))}
               </div>
             </label>
+            {(profile.decision_style === "aggressive" || profile.swing_alerts_enabled) ? (
+              <>
+                <label className="block rounded-xl border border-slate-100 bg-slate-50/50 p-3 sm:col-span-2">
+                  <span className="text-[11px] font-bold text-slate-400">
+                    买卖合计手续费（%）· 扣费止盈线约 {takeProfitThresholdPercent(profile)}%
+                  </span>
+                  <div className="mt-2 flex items-center gap-2">
+                    <input
+                      type="range"
+                      min={0.5}
+                      max={3}
+                      step={0.1}
+                      value={profile.round_trip_fee_percent ?? 1.5}
+                      onChange={(event) =>
+                        onChange({
+                          ...profile,
+                          round_trip_fee_percent: Number(event.target.value),
+                        })
+                      }
+                      className="w-full accent-rose-500"
+                    />
+                    <span className="w-12 text-right text-xs font-black tabular-nums">
+                      {(profile.round_trip_fee_percent ?? 1.5).toFixed(1)}%
+                    </span>
+                  </div>
+                </label>
+                <label className="block rounded-xl border border-slate-100 bg-slate-50/50 p-3 sm:col-span-2">
+                  <span className="text-[11px] font-bold text-slate-400">期望净赚（%）</span>
+                  <div className="mt-2 flex items-center gap-2">
+                    <input
+                      type="range"
+                      min={0.5}
+                      max={3}
+                      step={0.5}
+                      value={profile.min_net_profit_percent ?? 1.0}
+                      onChange={(event) =>
+                        onChange({
+                          ...profile,
+                          min_net_profit_percent: Number(event.target.value),
+                        })
+                      }
+                      className="w-full accent-rose-500"
+                    />
+                    <span className="w-12 text-right text-xs font-black tabular-nums">
+                      {(profile.min_net_profit_percent ?? 1.0).toFixed(1)}%
+                    </span>
+                  </div>
+                </label>
+                <label className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50/50 px-3 py-2.5 text-sm font-semibold text-slate-700 sm:col-span-2">
+                  盘中波段盯盘提醒
+                  <input
+                    type="checkbox"
+                    checked={profile.swing_alerts_enabled ?? profile.decision_style === "aggressive"}
+                    onChange={(event) =>
+                      onChange({ ...profile, swing_alerts_enabled: event.target.checked })
+                    }
+                    className="h-4 w-4 accent-rose-500"
+                  />
+                </label>
+                <label className="block rounded-xl border border-slate-100 bg-slate-50/50 p-3 sm:col-span-2">
+                  <span className="text-[11px] font-bold text-slate-400">盯盘范围</span>
+                  <div className="mt-2 grid grid-cols-3 gap-2">
+                    {(
+                      [
+                        ["holdings", "仅持仓"],
+                        ["full_market", "全市场"],
+                        ["both", "两者"],
+                      ] as const satisfies Array<[SwingMonitorScope, string]>
+                    ).map(([value, label]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => onChange({ ...profile, swing_monitor_scope: value })}
+                        className={`rounded-lg border px-2 py-1.5 text-xs font-bold transition ${
+                          (profile.swing_monitor_scope ?? "both") === value
+                            ? "border-rose-300 bg-rose-50 text-rose-900"
+                            : "border-slate-200 bg-white text-slate-600"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </label>
+              </>
+            ) : null}
             <label className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50/50 px-3 py-2.5 text-sm font-semibold text-slate-700">
-              偏定投
               <input
                 type="checkbox"
                 checked={profile.prefer_dca}

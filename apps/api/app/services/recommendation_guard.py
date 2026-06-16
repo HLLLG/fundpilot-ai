@@ -10,6 +10,7 @@ from app.models import (
     TopicBrief,
 )
 from app.services.market_signal import has_today_market_signal
+from app.services.investment_presets import is_short_term_style
 from app.services.signal_guard_policy import resolve_signal_guard_policy
 from app.services.recommendations import build_offline_fund_recommendation
 from app.services.risk import holding_weight_percent, resolve_weight_denominator
@@ -52,7 +53,10 @@ def apply_recommendation_guards(
         northbound_net_yi=northbound_net_yi,
     )
     settings = get_settings()
-    tactical = request.profile.decision_style == "tactical"
+    decision_style = request.profile.decision_style
+    tactical = decision_style == "tactical"
+    aggressive = decision_style == "aggressive"
+    short_term = is_short_term_style(decision_style)
     guard_policy = (
         resolve_signal_guard_policy(
             request.holdings,
@@ -102,15 +106,17 @@ def apply_recommendation_guards(
                 normalized = "观察"
                 reversal_note = "历史涨后回吐命中率偏低，战术模式已自动收紧：回吐场景优先观察。"
 
-        if offline is not None and not tactical and not reversal_note:
+        if offline is not None and not short_term and not reversal_note:
             normalized = conservative_action_text(normalized, offline.action)
 
-        max_bucket = _max_allowed_bucket(risk, holding, request, tactical=tactical)
+        max_bucket = _max_allowed_bucket(
+            risk, holding, request, tactical=tactical, aggressive=aggressive
+        )
         if _action_bucket(normalized) > max_bucket:
             normalized = _BUCKET_TO_LABEL[_bucket_name(max_bucket)]
 
         if (
-            not tactical
+            not short_term
             and settings.news_require_today_for_add
             and not today_signal
             and _action_bucket(normalized) >= 3
@@ -121,17 +127,19 @@ def apply_recommendation_guards(
         note = reversal_note
         if (
             not note
-            and not tactical
+            and not short_term
             and settings.news_require_today_for_add
             and not today_signal
             and _action_bucket(rec.action.strip()) >= 3
             and normalized != rec.action.strip()
         ):
             note = "无当日可引用要闻，已限制激进加仓类动作（更贴盘面、防幻觉）。"
-        elif not note and offline is not None and not tactical and normalized != rec.action.strip():
+        elif not note and offline is not None and not short_term and normalized != rec.action.strip():
             note = f"已按风控规则将「{rec.action.strip()}」调整为「{normalized}」（对照本地规则：{offline.action}）。"
         elif not note and tactical and normalized != rec.action.strip():
             note = f"战术模式下保留模型动作「{normalized}」（未与离线规则取更保守值）。"
+        elif not note and aggressive and normalized != rec.action.strip():
+            note = f"激进波段模式保留模型动作「{normalized}」（对照离线规则：{offline.action if offline else '—'}）。"
         elif not note and normalized != rec.action.strip():
             note = f"已规范动作表述为「{normalized}」。"
 
@@ -141,8 +149,18 @@ def apply_recommendation_guards(
         guarded.append(copy)
 
     portfolio = _guard_portfolio_lines(portfolio_lines, risk)
-    if not tactical and settings.news_require_today_for_add and not today_signal:
+    if not short_term and settings.news_require_today_for_add and not today_signal:
         hint = "当日无已引用要闻支撑，组合级建议以观察/控风险为主，不宜激进加仓。"
+        if not portfolio or hint not in portfolio[0]:
+            portfolio = [hint, *portfolio]
+    elif aggressive:
+        from app.services.investment_presets import take_profit_threshold_percent
+
+        threshold = take_profit_threshold_percent(request.profile)
+        hint = (
+            f"激进波段模式：跌深分批买、持有收益达 {threshold:.1f}%（含手续费）优先止盈，"
+            f"目标持有 {request.profile.hold_days_target} 天内，仍须遵守集中度与浮亏线。"
+        )
         if not portfolio or hint not in portfolio[0]:
             portfolio = [hint, *portfolio]
     elif tactical:
@@ -249,6 +267,7 @@ def _max_allowed_bucket(
     request: AnalysisRequest,
     *,
     tactical: bool = False,
+    aggressive: bool = False,
 ) -> int:
     if risk.suggested_action == "risk_review":
         return 2
@@ -256,6 +275,7 @@ def _max_allowed_bucket(
         return 2
     if (
         not tactical
+        and not aggressive
         and holding is not None
         and request.profile.avoid_chasing
     ):

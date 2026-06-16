@@ -209,6 +209,21 @@ def build_offline_fund_recommendation(
             northbound_net_yi=northbound_net_yi,
         )
 
+    if profile.decision_style == "aggressive":
+        from app.services.aggressive_swing_recommendations import (
+            build_aggressive_swing_offline_fund_recommendation,
+        )
+
+        return build_aggressive_swing_offline_fund_recommendation(
+            holding,
+            weight_percent,
+            weight_denominator,
+            profile,
+            market_news,
+            nav_trend=nav_trend,
+            northbound_net_yi=northbound_net_yi,
+        )
+
     action = "观察"
     points: list[str] = []
 

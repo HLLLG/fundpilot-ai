@@ -57,7 +57,11 @@ export function RecommendationAccuracyPanel() {
           <div key={bucket.decision_style} className="rounded-2xl bg-white p-4 shadow-sm">
             <div className="flex items-center justify-between gap-2">
               <span className="text-sm font-black text-slate-950">
-                {bucket.decision_style === "tactical" ? "战术短线" : "稳健"}
+                {bucket.decision_style === "tactical"
+                  ? "战术短线"
+                  : bucket.decision_style === "aggressive"
+                    ? "激进波段"
+                    : "稳健"}
               </span>
               <StatusPill tone={bucket.hit_rate_percent >= 50 ? "green" : "amber"}>
                 命中率 {bucket.hit_rate_percent}%

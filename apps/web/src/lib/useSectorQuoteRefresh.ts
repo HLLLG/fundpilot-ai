@@ -108,16 +108,17 @@ export function useSectorQuoteRefresh({
   const refresh = useCallback(
     async (forceRefresh = false, budget: "fast" | "accurate" = "fast") => {
       if (!holdingsRef.current.length) {
-        return;
+        return undefined;
       }
       setIsRefreshing(true);
       try {
         const result = await refreshSectorQuotes(holdingsRef.current, { forceRefresh, budget });
-        applyRefreshResult(result);
+        return applyRefreshResult(result);
       } catch (error) {
         const message = error instanceof Error ? error.message : "刷新板块涨跌失败。";
         setRefreshError(message);
         onMessage?.(message);
+        return undefined;
       } finally {
         setIsRefreshing(false);
       }

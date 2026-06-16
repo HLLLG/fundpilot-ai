@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.models import Holding, InvestorProfile, NewsItem, TopicBrief
+from app.services.investment_presets import take_profit_threshold_percent
 from app.services.market_flow_client import build_market_flow_context
 from app.services.news_freshness import build_news_pipeline_context
 from app.services.risk import resolve_weight_denominator
@@ -43,6 +44,16 @@ def build_discovery_facts(
             "concentration_limit_percent": profile.concentration_limit_percent,
             "expected_investment_amount": profile.expected_investment_amount,
             "horizon": profile.horizon,
+            **(
+                {
+                    "round_trip_fee_percent": profile.round_trip_fee_percent,
+                    "min_net_profit_percent": profile.min_net_profit_percent,
+                    "take_profit_threshold_percent": take_profit_threshold_percent(profile),
+                    "hold_days_target": profile.hold_days_target,
+                }
+                if profile.decision_style == "aggressive"
+                else {}
+            ),
         },
         "portfolio_gap": {
             "holding_count": len(holdings),

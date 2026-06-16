@@ -8,6 +8,7 @@ from app.models import (
     RiskAssessment,
     TopicBrief,
 )
+from app.services.investment_presets import is_short_term_style, take_profit_threshold_percent
 from app.services.holding_estimates import build_holding_display_metrics
 from app.services.holding_metrics import (
     compute_estimated_daily_return_percent,
@@ -118,6 +119,16 @@ def build_analysis_facts(
             "suggested_action": risk.suggested_action,
             "max_drawdown_limit_percent": profile.max_drawdown_percent,
             "concentration_limit_percent": profile.concentration_limit_percent,
+            **(
+                {
+                    "round_trip_fee_percent": profile.round_trip_fee_percent,
+                    "min_net_profit_percent": profile.min_net_profit_percent,
+                    "take_profit_threshold_percent": take_profit_threshold_percent(profile),
+                    "hold_days_target": profile.hold_days_target,
+                }
+                if profile.decision_style == "aggressive"
+                else {}
+            ),
         },
         "alerts": [alert.model_dump() for alert in risk.alerts],
         "holdings": per_fund,
@@ -141,6 +152,6 @@ def build_analysis_facts(
         "reason": guard_policy.get("reason"),
         "backtest_summary_lines": guard_policy.get("backtest_summary_lines") or [],
     }
-    if profile.decision_style == "tactical":
+    if is_short_term_style(profile.decision_style):
         facts["prompt_tuning"] = guard_policy
     return facts

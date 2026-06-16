@@ -1,8 +1,14 @@
 from __future__ import annotations
 
-from app.database import list_fund_primary_sectors
+from app.database import get_fund_profile_by_code, list_fund_primary_sectors
 from app.models import Holding
-from app.services.discovery_selection_strategy import SelectionStrategy, pick_sector_candidates
+from app.services.discovery_selection_strategy import (
+    SelectionStrategy,
+    pick_sector_candidates,
+    rank_candidates_balanced,
+    rank_candidates_dip_rebound,
+)
+from app.services.fund_code_resolver import lookup_fund_name_by_code
 from app.services.fund_data import FundDataService
 from app.services.fund_primary_sector_service import GLOBAL_FUND_SECTOR_SEEDS
 from app.services.sector_canonical import get_canonical_sector
@@ -48,7 +54,9 @@ def build_candidate_pool(
         collected.extend(sector_candidates[:per_sector])
 
     if len(collected) < 3:
-        fallback_ranked = rank_candidates_balanced_fallback(rank_rows, excluded, seen_codes, fund_type_preference)
+        fallback_ranked = rank_candidates_balanced_fallback(
+            rank_rows, excluded, seen_codes, fund_type_preference, selection_strategy
+        )
         for entry in fallback_ranked:
             collected.append(entry)
             seen_codes.add(str(entry.get("fund_code", "")).zfill(6))
@@ -108,7 +116,7 @@ def _candidates_for_sector(
         fixed_entries.append(
             {
                 "fund_code": normalized,
-                "fund_name": f"种子基金 {normalized}",
+                "fund_name": _resolve_fund_name(normalized),
                 "sector_label": sector_label,
                 "selection_reason": "全局种子",
             }
@@ -124,7 +132,7 @@ def _candidates_for_sector(
         fixed_entries.append(
             {
                 "fund_code": code,
-                "fund_name": code,
+                "fund_name": _resolve_fund_name(code),
                 "sector_label": sector_label,
                 "selection_reason": "主关联板块映射",
             }
@@ -165,8 +173,12 @@ def rank_candidates_balanced_fallback(
     excluded: set[str],
     seen_codes: set[str],
     fund_type_preference: str,
+    selection_strategy: SelectionStrategy = "balanced",
 ) -> list[dict]:
-    from app.services.discovery_selection_strategy import rank_candidates_balanced
+    from app.services.discovery_selection_strategy import (
+        rank_candidates_balanced,
+        rank_candidates_dip_rebound,
+    )
 
     candidates: list[dict] = []
     for row in rank_rows:
@@ -178,6 +190,8 @@ def rank_candidates_balanced_fallback(
         if not _matches_fund_type_preference(str(row.get("fund_name", "")), fund_type_preference):
             continue
         candidates.append(_entry_from_rank(row, sector_label="综合", selection_reason="排行补位"))
+    if selection_strategy == "dip_rebound":
+        return rank_candidates_dip_rebound(candidates)
     return rank_candidates_balanced(candidates)
 
 
@@ -193,6 +207,18 @@ def _entry_from_rank(row: dict, *, sector_label: str, selection_reason: str) -> 
         "max_drawdown_1y_percent": row.get("max_drawdown_1y_percent"),
         "fund_scale_yi": row.get("fund_scale_yi"),
     }
+
+
+def _resolve_fund_name(fund_code: str) -> str:
+    """东财名称表优先，其次本地档案，最后回退代码本身。"""
+    code = fund_code.strip().zfill(6)
+    table_name = lookup_fund_name_by_code(code)
+    if table_name:
+        return table_name
+    profile = get_fund_profile_by_code(code)
+    if profile and profile.fund_name:
+        return profile.fund_name
+    return code
 
 
 def _sector_keywords(sector_label: str, canon) -> tuple[str, ...]:

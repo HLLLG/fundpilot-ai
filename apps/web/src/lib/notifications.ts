@@ -7,3 +7,16 @@ export function notifyDesktop(title: string, options?: NotificationOptions) {
   }
   new Notification(title, options);
 }
+
+export async function ensureNotificationPermission(): Promise<NotificationPermission | "unsupported"> {
+  if (typeof window === "undefined" || !("Notification" in window)) {
+    return "unsupported";
+  }
+  if (Notification.permission === "granted") {
+    return "granted";
+  }
+  if (Notification.permission === "denied") {
+    return "denied";
+  }
+  return Notification.requestPermission();
+}

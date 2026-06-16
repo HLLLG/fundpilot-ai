@@ -5,7 +5,7 @@ import sqlite3
 from datetime import datetime, timezone
 
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 
 def _now() -> str:
@@ -332,6 +332,29 @@ def _migrate_discovery_prompt_state(connection: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_swing_alert_fired(connection: sqlite3.Connection) -> None:
+    if _table_exists(connection, "swing_alert_fired"):
+        return
+    connection.execute(
+        """
+        CREATE TABLE swing_alert_fired (
+            userId INTEGER NOT NULL,
+            trade_date TEXT NOT NULL,
+            alert_key TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            fired_at TEXT NOT NULL,
+            PRIMARY KEY (userId, trade_date, alert_key)
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_swing_alert_fired_user_date
+        ON swing_alert_fired (userId, trade_date, fired_at DESC)
+        """
+    )
+
+
 def run_migrations(connection: sqlite3.Connection) -> None:
     version = _get_schema_version(connection)
     if version >= SCHEMA_VERSION:
@@ -389,6 +412,7 @@ def run_migrations(connection: sqlite3.Connection) -> None:
     _migrate_analysis_prompt_state(connection)
     _migrate_discovery_tables(connection)
     _migrate_discovery_prompt_state(connection)
+    _migrate_swing_alert_fired(connection)
 
     _ensure_migration_user(connection)
     _set_schema_version(connection, SCHEMA_VERSION)

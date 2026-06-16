@@ -59,6 +59,7 @@ from app.models import (
     RefreshSectorQuotesRequest,
     ReportChatRequest,
     SaveSectorMappingRequest,
+    SwingAlertEvaluateRequest,
     UpdateFundProfileRequest,
 )
 from app.services.analyze_pipeline import run_analysis
@@ -897,6 +898,21 @@ def investor_profile_get() -> dict:
 def investor_profile_put(profile: InvestorProfile) -> dict:
     saved = save_investor_profile(profile)
     return saved.model_dump()
+
+
+@app.post("/api/swing-alerts/evaluate")
+def swing_alerts_evaluate(body: SwingAlertEvaluateRequest) -> dict:
+    from app.services.swing_alert_service import evaluate_and_record_swing_alerts
+
+    return evaluate_and_record_swing_alerts(body).model_dump()
+
+
+@app.get("/api/swing-alerts/today")
+def swing_alerts_today(trade_date: str | None = None) -> dict:
+    from app.services.swing_alert_service import list_today_swing_alerts
+
+    items = list_today_swing_alerts(trade_date)
+    return {"items": [item.model_dump() for item in items]}
 
 
 @app.get("/api/analysis-prompt")

@@ -9,7 +9,10 @@ from pydantic import BaseModel, Field, model_validator
 
 Action = Literal["watch", "pause_add", "staggered_add", "risk_review"]
 RiskLevel = Literal["low", "medium", "high"]
-DecisionStyle = Literal["conservative", "tactical"]
+DecisionStyle = Literal["conservative", "tactical", "aggressive"]
+InvestmentPreset = Literal["conservative_hold", "aggressive_swing"]
+SwingMonitorScope = Literal["holdings", "full_market", "both"]
+SwingAlertType = Literal["take_profit", "dip_buy", "pullback", "sector_dip"]
 
 
 class Holding(BaseModel):
@@ -47,6 +50,12 @@ class InvestorProfile(BaseModel):
     prefer_dca: bool = True
     avoid_chasing: bool = True
     decision_style: DecisionStyle = "conservative"
+    investment_preset: InvestmentPreset = "conservative_hold"
+    round_trip_fee_percent: float = 1.5
+    min_net_profit_percent: float = 1.0
+    hold_days_target: int = 7
+    swing_alerts_enabled: bool = False
+    swing_monitor_scope: SwingMonitorScope = "both"
 
 
 class RiskAlert(BaseModel):
@@ -292,7 +301,7 @@ class FundDiscoveryReport(BaseModel):
 
 
 FundTypePreference = Literal["any", "etf_link", "no_c_class"]
-SelectionStrategy = Literal["balanced", "with_new_issue"]
+SelectionStrategy = Literal["balanced", "with_new_issue", "dip_rebound"]
 DiscoveryScanMode = Literal["full_market", "portfolio_gap"]
 
 
@@ -388,6 +397,32 @@ class RefreshSectorQuotesRequest(BaseModel):
     holdings: list[Holding] = Field(min_length=1)
     force_refresh: bool = False
     budget: Literal["fast", "accurate"] = "fast"
+
+
+class SwingAlertItem(BaseModel):
+    alert_key: str
+    alert_type: SwingAlertType
+    title: str
+    message: str
+    priority: Literal["high", "medium"] = "medium"
+    fund_code: str | None = None
+    fund_name: str | None = None
+    sector_label: str | None = None
+    is_new: bool = False
+
+
+class SwingAlertEvaluateRequest(BaseModel):
+    holdings: list[Holding] = Field(default_factory=list)
+    profile: InvestorProfile = Field(default_factory=InvestorProfile)
+    monitor_scope: SwingMonitorScope | None = None
+
+
+class SwingAlertEvaluateResponse(BaseModel):
+    trade_date: str
+    session_kind: str
+    alerts_enabled: bool
+    items: list[SwingAlertItem] = Field(default_factory=list)
+    new_count: int = 0
 
 
 class SaveSectorMappingRequest(BaseModel):

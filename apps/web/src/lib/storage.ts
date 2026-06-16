@@ -33,9 +33,30 @@ export function normalizeInvestorProfile(
     prefer_dca: source.prefer_dca ?? fallback.prefer_dca,
     avoid_chasing: source.avoid_chasing ?? fallback.avoid_chasing,
     decision_style:
-      source.decision_style === "tactical" || source.decision_style === "conservative"
+      source.decision_style === "tactical" ||
+      source.decision_style === "conservative" ||
+      source.decision_style === "aggressive"
         ? source.decision_style
         : fallback.decision_style ?? "conservative",
+    investment_preset:
+      source.investment_preset === "aggressive_swing" ||
+      source.investment_preset === "conservative_hold"
+        ? source.investment_preset
+        : fallback.investment_preset ?? "conservative_hold",
+    round_trip_fee_percent: Number(
+      source.round_trip_fee_percent ?? fallback.round_trip_fee_percent ?? 1.5,
+    ),
+    min_net_profit_percent: Number(
+      source.min_net_profit_percent ?? fallback.min_net_profit_percent ?? 1.0,
+    ),
+    hold_days_target: Number(source.hold_days_target ?? fallback.hold_days_target ?? 7),
+    swing_alerts_enabled: source.swing_alerts_enabled ?? fallback.swing_alerts_enabled ?? false,
+    swing_monitor_scope:
+      source.swing_monitor_scope === "holdings" ||
+      source.swing_monitor_scope === "full_market" ||
+      source.swing_monitor_scope === "both"
+        ? source.swing_monitor_scope
+        : fallback.swing_monitor_scope ?? "both",
   };
 }
 
