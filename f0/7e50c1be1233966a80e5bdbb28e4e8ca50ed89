@@ -1,0 +1,54 @@
+.github/workflows/ci.yml
+  s_e6dcc6b2141a6c::t_35c7a9e583b196 78
+  s_e6dcc6b2141a6c::t_8f1ff99f9cc968 67-68
+  s_e6dcc6b2141a6c::t_96eb1047e6d8a2 19-20,24,26
+  s_e6dcc6b2141a6c::t_f1ca7528c2a5e8 28
+apps/api/tests/test_yangjibao_four_funds.py
+  s_e6dcc6b2141a6c::t_f91bd64d61ce06 1,113-116
+apps/api/tests/conftest.py
+  s_e6dcc6b2141a6c::t_5adaf92b95467e 146
+  s_e6dcc6b2141a6c::t_6f0897a45e1dac 111
+  s_e6dcc6b2141a6c::t_39fc0d514b0d02 145,147
+apps/api/tests/test_holding_metrics.py
+  s_e6dcc6b2141a6c::t_97f023679b07cc 41
+  s_e6dcc6b2141a6c::t_3b2320d965f876 3,31,49
+  s_e6dcc6b2141a6c::t_2640b7346d9ad7 62
+apps/api/tests/test_fund_profile.py
+  s_e6dcc6b2141a6c::t_8a652b72b9dfea 2-3,33-34,36-39,42-51,53-54,66,98,101,108
+README.md
+  s_e6dcc6b2141a6c::t_2e6ff5befbd1b2 279-286,290,293-305
+apps/api/requirements.txt
+  s_e6dcc6b2141a6c::t_940a1b83874bed 10
+apps/api/pytest.ini
+  s_e6dcc6b2141a6c::t_d671195b849efd 4
+docs/PROJECT_CONTEXT.md
+  s_e6dcc6b2141a6c::t_5b934609ab2c6e 651-652,657-669
+  s_e6dcc6b2141a6c::t_281ff804a96dfc 7,10,670
+  s_e6dcc6b2141a6c::t_c618925d43ca74 684-685,687,689
+  s_e6dcc6b2141a6c::t_1ecd8fc73b668d 98
+  s_e6dcc6b2141a6c::t_d2339d08004893 678
+apps/api/tests/test_fund_nav_service.py
+  s_e6dcc6b2141a6c::t_f8564c2d00fd92 3,5,8-9,14,22,28,30,34
+  s_e6dcc6b2141a6c::t_03a061b9fd0ff0 20
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.17-trip",
+  "base_commit_sha": "f07e50c1be1233966a80e5bdbb28e4e8ca50ed89",
+  "prompts": {},
+  "humans": {
+    "h_375fc341ff3baa": {
+      "author": "hegl <HLLLG@github.com>"
+    }
+  },
+  "sessions": {
+    "s_e6dcc6b2141a6c": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "e1d40230-2212-42a1-9246-f0d456ffb0df",
+        "model": "composer-2.5"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
