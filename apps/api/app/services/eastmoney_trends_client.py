@@ -4,6 +4,7 @@ import json
 import logging
 import re
 import time
+from datetime import date, timedelta
 from typing import Any
 
 import requests
@@ -30,6 +31,17 @@ _KLINE_URLS = (
     "https://79.push2.eastmoney.com/api/qt/stock/kline/get",
     "https://88.push2.eastmoney.com/api/qt/stock/kline/get",
     "https://91.push2his.eastmoney.com/api/qt/stock/kline/get",
+)
+
+# 日 K 历史走 push2his（与 AkShare stock_board_*_hist_em 一致）；push2delay 对概念板块常返回空 klines
+_DAILY_KLINE_URLS = (
+    "https://91.push2his.eastmoney.com/api/qt/stock/kline/get",
+    "https://50.push2his.eastmoney.com/api/qt/stock/kline/get",
+    "https://push2his.eastmoney.com/api/qt/stock/kline/get",
+    "https://79.push2his.eastmoney.com/api/qt/stock/kline/get",
+    "https://17.push2his.eastmoney.com/api/qt/stock/kline/get",
+    "https://32.push2his.eastmoney.com/api/qt/stock/kline/get",
+    "https://push2delay.eastmoney.com/api/qt/stock/kline/get",
 )
 
 _TRENDS2_URLS = (
@@ -135,6 +147,34 @@ def fetch_eastmoney_daily_kline_series(
     return []
 
 
+def _daily_kline_beg_end(max_days: int) -> tuple[str, str]:
+    end = date.today().strftime("%Y%m%d")
+    beg = (date.today() - timedelta(days=max_days + 90)).strftime("%Y%m%d")
+    return beg, end
+
+
+def _daily_kline_param_variants(secid: str, *, max_days: int) -> list[dict[str, str]]:
+    fqt = "1" if secid.startswith("2.") else "0"
+    beg, end = _daily_kline_beg_end(max_days)
+    common = {
+        "secid": secid,
+        "fields1": "f1,f2,f3,f4,f5,f6",
+        "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
+        "klt": "101",
+        "fqt": fqt,
+        "beg": beg,
+        "end": end,
+        "smplmt": "10000",
+        "lmt": "1000000",
+    }
+    return [
+        common,
+        {**common, "beg": "0", "end": "20500000"},
+        {**_EM_COMMON_PARAMS, **common},
+        {**_EM_COMMON_PARAMS, **common, "beg": "0", "end": "20500000"},
+    ]
+
+
 def _fetch_daily_kline_series(
     session: requests.Session,
     secid: str,
@@ -144,37 +184,34 @@ def _fetch_daily_kline_series(
     max_retries: int,
     proxies: dict[str, None],
 ) -> list[DailyKlineBar]:
-    fqt = "1" if secid.startswith("2.") else "0"
-    base_params = {
-        **_EM_COMMON_PARAMS,
-        "secid": secid,
-        "fields1": "f1,f2,f3,f4,f5,f6",
-        "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
-        "klt": "101",
-        "fqt": fqt,
-        "beg": "0",
-        "end": "20500000",
-    }
+    param_variants = _daily_kline_param_variants(secid, max_days=max_days)
     last_error: Exception | None = None
     for attempt in range(max_retries):
-        for ut in _KLINE_UTS:
-            params = {**base_params, "ut": ut}
-            for url in _KLINE_URLS:
-                try:
-                    response = session.get(
-                        url, params=params, timeout=timeout, proxies=proxies
-                    )
-                    response.raise_for_status()
-                    series = _parse_daily_kline_series(
-                        _read_em_json(response), max_days=max_days
-                    )
-                    if series:
-                        return series
-                except Exception as exc:
-                    last_error = exc
-                    logger.debug("eastmoney daily kline %s failed: %s", secid, exc)
-                    if _is_connection_drop(exc):
-                        break
+        for base_params in param_variants:
+            ut_candidates: list[str | None] = [None, *_KLINE_UTS]
+            for ut in ut_candidates:
+                params = dict(base_params)
+                if ut:
+                    params["ut"] = ut
+                for url in _DAILY_KLINE_URLS:
+                    try:
+                        response = session.get(
+                            url, params=params, timeout=timeout, proxies=proxies
+                        )
+                        response.raise_for_status()
+                        series = _parse_daily_kline_series(
+                            _read_em_json(response), max_days=max_days
+                        )
+                        if series:
+                            return series
+                    except Exception as exc:
+                        last_error = exc
+                        logger.debug(
+                            "eastmoney daily kline %s url=%s failed: %s",
+                            secid,
+                            url,
+                            exc,
+                        )
         if attempt + 1 < max_retries:
             time.sleep(0.4 * (attempt + 1))
     if last_error:
@@ -342,7 +379,11 @@ def _apply_referer(
         market, maybe_code = secid.split(".", 1)
         if not code and maybe_code.strip().isdigit():
             code = maybe_code.strip()
-    if code.isdigit():
+    if code.upper().startswith("BK"):
+        session.headers["Referer"] = (
+            f"https://quote.eastmoney.com/bk/{market}.{code}.html"
+        )
+    elif code.isdigit():
         session.headers["Referer"] = (
             f"https://quote.eastmoney.com/zz/{market}.{code}.html"
         )

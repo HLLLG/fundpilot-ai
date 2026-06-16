@@ -6,11 +6,13 @@ import time
 from collections.abc import Callable
 from typing import Any
 
+from app.services.akshare_subprocess import fetch_board_daily_kline_series
+from app.services.sector_quote_relay_provider import fetch_daily_kline_via_relay
 from app.services.eastmoney_trends_client import (
     DailyKlineBar,
     fetch_eastmoney_daily_kline_series,
 )
-from app.services.sector_canonical import get_canonical_sector, list_canonical_sector_labels
+from app.services.sector_canonical import CanonicalSector, get_canonical_sector, list_canonical_sector_labels
 from app.services.sector_signal_rules import (
     SIGNAL_RULE_IDS,
     prediction_matches,
@@ -57,16 +59,23 @@ def build_sector_signal_backtest(
     else:
         cache_key = None
 
-    result = _build_sector_signal_backtest_impl(
+    if fetch_series is None:
+        result = _build_sector_signal_backtest_impl(
+            sector_labels,
+            lookback_days=lookback_days,
+            rules=rules,
+            fetch_series=None,
+        )
+        if result.get("has_data"):
+            _BACKTEST_CACHE[cache_key] = (time.time(), result)
+        return result
+
+    return _build_sector_signal_backtest_impl(
         sector_labels,
         lookback_days=lookback_days,
         rules=rules,
         fetch_series=fetch_series,
     )
-
-    if fetch_series is None:
-        _BACKTEST_CACHE[cache_key] = (time.time(), result)
-    return result
 
 
 def _build_sector_signal_backtest_impl(
@@ -79,7 +88,6 @@ def _build_sector_signal_backtest_impl(
     """对 canonical 板块日线做 T→T+1 信号回测（离线诊断，不写入日报）。"""
     labels = _resolve_sector_labels(sector_labels)
     active_rules = rules or _DEFAULT_RULES
-    loader = fetch_series or _default_fetch_series
     window = max(30, min(lookback_days, 400))
 
     if not labels:
@@ -108,7 +116,10 @@ def _build_sector_signal_backtest_impl(
             )
             continue
 
-        series = loader(canon.eastmoney_secid, canon.source_code)
+        if fetch_series is None:
+            series = _default_fetch_series_for_canon(canon)
+        else:
+            series = fetch_series(canon.eastmoney_secid, canon.source_code)
         filtered = _filter_trading_days(series, trade_dates, window)
         if len(filtered) < 3:
             sector_results.append(
@@ -160,6 +171,36 @@ def _resolve_sector_labels(sector_labels: list[str] | None) -> list[str]:
             resolved.append(label)
         return resolved
     return list_canonical_sector_labels()
+
+
+def _default_fetch_series_for_canon(canon: CanonicalSector) -> list[DailyKlineBar]:
+    series = fetch_eastmoney_daily_kline_series(
+        canon.eastmoney_secid,
+        source_code=canon.source_code,
+        max_days=400,
+        timeout=12.0,
+        max_retries=2,
+    )
+    if series:
+        return series
+    relay_series = fetch_daily_kline_via_relay(
+        canon.eastmoney_secid,
+        source_code=canon.source_code,
+        max_days=400,
+        timeout_seconds=15.0,
+    )
+    if relay_series:
+        return relay_series
+    if canon.source_type in {"concept", "industry"}:
+        fallback = fetch_board_daily_kline_series(
+            canon.source_type,
+            canon.source_name,
+            source_code=canon.source_code,
+            max_days=400,
+        )
+        if fallback:
+            return fallback
+    return []
 
 
 def _default_fetch_series(secid: str, source_code: str | None) -> list[DailyKlineBar]:

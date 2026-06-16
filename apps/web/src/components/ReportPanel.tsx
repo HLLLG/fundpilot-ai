@@ -1,19 +1,15 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { BarChart3, Download, Sparkles, Workflow } from "lucide-react";
-import type { Report, ReportDiff } from "@/lib/api";
-import { fetchReportDiff, fetchReportMarkdown } from "@/lib/api";
+import { useState } from "react";
+import { BarChart3, Download, Sparkles } from "lucide-react";
+import type { Report } from "@/lib/api";
+import { fetchReportMarkdown } from "@/lib/api";
 import { actionBadgeClass, actionCardClass } from "@/lib/actionStyles";
 import { ReportChatPanel } from "@/components/ReportChatPanel";
 import { ReportCollapsibleSection } from "@/components/ReportCollapsibleSection";
-import { ReportDiffPanel } from "@/components/ReportDiffPanel";
 import { RebalanceSimulationPanel } from "@/components/RebalanceSimulationPanel";
-import { ReportExecutiveSummary } from "@/components/ReportExecutiveSummary";
-import { ReportFactsPanel } from "@/components/ReportFactsPanel";
 import { ReportNewsBriefPanel } from "@/components/ReportNewsBriefPanel";
 import { ReportOutcomesPanel } from "@/components/ReportOutcomesPanel";
-import { ReportSignalBacktestPanel } from "@/components/ReportSignalBacktestPanel";
 import { StatusPill } from "@/components/StatusPill";
 
 type ReportPanelProps = {
@@ -32,12 +28,6 @@ const actionLabel = {
   staggered_add: "分批加仓",
   risk_review: "减仓/风控复核",
 };
-
-const INTERNAL_CAVEAT_MARKERS = ["JSON 被截断", "无法解析为完整 JSON", "已使用本地规则补齐"];
-
-function userFacingCaveats(caveats: string[]) {
-  return caveats.filter((line) => !INTERNAL_CAVEAT_MARKERS.some((marker) => line.includes(marker)));
-}
 
 function FundDiagnosticHint({
   fundCode,
@@ -174,50 +164,8 @@ function displayFundRecommendations(report: Report) {
   return [...byCode.values()];
 }
 
-function ReportPipelineBanner({ facts }: { facts?: Record<string, unknown> }) {
-  const pipeline = (facts?.pipeline ?? {}) as Record<string, unknown>;
-  const trend = (facts?.portfolio_trend ?? {}) as Record<string, unknown>;
-  const session = (facts?.session ?? {}) as Record<string, unknown>;
-  if (!pipeline.analysis_mode && !trend.summary_line && !session.decision_window) {
-    return null;
-  }
-
-  return (
-    <div className="mb-5 rounded-[24px] border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-700">
-      <div className="mb-1 flex items-center gap-2 font-black text-slate-950">
-        <Workflow size={16} className="text-blue-600" />
-        分析上下文
-      </div>
-      {pipeline.analysis_mode ? (
-        <p>
-          模式 {String(pipeline.analysis_mode)} · 模型 {String(pipeline.model ?? "—")}
-          {pipeline.llm_judge_applied ? " · 深度审校已应用" : null}
-          {typeof pipeline.today_news_count === "number"
-            ? ` · 当日要闻 ${pipeline.today_news_count} 条`
-            : null}
-        </p>
-      ) : null}
-      {session.decision_window ? (
-        <p className="mt-1 text-xs text-slate-500">{String(session.decision_window)}</p>
-      ) : null}
-      {trend.summary_line ? <p className="mt-1 font-semibold text-slate-800">{String(trend.summary_line)}</p> : null}
-    </div>
-  );
-}
-
 export function ReportPanel({ report }: ReportPanelProps) {
-  const [diff, setDiff] = useState<ReportDiff | null>(null);
   const [isExporting, setIsExporting] = useState(false);
-
-  useEffect(() => {
-    if (!report?.id) {
-      setDiff(null);
-      return;
-    }
-    void fetchReportDiff(report.id)
-      .then((response) => setDiff(response.has_previous && response.diff ? response.diff : null))
-      .catch(() => setDiff(null));
-  }, [report?.id]);
 
   const handleExportMarkdown = async () => {
     if (!report) {
@@ -262,7 +210,6 @@ export function ReportPanel({ report }: ReportPanelProps) {
   }
 
   const fundRecommendations = displayFundRecommendations(report);
-  const caveatLines = userFacingCaveats(report.caveats);
   const portfolioRecommendations =
     report.fund_recommendations.length > 0
       ? report.recommendations
@@ -302,16 +249,6 @@ export function ReportPanel({ report }: ReportPanelProps) {
       </div>
       </div>
 
-      <ReportExecutiveSummary report={report} />
-      <ReportPipelineBanner facts={report.analysis_facts} />
-      <ReportSignalBacktestPanel facts={report.analysis_facts} />
-
-      {diff ? (
-        <ReportCollapsibleSection title="与上一份日报对比" className="mb-5">
-          <ReportDiffPanel diff={diff} />
-        </ReportCollapsibleSection>
-      ) : null}
-
       <div className="report-panel mb-5 overflow-hidden">
         <div className="report-panel-header">
           <div className="flex items-center gap-2 text-sm font-black text-slate-950">
@@ -350,81 +287,20 @@ export function ReportPanel({ report }: ReportPanelProps) {
         </div>
       </div>
 
+      <ReportCollapsibleSection title="调仓示意模拟" className="mb-5">
+        <RebalanceSimulationPanel reportId={report.id} embedded />
+      </ReportCollapsibleSection>
+
       <ReportCollapsibleSection
         title="建议复盘"
-        defaultOpen
         className="mb-5"
       >
         <ReportOutcomesPanel reportId={report.id} embedded />
       </ReportCollapsibleSection>
 
-      <ReportCollapsibleSection title="调仓示意模拟" className="mb-5">
-        <RebalanceSimulationPanel reportId={report.id} embedded />
-      </ReportCollapsibleSection>
-
-      <ReportCollapsibleSection title="系统计算事实" className="mb-5">
-        <ReportFactsPanel facts={report.analysis_facts} embedded />
-      </ReportCollapsibleSection>
-
-      {[...report.risk.alerts.map((alert) => alert.message), ...caveatLines].length > 0 ? (
-        <ReportCollapsibleSection title="风险提醒与说明" className="mb-5">
-          <div className="space-y-3">
-            {[...report.risk.alerts.map((alert) => alert.message), ...caveatLines].map(
-              (item, index) => (
-                <div
-                  key={`${item}-${index}`}
-                  className="rounded-2xl border border-amber-100 bg-amber-50/70 px-4 py-3 text-sm leading-6 text-slate-700"
-                >
-                  {item}
-                </div>
-              ),
-            )}
-          </div>
-        </ReportCollapsibleSection>
-      ) : null}
-
       {report.topic_briefs && report.topic_briefs.length > 0 ? (
         <ReportCollapsibleSection title="主题要闻摘要" className="mb-5">
-          <ReportNewsBriefPanel briefs={report.topic_briefs} />
-        </ReportCollapsibleSection>
-      ) : null}
-
-      {report.market_news.length > 0 ? (
-        <ReportCollapsibleSection title="新闻原文出处（优先当日）">
-          <div className="space-y-3">
-            {report.market_news.map((item, index) => (
-              <div
-                key={`${item.url ?? item.title}-${index}`}
-                className="rounded-2xl border border-emerald-100 bg-emerald-50/50 px-4 py-3"
-              >
-                <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                  <span className="font-bold text-emerald-800">{item.topic}</span>
-                  {"is_today" in item && item.is_today ? (
-                    <span className="rounded-full bg-emerald-600 px-2 py-0.5 text-[10px] font-bold text-white">
-                      当日
-                    </span>
-                  ) : null}
-                  {item.published_at ? <span>{item.published_at}</span> : null}
-                  {item.source ? <span>{item.source}</span> : null}
-                </div>
-                {item.url ? (
-                  <a
-                    href={item.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="mt-2 block text-sm font-bold leading-6 text-slate-950 underline-offset-2 hover:underline"
-                  >
-                    {item.title}
-                  </a>
-                ) : (
-                  <div className="mt-2 text-sm font-bold leading-6 text-slate-950">{item.title}</div>
-                )}
-                {item.snippet ? (
-                  <p className="mt-2 text-xs leading-5 text-slate-600">{item.snippet}</p>
-                ) : null}
-              </div>
-            ))}
-          </div>
+          <ReportNewsBriefPanel briefs={report.topic_briefs} marketNews={report.market_news} />
         </ReportCollapsibleSection>
       ) : null}
     </section>

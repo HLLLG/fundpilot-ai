@@ -11,7 +11,7 @@
 
 1. 板块后台轮询：`useSectorQuoteRefresh` 180s 自动刷新改用 `budget: "fast"`；用户手动刷新用 `accurate`
 2. 基金详情分时：去掉无条件 `forceRefresh`；缓存 ≥2 点时跳过后台强刷；点击刷新图标可 force
-3. 板块信号回测：服务端 24h 内存响应缓存
+3. 板块信号回测：服务端 24h 内存响应缓存（**2026-06-16 起仅 `has_data=true` 时写入**，避免空结果被缓存一天）
 
 ## Phase 2 — 前端 SWR
 

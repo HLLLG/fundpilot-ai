@@ -1,11 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Loader2, MessageCircle, Send, Sparkles, Zap } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { ArrowDown, Loader2, MessageCircle, Send, Sparkles, Zap } from "lucide-react";
 import type { AnalysisMode, DiscoveryChatMessage } from "@/lib/api";
 import { ChatMarkdown } from "@/components/ChatMarkdown";
 import { fetchDiscoveryChatHistory, streamDiscoveryChat } from "@/lib/api";
 import { loadReportChatMode, saveReportChatMode } from "@/lib/storage";
+import { useChatAutoScroll } from "@/lib/useChatAutoScroll";
 
 type DiscoveryChatPanelProps = {
   reportId: string;
@@ -27,8 +28,16 @@ export function DiscoveryChatPanel({ reportId, reportTitle }: DiscoveryChatPanel
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const scrollRef = useRef<HTMLDivElement>(null);
   const localMessageIdRef = useRef(0);
+  const {
+    scrollRef,
+    handleScroll,
+    onContentChange,
+    pinToBottomForSend,
+    onHistoryLoaded,
+    scrollToBottom,
+    showScrollToBottom,
+  } = useChatAutoScroll<HTMLDivElement>({ resetKey: reportId });
 
   const allocLocalMessageId = (prefix: string) => {
     localMessageIdRef.current += 1;
@@ -37,11 +46,6 @@ export function DiscoveryChatPanel({ reportId, reportTitle }: DiscoveryChatPanel
 
   useEffect(() => {
     setChatMode(loadReportChatMode("fast"));
-  }, []);
-
-  const scrollToBottom = useCallback(() => {
-    const node = scrollRef.current;
-    if (node) node.scrollTop = node.scrollHeight;
   }, []);
 
   useEffect(() => {
@@ -57,22 +61,26 @@ export function DiscoveryChatPanel({ reportId, reportTitle }: DiscoveryChatPanel
         }
       })
       .finally(() => {
-        if (!cancelled) setIsLoadingHistory(false);
+        if (!cancelled) {
+          setIsLoadingHistory(false);
+          onHistoryLoaded();
+        }
       });
     return () => {
       cancelled = true;
     };
-  }, [reportId]);
+  }, [reportId, onHistoryLoaded]);
 
   useEffect(() => {
-    scrollToBottom();
-  }, [messages, scrollToBottom]);
+    onContentChange();
+  }, [messages, onContentChange]);
 
   const handleSend = async (text: string) => {
     const trimmed = text.trim();
     if (!trimmed || isStreaming) return;
     setError(null);
     setIsStreaming(true);
+    pinToBottomForSend();
     const draftId = allocLocalMessageId("draft");
     setMessages((prev) => [
       ...prev,
@@ -120,7 +128,7 @@ export function DiscoveryChatPanel({ reportId, reportTitle }: DiscoveryChatPanel
   };
 
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+    <section className="flex h-[min(62vh,560px)] min-h-[400px] flex-col rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
       <div className="mb-3 flex items-center gap-2">
         <MessageCircle size={18} className="text-indigo-600" />
         <h3 className="text-sm font-bold text-slate-900">追问推荐报告</h3>
@@ -143,10 +151,12 @@ export function DiscoveryChatPanel({ reportId, reportTitle }: DiscoveryChatPanel
         ))}
       </div>
 
-      <div
-        ref={scrollRef}
-        className="mb-3 max-h-64 space-y-3 overflow-y-auto rounded-xl border border-slate-100 bg-slate-50/80 p-3"
-      >
+      <div className="relative mb-3 min-h-0 flex-1">
+        <div
+          ref={scrollRef}
+          onScroll={handleScroll}
+          className="h-full min-h-[min(36vh,320px)] space-y-3 overflow-y-auto rounded-xl border border-slate-100 bg-slate-50/80 p-3"
+        >
         {isLoadingHistory ? (
           <div className="flex items-center gap-2 text-xs text-slate-500">
             <Loader2 size={14} className="animate-spin" />
@@ -172,6 +182,18 @@ export function DiscoveryChatPanel({ reportId, reportTitle }: DiscoveryChatPanel
             )}
           </div>
         ))}
+        </div>
+
+        {showScrollToBottom ? (
+          <button
+            type="button"
+            onClick={() => scrollToBottom("smooth")}
+            className="absolute bottom-2 right-2 z-10 inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200/80 bg-white/90 text-slate-600 shadow-sm backdrop-blur transition hover:border-indigo-300 hover:text-indigo-700"
+            aria-label="回到底部"
+          >
+            <ArrowDown size={14} />
+          </button>
+        ) : null}
       </div>
 
       {error ? <p className="mb-2 text-xs text-red-600">{error}</p> : null}

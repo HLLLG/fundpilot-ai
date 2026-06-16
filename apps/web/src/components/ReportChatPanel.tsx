@@ -1,11 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Download, Gauge, Loader2, MessageCircle, Send, Zap } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { ArrowDown, Download, Gauge, Loader2, MessageCircle, Send, Zap } from "lucide-react";
 import type { ReportChatMessage, ReportChatMode } from "@/lib/api";
 import { ChatMarkdown } from "@/components/ChatMarkdown";
 import { fetchReportChatHistory, fetchReportChatMarkdown, streamReportChat } from "@/lib/api";
 import { loadReportChatMode, saveReportChatMode } from "@/lib/storage";
+import { useChatAutoScroll } from "@/lib/useChatAutoScroll";
 
 type ReportChatPanelProps = {
   reportId: string;
@@ -31,18 +32,19 @@ export function ReportChatPanel({ reportId, reportTitle, compact = false }: Repo
   const [isStreaming, setIsStreaming] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const scrollRef = useRef<HTMLDivElement>(null);
   const draftAssistantId = useRef<string | null>(null);
+  const {
+    scrollRef,
+    handleScroll,
+    onContentChange,
+    pinToBottomForSend,
+    onHistoryLoaded,
+    scrollToBottom,
+    showScrollToBottom,
+  } = useChatAutoScroll<HTMLDivElement>({ resetKey: reportId });
 
   useEffect(() => {
     setChatMode(loadReportChatMode("fast"));
-  }, []);
-
-  const scrollToBottom = useCallback(() => {
-    const node = scrollRef.current;
-    if (node) {
-      node.scrollTop = node.scrollHeight;
-    }
   }, []);
 
   useEffect(() => {
@@ -63,16 +65,17 @@ export function ReportChatPanel({ reportId, reportTitle, compact = false }: Repo
       .finally(() => {
         if (!cancelled) {
           setIsLoadingHistory(false);
+          onHistoryLoaded();
         }
       });
     return () => {
       cancelled = true;
     };
-  }, [reportId]);
+  }, [reportId, onHistoryLoaded]);
 
   useEffect(() => {
-    scrollToBottom();
-  }, [messages, scrollToBottom]);
+    onContentChange();
+  }, [messages, onContentChange]);
 
   const handleModeChange = (mode: ReportChatMode) => {
     setChatMode(mode);
@@ -89,6 +92,7 @@ export function ReportChatPanel({ reportId, reportTitle, compact = false }: Repo
     setIsStreaming(true);
     setInput("");
     draftAssistantId.current = null;
+    pinToBottomForSend();
 
     try {
       await streamReportChat(reportId, trimmed, chatMode, {
@@ -162,8 +166,8 @@ export function ReportChatPanel({ reportId, reportTitle, compact = false }: Repo
     <div
       className={`flex flex-col rounded-2xl border border-slate-200 bg-slate-50/90 ${
         compact
-          ? "h-[min(52vh,520px)] min-h-[360px]"
-          : "h-[min(72vh,720px)] min-h-[480px]"
+          ? "h-[min(92vh,960px)] min-h-[960px]"
+          : "h-[min(72vh,720px)] min-h-[520px]"
       }`}
       data-testid="report-chat-panel"
     >
@@ -227,10 +231,12 @@ export function ReportChatPanel({ reportId, reportTitle, compact = false }: Repo
         </div>
       </div>
 
-      <div
-        ref={scrollRef}
-        className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-3 py-3"
-      >
+      <div className="relative min-h-0 flex-1">
+        <div
+          ref={scrollRef}
+          onScroll={handleScroll}
+          className="h-full min-h-[min(84vh,760px)] space-y-3 overflow-y-auto overscroll-contain px-3 py-3"
+        >
         {isLoadingHistory ? (
           <div className="flex items-center justify-center gap-2 py-8 text-sm text-slate-500">
             <Loader2 size={16} className="animate-spin" />
@@ -268,6 +274,18 @@ export function ReportChatPanel({ reportId, reportTitle, compact = false }: Repo
 
         {statusHint ? (
           <p className="text-center text-[11px] text-slate-500">{statusHint}</p>
+        ) : null}
+        </div>
+
+        {showScrollToBottom ? (
+          <button
+            type="button"
+            onClick={() => scrollToBottom("smooth")}
+            className="absolute bottom-2 right-2 z-10 inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200/80 bg-white/90 text-slate-600 shadow-sm backdrop-blur transition hover:border-blue-300 hover:text-blue-700"
+            aria-label="回到底部"
+          >
+            <ArrowDown size={14} />
+          </button>
         ) : null}
       </div>
 

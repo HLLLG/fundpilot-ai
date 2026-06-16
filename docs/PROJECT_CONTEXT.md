@@ -4,9 +4,15 @@
 >
 > **维护：** 功能或架构有实质变化时，同步更新「能力清单」「数据流」「API」「目录」「环境变量」。
 
-**文档版本：** 2026-06-15（持有收益口径对齐 + 调仓示意修复）
+**文档版本：** 2026-06-16（日报 UI 精简 + 板块信号回测修复 + 追问体验）
 
 **更新记录：**
+- **板块信号回测修复（2026-06-16）：** 概念板块日 K 改优先 `push2his`（`91.push2his` + AkShare 同款 `smplmt`/`lmt`/日期范围）；拉取链：**东财 → sector-relay `/kline/daily` → AkShare 子进程**；**仅 `has_data=true` 时缓存 24h**（避免空结果被锁一天）；`SectorSignalBacktestPanel` 仍在「生成日报」诊断区，日报正文已移除快照面板。
+- **日报 UI 精简（2026-06-16）：** 移除日报内「今日三行结论」「分析上下文」「板块信号回测快照」「与上一份日报对比」「系统计算事实 + 风险提醒」；`建议复盘` 移至调仓示意下方且默认折叠；主题要闻标题可点原文、去掉底部「新闻原文出处」；移除前端 `DatabaseBackupPanel`（后端 export/import API 仍保留）。
+- **追问侧栏体验（2026-06-16）：** `useChatAutoScroll` — 用户上滑时不强制贴底，右下角「回到底部」；侧栏加高/加宽；设计见 `docs/superpowers/specs/2026-06-16-chat-ux-optimization-design.md`。
+- **登录持久化（2026-06-16）：** `AuthProvider` 启动 bootstrap 失败重试 5 次；仅 HTTP **401** 清 token（网络错误不清）；登录/注册 401 不 wipe 已有 token。
+- **历史日报（2026-06-16）：** `HistoryRail` 支持批量选择与删除。
+- **`.env.example`（2026-06-16）：** 重组为「Secrets & paths」+「App defaults」；显式列出 relay / JWT 30 天 / `NEXT_PUBLIC_API_BASE_URL`。
 - **调仓示意模拟修复（2026-06-15）：** `rebalance_simulator.py` 在报告未填 `amount_yuan` 时自动补算示意金额；超集中度「观察」也应用负变动；非集中度「减仓评估」按持仓 15% 给 fallback；`GET /api/reports/{id}/rebalance-simulation` 从 `analysis_facts.portfolio` 恢复集中度上限；前端 `RebalanceSimulationPanel` 展示 `amount_note`。
 - **日报持有收益口径对齐（2026-06-15）：** `analysis_facts` 新增 `estimated_holding_return_percent` / `estimated_holding_profit` / `over_drawdown_limit`，与前端「持有」列一致；组合/单只浮亏风控改用有效持有收益率（盘中含板块估算），不再误用昨日结算 `holding_return_percent`。
 - **数据缓存优化（2026-06-15）：** 前端 `clientCache.ts` + `useCachedFetch.ts`（SWR：盈亏分析 dashboard、业绩走势、持仓详情）；板块后台轮询改 `fast` 预算、手动刷新 `accurate`；分时图去掉无条件 forceRefresh；服务端指数日线 1h TTL、组合分时 fingerprint 并行、新闻盘中 15min 过期、信号回测 24h 缓存。设计见 `docs/superpowers/specs/2026-06-15-data-caching-optimization-design.md`。
@@ -27,7 +33,7 @@
 - **盈亏分析 Tab（2026-06-11）：** 主 Tab 为「持有 | 盈亏分析 | 生成日报」；`PortfolioDashboard` 含收益走势（我的收益 vs 沪深300、不对称 Y 轴）、盈亏日历、当日 TOP5、持仓甜甜圈；`GET /api/portfolio/dashboard?range=&calendar_year=&calendar_month=`；`portfolio_profit_analysis.py` + `portfolio_intraday_curves` 表；`DELETE /api/portfolio/snapshots?on_or_before=` 清理历史日快照。
 - **UI 精简（2026-06-11）：** 用户菜单仅保留「历史日报」；生成日报页诊断折叠为 `DiagnosticsAccordion`；风控收进「高级设置」；移除废弃组件 `HoldingTable` / `PortfolioSummaryCard` / `TodayWorkflowSteps` / `NavLineChart` / `holdingReview.ts`。
 - **风控偏好语义（2026-06-11）：** `prefer_dca` / `avoid_chasing` 随 `profile` 传入模型；`avoid_chasing` 在 `recommendation_guard` 中板块大涨时限制加仓档；`prefer_dca` 在离线规则中弱持有收益时倾向分批加仓。
-- **板块信号闭环（2026-06-10）：** `sector_signal_rules` + `sector_signal_backtest` + `sector_signal_context` + `signal_guard_policy` — 回测写入 `analysis_facts.signal_backtest` / `guard_policy`；`prompt_tuning` 与守卫按历史命中率自动收紧/放松；前端 `SectorSignalBacktestPanel`（生成日报/历史 Tab）与 `ReportSignalBacktestPanel`（日报内快照）；环境变量 `FUND_AI_SECTOR_SIGNAL_BACKTEST_*`。
+- **板块信号闭环（2026-06-10）：** `sector_signal_rules` + `sector_signal_backtest` + `sector_signal_context` + `signal_guard_policy` — 回测写入 `analysis_facts.signal_backtest` / `guard_policy`；`prompt_tuning` 与守卫按历史命中率自动收紧/放松；前端 `SectorSignalBacktestPanel`（生成日报诊断区）；环境变量 `FUND_AI_SECTOR_SIGNAL_BACKTEST_*`。
 - **账户汇总与日报流程简化（2026-06-10）：** 隐藏 `000000`/待录入占位行；官方净值「已更新」浅蓝标签（含右上角当日收益）；移除「详细校对」与「生成日报」页 `HoldingTable`；AI 分析直接使用账户汇总 `displayableHoldings`；移除「快捷操作」侧栏。
 - **期望投入总额（2026-06-10）：** `InvestorProfile.expected_investment_amount` 滑条默认 3 万、1–10 万步进 5 千；持仓占比/集中度/减仓建议以期望投入为分母（`risk.resolve_weight_denominator`），避免减仓后占比误判偏高。
 - **风控画像持久化（2026-06-10）：** SQLite `investor_profile_state` + `GET/PUT /api/investor-profile`；前端 `localStorage` 作缓存，启动时 API 优先、修改后双写。
@@ -73,21 +79,21 @@
 | AI 角色 Prompt（日报） | `analysis_prompt.py` `DEFAULT_ROLE_PROMPT`；用户自定义 `role_prompt`（≤4000 字）持久化 `analysis_prompt_state`；`GET/PUT /api/analysis-prompt`；生成时 `system_role_prompt` 传入 `POST /api/analyze/async` |
 | AI 角色 Prompt（荐基） | `discovery_prompt.py` `DEFAULT_DISCOVERY_ROLE_PROMPT`；持久化 `discovery_prompt_state`（schema v6）；`GET/PUT /api/discovery-prompt`；扫描时 `DiscoveryRequest.system_role_prompt` 传入 `discovery_client` |
 | 复盘/模拟 | outcomes / outcomes-weekly / rebalance-simulation / recommendation-accuracy |
-| 信号诊断 | `GET /api/diagnostics/sector-signal-backtest` — 板块短线规则历史命中率（东财日 K） |
+| 信号诊断 | `GET /api/diagnostics/sector-signal-backtest` — 板块短线规则历史命中率（东财日 K；失败时 relay/AkShare 兜底） |
 | 交易日语义 | `trading_session.py` + `trade_calendar_cache`；**9:30 前** `trading_day_pre_open` 展示上一交易日（对齐养基宝，周末/节假日同理）；`TradingSessionBar` |
 | 穿透估算 | 未收盘时按板块权重分配账户当日收益 |
 | 板块实时 | **canonical 映射优先**（`sector_canonical` → 东财 `secid` K 线）；未知板块再走 spot 批量表 + `sector_quote_resolver` + `sector_on_demand`；可选中继/浏览器命令；300s 自动 + 手动；低置信度 `SectorMappingModal`；有场内指数时优先指数口径（`sector_quote_lookup_label`） |
 | 分时图 | `GET /api/sector-quotes/intraday`；push2delay 首选；相对**昨收**对齐养基宝；骨架点 &lt;30 不写缓存；可选 `sector_intraday_browser_command` 浏览器兜底 |
 | 官方净值 | AkShare `fund_open_fund_info_em` 覆盖**当日收益**（非板块列）；源标签：板块实时 / 收盘估算 / 官方净值；昨日收益取再上一交易日官方净值或 OCR |
 | 工作流阻塞 | `workflowBlockers`（生成日报前校验，无独立阻塞清单组件） |
-| 数据备份 | SQLite export/import；`DatabaseBackupPanel` |
+| 数据备份 | SQLite export/import API（`GET/POST /api/database/*`）；Web 面板已移除 |
 | 小程序 | `apps/miniprogram`：登录、持有列表、基金详情（只读）；与 Web 经 `bind-wechat` 共享 `userId` |
 | 云部署 | `apps/api/Dockerfile`、`docker-compose.cloud.yml`；`scripts/migrate_sqlite_to_mysql.py`；见 `docs/deploy/cloudbase.md` |
 | CI / E2E | GitHub Actions：pytest（**370** 项）+ lint/typecheck/build + Playwright |
 | 基金诊断 | AkShare 概况/累计收益；详情页可 AkShare **按名称查码**并持久化 |
 | 分析模式 | 快速 / 深度 |
-| 体验 | 报告 diff、Markdown 导出、SQLite 备份、桌面通知、Plus Jakarta 字体 UI；**客户端 SWR 缓存**（盈亏分析/详情/业绩走势）；板块刷新 fast 轮询 + accurate 手动 |
-| 报告追问 | SSE + ChatMarkdown |
+| 体验 | Markdown 导出、桌面通知、Plus Jakarta 字体 UI；**客户端 SWR 缓存**（盈亏分析/详情/业绩走势）；板块刷新 fast 轮询 + accurate 手动；追问侧栏智能滚动 |
+| 报告追问 | SSE + ChatMarkdown；`useChatAutoScroll` 贴底/回到底部 |
 | 异步任务 | `/api/analyze/async` + `JobStatusFloat`；`/api/fund-discovery/async` + `DiscoveryJobStatusFloat`；`GET /api/jobs/{id}` 经 `job_status_service` 统一查询（`job_kind` 区分日报/荐基） |
 | 前端偏好 | localStorage：风控、**日报/荐基 AI 角色 Prompt**、分析模式、板块自动刷新 |
 
@@ -178,7 +184,7 @@ fundpilot-ai/
 │       ├── PortfolioDashboard / ProfitAnalysisTrendChart / ProfitLossCalendar / DailyProfitTop5 / HoldingDonutChart
 │       ├── PerformanceTrendPanel / PerformanceReturnChart / NavHistoryListModal / WheelDatePicker
 │       ├── SectorMappingModal / IntradayPercentChart
-│       ├── TradingSessionBar / DatabaseBackupPanel
+│       ├── TradingSessionBar / useChatAutoScroll
 │       ├── RiskControls / DiagnosticsAccordion / NewsPreviewPanel / SectorSignalBacktestPanel
 │       ├── ReportPanel / JobStatusFloat / HistoryRail / UserMenu
 ├── apps/miniprogram/          # 微信小程序（登录、持有、详情）
@@ -560,7 +566,8 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 - **推荐基金 Tab：** `FundDiscoveryPanel`（**扫描模式**、19 板块关注方向、荐基角色、基金类型偏好）+ `DiscoveryReportPanel` + `DiscoveryHistoryRail` + `DiscoveryChatPanel`；`DiscoveryJobStatusFloat` 轮询失败自动重试。
 - **缓存：** `clientCache.ts` / `useCachedFetch.ts` — 盈亏分析 `sessionStorage`、详情/NAV `memory`；`loadDiscoverySectorHeatCache` 板块热度 30min；板块 `useSectorQuoteRefresh` 后台 `fast`、手动 `accurate`。
 - **认证：** `AuthProvider` 注入 JWT；未登录访问受保护页会跳转 `/login`；`apiFetch` 自动带 `Authorization: Bearer`；CORS 中间件置于最外层（含 401 响应）。
-- **用户菜单：** 历史日报（含 `HistoryRail`、SQLite 备份）、**账号设置**（`/settings` 绑定微信）；未绑微信时显示角标；持仓元数据由 OCR 自动维护，无独立档案页。
+- **用户菜单：** 历史日报（`HistoryRail` 支持批量删除）、**账号设置**（`/settings` 绑定微信）；未绑微信时显示角标；持仓元数据由 OCR 自动维护，无独立档案页。
+- **日报正文：** 仅保留决策建议、主题要闻、调仓示意、建议复盘（折叠）等核心块；诊断与回测在「生成日报」Tab `DiagnosticsAccordion`。
 - **分析：** `ReportPanel` + `JobStatusFloat` 异步轮询；提交时携带 `system_role_prompt`。
 - **偏好：** `lib/storage.ts`（profile、**analysisPrompt** / **discoveryPrompt** 缓存、analysisMode、sectorAutoRefresh）；风控与角色 Prompt 主存 SQLite/MySQL（`investor_profile_state` / `analysis_prompt_state` / `discovery_prompt_state`）。
 
@@ -588,8 +595,8 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | `FUND_AI_SECTOR_QUOTES_TTL_SECONDS` | 60 | spot 缓存 TTL |
 | `FUND_AI_SECTOR_QUOTES_AUTO_INTERVAL_SECONDS` | 300 | 前端自动刷新间隔 |
 | `FUND_AI_SECTOR_QUOTES_DISCREPANCY_WARN` | 0.5 | OCR vs 实时板块相差阈值（百分点） |
-| `FUND_AI_SECTOR_QUOTES_RELAY_URL` | — | 可选真实板块行情中继地址；PC 直连东财失败时在 VPS/NAS 部署 `apps/sector-relay`（`docker compose up -d`），将 URL 填入此项 |
-| `FUND_AI_SECTOR_QUOTES_RELAY_TIMEOUT_SECONDS` | 2.5 | 中继请求超时 |
+| `FUND_AI_SECTOR_QUOTES_RELAY_URL` | — | 可选板块行情中继（`apps/sector-relay` 默认 `:8787`）；填 `http://host:8787/boards`；除 spot 外还提供 `GET /kline/daily` 供板块信号回测拉历史日 K |
+| `FUND_AI_SECTOR_QUOTES_RELAY_TIMEOUT_SECONDS` | 2.5 | 中继请求超时（日 K 兜底会自动放宽） |
 | `FUND_AI_SECTOR_QUOTES_BROWSER_ENABLED` | false | 是否启用浏览器命令链路 |
 | `FUND_AI_SECTOR_QUOTES_BROWSER_COMMAND` | — | 浏览器命令，例如 `node scripts/sector-quote-browser-command.mjs` |
 | `FUND_AI_SECTOR_QUOTES_BROWSER_TIMEOUT_SECONDS` | 4 | 板块 spot 浏览器命令超时 |

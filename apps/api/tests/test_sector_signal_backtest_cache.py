@@ -18,8 +18,8 @@ def test_sector_signal_backtest_response_cache(monkeypatch):
         lambda: frozenset({"2026-06-02", "2026-06-03", "2026-06-04"}),
     )
     monkeypatch.setattr(
-        "app.services.sector_signal_backtest._default_fetch_series",
-        fake_fetch,
+        "app.services.sector_signal_backtest._default_fetch_series_for_canon",
+        lambda _canon: fake_fetch("", None),
     )
 
     first = build_sector_signal_backtest(["半导体"], lookback_days=30)

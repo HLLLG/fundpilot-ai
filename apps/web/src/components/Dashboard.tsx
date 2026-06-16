@@ -43,7 +43,6 @@ import { displayableHoldings } from "@/lib/holdingMetrics";
 import { useSectorQuoteRefresh } from "@/lib/useSectorQuoteRefresh";
 import { buildWorkflowBlockers, hasBlockingErrors } from "@/lib/workflowBlockers";
 import { TradingSessionBar } from "@/components/TradingSessionBar";
-import { DatabaseBackupPanel } from "@/components/DatabaseBackupPanel";
 import { PortfolioDashboard } from "@/components/PortfolioDashboard";
 import { ReportPanel } from "@/components/ReportPanel";
 import { YangjibaoHoldingsBoard } from "@/components/YangjibaoHoldingsBoard";
@@ -515,12 +514,6 @@ export function Dashboard() {
           {activeTab === "history" ? (
             <div className="grid gap-6">
               <SectorSignalBacktestPanel title="板块信号历史回测（全部 canonical）" />
-              <DatabaseBackupPanel
-              onImported={() => {
-                void loadHistory();
-                void hydratePortfolio();
-              }}
-              />
               <HistoryRail
               reports={reports}
               onRefresh={loadHistory}

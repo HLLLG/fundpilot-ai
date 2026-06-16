@@ -295,3 +295,151 @@ except Exception as e:
     except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError) as exc:
         logger.warning("akshare new fund exception: %s", exc)
         return None
+
+
+def fetch_board_daily_kline_series(
+    source_type: str,
+    source_name: str,
+    *,
+    source_code: str | None = None,
+    max_days: int = 400,
+) -> list[dict[str, str | float | None]] | None:
+    """东财 push2his 不可达时，用 AkShare 板块日 K 作回测兜底（子进程隔离）。"""
+    board_type = (source_type or "").strip().lower()
+    if board_type not in {"concept", "industry"}:
+        return None
+
+    symbol = (source_code or source_name or "").strip()
+    if not symbol:
+        return None
+
+    days = max(30, min(max_days, 800))
+    fn_name = (
+        "stock_board_concept_hist_em"
+        if board_type == "concept"
+        else "stock_board_industry_hist_em"
+    )
+    script = f"""
+import akshare as ak
+import json
+from datetime import date, timedelta
+
+def _num(value):
+    if value is None:
+        return None
+    text = str(value).strip().lower()
+    if text in ("", "nan", "none"):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+symbol = {symbol!r}
+days = {days}
+end = date.today().strftime("%Y%m%d")
+beg = (date.today() - timedelta(days=days + 90)).strftime("%Y%m%d")
+try:
+    frame = ak.{fn_name}(
+        symbol=symbol,
+        period="daily",
+        start_date=beg,
+        end_date=end,
+        adjust="",
+    )
+    if frame is None or frame.empty:
+        print(json.dumps({{"error": "empty"}}))
+    else:
+        rows = []
+        for _, row in frame.iterrows():
+            rows.append({{
+                "date": str(row.get("日期", ""))[:10],
+                "open": _num(row.get("开盘")),
+                "close": _num(row.get("收盘")),
+                "high": _num(row.get("最高")),
+                "low": _num(row.get("最低")),
+                "change_percent": _num(row.get("涨跌幅")),
+            }})
+        print(json.dumps({{"data": rows}}))
+except Exception as e:
+    print(json.dumps({{"error": str(e)}}))
+"""
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            timeout=_SUBPROCESS_TIMEOUT,
+            check=False,
+        )
+        if result.returncode != 0 or not result.stdout.strip():
+            logger.debug(
+                "akshare board daily subprocess failed for %s: %s",
+                symbol,
+                result.stderr[:200] if result.stderr else "no output",
+            )
+            return None
+        output = json.loads(result.stdout.strip())
+        if output.get("error"):
+            logger.debug(
+                "akshare board daily returned error for %s: %s",
+                symbol,
+                output["error"],
+            )
+            return None
+        return _akshare_board_rows_to_daily_bars(output.get("data") or [], max_days=days)
+    except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError) as exc:
+        logger.warning("akshare board daily exception for %s: %s", symbol, exc)
+        return None
+
+
+def _akshare_board_rows_to_daily_bars(
+    rows: list[dict[str, object]],
+    *,
+    max_days: int,
+) -> list[dict[str, str | float | None]]:
+    bars: list[dict[str, str | float | None]] = []
+    prior_close: float | None = None
+    for row in rows:
+        day = str(row.get("date") or "")[:10]
+        close = _as_board_float(row.get("close"))
+        high = _as_board_float(row.get("high"))
+        change_pct = _as_board_float(row.get("change_percent"))
+        if not day or close is None or close <= 0:
+            continue
+
+        if change_pct is not None:
+            change = round(change_pct, 4)
+        elif prior_close and prior_close > 0:
+            change = round((close / prior_close - 1) * 100, 4)
+        else:
+            prior_close = close
+            continue
+
+        high_change = (
+            round((high / prior_close - 1) * 100, 4)
+            if high is not None and prior_close and prior_close > 0
+            else None
+        )
+        bars.append(
+            {
+                "date": day,
+                "change_percent": change,
+                "high_change_percent": high_change,
+                "close": close,
+            }
+        )
+        prior_close = close
+
+    if len(bars) > max_days:
+        bars = bars[-max_days:]
+    return bars
+
+
+def _as_board_float(value: object) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None

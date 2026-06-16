@@ -57,6 +57,27 @@ def quote(
     return {"secid": secid, "name": name, "change_percent": change}
 
 
+@app.get("/kline/daily")
+def daily_kline(
+    secid: str = Query(..., min_length=3),
+    source_code: str | None = Query(default=None),
+    days: int = Query(default=150, ge=20, le=800),
+    authorization: str | None = Header(default=None),
+    x_relay_token: str | None = Header(default=None),
+) -> dict:
+    _require_token(authorization, x_relay_token)
+    from app.services.eastmoney_trends_client import fetch_eastmoney_daily_kline_series
+
+    series = fetch_eastmoney_daily_kline_series(
+        secid,
+        source_code=source_code,
+        max_days=days,
+        timeout=20.0,
+        max_retries=3,
+    )
+    return {"secid": secid, "series": series, "count": len(series)}
+
+
 def _require_token(authorization: str | None, x_relay_token: str | None) -> None:
     if not RELAY_TOKEN:
         return

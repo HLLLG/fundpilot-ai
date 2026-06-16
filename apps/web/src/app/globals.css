@@ -326,7 +326,7 @@ button:disabled {
 
 @container report-shell (min-width: 52rem) {
   .report-decision-grid {
-    grid-template-columns: minmax(0, 1fr) minmax(260px, 22rem);
+    grid-template-columns: minmax(0, 1fr) minmax(280px, 26rem);
     gap: 1.5rem;
   }
 

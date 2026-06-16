@@ -473,6 +473,32 @@ const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000"
 
 export type { AuthSession, AuthUser };
 
+export class ApiError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
+function isAuthEntrypoint(url: string): boolean {
+  return url.includes("/api/auth/login") || url.includes("/api/auth/register");
+}
+
+function redirectToLogin(): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  const path = window.location.pathname;
+  if (path === "/login" || path === "/register") {
+    return;
+  }
+  const redirect = encodeURIComponent(path + window.location.search);
+  window.location.href = `/login?redirect=${redirect}`;
+}
+
 async function apiFetch(input: string, init?: RequestInit): Promise<Response> {
   const headers = new Headers(init?.headers);
   const token = getAccessToken();
@@ -480,13 +506,14 @@ async function apiFetch(input: string, init?: RequestInit): Promise<Response> {
     headers.set("Authorization", `Bearer ${token}`);
   }
   const response = await fetch(input, { ...init, headers });
-  if (response.status === 401 && typeof window !== "undefined") {
+  if (
+    response.status === 401 &&
+    typeof window !== "undefined" &&
+    token &&
+    !isAuthEntrypoint(input)
+  ) {
     clearAccessToken();
-    const path = window.location.pathname;
-    if (path !== "/login" && path !== "/register") {
-      const redirect = encodeURIComponent(path + window.location.search);
-      window.location.href = `/login?redirect=${redirect}`;
-    }
+    redirectToLogin();
   }
   return response;
 }
@@ -534,7 +561,7 @@ export async function loginUser(payload: {
 export async function fetchCurrentUser(): Promise<AuthUser> {
   const response = await apiFetch(`${API_BASE}/api/auth/me`, { cache: "no-store" });
   if (!response.ok) {
-    throw new Error("未登录");
+    throw new ApiError("未登录", response.status);
   }
   return response.json();
 }
@@ -1139,38 +1166,6 @@ export async function previewNewsForHoldings(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ holdings, profile }),
     cache: "no-store",
-  });
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  return response.json();
-}
-
-export async function exportDatabase(): Promise<void> {
-  const response = await apiFetch(`${API_BASE}/api/database/export`, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  const blob = await response.blob();
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = "fundpilot-app.db";
-  anchor.click();
-  URL.revokeObjectURL(url);
-}
-
-export async function importDatabase(file: File): Promise<{
-  ok: boolean;
-  imported_from: string;
-  target: string;
-  backup_path: string;
-}> {
-  const form = new FormData();
-  form.append("file", file);
-  const response = await apiFetch(`${API_BASE}/api/database/import`, {
-    method: "POST",
-    body: form,
   });
   if (!response.ok) {
     throw new Error(await response.text());
