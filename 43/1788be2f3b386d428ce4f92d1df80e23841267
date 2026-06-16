@@ -1,0 +1,236 @@
+apps/api/app/models.py
+  s_83fb1331c5f6c4::t_a000e2acd359ee 57-58
+  s_83fb1331c5f6c4::t_6a5c3729b69e17 304
+  s_83fb1331c5f6c4::t_975c20d864c39e 53-56
+  s_83fb1331c5f6c4::t_4fc58dadc107ed 12-13
+  s_83fb1331c5f6c4::t_d7da30fffefeb7 402-427
+  s_83fb1331c5f6c4::t_b3f25c89bdbfa6 14-15
+apps/api/app/services/discovery_candidate_pool.py
+  s_bf42bda6bfec6f::t_98d42cbe4859f1 3,11
+  s_83fb1331c5f6c4::t_a0d157beadad9f 178-181
+  s_bf42bda6bfec6f::t_fd86903affe9c1 135
+  s_bf42bda6bfec6f::t_33391046756acd 119
+  s_83fb1331c5f6c4::t_095a63ed147003 5-10
+  s_83fb1331c5f6c4::t_e8bf4597d81a81 176,193-194
+  s_bf42bda6bfec6f::t_ceb10cca54dfeb 212-223
+  s_83fb1331c5f6c4::t_433f62bcea7159 57-59
+apps/api/app/services/analysis_facts.py
+  s_83fb1331c5f6c4::t_b535f67b8ab31a 122-131
+  s_83fb1331c5f6c4::t_9462cc7bffc9f8 155
+  s_83fb1331c5f6c4::t_9c7797fdf8d8ab 11
+apps/web/src/lib/storage.ts
+  s_83fb1331c5f6c4::t_4ac050dc3e0b95 53-59
+  s_83fb1331c5f6c4::t_85beb4591caeb1 36-38,41-52
+apps/web/src/components/RecommendationAccuracyPanel.tsx
+  s_83fb1331c5f6c4::t_83647780d0a725 60-64
+apps/api/tests/conftest.py
+  s_e6dcc6b2141a6c::t_3bc22677f7aa24 145-146
+  s_e6dcc6b2141a6c::t_c83e453b00eed6 32-33
+  s_e6dcc6b2141a6c::t_d0ac820ba3bb9e 5,18-23,27,46-52,134,140,144,147
+  s_e6dcc6b2141a6c::t_86330228a2d2e6 45,53-57,75-78,91,98-99,113,130-131,133
+  s_e6dcc6b2141a6c::t_8011b383613191 24-26,28-31,34-44,86-89,92-95,105-108,135,137-138,141-143
+  s_e6dcc6b2141a6c::t_b7fdedb47d23ed 136,139
+  s_e6dcc6b2141a6c::t_bbdd7561d7da02 58-60,63-72,74,79-85,90,96-97,100-104,109-112,114-129,132
+apps/api/tests/test_api.py
+  s_e6dcc6b2141a6c::t_3fef834c5a5923 162-166
+docs/superpowers/specs/2026-06-16-aggressive-swing-style-design.md
+  s_83fb1331c5f6c4::t_a7cca104f9d1d1 4
+  s_83fb1331c5f6c4::t_d536b5a4d95dec 48-51,53-56
+  s_83fb1331c5f6c4::t_2ab55003b3747c 1-3,5-47,57-62
+  s_83fb1331c5f6c4::t_8eb9f75c16dab9 52
+apps/api/app/services/analysis_payload.py
+  s_83fb1331c5f6c4::t_c6d51864137641 14
+  s_83fb1331c5f6c4::t_fe4d57ee3aceae 233
+  s_83fb1331c5f6c4::t_367d8f47130f98 164,172-181
+  s_83fb1331c5f6c4::t_3ab502524b379e 199
+apps/web/src/lib/notifications.ts
+  s_83fb1331c5f6c4::t_81dd1c0e4d782f 10-22
+apps/api/app/services/deepseek_client.py
+  s_83fb1331c5f6c4::t_980a5b5b38ac04 792,799-803
+  s_83fb1331c5f6c4::t_2a8c430c0f9734 376
+  s_83fb1331c5f6c4::t_938232949e4ceb 388-390,393-395
+  s_83fb1331c5f6c4::t_247349f0f4fcb8 391-392
+apps/api/pytest.ini
+  s_e6dcc6b2141a6c::t_d671195b849efd 4
+apps/api/app/services/discovery_prompt.py
+  s_83fb1331c5f6c4::t_512f6318646138 25
+  s_83fb1331c5f6c4::t_fea45c6785b0b2 41
+  s_83fb1331c5f6c4::t_81b3a2f616661f 29
+apps/api/app/services/discovery_guard.py
+  s_83fb1331c5f6c4::t_0cb6500814885d 41-42
+apps/api/tests/test_fund_code_resolver.py
+  s_e6dcc6b2141a6c::t_d96fc15e84f183 81-85
+apps/api/app/services/swing_alert_service.py
+  s_83fb1331c5f6c4::t_f13a367a262f65 1-113
+apps/api/tests/test_aggressive_swing_recommendations.py
+  s_83fb1331c5f6c4::t_8329dc220657fa 1-11,14-48
+  s_83fb1331c5f6c4::t_2d851716ae6816 12-13
+apps/api/tests/test_investment_presets.py
+  s_83fb1331c5f6c4::t_28b4948a8c6043 1-26
+apps/api/app/services/recommendations.py
+  s_83fb1331c5f6c4::t_f886092d249bc9 212-226
+apps/web/src/components/FundDiscoveryPanel.tsx
+  s_bf42bda6bfec6f::t_336cfa333d5288 83-87
+  s_83fb1331c5f6c4::t_e236e08dab9a2b 124-129
+  s_83fb1331c5f6c4::t_f3ded196a70f8c 74
+  s_83fb1331c5f6c4::t_cc1eabe542086c 26
+  s_bf42bda6bfec6f::t_4ad6d7d3410ad2 96-100
+  s_83fb1331c5f6c4::t_d743ba12b4dc63 271-275
+  s_83fb1331c5f6c4::t_18408cd4056723 93
+  s_bf42bda6bfec6f::t_c601ca6b997de8 206,220,226-245
+  s_bf42bda6bfec6f::t_70f67b4bb3a2a7 189-195
+  s_83fb1331c5f6c4::t_f5b413f1f6ee67 80
+  s_bf42bda6bfec6f::t_62f7a0cbbe83a2 483-488
+  s_bf42bda6bfec6f::t_ceb9654e867809 479
+apps/web/src/components/Dashboard.tsx
+  s_bf42bda6bfec6f::t_95b84f0f315688 42-43
+  s_83fb1331c5f6c4::t_b1307777fc4513 74-75
+  s_bf42bda6bfec6f::t_d1971a27f71896 3
+  s_83fb1331c5f6c4::t_6a17c7804ee460 160-162,170-171
+  s_bf42bda6bfec6f::t_1636c94fda6ba1 9
+  s_83fb1331c5f6c4::t_f3443b6dbbff4c 47-48
+  s_bf42bda6bfec6f::t_04f46ee0331d05 325-350
+  s_83fb1331c5f6c4::t_f9675031214069 495-503
+  s_bf42bda6bfec6f::t_9703affb9d67b5 115-119
+  s_bf42bda6bfec6f::t_20db2ce0a3b76a 574-578
+  s_bf42bda6bfec6f::t_3787e20d789ca0 607-624
+  s_83fb1331c5f6c4::t_fa2aa9de385274 71-73
+  s_bf42bda6bfec6f::t_96300c710c708d 606,625
+  s_83fb1331c5f6c4::t_313b8810b8ea48 163,166-169
+  s_83fb1331c5f6c4::t_7f0540785b0298 571
+apps/api/app/services/discovery_facts.py
+  s_83fb1331c5f6c4::t_cd0b1035250329 4
+  s_83fb1331c5f6c4::t_93192971df8444 47-56
+apps/web/src/lib/useSectorQuoteRefresh.ts
+  s_83fb1331c5f6c4::t_b79a7344034050 111,116,121
+apps/web/src/components/DiscoveryJobStatusFloat.tsx
+  s_bf42bda6bfec6f::t_3ee470e1da9b93 78
+apps/web/src/components/InvestmentPresetSelector.tsx
+  s_83fb1331c5f6c4::t_0f92307e582903 1-59
+apps/web/src/components/JobStatusFloat.tsx
+  s_bf42bda6bfec6f::t_47ff2b6e4638fa 85
+apps/api/tests/test_discovery_selection_strategy.py
+  s_83fb1331c5f6c4::t_76632ec5e9c0d4 5,8
+  s_83fb1331c5f6c4::t_089b4b65609ca2 27-55
+apps/web/src/components/RiskControls.tsx
+  s_83fb1331c5f6c4::t_b29cd22a2473a6 76-78,80-89
+  s_83fb1331c5f6c4::t_b27e231ae0f3ab 95-99
+  s_83fb1331c5f6c4::t_3804124fc06a25 5-6
+  s_83fb1331c5f6c4::t_81754399335e37 29-34
+  s_83fb1331c5f6c4::t_57cd3f999580bc 262-347
+  s_83fb1331c5f6c4::t_7de93a45a47b59 235
+  s_83fb1331c5f6c4::t_940dfdd7b6f43b 240,249-253
+  s_83fb1331c5f6c4::t_dcd628c8cea556 8
+  s_83fb1331c5f6c4::t_b8a672ccfff7cc 79
+apps/api/app/services/recommendation_guard.py
+  s_83fb1331c5f6c4::t_969602c75fc0dc 130,137,141-142
+  s_83fb1331c5f6c4::t_307b3bd733ffae 164-165
+  s_83fb1331c5f6c4::t_20c5cf420d0d0c 270,278
+  s_83fb1331c5f6c4::t_ae1bf5cbab867d 109,112-114
+  s_83fb1331c5f6c4::t_57d0ac0bd4c60f 13
+  s_83fb1331c5f6c4::t_7f150566f8e796 56-59
+  s_83fb1331c5f6c4::t_3120cc7a7986db 152,156-163
+  s_83fb1331c5f6c4::t_4389747089ae23 119
+apps/api/tests/test_swing_alert_engine.py
+  s_83fb1331c5f6c4::t_98e02b30bd7453 51-56
+  s_83fb1331c5f6c4::t_7fbede673204f9 1-2,5-6,18-50,57-92
+  s_83fb1331c5f6c4::t_3692c3aaf15b98 3-4,7-17
+apps/web/src/components/SwingAlertsPanel.tsx
+  s_83fb1331c5f6c4::t_86c589b05ef326 1-52,54-80
+  s_83fb1331c5f6c4::t_1286d1ba0ace2d 53
+apps/web/src/lib/useSwingAlerts.ts
+  s_83fb1331c5f6c4::t_feed6de99ebdeb 52-56
+  s_83fb1331c5f6c4::t_fbcf782c78fe33 8-10,17,28-29,37,46-49,84,87-106
+  s_83fb1331c5f6c4::t_8d1d3db5ba659c 15-16
+  s_83fb1331c5f6c4::t_9a93102aec291c 1-7,11-14,18-27,30-36,38-45,50-51,57-60,67-83,85-86,107-122
+  s_83fb1331c5f6c4::t_332d9cfeaadc66 61-66
+docs/PROJECT_CONTEXT.md
+  s_bf42bda6bfec6f::t_dab914e50b8cb2 226-227
+  s_bf42bda6bfec6f::t_fe910f0c4a0b07 207-208
+  s_bf42bda6bfec6f::t_7c23bfc0d07759 83
+  s_bf42bda6bfec6f::t_75e921ba99c2bf 350-352
+  s_bf42bda6bfec6f::t_0e7c16a69635f6 78-79
+  s_bf42bda6bfec6f::t_5138ea9312f79e 97
+  s_bf42bda6bfec6f::t_a01a086cff3a53 7,10-13
+  s_bf42bda6bfec6f::t_9462633e80641d 102
+  s_bf42bda6bfec6f::t_541175a282d043 650
+apps/web/src/components/BackgroundJobsStack.tsx
+  s_bf42bda6bfec6f::t_2f60b76aec1603 1-2,4-10,12-20,23-28
+  s_bf42bda6bfec6f::t_0cb18214c59ecf 3,11,21-22
+apps/api/tests/test_discovery_candidate_pool.py
+  s_bf42bda6bfec6f::t_2382dbf7df4596 97-137
+apps/api/app/services/discovery_selection_strategy.py
+  s_83fb1331c5f6c4::t_54ee2f56b1b9f4 104-107
+  s_83fb1331c5f6c4::t_22a2e307562cee 43-65
+apps/api/app/services/aggressive_swing_recommendations.py
+  s_83fb1331c5f6c4::t_38ef065a91ed93 1-163
+apps/api/app/main.py
+  s_83fb1331c5f6c4::t_ea4d1b30790996 903-917
+  s_83fb1331c5f6c4::t_d8a25a96b7a698 62
+apps/api/app/mysql_bootstrap.py
+  s_83fb1331c5f6c4::t_e9107da999af86 189-199
+apps/api/tests/test_swing_alert_service.py
+  s_83fb1331c5f6c4::t_10c056ab09de49 2-3,6,8,10-14,19
+  s_83fb1331c5f6c4::t_56590d5c7ed277 1,4-5,7,15-18,20-63
+apps/api/app/services/investment_presets.py
+  s_83fb1331c5f6c4::t_58d9a29dfa3037 1-26,32-44,47-52
+  s_83fb1331c5f6c4::t_e6d4f183e2c764 45-46
+  s_83fb1331c5f6c4::t_47b4ed6a891f8a 27,29-31
+  s_83fb1331c5f6c4::t_d6db92ac68994d 28
+apps/web/src/lib/investmentPresets.ts
+  s_83fb1331c5f6c4::t_37005001b61dfd 24-25,41-42
+  s_83fb1331c5f6c4::t_b726d81295a3ef 1
+  s_83fb1331c5f6c4::t_ce895c4422f57e 2-23,26-40,43-61
+apps/api/app/services/recommendation_accuracy.py
+  s_83fb1331c5f6c4::t_8aa61750046d2c 92
+  s_83fb1331c5f6c4::t_77c1e2aa8ab02c 95
+  s_83fb1331c5f6c4::t_e3942ba344bcd6 103-109
+apps/api/app/services/swing_alert_engine.py
+  s_83fb1331c5f6c4::t_33f337d4738a2e 1-183
+apps/api/app/db_migrations.py
+  s_83fb1331c5f6c4::t_72bc7e5ba035cd 8
+  s_83fb1331c5f6c4::t_51c11803d8809e 415
+  s_83fb1331c5f6c4::t_1c9b890b534933 335-357
+apps/web/src/lib/api.ts
+  s_83fb1331c5f6c4::t_7ff5b346840297 414
+  s_83fb1331c5f6c4::t_f8bdb81273d3f2 23-24,39-60
+  s_83fb1331c5f6c4::t_1534dcf60704e3 1458-1476
+  s_83fb1331c5f6c4::t_799ae7897c6465 21-22,35-38
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.17-trip",
+  "base_commit_sha": "431788be2f3b386d428ce4f92d1df80e23841267",
+  "prompts": {},
+  "humans": {
+    "h_375fc341ff3baa": {
+      "author": "hegl <HLLLG@github.com>"
+    }
+  },
+  "sessions": {
+    "s_83fb1331c5f6c4": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "716d20bc-393e-496c-8a72-b1b8851c40d9",
+        "model": "composer-2.5"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    },
+    "s_bf42bda6bfec6f": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "0114d1ab-e0d1-4c16-adfa-e0e038786b0e",
+        "model": "composer-2.5"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    },
+    "s_e6dcc6b2141a6c": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "e1d40230-2212-42a1-9246-f0d456ffb0df",
+        "model": "composer-2.5"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
