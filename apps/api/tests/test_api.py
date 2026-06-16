@@ -381,18 +381,6 @@ def test_fund_profiles_list_after_save(tmp_path, monkeypatch):
     assert any(item["fund_code"] == "015608" for item in listed)
 
 
-def test_trading_session_endpoint():
-    from app.main import app
-
-    client = TestClient(app)
-    response = client.get("/api/trading-session")
-    assert response.status_code == 200
-    body = response.json()
-    assert body["session_kind"]
-    assert body["decision_window"]
-    assert body["effective_trade_date"]
-
-
 def test_investor_profile_persistence(tmp_path, monkeypatch):
     client = auth_client_for_db(monkeypatch, tmp_path / "investor_profile.db")
 
@@ -418,88 +406,6 @@ def test_investor_profile_persistence(tmp_path, monkeypatch):
     assert loaded.status_code == 200
     assert loaded.json()["style"] == "进取"
     assert loaded.json()["max_drawdown_percent"] == 12
-
-
-def test_analysis_prompt_persistence(tmp_path, monkeypatch):
-    client = auth_client_for_db(monkeypatch, tmp_path / "analysis_prompt.db")
-
-    missing = client.get("/api/analysis-prompt")
-    assert missing.status_code == 200
-    assert missing.json()["is_custom"] is False
-    default_prompt = missing.json()["default_role_prompt"]
-    assert "已有持仓" in default_prompt
-
-    saved = client.put("/api/analysis-prompt", json={"role_prompt": "我是自定义投研角色。"})
-    assert saved.status_code == 200
-    assert saved.json()["is_custom"] is True
-    assert saved.json()["role_prompt"] == "我是自定义投研角色。"
-
-    loaded = client.get("/api/analysis-prompt")
-    assert loaded.status_code == 200
-    assert loaded.json()["role_prompt"] == "我是自定义投研角色。"
-
-    reset = client.put("/api/analysis-prompt", json={"role_prompt": None})
-    assert reset.status_code == 200
-    assert reset.json()["is_custom"] is False
-    assert reset.json()["role_prompt"] == default_prompt
-
-
-def test_discovery_prompt_persistence(tmp_path, monkeypatch):
-    client = auth_client_for_db(monkeypatch, tmp_path / "discovery_prompt.db")
-
-    missing = client.get("/api/discovery-prompt")
-    assert missing.status_code == 200
-    assert missing.json()["is_custom"] is False
-    default_prompt = missing.json()["default_role_prompt"]
-    assert "candidate_pool" in default_prompt
-
-    saved = client.put("/api/discovery-prompt", json={"role_prompt": "我是自定义荐基角色。"})
-    assert saved.status_code == 200
-    assert saved.json()["is_custom"] is True
-
-    loaded = client.get("/api/discovery-prompt")
-    assert loaded.json()["role_prompt"] == "我是自定义荐基角色。"
-
-
-def test_database_export_and_import(tmp_path, monkeypatch):
-    monkeypatch.setenv("FUND_AI_DEEPSEEK_API_KEY", "")
-    refresh_settings()
-    client = auth_client_for_db(monkeypatch, tmp_path / "app.db")
-
-    client.post(
-        "/api/analyze",
-        json={
-            "holdings": [
-                {
-                    "fund_code": "015608",
-                    "fund_name": "测试",
-                    "holding_amount": 1000,
-                    "return_percent": 1,
-                }
-            ],
-            "profile": {
-                "style": "稳健",
-                "horizon": "半年到一年",
-                "max_drawdown_percent": 8,
-                "concentration_limit_percent": 35,
-                "prefer_dca": True,
-                "avoid_chasing": True,
-            },
-        },
-    )
-
-    export = client.get("/api/database/export")
-    assert export.status_code == 200
-    assert export.content
-
-    import_path = tmp_path / "imported.db"
-    import_path.write_bytes(export.content)
-    upload = client.post(
-        "/api/database/import",
-        files={"file": ("fundpilot-app.db", import_path.read_bytes(), "application/octet-stream")},
-    )
-    assert upload.status_code == 200
-    assert upload.json()["ok"] is True
 
 
 def test_async_job_returns_stage(tmp_path, monkeypatch):

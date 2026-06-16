@@ -16,13 +16,16 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: apps/api/requirements.txt
       - name: Install backend dependencies
         run: |
           python -m pip install --upgrade pip setuptools wheel
-          pip install --retries 10 --default-timeout=120 --no-cache-dir -r requirements.txt
+          pip install --retries 10 --default-timeout=120 -r requirements.txt
       - name: Run pytest
-        run: python -m pytest tests -q
+        run: python -m pytest tests -q -n auto --dist loadscope
         env:
+          FUND_AI_DATABASE_URL: ""
           FUND_AI_OCR_PRELOAD: "false"
           FUND_AI_NEWS_ENABLED: "false"
           FUND_AI_NEWS_SUMMARIZE: "false"
@@ -61,6 +64,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: apps/api/requirements.txt
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -70,7 +75,7 @@ jobs:
         working-directory: apps/api
         run: |
           python -m pip install --upgrade pip setuptools wheel
-          pip install --retries 10 --default-timeout=120 --no-cache-dir -r requirements.txt
+          pip install --retries 10 --default-timeout=120 -r requirements.txt
       - name: Install frontend
         run: npm ci
       - name: Install Playwright

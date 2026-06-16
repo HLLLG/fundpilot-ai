@@ -276,12 +276,32 @@ docker compose -f docker-compose.cloud.yml up --build
 
 ## 验证
 
-后端：
+后端单元测试（约 **199** 项，本地串行 ~40s；默认离线 stub，不访问东财/AkShare/MySQL）：
 
 ```bash
 cd /d/Code/HL_Project/fundpilot-ai/apps/api
-./.venv/Scripts/python.exe -m pytest tests -v
+./.venv/Scripts/python.exe -m pytest tests -q
 ```
+
+与 CI 一致并行跑（需 `pytest-xdist`，Linux/macOS 推荐；Windows 上 xdist 偶发不稳定）：
+
+```bash
+cd /d/Code/HL_Project/fundpilot-ai/apps/api
+./.venv/Scripts/python.exe -m pytest tests -q -n auto --dist loadscope
+```
+
+本地若 `.env` 配置了 MySQL，跑测前建议临时清空数据库 URL，强制使用 SQLite 内存库（与 CI 相同）：
+
+```bash
+export FUND_AI_DATABASE_URL=
+export FUND_AI_OCR_PRELOAD=false
+export FUND_AI_NEWS_ENABLED=false
+export FUND_AI_SECTOR_SIGNAL_BACKTEST_ENABLED=false
+```
+
+单测默认 **30s** 超时（`apps/api/pytest.ini`）。外部行情、交易日历、板块热度等在 `tests/conftest.py` 中统一 stub，避免子进程拉 AkShare。
+
+**CI（GitHub Actions）：** `api` job 并行 pytest + 关闭 OCR 预加载/新闻/回测；`web` job lint/typecheck/build；`e2e-smoke` Playwright 冒烟。详见 `.github/workflows/ci.yml`。
 
 前端：
 

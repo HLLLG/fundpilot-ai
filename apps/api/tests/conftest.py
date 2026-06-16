@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import shutil
 from uuid import uuid4
 
 import pytest
@@ -40,23 +39,6 @@ PYTEST_TRADE_DATES = frozenset(
 _STUB_SECTOR_HEAT = [
     {"sector_label": "半导体", "heat_score": 1.0, "change_1d_percent": 1.0},
 ]
-
-
-@pytest.fixture(scope="session")
-def _migrated_db_template(tmp_path_factory):
-    """Migrate schema once per session; per-test DBs copy this file instead of re-migrating."""
-    template_path = tmp_path_factory.mktemp("db_template") / "template.db"
-    from app.database import _connect
-
-    previous_db = pytest.MonkeyPatch.context.__self__ if False else None  # noqa: F841
-    import os
-
-    os.environ["FUND_AI_DB_PATH"] = str(template_path)
-    os.environ["FUND_AI_JWT_SECRET"] = PYTEST_JWT_SECRET
-    refresh_settings()
-    connection = _connect()
-    connection._raw.close()
-    return template_path
 
 
 @pytest.fixture(autouse=True)
@@ -126,7 +108,7 @@ def _stub_market_data_fetches(monkeypatch):
     )
     monkeypatch.setattr(
         "app.services.sector_canonical.fetch_eastmoney_quote_by_secid",
-        lambda *_args, **_kwargs: None,
+        lambda *_args, **_kwargs: (None, None),
     )
     monkeypatch.setattr(
         "app.services.sector_intraday_provider.fetch_eastmoney_intraday_trends",
@@ -160,10 +142,9 @@ def _stub_market_data_fetches(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _auth_env(monkeypatch, tmp_path, _migrated_db_template):
-    db_path = tmp_path / "pytest.db"
-    shutil.copyfile(_migrated_db_template, db_path)
-    monkeypatch.setenv("FUND_AI_DB_PATH", str(db_path))
+def _auth_env(monkeypatch, tmp_path):
+    monkeypatch.setenv("FUND_AI_DATABASE_URL", "")
+    monkeypatch.setenv("FUND_AI_DB_PATH", str(tmp_path / "pytest.db"))
     monkeypatch.setenv("FUND_AI_JWT_SECRET", PYTEST_JWT_SECRET)
     monkeypatch.setenv("FUND_AI_OCR_PRELOAD", "false")
     monkeypatch.setenv("FUND_AI_SECTOR_SIGNAL_BACKTEST_ENABLED", "false")

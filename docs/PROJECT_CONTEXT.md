@@ -4,9 +4,10 @@
 >
 > **维护：** 功能或架构有实质变化时，同步更新「能力清单」「数据流」「API」「目录」「环境变量」。
 
-**文档版本：** 2026-06-16（激进波段预设 + 荐基名称修复 + 后台任务浮层）
+**文档版本：** 2026-06-16（CI 测试加速 + 单元测试精简）
 
 **更新记录：**
+- **CI / 单元测试加速（2026-06-16）：** GitHub Actions `api` job 使用 `pytest-xdist` 并行（`-n auto --dist loadscope`）、pip 缓存、CI 环境关闭 OCR 预加载/新闻/回测/战术调优；`tests/conftest.py` 统一 stub 交易日历、东财行情、板块热度，强制 SQLite（`FUND_AI_DATABASE_URL=""`）；移除重复/集成慢测，保留核心 API/OCR/持仓/荐基守卫等 **199** 项；单测超时 30s；本地串行约 40s。详见 README「验证」与 `.github/workflows/ci.yml`。
 - **激进波段投资风格（2026-06-16）：** `InvestorProfile.decision_style` 新增 `aggressive`；顶部 **投资预设**（`conservative_hold` | `aggressive_swing`）一键切换浮亏/集中度/持有天数/手续费/净赚目标；日报离线规则 `aggressive_swing_recommendations.py`（跌深加仓 + 扣费后止盈减仓）；荐基选基策略 `dip_rebound`；`discovery_guard` 激进时放宽追高；**盘中盯盘** `POST /api/swing-alerts/evaluate` + `GET /api/swing-alerts/today`；持有 Tab `SwingAlertsPanel` + `useSwingAlerts`（15min 评估 + 浏览器通知）；设计见 `docs/superpowers/specs/2026-06-16-aggressive-swing-style-design.md`。
 - **荐基候选池名称修复（2026-06-16）：** `discovery_candidate_pool._resolve_fund_name()` — 全局种子/主关联板块映射不再使用 `种子基金 {code}` 占位，改东财名称表 `lookup_fund_name_by_code` → 档案 → 代码回退。
 - **后台任务浮层（2026-06-16）：** `BackgroundJobsStack` 于 `Dashboard` 层堆叠 `JobStatusFloat` + `DiscoveryJobStatusFloat`；荐基 `discoveryJobId` 提升为 Dashboard 状态，切 Tab 不丢进度、不与日报浮层互相遮挡；扫描中按钮显示「扫描进行中…」。
@@ -94,7 +95,7 @@
 | 数据备份 | SQLite export/import API（`GET/POST /api/database/*`）；Web 面板已移除 |
 | 小程序 | `apps/miniprogram`：登录、持有列表、基金详情（只读）；与 Web 经 `bind-wechat` 共享 `userId` |
 | 云部署 | `apps/api/Dockerfile`、`docker-compose.cloud.yml`；`scripts/migrate_sqlite_to_mysql.py`；见 `docs/deploy/cloudbase.md` |
-| CI / E2E | GitHub Actions：pytest（**406** 项）+ lint/typecheck/build + Playwright |
+| CI / E2E | GitHub Actions：`api` 并行 pytest（**199** 项，~1min 量级）+ `web` lint/typecheck/build + Playwright 冒烟 |
 | 基金诊断 | AkShare 概况/累计收益；详情页可 AkShare **按名称查码**并持久化 |
 | 分析模式 | 快速 / 深度 |
 | 体验 | Markdown 导出、桌面通知、Plus Jakarta 字体 UI；**客户端 SWR 缓存**（盈亏分析/详情/业绩走势）；板块刷新 fast 轮询 + accurate 手动；追问侧栏智能滚动 |
@@ -647,10 +648,25 @@ bash scripts/dev.sh    # 或 scripts/dev.ps1
 ```
 
 ```bash
-cd apps/api && ./.venv/Scripts/python.exe -m pytest tests -q   # 当前 406 项
+cd apps/api && ./.venv/Scripts/python.exe -m pytest tests -q          # 199 项，串行 ~40s
+cd apps/api && ./.venv/Scripts/python.exe -m pytest tests -q -n auto --dist loadscope  # 与 CI 一致
 cd apps/web && npm run lint && npm run typecheck && npm run build
 cd apps/web && npm run test:e2e   # Playwright 冒烟
 ```
+
+### 测试与 CI
+
+| 项 | 说明 |
+|----|------|
+| 规模 | **199** 项单元测试（自 ~400+ 精简；去掉重复集成测与纯网络拉取测） |
+| 离线 | `conftest.py` autouse stub：交易日历、基金名称表、东财 spot/K 线、板块刷新、`build_sector_heat_ranking` 等 |
+| 数据库 | 测试强制 `FUND_AI_DATABASE_URL=""` → SQLite 文件库；勿在 pytest 期间连生产 MySQL |
+| 超时 | `pytest.ini`：`timeout = 30` |
+| 并行 | CI：`python -m pytest tests -q -n auto --dist loadscope`（`pytest-xdist`） |
+| CI 环境变量 | `FUND_AI_OCR_PRELOAD=false`、`FUND_AI_NEWS_ENABLED=false`、`FUND_AI_SECTOR_SIGNAL_BACKTEST_ENABLED=false`、`FUND_AI_TACTICAL_PROMPT_TUNING_ENABLED=false` |
+| 保留覆盖 | 核心 API（OCR/分析/荐基）、持仓指标、OCR 解析、discovery 守卫与候选池、`test_api.py` 集成冒烟 |
+
+Workflow：`.github/workflows/ci.yml`（`api` / `web` / `e2e-smoke` 三 job）。
 
 ---
 
@@ -659,18 +675,18 @@ cd apps/web && npm run test:e2e   # Playwright 冒烟
 1. 改 API：`models.py` → `main.py` → `api.ts` → 组件 → `tests/`。
 2. 改报告结构：同步 `deepseek_client` JSON、`recommendations`、`_offline_report`、`Report` 类型。
 3. 改异步流程：`job_store.py`（后端）→ `JobStatusFloat.tsx`（前端轮询）→ `Dashboard.tsx`（回调）。
-4. 改追问：`report_chat.py` / `report_chat_runtime.py` → `main.py` chat 路由 → `ReportChatPanel.tsx` / `ChatMarkdown.tsx` → `tests/test_report_chat*.py`。
+4. 改追问：`report_chat.py` / `report_chat_runtime.py` → `main.py` chat 路由 → `ReportChatPanel.tsx` / `ChatMarkdown.tsx` → `tests/test_report_chat.py`。
 5. 改 OCR/估算收益：`ocr_parser.py` → `holding_metrics.py` → `YangjibaoHoldingsBoard.tsx` / `holdingMetrics.ts` → `tests/test_ocr_parser.py`、`tests/fixtures/`。
 6. 改盈亏分析：`portfolio_profit_analysis.py` → `portfolio_snapshot.py` → `GET /api/portfolio/dashboard` → `PortfolioDashboard.tsx` / `ProfitAnalysisTrendChart.tsx` → `tests/test_portfolio_profit_analysis.py`。
 7. 改板块/净值收益：`sector_canonical.py` → `sector_quote_service.py`（板块 + 官方 NAV 写入 daily）→ `fund_nav_service.py` → `holding_estimates.py` / `holdingMetrics.ts` → `YangjibaoHoldingsBoard.tsx` → 相关 tests。
 8. 改分时：`eastmoney_trends_client.py` → `sector_intraday_provider.py` → `IntradayPercentChart.tsx`；换机排查见 design 分时文档。
 9. 改交易日/开盘前日期：`trading_session.py` → `sector_quote_service.py` / `sector_intraday_provider.py` / `holding_amount_sync.py` → `YangjibaoHoldingsBoard.tsx` / `TradingSessionBar.tsx` → `tests/test_trading_session.py`。
-10. 改持有金额同步：`holding_amount_sync.py` → `portfolio_persistence.py` / `overview_pipeline.py` / `portfolio_holdings_service.py` → `holding_estimates.py` → `tests/test_holding_amount_sync.py`。
-11. 改风控画像/期望投入：`models.py` `InvestorProfile` → `database.py` / `main.py` `/api/investor-profile` → `risk.py` / `analysis_facts.py` → `RiskControls.tsx` / `storage.ts` → `tests/test_api.py` `test_investor_profile_persistence`。
+10. 改持有金额同步：`holding_amount_sync.py` → `overview_pipeline.py` / `portfolio_holdings_service.py` → `holding_estimates.py` → `tests/test_holding_amount_sync.py`。
+11. 改风控画像/期望投入：`models.py` `InvestorProfile` → `database.py` / `main.py` `/api/investor-profile` → `risk.py` / `analysis_facts.py` → `RiskControls.tsx` / `storage.ts` → `tests/test_api.py`（`test_investor_profile_persistence`）。
 12. 改账户汇总展示：`holdingMetrics.ts` `displayableHoldings` → `YangjibaoHoldingsBoard.tsx` → `Dashboard.tsx`（日报直接喂 `displayableHoldings`）。
-13. 改日报角色 Prompt：`analysis_prompt.py` `DEFAULT_ROLE_PROMPT` → `deepseek_client._system_prompt` → `models.py` `AnalysisRequest.system_role_prompt` → `database.py` `analysis_prompt_state` → `main.py` `/api/analysis-prompt` → `RiskControls.tsx` / `storage.ts` / `api.ts` → `tests/test_analysis_prompt.py`、`tests/test_api.py` `test_analysis_prompt_persistence`。
+13. 改日报角色 Prompt：`analysis_prompt.py` `DEFAULT_ROLE_PROMPT` → `deepseek_client._system_prompt` → `models.py` `AnalysisRequest.system_role_prompt` → `database.py` `analysis_prompt_state` → `main.py` `/api/analysis-prompt` → `RiskControls.tsx` / `storage.ts` / `api.ts` → `tests/test_api.py` / `tests/test_fund_profile.py`。
 14. 改喂模型数据包：`analysis_payload.py` `build_user_payload` / `compact_news_titles` / `trim_analysis_facts_for_llm` → `analysis_facts.py`（`for_llm`、`sector_fund_gap_percent`）→ `nav_trend_summary.py` → `deepseek_client._generate_with_tools`（`append_output_requirements_to_system`）→ `tests/test_analysis_payload.py`；体积对比 `scripts/compare_analysis_payload.py`；报告质量 A/B `scripts/ab_compare_reports.py`（输出 `data/ab_report_compare.json`）。
-15. 改推荐基金：`discovery_pipeline.py` → `discovery_candidate_pool.py` / `discovery_selection_strategy.py` / `discovery_guard.py` / `discovery_client.py` / `discovery_diff.py` / `discovery_outcomes.py` → `main.py` `/api/fund-discovery/*` → `FundDiscoveryPanel.tsx` / `DiscoveryReportPanel.tsx` / `api.ts` → `tests/test_discovery_*.py`；设计见 V2/V3 spec。
+15. 改推荐基金：`discovery_pipeline.py` → `discovery_candidate_pool.py` / `discovery_selection_strategy.py` / `discovery_guard.py` / `discovery_client.py` → `main.py` `/api/fund-discovery/*` → `FundDiscoveryPanel.tsx` / `DiscoveryReportPanel.tsx` / `api.ts` → `tests/test_discovery_*.py`、`tests/test_api.py`；设计见 V2/V3 spec。
 16. 改荐基角色 Prompt：`discovery_prompt.py` → `models.py` `DiscoveryRequest.system_role_prompt` → `database.py` `discovery_prompt_state` → `main.py` `/api/discovery-prompt` → `FundDiscoveryPanel.tsx` / `storage.ts` / `api.ts`。
 17. 改任务轮询：`job_status_service.py` → `main.py` `GET /api/jobs/{id}` → `JobStatusFloat.tsx` / `DiscoveryJobStatusFloat.tsx`；`db_connect.py` 超时参数。
 

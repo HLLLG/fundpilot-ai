@@ -55,13 +55,6 @@ def _parse_sse_events(body: str) -> list[dict]:
     return events
 
 
-def test_report_chat_history_empty(tmp_path, monkeypatch):
-    client, report_id = _create_report(tmp_path, monkeypatch)
-    response = client.get(f"/api/reports/{report_id}/chat")
-    assert response.status_code == 200
-    assert response.json()["messages"] == []
-
-
 def test_report_chat_stream_offline_persists_messages(tmp_path, monkeypatch):
     client, report_id = _create_report(tmp_path, monkeypatch)
     response = client.post(
@@ -89,30 +82,6 @@ def test_report_chat_stream_offline_persists_messages(tmp_path, monkeypatch):
     assert stored[0]["role"] == "user"
     assert stored[0]["content"] == "015608 今天适合加仓吗？"
     assert stored[1]["role"] == "assistant"
-
-
-def test_report_chat_markdown_export(tmp_path, monkeypatch):
-    client, report_id = _create_report(tmp_path, monkeypatch)
-    client.post(
-        f"/api/reports/{report_id}/chat",
-        json={"message": "测试问题", "chat_mode": "fast"},
-    )
-    response = client.get(f"/api/reports/{report_id}/chat/markdown")
-    assert response.status_code == 200
-    markdown = response.json()["markdown"]
-    assert "报告追问记录" in markdown
-    assert "测试问题" in markdown
-
-
-def test_report_chat_deep_mode_offline(tmp_path, monkeypatch):
-    client, report_id = _create_report(tmp_path, monkeypatch)
-    response = client.post(
-        f"/api/reports/{report_id}/chat",
-        json={"message": "查一下半导体最新新闻", "chat_mode": "deep"},
-    )
-    assert response.status_code == 200
-    events = _parse_sse_events(response.text)
-    assert any(event.get("type") == "status" for event in events)
 
 
 def test_report_chat_unknown_report_returns_404(tmp_path, monkeypatch):

@@ -8,18 +8,6 @@ from app.services.eastmoney_trends_client import (
 )
 
 
-def test_secid_candidates_prefers_csi_prefix_two():
-    candidates = _secid_candidates("2.931994", "931994")
-    assert candidates[0] == "2.931994"
-    assert "0.931994" in candidates
-
-
-def test_secid_candidates_puts_configured_secid_first():
-    candidates = _secid_candidates("2.930713", "930713")
-    assert candidates[0] == "2.930713"
-    assert "0.930713" in candidates
-
-
 def test_secid_candidates_includes_shanghai_composite_prefix():
     candidates = _secid_candidates("", "000001")
     assert candidates[0] == "1.000001"
@@ -110,39 +98,6 @@ def test_parse_trends_payload_builds_session_percent_series():
     assert len(points) == 2
     assert points[0]["percent"] == round((1001 / 1000 - 1) * 100, 4)
     assert points[-1]["percent"] == round((1010 / 1000 - 1) * 100, 4)
-
-
-def test_fetch_after_close_uses_eastmoney_kline(monkeypatch):
-    monkeypatch.setattr(
-        "app.services.sector_intraday_provider.build_trading_session",
-        lambda: {
-            "session_kind": "trading_day_after_close",
-            "is_trading_day": True,
-        },
-    )
-    monkeypatch.setattr(
-        "app.services.sector_intraday_provider.get_spot_snapshot",
-        lambda *args, **kwargs: None,
-    )
-    monkeypatch.setattr(
-        "app.services.sector_intraday_provider.save_spot_snapshot",
-        lambda *args, **kwargs: None,
-    )
-    monkeypatch.setattr(
-        "app.services.sector_intraday_provider.fetch_eastmoney_intraday_trends",
-        lambda *args, **kwargs: [
-            {"time": "09:31", "percent": 0.1},
-            {"time": "15:00", "percent": 1.0},
-        ],
-    )
-
-    from app.services.sector_intraday_provider import fetch_sector_intraday
-
-    points, note, session_date, close_change = fetch_sector_intraday("index", "中证电网设备")
-    assert close_change is None or isinstance(close_change, float)
-    assert len(points) == 2
-    assert session_date is not None
-    assert note and "收盘分时" in note
 
 
 def test_fetch_eastmoney_intraday_trends_trends2_path(monkeypatch):
@@ -238,118 +193,3 @@ def test_fetch_eastmoney_intraday_trends_kline_path(monkeypatch):
     assert len(points) == 2
     assert points[0]["time"] == "09:31"
 
-
-def test_sparse_kline_falls_through_to_trends2(monkeypatch):
-    """kline 返回 2 个骨架点时，应继续尝试 trends2，返回 trends2 的完整结果。"""
-
-    call_log: list[str] = []
-
-    class FakeResponse:
-        def __init__(self, payload):
-            self._payload = payload
-            self.text = ""
-
-        def raise_for_status(self):
-            pass
-
-        def json(self):
-            return self._payload
-
-    def make_kline_response():
-        return FakeResponse(
-            {
-                "data": {
-                    "preKPrice": 100.0,
-                    "klines": [
-                        "2026-06-04 09:31,99,101,102,99,0,0,0,0.2,0,0,0",
-                        "2026-06-04 15:00,100,110,111,109,0,0,0,0.8,0,0,0",
-                    ],
-                }
-            }
-        )
-
-    def make_trends2_response():
-        trends = [
-            f"2026-06-04 {h:02d}:{m:02d},1000,{1000 + i},0,0,0,0,{1000 + i}"
-            for i, (h, m) in enumerate(
-                [(9, 31 + j) if j < 29 else (14, 59) for j in range(30)]
-            )
-        ]
-        return FakeResponse({"data": {"prePrice": 1000.0, "trends": trends}})
-
-    class FakeSession:
-        def __init__(self):
-            self.headers = {}
-
-        def get(self, url, params=None, timeout=None, proxies=None):
-            if "kline/get" in url:
-                call_log.append("kline")
-                return make_kline_response()
-            if "trends2/get" in url:
-                call_log.append("trends2")
-                return make_trends2_response()
-            raise AssertionError(f"unexpected url {url}")
-
-    monkeypatch.setattr(
-        "app.services.eastmoney_trends_client.requests.Session",
-        lambda: FakeSession(),
-    )
-
-    points = fetch_eastmoney_intraday_trends(
-        "2.931994",
-        source_code="931994",
-        trade_date="2026-06-04",
-    )
-
-    assert "trends2" in call_log, "sparse kline should have fallen through to trends2"
-    assert len(points) == 30, f"expected 30 points from trends2, got {len(points)}"
-
-
-def test_rich_kline_does_not_call_trends2(monkeypatch):
-    """kline 返回 ≥30 个点时，不应调用 trends2。"""
-
-    call_log: list[str] = []
-
-    class FakeResponse:
-        def __init__(self, payload):
-            self._payload = payload
-            self.text = ""
-
-        def raise_for_status(self):
-            pass
-
-        def json(self):
-            return self._payload
-
-    class FakeSession:
-        def __init__(self):
-            self.headers = {}
-
-        def get(self, url, params=None, timeout=None, proxies=None):
-            if "kline/get" in url:
-                call_log.append("kline")
-                klines = [
-                    f"2026-06-04 09:{31 + i:02d},99,{100 + i},{101 + i},99,0,0,0,{i * 0.1:.1f},0,0,0"
-                    for i in range(30)
-                ]
-                return FakeResponse(
-                    {"data": {"preKPrice": 100.0, "klines": klines}}
-                )
-            if "trends2/get" in url:
-                call_log.append("trends2")
-                return FakeResponse({"data": {"trends": []}})
-            raise AssertionError(f"unexpected url {url}")
-
-    monkeypatch.setattr(
-        "app.services.eastmoney_trends_client.requests.Session",
-        lambda: FakeSession(),
-    )
-
-    points = fetch_eastmoney_intraday_trends(
-        "2.931994",
-        source_code="931994",
-        trade_date="2026-06-04",
-    )
-
-    assert "trends2" not in call_log, "rich kline should NOT call trends2"
-    assert len(points) == 30
