@@ -1,6 +1,6 @@
 "use client";
 
-import type { InvestmentPreset, InvestorProfile } from "@/lib/api";
+import type { InvestorProfile } from "@/lib/api";
 import {
   PRESET_OPTIONS,
   applyInvestmentPreset,

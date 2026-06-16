@@ -101,8 +101,7 @@ export function useSwingAlerts({
     enabled,
     evaluate,
     evaluateIntervalMs,
-    profile.swing_alerts_enabled,
-    profile.decision_style,
+    profile,
   ]);
 
   useEffect(() => {

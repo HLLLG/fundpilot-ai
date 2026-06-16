@@ -127,6 +127,10 @@ def _stub_market_data_fetches(monkeypatch):
         lambda *_args, **_kwargs: None,
     )
     monkeypatch.setattr(
+        "app.services.fund_nav_service.fetch_fund_nav_history",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
         "app.services.akshare_subprocess.fetch_open_fund_rank",
         lambda **_kwargs: [],
     )

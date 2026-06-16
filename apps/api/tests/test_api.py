@@ -50,19 +50,24 @@ def _mock_news_search(monkeypatch):
     from app.models import NewsItem
     from app.services.news_service import NewsService
 
-    def fake_search(self, topic: str, limit: int | None = None):
-        return [
-            NewsItem(
-                topic=topic,
-                title=f"{topic}相关新闻",
-                published_at="2026-05-30 09:00:00",
-                source="eastmoney",
-                url=f"http://example.com/{topic}",
-                snippet="测试摘要",
+    def fake_prefetch_for_holdings(self, holdings, max_topics=None):
+        del max_topics
+        items: list[NewsItem] = []
+        for holding in holdings:
+            topic = (holding.sector_name or holding.fund_name or "市场").strip()
+            items.append(
+                NewsItem(
+                    topic=topic,
+                    title=f"{topic}相关新闻",
+                    published_at="2026-05-30 09:00:00",
+                    source="eastmoney",
+                    url=f"http://example.com/{topic}",
+                    snippet="测试摘要",
+                )
             )
-        ]
+        return items
 
-    monkeypatch.setattr(NewsService, "search", fake_search)
+    monkeypatch.setattr(NewsService, "prefetch_for_holdings", fake_prefetch_for_holdings)
 
 
 def test_analyze_manual_holdings_returns_persisted_report(tmp_path, monkeypatch):

@@ -14,6 +14,11 @@ def test_search_maps_akshare_frame(monkeypatch):
     pytest = __import__("pytest")
     pd = pytest.importorskip("pandas")
 
+    from app.config import refresh_settings
+
+    monkeypatch.setenv("FUND_AI_NEWS_ENABLED", "true")
+    refresh_settings()
+
 
     class FakeRow:
         def __init__(self, data: dict):
@@ -73,6 +78,7 @@ def test_prefetch_topics_respects_limit(monkeypatch):
         return [NewsItem(topic=topic, title=f"标题-{topic}")]
 
     monkeypatch.setattr(NewsService, "search", fake_search)
+    monkeypatch.setenv("FUND_AI_NEWS_ENABLED", "true")
     monkeypatch.setenv("FUND_AI_NEWS_MAX_TOPICS", "2")
     from app.config import refresh_settings
 
