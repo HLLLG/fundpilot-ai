@@ -134,7 +134,7 @@ def _fetch_live_boards(*, timeout_seconds: float | None = None) -> SpotBoardFetc
         logger.warning("fetch_eastmoney_boards failed: %s", exc)
 
     relay_boards = fetch_boards_via_relay(timeout_seconds=_remaining_budget(start_time, timeout_seconds))
-    if any(relay_boards.values()):
+    if relay_boards and any(relay_boards.values()):
         logger.info("relay sector provider succeeded")
         return SpotBoardFetchResult(
             boards=relay_boards,
@@ -147,7 +147,7 @@ def _fetch_live_boards(*, timeout_seconds: float | None = None) -> SpotBoardFetc
         browser_boards = fetch_boards_via_browser_command(
             timeout_seconds=_remaining_budget(start_time, timeout_seconds),
         )
-        if any(browser_boards.values()):
+        if browser_boards and any(browser_boards.values()):
             logger.info("browser sector command succeeded")
             return SpotBoardFetchResult(
                 boards=browser_boards,
