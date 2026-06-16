@@ -1,0 +1,25 @@
+apps/api/app/services/sector_quote_provider.py
+  s_bf42bda6bfec6f::t_d624459fdf4dcc 150
+  s_bf42bda6bfec6f::t_c8ba6af9a037ed 137
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.17-trip",
+  "base_commit_sha": "0b1bb483d23694d9646573da607e81df3af8eed2",
+  "prompts": {},
+  "humans": {
+    "h_375fc341ff3baa": {
+      "author": "hegl <HLLLG@github.com>"
+    }
+  },
+  "sessions": {
+    "s_bf42bda6bfec6f": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "0114d1ab-e0d1-4c16-adfa-e0e038786b0e",
+        "model": "composer-2.5"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
