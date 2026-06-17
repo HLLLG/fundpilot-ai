@@ -471,6 +471,65 @@ export type DiscoverySectorHeat = {
   heat_score?: number | null;
 };
 
+export type SectorBoardItem = {
+  name: string;
+  code?: string | null;
+  change_percent?: number | null;
+  main_force_net_yi?: number | null;
+  rank?: number;
+};
+
+export type MarketSectorBoardWidget = {
+  trade_date?: string | null;
+  session_kind?: string | null;
+  available: boolean;
+  from_cache?: boolean;
+  stale?: boolean;
+  message?: string | null;
+  top_gainers: SectorBoardItem[];
+  top_losers: SectorBoardItem[];
+  top_inflow: SectorBoardItem[];
+  top_outflow: SectorBoardItem[];
+};
+
+export type MarketSectorBoardList = {
+  trade_date?: string | null;
+  session_kind?: string | null;
+  available: boolean;
+  from_cache?: boolean;
+  stale?: boolean;
+  message?: string | null;
+  board_type: "industry" | "concept";
+  sort: "change" | "inflow";
+  items: SectorBoardItem[];
+};
+
+export type MarketBoardType = "industry" | "concept";
+export type MarketBoardSort = "change" | "inflow";
+
+export type MarketThemeBoardSort = "change" | "streak";
+
+export type MarketThemeBoardItem = {
+  sector_label: string;
+  change_1d_percent?: number | null;
+  consecutive_up_days?: number | null;
+  linked_fund_count: number;
+  held_fund_count: number;
+  in_portfolio: boolean;
+  rank?: number;
+};
+
+export type MarketThemeBoardResponse = {
+  trade_date?: string | null;
+  session_kind?: string | null;
+  available: boolean;
+  from_cache?: boolean;
+  stale?: boolean;
+  message?: string | null;
+  sort: MarketThemeBoardSort;
+  items: MarketThemeBoardItem[];
+};
+
 export type DiscoveryChatMessage = {
   id: string;
   discovery_report_id: string;
@@ -876,6 +935,61 @@ export async function fetchDiscoverySectors(): Promise<DiscoverySectorHeat[]> {
   } finally {
     window.clearTimeout(timeoutId);
   }
+}
+
+export async function fetchMarketSectorBoardWidget(
+  options?: { forceRefresh?: boolean },
+): Promise<MarketSectorBoardWidget> {
+  const params = new URLSearchParams({ view: "widget" });
+  if (options?.forceRefresh) {
+    params.set("force_refresh", "true");
+  }
+  const response = await apiFetch(`${API_BASE}/api/market/sector-boards?${params}`, {
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export async function fetchMarketSectorBoardList(options: {
+  boardType: MarketBoardType;
+  sort: MarketBoardSort;
+  forceRefresh?: boolean;
+}): Promise<MarketSectorBoardList> {
+  const params = new URLSearchParams({
+    view: "list",
+    board_type: options.boardType,
+    sort: options.sort,
+  });
+  if (options.forceRefresh) {
+    params.set("force_refresh", "true");
+  }
+  const response = await apiFetch(`${API_BASE}/api/market/sector-boards?${params}`, {
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export async function fetchMarketThemeBoards(options?: {
+  sort?: MarketThemeBoardSort;
+  forceRefresh?: boolean;
+}): Promise<MarketThemeBoardResponse> {
+  const params = new URLSearchParams({ sort: options?.sort ?? "change" });
+  if (options?.forceRefresh) {
+    params.set("force_refresh", "true");
+  }
+  const response = await apiFetch(`${API_BASE}/api/market/theme-boards?${params}`, {
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
 }
 
 export async function startDiscoveryJob(

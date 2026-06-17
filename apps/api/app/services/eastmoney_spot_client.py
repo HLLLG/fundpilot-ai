@@ -27,7 +27,8 @@ _COMMON_PARAMS = {
     "invt": "2",
 }
 
-_HOST_POOL = ("79", "88", "48", "17", "33", "91")
+_HOST_POOL = ("17", "79", "88", "48", "33", "91")
+_PREFERRED_PUSH_HOST = "17"
 
 
 def fetch_eastmoney_boards(
@@ -350,3 +351,175 @@ def _absorb_board_rows(rows: list[dict[str, Any]], target: dict[str, float]) -> 
             target[cleaned] = round(float(change), 4)
         except (TypeError, ValueError):
             continue
+
+
+# 经典行业/概念板块（与蚂蚁财富、东财资金流向页一致）；勿加 f:!50（该过滤为细分行业，如「防水材料」）
+_BOARD_TYPE_PARAMS: dict[str, tuple[str, str]] = {
+    "industry": ("m:90 t:2", "f3"),
+    "concept": ("m:90 t:3", "f12"),
+}
+
+
+def fetch_eastmoney_board_records(
+    board_type: str,
+    *,
+    timeout: float = 15.0,
+    max_retries: int = 2,
+    max_hosts: int | None = None,
+    max_pages: int = 6,
+) -> list[dict[str, Any]]:
+    """拉取东财行业/概念板块列表（涨跌幅 + 主力净流入）。"""
+    spec = _BOARD_TYPE_PARAMS.get(board_type)
+    if spec is None:
+        raise ValueError(f"unsupported board_type: {board_type}")
+
+    fs, fid = spec
+    params = {
+        **_COMMON_PARAMS,
+        "pz": "100",
+        "fid": fid,
+        "fs": fs,
+        "fields": "f3,f12,f14,f62",
+    }
+
+    errors: list[str] = []
+    try:
+        with httpx.Client(
+            headers=_EASTMONEY_HEADERS,
+            timeout=timeout,
+            trust_env=False,
+            follow_redirects=True,
+            http2=False,
+        ) as client:
+            return _fetch_paginated_board_records(
+                client,
+                params,
+                max_retries=max_retries,
+                max_hosts=max_hosts,
+                max_pages=max_pages,
+            )
+    except Exception as exc:
+        errors.append(f"httpx: {exc}")
+        logger.debug("eastmoney board httpx failed (%s): %s", board_type, exc)
+
+    try:
+        return _fetch_board_records_via_requests(
+            params,
+            timeout=timeout,
+            max_pages=max_pages,
+        )
+    except Exception as exc:
+        errors.append(f"requests: {exc}")
+        logger.info("eastmoney board requests fallback failed (%s): %s", board_type, exc)
+
+    raise RuntimeError("; ".join(errors) or "eastmoney board fetch failed")
+
+
+def _fetch_board_records_via_requests(
+    base_params: dict[str, str],
+    *,
+    timeout: float,
+    max_pages: int,
+) -> list[dict[str, Any]]:
+    """与 AkShare 相同：requests + 17.push2（httpx 偶发 reset 时更稳）。"""
+    import requests
+
+    params = {**base_params, "pn": "1"}
+    url = f"https://{_PREFERRED_PUSH_HOST}.push2.eastmoney.com/api/qt/clist/get"
+    session = requests.Session()
+    session.trust_env = False
+
+    result: list[dict[str, Any]] = []
+    for page in range(1, max_pages + 1):
+        page_params = {**params, "pn": str(page)}
+        response = session.get(url, params=page_params, headers=_EASTMONEY_HEADERS, timeout=timeout)
+        response.raise_for_status()
+        payload = response.json()
+        data = payload.get("data") or {}
+        rows = list(data.get("diff") or [])
+        if not rows:
+            break
+        result.extend(_parse_board_record_rows(rows))
+        total = int(data.get("total") or 0)
+        page_size = max(len(rows), 1)
+        if page >= math.ceil(total / page_size):
+            break
+        time.sleep(0.1)
+
+    if not result:
+        raise RuntimeError("requests board returned no rows")
+    return result
+
+
+def _fetch_paginated_board_records(
+    client: httpx.Client,
+    base_params: dict[str, str],
+    *,
+    max_retries: int,
+    max_hosts: int | None = None,
+    max_pages: int = 6,
+) -> list[dict[str, Any]]:
+    params = {**base_params, "pn": "1"}
+    first = _request_board_page(client, params, max_retries=max_retries, max_hosts=max_hosts)
+    rows = list(first.get("diff") or [])
+    total = int(first.get("total") or 0)
+    page_size = max(len(rows), 1)
+    total_pages = max(1, math.ceil(total / page_size))
+
+    result = _parse_board_record_rows(rows)
+    last_page = min(total_pages, max_pages)
+    for page in range(2, last_page + 1):
+        page_params = {**params, "pn": str(page)}
+        try:
+            payload = _request_board_page(
+                client,
+                page_params,
+                max_retries=max_retries,
+                max_hosts=max_hosts,
+            )
+            result.extend(_parse_board_record_rows(payload.get("diff") or []))
+        except Exception as exc:
+            logger.debug(
+                "eastmoney board records pagination stopped at page %s: %s",
+                page,
+                exc,
+            )
+            break
+        time.sleep(0.15)
+    if not result:
+        raise RuntimeError("eastmoney board records returned no rows")
+    return result
+
+
+def _parse_board_record_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    parsed: list[dict[str, Any]] = []
+    for row in rows:
+        name = row.get("f14")
+        if name is None:
+            continue
+        cleaned_name = str(name).strip()
+        if not cleaned_name:
+            continue
+        code = row.get("f12")
+        change = _as_board_float(row.get("f3"))
+        main_force_yuan = _as_board_float(row.get("f62"))
+        if change is None and main_force_yuan is None:
+            continue
+        parsed.append(
+            {
+                "name": cleaned_name,
+                "code": str(code).strip() if code not in (None, "-", "") else None,
+                "change_percent": change,
+                "main_force_net_yi": round(main_force_yuan / 1e8, 2) if main_force_yuan is not None else None,
+            }
+        )
+    return parsed
+
+
+def _as_board_float(value: object) -> float | None:
+    if value in (None, "-", ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None

@@ -477,6 +477,37 @@ def test_fund_discovery_sectors(client):
     assert "sectors" in body
 
 
+def test_market_sector_boards_widget(client):
+    response = client.get("/api/market/sector-boards?view=widget")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["available"] is True
+    assert "top_gainers" in body
+    assert body["top_gainers"][0]["name"] == "建筑材料"
+
+
+def test_market_sector_boards_list(client):
+    response = client.get("/api/market/sector-boards?view=list&board_type=industry&sort=change")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["board_type"] == "industry"
+    assert body["items"][0]["rank"] == 1
+
+
+def test_market_theme_boards(client):
+    response = client.get("/api/market/theme-boards?sort=change")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["available"] is True
+    assert body["items"][0]["sector_label"] == "商业航天"
+    assert body["items"][0]["consecutive_up_days"] == 5
+
+
+def test_market_theme_boards_invalid_sort(client):
+    response = client.get("/api/market/theme-boards?sort=invalid")
+    assert response.status_code == 400
+
+
 def test_fund_discovery_async_offline(client, monkeypatch):
     monkeypatch.setattr(
         "app.services.discovery_pipeline.build_sector_heat_ranking",

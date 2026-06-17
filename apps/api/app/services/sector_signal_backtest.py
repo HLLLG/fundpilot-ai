@@ -6,8 +6,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from app.services.akshare_subprocess import fetch_board_daily_kline_series
-from app.services.sector_quote_relay_provider import fetch_daily_kline_via_relay
+from app.services.sector_daily_kline_provider import fetch_canonical_daily_kline_series
 from app.services.eastmoney_trends_client import (
     DailyKlineBar,
     fetch_eastmoney_daily_kline_series,
@@ -174,33 +173,7 @@ def _resolve_sector_labels(sector_labels: list[str] | None) -> list[str]:
 
 
 def _default_fetch_series_for_canon(canon: CanonicalSector) -> list[DailyKlineBar]:
-    series = fetch_eastmoney_daily_kline_series(
-        canon.eastmoney_secid,
-        source_code=canon.source_code,
-        max_days=400,
-        timeout=12.0,
-        max_retries=2,
-    )
-    if series:
-        return series
-    relay_series = fetch_daily_kline_via_relay(
-        canon.eastmoney_secid,
-        source_code=canon.source_code,
-        max_days=400,
-        timeout_seconds=15.0,
-    )
-    if relay_series:
-        return relay_series
-    if canon.source_type in {"concept", "industry"}:
-        fallback = fetch_board_daily_kline_series(
-            canon.source_type,
-            canon.source_name,
-            source_code=canon.source_code,
-            max_days=400,
-        )
-        if fallback:
-            return fallback
-    return []
+    return fetch_canonical_daily_kline_series(canon, max_days=400, timeout=10.0)
 
 
 def _default_fetch_series(secid: str, source_code: str | None) -> list[DailyKlineBar]:

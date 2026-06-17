@@ -84,6 +84,12 @@ from app.services.discovery_outcomes import (
     build_discovery_recommendation_accuracy,
 )
 from app.services.discovery_sector_heat import build_sector_heat_ranking, build_sector_heat_ranking_for_ui
+from app.services.sector_board_snapshot import (
+    build_list_payload,
+    build_widget_payload,
+    get_sector_board_snapshot,
+)
+from app.services.theme_board_snapshot import get_theme_board_snapshot
 from app.services.ocr_pipeline import apply_confirmed_holdings, run_ocr_upload_pipeline
 from app.services.report_diff import diff_reports
 from app.services.report_chat import stream_report_chat
@@ -415,6 +421,43 @@ def job_status(job_id: str) -> dict:
 @app.get("/api/fund-discovery/sectors")
 def fund_discovery_sectors() -> dict:
     return {"sectors": build_sector_heat_ranking_for_ui()}
+
+
+@app.get("/api/market/sector-boards")
+def market_sector_boards(
+    view: str = "widget",
+    board_type: str = "industry",
+    sort: str = "change",
+    force_refresh: bool = False,
+) -> dict:
+    snapshot = get_sector_board_snapshot(force_refresh=force_refresh)
+    if view == "list":
+        if board_type not in {"industry", "concept"}:
+            raise HTTPException(status_code=400, detail="board_type 须为 industry 或 concept")
+        if sort not in {"change", "inflow"}:
+            raise HTTPException(status_code=400, detail="sort 须为 change 或 inflow")
+        return build_list_payload(snapshot, board_type=board_type, sort=sort)  # type: ignore[arg-type]
+    if view != "widget":
+        raise HTTPException(status_code=400, detail="view 须为 widget 或 list")
+    return build_widget_payload(snapshot)
+
+
+@app.get("/api/market/theme-boards")
+def market_theme_boards(
+    sort: str = "change",
+    force_refresh: bool = False,
+) -> dict:
+    if sort not in {"change", "streak"}:
+        raise HTTPException(status_code=400, detail="sort 须为 change 或 streak")
+    holdings: list = []
+    if get_request_user_id() is not None:
+        loaded, _, _ = load_persisted_holdings()
+        holdings = loaded
+    return get_theme_board_snapshot(
+        force_refresh=force_refresh,
+        holdings=holdings,
+        sort=sort,  # type: ignore[arg-type]
+    )
 
 
 @app.post("/api/fund-discovery/async")

@@ -147,6 +147,57 @@ def _stub_market_data_fetches(monkeypatch):
         "app.main.build_sector_heat_ranking_for_ui",
         lambda: list(_STUB_SECTOR_HEAT),
     )
+    monkeypatch.setattr(
+        "app.main.get_sector_board_snapshot",
+        lambda **_kwargs: {
+            "trade_date": "2026-06-17",
+            "session_kind": "trading_day_intraday",
+            "available": True,
+            "from_cache": True,
+            "message": None,
+            "industry": [
+                {
+                    "name": "建筑材料",
+                    "code": "BK0425",
+                    "change_percent": 4.02,
+                    "main_force_net_yi": 12.5,
+                }
+            ],
+            "concept": [],
+        },
+    )
+    monkeypatch.setattr(
+        "app.main.get_theme_board_snapshot",
+        lambda **_kwargs: {
+            "trade_date": "2026-06-17",
+            "session_kind": "trading_day_intraday",
+            "available": True,
+            "from_cache": True,
+            "stale": False,
+            "message": None,
+            "sort": _kwargs.get("sort", "change"),
+            "items": [
+                {
+                    "sector_label": "商业航天",
+                    "change_1d_percent": 2.78,
+                    "consecutive_up_days": 5,
+                    "linked_fund_count": 2,
+                    "held_fund_count": 0,
+                    "in_portfolio": False,
+                    "rank": 1,
+                },
+                {
+                    "sector_label": "半导体",
+                    "change_1d_percent": 1.21,
+                    "consecutive_up_days": 3,
+                    "linked_fund_count": 1,
+                    "held_fund_count": 0,
+                    "in_portfolio": False,
+                    "rank": 2,
+                },
+            ],
+        },
+    )
 
 
 @pytest.fixture(autouse=True)

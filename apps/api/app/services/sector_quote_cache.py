@@ -48,6 +48,27 @@ def get_spot_snapshot(cache_key: str, *, ttl_seconds: float) -> dict | None:
     return payload
 
 
+def get_spot_snapshot_any_age(cache_key: str) -> dict | None:
+    """读取缓存（忽略 TTL），用于 stale-while-revalidate 回退。"""
+    now = datetime.now(timezone.utc).timestamp()
+    cached = _MEMORY.get(cache_key)
+    if cached is not None:
+        return cached[1]
+
+    with _connect() as connection:
+        _ensure_cache_table(connection)
+        row = connection.execute(
+            "SELECT payload, updated_at FROM sector_spot_cache WHERE cache_key = ?",
+            (cache_key,),
+        ).fetchone()
+    if row is None:
+        return None
+
+    payload = json.loads(row["payload"])
+    _MEMORY[cache_key] = (now, payload)
+    return payload
+
+
 def save_spot_snapshot(cache_key: str, payload: dict) -> None:
     now = datetime.now(timezone.utc)
     encoded = json.dumps(payload, ensure_ascii=False)

@@ -105,6 +105,24 @@ except Exception as e:
     return {str(k): float(v) for k, v in payload.items()}
 
 
+def fetch_akshare_board_records(board_type: str) -> list[dict[str, Any]]:
+    """AkShare 子进程拉经典行业/概念（仅涨跌幅；主力净流入可能为空）。"""
+    if board_type not in {"industry", "concept"}:
+        return []
+    spot = _fetch_board_kind_subprocess(board_type)
+    if not spot:
+        return []
+    return [
+        {
+            "name": name,
+            "code": None,
+            "change_percent": change,
+            "main_force_net_yi": None,
+        }
+        for name, change in spot.items()
+    ]
+
+
 def fetch_boards_via_akshare(*, include_index: bool = True) -> dict[str, SpotBoard]:
     """httpx 直连失败时，用 AkShare 列表接口兜底（概念/行业；指数可选且较慢）。"""
     boards: dict[str, SpotBoard] = {"concept": {}, "industry": {}, "index": {}}

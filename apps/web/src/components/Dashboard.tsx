@@ -58,6 +58,7 @@ import { SectorSignalBacktestPanel } from "@/components/SectorSignalBacktestPane
 import { RiskControls } from "@/components/RiskControls";
 import { DiagnosticsAccordion } from "@/components/DiagnosticsAccordion";
 import { FundDiscoveryPanel } from "@/components/FundDiscoveryPanel";
+import { MarketTab } from "@/components/MarketTab";
 import { UserMenu } from "@/components/UserMenu";
 const defaultProfile: InvestorProfile = {
   style: "稳健",
@@ -75,14 +76,15 @@ const defaultProfile: InvestorProfile = {
   swing_monitor_scope: "both",
 };
 
-type TabId = "today" | "report" | "history" | "dashboard" | "discovery";
+type TabId = "today" | "report" | "history" | "dashboard" | "market" | "discovery";
 
 const primaryTabs: Array<{
-  id: Extract<TabId, "today" | "dashboard" | "discovery" | "report">;
+  id: Extract<TabId, "today" | "dashboard" | "market" | "discovery" | "report">;
   label: string;
 }> = [
   { id: "today", label: "持有" },
   { id: "dashboard", label: "盈亏分析" },
+  { id: "market", label: "市场" },
   { id: "discovery", label: "推荐基金" },
   { id: "report", label: "生成日报" },
 ];
@@ -564,6 +566,8 @@ export function Dashboard() {
 
           {activeTab === "dashboard" ? <PortfolioDashboard /> : null}
 
+          {activeTab === "market" ? <MarketTab /> : null}
+
           {activeTab === "discovery" ? (
             <FundDiscoveryPanel
               holdings={holdings}
@@ -689,11 +693,12 @@ function TabNav({
   onSelect,
 }: {
   activeTab: TabId;
-  onSelect: (tab: Extract<TabId, "today" | "dashboard" | "discovery" | "report">) => void;
+  onSelect: (tab: Extract<TabId, "today" | "dashboard" | "market" | "discovery" | "report">) => void;
 }) {
   const highlightedTab =
     activeTab === "today" ||
     activeTab === "dashboard" ||
+    activeTab === "market" ||
     activeTab === "discovery" ||
     activeTab === "report"
       ? activeTab
