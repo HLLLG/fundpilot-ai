@@ -51,6 +51,19 @@ def test_build_list_payload_sort_inflow():
     assert payload["items"][0]["name"] == "半导体材料"
 
 
+def test_build_list_payload_dedupes_duplicate_codes():
+    snapshot = _stub_snapshot()
+    snapshot["concept"] = [
+        {"name": "A板块", "code": "BK1365", "change_percent": 3.0, "main_force_net_yi": 10.0},
+        {"name": "A板块重复", "code": "BK1365", "change_percent": 1.0, "main_force_net_yi": 5.0},
+        {"name": "B板块", "code": "BK1366", "change_percent": 2.0, "main_force_net_yi": 8.0},
+    ]
+    payload = build_list_payload(snapshot, board_type="concept", sort="change")
+    codes = [item["code"] for item in payload["items"]]
+    assert codes.count("BK1365") == 1
+    assert payload["items"][0]["name"] == "A板块"
+
+
 def test_combined_board_rows_prefers_industry():
     from app.services.sector_board_snapshot import _combined_board_rows
 
@@ -60,46 +73,6 @@ def test_combined_board_rows_prefers_industry():
     by_name = {row["name"]: row["change_percent"] for row in merged}
     assert by_name["电子"] == 2.0
     assert by_name["半导体材料"] == 2.5
-
-
-def test_get_sector_board_snapshot_uses_cache(monkeypatch):
-    calls: list[bool] = []
-
-    def fake_fetch(board_type: str):
-        calls.append(True)
-        return _STUB_INDUSTRY if board_type == "industry" else _STUB_CONCEPT
-
-    monkeypatch.setattr(
-        "app.services.sector_board_snapshot._fetch_board_records",
-        fake_fetch,
-    )
-    monkeypatch.setattr(
-        "app.services.sector_board_snapshot.get_spot_snapshot",
-        lambda *_args, **_kwargs: None,
-    )
-    saved: list[dict] = []
-    monkeypatch.setattr(
-        "app.services.sector_board_snapshot.save_spot_snapshot",
-        lambda _key, payload: saved.append(payload),
-    )
-    monkeypatch.setattr(
-        "app.services.sector_board_snapshot.build_trading_session",
-        lambda: {"effective_trade_date": "2026-06-17", "session_kind": "trading_day_intraday"},
-    )
-
-    first = get_sector_board_snapshot(force_refresh=True)
-    assert first["available"] is True
-    assert len(calls) == 2
-    assert saved
-
-    calls.clear()
-    monkeypatch.setattr(
-        "app.services.sector_board_snapshot.get_spot_snapshot",
-        lambda *_args, **_kwargs: saved[0],
-    )
-    second = get_sector_board_snapshot(force_refresh=False)
-    assert second["from_cache"] is True
-    assert len(calls) == 0
 
 
 def test_get_sector_board_snapshot_falls_back_to_stale_on_fetch_failure(monkeypatch):

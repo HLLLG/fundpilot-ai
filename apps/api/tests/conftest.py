@@ -79,6 +79,26 @@ def _stub_market_data_fetches(monkeypatch):
         lambda _kind: {},
     )
     monkeypatch.setattr(
+        "app.services.akshare_spot_client.fetch_boards_via_akshare",
+        lambda **_kwargs: {"concept": {}, "industry": {}, "index": {}},
+    )
+    monkeypatch.setattr(
+        "app.services.theme_board_snapshot.fetch_boards_via_akshare",
+        lambda **_kwargs: {"concept": {}, "industry": {}, "index": {}},
+    )
+    monkeypatch.setattr(
+        "app.services.theme_board_snapshot.fetch_akshare_board_records",
+        lambda _board_type: [],
+    )
+    monkeypatch.setattr(
+        "app.services.theme_board_snapshot._load_theme_spot_changes",
+        lambda: {},
+    )
+    monkeypatch.setattr(
+        "app.services.sector_daily_kline_provider.fetch_canonical_daily_kline_series",
+        lambda *_args, **_kwargs: [],
+    )
+    monkeypatch.setattr(
         "app.services.sector_quote_provider.fetch_eastmoney_boards",
         _empty_spot_boards,
     )

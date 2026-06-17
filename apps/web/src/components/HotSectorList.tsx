@@ -130,7 +130,7 @@ export function HotSectorList({
       ) : (
         <ul className="divide-y divide-[var(--line)]">
           {data!.items.map((item) => (
-            <li key={`${item.code ?? item.name}`} className="flex items-center justify-between gap-3 py-3">
+            <li key={item.rank} className="flex items-center justify-between gap-3 py-3">
               <div className="min-w-0">
                 <div className="truncate text-sm font-medium text-slate-900">{item.name}</div>
                 {item.code ? <div className="text-xs text-slate-400">{item.code}</div> : null}

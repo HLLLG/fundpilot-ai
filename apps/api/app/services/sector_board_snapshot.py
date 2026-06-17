@@ -51,8 +51,8 @@ def get_sector_board_snapshot(*, force_refresh: bool = False) -> dict[str, Any]:
             "from_cache": False,
             "stale": False,
             "message": None,
-            "industry": industry,
-            "concept": concept,
+            "industry": _dedupe_board_rows(industry),
+            "concept": _dedupe_board_rows(concept),
         }
         save_spot_snapshot(cache_key, snapshot)
         return snapshot
@@ -107,7 +107,7 @@ def build_list_payload(
     board_type: BoardType,
     sort: SortMode,
 ) -> dict[str, Any]:
-    rows = list(snapshot.get(board_type) or [])
+    rows = _dedupe_board_rows(list(snapshot.get(board_type) or []))
     sort_key = "change_percent" if sort == "change" else "main_force_net_yi"
     sorted_rows = _sort_rows(rows, key=sort_key, reverse=True)
     items = [
@@ -190,6 +190,12 @@ def _safe_fetch_board_records(board_type: BoardType) -> list[dict[str, Any]]:
         return _fetch_board_records(board_type)
     except Exception:
         return []
+
+
+def _dedupe_board_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    from app.services.eastmoney_spot_client import _dedupe_board_records
+
+    return _dedupe_board_records(rows)
 
 
 def _combined_board_rows(

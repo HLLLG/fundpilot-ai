@@ -448,7 +448,7 @@ def _fetch_board_records_via_requests(
 
     if not result:
         raise RuntimeError("requests board returned no rows")
-    return result
+    return _dedupe_board_records(result)
 
 
 def _fetch_paginated_board_records(
@@ -488,7 +488,22 @@ def _fetch_paginated_board_records(
         time.sleep(0.15)
     if not result:
         raise RuntimeError("eastmoney board records returned no rows")
-    return result
+    return _dedupe_board_records(result)
+
+
+def _dedupe_board_records(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """按 code（优先）或 name 去重；分页重叠时东财可能返回重复板块。"""
+    seen: set[str] = set()
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        code = row.get("code")
+        name = str(row.get("name", "")).strip()
+        key = str(code).strip() if code not in (None, "") else name
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(row)
+    return out
 
 
 def _parse_board_record_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
