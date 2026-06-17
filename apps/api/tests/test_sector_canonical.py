@@ -42,6 +42,28 @@ def test_intraday_canonical_maps_semiconductor_board_to_csi_index():
     assert canon.eastmoney_secid == "2.931865"
 
 
+def test_get_canonical_sector_cpo_and_pcb():
+    from app.services.sector_canonical import get_canonical_sector
+
+    cpo = get_canonical_sector("CPO")
+    assert cpo is not None
+    assert cpo.source_code == "BK1128"
+    assert cpo.source_name == "CPO概念"
+
+    pcb = get_canonical_sector("PCB")
+    assert pcb is not None
+    assert pcb.source_code == "BK0877"
+
+
+def test_list_discovery_sector_labels_includes_cpo_and_pcb():
+    from app.services.sector_canonical import list_discovery_sector_labels
+
+    labels = list_discovery_sector_labels()
+    assert "CPO" in labels
+    assert "PCB" in labels
+    assert len(labels) == 21
+
+
 def test_fuzzy_match_blocks_wrong_aerospace_name():
     from app.services.sector_quote_resolver import _fuzzy_sector_match
 

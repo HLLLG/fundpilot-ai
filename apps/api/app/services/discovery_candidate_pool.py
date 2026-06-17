@@ -246,6 +246,8 @@ def _sector_keywords(sector_label: str, canon) -> tuple[str, ...]:
         "云计算": ("云计算", "云"),
         "5G": ("5G", "通信"),
         "医疗器械": ("医疗器械", "器械"),
+        "CPO": ("CPO", "光模块", "共封装", "光电"),
+        "PCB": ("PCB", "电路板", "印制电路"),
     }
     extra = mapping.get(sector_label, ())
     return tuple(names) + extra

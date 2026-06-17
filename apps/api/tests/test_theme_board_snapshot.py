@@ -80,7 +80,7 @@ def test_merge_theme_board_rows_fills_all_labels():
     merged = _merge_theme_board_rows(
         [{"sector_label": "半导体", "change_1d_percent": 1.0, "consecutive_up_days": 2, "linked_fund_count": 1}]
     )
-    assert len(merged) == 19
+    assert len(merged) == 21
     by_label = {row["sector_label"]: row for row in merged}
     assert by_label["半导体"]["change_1d_percent"] == 1.0
     assert by_label["医药"]["change_1d_percent"] is None

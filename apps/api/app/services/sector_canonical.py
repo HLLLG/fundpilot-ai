@@ -195,6 +195,20 @@ _CANONICAL_BY_LABEL: dict[str, CanonicalSector] = {
         eastmoney_secid="90.BK1041",
         source_code="BK1041",
     ),
+    "CPO": CanonicalSector(
+        label="CPO",
+        source_type="concept",
+        source_name="CPO概念",
+        eastmoney_secid="90.BK1128",
+        source_code="BK1128",
+    ),
+    "PCB": CanonicalSector(
+        label="PCB",
+        source_type="concept",
+        source_name="PCB",
+        eastmoney_secid="90.BK0877",
+        source_code="BK0877",
+    ),
 }
 
 
@@ -231,6 +245,8 @@ _DISCOVERY_CHIP_LABELS: tuple[str, ...] = (
     "云计算",
     "5G",
     "医疗器械",
+    "CPO",
+    "PCB",
 )
 
 
@@ -266,6 +282,8 @@ def get_canonical_sector(sector_name: str | None) -> CanonicalSector | None:
         "云计算",
         "5G",
         "医疗器械",
+        "CPO",
+        "PCB",
     ):
         if key in label:
             return _CANONICAL_BY_LABEL[key]
