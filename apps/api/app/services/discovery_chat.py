@@ -10,6 +10,10 @@ from app.config import get_settings
 from app.database import get_discovery_report, list_discovery_chat_messages, save_discovery_chat_message
 from app.models import AnalysisMode, DiscoveryChatMessage
 from app.services.deepseek_http import deepseek_chat_url, deepseek_request_headers, deepseek_timeout, format_deepseek_http_error
+from app.services.discovery_chat_guard import (
+    format_candidate_pool_whitelist,
+    sanitize_discovery_chat_fund_codes,
+)
 from app.services.discovery_export import discovery_report_to_markdown
 from app.services.report_chat_runtime import resolve_report_chat_runtime
 
@@ -19,16 +23,20 @@ OFFLINE_REPLY = (
 )
 
 
-def _discovery_chat_system_prompt(report_markdown: str) -> str:
+def _discovery_chat_system_prompt(report_markdown: str, report: dict) -> str:
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    whitelist = format_candidate_pool_whitelist(report)
     return (
         "你是个人基金投研助手，正在就一份「基金机会推荐报告」回答追问。"
         "你只能提供个人研究和风险提示，不能承诺收益。"
         f"当前时间为 {now}。"
-        "回答须基于下方报告中的候选池、推荐与板块数据，不要编造未出现的基金代码。"
+        "回答须严格基于下方「候选基金池」与「已生成推荐报告」；"
+        "提及具体基金时，代码与名称必须与候选池表格完全一致，禁止编造表外基金代码"
+        "（含臆造 ETF 场内代码）。若用户追问的板块在候选池中有对应行，只能引用那些基金。"
         "若用户要求调整方向或预算，在报告框架内给出条件化建议。"
         "使用简洁中文 Markdown；单条回复尽量 800 字以内。\n\n"
-        "## 已生成推荐报告\n\n"
+        + whitelist
+        + "\n\n## 已生成推荐报告\n\n"
         + report_markdown
     )
 
@@ -79,7 +87,7 @@ def stream_discovery_chat(
 
     report_markdown = discovery_report_to_markdown(report)
     messages = [
-        {"role": "system", "content": _discovery_chat_system_prompt(report_markdown)},
+        {"role": "system", "content": _discovery_chat_system_prompt(report_markdown, report)},
     ]
     for item in history:
         role = str(item.get("role", ""))
@@ -124,6 +132,14 @@ def stream_discovery_chat(
         yield json.dumps({"type": "token", "content": error_text}, ensure_ascii=False)
 
     assistant_content = "".join(assistant_parts).strip() or "（无回复内容）"
+    assistant_content, guard_notes = sanitize_discovery_chat_fund_codes(assistant_content, report)
+    if guard_notes:
+        unique_notes = list(dict.fromkeys(guard_notes))
+        assistant_content = (
+            assistant_content.rstrip()
+            + "\n\n> "
+            + "\n> ".join(unique_notes)
+        )
     assistant_record = save_discovery_chat_message(
         DiscoveryChatMessage(
             discovery_report_id=discovery_report_id,
