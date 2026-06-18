@@ -90,7 +90,7 @@ export function MarketTab() {
     refresh: refreshTheme,
   } = useCachedFetch({
     cacheKey: themeCacheKey,
-    staleTimeMs: 60_000,
+    staleTimeMs: 900_000,
     storage: "session",
     fetcher: () =>
       fetchMarketThemeBoards({

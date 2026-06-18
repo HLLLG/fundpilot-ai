@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  boardKindClass,
+  formatBoardKindLabel,
   formatConsecutiveDays,
   formatThemeBoardUpdatedAt,
+  formatThemeBoardUpdatedFromIso,
   formatThemePercent,
   formatThemeRank,
   themeBoardHeading,
@@ -38,5 +41,24 @@ describe("marketThemeBoard formatters", () => {
   it("formats updated timestamp", () => {
     const label = formatThemeBoardUpdatedAt(new Date(2026, 5, 18, 8, 12, 37));
     expect(label).toBe("更新于 06-18 08:12:37");
+  });
+
+  it("formats board kind labels", () => {
+    expect(formatBoardKindLabel("industry")).toBe("行业");
+    expect(formatBoardKindLabel("concept")).toBe("概念");
+    expect(formatBoardKindLabel("index")).toBe("指数");
+    expect(formatBoardKindLabel(undefined)).toBe("概念");
+  });
+
+  it("maps board kind to tone class", () => {
+    expect(boardKindClass("industry")).toContain("slate");
+    expect(boardKindClass("index")).toContain("violet");
+    expect(boardKindClass("concept")).toContain("amber");
+  });
+
+  it("formats updated timestamp from iso, falling back when empty", () => {
+    expect(formatThemeBoardUpdatedFromIso(null)).toBe("加载中…");
+    expect(formatThemeBoardUpdatedFromIso("not-a-date")).toBe("加载中…");
+    expect(formatThemeBoardUpdatedFromIso("2026-06-18T08:12:37").startsWith("更新于")).toBe(true);
   });
 });

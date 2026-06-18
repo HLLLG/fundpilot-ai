@@ -509,11 +509,13 @@ export type MarketBoardSort = "change" | "inflow";
 
 export type MarketThemeBoardSort = "change" | "streak";
 
+export type MarketThemeBoardKind = "industry" | "concept" | "index";
+
 export type MarketThemeBoardItem = {
   sector_label: string;
+  board_kind: MarketThemeBoardKind;
   change_1d_percent?: number | null;
   consecutive_up_days?: number | null;
-  linked_fund_count: number;
   held_fund_count: number;
   in_portfolio: boolean;
   rank?: number;
@@ -525,6 +527,7 @@ export type MarketThemeBoardResponse = {
   available: boolean;
   from_cache?: boolean;
   stale?: boolean;
+  refreshed_at?: string | null;
   message?: string | null;
   sort: MarketThemeBoardSort;
   items: MarketThemeBoardItem[];

@@ -1,11 +1,12 @@
 "use client";
 
 import { Loader2, RotateCcw } from "lucide-react";
-import { useEffect, useState } from "react";
 import type { MarketThemeBoardResponse } from "@/lib/api";
 import {
+  boardKindClass,
+  formatBoardKindLabel,
   formatConsecutiveDays,
-  formatThemeBoardUpdatedAt,
+  formatThemeBoardUpdatedFromIso,
   formatThemePercent,
   formatThemeRank,
   isMarketThemeBoardUsable,
@@ -28,13 +29,6 @@ export function ThemeSectorOverview({
   onRefresh,
 }: ThemeSectorOverviewProps) {
   const showData = isMarketThemeBoardUsable(data);
-  const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
-
-  useEffect(() => {
-    if (showData && !revalidating) {
-      setUpdatedAt(new Date());
-    }
-  }, [data, showData, revalidating]);
 
   return (
     <section className="overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--panel)] shadow-sm">
@@ -43,7 +37,7 @@ export function ThemeSectorOverview({
           <div className="min-w-0">
             <h2 className="text-lg font-bold tracking-tight text-slate-900 sm:text-xl">{themeBoardHeading()}</h2>
             <p className="mt-1 text-xs text-slate-400">
-              {updatedAt ? formatThemeBoardUpdatedAt(updatedAt) : "加载中…"}
+              {formatThemeBoardUpdatedFromIso(data?.refreshed_at)}
               {data?.stale ? " · 行情暂不可用" : ""}
             </p>
             {data?.message?.includes("连涨") ? (
@@ -96,6 +90,11 @@ export function ThemeSectorOverview({
                     <td className="py-3 pr-2">
                       <div className="flex flex-wrap items-center gap-1.5">
                         <span className="font-medium text-slate-900">{item.sector_label}</span>
+                        <span
+                          className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${boardKindClass(item.board_kind)}`}
+                        >
+                          {formatBoardKindLabel(item.board_kind)}
+                        </span>
                         {item.in_portfolio ? (
                           <span className="rounded bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700">
                             持仓

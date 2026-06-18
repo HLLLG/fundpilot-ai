@@ -17,6 +17,29 @@ export function formatThemeBoardUpdatedAt(date: Date): string {
   return `更新于 ${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
+export function formatThemeBoardUpdatedFromIso(iso: string | null | undefined): string {
+  if (!iso) {
+    return "加载中…";
+  }
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) {
+    return "加载中…";
+  }
+  return formatThemeBoardUpdatedAt(date);
+}
+
+export function formatBoardKindLabel(kind: string | null | undefined): string {
+  if (kind === "industry") return "行业";
+  if (kind === "index") return "指数";
+  return "概念";
+}
+
+export function boardKindClass(kind: string | null | undefined): string {
+  if (kind === "industry") return "bg-slate-100 text-slate-600";
+  if (kind === "index") return "bg-violet-100 text-violet-700";
+  return "bg-amber-100 text-amber-700";
+}
+
 export function formatThemeRank(rank: number | undefined, index: number): string {
   const value = rank ?? index + 1;
   return String(value).padStart(2, "0");
