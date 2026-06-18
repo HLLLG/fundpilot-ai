@@ -530,6 +530,62 @@ export type MarketThemeBoardResponse = {
   items: MarketThemeBoardItem[];
 };
 
+// --- 美股概览（市场 Tab · 美股子 Tab）-------------------------------------
+// 镜像后端 Pydantic 模型（models.py）。
+// 数据源状态：ok=本次真实采集；stale=采集失败但沿用上次真实缓存值；
+// unavailable=无可用数据（数值字段一律为 null，禁止占位常量/收盘价回退）。
+export type UsDataSourceStatus = "ok" | "stale" | "unavailable";
+// 美股交易时段（America/New_York，含夏令时）。
+export type UsSessionKind = "pre_market" | "regular" | "after_hours" | "closed";
+
+export type UsFuturesQuote = {
+  symbol: string; // NASDAQ_FUT | SP500_FUT | DOW_FUT
+  display_name: string; // 纳斯达克 / 标普500 / 道琼斯
+  /** status === "unavailable" 时为 null（禁止占位值） */
+  last_price?: number | null;
+  change_percent?: number | null;
+  quote_time?: string | null; // 数据时间戳（ISO，源采集时刻）
+  quote_caliber?: string | null; // futures_live | index_close | futures_night
+  status: UsDataSourceStatus;
+};
+
+export type UsdCnyQuote = {
+  /** status === "unavailable" 时为 null（禁止占位值） */
+  last_price?: number | null;
+  change_percent?: number | null;
+  quote_time?: string | null;
+  status: UsDataSourceStatus;
+};
+
+export type QdiiPremarketItem = {
+  fund_code: string;
+  fund_name: string;
+  tracking_target: string; // 跟踪标的（如「纳斯达克100」）
+  tracking_symbol?: string | null; // 映射到期货 symbol
+  /** 跟踪期货不可用/无映射时为 null（非承诺性预估） */
+  reference_change_percent?: number | null;
+  estimate_basis?: string | null; // 非承诺性预估说明
+  estimated_at?: string | null; // 天天基金 gztime（如有）
+};
+
+export type UsMarketSnapshot = {
+  session_kind: UsSessionKind;
+  session_label: string; // 盘前交易中 / 盘中 / 盘后 / 休市
+  et_date: string; // 美东日期
+  updated_at: string; // 采集时刻 ISO 时间戳
+  futures: UsFuturesQuote[]; // 固定 3 条
+  usd_cny: UsdCnyQuote;
+  qdii: QdiiPremarketItem[];
+  qdii_status: UsDataSourceStatus; // QDII 列表整体状态
+  qdii_estimated_at?: string | null; // 天天基金估值时间（如有）
+  futures_status: UsDataSourceStatus; // 期货整体状态（任一可用即 ok/stale）
+  forex_status: UsDataSourceStatus;
+  available: boolean; // 任一数据源可用即 true
+  from_cache?: boolean;
+  stale?: boolean;
+  message?: string | null;
+};
+
 export type DiscoveryChatMessage = {
   id: string;
   discovery_report_id: string;
@@ -986,6 +1042,22 @@ export async function fetchMarketThemeBoards(options?: {
   const response = await apiFetch(`${API_BASE}/api/market/theme-boards?${params}`, {
     cache: "no-store",
   });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export async function fetchUsMarketOverview(
+  forceRefresh = false,
+): Promise<UsMarketSnapshot> {
+  const params = new URLSearchParams();
+  if (forceRefresh) {
+    params.set("force_refresh", "true");
+  }
+  const query = params.toString();
+  const url = `${API_BASE}/api/market/us-overview${query ? `?${query}` : ""}`;
+  const response = await apiFetch(url, { cache: "no-store" });
   if (!response.ok) {
     throw new Error(await response.text());
   }

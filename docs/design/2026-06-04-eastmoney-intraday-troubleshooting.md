@@ -27,29 +27,28 @@
 - 015945 关联「商业航天」走 `90.BK0963`，优先 `trends2` + AkShare 概念分钟。
 - 旧链 `zs931151.html` 会 404，且代码本身不是电网设备主题。
 
-### 2. push2 主域被掐（已修：新增 push2delay）
+### 2. push2 主域被掐（已修：仅用 push2delay）
 
-所有 `push2his`、`push2` 子域在部分网络环境下返回 `RemoteDisconnected`（HTTP:000）。
+`push2` 主域在部分网络环境下返回 `RemoteDisconnected`（HTTP:000）。K 线 / 分时仅保留 **push2delay** 与少量 **push2** 子域备选。
 
-**解决方案：** 在 `_KLINE_URLS` 和 `_TRENDS2_URLS` 首位加入 `push2delay.eastmoney.com`，这是东财的 CDN 延迟节点，在 push2 主域不可用时仍可正常响应：
+**解决方案：** `_KLINE_URLS` / `_TRENDS2_URLS` 仅保留 `push2delay` 与少量 `push2` 子域备选；历史日 K 失败后走 sector-relay / AkShare：
 
 ```python
 # eastmoney_trends_client.py
 _KLINE_URLS = (
     "https://push2delay.eastmoney.com/api/qt/stock/kline/get",  # 首选
-    "https://push2his.eastmoney.com/api/qt/stock/kline/get",
+    "https://79.push2.eastmoney.com/api/qt/stock/kline/get",
     ...
 )
 _TRENDS2_URLS = (
     "https://push2delay.eastmoney.com/api/qt/stock/trends2/get",  # 首选
-    "https://push2his.eastmoney.com/api/qt/stock/trends2/get",
     ...
 )
 ```
 
 浏览器脚本 `sector-intraday-browser-command.mjs` 的 `hosts` 数组同步更新：
 ```javascript
-const hosts = ["push2delay.eastmoney.com", "push2his.eastmoney.com", ...];
+const hosts = ["push2delay.eastmoney.com", "88.push2.eastmoney.com", ...];
 ```
 
 ### 3. percent 值为小数形式而非百分比（已修：两处防御）
@@ -144,7 +143,7 @@ conn.commit()
 | 文件 | 职责 |
 |------|------|
 | `apps/api/app/services/sector_canonical.py` | 指数名 → source_code / eastmoney_secid 映射 |
-| `apps/api/app/services/eastmoney_trends_client.py` | push2delay/push2his kline+trends2 拉取、preKPrice 解析、日期范围 |
+| `apps/api/app/services/eastmoney_trends_client.py` | push2delay kline+trends2 拉取、preKPrice 解析、日期范围 |
 | `apps/api/app/services/sector_intraday_provider.py` | 分时缓存、骨架点过滤、小数形式检测、stale 回退 |
 | `apps/web/scripts/sector-intraday-browser-command.mjs` | Playwright 浏览器兜底拉取 |
 | `apps/web/src/components/IntradayPercentChart.tsx` | 对称 Y 轴、细线渲染 |

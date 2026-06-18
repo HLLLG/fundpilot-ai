@@ -8,6 +8,7 @@ from typing import Any, Literal
 from app.database import list_fund_primary_sectors
 from app.models import Holding
 from app.services.sector_daily_kline_provider import fetch_canonical_daily_kline_series
+from app.services.eastmoney_trends_client import fetch_eastmoney_kline_close_percent
 from app.services.akshare_spot_client import fetch_akshare_board_records, fetch_boards_via_akshare
 from app.services.sector_board_snapshot import get_sector_board_snapshot
 from app.services.fund_primary_sector_service import GLOBAL_FUND_SECTOR_SEEDS
@@ -15,6 +16,7 @@ from app.services.sector_labels import build_sector_candidates, normalize_sector
 from app.services.sector_canonical import (
     get_canonical_sector,
     get_quote_canonical_sector,
+    is_plausible_daily_change,
     list_discovery_sector_labels,
 )
 from app.services.sector_quote_cache import (
@@ -32,6 +34,12 @@ _LIVE_TTL_SECONDS = 60.0
 _CLOSED_TTL_SECONDS = 3600.0
 _CACHE_VERSION = "v2"
 _BUDGET_SECONDS = 12.0
+_STREAK_BUDGET_SECONDS = 20.0
+_STREAK_FETCH_TIMEOUT = 8.0
+_STREAK_UNAVAILABLE_HINT = (
+    "日涨幅已更新；连涨天数需近N日历史K线，当前暂未获取"
+    "（历史日K暂未获取，可配置 sector-relay 或 AkShare 板块日线）"
+)
 def compute_consecutive_up_days(
     series: list[dict],
     trade_date: str | None,
@@ -177,22 +185,21 @@ def get_theme_board_snapshot(
 
     stale_cached = get_spot_snapshot_any_age(cache_key)
     series_fetcher = fetch_series or _default_fetch_theme_series
-    spot_changes = _load_theme_spot_changes()
     items = _build_theme_board_items(
         trade_date=trade_date,
         fetch_series=series_fetcher,
-        spot_changes=spot_changes,
     )
     has_live_quotes = any(item.get("change_1d_percent") is not None for item in items)
 
     if items and has_live_quotes:
+        streak_hint = _theme_streak_unavailable_hint(items)
         snapshot_meta = {
             "trade_date": trade_date,
             "session_kind": session_kind,
             "available": True,
             "from_cache": False,
             "stale": False,
-            "message": None,
+            "message": streak_hint,
         }
         save_spot_snapshot(
             cache_key,
@@ -355,25 +362,23 @@ def _build_theme_board_items(
     *,
     trade_date: str | None,
     fetch_series,
-    spot_changes: dict[str, float] | None = None,
 ) -> list[dict[str, Any]]:
     labels = list_discovery_sector_labels()
     linked_counts = build_linked_fund_counts()
-    spot_map = spot_changes or _load_theme_spot_changes()
 
     rows: list[dict[str, Any]] = []
     for label in labels:
-        row = _theme_board_row_spot(label, trade_date, linked_counts.get(label, 0), spot_map)
+        row = _theme_board_row_base(label, linked_counts.get(label, 0))
         if row is not None:
             rows.append(row)
 
     deadline = time.monotonic() + _BUDGET_SECONDS
     executor = ThreadPoolExecutor(max_workers=min(6, max(len(rows), 1)))
-    futures = [
-        executor.submit(_enrich_theme_board_streak, row, trade_date, fetch_series)
+    change_futures = [
+        executor.submit(_enrich_theme_board_daily_change, row, trade_date)
         for row in rows
     ]
-    pending = set(futures)
+    pending = set(change_futures)
     try:
         while pending and time.monotonic() < deadline:
             remaining = deadline - time.monotonic()
@@ -386,40 +391,83 @@ def _build_theme_board_items(
                 try:
                     future.result()
                 except Exception as exc:
-                    logger.debug("theme board streak enrich failed: %s", exc)
+                    logger.debug("theme board daily change enrich failed: %s", exc)
     finally:
         executor.shutdown(wait=False, cancel_futures=True)
 
+    streak_deadline = time.monotonic() + _STREAK_BUDGET_SECONDS
+    streak_executor = ThreadPoolExecutor(max_workers=min(6, max(len(rows), 1)))
+    streak_futures = [
+        streak_executor.submit(_enrich_theme_board_streak, row, trade_date, fetch_series)
+        for row in rows
+    ]
+    pending = set(streak_futures)
+    try:
+        while pending and time.monotonic() < streak_deadline:
+            remaining = streak_deadline - time.monotonic()
+            done, pending = wait(
+                pending,
+                timeout=min(0.25, max(0.05, remaining)),
+                return_when=FIRST_COMPLETED,
+            )
+            for future in done:
+                try:
+                    future.result()
+                except Exception as exc:
+                    logger.debug("theme board streak enrich failed: %s", exc)
+    finally:
+        streak_executor.shutdown(wait=False, cancel_futures=True)
+
     for row in rows:
         row.pop("_canon", None)
-        row.pop("_trade_date", None)
 
     return [_strip_internal_theme_fields(row) for row in _merge_theme_board_rows(rows)]
 
 
-def _theme_board_row_spot(
+def _theme_board_row_base(
     label: str,
-    trade_date: str | None,
     linked_fund_count: int,
-    spot_changes: dict[str, float],
 ) -> dict[str, Any] | None:
     canon = get_quote_canonical_sector(label) or get_canonical_sector(label)
     if canon is None:
         return None
 
-    change_1d = _lookup_spot_change(label=label, canon=canon, spot_changes=spot_changes)
     return {
         "sector_label": label,
-        "change_1d_percent": change_1d,
+        "change_1d_percent": None,
         "consecutive_up_days": None,
         "linked_fund_count": linked_fund_count,
         "_canon": canon,
-        "_trade_date": trade_date,
     }
 
 
 def _strip_internal_theme_fields(row: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in row.items() if not str(key).startswith("_")}
+
+
+def _enrich_theme_board_daily_change(
+    row: dict[str, Any],
+    trade_date: str | None,
+) -> None:
+    canon = row.get("_canon")
+    if canon is None:
+        return
+
+    change = fetch_eastmoney_kline_close_percent(
+        canon.eastmoney_secid,
+        source_code=canon.source_code,
+        trade_date=trade_date,
+        timeout=4.0,
+        max_retries=1,
+    )
+    if change is not None and is_plausible_daily_change(change):
+        row["change_1d_percent"] = round(float(change), 2)
+        return
+
+    row["change_1d_percent"] = _lookup_spot_change_fallback(
+        label=str(row.get("sector_label", "")),
+        canon=canon,
+    )
 
 
 def _enrich_theme_board_streak(
@@ -428,21 +476,40 @@ def _enrich_theme_board_streak(
     fetch_series,
 ) -> None:
     canon = row.get("_canon")
+    if canon is None:
+        return
+
+    series = fetch_series(canon)
+    if row.get("change_1d_percent") is None and series:
+        row["change_1d_percent"] = _latest_change_percent(series, trade_date)
+    if series:
+        row["consecutive_up_days"] = compute_consecutive_up_days(series, trade_date)
+
+
+def _lookup_spot_change_fallback(*, label: str, canon) -> float | None:
+    """日 K 全失败时再用现货榜模糊匹配（与持仓 canonical K 线口径不一致，仅作兜底）。"""
     try:
-        if canon is None:
-            return
-        series = fetch_series(canon)
-        if row.get("change_1d_percent") is None:
-            row["change_1d_percent"] = _latest_change_percent(series, trade_date)
-        if series:
-            row["consecutive_up_days"] = compute_consecutive_up_days(series, trade_date)
-    finally:
-        row.pop("_canon", None)
-        row.pop("_trade_date", None)
+        spot_changes = _load_theme_spot_changes()
+    except Exception as exc:
+        logger.debug("theme spot fallback failed: %s", exc)
+        return None
+    return _lookup_spot_change(label=label, canon=canon, spot_changes=spot_changes)
 
 
 def _default_fetch_theme_series(canon) -> list[dict]:
-    return fetch_canonical_daily_kline_series(canon, max_days=20, timeout=4.0)
+    return fetch_canonical_daily_kline_series(
+        canon,
+        max_days=20,
+        timeout=_STREAK_FETCH_TIMEOUT,
+    )
+
+
+def _theme_streak_unavailable_hint(items: list[dict[str, Any]]) -> str | None:
+    if any(item.get("consecutive_up_days") is not None for item in items):
+        return None
+    if not any(item.get("change_1d_percent") is not None for item in items):
+        return None
+    return _STREAK_UNAVAILABLE_HINT
 
 
 def _sort_theme_items(items: list[dict[str, Any]], *, sort: SortMode) -> list[dict[str, Any]]:

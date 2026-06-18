@@ -194,7 +194,7 @@ async function fetchJson(page, url) {
 
 async function manualMinuteFetch(page, secid, tradeDate) {
   const ymd = (tradeDate || "").replace(/-/g, "");
-  const hosts = ["push2delay.eastmoney.com", "push2his.eastmoney.com", "79.push2his.eastmoney.com", "88.push2.eastmoney.com"];
+  const hosts = ["push2delay.eastmoney.com", "88.push2.eastmoney.com", "79.push2.eastmoney.com"];
   const begEnds = ymd ? [[ymd, ymd], ["0", "20500000"]] : [["0", "20500000"]];
   const preferKline = secid.startsWith("2.");
 

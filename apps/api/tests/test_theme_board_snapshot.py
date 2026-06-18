@@ -6,6 +6,7 @@ from app.services.theme_board_snapshot import (
     compute_consecutive_up_days,
     _lookup_spot_change,
     _merge_theme_board_rows,
+    _theme_streak_unavailable_hint,
 )
 
 
@@ -86,6 +87,44 @@ def test_merge_theme_board_rows_fills_all_labels():
     assert by_label["医药"]["change_1d_percent"] is None
 
 
+def test_enrich_theme_board_prefers_kline_over_spot(monkeypatch):
+    from app.services.sector_canonical import get_canonical_sector
+
+    canon = get_canonical_sector("半导体")
+    assert canon is not None
+    row = {
+        "sector_label": "半导体",
+        "change_1d_percent": 4.13,
+        "consecutive_up_days": None,
+        "linked_fund_count": 1,
+        "_canon": canon,
+    }
+
+    def fake_series(_canon):
+        return [
+            {"date": "2026-06-16", "change_percent": 1.0},
+            {"date": "2026-06-17", "change_percent": 6.91},
+        ]
+
+    monkeypatch.setattr(
+        "app.services.theme_board_snapshot._load_theme_spot_changes",
+        lambda: {"半导体": 4.13},
+    )
+    monkeypatch.setattr(
+        "app.services.theme_board_snapshot.fetch_eastmoney_kline_close_percent",
+        lambda *args, **kwargs: 6.91,
+    )
+    from app.services.theme_board_snapshot import (
+        _enrich_theme_board_daily_change,
+        _enrich_theme_board_streak,
+    )
+
+    _enrich_theme_board_daily_change(row, "2026-06-17")
+    _enrich_theme_board_streak(row, "2026-06-17", fake_series)
+    assert row["change_1d_percent"] == 6.91
+    assert row["consecutive_up_days"] == 2
+
+
 def test_lookup_spot_change_fuzzy_match():
     from app.services.sector_canonical import get_canonical_sector
 
@@ -93,3 +132,11 @@ def test_lookup_spot_change_fuzzy_match():
     assert canon is not None
     spot = {"医药医疗": 1.23, "半导体": 2.0}
     assert _lookup_spot_change(label="医药", canon=canon, spot_changes=spot) == 1.23
+
+
+def test_theme_streak_unavailable_hint():
+    assert _theme_streak_unavailable_hint([{"change_1d_percent": 1.0}]) is not None
+    assert _theme_streak_unavailable_hint(
+        [{"change_1d_percent": 1.0, "consecutive_up_days": 2}]
+    ) is None
+    assert _theme_streak_unavailable_hint([{"change_1d_percent": None}]) is None

@@ -600,3 +600,43 @@ def test_fund_discovery_async_offline(client, monkeypatch):
     raise AssertionError(
         f"discovery job timeout (last status={job.get('status')}, stage={job.get('stage')})"
     )
+
+
+def test_market_us_overview_smoke(client: TestClient):
+    response = client.get("/api/market/us-overview")
+    assert response.status_code == 200
+    body = response.json()
+
+    # 时段字段
+    assert body["session_kind"] == "pre_market"
+    assert body["session_label"] == "盘前交易中"
+
+    # 期货：3 个品种 + 数值字段齐全
+    assert isinstance(body["futures"], list)
+    assert len(body["futures"]) == 3
+    symbols = {item["symbol"] for item in body["futures"]}
+    assert {"NASDAQ_FUT", "SP500_FUT", "DOW_FUT"} <= symbols
+    assert body["futures"][0]["last_price"] is not None
+
+    # USD/CNY 汇率
+    assert body["usd_cny"]["last_price"] == 6.8096
+    assert body["usd_cny"]["status"] == "ok"
+
+    # 方案 A：QDII 列表默认关闭
+    assert isinstance(body["qdii"], list)
+    assert body["qdii"] == []
+    assert body["qdii_status"] == "unavailable"
+    assert body["futures_status"] == "ok"
+    assert body["forex_status"] == "ok"
+    assert body["available"] is True
+
+
+def test_market_us_overview_force_refresh(client: TestClient):
+    response = client.get("/api/market/us-overview?force_refresh=true")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["available"] is True
+    assert body["session_kind"] == "pre_market"
+    assert len(body["futures"]) == 3
+    assert body["usd_cny"]["last_price"] == 6.8096
+    assert body["qdii"] == []

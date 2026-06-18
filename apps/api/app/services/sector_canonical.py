@@ -20,7 +20,7 @@ SpotBoard = dict[str, float]
 
 """养基宝常见「关联板块」→ 东财标准板块（名称 + secid）。
 
-板块涨跌与分时图统一走东财 push2his K 线（收盘相对昨收），不再依赖 AkShare/批量板块表/天天基金估值。
+板块涨跌与分时图统一走东财 push2delay K 线 / trends2（收盘相对昨收），不再依赖 AkShare/批量板块表/天天基金估值。
 """
 
 

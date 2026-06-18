@@ -93,6 +93,8 @@ class Settings(BaseSettings):
     cloudbase_custom_login_key_path: Path | None = None
     cloudbase_api_base_url: str = "https://tcb-api.tencentcloudapi.com"
     cloudbase_auth_dev_mode: bool = False
+    # 方案 A 默认关闭：美股 Tab 仅展示指数 + 汇率，不拉 QDII 穿透估值
+    us_market_qdii_enabled: bool = False
 
     @field_validator("cloudbase_custom_login_key_path", mode="before")
     @classmethod

@@ -304,7 +304,7 @@ def fetch_board_daily_kline_series(
     source_code: str | None = None,
     max_days: int = 400,
 ) -> list[dict[str, str | float | None]] | None:
-    """东财 push2his 不可达时，用 AkShare 板块日 K 作回测兜底（子进程隔离）。"""
+    """东财日 K 直连不可达时，用 AkShare 板块日 K 作回测兜底（子进程隔离）。"""
     board_type = (source_type or "").strip().lower()
     if board_type not in {"concept", "industry"}:
         return None

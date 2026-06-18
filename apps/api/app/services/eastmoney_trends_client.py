@@ -23,35 +23,18 @@ _HEADERS = {
 
 _EM_COMMON_PARAMS = {"invt": "2", "fltt": "2"}
 
-# 指数页 K 线走 push2his（与 zz/2.931994 浏览器一致）；push2 在部分网络下 ERR_EMPTY_RESPONSE
+# 东财 K 线 / 分时：首选 push2delay；历史日 K 同池尝试后走 sector-relay / AkShare
 _KLINE_URLS = (
     "https://push2delay.eastmoney.com/api/qt/stock/kline/get",
-    "https://push2his.eastmoney.com/api/qt/stock/kline/get",
-    "https://79.push2his.eastmoney.com/api/qt/stock/kline/get",
     "https://79.push2.eastmoney.com/api/qt/stock/kline/get",
     "https://88.push2.eastmoney.com/api/qt/stock/kline/get",
-    "https://91.push2his.eastmoney.com/api/qt/stock/kline/get",
-)
-
-# 日 K 历史走 push2his（与 AkShare stock_board_*_hist_em 一致）；push2delay 对概念板块常返回空 klines
-_DAILY_KLINE_URLS = (
-    "https://91.push2his.eastmoney.com/api/qt/stock/kline/get",
-    "https://50.push2his.eastmoney.com/api/qt/stock/kline/get",
-    "https://push2his.eastmoney.com/api/qt/stock/kline/get",
-    "https://79.push2his.eastmoney.com/api/qt/stock/kline/get",
-    "https://17.push2his.eastmoney.com/api/qt/stock/kline/get",
-    "https://32.push2his.eastmoney.com/api/qt/stock/kline/get",
-    "https://push2delay.eastmoney.com/api/qt/stock/kline/get",
 )
 
 _TRENDS2_URLS = (
     "https://push2delay.eastmoney.com/api/qt/stock/trends2/get",
-    "https://push2his.eastmoney.com/api/qt/stock/trends2/get",
-    "https://79.push2his.eastmoney.com/api/qt/stock/trends2/get",
     "https://push2.eastmoney.com/api/qt/stock/trends2/get",
     "https://79.push2.eastmoney.com/api/qt/stock/trends2/get",
     "https://88.push2.eastmoney.com/api/qt/stock/trends2/get",
-    "https://91.push2his.eastmoney.com/api/qt/stock/trends2/get",
 )
 
 # 浏览器 zz 页 kline 用 fa5fd…；旧 push2 分钟接口用 7eea…
@@ -193,7 +176,7 @@ def _fetch_daily_kline_series(
                 params = dict(base_params)
                 if ut:
                     params["ut"] = ut
-                for url in _DAILY_KLINE_URLS:
+                for url in _KLINE_URLS:
                     try:
                         response = session.get(
                             url, params=params, timeout=timeout, proxies=proxies

@@ -4,10 +4,12 @@
 >
 > **维护：** 功能或架构有实质变化时，同步更新「能力清单」「数据流」「API」「目录」「环境变量」。
 
-**文档版本：** 2026-06-17（市场 Tab — 主题板块）
+**文档版本：** 2026-06-18（主题板块口径 · 东财 push2delay）
 
 **更新记录：**
-- **市场 Tab — 主题板块（2026-06-17）：** 市场 Tab 子 Tab「全市场 | 主题板块」；`GET /api/market/theme-boards`（canonical 19 主题：日涨幅、连涨天数、关联基金数、我的持仓）；**日涨幅**优先 AkShare/全市场现货榜 + 模糊名匹配（如「医药」→「医药医疗」），**连涨天数**走 `sector_daily_kline_provider`（东财 → relay → AkShare 板块/指数日 K）；仅在有有效涨跌时缓存（`theme:boards:v2`）；`discovery_sector_heat` 共用日 K provider。设计见 `docs/superpowers/specs/2026-06-17-market-theme-boards-design.md`。
+- **主题板块口径与 UI（2026-06-18）：** `GET /api/market/theme-boards` **日涨幅**改 canonical secid + `fetch_eastmoney_kline_close_percent`（**push2delay** trends2，与持有页一致）；不再用全市场现货榜模糊匹配。连涨天数仍走 `sector_daily_kline_provider`（push2delay 日 K → relay → AkShare）；历史日 K 不可达时列显示 `—` 并提示配置 relay。前端 `ThemeSectorOverview` 对齐小倍「今日板块涨幅榜」：排名/板块/连涨天数/涨跌幅；固定按涨幅排序（移除连涨榜 Tab）；持仓行「持仓」标签；`marketThemeBoard.ts` 格式化 helper + vitest。
+- **东财 K 线去 push2his（2026-06-18）：** `eastmoney_trends_client` / 浏览器分时脚本 / 美股指数 clist 仅保留 **push2delay** + 少量 **push2** 子域；历史日 K 失败后走 sector-relay / AkShare。运维文档同步。
+- **市场 Tab — 主题板块（2026-06-17）：** 市场 Tab 子 Tab「全市场 | 主题板块 | 美股」；`GET /api/market/theme-boards`（canonical 21 主题：日涨幅、连涨天数、我的持仓）；缓存 `theme:boards:v2`；设计见 `docs/superpowers/specs/2026-06-17-market-theme-boards-design.md`。
 - **市场 Tab — 板块表现（2026-06-17）：** 底部导航新增「市场」Tab；`GET /api/market/sector-boards`（`view=widget|list`）拉取东财行业/概念涨跌幅与主力净流入（`f3`/`f62`），服务端 `sector_board_snapshot` + `sector_quote_cache`（盘中 60s / 收盘 1h）；前端 `MarketTab` / `SectorPerformanceCard` / `HotSectorList` + `useCachedFetch` session 缓存。设计见 `docs/superpowers/specs/2026-06-17-market-sector-performance-design.md`。
 - **持仓恢复与荐基体验修复（2026-06-16）：** `GET /api/portfolio/holdings` 默认 `enrich_loaded_holdings(with_network=False)` 快速返回快照/档案，移除 `main.py` 重复 enrich；份额×净值与官方净值覆盖仍由 `POST /api/holdings/refresh-sector-quotes` 完成。`GET /api/fund-discovery/sectors` 改 `build_sector_heat_ranking_for_ui()`（轻量当日涨跌、12s 总预算、超时仍返回 19 个板块标签）；`FundDiscoveryPanel` 关注方向仅挂载时拉取、本地缓存 + 20s 超时，持仓刷新不再反复请求；历史列表请求失败保留已有数据。`DiscoveryHistoryRail` 对齐 `HistoryRail` 支持**批量删除**；单测新增 `test_discovery_sector_heat.py`（**203** 项总量）。
 - **CI / 单元测试加速（2026-06-16）：** GitHub Actions `api` job 使用 `pytest-xdist` 并行（`-n auto --dist loadscope`）、pip 缓存、CI 环境关闭 OCR 预加载/新闻/回测/战术调优；`tests/conftest.py` 统一 stub 交易日历、东财行情、板块热度，强制 SQLite（`FUND_AI_DATABASE_URL=""`）；移除重复/集成慢测，保留核心 API/OCR/持仓/荐基守卫等 **199** 项；单测超时 30s；本地串行约 40s。详见 README「验证」与 `.github/workflows/ci.yml`。
@@ -15,7 +17,7 @@
 - **荐基候选池名称修复（2026-06-16）：** `discovery_candidate_pool._resolve_fund_name()` — 全局种子/主关联板块映射不再使用 `种子基金 {code}` 占位，改东财名称表 `lookup_fund_name_by_code` → 档案 → 代码回退。
 - **后台任务浮层（2026-06-16）：** `BackgroundJobsStack` 于 `Dashboard` 层堆叠 `JobStatusFloat` + `DiscoveryJobStatusFloat`；荐基 `discoveryJobId` 提升为 Dashboard 状态，切 Tab 不丢进度、不与日报浮层互相遮挡；扫描中按钮显示「扫描进行中…」。
 - **持仓金额同步说明（2026-06-16）：** OCR/板块刷新路径下 `enrich_loaded_holdings(with_network=True)` 会按档案份额×净值重算 `holding_amount`；**启动恢复**默认 `with_network=False` 用快照展示，避免 AkShare 子进程拖慢首页。重新上传总览截图可 `force_reset_shares` 对齐养基宝。
-- **板块信号回测修复（2026-06-16）：** 概念板块日 K 改优先 `push2his`（`91.push2his` + AkShare 同款 `smplmt`/`lmt`/日期范围）；拉取链：**东财 → sector-relay `/kline/daily` → AkShare 子进程**；**仅 `has_data=true` 时缓存 24h**（避免空结果被锁一天）；`SectorSignalBacktestPanel` 仍在「生成日报」诊断区，日报正文已移除快照面板。
+- **板块信号回测修复（2026-06-16）：** 概念板块日 K 走 **push2delay**（AkShare 同款 `smplmt`/`lmt`/日期范围）；拉取链：**东财 push2delay → sector-relay `/kline/daily` → AkShare 子进程**；**仅 `has_data=true` 时缓存 24h**（避免空结果被锁一天）；`SectorSignalBacktestPanel` 仍在「生成日报」诊断区，日报正文已移除快照面板。
 - **日报 UI 精简（2026-06-16）：** 移除日报内「今日三行结论」「分析上下文」「板块信号回测快照」「与上一份日报对比」「系统计算事实 + 风险提醒」；`建议复盘` 移至调仓示意下方且默认折叠；主题要闻标题可点原文、去掉底部「新闻原文出处」；移除前端 `DatabaseBackupPanel`（后端 export/import API 仍保留）。
 - **追问侧栏体验（2026-06-16）：** `useChatAutoScroll` — 用户上滑时不强制贴底，右下角「回到底部」；侧栏加高/加宽；设计见 `docs/superpowers/specs/2026-06-16-chat-ux-optimization-design.md`。
 - **登录持久化（2026-06-16）：** `AuthProvider` 启动 bootstrap 失败重试 5 次；仅 HTTP **401** 清 token（网络错误不清）；登录/注册 401 不 wipe 已有 token。
@@ -55,7 +57,7 @@
 - **持有收益展示（2026-06-07）：** 盘中 `持有收益 ≈ 昨日结算 + 板块涨跌`；官方净值公布后直接使用 OCR/档案中的含当日总值，不再叠加当日收益。
 - **文档整理（2026-06-06）：** 合并历史迭代要点；`docs/design/` 仅保留分时 push2 运维 runbook，其余设计稿删除，以本文为准。
 - **官方净值收益：** 收盘后以官方 T-day NAV 收益率替换板块估算；三层源标签（板块实时 / 收盘估算 / 官方净值）；修复周末日期回溯。
-- **板块 canonical：** 养基宝常见板块名 → 东财 `secid` 硬编码映射（`sector_canonical.py`）；涨跌与分时统一走 push2 K 线。
+- **板块 canonical：** 养基宝常见板块名 → 东财 `secid` 硬编码映射（`sector_canonical.py`）；涨跌与分时统一走 **push2delay** K 线 / trends2。
 - **分时 / push2：** 见 [design/2026-06-04-eastmoney-intraday-troubleshooting.md](design/2026-06-04-eastmoney-intraday-troubleshooting.md)（931994 电网设备、push2delay、骨架点与小数形式防御）。
 
 ---
@@ -79,7 +81,8 @@
 | 首页看板 | **持有** Tab：`YangjibaoHoldingsBoard` 养基宝式卡片（`AddHoldingModal` 上传支付宝/养基宝截图）；启动 `GET /api/portfolio/holdings` 恢复持仓并自动刷新板块；点击行打开 `YangjibaoFundDetail` |
 | 基金详情 | 关联板块分时图（边框/十字线）；**业绩走势**（区间涨跌 vs 沪深300、历史净值分页）；**我的收益**；持有天数滚轮选购入日；持仓明细默认收起 |
 | 盈亏分析 | **盈亏分析** Tab：`PortfolioDashboard` — 收益走势（当日/周/月/年/全部）、盈亏日历、当日 TOP5、持仓甜甜圈；`GET /api/portfolio/dashboard` |
-| 市场板块 | **市场** Tab：`MarketTab` — 子 Tab「全市场 | 主题板块」；全市场：`SectorPerformanceCard` + `HotSectorList`（`GET /api/market/sector-boards`，东财→AkShare→relay）；主题：`ThemeSectorOverview`（`GET /api/market/theme-boards`，现货榜模糊匹配 + 日 K 连涨） |
+| 市场板块 | **市场** Tab：`MarketTab` — 子 Tab「全市场 \| 主题板块 \| 美股」；全市场：`SectorPerformanceCard` + `HotSectorList`；主题：`ThemeSectorOverview`（`GET /api/market/theme-boards`，canonical 日涨幅 **push2delay** + 连涨日 K fallback；小倍式涨幅榜 UI） |
+| 美股概览 | **市场** Tab 第三子 Tab「美股」：`UsMarketOverview`（`GET /api/market/us-overview`）— 纳指/标普/道指**指数期货**（真实期货，禁回退收盘价）+ USD/CNY 汇率指标卡 + QDII「盘前参考涨跌」列表（基于期货盘前涨跌估算，标注非承诺性预估）；美东时段标签（盘前/盘中/盘后/休市，含夏令时）+ 更新时间；服务端 snapshot + 时段感知 TTL（盘前/盘中 ≤60s、休市更长）+ 优雅降级（`*_status` 标 `ok`/`stale`/`unavailable`，绝不编造数值）；前端时段感知刷新（盘前/盘中 45s、其余 5min、不可见暂停） |
 | 风控 | 浮亏线、单只集中度、**期望投入总额**（滑条 1–10 万）、**投资预设**（稳健持有 / 激进波段）、`decision_style`（`conservative` / `tactical` / **`aggressive`**）、扣费止盈参数、**偏定投** / **拒绝追高**；`InvestorProfile` 持久化 + localStorage |
 | 波段盯盘 | `swing_alert_engine` + `swing_alert_service`；`POST /api/swing-alerts/evaluate`、`GET /api/swing-alerts/today`；持有 Tab `SwingAlertsPanel`；`useSwingAlerts` 15min 自动评估 + 桌面通知；高级设置：手续费%/净赚%/盯盘范围 |
 | 报告 | 组合摘要 + `fund_recommendations` + `topic_briefs` + `market_news`；`analysis_facts`；守卫 + 深度 `report_judge` |
@@ -155,6 +158,7 @@ fundpilot-ai/
 │       ├── holding_validation.py / holding_metrics.py / holding_estimates.py / holding_amount_sync.py / holding_detail_service.py
 │       ├── sector_quote_service.py / sector_quote_provider.py / sector_quote_resolver.py / sector_canonical.py
 │       ├── sector_board_snapshot.py / theme_board_snapshot.py / sector_daily_kline_provider.py  # 市场 Tab 全市场/主题板块
+│       ├── us_market_service.py / us_*_client.py  # 市场 Tab 美股概览
 │       ├── fund_nav_service.py / eastmoney_spot_client.py / eastmoney_trends_client.py
 │       ├── akshare_spot_client.py / sector_on_demand.py / sector_intraday_provider.py
 │       ├── sector_intraday_browser_provider.py / sector_quote_browser_provider.py / sector_quote_relay_provider.py
@@ -370,7 +374,8 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | GET | `/api/discovery-prompt` | 读取荐基 AI 角色设定；含 `role_prompt`、`is_custom`、`default_role_prompt` |
 | PUT | `/api/discovery-prompt` | 保存荐基角色设定；body `{ role_prompt }`，`null`/空串恢复默认 |
 | GET | `/api/market/sector-boards` | 全市场板块行情：`view=widget`（Top3 摘要）或 `view=list` + `board_type` + `sort`；`force_refresh` 跳过缓存 |
-| GET | `/api/market/theme-boards` | 主题板块（canonical 19）：`sort=change\|streak`；日涨幅优先现货榜模糊匹配，连涨天数走日 K 多级 fallback；含关联基金数、我的持仓；`force_refresh` 跳过缓存 |
+| GET | `/api/market/theme-boards` | 主题板块（canonical 21）：默认 `sort=change`（日涨幅降序）；日涨幅 **canonical + push2delay**；连涨天数走日 K fallback；含我的持仓；`force_refresh` 跳过缓存 |
+| GET | `/api/market/us-overview` | 美股概览快照（`UsMarketSnapshot`）：纳指/标普/道指**指数期货** + USD/CNY 汇率 + QDII「盘前参考涨跌」列表 + 美东时段（`session_kind`/`session_label`，含夏令时）+ `updated_at`；`force_refresh` 跳过服务端时段感知缓存；无需 JWT；任一数据源失败仍返回 200，经 `futures_status`/`forex_status`/`qdii_status`/`available`/`stale`/`message` 表达陈旧或不可用，绝不回退收盘价或编造数值 |
 | GET | `/api/fund-discovery/sectors` | 荐基关注方向 chips：`build_sector_heat_ranking_for_ui()`（当日涨跌轻量拉取、12s 预算；超时回退全部标签）；扫描 pipeline 仍用完整 `build_sector_heat_ranking()` |
 | POST | `/api/fund-discovery/async` | 创建推荐基金异步任务；body `DiscoveryRequest` |
 | GET | `/api/fund-discovery/reports` | 最近 30 条推荐报告 |

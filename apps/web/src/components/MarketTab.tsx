@@ -1,11 +1,16 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
-import type { MarketBoardSort, MarketBoardType, MarketThemeBoardSort } from "@/lib/api";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type {
+  MarketBoardSort,
+  MarketBoardType,
+  UsSessionKind,
+} from "@/lib/api";
 import {
   fetchMarketSectorBoardList,
   fetchMarketSectorBoardWidget,
   fetchMarketThemeBoards,
+  fetchUsMarketOverview,
 } from "@/lib/api";
 import { buildClientCacheKey } from "@/lib/clientCache";
 import {
@@ -21,25 +26,30 @@ import {
   saveMarketSubTab,
   type MarketSubTab,
 } from "@/lib/marketThemeBoard";
+import { acceptUsMarketFresh, usRefreshIntervalMs } from "@/lib/usMarketOverview";
 import { useCachedFetch } from "@/lib/useCachedFetch";
 import { HotSectorList } from "@/components/HotSectorList";
 import { SectorPerformanceCard } from "@/components/SectorPerformanceCard";
 import { ThemeSectorOverview } from "@/components/ThemeSectorOverview";
 import { TradingSessionBar } from "@/components/TradingSessionBar";
+import { UsMarketOverview } from "@/components/UsMarketOverview";
 
 export function MarketTab() {
   const [subTab, setSubTab] = useState<MarketSubTab>(() => loadMarketSubTab());
   const [metric, setMetric] = useState<"change" | "inflow">("change");
   const [boardType, setBoardType] = useState<MarketBoardType>("industry");
   const [sort, setSort] = useState<MarketBoardSort>("change");
-  const [themeSort, setThemeSort] = useState<MarketThemeBoardSort>("change");
+  // 美股快照的时段类型独立追踪：用作 staleTimeMs/刷新间隔的输入，
+  // 避免在 useCachedFetch 选项里前向引用其自身返回的 data。
+  const [usSessionKind, setUsSessionKind] = useState<UsSessionKind>("closed");
   const listRef = useRef<HTMLDivElement>(null);
   const forceListRefreshRef = useRef(false);
   const forceThemeRefreshRef = useRef(false);
 
   const widgetCacheKey = buildClientCacheKey("market-sector-boards-widget");
   const listCacheKey = buildClientCacheKey("market-sector-boards-list", boardType, sort);
-  const themeCacheKey = buildClientCacheKey("market-theme-boards", themeSort);
+  const themeCacheKey = buildClientCacheKey("market-theme-boards", "change");
+  const usCacheKey = buildClientCacheKey("market-us-overview");
 
   const {
     data: widgetData,
@@ -84,12 +94,71 @@ export function MarketTab() {
     storage: "session",
     fetcher: () =>
       fetchMarketThemeBoards({
-        sort: themeSort,
+        sort: "change",
         forceRefresh: forceThemeRefreshRef.current,
       }),
     keepPreviousUnless: acceptMarketThemeBoardFresh,
     enabled: subTab === "themes",
   });
+
+  const {
+    data: usData,
+    loading: usLoading,
+    revalidating: usRevalidating,
+    refresh: refreshUs,
+  } = useCachedFetch({
+    cacheKey: usCacheKey,
+    staleTimeMs: usRefreshIntervalMs(usSessionKind),
+    storage: "session",
+    fetcher: () => fetchUsMarketOverview(),
+    keepPreviousUnless: acceptUsMarketFresh,
+    enabled: subTab === "us",
+  });
+
+  // 同步最新快照的时段，驱动 staleTimeMs 与下方自动刷新间隔。
+  useEffect(() => {
+    if (usData?.session_kind && usData.session_kind !== usSessionKind) {
+      setUsSessionKind(usData.session_kind);
+    }
+  }, [usData?.session_kind, usSessionKind]);
+
+  // 时段感知自动刷新：仅在「美股」子 Tab 且页面可见时运行，
+  // subTab 切走或 document.hidden 时清除定时器（Req 5.1/5.2/5.3）。
+  useEffect(() => {
+    if (subTab !== "us") {
+      return;
+    }
+    const intervalMs = usRefreshIntervalMs(usData?.session_kind ?? "closed");
+    let timer: number | null = null;
+    const start = () => {
+      if (timer == null) {
+        timer = window.setInterval(() => {
+          void refreshUs();
+        }, intervalMs);
+      }
+    };
+    const stop = () => {
+      if (timer != null) {
+        window.clearInterval(timer);
+        timer = null;
+      }
+    };
+    const handleVisibility = () => {
+      if (document.hidden) {
+        stop();
+      } else {
+        start();
+      }
+    };
+    if (!document.hidden) {
+      start();
+    }
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => {
+      stop();
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, [subTab, usData?.session_kind, refreshUs]);
 
   const handleSubTabChange = useCallback((next: MarketSubTab) => {
     setSubTab(next);
@@ -140,6 +209,14 @@ export function MarketTab() {
         >
           主题板块
         </button>
+        <button
+          type="button"
+          className="tab-segment-btn"
+          aria-pressed={subTab === "us"}
+          onClick={() => handleSubTabChange("us")}
+        >
+          美股
+        </button>
       </div>
 
       {subTab === "market" ? (
@@ -165,18 +242,18 @@ export function MarketTab() {
             />
           </div>
         </>
-      ) : (
+      ) : subTab === "themes" ? (
         <ThemeSectorOverview
           data={themeData}
           loading={themeLoading && !isMarketThemeBoardUsable(themeData)}
           revalidating={themeRevalidating}
-          sort={themeSort}
-          onSortChange={setThemeSort}
           onRefresh={handleRefreshTheme}
         />
+      ) : (
+        <UsMarketOverview data={usData} loading={usLoading} revalidating={usRevalidating} />
       )}
 
-      {footerDate ? (
+      {subTab !== "us" && footerDate ? (
         <p className="text-center text-xs text-slate-400">
           数据日期 {footerDate}
           {footerRevalidating

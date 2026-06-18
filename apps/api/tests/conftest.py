@@ -219,6 +219,114 @@ def _stub_market_data_fetches(monkeypatch):
         },
     )
 
+    # 美股概览：避免子进程拉取真实期货 / 外汇源（需求 7 stub，任务 7.1）。
+    monkeypatch.setattr(
+        "app.services.us_futures_client.fetch_us_index_futures",
+        lambda: [
+            {
+                "symbol": "NASDAQ_FUT",
+                "display_name": "纳斯达克",
+                "last_price": 19850.5,
+                "change_percent": 0.62,
+                "quote_time": "2026-06-17T08:12:00-04:00",
+            },
+            {
+                "symbol": "SP500_FUT",
+                "display_name": "标普500",
+                "last_price": 5510.25,
+                "change_percent": 0.41,
+                "quote_time": "2026-06-17T08:12:00-04:00",
+            },
+            {
+                "symbol": "DOW_FUT",
+                "display_name": "道琼斯",
+                "last_price": 40120.0,
+                "change_percent": 0.28,
+                "quote_time": "2026-06-17T08:12:00-04:00",
+            },
+        ],
+    )
+    monkeypatch.setattr("app.services.us_market_service.fetch_us_index_spot", lambda: None)
+    monkeypatch.setattr(
+        "app.services.us_market_service.fetch_fund_estimates_for_codes",
+        lambda *_a, **_k: {},
+    )
+    monkeypatch.setattr(
+        "app.services.us_market_service.fetch_stock_changes_for_holdings",
+        lambda *_a, **_k: {},
+    )
+    monkeypatch.setattr(
+        "app.services.us_market_service.load_qdii_holdings_batch",
+        lambda *_a, **_k: {},
+    )
+    monkeypatch.setattr(
+        "app.services.us_forex_client.fetch_usd_cny",
+        lambda: {
+            "last_price": 6.8096,
+            "change_percent": -0.02,
+            "quote_time": "2026-06-17",
+            "source": "currency_boc_safe",
+            "stale": False,
+            "frequency": "daily",
+        },
+    )
+    # API 路由在模块加载时导入该符号；提供确定性 snapshot stub 供 smoke 测试。
+    from app.models import (
+        UsdCnyQuote,
+        UsFuturesQuote,
+        UsMarketSnapshot,
+    )
+
+    def _stub_us_market_snapshot(**_kwargs):
+        return UsMarketSnapshot(
+            session_kind="pre_market",
+            session_label="盘前交易中",
+            et_date="2026-06-17",
+            updated_at="2026-06-17T08:12:30-04:00",
+            futures=[
+                UsFuturesQuote(
+                    symbol="NASDAQ_FUT",
+                    display_name="纳斯达克",
+                    last_price=19850.5,
+                    change_percent=0.62,
+                    quote_time="2026-06-17T08:12:00-04:00",
+                    status="ok",
+                ),
+                UsFuturesQuote(
+                    symbol="SP500_FUT",
+                    display_name="标普500",
+                    last_price=5510.25,
+                    change_percent=0.41,
+                    quote_time="2026-06-17T08:12:00-04:00",
+                    status="ok",
+                ),
+                UsFuturesQuote(
+                    symbol="DOW_FUT",
+                    display_name="道琼斯",
+                    last_price=40120.0,
+                    change_percent=0.28,
+                    quote_time="2026-06-17T08:12:00-04:00",
+                    status="ok",
+                ),
+            ],
+            usd_cny=UsdCnyQuote(
+                last_price=6.8096,
+                change_percent=-0.02,
+                quote_time="2026-06-17",
+                status="ok",
+            ),
+            qdii=[],
+            qdii_status="unavailable",
+            futures_status="ok",
+            forex_status="ok",
+            available=True,
+            from_cache=False,
+            stale=False,
+            message=None,
+        )
+
+    monkeypatch.setattr("app.main.get_us_market_snapshot", _stub_us_market_snapshot)
+
 
 @pytest.fixture(autouse=True)
 def _auth_env(monkeypatch, tmp_path):

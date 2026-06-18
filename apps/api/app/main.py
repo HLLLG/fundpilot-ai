@@ -90,6 +90,7 @@ from app.services.sector_board_snapshot import (
     get_sector_board_snapshot,
 )
 from app.services.theme_board_snapshot import get_theme_board_snapshot
+from app.services.us_market_service import get_us_market_snapshot
 from app.services.ocr_pipeline import apply_confirmed_holdings, run_ocr_upload_pipeline
 from app.services.report_diff import diff_reports
 from app.services.report_chat import stream_report_chat
@@ -458,6 +459,18 @@ def market_theme_boards(
         holdings=holdings,
         sort=sort,  # type: ignore[arg-type]
     )
+
+
+@app.get("/api/market/us-overview")
+def market_us_overview(force_refresh: bool = False) -> dict:
+    """美股概览：纳指/标普/道指期货 + USD/CNY + QDII 盘前参考涨跌。
+
+    任何数据源失败均返回 200，通过各 ``*_status`` / ``available`` / ``stale`` /
+    ``message`` 表达降级（需求 7），绝不抛 5xx、绝不编造数值。``force_refresh``
+    跳过服务端缓存重新聚合（需求 4.5）。与其它 ``/api/market/*`` 接口一致，无需 JWT。
+    """
+    snapshot = get_us_market_snapshot(force_refresh=force_refresh)
+    return snapshot.model_dump(mode="json")
 
 
 @app.post("/api/fund-discovery/async")

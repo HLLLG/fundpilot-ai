@@ -431,3 +431,59 @@ class SaveSectorMappingRequest(BaseModel):
     source_type: SectorSourceType
     source_name: str
     source_code: str | None = None
+
+
+# --- 美股概览（market Tab · 美股子 Tab）---------------------------------------
+# 数据源状态：ok=本次真实采集成功；stale=采集失败但沿用上次真实缓存值；
+# unavailable=无可用数据（数值字段一律为 None，禁止占位常量/收盘价回退）。
+DataSourceStatus = Literal["ok", "stale", "unavailable"]
+# 美股交易时段（America/New_York，含夏令时）。
+UsSessionKind = Literal["pre_market", "regular", "after_hours", "closed"]
+
+
+class UsFuturesQuote(BaseModel):
+    symbol: str  # NASDAQ_FUT | SP500_FUT | DOW_FUT
+    display_name: str  # 纳斯达克 / 标普500 / 道琼斯
+    # status != "ok"/"stale" 时（即 unavailable）必须为 None，禁止占位值。
+    last_price: float | None = None
+    change_percent: float | None = None
+    quote_time: str | None = None  # 数据时间戳（ISO，源采集时刻）
+    quote_caliber: str | None = None  # futures_live | index_close | futures_night
+    status: DataSourceStatus = "unavailable"
+
+
+class UsdCnyQuote(BaseModel):
+    # status == "unavailable" 时必须为 None，禁止填占位常量。
+    last_price: float | None = None
+    change_percent: float | None = None
+    quote_time: str | None = None
+    status: DataSourceStatus = "unavailable"
+
+
+class QdiiPremarketItem(BaseModel):
+    fund_code: str
+    fund_name: str
+    tracking_target: str  # 跟踪标的（如「纳斯达克100」）
+    tracking_symbol: str | None = None  # 映射到期货 symbol
+    # 跟踪期货不可用/无映射时必须为 None（非承诺性预估，禁止编造）。
+    reference_change_percent: float | None = None
+    estimate_basis: str | None = None  # 非承诺性预估说明
+    estimated_at: str | None = None  # 天天基金 gztime（如有）
+
+
+class UsMarketSnapshot(BaseModel):
+    session_kind: UsSessionKind
+    session_label: str  # 盘前交易中 / 盘中 / 盘后 / 休市
+    et_date: str  # 美东日期
+    updated_at: str  # 采集时刻 ISO 时间戳（需求 4.6）
+    futures: list[UsFuturesQuote]  # 固定 3 条
+    usd_cny: UsdCnyQuote
+    qdii: list[QdiiPremarketItem]
+    qdii_status: DataSourceStatus  # QDII 列表整体状态
+    qdii_estimated_at: str | None = None  # 天天基金估值时间（如有）
+    futures_status: DataSourceStatus  # 期货整体状态（任一可用即 ok/stale）
+    forex_status: DataSourceStatus
+    available: bool  # 任一数据源可用即 True
+    from_cache: bool = False
+    stale: bool = False
+    message: str | None = None

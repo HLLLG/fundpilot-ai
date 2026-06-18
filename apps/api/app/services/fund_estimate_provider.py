@@ -25,6 +25,36 @@ _HEADERS = {
 }
 
 
+def fetch_fund_estimates_for_codes(
+    fund_codes: list[str],
+    *,
+    timeout_seconds: float = 8.0,
+) -> dict[str, dict[str, Any]]:
+    """按基金代码批量拉取天天基金 ``fundgz`` 估值（``gszzl`` 涨跌幅）。"""
+    codes = sorted({str(code).strip() for code in fund_codes if str(code).strip()})
+    if not codes:
+        return {}
+
+    per_code_timeout = max(0.8, min(3.0, timeout_seconds / max(len(codes), 1)))
+    results: dict[str, dict[str, Any]] = {}
+    max_workers = min(8, len(codes))
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(_fetch_fund_estimate_quote_for_code, code, per_code_timeout): code
+            for code in codes
+        }
+        for future in as_completed(futures):
+            code = futures[future]
+            try:
+                payload = future.result()
+            except Exception as exc:
+                logger.info("fundgz worker failed for %s: %s", code, exc)
+                continue
+            if payload is not None:
+                results[code] = payload
+    return results
+
+
 def fetch_fund_estimate_quotes(
     holdings: list[Holding],
     *,

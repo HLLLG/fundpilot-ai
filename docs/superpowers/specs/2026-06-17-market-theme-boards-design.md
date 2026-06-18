@@ -248,22 +248,22 @@ export function fetchMarketThemeBoards(opts?: { sort?, forceRefresh? }): Promise
 ### 日 K 拉取链（共用 `sector_daily_kline_provider.py`）
 
 ```
-东财板块日 K → sector-relay /kline/daily → AkShare 板块日 K → 新浪/AkShare 指数日 K
+东财 push2delay 日 K → sector-relay /kline/daily → AkShare 板块日 K → 新浪/AkShare 指数日 K
 ```
 
 `discovery_sector_heat`、`sector_signal_backtest` 已复用该 provider。
 
-### 主题板块数据策略（`theme_board_snapshot.py`）
+### 主题板块数据策略（`theme_board_snapshot.py`，2026-06-18）
 
-1. **日涨幅（`change_1d_percent`）**：优先 AkShare/全市场现货榜 + **模糊名匹配**（如「医药」→「医药医疗」）；可复用 `sector_board_snapshot` 缓存。
-2. **连涨天数**：后台并行拉日 K，12s 预算内 `wait()` + `shutdown(wait=False, cancel_futures=True)`，避免 ThreadPool 阻塞响应。
-3. **缓存**：`theme:boards:v2:{trade_date}`；仅当 `has_live_quotes=true` 时写入；始终返回 19 行骨架。
-4. **持仓叠加**：`resolve_holding_to_discovery_label` + secid 区分「半导体」与「中证半导体」等同名指数。
+1. **日涨幅（`change_1d_percent`）**：`fetch_eastmoney_kline_close_percent`（canonical secid，**push2delay** trends2）；失败才回退现货榜模糊匹配。
+2. **连涨天数**：独立阶段并行拉 `sector_daily_kline_provider`（push2delay 日 K → relay → AkShare）；20s 预算。
+3. **缓存**：`theme:boards:v2:{trade_date}`；仅当 `has_live_quotes=true` 时写入。
+4. **前端**：仅「今日板块涨幅榜」；列：排名、板块名称、连涨/连跌天数、涨跌幅；持仓行浅蓝 + 「持仓」标签。
 
-### 东财不可用时的表现
+### 东财 K 线节点（2026-06-18）
 
-- 全市场层：AkShare 现货榜 → sector-relay 兜底。
-- 主题层：现货榜模糊匹配仍可填充部分日涨幅；连涨天数依赖日 K fallback 链，可能为 `—`。
+- **仅用 push2delay**（+ 少量 push2 备选）；**已移除 push2his 直连**。
+- 历史日 K 不可达时：sector-relay、`akshare_subprocess` 板块/指数 hist。
 
 ### 测试
 
