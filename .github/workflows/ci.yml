@@ -46,6 +46,8 @@ jobs:
           cache-dependency-path: apps/web/package-lock.json
       - name: Install frontend dependencies
         run: npm ci
+        env:
+          NPM_CONFIG_REGISTRY: https://registry.npmjs.org/
       - name: Lint
         run: npm run lint
       - name: Typecheck
@@ -78,6 +80,8 @@ jobs:
           pip install --retries 10 --default-timeout=120 -r requirements.txt
       - name: Install frontend
         run: npm ci
+        env:
+          NPM_CONFIG_REGISTRY: https://registry.npmjs.org/
       - name: Install Playwright
         run: npx playwright install --with-deps chromium
       - name: Run smoke tests
