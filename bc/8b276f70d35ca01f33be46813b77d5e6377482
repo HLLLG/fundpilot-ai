@@ -1,0 +1,29 @@
+apps/web/.npmrc
+  s_889eb5918fcf08::t_7e0a1b97abcd23 1
+.github/workflows/deploy-web.yml
+  s_889eb5918fcf08::t_237e20c9fa1070 42-43
+.github/workflows/ci.yml
+  s_889eb5918fcf08::t_ba788045498f3a 83-84
+  s_889eb5918fcf08::t_cb2d00d0e5dd01 49-50
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.17-trip",
+  "base_commit_sha": "bc8b276f70d35ca01f33be46813b77d5e6377482",
+  "prompts": {},
+  "humans": {
+    "h_375fc341ff3baa": {
+      "author": "hegl <HLLLG@github.com>"
+    }
+  },
+  "sessions": {
+    "s_889eb5918fcf08": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "bfba0bcd-c805-40f6-9225-ecd30989e860",
+        "model": "composer-2.5"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
