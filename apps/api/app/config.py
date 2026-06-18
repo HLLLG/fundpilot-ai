@@ -95,6 +95,10 @@ class Settings(BaseSettings):
     cloudbase_auth_dev_mode: bool = False
     # 方案 A 默认关闭：美股 Tab 仅展示指数 + 汇率，不拉 QDII 穿透估值
     us_market_qdii_enabled: bool = False
+    # 主题板块后台刷新：daemon 线程时段感知（盘中 15min / 收盘 1h），前台只读缓存
+    theme_board_refresh_enabled: bool = True
+    theme_board_refresh_interval_seconds: int = 900
+    theme_board_refresh_idle_interval_seconds: int = 3600
 
     @field_validator("cloudbase_custom_login_key_path", mode="before")
     @classmethod

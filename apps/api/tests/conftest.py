@@ -91,6 +91,14 @@ def _stub_market_data_fetches(monkeypatch):
         lambda _board_type: [],
     )
     monkeypatch.setattr(
+        "app.services.theme_board_snapshot.fetch_eastmoney_board_records",
+        lambda _board_type: [],
+    )
+    monkeypatch.setattr(
+        "app.services.theme_board_snapshot.fetch_canonical_daily_kline_series",
+        lambda *_args, **_kwargs: [],
+    )
+    monkeypatch.setattr(
         "app.services.theme_board_snapshot._load_theme_spot_changes",
         lambda: {},
     )
@@ -194,23 +202,24 @@ def _stub_market_data_fetches(monkeypatch):
             "available": True,
             "from_cache": True,
             "stale": False,
+            "refreshed_at": "2026-06-17T06:00:00+00:00",
             "message": None,
             "sort": _kwargs.get("sort", "change"),
             "items": [
                 {
                     "sector_label": "商业航天",
+                    "board_kind": "concept",
                     "change_1d_percent": 2.78,
                     "consecutive_up_days": 5,
-                    "linked_fund_count": 2,
                     "held_fund_count": 0,
                     "in_portfolio": False,
                     "rank": 1,
                 },
                 {
-                    "sector_label": "半导体",
+                    "sector_label": "电子",
+                    "board_kind": "industry",
                     "change_1d_percent": 1.21,
                     "consecutive_up_days": 3,
-                    "linked_fund_count": 1,
                     "held_fund_count": 0,
                     "in_portfolio": False,
                     "rank": 2,
@@ -336,6 +345,7 @@ def _auth_env(monkeypatch, tmp_path):
     monkeypatch.setenv("FUND_AI_OCR_PRELOAD", "false")
     monkeypatch.setenv("FUND_AI_SECTOR_SIGNAL_BACKTEST_ENABLED", "false")
     monkeypatch.setenv("FUND_AI_TACTICAL_PROMPT_TUNING_ENABLED", "false")
+    monkeypatch.setenv("FUND_AI_THEME_BOARD_REFRESH_ENABLED", "false")
     refresh_settings()
     yield
 

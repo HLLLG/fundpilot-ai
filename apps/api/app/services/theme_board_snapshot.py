@@ -3,20 +3,18 @@ from __future__ import annotations
 import logging
 import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from datetime import datetime, timezone
 from typing import Any, Literal
 
-from app.database import list_fund_primary_sectors
 from app.models import Holding
 from app.services.sector_daily_kline_provider import fetch_canonical_daily_kline_series
-from app.services.eastmoney_trends_client import fetch_eastmoney_kline_close_percent
 from app.services.akshare_spot_client import fetch_akshare_board_records, fetch_boards_via_akshare
+from app.services.eastmoney_spot_client import fetch_eastmoney_board_records
 from app.services.sector_board_snapshot import get_sector_board_snapshot
-from app.services.fund_primary_sector_service import GLOBAL_FUND_SECTOR_SEEDS
-from app.services.sector_labels import build_sector_candidates, normalize_sector_label
 from app.services.sector_canonical import (
+    CanonicalSector,
     get_canonical_sector,
     get_quote_canonical_sector,
-    is_plausible_daily_change,
     list_discovery_sector_labels,
 )
 from app.services.sector_quote_cache import (
@@ -29,17 +27,25 @@ from app.services.trading_session import build_trading_session
 logger = logging.getLogger(__name__)
 
 SortMode = Literal["change", "streak"]
+BoardKind = Literal["industry", "concept", "index"]
 
 _LIVE_TTL_SECONDS = 60.0
 _CLOSED_TTL_SECONDS = 3600.0
-_CACHE_VERSION = "v2"
-_BUDGET_SECONDS = 12.0
-_STREAK_BUDGET_SECONDS = 20.0
-_STREAK_FETCH_TIMEOUT = 8.0
-_STREAK_UNAVAILABLE_HINT = (
-    "日涨幅已更新；连涨天数需近N日历史K线，当前暂未获取"
-    "（历史日K暂未获取，可配置 sector-relay 或 AkShare 板块日线）"
-)
+_CACHE_VERSION = "v3"
+_REFRESH_BUDGET_SECONDS = 90.0
+_SERIES_TIMEOUT = 8.0
+_MAX_WORKERS = 8
+
+_INTRADAY_SESSIONS = {
+    "trading_day_intraday",
+    "trading_day_pre_close",
+    "trading_day_pre_open",
+}
+
+
+# ---------------------------------------------------------------------------
+# 连涨天数
+# ---------------------------------------------------------------------------
 def compute_consecutive_up_days(
     series: list[dict],
     trade_date: str | None,
@@ -70,56 +76,210 @@ def compute_consecutive_up_days(
     return streak
 
 
-def build_linked_fund_counts() -> dict[str, int]:
-    labels = list_discovery_sector_labels()
-    by_sector: dict[str, set[str]] = {label: set() for label in labels}
-
-    for code, seed in GLOBAL_FUND_SECTOR_SEEDS.items():
-        sector_name = seed.get("sector_name")
-        if sector_name in by_sector:
-            by_sector[str(sector_name)].add(str(code).zfill(6))
-
-    for row in list_fund_primary_sectors():
-        sector_name = row.get("sector_name")
-        fund_code = str(row.get("fund_code", "")).strip().zfill(6)
-        if sector_name in by_sector and fund_code:
-            by_sector[str(sector_name)].add(fund_code)
-
-    return {label: len(codes) for label, codes in by_sector.items()}
+# ---------------------------------------------------------------------------
+# 板块全集（行业全量 + canonical 概念/指数，去重）
+# ---------------------------------------------------------------------------
+def _board_kind_from_source_type(source_type: str) -> BoardKind:
+    if source_type in {"industry", "concept", "index"}:
+        return source_type  # type: ignore[return-value]
+    return "concept"
 
 
-def resolve_holding_to_discovery_label(sector_name: str | None) -> str | None:
-    canon = get_quote_canonical_sector(sector_name) or get_canonical_sector(sector_name)
+def list_theme_board_universe() -> list[dict[str, Any]]:
+    """行业 spot 全量 + 21 canonical 概念/指数，按 secid 去重；canonical 优先。
+
+    每项：``sector_label``、``secid``、``source_code``、``board_kind``、``_canon``。
+    行业 spot 拉取失败时退化为仅 canonical，保证不空榜。
+    """
+    by_secid: dict[str, dict[str, Any]] = {}
+
+    # 1) canonical 概念/指数（优先，精确 secid，能与持仓精确匹配）
+    for label in list_discovery_sector_labels():
+        quote_canon = get_quote_canonical_sector(label) or get_canonical_sector(label)
+        if quote_canon is None:
+            continue
+        # board_kind 取语义类型（半导体=概念），与拉数据/匹配用的 quote secid 解耦，
+        # 避免「半导体」因分时优先指数而被标成「指数」。
+        semantic_canon = get_canonical_sector(label) or quote_canon
+        by_secid.setdefault(
+            quote_canon.eastmoney_secid,
+            {
+                "sector_label": label,
+                "secid": quote_canon.eastmoney_secid,
+                "source_code": quote_canon.source_code,
+                "board_kind": _board_kind_from_source_type(semantic_canon.source_type),
+                "_canon": quote_canon,
+            },
+        )
+
+    # 2) 行业 spot 全量（同 secid 不覆盖 canonical）
+    try:
+        rows = fetch_eastmoney_board_records("industry")
+    except Exception as exc:
+        logger.info("theme universe industry spot failed: %s", exc)
+        rows = []
+
+    for row in rows:
+        name = str(row.get("name", "")).strip()
+        code = str(row.get("code", "")).strip()
+        if not name or not code:
+            continue
+        quote_canon = get_quote_canonical_sector(name) or get_canonical_sector(name)
+        resolved_secid = quote_canon.eastmoney_secid if quote_canon else f"90.{code}"
+        if resolved_secid in by_secid:
+            continue
+        semantic_canon = get_canonical_sector(name) or quote_canon
+        by_secid[resolved_secid] = {
+            "sector_label": name,
+            "secid": resolved_secid,
+            "source_code": (quote_canon.source_code if quote_canon else code),
+            "board_kind": (
+                _board_kind_from_source_type(semantic_canon.source_type)
+                if semantic_canon
+                else "industry"
+            ),
+            "_canon": quote_canon,
+        }
+
+    return list(by_secid.values())
+
+
+# ---------------------------------------------------------------------------
+# 后台刷新：同源拉日 K 算 change + streak，写缓存
+# ---------------------------------------------------------------------------
+def _fetch_universe_series(
+    secid: str,
+    source_code: str | None = None,
+    *,
+    canon: CanonicalSector | None = None,
+    timeout: float = _SERIES_TIMEOUT,
+) -> list[dict]:
+    """按 secid 拉 push2delay 日 K 序列（→ relay → AkShare）。"""
     if canon is None:
-        return None
-    labels = list_discovery_sector_labels()
-    for label in labels:
-        label_canon = get_quote_canonical_sector(label) or get_canonical_sector(label)
-        if label_canon and label_canon.eastmoney_secid == canon.eastmoney_secid:
-            return label
-    return canon.label if canon.label in labels else None
+        source_type = "index" if str(secid).startswith("2.") else "concept"
+        canon = CanonicalSector(
+            label=secid,
+            source_type=source_type,
+            source_name=secid,
+            eastmoney_secid=secid,
+            source_code=source_code,
+        )
+    return fetch_canonical_daily_kline_series(canon, max_days=20, timeout=timeout)
 
 
-def count_held_funds_by_sector(holdings: list[Holding]) -> dict[str, int]:
-    labels = list_discovery_sector_labels()
-    counts = {label: 0 for label in labels}
+def refresh_theme_board_snapshot(*, trade_date: str | None = None) -> dict[str, Any]:
+    """后台刷新主体：~100 板块并行拉日 K，算 change + streak，写缓存并返回快照。"""
+    session = build_trading_session()
+    resolved_date = trade_date or session.get("effective_trade_date")
+    session_kind = session.get("session_kind", "")
+    universe = list_theme_board_universe()
+
+    def enrich(entry: dict[str, Any]) -> dict[str, Any]:
+        secid = entry["secid"]
+        series = _fetch_universe_series(
+            secid,
+            entry.get("source_code"),
+            canon=entry.get("_canon"),
+        )
+        change = _latest_change_percent(series, resolved_date) if series else None
+        streak = compute_consecutive_up_days(series, resolved_date) if series else None
+        return {
+            "sector_label": entry["sector_label"],
+            "board_kind": entry["board_kind"],
+            "secid": secid,
+            "change_1d_percent": change,
+            "consecutive_up_days": streak,
+        }
+
+    def base_row(entry: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "sector_label": entry["sector_label"],
+            "board_kind": entry["board_kind"],
+            "secid": entry["secid"],
+            "change_1d_percent": None,
+            "consecutive_up_days": None,
+        }
+
+    items: list[dict[str, Any]] = []
+    deadline = time.monotonic() + _REFRESH_BUDGET_SECONDS
+    executor = ThreadPoolExecutor(max_workers=min(_MAX_WORKERS, max(len(universe), 1)))
+    futures = {executor.submit(enrich, entry): entry for entry in universe}
+    pending = set(futures)
+    try:
+        while pending and time.monotonic() < deadline:
+            remaining = deadline - time.monotonic()
+            done, pending = wait(
+                pending,
+                timeout=min(0.5, max(0.05, remaining)),
+                return_when=FIRST_COMPLETED,
+            )
+            for future in done:
+                entry = futures[future]
+                try:
+                    items.append(future.result())
+                except Exception as exc:
+                    logger.debug("theme universe enrich failed: %s", exc)
+                    items.append(base_row(entry))
+        # 超预算未完成的板块用基础行补齐（change/streak=None）
+        for future in pending:
+            items.append(base_row(futures[future]))
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
+
+    # 日 K 缺失涨跌幅的板块，用行业现货榜按板块名兜底
+    missing = [item for item in items if item["change_1d_percent"] is None]
+    if missing:
+        try:
+            spot_changes = _load_theme_spot_changes()
+        except Exception as exc:
+            logger.debug("theme spot fallback failed: %s", exc)
+            spot_changes = {}
+        for item in missing:
+            change = spot_changes.get(item["sector_label"])
+            if change is not None:
+                item["change_1d_percent"] = round(float(change), 2)
+
+    snapshot = {
+        "items": items,
+        "trade_date": resolved_date,
+        "session_kind": session_kind,
+        "refreshed_at": datetime.now(timezone.utc).isoformat(),
+    }
+    save_spot_snapshot(f"theme:boards:{_CACHE_VERSION}:{resolved_date}", snapshot)
+    return snapshot
+
+
+# ---------------------------------------------------------------------------
+# 持仓叠加 + payload
+# ---------------------------------------------------------------------------
+def _holding_secids(holdings: list[Holding]) -> dict[str, int]:
+    counts: dict[str, int] = {}
     for holding in holdings:
-        resolved = resolve_holding_to_discovery_label(holding.sector_name)
-        if resolved in counts:
-            counts[resolved] += 1
+        canon = get_quote_canonical_sector(holding.sector_name) or get_canonical_sector(
+            holding.sector_name
+        )
+        if canon is None:
+            continue
+        counts[canon.eastmoney_secid] = counts.get(canon.eastmoney_secid, 0) + 1
     return counts
 
 
-def apply_holdings_overlay(items: list[dict[str, Any]], holdings: list[Holding]) -> list[dict[str, Any]]:
-    held_counts = count_held_funds_by_sector(holdings)
-    return [
-        {
-            **item,
-            "held_fund_count": held_counts.get(str(item.get("sector_label")), 0),
-            "in_portfolio": held_counts.get(str(item.get("sector_label")), 0) > 0,
-        }
-        for item in items
-    ]
+def apply_holdings_overlay(
+    items: list[dict[str, Any]],
+    holdings: list[Holding],
+) -> list[dict[str, Any]]:
+    held = _holding_secids(holdings or [])
+    overlaid: list[dict[str, Any]] = []
+    for item in items:
+        count = held.get(str(item.get("secid")), 0)
+        overlaid.append(
+            {
+                **item,
+                "held_fund_count": count,
+                "in_portfolio": count > 0,
+            }
+        )
+    return overlaid
 
 
 def build_theme_board_payload(
@@ -131,13 +291,17 @@ def build_theme_board_payload(
 ) -> dict[str, Any]:
     overlaid = apply_holdings_overlay(items, holdings or [])
     sorted_items = _sort_theme_items(overlaid, sort=sort)
-    ranked = [{**row, "rank": index + 1} for index, row in enumerate(sorted_items)]
+    ranked = [
+        {**_strip_internal_theme_fields(row), "rank": index + 1}
+        for index, row in enumerate(sorted_items)
+    ]
     return {
         "trade_date": snapshot_meta.get("trade_date"),
         "session_kind": snapshot_meta.get("session_kind"),
         "available": snapshot_meta.get("available", False),
         "from_cache": snapshot_meta.get("from_cache", False),
         "stale": snapshot_meta.get("stale", False),
+        "refreshed_at": snapshot_meta.get("refreshed_at"),
         "message": snapshot_meta.get("message"),
         "sort": sort,
         "items": ranked,
@@ -149,136 +313,79 @@ def get_theme_board_snapshot(
     force_refresh: bool = False,
     holdings: list[Holding] | None = None,
     sort: SortMode = "change",
-    fetch_series=None,
 ) -> dict[str, Any]:
+    """只读缓存 + 持仓叠加；缓存为空或 force_refresh 时同步刷新一次兜底。"""
     session = build_trading_session()
     trade_date = session.get("effective_trade_date")
     session_kind = session.get("session_kind", "")
-    cache_ttl = (
-        _LIVE_TTL_SECONDS
-        if session_kind in {"trading_day_intraday", "trading_day_pre_close"}
-        else _CLOSED_TTL_SECONDS
-    )
     cache_key = f"theme:boards:{_CACHE_VERSION}:{trade_date}"
 
-    cached_items: list[dict[str, Any]] | None = None
-    snapshot_meta: dict[str, Any]
-
+    cached: dict[str, Any] | None = None
     if not force_refresh:
-        cached = get_spot_snapshot(cache_key, ttl_seconds=cache_ttl)
-        if cached and cached.get("items"):
-            cached_items = list(cached["items"])
-            snapshot_meta = {
-                "trade_date": cached.get("trade_date", trade_date),
-                "session_kind": cached.get("session_kind", session_kind),
-                "available": True,
-                "from_cache": True,
-                "stale": False,
-                "message": cached.get("message"),
-            }
-            return build_theme_board_payload(
-                cached_items,
-                sort=sort,
-                snapshot_meta=snapshot_meta,
-                holdings=holdings,
-            )
+        # 后台线程负责新鲜度；前台接受任意时段缓存，秒出。
+        cached = get_spot_snapshot_any_age(cache_key)
 
-    stale_cached = get_spot_snapshot_any_age(cache_key)
-    series_fetcher = fetch_series or _default_fetch_theme_series
-    items = _build_theme_board_items(
-        trade_date=trade_date,
-        fetch_series=series_fetcher,
-    )
-    has_live_quotes = any(item.get("change_1d_percent") is not None for item in items)
+    if cached is None or force_refresh:
+        cached = refresh_theme_board_snapshot(trade_date=trade_date)
+        from_cache = False
+    else:
+        from_cache = True
 
-    if items and has_live_quotes:
-        streak_hint = _theme_streak_unavailable_hint(items)
-        snapshot_meta = {
-            "trade_date": trade_date,
-            "session_kind": session_kind,
-            "available": True,
-            "from_cache": False,
-            "stale": False,
-            "message": streak_hint,
-        }
-        save_spot_snapshot(
-            cache_key,
-            {
-                "items": items,
-                "trade_date": trade_date,
-                "session_kind": session_kind,
-            },
-        )
-        return build_theme_board_payload(
-            items,
-            sort=sort,
-            snapshot_meta=snapshot_meta,
-            holdings=holdings,
-        )
-
-    if items:
-        snapshot_meta = {
-            "trade_date": trade_date,
-            "session_kind": session_kind,
-            "available": True,
-            "from_cache": False,
-            "stale": True,
-            "message": "行情暂不可用，仅展示板块列表",
-        }
-        return build_theme_board_payload(
-            items,
-            sort=sort,
-            snapshot_meta=snapshot_meta,
-            holdings=holdings,
-        )
-
-    if stale_cached and stale_cached.get("items"):
-        snapshot_meta = {
-            "trade_date": stale_cached.get("trade_date", trade_date),
-            "session_kind": stale_cached.get("session_kind", session_kind),
-            "available": True,
-            "from_cache": True,
-            "stale": True,
-            "message": "行情更新失败，展示上次缓存数据",
-        }
-        return build_theme_board_payload(
-            _merge_theme_board_rows(list(stale_cached["items"])),
-            sort=sort,
-            snapshot_meta=snapshot_meta,
-            holdings=holdings,
-        )
-
+    items = list(cached.get("items") or [])
+    available = bool(items)
     snapshot_meta = {
-        "trade_date": trade_date,
-        "session_kind": session_kind,
-        "available": True,
-        "from_cache": False,
+        "trade_date": cached.get("trade_date", trade_date),
+        "session_kind": cached.get("session_kind", session_kind),
+        "available": available,
+        "from_cache": from_cache,
         "stale": False,
-        "message": "行情暂不可用，仅展示板块列表",
+        "refreshed_at": cached.get("refreshed_at"),
+        "message": None if available else "行情暂不可用，请稍后重试",
     }
     return build_theme_board_payload(
-        _merge_theme_board_rows([]),
+        items,
         sort=sort,
         snapshot_meta=snapshot_meta,
         holdings=holdings,
     )
 
 
-def _merge_theme_board_rows(partial: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    by_label = {row["sector_label"]: row for row in partial}
-    linked_counts = build_linked_fund_counts()
-    merged: list[dict[str, Any]] = []
-    for label in list_discovery_sector_labels():
-        row = by_label.get(label) or {
-                "sector_label": label,
-                "change_1d_percent": None,
-                "consecutive_up_days": None,
-                "linked_fund_count": linked_counts.get(label, 0),
-            }
-        merged.append(_strip_internal_theme_fields(row))
-    return merged
+# ---------------------------------------------------------------------------
+# 后台刷新线程
+# ---------------------------------------------------------------------------
+def _refresh_enabled() -> bool:
+    from app.config import get_settings
+
+    return bool(get_settings().theme_board_refresh_enabled)
 
 
+def theme_board_refresh_loop() -> None:
+    """时段感知 daemon 循环：启动预热一次，盘中 15min / 收盘 1h 刷新。"""
+    from app.config import get_settings
+
+    try:
+        refresh_theme_board_snapshot()
+    except Exception as exc:
+        logger.info("theme board initial refresh failed: %s", exc)
+
+    while True:
+        settings = get_settings()
+        session_kind = build_trading_session().get("session_kind", "")
+        interval = (
+            settings.theme_board_refresh_interval_seconds
+            if session_kind in _INTRADAY_SESSIONS
+            else settings.theme_board_refresh_idle_interval_seconds
+        )
+        time.sleep(max(60, int(interval)))
+        try:
+            refresh_theme_board_snapshot()
+        except Exception as exc:
+            logger.info("theme board refresh failed: %s", exc)
+
+
+# ---------------------------------------------------------------------------
+# 现货榜兜底（仅日 K 全失败时）
+# ---------------------------------------------------------------------------
 def _load_theme_spot_changes() -> dict[str, float]:
     """批量现货涨跌幅：优先复用全市场板块缓存，失败再走 AkShare。"""
     changes: dict[str, float] = {}
@@ -318,198 +425,11 @@ def _load_theme_spot_changes() -> dict[str, float]:
     return changes
 
 
-def _spot_name_matches(candidate_label: str, spot_name: str) -> bool:
-    if candidate_label == spot_name:
-        return True
-    if len(candidate_label) < 2:
-        return False
-    if "商业航天" in candidate_label:
-        return "商业航天" in spot_name
-    if "国防军工" in candidate_label:
-        return "国防军工" in spot_name or spot_name == "军工"
-    if candidate_label in spot_name:
-        return len(spot_name) - len(candidate_label) <= 6
-    if spot_name in candidate_label:
-        return True
-    return False
-
-
-def _lookup_spot_change(
-    *,
-    label: str,
-    canon,
-    spot_changes: dict[str, float],
-) -> float | None:
-    if not spot_changes:
-        return None
-    for key in (label, canon.label, canon.source_name):
-        cleaned = normalize_sector_label(key)
-        if cleaned and cleaned in spot_changes:
-            return round(float(spot_changes[cleaned]), 2)
-
-    candidates: list[str] = []
-    for key in (label, canon.label, canon.source_name):
-        candidates.extend(build_sector_candidates(key))
-
-    for spot_name, change in spot_changes.items():
-        for candidate in candidates:
-            if _spot_name_matches(candidate, spot_name):
-                return round(float(change), 2)
-    return None
-
-
-def _build_theme_board_items(
-    *,
-    trade_date: str | None,
-    fetch_series,
-) -> list[dict[str, Any]]:
-    labels = list_discovery_sector_labels()
-    linked_counts = build_linked_fund_counts()
-
-    rows: list[dict[str, Any]] = []
-    for label in labels:
-        row = _theme_board_row_base(label, linked_counts.get(label, 0))
-        if row is not None:
-            rows.append(row)
-
-    deadline = time.monotonic() + _BUDGET_SECONDS
-    executor = ThreadPoolExecutor(max_workers=min(6, max(len(rows), 1)))
-    change_futures = [
-        executor.submit(_enrich_theme_board_daily_change, row, trade_date)
-        for row in rows
-    ]
-    pending = set(change_futures)
-    try:
-        while pending and time.monotonic() < deadline:
-            remaining = deadline - time.monotonic()
-            done, pending = wait(
-                pending,
-                timeout=min(0.25, max(0.05, remaining)),
-                return_when=FIRST_COMPLETED,
-            )
-            for future in done:
-                try:
-                    future.result()
-                except Exception as exc:
-                    logger.debug("theme board daily change enrich failed: %s", exc)
-    finally:
-        executor.shutdown(wait=False, cancel_futures=True)
-
-    streak_deadline = time.monotonic() + _STREAK_BUDGET_SECONDS
-    streak_executor = ThreadPoolExecutor(max_workers=min(6, max(len(rows), 1)))
-    streak_futures = [
-        streak_executor.submit(_enrich_theme_board_streak, row, trade_date, fetch_series)
-        for row in rows
-    ]
-    pending = set(streak_futures)
-    try:
-        while pending and time.monotonic() < streak_deadline:
-            remaining = streak_deadline - time.monotonic()
-            done, pending = wait(
-                pending,
-                timeout=min(0.25, max(0.05, remaining)),
-                return_when=FIRST_COMPLETED,
-            )
-            for future in done:
-                try:
-                    future.result()
-                except Exception as exc:
-                    logger.debug("theme board streak enrich failed: %s", exc)
-    finally:
-        streak_executor.shutdown(wait=False, cancel_futures=True)
-
-    for row in rows:
-        row.pop("_canon", None)
-
-    return [_strip_internal_theme_fields(row) for row in _merge_theme_board_rows(rows)]
-
-
-def _theme_board_row_base(
-    label: str,
-    linked_fund_count: int,
-) -> dict[str, Any] | None:
-    canon = get_quote_canonical_sector(label) or get_canonical_sector(label)
-    if canon is None:
-        return None
-
-    return {
-        "sector_label": label,
-        "change_1d_percent": None,
-        "consecutive_up_days": None,
-        "linked_fund_count": linked_fund_count,
-        "_canon": canon,
-    }
-
-
+# ---------------------------------------------------------------------------
+# helpers
+# ---------------------------------------------------------------------------
 def _strip_internal_theme_fields(row: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in row.items() if not str(key).startswith("_")}
-
-
-def _enrich_theme_board_daily_change(
-    row: dict[str, Any],
-    trade_date: str | None,
-) -> None:
-    canon = row.get("_canon")
-    if canon is None:
-        return
-
-    change = fetch_eastmoney_kline_close_percent(
-        canon.eastmoney_secid,
-        source_code=canon.source_code,
-        trade_date=trade_date,
-        timeout=4.0,
-        max_retries=1,
-    )
-    if change is not None and is_plausible_daily_change(change):
-        row["change_1d_percent"] = round(float(change), 2)
-        return
-
-    row["change_1d_percent"] = _lookup_spot_change_fallback(
-        label=str(row.get("sector_label", "")),
-        canon=canon,
-    )
-
-
-def _enrich_theme_board_streak(
-    row: dict[str, Any],
-    trade_date: str | None,
-    fetch_series,
-) -> None:
-    canon = row.get("_canon")
-    if canon is None:
-        return
-
-    series = fetch_series(canon)
-    if row.get("change_1d_percent") is None and series:
-        row["change_1d_percent"] = _latest_change_percent(series, trade_date)
-    if series:
-        row["consecutive_up_days"] = compute_consecutive_up_days(series, trade_date)
-
-
-def _lookup_spot_change_fallback(*, label: str, canon) -> float | None:
-    """日 K 全失败时再用现货榜模糊匹配（与持仓 canonical K 线口径不一致，仅作兜底）。"""
-    try:
-        spot_changes = _load_theme_spot_changes()
-    except Exception as exc:
-        logger.debug("theme spot fallback failed: %s", exc)
-        return None
-    return _lookup_spot_change(label=label, canon=canon, spot_changes=spot_changes)
-
-
-def _default_fetch_theme_series(canon) -> list[dict]:
-    return fetch_canonical_daily_kline_series(
-        canon,
-        max_days=20,
-        timeout=_STREAK_FETCH_TIMEOUT,
-    )
-
-
-def _theme_streak_unavailable_hint(items: list[dict[str, Any]]) -> str | None:
-    if any(item.get("consecutive_up_days") is not None for item in items):
-        return None
-    if not any(item.get("change_1d_percent") is not None for item in items):
-        return None
-    return _STREAK_UNAVAILABLE_HINT
 
 
 def _sort_theme_items(items: list[dict[str, Any]], *, sort: SortMode) -> list[dict[str, Any]]:
