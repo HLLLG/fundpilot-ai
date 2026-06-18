@@ -39,8 +39,7 @@ describe("portfolioHoldingsCache", () => {
       ],
       portfolio_summary: {
         total_assets: 1000,
-        total_daily_profit: 10,
-        total_holding_profit: 50,
+        daily_profit: 10,
         holding_count: 1,
       },
     });
