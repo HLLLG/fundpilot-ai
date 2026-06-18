@@ -1,0 +1,43 @@
+apps/api/scripts/verify_qdii_seeds.py
+  s_889eb5918fcf08::t_28c256f0abc945 1-27
+apps/api/scripts/diagnose_qdii_vs_xiaobei.py
+  s_018267ee2ecb2a::t_8a7250f3928c78 1,10-48,51-59,62-76,78-94,96-105,109-137,139-151,153-185
+  s_018267ee2ecb2a::t_1da2db084e9851 138
+  s_018267ee2ecb2a::t_15c923de1b2353 152
+  s_018267ee2ecb2a::t_35fae53bcbd9fd 95,106-108
+  s_018267ee2ecb2a::t_807846f62066c7 49-50
+  s_018267ee2ecb2a::t_93221b5c85ce09 77
+  s_018267ee2ecb2a::t_923d1ae7f6c83b 60
+docs/PROJECT_CONTEXT.md
+  s_889eb5918fcf08::t_c5c4f6cf8751ef 12
+  s_889eb5918fcf08::t_8726d906cf13fa 729-731
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.17-trip",
+  "base_commit_sha": "dc6aaa3fb65557b60a7f52f7075c800881dcb971",
+  "prompts": {},
+  "humans": {
+    "h_375fc341ff3baa": {
+      "author": "hegl <HLLLG@github.com>"
+    }
+  },
+  "sessions": {
+    "s_018267ee2ecb2a": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "f6eddc8d-e4a9-4bce-9acc-952c03259cff",
+        "model": "composer-2.5"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    },
+    "s_889eb5918fcf08": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "bfba0bcd-c805-40f6-9225-ecd30989e860",
+        "model": "composer-2.5"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
