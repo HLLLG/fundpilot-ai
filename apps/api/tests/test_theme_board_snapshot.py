@@ -30,55 +30,39 @@ def test_compute_consecutive_up_days():
     assert compute_consecutive_up_days([{"date": "2026-06-17", "change_percent": None}], "2026-06-17") is None
 
 
-def test_list_theme_board_universe_merges_industry_and_canonical(monkeypatch):
-    monkeypatch.setattr(
-        mod,
-        "fetch_eastmoney_board_records",
-        lambda board_type: (
-            [
-                {"name": "电子", "code": "BK0447", "change_percent": 1.0},
-                {"name": "有色金属", "code": "BK0478", "change_percent": 2.0},  # 与 canonical 同码
-            ]
-            if board_type == "industry"
-            else []
-        ),
-    )
+def test_list_theme_board_universe_resolves_via_canonical_and_alias():
+    # conftest stubs board records -> empty；仅 canonical + 别名能解析
     universe = list_theme_board_universe()
-    labels = {item["sector_label"] for item in universe}
-    assert "电子" in labels            # 纯行业
-    assert "半导体" in labels          # canonical 概念
+    by_label = {e["sector_label"]: e for e in universe}
+    # canonical 命中
+    assert "半导体" in by_label
+    assert by_label["半导体"]["board_kind"] == "concept"
+    # 别名命中（软件 -> 软件开发 90.BK0737）
+    assert "软件" in by_label
+    assert by_label["软件"]["secid"] == "90.BK0737"
+    assert by_label["软件"]["board_kind"] == "industry"
+    # 需东财概念/行业名表才能解析的（空表时跳过），不应出现细分行业
+    assert "稀土" not in by_label
+    # secid 唯一
+    secids = [e["secid"] for e in universe]
+    assert len(secids) == len(set(secids))
 
-    # 同码去重：有色金属只出现一次
-    youse = [i for i in universe if i["sector_label"] == "有色金属"]
-    assert len(youse) == 1
 
-    kinds = {item["board_kind"] for item in universe}
-    assert kinds <= {"industry", "concept", "index"}
-    electronics = next(i for i in universe if i["sector_label"] == "电子")
-    assert electronics["board_kind"] == "industry"
-    assert electronics["secid"] == "90.BK0447"
+def test_list_theme_board_universe_resolves_via_eastmoney_name(monkeypatch):
+    def fake(board_type):
+        if board_type == "concept":
+            return [
+                {"name": "稀土", "code": "BK1625", "change_percent": 2.86},
+                {"name": "创新药", "code": "BK0731", "change_percent": 2.67},
+            ]
+        return []
 
-
-def test_list_theme_board_universe_caps_by_change(monkeypatch):
-    fake_rows = [
-        {"name": f"测试板块{i}", "code": f"BK90{i:02d}", "change_percent": float(i)}
-        for i in range(6)
-    ]
-    monkeypatch.setattr(
-        mod,
-        "fetch_eastmoney_board_records",
-        lambda board_type: fake_rows if board_type == "industry" else [],
-    )
-    # canonical 21 + 行业按涨幅取前 4（max_boards=25）
-    universe = list_theme_board_universe(max_boards=25)
-    assert len(universe) == 25
-    industry = [i for i in universe if i["sector_label"].startswith("测试板块")]
-    assert len(industry) == 4
-    # 取涨幅最高的 5,4,3,2（测试板块5..2），最低的 1,0 被截断
-    kept_labels = {i["sector_label"] for i in industry}
-    assert "测试板块5" in kept_labels
-    assert "测试板块0" not in kept_labels
-    assert industry[0]["change_hint"] == 5.0
+    monkeypatch.setattr(mod, "fetch_eastmoney_board_records", fake)
+    universe = list_theme_board_universe()
+    by_label = {e["sector_label"]: e for e in universe}
+    assert by_label["稀土"]["secid"] == "90.BK1625"
+    assert by_label["稀土"]["board_kind"] == "concept"
+    assert by_label["稀土"]["change_hint"] == 2.86
 
 
 def test_refresh_theme_board_snapshot_computes_change_and_streak(monkeypatch):

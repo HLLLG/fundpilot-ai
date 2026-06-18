@@ -15,7 +15,6 @@ from app.services.sector_canonical import (
     CanonicalSector,
     get_canonical_sector,
     get_quote_canonical_sector,
-    list_discovery_sector_labels,
 )
 from app.services.sector_quote_cache import (
     get_spot_snapshot,
@@ -35,8 +34,42 @@ _CACHE_VERSION = "v3"
 _REFRESH_BUDGET_SECONDS = 120.0
 _SERIES_TIMEOUT = 8.0
 _MAX_WORKERS = 8
-# 主榜上限：canonical 全保留 + 行业按当日涨幅取前列，合计约此数（对齐小倍 ~76 量级）
-_THEME_BOARD_MAX = 100
+
+# 对标小倍养基「今日板块涨幅榜」的粗粒度精选清单（固定白名单，2026-06-18 截图口径）。
+# 东财 m:90 t:2/t:3 含 ~500 细分行业/概念，过碎；此处只取小倍式粗板块。
+# 解析优先级：canonical → 别名 secid → 东财概念/行业精确名匹配 → 跳过。
+_THEME_BOARD_WHITELIST: tuple[str, ...] = (
+    "人工智能", "消费电子", "半导体", "5G", "电子", "通信技术", "稀土", "创新药",
+    "云计算", "信创", "CPO", "MLCC", "存储芯片", "计算机", "半导体材料", "智能家居",
+    "PCB", "机器人", "医药", "算力租赁", "软件", "电网设备", "传媒", "脑机接口",
+    "可控核聚变", "商业航天", "体育", "低空经济", "军工", "动漫游戏", "固态电池",
+    "钢铁", "有色金属", "黄金", "机械设备", "储能", "锂电池", "国企改革", "中药",
+    "汽车", "房地产", "新能源车", "光伏", "新能源", "金融科技", "环保", "畜牧养殖",
+    "农业", "基建", "交通运输", "红利", "食品饮料", "贵金属", "化工", "银行", "锂矿",
+    "白酒", "黄金股", "建材", "证券", "煤炭", "电力", "证券保险", "保险",
+)
+
+# 小倍名 → 东财近义板块（canonical/精确名都匹配不到时用）：(secid, source_code, board_kind)
+_THEME_BOARD_ALIAS: dict[str, tuple[str, str, str]] = {
+    "软件": ("90.BK0737", "BK0737", "industry"),        # 软件开发
+    "算力租赁": ("90.BK1134", "BK1134", "concept"),       # 算力概念
+    "脑机接口": ("90.BK0706", "BK0706", "concept"),       # 人脑工程
+    "体育": ("90.BK0708", "BK0708", "concept"),          # 体育产业
+    "动漫游戏": ("90.BK0509", "BK0509", "concept"),       # 网络游戏
+    "储能": ("90.BK0989", "BK0989", "concept"),          # 储能概念
+    "国企改革": ("90.BK0683", "BK0683", "concept"),       # 央国企改革
+    "中药": ("90.BK0615", "BK0615", "concept"),          # 中药概念
+    "金融科技": ("90.BK0637", "BK0637", "concept"),       # 互联网金融
+    "畜牧养殖": ("90.BK1259", "BK1259", "industry"),      # 养殖业
+    "农业": ("90.BK0433", "BK0433", "industry"),         # 农林牧渔
+    "基建": ("90.BK1247", "BK1247", "industry"),         # 基础建设
+    "红利": ("90.BK1641", "BK1641", "concept"),          # 红利股
+    "化工": ("90.BK1206", "BK1206", "industry"),         # 基础化工
+    "锂矿": ("90.BK1173", "BK1173", "concept"),          # 锂矿概念
+    "黄金股": ("90.BK0547", "BK0547", "concept"),         # 黄金概念
+    "建材": ("90.BK1208", "BK1208", "industry"),         # 建筑材料
+    "保险": ("90.BK0474", "BK0474", "industry"),         # 保险Ⅱ
+}
 
 _INTRADAY_SESSIONS = {
     "trading_day_intraday",
@@ -87,78 +120,104 @@ def _board_kind_from_source_type(source_type: str) -> BoardKind:
     return "concept"
 
 
-def list_theme_board_universe(max_boards: int = _THEME_BOARD_MAX) -> list[dict[str, Any]]:
-    """canonical 概念/指数（全保留）+ 行业板块按当日涨幅取前列，合计约 max_boards。
+def list_theme_board_universe() -> list[dict[str, Any]]:
+    """对标小倍的固定粗粒度板块白名单，解析到东财 secid。
 
-    东财 `m:90 t:2` 现返回 ~496 细分行业，全量过碎且连涨天数请求量大；故行业层按
-    当日涨幅降序截断到主榜量级（对齐小倍 ~76）。canonical 始终保留，确保持仓主题
-    （半导体/商业航天等）与持仓高亮不丢。每项：``sector_label``、``secid``、
-    ``source_code``、``board_kind``、``change_hint``（行业 spot f3，连涨拉取失败时兜底）、``_canon``。
+    解析优先级（每个白名单名）：canonical → `_THEME_BOARD_ALIAS` 近义板块 →
+    东财概念/行业**精确名**匹配 → 跳过（港股/指数类等无干净 A 股板块的名暂不纳入）。
+    每项：``sector_label``、``secid``、``source_code``、``board_kind``、
+    ``change_hint``（东财 spot f3，连涨拉取失败时兜底涨跌幅）、``_canon``。
     """
-    canonical_by_secid: dict[str, dict[str, Any]] = {}
+    concept_by_name, concept_by_code = _load_board_maps("concept")
+    industry_by_name, industry_by_code = _load_board_maps("industry")
 
-    # 1) canonical 概念/指数（始终保留，精确 secid，能与持仓精确匹配）
-    for label in list_discovery_sector_labels():
-        quote_canon = get_quote_canonical_sector(label) or get_canonical_sector(label)
-        if quote_canon is None:
+    def change_for_code(code: str | None) -> float | None:
+        if not code:
+            return None
+        if code in concept_by_code:
+            return concept_by_code[code]
+        if code in industry_by_code:
+            return industry_by_code[code]
+        return None
+
+    universe: list[dict[str, Any]] = []
+    seen_secids: set[str] = set()
+
+    for name in _THEME_BOARD_WHITELIST:
+        entry: dict[str, Any] | None = None
+
+        canon = get_quote_canonical_sector(name) or get_canonical_sector(name)
+        if canon is not None:
+            semantic = get_canonical_sector(name) or canon
+            entry = {
+                "sector_label": name,
+                "secid": canon.eastmoney_secid,
+                "source_code": canon.source_code,
+                "board_kind": _board_kind_from_source_type(semantic.source_type),
+                "change_hint": change_for_code(canon.source_code),
+                "_canon": canon,
+            }
+        elif name in _THEME_BOARD_ALIAS:
+            secid, code, kind = _THEME_BOARD_ALIAS[name]
+            entry = {
+                "sector_label": name,
+                "secid": secid,
+                "source_code": code,
+                "board_kind": kind,
+                "change_hint": change_for_code(code),
+                "_canon": None,
+            }
+        elif name in concept_by_name:
+            code = concept_by_name[name]
+            entry = {
+                "sector_label": name,
+                "secid": f"90.{code}",
+                "source_code": code,
+                "board_kind": "concept",
+                "change_hint": concept_by_code.get(code),
+                "_canon": None,
+            }
+        elif name in industry_by_name:
+            code = industry_by_name[name]
+            entry = {
+                "sector_label": name,
+                "secid": f"90.{code}",
+                "source_code": code,
+                "board_kind": "industry",
+                "change_hint": industry_by_code.get(code),
+                "_canon": None,
+            }
+        else:
+            logger.info("theme board whitelist name unresolved: %s", name)
             continue
-        # board_kind 取语义类型（半导体=概念），与拉数据/匹配用的 quote secid 解耦，
-        # 避免「半导体」因分时优先指数而被标成「指数」。
-        semantic_canon = get_canonical_sector(label) or quote_canon
-        canonical_by_secid.setdefault(
-            quote_canon.eastmoney_secid,
-            {
-                "sector_label": label,
-                "secid": quote_canon.eastmoney_secid,
-                "source_code": quote_canon.source_code,
-                "board_kind": _board_kind_from_source_type(semantic_canon.source_type),
-                "change_hint": None,
-                "_canon": quote_canon,
-            },
-        )
 
-    # 2) 行业 spot 全量（带当日涨幅 f3），排除已属 canonical 的 secid
+        if entry["secid"] in seen_secids:
+            continue
+        seen_secids.add(entry["secid"])
+        universe.append(entry)
+
+    return universe
+
+
+def _load_board_maps(board_type: str) -> tuple[dict[str, str], dict[str, float]]:
+    """返回 (name→code, code→change_percent)；拉取失败时返回空表（降级用 canonical）。"""
+    by_name: dict[str, str] = {}
+    by_code: dict[str, float] = {}
     try:
-        rows = fetch_eastmoney_board_records("industry")
+        rows = fetch_eastmoney_board_records(board_type)
     except Exception as exc:
-        logger.info("theme universe industry spot failed: %s", exc)
-        rows = []
-
-    industry_entries: list[dict[str, Any]] = []
-    seen_secids = set(canonical_by_secid)
+        logger.info("theme universe %s spot failed: %s", board_type, exc)
+        return by_name, by_code
     for row in rows:
         name = str(row.get("name", "")).strip()
         code = str(row.get("code", "")).strip()
         if not name or not code:
             continue
-        quote_canon = get_quote_canonical_sector(name) or get_canonical_sector(name)
-        resolved_secid = quote_canon.eastmoney_secid if quote_canon else f"90.{code}"
-        if resolved_secid in seen_secids:
-            continue
-        seen_secids.add(resolved_secid)
-        semantic_canon = get_canonical_sector(name) or quote_canon
-        industry_entries.append(
-            {
-                "sector_label": name,
-                "secid": resolved_secid,
-                "source_code": (quote_canon.source_code if quote_canon else code),
-                "board_kind": (
-                    _board_kind_from_source_type(semantic_canon.source_type)
-                    if semantic_canon
-                    else "industry"
-                ),
-                "change_hint": _as_float(row.get("change_percent")),
-                "_canon": quote_canon,
-            }
-        )
-
-    # 3) 行业层按当日涨幅降序截断到主榜量级（None 排末尾）
-    industry_entries.sort(
-        key=lambda e: (e["change_hint"] is not None, e["change_hint"] or 0.0),
-        reverse=True,
-    )
-    keep = max(0, max_boards - len(canonical_by_secid))
-    return list(canonical_by_secid.values()) + industry_entries[:keep]
+        by_name.setdefault(name, code)
+        change = _as_float(row.get("change_percent"))
+        if change is not None:
+            by_code[code] = change
+    return by_name, by_code
 
 
 # ---------------------------------------------------------------------------

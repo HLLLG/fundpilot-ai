@@ -290,3 +290,19 @@ cd apps/web && npm run lint && npm run typecheck && npm run build
 3. **批量日 K 不走 AkShare 子进程**：`fetch_canonical_daily_kline_series(..., allow_akshare=False)` 新增开关；主题板块 `_fetch_universe_series` 传 `False`，只走快速 HTTP 源（push2delay 日 K + relay + 新浪指数），避免 ~100 板块逐个开 AkShare 子进程拖垮后台刷新。连涨天数仅在日 K 可达时计算，否则 `—`（涨跌幅由行业 spot `change_hint` 兜底）。
 
 4. **预算**：`_REFRESH_BUDGET_SECONDS=120`（~100 板块日 K 并行，8 worker）。生产环境 push2delay 日 K 首请求即有数据时为秒级；日 K 源不可达的网络环境下达预算上限后以 spot 涨跌幅 + 连涨 `—` 降级返回。
+
+---
+
+## 再次修订（2026-06-18，对照小倍实际清单）
+
+用户提供小倍养基「今日板块涨幅榜」76 项完整截图后确认：小倍是一份**固定的粗粒度精选清单**（人工智能、消费电子、半导体、稀土、创新药、信创、软件、银行、保险……），**不是**东财 `m:90 t:2` 的 ~496 细分行业（钨、磨具磨料、非金属材料Ⅲ……）。方案 B 的「行业 top-N」仍从 496 细分取，会混入用户不想要的细分行业，故废弃。
+
+**最终方案：固定白名单 + 多级解析。**
+
+- `_THEME_BOARD_WHITELIST`：对标小倍的粗板块名清单（~64，2026-06-18 截图口径）。
+- 每名解析优先级：`get_quote_canonical_sector`/`get_canonical_sector` → `_THEME_BOARD_ALIAS`（东财近义名映射，如 软件→软件开发 BK0737、基建→基础建设 BK1247、化工→基础化工 BK1206、农业→农林牧渔 BK0433、保险→保险Ⅱ BK0474、储能→储能概念、中药→中药概念、国企改革→央国企改革、脑机接口→人脑工程、体育→体育产业、黄金股→黄金概念、锂矿→锂矿概念、建材→建筑材料、红利→红利股、畜牧养殖→养殖业、算力租赁→算力概念、动漫游戏→网络游戏、金融科技→互联网金融）→ 东财概念/行业**精确名**匹配（`_load_board_maps`）→ 解析不到则跳过。
+- 港股/海外/纯指数类（韩国综合、港股创新药/医药/科技/红利/消费、红利低波、医疗、家电、固态电池、证券保险）东财无干净 A 股板块或代码歧义，**暂不纳入**，可后续用确认过的 secid 增补。
+- 实测解析得 **~62 个粗粒度板块**（概念 34 / 行业 26 / 指数 2），无任何细分行业噪音。
+- 其余链路不变：push2delay 日 K 同源算 change+streak、`allow_akshare=False`、后台 15min 刷新、缓存 v3、board_kind 标签、持仓 secid 高亮。
+
+> `list_theme_board_universe()` 不再接收 `max_boards`；白名单本身即上限。
