@@ -30,6 +30,12 @@ _COMMON_PARAMS = {
 _HOST_POOL = ("17", "79", "88", "48", "33", "91")
 _PREFERRED_PUSH_HOST = "17"
 
+# clist / stock 接口 host：push2delay 优先（push2 数字子域偶发 Server disconnected），
+# 失败再依次回落 push2 子域。与 K 线/分时统一首选 push2delay。
+_PUSH2_HOSTS = tuple(f"{host}.push2.eastmoney.com" for host in _HOST_POOL)
+_CLIST_HOSTS = ("push2delay.eastmoney.com",) + _PUSH2_HOSTS
+_STOCK_HOSTS = ("push2delay.eastmoney.com",) + _PUSH2_HOSTS
+
 
 def fetch_eastmoney_boards(
     *,
@@ -180,10 +186,10 @@ def _request_board_page(
     max_hosts: int | None = None,
 ) -> dict[str, Any]:
     last_error: Exception | None = None
-    host_pool = _HOST_POOL[:max_hosts] if max_hosts is not None else _HOST_POOL
+    host_pool = _CLIST_HOSTS[:max_hosts] if max_hosts is not None else _CLIST_HOSTS
     for attempt in range(max_retries):
         for host in host_pool:
-            url = f"https://{host}.push2.eastmoney.com/api/qt/clist/get"
+            url = f"https://{host}/api/qt/clist/get"
             try:
                 response = client.get(url, params=params)
                 response.raise_for_status()
@@ -231,8 +237,8 @@ def fetch_eastmoney_quote_by_secid(
     ) as client:
         last_error: Exception | None = None
         for attempt in range(max_retries):
-            for host in _HOST_POOL:
-                url = f"https://{host}.push2.eastmoney.com/api/qt/stock/get"
+            for host in _STOCK_HOSTS:
+                url = f"https://{host}/api/qt/stock/get"
                 try:
                     response = client.get(url, params=params)
                     response.raise_for_status()
@@ -421,34 +427,42 @@ def _fetch_board_records_via_requests(
     timeout: float,
     max_pages: int,
 ) -> list[dict[str, Any]]:
-    """与 AkShare 相同：requests + 17.push2（httpx 偶发 reset 时更稳）。"""
+    """与 AkShare 相同：requests + push2delay 优先（httpx 偶发 reset 时更稳）。"""
     import requests
 
-    params = {**base_params, "pn": "1"}
-    url = f"https://{_PREFERRED_PUSH_HOST}.push2.eastmoney.com/api/qt/clist/get"
     session = requests.Session()
     session.trust_env = False
+    last_error: Exception | None = None
 
-    result: list[dict[str, Any]] = []
-    for page in range(1, max_pages + 1):
-        page_params = {**params, "pn": str(page)}
-        response = session.get(url, params=page_params, headers=_EASTMONEY_HEADERS, timeout=timeout)
-        response.raise_for_status()
-        payload = response.json()
-        data = payload.get("data") or {}
-        rows = list(data.get("diff") or [])
-        if not rows:
-            break
-        result.extend(_parse_board_record_rows(rows))
-        total = int(data.get("total") or 0)
-        page_size = max(len(rows), 1)
-        if page >= math.ceil(total / page_size):
-            break
-        time.sleep(0.1)
+    for host in _CLIST_HOSTS:
+        url = f"https://{host}/api/qt/clist/get"
+        try:
+            result: list[dict[str, Any]] = []
+            for page in range(1, max_pages + 1):
+                page_params = {**base_params, "pn": str(page)}
+                response = session.get(url, params=page_params, headers=_EASTMONEY_HEADERS, timeout=timeout)
+                response.raise_for_status()
+                payload = response.json()
+                data = payload.get("data") or {}
+                rows = list(data.get("diff") or [])
+                if not rows:
+                    break
+                result.extend(_parse_board_record_rows(rows))
+                total = int(data.get("total") or 0)
+                page_size = max(len(rows), 1)
+                if page >= math.ceil(total / page_size):
+                    break
+                time.sleep(0.1)
+            if result:
+                return _dedupe_board_records(result)
+        except Exception as exc:
+            last_error = exc
+            logger.debug("eastmoney board requests host=%s failed: %s", host, exc)
+            continue
 
-    if not result:
-        raise RuntimeError("requests board returned no rows")
-    return _dedupe_board_records(result)
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("requests board returned no rows")
 
 
 def _fetch_paginated_board_records(

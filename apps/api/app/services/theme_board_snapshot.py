@@ -32,9 +32,11 @@ BoardKind = Literal["industry", "concept", "index"]
 _LIVE_TTL_SECONDS = 60.0
 _CLOSED_TTL_SECONDS = 3600.0
 _CACHE_VERSION = "v3"
-_REFRESH_BUDGET_SECONDS = 90.0
+_REFRESH_BUDGET_SECONDS = 120.0
 _SERIES_TIMEOUT = 8.0
 _MAX_WORKERS = 8
+# 主榜上限：canonical 全保留 + 行业按当日涨幅取前列，合计约此数（对齐小倍 ~76 量级）
+_THEME_BOARD_MAX = 100
 
 _INTRADAY_SESSIONS = {
     "trading_day_intraday",
@@ -85,15 +87,17 @@ def _board_kind_from_source_type(source_type: str) -> BoardKind:
     return "concept"
 
 
-def list_theme_board_universe() -> list[dict[str, Any]]:
-    """行业 spot 全量 + 21 canonical 概念/指数，按 secid 去重；canonical 优先。
+def list_theme_board_universe(max_boards: int = _THEME_BOARD_MAX) -> list[dict[str, Any]]:
+    """canonical 概念/指数（全保留）+ 行业板块按当日涨幅取前列，合计约 max_boards。
 
-    每项：``sector_label``、``secid``、``source_code``、``board_kind``、``_canon``。
-    行业 spot 拉取失败时退化为仅 canonical，保证不空榜。
+    东财 `m:90 t:2` 现返回 ~496 细分行业，全量过碎且连涨天数请求量大；故行业层按
+    当日涨幅降序截断到主榜量级（对齐小倍 ~76）。canonical 始终保留，确保持仓主题
+    （半导体/商业航天等）与持仓高亮不丢。每项：``sector_label``、``secid``、
+    ``source_code``、``board_kind``、``change_hint``（行业 spot f3，连涨拉取失败时兜底）、``_canon``。
     """
-    by_secid: dict[str, dict[str, Any]] = {}
+    canonical_by_secid: dict[str, dict[str, Any]] = {}
 
-    # 1) canonical 概念/指数（优先，精确 secid，能与持仓精确匹配）
+    # 1) canonical 概念/指数（始终保留，精确 secid，能与持仓精确匹配）
     for label in list_discovery_sector_labels():
         quote_canon = get_quote_canonical_sector(label) or get_canonical_sector(label)
         if quote_canon is None:
@@ -101,24 +105,27 @@ def list_theme_board_universe() -> list[dict[str, Any]]:
         # board_kind 取语义类型（半导体=概念），与拉数据/匹配用的 quote secid 解耦，
         # 避免「半导体」因分时优先指数而被标成「指数」。
         semantic_canon = get_canonical_sector(label) or quote_canon
-        by_secid.setdefault(
+        canonical_by_secid.setdefault(
             quote_canon.eastmoney_secid,
             {
                 "sector_label": label,
                 "secid": quote_canon.eastmoney_secid,
                 "source_code": quote_canon.source_code,
                 "board_kind": _board_kind_from_source_type(semantic_canon.source_type),
+                "change_hint": None,
                 "_canon": quote_canon,
             },
         )
 
-    # 2) 行业 spot 全量（同 secid 不覆盖 canonical）
+    # 2) 行业 spot 全量（带当日涨幅 f3），排除已属 canonical 的 secid
     try:
         rows = fetch_eastmoney_board_records("industry")
     except Exception as exc:
         logger.info("theme universe industry spot failed: %s", exc)
         rows = []
 
+    industry_entries: list[dict[str, Any]] = []
+    seen_secids = set(canonical_by_secid)
     for row in rows:
         name = str(row.get("name", "")).strip()
         code = str(row.get("code", "")).strip()
@@ -126,22 +133,32 @@ def list_theme_board_universe() -> list[dict[str, Any]]:
             continue
         quote_canon = get_quote_canonical_sector(name) or get_canonical_sector(name)
         resolved_secid = quote_canon.eastmoney_secid if quote_canon else f"90.{code}"
-        if resolved_secid in by_secid:
+        if resolved_secid in seen_secids:
             continue
+        seen_secids.add(resolved_secid)
         semantic_canon = get_canonical_sector(name) or quote_canon
-        by_secid[resolved_secid] = {
-            "sector_label": name,
-            "secid": resolved_secid,
-            "source_code": (quote_canon.source_code if quote_canon else code),
-            "board_kind": (
-                _board_kind_from_source_type(semantic_canon.source_type)
-                if semantic_canon
-                else "industry"
-            ),
-            "_canon": quote_canon,
-        }
+        industry_entries.append(
+            {
+                "sector_label": name,
+                "secid": resolved_secid,
+                "source_code": (quote_canon.source_code if quote_canon else code),
+                "board_kind": (
+                    _board_kind_from_source_type(semantic_canon.source_type)
+                    if semantic_canon
+                    else "industry"
+                ),
+                "change_hint": _as_float(row.get("change_percent")),
+                "_canon": quote_canon,
+            }
+        )
 
-    return list(by_secid.values())
+    # 3) 行业层按当日涨幅降序截断到主榜量级（None 排末尾）
+    industry_entries.sort(
+        key=lambda e: (e["change_hint"] is not None, e["change_hint"] or 0.0),
+        reverse=True,
+    )
+    keep = max(0, max_boards - len(canonical_by_secid))
+    return list(canonical_by_secid.values()) + industry_entries[:keep]
 
 
 # ---------------------------------------------------------------------------
@@ -164,7 +181,12 @@ def _fetch_universe_series(
             eastmoney_secid=secid,
             source_code=source_code,
         )
-    return fetch_canonical_daily_kline_series(canon, max_days=20, timeout=timeout)
+    return fetch_canonical_daily_kline_series(
+        canon,
+        max_days=20,
+        timeout=timeout,
+        allow_akshare=False,
+    )
 
 
 def refresh_theme_board_snapshot(*, trade_date: str | None = None) -> dict[str, Any]:
@@ -182,6 +204,8 @@ def refresh_theme_board_snapshot(*, trade_date: str | None = None) -> dict[str, 
             canon=entry.get("_canon"),
         )
         change = _latest_change_percent(series, resolved_date) if series else None
+        if change is None:
+            change = entry.get("change_hint")  # 行业 spot f3 兜底（连涨拉取失败时）
         streak = compute_consecutive_up_days(series, resolved_date) if series else None
         return {
             "sector_label": entry["sector_label"],
@@ -196,7 +220,7 @@ def refresh_theme_board_snapshot(*, trade_date: str | None = None) -> dict[str, 
             "sector_label": entry["sector_label"],
             "board_kind": entry["board_kind"],
             "secid": entry["secid"],
-            "change_1d_percent": None,
+            "change_1d_percent": entry.get("change_hint"),
             "consecutive_up_days": None,
         }
 

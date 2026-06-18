@@ -276,3 +276,17 @@ cd apps/web && npm run lint && npm run typecheck && npm run build
 |-------|------|
 | 2 | 行业/概念子榜切换；连涨≥3 天标签；迷你 sparkline |
 | 3 | 点击主题行 → 荐基 Tab 预选 focus_sector |
+
+---
+
+## 实现修订（2026-06-18，实测后）
+
+实测发现两处与初稿假设不符，按用户确认调整：
+
+1. **行业全集量级**：东财 `m:90 t:2`（不论加不加 `f:!50`）实际返回 **~496 个细分行业**（钨、稀土、磨具磨料……），非初稿估计的 ~86 一级行业。按用户选择 **方案 B**：`list_theme_board_universe(max_boards=100)` = canonical 21（全保留）+ 行业层**按当日涨幅 f3 降序取前列**，合计约 100，对齐小倍 ~76 量级且请求可控。持仓高亮仍由 canonical secid 覆盖（基金主题均为 canonical 口径），故 universe 不依赖用户维度，缓存仍 user-agnostic。
+
+2. **板块列表 clist host**：原 `eastmoney_spot_client` 仅用 `{17/79/88/48/33/91}.push2.eastmoney.com`，本机/部分网络 push2 偶发 `Server disconnected`。改为 `_CLIST_HOSTS = ("push2delay.eastmoney.com", ...push2 子域)`，**push2delay 优先**（与 K 线/分时统一），`_request_board_page` / `_fetch_board_records_via_requests` / `fetch_eastmoney_quote_by_secid` 均切换。修复主题板块与全市场子 Tab 的板块列表抓取。
+
+3. **批量日 K 不走 AkShare 子进程**：`fetch_canonical_daily_kline_series(..., allow_akshare=False)` 新增开关；主题板块 `_fetch_universe_series` 传 `False`，只走快速 HTTP 源（push2delay 日 K + relay + 新浪指数），避免 ~100 板块逐个开 AkShare 子进程拖垮后台刷新。连涨天数仅在日 K 可达时计算，否则 `—`（涨跌幅由行业 spot `change_hint` 兜底）。
+
+4. **预算**：`_REFRESH_BUDGET_SECONDS=120`（~100 板块日 K 并行，8 worker）。生产环境 push2delay 日 K 首请求即有数据时为秒级；日 K 源不可达的网络环境下达预算上限后以 spot 涨跌幅 + 连涨 `—` 降级返回。

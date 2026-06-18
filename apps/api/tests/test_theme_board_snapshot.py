@@ -59,6 +59,28 @@ def test_list_theme_board_universe_merges_industry_and_canonical(monkeypatch):
     assert electronics["secid"] == "90.BK0447"
 
 
+def test_list_theme_board_universe_caps_by_change(monkeypatch):
+    fake_rows = [
+        {"name": f"测试板块{i}", "code": f"BK90{i:02d}", "change_percent": float(i)}
+        for i in range(6)
+    ]
+    monkeypatch.setattr(
+        mod,
+        "fetch_eastmoney_board_records",
+        lambda board_type: fake_rows if board_type == "industry" else [],
+    )
+    # canonical 21 + 行业按涨幅取前 4（max_boards=25）
+    universe = list_theme_board_universe(max_boards=25)
+    assert len(universe) == 25
+    industry = [i for i in universe if i["sector_label"].startswith("测试板块")]
+    assert len(industry) == 4
+    # 取涨幅最高的 5,4,3,2（测试板块5..2），最低的 1,0 被截断
+    kept_labels = {i["sector_label"] for i in industry}
+    assert "测试板块5" in kept_labels
+    assert "测试板块0" not in kept_labels
+    assert industry[0]["change_hint"] == 5.0
+
+
 def test_refresh_theme_board_snapshot_computes_change_and_streak(monkeypatch):
     monkeypatch.setattr(
         mod,
