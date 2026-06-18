@@ -1,0 +1,300 @@
+apps/api/app/services/us_futures_client.py
+  s_018267ee2ecb2a::t_87cf42d3e54b1b 51-53
+apps/web/src/components/UsMarketOverview.tsx
+  s_018267ee2ecb2a::t_cc5e628abeb44d 203
+  s_018267ee2ecb2a::t_e4564600a1c47d 21-36
+  s_018267ee2ecb2a::t_e7ed03b1f27b63 137-145
+  s_018267ee2ecb2a::t_b3e02845799b4a 8,37,155-202,205
+  s_18d8dc582dfe46::t_9e04d03fa934c6 19-20,206
+  s_018267ee2ecb2a::t_b6495eaa82acd1 88-118
+apps/api/tests/test_us_qdii_quote_policy.py
+  s_018267ee2ecb2a::t_4840f6030e654b 1-23
+docs/PROJECT_CONTEXT.md
+  s_889eb5918fcf08::t_b6f20becf7cffa 161
+  s_889eb5918fcf08::t_9ffaf9bc7588a1 20
+  s_889eb5918fcf08::t_b3a9db96667c5d 60
+  s_889eb5918fcf08::t_4b660efca7f8cc 377
+  s_889eb5918fcf08::t_7d25dfcf578d0a 84
+  s_889eb5918fcf08::t_035d7839ac1f4d 7,10-12
+apps/api/tests/test_us_qdii_valuation_service.py
+  s_018267ee2ecb2a::t_a38306affed0d3 1-6,8-11,27-29,36-37,80-81
+  s_18d8dc582dfe46::t_4cd3bca72697b1 7
+  s_018267ee2ecb2a::t_fd2dae0cbf88a8 21-26,30-35
+  s_018267ee2ecb2a::t_b6978c1601b2f9 51
+  s_018267ee2ecb2a::t_b88d458ba5e4c7 82-102
+  s_018267ee2ecb2a::t_f6de35a8dbba16 49-50,52-55
+  s_18d8dc582dfe46::t_a642fcfec5c5b3 12-20
+  s_018267ee2ecb2a::t_ce75170be16559 103
+  s_18d8dc582dfe46::t_8504742b441ef4 38,56-77
+  s_018267ee2ecb2a::t_cbd1b08734521c 39-48,78-79,104-113,115
+  s_018267ee2ecb2a::t_2241731ecd95e8 114
+apps/api/tests/test_api.py
+  s_18d8dc582dfe46::t_ba5e38cd2f0749 625-628
+  s_018267ee2ecb2a::t_50d8df7d2c8b16 641
+  s_18d8dc582dfe46::t_ccee7be7099081 642
+  s_18d8dc582dfe46::t_5209a621ddd565 629
+  s_018267ee2ecb2a::t_a5537fe7786bcd 622-623,630
+apps/api/app/services/theme_board_snapshot.py
+  s_889eb5918fcf08::t_8c833a3ab7c4e6 195,202
+  s_889eb5918fcf08::t_c4325a1d1fe59f 377-378,381,394,399-419
+  s_889eb5918fcf08::t_8f885ff9240c9e 427,437
+  s_889eb5918fcf08::t_201971dc997793 487-490,492-496
+  s_889eb5918fcf08::t_f2e4c7be0c730b 371
+  s_889eb5918fcf08::t_6f3cc1605fc67a 41
+  s_889eb5918fcf08::t_4c9acb8c9c6d4d 11
+  s_889eb5918fcf08::t_4a081855636614 19
+  s_889eb5918fcf08::t_64e1d1e4565e33 420,449-452
+  s_889eb5918fcf08::t_2d9acaddf46329 472,481
+  s_889eb5918fcf08::t_9484140a36df46 398
+  s_889eb5918fcf08::t_f0a9c824d09acb 448,453-471,479-480,482-486
+  s_889eb5918fcf08::t_c7c1c72787d2cc 37-40,42
+  s_889eb5918fcf08::t_536b4ca9e87a5a 500-512
+apps/api/app/services/us_market_service.py
+  s_018267ee2ecb2a::t_8b1061383d273b 53,56
+  s_018267ee2ecb2a::t_4654100b54f5b2 536,538
+  s_018267ee2ecb2a::t_fc969120e9798a 296-300,303,310-311
+  s_018267ee2ecb2a::t_87eb9ecc23df3e 658-660
+  s_018267ee2ecb2a::t_e8c15f44f72555 54
+  s_018267ee2ecb2a::t_7d0e716123a969 593
+  s_018267ee2ecb2a::t_1ce9c3057fd138 615,622
+  s_018267ee2ecb2a::t_e6e0930292e016 568,572,575,586-587,595-601,633-636
+  s_018267ee2ecb2a::t_d1bc4183917e3d 70
+  s_018267ee2ecb2a::t_0070e6c7dd3b4f 59-61
+  s_018267ee2ecb2a::t_ff89a2102efbb6 592
+  s_018267ee2ecb2a::t_0d851576382cdf 247-254
+  s_018267ee2ecb2a::t_9e998158f5f48b 456-471,473-478,485-489,491,494-496,505,507-510
+  s_018267ee2ecb2a::t_822897308f44bf 50
+  s_018267ee2ecb2a::t_0e84c438d99794 49
+  s_18d8dc582dfe46::t_c5d18649b84566 68
+  s_18d8dc582dfe46::t_61eee47779c560 69
+  s_018267ee2ecb2a::t_5538af6720dc08 126-131
+  s_cd326a1954d98e::t_d83392440df31b 301-302,306-309
+  s_018267ee2ecb2a::t_f62614f201f71e 511-524,526,528-534,540-551
+  s_18d8dc582dfe46::t_8b22dbcbb774a6 134
+  s_18d8dc582dfe46::t_651fe0dae8211f 667
+  s_018267ee2ecb2a::t_f6f641f6a2a7f1 566-567,569-570
+  s_018267ee2ecb2a::t_5d213156ed01b2 287-295,312-329,355,394-401
+  s_018267ee2ecb2a::t_b9ea546cc95278 472,479-484,490,492-493,497-504,506
+  s_018267ee2ecb2a::t_9b465a578123cd 525,527,535
+  s_18d8dc582dfe46::t_27176818c30ee5 43
+  s_18d8dc582dfe46::t_ad9cdc55936c9b 133,135-136,138-162,164
+  s_018267ee2ecb2a::t_abcafeec35e2fe 210-227
+  s_18d8dc582dfe46::t_c7774631d8ba66 86-90
+  s_018267ee2ecb2a::t_aa22b7563a1304 537,539
+  s_018267ee2ecb2a::t_1f4c9223af8c24 330-354,364-381
+  s_018267ee2ecb2a::t_b8a6f481d862a0 184
+  s_018267ee2ecb2a::t_bea0f1b4cc458c 52,55,57-58
+  s_018267ee2ecb2a::t_64b8acd77a7520 616-621
+  s_018267ee2ecb2a::t_866f7e72f1fa34 565,571,573-574,576-582,588-589,603-608,610-614,623-632,637-638
+  s_018267ee2ecb2a::t_261efa7ac7a1b0 591
+  s_018267ee2ecb2a::t_a0237d2d8d74f0 47
+  s_018267ee2ecb2a::t_f04be45cf3f0a3 609
+  s_018267ee2ecb2a::t_6169607d70dd7a 72-83
+  s_018267ee2ecb2a::t_fcc4614f1289ed 552
+  s_018267ee2ecb2a::t_203bfdf5f9320d 44
+  s_18d8dc582dfe46::t_fe5da3773bb0bc 137
+  s_18d8dc582dfe46::t_d66a1c85517dec 163
+apps/api/app/services/us_qdii_seeds.py
+  s_018267ee2ecb2a::t_a8827454de069c 1-9,21-66
+  s_018267ee2ecb2a::t_35093e923731e4 10
+apps/api/app/services/eastmoney_trends_client.py
+  s_889eb5918fcf08::t_31c27b7b001212 179
+  s_889eb5918fcf08::t_b9fb5c9b4c4f08 26
+apps/api/tests/test_us_market_service.py
+  s_018267ee2ecb2a::t_afb44f154076c2 917,919-925,927-948,950-953
+  s_18d8dc582dfe46::t_9f29c7341ec66e 918
+  s_018267ee2ecb2a::t_99b28e7420e43a 173-177
+  s_018267ee2ecb2a::t_b0c4d38c494521 159-170,188
+  s_018267ee2ecb2a::t_1fab23e8966a42 127-131
+  s_018267ee2ecb2a::t_4ce152677a47a4 232,279-487,557,627,677-766
+  s_18d8dc582dfe46::t_32aa215dbf80c9 556
+  s_18d8dc582dfe46::t_5e97378f7712d7 138-142
+  s_018267ee2ecb2a::t_11c7b9e15fbb70 563-564
+  s_18d8dc582dfe46::t_9fc6066c8f62a1 656-657
+  s_018267ee2ecb2a::t_29057e851a1a7b 777
+  s_018267ee2ecb2a::t_23bb297e13e3ea 778-784
+  s_018267ee2ecb2a::t_91b34ef2e4f08a 832-907
+  s_018267ee2ecb2a::t_a568103c1e4d70 908
+  s_018267ee2ecb2a::t_870e0b31dca888 913-914,956,958-961,965-969,972-996
+  s_018267ee2ecb2a::t_e8c41b9b1b2e79 949
+  s_18d8dc582dfe46::t_3b081269c50f40 954-955,962-964,970-971,997-1000
+  s_018267ee2ecb2a::t_355082a89ecea5 171-172,180-185
+  s_18d8dc582dfe46::t_bc36b2f91ba337 264-266
+  s_018267ee2ecb2a::t_11e5b09881be6f 178-179
+  s_18d8dc582dfe46::t_315e9831536369 957
+  s_18d8dc582dfe46::t_1433c0082f866f 915-916
+  s_018267ee2ecb2a::t_a4c9e3221a332e 926
+  s_018267ee2ecb2a::t_fe6730f33140ca 583-590
+  s_018267ee2ecb2a::t_a9f751de8731b3 772-774
+  s_cd326a1954d98e::t_8927a51e987b38 909-911
+  s_018267ee2ecb2a::t_1ec47fc6d6c604 595
+  s_18d8dc582dfe46::t_22818950b6ea5b 912
+apps/api/app/services/us_qdii_quote_policy.py
+  s_18d8dc582dfe46::t_0b1543b6dd2b6a 21-22,24-28
+  s_018267ee2ecb2a::t_5dbf05124ffcaa 1-20,23,29-60
+apps/web/src/components/MarketTab.tsx
+  s_889eb5918fcf08::t_cef310d2117296 51
+  s_889eb5918fcf08::t_3eba4064d9ece5 97
+apps/web/src/components/UsMarketOverview.test.tsx
+  s_18d8dc582dfe46::t_8cde7fd723b0a6 55-56,121-126
+  s_018267ee2ecb2a::t_a139105e72321b 24-52,80-114
+apps/web/src/lib/api.ts
+  s_018267ee2ecb2a::t_36437d35eb3728 548
+  s_018267ee2ecb2a::t_8d1ffd7259fb8e 568-580
+  s_018267ee2ecb2a::t_00c3d4d37cc4c1 543
+apps/api/app/services/us_qdii_holdings_client.py
+  s_018267ee2ecb2a::t_261463d27757a3 1-203
+apps/api/app/services/fund_estimate_provider.py
+  s_018267ee2ecb2a::t_0d83ede03dc98a 28-57
+apps/api/tests/test_us_futures_client.py
+  s_018267ee2ecb2a::t_2ef2176a086f87 62
+  s_018267ee2ecb2a::t_afba65b5d521ad 52-55
+apps/api/app/services/us_stock_quote_client.py
+  s_889eb5918fcf08::t_39d82d477c890c 27
+  s_18d8dc582dfe46::t_3b423594f00d3b 43
+  s_018267ee2ecb2a::t_5b7036ef81dda8 254
+  s_18d8dc582dfe46::t_af743de97f0bfd 238
+  s_018267ee2ecb2a::t_d6dba3afa6b091 199,205,209-218,223,225-226,235-237,239,241-242
+  s_018267ee2ecb2a::t_61b3c316e9ff81 76
+  s_18d8dc582dfe46::t_2870c26e17fd28 80-86,90,92,95,99,101-102
+  s_18d8dc582dfe46::t_f534a16b81733e 26,28-32
+  s_018267ee2ecb2a::t_69d9569868a4f2 291,295
+  s_18d8dc582dfe46::t_8de3355909f216 200-204,206-208
+  s_018267ee2ecb2a::t_99973636eb82bc 219-222,224,227-233,245
+  s_18d8dc582dfe46::t_8608f0faebe810 240
+  s_018267ee2ecb2a::t_98718b99a7f3f2 1,3-7,16-17,19-20,22-25,34,36,39-42,45,48,55,58-60,62-68,70,73-75,77-79,87-89,91,93-94,96-98,100,103-126,128-144,147-160,172-174,176-179,182,193,195,234,243-244,246-253,255-267,269-282,284,286-290,292-294,296-300
+  s_018267ee2ecb2a::t_4311a070f3aa30 2,8-15,18,21,37-38,44,46-47,49-54,56-57,61,69,71-72,127,180-181,183-192,194,196-198,283,285
+  s_018267ee2ecb2a::t_50c8fdbba0b908 268
+  s_018267ee2ecb2a::t_cf6a213f15382c 33
+  s_18d8dc582dfe46::t_f349e0e4db5146 145-146,161-171,175
+  s_018267ee2ecb2a::t_085a4ea9c8075e 35
+apps/api/app/services/us_qdii_valuation_service.py
+  s_018267ee2ecb2a::t_60d934971074e9 137,156
+  s_018267ee2ecb2a::t_93818c87f0a045 27-41,45-46
+  s_018267ee2ecb2a::t_f11abe3cca8dec 141
+  s_18d8dc582dfe46::t_602922000cc2ff 42-44
+  s_018267ee2ecb2a::t_0edce33e94d804 47-49
+  s_018267ee2ecb2a::t_014aaafcb8557e 10-12
+  s_018267ee2ecb2a::t_f58a087ec653bc 140,142,150-152
+  s_18d8dc582dfe46::t_db95b61e3ced50 144-149,163-168,170-179,181-188,203-246
+  s_018267ee2ecb2a::t_b5cb6e6a5667c9 199
+  s_018267ee2ecb2a::t_16408dee92f685 13,15-16,50-64
+  s_018267ee2ecb2a::t_98b3f058d9564e 1-9,14,65-136,138-139,143,153-155,157-162,169,180,189-198,200-202
+  s_18d8dc582dfe46::t_1de7ae08cb23ac 17-26
+apps/api/tests/test_theme_board_snapshot.py
+  s_889eb5918fcf08::t_526430a4217f7b 90-112,121,124-125
+  s_889eb5918fcf08::t_68d0ed3a635525 113-116
+  s_889eb5918fcf08::t_316ff479fe5cfb 9
+  s_889eb5918fcf08::t_e9834c30088e61 126-127,135-142
+  s_889eb5918fcf08::t_dac2dff8ce073f 117-120,122-123
+docs/design/2026-06-04-eastmoney-intraday-troubleshooting.md
+  s_889eb5918fcf08::t_5282784d5b562e 146
+  s_889eb5918fcf08::t_d01b03eb3cffe9 30,34,40,51
+apps/api/tests/test_us_qdii_holdings_client.py
+  s_018267ee2ecb2a::t_ff505a9bd02096 1-23
+apps/web/src/components/ThemeSectorOverview.tsx
+  s_889eb5918fcf08::t_db445547d52c35 4,6-15,31,33-37,39-41,43,45-63,67-82,84-118
+  s_889eb5918fcf08::t_fd2354ef09f9f2 5,42,44,66
+apps/api/tests/test_us_stock_quote_client.py
+  s_018267ee2ecb2a::t_cea9053dac0138 1-6,8-16,25-43
+  s_18d8dc582dfe46::t_9fbf52974f256c 7,17-24
+apps/api/tests/test_us_forex_client.py
+  s_018267ee2ecb2a::t_4ddbb676335aa5 85-87
+  s_018267ee2ecb2a::t_a6d86328d7e549 1,16-82
+  s_018267ee2ecb2a::t_64a18859e74b85 9-10
+apps/api/app/services/us_forex_client.py
+  s_018267ee2ecb2a::t_07f8711f7011aa 10-12
+  s_018267ee2ecb2a::t_5228977afa5b6e 96
+  s_018267ee2ecb2a::t_6f3bc700c1cdb8 326-355
+  s_018267ee2ecb2a::t_f6a5cc83479c6f 195-229
+  s_018267ee2ecb2a::t_30fd541befa96e 62-73
+apps/api/tests/fixtures/us_futures_global_spot_em.json
+  s_018267ee2ecb2a::t_72b5d5313cdc54 71-9936
+apps/api/tests/test_us_index_client.py
+  s_018267ee2ecb2a::t_f0978189bce3c2 1-4,12-31
+  s_cd326a1954d98e::t_ba1730ecef05c2 5-6,48
+  s_cd326a1954d98e::t_3486ec54303be3 7-11,32-47,49-80
+apps/api/app/models.py
+  s_018267ee2ecb2a::t_a74bc17937a1a5 446
+  s_018267ee2ecb2a::t_9aabdc7a39dea6 451
+  s_018267ee2ecb2a::t_3f6da3c3fabdf4 471
+  s_018267ee2ecb2a::t_2fe77a33895d0c 483
+apps/web/src/lib/marketThemeBoard.ts
+  s_889eb5918fcf08::t_b0462735ec4855 13-49
+  s_889eb5918fcf08::t_097386711a63d8 11-12
+apps/api/tests/conftest.py
+  s_018267ee2ecb2a::t_2403f99314fd90 249
+  s_018267ee2ecb2a::t_c8f7063a3062b4 251-254
+  s_018267ee2ecb2a::t_c7c89b57e5e481 289
+  s_018267ee2ecb2a::t_008491688e2fb9 255-256
+  s_018267ee2ecb2a::t_6f75d8fd13c045 321-325
+  s_018267ee2ecb2a::t_8e6700d5be8641 297
+  s_018267ee2ecb2a::t_02a4959adaf317 242
+  s_018267ee2ecb2a::t_420ca6292bd007 250,263
+  s_018267ee2ecb2a::t_610d1d4dcbcc6d 257-262
+  s_018267ee2ecb2a::t_416a45df3d2bad 305
+  s_018267ee2ecb2a::t_37c14b70f8d3d1 265-269
+  s_018267ee2ecb2a::t_e1fef67511e70d 228
+  s_18d8dc582dfe46::t_d371ff70ccd130 318-319
+  s_018267ee2ecb2a::t_72f77364d5f3b4 313-316
+  s_018267ee2ecb2a::t_31e0a7635ffbac 235
+apps/web/src/lib/marketThemeBoard.test.ts
+  s_889eb5918fcf08::t_89aaaf1de180b3 1-12,15-42
+  s_889eb5918fcf08::t_90c349091473b7 13-14
+apps/api/app/services/sector_canonical.py
+  s_889eb5918fcf08::t_976c5520665dfe 23
+docs/superpowers/specs/2026-06-17-market-theme-boards-design.md
+  s_889eb5918fcf08::t_80759e90ca7854 256,258-261,263,265-266
+  s_889eb5918fcf08::t_4c90948a928e5f 251
+apps/api/app/services/us_index_client.py
+  s_cd326a1954d98e::t_2b8ef59cae5ccf 1,3,5,7-11,14-16,25,27,29-30,34-45,53-59,61,65-76,78-91,93,115-148,157,168-169,171-185,189-242,244,275-315,318,325,328,337,343,345-419
+  s_889eb5918fcf08::t_ba67f7106bcaee 4
+  s_018267ee2ecb2a::t_1d037efbc837f1 2,6,12-13,17-24,26,28,31-33,46-52,60,62-64,77,92,94-114,149-156,158-167,170,186-188,243,245-274,316-317,319-324,326-327,329-336,338-342,344
+apps/api/app/config.py
+  s_18d8dc582dfe46::t_f64c91401ce161 96-97
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.17-trip",
+  "base_commit_sha": "eae9fe24e633c72766f177a3a64434a6e0863e39",
+  "prompts": {},
+  "humans": {
+    "h_375fc341ff3baa": {
+      "author": "hegl <HLLLG@github.com>"
+    }
+  },
+  "sessions": {
+    "s_018267ee2ecb2a": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "f6eddc8d-e4a9-4bce-9acc-952c03259cff",
+        "model": "composer-2.5"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    },
+    "s_18d8dc582dfe46": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "f04fe83f-6a71-4fa3-9b57-ee56954d3884",
+        "model": "composer-2.5"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    },
+    "s_889eb5918fcf08": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "bfba0bcd-c805-40f6-9225-ecd30989e860",
+        "model": "composer-2.5"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    },
+    "s_cd326a1954d98e": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "b11a3641-f91f-4b54-bdf2-9550890e4eb6",
+        "model": "composer-2.5"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
