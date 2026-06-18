@@ -16,6 +16,12 @@ export type Holding = {
   user_note?: string | null;
   /** 持有金额是否已含当日涨跌（份额×净值同步后） */
   amount_includes_today?: boolean | null;
+  /** 后端 holding_client.serialize 写入的展示口径（优先于前端 fallback 计算） */
+  estimated_holding_return_percent?: number | null;
+  estimated_holding_profit?: number | null;
+  holding_return_is_estimated?: boolean | null;
+  estimated_daily_return_percent?: number | null;
+  daily_return_is_estimated?: boolean | null;
 };
 
 export type DecisionStyle = "conservative" | "tactical" | "aggressive";

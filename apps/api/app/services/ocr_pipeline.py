@@ -317,8 +317,10 @@ def apply_confirmed_holdings(
     )
     save_portfolio_summary(portfolio_summary)
     save_daily_snapshot(processed, portfolio_summary)
+    from app.services.holding_client import serialize_holdings_for_client
+
     return {
-        "holdings": [holding.model_dump() for holding in processed],
+        "holdings": serialize_holdings_for_client(processed),
         "portfolio_summary": portfolio_summary.model_dump(mode="json"),
         "profile_sync": profile_sync,
         "sector_refresh": sector_refresh,

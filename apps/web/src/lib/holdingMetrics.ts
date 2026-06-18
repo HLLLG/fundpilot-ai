@@ -1,3 +1,8 @@
+/**
+ * 持有列 fallback 计算（离线/缓存无 display 字段时用）。
+ * 权威口径：apps/api/app/services/holding_estimates.py + holding_client.serialize_holding_for_client
+ * 展示请优先用 holdingDisplay.ts 的 getter。
+ */
 import type { Holding } from "@/lib/api";
 
 const TEST_FUND_CODES = new Set(["000001"]);

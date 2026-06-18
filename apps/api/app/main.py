@@ -68,7 +68,7 @@ from app.services.fund_data import FundDataService
 from app.services.fund_profile import FundProfileService, migrate_fund_profile_code
 from app.services.holding_validation import validate_holdings
 from app.services.penetration_daily_allocator import allocate_penetration_daily_profit
-from app.services.holding_estimates import sum_daily_profit
+from app.services.holding_client import serialize_holdings_for_client
 from app.services.fund_code_resolver import reconcile_holding_fund_codes, search_funds_by_keyword
 from app.services.portfolio_holdings_service import (
     build_portfolio_holdings_response,
@@ -298,7 +298,7 @@ def allocate_penetration_daily(request: AllocatePenetrationRequest) -> dict:
     )
     row_sum = round(sum(h.daily_profit or 0 for h in updated), 2)
     return {
-        "holdings": [holding.model_dump() for holding in updated],
+        "holdings": serialize_holdings_for_client(updated),
         "holding_warnings": [item.model_dump() for item in warnings],
         "warning_count": len([w for w in warnings if w.severity != "info"]),
         "allocated_total": row_sum,
@@ -323,7 +323,7 @@ def refresh_sector_quotes(request: RefreshSectorQuotesRequest) -> dict:
         if result.get("fetched_at"):
             fetched_at = datetime.fromisoformat(str(result["fetched_at"]))
         enriched = persist_holdings_after_sector_refresh(refreshed, fetched_at=fetched_at)
-        result["holdings"] = [holding.model_dump() for holding in enriched]
+        result["holdings"] = serialize_holdings_for_client(enriched)
     return result
 
 

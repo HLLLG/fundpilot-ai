@@ -1,6 +1,14 @@
+"""持有列语义与 LLM 分析 payload；计算口径见 holding_estimates.py。"""
+
 from __future__ import annotations
 
 from app.models import Holding
+from app.services.holding_estimates import (
+    build_holding_display_metrics,
+    compute_estimated_daily_return_percent,
+    compute_sector_fund_gap_percent,
+    holding_daily_return_is_estimated,
+)
 
 HOLDING_RETURN_SEMANTICS: dict[str, str] = {
     "sector_return_percent": (
@@ -25,41 +33,7 @@ HOLDING_RETURN_SEMANTICS: dict[str, str] = {
 }
 
 
-def compute_estimated_daily_return_percent(holding: Holding) -> float | None:
-    if holding.daily_return_percent is not None:
-        return holding.daily_return_percent
-    if holding.sector_return_percent is None:
-        return None
-    settled = holding.holding_return_percent
-    if settled is None:
-        settled = holding.return_percent
-    return round(holding.sector_return_percent + settled, 4)
-
-
-def holding_daily_return_is_estimated(holding: Holding) -> bool:
-    return (
-        holding.daily_return_percent is None
-        and holding.sector_return_percent is not None
-        and compute_estimated_daily_return_percent(holding) is not None
-    )
-
-
-def compute_sector_fund_gap_percent(holding: Holding) -> float | None:
-    """板块涨跌与基金当日/估算涨跌之差（百分点），正数表示板块强于基金表现。"""
-    sector = holding.sector_return_percent
-    if sector is None:
-        return None
-    fund_daily = holding.daily_return_percent
-    if fund_daily is None:
-        fund_daily = compute_estimated_daily_return_percent(holding)
-    if fund_daily is None:
-        return None
-    return round(sector - fund_daily, 4)
-
-
 def holding_analysis_payload(holding: Holding) -> dict:
-    from app.services.holding_estimates import build_holding_display_metrics
-
     estimated = compute_estimated_daily_return_percent(holding)
     display = build_holding_display_metrics(holding)
     payload = holding.model_dump()
@@ -70,3 +44,12 @@ def holding_analysis_payload(holding: Holding) -> dict:
     payload["estimated_holding_profit"] = display["estimated_holding_profit"]
     payload["holding_return_is_estimated"] = display["holding_return_is_estimated"]
     return payload
+
+
+__all__ = [
+    "HOLDING_RETURN_SEMANTICS",
+    "compute_estimated_daily_return_percent",
+    "compute_sector_fund_gap_percent",
+    "holding_analysis_payload",
+    "holding_daily_return_is_estimated",
+]

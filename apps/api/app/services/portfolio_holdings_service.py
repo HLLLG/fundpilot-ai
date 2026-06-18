@@ -63,8 +63,10 @@ def build_portfolio_holdings_response(
                     2,
                 )
     payload["holding_count"] = len(holdings)
+    from app.services.holding_client import serialize_holdings_for_client
+
     return {
-        "holdings": [holding.model_dump() for holding in holdings],
+        "holdings": serialize_holdings_for_client(holdings),
         "source": source,
         "snapshot_date": snapshot_date,
         "refreshed_at": refreshed_at.isoformat() if refreshed_at else None,
