@@ -29,6 +29,7 @@ import {
 import type { SectorQuoteMeta } from "@/lib/api";
 import { holdingDisplaySectorLabel } from "@/lib/profileSector";
 import { buildSectorRefreshNotice } from "@/lib/sectorQuoteStatus";
+import { formatThemeBoardUpdatedFromIso } from "@/lib/marketThemeBoard";
 import { loadAmountsHidden, saveAmountsHidden } from "@/lib/storage";
 import { formatTradeDateShort } from "@/lib/tradeDateLabel";
 import type { useSectorQuoteRefresh } from "@/lib/useSectorQuoteRefresh";
@@ -42,6 +43,7 @@ type YangjibaoHoldingsBoardProps = {
   holdings: Holding[];
   portfolioSummary?: PortfolioSummary | null;
   sectorRefresh: SectorRefreshControl;
+  refreshedAt?: string | null;
   isLoading?: boolean;
   className?: string;
   onAddHolding?: () => void;
@@ -164,10 +166,27 @@ function SortableColumnHeader({
   );
 }
 
+function formatHoldingsRefreshedLabel(
+  iso: string | null | undefined,
+  isRefreshing: boolean,
+): string {
+  if (iso) {
+    const formatted = formatThemeBoardUpdatedFromIso(iso);
+    if (formatted !== "加载中…") {
+      return formatted;
+    }
+  }
+  if (isRefreshing) {
+    return "刷新中…";
+  }
+  return "尚未刷新板块行情";
+}
+
 export function YangjibaoHoldingsBoard({
   holdings,
   portfolioSummary,
   sectorRefresh,
+  refreshedAt = null,
   isLoading = false,
   className,
   onAddHolding,
@@ -302,6 +321,9 @@ export function YangjibaoHoldingsBoard({
           <div className="flex items-end justify-between gap-4">
             <div className="min-w-0">
               <div className="text-[11px] font-semibold text-slate-400">总资产</div>
+              <p className="mt-0.5 text-[10px] font-medium text-slate-400">
+                {formatHoldingsRefreshedLabel(refreshedAt, isRefreshing)}
+              </p>
               <div className="kpi-value mt-0.5 text-[1.75rem] leading-none text-slate-950">
                 {formatBalance(totalAssets, amountsHidden)}
               </div>

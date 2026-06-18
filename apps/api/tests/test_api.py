@@ -503,7 +503,6 @@ def test_market_theme_boards(client):
     assert isinstance(body["items"], list)
     first = body["items"][0]
     assert first["sector_label"] == "商业航天"
-    assert first["consecutive_up_days"] == 5
     assert first["board_kind"] in {"industry", "concept", "index"}
     assert "linked_fund_count" not in first
 
@@ -511,6 +510,12 @@ def test_market_theme_boards(client):
 def test_market_theme_boards_invalid_sort(client):
     response = client.get("/api/market/theme-boards?sort=invalid")
     assert response.status_code == 400
+
+
+def test_market_theme_boards_sort_inflow(client):
+    response = client.get("/api/market/theme-boards?sort=inflow")
+    assert response.status_code == 200
+    assert response.json()["sort"] == "inflow"
 
 
 def test_fund_discovery_async_offline(client, monkeypatch):

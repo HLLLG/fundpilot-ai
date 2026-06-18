@@ -1,14 +1,76 @@
 from __future__ import annotations
 
-from app.database import get_most_recent_portfolio_snapshot, list_fund_profiles
+from datetime import datetime, timezone
+
+from app.database import get_most_recent_portfolio_snapshot, get_portfolio_summary, list_fund_profiles
 from app.models import FundProfile, Holding
+from app.services.fund_code_resolver import reconcile_holding_fund_codes
 from app.services.fund_profile import FundProfileService, _is_valid_sector_label
 from app.services.holding_amount_sync import sync_holding_amounts_from_shares
-from app.services.holding_estimates import enrich_holdings_estimates
+from app.services.holding_estimates import enrich_holdings_estimates, sum_daily_profit
 from app.services.holding_filters import is_test_holding, without_test_holdings
 from app.services.overview_pipeline import enrich_holdings_from_profiles
 from app.services.portfolio_persistence import enrich_loaded_holdings, persist_holdings_after_sector_refresh
 from app.services.sector_quote_service import refresh_holdings_sector_quotes
+
+
+def _coerce_utc_datetime(value: object | None) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        moment = value
+        if moment.tzinfo is None:
+            return moment.replace(tzinfo=timezone.utc)
+        return moment.astimezone(timezone.utc)
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _refreshed_at_from_summary() -> datetime | None:
+    summary = get_portfolio_summary()
+    if summary is None:
+        return None
+    return _coerce_utc_datetime(summary.updated_at)
+
+
+def build_portfolio_holdings_response(
+    holdings: list[Holding],
+    *,
+    source: str,
+    snapshot_date: str | None,
+    refreshed_at: datetime | None,
+) -> dict:
+    holdings = reconcile_holding_fund_codes(holdings)
+    holdings = FundProfileService().resolve_holdings(holdings)
+    summary = get_portfolio_summary()
+    profiles = FundProfileService().list_profiles()
+    payload = summary.model_dump(mode="json") if summary else {}
+    total_from_holdings = round(sum(holding.holding_amount for holding in holdings), 2)
+    if total_from_holdings:
+        payload["total_assets"] = total_from_holdings
+    if holdings:
+        payload["daily_profit"] = sum_daily_profit(holdings)
+        if total_from_holdings > (payload["daily_profit"] or 0):
+            previous = total_from_holdings - float(payload["daily_profit"])
+            if previous > 0:
+                payload["daily_return_percent"] = round(
+                    float(payload["daily_profit"]) / previous * 100,
+                    2,
+                )
+    payload["holding_count"] = len(holdings)
+    return {
+        "holdings": [holding.model_dump() for holding in holdings],
+        "source": source,
+        "snapshot_date": snapshot_date,
+        "refreshed_at": refreshed_at.isoformat() if refreshed_at else None,
+        "portfolio_summary": payload or None,
+        "profile_count": len(profiles),
+    }
 
 
 def profile_to_holding(profile: FundProfile) -> Holding:
@@ -149,7 +211,7 @@ def sync_portfolio_from_profiles(*, refresh_sectors: bool = True) -> list[Holdin
     return persist_holdings_after_sector_refresh(merged)
 
 
-def load_persisted_holdings() -> tuple[list[Holding], str, str | None]:
+def load_persisted_holdings() -> tuple[list[Holding], str, str | None, datetime | None]:
     profile_holdings = holdings_from_profiles()
     snapshot = get_most_recent_portfolio_snapshot()
 
@@ -167,12 +229,23 @@ def load_persisted_holdings() -> tuple[list[Holding], str, str | None]:
                         enrich_loaded_holdings(profile_holdings),
                         "profiles_recovered",
                         snapshot.get("snapshot_date"),
+                        _refreshed_at_from_summary(),
                     )
             merged = without_test_holdings(merge_holdings_with_profiles(holdings))
             enriched = enrich_loaded_holdings(enrich_holdings_from_profiles(merged))
-            return enriched, "snapshot", snapshot.get("snapshot_date")
+            return (
+                enriched,
+                "snapshot",
+                snapshot.get("snapshot_date"),
+                _coerce_utc_datetime(snapshot.get("captured_at")),
+            )
 
     if profile_holdings:
-        return enrich_loaded_holdings(profile_holdings), "profiles", None
+        return (
+            enrich_loaded_holdings(profile_holdings),
+            "profiles",
+            None,
+            _refreshed_at_from_summary(),
+        )
 
-    return [], "empty", None
+    return [], "empty", None, None

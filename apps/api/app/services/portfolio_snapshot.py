@@ -38,6 +38,9 @@ def save_daily_snapshot(
         captured_at=datetime.now(timezone.utc),
     )
     save_portfolio_daily_snapshot(snapshot)
+    from app.services.portfolio_holdings_cache import bump_holdings_cache_generation
+
+    bump_holdings_cache_generation()
     return snapshot
 
 

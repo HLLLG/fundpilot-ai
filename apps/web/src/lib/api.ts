@@ -68,40 +68,6 @@ export type AnalysisPromptConfig = {
   default_role_prompt: string;
 };
 
-export type ReportDiff = {
-  previous_report_id: string;
-  previous_title: string;
-  previous_created_at: string;
-  risk_level_changed: boolean;
-  previous_risk_level: string;
-  current_risk_level: string;
-  suggested_action_changed: boolean;
-  previous_suggested_action: string;
-  current_suggested_action: string;
-  weighted_return_delta: number;
-  holding_changes: Array<{
-    type: "added" | "removed" | "changed";
-    fund_code?: string;
-    fund_name?: string;
-    holding_amount?: number;
-    return_percent?: number;
-    previous_holding_amount?: number;
-    previous_return_percent?: number;
-    holding_amount_delta?: number;
-    return_percent_delta?: number;
-  }>;
-  recommendation_changes: Array<{
-    fund_code: string;
-    previous_action?: string | null;
-    current_action?: string | null;
-  }>;
-};
-
-export type ReportDiffResponse = {
-  has_previous: boolean;
-  diff: ReportDiff | null;
-};
-
 export type RiskAlert = {
   code: string;
   severity: "low" | "medium" | "high";
@@ -471,51 +437,24 @@ export type DiscoverySectorHeat = {
   heat_score?: number | null;
 };
 
-export type SectorBoardItem = {
-  name: string;
-  code?: string | null;
-  change_percent?: number | null;
-  main_force_net_yi?: number | null;
-  rank?: number;
-};
-
-export type MarketSectorBoardWidget = {
-  trade_date?: string | null;
-  session_kind?: string | null;
-  available: boolean;
-  from_cache?: boolean;
-  stale?: boolean;
-  message?: string | null;
-  top_gainers: SectorBoardItem[];
-  top_losers: SectorBoardItem[];
-  top_inflow: SectorBoardItem[];
-  top_outflow: SectorBoardItem[];
-};
-
-export type MarketSectorBoardList = {
-  trade_date?: string | null;
-  session_kind?: string | null;
-  available: boolean;
-  from_cache?: boolean;
-  stale?: boolean;
-  message?: string | null;
-  board_type: "industry" | "concept";
-  sort: "change" | "inflow";
-  items: SectorBoardItem[];
-};
-
-export type MarketBoardType = "industry" | "concept";
-export type MarketBoardSort = "change" | "inflow";
-
-export type MarketThemeBoardSort = "change" | "streak";
+export type MarketThemeBoardSort = "change" | "streak" | "inflow";
 
 export type MarketThemeBoardKind = "industry" | "concept" | "index";
+
+export type MarketThemeBoardFlowTiers = {
+  super_large_net_yi?: number | null;
+  large_net_yi?: number | null;
+  medium_net_yi?: number | null;
+  small_net_yi?: number | null;
+};
 
 export type MarketThemeBoardItem = {
   sector_label: string;
   board_kind: MarketThemeBoardKind;
   change_1d_percent?: number | null;
   consecutive_up_days?: number | null;
+  main_force_net_yi?: number | null;
+  flow_tiers?: MarketThemeBoardFlowTiers | null;
   held_fund_count: number;
   in_portfolio: boolean;
   rank?: number;
@@ -996,44 +935,6 @@ export async function fetchDiscoverySectors(): Promise<DiscoverySectorHeat[]> {
   }
 }
 
-export async function fetchMarketSectorBoardWidget(
-  options?: { forceRefresh?: boolean },
-): Promise<MarketSectorBoardWidget> {
-  const params = new URLSearchParams({ view: "widget" });
-  if (options?.forceRefresh) {
-    params.set("force_refresh", "true");
-  }
-  const response = await apiFetch(`${API_BASE}/api/market/sector-boards?${params}`, {
-    cache: "no-store",
-  });
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  return response.json();
-}
-
-export async function fetchMarketSectorBoardList(options: {
-  boardType: MarketBoardType;
-  sort: MarketBoardSort;
-  forceRefresh?: boolean;
-}): Promise<MarketSectorBoardList> {
-  const params = new URLSearchParams({
-    view: "list",
-    board_type: options.boardType,
-    sort: options.sort,
-  });
-  if (options.forceRefresh) {
-    params.set("force_refresh", "true");
-  }
-  const response = await apiFetch(`${API_BASE}/api/market/sector-boards?${params}`, {
-    cache: "no-store",
-  });
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  return response.json();
-}
-
 export async function fetchMarketThemeBoards(options?: {
   sort?: MarketThemeBoardSort;
   forceRefresh?: boolean;
@@ -1119,35 +1020,12 @@ export async function deleteDiscoveryReport(reportId: string): Promise<void> {
   }
 }
 
-export async function fetchDiscoveryReportDiff(reportId: string): Promise<Record<string, unknown>> {
-  const response = await apiFetch(`${API_BASE}/api/fund-discovery/reports/${reportId}/diff`, {
-    cache: "no-store",
-  });
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  return response.json();
-}
-
 export async function fetchDiscoveryOutcomes(
   reportId: string,
   days = 7,
 ): Promise<DiscoveryOutcomesPayload> {
   const response = await apiFetch(
     `${API_BASE}/api/fund-discovery/reports/${reportId}/outcomes?days=${days}`,
-    { cache: "no-store" },
-  );
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  return response.json();
-}
-
-export async function fetchDiscoveryRecommendationAccuracy(
-  days = 30,
-): Promise<Record<string, unknown>> {
-  const response = await apiFetch(
-    `${API_BASE}/api/fund-discovery/recommendation-accuracy?days=${days}`,
     { cache: "no-store" },
   );
   if (!response.ok) {
@@ -1415,16 +1293,6 @@ export async function fetchRebalanceSimulation(reportId: string): Promise<Rebala
   return response.json();
 }
 
-export async function fetchReportDiff(reportId: string): Promise<ReportDiffResponse> {
-  const response = await apiFetch(`${API_BASE}/api/reports/${reportId}/diff`, {
-    cache: "no-store",
-  });
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  return response.json();
-}
-
 export async function fetchReportChatHistory(reportId: string): Promise<ReportChatMessage[]> {
   const response = await apiFetch(`${API_BASE}/api/reports/${reportId}/chat`, {
     cache: "no-store",
@@ -1616,8 +1484,9 @@ export async function searchFunds(query: string, limit = 12): Promise<FundSearch
 
 export type PortfolioHoldingsPayload = {
   holdings: Holding[];
-  source: "snapshot" | "profiles" | "empty";
+  source: "snapshot" | "profiles" | "profiles_recovered" | "empty";
   snapshot_date?: string | null;
+  refreshed_at?: string | null;
   portfolio_summary?: PortfolioSummary | null;
   profile_count?: number;
 };

@@ -120,6 +120,6 @@ def test_load_recovers_from_profiles(monkeypatch):
         FakeService,
     )
 
-    holdings, source, _ = load_persisted_holdings()
+    holdings, source, _, _ = load_persisted_holdings()
     assert source == "profiles_recovered"
     assert len(holdings) == 2

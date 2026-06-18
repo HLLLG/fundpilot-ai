@@ -11,6 +11,7 @@ from app.services.sector_daily_kline_provider import fetch_canonical_daily_kline
 from app.services.akshare_spot_client import fetch_akshare_board_records, fetch_boards_via_akshare
 from app.services.eastmoney_spot_client import fetch_eastmoney_board_records
 from app.services.sector_board_snapshot import get_sector_board_snapshot
+from app.services.eastmoney_trends_client import fetch_eastmoney_kline_close_percent
 from app.services.sector_canonical import (
     CanonicalSector,
     get_canonical_sector,
@@ -25,7 +26,7 @@ from app.services.trading_session import build_trading_session
 
 logger = logging.getLogger(__name__)
 
-SortMode = Literal["change", "streak"]
+SortMode = Literal["change", "streak", "inflow"]
 BoardKind = Literal["industry", "concept", "index"]
 
 _LIVE_TTL_SECONDS = 60.0
@@ -49,7 +50,9 @@ _THEME_BOARD_WHITELIST: tuple[str, ...] = (
     "白酒", "黄金股", "建材", "证券", "煤炭", "电力", "证券保险", "保险",
 )
 
-# 小倍名 → 东财近义板块（canonical/精确名都匹配不到时用）：(secid, source_code, board_kind)
+# 指数主题涨跌幅用 _THEME_BOARD_INDEX；资金流用 _resolve_flow_source_code 解析到的东财 BK。
+# 个别自动解析不准时在此覆盖（label → BKxxxx）。
+_THEME_BOARD_FLOW: dict[str, str] = {}
 _THEME_BOARD_ALIAS: dict[str, tuple[str, str, str]] = {
     "软件": ("90.BK0737", "BK0737", "industry"),        # 软件开发
     "医疗": ("90.BK0727", "BK0727", "industry"),        # 医疗服务
@@ -72,6 +75,71 @@ _THEME_BOARD_ALIAS: dict[str, tuple[str, str, str]] = {
     "黄金股": ("90.BK0547", "BK0547", "concept"),         # 黄金概念
     "建材": ("90.BK1208", "BK1208", "industry"),         # 建筑材料
     "保险": ("90.BK0474", "BK0474", "industry"),         # 保险Ⅱ
+}
+
+# 小倍「今日板块涨幅榜」口径：优先中证/国证主题指数（2.xxx）；少数仍用东财 BK 行业。
+# 经 2026-06-18 小倍全榜截图与 push2delay trends2 逐条比对后固化。
+_THEME_BOARD_INDEX: dict[str, tuple[str, str, str]] = {
+    "人工智能": ("2.931071", "931071", "index"),
+    "半导体": ("2.H30184", "H30184", "index"),
+    "5G": ("2.931079", "931079", "index"),
+    "消费电子": ("2.931494", "931494", "index"),
+    "电子": ("2.930652", "930652", "index"),
+    "稀土": ("2.930598", "930598", "index"),
+    "创新药": ("2.931152", "931152", "index"),
+    "云计算": ("2.930851", "930851", "index"),
+    "CPO": ("2.932357", "932357", "index"),
+    "MLCC": ("2.930902", "930902", "index"),
+    "存储芯片": ("2.H30552", "H30552", "index"),
+    "计算机": ("2.930651", "930651", "index"),
+    "半导体材料": ("2.931743", "931743", "index"),
+    "智能家居": ("2.H50028", "H50028", "index"),
+    "PCB": ("2.931837", "931837", "index"),
+    "机器人": ("2.931594", "931594", "index"),          # 卫星产业
+    "医药": ("2.H30054", "H30054", "index"),
+    "软件": ("2.H30202", "H30202", "index"),
+    "医疗": ("2.930720", "930720", "index"),
+    "传媒": ("2.H30365", "H30365", "index"),
+    "信创": ("2.931247", "931247", "index"),
+    "体育": ("2.930790", "930790", "index"),
+    "电网设备": ("2.931994", "931994", "index"),
+    "钢铁": ("2.930606", "930606", "index"),
+    "有色金属": ("2.H30015", "H30015", "index"),
+    "机械设备": ("2.932078", "932078", "index"),
+    "储能": ("2.H30057", "H30057", "index"),
+    "锂电池": ("2.932444", "932444", "index"),
+    "动漫游戏": ("2.930901", "930901", "index"),
+    "汽车": ("2.931008", "931008", "index"),
+    "房地产": ("2.931775", "931775", "index"),
+    "新能源车": ("2.930997", "930997", "index"),
+    "光伏": ("2.931151", "931151", "index"),
+    "新能源": ("2.931151", "931151", "index"),
+    "金融科技": ("2.930986", "930986", "index"),
+    "环保": ("2.930614", "930614", "index"),
+    "畜牧养殖": ("2.931946", "931946", "index"),
+    "农业": ("2.931581", "931581", "index"),
+    "基建": ("2.930608", "930608", "index"),
+    "交通运输": ("2.H11043", "H11043", "index"),
+    "红利": ("2.H30089", "H30089", "index"),
+    "食品饮料": ("2.930653", "930653", "index"),
+    "贵金属": ("2.932422", "932422", "index"),
+    "化工": ("2.932422", "932422", "index"),
+    "银行": ("2.H30022", "H30022", "index"),
+    "锂矿": ("2.931454", "931454", "index"),
+    "白酒": ("2.930622", "930622", "index"),
+    "黄金股": ("2.931238", "931238", "index"),
+    "建材": ("2.931009", "931009", "index"),
+    "证券": ("2.931412", "931412", "index"),
+    "煤炭": ("90.BK0437", "BK0437", "industry"),
+    "电力": ("2.H30199", "H30199", "index"),
+    "保险": ("2.399809", "399809", "index"),
+    "军工": ("2.930749", "930749", "index"),
+    "国企改革": ("2.931088", "931088", "index"),
+    "中药": ("2.930641", "930641", "index"),
+    "家电": ("2.931021", "931021", "index"),
+    "可控核聚变": ("2.932000", "932000", "index"),
+    "脑机接口": ("2.H11050", "H11050", "index"),
+    "AI医疗": ("2.H30531", "H30531", "index"),
 }
 
 _INTRADAY_SESSIONS = {
@@ -123,11 +191,43 @@ def _board_kind_from_source_type(source_type: str) -> BoardKind:
     return "concept"
 
 
+def _resolve_flow_source_code(
+    name: str,
+    entry: dict[str, Any],
+    *,
+    concept_by_name: dict[str, str],
+    industry_by_name: dict[str, str],
+) -> str | None:
+    """涨跌幅 secid 与资金流 BK 解耦：指数主题仍返回东财 BK 代码供 clist 查 f62。"""
+    if name in _THEME_BOARD_FLOW:
+        return _THEME_BOARD_FLOW[name]
+
+    secid = str(entry.get("secid", ""))
+    if secid.startswith("90."):
+        code = str(entry.get("source_code") or "").strip()
+        return code or secid.split(".", 1)[1]
+
+    if name in _THEME_BOARD_ALIAS:
+        return _THEME_BOARD_ALIAS[name][1]
+
+    canon = get_canonical_sector(name)
+    if canon is not None and str(canon.eastmoney_secid).startswith("90."):
+        code = str(canon.source_code or "").strip()
+        if code:
+            return code
+
+    if name in concept_by_name:
+        return concept_by_name[name]
+    if name in industry_by_name:
+        return industry_by_name[name]
+    return None
+
+
 def list_theme_board_universe() -> list[dict[str, Any]]:
     """对标小倍的固定粗粒度板块白名单，解析到东财 secid。
 
-    解析优先级（每个白名单名）：canonical → `_THEME_BOARD_ALIAS` 近义板块 →
-    东财概念/行业**精确名**匹配 → 跳过（港股/指数类等无干净 A 股板块的名暂不纳入）。
+    解析优先级（每个白名单名）：``_THEME_BOARD_INDEX``（小倍中证指数）→ canonical →
+    别名 → 东财概念/行业**精确名**匹配 → 跳过。
     每项：``sector_label``、``secid``、``source_code``、``board_kind``、
     ``change_hint``（东财 spot f3，连涨拉取失败时兜底涨跌幅）、``_canon``。
     """
@@ -144,23 +244,39 @@ def list_theme_board_universe() -> list[dict[str, Any]]:
         return None
 
     universe: list[dict[str, Any]] = []
-    seen_secids: set[str] = set()
+    seen_labels: set[str] = set()
 
     for name in _THEME_BOARD_WHITELIST:
         entry: dict[str, Any] | None = None
 
-        canon = get_quote_canonical_sector(name) or get_canonical_sector(name)
-        if canon is not None:
-            semantic = get_canonical_sector(name) or canon
+        if name in _THEME_BOARD_INDEX:
+            secid, code, kind = _THEME_BOARD_INDEX[name]
             entry = {
                 "sector_label": name,
-                "secid": canon.eastmoney_secid,
-                "source_code": canon.source_code,
-                "board_kind": _board_kind_from_source_type(semantic.source_type),
-                "change_hint": change_for_code(canon.source_code),
-                "_canon": canon,
+                "secid": secid,
+                "source_code": code,
+                "board_kind": kind,
+                "change_hint": change_for_code(code) if kind != "index" else None,
+                "_canon": CanonicalSector(
+                    label=name,
+                    source_type=kind,
+                    source_name=name,
+                    eastmoney_secid=secid,
+                    source_code=code,
+                ),
             }
-        elif name in _THEME_BOARD_ALIAS:
+        else:
+            canon = get_quote_canonical_sector(name) or get_canonical_sector(name)
+            if canon is not None:
+                entry = {
+                    "sector_label": name,
+                    "secid": canon.eastmoney_secid,
+                    "source_code": canon.source_code,
+                    "board_kind": _board_kind_from_source_type(canon.source_type),
+                    "change_hint": change_for_code(canon.source_code),
+                    "_canon": canon,
+                }
+        if entry is None and name in _THEME_BOARD_ALIAS:
             secid, code, kind = _THEME_BOARD_ALIAS[name]
             entry = {
                 "sector_label": name,
@@ -170,7 +286,7 @@ def list_theme_board_universe() -> list[dict[str, Any]]:
                 "change_hint": change_for_code(code),
                 "_canon": None,
             }
-        elif name in concept_by_name:
+        if entry is None and name in concept_by_name:
             code = concept_by_name[name]
             entry = {
                 "sector_label": name,
@@ -180,7 +296,7 @@ def list_theme_board_universe() -> list[dict[str, Any]]:
                 "change_hint": concept_by_code.get(code),
                 "_canon": None,
             }
-        elif name in industry_by_name:
+        if entry is None and name in industry_by_name:
             code = industry_by_name[name]
             entry = {
                 "sector_label": name,
@@ -190,13 +306,20 @@ def list_theme_board_universe() -> list[dict[str, Any]]:
                 "change_hint": industry_by_code.get(code),
                 "_canon": None,
             }
-        else:
+        if entry is None:
             logger.info("theme board whitelist name unresolved: %s", name)
             continue
 
-        if entry["secid"] in seen_secids:
+        if entry["sector_label"] in seen_labels:
             continue
-        seen_secids.add(entry["secid"])
+        seen_labels.add(entry["sector_label"])
+        flow_code = _resolve_flow_source_code(
+            name,
+            entry,
+            concept_by_name=concept_by_name,
+            industry_by_name=industry_by_name,
+        )
+        entry["flow_source_code"] = flow_code
         universe.append(entry)
 
     return universe
@@ -260,21 +383,23 @@ def refresh_theme_board_snapshot(*, trade_date: str | None = None) -> dict[str, 
 
     def enrich(entry: dict[str, Any]) -> dict[str, Any]:
         secid = entry["secid"]
-        series = _fetch_universe_series(
-            secid,
-            entry.get("source_code"),
-            canon=entry.get("_canon"),
+        change = _as_float(
+            fetch_eastmoney_kline_close_percent(
+                secid,
+                source_code=entry.get("source_code"),
+                trade_date=resolved_date,
+                timeout=_SERIES_TIMEOUT,
+            )
         )
-        change = _latest_change_percent(series, resolved_date) if series else None
         if change is None:
-            change = entry.get("change_hint")  # 行业 spot f3 兜底（连涨拉取失败时）
-        streak = compute_consecutive_up_days(series, resolved_date) if series else None
+            change = entry.get("change_hint")
         return {
             "sector_label": entry["sector_label"],
             "board_kind": entry["board_kind"],
             "secid": secid,
+            "source_code": entry.get("source_code"),
+            "flow_source_code": entry.get("flow_source_code"),
             "change_1d_percent": change,
-            "consecutive_up_days": streak,
         }
 
     def base_row(entry: dict[str, Any]) -> dict[str, Any]:
@@ -282,8 +407,9 @@ def refresh_theme_board_snapshot(*, trade_date: str | None = None) -> dict[str, 
             "sector_label": entry["sector_label"],
             "board_kind": entry["board_kind"],
             "secid": entry["secid"],
+            "source_code": entry.get("source_code"),
+            "flow_source_code": entry.get("flow_source_code"),
             "change_1d_percent": entry.get("change_hint"),
-            "consecutive_up_days": None,
         }
 
     items: list[dict[str, Any]] = []
@@ -321,6 +447,9 @@ def refresh_theme_board_snapshot(*, trade_date: str | None = None) -> dict[str, 
             logger.debug("theme spot fallback failed: %s", exc)
             spot_changes = {}
         for item in missing:
+            # 指数主题已绑定 secid，禁止按展示名回退到同名概念板块（如 人工智能→BK0800）
+            if item.get("board_kind") == "index":
+                continue
             change = spot_changes.get(item["sector_label"])
             if change is not None:
                 item["change_1d_percent"] = round(float(change), 2)
@@ -350,6 +479,67 @@ def _holding_secids(holdings: list[Holding]) -> dict[str, int]:
     return counts
 
 
+def _load_board_flow_by_code() -> dict[str, dict[str, Any]]:
+    """从全市场板块快照按 BK 代码索引资金流（与 sector_board_snapshot 同源）。"""
+    by_code: dict[str, dict[str, Any]] = {}
+    try:
+        snapshot = get_sector_board_snapshot(force_refresh=False)
+        for board_type in ("industry", "concept"):
+            for row in snapshot.get(board_type) or []:
+                code = str(row.get("code", "")).strip()
+                if code:
+                    by_code[code] = row
+    except Exception as exc:
+        logger.debug("theme board flow lookup failed: %s", exc)
+    return by_code
+
+
+def _flow_fields_from_board_row(row: dict[str, Any] | None) -> dict[str, Any]:
+    if not row:
+        return {"main_force_net_yi": None, "flow_tiers": None}
+    tiers = {
+        "super_large_net_yi": row.get("super_large_net_yi"),
+        "large_net_yi": row.get("large_net_yi"),
+        "medium_net_yi": row.get("medium_net_yi"),
+        "small_net_yi": row.get("small_net_yi"),
+    }
+    main_force = row.get("main_force_net_yi")
+    has_any = main_force is not None or any(value is not None for value in tiers.values())
+    return {
+        "main_force_net_yi": main_force,
+        "flow_tiers": tiers if has_any else None,
+    }
+
+
+def _resolve_theme_source_code(item: dict[str, Any]) -> str | None:
+    code = str(item.get("source_code") or "").strip()
+    if code:
+        return code
+    secid = str(item.get("secid") or "")
+    if secid.startswith("90."):
+        return secid.split(".", 1)[1]
+    return None
+
+
+def _resolve_theme_flow_code(item: dict[str, Any]) -> str | None:
+    code = str(item.get("flow_source_code") or "").strip()
+    if code:
+        return code
+    return _resolve_theme_source_code(item)
+
+
+def apply_flow_to_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """合并东财 BK 主力/四档净流入；涨跌幅可走指数，资金流走 flow_source_code。"""
+    by_code = _load_board_flow_by_code()
+    enriched: list[dict[str, Any]] = []
+    for item in items:
+        row = dict(item)
+        code = _resolve_theme_flow_code(row)
+        row.update(_flow_fields_from_board_row(by_code.get(code) if code else None))
+        enriched.append(row)
+    return enriched
+
+
 def apply_holdings_overlay(
     items: list[dict[str, Any]],
     holdings: list[Holding],
@@ -375,7 +565,8 @@ def build_theme_board_payload(
     snapshot_meta: dict[str, Any],
     holdings: list[Holding] | None = None,
 ) -> dict[str, Any]:
-    overlaid = apply_holdings_overlay(items, holdings or [])
+    with_flow = apply_flow_to_items(items)
+    overlaid = apply_holdings_overlay(with_flow, holdings or [])
     sorted_items = _sort_theme_items(overlaid, sort=sort)
     ranked = [
         {**_strip_internal_theme_fields(row), "rank": index + 1}
@@ -519,7 +710,12 @@ def _strip_internal_theme_fields(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _sort_theme_items(items: list[dict[str, Any]], *, sort: SortMode) -> list[dict[str, Any]]:
-    key_name = "change_1d_percent" if sort == "change" else "consecutive_up_days"
+    if sort == "inflow":
+        key_name = "main_force_net_yi"
+    elif sort == "streak":
+        key_name = "consecutive_up_days"
+    else:
+        key_name = "change_1d_percent"
 
     def sort_key(item: dict[str, Any]) -> tuple[int, float]:
         value = item.get(key_name)

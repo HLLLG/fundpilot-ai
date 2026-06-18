@@ -385,7 +385,7 @@ def fetch_eastmoney_board_records(
         "pz": "100",
         "fid": fid,
         "fs": fs,
-        "fields": "f3,f12,f14,f62",
+        "fields": "f3,f12,f14,f62,f66,f72,f78,f84",
     }
 
     errors: list[str] = []
@@ -532,14 +532,19 @@ def _parse_board_record_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]
         code = row.get("f12")
         change = _as_board_float(row.get("f3"))
         main_force_yuan = _as_board_float(row.get("f62"))
-        if change is None and main_force_yuan is None:
+        tier_yuan = [_as_board_float(row.get(key)) for key in ("f66", "f72", "f78", "f84")]
+        if change is None and main_force_yuan is None and all(v is None for v in tier_yuan):
             continue
         parsed.append(
             {
                 "name": cleaned_name,
                 "code": str(code).strip() if code not in (None, "-", "") else None,
                 "change_percent": change,
-                "main_force_net_yi": round(main_force_yuan / 1e8, 2) if main_force_yuan is not None else None,
+                "main_force_net_yi": _board_yuan_to_yi(main_force_yuan),
+                "super_large_net_yi": _board_yuan_to_yi(tier_yuan[0]),
+                "large_net_yi": _board_yuan_to_yi(tier_yuan[1]),
+                "medium_net_yi": _board_yuan_to_yi(tier_yuan[2]),
+                "small_net_yi": _board_yuan_to_yi(tier_yuan[3]),
             }
         )
     return parsed
@@ -552,3 +557,9 @@ def _as_board_float(value: object) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _board_yuan_to_yi(value: float | None) -> float | None:
+    if value is None:
+        return None
+    return round(value / 1e8, 2)
