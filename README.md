@@ -108,7 +108,7 @@
 | 输出 | `fund_recommendations` 调仓建议 | `FundDiscoveryReport` 荐基报告 |
 | 历史 | 历史日报侧栏（批量删除） | 推荐基金右侧 `DiscoveryHistoryRail`（批量删除） |
 
-设计细节见 [V2 设计](docs/superpowers/specs/2026-06-14-fund-discovery-v2-design.md)、[V3 选基策略](docs/superpowers/specs/2026-06-14-fund-discovery-v3-selection-strategy-design.md)、[全市场扫描](docs/superpowers/specs/2026-06-15-fund-discovery-full-market-design.md)；API 与架构见 [docs/PROJECT_CONTEXT.md](docs/PROJECT_CONTEXT.md)。
+API 与架构见 [docs/PROJECT_CONTEXT.md](docs/PROJECT_CONTEXT.md)（推荐基金 V2/V3、全市场扫描等行为以本文为准）。
 
 ## 目录
 
