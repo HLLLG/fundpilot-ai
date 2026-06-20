@@ -163,6 +163,13 @@ def _resolve_holding_days(
         except ValueError:
             pass
 
+    if profile and profile.first_seen_date:
+        try:
+            seen = date.fromisoformat(profile.first_seen_date)
+            return max(0, (date.today() - seen).days), "first_seen"
+        except ValueError:
+            pass
+
     snapshot_days = _holding_days_from_snapshots(holding)
     ocr_days = profile.holding_days if profile else None
     aged_ocr_days: int | None = None

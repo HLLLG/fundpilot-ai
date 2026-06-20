@@ -9,6 +9,41 @@ from app.services.holding_detail_service import (
 )
 
 
+def _holding(code="600000"):
+    return Holding(fund_code=code, fund_name="测试基金", holding_amount=1000.0)
+
+
+def test_resolve_holding_days_from_first_seen_increments():
+    anchor = (date.today() - timedelta(days=12)).isoformat()
+    profile = FundProfile(fund_code="600000", fund_name="测试基金", first_seen_date=anchor)
+    days, source = _resolve_holding_days(profile, _holding())
+    assert days == 12
+    assert source == "first_seen"
+
+
+def test_resolve_holding_days_user_date_beats_first_seen():
+    profile = FundProfile(
+        fund_code="600000",
+        fund_name="测试基金",
+        first_purchase_date=(date.today() - timedelta(days=100)).isoformat(),
+        first_seen_date=(date.today() - timedelta(days=5)).isoformat(),
+    )
+    days, source = _resolve_holding_days(profile, _holding())
+    assert days == 100
+    assert source == "user"
+
+
+def test_resolve_holding_days_no_anchor_returns_none(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.holding_detail_service.list_portfolio_daily_snapshots",
+        lambda limit=365: [],
+    )
+    profile = FundProfile(fund_code="600000", fund_name="测试基金")
+    days, source = _resolve_holding_days(profile, _holding())
+    assert days is None
+    assert source is None
+
+
 def test_yesterday_profit_from_snapshots(monkeypatch):
     monkeypatch.setattr(
         "app.services.holding_detail_service.list_portfolio_daily_snapshots",
