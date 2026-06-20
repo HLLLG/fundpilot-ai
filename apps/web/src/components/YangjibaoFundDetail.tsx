@@ -51,6 +51,7 @@ type DetailTab = "sector" | "performance" | "profit";
 
 const PROVENANCE_LABEL: Record<string, string> = {
   ocr_detail: "详情 OCR",
+  first_seen: "按首次记录日",
   nav: "净值推算",
   snapshot: "历史快照",
   computed: "公式估算",
