@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   ArrowDown,
+  ArrowLeftRight,
   ArrowUp,
   Eye,
   EyeOff,
@@ -49,6 +50,7 @@ type YangjibaoHoldingsBoardProps = {
   isLoading?: boolean;
   className?: string;
   onAddHolding?: () => void;
+  onBatchTransaction?: () => void;
   onSelectHolding?: (index: number) => void;
 };
 
@@ -192,6 +194,7 @@ export function YangjibaoHoldingsBoard({
   isLoading = false,
   className,
   onAddHolding,
+  onBatchTransaction,
   onSelectHolding,
 }: YangjibaoHoldingsBoardProps) {
   const [quoteTradeDate, setQuoteTradeDate] = useState<string | null>(null);
@@ -281,6 +284,16 @@ export function YangjibaoHoldingsBoard({
                   <Plus size={16} />
                   新增持有
                 </button>
+                {onBatchTransaction ? (
+                  <button
+                    type="button"
+                    onClick={onBatchTransaction}
+                    className="inline-flex items-center gap-2 rounded-full border border-blue-200 bg-white px-4 py-2 text-sm font-bold text-blue-600 transition hover:bg-blue-50"
+                  >
+                    <ArrowLeftRight size={16} />
+                    批量加减仓
+                  </button>
+                ) : null}
               </div>
             ) : null}
           </div>
@@ -477,15 +490,25 @@ export function YangjibaoHoldingsBoard({
         </ul>
 
         {onAddHolding ? (
-          <div className="border-t border-slate-100">
+          <div className="flex border-t border-slate-100">
             <button
               type="button"
               onClick={onAddHolding}
-              className="flex w-full items-center justify-center gap-1.5 bg-white py-2.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50"
+              className="flex flex-1 items-center justify-center gap-1.5 bg-white py-2.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50"
             >
               <Plus size={16} />
               新增持有
             </button>
+            {onBatchTransaction ? (
+              <button
+                type="button"
+                onClick={onBatchTransaction}
+                className="flex flex-1 items-center justify-center gap-1.5 border-l border-slate-100 bg-white py-2.5 text-sm font-bold text-blue-600 transition hover:bg-blue-50"
+              >
+                <ArrowLeftRight size={16} />
+                批量加减仓
+              </button>
+            ) : null}
           </div>
         ) : null}
       </div>

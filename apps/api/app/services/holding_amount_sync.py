@@ -62,7 +62,10 @@ def _bootstrap_profile_baseline(
     if shares <= 0:
         return
 
-    patch: dict = {"holding_shares": shares}
+    patch: dict = {
+        "holding_shares": shares,
+        "shares_baseline_date": get_effective_trade_date(),
+    }
     cost_basis = _cost_basis(holding, profile)
     if cost_basis is not None and cost_basis > 0:
         patch["holding_cost"] = round(cost_basis / shares, 4)
@@ -94,8 +97,13 @@ def sync_holding_amounts_from_shares(
     *,
     estimate_quotes: dict[str, dict] | None = None,
     persist_profiles: bool = True,
+    shares_override: dict[str, float] | None = None,
 ) -> list[Holding]:
-    """按档案份额 × 最新净值同步持有金额，对齐养基宝盘中自动更新。"""
+    """按档案份额 × 最新净值同步持有金额，对齐养基宝盘中自动更新。
+
+    ``shares_override``：账本算出的有效份额覆盖表（基线 + 事件流）；命中则优先使用，
+    不写回档案（基线不可变）。
+    """
     if not holdings:
         return holdings
 
@@ -120,6 +128,7 @@ def sync_holding_amounts_from_shares(
                 trade_date=trade_date,
                 estimate_quote=quotes.get(holding.fund_code or ""),
                 persist_profile=persist_profiles,
+                shares_override=shares_override,
             )
         )
     return updated
@@ -131,16 +140,29 @@ def _sync_one_holding(
     trade_date: str,
     estimate_quote: dict | None,
     persist_profile: bool,
+    shares_override: dict[str, float] | None = None,
 ) -> Holding:
     code = (holding.fund_code or "").strip()
     if not code or code == "000000" or holding.holding_amount <= 0:
         return holding
 
     profile = get_fund_profile_by_code(code)
-    shares = profile.holding_shares if profile else None
+    override_value = shares_override.get(code) if shares_override else None
+    if override_value is not None:
+        shares = override_value
+    else:
+        shares = profile.holding_shares if profile else None
     unit_nav = _resolve_unit_nav(code, trade_date, estimate_quote)
 
-    if shares is None and unit_nav and unit_nav > 0:
+    # 清仓：账本有效份额 ≤ 0 → 金额归零（不写回档案，由展示层过滤）。
+    if override_value is not None and override_value <= 0:
+        if holding.holding_amount == 0:
+            return holding
+        return holding.model_copy(
+            update={"holding_amount": 0.0, "amount_includes_today": True}
+        )
+
+    if override_value is None and shares is None and unit_nav and unit_nav > 0:
         shares = round(holding.holding_amount / unit_nav, 2)
         if profile is not None and profile.holding_shares is None and persist_profile:
             save_fund_profile(profile.model_copy(update={"holding_shares": shares}))

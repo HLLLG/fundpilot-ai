@@ -95,6 +95,25 @@ def ensure_mysql_schema(connection: Any) -> None:
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """,
         """
+        CREATE TABLE IF NOT EXISTS fund_transactions (
+            id VARCHAR(64) PRIMARY KEY,
+            userId BIGINT NOT NULL,
+            fund_code VARCHAR(16) NULL,
+            fund_name VARCHAR(255) NOT NULL,
+            direction VARCHAR(8) NOT NULL,
+            amount_yuan DOUBLE NOT NULL,
+            trade_time VARCHAR(32) NOT NULL,
+            confirm_date VARCHAR(16) NOT NULL,
+            status VARCHAR(16) NOT NULL,
+            shares_delta DOUBLE NULL,
+            nav_on_confirm DOUBLE NULL,
+            dedup_key VARCHAR(255) NOT NULL,
+            created_at VARCHAR(64) NOT NULL,
+            UNIQUE KEY uq_fund_tx_dedup (userId, dedup_key),
+            INDEX idx_fund_tx_fund (userId, fund_code)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """,
+        """
         CREATE TABLE IF NOT EXISTS sector_mappings (
             userId BIGINT NOT NULL,
             sector_label VARCHAR(255) NOT NULL,

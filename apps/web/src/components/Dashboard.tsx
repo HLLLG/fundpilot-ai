@@ -7,10 +7,10 @@ import type {
   AnalysisPromptConfig,
   FundCodeResolution,
   FundDiscoveryReport,
-  FundProfile,
   Holding,
   HoldingFieldWarning,
   InvestorProfile,
+  ParsedTransaction,
   Report,
 } from "@/lib/api";
 import {
@@ -20,7 +20,9 @@ import {
   fetchPortfolioSummary,
   listReports,
   applyPortfolioHoldings,
+  applyTransactions,
   parseOcrUpload,
+  transactionsOcr,
   saveAnalysisPromptRemote,
   saveInvestorProfileRemote,
   startAnalyzeJob,
@@ -28,6 +30,8 @@ import {
 } from "@/lib/api";
 import { AddHoldingModal } from "@/components/AddHoldingModal";
 import { AlipayOcrConfirmModal } from "@/components/AlipayOcrConfirmModal";
+import { BatchTransactionModal } from "@/components/BatchTransactionModal";
+import { BatchTransactionConfirmModal } from "@/components/BatchTransactionConfirmModal";
 import { notifyDesktop } from "@/lib/notifications";
 import {
   loadAnalysisMode,
@@ -138,10 +142,13 @@ export function Dashboard() {
   const [pendingOcrResolutions, setPendingOcrResolutions] = useState<FundCodeResolution[]>([]);
   const [pendingOcrNote, setPendingOcrNote] = useState<string | null>(null);
   const [pendingOcrSource, setPendingOcrSource] = useState<string | null>(null);
-  const [pendingDetailProfile, setPendingDetailProfile] = useState<FundProfile | null>(null);
   const [isConfirmingOcr, setIsConfirmingOcr] = useState(false);
   const [showAddHoldingModal, setShowAddHoldingModal] = useState(false);
   const [isManualAdding, setIsManualAdding] = useState(false);
+  const [showBatchModal, setShowBatchModal] = useState(false);
+  const [isBatchUploading, setIsBatchUploading] = useState(false);
+  const [pendingTransactions, setPendingTransactions] = useState<ParsedTransaction[] | null>(null);
+  const [isApplyingTransactions, setIsApplyingTransactions] = useState(false);
 
   const workflowBlockers = useMemo(
     () =>
@@ -427,14 +434,13 @@ export function Dashboard() {
       }
       if (!result.holdings.length) {
         throw new Error(
-          "未识别到基金持仓，请确认截图为支付宝「我的持有」、养基宝总览或养基宝单基金详情。",
+          "未识别到基金持仓，请确认截图为支付宝「我的持有」。",
         );
       }
       setPendingOcrHoldings(result.holdings);
       setPendingOcrResolutions(result.fund_code_resolutions ?? []);
       setPendingOcrNote(result.amount_semantics?.note ?? null);
       setPendingOcrSource(result.ocr_source ?? null);
-      setPendingDetailProfile(result.detail_profile ?? null);
       setHoldingWarnings(result.holding_warnings ?? []);
       setShowAddHoldingModal(false);
       setActiveTab("today");
@@ -478,31 +484,7 @@ export function Dashboard() {
     const count = pendingOcrHoldings.length;
     setIsConfirmingOcr(true);
     try {
-      const detailProfiles =
-        pendingDetailProfile && pendingOcrHoldings[0]
-          ? [
-              {
-                ...pendingDetailProfile,
-                fund_code:
-                  pendingOcrHoldings[0].fund_code !== "000000"
-                    ? pendingOcrHoldings[0].fund_code
-                    : pendingDetailProfile.fund_code,
-                fund_name: pendingOcrHoldings[0].fund_name,
-                holding_amount: pendingOcrHoldings[0].holding_amount,
-                holding_profit: pendingOcrHoldings[0].holding_profit,
-                sector_name:
-                  pendingOcrHoldings[0].sector_name ?? pendingDetailProfile.sector_name,
-                sector_return_percent:
-                  pendingOcrHoldings[0].sector_return_percent ??
-                  pendingDetailProfile.sector_return_percent,
-              },
-            ]
-          : pendingDetailProfile
-            ? [pendingDetailProfile]
-            : [];
-      const applied = await applyPortfolioHoldings(pendingOcrHoldings, {
-        detailProfiles,
-      });
+      const applied = await applyPortfolioHoldings(pendingOcrHoldings);
       setHoldings(applied.holdings);
       if (applied.portfolio_summary) {
         setPortfolioSummary(applied.portfolio_summary);
@@ -511,16 +493,71 @@ export function Dashboard() {
       setPendingOcrResolutions([]);
       setPendingOcrNote(null);
       setPendingOcrSource(null);
-      setPendingDetailProfile(null);
-      setMessage(
-        pendingOcrSource === "yangjibao_detail"
-          ? "详情页已建档并刷新板块涨跌。"
-          : `已更新 ${count} 只基金的账户汇总，板块涨跌已刷新。`,
-      );
+      setMessage(`已更新 ${count} 只基金的账户汇总，板块涨跌已刷新。`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "确认更新失败。");
     } finally {
       setIsConfirmingOcr(false);
+    }
+  };
+
+  const mergeTransactions = (
+    existing: ParsedTransaction[],
+    incoming: ParsedTransaction[],
+  ): ParsedTransaction[] => {
+    const seen = new Set(
+      existing.map((tx) => `${tx.direction}|${tx.fund_name}|${tx.amount_yuan}|${tx.trade_time}`),
+    );
+    const merged = [...existing];
+    for (const tx of incoming) {
+      const key = `${tx.direction}|${tx.fund_name}|${tx.amount_yuan}|${tx.trade_time}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        merged.push(tx);
+      }
+    }
+    return merged;
+  };
+
+  const handleBatchUpload = async (selectedFile: File) => {
+    setIsBatchUploading(true);
+    setMessage(null);
+    try {
+      const result = await transactionsOcr(selectedFile);
+      if (!result.transactions.length) {
+        throw new Error("未识别到交易记录，请确认截图为支付宝「交易记录 / 交易分析」页。");
+      }
+      setShowBatchModal(false);
+      setPendingTransactions((prev) => mergeTransactions(prev ?? [], result.transactions));
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "交易记录识别失败。");
+    } finally {
+      setIsBatchUploading(false);
+    }
+  };
+
+  const handleApplyTransactions = async () => {
+    if (!pendingTransactions?.length) {
+      return;
+    }
+    const toApply = pendingTransactions.filter((tx) => Boolean(tx.fund_code));
+    if (!toApply.length) {
+      setMessage("没有可应用的交易（请先为交易匹配基金代码）。");
+      return;
+    }
+    setIsApplyingTransactions(true);
+    setMessage(null);
+    try {
+      const result = await applyTransactions(toApply);
+      setHoldings(result.holdings);
+      void loadPortfolioSummary();
+      setPendingTransactions(null);
+      const pendingNote = result.pending > 0 ? `，${result.pending} 笔待净值确认` : "";
+      setMessage(`已应用 ${result.inserted} 笔交易${pendingNote}，持仓已更新。`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "应用交易失败。");
+    } finally {
+      setIsApplyingTransactions(false);
     }
   };
 
@@ -575,6 +612,7 @@ export function Dashboard() {
                 refreshedAt={holdingsRefreshedAt}
                 isLoading={isHydratingHoldings && holdings.length === 0}
                 onAddHolding={() => setShowAddHoldingModal(true)}
+                onBatchTransaction={() => setShowBatchModal(true)}
                 onSelectHolding={setSelectedHoldingIndex}
               />
             </div>
@@ -703,8 +741,6 @@ export function Dashboard() {
           sectorMeta={sectorRefresh.sectorMetaByFundCode[holdings[selectedHoldingIndex].fund_code]}
           onClose={() => setSelectedHoldingIndex(null)}
           onNavigate={setSelectedHoldingIndex}
-          onUploadDetailScreenshot={(file) => void handleOcrUpload(file)}
-          isDetailOcrUploading={isOcrUploading}
           onFundCodeUpdated={async (index, updated) => {
             const next = holdings.map((item, itemIndex) => (itemIndex === index ? updated : item));
             setHoldings(next);
@@ -732,6 +768,24 @@ export function Dashboard() {
         isSubmitting={isManualAdding}
       />
 
+      <BatchTransactionModal
+        open={showBatchModal}
+        onClose={() => setShowBatchModal(false)}
+        onUpload={(file) => void handleBatchUpload(file)}
+        isUploading={isBatchUploading}
+      />
+
+      {pendingTransactions ? (
+        <BatchTransactionConfirmModal
+          transactions={pendingTransactions}
+          isBusy={isApplyingTransactions}
+          onChange={setPendingTransactions}
+          onConfirm={() => void handleApplyTransactions()}
+          onContinueUpload={() => setShowBatchModal(true)}
+          onClose={() => setPendingTransactions(null)}
+        />
+      ) : null}
+
       {pendingOcrHoldings ? (
         <AlipayOcrConfirmModal
           holdings={pendingOcrHoldings}
@@ -746,7 +800,6 @@ export function Dashboard() {
             setPendingOcrResolutions([]);
             setPendingOcrNote(null);
             setPendingOcrSource(null);
-            setPendingDetailProfile(null);
           }}
         />
       ) : null}

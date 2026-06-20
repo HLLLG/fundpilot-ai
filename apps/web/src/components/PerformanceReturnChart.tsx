@@ -8,20 +8,29 @@ const Y_AXIS_HEADROOM_RATIO = 0.12;
 const FUND_COLOR = "#3d7eff";
 const BENCH_COLOR = "#f59e0b";
 
+export type TradeMarker = {
+  date: string; // confirm_date "YYYY-MM-DD"
+  kind: "buy" | "sell" | "pending";
+  items: { direction: "buy" | "sell"; amount_yuan: number; trade_time: string; status: string }[];
+};
+
 type PerformanceReturnChartProps = {
   points: PerformanceSeriesPoint[];
   height?: number;
   showBenchmark?: boolean;
+  markers?: TradeMarker[];
 };
 
 export function PerformanceReturnChart({
   points,
   height = 220,
   showBenchmark = true,
+  markers = [],
 }: PerformanceReturnChartProps) {
   const gradientId = useId().replace(/:/g, "");
   const containerRef = useRef<HTMLDivElement>(null);
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
+  const [selectedMarkerDate, setSelectedMarkerDate] = useState<string | null>(null);
 
   const chart = useMemo(() => {
     if (points.length < 2) {
@@ -107,6 +116,19 @@ export function PerformanceReturnChart({
     };
   }, [height, points, showBenchmark]);
 
+  const markerPoints = useMemo(() => {
+    if (!chart || markers.length === 0) {
+      return [] as Array<TradeMarker & { x: number; y: number }>;
+    }
+    const byDate = new Map(chart.coords.map((coord) => [coord.date, coord]));
+    return markers
+      .map((marker) => {
+        const coord = byDate.get(marker.date);
+        return coord ? { ...marker, x: coord.x, y: coord.fundY } : null;
+      })
+      .filter((marker): marker is TradeMarker & { x: number; y: number } => marker != null);
+  }, [chart, markers]);
+
   if (!chart) {
     return (
       <div
@@ -120,6 +142,7 @@ export function PerformanceReturnChart({
 
   const isHovering = hoverIndex != null;
   const active = isHovering ? chart.coords[hoverIndex] : null;
+  const selectedMarker = markerPoints.find((marker) => marker.date === selectedMarkerDate) ?? null;
 
   return (
     <div ref={containerRef} className="relative w-full">
@@ -168,6 +191,26 @@ export function PerformanceReturnChart({
           <path d={chart.benchPath} fill="none" stroke={BENCH_COLOR} strokeWidth={0.9} />
         ) : null}
         <path d={chart.fundPath} fill="none" stroke={FUND_COLOR} strokeWidth={1} />
+
+        {markerPoints.map((marker) => {
+          const isBuy = marker.kind === "buy";
+          const isPending = marker.kind === "pending";
+          return (
+            <circle
+              key={marker.date}
+              cx={marker.x}
+              cy={marker.y}
+              r={4}
+              fill={isPending ? "#ffffff" : isBuy ? "#f43f5e" : "#10b981"}
+              stroke={isPending ? "#94a3b8" : "#ffffff"}
+              strokeWidth={1.5}
+              style={{ cursor: "pointer" }}
+              onClick={() =>
+                setSelectedMarkerDate((prev) => (prev === marker.date ? null : marker.date))
+              }
+            />
+          );
+        })}
 
         <text x={chart.plotLeft + 4} y={chart.plotTop + 8} fontSize={8} className="fill-slate-400 font-medium tabular-nums">
           {formatSignedPercent(chart.max)}
@@ -280,6 +323,50 @@ export function PerformanceReturnChart({
           onMouseLeave={() => setHoverIndex(null)}
         />
       </svg>
+
+      {selectedMarker ? (
+        <div
+          className="absolute top-1 z-10 w-44 -translate-x-1/2 rounded-xl border border-slate-200 bg-white p-2.5 text-xs shadow-lg"
+          style={{
+            left: `${Math.min(82, Math.max(18, (selectedMarker.x / chart.width) * 100))}%`,
+          }}
+        >
+          <div className="mb-1 flex items-center justify-between">
+            <span className="font-bold text-slate-700">{selectedMarker.date}</span>
+            <button
+              type="button"
+              onClick={() => setSelectedMarkerDate(null)}
+              className="text-slate-400 hover:text-slate-600"
+              aria-label="关闭"
+            >
+              ✕
+            </button>
+          </div>
+          <ul className="space-y-1">
+            {selectedMarker.items.map((item, index) => {
+              const isBuy = item.direction === "buy";
+              return (
+                <li key={index} className="flex items-center justify-between gap-2">
+                  <span
+                    className={`shrink-0 rounded px-1 py-0.5 text-[10px] font-bold ${
+                      isBuy ? "bg-rose-100 text-rose-600" : "bg-emerald-100 text-emerald-600"
+                    }`}
+                  >
+                    {isBuy ? "加仓" : "减仓"}
+                    {item.status === "pending" ? "·待确认" : ""}
+                  </span>
+                  <span className="font-bold tabular-nums text-slate-800">
+                    {item.amount_yuan.toLocaleString("zh-CN", { minimumFractionDigits: 2 })}
+                  </span>
+                  <span className="shrink-0 text-[10px] tabular-nums text-slate-400">
+                    {item.trade_time.slice(5, 16)}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      ) : null}
     </div>
   );
 }

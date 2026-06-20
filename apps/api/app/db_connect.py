@@ -25,6 +25,7 @@ def adapt_sql(sql: str) -> str:
     if not uses_mysql():
         return sql
     adapted = sql.replace("INSERT OR REPLACE INTO", "REPLACE INTO")
+    adapted = adapted.replace("INSERT OR IGNORE INTO", "INSERT IGNORE INTO")
     return adapted.replace("?", "%s")
 
 

@@ -7,7 +7,7 @@ from pathlib import Path
 from app.config import get_settings
 from app.models import PortfolioSummary
 from app.database import get_ocr_text_cache, save_ocr_text_cache, save_portfolio_summary
-from app.services.fund_profile import FundProfileService, parse_profile_from_text
+from app.services.fund_profile import FundProfileService
 from app.services.holding_validation import build_holding_review, enrich_portfolio_summary_source
 from app.services.ocr_engine import OcrEngine
 from app.services.fund_code_resolver import (
@@ -55,215 +55,116 @@ def run_ocr_upload_pipeline(
 ) -> dict:
     settings = get_settings()
     upload_path: Path | None = None
-    upload_path_str: str | None = None
     cache_hit = False
 
     if file_bytes and filename:
         settings.upload_dir.mkdir(parents=True, exist_ok=True)
         upload_path = settings.upload_dir / Path(filename).name
         upload_path.write_bytes(file_bytes)
-        upload_path_str = str(upload_path)
         cache_key = hashlib.sha256(file_bytes).hexdigest()
-
-    try:
-        if file_bytes and filename and not text:
+        if not text:
             cached_text = get_ocr_text_cache(cache_key)
             if cached_text is not None:
                 text = cached_text
                 cache_hit = True
             else:
                 try:
-                    text = OcrEngine().extract_text(upload_path)  # type: ignore[arg-type]
+                    text = OcrEngine().extract_text(upload_path)
                     save_ocr_text_cache(cache_key, text)
                 except Exception as exc:
+                    _cleanup_upload_artifacts(upload_path)
                     return {
                         "raw_text": "",
-                        "upload_path": upload_path_str,
+                        "upload_path": str(upload_path),
                         "holdings": [],
                         "error": f"OCR 识别失败：{exc}",
                     }
 
-        profile_service = FundProfileService()
-        ocr_source = detect_ocr_source(text) if text else "unknown"
+    profile_service = FundProfileService()
+    ocr_source = detect_ocr_source(text) if text else "unknown"
 
-        if ocr_source == "yangjibao_detail":
-            return _run_yangjibao_detail_pipeline(
-                text=text,
-                upload_path_str=upload_path_str,
-                cache_hit=cache_hit,
-                preview=preview,
-                profile_service=profile_service,
-            )
+    parsed_holdings = parse_holdings_from_text(text)
+    holdings, fund_code_resolutions = _resolve_fund_codes(parsed_holdings, profile_service)
+    holdings = profile_service.resolve_holdings(holdings)
+    previous_holdings = get_previous_holdings_for_review()
+    profile_sync = (
+        profile_service.sync_profiles_from_holdings(holdings).model_dump()
+        if not preview
+        else {"updated": 0, "created": 0, "skipped": True}
+    )
 
-        parsed_holdings = parse_holdings_from_text(text)
-        holdings, fund_code_resolutions = _resolve_fund_codes(parsed_holdings, profile_service)
-        holdings = profile_service.resolve_holdings(holdings)
-        previous_holdings = get_previous_holdings_for_review()
-        profile_sync = (
-            profile_service.sync_profiles_from_holdings(holdings).model_dump()
-            if not preview
-            else {"updated": 0, "created": 0, "skipped": True}
+    portfolio_summary = parse_portfolio_summary_from_text(text)
+    if portfolio_summary is not None:
+        portfolio_summary = enrich_portfolio_summary_source(portfolio_summary, holdings)
+        portfolio_summary = portfolio_summary.model_copy(
+            update={"holding_count": len(holdings)}
         )
 
-        portfolio_summary = parse_portfolio_summary_from_text(text)
-        if portfolio_summary is not None:
-            portfolio_summary = enrich_portfolio_summary_source(portfolio_summary, holdings)
-            portfolio_summary = portfolio_summary.model_copy(
-                update={"holding_count": len(holdings)}
-            )
-
-        sector_refresh: dict | None = None
-        if holdings:
-            if preview:
-                # 养基宝式确认页：仅 OCR + 查码，不拉板块（确认后再刷新）
-                holdings = enrich_holdings_from_profiles(holdings)
+    sector_refresh: dict | None = None
+    if holdings:
+        if preview:
+            # 养基宝式确认页：仅 OCR + 查码，不拉板块（确认后再刷新）
+            holdings = enrich_holdings_from_profiles(holdings)
+            sector_refresh = {
+                "ok": True,
+                "skipped": True,
+                "message": "预览模式：确认后将刷新板块涨跌并估算当日收益。",
+                "holdings": [holding.model_dump() for holding in holdings],
+                "items": [],
+                "summary": {"matched": 0, "unresolved": 0, "needs_mapping": 0},
+            }
+        else:
+            try:
+                holdings, sector_refresh, portfolio_summary = process_overview_holdings(
+                    holdings,
+                    portfolio_summary=portfolio_summary,
+                    force_sector_refresh=True,
+                    from_user_upload=True,
+                )
+            except Exception as exc:
+                logger.exception("sector refresh failed during OCR")
                 sector_refresh = {
-                    "ok": True,
-                    "skipped": True,
-                    "message": "预览模式：确认后将刷新板块涨跌并估算当日收益。",
+                    "ok": False,
+                    "message": f"持仓已识别，但板块刷新失败：{exc}。请点刷新按钮重试。",
                     "holdings": [holding.model_dump() for holding in holdings],
                     "items": [],
-                    "summary": {"matched": 0, "unresolved": 0, "needs_mapping": 0},
+                    "summary": {"matched": 0, "unresolved": len(holdings), "needs_mapping": 0},
                 }
-            else:
-                try:
-                    holdings, sector_refresh, portfolio_summary = process_overview_holdings(
-                        holdings,
-                        portfolio_summary=portfolio_summary,
-                        force_sector_refresh=True,
-                        from_user_upload=True,
-                    )
-                except Exception as exc:
-                    logger.exception("sector refresh failed during OCR")
-                    sector_refresh = {
-                        "ok": False,
-                        "message": f"持仓已识别，但板块刷新失败：{exc}。请点刷新按钮重试。",
-                        "holdings": [holding.model_dump() for holding in holdings],
-                        "items": [],
-                        "summary": {"matched": 0, "unresolved": len(holdings), "needs_mapping": 0},
-                    }
-                if portfolio_summary is not None:
-                    save_portfolio_summary(portfolio_summary)
+            if portfolio_summary is not None:
+                save_portfolio_summary(portfolio_summary)
 
-        holding_review = build_holding_review(
-            holdings,
-            previous_holdings=previous_holdings,
-            portfolio_summary=portfolio_summary,
-        )
-
-        if holdings and not preview:
-            save_daily_snapshot(holdings, portfolio_summary)
-
-        trading_session = build_trading_session()
-        amount_semantics = _ocr_amount_semantics(ocr_source, trading_session)
-
-        return {
-            "raw_text": text,
-            "upload_path": upload_path_str,
-            "holdings": [holding.model_dump() for holding in holdings],
-            "cache_hit": cache_hit,
-            "preview": preview,
-            "ocr_source": ocr_source,
-            "fund_code_resolutions": fund_code_resolutions,
-            "amount_semantics": amount_semantics,
-            "trading_session": trading_session,
-            "profile_sync": profile_sync,
-            "sector_refresh": sector_refresh,
-            "portfolio_summary": (
-                portfolio_summary.model_dump(mode="json") if portfolio_summary else None
-            ),
-            **holding_review,
-        }
-    finally:
-        _cleanup_upload_artifacts(upload_path)
-
-
-def _run_yangjibao_detail_pipeline(
-    *,
-    text: str,
-    upload_path_str: str | None,
-    cache_hit: bool,
-    preview: bool,
-    profile_service: FundProfileService,
-) -> dict:
-    """养基宝单基金详情 OCR：解析代码/份额/板块并建档。"""
-    from app.models import Holding
-
-    profile = parse_profile_from_text(text)
-    if profile is None:
-        return {
-            "raw_text": text,
-            "upload_path": upload_path_str,
-            "holdings": [],
-            "cache_hit": cache_hit,
-            "preview": preview,
-            "ocr_source": "yangjibao_detail",
-            "error": "无法识别养基宝详情页，请确认截图为单只基金的详情（含代码、持有金额、关联板块）。",
-        }
-
-    profile = profile.model_copy(
-        update={"source": "yangjibao-detail", "is_provisional": False},
-    )
-    holding = Holding(
-        fund_code=profile.fund_code,
-        fund_name=profile.fund_name,
-        holding_amount=profile.holding_amount or 0,
-        return_percent=profile.holding_return_percent or 0,
-        holding_return_percent=profile.holding_return_percent,
-        holding_profit=profile.holding_profit,
-        sector_name=profile.sector_name,
-        sector_return_percent=profile.sector_return_percent,
-        intraday_index_name=profile.intraday_index_name,
-        daily_profit=profile.daily_profit,
-        yesterday_profit=profile.yesterday_profit,
+    holding_review = build_holding_review(
+        holdings,
+        previous_holdings=previous_holdings,
+        portfolio_summary=portfolio_summary,
     )
 
-    profile_sync = {"updated": 0, "created": 0, "skipped": True}
-    sector_refresh: dict | None = None
-    holdings = [holding]
-
-    if not preview:
-        profile_service.save_profile(profile)
-        profile_sync = {"updated": 1, "created": 0, "saved_detail": True}
-        holdings, sector_refresh, _ = process_overview_holdings(
-            holdings,
-            portfolio_summary=None,
-            force_sector_refresh=True,
-            from_user_upload=True,
-        )
-        save_daily_snapshot(holdings, None)
+    if holdings and not preview:
+        save_daily_snapshot(holdings, portfolio_summary)
 
     trading_session = build_trading_session()
-    amount_semantics = {
-        "source": "yangjibao_detail",
-        "holding_amount": "detail_page_settled",
-        "daily_profit": "ocr_or_sector_after_refresh",
-        "note": "详情页持有金额/份额/板块来自截图；确认后将写入基金档案并刷新板块涨跌。",
-    }
+    amount_semantics = _ocr_amount_semantics(ocr_source, trading_session)
 
-    return {
+    result = {
         "raw_text": text,
-        "upload_path": upload_path_str,
-        "holdings": [item.model_dump() for item in holdings],
+        "upload_path": str(upload_path) if upload_path else None,
+        "holdings": [holding.model_dump() for holding in holdings],
         "cache_hit": cache_hit,
         "preview": preview,
-        "ocr_source": "yangjibao_detail",
-        "detail_profile": profile.model_dump(mode="json"),
-        "fund_code_resolutions": [
-            {
-                "fund_name": profile.fund_name,
-                "fund_code": profile.fund_code,
-                "source": "ocr_detail",
-                "resolved": True,
-            }
-        ],
+        "ocr_source": ocr_source,
+        "fund_code_resolutions": fund_code_resolutions,
         "amount_semantics": amount_semantics,
         "trading_session": trading_session,
         "profile_sync": profile_sync,
         "sector_refresh": sector_refresh,
-        "portfolio_summary": None,
-        "holding_warnings": [],
+        "portfolio_summary": (
+            portfolio_summary.model_dump(mode="json") if portfolio_summary else None
+        ),
+        **holding_review,
     }
+
+    _cleanup_upload_artifacts(upload_path)
+    return result
 
 
 def _resolve_fund_codes(
@@ -307,11 +208,9 @@ def _resolve_fund_codes(
 
 def apply_confirmed_holdings(
     holdings: list,
-    *,
-    detail_profiles: list | None = None,
 ) -> dict:
     """用户确认 OCR 草稿后：同步档案、刷新板块、持久化快照。"""
-    from app.models import FundProfile, Holding
+    from app.models import Holding
 
     profile_service = FundProfileService()
     typed = [Holding.model_validate(item) if isinstance(item, dict) else item for item in holdings]
@@ -319,16 +218,6 @@ def apply_confirmed_holdings(
     from app.services.fund_primary_sector_service import apply_primary_sector_to_holdings
 
     typed = apply_primary_sector_to_holdings(typed)
-
-    for raw_profile in detail_profiles or []:
-        profile = (
-            FundProfile.model_validate(raw_profile)
-            if isinstance(raw_profile, dict)
-            else raw_profile
-        )
-        profile_service.save_profile(
-            profile.model_copy(update={"source": "yangjibao-detail", "is_provisional": False}),
-        )
 
     profile_sync = profile_service.sync_profiles_from_holdings(typed).model_dump()
     total_assets = round(sum(item.holding_amount for item in typed), 2)
@@ -344,10 +233,8 @@ def apply_confirmed_holdings(
     )
     save_portfolio_summary(portfolio_summary)
     save_daily_snapshot(processed, portfolio_summary)
-    from app.services.holding_client import serialize_holdings_for_client
-
     return {
-        "holdings": serialize_holdings_for_client(processed),
+        "holdings": [holding.model_dump() for holding in processed],
         "portfolio_summary": portfolio_summary.model_dump(mode="json"),
         "profile_sync": profile_sync,
         "sector_refresh": sector_refresh,
@@ -394,18 +281,12 @@ def _finalize_confirmed_holdings(holdings: list, profile_service: FundProfileSer
 
 def _ocr_amount_semantics(ocr_source: str, trading_session: dict) -> dict:
     session_kind = trading_session.get("session_kind", "")
-    if ocr_source == "yangjibao_detail":
-        return {
-            "source": "yangjibao_detail",
-            "holding_amount": "detail_page_settled",
-            "daily_profit": "ocr_or_sector_after_refresh",
-        }
-
     if ocr_source != "alipay_holdings":
         return {
             "source": ocr_source,
-            "holding_amount": "yangjibao_overview",
+            "holding_amount": "unknown",
             "daily_profit": "sector_estimate_after_refresh",
+            "note": "未识别为支付宝持有页：金额按截图原值保留，当日收益需刷新板块后估算。",
         }
 
     if session_kind == "non_trading_day":

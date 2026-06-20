@@ -145,30 +145,24 @@ def test_resolve_holding_days_ages_ocr_detail(monkeypatch):
 def test_build_holding_detail_uses_profile_fields(tmp_path, monkeypatch):
     monkeypatch.setenv("FUND_AI_DB_PATH", str(tmp_path / "app.db"))
     from app.config import refresh_settings
-    from app.services.fund_profile import FundProfileService, parse_profile_from_text
+    from app.services.fund_profile import FundProfileService
 
     refresh_settings()
-    detail_text = """
-华夏中证电网设备主题ETF联接A
-025856
-持有金额
-15,075.46
-10,645.76
-52.76%
-持有收益
-+401.80
-+2.74%
-1.3784
-当日收益
-昨日收益
-持有天数
--85.93
--86.23
-95
-"""
-    profile = parse_profile_from_text(detail_text)
-    assert profile is not None
-    FundProfileService().save_profile(profile)
+    FundProfileService().save_profile(
+        FundProfile(
+            fund_code="025856",
+            fund_name="华夏中证电网设备主题ETF联接A",
+            holding_amount=15075.46,
+            holding_shares=10645.76,
+            position_percent=52.76,
+            holding_profit=401.80,
+            holding_return_percent=2.74,
+            holding_cost=1.3784,
+            daily_profit=-85.93,
+            yesterday_profit=-86.23,
+            holding_days=95,
+        )
+    )
 
     holding = Holding(
         fund_code="000000",

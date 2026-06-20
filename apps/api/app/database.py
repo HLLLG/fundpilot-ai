@@ -18,6 +18,7 @@ from app.models import (
     DiscoveryChatMessage,
     FundDiscoveryReport,
     FundProfile,
+    FundTransaction,
     InvestorProfile,
     PortfolioDailySnapshot,
     PortfolioSummary,
@@ -144,6 +145,37 @@ def _connect():
             payload TEXT NOT NULL,
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS fund_transactions (
+            id TEXT PRIMARY KEY,
+            userId INTEGER NOT NULL,
+            fund_code TEXT,
+            fund_name TEXT NOT NULL,
+            direction TEXT NOT NULL,
+            amount_yuan REAL NOT NULL,
+            trade_time TEXT NOT NULL,
+            confirm_date TEXT NOT NULL,
+            status TEXT NOT NULL,
+            shares_delta REAL,
+            nav_on_confirm REAL,
+            dedup_key TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_fund_tx_dedup
+        ON fund_transactions (userId, dedup_key)
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_fund_tx_fund
+        ON fund_transactions (userId, fund_code)
         """
     )
     run_migrations(connection)
@@ -478,6 +510,128 @@ def get_fund_profile_by_code(fund_code: str) -> FundProfile | None:
     return _sanitize_profile_sector_fields(
         FundProfile.model_validate(json.loads(row["payload"]))
     )
+
+
+def _fund_transaction_from_row(row: object) -> FundTransaction:
+    data = _row_to_dict(row)
+    return FundTransaction(
+        id=str(data["id"]),
+        fund_code=data.get("fund_code"),
+        fund_name=str(data["fund_name"]),
+        direction=str(data["direction"]),
+        amount_yuan=float(data["amount_yuan"]),
+        trade_time=str(data["trade_time"]),
+        confirm_date=str(data["confirm_date"]),
+        status=str(data["status"]),
+        shares_delta=(
+            float(data["shares_delta"]) if data.get("shares_delta") is not None else None
+        ),
+        nav_on_confirm=(
+            float(data["nav_on_confirm"]) if data.get("nav_on_confirm") is not None else None
+        ),
+        dedup_key=str(data["dedup_key"]),
+        created_at=str(data["created_at"]),
+    )
+
+
+def insert_fund_transaction(tx: FundTransaction) -> bool:
+    """写入交易记录；命中唯一 (userId, dedup_key) 时忽略并返回 False。"""
+    user_id = _uid()
+    with _connect() as connection:
+        cursor = connection.execute(
+            """
+            INSERT OR IGNORE INTO fund_transactions (
+                id, userId, fund_code, fund_name, direction, amount_yuan,
+                trade_time, confirm_date, status, shares_delta, nav_on_confirm,
+                dedup_key, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                tx.id,
+                user_id,
+                tx.fund_code,
+                tx.fund_name,
+                tx.direction,
+                tx.amount_yuan,
+                tx.trade_time,
+                tx.confirm_date,
+                tx.status,
+                tx.shares_delta,
+                tx.nav_on_confirm,
+                tx.dedup_key,
+                tx.created_at,
+            ),
+        )
+        connection.commit()
+    return cursor.rowcount > 0
+
+
+def list_fund_transactions(fund_code: str | None = None) -> list[FundTransaction]:
+    user_id = _uid()
+    with _connect() as connection:
+        if fund_code is None:
+            rows = connection.execute(
+                """
+                SELECT * FROM fund_transactions
+                WHERE userId = ?
+                ORDER BY confirm_date ASC, trade_time ASC
+                """,
+                (user_id,),
+            ).fetchall()
+        else:
+            rows = connection.execute(
+                """
+                SELECT * FROM fund_transactions
+                WHERE userId = ? AND fund_code = ?
+                ORDER BY confirm_date ASC, trade_time ASC
+                """,
+                (user_id, fund_code),
+            ).fetchall()
+    return [_fund_transaction_from_row(row) for row in rows]
+
+
+def list_pending_fund_transactions() -> list[FundTransaction]:
+    user_id = _uid()
+    with _connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT * FROM fund_transactions
+            WHERE userId = ? AND status = 'pending'
+            ORDER BY confirm_date ASC, trade_time ASC
+            """,
+            (user_id,),
+        ).fetchall()
+    return [_fund_transaction_from_row(row) for row in rows]
+
+
+def update_fund_transaction(
+    id: str,
+    *,
+    status: str,
+    shares_delta: float | None = None,
+    nav_on_confirm: float | None = None,
+) -> None:
+    user_id = _uid()
+    with _connect() as connection:
+        connection.execute(
+            """
+            UPDATE fund_transactions
+            SET status = ?, shares_delta = ?, nav_on_confirm = ?
+            WHERE userId = ? AND id = ?
+            """,
+            (status, shares_delta, nav_on_confirm, user_id, id),
+        )
+        connection.commit()
+
+
+def delete_fund_transaction(id: str) -> None:
+    user_id = _uid()
+    with _connect() as connection:
+        connection.execute(
+            "DELETE FROM fund_transactions WHERE userId = ? AND id = ?",
+            (user_id, id),
+        )
+        connection.commit()
 
 
 def save_portfolio_summary(summary: PortfolioSummary) -> PortfolioSummary:
