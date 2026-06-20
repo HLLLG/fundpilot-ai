@@ -7,6 +7,7 @@
 **文档版本：** 2026-06-18（主题板块口径 · 东财 push2delay）
 
 **更新记录：**
+- **持有天数锚点修复（2026-06-20）：** `FundProfile` 新增 `first_seen_date`（JSON payload，无需迁移）；`FundProfileService.save_profile` 在持仓**首次**持久化时写入稳定锚点（用户购入日 > OCR 持有天数回推 > 今天），重复上传不重置；`holding_detail_service._resolve_holding_days` 优先级 `first_purchase_date` → `first_seen_date` → 旧 OCR aging → 快照，天数按 `today` 重算自动递增；修复支付宝列表录入持仓「持有天数不增长/显示 —」。前端 `YangjibaoFundDetail` source hint 新增「按首次记录日」。设计/计划见 `docs/superpowers/specs/2026-06-20-holding-days-anchor-design.md`。单测 **301** 项。
 - **主题板块口径与 UI（2026-06-18）：** `GET /api/market/theme-boards` **日涨幅**改 canonical secid + `fetch_eastmoney_kline_close_percent`（**push2delay** trends2，与持有页一致）；不再用全市场现货榜模糊匹配。连涨天数仍走 `sector_daily_kline_provider`（push2delay 日 K → relay → AkShare）；历史日 K 不可达时列显示 `—` 并提示配置 relay。前端 `ThemeSectorOverview` 对齐小倍「今日板块涨幅榜」：排名/板块/连涨天数/涨跌幅；固定按涨幅排序（移除连涨榜 Tab）；持仓行「持仓」标签；`marketThemeBoard.ts` 格式化 helper + vitest。
 - **东财 K 线去 push2his（2026-06-18）：** `eastmoney_trends_client` / 浏览器分时脚本 / 美股指数 clist 仅保留 **push2delay** + 少量 **push2** 子域；历史日 K 失败后走 sector-relay / AkShare。运维文档同步。
 - **市场 Tab — 美股概览（2026-06-18）：** 第三子 Tab「美股」+ `GET /api/market/us-overview`（指数期货 + USD/CNY + QDII 盘前参考涨跌 + 美东时段）；需求/设计/任务见 `.kiro/specs/us-market-overview/`；诊断脚本 `diagnose_us_market.py`、`diagnose_qdii_vs_xiaobei.py`。
