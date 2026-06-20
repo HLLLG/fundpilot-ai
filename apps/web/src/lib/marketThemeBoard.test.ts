@@ -49,7 +49,7 @@ describe("marketThemeBoard formatters", () => {
 
   it("maps board kind to tone class", () => {
     expect(boardKindClass("industry")).toContain("slate");
-    expect(boardKindClass("index")).toContain("violet");
+    expect(boardKindClass("index")).toContain("brand");
     expect(boardKindClass("concept")).toContain("amber");
   });
 

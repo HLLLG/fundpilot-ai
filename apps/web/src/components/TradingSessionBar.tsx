@@ -9,7 +9,7 @@ const sessionTone: Record<string, string> = {
   trading_day_pre_close: "border-amber-200 bg-amber-50 text-amber-950",
   trading_day_after_close: "border-slate-200 bg-slate-50 text-slate-800",
   trading_day_intraday: "border-blue-200 bg-blue-50 text-blue-950",
-  non_trading_day: "border-violet-200 bg-violet-50 text-violet-950",
+  non_trading_day: "border-slate-200 bg-slate-50 text-slate-800",
 };
 
 const sessionLabel: Record<string, string> = {

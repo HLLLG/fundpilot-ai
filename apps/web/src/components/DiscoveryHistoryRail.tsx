@@ -107,7 +107,7 @@ export function DiscoveryHistoryRail({
                 type="button"
                 onClick={toggleSelectAll}
                 disabled={batchDeleting || reports.length === 0}
-                className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-600 transition hover:border-indigo-300 hover:text-indigo-700 disabled:opacity-50"
+                className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-600 transition hover:border-[rgba(37,99,235,0.4)] hover:text-[var(--brand-strong)] disabled:opacity-50"
               >
                 {allSelected ? "取消全选" : "全选"}
               </button>
@@ -144,7 +144,7 @@ export function DiscoveryHistoryRail({
               <button
                 type="button"
                 onClick={onRefresh}
-                className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-white text-slate-500 shadow-sm transition hover:text-indigo-600"
+                className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-white text-slate-500 shadow-sm transition hover:text-[var(--brand)]"
                 aria-label="刷新历史推荐"
               >
                 <RefreshCw size={16} />
@@ -171,7 +171,7 @@ export function DiscoveryHistoryRail({
                     ? "ring-2 ring-rose-200"
                     : "bg-white"
                   : active
-                    ? "bg-indigo-50 ring-1 ring-indigo-200"
+                    ? "bg-[var(--brand-soft)] ring-1 ring-[rgba(37,99,235,0.25)]"
                     : "bg-white hover:-translate-y-0.5 hover:shadow-md"
               }`}
             >

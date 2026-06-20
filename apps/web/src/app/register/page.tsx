@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 import { registerUser } from "@/lib/api";
 import { useAuth } from "@/components/AuthProvider";
+import { BrandMark } from "@/components/BrandMark";
 
 export default function RegisterPage() {
   const { setSession } = useAuth();
@@ -40,11 +41,14 @@ export default function RegisterPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-slate-50 via-blue-50/40 to-indigo-50 px-4">
-      <div className="w-full max-w-md rounded-3xl border border-slate-200 bg-white p-8 shadow-[0_24px_60px_rgba(15,23,42,0.08)]">
+    <div className="landing-hero-bg flex min-h-screen flex-col items-center justify-center px-4 py-10">
+      <Link href="/" className="mb-7">
+        <BrandMark size="lg" showEnglish />
+      </Link>
+      <div className="w-full max-w-md rounded-[var(--radius-card)] border border-slate-200/80 bg-white p-8 shadow-[var(--shadow-lg)]">
         <div className="mb-8 text-center">
-          <h1 className="text-2xl font-black text-slate-900">注册 FundPilot</h1>
-          <p className="mt-2 text-sm text-slate-500">创建账号，开始管理你的基金持仓</p>
+          <h1 className="text-2xl font-black text-slate-900">创建账号</h1>
+          <p className="mt-2 text-sm text-slate-500">注册好基灵，截个图就看懂你的基金</p>
         </div>
         <form className="space-y-4" onSubmit={onSubmit}>
           <label className="block text-sm font-semibold text-slate-700">
@@ -53,7 +57,7 @@ export default function RegisterPage() {
               type="text"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              className="mt-1.5 w-full rounded-xl border border-slate-200 px-3 py-2.5 outline-none ring-blue-200 focus:ring-2"
+              className="input-field mt-1.5"
               placeholder="投研用户"
             />
           </label>
@@ -65,7 +69,7 @@ export default function RegisterPage() {
               autoComplete="email"
               value={userAccount}
               onChange={(e) => setUserAccount(e.target.value)}
-              className="mt-1.5 w-full rounded-xl border border-slate-200 px-3 py-2.5 outline-none ring-blue-200 focus:ring-2"
+              className="input-field mt-1.5"
               placeholder="you@example.com"
             />
           </label>
@@ -78,7 +82,7 @@ export default function RegisterPage() {
               autoComplete="new-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="mt-1.5 w-full rounded-xl border border-slate-200 px-3 py-2.5 outline-none ring-blue-200 focus:ring-2"
+              className="input-field mt-1.5"
             />
           </label>
           <label className="block text-sm font-semibold text-slate-700">
@@ -90,27 +94,29 @@ export default function RegisterPage() {
               autoComplete="new-password"
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
-              className="mt-1.5 w-full rounded-xl border border-slate-200 px-3 py-2.5 outline-none ring-blue-200 focus:ring-2"
+              className="input-field mt-1.5"
             />
           </label>
           {error ? (
             <p className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>
           ) : null}
-          <button
-            type="submit"
-            disabled={submitting}
-            className="w-full rounded-xl bg-gradient-to-r from-blue-600 to-indigo-500 py-3 text-sm font-bold text-white shadow-lg shadow-blue-500/25 disabled:opacity-60"
-          >
-            {submitting ? "注册中…" : "注册"}
+          <button type="submit" disabled={submitting} className="btn-primary w-full">
+            {submitting ? "注册中…" : "免费注册"}
           </button>
         </form>
         <p className="mt-6 text-center text-sm text-slate-500">
           已有账号？{" "}
-          <Link href="/login" className="font-semibold text-blue-600 hover:underline">
+          <Link href="/login" className="font-semibold text-[var(--brand)] hover:underline">
             登录
           </Link>
         </p>
+        <p className="mt-5 text-center text-[11px] leading-5 text-slate-400">
+          投资有风险，入市需谨慎。本工具内容仅供参考，不构成投资建议。
+        </p>
       </div>
+      <Link href="/" className="mt-6 text-xs text-slate-400 hover:text-slate-600">
+        ← 返回首页
+      </Link>
     </div>
   );
 }

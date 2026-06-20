@@ -33,7 +33,7 @@ export function RecommendationAccuracyPanel() {
   return (
     <section className="glass-panel rounded-[24px] p-5">
       <div className="mb-4 flex items-start gap-3">
-        <div className="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-violet-500 text-white">
+        <div className="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-[var(--brand)] text-white">
           <Target size={20} />
         </div>
         <div>

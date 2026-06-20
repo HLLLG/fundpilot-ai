@@ -4,9 +4,11 @@
 >
 > **维护：** 功能或架构有实质变化时，同步更新「能力清单」「数据流」「API」「目录」「环境变量」。
 
-**文档版本：** 2026-06-18（主题板块 ~66 白名单 · 主力净流入 · 持仓缓存 · Tab 记忆）
+**文档版本：** 2026-06-21（好基灵 UI 全面升级 · 静谧蓝海设计语言落地）
 
 **更新记录：**
+- **好基灵 UI 全面升级（2026-06-21）：** 「静谧蓝海·高级克制」设计语言三轮落地，覆盖全产品前端。① **设计系统**：字体从 Plus Jakarta Sans 换成 **Sora**（`next/font/google` 自托管，构建期拉取，零操作），中文用 PingFang / HarmonyOS / 雅黑 / Noto 系统栈，彻底去除 AI 味；品牌色升级为深海蓝 `#2356e0` + 暖金强调 `#cf9b3e`（仅用于钱/收益/高光），背景 `#f3f6fc`，阴影偏冷蓝更通透；新增 `--brand-deep` / `--muted-soft` / `--shadow-brand` / `--font-display`；`globals.css` 新增 `.eyebrow`、`.trust-strip`、`.stat-value`、`.device-shell`、`.float-badge`、`.plan-card.is-pro`、`.ribbon`、`.reveal`（分级延迟入场，支持 `prefers-reduced-motion`）等工具类；Tab 分段控件选中态改品牌蓝文字+细描边；`.kpi-value` 统一 display 字体；`--background`/`--line`/`.btn-primary/secondary` 阴影/描边全面对齐新 token，清除全局残留旧蓝 `rgba(37,99,235)`。② **落地页重做**（`LandingPage.tsx`）：Hero 改为「左文案 + 右产品预览」两列布局，右侧新增**手机产品预览**（仿真持有首屏：收益大数字 + 上涨火花曲线 + 板块 Mini 卡 + 悬浮徽标），吸引力 > 原纯文字版；文案换成「搭子」人味；新增能力指标条（30s/0手动/每日）和信任条；功能卡片加编号+编号 hover 光晕；新增**「会员方案」展示区**（免费版 vs 好基灵 Pro ¥19/月，列出盘中提醒/多账户/回测/导出等付费价值，标「即将上线」，纯展示，为盈利目标铺钩子）；CTA 区加暖金光晕；整体换用分级 `.reveal` 入场。③ **App 壳**：顶部导航改为**毛玻璃悬浮 App Bar**（`sticky top-0 backdrop-blur`）；用户头像阴影和 ring 对齐新品牌色。④ **「持有」首屏**：总资产英雄区加柔光底框（`.holdings-hero`），数字放大至 `2.15rem` + Sora 等宽字；当日收益数字换 display 字体并加大。⑤ **「盈亏分析」页**：`.pl-hero` 加品牌蓝径向柔光框，大数字换 Sora `2.6rem`。⑥ **日报/推荐/设置页**：日报标题、空态标题、推荐报告标题、推荐基金标题均换 `font-display extrabold`；设置页卡片换设计系统 `section-card` + `section-eyebrow`，输入框/按钮/链接接入新 token。纯前端表现层，不动后端/数据流，`lint`（0 warning）、`typecheck`、`build`（静态导出）全部通过；Playwright 截图脚本验证全流程无报错。截图见 `apps/web/verify-shots/`。
+- **好基灵 toC 视觉改造（2026-06-20）：** 面向普通基民的视觉与体验升级，定位 toC 订阅产品。中文品牌名「好基灵」（英文 FundPilot 辅助），Slogan「好基灵，截个图就懂你的基金」。① 设计地基：`globals.css` 扩展信任蓝 `#2563EB` + 暖橙 `#FB8C3B` 点缀的 token 体系（圆角 20px、分层柔和阴影、`.btn-primary/secondary/accent/ghost`、`.badge`、`.input-field`、`.empty-state`、`.card-hover`、`.landing-*`），涨跌红绿不变。② 新增登录前**品牌落地页**（`LandingPage.tsx`）+ 复用品牌标识（`BrandMark.tsx`）；路由：未登录 `/` 看落地页、已登录看 Dashboard（`AuthProvider` 放行 `/`、`page.tsx` 按登录态分支，静态导出安全）。③ 登录/注册/设置页、Dashboard 顶部品牌头、持有页空状态、基金详情页、上传截图弹窗（新增三步引导）全部统一到品牌视觉。④ **全站色彩统一**：推荐基金线（原 indigo）、日报/复盘/要闻面板（原 violet）、市场 `指数` 标签（原 violet）等全部归一到品牌蓝；语义色（warning 琥珀、danger 玫红、conservative 翠绿）保留。纯前端表现层，不动后端/数据流，单测 38 项前端用例通过、`build` 静态导出正常。
 - **持有天数锚点修复（2026-06-20）：** `FundProfile` 新增 `first_seen_date`（JSON payload，无需迁移）；`FundProfileService.save_profile` 在持仓**首次**持久化时写入稳定锚点（用户购入日 > OCR 持有天数回推 > 今天），重复上传不重置；`holding_detail_service._resolve_holding_days` 优先级 `first_purchase_date` → `first_seen_date` → 旧 OCR aging → 快照，天数按 `today` 重算自动递增；修复支付宝列表录入持仓「持有天数不增长/显示 —」。前端 `YangjibaoFundDetail` source hint 新增「按首次记录日」。设计/计划见 `docs/superpowers/specs/2026-06-20-holding-days-anchor-design.md`。单测 **301** 项。
 - **脚本清理（2026-06-19）：** 删除一次性研发脚本 `compare_analysis_payload.py`、`ab_compare_reports.py`、`analysis_payload_legacy.py`、`verify_qdii_seeds.py`、`diagnose_qdii_vs_xiaobei.py`；保留 `dev.sh`、迁库、板块/美股诊断与浏览器兜底脚本。精简 `test_us_market_*` 冗余属性测试、`test_api` 中 sector-boards 重复冒烟，删除未引用 OCR fixture。
 - **文档精简（2026-06-18）：** 删除 `docs/superpowers/` 全部历史 spec/plan（Superpowers 过程稿）；架构与 API 仅以本文 + `docs/design/` 运维/契约为准。
@@ -108,7 +110,7 @@
 | CI / E2E | GitHub Actions：`api` 并行 pytest（**304** 项，~1min 量级）+ `web` lint/typecheck/build + Playwright 冒烟 |
 | 基金诊断 | AkShare 概况/累计收益；详情页可 AkShare **按名称查码**并持久化 |
 | 分析模式 | 快速 / 深度 |
-| 体验 | Markdown 导出、桌面通知、Plus Jakarta 字体 UI；**客户端 SWR 缓存**（盈亏分析/详情/业绩走势）；板块刷新 fast 轮询 + accurate 手动；追问侧栏智能滚动 |
+| 体验 | Markdown 导出、桌面通知、**Sora 字体 + 中文系统字体栈**（PingFang / HarmonyOS / 雅黑 / Noto）UI；**「静谧蓝海·高级克制」设计语言**（深海蓝 `#2356e0` + 暖金 `#cf9b3e`、毛玻璃 App Bar、会员方案展示区）；**客户端 SWR 缓存**（盈亏分析/详情/业绩走势）；板块刷新 fast 轮询 + accurate 手动；追问侧栏智能滚动 |
 | 报告追问 | SSE + ChatMarkdown；`useChatAutoScroll` 贴底/回到底部 |
 | 异步任务 | `/api/analyze/async` + `/api/fund-discovery/async`；`Dashboard` 层 `BackgroundJobsStack` 堆叠 `JobStatusFloat` + `DiscoveryJobStatusFloat`（切 Tab 持续轮询）；`GET /api/jobs/{id}`（`job_kind` 区分日报/荐基） |
 | 前端偏好 | localStorage：风控、**日报/荐基 AI 角色 Prompt**、分析模式、板块自动刷新 |

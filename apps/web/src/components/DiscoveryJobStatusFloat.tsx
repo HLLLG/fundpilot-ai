@@ -78,7 +78,7 @@ export function DiscoveryJobStatusFloat({
     <div className="w-full rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_8px_32px_rgba(0,0,0,0.12)]">
       {state === "running" ? (
         <div className="flex items-start gap-3">
-          <Loader2 size={20} className="mt-0.5 shrink-0 animate-spin text-indigo-600" />
+          <Loader2 size={20} className="mt-0.5 shrink-0 animate-spin text-[var(--brand)]" />
           <div>
             <div className="text-sm font-bold text-slate-900">{stageLabel}</div>
             <div className="mt-0.5 text-xs text-slate-500">可继续浏览页面</div>
@@ -98,7 +98,7 @@ export function DiscoveryJobStatusFloat({
               onClick={() => {
                 if (report) onComplete(report);
               }}
-              className="flex-1 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-bold text-white hover:bg-indigo-700"
+              className="flex-1 rounded-xl bg-[var(--brand)] px-3 py-2 text-xs font-bold text-white hover:bg-[var(--brand-strong)]"
             >
               查看报告
             </button>
@@ -128,7 +128,7 @@ export function DiscoveryJobStatusFloat({
             <button
               type="button"
               onClick={onRetry}
-              className="flex-1 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-bold text-white hover:bg-indigo-700"
+              className="flex-1 rounded-xl bg-[var(--brand)] px-3 py-2 text-xs font-bold text-white hover:bg-[var(--brand-strong)]"
             >
               重试
             </button>

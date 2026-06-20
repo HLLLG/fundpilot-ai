@@ -48,7 +48,7 @@ function NewsSourceLink({ title, url }: { title: string; url: string }) {
       href={url}
       target="_blank"
       rel="noreferrer"
-      className="inline-flex items-start gap-0.5 font-semibold underline decoration-violet-300 underline-offset-2 transition hover:text-violet-800"
+      className="inline-flex items-start gap-0.5 font-semibold underline decoration-[rgba(37,99,235,0.4)] underline-offset-2 transition hover:text-[var(--brand-strong)]"
     >
       <span>{title}</span>
       <ExternalLink size={10} className="mt-0.5 shrink-0 opacity-60" />
@@ -121,9 +121,9 @@ export function ReportNewsBriefPanel({ briefs, marketNews = [] }: ReportNewsBrie
   const titleUrlMap = buildTitleUrlMap(marketNews);
 
   return (
-    <section className="rounded-[24px] border border-violet-100 bg-gradient-to-br from-violet-50/80 via-white to-white p-5 shadow-sm">
+    <section className="rounded-[24px] border border-[rgba(37,99,235,0.18)] bg-gradient-to-br from-[var(--brand-soft)] via-white to-white p-5 shadow-sm">
       <div className="mb-4 flex items-center gap-2 text-sm font-black text-slate-950">
-        <Newspaper size={18} className="text-violet-600" />
+        <Newspaper size={18} className="text-[var(--brand)]" />
         主题要闻摘要
         <span className="text-xs font-semibold text-slate-400">（点击要点或出处跳转原文）</span>
       </div>

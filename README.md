@@ -312,6 +312,9 @@ cd /d/Code/HL_Project/fundpilot-ai/apps/web
 npm run lint
 npm run typecheck
 npm run build
+# 可选：截图验收（需本地开发服务器已启动）
+node scripts/_verify-shots.mjs    # 落地页 / 登录 / 注册
+node scripts/_verify-auth.mjs     # 注册并进入 App（Dashboard / 市场）
 ```
 
 ## 常见 Git Bash 路径写法

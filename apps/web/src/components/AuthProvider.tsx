@@ -97,9 +97,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
     const isPublic = PUBLIC_PATHS.has(pathname);
+    const isLanding = pathname === "/";
     const hasToken = Boolean(getAccessToken());
 
-    if (!user && !isPublic && !hasToken) {
+    if (!user && !isPublic && !isLanding && !hasToken) {
       const redirect = encodeURIComponent(pathname);
       router.replace(`/login?redirect=${redirect}`);
       return;
@@ -153,7 +154,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     );
   }
 
-  if (!user && !PUBLIC_PATHS.has(pathname) && !getAccessToken()) {
+  if (!user && !PUBLIC_PATHS.has(pathname) && pathname !== "/" && !getAccessToken()) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-50 text-sm text-slate-500">
         跳转登录…
