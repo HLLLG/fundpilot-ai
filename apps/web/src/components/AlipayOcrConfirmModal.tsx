@@ -135,7 +135,6 @@ export function AlipayOcrConfirmModal({
   holdings,
   fundCodeResolutions = [],
   amountSemanticsNote,
-  ocrSource,
   isBusy = false,
   onChange,
   onConfirm,
@@ -144,8 +143,6 @@ export function AlipayOcrConfirmModal({
   const resolutionByName = new Map(fundCodeResolutions.map((item) => [item.fund_name, item]));
   const [searchIndex, setSearchIndex] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
-
-  const isDetail = ocrSource === "yangjibao_detail";
 
   const removeAt = (index: number) => {
     onChange(holdings.filter((_, itemIndex) => itemIndex !== index));
@@ -166,7 +163,7 @@ export function AlipayOcrConfirmModal({
         <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
           <div>
             <h2 className="text-lg font-black text-slate-950">
-              {isDetail ? "确认详情识别" : "确认识别结果"}
+              确认识别结果
             </h2>
             <p className="mt-1 text-xs leading-5 text-slate-500">
               可修改基金代码、名称、金额与收益；代码不对时点搜索从东财选取。
@@ -248,16 +245,14 @@ export function AlipayOcrConfirmModal({
                       className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm font-black text-slate-950 outline-none focus:border-blue-400"
                     />
                   </div>
-                  {!isDetail ? (
-                    <button
-                      type="button"
-                      onClick={() => removeAt(index)}
-                      className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-white hover:text-rose-600"
-                      aria-label="移除"
-                    >
-                      <X size={16} />
-                    </button>
-                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => removeAt(index)}
+                    className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-white hover:text-rose-600"
+                    aria-label="移除"
+                  >
+                    <X size={16} />
+                  </button>
                 </div>
 
                 <div className="grid grid-cols-2 gap-3 text-sm">
@@ -286,15 +281,6 @@ export function AlipayOcrConfirmModal({
                     />
                   </div>
                 </div>
-
-                {isDetail && holding.sector_name ? (
-                  <div className="mt-2 text-[11px] text-slate-500">
-                    关联板块：{holding.sector_name}
-                    {holding.sector_return_percent != null
-                      ? ` (${holding.sector_return_percent > 0 ? "+" : ""}${holding.sector_return_percent}%)`
-                      : null}
-                  </div>
-                ) : null}
               </div>
             );
           })}

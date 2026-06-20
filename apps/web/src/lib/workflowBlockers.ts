@@ -21,7 +21,7 @@ export function buildWorkflowBlockers(input: {
     blockers.push({
       id: "no-holdings",
       severity: "error",
-      message: "请先上传养基宝总览截图或录入持仓。",
+      message: "请先上传支付宝持仓截图或录入持仓。",
     });
     return blockers;
   }

@@ -7,7 +7,6 @@ import type {
   AnalysisPromptConfig,
   FundCodeResolution,
   FundDiscoveryReport,
-  FundProfile,
   Holding,
   HoldingFieldWarning,
   InvestorProfile,
@@ -130,7 +129,6 @@ export function Dashboard() {
   const [pendingOcrResolutions, setPendingOcrResolutions] = useState<FundCodeResolution[]>([]);
   const [pendingOcrNote, setPendingOcrNote] = useState<string | null>(null);
   const [pendingOcrSource, setPendingOcrSource] = useState<string | null>(null);
-  const [pendingDetailProfile, setPendingDetailProfile] = useState<FundProfile | null>(null);
   const [isConfirmingOcr, setIsConfirmingOcr] = useState(false);
   const [showAddHoldingModal, setShowAddHoldingModal] = useState(false);
   const [isManualAdding, setIsManualAdding] = useState(false);
@@ -362,14 +360,13 @@ export function Dashboard() {
       }
       if (!result.holdings.length) {
         throw new Error(
-          "未识别到基金持仓，请确认截图为支付宝「我的持有」、养基宝总览或养基宝单基金详情。",
+          "未识别到基金持仓，请确认截图为支付宝「我的持有」。",
         );
       }
       setPendingOcrHoldings(result.holdings);
       setPendingOcrResolutions(result.fund_code_resolutions ?? []);
       setPendingOcrNote(result.amount_semantics?.note ?? null);
       setPendingOcrSource(result.ocr_source ?? null);
-      setPendingDetailProfile(result.detail_profile ?? null);
       setHoldingWarnings(result.holding_warnings ?? []);
       setShowAddHoldingModal(false);
       setActiveTab("today");
@@ -413,31 +410,7 @@ export function Dashboard() {
     const count = pendingOcrHoldings.length;
     setIsConfirmingOcr(true);
     try {
-      const detailProfiles =
-        pendingDetailProfile && pendingOcrHoldings[0]
-          ? [
-              {
-                ...pendingDetailProfile,
-                fund_code:
-                  pendingOcrHoldings[0].fund_code !== "000000"
-                    ? pendingOcrHoldings[0].fund_code
-                    : pendingDetailProfile.fund_code,
-                fund_name: pendingOcrHoldings[0].fund_name,
-                holding_amount: pendingOcrHoldings[0].holding_amount,
-                holding_profit: pendingOcrHoldings[0].holding_profit,
-                sector_name:
-                  pendingOcrHoldings[0].sector_name ?? pendingDetailProfile.sector_name,
-                sector_return_percent:
-                  pendingOcrHoldings[0].sector_return_percent ??
-                  pendingDetailProfile.sector_return_percent,
-              },
-            ]
-          : pendingDetailProfile
-            ? [pendingDetailProfile]
-            : [];
-      const applied = await applyPortfolioHoldings(pendingOcrHoldings, {
-        detailProfiles,
-      });
+      const applied = await applyPortfolioHoldings(pendingOcrHoldings);
       setHoldings(applied.holdings);
       if (applied.portfolio_summary) {
         setPortfolioSummary(applied.portfolio_summary);
@@ -446,12 +419,7 @@ export function Dashboard() {
       setPendingOcrResolutions([]);
       setPendingOcrNote(null);
       setPendingOcrSource(null);
-      setPendingDetailProfile(null);
-      setMessage(
-        pendingOcrSource === "yangjibao_detail"
-          ? "详情页已建档并刷新板块涨跌。"
-          : `已更新 ${count} 只基金的账户汇总，板块涨跌已刷新。`,
-      );
+      setMessage(`已更新 ${count} 只基金的账户汇总，板块涨跌已刷新。`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "确认更新失败。");
     } finally {
@@ -637,8 +605,6 @@ export function Dashboard() {
           sectorMeta={sectorRefresh.sectorMetaByFundCode[holdings[selectedHoldingIndex].fund_code]}
           onClose={() => setSelectedHoldingIndex(null)}
           onNavigate={setSelectedHoldingIndex}
-          onUploadDetailScreenshot={(file) => void handleOcrUpload(file)}
-          isDetailOcrUploading={isOcrUploading}
           onFundCodeUpdated={async (index, updated) => {
             const next = holdings.map((item, itemIndex) => (itemIndex === index ? updated : item));
             setHoldings(next);
@@ -680,7 +646,6 @@ export function Dashboard() {
             setPendingOcrResolutions([]);
             setPendingOcrNote(null);
             setPendingOcrSource(null);
-            setPendingDetailProfile(null);
           }}
         />
       ) : null}

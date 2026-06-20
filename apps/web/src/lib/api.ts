@@ -1575,7 +1575,6 @@ export async function parseOcrUpload(
 
 export async function applyPortfolioHoldings(
   holdings: Holding[],
-  options?: { detailProfiles?: FundProfile[] },
 ): Promise<{
   holdings: Holding[];
   portfolio_summary?: PortfolioSummary | null;
@@ -1585,7 +1584,6 @@ export async function applyPortfolioHoldings(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       holdings,
-      detail_profiles: options?.detailProfiles ?? [],
     }),
   });
   if (!response.ok) {

@@ -6,7 +6,6 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronUp,
-  ImageUp,
   Loader2,
   Pencil,
   RefreshCw,
@@ -70,8 +69,6 @@ type YangjibaoFundDetailProps = {
   onNavigate: (index: number) => void;
   onHoldingResolved?: (index: number, holding: Holding) => void;
   onFundCodeUpdated?: (index: number, holding: Holding) => void | Promise<void>;
-  onUploadDetailScreenshot?: (file: File) => void | Promise<void>;
-  isDetailOcrUploading?: boolean;
 };
 
 function HeaderStat({
@@ -155,10 +152,7 @@ export function YangjibaoFundDetail({
   onNavigate,
   onHoldingResolved,
   onFundCodeUpdated,
-  onUploadDetailScreenshot,
-  isDetailOcrUploading = false,
 }: YangjibaoFundDetailProps) {
-  const detailFileInputRef = useRef<HTMLInputElement>(null);
   const [tab, setTab] = useState<DetailTab>("sector");
   const [detail, setDetail] = useState<HoldingDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(true);
@@ -529,38 +523,6 @@ export function YangjibaoFundDetail({
                 </div>
               </div>
               <div className="flex items-center gap-0.5">
-                {onUploadDetailScreenshot ? (
-                  <>
-                    <input
-                      ref={detailFileInputRef}
-                      type="file"
-                      accept="image/*"
-                      className="sr-only"
-                      disabled={isDetailOcrUploading}
-                      onChange={(event) => {
-                        const file = event.target.files?.[0];
-                        if (file) {
-                          void onUploadDetailScreenshot(file);
-                        }
-                        event.currentTarget.value = "";
-                      }}
-                    />
-                    <button
-                      type="button"
-                      disabled={isDetailOcrUploading}
-                      onClick={() => detailFileInputRef.current?.click()}
-                      className="inline-flex h-8 w-8 items-center justify-center rounded-full hover:bg-white/15 disabled:opacity-40"
-                      aria-label="上传详情截图"
-                      title="上传养基宝详情截图（含代码、板块）"
-                    >
-                      {isDetailOcrUploading ? (
-                        <Loader2 size={16} className="animate-spin" />
-                      ) : (
-                        <ImageUp size={16} />
-                      )}
-                    </button>
-                  </>
-                ) : null}
                 <button
                   type="button"
                   disabled={!canGoPrev}
