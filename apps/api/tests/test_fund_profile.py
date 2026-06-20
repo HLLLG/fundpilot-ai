@@ -1,6 +1,42 @@
+from datetime import date, timedelta
+
 from app.config import refresh_settings
-from app.models import Holding
-from app.services.fund_profile import FundProfileService, parse_profile_from_text
+from app.models import FundProfile, Holding
+from app.services.fund_profile import (
+    FundProfileService,
+    parse_profile_from_text,
+    resolve_first_seen_anchor,
+)
+
+
+def test_resolve_first_seen_anchor_prefers_purchase_date():
+    profile = FundProfile(fund_code="000001", fund_name="A", first_purchase_date="2020-01-01")
+    assert resolve_first_seen_anchor(profile, today=date(2026, 6, 20)) == "2020-01-01"
+
+
+def test_resolve_first_seen_anchor_backdates_from_ocr_holding_days():
+    profile = FundProfile(fund_code="000001", fund_name="A", holding_days=30)
+    assert resolve_first_seen_anchor(profile, today=date(2026, 6, 20)) == "2026-05-21"
+
+
+def test_resolve_first_seen_anchor_defaults_to_today():
+    profile = FundProfile(fund_code="000001", fund_name="A")
+    assert resolve_first_seen_anchor(profile, today=date(2026, 6, 20)) == "2026-06-20"
+
+
+def test_save_profile_stamps_first_seen_for_new_profile():
+    service = FundProfileService()
+    saved = service.save_profile(FundProfile(fund_code="000002", fund_name="新基金"))
+    assert saved.first_seen_date == date.today().isoformat()
+
+
+def test_save_profile_keeps_existing_first_seen_on_reupload():
+    service = FundProfileService()
+    service.save_profile(
+        FundProfile(fund_code="000003", fund_name="老基金", first_seen_date="2025-01-01")
+    )
+    again = service.save_profile(FundProfile(fund_code="000003", fund_name="老基金"))
+    assert again.first_seen_date == "2025-01-01"
 
 DETAIL_TEXT = """
 华夏中证电网设备主题ETF联接A
