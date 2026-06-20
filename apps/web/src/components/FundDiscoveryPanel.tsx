@@ -276,8 +276,8 @@ export function FundDiscoveryPanel({
       <div className="grid min-w-0 gap-4">
         <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex items-center gap-2">
-            <Target size={18} className="text-indigo-600" />
-            <h2 className="text-base font-black text-slate-950">推荐基金</h2>
+            <Target size={18} className="text-[var(--brand)]" />
+            <h2 className="font-display text-base font-extrabold text-slate-950">推荐基金</h2>
           </div>
           <p className="mt-2 text-sm leading-6 text-slate-600">
             从扩展板块库（含互联网、有色、新能源车等）中按热度构建候选池，由 AI 精选 3~5 只值得关注的机会。默认「全市场机会」横向对比多板块；也可切换「持仓缺口补充」。仅供参考，不构成投资建议。
@@ -291,7 +291,7 @@ export function FundDiscoveryPanel({
           <div className="mt-4 overflow-hidden rounded-xl border border-slate-100">
             <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-3 py-2.5">
               <div className="flex items-center gap-2">
-                <Sparkles size={15} className="text-violet-600" />
+                <Sparkles size={15} className="text-[var(--brand)]" />
                 <span className="text-xs font-bold text-slate-700">AI 角色设定</span>
               </div>
               {discoveryPrompt.is_custom ? (
@@ -336,7 +336,7 @@ export function FundDiscoveryPanel({
                   onClick={() => setScanMode(option.id)}
                   className={`rounded-full border px-3 py-1.5 text-xs font-medium transition ${
                     scanMode === option.id
-                      ? "border-violet-600 bg-violet-600 text-white"
+                      ? "border-[var(--brand)] bg-[var(--brand)] text-white"
                       : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
                   }`}
                 >
@@ -391,7 +391,7 @@ export function FundDiscoveryPanel({
                       onClick={() => toggleSector(sector.sector_label)}
                       className={`rounded-full border px-3 py-1.5 text-xs font-medium transition ${
                         selected
-                          ? "border-indigo-600 bg-indigo-600 text-white"
+                          ? "border-[var(--brand)] bg-[var(--brand)] text-white"
                           : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
                       }`}
                     >
@@ -421,7 +421,7 @@ export function FundDiscoveryPanel({
                   onClick={() => setSelectionStrategy(option.id)}
                   className={`rounded-full border px-3 py-1.5 text-xs font-medium transition ${
                     selectionStrategy === option.id
-                      ? "border-indigo-600 bg-indigo-600 text-white"
+                      ? "border-[var(--brand)] bg-[var(--brand)] text-white"
                       : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
                   }`}
                 >
@@ -464,7 +464,7 @@ export function FundDiscoveryPanel({
                 value={budgetYuan}
                 onChange={(event) => setBudgetYuan(event.target.value)}
                 placeholder="默认按期望投入余额"
-                className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-400"
+                className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-[var(--brand)]"
               />
             </label>
             <div>
@@ -493,7 +493,7 @@ export function FundDiscoveryPanel({
             data-testid="discovery-scan-button"
             disabled={isSubmitting || Boolean(discoveryJobId)}
             onClick={() => void handleScan()}
-            className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-3 text-sm font-bold text-white hover:bg-indigo-700 disabled:opacity-60 sm:w-auto"
+            className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[var(--brand)] px-4 py-3 text-sm font-bold text-white hover:bg-[var(--brand-strong)] disabled:opacity-60 sm:w-auto"
           >
             {isSubmitting || discoveryJobId ? (
               <Loader2 size={16} className="animate-spin" />

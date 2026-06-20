@@ -130,7 +130,7 @@ export function DiscoveryChatPanel({ reportId, reportTitle }: DiscoveryChatPanel
   return (
     <section className="flex h-[min(62vh,560px)] min-h-[400px] flex-col rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
       <div className="mb-3 flex items-center gap-2">
-        <MessageCircle size={18} className="text-indigo-600" />
+        <MessageCircle size={18} className="text-[var(--brand)]" />
         <h3 className="text-sm font-bold text-slate-900">追问推荐报告</h3>
         {reportTitle ? (
           <span className="truncate text-xs text-slate-500">{reportTitle}</span>
@@ -171,7 +171,7 @@ export function DiscoveryChatPanel({ reportId, reportTitle }: DiscoveryChatPanel
             key={message.id}
             className={
               message.role === "user"
-                ? "ml-8 rounded-xl bg-indigo-600 px-3 py-2 text-sm text-white"
+                ? "ml-8 rounded-xl bg-[var(--brand)] px-3 py-2 text-sm text-white"
                 : "mr-8 rounded-xl bg-white px-3 py-2 text-sm text-slate-800 shadow-sm"
             }
           >
@@ -188,7 +188,7 @@ export function DiscoveryChatPanel({ reportId, reportTitle }: DiscoveryChatPanel
           <button
             type="button"
             onClick={() => scrollToBottom("smooth")}
-            className="absolute bottom-2 right-2 z-10 inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200/80 bg-white/90 text-slate-600 shadow-sm backdrop-blur transition hover:border-indigo-300 hover:text-indigo-700"
+            className="absolute bottom-2 right-2 z-10 inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200/80 bg-white/90 text-slate-600 shadow-sm backdrop-blur transition hover:border-[rgba(37,99,235,0.4)] hover:text-[var(--brand-strong)]"
             aria-label="回到底部"
           >
             <ArrowDown size={14} />
@@ -233,14 +233,14 @@ export function DiscoveryChatPanel({ reportId, reportTitle }: DiscoveryChatPanel
             }
           }}
           placeholder="继续追问…"
-          className="min-w-0 flex-1 rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-400"
+          className="min-w-0 flex-1 rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-[var(--brand)]"
           disabled={isStreaming}
         />
         <button
           type="button"
           disabled={isStreaming || !input.trim()}
           onClick={() => void handleSend(input)}
-          className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
+          className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--brand)] text-white hover:bg-[var(--brand-strong)] disabled:opacity-50"
           aria-label="发送"
         >
           {isStreaming ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}

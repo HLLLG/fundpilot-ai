@@ -17,7 +17,7 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
   return (
     <div className="grid min-w-0 gap-4">
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h2 className="text-lg font-black text-slate-950">{report.title}</h2>
+        <h2 className="font-display text-lg font-extrabold text-slate-950">{report.title}</h2>
         <p className="mt-2 text-sm leading-6 text-slate-600">{report.summary}</p>
         {report.market_view ? (
           <p className="mt-3 text-sm leading-6 text-slate-700">
@@ -46,7 +46,7 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
               <button
                 type="button"
                 onClick={() => onOpenFund?.(rec)}
-                className="min-w-0 text-left transition hover:text-indigo-700"
+                className="min-w-0 text-left transition hover:text-[var(--brand-strong)]"
               >
                 <div className="text-sm font-bold text-slate-900">
                   [{rec.fund_code}] {rec.fund_name}
@@ -56,12 +56,12 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
                   {rec.hold_horizon ? ` · 持有期 ${rec.hold_horizon}` : ""}
                   {rec.confidence ? ` · 置信度 ${rec.confidence}` : ""}
                 </div>
-                <div className="mt-1 text-[11px] font-medium text-indigo-600">查看基金详情 →</div>
+                <div className="mt-1 text-[11px] font-medium text-[var(--brand)]">查看基金详情 →</div>
               </button>
               <span className={actionBadgeClass(rec.action)}>{rec.action}</span>
             </div>
             {rec.suggested_amount_yuan != null ? (
-              <p className="mt-2 text-sm font-semibold text-indigo-700">
+              <p className="mt-2 text-sm font-semibold text-[var(--brand-strong)]">
                 示意金额 ¥{rec.suggested_amount_yuan.toLocaleString()}
                 {rec.amount_note ? (
                   <span className="ml-1 font-normal text-slate-500">（{rec.amount_note}）</span>

@@ -35,7 +35,7 @@ export function DiscoveryCandidatePoolPanel({
         className="flex w-full items-center justify-between gap-2 px-5 py-4 text-left"
       >
         <div className="flex items-center gap-2 text-sm font-bold text-slate-900">
-          <Layers size={16} className="text-indigo-600" />
+          <Layers size={16} className="text-[var(--brand)]" />
           本次候选池（{pool.length} 只）
         </div>
         <ChevronDown
@@ -63,7 +63,7 @@ export function DiscoveryCandidatePoolPanel({
                 return (
                   <tr
                     key={item.fund_code}
-                    className={picked ? "bg-indigo-50/80" : "border-t border-slate-50"}
+                    className={picked ? "bg-[var(--brand-soft)]" : "border-t border-slate-50"}
                   >
                     <td className="px-2 py-2 font-mono font-semibold text-slate-800">
                       {item.fund_code}
@@ -89,7 +89,7 @@ export function DiscoveryCandidatePoolPanel({
                     <td className="px-2 py-2 text-slate-500">
                       {item.selection_reason ?? "—"}
                       {picked ? (
-                        <span className="ml-1 font-semibold text-indigo-600">· 已推荐</span>
+                        <span className="ml-1 font-semibold text-[var(--brand)]">· 已推荐</span>
                       ) : null}
                     </td>
                   </tr>

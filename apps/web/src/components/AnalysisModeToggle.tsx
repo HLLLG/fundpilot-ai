@@ -52,8 +52,8 @@ export function AnalysisModeToggle({ mode, onChange, compact = false }: Analysis
           onClick={() => onChange("deep")}
           className={`rounded-2xl px-3 py-2.5 text-sm font-bold transition ${
             mode === "deep"
-              ? "bg-blue-600 text-white shadow-md"
-              : "bg-slate-50 text-slate-600 hover:bg-blue-50"
+              ? "bg-[var(--brand)] text-white shadow-md"
+              : "bg-slate-50 text-slate-600 hover:bg-[var(--brand-soft)]"
           }`}
         >
           深度

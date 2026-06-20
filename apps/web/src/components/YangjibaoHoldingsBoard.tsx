@@ -9,6 +9,7 @@ import {
   EyeOff,
   Plus,
   RefreshCw,
+  ScanLine,
 } from "lucide-react";
 import { fetchTradingSession, type Holding, type PortfolioSummary } from "@/lib/api";
 import { SectorMappingModal } from "@/components/SectorMappingModal";
@@ -265,38 +266,45 @@ export function YangjibaoHoldingsBoard({
   if (!displayHoldings.length) {
     return (
       <section className={`mx-auto w-full ${sectionClassName}`}>
-        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <div className="border-b border-slate-100 px-5 py-8 text-center">
-            <p className="text-sm font-bold text-slate-500">账户汇总</p>
-            <p className="mt-6 text-3xl font-black text-slate-300">—</p>
-            <p className="mt-6 text-sm leading-6 text-slate-400">
-              {isLoading
-                ? "正在恢复上次持仓，并尝试刷新真实板块涨跌..."
-                : "暂无持仓。点击「新增持有」上传支付宝持仓截图或手动录入。"}
-            </p>
-            {!isLoading && onAddHolding ? (
-              <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
-                <button
-                  type="button"
-                  onClick={onAddHolding}
-                  className="inline-flex items-center gap-2 rounded-full bg-blue-600 px-4 py-2 text-sm font-bold text-white transition hover:bg-blue-700"
-                >
-                  <Plus size={16} />
-                  新增持有
-                </button>
-                {onBatchTransaction ? (
-                  <button
-                    type="button"
-                    onClick={onBatchTransaction}
-                    className="inline-flex items-center gap-2 rounded-full border border-blue-200 bg-white px-4 py-2 text-sm font-bold text-blue-600 transition hover:bg-blue-50"
-                  >
-                    <ArrowLeftRight size={16} />
-                    批量加减仓
+        <div className="section-card overflow-hidden">
+          {isLoading ? (
+            <div className="px-5 py-12 text-center">
+              <p className="text-sm font-bold text-slate-500">账户汇总</p>
+              <p className="mt-6 text-3xl font-black text-slate-300">—</p>
+              <p className="mt-6 text-sm leading-6 text-slate-400">
+                正在恢复上次持仓，并尝试刷新真实板块涨跌…
+              </p>
+            </div>
+          ) : (
+            <div className="empty-state">
+              <span className="empty-state-icon">
+                <ScanLine size={26} strokeWidth={2.2} />
+              </span>
+              <h3 className="text-lg font-black text-slate-900">截张图，30 秒看懂你的基金</h3>
+              <p className="max-w-xs text-sm leading-6 text-slate-500">
+                上传支付宝或养基宝的持仓截图，好基灵自动识别基金、份额与收益，并实时关联板块涨跌。
+              </p>
+              {onAddHolding ? (
+                <div className="mt-2 flex flex-wrap items-center justify-center gap-2.5">
+                  <button type="button" onClick={onAddHolding} className="btn-primary !px-5 !py-2.5 !text-sm">
+                    <Plus size={16} />
+                    上传截图 / 新增持有
                   </button>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
+                  {onBatchTransaction ? (
+                    <button
+                      type="button"
+                      onClick={onBatchTransaction}
+                      className="btn-secondary !px-5 !py-2.5 !text-sm"
+                    >
+                      <ArrowLeftRight size={16} />
+                      批量加减仓
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+              <p className="mt-1 text-xs text-slate-400">数据仅本地识别，不上传原始截图</p>
+            </div>
+          )}
         </div>
       </section>
     );
@@ -305,7 +313,7 @@ export function YangjibaoHoldingsBoard({
   return (
     <section className={`mx-auto w-full ${sectionClassName}`}>
       <div className="section-card overflow-hidden">
-        <div className="border-b border-slate-100 px-4 pb-3 pt-4">
+        <div className="holdings-hero border-b border-slate-100 px-4 pb-3.5 pt-4">
           <div className="mb-3 flex items-center justify-end gap-1">
             <button
               type="button"
@@ -339,7 +347,7 @@ export function YangjibaoHoldingsBoard({
               <p className="mt-0.5 text-[10px] font-medium text-slate-400">
                 {formatHoldingsRefreshedLabel(refreshedAt, isRefreshing)}
               </p>
-              <div className="kpi-value mt-0.5 text-[1.75rem] leading-none text-slate-950">
+              <div className="kpi-value mt-1 text-[2.15rem] leading-none text-slate-950">
                 {formatBalance(totalAssets, amountsHidden)}
               </div>
               {refreshError ? (
@@ -362,7 +370,7 @@ export function YangjibaoHoldingsBoard({
                 {allOfficialDaily ? <UpdatedBadge className="ml-1.5 inline-flex px-1.5" /> : null}
               </div>
               <div
-                className={`mt-0.5 text-lg font-black tabular-nums ${cnProfitClass(
+                className={`font-display mt-0.5 text-xl font-extrabold tabular-nums ${cnProfitClass(
                   dailyDisplayMode === "amount" ? dailyProfit : dailyReturn,
                 )}`}
               >
@@ -503,7 +511,7 @@ export function YangjibaoHoldingsBoard({
               <button
                 type="button"
                 onClick={onBatchTransaction}
-                className="flex flex-1 items-center justify-center gap-1.5 border-l border-slate-100 bg-white py-2.5 text-sm font-bold text-blue-600 transition hover:bg-blue-50"
+                className="flex flex-1 items-center justify-center gap-1.5 border-l border-slate-100 bg-white py-2.5 text-sm font-bold text-[var(--brand)] transition hover:bg-[var(--brand-soft)]"
               >
                 <ArrowLeftRight size={16} />
                 批量加减仓

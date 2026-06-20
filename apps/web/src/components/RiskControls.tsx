@@ -100,7 +100,7 @@ export function RiskControls({
       <div className="mt-4 overflow-hidden rounded-xl border border-slate-100">
         <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-3 py-2.5">
           <div className="flex items-center gap-2">
-            <Sparkles size={15} className="text-violet-600" />
+            <Sparkles size={15} className="text-[var(--brand)]" />
             <span className="text-xs font-bold text-slate-700">AI 角色设定</span>
           </div>
           {isRolePromptCustom ? (
@@ -161,7 +161,7 @@ export function RiskControls({
               <input
                 value={profile.style}
                 onChange={(event) => onChange({ ...profile, style: event.target.value })}
-                className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-sm font-semibold outline-none focus:border-blue-400"
+                className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-sm font-semibold outline-none focus:border-[var(--brand)]"
               />
             </label>
             <label className="block rounded-xl border border-slate-100 bg-slate-50/50 p-3">
@@ -169,7 +169,7 @@ export function RiskControls({
               <input
                 value={profile.horizon}
                 onChange={(event) => onChange({ ...profile, horizon: event.target.value })}
-                className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-sm font-semibold outline-none focus:border-blue-400"
+                className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-sm font-semibold outline-none focus:border-[var(--brand)]"
               />
             </label>
             <label className="block rounded-xl border border-slate-100 bg-slate-50/50 p-3">
@@ -223,7 +223,7 @@ export function RiskControls({
                       expected_investment_amount: Number(event.target.value),
                     })
                   }
-                  className="w-full accent-violet-500"
+                  className="w-full accent-[var(--brand)]"
                 />
                 <span className="w-20 shrink-0 text-right text-xs font-black tabular-nums">
                   {resolveExpectedInvestmentAmount(profile).toLocaleString("zh-CN")} 元

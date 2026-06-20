@@ -31,7 +31,7 @@ export function RolePromptEditor({ value, onChange }: RolePromptEditorProps) {
             onClick={() => setMode(id)}
             className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11px] font-bold transition ${
               mode === id
-                ? "bg-violet-100 text-violet-900"
+                ? "bg-[var(--brand-soft)] text-[var(--brand-strong)]"
                 : "text-slate-500 hover:bg-slate-100 hover:text-slate-700"
             }`}
           >
@@ -57,7 +57,7 @@ export function RolePromptEditor({ value, onChange }: RolePromptEditorProps) {
             maxLength={MAX_ROLE_PROMPT_LENGTH}
             rows={12}
             data-testid="analysis-role-prompt"
-            className="w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono text-xs leading-5 text-slate-800 outline-none focus:border-violet-400"
+            className="w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono text-xs leading-5 text-slate-800 outline-none focus:border-[var(--brand)]"
             placeholder="支持 Markdown：可用 ## 标题、- 列表、`代码` 等格式…"
           />
         </label>

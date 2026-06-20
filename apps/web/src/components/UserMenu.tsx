@@ -59,7 +59,7 @@ export function UserMenu({ onNavigate }: UserMenuProps) {
             className="h-9 w-9 rounded-full object-cover"
           />
         ) : (
-          <span className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-blue-600 to-indigo-500 text-sm font-black text-white shadow-[0_6px_16px_rgba(37,99,235,0.28)]">
+          <span className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-[var(--brand)] to-[var(--brand-strong)] text-sm font-black text-white shadow-[0_6px_16px_rgba(35,86,224,0.30)] ring-2 ring-white">
             {initial}
           </span>
         )}

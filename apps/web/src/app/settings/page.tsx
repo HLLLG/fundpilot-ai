@@ -40,28 +40,26 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50/30 to-indigo-50/40 px-4 py-8">
+    <div className="landing-hero-bg min-h-screen px-4 py-8">
       <div className="mx-auto max-w-lg">
         <Link
           href="/"
-          className="mb-6 inline-flex items-center gap-2 text-sm font-semibold text-slate-600 transition hover:text-blue-600"
+          className="mb-6 inline-flex items-center gap-2 text-sm font-semibold text-slate-600 transition hover:text-[var(--brand)]"
         >
           <ArrowLeft size={16} />
           返回首页
         </Link>
 
-        <h1 className="text-2xl font-black text-slate-900">账号设置</h1>
+        <h1 className="font-display text-2xl font-extrabold tracking-tight text-slate-900">账号设置</h1>
         <p className="mt-1 text-sm text-slate-500">管理登录方式与小程序同步</p>
 
-        <section className="mt-8 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="text-sm font-bold uppercase tracking-wide text-slate-400">
-            当前账号
-          </h2>
+        <section className="section-card mt-8 p-6">
+          <h2 className="section-eyebrow">当前账号</h2>
           <p className="mt-3 text-lg font-bold text-slate-900">{user?.username}</p>
           <p className="text-sm text-slate-500">{user?.userAccount}</p>
         </section>
 
-        <section className="mt-6 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+        <section className="section-card mt-6 p-6">
           <div className="flex items-start gap-3">
             <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-green-50 text-green-600">
               <Smartphone size={20} />
@@ -99,7 +97,7 @@ export default function SettingsPage() {
                       value={cloudbaseUid}
                       onChange={(e) => setCloudbaseUid(e.target.value)}
                       placeholder="例如 cloudbase-test-uid-001"
-                      className="mt-1.5 w-full rounded-xl border border-slate-200 px-3 py-2.5 font-normal outline-none ring-blue-200 focus:ring-2"
+                      className="input-field mt-1.5 font-normal"
                     />
                   </label>
                   <p className="text-xs text-slate-400">
@@ -118,7 +116,7 @@ export default function SettingsPage() {
                   <button
                     type="submit"
                     disabled={submitting}
-                    className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-500 py-3 text-sm font-bold text-white shadow-lg shadow-blue-500/20 disabled:opacity-60"
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[var(--brand)] to-[var(--brand-strong)] py-3 text-sm font-bold text-white shadow-[var(--shadow-brand)] disabled:opacity-60"
                   >
                     <Link2 size={16} />
                     {submitting ? "绑定中…" : "绑定微信"}

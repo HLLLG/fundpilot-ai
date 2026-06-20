@@ -48,7 +48,7 @@ function OutcomeItems({ outcomes }: { outcomes: ReportOutcomes }) {
                   ? ` · 持有收益变化 ${item.holding_return_delta > 0 ? "+" : ""}${item.holding_return_delta}%`
                   : ""}
             </div>
-            <div className="mt-2 text-xs leading-5 text-violet-900">{item.assessment}</div>
+            <div className="mt-2 text-xs leading-5 text-slate-600">{item.assessment}</div>
           </div>
         ))}
       </div>
@@ -83,9 +83,9 @@ export function ReportOutcomesPanel({ reportId, embedded = false }: ReportOutcom
         </div>
       ) : null}
       {weekly ? (
-        <div className="rounded-2xl border border-indigo-100 bg-indigo-50/50 p-4">
+        <div className="rounded-2xl border border-[rgba(37,99,235,0.18)] bg-[var(--brand-soft)] p-4">
           <div className="mb-2 flex items-center gap-2 text-sm font-black text-slate-950">
-            <CalendarRange size={16} className="text-indigo-600" />
+            <CalendarRange size={16} className="text-[var(--brand)]" />
             7 日建议复盘
           </div>
           {!weekly.has_baseline ? (
@@ -93,7 +93,7 @@ export function ReportOutcomesPanel({ reportId, embedded = false }: ReportOutcom
           ) : (
             <>
               {weekly.summary ? (
-                <p className="mb-3 text-sm font-semibold text-indigo-950">{weekly.summary}</p>
+                <p className="mb-3 text-sm font-semibold text-[var(--brand-strong)]">{weekly.summary}</p>
               ) : null}
               <OutcomeItems outcomes={weekly} />
             </>
@@ -108,9 +108,9 @@ export function ReportOutcomesPanel({ reportId, embedded = false }: ReportOutcom
   }
 
   return (
-    <div className="mb-5 rounded-[24px] border border-violet-100 bg-violet-50/60 p-5">
+    <div className="mb-5 rounded-[24px] border border-[rgba(37,99,235,0.18)] bg-[var(--brand-soft)] p-5">
       <div className="mb-3 flex items-center gap-2 text-sm font-black text-slate-950">
-        <History size={18} className="text-violet-600" />
+        <History size={18} className="text-[var(--brand)]" />
         建议复盘
       </div>
       {body}

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { BrainCircuit, X } from "lucide-react";
+import { X } from "lucide-react";
 import type {
   AnalysisMode,
   AnalysisPromptConfig,
@@ -71,6 +71,7 @@ import { DiagnosticsAccordion } from "@/components/DiagnosticsAccordion";
 import { FundDiscoveryPanel } from "@/components/FundDiscoveryPanel";
 import { MarketTab } from "@/components/MarketTab";
 import { UserMenu } from "@/components/UserMenu";
+import { BrandMark } from "@/components/BrandMark";
 const defaultProfile: InvestorProfile = {
   style: "稳健",
   horizon: "半年到一年",
@@ -564,13 +565,11 @@ export function Dashboard() {
   return (
     <main className="premium-bg min-h-screen">
       <div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col px-4 py-3 sm:px-5 sm:py-4">
-        <nav className="relative z-40 mb-3 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[var(--brand)] text-white">
-              <BrainCircuit size={18} />
-            </div>
-            <span className="text-sm font-black tracking-tight text-slate-950">FundPilot</span>
-          </div>
+        <nav
+          className="sticky top-0 z-40 -mx-4 mb-3 flex items-center justify-between gap-3 border-b border-[var(--line)] px-4 py-2.5 backdrop-blur-md sm:-mx-5 sm:px-5"
+          style={{ background: "rgba(243, 246, 252, 0.82)" }}
+        >
+          <BrandMark size="md" />
           <UserMenu onNavigate={setActiveTab} />
         </nav>
 

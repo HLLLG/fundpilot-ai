@@ -49,7 +49,7 @@ function FundDiagnosticHint({
   if (!hints.length) {
     return null;
   }
-  return <p className="mt-1 text-xs text-indigo-700">{hints.join(" · ")}</p>;
+  return <p className="mt-1 text-xs text-[var(--brand-strong)]">{hints.join(" · ")}</p>;
 }
 
 function navHintForFund(fundCode: string, snapshots: Report["snapshots"]): string | null {
@@ -192,7 +192,7 @@ export function ReportPanel({ report }: ReportPanelProps) {
         <div className="flex min-h-80 flex-col justify-between rounded-[24px] bg-white/75 p-6">
           <div>
             <StatusPill tone="blue">等待生成</StatusPill>
-            <h2 className="mt-5 text-2xl font-black text-slate-950">你的日报会出现在这里</h2>
+            <h2 className="font-display mt-5 text-2xl font-extrabold text-slate-950">你的日报会出现在这里</h2>
             <p className="mt-3 max-w-lg text-sm leading-6 text-slate-600">
               上传截图并确认持仓后，系统会先跑硬风控，再让 DeepSeek 生成带风险边界的操作日报。
             </p>
@@ -225,7 +225,7 @@ export function ReportPanel({ report }: ReportPanelProps) {
             <StatusPill tone="dark">{actionLabel[report.risk.suggested_action]}</StatusPill>
             <StatusPill tone="blue">{report.provider}</StatusPill>
           </div>
-          <h2 className="text-2xl font-black text-slate-950">{report.title}</h2>
+          <h2 className="font-display text-2xl font-extrabold text-slate-950">{report.title}</h2>
           <p className="mt-2 text-sm leading-6 text-slate-600">{report.summary}</p>
         </div>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
@@ -240,7 +240,7 @@ export function ReportPanel({ report }: ReportPanelProps) {
             type="button"
             onClick={() => void handleExportMarkdown()}
             disabled={isExporting}
-            className="inline-flex items-center justify-center gap-2 rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-700 shadow-sm transition hover:border-blue-300 hover:text-blue-700 disabled:opacity-50"
+            className="inline-flex items-center justify-center gap-2 rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-700 shadow-sm transition hover:border-[rgba(37,99,235,0.4)] hover:text-[var(--brand-strong)] disabled:opacity-50"
           >
             <Download size={16} />
             {isExporting ? "导出中..." : "导出 Markdown"}
@@ -252,7 +252,7 @@ export function ReportPanel({ report }: ReportPanelProps) {
       <div className="report-panel mb-5 overflow-hidden">
         <div className="report-panel-header">
           <div className="flex items-center gap-2 text-sm font-black text-slate-950">
-            <Sparkles size={18} className="text-blue-600" />
+            <Sparkles size={18} className="text-[var(--brand)]" />
             决策建议
           </div>
           <p className="mt-1 text-xs leading-5 text-slate-500">

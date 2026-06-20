@@ -39,7 +39,7 @@ export function formatBoardKindLabel(kind: string | null | undefined): string {
 
 export function boardKindClass(kind: string | null | undefined): string {
   if (kind === "industry") return "bg-slate-100 text-slate-600";
-  if (kind === "index") return "bg-violet-100 text-violet-700";
+  if (kind === "index") return "bg-[var(--brand-soft)] text-[var(--brand-strong)]";
   return "bg-amber-100 text-amber-700";
 }
 

@@ -21,7 +21,7 @@ const ALIPAY_CHANNEL_COPY: { title: string; hint: ReactNode } = {
   hint: (
     <>
       上传支付宝
-      <span className="font-bold text-[#4a86e8]">「我的持有」</span>
+      <span className="font-bold text-[var(--brand)]">「我的持有」</span>
       总览截图即可同步持仓
     </>
   ),
@@ -166,6 +166,20 @@ export function AddHoldingModal({
             <div className="flex min-h-0 flex-1 flex-col items-center overflow-y-auto px-5 pb-2 pt-6">
               <AlipayPhoneGuide src={ALIPAY_GUIDE_IMAGE} />
               <p className="mt-6 text-center text-[15px] leading-7 text-slate-800">{channelCopy.hint}</p>
+              <ol className="mt-5 w-full space-y-2.5">
+                {[
+                  "打开支付宝 → 我的 → 总资产 → 基金，进入「我的持有」",
+                  "截图保存当前持仓总览页",
+                  "回到这里上传截图，好基灵自动识别",
+                ].map((text, index) => (
+                  <li key={index} className="flex items-center gap-3">
+                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--brand-soft)] text-xs font-black text-[var(--brand-strong)]">
+                      {index + 1}
+                    </span>
+                    <span className="text-[13px] leading-5 text-slate-600">{text}</span>
+                  </li>
+                ))}
+              </ol>
             </div>
 
             <div className="space-y-3 bg-[#f5f7fa] px-5 pb-8 pt-3">
@@ -187,7 +201,7 @@ export function AddHoldingModal({
                 type="button"
                 disabled={busy}
                 onClick={() => fileInputRef.current?.click()}
-                className="flex w-full items-center justify-center gap-1 rounded-full bg-gradient-to-r from-[#4a86e8] to-[#3b78e0] px-4 py-4 text-[16px] font-bold text-white shadow-[0_10px_24px_rgba(74,134,232,0.35)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60"
+                className="flex w-full items-center justify-center gap-1 rounded-full bg-gradient-to-r from-[var(--brand)] to-[var(--brand-strong)] px-4 py-4 text-[16px] font-bold text-white shadow-[0_10px_24px_rgba(37,99,235,0.32)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {isUploading ? "识别中..." : "去相册选择"}
                 {!isUploading ? <ChevronRight size={18} strokeWidth={2.5} /> : null}
@@ -199,7 +213,7 @@ export function AddHoldingModal({
                   setFormError(null);
                   setMode("manual");
                 }}
-                className="flex w-full items-center justify-center gap-2 rounded-full border border-[#d6e6ff] bg-[#eef4ff] px-4 py-4 text-[16px] font-bold text-[#4a86e8] transition hover:bg-[#e4edff] disabled:cursor-not-allowed disabled:opacity-60"
+                className="flex w-full items-center justify-center gap-2 rounded-full border border-[rgba(37,99,235,0.22)] bg-[var(--brand-soft)] px-4 py-4 text-[16px] font-bold text-[var(--brand)] transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <PenLine size={18} strokeWidth={2.25} />
                 手动输入
@@ -225,9 +239,9 @@ export function AddHoldingModal({
                 type="button"
                 disabled={busy}
                 onClick={() => setEntries((current) => [...current, createManualEntry()])}
-                className="mt-3 flex w-full items-center justify-end gap-1.5 text-sm font-bold text-[#4a86e8] transition hover:text-[#3b78e0] disabled:opacity-50"
+                className="mt-3 flex w-full items-center justify-end gap-1.5 text-sm font-bold text-[var(--brand)] transition hover:text-[var(--brand-strong)] disabled:opacity-50"
               >
-                <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-[#4a86e8]">
+                <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-[var(--brand)]">
                   <Plus size={12} strokeWidth={2.5} />
                 </span>
                 继续添加
@@ -247,7 +261,7 @@ export function AddHoldingModal({
                 onClick={() => void handleManualSubmit()}
                 className={`w-full rounded-full px-4 py-4 text-[16px] font-bold transition ${
                   canSubmit
-                    ? "bg-gradient-to-r from-[#4a86e8] to-[#3b78e0] text-white shadow-[0_10px_24px_rgba(74,134,232,0.35)] hover:brightness-105"
+                    ? "bg-gradient-to-r from-[var(--brand)] to-[var(--brand-strong)] text-white shadow-[0_10px_24px_rgba(37,99,235,0.32)] hover:brightness-105"
                     : "bg-[#d9e8ff] text-[#8eb3ef]"
                 } disabled:cursor-not-allowed`}
               >
@@ -297,7 +311,7 @@ function ManualEntryCard({
           className="flex w-full items-center justify-between rounded-xl bg-[#f0f2f5] px-4 py-3.5 text-left"
         >
           <span className="truncate pr-8 text-sm font-medium text-slate-800">{summary}</span>
-          <ChevronDown size={18} className="shrink-0 text-[#4a86e8]" />
+          <ChevronDown size={18} className="shrink-0 text-[var(--brand)]" />
         </button>
       ) : (
         <>
@@ -324,7 +338,7 @@ function ManualEntryCard({
           <button
             type="button"
             onClick={() => onChange({ collapsed: true })}
-            className="mt-1 flex w-full flex-col items-center gap-0.5 py-1 text-xs font-medium text-[#4a86e8]"
+            className="mt-1 flex w-full flex-col items-center gap-0.5 py-1 text-xs font-medium text-[var(--brand)]"
           >
             <ChevronUp size={16} strokeWidth={2.25} />
             收起

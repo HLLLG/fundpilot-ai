@@ -491,7 +491,10 @@ export function YangjibaoFundDetail({
         onClick={(event) => event.stopPropagation()}
       >
         <div className="sticky top-0 z-10 shrink-0">
-          <header className="bg-[#3d7eff] px-3 pb-3 pt-3 text-white shadow-sm">
+          <header
+            className="px-3 pb-3 pt-3 text-white shadow-sm"
+            style={{ background: "linear-gradient(135deg, var(--brand) 0%, var(--brand-strong) 100%)" }}
+          >
             <div className="flex items-center justify-between gap-2">
               <button
                 type="button"
@@ -667,7 +670,7 @@ export function YangjibaoFundDetail({
                 onClick={() => setTab(id)}
                 className={`border-b-[2.5px] py-3 transition ${
                   tab === id
-                    ? "border-[#3d7eff] text-[#3d7eff]"
+                    ? "border-[var(--brand)] text-[var(--brand)]"
                     : "border-transparent text-slate-500"
                 }`}
               >
@@ -986,7 +989,7 @@ function PurchaseDatePickerModal({
             type="button"
             disabled={saving || !draftDate}
             onClick={() => onDateChange(draftDate)}
-            className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-[#3d7eff] py-2.5 text-sm font-semibold text-white hover:bg-[#356fe0] disabled:cursor-not-allowed disabled:opacity-50"
+            className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-[var(--brand)] py-2.5 text-sm font-semibold text-white hover:bg-[var(--brand-strong)] disabled:cursor-not-allowed disabled:opacity-50"
           >
             {saving ? <Loader2 size={16} className="animate-spin" /> : null}
             完成

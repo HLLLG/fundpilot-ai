@@ -1,17 +1,21 @@
 import type { Metadata } from "next";
-import { Plus_Jakarta_Sans } from "next/font/google";
+import { Sora } from "next/font/google";
 import { AuthProvider } from "@/components/AuthProvider";
 import "./globals.css";
 
-const plusJakarta = Plus_Jakarta_Sans({
+// 拉丁字与大数字：Sora（几何感、克制高级，等宽数字适合金融场景）。
+// 中文走系统高质量字体栈（PingFang / HarmonyOS / 雅黑 / Noto 兜底），零下载、不拖慢首屏。
+const sora = Sora({
   subsets: ["latin"],
   variable: "--font-sans",
   display: "swap",
+  weight: ["400", "500", "600", "700", "800"],
 });
 
 export const metadata: Metadata = {
-  title: "FundPilot AI | 私人基金投研助手",
-  description: "本地优先的基金截图识别、风控和 DeepSeek 投研日报。",
+  title: "好基灵 | 截个图就懂你的基金",
+  description:
+    "好基灵：自动识别持仓明细 · 实时追踪板块冷暖 · 每天一份听得懂的投研日报。",
 };
 
 export default function RootLayout({
@@ -21,7 +25,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="zh-CN">
-      <body className={`${plusJakarta.variable} antialiased`}>
+      <body className={`${sora.variable} antialiased`}>
         <AuthProvider>{children}</AuthProvider>
       </body>
     </html>
