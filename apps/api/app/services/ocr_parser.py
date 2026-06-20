@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from app.models import Holding
 from app.services.alipay_holdings_parser import is_alipay_holdings_page, parse_alipay_holdings_page
+from app.services.alipay_transactions_parser import is_alipay_transaction_page
 
 
 # detect_ocr_source 用：支付宝「我的持有 / 全部持有」页眉标记
@@ -25,6 +26,8 @@ def parse_holdings_from_text(text: str) -> list[Holding]:
 
 def detect_ocr_source(text: str) -> str:
     lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if is_alipay_transaction_page(lines):
+        return "alipay_transactions"
     if any(marker in line for line in lines for marker in ALIPAY_HOLDINGS_MARKERS):
         return "alipay_holdings"
     if is_alipay_holdings_page(lines):

@@ -7,6 +7,9 @@ from uuid import uuid4
 from pydantic import BaseModel, Field, model_validator
 
 
+TransactionDirection = Literal["buy", "sell"]
+TransactionStatus = Literal["pending", "confirmed", "superseded", "skipped"]
+
 Action = Literal["watch", "pause_add", "staggered_add", "risk_review"]
 RiskLevel = Literal["low", "medium", "high"]
 DecisionStyle = Literal["conservative", "tactical", "aggressive"]
@@ -149,11 +152,37 @@ class FundProfile(BaseModel):
     holding_days_as_of: str | None = None
     first_purchase_date: str | None = None
     first_seen_date: str | None = None
+    shares_baseline_date: str | None = None
     sector_name: str | None = None
     sector_return_percent: float | None = None
     intraday_index_name: str | None = None
     source: str = "yangjibao-detail"
     is_provisional: bool = False
+
+
+class ParsedTransaction(BaseModel):
+    direction: TransactionDirection
+    fund_name: str
+    fund_code: str | None = None
+    amount_yuan: float
+    trade_time: str            # "YYYY-MM-DD HH:MM:SS"
+    confirm_date: str | None = None   # ISO date
+    in_progress: bool = False
+
+
+class FundTransaction(BaseModel):
+    id: str
+    fund_code: str | None = None
+    fund_name: str
+    direction: TransactionDirection
+    amount_yuan: float
+    trade_time: str
+    confirm_date: str
+    status: TransactionStatus = "pending"
+    shares_delta: float | None = None
+    nav_on_confirm: float | None = None
+    dedup_key: str
+    created_at: str
 
 
 class PortfolioSummary(BaseModel):

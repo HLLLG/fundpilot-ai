@@ -111,3 +111,42 @@ def _is_trading_day(day: date) -> bool:
     if trade_dates is None:
         return True
     return day.isoformat() in trade_dates
+
+
+def _parse_trade_time(trade_time: str) -> datetime:
+    """容错解析成交时间字符串（"YYYY-MM-DD HH:MM:SS" 优先，兼容少量变体）。"""
+    text = (trade_time or "").strip().replace("/", "-").replace("T", " ")
+    text = " ".join(text.split())
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+    # 末位兜底：尝试 fromisoformat（去掉时区信息）
+    try:
+        parsed = datetime.fromisoformat(text)
+        return parsed.replace(tzinfo=None)
+    except ValueError as exc:
+        raise ValueError(f"无法解析成交时间：{trade_time!r}") from exc
+
+
+def _next_trading_day(day: date) -> date:
+    cursor = day
+    for _ in range(366):
+        cursor += timedelta(days=1)
+        if _is_trading_day(cursor):
+            return cursor
+    return day + timedelta(days=1)
+
+
+def resolve_confirm_date(trade_time: str, *, today: date | None = None) -> str:
+    """成交时间 -> 确认净值交易日。
+
+    <15:00 且当天为交易日 -> 当天；否则（≥15:00 或非交易日）-> 之后的下一个交易日。
+    返回 ISO date 字符串。``today`` 预留给调用方覆盖"当前日"语义，规则本身只依赖成交时间。
+    """
+    moment = _parse_trade_time(trade_time)
+    trade_day = moment.date()
+    if moment.time() < MARKET_CLOSE and _is_trading_day(trade_day):
+        return trade_day.isoformat()
+    return _next_trading_day(trade_day).isoformat()
