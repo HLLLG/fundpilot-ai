@@ -4,9 +4,14 @@ import { useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 import { NavHistoryListModal } from "@/components/NavHistoryListModal";
 import { NavHistoryTable } from "@/components/NavHistoryTable";
-import { PerformanceReturnChart } from "@/components/PerformanceReturnChart";
-import type { FundNavHistory, IndexDailyHistory } from "@/lib/api";
-import { fetchFundNavHistory, fetchFundNavHistoryPage, fetchIndexDailyHistory } from "@/lib/api";
+import { PerformanceReturnChart, type TradeMarker } from "@/components/PerformanceReturnChart";
+import type { FundNavHistory, FundTransaction, IndexDailyHistory } from "@/lib/api";
+import {
+  fetchFundNavHistory,
+  fetchFundNavHistoryPage,
+  fetchIndexDailyHistory,
+  getFundTransactions,
+} from "@/lib/api";
 import { buildClientCacheKey, readClientCache, writeClientCache } from "@/lib/clientCache";
 import {
   buildPerformanceSeries,
@@ -41,6 +46,68 @@ export function PerformanceTrendPanel({
   const [previewLoading, setPreviewLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [transactions, setTransactions] = useState<FundTransaction[]>([]);
+
+  useEffect(() => {
+    if (!enabled || fundCode === "000000") {
+      setTransactions([]);
+      return;
+    }
+    let cancelled = false;
+    void getFundTransactions(fundCode)
+      .then((res) => {
+        if (!cancelled) {
+          setTransactions(res.transactions);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setTransactions([]);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled, fundCode]);
+
+  const tradeMarkers = useMemo<TradeMarker[]>(() => {
+    const byDate = new Map<string, FundTransaction[]>();
+    for (const tx of transactions) {
+      if (!tx.confirm_date) {
+        continue;
+      }
+      const list = byDate.get(tx.confirm_date) ?? [];
+      list.push(tx);
+      byDate.set(tx.confirm_date, list);
+    }
+    return Array.from(byDate.entries()).map(([date, txs]) => {
+      const hasConfirmed = txs.some(
+        (tx) => tx.status === "confirmed" || tx.status === "superseded",
+      );
+      let kind: TradeMarker["kind"];
+      if (!hasConfirmed) {
+        kind = "pending";
+      } else {
+        const net = txs.reduce((acc, tx) => {
+          if (tx.status !== "confirmed" && tx.status !== "superseded") {
+            return acc;
+          }
+          return acc + (tx.direction === "buy" ? tx.amount_yuan : -tx.amount_yuan);
+        }, 0);
+        kind = net >= 0 ? "buy" : "sell";
+      }
+      return {
+        date,
+        kind,
+        items: txs.map((tx) => ({
+          direction: tx.direction,
+          amount_yuan: tx.amount_yuan,
+          trade_time: tx.trade_time,
+          status: tx.status,
+        })),
+      };
+    });
+  }, [transactions]);
 
   useEffect(() => {
     if (!enabled || fundCode === "000000") {
@@ -194,7 +261,12 @@ export function PerformanceTrendPanel({
           {error}
         </div>
       ) : series.length >= 2 ? (
-        <PerformanceReturnChart points={series} height={220} showBenchmark={hasBenchmark} />
+        <PerformanceReturnChart
+          points={series}
+          height={220}
+          showBenchmark={hasBenchmark}
+          markers={tradeMarkers}
+        />
       ) : (
         <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-400">
           {fundHistory?.note ?? "暂无净值历史数据"}

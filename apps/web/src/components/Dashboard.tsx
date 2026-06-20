@@ -10,6 +10,7 @@ import type {
   Holding,
   HoldingFieldWarning,
   InvestorProfile,
+  ParsedTransaction,
   Report,
 } from "@/lib/api";
 import {
@@ -19,7 +20,9 @@ import {
   fetchPortfolioSummary,
   listReports,
   applyPortfolioHoldings,
+  applyTransactions,
   parseOcrUpload,
+  transactionsOcr,
   saveAnalysisPromptRemote,
   saveInvestorProfileRemote,
   startAnalyzeJob,
@@ -27,6 +30,8 @@ import {
 } from "@/lib/api";
 import { AddHoldingModal } from "@/components/AddHoldingModal";
 import { AlipayOcrConfirmModal } from "@/components/AlipayOcrConfirmModal";
+import { BatchTransactionModal } from "@/components/BatchTransactionModal";
+import { BatchTransactionConfirmModal } from "@/components/BatchTransactionConfirmModal";
 import { notifyDesktop } from "@/lib/notifications";
 import {
   loadAnalysisMode,
@@ -132,6 +137,10 @@ export function Dashboard() {
   const [isConfirmingOcr, setIsConfirmingOcr] = useState(false);
   const [showAddHoldingModal, setShowAddHoldingModal] = useState(false);
   const [isManualAdding, setIsManualAdding] = useState(false);
+  const [showBatchModal, setShowBatchModal] = useState(false);
+  const [isBatchUploading, setIsBatchUploading] = useState(false);
+  const [pendingTransactions, setPendingTransactions] = useState<ParsedTransaction[] | null>(null);
+  const [isApplyingTransactions, setIsApplyingTransactions] = useState(false);
 
   const workflowBlockers = useMemo(
     () =>
@@ -427,6 +436,66 @@ export function Dashboard() {
     }
   };
 
+  const mergeTransactions = (
+    existing: ParsedTransaction[],
+    incoming: ParsedTransaction[],
+  ): ParsedTransaction[] => {
+    const seen = new Set(
+      existing.map((tx) => `${tx.direction}|${tx.fund_name}|${tx.amount_yuan}|${tx.trade_time}`),
+    );
+    const merged = [...existing];
+    for (const tx of incoming) {
+      const key = `${tx.direction}|${tx.fund_name}|${tx.amount_yuan}|${tx.trade_time}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        merged.push(tx);
+      }
+    }
+    return merged;
+  };
+
+  const handleBatchUpload = async (selectedFile: File) => {
+    setIsBatchUploading(true);
+    setMessage(null);
+    try {
+      const result = await transactionsOcr(selectedFile);
+      if (!result.transactions.length) {
+        throw new Error("未识别到交易记录，请确认截图为支付宝「交易记录 / 交易分析」页。");
+      }
+      setShowBatchModal(false);
+      setPendingTransactions((prev) => mergeTransactions(prev ?? [], result.transactions));
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "交易记录识别失败。");
+    } finally {
+      setIsBatchUploading(false);
+    }
+  };
+
+  const handleApplyTransactions = async () => {
+    if (!pendingTransactions?.length) {
+      return;
+    }
+    const toApply = pendingTransactions.filter((tx) => Boolean(tx.fund_code));
+    if (!toApply.length) {
+      setMessage("没有可应用的交易（请先为交易匹配基金代码）。");
+      return;
+    }
+    setIsApplyingTransactions(true);
+    setMessage(null);
+    try {
+      const result = await applyTransactions(toApply);
+      setHoldings(result.holdings);
+      void loadPortfolioSummary();
+      setPendingTransactions(null);
+      const pendingNote = result.pending > 0 ? `，${result.pending} 笔待净值确认` : "";
+      setMessage(`已应用 ${result.inserted} 笔交易${pendingNote}，持仓已更新。`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "应用交易失败。");
+    } finally {
+      setIsApplyingTransactions(false);
+    }
+  };
+
   return (
     <main className="premium-bg min-h-screen">
       <div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col px-4 py-3 sm:px-5 sm:py-4">
@@ -477,6 +546,7 @@ export function Dashboard() {
                 sectorRefresh={sectorRefresh}
                 isLoading={isHydratingHoldings}
                 onAddHolding={() => setShowAddHoldingModal(true)}
+                onBatchTransaction={() => setShowBatchModal(true)}
                 onSelectHolding={setSelectedHoldingIndex}
               />
             </div>
@@ -631,6 +701,24 @@ export function Dashboard() {
         isUploading={isOcrUploading}
         isSubmitting={isManualAdding}
       />
+
+      <BatchTransactionModal
+        open={showBatchModal}
+        onClose={() => setShowBatchModal(false)}
+        onUpload={(file) => void handleBatchUpload(file)}
+        isUploading={isBatchUploading}
+      />
+
+      {pendingTransactions ? (
+        <BatchTransactionConfirmModal
+          transactions={pendingTransactions}
+          isBusy={isApplyingTransactions}
+          onChange={setPendingTransactions}
+          onConfirm={() => void handleApplyTransactions()}
+          onContinueUpload={() => setShowBatchModal(true)}
+          onClose={() => setPendingTransactions(null)}
+        />
+      ) : null}
 
       {pendingOcrHoldings ? (
         <AlipayOcrConfirmModal

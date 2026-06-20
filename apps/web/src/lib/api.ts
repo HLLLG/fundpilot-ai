@@ -1609,6 +1609,89 @@ export async function searchFunds(query: string, limit = 12): Promise<FundSearch
   return body.items ?? [];
 }
 
+// --- 批量加减仓（交易记录）-------------------------------------------------
+// 加仓 = buy（红），减仓 = sell（绿）。
+export type TransactionDirection = "buy" | "sell";
+
+// OCR/手工解析得到的一条待应用交易（尚未落库）。
+export type ParsedTransaction = {
+  direction: TransactionDirection;
+  fund_name: string;
+  fund_code: string | null;
+  amount_yuan: number;
+  trade_time: string; // "YYYY-MM-DD HH:MM:SS"
+  confirm_date: string | null;
+  in_progress: boolean;
+};
+
+// 已落库的交易记录（含确认份额/净值与状态）。
+export type FundTransaction = {
+  id: string;
+  fund_code: string | null;
+  fund_name: string;
+  direction: TransactionDirection;
+  amount_yuan: number;
+  trade_time: string;
+  confirm_date: string;
+  status: "pending" | "confirmed" | "superseded" | "skipped";
+  shares_delta: number | null;
+  nav_on_confirm: number | null;
+  dedup_key: string;
+  created_at: string;
+};
+
+export type TransactionsOcrResult = {
+  transactions: ParsedTransaction[];
+  ocr_source: string;
+};
+
+export type ApplyTransactionsResult = {
+  holdings: Holding[];
+  inserted: number;
+  skipped: number;
+  pending: number;
+};
+
+export async function transactionsOcr(file: File): Promise<TransactionsOcrResult> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const response = await apiFetch(`${API_BASE}/api/transactions/ocr`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export async function applyTransactions(
+  transactions: ParsedTransaction[],
+): Promise<ApplyTransactionsResult> {
+  const response = await apiFetch(`${API_BASE}/api/transactions/apply`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ transactions }),
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export async function getFundTransactions(
+  code: string,
+): Promise<{ transactions: FundTransaction[] }> {
+  const response = await apiFetch(
+    `${API_BASE}/api/funds/${encodeURIComponent(code)}/transactions`,
+    { cache: "no-store" },
+  );
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
 export type PortfolioHoldingsPayload = {
   holdings: Holding[];
   source: "snapshot" | "profiles" | "empty";
