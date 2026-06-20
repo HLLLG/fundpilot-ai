@@ -18,7 +18,8 @@
 - 总览 OCR 缺少基金代码时，优先用 **AkShare 基金名称表**查码，本地 `fund_profiles` 元数据按名称兜底。
 - 份额、成本、板块、购入日等元数据由 OCR **自动维护**（SQLite `fund_profiles`），无需单独「基金档案」页。
 - 养基宝总览 OCR：识别多只基金、区分当日/持有收益（未收盘时当日列为 `-` 则不填当日收益）；**OCR 漏负号**时按收益率/账户总收益/独立行减号规则补符号（当日收益额、板块涨跌与收益率一致）。详见 `docs/PROJECT_CONTEXT.md`。
-- **持有**页养基宝式账户汇总：基金代码、名称、金额、持有/当日收益、板块涨跌；**估算当日收益率**（≈ 板块涨跌 + 持有收益率，与传给模型一致）。
+- **持有**页养基宝式账户汇总：基金代码、名称、金额、持有/当日收益、板块涨跌；**估算当日收益率**（≈ 板块涨跌 + 持有收益率，与传给模型一致）；**刷新后 instant 展示**（localStorage 缓存 + 服务端 `refreshed_at`）。
+- **市场** Tab：子 Tab「主题板块 | 美股」；主题板块小倍式涨幅榜（~66 白名单、主力净流入、列头排序）；美股指数期货 + QDII 盘前参考。
 - **盈亏分析**页：收益走势（我的收益 vs 沪深300）、盈亏日历、当日 TOP5、持仓分布图。
 - 内置稳健型风控规则：最大浮亏线、单只基金集中度、偏定投、拒绝追高（规则守卫 + 传入 AI `profile`）。
 - DeepSeek V4 Pro 生成日报；新闻来自东财/基金公告/宏观主题（可配置），生成前用 **Flash 按主题摘要**（`topic_briefs`），深度模式还可 `fetch_market_news` 补拉。
@@ -33,7 +34,7 @@
 - **邮箱注册/登录**（JWT，默认 30 天有效）；用户菜单 → **账号设置** 可绑定微信，与小程序共享持仓。
 - **微信小程序**（`apps/miniprogram`）：微信登录、持有列表、基金详情（只读）；云端部署见 [docs/deploy/cloudbase.md](docs/deploy/cloudbase.md)。
 - **推荐基金** Tab：默认 **全市场机会** 模式，从 21 个板块热度 Top 8 建窄池并 AI 横向精选；可切换 **持仓缺口补充**；选基策略、关注方向（限时拉取 + 本地缓存）、预算、基金类型偏好；历史推荐（含批量删除）、候选池、7 日复盘与追问。详见下文「推荐基金」。
-- **页面缓存**：盈亏分析、业绩走势、持仓详情等采用客户端 SWR 缓存；板块涨跌后台轻量轮询，手动刷新走精确模式。
+- **页面缓存：** 持有 localStorage 优先、Dashboard/市场子 Tab sessionStorage 记忆；盈亏分析、业绩走势、持仓详情等 SWR 缓存；板块涨跌后台轻量轮询，手动刷新走精确模式。
 - **日报数据口径**：AI 分析使用 `estimated_holding_return_percent`，与持有页「持有」列一致（盘中含板块估算）。
 - **调仓示意**：报告页展开「调仓示意模拟」；AI 未填金额时按集中度或减仓动作自动补算变动额。
 
@@ -107,7 +108,7 @@
 | 输出 | `fund_recommendations` 调仓建议 | `FundDiscoveryReport` 荐基报告 |
 | 历史 | 历史日报侧栏（批量删除） | 推荐基金右侧 `DiscoveryHistoryRail`（批量删除） |
 
-设计细节见 [V2 设计](docs/superpowers/specs/2026-06-14-fund-discovery-v2-design.md)、[V3 选基策略](docs/superpowers/specs/2026-06-14-fund-discovery-v3-selection-strategy-design.md)、[全市场扫描](docs/superpowers/specs/2026-06-15-fund-discovery-full-market-design.md)；API 与架构见 [docs/PROJECT_CONTEXT.md](docs/PROJECT_CONTEXT.md)。
+API 与架构见 [docs/PROJECT_CONTEXT.md](docs/PROJECT_CONTEXT.md)（推荐基金 V2/V3、全市场扫描等行为以本文为准）。
 
 ## 目录
 
@@ -251,17 +252,18 @@ http://127.0.0.1:3001
 
 ```text
 0. 首次使用在 /register 注册账号，或 /login 登录（需在 .env 配置 FUND_AI_JWT_SECRET）
-1. bash scripts/dev.sh → 打开 http://127.0.0.1:3001（默认「持有」Tab）
-2. 启动后自动恢复上次持仓；需更新金额时点击「新增持有」上传支付宝/养基宝总览截图
+1. bash scripts/dev.sh → 打开 http://127.0.0.1:3001（**刷新后恢复上次 Tab**，首次默认「持有」）
+2. 启动后 **localStorage 优先**展示上次持仓，再请求 API 同步；需更新金额时点击「新增持有」上传支付宝/养基宝总览截图
 3. 预览确认后写入账户汇总，并自动同步份额、查码、刷新板块涨跌
 4. 「盈亏分析」查看收益走势、盈亏日历、当日 TOP5
-5. 点击持仓行可查看基金详情（业绩走势、持有天数、板块分时）
-6. 「推荐基金」→ 选择扫描模式（默认全市场）→ 可选关注板块、预算、**选基策略**、基金类型与荐基角色 → 扫描今日机会 → 查看报告 / 历史 / 候选池 / 复盘 / 追问
-7. 切到「生成日报」→ 确认风控画像与日报 AI 角色 → 选快速/深度 → 生成日报
-8. 右下角 JobStatusFloat 查看进度；完成后可在报告页追问（可选深度模式拉最新新闻）
-9. 换机迁移：用户菜单 → 历史日报 → SQLite 备份导出/导入
-10. 需要留存时可导出日报 Markdown 或导出对话 Markdown
-11. 使用小程序：用户菜单 → 账号设置 → 绑定微信；详见 apps/miniprogram/README.md
+5. 「市场」→ 主题板块涨幅榜 / 美股概览
+6. 点击持仓行可查看基金详情（业绩走势、持有天数、板块分时）
+7. 「推荐基金」→ 选择扫描模式（默认全市场）→ 可选关注板块、预算、**选基策略**、基金类型与荐基角色 → 扫描今日机会 → 查看报告 / 历史 / 候选池 / 复盘 / 追问
+8. 切到「生成日报」→ 确认风控画像与日报 AI 角色 → 选快速/深度 → 生成日报
+9. 右下角 JobStatusFloat 查看进度；完成后可在报告页追问（可选深度模式拉最新新闻）
+10. 换机迁移：用户菜单 → 历史日报 → SQLite 备份导出/导入
+11. 需要留存时可导出日报 Markdown 或导出对话 Markdown
+12. 使用小程序：用户菜单 → 账号设置 → 绑定微信；详见 apps/miniprogram/README.md
 ```
 
 ## 云端部署（可选）
@@ -276,7 +278,7 @@ docker compose -f docker-compose.cloud.yml up --build
 
 ## 验证
 
-后端单元测试（约 **203** 项，本地串行 ~40s；默认离线 stub，不访问东财/AkShare/MySQL）：
+后端单元测试（约 **304** 项，本地串行 ~28s；默认离线 stub，不访问东财/AkShare/MySQL）：
 
 ```bash
 cd /d/Code/HL_Project/fundpilot-ai/apps/api

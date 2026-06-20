@@ -32,9 +32,6 @@ import {
   cnProfitClass,
   computeCostBasis,
   computeDailyProfit,
-  computeEstimatedDailyReturnPercent,
-  computeEstimatedHoldingReturnPercent,
-  computeHoldingProfit,
   computeHoldingWeight,
   formatPlainMoney,
   formatPlainPercent,
@@ -42,6 +39,11 @@ import {
   formatSignedPercent,
   resolveSectorBoardReturnPercent,
 } from "@/lib/holdingMetrics";
+import {
+  getEstimatedDailyReturnPercent,
+  getEstimatedHoldingProfit,
+  getEstimatedHoldingReturnPercent,
+} from "@/lib/holdingDisplay";
 import { holdingRelatedBoardLabel, resolveIntradayQuery } from "@/lib/profileSector";
 import { buildClientCacheKey, readClientCache, writeClientCache } from "@/lib/clientCache";
 import { isEstimateFallbackMeta } from "@/lib/sectorQuoteStatus";
@@ -186,8 +188,8 @@ export function YangjibaoFundDetail({
     portfolioSummary?.total_assets ??
     (holdings.reduce((sum, item) => sum + item.holding_amount, 0) || null);
 
-  const holdingReturn = computeEstimatedHoldingReturnPercent(activeHolding);
-  const holdingProfit = computeHoldingProfit(activeHolding);
+  const holdingReturn = getEstimatedHoldingReturnPercent(activeHolding);
+  const holdingProfit = getEstimatedHoldingProfit(activeHolding);
   const dailyProfit = computeDailyProfit(activeHolding);
   const costBasis = computeCostBasis(activeHolding);
   const weight = computeHoldingWeight(activeHolding, totalAssets);
@@ -212,7 +214,7 @@ export function YangjibaoFundDetail({
       ? "东财"
       : "数据源";
   const displayDailyReturn =
-    activeHolding.daily_return_percent ?? computeEstimatedDailyReturnPercent(activeHolding);
+    activeHolding.daily_return_percent ?? getEstimatedDailyReturnPercent(activeHolding);
 
   const intradayQuery = useMemo(
     () => resolveIntradayQuery(activeHolding, sectorMeta),

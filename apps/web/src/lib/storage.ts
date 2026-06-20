@@ -256,3 +256,40 @@ export function saveDiscoverySectorHeatCache(sectors: DiscoverySectorHeat[]) {
   };
   window.localStorage.setItem(DISCOVERY_SECTORS_KEY, JSON.stringify(payload));
 }
+
+const DASHBOARD_TAB_KEY = "fundpilot-dashboard-tab";
+
+export type DashboardTabId =
+  | "today"
+  | "report"
+  | "history"
+  | "dashboard"
+  | "market"
+  | "discovery";
+
+const DASHBOARD_TAB_IDS: DashboardTabId[] = [
+  "today",
+  "report",
+  "history",
+  "dashboard",
+  "market",
+  "discovery",
+];
+
+export function loadDashboardTab(fallback: DashboardTabId = "today"): DashboardTabId {
+  if (typeof window === "undefined") {
+    return fallback;
+  }
+  const stored = window.sessionStorage.getItem(DASHBOARD_TAB_KEY);
+  if (stored && DASHBOARD_TAB_IDS.includes(stored as DashboardTabId)) {
+    return stored as DashboardTabId;
+  }
+  return fallback;
+}
+
+export function saveDashboardTab(tab: DashboardTabId): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.sessionStorage.setItem(DASHBOARD_TAB_KEY, tab);
+}

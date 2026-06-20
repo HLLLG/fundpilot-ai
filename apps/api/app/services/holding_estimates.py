@@ -268,6 +268,39 @@ def sum_daily_profit(holdings: list[Holding]) -> float:
     return _round2(sum((compute_daily_profit(holding) or 0) for holding in holdings))
 
 
+def compute_estimated_daily_return_percent(holding: Holding) -> float | None:
+    """当日基金涨跌：优先 official/daily；否则 sector + 昨日结算（勿与累计持有混淆）。"""
+    if holding.daily_return_percent is not None:
+        return holding.daily_return_percent
+    if holding.sector_return_percent is None:
+        return None
+    settled = resolve_holding_return_percent(holding)
+    if settled is None:
+        return None
+    return round(holding.sector_return_percent + settled, 4)
+
+
+def holding_daily_return_is_estimated(holding: Holding) -> bool:
+    return (
+        holding.daily_return_percent is None
+        and holding.sector_return_percent is not None
+        and compute_estimated_daily_return_percent(holding) is not None
+    )
+
+
+def compute_sector_fund_gap_percent(holding: Holding) -> float | None:
+    """板块涨跌与基金当日/估算涨跌之差（百分点）。"""
+    sector = holding.sector_return_percent
+    if sector is None:
+        return None
+    fund_daily = holding.daily_return_percent
+    if fund_daily is None:
+        fund_daily = compute_estimated_daily_return_percent(holding)
+    if fund_daily is None:
+        return None
+    return round(sector - fund_daily, 4)
+
+
 def compute_official_daily_profit(holding_amount: float, daily_return_percent: float) -> float:
     """官方净值当日收益：结算前金额 × 日涨幅 = 现金额 × r / (100 + r)。"""
     return _round2(holding_amount * daily_return_percent / (100 + daily_return_percent))

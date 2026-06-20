@@ -68,9 +68,16 @@ from app.services.fund_data import FundDataService
 from app.services.fund_profile import FundProfileService, migrate_fund_profile_code
 from app.services.holding_validation import validate_holdings
 from app.services.penetration_daily_allocator import allocate_penetration_daily_profit
-from app.services.holding_estimates import sum_daily_profit
+from app.services.holding_client import serialize_holdings_for_client
 from app.services.fund_code_resolver import reconcile_holding_fund_codes, search_funds_by_keyword
-from app.services.portfolio_holdings_service import load_persisted_holdings
+from app.services.portfolio_holdings_service import (
+    build_portfolio_holdings_response,
+    load_persisted_holdings,
+)
+from app.services.portfolio_holdings_cache import (
+    get_cached_holdings_response,
+    save_cached_holdings_response,
+)
 from app.services.portfolio_persistence import persist_holdings_after_sector_refresh
 from app.services.portfolio_snapshot import build_dashboard_payload
 from app.services.job_status_service import resolve_job_status_single_connection
@@ -291,7 +298,7 @@ def allocate_penetration_daily(request: AllocatePenetrationRequest) -> dict:
     )
     row_sum = round(sum(h.daily_profit or 0 for h in updated), 2)
     return {
-        "holdings": [holding.model_dump() for holding in updated],
+        "holdings": serialize_holdings_for_client(updated),
         "holding_warnings": [item.model_dump() for item in warnings],
         "warning_count": len([w for w in warnings if w.severity != "info"]),
         "allocated_total": row_sum,
@@ -316,7 +323,7 @@ def refresh_sector_quotes(request: RefreshSectorQuotesRequest) -> dict:
         if result.get("fetched_at"):
             fetched_at = datetime.fromisoformat(str(result["fetched_at"]))
         enriched = persist_holdings_after_sector_refresh(refreshed, fetched_at=fetched_at)
-        result["holdings"] = [holding.model_dump() for holding in enriched]
+        result["holdings"] = serialize_holdings_for_client(enriched)
     return result
 
 
@@ -448,11 +455,11 @@ def market_theme_boards(
     sort: str = "change",
     force_refresh: bool = False,
 ) -> dict:
-    if sort not in {"change", "streak"}:
-        raise HTTPException(status_code=400, detail="sort 须为 change 或 streak")
+    if sort not in {"change", "streak", "inflow"}:
+        raise HTTPException(status_code=400, detail="sort 须为 change、streak 或 inflow")
     holdings: list = []
     if get_request_user_id() is not None:
-        loaded, _, _ = load_persisted_holdings()
+        loaded, _, _, _ = load_persisted_holdings()
         holdings = loaded
     return get_theme_board_snapshot(
         force_refresh=force_refresh,
@@ -476,7 +483,7 @@ def market_us_overview(force_refresh: bool = False) -> dict:
 @app.post("/api/fund-discovery/async")
 def fund_discovery_async(request: DiscoveryRequest) -> dict:
     if not request.holdings:
-        loaded, _, _ = load_persisted_holdings()
+        loaded, _, _, _ = load_persisted_holdings()
         request = request.model_copy(update={"holdings": loaded})
     job_id = create_discovery_job(request)
     return {"job_id": job_id, "status": "pending"}
@@ -913,32 +920,19 @@ def portfolio_dashboard(
 
 @app.get("/api/portfolio/holdings")
 def portfolio_holdings() -> dict:
-    holdings, source, snapshot_date = load_persisted_holdings()
-    holdings = reconcile_holding_fund_codes(holdings)
-    holdings = FundProfileService().resolve_holdings(holdings)
-    summary = get_portfolio_summary()
-    profiles = FundProfileService().list_profiles()
-    payload = summary.model_dump(mode="json") if summary else {}
-    total_from_holdings = round(sum(holding.holding_amount for holding in holdings), 2)
-    if total_from_holdings:
-        payload["total_assets"] = total_from_holdings
-    if holdings:
-        payload["daily_profit"] = sum_daily_profit(holdings)
-        if total_from_holdings > (payload["daily_profit"] or 0):
-            previous = total_from_holdings - float(payload["daily_profit"])
-            if previous > 0:
-                payload["daily_return_percent"] = round(
-                    float(payload["daily_profit"]) / previous * 100,
-                    2,
-                )
-    payload["holding_count"] = len(holdings)
-    return {
-        "holdings": [holding.model_dump() for holding in holdings],
-        "source": source,
-        "snapshot_date": snapshot_date,
-        "portfolio_summary": payload or None,
-        "profile_count": len(profiles),
-    }
+    cached = get_cached_holdings_response()
+    if cached is not None:
+        return cached
+
+    holdings, source, snapshot_date, refreshed_at = load_persisted_holdings()
+    payload = build_portfolio_holdings_response(
+        holdings,
+        source=source,
+        snapshot_date=snapshot_date,
+        refreshed_at=refreshed_at,
+    )
+    save_cached_holdings_response(payload)
+    return payload
 
 
 @app.get("/api/investor-profile")

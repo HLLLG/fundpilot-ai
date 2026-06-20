@@ -22,8 +22,13 @@ def fetch_canonical_daily_kline_series(
     *,
     max_days: int = 20,
     timeout: float = 4.0,
+    allow_akshare: bool = True,
 ) -> list[DailyKlineBar]:
-    """板块日 K：东财 → sector-relay → AkShare（与板块信号回测/分时图兜底同源）。"""
+    """板块日 K：东财 → sector-relay → AkShare（与板块信号回测/分时图兜底同源）。
+
+    ``allow_akshare=False`` 时跳过 AkShare 子进程兜底（每板块一次子进程，主题板块
+    批量刷新 ~100 板块时会非常慢），只走快速 HTTP 源（东财 push2delay + relay + 新浪指数）。
+    """
     days = max(8, min(max_days, 400))
 
     series = fetch_eastmoney_daily_kline_series(
@@ -45,7 +50,7 @@ def fetch_canonical_daily_kline_series(
     if relay_series:
         return relay_series
 
-    if canon.source_type in {"concept", "industry"}:
+    if allow_akshare and canon.source_type in {"concept", "industry"}:
         fallback = fetch_board_daily_kline_series(
             canon.source_type,
             canon.source_name,
@@ -66,15 +71,16 @@ def fetch_canonical_daily_kline_series(
                 )
                 return converted
 
-        index_hist = fetch_index_daily_via_akshare(canon.source_code, trading_days=days + 5)
-        if index_hist:
-            converted = _index_history_to_daily_bars(index_hist, max_days=days)
-            if converted:
-                logger.debug(
-                    "canonical daily kline via akshare index for %s",
-                    canon.label,
-                )
-                return converted
+        if allow_akshare:
+            index_hist = fetch_index_daily_via_akshare(canon.source_code, trading_days=days + 5)
+            if index_hist:
+                converted = _index_history_to_daily_bars(index_hist, max_days=days)
+                if converted:
+                    logger.debug(
+                        "canonical daily kline via akshare index for %s",
+                        canon.label,
+                    )
+                    return converted
 
     return []
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { BrainCircuit, X } from "lucide-react";
 import type {
   AnalysisMode,
@@ -32,17 +32,24 @@ import { notifyDesktop } from "@/lib/notifications";
 import {
   loadAnalysisMode,
   loadAnalysisPrompt,
+  loadDashboardTab,
   loadInvestorProfile,
   normalizeInvestorProfile,
   saveAnalysisMode,
   saveAnalysisPrompt,
+  saveDashboardTab,
   saveInvestorProfile,
+  type DashboardTabId,
 } from "@/lib/storage";
 import { HistoryRail } from "@/components/HistoryRail";
 import { BackgroundJobsStack } from "@/components/BackgroundJobsStack";
 import { DiscoveryJobStatusFloat } from "@/components/DiscoveryJobStatusFloat";
 import { JobStatusFloat } from "@/components/JobStatusFloat";
 import { displayableHoldings } from "@/lib/holdingMetrics";
+import {
+  loadCachedPortfolioHoldings,
+  saveCachedPortfolioHoldings,
+} from "@/lib/portfolioHoldingsCache";
 import { useSectorQuoteRefresh } from "@/lib/useSectorQuoteRefresh";
 import { useSwingAlerts } from "@/lib/useSwingAlerts";
 import { SwingAlertsPanel } from "@/components/SwingAlertsPanel";
@@ -76,7 +83,7 @@ const defaultProfile: InvestorProfile = {
   swing_monitor_scope: "both",
 };
 
-type TabId = "today" | "report" | "history" | "dashboard" | "market" | "discovery";
+type TabId = DashboardTabId;
 
 const primaryTabs: Array<{
   id: Extract<TabId, "today" | "dashboard" | "market" | "discovery" | "report">;
@@ -109,7 +116,7 @@ export function Dashboard() {
   const [holdingWarnings, setHoldingWarnings] = useState<HoldingFieldWarning[]>([]);
   const [message, setMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [activeTab, setActiveTab] = useState<TabId>("today");
+  const [activeTab, setActiveTabState] = useState<TabId>("today");
   const [analysisMode, setAnalysisMode] = useState<AnalysisMode>("deep");
   const [profileReady, setProfileReady] = useState(false);
   const [promptReady, setPromptReady] = useState(false);
@@ -125,6 +132,7 @@ export function Dashboard() {
   const profilePersistReady = useRef(false);
   const promptPersistReady = useRef(false);
   const [isHydratingHoldings, setIsHydratingHoldings] = useState(true);
+  const [holdingsRefreshedAt, setHoldingsRefreshedAt] = useState<string | null>(null);
   const [isOcrUploading, setIsOcrUploading] = useState(false);
   const [pendingOcrHoldings, setPendingOcrHoldings] = useState<Holding[] | null>(null);
   const [pendingOcrResolutions, setPendingOcrResolutions] = useState<FundCodeResolution[]>([]);
@@ -188,7 +196,10 @@ export function Dashboard() {
   };
 
   const hydratePortfolio = async () => {
-    setIsHydratingHoldings(true);
+    const hadCachedHoldings = loadCachedPortfolioHoldings()?.holdings?.length;
+    if (!hadCachedHoldings) {
+      setIsHydratingHoldings(true);
+    }
     try {
       const payload = await fetchPortfolioHoldings();
       if (payload.portfolio_summary) {
@@ -196,15 +207,51 @@ export function Dashboard() {
       }
       if (payload.holdings.length > 0) {
         setHoldings(payload.holdings);
+        setHoldingsRefreshedAt(payload.refreshed_at ?? null);
+        saveCachedPortfolioHoldings({
+          holdings: payload.holdings,
+          portfolio_summary: payload.portfolio_summary ?? null,
+          refreshed_at: payload.refreshed_at ?? null,
+        });
         shouldRefreshOnLoad.current = true;
       }
     } catch {
-      await loadPortfolioSummary();
-      setMessage("持仓加载失败，请确认后端 API 正常运行后刷新页面。");
+      if (!hadCachedHoldings) {
+        await loadPortfolioSummary();
+        setMessage("持仓加载失败，请确认后端 API 正常运行后刷新页面。");
+      }
     } finally {
       setIsHydratingHoldings(false);
     }
   };
+
+  useLayoutEffect(() => {
+    const cached = loadCachedPortfolioHoldings();
+    if (!cached?.holdings?.length) {
+      return;
+    }
+    setHoldings(cached.holdings);
+    if (cached.portfolio_summary) {
+      setPortfolioSummary(cached.portfolio_summary);
+    }
+    if (cached.refreshed_at) {
+      setHoldingsRefreshedAt(cached.refreshed_at);
+    }
+    shouldRefreshOnLoad.current = true;
+    setIsHydratingHoldings(false);
+  }, []);
+
+  const setActiveTab = useCallback((tab: TabId | ((prev: TabId) => TabId)) => {
+    setActiveTabState((prev) => {
+      const next = typeof tab === "function" ? tab(prev) : tab;
+      saveDashboardTab(next);
+      return next;
+    });
+  }, []);
+
+  useLayoutEffect(() => {
+    setActiveTabState(loadDashboardTab());
+  }, []);
 
   useEffect(() => {
     setAnalysisMode(loadAnalysisMode("deep"));
@@ -248,6 +295,24 @@ export function Dashboard() {
     // One-shot refresh after portfolio hydration.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [holdings.length]);
+
+  useEffect(() => {
+    if (holdings.length === 0) {
+      return;
+    }
+    saveCachedPortfolioHoldings({
+      holdings,
+      portfolio_summary: portfolioSummary,
+      refreshed_at: holdingsRefreshedAt,
+    });
+  }, [holdings, portfolioSummary, holdingsRefreshedAt]);
+
+  useEffect(() => {
+    if (!sectorRefresh.lastFetchedAt) {
+      return;
+    }
+    setHoldingsRefreshedAt(sectorRefresh.lastFetchedAt);
+  }, [sectorRefresh.lastFetchedAt]);
 
   useEffect(() => {
     if (!profileReady || !profilePersistReady.current) return;
@@ -507,7 +572,8 @@ export function Dashboard() {
                 holdings={holdings}
                 portfolioSummary={portfolioSummary}
                 sectorRefresh={sectorRefresh}
-                isLoading={isHydratingHoldings}
+                refreshedAt={holdingsRefreshedAt}
+                isLoading={isHydratingHoldings && holdings.length === 0}
                 onAddHolding={() => setShowAddHoldingModal(true)}
                 onSelectHolding={setSelectedHoldingIndex}
               />

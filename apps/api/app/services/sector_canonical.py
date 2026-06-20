@@ -178,8 +178,8 @@ _CANONICAL_BY_LABEL: dict[str, CanonicalSector] = {
         label="云计算",
         source_type="concept",
         source_name="云计算",
-        eastmoney_secid="90.BK0968",
-        source_code="BK0968",
+        eastmoney_secid="90.BK0579",
+        source_code="BK0579",
     ),
     "5G": CanonicalSector(
         label="5G",

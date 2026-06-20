@@ -34,6 +34,7 @@ def test_load_persisted_holdings_prefers_snapshot(tmp_path, monkeypatch):
         "app.services.portfolio_holdings_service.get_most_recent_portfolio_snapshot",
         lambda: {
             "snapshot_date": "2026-06-03",
+            "captured_at": "2026-06-03T08:15:00+00:00",
             "holdings": snapshot_holdings,
         },
     )
@@ -46,9 +47,11 @@ def test_load_persisted_holdings_prefers_snapshot(tmp_path, monkeypatch):
         lambda holdings: holdings,
     )
 
-    holdings, source, snapshot_date = load_persisted_holdings()
+    holdings, source, snapshot_date, refreshed_at = load_persisted_holdings()
     assert source == "snapshot"
     assert snapshot_date == "2026-06-03"
+    assert refreshed_at is not None
+    assert refreshed_at.isoformat().startswith("2026-06-03T08:15:00")
     assert len(holdings) == 1
     assert holdings[0].fund_code == "008586"
 
@@ -86,9 +89,10 @@ def test_load_persisted_holdings_falls_back_to_profiles(tmp_path, monkeypatch):
         FakeService,
     )
 
-    holdings, source, snapshot_date = load_persisted_holdings()
+    holdings, source, snapshot_date, refreshed_at = load_persisted_holdings()
     assert source == "profiles"
     assert snapshot_date is None
+    assert refreshed_at is None
     assert len(holdings) == 1
     assert holdings[0].fund_name == "银河创新成长混合A"
 

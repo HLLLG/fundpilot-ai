@@ -13,7 +13,6 @@ import {
   refreshSectorQuotes,
   type RefreshSectorQuotesResult,
 } from "@/lib/api";
-import { enrichHoldingComputedFields } from "@/lib/holdingMetrics";
 import { isRoutineSectorRefreshMessage } from "@/lib/sectorQuoteStatus";
 const DEFAULT_AUTO_INTERVAL_MS = 180_000;
 
@@ -30,7 +29,6 @@ type UseSectorQuoteRefreshOptions = {
   warnings?: HoldingFieldWarning[];
   onWarningsChange?: (warnings: HoldingFieldWarning[]) => void;
   onMessage?: (message: string) => void;
-  enrichComputed?: boolean;
 };
 
 export function useSectorQuoteRefresh({
@@ -39,7 +37,6 @@ export function useSectorQuoteRefresh({
   warnings = [],
   onWarningsChange,
   onMessage,
-  enrichComputed = true,
 }: UseSectorQuoteRefreshOptions) {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [sectorMetaByFundCode, setSectorMetaByFundCode] = useState<Record<string, SectorQuoteMeta>>({});
@@ -61,11 +58,7 @@ export function useSectorQuoteRefresh({
 
   const applyRefreshResult = useCallback(
     (result: Awaited<ReturnType<typeof refreshSectorQuotes>>) => {
-      let nextHoldings = result.holdings;
-      if (enrichComputed) {
-        nextHoldings = nextHoldings.map((holding) => enrichHoldingComputedFields(holding));
-      }
-      onChange(nextHoldings);
+      onChange(result.holdings);
       if (result.holding_warnings?.length) {
         const sectorCodes = new Set(["sector_quote_discrepancy"]);
         const kept = warningsRef.current.filter((warning) => !sectorCodes.has(warning.code));
@@ -102,7 +95,7 @@ export function useSectorQuoteRefresh({
       }
       return result;
     },
-    [enrichComputed, onChange, onWarningsChange, onMessage],
+    [onChange, onWarningsChange, onMessage],
   );
 
   const refresh = useCallback(

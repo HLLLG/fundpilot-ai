@@ -13,22 +13,25 @@ import { fetchTradingSession, type Holding, type PortfolioSummary } from "@/lib/
 import { SectorMappingModal } from "@/components/SectorMappingModal";
 import {
   cnProfitClass,
-  computeDailyProfit,
-  computeEstimatedDailyReturnPercent,
-  computeEstimatedHoldingReturnPercent,
-  computeHoldingProfit,
-  dailyProfitIsEstimated,
   formatSignedMoney,
   formatSignedPercent,
-  holdingProfitIsEstimated,
   resolveSectorBoardReturnPercent,
   sumDailyProfit,
   sumHoldingAmount,
   displayableHoldings,
 } from "@/lib/holdingMetrics";
+import {
+  getDailyProfit,
+  getEstimatedDailyReturnPercent,
+  getEstimatedHoldingProfit,
+  getEstimatedHoldingReturnPercent,
+  isDailyProfitEstimated,
+  isHoldingReturnEstimated,
+} from "@/lib/holdingDisplay";
 import type { SectorQuoteMeta } from "@/lib/api";
 import { holdingDisplaySectorLabel } from "@/lib/profileSector";
 import { buildSectorRefreshNotice } from "@/lib/sectorQuoteStatus";
+import { formatThemeBoardUpdatedFromIso } from "@/lib/marketThemeBoard";
 import { loadAmountsHidden, saveAmountsHidden } from "@/lib/storage";
 import { formatTradeDateShort } from "@/lib/tradeDateLabel";
 import type { useSectorQuoteRefresh } from "@/lib/useSectorQuoteRefresh";
@@ -42,6 +45,7 @@ type YangjibaoHoldingsBoardProps = {
   holdings: Holding[];
   portfolioSummary?: PortfolioSummary | null;
   sectorRefresh: SectorRefreshControl;
+  refreshedAt?: string | null;
   isLoading?: boolean;
   className?: string;
   onAddHolding?: () => void;
@@ -89,11 +93,11 @@ function accountDailyReturnPercent(
 function holdingsSortValue(holding: Holding, key: HoldingsSortKey): number | null {
   switch (key) {
     case "daily":
-      return computeDailyProfit(holding);
+      return getDailyProfit(holding);
     case "sector":
       return resolveSectorBoardReturnPercent(holding);
     case "holding":
-      return computeHoldingProfit(holding);
+      return getEstimatedHoldingProfit(holding);
     case "amount":
       return holding.holding_amount;
   }
@@ -164,10 +168,27 @@ function SortableColumnHeader({
   );
 }
 
+function formatHoldingsRefreshedLabel(
+  iso: string | null | undefined,
+  isRefreshing: boolean,
+): string {
+  if (iso) {
+    const formatted = formatThemeBoardUpdatedFromIso(iso);
+    if (formatted !== "加载中…") {
+      return formatted;
+    }
+  }
+  if (isRefreshing) {
+    return "刷新中…";
+  }
+  return "尚未刷新板块行情";
+}
+
 export function YangjibaoHoldingsBoard({
   holdings,
   portfolioSummary,
   sectorRefresh,
+  refreshedAt = null,
   isLoading = false,
   className,
   onAddHolding,
@@ -302,6 +323,9 @@ export function YangjibaoHoldingsBoard({
           <div className="flex items-end justify-between gap-4">
             <div className="min-w-0">
               <div className="text-[11px] font-semibold text-slate-400">总资产</div>
+              <p className="mt-0.5 text-[10px] font-medium text-slate-400">
+                {formatHoldingsRefreshedLabel(refreshedAt, isRefreshing)}
+              </p>
               <div className="kpi-value mt-0.5 text-[1.75rem] leading-none text-slate-950">
                 {formatBalance(totalAssets, amountsHidden)}
               </div>
@@ -374,11 +398,11 @@ export function YangjibaoHoldingsBoard({
 
         <ul className="divide-y divide-slate-100">
           {sortedHoldings.map(({ holding, index }) => {
-            const daily = computeDailyProfit(holding);
-            const estimatedDailyReturn = computeEstimatedDailyReturnPercent(holding);
-            const holdingProfit = computeHoldingProfit(holding);
-            const holdingReturn = computeEstimatedHoldingReturnPercent(holding);
-            const dailyIsEstimated = dailyProfitIsEstimated(holding);
+            const daily = getDailyProfit(holding);
+            const estimatedDailyReturn = getEstimatedDailyReturnPercent(holding);
+            const holdingProfit = getEstimatedHoldingProfit(holding);
+            const holdingReturn = getEstimatedHoldingReturnPercent(holding);
+            const dailyIsEstimated = isDailyProfitEstimated(holding);
             const isOfficialDaily = holding.daily_return_percent_source === "official_nav";
             const sectorReturn = resolveSectorBoardReturnPercent(holding);
             const sectorMeta = sectorMetaByFundCode[holding.fund_code] as SectorQuoteMeta | undefined;
@@ -441,7 +465,7 @@ export function YangjibaoHoldingsBoard({
                     </div>
                     {holdingReturn != null ? (
                       <div className={`text-[10px] font-semibold tabular-nums ${cnProfitClass(holdingReturn)}`}>
-                        {holdingProfitIsEstimated(holding) ? "≈" : ""}
+                        {isHoldingReturnEstimated(holding) ? "≈" : ""}
                         {formatSignedPercent(holdingReturn)}
                       </div>
                     ) : null}
