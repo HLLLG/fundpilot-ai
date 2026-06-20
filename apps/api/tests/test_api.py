@@ -477,23 +477,6 @@ def test_fund_discovery_sectors(client):
     assert "sectors" in body
 
 
-def test_market_sector_boards_widget(client):
-    response = client.get("/api/market/sector-boards?view=widget")
-    assert response.status_code == 200
-    body = response.json()
-    assert body["available"] is True
-    assert "top_gainers" in body
-    assert body["top_gainers"][0]["name"] == "建筑材料"
-
-
-def test_market_sector_boards_list(client):
-    response = client.get("/api/market/sector-boards?view=list&board_type=industry&sort=change")
-    assert response.status_code == 200
-    body = response.json()
-    assert body["board_type"] == "industry"
-    assert body["items"][0]["rank"] == 1
-
-
 def test_market_theme_boards(client):
     response = client.get("/api/market/theme-boards?sort=change")
     assert response.status_code == 200

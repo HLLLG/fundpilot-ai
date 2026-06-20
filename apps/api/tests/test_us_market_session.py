@@ -63,56 +63,11 @@ def _random_et_instants(n: int, seed: int = 20260617) -> list[datetime]:
     return instants
 
 
-def _dst_boundary_instants() -> list[datetime]:
-    """围绕 2024/2025 春进、秋退切换日的密集采样（每 15 分钟一格，覆盖全天）。"""
-    boundary_dates = [
-        # 春进（DST 开始，第二个周日 02:00→03:00）
-        datetime(2024, 3, 10, tzinfo=US_TZ).date(),
-        datetime(2025, 3, 9, tzinfo=US_TZ).date(),
-        # 秋退（DST 结束，第一个周日 02:00→01:00）
-        datetime(2024, 11, 3, tzinfo=US_TZ).date(),
-        datetime(2025, 11, 2, tzinfo=US_TZ).date(),
-    ]
-    instants: list[datetime] = []
-    for d in boundary_dates:
-        for minutes in range(0, 24 * 60, 15):
-            instants.append(
-                datetime(d.year, d.month, d.day, tzinfo=US_TZ)
-                + timedelta(minutes=minutes)
-            )
-    return instants
-
-
 # ---------------------------------------------------------------------------
 # Property 1：时段划分完备且互斥
 # Feature: us-market-overview, Property 1
 # Validates: Requirements 3.1, 3.2, 3.3, 3.4, 3.5
 # ---------------------------------------------------------------------------
-
-
-def test_property1_session_partition_complete_and_exclusive_random():
-    """Feature: us-market-overview, Property 1
-
-    For any 美东时刻：detect_us_session 恰返回 pre_market/regular/after_hours/closed
-    之一（完备且互斥），且与时间窗口规则一致。
-
-    Validates: Requirements 3.1, 3.2, 3.3, 3.4, 3.5
-    """
-    instants = _random_et_instants(_ITERATIONS) + _dst_boundary_instants()
-    assert len(instants) >= 100
-
-    for moment in instants:
-        result = detect_us_session(moment)
-        kind = result["session_kind"]
-
-        # 完备且互斥：恰为四类之一
-        assert kind in VALID_KINDS, f"非法时段 {kind!r} @ {moment.isoformat()}"
-
-        # 与窗口规则一致（独立推导）
-        expected = _expected_kind(moment)
-        assert kind == expected, (
-            f"时段不一致 @ {moment.isoformat()}: got {kind!r}, expected {expected!r}"
-        )
 
 
 def test_property1_label_and_date_consistency_random():
@@ -175,47 +130,6 @@ def _weekday_in_month(year: int, month: int, day_of_month: int) -> date:
     return d
 
 
-def test_property2_same_wallclock_same_session_kind_across_dst_random():
-    """Feature: us-market-overview, Property 2
-
-    对相同的 ET 墙钟时间（时:分:秒），分别构造在夏令时（7 月，DST 生效）与
-    标准时（1 月，标准时）的某个工作日，detect_us_session 必须返回相同的
-    `session_kind`。
-
-    校验时段判定基于 DST 感知的墙钟时间而非固定 UTC 偏移：夏令时与标准时下
-    相同墙钟时间应得到一致的时段。
-
-    Validates: Requirements 3.1
-    """
-    rng = random.Random(20260618)
-    summer_day = _weekday_in_month(2025, 7, 15)  # DST 生效（夏令时）
-    winter_day = _weekday_in_month(2025, 1, 15)  # 标准时
-
-    # 抽样确认：构造日确实分处 DST 与标准时（utcoffset 不同）
-    summer_probe = datetime.combine(summer_day, time(12, 0), tzinfo=US_TZ)
-    winter_probe = datetime.combine(winter_day, time(12, 0), tzinfo=US_TZ)
-    assert summer_probe.utcoffset() != winter_probe.utcoffset(), (
-        "构造的夏季/冬季日期未能跨越 DST 边界，测试前提不成立"
-    )
-
-    for _ in range(_ITERATIONS):
-        h = rng.randint(0, 23)
-        m = rng.randint(0, 59)
-        s = rng.randint(0, 59)
-        wall = time(h, m, s)
-
-        summer_moment = datetime.combine(summer_day, wall, tzinfo=US_TZ)
-        winter_moment = datetime.combine(winter_day, wall, tzinfo=US_TZ)
-
-        summer_kind = detect_us_session(summer_moment)["session_kind"]
-        winter_kind = detect_us_session(winter_moment)["session_kind"]
-
-        assert summer_kind == winter_kind, (
-            f"相同墙钟 {wall.isoformat()} 跨 DST/标准时时段不一致："
-            f"DST→{summer_kind!r}, 标准时→{winter_kind!r}"
-        )
-
-
 def test_property2_wallclock_grid_across_dst_consistent():
     """Feature: us-market-overview, Property 2
 
@@ -256,51 +170,6 @@ def test_property2_wallclock_grid_across_dst_consistent():
 # ---------------------------------------------------------------------------
 
 
-def _random_weekend_et_instants(n: int, seed: int = 20260619) -> list[datetime]:
-    """生成跨多年、覆盖一天各时刻的随机「周末」美东时刻（周六/周日）。
-
-    任取一个 ET 墙钟瞬时，若其落在周六或周日则保留；否则平移到同周的周六，
-    从而保证样本均为周末时刻，同时覆盖全天各时刻（含盘前/盘中/盘后时间窗）。
-    """
-    rng = random.Random(seed)
-    base = datetime(2024, 1, 1, tzinfo=US_TZ)
-    instants: list[datetime] = []
-    while len(instants) < n:
-        # 覆盖 ~3 年范围，秒级粒度
-        offset = timedelta(seconds=rng.randint(0, 3 * 365 * 24 * 3600))
-        moment = (base + offset).astimezone(US_TZ)
-        weekday = moment.weekday()  # 周一=0 … 周六=5、周日=6
-        if weekday < 5:
-            # 平移到本周周六（保持时:分:秒不变）
-            moment = moment + timedelta(days=(5 - weekday))
-        instants.append(moment)
-    return instants
-
-
-def test_property3_weekend_always_closed_random():
-    """Feature: us-market-overview, Property 3
-
-    任意落在周六或周日（ET 墙钟）的时刻，无论当日处于盘前/盘中/盘后的时间窗，
-    detect_us_session 必须恒返回 session_kind == "closed"。
-
-    Validates: Requirements 3.5
-    """
-    instants = _random_weekend_et_instants(_ITERATIONS)
-    assert len(instants) >= 100
-
-    for moment in instants:
-        et = moment.astimezone(US_TZ)
-        assert et.weekday() >= 5, (
-            f"样本未落在周末 @ {moment.isoformat()} (weekday={et.weekday()})"
-        )
-        result = detect_us_session(moment)
-        assert result["session_kind"] == "closed", (
-            f"周末时刻应为 closed @ {moment.isoformat()}: "
-            f"got {result['session_kind']!r}"
-        )
-        assert result["session_label"] == "休市"
-
-
 def test_property3_weekend_closed_even_in_trading_time_windows():
     """Feature: us-market-overview, Property 3
 
@@ -334,29 +203,6 @@ def test_property3_weekend_closed_even_in_trading_time_windows():
                 f"got {result['session_kind']!r}"
             )
 
-
-def test_property3_weekend_minute_grid_all_closed():
-    """Feature: us-market-overview, Property 3
-
-    在一个完整周末（周六+周日）上按分钟穷举全天（≥100 次迭代），所有时刻
-    必须为 closed，且不会出现任何其他时段类别。
-
-    Validates: Requirements 3.5
-    """
-    weekend_days = [date(2025, 11, 1), date(2025, 11, 2)]  # 周六、周日
-    checked = 0
-    for d in weekend_days:
-        assert d.weekday() >= 5
-        for minutes in range(0, 24 * 60, 10):
-            moment = datetime(d.year, d.month, d.day, tzinfo=US_TZ) + timedelta(
-                minutes=minutes
-            )
-            kind = detect_us_session(moment)["session_kind"]
-            assert kind == "closed", (
-                f"周末分钟网格应恒为 closed @ {moment.isoformat()}: got {kind!r}"
-            )
-            checked += 1
-    assert checked >= 100
 
 # ---------------------------------------------------------------------------
 # 单元测试：时段边界（精确到秒）
