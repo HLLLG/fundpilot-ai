@@ -14,7 +14,7 @@ from app.database import (
     update_fund_transaction,
 )
 from app.models import FundProfile, FundTransaction, Holding, ParsedTransaction
-from app.services.fund_nav_service import get_unit_nav_on_date
+from app.services.fund_nav_service import get_latest_unit_nav, get_unit_nav_on_date
 from app.services.trading_session import resolve_confirm_date
 
 logger = logging.getLogger(__name__)
@@ -92,6 +92,24 @@ def _dedup_key(parsed: ParsedTransaction) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+def _seed_amounts_for_new_positions(fund_codes: list[str]) -> None:
+    """给全新建仓（holding_amount=0）的基金按有效份额 × 最新净值写入初始金额，
+    使其能进入 merge_holdings_with_profiles 展示；精确金额随后由 sync override 重算。"""
+    effective_map = compute_effective_shares_map(fund_codes)
+    for code, effective in effective_map.items():
+        if effective <= 0:
+            continue
+        profile = get_fund_profile_by_code(code)
+        if profile is None or (profile.holding_amount or 0) > 0:
+            continue
+        nav = get_latest_unit_nav(code)
+        if nav is None or nav <= 0:
+            continue
+        save_fund_profile(
+            profile.model_copy(update={"holding_amount": round(effective * nav, 2)})
+        )
+
+
 def apply_parsed_transactions(parsed: list[ParsedTransaction]) -> dict:
     """写入交易 → 确认 → 重算并返回持仓。
 
@@ -139,6 +157,7 @@ def apply_parsed_transactions(parsed: list[ParsedTransaction]) -> dict:
             )
 
     confirm_pending_transactions()
+    _seed_amounts_for_new_positions([item.fund_code for item in parsed if item.fund_code])
 
     from app.services.portfolio_holdings_service import sync_portfolio_from_profiles
 

@@ -214,3 +214,21 @@ def test_apply_skips_when_fund_code_missing(monkeypatch):
     result = apply_parsed_transactions([_parsed_buy(code=None, fund_name="未匹配")])
     assert result["inserted"] == 0
     assert result["skipped"] == 1
+
+
+def test_apply_new_position_visible_with_seeded_amount(monkeypatch):
+    """买入全新基金建仓后，应进入持仓列表且金额 = 有效份额 × 最新净值（随后由 sync override 精确化）。"""
+    _stub_apply_env(monkeypatch, nav=2.0)
+    monkeypatch.setattr(transaction_ledger, "get_latest_unit_nav", lambda _c: 2.0)
+
+    result = apply_parsed_transactions(
+        [_parsed_buy(code="330033", fund_name="华夏成长混合")]
+    )
+
+    assert result["inserted"] == 1
+    match = next(
+        (h for h in result["holdings"] if h.get("fund_code") == "330033"), None
+    )
+    assert match is not None, "建仓的新基金应出现在持仓列表中"
+    # 1500 / 2.0 = 750 份额 × 2.0 净值 = 1500.0
+    assert match["holding_amount"] == 1500.0
