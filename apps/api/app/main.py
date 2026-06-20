@@ -32,6 +32,7 @@ from app.database import (
     get_investor_profile,
     get_analysis_role_prompt,
     get_discovery_role_prompt,
+    get_ocr_text_cache,
     get_previous_discovery_report,
     get_previous_report,
     get_report,
@@ -42,6 +43,7 @@ from app.database import (
     save_analysis_role_prompt,
     save_discovery_role_prompt,
     save_investor_profile,
+    save_ocr_text_cache,
 )
 from app.lifespan import app_lifespan
 from app.database import list_report_chat_messages
@@ -50,6 +52,7 @@ from app.models import (
     AnalysisPromptSaveRequest,
     AnalysisRequest,
     ApplyHoldingsRequest,
+    ApplyTransactionsRequest,
     DiscoveryChatRequest,
     DiscoveryPromptSaveRequest,
     DiscoveryRequest,
@@ -236,6 +239,88 @@ async def parse_ocr(
         filename=filename,
         preview=preview,
     )
+
+
+@app.post("/api/transactions/ocr")
+async def parse_transactions_ocr(
+    raw_text: str | None = Form(default=None),
+    file: UploadFile | None = File(default=None),
+) -> dict:
+    """支付宝「交易记录」截图 → ParsedTransaction[]（不写库）。"""
+    file_bytes: bytes | None = None
+    filename: str | None = None
+    if file is not None and file.filename:
+        file_bytes = await file.read()
+        filename = file.filename
+
+    return await asyncio.to_thread(
+        _build_transactions_ocr_response,
+        raw_text or "",
+        file_bytes,
+        filename,
+    )
+
+
+def _build_transactions_ocr_response(
+    raw_text: str,
+    file_bytes: bytes | None,
+    filename: str | None,
+) -> dict:
+    from app.services.alipay_transactions_parser import parse_alipay_transactions
+    from app.services.fund_code_resolver import lookup_fund_code_by_name
+    from app.services.ocr_engine import OcrEngine
+    from app.services.ocr_parser import detect_ocr_source
+    from app.services.trading_session import resolve_confirm_date
+
+    text = raw_text
+    if not text and file_bytes and filename:
+        settings.upload_dir.mkdir(parents=True, exist_ok=True)
+        upload_path = settings.upload_dir / Path(filename).name
+        upload_path.write_bytes(file_bytes)
+        cache_key = hashlib.sha256(file_bytes).hexdigest()
+        cached_text = get_ocr_text_cache(cache_key)
+        if cached_text is not None:
+            text = cached_text
+        else:
+            try:
+                text = OcrEngine().extract_text(upload_path)
+                save_ocr_text_cache(cache_key, text)
+            except Exception as exc:  # noqa: BLE001
+                return {"transactions": [], "ocr_source": "unknown", "error": f"OCR 识别失败：{exc}"}
+
+    transactions = parse_alipay_transactions(text) if text else []
+    enriched: list[dict] = []
+    for parsed in transactions:
+        if not parsed.confirm_date:
+            parsed = parsed.model_copy(update={"confirm_date": resolve_confirm_date(parsed.trade_time)})
+        if not parsed.fund_code:
+            code = lookup_fund_code_by_name(parsed.fund_name)
+            if code:
+                parsed = parsed.model_copy(update={"fund_code": code})
+        enriched.append(parsed.model_dump(mode="json"))
+
+    return {
+        "transactions": enriched,
+        "ocr_source": detect_ocr_source(text) if text else "unknown",
+    }
+
+
+@app.post("/api/transactions/apply")
+def apply_transactions(payload: ApplyTransactionsRequest) -> dict:
+    from app.services.transaction_ledger import apply_parsed_transactions
+
+    return apply_parsed_transactions(payload.transactions)
+
+
+@app.get("/api/funds/{fund_code}/transactions")
+def fund_transactions(fund_code: str) -> dict:
+    from app.database import list_fund_transactions
+
+    return {
+        "transactions": [
+            tx.model_dump(mode="json") for tx in list_fund_transactions(fund_code=fund_code)
+        ]
+    }
 
 
 @app.post("/api/portfolio/apply-holdings")

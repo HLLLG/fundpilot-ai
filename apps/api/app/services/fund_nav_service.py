@@ -99,6 +99,47 @@ def get_latest_unit_nav(fund_code: str) -> float | None:
         return None
 
 
+def get_unit_nav_on_date(fund_code: str, trade_date: str) -> float | None:
+    """返回该交易日的官方单位净值（精确匹配净值日期），未发布/不存在返回 None。"""
+    if not fund_code or fund_code == "000000" or not trade_date:
+        return None
+
+    key = f"unitdate:{fund_code}:{trade_date}"
+    now = time.monotonic()
+
+    cached = _UNIT_NAV_CACHE.get(key)
+    if cached is not None:
+        value, expires_at = cached
+        if now < expires_at:
+            return value
+
+    try:
+        df = _fetch_nav_df(fund_code)
+        if df is None or df.empty:
+            _UNIT_NAV_CACHE[key] = (None, now + TTL_MISS)
+            return None
+
+        frame = df.copy()
+        frame["_date"] = frame["净值日期"].astype(str).str[:10]
+        matches = frame.index[frame["_date"] == trade_date].tolist()
+        if not matches:
+            _UNIT_NAV_CACHE[key] = (None, now + TTL_MISS)
+            return None
+
+        unit_nav = float(frame.loc[matches[-1], "单位净值"])
+        if math.isnan(unit_nav) or unit_nav <= 0:
+            _UNIT_NAV_CACHE[key] = (None, now + TTL_MISS)
+            return None
+
+        rounded = round(unit_nav, 4)
+        _UNIT_NAV_CACHE[key] = (rounded, now + TTL_HIT)
+        return rounded
+    except Exception:
+        logger.exception("Failed to fetch unit NAV for %s on %s", fund_code, trade_date)
+        _UNIT_NAV_CACHE[key] = (None, now + TTL_MISS)
+        return None
+
+
 def compute_yesterday_profit_from_official_nav(
     fund_code: str,
     holding_amount: float,

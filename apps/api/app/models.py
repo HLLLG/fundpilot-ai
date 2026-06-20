@@ -185,6 +185,10 @@ class FundTransaction(BaseModel):
     created_at: str
 
 
+class ApplyTransactionsRequest(BaseModel):
+    transactions: list[ParsedTransaction] = Field(default_factory=list)
+
+
 class PortfolioSummary(BaseModel):
     total_assets: float | None = None
     daily_profit: float | None = None

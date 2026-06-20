@@ -659,3 +659,115 @@ def test_market_us_overview_force_refresh(client: TestClient):
     assert len(body["futures"]) == 3
     assert body["usd_cny"]["last_price"] == 6.8096
     assert body["qdii"] == []
+
+
+def _stub_transaction_nav(monkeypatch, nav: float = 2.0) -> None:
+    from app.services import holding_amount_sync, transaction_ledger
+
+    monkeypatch.setattr(transaction_ledger, "get_unit_nav_on_date", lambda _c, _d: nav)
+    monkeypatch.setattr(holding_amount_sync, "fetch_fund_estimate_quotes", lambda *_a, **_k: {})
+    monkeypatch.setattr(holding_amount_sync, "get_latest_unit_nav", lambda _c: nav)
+    monkeypatch.setattr(holding_amount_sync, "get_official_nav_return", lambda _c, _d: None)
+
+
+def test_transactions_apply_then_list_fund_transactions(tmp_path, monkeypatch):
+    _stub_transaction_nav(monkeypatch, nav=2.0)
+    client = auth_client_for_db(monkeypatch, tmp_path / "tx.db")
+
+    body = {
+        "transactions": [
+            {
+                "direction": "buy",
+                "fund_name": "测试基金",
+                "fund_code": "110011",
+                "amount_yuan": 1500.0,
+                "trade_time": "2026-06-09 10:00:00",
+                "confirm_date": "2026-06-09",
+            }
+        ]
+    }
+    apply_resp = client.post("/api/transactions/apply", json=body)
+    assert apply_resp.status_code == 200, apply_resp.text
+    data = apply_resp.json()
+    assert data["inserted"] == 1
+    assert data["skipped"] == 0
+    assert data["pending"] == 0
+
+    listed = client.get("/api/funds/110011/transactions")
+    assert listed.status_code == 200
+    transactions = listed.json()["transactions"]
+    assert len(transactions) == 1
+    assert transactions[0]["status"] == "confirmed"
+    assert transactions[0]["shares_delta"] == 750.0
+
+
+def test_transactions_apply_updates_holding_amount_via_override(tmp_path, monkeypatch):
+    from app.database import save_fund_profile
+    from app.models import FundProfile
+    from app.request_context import reset_request_user_id, set_request_user_id
+
+    _stub_transaction_nav(monkeypatch, nav=2.0)
+    client = auth_client_for_db(monkeypatch, tmp_path / "tx_override.db")
+
+    user_id = client.get("/api/auth/me").json()["id"]
+    token = set_request_user_id(user_id)
+    try:
+        save_fund_profile(
+            FundProfile(
+                fund_code="110011",
+                fund_name="华夏成长混合",
+                holding_amount=2000.0,
+                holding_shares=1000.0,
+                shares_baseline_date="2026-06-01",
+            )
+        )
+    finally:
+        reset_request_user_id(token)
+
+    body = {
+        "transactions": [
+            {
+                "direction": "buy",
+                "fund_name": "华夏成长混合",
+                "fund_code": "110011",
+                "amount_yuan": 1500.0,
+                "trade_time": "2026-06-09 10:00:00",
+                "confirm_date": "2026-06-09",
+            }
+        ]
+    }
+    resp = client.post("/api/transactions/apply", json=body)
+    assert resp.status_code == 200, resp.text
+    holdings = {h["fund_code"]: h for h in resp.json()["holdings"]}
+    assert "110011" in holdings
+    # baseline 1000 + delta 750 = 1750 shares × nav 2.0 = 3500.0
+    assert holdings["110011"]["holding_amount"] == 3500.0
+
+
+def test_transactions_ocr_parses_text_without_persisting(client: TestClient, monkeypatch):
+    monkeypatch.setattr(
+        "app.services.fund_code_resolver._fund_name_table",
+        lambda: [("110011", "测试基金")],
+    )
+    text = "\n".join(
+        [
+            "交易分析",
+            "买入",
+            "测试基金",
+            "1,500.00元",
+            "2026-06-09 10:00:00",
+            "卖出",
+            "测试基金",
+            "500.00元",
+            "2026-06-09 09:00:00",
+        ]
+    )
+    resp = client.post("/api/transactions/ocr", data={"raw_text": text})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["ocr_source"] == "alipay_transactions"
+    assert len(body["transactions"]) == 2
+    first = body["transactions"][0]
+    assert first["direction"] == "buy"
+    assert first["confirm_date"] == "2026-06-09"
+    assert first["fund_code"] == "110011"

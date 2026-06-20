@@ -76,7 +76,10 @@ def enrich_loaded_holdings(
         return holdings
     if not with_network:
         return enrich_holdings_estimates(holdings)
-    synced = sync_holding_amounts_from_shares(holdings)
+    from app.services.transaction_ledger import confirm_and_compute_overrides
+
+    overrides = confirm_and_compute_overrides(holdings)
+    synced = sync_holding_amounts_from_shares(holdings, shares_override=overrides)
     return enrich_holdings_estimates(overlay_official_nav_returns(synced))
 
 
@@ -89,7 +92,10 @@ def persist_holdings_after_sector_refresh(
     merged = without_placeholder_holdings(
         without_test_holdings(merge_holdings_with_snapshot(holdings))
     )
-    synced = sync_holding_amounts_from_shares(merged)
+    from app.services.transaction_ledger import confirm_and_compute_overrides
+
+    overrides = confirm_and_compute_overrides(merged)
+    synced = sync_holding_amounts_from_shares(merged, shares_override=overrides)
     enriched = enrich_holdings_estimates(overlay_official_nav_returns(synced))
     if not enriched:
         return enriched

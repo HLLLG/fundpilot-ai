@@ -9,6 +9,7 @@ from app.services.holding_filters import is_test_holding, without_test_holdings
 from app.services.overview_pipeline import enrich_holdings_from_profiles
 from app.services.portfolio_persistence import enrich_loaded_holdings, persist_holdings_after_sector_refresh
 from app.services.sector_quote_service import refresh_holdings_sector_quotes
+from app.services.transaction_ledger import confirm_and_compute_overrides
 
 
 def profile_to_holding(profile: FundProfile) -> Holding:
@@ -140,7 +141,8 @@ def sync_portfolio_from_profiles(*, refresh_sectors: bool = True) -> list[Holdin
 
     merged = without_test_holdings(merge_holdings_with_profiles(base))
     merged = enrich_holdings_from_profiles(merged)
-    merged = sync_holding_amounts_from_shares(merged)
+    overrides = confirm_and_compute_overrides(merged)
+    merged = sync_holding_amounts_from_shares(merged, shares_override=overrides)
 
     if refresh_sectors and merged:
         sector_result = refresh_holdings_sector_quotes(merged, force_refresh=False)
@@ -164,7 +166,7 @@ def load_persisted_holdings() -> tuple[list[Holding], str, str | None]:
             ):
                 if profile_holdings:
                     return (
-                        enrich_loaded_holdings(profile_holdings),
+                        enrich_loaded_holdings(profile_holdings, with_network=True),
                         "profiles_recovered",
                         snapshot.get("snapshot_date"),
                     )
@@ -173,6 +175,6 @@ def load_persisted_holdings() -> tuple[list[Holding], str, str | None]:
             return enriched, "snapshot", snapshot.get("snapshot_date")
 
     if profile_holdings:
-        return enrich_loaded_holdings(profile_holdings), "profiles", None
+        return enrich_loaded_holdings(profile_holdings, with_network=True), "profiles", None
 
     return [], "empty", None
