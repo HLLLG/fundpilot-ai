@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from datetime import date
+from datetime import date, timedelta
 
 from app.database import (
     delete_fund_profile,
@@ -44,6 +44,10 @@ class FundProfileService:
         profile = merge_detail_profile(existing, profile)
         if profile.source == "yangjibao-detail":
             profile = profile.model_copy(update={"is_provisional": False})
+        if existing is None and not profile.first_seen_date:
+            profile = profile.model_copy(
+                update={"first_seen_date": resolve_first_seen_anchor(profile)}
+            )
         saved = save_fund_profile(profile)
         from app.services.fund_primary_sector_service import upsert_primary_sector_from_profile
 
@@ -183,6 +187,16 @@ class FundProfileService:
         return self.find_match(holding.fund_name)
 
 
+def resolve_first_seen_anchor(profile: FundProfile, *, today: date | None = None) -> str:
+    """首次录入持有时的稳定锚点日期：用户购入日 > OCR 持有天数回推 > 今天。"""
+    today = today or date.today()
+    if profile.first_purchase_date:
+        return profile.first_purchase_date
+    if profile.holding_days is not None and profile.holding_days >= 0:
+        return (today - timedelta(days=profile.holding_days)).isoformat()
+    return today.isoformat()
+
+
 def merge_detail_profile(existing: FundProfile | None, incoming: FundProfile) -> FundProfile:
     """详情 OCR 再次上传时保留已有板块/指数字段，避免整份覆盖成空。"""
     incoming = _sanitize_profile_sector_fields(incoming)
@@ -232,6 +246,7 @@ def merge_detail_profile(existing: FundProfile | None, incoming: FundProfile) ->
                 else existing.holding_days_as_of
             ),
             "first_purchase_date": existing.first_purchase_date,
+            "first_seen_date": existing.first_seen_date or incoming.first_seen_date,
         }
     )
 

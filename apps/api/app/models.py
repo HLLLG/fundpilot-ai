@@ -148,6 +148,7 @@ class FundProfile(BaseModel):
     holding_days: int | None = None
     holding_days_as_of: str | None = None
     first_purchase_date: str | None = None
+    first_seen_date: str | None = None
     sector_name: str | None = None
     sector_return_percent: float | None = None
     intraday_index_name: str | None = None
