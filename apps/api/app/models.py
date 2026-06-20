@@ -391,7 +391,6 @@ class UpdateFundProfileRequest(BaseModel):
 
 class ApplyHoldingsRequest(BaseModel):
     holdings: list[Holding] = Field(min_length=1)
-    detail_profiles: list[FundProfile] = Field(default_factory=list)
 
 
 class RefreshSectorQuotesRequest(BaseModel):

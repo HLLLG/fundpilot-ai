@@ -151,18 +151,28 @@ def test_ocr_preview_skips_sector_refresh(client: TestClient, monkeypatch):
 
 
 def test_ocr_endpoint_accepts_text_fallback(client: TestClient):
+    from pathlib import Path
+
+    text = (
+        Path(__file__).parent / "fixtures" / "alipay_holdings_list_ocr.txt"
+    ).read_text(encoding="utf-8")
     response = client.post(
         "/api/ocr",
-        data={"raw_text": "测试基金A\n000001\n持有金额 1000\n持有收益率 -1.5%"},
+        data={"raw_text": text},
     )
 
     assert response.status_code == 200
-    assert response.json()["holdings"][0]["fund_code"] == "000001"
+    holdings = response.json()["holdings"]
+    assert len(holdings) == 4
+    assert any("电网设备" in item["fund_name"] for item in holdings)
 
 
 def test_ocr_endpoint_resolves_holdings_with_saved_profiles(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from app.models import FundProfile
     from app.request_context import reset_request_user_id, set_request_user_id
-    from app.services.fund_profile import FundProfileService, parse_profile_from_text
+    from app.services.fund_profile import FundProfileService
 
     monkeypatch.setattr(
         "app.services.fund_code_resolver._fund_name_table",
@@ -171,27 +181,30 @@ def test_ocr_endpoint_resolves_holdings_with_saved_profiles(tmp_path, monkeypatc
 
     client = auth_client_for_db(monkeypatch, tmp_path / "app.db")
     user_id = client.get("/api/auth/me").json()["id"]
-    profile = parse_profile_from_text(
-        "华夏中证电网设备主题ETF联接A\n025856\n持有金额\n15,075.46\n10,645.76\n52.76%"
-    )
-    assert profile is not None
     token = set_request_user_id(user_id)
     try:
-        FundProfileService().save_profile(profile)
+        FundProfileService().save_profile(
+            FundProfile(
+                fund_code="025856",
+                fund_name="华夏中证电网设备主题ETF联接A",
+                holding_amount=15075.46,
+                holding_shares=10645.76,
+                position_percent=52.76,
+            )
+        )
     finally:
         reset_request_user_id(token)
 
-    response = client.post(
-        "/api/ocr",
-        data={
-            "raw_text": "华夏中证电网设备...\n0.87%\n+488.03\n￥15,161.69\n中证电网设备\n+3.33%"
-        },
-    )
+    text = (
+        Path(__file__).parent / "fixtures" / "alipay_holdings_list_ocr.txt"
+    ).read_text(encoding="utf-8")
+    response = client.post("/api/ocr", data={"raw_text": text})
 
     body = response.json()
     assert response.status_code == 200
-    assert body["holdings"][0]["fund_code"] == "025856"
-    assert body["holdings"][0]["fund_name"] == "华夏中证电网设备主题ETF联接A"
+    grid = next(item for item in body["holdings"] if "电网设备" in item["fund_name"])
+    assert grid["fund_code"] == "025856"
+    assert grid["fund_name"] == "华夏中证电网设备主题ETF联接A"
 
 
 def test_ocr_endpoint_caches_image_text(tmp_path, monkeypatch):
@@ -369,16 +382,22 @@ def test_report_diff_and_markdown_endpoints(tmp_path, monkeypatch):
 
 
 def test_fund_profiles_list_after_save(tmp_path, monkeypatch):
+    from app.models import FundProfile
     from app.request_context import reset_request_user_id, set_request_user_id
-    from app.services.fund_profile import FundProfileService, parse_profile_from_text
+    from app.services.fund_profile import FundProfileService
 
     client = auth_client_for_db(monkeypatch, tmp_path / "app.db")
     user_id = client.get("/api/auth/me").json()["id"]
-    profile = parse_profile_from_text("测试基金\n015608\n持有金额\n1000\n1.2%")
-    assert profile is not None
     token = set_request_user_id(user_id)
     try:
-        FundProfileService().save_profile(profile)
+        FundProfileService().save_profile(
+            FundProfile(
+                fund_code="015608",
+                fund_name="测试基金",
+                holding_amount=1000.0,
+                holding_return_percent=1.2,
+            )
+        )
     finally:
         reset_request_user_id(token)
 

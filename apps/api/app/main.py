@@ -244,7 +244,6 @@ def apply_portfolio_holdings(payload: ApplyHoldingsRequest) -> dict:
         raise HTTPException(status_code=400, detail="持仓不能为空")
     return apply_confirmed_holdings(
         payload.holdings,
-        detail_profiles=payload.detail_profiles,
     )
 
 

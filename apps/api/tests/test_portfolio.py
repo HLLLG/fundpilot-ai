@@ -1,35 +1,20 @@
-from pathlib import Path
-
 from app.config import refresh_settings
 from app.database import get_portfolio_summary, save_portfolio_summary
-from app.models import Holding, PortfolioSummary
-from app.services.fund_profile import FundProfileService, parse_profile_from_text
-from app.services.ocr_parser import parse_holdings_from_text
+from app.models import FundProfile, Holding, PortfolioSummary
+from app.services.fund_profile import FundProfileService
 from app.services.portfolio_parser import parse_portfolio_summary_from_text
 
-FIXTURES = Path(__file__).parent / "fixtures"
-OVERVIEW_TEXT = (FIXTURES / "yangjibao_holdings_no_daily_ocr.txt").read_text(encoding="utf-8")
-
-DETAIL_TEXT = """
-华夏中证电网设备主题ETF联接A
-025856
-持有金额
-持有份额
-持仓占比
-15,075.46
-10,645.76
-52.76%
-持有收益
-持有收益率
-持仓成本
-+401.80
-+2.74%
-1.3784
+# 账户汇总版式（账户资产 + 当日收益），parse_portfolio_summary_from_text 的输入。
+ACCOUNT_SUMMARY_TEXT = """
+账户汇总
+28,572.36
+-363.10
+当日收益
 """
 
 
-def test_parse_portfolio_summary_from_yangjibao_overview():
-    summary = parse_portfolio_summary_from_text(OVERVIEW_TEXT)
+def test_parse_portfolio_summary_from_account_overview():
+    summary = parse_portfolio_summary_from_text(ACCOUNT_SUMMARY_TEXT)
 
     assert summary is not None
     assert summary.total_assets == 28572.36
@@ -41,9 +26,45 @@ def test_sync_profiles_from_overview_holdings(tmp_path, monkeypatch):
     refresh_settings()
 
     service = FundProfileService()
-    service.save_profile(parse_profile_from_text(DETAIL_TEXT))
+    service.save_profile(
+        FundProfile(
+            fund_code="025856",
+            fund_name="华夏中证电网设备主题ETF联接A",
+            holding_amount=15075.46,
+            holding_shares=10645.76,
+            holding_cost=1.3784,
+            sector_name="电网设备",
+            intraday_index_name="中证电网设备",
+        )
+    )
 
-    holdings = FundProfileService().resolve_holdings(parse_holdings_from_text(OVERVIEW_TEXT))
+    drafts = [
+        Holding(
+            fund_code="000000",
+            fund_name="华夏中证电网设备...",
+            holding_amount=15075.46,
+            return_percent=2.74,
+        ),
+        Holding(
+            fund_code="000000",
+            fund_name="华夏人工智能ETF.",
+            holding_amount=7427.01,
+            return_percent=-1.12,
+        ),
+        Holding(
+            fund_code="000000",
+            fund_name="易方达国防军工混..",
+            holding_amount=1846.93,
+            return_percent=-7.65,
+        ),
+        Holding(
+            fund_code="000000",
+            fund_name="银河创新成长混合A",
+            holding_amount=4222.96,
+            return_percent=1.53,
+        ),
+    ]
+    holdings = FundProfileService().resolve_holdings(drafts)
     result = service.sync_profiles_from_holdings(holdings)
 
     assert result.updated >= 1

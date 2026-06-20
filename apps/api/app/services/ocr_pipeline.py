@@ -7,7 +7,7 @@ from pathlib import Path
 from app.config import get_settings
 from app.models import PortfolioSummary
 from app.database import get_ocr_text_cache, save_ocr_text_cache, save_portfolio_summary
-from app.services.fund_profile import FundProfileService, parse_profile_from_text
+from app.services.fund_profile import FundProfileService
 from app.services.holding_validation import build_holding_review, enrich_portfolio_summary_source
 from app.services.ocr_engine import OcrEngine
 from app.services.fund_code_resolver import (
@@ -60,15 +60,6 @@ def run_ocr_upload_pipeline(
 
     profile_service = FundProfileService()
     ocr_source = detect_ocr_source(text) if text else "unknown"
-
-    if ocr_source == "yangjibao_detail":
-        return _run_yangjibao_detail_pipeline(
-            text=text,
-            upload_path=upload_path,
-            cache_hit=cache_hit,
-            preview=preview,
-            profile_service=profile_service,
-        )
 
     parsed_holdings = parse_holdings_from_text(text)
     holdings, fund_code_resolutions = _resolve_fund_codes(parsed_holdings, profile_service)
@@ -151,94 +142,6 @@ def run_ocr_upload_pipeline(
     }
 
 
-def _run_yangjibao_detail_pipeline(
-    *,
-    text: str,
-    upload_path: Path | None,
-    cache_hit: bool,
-    preview: bool,
-    profile_service: FundProfileService,
-) -> dict:
-    """养基宝单基金详情 OCR：解析代码/份额/板块并建档。"""
-    from app.models import Holding
-
-    profile = parse_profile_from_text(text)
-    if profile is None:
-        return {
-            "raw_text": text,
-            "upload_path": str(upload_path) if upload_path else None,
-            "holdings": [],
-            "cache_hit": cache_hit,
-            "preview": preview,
-            "ocr_source": "yangjibao_detail",
-            "error": "无法识别养基宝详情页，请确认截图为单只基金的详情（含代码、持有金额、关联板块）。",
-        }
-
-    profile = profile.model_copy(
-        update={"source": "yangjibao-detail", "is_provisional": False},
-    )
-    holding = Holding(
-        fund_code=profile.fund_code,
-        fund_name=profile.fund_name,
-        holding_amount=profile.holding_amount or 0,
-        return_percent=profile.holding_return_percent or 0,
-        holding_return_percent=profile.holding_return_percent,
-        holding_profit=profile.holding_profit,
-        sector_name=profile.sector_name,
-        sector_return_percent=profile.sector_return_percent,
-        intraday_index_name=profile.intraday_index_name,
-        daily_profit=profile.daily_profit,
-        yesterday_profit=profile.yesterday_profit,
-    )
-
-    profile_sync = {"updated": 0, "created": 0, "skipped": True}
-    sector_refresh: dict | None = None
-    holdings = [holding]
-
-    if not preview:
-        profile_service.save_profile(profile)
-        profile_sync = {"updated": 1, "created": 0, "saved_detail": True}
-        holdings, sector_refresh, _ = process_overview_holdings(
-            holdings,
-            portfolio_summary=None,
-            force_sector_refresh=True,
-            from_user_upload=True,
-        )
-        save_daily_snapshot(holdings, None)
-
-    trading_session = build_trading_session()
-    amount_semantics = {
-        "source": "yangjibao_detail",
-        "holding_amount": "detail_page_settled",
-        "daily_profit": "ocr_or_sector_after_refresh",
-        "note": "详情页持有金额/份额/板块来自截图；确认后将写入基金档案并刷新板块涨跌。",
-    }
-
-    return {
-        "raw_text": text,
-        "upload_path": str(upload_path) if upload_path else None,
-        "holdings": [item.model_dump() for item in holdings],
-        "cache_hit": cache_hit,
-        "preview": preview,
-        "ocr_source": "yangjibao_detail",
-        "detail_profile": profile.model_dump(mode="json"),
-        "fund_code_resolutions": [
-            {
-                "fund_name": profile.fund_name,
-                "fund_code": profile.fund_code,
-                "source": "ocr_detail",
-                "resolved": True,
-            }
-        ],
-        "amount_semantics": amount_semantics,
-        "trading_session": trading_session,
-        "profile_sync": profile_sync,
-        "sector_refresh": sector_refresh,
-        "portfolio_summary": None,
-        "holding_warnings": [],
-    }
-
-
 def _resolve_fund_codes(
     holdings: list,
     profile_service: FundProfileService,
@@ -280,11 +183,9 @@ def _resolve_fund_codes(
 
 def apply_confirmed_holdings(
     holdings: list,
-    *,
-    detail_profiles: list | None = None,
 ) -> dict:
     """用户确认 OCR 草稿后：同步档案、刷新板块、持久化快照。"""
-    from app.models import FundProfile, Holding
+    from app.models import Holding
 
     profile_service = FundProfileService()
     typed = [Holding.model_validate(item) if isinstance(item, dict) else item for item in holdings]
@@ -292,16 +193,6 @@ def apply_confirmed_holdings(
     from app.services.fund_primary_sector_service import apply_primary_sector_to_holdings
 
     typed = apply_primary_sector_to_holdings(typed)
-
-    for raw_profile in detail_profiles or []:
-        profile = (
-            FundProfile.model_validate(raw_profile)
-            if isinstance(raw_profile, dict)
-            else raw_profile
-        )
-        profile_service.save_profile(
-            profile.model_copy(update={"source": "yangjibao-detail", "is_provisional": False}),
-        )
 
     profile_sync = profile_service.sync_profiles_from_holdings(typed).model_dump()
     total_assets = round(sum(item.holding_amount for item in typed), 2)
@@ -365,18 +256,12 @@ def _finalize_confirmed_holdings(holdings: list, profile_service: FundProfileSer
 
 def _ocr_amount_semantics(ocr_source: str, trading_session: dict) -> dict:
     session_kind = trading_session.get("session_kind", "")
-    if ocr_source == "yangjibao_detail":
-        return {
-            "source": "yangjibao_detail",
-            "holding_amount": "detail_page_settled",
-            "daily_profit": "ocr_or_sector_after_refresh",
-        }
-
     if ocr_source != "alipay_holdings":
         return {
             "source": ocr_source,
-            "holding_amount": "yangjibao_overview",
+            "holding_amount": "unknown",
             "daily_profit": "sector_estimate_after_refresh",
+            "note": "未识别为支付宝持有页：金额按截图原值保留，当日收益需刷新板块后估算。",
         }
 
     if session_kind == "non_trading_day":
