@@ -1,0 +1,56 @@
+apps/api/app/auth/service.py
+  s_f3e8334cbc55c1::t_7e96712cf68a03 3
+  s_f3e8334cbc55c1::t_3b4a321778ff65 85-97
+.gitignore
+  s_f3e8334cbc55c1::t_8652c57a68a799 34
+apps/miniprogram/utils/config.js
+  s_f3e8334cbc55c1::t_7b673cdfe326d3 1,4-5,10
+  s_f3e8334cbc55c1::t_26ed196eb5cfb4 2-3
+apps/miniprogram/pages/login/login.js
+  s_f3e8334cbc55c1::t_5ba077d85229e5 14-19,22-24
+apps/miniprogram/project.config.json
+  s_f3e8334cbc55c1::t_fbe4ac3dec3fba 34,39
+apps/miniprogram/app.json
+  s_f3e8334cbc55c1::t_1d354cab159730 8-9
+apps/api/tests/test_auth.py
+  s_f3e8334cbc55c1::t_8931d5f9646c1b 89-117
+  s_f3e8334cbc55c1::t_81d9f025f09e2a 7
+apps/miniprogram/README.md
+  s_f3e8334cbc55c1::t_6a2b7214b9f41c 1,5,9-26,31-34,39-40,42
+apps/api/app/main.py
+  s_f3e8334cbc55c1::t_1007b2b7b872c6 191,193-194
+  s_f3e8334cbc55c1::t_05ea6095b60b45 14
+docs/deploy/cloudbase.md
+  s_f3e8334cbc55c1::t_ba3460c4dffb15 101-130,132
+  s_f3e8334cbc55c1::t_c1328495967c10 8-12,15-16
+apps/miniprogram/pages/login/login.wxss
+  s_f3e8334cbc55c1::t_999c1447b4aeda 43
+  s_f3e8334cbc55c1::t_18233d6062fa86 19-26
+apps/web/src/app/layout.tsx
+  s_f3e8334cbc55c1::t_a366a413572589 19,24-25
+  s_f3e8334cbc55c1::t_7860524f2bec77 20-23
+apps/miniprogram/pages/login/login.wxml
+  s_f3e8334cbc55c1::t_6abca9febe7105 3-4
+apps/miniprogram/utils/api.js
+  s_f3e8334cbc55c1::t_a78affc3959b24 1,24,26-29,31-42,44-45,47,49,51-59,78-79,81-83,85,88,90-91
+  s_f3e8334cbc55c1::t_b4021ec46949f7 17-19,21-23,25,43,46,48,50,62,67,76-77,80,84,86-87,89,95-96,107,114,119-126
+apps/api/app/auth/cloudbase_auth.py
+  s_f3e8334cbc55c1::t_8620e121b7ae89 6
+  s_f3e8334cbc55c1::t_a852b8b3d9eb81 59-73
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.17-trip",
+  "base_commit_sha": "1acdaaf382cad1f339bf04761a69c269a2b4fe3b",
+  "prompts": {},
+  "sessions": {
+    "s_f3e8334cbc55c1": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "18fbe41c-7324-4eb9-9f75-82d608955e50",
+        "model": "composer-2.5"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
