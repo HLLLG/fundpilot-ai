@@ -21,6 +21,8 @@ def build_discovery_facts(
     budget_yuan: float | None = None,
     selection_strategy: str = "balanced",
     scan_mode: str = "full_market",
+    dip_lookback_days: int = 5,
+    dip_min_drop_percent: float = 3.0,
 ) -> dict:
     total_amount = sum(item.holding_amount for item in holdings) or 0.0
     denominator = resolve_weight_denominator(holdings, profile)
@@ -31,8 +33,10 @@ def build_discovery_facts(
 
     signal_backtest = build_signal_backtest_context(target_sectors)
     session = build_trading_session()
+    fee_break_even = take_profit_threshold_percent(profile)
+    target_exit_days = profile.hold_days_target or 5
 
-    return {
+    facts: dict = {
         "readonly": True,
         "instruction": "以下数字由系统计算；推荐基金代码必须来自 candidate_pool。",
         "session": session,
@@ -70,6 +74,26 @@ def build_discovery_facts(
         "candidate_pool": candidate_pool,
         "selection_strategy": selection_strategy,
     }
+
+    if scan_mode == "dip_swing":
+        dip_values = [
+            float(item["dip_drop_percent"])
+            for item in candidate_pool
+            if item.get("dip_drop_percent") is not None
+        ]
+        avg_drop = round(sum(dip_values) / len(dip_values), 2) if dip_values else None
+        facts["dip_swing"] = {
+            "lookback_days": dip_lookback_days,
+            "min_drop_percent": dip_min_drop_percent,
+            "fee_break_even_percent": fee_break_even,
+            "target_exit_days": target_exit_days,
+            "pool_prescreen_stats": {
+                "candidates": len(candidate_pool),
+                "avg_drop": avg_drop,
+            },
+        }
+
+    return facts
 
 
 def _held_sector_summary(holdings: list[Holding]) -> list[dict]:

@@ -7,7 +7,7 @@ from app.services.risk import holding_weight_percent, resolve_weight_denominator
 from app.services.sector_canonical import get_canonical_sector, list_discovery_sector_labels
 from app.services.sector_labels import normalize_sector_label
 
-DiscoveryScanMode = Literal["full_market", "portfolio_gap"]
+DiscoveryScanMode = Literal["full_market", "portfolio_gap", "dip_swing"]
 
 _FULL_MARKET_MAX_SECTORS = 8
 _GAP_MAX_SECTORS = 5
@@ -23,6 +23,9 @@ def select_target_sectors(
     max_sectors: int | None = None,
     gap_weight_threshold: float = 15.0,
 ) -> list[str]:
+    if scan_mode == "dip_swing":
+        limit = max_sectors or _FULL_MARKET_MAX_SECTORS
+        return _select_dip_swing_sectors(focus_sectors, heat_ranking, max_sectors=limit)
     if scan_mode == "full_market":
         limit = max_sectors or _FULL_MARKET_MAX_SECTORS
         return _select_full_market_sectors(focus_sectors, heat_ranking, max_sectors=limit)
@@ -54,6 +57,49 @@ def _select_full_market_sectors(
             ordered.append(label)
 
     for row in sorted(heat_ranking, key=lambda item: float(item.get("heat_score") or -999), reverse=True):
+        label = str(row.get("sector_label", "")).strip()
+        if not label or label in seen:
+            continue
+        seen.add(label)
+        ordered.append(label)
+        if len(ordered) >= max_sectors:
+            break
+
+    if not ordered:
+        for label in list_discovery_sector_labels()[:max_sectors]:
+            if label not in seen:
+                ordered.append(label)
+                seen.add(label)
+
+    return ordered[:max_sectors]
+
+
+def _select_dip_swing_sectors(
+    focus_sectors: list[str] | None,
+    heat_ranking: list[dict],
+    *,
+    max_sectors: int,
+) -> list[str]:
+    """短线抄底：用户关注方向优先，其余按近5日板块跌幅升序。"""
+    ordered: list[str] = []
+    seen: set[str] = set()
+
+    for raw in focus_sectors or []:
+        label = _resolve_sector_label(raw)
+        if label and label not in seen:
+            seen.add(label)
+            ordered.append(label)
+
+    def _change_5d(row: dict) -> float:
+        value = row.get("change_5d_percent")
+        if value is None:
+            return 999.0
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return 999.0
+
+    for row in sorted(heat_ranking, key=_change_5d):
         label = str(row.get("sector_label", "")).strip()
         if not label or label in seen:
             continue

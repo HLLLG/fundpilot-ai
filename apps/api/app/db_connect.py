@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import sqlite3
 from contextlib import contextmanager
@@ -8,6 +9,8 @@ from typing import Any, Iterator
 from urllib.parse import unquote, urlparse
 
 from app.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 def _db_path() -> Path:
@@ -19,6 +22,34 @@ def _db_path() -> Path:
 
 def uses_mysql() -> bool:
     return get_settings().uses_mysql
+
+
+def sqlite_fallback_enabled() -> bool:
+    """MySQL 不可达时是否回退本地 SQLite（本地开发默认开启）。"""
+    raw = os.getenv("FUND_AI_DB_FALLBACK_SQLITE", "true").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _connect_primary() -> DbConnection:
+    if uses_mysql():
+        return _open_mysql()
+    return _open_sqlite()
+
+
+def connect_with_fallback() -> DbConnection:
+    if not uses_mysql():
+        return _open_sqlite()
+    try:
+        return _open_mysql()
+    except Exception as exc:
+        if not sqlite_fallback_enabled():
+            raise
+        logger.warning(
+            "MySQL unavailable (%s); falling back to SQLite at %s",
+            exc,
+            _db_path(),
+        )
+        return _open_sqlite()
 
 
 def adapt_sql(sql: str) -> str:
@@ -97,7 +128,7 @@ def _open_sqlite() -> DbConnection:
 
 @contextmanager
 def open_db() -> Iterator[DbConnection]:
-    connection = _open_mysql() if uses_mysql() else _open_sqlite()
+    connection = connect_with_fallback()
     try:
         yield connection
         connection.commit()
@@ -107,4 +138,4 @@ def open_db() -> Iterator[DbConnection]:
 
 def connect() -> DbConnection:
     """与历史 `_connect()` 兼容：调用方负责 commit/close。"""
-    return _open_mysql() if uses_mysql() else _open_sqlite()
+    return connect_with_fallback()

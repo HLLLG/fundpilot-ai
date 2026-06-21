@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Loader2, RotateCcw, Sparkles, Target } from "lucide-react";
+import { ChevronDown, Loader2, RotateCcw, Sparkles, Target } from "lucide-react";
 import type {
   AnalysisMode,
   DiscoveryPromptConfig,
@@ -17,49 +17,37 @@ import type {
 import {
   fetchDiscoveryPrompt,
   fetchDiscoverySectors,
+  fetchSectorLabels,
   listDiscoveryReports,
   saveDiscoveryPromptRemote,
   startDiscoveryJob,
 } from "@/lib/api";
 import { DiscoveryHistoryRail } from "@/components/DiscoveryHistoryRail";
 import { DiscoveryReportPanel } from "@/components/DiscoveryReportPanel";
+import { FocusSectorPicker } from "@/components/FocusSectorPicker";
 import { InvestmentPresetSelector } from "@/components/InvestmentPresetSelector";
 import { RolePromptEditor } from "@/components/RolePromptEditor";
 import { YangjibaoFundDetail } from "@/components/YangjibaoFundDetail";
 import { displayableHoldings } from "@/lib/holdingMetrics";
+import { applyInvestmentPreset } from "@/lib/investmentPresets";
 import { loadDiscoveryPrompt, loadDiscoverySectorHeatCache, saveDiscoveryPrompt, saveDiscoverySectorHeatCache } from "@/lib/storage";
+import {
+  DISCOVERY_FOCUS_CHANGED_EVENT,
+  loadDiscoveryFocusSectors,
+  setDiscoveryFocusSectors,
+} from "@/lib/discoveryFocusSectors";
 
-function heldSectorLabels(holdings: Holding[]): Set<string> {
-  const labels = new Set<string>();
-  for (const holding of holdings) {
-    const name = holding.sector_name?.trim();
-    if (name) {
-      labels.add(name);
-    }
-  }
-  return labels;
-}
+const DISCOVERY_PREFILL_KEY = "fundpilot-discovery-prefill";
 
-/** 全市场模式按热度排序；缺口模式未持仓板块排前 */
-function orderDiscoverySectorsForChips(
-  rows: DiscoverySectorHeat[],
-  holdings: Holding[],
-  scanMode: DiscoveryScanMode,
-): DiscoverySectorHeat[] {
-  const byHeat = (a: DiscoverySectorHeat, b: DiscoverySectorHeat) =>
-    (b.heat_score ?? -999) - (a.heat_score ?? -999);
-  if (scanMode === "full_market") {
-    return [...rows].sort(byHeat);
-  }
-  const held = heldSectorLabels(holdings);
-  const unheld = rows.filter((row) => !held.has(row.sector_label)).sort(byHeat);
-  const heldRows = rows.filter((row) => held.has(row.sector_label)).sort(byHeat);
-  return [...unheld, ...heldRows];
-}
+type DiscoveryPrefill = {
+  scanMode?: DiscoveryScanMode;
+  focusSectors?: string[];
+};
 
 const SCAN_MODE_OPTIONS: { id: DiscoveryScanMode; label: string; hint: string }[] = [
   { id: "full_market", label: "全市场机会", hint: "多板块横向对比，不限于持仓缺口" },
   { id: "portfolio_gap", label: "持仓缺口补充", hint: "优先未重仓、热度靠前的缺口板块" },
+  { id: "dip_swing", label: "短线抄底", hint: "近几日大跌、有反弹信号；默认 2～5 天波段" },
 ];
 
 const FUND_TYPE_OPTIONS: { id: FundTypePreference; label: string }[] = [
@@ -102,10 +90,16 @@ export function FundDiscoveryPanel({
   const [rawSectors, setRawSectors] = useState<DiscoverySectorHeat[]>(
     () => loadDiscoverySectorHeatCache() ?? [],
   );
-  const [focusSectors, setFocusSectors] = useState<string[]>([]);
+  const [focusSectors, setFocusSectors] = useState<string[]>(() => loadDiscoveryFocusSectors());
+  const [sectorLabels, setSectorLabels] = useState<string[]>([]);
+  const [loadingSectorLabels, setLoadingSectorLabels] = useState(true);
+  const [sectorLabelsError, setSectorLabelsError] = useState<string | null>(null);
   const [fundTypePreference, setFundTypePreference] = useState<FundTypePreference>("any");
   const [selectionStrategy, setSelectionStrategy] = useState<SelectionStrategy>("balanced");
   const [scanMode, setScanMode] = useState<DiscoveryScanMode>("full_market");
+  const [dipLookbackDays, setDipLookbackDays] = useState<3 | 5>(5);
+  const [dipMinDropPercent, setDipMinDropPercent] = useState<3 | 5>(3);
+  const [dipAdvancedOpen, setDipAdvancedOpen] = useState(false);
   const [budgetYuan, setBudgetYuan] = useState<string>("");
   const [report, setReport] = useState<FundDiscoveryReport | null>(null);
   const [historyReports, setHistoryReports] = useState<FundDiscoveryReport[]>([]);
@@ -126,10 +120,77 @@ export function FundDiscoveryPanel({
   const [promptReady, setPromptReady] = useState(false);
 
   useEffect(() => {
-    if (profile.decision_style === "aggressive") {
+    if (scanMode === "dip_swing") {
       setSelectionStrategy("dip_rebound");
     }
-  }, [profile.decision_style]);
+  }, [scanMode]);
+
+  useEffect(() => {
+    try {
+      const raw = window.sessionStorage.getItem(DISCOVERY_PREFILL_KEY);
+      if (raw) {
+        window.sessionStorage.removeItem(DISCOVERY_PREFILL_KEY);
+        const prefill = JSON.parse(raw) as DiscoveryPrefill;
+        if (prefill.scanMode) {
+          setScanMode(prefill.scanMode);
+        }
+        if (prefill.focusSectors?.length) {
+          setFocusSectors(prefill.focusSectors.slice(0, 3));
+        }
+      } else {
+        const labels = loadDiscoveryFocusSectors();
+        if (labels.length) {
+          setFocusSectors(labels);
+        }
+      }
+    } catch {
+      // ignore malformed prefill
+    }
+  }, []);
+
+  useEffect(() => {
+    const onFocusChanged = (event: Event) => {
+      setFocusSectors((event as CustomEvent<string[]>).detail);
+    };
+    window.addEventListener(DISCOVERY_FOCUS_CHANGED_EVENT, onFocusChanged);
+    return () => window.removeEventListener(DISCOVERY_FOCUS_CHANGED_EVENT, onFocusChanged);
+  }, []);
+
+  const loadSectorLabels = useCallback(async () => {
+    setLoadingSectorLabels(true);
+    setSectorLabelsError(null);
+    try {
+      const labels = await fetchSectorLabels();
+      if (labels.length > 0) {
+        setSectorLabels(labels);
+      } else {
+        setSectorLabelsError("板块列表为空，请稍后重试");
+      }
+    } catch (loadError) {
+      setSectorLabelsError(loadError instanceof Error ? loadError.message : "加载板块列表失败");
+    } finally {
+      setLoadingSectorLabels(false);
+    }
+  }, []);
+
+  const allSectorLabels = useMemo(() => {
+    const seen = new Set<string>();
+    const merged: string[] = [];
+    for (const label of [...sectorLabels, ...rawSectors.map((row) => row.sector_label)]) {
+      const trimmed = label.trim();
+      if (!trimmed || seen.has(trimmed)) {
+        continue;
+      }
+      seen.add(trimmed);
+      merged.push(trimmed);
+    }
+    return merged.sort((a, b) => a.localeCompare(b, "zh-CN"));
+  }, [rawSectors, sectorLabels]);
+
+  const handleFocusSectorsChange = useCallback((next: string[]) => {
+    setFocusSectors(next);
+    setDiscoveryFocusSectors(next);
+  }, []);
 
   const loadSectors = useCallback(async () => {
     const cached = loadDiscoverySectorHeatCache();
@@ -158,10 +219,18 @@ export function FundDiscoveryPanel({
     }
   }, []);
 
-  const sectors = useMemo(
-    () => orderDiscoverySectorsForChips(rawSectors, holdings, scanMode),
-    [rawSectors, holdings, scanMode],
-  );
+  useEffect(() => {
+    void loadSectorLabels();
+  }, [loadSectorLabels]);
+
+  const dipDeepSectors = useMemo(() => {
+    return [...rawSectors]
+      .filter((row) => row.change_5d_percent != null)
+      .sort((a, b) => (a.change_5d_percent ?? 0) - (b.change_5d_percent ?? 0))
+      .slice(0, 5);
+  }, [rawSectors]);
+
+  const isAggressiveProfile = profile.decision_style === "aggressive";
 
   const loadHistory = useCallback(async () => {
     try {
@@ -209,13 +278,14 @@ export function FundDiscoveryPanel({
   }, [pendingDiscoveryReport, loadHistory, onPendingDiscoveryReportApplied]);
 
   const toggleSector = (label: string) => {
-    setFocusSectors((current) => {
-      if (current.includes(label)) {
-        return current.filter((item) => item !== label);
-      }
-      if (current.length >= 3) return current;
-      return [...current, label];
-    });
+    if (focusSectors.includes(label)) {
+      handleFocusSectorsChange(focusSectors.filter((item) => item !== label));
+      return;
+    }
+    if (focusSectors.length >= 3) {
+      return;
+    }
+    handleFocusSectorsChange([...focusSectors, label]);
   };
 
   const handleScan = useCallback(async () => {
@@ -230,6 +300,8 @@ export function FundDiscoveryPanel({
         fundTypePreference,
         selectionStrategy,
         scanMode,
+        dipLookbackDays: scanMode === "dip_swing" ? dipLookbackDays : undefined,
+        dipMinDropPercent: scanMode === "dip_swing" ? dipMinDropPercent : undefined,
         systemRolePrompt: discoveryPrompt.is_custom ? discoveryPrompt.role_prompt : null,
       });
       onDiscoveryJobIdChange(jobId);
@@ -248,6 +320,8 @@ export function FundDiscoveryPanel({
     holdings,
     onDiscoveryJobIdChange,
     profile,
+    dipLookbackDays,
+    dipMinDropPercent,
     scanMode,
     selectionStrategy,
   ]);
@@ -272,24 +346,31 @@ export function FundDiscoveryPanel({
   };
 
   return (
-    <div className="grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1fr)_280px]">
+    <div className="mx-auto grid min-w-0 max-w-3xl gap-6 xl:max-w-6xl xl:grid-cols-[minmax(0,1fr)_280px]">
       <div className="grid min-w-0 gap-4">
-        <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex items-center gap-2">
-            <Target size={18} className="text-[var(--brand)]" />
-            <h2 className="font-display text-base font-extrabold text-slate-950">推荐基金</h2>
+        <section className="section-card overflow-hidden">
+          <div className="report-control-hero border-b border-[var(--line)] px-4 py-4 sm:px-5">
+            <div className="flex items-start gap-3">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[var(--brand-soft)] text-[var(--brand-strong)]">
+                <Target size={20} strokeWidth={2.3} />
+              </span>
+              <div>
+                <h2 className="font-display text-lg font-extrabold text-slate-950">发现基金机会</h2>
+                <p className="mt-1 text-sm leading-6 text-slate-600">
+                  从全市场板块热度中筛选候选，AI 精选 3～5 只值得关注的机会。仅供参考，不构成投资建议。
+                </p>
+              </div>
+            </div>
           </div>
-          <p className="mt-2 text-sm leading-6 text-slate-600">
-            从扩展板块库（含互联网、有色、新能源车等）中按热度构建候选池，由 AI 精选 3~5 只值得关注的机会。默认「全市场机会」横向对比多板块；也可切换「持仓缺口补充」。仅供参考，不构成投资建议。
-          </p>
 
-          <div className="mt-4">
+          <div className="p-4 sm:p-5">
+          <div>
             <p className="mb-2 text-[11px] font-bold text-slate-400">投资风格预设</p>
             <InvestmentPresetSelector profile={profile} onChange={onProfileChange} compact />
           </div>
 
-          <div className="mt-4 overflow-hidden rounded-xl border border-slate-100">
-            <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-3 py-2.5">
+          <div className="mt-4 overflow-hidden rounded-xl border border-[var(--line)]">
+            <div className="flex items-center justify-between gap-2 border-b border-[var(--line)] px-3 py-2.5">
               <div className="flex items-center gap-2">
                 <Sparkles size={15} className="text-[var(--brand)]" />
                 <span className="text-xs font-bold text-slate-700">AI 角色设定</span>
@@ -334,11 +415,7 @@ export function FundDiscoveryPanel({
                   type="button"
                   title={option.hint}
                   onClick={() => setScanMode(option.id)}
-                  className={`rounded-full border px-3 py-1.5 text-xs font-medium transition ${
-                    scanMode === option.id
-                      ? "border-[var(--brand)] bg-[var(--brand)] text-white"
-                      : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
-                  }`}
+                  className={`chip-btn ${scanMode === option.id ? "chip-btn-active" : ""}`}
                 >
                   {option.label}
                 </button>
@@ -349,65 +426,146 @@ export function FundDiscoveryPanel({
             </p>
           </div>
 
+          {scanMode === "dip_swing" && !isAggressiveProfile ? (
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50/80 px-3 py-2.5">
+              <p className="text-xs font-semibold leading-5 text-rose-900">
+                短线抄底更适合「激进波段」预设（3～7 天、扣费后止盈）。
+              </p>
+              <button
+                type="button"
+                onClick={() => onProfileChange(applyInvestmentPreset("aggressive_swing", profile))}
+                className="shrink-0 rounded-full border border-rose-300 bg-white px-3 py-1.5 text-xs font-bold text-rose-800 transition hover:bg-rose-100"
+              >
+                切换激进波段
+              </button>
+            </div>
+          ) : null}
+
+          {scanMode === "dip_swing" ? (
+            <div className="mt-4 overflow-hidden rounded-xl border border-slate-100">
+              <button
+                type="button"
+                onClick={() => setDipAdvancedOpen((value) => !value)}
+                className="flex w-full items-center justify-between gap-2 px-3 py-2.5 text-left text-xs font-bold text-slate-600 hover:bg-slate-50"
+              >
+                <span>抄底筛选（高级）</span>
+                <ChevronDown
+                  size={14}
+                  className={`shrink-0 transition ${dipAdvancedOpen ? "rotate-180" : ""}`}
+                />
+              </button>
+              {dipAdvancedOpen ? (
+                <div className="grid gap-3 border-t border-slate-100 p-3 sm:grid-cols-2">
+                  <div>
+                    <p className="mb-2 text-[11px] font-bold text-slate-400">回看天数</p>
+                    <div className="flex flex-wrap gap-2">
+                      {([3, 5] as const).map((days) => (
+                        <button
+                          key={days}
+                          type="button"
+                          onClick={() => setDipLookbackDays(days)}
+                          className={`rounded-full border px-3 py-1.5 text-xs font-medium transition ${
+                            dipLookbackDays === days
+                              ? "border-[var(--brand)] bg-[var(--brand)] text-white"
+                              : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
+                          }`}
+                        >
+                          {days} 日
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <p className="mb-2 text-[11px] font-bold text-slate-400">最小跌幅</p>
+                    <div className="flex flex-wrap gap-2">
+                      {([3, 5] as const).map((pct) => (
+                        <button
+                          key={pct}
+                          type="button"
+                          onClick={() => setDipMinDropPercent(pct)}
+                          className={`rounded-full border px-3 py-1.5 text-xs font-medium transition ${
+                            dipMinDropPercent === pct
+                              ? "border-[var(--brand)] bg-[var(--brand)] text-white"
+                              : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
+                          }`}
+                        >
+                          ≥ {pct}%
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <p className="border-t border-slate-100 px-3 py-2 text-[11px] leading-5 text-slate-500">
+                  回看 {dipLookbackDays} 日、板块跌幅 ≥ {dipMinDropPercent}%
+                </p>
+              )}
+            </div>
+          ) : null}
+
           <div className="mt-4">
             <div className="mb-2 text-xs font-semibold text-slate-700">
               关注方向（可选，最多 3 个）
             </div>
-            {loadingSectors ? (
-              <div className="flex items-center gap-2 text-xs text-slate-500">
-                <Loader2 size={14} className="animate-spin" />
-                加载板块热度…
+            {scanMode === "dip_swing" && dipDeepSectors.length > 0 ? (
+              <div className="mb-3">
+                <p className="mb-2 text-[11px] font-bold text-rose-600">今日跌深板块</p>
+                <div className="flex flex-wrap gap-2">
+                  {dipDeepSectors.map((sector) => {
+                    const selected = focusSectors.includes(sector.sector_label);
+                    const change5d = sector.change_5d_percent;
+                    return (
+                      <button
+                        key={`dip-${sector.sector_label}`}
+                        type="button"
+                        onClick={() => toggleSector(sector.sector_label)}
+                        className={`rounded-full border px-3 py-1.5 text-xs font-medium transition ${
+                          selected
+                            ? "border-rose-500 bg-rose-500 text-white"
+                            : "border-rose-200 bg-rose-50 text-rose-900 hover:bg-rose-100"
+                        }`}
+                      >
+                        {sector.sector_label}
+                        {change5d != null ? (
+                          <span className={selected ? "text-rose-100" : "text-rose-700"}>
+                            {" "}
+                            {change5d >= 0 ? "+" : ""}
+                            {change5d.toFixed(2)}%
+                          </span>
+                        ) : null}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
-            ) : sectorsError ? (
-              <div className="rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-xs text-red-700">
-                <p>{sectorsError}</p>
+            ) : null}
+            <FocusSectorPicker
+              selected={focusSectors}
+              onChange={handleFocusSectorsChange}
+              allLabels={allSectorLabels}
+              heatRows={rawSectors}
+              loading={loadingSectorLabels && allSectorLabels.length === 0}
+              error={sectorLabelsError}
+              onRetry={() => void loadSectorLabels()}
+            />
+            {loadingSectors && rawSectors.length === 0 ? (
+              <p className="mt-2 flex items-center gap-2 text-[11px] text-slate-400">
+                <Loader2 size={12} className="animate-spin" />
+                同步板块热度…
+              </p>
+            ) : null}
+            {sectorsError && rawSectors.length === 0 ? (
+              <p className="mt-2 text-[11px] text-amber-700">
+                板块热度暂不可用，仍可搜索选择关注方向。
                 <button
                   type="button"
                   onClick={() => void loadSectors()}
-                  className="mt-2 font-semibold text-red-800 underline"
+                  className="ml-1 font-semibold underline"
                 >
                   重试
                 </button>
-              </div>
-            ) : (
-              <div className="flex flex-wrap gap-2">
-                {sectors.map((sector) => {
-                  const selected = focusSectors.includes(sector.sector_label);
-                  const change = sector.change_1d_percent;
-                  const changeClass =
-                    change == null
-                      ? "text-slate-500"
-                      : change >= 0
-                        ? selected
-                          ? "text-rose-100"
-                          : "text-rose-600"
-                        : selected
-                          ? "text-emerald-100"
-                          : "text-emerald-600";
-                  return (
-                    <button
-                      key={sector.sector_label}
-                      type="button"
-                      onClick={() => toggleSector(sector.sector_label)}
-                      className={`rounded-full border px-3 py-1.5 text-xs font-medium transition ${
-                        selected
-                          ? "border-[var(--brand)] bg-[var(--brand)] text-white"
-                          : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
-                      }`}
-                    >
-                      {sector.sector_label}
-                      {change != null ? (
-                        <span className={changeClass}>
-                          {" "}
-                          {change >= 0 ? "+" : ""}
-                          {change.toFixed(2)}%
-                        </span>
-                      ) : null}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
+              </p>
+            ) : null}
           </div>
 
           <div className="mt-4">
@@ -419,11 +577,7 @@ export function FundDiscoveryPanel({
                   type="button"
                   title={option.hint}
                   onClick={() => setSelectionStrategy(option.id)}
-                  className={`rounded-full border px-3 py-1.5 text-xs font-medium transition ${
-                    selectionStrategy === option.id
-                      ? "border-[var(--brand)] bg-[var(--brand)] text-white"
-                      : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
-                  }`}
+                  className={`chip-btn ${selectionStrategy === option.id ? "chip-btn-active" : ""}`}
                 >
                   {option.label}
                 </button>
@@ -442,11 +596,7 @@ export function FundDiscoveryPanel({
                   key={option.id}
                   type="button"
                   onClick={() => setFundTypePreference(option.id)}
-                  className={`rounded-full border px-3 py-1.5 text-xs font-medium transition ${
-                    fundTypePreference === option.id
-                      ? "border-slate-900 bg-slate-900 text-white"
-                      : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
-                  }`}
+                  className={`chip-btn ${fundTypePreference === option.id ? "chip-btn-active" : ""}`}
                 >
                   {option.label}
                 </button>
@@ -493,7 +643,7 @@ export function FundDiscoveryPanel({
             data-testid="discovery-scan-button"
             disabled={isSubmitting || Boolean(discoveryJobId)}
             onClick={() => void handleScan()}
-            className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[var(--brand)] px-4 py-3 text-sm font-bold text-white hover:bg-[var(--brand-strong)] disabled:opacity-60 sm:w-auto"
+            className="btn-primary mt-4 w-full !rounded-xl sm:w-auto"
           >
             {isSubmitting || discoveryJobId ? (
               <Loader2 size={16} className="animate-spin" />
@@ -502,6 +652,7 @@ export function FundDiscoveryPanel({
             )}
             {discoveryJobId ? "扫描进行中…" : "扫描今日机会"}
           </button>
+          </div>
         </section>
 
         {report ? (

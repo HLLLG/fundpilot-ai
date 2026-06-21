@@ -40,7 +40,7 @@ export default function LoginPage() {
       <div className="w-full max-w-md rounded-[var(--radius-card)] border border-slate-200/80 bg-white p-8 shadow-[var(--shadow-lg)]">
         <div className="mb-8 text-center">
           <h1 className="text-2xl font-black text-slate-900">欢迎回来</h1>
-          <p className="mt-2 text-sm text-slate-500">登录后查看你的基金持仓与投研日报</p>
+          <p className="mt-2 text-sm text-slate-500">登录查看今日 AI 简报与持仓分析</p>
         </div>
         <form className="space-y-4" onSubmit={onSubmit}>
           <label className="block text-sm font-semibold text-slate-700">

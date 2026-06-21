@@ -14,6 +14,7 @@ def apply_discovery_guards(
     sector_heat: list[dict],
     market_news: list[NewsItem] | None = None,
     topic_briefs: list[TopicBrief] | None = None,
+    scan_mode: str = "full_market",
 ) -> tuple[list[DiscoveryRecommendation], list[str]]:
     allowed_codes = {str(item.get("fund_code", "")).zfill(6) for item in candidate_pool}
     pool_by_code = {
@@ -62,6 +63,16 @@ def apply_discovery_guards(
                     f"净值距区间高点仅 {float(dist_high):+.1f}%，短线追高风险偏高。"
                 ]
 
+        if scan_mode == "dip_swing" and copy.action == "分批买入":
+            pool_item = pool_by_code.get(code, {})
+            nav_trend = pool_item.get("nav_trend") or {}
+            recent_1d = _recent_1d_change_percent(nav_trend, pool_item)
+            if recent_1d is not None and recent_1d > 3.0:
+                copy.action = "建议关注"
+                copy.points = list(copy.points) + [
+                    f"近1日净值涨幅 {recent_1d:+.2f}% 偏高，短线抄底模式避免追涨。"
+                ]
+
         max_single = budget_yuan * profile.concentration_limit_percent / 100
         if copy.suggested_amount_yuan is not None and max_single > 0:
             if copy.suggested_amount_yuan > max_single:
@@ -74,6 +85,19 @@ def apply_discovery_guards(
         guarded.append(copy)
 
     return guarded[:5], caveats
+
+
+def _recent_1d_change_percent(nav_trend: dict, pool_item: dict) -> float | None:
+    daily = nav_trend.get("recent_5d_daily_change_percent")
+    if isinstance(daily, list) and daily:
+        try:
+            return float(daily[-1])
+        except (TypeError, ValueError):
+            pass
+    dip = pool_item.get("dip_drop_percent")
+    if dip is not None:
+        return None
+    return None
 
 
 def _filter_news_titles(headlines: list[str], known_titles: list[str]) -> list[str]:

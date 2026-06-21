@@ -22,6 +22,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 echo "Starting FundPilot AI..."
+export FUND_AI_DB_FALLBACK_SQLITE="${FUND_AI_DB_FALLBACK_SQLITE:-true}"
 (cd "$API_DIR" && "$API_PYTHON" -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000) &
 API_PID=$!
 

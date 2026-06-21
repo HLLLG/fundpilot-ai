@@ -379,13 +379,17 @@ export type DiscoveryRecommendation = {
   points?: string[];
   risks?: string[];
   news_bullish?: string[];
+  target_exit_days?: number | null;
+  fee_break_even_percent?: number | null;
+  dip_drop_percent?: number | null;
+  rebound_signals?: Array<{ id: string; label: string }>;
 };
 
 export type FundTypePreference = "any" | "etf_link" | "no_c_class";
 
 export type SelectionStrategy = "balanced" | "with_new_issue" | "dip_rebound";
 
-export type DiscoveryScanMode = "full_market" | "portfolio_gap";
+export type DiscoveryScanMode = "full_market" | "portfolio_gap" | "dip_swing";
 
 export type DiscoveryPromptConfig = {
   role_prompt: string;
@@ -412,6 +416,7 @@ export type DiscoveryOutcomeItem = {
   period_change_percent?: number | null;
   direction_aligned?: boolean;
   assessment?: string;
+  hit_take_profit_within_days?: boolean | null;
 };
 
 export type DiscoveryOutcomesPayload = {
@@ -476,6 +481,59 @@ export type MarketThemeBoardResponse = {
   message?: string | null;
   sort: MarketThemeBoardSort;
   items: MarketThemeBoardItem[];
+};
+
+export type DipRadarReboundSignal = {
+  id: string;
+  label: string;
+};
+
+export type DipRadarItem = {
+  fund_code: string;
+  fund_name: string;
+  sector_label: string;
+  dip_drop_percent?: number | null;
+  change_1d_percent?: number | null;
+  rebound_score?: number | null;
+  rebound_signals?: DipRadarReboundSignal[];
+  rank?: number;
+  historical_hint?: {
+    sample_count?: number;
+    sample_days?: number;
+    rebound_rate_3d_percent?: number;
+    note?: string;
+  } | null;
+};
+
+export type DipRadarSectorLeader = {
+  sector_label: string;
+  avg_dip_drop_percent?: number | null;
+  min_dip_drop_percent?: number | null;
+  fund_count?: number;
+};
+
+export type DipRadarResponse = {
+  refreshed_at?: string | null;
+  trade_date?: string | null;
+  lookback_days: number;
+  fee_break_even_percent?: number | null;
+  items: DipRadarItem[];
+  sector_dip_leaders?: DipRadarSectorLeader[];
+  scan_stats?: {
+    rank_shortlist?: number;
+    dip_threshold_percent?: number;
+    lookback_days?: number;
+    matches?: number;
+    total_matches?: number;
+    sector_filter?: string;
+    nav_fallback?: string;
+  } | null;
+  sector_filter?: string | null;
+  available: boolean;
+  from_cache?: boolean;
+  stale?: boolean;
+  session_kind?: string | null;
+  message?: string | null;
 };
 
 // --- 美股概览（市场 Tab · 美股子 Tab）-------------------------------------
@@ -941,6 +999,17 @@ export async function fetchDiscoverySectors(): Promise<DiscoverySectorHeat[]> {
   }
 }
 
+export async function fetchSectorLabels(): Promise<string[]> {
+  const response = await apiFetch(`${API_BASE}/api/market/sector-labels`, {
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  const body = await response.json();
+  return body.labels ?? [];
+}
+
 export async function fetchMarketThemeBoards(options?: {
   sort?: MarketThemeBoardSort;
   forceRefresh?: boolean;
@@ -950,6 +1019,31 @@ export async function fetchMarketThemeBoards(options?: {
     params.set("force_refresh", "true");
   }
   const response = await apiFetch(`${API_BASE}/api/market/theme-boards?${params}`, {
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export async function fetchDipRadar(options?: {
+  lookbackDays?: 3 | 5;
+  sector?: string | null;
+  limit?: number;
+  forceRefresh?: boolean;
+}): Promise<DipRadarResponse> {
+  const params = new URLSearchParams({
+    lookback_days: String(options?.lookbackDays ?? 5),
+    limit: String(options?.limit ?? 20),
+  });
+  if (options?.sector) {
+    params.set("sector", options.sector);
+  }
+  if (options?.forceRefresh) {
+    params.set("force_refresh", "true");
+  }
+  const response = await apiFetch(`${API_BASE}/api/market/dip-radar?${params}`, {
     cache: "no-store",
   });
   if (!response.ok) {
@@ -984,6 +1078,8 @@ export async function startDiscoveryJob(
     fundTypePreference?: FundTypePreference;
     selectionStrategy?: SelectionStrategy;
     scanMode?: DiscoveryScanMode;
+    dipLookbackDays?: number;
+    dipMinDropPercent?: number;
     systemRolePrompt?: string | null;
   },
 ): Promise<string> {
@@ -999,6 +1095,8 @@ export async function startDiscoveryJob(
       fund_type_preference: options?.fundTypePreference ?? "any",
       selection_strategy: options?.selectionStrategy ?? "balanced",
       scan_mode: options?.scanMode ?? "full_market",
+      dip_lookback_days: options?.dipLookbackDays ?? 5,
+      dip_min_drop_percent: options?.dipMinDropPercent ?? 3.0,
       system_role_prompt: options?.systemRolePrompt ?? null,
     }),
   });

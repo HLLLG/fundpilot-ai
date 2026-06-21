@@ -75,6 +75,7 @@ class DiscoveryClient:
             sector_heat=sector_heat,
             market_news=market_news,
             topic_briefs=topic_briefs,
+            scan_mode=scan_mode,
         )
         caveats = _as_str_list(parsed.get("caveats"))
         caveats.extend(guard_caveats)
@@ -162,6 +163,10 @@ def _parse_recommendations(raw: object) -> list[DiscoveryRecommendation]:
                 points=_as_str_list(item.get("points")),
                 risks=_as_str_list(item.get("risks")),
                 news_bullish=_as_str_list(item.get("news_bullish")),
+                target_exit_days=_as_int(item.get("target_exit_days")),
+                fee_break_even_percent=_as_float(item.get("fee_break_even_percent")),
+                dip_drop_percent=_as_float(item.get("dip_drop_percent")),
+                rebound_signals=_as_dict_list(item.get("rebound_signals")),
             )
         )
     return results
@@ -187,3 +192,18 @@ def _as_float(value: object) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _as_int(value: object) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _as_dict_list(value: object) -> list[dict]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]

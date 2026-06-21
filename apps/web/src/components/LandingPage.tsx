@@ -55,7 +55,19 @@ const TRUST = [
 const STATS = [
   { value: "30s", label: "截图到看懂" },
   { value: "0", label: "手动录入" },
-  { value: "每日", label: "投研日报" },
+  { value: "每日", label: "AI 简报" },
+];
+
+const STEPS = [
+  { step: "01", title: "上传截图", desc: "支付宝 / 养基宝持仓一拍即识" },
+  { step: "02", title: "看懂持仓", desc: "收益、板块涨跌、风险一眼明白" },
+  { step: "03", title: "每日简报", desc: "AI 说人话，告诉你该不该动" },
+];
+
+const PERSONAS = [
+  { quote: "终于不用一个个手打基金代码了，截图 30 秒全进来。", who: "上班族基民" },
+  { quote: "日报不说术语，直接告诉我今天要不要加仓。", who: "理财小白" },
+  { quote: "板块涨跌和持仓自动关联，盘中心里更有数。", who: "波段爱好者" },
 ];
 
 const FREE_FEATURES = ["截图识别持仓", "板块实时涨跌", "每日 1 份投研日报", "盈亏分析看板"];
@@ -100,12 +112,12 @@ export function LandingPage() {
               <span className="landing-gradient-text">就懂你的基金</span>
             </h1>
             <p className="mt-6 max-w-lg text-base leading-7 text-slate-500 sm:text-lg">
-              自动识别持仓明细 · 实时追踪板块冷暖 · 每天一份听得懂的投研日报。
-              做你身边那个真正看得懂行情、说得清人话的基金搭子。
+              不用记代码、不用盯盘到眼花。上传一张持仓截图，好基灵帮你理清持仓、追踪板块，每天推送一份
+              <span className="font-semibold text-slate-700">听得懂的 AI 简报</span>。
             </p>
             <div className="mt-9 flex w-full flex-col items-stretch gap-3 sm:w-auto sm:flex-row sm:items-center">
               <Link href="/register" className="btn-primary w-full justify-center sm:w-auto">
-                免费注册，开始体验
+                免费开始，30 秒上手
                 <ArrowRight size={18} />
               </Link>
               <Link href="/login" className="btn-secondary w-full justify-center sm:w-auto">
@@ -137,6 +149,21 @@ export function LandingPage() {
           </div>
         </section>
 
+        {/* 三步上手 */}
+        <section className="reveal reveal-2 pb-14">
+          <div className="landing-steps section-card grid gap-4 p-5 sm:grid-cols-3 sm:p-6">
+            {STEPS.map(({ step, title, desc }) => (
+              <div key={step} className="flex flex-col gap-2">
+                <span className="font-display text-xs font-extrabold tracking-widest text-[var(--accent-strong)]">
+                  {step}
+                </span>
+                <h3 className="text-base font-bold text-slate-900">{title}</h3>
+                <p className="text-sm leading-6 text-slate-500">{desc}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+
         {/* 三个核心能力 */}
         <section className="reveal reveal-2 pb-16">
           <div className="mb-7 flex flex-col gap-1.5">
@@ -157,6 +184,24 @@ export function LandingPage() {
                 <h3 className="text-lg font-bold text-slate-900">{title}</h3>
                 <p className="text-sm leading-6 text-slate-500">{desc}</p>
               </div>
+            ))}
+          </div>
+        </section>
+
+        {/* 用户场景 */}
+        <section className="reveal reveal-2 pb-16">
+          <div className="mb-7 text-center">
+            <span className="section-eyebrow">真实场景</span>
+            <h2 className="font-display mt-1.5 text-2xl font-extrabold tracking-tight text-slate-900 sm:text-3xl">
+              基民们这样用好基灵
+            </h2>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-3">
+            {PERSONAS.map(({ quote, who }) => (
+              <blockquote key={who} className="section-card flex flex-col gap-3 p-6">
+                <p className="text-sm leading-7 text-slate-700">&ldquo;{quote}&rdquo;</p>
+                <footer className="text-xs font-bold text-[var(--muted)]">— {who}</footer>
+              </blockquote>
             ))}
           </div>
         </section>
@@ -280,7 +325,7 @@ export function LandingPage() {
         </section>
 
         {/* 页脚与风险提示 */}
-        <footer className="border-t border-slate-200/70 py-7 text-center">
+        <footer className="border-t border-slate-200/70 py-7 pb-24 text-center sm:pb-7">
           <div className="mb-3 flex justify-center">
             <BrandMark size="sm" showEnglish />
           </div>
@@ -289,6 +334,14 @@ export function LandingPage() {
           </p>
           <p className="mt-2 text-xs text-slate-300">© {new Date().getFullYear()} 好基灵 FundPilot</p>
         </footer>
+      </div>
+
+      {/* 移动端固定 CTA */}
+      <div className="landing-sticky-cta sm:hidden">
+        <Link href="/register" className="btn-primary w-full justify-center">
+          免费注册，30 秒上手
+          <ArrowRight size={18} />
+        </Link>
       </div>
     </main>
   );

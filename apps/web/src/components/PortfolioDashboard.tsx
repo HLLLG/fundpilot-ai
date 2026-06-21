@@ -84,8 +84,9 @@ export function PortfolioDashboard() {
         : "#64748b";
 
   return (
-    <div className="pl-page">
-      <div className="pl-hero">
+    <div className="pl-page mx-auto max-w-3xl">
+      <div className="section-card briefing-hero overflow-hidden">
+        <div className="pl-hero !rounded-none !border-0 !bg-transparent">
         <div className="pl-hero-label">
           {profitRange === "today" ? "当日收益" : `${RANGE_TABS.find((t) => t.id === profitRange)?.label ?? ""}累计`}
         </div>
@@ -115,9 +116,11 @@ export function PortfolioDashboard() {
             收益率
           </button>
         </div>
+        </div>
       </div>
 
-      <div className="pl-range-bar" role="tablist" aria-label="时间范围">
+      <div className="section-card mt-3 overflow-hidden">
+      <div className="pl-range-bar !rounded-none !border-0 !border-t !border-[var(--line)]" role="tablist" aria-label="时间范围">
         {RANGE_TABS.map((tab) => (
           <button
             key={tab.id}
@@ -131,6 +134,7 @@ export function PortfolioDashboard() {
           </button>
         ))}
       </div>
+      </div>
 
       {error ? (
         <div className="mt-3 rounded-xl border border-rose-100 bg-rose-50 px-3 py-2 text-sm text-rose-700">
@@ -138,7 +142,7 @@ export function PortfolioDashboard() {
         </div>
       ) : null}
 
-      <section className="pl-panel">
+      <section className="pl-panel section-card">
         <div className="pl-panel-head">
           <div className="pl-panel-title">收益走势</div>
           <div className="pl-legend">
@@ -185,7 +189,7 @@ export function PortfolioDashboard() {
           gainers={data?.daily_top5?.gainers ?? []}
           losers={data?.daily_top5?.losers ?? []}
         />
-        <section className="pl-panel">
+        <section className="pl-panel section-card">
           <div className="pl-panel-title mb-3">持仓分布</div>
           <HoldingDonutChart rows={data?.allocation ?? []} />
         </section>

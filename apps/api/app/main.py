@@ -3,12 +3,13 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 from datetime import date, datetime
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from app.auth.middleware import AuthMiddleware
 from app.auth.models import BindWechatRequest, LoginRequest, RegisterRequest, WechatLoginRequest
@@ -99,6 +100,7 @@ from app.services.sector_board_snapshot import (
     build_widget_payload,
     get_sector_board_snapshot,
 )
+from app.services.dip_radar_snapshot import get_dip_radar_snapshot
 from app.services.theme_board_snapshot import get_theme_board_snapshot
 from app.services.us_market_service import get_us_market_snapshot
 from app.services.ocr_pipeline import apply_confirmed_holdings, run_ocr_upload_pipeline
@@ -124,6 +126,7 @@ from app.services.trading_session import build_trading_session
 
 settings = get_settings()
 app = FastAPI(title=settings.app_name, lifespan=app_lifespan)
+logger = logging.getLogger(__name__)
 
 app.add_middleware(AuthMiddleware)
 app.add_middleware(
@@ -133,6 +136,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    if isinstance(exc, HTTPException):
+        raise exc
+    logger.exception("Unhandled error on %s %s", request.method, request.url.path)
+    return JSONResponse(status_code=500, content={"detail": "服务器内部错误，请稍后重试"})
 
 
 @app.get("/health")
@@ -515,6 +526,13 @@ def fund_discovery_sectors() -> dict:
     return {"sectors": build_sector_heat_ranking_for_ui()}
 
 
+@app.get("/api/market/sector-labels")
+def market_sector_labels() -> dict:
+    from app.services.sector_registry import list_theme_board_labels
+
+    return {"labels": list_theme_board_labels()}
+
+
 @app.get("/api/market/sector-boards")
 def market_sector_boards(
     view: str = "widget",
@@ -549,6 +567,25 @@ def market_theme_boards(
         force_refresh=force_refresh,
         holdings=holdings,
         sort=sort,  # type: ignore[arg-type]
+    )
+
+
+@app.get("/api/market/dip-radar")
+def market_dip_radar(
+    lookback_days: int = 5,
+    sector: str | None = None,
+    limit: int = 20,
+    force_refresh: bool = False,
+) -> dict:
+    if lookback_days not in {3, 5}:
+        raise HTTPException(status_code=400, detail="lookback_days 须为 3 或 5")
+    if limit < 1 or limit > 50:
+        raise HTTPException(status_code=400, detail="limit 须在 1～50 之间")
+    return get_dip_radar_snapshot(
+        lookback_days=lookback_days,
+        sector=sector,
+        limit=limit,
+        force_refresh=force_refresh,
     )
 
 

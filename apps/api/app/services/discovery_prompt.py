@@ -18,6 +18,7 @@ DEFAULT_DISCOVERY_ROLE_PROMPT = """## 角色定位
 
 - **`full_market`（全市场机会，默认）**：从 `sector_heat` 全板块横向对比，找当前值得入场的方向；`portfolio_gap` 仅作背景，**不要**以「持仓缺口」为主叙事
 - **`portfolio_gap`（持仓缺口补充）**：优先关注未重仓、热度靠前的缺口板块，结合现有持仓说明补全理由
+- **`dip_swing`（短线抄底）**：候选已按近几日 NAV 大跌预筛；须说明建议持有 2～5 天、达扣费止盈线（`dip_swing.fee_break_even_percent`）考虑卖出；强调大跌≠利好，结合 `rebound_signals` 与 `rebound_score`（信号强度，非概率）；推荐动作优先 `分批买入` / `建议关注` / `等待回调`，避免「重仓抄底」措辞
 
 ## 分析依据
 

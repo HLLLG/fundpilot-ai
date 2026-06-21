@@ -67,11 +67,17 @@ export function RiskControls({
   const [advancedOpen, setAdvancedOpen] = useState(false);
 
   return (
-    <section className="section-card min-w-0 p-4 sm:p-5">
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <ShieldCheck size={18} className="text-emerald-600" />
-          <h2 className="section-title">生成日报</h2>
+    <section className="report-control-card section-card min-w-0 overflow-hidden">
+      <div className="report-control-hero border-b border-[var(--line)] px-4 py-4 sm:px-5">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2.5">
+          <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[var(--brand-soft)] text-[var(--brand-strong)]">
+            <ShieldCheck size={20} strokeWidth={2.3} />
+          </span>
+          <div>
+            <h2 className="font-display text-lg font-extrabold text-slate-950">生成投研日报</h2>
+            <p className="mt-0.5 text-xs text-slate-500">AI 结合你的持仓与风险偏好，给出说人话的操作建议</p>
+          </div>
         </div>
         <StatusPill
           tone={
@@ -89,7 +95,9 @@ export function RiskControls({
               : "稳健"}
         </StatusPill>
       </div>
+      </div>
 
+      <div className="p-4 sm:p-5">
       <AnalysisModeToggle mode={analysisMode} onChange={onAnalysisModeChange} compact />
 
       <div className="mt-4">
@@ -131,7 +139,7 @@ export function RiskControls({
         onClick={onAnalyze}
         disabled={isBusy || hasBlockingErrors}
         data-testid="analyze"
-        className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 py-3 text-sm font-black text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+        className="btn-primary mt-4 w-full !rounded-xl"
       >
         <SlidersHorizontal size={17} />
         {isBusy
@@ -364,6 +372,7 @@ export function RiskControls({
             </label>
           </div>
         )}
+      </div>
       </div>
     </section>
   );

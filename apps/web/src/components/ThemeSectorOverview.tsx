@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useMemo, useState, type MouseEvent } from "react";
 import { ChevronDown, ChevronRight, ChevronUp, Loader2, RotateCcw } from "lucide-react";
 import type { MarketThemeBoardItem, MarketThemeBoardResponse } from "@/lib/api";
 import {
@@ -27,6 +27,9 @@ type ThemeSectorOverviewProps = {
   loading: boolean;
   revalidating: boolean;
   onRefresh: () => void;
+  onViewDipFunds?: (sectorLabel: string) => void;
+  onAddFocusSector?: (sectorLabel: string) => void;
+  focusSectors?: string[];
 };
 
 function FlowTierGrid({ item }: { item: MarketThemeBoardItem }) {
@@ -100,6 +103,9 @@ export function ThemeSectorOverview({
   loading,
   revalidating,
   onRefresh,
+  onViewDipFunds,
+  onAddFocusSector,
+  focusSectors = [],
 }: ThemeSectorOverviewProps) {
   const [expandedLabel, setExpandedLabel] = useState<string | null>(null);
   const [sortColumn, setSortColumn] = useState<ThemeSortColumn>("change");
@@ -122,6 +128,19 @@ export function ThemeSectorOverview({
       return;
     }
     setExpandedLabel((current) => (current === item.sector_label ? null : item.sector_label));
+  };
+
+  const handleRowAction = (
+    event: MouseEvent,
+    action: "dip" | "focus",
+    sectorLabel: string,
+  ) => {
+    event.stopPropagation();
+    if (action === "dip") {
+      onViewDipFunds?.(sectorLabel);
+    } else {
+      onAddFocusSector?.(sectorLabel);
+    }
   };
 
   return (
@@ -185,6 +204,7 @@ export function ThemeSectorOverview({
                       onSort={handleSort}
                     />
                   </th>
+                  <th className="pb-2 text-right font-medium text-slate-400">操作</th>
                 </tr>
               </thead>
               <tbody>
@@ -232,14 +252,36 @@ export function ThemeSectorOverview({
                           {formatThemePercent(item.change_1d_percent)}
                         </td>
                         <td
-                          className={`py-3 text-right tabular-nums font-medium ${profitToneClass(item.main_force_net_yi)}`}
+                          className={`py-3 pr-2 text-right tabular-nums font-medium ${profitToneClass(item.main_force_net_yi)}`}
                         >
                           {formatThemeFlowYi(item.main_force_net_yi)}
+                        </td>
+                        <td className="py-3 text-right">
+                          <div className="flex flex-col items-end gap-1 sm:flex-row sm:justify-end">
+                            <button
+                              type="button"
+                              className="rounded-md px-2 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-100"
+                              onClick={(event) => handleRowAction(event, "dip", item.sector_label)}
+                            >
+                              看大跌基金
+                            </button>
+                            <button
+                              type="button"
+                              className={`rounded-md px-2 py-1 text-[11px] font-medium ${
+                                focusSectors.includes(item.sector_label)
+                                  ? "bg-[var(--brand-soft)] text-[var(--brand-strong)]"
+                                  : "text-[var(--brand-strong)] hover:bg-[var(--brand-soft)]"
+                              }`}
+                              onClick={(event) => handleRowAction(event, "focus", item.sector_label)}
+                            >
+                              {focusSectors.includes(item.sector_label) ? "已关注" : "加入关注方向"}
+                            </button>
+                          </div>
                         </td>
                       </tr>
                       {expanded && item.flow_tiers ? (
                         <tr className="bg-slate-50/60">
-                          <td colSpan={5} className="px-3 pb-3 pt-0">
+                          <td colSpan={6} className="px-3 pb-3 pt-0">
                             <FlowTierGrid item={item} />
                           </td>
                         </tr>

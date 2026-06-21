@@ -69,9 +69,12 @@ import { SectorSignalBacktestPanel } from "@/components/SectorSignalBacktestPane
 import { RiskControls } from "@/components/RiskControls";
 import { DiagnosticsAccordion } from "@/components/DiagnosticsAccordion";
 import { FundDiscoveryPanel } from "@/components/FundDiscoveryPanel";
+import { FocusSectorToast } from "@/components/FocusSectorToast";
 import { MarketTab } from "@/components/MarketTab";
 import { UserMenu } from "@/components/UserMenu";
 import { BrandMark } from "@/components/BrandMark";
+import { TodayBriefing } from "@/components/TodayBriefing";
+import { DashboardNav } from "@/components/DashboardNav";
 const defaultProfile: InvestorProfile = {
   style: "稳健",
   horizon: "半年到一年",
@@ -89,17 +92,6 @@ const defaultProfile: InvestorProfile = {
 };
 
 type TabId = DashboardTabId;
-
-const primaryTabs: Array<{
-  id: Extract<TabId, "today" | "dashboard" | "market" | "discovery" | "report">;
-  label: string;
-}> = [
-  { id: "today", label: "持有" },
-  { id: "dashboard", label: "盈亏分析" },
-  { id: "market", label: "市场" },
-  { id: "discovery", label: "推荐基金" },
-  { id: "report", label: "生成日报" },
-];
 
 const defaultAnalysisPrompt: AnalysisPromptConfig = {
   role_prompt: "",
@@ -260,6 +252,17 @@ export function Dashboard() {
   useLayoutEffect(() => {
     setActiveTabState(loadDashboardTab());
   }, []);
+
+  useEffect(() => {
+    const handleDashboardTabEvent = (event: Event) => {
+      const detail = (event as CustomEvent<string>).detail;
+      if (detail === "today" || detail === "holdings" || detail === "report" || detail === "history" || detail === "dashboard" || detail === "market" || detail === "discovery") {
+        setActiveTab(detail);
+      }
+    };
+    window.addEventListener("fundpilot-dashboard-tab", handleDashboardTabEvent);
+    return () => window.removeEventListener("fundpilot-dashboard-tab", handleDashboardTabEvent);
+  }, [setActiveTab]);
 
   useEffect(() => {
     setAnalysisMode(loadAnalysisMode("deep"));
@@ -564,7 +567,7 @@ export function Dashboard() {
 
   return (
     <main className="premium-bg min-h-screen">
-      <div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col px-4 py-3 sm:px-5 sm:py-4">
+      <div className="dashboard-shell mx-auto flex min-h-screen w-full max-w-6xl flex-col px-4 py-3 sm:px-5 sm:py-4">
         <nav
           className="sticky top-0 z-40 -mx-4 mb-3 flex items-center justify-between gap-3 border-b border-[var(--line)] px-4 py-2.5 backdrop-blur-md sm:-mx-5 sm:px-5"
           style={{ background: "rgba(243, 246, 252, 0.82)" }}
@@ -573,7 +576,11 @@ export function Dashboard() {
           <UserMenu onNavigate={setActiveTab} />
         </nav>
 
-        <TabNav activeTab={activeTab} onSelect={setActiveTab} />
+        <DashboardNav
+          activeTab={activeTab}
+          onSelect={setActiveTab}
+          onSelectHistory={() => setActiveTab("history")}
+        />
 
         {message ? (
           <div
@@ -594,6 +601,20 @@ export function Dashboard() {
 
         <div className="min-w-0 flex-1 pb-6">
           {activeTab === "today" ? (
+            <TodayBriefing
+              holdings={holdings}
+              reports={reports}
+              portfolioSummary={portfolioSummary}
+              sectorRefresh={sectorRefresh}
+              refreshedAt={holdingsRefreshedAt}
+              isLoading={isHydratingHoldings && holdings.length === 0}
+              onNavigateTab={(tab) => setActiveTab(tab)}
+              onAddHolding={() => setShowAddHoldingModal(true)}
+              onSelectHolding={setSelectedHoldingIndex}
+            />
+          ) : null}
+
+          {activeTab === "holdings" ? (
             <div className="w-full">
               {swingAlerts.alertsActive ? (
                 <SwingAlertsPanel
@@ -802,39 +823,7 @@ export function Dashboard() {
           }}
         />
       ) : null}
+      <FocusSectorToast />
     </main>
-  );
-}
-
-function TabNav({
-  activeTab,
-  onSelect,
-}: {
-  activeTab: TabId;
-  onSelect: (tab: Extract<TabId, "today" | "dashboard" | "market" | "discovery" | "report">) => void;
-}) {
-  const highlightedTab =
-    activeTab === "today" ||
-    activeTab === "dashboard" ||
-    activeTab === "market" ||
-    activeTab === "discovery" ||
-    activeTab === "report"
-      ? activeTab
-      : null;
-
-  return (
-    <div className="tab-segment mb-3">
-      {primaryTabs.map((tab) => (
-        <button
-          key={tab.id}
-          type="button"
-          onClick={() => onSelect(tab.id)}
-          aria-current={tab.id === highlightedTab ? "page" : undefined}
-          className="tab-segment-btn"
-        >
-          {tab.label}
-        </button>
-      ))}
-    </div>
   );
 }

@@ -496,6 +496,16 @@ def test_fund_discovery_sectors(client):
     assert "sectors" in body
 
 
+def test_market_sector_labels(client):
+    response = client.get("/api/market/sector-labels")
+    assert response.status_code == 200
+    body = response.json()
+    labels = body["labels"]
+    assert isinstance(labels, list)
+    assert len(labels) >= 60
+    assert "人工智能" in labels
+
+
 def test_market_theme_boards(client):
     response = client.get("/api/market/theme-boards?sort=change")
     assert response.status_code == 200

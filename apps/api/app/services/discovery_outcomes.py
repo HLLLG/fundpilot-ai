@@ -29,6 +29,8 @@ def build_discovery_outcomes(
         }
 
     items: list[dict[str, Any]] = []
+    fee_threshold = _resolve_fee_break_even(report)
+    take_profit_window = 3
     for rec in recommendations:
         code = str(rec.get("fund_code", "")).strip().zfill(6)
         if not code.isdigit():
@@ -40,6 +42,8 @@ def build_discovery_outcomes(
             since=created_at,
             days=days,
             fetch_nav=fetch_nav,
+            fee_break_even_percent=fee_threshold,
+            take_profit_days=take_profit_window,
         )
         if outcome is not None:
             items.append(outcome)
@@ -52,10 +56,19 @@ def build_discovery_outcomes(
         }
 
     aligned = sum(1 for item in items if item.get("direction_aligned"))
+    take_profit_hits = sum(1 for item in items if item.get("hit_take_profit_within_days"))
+    message = (
+        f"自推荐日起约 {days} 个交易日内，{aligned}/{len(items)} 只方向与净值变化一致（历史统计，不代表未来）。"
+    )
+    if fee_threshold is not None and any(item.get("hit_take_profit_within_days") is not None for item in items):
+        message += (
+            f" 其中 {take_profit_hits}/{len(items)} 只在 {take_profit_window} 个交易日内达扣费止盈线"
+            f"（≥{fee_threshold}% ，历史统计，不代表未来）。"
+        )
     return {
         "has_data": True,
         "days": days,
-        "message": f"自推荐日起约 {days} 个交易日内，{aligned}/{len(items)} 只方向与净值变化一致（历史统计，不代表未来）。",
+        "message": message,
         "items": items,
     }
 
@@ -107,6 +120,8 @@ def _outcome_for_fund(
     since: datetime,
     days: int,
     fetch_nav,
+    fee_break_even_percent: float | None = None,
+    take_profit_days: int = 3,
 ) -> dict[str, Any] | None:
     payload = fetch_nav(code, trading_days=max(days + 10, 30))
     rows = None
@@ -136,6 +151,12 @@ def _outcome_for_fund(
 
     change = round((latest_nav / baseline_nav - 1) * 100, 2)
     aligned = _direction_aligned(action, change)
+    hit_take_profit = _hit_take_profit_within_days(
+        rows,
+        since_date=since_date,
+        forward_trading_days=take_profit_days,
+        threshold_percent=fee_break_even_percent,
+    )
     return {
         "fund_code": code,
         "fund_name": fund_name,
@@ -146,7 +167,77 @@ def _outcome_for_fund(
         "latest_nav_date": latest_date,
         "direction_aligned": aligned,
         "assessment": _assessment_label(action, change, aligned),
+        "hit_take_profit_within_days": hit_take_profit,
     }
+
+
+def _hit_take_profit_within_days(
+    rows: list,
+    *,
+    since_date: str,
+    forward_trading_days: int,
+    threshold_percent: float | None,
+) -> bool | None:
+    if threshold_percent is None:
+        return None
+
+    baseline_nav = None
+    baseline_date = None
+    parsed_rows: list[tuple[str, float]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        date = str(row.get("date", ""))[:10]
+        nav = _as_float(row.get("nav"))
+        if nav is None or nav <= 0 or not date:
+            continue
+        parsed_rows.append((date, nav))
+
+    for date, nav in parsed_rows:
+        if date >= since_date and baseline_nav is None:
+            baseline_nav = nav
+            baseline_date = date
+            break
+
+    if baseline_nav is None or baseline_date is None:
+        return None
+
+    forward_navs: list[float] = []
+    for date, nav in parsed_rows:
+        if date <= baseline_date:
+            continue
+        forward_navs.append(nav)
+        if len(forward_navs) >= forward_trading_days:
+            break
+
+    if not forward_navs:
+        return False
+
+    target_nav = baseline_nav * (1.0 + threshold_percent / 100.0)
+    return any(nav >= target_nav for nav in forward_navs)
+
+
+def _resolve_fee_break_even(report: dict[str, Any]) -> float | None:
+    facts = report.get("discovery_facts") or {}
+    dip = facts.get("dip_swing") or {}
+    if dip.get("fee_break_even_percent") is not None:
+        try:
+            return float(dip["fee_break_even_percent"])
+        except (TypeError, ValueError):
+            pass
+    for rec in report.get("recommendations") or []:
+        if rec.get("fee_break_even_percent") is not None:
+            try:
+                return float(rec["fee_break_even_percent"])
+            except (TypeError, ValueError):
+                continue
+    profile = facts.get("profile") or {}
+    if profile.get("take_profit_threshold_percent") is not None:
+        try:
+            return float(profile["take_profit_threshold_percent"])
+        except (TypeError, ValueError):
+            pass
+    return None
 
 
 def _direction_aligned(action: str, change_percent: float) -> bool:

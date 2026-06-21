@@ -56,6 +56,36 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
                   {rec.hold_horizon ? ` · 持有期 ${rec.hold_horizon}` : ""}
                   {rec.confidence ? ` · 置信度 ${rec.confidence}` : ""}
                 </div>
+                {(rec.dip_drop_percent != null ||
+                  rec.fee_break_even_percent != null ||
+                  rec.target_exit_days != null ||
+                  (rec.rebound_signals?.length ?? 0) > 0) ? (
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    {rec.dip_drop_percent != null ? (
+                      <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-800">
+                        近段跌幅 {rec.dip_drop_percent.toFixed(2)}%
+                      </span>
+                    ) : null}
+                    {rec.fee_break_even_percent != null ? (
+                      <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold text-slate-700">
+                        扣费止盈线 {rec.fee_break_even_percent.toFixed(2)}%
+                      </span>
+                    ) : null}
+                    {rec.target_exit_days != null ? (
+                      <span className="rounded-full border border-[var(--brand)]/30 bg-[var(--brand)]/10 px-2 py-0.5 text-[11px] font-semibold text-[var(--brand-strong)]">
+                        目标 {rec.target_exit_days} 天内
+                      </span>
+                    ) : null}
+                    {(rec.rebound_signals ?? []).map((signal) => (
+                      <span
+                        key={signal.id}
+                        className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-900"
+                      >
+                        {signal.label}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
                 <div className="mt-1 text-[11px] font-medium text-[var(--brand)]">查看基金详情 →</div>
               </button>
               <span className={actionBadgeClass(rec.action)}>{rec.action}</span>

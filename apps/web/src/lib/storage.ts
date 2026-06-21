@@ -261,6 +261,7 @@ const DASHBOARD_TAB_KEY = "fundpilot-dashboard-tab";
 
 export type DashboardTabId =
   | "today"
+  | "holdings"
   | "report"
   | "history"
   | "dashboard"
@@ -269,6 +270,7 @@ export type DashboardTabId =
 
 const DASHBOARD_TAB_IDS: DashboardTabId[] = [
   "today",
+  "holdings",
   "report",
   "history",
   "dashboard",

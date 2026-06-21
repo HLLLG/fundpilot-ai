@@ -13,6 +13,8 @@ type ReportChatPanelProps = {
   reportTitle?: string;
   /** 侧栏模式：更矮、更紧凑，给决策建议让出宽度 */
   compact?: boolean;
+  /** 简报页内嵌：更矮、隐藏导出 */
+  inline?: boolean;
 };
 
 type LocalMessage = ReportChatMessage & { pending?: boolean };
@@ -23,7 +25,7 @@ const SUGGESTED_PROMPTS = [
   "新闻里对持仓影响最大的是哪条？",
 ];
 
-export function ReportChatPanel({ reportId, reportTitle, compact = false }: ReportChatPanelProps) {
+export function ReportChatPanel({ reportId, reportTitle, compact = false, inline = false }: ReportChatPanelProps) {
   const [messages, setMessages] = useState<LocalMessage[]>([]);
   const [input, setInput] = useState("");
   const [chatMode, setChatMode] = useState<ReportChatMode>("fast");
@@ -164,28 +166,34 @@ export function ReportChatPanel({ reportId, reportTitle, compact = false }: Repo
 
   return (
     <div
-      className={`flex flex-col rounded-2xl border border-slate-200 bg-slate-50/90 ${
-        compact
-          ? "h-[min(92vh,960px)] min-h-[960px]"
-          : "h-[min(72vh,720px)] min-h-[520px]"
+      className={`flex flex-col rounded-2xl border border-[var(--line)] bg-slate-50/90 ${
+        inline
+          ? "h-[min(48vh,440px)] min-h-[300px]"
+          : compact
+            ? "h-[min(92vh,960px)] min-h-[960px]"
+            : "h-[min(72vh,720px)] min-h-[520px]"
       }`}
       data-testid="report-chat-panel"
     >
-      <div className="border-b border-slate-200 px-3 py-3">
+      <div className="border-b border-[var(--line)] px-3 py-3">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            <MessageCircle size={16} className="text-blue-600" />
-            <span className="text-sm font-black text-slate-950">追问助手</span>
+            <MessageCircle size={16} className="text-[var(--brand)]" />
+            <span className="text-sm font-black text-slate-950">
+              {inline ? "继续追问" : "追问助手"}
+            </span>
           </div>
-          <button
-            type="button"
-            onClick={() => void handleExportMarkdown()}
-            disabled={isExporting || isLoadingHistory}
-            className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-bold text-slate-600 transition hover:border-blue-300 hover:text-blue-700 disabled:opacity-50"
-          >
-            <Download size={12} />
-            {isExporting ? "导出中" : "导出对话"}
-          </button>
+          {!inline ? (
+            <button
+              type="button"
+              onClick={() => void handleExportMarkdown()}
+              disabled={isExporting || isLoadingHistory}
+              className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-bold text-slate-600 transition hover:border-blue-300 hover:text-blue-700 disabled:opacity-50"
+            >
+              <Download size={12} />
+              {isExporting ? "导出中" : "导出对话"}
+            </button>
+          ) : null}
         </div>
         <div className="mt-2 grid grid-cols-2 gap-1.5">
           <button
@@ -235,7 +243,9 @@ export function ReportChatPanel({ reportId, reportTitle, compact = false }: Repo
         <div
           ref={scrollRef}
           onScroll={handleScroll}
-          className="h-full min-h-[min(84vh,760px)] space-y-3 overflow-y-auto overscroll-contain px-3 py-3"
+          className={`h-full space-y-3 overflow-y-auto overscroll-contain px-3 py-3 ${
+            inline ? "min-h-[160px]" : "min-h-[min(84vh,760px)]"
+          }`}
         >
         {isLoadingHistory ? (
           <div className="flex items-center justify-center gap-2 py-8 text-sm text-slate-500">
@@ -246,7 +256,9 @@ export function ReportChatPanel({ reportId, reportTitle, compact = false }: Repo
 
         {!isLoadingHistory && messages.length === 0 ? (
           <div className="rounded-xl border border-dashed border-slate-200 bg-white/70 px-3 py-4 text-xs leading-6 text-slate-600">
-            针对上方决策建议继续提问。深度模式可在需要时调用东方财富新闻 Tool 补充最新信息。
+            {inline
+              ? "对今日简报继续提问，快速模式秒回，深度模式可拉最新新闻。"
+              : "针对上方决策建议继续提问。深度模式可在需要时调用东方财富新闻 Tool 补充最新信息。"}
           </div>
         ) : null}
 
@@ -325,7 +337,7 @@ export function ReportChatPanel({ reportId, reportTitle, compact = false }: Repo
         <button
           type="submit"
           disabled={isStreaming || isLoadingHistory || !input.trim()}
-          className="inline-flex items-center justify-center rounded-xl bg-slate-950 px-3 py-2 text-white transition hover:bg-blue-700 disabled:opacity-50"
+          className="inline-flex items-center justify-center rounded-xl bg-[var(--brand-strong)] px-3 py-2 text-white transition hover:opacity-90 disabled:opacity-50"
           aria-label="发送"
         >
           {isStreaming ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}

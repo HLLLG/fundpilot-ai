@@ -30,6 +30,11 @@ describe("dashboard tab persistence", () => {
     expect(loadDashboardTab()).toBe("market");
   });
 
+  it("restores holdings tab", () => {
+    saveDashboardTab("holdings");
+    expect(loadDashboardTab()).toBe("holdings");
+  });
+
   it("ignores invalid stored values", () => {
     window.sessionStorage.setItem("fundpilot-dashboard-tab", "invalid");
     expect(loadDashboardTab()).toBe("today");

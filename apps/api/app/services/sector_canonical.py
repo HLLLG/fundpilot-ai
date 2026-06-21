@@ -13,6 +13,9 @@ from app.services.eastmoney_trends_client import (
 )
 from app.services.trading_session import build_trading_session
 from app.services.sector_labels import normalize_sector_label
+from app.services.sector_registry import (
+    list_discovery_sector_labels as _registry_discovery_labels,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -251,7 +254,7 @@ _DISCOVERY_CHIP_LABELS: tuple[str, ...] = (
 
 
 def list_discovery_sector_labels() -> list[str]:
-    return list(_DISCOVERY_CHIP_LABELS)
+    return _registry_discovery_labels()
 
 
 def get_canonical_sector(sector_name: str | None) -> CanonicalSector | None:

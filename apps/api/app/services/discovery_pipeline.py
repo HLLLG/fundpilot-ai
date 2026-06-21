@@ -18,6 +18,7 @@ ProgressCallback = Callable[[str, str], None]
 DISCOVERY_JOB_STAGES: dict[str, str] = {
     "queued": "排队中…",
     "sector_heat": "计算板块热度…",
+    "dip_prescreen": "预筛大跌基金…",
     "candidate_pool": "构建候选基金池…",
     "news": "拉取市场要闻…",
     "generating": "AI 分析中…",
@@ -49,16 +50,32 @@ def run_discovery(
     pool_cap = 25
     held_codes = {h.fund_code.strip().zfill(6) for h in holdings if h.fund_code}
 
-    progress("candidate_pool")
-    pool = build_candidate_pool(
-        target_sectors,
-        exclude_codes=held_codes,
-        fund_type_preference=request.fund_type_preference,
-        selection_strategy=request.selection_strategy,
-        per_sector=per_sector,
-        pool_cap=pool_cap,
-    )
-    pool = enrich_candidates(pool)
+    selection_strategy = request.selection_strategy
+    if request.scan_mode == "dip_swing":
+        selection_strategy = "dip_rebound"
+
+    if request.scan_mode == "dip_swing":
+        progress("dip_prescreen")
+        from app.services.dip_drop_scanner import build_dip_pool_for_sectors
+
+        pool = build_dip_pool_for_sectors(
+            target_sectors,
+            lookback_days=request.dip_lookback_days,
+            min_drop_percent=request.dip_min_drop_percent,
+            exclude_codes=held_codes,
+        )
+        pool = enrich_candidates(pool)
+    else:
+        progress("candidate_pool")
+        pool = build_candidate_pool(
+            target_sectors,
+            exclude_codes=held_codes,
+            fund_type_preference=request.fund_type_preference,
+            selection_strategy=selection_strategy,
+            per_sector=per_sector,
+            pool_cap=pool_cap,
+        )
+        pool = enrich_candidates(pool)
 
     progress("news")
     news_service = NewsService()
@@ -84,8 +101,10 @@ def run_discovery(
         market_news=market_news,
         topic_briefs=topic_briefs,
         budget_yuan=budget,
-        selection_strategy=request.selection_strategy,
+        selection_strategy=selection_strategy,
         scan_mode=request.scan_mode,
+        dip_lookback_days=request.dip_lookback_days,
+        dip_min_drop_percent=request.dip_min_drop_percent,
     )
 
     progress("generating")

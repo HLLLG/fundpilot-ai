@@ -17,6 +17,7 @@ from app.services.sector_canonical import (
     get_canonical_sector,
     get_quote_canonical_sector,
 )
+from app.services.sector_registry import list_theme_board_labels, resolve_market_quote
 from app.services.sector_quote_cache import (
     get_spot_snapshot,
     get_spot_snapshot_any_age,
@@ -142,6 +143,116 @@ _THEME_BOARD_INDEX: dict[str, tuple[str, str, str]] = {
     "AI医疗": ("2.H30531", "H30531", "index"),
 }
 
+
+def _theme_board_whitelist() -> tuple[str, ...]:
+    return tuple(list_theme_board_labels())
+
+
+def _entry_from_quote(
+    name: str,
+    *,
+    secid: str,
+    source_code: str | None,
+    board_kind: str,
+    source_name: str,
+    change_for_code,
+    canon: CanonicalSector | None = None,
+) -> dict[str, Any]:
+    return {
+        "sector_label": name,
+        "secid": secid,
+        "source_code": source_code,
+        "board_kind": board_kind,
+        "change_hint": change_for_code(source_code) if board_kind != "index" else None,
+        "_canon": canon
+        or CanonicalSector(
+            label=name,
+            source_type=board_kind,
+            source_name=source_name,
+            eastmoney_secid=secid,
+            source_code=source_code,
+        ),
+    }
+
+
+def _resolve_theme_board_entry(
+    name: str,
+    *,
+    change_for_code,
+    concept_by_name: dict[str, str],
+    industry_by_name: dict[str, str],
+) -> dict[str, Any] | None:
+    """Registry-first theme board resolution; legacy dicts as transition fallback."""
+    quote = resolve_market_quote(name)
+    if quote is not None:
+        return _entry_from_quote(
+            name,
+            secid=quote.eastmoney_secid,
+            source_code=quote.source_code,
+            board_kind=quote.source_type,
+            source_name=quote.source_name,
+            change_for_code=change_for_code,
+        )
+
+    if name in _THEME_BOARD_INDEX:
+        secid, code, kind = _THEME_BOARD_INDEX[name]
+        return _entry_from_quote(
+            name,
+            secid=secid,
+            source_code=code,
+            board_kind=kind,
+            source_name=name,
+            change_for_code=change_for_code,
+        )
+
+    canon = get_quote_canonical_sector(name) or get_canonical_sector(name)
+    if canon is not None:
+        return {
+            "sector_label": name,
+            "secid": canon.eastmoney_secid,
+            "source_code": canon.source_code,
+            "board_kind": _board_kind_from_source_type(canon.source_type),
+            "change_hint": change_for_code(canon.source_code),
+            "_canon": canon,
+        }
+
+    if name in _THEME_BOARD_ALIAS:
+        secid, code, kind = _THEME_BOARD_ALIAS[name]
+        return _entry_from_quote(
+            name,
+            secid=secid,
+            source_code=code,
+            board_kind=kind,
+            source_name=name,
+            change_for_code=change_for_code,
+            canon=None,
+        )
+
+    if name in concept_by_name:
+        code = concept_by_name[name]
+        return {
+            "sector_label": name,
+            "secid": f"90.{code}",
+            "source_code": code,
+            "board_kind": "concept",
+            "change_hint": change_for_code(code),
+            "_canon": None,
+        }
+
+    if name in industry_by_name:
+        code = industry_by_name[name]
+        return {
+            "sector_label": name,
+            "secid": f"90.{code}",
+            "source_code": code,
+            "board_kind": "industry",
+            "change_hint": change_for_code(code),
+            "_canon": None,
+        }
+
+    return None
+
+
 _INTRADAY_SESSIONS = {
     "trading_day_intraday",
     "trading_day_pre_close",
@@ -226,8 +337,8 @@ def _resolve_flow_source_code(
 def list_theme_board_universe() -> list[dict[str, Any]]:
     """对标小倍的固定粗粒度板块白名单，解析到东财 secid。
 
-    解析优先级（每个白名单名）：``_THEME_BOARD_INDEX``（小倍中证指数）→ canonical →
-    别名 → 东财概念/行业**精确名**匹配 → 跳过。
+    解析优先级（每个白名单名）：``sector_registry.resolve_market_quote`` →
+    legacy ``_THEME_BOARD_INDEX`` → canonical → 别名 → 东财概念/行业**精确名**匹配 → 跳过。
     每项：``sector_label``、``secid``、``source_code``、``board_kind``、
     ``change_hint``（东财 spot f3，连涨拉取失败时兜底涨跌幅）、``_canon``。
     """
@@ -246,66 +357,13 @@ def list_theme_board_universe() -> list[dict[str, Any]]:
     universe: list[dict[str, Any]] = []
     seen_labels: set[str] = set()
 
-    for name in _THEME_BOARD_WHITELIST:
-        entry: dict[str, Any] | None = None
-
-        if name in _THEME_BOARD_INDEX:
-            secid, code, kind = _THEME_BOARD_INDEX[name]
-            entry = {
-                "sector_label": name,
-                "secid": secid,
-                "source_code": code,
-                "board_kind": kind,
-                "change_hint": change_for_code(code) if kind != "index" else None,
-                "_canon": CanonicalSector(
-                    label=name,
-                    source_type=kind,
-                    source_name=name,
-                    eastmoney_secid=secid,
-                    source_code=code,
-                ),
-            }
-        else:
-            canon = get_quote_canonical_sector(name) or get_canonical_sector(name)
-            if canon is not None:
-                entry = {
-                    "sector_label": name,
-                    "secid": canon.eastmoney_secid,
-                    "source_code": canon.source_code,
-                    "board_kind": _board_kind_from_source_type(canon.source_type),
-                    "change_hint": change_for_code(canon.source_code),
-                    "_canon": canon,
-                }
-        if entry is None and name in _THEME_BOARD_ALIAS:
-            secid, code, kind = _THEME_BOARD_ALIAS[name]
-            entry = {
-                "sector_label": name,
-                "secid": secid,
-                "source_code": code,
-                "board_kind": kind,
-                "change_hint": change_for_code(code),
-                "_canon": None,
-            }
-        if entry is None and name in concept_by_name:
-            code = concept_by_name[name]
-            entry = {
-                "sector_label": name,
-                "secid": f"90.{code}",
-                "source_code": code,
-                "board_kind": "concept",
-                "change_hint": concept_by_code.get(code),
-                "_canon": None,
-            }
-        if entry is None and name in industry_by_name:
-            code = industry_by_name[name]
-            entry = {
-                "sector_label": name,
-                "secid": f"90.{code}",
-                "source_code": code,
-                "board_kind": "industry",
-                "change_hint": industry_by_code.get(code),
-                "_canon": None,
-            }
+    for name in _theme_board_whitelist():
+        entry = _resolve_theme_board_entry(
+            name,
+            change_for_code=change_for_code,
+            concept_by_name=concept_by_name,
+            industry_by_name=industry_by_name,
+        )
         if entry is None:
             logger.info("theme board whitelist name unresolved: %s", name)
             continue
