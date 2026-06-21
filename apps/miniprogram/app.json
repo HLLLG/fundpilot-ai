@@ -5,8 +5,8 @@
     "pages/fund-detail/fund-detail"
   ],
   "window": {
-    "navigationBarTitleText": "FundPilot",
-    "navigationBarBackgroundColor": "#2563eb",
+    "navigationBarTitleText": "好基灵",
+    "navigationBarBackgroundColor": "#2356e0",
     "navigationBarTextStyle": "white",
     "backgroundColor": "#f8fafc"
   },

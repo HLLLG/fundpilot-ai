@@ -11,25 +11,17 @@ Page({
     this.setData({ loading: true, error: "" });
     try {
       let payload = {};
-      if (CLOUDBASE_ENV_ID && wx.cloud) {
-        const loginState = await wx.cloud.callFunction({ name: "login" }).catch(() => null);
-        if (loginState && loginState.result && loginState.result.uid) {
-          payload.cloudbaseUid = loginState.result.uid;
-        } else {
-          const auth = wx.cloud.CloudID ? null : null;
-          void auth;
-          const cloud = wx.cloud;
-          if (cloud && cloud.auth) {
-            const state = await cloud.auth().getLoginState();
-            if (state && state.user) {
-              payload.cloudbaseAccessToken = state.accessToken;
-              payload.cloudbaseUid = state.user.uid;
-            }
+      if (!api.shouldUseCallContainer()) {
+        if (CLOUDBASE_ENV_ID && wx.cloud && wx.cloud.auth) {
+          const state = await wx.cloud.auth().getLoginState();
+          if (state && state.user) {
+            payload.cloudbaseAccessToken = state.accessToken;
+            payload.cloudbaseUid = state.user.uid;
           }
         }
-      }
-      if (!payload.cloudbaseUid && !payload.cloudbaseAccessToken) {
-        payload.cloudbaseUid = `dev-mp-${Date.now()}`;
+        if (!payload.cloudbaseUid && !payload.cloudbaseAccessToken) {
+          payload.cloudbaseUid = "dev-mp-" + Date.now();
+        }
       }
       const session = await api.wechatLogin(payload);
       api.setToken(session.accessToken);

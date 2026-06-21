@@ -16,6 +16,13 @@ export const metadata: Metadata = {
   title: "好基灵 | 截个图就懂你的基金",
   description:
     "好基灵：自动识别持仓明细 · 实时追踪板块冷暖 · 每天一份听得懂的投研日报。",
+  icons: {
+    icon: [
+      { url: "/icon.svg", type: "image/svg+xml" },
+      { url: "/icon.png", type: "image/png" },
+    ],
+    apple: [{ url: "/icon.png", type: "image/png" }],
+  },
 };
 
 export default function RootLayout({

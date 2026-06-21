@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.auth.cloudbase_auth import resolve_cloudbase_uid
+from app.auth.cloudbase_auth import resolve_cloudbase_uid, resolve_trusted_wechat_openid
 from app.auth.jwt import create_access_token
 from app.auth.models import (
     BindWechatRequest,
@@ -82,12 +82,19 @@ def _issue_token_for_user(user: dict) -> TokenResponse:
     )
 
 
-def wechat_login_user(body: WechatLoginRequest) -> TokenResponse:
-    cloudbase_uid = resolve_cloudbase_uid(
-        cloudbase_uid=body.cloudbaseUid,
-        cloudbase_access_token=body.cloudbaseAccessToken,
-        cloudbase_ticket=body.cloudbaseTicket,
-    )
+def wechat_login_user(
+    body: WechatLoginRequest,
+    *,
+    trusted_wechat_openid: str | None = None,
+) -> TokenResponse:
+    if trusted_wechat_openid:
+        cloudbase_uid = trusted_wechat_openid
+    else:
+        cloudbase_uid = resolve_cloudbase_uid(
+            cloudbase_uid=body.cloudbaseUid,
+            cloudbase_access_token=body.cloudbaseAccessToken,
+            cloudbase_ticket=body.cloudbaseTicket,
+        )
     user = get_user_by_cloudbase_uid(cloudbase_uid)
     if user is None:
         user = create_wechat_user(cloudbase_uid=cloudbase_uid, username=body.username)

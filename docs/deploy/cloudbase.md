@@ -5,12 +5,14 @@
 ## 架构
 
 ```text
-微信小程序 ──HTTPS──► CloudBase 云托管（FastAPI Docker）
-Web 静态托管  ──HTTPS──► 同上 API
-                              │
-                              ▼
-                    CloudBase MySQL
+微信小程序 ──callContainer（内网）──► CloudBase 云托管（FastAPI Docker）
+Web 静态托管  ──HTTPS 公网──────────► 同上 API
+                                          │
+                                          ▼
+                                CloudBase MySQL
 ```
+
+小程序通过 `wx.cloud.callContainer` 访问云托管，微信网关注入 `X-Wx-Openid`，后端 `/api/auth/wechat-login` 据此签发 JWT。**不需要**把 `*.sh.run.tcloudbase.com` 配进小程序 request 合法域名。
 
 ## 1. 准备 CloudBase 环境
 
@@ -96,12 +98,38 @@ tcb app deploy --force
 
 ## 5. 微信小程序
 
-1. `apps/miniprogram/utils/config.js` 设置 `API_BASE` 与 `CLOUDBASE_ENV_ID`
-2. 微信公众平台 → 开发管理 → 服务器域名 → 添加云托管 API 域名
-3. 生产环境设置 `FUND_AI_CLOUDBASE_AUTH_DEV_MODE=false`
-4. 用微信开发者工具上传审核
+### 前置
 
-开发联调：后端 `.env` 设 `FUND_AI_CLOUDBASE_AUTH_DEV_MODE=true`，小程序登录会走开发 UID。
+1. 小程序后台 → **开发管理 → 云开发** → 开通（与 CloudBase 环境关联）
+2. CloudBase 控制台 → **扫码授权** 绑定小程序 AppID
+3. 云托管环境变量：`FUND_AI_CLOUDBASE_ENV_ID=<环境ID>`（**必设**）
+
+### 项目配置
+
+`apps/miniprogram/utils/config.js`：
+
+```js
+const CLOUDBASE_ENV_ID = "你的环境ID";
+const CLOUD_SERVICE_NAME = "fundpilot-api";  // 云托管服务名
+const API_BASE = "https://你的云托管公网域名"; // 仅 HTTP 回退
+```
+
+`project.config.json` 填写真实 `appid`。
+
+### 调用方式
+
+- **推荐**：`utils/api.js` 使用 `wx.cloud.callContainer`（已内置），**无需**配置 request 合法域名
+- **不推荐**：`wx.request` + `*.tcloudbase.com` 公网域名——微信后台会提示「云托管域名仅作测试，不可用于正式环境」
+
+### 体验版（≤5 人）
+
+1. 微信开发者工具上传代码
+2. 公众平台 → 版本管理 → 选为体验版 → 添加体验成员
+3. 备案可并行办理，不挡体验版
+
+生产环境关闭 `FUND_AI_CLOUDBASE_AUTH_DEV_MODE`（`callContainer` 登录不依赖 dev UID）。
+
+本地 HTTP 联调：`.env` 设 `FUND_AI_CLOUDBASE_AUTH_DEV_MODE=true`。
 
 ## 6. Web 与小程序账号统一
 

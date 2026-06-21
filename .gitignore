@@ -31,3 +31,4 @@ COMMIT_EDITMSG_TMP
 
 # 截图验收输出（构建产物，不入库）
 apps/web/verify-shots/
+apps/miniprogram/project.private.config.json

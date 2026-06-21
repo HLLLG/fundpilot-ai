@@ -11,6 +11,7 @@ from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
+from app.auth.cloudbase_auth import resolve_trusted_wechat_openid
 from app.auth.middleware import AuthMiddleware
 from app.auth.models import BindWechatRequest, LoginRequest, RegisterRequest, WechatLoginRequest
 from app.auth.service import (
@@ -187,9 +188,10 @@ def auth_me() -> dict:
 
 
 @app.post("/api/auth/wechat-login")
-def auth_wechat_login(body: WechatLoginRequest) -> dict:
+def auth_wechat_login(body: WechatLoginRequest, request: Request) -> dict:
     try:
-        result = wechat_login_user(body)
+        trusted_openid = resolve_trusted_wechat_openid(request.headers)
+        result = wechat_login_user(body, trusted_wechat_openid=trusted_openid)
     except ValueError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
     return result.model_dump()

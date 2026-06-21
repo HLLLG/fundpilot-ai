@@ -4,6 +4,7 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
+from app.config import refresh_settings
 from app.main import app
 from tests.conftest import register_and_login
 
@@ -85,3 +86,32 @@ def test_user_data_isolation():
     )
     assert found.status_code == 200
     assert found.json()["style"] == "稳健"
+
+
+def test_wechat_login_with_callcontainer_openid_header(monkeypatch):
+    monkeypatch.setenv("FUND_AI_CLOUDBASE_ENV_ID", "fundpilot-ai-test-env")
+    refresh_settings()
+    client = TestClient(app)
+    response = client.post(
+        "/api/auth/wechat-login",
+        json={},
+        headers={
+            "X-Wx-Openid": "oPytest-openid-001",
+            "X-Wx-Env-Id": "fundpilot-ai-test-env",
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["accessToken"]
+    assert body["user"]["wechatBound"] is True
+
+    second = client.post(
+        "/api/auth/wechat-login",
+        json={},
+        headers={
+            "X-Wx-Openid": "oPytest-openid-001",
+            "X-Wx-Env-Id": "fundpilot-ai-test-env",
+        },
+    )
+    assert second.status_code == 200
+    assert second.json()["user"]["id"] == body["user"]["id"]

@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 import httpx
 import jwt
@@ -54,6 +54,21 @@ def verify_cloudbase_access_token(access_token: str) -> str:
     if not uid:
         raise ValueError("无法解析 CloudBase 用户")
     return str(uid)
+
+
+def resolve_trusted_wechat_openid(headers: Mapping[str, str]) -> str | None:
+    """callContainer 经微信网关注入 openid；公网直连不可伪造此链路。"""
+    settings = get_settings()
+    if not settings.cloudbase_env_id:
+        return None
+    normalized = {str(key).lower(): value for key, value in headers.items()}
+    openid = normalized.get("x-wx-openid")
+    env_id = normalized.get("x-wx-env-id")
+    if not openid:
+        return None
+    if env_id and env_id != settings.cloudbase_env_id:
+        return None
+    return str(openid).strip()
 
 
 def resolve_cloudbase_uid(

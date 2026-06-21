@@ -16,6 +16,14 @@
   text-align: center;
 }
 
+.logo {
+  display: block;
+  width: 144rpx;
+  height: 144rpx;
+  margin: 0 auto 24rpx;
+  border-radius: 32rpx;
+}
+
 .title {
   display: block;
   font-size: 48rpx;
@@ -32,7 +40,7 @@
 
 .btn {
   margin-top: 48rpx;
-  background: linear-gradient(90deg, #2563eb, #4f46e5);
+  background: linear-gradient(90deg, #2356e0, #173fb0);
   color: #fff;
   border-radius: 24rpx;
 }
