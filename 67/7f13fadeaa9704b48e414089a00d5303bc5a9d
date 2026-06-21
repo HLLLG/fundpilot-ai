@@ -1,0 +1,404 @@
+apps/web/src/components/LandingPage.tsx
+  s_96f71f2f23d290::t_7188cc271b4d7c 58-70
+  s_96f71f2f23d290::t_53d74d0d8773dc 152-166
+  s_96f71f2f23d290::t_b302ab600f773f 191-208
+  s_96f71f2f23d290::t_cdc82b7ccebfef 120
+  s_96f71f2f23d290::t_a27f1f7b491685 328
+  s_96f71f2f23d290::t_31c7c058de8833 338-345
+  s_96f71f2f23d290::t_c91935e7a31d03 115-116
+apps/api/app/services/dip_drop_scanner.py
+  s_1a8eabb7dcf3a1::t_c9297648645f87 26-27
+  s_1a8eabb7dcf3a1::t_5a8d5ba29a9bc6 9
+  s_1a8eabb7dcf3a1::t_ea2380a1ee7d3d 25
+  s_1a8eabb7dcf3a1::t_14796cf948ef34 251-280
+  s_1a8eabb7dcf3a1::t_fc9494755190bc 167,169,171-174,177,186-187
+  s_1a8eabb7dcf3a1::t_d14409806b8825 181-182,188-191,193-211,214-215,217,219,221-224,231-234,236,240,245
+  s_1a8eabb7dcf3a1::t_ac7303a62486f5 21
+  s_1a8eabb7dcf3a1::t_92fea2687c3880 161-166,168,170,175-176,178-180,183-185,192,212-213,216,218,220,225-230,235,237-239,241-244,246-250
+  s_1a8eabb7dcf3a1::t_5293ba7c917113 293-298,301-323,328,332-354
+  s_1a8eabb7dcf3a1::t_ad3875f0115fec 5
+  s_fa344afd148553::t_6bd805770e3b43 1-4,6-8,10-20,22-24,28-160,281-292,299-300,324-327,329-331,355-408
+apps/api/app/services/discovery_pipeline.py
+  s_fa344afd148553::t_706199490aeade 104,106-107
+  s_fa344afd148553::t_3d266d0fbfe295 21
+  s_fa344afd148553::t_696ff90fab5ccf 53-78
+apps/api/app/services/discovery_facts.py
+  s_fa344afd148553::t_bc1e830e1278ac 24-25
+  s_fa344afd148553::t_7d3d79636f8ea9 78-97
+  s_fa344afd148553::t_917be526b6eb95 36-37,39
+apps/api/app/db_connect.py
+  s_96f71f2f23d290::t_9153c272f2b9be 27-54
+  s_96f71f2f23d290::t_3f42569c46376b 131,141
+  s_96f71f2f23d290::t_18c4210d32b708 3,13-14
+apps/api/app/services/discovery_target_sectors.py
+  s_fa344afd148553::t_caf2a80f7dbdc4 10,73-76
+  s_fa344afd148553::t_61e636b3838306 26-28
+  s_fa344afd148553::t_5481b0e03aa866 77-115
+apps/api/app/services/theme_board_snapshot.py
+  s_2e702d9a7cfa5d::t_f44fbcb28f331b 361-366
+  s_f3171c46c6de84::t_72f4124e98fe38 146-148,254-255
+  s_2e702d9a7cfa5d::t_9a34825734a5e0 20
+  s_2e702d9a7cfa5d::t_07186b188a0343 340-341
+  s_f3171c46c6de84::t_0ab519aa14f0a2 360
+  s_2e702d9a7cfa5d::t_1d1da115562b63 149-253
+apps/api/tests/conftest.py
+  s_eae1ce2dc4f2cd::t_f4e09c88ec6a22 360,386,394
+  s_eae1ce2dc4f2cd::t_5b78a65f6d67fb 361-385,387-393,395-396
+  s_fa344afd148553::t_0bbaca3da657a0 165-185
+apps/api/tests/test_discovery_target_sectors.py
+  s_fa344afd148553::t_1930b60aa7bffb 1-21
+apps/api/tests/test_fund_dip_rebound_backtest.py
+  s_40ad1169810d19::t_9dc2859a963547 63-66
+  s_40ad1169810d19::t_3a59c994e876bf 48-54,57-62,67
+  s_40ad1169810d19::t_a2d03dfd7063f6 74
+  s_40ad1169810d19::t_2b714d51c52652 55-56
+  s_40ad1169810d19::t_7b53b7053abe79 1-47,68-73,75-90
+apps/api/tests/test_api.py
+  s_1a8eabb7dcf3a1::t_95bc80595d39e6 499-508
+apps/web/src/lib/discoveryFocusSectors.ts
+  s_1a8eabb7dcf3a1::t_bcf59608ba7b64 1-118
+apps/web/src/components/Dashboard.tsx
+  s_96f71f2f23d290::t_4df2de0cbe24b1 570
+  s_96f71f2f23d290::t_b42ae3157cc498 259
+  s_96f71f2f23d290::t_1f29f144afd132 76-77
+  s_1a8eabb7dcf3a1::t_37dcfb6f38c68f 826
+  s_96f71f2f23d290::t_ea58af23ac4c8d 579-583
+  s_96f71f2f23d290::t_53ebfb070a2221 604-617
+  s_eae1ce2dc4f2cd::t_945f2c85ab074e 256-258,260-266
+  s_1a8eabb7dcf3a1::t_33ede72b5ed293 72
+apps/web/src/lib/api.ts
+  s_fa344afd148553::t_06f60d5f2823e4 392
+  s_1a8eabb7dcf3a1::t_7c01b66571f680 527-528,531
+  s_40ad1169810d19::t_c22cd9e7716e83 501
+  s_eae1ce2dc4f2cd::t_74b2689e82d44d 1030-1034,1036-1054
+  s_eae1ce2dc4f2cd::t_e6d2d757138d46 1035
+  s_fa344afd148553::t_53b618ba22fe31 419
+  s_fa344afd148553::t_95627eb0daef85 382-385
+  s_eae1ce2dc4f2cd::t_ecd0d988981e8a 486-500,502-521,532-538
+  s_1a8eabb7dcf3a1::t_98ee180f4609fc 1002-1012
+  s_fa344afd148553::t_dbb2836366f6a6 1081-1082,1098-1099
+  s_1a8eabb7dcf3a1::t_1b8b195f4af8bc 522-526,529-530
+apps/web/src/lib/dashboardTab.test.ts
+  s_96f71f2f23d290::t_3d148cbd482d22 33-36
+  s_96f71f2f23d290::t_5b7d73447bc34e 37
+apps/api/app/services/discovery_client.py
+  s_fa344afd148553::t_1313821d7c7451 78
+  s_fa344afd148553::t_9ed9e977d40b46 166-169
+  s_fa344afd148553::t_f8790036fb440f 195-209
+apps/api/app/services/sector_registry_data.py
+  s_2e702d9a7cfa5d::t_e91fdca6f66b06 1-157
+apps/web/src/components/MarketTab.tsx
+  s_40ad1169810d19::t_70295729f7281d 32
+  s_1a8eabb7dcf3a1::t_dc4adaa4a41b3a 33
+  s_40ad1169810d19::t_3aa8bf0a9bd1d3 11,14
+  s_96f71f2f23d290::t_22e92cc21988df 229
+  s_40ad1169810d19::t_6f9978fc507a2d 237
+  s_eae1ce2dc4f2cd::t_6597d52938102a 4-5,7,22,26,31,34,36,40,74-92,99,177-192,212-219,241-245,247-250,252-257,259,273-274,282
+  s_96f71f2f23d290::t_07e5ddf723a98e 199,202-203
+  s_1a8eabb7dcf3a1::t_16ebf625589480 238-239
+  s_40ad1169810d19::t_523e4eb6b6dff7 251
+  s_eae1ce2dc4f2cd::t_e037a543f7c540 275-281
+  s_1a8eabb7dcf3a1::t_26618cdffeadcd 100-106
+  s_1a8eabb7dcf3a1::t_5f627277a9df0b 12,16,19
+  s_40ad1169810d19::t_36eb00a0665935 148-156,159-169
+  s_96f71f2f23d290::t_0121af3a76e1e8 262
+  s_1a8eabb7dcf3a1::t_4af653bb878b8b 157-158
+  s_1a8eabb7dcf3a1::t_551713651a9bc6 246
+apps/api/tests/test_dip_radar.py
+  s_eae1ce2dc4f2cd::t_27362fa4cf04bc 6
+  s_1a8eabb7dcf3a1::t_8c674c2d96b711 84-142
+  s_eae1ce2dc4f2cd::t_f89261ce0657d3 1-5,7-83
+apps/web/src/components/TodayBriefing.tsx
+  s_96f71f2f23d290::t_086ca202f62ad2 38
+  s_96f71f2f23d290::t_ed99ddb89dff70 245-251
+  s_96f71f2f23d290::t_dbb5def32d0ba0 101
+  s_96f71f2f23d290::t_5c0acd2875abbc 252-255
+  s_96f71f2f23d290::t_1d133649352d05 1-29,31-36,39-100,102-244,256-344
+  s_96f71f2f23d290::t_e6a4a7fafb698a 30,37
+apps/api/app/services/discovery_prompt.py
+  s_fa344afd148553::t_ec2643255416cf 21
+apps/api/tests/test_discovery_outcomes.py
+  s_fa344afd148553::t_f68790e2115266 1-11,13-69
+  s_fa344afd148553::t_f26c4394af293b 12
+apps/web/src/components/FundDiscoveryPanel.tsx
+  s_96f71f2f23d290::t_8cfe1489097584 599
+  s_96f71f2f23d290::t_081252b974cb31 367,372-373
+  s_40ad1169810d19::t_0be45f40cebaa4 131-140,144
+  s_96f71f2f23d290::t_6ff1f805e840b3 349,351-363,366
+  s_1a8eabb7dcf3a1::t_3700338e454dba 93-96
+  s_a47d5f56abd64c::t_0c87ea4b70729a 50
+  s_1a8eabb7dcf3a1::t_848f2dbc9ebea8 151-193
+  s_96f71f2f23d290::t_d70b65eefe172a 580
+  s_a47d5f56abd64c::t_c427b79b791ef9 32,40,42-45
+  s_1a8eabb7dcf3a1::t_0cacb03f95f1f2 34-38
+  s_1a8eabb7dcf3a1::t_782224e45c6182 141-143
+  s_a47d5f56abd64c::t_7f60d50e308a47 100-102
+  s_1a8eabb7dcf3a1::t_4e51e254ac7221 281-288
+  s_a47d5f56abd64c::t_6aff5616a232c2 303-304
+  s_1a8eabb7dcf3a1::t_90351b649bfc8b 510-539,541-559,563,567-568
+  s_a47d5f56abd64c::t_c6818719c54109 4,150,225
+  s_a47d5f56abd64c::t_b08c1b5be43b1d 226-233
+  s_96f71f2f23d290::t_0977f8d41663e8 646
+  s_96f71f2f23d290::t_66f80e79469c28 655
+  s_1a8eabb7dcf3a1::t_c60efc0d1927e8 20,27
+  s_a47d5f56abd64c::t_f29a1f835191e6 323-324
+  s_1a8eabb7dcf3a1::t_a77cd178da9bdc 222-224
+  s_a47d5f56abd64c::t_82f512e4732688 123,126-130,145-149
+  s_96f71f2f23d290::t_c84cc293219804 418
+  s_a47d5f56abd64c::t_e86a4b79647720 429-505
+apps/web/src/components/DipReboundRadar.tsx
+  s_eae1ce2dc4f2cd::t_61c14494a550e1 1-86,105-145,166-169,231-237
+  s_1a8eabb7dcf3a1::t_40ad609f385f5e 163-165
+  s_1a8eabb7dcf3a1::t_dbd37bcccdee30 146-147,161-162
+  s_1a8eabb7dcf3a1::t_328a86e66beb34 87-104
+  s_96f71f2f23d290::t_f61e409b748422 170,179,189
+  s_1a8eabb7dcf3a1::t_0be56f5ff17538 148-160
+  s_96f71f2f23d290::t_0f39b0c5c38ddb 171-178,180-188,190-230
+apps/web/src/components/DashboardNav.tsx
+  s_96f71f2f23d290::t_267d2a9a20b05c 1-85,88-103,105-160
+  s_96f71f2f23d290::t_5684c0dfcd5673 86-87
+  s_96f71f2f23d290::t_afa1e9d923b69e 104
+apps/web/src/components/FocusSectorPicker.tsx
+  s_1a8eabb7dcf3a1::t_1f110269b286d7 196
+  s_1a8eabb7dcf3a1::t_6f2244ee6d7664 63,65
+  s_1a8eabb7dcf3a1::t_15d354e06806af 1-62,64,66-169,171-183,185-195,197-218
+  s_1a8eabb7dcf3a1::t_713619f6a6fd2b 170
+  s_1a8eabb7dcf3a1::t_41f2f28f64f2db 184
+apps/api/app/services/akshare_subprocess.py
+  s_1a8eabb7dcf3a1::t_c759869aa5bad7 238-308
+apps/api/app/models.py
+  s_fa344afd148553::t_bc333b265e77af 343
+  s_fa344afd148553::t_3461e1b30f311b 359-360
+  s_fa344afd148553::t_70857278a3be64 319-322
+apps/web/src/components/DiscoveryReportPanel.tsx
+  s_a47d5f56abd64c::t_80175bccda02bd 59-88
+docs/superpowers/plans/2026-06-21-ai-briefing-home.md
+  s_96f71f2f23d290::t_6df3fc3a9cf8c5 1-49
+apps/api/app/services/fund_dip_rebound_backtest.py
+  s_40ad1169810d19::t_e084a62cd5330e 5
+  s_40ad1169810d19::t_8d796118676377 1-4,6-129
+apps/api/tests/test_sector_registry.py
+  s_83787d6dbc638b::t_9cd7c16f5b661c 1-41
+apps/web/src/components/RiskControls.tsx
+  s_96f71f2f23d290::t_36d603882d1358 70-80
+  s_96f71f2f23d290::t_21dbbd25ab332d 98,100
+  s_96f71f2f23d290::t_c213df9bebc06b 376
+  s_96f71f2f23d290::t_ed3acc39a13236 142
+apps/web/src/app/globals.css
+  s_96f71f2f23d290::t_4d37102895ec56 948,951
+  s_96f71f2f23d290::t_c456bcf7d8b746 1013-1015,1018-1019
+  s_96f71f2f23d290::t_2e52c33bfb1111 1012,1016-1017,1020
+  s_96f71f2f23d290::t_4267243a525bce 839-867,869-882,889-947,949-950,952-955
+  s_96f71f2f23d290::t_f5e0b8f77f8af3 956-962
+  s_96f71f2f23d290::t_7b1d893ae2b076 868,883-888
+  s_96f71f2f23d290::t_fb32d1e26ecc36 963-1011
+apps/api/app/services/dip_radar_snapshot.py
+  s_1a8eabb7dcf3a1::t_4664050af19c4e 141
+  s_1a8eabb7dcf3a1::t_189716a031769f 155-163,171,176
+  s_1a8eabb7dcf3a1::t_0f9bdb1bcac66b 7
+  s_40ad1169810d19::t_794420795b3c17 98-120
+  s_1a8eabb7dcf3a1::t_bc99057307072a 229-231,235-239,241-261,266,270-271
+  s_1a8eabb7dcf3a1::t_8da6a652efc3cd 22,24-25
+  s_1a8eabb7dcf3a1::t_8e14f3ad1f53e4 212,225-226
+  s_1a8eabb7dcf3a1::t_f654d0a6b83bb8 34-35,37,39-42
+  s_40ad1169810d19::t_768bde279420b8 8
+  s_1a8eabb7dcf3a1::t_dc7893b8da10a3 14
+  s_1a8eabb7dcf3a1::t_20ea5349c4d40d 133,136,145,149
+  s_eae1ce2dc4f2cd::t_63ae2acc1c34ba 1-6,9-13,15-21,23,26-33,36,38,43-97,121-132,134-135,137-140,142-144,146-148,150-154,164-170,172-175,177-211,213-224,227-228,232-234,240,262-265,267-269,272
+apps/api/app/services/discovery_outcomes.py
+  s_fa344afd148553::t_4606d8a389c455 154-159,170
+  s_fa344afd148553::t_c92532a6faf112 123-124
+  s_fa344afd148553::t_1526b2b97dc807 174-242
+  s_fa344afd148553::t_8d28e7555ff666 32-33,45-46,59-67,71
+docs/superpowers/specs/2026-06-21-ai-briefing-home-design.md
+  s_96f71f2f23d290::t_1b7c5fe338d399 1-99
+apps/api/app/services/sector_canonical.py
+  s_f3171c46c6de84::t_1e6426731249ce 257
+  s_2e702d9a7cfa5d::t_559e6cd1002791 16-18
+apps/api/tests/test_discovery_guard.py
+  s_fa344afd148553::t_2dd0361f2797c1 70-95
+.env.example
+  s_96f71f2f23d290::t_4241cdfa7e71da 67-69
+apps/web/src/components/FocusSectorToast.tsx
+  s_1a8eabb7dcf3a1::t_1b7e95372b963c 1-43
+apps/web/src/components/BriefingDecisionCards.tsx
+  s_96f71f2f23d290::t_b15eb5d05758f2 1-66
+apps/web/src/components/ThemeSectorOverview.tsx
+  s_40ad1169810d19::t_17c9d6021c5cbf 30-31
+  s_1a8eabb7dcf3a1::t_cbf999a8ce785c 32
+  s_40ad1169810d19::t_dd4ec77124da67 255,259-269,275-276,278-280,284
+  s_1a8eabb7dcf3a1::t_4f94482277e8f6 270-274,277
+  s_40ad1169810d19::t_f0fe63aa69d5bc 133,135-145
+  s_40ad1169810d19::t_bef3896ddf0cc5 106-107
+  s_40ad1169810d19::t_056f18772601fd 3
+  s_40ad1169810d19::t_809cd53062ac71 207
+  s_40ad1169810d19::t_4d1a263b27d03e 134
+  s_1a8eabb7dcf3a1::t_a3d36a17af7ea6 108
+apps/web/src/lib/todayBriefing.ts
+  s_96f71f2f23d290::t_3174988954a14e 1-116,180-191
+  s_96f71f2f23d290::t_d9f0716f9edec6 117-179
+docs/superpowers/specs/2026-06-21-dip-swing-discovery-design.md
+  s_1a8eabb7dcf3a1::t_b3e67b3a9c6e6e 1-3,5-441
+  s_1a8eabb7dcf3a1::t_51b498ff137e1e 4
+apps/api/tests/test_dip_drop_scanner.py
+  s_1a8eabb7dcf3a1::t_31bda8311a49e6 76-81,84-91,99-101
+  s_fa344afd148553::t_92190c4a6bdd80 1-5,8-75
+  s_1a8eabb7dcf3a1::t_dedfcd69c6753d 92-96,98
+  s_1a8eabb7dcf3a1::t_6bed2904392499 82-83
+  s_fa344afd148553::t_eeb37becf637c1 6-7
+  s_1a8eabb7dcf3a1::t_0c080986101b57 97
+apps/api/app/services/sector_registry.py
+  s_2e702d9a7cfa5d::t_8b52b459db1ae1 1-156
+apps/web/src/lib/dipRadar.ts
+  s_eae1ce2dc4f2cd::t_c1d2fdbbfe6f63 2-3,10-17,19,21-59,61-69,73-98
+  s_1a8eabb7dcf3a1::t_a3fc7242bee1a3 18,20
+  s_1a8eabb7dcf3a1::t_a65e930f34bee6 60
+  s_eae1ce2dc4f2cd::t_138ad5bf8b2319 1,4-9,70-72
+apps/web/src/components/PortfolioDashboard.tsx
+  s_96f71f2f23d290::t_cb9deb2d0a102b 87-89
+  s_96f71f2f23d290::t_c877b18e3c3b09 119
+  s_96f71f2f23d290::t_30019e33d17a41 145,192
+  s_96f71f2f23d290::t_4d82c4c3e31a2a 137
+  s_96f71f2f23d290::t_b3bad5394edaf7 122-123
+apps/web/src/components/BriefingChatPanel.tsx
+  s_96f71f2f23d290::t_e334757cc04ac5 1-23
+docs/PROJECT_CONTEXT.md
+  s_96f71f2f23d290::t_2b33f703b0d55a 594-595
+  s_eae1ce2dc4f2cd::t_da0ca5f0bce333 102
+  s_eae1ce2dc4f2cd::t_9e989aca511b65 718
+  s_40ad1169810d19::t_0bd681b3caca55 596-597
+  s_40ad1169810d19::t_d3ee0bff050401 12
+  s_96f71f2f23d290::t_a887c486fd9253 203,206-208
+  s_eae1ce2dc4f2cd::t_8fbbb44bea8845 302-303,305
+  s_eae1ce2dc4f2cd::t_0844f6ed33027d 209
+  s_40ad1169810d19::t_43269750ef320e 171
+  s_eae1ce2dc4f2cd::t_6698baa12960e0 385
+  s_96f71f2f23d290::t_8da1fae6bfb806 7,10-11
+  s_96f71f2f23d290::t_f49300035de3b7 238-240
+  s_eae1ce2dc4f2cd::t_bb1a8c78af4621 172
+  s_96f71f2f23d290::t_1a83dc4d98b524 733-736
+  s_40ad1169810d19::t_6221a31ab27a29 94
+  s_eae1ce2dc4f2cd::t_c1cee3862da49d 437
+  s_eae1ce2dc4f2cd::t_c64f4a67d23520 95
+  s_40ad1169810d19::t_f5f35f6db3a18e 382
+  s_eae1ce2dc4f2cd::t_6b355ee7fde86a 435
+  s_96f71f2f23d290::t_d851427af64937 88-91
+  s_96f71f2f23d290::t_893743ae56e365 616
+apps/web/src/lib/todayBriefing.test.ts
+  s_96f71f2f23d290::t_e49dd0b29e5d7d 1-3,5-106,112,119
+  s_96f71f2f23d290::t_69c02ee75505ba 113-118
+  s_96f71f2f23d290::t_7ef836d6b95662 107-111
+  s_96f71f2f23d290::t_7d009fb1aef3cb 4
+scripts/dev.sh
+  s_96f71f2f23d290::t_5230d6f7cda596 25
+apps/api/app/services/discovery_guard.py
+  s_fa344afd148553::t_f7dd7fcf00ecea 17
+  s_fa344afd148553::t_25e079b7f33ed5 66-75
+  s_fa344afd148553::t_32caa581cfa488 90-102
+apps/api/app/main.py
+  s_96f71f2f23d290::t_13c5abed14cfe0 6,10,12
+  s_96f71f2f23d290::t_f4f720cae3498a 129,141-146
+  s_eae1ce2dc4f2cd::t_e8d1bed9e564b7 573-591
+  s_eae1ce2dc4f2cd::t_de47d8eec42723 103,147-148
+  s_1a8eabb7dcf3a1::t_e7bd50d77b24ea 529-535
+apps/web/src/components/ReportChatPanel.tsx
+  s_96f71f2f23d290::t_68c1373716ef35 169-174,178,181-184,186-196
+  s_96f71f2f23d290::t_fa175ee7867094 246-248
+  s_96f71f2f23d290::t_062e2c99b391b4 340
+  s_96f71f2f23d290::t_f0e79c450fa40f 16-17
+  s_96f71f2f23d290::t_658bdfa2e2214e 28
+  s_96f71f2f23d290::t_e5cac06c4848db 259-261
+apps/web/src/app/login/page.tsx
+  s_96f71f2f23d290::t_97be0dd709936d 43
+apps/web/src/lib/storage.ts
+  s_96f71f2f23d290::t_83dbb56d0d3f0e 264,273
+docs/superpowers/plans/2026-06-21-dip-swing-discovery.md
+  s_1a8eabb7dcf3a1::t_92a472e6193e66 1-623
+apps/web/src/app/register/page.tsx
+  s_96f71f2f23d290::t_a408ba3903b35d 6,11-16,55-150,153
+apps/web/src/lib/marketThemeBoard.ts
+  s_1a8eabb7dcf3a1::t_2e59ab8551e657 178-184
+  s_40ad1169810d19::t_4433e0bc6441fe 148-177
+  s_eae1ce2dc4f2cd::t_a4422b386d2cc5 136-137
+  s_eae1ce2dc4f2cd::t_2e82bd670e37e3 129
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.17-trip",
+  "base_commit_sha": "677f13fadeaa9704b48e414089a00d5303bc5a9d",
+  "prompts": {},
+  "sessions": {
+    "s_1a8eabb7dcf3a1": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "5f6afb31-c8d7-4e3c-8fb9-83a4c0c10bb5",
+        "model": "composer-2.5"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    },
+    "s_2e702d9a7cfa5d": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "c1729f9f-45d4-4c8e-b490-cfd4a37b062f",
+        "model": "composer-2.5-fast"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    },
+    "s_40ad1169810d19": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "5482984b-1487-4d6d-932f-9bc2b144c284",
+        "model": "composer-2.5"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    },
+    "s_83787d6dbc638b": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "1ba84143-72aa-4500-9f61-e9fda5702576",
+        "model": "composer-2.5-fast"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    },
+    "s_96f71f2f23d290": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "72925288-a702-408f-83e3-dd9acdfd815d",
+        "model": "composer-2.5"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    },
+    "s_a47d5f56abd64c": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "7c73be69-ec71-4fcf-8386-e640b5a85eb8",
+        "model": "composer-2.5"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    },
+    "s_eae1ce2dc4f2cd": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "3c771fe0-f4f4-4d9b-8ec6-36b619dbb987",
+        "model": "composer-2.5"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    },
+    "s_f3171c46c6de84": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "d659658d-3e54-44f8-995c-83114c81d823",
+        "model": "composer-2.5-fast"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    },
+    "s_fa344afd148553": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "12cbda5c-8d85-4f83-8e52-dac96234340c",
+        "model": "composer-2.5"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
