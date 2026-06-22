@@ -1,0 +1,9 @@
+{
+  "navigationBarTitleText": "生成日报",
+  "usingComponents": {
+    "chat-panel": "../../components/chat-panel/chat-panel",
+    "md-view":    "../../components/md-view/md-view",
+    "state-view": "../../components/state-view/state-view",
+    "num-text":   "../../components/num-text/num-text"
+  }
+}

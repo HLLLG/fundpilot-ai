@@ -1,0 +1,408 @@
+<!-- pages/discovery/discovery.wxml -->
+<!-- Discovery_Page（推荐基金）
+     Req 15（扫描与报告）、Req 16（历史/复盘/批量删/追问）。 -->
+
+<scroll-view class="discovery-page" scroll-y enhanced>
+
+  <!-- ── 扫描/历史切换 Tab ─────────────────────────── -->
+  <view class="disc-tab-bar">
+    <view
+      class="disc-tab {{subView === 'scan' ? 'disc-tab--active' : ''}}"
+      bindtap="onSwitchToScan"
+    >新建扫描</view>
+    <view
+      class="disc-tab {{subView === 'history' ? 'disc-tab--active' : ''}}"
+      bindtap="onSwitchToHistory"
+    >历史记录</view>
+  </view>
+
+  <!-- ═══════════════════════════════════════════════════
+       扫描子视图（subView === 'scan'）
+  ═══════════════════════════════════════════════════ -->
+  <view wx:if="{{subView === 'scan'}}">
+
+    <!-- ── 配置区（Req 15.1）─────────────────────────────── -->
+    <view class="card disc-section" wx:if="{{jobPhase === 'idle' || jobPhase === 'failed'}}">
+      <view class="disc-section__title">扫描配置</view>
+
+      <!-- 扫描模式 -->
+      <view class="form-row">
+        <text class="form-label">扫描模式</text>
+        <picker mode="selector" range="{{scanModes}}" range-key="label"
+                value="{{scanModeIndex}}" bindchange="onScanModeChange">
+          <view class="form-picker">
+            <text>{{scanModes[scanModeIndex].label}}</text>
+            <text class="form-picker__arrow">›</text>
+          </view>
+        </picker>
+      </view>
+
+      <!-- 关注方向（≤3，Req 15.1 / 10.7）-->
+      <view class="form-col">
+        <text class="form-label">关注方向（最多 3 个）</text>
+
+        <!-- 已选关注方向 tags -->
+        <view class="focus-tags" wx:if="{{focusSectors.length > 0}}">
+          <view
+            class="focus-tag"
+            wx:for="{{focusSectors}}"
+            wx:key="*this"
+          >
+            <text class="focus-tag__label">{{item}}</text>
+            <text class="focus-tag__remove" data-sector="{{item}}" bindtap="onRemoveFocusSector">×</text>
+          </view>
+        </view>
+        <view wx:else class="disc-placeholder-text">暂未选择关注方向</view>
+
+        <!-- 候选板块滚动选择（Req 15.2）-->
+        <view class="sectors-picker" wx:if="{{sectorsAvailable.length > 0}}">
+          <scroll-view scroll-x class="sectors-scroll">
+            <view class="sectors-row">
+              <view
+                wx:for="{{sectorsAvailable}}"
+                wx:key="sector_name"
+                class="sector-chip {{focusSectors.indexOf(item.sector_name) !== -1 ? 'sector-chip--active' : ''}}"
+                data-sector="{{item.sector_name || item}}"
+                bindtap="onAddFocusSector"
+              >
+                <text>{{item.sector_name || item}}</text>
+              </view>
+            </view>
+          </scroll-view>
+        </view>
+        <view wx:elif="{{sectorsLoading}}" class="disc-placeholder-text">加载板块中…</view>
+      </view>
+
+      <!-- 选基策略 -->
+      <view class="form-row">
+        <text class="form-label">选基策略</text>
+        <picker mode="selector" range="{{strategyOptions}}" range-key="label"
+                value="{{strategyIndex}}" bindchange="onStrategyChange">
+          <view class="form-picker">
+            <text>{{strategyOptions[strategyIndex].label}}</text>
+            <text class="form-picker__arrow">›</text>
+          </view>
+        </picker>
+      </view>
+
+      <!-- 基金类型偏好 -->
+      <view class="form-row">
+        <text class="form-label">类型偏好</text>
+        <picker mode="selector" range="{{fundTypeOptions}}" range-key="label"
+                value="{{fundTypeIndex}}" bindchange="onFundTypeChange">
+          <view class="form-picker">
+            <text>{{fundTypeOptions[fundTypeIndex].label}}</text>
+            <text class="form-picker__arrow">›</text>
+          </view>
+        </picker>
+      </view>
+
+      <!-- 预算 -->
+      <view class="form-row">
+        <text class="form-label">预算（元，选填）</text>
+        <input
+          class="form-input"
+          type="digit"
+          placeholder="如：10000"
+          value="{{budgetYuan}}"
+          bindinput="onBudgetInput"
+        />
+      </view>
+
+      <!-- 分析模式 -->
+      <view class="form-row">
+        <text class="form-label">分析模式</text>
+        <view class="segmented">
+          <view
+            wx:for="{{modeOptions}}"
+            wx:key="value"
+            class="segmented__item {{modeIndex === index ? 'segmented__item--active' : ''}}"
+            data-value="{{index}}"
+            bindtap="onModeChange"
+          >{{item.label}}</view>
+        </view>
+      </view>
+
+      <!-- AI 角色设定（Req 15.3）-->
+      <view class="form-col">
+        <view class="form-row form-row--between">
+          <text class="form-label">AI 角色设定</text>
+          <view class="btn btn-secondary btn--xs" bindtap="onSavePrompt">保存</view>
+        </view>
+        <textarea
+          class="form-textarea"
+          placeholder="输入荐基 AI 角色提示词（可选）…"
+          value="{{systemRolePrompt}}"
+          bindinput="onPromptInput"
+          maxlength="500"
+          auto-height
+        />
+      </view>
+    </view>
+
+    <!-- ── 开始扫描按钮（Req 15.4）────────────────────── -->
+    <view class="disc-actions" wx:if="{{jobPhase === 'idle' || jobPhase === 'failed'}}">
+      <view class="btn btn-primary btn--lg disc-actions__btn" bindtap="onStartScan">
+        开始扫描
+      </view>
+    </view>
+
+    <!-- ── 轮询进度（Req 15.5）──────────────────────────── -->
+    <view class="card disc-section disc-progress"
+          wx:if="{{jobPhase === 'submitting' || jobPhase === 'polling'}}">
+      <view class="disc-progress__icon">⏳</view>
+      <view class="disc-progress__stage">
+        {{jobPhase === 'submitting' ? '正在提交任务…' : (jobStageLabel || '扫描中…')}}
+      </view>
+      <view class="disc-progress__hint">荐基扫描约需 30–120 秒，请稍候</view>
+      <view class="disc-progress__bar">
+        <view class="disc-progress__fill"></view>
+      </view>
+    </view>
+
+    <!-- ── 失败态（Req 15.4 error path）───────────────── -->
+    <view class="card disc-section disc-fail" wx:if="{{jobPhase === 'failed'}}">
+      <view class="disc-fail__icon">✗</view>
+      <text class="disc-fail__msg">{{jobError || '荐基扫描失败，请重试'}}</text>
+      <view class="btn btn-secondary btn--sm" bindtap="onReScan">重新扫描</view>
+    </view>
+
+    <!-- ── 荐基报告（Req 15.6）──────────────────────────── -->
+    <view class="card disc-section" wx:if="{{jobPhase === 'completed' && reportMarkdown}}">
+      <view class="disc-section__title">荐基报告</view>
+      <md-view markdown="{{reportMarkdown}}" />
+    </view>
+
+    <!-- ── 推荐基金列表（Req 15.6 + 15.7）─────────────── -->
+    <view class="card disc-section"
+          wx:if="{{jobPhase === 'completed' && discoveryReport && discoveryReport.recommended_funds && discoveryReport.recommended_funds.length > 0}}">
+      <view class="disc-section__title">推荐基金</view>
+      <view
+        class="fund-item"
+        wx:for="{{discoveryReport.recommended_funds}}"
+        wx:key="fund_code"
+        data-fund="{{item}}"
+        bindtap="onFundPreviewTap"
+      >
+        <view class="fund-item__main">
+          <text class="fund-item__name">{{item.fund_name || item.fund_code}}</text>
+          <text class="fund-item__code">{{item.fund_code}}</text>
+        </view>
+        <view class="fund-item__meta" wx:if="{{item.reason}}">
+          <text class="fund-item__reason">{{item.reason}}</text>
+        </view>
+        <text class="fund-item__arrow">›</text>
+      </view>
+    </view>
+
+    <!-- ── 操作按钮行（完成后）──────────────────────────── -->
+    <view class="disc-btn-row"
+          wx:if="{{jobPhase === 'completed' && discoveryReport}}">
+      <view class="btn btn-secondary btn--sm" bindtap="onToggleChat">
+        {{showChat ? '收起追问' : 'AI 追问'}}
+      </view>
+      <view class="btn btn-secondary btn--sm" bindtap="onReScan">
+        重新扫描
+      </view>
+    </view>
+
+    <!-- ── AI 追问面板（Req 16.4–16.6，通过 chat-panel）── -->
+    <view class="card disc-section disc-chat-section"
+          wx:if="{{showChat && chatReportId}}">
+      <view class="disc-section__title">AI 追问</view>
+      <chat-panel
+        reportId="{{chatReportId}}"
+        chatType="discovery"
+        loading="{{false}}"
+      />
+    </view>
+
+  </view><!-- /scan subView -->
+
+  <!-- ═══════════════════════════════════════════════════
+       历史子视图（subView === 'history'）Req 16.1–16.6
+  ═══════════════════════════════════════════════════ -->
+  <view wx:if="{{subView === 'history'}}">
+
+    <!-- 顶部操作栏：多选 / 批量删除 -->
+    <view class="disc-history-toolbar">
+      <view
+        class="btn btn-secondary btn--xs"
+        bindtap="onToggleSelectMode"
+      >{{isSelecting ? '取消' : '多选'}}</view>
+      <view
+        wx:if="{{isSelecting}}"
+        class="btn btn-danger btn--xs"
+        bindtap="onBatchDelete"
+      >删除选中（{{selectedCount}}）</view>
+    </view>
+
+    <!-- 加载中 -->
+    <view class="disc-placeholder-text" wx:if="{{historyLoading}}">加载中…</view>
+
+    <!-- 错误态 -->
+    <view class="card disc-section disc-fail" wx:elif="{{historyError}}">
+      <view class="disc-fail__icon">⚠</view>
+      <text class="disc-fail__msg">{{historyError}}</text>
+      <view class="btn btn-secondary btn--sm" bindtap="onRetryHistory">重试</view>
+    </view>
+
+    <!-- 空态 -->
+    <view class="disc-placeholder-text"
+          wx:elif="{{!historyLoading && historyList.length === 0}}">
+      暂无历史荐基报告
+    </view>
+
+    <!-- 历史报告列表（Req 16.1）-->
+    <view class="card disc-section" wx:elif="{{historyList.length > 0}}">
+      <view
+        class="hist-item {{isSelecting && selectedIds[item.id] ? 'hist-item--selected' : ''}}"
+        wx:for="{{historyList}}"
+        wx:key="id"
+        data-id="{{item.id}}"
+        bindtap="onToggleSelectReport"
+      >
+        <!-- 多选复选框 -->
+        <view class="hist-item__checkbox" wx:if="{{isSelecting}}">
+          <view class="checkbox {{selectedIds[item.id] ? 'checkbox--checked' : ''}}">
+            <text wx:if="{{selectedIds[item.id]}}" class="checkbox__tick">✓</text>
+          </view>
+        </view>
+
+        <!-- 报告信息 -->
+        <view class="hist-item__body">
+          <view class="hist-item__title">
+            {{item.scan_mode || item.title || '荐基报告'}}
+          </view>
+          <view class="hist-item__date" wx:if="{{item.created_at}}">
+            {{item.created_at}}
+          </view>
+          <view class="hist-item__meta" wx:if="{{item.focus_sectors && item.focus_sectors.length > 0}}">
+            <text
+              class="hist-item__tag"
+              wx:for="{{item.focus_sectors}}"
+              wx:key="*this"
+              wx:for-item="sector"
+            >{{sector}}</text>
+          </view>
+        </view>
+
+        <!-- 操作按钮（非多选模式）-->
+        <view class="hist-item__actions" wx:if="{{!isSelecting}}">
+          <view
+            class="btn btn-secondary btn--xs"
+            data-id="{{item.id}}"
+            catchtap="onViewOutcomes"
+          >复盘</view>
+          <view
+            class="btn btn-secondary btn--xs"
+            data-id="{{item.id}}"
+            catchtap="onOpenHistoryReport"
+          >追问</view>
+        </view>
+      </view>
+    </view>
+
+  </view><!-- /history subView -->
+
+  <!-- 底部留白 -->
+  <view style="height: 40rpx;"></view>
+
+</scroll-view>
+
+<!-- ── 推荐基金详情预览弹层（Req 15.7）─────────────── -->
+<view class="fund-preview-mask" wx:if="{{showFundPreview}}" bindtap="onCloseFundPreview">
+  <view class="fund-preview-sheet" catchtap>
+    <view class="fund-preview__header">
+      <text class="fund-preview__title">{{previewFund.fund_name || previewFund.fund_code}}</text>
+      <text class="fund-preview__code">代码：{{previewFund.fund_code}}</text>
+    </view>
+
+    <view class="fund-preview__body">
+      <!-- 推荐理由 -->
+      <view class="fund-preview__row" wx:if="{{previewFund.reason}}">
+        <text class="fund-preview__row-label">推荐理由</text>
+        <text class="fund-preview__row-value">{{previewFund.reason}}</text>
+      </view>
+      <!-- 建议仓位 / 比例 -->
+      <view class="fund-preview__row" wx:if="{{previewFund.target_weight_percent != null}}">
+        <text class="fund-preview__row-label">建议仓位</text>
+        <num-text value="{{previewFund.target_weight_percent}}" kind="percent" />
+      </view>
+      <!-- 预期收益区间 -->
+      <view class="fund-preview__row" wx:if="{{previewFund.expected_return_hint}}">
+        <text class="fund-preview__row-label">预期收益参考</text>
+        <text class="fund-preview__row-value">{{previewFund.expected_return_hint}}</text>
+      </view>
+      <!-- 风险提示 -->
+      <view class="fund-preview__row" wx:if="{{previewFund.risk_note}}">
+        <text class="fund-preview__row-label">风险提示</text>
+        <text class="fund-preview__row-value disc-risk-text">{{previewFund.risk_note}}</text>
+      </view>
+    </view>
+
+    <view class="fund-preview__footer">
+      <view class="btn btn-primary btn--lg" bindtap="onGoToFundDetail">查看基金详情</view>
+      <view class="btn btn-secondary btn--sm" bindtap="onCloseFundPreview">关闭</view>
+    </view>
+  </view>
+</view>
+
+<!-- ── 复盘弹层（Req 16.3）─────────────────────────── -->
+<view class="fund-preview-mask" wx:if="{{showOutcomes}}" bindtap="onCloseOutcomes">
+  <view class="fund-preview-sheet" catchtap>
+    <view class="fund-preview__header">
+      <text class="fund-preview__title">荐基复盘</text>
+    </view>
+
+    <!-- 加载中 -->
+    <view class="disc-placeholder-text" wx:if="{{outcomesLoading}}">加载复盘中…</view>
+
+    <!-- 错误 -->
+    <view wx:elif="{{outcomesError}}">
+      <text class="disc-fail__msg">{{outcomesError}}</text>
+    </view>
+
+    <!-- 复盘数据 -->
+    <view class="fund-preview__body" wx:elif="{{outcomesData}}">
+      <!-- 整体收益 -->
+      <view class="fund-preview__row" wx:if="{{outcomesData.overall_return_percent != null}}">
+        <text class="fund-preview__row-label">整体收益</text>
+        <num-text value="{{outcomesData.overall_return_percent}}" kind="percent" signed="{{true}}" />
+      </view>
+      <!-- 推荐基金复盘列表 -->
+      <view wx:if="{{outcomesData.fund_outcomes && outcomesData.fund_outcomes.length > 0}}">
+        <view class="disc-section__title" style="margin-bottom: 12rpx;">推荐基金表现</view>
+        <view
+          class="outcome-item"
+          wx:for="{{outcomesData.fund_outcomes}}"
+          wx:key="fund_code"
+        >
+          <view class="outcome-item__name">{{item.fund_name || item.fund_code}}</view>
+          <view class="outcome-item__row">
+            <text class="fund-preview__row-label">区间涨跌</text>
+            <num-text
+              wx:if="{{item.return_percent != null}}"
+              value="{{item.return_percent}}"
+              kind="percent"
+              signed="{{true}}"
+            />
+            <text wx:else class="fund-preview__row-value">–</text>
+          </view>
+          <view class="outcome-item__row" wx:if="{{item.outcome_note}}">
+            <text class="fund-preview__row-label">说明</text>
+            <text class="fund-preview__row-value">{{item.outcome_note}}</text>
+          </view>
+        </view>
+      </view>
+      <!-- 摘要文字 -->
+      <view class="fund-preview__row" wx:if="{{outcomesData.summary}}">
+        <text class="fund-preview__row-value" style="line-height:1.7;">{{outcomesData.summary}}</text>
+      </view>
+    </view>
+
+    <view class="fund-preview__footer">
+      <view class="btn btn-secondary btn--sm" bindtap="onCloseOutcomes">关闭</view>
+    </view>
+  </view>
+</view>

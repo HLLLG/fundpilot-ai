@@ -1,0 +1,10 @@
+<!-- components/chart-donut/chart-donut.wxml -->
+<!-- 甜甜圈/持仓分布图：包裹 ec-canvas，高度由 height prop 控制。Requirements: 9.7 -->
+<view class="chart-donut__container" style="height: {{height}};">
+  <ec-canvas
+    id="chart-donut-ec"
+    canvas-id="{{canvasId}}"
+    ec="{{ec}}"
+    class="chart-donut__canvas"
+  ></ec-canvas>
+</view>

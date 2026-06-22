@@ -1,0 +1,121 @@
+/**
+ * components/md-view/md-view.wxss
+ * towxml Markdown 渲染主题，与设计 token 对齐（design.md A5）：
+ *   - 链接用品牌蓝（--brand）
+ *   - 正文行高适配移动端阅读
+ *   - 标题/代码/表格/引用样式沿用 token 的字号/描边/圆角/背景
+ *
+ * 说明：官方 towxml 渲染出的富文本节点带有 h2w__* 类名（h2w__a / h2w__h1 等）。
+ * 下方按这些类名挂主题；占位降级文本走 .md-view__plain。
+ * styleIsolation: apply-shared 使这些样式可作用到 towxml 子组件节点。
+ */
+
+.md-view {
+  font-family: var(--font-family-base);
+  font-size: var(--font-base);
+  line-height: 1.75;
+  color: var(--text);
+  word-break: break-word;
+}
+
+/* ── 占位降级：纯文本 ─────────────────────────── */
+.md-view__plain {
+  display: block;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: var(--font-base);
+  line-height: 1.75;
+  color: var(--text);
+}
+
+/* ── towxml 富文本主题（官方源码就位后生效） ──── */
+/* 链接：品牌蓝 */
+.h2w__a,
+.md-view a {
+  color: var(--brand);
+  text-decoration: none;
+}
+
+/* 段落 */
+.h2w__p,
+.md-view p {
+  margin: 0 0 var(--space-sm) 0;
+  line-height: 1.75;
+  color: var(--text);
+}
+
+/* 标题 */
+.h2w__h1,
+.h2w__h2,
+.h2w__h3,
+.h2w__h4 {
+  color: var(--text);
+  font-weight: 600;
+  line-height: 1.4;
+  margin: var(--space-md) 0 var(--space-sm) 0;
+}
+.h2w__h1 { font-size: var(--font-xl); }
+.h2w__h2 { font-size: var(--font-lg); }
+.h2w__h3 { font-size: var(--font-md); }
+.h2w__h4 { font-size: var(--font-base); }
+
+/* 列表 */
+.h2w__li {
+  color: var(--text);
+  line-height: 1.75;
+}
+
+/* 引用块 */
+.h2w__blockquote {
+  margin: var(--space-sm) 0;
+  padding: var(--space-sm) var(--space-md);
+  border-left: 6rpx solid var(--brand);
+  background: var(--brand-soft);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+}
+
+/* 行内代码 */
+.h2w__code {
+  font-family: var(--font-family-number);
+  background: var(--surface-muted);
+  border: 2rpx solid var(--line);
+  border-radius: var(--radius-xs);
+  padding: 0 8rpx;
+  color: var(--text);
+}
+
+/* 代码块 */
+.h2w__pre {
+  background: var(--surface-muted);
+  border: 2rpx solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: var(--space-sm);
+  overflow-x: auto;
+}
+
+/* 表格 */
+.h2w__table {
+  border: 2rpx solid var(--line);
+  border-radius: var(--radius-sm);
+}
+.h2w__thead {
+  background: var(--surface-muted);
+}
+.h2w__th,
+.h2w__td {
+  border: 2rpx solid var(--line);
+  padding: var(--space-xs) var(--space-sm);
+  color: var(--text);
+}
+
+/* 分隔线 */
+.h2w__hr {
+  border: none;
+  border-top: 2rpx solid var(--line);
+  margin: var(--space-md) 0;
+}
+
+/* 强调 */
+.h2w__strong { font-weight: 600; color: var(--text); }
+.h2w__em { font-style: italic; }

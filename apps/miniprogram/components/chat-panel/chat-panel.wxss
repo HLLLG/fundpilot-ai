@@ -1,0 +1,203 @@
+/**
+ * components/chat-panel/chat-panel.wxss
+ * 非流式追问对话面板样式（Req 14，design.md chat-panel）。
+ * 与设计 token（styles/tokens.wxss）对齐：品牌蓝、圆角、间距、阴影。
+ */
+
+.chat-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 400rpx;
+  background: var(--bg, #f3f6fc);
+  border-radius: var(--radius-md, 16rpx);
+  overflow: hidden;
+}
+
+/* ── 消息滚动区 ──────────────────────────────────────── */
+.chat-panel__scroll {
+  flex: 1;
+  min-height: 0;
+  max-height: 900rpx;
+  padding: 16rpx 0;
+}
+
+.chat-panel__messages {
+  display: flex;
+  flex-direction: column;
+  gap: 20rpx;
+  padding: 0 16rpx 8rpx;
+}
+
+.chat-panel__anchor {
+  height: 1rpx;
+}
+
+/* ── 气泡容器 ────────────────────────────────────────── */
+.chat-bubble {
+  display: flex;
+  align-items: flex-start;
+  gap: 12rpx;
+  max-width: 100%;
+}
+
+.chat-bubble--user {
+  flex-direction: row-reverse;
+}
+
+.chat-bubble--assistant {
+  flex-direction: row;
+}
+
+/* ── 头像 ────────────────────────────────────────────── */
+.chat-bubble__avatar {
+  flex-shrink: 0;
+  width: 56rpx;
+  height: 56rpx;
+  border-radius: 50%;
+  background: var(--brand, #2356e0);
+  color: #fff;
+  font-size: 20rpx;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ── 气泡内容 ────────────────────────────────────────── */
+.chat-bubble__content {
+  max-width: 78%;
+  padding: 16rpx 20rpx;
+  border-radius: var(--radius-md, 16rpx);
+  font-size: var(--font-base, 28rpx);
+  line-height: 1.6;
+  word-break: break-word;
+}
+
+.chat-bubble__content--user {
+  background: var(--brand, #2356e0);
+  color: #fff;
+  border-bottom-right-radius: 4rpx;
+}
+
+.chat-bubble__content--assistant {
+  background: #fff;
+  color: var(--text, #1a2237);
+  border: 2rpx solid var(--line, #e5eaf5);
+  border-bottom-left-radius: 4rpx;
+  box-shadow: var(--shadow-sm, 0 2rpx 8rpx rgba(0,0,0,0.06));
+}
+
+.chat-bubble__content--loading {
+  min-width: 80rpx;
+}
+
+.chat-bubble__text {
+  font-size: var(--font-base, 28rpx);
+  line-height: 1.6;
+}
+
+/* ── 输入中占位 ──────────────────────────────────────── */
+.chat-panel__typing {
+  font-size: 36rpx;
+  color: var(--text-secondary, #6b7a9a);
+  letter-spacing: 6rpx;
+}
+
+/* ── 错误提示条 ──────────────────────────────────────── */
+.chat-panel__error-bar {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  padding: 12rpx 20rpx;
+  background: #fff5f5;
+  border-top: 2rpx solid var(--down-light, #ffe0e1);
+}
+
+.chat-panel__error-text {
+  flex: 1;
+  font-size: 24rpx;
+  color: var(--down, #e5484d);
+  line-height: 1.5;
+}
+
+.chat-panel__retry-btn {
+  flex-shrink: 0;
+}
+
+/* ── 输入区 ──────────────────────────────────────────── */
+.chat-panel__input-area {
+  flex-shrink: 0;
+  border-top: 2rpx solid var(--line, #e5eaf5);
+  background: #fff;
+  padding: 12rpx 16rpx;
+  display: flex;
+  flex-direction: column;
+  gap: 10rpx;
+}
+
+/* 快速/深度模式切换条 */
+.chat-panel__mode-bar {
+  display: flex;
+  gap: 12rpx;
+  align-items: center;
+}
+
+.chat-panel__mode-btn {
+  padding: 8rpx 20rpx;
+  border-radius: var(--radius-full, 999rpx);
+  font-size: 22rpx;
+  color: var(--text-secondary, #6b7a9a);
+  background: var(--surface-muted, #f1f5fb);
+  border: 2rpx solid transparent;
+  line-height: 1.4;
+}
+
+.chat-panel__mode-btn--active {
+  background: var(--brand-soft, #e8eefa);
+  color: var(--brand, #2356e0);
+  border-color: var(--brand, #2356e0);
+  font-weight: 600;
+}
+
+/* 文本框 + 发送按钮行 */
+.chat-panel__input-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 12rpx;
+}
+
+.chat-panel__textarea {
+  flex: 1;
+  min-height: 64rpx;
+  max-height: 200rpx;
+  padding: 14rpx 16rpx;
+  background: var(--surface-muted, #f1f5fb);
+  border-radius: var(--radius-sm, 10rpx);
+  border: 2rpx solid var(--line, #e5eaf5);
+  font-size: var(--font-base, 28rpx);
+  line-height: 1.5;
+  color: var(--text, #1a2237);
+  box-sizing: border-box;
+}
+
+.chat-panel__send-btn {
+  flex-shrink: 0;
+  height: 72rpx;
+  padding: 0 28rpx;
+  background: var(--brand, #2356e0);
+  color: #fff;
+  font-size: 28rpx;
+  font-weight: 600;
+  border-radius: var(--radius-sm, 10rpx);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+.chat-panel__send-btn--disabled {
+  background: var(--line, #e5eaf5);
+  color: var(--text-secondary, #6b7a9a);
+  pointer-events: none;
+}

@@ -1,0 +1,62 @@
+/* components/state-view/state-view.wxss */
+/* 复用设计系统 token（styles/tokens.wxss 在 app.wxss 全局注入，组件内可直接 var()）。 */
+/* Req 1.5 / 4.1 / 4.2 */
+
+.sv {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-2xl) var(--space-lg);
+  text-align: center;
+  box-sizing: border-box;
+}
+
+.sv__text {
+  margin-top: var(--space-md);
+  font-size: var(--font-sm);
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+/* ── 加载态 spinner ──────────────────────────── */
+.sv__spinner {
+  width: 56rpx;
+  height: 56rpx;
+  border-radius: 50%;
+  border: 6rpx solid var(--line);
+  border-top-color: var(--brand);
+  animation: sv-spin 0.8s linear infinite;
+}
+
+@keyframes sv-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* ── 错误/空态图标 ───────────────────────────── */
+.sv__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 80rpx;
+  height: 80rpx;
+  border-radius: var(--radius-pill);
+  font-size: var(--font-xl);
+  font-weight: 700;
+}
+
+.sv__icon--error {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.sv__icon--empty {
+  background: var(--surface-muted);
+  color: var(--text-muted);
+}
+
+/* ── 重试按钮间距 ────────────────────────────── */
+.sv__retry {
+  margin-top: var(--space-lg);
+}

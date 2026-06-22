@@ -25,7 +25,8 @@ Page({
       }
       const session = await api.wechatLogin(payload);
       api.setToken(session.accessToken);
-      wx.reLaunch({ url: "/pages/holdings/holdings" });
+      // 登录默认落地简报首页（Req 17.1）；briefing 为 TabBar 页，reLaunch 合法。
+      wx.reLaunch({ url: "/pages/briefing/briefing" });
     } catch (err) {
       this.setData({
         error: (err && err.message) || "登录失败",

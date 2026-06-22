@@ -1,0 +1,13 @@
+{
+  "name": "fundpilot-miniprogram",
+  "version": "0.0.0",
+  "private": true,
+  "description": "好基灵 FundPilot AI 微信小程序逻辑层测试工程（纯函数单测 + 属性测试）",
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "fast-check": "^3.23.1",
+    "vitest": "^2.1.8"
+  }
+}

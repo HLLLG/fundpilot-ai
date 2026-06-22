@@ -1,0 +1,148 @@
+/* pages/profit/profit.wxss                                */
+/* 盈亏分析页样式 — 使用设计 token                          */
+/* Requirements: 9.1, 9.2, 9.3, 9.6, 9.7                  */
+
+.profit-page {
+  padding: var(--space-md);
+  background: var(--bg);
+  min-height: 100vh;
+  box-sizing: border-box;
+}
+
+/* ── 区间选择条 ─────────────────────────────────────────── */
+.profit-page__range-bar {
+  margin-bottom: var(--space-md);
+}
+
+/* ── 通用卡片间距 ────────────────────────────────────────── */
+.profit-page__summary-card,
+.profit-page__chart-card,
+.profit-page__top5-card,
+.profit-page__empty-top5 {
+  margin-bottom: var(--space-md);
+}
+
+/* ── 章节标题 ────────────────────────────────────────────── */
+.profit-page__section-title {
+  margin-bottom: var(--space-sm);
+}
+
+/* ── KPI 汇总行 ─────────────────────────────────────────── */
+.profit-page__kpi-row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.profit-page__kpi-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.profit-page__kpi-label {
+  font-size: var(--font-xs);
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.profit-page__kpi-value {
+  font-size: var(--font-md);
+  font-weight: 700;
+  font-family: var(--font-family-number);
+}
+
+/* ── TOP5 列表 ───────────────────────────────────────────── */
+.profit-page__top5-header {
+  padding-bottom: var(--space-xs);
+  border-bottom: 1rpx solid var(--line);
+  margin-bottom: var(--space-sm);
+}
+
+.profit-page__top5-label {
+  font-size: var(--font-sm);
+  font-weight: 700;
+}
+
+.profit-page__top5-label--up {
+  color: var(--up);
+}
+
+.profit-page__top5-label--down {
+  color: var(--down);
+}
+
+.profit-page__top5-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--space-sm) 0;
+  border-bottom: 1rpx solid var(--line);
+}
+
+.profit-page__top5-item:last-child {
+  border-bottom: none;
+}
+
+.profit-page__top5-item-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4rpx;
+  flex: 1;
+  min-width: 0;
+}
+
+.profit-page__top5-item-name {
+  font-size: var(--font-base);
+  color: var(--text);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profit-page__top5-item-code {
+  font-size: var(--font-xs);
+  color: var(--text-muted);
+}
+
+.profit-page__top5-item-profit {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4rpx;
+  margin-left: var(--space-sm);
+}
+
+.profit-page__top5-item-amount {
+  font-size: var(--font-base);
+  font-weight: 700;
+  font-family: var(--font-family-number);
+}
+
+.profit-page__top5-item-pct {
+  font-size: var(--font-xs);
+  font-family: var(--font-family-number);
+}
+
+/* 亏损列表与盈利列表间距 */
+.profit-page__losers-section {
+  margin-top: var(--space-md);
+}
+
+/* ── 空态提示 ────────────────────────────────────────────── */
+.profit-page__empty-top5 {
+  text-align: center;
+}
+
+.profit-page__empty-tip {
+  font-size: var(--font-sm);
+  color: var(--text-muted);
+}
+
+/* ── 工具类 ─────────────────────────────────────────────── */
+.u-muted {
+  color: var(--text-muted);
+}

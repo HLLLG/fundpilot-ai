@@ -1,0 +1,11 @@
+<!-- 官方 ec-canvas 桥接组件模板 -->
+<canvas
+  type="2d"
+  class="ec-canvas"
+  id="{{ canvasId }}"
+  canvas-id="{{ canvasId }}"
+  bindinit="init"
+  bindtouchstart="{{ ec.disableTouch ? '' : 'touchStart' }}"
+  bindtouchmove="{{ ec.disableTouch ? '' : 'touchMove' }}"
+  bindtouchend="{{ ec.disableTouch ? '' : 'touchEnd' }}"
+></canvas>

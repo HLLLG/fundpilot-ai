@@ -1,0 +1,13 @@
+/* components/chart-line/chart-line.wxss */
+/* 折线/分时图容器。Requirements: 8.2 */
+
+.chart-line__container {
+  width: 100%;
+  display: block;
+}
+
+.chart-line__canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}

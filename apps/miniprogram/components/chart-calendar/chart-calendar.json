@@ -1,0 +1,6 @@
+{
+  "component": true,
+  "usingComponents": {
+    "num-text": "../num-text/num-text"
+  }
+}

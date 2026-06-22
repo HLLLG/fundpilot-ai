@@ -1,0 +1,7 @@
+{
+  "navigationBarTitleText": "盯盘提醒",
+  "usingComponents": {
+    "state-view": "../../components/state-view/state-view",
+    "num-text": "../../components/num-text/num-text"
+  }
+}

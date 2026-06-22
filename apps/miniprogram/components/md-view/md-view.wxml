@@ -1,0 +1,12 @@
+<!-- components/md-view/md-view.wxml -->
+<!-- towxml 富文本渲染（官方源码就位时）；占位/异常时降级为纯文本。 -->
+<view class="md-view">
+  <text
+    wx:if="{{isPlaceholder}}"
+    class="md-view__plain"
+    user-select
+    decode
+    space="nbsp"
+  >{{plainText}}</text>
+  <towxml wx:elif="{{nodes}}" nodes="{{nodes}}" />
+</view>

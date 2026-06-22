@@ -1,10 +1,363 @@
-.page { padding: 24rpx; }
-.card { background: #fff; border-radius: 24rpx; padding: 32rpx; }
-.name { display: block; font-size: 36rpx; font-weight: 800; color: #0f172a; }
-.code { display: block; margin-top: 8rpx; color: #94a3b8; font-size: 26rpx; }
-.grid { margin-top: 32rpx; display: grid; grid-template-columns: 1fr 1fr; gap: 24rpx; }
-.item { background: #f8fafc; border-radius: 16rpx; padding: 20rpx; }
-.label { display: block; font-size: 22rpx; color: #64748b; }
-.value { display: block; margin-top: 8rpx; font-size: 30rpx; font-weight: 700; color: #0f172a; }
-.hint, .error { text-align: center; padding: 48rpx; color: #64748b; }
-.error { color: #dc2626; }
+/* pages/fund-detail/fund-detail.wxss */
+/* 基金详情页样式，使用 styles/tokens.wxss 设计 token。Requirements: 8.1, 8.2 */
+
+@import "../../styles/tokens.wxss";
+@import "../../styles/shared.wxss";
+
+/* ── 页面容器 ──────────────────────────────────────── */
+.page {
+  min-height: 100vh;
+  background: var(--bg, #f3f6fc);
+  padding: var(--space-3, 24rpx);
+  box-sizing: border-box;
+}
+
+/* ── 卡片间距 ──────────────────────────────────────── */
+.card {
+  background: #fff;
+  border-radius: var(--radius-2, 24rpx);
+  padding: var(--space-4, 32rpx);
+  box-shadow: var(--shadow-1, 0 2rpx 12rpx rgba(0,0,0,0.06));
+  margin-bottom: var(--space-3, 24rpx);
+}
+
+/* ── 标题卡片 ──────────────────────────────────────── */
+.header-card {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.fund-title {
+  flex: 1;
+}
+
+.fund-name {
+  display: block;
+  font-size: 34rpx;
+  font-weight: 800;
+  color: var(--text-primary, #0f172a);
+  line-height: 1.3;
+}
+
+.fund-code {
+  display: block;
+  margin-top: 6rpx;
+  font-size: 24rpx;
+  color: var(--text-tertiary, #94a3b8);
+  font-family: var(--font-mono, 'Courier New', monospace);
+}
+
+.sector-badge {
+  margin-left: var(--space-2, 16rpx);
+  background: var(--accent-light, rgba(35,86,224,0.08));
+  border-radius: var(--radius-1, 12rpx);
+  padding: 8rpx 16rpx;
+  flex-shrink: 0;
+}
+
+.sector-text {
+  font-size: 22rpx;
+  color: var(--brand, #2356e0);
+  font-weight: 600;
+}
+
+/* ── 指标网格（2 列）──────────────────────────────── */
+.metrics-card {
+  padding-bottom: var(--space-3, 24rpx);
+}
+
+.metrics-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3, 24rpx) var(--space-3, 24rpx);
+}
+
+.metric-item {
+  background: var(--bg, #f8fafc);
+  border-radius: var(--radius-1, 16rpx);
+  padding: var(--space-3, 20rpx);
+  min-height: 96rpx;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.metric-label {
+  display: block;
+  font-size: 22rpx;
+  color: var(--text-secondary, #64748b);
+  margin-bottom: 8rpx;
+}
+
+/* num-text 组件本身输出 <text>，继承字号与字重 */
+.metric-value {
+  font-size: 30rpx;
+  font-weight: 700;
+}
+
+.metric-value-plain {
+  display: flex;
+  flex-direction: row;
+  align-items: baseline;
+  gap: 4rpx;
+}
+
+.metric-value-plain text {
+  font-size: 30rpx;
+  font-weight: 700;
+  color: var(--text-primary, #0f172a);
+}
+
+.metric-unit {
+  font-size: 22rpx;
+  color: var(--text-secondary, #64748b) !important;
+  font-weight: 400 !important;
+}
+
+/* 净值 + 净值日期两行 */
+.metric-value-nav {
+  display: flex;
+  flex-direction: column;
+}
+
+.metric-nav-value {
+  font-size: 30rpx;
+  font-weight: 700;
+  color: var(--text-primary, #0f172a);
+}
+
+.metric-nav-date {
+  font-size: 20rpx;
+  color: var(--text-tertiary, #94a3b8);
+  margin-top: 4rpx;
+}
+
+/* ── 分时图卡片 ───────────────────────────────────── */
+.chart-card {
+  padding-bottom: var(--space-3, 24rpx);
+}
+
+.chart-header {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-3, 20rpx);
+}
+
+.chart-title {
+  font-size: 28rpx;
+  font-weight: 700;
+  color: var(--text-primary, #0f172a);
+}
+
+.chart-sector {
+  font-size: 22rpx;
+  color: var(--text-secondary, #64748b);
+}
+
+/* 占位态（加载/空/错误）统一高度，避免布局跳动 */
+.chart-placeholder {
+  height: 360rpx;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16rpx;
+}
+
+.chart-hint {
+  font-size: 26rpx;
+  color: var(--text-tertiary, #94a3b8);
+}
+
+.chart-hint--error {
+  color: var(--error, #dc2626);
+}
+
+/* ── 业绩对比卡片（Req 8.3） ──────────────────────── */
+.perf-card {
+  padding-bottom: var(--space-3, 24rpx);
+}
+
+/* 区间 Tab 选择器 */
+.perf-range-tabs {
+  display: flex;
+  flex-direction: row;
+  gap: 12rpx;
+  margin-bottom: var(--space-3, 20rpx);
+  flex-wrap: wrap;
+}
+
+.perf-range-tab {
+  padding: 8rpx 20rpx;
+  border-radius: var(--radius-1, 12rpx);
+  background: var(--bg, #f3f6fc);
+  font-size: 24rpx;
+  color: var(--text-secondary, #64748b);
+  font-weight: 500;
+  transition: background 0.15s, color 0.15s;
+}
+
+.perf-range-tab--active {
+  background: var(--brand, #2356e0);
+  color: #fff;
+  font-weight: 700;
+}
+
+/* 图例 */
+.perf-legend {
+  display: flex;
+  flex-direction: row;
+  gap: var(--space-3, 24rpx);
+  margin-top: var(--space-2, 16rpx);
+  padding-top: var(--space-2, 16rpx);
+  border-top: 1rpx solid var(--line, #e2e8f0);
+}
+
+.perf-legend-item {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8rpx;
+}
+
+.perf-legend-dot {
+  width: 20rpx;
+  height: 20rpx;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.perf-legend-dot--fund {
+  background: var(--brand, #2356e0);
+}
+
+.perf-legend-dot--index {
+  background: var(--accent, #cf9b3e);
+}
+
+.perf-legend-label {
+  font-size: 22rpx;
+  color: var(--text-secondary, #64748b);
+}
+
+/* ── 历史净值卡片（Req 8.4） ──────────────────────── */
+.nav-history-card {
+  padding-bottom: var(--space-3, 24rpx);
+}
+
+.nav-list {
+  margin-top: 4rpx;
+}
+
+/* 表头与行 */
+.nav-list-header {
+  display: flex;
+  flex-direction: row;
+  padding: 12rpx 0;
+  border-bottom: 2rpx solid var(--line, #e2e8f0);
+  margin-bottom: 4rpx;
+}
+
+.nav-list-header .nav-col {
+  font-size: 22rpx;
+  color: var(--text-tertiary, #94a3b8);
+  font-weight: 600;
+}
+
+.nav-list-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  padding: 20rpx 0;
+  border-bottom: 1rpx solid var(--line, #f1f5f9);
+}
+
+/* 列宽分配 */
+.nav-col--date {
+  flex: 0 0 220rpx;
+  font-size: 26rpx;
+  color: var(--text-primary, #0f172a);
+}
+
+.nav-col--nav {
+  flex: 1;
+  font-size: 26rpx;
+  color: var(--text-primary, #0f172a);
+  font-weight: 600;
+  text-align: center;
+}
+
+.nav-col--change {
+  flex: 0 0 160rpx;
+  font-size: 26rpx;
+  text-align: right;
+}
+
+/* 加载更多区域 */
+.nav-load-more {
+  padding: var(--space-3, 24rpx) 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.nav-load-more-btn {
+  min-width: 200rpx;
+  text-align: center;
+}
+
+.nav-load-more-hint {
+  text-align: center;
+}
+
+/* ── 首次购入日选择行（Req 8.5, 8.6）─────────────── */
+.purchase-date-row {
+  margin-top: var(--space-3, 24rpx);
+  padding-top: var(--space-3, 24rpx);
+  border-top: 1rpx solid var(--line, #e2e8f0);
+}
+
+.purchase-date-label-wrap {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12rpx;
+}
+
+.purchase-date-saving {
+  display: flex;
+  align-items: center;
+}
+
+.purchase-date-saving-text {
+  font-size: 22rpx;
+  color: var(--text-tertiary, #94a3b8);
+}
+
+/* picker 本身是 block；inner view 模拟一行可点按钮 */
+.purchase-date-picker-inner {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bg, #f3f6fc);
+  border-radius: var(--radius-1, 12rpx);
+  padding: 18rpx 24rpx;
+}
+
+.purchase-date-value {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: var(--text-primary, #0f172a);
+}
+
+.purchase-date-edit {
+  font-size: 24rpx;
+  color: var(--brand, #2356e0);
+  font-weight: 500;
+}

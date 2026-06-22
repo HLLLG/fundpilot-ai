@@ -1,0 +1,6 @@
+{
+  "navigationBarTitleText": "风控设置",
+  "usingComponents": {
+    "state-view": "../../components/state-view/state-view"
+  }
+}

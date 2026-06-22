@@ -1,0 +1,94 @@
+<!-- pages/history/history.wxml -->
+<!-- History_Page（历史日报）
+     Req 20.1（列表）、20.2（详情）、20.3（多选批量删除）。 -->
+
+<view class="history-page">
+
+  <!-- ── 顶部工具条 ─────────────────────────────────── -->
+  <view class="card history-toolbar">
+    <view class="history-toolbar__title">
+      <text>历史日报</text>
+      <num-text class="history-toolbar__count" value="{{reportCount}}" kind="plain" digits="0" />
+    </view>
+    <view class="history-toolbar__actions">
+      <view
+        wx:if="{{!isSelecting}}"
+        class="btn btn-secondary btn--sm"
+        bindtap="onToggleSelectMode"
+      >多选</view>
+      <view
+        wx:else
+        class="btn btn-secondary btn--sm"
+        bindtap="onToggleSelectMode"
+      >取消</view>
+    </view>
+  </view>
+
+  <!-- ── 列表三态（Req 20.1）──────────────────────────── -->
+  <state-view
+    loading="{{loading}}"
+    error="{{error}}"
+    empty="{{isEmpty}}"
+    emptyText="暂无历史日报"
+    bind:retry="onRetry"
+  >
+    <view class="history-list">
+      <view
+        class="history-item card {{isSelecting && selectedIds[item.id] ? 'history-item--selected' : ''}}"
+        wx:for="{{reports}}"
+        wx:key="id"
+        data-id="{{item.id}}"
+        bindtap="onTapReport"
+      >
+        <!-- 多选 checkbox -->
+        <view wx:if="{{isSelecting}}" class="history-item__check" catchtap="onToggleSelect" data-id="{{item.id}}">
+          <view class="history-checkbox {{selectedIds[item.id] ? 'history-checkbox--on' : ''}}">
+            <text wx:if="{{selectedIds[item.id]}}" class="history-checkbox__tick">✓</text>
+          </view>
+        </view>
+
+        <!-- 主体 -->
+        <view class="history-item__main">
+          <view class="history-item__head">
+            <text class="history-item__title">{{item.title}}</text>
+            <text
+              wx:if="{{item.risk_level}}"
+              class="history-item__risk history-item__risk--{{item.risk_level}}"
+            >{{item.risk_level}}</text>
+          </view>
+          <text class="history-item__date">{{item.created_display}}</text>
+        </view>
+
+        <!-- 非多选模式下展示进入箭头 -->
+        <text wx:if="{{!isSelecting}}" class="history-item__arrow">›</text>
+      </view>
+    </view>
+  </state-view>
+
+  <!-- ── 批量删除浮条（Req 20.3）──────────────────────── -->
+  <view wx:if="{{isSelecting}}" class="history-batchbar">
+    <text class="history-batchbar__info">已选 {{selectedCount}} 份</text>
+    <view
+      class="btn btn-danger btn--sm {{batchDeleting ? 'btn--disabled' : ''}}"
+      bindtap="onBatchDelete"
+    >{{batchDeleting ? '删除中…' : '批量删除'}}</view>
+  </view>
+
+  <!-- ── 详情弹层（Req 20.2）──────────────────────────── -->
+  <view wx:if="{{showDetail}}" class="history-detail-mask" bindtap="onCloseDetail">
+    <view class="history-detail-sheet" catchtap="noop">
+      <view class="history-detail__header">
+        <view class="history-detail__heading">
+          <text class="history-detail__title">{{detailTitle}}</text>
+          <text class="history-detail__date">{{detailDate}}</text>
+        </view>
+        <view class="history-detail__close" bindtap="onCloseDetail">✕</view>
+      </view>
+      <scroll-view class="history-detail__body" scroll-y enhanced>
+        <md-view wx:if="{{detailMarkdown}}" markdown="{{detailMarkdown}}" />
+        <view wx:else class="history-detail__empty">暂无日报正文</view>
+      </scroll-view>
+    </view>
+  </view>
+
+</view>

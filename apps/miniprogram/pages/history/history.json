@@ -1,0 +1,8 @@
+{
+  "navigationBarTitleText": "历史日报",
+  "usingComponents": {
+    "md-view":    "../../components/md-view/md-view",
+    "state-view": "../../components/state-view/state-view",
+    "num-text":   "../../components/num-text/num-text"
+  }
+}
