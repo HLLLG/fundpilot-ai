@@ -157,16 +157,10 @@ def holding_profit_is_estimated(holding: Holding) -> bool:
 
 
 def _amount_includes_today_return(holding: Holding) -> bool:
-    """份额×净值同步后的持有金额已含当日涨跌，需用反推结算基数的公式。"""
-    if holding.daily_return_percent_source == "official_nav":
-        return True
-    code = (holding.fund_code or "").strip()
-    if not code or code == "000000":
-        return False
-    from app.database import get_fund_profile_by_code
-
-    profile = get_fund_profile_by_code(code)
-    return bool(profile and profile.holding_shares)
+    """盘中持有金额为上一交易日结算值，当日收益单独估算。"""
+    if holding.amount_includes_today is not None:
+        return holding.amount_includes_today
+    return False
 
 
 def compute_daily_profit_from_rate(
@@ -188,7 +182,8 @@ def apply_sector_daily_estimates(holding: Holding) -> Holding:
     if holding.daily_return_percent_source == "official_nav":
         return holding
     sector = holding.sector_return_percent
-    if sector is None or holding.holding_amount <= 0:
+    amount = holding.settled_holding_amount or holding.holding_amount
+    if sector is None or amount <= 0:
         return holding.model_copy(
             update={
                 "daily_profit": None,
@@ -197,7 +192,7 @@ def apply_sector_daily_estimates(holding: Holding) -> Holding:
             }
         )
     daily = compute_daily_profit_from_rate(
-        holding.holding_amount,
+        amount,
         sector,
         amount_includes_today=_amount_includes_today_return(holding),
     )
@@ -225,12 +220,13 @@ def overlay_official_nav_returns(holdings: list[Holding]) -> list[Holding]:
         if nav_return is None:
             updated.append(holding)
             continue
+        amount = holding.settled_holding_amount or holding.holding_amount
         updated.append(
             holding.model_copy(
                 update={
                     "daily_return_percent": nav_return,
                     "daily_profit": compute_daily_profit_from_rate(
-                        holding.holding_amount,
+                        amount,
                         nav_return,
                         amount_includes_today=_amount_includes_today_return(holding),
                     ),
@@ -307,17 +303,19 @@ def compute_official_daily_profit(holding_amount: float, daily_return_percent: f
 
 
 def compute_daily_profit(holding: Holding) -> float | None:
-    amount = holding.holding_amount
+    amount = holding.settled_holding_amount or holding.holding_amount
     if amount <= 0:
         return holding.daily_profit
 
     includes_today = _amount_includes_today_return(holding)
     rate = holding.daily_return_percent
     if rate is not None:
+        if holding.daily_return_percent_source == "official_nav" and not includes_today:
+            return _round2(amount * rate / 100)
         return compute_daily_profit_from_rate(
             amount,
             rate,
-            amount_includes_today=includes_today or holding.daily_return_percent_source == "official_nav",
+            amount_includes_today=includes_today,
         )
 
     sector = holding.sector_return_percent

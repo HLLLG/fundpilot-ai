@@ -53,8 +53,8 @@ def test_sync_holding_amounts_uses_estimate_nav(monkeypatch):
         persist_profiles=True,
     )
 
-    assert updated[0].holding_amount == 9618.51
-    assert updated[0].amount_includes_today is True
+    assert updated[0].holding_amount == 9508.74
+    assert updated[0].amount_includes_today is False
     assert updated[0].holding_return_percent == 2.43
     assert updated[0].holding_profit is None
 

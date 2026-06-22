@@ -42,8 +42,11 @@ import {
   getEstimatedDailyReturnPercent,
   getEstimatedHoldingProfit,
   getEstimatedHoldingReturnPercent,
+  getSettledHoldingAmount,
 } from "@/lib/holdingDisplay";
-import { holdingRelatedBoardLabel, resolveIntradayQuery } from "@/lib/profileSector";
+import { HoldingModifyModal } from "@/components/HoldingModifyModal";
+import { SingleFundTransactionModal } from "@/components/SingleFundTransactionModal";
+import { holdingDisplaySectorLabel, holdingRelatedBoardLabel, resolveIntradayQuery } from "@/lib/profileSector";
 import { buildClientCacheKey, readClientCache, writeClientCache } from "@/lib/clientCache";
 import { isEstimateFallbackMeta } from "@/lib/sectorQuoteStatus";
 import { formatTradeDateShort } from "@/lib/tradeDateLabel";
@@ -71,6 +74,8 @@ type YangjibaoFundDetailProps = {
   onNavigate: (index: number) => void;
   onHoldingResolved?: (index: number, holding: Holding) => void;
   onFundCodeUpdated?: (index: number, holding: Holding) => void | Promise<void>;
+  onDeleteHolding?: (index: number) => void;
+  onPortfolioUpdated?: (holdings: Holding[]) => void | Promise<void>;
 };
 
 function HeaderStat({
@@ -154,6 +159,8 @@ export function YangjibaoFundDetail({
   onNavigate,
   onHoldingResolved,
   onFundCodeUpdated,
+  onDeleteHolding,
+  onPortfolioUpdated,
 }: YangjibaoFundDetailProps) {
   const [tab, setTab] = useState<DetailTab>("sector");
   const [detail, setDetail] = useState<HoldingDetail | null>(null);
@@ -172,6 +179,9 @@ export function YangjibaoFundDetail({
   const [fundCodeEditOpen, setFundCodeEditOpen] = useState(false);
   const [fundCodeSaving, setFundCodeSaving] = useState(false);
   const [fundCodeError, setFundCodeError] = useState<string | null>(null);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [modifyOpen, setModifyOpen] = useState(false);
+  const [txDirection, setTxDirection] = useState<"buy" | "sell" | null>(null);
   const [intradayForceSeq, setIntradayForceSeq] = useState(0);
   const intradayRequestSeq = useRef(0);
 
@@ -185,6 +195,7 @@ export function YangjibaoFundDetail({
   const holdingReturn = getEstimatedHoldingReturnPercent(activeHolding);
   const holdingProfit = getEstimatedHoldingProfit(activeHolding);
   const dailyProfit = computeDailyProfit(activeHolding);
+  const settledAmount = getSettledHoldingAmount(activeHolding);
   const costBasis = computeCostBasis(activeHolding);
   const weight = computeHoldingWeight(activeHolding, totalAssets);
 
@@ -197,7 +208,7 @@ export function YangjibaoFundDetail({
     detail?.fund_code_resolved === true && activeHolding.fund_code !== "000000";
   const yearReturn = detail?.year_return_percent ?? null;
 
-  const quoteLabel = holdingRelatedBoardLabel(activeHolding) || sectorMeta?.matched_name || "—";
+  const quoteLabel = holdingDisplaySectorLabel(activeHolding, sectorMeta);
   const sectorReturn = resolveSectorBoardReturnPercent(activeHolding);
   // 盘中优先用分时末点（与曲线同源），避免板块刷新缓存与分时不同步
   const displaySectorReturn =
@@ -298,6 +309,15 @@ export function YangjibaoFundDetail({
   const needsCodeAttention =
     activeHolding.fund_code === "000000" || isProvisionalFundCode(activeHolding.fund_code);
 
+  function handleDeleteHolding() {
+    if (!onDeleteHolding) {
+      return;
+    }
+    setDeleteConfirmOpen(false);
+    onDeleteHolding(holdingIndex);
+    onClose();
+  }
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -318,7 +338,6 @@ export function YangjibaoFundDetail({
     const detailCacheKey = buildClientCacheKey(
       "holding-detail",
       holdings[holdingIndex]?.fund_code,
-      holdingIndex,
     );
     const cachedDetail = readClientCache<HoldingDetail>(detailCacheKey, 5 * 60 * 1000);
     if (cachedDetail) {
@@ -370,7 +389,7 @@ export function YangjibaoFundDetail({
     if (!intradayQuery) {
       setIntradayPoints([]);
       setIntradayClosePercent(null);
-      setIntradayNote("暂无板块映射，请先在「今日」刷新板块或上传详情截图建档");
+      setIntradayNote("暂无板块映射，请先在持仓页刷新板块或上传详情截图建档");
       setIntradayLoading(false);
       setIntradayRefreshing(false);
       return;
@@ -590,7 +609,7 @@ export function YangjibaoFundDetail({
           {holdingsExpanded ? (
             <div className="divide-y divide-slate-100/80">
               <div className="grid grid-cols-3 divide-x divide-slate-100">
-                <GridStat label="持有金额" value={formatPlainMoney(activeHolding.holding_amount)} />
+                <GridStat label="持有金额" value={formatPlainMoney(settledAmount)} />
                 <GridStat
                   label="持有份额"
                   value={shares != null ? formatPlainMoney(shares) : detailLoading ? "…" : "—"}
@@ -755,7 +774,7 @@ export function YangjibaoFundDetail({
 
           {tab === "profit" ? (
             <div className="space-y-2">
-              <ProfitRow label="持有金额" value={`¥ ${formatPlainMoney(activeHolding.holding_amount)}`} />
+              <ProfitRow label="持有金额" value={`¥ ${formatPlainMoney(settledAmount)}`} />
               <ProfitRow
                 label="持仓成本总额"
                 value={costBasis != null ? `¥ ${formatPlainMoney(costBasis)}` : "—"}
@@ -792,15 +811,77 @@ export function YangjibaoFundDetail({
         </div>
 
         <footer className="sticky bottom-0 z-10 shrink-0 border-t border-slate-100 bg-white">
-          <button
-            type="button"
-            onClick={onClose}
-            className="flex w-full flex-col items-center justify-center gap-1 py-3 text-[11px] font-semibold text-slate-600 hover:bg-slate-50"
-          >
-            <ChevronLeft size={18} className="text-slate-500" />
-            返回列表
-          </button>
+          <div className="grid grid-cols-3 divide-x divide-slate-100">
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex flex-col items-center justify-center gap-1 py-3 text-[11px] font-semibold text-slate-600 hover:bg-slate-50"
+            >
+              <ChevronLeft size={18} className="text-slate-500" />
+              返回列表
+            </button>
+            <button
+              type="button"
+              onClick={() => setModifyOpen(true)}
+              className="flex flex-col items-center justify-center gap-1 py-3 text-[11px] font-semibold text-[#2356e0] hover:bg-blue-50"
+            >
+              <Pencil size={18} className="text-[#2356e0]" />
+              修改持仓
+            </button>
+            {onDeleteHolding ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setDeleteConfirmOpen(true);
+                }}
+                className="flex flex-col items-center justify-center gap-1 py-3 text-[11px] font-semibold text-rose-600 hover:bg-rose-50"
+              >
+                删除该基金
+              </button>
+            ) : (
+              <div />
+            )}
+          </div>
         </footer>
+
+        {deleteConfirmOpen ? (
+          <div
+            className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/40 p-4"
+            onClick={() => setDeleteConfirmOpen(false)}
+            role="presentation"
+          >
+            <div
+              className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl"
+              onClick={(event) => event.stopPropagation()}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="delete-holding-title"
+            >
+              <h3 id="delete-holding-title" className="text-base font-bold text-slate-900">
+                删除该基金？
+              </h3>
+              <p className="mt-2 text-sm leading-6 text-slate-600">
+                将从当前账户汇总移除「{activeHolding.fund_name}」。基金档案与历史盈亏快照会保留，之后仍可重新添加。
+              </p>
+              <div className="mt-4 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setDeleteConfirmOpen(false)}
+                  className="btn-secondary flex-1 !py-2.5"
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDeleteHolding}
+                  className="flex-1 rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-rose-700"
+                >
+                  确认删除
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         <PurchaseDatePickerModal
           open={purchaseDatePickerOpen}
@@ -827,6 +908,57 @@ export function YangjibaoFundDetail({
             }
           }}
           onSave={handleFundCodeSave}
+        />
+
+        <HoldingModifyModal
+          open={modifyOpen}
+          holding={activeHolding}
+          holdingDays={holdingDays}
+          onClose={() => setModifyOpen(false)}
+          onSaved={async (payload) => {
+            await onPortfolioUpdated?.(payload.holdings);
+            const result = await fetchHoldingDetail({
+              holdings: payload.holdings,
+              index: holdingIndex,
+              portfolio_summary: portfolioSummary,
+              sector_quote_meta: sectorMeta,
+            });
+            setDetail(result);
+          }}
+          onEditPurchaseDate={() => {
+            setModifyOpen(false);
+            if (canEditPurchaseDate) {
+              setPurchaseDatePickerOpen(true);
+            }
+          }}
+          onSyncBuy={() => {
+            setModifyOpen(false);
+            setTxDirection("buy");
+          }}
+          onSyncSell={() => {
+            setModifyOpen(false);
+            setTxDirection("sell");
+          }}
+        />
+
+        <SingleFundTransactionModal
+          open={txDirection != null}
+          holding={activeHolding}
+          direction={txDirection ?? "buy"}
+          maxShares={shares ?? undefined}
+          latestNav={detail?.latest_nav ?? undefined}
+          navDateLabel={detail?.nav_date ?? undefined}
+          onClose={() => setTxDirection(null)}
+          onApplied={async (nextHoldings) => {
+            await onPortfolioUpdated?.(nextHoldings);
+            const result = await fetchHoldingDetail({
+              holdings: nextHoldings,
+              index: holdingIndex,
+              portfolio_summary: portfolioSummary,
+              sector_quote_meta: sectorMeta,
+            });
+            setDetail(result);
+          }}
         />
       </div>
     </div>

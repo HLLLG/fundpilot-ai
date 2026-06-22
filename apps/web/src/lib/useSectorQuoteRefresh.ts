@@ -47,6 +47,7 @@ export function useSectorQuoteRefresh({
   const [lastRefreshResult, setLastRefreshResult] = useState<RefreshSectorQuotesResult | null>(null);
   const holdingsRef = useRef(holdings);
   const warningsRef = useRef(warnings);
+  const refreshGenerationRef = useRef(0);
 
   useEffect(() => {
     holdingsRef.current = holdings;
@@ -56,8 +57,15 @@ export function useSectorQuoteRefresh({
     warningsRef.current = warnings;
   }, [warnings]);
 
+  const invalidatePendingRefresh = useCallback(() => {
+    refreshGenerationRef.current += 1;
+  }, []);
+
   const applyRefreshResult = useCallback(
-    (result: Awaited<ReturnType<typeof refreshSectorQuotes>>) => {
+    (result: Awaited<ReturnType<typeof refreshSectorQuotes>>, generation: number) => {
+      if (generation !== refreshGenerationRef.current) {
+        return undefined;
+      }
       onChange(result.holdings);
       if (result.holding_warnings?.length) {
         const sectorCodes = new Set(["sector_quote_discrepancy"]);
@@ -103,17 +111,22 @@ export function useSectorQuoteRefresh({
       if (!holdingsRef.current.length) {
         return undefined;
       }
+      const generation = ++refreshGenerationRef.current;
       setIsRefreshing(true);
       try {
         const result = await refreshSectorQuotes(holdingsRef.current, { forceRefresh, budget });
-        return applyRefreshResult(result);
+        return applyRefreshResult(result, generation);
       } catch (error) {
-        const message = error instanceof Error ? error.message : "刷新板块涨跌失败。";
-        setRefreshError(message);
-        onMessage?.(message);
+        if (generation === refreshGenerationRef.current) {
+          const message = error instanceof Error ? error.message : "刷新板块涨跌失败。";
+          setRefreshError(message);
+          onMessage?.(message);
+        }
         return undefined;
       } finally {
-        setIsRefreshing(false);
+        if (generation === refreshGenerationRef.current) {
+          setIsRefreshing(false);
+        }
       }
     },
     [applyRefreshResult, onMessage],
@@ -125,6 +138,7 @@ export function useSectorQuoteRefresh({
       if (!current) {
         return;
       }
+      const generation = ++refreshGenerationRef.current;
       setIsRefreshing(true);
       try {
         const result = await applySectorMapping(holdingsRef.current, {
@@ -133,12 +147,16 @@ export function useSectorQuoteRefresh({
           source_name: candidate.source_name,
           source_code: candidate.source_code,
         });
-        applyRefreshResult(result);
-        setMappingQueue((queue) => queue.slice(1));
+        applyRefreshResult(result, generation);
+        if (generation === refreshGenerationRef.current) {
+          setMappingQueue((queue) => queue.slice(1));
+        }
       } catch (error) {
         onMessage?.(error instanceof Error ? error.message : "保存板块映射失败。");
       } finally {
-        setIsRefreshing(false);
+        if (generation === refreshGenerationRef.current) {
+          setIsRefreshing(false);
+        }
       }
     },
     [applyRefreshResult, mappingQueue, onMessage],
@@ -190,6 +208,8 @@ export function useSectorQuoteRefresh({
     refresh,
     selectMapping,
     dismissMapping,
-    applyServerRefresh: applyRefreshResult,
+    invalidatePendingRefresh,
+    applyServerRefresh: (result: RefreshSectorQuotesResult) =>
+      applyRefreshResult(result, refreshGenerationRef.current),
   };
 }

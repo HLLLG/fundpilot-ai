@@ -39,26 +39,34 @@ def _overlay_sector_fields(base: Holding, patch: Holding) -> Holding:
 
 
 def merge_holdings_with_snapshot(incoming: list[Holding]) -> list[Holding]:
-    """刷新持久化时：若当前请求只有部分持仓，与上一版快照合并，避免覆盖掉其余基金。"""
+    """板块刷新写回：以请求持仓为成员名单；从快照补全同码/同名的非板块字段。
+
+    仅当请求里只有测试/占位行、没有有效持仓时，才保留上一版快照（防误覆盖）。
+    删除基金后客户端会发送更短的完整列表，不能把已删基金从快照里捞回来。
+    """
     snapshot = get_most_recent_portfolio_snapshot()
     if not snapshot:
         return incoming
     previous = [Holding.model_validate(item) for item in snapshot.get("holdings", [])]
-    if not previous or len(incoming) >= len(previous):
+    if not previous:
         return incoming
+
+    meaningful_incoming = without_placeholder_holdings(without_test_holdings(incoming))
+    meaningful_previous = without_placeholder_holdings(without_test_holdings(previous))
+    if not meaningful_incoming and meaningful_previous:
+        return previous
 
     by_code = {
         holding.fund_code: holding
-        for holding in incoming
+        for holding in previous
         if holding.fund_code != "000000"
     }
-    by_name = {holding.fund_name: holding for holding in incoming}
+    by_name = {holding.fund_name: holding for holding in previous}
 
     merged: list[Holding] = []
-    for prev in previous:
-        patch = by_code.get(prev.fund_code) or by_name.get(prev.fund_name)
-        merged.append(_overlay_sector_fields(prev, patch) if patch else prev)
-
+    for item in incoming:
+        prev = by_code.get(item.fund_code) or by_name.get(item.fund_name)
+        merged.append(_overlay_sector_fields(prev, item) if prev else item)
     return merged
 
 
@@ -75,7 +83,9 @@ def enrich_loaded_holdings(
     if not holdings:
         return holdings
     if not with_network:
-        return enrich_holdings_estimates(holdings)
+        from app.services.fund_primary_sector_service import apply_primary_sector_to_holdings
+
+        return apply_primary_sector_to_holdings(enrich_holdings_estimates(holdings))
     from app.services.transaction_ledger import confirm_and_compute_overrides
 
     overrides = confirm_and_compute_overrides(holdings)
@@ -101,7 +111,13 @@ def persist_holdings_after_sector_refresh(
         return enriched
 
     summary = get_portfolio_summary()
-    total_assets = round(sum(h.holding_amount for h in enriched), 2)
+    total_assets = round(
+        sum(
+            (h.settled_holding_amount or h.holding_amount) + (h.daily_profit or 0)
+            for h in enriched
+        ),
+        2,
+    )
     daily_profit = sum_daily_profit(enriched)
     daily_return_percent = None
     if total_assets > daily_profit > 0:

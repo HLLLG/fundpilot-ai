@@ -35,6 +35,7 @@ class Holding(BaseModel):
     intraday_index_name: str | None = None
     user_note: str | None = None
     amount_includes_today: bool | None = None
+    settled_holding_amount: float | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -141,6 +142,7 @@ class FundProfile(BaseModel):
     fund_name: str
     aliases: list[str] = Field(default_factory=list)
     holding_amount: float | None = None
+    settled_holding_amount: float | None = None
     holding_shares: float | None = None
     position_percent: float | None = None
     holding_profit: float | None = None
@@ -426,6 +428,12 @@ class UpdateFundProfileRequest(BaseModel):
     first_purchase_date: str | None = None
     fund_code: str | None = None
     fund_name: str | None = None
+
+
+class AdjustHoldingRequest(BaseModel):
+    settled_holding_amount: float | None = Field(default=None, ge=0)
+    holding_profit: float | None = None
+    holding_return_percent: float | None = None
 
 
 class ApplyHoldingsRequest(BaseModel):

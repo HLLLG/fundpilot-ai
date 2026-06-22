@@ -51,6 +51,7 @@ from app.database import (
 from app.lifespan import app_lifespan
 from app.database import list_report_chat_messages
 from app.models import (
+    AdjustHoldingRequest,
     AllocatePenetrationRequest,
     AnalysisPromptSaveRequest,
     AnalysisRequest,
@@ -79,6 +80,7 @@ from app.services.fund_code_resolver import reconcile_holding_fund_codes, search
 from app.services.portfolio_holdings_service import (
     build_portfolio_holdings_response,
     load_persisted_holdings,
+    remove_holding_from_portfolio,
 )
 from app.services.portfolio_holdings_cache import (
     get_cached_holdings_response,
@@ -361,6 +363,32 @@ def apply_portfolio_holdings(payload: ApplyHoldingsRequest) -> dict:
     return apply_confirmed_holdings(
         payload.holdings,
     )
+
+
+@app.delete("/api/portfolio/holdings/{fund_code}")
+def delete_portfolio_holding(fund_code: str, fund_name: str | None = None) -> dict:
+    try:
+        payload = remove_holding_from_portfolio(fund_code, fund_name=fund_name)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    save_cached_holdings_response(payload)
+    return payload
+
+
+@app.patch("/api/portfolio/holdings/{fund_code}/adjust")
+def adjust_portfolio_holding(fund_code: str, payload: AdjustHoldingRequest) -> dict:
+    from app.services.holding_adjust_service import adjust_holding_in_portfolio
+
+    try:
+        response = adjust_holding_in_portfolio(fund_code, payload)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    save_cached_holdings_response(response)
+    return response
 
 
 @app.get("/api/funds/search")

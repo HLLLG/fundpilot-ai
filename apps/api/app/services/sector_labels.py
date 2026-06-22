@@ -2,7 +2,17 @@ from __future__ import annotations
 
 import re
 
-_TOPIC_ALIASES = ("人工智能", "电网设备", "半导体", "国防军工", "商业航天", "红利", "新能源")
+_TOPIC_ALIASES = (
+    "人工智能",
+    "电网设备",
+    "半导体",
+    "国防军工",
+    "商业航天",
+    "红利",
+    "新能源",
+    "传媒",
+    "CPO",
+)
 
 
 def normalize_sector_label(label: str | None) -> str:

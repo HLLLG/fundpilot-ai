@@ -162,7 +162,7 @@ class FundProfileService:
                         fund_code=holding.fund_code,
                         is_provisional=False,
                     )
-                save_fund_profile(profile)
+                self.save_profile(profile)
                 created += 1
                 continue
 
@@ -171,7 +171,7 @@ class FundProfileService:
                 holding,
                 total_amount=total_amount if total_amount > 0 else None,
             )
-            save_fund_profile(merged)
+            self.save_profile(merged)
             updated += 1
 
         return ProfileSyncResult(updated=updated, created=created)
@@ -182,6 +182,18 @@ class FundProfileService:
             if by_code is not None:
                 return by_code
         return self.find_match(holding.fund_name)
+
+
+def ensure_first_seen_anchor(
+    profile: FundProfile,
+    *,
+    fallback_anchor: str | None = None,
+) -> FundProfile:
+    """惰性回填：持有中档案缺少 first_seen_date 时写入稳定锚点（不覆盖已有值）。"""
+    if profile.first_seen_date or profile.first_purchase_date:
+        return profile
+    anchor = fallback_anchor or resolve_first_seen_anchor(profile)
+    return save_fund_profile(profile.model_copy(update={"first_seen_date": anchor}))
 
 
 def resolve_first_seen_anchor(profile: FundProfile, *, today: date | None = None) -> str:
@@ -350,6 +362,21 @@ def _looks_like_board_label(name: str) -> bool:
     if name.strip() in _DETAIL_TAB_LABELS or name.strip() in {"场内指数", "数据来源"}:
         return False
     if not re.search(r"[\u4e00-\u9fff]", name):
+        from app.services.sector_canonical import get_canonical_sector
+
+        return get_canonical_sector(name.strip()) is not None
+    from app.services.fund_name_utils import FUND_PRODUCT_SUFFIX_RE, looks_like_fund_product_name
+
+    compact = re.sub(r"\s+", "", name.strip())
+    if looks_like_fund_product_name(name):
+        return False
+    if FUND_PRODUCT_SUFFIX_RE.search(compact):
+        return False
+    if re.search(r"(混合|联接|链接|发起|精选|股票)[A-CEH]?$", compact, re.IGNORECASE):
+        return False
+    if len(compact) > 8 and any(
+        token in compact for token in ("混合", "联接", "链接", "发起", "精选", "ETF", "LOF")
+    ):
         return False
     if _looks_like_index_name(name):
         return False

@@ -6,6 +6,7 @@ from typing import Any
 from app.config import get_settings
 from app.database import get_sector_mapping, save_sector_mapping
 from app.models import Holding, HoldingFieldWarning, SectorMappingCandidate, SectorQuoteMeta
+from app.services.fund_primary_sector_service import primary_sector_fields_for_holding
 from app.services.fund_profile import FundProfileService, _is_valid_sector_label
 from app.services.fund_estimate_provider import fetch_fund_estimate_quotes
 from app.services.sector_canonical import (
@@ -144,6 +145,21 @@ def refresh_holdings_sector_quotes(
         and _board_entry_count(fetch_result.boards) < 8
     )
 
+    # 兜底：当没有任何板块/指数命中（例如全部持仓都是无关联板块的新基金，
+    # 如「中航机遇领航混合发起C」）时，仍尝试用天天基金估值给出当日收益，
+    # 避免直接硬失败 + 当日收益恒为 0。
+    if not any(boards.values()) and not estimate_quotes and kline_prefetched == 0:
+        has_real_fund_code = any(
+            (holding.fund_code or "").strip() and holding.fund_code != "000000"
+            for holding in holdings
+        )
+        if has_real_fund_code:
+            estimate_quotes = fetch_fund_estimate_quotes(
+                holdings,
+                timeout_seconds=timeout_seconds,
+            )
+            estimate_quotes_loaded = True
+
     if not any(boards.values()) and not estimate_quotes and kline_prefetched == 0:
         return {
             "ok": False,
@@ -175,6 +191,12 @@ def refresh_holdings_sector_quotes(
     secid_matched = 0
 
     for index, holding in enumerate(holdings):
+        if holding.sector_name and not _is_valid_sector_label(holding.sector_name):
+            holding = holding.model_copy(update={"sector_name": None})
+        repair_fields = primary_sector_fields_for_holding(holding, allow_name_infer=True)
+        if repair_fields:
+            holding = holding.model_copy(update=repair_fields)
+
         lookup_label = sector_quote_lookup_label(
             holding,
             profile=profile_service._find_profile_for_holding(holding),
@@ -260,8 +282,11 @@ def refresh_holdings_sector_quotes(
                 holding.sector_name
             ):
                 update["sector_name"] = display_sector
-            elif _is_valid_sector_label(result.matched_name) and not _is_valid_sector_label(
-                holding.sector_name
+            elif (
+                estimate_quote is None
+                and result.message != "天天基金估值"
+                and _is_valid_sector_label(result.matched_name)
+                and not _is_valid_sector_label(holding.sector_name)
             ):
                 canonical = get_canonical_sector(result.matched_name or "")
                 update["sector_name"] = (

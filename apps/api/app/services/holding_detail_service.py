@@ -1,12 +1,17 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from app.database import get_fund_profile_by_code, list_portfolio_daily_snapshots, save_fund_profile
 from app.models import FundProfile, Holding, HoldingDetailResponse, PortfolioSummary, SectorQuoteMeta
 from app.services.fund_code_resolver import lookup_fund_code_by_name
 from app.services.fund_data import FundDataService
-from app.services.fund_profile import FundProfileService, _aliases_for_name, merge_holding_into_profile
+from app.services.fund_profile import (
+    FundProfileService,
+    _aliases_for_name,
+    ensure_first_seen_anchor,
+    merge_holding_into_profile,
+)
 from app.services.holding_estimates import compute_yesterday_profit
 
 
@@ -49,6 +54,12 @@ def build_holding_detail(
     profile = get_fund_profile_by_code(resolved.fund_code)
     if profile is None:
         profile = profile_service.find_match(resolved.fund_name)
+    if profile is not None and not profile.first_seen_date and not profile.first_purchase_date:
+        snapshot_days = _holding_days_from_snapshots(resolved)
+        fallback = None
+        if snapshot_days is not None and snapshot_days > 0:
+            fallback = (date.today() - timedelta(days=snapshot_days)).isoformat()
+        profile = ensure_first_seen_anchor(profile, fallback_anchor=fallback)
 
     holding_shares = profile.holding_shares if profile else None
     holding_cost = profile.holding_cost if profile else None

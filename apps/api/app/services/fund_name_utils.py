@@ -67,7 +67,8 @@ PROMO_MARKERS = (
     "财富号",
 )
 FUND_PRODUCT_SUFFIX_RE = re.compile(
-    r"(混合[A-CEH]?|联接[A-CEH]|ETF联接[A-CEH]|ETF联[A-CEH]|主题ETF联接[A-CEH]|发起式联接[A-CEH])$",
+    r"(混合[A-CEH]?|联接[A-CEH]|ETF联接[A-CEH]|ETF联[A-CEH]|主题ETF联接[A-CEH]"
+    r"|发起式联接[A-CEH]|股票[A-CEH]?)$",
     re.IGNORECASE,
 )
 FUND_NAME_HINTS = (
@@ -82,11 +83,11 @@ FUND_NAME_HINTS = (
     "军工",
     "成长",
 )
-PARTIAL_FUND_NAME_ENDINGS = ("混合", "联接", "ETF", "ETF联", "主", "混")
+PARTIAL_FUND_NAME_ENDINGS = ("混合", "联接", "ETF", "ETF联", "主", "混", "股票", "股")
 # 东财简称相对 OCR/支付宝展示的差异（查码时双方都要归一化）
 LOOKUP_NAME_STRIP_TOKENS = ("发起式",)
 SHARE_CLASS_SUFFIX_RE = re.compile(
-    r"(混合|联接|ETF联接|ETF联)([A-CEH])$",
+    r"(混合|联接|ETF联接|ETF联|股票)([A-CEH])$",
     re.IGNORECASE,
 )
 

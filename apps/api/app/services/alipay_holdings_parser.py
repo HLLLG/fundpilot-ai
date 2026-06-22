@@ -50,6 +50,12 @@ ALIPAY_NOISE_MARKERS = (
     "厄尔尼诺",
     "北美云厂商",
     "持续加大资本支出",
+    "当前行情下",
+    "该如何操作",
+    "拿不定主意",
+    "不妨先看看收益分析",
+    "去看看",
+    "以上按照持有收益排序",
 )
 PERCENT_LINE_RE = re.compile(r"([+-]?\d+(?:\.\d+)?)\s*%")
 NUMBER_TOKEN_RE = re.compile(r"(?<![\d.])([+-]?\d[\d,]*(?:\.\d+)?)(?![\d.])")
@@ -60,7 +66,7 @@ INLINE_TWO_COLUMN_RE = re.compile(
 )
 COMPLETE_FUND_NAME_RE = re.compile(
     r"^[\u4e00-\u9fffA-Za-z0-9·]{4,40}"
-    r"(?:混合[A-CEH]|联接[A-CEH]|ETF联接[A-CEH]|主题ETF联接[A-CEH])$",
+    r"(?:混合[A-CEH]|联接[A-CEH]|ETF联接[A-CEH]|主题ETF联接[A-CEH]|股票[A-CEH])$",
     re.IGNORECASE,
 )
 
@@ -80,11 +86,22 @@ def is_alipay_holdings_page(lines: list[str]) -> bool:
     return percent_blocks >= 2 and "￥" not in joined
 
 
+def _count_holding_return_percent_lines(lines: list[str]) -> int:
+    return sum(
+        1
+        for line in lines
+        if extract_percent(line) is not None
+        and not _is_header_line(line)
+        and not _is_portfolio_weight_line(line)
+    )
+
+
 def parse_alipay_holdings_page(text: str) -> list[Holding]:
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     if is_alipay_overview_holdings_page(lines):
         overview = _parse_alipay_overview_holdings(lines)
-        if overview:
+        expected = _count_holding_return_percent_lines(lines)
+        if overview and (expected <= 0 or len(overview) >= expected):
             return _reconcile_alipay_profit_signs(overview)
     if not is_alipay_holdings_page(lines):
         return []
@@ -366,7 +383,7 @@ def _parse_overview_fund_block(fund_name: str, block_lines: list[str]) -> Holdin
 
 
 def _is_portfolio_weight_line(line: str) -> bool:
-    cleaned = line.strip()
+    cleaned = line.strip().replace(" ", "")
     return cleaned.startswith("占比") and PERCENT_LINE_RE.search(cleaned) is not None
 
 
@@ -462,7 +479,7 @@ def _merge_name_fragments(fragments: list[str]) -> str:
 
 
 def _join_name_fragment(left: str, right: str) -> str:
-    if re.fullmatch(r"[A-CEH]", right) and left.endswith(("混合", "联接", "债券")):
+    if re.fullmatch(r"[A-CEH]", right) and left.endswith(("混合", "联接", "债券", "股票")):
         return left + right
     if right.startswith("接") and left.endswith("联"):
         return left + right[1:]

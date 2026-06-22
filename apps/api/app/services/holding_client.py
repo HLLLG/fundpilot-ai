@@ -13,6 +13,9 @@ def serialize_holding_for_client(holding: Holding) -> dict:
 
     payload = holding.model_dump()
     display = build_holding_display_metrics(holding)
+    settled = holding.settled_holding_amount or holding.holding_amount
+    payload["settled_holding_amount"] = settled
+    payload["display_holding_amount"] = settled
     payload["estimated_holding_return_percent"] = display["estimated_holding_return_percent"]
     payload["estimated_holding_profit"] = display["estimated_holding_profit"]
     payload["holding_return_is_estimated"] = display["holding_return_is_estimated"]

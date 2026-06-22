@@ -144,7 +144,9 @@ def apply_parsed_transactions(parsed: list[ParsedTransaction]) -> dict:
         # 建仓：买入未持有基金 → 创建简略 provisional 档案，
         # baseline_date 取 confirm_date 的前一天，保证该买入 confirm_date > baseline_date。
         if item.direction == "buy" and get_fund_profile_by_code(item.fund_code) is None:
-            save_fund_profile(
+            from app.services.fund_profile import FundProfileService
+
+            FundProfileService().save_profile(
                 FundProfile(
                     fund_code=item.fund_code,
                     fund_name=item.fund_name,

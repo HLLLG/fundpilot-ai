@@ -26,6 +26,7 @@ def bootstrap_holding_baselines(
     if quotes is None:
         quotes = fetch_fund_estimate_quotes(holdings, timeout_seconds=6.0)
 
+    updated: list[Holding] = []
     for holding in holdings:
         _bootstrap_profile_baseline(
             holding,
@@ -33,7 +34,15 @@ def bootstrap_holding_baselines(
             persist_profile=persist_profiles,
             force_reset_shares=force_reset_shares,
         )
-    return holdings
+        updated.append(
+            holding.model_copy(
+                update={
+                    "settled_holding_amount": holding.holding_amount,
+                    "amount_includes_today": False,
+                }
+            )
+        )
+    return updated
 
 
 def _bootstrap_profile_baseline(
@@ -65,6 +74,8 @@ def _bootstrap_profile_baseline(
     patch: dict = {
         "holding_shares": shares,
         "shares_baseline_date": get_effective_trade_date(),
+        "settled_holding_amount": holding.holding_amount,
+        "holding_amount": holding.holding_amount,
     }
     cost_basis = _cost_basis(holding, profile)
     if cost_basis is not None and cost_basis > 0:
@@ -99,7 +110,7 @@ def sync_holding_amounts_from_shares(
     persist_profiles: bool = True,
     shares_override: dict[str, float] | None = None,
 ) -> list[Holding]:
-    """按档案份额 × 最新净值同步持有金额，对齐养基宝盘中自动更新。
+    """按档案份额同步结算持有金额：盘中保持上一交易日结算值，官方净值公布后滚入。
 
     ``shares_override``：账本算出的有效份额覆盖表（基线 + 事件流）；命中则优先使用，
     不写回档案（基线不可变）。
@@ -134,6 +145,16 @@ def sync_holding_amounts_from_shares(
     return updated
 
 
+def _resolve_settled_amount(holding: Holding, profile: FundProfile | None) -> float:
+    if holding.settled_holding_amount is not None:
+        return holding.settled_holding_amount
+    if profile and profile.settled_holding_amount is not None:
+        return profile.settled_holding_amount
+    if profile and profile.holding_amount is not None:
+        return profile.holding_amount
+    return holding.holding_amount
+
+
 def _sync_one_holding(
     holding: Holding,
     *,
@@ -152,36 +173,87 @@ def _sync_one_holding(
         shares = override_value
     else:
         shares = profile.holding_shares if profile else None
-    unit_nav = _resolve_unit_nav(code, trade_date, estimate_quote)
 
     # 清仓：账本有效份额 ≤ 0 → 金额归零（不写回档案，由展示层过滤）。
     if override_value is not None and override_value <= 0:
         if holding.holding_amount == 0:
             return holding
         return holding.model_copy(
-            update={"holding_amount": 0.0, "amount_includes_today": True}
+            update={
+                "holding_amount": 0.0,
+                "settled_holding_amount": 0.0,
+                "amount_includes_today": False,
+            }
         )
 
-    if override_value is None and shares is None and unit_nav and unit_nav > 0:
-        shares = round(holding.holding_amount / unit_nav, 2)
-        if profile is not None and profile.holding_shares is None and persist_profile:
-            save_fund_profile(profile.model_copy(update={"holding_shares": shares}))
+    if override_value is None and shares is None and profile and profile.holding_shares is None:
+        unit_nav = _resolve_unit_nav(code, trade_date, estimate_quote)
+        if unit_nav and unit_nav > 0 and holding.holding_amount > 0:
+            shares = round(holding.holding_amount / unit_nav, 2)
+            if persist_profile:
+                save_fund_profile(profile.model_copy(update={"holding_shares": shares}))
 
-    if shares is None or shares <= 0 or unit_nav is None or unit_nav <= 0:
-        return holding
+    settled = _resolve_settled_amount(holding, profile)
+    official_return = get_official_nav_return(code, trade_date)
+    unit_nav = _resolve_unit_nav(code, trade_date, estimate_quote)
 
-    new_amount = round(shares * unit_nav, 2)
-    if abs(new_amount - holding.holding_amount) < 0.01:
-        return holding
+    # 交易账本有效份额变化：按最新净值重算结算基线（用户确认加减仓）。
+    if override_value is not None and shares and unit_nav and unit_nav > 0:
+        new_settled = round(shares * unit_nav, 2)
+        if persist_profile and profile is not None:
+            save_fund_profile(
+                profile.model_copy(
+                    update={
+                        "settled_holding_amount": new_settled,
+                        "holding_amount": new_settled,
+                    }
+                )
+            )
+        return holding.model_copy(
+            update={
+                "holding_amount": new_settled,
+                "settled_holding_amount": new_settled,
+                "amount_includes_today": False,
+            }
+        )
 
-    cost_basis = _cost_basis(holding, profile)
-    patched = _apply_amount_update(holding, new_amount, cost_basis)
+    if official_return is not None and shares and unit_nav and unit_nav > 0:
+        new_settled = round(shares * unit_nav, 2)
+        if persist_profile and profile is not None:
+            save_fund_profile(
+                profile.model_copy(
+                    update={
+                        "settled_holding_amount": new_settled,
+                        "holding_amount": new_settled,
+                    }
+                )
+            )
+        return holding.model_copy(
+            update={
+                "holding_amount": new_settled,
+                "settled_holding_amount": new_settled,
+                "amount_includes_today": False,
+            }
+        )
 
-    if persist_profile and profile is not None:
-        # 自动同步只更新演算结果；份额/成本仅在 OCR 确认时写入档案。
-        pass
-
-    return patched
+    if abs(settled - holding.holding_amount) > 0.01 or holding.amount_includes_today is not False:
+        if persist_profile and profile is not None and profile.settled_holding_amount is None:
+            save_fund_profile(
+                profile.model_copy(
+                    update={
+                        "settled_holding_amount": settled,
+                        "holding_amount": settled,
+                    }
+                )
+            )
+        return holding.model_copy(
+            update={
+                "holding_amount": settled,
+                "settled_holding_amount": settled,
+                "amount_includes_today": False,
+            }
+        )
+    return holding
 
 
 def _resolve_unit_nav(
@@ -208,9 +280,10 @@ def _cost_basis_from_return(holding: Holding) -> float | None:
     return_percent = holding.holding_return_percent
     if return_percent is None:
         return_percent = holding.return_percent
-    if return_percent is None or holding.holding_amount <= 0:
+    settled = _resolve_settled_amount(holding, None)
+    if return_percent is None or settled <= 0:
         return None
-    return round(holding.holding_amount / (1 + return_percent / 100), 2)
+    return round(settled / (1 + return_percent / 100), 2)
 
 
 def _cost_basis(holding: Holding, profile: FundProfile | None) -> float | None:
@@ -230,18 +303,3 @@ def _cost_basis(holding: Holding, profile: FundProfile | None) -> float | None:
                 return derived
         return profile_basis
     return derived
-
-
-def _apply_amount_update(
-    holding: Holding,
-    new_amount: float,
-    cost_basis: float | None,
-) -> Holding:
-    """仅同步持有金额；昨日结算持有收益/收益率由 OCR 保留，展示层叠加当日估算。"""
-    _ = cost_basis
-    return holding.model_copy(
-        update={
-            "holding_amount": new_amount,
-            "amount_includes_today": True,
-        }
-    )

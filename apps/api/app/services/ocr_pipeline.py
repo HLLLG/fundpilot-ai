@@ -16,6 +16,7 @@ from app.services.fund_code_resolver import (
     resolve_holding_fund_code,
 )
 from app.services.fund_name_utils import sanitize_fund_name
+from app.services.alipay_holdings_parser import is_alipay_holdings_page
 from app.services.ocr_parser import detect_ocr_source, parse_holdings_from_text
 from app.services.trading_session import build_trading_session
 from app.services.overview_pipeline import enrich_holdings_from_profiles, process_overview_holdings
@@ -84,6 +85,16 @@ def run_ocr_upload_pipeline(
     ocr_source = detect_ocr_source(text) if text else "unknown"
 
     parsed_holdings = parse_holdings_from_text(text)
+    lines = [line.strip() for line in text.splitlines() if line.strip()] if text else []
+    if parsed_holdings and is_alipay_holdings_page(lines):
+        ocr_source = "alipay_holdings"
+    elif parsed_holdings and ocr_source not in {"alipay_holdings", "yangjibao_overview"}:
+        ocr_source = "alipay_holdings"
+    # 兜底：能被支付宝持有解析器解析出持仓，即说明这是支付宝持有页。
+    # 避免 OCR 漏读页眉关键词时 detect_ocr_source 误判 unknown，进而错误提示
+    # 「未识别为支付宝持有页」。
+    if parsed_holdings and ocr_source == "unknown":
+        ocr_source = "alipay_holdings"
     holdings, fund_code_resolutions = _resolve_fund_codes(parsed_holdings, profile_service)
     holdings = profile_service.resolve_holdings(holdings)
     previous_holdings = get_previous_holdings_for_review()
@@ -209,8 +220,16 @@ def _resolve_fund_codes(
 def apply_confirmed_holdings(
     holdings: list,
 ) -> dict:
-    """用户确认 OCR 草稿后：同步档案、刷新板块、持久化快照。"""
+    """用户确认 OCR 草稿 / 手动新增后：快速写库并立即返回。
+
+    历史实现会在本请求内同步做全量板块刷新 + per-fund 官方净值/估值拉取（无超时预算），
+    在 CloudBase 云托管下极易超过网关超时（~60s）返回 504（且 504 不经 CORS 中间件，
+    浏览器二次报 CORS）。这里改为「快速写入」：只做 查码 + 档案/板块映射（DB）+ 展示层估算，
+    板块涨跌与当日收益由前端在 apply 成功后调用 `POST /api/holdings/refresh-sector-quotes`
+    异步刷新（该端点带 8s 预算并会回写快照）。
+    """
     from app.models import Holding
+    from app.services.portfolio_persistence import enrich_loaded_holdings
 
     profile_service = FundProfileService()
     typed = [Holding.model_validate(item) if isinstance(item, dict) else item for item in holdings]
@@ -220,16 +239,13 @@ def apply_confirmed_holdings(
     typed = apply_primary_sector_to_holdings(typed)
 
     profile_sync = profile_service.sync_profiles_from_holdings(typed).model_dump()
-    total_assets = round(sum(item.holding_amount for item in typed), 2)
+    merged = enrich_holdings_from_profiles(typed)
+    processed = enrich_loaded_holdings(merged, with_network=False)
+
+    total_assets = round(sum(item.holding_amount for item in processed), 2)
     portfolio_summary = PortfolioSummary(
         total_assets=total_assets,
-        holding_count=len(typed),
-    )
-    processed, sector_refresh, portfolio_summary = process_overview_holdings(
-        typed,
-        portfolio_summary=portfolio_summary,
-        force_sector_refresh=True,
-        from_user_upload=True,
+        holding_count=len(processed),
     )
     save_portfolio_summary(portfolio_summary)
     save_daily_snapshot(processed, portfolio_summary)
@@ -237,7 +253,7 @@ def apply_confirmed_holdings(
         "holdings": [holding.model_dump() for holding in processed],
         "portfolio_summary": portfolio_summary.model_dump(mode="json"),
         "profile_sync": profile_sync,
-        "sector_refresh": sector_refresh,
+        "sector_refresh": None,
     }
 
 

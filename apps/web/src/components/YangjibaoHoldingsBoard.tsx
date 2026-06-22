@@ -21,6 +21,7 @@ import {
   sumDailyProfit,
   sumHoldingAmount,
   displayableHoldings,
+  type HoldingIdentity,
 } from "@/lib/holdingMetrics";
 import {
   getDailyProfit,
@@ -52,7 +53,7 @@ type YangjibaoHoldingsBoardProps = {
   className?: string;
   onAddHolding?: () => void;
   onBatchTransaction?: () => void;
-  onSelectHolding?: (index: number) => void;
+  onSelectHolding?: (holding: HoldingIdentity) => void;
 };
 
 const updatedBadgeClassName =
@@ -250,15 +251,10 @@ export function YangjibaoHoldingsBoard({
 
   const sortedHoldings = useMemo(
     () =>
-      displayHoldings
-        .map((holding) => {
-          const index = holdings.findIndex(
-            (item) => item.fund_code === holding.fund_code && item.fund_name === holding.fund_name,
-          );
-          return { holding, index: index >= 0 ? index : 0 };
-        })
-        .sort((left, right) => compareHoldingsBySort(left.holding, right.holding, sortKey, sortDir)),
-    [displayHoldings, holdings, sortDir, sortKey],
+      [...displayHoldings].sort((left, right) =>
+        compareHoldingsBySort(left, right, sortKey, sortDir),
+      ),
+    [displayHoldings, sortDir, sortKey],
   );
 
   const sectionClassName = className ?? "max-w-none";
@@ -418,7 +414,7 @@ export function YangjibaoHoldingsBoard({
         </div>
 
         <ul className="divide-y divide-slate-100">
-          {sortedHoldings.map(({ holding, index }) => {
+          {sortedHoldings.map((holding) => {
             const daily = getDailyProfit(holding);
             const estimatedDailyReturn = getEstimatedDailyReturnPercent(holding);
             const holdingProfit = getEstimatedHoldingProfit(holding);
@@ -429,10 +425,15 @@ export function YangjibaoHoldingsBoard({
             const sectorMeta = sectorMetaByFundCode[holding.fund_code] as SectorQuoteMeta | undefined;
             const sectorLabel = holdingDisplaySectorLabel(holding, sectorMeta);
             return (
-              <li key={`${holding.fund_code}-${index}`}>
+              <li key={`${holding.fund_code}-${holding.fund_name}`}>
                 <button
                   type="button"
-                  onClick={() => onSelectHolding?.(index)}
+                  onClick={() =>
+                    onSelectHolding?.({
+                      fund_code: holding.fund_code,
+                      fund_name: holding.fund_name,
+                    })
+                  }
                   className="grid w-full grid-cols-[minmax(0,1fr)_4.25rem_minmax(3.5rem,5rem)_4.25rem] gap-1 px-3 py-2 text-left transition hover:bg-slate-50 active:bg-slate-100 sm:px-4"
                 >
                   <div className="min-w-0">

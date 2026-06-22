@@ -85,7 +85,14 @@ def process_overview_holdings(
 
     updated_summary = portfolio_summary
     if updated_summary is not None:
-        total_assets = round(sum(holding.holding_amount for holding in estimated), 2)
+        total_assets = round(
+            sum(
+                (holding.settled_holding_amount or holding.holding_amount)
+                + (holding.daily_profit or 0)
+                for holding in estimated
+            ),
+            2,
+        )
         row_sum = sum_daily_profit(estimated)
         patch: dict = {
             "total_assets": total_assets,

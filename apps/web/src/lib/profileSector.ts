@@ -9,7 +9,56 @@ const FUND_NAME_TOPIC_TOKENS = [
   "半导体",
   "新能源",
   "红利",
+  "传媒",
+  "CPO",
 ] as const;
+
+const FUND_PRODUCT_LABEL_RE =
+  /(?:混合|联接|链接|发起|精选|股票)[A-CEH]?$|(?:混合|联接|链接|发起|精选|ETF|LOF)/i;
+
+/** 与 apps/api sector_canonical 一致的英文/数字板块短名 */
+const CANONICAL_ASCII_SECTOR_LABELS = new Set(["CPO", "PCB", "5G"]);
+
+/** 与 apps/api GLOBAL_FUND_SECTOR_SEEDS 同步 */
+const FUND_CODE_SECTOR_SEEDS: Record<string, { sector_name: string; intraday_index_name?: string }> = {
+  "018957": { sector_name: "CPO" },
+  "010236": { sector_name: "传媒", intraday_index_name: "传媒" },
+};
+
+function seededSectorFields(
+  holding: Pick<Holding, "fund_code" | "sector_name" | "intraday_index_name">,
+): { sector_name: string; intraday_index_name?: string } | null {
+  const code = (holding.fund_code || "").trim().padStart(6, "0");
+  if (!code || code === "000000") {
+    return null;
+  }
+  const seed = FUND_CODE_SECTOR_SEEDS[code];
+  if (!seed) {
+    return null;
+  }
+  const sectorName =
+    holding.sector_name?.trim() && !isInvalidSectorLabel(holding.sector_name)
+      ? holding.sector_name.trim()
+      : seed.sector_name;
+  const intradayIndex =
+    holding.intraday_index_name?.trim() && !isInvalidSectorLabel(holding.intraday_index_name)
+      ? holding.intraday_index_name.trim()
+      : seed.intraday_index_name;
+  return {
+    sector_name: sectorName,
+    ...(intradayIndex ? { intraday_index_name: intradayIndex } : {}),
+  };
+}
+
+function seededSectorLabel(
+  holding: Pick<Holding, "fund_code" | "sector_name">,
+): string | null {
+  const seeded = seededSectorFields(holding);
+  if (!seeded || isInvalidSectorLabel(seeded.sector_name)) {
+    return null;
+  }
+  return seeded.sector_name;
+}
 
 export function inferSectorLabelFromFundName(fundName: string | null | undefined): string | null {
   const normalized = (fundName || "").replace("...", "").replace(/\s+/g, "");
@@ -26,12 +75,16 @@ export function inferSectorLabelFromFundName(fundName: string | null | undefined
 
 /** 持仓列表「板块」列展示名：档案/OCR → 基金名推断 → 估值兜底提示 */
 export function holdingDisplaySectorLabel(
-  holding: Pick<Holding, "fund_name" | "sector_name" | "intraday_index_name">,
+  holding: Pick<Holding, "fund_code" | "fund_name" | "sector_name" | "intraday_index_name">,
   sectorMeta?: SectorQuoteMeta | null,
 ): string {
   const base = holdingRelatedBoardLabel(holding);
   if (base !== "—") {
     return base;
+  }
+  const seeded = seededSectorLabel(holding);
+  if (seeded) {
+    return seeded;
   }
   const inferred = inferSectorLabelFromFundName(holding.fund_name);
   if (inferred) {
@@ -108,11 +161,15 @@ function inferIndexFromFundName(fundName: string | null | undefined): string | n
 
 /** 与后端 sector_quote_lookup_label 一致：ETF 联接 / OCR 场内指数 → 指数；否则关联板块短名 */
 export function sectorQuoteLookupLabel(
-  holding: Pick<Holding, "fund_name" | "sector_name" | "intraday_index_name">,
+  holding: Pick<Holding, "fund_code" | "fund_name" | "sector_name" | "intraday_index_name">,
 ): string | null {
   const fromFund = inferIndexFromFundName(holding.fund_name);
   if (fromFund) {
     return fromFund;
+  }
+  const seeded = seededSectorFields(holding);
+  if (seeded?.sector_name && !isInvalidSectorLabel(seeded.sector_name)) {
+    return seeded.sector_name;
   }
   const boardName = holding.sector_name?.trim();
   if (boardName && !isInvalidSectorLabel(boardName)) {
@@ -136,7 +193,17 @@ export function isInvalidSectorLabel(name: string | null | undefined): boolean {
   if (trimmed === "关联板块" || trimmed === "场内指数") {
     return true;
   }
-  return !/[\u4e00-\u9fff]/.test(trimmed);
+  if (!/[\u4e00-\u9fff]/.test(trimmed)) {
+    return !CANONICAL_ASCII_SECTOR_LABELS.has(trimmed.toUpperCase());
+  }
+  const compact = trimmed.replace(/\s+/g, "");
+  if (FUND_PRODUCT_LABEL_RE.test(compact)) {
+    return true;
+  }
+  if (compact.length > 8 && /(?:混合|联接|链接|发起|精选|ETF|LOF)/.test(compact)) {
+    return true;
+  }
+  return false;
 }
 
 export type IntradayQuery = {
@@ -149,6 +216,7 @@ const BOARD_TO_INTRADAY_INDEX: Record<string, string> = {
   半导体: "中证半导体",
   电网设备: "中证电网设备",
   人工智能: "中证人工智能",
+  传媒: "传媒",
 };
 
 function intradayIndexForBoard(boardName: string | null | undefined): string | null {
@@ -161,22 +229,31 @@ function intradayIndexForBoard(boardName: string | null | undefined): string | n
 
 /** 详情弹窗分时图：有场内指数则走指数 K 线（008586→中证人工智能），概念板块名无分钟线 */
 export function resolveIntradayQuery(
-  holding: Pick<Holding, "fund_name" | "sector_name" | "intraday_index_name">,
+  holding: Pick<Holding, "fund_code" | "fund_name" | "sector_name" | "intraday_index_name">,
   sectorMeta?: SectorQuoteMeta | null,
 ): IntradayQuery | null {
-  const indexName = holding.intraday_index_name?.trim();
+  const seeded = seededSectorFields(holding);
+  const effectiveHolding = seeded
+    ? {
+        ...holding,
+        sector_name: seeded.sector_name,
+        intraday_index_name: seeded.intraday_index_name ?? holding.intraday_index_name,
+      }
+    : holding;
+
+  const indexName = effectiveHolding.intraday_index_name?.trim();
   if (indexName && !isInvalidSectorLabel(indexName)) {
     return { source_type: "index", source_name: indexName };
   }
 
-  const boardIndex = intradayIndexForBoard(holding.sector_name);
+  const boardIndex = intradayIndexForBoard(effectiveHolding.sector_name);
   if (boardIndex) {
     return { source_type: "index", source_name: boardIndex };
   }
 
   const metaName = sectorMeta?.matched_name?.trim();
   const metaType = sectorMeta?.source_type;
-  const fundHint = (holding.fund_name || "").trim();
+  const fundHint = (effectiveHolding.fund_name || "").trim();
   const metaLooksLikeFund =
     Boolean(metaName) &&
     Boolean(fundHint) &&
@@ -200,12 +277,12 @@ export function resolveIntradayQuery(
     return { source_type: metaType, source_name: metaName };
   }
 
-  const label = sectorQuoteLookupLabel(holding);
+  const label = sectorQuoteLookupLabel(effectiveHolding);
   if (!label) {
     return null;
   }
 
-  const boardName = holding.sector_name?.trim();
+  const boardName = effectiveHolding.sector_name?.trim();
   if (boardName && !isInvalidSectorLabel(boardName)) {
     const mappedIndex = intradayIndexForBoard(boardName);
     if (mappedIndex) {

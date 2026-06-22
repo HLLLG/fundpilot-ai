@@ -21,8 +21,8 @@ describe("dashboard tab persistence", () => {
     vi.unstubAllGlobals();
   });
 
-  it("defaults to today when nothing stored", () => {
-    expect(loadDashboardTab()).toBe("today");
+  it("defaults to holdings when nothing stored", () => {
+    expect(loadDashboardTab()).toBe("holdings");
   });
 
   it("restores a saved primary tab", () => {
@@ -37,6 +37,6 @@ describe("dashboard tab persistence", () => {
 
   it("ignores invalid stored values", () => {
     window.sessionStorage.setItem("fundpilot-dashboard-tab", "invalid");
-    expect(loadDashboardTab()).toBe("today");
+    expect(loadDashboardTab()).toBe("holdings");
   });
 });

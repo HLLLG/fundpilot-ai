@@ -260,7 +260,6 @@ export function saveDiscoverySectorHeatCache(sectors: DiscoverySectorHeat[]) {
 const DASHBOARD_TAB_KEY = "fundpilot-dashboard-tab";
 
 export type DashboardTabId =
-  | "today"
   | "holdings"
   | "report"
   | "history"
@@ -269,7 +268,6 @@ export type DashboardTabId =
   | "discovery";
 
 const DASHBOARD_TAB_IDS: DashboardTabId[] = [
-  "today",
   "holdings",
   "report",
   "history",
@@ -278,7 +276,7 @@ const DASHBOARD_TAB_IDS: DashboardTabId[] = [
   "discovery",
 ];
 
-export function loadDashboardTab(fallback: DashboardTabId = "today"): DashboardTabId {
+export function loadDashboardTab(fallback: DashboardTabId = "holdings"): DashboardTabId {
   if (typeof window === "undefined") {
     return fallback;
   }

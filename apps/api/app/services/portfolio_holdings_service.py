@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from app.database import get_most_recent_portfolio_snapshot, get_portfolio_summary, list_fund_profiles
-from app.models import FundProfile, Holding
+from app.database import get_most_recent_portfolio_snapshot, get_portfolio_summary, list_fund_profiles, save_portfolio_summary
+from app.models import FundProfile, Holding, PortfolioSummary
 from app.services.fund_code_resolver import reconcile_holding_fund_codes
+from app.services.fund_name_utils import is_fund_name_match
 from app.services.fund_profile import FundProfileService, _is_valid_sector_label
 from app.services.holding_amount_sync import sync_holding_amounts_from_shares
 from app.services.holding_estimates import enrich_holdings_estimates, sum_daily_profit
@@ -12,6 +13,7 @@ from app.services.holding_filters import is_test_holding, without_test_holdings
 from app.services.overview_pipeline import enrich_holdings_from_profiles
 from app.services.portfolio_persistence import enrich_loaded_holdings, persist_holdings_after_sector_refresh
 from app.services.sector_quote_service import refresh_holdings_sector_quotes
+from app.services.portfolio_snapshot import save_daily_snapshot
 from app.services.transaction_ledger import confirm_and_compute_overrides
 
 
@@ -177,14 +179,16 @@ def merge_holdings_with_profiles(
 
     merged: list[Holding] = []
     seen_codes: set[str] = set()
+    allow_profile_only = not snapshot_holdings
 
     for profile in profiles:
         existing = by_code.get(profile.fund_code) or by_name.get(profile.fund_name)
         if existing is not None:
             merged.append(_overlay_profile_onto_holding(existing, profile))
-        else:
+            seen_codes.add(profile.fund_code)
+        elif allow_profile_only:
             merged.append(profile_to_holding(profile))
-        seen_codes.add(profile.fund_code)
+            seen_codes.add(profile.fund_code)
 
     for row in snapshot_holdings:
         if row.fund_code in seen_codes or is_test_holding(row):
@@ -253,3 +257,125 @@ def load_persisted_holdings() -> tuple[list[Holding], str, str | None, datetime 
         )
 
     return [], "empty", None, None
+
+
+def _holding_matches_target(
+    holding: Holding,
+    fund_code: str,
+    fund_name: str | None,
+) -> bool:
+    code = (fund_code or "").strip()
+    if code and code != "000000" and holding.fund_code == code:
+        return True
+    if fund_name:
+        if holding.fund_name == fund_name:
+            return True
+        if is_fund_name_match(fund_name, holding.fund_name):
+            return True
+    return False
+
+
+def _deactivate_profile_holding(profile: FundProfile) -> None:
+    """从持有列表移除但保留档案元数据（板块、成本历史等）。"""
+    from app.database import save_fund_profile
+
+    save_fund_profile(
+        profile.model_copy(
+            update={
+                "holding_amount": 0,
+                "settled_holding_amount": 0,
+                "holding_shares": 0,
+                "first_seen_date": None,
+            }
+        )
+    )
+
+
+def remove_holding_from_portfolio(
+    fund_code: str,
+    *,
+    fund_name: str | None = None,
+) -> dict:
+    """从当前账户汇总移除一只基金；保留 fund_profiles 与历史日快照。"""
+    code = (fund_code or "").strip()
+    if not code:
+        raise ValueError("fund_code 不能为空")
+
+    snapshot = get_most_recent_portfolio_snapshot()
+    if not snapshot:
+        raise LookupError("当前没有可删除的持仓快照")
+
+    current = [Holding.model_validate(item) for item in snapshot.get("holdings", [])]
+    if not current:
+        raise LookupError("当前持仓为空")
+
+    matched_in_snapshot = [item for item in current if _holding_matches_target(item, code, fund_name)]
+
+    if matched_in_snapshot:
+        remaining = [item for item in current if not _holding_matches_target(item, code, fund_name)]
+    else:
+        from app.database import get_fund_profile_by_code
+
+        profile = get_fund_profile_by_code(code) if code != "000000" else None
+        if profile is None and fund_name:
+            profile = FundProfileService().find_match(fund_name)
+        if profile is None:
+            raise LookupError("未找到要删除的持仓")
+        _deactivate_profile_holding(profile)
+        remaining = current
+
+    remaining = without_test_holdings(remaining)
+
+    total_assets = round(
+        sum(
+            (item.settled_holding_amount or item.holding_amount) + (item.daily_profit or 0)
+            for item in remaining
+        ),
+        2,
+    )
+    daily_profit = sum_daily_profit(remaining) if remaining else 0.0
+    daily_return_percent = None
+    if remaining and total_assets > daily_profit > 0:
+        previous = total_assets - daily_profit
+        if previous > 0:
+            daily_return_percent = round(daily_profit / previous * 100, 2)
+
+    summary = get_portfolio_summary()
+    if summary is None:
+        summary = PortfolioSummary(
+            total_assets=total_assets,
+            daily_profit=daily_profit,
+            daily_return_percent=daily_return_percent,
+            holding_count=len(remaining),
+        )
+    else:
+        summary = summary.model_copy(
+            update={
+                "total_assets": total_assets,
+                "daily_profit": daily_profit,
+                "daily_return_percent": daily_return_percent,
+                "holding_count": len(remaining),
+                "updated_at": datetime.now(timezone.utc),
+            }
+        )
+
+    save_portfolio_summary(summary)
+    save_daily_snapshot(remaining, summary)
+
+    from app.database import get_fund_profile_by_code, save_fund_profile
+
+    for item in matched_in_snapshot:
+        item_code = (item.fund_code or "").strip()
+        if not item_code or item_code == "000000":
+            continue
+        profile = get_fund_profile_by_code(item_code)
+        if profile is None:
+            continue
+        save_fund_profile(profile.model_copy(update={"first_seen_date": None}))
+
+    return build_portfolio_holdings_response(
+        remaining,
+        source="snapshot",
+        snapshot_date=snapshot.get("snapshot_date"),
+        refreshed_at=summary.updated_at,
+    )

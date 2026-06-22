@@ -71,6 +71,45 @@ def test_merge_holdings_keeps_previous_when_incoming_is_subset(monkeypatch):
     assert merged[1].fund_code == "519674"
 
 
+def test_merge_holdings_does_not_restore_deleted_fund(monkeypatch):
+    previous = [
+        Holding(
+            fund_code="018957",
+            fund_name="中航机遇领航混合发起C",
+            holding_amount=999.97,
+            return_percent=1.39,
+            sector_name="CPO",
+            sector_return_percent=1.39,
+        ),
+        Holding(
+            fund_code="010236",
+            fund_name="广发电子信息传媒股票C",
+            holding_amount=1500.0,
+            return_percent=2.0,
+            sector_name="传媒",
+            sector_return_percent=2.0,
+        ),
+    ]
+    monkeypatch.setattr(
+        "app.services.portfolio_persistence.get_most_recent_portfolio_snapshot",
+        lambda: {"holdings": [h.model_dump() for h in previous]},
+    )
+    incoming = [
+        Holding(
+            fund_code="010236",
+            fund_name="广发电子信息传媒股票C",
+            holding_amount=1500.0,
+            return_percent=2.0,
+            sector_name="传媒",
+            sector_return_percent=2.93,
+        ),
+    ]
+    merged = merge_holdings_with_snapshot(incoming)
+    assert len(merged) == 1
+    assert merged[0].fund_code == "010236"
+    assert merged[0].sector_return_percent == 2.93
+
+
 def test_load_recovers_from_profiles(monkeypatch):
     monkeypatch.setattr(
         "app.services.portfolio_holdings_service.get_most_recent_portfolio_snapshot",

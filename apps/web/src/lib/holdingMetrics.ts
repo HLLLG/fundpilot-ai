@@ -34,6 +34,39 @@ export function displayableHoldings(holdings: Holding[]): Holding[] {
   return withoutTestHoldings(holdings).filter((holding) => !isPlaceholderHolding(holding));
 }
 
+export type HoldingIdentity = Pick<Holding, "fund_code" | "fund_name">;
+
+function normalizeHoldingName(name: string): string {
+  return name.replace(/\.\.\./g, "").replace(/[.\s·]/g, "").trim();
+}
+
+/** 在完整持仓数组中定位基金；优先 fund_code，避免排序/刷新后下标错位。 */
+export function findHoldingIndex(
+  holdings: Holding[],
+  target: HoldingIdentity,
+): number {
+  const code = (target.fund_code || "").trim();
+  if (code && code !== "000000") {
+    const byCode = holdings.findIndex((item) => item.fund_code === code);
+    if (byCode >= 0) {
+      return byCode;
+    }
+  }
+  const targetName = normalizeHoldingName(target.fund_name || "");
+  if (targetName) {
+    const byName = holdings.findIndex(
+      (item) => normalizeHoldingName(item.fund_name || "") === targetName,
+    );
+    if (byName >= 0) {
+      return byName;
+    }
+  }
+  return holdings.findIndex(
+    (item) =>
+      item.fund_code === target.fund_code && item.fund_name === target.fund_name,
+  );
+}
+
 function round2(value: number) {
   return Math.round(value * 100) / 100;
 }
@@ -174,7 +207,7 @@ export function holdingAmountIncludesTodayReturn(holding: Holding): boolean {
   if (holding.amount_includes_today != null) {
     return holding.amount_includes_today;
   }
-  return holding.daily_return_percent_source === "official_nav";
+  return false;
 }
 
 export function computeDailyProfitFromRate(
@@ -231,18 +264,18 @@ export function computeYesterdayProfit(holding: Holding): number | null {
 }
 
 export function computeDailyProfit(holding: Holding): number | null {
-  const amount = holding.holding_amount;
+  const amount =
+    holding.settled_holding_amount ?? holding.display_holding_amount ?? holding.holding_amount;
   if (amount <= 0) {
     return holding.daily_profit ?? null;
   }
 
   const includesToday = holdingAmountIncludesTodayReturn(holding);
   if (holding.daily_return_percent != null) {
-    return computeDailyProfitFromRate(
-      amount,
-      holding.daily_return_percent,
-      includesToday || holding.daily_return_percent_source === "official_nav",
-    );
+    if (holding.daily_return_percent_source === "official_nav" && !includesToday) {
+      return round2((amount * holding.daily_return_percent) / 100);
+    }
+    return computeDailyProfitFromRate(amount, holding.daily_return_percent, includesToday);
   }
 
   if (holding.sector_return_percent != null) {

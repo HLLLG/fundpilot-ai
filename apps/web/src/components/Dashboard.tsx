@@ -21,6 +21,7 @@ import {
   listReports,
   applyPortfolioHoldings,
   applyTransactions,
+  deletePortfolioHolding,
   parseOcrUpload,
   transactionsOcr,
   saveAnalysisPromptRemote,
@@ -49,7 +50,7 @@ import { HistoryRail } from "@/components/HistoryRail";
 import { BackgroundJobsStack } from "@/components/BackgroundJobsStack";
 import { DiscoveryJobStatusFloat } from "@/components/DiscoveryJobStatusFloat";
 import { JobStatusFloat } from "@/components/JobStatusFloat";
-import { displayableHoldings } from "@/lib/holdingMetrics";
+import { displayableHoldings, findHoldingIndex, sumDailyProfit, sumHoldingAmount, type HoldingIdentity } from "@/lib/holdingMetrics";
 import {
   loadCachedPortfolioHoldings,
   saveCachedPortfolioHoldings,
@@ -73,7 +74,6 @@ import { FocusSectorToast } from "@/components/FocusSectorToast";
 import { MarketTab } from "@/components/MarketTab";
 import { UserMenu } from "@/components/UserMenu";
 import { BrandMark } from "@/components/BrandMark";
-import { TodayBriefing } from "@/components/TodayBriefing";
 import { DashboardNav } from "@/components/DashboardNav";
 const defaultProfile: InvestorProfile = {
   style: "稳健",
@@ -113,7 +113,7 @@ export function Dashboard() {
   const [holdingWarnings, setHoldingWarnings] = useState<HoldingFieldWarning[]>([]);
   const [message, setMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [activeTab, setActiveTabState] = useState<TabId>("today");
+  const [activeTab, setActiveTabState] = useState<TabId>("holdings");
   const [analysisMode, setAnalysisMode] = useState<AnalysisMode>("deep");
   const [profileReady, setProfileReady] = useState(false);
   const [promptReady, setPromptReady] = useState(false);
@@ -123,9 +123,17 @@ export function Dashboard() {
     null,
   );
   const discoveryScanRetryRef = useRef<(() => void) | null>(null);
-  const [selectedHoldingIndex, setSelectedHoldingIndex] = useState<number | null>(null);
+  const [selectedHoldingKey, setSelectedHoldingKey] = useState<HoldingIdentity | null>(null);
+  const selectedHoldingIndex = useMemo(() => {
+    if (!selectedHoldingKey) {
+      return null;
+    }
+    const index = findHoldingIndex(holdings, selectedHoldingKey);
+    return index >= 0 ? index : null;
+  }, [holdings, selectedHoldingKey]);
   const reportSectionRef = useRef<HTMLDivElement>(null);
   const shouldRefreshOnLoad = useRef(false);
+  const refreshAfterApplyRef = useRef(false);
   const profilePersistReady = useRef(false);
   const promptPersistReady = useRef(false);
   const [isHydratingHoldings, setIsHydratingHoldings] = useState(true);
@@ -256,7 +264,7 @@ export function Dashboard() {
   useEffect(() => {
     const handleDashboardTabEvent = (event: Event) => {
       const detail = (event as CustomEvent<string>).detail;
-      if (detail === "today" || detail === "holdings" || detail === "report" || detail === "history" || detail === "dashboard" || detail === "market" || detail === "discovery") {
+      if (detail === "holdings" || detail === "report" || detail === "history" || detail === "dashboard" || detail === "market" || detail === "discovery") {
         setActiveTab(detail);
       }
     };
@@ -306,6 +314,18 @@ export function Dashboard() {
     // One-shot refresh after portfolio hydration.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [holdings.length]);
+
+  // apply-holdings 已改为「快速写入」（不在后端做板块拉取），新增/确认成功后在此显式
+  // 触发一次板块刷新补全板块涨跌与当日收益。依赖 holdings 引用变化，确保刷新时
+  // useSectorQuoteRefresh 内部 holdingsRef 已更新为最新持仓。
+  useEffect(() => {
+    if (!refreshAfterApplyRef.current || holdings.length === 0) {
+      return;
+    }
+    refreshAfterApplyRef.current = false;
+    void sectorRefresh.refresh(true, "fast");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [holdings]);
 
   useEffect(() => {
     if (holdings.length === 0) {
@@ -447,7 +467,7 @@ export function Dashboard() {
       setPendingOcrSource(result.ocr_source ?? null);
       setHoldingWarnings(result.holding_warnings ?? []);
       setShowAddHoldingModal(false);
-      setActiveTab("today");
+      setActiveTab("holdings");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "截图识别失败。");
     } finally {
@@ -468,6 +488,7 @@ export function Dashboard() {
       if (applied.portfolio_summary) {
         setPortfolioSummary(applied.portfolio_summary);
       }
+      refreshAfterApplyRef.current = true;
       setShowAddHoldingModal(false);
       setMessage(
         newHoldings.length === 1
@@ -493,6 +514,7 @@ export function Dashboard() {
       if (applied.portfolio_summary) {
         setPortfolioSummary(applied.portfolio_summary);
       }
+      refreshAfterApplyRef.current = true;
       setPendingOcrHoldings(null);
       setPendingOcrResolutions([]);
       setPendingOcrNote(null);
@@ -504,6 +526,73 @@ export function Dashboard() {
       setIsConfirmingOcr(false);
     }
   };
+
+  const handleDeleteHolding = useCallback(
+    (index: number) => {
+      const target = holdings[index];
+      if (!target) {
+        return;
+      }
+
+      const rollbackHoldings = holdings;
+      const rollbackSummary = portfolioSummary;
+      const remaining = holdings.filter((_, itemIndex) => itemIndex !== index);
+      const display = displayableHoldings(remaining);
+      const totalAssets = sumHoldingAmount(display) || null;
+      const dailyProfit = display.length > 0 ? sumDailyProfit(display) : null;
+      let dailyReturnPercent: number | null = null;
+      if (totalAssets != null && dailyProfit != null && totalAssets > dailyProfit) {
+        const previousAssets = totalAssets - dailyProfit;
+        if (previousAssets > 0) {
+          dailyReturnPercent = Math.round((dailyProfit / previousAssets) * 10000) / 100;
+        }
+      }
+      const optimisticSummary: PortfolioSummary = {
+        ...portfolioSummary,
+        total_assets: totalAssets,
+        daily_profit: dailyProfit,
+        daily_return_percent: dailyReturnPercent,
+        holding_count: display.length,
+        updated_at: new Date().toISOString(),
+      };
+
+      setHoldings(remaining);
+      setPortfolioSummary(optimisticSummary);
+      setSelectedHoldingKey(null);
+      saveCachedPortfolioHoldings({
+        holdings: remaining,
+        portfolio_summary: optimisticSummary,
+        refreshed_at: holdingsRefreshedAt,
+      });
+      setMessage(`已移除 ${target.fund_name}`);
+
+      sectorRefresh.invalidatePendingRefresh();
+
+      void deletePortfolioHolding(target.fund_code, target.fund_name)
+        .then((result) => {
+          setHoldings(result.holdings);
+          if (result.portfolio_summary) {
+            setPortfolioSummary(result.portfolio_summary);
+          }
+          saveCachedPortfolioHoldings({
+            holdings: result.holdings,
+            portfolio_summary: result.portfolio_summary ?? optimisticSummary,
+            refreshed_at: holdingsRefreshedAt,
+          });
+        })
+        .catch((error) => {
+          setHoldings(rollbackHoldings);
+          setPortfolioSummary(rollbackSummary);
+          saveCachedPortfolioHoldings({
+            holdings: rollbackHoldings,
+            portfolio_summary: rollbackSummary,
+            refreshed_at: holdingsRefreshedAt,
+          });
+          setMessage(error instanceof Error ? error.message : "删除失败，已恢复列表");
+        });
+    },
+    [holdings, holdingsRefreshedAt, portfolioSummary, sectorRefresh],
+  );
 
   const mergeTransactions = (
     existing: ParsedTransaction[],
@@ -600,20 +689,6 @@ export function Dashboard() {
         ) : null}
 
         <div className="min-w-0 flex-1 pb-6">
-          {activeTab === "today" ? (
-            <TodayBriefing
-              holdings={holdings}
-              reports={reports}
-              portfolioSummary={portfolioSummary}
-              sectorRefresh={sectorRefresh}
-              refreshedAt={holdingsRefreshedAt}
-              isLoading={isHydratingHoldings && holdings.length === 0}
-              onNavigateTab={(tab) => setActiveTab(tab)}
-              onAddHolding={() => setShowAddHoldingModal(true)}
-              onSelectHolding={setSelectedHoldingIndex}
-            />
-          ) : null}
-
           {activeTab === "holdings" ? (
             <div className="w-full">
               {swingAlerts.alertsActive ? (
@@ -633,7 +708,7 @@ export function Dashboard() {
                 isLoading={isHydratingHoldings && holdings.length === 0}
                 onAddHolding={() => setShowAddHoldingModal(true)}
                 onBatchTransaction={() => setShowBatchModal(true)}
-                onSelectHolding={setSelectedHoldingIndex}
+                onSelectHolding={setSelectedHoldingKey}
               />
             </div>
           ) : null}
@@ -759,8 +834,16 @@ export function Dashboard() {
           holdings={holdings}
           portfolioSummary={portfolioSummary}
           sectorMeta={sectorRefresh.sectorMetaByFundCode[holdings[selectedHoldingIndex].fund_code]}
-          onClose={() => setSelectedHoldingIndex(null)}
-          onNavigate={setSelectedHoldingIndex}
+          onClose={() => setSelectedHoldingKey(null)}
+          onNavigate={(index) => {
+            const target = holdings[index];
+            if (target) {
+              setSelectedHoldingKey({
+                fund_code: target.fund_code,
+                fund_name: target.fund_name,
+              });
+            }
+          }}
           onFundCodeUpdated={async (index, updated) => {
             const next = holdings.map((item, itemIndex) => (itemIndex === index ? updated : item));
             setHoldings(next);
@@ -775,6 +858,15 @@ export function Dashboard() {
             setHoldings((current) =>
               current.map((item, itemIndex) => (itemIndex === index ? resolved : item)),
             );
+          }}
+          onDeleteHolding={handleDeleteHolding}
+          onPortfolioUpdated={async (nextHoldings) => {
+            setHoldings(nextHoldings);
+            try {
+              await applyPortfolioHoldings(nextHoldings);
+            } catch (error) {
+              setMessage(error instanceof Error ? error.message : "持仓持久化失败，请刷新后重试");
+            }
           }}
         />
       ) : null}

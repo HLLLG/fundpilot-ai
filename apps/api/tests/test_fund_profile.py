@@ -29,6 +29,28 @@ def test_save_profile_stamps_first_seen_for_new_profile():
     assert saved.first_seen_date == date.today().isoformat()
 
 
+def test_sync_profiles_from_holdings_stamps_first_seen(tmp_path, monkeypatch):
+    monkeypatch.setenv("FUND_AI_DB_PATH", str(tmp_path / "app.db"))
+    from app.config import refresh_settings
+
+    refresh_settings()
+    service = FundProfileService()
+    holdings = [
+        Holding(
+            fund_code="008586",
+            fund_name="华夏人工智能ETF联接C",
+            holding_amount=8789.79,
+            return_percent=6.88,
+            holding_return_percent=6.88,
+        )
+    ]
+    result = service.sync_profiles_from_holdings(holdings)
+    assert result.created == 1
+    saved = service._find_profile_for_holding(holdings[0])
+    assert saved is not None
+    assert saved.first_seen_date == date.today().isoformat()
+
+
 def test_save_profile_keeps_existing_first_seen_on_reupload():
     service = FundProfileService()
     service.save_profile(

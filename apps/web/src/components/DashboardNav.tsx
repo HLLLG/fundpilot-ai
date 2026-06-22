@@ -8,14 +8,13 @@ import {
   MoreHorizontal,
   PieChart,
   Search,
-  Sparkles,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { DashboardTabId } from "@/lib/storage";
 
 export type PrimaryDashboardTab = Extract<
   DashboardTabId,
-  "today" | "holdings" | "dashboard" | "market" | "discovery" | "report"
+  "holdings" | "dashboard" | "market" | "discovery" | "report"
 >;
 
 type DashboardNavProps = {
@@ -25,7 +24,6 @@ type DashboardNavProps = {
 };
 
 const DESKTOP_TABS: Array<{ id: PrimaryDashboardTab; label: string }> = [
-  { id: "today", label: "简报" },
   { id: "holdings", label: "持仓" },
   { id: "dashboard", label: "分析" },
   { id: "market", label: "市场" },
@@ -36,9 +34,8 @@ const DESKTOP_TABS: Array<{ id: PrimaryDashboardTab; label: string }> = [
 const MOBILE_PRIMARY: Array<{
   id: PrimaryDashboardTab;
   label: string;
-  icon: typeof Sparkles;
+  icon: typeof LayoutList;
 }> = [
-  { id: "today", label: "简报", icon: Sparkles },
   { id: "holdings", label: "持仓", icon: LayoutList },
   { id: "dashboard", label: "分析", icon: PieChart },
   { id: "market", label: "市场", icon: Activity },
@@ -47,7 +44,7 @@ const MOBILE_PRIMARY: Array<{
 const MOBILE_MORE: Array<{
   id: PrimaryDashboardTab | "history";
   label: string;
-  icon: typeof Sparkles;
+  icon: typeof LayoutList;
 }> = [
   { id: "discovery", label: "发现基金", icon: Search },
   { id: "report", label: "生成日报", icon: FileText },

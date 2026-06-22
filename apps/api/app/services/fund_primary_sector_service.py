@@ -26,6 +26,10 @@ GLOBAL_FUND_SECTOR_SEEDS: dict[str, dict[str, str | None]] = {
     "015945": {"sector_name": "商业航天", "intraday_index_name": None},
     "008586": {"sector_name": "人工智能", "intraday_index_name": "中证人工智能"},
     "025856": {"sector_name": "电网设备", "intraday_index_name": "中证电网设备"},
+    # 重仓光模块/CPO，名称无主题关键词
+    "018957": {"sector_name": "CPO", "intraday_index_name": None},
+    # 电子信息传媒产业精选 → 传媒指数
+    "010236": {"sector_name": "传媒", "intraday_index_name": "传媒"},
 }
 
 # 重仓股名称关键词 → 东财概念板块（加权投票）
@@ -194,6 +198,8 @@ def primary_sector_fields_for_holding(
 
 
 def apply_primary_sector_to_holding(holding: Holding) -> Holding:
+    if holding.sector_name and not _is_valid_sector_label(holding.sector_name):
+        holding = holding.model_copy(update={"sector_name": None})
     if _is_valid_sector_label(holding.sector_name):
         if holding.fund_code and holding.fund_code != "000000":
             upsert_primary_sector_from_holding(holding, source="yangjibao_overview")
@@ -334,6 +340,8 @@ print(json.dumps(rows, ensure_ascii=False))
             [sys.executable, "-c", script, fund_code],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=_SUBPROCESS_TIMEOUT,
             check=False,
         )

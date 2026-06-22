@@ -16,6 +16,10 @@ export type Holding = {
   user_note?: string | null;
   /** 持有金额是否已含当日涨跌（份额×净值同步后） */
   amount_includes_today?: boolean | null;
+  /** 上一交易日结算持有金额（养基宝口径） */
+  settled_holding_amount?: number | null;
+  /** API 展示用结算金额 */
+  display_holding_amount?: number | null;
   /** 后端 holding_client.serialize 写入的展示口径（优先于前端 fallback 计算） */
   estimated_holding_return_percent?: number | null;
   estimated_holding_profit?: number | null;
@@ -1567,6 +1571,39 @@ export async function applyPortfolioHoldings(
   return response.json();
 }
 
+export async function deletePortfolioHolding(
+  fundCode: string,
+  fundName?: string,
+): Promise<{
+  holdings: Holding[];
+  portfolio_summary?: PortfolioSummary | null;
+}> {
+  const params = new URLSearchParams();
+  if (fundName) {
+    params.set("fund_name", fundName);
+  }
+  const query = params.toString();
+  const response = await apiFetch(
+    `${API_BASE}/api/portfolio/holdings/${encodeURIComponent(fundCode)}${query ? `?${query}` : ""}`,
+    { method: "DELETE" },
+  );
+  if (!response.ok) {
+    const text = await response.text();
+    try {
+      const parsed = JSON.parse(text) as { detail?: string };
+      if (parsed.detail) {
+        throw new Error(parsed.detail);
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message !== text) {
+        throw error;
+      }
+    }
+    throw new Error(text);
+  }
+  return response.json();
+}
+
 export type FundSearchItem = {
   fund_code: string;
   fund_name: string;
@@ -1648,6 +1685,28 @@ export async function applyTransactions(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ transactions }),
   });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export async function adjustHolding(
+  fundCode: string,
+  patch: {
+    settled_holding_amount?: number | null;
+    holding_profit?: number | null;
+    holding_return_percent?: number | null;
+  },
+): Promise<PortfolioHoldingsPayload> {
+  const response = await apiFetch(
+    `${API_BASE}/api/portfolio/holdings/${encodeURIComponent(fundCode)}/adjust`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    },
+  );
   if (!response.ok) {
     throw new Error(await response.text());
   }
