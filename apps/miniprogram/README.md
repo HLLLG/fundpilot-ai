@@ -35,8 +35,14 @@
 
 ## 与 Web 账号绑定
 
-1. Web 邮箱登录 → 用户菜单 → **账号设置**（`/settings`）
-2. 绑定 CloudBase 用户 ID 或 `cloudbaseAccessToken`
-3. 小程序用同一微信登录 → 持仓与 Web 一致
+**推荐（小程序内一步打通）：**
 
-也可调用 `POST /api/auth/bind-wechat`（需 JWT，body 含 `cloudbaseUid` 或 `cloudbaseAccessToken`）。
+1. 微信一键登录后，若「我的持有」显示空，点击 **「关联已有邮箱账号」**
+2. 输入你在 Web 端注册的邮箱与密码 → 关联成功
+3. 此后每次微信登录都会命中该邮箱账号，看到与 Web 一致的持仓
+
+原理：小程序 `callContainer` 登录由微信网关注入 openid，后端 `POST /api/auth/link-email`（需微信登录 JWT）校验邮箱密码后，把本次 openid 迁移到邮箱账号并软删微信占位账号。相比「Web 端填 CloudBase UID」更可靠（Web 拿到的是 CloudBase uid，与小程序 openid 命名空间不同，无法直接互通）。
+
+**备用（Web 侧绑定 / 自定义登录场景）：**
+
+调用 `POST /api/auth/bind-wechat`（需邮箱登录 JWT，body 含 `cloudbaseUid` 或 `cloudbaseAccessToken`）。仅当小程序登录与该标识同源时才生效。

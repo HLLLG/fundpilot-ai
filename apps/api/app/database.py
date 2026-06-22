@@ -313,6 +313,55 @@ def bind_user_cloudbase_uid(user_id: int, cloudbase_uid: str) -> dict[str, objec
     return user
 
 
+def merge_wechat_account_into_email_user(
+    wechat_user_id: int,
+    email_user_id: int,
+) -> dict[str, object]:
+    """把微信占位账号上的 cloudbaseUid 迁移到邮箱账号，并软删占位账号。
+
+    用于小程序「关联已有邮箱账号」：微信登录会先建一个空的占位账号（携带本次
+    openid），关联时把该 openid 搬到真正的邮箱账号上，之后每次微信登录都命中
+    邮箱账号，从而看到 Web 端录入的持仓。占位账号无业务数据，仅软删不迁移。
+    """
+    wechat_user = get_user_by_id(wechat_user_id)
+    if wechat_user is None:
+        raise ValueError("微信账号不存在")
+    email_user = get_user_by_id(email_user_id)
+    if email_user is None:
+        raise ValueError("邮箱账号不存在")
+    if wechat_user_id == email_user_id:
+        raise ValueError("无法关联到自身账号")
+
+    cloudbase_uid = wechat_user.get("cloudbaseUid")
+    if not cloudbase_uid:
+        raise ValueError("当前微信账号缺少标识，无法关联")
+
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as connection:
+        # 先解绑并软删占位账号，避免两条记录同时持有同一 cloudbaseUid
+        connection.execute(
+            """
+            UPDATE users
+            SET cloudbaseUid = NULL, isDeleted = 1, deletedAt = ?, updatedAt = ?
+            WHERE id = ?
+            """,
+            (now, now, wechat_user_id),
+        )
+        connection.execute(
+            """
+            UPDATE users SET cloudbaseUid = ?, updatedAt = ?
+            WHERE id = ? AND isDeleted = 0
+            """,
+            (cloudbase_uid, now, email_user_id),
+        )
+        connection.commit()
+
+    merged = get_user_by_id(email_user_id)
+    if merged is None:
+        raise ValueError("邮箱账号不存在")
+    return merged
+
+
 def save_report(report: Report) -> Report:
     payload = report.model_dump(mode="json")
     user_id = _uid()

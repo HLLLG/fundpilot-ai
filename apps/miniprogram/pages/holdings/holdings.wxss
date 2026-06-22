@@ -23,3 +23,25 @@
 .sector { font-size: 24rpx; color: #64748b; }
 .hint, .error { text-align: center; padding: 48rpx; color: #64748b; }
 .error { color: #dc2626; }
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 64rpx 48rpx;
+}
+.empty-text { font-size: 32rpx; font-weight: 700; color: #0f172a; }
+.empty-sub {
+  margin-top: 16rpx;
+  font-size: 26rpx;
+  color: #64748b;
+  text-align: center;
+  line-height: 1.6;
+}
+.link-btn {
+  margin-top: 40rpx;
+  background: linear-gradient(90deg, #2356e0, #173fb0);
+  color: #fff;
+  border-radius: 24rpx;
+  padding-left: 48rpx;
+  padding-right: 48rpx;
+}

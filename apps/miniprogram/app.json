@@ -2,6 +2,7 @@
   "pages": [
     "pages/login/login",
     "pages/holdings/holdings",
+    "pages/link-email/link-email",
     "pages/fund-detail/fund-detail"
   ],
   "window": {

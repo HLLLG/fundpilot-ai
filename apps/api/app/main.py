@@ -13,10 +13,11 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from app.auth.cloudbase_auth import resolve_trusted_wechat_openid
 from app.auth.middleware import AuthMiddleware
-from app.auth.models import BindWechatRequest, LoginRequest, RegisterRequest, WechatLoginRequest
+from app.auth.models import BindWechatRequest, LinkEmailRequest, LoginRequest, RegisterRequest, WechatLoginRequest
 from app.auth.service import (
     bind_wechat_user,
     get_current_user_public,
+    link_email_account,
     login_user,
     register_user,
     wechat_login_user,
@@ -204,6 +205,16 @@ def auth_bind_wechat(body: BindWechatRequest) -> dict:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return user.model_dump()
+
+
+@app.post("/api/auth/link-email")
+def auth_link_email(body: LinkEmailRequest) -> dict:
+    """小程序微信账号关联已有邮箱账号（需微信登录态 JWT）。"""
+    try:
+        result = link_email_account(get_request_user_id(), body)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return result.model_dump()
 
 
 @app.get("/api/reports/recommendation-accuracy")

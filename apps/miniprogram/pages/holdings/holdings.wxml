@@ -14,7 +14,11 @@
 
   <view wx:if="{{loading}}" class="hint">加载中…</view>
   <view wx:elif="{{error}}" class="error">{{error}}</view>
-  <view wx:elif="{{!holdings.length}}" class="hint">暂无持仓，请先在 Web 端录入</view>
+  <view wx:elif="{{!holdings.length}}" class="empty">
+    <text class="empty-text">暂无持仓</text>
+    <text class="empty-sub">在 Web 端用邮箱录入持仓后，关联邮箱账号即可在此查看</text>
+    <button class="link-btn" bindtap="onGoLink">关联已有邮箱账号</button>
+  </view>
 
   <block wx:else>
     <view

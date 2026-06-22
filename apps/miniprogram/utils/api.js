@@ -97,6 +97,13 @@ function wechatLogin(payload) {
   });
 }
 
+function linkEmail(account, password) {
+  return request("/api/auth/link-email", {
+    method: "POST",
+    data: { userAccount: account, password: password },
+  });
+}
+
 function fetchHoldings() {
   return request("/api/portfolio/holdings");
 }
@@ -120,6 +127,7 @@ module.exports = {
   setToken: setToken,
   clearToken: clearToken,
   wechatLogin: wechatLogin,
+  linkEmail: linkEmail,
   fetchHoldings: fetchHoldings,
   refreshSectorQuotes: refreshSectorQuotes,
   fetchHoldingDetail: fetchHoldingDetail,

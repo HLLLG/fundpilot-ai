@@ -56,4 +56,8 @@ Page({
     api.clearToken();
     wx.reLaunch({ url: "/pages/login/login" });
   },
+
+  onGoLink() {
+    wx.navigateTo({ url: "/pages/link-email/link-email" });
+  },
 });

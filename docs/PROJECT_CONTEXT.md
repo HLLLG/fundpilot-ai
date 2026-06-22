@@ -7,6 +7,7 @@
 **文档版本：** 2026-06-21（AI 简报首页 + 移动端底栏导航 + 本地 DB 回落）
 
 **更新记录：**
+- **小程序微信登录关联邮箱账号（2026-06-22）：** 修复小程序「微信一键登录」后看不到 Web 端持仓的问题。根因是身份隔离——业务数据按 `userId` 隔离，微信 callContainer 登录用 **openid** 为 key 新建空占位账号（`wx_*@wechat.fundpilot`），而 Web 持仓挂在邮箱账号下；且 Web `bind-wechat` 存的是 CloudBase **uid**，与小程序 openid 不同命名空间，原「Web 填 UID 绑定」路径实际打不通。方案：小程序侧账号打通。后端新增 `POST /api/auth/link-email`（需微信登录 JWT）→ `auth.service.link_email_account`：校验当前为微信占位账号 + 邮箱密码 → `database.merge_wechat_account_into_email_user` 事务内把占位账号 `cloudbaseUid` 迁移到邮箱账号并软删占位账号 → 返回邮箱账号新 JWT；之后每次微信登录稳定命中邮箱账号。小程序新增 `pages/link-email/`，持仓空态加「关联已有邮箱账号」入口，`utils/api.js` 加 `linkEmail()`。后端单测 +3（`tests/test_auth.py`）。
 - **AI 简报首页 + 移动端导航（2026-06-21）：** 方案 B「蚂小财式」简报首页落地。① **信息架构**：登录默认 Tab 改为 **「简报」**（`TodayBriefing`）；原养基宝持有看板独立为 **「持仓」** Tab（`YangjibaoHoldingsBoard`）；主 Tab 顺序：简报 / 持仓 / 分析 / 市场 / 发现 / 日报。② **简报页**：`todayBriefing.ts` 汇总组合 KPI、板块脉搏、嵌入最新日报决策卡（`BriefingDecisionCards`）、内联 AI 追问（`BriefingChatPanel` / `ReportChatPanel inline`）。③ **导航**：`DashboardNav.tsx` — 桌面 `lg`（≥1024px）顶部 6 Tab；手机/平板仅 **底部固定导航**（简报/持仓/分析/市场/更多→发现/日报/历史）；修复 `.dashboard-bottom-nav { display:flex }` 覆盖 Tailwind `hidden` 导致顶底双栏并存；`.dashboard-shell` 底部留白 `5.75rem + safe-area` 避免市场页「数据日期」脚注被底栏遮挡。④ **大跌雷达 UI**：`DipReboundRadar` 改卡片列表（避免表格列宽截断「深度扫描」）。⑤ **落地页/注册**：转化优化（步骤、人群、sticky CTA）。设计/计划见 `docs/superpowers/specs/2026-06-21-ai-briefing-home-design.md`、`docs/superpowers/plans/2026-06-21-ai-briefing-home.md`。
 - **本地开发 DB 回落（2026-06-21）：** 云 MySQL（如腾讯 CynosDB 30min 自动暂停）冷启动超时时，API 不再裸 500 触发浏览器 `Failed to fetch`。`db_connect.connect_with_fallback()` — MySQL 连接失败且 `FUND_AI_DB_FALLBACK_SQLITE=true`（默认，`scripts/dev.sh` 导出）时回落 SQLite；`main.py` 全局 `Exception` → JSON 500；CORS 仍最外层。`.env.example` 已文档化。
 - **M3 大跌雷达历史命中率 + 主题联动（2026-06-21）：** `fund_dip_rebound_backtest.py` 板块指数代理回测（dip 日 → 未来 3 日累计反弹 ≥ `fee_break_even`）；`dip_radar_snapshot` 每项 `historical_hint`（`sample_count`、`rebound_rate_3d_percent`、`note`）。主题板块行操作「看大跌基金」→ `sessionStorage` `fundpilot-dip-radar-sector` + 子 Tab 切大跌雷达；「加入关注方向」→ `fundpilot-discovery-focus-sectors`（≤3）；`FundDiscoveryPanel` 挂载时读取关注方向预填。
@@ -352,7 +353,8 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | POST | `/api/auth/register` | 邮箱注册 |
 | POST | `/api/auth/login` | 邮箱登录 |
 | POST | `/api/auth/wechat-login` | 微信小程序 / CloudBase 登录 |
-| POST | `/api/auth/bind-wechat` | 已登录用户绑定微信（需 JWT） |
+| POST | `/api/auth/bind-wechat` | 已登录用户绑定微信（需 JWT；Web 侧用 CloudBase uid/accessToken） |
+| POST | `/api/auth/link-email` | **小程序**微信占位账号关联已有邮箱账号（需微信登录 JWT；校验邮箱密码后把本次 openid 迁移到邮箱账号并软删占位账号，返回邮箱账号新 JWT） |
 | GET | `/api/auth/me` | 当前用户（需 JWT） |
 | POST | `/api/ocr` | 截图/文本 → holdings；`preview=true` 仅解析不写入；支持支付宝列表 |
 | POST | `/api/portfolio/apply-holdings` | 确认 OCR 预览结果写入持仓与快照；body 可选 `detail_profiles`（养基宝详情 OCR 档案） |
