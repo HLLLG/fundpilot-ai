@@ -1,0 +1,574 @@
+/**
+ * pages/discovery/discovery.wxss
+ * 推荐基金页样式（Req 15–16）。
+ * 与 styles/tokens.wxss 设计 token 对齐（不重复定义 token 变量）。
+ */
+
+.discovery-page {
+  height: 100vh;
+  background: var(--bg, #f3f6fc);
+  box-sizing: border-box;
+}
+
+/* ── 通用区块 ────────────────────────────────────────── */
+.disc-section {
+  margin: 16rpx 24rpx 0;
+  display: flex;
+  flex-direction: column;
+  gap: 20rpx;
+}
+
+.disc-section__title {
+  font-size: 30rpx;
+  font-weight: 600;
+  color: var(--text, #1a2237);
+}
+
+/* ── 表单行/列 ──────────────────────────────────────── */
+.form-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+}
+
+.form-row--between {
+  justify-content: space-between;
+}
+
+.form-col {
+  display: flex;
+  flex-direction: column;
+  gap: 10rpx;
+}
+
+.form-label {
+  font-size: 26rpx;
+  color: var(--text-secondary, #6b7a9a);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.form-picker {
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+  padding: 10rpx 20rpx;
+  background: var(--surface-muted, #f1f5fb);
+  border-radius: var(--radius-sm, 10rpx);
+  border: 2rpx solid var(--line, #e5eaf5);
+  font-size: 26rpx;
+  color: var(--text, #1a2237);
+}
+
+.form-picker__arrow {
+  color: var(--text-secondary, #6b7a9a);
+  font-size: 28rpx;
+}
+
+.form-input {
+  flex: 1;
+  padding: 10rpx 20rpx;
+  background: var(--surface-muted, #f1f5fb);
+  border-radius: var(--radius-sm, 10rpx);
+  border: 2rpx solid var(--line, #e5eaf5);
+  font-size: 26rpx;
+  color: var(--text, #1a2237);
+  text-align: right;
+}
+
+.form-textarea {
+  width: 100%;
+  min-height: 80rpx;
+  padding: 16rpx;
+  background: var(--surface-muted, #f1f5fb);
+  border-radius: var(--radius-sm, 10rpx);
+  border: 2rpx solid var(--line, #e5eaf5);
+  font-size: 26rpx;
+  color: var(--text, #1a2237);
+  box-sizing: border-box;
+  line-height: 1.5;
+}
+
+/* ── 关注方向 tags ───────────────────────────────────── */
+.focus-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12rpx;
+}
+
+.focus-tag {
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+  padding: 8rpx 16rpx;
+  background: var(--brand, #2356e0);
+  border-radius: var(--radius-sm, 10rpx);
+}
+
+.focus-tag__label {
+  font-size: 24rpx;
+  color: #fff;
+}
+
+.focus-tag__remove {
+  font-size: 28rpx;
+  color: rgba(255,255,255,0.8);
+  line-height: 1;
+  padding: 0 4rpx;
+}
+
+/* ── 候选板块横向滚动 ────────────────────────────────── */
+.sectors-picker {
+  margin-top: 8rpx;
+}
+
+.sectors-scroll {
+  white-space: nowrap;
+}
+
+.sectors-row {
+  display: flex;
+  gap: 12rpx;
+  padding-bottom: 4rpx;
+}
+
+.sector-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 8rpx 20rpx;
+  background: var(--surface-muted, #f1f5fb);
+  border: 2rpx solid var(--line, #e5eaf5);
+  border-radius: var(--radius-sm, 10rpx);
+  font-size: 24rpx;
+  color: var(--text, #1a2237);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.sector-chip--active {
+  background: rgba(35, 86, 224, 0.1);
+  border-color: var(--brand, #2356e0);
+  color: var(--brand, #2356e0);
+  font-weight: 600;
+}
+
+/* ── 分段控件（模式切换）────────────────────────────── */
+.segmented {
+  display: flex;
+  gap: 0;
+  background: var(--surface-muted, #f1f5fb);
+  border-radius: var(--radius-sm, 10rpx);
+  overflow: hidden;
+  border: 2rpx solid var(--line, #e5eaf5);
+}
+
+.segmented__item {
+  flex: 1;
+  text-align: center;
+  padding: 10rpx 0;
+  font-size: 26rpx;
+  color: var(--text-secondary, #6b7a9a);
+  line-height: 1.4;
+}
+
+.segmented__item--active {
+  background: var(--brand, #2356e0);
+  color: #fff;
+  font-weight: 600;
+}
+
+/* ── 开始扫描按钮 ────────────────────────────────────── */
+.disc-actions {
+  margin: 24rpx;
+  display: flex;
+  flex-direction: column;
+  gap: 16rpx;
+}
+
+.disc-actions__btn {
+  width: 100%;
+  text-align: center;
+  font-size: 32rpx;
+  padding: 24rpx;
+  border-radius: var(--radius-md, 16rpx);
+  font-weight: 600;
+}
+
+/* ── 轮询进度 ────────────────────────────────────────── */
+.disc-progress {
+  align-items: center;
+  text-align: center;
+  padding: 40rpx 24rpx;
+}
+
+.disc-progress__icon {
+  font-size: 64rpx;
+  margin-bottom: 12rpx;
+}
+
+.disc-progress__stage {
+  font-size: 30rpx;
+  font-weight: 600;
+  color: var(--text, #1a2237);
+}
+
+.disc-progress__hint {
+  font-size: 24rpx;
+  color: var(--text-secondary, #6b7a9a);
+  margin-top: 8rpx;
+}
+
+.disc-progress__bar {
+  width: 100%;
+  height: 8rpx;
+  background: var(--line, #e5eaf5);
+  border-radius: 4rpx;
+  overflow: hidden;
+  margin-top: 20rpx;
+}
+
+.disc-progress__fill {
+  height: 100%;
+  width: 60%;
+  background: var(--accent, #cf9b3e);
+  border-radius: 4rpx;
+  animation: disc-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes disc-pulse {
+  0%   { opacity: 1; }
+  50%  { opacity: 0.4; }
+  100% { opacity: 1; }
+}
+
+/* ── 失败态 ──────────────────────────────────────────── */
+.disc-fail {
+  align-items: center;
+  text-align: center;
+  padding: 32rpx 24rpx;
+}
+
+.disc-fail__icon {
+  font-size: 56rpx;
+  color: var(--down, #e5484d);
+  margin-bottom: 12rpx;
+}
+
+.disc-fail__msg {
+  font-size: 26rpx;
+  color: var(--down, #e5484d);
+  margin-bottom: 20rpx;
+  line-height: 1.5;
+}
+
+/* ── 推荐基金列表 ────────────────────────────────────── */
+.fund-item {
+  display: flex;
+  align-items: flex-start;
+  padding: 20rpx 0;
+  border-bottom: 2rpx solid var(--line, #e5eaf5);
+  gap: 16rpx;
+}
+
+.fund-item:last-child {
+  border-bottom: none;
+}
+
+.fund-item__main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6rpx;
+}
+
+.fund-item__name {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: var(--text, #1a2237);
+}
+
+.fund-item__code {
+  font-size: 22rpx;
+  color: var(--text-secondary, #6b7a9a);
+}
+
+.fund-item__meta {
+  flex: 1;
+}
+
+.fund-item__reason {
+  font-size: 24rpx;
+  color: var(--text-secondary, #6b7a9a);
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.fund-item__arrow {
+  font-size: 36rpx;
+  color: var(--text-secondary, #6b7a9a);
+  align-self: center;
+}
+
+/* ── 操作按钮行 ──────────────────────────────────────── */
+.disc-btn-row {
+  margin: 16rpx 24rpx 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12rpx;
+}
+
+/* ── 追问面板容器 ────────────────────────────────────── */
+.disc-chat-section {
+  min-height: 500rpx;
+  padding-bottom: 0 !important;
+  overflow: hidden;
+}
+
+/* ── 通用辅助 ────────────────────────────────────────── */
+.disc-placeholder-text {
+  font-size: 26rpx;
+  color: var(--text-secondary, #6b7a9a);
+  text-align: center;
+  padding: 16rpx 0;
+}
+
+.disc-risk-text {
+  color: var(--down, #e5484d);
+}
+
+/* ── 推荐基金预览弹层（Req 15.7）────────────────────── */
+.fund-preview-mask {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 100;
+  display: flex;
+  align-items: flex-end;
+}
+
+.fund-preview-sheet {
+  width: 100%;
+  background: #fff;
+  border-radius: var(--radius-md, 20rpx) var(--radius-md, 20rpx) 0 0;
+  padding: 32rpx 32rpx 48rpx;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 24rpx;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+.fund-preview__header {
+  display: flex;
+  flex-direction: column;
+  gap: 8rpx;
+}
+
+.fund-preview__title {
+  font-size: 34rpx;
+  font-weight: 700;
+  color: var(--text, #1a2237);
+}
+
+.fund-preview__code {
+  font-size: 24rpx;
+  color: var(--text-secondary, #6b7a9a);
+}
+
+.fund-preview__body {
+  display: flex;
+  flex-direction: column;
+  gap: 16rpx;
+}
+
+.fund-preview__row {
+  display: flex;
+  align-items: flex-start;
+  gap: 16rpx;
+}
+
+.fund-preview__row-label {
+  font-size: 26rpx;
+  color: var(--text-secondary, #6b7a9a);
+  white-space: nowrap;
+  flex-shrink: 0;
+  min-width: 140rpx;
+}
+
+.fund-preview__row-value {
+  font-size: 26rpx;
+  color: var(--text, #1a2237);
+  line-height: 1.6;
+  flex: 1;
+}
+
+.fund-preview__footer {
+  display: flex;
+  flex-direction: column;
+  gap: 16rpx;
+  align-items: stretch;
+}
+
+.fund-preview__footer .btn {
+  width: 100%;
+  text-align: center;
+}
+
+/* ── 扫描/历史切换 Tab ──────────────────────────────── */
+.disc-tab-bar {
+  display: flex;
+  margin: 16rpx 24rpx 0;
+  background: var(--surface-muted, #f1f5fb);
+  border-radius: var(--radius-sm, 10rpx);
+  overflow: hidden;
+  border: 2rpx solid var(--line, #e5eaf5);
+}
+
+.disc-tab {
+  flex: 1;
+  text-align: center;
+  padding: 16rpx 0;
+  font-size: 28rpx;
+  color: var(--text-secondary, #6b7a9a);
+  line-height: 1.4;
+}
+
+.disc-tab--active {
+  background: var(--brand, #2356e0);
+  color: #fff;
+  font-weight: 600;
+}
+
+/* ── 历史顶部操作栏 ──────────────────────────────────── */
+.disc-history-toolbar {
+  margin: 16rpx 24rpx 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12rpx;
+}
+
+/* 危险操作按钮（批量删除）*/
+.btn-danger {
+  background: var(--down, #e5484d);
+  color: #fff;
+}
+
+/* ── 历史报告列表项 ──────────────────────────────────── */
+.hist-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 16rpx;
+  padding: 20rpx 0;
+  border-bottom: 2rpx solid var(--line, #e5eaf5);
+}
+
+.hist-item:last-child {
+  border-bottom: none;
+}
+
+.hist-item--selected {
+  background: rgba(35, 86, 224, 0.06);
+}
+
+.hist-item__checkbox {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  padding-top: 4rpx;
+}
+
+.checkbox {
+  width: 40rpx;
+  height: 40rpx;
+  border-radius: 8rpx;
+  border: 2rpx solid var(--line, #e5eaf5);
+  background: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.checkbox--checked {
+  background: var(--brand, #2356e0);
+  border-color: var(--brand, #2356e0);
+}
+
+.checkbox__tick {
+  color: #fff;
+  font-size: 26rpx;
+  line-height: 1;
+}
+
+.hist-item__body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8rpx;
+  min-width: 0;
+}
+
+.hist-item__title {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: var(--text, #1a2237);
+}
+
+.hist-item__date {
+  font-size: 22rpx;
+  color: var(--text-secondary, #6b7a9a);
+}
+
+.hist-item__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8rpx;
+}
+
+.hist-item__tag {
+  font-size: 22rpx;
+  color: var(--brand, #2356e0);
+  background: rgba(35, 86, 224, 0.1);
+  border-radius: 8rpx;
+  padding: 2rpx 12rpx;
+}
+
+.hist-item__actions {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10rpx;
+  align-items: flex-end;
+}
+
+/* ── 复盘项 ──────────────────────────────────────────── */
+.outcome-item {
+  padding: 16rpx 0;
+  border-bottom: 2rpx solid var(--line, #e5eaf5);
+  display: flex;
+  flex-direction: column;
+  gap: 8rpx;
+}
+
+.outcome-item:last-child {
+  border-bottom: none;
+}
+
+.outcome-item__name {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: var(--text, #1a2237);
+}
+
+.outcome-item__row {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+}

@@ -1,0 +1,124 @@
+<!-- pages/fund-edit/fund-edit.wxml -->
+<!-- 手动新增/改代码/改名称/改金额 + 东财搜索查码 -->
+<!-- Requirements: 7.1, 7.2, 7.3, 7.4, 7.5 -->
+
+<view class="u-page fund-edit-page">
+
+  <!-- ══ 搜索区域（Req 7.1）══════════════════════════════════════════ -->
+  <view class="card section-card search-card">
+    <view class="card__title section-title">按名称搜索基金</view>
+    <view class="card__subtitle section-subtitle">输入基金名称关键字，自动查询代码</view>
+
+    <!-- 搜索输入框 -->
+    <view class="search-input-wrap">
+      <input
+        class="search-input"
+        value="{{searchQuery}}"
+        placeholder="如：华夏成长、中证500…"
+        confirm-type="search"
+        bindinput="onSearchInput"
+        bindblur="onSearchBlur"
+      />
+      <!-- 搜索加载指示 -->
+      <view class="search-spinner" wx:if="{{searching}}"></view>
+    </view>
+
+    <!-- 搜索结果下拉列表（Req 7.1 候选展示）-->
+    <view class="search-dropdown" wx:if="{{showSearchDropdown}}">
+      <!-- 结果为空 -->
+      <view class="search-empty" wx:if="{{!searching && searchResults.length === 0}}">
+        <text class="search-empty__text">未找到匹配基金</text>
+      </view>
+
+      <!-- 候选结果列表（Req 7.2 点击回填）-->
+      <view
+        wx:for="{{searchResults}}"
+        wx:key="fund_code"
+        class="search-item"
+        hover-class="search-item--hover"
+        data-item="{{item}}"
+        bindtap="onSelectSearchResult"
+      >
+        <view class="search-item__code badge badge--muted">{{item.fund_code}}</view>
+        <view class="search-item__name">{{item.fund_name}}</view>
+        <view class="search-item__arrow">›</view>
+      </view>
+    </view>
+  </view>
+
+  <!-- ══ 表单区域 ══════════════════════════════════════════════════ -->
+  <view class="card section-card form-card">
+    <view class="card__title section-title">
+      {{isEditMode ? '编辑持仓信息' : '填写持仓信息'}}
+    </view>
+
+    <!-- 基金代码 -->
+    <view class="form-row">
+      <text class="form-label">基金代码</text>
+      <input
+        class="form-input {{phase === 'error' ? 'form-input--error' : ''}}"
+        value="{{fundCode}}"
+        placeholder="如 000001"
+        maxlength="8"
+        bindinput="onFundCodeInput"
+      />
+    </view>
+
+    <!-- 基金名称 -->
+    <view class="form-row">
+      <text class="form-label">基金名称</text>
+      <input
+        class="form-input"
+        value="{{fundName}}"
+        placeholder="如 华夏成长混合"
+        maxlength="60"
+        bindinput="onFundNameInput"
+      />
+    </view>
+
+    <!-- 持有金额 -->
+    <view class="form-row">
+      <text class="form-label">持有金额（元）</text>
+      <input
+        class="form-input form-input--num"
+        value="{{amount}}"
+        placeholder="如 10000.00"
+        type="digit"
+        bindinput="onAmountInput"
+      />
+    </view>
+  </view>
+
+  <!-- ══ 错误提示（Req 7.5：展示后端错误并保留输入）══════════════════ -->
+  <view class="error-banner" wx:if="{{errorMsg && phase === 'error'}}">
+    <view class="error-banner__icon">✕</view>
+    <text class="error-banner__text">{{errorMsg}}</text>
+    <view
+      class="error-banner__dismiss"
+      hover-class="btn--press"
+      bindtap="onDismissError"
+    >
+      知道了
+    </view>
+  </view>
+
+  <!-- ══ 保存中提示 ══════════════════════════════════════════════════ -->
+  <view class="saving-tip" wx:if="{{phase === 'saving'}}">
+    <view class="saving-spinner"></view>
+    <text class="saving-text">
+      {{isEditMode ? '正在保存修改…' : '正在录入持仓…'}}
+    </text>
+  </view>
+
+  <!-- ══ 保存按钮（Req 7.3）══════════════════════════════════════════ -->
+  <view
+    class="btn btn-primary btn--block save-btn {{phase === 'saving' ? 'btn--disabled' : ''}}"
+    hover-class="btn--press"
+    bindtap="onSave"
+  >
+    <text wx:if="{{phase === 'saving'}}">保存中…</text>
+    <text wx:elif="{{isEditMode}}">保存修改</text>
+    <text wx:else>新增持仓</text>
+  </view>
+
+</view>

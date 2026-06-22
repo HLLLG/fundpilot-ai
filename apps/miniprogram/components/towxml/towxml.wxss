@@ -1,0 +1,12 @@
+/* components/towxml/towxml.wxss — 占位样式，与设计 token 对齐。 */
+.towxml-placeholder {
+  font-family: var(--font-family-base);
+  font-size: var(--font-base);
+  line-height: 1.7;
+  color: var(--text);
+}
+
+.towxml-placeholder__text {
+  white-space: pre-wrap;
+  word-break: break-word;
+}

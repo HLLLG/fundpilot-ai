@@ -1,0 +1,258 @@
+/* pages/briefing/briefing.wxss */
+/* 简报首页样式 — 使用设计 token（Req 17, Req 1）。 */
+
+.briefing-page {
+  padding: var(--space-md);
+  background: var(--bg);
+  min-height: 100vh;
+  box-sizing: border-box;
+}
+
+/* ── 章节标题 ─────────────────────────────────────────── */
+.briefing-page__section-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin: var(--space-md) 0 var(--space-sm);
+}
+
+.briefing-page__section-title:first-child {
+  margin-top: 0;
+}
+
+.briefing-page__title-text {
+  font-size: var(--font-lg);
+  font-weight: 700;
+  color: var(--text);
+}
+
+.briefing-page__refreshed {
+  font-size: var(--font-xs);
+  color: var(--text-muted);
+}
+
+/* ── 组合 KPI 摘要 ───────────────────────────────────── */
+.briefing-page__kpi-row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.briefing-page__kpi-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.briefing-page__kpi-label {
+  font-size: var(--font-xs);
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.briefing-page__kpi-value {
+  font-size: var(--font-lg);
+  font-weight: 700;
+  font-family: var(--font-family-number);
+}
+
+.briefing-page__kpi-empty {
+  margin-top: var(--space-sm);
+  padding-top: var(--space-sm);
+  border-top: 1rpx solid var(--line);
+  text-align: center;
+}
+
+/* ── 板块脉搏摘要 ────────────────────────────────────── */
+.briefing-page__sector-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-sm) 0;
+  border-bottom: 1rpx solid var(--line);
+}
+
+.briefing-page__sector-item:last-child {
+  border-bottom: none;
+}
+
+.briefing-page__sector-info {
+  display: flex;
+  flex-direction: column;
+  gap: 6rpx;
+  flex: 1;
+  min-width: 0;
+}
+
+.briefing-page__sector-name {
+  font-size: var(--font-base);
+  font-weight: 500;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.briefing-page__sector-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.briefing-page__sector-kind {
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+
+.briefing-page__sector-hold {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.briefing-page__sector-streak {
+  font-size: var(--font-xs);
+  color: var(--text-muted);
+}
+
+.briefing-page__sector-change {
+  font-size: var(--font-md);
+  font-weight: 700;
+  font-family: var(--font-family-number);
+  margin-left: var(--space-sm);
+}
+
+/* ── 最新日报决策卡 ──────────────────────────────────── */
+.briefing-page__report-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.briefing-page__report-title {
+  font-size: var(--font-md);
+  font-weight: 700;
+  color: var(--text);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.briefing-page__report-time {
+  font-size: var(--font-xs);
+  color: var(--text-muted);
+}
+
+.briefing-page__report-tags {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+  margin-top: var(--space-sm);
+}
+
+.briefing-page__risk-badge--low {
+  background: var(--down-soft);
+  color: var(--down);
+}
+
+.briefing-page__risk-badge--medium {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.briefing-page__risk-badge--high {
+  background: var(--up-soft);
+  color: var(--up);
+}
+
+.briefing-page__action-badge {
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+
+.briefing-page__report-return {
+  display: flex;
+  align-items: center;
+  gap: 6rpx;
+  margin-left: auto;
+}
+
+.briefing-page__report-return-label {
+  font-size: var(--font-xs);
+  color: var(--text-muted);
+}
+
+.briefing-page__report-summary {
+  display: block;
+  margin-top: var(--space-sm);
+  font-size: var(--font-sm);
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.briefing-page__report-recs {
+  margin-top: var(--space-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.briefing-page__report-rec {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-xs);
+}
+
+.briefing-page__report-rec-dot {
+  color: var(--brand);
+  font-size: var(--font-sm);
+  line-height: 1.6;
+}
+
+.briefing-page__report-rec-text {
+  flex: 1;
+  font-size: var(--font-sm);
+  color: var(--text);
+  line-height: 1.6;
+}
+
+.briefing-page__report-actions {
+  display: flex;
+  gap: var(--space-sm);
+  margin-top: var(--space-md);
+}
+
+.briefing-page__report-actions .btn {
+  flex: 1;
+}
+
+/* ── 日报空态 ────────────────────────────────────────── */
+.briefing-page__report-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-sm);
+  text-align: center;
+}
+
+.briefing-page__report-empty-btn {
+  margin-top: var(--space-xs);
+}
+
+/* ── 内联追问 ────────────────────────────────────────── */
+.briefing-page__chat-card {
+  margin-top: var(--space-md);
+  padding: 0;
+  overflow: hidden;
+}
+
+/* ── 工具类 ─────────────────────────────────────────── */
+.u-muted {
+  color: var(--text-muted);
+  font-size: var(--font-sm);
+}

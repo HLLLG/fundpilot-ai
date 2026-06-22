@@ -1,0 +1,6 @@
+<!-- components/towxml/towxml.wxml — 占位渲染。 -->
+<!-- 官方 towxml 在此递归渲染节点树；占位实现仅回显原文，确保不丢内容。 -->
+<view class="towxml-placeholder">
+  <text wx:if="{{isPlaceholder}}" class="towxml-placeholder__text" user-select decode>{{placeholderRaw}}</text>
+  <slot wx:else></slot>
+</view>

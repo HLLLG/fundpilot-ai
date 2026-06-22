@@ -1,0 +1,589 @@
+/* pages/market/market.wxss */
+/* 市场页样式：设计 token 引用 + 板块卡片 + 排序/子视图 Tab */
+/* Requirements: 1.1, 1.2, 10.1–10.8 */
+
+/* ── 页面容器 ───────────────────────────────────── */
+.market-page {
+  background: var(--bg);
+  min-height: 100vh;
+  padding-bottom: var(--space-2xl);
+}
+
+/* ── 子视图 Tab Bar ─────────────────────────────── */
+.sub-tab-bar {
+  display: flex;
+  background: var(--surface);
+  border-bottom: 1rpx solid var(--line);
+  padding: 0 var(--space-md);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.sub-tab-bar__item {
+  flex: 1;
+  text-align: center;
+  padding: var(--space-md) 0;
+  font-size: var(--font-base);
+  color: var(--text-secondary);
+  position: relative;
+}
+
+.sub-tab-bar__item--active {
+  color: var(--brand);
+  font-weight: 700;
+}
+
+.sub-tab-bar__item--active::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 20%;
+  right: 20%;
+  height: 4rpx;
+  background: var(--brand);
+  border-radius: var(--radius-pill);
+}
+
+/* ── 排序 Tab Bar ────────────────────────────────── */
+.sort-bar {
+  display: flex;
+  margin: var(--space-md) var(--space-md) 0;
+  background: var(--surface-muted);
+  border-radius: var(--radius-md);
+  border: 1rpx solid var(--line);
+  padding: 6rpx;
+}
+
+.sort-bar__item {
+  flex: 1;
+  text-align: center;
+  height: 64rpx;
+  line-height: 64rpx;
+  font-size: var(--font-sm);
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+}
+
+.sort-bar__item--active {
+  background: var(--surface);
+  color: var(--brand);
+  font-weight: 700;
+  box-shadow: var(--shadow-sm);
+}
+
+/* ── 板块卡片 ────────────────────────────────────── */
+.board-card {
+  margin: var(--space-md) var(--space-md) 0;
+  padding: var(--space-md);
+}
+
+/* 卡片头部 */
+.board-card__header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.board-card__title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex-wrap: wrap;
+}
+
+.board-card__name {
+  font-size: var(--font-md);
+  font-weight: 700;
+  color: var(--text);
+  flex-shrink: 0;
+}
+
+.board-card__kind-badge {
+  font-size: var(--font-xs);
+}
+
+.board-card__portfolio-badge {
+  font-size: var(--font-xs);
+}
+
+/* 核心指标行 */
+.board-card__metrics {
+  display: flex;
+  justify-content: space-between;
+  padding: var(--space-sm) 0;
+  border-top: 1rpx solid var(--line);
+  border-bottom: 1rpx solid var(--line);
+}
+
+.board-card__metric {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6rpx;
+  flex: 1;
+}
+
+.board-card__metric-label {
+  font-size: var(--font-xs);
+  color: var(--text-muted);
+}
+
+.board-card__metric-value {
+  font-size: var(--font-sm);
+  font-weight: 600;
+  font-family: var(--font-family-number);
+}
+
+.board-card__streak {
+  color: var(--accent);
+  font-size: var(--font-sm);
+  font-weight: 600;
+}
+
+/* 资金流展开/折叠 Toggle */
+.board-card__flow-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-xs);
+  padding: var(--space-sm) 0 var(--space-xs);
+}
+
+.board-card__flow-toggle-text {
+  font-size: var(--font-sm);
+  color: var(--text-secondary);
+}
+
+.board-card__flow-arrow {
+  font-size: var(--font-xs);
+  color: var(--text-muted);
+}
+
+/* 资金流四档明细 */
+.board-card__flow-tiers {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-sm) 0;
+  background: var(--surface-muted);
+  border-radius: var(--radius-sm);
+  padding: var(--space-sm) var(--space-md);
+  margin-bottom: var(--space-sm);
+}
+
+.flow-tier {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8rpx 0;
+}
+
+.flow-tier__label {
+  font-size: var(--font-sm);
+  color: var(--text-secondary);
+}
+
+.flow-tier__value {
+  font-size: var(--font-sm);
+  font-weight: 600;
+  font-family: var(--font-family-number);
+}
+
+/* 操作按钮行 */
+.board-card__actions {
+  display: flex;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+  padding-top: var(--space-sm);
+  border-top: 1rpx solid var(--line);
+}
+
+.board-card__action-btn {
+  flex: 1;
+  color: var(--text-secondary);
+  border: 1rpx solid var(--line);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-xs);
+  justify-content: center;
+}
+
+.board-card__action-btn--accent {
+  color: var(--accent);
+  border-color: var(--accent-soft);
+  background: var(--accent-soft);
+}
+
+/* ── 数据更新时间（Req 10.8）──────────────────────── */
+.refreshed-at {
+  margin: var(--space-md) var(--space-md) 0;
+  text-align: center;
+}
+
+.refreshed-at__text {
+  font-size: var(--font-xs);
+  color: var(--text-muted);
+}
+
+/* ── 占位子视图（任务 5.4/5.5 待实现）──────────── */
+.placeholder-sub {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 400rpx;
+  margin: var(--space-md);
+}
+
+.placeholder-sub__text {
+  font-size: var(--font-base);
+  color: var(--text-muted);
+}
+
+/* ══════════════════════════════════════════════════════════════ */
+/* 大跌反弹雷达（Req 11，Task 5.4）                               */
+/* ══════════════════════════════════════════════════════════════ */
+
+/* 回看天数工具栏 */
+.dip-toolbar {
+  padding: var(--space-md) var(--space-md) 0;
+}
+
+.dip-lookback-bar {
+  /* 继承 .sort-bar 样式，仅覆盖边距 */
+  margin: 0;
+}
+
+/* 不可用态（Req 11.6）*/
+.dip-unavailable {
+  margin: var(--space-md);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-xl) var(--space-md);
+}
+
+.dip-unavailable__icon {
+  font-size: 64rpx;
+}
+
+.dip-unavailable__msg {
+  font-size: var(--font-base);
+  color: var(--text-muted);
+  text-align: center;
+  line-height: 1.6;
+}
+
+/* 列表容器 */
+.dip-list {
+  padding-bottom: var(--space-xl);
+}
+
+/* 大跌基金卡片 */
+.dip-card {
+  margin: var(--space-md) var(--space-md) 0;
+  padding: var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+/* 头部：基金名 + 板块标签 */
+.dip-card__header {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-xs);
+  flex-wrap: wrap;
+}
+
+.dip-card__name {
+  font-size: var(--font-md);
+  font-weight: 700;
+  color: var(--text);
+  flex: 1;
+  min-width: 200rpx;
+  line-height: 1.4;
+}
+
+.dip-card__sector {
+  font-size: var(--font-xs);
+  white-space: nowrap;
+}
+
+/* 指标行：区间跌幅 / 反弹评分 */
+.dip-card__metrics {
+  display: flex;
+  gap: var(--space-lg);
+  padding: var(--space-sm) 0;
+  border-top: 1rpx solid var(--line);
+}
+
+.dip-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 4rpx;
+}
+
+.dip-metric__label {
+  font-size: var(--font-xs);
+  color: var(--text-muted);
+}
+
+.dip-metric__value {
+  font-size: var(--font-sm);
+  font-weight: 700;
+  color: var(--text);
+  font-family: var(--font-family-number);
+}
+
+/* 区间跌幅：绿色（跌用绿）*/
+.dip-metric__value--drop {
+  color: var(--down);
+}
+
+/* 反弹信号标签组 */
+.dip-card__signals {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-xs);
+  flex-wrap: wrap;
+}
+
+.dip-card__signals-label {
+  font-size: var(--font-xs);
+  color: var(--text-muted);
+  white-space: nowrap;
+  line-height: 40rpx;
+  min-width: 80rpx;
+}
+
+.dip-card__signals-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+
+.dip-signal-tag {
+  font-size: var(--font-xs);
+}
+
+/* 历史命中率提示（Req 11.3）*/
+.dip-card__hint {
+  background: var(--surface-muted);
+  border-radius: var(--radius-sm);
+  padding: var(--space-sm) var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: 6rpx;
+  border: 1rpx solid var(--line);
+}
+
+.dip-hint__label {
+  font-size: var(--font-xs);
+  color: var(--text-muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.dip-hint__body {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4rpx;
+}
+
+.dip-hint__text {
+  font-size: var(--font-sm);
+  color: var(--text-secondary);
+}
+
+.dip-hint__sep {
+  font-size: var(--font-sm);
+  color: var(--text-muted);
+}
+
+.dip-hint__prob {
+  color: var(--up);
+  font-weight: 700;
+  font-family: var(--font-family-number);
+}
+
+/* 底部操作区：「深度扫描」按钮 */
+.dip-card__footer {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: var(--space-xs);
+  border-top: 1rpx solid var(--line);
+}
+
+.dip-card__scan-btn {
+  color: var(--brand);
+  border-color: var(--brand);
+  font-size: var(--font-xs);
+  min-width: 160rpx;
+  justify-content: center;
+}
+
+/* 列表底部刷新提示 */
+.list-refreshing {
+  text-align: center;
+  padding: var(--space-md) 0 var(--space-sm);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════ */
+/* 美股概览子视图（Req 12，任务 5.5）                                         */
+/* ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── 整体容器 ─────────────────────────────────────────────────────────────── */
+.us-overview {
+  padding: var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+/* ── 美东时段条（Req 12.5）────────────────────────────────────────────────── */
+.us-session-bar {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-sm) var(--space-md);
+  background: var(--surface);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+}
+
+.us-session-label-wrap {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.us-session-kind-badge {
+  font-size: var(--font-sm);
+  font-weight: 700;
+  color: var(--brand);
+  background: var(--brand-soft);
+  padding: 4rpx 18rpx;
+  border-radius: var(--radius-pill);
+}
+
+.us-session-desc {
+  font-size: var(--font-sm);
+  color: var(--text-secondary);
+}
+
+.us-updated-at {
+  font-size: var(--font-xs);
+  color: var(--text-muted);
+}
+
+/* ── 区块通用 ─────────────────────────────────────────────────────────────── */
+.us-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.us-section-header {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.us-section-title {
+  font-size: var(--font-base);
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* ── 非承诺免责声明徽标（Req 12.4）──────────────────────────────────────── */
+.us-disclaimer-badge {
+  background: var(--warning-soft);
+  border-radius: var(--radius-pill);
+  padding: 4rpx 16rpx;
+}
+
+.us-disclaimer-text {
+  font-size: var(--font-xs);
+  color: var(--warning);
+}
+
+/* ── 行情列表容器 ────────────────────────────────────────────────────────── */
+.us-list {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── 行情行（期货/汇率/QDII 共用）────────────────────────────────────────── */
+.us-quote-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-sm) 0;
+  border-bottom: 1rpx solid var(--line);
+}
+
+.us-quote-row:last-child {
+  border-bottom: none;
+}
+
+.us-quote-name {
+  font-size: var(--font-base);
+  color: var(--text);
+  flex: 1;
+  margin-right: var(--space-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.us-qdii-name {
+  font-size: var(--font-sm);
+  color: var(--text-secondary);
+}
+
+.us-quote-values {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-shrink: 0;
+}
+
+.us-price {
+  font-family: var(--font-family-number);
+  font-size: var(--font-sm);
+}
+
+.us-change {
+  font-family: var(--font-family-number);
+  font-size: var(--font-sm);
+  font-weight: 600;
+  min-width: 120rpx;
+  text-align: right;
+}
+
+/* ── 不可用占位（Req 12.6：status==='unavailable' 不渲染数值）────────────── */
+.us-unavailable {
+  background: var(--surface-muted);
+  border-radius: var(--radius-xs);
+  padding: 4rpx 16rpx;
+}
+
+.us-unavailable-text {
+  font-size: var(--font-xs);
+  color: var(--text-muted);
+}
+
+/* ── 刷新按钮行 ──────────────────────────────────────────────────────────── */
+.us-refresh-row {
+  display: flex;
+  justify-content: center;
+  padding-top: var(--space-xs);
+}

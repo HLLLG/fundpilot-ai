@@ -1,0 +1,24 @@
+<!-- components/trading-session-bar/trading-session-bar.wxml -->
+<!-- 交易日语义条：时段语义 + 生效交易日（Req 4.4 / 4.5） -->
+<view class="tsb custom-class">
+  <!-- 加载态 -->
+  <view wx:if="{{phase === 'loading'}}" class="tsb__bar tsb__bar--skeleton">
+    <view class="tsb__skeleton-dot"></view>
+    <text class="tsb__skeleton-text">交易日历加载中…</text>
+  </view>
+
+  <!-- 错误/降级态：不影响其他功能 -->
+  <view wx:elif="{{phase === 'error'}}" class="tsb__bar tsb__bar--error" bindtap="onRetryTap">
+    <text class="tsb__icon">⚠</text>
+    <text class="tsb__error-text">交易日历暂不可用</text>
+    <text class="tsb__retry">点击重试</text>
+  </view>
+
+  <!-- 就绪态 -->
+  <view wx:else class="tsb__bar">
+    <text class="tsb__icon">🕒</text>
+    <view class="badge tsb__badge tsb__badge--{{tone}}">{{label}}</view>
+    <text class="u-num tsb__date" wx:if="{{effectiveTradeDate}}">{{effectiveTradeDate}}</text>
+    <text class="tsb__close" wx:if="{{minutesToClose !== null}}">距收盘 {{minutesToClose}} 分</text>
+  </view>
+</view>

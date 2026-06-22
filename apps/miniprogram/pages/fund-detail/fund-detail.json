@@ -1,3 +1,8 @@
 {
-  "navigationBarTitleText": "基金详情"
+  "navigationBarTitleText": "基金详情",
+  "usingComponents": {
+    "state-view": "../../components/state-view/state-view",
+    "num-text": "../../components/num-text/num-text",
+    "chart-line": "../../components/chart-line/chart-line"
+  }
 }

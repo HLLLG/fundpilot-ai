@@ -1,0 +1,13 @@
+<!-- components/ocr-uploader/ocr-uploader.wxml -->
+<!-- OCR 上传入口按钮组件。点击后导航至 pages/ocr-import/ocr-import 完整流程。 -->
+<!-- Requirements: 6.1–6.7（实现体在 pages/ocr-import） -->
+
+<view
+  class="{{btnClass}} ocr-uploader-btn"
+  hover-class="btn--press"
+  bindtap="onTap"
+>
+  <slot>
+    <text>{{label}}</text>
+  </slot>
+</view>

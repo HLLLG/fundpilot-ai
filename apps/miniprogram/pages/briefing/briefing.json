@@ -1,0 +1,9 @@
+{
+  "navigationBarTitleText": "简报",
+  "usingComponents": {
+    "state-view": "../../components/state-view/state-view",
+    "num-text": "../../components/num-text/num-text",
+    "chat-panel": "../../components/chat-panel/chat-panel",
+    "md-view": "../../components/md-view/md-view"
+  }
+}

@@ -1,0 +1,201 @@
+/**
+ * 好基灵 FundPilot AI · 小程序通用样式类
+ * Requirements: 1.3（受支持字体栈）、1.4（卡片/主次按钮/徽标/分段切换控件）
+ *
+ * 依赖 styles/tokens.wxss 中定义的设计 token。
+ * 用法：在 app.wxss 中 `@import "styles/tokens.wxss";` 与 `@import "styles/shared.wxss";`。
+ */
+
+/* ── 基础排版（受支持字体栈，Req 1.3） ─────────── */
+page {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-family-base);
+  font-size: var(--font-base);
+  line-height: 1.5;
+}
+
+.u-page {
+  padding: var(--space-md);
+  box-sizing: border-box;
+}
+
+/* 数字/金额展示：等宽倾向字体栈，便于纵向对齐（Req 1.3） */
+.u-num {
+  font-family: var(--font-family-number);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 涨跌语义着色（红涨绿跌，配合 num-text 组件 / Req 1.6 落地基座） */
+.u-up { color: var(--up); }
+.u-down { color: var(--down); }
+.u-neutral { color: var(--neutral); }
+
+/* ── 卡片（Req 1.4） ──────────────────────────── */
+.card {
+  background: var(--surface);
+  border-radius: var(--radius-lg);
+  padding: var(--space-lg);
+  box-shadow: var(--shadow-sm);
+  box-sizing: border-box;
+}
+
+.card--muted {
+  background: var(--surface-muted);
+  box-shadow: none;
+}
+
+.card--bordered {
+  box-shadow: none;
+  border: 1rpx solid var(--line);
+}
+
+.card + .card {
+  margin-top: var(--space-md);
+}
+
+.card__title {
+  font-size: var(--font-md);
+  font-weight: 700;
+  color: var(--text);
+}
+
+.card__subtitle {
+  font-size: var(--font-sm);
+  color: var(--text-secondary);
+  margin-top: var(--space-xs);
+}
+
+/* ── 按钮（主/次，Req 1.4） ──────────────────── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 80rpx;
+  padding: 0 var(--space-lg);
+  border-radius: var(--radius-lg);
+  font-size: var(--font-base);
+  font-weight: 600;
+  line-height: 1;
+  border: none;
+  box-sizing: border-box;
+}
+
+.btn::after { border: none; }
+
+/* 主按钮 */
+.btn-primary {
+  background: linear-gradient(90deg, var(--brand), var(--brand-strong));
+  color: var(--text-inverse);
+  box-shadow: var(--shadow-brand);
+}
+
+.btn-primary.btn--disabled,
+.btn-primary[disabled] {
+  background: var(--line-strong);
+  color: var(--text-inverse);
+  box-shadow: none;
+}
+
+/* 次按钮 */
+.btn-secondary {
+  background: var(--surface);
+  color: var(--brand);
+  border: 1rpx solid var(--brand);
+  box-shadow: none;
+}
+
+.btn-secondary.btn--disabled,
+.btn-secondary[disabled] {
+  color: var(--text-muted);
+  border-color: var(--line);
+}
+
+/* 文本/幽灵按钮 */
+.btn-ghost {
+  background: transparent;
+  color: var(--text-secondary);
+  box-shadow: none;
+}
+
+.btn--block {
+  display: flex;
+  width: 100%;
+}
+
+.btn--sm {
+  height: 60rpx;
+  padding: 0 var(--space-md);
+  font-size: var(--font-sm);
+  border-radius: var(--radius-md);
+}
+
+.btn--press {
+  opacity: 0.85;
+}
+
+/* ── 徽标 / 标签（Req 1.4） ───────────────────── */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4rpx var(--space-sm);
+  border-radius: var(--radius-pill);
+  font-size: var(--font-xs);
+  font-weight: 600;
+  line-height: 1.4;
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+
+.badge--accent {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.badge--up {
+  background: var(--up-soft);
+  color: var(--up);
+}
+
+.badge--down {
+  background: var(--down-soft);
+  color: var(--down);
+}
+
+.badge--muted {
+  background: var(--surface-muted);
+  color: var(--text-secondary);
+}
+
+.badge--warning {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+/* ── 分段切换控件（Req 1.4） ──────────────────── */
+.segmented {
+  display: flex;
+  padding: 6rpx;
+  background: var(--surface-muted);
+  border-radius: var(--radius-md);
+  border: 1rpx solid var(--line);
+}
+
+.segmented__item {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 64rpx;
+  font-size: var(--font-sm);
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.segmented__item--active {
+  background: var(--surface);
+  color: var(--brand);
+  font-weight: 700;
+  box-shadow: var(--shadow-sm);
+}

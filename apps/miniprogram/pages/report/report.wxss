@@ -1,0 +1,317 @@
+/**
+ * pages/report/report.wxss
+ * 生成日报页样式（Req 13–14, 3.2）。
+ * 与 styles/tokens.wxss 设计 token 对齐（不重复定义 token 变量）。
+ */
+
+.report-page {
+  height: 100vh;
+  background: var(--bg, #f3f6fc);
+  box-sizing: border-box;
+}
+
+/* ── 通用区块 ────────────────────────────────────────── */
+.report-section {
+  margin: 16rpx 24rpx 0;
+  display: flex;
+  flex-direction: column;
+  gap: 20rpx;
+}
+
+.report-section__title {
+  font-size: 30rpx;
+  font-weight: 600;
+  color: var(--text, #1a2237);
+}
+
+.report-section__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12rpx;
+}
+
+/* ── 表单行/列 ──────────────────────────────────────── */
+.form-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+}
+
+.form-col {
+  display: flex;
+  flex-direction: column;
+  gap: 10rpx;
+}
+
+.form-label {
+  font-size: 26rpx;
+  color: var(--text-secondary, #6b7a9a);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.form-picker {
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+  padding: 10rpx 20rpx;
+  background: var(--surface-muted, #f1f5fb);
+  border-radius: var(--radius-sm, 10rpx);
+  border: 2rpx solid var(--line, #e5eaf5);
+  font-size: 26rpx;
+  color: var(--text, #1a2237);
+}
+
+.form-picker__arrow {
+  color: var(--text-secondary, #6b7a9a);
+  font-size: 28rpx;
+}
+
+.form-textarea {
+  width: 100%;
+  min-height: 80rpx;
+  padding: 16rpx;
+  background: var(--surface-muted, #f1f5fb);
+  border-radius: var(--radius-sm, 10rpx);
+  border: 2rpx solid var(--line, #e5eaf5);
+  font-size: 26rpx;
+  color: var(--text, #1a2237);
+  box-sizing: border-box;
+  line-height: 1.5;
+}
+
+/* ── 新闻预览 ────────────────────────────────────────── */
+.news-preview__meta {
+  display: flex;
+  align-items: center;
+  font-size: 24rpx;
+  color: var(--text-secondary, #6b7a9a);
+}
+
+.news-preview__label {
+  font-weight: 600;
+}
+
+.news-preview__list {
+  display: flex;
+  flex-direction: column;
+  gap: 12rpx;
+}
+
+.news-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8rpx;
+}
+
+.news-item__dot {
+  color: var(--brand, #2356e0);
+  font-size: 28rpx;
+  flex-shrink: 0;
+}
+
+.news-item__text {
+  font-size: 26rpx;
+  color: var(--text, #1a2237);
+  line-height: 1.6;
+}
+
+/* ── 生成按钮 ────────────────────────────────────────── */
+.report-actions {
+  margin: 24rpx;
+  display: flex;
+  flex-direction: column;
+  gap: 16rpx;
+}
+
+.report-actions__btn {
+  width: 100%;
+  text-align: center;
+  font-size: 32rpx;
+  padding: 24rpx;
+  border-radius: var(--radius-md, 16rpx);
+  font-weight: 600;
+}
+
+/* ── 轮询进度 ────────────────────────────────────────── */
+.report-progress {
+  align-items: center;
+  text-align: center;
+  padding: 40rpx 24rpx;
+}
+
+.report-progress__icon {
+  font-size: 64rpx;
+  margin-bottom: 12rpx;
+}
+
+.report-progress__stage {
+  font-size: 30rpx;
+  font-weight: 600;
+  color: var(--text, #1a2237);
+}
+
+.report-progress__hint {
+  font-size: 24rpx;
+  color: var(--text-secondary, #6b7a9a);
+  margin-top: 8rpx;
+}
+
+.report-progress__bar {
+  width: 100%;
+  height: 8rpx;
+  background: var(--line, #e5eaf5);
+  border-radius: 4rpx;
+  overflow: hidden;
+  margin-top: 20rpx;
+}
+
+.report-progress__fill {
+  height: 100%;
+  width: 60%;
+  background: var(--brand, #2356e0);
+  border-radius: 4rpx;
+  animation: progress-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes progress-pulse {
+  0%   { opacity: 1; }
+  50%  { opacity: 0.4; }
+  100% { opacity: 1; }
+}
+
+/* ── 失败态 ──────────────────────────────────────────── */
+.report-fail {
+  align-items: center;
+  text-align: center;
+  padding: 32rpx 24rpx;
+}
+
+.report-fail__icon {
+  font-size: 56rpx;
+  color: var(--down, #e5484d);
+  margin-bottom: 12rpx;
+}
+
+.report-fail__msg {
+  font-size: 26rpx;
+  color: var(--down, #e5484d);
+  margin-bottom: 20rpx;
+  line-height: 1.5;
+}
+
+/* ── 操作按钮行 ──────────────────────────────────────── */
+.report-btn-row {
+  margin: 16rpx 24rpx 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12rpx;
+}
+
+/* ── 调仓示意 ────────────────────────────────────────── */
+.rebalance-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16rpx 0;
+  border-bottom: 2rpx solid var(--line, #e5eaf5);
+}
+
+.rebalance-item__name {
+  flex: 1;
+  font-size: 26rpx;
+  color: var(--text, #1a2237);
+}
+
+.rebalance-item__action {
+  font-size: 24rpx;
+  color: var(--brand, #2356e0);
+  font-weight: 600;
+  margin: 0 16rpx;
+}
+
+.rebalance-item__amount {
+  font-size: 24rpx;
+  color: var(--text-secondary, #6b7a9a);
+}
+
+/* ── 复盘摘要 ────────────────────────────────────────── */
+.outcomes-summary {
+  font-size: 26rpx;
+  color: var(--text, #1a2237);
+  line-height: 1.75;
+}
+
+/* ── 追问面板容器 ────────────────────────────────────── */
+.report-chat-section {
+  min-height: 500rpx;
+  padding-bottom: 0 !important;
+  overflow: hidden;
+}
+
+/* ── 「更多」入口 ────────────────────────────────────── */
+.more-section {
+  margin-bottom: 0;
+}
+
+.more-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16rpx;
+}
+
+.more-item {
+  flex: 0 0 calc(33.33% - 12rpx);
+  box-sizing: border-box;
+  padding: 24rpx 0;
+  text-align: center;
+  background: var(--surface-muted, #f1f5fb);
+  border-radius: var(--radius-sm, 12rpx);
+  color: var(--brand, #2356e0);
+}
+
+.more-item__label {
+  font-size: 26rpx;
+}
+
+/* ── 通用辅助 ────────────────────────────────────────── */
+.report-placeholder-text {
+  font-size: 26rpx;
+  color: var(--text-secondary, #6b7a9a);
+  text-align: center;
+  padding: 16rpx 0;
+}
+
+.report-error-text {
+  font-size: 26rpx;
+  color: var(--down, #e5484d);
+  line-height: 1.5;
+}
+
+/* ── 分段控件覆写（mode 切换） ──────────────────────── */
+.segmented {
+  display: flex;
+  gap: 0;
+  background: var(--surface-muted, #f1f5fb);
+  border-radius: var(--radius-sm, 10rpx);
+  overflow: hidden;
+  border: 2rpx solid var(--line, #e5eaf5);
+}
+
+.segmented__item {
+  flex: 1;
+  text-align: center;
+  padding: 10rpx 0;
+  font-size: 26rpx;
+  color: var(--text-secondary, #6b7a9a);
+  line-height: 1.4;
+}
+
+.segmented__item--active {
+  background: var(--brand, #2356e0);
+  color: #fff;
+  font-weight: 600;
+}

@@ -1,0 +1,157 @@
+<!-- pages/profit/profit.wxml -->
+<!-- 盈亏分析页 (Profit_Analysis_Page)                            -->
+<!-- Requirements: 9.1, 9.2, 9.3, 9.6, 9.7                      -->
+<view class="profit-page">
+
+  <!-- ── 区间分段切换（Req 9.2） ───────────────────────────── -->
+  <view class="profit-page__range-bar">
+    <view class="segmented">
+      <view
+        wx:for="{{ranges}}"
+        wx:key="value"
+        class="segmented__item {{index === rangeIndex ? 'segmented__item--active' : ''}}"
+        data-index="{{index}}"
+        bindtap="onRangeTap"
+      >{{item.label}}</view>
+    </view>
+  </view>
+
+  <!-- ── 三态包裹 ──────────────────────────────────────────── -->
+  <state-view
+    loading="{{loading}}"
+    error="{{error}}"
+    empty="{{isEmpty}}"
+    emptyText="暂无盈亏数据，请先录入持仓"
+    bind:retry="onRetry"
+  >
+
+    <!-- ── 摘要 KPI 卡片 ────────────────────────────────── -->
+    <view class="card profit-page__summary-card" wx:if="{{summary}}">
+      <view class="profit-page__kpi-row">
+        <view class="profit-page__kpi-item">
+          <text class="profit-page__kpi-label">总资产</text>
+          <num-text
+            value="{{summary.total_assets}}"
+            kind="money"
+            class="profit-page__kpi-value"
+          />
+        </view>
+        <view class="profit-page__kpi-item">
+          <text class="profit-page__kpi-label">持有收益</text>
+          <num-text
+            value="{{summary.total_return}}"
+            kind="money"
+            signed="{{true}}"
+            class="profit-page__kpi-value"
+          />
+        </view>
+        <view class="profit-page__kpi-item">
+          <text class="profit-page__kpi-label">当日收益</text>
+          <num-text
+            value="{{summary.daily_profit}}"
+            kind="money"
+            signed="{{true}}"
+            class="profit-page__kpi-value"
+          />
+        </view>
+      </view>
+    </view>
+
+    <!-- ── 收益走势图（Req 9.3） ─────────────────────────── -->
+    <view class="card profit-page__chart-card">
+      <view class="card__title profit-page__section-title">收益走势 vs 沪深300</view>
+      <chart-line
+        option="{{lineChartOption}}"
+        canvas-id="profit-line-canvas"
+        height="400rpx"
+      />
+    </view>
+
+    <!-- ── 持仓分布甜甜圈（Req 9.7） ───────────────────── -->
+    <view class="card profit-page__chart-card" wx:if="{{donutChartOption.series[0].data.length > 0}}">
+      <view class="card__title profit-page__section-title">持仓分布</view>
+      <chart-donut
+        option="{{donutChartOption}}"
+        canvas-id="profit-donut-canvas"
+        height="400rpx"
+      />
+    </view>
+
+    <!-- ── 当日盈亏 TOP5（Req 9.6） ─────────────────────── -->
+    <view class="card profit-page__top5-card" wx:if="{{gainers.length > 0 || losers.length > 0}}">
+      <view class="card__title profit-page__section-title">当日盈亏 TOP5</view>
+
+      <!-- 盈利 TOP5 -->
+      <view wx:if="{{gainers.length > 0}}">
+        <view class="profit-page__top5-header">
+          <text class="profit-page__top5-label profit-page__top5-label--up">盈利榜</text>
+        </view>
+        <view
+          wx:for="{{gainers}}"
+          wx:key="fund_code"
+          class="profit-page__top5-item"
+        >
+          <view class="profit-page__top5-item-info">
+            <text class="profit-page__top5-item-name">{{item.fund_name || item.fund_code}}</text>
+            <text class="profit-page__top5-item-code u-muted">{{item.fund_code}}</text>
+          </view>
+          <view class="profit-page__top5-item-profit">
+            <num-text
+              value="{{item.daily_profit}}"
+              kind="money"
+              signed="{{true}}"
+              class="profit-page__top5-item-amount"
+            />
+            <num-text
+              value="{{item.daily_return_percent}}"
+              kind="percent"
+              signed="{{true}}"
+              class="profit-page__top5-item-pct"
+            />
+          </view>
+        </view>
+      </view>
+
+      <!-- 亏损 TOP5 -->
+      <view wx:if="{{losers.length > 0}}" class="profit-page__losers-section">
+        <view class="profit-page__top5-header">
+          <text class="profit-page__top5-label profit-page__top5-label--down">亏损榜</text>
+        </view>
+        <view
+          wx:for="{{losers}}"
+          wx:key="fund_code"
+          class="profit-page__top5-item"
+        >
+          <view class="profit-page__top5-item-info">
+            <text class="profit-page__top5-item-name">{{item.fund_name || item.fund_code}}</text>
+            <text class="profit-page__top5-item-code u-muted">{{item.fund_code}}</text>
+          </view>
+          <view class="profit-page__top5-item-profit">
+            <num-text
+              value="{{item.daily_profit}}"
+              kind="money"
+              signed="{{true}}"
+              class="profit-page__top5-item-amount"
+            />
+            <num-text
+              value="{{item.daily_return_percent}}"
+              kind="percent"
+              signed="{{true}}"
+              class="profit-page__top5-item-pct"
+            />
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <!-- 无 TOP5 数据时的占位（非空态但没有当日盈亏记录） -->
+    <view
+      class="card profit-page__empty-top5"
+      wx:if="{{!loading && !error && gainers.length === 0 && losers.length === 0 && !isEmpty}}"
+    >
+      <text class="profit-page__empty-tip">今日暂无盈亏记录</text>
+    </view>
+
+  </state-view>
+
+</view>

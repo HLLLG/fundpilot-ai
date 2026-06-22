@@ -1,0 +1,7 @@
+{
+  "component": true,
+  "usingComponents": {
+    "md-view": "../md-view/md-view",
+    "state-view": "../state-view/state-view"
+  }
+}

@@ -1,0 +1,68 @@
+<!-- pages/swing/swing.wxml -->
+<!-- 波段盯盘提醒页（Swing_Alerts） -->
+<!-- Requirements: 19.1, 19.2, 19.3, 19.4 -->
+
+<view class="swing-page u-page">
+
+  <!-- ── 页面头部：标题 + 重新评估按钮（Req 19.1）── -->
+  <view class="swing-header">
+    <view class="swing-header__title-row">
+      <text class="swing-header__title">盯盘提醒</text>
+      <text class="swing-header__subtitle">当日波段提醒</text>
+    </view>
+    <view
+      class="btn btn-secondary btn--sm swing-header__evaluate-btn {{evaluating ? 'btn--disabled' : ''}}"
+      bindtap="onEvaluate"
+    >
+      <text>{{evaluating ? '评估中…' : '重新评估'}}</text>
+    </view>
+  </view>
+
+  <!-- 评估错误提示 -->
+  <view wx:if="{{evaluateError}}" class="swing-evaluate-error">
+    <text class="swing-evaluate-error__text">{{evaluateError}}</text>
+  </view>
+
+  <!-- ── 三态包裹（Req 4.1/4.2）── -->
+  <state-view
+    loading="{{loading}}"
+    error="{{error}}"
+    empty="{{empty}}"
+    emptyText="今日暂无盯盘提醒"
+    bind:retry="onRetry"
+  >
+
+    <!-- ── 提醒列表（Req 19.3 / 19.4）── -->
+    <view wx:for="{{alerts}}" wx:key="_idx" class="alert-card card">
+
+      <!-- 卡片头部：优先级徽标 + 类型标签 + 新提醒标记 -->
+      <view class="alert-card__header">
+        <!-- 优先级徽标（Req 19.3：展示优先级）-->
+        <view class="badge {{item.priorityBadgeClass}} alert-card__priority-badge">
+          {{item.priorityLabel}}优先
+        </view>
+        <!-- 提醒类型标签（Req 19.3：展示类型）-->
+        <view class="badge badge--muted alert-card__type-badge">
+          {{item.typeLabel}}
+        </view>
+        <!-- 新提醒标记（Req 19.4：标记新增提醒）-->
+        <view wx:if="{{item.isNew}}" class="badge badge--accent alert-card__new-badge">
+          NEW
+        </view>
+        <view class="alert-card__spacer"></view>
+        <!-- 基金名称（辅助展示）-->
+        <text wx:if="{{item.fund_name}}" class="alert-card__fund-name">{{item.fund_name}}</text>
+      </view>
+
+      <!-- 提醒标题（Req 19.3）-->
+      <text class="alert-card__title">{{item.title}}</text>
+
+      <!-- 提醒内容（Req 19.3）-->
+      <text wx:if="{{item.content}}" class="alert-card__content">{{item.content}}</text>
+
+    </view>
+    <!-- /alert-card -->
+
+  </state-view>
+
+</view>

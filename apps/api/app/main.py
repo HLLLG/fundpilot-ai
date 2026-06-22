@@ -110,6 +110,7 @@ from app.services.us_market_service import get_us_market_snapshot
 from app.services.ocr_pipeline import apply_confirmed_holdings, run_ocr_upload_pipeline
 from app.services.report_diff import diff_reports
 from app.services.report_chat import stream_report_chat
+from app.services.chat_aggregate import aggregate_chat_stream
 from app.services.report_chat_export import report_chat_to_markdown
 from app.services.rebalance_simulator import simulate_rebalance
 from app.services.recommendation_accuracy import build_recommendation_accuracy
@@ -742,6 +743,31 @@ def fund_discovery_chat(report_id: str, body: DiscoveryChatRequest) -> Streaming
     )
 
 
+@app.post("/api/fund-discovery/reports/{report_id}/chat/sync")
+def fund_discovery_chat_sync(report_id: str, body: DiscoveryChatRequest) -> dict:
+    report = get_discovery_report(report_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="报告不存在")
+    try:
+        result = aggregate_chat_stream(
+            stream_discovery_chat(
+                report_id,
+                body.message.strip(),
+                chat_mode=body.chat_mode,
+            )
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    response: dict = {
+        "user_message": result.user_message,
+        "message": result.message,
+        "chat_mode": result.chat_mode,
+    }
+    if result.model is not None:
+        response["model"] = result.model
+    return response
+
+
 @app.get("/api/reports")
 def reports() -> list[dict]:
     return list_reports()
@@ -894,6 +920,33 @@ def report_chat(report_id: str, body: ReportChatRequest) -> StreamingResponse:
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@app.post("/api/reports/{report_id}/chat/sync")
+def report_chat_sync(report_id: str, body: ReportChatRequest) -> dict:
+    report = get_report(report_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="报告不存在")
+
+    try:
+        aggregated = aggregate_chat_stream(
+            stream_report_chat(
+                report_id,
+                body.message.strip(),
+                chat_mode=body.chat_mode,
+            )
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    response: dict = {
+        "user_message": aggregated.user_message,
+        "message": aggregated.message,
+        "chat_mode": aggregated.chat_mode,
+    }
+    if aggregated.model is not None:
+        response["model"] = aggregated.model
+    return response
 
 
 @app.get("/api/reports/{report_id}/chat/markdown")

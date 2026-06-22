@@ -1,0 +1,209 @@
+<!-- pages/ocr-import/ocr-import.wxml -->
+<!-- OCR 截图录入页（全页面，非组件）。 -->
+<!-- Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7 -->
+<!--
+  设计系统类（styles/shared.wxss + styles/tokens.wxss）：
+  .card / .btn / .btn-primary / .btn-secondary / .btn--sm / .btn--block / .badge / .segmented
+  组件：state-view、num-text
+-->
+
+<view class="u-page ocr-import-page">
+
+  <!-- ══ 步骤 1：来源选择 + 选择截图（Req 6.3 / 6.1） ══════════════ -->
+  <view class="card section-card" wx:if="{{phase === 'idle' || phase === 'choosing'}}">
+    <view class="card__title section-title">选择截图来源</view>
+    <view class="card__subtitle section-subtitle">请选择截图所属 App 及视图类型，以便提升识别准确率</view>
+
+    <!-- 分段来源选择器（Req 6.3） -->
+    <view class="segmented source-segmented">
+      <view
+        wx:for="{{sourceOptions}}"
+        wx:key="value"
+        class="segmented__item {{sourceIndex === index ? 'segmented__item--active' : ''}}"
+        data-index="{{index}}"
+        bindtap="onSourceChange"
+      >
+        {{item.label}}
+      </view>
+    </view>
+
+    <!-- 选择截图按钮（Req 6.1）-->
+    <view
+      class="btn btn-primary btn--block choose-btn"
+      hover-class="btn--press"
+      bindtap="onChooseImage"
+    >
+      📷  选择截图
+    </view>
+  </view>
+
+  <!-- ══ 步骤 2：上传中（loading） ════════════════════════════════ -->
+  <view class="card section-card" wx:if="{{phase === 'uploading'}}">
+    <!-- 缩略图 -->
+    <view class="thumb-wrap" wx:if="{{fileThumb}}">
+      <image class="thumb-img" src="{{fileThumb}}" mode="aspectFit" />
+    </view>
+    <view class="uploading-row">
+      <view class="uploading-spinner"></view>
+      <text class="uploading-text">正在识别截图，请稍候…</text>
+    </view>
+  </view>
+
+  <!-- ══ 步骤 3：可编辑识别结果（Req 6.4） ══════════════════════════ -->
+  <view wx:if="{{phase === 'editing' || phase === 'saving'}}">
+
+    <!-- 缩略图 + 重新选图 -->
+    <view class="card section-card thumb-header" wx:if="{{fileThumb}}">
+      <image class="thumb-img thumb-img--sm" src="{{fileThumb}}" mode="aspectFit" />
+      <view
+        class="btn btn-secondary btn--sm reselect-btn"
+        hover-class="btn--press"
+        bindtap="onReselect"
+      >
+        重新选图
+      </view>
+    </view>
+
+    <!-- 告警面板（Req 6.6） -->
+    <view class="card card--bordered warning-card" wx:if="{{warnings.length > 0}}">
+      <view class="warning-header" bindtap="onToggleWarnings">
+        <view class="badge badge--warning warning-badge">⚠️ 识别告警 ({{warnings.length}})</view>
+        <text class="warning-toggle">{{showWarnings ? '收起' : '展开'}}</text>
+      </view>
+      <view wx:if="{{showWarnings}}" class="warning-list">
+        <view
+          wx:for="{{warnings}}"
+          wx:key="index"
+          class="warning-item"
+        >
+          <text class="warning-text">· {{item}}</text>
+        </view>
+      </view>
+    </view>
+
+    <!-- 识别结果列表 -->
+    <view class="card section-card">
+      <view class="card__title section-title">
+        识别结果（{{holdings.length}} 条，可编辑）
+      </view>
+
+      <!-- 空结果提示 -->
+      <view class="empty-result" wx:if="{{holdings.length === 0}}">
+        <text class="empty-result__text">未识别到持仓数据，请检查截图或更换来源后重试</text>
+        <view
+          class="btn btn-secondary btn--sm"
+          hover-class="btn--press"
+          bindtap="onReselect"
+          style="margin-top: 16rpx;"
+        >
+          重新选图
+        </view>
+      </view>
+
+      <!-- 每条持仓可编辑行（Req 6.4：代码/名称/金额） -->
+      <view
+        wx:for="{{holdings}}"
+        wx:key="_key"
+        class="holding-edit-card"
+      >
+        <!-- 行头：序号 + 删除按钮 -->
+        <view class="edit-row edit-row--header">
+          <text class="edit-index badge badge--muted">{{index + 1}}</text>
+          <view
+            class="btn btn-ghost btn--sm delete-btn"
+            hover-class="btn--press"
+            data-index="{{index}}"
+            bindtap="onRemoveHolding"
+          >
+            删除
+          </view>
+        </view>
+
+        <!-- 基金代码（Req 6.4） -->
+        <view class="edit-row">
+          <text class="edit-label">基金代码</text>
+          <input
+            class="edit-input"
+            value="{{item.fund_code}}"
+            placeholder="如 000001"
+            maxlength="8"
+            data-index="{{index}}"
+            bindinput="onFundCodeInput"
+          />
+        </view>
+
+        <!-- 基金名称（Req 6.4） -->
+        <view class="edit-row">
+          <text class="edit-label">基金名称</text>
+          <input
+            class="edit-input"
+            value="{{item.fund_name}}"
+            placeholder="如 华夏成长混合"
+            maxlength="40"
+            data-index="{{index}}"
+            bindinput="onFundNameInput"
+          />
+        </view>
+
+        <!-- 持有金额（Req 6.4） -->
+        <view class="edit-row">
+          <text class="edit-label">持有金额（元）</text>
+          <input
+            class="edit-input edit-input--num"
+            value="{{item.amount}}"
+            placeholder="如 10000.00"
+            type="digit"
+            data-index="{{index}}"
+            bindinput="onAmountInput"
+          />
+        </view>
+      </view>
+    </view>
+
+    <!-- 保存中提示 -->
+    <view class="saving-tip" wx:if="{{phase === 'saving'}}">
+      <view class="uploading-spinner uploading-spinner--sm"></view>
+      <text class="uploading-text">正在录入持仓…</text>
+    </view>
+
+    <!-- 错误提示（saving 失败后回到 editing，显示此区域） -->
+    <view class="error-tip" wx:if="{{errorMsg && phase === 'editing'}}">
+      <text class="error-tip__text">{{errorMsg}}</text>
+    </view>
+
+    <!-- 确认按钮（Req 6.5） -->
+    <view
+      class="btn btn-primary btn--block confirm-btn {{phase === 'saving' || holdings.length === 0 ? 'btn--disabled' : ''}}"
+      hover-class="btn--press"
+      bindtap="onConfirm"
+    >
+      <text wx:if="{{phase === 'saving'}}">录入中…</text>
+      <text wx:else>确认录入（{{holdings.length}} 条）</text>
+    </view>
+
+  </view>
+
+  <!-- ══ 错误态（OCR 识别失败，Req 4.2） ════════════════════════════ -->
+  <view class="card section-card error-card" wx:if="{{phase === 'error'}}">
+    <view class="error-icon">✗</view>
+    <text class="error-message">{{errorMsg || '识别失败，请重试'}}</text>
+    <view class="error-actions">
+      <view
+        class="btn btn-primary btn--sm"
+        hover-class="btn--press"
+        bindtap="onRetry"
+        wx:if="{{filePath}}"
+      >
+        重试识别
+      </view>
+      <view
+        class="btn btn-secondary btn--sm"
+        hover-class="btn--press"
+        bindtap="onReselect"
+      >
+        重新选图
+      </view>
+    </view>
+  </view>
+
+</view>

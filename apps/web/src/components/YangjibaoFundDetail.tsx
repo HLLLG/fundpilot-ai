@@ -46,7 +46,7 @@ import {
 } from "@/lib/holdingDisplay";
 import { HoldingModifyModal } from "@/components/HoldingModifyModal";
 import { SingleFundTransactionModal } from "@/components/SingleFundTransactionModal";
-import { holdingDisplaySectorLabel, holdingRelatedBoardLabel, resolveIntradayQuery } from "@/lib/profileSector";
+import { holdingDisplaySectorLabel, resolveIntradayQuery } from "@/lib/profileSector";
 import { buildClientCacheKey, readClientCache, writeClientCache } from "@/lib/clientCache";
 import { isEstimateFallbackMeta } from "@/lib/sectorQuoteStatus";
 import { formatTradeDateShort } from "@/lib/tradeDateLabel";

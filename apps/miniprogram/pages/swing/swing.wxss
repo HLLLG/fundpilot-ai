@@ -1,0 +1,113 @@
+/* pages/swing/swing.wxss */
+/* 波段盯盘提醒页样式 */
+/* 使用 styles/tokens.wxss 中定义的设计 token */
+
+/* ── 页面容器 ────────────────────────────────── */
+.swing-page {
+  min-height: 100vh;
+  background: var(--bg);
+}
+
+/* ── 页面头部（标题 + 评估按钮）──────────────── */
+.swing-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-md);
+}
+
+.swing-header__title-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4rpx;
+}
+
+.swing-header__title {
+  font-size: var(--font-xl);
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.2;
+}
+
+.swing-header__subtitle {
+  font-size: var(--font-sm);
+  color: var(--text-secondary);
+}
+
+.swing-header__evaluate-btn {
+  flex-shrink: 0;
+}
+
+/* ── 评估错误提示 ─────────────────────────────── */
+.swing-evaluate-error {
+  background: var(--danger-soft);
+  border-radius: var(--radius-md);
+  padding: var(--space-sm) var(--space-md);
+  margin-bottom: var(--space-md);
+}
+
+.swing-evaluate-error__text {
+  font-size: var(--font-sm);
+  color: var(--danger);
+  line-height: 1.5;
+}
+
+/* ── 提醒卡片 ────────────────────────────────── */
+.alert-card {
+  margin-bottom: var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+/* 卡片头部：徽标行 */
+.alert-card__header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+
+.alert-card__priority-badge {
+  /* 继承 .badge 基础样式；具体颜色由 badge--up/warning/muted 控制 */
+}
+
+.alert-card__type-badge {
+  /* 继承 .badge badge--muted */
+}
+
+/* 新提醒标记（Req 19.4）：暖金强调色 */
+.alert-card__new-badge {
+  /* 继承 .badge badge--accent */
+  font-size: var(--font-xs);
+  letter-spacing: 2rpx;
+}
+
+/* 占位弹性空间，将基金名称推到右侧 */
+.alert-card__spacer {
+  flex: 1;
+}
+
+.alert-card__fund-name {
+  font-size: var(--font-sm);
+  color: var(--text-secondary);
+  max-width: 240rpx;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 提醒标题（Req 19.3）*/
+.alert-card__title {
+  font-size: var(--font-md);
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.4;
+}
+
+/* 提醒内容（Req 19.3）*/
+.alert-card__content {
+  font-size: var(--font-base);
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
