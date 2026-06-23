@@ -9,7 +9,6 @@ from app.services.fund_data import FundDataService
 from app.services.fund_profile import (
     FundProfileService,
     _aliases_for_name,
-    ensure_first_seen_anchor,
     merge_holding_into_profile,
 )
 from app.services.holding_estimates import compute_yesterday_profit
@@ -34,10 +33,10 @@ def build_holding_detail(
     if resolved.fund_code != holding.fund_code:
         fund_code_source = "profile"
     elif holding.fund_code == "000000":
-        looked_up = lookup_fund_code_by_name(holding.fund_name)
+        looked_up, lookup_source = lookup_fund_code_by_name(holding.fund_name)
         if looked_up:
             resolved = holding.model_copy(update={"fund_code": looked_up})
-            fund_code_source = "akshare"
+            fund_code_source = lookup_source or "akshare"
             existing = get_fund_profile_by_code(looked_up) or profile_service.find_match(holding.fund_name)
             if existing is None:
                 save_fund_profile(
@@ -54,12 +53,6 @@ def build_holding_detail(
     profile = get_fund_profile_by_code(resolved.fund_code)
     if profile is None:
         profile = profile_service.find_match(resolved.fund_name)
-    if profile is not None and not profile.first_seen_date and not profile.first_purchase_date:
-        snapshot_days = _holding_days_from_snapshots(resolved)
-        fallback = None
-        if snapshot_days is not None and snapshot_days > 0:
-            fallback = (date.today() - timedelta(days=snapshot_days)).isoformat()
-        profile = ensure_first_seen_anchor(profile, fallback_anchor=fallback)
 
     holding_shares = profile.holding_shares if profile else None
     holding_cost = profile.holding_cost if profile else None
@@ -174,9 +167,10 @@ def _resolve_holding_days(
         except ValueError:
             pass
 
-    if profile and profile.first_seen_date:
+    anchor = _first_seen_anchor_date(profile)
+    if anchor is not None:
         try:
-            seen = date.fromisoformat(profile.first_seen_date)
+            seen = date.fromisoformat(anchor)
             return max(0, (date.today() - seen).days), "first_seen"
         except ValueError:
             pass
@@ -201,6 +195,25 @@ def _resolve_holding_days(
     if snapshot_days is not None:
         return snapshot_days, "snapshot"
     return None, None
+
+
+def _first_seen_anchor_date(profile: FundProfile | None) -> str | None:
+    if profile is None:
+        return None
+    if profile.first_seen_date:
+        anchor = profile.first_seen_date
+        if profile.shares_baseline_date:
+            try:
+                baseline = date.fromisoformat(profile.shares_baseline_date)
+                seen = date.fromisoformat(anchor)
+                if baseline < seen:
+                    anchor = profile.shares_baseline_date
+            except ValueError:
+                pass
+        return anchor
+    if profile.shares_baseline_date and not profile.first_purchase_date:
+        return profile.shares_baseline_date
+    return None
 
 
 def _holding_days_as_of_date(profile: FundProfile | None) -> date | None:

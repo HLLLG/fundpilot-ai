@@ -79,7 +79,7 @@ class RiskAssessment(BaseModel):
 AnalysisMode = Literal["fast", "deep"]
 DailyProfitSource = Literal["settled", "penetration_estimate"]
 SectorReturnSource = Literal["realtime", "closing_estimate"]
-DailyReturnSource = Literal["sector_estimate", "official_nav"]
+DailyReturnSource = Literal["sector_estimate", "official_nav", "pending_accrual"]
 
 
 class AnalysisRequest(BaseModel):
@@ -154,11 +154,12 @@ class FundProfile(BaseModel):
     holding_days_as_of: str | None = None
     first_purchase_date: str | None = None
     first_seen_date: str | None = None
+    profit_accrual_deferred_until: str | None = None
     shares_baseline_date: str | None = None
     sector_name: str | None = None
     sector_return_percent: float | None = None
     intraday_index_name: str | None = None
-    source: str = "yangjibao-detail"
+    source: str = "alipay-overview"
     is_provisional: bool = False
 
 

@@ -59,7 +59,7 @@ export function getDailyProfit(holding: Holding): number | null {
   return computeDailyProfit(holding);
 }
 
-/** 养基宝口径：持有金额展示上一交易日结算值 */
+/** 养基宝口径：持有金额=上一交易日结算额（不含当日涨跌）；总资产另加当日收益 */
 export function getSettledHoldingAmount(holding: Holding): number {
   if (holding.display_holding_amount != null) {
     return holding.display_holding_amount;

@@ -11,6 +11,7 @@ from app.services.fund_profile import FundProfileService
 from app.services.holding_validation import build_holding_review, enrich_portfolio_summary_source
 from app.services.ocr_engine import OcrEngine
 from app.services.fund_code_resolver import (
+    UNRESOLVED_FUND_CODE_HINT,
     is_provisional_fund_code,
     lookup_fund_name_by_code,
     resolve_holding_fund_code,
@@ -88,7 +89,7 @@ def run_ocr_upload_pipeline(
     lines = [line.strip() for line in text.splitlines() if line.strip()] if text else []
     if parsed_holdings and is_alipay_holdings_page(lines):
         ocr_source = "alipay_holdings"
-    elif parsed_holdings and ocr_source not in {"alipay_holdings", "yangjibao_overview"}:
+    elif parsed_holdings and ocr_source != "alipay_holdings":
         ocr_source = "alipay_holdings"
     # 兜底：能被支付宝持有解析器解析出持仓，即说明这是支付宝持有页。
     # 避免 OCR 漏读页眉关键词时 detect_ocr_source 误判 unknown，进而错误提示
@@ -204,13 +205,15 @@ def _resolve_fund_codes(
         if code and code != holding.fund_code:
             holding = holding.model_copy(update={"fund_code": code})
 
+        resolved = holding.fund_code != "000000"
         resolved_holdings.append(holding)
         resolutions.append(
             {
                 "fund_name": holding.fund_name,
-                "fund_code": holding.fund_code if holding.fund_code != "000000" else None,
+                "fund_code": holding.fund_code if resolved else None,
                 "source": source,
-                "resolved": holding.fund_code != "000000",
+                "resolved": resolved,
+                "message": None if resolved else UNRESOLVED_FUND_CODE_HINT,
             }
         )
 

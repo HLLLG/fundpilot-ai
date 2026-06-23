@@ -126,12 +126,20 @@ Component({
             isEmpty: false,
             dateNum: d,
             isTrading: !!item.is_trading_day,
+            isToday: !!item.is_today,
+            isPending: !!item.is_pending_update,
             colorClass: item.colorClass || 'placeholder',
-            dailyProfit: item.is_trading_day ? item.daily_profit : null,
-            // 提供给 num-text 的 value（非交易日传 null 不展示数字）
-            profitValue: item.is_trading_day
-              ? (item.daily_profit != null ? item.daily_profit : null)
-              : null,
+            dailyProfit: item.is_pending_update
+              ? null
+              : item.is_trading_day
+                ? item.daily_profit
+                : 0,
+            profitValue: item.is_pending_update
+              ? null
+              : item.is_trading_day
+                ? (item.daily_profit != null ? item.daily_profit : null)
+                : 0,
+            pendingLabel: item.is_pending_update ? '未更新' : '',
           });
         } else {
           // 无数据：作为非交易日占位

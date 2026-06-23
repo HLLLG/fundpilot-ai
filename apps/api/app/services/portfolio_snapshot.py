@@ -111,6 +111,10 @@ def build_dashboard_payload(
         if calendar_year and calendar_month
         else default_calendar_anchor()
     )
+    from app.services.portfolio_holdings_service import load_persisted_holdings
+
+    live_holdings, *_ = load_persisted_holdings()
+    calendar_holdings = live_holdings if live_holdings else holdings_models
     profit_trend = build_profit_trend(
         profit_range=profit_range,
         snapshots=history_rows,
@@ -121,7 +125,12 @@ def build_dashboard_payload(
         profit_trend,
         summary_daily_return=summary.daily_return_percent if summary else None,
     )
-    calendar = build_calendar_month(year=year, month=month, snapshots=history_rows)
+    calendar = build_calendar_month(
+        year=year,
+        month=month,
+        snapshots=history_rows,
+        holdings=calendar_holdings,
+    )
     daily_top5 = build_daily_top5(holdings_models)
 
     return {

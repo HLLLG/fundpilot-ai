@@ -66,7 +66,7 @@ INLINE_TWO_COLUMN_RE = re.compile(
 )
 COMPLETE_FUND_NAME_RE = re.compile(
     r"^[\u4e00-\u9fffA-Za-z0-9·]{4,40}"
-    r"(?:混合[A-CEH]|联接[A-CEH]|ETF联接[A-CEH]|主题ETF联接[A-CEH]|股票[A-CEH])$",
+    r"(?:混合[A-CEH]|联接[A-CEH]|ETF联接[A-CEH]|主题ETF联接[A-CEH]|股票[A-CEH]|指数[A-CEH])$",
     re.IGNORECASE,
 )
 

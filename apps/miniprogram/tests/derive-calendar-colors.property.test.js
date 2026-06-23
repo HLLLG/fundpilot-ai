@@ -2,8 +2,7 @@
 //
 // Property 10 (design.md):
 //   For any 盈亏日历的 days[]，每个交易日的着色类与其 daily_profit 符号一致
-//   （正→'up'、负→'down'、零→'neutral'），非交易日渲染为占位（'placeholder'）
-//   且不参与盈亏配色。
+//   （正→'up'、负→'down'、零→'neutral'），非交易日固定为 0 且使用 'neutral'。
 //
 // Validates: Requirements 9.4
 //
@@ -64,7 +63,7 @@ const daysArrayArb = fc.array(calendarDayArb, { minLength: 0, maxLength: 31 });
  * 与 mapCalendarColors 实现逻辑对称，用于属性断言。
  */
 function expectedColorClass(isTrading, dailyProfit) {
-  if (!isTrading) return "placeholder";
+  if (!isTrading) return "neutral";
   const dp = Number(dailyProfit);
   if (!Number.isFinite(dp) || dp === 0) return "neutral";
   if (dp > 0) return "up";
@@ -76,7 +75,7 @@ function expectedColorClass(isTrading, dailyProfit) {
 // ---------------------------------------------------------------------------
 
 describe("Property 10: 盈亏日历配色", () => {
-  it("交易日 colorClass 与 daily_profit 符号一致，非交易日为 placeholder", () => {
+  it("交易日 colorClass 与 daily_profit 符号一致，非交易日为 neutral 且收益为 0", () => {
     fc.assert(
       fc.property(daysArrayArb, (days) => {
         // 保存输入快照，用于验证纯函数性。
@@ -107,9 +106,10 @@ describe("Property 10: 盈亏日历配色", () => {
           );
           expect(output.colorClass).toBe(expected);
 
-          // 非交易日：colorClass 一律为 'placeholder'，不受 daily_profit 影响。
+          // 非交易日：colorClass 为 neutral，收益归零。
           if (!input.is_trading_day) {
-            expect(output.colorClass).toBe("placeholder");
+            expect(output.colorClass).toBe("neutral");
+            expect(output.daily_profit).toBe(0);
           }
 
           // 交易日：colorClass 只能是 'up' / 'down' / 'neutral'（三值完备）。

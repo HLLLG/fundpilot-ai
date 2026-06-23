@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 
 FUND_ISSUER_PREFIX = (
+    "中航",
     "景顺长城",
     "易方达",
     "汇添富",
@@ -68,7 +69,7 @@ PROMO_MARKERS = (
 )
 FUND_PRODUCT_SUFFIX_RE = re.compile(
     r"(混合[A-CEH]?|联接[A-CEH]|ETF联接[A-CEH]|ETF联[A-CEH]|主题ETF联接[A-CEH]"
-    r"|发起式联接[A-CEH]|股票[A-CEH]?)$",
+    r"|发起式联接[A-CEH]|股票[A-CEH]?|指数[A-CEH])$",
     re.IGNORECASE,
 )
 FUND_NAME_HINTS = (
@@ -83,11 +84,11 @@ FUND_NAME_HINTS = (
     "军工",
     "成长",
 )
-PARTIAL_FUND_NAME_ENDINGS = ("混合", "联接", "ETF", "ETF联", "主", "混", "股票", "股")
+PARTIAL_FUND_NAME_ENDINGS = ("混合", "联接", "ETF", "ETF联", "主", "混", "股票", "股", "指数")
 # 东财简称相对 OCR/支付宝展示的差异（查码时双方都要归一化）
-LOOKUP_NAME_STRIP_TOKENS = ("发起式",)
+LOOKUP_NAME_STRIP_TOKENS = ("发起式", "主题")
 SHARE_CLASS_SUFFIX_RE = re.compile(
-    r"(混合|联接|ETF联接|ETF联|股票)([A-CEH])$",
+    r"(混合|联接|ETF联接|ETF联|股票|指数)([A-CEH])$",
     re.IGNORECASE,
 )
 
@@ -110,10 +111,16 @@ def normalize_fund_name(name: str) -> str:
 
 
 def normalize_fund_name_for_lookup(name: str) -> str:
-    """东财查码专用：去掉发起式等展示差异后再比对。"""
+    """东财查码专用：去掉发起式/主题/板块缩写等展示差异后再比对。"""
     result = normalize_fund_name(name)
     for token in LOOKUP_NAME_STRIP_TOKENS:
         result = result.replace(token, "")
+    # 支付宝 OCR 常省略「发起」：混合发起C ↔ 混合C；ETF发起联接C ↔ ETF联接C
+    result = re.sub(r"混合发起([A-CEH])$", r"混合\1", result, flags=re.IGNORECASE)
+    result = re.sub(r"ETF发起联接", "ETF联接", result, flags=re.IGNORECASE)
+    result = re.sub(r"发起联接", "联接", result, flags=re.IGNORECASE)
+    # 支付宝常写「科创」；东财全称「上证科创板」
+    result = result.replace("上证科创板", "科创")
     return result
 
 

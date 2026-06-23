@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Search, X } from "lucide-react";
 import type { FundSearchItem, Holding } from "@/lib/api";
 import { searchFunds } from "@/lib/api";
@@ -11,6 +11,7 @@ type FundCodeResolution = {
   fund_code: string | null;
   source: string | null;
   resolved: boolean;
+  message?: string | null;
 };
 
 type AlipayOcrConfirmModalProps = {
@@ -143,6 +144,28 @@ export function AlipayOcrConfirmModal({
   const resolutionByName = new Map(fundCodeResolutions.map((item) => [item.fund_name, item]));
   const [searchIndex, setSearchIndex] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const unresolvedCount = holdings.filter((holding) => {
+    const resolution = resolutionByName.get(holding.fund_name);
+    const code = displayCode(holding, resolution);
+    return !code;
+  }).length;
+  const autoOpenedSearchRef = useRef(false);
+
+  useEffect(() => {
+    if (autoOpenedSearchRef.current || isBusy || searchIndex !== null) {
+      return;
+    }
+    const firstUnresolved = holdings.findIndex((holding) => {
+      const resolution = resolutionByName.get(holding.fund_name);
+      return !displayCode(holding, resolution);
+    });
+    if (firstUnresolved < 0) {
+      return;
+    }
+    autoOpenedSearchRef.current = true;
+    setSearchIndex(firstUnresolved);
+    setSearchQuery(holdings[firstUnresolved]?.fund_name ?? "");
+  }, [holdings, fundCodeResolutions, isBusy, searchIndex]);
 
   const removeAt = (index: number) => {
     onChange(holdings.filter((_, itemIndex) => itemIndex !== index));
@@ -185,6 +208,12 @@ export function AlipayOcrConfirmModal({
           </div>
         ) : null}
 
+        {unresolvedCount > 0 ? (
+          <div className="border-b border-amber-200 bg-amber-50 px-5 py-3 text-xs leading-5 text-amber-900">
+            有 {unresolvedCount} 只基金未自动匹配到代码，请逐一点「搜索」从东财基金库选取后再确认入库。
+          </div>
+        ) : null}
+
         <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-4">
           {holdings.map((holding, index) => {
             const resolution = resolutionByName.get(holding.fund_name);
@@ -194,7 +223,11 @@ export function AlipayOcrConfirmModal({
             return (
               <div
                 key={`${holding.fund_name}-${index}`}
-                className="rounded-2xl border border-slate-200 bg-slate-50/70 px-4 py-3"
+                className={`rounded-2xl border px-4 py-3 ${
+                  unresolved
+                    ? "border-amber-300 bg-amber-50/80 ring-1 ring-amber-200"
+                    : "border-slate-200 bg-slate-50/70"
+                }`}
               >
                 <div className="mb-3 flex items-start justify-between gap-3">
                   <div className="min-w-0 flex-1 space-y-2">
@@ -216,15 +249,24 @@ export function AlipayOcrConfirmModal({
                         <button
                           type="button"
                           onClick={() => openSearch(index)}
-                          className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-600 transition hover:border-blue-300 hover:text-blue-700"
+                          className={`inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] font-semibold transition ${
+                            unresolved
+                              ? "border-amber-400 bg-amber-100 text-amber-900 hover:border-amber-500"
+                              : "border-slate-200 bg-white text-slate-600 hover:border-blue-300 hover:text-blue-700"
+                          }`}
                         >
                           <Search size={12} />
-                          搜索
+                          {unresolved ? "搜索匹配" : "搜索"}
                         </button>
                         {resolution?.source ? (
-                          <span className="text-[10px] text-slate-400">{resolution.source}</span>
+                          <span className="text-[10px] text-slate-400">
+                            {resolution.source === "fuzzy" ? "模糊匹配" : resolution.source}
+                          </span>
                         ) : null}
                       </div>
+                      {unresolved && resolution?.message ? (
+                        <p className="mt-1 text-[11px] leading-4 text-amber-700">{resolution.message}</p>
+                      ) : null}
                       {searchIndex === index ? (
                         <FundCodeSearchPanel
                           initialQuery={searchQuery}

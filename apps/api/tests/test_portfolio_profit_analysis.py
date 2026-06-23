@@ -64,7 +64,111 @@ def test_build_calendar_month_marks_holiday():
     )
     june_4 = next(day for day in calendar["days"] if day["date"] == "2026-06-04")
     assert june_4["is_holiday"] is True
+    assert june_4["daily_profit"] == 0.0
+    assert june_4["daily_return_percent"] == 0.0
     assert calendar["month_cumulative_profit"] == -10
+
+
+def test_build_calendar_month_weekend_profit_is_zero_not_carried():
+    snapshots = [
+        {
+            "snapshot_date": "2026-06-20",
+            "daily_profit": 640.79,
+            "daily_return_percent": 2.5,
+        }
+    ]
+    trade_dates = frozenset({"2026-06-19"})
+    calendar = build_calendar_month(
+        year=2026,
+        month=6,
+        snapshots=snapshots,
+        trade_dates=trade_dates,
+    )
+    saturday = next(day for day in calendar["days"] if day["date"] == "2026-06-20")
+    sunday = next(day for day in calendar["days"] if day["date"] == "2026-06-21")
+    assert saturday["is_trading_day"] is False
+    assert saturday["daily_profit"] == 0.0
+    assert sunday["daily_profit"] == 0.0
+    assert calendar["month_cumulative_profit"] == 0.0
+
+
+def test_build_calendar_month_today_pending_until_official_nav(monkeypatch):
+    today = date.today()
+    today_key = today.isoformat()
+    snapshots = [
+        {
+            "snapshot_date": today_key,
+            "daily_profit": -629.87,
+            "daily_return_percent": -1.2,
+        }
+    ]
+    holdings = [
+        Holding(
+            fund_code="015945",
+            fund_name="易方达国防军工混合C",
+            holding_amount=1437.88,
+            daily_profit=-28.88,
+            daily_return_percent=-2.01,
+            daily_return_percent_source="sector_estimate",
+        )
+    ]
+    monkeypatch.setattr(
+        "app.services.portfolio_profit_analysis.get_trade_date_set",
+        lambda: frozenset({today_key}),
+    )
+    calendar = build_calendar_month(
+        year=today.year,
+        month=today.month,
+        snapshots=snapshots,
+        trade_dates=frozenset({today_key}),
+        holdings=holdings,
+    )
+    today_day = next(day for day in calendar["days"] if day["date"] == today_key)
+    assert today_day["is_pending_update"] is True
+    assert today_day["daily_profit"] is None
+    assert today_day not in [
+        day
+        for day in calendar["days"]
+        if day.get("daily_profit") == -629.87
+    ]
+
+
+def test_build_calendar_month_today_shows_official_nav_profit(monkeypatch):
+    today = date.today()
+    today_key = today.isoformat()
+    snapshots = [
+        {
+            "snapshot_date": today_key,
+            "daily_profit": -629.87,
+            "daily_return_percent": -1.2,
+        }
+    ]
+    holdings = [
+        Holding(
+            fund_code="015945",
+            fund_name="易方达国防军工混合C",
+            holding_amount=1437.88,
+            settled_holding_amount=1400.0,
+            daily_profit=-18.5,
+            daily_return_percent=-1.3,
+            daily_return_percent_source="official_nav",
+        )
+    ]
+    monkeypatch.setattr(
+        "app.services.portfolio_profit_analysis.get_trade_date_set",
+        lambda: frozenset({today_key}),
+    )
+    calendar = build_calendar_month(
+        year=today.year,
+        month=today.month,
+        snapshots=snapshots,
+        trade_dates=frozenset({today_key}),
+        holdings=holdings,
+    )
+    today_day = next(day for day in calendar["days"] if day["date"] == today_key)
+    assert today_day["is_pending_update"] is False
+    assert today_day["daily_profit"] is not None
+    assert today_day["daily_profit"] != -629.87
 
 
 def test_summarize_trend_footer_alpha():

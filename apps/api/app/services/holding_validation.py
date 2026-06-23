@@ -4,6 +4,7 @@ import re
 from typing import Literal
 
 from app.models import DailyProfitSource, Holding, HoldingFieldWarning, HoldingListDiff, PortfolioSummary
+from app.services.fund_code_resolver import UNRESOLVED_FUND_CODE_HINT
 from app.services.fund_profile import _is_valid_sector_label
 from app.services.holding_metrics import compute_estimated_daily_return_percent
 
@@ -206,7 +207,7 @@ def _warnings_for_holding(index: int, holding: Holding) -> list[HoldingFieldWarn
                 index=index,
                 field="fund_code",
                 code="missing_fund_code",
-                message="缺少基金代码，请重新上传账户汇总截图或手动录入完整名称。",
+                message=UNRESOLVED_FUND_CODE_HINT,
                 severity="warn",
             )
         )

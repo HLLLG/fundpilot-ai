@@ -179,3 +179,56 @@ def test_build_holding_detail_uses_profile_fields(tmp_path, monkeypatch):
     assert result.yesterday_profit == -86.23
     assert result.holding_days == 95
     assert result.provenance["yesterday_profit"] == "ocr_detail"
+
+
+def test_build_holding_detail_does_not_stamp_today_over_ocr_holding_days(tmp_path, monkeypatch):
+    monkeypatch.setenv("FUND_AI_DB_PATH", str(tmp_path / "app.db"))
+    from app.config import refresh_settings
+    from app.database import get_fund_profile_by_code, save_fund_profile
+
+    refresh_settings()
+    save_fund_profile(
+        FundProfile(
+            fund_code="025856",
+            fund_name="华夏中证电网设备主题ETF联接A",
+            holding_days=95,
+        )
+    )
+
+    holding = Holding(
+        fund_code="025856",
+        fund_name="华夏中证电网设备主题ETF联接A",
+        holding_amount=15075.46,
+        return_percent=2.74,
+    )
+    result = build_holding_detail([holding], 0)
+    assert result.holding_days == 95
+    assert result.provenance["holding_days"] == "ocr_detail"
+
+    saved = get_fund_profile_by_code("025856")
+    assert saved is not None
+    assert saved.first_seen_date is None
+
+
+def test_resolve_holding_days_uses_shares_baseline_without_first_seen():
+    baseline = (date.today() - timedelta(days=13)).isoformat()
+    profile = FundProfile(
+        fund_code="015945",
+        fund_name="易方达国防军工混合C",
+        shares_baseline_date=baseline,
+    )
+    days, source = _resolve_holding_days(profile, _holding("015945"))
+    assert days == 13
+    assert source == "first_seen"
+
+
+def test_resolve_holding_days_repairs_late_first_seen_with_earlier_baseline():
+    profile = FundProfile(
+        fund_code="015945",
+        fund_name="易方达国防军工混合C",
+        first_seen_date=date.today().isoformat(),
+        shares_baseline_date=(date.today() - timedelta(days=13)).isoformat(),
+    )
+    days, source = _resolve_holding_days(profile, _holding("015945"))
+    assert days == 13
+    assert source == "first_seen"

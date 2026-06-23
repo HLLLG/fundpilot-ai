@@ -195,11 +195,11 @@ def _sync_one_holding(
 
     settled = _resolve_settled_amount(holding, profile)
     official_return = get_official_nav_return(code, trade_date)
-    unit_nav = _resolve_unit_nav(code, trade_date, estimate_quote)
+    official_unit_nav = get_latest_unit_nav(code)
 
-    # 交易账本有效份额变化：按最新净值重算结算基线（用户确认加减仓）。
-    if override_value is not None and shares and unit_nav and unit_nav > 0:
-        new_settled = round(shares * unit_nav, 2)
+    # 交易账本有效份额变化：按最新官方净值重算结算基线（用户确认加减仓）。
+    if override_value is not None and shares and official_unit_nav and official_unit_nav > 0:
+        new_settled = round(shares * official_unit_nav, 2)
         if persist_profile and profile is not None:
             save_fund_profile(
                 profile.model_copy(
@@ -217,24 +217,32 @@ def _sync_one_holding(
             }
         )
 
-    if official_return is not None and shares and unit_nav and unit_nav > 0:
-        new_settled = round(shares * unit_nav, 2)
-        if persist_profile and profile is not None:
-            save_fund_profile(
-                profile.model_copy(
-                    update={
-                        "settled_holding_amount": new_settled,
-                        "holding_amount": new_settled,
-                    }
-                )
+    if shares and official_unit_nav and official_unit_nav > 0:
+        new_settled = round(shares * official_unit_nav, 2)
+        # 当日官方净值已公布 → 滚入；否则仅当结算额落后最近已公布净值时补齐（不用估值抬升）
+        should_roll = official_return is not None or abs(new_settled - settled) > 0.01
+        if should_roll:
+            profit_patch = _profit_patch_from_rolled_settled(
+                new_settled,
+                shares,
+                profile,
+                holding,
             )
-        return holding.model_copy(
-            update={
-                "holding_amount": new_settled,
+            profile_patch = {
                 "settled_holding_amount": new_settled,
-                "amount_includes_today": False,
+                "holding_amount": new_settled,
+                **profit_patch,
             }
-        )
+            if persist_profile and profile is not None:
+                save_fund_profile(profile.model_copy(update=profile_patch))
+            return holding.model_copy(
+                update={
+                    "holding_amount": new_settled,
+                    "settled_holding_amount": new_settled,
+                    "amount_includes_today": False,
+                    **profit_patch,
+                }
+            )
 
     if abs(settled - holding.holding_amount) > 0.01 or holding.amount_includes_today is not False:
         if persist_profile and profile is not None and profile.settled_holding_amount is None:
@@ -284,6 +292,32 @@ def _cost_basis_from_return(holding: Holding) -> float | None:
     if return_percent is None or settled <= 0:
         return None
     return round(settled / (1 + return_percent / 100), 2)
+
+
+def _profit_patch_from_rolled_settled(
+    new_settled: float,
+    shares: float,
+    profile: FundProfile | None,
+    holding: Holding,
+) -> dict:
+    """份额×最近官方净值后，按成本重算昨日结算持有收益（对齐支付宝持有收益列）。"""
+    if profile and profile.holding_cost and profile.holding_cost > 0 and shares > 0:
+        cost = round(profile.holding_cost * shares, 2)
+        if cost > 0:
+            profit = round(new_settled - cost, 2)
+            return_percent = round(profit / cost * 100, 2)
+            return {
+                "holding_profit": profit,
+                "holding_return_percent": return_percent,
+                "return_percent": return_percent,
+            }
+    if holding.holding_profit is not None:
+        return {
+            "holding_profit": holding.holding_profit,
+            "holding_return_percent": holding.holding_return_percent or holding.return_percent,
+            "return_percent": holding.holding_return_percent or holding.return_percent,
+        }
+    return {}
 
 
 def _cost_basis(holding: Holding, profile: FundProfile | None) -> float | None:

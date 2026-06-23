@@ -28,6 +28,7 @@ import {
   getEstimatedDailyReturnPercent,
   getEstimatedHoldingProfit,
   getEstimatedHoldingReturnPercent,
+  getSettledHoldingAmount,
   isDailyProfitEstimated,
   isHoldingReturnEstimated,
 } from "@/lib/holdingDisplay";
@@ -420,6 +421,7 @@ export function YangjibaoHoldingsBoard({
             const holdingProfit = getEstimatedHoldingProfit(holding);
             const holdingReturn = getEstimatedHoldingReturnPercent(holding);
             const dailyIsEstimated = isDailyProfitEstimated(holding);
+            const profitAccrualDeferred = holding.profit_accrual_deferred === true;
             const isOfficialDaily = holding.daily_return_percent_source === "official_nav";
             const sectorReturn = resolveSectorBoardReturnPercent(holding);
             const sectorMeta = sectorMetaByFundCode[holding.fund_code] as SectorQuoteMeta | undefined;
@@ -445,7 +447,7 @@ export function YangjibaoHoldingsBoard({
                     </div>
                     {!amountsHidden ? (
                       <div className="mt-0.5 text-[10px] text-slate-400 tabular-nums">
-                        {formatMoney(holding.holding_amount)}
+                        {formatMoney(getSettledHoldingAmount(holding))}
                       </div>
                     ) : null}
                   </div>
@@ -453,7 +455,9 @@ export function YangjibaoHoldingsBoard({
                   <div
                     className="text-right leading-tight"
                     title={
-                      holding.daily_return_percent_source === "official_nav"
+                      profitAccrualDeferred
+                        ? "份额待确认，次交易日起计收益（与支付宝一致）"
+                        : holding.daily_return_percent_source === "official_nav"
                         ? "官方净值已公布"
                         : "板块或指数涨跌估算"
                     }

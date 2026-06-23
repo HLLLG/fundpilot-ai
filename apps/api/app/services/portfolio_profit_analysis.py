@@ -433,10 +433,19 @@ def build_calendar_month(
     month: int,
     snapshots: list[dict],
     trade_dates: frozenset[str] | None = None,
+    holdings: list[Holding] | None = None,
 ) -> dict:
+    from app.services.holding_estimates import (
+        compute_portfolio_daily_return_percent,
+        portfolio_official_nav_settled,
+        sum_daily_profit,
+    )
+
     trade_dates = trade_dates or get_trade_date_set()
     snapshot_by_date = {str(row.get("snapshot_date")): row for row in snapshots}
     today = date.today()
+    today_key = today.isoformat()
+    official_today = portfolio_official_nav_settled(holdings or [])
     _, days_in_month = calendar.monthrange(year, month)
 
     days: list[dict] = []
@@ -452,9 +461,27 @@ def build_calendar_month(
         is_trading = key in trade_dates if trade_dates else weekday < 5
         daily_profit = snapshot.get("daily_profit") if snapshot else None
         daily_return = snapshot.get("daily_return_percent") if snapshot else None
-        if daily_profit is not None:
+        # 非交易日（周末、法定节假日）收益为 0，不沿用上一交易日快照中的结算值。
+        if not is_trading and current <= today:
+            daily_profit = 0.0
+            daily_return = 0.0
+        elif not is_trading:
+            daily_profit = None
+            daily_return = None
+
+        is_pending_update = False
+        if key == today_key and is_trading and holdings:
+            if not official_today:
+                daily_profit = None
+                daily_return = None
+                is_pending_update = True
+            else:
+                daily_profit = sum_daily_profit(holdings)
+                daily_return = compute_portfolio_daily_return_percent(holdings, daily_profit)
+
+        if is_trading and daily_profit is not None and not is_pending_update:
             month_profit += float(daily_profit)
-        if daily_return is not None:
+        if is_trading and daily_return is not None and not is_pending_update:
             month_returns.append(float(daily_return))
         index_return = _index_return_for_date(key, "000001")
         if index_return is not None and is_trading:
@@ -470,6 +497,7 @@ def build_calendar_month(
                 "daily_profit": daily_profit,
                 "daily_return_percent": daily_return,
                 "is_holiday": weekday < 5 and not is_trading,
+                "is_pending_update": is_pending_update,
             }
         )
 

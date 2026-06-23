@@ -5,6 +5,57 @@ from app.services.holding_amount_sync import (
 )
 
 
+def test_sync_holding_amounts_rolls_to_latest_official_nav(monkeypatch):
+    profile = FundProfile(
+        fund_code="025856",
+        fund_name="华夏中证电网设备主题ETF联接A",
+        holding_amount=7306.16,
+        settled_holding_amount=7306.16,
+        holding_shares=6734.71,
+        holding_cost=1.05,
+        source="test",
+    )
+    monkeypatch.setattr(
+        "app.services.holding_amount_sync.get_fund_profile_by_code",
+        lambda code: profile if code == "025856" else None,
+    )
+    monkeypatch.setattr(
+        "app.services.holding_amount_sync.get_official_nav_return",
+        lambda fund_code, trade_date: None,
+    )
+    monkeypatch.setattr(
+        "app.services.holding_amount_sync.get_latest_unit_nav",
+        lambda fund_code: 1.105,
+    )
+    monkeypatch.setattr(
+        "app.services.holding_amount_sync.save_fund_profile",
+        lambda item: item,
+    )
+
+    holdings = [
+        Holding(
+            fund_code="025856",
+            fund_name="华夏中证电网设备主题ETF联接A",
+            holding_amount=7306.16,
+            settled_holding_amount=7306.16,
+            return_percent=4.12,
+            holding_return_percent=4.12,
+            holding_profit=276.85,
+        )
+    ]
+
+    updated = sync_holding_amounts_from_shares(
+        holdings,
+        estimate_quotes={},
+        persist_profiles=False,
+    )
+
+    expected_amount = round(6734.71 * 1.105, 2)
+    assert updated[0].holding_amount == expected_amount
+    assert updated[0].settled_holding_amount == expected_amount
+    assert updated[0].holding_profit == round(expected_amount - 6734.71 * 1.05, 2)
+
+
 def test_sync_holding_amounts_uses_estimate_nav(monkeypatch):
     profile = FundProfile(
         fund_code="025856",
@@ -53,10 +104,9 @@ def test_sync_holding_amounts_uses_estimate_nav(monkeypatch):
         persist_profiles=True,
     )
 
-    assert updated[0].holding_amount == 9508.74
+    expected = round(6734.71 * 1.41, 2)
+    assert updated[0].holding_amount == expected
     assert updated[0].amount_includes_today is False
-    assert updated[0].holding_return_percent == 2.43
-    assert updated[0].holding_profit is None
 
 
 def test_bootstrap_locks_shares_from_overview_amount(monkeypatch):

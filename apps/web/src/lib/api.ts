@@ -26,6 +26,7 @@ export type Holding = {
   holding_return_is_estimated?: boolean | null;
   estimated_daily_return_percent?: number | null;
   daily_return_is_estimated?: boolean | null;
+  profit_accrual_deferred?: boolean | null;
 };
 
 export type DecisionStyle = "conservative" | "tactical" | "aggressive";
@@ -324,6 +325,7 @@ export type ProfitCalendarDay = {
   is_trading_day: boolean;
   is_today: boolean;
   is_holiday: boolean;
+  is_pending_update?: boolean;
   daily_profit?: number | null;
   daily_return_percent?: number | null;
 };

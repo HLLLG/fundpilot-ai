@@ -97,8 +97,13 @@ def persist_holdings_after_sector_refresh(
     holdings: list[Holding],
     *,
     fetched_at: datetime | None = None,
+    with_official_nav: bool = True,
 ) -> list[Holding]:
-    """板块刷新成功后写回日快照与账户汇总，重启后保留最新当日收益。"""
+    """板块刷新成功后写回日快照与账户汇总，重启后保留最新当日收益。
+
+    ``with_official_nav=False`` 时跳过逐只 AkShare 官方净值覆盖（fast 刷新用），
+    避免 CloudBase 网关 ~60s 超时；accurate 刷新仍走官方净值。
+    """
     merged = without_placeholder_holdings(
         without_test_holdings(merge_holdings_with_snapshot(holdings))
     )
@@ -106,7 +111,9 @@ def persist_holdings_after_sector_refresh(
 
     overrides = confirm_and_compute_overrides(merged)
     synced = sync_holding_amounts_from_shares(merged, shares_override=overrides)
-    enriched = enrich_holdings_estimates(overlay_official_nav_returns(synced))
+    if with_official_nav:
+        synced = overlay_official_nav_returns(synced)
+    enriched = enrich_holdings_estimates(synced)
     if not enriched:
         return enriched
 

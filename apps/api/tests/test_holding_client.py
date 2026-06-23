@@ -27,3 +27,23 @@ def test_holding_client_matches_shared_fixtures(case, monkeypatch):
             assert payload[key] is value
             continue
         assert payload[key] == pytest.approx(value, abs=0.5)
+
+
+def test_holding_client_display_amount_is_settled_only(monkeypatch):
+    monkeypatch.setattr("app.database.get_fund_profile_by_code", lambda code: None)
+    holding = Holding(
+        fund_code="025856",
+        fund_name="华夏中证电网设备主题ETF联接A",
+        holding_amount=7447.24,
+        settled_holding_amount=7447.24,
+        return_percent=11.88,
+        holding_return_percent=11.88,
+        holding_profit=827.07,
+        sector_return_percent=4.59,
+        daily_return_percent_source="sector_estimate",
+        daily_profit=341.95,
+        daily_return_percent=4.59,
+    )
+    payload = serialize_holding_for_client(holding)
+    assert payload["display_holding_amount"] == 7447.24
+    assert payload["display_holding_amount"] != pytest.approx(7789.19, abs=0.5)

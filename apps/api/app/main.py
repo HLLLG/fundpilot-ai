@@ -329,7 +329,7 @@ def _build_transactions_ocr_response(
         if not parsed.confirm_date:
             parsed = parsed.model_copy(update={"confirm_date": resolve_confirm_date(parsed.trade_time)})
         if not parsed.fund_code:
-            code = lookup_fund_code_by_name(parsed.fund_name)
+            code, _ = lookup_fund_code_by_name(parsed.fund_name)
             if code:
                 parsed = parsed.model_copy(update={"fund_code": code})
         enriched.append(parsed.model_dump(mode="json"))
@@ -460,7 +460,11 @@ def refresh_sector_quotes(request: RefreshSectorQuotesRequest) -> dict:
         fetched_at = None
         if result.get("fetched_at"):
             fetched_at = datetime.fromisoformat(str(result["fetched_at"]))
-        enriched = persist_holdings_after_sector_refresh(refreshed, fetched_at=fetched_at)
+        enriched = persist_holdings_after_sector_refresh(
+            refreshed,
+            fetched_at=fetched_at,
+            with_official_nav=request.budget == "accurate",
+        )
         result["holdings"] = serialize_holdings_for_client(enriched)
     return result
 

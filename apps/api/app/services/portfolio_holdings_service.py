@@ -53,7 +53,14 @@ def build_portfolio_holdings_response(
     summary = get_portfolio_summary()
     profiles = FundProfileService().list_profiles()
     payload = summary.model_dump(mode="json") if summary else {}
-    total_from_holdings = round(sum(holding.holding_amount for holding in holdings), 2)
+    total_from_holdings = round(
+        sum(
+            (holding.settled_holding_amount or holding.holding_amount)
+            + (holding.daily_profit or 0)
+            for holding in holdings
+        ),
+        2,
+    )
     if total_from_holdings:
         payload["total_assets"] = total_from_holdings
     if holdings:

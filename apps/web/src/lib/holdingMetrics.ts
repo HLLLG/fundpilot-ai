@@ -305,7 +305,11 @@ export function computeEstimatedDailyReturnPercent(holding: Holding): number | n
 }
 
 export function holdingDailyReturnIsEstimated(holding: Holding): boolean {
-  if (holding.daily_return_percent_source === "official_nav") {
+  if (
+    holding.daily_return_percent_source === "official_nav" ||
+    holding.daily_return_percent_source === "pending_accrual" ||
+    holding.profit_accrual_deferred
+  ) {
     return false;
   }
   return (
@@ -316,7 +320,11 @@ export function holdingDailyReturnIsEstimated(holding: Holding): boolean {
 }
 
 export function dailyProfitIsEstimated(holding: Holding): boolean {
-  if (holding.daily_return_percent_source === "official_nav") {
+  if (
+    holding.daily_return_percent_source === "official_nav" ||
+    holding.daily_return_percent_source === "pending_accrual" ||
+    holding.profit_accrual_deferred
+  ) {
     return false;
   }
   if (holding.daily_profit != null) {
@@ -326,6 +334,12 @@ export function dailyProfitIsEstimated(holding: Holding): boolean {
 }
 
 export function holdingProfitIsEstimated(holding: Holding): boolean {
+  if (
+    holding.daily_return_percent_source === "pending_accrual" ||
+    holding.profit_accrual_deferred
+  ) {
+    return false;
+  }
   if (holding.daily_return_percent_source === "official_nav") {
     return holding.holding_profit == null;
   }

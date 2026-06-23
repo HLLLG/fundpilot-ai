@@ -23,6 +23,62 @@ def test_resolve_first_seen_anchor_defaults_to_today():
     assert resolve_first_seen_anchor(profile, today=date(2026, 6, 20)) == "2026-06-20"
 
 
+def test_resolve_first_seen_anchor_uses_shares_baseline_date():
+    profile = FundProfile(
+        fund_code="000001",
+        fund_name="A",
+        shares_baseline_date="2026-06-10",
+    )
+    assert resolve_first_seen_anchor(profile, today=date(2026, 6, 20)) == "2026-06-10"
+
+
+def test_save_profile_stamps_first_seen_from_shares_baseline_for_existing(tmp_path, monkeypatch):
+    monkeypatch.setenv("FUND_AI_DB_PATH", str(tmp_path / "app.db"))
+    from app.config import refresh_settings
+
+    refresh_settings()
+    service = FundProfileService()
+    service.save_profile(
+        FundProfile(
+            fund_code="015945",
+            fund_name="易方达国防军工混合C",
+            shares_baseline_date="2026-06-10",
+        )
+    )
+    again = service.save_profile(
+        FundProfile(
+            fund_code="015945",
+            fund_name="易方达国防军工混合C",
+            holding_amount=1437.88,
+        )
+    )
+    assert again.first_seen_date == "2026-06-10"
+
+
+def test_save_profile_repairs_first_seen_later_than_shares_baseline(tmp_path, monkeypatch):
+    monkeypatch.setenv("FUND_AI_DB_PATH", str(tmp_path / "app.db"))
+    from app.config import refresh_settings
+
+    refresh_settings()
+    service = FundProfileService()
+    service.save_profile(
+        FundProfile(
+            fund_code="015945",
+            fund_name="易方达国防军工混合C",
+            first_seen_date="2026-06-23",
+            shares_baseline_date="2026-06-10",
+        )
+    )
+    again = service.save_profile(
+        FundProfile(
+            fund_code="015945",
+            fund_name="易方达国防军工混合C",
+            holding_amount=1437.88,
+        )
+    )
+    assert again.first_seen_date == "2026-06-10"
+
+
 def test_save_profile_stamps_first_seen_for_new_profile():
     service = FundProfileService()
     saved = service.save_profile(FundProfile(fund_code="000002", fund_name="新基金"))

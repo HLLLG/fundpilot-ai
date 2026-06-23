@@ -51,7 +51,12 @@ def test_refresh_sector_quotes_accurate_budget_uses_no_timeout(monkeypatch):
             "summary": {"matched": 1, "unresolved": 0, "needs_mapping": 0},
         }
 
+    def fake_persist(holdings, *, fetched_at=None, with_official_nav=True):
+        captured["with_official_nav"] = with_official_nav
+        return holdings
+
     monkeypatch.setattr("app.main.refresh_holdings_sector_quotes", fake_refresh)
+    monkeypatch.setattr("app.main.persist_holdings_after_sector_refresh", fake_persist)
 
     from tests.conftest import authenticated_test_client
 
@@ -74,6 +79,48 @@ def test_refresh_sector_quotes_accurate_budget_uses_no_timeout(monkeypatch):
     )
     assert response.status_code == 200
     assert captured["timeout_seconds"] is None
+    assert captured["with_official_nav"] is True
+
+
+def test_refresh_sector_quotes_fast_budget_skips_official_nav_persist(monkeypatch):
+    captured = {}
+
+    def fake_refresh(holdings, force_refresh=False, timeout_seconds=None):
+        return {
+            "ok": True,
+            "holdings": [h.model_dump() for h in holdings],
+            "items": [],
+            "summary": {"matched": 1, "unresolved": 0, "needs_mapping": 0},
+        }
+
+    def fake_persist(holdings, *, fetched_at=None, with_official_nav=True):
+        captured["with_official_nav"] = with_official_nav
+        return holdings
+
+    monkeypatch.setattr("app.main.refresh_holdings_sector_quotes", fake_refresh)
+    monkeypatch.setattr("app.main.persist_holdings_after_sector_refresh", fake_persist)
+
+    from tests.conftest import authenticated_test_client
+
+    client = authenticated_test_client()
+    response = client.post(
+        "/api/holdings/refresh-sector-quotes",
+        json={
+            "holdings": [
+                {
+                    "fund_code": "015608",
+                    "fund_name": "测试",
+                    "holding_amount": 1000,
+                    "return_percent": 1,
+                    "sector_name": "半导体",
+                    "sector_return_percent": 1,
+                }
+            ],
+            "budget": "fast",
+        },
+    )
+    assert response.status_code == 200
+    assert captured["with_official_nav"] is False
 
 
 def test_sector_quotes_status_endpoint():

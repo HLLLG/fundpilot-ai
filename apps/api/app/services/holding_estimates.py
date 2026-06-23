@@ -50,6 +50,13 @@ def build_holding_display_metrics(holding: Holding) -> dict[str, float | bool | 
 
 def compute_estimated_holding_return_percent(holding: Holding) -> float | None:
     """持有收益率：净值公布后 OCR 值为含当日总值；盘中为昨日结算 + 板块涨跌。"""
+    from app.services.profit_accrual_defer import get_profile_for_holding, is_profit_accrual_deferred
+
+    profile = get_profile_for_holding(holding)
+    if is_profit_accrual_deferred(profile):
+        settled = resolve_holding_return_percent(holding)
+        return round(settled, 4) if settled is not None else 0.0
+
     holding = _repair_corrupted_settled_profit(holding)
     settled = resolve_holding_return_percent(holding)
     if holding.daily_return_percent_source == "official_nav":
@@ -128,6 +135,13 @@ def resolve_settled_holding_profit(holding: Holding) -> float | None:
 
 
 def compute_holding_profit(holding: Holding) -> float | None:
+    from app.services.profit_accrual_defer import get_profile_for_holding, is_profit_accrual_deferred
+
+    profile = get_profile_for_holding(holding)
+    if is_profit_accrual_deferred(profile):
+        settled_profit = resolve_settled_holding_profit(holding)
+        return settled_profit if settled_profit is not None else 0.0
+
     holding = _repair_corrupted_settled_profit(holding)
     if holding.daily_return_percent_source == "official_nav":
         if holding.holding_profit is not None:
@@ -149,6 +163,10 @@ def compute_holding_profit(holding: Holding) -> float | None:
 
 
 def holding_profit_is_estimated(holding: Holding) -> bool:
+    from app.services.profit_accrual_defer import get_profile_for_holding, is_profit_accrual_deferred
+
+    if is_profit_accrual_deferred(get_profile_for_holding(holding)):
+        return False
     if holding.daily_return_percent_source == "official_nav":
         return holding.holding_profit is None
     if resolve_intraday_return_percent(holding) is not None:
@@ -178,9 +196,20 @@ def compute_daily_profit_from_rate(
 def apply_sector_daily_estimates(holding: Holding) -> Holding:
     """刷新板块后重算当日收益，忽略 OCR 截图中的当日收益。
 
-    若已写入官方净值当日收益率，则保留（关联板块列仍用 sector_return_percent）。"""
+    若已写入官方净值当日收益率，则保留（关联板块列仍用 sector_return_percent）。
+    若档案标记份额待确认（当日买入），则当日收益保持 0，不用板块覆盖。"""
+    from app.services.profit_accrual_defer import get_profile_for_holding, is_profit_accrual_deferred
+
     if holding.daily_return_percent_source == "official_nav":
         return holding
+    if is_profit_accrual_deferred(get_profile_for_holding(holding)):
+        return holding.model_copy(
+            update={
+                "daily_profit": 0.0,
+                "daily_return_percent": 0.0,
+                "daily_return_percent_source": "pending_accrual",
+            }
+        )
     sector = holding.sector_return_percent
     amount = holding.settled_holding_amount or holding.holding_amount
     if sector is None or amount <= 0:
@@ -218,6 +247,11 @@ def overlay_official_nav_returns(holdings: list[Holding]) -> list[Holding]:
             continue
         nav_return = get_official_nav_return(holding.fund_code, trade_date)
         if nav_return is None:
+            updated.append(holding)
+            continue
+        from app.services.profit_accrual_defer import get_profile_for_holding, is_profit_accrual_deferred
+
+        if is_profit_accrual_deferred(get_profile_for_holding(holding)):
             updated.append(holding)
             continue
         amount = holding.settled_holding_amount or holding.holding_amount
@@ -277,11 +311,57 @@ def compute_estimated_daily_return_percent(holding: Holding) -> float | None:
 
 
 def holding_daily_return_is_estimated(holding: Holding) -> bool:
+    if holding.daily_return_percent_source in {"official_nav", "pending_accrual"}:
+        return False
+    from app.services.profit_accrual_defer import get_profile_for_holding, is_profit_accrual_deferred
+
+    if is_profit_accrual_deferred(get_profile_for_holding(holding)):
+        return False
     return (
         holding.daily_return_percent is None
         and holding.sector_return_percent is not None
         and compute_estimated_daily_return_percent(holding) is not None
     )
+
+
+def portfolio_official_nav_settled(holdings: list[Holding]) -> bool:
+    """组合当日收益是否已全部切到官方净值（盈亏日历「今日」展示条件）。"""
+    from app.services.profit_accrual_defer import get_profile_for_holding, is_profit_accrual_deferred
+
+    active = [
+        holding
+        for holding in holdings
+        if holding.fund_code
+        and holding.fund_code != "000000"
+        and (holding.settled_holding_amount or holding.holding_amount) > 0
+    ]
+    if not active:
+        return False
+
+    counted = 0
+    for holding in active:
+        if is_profit_accrual_deferred(get_profile_for_holding(holding)):
+            continue
+        if holding.daily_return_percent_source == "pending_accrual":
+            continue
+        counted += 1
+        if holding.daily_return_percent_source != "official_nav":
+            return False
+    return counted > 0
+
+
+def compute_portfolio_daily_return_percent(holdings: list[Holding], daily_profit: float) -> float | None:
+    total_assets = sum(
+        (holding.settled_holding_amount or holding.holding_amount) + (holding.daily_profit or 0)
+        for holding in holdings
+        if (holding.settled_holding_amount or holding.holding_amount) > 0
+    )
+    if total_assets <= daily_profit or daily_profit == 0:
+        return 0.0 if daily_profit == 0 else None
+    previous = total_assets - daily_profit
+    if previous <= 0:
+        return None
+    return _round2(daily_profit / previous * 100)
 
 
 def compute_sector_fund_gap_percent(holding: Holding) -> float | None:

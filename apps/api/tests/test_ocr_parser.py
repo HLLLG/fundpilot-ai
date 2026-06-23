@@ -117,3 +117,56 @@ def test_ocr_pipeline_user_upload_preview_is_alipay_holdings(monkeypatch):
     assert len(result["holdings"]) == 5
     assert result["amount_semantics"]["source"] == "alipay_holdings"
     assert "未识别为支付宝持有页" not in result["amount_semantics"]["note"]
+
+
+def test_parse_user_upload_overview_four_funds_including_index_class():
+    """用户实网截图：含指数C后缀与中间运营条，须识别全部 4 只基金。"""
+    text = (FIXTURES / "alipay_overview_holdings_4_user_ocr.txt").read_text(encoding="utf-8")
+
+    assert detect_ocr_source(text) == "alipay_holdings"
+
+    holdings = parse_holdings_from_text(text)
+    assert len(holdings) == 4
+    names = [item.fund_name for item in holdings]
+    assert "中航机遇领航混合C" in names
+    assert "华夏中证电网设备主题ETF联接C" in names
+    assert "中欧上证科创板人工智能指数C" in names
+    assert "天弘科创芯片设计ETF联接C" in names
+
+    avic = next(item for item in holdings if "中航机遇" in item.fund_name)
+    assert avic.holding_amount == 10018.60
+    assert avic.holding_profit == 18.60
+
+    index_fund = next(item for item in holdings if "人工智能指数" in item.fund_name)
+    assert index_fund.holding_amount == 1000.0
+
+
+def test_ocr_pipeline_unresolved_fund_code_includes_hint(monkeypatch):
+    from app.models import Holding
+    from app.services.fund_code_resolver import UNRESOLVED_FUND_CODE_HINT
+    from app.services.ocr_pipeline import _resolve_fund_codes
+
+    class _EmptyProfileService:
+        def find_match(self, _name: str):
+            return None
+
+    monkeypatch.setattr(
+        "app.services.fund_code_resolver._fund_name_table",
+        lambda: [],
+    )
+
+    holdings, resolutions = _resolve_fund_codes(
+        [
+            Holding(
+                fund_code="000000",
+                fund_name="中欧上证科创板人工智能指数C",
+                holding_amount=1000,
+                return_percent=0,
+            )
+        ],
+        _EmptyProfileService(),
+    )
+
+    assert holdings[0].fund_code == "000000"
+    assert resolutions[0]["resolved"] is False
+    assert resolutions[0]["message"] == UNRESOLVED_FUND_CODE_HINT

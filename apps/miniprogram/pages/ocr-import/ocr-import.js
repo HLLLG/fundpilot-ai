@@ -6,7 +6,7 @@
 // Requirements:
 //   6.1 wx.chooseMedia 选图（相册/相机）
 //   6.2 wx.uploadFile 以 preview=true 调 /api/ocr
-//   6.3 截图来源选择（支付宝持仓列表 / 养基宝总览 / 养基宝详情）
+//   6.3 截图来源：支付宝「全部持有」总览
 //   6.4 展示可编辑的识别结果（基金代码 / 名称 / 金额）
 //   6.5 确认调 POST /api/portfolio/apply-holdings 并刷新持仓看板缓存
 //   6.6 holding_warnings 展示供用户确认或修正
@@ -24,11 +24,9 @@
 var api = require("../../utils/api");
 var cache = require("../../utils/cache");
 
-// 截图来源选项（Req 6.3）
+// 截图来源：仅支付宝「全部持有」
 var SOURCE_OPTIONS = [
-  { label: "支付宝持仓列表", value: "alipay" },
-  { label: "养基宝总览",     value: "yangjibao_overview" },
-  { label: "养基宝详情",     value: "yangjibao_detail" },
+  { label: "支付宝全部持有", value: "alipay" },
 ];
 
 Page({

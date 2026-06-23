@@ -68,7 +68,7 @@ _SECTOR_STOCK_KEYWORDS: dict[str, tuple[str, ...]] = {
 
 _SOURCE_PRIORITY = {
     "ocr_detail": 100,
-    "yangjibao_overview": 90,
+    "alipay_overview": 90,
     "manual": 85,
     "holdings_infer": 70,
     "seed": 60,
@@ -141,7 +141,7 @@ def resolve_primary_sector(
 
     profile = get_fund_profile_by_code(code)
     if profile and _is_valid_sector_label(profile.sector_name):
-        source = "ocr_detail" if profile.source == "yangjibao-detail" else "yangjibao_overview"
+        source = "alipay_overview"
         return PrimarySectorRecord(
             fund_code=code,
             sector_name=profile.sector_name or "",
@@ -202,14 +202,14 @@ def apply_primary_sector_to_holding(holding: Holding) -> Holding:
         holding = holding.model_copy(update={"sector_name": None})
     if _is_valid_sector_label(holding.sector_name):
         if holding.fund_code and holding.fund_code != "000000":
-            upsert_primary_sector_from_holding(holding, source="yangjibao_overview")
+            upsert_primary_sector_from_holding(holding, source="alipay_overview")
         return holding
 
     fields = primary_sector_fields_for_holding(holding, allow_name_infer=False)
     if not fields:
         return holding
     updated = holding.model_copy(update=fields)
-    upsert_primary_sector_from_holding(updated, source="yangjibao_overview")
+    upsert_primary_sector_from_holding(updated, source="alipay_overview")
     return updated
 
 

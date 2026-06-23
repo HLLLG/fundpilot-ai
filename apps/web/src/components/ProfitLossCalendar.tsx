@@ -113,16 +113,26 @@ export function ProfitLossCalendar({
             return <div key={`empty-${index}`} />;
           }
           const value = showReturnPercent ? day.daily_return_percent : day.daily_profit;
-          const display = day.is_holiday
-            ? "休"
-            : showReturnPercent
-              ? formatReturn(value)
-              : formatMoney(value);
-          const tone = day.is_holiday
-            ? "bg-slate-100 text-slate-400"
-            : day.is_today
+          const isClosedDay = !day.is_trading_day;
+          const isPending = Boolean(day.is_pending_update);
+          const display = isPending
+            ? "未更新"
+            : isClosedDay
+              ? showReturnPercent
+                ? formatReturn(0)
+                : formatMoney(0)
+              : showReturnPercent
+                ? formatReturn(value)
+                : formatMoney(value);
+          const tone = isPending
+            ? day.is_today
               ? "bg-[var(--brand)] text-white ring-2 ring-[var(--brand-soft)]"
-              : cellTone(typeof value === "number" ? value : null);
+              : "bg-slate-50 text-slate-400"
+            : isClosedDay
+              ? "bg-slate-50 text-slate-400"
+              : day.is_today
+                ? "bg-[var(--brand)] text-white ring-2 ring-[var(--brand-soft)]"
+                : cellTone(typeof value === "number" ? value : null);
 
           return (
             <div
@@ -130,10 +140,12 @@ export function ProfitLossCalendar({
               className={`min-h-[52px] rounded-lg px-0.5 py-1 text-center ${tone}`}
             >
               <div className="text-[10px] font-bold opacity-80">{day.is_today ? "今" : day.day}</div>
-              {display && display !== "休" ? (
-                <div className="mt-0.5 text-[9px] font-bold leading-tight">{display}</div>
-              ) : day.is_holiday ? (
-                <div className="mt-0.5 text-[9px] font-bold">休</div>
+              {display ? (
+                <div
+                  className={`mt-0.5 font-bold leading-tight ${isPending ? "text-[8px] opacity-90" : "text-[9px]"}`}
+                >
+                  {display}
+                </div>
               ) : null}
             </div>
           );

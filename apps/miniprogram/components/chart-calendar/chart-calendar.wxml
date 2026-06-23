@@ -46,6 +46,11 @@
           />
         </view>
 
+        <!-- 今日净值未公布：展示「未更新」 -->
+        <view wx:elif="{{item.isTrading && item.pendingLabel}}" class="cal__profit cal__profit--pending">
+          <text class="cal__profit-placeholder">{{item.pendingLabel}}</text>
+        </view>
+
         <!-- 交易日但无盈亏数据：展示中性占位 -->
         <view wx:elif="{{item.isTrading}}" class="cal__profit cal__profit--empty">
           <text class="cal__profit-placeholder">—</text>

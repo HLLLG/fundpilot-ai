@@ -170,7 +170,7 @@ export function ReportChatPanel({ reportId, reportTitle, compact = false, inline
         inline
           ? "h-[min(48vh,440px)] min-h-[300px]"
           : compact
-            ? "h-[min(92vh,960px)] min-h-[960px]"
+            ? "h-[min(92vh,960px)] min-h-[min(72vh,520px)] lg:min-h-[640px]"
             : "h-[min(72vh,720px)] min-h-[520px]"
       }`}
       data-testid="report-chat-panel"
@@ -239,13 +239,11 @@ export function ReportChatPanel({ reportId, reportTitle, compact = false, inline
         </div>
       </div>
 
-      <div className="relative min-h-0 flex-1">
+      <div className="relative min-h-0 flex-1 overflow-hidden">
         <div
           ref={scrollRef}
           onScroll={handleScroll}
-          className={`h-full space-y-3 overflow-y-auto overscroll-contain px-3 py-3 ${
-            inline ? "min-h-[160px]" : "min-h-[min(84vh,760px)]"
-          }`}
+          className="h-full min-h-0 space-y-3 overflow-y-auto overscroll-contain px-3 py-3"
         >
         {isLoadingHistory ? (
           <div className="flex items-center justify-center gap-2 py-8 text-sm text-slate-500">
@@ -301,31 +299,32 @@ export function ReportChatPanel({ reportId, reportTitle, compact = false, inline
         ) : null}
       </div>
 
-      {!isLoadingHistory && messages.length === 0 ? (
-        <div className="flex flex-wrap gap-2 px-3 pb-2">
-          {SUGGESTED_PROMPTS.map((prompt) => (
-            <button
-              key={prompt}
-              type="button"
-              disabled={isStreaming}
-              onClick={() => void sendMessage(prompt)}
-              className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600 transition hover:border-blue-300 hover:text-blue-700 disabled:opacity-50"
-            >
-              {prompt}
-            </button>
-          ))}
-        </div>
-      ) : null}
+      <div className="relative z-10 shrink-0 border-t border-slate-200/80 bg-slate-50/95">
+        {!isLoadingHistory ? (
+          <div className="flex flex-wrap gap-2 px-3 pb-2 pt-2">
+            {SUGGESTED_PROMPTS.map((prompt) => (
+              <button
+                key={prompt}
+                type="button"
+                disabled={isStreaming}
+                onClick={() => void sendMessage(prompt)}
+                className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600 transition hover:border-blue-300 hover:text-blue-700 disabled:opacity-50"
+              >
+                {prompt}
+              </button>
+            ))}
+          </div>
+        ) : null}
 
-      {error ? <p className="px-3 text-xs text-rose-600">{error}</p> : null}
+        {error ? <p className="px-3 pb-1 text-xs text-rose-600">{error}</p> : null}
 
-      <form
-        className="flex gap-2 border-t border-slate-200 p-3"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void sendMessage(input);
-        }}
-      >
+        <form
+          className="flex gap-2 p-3 pt-0"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void sendMessage(input);
+          }}
+        >
         <input
           type="text"
           value={input}
@@ -343,6 +342,7 @@ export function ReportChatPanel({ reportId, reportTitle, compact = false, inline
           {isStreaming ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
         </button>
       </form>
+      </div>
     </div>
   );
 }

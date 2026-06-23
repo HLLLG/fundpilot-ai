@@ -34,17 +34,21 @@ class FundProfileService:
             existing = by_code
         elif existing is not None and existing.fund_code != profile.fund_code:
             existing = None
+        reconciled_first_seen = reconcile_first_seen_date(existing, profile)
         if existing is not None:
             profile = profile.model_copy(
                 update={
                     "aliases": sorted(set(existing.aliases) | set(profile.aliases)),
-                    "first_seen_date": profile.first_seen_date or existing.first_seen_date,
+                    "first_seen_date": reconciled_first_seen,
+                    "profit_accrual_deferred_until": (
+                        profile.profit_accrual_deferred_until
+                        if profile.profit_accrual_deferred_until is not None
+                        else existing.profit_accrual_deferred_until
+                    ),
                 }
             )
-        elif not profile.first_seen_date:
-            profile = profile.model_copy(
-                update={"first_seen_date": resolve_first_seen_anchor(profile)}
-            )
+        elif reconciled_first_seen:
+            profile = profile.model_copy(update={"first_seen_date": reconciled_first_seen})
         saved = save_fund_profile(profile)
         from app.services.fund_primary_sector_service import upsert_primary_sector_from_profile
 
@@ -184,26 +188,68 @@ class FundProfileService:
         return self.find_match(holding.fund_name)
 
 
-def ensure_first_seen_anchor(
-    profile: FundProfile,
-    *,
-    fallback_anchor: str | None = None,
-) -> FundProfile:
-    """惰性回填：持有中档案缺少 first_seen_date 时写入稳定锚点（不覆盖已有值）。"""
-    if profile.first_seen_date or profile.first_purchase_date:
-        return profile
-    anchor = fallback_anchor or resolve_first_seen_anchor(profile)
-    return save_fund_profile(profile.model_copy(update={"first_seen_date": anchor}))
-
-
 def resolve_first_seen_anchor(profile: FundProfile, *, today: date | None = None) -> str:
-    """首次录入持有时的稳定锚点日期：用户购入日 > OCR 持有天数回推 > 今天。"""
+    """首次录入持有时的稳定锚点日期：用户购入日 > OCR 持有天数回推 > 份额基准日 > 今天。"""
     today = today or date.today()
     if profile.first_purchase_date:
         return profile.first_purchase_date
     if profile.holding_days is not None and profile.holding_days >= 0:
         return (today - timedelta(days=profile.holding_days)).isoformat()
+    if profile.shares_baseline_date:
+        return profile.shares_baseline_date
     return today.isoformat()
+
+
+def _anchor_signals_present(profile: FundProfile) -> bool:
+    return bool(
+        profile.first_purchase_date
+        or profile.holding_days is not None
+        or profile.shares_baseline_date
+    )
+
+
+def _merge_profile_fields_for_anchor(existing: FundProfile, profile: FundProfile) -> FundProfile:
+    merged_updates: dict[str, str | int | None] = {}
+    for key in ("holding_days", "holding_days_as_of", "shares_baseline_date", "first_purchase_date"):
+        incoming = getattr(profile, key, None)
+        current = getattr(existing, key, None)
+        if incoming is not None:
+            merged_updates[key] = incoming
+        elif current is not None:
+            merged_updates[key] = current
+    return existing.model_copy(update=merged_updates)
+
+
+def _repair_first_seen_against_baseline(first_seen: str, profile: FundProfile) -> str:
+    if not profile.shares_baseline_date:
+        return first_seen
+    try:
+        baseline = date.fromisoformat(profile.shares_baseline_date)
+        seen = date.fromisoformat(first_seen)
+    except ValueError:
+        return first_seen
+    if baseline < seen:
+        return profile.shares_baseline_date
+    return first_seen
+
+
+def reconcile_first_seen_date(
+    existing: FundProfile | None,
+    profile: FundProfile,
+) -> str | None:
+    """在 save_profile 时确定 first_seen_date，避免读取路径写入 today 重置天数。"""
+    first_seen = profile.first_seen_date or (existing.first_seen_date if existing else None)
+    merged = _merge_profile_fields_for_anchor(existing, profile) if existing is not None else profile
+
+    if existing is None:
+        return first_seen or resolve_first_seen_anchor(merged)
+
+    if first_seen:
+        return _repair_first_seen_against_baseline(first_seen, merged)
+
+    if _anchor_signals_present(merged):
+        return resolve_first_seen_anchor(merged)
+    return None
 
 
 def merge_holding_into_profile(
@@ -232,7 +278,10 @@ def merge_holding_into_profile(
         updates["sector_return_percent"] = holding.sector_return_percent
     if total_amount and holding.holding_amount > 0:
         updates["position_percent"] = round(holding.holding_amount / total_amount * 100, 2)
-    return profile.model_copy(update=updates)
+    from app.services.profit_accrual_defer import apply_defer_to_profile
+
+    merged = profile.model_copy(update=updates)
+    return apply_defer_to_profile(merged, holding)
 
 
 def _holding_to_provisional_profile(
@@ -242,7 +291,7 @@ def _holding_to_provisional_profile(
     is_provisional: bool = True,
 ) -> FundProfile:
     code = fund_code or provisional_code_for_name(holding.fund_name)
-    return FundProfile(
+    profile = FundProfile(
         fund_code=code,
         fund_name=holding.fund_name,
         aliases=_aliases_for_name(holding.fund_name),
@@ -253,9 +302,12 @@ def _holding_to_provisional_profile(
         sector_name=holding.sector_name,
         sector_return_percent=holding.sector_return_percent,
         intraday_index_name=holding.intraday_index_name,
-        source="yangjibao-overview",
+        source="alipay-overview",
         is_provisional=is_provisional,
     )
+    from app.services.profit_accrual_defer import apply_defer_to_profile
+
+    return apply_defer_to_profile(profile, holding)
 
 
 def _aliases_for_name(name: str) -> list[str]:

@@ -303,7 +303,11 @@ function mapCalendarColors(days) {
     if (!d) return null;
     var result = Object.assign({}, d);
     if (!d.is_trading_day) {
+      result.colorClass = 'neutral';
+      result.daily_profit = 0;
+    } else if (d.is_pending_update) {
       result.colorClass = 'placeholder';
+      result.daily_profit = null;
     } else {
       var dp = Number(d.daily_profit);
       if (!Number.isFinite(dp) || dp === 0) {
