@@ -187,6 +187,10 @@ def _stub_market_data_fetches(monkeypatch):
         "app.services.akshare_subprocess.fetch_board_daily_kline_series",
         lambda *_args, **_kwargs: [],
     )
+    monkeypatch.setattr(
+        "app.services.board_fund_flow_history._fetch_flow_history_via_httpx",
+        lambda *_args, **_kwargs: [],
+    )
     # API routes import this symbol at module load; patching the service alone is not enough.
     monkeypatch.setattr(
         "app.main.build_sector_heat_ranking",

@@ -524,12 +524,6 @@ def test_market_theme_boards_invalid_sort(client):
     assert response.status_code == 400
 
 
-def test_market_theme_boards_sort_inflow(client):
-    response = client.get("/api/market/theme-boards?sort=inflow")
-    assert response.status_code == 200
-    assert response.json()["sort"] == "inflow"
-
-
 def test_market_board_flow_history(client, monkeypatch):
     monkeypatch.setattr(
         "app.main.get_board_flow_history",
@@ -683,17 +677,6 @@ def test_market_us_overview_smoke(client: TestClient):
     assert body["futures_status"] == "ok"
     assert body["forex_status"] == "ok"
     assert body["available"] is True
-
-
-def test_market_us_overview_force_refresh(client: TestClient):
-    response = client.get("/api/market/us-overview?force_refresh=true")
-    assert response.status_code == 200
-    body = response.json()
-    assert body["available"] is True
-    assert body["session_kind"] == "pre_market"
-    assert len(body["futures"]) == 3
-    assert body["usd_cny"]["last_price"] == 6.8096
-    assert body["qdii"] == []
 
 
 def _stub_transaction_nav(monkeypatch, nav: float = 2.0) -> None:

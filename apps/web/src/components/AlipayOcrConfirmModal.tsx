@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Search, X } from "lucide-react";
 import type { FundSearchItem, Holding } from "@/lib/api";
 import { searchFunds } from "@/lib/api";
@@ -141,7 +141,10 @@ export function AlipayOcrConfirmModal({
   onConfirm,
   onClose,
 }: AlipayOcrConfirmModalProps) {
-  const resolutionByName = new Map(fundCodeResolutions.map((item) => [item.fund_name, item]));
+  const resolutionByName = useMemo(
+    () => new Map(fundCodeResolutions.map((item) => [item.fund_name, item])),
+    [fundCodeResolutions],
+  );
   const [searchIndex, setSearchIndex] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const unresolvedCount = holdings.filter((holding) => {
@@ -165,7 +168,7 @@ export function AlipayOcrConfirmModal({
     autoOpenedSearchRef.current = true;
     setSearchIndex(firstUnresolved);
     setSearchQuery(holdings[firstUnresolved]?.fund_name ?? "");
-  }, [holdings, fundCodeResolutions, isBusy, searchIndex]);
+  }, [holdings, resolutionByName, isBusy, searchIndex]);
 
   const removeAt = (index: number) => {
     onChange(holdings.filter((_, itemIndex) => itemIndex !== index));
