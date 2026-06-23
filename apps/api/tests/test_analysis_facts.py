@@ -193,6 +193,36 @@ def test_build_analysis_facts_includes_news_freshness_and_momentum():
     assert facts["holdings"][0]["sector_momentum"] is not None
 
 
+def test_build_analysis_facts_includes_sector_fund_flow(monkeypatch):
+    holdings = [
+        Holding(
+            fund_code="519674",
+            fund_name="基A",
+            holding_amount=5000,
+            sector_name="半导体",
+            sector_return_percent=2.0,
+        ),
+    ]
+    profile = InvestorProfile()
+    risk = evaluate_portfolio_risk(holdings, profile)
+    monkeypatch.setattr(
+        "app.services.analysis_facts.build_sector_fund_flow_map",
+        lambda _holdings: {
+            "半导体": {
+                "available": True,
+                "board_code": "BK1036",
+                "today_main_force_net_yi": -3.0,
+                "pattern_label": "distribution",
+                "pattern_hint": "测试",
+            }
+        },
+    )
+    facts = build_analysis_facts(holdings, risk, [], profile)
+    flow = facts["holdings"][0]["sector_fund_flow"]
+    assert flow["available"] is True
+    assert flow["pattern_label"] == "distribution"
+
+
 def test_build_analysis_facts_aligns_estimated_holding_return_with_ui():
     holdings = [
         Holding(

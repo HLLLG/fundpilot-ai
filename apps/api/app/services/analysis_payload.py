@@ -41,7 +41,8 @@ OUTPUT_REQUIREMENTS_SYSTEM = (
     "estimated_holding_return_percent（累计持有）、daily_return_percent（当日）。"
     "基金代码 000000 须提示补全代码。不做实盘交易指令。"
     "analysis_facts.holdings[].nav_trend 为净值摘要，不得编造未给出的序列；"
-    "sector_momentum/sector_intraday 为短线提示；market_flow 为北向资金解读（若提供）。"
+    "sector_momentum/sector_intraday/sector_fund_flow 为短线提示；market_flow 为北向资金解读（若提供）。"
+    "sector_fund_flow.pattern_hint 可辅助判断高位出货、低位洗盘等，须用给定数字不得编造。"
     "analysis_facts.news.freshness_label 须在 summary 或 caveats 体现对决策置信度的影响。"
     "news_titles 中 source=cls 为财联社快讯。若 nav_trend 为空须在 points 说明。"
 )
@@ -52,7 +53,7 @@ OUTPUT_REQUIREMENTS_USER = [
     "action 仅限 analysis_facts.allowed_actions；risk_review 或 high 禁止加仓类",
     "news_bullish/news_bearish 为字符串数组，须来自 news_titles 或 topic_briefs.points.source_titles",
     "每只基金 points 1-3 条：含权重/持有收益/净值或板块数据，且至少 1 条写下一交易日条件化预案",
-    "引用 sector_intraday.pattern_label、nav_trend、sector_fund_gap_percent 时须用 analysis_facts 中的数字",
+    "引用 sector_intraday.pattern_label、nav_trend、sector_fund_gap_percent、sector_fund_flow 时须用 analysis_facts 中的数字",
 ]
 
 _HOLDING_LLM_DROP_KEYS = frozenset(
@@ -222,6 +223,25 @@ def trim_analysis_facts_for_llm(
                     if k in intraday
                 }
                 copy["sector_intraday"] = intraday_copy or None
+            sector_flow = copy.get("sector_fund_flow")
+            if isinstance(sector_flow, dict) and phase >= 2:
+                if analysis_mode == "fast":
+                    copy["sector_fund_flow"] = {
+                        k: sector_flow[k]
+                        for k in (
+                            "available",
+                            "today_main_force_net_yi",
+                            "cumulative_5d_net_yi",
+                            "cumulative_20d_net_yi",
+                            "pattern_label",
+                            "pattern_hint",
+                        )
+                        if k in sector_flow
+                    } or None
+                else:
+                    flow_copy = dict(sector_flow)
+                    flow_copy.pop("message", None)
+                    copy["sector_fund_flow"] = flow_copy
         holdings.append(copy)
     trimmed["holdings"] = holdings
 

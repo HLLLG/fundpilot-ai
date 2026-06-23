@@ -1,8 +1,15 @@
 "use client";
 
-import { Fragment, useMemo, useState, type MouseEvent } from "react";
+import { Fragment, useEffect, useMemo, useState, type MouseEvent } from "react";
 import { ChevronDown, ChevronRight, ChevronUp, Loader2, RotateCcw } from "lucide-react";
-import type { MarketThemeBoardItem, MarketThemeBoardResponse } from "@/lib/api";
+import { BoardFlowHistoryChart } from "@/components/BoardFlowHistoryChart";
+import type {
+  BoardFlowHistoryRange,
+  BoardFlowHistoryResponse,
+  MarketThemeBoardItem,
+  MarketThemeBoardResponse,
+} from "@/lib/api";
+import { fetchBoardFlowHistory } from "@/lib/api";
 import {
   boardKindClass,
   formatBoardKindLabel,
@@ -60,6 +67,57 @@ function FlowTierGrid({ item }: { item: MarketThemeBoardItem }) {
   );
 }
 
+function FlowHistoryPanel({
+  flowRange,
+  onRangeChange,
+  cached,
+  loading,
+}: {
+  flowRange: BoardFlowHistoryRange;
+  onRangeChange: (range: BoardFlowHistoryRange) => void;
+  cached: BoardFlowHistoryResponse | null | undefined;
+  loading: boolean;
+}) {
+  return (
+    <div className="mt-3 space-y-2 border-t border-slate-100 pt-3">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs font-medium text-slate-600">主力净流入走势</p>
+        <div className="inline-flex rounded-lg border border-slate-200 bg-white p-0.5 text-[11px]">
+          {(["week", "month"] as const).map((range) => (
+            <button
+              key={range}
+              type="button"
+              onClick={() => onRangeChange(range)}
+              className={`rounded-md px-2.5 py-1 font-medium transition-colors ${
+                flowRange === range
+                  ? "bg-[var(--brand-soft)] text-[var(--brand-strong)]"
+                  : "text-slate-500 hover:text-slate-700"
+              }`}
+            >
+              {range === "week" ? "近一周" : "近一月"}
+            </button>
+          ))}
+        </div>
+      </div>
+      {loading && !cached ? (
+        <div className="flex items-center justify-center py-8 text-xs text-slate-400">
+          <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+          加载历史资金流…
+        </div>
+      ) : cached?.available ? (
+        <BoardFlowHistoryChart
+          points={cached.points}
+          cumulativeNetYi={cached.cumulative_net_yi}
+        />
+      ) : (
+        <p className="py-6 text-center text-xs text-slate-400">
+          {cached?.message ?? "暂无历史资金流数据"}
+        </p>
+      )}
+    </div>
+  );
+}
+
 function SortColumnHeader({
   label,
   column,
@@ -107,10 +165,78 @@ export function ThemeSectorOverview({
   onAddFocusSector,
   focusSectors = [],
 }: ThemeSectorOverviewProps) {
-  const [expandedLabel, setExpandedLabel] = useState<string | null>(null);
+  const [expandedItem, setExpandedItem] = useState<{
+    label: string;
+    boardCode?: string | null;
+  } | null>(null);
+  const [flowRange, setFlowRange] = useState<BoardFlowHistoryRange>("week");
+  const [flowCache, setFlowCache] = useState<Record<string, Partial<Record<BoardFlowHistoryRange, BoardFlowHistoryResponse>>>>({});
+  const [flowLoadingKey, setFlowLoadingKey] = useState<string | null>(null);
   const [sortColumn, setSortColumn] = useState<ThemeSortColumn>("change");
   const [sortDirection, setSortDirection] = useState<ThemeSortDirection>("desc");
   const showData = isMarketThemeBoardUsable(data);
+
+  const flowHistoryCacheId = (label: string, boardCode?: string | null) =>
+    `${label}:${boardCode ?? ""}`;
+
+  useEffect(() => {
+    if (!expandedItem) {
+      return;
+    }
+    const cacheId = flowHistoryCacheId(expandedItem.label, expandedItem.boardCode);
+    if (flowCache[cacheId]?.[flowRange]) {
+      return;
+    }
+
+    const cacheKey = `${cacheId}:${flowRange}`;
+    let cancelled = false;
+    setFlowLoadingKey(cacheKey);
+    fetchBoardFlowHistory({
+      sectorLabel: expandedItem.label,
+      boardCode: expandedItem.boardCode,
+      range: flowRange,
+    })
+      .then((response) => {
+        if (cancelled) {
+          return;
+        }
+        setFlowCache((current) => ({
+          ...current,
+          [cacheId]: {
+            ...current[cacheId],
+            [flowRange]: response,
+          },
+        }));
+      })
+      .catch(() => {
+        if (cancelled) {
+          return;
+        }
+        setFlowCache((current) => ({
+          ...current,
+          [cacheId]: {
+            ...current[cacheId],
+            [flowRange]: {
+              available: false,
+              range: flowRange,
+              sector_label: expandedItem.label,
+              points: [],
+              cumulative_net_yi: null,
+              message: "历史资金流加载失败",
+            },
+          },
+        }));
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setFlowLoadingKey((current) => (current === cacheKey ? null : current));
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [expandedItem, flowRange, flowCache]);
 
   const sortedItems = useMemo(
     () => sortThemeBoardItems(data?.items ?? [], sortColumn, sortDirection),
@@ -127,7 +253,11 @@ export function ThemeSectorOverview({
     if (!hasThemeFlowDetail(item)) {
       return;
     }
-    setExpandedLabel((current) => (current === item.sector_label ? null : item.sector_label));
+    setExpandedItem((current) =>
+      current?.label === item.sector_label
+        ? null
+        : { label: item.sector_label, boardCode: item.flow_source_code },
+    );
   };
 
   const handleRowAction = (
@@ -210,7 +340,11 @@ export function ThemeSectorOverview({
               <tbody>
                 {sortedItems.map((item, index) => {
                   const expandable = hasThemeFlowDetail(item);
-                  const expanded = expandedLabel === item.sector_label;
+                  const expanded = expandedItem?.label === item.sector_label;
+                  const historyCacheId = flowHistoryCacheId(
+                    item.sector_label,
+                    item.flow_source_code,
+                  );
                   return (
                     <Fragment key={item.sector_label}>
                       <tr
@@ -279,10 +413,16 @@ export function ThemeSectorOverview({
                           </div>
                         </td>
                       </tr>
-                      {expanded && item.flow_tiers ? (
+                      {expanded && hasThemeFlowDetail(item) ? (
                         <tr className="bg-slate-50/60">
                           <td colSpan={6} className="px-3 pb-3 pt-0">
-                            <FlowTierGrid item={item} />
+                            {item.flow_tiers ? <FlowTierGrid item={item} /> : null}
+                            <FlowHistoryPanel
+                              flowRange={flowRange}
+                              onRangeChange={setFlowRange}
+                              cached={flowCache[historyCacheId]?.[flowRange]}
+                              loading={flowLoadingKey === `${historyCacheId}:${flowRange}`}
+                            />
                           </td>
                         </tr>
                       ) : null}

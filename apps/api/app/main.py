@@ -105,6 +105,7 @@ from app.services.sector_board_snapshot import (
     get_sector_board_snapshot,
 )
 from app.services.dip_radar_snapshot import get_dip_radar_snapshot
+from app.services.board_fund_flow_history import get_board_flow_history
 from app.services.theme_board_snapshot import get_theme_board_snapshot
 from app.services.us_market_service import get_us_market_snapshot
 from app.services.ocr_pipeline import apply_confirmed_holdings, run_ocr_upload_pipeline
@@ -609,6 +610,25 @@ def market_theme_boards(
         force_refresh=force_refresh,
         holdings=holdings,
         sort=sort,  # type: ignore[arg-type]
+    )
+
+
+@app.get("/api/market/board-flow-history")
+def market_board_flow_history(
+    sector_label: str | None = None,
+    board_code: str | None = None,
+    range: str = "week",
+    force_refresh: bool = False,
+) -> dict:
+    if range not in {"week", "month"}:
+        raise HTTPException(status_code=400, detail="range 须为 week 或 month")
+    if not sector_label and not board_code:
+        raise HTTPException(status_code=400, detail="须提供 sector_label 或 board_code")
+    return get_board_flow_history(
+        sector_label=sector_label,
+        board_code=board_code,
+        flow_range=range,  # type: ignore[arg-type]
+        force_refresh=force_refresh,
     )
 
 

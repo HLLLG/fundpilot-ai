@@ -27,6 +27,10 @@ from app.services.trading_session import get_effective_trade_date
 from app.services.risk import holding_weight_percent, resolve_weight_denominator
 from app.services.sector_intraday_summary import summarize_sector_intraday_for_holding
 from app.services.sector_momentum import build_sector_momentum_context
+from app.services.sector_fund_flow_context import (
+    build_sector_fund_flow_map,
+    sector_fund_flow_for_holding,
+)
 
 
 def build_analysis_facts(
@@ -50,6 +54,7 @@ def build_analysis_facts(
     sector_labels = sector_labels_from_holdings(holdings)
     signal_backtest = build_signal_backtest_context(sector_labels)
     guard_policy = resolve_signal_guard_policy(holdings)
+    sector_flow_map = build_sector_fund_flow_map(holdings)
 
     per_fund: list[dict] = []
     drawdown_limit = abs(profile.max_drawdown_percent)
@@ -92,6 +97,7 @@ def build_analysis_facts(
                     nav_trends.get(holding.fund_code),
                 ),
                 "sector_intraday": summarize_sector_intraday_for_holding(holding),
+                "sector_fund_flow": sector_fund_flow_for_holding(holding, sector_flow_map),
                 "signal_backtest": signal_backtest_for_sector(
                     holding.sector_name,
                     signal_backtest,

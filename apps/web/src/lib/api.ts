@@ -470,6 +470,7 @@ export type MarketThemeBoardItem = {
   consecutive_up_days?: number | null;
   main_force_net_yi?: number | null;
   flow_tiers?: MarketThemeBoardFlowTiers | null;
+  flow_source_code?: string | null;
   held_fund_count: number;
   in_portfolio: boolean;
   rank?: number;
@@ -485,6 +486,26 @@ export type MarketThemeBoardResponse = {
   message?: string | null;
   sort: MarketThemeBoardSort;
   items: MarketThemeBoardItem[];
+};
+
+export type BoardFlowHistoryRange = "week" | "month";
+
+export type BoardFlowHistoryPoint = {
+  date: string;
+  main_force_net_yi?: number | null;
+  flow_tiers?: MarketThemeBoardFlowTiers | null;
+};
+
+export type BoardFlowHistoryResponse = {
+  available: boolean;
+  range: BoardFlowHistoryRange;
+  sector_label?: string | null;
+  board_code?: string | null;
+  points: BoardFlowHistoryPoint[];
+  cumulative_net_yi?: number | null;
+  from_cache?: boolean;
+  refreshed_at?: string | null;
+  message?: string | null;
 };
 
 export type DipRadarReboundSignal = {
@@ -1023,6 +1044,31 @@ export async function fetchMarketThemeBoards(options?: {
     params.set("force_refresh", "true");
   }
   const response = await apiFetch(`${API_BASE}/api/market/theme-boards?${params}`, {
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export async function fetchBoardFlowHistory(options: {
+  sectorLabel: string;
+  boardCode?: string | null;
+  range?: BoardFlowHistoryRange;
+  forceRefresh?: boolean;
+}): Promise<BoardFlowHistoryResponse> {
+  const params = new URLSearchParams({
+    sector_label: options.sectorLabel,
+    range: options.range ?? "week",
+  });
+  if (options.boardCode) {
+    params.set("board_code", options.boardCode);
+  }
+  if (options.forceRefresh) {
+    params.set("force_refresh", "true");
+  }
+  const response = await apiFetch(`${API_BASE}/api/market/board-flow-history?${params}`, {
     cache: "no-store",
   });
   if (!response.ok) {

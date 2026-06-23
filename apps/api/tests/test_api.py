@@ -530,6 +530,38 @@ def test_market_theme_boards_sort_inflow(client):
     assert response.json()["sort"] == "inflow"
 
 
+def test_market_board_flow_history(client, monkeypatch):
+    monkeypatch.setattr(
+        "app.main.get_board_flow_history",
+        lambda **kwargs: {
+            "available": True,
+            "range": kwargs.get("flow_range", "week"),
+            "sector_label": kwargs.get("sector_label"),
+            "board_code": "BK1036",
+            "points": [{"date": "2026-06-22", "main_force_net_yi": 1.2}],
+            "cumulative_net_yi": 1.2,
+            "from_cache": False,
+            "message": None,
+        },
+    )
+    response = client.get("/api/market/board-flow-history?sector_label=半导体&range=week")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["available"] is True
+    assert body["board_code"] == "BK1036"
+    assert len(body["points"]) == 1
+
+
+def test_market_board_flow_history_invalid_range(client):
+    response = client.get("/api/market/board-flow-history?sector_label=半导体&range=year")
+    assert response.status_code == 400
+
+
+def test_market_board_flow_history_missing_params(client):
+    response = client.get("/api/market/board-flow-history?range=week")
+    assert response.status_code == 400
+
+
 def test_fund_discovery_async_offline(client, monkeypatch):
     monkeypatch.setattr(
         "app.services.discovery_pipeline.build_sector_heat_ranking",

@@ -53,7 +53,13 @@ _THEME_BOARD_WHITELIST: tuple[str, ...] = (
 
 # 指数主题涨跌幅用 _THEME_BOARD_INDEX；资金流用 _resolve_flow_source_code 解析到的东财 BK。
 # 个别自动解析不准时在此覆盖（label → BKxxxx）。
-_THEME_BOARD_FLOW: dict[str, str] = {}
+# 个别指数主题在东财 spot 榜未命中时，显式指定 BK 资金流代码。
+_THEME_BOARD_FLOW: dict[str, str] = {
+    "医药": "BK0465",
+    "贵金属": "BK0732",      # 工业金属/贵金属行业
+    "化工": "BK1206",        # 基础化工
+    "交通运输": "BK1210",    # 交通运输行业
+}
 _THEME_BOARD_ALIAS: dict[str, tuple[str, str, str]] = {
     "软件": ("90.BK0737", "BK0737", "industry"),        # 软件开发
     "医疗": ("90.BK0727", "BK0727", "industry"),        # 医疗服务
@@ -519,6 +525,27 @@ def refresh_theme_board_snapshot(*, trade_date: str | None = None) -> dict[str, 
         "refreshed_at": datetime.now(timezone.utc).isoformat(),
     }
     save_spot_snapshot(f"theme:boards:{_CACHE_VERSION}:{resolved_date}", snapshot)
+
+    flow_codes = [
+        str(item.get("flow_source_code") or "").strip()
+        for item in items
+        if item.get("flow_source_code")
+    ]
+    if flow_codes:
+        try:
+            import threading
+
+            from app.services.board_fund_flow_history import prefetch_board_flow_histories
+
+            threading.Thread(
+                target=prefetch_board_flow_histories,
+                args=(flow_codes,),
+                kwargs={"max_workers": 1},
+                daemon=True,
+            ).start()
+        except Exception as exc:
+            logger.debug("board flow prefetch schedule failed: %s", exc)
+
     return snapshot
 
 
