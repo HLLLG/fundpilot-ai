@@ -95,6 +95,18 @@ def _stub_market_data_fetches(monkeypatch):
         lambda _board_type: [],
     )
     monkeypatch.setattr(
+        "app.services.sector_board_snapshot.fetch_eastmoney_board_records",
+        lambda _board_type: [],
+    )
+    monkeypatch.setattr(
+        "app.services.sector_board_snapshot.fetch_akshare_board_records",
+        lambda _board_type: [],
+    )
+    monkeypatch.setattr(
+        "app.services.theme_board_snapshot.get_sector_board_snapshot",
+        lambda **_kwargs: {"industry": [], "concept": []},
+    )
+    monkeypatch.setattr(
         "app.services.theme_board_snapshot.fetch_canonical_daily_kline_series",
         lambda *_args, **_kwargs: [],
     )

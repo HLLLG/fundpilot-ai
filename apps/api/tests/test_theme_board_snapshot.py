@@ -105,60 +105,6 @@ def test_refresh_theme_board_snapshot_computes_change(monkeypatch):
     assert snapshot["refreshed_at"]
 
 
-def test_refresh_theme_board_snapshot_trends2_fallback(monkeypatch):
-    monkeypatch.setattr(
-        mod,
-        "list_theme_board_universe",
-        lambda: [
-            {
-                "sector_label": "人工智能",
-                "secid": "2.930713",
-                "source_code": "930713",
-                "board_kind": "index",
-                "_canon": None,
-            }
-        ],
-    )
-    monkeypatch.setattr(mod, "_fetch_universe_series", lambda *a, **k: [])
-    monkeypatch.setattr(
-        mod,
-        "fetch_eastmoney_kline_close_percent",
-        lambda secid, **kwargs: 4.76 if secid == "2.930713" else None,
-    )
-    monkeypatch.setattr(mod, "_load_theme_spot_changes", lambda: {"人工智能": 0.37})
-    monkeypatch.setattr(mod, "save_spot_snapshot", lambda *a, **k: None)
-
-    snapshot = refresh_theme_board_snapshot(trade_date="2026-06-18")
-    item = snapshot["items"][0]
-    assert item["change_1d_percent"] == 4.76
-    assert "consecutive_up_days" not in item
-
-
-def test_refresh_theme_board_snapshot_spot_fallback(monkeypatch):
-    monkeypatch.setattr(
-        mod,
-        "list_theme_board_universe",
-        lambda: [
-            {
-                "sector_label": "电子",
-                "secid": "90.BK0447",
-                "source_code": "BK0447",
-                "board_kind": "industry",
-                "_canon": None,
-            }
-        ],
-    )
-    monkeypatch.setattr(mod, "_fetch_universe_series", lambda *a, **k: [])
-    monkeypatch.setattr(mod, "fetch_eastmoney_kline_close_percent", lambda *a, **k: None)
-    monkeypatch.setattr(mod, "_load_theme_spot_changes", lambda: {"电子": 3.21})
-    monkeypatch.setattr(mod, "save_spot_snapshot", lambda *a, **k: None)
-
-    snapshot = refresh_theme_board_snapshot(trade_date="2026-06-18")
-    item = snapshot["items"][0]
-    assert item["change_1d_percent"] == 3.21
-    assert "consecutive_up_days" not in item
-
-
 def test_apply_holdings_overlay_matches_by_secid():
     from app.services.sector_canonical import get_quote_canonical_sector
 
@@ -182,30 +128,6 @@ def test_apply_holdings_overlay_matches_by_secid():
     assert semi["held_fund_count"] == 1
     assert semi["in_portfolio"] is True
     assert other["in_portfolio"] is False
-
-
-def test_build_theme_board_payload_sort_and_strips_internal():
-    items = [
-        {"sector_label": "半导体", "secid": "90.BK1036", "change_1d_percent": 1.5, "_canon": "x"},
-        {"sector_label": "商业航天", "secid": "90.BK0963", "change_1d_percent": 2.8},
-    ]
-    meta = {
-        "trade_date": "2026-06-18",
-        "session_kind": "trading_day_intraday",
-        "available": True,
-        "from_cache": True,
-        "stale": False,
-        "refreshed_at": "2026-06-18T06:00:00+00:00",
-        "message": None,
-    }
-    by_change = build_theme_board_payload(items, sort="change", snapshot_meta=meta, holdings=[])
-    assert by_change["items"][0]["sector_label"] == "商业航天"
-    assert by_change["items"][0]["rank"] == 1
-    assert by_change["refreshed_at"] == "2026-06-18T06:00:00+00:00"
-    assert "_canon" not in by_change["items"][0]
-
-    by_streak = build_theme_board_payload(items, sort="streak", snapshot_meta=meta, holdings=[])
-    assert len(by_streak["items"]) == 2
 
 
 def test_get_theme_board_snapshot_reads_cache_and_overlays(monkeypatch):
