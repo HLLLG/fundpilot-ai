@@ -1,0 +1,38 @@
+docs/PROJECT_CONTEXT.md
+  s_5ce134945012c9::t_9fc5ac9f45aa9a 12
+  s_e7db4dc3ac42fe::t_7a09c129ff9995 195
+  s_e7db4dc3ac42fe::t_9af20e34c3baaa 103
+  s_5ce134945012c9::t_17ff2aa3877ee6 11
+  s_5ce134945012c9::t_7e83e8767b1645 429
+  s_5ce134945012c9::t_71e53749350d99 428
+  s_e7db4dc3ac42fe::t_b628964ac41e0e 7,10
+  s_e7db4dc3ac42fe::t_298702c60e417f 430
+  s_5ce134945012c9::t_8bd3ea37c4ff16 656
+  s_e7db4dc3ac42fe::t_879934780a7136 752-753
+  s_5ce134945012c9::t_be679bfb692869 13
+  s_5ce134945012c9::t_408861bd676f84 102
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.18-trip",
+  "base_commit_sha": "51da79fe343c045e8e097f6ec1bac54bfd0cd0e8",
+  "prompts": {},
+  "sessions": {
+    "s_5ce134945012c9": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "4582a977-ede3-4147-9dcc-ee6c922a3c59",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    },
+    "s_e7db4dc3ac42fe": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "e6dd7659-93b8-4e68-aba8-cdabb47c530f",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
