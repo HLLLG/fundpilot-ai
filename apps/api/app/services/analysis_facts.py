@@ -113,6 +113,9 @@ def build_analysis_facts(
             "以下数字由系统计算，分析时不得改写；仅可基于它们做解释与建议。"
             "浮亏/持有收益判断须用 estimated_holding_return_percent 与 portfolio.weighted_return_percent，"
             "勿用 holding_return_percent（昨日结算）。"
+            "板块信号(signal_backtest)须按各规则 confidence.level 表述："
+            "「高」可作主理由；「中」需措辞保留；「低/不足」只能作提示，"
+            "不得据此主导追涨或减仓建议。"
         ),
         "portfolio": {
             "total_amount": round(total_amount, 2),

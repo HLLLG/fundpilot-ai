@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from dataclasses import asdict
 from typing import Any
 
 from app.config import get_settings
@@ -9,6 +10,7 @@ from app.services.sector_canonical import get_canonical_sector
 from app.services.sector_labels import normalize_sector_label
 from app.services.sector_signal_backtest import build_sector_signal_backtest
 from app.services.sector_signal_rules import rule_label
+from app.services.signal_confidence import score_signal
 
 _CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 _CACHE_TTL_SECONDS = 3600
@@ -125,4 +127,5 @@ def _compact_rules(raw: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
             "beats_baseline": bucket.get("beats_baseline"),
             "beats_random": bucket.get("beats_random"),
         }
+        compact[rule_id]["confidence"] = asdict(score_signal(compact[rule_id]))
     return compact
