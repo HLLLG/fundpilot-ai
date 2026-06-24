@@ -54,6 +54,9 @@ def _report_chat_system_prompt(
         "持仓收益率语义：板块涨跌 sector_return_percent 为当日实时；持有收益率 holding_return_percent "
         "多为昨日结算。当日基金涨跌若无 daily_return_percent，可用 "
         "estimated_daily_return_percent（≈板块涨跌+持有收益率）近似，并说明为估算。"
+        "日报「逐基金建议」中的「量化依据（综合置信X）」与「组合量化背书」是系统计算的"
+        "可回测证据：综合置信「高」可作主理由、「中」措辞保留、「低/不足」只能作风险提示，"
+        "不得据低置信信号建议追涨；用户追问某只票「为什么这么建议/有多大把握」时应引用其量化依据。"
     )
     if news_tool_enabled:
         base += (

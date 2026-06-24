@@ -35,6 +35,22 @@ def report_to_markdown(report: dict[str, Any]) -> str:
             lines.append(f"- {item}")
         lines.append("")
 
+    facts = report.get("analysis_facts") or {}
+    evidence_by_code = {
+        str(row.get("fund_code")): row.get("evidence")
+        for row in (facts.get("holdings") or [])
+        if row.get("evidence")
+    }
+    overview = facts.get("evidence_overview") or {}
+    if overview.get("available") and overview.get("summary"):
+        lines.extend([
+            "## 组合量化背书",
+            "",
+            f"- {overview['summary']}",
+            f"- 中/高背书市值占比：{overview.get('backed_weight_percent', 0)}%",
+            "",
+        ])
+
     fund_recs = report.get("fund_recommendations") or []
     if fund_recs:
         lines.extend(["## 逐基金建议", ""])
@@ -48,6 +64,11 @@ def report_to_markdown(report: dict[str, Any]) -> str:
                 lines.append(f"- **金额**：约 {item['amount_yuan']} 元")
             for point in item.get("points") or []:
                 lines.append(f"- {point}")
+            evidence = evidence_by_code.get(str(item.get("fund_code")))
+            if evidence:
+                composite = (evidence.get("composite") or {}).get("level", "")
+                summary = evidence.get("summary", "")
+                lines.append(f"- **量化依据**（综合置信{composite}）：{summary}")
             lines.append("")
 
     alerts = [alert.get("message") for alert in risk.get("alerts") or [] if alert.get("message")]
