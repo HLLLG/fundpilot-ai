@@ -1,0 +1,21 @@
+docs/superpowers/specs/2026-06-24-fund-factor-scores-design.md
+  s_e7db4dc3ac42fe::t_3e6a75782ea180 827
+  s_e7db4dc3ac42fe::t_baf839930c937b 1-560,562-826,828-864
+  s_e7db4dc3ac42fe::t_947896f39f16d9 561
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.18-trip",
+  "base_commit_sha": "c385855be1b2d88b179c62a0a654da1a33c0c1a4",
+  "prompts": {},
+  "sessions": {
+    "s_e7db4dc3ac42fe": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "e6dd7659-93b8-4e68-aba8-cdabb47c530f",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
