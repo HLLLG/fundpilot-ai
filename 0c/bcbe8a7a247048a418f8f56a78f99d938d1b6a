@@ -1,0 +1,21 @@
+apps/api/tests/test_factor_ic_backtest.py
+  s_e7db4dc3ac42fe::t_e5df86398d8c61 173-201
+apps/api/scripts/run_factor_ic.py
+  s_e7db4dc3ac42fe::t_d8740c581468e0 1-221
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.18-trip",
+  "base_commit_sha": "0cbcbe8a7a247048a418f8f56a78f99d938d1b6a",
+  "prompts": {},
+  "sessions": {
+    "s_e7db4dc3ac42fe": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "e6dd7659-93b8-4e68-aba8-cdabb47c530f",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
