@@ -1,0 +1,27 @@
+apps/web/src/lib/api.ts
+  s_e7db4dc3ac42fe::t_b8b0a5f87dd03c 409-432
+  s_e7db4dc3ac42fe::t_24a262658b8774 2003-2012
+apps/web/src/components/PortfolioDashboard.tsx
+  s_e7db4dc3ac42fe::t_199e3d7a2a9670 57
+  s_e7db4dc3ac42fe::t_a40b8a390225b6 14
+  s_e7db4dc3ac42fe::t_1e5b4b4929aee8 203-220
+apps/web/src/components/PortfolioEvidenceOverviewPanel.tsx
+  s_e7db4dc3ac42fe::t_aa5f11d383894e 1-10,18-21,23-110
+  s_e7db4dc3ac42fe::t_80d9cdd3927a2e 11-17,22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.18-trip",
+  "base_commit_sha": "3d92a46097b40958f3ba2531c17df2cac905127a",
+  "prompts": {},
+  "sessions": {
+    "s_e7db4dc3ac42fe": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "e6dd7659-93b8-4e68-aba8-cdabb47c530f",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
