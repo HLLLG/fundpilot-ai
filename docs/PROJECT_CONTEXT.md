@@ -7,6 +7,7 @@
 **文档版本：** 2026-06-24（模块4 量化依据进追问上下文 · 证据进日报正文 · 组合证据总览 · 信号合成证据卡 · 信号/因子IC/风险度量 三类置信喂LLM · 模块3 因子IC回测/风格回归/分层抽样/信号基线修正 · 因子体检 · 组合风险度量）
 
 **更新记录：**
+- **截图识别升级 VLM + 本地解析器修复（2026-06-24）：** 解决「新增持有」截图识别**慢/不准/截不全报错**三问题。根因：①本地 PaddleOCR CPU 推理 6~9s（冷加载再+3.8s）超 5s 目标；②QDII 基金名（`(QDII)`/`（QDII）` 在份额字母前）未被 `COMPLETE_FUND_NAME_RE`/`looks_like_fund_product_name` 匹配 → image1 仅识别 3/6 只；③`is_near_zero(None)` 抛 `TypeError` 使 `/api/ocr` 500、生产经 CloudBase 表现为 `failed to fetch`。方案：新增 `HoldingsExtractor` 抽象层（`vlm` 主 + `local` 回退，`auto` 软回退）插入 `run_ocr_upload_pipeline`，主路走云端 `qwen3-vl-flash`（阿里云百炼 DashScope，图片→结构化 JSON）<5s；本地解析器修两 bug 作可靠兜底（`is_near_zero` None 安全 + `parse_holdings_from_text` try/except 永不抛 + QDII 名正则 + 余额宝/法律声明噪声过滤）。新增 `vlm_holdings_provider.py`/`holdings_extractor.py`/`scripts/smoke_vlm_ocr.py` + 5 配置项（`FUND_AI_OCR_PROVIDER`/`FUND_AI_VLM_OCR_*`）。**隐私**：auto/vlm 模式截图发往阿里云百炼，`local` 强制本地不外传（见隐私段）。单测 `test_alipay_holdings_parser.py`/`test_vlm_holdings_provider.py`/`test_holdings_extractor.py`/`test_ocr_pipeline.py`/`test_config.py`。设计见 `docs/superpowers/specs/2026-06-24-ocr-vlm-upgrade-design.md`、计划见 `docs/superpowers/plans/2026-06-24-ocr-vlm-upgrade.md`。
 - **量化依据进追问上下文（模块4 证据卡延伸，2026-06-24）：** 追问对话上下文用的是 `report_to_markdown(report)`（非 facts），此前不含 evidence。现 `report_export.report_to_markdown` 从 `report.analysis_facts` 取数：① 顶部加「## 组合量化背书」段（`evidence_overview.summary` + backed 占比）；② 「逐基金建议」每条 points 后追加「**量化依据**（综合置信X）：{summary}」（仅该 fund_code 有 evidence 时）。`report_chat._report_chat_system_prompt` 加护栏「量化依据/组合量化背书 是可回测证据，综合置信高可作主理由/中保留/低·不足仅风险提示、不得据此追涨；用户问『为什么这么建议/多大把握』应引用其量化依据」。markdown 导出/下载同步受益。单测 `tests/test_report_export.py`（每基金 evidence 行 / overview 段 / 无 facts 不渲染 / 无 evidence 的基金不出依据行）。后端全量 571 passed。
 - **证据进日报正文（模块4 证据卡延伸，2026-06-24）：** 把每只持仓的 `evidence` 综合置信 + 证据摘要展示到日报每条基金建议**下方**（「量化依据」行），让用户直接看到「这条建议有多少可回测背书」。**后端**：日报存档 facts 此前由 `deepseek_client._compose_analysis_facts` 构建、**不含** evidence（缺 factor_scores/risk_metrics）；现改为在该函数内 best-effort 计算 `build_factor_scores_for_facts`（TTL 缓存，生成 prompt 时多已预热）+ `build_risk_metrics_for_facts`（取日快照）并传入 `build_analysis_facts`，使在线/离线两条报告路径的存档 facts 持仓行均带 `evidence`、顶层带 `evidence_overview`（任一路失败不阻塞）。**前端**：`ReportPanel.FundRecommendationCard` 从 `report.analysis_facts.holdings[].evidence` 取数（`evidenceForFund` 按 fund_code 查），渲染「量化依据」卡（复用 `confidenceTone` 的综合置信 StatusPill + summary）。单测 `test_deepseek_client.py::test_compose_analysis_facts_wires_evidence`（monkeypatch 两 builder→facts 带 evidence/overview）。后端全量 567 passed、前端 vitest 69 passed、tsc 通过。
 - **组合证据总览（模块4 证据卡延伸，2026-06-24）：** 把竖切5 每只持仓的 `evidence` 聚合成**组合级背书分布**——「组合多少**市值**有中/高量化背书」——同时进 LLM（facts）+ 前端（懒加载端点+面板）。**纯函数** `signal_synthesis.build_evidence_overview(rows)`：按**持仓市值加权**统计各级（高/中/低/不足）占比 + 计数，`backed_weight_percent`=高+中市值占比，分母为全部持仓市值（含未覆盖→各级之和=覆盖率），无 evidence/零市值→available False。**LLM 注入**：`build_analysis_facts` per-fund 循环后挂 `facts["evidence_overview"]`；`instruction`+角色 prompt 各加护栏「backed_weight_percent 高→建议可更积极，低→强调多数仓位背书不足、风险口径」。**前端端点**：`portfolio_snapshot.build_evidence_overview_payload(holdings)` 精简装配三路（factor_scores 走 TTL 缓存 / risk_metrics 取日快照 / signal 取板块上下文，逐路 best-effort）→ 逐持仓 evidence → 汇总；`GET /api/portfolio/evidence-overview`（懒加载，异常不 500）。**前端面板** `PortfolioEvidenceOverviewPanel`（懒加载，复用 `confidenceTone`）展示 backed 大字+各级市值横条+逐持仓综合置信标签，接入 `PortfolioDashboard` 组合分析页「组合证据总览」可折叠区。单测 `tests/test_signal_synthesis.py`（加权分布/未覆盖计入分母/无evidence→False）+ `test_analysis_facts.py`（facts 含 overview）+ `test_api.py`（端点契约）。后端全量 566 passed、前端 vitest 69 passed。设计见 `docs/superpowers/specs/2026-06-24-evidence-overview-design.md`。
@@ -99,7 +100,7 @@
 | 类别 | 能力 |
 |------|------|
 | 鉴权 | 邮箱注册/登录（JWT，默认 **30 天**有效）；Web `/login` `/register`；`/settings` 绑定微信（`cloudbaseUid`）；`UserMenu` 显示「未绑微信」；小程序 `POST /api/auth/wechat-login`；开发模式 `FUND_AI_CLOUDBASE_AUTH_DEV_MODE` |
-| 输入 | 养基宝**总览 / 详情** OCR（详情含 6 位代码与关联板块）；**支付宝持有列表 OCR**（预览确认后写入）；确认弹窗可编辑 code/名称/金额并东财搜索；当日列为 `-` 时不填当日收益；**OCR 漏负号**时规则补符号 |
+| 输入 | 养基宝**总览 / 详情** OCR（详情含 6 位代码与关联板块）；**支付宝持有列表 OCR**（预览确认后写入）；确认弹窗可编辑 code/名称/金额并东财搜索；当日列为 `-` 时不填当日收益；**OCR 漏负号**时规则补符号；**截图识别引擎 auto**：有 key 走云端 `qwen3-vl-flash`（结构化 JSON、QDII/截不全鲁棒、<5s），否则/失败回退本地 PaddleOCR |
 | 主关联板块 | `fund_primary_sectors` 表 + 全局种子 + 季报重仓推荐；支付宝导入后 **按 fund_code 查表**补板块名（非名称推断）；详情 OCR 自动沉淀 |
 | 当日收益 | 盘中/净值未公布：**板块涨跌估算**（`holding_amount × sector_return%`）；NAV 发布后：**官方日增长率** + `daily_profit = amount × r / (100 + r)`；关联板块列始终东财涨跌；账户汇总附「昨日收益」；**份额×净值**自动更新持有金额（`holding_amount_sync`） |
 | OCR 校验 | OCR 返回 `holding_warnings`；账户汇总为唯一持仓展示与日报输入源（`displayableHoldings` 过滤占位行） |
@@ -153,7 +154,7 @@
 | 本地 SQLite / 上传目录 | 默认把原始截图发往云端 |
 | 公开新闻标题/摘要供模型参考 | 投资建议（报告须有 caveats） |
 
-**隐私：** DeepSeek 收到**结构化持仓、风控、净值摘要、新闻标题/摘要**，不传原始截图。见 `README.md`「隐私和边界」。
+**隐私：** DeepSeek 收到**结构化持仓、风控、净值摘要、新闻标题/摘要**。截图识别默认走云端视觉模型（`FUND_AI_OCR_PROVIDER=auto`，配置 `FUND_AI_VLM_OCR_API_KEY` 即启用 `qwen3-vl-flash`）：**此时截图图片会发往阿里云百炼用于识别**；设 `FUND_AI_OCR_PROVIDER=local` 可强制本地 PaddleOCR 不外传截图。见 `README.md`「隐私和边界」。
 
 ---
 
@@ -696,6 +697,11 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | `FUND_AI_OCR_PRELOAD` | false | 启动时预热 PaddleOCR |
 | `FUND_AI_OCR_USE_MOBILE_MODELS` | false | 使用 mobile 模型（更快，适合列表截图） |
 | `FUND_AI_OCR_MAX_IMAGE_SIDE` | — | OCR 前缩放最长边（像素） |
+| `FUND_AI_OCR_PROVIDER` | auto | 截图识别引擎：auto（有 key 走云端 VLM 否则本地）/ vlm（强制云端，失败回退本地）/ local（强制本地不外传） |
+| `FUND_AI_VLM_OCR_API_KEY` | — | 阿里云百炼 Key；配置后 auto 启用云端识别（截图发往该 API） |
+| `FUND_AI_VLM_OCR_BASE_URL` | dashscope compatible-mode | DashScope OpenAI 兼容端点 |
+| `FUND_AI_VLM_OCR_MODEL` | qwen3-vl-flash | 视觉模型，可切 qwen3-vl-plus |
+| `FUND_AI_VLM_OCR_TIMEOUT_SECONDS` | 20 | VLM 读超时 |
 
 修改 `.env` 后需重启 API。
 

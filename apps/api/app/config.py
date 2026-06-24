@@ -86,6 +86,12 @@ class Settings(BaseSettings):
     ocr_preload: bool = True
     ocr_use_mobile_models: bool = True
     ocr_max_image_side: int = 1280
+    # 截图识别引擎：auto（有 key 走云 VLM 否则本地）/ vlm（强制云，失败回退本地）/ local（强制本地不外传）
+    ocr_provider: str = "auto"
+    vlm_ocr_api_key: str | None = None
+    vlm_ocr_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    vlm_ocr_model: str = "qwen3-vl-flash"
+    vlm_ocr_timeout_seconds: float = 20.0
     jwt_secret: str = "fundpilot-dev-jwt-secret-change-me-32chars"
     jwt_access_expire_minutes: int = 43_200  # 30 days
     database_url: str | None = None
@@ -99,6 +105,20 @@ class Settings(BaseSettings):
     theme_board_refresh_enabled: bool = True
     theme_board_refresh_interval_seconds: int = 900
     theme_board_refresh_idle_interval_seconds: int = 3600
+    # 组合风险指标无风险利率（年化，小数；夏普/索提诺/Alpha 使用）
+    risk_free_rate: float = 0.02
+
+    @field_validator("risk_free_rate", mode="before")
+    @classmethod
+    def normalize_risk_free_rate(cls, value: object) -> float:
+        """容错：用户填 2 表示 2% 时归一到 0.02；非法值回落到默认 0.02。"""
+        if value is None:
+            return 0.02
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return 0.02
+        return number / 100 if number > 1 else number
 
     @field_validator("cloudbase_custom_login_key_path", mode="before")
     @classmethod
@@ -150,6 +170,14 @@ class Settings(BaseSettings):
             return None
         return cleaned
 
+    @field_validator("vlm_ocr_api_key", mode="before")
+    @classmethod
+    def normalize_vlm_ocr_api_key(cls, value: object) -> str | None:
+        if not isinstance(value, str):
+            return None
+        cleaned = value.strip().strip('"').strip("'")
+        return cleaned or None
+
     @property
     def deepseek_configured(self) -> bool:
         return bool(self.deepseek_api_key)
@@ -178,6 +206,11 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+def get_risk_free_rate() -> float:
+    """年化无风险利率（小数）。默认 2%，可经 FUND_AI_RISK_FREE_RATE 覆盖。"""
+    return get_settings().risk_free_rate
 
 
 def refresh_settings() -> Settings:

@@ -549,3 +549,11 @@ def summarize_trend_footer(
 
 def default_calendar_anchor() -> tuple[int, int]:
     return date.today().year, date.today().month
+
+
+def _compound_return_percent(daily_return_percents: list[float]) -> float:
+    """把若干日收益率（百分比）复利累乘，返回区间累计收益率（百分比）。"""
+    result = 1.0
+    for r in daily_return_percents:
+        result *= 1.0 + r / 100.0
+    return (result - 1.0) * 100.0

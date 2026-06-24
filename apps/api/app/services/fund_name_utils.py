@@ -67,9 +67,17 @@ PROMO_MARKERS = (
     "市场解读",
     "财富号",
 )
+# 允许 混合/股票/指数/联接 与份额字母间出现 (QDII)/（QDII）/(QDII-ETF) 等括注
+_QDII_INFIX = r"(?:[（(](?:QDII|LOF|FOF|QDII-ETF)[)）])?"
 FUND_PRODUCT_SUFFIX_RE = re.compile(
-    r"(混合[A-CEH]?|联接[A-CEH]|ETF联接[A-CEH]|ETF联[A-CEH]|主题ETF联接[A-CEH]"
-    r"|发起式联接[A-CEH]|股票[A-CEH]?|指数[A-CEH])$",
+    r"(混合" + _QDII_INFIX + r"[A-CEH]?"
+    r"|联接" + _QDII_INFIX + r"[A-CEH]"
+    r"|ETF联接" + _QDII_INFIX + r"[A-CEH]"
+    r"|ETF联" + _QDII_INFIX + r"[A-CEH]"
+    r"|主题ETF联接" + _QDII_INFIX + r"[A-CEH]"
+    r"|发起式联接" + _QDII_INFIX + r"[A-CEH]"
+    r"|股票" + _QDII_INFIX + r"[A-CEH]?"
+    r"|指数" + _QDII_INFIX + r"[A-CEH])$",
     re.IGNORECASE,
 )
 FUND_NAME_HINTS = (

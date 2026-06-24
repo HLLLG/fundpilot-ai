@@ -24,9 +24,12 @@ ALIPAY_HOLDINGS_MARKERS = (
 
 def parse_holdings_from_text(text: str) -> list[Holding]:
     lines = [line.strip() for line in text.splitlines() if line.strip()]
-    if is_alipay_holdings_page(lines):
+    if not is_alipay_holdings_page(lines):
+        return []
+    try:
         return parse_alipay_holdings_page(text)
-    return []
+    except Exception:  # noqa: BLE001 — parse errors must not let /api/ocr 500
+        return []
 
 
 def detect_ocr_source(text: str) -> str:

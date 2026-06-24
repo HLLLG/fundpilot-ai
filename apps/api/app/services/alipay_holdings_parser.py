@@ -39,8 +39,19 @@ ALIPAY_HEADER_MARKERS = (
     "机会",
     "自选",
 )
-ALIPAY_FOOTER_MARKERS = ("基金市场", "上证指数", "新增持有", "批量")
+ALIPAY_FOOTER_MARKERS = (
+    "基金市场",
+    "上证指数",
+    "新增持有",
+    "批量",
+    "本页面非任何法律文件",
+    "该页面由蚂蚁财富",
+    "以上按照持有收益排序",
+)
 ALIPAY_NOISE_MARKERS = (
+    "余额宝",
+    "余额",
+    "灵活取用",
     "投资锦囊",
     "基金经理说",
     "市场解读",
@@ -64,9 +75,13 @@ NAME_FRAGMENT_RE = re.compile(r"^[\u4e00-\u9fffA-Za-z0-9·]{1,40}$")
 INLINE_TWO_COLUMN_RE = re.compile(
     r"^\s*([+-]?\d[\d,]*(?:\.\d+)?)\s+([+-]?\d[\d,]*(?:\.\d+)?)\s*$"
 )
+# 允许 混合/股票/指数/联接 与份额字母间出现 (QDII)/（QDII）/(QDII-ETF) 等括注
+_QDII_INFIX = r"(?:[（(](?:QDII|LOF|FOF|QDII-ETF)[)）])?"
 COMPLETE_FUND_NAME_RE = re.compile(
     r"^[\u4e00-\u9fffA-Za-z0-9·]{4,40}"
-    r"(?:混合[A-CEH]|联接[A-CEH]|ETF联接[A-CEH]|主题ETF联接[A-CEH]|股票[A-CEH]|指数[A-CEH])$",
+    r"(?:混合|联接|ETF联接|主题ETF联接|股票|指数)"
+    + _QDII_INFIX
+    + r"[A-CEH]$",
     re.IGNORECASE,
 )
 
@@ -288,7 +303,7 @@ def _extract_my_holdings_metrics(
             if not is_near_zero(value) and value != holding_amount:
                 holding_profit = value
                 break
-    elif is_near_zero(holding_profit) and inline_profit_numbers:
+    elif holding_profit is not None and is_near_zero(holding_profit) and inline_profit_numbers:
         for value in inline_profit_numbers:
             if not is_near_zero(value) and value != holding_amount:
                 holding_profit = value

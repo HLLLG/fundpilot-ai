@@ -83,7 +83,9 @@ def align_profit_sign(
     return profit
 
 
-def is_near_zero(value: float) -> bool:
+def is_near_zero(value: float | None) -> bool:
+    if value is None:
+        return False
     return abs(value) < 0.0001
 
 

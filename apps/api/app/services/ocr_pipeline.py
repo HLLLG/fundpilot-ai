@@ -1,15 +1,14 @@
 from __future__ import annotations
 
-import hashlib
 import logging
 from pathlib import Path
 
 from app.config import get_settings
 from app.models import PortfolioSummary
-from app.database import get_ocr_text_cache, save_ocr_text_cache, save_portfolio_summary
+from app.database import save_portfolio_summary
 from app.services.fund_profile import FundProfileService
 from app.services.holding_validation import build_holding_review, enrich_portfolio_summary_source
-from app.services.ocr_engine import OcrEngine
+from app.services.holdings_extractor import ExtractionResult, extract_holdings
 from app.services.fund_code_resolver import (
     UNRESOLVED_FUND_CODE_HINT,
     is_provisional_fund_code,
@@ -17,8 +16,7 @@ from app.services.fund_code_resolver import (
     resolve_holding_fund_code,
 )
 from app.services.fund_name_utils import sanitize_fund_name
-from app.services.alipay_holdings_parser import is_alipay_holdings_page
-from app.services.ocr_parser import detect_ocr_source, parse_holdings_from_text
+from app.services.ocr_parser import detect_ocr_source
 from app.services.trading_session import build_trading_session
 from app.services.overview_pipeline import enrich_holdings_from_profiles, process_overview_holdings
 from app.services.portfolio_parser import parse_portfolio_summary_from_text
@@ -57,44 +55,33 @@ def run_ocr_upload_pipeline(
 ) -> dict:
     settings = get_settings()
     upload_path: Path | None = None
-    cache_hit = False
 
     if file_bytes and filename:
         settings.upload_dir.mkdir(parents=True, exist_ok=True)
         upload_path = settings.upload_dir / Path(filename).name
         upload_path.write_bytes(file_bytes)
-        cache_key = hashlib.sha256(file_bytes).hexdigest()
-        if not text:
-            cached_text = get_ocr_text_cache(cache_key)
-            if cached_text is not None:
-                text = cached_text
-                cache_hit = True
-            else:
-                try:
-                    text = OcrEngine().extract_text(upload_path)
-                    save_ocr_text_cache(cache_key, text)
-                except Exception as exc:
-                    _cleanup_upload_artifacts(upload_path)
-                    return {
-                        "raw_text": "",
-                        "upload_path": str(upload_path),
-                        "holdings": [],
-                        "error": f"OCR 识别失败：{exc}",
-                    }
 
+    try:
+        extraction: ExtractionResult = extract_holdings(file_bytes=file_bytes, text=text)
+    except Exception as exc:  # noqa: BLE001 — 识别异常不应让端点 500
+        _cleanup_upload_artifacts(upload_path)
+        return {
+            "raw_text": "",
+            "upload_path": str(upload_path) if upload_path else None,
+            "holdings": [],
+            "error": f"OCR 识别失败：{exc}",
+            "extraction_provider": "none",
+        }
+
+    text = extraction.raw_text or text
+    parsed_holdings = extraction.holdings
     profile_service = FundProfileService()
-    ocr_source = detect_ocr_source(text) if text else "unknown"
-
-    parsed_holdings = parse_holdings_from_text(text)
-    lines = [line.strip() for line in text.splitlines() if line.strip()] if text else []
-    if parsed_holdings and is_alipay_holdings_page(lines):
-        ocr_source = "alipay_holdings"
-    elif parsed_holdings and ocr_source != "alipay_holdings":
-        ocr_source = "alipay_holdings"
-    # 兜底：能被支付宝持有解析器解析出持仓，即说明这是支付宝持有页。
-    # 避免 OCR 漏读页眉关键词时 detect_ocr_source 误判 unknown，进而错误提示
-    # 「未识别为支付宝持有页」。
-    if parsed_holdings and ocr_source == "unknown":
+    ocr_source = extraction.ocr_source
+    # 文本可用时用 detect_ocr_source 补全更细的来源（如 alipay_transactions）。
+    if ocr_source == "unknown" and text:
+        ocr_source = detect_ocr_source(text)
+    # 兜底：能解析出持仓即视为支付宝持有页，避免页眉漏读时错误提示「未识别为支付宝持有页」。
+    if parsed_holdings and ocr_source != "alipay_holdings":
         ocr_source = "alipay_holdings"
     holdings, fund_code_resolutions = _resolve_fund_codes(parsed_holdings, profile_service)
     holdings = profile_service.resolve_holdings(holdings)
@@ -161,7 +148,8 @@ def run_ocr_upload_pipeline(
         "raw_text": text,
         "upload_path": str(upload_path) if upload_path else None,
         "holdings": [holding.model_dump() for holding in holdings],
-        "cache_hit": cache_hit,
+        "cache_hit": False,
+        "extraction_provider": extraction.provider,
         "preview": preview,
         "ocr_source": ocr_source,
         "fund_code_resolutions": fund_code_resolutions,
