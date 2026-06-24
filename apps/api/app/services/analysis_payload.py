@@ -300,6 +300,12 @@ def build_user_payload(
     nav_trends = nav_trends_by_code or {}
     session = build_trading_session()
     include_portfolio_trend = not (phase >= 2 and analysis_mode == "fast")
+    try:
+        from app.services.portfolio_snapshot import build_factor_scores_for_facts
+
+        factor_scores = build_factor_scores_for_facts(request.holdings)
+    except Exception:  # noqa: BLE001 — best-effort，绝不阻塞日报
+        factor_scores = None
     facts = build_analysis_facts(
         request.holdings,
         risk,
@@ -310,6 +316,7 @@ def build_user_payload(
         prefetched_news,
         session=session,
         portfolio_trend=build_portfolio_trend_context() if include_portfolio_trend else None,
+        factor_scores=factor_scores,
         for_llm=True,
     )
     facts = trim_analysis_facts_for_llm(

@@ -26,6 +26,24 @@ def _stub_signal_backtest(monkeypatch):
     )
 
 
+def test_build_analysis_facts_attaches_factor_scores():
+    holdings = [Holding(fund_code="015608", fund_name="基金A", holding_amount=5000)]
+    profile = InvestorProfile()
+    risk = evaluate_portfolio_risk(holdings, profile)
+    factor_scores = {
+        "available": True,
+        "universe_size": 300,
+        "factor_reliability": {"momentum": {"level": "高", "basis": "回测显著正向"}},
+        "holdings": [{"fund_code": "015608", "composite_grade": "A"}],
+    }
+    facts = build_analysis_facts(
+        holdings, risk, [], profile, factor_scores=factor_scores
+    )
+    assert facts["factor_scores"]["available"] is True
+    assert facts["factor_scores"]["factor_reliability"]["momentum"]["level"] == "高"
+    assert "factor_reliability" in facts["instruction"]
+
+
 def test_build_analysis_facts_marks_concentration():
     holdings = [
         Holding(
