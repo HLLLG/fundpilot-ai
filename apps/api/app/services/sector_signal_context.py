@@ -119,6 +119,10 @@ def _compact_rules(raw: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
             "trigger_count": triggers,
             "hit_count": int(bucket.get("hit_count") or 0),
             "hit_rate_percent": bucket.get("hit_rate_percent"),
+            "baseline_rate_percent": bucket.get("baseline_rate_percent"),
+            "edge_percent": bucket.get("edge_percent"),
+            "significant": bucket.get("significant"),
+            "beats_baseline": bucket.get("beats_baseline"),
             "beats_random": bucket.get("beats_random"),
         }
     return compact

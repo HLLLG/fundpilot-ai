@@ -32,8 +32,11 @@ function RuleCard({ rule }: { rule: SectorSignalBacktestRule }) {
       </div>
       <p className="mt-2 text-xs text-slate-600">
         触发 {rule.trigger_count} 次 · 命中 {rule.hit_count}
-        {rule.beats_random != null
-          ? ` · ${rule.beats_random ? "高于" : "不高于"}随机 50%`
+        {rule.baseline_rate_percent != null
+          ? ` · 自然基准 ${rule.baseline_rate_percent}%`
+          : ""}
+        {rule.significant != null
+          ? ` · ${rule.significant ? "显著跑赢 ✓" : "未显著跑赢"}`
           : ""}
       </p>
     </div>

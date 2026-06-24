@@ -26,6 +26,66 @@ _DEFAULT_RULES = ("reversal_down", "sector_weak", "intraday_pullback", "baseline
 _BACKTEST_RESPONSE_TTL_SECONDS = 86400
 _BACKTEST_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 
+# Bug B 修复：命中率基准不是固定 50%，而是「方向感知的自然发生率」+ 统计显著性。
+MIN_TRIGGERS_FOR_SIGNIFICANCE = 30  # 触发次数太少时不下「有效」结论（可能是运气）
+EDGE_MIN_PERCENT = 5.0  # 命中率需超过基准至少这么多个百分点才算真有超额
+_FLAT_THRESHOLD = 0.3  # 与 sector_signal_rules.FLAT_THRESHOLD 对齐
+
+
+def _direction_fractions(changes: list[float]) -> tuple[float, float, float]:
+    """一组日涨跌的方向分布（up, down, flat 占比）。空集返回全 0。"""
+    if not changes:
+        return 0.0, 0.0, 0.0
+    up = down = flat = 0
+    for ch in changes:
+        if abs(ch) < _FLAT_THRESHOLD:
+            flat += 1
+        elif ch > 0:
+            up += 1
+        else:
+            down += 1
+    total = len(changes)
+    return up / total, down / total, flat / total
+
+
+def _baseline_prob(prediction: str, fracs: tuple[float, float, float]) -> float:
+    """某预测方向在随机时点上「自然命中」的概率（方向感知的 base rate）。"""
+    up, down, flat = fracs
+    if prediction == "up":
+        return up
+    if prediction == "down":
+        return down
+    if prediction == "down_or_flat":
+        return down + flat
+    return 0.0
+
+
+def _finalize_bucket(bucket: dict[str, Any]) -> None:
+    """就地补全命中率/基准/超额/显著性。
+
+    显著 = 触发次数 >= 门槛 且 命中率超过基准 > EDGE_MIN_PERCENT。
+    `beats_random` 保留为 `beats_baseline` 的向后兼容别名。
+    """
+    triggers = int(bucket.get("trigger_count") or 0)
+    if triggers <= 0:
+        bucket["hit_rate_percent"] = None
+        bucket["baseline_rate_percent"] = None
+        bucket["edge_percent"] = None
+        bucket["significant"] = False
+        bucket["beats_baseline"] = False
+        bucket["beats_random"] = False
+        return
+    hit_rate = bucket["hit_count"] / triggers * 100
+    baseline = float(bucket.get("expected_random_hits") or 0.0) / triggers * 100
+    edge = hit_rate - baseline
+    significant = triggers >= MIN_TRIGGERS_FOR_SIGNIFICANCE and edge > EDGE_MIN_PERCENT
+    bucket["hit_rate_percent"] = round(hit_rate, 1)
+    bucket["baseline_rate_percent"] = round(baseline, 1)
+    bucket["edge_percent"] = round(edge, 1)
+    bucket["significant"] = significant
+    bucket["beats_baseline"] = significant
+    bucket["beats_random"] = significant
+
 
 def _backtest_cache_key(
     sector_labels: list[str] | None,
@@ -216,8 +276,13 @@ def _evaluate_rules(
             "trigger_count": 0,
             "hit_count": 0,
             "miss_count": 0,
+            "expected_random_hits": 0.0,
             "hit_rate_percent": None,
         }
+
+    # 基准用的「未来日」方向分布：回测里被当作 outcome 的那批 bar（series[2:]）。
+    next_changes = [float(series[i + 1]["change_percent"]) for i in range(1, len(series) - 1)]
+    fracs = _direction_fractions(next_changes)
 
     for index in range(1, len(series) - 1):
         prev_bar = series[index - 1]
@@ -241,15 +306,14 @@ def _evaluate_rules(
                 continue
             bucket = stats[rule_id]
             bucket["trigger_count"] += 1
+            bucket["expected_random_hits"] += _baseline_prob(prediction, fracs)
             if prediction_matches(prediction, next_change):
                 bucket["hit_count"] += 1
             else:
                 bucket["miss_count"] += 1
 
     for bucket in stats.values():
-        triggers = int(bucket["trigger_count"])
-        if triggers:
-            bucket["hit_rate_percent"] = round(bucket["hit_count"] / triggers * 100, 1)
+        _finalize_bucket(bucket)
     return stats
 
 
@@ -266,11 +330,13 @@ def _merge_rule_stats(
                 "trigger_count": 0,
                 "hit_count": 0,
                 "miss_count": 0,
+                "expected_random_hits": 0.0,
             },
         )
         target["trigger_count"] += int(bucket.get("trigger_count") or 0)
         target["hit_count"] += int(bucket.get("hit_count") or 0)
         target["miss_count"] += int(bucket.get("miss_count") or 0)
+        target["expected_random_hits"] += float(bucket.get("expected_random_hits") or 0.0)
 
 
 def _finalize_aggregate(
@@ -282,13 +348,9 @@ def _finalize_aggregate(
         bucket = aggregate.get(rule_id)
         if not bucket:
             continue
-        triggers = int(bucket["trigger_count"])
-        hit_rate = round(bucket["hit_count"] / triggers * 100, 1) if triggers else None
-        by_rule[rule_id] = {
-            **bucket,
-            "hit_rate_percent": hit_rate,
-            "beats_random": hit_rate is not None and hit_rate > 50.0,
-        }
+        merged = {**bucket}
+        _finalize_bucket(merged)
+        by_rule[rule_id] = merged
     return {"by_rule": by_rule}
 
 
@@ -298,10 +360,13 @@ def _summary_lines(by_rule: dict[str, dict[str, Any]]) -> list[str]:
         bucket = by_rule.get(rule_id)
         if not bucket or not bucket.get("trigger_count"):
             continue
+        baseline = bucket.get("baseline_rate_percent")
+        edge = bucket.get("edge_percent")
+        verdict = "显著跑赢基准 ✓" if bucket.get("significant") else "未显著跑赢基准"
         lines.append(
             f"{bucket['label']}：触发 {bucket['trigger_count']} 次，"
             f"T+1 命中率 {bucket['hit_rate_percent']}%"
-            f"（{'高于' if bucket.get('beats_random') else '不高于'}随机基准 50%）。"
+            f"（自然基准 {baseline}%，超额 {edge}pp，{verdict}）。"
         )
     if not lines:
         lines.append("样本内无足够触发次数，请拉长 lookback 或换板块。")

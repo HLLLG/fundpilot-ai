@@ -1442,6 +1442,10 @@ export type SectorSignalBacktestRule = {
   trigger_count: number;
   hit_count: number;
   hit_rate_percent: number | null;
+  baseline_rate_percent?: number | null;
+  edge_percent?: number | null;
+  significant?: boolean | null;
+  beats_baseline?: boolean | null;
   beats_random?: boolean | null;
 };
 
