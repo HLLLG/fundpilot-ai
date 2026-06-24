@@ -323,6 +323,25 @@ def build_factor_scores_for_facts(
     return compact
 
 
+def build_risk_metrics_for_facts(
+    history_rows: list[dict],
+    holdings_models: list[Holding],
+) -> dict:
+    """喂 LLM 用的组合风险度量（挂样本充足度置信），best-effort。
+
+    内部走 build_risk_metrics_payload（取沪深300日线），任意异常 → available=false，
+    不抛、不阻塞日报。
+    """
+    from app.services.risk_confidence import risk_metrics_confidence
+
+    try:
+        payload = build_risk_metrics_payload(history_rows, holdings_models)
+    except Exception:  # noqa: BLE001 — best-effort，绝不阻塞日报
+        return {"available": False, "message": "风险指标暂不可用"}
+    payload["confidence"] = risk_metrics_confidence(payload)
+    return payload
+
+
 def snapshot_date_key(when: datetime | None = None) -> str:
     moment = when or datetime.now(timezone.utc)
     return moment.date().isoformat()

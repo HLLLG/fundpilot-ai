@@ -178,6 +178,34 @@ def test_factor_scores_for_facts_best_effort_on_failure():
     assert "message" in out
 
 
+# ---------------------------------------------------------------------------
+# 模块4 竖切4：build_risk_metrics_for_facts（挂样本充足度置信，best-effort）
+# ---------------------------------------------------------------------------
+
+from app.services import portfolio_snapshot as _ps  # noqa: E402
+
+
+def test_risk_metrics_for_facts_attaches_confidence(monkeypatch):
+    monkeypatch.setattr(
+        _ps,
+        "build_risk_metrics_payload",
+        lambda rows, holdings: {"available": True, "sample_days": 150, "sharpe_ratio": 1.2},
+    )
+    out = _ps.build_risk_metrics_for_facts([{"x": 1}], [])
+    assert out["available"] is True
+    assert out["confidence"]["level"] == "高"
+
+
+def test_risk_metrics_for_facts_best_effort_on_failure(monkeypatch):
+    def _boom(rows, holdings):
+        raise RuntimeError("index down")
+
+    monkeypatch.setattr(_ps, "build_risk_metrics_payload", _boom)
+    out = _ps.build_risk_metrics_for_facts([{"x": 1}], [])
+    assert out["available"] is False
+    assert "message" in out
+
+
 def test_build_risk_correlation_payload_single_holding_unavailable():
     from app.models import FundNavPoint
 
