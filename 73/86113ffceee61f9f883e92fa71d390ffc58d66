@@ -1,0 +1,19 @@
+docs/superpowers/specs/2026-06-24-signal-confidence-design.md
+  s_e7db4dc3ac42fe::t_900522afc5e197 1-143
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.18-trip",
+  "base_commit_sha": "7386113ffceee61f9f883e92fa71d390ffc58d66",
+  "prompts": {},
+  "sessions": {
+    "s_e7db4dc3ac42fe": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "e6dd7659-93b8-4e68-aba8-cdabb47c530f",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
