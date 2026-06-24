@@ -1,0 +1,33 @@
+apps/api/app/services/portfolio_snapshot.py
+  s_e7db4dc3ac42fe::t_ec0e7b095e0d2c 3
+  s_e7db4dc3ac42fe::t_f72257629a42f7 254-325
+apps/api/tests/test_portfolio_snapshot.py
+  s_e7db4dc3ac42fe::t_e9cec0189776d6 115-118,120
+  s_e7db4dc3ac42fe::t_4afd64e13da6e6 119,121-179
+  s_5ce134945012c9::t_d5c365642e800b 8
+  s_5ce134945012c9::t_30c3c5df1147ce 86-114,180-189
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.18-trip",
+  "base_commit_sha": "6b1258712466fb4206afe6bd219bd5e2f0b7fc1a",
+  "prompts": {},
+  "sessions": {
+    "s_5ce134945012c9": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "4582a977-ede3-4147-9dcc-ee6c922a3c59",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    },
+    "s_e7db4dc3ac42fe": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "e6dd7659-93b8-4e68-aba8-cdabb47c530f",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
