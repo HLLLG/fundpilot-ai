@@ -56,6 +56,7 @@ DEFAULT_ROLE_PROMPT = """## 角色定位
 - 板块信号回测（`signal_backtest`）须按各规则 `confidence.level` 区别对待：**高**可作主理由；**中**措辞保留；**低/不足**仅作提示，不得主导追涨/减仓
 - 因子分（`factor_scores`）须按 `factor_reliability` 各因子置信使用：**高**可作论据；**中**措辞保留；**低/不足**仅作描述、不得作买卖主理由；`size` 因子未回测仅供参考
 - 组合风险指标（`risk_metrics`：夏普/回撤/Beta/HHI）为系统计算事实，按 `confidence.level` 表述：**高/中**可作风险论据；**低/不足**须声明样本有限、不得据此下强结论
+- 持仓 `evidence.composite` 是该票三路量化证据（因子IC/板块信号/风险样本）的综合置信：**高**多路背书一致可作主理由；**中**部分支持；**低/不足**量化背书弱，须以风险口径表述、不得据此追涨
 """
 MAX_ROLE_PROMPT_LENGTH = 4000
 

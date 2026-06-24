@@ -23,6 +23,7 @@ from app.services.sector_signal_context import (
     signal_backtest_for_sector,
 )
 from app.services.signal_guard_policy import resolve_signal_guard_policy
+from app.services.signal_synthesis import build_holding_evidence
 from app.services.trading_session import get_effective_trade_date
 from app.services.risk import holding_weight_percent, resolve_weight_denominator
 from app.services.sector_intraday_summary import summarize_sector_intraday_for_holding
@@ -107,6 +108,14 @@ def build_analysis_facts(
             }
         if for_llm:
             row["sector_fund_gap_percent"] = compute_sector_fund_gap_percent(holding)
+        evidence = build_holding_evidence(
+            fund_code=holding.fund_code,
+            signal_entry=row["signal_backtest"],
+            factor_scores=factor_scores,
+            risk_metrics=risk_metrics,
+        )
+        if evidence:
+            row["evidence"] = evidence
         per_fund.append(row)
 
     facts: dict = {
@@ -124,6 +133,9 @@ def build_analysis_facts(
             "组合风险指标(risk_metrics：夏普/回撤/Beta/HHI)为系统计算事实，"
             "按 confidence.level 表述：「高/中」可作风险论据；"
             "「低/不足」须声明样本有限、不得据此下强结论。"
+            "持仓的 evidence.composite 是该票三路量化证据(因子IC/板块信号/风险样本)的"
+            "综合置信：「高」表多路背书一致、可作主理由；「中」部分支持；"
+            "「低/不足」量化背书弱、须以风险口径表述、不得据此追涨。"
         ),
         "portfolio": {
             "total_amount": round(total_amount, 2),

@@ -61,6 +61,37 @@ def test_build_analysis_facts_attaches_risk_metrics():
     assert "risk_metrics" in facts["instruction"]
 
 
+def test_build_analysis_facts_attaches_holding_evidence():
+    holdings = [Holding(fund_code="000001", fund_name="基金A", holding_amount=5000)]
+    profile = InvestorProfile()
+    risk = evaluate_portfolio_risk(holdings, profile)
+    factor_scores = {
+        "available": True,
+        "factor_reliability": {
+            "momentum": {"level": "高", "basis": "回测显著正向（IC +0.04），置信高"},
+        },
+        "holdings": [
+            {
+                "fund_code": "000001",
+                "composite_grade": "A",
+                "factor_percentiles": {"momentum": 88, "risk_adjusted": 70, "drawdown": 60, "size": 40},
+            }
+        ],
+    }
+    risk_metrics = {
+        "available": True,
+        "confidence": {"level": "高", "basis": "150 交易日样本，置信高"},
+    }
+    facts = build_analysis_facts(
+        holdings, risk, [], profile,
+        factor_scores=factor_scores, risk_metrics=risk_metrics,
+    )
+    row = {item["fund_code"]: item for item in facts["holdings"]}["000001"]
+    assert "evidence" in row
+    assert row["evidence"]["composite"]["level"] == "高"
+    assert "evidence" in facts["instruction"]
+
+
 def test_build_analysis_facts_marks_concentration():
     holdings = [
         Holding(
