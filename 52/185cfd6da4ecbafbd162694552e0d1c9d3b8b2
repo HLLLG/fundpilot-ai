@@ -1,0 +1,21 @@
+apps/api/tests/test_fund_factor_nav.py
+  s_e7db4dc3ac42fe::t_81504e84b43c1e 1-36
+apps/api/app/services/fund_factor_nav.py
+  s_e7db4dc3ac42fe::t_2093ce6f3467ae 1-39
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.18-trip",
+  "base_commit_sha": "52185cfd6da4ecbafbd162694552e0d1c9d3b8b2",
+  "prompts": {},
+  "sessions": {
+    "s_e7db4dc3ac42fe": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "e6dd7659-93b8-4e68-aba8-cdabb47c530f",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
