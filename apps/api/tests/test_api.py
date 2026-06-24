@@ -14,6 +14,17 @@ def test_health_endpoint_returns_ok():
     assert response.json()["status"] == "ok"
 
 
+def test_portfolio_factor_scores_endpoint_contract(client: TestClient):
+    # 离线 stub 下排行榜为空 → available=false，但接口结构契约须满足。
+    response = client.get("/api/portfolio/factor-scores")
+    assert response.status_code == 200
+    body = response.json()
+    assert "available" in body
+    assert "universe_size" in body
+    assert "funds" in body
+    assert isinstance(body["funds"], list)
+
+
 def test_allocate_penetration_daily_endpoint(client: TestClient):
     response = client.post(
         "/api/holdings/allocate-penetration-daily",

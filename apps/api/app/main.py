@@ -87,7 +87,11 @@ from app.services.portfolio_holdings_cache import (
     save_cached_holdings_response,
 )
 from app.services.portfolio_persistence import persist_holdings_after_sector_refresh
-from app.services.portfolio_snapshot import build_dashboard_payload
+from app.services.portfolio_snapshot import (
+    build_dashboard_payload,
+    build_factor_scores_payload,
+    build_risk_correlation_payload,
+)
 from app.services.job_status_service import resolve_job_status_single_connection
 from app.services.job_store import create_analysis_job
 from app.services.discovery_job_store import create_discovery_job
@@ -1155,6 +1159,25 @@ def portfolio_dashboard(
     )
     payload["profiles"] = [profile.model_dump(mode="json") for profile in profiles]
     return payload
+
+
+@app.get("/api/portfolio/risk-correlation")
+def portfolio_risk_correlation(lookback_days: int = 120) -> dict:
+    """持仓相关性矩阵（懒加载，逐只拉净值历史）。"""
+    lookback = max(30, min(lookback_days, 400))
+    holdings, *_ = load_persisted_holdings()
+    return build_risk_correlation_payload(holdings, lookback_days=lookback)
+
+
+@app.get("/api/portfolio/factor-scores")
+def portfolio_factor_scores() -> dict:
+    """持仓因子体检（懒加载）：排行榜横截面 z-score 多因子打分。
+
+    模块2 第一期；设计见
+    docs/superpowers/specs/2026-06-24-fund-factor-scores-design.md。
+    """
+    holdings, *_ = load_persisted_holdings()
+    return build_factor_scores_payload(holdings)
 
 
 @app.get("/api/portfolio/holdings")
