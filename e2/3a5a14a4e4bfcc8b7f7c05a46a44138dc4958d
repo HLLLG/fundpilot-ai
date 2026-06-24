@@ -1,0 +1,33 @@
+apps/api/tests/test_signal_synthesis.py
+  s_e7db4dc3ac42fe::t_3c8eef20c4a75a 7-11
+  s_e7db4dc3ac42fe::t_18fcbe9fc93489 124-168
+apps/api/app/services/signal_synthesis.py
+  s_e7db4dc3ac42fe::t_faf3f64a1350e8 129-164
+  s_e7db4dc3ac42fe::t_50e74e1d8c2260 12
+apps/api/app/services/analysis_facts.py
+  s_e7db4dc3ac42fe::t_fe53ccc6fc0a7d 180-182
+  s_e7db4dc3ac42fe::t_09a9ba35956615 26
+  s_e7db4dc3ac42fe::t_18bb869422342d 139-141
+apps/api/app/services/analysis_prompt.py
+  s_e7db4dc3ac42fe::t_ac318e7ec6ee41 60
+docs/superpowers/specs/2026-06-24-evidence-overview-design.md
+  s_e7db4dc3ac42fe::t_206563f7c2258f 1-103
+apps/api/tests/test_analysis_facts.py
+  s_e7db4dc3ac42fe::t_231960331afa0c 93-95
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.18-trip",
+  "base_commit_sha": "e23a5a14a4e4bfcc8b7f7c05a46a44138dc4958d",
+  "prompts": {},
+  "sessions": {
+    "s_e7db4dc3ac42fe": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "e6dd7659-93b8-4e68-aba8-cdabb47c530f",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
