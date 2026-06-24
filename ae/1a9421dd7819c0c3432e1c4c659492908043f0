@@ -1,0 +1,24 @@
+apps/api/app/services/sector_signal_context.py
+  s_e7db4dc3ac42fe::t_895f25ff80cbce 130
+  s_e7db4dc3ac42fe::t_8609c881e7a25c 4,13
+apps/api/app/services/analysis_facts.py
+  s_e7db4dc3ac42fe::t_667d69660ca4e8 116-118
+apps/api/tests/test_sector_signal_context.py
+  s_e7db4dc3ac42fe::t_cefd15b266c0f2 1-41
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.18-trip",
+  "base_commit_sha": "ae1a9421dd7819c0c3432e1c4c659492908043f0",
+  "prompts": {},
+  "sessions": {
+    "s_e7db4dc3ac42fe": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "e6dd7659-93b8-4e68-aba8-cdabb47c530f",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
