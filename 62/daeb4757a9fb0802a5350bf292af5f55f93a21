@@ -1,0 +1,19 @@
+apps/api/app/services/portfolio_snapshot.py
+  s_e7db4dc3ac42fe::t_91132aff09bb25 149,153,176
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.18-trip",
+  "base_commit_sha": "62daeb4757a9fb0802a5350bf292af5f55f93a21",
+  "prompts": {},
+  "sessions": {
+    "s_e7db4dc3ac42fe": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "e6dd7659-93b8-4e68-aba8-cdabb47c530f",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
