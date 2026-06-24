@@ -1,0 +1,33 @@
+apps/web/src/app/globals.css
+  s_e7db4dc3ac42fe::t_5d6e14dc52bced 731-756
+apps/web/src/lib/fundFactors.ts
+  s_e7db4dc3ac42fe::t_7bc93e49f9f437 19-26
+apps/web/src/components/PortfolioFactorScoresPanel.tsx
+  s_e7db4dc3ac42fe::t_c9b8338f843a02 4-9,15
+  s_e7db4dc3ac42fe::t_1b83de5fd0f4b2 35,40,47-57
+  s_e7db4dc3ac42fe::t_295c24c70e061d 106
+  s_e7db4dc3ac42fe::t_f777d66cf24d8d 185-190
+  s_e7db4dc3ac42fe::t_7cf0a4a5da21e5 72-80
+apps/api/app/main.py
+  s_e7db4dc3ac42fe::t_1784b331a040f9 1180-1187
+apps/web/src/lib/fundFactors.test.ts
+  s_e7db4dc3ac42fe::t_87729f8365d6f6 6,13-22
+apps/web/src/lib/api.ts
+  s_e7db4dc3ac42fe::t_32a179d2128adb 399-400,406
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.18-trip",
+  "base_commit_sha": "c804f955a43fde9bd23015440479db83b7dbd17d",
+  "prompts": {},
+  "sessions": {
+    "s_e7db4dc3ac42fe": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "e6dd7659-93b8-4e68-aba8-cdabb47c530f",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
