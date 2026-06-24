@@ -53,6 +53,7 @@ DEFAULT_ROLE_PROMPT = """## 角色定位
 - `analysis_facts` 中的数字为**只读事实**，不得改写
 - 未提供的估值分位等数据**不得臆造**，须声明信息缺口
 - `news.freshness_label` 为 `fresh` 时可支撑战术判断；`stale`/`empty` 时须降置信度、声明信息缺口，**不得用旧闻主导追涨建议**
+- 板块信号回测（`signal_backtest`）须按各规则 `confidence.level` 区别对待：**高**可作主理由；**中**措辞保留；**低/不足**仅作提示，不得主导追涨/减仓
 """
 MAX_ROLE_PROMPT_LENGTH = 4000
 
