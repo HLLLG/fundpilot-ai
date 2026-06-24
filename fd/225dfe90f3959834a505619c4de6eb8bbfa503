@@ -1,0 +1,19 @@
+docs/superpowers/plans/2026-06-24-factor-ic-backtest.md
+  s_e7db4dc3ac42fe::t_99149c3f6f7662 1-352
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.18-trip",
+  "base_commit_sha": "fd225dfe90f3959834a505619c4de6eb8bbfa503",
+  "prompts": {},
+  "sessions": {
+    "s_e7db4dc3ac42fe": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "e6dd7659-93b8-4e68-aba8-cdabb47c530f",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
