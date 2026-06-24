@@ -396,11 +396,14 @@ export type FundFactorScore = {
   factors: Record<FactorKey, FactorDetail>;
 };
 
+export type FactorReliability = { level: string; basis: string };
+
 export type PortfolioFactorScores = {
   available: boolean;
   universe_size: number;
   message?: string | null;
   funds: FundFactorScore[];
+  factor_reliability?: Record<string, FactorReliability> | null;
 };
 
 export type PortfolioDashboardData = {

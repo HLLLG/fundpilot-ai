@@ -1177,7 +1177,14 @@ def portfolio_factor_scores() -> dict:
     docs/superpowers/specs/2026-06-24-fund-factor-scores-design.md。
     """
     holdings, *_ = load_persisted_holdings()
-    return build_factor_scores_payload(holdings)
+    payload = build_factor_scores_payload(holdings)
+    try:
+        from app.services.factor_confidence import factor_reliability
+
+        payload["factor_reliability"] = factor_reliability()
+    except Exception:  # noqa: BLE001 — IC 置信缺失不应影响因子分主体
+        pass
+    return payload
 
 
 @app.get("/api/portfolio/holdings")

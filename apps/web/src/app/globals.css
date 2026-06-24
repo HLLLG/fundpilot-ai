@@ -728,6 +728,32 @@ button:disabled {
   color: var(--foreground);
 }
 
+.factor-ic-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 0.625rem;
+  font-weight: 700;
+  vertical-align: middle;
+}
+.factor-ic-tag.factor-tone-good {
+  background: rgba(37, 99, 235, 0.12);
+  color: #2563eb;
+}
+.factor-ic-tag.factor-tone-warn {
+  background: rgba(251, 140, 59, 0.16);
+  color: #c2610a;
+}
+.factor-ic-tag.factor-tone-danger {
+  background: rgba(225, 29, 72, 0.12);
+  color: #be123c;
+}
+.factor-ic-tag.factor-tone-neutral {
+  background: rgba(100, 116, 139, 0.12);
+  color: #64748b;
+}
+
 .factor-bar-value {
   color: var(--muted, #64748b);
 }

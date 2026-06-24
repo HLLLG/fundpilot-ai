@@ -3,11 +3,22 @@ import { describe, expect, it } from "vitest";
 import {
   factorLabel,
   factorPercentileHint,
+  factorReliabilityTone,
   formatPercentile,
   gradeTone,
   compositeSummary,
 } from "@/lib/fundFactors";
 import type { FundFactorScore } from "@/lib/api";
+
+describe("factorReliabilityTone", () => {
+  it("maps IC confidence levels to tones", () => {
+    expect(factorReliabilityTone("高")).toBe("good");
+    expect(factorReliabilityTone("中")).toBe("warn");
+    expect(factorReliabilityTone("低")).toBe("danger");
+    expect(factorReliabilityTone("不足")).toBe("neutral");
+    expect(factorReliabilityTone(undefined)).toBe("neutral");
+  });
+});
 
 describe("formatPercentile", () => {
   it("formats null as em dash", () => {

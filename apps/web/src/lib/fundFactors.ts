@@ -16,6 +16,14 @@ export function factorLabel(key: FactorKey): string {
   return FACTOR_LABELS[key];
 }
 
+// 因子 IC 置信标签配色（模块4 竖切3）：高=good / 中=warn / 低=danger / 不足·未知=neutral
+export function factorReliabilityTone(level: string | undefined | null): FactorTone {
+  if (level === "高") return "good";
+  if (level === "中") return "warn";
+  if (level === "低") return "danger";
+  return "neutral";
+}
+
 export function formatPercentile(value: number | null | undefined): string {
   if (value == null || Number.isNaN(value)) {
     return "—";

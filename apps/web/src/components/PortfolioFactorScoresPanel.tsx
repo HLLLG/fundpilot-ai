@@ -1,12 +1,18 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { FactorKey, FundFactorScore, PortfolioFactorScores } from "@/lib/api";
+import type {
+  FactorKey,
+  FactorReliability,
+  FundFactorScore,
+  PortfolioFactorScores,
+} from "@/lib/api";
 import { fetchPortfolioFactorScores } from "@/lib/api";
 import {
   compositeSummary,
   factorLabel,
   factorPercentileHint,
+  factorReliabilityTone,
   formatPercentile,
   gradeTone,
   percentileTone,
@@ -26,17 +32,29 @@ function FactorBar({
   factorKey,
   percentile,
   locked,
+  reliability,
 }: {
   factorKey: FactorKey;
   percentile: number | null;
   locked: boolean;
+  reliability?: FactorReliability | null;
 }) {
   const tone = locked ? "neutral" : percentileTone(percentile);
   const width = percentile == null ? 0 : Math.max(2, Math.min(100, percentile));
   return (
     <div className={`factor-bar factor-tone-${tone}`}>
       <div className="factor-bar-head">
-        <span className="factor-bar-label">{factorLabel(factorKey)}</span>
+        <span className="factor-bar-label">
+          {factorLabel(factorKey)}
+          {reliability ? (
+            <span
+              className={`factor-ic-tag factor-tone-${factorReliabilityTone(reliability.level)}`}
+              title={reliability.basis}
+            >
+              IC·{reliability.level}
+            </span>
+          ) : null}
+        </span>
         <span className="factor-bar-value">
           {locked ? "•••" : formatPercentile(percentile)}
         </span>
@@ -51,7 +69,15 @@ function FactorBar({
   );
 }
 
-function FundCard({ fund, isPro }: { fund: FundFactorScore; isPro: boolean }) {
+function FundCard({
+  fund,
+  isPro,
+  reliability,
+}: {
+  fund: FundFactorScore;
+  isPro: boolean;
+  reliability?: Record<string, FactorReliability> | null;
+}) {
   const tone = gradeTone(fund.composite_grade);
   return (
     <div className="factor-fund-card">
@@ -77,6 +103,7 @@ function FundCard({ fund, isPro }: { fund: FundFactorScore; isPro: boolean }) {
             factorKey={key}
             percentile={fund.factors[key]?.percentile ?? null}
             locked={pro && !isPro}
+            reliability={reliability?.[key] ?? null}
           />
         ))}
       </div>
@@ -155,7 +182,12 @@ export function PortfolioFactorScoresPanel({ enabled }: { enabled: boolean }) {
     <div className="factor-panel-body">
       <div className="factor-cards">
         {data.funds.map((fund) => (
-          <FundCard key={fund.fund_code} fund={fund} isPro={isPro} />
+          <FundCard
+            key={fund.fund_code}
+            fund={fund}
+            isPro={isPro}
+            reliability={data.factor_reliability}
+          />
         ))}
       </div>
       <div className="factor-foot">
