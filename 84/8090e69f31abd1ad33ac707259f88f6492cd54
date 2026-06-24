@@ -1,0 +1,32 @@
+apps/api/app/main.py
+  s_5ce134945012c9::t_237c98d22f1588 90-91,93-94
+  s_e7db4dc3ac42fe::t_ffe3ff785b49fb 92
+  s_e7db4dc3ac42fe::t_8202e4b9149562 1172-1182
+  s_5ce134945012c9::t_0bea0fc829da30 1164-1171
+apps/api/tests/test_api.py
+  s_e7db4dc3ac42fe::t_a21c48dd05ad33 17-27
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.18-trip",
+  "base_commit_sha": "848090e69f31abd1ad33ac707259f88f6492cd54",
+  "prompts": {},
+  "sessions": {
+    "s_5ce134945012c9": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "4582a977-ede3-4147-9dcc-ee6c922a3c59",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    },
+    "s_e7db4dc3ac42fe": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "e6dd7659-93b8-4e68-aba8-cdabb47c530f",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
