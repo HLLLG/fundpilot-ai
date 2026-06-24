@@ -25,6 +25,17 @@ def test_portfolio_factor_scores_endpoint_contract(client: TestClient):
     assert isinstance(body["funds"], list)
 
 
+def test_portfolio_evidence_overview_endpoint_contract(client: TestClient):
+    # 离线 stub 下三路多半缺失 → available=false，但接口须 200 且结构契约满足。
+    response = client.get("/api/portfolio/evidence-overview")
+    assert response.status_code == 200
+    body = response.json()
+    assert "available" in body
+    assert "overview" in body
+    assert "holdings" in body
+    assert isinstance(body["holdings"], list)
+
+
 def test_allocate_penetration_daily_endpoint(client: TestClient):
     response = client.post(
         "/api/holdings/allocate-penetration-daily",

@@ -1187,6 +1187,22 @@ def portfolio_factor_scores() -> dict:
     return payload
 
 
+@app.get("/api/portfolio/evidence-overview")
+def portfolio_evidence_overview() -> dict:
+    """组合层证据总览（懒加载）：每只持仓三路量化置信聚合 → 组合级背书分布。
+
+    模块4 证据卡延伸；设计见
+    docs/superpowers/specs/2026-06-24-evidence-overview-design.md。
+    """
+    from app.services.portfolio_snapshot import build_evidence_overview_payload
+
+    holdings, *_ = load_persisted_holdings()
+    try:
+        return build_evidence_overview_payload(holdings)
+    except Exception:  # noqa: BLE001 — best-effort，不应 500
+        return {"available": False, "overview": {"available": False}, "holdings": []}
+
+
 @app.get("/api/portfolio/holdings")
 def portfolio_holdings() -> dict:
     cached = get_cached_holdings_response()

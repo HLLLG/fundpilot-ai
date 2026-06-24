@@ -342,6 +342,73 @@ def build_risk_metrics_for_facts(
     return payload
 
 
+def build_evidence_overview_payload(holdings_models: list[Holding]) -> dict:
+    """组合层证据总览（懒加载端点用）：精简装配三路 → 逐持仓 evidence → 组合级汇总。
+
+    factor_scores 走 TTL 缓存、risk_metrics 取日快照、signal 取板块上下文；
+    任一路 best-effort 缺失，全失败 → available=false。不触发 LLM、不阻塞。
+    """
+    from app.services.sector_signal_context import (
+        build_signal_backtest_context,
+        sector_labels_from_holdings,
+        signal_backtest_for_sector,
+    )
+    from app.services.signal_synthesis import (
+        build_evidence_overview,
+        build_holding_evidence,
+    )
+
+    try:
+        factor_scores = build_factor_scores_for_facts(holdings_models)
+    except Exception:  # noqa: BLE001
+        factor_scores = None
+
+    risk_metrics = None
+    try:
+        from app.database import list_portfolio_daily_snapshots
+
+        history_rows = list_portfolio_daily_snapshots(limit=400)
+        risk_metrics = build_risk_metrics_for_facts(history_rows, holdings_models)
+    except Exception:  # noqa: BLE001
+        risk_metrics = None
+
+    try:
+        signal_ctx = build_signal_backtest_context(
+            sector_labels_from_holdings(holdings_models)
+        )
+    except Exception:  # noqa: BLE001
+        signal_ctx = None
+
+    rows: list[dict] = []
+    for holding in holdings_models:
+        signal_entry = (
+            signal_backtest_for_sector(holding.sector_name, signal_ctx)
+            if signal_ctx
+            else None
+        )
+        evidence = build_holding_evidence(
+            fund_code=holding.fund_code,
+            signal_entry=signal_entry,
+            factor_scores=factor_scores,
+            risk_metrics=risk_metrics,
+        )
+        row = {
+            "fund_code": holding.fund_code,
+            "fund_name": holding.fund_name,
+            "holding_amount": round(holding.holding_amount, 2),
+        }
+        if evidence:
+            row["evidence"] = evidence
+        rows.append(row)
+
+    overview = build_evidence_overview(rows)
+    return {
+        "available": bool(overview.get("available")),
+        "overview": overview,
+        "holdings": [r for r in rows if r.get("evidence")],
+    }
+
+
 def snapshot_date_key(when: datetime | None = None) -> str:
     moment = when or datetime.now(timezone.utc)
     return moment.date().isoformat()
