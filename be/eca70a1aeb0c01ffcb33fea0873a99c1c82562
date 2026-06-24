@@ -1,0 +1,23 @@
+apps/web/src/components/SectorSignalBacktestPanel.tsx
+  s_e7db4dc3ac42fe::t_de473440f7eee9 19-27,31,43-49
+apps/web/src/components/SectorSignalBacktestPanel.test.tsx
+  s_e7db4dc3ac42fe::t_afa3ef902146c7 1-19
+apps/web/src/lib/api.ts
+  s_e7db4dc3ac42fe::t_3499865feeff68 1450
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.18-trip",
+  "base_commit_sha": "beeca70a1aeb0c01ffcb33fea0873a99c1c82562",
+  "prompts": {},
+  "sessions": {
+    "s_e7db4dc3ac42fe": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "e6dd7659-93b8-4e68-aba8-cdabb47c530f",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
