@@ -406,6 +406,30 @@ export type PortfolioFactorScores = {
   factor_reliability?: Record<string, FactorReliability> | null;
 };
 
+export type EvidenceComponent = { source: string; level: string; basis: string };
+
+export type HoldingEvidence = {
+  composite: { level: string; score: number };
+  components: EvidenceComponent[];
+  summary: string;
+};
+
+export type EvidenceOverview = {
+  available: boolean;
+  total_holdings?: number;
+  covered_holdings?: number;
+  count_by_level?: Record<string, number>;
+  weight_by_level?: Record<string, number>;
+  backed_weight_percent?: number;
+  summary?: string;
+};
+
+export type PortfolioEvidenceOverview = {
+  available: boolean;
+  overview: EvidenceOverview;
+  holdings: Array<{ fund_code: string; fund_name: string; evidence: HoldingEvidence }>;
+};
+
 export type PortfolioDashboardData = {
   summary: PortfolioSummary;
   history: PortfolioHistoryPoint[];
@@ -1968,6 +1992,16 @@ export async function fetchPortfolioRiskCorrelation(
 
 export async function fetchPortfolioFactorScores(): Promise<PortfolioFactorScores> {
   const response = await apiFetch(`${API_BASE}/api/portfolio/factor-scores`, {
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export async function fetchPortfolioEvidenceOverview(): Promise<PortfolioEvidenceOverview> {
+  const response = await apiFetch(`${API_BASE}/api/portfolio/evidence-overview`, {
     cache: "no-store",
   });
   if (!response.ok) {

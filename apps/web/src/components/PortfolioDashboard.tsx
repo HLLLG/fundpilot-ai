@@ -11,6 +11,7 @@ import { ProfitAnalysisTrendChart } from "@/components/ProfitAnalysisTrendChart"
 import { ProfitLossCalendar } from "@/components/ProfitLossCalendar";
 import { PortfolioRiskMetricsPanel } from "@/components/PortfolioRiskMetricsPanel";
 import { PortfolioFactorScoresPanel } from "@/components/PortfolioFactorScoresPanel";
+import { PortfolioEvidenceOverviewPanel } from "@/components/PortfolioEvidenceOverviewPanel";
 
 const RANGE_TABS: Array<{ id: ProfitRange; label: string }> = [
   { id: "today", label: "当日" },
@@ -53,6 +54,7 @@ export function PortfolioDashboard() {
   const [calendarShowReturn, setCalendarShowReturn] = useState(false);
   const [showReturnHeader, setShowReturnHeader] = useState(false);
   const [showFactorScores, setShowFactorScores] = useState(false);
+  const [showEvidenceOverview, setShowEvidenceOverview] = useState(false);
 
   const cacheKey = buildClientCacheKey("portfolio-dashboard", profitRange, calendarYear, calendarMonth);
   const staleTimeMs = profitRange === "today" ? 60_000 : 300_000;
@@ -196,6 +198,24 @@ export function PortfolioDashboard() {
           把每只持仓放进排行榜可比池里横着比：动量、风险调整收益、回撤控制、规模——看清谁在拖后腿。
         </p>
         <PortfolioFactorScoresPanel enabled={showFactorScores} />
+      </section>
+
+      <section className="pl-panel section-card">
+        <div className="pl-panel-head">
+          <div className="pl-panel-title">组合证据总览</div>
+          <button
+            type="button"
+            className="risk-corr-toggle"
+            aria-expanded={showEvidenceOverview}
+            onClick={() => setShowEvidenceOverview((value) => !value)}
+          >
+            {showEvidenceOverview ? "收起证据总览" : "展开证据总览"}
+          </button>
+        </div>
+        <p className="factor-intro">
+          把每只持仓的三路量化置信（因子IC、板块信号、风险样本）聚成一张组合体检：多少市值的建议有可回测背书。
+        </p>
+        <PortfolioEvidenceOverviewPanel enabled={showEvidenceOverview} />
       </section>
 
       <div className="mt-3 grid gap-3">
