@@ -122,9 +122,21 @@ def build_ic_report(
     factor_lookback: int = DEFAULT_FACTOR_LOOKBACK,
     max_workers: int = 8,
     limit_funds: int | None = None,
+    universe_mode: str = "top",
+    sample_pool_size: int = 500,
 ) -> dict:
-    """取数 → 组面板 → 跑引擎 → 落盘 report.txt + summary.json，返回结果 dict。"""
-    rank_rows = fetch_rank(universe_size) or []
+    """取数 → 组面板 → 跑引擎 → 落盘 report.txt + summary.json，返回结果 dict。
+
+    universe_mode:
+      - "top"（默认）：取排行榜前 universe_size 名（偏强样本，行为不变）。
+      - "sampled"：取前 sample_pool_size 名作大池，再跨业绩段分层抽样出 universe_size 只。
+    """
+    if universe_mode == "sampled":
+        from app.services.fund_universe_sampler import sample_universe
+
+        rank_rows = sample_universe(fetch_rank(sample_pool_size) or [], universe_size)
+    else:
+        rank_rows = fetch_rank(universe_size) or []
     codes = [
         (row["fund_code"], row.get("fund_name", ""))
         for row in rank_rows
@@ -168,6 +180,8 @@ def build_ic_report(
         "run_date": run_date,
         "params": {
             "universe_size": universe_size,
+            "universe_mode": universe_mode,
+            "sample_pool_size": sample_pool_size,
             "nav_days": nav_days,
             "rebalance_step": rebalance_step,
             "forward_days": forward_days,
@@ -193,6 +207,11 @@ def build_ic_report(
 def main() -> int:
     parser = argparse.ArgumentParser(description="因子有效性回测 (Rank IC)")
     parser.add_argument("--universe-size", type=int, default=300)
+    parser.add_argument(
+        "--universe-mode", choices=["top", "sampled"], default="top",
+        help="top=榜单前N(偏强); sampled=大池跨业绩段分层抽样",
+    )
+    parser.add_argument("--sample-pool-size", type=int, default=500)
     parser.add_argument("--nav-days", type=int, default=750)
     parser.add_argument("--rebalance-step", type=int, default=DEFAULT_REBALANCE_STEP)
     parser.add_argument("--forward-days", type=int, default=DEFAULT_FORWARD_DAYS)
@@ -205,6 +224,8 @@ def main() -> int:
     summary = build_ic_report(
         out_dir=args.out_dir,
         universe_size=args.universe_size,
+        universe_mode=args.universe_mode,
+        sample_pool_size=args.sample_pool_size,
         nav_days=args.nav_days,
         rebalance_step=args.rebalance_step,
         forward_days=args.forward_days,

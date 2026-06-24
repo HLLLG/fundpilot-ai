@@ -199,6 +199,37 @@ def test_runner_offline_writes_summary(tmp_path):
     assert data["universe_size"] == 15
 
 
+def test_runner_sampled_mode_stratifies_pool(tmp_path):
+    import json
+
+    from scripts.run_factor_ic import build_ic_report
+
+    cal = [f"D{i:04d}" for i in range(400)]
+    seen_limits: list[int] = []
+
+    def fetch_rank(limit):
+        seen_limits.append(limit)
+        return [{"fund_code": f"{k:06d}", "fund_name": f"基金{k}"} for k in range(60)]
+
+    def fetch_nav(code, name, trading_days):
+        k = int(code)
+        return [NavPoint(cal[i], (1.0 + 0.0003 * (k + 1)) ** i) for i in range(400)]
+
+    out = build_ic_report(
+        fetch_rank=fetch_rank,
+        fetch_nav=fetch_nav,
+        out_dir=str(tmp_path),
+        universe_size=12,
+        universe_mode="sampled",
+        sample_pool_size=60,
+        nav_days=400,
+    )
+    assert out["available"] is True
+    assert out["params"]["universe_mode"] == "sampled"
+    assert seen_limits == [60]  # 用大池而非 universe_size 取数
+    assert out["universe_size"] == 12  # 抽样后只剩 12 只
+
+
 @given(st.integers(min_value=0, max_value=10_000))
 @settings(max_examples=30, deadline=None)
 def test_ic_series_within_bounds(seed):
