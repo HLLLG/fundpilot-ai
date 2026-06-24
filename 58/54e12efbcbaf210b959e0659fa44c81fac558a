@@ -1,0 +1,27 @@
+docs/PROJECT_CONTEXT.md
+  s_e7db4dc3ac42fe::t_535258ac92dbfe 10
+  s_e7db4dc3ac42fe::t_6f11d354958f52 7
+apps/api/tests/test_report_export.py
+  s_e7db4dc3ac42fe::t_defa3358accd0c 1-36,38-58
+  s_e7db4dc3ac42fe::t_559c74872f1c9e 37
+apps/api/app/services/report_export.py
+  s_e7db4dc3ac42fe::t_bac94bf7690523 38-53,67-71
+apps/api/app/services/report_chat.py
+  s_e7db4dc3ac42fe::t_8378c46ebb21f3 57-59
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.18-trip",
+  "base_commit_sha": "5854e12efbcbaf210b959e0659fa44c81fac558a",
+  "prompts": {},
+  "sessions": {
+    "s_e7db4dc3ac42fe": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "e6dd7659-93b8-4e68-aba8-cdabb47c530f",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
