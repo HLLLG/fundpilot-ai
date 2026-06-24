@@ -44,6 +44,23 @@ def test_build_analysis_facts_attaches_factor_scores():
     assert "factor_reliability" in facts["instruction"]
 
 
+def test_build_analysis_facts_attaches_risk_metrics():
+    holdings = [Holding(fund_code="015608", fund_name="基金A", holding_amount=5000)]
+    profile = InvestorProfile()
+    risk = evaluate_portfolio_risk(holdings, profile)
+    risk_metrics = {
+        "available": True,
+        "sample_days": 150,
+        "sharpe_ratio": 1.2,
+        "confidence": {"level": "高", "basis": "150 交易日样本，置信高"},
+    }
+    facts = build_analysis_facts(
+        holdings, risk, [], profile, risk_metrics=risk_metrics
+    )
+    assert facts["risk_metrics"]["confidence"]["level"] == "高"
+    assert "risk_metrics" in facts["instruction"]
+
+
 def test_build_analysis_facts_marks_concentration():
     holdings = [
         Holding(

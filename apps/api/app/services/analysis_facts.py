@@ -46,6 +46,7 @@ def build_analysis_facts(
     pipeline: dict | None = None,
     portfolio_trend: dict | None = None,
     factor_scores: dict | None = None,
+    risk_metrics: dict | None = None,
     for_llm: bool = False,
 ) -> dict:
     nav_trends = nav_trends_by_code or {}
@@ -120,6 +121,9 @@ def build_analysis_facts(
             "因子分(factor_scores)须按 factor_reliability 各因子置信使用："
             "「高」可作论据；「中」措辞保留；「低/不足」仅作描述、不得作买卖主理由；"
             "size 因子未回测仅供参考。"
+            "组合风险指标(risk_metrics：夏普/回撤/Beta/HHI)为系统计算事实，"
+            "按 confidence.level 表述：「高/中」可作风险论据；"
+            "「低/不足」须声明样本有限、不得据此下强结论。"
         ),
         "portfolio": {
             "total_amount": round(total_amount, 2),
@@ -156,6 +160,8 @@ def build_analysis_facts(
         facts["portfolio_trend"] = portfolio_trend
     if factor_scores:
         facts["factor_scores"] = factor_scores
+    if risk_metrics:
+        facts["risk_metrics"] = risk_metrics
     facts["market_flow"] = build_market_flow_context(
         trade_date=get_effective_trade_date(),
     )

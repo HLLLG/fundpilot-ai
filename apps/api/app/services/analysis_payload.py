@@ -306,6 +306,23 @@ def build_user_payload(
         factor_scores = build_factor_scores_for_facts(request.holdings)
     except Exception:  # noqa: BLE001 — best-effort，绝不阻塞日报
         factor_scores = None
+
+    # 历史快照 load 一次，供组合走势 + 风险度量复用
+    history_rows = None
+    portfolio_trend = None
+    risk_metrics = None
+    try:
+        from app.database import list_portfolio_daily_snapshots
+        from app.services.portfolio_snapshot import build_risk_metrics_for_facts
+
+        history_rows = list_portfolio_daily_snapshots(limit=400)
+        if include_portfolio_trend:
+            portfolio_trend = build_portfolio_trend_context(history_rows=history_rows)
+        risk_metrics = build_risk_metrics_for_facts(history_rows, request.holdings)
+    except Exception:  # noqa: BLE001 — best-effort，绝不阻塞日报
+        if include_portfolio_trend and portfolio_trend is None:
+            portfolio_trend = build_portfolio_trend_context()
+
     facts = build_analysis_facts(
         request.holdings,
         risk,
@@ -315,8 +332,9 @@ def build_user_payload(
         nav_trends,
         prefetched_news,
         session=session,
-        portfolio_trend=build_portfolio_trend_context() if include_portfolio_trend else None,
+        portfolio_trend=portfolio_trend,
         factor_scores=factor_scores,
+        risk_metrics=risk_metrics,
         for_llm=True,
     )
     facts = trim_analysis_facts_for_llm(
