@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 _LEVEL_SCORE = {"高": 3, "中": 2, "低": 1}  # 不足 = 无数据，不计入
+_OVERVIEW_LEVELS = ("高", "中", "低", "不足")
 _FACTOR_KEYS = ("momentum", "risk_adjusted", "drawdown")  # size 未回测，不参与
 _FACTOR_LABEL = {"momentum": "动量", "risk_adjusted": "风险调整", "drawdown": "回撤控制"}
 
@@ -124,4 +125,40 @@ def build_holding_evidence(
         "composite": composite,
         "components": components,
         "summary": "；".join(c["basis"] for c in components),
+    }
+
+
+def build_evidence_overview(rows: list[dict]) -> dict:
+    """把每只持仓的 evidence 聚合成组合级背书分布（市值加权）。
+
+    rows: build_analysis_facts 的 per_fund 行（含 holding_amount，可含 evidence）。
+    分母为全部持仓市值（含未覆盖），各级之和=已覆盖市值占比。
+    """
+    total_amount = sum(float(r.get("holding_amount") or 0) for r in rows)
+    covered = [r for r in rows if r.get("evidence")]
+    if not covered or total_amount <= 0:
+        return {"available": False}
+
+    count_by_level = {lv: 0 for lv in _OVERVIEW_LEVELS}
+    weight_by_level = {lv: 0.0 for lv in _OVERVIEW_LEVELS}
+    for r in covered:
+        lv = (r["evidence"].get("composite") or {}).get("level")
+        if lv not in count_by_level:
+            continue
+        count_by_level[lv] += 1
+        weight_by_level[lv] += float(r.get("holding_amount") or 0) / total_amount * 100
+
+    weight_by_level = {k: round(v, 1) for k, v in weight_by_level.items()}
+    backed = round(weight_by_level["高"] + weight_by_level["中"], 1)
+    return {
+        "available": True,
+        "total_holdings": len(rows),
+        "covered_holdings": len(covered),
+        "count_by_level": count_by_level,
+        "weight_by_level": weight_by_level,
+        "backed_weight_percent": backed,
+        "summary": (
+            f"组合 {backed:.0f}% 市值有中/高量化背书，"
+            f"{len(covered)}/{len(rows)} 只持仓有证据覆盖。"
+        ),
     }

@@ -23,7 +23,7 @@ from app.services.sector_signal_context import (
     signal_backtest_for_sector,
 )
 from app.services.signal_guard_policy import resolve_signal_guard_policy
-from app.services.signal_synthesis import build_holding_evidence
+from app.services.signal_synthesis import build_evidence_overview, build_holding_evidence
 from app.services.trading_session import get_effective_trade_date
 from app.services.risk import holding_weight_percent, resolve_weight_denominator
 from app.services.sector_intraday_summary import summarize_sector_intraday_for_holding
@@ -136,6 +136,9 @@ def build_analysis_facts(
             "持仓的 evidence.composite 是该票三路量化证据(因子IC/板块信号/风险样本)的"
             "综合置信：「高」表多路背书一致、可作主理由；「中」部分支持；"
             "「低/不足」量化背书弱、须以风险口径表述、不得据此追涨。"
+            "evidence_overview 是组合级量化背书体检：backed_weight_percent 为"
+            "「中/高背书」市值占比；占比高→建议可更积极，占比低→须强调多数仓位"
+            "量化背书不足、以风险口径表述。"
         ),
         "portfolio": {
             "total_amount": round(total_amount, 2),
@@ -174,6 +177,9 @@ def build_analysis_facts(
         facts["factor_scores"] = factor_scores
     if risk_metrics:
         facts["risk_metrics"] = risk_metrics
+    overview = build_evidence_overview(per_fund)
+    if overview.get("available"):
+        facts["evidence_overview"] = overview
     facts["market_flow"] = build_market_flow_context(
         trade_date=get_effective_trade_date(),
     )

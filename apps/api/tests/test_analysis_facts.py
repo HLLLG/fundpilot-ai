@@ -90,6 +90,9 @@ def test_build_analysis_facts_attaches_holding_evidence():
     assert "evidence" in row
     assert row["evidence"]["composite"]["level"] == "高"
     assert "evidence" in facts["instruction"]
+    assert facts["evidence_overview"]["available"] is True
+    assert facts["evidence_overview"]["backed_weight_percent"] == 100.0
+    assert "evidence_overview" in facts["instruction"]
 
 
 def test_build_analysis_facts_marks_concentration():

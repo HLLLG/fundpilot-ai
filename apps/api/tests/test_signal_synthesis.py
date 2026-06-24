@@ -4,7 +4,11 @@
 """
 from __future__ import annotations
 
-from app.services.signal_synthesis import build_holding_evidence, synthesize_confidence
+from app.services.signal_synthesis import (
+    build_evidence_overview,
+    build_holding_evidence,
+    synthesize_confidence,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -115,6 +119,51 @@ def test_no_components_returns_none():
         risk_metrics=None,
     )
     assert ev is None
+
+
+def _row(code: str, amount: float, level: str | None):
+    row = {"fund_code": code, "fund_name": code, "holding_amount": amount}
+    if level is not None:
+        row["evidence"] = {"composite": {"level": level, "score": 2}, "components": [], "summary": ""}
+    return row
+
+
+def test_overview_weighted_distribution():
+    rows = [
+        _row("a", 6000, "高"),
+        _row("b", 3000, "低"),
+        _row("c", 1000, "中"),
+    ]
+    ov = build_evidence_overview(rows)
+    assert ov["available"] is True
+    assert ov["total_holdings"] == 3
+    assert ov["covered_holdings"] == 3
+    assert ov["count_by_level"]["高"] == 1
+    assert ov["weight_by_level"]["高"] == 60.0
+    assert ov["weight_by_level"]["低"] == 30.0
+    assert ov["weight_by_level"]["中"] == 10.0
+    # backed = 高 + 中 = 70%
+    assert ov["backed_weight_percent"] == 70.0
+
+
+def test_overview_uncovered_counts_in_denominator():
+    rows = [
+        _row("a", 5000, "高"),  # covered
+        _row("b", 5000, None),  # uncovered → 计入分母不计入分子
+    ]
+    ov = build_evidence_overview(rows)
+    assert ov["covered_holdings"] == 1
+    assert ov["weight_by_level"]["高"] == 50.0
+    assert ov["backed_weight_percent"] == 50.0
+
+
+def test_overview_no_evidence_unavailable():
+    rows = [_row("a", 5000, None), _row("b", 5000, None)]
+    assert build_evidence_overview(rows)["available"] is False
+
+
+def test_overview_zero_amount_unavailable():
+    assert build_evidence_overview([_row("a", 0, "高")])["available"] is False
 
 
 def test_factor_skips_when_all_reliability_insufficient():
