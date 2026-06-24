@@ -2,9 +2,10 @@
 
 import { useState } from "react";
 import { BarChart3, Download, Sparkles } from "lucide-react";
-import type { Report } from "@/lib/api";
+import type { HoldingEvidence, Report } from "@/lib/api";
 import { fetchReportMarkdown } from "@/lib/api";
 import { actionBadgeClass, actionCardClass } from "@/lib/actionStyles";
+import { confidenceTone } from "@/components/SectorSignalBacktestPanel";
 import { ReportChatPanel } from "@/components/ReportChatPanel";
 import { ReportCollapsibleSection } from "@/components/ReportCollapsibleSection";
 import { RebalanceSimulationPanel } from "@/components/RebalanceSimulationPanel";
@@ -74,12 +75,25 @@ function navHintForFund(fundCode: string, snapshots: Report["snapshots"]): strin
 
 type FundRec = Report["fund_recommendations"][number];
 
+function evidenceForFund(
+  fundCode: string,
+  report: Report,
+): HoldingEvidence | null {
+  const facts = report.analysis_facts as
+    | { holdings?: Array<{ fund_code?: string; evidence?: HoldingEvidence }> }
+    | undefined;
+  const row = facts?.holdings?.find((h) => h.fund_code === fundCode);
+  return row?.evidence ?? null;
+}
+
 function FundRecommendationCard({
   item,
   snapshots,
+  evidence,
 }: {
   item: FundRec;
   snapshots: Report["snapshots"];
+  evidence?: HoldingEvidence | null;
 }) {
   const navHint = navHintForFund(item.fund_code, snapshots);
 
@@ -132,6 +146,17 @@ function FundRecommendationCard({
           </li>
         ))}
       </ul>
+      {evidence ? (
+        <div className="mt-3 rounded-xl border border-slate-200 bg-white/70 px-3 py-2">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold text-slate-500">量化依据</span>
+            <StatusPill tone={confidenceTone(evidence.composite.level)}>
+              综合置信{evidence.composite.level}
+            </StatusPill>
+          </div>
+          <p className="mt-1.5 text-xs leading-5 text-slate-600">{evidence.summary}</p>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -274,6 +299,7 @@ export function ReportPanel({ report }: ReportPanelProps) {
                 key={item.fund_code}
                 item={item}
                 snapshots={report.snapshots}
+                evidence={evidenceForFund(item.fund_code, report)}
               />
             ))}
           </div>

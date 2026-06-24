@@ -752,6 +752,26 @@ def _compose_analysis_facts(
     market_news: list[NewsItem] | None,
     judge_meta: dict,
 ) -> dict:
+    # 因子分/风险度量 best-effort 计算，使存档 facts 的持仓行带 evidence 综合置信
+    # （factor_scores 走 TTL 缓存，生成 prompt 时多已预热；任一路失败不阻塞日报）
+    factor_scores = None
+    risk_metrics = None
+    try:
+        from app.services.portfolio_snapshot import build_factor_scores_for_facts
+
+        factor_scores = build_factor_scores_for_facts(request.holdings)
+    except Exception:  # noqa: BLE001
+        factor_scores = None
+    try:
+        from app.database import list_portfolio_daily_snapshots
+        from app.services.portfolio_snapshot import build_risk_metrics_for_facts
+
+        risk_metrics = build_risk_metrics_for_facts(
+            list_portfolio_daily_snapshots(limit=400), request.holdings
+        )
+    except Exception:  # noqa: BLE001
+        risk_metrics = None
+
     return build_analysis_facts(
         request.holdings,
         risk,
@@ -768,6 +788,8 @@ def _compose_analysis_facts(
             judge_meta=judge_meta,
         ),
         portfolio_trend=build_portfolio_trend_context(),
+        factor_scores=factor_scores,
+        risk_metrics=risk_metrics,
     )
 
 
