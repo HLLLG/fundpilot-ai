@@ -1,0 +1,31 @@
+apps/web/src/lib/api.ts
+  s_e7db4dc3ac42fe::t_1472b93a2384fc 1445-1448
+apps/web/src/components/SectorSignalBacktestPanel.tsx
+  s_e7db4dc3ac42fe::t_dc83e2661851fc 35-39
+apps/api/app/services/sector_signal_context.py
+  s_e7db4dc3ac42fe::t_d7e0d1f78f9e77 122-125
+apps/api/app/services/sector_signal_backtest.py
+  s_e7db4dc3ac42fe::t_003ad79d83f803 29-88
+  s_e7db4dc3ac42fe::t_ae9ddb49626ca3 351-353
+  s_e7db4dc3ac42fe::t_6209c4c7d38ac8 279,283-286,309,316
+  s_e7db4dc3ac42fe::t_555521c1285d91 333,339
+  s_e7db4dc3ac42fe::t_94a4b9205da3d7 363-365,369
+apps/api/tests/test_sector_signal_backtest.py
+  s_e7db4dc3ac42fe::t_3e01cdd65e76ad 1-100
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.18-trip",
+  "base_commit_sha": "7079c27a3784106b703d4808ae81fbbb4a3b4523",
+  "prompts": {},
+  "sessions": {
+    "s_e7db4dc3ac42fe": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "e6dd7659-93b8-4e68-aba8-cdabb47c530f",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
