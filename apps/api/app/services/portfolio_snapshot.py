@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from datetime import date, datetime, timezone
 
 from app.database import (
@@ -248,6 +249,78 @@ def build_factor_scores_payload(
 
     result = compute_factor_scores(universe=universe, targets=targets)
     return asdict(result)
+
+
+_FACTOR_FACTS_CACHE: dict[str, tuple[float, dict]] = {}
+_FACTOR_FACTS_TTL_SECONDS = 3600
+_FACTOR_FACTS_KEYS = ("momentum", "risk_adjusted", "drawdown", "size")
+
+
+def _compact_factor_scores(payload: dict, reliability: dict) -> dict:
+    """把 build_factor_scores_payload 的结果压成紧凑 facts 结构（挂 IC 置信）。"""
+    holdings = []
+    for fund in payload.get("funds") or []:
+        factors = fund.get("factors") or {}
+        percentiles = {}
+        for key in _FACTOR_FACTS_KEYS:
+            detail = factors.get(key) or {}
+            pct = detail.get("percentile")
+            percentiles[key] = round(pct) if pct is not None else None
+        holdings.append(
+            {
+                "fund_code": fund.get("fund_code"),
+                "fund_name": fund.get("fund_name"),
+                "composite_grade": fund.get("composite_grade"),
+                "composite_score": fund.get("composite_score"),
+                "factor_percentiles": percentiles,
+            }
+        )
+    return {
+        "available": bool(payload.get("available")),
+        "universe_size": payload.get("universe_size", 0),
+        "factor_reliability": reliability,
+        "holdings": holdings,
+    }
+
+
+def build_factor_scores_for_facts(
+    holdings_models: list[Holding],
+    *,
+    fetch_rank=None,
+    fetch_nav=None,
+    ic_factors: dict | None = None,
+) -> dict:
+    """喂 LLM 用的因子分（紧凑 + 挂 3A IC 置信），TTL 缓存 + best-effort。
+
+    计算重（拉排行榜 + 净值），故生产路径按持仓代码缓存 1 小时；注入 fetcher 或
+    ic_factors 时（测试路径）绕过缓存。任意异常 → available=false，不抛、不阻塞日报。
+    """
+    from app.services.factor_confidence import factor_reliability, load_ic_summary
+
+    injected = fetch_rank is not None or fetch_nav is not None or ic_factors is not None
+    cache_key = ",".join(
+        sorted((h.fund_code or "") for h in holdings_models if h.fund_code)
+    )
+    now = time.time()
+    if not injected:
+        cached = _FACTOR_FACTS_CACHE.get(cache_key)
+        if cached and now - cached[0] < _FACTOR_FACTS_TTL_SECONDS:
+            return cached[1]
+
+    try:
+        payload = build_factor_scores_payload(
+            holdings_models, fetch_rank=fetch_rank, fetch_nav=fetch_nav
+        )
+        reliability = factor_reliability(
+            ic_factors if ic_factors is not None else load_ic_summary()
+        )
+        compact = _compact_factor_scores(payload, reliability)
+    except Exception:  # noqa: BLE001 — best-effort，绝不阻塞日报
+        return {"available": False, "message": "因子分暂不可用"}
+
+    if not injected:
+        _FACTOR_FACTS_CACHE[cache_key] = (now, compact)
+    return compact
 
 
 def snapshot_date_key(when: datetime | None = None) -> str:
