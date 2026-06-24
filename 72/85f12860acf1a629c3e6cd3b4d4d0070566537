@@ -1,0 +1,21 @@
+apps/api/tests/test_factor_confidence.py
+  s_e7db4dc3ac42fe::t_9175740859cc55 1-78
+apps/api/app/services/factor_confidence.py
+  s_e7db4dc3ac42fe::t_5c51299f90add9 1-79
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.18-trip",
+  "base_commit_sha": "7285f12860acf1a629c3e6cd3b4d4d0070566537",
+  "prompts": {},
+  "sessions": {
+    "s_e7db4dc3ac42fe": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "e6dd7659-93b8-4e68-aba8-cdabb47c530f",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
