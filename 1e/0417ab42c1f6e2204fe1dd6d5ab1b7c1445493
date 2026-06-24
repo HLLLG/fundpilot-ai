@@ -1,0 +1,22 @@
+docs/PROJECT_CONTEXT.md
+  s_e7db4dc3ac42fe::t_5d09ab7282a816 10
+  s_e7db4dc3ac42fe::t_96364d495c29c6 7
+  s_e7db4dc3ac42fe::t_e529808f274e2e 769
+  s_e7db4dc3ac42fe::t_40ed562773cfc4 205
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.18-trip",
+  "base_commit_sha": "1e0417ab42c1f6e2204fe1dd6d5ab1b7c1445493",
+  "prompts": {},
+  "sessions": {
+    "s_e7db4dc3ac42fe": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "e6dd7659-93b8-4e68-aba8-cdabb47c530f",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
