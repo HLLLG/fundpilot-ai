@@ -1,0 +1,19 @@
+docs/superpowers/plans/2026-06-24-ocr-vlm-upgrade.md
+  s_78ab59297de0b6::t_0a107b67c83aa3 39-40
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.18-trip",
+  "base_commit_sha": "56dfe54e030bdb4658edf7f1f4454ff4e475b206",
+  "prompts": {},
+  "sessions": {
+    "s_78ab59297de0b6": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "b4c954b0-09cb-4628-826e-f89dccffcb06",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
