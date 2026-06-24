@@ -170,6 +170,35 @@ def test_few_periods_not_significant():
 # ---------------------------------------------------------------------------
 
 
+def test_runner_offline_writes_summary(tmp_path):
+    import json
+
+    from scripts.run_factor_ic import build_ic_report
+
+    cal = [f"D{i:04d}" for i in range(400)]
+
+    def fetch_rank(limit):
+        return [{"fund_code": f"{k:06d}", "fund_name": f"基金{k}"} for k in range(15)]
+
+    def fetch_nav(code, name, trading_days):
+        k = int(code)
+        return [NavPoint(cal[i], (1.0 + 0.0003 * (k + 1)) ** i) for i in range(400)]
+
+    out = build_ic_report(
+        fetch_rank=fetch_rank,
+        fetch_nav=fetch_nav,
+        out_dir=str(tmp_path),
+        universe_size=15,
+        nav_days=400,
+    )
+    assert out["available"] is True
+    assert (tmp_path / "summary.json").exists()
+    assert (tmp_path / "report.txt").exists()
+    data = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
+    assert "factors" in data and isinstance(data["factors"], list)
+    assert data["universe_size"] == 15
+
+
 @given(st.integers(min_value=0, max_value=10_000))
 @settings(max_examples=30, deadline=None)
 def test_ic_series_within_bounds(seed):
