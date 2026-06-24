@@ -1,0 +1,38 @@
+apps/web/src/app/globals.css
+  s_5ce134945012c9::t_f8637473bcb508 457-541
+  s_5ce134945012c9::t_e98effb6a81c45 542-621
+  s_e7db4dc3ac42fe::t_35a04a969e9740 622-774
+apps/web/src/components/PortfolioFactorScoresPanel.tsx
+  s_e7db4dc3ac42fe::t_59ea73801ec000 1-93,95-99,101-167
+  s_e7db4dc3ac42fe::t_f8d10bb3f46856 94,100
+apps/web/src/components/PortfolioDashboard.tsx
+  s_e7db4dc3ac42fe::t_a18d0ba4275e51 183-200
+  s_5ce134945012c9::t_2251ed5c9adca4 12
+  s_5ce134945012c9::t_f7cb69684d4547 181-182
+  s_e7db4dc3ac42fe::t_dbccc673257dd5 13
+  s_e7db4dc3ac42fe::t_10738ab014f736 55
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.18-trip",
+  "base_commit_sha": "3617ba9f48f2898753a84f23be149e64df3970f0",
+  "prompts": {},
+  "sessions": {
+    "s_5ce134945012c9": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "4582a977-ede3-4147-9dcc-ee6c922a3c59",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    },
+    "s_e7db4dc3ac42fe": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "e6dd7659-93b8-4e68-aba8-cdabb47c530f",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
