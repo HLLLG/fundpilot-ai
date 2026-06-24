@@ -1,0 +1,23 @@
+apps/api/app/main.py
+  s_e7db4dc3ac42fe::t_1b554905366733 1190-1205
+apps/api/app/services/portfolio_snapshot.py
+  s_e7db4dc3ac42fe::t_b5b1ace5520c64 345-411
+apps/api/tests/test_api.py
+  s_e7db4dc3ac42fe::t_5a03e53d0ccb45 28-38
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.18-trip",
+  "base_commit_sha": "7626573f62185df6bbd48e56a80e3bce3a1a7164",
+  "prompts": {},
+  "sessions": {
+    "s_e7db4dc3ac42fe": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "e6dd7659-93b8-4e68-aba8-cdabb47c530f",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
