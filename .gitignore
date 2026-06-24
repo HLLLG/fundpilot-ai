@@ -20,6 +20,7 @@ uploads/inbox/*
 !uploads/inbox/.gitkeep
 apps/api/.venv/
 apps/api/.uvicorn-*.log
+apps/api/var/
 .tmp-*.html
 apps/web/.next/
 apps/web/out/
