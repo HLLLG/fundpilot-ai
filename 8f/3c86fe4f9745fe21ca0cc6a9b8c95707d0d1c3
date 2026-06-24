@@ -1,0 +1,27 @@
+apps/api/app/services/analysis_facts.py
+  s_e7db4dc3ac42fe::t_0e2beaba2e6ced 120-122
+  s_e7db4dc3ac42fe::t_b47a6e84dfe890 157-158
+  s_e7db4dc3ac42fe::t_9bd3812cb737ff 48
+apps/api/app/services/analysis_prompt.py
+  s_e7db4dc3ac42fe::t_33335e73799b77 57
+apps/api/tests/test_analysis_facts.py
+  s_e7db4dc3ac42fe::t_e1e80b412121dd 29-46
+apps/api/app/services/analysis_payload.py
+  s_e7db4dc3ac42fe::t_4e4b8249aa34d5 303-308,319
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.18-trip",
+  "base_commit_sha": "8f3c86fe4f9745fe21ca0cc6a9b8c95707d0d1c3",
+  "prompts": {},
+  "sessions": {
+    "s_e7db4dc3ac42fe": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "e6dd7659-93b8-4e68-aba8-cdabb47c530f",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
