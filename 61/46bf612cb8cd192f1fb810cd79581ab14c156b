@@ -1,0 +1,81 @@
+docs/superpowers/plans/2026-06-24-ocr-vlm-upgrade.md
+  s_78ab59297de0b6::t_b4d2de0af5fadf 1,3,5,7,9,11,13,15,17-33,35,37,39,41-45,47,49,51-52,54-55,57,60-65,67-84,86-116,118-121,123,125-126,128,130-135,137,139-142,144,146,148-150,153-163,166-174,177-285,287-347,349-362,364-367,370-400,402,404-405,407-410,412,414-458,460-488,491-493,496-521,524-535,537,539-540,542,544-547,549,551-578,580-595,597-608,610,612-620,622-638,640-642,644,646-718,720-726,728-793,795-992
+apps/api/app/services/ocr_parser.py
+  s_8ded352e3bc645::t_a91db0054b6283 27-29,31-32
+apps/api/app/services/vlm_holdings_provider.py
+  s_78ab59297de0b6::t_87594f0194a78a 1-130
+apps/api/tests/test_alipay_holdings_parser.py
+  s_78ab59297de0b6::t_397d7521da3e16 1-61
+apps/api/app/services/ocr_text_utils.py
+  s_8ded352e3bc645::t_c29586cece42fe 86-88
+apps/api/app/config.py
+  s_5ce134945012c9::t_00cca5f10a701b 108-121
+  s_5ce134945012c9::t_427f2207166f0c 211-215
+  s_78ab59297de0b6::t_2429afbf142d7a 173-180
+  s_78ab59297de0b6::t_345c81edbb2a94 89-94
+apps/api/app/services/ocr_pipeline.py
+  s_78ab59297de0b6::t_88ade53091c822 8,11,19,75
+  s_78ab59297de0b6::t_394597efe24fdf 151-152
+  s_78ab59297de0b6::t_dce4a69c1617e0 72
+  s_78ab59297de0b6::t_2255691b534254 64-71,73-74,76-77,79-84
+apps/api/app/services/portfolio_profit_analysis.py
+  s_78ab59297de0b6::t_aa2beb28d201fe 552-559
+docs/superpowers/specs/2026-06-24-ocr-vlm-upgrade-design.md
+  s_78ab59297de0b6::t_4b1906bbaafaed 1-161
+.env.example
+  s_5ce134945012c9::t_ce4b0682207215 60-62
+  s_78ab59297de0b6::t_adc8508bd91e42 76-83
+apps/api/app/services/alipay_holdings_parser.py
+  s_78ab59297de0b6::t_97ec1af6ce3d3c 42-50,52-54
+  s_78ab59297de0b6::t_2d7ebeee478369 78-79,82-84
+  s_8ded352e3bc645::t_d44b1333fb8f7e 306
+apps/api/app/services/fund_name_utils.py
+  s_78ab59297de0b6::t_73495ba49ad6a4 70-71,73-80
+apps/api/app/services/holdings_extractor.py
+  s_78ab59297de0b6::t_e3b71655faee69 1-96
+docs/PROJECT_CONTEXT.md
+  s_78ab59297de0b6::t_a5c1e78a05c732 103
+  s_78ab59297de0b6::t_0b9948f81f7c02 157
+  s_78ab59297de0b6::t_7c39c2308d1686 700-704
+  s_78ab59297de0b6::t_cae999e77e949b 10
+README.md
+  s_78ab59297de0b6::t_92eb0d8832d959 342-344
+apps/api/tests/test_config.py
+  s_78ab59297de0b6::t_397d7521da3e16 1,30-42
+apps/api/tests/test_ocr_pipeline.py
+  s_78ab59297de0b6::t_397d7521da3e16 1-17,19-20,22-24
+apps/api/scripts/smoke_vlm_ocr.py
+  s_78ab59297de0b6::t_e02eaab5256095 1-37
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.18-trip",
+  "base_commit_sha": "6146bf612cb8cd192f1fb810cd79581ab14c156b",
+  "prompts": {},
+  "sessions": {
+    "s_5ce134945012c9": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "4582a977-ede3-4147-9dcc-ee6c922a3c59",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    },
+    "s_78ab59297de0b6": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "b4c954b0-09cb-4628-826e-f89dccffcb06",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    },
+    "s_8ded352e3bc645": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "bd14adc2-6c63-448d-b4f4-888b6c0f3c36",
+        "model": "claude-4.6-sonnet-medium-thinking"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
