@@ -16,9 +16,19 @@ type SectorSignalBacktestPanelProps = {
   compact?: boolean;
 };
 
+export function confidenceTone(
+  level: string | undefined,
+): "blue" | "green" | "amber" | "red" {
+  if (level === "高") return "green";
+  if (level === "中") return "amber";
+  if (level === "低") return "red";
+  return "blue";
+}
+
 function RuleCard({ rule }: { rule: SectorSignalBacktestRule }) {
   const hitRate = rule.hit_rate_percent;
   const tone = hitRate == null ? "blue" : hitRate >= 53 ? "green" : hitRate >= 50 ? "amber" : "red";
+  const confidence = rule.confidence ?? null;
 
   return (
     <div className="rounded-2xl bg-white p-4 shadow-sm">
@@ -30,6 +40,13 @@ function RuleCard({ rule }: { rule: SectorSignalBacktestRule }) {
           <StatusPill tone="blue">无样本</StatusPill>
         )}
       </div>
+      {confidence ? (
+        <div className="mt-2" title={confidence.basis}>
+          <StatusPill tone={confidenceTone(confidence.level)}>
+            置信{confidence.level}
+          </StatusPill>
+        </div>
+      ) : null}
       <p className="mt-2 text-xs text-slate-600">
         触发 {rule.trigger_count} 次 · 命中 {rule.hit_count}
         {rule.baseline_rate_percent != null

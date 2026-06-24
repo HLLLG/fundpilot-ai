@@ -1447,6 +1447,7 @@ export type SectorSignalBacktestRule = {
   significant?: boolean | null;
   beats_baseline?: boolean | null;
   beats_random?: boolean | null;
+  confidence?: { level: string; score: number; basis: string } | null;
 };
 
 export type SectorSignalBacktestSector = {
