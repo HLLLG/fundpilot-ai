@@ -219,3 +219,69 @@ def test_zscore_within_clip(values):
 def test_percentile_rank_within_bounds(population, value):
     pct = _percentile_rank(value, population)
     assert pct is None or (0.0 <= pct <= 100.0)
+
+
+# ---------------------------------------------------------------------------
+# 装配层 build_factor_scores_payload（离线，注入 fetch_rank / fetch_nav）
+# ---------------------------------------------------------------------------
+
+from types import SimpleNamespace
+
+from app.models import Holding
+from app.services.portfolio_snapshot import build_factor_scores_payload
+
+
+def _fake_rank_rows(n: int) -> list[dict]:
+    rows = []
+    for i in range(n):
+        rows.append(
+            {
+                "fund_code": f"{100000 + i:06d}",
+                "fund_name": f"排行基金{i}",
+                "return_3m_percent": float(i % 13) - 6,
+                "return_6m_percent": float(i % 17) - 8,
+                "return_1y_percent": float(i % 23) - 10,
+                "max_drawdown_1y_percent": -float(i % 19 + 1),
+                "fund_scale_yi": float(i % 50 + 1),
+            }
+        )
+    return rows
+
+
+def _fake_nav_points(start: float, step: float, days: int) -> list:
+    return [
+        SimpleNamespace(date=f"2026-01-{d + 1:02d}", nav=round(start + step * d, 4))
+        for d in range(days)
+    ]
+
+
+def test_assembly_scores_holdings_offline():
+    holdings = [
+        Holding(fund_code="100005", fund_name="持仓在榜", holding_amount=1000.0),
+        Holding(fund_code="999999", fund_name="持仓不在榜", holding_amount=500.0),
+    ]
+    payload = build_factor_scores_payload(
+        holdings,
+        fetch_rank=lambda: _fake_rank_rows(40),
+        fetch_nav=lambda code, name, trading_days: _fake_nav_points(1.0, 0.01, 60),
+    )
+    assert payload["available"] is True
+    assert payload["universe_size"] == 40
+    assert len(payload["funds"]) == 2
+    by_code = {f["fund_code"]: f for f in payload["funds"]}
+    assert by_code["100005"]["in_universe"] is True
+    assert by_code["999999"]["in_universe"] is False
+    # 不在榜的持仓走净值兜底算动量（上升序列 → 动量原始值 > 0）
+    assert by_code["999999"]["factors"]["momentum"]["raw"] is not None
+    assert by_code["999999"]["factors"]["momentum"]["raw"] > 0
+
+
+def test_assembly_empty_universe_unavailable():
+    holdings = [Holding(fund_code="100005", fund_name="x", holding_amount=1000.0)]
+    payload = build_factor_scores_payload(
+        holdings,
+        fetch_rank=lambda: [],
+        fetch_nav=lambda code, name, trading_days: [],
+    )
+    assert payload["available"] is False
+    assert payload["message"] is not None
