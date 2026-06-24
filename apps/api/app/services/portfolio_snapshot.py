@@ -145,29 +145,13 @@ def build_risk_correlation_payload(
     return asdict(matrix)
 
 
-def _window_return_percent(navs: list[float], window: int) -> float | None:
-    """从升序净值序列算近 window 个交易日的区间收益（%）。
-
-    序列短于 window+1 时退化为「从最早一点到最新一点」的尽力收益。
-    """
-    if len(navs) < 2:
-        return None
-    idx = max(0, len(navs) - 1 - window)
-    base = navs[idx]
-    if base <= 0:
-        return None
-    return (navs[-1] / base - 1.0) * 100.0
-
-
 def _target_from_nav(holding: Holding, fetch_nav) -> "object":
-    """持仓不在排行榜池时，用净值序列算同口径因子原始值。
+    """持仓不在排行榜池时，用净值序列算同口径因子原始值（复用共享 helper）。
 
-    动量窗口对齐排行榜口径：3 月≈60、6 月≈120、1 年≈250 交易日。
-    最大回撤复用 portfolio_risk_metrics._max_drawdown 保证与模块 1 口径一致。
     规模无法从净值取，置 None（size 因子权重低、合成时按剩余权重归一）。
     """
+    from app.services.fund_factor_nav import factor_input_from_navs
     from app.services.fund_factors import FundFactorInput
-    from app.services.portfolio_risk_metrics import _max_drawdown
 
     code = holding.fund_code
     name = holding.fund_name or ""
@@ -189,20 +173,7 @@ def _target_from_nav(holding: Holding, fetch_nav) -> "object":
     if len(navs) < 2:
         return FundFactorInput(fund_code=code, fund_name=name)
 
-    decimal_returns = [
-        navs[i] / navs[i - 1] - 1.0 for i in range(1, len(navs)) if navs[i - 1] > 0
-    ]
-    mdd_percent = _max_drawdown(decimal_returns) * 100.0 if decimal_returns else None
-
-    return FundFactorInput(
-        fund_code=code,
-        fund_name=name,
-        return_3m_percent=_window_return_percent(navs, 60),
-        return_6m_percent=_window_return_percent(navs, 120),
-        return_1y_percent=_window_return_percent(navs, 250),
-        max_drawdown_1y_percent=mdd_percent,
-        fund_scale_yi=None,
-    )
+    return factor_input_from_navs(code, name, navs)
 
 
 def build_factor_scores_payload(
