@@ -1,0 +1,19 @@
+docs/superpowers/specs/2026-06-24-factor-style-and-universe-design.md
+  s_e7db4dc3ac42fe::t_58810ec496838b 1-111
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.18-trip",
+  "base_commit_sha": "28a347c6671d1795a362b16e7c8a4e4be429cd09",
+  "prompts": {},
+  "sessions": {
+    "s_e7db4dc3ac42fe": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "e6dd7659-93b8-4e68-aba8-cdabb47c530f",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
