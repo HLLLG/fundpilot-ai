@@ -345,6 +345,64 @@ export type DailyProfitTop5Row = {
   daily_profit: number;
 };
 
+export type PortfolioRiskMetrics = {
+  available: boolean;
+  sample_days: number;
+  message?: string | null;
+  annualized_return_percent?: number | null;
+  annualized_volatility_percent?: number | null;
+  sharpe_ratio?: number | null;
+  sortino_ratio?: number | null;
+  max_drawdown_percent?: number | null;
+  beta?: number | null;
+  alpha_percent?: number | null;
+  hhi?: number | null;
+  effective_holdings?: number | null;
+};
+
+export type RiskCorrelationPair = {
+  code_a: string;
+  code_b: string;
+  name_a: string;
+  name_b: string;
+  corr: number;
+};
+
+export type PortfolioRiskCorrelation = {
+  available: boolean;
+  message?: string | null;
+  sample_days: number;
+  codes: string[];
+  names: string[];
+  matrix: Array<Array<number | null>>;
+  max_pair?: RiskCorrelationPair | null;
+};
+
+export type FactorDetail = {
+  raw: number | null;
+  z: number | null;
+  percentile: number | null;
+  hint?: string | null;
+};
+
+export type FactorKey = "momentum" | "risk_adjusted" | "drawdown" | "size";
+
+export type FundFactorScore = {
+  fund_code: string;
+  fund_name: string;
+  in_universe: boolean;
+  composite_score: number | null;
+  composite_grade: "A" | "B" | "C" | "D" | null;
+  factors: Record<FactorKey, FactorDetail>;
+};
+
+export type PortfolioFactorScores = {
+  available: boolean;
+  universe_size: number;
+  message?: string | null;
+  funds: FundFactorScore[];
+};
+
 export type PortfolioDashboardData = {
   summary: PortfolioSummary;
   history: PortfolioHistoryPoint[];
@@ -357,6 +415,7 @@ export type PortfolioDashboardData = {
   profit_trend_footer?: ProfitTrendFooter;
   profit_calendar?: ProfitCalendar;
   daily_top5?: { gainers: DailyProfitTop5Row[]; losers: DailyProfitTop5Row[] };
+  risk_metrics?: PortfolioRiskMetrics;
 };
 
 export type AnalysisJob = {
@@ -1880,6 +1939,29 @@ export async function fetchPortfolioDashboard(options?: {
     `${API_BASE}/api/portfolio/dashboard${query ? `?${query}` : ""}`,
     { cache: "no-store" },
   );
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export async function fetchPortfolioRiskCorrelation(
+  lookbackDays?: number,
+): Promise<PortfolioRiskCorrelation> {
+  const query = lookbackDays ? `?lookback_days=${lookbackDays}` : "";
+  const response = await apiFetch(`${API_BASE}/api/portfolio/risk-correlation${query}`, {
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export async function fetchPortfolioFactorScores(): Promise<PortfolioFactorScores> {
+  const response = await apiFetch(`${API_BASE}/api/portfolio/factor-scores`, {
+    cache: "no-store",
+  });
   if (!response.ok) {
     throw new Error(await response.text());
   }
