@@ -1,0 +1,40 @@
+docs/PROJECT_CONTEXT.md
+  s_e7db4dc3ac42fe::t_aa6e0732ae64b6 7
+  s_e7db4dc3ac42fe::t_c40e96a9fceda7 762
+  s_e7db4dc3ac42fe::t_1871ecd9f6b5e1 201
+  s_e7db4dc3ac42fe::t_741fe2ba68cf99 10-12
+apps/api/tests/test_fund_universe_sampler.py
+  s_e7db4dc3ac42fe::t_aaa30b008f9b67 1-38
+apps/api/tests/test_fund_style_regression.py
+  s_e7db4dc3ac42fe::t_3c64e469197551 1-81
+  s_e7db4dc3ac42fe::t_af625fef1eb08f 82-133
+apps/api/app/services/fund_universe_sampler.py
+  s_e7db4dc3ac42fe::t_3a007c127eb755 1-21
+apps/api/scripts/run_factor_ic.py
+  s_e7db4dc3ac42fe::t_52db2cbc684b18 183-184
+  s_e7db4dc3ac42fe::t_828c231baf1773 227-228
+  s_e7db4dc3ac42fe::t_643f54fb61f366 210-214
+  s_e7db4dc3ac42fe::t_1926da2823f1e7 125-126,128-139
+apps/api/app/services/fund_style_regression.py
+  s_e7db4dc3ac42fe::t_48b2e68a13c585 1-120
+apps/api/tests/test_factor_ic_backtest.py
+  s_e7db4dc3ac42fe::t_994c14a21fd1c6 202-232
+apps/api/scripts/run_style_factor.py
+  s_e7db4dc3ac42fe::t_7501b05f3382c6 1-237
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.18-trip",
+  "base_commit_sha": "3a17399664bd8adf08cc405831457dee2064b581",
+  "prompts": {},
+  "sessions": {
+    "s_e7db4dc3ac42fe": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "e6dd7659-93b8-4e68-aba8-cdabb47c530f",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
