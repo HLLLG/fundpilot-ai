@@ -9,6 +9,8 @@ import { DailyProfitTop5 } from "@/components/DailyProfitTop5";
 import { HoldingDonutChart } from "@/components/HoldingDonutChart";
 import { ProfitAnalysisTrendChart } from "@/components/ProfitAnalysisTrendChart";
 import { ProfitLossCalendar } from "@/components/ProfitLossCalendar";
+import { PortfolioRiskMetricsPanel } from "@/components/PortfolioRiskMetricsPanel";
+import { PortfolioFactorScoresPanel } from "@/components/PortfolioFactorScoresPanel";
 
 const RANGE_TABS: Array<{ id: ProfitRange; label: string }> = [
   { id: "today", label: "当日" },
@@ -50,6 +52,7 @@ export function PortfolioDashboard() {
   const [calendarMonth, setCalendarMonth] = useState(() => new Date().getMonth() + 1);
   const [calendarShowReturn, setCalendarShowReturn] = useState(false);
   const [showReturnHeader, setShowReturnHeader] = useState(false);
+  const [showFactorScores, setShowFactorScores] = useState(false);
 
   const cacheKey = buildClientCacheKey("portfolio-dashboard", profitRange, calendarYear, calendarMonth);
   const staleTimeMs = profitRange === "today" ? 60_000 : 300_000;
@@ -173,6 +176,26 @@ export function PortfolioDashboard() {
             </span>
           ) : null}
         </div>
+      </section>
+
+      <PortfolioRiskMetricsPanel metrics={data?.risk_metrics} />
+
+      <section className="pl-panel section-card">
+        <div className="pl-panel-head">
+          <div className="pl-panel-title">持仓因子体检</div>
+          <button
+            type="button"
+            className="risk-corr-toggle"
+            aria-expanded={showFactorScores}
+            onClick={() => setShowFactorScores((value) => !value)}
+          >
+            {showFactorScores ? "收起因子评分" : "展开因子评分"}
+          </button>
+        </div>
+        <p className="factor-intro">
+          把每只持仓放进排行榜可比池里横着比：动量、风险调整收益、回撤控制、规模——看清谁在拖后腿。
+        </p>
+        <PortfolioFactorScoresPanel enabled={showFactorScores} />
       </section>
 
       <div className="mt-3 grid gap-3">
