@@ -1,0 +1,35 @@
+apps/web/src/lib/api.ts
+  s_5ce134945012c9::t_dff95297672c9a 348-362,418
+  s_5ce134945012c9::t_eb9d3aad7611cb 363-380
+  s_e7db4dc3ac42fe::t_0843711e664e2d 1961-1970
+  s_5ce134945012c9::t_2f2f2cb0807d5a 1948-1960
+  s_e7db4dc3ac42fe::t_f4b6e1ac9ab113 381-405
+apps/web/src/lib/fundFactors.test.ts
+  s_e7db4dc3ac42fe::t_6cdb4505a12d1e 1-76
+apps/web/src/lib/fundFactors.ts
+  s_e7db4dc3ac42fe::t_b3820dc757f6a9 1-95
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.18-trip",
+  "base_commit_sha": "5ed5095eb1db9ce3126e314c3f1ab855aa8cd5f2",
+  "prompts": {},
+  "sessions": {
+    "s_5ce134945012c9": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "4582a977-ede3-4147-9dcc-ee6c922a3c59",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    },
+    "s_e7db4dc3ac42fe": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "e6dd7659-93b8-4e68-aba8-cdabb47c530f",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
