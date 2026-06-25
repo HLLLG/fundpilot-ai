@@ -6,7 +6,7 @@ import logging
 import httpx
 
 from app.config import get_settings
-from app.services.analysis_facts import build_analysis_facts
+from app.services.analysis_facts import build_analysis_facts  # noqa: F401  # 测试 patch 此符号
 from app.services.analysis_runtime import AnalysisRuntime
 from app.services.deepseek_http import (
     deepseek_chat_url,
@@ -25,8 +25,15 @@ def judge_parsed_report(
     risk: RiskAssessment,
     snapshots: list[FundSnapshot],
     runtime: AnalysisRuntime,
+    *,
+    facts: dict,
 ) -> tuple[dict, dict]:
-    judged = _rule_judge(parsed, request, risk, snapshots)
+    """对 LLM 生成的 draft 报告做规则 + 可选 LLM 审校。
+
+    facts 必填，由上游 prepare_analysis_bundle 计算并传入；judge 内部不再重算
+    build_analysis_facts，深度模式可省 5~10s、快速可省 1~3s。
+    """
+    judged = _rule_judge(parsed, request, risk, facts)
     meta = {
         "rule_judge": True,
         "llm_judge_attempted": False,
@@ -35,7 +42,7 @@ def judge_parsed_report(
     if runtime.mode != "deep" or not get_settings().deepseek_configured:
         return judged, meta
     meta["llm_judge_attempted"] = True
-    reviewed = _llm_judge(judged, request, risk, snapshots, runtime)
+    reviewed = _llm_judge(judged, facts)
     if reviewed is not judged and reviewed.get("fund_recommendations"):
         meta["llm_judge_applied"] = True
         return reviewed, meta
@@ -46,13 +53,13 @@ def _rule_judge(
     parsed: dict,
     request: AnalysisRequest,
     risk: RiskAssessment,
-    snapshots: list[FundSnapshot],
+    facts: dict,
 ) -> dict:
-    facts = build_analysis_facts(request.holdings, risk, snapshots, request.profile)
     weight_by_code = {
-        item["fund_code"]: item["weight_percent"] for item in facts["holdings"]
+        item["fund_code"]: item["weight_percent"]
+        for item in facts.get("holdings") or []
     }
-    allowed = set(facts["allowed_actions"])
+    allowed = set(facts.get("allowed_actions") or [])
 
     raw_recs = parsed.get("fund_recommendations")
     if not isinstance(raw_recs, list):
@@ -89,13 +96,9 @@ def _rule_judge(
 
 def _llm_judge(
     parsed: dict,
-    request: AnalysisRequest,
-    risk: RiskAssessment,
-    snapshots: list[FundSnapshot],
-    runtime: AnalysisRuntime,
+    facts: dict,
 ) -> dict:
     settings = get_settings()
-    facts = build_analysis_facts(request.holdings, risk, snapshots, request.profile)
     payload = {
         "facts": facts,
         "draft_report": parsed,

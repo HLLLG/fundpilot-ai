@@ -145,7 +145,10 @@ class DeepSeekClient:
             if len(market_news) > initial_news_count:
                 topic_briefs = merge_topic_briefs(topic_briefs, market_news, self.settings)
             progress("judging")
-            parsed, judge_meta = judge_parsed_report(parsed, request, risk, snapshots, runtime)
+            parsed, judge_meta = judge_parsed_report(
+                parsed, request, risk, snapshots, runtime,
+                facts=analysis_bundle.facts,
+            )
             fallback = _offline_report(
                 request,
                 risk,
