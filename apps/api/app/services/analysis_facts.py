@@ -32,6 +32,20 @@ from app.services.sector_fund_flow_context import (
     build_sector_fund_flow_map,
     sector_fund_flow_for_holding,
 )
+from app.services.sector_quote_label import sector_quote_lookup_label
+
+
+def _build_sector_intraday_map(holdings: list[Holding]) -> dict[str, dict]:
+    """按板块 label 去重，复用全局 intraday 缓存。"""
+    result: dict[str, dict] = {}
+    for holding in holdings:
+        label = sector_quote_lookup_label(holding)
+        if not label or label in result:
+            continue
+        summary = summarize_sector_intraday_for_holding(holding)
+        if summary is not None:
+            result[label] = summary
+    return result
 
 
 def build_analysis_facts(
@@ -57,7 +71,15 @@ def build_analysis_facts(
     sector_labels = sector_labels_from_holdings(holdings)
     signal_backtest = build_signal_backtest_context(sector_labels)
     guard_policy = resolve_signal_guard_policy(holdings)
-    sector_flow_map = build_sector_fund_flow_map(holdings)
+    sector_flow_map = build_sector_fund_flow_map(
+        holdings,
+        trade_date=(
+            str(session.get("effective_trade_date"))
+            if isinstance(session, dict) and session.get("effective_trade_date")
+            else None
+        ),
+    )
+    intraday_map = _build_sector_intraday_map(holdings)
 
     per_fund: list[dict] = []
     drawdown_limit = abs(profile.max_drawdown_percent)
@@ -99,7 +121,7 @@ def build_analysis_facts(
                     holding,
                     nav_trends.get(holding.fund_code),
                 ),
-                "sector_intraday": summarize_sector_intraday_for_holding(holding),
+                "sector_intraday": intraday_map.get(sector_quote_lookup_label(holding) or ""),
                 "sector_fund_flow": sector_fund_flow_for_holding(holding, sector_flow_map),
                 "signal_backtest": signal_backtest_for_sector(
                     holding.sector_name,
@@ -139,6 +161,8 @@ def build_analysis_facts(
             "evidence_overview 是组合级量化背书体检：backed_weight_percent 为"
             "「中/高背书」市值占比；占比高→建议可更积极，占比低→须强调多数仓位"
             "量化背书不足、以风险口径表述。"
+            "sector_fund_flow.today_main_force_net_yi 正数=净流入、负数=净流出；"
+            "仅当 flow_date 与 trade_date 对齐（date_aligned=true）时方可与 sector_return_percent 做背离判断。"
         ),
         "portfolio": {
             "total_amount": round(total_amount, 2),

@@ -8,6 +8,7 @@ from app.services.board_fund_flow_history import (
     resolve_board_flow_code_for_sector,
 )
 from app.services.sector_labels import normalize_sector_label
+from app.services.trading_session import get_effective_trade_date
 
 
 def _sum_main_force(points: list[dict[str, Any]]) -> float | None:
@@ -25,6 +26,44 @@ def _slice_tail(points: list[dict[str, Any]], days: int) -> list[dict[str, Any]]
     if len(points) <= days:
         return list(points)
     return points[-days:]
+
+
+def _pick_flow_point(series: list[dict[str, Any]], trade_date: str) -> dict[str, Any] | None:
+    """按 effective_trade_date 取当日资金流；缺失则取不晚于该日的最近一条。"""
+    if not series or not trade_date:
+        return series[-1] if series else None
+    for point in reversed(series):
+        if point.get("date") == trade_date:
+            return point
+    on_or_before = [
+        point for point in series if str(point.get("date") or "") <= trade_date
+    ]
+    if on_or_before:
+        return on_or_before[-1]
+    return series[-1]
+
+
+def _series_has_date(series: list[dict[str, Any]], trade_date: str) -> bool:
+    return any(point.get("date") == trade_date for point in series)
+
+
+def _main_force_direction(value: float | None) -> str | None:
+    if value is None:
+        return None
+    if value > 0.05:
+        return "inflow"
+    if value < -0.05:
+        return "outflow"
+    return "flat"
+
+
+def _load_flow_series(board_code: str, trade_date: str) -> list[dict[str, Any]]:
+    series = get_cached_board_flow_series(board_code)
+    if series and not _series_has_date(series, trade_date):
+        refreshed = get_cached_board_flow_series(board_code, force_refresh=True)
+        if refreshed:
+            series = refreshed
+    return series
 
 
 def _classify_flow_pattern(
@@ -97,10 +136,13 @@ def build_sector_fund_flow_context(
     sector_name: str | None,
     *,
     sector_return_percent: float | None = None,
+    trade_date: str | None = None,
 ) -> dict[str, Any] | None:
     label = normalize_sector_label(sector_name)
     if not label:
         return None
+
+    target_trade_date = trade_date or get_effective_trade_date()
 
     board_code, resolved_label = resolve_board_flow_code_for_sector(label)
     if not board_code:
@@ -110,7 +152,7 @@ def build_sector_fund_flow_context(
             "message": "未解析到板块资金流代码",
         }
 
-    series = get_cached_board_flow_series(board_code)
+    series = _load_flow_series(board_code, target_trade_date)
     if not series:
         return {
             "available": False,
@@ -119,37 +161,69 @@ def build_sector_fund_flow_context(
             "message": "暂无板块历史资金流",
         }
 
+    point = _pick_flow_point(series, target_trade_date)
+    if point is None:
+        return {
+            "available": False,
+            "sector_label": resolved_label or label,
+            "board_code": board_code,
+            "message": "暂无板块历史资金流",
+        }
+
+    flow_date = str(point.get("date") or "")
+    date_aligned = flow_date == target_trade_date
     recent_5d = _slice_tail(series, 5)
     recent_20d = _slice_tail(series, 20)
-    latest = recent_5d[-1]
-    today_flow = latest.get("main_force_net_yi")
-    tiers = latest.get("flow_tiers")
+    today_flow = point.get("main_force_net_yi")
+    tiers = point.get("flow_tiers")
     cumulative_5d = _sum_main_force(recent_5d)
     cumulative_20d = _sum_main_force(recent_20d)
-    pattern = _classify_flow_pattern(
-        sector_return_percent=sector_return_percent,
-        today_flow=today_flow,
-        cumulative_5d=cumulative_5d,
-        flow_tiers=tiers if isinstance(tiers, dict) else None,
-    )
+
+    if date_aligned:
+        pattern = _classify_flow_pattern(
+            sector_return_percent=sector_return_percent,
+            today_flow=today_flow,
+            cumulative_5d=cumulative_5d,
+            flow_tiers=tiers if isinstance(tiers, dict) else None,
+        )
+    else:
+        pattern = {
+            "pattern_label": "flow_date_mismatch",
+            "pattern_hint": (
+                f"板块资金流为 {flow_date} 数据，与当日 sector_return_percent"
+                f"（{target_trade_date}）不同日，勿做量价背离判断。"
+            ),
+        }
 
     return {
         "available": True,
         "sector_label": resolved_label or label,
         "board_code": board_code,
+        "trade_date": target_trade_date,
+        "flow_date": flow_date,
+        "date_aligned": date_aligned,
         "today_main_force_net_yi": today_flow,
+        "main_force_direction": _main_force_direction(
+            float(today_flow) if today_flow is not None else None
+        ),
         "cumulative_5d_net_yi": cumulative_5d,
         "cumulative_20d_net_yi": cumulative_20d,
         "recent_5d_main_force_yi": [
-            point.get("main_force_net_yi") for point in recent_5d
+            {"date": item.get("date"), "main_force_net_yi": item.get("main_force_net_yi")}
+            for item in recent_5d
         ],
         "flow_tiers": tiers,
         **pattern,
     }
 
 
-def build_sector_fund_flow_map(holdings: list[Holding]) -> dict[str, dict[str, Any]]:
+def build_sector_fund_flow_map(
+    holdings: list[Holding],
+    *,
+    trade_date: str | None = None,
+) -> dict[str, dict[str, Any]]:
     """按 normalized sector 名去重拉取，供多只同板块基金复用。"""
+    target_trade_date = trade_date or get_effective_trade_date()
     result: dict[str, dict[str, Any]] = {}
     for holding in holdings:
         label = normalize_sector_label(holding.sector_name)
@@ -158,6 +232,7 @@ def build_sector_fund_flow_map(holdings: list[Holding]) -> dict[str, dict[str, A
         context = build_sector_fund_flow_context(
             label,
             sector_return_percent=holding.sector_return_percent,
+            trade_date=target_trade_date,
         )
         if context is not None:
             result[label] = context
@@ -177,4 +252,5 @@ def sector_fund_flow_for_holding(
     return build_sector_fund_flow_context(
         label,
         sector_return_percent=holding.sector_return_percent,
+        trade_date=get_effective_trade_date(),
     )

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal
 
@@ -15,6 +16,7 @@ from app.services.investment_presets import is_short_term_style, take_profit_thr
 from app.services.analysis_facts import build_analysis_facts
 from app.services.holding_metrics import HOLDING_RETURN_SEMANTICS
 from app.services.analysis_runtime import AnalysisMode
+from app.services.news_freshness import build_news_pipeline_context
 from app.services.portfolio_snapshot import build_portfolio_trend_context
 from app.services.trading_session import build_trading_session
 
@@ -43,6 +45,9 @@ OUTPUT_REQUIREMENTS_SYSTEM = (
     "analysis_facts.holdings[].nav_trend 为净值摘要，不得编造未给出的序列；"
     "sector_momentum/sector_intraday/sector_fund_flow 为短线提示；market_flow 为北向资金解读（若提供）。"
     "sector_fund_flow.pattern_hint 可辅助判断高位出货、低位洗盘等，须用给定数字不得编造。"
+    "sector_fund_flow.today_main_force_net_yi：正=主力净流入、负=主力净流出；"
+    "须与 flow_date 同日且 date_aligned=true 时才可与 sector_return_percent 做量价背离判断；"
+    "date_aligned=false 或 pattern_label=flow_date_mismatch 时禁止写出货/诱多等背离结论。"
     "analysis_facts.news.freshness_label 须在 summary 或 caveats 体现对决策置信度的影响。"
     "news_titles 中 source=cls 为财联社快讯。若 nav_trend 为空须在 points 说明。"
 )
@@ -230,7 +235,11 @@ def trim_analysis_facts_for_llm(
                         k: sector_flow[k]
                         for k in (
                             "available",
+                            "trade_date",
+                            "flow_date",
+                            "date_aligned",
                             "today_main_force_net_yi",
+                            "main_force_direction",
                             "cumulative_5d_net_yi",
                             "cumulative_20d_net_yi",
                             "pattern_label",
@@ -285,29 +294,32 @@ def trim_analysis_facts_for_llm(
     return trimmed
 
 
-def build_user_payload(
-    request: AnalysisRequest,
-    risk: RiskAssessment,
-    snapshots: list[FundSnapshot],
-    prefetched_news: list[NewsItem],
-    topic_briefs: list[TopicBrief] | None = None,
-    nav_trends_by_code: dict[str, dict] | None = None,
+@dataclass
+class AnalysisFactsBundle:
+    """一次计算的 analysis_facts 上下文，供 prompt 与存档复用。"""
+
+    session: dict
+    factor_scores: dict | None
+    risk_metrics: dict | None
+    portfolio_trend: dict | None
+    facts: dict
+
+
+def _compute_analysis_context(
+    holdings: list,
     *,
     analysis_mode: AnalysisMode = "deep",
     phase: AnalysisPayloadPhase = 3,
-) -> dict:
-    briefs = topic_briefs or []
-    nav_trends = nav_trends_by_code or {}
+) -> tuple[dict, dict | None, dict | None, dict | None]:
     session = build_trading_session()
     include_portfolio_trend = not (phase >= 2 and analysis_mode == "fast")
     try:
         from app.services.portfolio_snapshot import build_factor_scores_for_facts
 
-        factor_scores = build_factor_scores_for_facts(request.holdings)
+        factor_scores = build_factor_scores_for_facts(holdings)
     except Exception:  # noqa: BLE001 — best-effort，绝不阻塞日报
         factor_scores = None
 
-    # 历史快照 load 一次，供组合走势 + 风险度量复用
     history_rows = None
     portfolio_trend = None
     risk_metrics = None
@@ -318,11 +330,33 @@ def build_user_payload(
         history_rows = list_portfolio_daily_snapshots(limit=400)
         if include_portfolio_trend:
             portfolio_trend = build_portfolio_trend_context(history_rows=history_rows)
-        risk_metrics = build_risk_metrics_for_facts(history_rows, request.holdings)
+        risk_metrics = build_risk_metrics_for_facts(history_rows, holdings)
     except Exception:  # noqa: BLE001 — best-effort，绝不阻塞日报
         if include_portfolio_trend and portfolio_trend is None:
             portfolio_trend = build_portfolio_trend_context()
 
+    return session, factor_scores, risk_metrics, portfolio_trend
+
+
+def prepare_analysis_bundle(
+    request: AnalysisRequest,
+    risk: RiskAssessment,
+    snapshots: list[FundSnapshot],
+    prefetched_news: list[NewsItem],
+    topic_briefs: list[TopicBrief] | None = None,
+    nav_trends_by_code: dict[str, dict] | None = None,
+    *,
+    analysis_mode: AnalysisMode = "deep",
+    phase: AnalysisPayloadPhase = 3,
+) -> AnalysisFactsBundle:
+    """构建完整 analysis_facts（未 trim），供 LLM prompt 与最终存档各用一次。"""
+    briefs = topic_briefs or []
+    nav_trends = nav_trends_by_code or {}
+    session, factor_scores, risk_metrics, portfolio_trend = _compute_analysis_context(
+        request.holdings,
+        analysis_mode=analysis_mode,
+        phase=phase,
+    )
     facts = build_analysis_facts(
         request.holdings,
         risk,
@@ -337,8 +371,56 @@ def build_user_payload(
         risk_metrics=risk_metrics,
         for_llm=True,
     )
+    return AnalysisFactsBundle(
+        session=session,
+        factor_scores=factor_scores,
+        risk_metrics=risk_metrics,
+        portfolio_trend=portfolio_trend,
+        facts=facts,
+    )
+
+
+def finalize_analysis_facts(
+    base_facts: dict,
+    *,
+    market_news: list[NewsItem] | None = None,
+    topic_briefs: list[TopicBrief] | None = None,
+    pipeline: dict | None = None,
+) -> dict:
+    """在预计算 facts 上叠加 pipeline / 更新后的 news，避免重复 build_analysis_facts。"""
+    facts = dict(base_facts)
+    if market_news is not None or topic_briefs is not None:
+        facts["news"] = build_news_pipeline_context(market_news or [], topic_briefs)
+    if pipeline is not None:
+        facts["pipeline"] = pipeline
+    return facts
+
+
+def build_user_payload(
+    request: AnalysisRequest,
+    risk: RiskAssessment,
+    snapshots: list[FundSnapshot],
+    prefetched_news: list[NewsItem],
+    topic_briefs: list[TopicBrief] | None = None,
+    nav_trends_by_code: dict[str, dict] | None = None,
+    *,
+    analysis_mode: AnalysisMode = "deep",
+    phase: AnalysisPayloadPhase = 3,
+    analysis_bundle: AnalysisFactsBundle | None = None,
+) -> dict:
+    briefs = topic_briefs or []
+    bundle = analysis_bundle or prepare_analysis_bundle(
+        request,
+        risk,
+        snapshots,
+        prefetched_news,
+        briefs,
+        nav_trends_by_code,
+        analysis_mode=analysis_mode,
+        phase=phase,
+    )
     facts = trim_analysis_facts_for_llm(
-        facts,
+        bundle.facts,
         analysis_mode=analysis_mode,
         decision_style=request.profile.decision_style or "conservative",
         phase=phase,

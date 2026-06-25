@@ -5,17 +5,56 @@ import logging
 import subprocess
 import sys
 from datetime import date
-from functools import lru_cache
+
+from app.services.sector_quote_cache import (
+    get_spot_snapshot,
+    get_spot_snapshot_any_age,
+    save_spot_snapshot,
+)
+from app.services.trading_session import build_trading_session
 
 logger = logging.getLogger(__name__)
 
 _FLOW_TIMEOUT_SECONDS = 20
+_CACHE_VERSION = "v1"
+_LIVE_TTL_SECONDS = 1800.0
+_CLOSED_TTL_SECONDS = 3600.0
+_INTRADAY_SESSIONS = {
+    "trading_day_intraday",
+    "trading_day_pre_close",
+    "trading_day_pre_open",
+}
 
 
-@lru_cache(maxsize=4)
+def _flow_cache_ttl_seconds() -> float:
+    session_kind = str(build_trading_session().get("session_kind") or "")
+    if session_kind in _INTRADAY_SESSIONS:
+        return _LIVE_TTL_SECONDS
+    return _CLOSED_TTL_SECONDS
+
+
+def _northbound_cache_key(trade_date: str) -> str:
+    return f"market:northbound:{_CACHE_VERSION}:{trade_date[:10]}"
+
+
 def fetch_northbound_flow_summary(trade_date: str | None = None) -> dict | None:
     """沪深港通资金流向摘要（亿元），失败返回 None。"""
-    anchor = trade_date or date.today().isoformat()
+    anchor = (trade_date or date.today().isoformat())[:10]
+    cache_key = _northbound_cache_key(anchor)
+    cached = get_spot_snapshot(cache_key, ttl_seconds=_flow_cache_ttl_seconds())
+    if cached:
+        return dict(cached)
+
+    result = _fetch_northbound_flow_summary_uncached(anchor)
+    if result:
+        save_spot_snapshot(cache_key, result)
+        return result
+
+    stale = get_spot_snapshot_any_age(cache_key)
+    return dict(stale) if stale else None
+
+
+def _fetch_northbound_flow_summary_uncached(anchor: str) -> dict | None:
     script = """
 import akshare as ak
 import json

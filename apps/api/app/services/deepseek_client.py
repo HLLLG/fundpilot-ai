@@ -25,18 +25,18 @@ from app.models import (
 )
 from app.services.analysis_runtime import AnalysisMode, AnalysisRuntime, resolve_analysis_runtime
 from app.services.analysis_payload import (
+    AnalysisFactsBundle,
     append_output_requirements_to_system,
     build_user_payload,
+    finalize_analysis_facts,
+    prepare_analysis_bundle,
 )
 from app.services.news_service import NewsService, _dedupe_news
 from app.services.news_summarizer import merge_topic_briefs, summarize_all_topics
-from app.services.analysis_facts import build_analysis_facts
 from app.services.news_citation import apply_news_citation_guards
-from app.services.portfolio_snapshot import build_portfolio_trend_context
 from app.services.recommendation_guard import apply_recommendation_guards
 from app.services.report_judge import judge_parsed_report
 from app.services.report_pipeline import build_pipeline_metadata
-from app.services.trading_session import build_trading_session
 from app.services.recommendations import (
     build_offline_fund_recommendation,
     enrich_fund_recommendations,
@@ -123,6 +123,15 @@ class DeepSeekClient:
 
         try:
             progress("generating")
+            analysis_bundle = prepare_analysis_bundle(
+                request,
+                risk,
+                snapshots,
+                market_news,
+                topic_briefs,
+                nav_trends,
+                analysis_mode=runtime.mode,
+            )
             parsed, market_news = self._generate_with_tools(
                 request,
                 risk,
@@ -131,6 +140,7 @@ class DeepSeekClient:
                 topic_briefs,
                 runtime,
                 nav_trends,
+                analysis_bundle=analysis_bundle,
             )
             if len(market_news) > initial_news_count:
                 topic_briefs = merge_topic_briefs(topic_briefs, market_news, self.settings)
@@ -143,6 +153,7 @@ class DeepSeekClient:
                 market_news=market_news,
                 topic_briefs=topic_briefs,
                 nav_trends_by_code=nav_trends,
+                analysis_bundle=analysis_bundle,
             )
             portfolio_recs, fund_recs = _finalize_recommendations(
                 parsed,
@@ -153,15 +164,16 @@ class DeepSeekClient:
                 topic_briefs,
                 nav_trends_by_code=nav_trends,
             )
-            facts = _compose_analysis_facts(
-                request=request,
-                risk=risk,
-                snapshots=snapshots,
-                topic_briefs=topic_briefs,
-                nav_trends=nav_trends,
-                runtime=runtime,
+            facts = finalize_analysis_facts(
+                analysis_bundle.facts,
                 market_news=market_news,
-                judge_meta=judge_meta,
+                topic_briefs=topic_briefs,
+                pipeline=build_pipeline_metadata(
+                    runtime=runtime,
+                    market_news=market_news,
+                    topic_briefs=topic_briefs,
+                    judge_meta=judge_meta,
+                ),
             )
             caveats = _user_facing_caveats(
                 _non_empty_list(parsed.get("caveats"), fallback.caveats)
@@ -238,8 +250,19 @@ class DeepSeekClient:
         topic_briefs: list[TopicBrief],
         runtime: AnalysisRuntime,
         nav_trends_by_code: dict[str, dict] | None = None,
+        *,
+        analysis_bundle: AnalysisFactsBundle | None = None,
     ) -> tuple[dict, list[NewsItem]]:
         nav_trends = nav_trends_by_code or {}
+        bundle = analysis_bundle or prepare_analysis_bundle(
+            request,
+            risk,
+            snapshots,
+            prefetched_news,
+            topic_briefs,
+            nav_trends,
+            analysis_mode=runtime.mode,
+        )
         collected: list[NewsItem] = list(prefetched_news)
         news_enabled = runtime.news_enabled
         messages: list[dict] = [
@@ -262,6 +285,7 @@ class DeepSeekClient:
                         topic_briefs,
                         nav_trends,
                         analysis_mode=runtime.mode,
+                        analysis_bundle=bundle,
                     ),
                     ensure_ascii=False,
                 ),
@@ -741,58 +765,6 @@ def _finalize_recommendations(
     return portfolio, fund_recs
 
 
-def _compose_analysis_facts(
-    *,
-    request: AnalysisRequest,
-    risk: RiskAssessment,
-    snapshots: list[FundSnapshot],
-    topic_briefs: list[TopicBrief] | None,
-    nav_trends: dict[str, dict],
-    runtime: AnalysisRuntime,
-    market_news: list[NewsItem] | None,
-    judge_meta: dict,
-) -> dict:
-    # 因子分/风险度量 best-effort 计算，使存档 facts 的持仓行带 evidence 综合置信
-    # （factor_scores 走 TTL 缓存，生成 prompt 时多已预热；任一路失败不阻塞日报）
-    factor_scores = None
-    risk_metrics = None
-    try:
-        from app.services.portfolio_snapshot import build_factor_scores_for_facts
-
-        factor_scores = build_factor_scores_for_facts(request.holdings)
-    except Exception:  # noqa: BLE001
-        factor_scores = None
-    try:
-        from app.database import list_portfolio_daily_snapshots
-        from app.services.portfolio_snapshot import build_risk_metrics_for_facts
-
-        risk_metrics = build_risk_metrics_for_facts(
-            list_portfolio_daily_snapshots(limit=400), request.holdings
-        )
-    except Exception:  # noqa: BLE001
-        risk_metrics = None
-
-    return build_analysis_facts(
-        request.holdings,
-        risk,
-        snapshots,
-        request.profile,
-        topic_briefs,
-        nav_trends,
-        market_news,
-        session=build_trading_session(),
-        pipeline=build_pipeline_metadata(
-            runtime=runtime,
-            market_news=market_news,
-            topic_briefs=topic_briefs,
-            judge_meta=judge_meta,
-        ),
-        portfolio_trend=build_portfolio_trend_context(),
-        factor_scores=factor_scores,
-        risk_metrics=risk_metrics,
-    )
-
-
 def _append_pipeline_caveats(caveats: list[str], facts: dict) -> list[str]:
     result = list(caveats)
     pipeline = facts.get("pipeline") or {}
@@ -869,6 +841,8 @@ def _offline_report(
     market_news: list[NewsItem] | None = None,
     topic_briefs: list[TopicBrief] | None = None,
     nav_trends_by_code: dict[str, dict] | None = None,
+    *,
+    analysis_bundle: AnalysisFactsBundle | None = None,
 ) -> Report:
     recommendations = []
     if risk.suggested_action == "risk_review":
@@ -928,15 +902,25 @@ def _offline_report(
         caveats.append("本次未能拉取到有效新闻条目，政策与资金面判断请结合公开信息人工复核。")
     caveats = _append_news_pipeline_caveats(caveats, briefs, news)
 
-    facts = _compose_analysis_facts(
-        request=request,
-        risk=risk,
-        snapshots=snapshots,
-        topic_briefs=briefs,
-        nav_trends=nav_trends_by_code or {},
-        runtime=runtime,
+    bundle = analysis_bundle or prepare_analysis_bundle(
+        request,
+        risk,
+        snapshots,
+        news,
+        briefs,
+        nav_trends,
+        analysis_mode=runtime.mode,
+    )
+    facts = finalize_analysis_facts(
+        bundle.facts,
         market_news=news,
-        judge_meta={},
+        topic_briefs=briefs,
+        pipeline=build_pipeline_metadata(
+            runtime=runtime,
+            market_news=news,
+            topic_briefs=briefs,
+            judge_meta={},
+        ),
     )
     caveats = _append_pipeline_caveats(caveats, facts)
     return Report(

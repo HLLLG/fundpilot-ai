@@ -196,9 +196,9 @@ def build_factor_scores_payload(
     if fetch_rank is None:
 
         def fetch_rank():
-            from app.services.akshare_subprocess import fetch_open_fund_rank
+            from app.services.fund_rank_cache import fetch_open_fund_rank_cached
 
-            return fetch_open_fund_rank(limit=300)
+            return fetch_open_fund_rank_cached(limit=300)
 
     if fetch_nav is None:
 

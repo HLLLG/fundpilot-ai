@@ -30,6 +30,7 @@ import {
   type PortfolioSummary,
 } from "@/lib/api";
 import { AddHoldingModal } from "@/components/AddHoldingModal";
+import { useAuth } from "@/components/AuthProvider";
 import { AlipayOcrConfirmModal } from "@/components/AlipayOcrConfirmModal";
 import { BatchTransactionModal } from "@/components/BatchTransactionModal";
 import { BatchTransactionConfirmModal } from "@/components/BatchTransactionConfirmModal";
@@ -55,6 +56,7 @@ import {
   loadCachedPortfolioHoldings,
   saveCachedPortfolioHoldings,
 } from "@/lib/portfolioHoldingsCache";
+import { scheduleHoldingsDetailPrefetch } from "@/lib/holdingDetailPrefetch";
 import { useSectorQuoteRefresh } from "@/lib/useSectorQuoteRefresh";
 import { useSwingAlerts } from "@/lib/useSwingAlerts";
 import { SwingAlertsPanel } from "@/components/SwingAlertsPanel";
@@ -100,6 +102,7 @@ const defaultAnalysisPrompt: AnalysisPromptConfig = {
 };
 
 export function Dashboard() {
+  const { user } = useAuth();
   const [holdings, setHoldings] = useState<Holding[]>([]);
   const [profile, setProfile] = useState<InvestorProfile>(() =>
     loadInvestorProfile(defaultProfile),
@@ -344,6 +347,24 @@ export function Dashboard() {
     }
     setHoldingsRefreshedAt(sectorRefresh.lastFetchedAt);
   }, [sectorRefresh.lastFetchedAt]);
+
+  useEffect(() => {
+    if (activeTab !== "holdings" || holdings.length === 0) {
+      return;
+    }
+    return scheduleHoldingsDetailPrefetch({
+      userId: user?.id ?? null,
+      holdings,
+      portfolioSummary,
+      sectorMetaByFundCode: sectorRefresh.sectorMetaByFundCode,
+    });
+  }, [
+    activeTab,
+    holdings,
+    portfolioSummary,
+    user?.id,
+    sectorRefresh.sectorMetaByFundCode,
+  ]);
 
   useEffect(() => {
     if (!profileReady || !profilePersistReady.current) return;

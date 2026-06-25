@@ -91,6 +91,14 @@ class FundDataService:
         *,
         trading_days: int,
     ) -> FundNavHistory:
+        from app.services.fund_nav_cache import get_cached_fund_nav, save_cached_fund_nav
+
+        cached = get_cached_fund_nav(fund_code, trading_days)
+        if cached is not None and cached.points:
+            if fund_name and not cached.fund_name:
+                cached = cached.model_copy(update={"fund_name": fund_name})
+            return cached
+
         from app.services.akshare_subprocess import fetch_fund_nav_history
 
         result = fetch_fund_nav_history(fund_code, trading_days=trading_days)
@@ -111,7 +119,7 @@ class FundDataService:
         if points[0].nav > 0:
             period_change = round((latest.nav / points[0].nav - 1) * 100, 2)
 
-        return FundNavHistory(
+        history = FundNavHistory(
             fund_code=fund_code,
             fund_name=fund_name,
             source="akshare",
@@ -120,6 +128,8 @@ class FundDataService:
             latest_date=latest.date,
             period_change_percent=period_change,
         )
+        save_cached_fund_nav(fund_code, trading_days, history)
+        return history
 
     def _from_akshare_combined(
         self,
@@ -127,31 +137,22 @@ class FundDataService:
         *,
         trading_days: int,
     ) -> tuple[FundSnapshot, FundNavHistory]:
-        from app.services.akshare_subprocess import fetch_fund_nav_history
-
-        result = fetch_fund_nav_history(holding.fund_code, trading_days=trading_days)
-        if result is None or "data" not in result:
+        history = self.get_nav_history(
+            holding.fund_code,
+            holding.fund_name,
+            trading_days=trading_days,
+        )
+        if history.source != "akshare" or not history.points:
             raise ValueError("AkShare 获取净值数据失败")
 
-        data = result["data"]
-        if not data:
-            raise ValueError("未能解析净值数据")
-
-        points = _parse_nav_points(data)
-
-        if not points:
-            raise ValueError("未能解析净值数据")
-
-        latest_point = points[-1]
-        period_change = None
-        if points[0].nav > 0:
-            period_change = round((latest_point.nav / points[0].nav - 1) * 100, 2)
+        latest_point = history.points[-1]
 
         # 获取基金诊断信息（这会单独调用AkShare）
         diagnostics = {}
         try:
-            import akshare as ak  # type: ignore[import-not-found]
-            diagnostics = _load_fund_diagnostics(ak, holding.fund_code)
+            from app.services.fund_diagnostics_cache import load_fund_diagnostics
+
+            diagnostics = load_fund_diagnostics(holding.fund_code)
         except Exception:
             pass  # 诊断信息失败不影响主逻辑
 
@@ -166,15 +167,6 @@ class FundDataService:
             fund_scale_yi=diagnostics.get("fund_scale_yi"),
             return_1y_percent=diagnostics.get("return_1y_percent"),
             max_drawdown_1y_percent=diagnostics.get("max_drawdown_1y_percent"),
-        )
-        history = FundNavHistory(
-            fund_code=holding.fund_code,
-            fund_name=holding.fund_name,
-            source="akshare",
-            points=points,
-            latest_nav=latest_point.nav,
-            latest_date=latest_point.date,
-            period_change_percent=period_change,
         )
         return snapshot, history
 

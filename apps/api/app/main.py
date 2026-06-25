@@ -63,6 +63,7 @@ from app.models import (
     Holding,
     HoldingDetailRequest,
     InvestorProfile,
+    PortfolioSummary,
     RefreshSectorQuotesRequest,
     ReportChatRequest,
     SaveSectorMappingRequest,
@@ -476,9 +477,11 @@ def refresh_sector_quotes(request: RefreshSectorQuotesRequest) -> dict:
             with_official_nav=request.budget == "accurate",
         )
         result["holdings"] = serialize_holdings_for_client(enriched)
+        user_id = get_request_user_id()
         schedule_warm_holdings_intraday(
             enriched,
-            user_key=str(get_request_user_id()),
+            user_key=str(user_id),
+            user_id=user_id,
         )
     return result
 
@@ -1236,7 +1239,16 @@ def portfolio_holdings() -> dict:
             cached_holdings = [
                 Holding.model_validate(item) for item in cached.get("holdings", [])
             ]
-            schedule_warm_holdings_intraday(cached_holdings, user_key=user_key)
+            schedule_warm_holdings_intraday(
+                cached_holdings,
+                user_key=user_key,
+                user_id=int(user_key) if user_key.isdigit() else None,
+                portfolio_summary=(
+                    PortfolioSummary.model_validate(cached["portfolio_summary"])
+                    if cached.get("portfolio_summary")
+                    else None
+                ),
+            )
         except Exception:  # noqa: BLE001 — 预热失败不影响响应
             pass
         return cached
@@ -1249,7 +1261,16 @@ def portfolio_holdings() -> dict:
         refreshed_at=refreshed_at,
     )
     save_cached_holdings_response(payload)
-    schedule_warm_holdings_intraday(holdings, user_key=user_key)
+    schedule_warm_holdings_intraday(
+        holdings,
+        user_key=user_key,
+        user_id=int(user_key) if user_key.isdigit() else None,
+        portfolio_summary=(
+            PortfolioSummary.model_validate(payload["portfolio_summary"])
+            if payload.get("portfolio_summary")
+            else None
+        ),
+    )
     return payload
 
 
