@@ -1,0 +1,24 @@
+docs/superpowers/specs/2026-06-25-qwen-vl-ocr-switch-design.md
+  s_56bac5bbaace4e::t_db1932bfda065e 1-195
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.18-trip",
+  "base_commit_sha": "848c8d64ac4d9db34bf9bb64fc69e0e109f81b9f",
+  "prompts": {},
+  "humans": {
+    "h_375fc341ff3baa": {
+      "author": "hegl <HLLLG@github.com>"
+    }
+  },
+  "sessions": {
+    "s_56bac5bbaace4e": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "876bbea8-3ddf-4ae8-ba35-c1dbaa4ac3e6",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
