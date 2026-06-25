@@ -74,12 +74,25 @@ class NewsService:
         return ranked
 
     def prefetch_topics(self, topics: list[str]) -> list[NewsItem]:
-        if not self.settings.news_enabled:
+        if not self.settings.news_enabled or not topics:
             return []
 
+        limited = list(topics[: self.settings.news_max_topics])
+        if len(limited) == 1:
+            return _rank_news_by_recency(_dedupe_news(self.search(limited[0])))
+
+        from concurrent.futures import ThreadPoolExecutor
+
+        max_workers = min(5, len(limited))
+        with ThreadPoolExecutor(
+            max_workers=max_workers,
+            thread_name_prefix="news-prefetch",
+        ) as executor:
+            results = list(executor.map(self.search, limited))
+
         collected: list[NewsItem] = []
-        for topic in topics[: self.settings.news_max_topics]:
-            collected.extend(self.search(topic))
+        for items in results:
+            collected.extend(items)
         return _rank_news_by_recency(_dedupe_news(collected))
 
     def prefetch_for_holdings(
