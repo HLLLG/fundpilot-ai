@@ -1,0 +1,24 @@
+apps/web/src/lib/holdingMetrics.test.ts
+  s_28252ff32818c0::t_ab7eded0aa453c 53
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.18-trip",
+  "base_commit_sha": "6e2d9d0455d00f24f97d76ea3870fc66c2cdc660",
+  "prompts": {},
+  "humans": {
+    "h_375fc341ff3baa": {
+      "author": "hegl <HLLLG@github.com>"
+    }
+  },
+  "sessions": {
+    "s_28252ff32818c0": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "7385c4d1-4bc7-4de5-b1ba-fcec0d48c108",
+        "model": "composer-2.5"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
