@@ -861,7 +861,7 @@ export function YangjibaoFundDetail({
                 删除该基金？
               </h3>
               <p className="mt-2 text-sm leading-6 text-slate-600">
-                将从当前账户汇总移除「{activeHolding.fund_name}」。基金档案与历史盈亏快照会保留，之后仍可重新添加。
+                将从当前账户汇总移除「{activeHolding.fund_name}」，并删除该基金档案。重新添加时将作为新持仓录入。
               </p>
               <div className="mt-4 flex gap-2">
                 <button

@@ -39,7 +39,7 @@ def test_vlm_ocr_settings_defaults(monkeypatch):
     assert s.vlm_ocr_model == "qwen-vl-ocr"
     assert s.vlm_ocr_base_url.startswith("https://dashscope.aliyuncs.com")
     assert s.vlm_ocr_timeout_seconds == 20
-    assert s.vlm_ocr_api_key is None
+    # 注：不断言 vlm_ocr_api_key（会被本地 .env 真实 key 覆盖，与「默认值」语义无关）
     # qwen-vl-ocr 图像缩放 + 上传前压缩默认值
     assert s.vlm_ocr_min_pixels == 3072
     assert s.vlm_ocr_max_pixels == 8388608

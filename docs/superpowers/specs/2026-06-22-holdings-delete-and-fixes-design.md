@@ -1,7 +1,9 @@
 # 好基灵 — 删除简报页 + 持仓删除 + 三个 Bug 修复（设计）
 
 **日期：** 2026-06-22
-**状态：** 已与用户确认，进入实现
+**状态：** 已实现；**2026-06-25 修订**删除数据范围
+
+> **2026-06-25 修订：** 用户删除基金时改为**彻底删除** `fund_profiles` 与用户级 `fund_primary_sectors`（不再仅归零 `holding_amount`）。修复删除后 `profiles_recovered` 复活与列表 0.00 脏数据。历史**按日日快照**仍保留。
 
 ## 背景与目标
 
@@ -18,7 +20,7 @@
 | 决策点 | 选择 |
 |--------|------|
 | 删除基金交互 | 基金详情页底部「删除该基金」按钮 + 二次确认 |
-| 删除数据范围 | 仅从当前持仓/账户汇总移除；保留 `fund_profiles`、板块映射、历史日快照 |
+| 删除数据范围 | 从快照移除，并删除 `fund_profiles` + 用户级 `fund_primary_sectors`；历史日快照保留 |
 | 504 修复策略 | apply-holdings 改「快速写入」：只写库，不做重网络拉取；板块/当日收益交前端 `refresh-sector-quotes` 异步刷新 |
 | 删除简报后默认落地页 | 「持仓」Tab |
 
@@ -57,7 +59,7 @@
 - 新增 fixture `alipay_overview_holdings_5_ocr.txt`（5 只含股票C + 页眉缺失变体）+ 测试断言 5 只、来源 `alipay_holdings`。
 
 ### 任务 E（新功能）：删除基金
-- 后端 `DELETE /api/portfolio/holdings/{fund_code}`：从最近快照移除该 `fund_code`（同名兜底）→ 重存快照/summary；保留档案/映射/历史快照。空仓后写空快照。
+- 后端 `DELETE /api/portfolio/holdings/{fund_code}`：从最近快照移除该 `fund_code`（同名兜底）→ `_purge_fund_profile` 删档案与板块映射 → 重存快照/summary；历史日快照保留。
 - 前端 `api.ts` 加 `deletePortfolioHolding(fundCode)`；`YangjibaoFundDetail` 底部「删除该基金」按钮 + 确认弹窗；`Dashboard` 删除成功后更新 `holdings` 与本地缓存、关闭详情。
 
 ## 验证
@@ -67,5 +69,5 @@
 
 ## 不做（YAGNI）
 - 列表左滑/编辑模式批量删除（本期仅详情页删除）。
-- 彻底清除档案/历史（本期仅移除当前持仓）。
+- 清除历史日快照（删除仅影响当前持仓与档案，往日快照不动）。
 - 简报页相关后端无独立逻辑，无需改后端。

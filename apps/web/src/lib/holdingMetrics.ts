@@ -31,7 +31,16 @@ export function isPlaceholderHolding(holding: Holding): boolean {
 
 /** 账户汇总 / 生成日报使用的有效持仓列表。 */
 export function displayableHoldings(holdings: Holding[]): Holding[] {
-  return withoutTestHoldings(holdings).filter((holding) => !isPlaceholderHolding(holding));
+  return withoutTestHoldings(holdings).filter((holding) => {
+    if (isPlaceholderHolding(holding)) {
+      return false;
+    }
+    const amount =
+      holding.settled_holding_amount != null
+        ? holding.settled_holding_amount
+        : holding.holding_amount;
+    return (amount ?? 0) > 0;
+  });
 }
 
 export type HoldingIdentity = Pick<Holding, "fund_code" | "fund_name">;

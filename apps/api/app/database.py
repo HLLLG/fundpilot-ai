@@ -1124,6 +1124,18 @@ def save_fund_primary_sector(
     }
 
 
+def delete_fund_primary_sector(fund_code: str) -> bool:
+    user_id = _uid()
+    code = fund_code.strip().zfill(6)
+    with _connect() as connection:
+        cursor = connection.execute(
+            "DELETE FROM fund_primary_sectors WHERE userId = ? AND fund_code = ?",
+            (user_id, code),
+        )
+        connection.commit()
+    return cursor.rowcount > 0
+
+
 def list_fund_primary_sectors() -> list[dict[str, Any]]:
     user_id = _uid()
     with _connect() as connection:

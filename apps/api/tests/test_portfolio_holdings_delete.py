@@ -48,7 +48,7 @@ def test_apply_confirmed_holdings_skips_heavy_sector_pipeline(monkeypatch):
     assert result["sector_refresh"] is None
 
 
-def test_remove_holding_from_portfolio_keeps_profiles(tmp_path, monkeypatch):
+def test_remove_holding_from_portfolio_deletes_profile(tmp_path, monkeypatch):
     monkeypatch.setenv("FUND_AI_DB_PATH", str(tmp_path / "app.db"))
     from app.config import refresh_settings
 
@@ -97,7 +97,61 @@ def test_remove_holding_from_portfolio_keeps_profiles(tmp_path, monkeypatch):
     assert payload["portfolio_summary"]["total_assets"] == 2000.0
     from app.database import get_fund_profile_by_code
 
-    assert get_fund_profile_by_code("001234") is not None
+    assert get_fund_profile_by_code("001234") is None
+    assert get_fund_profile_by_code("005678") is not None
+
+
+def test_delete_then_load_persisted_holdings_does_not_resurrect_fund(tmp_path, monkeypatch):
+    """删除后刷新：快照与档案均移除，基金不应复活。"""
+    monkeypatch.setenv("FUND_AI_DB_PATH", str(tmp_path / "app.db"))
+    from app.config import refresh_settings
+
+    refresh_settings()
+
+    from app.database import get_fund_profile_by_code
+    from app.models import FundProfile
+    from app.services.fund_profile import FundProfileService
+    from app.services.portfolio_holdings_service import load_persisted_holdings
+
+    service = FundProfileService()
+    service.save_profile(
+        FundProfile(
+            fund_code="026790",
+            fund_name="中欧上证科创板人工智能指数C",
+            holding_amount=770.77,
+        )
+    )
+    service.save_profile(
+        FundProfile(
+            fund_code="025857",
+            fund_name="华夏中证电网设备主题ETF联接C",
+            holding_amount=2000.0,
+        )
+    )
+    holdings = [
+        Holding(
+            fund_code="026790",
+            fund_name="中欧上证科创板人工智能指数C",
+            holding_amount=770.77,
+            return_percent=0,
+        ),
+        Holding(
+            fund_code="025857",
+            fund_name="华夏中证电网设备主题ETF联接C",
+            holding_amount=2000.0,
+            return_percent=0,
+        ),
+    ]
+    save_daily_snapshot(holdings, PortfolioSummary(total_assets=2770.77, holding_count=2))
+
+    remove_holding_from_portfolio("026790", fund_name="中欧上证科创板人工智能指数C")
+
+    loaded, source, _, _ = load_persisted_holdings()
+    codes = {h.fund_code for h in loaded}
+    assert "026790" not in codes
+    assert "025857" in codes
+    assert source == "snapshot"
+    assert get_fund_profile_by_code("026790") is None
 
 
 def test_merge_holdings_with_profiles_does_not_readd_deleted_profile(tmp_path, monkeypatch):
@@ -175,6 +229,4 @@ def test_remove_profile_only_holding(tmp_path, monkeypatch):
 
     assert len(payload["holdings"]) == 1
     assert payload["holdings"][0]["fund_code"] == "005678"
-    profile = get_fund_profile_by_code("021234")
-    assert profile is not None
-    assert profile.holding_amount == 0
+    assert get_fund_profile_by_code("021234") is None

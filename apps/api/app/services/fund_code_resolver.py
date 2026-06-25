@@ -4,6 +4,8 @@ import json
 import os
 import subprocess
 import sys
+from collections import defaultdict
+from dataclasses import dataclass
 
 from app.services.fund_name_fuzzy import (
     FUZZY_SEARCH_MIN_SCORE,
@@ -65,11 +67,90 @@ def _fund_name_table_looks_valid(table: list[tuple[str, str]]) -> bool:
 
 
 _fund_name_table_cache: list[tuple[str, str]] | None = None
+_fund_name_index_cache: _FundNameIndex | None = None
+
+
+@dataclass(frozen=True)
+class _FundNameIndex:
+    """东财基金名称表内存索引：by_code、归一化名、名称/bigram 子串搜索。"""
+
+    table: tuple[tuple[str, str], ...]
+    by_code: dict[str, str]
+    by_normalized: dict[str, tuple[tuple[str, str], ...]]
+    postings_by_name_bigram: dict[str, frozenset[str]]
+    postings_by_norm_bigram: dict[str, frozenset[str]]
+
+
+def _text_bigrams(text: str) -> tuple[str, ...]:
+    if len(text) < 2:
+        return ()
+    return tuple(text[index : index + 2] for index in range(len(text) - 1))
+
+
+def _add_bigram_postings(
+    target: dict[str, set[str]],
+    text: str,
+    code: str,
+) -> None:
+    for bigram in set(_text_bigrams(text)):
+        target[bigram].add(code)
+
+
+def _candidate_codes_by_bigrams(
+    postings: dict[str, frozenset[str]],
+    grams: tuple[str, ...],
+) -> set[str]:
+    if not grams:
+        return set()
+    candidate_codes: set[str] | None = None
+    for gram in grams:
+        codes = postings.get(gram)
+        if not codes:
+            return set()
+        candidate_codes = codes if candidate_codes is None else candidate_codes & codes
+    return candidate_codes or set()
+
+
+def _build_fund_name_index(table: list[tuple[str, str]]) -> _FundNameIndex:
+    by_code: dict[str, str] = {}
+    by_normalized_lists: dict[str, list[tuple[str, str]]] = defaultdict(list)
+    name_bigram_sets: dict[str, set[str]] = defaultdict(set)
+    norm_bigram_sets: dict[str, set[str]] = defaultdict(set)
+    for code, name in table:
+        by_code[code] = name
+        normalized = normalize_fund_name_for_lookup(name)
+        if normalized:
+            by_normalized_lists[normalized].append((code, name))
+            _add_bigram_postings(norm_bigram_sets, normalized, code)
+        _add_bigram_postings(name_bigram_sets, name, code)
+    by_normalized = {
+        key: tuple(rows) for key, rows in by_normalized_lists.items()
+    }
+    return _FundNameIndex(
+        table=tuple(table),
+        by_code=by_code,
+        by_normalized=by_normalized,
+        postings_by_name_bigram={
+            key: frozenset(codes) for key, codes in name_bigram_sets.items()
+        },
+        postings_by_norm_bigram={
+            key: frozenset(codes) for key, codes in norm_bigram_sets.items()
+        },
+    )
+
+
+def _fund_name_index() -> _FundNameIndex:
+    global _fund_name_index_cache
+    table = _fund_name_table()
+    if _fund_name_index_cache is None or _fund_name_index_cache.table != tuple(table):
+        _fund_name_index_cache = _build_fund_name_index(table)
+    return _fund_name_index_cache
 
 
 def clear_fund_name_table_cache() -> None:
-    global _fund_name_table_cache
+    global _fund_name_table_cache, _fund_name_index_cache
     _fund_name_table_cache = None
+    _fund_name_index_cache = None
 
 
 def clear_all_fund_name_table_caches() -> None:
@@ -190,12 +271,18 @@ def lookup_fund_code_by_name(fund_name: str) -> tuple[str | None, str | None]:
         return None, None
 
     target_class = extract_share_class_letter(fund_name)
-    table = _fund_name_table()
+    index = _fund_name_index()
+    table = list(index.table)
 
-    for code, name in table:
-        normalized = normalize_fund_name_for_lookup(name)
-        if normalized and target == normalized:
-            return code, "akshare"
+    exact_rows = index.by_normalized.get(target)
+    if exact_rows:
+        if len(exact_rows) == 1:
+            return exact_rows[0][0], "akshare"
+        if target_class:
+            for code, name in exact_rows:
+                if extract_share_class_letter(name) == target_class:
+                    return code, "akshare"
+        return exact_rows[0][0], "akshare"
 
     candidates: list[tuple[int, str]] = []
     for code, name in table:
@@ -211,10 +298,7 @@ def lookup_fund_code_by_name(fund_name: str) -> tuple[str | None, str | None]:
 
     if candidates:
         if target_class is None:
-            class_by_code = {
-                code: extract_share_class_letter(name)
-                for code, name in table
-            }
+            class_by_code = {code: extract_share_class_letter(name) for code, name in table}
             c_only = [item for item in candidates if class_by_code.get(item[1]) == "C"]
             if len(c_only) == 1 and len(candidates) >= 2:
                 return c_only[0][1], "akshare"
@@ -240,14 +324,13 @@ def lookup_fund_name_by_code(fund_code: str) -> str | None:
     code = fund_code.strip().zfill(6)
     if len(code) != 6 or not code.isdigit():
         return None
-    for table_code, name in _fund_name_table():
+    index = _fund_name_index()
+    name = index.by_code.get(code)
+    if name and _fund_name_looks_valid(name):
+        return name
+    for table_code, table_name in _reload_fund_name_table():
         if table_code == code:
-            if _fund_name_looks_valid(name):
-                return name
-            break
-    for table_code, name in _reload_fund_name_table():
-        if table_code == code:
-            return name if _fund_name_looks_valid(name) else None
+            return table_name if _fund_name_looks_valid(table_name) else None
     return None
 
 
@@ -257,25 +340,51 @@ def search_funds_by_keyword(keyword: str, *, limit: int = 12) -> list[dict[str, 
     if not query:
         return []
 
-    table = _fund_name_table()
+    index = _fund_name_index()
+    table_snapshot = index.table
     results: list[tuple[int, str, str]] = []
 
     if query.isdigit() and len(query) <= 6:
         code_query = query.zfill(6)
-        for code, name in table:
-            if code == code_query:
-                if _fund_name_looks_valid(name):
-                    return [{"fund_code": code, "fund_name": name}]
-                break
-        for code, name in _reload_fund_name_table():
-            if code == code_query and _fund_name_looks_valid(name):
-                return [{"fund_code": code, "fund_name": name}]
-        for code, name in table:
-            if code.startswith(query):
-                results.append((900_000 + len(query), code, name))
+        name = index.by_code.get(code_query)
+        if name and _fund_name_looks_valid(name):
+            return [{"fund_code": code_query, "fund_name": name}]
+        for table_code, table_name in _reload_fund_name_table():
+            if table_code == code_query and _fund_name_looks_valid(table_name):
+                return [{"fund_code": code_query, "fund_name": table_name}]
+        # reload 失败时会清空内存表；前缀匹配仍用 reload 前的快照（与原实现一致）
+        prefix_source = table_snapshot
+        index = _fund_name_index()
+        if index.table:
+            prefix_source = index.table
+        for code, table_name in prefix_source:
+            if code.startswith(query) and _fund_name_looks_valid(table_name):
+                results.append((900_000 + len(query), code, table_name))
 
+    index = _fund_name_index()
     query_norm = normalize_fund_name_for_lookup(query)
-    for code, name in table:
+    candidate_codes = set()
+    if len(query) >= 2:
+        candidate_codes |= _candidate_codes_by_bigrams(
+            index.postings_by_name_bigram,
+            _text_bigrams(query),
+        )
+    if query_norm and len(query_norm) >= 2:
+        candidate_codes |= _candidate_codes_by_bigrams(
+            index.postings_by_norm_bigram,
+            _text_bigrams(query_norm),
+        )
+
+    if candidate_codes:
+        iterable = (
+            (code, index.by_code[code])
+            for code in candidate_codes
+            if code in index.by_code
+        )
+    else:
+        iterable = index.table if index.table else table_snapshot
+
+    for code, name in iterable:
         if query in name:
             score = 500_000 + len(query)
         elif query_norm:
@@ -286,9 +395,10 @@ def search_funds_by_keyword(keyword: str, *, limit: int = 12) -> list[dict[str, 
             results.append((score, code, name))
 
     if not results and query_norm and len(query_norm) >= 4:
+        fuzzy_table = list(index.table) if index.table else list(table_snapshot)
         for score, code, name in fuzzy_search_funds(
             query,
-            table,
+            fuzzy_table,
             limit=limit,
             min_score=FUZZY_SEARCH_MIN_SCORE,
         ):

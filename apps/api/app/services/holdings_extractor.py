@@ -9,7 +9,7 @@ from app.models import Holding
 
 logger = logging.getLogger(__name__)
 
-VlmFn = Callable[[bytes, Settings], list[Holding]]
+VlmFn = Callable[[bytes, Settings], tuple[list[Holding], str]]
 LocalFn = Callable[[bytes | None, str], tuple[list[Holding], str]]
 
 
@@ -76,13 +76,13 @@ def extract_holdings(
 
     vlm = vlm_fn or _default_vlm_fn
     try:
-        holdings = vlm(file_bytes, resolved)
+        holdings, raw_text = vlm(file_bytes, resolved)
         if not holdings:
             raise ValueError("VLM 返回空持仓")
         return ExtractionResult(
             holdings=holdings,
             ocr_source="alipay_holdings",
-            raw_text="",
+            raw_text=raw_text,
             provider="vlm",
         )
     except Exception:  # noqa: BLE001 — 云端失败软回退本地，绝不冒泡
@@ -90,7 +90,7 @@ def extract_holdings(
         return run_local()
 
 
-def _default_vlm_fn(file_bytes: bytes, settings: Settings) -> list[Holding]:
+def _default_vlm_fn(file_bytes: bytes, settings: Settings) -> tuple[list[Holding], str]:
     from app.services.vlm_holdings_provider import extract_holdings_via_vlm
 
     return extract_holdings_via_vlm(file_bytes, settings=settings)

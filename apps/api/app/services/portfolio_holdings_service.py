@@ -9,7 +9,7 @@ from app.services.fund_name_utils import is_fund_name_match
 from app.services.fund_profile import FundProfileService, _is_valid_sector_label
 from app.services.holding_amount_sync import sync_holding_amounts_from_shares
 from app.services.holding_estimates import enrich_holdings_estimates, sum_daily_profit
-from app.services.holding_filters import is_test_holding, without_test_holdings
+from app.services.holding_filters import is_inactive_holding, is_test_holding, without_inactive_holdings, without_test_holdings
 from app.services.overview_pipeline import enrich_holdings_from_profiles
 from app.services.portfolio_persistence import enrich_loaded_holdings, persist_holdings_after_sector_refresh
 from app.services.sector_quote_service import refresh_holdings_sector_quotes
@@ -48,7 +48,7 @@ def build_portfolio_holdings_response(
     snapshot_date: str | None,
     refreshed_at: datetime | None,
 ) -> dict:
-    holdings = reconcile_holding_fund_codes(holdings)
+    holdings = without_inactive_holdings(reconcile_holding_fund_codes(holdings))
     holdings = FundProfileService().resolve_holdings(holdings)
     summary = get_portfolio_summary()
     profiles = FundProfileService().list_profiles()
@@ -200,11 +200,19 @@ def merge_holdings_with_profiles(
     for row in snapshot_holdings:
         if row.fund_code in seen_codes or is_test_holding(row):
             continue
+        if is_inactive_holding(row):
+            continue
+        if row.fund_code and row.fund_code != "000000":
+            from app.database import get_fund_profile_by_code
+
+            profile = get_fund_profile_by_code(row.fund_code)
+            if profile is not None and (profile.holding_amount or 0) <= 0:
+                continue
         if row.fund_name in {item.fund_name for item in merged}:
             continue
         merged.append(row)
 
-    return merged
+    return without_inactive_holdings(merged)
 
 
 def sync_portfolio_from_profiles(*, refresh_sectors: bool = True) -> list[Holding]:
@@ -230,6 +238,12 @@ def load_persisted_holdings() -> tuple[list[Holding], str, str | None, datetime 
     profile_holdings = holdings_from_profiles()
     snapshot = get_most_recent_portfolio_snapshot()
 
+    def _finalize(holdings: list[Holding], source: str, snap_date: str | None, refreshed: datetime | None):
+        cleaned = without_inactive_holdings(holdings)
+        if cleaned and len(cleaned) < len(holdings):
+            _repair_snapshot_holdings(cleaned)
+        return cleaned, source, snap_date, refreshed
+
     if snapshot and snapshot.get("holdings"):
         holdings = [Holding.model_validate(item) for item in snapshot["holdings"]]
         if holdings:
@@ -240,7 +254,7 @@ def load_persisted_holdings() -> tuple[list[Holding], str, str | None, datetime 
                 snapshot_total_assets=snapshot_total,
             ):
                 if profile_holdings:
-                    return (
+                    return _finalize(
                         enrich_loaded_holdings(profile_holdings),
                         "profiles_recovered",
                         snapshot.get("snapshot_date"),
@@ -248,7 +262,7 @@ def load_persisted_holdings() -> tuple[list[Holding], str, str | None, datetime 
                     )
             merged = without_test_holdings(merge_holdings_with_profiles(holdings))
             enriched = enrich_loaded_holdings(enrich_holdings_from_profiles(merged))
-            return (
+            return _finalize(
                 enriched,
                 "snapshot",
                 snapshot.get("snapshot_date"),
@@ -256,7 +270,7 @@ def load_persisted_holdings() -> tuple[list[Holding], str, str | None, datetime 
             )
 
     if profile_holdings:
-        return (
+        return _finalize(
             enrich_loaded_holdings(profile_holdings),
             "profiles",
             None,
@@ -264,6 +278,32 @@ def load_persisted_holdings() -> tuple[list[Holding], str, str | None, datetime 
         )
 
     return [], "empty", None, None
+
+
+def _repair_snapshot_holdings(holdings: list[Holding]) -> None:
+    """自愈：快照里残留已删除基金（金额 0 / 档案停用）时写回干净列表。"""
+    if not holdings:
+        return
+    summary = get_portfolio_summary()
+    if summary is None:
+        summary = PortfolioSummary(
+            total_assets=round(sum(h.holding_amount for h in holdings), 2),
+            holding_count=len(holdings),
+        )
+    else:
+        total_assets = round(
+            sum((h.settled_holding_amount or h.holding_amount) + (h.daily_profit or 0) for h in holdings),
+            2,
+        )
+        summary = summary.model_copy(
+            update={
+                "total_assets": total_assets,
+                "holding_count": len(holdings),
+                "daily_profit": sum_daily_profit(holdings),
+            }
+        )
+    save_portfolio_summary(summary)
+    save_daily_snapshot(holdings, summary)
 
 
 def _holding_matches_target(
@@ -282,20 +322,25 @@ def _holding_matches_target(
     return False
 
 
-def _deactivate_profile_holding(profile: FundProfile) -> None:
-    """从持有列表移除但保留档案元数据（板块、成本历史等）。"""
-    from app.database import save_fund_profile
-
-    save_fund_profile(
-        profile.model_copy(
-            update={
-                "holding_amount": 0,
-                "settled_holding_amount": 0,
-                "holding_shares": 0,
-                "first_seen_date": None,
-            }
-        )
+def _purge_fund_profile(fund_code: str, fund_name: str | None = None) -> None:
+    """删除基金档案及用户级主关联板块映射（历史日快照仍保留）。"""
+    from app.database import (
+        delete_fund_primary_sector,
+        delete_fund_profile,
+        get_fund_profile_by_code,
     )
+
+    code = (fund_code or "").strip()
+    profile = get_fund_profile_by_code(code) if code and code != "000000" else None
+    if profile is None and fund_name:
+        profile = FundProfileService().find_match(fund_name)
+    if profile is None:
+        return
+    purge_code = (profile.fund_code or "").strip()
+    if not purge_code or purge_code == "000000":
+        return
+    delete_fund_primary_sector(purge_code)
+    delete_fund_profile(purge_code)
 
 
 def remove_holding_from_portfolio(
@@ -303,7 +348,7 @@ def remove_holding_from_portfolio(
     *,
     fund_name: str | None = None,
 ) -> dict:
-    """从当前账户汇总移除一只基金；保留 fund_profiles 与历史日快照。"""
+    """从当前账户汇总移除一只基金，并删除对应 fund_profiles / 板块映射。"""
     code = (fund_code or "").strip()
     if not code:
         raise ValueError("fund_code 不能为空")
@@ -328,7 +373,6 @@ def remove_holding_from_portfolio(
             profile = FundProfileService().find_match(fund_name)
         if profile is None:
             raise LookupError("未找到要删除的持仓")
-        _deactivate_profile_holding(profile)
         remaining = current
 
     remaining = without_test_holdings(remaining)
@@ -369,16 +413,7 @@ def remove_holding_from_portfolio(
     save_portfolio_summary(summary)
     save_daily_snapshot(remaining, summary)
 
-    from app.database import get_fund_profile_by_code, save_fund_profile
-
-    for item in matched_in_snapshot:
-        item_code = (item.fund_code or "").strip()
-        if not item_code or item_code == "000000":
-            continue
-        profile = get_fund_profile_by_code(item_code)
-        if profile is None:
-            continue
-        save_fund_profile(profile.model_copy(update={"first_seen_date": None}))
+    _purge_fund_profile(code, fund_name)
 
     return build_portfolio_holdings_response(
         remaining,

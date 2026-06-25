@@ -12,7 +12,7 @@ from app.services.holding_estimates import (
 )
 from app.services.fund_profile import _is_valid_sector_label
 from app.services.fund_profile import _looks_like_index_name
-from app.services.holding_filters import without_placeholder_holdings, without_test_holdings
+from app.services.holding_filters import without_inactive_holdings, without_placeholder_holdings, without_test_holdings
 from app.services.portfolio_profit_analysis import persist_intraday_curve
 from app.services.portfolio_snapshot import save_daily_snapshot
 
@@ -104,8 +104,10 @@ def persist_holdings_after_sector_refresh(
     ``with_official_nav=False`` 时跳过逐只 AkShare 官方净值覆盖（fast 刷新用），
     避免 CloudBase 网关 ~60s 超时；accurate 刷新仍走官方净值。
     """
-    merged = without_placeholder_holdings(
-        without_test_holdings(merge_holdings_with_snapshot(holdings))
+    merged = without_inactive_holdings(
+        without_placeholder_holdings(
+            without_test_holdings(merge_holdings_with_snapshot(holdings))
+        )
     )
     from app.services.transaction_ledger import confirm_and_compute_overrides
 

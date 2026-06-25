@@ -20,7 +20,7 @@ def main() -> None:
             continue
         t0 = time.perf_counter()
         try:
-            holdings = extract_holdings_via_vlm(p.read_bytes())
+            holdings, _raw_text = extract_holdings_via_vlm(p.read_bytes())
         except Exception as exc:  # noqa: BLE001
             print(f"{p.name}: 失败 {type(exc).__name__}: {exc}")
             continue

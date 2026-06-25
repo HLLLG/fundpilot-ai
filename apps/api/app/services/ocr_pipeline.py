@@ -84,7 +84,8 @@ def run_ocr_upload_pipeline(
     if parsed_holdings and ocr_source != "alipay_holdings":
         ocr_source = "alipay_holdings"
     holdings, fund_code_resolutions = _resolve_fund_codes(parsed_holdings, profile_service)
-    holdings = profile_service.resolve_holdings(holdings)
+    if not preview:
+        holdings = profile_service.resolve_holdings(holdings)
     previous_holdings = get_previous_holdings_for_review()
     profile_sync = (
         profile_service.sync_profiles_from_holdings(holdings).model_dump()
@@ -102,8 +103,7 @@ def run_ocr_upload_pipeline(
     sector_refresh: dict | None = None
     if holdings:
         if preview:
-            # 养基宝式确认页：仅 OCR + 查码，不拉板块（确认后再刷新）
-            holdings = enrich_holdings_from_profiles(holdings)
+            # 养基宝式确认页：仅 OCR + 查码，不补档案/板块（确认后 apply + refresh 再 enrichment）
             sector_refresh = {
                 "ok": True,
                 "skipped": True,

@@ -28,3 +28,19 @@ def is_placeholder_holding(holding: Holding) -> bool:
 
 def without_placeholder_holdings(holdings: list[Holding]) -> list[Holding]:
     return [holding for holding in holdings if not is_placeholder_holding(holding)]
+
+
+def effective_holding_amount(holding: Holding) -> float:
+    settled = holding.settled_holding_amount
+    if settled is not None:
+        return float(settled)
+    return float(holding.holding_amount or 0)
+
+
+def is_inactive_holding(holding: Holding) -> bool:
+    """已删除/停用：持有金额为 0，不应出现在账户汇总列表。"""
+    return effective_holding_amount(holding) <= 0
+
+
+def without_inactive_holdings(holdings: list[Holding]) -> list[Holding]:
+    return [holding for holding in holdings if not is_inactive_holding(holding)]

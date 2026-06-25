@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import base64
 import io
-import json
 import logging
-import re
 from typing import Callable
 
 import httpx
@@ -14,28 +12,12 @@ from app.models import Holding
 
 logger = logging.getLogger(__name__)
 
-VLM_EXTRACTION_PROMPT = (
-    "你是支付宝/养基宝「持有」截图的基金持仓识别器。请逐只提取截图里每一只**基金**的持仓数据，"
-    "只输出 JSON，不要任何解释、不要 markdown 代码块。JSON 格式："
-    '{"holdings":[{"fund_name":"完整基金名","fund_code":"6位代码或null",'
-    '"holding_amount":金额数字,"daily_profit":日收益或null,'
-    '"holding_profit":持有收益或null,"cumulative_profit":累计收益或null,'
-    '"holding_return_percent":持有收益率数字或null,"weight_percent":占比数字或null}]}\n'
-    "列布局（务必按列对位，不要错位）：每只基金一个区块——\n"
-    "· 第一行是基金名称；其下一行是『基金/进阶理财/定投』等标签，忽略标签；\n"
-    "· 数值行从左到右依次为：金额(holding_amount) → 日收益(daily_profit) → 持有收益(holding_profit) → 累计收益(cumulative_profit)；\n"
-    "· 金额正下方的『占比 X.XX%』是 weight_percent；『持有收益』列正下方的百分比是 holding_return_percent。\n"
-    "规则：\n"
-    "1) 只提取带「基金」标签的行；必须跳过『余额宝/余额/现金/灵活取用』等货币基金或现金行；\n"
-    "2) 跳过顶部页签(全部持有/收益明细/交易记录)、功能图标(清仓分析/收益地图/基金定投/专项计划)、排序控件(持有收益排序)、底部法律声明(本页面非任何法律文件…/该页面由蚂蚁财富…/以上按照持有收益排序)；\n"
-    "3) 保留完整基金名（含 (QDII)/（QDII）、ETF联接、份额字母 A/B/C 等），不要拆词、缩写或翻译；\n"
-    "4) 亏损（绿色减号）必须保留负号；金额/收益去掉千分位逗号转成数字；看不到或不确定的字段填 null，绝不编造；\n"
-    "5) 截图可能截不全（无表头或只有底部片段），仍尽量提取所有可见基金行。"
-)
+# qwen-vl-ocr 是文字识别专用模型：擅长「图→文本」，但做不了支付宝多列+纵向错位的字段归属推理
+# （让它直接吐结构化 JSON 会把金额/收益/占比错位、把数字当基金名）。因此本 provider 只让它做
+# 高质量纯文本识别（不传 prompt 用模型默认 OCR；传自定义「阅读顺序」prompt 反而会触发文字定位/坐标
+# 输出），再交给久经测试的本地 `parse_holdings_from_text` 做结构化——与本地 PaddleOCR 路径同一解析器。
 
 CompletionFn = Callable[[list[dict], Settings], str]
-
-_JSON_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
 
 
 def _guess_image_mime(image_bytes: bytes) -> str:
@@ -84,6 +66,7 @@ def _image_data_url(image_bytes: bytes, mime: str) -> str:
 
 
 def build_vlm_messages(image_bytes: bytes, settings: Settings) -> list[dict]:
+    """仅图片、不带文本 prompt → qwen-vl-ocr 走默认纯文本识别（最稳，输出干净文本）。"""
     data, mime = compress_image_for_vlm(image_bytes, settings)
     return [
         {
@@ -96,63 +79,9 @@ def build_vlm_messages(image_bytes: bytes, settings: Settings) -> list[dict]:
                     "min_pixels": settings.vlm_ocr_min_pixels,
                     "max_pixels": settings.vlm_ocr_max_pixels,
                 },
-                {"type": "text", "text": VLM_EXTRACTION_PROMPT},
             ],
         }
     ]
-
-
-def parse_vlm_response(content: str) -> list[Holding]:
-    if not content or not content.strip():
-        raise ValueError("VLM 返回为空")
-    text = content.strip()
-    match = _JSON_OBJECT_RE.search(text)
-    if not match:
-        raise ValueError(f"VLM 返回非 JSON：{text[:120]}")
-    try:
-        data = json.loads(match.group(0))
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"VLM JSON 解析失败：{exc}") from exc
-
-    rows = data.get("holdings") if isinstance(data, dict) else None
-    if not isinstance(rows, list):
-        raise ValueError("VLM 返回缺少 holdings 数组")
-
-    holdings: list[Holding] = []
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        name = str(row.get("fund_name") or "").strip()
-        amount = row.get("holding_amount")
-        if not name or amount is None:
-            continue
-        code = str(row.get("fund_code") or "").strip()
-        if not re.fullmatch(r"\d{6}", code):
-            code = "000000"
-        ret = row.get("holding_return_percent")
-        holdings.append(
-            Holding(
-                fund_code=code,
-                fund_name=name,
-                holding_amount=float(amount),
-                return_percent=float(ret) if ret is not None else 0,
-                daily_profit=_opt_float(row.get("daily_profit")),
-                holding_profit=_opt_float(row.get("holding_profit")),
-                holding_return_percent=_opt_float(ret),
-            )
-        )
-    if not holdings:
-        raise ValueError("VLM 未提取到任何基金持仓")
-    return holdings
-
-
-def _opt_float(value: object) -> float | None:
-    if value is None:
-        return None
-    try:
-        return float(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return None
 
 
 def _dashscope_completion(messages: list[dict], settings: Settings) -> str:
@@ -174,14 +103,31 @@ def _dashscope_completion(messages: list[dict], settings: Settings) -> str:
     return data["choices"][0]["message"]["content"]
 
 
+def extract_text_via_vlm(
+    image_bytes: bytes,
+    *,
+    settings: Settings | None = None,
+    completion: CompletionFn | None = None,
+) -> str:
+    """图片 → qwen-vl-ocr 默认纯文本识别，返回 OCR 文本。"""
+    resolved = settings or get_settings()
+    run = completion or _dashscope_completion
+    messages = build_vlm_messages(image_bytes, resolved)
+    content = run(messages, resolved)
+    if not content or not content.strip():
+        raise ValueError("VLM 返回为空文本")
+    return content
+
+
 def extract_holdings_via_vlm(
     image_bytes: bytes,
     *,
     settings: Settings | None = None,
     completion: CompletionFn | None = None,
-) -> list[Holding]:
-    resolved = settings or get_settings()
-    run = completion or _dashscope_completion
-    messages = build_vlm_messages(image_bytes, resolved)
-    content = run(messages, resolved)
-    return parse_vlm_response(content)
+) -> tuple[list[Holding], str]:
+    """图片 → qwen-vl-ocr 文本 → 本地解析器结构化。返回 (holdings, ocr_text)。"""
+    from app.services.ocr_parser import parse_holdings_from_text
+
+    text = extract_text_via_vlm(image_bytes, settings=settings, completion=completion)
+    holdings = parse_holdings_from_text(text)
+    return holdings, text

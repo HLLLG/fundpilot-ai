@@ -21,6 +21,12 @@ _DETAIL_TAB_LABELS = frozenset({"关联板块", "业绩走势", "我的收益"})
 
 
 class FundProfileService:
+    def __init__(self) -> None:
+        self._profiles_cache: list[FundProfile] | None = None
+
+    def _invalidate_profiles_cache(self) -> None:
+        self._profiles_cache = None
+
     def save_profile(self, profile: FundProfile) -> FundProfile:
         existing = self.find_match(profile.fund_name)
         if (
@@ -53,10 +59,13 @@ class FundProfileService:
         from app.services.fund_primary_sector_service import upsert_primary_sector_from_profile
 
         upsert_primary_sector_from_profile(saved)
+        self._invalidate_profiles_cache()
         return saved
 
     def list_profiles(self) -> list[FundProfile]:
-        return list_fund_profiles()
+        if self._profiles_cache is None:
+            self._profiles_cache = list_fund_profiles()
+        return self._profiles_cache
 
     def resolve_holding(self, holding: Holding) -> Holding:
         profile = (
@@ -178,6 +187,7 @@ class FundProfileService:
             self.save_profile(merged)
             updated += 1
 
+        self._invalidate_profiles_cache()
         return ProfileSyncResult(updated=updated, created=created)
 
     def _find_profile_for_holding(self, holding: Holding) -> FundProfile | None:
