@@ -1,0 +1,27 @@
+apps/api/tests/test_news_service_prefetch.py
+  s_8970ebc7890e63::t_d45005b6c96e97 44-48,55,58,66
+  s_8970ebc7890e63::t_524c45896f6bf8 1-43,49-54,56-57,59-65,67-89
+apps/api/app/services/news_service.py
+  s_8970ebc7890e63::t_1a2697c5bcd9c2 77,80-92,94-95
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.18-trip",
+  "base_commit_sha": "e67440d0d09a41b095ad24a50ac3791c3f2fbfd9",
+  "prompts": {},
+  "humans": {
+    "h_375fc341ff3baa": {
+      "author": "hegl <HLLLG@github.com>"
+    }
+  },
+  "sessions": {
+    "s_8970ebc7890e63": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e5afe88f-3c65-48f6-846f-e3377efbe527",
+        "model": "arn:aws:bedrock:us-west-2:133197901387:application-inference-profile/ypvzpmevzxdl"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
