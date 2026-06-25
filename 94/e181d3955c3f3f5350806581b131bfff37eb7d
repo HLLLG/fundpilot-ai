@@ -1,0 +1,38 @@
+apps/api/app/services/discovery_candidate_pool.py
+  s_8970ebc7890e63::t_cf580fc86327f0 82
+  s_8970ebc7890e63::t_d67567b9ac0fe7 96-98
+apps/api/app/config.py
+  s_8970ebc7890e63::t_aab186f45243df 204-207
+  s_8970ebc7890e63::t_eead59a87b3359 70-73,203
+apps/api/app/services/nav_trend_summary.py
+  s_8970ebc7890e63::t_2639fc4ce837a7 10,12-17,23-28,35-36,40-42,52,55,57
+apps/api/tests/test_nav_trend_window.py
+  s_8970ebc7890e63::t_64cdd45fcfa4f4 1-64
+apps/api/app/services/dip_drop_scanner.py
+  s_8970ebc7890e63::t_0349b482b6c786 341,346
+apps/api/tests/test_fund_nav_pull_days.py
+  s_8970ebc7890e63::t_b17cafda004863 1-73
+apps/api/app/services/fund_data.py
+  s_8970ebc7890e63::t_d092cb4f17a12a 40,42,59
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.18-trip",
+  "base_commit_sha": "94e181d3955c3f3f5350806581b131bfff37eb7d",
+  "prompts": {},
+  "humans": {
+    "h_375fc341ff3baa": {
+      "author": "hegl <HLLLG@github.com>"
+    }
+  },
+  "sessions": {
+    "s_8970ebc7890e63": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e5afe88f-3c65-48f6-846f-e3377efbe527",
+        "model": "arn:aws:bedrock:us-west-2:133197901387:application-inference-profile/ypvzpmevzxdl"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
