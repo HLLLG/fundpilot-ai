@@ -1,0 +1,24 @@
+docs/PROJECT_CONTEXT.md
+  s_8970ebc7890e63::t_b8cca47b91001d 10
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.18-trip",
+  "base_commit_sha": "161956af951a5f43d84b9f9ee8b5e3a91af1775d",
+  "prompts": {},
+  "humans": {
+    "h_375fc341ff3baa": {
+      "author": "hegl <HLLLG@github.com>"
+    }
+  },
+  "sessions": {
+    "s_8970ebc7890e63": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e5afe88f-3c65-48f6-846f-e3377efbe527",
+        "model": "arn:aws:bedrock:us-west-2:133197901387:application-inference-profile/ypvzpmevzxdl"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
