@@ -1,24 +1,33 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from datetime import datetime
 
 import httpx
 
 from app.config import get_settings
 from app.models import DiscoveryRecommendation, FundDiscoveryReport, InvestorProfile, NewsItem, TopicBrief
-from app.services.analysis_runtime import resolve_analysis_runtime
+from app.services.analysis_runtime import AnalysisRuntime, resolve_analysis_runtime
 from app.services.deepseek_http import (
     deepseek_chat_url,
     deepseek_request_headers,
     deepseek_timeout,
     format_deepseek_http_error,
 )
-from app.services.deepseek_client import _parse_model_json
+from app.services.deepseek_client import (
+    FETCH_MARKET_NEWS_TOOL,
+    _execute_fetch_market_news,
+    _parse_model_json,
+    tool_round_stage_label,
+)
 from app.services.discovery_guard import apply_discovery_guards
 from app.services.discovery_offline import build_offline_discovery_report
 from app.services.discovery_payload import append_output_requirements_to_system, build_user_payload
 from app.services.discovery_prompt import DEFAULT_DISCOVERY_ROLE_PROMPT, resolve_discovery_role_prompt
+from app.services.news_service import NewsService, _dedupe_news
+
+ProgressCallback = Callable[[str, str], None]
 
 _DISCLAIMER = "仅供参考，不构成投资建议；基金有风险，决策需结合自身承受能力。"
 
@@ -26,6 +35,63 @@ _DISCLAIMER = "仅供参考，不构成投资建议；基金有风险，决策�
 class DiscoveryClient:
     def __init__(self) -> None:
         self.settings = get_settings()
+        self.news_service = NewsService()
+
+    def run_discovery_news_tool_rounds(
+        self,
+        *,
+        system_prompt: str,
+        user_payload: dict,
+        prefetched_news: list[NewsItem],
+        runtime: AnalysisRuntime,
+        on_stage: ProgressCallback | None = None,
+    ) -> tuple[list[dict], list[NewsItem]]:
+        """深度荐基：同步新闻 tool 轮，返回可供最终 JSON 流式补全的 messages。"""
+        collected: list[NewsItem] = list(prefetched_news)
+        messages: list[dict] = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
+        ]
+        tools = (
+            [FETCH_MARKET_NEWS_TOOL]
+            if runtime.news_enabled and runtime.news_tool_max_rounds > 0
+            else None
+        )
+        max_rounds = runtime.news_tool_max_rounds if tools else 0
+
+        for round_index in range(max_rounds):
+            stage, label = tool_round_stage_label(round_index + 1, max_rounds)
+            if on_stage is not None:
+                on_stage(stage, label)
+            message = self._chat_completion(
+                messages=messages,
+                tools=tools,
+                response_format=None,
+                max_tokens=self.settings.deepseek_max_tokens,
+                model=runtime.model,
+            )
+            tool_calls = message.get("tool_calls")
+            if not tool_calls:
+                messages.append(message)
+                break
+            messages.append(message)
+            for tool_call in tool_calls:
+                if on_stage is not None:
+                    on_stage("fetch_market_news", "正在拉取市场新闻…")
+                result = _execute_fetch_market_news(
+                    tool_call,
+                    self.news_service,
+                    collected,
+                )
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call["id"],
+                        "content": result,
+                    }
+                )
+
+        return messages, _dedupe_news(collected)
 
     def generate_report(
         self,
@@ -60,40 +126,28 @@ class DiscoveryClient:
             profile=profile,
             focus_sectors=focus_sectors,
             scan_mode=scan_mode,
+            market_news=market_news,
+            topic_briefs=topic_briefs,
+            analysis_mode=analysis_mode,  # type: ignore[arg-type]
         )
         system_prompt = append_output_requirements_to_system(
             self._system_prompt(runtime.news_tool_max_rounds > 0, system_role_prompt)
         )
         parsed = self._call_model(system_prompt, user_payload, runtime.model)
-        recommendations = _parse_recommendations(parsed.get("recommendations"))
-        guarded, guard_caveats = apply_discovery_guards(
-            recommendations,
+        return build_discovery_report_from_parsed(
+            parsed,
+            target_sectors=target_sectors,
+            focus_sectors=focus_sectors,
+            scan_mode=scan_mode,
             candidate_pool=candidate_pool,
-            held_codes=held_codes,
+            discovery_facts=discovery_facts,
             profile=profile,
+            held_codes=held_codes,
             budget_yuan=budget_yuan,
             sector_heat=sector_heat,
             market_news=market_news,
             topic_briefs=topic_briefs,
-            scan_mode=scan_mode,
-        )
-        caveats = _as_str_list(parsed.get("caveats"))
-        caveats.extend(guard_caveats)
-        if _DISCLAIMER not in caveats:
-            caveats.insert(0, _DISCLAIMER)
-
-        return FundDiscoveryReport(
-            title=str(parsed.get("title") or "今日基金机会扫描"),
-            summary=str(parsed.get("summary") or ""),
-            market_view=str(parsed.get("market_view") or ""),
-            focus_sectors=focus_sectors,
-            target_sectors=target_sectors,
-            candidate_pool=candidate_pool,
-            recommendations=guarded,
-            discovery_facts=discovery_facts,
-            caveats=caveats,
-            provider="deepseek",
-            analysis_mode=analysis_mode,  # type: ignore[arg-type]
+            analysis_mode=analysis_mode,
         )
 
     def _system_prompt(self, news_tool_enabled: bool, role_prompt: str | None = None) -> str:
@@ -138,6 +192,97 @@ class DiscoveryClient:
         if not content:
             raise RuntimeError("DeepSeek 返回空内容")
         return _parse_model_json(content)
+
+    def _chat_completion(
+        self,
+        *,
+        messages: list[dict],
+        tools: list[dict] | None,
+        response_format: dict | None,
+        max_tokens: int | None = None,
+        model: str | None = None,
+    ) -> dict:
+        body: dict = {
+            "model": model or self.settings.deepseek_model,
+            "messages": messages,
+            "temperature": 0.3,
+        }
+        if max_tokens is not None:
+            body["max_tokens"] = max_tokens
+        if tools:
+            body["tools"] = tools
+        if response_format:
+            body["response_format"] = response_format
+        try:
+            with httpx.Client(timeout=deepseek_timeout(self.settings)) as client:
+                response = client.post(
+                    deepseek_chat_url(self.settings),
+                    headers=deepseek_request_headers(self.settings),
+                    json=body,
+                )
+                response.raise_for_status()
+                payload = response.json()
+        except httpx.HTTPError as exc:
+            raise RuntimeError(format_deepseek_http_error(exc)) from exc
+        return payload.get("choices", [{}])[0].get("message", {})
+
+
+def build_discovery_chat_messages(
+    system_prompt: str,
+    user_payload: dict,
+) -> list[dict]:
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
+    ]
+
+
+def build_discovery_report_from_parsed(
+    parsed: dict,
+    *,
+    target_sectors: list[str],
+    focus_sectors: list[str],
+    scan_mode: str,
+    candidate_pool: list[dict],
+    discovery_facts: dict,
+    profile: InvestorProfile,
+    held_codes: set[str],
+    budget_yuan: float,
+    sector_heat: list[dict],
+    market_news: list[NewsItem] | None = None,
+    topic_briefs: list[TopicBrief] | None = None,
+    analysis_mode: str = "fast",
+) -> FundDiscoveryReport:
+    recommendations = _parse_recommendations(parsed.get("recommendations"))
+    guarded, guard_caveats = apply_discovery_guards(
+        recommendations,
+        candidate_pool=candidate_pool,
+        held_codes=held_codes,
+        profile=profile,
+        budget_yuan=budget_yuan,
+        sector_heat=sector_heat,
+        market_news=market_news,
+        topic_briefs=topic_briefs,
+        scan_mode=scan_mode,
+    )
+    caveats = _as_str_list(parsed.get("caveats"))
+    caveats.extend(guard_caveats)
+    if _DISCLAIMER not in caveats:
+        caveats.insert(0, _DISCLAIMER)
+
+    return FundDiscoveryReport(
+        title=str(parsed.get("title") or "今日基金机会扫描"),
+        summary=str(parsed.get("summary") or ""),
+        market_view=str(parsed.get("market_view") or ""),
+        focus_sectors=focus_sectors,
+        target_sectors=target_sectors,
+        candidate_pool=candidate_pool,
+        recommendations=guarded,
+        discovery_facts=discovery_facts,
+        caveats=caveats,
+        provider="deepseek",
+        analysis_mode=analysis_mode,  # type: ignore[arg-type]
+    )
 
 
 def _parse_recommendations(raw: object) -> list[DiscoveryRecommendation]:

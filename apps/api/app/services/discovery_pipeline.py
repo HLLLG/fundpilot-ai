@@ -23,6 +23,7 @@ DISCOVERY_JOB_STAGES: dict[str, str] = {
     "news": "拉取市场要闻…",
     "generating": "AI 分析中…",
     "guarding": "校验推荐结果…",
+    "salvage": "流式中断，已收集部分内容…",
     "saving": "保存报告…",
     "completed": "完成",
 }
@@ -105,6 +106,7 @@ def run_discovery(
         scan_mode=request.scan_mode,
         dip_lookback_days=request.dip_lookback_days,
         dip_min_drop_percent=request.dip_min_drop_percent,
+        focus_sectors=list(request.focus_sectors),
     )
 
     progress("generating")

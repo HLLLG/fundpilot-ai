@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from app.models import Holding, InvestorProfile, NewsItem, TopicBrief
+from app.services.discovery_sector_context import (
+    build_candidate_factor_scores,
+    build_target_sector_context,
+)
 from app.services.investment_presets import take_profit_threshold_percent
 from app.services.market_flow_client import build_market_flow_context
 from app.services.news_freshness import build_news_pipeline_context
@@ -23,6 +27,7 @@ def build_discovery_facts(
     scan_mode: str = "full_market",
     dip_lookback_days: int = 5,
     dip_min_drop_percent: float = 3.0,
+    focus_sectors: list[str] | None = None,
 ) -> dict:
     total_amount = sum(item.holding_amount for item in holdings) or 0.0
     denominator = resolve_weight_denominator(holdings, profile)
@@ -38,7 +43,12 @@ def build_discovery_facts(
 
     facts: dict = {
         "readonly": True,
-        "instruction": "以下数字由系统计算；推荐基金代码必须来自 candidate_pool。",
+        "instruction": (
+            "以下数字由系统计算；推荐基金代码必须来自 candidate_pool。"
+            "引用 sector_fund_flow / sector_intraday / signal_backtest 时须用给定数字，禁止编造。"
+            "news.freshness_label 须在 summary 或 caveats 体现对决策置信度的影响。"
+            "market_flow 为北向/南向资金解读；factor_scores 按 factor_reliability 置信使用。"
+        ),
         "session": session,
         "profile": {
             "decision_style": profile.decision_style,
@@ -68,10 +78,17 @@ def build_discovery_facts(
             "scan_mode": scan_mode,
         },
         "sector_heat": sector_heat,
+        "target_sector_context": build_target_sector_context(
+            list(dict.fromkeys(list(target_sectors) + list(focus_sectors or []))),
+            sector_heat,
+            signal_backtest,
+            trade_date=session.get("effective_trade_date"),
+        ),
         "market_flow": build_market_flow_context(session.get("effective_trade_date")),
         "signal_backtest": signal_backtest,
         "news": build_news_pipeline_context(market_news, topic_briefs),
         "candidate_pool": candidate_pool,
+        "candidate_factor_scores": build_candidate_factor_scores(candidate_pool),
         "selection_strategy": selection_strategy,
     }
 

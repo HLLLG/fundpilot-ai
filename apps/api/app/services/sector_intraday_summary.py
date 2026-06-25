@@ -81,3 +81,17 @@ def _summarize_points(
         "pattern_label": pattern_label,
         "pattern_hint": pattern_hint,
     }
+
+
+def summarize_sector_intraday_for_label(sector_label: str) -> dict | None:
+    """按板块名拉取分时摘要（荐基 target_sector 上下文用）。"""
+    label = (sector_label or "").strip()
+    if not label:
+        return None
+    stub = Holding(
+        fund_code="000000",
+        fund_name=label,
+        sector_name=label,
+        holding_amount=0.0,
+    )
+    return summarize_sector_intraday_for_holding(stub)

@@ -407,6 +407,7 @@ def build_user_payload(
     analysis_mode: AnalysisMode = "deep",
     phase: AnalysisPayloadPhase = 3,
     analysis_bundle: AnalysisFactsBundle | None = None,
+    operator_notes: list[str] | None = None,
 ) -> dict:
     briefs = topic_briefs or []
     bundle = analysis_bundle or prepare_analysis_bundle(
@@ -427,7 +428,7 @@ def build_user_payload(
     )
 
     minimal_briefs = phase >= 2 and analysis_mode == "fast"
-    return {
+    payload: dict = {
         "today": datetime.now().date().isoformat(),
         "profile": slim_profile_for_llm(request.profile),
         "holding_return_semantics": HOLDING_RETURN_SEMANTICS,
@@ -436,6 +437,9 @@ def build_user_payload(
         "topic_briefs": compact_topic_briefs(briefs, minimal=minimal_briefs),
         "requirements": list(OUTPUT_REQUIREMENTS_USER),
     }
+    if operator_notes:
+        payload["operator_notes"] = list(operator_notes)
+    return payload
 
 
 def append_output_requirements_to_system(system_prompt: str) -> str:

@@ -4,9 +4,11 @@
 >
 > **维护：** 功能或架构有实质变化时，同步更新「能力清单」「数据流」「API」「目录」「环境变量」。
 
-**文档版本：** 2026-06-25（QDII 币种后缀查码 · OCR 预览提速 + 东财名称表索引）
+**文档版本：** 2026-06-25（管线阶段 4 流式 · 荐基 LLM 数据对齐 · 外部数据源说明）
 
 **更新记录：**
+- **荐基 LLM 数据包对齐日报（2026-06-25）：** `discovery_payload.build_user_payload` 新增顶层 `news_titles` / `topic_briefs`（复用 `analysis_payload.compact_*`）；`discovery_facts` 透传 `session`、`target_sector_context`（板块热度+主力+分时+信号，见 `discovery_sector_context.py`）、`market_flow`、`candidate_factor_scores`、`selection_strategy`、`dip_swing`、`instruction`；requirements 要求引用北向/南向与 `news.freshness_label`。单测 `test_discovery_payload.py`。
+- **日报/推荐报告管线提速 · 阶段 4（2026-06-25）：** LLM **流式输出** + 前端骨架/浮层。**后端**：`analyze_streaming.py` / `discovery_streaming.py` SSE（`stage` / `token` / `recommendation` partial / `done`）；`deepseek_streaming.py` + `streaming_json_parser.py`；深度模式同步新闻 tool 轮后流式 JSON；`stream_session_store.py` + `POST /api/analyze/stream/{id}/followup`（生成前追加 `operator_notes`，仅日报）。**前端**：`streamApi.ts` / `discoveryStreamApi.ts` token 打字机；`ReportThinkingSidebar` / `DiscoverySkeleton`；`StreamingAnalysisFloat` / `DiscoveryStreamingFloat`（切 Tab 不丢进度 + 完成通知）；荐基 fast/deep 均走流式。烟测 `smoke_run_analysis.py --stream`、`smoke_run_discovery.py`。设计/计划：`docs/superpowers/specs/2026-06-25-report-pipeline-speedup-phase4-design.md` / `docs/superpowers/plans/2026-06-25-report-pipeline-speedup-phase4.md`。未做：生成中 follow-up、tool_calls delta 流、荐基 operator_notes。
 - **日报/推荐报告管线提速 · 阶段 1（2026-06-25）：** 四项后端数据/缓存优化落地。**F2** `discovery_candidate_pool.build_candidate_pool` / `dip_drop_scanner.build_dip_pool_for_sectors` 默认 fetcher 改 lookup 模式接 `fund_rank_cache.fetch_open_fund_rank_cached`（与因子分模块共享 1h 缓存）；热路径省 1~3s。**F3** `NewsService.prefetch_topics` 由串行 for-loop 改 `ThreadPoolExecutor.map`（max=5），冷态 5 主题并发省 2~5s；日报+荐基双路径受益。**F1** `judge_parsed_report` 增加 `facts: dict` 必填 kwarg，`_rule_judge` / `_llm_judge` 不再各自重算 `build_analysis_facts`（深度 -5~10s、快速 -1~3s）；副效应：judge 看到的字段集合==prompt 看到的，事实一致性提升。**F4** `nav_cache_pull_days=252` / `nav_trend_window=66`，`summarize_nav_history` 加 `window_days` 参数——拉满 252 让日报/荐基与持仓详情弹窗预热共享 `fund_nav_cache`，摘要窗口仍 66 保留 LLM 决策口径（period_change / distance_from_high|low 在窗口内；recent_5d / recent_nav_series 始终基于真实尾部）；旧 `nav_trend_days` 转 property 兼容。设计/计划：`docs/superpowers/specs/2026-06-25-report-pipeline-speedup-phase1-design.md` / `docs/superpowers/plans/2026-06-25-report-pipeline-speedup-phase1.md`。阶段 2（LLM 流式）/ 阶段 3（前端骨架卡）独立 spec 排期。
 - **DeepSeek 日报数据管线缓存优化（2026-06-25）：** 审计后落地 top3：**①** `fund_diagnostics_cache.py` — 基金概况/1年收益 AkShare 全用户共享缓存（盘中 1h / 收盘 24h）；**②** `fund_rank_cache.py` — 开放式基金排行榜缓存（因子横截面，1h）；**③** `prepare_analysis_bundle` + `finalize_analysis_facts` — `build_analysis_facts` **只算一次**（prompt trim + 存档 overlay pipeline/news），替代原 `build_user_payload` + `_compose_analysis_facts` 双遍。附加：北向资金 `@lru_cache` → `sector_quote_cache`（30min/1h）；板块 intraday 按 label 去重。单测 `test_fund_diagnostics_rank_cache.py` / `test_analysis_payload_bundle.py`。
 - **板块资金流日期对齐修复（2026-06-25）：** 修复日报「半导体 +5% 却写主力净流出 216 亿」——根因非符号反了，而是 **6/24 涨跌幅配了 6/23 资金流**。`sector_fund_flow_context.py` 按 `effective_trade_date` 选 flow 点；新增 `trade_date`/`flow_date`/`date_aligned`/`main_force_direction`；`date_aligned=false` 时跳过背离 pattern（`flow_date_mismatch`）。单测 `test_sector_fund_flow_context.py`。
@@ -150,7 +152,8 @@
 | 分析模式 | 快速 / 深度 |
 | 体验 | Markdown 导出、桌面通知、**Sora 字体 + 中文系统字体栈**（PingFang / HarmonyOS / 雅黑 / Noto）UI；**「静谧蓝海·高级克制」设计语言**（深海蓝 `#2356e0` + 暖金 `#cf9b3e`、毛玻璃 App Bar、会员方案展示区）；**客户端 SWR 缓存**（盈亏分析/详情/业绩走势）；板块刷新 fast 轮询 + accurate 手动；追问侧栏智能滚动 |
 | 报告追问 | SSE + ChatMarkdown；`useChatAutoScroll` 贴底/回到底部 |
-| 异步任务 | `/api/analyze/async` + `/api/fund-discovery/async`；`Dashboard` 层 `BackgroundJobsStack` 堆叠 `JobStatusFloat` + `DiscoveryJobStatusFloat`（切 Tab 持续轮询）；`GET /api/jobs/{id}`（`job_kind` 区分日报/荐基） |
+| 流式报告 | **推荐路径**：`POST /api/analyze/stream`、`POST /api/fund-discovery/stream`（SSE：`stage`/`token`/partial/`done`）；`StreamingAnalysisFloat` + `DiscoveryStreamingFloat`；日报生成前 `followup` 追加 `operator_notes` |
+| 异步任务 | `/api/analyze/async` + `/api/fund-discovery/async`（流式失败回退）；`BackgroundJobsStack` 堆叠双浮层；`GET /api/jobs/{id}`（`job_kind` 区分日报/荐基） |
 | 前端偏好 | localStorage：风控、**日报/荐基 AI 角色 Prompt**、分析模式、板块自动刷新 |
 
 ---
@@ -233,8 +236,10 @@ fundpilot-ai/
 │       ├── report_chat.py         # 追问 SSE + Tool 轮次
 │       ├── report_chat_runtime.py # 追问 fast/deep
 │       ├── report_chat_export.py  # 对话 Markdown
-│       ├── deepseek_client.py / analysis_runtime.py / analyze_pipeline.py
-│       ├── discovery_*.py           # 推荐基金：窄池、守卫、pipeline、chat、job_store、diff、outcomes、selection_strategy
+│       ├── deepseek_client.py / deepseek_streaming.py / analysis_runtime.py
+│       ├── analyze_pipeline.py / analyze_streaming.py   # 日报同步/异步/流式
+│       ├── streaming_json_parser.py / stream_session_store.py
+│       ├── discovery_*.py           # 荐基：窄池、守卫、pipeline、streaming、sector_context、payload、chat…
 │       ├── job_status_service.py    # GET /api/jobs/{id} 单连接查询 discovery/analysis
 │       └── recommendations.py
 ├── apps/web/src/
@@ -323,7 +328,7 @@ POST /api/analyze
   → save_report
 ```
 
-### 异步分析（主流程）
+### 异步分析（主流程，轮询）
 
 ```text
 POST /api/analyze/async { holdings, profile, analysis_mode, system_role_prompt? } → job_id
@@ -333,7 +338,20 @@ POST /api/analyze/async { holdings, profile, analysis_mode, system_role_prompt? 
   → status=completed 时含 report → onComplete 回调 → 切换报告 Tab
 ```
 
-### 推荐基金（异步）
+### 流式分析（推荐，SSE）
+
+```text
+POST /api/analyze/stream { holdings, profile, analysis_mode, system_role_prompt? }
+  → analyze_streaming.stream_analysis()：prefetch → generating →（deep）tool_round_N → token 流 → guarding → saving → done
+  → 生成前可 POST /api/analyze/stream/{session_id}/followup { message } 追加 operator_notes
+  → 前端 StreamingAnalysisFloat + ReportThinkingSidebar 打字机
+
+POST /api/fund-discovery/stream { DiscoveryRequest }
+  → discovery_streaming.stream_discovery()：同上阶段；fast/deep 均流式；DiscoveryStreamingFloat
+  → 失败可回退 POST /api/fund-discovery/async 轮询
+```
+
+### 推荐基金（异步轮询，回退路径）
 
 ```text
 POST /api/fund-discovery/async {
@@ -401,7 +419,9 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | POST | `/api/funds/{code}/primary-sector/refresh-holdings` | AkShare 季报重仓推荐板块并写入表 |
 | POST | `/api/fund-primary-sectors/sync-from-profiles` | 从已有 `fund_profiles` 批量同步板块映射 |
 | POST | `/api/analyze` | 同步生成 Report（兜底） |
-| POST | `/api/analyze/async` | `{ job_id, status }` |
+| POST | `/api/analyze/async` | `{ job_id, status }`（流式失败回退） |
+| POST | `/api/analyze/stream` | SSE 流式日报；事件 `stage`/`token`/`done`/`error` |
+| POST | `/api/analyze/stream/{session_id}/followup` | 生成完成前追加 `operator_notes` |
 | GET | `/api/trading-session` | 交易日/收盘窗口语义 |
 | GET | `/api/investor-profile` | 读取持久化风控画像（未保存时返回默认） |
 | PUT | `/api/investor-profile` | 保存风控画像（含 `decision_style`、`investment_preset`、激进波段参数、盯盘开关） |
@@ -423,7 +443,8 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | GET | `/api/market/dip-radar` | 大跌反弹雷达：`lookback_days`（3\|5，默认 5）、可选 `sector`（注册表 label）、`limit`（默认 20）、`force_refresh`；跨 `discovery_eligible`+`theme_board_eligible` 板块并集，经 `dip_drop_scanner.build_dip_pool_for_sectors` 取 Top N；缓存 `dip:radar:v1:{trade_date}:{lookback}`（盘中 60s / 收盘 1h）；响应含 `items[]`（`dip_drop_percent`、`rebound_score`、`rebound_signals`、**`historical_hint`** 板块代理 3 日反弹率）、`sector_dip_leaders` |
 | GET | `/api/market/us-overview` | 美股概览快照（`UsMarketSnapshot`）：纳指/标普/道指**指数期货** + USD/CNY 汇率 + QDII「盘前参考涨跌」列表 + 美东时段（`session_kind`/`session_label`，含夏令时）+ `updated_at`；`force_refresh` 跳过服务端时段感知缓存；无需 JWT；任一数据源失败仍返回 200，经 `futures_status`/`forex_status`/`qdii_status`/`available`/`stale`/`message` 表达陈旧或不可用，绝不回退收盘价或编造数值 |
 | GET | `/api/fund-discovery/sectors` | 荐基关注方向 chips：`build_sector_heat_ranking_for_ui()`（当日涨跌轻量拉取、12s 预算；超时回退全部标签）；扫描 pipeline 仍用完整 `build_sector_heat_ranking()` |
-| POST | `/api/fund-discovery/async` | 创建推荐基金异步任务；body `DiscoveryRequest`；**`scan_mode=dip_swing`** 时走大跌预筛 + `dip_rebound` 选基策略 |
+| POST | `/api/fund-discovery/async` | 创建推荐基金异步任务；body `DiscoveryRequest`；**`scan_mode=dip_swing`** 时走大跌预筛 + `dip_rebound` 选基策略（流式失败回退） |
+| POST | `/api/fund-discovery/stream` | SSE 流式荐基；fast/deep 均支持；事件含 `recommendation` partial |
 | GET | `/api/fund-discovery/reports` | 最近 30 条推荐报告 |
 | GET | `/api/fund-discovery/reports/{id}` | 推荐报告详情 |
 | GET | `/api/fund-discovery/reports/{id}/diff` | 与上一份推荐报告对比 |
@@ -604,7 +625,29 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 
 默认角色模板见 `apps/api/app/services/analysis_prompt.py` 中 `DEFAULT_ROLE_PROMPT`。
 
-- **数据源（`FUND_AI_NEWS_SOURCES`）：** `eastmoney`（东财 `stock_news_em`）、`announcement`（基金公告）、`macro`（宏观主题，默认「上证指数」）。
+---
+
+## 外部数据源一览
+
+> **说明：** 项目使用 **新浪财经（Sina Finance）** 的行情/日历接口，**不使用新浪微博** 社交舆情。北向/南向资金走 **东方财富（东财）**，不是新浪。
+
+| 数据 | 实现 | 上游来源 | 用途 |
+|------|------|----------|------|
+| **北向/南向资金** | `market_flow_client.py` | AkShare `stock_hsgt_fund_flow_summary_em()`（东财沪深港通汇总） | 日报/荐基 `market_flow`：`northbound_net_yi`（沪股通+深股通）、`southbound_net_yi`（港股通）；缓存 `sector_quote_cache` 盘中 30min / 收盘 1h |
+| **板块主力资金** | `board_fund_flow_history.py` + `sector_fund_flow_context.py` | 东财 `push2his` `fflow/daykline/get` | 市场 Tab 板块资金流历史；日报持仓行 / 荐基 `target_sector_context.sector_fund_flow` |
+| **板块现货/热度** | `eastmoney_spot_client.py` / `theme_board_snapshot.py` | 东财 `push2delay` / `push2` | 持仓板块涨跌、主题榜、荐基 `sector_heat` |
+| **A 股交易日历** | `trade_calendar_cache.py` | AkShare `tool_trade_date_hist_sina()` | 盈亏日历非交易日收益 0、今日「未更新」判定 |
+| **指数日线 K 线** | `index_daily_client.py` | HTTP `money.finance.sina.com.cn` `CN_MarketData.getKLineData` | 沪深300 基准、业绩走势对比、板块日 K 备用 |
+| **美股指数（备用）** | `us_index_client.py` | 主东财 `push2delay`；备 AkShare `index_us_stock_sina` | 市场 Tab 美股概览 |
+| **美元/CNY（备用）** | `us_forex_client.py` | 主百度 `fx_quote_baidu`；备 AkShare `currency_boc_sina`（中行牌价） | 美股 Tab 汇率 |
+| **新闻** | `news_service.py` | 东财 `stock_news_em`、财联社 `cls_news_client`、基金公告、宏观主题 | 日报/荐基 `news_titles` + `topic_briefs` |
+| **基金净值/名称** | `fund_data.py` / `fund_code_resolver.py` | 天天基金、东财 `fund_name_em` 等 | 持仓、候选池、查码 |
+
+---
+
+## 新闻与 LLM 上下文（日报）
+
+- **数据源（`FUND_AI_NEWS_SOURCES`）：** `eastmoney`（东财 `stock_news_em`）、`cls`（财联社）、`announcement`（基金公告）、`macro`（宏观主题，默认「上证指数」）。
 - **预取：** `NewsService.prefetch_for_holdings` → `market_news`（标题 + ≤200 字 snippet + 链接）。
 - **按主题摘要：** `news_summarizer.summarize_all_topics`（Flash，每主题 1 次）→ `topic_briefs`；失败 → `rule-fallback`；关闭：`FUND_AI_NEWS_SUMMARIZE=false`。
 - **喂模型（user JSON）：** `build_user_payload()` 结构如下；**落库报告**仍用 `_compose_analysis_facts()` 全量事实，不经 slim。
@@ -631,6 +674,21 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 - **Tool：** 仅深度模式且 `news_tool_max_rounds > 0` 时注册 `fetch_market_news`（默认最多 3 轮）；Tool 补拉后 `merge_topic_briefs` 增量摘要。
 - **缓存：** `news_cache` 表按 `topic+date` 同日复用。
 - **兜底：** JSON 解析失败 → `_offline_report` + `recommendations.enrich_*`。
+
+---
+
+## 喂模型 user JSON（荐基）
+
+`discovery_payload.build_user_payload()`（与日报对齐市场侧上下文；**不含**逐持仓 NAV/盈亏）：
+
+| 字段 | 说明 |
+|------|------|
+| `today` / `focus_sectors` / `scan_mode` / `profile` | 扫描上下文 |
+| `news_titles` / `topic_briefs` | 与日报同源 `compact_*`；fast 模式 brief 为 minimal |
+| `discovery_facts` | `session`、`portfolio_gap`、`sector_heat`、`target_sector_context`（每板块：热度+`sector_fund_flow`+`sector_intraday`+`signal_backtest`）、`market_flow`、`news`（含 `freshness_label`）、`candidate_factor_scores`、`selection_strategy`、`dip_swing`、`candidate_pool`（slim） |
+| `requirements` | 全市场 vs 缺口补全两套；须引用 `market_flow` / `target_sector_context` / 可引用标题 |
+
+实现：`discovery_facts.py` + `discovery_sector_context.py`；存档仍保留全量 `discovery_facts`。
 
 ---
 

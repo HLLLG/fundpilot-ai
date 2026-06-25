@@ -1,6 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type {
+  Dispatch,
+  MutableRefObject,
+  SetStateAction,
+} from "react";
 import { ChevronDown, Loader2, RotateCcw, Sparkles, Target } from "lucide-react";
 import type {
   AnalysisMode,
@@ -24,12 +28,21 @@ import {
 } from "@/lib/api";
 import { DiscoveryHistoryRail } from "@/components/DiscoveryHistoryRail";
 import { DiscoveryReportPanel } from "@/components/DiscoveryReportPanel";
+import { DiscoverySkeleton } from "@/components/DiscoverySkeleton";
 import { FocusSectorPicker } from "@/components/FocusSectorPicker";
 import { InvestmentPresetSelector } from "@/components/InvestmentPresetSelector";
 import { RolePromptEditor } from "@/components/RolePromptEditor";
 import { YangjibaoFundDetail } from "@/components/YangjibaoFundDetail";
 import { displayableHoldings } from "@/lib/holdingMetrics";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  appendStreamTokenBuffer,
+  streamDiscovery,
+  type DiscoveryRecommendationPartial,
+  type StreamingDiscoveryState,
+} from "@/lib/discoveryStreamApi";
 import { applyInvestmentPreset } from "@/lib/investmentPresets";
+import { ensureNotificationPermission } from "@/lib/notifications";
 import { loadDiscoveryPrompt, loadDiscoverySectorHeatCache, saveDiscoveryPrompt, saveDiscoverySectorHeatCache } from "@/lib/storage";
 import {
   DISCOVERY_FOCUS_CHANGED_EVENT,
@@ -73,6 +86,11 @@ type FundDiscoveryPanelProps = {
   pendingDiscoveryReport: FundDiscoveryReport | null;
   onPendingDiscoveryReportApplied: () => void;
   onRegisterDiscoveryScanRetry: (retry: (() => void) | null) => void;
+  streamingDiscovery: StreamingDiscoveryState | null;
+  onStreamingDiscoveryChange: Dispatch<SetStateAction<StreamingDiscoveryState | null>>;
+  onDiscoveryStreamComplete: (report: FundDiscoveryReport) => void;
+  onDiscoveryStreamStart?: () => void;
+  discoveryStreamAbortRef: MutableRefObject<AbortController | null>;
 };
 
 export function FundDiscoveryPanel({
@@ -86,6 +104,11 @@ export function FundDiscoveryPanel({
   pendingDiscoveryReport,
   onPendingDiscoveryReportApplied,
   onRegisterDiscoveryScanRetry,
+  streamingDiscovery,
+  onStreamingDiscoveryChange,
+  onDiscoveryStreamComplete,
+  onDiscoveryStreamStart,
+  discoveryStreamAbortRef,
 }: FundDiscoveryPanelProps) {
   const [rawSectors, setRawSectors] = useState<DiscoverySectorHeat[]>(
     () => loadDiscoverySectorHeatCache() ?? [],
@@ -288,22 +311,135 @@ export function FundDiscoveryPanel({
     handleFocusSectorsChange([...focusSectors, label]);
   };
 
+  const handleCancelStream = useCallback(() => {
+    discoveryStreamAbortRef.current?.abort();
+    discoveryStreamAbortRef.current = null;
+    onStreamingDiscoveryChange(null);
+    setIsSubmitting(false);
+    setError("已停止扫描。");
+  }, [discoveryStreamAbortRef, onStreamingDiscoveryChange]);
+
   const handleScan = useCallback(async () => {
     setIsSubmitting(true);
     setError(null);
+    setReport(null);
+    const parsedBudget = budgetYuan.trim() ? Number(budgetYuan) : null;
+    const scanOptions = {
+      analysisMode,
+      focusSectors,
+      budgetYuan: parsedBudget && !Number.isNaN(parsedBudget) ? parsedBudget : null,
+      fundTypePreference,
+      selectionStrategy,
+      scanMode,
+      dipLookbackDays: scanMode === "dip_swing" ? dipLookbackDays : undefined,
+      dipMinDropPercent: scanMode === "dip_swing" ? dipMinDropPercent : undefined,
+      systemRolePrompt: discoveryPrompt.is_custom ? discoveryPrompt.role_prompt : null,
+    };
+
     try {
-      const parsedBudget = budgetYuan.trim() ? Number(budgetYuan) : null;
-      const jobId = await startDiscoveryJob(displayableHoldings(holdings), profile, {
-        analysisMode,
-        focusSectors,
-        budgetYuan: parsedBudget && !Number.isNaN(parsedBudget) ? parsedBudget : null,
-        fundTypePreference,
-        selectionStrategy,
-        scanMode,
-        dipLookbackDays: scanMode === "dip_swing" ? dipLookbackDays : undefined,
-        dipMinDropPercent: scanMode === "dip_swing" ? dipMinDropPercent : undefined,
-        systemRolePrompt: discoveryPrompt.is_custom ? discoveryPrompt.role_prompt : null,
-      });
+      try {
+        void ensureNotificationPermission();
+        onDiscoveryStreamStart?.();
+        const abortController = new AbortController();
+        discoveryStreamAbortRef.current = abortController;
+        onStreamingDiscoveryChange({
+          stage: "sector_heat",
+          stageLabel: "正在连接流式扫描…",
+          fundCodes: [],
+          fundNames: [],
+          partialByCode: {},
+          stageLog: [],
+          tokenBuffer: "",
+          startedAt: Date.now(),
+        });
+
+        await streamDiscovery(
+          displayableHoldings(holdings),
+          profile,
+          {
+            onStage: (stage, label) =>
+              onStreamingDiscoveryChange((current) => {
+                if (!current) {
+                  return current;
+                }
+                const entry = { stage, label, at: Date.now() };
+                const stageLog = [
+                  ...current.stageLog.filter((item) => item.stage !== stage),
+                  entry,
+                ];
+                return { ...current, stage, stageLabel: label, stageLog };
+              }),
+            onSkeleton: (fundCodes, fundNames) =>
+              onStreamingDiscoveryChange((current) =>
+                current ? { ...current, fundCodes, fundNames } : current,
+              ),
+            onToken: (content) =>
+              onStreamingDiscoveryChange((current) =>
+                current
+                  ? {
+                      ...current,
+                      tokenBuffer: appendStreamTokenBuffer(current.tokenBuffer, content),
+                    }
+                  : current,
+              ),
+            onPartial: (field, value) => {
+              onStreamingDiscoveryChange((current) => {
+                if (!current) {
+                  return current;
+                }
+                if (field === "title") {
+                  return { ...current, title: String(value) };
+                }
+                if (field === "summary") {
+                  return { ...current, summary: String(value) };
+                }
+                if (field === "caveats" && Array.isArray(value)) {
+                  return { ...current, caveats: value.map(String) };
+                }
+                if (field === "recommendation" && value && typeof value === "object") {
+                  const rec = value as DiscoveryRecommendationPartial;
+                  const code = rec.fund_code;
+                  if (!code) {
+                    return current;
+                  }
+                  return {
+                    ...current,
+                    partialByCode: {
+                      ...current.partialByCode,
+                      [code]: { ...current.partialByCode[code], ...rec },
+                    },
+                  };
+                }
+                return current;
+              });
+            },
+            onDone: (completedReport) => {
+              discoveryStreamAbortRef.current = null;
+              onStreamingDiscoveryChange(null);
+              onDiscoveryStreamComplete(completedReport);
+              void loadHistory();
+            },
+            onError: (message) => {
+              throw new Error(message);
+            },
+          },
+          { ...scanOptions, signal: abortController.signal },
+        );
+        return;
+      } catch (streamError) {
+        discoveryStreamAbortRef.current = null;
+        onStreamingDiscoveryChange(null);
+        if (streamError instanceof DOMException && streamError.name === "AbortError") {
+          return;
+        }
+        setError(
+          streamError instanceof Error
+            ? `${streamError.message}，已切换到后台扫描。`
+            : "流式扫描失败，已切换到后台扫描。",
+        );
+      }
+
+      const jobId = await startDiscoveryJob(displayableHoldings(holdings), profile, scanOptions);
       onDiscoveryJobIdChange(jobId);
     } catch (scanError) {
       setError(scanError instanceof Error ? scanError.message : "提交失败");
@@ -315,16 +451,26 @@ export function FundDiscoveryPanel({
     budgetYuan,
     discoveryPrompt.is_custom,
     discoveryPrompt.role_prompt,
+    discoveryStreamAbortRef,
     focusSectors,
     fundTypePreference,
     holdings,
     onDiscoveryJobIdChange,
+    onDiscoveryStreamComplete,
+    onDiscoveryStreamStart,
+    onStreamingDiscoveryChange,
     profile,
     dipLookbackDays,
     dipMinDropPercent,
     scanMode,
     selectionStrategy,
   ]);
+
+  useEffect(() => {
+    return () => {
+      discoveryStreamAbortRef.current?.abort();
+    };
+  }, [discoveryStreamAbortRef]);
 
   useEffect(() => {
     onRegisterDiscoveryScanRetry(() => {
@@ -641,21 +787,25 @@ export function FundDiscoveryPanel({
           <button
             type="button"
             data-testid="discovery-scan-button"
-            disabled={isSubmitting || Boolean(discoveryJobId)}
+            disabled={isSubmitting || Boolean(discoveryJobId) || Boolean(streamingDiscovery)}
             onClick={() => void handleScan()}
             className="btn-primary mt-4 w-full !rounded-xl sm:w-auto"
           >
-            {isSubmitting || discoveryJobId ? (
+            {isSubmitting || discoveryJobId || streamingDiscovery ? (
               <Loader2 size={16} className="animate-spin" />
             ) : (
               <Sparkles size={16} />
             )}
-            {discoveryJobId ? "扫描进行中…" : "扫描今日机会"}
+            {discoveryJobId || streamingDiscovery ? "扫描进行中…" : "扫描今日机会"}
           </button>
           </div>
         </section>
 
-        {report ? (
+        {streamingDiscovery ? (
+          <DiscoverySkeleton streaming={streamingDiscovery} onCancel={handleCancelStream} />
+        ) : null}
+
+        {report && !streamingDiscovery ? (
           <DiscoveryReportPanel report={report} onOpenFund={handleOpenFund} />
         ) : null}
       </div>

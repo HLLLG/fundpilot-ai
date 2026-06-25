@@ -67,10 +67,14 @@ from app.models import (
     RefreshSectorQuotesRequest,
     ReportChatRequest,
     SaveSectorMappingRequest,
+    StreamFollowupRequest,
     SwingAlertEvaluateRequest,
     UpdateFundProfileRequest,
 )
 from app.services.analyze_pipeline import run_analysis
+from app.services.analyze_streaming import stream_analysis
+from app.services.discovery_streaming import stream_discovery
+from app.services.stream_session_store import append_stream_followup
 from app.database import get_portfolio_summary
 from app.services.fund_data import FundDataService
 from app.services.fund_profile import FundProfileService, migrate_fund_profile_code
@@ -594,6 +598,33 @@ def analyze_async(request: AnalysisRequest) -> dict:
     return {"job_id": job_id, "status": "pending"}
 
 
+@app.post("/api/analyze/stream")
+def analyze_stream_endpoint(request: AnalysisRequest) -> StreamingResponse:
+    user_id = get_request_user_id()
+
+    def event_stream():
+        for payload in stream_analysis(request, user_id=user_id):
+            yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.post("/api/analyze/stream/{session_id}/followup")
+def analyze_stream_followup(session_id: str, body: StreamFollowupRequest) -> dict:
+    ok, message, status_code = append_stream_followup(session_id, body.message)
+    if not ok:
+        raise HTTPException(status_code=status_code, detail=message)
+    return {"ok": True}
+
+
 @app.get("/api/jobs/{job_id}")
 def job_status(job_id: str) -> dict:
     return resolve_job_status_single_connection(job_id)
@@ -705,6 +736,28 @@ def fund_discovery_async(request: DiscoveryRequest) -> dict:
         request = request.model_copy(update={"holdings": loaded})
     job_id = create_discovery_job(request)
     return {"job_id": job_id, "status": "pending"}
+
+
+@app.post("/api/fund-discovery/stream")
+def fund_discovery_stream_endpoint(request: DiscoveryRequest) -> StreamingResponse:
+    if not request.holdings:
+        loaded, _, _, _ = load_persisted_holdings()
+        request = request.model_copy(update={"holdings": loaded})
+    user_id = get_request_user_id()
+
+    def event_stream():
+        for payload in stream_discovery(request, user_id=user_id):
+            yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.get("/api/fund-discovery/reports")

@@ -11,10 +11,14 @@ import { ReportCollapsibleSection } from "@/components/ReportCollapsibleSection"
 import { RebalanceSimulationPanel } from "@/components/RebalanceSimulationPanel";
 import { ReportNewsBriefPanel } from "@/components/ReportNewsBriefPanel";
 import { ReportOutcomesPanel } from "@/components/ReportOutcomesPanel";
+import { ReportSkeleton } from "@/components/ReportSkeleton";
 import { StatusPill } from "@/components/StatusPill";
 
 type ReportPanelProps = {
   report: Report | null;
+  streaming?: import("@/lib/streamApi").StreamingReportState | null;
+  onCancelStream?: () => void;
+  onStreamFollowup?: (message: string) => Promise<void>;
 };
 
 const riskTone = {
@@ -189,8 +193,12 @@ function displayFundRecommendations(report: Report) {
   return [...byCode.values()];
 }
 
-export function ReportPanel({ report }: ReportPanelProps) {
+export function ReportPanel({ report, streaming, onCancelStream, onStreamFollowup }: ReportPanelProps) {
   const [isExporting, setIsExporting] = useState(false);
+
+  if (streaming && !report) {
+    return <ReportSkeleton streaming={streaming} onCancel={onCancelStream} onFollowup={onStreamFollowup} />;
+  }
 
   const handleExportMarkdown = async () => {
     if (!report) {

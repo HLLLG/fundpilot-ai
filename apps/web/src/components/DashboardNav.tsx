@@ -19,6 +19,8 @@ export type PrimaryDashboardTab = Extract<
 
 type DashboardNavProps = {
   activeTab: DashboardTabId;
+  reportTabUnread?: boolean;
+  discoveryTabUnread?: boolean;
   onSelect: (tab: PrimaryDashboardTab) => void;
   onSelectHistory: () => void;
 };
@@ -59,7 +61,14 @@ function isMobileMoreActive(activeTab: DashboardTabId): boolean {
   return activeTab === "discovery" || activeTab === "report" || activeTab === "history";
 }
 
-export function DashboardNav({ activeTab, onSelect, onSelectHistory }: DashboardNavProps) {
+export function DashboardNav({
+  activeTab,
+  reportTabUnread = false,
+  discoveryTabUnread = false,
+  onSelect,
+  onSelectHistory,
+}: DashboardNavProps) {
+  const moreMenuUnread = reportTabUnread || discoveryTabUnread;
   const [moreOpen, setMoreOpen] = useState(false);
   const moreRef = useRef<HTMLDivElement>(null);
 
@@ -89,9 +98,23 @@ export function DashboardNav({ activeTab, onSelect, onSelectHistory }: Dashboard
               type="button"
               onClick={() => onSelect(tab.id)}
               aria-current={tab.id === highlightedDesktop ? "page" : undefined}
-              className="tab-segment-btn !px-3"
+              className="tab-segment-btn relative !px-3"
             >
               {tab.label}
+              {tab.id === "report" && reportTabUnread ? (
+                <span
+                  className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-red-500"
+                  aria-label="有新日报"
+                  data-testid="report-tab-badge"
+                />
+              ) : null}
+              {tab.id === "discovery" && discoveryTabUnread ? (
+                <span
+                  className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-red-500"
+                  aria-label="有新推荐报告"
+                  data-testid="discovery-tab-badge"
+                />
+              ) : null}
             </button>
           ))}
         </div>
@@ -121,8 +144,15 @@ export function DashboardNav({ activeTab, onSelect, onSelectHistory }: Dashboard
             onClick={() => setMoreOpen((v) => !v)}
             aria-current={isMobileMoreActive(activeTab) ? "page" : undefined}
             aria-expanded={moreOpen}
-            className="dashboard-bottom-nav-btn w-full"
+            className="dashboard-bottom-nav-btn relative w-full"
           >
+            {moreMenuUnread ? (
+              <span
+                className="absolute right-5 top-1 h-2 w-2 rounded-full bg-red-500"
+                data-testid="more-tab-badge-mobile"
+                aria-hidden
+              />
+            ) : null}
             <MoreHorizontal size={20} strokeWidth={isMobileMoreActive(activeTab) ? 2.5 : 2} />
             <span>更多</span>
           </button>

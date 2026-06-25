@@ -54,7 +54,13 @@ JOB_STAGES: dict[str, str] = {
     "generating": "正在生成 AI 日报…",
     "judging": "正在审校报告…",
     "saving": "正在保存报告…",
+    "salvage": "流式中断，已收集部分内容…",
 }
+
+
+def tool_round_stage_label(round_index: int, total_rounds: int) -> tuple[str, str]:
+    stage = f"tool_round_{round_index}"
+    return stage, f"正在检索新闻 ({round_index}/{total_rounds})…"
 
 FETCH_MARKET_NEWS_TOOL = {
     "type": "function",
@@ -149,54 +155,17 @@ class DeepSeekClient:
                 parsed, request, risk, snapshots, runtime,
                 facts=analysis_bundle.facts,
             )
-            fallback = _offline_report(
-                request,
-                risk,
-                snapshots,
-                market_news=market_news,
-                topic_briefs=topic_briefs,
-                nav_trends_by_code=nav_trends,
-                analysis_bundle=analysis_bundle,
-            )
-            portfolio_recs, fund_recs = _finalize_recommendations(
+            return _build_final_report(
                 parsed,
-                fallback,
-                request,
-                risk,
-                market_news,
-                topic_briefs,
-                nav_trends_by_code=nav_trends,
-            )
-            facts = finalize_analysis_facts(
-                analysis_bundle.facts,
-                market_news=market_news,
-                topic_briefs=topic_briefs,
-                pipeline=build_pipeline_metadata(
-                    runtime=runtime,
-                    market_news=market_news,
-                    topic_briefs=topic_briefs,
-                    judge_meta=judge_meta,
-                ),
-            )
-            caveats = _user_facing_caveats(
-                _non_empty_list(parsed.get("caveats"), fallback.caveats)
-            )
-            caveats = _append_news_pipeline_caveats(caveats, topic_briefs, market_news)
-            caveats = _append_pipeline_caveats(caveats, facts)
-            return Report(
-                title=parsed.get("title", "每日基金操作日报"),
+                request=request,
                 risk=risk,
-                holdings=request.holdings,
                 snapshots=snapshots,
-                market_context=[],
                 market_news=market_news,
                 topic_briefs=topic_briefs,
-                fund_recommendations=fund_recs,
-                summary=parsed.get("summary") or fallback.summary,
-                recommendations=portfolio_recs,
-                caveats=caveats,
-                provider=runtime.model,
-                analysis_facts=facts,
+                nav_trends=nav_trends,
+                analysis_bundle=analysis_bundle,
+                judge_meta=judge_meta,
+                runtime=runtime,
             )
         except httpx.TimeoutException as exc:
             fallback = _offline_report(
@@ -244,7 +213,7 @@ class DeepSeekClient:
             fallback.provider = "offline-fallback"
             return fallback
 
-    def _generate_with_tools(
+    def run_news_tool_rounds(
         self,
         request: AnalysisRequest,
         risk: RiskAssessment,
@@ -255,7 +224,10 @@ class DeepSeekClient:
         nav_trends_by_code: dict[str, dict] | None = None,
         *,
         analysis_bundle: AnalysisFactsBundle | None = None,
-    ) -> tuple[dict, list[NewsItem]]:
+        on_stage: ProgressCallback | None = None,
+        operator_notes: list[str] | None = None,
+    ) -> tuple[list[dict], list[NewsItem]]:
+        """运行新闻 tool 轮（同步），返回可供最终 JSON 补全的 messages。"""
         nav_trends = nav_trends_by_code or {}
         bundle = analysis_bundle or prepare_analysis_bundle(
             request,
@@ -289,6 +261,7 @@ class DeepSeekClient:
                         nav_trends,
                         analysis_mode=runtime.mode,
                         analysis_bundle=bundle,
+                        operator_notes=operator_notes,
                     ),
                     ensure_ascii=False,
                 ),
@@ -297,50 +270,71 @@ class DeepSeekClient:
         tools = [FETCH_MARKET_NEWS_TOOL] if news_enabled and runtime.news_tool_max_rounds > 0 else None
         max_rounds = runtime.news_tool_max_rounds if tools else 0
 
-        final_content = ""
-        for round_index in range(max_rounds + 1):
-            allow_tools = tools is not None and round_index < max_rounds
+        for round_index in range(max_rounds):
+            stage, label = tool_round_stage_label(round_index + 1, max_rounds)
+            if on_stage is not None:
+                on_stage(stage, label)
             message = self._chat_completion(
                 messages=messages,
-                tools=tools if allow_tools else None,
-                response_format=None if allow_tools else {"type": "json_object"},
-                max_tokens=(
-                    self.settings.deepseek_max_tokens
-                    if allow_tools
-                    else self.settings.deepseek_max_tokens_report
-                ),
+                tools=tools,
+                response_format=None,
+                max_tokens=self.settings.deepseek_max_tokens,
                 model=runtime.model,
             )
             tool_calls = message.get("tool_calls")
-
-            if tool_calls and allow_tools:
+            if not tool_calls:
                 messages.append(message)
-                for tool_call in tool_calls:
-                    result = _execute_fetch_market_news(
-                        tool_call,
-                        self.news_service,
-                        collected,
-                    )
-                    messages.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": tool_call["id"],
-                            "content": result,
-                        }
-                    )
-                continue
+                break
+            messages.append(message)
+            for tool_call in tool_calls:
+                if on_stage is not None:
+                    on_stage("fetch_market_news", "正在拉取市场新闻…")
+                result = _execute_fetch_market_news(
+                    tool_call,
+                    self.news_service,
+                    collected,
+                )
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call["id"],
+                        "content": result,
+                    }
+                )
 
-            final_content = message.get("content") or ""
-            break
-        else:
-            message = self._chat_completion(
-                messages=messages,
-                tools=None,
-                response_format={"type": "json_object"},
-                max_tokens=self.settings.deepseek_max_tokens_report,
-                model=runtime.model,
-            )
-            final_content = message.get("content") or ""
+        return messages, _dedupe_news(collected)
+
+    def _generate_with_tools(
+        self,
+        request: AnalysisRequest,
+        risk: RiskAssessment,
+        snapshots: list[FundSnapshot],
+        prefetched_news: list[NewsItem],
+        topic_briefs: list[TopicBrief],
+        runtime: AnalysisRuntime,
+        nav_trends_by_code: dict[str, dict] | None = None,
+        *,
+        analysis_bundle: AnalysisFactsBundle | None = None,
+    ) -> tuple[dict, list[NewsItem]]:
+        messages, collected = self.run_news_tool_rounds(
+            request=request,
+            risk=risk,
+            snapshots=snapshots,
+            prefetched_news=prefetched_news,
+            topic_briefs=topic_briefs,
+            runtime=runtime,
+            nav_trends_by_code=nav_trends_by_code,
+            analysis_bundle=analysis_bundle,
+        )
+
+        message = self._chat_completion(
+            messages=messages,
+            tools=None,
+            response_format={"type": "json_object"},
+            max_tokens=self.settings.deepseek_max_tokens_report,
+            model=runtime.model,
+        )
+        final_content = message.get("content") or ""
 
         parsed = _parse_model_json(final_content)
         if _response_incomplete(parsed):
@@ -448,6 +442,111 @@ def _build_topic_briefs(
     if not market_news or not getattr(resolved, "news_summarize", True):
         return []
     return summarize_all_topics(market_news, resolved)  # type: ignore[arg-type]
+
+
+def build_analysis_chat_messages(
+    request: AnalysisRequest,
+    risk: RiskAssessment,
+    snapshots: list[FundSnapshot],
+    market_news: list[NewsItem],
+    topic_briefs: list[TopicBrief],
+    nav_trends: dict[str, dict],
+    runtime: AnalysisRuntime,
+    analysis_bundle: AnalysisFactsBundle,
+    operator_notes: list[str] | None = None,
+) -> list[dict]:
+    """fast 模式流式路径：无 tool calling，直接 JSON 输出。"""
+    return [
+        {
+            "role": "system",
+            "content": _system_prompt(
+                runtime.news_enabled,
+                request.profile.decision_style,
+                request.system_role_prompt,
+            ),
+        },
+        {
+            "role": "user",
+            "content": json.dumps(
+                build_user_payload(
+                    request,
+                    risk,
+                    snapshots,
+                    market_news,
+                    topic_briefs,
+                    nav_trends,
+                    analysis_mode=runtime.mode,
+                    analysis_bundle=analysis_bundle,
+                    operator_notes=operator_notes,
+                ),
+                ensure_ascii=False,
+            ),
+        },
+    ]
+
+
+def _build_final_report(
+    parsed: dict,
+    *,
+    request: AnalysisRequest,
+    risk: RiskAssessment,
+    snapshots: list[FundSnapshot],
+    market_news: list[NewsItem],
+    topic_briefs: list[TopicBrief],
+    nav_trends: dict[str, dict],
+    analysis_bundle: AnalysisFactsBundle,
+    judge_meta: dict,
+    runtime: AnalysisRuntime,
+) -> Report:
+    fallback = _offline_report(
+        request,
+        risk,
+        snapshots,
+        market_news=market_news,
+        topic_briefs=topic_briefs,
+        nav_trends_by_code=nav_trends,
+        analysis_bundle=analysis_bundle,
+    )
+    portfolio_recs, fund_recs = _finalize_recommendations(
+        parsed,
+        fallback,
+        request,
+        risk,
+        market_news,
+        topic_briefs,
+        nav_trends_by_code=nav_trends,
+    )
+    facts = finalize_analysis_facts(
+        analysis_bundle.facts,
+        market_news=market_news,
+        topic_briefs=topic_briefs,
+        pipeline=build_pipeline_metadata(
+            runtime=runtime,
+            market_news=market_news,
+            topic_briefs=topic_briefs,
+            judge_meta=judge_meta,
+        ),
+    )
+    caveats = _user_facing_caveats(
+        _non_empty_list(parsed.get("caveats"), fallback.caveats)
+    )
+    caveats = _append_news_pipeline_caveats(caveats, topic_briefs, market_news)
+    caveats = _append_pipeline_caveats(caveats, facts)
+    return Report(
+        title=parsed.get("title", "每日基金操作日报"),
+        risk=risk,
+        holdings=request.holdings,
+        snapshots=snapshots,
+        market_context=[],
+        market_news=market_news,
+        topic_briefs=topic_briefs,
+        fund_recommendations=fund_recs,
+        summary=parsed.get("summary") or fallback.summary,
+        recommendations=portfolio_recs,
+        caveats=caveats,
+        provider=runtime.model,
+        analysis_facts=facts,
+    )
 
 
 def _append_news_pipeline_caveats(

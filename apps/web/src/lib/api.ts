@@ -2127,3 +2127,11 @@ export async function fetchIndexDailyHistory(
   }
   return response.json();
 }
+
+export {
+  streamAnalysis,
+  type FundRecommendationPartial,
+  type StreamingPartialField,
+  type StreamingReportEvents,
+  type StreamingReportState,
+} from "@/lib/streamApi";
