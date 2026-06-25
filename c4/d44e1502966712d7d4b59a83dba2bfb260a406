@@ -1,0 +1,28 @@
+apps/api/app/services/report_judge.py
+  s_8970ebc7890e63::t_8906903a18e30a 9,28-29,31-36,45,56,59-60,62,99
+apps/api/tests/test_report_judge_facts_reuse.py
+  s_8970ebc7890e63::t_975bbbaef1500f 1-110
+apps/api/app/services/deepseek_client.py
+  s_8970ebc7890e63::t_177fa72f106eeb 148-151
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.18-trip",
+  "base_commit_sha": "c4d44e1502966712d7d4b59a83dba2bfb260a406",
+  "prompts": {},
+  "humans": {
+    "h_375fc341ff3baa": {
+      "author": "hegl <HLLLG@github.com>"
+    }
+  },
+  "sessions": {
+    "s_8970ebc7890e63": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e5afe88f-3c65-48f6-846f-e3377efbe527",
+        "model": "arn:aws:bedrock:us-west-2:133197901387:application-inference-profile/ypvzpmevzxdl"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
