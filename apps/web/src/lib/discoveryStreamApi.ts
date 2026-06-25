@@ -14,6 +14,8 @@ import {
   STREAM_TOKEN_BUFFER_MAX,
 } from "@/lib/streamApi";
 
+export { streamTimestamp } from "@/lib/streamApi";
+
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
 
 async function apiFetch(input: string, init?: RequestInit): Promise<Response> {

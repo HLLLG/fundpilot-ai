@@ -38,6 +38,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   appendStreamTokenBuffer,
   streamDiscovery,
+  streamTimestamp,
   type DiscoveryRecommendationPartial,
   type StreamingDiscoveryState,
 } from "@/lib/discoveryStreamApi";
@@ -350,7 +351,7 @@ export function FundDiscoveryPanel({
           partialByCode: {},
           stageLog: [],
           tokenBuffer: "",
-          startedAt: Date.now(),
+          startedAt: streamTimestamp(),
         });
 
         await streamDiscovery(
@@ -362,7 +363,7 @@ export function FundDiscoveryPanel({
                 if (!current) {
                   return current;
                 }
-                const entry = { stage, label, at: Date.now() };
+                const entry = { stage, label, at: streamTimestamp() };
                 const stageLog = [
                   ...current.stageLog.filter((item) => item.stage !== stage),
                   entry,
@@ -464,6 +465,7 @@ export function FundDiscoveryPanel({
     dipMinDropPercent,
     scanMode,
     selectionStrategy,
+    loadHistory,
   ]);
 
   useEffect(() => {

@@ -33,6 +33,7 @@ import {
   streamAnalysis,
   submitStreamFollowup,
   appendStreamTokenBuffer,
+  streamTimestamp,
   type FundRecommendationPartial,
   type StreamingReportState,
 } from "@/lib/streamApi";
@@ -464,7 +465,7 @@ export function Dashboard() {
         userLeftReportDuringStreamRef.current = false;
         const abortController = new AbortController();
         streamAbortRef.current = abortController;
-        const startedAt = Date.now();
+        const startedAt = streamTimestamp();
         setStreamingReport({
           stage: "fund_data",
           stageLabel: "正在连接流式分析…",
@@ -495,7 +496,7 @@ export function Dashboard() {
                 if (!current) {
                   return current;
                 }
-                const entry = { stage, label, at: Date.now() };
+                const entry = { stage, label, at: streamTimestamp() };
                 const stageLog = [
                   ...current.stageLog.filter((item) => item.stage !== stage),
                   entry,

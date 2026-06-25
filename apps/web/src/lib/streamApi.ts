@@ -3,6 +3,11 @@ import type { AnalysisMode, Holding, InvestorProfile, Report } from "@/lib/api";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
 
+/** Wall-clock ms for stream session timing (event handlers only). */
+export function streamTimestamp(): number {
+  return Date.now();
+}
+
 async function apiFetch(input: string, init?: RequestInit): Promise<Response> {
   const headers = new Headers(init?.headers);
   const token = getAccessToken();

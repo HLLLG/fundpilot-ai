@@ -6,8 +6,18 @@ import threading
 import time
 from unittest.mock import patch
 
+import pytest
+
+from app.config import refresh_settings
 from app.models import NewsItem
 from app.services.news_service import NewsService
+
+
+@pytest.fixture
+def news_prefetch_enabled(monkeypatch):
+    """CI 默认 FUND_AI_NEWS_ENABLED=false，预取单测需显式打开。"""
+    monkeypatch.setenv("FUND_AI_NEWS_ENABLED", "true")
+    refresh_settings()
 
 
 def _make_item(topic: str, title: str, today: bool = True) -> NewsItem:
@@ -20,7 +30,7 @@ def _make_item(topic: str, title: str, today: bool = True) -> NewsItem:
     )
 
 
-def test_prefetch_topics_runs_topics_in_parallel():
+def test_prefetch_topics_runs_topics_in_parallel(news_prefetch_enabled):
     """5 个主题每个 sleep 0.2s，并发执行总耗时应远小于串行 1s。"""
     service = NewsService()
 
@@ -40,7 +50,7 @@ def test_prefetch_topics_runs_topics_in_parallel():
     assert set(titles) == {f"{t} title" for t in topics}
 
 
-def test_prefetch_topics_dedupes_and_ranks_today_first():
+def test_prefetch_topics_dedupes_and_ranks_today_first(news_prefetch_enabled):
     """同主题内重复标题应 dedupe；当日新闻应排在前面。
 
     注意：_dedupe_news 的 key 是 `url or f"{topic}:{title}"`，所以不同主题相同
@@ -67,7 +77,7 @@ def test_prefetch_topics_dedupes_and_ranks_today_first():
     assert titles_in_order.count("重复标题") == 1
 
 
-def test_prefetch_topics_single_topic_skips_threadpool():
+def test_prefetch_topics_single_topic_skips_threadpool(news_prefetch_enabled):
     service = NewsService()
     invoked_thread_ids: list[int] = []
     main_ident = threading.get_ident()
