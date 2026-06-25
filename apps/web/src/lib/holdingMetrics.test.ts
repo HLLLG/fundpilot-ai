@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Holding } from "@/lib/api";
-import { findHoldingIndex } from "@/lib/holdingMetrics";
+import { applySectorDailyEstimate, computeDailyProfit, findHoldingIndex } from "@/lib/holdingMetrics";
+import { getDailyProfit } from "@/lib/holdingDisplay";
 
 function holding(fund_code: string, fund_name: string): Holding {
   return {
@@ -41,5 +42,27 @@ describe("findHoldingIndex", () => {
         fund_name: "中航机遇领航混合发起C",
       }),
     ).toBe(0);
+  });
+});
+
+describe("profit accrual defer", () => {
+  const deferred: Holding = {
+    fund_code: "008281",
+    fund_name: "天弘半导体设备指数C",
+    holding_amount: 3000,
+    settled_holding_amount: 3000,
+    daily_profit: 79.23,
+    daily_return_percent: 2.65,
+    daily_return_percent_source: "official_nav",
+    sector_return_percent: 3.3,
+    profit_accrual_deferred: true,
+  };
+
+  it("zeros daily profit when deferred even if official nav was persisted", () => {
+    expect(computeDailyProfit(deferred)).toBe(0);
+    expect(getDailyProfit(deferred)).toBe(0);
+    const estimated = applySectorDailyEstimate(deferred);
+    expect(estimated.daily_profit).toBe(0);
+    expect(estimated.daily_return_percent_source).toBe("pending_accrual");
   });
 });

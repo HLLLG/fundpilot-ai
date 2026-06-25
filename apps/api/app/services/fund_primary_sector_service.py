@@ -71,6 +71,7 @@ _SOURCE_PRIORITY = {
     "alipay_overview": 90,
     "manual": 85,
     "holdings_infer": 70,
+    "benchmark_index": 65,
     "seed": 60,
     "name_infer": 20,
 }
@@ -86,13 +87,30 @@ class PrimarySectorRecord:
     detail: dict | None = None
 
 
+def _can_upsert_primary_sector(existing: dict | None, new_source: str) -> bool:
+    if not existing:
+        return True
+    old_source = str(existing.get("source") or "")
+    old_prio = _SOURCE_PRIORITY.get(old_source, 0)
+    new_prio = _SOURCE_PRIORITY.get(new_source, 0)
+    if new_prio > old_prio:
+        return True
+    if new_source == "benchmark_index" and old_source in {
+        "alipay_overview",
+        "name_infer",
+        "seed",
+    }:
+        return True
+    return new_prio >= old_prio and new_source == old_source
+
+
 def upsert_primary_sector_from_profile(profile: FundProfile, *, source: str = "ocr_detail") -> None:
     if not profile.fund_code or profile.fund_code == "000000":
         return
     if not _is_valid_sector_label(profile.sector_name):
         return
     existing = get_fund_primary_sector(profile.fund_code)
-    if existing and _SOURCE_PRIORITY.get(existing.get("source", ""), 0) > _SOURCE_PRIORITY.get(source, 0):
+    if existing and not _can_upsert_primary_sector(existing, source):
         return
     save_fund_primary_sector(
         fund_code=profile.fund_code,
@@ -110,7 +128,7 @@ def upsert_primary_sector_from_holding(holding: Holding, *, source: str) -> None
     if not _is_valid_sector_label(holding.sector_name):
         return
     existing = get_fund_primary_sector(holding.fund_code)
-    if existing and _SOURCE_PRIORITY.get(existing.get("source", ""), 0) > _SOURCE_PRIORITY.get(source, 0):
+    if existing and not _can_upsert_primary_sector(existing, source):
         return
     index_name = holding.intraday_index_name
     if not index_name:
@@ -137,18 +155,27 @@ def resolve_primary_sector(
 
     row = get_fund_primary_sector(code)
     if row and _is_valid_sector_label(row.get("sector_name")):
+        if _SOURCE_PRIORITY.get(row.get("source", ""), 0) > _SOURCE_PRIORITY["benchmark_index"]:
+            return _record_from_row(row)
+
+    benchmark_record = _resolve_from_benchmark_index(code)
+    if benchmark_record is not None:
+        return benchmark_record
+
+    if row and _is_valid_sector_label(row.get("sector_name")):
         return _record_from_row(row)
 
     profile = get_fund_profile_by_code(code)
     if profile and _is_valid_sector_label(profile.sector_name):
-        source = "alipay_overview"
-        return PrimarySectorRecord(
-            fund_code=code,
-            sector_name=profile.sector_name or "",
-            intraday_index_name=profile.intraday_index_name,
-            source=source,
-            confidence=0.9,
-        )
+        # 支付宝总览 OCR 不含可靠板块名，勿用档案里的推断值挡住业绩基准。
+        if profile.source != "alipay-overview":
+            return PrimarySectorRecord(
+                fund_code=code,
+                sector_name=profile.sector_name or "",
+                intraday_index_name=profile.intraday_index_name,
+                source="alipay_overview",
+                confidence=0.9,
+            )
 
     seed = GLOBAL_FUND_SECTOR_SEEDS.get(code)
     if seed and _is_valid_sector_label(seed.get("sector_name")):
@@ -200,16 +227,37 @@ def primary_sector_fields_for_holding(
 def apply_primary_sector_to_holding(holding: Holding) -> Holding:
     if holding.sector_name and not _is_valid_sector_label(holding.sector_name):
         holding = holding.model_copy(update={"sector_name": None})
+
+    code = holding.fund_code if holding.fund_code != "000000" else ""
+    record = None
+    if code:
+        record = resolve_primary_sector(
+            code,
+            fund_name=holding.fund_name,
+            allow_name_infer=False,
+        )
+
+    if record and record.source == "benchmark_index":
+        fields: dict[str, str] = {"sector_name": record.sector_name}
+        if record.intraday_index_name:
+            fields["intraday_index_name"] = record.intraday_index_name
+        if holding.sector_name != record.sector_name or holding.intraday_index_name != record.intraday_index_name:
+            updated = holding.model_copy(update=fields)
+            upsert_primary_sector_from_holding(updated, source="benchmark_index")
+            return updated
+
     if _is_valid_sector_label(holding.sector_name):
         if holding.fund_code and holding.fund_code != "000000":
             upsert_primary_sector_from_holding(holding, source="alipay_overview")
         return holding
 
-    fields = primary_sector_fields_for_holding(holding, allow_name_infer=False)
-    if not fields:
+    if record is None:
         return holding
+    fields = {"sector_name": record.sector_name}
+    if record.intraday_index_name and not holding.intraday_index_name:
+        fields["intraday_index_name"] = record.intraday_index_name
     updated = holding.model_copy(update=fields)
-    upsert_primary_sector_from_holding(updated, source="alipay_overview")
+    upsert_primary_sector_from_holding(updated, source=record.source)
     return updated
 
 
@@ -352,6 +400,47 @@ print(json.dumps(rows, ensure_ascii=False))
     except Exception:
         logger.exception("fund holdings fetch failed for %s", fund_code)
         return None
+
+
+def _resolve_from_benchmark_index(fund_code: str) -> PrimarySectorRecord | None:
+    from app.services.fund_benchmark_sector import fetch_fund_benchmark_text, resolve_sector_from_benchmark
+
+    benchmark_text = fetch_fund_benchmark_text(fund_code)
+    if not benchmark_text:
+        return None
+    resolved = resolve_sector_from_benchmark(benchmark_text)
+    if resolved is None:
+        return None
+    sector_name, intraday_index_name, match = resolved
+    if not get_canonical_sector(sector_name):
+        from app.services.sector_registry_data import THEME_BOARD_INDEX
+
+        if sector_name not in THEME_BOARD_INDEX:
+            return None
+
+    record = PrimarySectorRecord(
+        fund_code=fund_code,
+        sector_name=sector_name,
+        intraday_index_name=intraday_index_name,
+        source="benchmark_index",
+        confidence=0.82,
+        detail={
+            "index_code": match.index_code,
+            "index_name": match.index_name,
+            "benchmark_text": match.benchmark_text[:240],
+        },
+    )
+    existing = get_fund_primary_sector(fund_code)
+    if _can_upsert_primary_sector(existing, "benchmark_index"):
+        save_fund_primary_sector(
+            fund_code=fund_code,
+            sector_name=sector_name,
+            intraday_index_name=intraday_index_name,
+            source="benchmark_index",
+            confidence=record.confidence,
+            detail=record.detail,
+        )
+    return record
 
 
 def _record_from_row(row: dict) -> PrimarySectorRecord:

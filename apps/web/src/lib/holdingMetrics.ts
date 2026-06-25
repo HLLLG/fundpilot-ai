@@ -235,6 +235,17 @@ export function computeDailyProfitFromRate(
  * 若后端已写入官方净值当日收益率，则保留。
  */
 export function applySectorDailyEstimate(holding: Holding): Holding {
+  if (
+    holding.profit_accrual_deferred ||
+    holding.daily_return_percent_source === "pending_accrual"
+  ) {
+    return {
+      ...holding,
+      daily_profit: 0,
+      daily_return_percent: 0,
+      daily_return_percent_source: "pending_accrual",
+    };
+  }
   if (holding.daily_return_percent_source === "official_nav") {
     return holding;
   }
@@ -273,6 +284,12 @@ export function computeYesterdayProfit(holding: Holding): number | null {
 }
 
 export function computeDailyProfit(holding: Holding): number | null {
+  if (
+    holding.profit_accrual_deferred ||
+    holding.daily_return_percent_source === "pending_accrual"
+  ) {
+    return 0;
+  }
   const amount =
     holding.settled_holding_amount ?? holding.display_holding_amount ?? holding.holding_amount;
   if (amount <= 0) {

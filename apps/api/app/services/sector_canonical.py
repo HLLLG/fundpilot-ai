@@ -51,6 +51,20 @@ _CANONICAL_BY_LABEL: dict[str, CanonicalSector] = {
         eastmoney_secid="90.BK1036",
         source_code="BK1036",
     ),
+    "半导体材料": CanonicalSector(
+        label="半导体材料",
+        source_type="index",
+        source_name="半导体材料设备",
+        eastmoney_secid="2.931743",
+        source_code="931743",
+    ),
+    "半导体材料设备": CanonicalSector(
+        label="半导体材料设备",
+        source_type="index",
+        source_name="半导体材料设备",
+        eastmoney_secid="2.931743",
+        source_code="931743",
+    ),
     "国防军工": CanonicalSector(
         label="国防军工",
         source_type="concept",
@@ -271,32 +285,7 @@ def get_canonical_sector(sector_name: str | None) -> CanonicalSector | None:
         return None
     if label in _CANONICAL_BY_LABEL:
         return _CANONICAL_BY_LABEL[label]
-    for key in (
-        "商业航天",
-        "国防军工",
-        "半导体",
-        "中证半导体",
-        "中证半导",
-        "中证电网设备",
-        "中证人工智能",
-        "互联网",
-        "有色金属",
-        "新能源车",
-        "医药",
-        "证券",
-        "银行",
-        "白酒",
-        "光伏",
-        "锂电池",
-        "消费电子",
-        "机器人",
-        "云计算",
-        "5G",
-        "医疗器械",
-        "CPO",
-        "PCB",
-        "传媒",
-    ):
+    for key in sorted(_CANONICAL_BY_LABEL.keys(), key=len, reverse=True):
         if key in label:
             return _CANONICAL_BY_LABEL[key]
     return None

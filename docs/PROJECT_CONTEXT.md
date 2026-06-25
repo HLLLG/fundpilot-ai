@@ -4,9 +4,11 @@
 >
 > **维护：** 功能或架构有实质变化时，同步更新「能力清单」「数据流」「API」「目录」「环境变量」。
 
-**文档版本：** 2026-06-25（管线阶段 4 流式 · 荐基 LLM 数据对齐 · 外部数据源说明）
+**文档版本：** 2026-06-26（业绩基准板块解析 · 当日收益 defer 补强）
 
 **更新记录：**
+- **基金业绩基准 → 关联板块（2026-06-26）：** 指数型基金不再靠 per-fund seed 或基金名子串推断板块。新增 `fund_benchmark_sector.py`：AkShare 雪球概况拉「业绩比较基准」→ 解析跟踪指数（如 931743）→ `THEME_BOARD_INDEX` 映射展示名（如「半导体材料」）。`fund_primary_sector_service.resolve_primary_sector` 新增 source=`benchmark_index`（优先级 65），可覆盖 `alipay_overview`/`name_infer`/`seed` 的错误板块；`sector_canonical.get_canonical_sector` 改最长子串匹配优先，新增「半导体材料」→ `2.931743`。Windows 子进程 stdout 用 `ensure_ascii=True` JSON 防乱码。案例：021533 天弘半导体设备指数 C → 半导体材料（非泛化「半导体」BK1036）。单测 `test_fund_benchmark_sector.py`。设计/计划：`docs/superpowers/specs/2026-06-26-fund-benchmark-sector-design.md` / `docs/superpowers/plans/2026-06-26-fund-benchmark-sector.md`。
+- **当日收益 defer bypass 修复（2026-06-26）：** `profit_accrual_defer` 初版已在 `apply_sector_daily_estimates` 生效，但官方 NAV 公布后 `sector_quote_service`、`holding_amount_sync`、`holding_estimates` 三条路径绕过 defer，导致当日新购仍出现日收益（如 6/25 买入 3000 元、净值更新后显示 +79）。现三处均先检查 `is_profit_accrual_deferred`；前端 `holdingMetrics.ts`/`holdingDisplay.ts` 防御性强制日收益 0。单测 `test_profit_accrual_defer.py` + `holdingMetrics.test.ts`。设计见 `docs/superpowers/specs/2026-06-23-profit-accrual-defer-design.md`（2026-06-26 补强节）。
 - **荐基 LLM 数据包对齐日报（2026-06-25）：** `discovery_payload.build_user_payload` 新增顶层 `news_titles` / `topic_briefs`（复用 `analysis_payload.compact_*`）；`discovery_facts` 透传 `session`、`target_sector_context`（板块热度+主力+分时+信号，见 `discovery_sector_context.py`）、`market_flow`、`candidate_factor_scores`、`selection_strategy`、`dip_swing`、`instruction`；requirements 要求引用北向/南向与 `news.freshness_label`。单测 `test_discovery_payload.py`。
 - **日报/推荐报告管线提速 · 阶段 4（2026-06-25）：** LLM **流式输出** + 前端骨架/浮层。**后端**：`analyze_streaming.py` / `discovery_streaming.py` SSE（`stage` / `token` / `recommendation` partial / `done`）；`deepseek_streaming.py` + `streaming_json_parser.py`；深度模式同步新闻 tool 轮后流式 JSON；`stream_session_store.py` + `POST /api/analyze/stream/{id}/followup`（生成前追加 `operator_notes`，仅日报）。**前端**：`streamApi.ts` / `discoveryStreamApi.ts` token 打字机；`ReportThinkingSidebar` / `DiscoverySkeleton`；`StreamingAnalysisFloat` / `DiscoveryStreamingFloat`（切 Tab 不丢进度 + 完成通知）；荐基 fast/deep 均走流式。烟测 `smoke_run_analysis.py --stream`、`smoke_run_discovery.py`。设计/计划：`docs/superpowers/specs/2026-06-25-report-pipeline-speedup-phase4-design.md` / `docs/superpowers/plans/2026-06-25-report-pipeline-speedup-phase4.md`。未做：生成中 follow-up、tool_calls delta 流、荐基 operator_notes。
 - **日报/推荐报告管线提速 · 阶段 1（2026-06-25）：** 四项后端数据/缓存优化落地。**F2** `discovery_candidate_pool.build_candidate_pool` / `dip_drop_scanner.build_dip_pool_for_sectors` 默认 fetcher 改 lookup 模式接 `fund_rank_cache.fetch_open_fund_rank_cached`（与因子分模块共享 1h 缓存）；热路径省 1~3s。**F3** `NewsService.prefetch_topics` 由串行 for-loop 改 `ThreadPoolExecutor.map`（max=5），冷态 5 主题并发省 2~5s；日报+荐基双路径受益。**F1** `judge_parsed_report` 增加 `facts: dict` 必填 kwarg，`_rule_judge` / `_llm_judge` 不再各自重算 `build_analysis_facts`（深度 -5~10s、快速 -1~3s）；副效应：judge 看到的字段集合==prompt 看到的，事实一致性提升。**F4** `nav_cache_pull_days=252` / `nav_trend_window=66`，`summarize_nav_history` 加 `window_days` 参数——拉满 252 让日报/荐基与持仓详情弹窗预热共享 `fund_nav_cache`，摘要窗口仍 66 保留 LLM 决策口径（period_change / distance_from_high|low 在窗口内；recent_5d / recent_nav_series 始终基于真实尾部）；旧 `nav_trend_days` 转 property 兼容。设计/计划：`docs/superpowers/specs/2026-06-25-report-pipeline-speedup-phase1-design.md` / `docs/superpowers/plans/2026-06-25-report-pipeline-speedup-phase1.md`。阶段 2（LLM 流式）/ 阶段 3（前端骨架卡）独立 spec 排期。
@@ -113,8 +115,8 @@
 |------|------|
 | 鉴权 | 邮箱注册/登录（JWT，默认 **30 天**有效）；Web `/login` `/register`；`/settings` 绑定微信（`cloudbaseUid`）；`UserMenu` 显示「未绑微信」；小程序 `POST /api/auth/wechat-login`；开发模式 `FUND_AI_CLOUDBASE_AUTH_DEV_MODE` |
 | 输入 | 养基宝**总览 / 详情** OCR（详情含 6 位代码与关联板块）；**支付宝持有列表 OCR**（预览确认后写入）；确认弹窗可编辑 code/名称/金额并东财搜索；当日列为 `-` 时不填当日收益；**OCR 漏负号**时规则补符号；**截图识别引擎 auto**：有 key 走云端 `qwen-vl-ocr`（DashScope OpenAI 兼容；模型只做纯文本 OCR，再交本地 `parse_holdings_from_text` 结构化——与本地 PaddleOCR 同一解析器；min/max_pixels 控制 token、上传前 JPEG 压缩；QDII/截不全/余额宝过滤鲁棒、<5s），否则/失败回退本地 PaddleOCR |
-| 主关联板块 | `fund_primary_sectors` 表 + 全局种子 + 季报重仓推荐；支付宝导入后 **按 fund_code 查表**补板块名（非名称推断）；详情 OCR 自动沉淀 |
-| 当日收益 | 盘中/净值未公布：**板块涨跌估算**（`holding_amount × sector_return%`）；NAV 发布后：**官方日增长率** + `daily_profit = amount × r / (100 + r)`；关联板块列始终东财涨跌；账户汇总附「昨日收益」；**份额×净值**自动更新持有金额（`holding_amount_sync`） |
+| 主关联板块 | `fund_primary_sectors` 表 + **业绩基准解析**（`benchmark_index`）+ 全局种子 + 季报重仓推荐；指数型基金从官方基准解析跟踪指数（如 931743→半导体材料）；支付宝导入后 **按 fund_code 查表**补板块名（非名称推断）；详情 OCR 自动沉淀 |
+| 当日收益 | 盘中/净值未公布：**板块涨跌估算**；NAV 发布后：**官方日增长率**；**当日新购 defer**（OCR 三列收益≈0 → 次交易日起计，含官方 NAV 公布后仍强制日收益 0）；关联板块列始终东财涨跌 |
 | OCR 校验 | OCR 返回 `holding_warnings`；账户汇总为唯一持仓展示与日报输入源（`displayableHoldings` 过滤占位行） |
 | 持仓元数据 | SQLite `fund_profiles` + `fund_primary_sectors` 由 OCR **自动维护**（份额、成本、板块、购入日）；拒绝 `+`/`-`/Tab 标签误存为板块名；`POST /api/fund-profiles/repair-sectors` 清理历史脏数据；查码走东财名称表 + 档案兜底；详情页铅笔改代码 |
 | 简报首页 | **简报** Tab（默认）：`TodayBriefing` — 组合摘要 KPI、板块脉搏、最新日报决策卡、内联 AI 追问；`todayBriefing.ts` 纯前端汇总逻辑 + vitest |
@@ -510,13 +512,15 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 
 混合基（如 015945 国防军工→**商业航天**、519674 创新成长→**半导体**）不能从基金名推断板块。解析优先级：
 
-1. **用户表** — `fund_primary_sectors`（OCR 沉淀 / 手动 refresh-holdings）
-2. **档案** — `fund_profiles.sector_name`（养基宝详情 OCR）
-3. **全局种子** — `GLOBAL_FUND_SECTOR_SEEDS`（常见四只基）
-4. **重仓推荐** — `fund_portfolio_hold_em` + 关键词投票（`POST .../refresh-holdings`）
-5. ~~名称推断~~ — 支付宝导入路径 **禁用**（避免「国防军工」≠「商业航天」）
+1. **用户表（高信任）** — `fund_primary_sectors`（OCR 详情沉淀 / manual）
+2. **业绩基准** — `fund_benchmark_sector` 拉官方比较基准 → 跟踪指数 → `THEME_BOARD_INDEX`（source=`benchmark_index`，如 021533→半导体材料/931743）
+3. **用户表（低信任）** — `alipay_overview` 总览沉淀
+4. **档案** — `fund_profiles.sector_name`（养基宝详情 OCR）
+5. **全局种子** — `GLOBAL_FUND_SECTOR_SEEDS`（极少数兜底）
+6. **重仓推荐** — `fund_portfolio_hold_em` + 关键词投票（主动基，`holdings_infer`）
+7. **名称推断** — 最后兜底（支付宝导入路径默认跳过 alipay 板块字段）
 
-实现：`fund_primary_sector_service.py`；接入 `overview_pipeline`、`ocr_pipeline`、`fund_profile.save_profile`。
+实现：`fund_primary_sector_service.py` + `fund_benchmark_sector.py`；接入 `overview_pipeline`、`ocr_pipeline`、`fund_profile.save_profile`。
 
 ### 板块实时行情
 

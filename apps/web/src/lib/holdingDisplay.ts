@@ -53,6 +53,9 @@ export function isDailyProfitEstimated(holding: Holding): boolean {
 }
 
 export function getDailyProfit(holding: Holding): number | null {
+  if (holding.profit_accrual_deferred) {
+    return 0;
+  }
   if (holding.daily_profit != null) {
     return holding.daily_profit;
   }

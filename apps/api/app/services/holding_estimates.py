@@ -200,8 +200,6 @@ def apply_sector_daily_estimates(holding: Holding) -> Holding:
     若档案标记份额待确认（当日买入），则当日收益保持 0，不用板块覆盖。"""
     from app.services.profit_accrual_defer import get_profile_for_holding, is_profit_accrual_deferred
 
-    if holding.daily_return_percent_source == "official_nav":
-        return holding
     if is_profit_accrual_deferred(get_profile_for_holding(holding)):
         return holding.model_copy(
             update={
@@ -210,6 +208,8 @@ def apply_sector_daily_estimates(holding: Holding) -> Holding:
                 "daily_return_percent_source": "pending_accrual",
             }
         )
+    if holding.daily_return_percent_source == "official_nav":
+        return holding
     sector = holding.sector_return_percent
     amount = holding.settled_holding_amount or holding.holding_amount
     if sector is None or amount <= 0:

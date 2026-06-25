@@ -194,6 +194,19 @@ def _sync_one_holding(
                 save_fund_profile(profile.model_copy(update={"holding_shares": shares}))
 
     settled = _resolve_settled_amount(holding, profile)
+    from app.services.profit_accrual_defer import is_profit_accrual_deferred
+
+    if is_profit_accrual_deferred(profile):
+        if abs(settled - holding.holding_amount) > 0.01 or holding.amount_includes_today is not False:
+            return holding.model_copy(
+                update={
+                    "holding_amount": settled,
+                    "settled_holding_amount": settled,
+                    "amount_includes_today": False,
+                }
+            )
+        return holding
+
     official_return = get_official_nav_return(code, trade_date)
     official_unit_nav = get_latest_unit_nav(code)
 

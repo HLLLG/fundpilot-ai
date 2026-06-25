@@ -292,7 +292,10 @@ def refresh_holdings_sector_quotes(
                 update["sector_name"] = (
                     canonical.label if canonical else result.matched_name
                 )
-            if nav_return is not None:
+            from app.services.profit_accrual_defer import is_profit_accrual_deferred
+
+            profile = profile_service._find_profile_for_holding(holding)
+            if nav_return is not None and not is_profit_accrual_deferred(profile):
                 update["daily_return_percent"] = nav_return
                 update["daily_profit"] = compute_daily_profit_from_rate(
                     holding.holding_amount,

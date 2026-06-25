@@ -1,7 +1,7 @@
 # 当日买入延迟计收益（对齐支付宝截图）
 
 **日期：** 2026-06-23  
-**状态：** 已确认（方案 A）
+**状态：** 已落地（2026-06-26 补强 bypass 修复）
 
 ## 问题
 
@@ -37,3 +37,17 @@
 
 - `serialize_holding_for_client` 增加 `profit_accrual_deferred: bool`。
 - 持有列表「估算」列 title 提示「份额待确认，次交易日起计收益」。
+
+## 落地补强（2026-06-26）
+
+初版 `profit_accrual_defer` 已在 `apply_sector_daily_estimates` 生效，但三条路径在 **官方净值已公布** 时绕过 defer，导致当日新购仍出现日收益：
+
+| 路径 | 文件 | 修复 |
+|------|------|------|
+| 板块 quote 写日收益 | `sector_quote_service.py` | 应用 `official_nav` 前检查 `is_profit_accrual_deferred` |
+| 结算金额滚动 | `holding_amount_sync.py` | `shares × NAV` 滚 settled 前检查 defer |
+| 估算优先级 | `holding_estimates.py` | defer 检查置于 `official_nav` 分支之前 |
+
+**前端防御：** `holdingMetrics.ts` / `holdingDisplay.ts` 在 `profit_accrual_deferred` 时强制日收益为 0。
+
+**单测：** `apps/api/tests/test_profit_accrual_defer.py`（4 项）、`apps/web/src/lib/holdingMetrics.test.ts`（1 项）。
