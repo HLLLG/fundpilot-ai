@@ -1,0 +1,38 @@
+docs/superpowers/specs/2026-06-25-report-pipeline-speedup-phase1-design.md
+  s_8970ebc7890e63::t_8deca7c738f40a 1-371
+apps/api/app/services/discovery_candidate_pool.py
+  s_8970ebc7890e63::t_afb50f09eb6e28 31-32,34-38
+  s_8970ebc7890e63::t_3b992a7ecf7577 15-16
+docs/superpowers/plans/2026-06-25-report-pipeline-speedup-phase1.md
+  s_8970ebc7890e63::t_9b1251409e8a7f 1-1261
+apps/api/tests/test_discovery_candidate_pool_cache.py
+  s_8970ebc7890e63::t_5fed8f0182f582 7,41,43-44,55
+  s_8970ebc7890e63::t_10559e8ea67b50 38-40
+  s_8970ebc7890e63::t_371654bf5000d4 1-6,8-11,18-19,21-27,29-37,42,45-46,48-54,56-62
+  s_8970ebc7890e63::t_49cf47520a8e3d 12-17,20,28,47
+apps/api/app/services/dip_drop_scanner.py
+  s_8970ebc7890e63::t_685480054d7b37 103,107
+  s_8970ebc7890e63::t_2b0883b3d7eb5c 106,108
+  s_8970ebc7890e63::t_6c62b6fb42fd05 9-10
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.18-trip",
+  "base_commit_sha": "6ff79a16060fbed1724936351b05befc7924beab",
+  "prompts": {},
+  "humans": {
+    "h_375fc341ff3baa": {
+      "author": "hegl <HLLLG@github.com>"
+    }
+  },
+  "sessions": {
+    "s_8970ebc7890e63": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e5afe88f-3c65-48f6-846f-e3377efbe527",
+        "model": "arn:aws:bedrock:us-west-2:133197901387:application-inference-profile/ypvzpmevzxdl"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
