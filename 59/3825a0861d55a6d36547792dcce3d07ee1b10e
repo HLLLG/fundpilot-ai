@@ -1,0 +1,306 @@
+docs/superpowers/plans/2026-06-25-report-pipeline-speedup-phase3.md
+  s_7aa0720df5e56a::t_5b039dac269af9 1-27
+apps/api/app/services/deepseek_streaming.py
+  s_7aa0720df5e56a::t_e5f72e15645cbb 1-59
+apps/api/scripts/smoke_run_analysis.py
+  s_7aa0720df5e56a::t_bd18d140231daf 17-20
+  s_7aa0720df5e56a::t_0b417641629d37 105
+  s_7aa0720df5e56a::t_9b86792154b953 189-193
+  s_7aa0720df5e56a::t_33bf066420669b 6
+  s_7aa0720df5e56a::t_0ee4c1445d5546 107-110,120-125,129-134,136-143
+  s_7aa0720df5e56a::t_8b6a88615dd1da 95-97
+  s_7aa0720df5e56a::t_8b4b2d2dbce028 185-188,194,200-202
+  s_7aa0720df5e56a::t_c368e2b5efbecf 1,5,25
+  s_7aa0720df5e56a::t_98df9f39db3780 44,48-49
+  s_7aa0720df5e56a::t_e7fbe3c10ae6eb 41-43,45,50
+  s_7aa0720df5e56a::t_c67dde7ac10893 104,106,111,113-119,126-128,135,144,146-147,150-168
+  s_7aa0720df5e56a::t_27fb7c63061039 98
+  s_7aa0720df5e56a::t_0dc7be6378d539 145,148-149
+apps/web/src/components/ReportThinkingSidebar.tsx
+  s_7aa0720df5e56a::t_ce89513052d97e 111-147
+  s_7aa0720df5e56a::t_c3d59061b6af67 1-2,5,7-14,16-22,27,49-109,157-159
+  s_7aa0720df5e56a::t_51137c28e98ea7 6
+  s_7aa0720df5e56a::t_287c88a580336f 110,148-156
+  s_7aa0720df5e56a::t_837acbc4db9316 23-26,28-48
+  s_7aa0720df5e56a::t_e18fcc35e5364c 3-4
+  s_7aa0720df5e56a::t_92789c872b9af3 15
+apps/web/src/lib/streamApi.test.ts
+  s_7aa0720df5e56a::t_11dd3cb5a9c9fb 102
+  s_7aa0720df5e56a::t_0ac0ab98070744 111,115-116,122,124
+  s_7aa0720df5e56a::t_f6e651199f1ee7 123
+  s_7aa0720df5e56a::t_865f6cf55a78e1 82,91
+  s_7aa0720df5e56a::t_33ffc2196c04cc 1-46,60-66,69-81,84-86,88-90,92-101,103-110,112-114,117-121,125-126
+  s_7aa0720df5e56a::t_920e8da68d6c93 83,87
+  s_7aa0720df5e56a::t_d2523dc584e7f5 47-59
+  s_7aa0720df5e56a::t_fe0eee961ae49f 67-68
+docs/superpowers/specs/2026-06-25-report-pipeline-speedup-phase4-design.md
+  s_7aa0720df5e56a::t_bdc2f3684debd6 1-192
+apps/api/tests/test_analyze_stream_endpoint.py
+  s_7aa0720df5e56a::t_1a28443104f741 1-23,25-56,58
+  s_7aa0720df5e56a::t_3f2b17187662c9 24
+  s_7aa0720df5e56a::t_bd9840412b225f 57
+apps/api/app/services/discovery_facts.py
+  s_7aa0720df5e56a::t_e6f1e860878a8c 30
+  s_7aa0720df5e56a::t_09808dae09be4c 82
+  s_7aa0720df5e56a::t_46f4398ba514ca 46-51
+  s_7aa0720df5e56a::t_e4acf902ce436f 4-7
+  s_7aa0720df5e56a::t_70b63706cdf6a2 81,83-86,91
+apps/web/src/lib/streamingStageMeta.test.ts
+  s_7aa0720df5e56a::t_943444508034e6 29-37
+  s_7aa0720df5e56a::t_ef6853ae607c6a 2
+  s_7aa0720df5e56a::t_8eb31230946c94 1,3-28
+apps/web/src/lib/discoveryStreamApi.ts
+  s_7aa0720df5e56a::t_a177162ff4b4e0 1-243
+apps/api/app/services/discovery_payload.py
+  s_7aa0720df5e56a::t_7a091f3bd2ffaf 28,32,34-36,43,45-46
+  s_7aa0720df5e56a::t_941587bb07f182 5-7
+  s_7aa0720df5e56a::t_95894f794e3e68 56-58,75-77,83-84,86-88,91,95-97
+apps/api/tests/test_stream_session_store.py
+  s_7aa0720df5e56a::t_9531c7f8c6855f 1-37
+apps/api/tests/test_stream_followup_endpoint.py
+  s_7aa0720df5e56a::t_d4909e6dca7d38 1-39
+apps/api/tests/test_discovery_payload.py
+  s_7aa0720df5e56a::t_5360106d641276 83-84
+  s_7aa0720df5e56a::t_d8e12cf05c54ee 1-48,50-53,55-82,85-90,92-97,99-111,113-124
+  s_7aa0720df5e56a::t_0dd6bd14ae5502 91,98,112
+  s_7aa0720df5e56a::t_d1b8684ceda8b9 54
+  s_7aa0720df5e56a::t_016cfa272329b7 49
+docs/superpowers/plans/2026-06-25-report-pipeline-speedup-phase2.md
+  s_7aa0720df5e56a::t_e2e6f6195dfb99 1-174
+apps/web/src/components/StreamingAnalysisFloat.tsx
+  s_7aa0720df5e56a::t_321deed1257267 1-57
+apps/api/app/services/discovery_streaming.py
+  s_7aa0720df5e56a::t_a7f7c536129e93 153-169
+  s_7aa0720df5e56a::t_ba4033b5814a3e 1-32,34-120,122-145,149-152,170-234
+  s_7aa0720df5e56a::t_f7c2260e0d9429 121
+  s_7aa0720df5e56a::t_35af823fc50f43 146-148
+  s_7aa0720df5e56a::t_eb220b9b9d71e1 33
+apps/web/src/lib/streamingStageMeta.ts
+  s_7aa0720df5e56a::t_0fbf757550b8e3 2-23,25-73
+  s_7aa0720df5e56a::t_593563f0aee157 24
+apps/api/app/services/analyze_streaming.py
+  s_7aa0720df5e56a::t_9d26a5b0590ec9 1-16,18-28,30-32,38-40,42-47,49,52-58,60-66,68-94,96-99,136-153,155-169,171-190,192-196,198,204-219
+  s_7aa0720df5e56a::t_ff1e30678cf03a 154
+  s_7aa0720df5e56a::t_3fe73b43e91625 95
+  s_7aa0720df5e56a::t_8813ecb1c4997f 17,29,41
+  s_7aa0720df5e56a::t_7a3fa9a5eb86cc 67
+  s_7aa0720df5e56a::t_6d651a8f0aba9a 59
+  s_7aa0720df5e56a::t_246eb1ba6f2a15 100,103,117,120,133
+  s_7aa0720df5e56a::t_4ae48f15feea65 191
+  s_7aa0720df5e56a::t_0e0364c25ee8cd 48,50-51
+  s_7aa0720df5e56a::t_aa06d11a8796e8 101-102,104-116,118-119,121-132,134-135
+  s_7aa0720df5e56a::t_8a34c1304688ca 197,199-203
+  s_7aa0720df5e56a::t_23e44534068832 170
+  s_7aa0720df5e56a::t_c6697b49795579 33-37
+docs/superpowers/specs/2026-06-25-report-pipeline-speedup-phase3-design.md
+  s_7aa0720df5e56a::t_2336b6c8acba54 1-52
+apps/api/tests/test_analyze_streaming.py
+  s_7aa0720df5e56a::t_c07bf1e0d3cb96 87-90,105-133,135-140
+  s_7aa0720df5e56a::t_3815e51175d9af 91-104
+  s_7aa0720df5e56a::t_cadc12804606b8 165
+  s_7aa0720df5e56a::t_ee1c19fc38b774 1-9,11-12,15-86,134,141,143-164,166-172,174-196
+  s_7aa0720df5e56a::t_b78675db9b8d27 10,13-14
+  s_7aa0720df5e56a::t_3d00679b7ae5e3 142,173
+apps/api/tests/test_discovery_stream_endpoint.py
+  s_7aa0720df5e56a::t_e0dee5585f4044 1-58
+docs/superpowers/plans/2026-06-25-report-pipeline-speedup-phase4.md
+  s_7aa0720df5e56a::t_d027f37052ebf7 1-62
+  s_7aa0720df5e56a::t_e6717813185ac2 63-68
+apps/api/scripts/smoke_run_discovery.py
+  s_7aa0720df5e56a::t_cbd49c1051a72c 38
+  s_7aa0720df5e56a::t_82d0cbc832e1e5 1-37,39-185
+apps/web/src/lib/discoveryStreamingStageMeta.ts
+  s_7aa0720df5e56a::t_62f294d4152025 1-30
+apps/api/app/services/sector_intraday_summary.py
+  s_7aa0720df5e56a::t_f8cc84a0bd1048 84-97
+apps/web/src/components/ReportPanel.test.tsx
+  s_7aa0720df5e56a::t_938d923b1ee8a4 130-143
+  s_7aa0720df5e56a::t_7838ea5504553a 28
+  s_7aa0720df5e56a::t_27d50131dacc2b 22-27
+  s_7aa0720df5e56a::t_a43db2d14e35b4 29
+  s_7aa0720df5e56a::t_fccd3b418666ad 1-21,30-51,53-83,86-129,144-154
+  s_7aa0720df5e56a::t_49a719823f9472 52
+  s_7aa0720df5e56a::t_c8d805953ef902 84-85
+apps/api/tests/test_streaming_json_parser.py
+  s_7aa0720df5e56a::t_0eca95d4256649 1-92
+apps/api/tests/test_discovery_streaming.py
+  s_7aa0720df5e56a::t_7758bd60b777e8 75-121,123-126
+  s_7aa0720df5e56a::t_6d320eb9de3046 1-74,122,127-183
+apps/web/src/lib/streamApi.ts
+  s_7aa0720df5e56a::t_a7c4f6b3fd96af 2,14-22,35-43,51-53,55-56,58-63,65-76,86-114,119-126,131-199,204-239
+  s_7aa0720df5e56a::t_b5ca61e7e0d063 29-34,49-50,54
+  s_7aa0720df5e56a::t_4ffb9cea7ba04d 200-203
+  s_7aa0720df5e56a::t_214f759ffe06d9 57
+  s_7aa0720df5e56a::t_c842e02bf0969f 77-85
+  s_7aa0720df5e56a::t_2c5745bf5ad0d9 1,3-13
+  s_7aa0720df5e56a::t_eff5874079012f 64
+  s_7aa0720df5e56a::t_2d457db9eb1fca 115-118
+  s_7aa0720df5e56a::t_bc1fcb4213aea0 127-130
+  s_7aa0720df5e56a::t_962752b21870de 23-28,44-46
+  s_7aa0720df5e56a::t_681317de2bc06f 47-48
+  s_7aa0720df5e56a::t_6074004eb43df6 240-251
+apps/web/src/components/Dashboard.tsx
+  s_7aa0720df5e56a::t_972b97307277a8 1087-1093
+  s_7aa0720df5e56a::t_621952089acda8 1005-1008,1010
+  s_7aa0720df5e56a::t_6ecc728498e153 135
+  s_7aa0720df5e56a::t_86920d47a02984 617
+  s_7aa0720df5e56a::t_996e159c92fd82 1048-1050
+  s_7aa0720df5e56a::t_5efab6336d914f 438-453
+  s_7aa0720df5e56a::t_13fc8e9179ea5b 1080-1086
+  s_7aa0720df5e56a::t_11bc7d2281ed7f 76
+  s_7aa0720df5e56a::t_f94ade5e15a6f4 926
+  s_7aa0720df5e56a::t_1a61d9eefde937 77
+  s_7aa0720df5e56a::t_7c6e22c194347c 39
+  s_7aa0720df5e56a::t_d123ab83031eb4 137,141-143
+  s_7aa0720df5e56a::t_953da8e05a82f1 280-282
+  s_7aa0720df5e56a::t_3f07536d49a298 927
+  s_7aa0720df5e56a::t_1ae63a0abf6f4f 277-279,288-292
+  s_7aa0720df5e56a::t_f81aecb3c84688 34
+  s_7aa0720df5e56a::t_295acb831f46f4 1009
+  s_7aa0720df5e56a::t_25f875d7ec226e 462-477,479-483,485-488,493-512,514,516-520,522-566,568-569,571-584,587-591
+  s_7aa0720df5e56a::t_1782ebb0dfa992 136,138-139
+  s_7aa0720df5e56a::t_336c056324771a 1003
+  s_7aa0720df5e56a::t_499644f3591aa8 294-299
+  s_7aa0720df5e56a::t_8f796707191dcf 484,515,521,567,570,585-586,592-593
+  s_7aa0720df5e56a::t_5062d53cb1c190 659-687
+  s_7aa0720df5e56a::t_6f744f8c3a801a 429-437
+  s_7aa0720df5e56a::t_4af4afcd959036 1045-1047,1051
+  s_7aa0720df5e56a::t_8c30a0d8e7610d 613-616,618,622-632
+  s_7aa0720df5e56a::t_93996202228f1a 478
+  s_7aa0720df5e56a::t_113894a3b1392f 489-492
+  s_7aa0720df5e56a::t_346928ad27f87e 513
+  s_7aa0720df5e56a::t_30dd2ae5462872 32-33,36-38,293
+  s_7aa0720df5e56a::t_1acab0dec9d2b4 35
+  s_7aa0720df5e56a::t_42058505bbdcb9 45-46
+apps/web/src/components/ReportPanel.tsx
+  s_7aa0720df5e56a::t_32bfca0c84cf2f 21
+  s_7aa0720df5e56a::t_4dd6f7d7dcf095 199,201
+  s_7aa0720df5e56a::t_095c7645972589 200
+  s_7aa0720df5e56a::t_d0267ea527ab7d 196
+  s_7aa0720df5e56a::t_cbf960771197cc 14
+  s_7aa0720df5e56a::t_e7bce2b6444665 20
+  s_7aa0720df5e56a::t_33efb772365c4b 19,202
+apps/api/app/services/discovery_pipeline.py
+  s_7aa0720df5e56a::t_c2daf9c8acfc8f 26
+  s_7aa0720df5e56a::t_59e0b77a8a81bc 109
+apps/web/src/components/FundDiscoveryPanel.tsx
+  s_7aa0720df5e56a::t_e41ce43c1065aa 37
+  s_7aa0720df5e56a::t_2498d9b189c370 31,469
+  s_7aa0720df5e56a::t_de978a572be3fa 110
+  s_7aa0720df5e56a::t_23adb719f92db5 460
+  s_7aa0720df5e56a::t_97238329c70d9a 799,804-808
+  s_7aa0720df5e56a::t_c6e26a751d9c2e 342
+  s_7aa0720df5e56a::t_4d38bce6165d47 45
+  s_7aa0720df5e56a::t_6ee59b51476fe5 314,318-319,321,325-338,355,424,433-434,440-442
+  s_7aa0720df5e56a::t_0049fba390fd6f 380,388
+  s_7aa0720df5e56a::t_a04bca5412c494 89-91,93,107-109,111
+  s_7aa0720df5e56a::t_54bd66b3921ff6 315-317,320,340-341,343-354,356-379,381-387,389-423,425-432,435-439,454,459,461,471,473
+  s_7aa0720df5e56a::t_464534c2fb782a 470,472,474
+  s_7aa0720df5e56a::t_c19ade64ac4c7e 790,794
+  s_7aa0720df5e56a::t_0b674a877afa5c 92
+  s_7aa0720df5e56a::t_8c7b7401dc7b3f 38-43
+  s_7aa0720df5e56a::t_6092038b273db6 3-7
+apps/api/app/services/deepseek_client.py
+  s_7aa0720df5e56a::t_e0d05934f0dbf0 228
+  s_7aa0720df5e56a::t_8a9d1d13db216f 447-455,457-479,481-551
+  s_7aa0720df5e56a::t_6417c412446224 264
+  s_7aa0720df5e56a::t_ef318cc663c2b1 57,60-63
+  s_7aa0720df5e56a::t_a5d07b6907b228 319-325,328,330-337
+  s_8970ebc7890e63::t_96f0ca3a363ec8 64,306,329
+  s_7aa0720df5e56a::t_535e7868fedab9 216,227,229-230,273-276,279-281,285,287-305,307-318,326-327
+  s_7aa0720df5e56a::t_a908aec408b583 456
+  s_7aa0720df5e56a::t_37a104a365fdb1 480
+  s_7aa0720df5e56a::t_dfaf3c4d031350 158,160,165-168
+apps/web/src/components/DiscoverySkeleton.tsx
+  s_7aa0720df5e56a::t_7d0be0d4c82410 1-2,4-61,67-132
+  s_7aa0720df5e56a::t_762f36bd18ff02 3
+  s_7aa0720df5e56a::t_c8921e82319d40 62-66
+apps/api/app/models.py
+  s_7aa0720df5e56a::t_ddf7fc59a9157a 93-96
+apps/web/src/components/DiscoveryStreamingFloat.tsx
+  s_7aa0720df5e56a::t_afe06993010279 1-57
+apps/web/src/components/DashboardNav.tsx
+  s_7aa0720df5e56a::t_b63bc0ecd2ce69 67,71
+  s_7aa0720df5e56a::t_8cef90a42ef826 147,150-151,153-155
+  s_7aa0720df5e56a::t_16645f70c6e146 64-66,68-70
+  s_7aa0720df5e56a::t_f7ed7808961fc3 23
+  s_7aa0720df5e56a::t_eb40fbf2df6d43 101,104-110
+  s_7aa0720df5e56a::t_1bdc18fb70b2b3 111-117
+  s_7aa0720df5e56a::t_78eef34c1f2f30 22
+  s_7aa0720df5e56a::t_55002690ffb4a4 149,152
+docs/PROJECT_CONTEXT.md
+  s_7aa0720df5e56a::t_8f50a93dad4f16 680-694
+  s_7aa0720df5e56a::t_f38f51185b87cf 422-424
+  s_7aa0720df5e56a::t_c48da55899702d 331,341-354
+  s_7aa0720df5e56a::t_31b61b63616181 239-242
+  s_7aa0720df5e56a::t_08fd45b99c70a4 7,10-11
+  s_7aa0720df5e56a::t_885d1997148788 155-156
+  s_7aa0720df5e56a::t_4ddcc4e695dd83 628-650
+  s_7aa0720df5e56a::t_c6ce7479eb9ad1 446-447
+apps/api/app/services/streaming_json_parser.py
+  s_7aa0720df5e56a::t_ee9bdce635af0c 70-71,73-78
+  s_7aa0720df5e56a::t_1a5e185979c0e3 1-15,17,26-29,32-49,51,55-69,72,79-87,89-92,94-96,98-115,117,119-120,123-125,127-177
+  s_7aa0720df5e56a::t_c837e897675d68 16,18-25,30-31
+  s_7aa0720df5e56a::t_bfa06b49fb8d94 88,93,97,116,118,121-122,126
+  s_7aa0720df5e56a::t_ba6774b74be6bc 50,52-54
+apps/api/app/main.py
+  s_7aa0720df5e56a::t_9d11ea2110534d 741-762
+  s_7aa0720df5e56a::t_daf00ae76660eb 76
+  s_7aa0720df5e56a::t_0ae5809b3f84ab 601-619
+  s_7aa0720df5e56a::t_b6971360cfeee9 75
+  s_7aa0720df5e56a::t_a9cf869b05547d 70
+  s_7aa0720df5e56a::t_4633fd4650a0ea 77
+  s_7aa0720df5e56a::t_cc5f10e6c2a7dc 620-627
+apps/web/src/components/ReportSkeleton.tsx
+  s_7aa0720df5e56a::t_5cd0ee090ae886 33
+  s_7aa0720df5e56a::t_6763f0365c9df3 11
+  s_7aa0720df5e56a::t_a2c97cec0f9c6c 1-2,4,6-9,12-32,34-37,61,98,100,104,119-122
+  s_7aa0720df5e56a::t_a50c9845fdf54c 3,5,10,38-60,62-97,99,101-103,105-117
+  s_7aa0720df5e56a::t_01d034269ef126 118
+apps/api/app/services/analysis_payload.py
+  s_7aa0720df5e56a::t_e63d51f9a5c173 410
+  s_7aa0720df5e56a::t_0d92c3a39ce6c7 431,440-442
+apps/web/src/lib/api.ts
+  s_7aa0720df5e56a::t_3eee7127ebcb4a 2130-2137
+apps/api/app/services/stream_session_store.py
+  s_7aa0720df5e56a::t_3162497e782431 1-58
+apps/api/app/services/discovery_sector_context.py
+  s_7aa0720df5e56a::t_320879feaccadc 1-122
+apps/api/app/services/discovery_client.py
+  s_7aa0720df5e56a::t_5e3ee9285628fb 28
+  s_7aa0720df5e56a::t_605eec831a43a9 129-131
+  s_7aa0720df5e56a::t_e613dc60204b73 196-228
+  s_7aa0720df5e56a::t_0078c3d4470148 38-94
+  s_7aa0720df5e56a::t_6367741f0c70c4 229-286
+  s_7aa0720df5e56a::t_06efafa27b6774 4,11,18-23,29-30
+  s_7aa0720df5e56a::t_7c6f1bd9ff40fb 137-141,143,145,150
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.18-trip",
+  "base_commit_sha": "593825a0861d55a6d36547792dcce3d07ee1b10e",
+  "prompts": {},
+  "humans": {
+    "h_375fc341ff3baa": {
+      "author": "hegl <HLLLG@github.com>"
+    }
+  },
+  "sessions": {
+    "s_7aa0720df5e56a": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "36a0b4ed-29dc-49d4-8d6c-5f8f5eb4372b",
+        "model": "composer-2.5"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    },
+    "s_8970ebc7890e63": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e5afe88f-3c65-48f6-846f-e3377efbe527",
+        "model": "arn:aws:bedrock:us-west-2:133197901387:application-inference-profile/ypvzpmevzxdl"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
