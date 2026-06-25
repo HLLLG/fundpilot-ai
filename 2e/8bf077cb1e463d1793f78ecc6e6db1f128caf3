@@ -1,0 +1,37 @@
+apps/web/src/lib/riskMetrics.ts
+  s_5ce134945012c9::t_bcc5dce6b031ca 1-196
+apps/api/app/services/portfolio_risk_metrics.py
+  s_5ce134945012c9::t_ae8f591406c254 11-14,17-19,23-115,120-206
+  s_5ce134945012c9::t_c33a6f3ba48a87 209-255,261-319
+  s_5ce134945012c9::t_538891fa6e0aa4 15,20
+apps/web/src/lib/riskMetrics.test.ts
+  s_5ce134945012c9::t_b9d83d29fb2ef7 1-79
+apps/web/src/components/PortfolioRiskMetricsPanel.tsx
+  s_5ce134945012c9::t_736abb370ff6bd 1-4,6-113,116-160,181-185
+  s_5ce134945012c9::t_f0634e5ab8a213 114
+  s_5ce134945012c9::t_ce50e2a853ce1f 162-180
+  s_5ce134945012c9::t_b6d9f19c5985be 5
+apps/web/src/components/PortfolioCorrelationHeatmap.tsx
+  s_5ce134945012c9::t_4df092b2520600 1-132
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.18-trip",
+  "base_commit_sha": "2e8bf077cb1e463d1793f78ecc6e6db1f128caf3",
+  "prompts": {},
+  "humans": {
+    "h_375fc341ff3baa": {
+      "author": "hegl <HLLLG@github.com>"
+    }
+  },
+  "sessions": {
+    "s_5ce134945012c9": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "4582a977-ede3-4147-9dcc-ee6c922a3c59",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
