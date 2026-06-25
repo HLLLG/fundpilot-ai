@@ -1,0 +1,26 @@
+apps/api/scripts/smoke_run_analysis.py
+  s_8970ebc7890e63::t_ebad436cb01506 1-16,18-81,85-117
+  s_8970ebc7890e63::t_e6726f4fb0a5a4 17
+  s_8970ebc7890e63::t_57dec1a4f4e12d 82-84
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.18-trip",
+  "base_commit_sha": "1ab4c6914aef516df05f8ccb828dac98b681edab",
+  "prompts": {},
+  "humans": {
+    "h_375fc341ff3baa": {
+      "author": "hegl <HLLLG@github.com>"
+    }
+  },
+  "sessions": {
+    "s_8970ebc7890e63": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e5afe88f-3c65-48f6-846f-e3377efbe527",
+        "model": "arn:aws:bedrock:us-west-2:133197901387:application-inference-profile/ypvzpmevzxdl"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
