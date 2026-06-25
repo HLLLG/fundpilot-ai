@@ -262,8 +262,10 @@ def _resolve_theme_board_entry(
 _INTRADAY_SESSIONS = {
     "trading_day_intraday",
     "trading_day_pre_close",
-    "trading_day_pre_open",
 }
+
+# 仅 9:30–15:00 交易时段后台刷新；收盘后/开盘前/非交易日只读缓存
+_MARKET_REFRESH_SESSIONS = _INTRADAY_SESSIONS
 
 
 # ---------------------------------------------------------------------------
@@ -670,6 +672,18 @@ def build_theme_board_payload(
     }
 
 
+def refresh_market_shared_snapshots(*, trade_date: str | None = None) -> dict[str, Any]:
+    """刷新所有用户共享的市场快照：主题板块榜 + 全市场板块资金流。"""
+    from app.services.sector_board_snapshot import refresh_sector_board_snapshot
+
+    theme = refresh_theme_board_snapshot(trade_date=trade_date)
+    try:
+        refresh_sector_board_snapshot()
+    except Exception as exc:
+        logger.info("sector board shared refresh failed: %s", exc)
+    return theme
+
+
 def get_theme_board_snapshot(
     *,
     force_refresh: bool = False,
@@ -688,7 +702,11 @@ def get_theme_board_snapshot(
         cached = get_spot_snapshot_any_age(cache_key)
 
     if cached is None or force_refresh:
-        cached = refresh_theme_board_snapshot(trade_date=trade_date)
+        if force_refresh:
+            cached = refresh_market_shared_snapshots(trade_date=trade_date)
+        else:
+            # 冷启动兜底：仅无缓存时同步拉一次，避免首用户长时间等待
+            cached = refresh_theme_board_snapshot(trade_date=trade_date)
         from_cache = False
     else:
         from_cache = True
@@ -722,27 +740,10 @@ def _refresh_enabled() -> bool:
 
 
 def theme_board_refresh_loop() -> None:
-    """时段感知 daemon 循环：启动预热一次，盘中 15min / 收盘 1h 刷新。"""
-    from app.config import get_settings
+    """兼容旧名：统一走 ``market_shared_refresh_loop``。"""
+    from app.services.market_shared_refresh import market_shared_refresh_loop
 
-    try:
-        refresh_theme_board_snapshot()
-    except Exception as exc:
-        logger.info("theme board initial refresh failed: %s", exc)
-
-    while True:
-        settings = get_settings()
-        session_kind = build_trading_session().get("session_kind", "")
-        interval = (
-            settings.theme_board_refresh_interval_seconds
-            if session_kind in _INTRADAY_SESSIONS
-            else settings.theme_board_refresh_idle_interval_seconds
-        )
-        time.sleep(max(60, int(interval)))
-        try:
-            refresh_theme_board_snapshot()
-        except Exception as exc:
-            logger.info("theme board refresh failed: %s", exc)
+    market_shared_refresh_loop()
 
 
 # ---------------------------------------------------------------------------

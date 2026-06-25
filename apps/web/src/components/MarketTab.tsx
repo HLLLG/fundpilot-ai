@@ -46,7 +46,7 @@ export function MarketTab() {
     refresh: refreshTheme,
   } = useCachedFetch({
     cacheKey: themeCacheKey,
-    staleTimeMs: 900_000,
+    staleTimeMs: 1_200_000,
     storage: "session",
     fetcher: () =>
       fetchMarketThemeBoards({
@@ -78,7 +78,7 @@ export function MarketTab() {
     refresh: refreshDip,
   } = useCachedFetch({
     cacheKey: dipCacheKey,
-    staleTimeMs: 300_000,
+    staleTimeMs: 1_200_000,
     storage: "session",
     fetcher: () =>
       fetchDipRadar({

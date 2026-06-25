@@ -37,6 +37,15 @@ def get_sector_board_snapshot(*, force_refresh: bool = False) -> dict[str, Any]:
         cached = get_spot_snapshot(cache_key, ttl_seconds=cache_ttl)
         if cached and _snapshot_has_rows(cached):
             return {**cached, "from_cache": True, "stale": False}
+        stale_cached = get_spot_snapshot_any_age(cache_key)
+        if stale_cached and _snapshot_has_rows(stale_cached):
+            return {
+                **stale_cached,
+                "from_cache": True,
+                "stale": True,
+                "available": True,
+                "message": "展示缓存板块行情，后台将在下一交易时段更新",
+            }
 
     stale_cached = get_spot_snapshot_any_age(cache_key)
 
@@ -76,6 +85,11 @@ def get_sector_board_snapshot(*, force_refresh: bool = False) -> dict[str, Any]:
         "industry": [],
         "concept": [],
     }
+
+
+def refresh_sector_board_snapshot() -> dict[str, Any]:
+    """后台任务：强制刷新全市场板块快照（涨跌幅 + 主力净流入）。"""
+    return get_sector_board_snapshot(force_refresh=True)
 
 
 def _snapshot_has_rows(snapshot: dict[str, Any]) -> bool:

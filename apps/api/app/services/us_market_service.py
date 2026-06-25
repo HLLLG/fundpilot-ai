@@ -114,16 +114,27 @@ def get_us_market_snapshot(*, force_refresh: bool = False) -> UsMarketSnapshot:
         f"{_bucket_for(session_kind)}:{session['et_date']}"
     )
 
-    # 1) 命中且新鲜的服务端缓存（且 available）直接返回（需求 4.2 性能）。
+    # 1) 新鲜或 stale 缓存（API 只读，后台任务负责刷新）
     if not force_refresh:
         cached = get_spot_snapshot(cache_key, ttl_seconds=_ttl_for(session_kind))
         if cached and cached.get("available"):
-            return UsMarketSnapshot(**{**cached, "from_cache": True})
+            return UsMarketSnapshot(**{**cached, "from_cache": True, "stale": False})
+        stale_cached = get_spot_snapshot_any_age(cache_key)
+        if stale_cached and stale_cached.get("available"):
+            return UsMarketSnapshot(
+                **{
+                    **stale_cached,
+                    "from_cache": True,
+                    "stale": True,
+                    "message": stale_cached.get("message")
+                    or "展示缓存数据，后台将在下一活跃时段更新",
+                }
+            )
 
-    # 2) 任意年龄缓存——用于 stale 回退与「最后真实值」溯源（需求 7.1）。
+    # 2) 任意年龄缓存——fetch 失败时的 degrade 回退
     prev = get_spot_snapshot_any_age(cache_key)
 
-    # 3) 并行拉取期货 + 指数 + 汇率（预算 ~15s）。
+    # 3) force_refresh 或冷启动：并行拉取期货 + 指数 + 汇率
     raw_futures, raw_indices, raw_forex = _fetch_sources_parallel()
 
     futures, futures_status = _degrade_market_quotes(

@@ -129,6 +129,12 @@ from app.services.sector_quote_diagnostic import run_sector_quote_diagnostic
 from app.services.sector_quote_service import apply_sector_mapping_choice, refresh_holdings_sector_quotes
 from app.services.sector_intraday_provider import fetch_sector_intraday
 from app.services.holding_detail_service import build_holding_detail
+from app.services.holding_detail_cache import (
+    get_cached_holding_detail,
+    holding_detail_fingerprint,
+    save_cached_holding_detail,
+)
+from app.services.holding_intraday_warmup import schedule_warm_holdings_intraday
 from app.services.news_freshness import build_news_pipeline_context
 from app.services.news_service import NewsService
 from app.services.trading_session import build_trading_session
@@ -470,6 +476,10 @@ def refresh_sector_quotes(request: RefreshSectorQuotesRequest) -> dict:
             with_official_nav=request.budget == "accurate",
         )
         result["holdings"] = serialize_holdings_for_client(enriched)
+        schedule_warm_holdings_intraday(
+            enriched,
+            user_key=str(get_request_user_id()),
+        )
     return result
 
 
@@ -539,6 +549,15 @@ def sector_quotes_intraday(
 @app.post("/api/holdings/detail")
 def holding_detail(request: HoldingDetailRequest) -> dict:
     try:
+        holding = request.holdings[request.index]
+        fingerprint = holding_detail_fingerprint(
+            fund_code=holding.fund_code,
+            holding_amount=holding.holding_amount,
+        )
+        cached = get_cached_holding_detail(holding.fund_code, fingerprint)
+        if cached is not None:
+            return cached
+
         detail = build_holding_detail(
             request.holdings,
             request.index,
@@ -547,7 +566,12 @@ def holding_detail(request: HoldingDetailRequest) -> dict:
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return detail.model_dump(mode="json")
+    except IndexError as exc:
+        raise HTTPException(status_code=400, detail="持仓索引超出范围") from exc
+
+    payload = detail.model_dump(mode="json")
+    save_cached_holding_detail(holding.fund_code, fingerprint, payload)
+    return payload
 
 
 @app.post("/api/analyze")
@@ -1205,8 +1229,16 @@ def portfolio_evidence_overview() -> dict:
 
 @app.get("/api/portfolio/holdings")
 def portfolio_holdings() -> dict:
+    user_key = str(get_request_user_id())
     cached = get_cached_holdings_response()
     if cached is not None:
+        try:
+            cached_holdings = [
+                Holding.model_validate(item) for item in cached.get("holdings", [])
+            ]
+            schedule_warm_holdings_intraday(cached_holdings, user_key=user_key)
+        except Exception:  # noqa: BLE001 — 预热失败不影响响应
+            pass
         return cached
 
     holdings, source, snapshot_date, refreshed_at = load_persisted_holdings()
@@ -1217,6 +1249,7 @@ def portfolio_holdings() -> dict:
         refreshed_at=refreshed_at,
     )
     save_cached_holdings_response(payload)
+    schedule_warm_holdings_intraday(holdings, user_key=user_key)
     return payload
 
 

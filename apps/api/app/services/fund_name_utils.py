@@ -95,8 +95,13 @@ FUND_NAME_HINTS = (
 PARTIAL_FUND_NAME_ENDINGS = ("混合", "联接", "ETF", "ETF联", "主", "混", "股票", "股", "指数")
 # 东财简称相对 OCR/支付宝展示的差异（查码时双方都要归一化）
 LOOKUP_NAME_STRIP_TOKENS = ("发起式", "主题")
+# 东财 QDII 全称常带「人民币/美元/港币」份额币种，支付宝 OCR 常省略
+LOOKUP_CURRENCY_SUFFIXES = ("人民币", "美元", "港币")
 SHARE_CLASS_SUFFIX_RE = re.compile(
-    r"(混合|联接|ETF联接|ETF联|股票|指数)([A-CEH])$",
+    r"(?:混合|联接|ETF联接|ETF联|股票|指数)"
+    + _QDII_INFIX
+    + r"(?:人民币|美元|港币)?"
+    + r"([A-CEH])$",
     re.IGNORECASE,
 )
 
@@ -121,6 +126,7 @@ def normalize_fund_name(name: str) -> str:
 def normalize_fund_name_for_lookup(name: str) -> str:
     """东财查码专用：去掉发起式/主题/板块缩写等展示差异后再比对。"""
     result = normalize_fund_name(name)
+    result = result.replace("（", "(").replace("）", ")")
     for token in LOOKUP_NAME_STRIP_TOKENS:
         result = result.replace(token, "")
     # 支付宝 OCR 常省略「发起」：混合发起C ↔ 混合C；ETF发起联接C ↔ ETF联接C
@@ -129,14 +135,31 @@ def normalize_fund_name_for_lookup(name: str) -> str:
     result = re.sub(r"发起联接", "联接", result, flags=re.IGNORECASE)
     # 支付宝常写「科创」；东财全称「上证科创板」
     result = result.replace("上证科创板", "科创")
+    # 广发全球精选股票(QDII)C ↔ 东财 广发全球精选股票(QDII)人民币C
+    for currency in LOOKUP_CURRENCY_SUFFIXES:
+        result = re.sub(
+            rf"(?<=[)）]){re.escape(currency)}(?=[A-CEH]$)",
+            "",
+            result,
+            flags=re.IGNORECASE,
+        )
     return result
 
 
 def extract_share_class_letter(name: str) -> str | None:
-    match = SHARE_CLASS_SUFFIX_RE.search(normalize_fund_name(name))
-    if not match:
-        return None
-    return match.group(2).upper()
+    normalized = normalize_fund_name(name)
+    match = SHARE_CLASS_SUFFIX_RE.search(normalized)
+    if match:
+        return match.group(1).upper()
+    # QDII 括注 + 可选币种 + 份额字母（如 (QDII)人民币C / (QDII)C）
+    qdii_match = re.search(
+        r"(?:[（(](?:QDII|LOF|FOF|QDII-ETF)[)）])?(?:人民币|美元|港币)?([A-CEH])$",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    if qdii_match:
+        return qdii_match.group(1).upper()
+    return None
 
 
 def _extract_fund_name_by_issuer(text: str) -> str | None:

@@ -110,8 +110,12 @@ class Settings(BaseSettings):
     us_market_qdii_enabled: bool = False
     # 主题板块后台刷新：daemon 线程时段感知（盘中 15min / 收盘 1h），前台只读缓存
     theme_board_refresh_enabled: bool = True
-    theme_board_refresh_interval_seconds: int = 900
-    theme_board_refresh_idle_interval_seconds: int = 3600
+    theme_board_refresh_interval_seconds: int = 1200  # 盘中/美股活跃时段每 20min
+    theme_board_refresh_idle_interval_seconds: int = 10800  # 非活跃时段每 3h（兼容旧 env）
+    market_shared_idle_interval_seconds: int = 10800  # 非 A 股/美股活跃时段后台刷新间隔
+    # 持仓详情：按用户内存缓存 + 后台预热关联板块分时
+    holding_detail_cache_ttl_seconds: int = 300
+    holding_intraday_warmup_enabled: bool = True
     # 组合风险指标无风险利率（年化，小数；夏普/索提诺/Alpha 使用）
     risk_free_rate: float = 0.02
 

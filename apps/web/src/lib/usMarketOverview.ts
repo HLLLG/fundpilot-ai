@@ -4,12 +4,10 @@ import type { UsMarketSnapshot, UsSessionKind } from "@/lib/api";
 // 已包含 "us"）。此处重新导出，便于美股相关模块就近引用。
 export type { MarketSubTab } from "@/lib/marketThemeBoard";
 
-/**
- * 时段感知自动刷新间隔（毫秒）。
- * 盘前 / 盘中（高频）→ 45s；盘后 / 休市（低频）→ 300s（5min）。
- */
+/** 与服务端 market_shared 刷新对齐：活跃 20min / 非活跃 3h */
 export function usRefreshIntervalMs(kind: UsSessionKind): number {
-  return kind === "pre_market" || kind === "regular" ? 45_000 : 300_000;
+  const live = kind === "pre_market" || kind === "regular" || kind === "after_hours";
+  return live ? 1_200_000 : 10_800_000;
 }
 
 /** US_Session_Kind → 中文时段标签。 */

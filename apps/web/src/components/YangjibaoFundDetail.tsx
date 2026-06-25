@@ -47,7 +47,15 @@ import {
 import { HoldingModifyModal } from "@/components/HoldingModifyModal";
 import { SingleFundTransactionModal } from "@/components/SingleFundTransactionModal";
 import { holdingDisplaySectorLabel, resolveIntradayQuery } from "@/lib/profileSector";
-import { buildClientCacheKey, readClientCache, writeClientCache } from "@/lib/clientCache";
+import {
+  readHoldingDetailCache,
+  readIntradayCache,
+  readTradingSessionCache,
+  writeHoldingDetailCache,
+  writeIntradayCache,
+  writeTradingSessionCache,
+} from "@/lib/holdingDetailCache";
+import { useAuth } from "@/components/AuthProvider";
 import { isEstimateFallbackMeta } from "@/lib/sectorQuoteStatus";
 import { formatTradeDateShort } from "@/lib/tradeDateLabel";
 
@@ -162,6 +170,8 @@ export function YangjibaoFundDetail({
   onDeleteHolding,
   onPortfolioUpdated,
 }: YangjibaoFundDetailProps) {
+  const { user } = useAuth();
+  const userId = user?.id ?? null;
   const [tab, setTab] = useState<DetailTab>("sector");
   const [detail, setDetail] = useState<HoldingDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(true);
@@ -247,6 +257,7 @@ export function YangjibaoFundDetail({
         portfolio_summary: portfolioSummary,
         sector_quote_meta: sectorMeta,
       });
+      writeHoldingDetailCache(userId, result.holding.fund_code, result);
       setDetail(result);
       setPurchaseDatePickerOpen(false);
     } catch (error) {
@@ -297,6 +308,7 @@ export function YangjibaoFundDetail({
         portfolio_summary: portfolioSummary,
         sector_quote_meta: sectorMeta,
       });
+      writeHoldingDetailCache(userId, result.holding.fund_code, result);
       setDetail(result);
       setFundCodeEditOpen(false);
     } catch (error) {
@@ -335,11 +347,9 @@ export function YangjibaoFundDetail({
 
   useEffect(() => {
     let cancelled = false;
-    const detailCacheKey = buildClientCacheKey(
-      "holding-detail",
-      holdings[holdingIndex]?.fund_code,
-    );
-    const cachedDetail = readClientCache<HoldingDetail>(detailCacheKey, 5 * 60 * 1000);
+    const fundCode = holdings[holdingIndex]?.fund_code;
+    const cachedDetail = readHoldingDetailCache(userId, fundCode);
+
     if (cachedDetail) {
       setDetail(cachedDetail);
       setDetailLoading(false);
@@ -347,6 +357,8 @@ export function YangjibaoFundDetail({
       setDetailLoading(true);
     }
     setDetailError(null);
+
+    // 缓存期内也静默后台更新（stale-while-revalidate）
     void fetchHoldingDetail({
       holdings,
       index: holdingIndex,
@@ -357,7 +369,9 @@ export function YangjibaoFundDetail({
         if (cancelled) {
           return;
         }
-        writeClientCache(detailCacheKey, result);
+        if (result.holding.fund_code) {
+          writeHoldingDetailCache(userId, result.holding.fund_code, result);
+        }
         setDetail(result);
         if (
           result.fund_code_resolved &&
@@ -380,7 +394,7 @@ export function YangjibaoFundDetail({
     return () => {
       cancelled = true;
     };
-  }, [holdingIndex, holdings, portfolioSummary, sectorMeta, onHoldingResolved]);
+  }, [holdingIndex, holdings, portfolioSummary, sectorMeta, onHoldingResolved, userId]);
 
   useEffect(() => {
     if (tab !== "sector") {
@@ -396,11 +410,8 @@ export function YangjibaoFundDetail({
     }
 
     const requestId = ++intradayRequestSeq.current;
-    setIntradayPoints([]);
-    setIntradayClosePercent(null);
-    setIntradayNote(null);
-    setIntradayLoading(true);
-    setIntradayRefreshing(false);
+    const forceRefresh = intradayForceSeq > 0;
+    const cachedIntraday = !forceRefresh ? readIntradayCache(intradayQuery) : null;
 
     const applyIntraday = (result: {
       points: Array<{ time: string; percent: number }>;
@@ -419,59 +430,43 @@ export function YangjibaoFundDetail({
       setIntradayClosePercent(close);
     };
 
-    void (async () => {
-      let showedCache = false;
-      const forceRefresh = intradayForceSeq > 0;
+    if (cachedIntraday && cachedIntraday.points.length >= 2) {
+      applyIntraday(cachedIntraday);
+      setIntradayLoading(false);
+    } else if (cachedIntraday) {
+      if (cachedIntraday.note) {
+        setIntradayNote(cachedIntraday.note);
+      }
+      setIntradayLoading(false);
+    } else {
+      setIntradayPoints([]);
+      setIntradayClosePercent(null);
+      setIntradayNote(null);
+      setIntradayLoading(true);
+    }
+    // 缓存命中时不显示刷新动画；手动 forceRefresh 才亮 spinner
+    setIntradayRefreshing(forceRefresh);
 
+    void (async () => {
       try {
-        const cached = await fetchSectorIntraday(
+        const result = await fetchSectorIntraday(
           intradayQuery,
           forceRefresh ? { forceRefresh: true } : undefined,
         );
         if (requestId !== intradayRequestSeq.current) {
           return;
         }
-        if (cached.points.length >= 2) {
-          applyIntraday(cached);
-          showedCache = true;
-          setIntradayLoading(false);
-          if (!forceRefresh) {
-            return;
-          }
-        } else if (cached.note) {
-          setIntradayNote(cached.note);
+        writeIntradayCache(intradayQuery, result);
+        if (result.points.length >= 2 || !cachedIntraday) {
+          applyIntraday(result);
+        } else if (result.note && !cachedIntraday.note) {
+          setIntradayNote(result.note);
         }
       } catch {
         if (requestId !== intradayRequestSeq.current) {
           return;
         }
-      }
-
-      if (requestId !== intradayRequestSeq.current) {
-        return;
-      }
-      if (showedCache && !forceRefresh) {
-        setIntradayLoading(false);
-        return;
-      }
-
-      setIntradayRefreshing(true);
-
-      try {
-        const fresh = await fetchSectorIntraday(intradayQuery, { forceRefresh: true });
-        if (requestId !== intradayRequestSeq.current) {
-          return;
-        }
-        if (fresh.points.length >= 2) {
-          applyIntraday(fresh);
-        } else if (!showedCache) {
-          applyIntraday(fresh);
-        }
-      } catch {
-        if (requestId !== intradayRequestSeq.current) {
-          return;
-        }
-        if (!showedCache) {
+        if (!cachedIntraday) {
           setIntradayPoints([]);
           setIntradayNote("分时数据暂不可用");
         }
@@ -489,9 +484,20 @@ export function YangjibaoFundDetail({
   }, [tab, intradayQuery, intradayForceSeq]);
 
   useEffect(() => {
+    const cachedSession = readTradingSessionCache();
+    if (cachedSession) {
+      setQuoteTradeDate(formatTradeDateShort(cachedSession.effective_trade_date));
+    }
     void fetchTradingSession()
-      .then((session) => setQuoteTradeDate(formatTradeDateShort(session.effective_trade_date)))
-      .catch(() => setQuoteTradeDate(null));
+      .then((session) => {
+        writeTradingSessionCache(session);
+        setQuoteTradeDate(formatTradeDateShort(session.effective_trade_date));
+      })
+      .catch(() => {
+        if (!cachedSession) {
+          setQuoteTradeDate(null);
+        }
+      });
   }, []);
 
   const tradeDateLabel = quoteTradeDate ?? "—";
@@ -923,6 +929,7 @@ export function YangjibaoFundDetail({
               portfolio_summary: portfolioSummary,
               sector_quote_meta: sectorMeta,
             });
+            writeHoldingDetailCache(userId, result.holding.fund_code, result);
             setDetail(result);
           }}
           onEditPurchaseDate={() => {
@@ -957,6 +964,7 @@ export function YangjibaoFundDetail({
               portfolio_summary: portfolioSummary,
               sector_quote_meta: sectorMeta,
             });
+            writeHoldingDetailCache(userId, result.holding.fund_code, result);
             setDetail(result);
           }}
         />

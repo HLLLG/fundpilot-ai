@@ -66,6 +66,20 @@ export function writeClientCache<T>(
   memoryStore.set(key, envelope);
 }
 
+export function deleteClientCache(key: string, storage: ClientCacheStorage = "memory"): void {
+  if (storage === "session") {
+    if (typeof window !== "undefined") {
+      try {
+        window.sessionStorage.removeItem(key);
+      } catch {
+        // ignore
+      }
+    }
+    return;
+  }
+  memoryStore.delete(key);
+}
+
 export function peekClientCacheAgeMs(
   key: string,
   storage: ClientCacheStorage = "memory",

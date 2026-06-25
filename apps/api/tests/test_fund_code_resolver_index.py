@@ -32,6 +32,33 @@ def test_lookup_fund_name_by_code_uses_by_code_index():
     assert lookup_fund_name_by_code("025857") == "华夏中证电网设备主题ETF联接C"
 
 
+def test_lookup_fund_code_qdii_currency_suffix_resolves_rmb_c():
+    """支付宝省略「人民币」时仍能精确匹配东财 021277。"""
+    _install_table(
+        [
+            ("021277", "广发全球精选股票(QDII)人民币C"),
+            ("000906", "广发全球精选股票(QDII)美元A"),
+            ("023402", "广发全球精选股票(QDII)人民币A"),
+            ("016665", "天弘全球高端制造混合(QDII)C"),
+        ]
+    )
+    code, source = lookup_fund_code_by_name("广发全球精选股票(QDII)C")
+    assert code == "021277"
+    assert source == "akshare"
+
+
+def test_search_funds_qdii_currency_suffix_finds_rmb_c():
+    _install_table(
+        [
+            ("021277", "广发全球精选股票(QDII)人民币C"),
+            ("000906", "广发全球精选股票(QDII)美元A"),
+        ]
+    )
+    items = search_funds_by_keyword("广发全球精选股票(QDII)C")
+    assert items
+    assert items[0]["fund_code"] == "021277"
+
+
 def test_lookup_fund_code_partial_match_still_works():
     _install_table(
         [

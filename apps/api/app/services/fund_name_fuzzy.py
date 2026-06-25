@@ -28,7 +28,10 @@ def detect_fund_issuer(name: str) -> str | None:
 def lookup_core_tokens(name: str) -> set[str]:
     normalized = normalize_fund_name_for_lookup(name)
     core = re.sub(
-        r"(混合|联接|ETF联接|ETF联|指数|股票)([A-CEH])$",
+        r"(?:混合|联接|ETF联接|ETF联|指数|股票)"
+        r"(?:[（(](?:QDII|LOF|FOF|QDII-ETF)[)）])?"
+        r"(?:人民币|美元|港币)?"
+        r"[A-CEH]$",
         "",
         normalized,
         flags=re.IGNORECASE,

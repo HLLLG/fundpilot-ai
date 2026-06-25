@@ -12,6 +12,9 @@ CACHE_TTL_SECONDS = 120.0
 def bump_holdings_cache_generation() -> None:
     global _GENERATION
     _GENERATION += 1
+    from app.services.holding_detail_cache import bump_holding_detail_cache_generation
+
+    bump_holding_detail_cache_generation()
 
 
 def _cache_key() -> str:

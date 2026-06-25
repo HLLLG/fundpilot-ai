@@ -177,6 +177,21 @@ def build_dip_radar_snapshot(
     }
 
 
+def refresh_dip_radar_snapshots(*, lookback_days: tuple[int, ...] = (3, 5)) -> None:
+    """后台任务：刷新全用户共享的大跌雷达快照（默认 3/5 日）。"""
+    session = build_trading_session()
+    trade_date = session.get("effective_trade_date", "")
+    for days in lookback_days:
+        if days not in (3, 5):
+            continue
+        try:
+            snapshot = build_dip_radar_snapshot(lookback_days=days)
+            if snapshot.get("items"):
+                save_spot_snapshot(_cache_key(trade_date, days), snapshot)
+        except Exception as exc:
+            logger.info("dip radar refresh failed lookback=%s: %s", days, exc)
+
+
 def get_dip_radar_snapshot(
     *,
     lookback_days: int = 5,
@@ -212,19 +227,18 @@ def get_dip_radar_snapshot(
     ttl = _cache_ttl_seconds(session_kind, available=True)
 
     cached: dict[str, Any] | None = None
+    stale = False
     if not force_refresh:
         cached = get_spot_snapshot(cache_key, ttl_seconds=ttl)
-
-    stale = False
-    if cached is None:
-        if not force_refresh:
+        if cached is None:
             cached = get_spot_snapshot_any_age(cache_key)
             stale = cached is not None
-        if cached is None or force_refresh:
-            cached = build_dip_radar_snapshot(lookback_days=lookback_days)
-            if cached.get("items"):
-                save_spot_snapshot(cache_key, cached)
-            stale = False
+
+    if cached is None or force_refresh:
+        cached = build_dip_radar_snapshot(lookback_days=lookback_days)
+        if cached.get("items"):
+            save_spot_snapshot(cache_key, cached)
+        stale = False
 
     all_items = list(cached.get("items") or [])
     filtered_items = _apply_sector_filter(all_items, sector)
