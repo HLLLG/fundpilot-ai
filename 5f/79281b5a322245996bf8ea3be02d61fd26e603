@@ -1,0 +1,38 @@
+apps/api/app/config.py
+  s_56bac5bbaace4e::t_7c5f8953ca0ee8 93,95-101
+apps/api/tests/test_vlm_holdings_provider.py
+  s_56bac5bbaace4e::t_f558b86735b052 71-113
+  s_56bac5bbaace4e::t_05afb476857d65 1-2,4,6,8-9,15-20
+apps/api/tests/test_config.py
+  s_56bac5bbaace4e::t_8a2fd95ee31bee 39,43-48
+apps/api/app/services/vlm_holdings_provider.py
+  s_56bac5bbaace4e::t_0c3e52d1b83371 4,6,15-16,18-19,23-33,41-81,83,86-87,92-98
+  s_56bac5bbaace4e::t_a5fa64e626b523 185
+docs/PROJECT_CONTEXT.md
+  s_56bac5bbaace4e::t_25e8675fe9ec2b 10
+  s_56bac5bbaace4e::t_59bd31b0d64a3f 104
+  s_56bac5bbaace4e::t_60797a78fcdc9c 704,706-710
+.env.example
+  s_56bac5bbaace4e::t_678adb7adb5ef5 82-83,85-92
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.18-trip",
+  "base_commit_sha": "5f79281b5a322245996bf8ea3be02d61fd26e603",
+  "prompts": {},
+  "humans": {
+    "h_375fc341ff3baa": {
+      "author": "hegl <HLLLG@github.com>"
+    }
+  },
+  "sessions": {
+    "s_56bac5bbaace4e": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "876bbea8-3ddf-4ae8-ba35-c1dbaa4ac3e6",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
