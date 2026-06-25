@@ -28,14 +28,13 @@ FlowRange = Literal["week", "month"]
 
 _FLOW_HISTORY_PATH = "/api/qt/stock/fflow/daykline/get"
 # 实测 63/28 等子域常 Server disconnected；80/82 更稳，与 spot 接口一样需带 _COMMON_PARAMS。
+# 仅保留最稳的 3 个 host：减少失败时逐 host 串行重试造成的尾延迟（原 5 host × 4 retry）。
 _FLOW_HISTORY_HOSTS = (
     "80.push2his.eastmoney.com",
     "82.push2his.eastmoney.com",
     "push2his.eastmoney.com",
-    "28.push2his.eastmoney.com",
-    "63.push2his.eastmoney.com",
 )
-_FLOW_FETCH_MAX_RETRIES = 4
+_FLOW_FETCH_MAX_RETRIES = 2
 _CACHE_PREFIX = "board-flow-hist:v1:"
 _LIVE_TTL_SECONDS = 900.0
 _CLOSED_TTL_SECONDS = 3600.0
@@ -243,7 +242,7 @@ def _fetch_flow_history_via_httpx(
     return []
 
 
-def fetch_board_flow_series(board_code: str, *, timeout: float = 15.0) -> list[dict[str, Any]]:
+def fetch_board_flow_series(board_code: str, *, timeout: float = 8.0) -> list[dict[str, Any]]:
     code = _normalize_board_code(board_code)
     if not code:
         return []

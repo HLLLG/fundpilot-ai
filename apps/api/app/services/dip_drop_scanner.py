@@ -6,7 +6,8 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 
 from app.database import list_fund_primary_sectors
 from app.models import Holding
-from app.services.akshare_subprocess import fetch_open_fund_rank, fetch_open_fund_rank_worst_recent
+from app.services.akshare_subprocess import fetch_open_fund_rank_worst_recent
+from app.services.fund_rank_cache import fetch_open_fund_rank_cached
 from app.services.discovery_candidate_pool import (
     _entry_from_rank,
     _name_matches_sector,
@@ -99,9 +100,12 @@ def build_dip_pool_for_sectors(
     per_sector_top: int = 8,
     pool_cap: int = 30,
     budget_seconds: float = 15.0,
-    fetch_rank=fetch_open_fund_rank,
+    fetch_rank=None,
 ) -> list[dict]:
     """Build dip-swing candidate pool across target sectors with NAV prescreen."""
+    # 默认 fetcher 在调用时 lookup，便于 monkeypatch 与共享缓存对齐。
+    if fetch_rank is None:
+        fetch_rank = fetch_open_fund_rank_cached
     excluded = {code.strip().zfill(6) for code in (exclude_codes or set())}
     rank_rows = fetch_rank(limit=300) or []
     primary_rows = list_fund_primary_sectors()

@@ -1,8 +1,32 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from typing import Callable, TypeVar
+
 from app.config import get_settings
 from app.models import FundNavHistory, FundNavPoint, FundSnapshot, Holding
 from app.services.nav_trend_summary import summarize_nav_history
+
+_T = TypeVar("_T")
+_R = TypeVar("_R")
+
+# 逐只基金的 AkShare 拉取并发上限：每只是独立子进程 + 网络等待（IO 密集），
+# 并发可显著压低冷缓存耗时；上限避免一次拉太多基金时打爆源站/子进程数。
+_MAX_FETCH_WORKERS = 8
+
+
+def _map_holdings_concurrently(
+    items: list[_T],
+    worker: Callable[[_T], _R],
+) -> list[_R]:
+    """按原序并发执行 worker；worker 须自行捕获异常返回兜底值。"""
+    if not items:
+        return []
+    if len(items) == 1:
+        return [worker(items[0])]
+    max_workers = min(_MAX_FETCH_WORKERS, len(items))
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        return list(executor.map(worker, items))
 
 
 class FundDataService:
@@ -16,10 +40,18 @@ class FundDataService:
         days = trading_days if trading_days is not None else settings.nav_trend_days
         sample = settings.nav_trend_recent_sample
 
+        # 逐只 AkShare 拉取是 IO 密集（子进程 + 网络），并发以缩短冷缓存耗时；
+        # _snapshot_and_trend_for_holding 内部已捕获异常，返回顺序按持仓原序对齐。
+        results = _map_holdings_concurrently(
+            holdings,
+            lambda holding: self._snapshot_and_trend_for_holding(
+                holding, trading_days=days
+            ),
+        )
+
         snapshots: list[FundSnapshot] = []
         trends: dict[str, dict] = {}
-        for holding in holdings:
-            snapshot, trend = self._snapshot_and_trend_for_holding(holding, trading_days=days)
+        for holding, (snapshot, trend) in zip(holdings, results):
             snapshots.append(snapshot)
             if trend is not None:
                 trends[holding.fund_code] = summarize_nav_history(

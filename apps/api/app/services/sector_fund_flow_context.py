@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from app.models import Holding
@@ -224,18 +225,47 @@ def build_sector_fund_flow_map(
 ) -> dict[str, dict[str, Any]]:
     """按 normalized sector 名去重拉取，供多只同板块基金复用。"""
     target_trade_date = trade_date or get_effective_trade_date()
-    result: dict[str, dict[str, Any]] = {}
+
+    # 先去重出待拉取的板块标签（保序），再并发拉取——每个板块是独立的东财
+    # 资金流历史 HTTP 请求（IO 密集），并发可显著压低多板块组合的耗时。
+    unique_labels: list[str] = []
+    seen: set[str] = set()
     for holding in holdings:
         label = normalize_sector_label(holding.sector_name)
-        if not label or label in result:
+        if not label or label in seen:
             continue
+        seen.add(label)
+        unique_labels.append(label)
+
+    if not unique_labels:
+        return {}
+
+    return_by_label: dict[str, float | None] = {}
+    for holding in holdings:
+        label = normalize_sector_label(holding.sector_name)
+        if label and label not in return_by_label:
+            return_by_label[label] = holding.sector_return_percent
+
+    def _fetch(label: str) -> tuple[str, dict[str, Any] | None]:
         context = build_sector_fund_flow_context(
             label,
-            sector_return_percent=holding.sector_return_percent,
+            sector_return_percent=return_by_label.get(label),
             trade_date=target_trade_date,
         )
+        return label, context
+
+    result: dict[str, dict[str, Any]] = {}
+    if len(unique_labels) == 1:
+        label, context = _fetch(unique_labels[0])
         if context is not None:
             result[label] = context
+        return result
+
+    max_workers = min(6, len(unique_labels))
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        for label, context in executor.map(_fetch, unique_labels):
+            if context is not None:
+                result[label] = context
     return result
 
 

@@ -55,7 +55,7 @@ class Settings(BaseSettings):
     news_enabled: bool = True
     news_max_topics: int = 5
     news_per_topic: int = 5
-    news_tool_max_rounds: int = 3
+    news_tool_max_rounds: int = 1
     news_sources: str = "eastmoney,cls,announcement,macro"
     tactical_prompt_tuning_enabled: bool = True
     tactical_prompt_tuning_lookback_reports: int = 30
@@ -69,6 +69,10 @@ class Settings(BaseSettings):
     news_macro_topic: str = "上证指数"
     nav_trend_days: int = 66
     nav_trend_recent_sample: int = 8
+    # 批量净值预热：单次子进程拉多只基金净值（import akshare 一次），
+    # 替代逐只各起子进程各 import 的开销。失败自动回退逐只路径。
+    akshare_nav_batch_enabled: bool = True
+    akshare_nav_batch_workers: int = 6
     news_require_today_for_add: bool = True
     db_auto_import_path: Path | None = None
     sector_quotes_enabled: bool = True

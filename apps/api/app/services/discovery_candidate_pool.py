@@ -9,10 +9,11 @@ from app.services.discovery_selection_strategy import (
     rank_candidates_dip_rebound,
 )
 from app.services.fund_code_resolver import lookup_fund_name_by_code
-from app.services.fund_data import FundDataService
+from app.services.fund_data import FundDataService, _map_holdings_concurrently
 from app.services.fund_primary_sector_service import GLOBAL_FUND_SECTOR_SEEDS
 from app.services.sector_canonical import get_canonical_sector
-from app.services.akshare_subprocess import fetch_new_fund_offerings, fetch_open_fund_rank
+from app.services.akshare_subprocess import fetch_new_fund_offerings
+from app.services.fund_rank_cache import fetch_open_fund_rank_cached
 
 _POOL_CAP = 25
 _PER_SECTOR = 5
@@ -27,9 +28,14 @@ def build_candidate_pool(
     selection_strategy: SelectionStrategy = "balanced",
     per_sector: int = _PER_SECTOR,
     pool_cap: int = _POOL_CAP,
-    fetch_rank=fetch_open_fund_rank,
-    fetch_new_funds=fetch_new_fund_offerings,
+    fetch_rank=None,
+    fetch_new_funds=None,
 ) -> list[dict]:
+    # 默认 fetcher 在调用时 lookup，便于 monkeypatch 与共享缓存对齐。
+    if fetch_rank is None:
+        fetch_rank = fetch_open_fund_rank_cached
+    if fetch_new_funds is None:
+        fetch_new_funds = fetch_new_fund_offerings
     excluded = {code.strip().zfill(6) for code in (exclude_codes or set())}
     rank_rows = fetch_rank(limit=300) or []
     primary_rows = list_fund_primary_sectors()
@@ -68,8 +74,8 @@ def build_candidate_pool(
 
 def enrich_candidates(pool: list[dict]) -> list[dict]:
     service = FundDataService()
-    enriched: list[dict] = []
-    for item in pool:
+
+    def _enrich_one(item: dict) -> dict:
         code = str(item.get("fund_code", "")).zfill(6)
         name = str(item.get("fund_name", ""))
         holding = Holding(fund_code=code, fund_name=name, holding_amount=0)
@@ -88,8 +94,11 @@ def enrich_candidates(pool: list[dict]) -> list[dict]:
             from app.services.nav_trend_summary import summarize_nav_history
 
             row["nav_trend"] = summarize_nav_history(trend, recent_sample=5)
-        enriched.append(row)
-    return enriched
+        return row
+
+    # 候选池最多 25 只，逐只 AkShare 拉取是冷缓存下荐基管线最大耗时来源；
+    # 并发执行（IO 密集，_snapshot_and_trend_for_holding 内部已兜底异常）保序返回。
+    return _map_holdings_concurrently(pool, _enrich_one)
 
 
 def _candidates_for_sector(
