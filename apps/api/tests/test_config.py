@@ -36,7 +36,13 @@ def test_vlm_ocr_settings_defaults(monkeypatch):
 
     s = refresh_settings()
     assert s.ocr_provider == "auto"
-    assert s.vlm_ocr_model == "qwen3-vl-flash"
+    assert s.vlm_ocr_model == "qwen-vl-ocr"
     assert s.vlm_ocr_base_url.startswith("https://dashscope.aliyuncs.com")
     assert s.vlm_ocr_timeout_seconds == 20
     assert s.vlm_ocr_api_key is None
+    # qwen-vl-ocr 图像缩放 + 上传前压缩默认值
+    assert s.vlm_ocr_min_pixels == 3072
+    assert s.vlm_ocr_max_pixels == 8388608
+    assert s.vlm_ocr_compress_enabled is True
+    assert s.vlm_ocr_jpeg_quality == 85
+    assert s.vlm_ocr_max_image_side == 2000

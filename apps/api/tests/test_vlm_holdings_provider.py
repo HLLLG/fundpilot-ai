@@ -1,9 +1,21 @@
-import pytest
+import io
 
+import pytest
+from PIL import Image
+
+from app.config import Settings
 from app.services.vlm_holdings_provider import (
+    build_vlm_messages,
+    compress_image_for_vlm,
     extract_holdings_via_vlm,
     parse_vlm_response,
 )
+
+
+def _png_bytes(width: int, height: int, color=(200, 120, 60)) -> bytes:
+    buf = io.BytesIO()
+    Image.new("RGB", (width, height), color).save(buf, format="PNG")
+    return buf.getvalue()
 
 
 def test_parse_vlm_response_plain_json():
@@ -56,3 +68,46 @@ def test_extract_holdings_via_vlm_injects_completion():
     # 图片以 base64 data URL 形式进入 messages
     blob = str(captured["messages"])
     assert "image_url" in blob and "base64" in blob
+
+
+def test_compress_image_converts_to_jpeg_and_downscales():
+    s = Settings(vlm_ocr_compress_enabled=True, vlm_ocr_max_image_side=2000)
+    data, mime = compress_image_for_vlm(_png_bytes(3000, 100), s)
+    assert mime == "image/jpeg"
+    img = Image.open(io.BytesIO(data))
+    assert img.format == "JPEG"
+    assert max(img.size) <= 2000  # 最长边 3000 → 缩到 ≤2000
+
+
+def test_compress_image_keeps_small_image_dimensions():
+    s = Settings(vlm_ocr_compress_enabled=True, vlm_ocr_max_image_side=2000)
+    data, mime = compress_image_for_vlm(_png_bytes(800, 600), s)
+    assert mime == "image/jpeg"
+    img = Image.open(io.BytesIO(data))
+    assert img.size == (800, 600)  # 未超阈值不缩放
+
+
+def test_compress_image_disabled_returns_original_bytes():
+    raw = _png_bytes(800, 600)
+    s = Settings(vlm_ocr_compress_enabled=False)
+    data, mime = compress_image_for_vlm(raw, s)
+    assert data == raw
+    assert mime == "image/png"
+
+
+def test_compress_image_invalid_bytes_falls_back_to_original():
+    s = Settings(vlm_ocr_compress_enabled=True)
+    data, mime = compress_image_for_vlm(b"\x89PNG_fake", s)
+    assert data == b"\x89PNG_fake"
+    assert mime == "image/png"
+
+
+def test_build_vlm_messages_includes_pixel_bounds_and_jpeg_mime():
+    s = Settings(vlm_ocr_min_pixels=3072, vlm_ocr_max_pixels=8388608)
+    messages = build_vlm_messages(_png_bytes(800, 600), s)
+    content = messages[0]["content"]
+    image_part = next(p for p in content if p.get("type") == "image_url")
+    assert image_part["min_pixels"] == 3072
+    assert image_part["max_pixels"] == 8388608
+    assert image_part["image_url"]["url"].startswith("data:image/jpeg;base64,")
+    assert any(p.get("type") == "text" for p in content)

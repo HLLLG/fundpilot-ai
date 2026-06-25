@@ -90,8 +90,15 @@ class Settings(BaseSettings):
     ocr_provider: str = "auto"
     vlm_ocr_api_key: str | None = None
     vlm_ocr_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    vlm_ocr_model: str = "qwen3-vl-flash"
+    vlm_ocr_model: str = "qwen-vl-ocr"
     vlm_ocr_timeout_seconds: float = 20.0
+    # qwen-vl-ocr 图像缩放：min/max_pixels 作为 image_url 同级字段传入（每 1024 像素≈1 图像 token）
+    vlm_ocr_min_pixels: int = 3072
+    vlm_ocr_max_pixels: int = 8388608
+    # 上传前压缩（best-effort）：转 JPEG 减小上传体积/延迟；token 由 max_pixels 控制，与文件体积无关
+    vlm_ocr_compress_enabled: bool = True
+    vlm_ocr_jpeg_quality: int = 85
+    vlm_ocr_max_image_side: int = 2000
     jwt_secret: str = "fundpilot-dev-jwt-secret-change-me-32chars"
     jwt_access_expire_minutes: int = 43_200  # 30 days
     database_url: str | None = None

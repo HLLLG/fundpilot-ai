@@ -7,6 +7,7 @@
 **文档版本：** 2026-06-24（模块4 量化依据进追问上下文 · 证据进日报正文 · 组合证据总览 · 信号合成证据卡 · 信号/因子IC/风险度量 三类置信喂LLM · 模块3 因子IC回测/风格回归/分层抽样/信号基线修正 · 因子体检 · 组合风险度量）
 
 **更新记录：**
+- **截图识别模型切换 qwen-vl-ocr（2026-06-25）：** 把云端识别默认模型从 `qwen3-vl-flash`（即将下线）切到文字识别专用 **`qwen-vl-ocr`** 稳定版（现已等同 `qwen-vl-ocr-2025-11-20`，基于 Qwen3-VL，输入 ¥0.30/输出 ¥0.52 每百万 token，单图<¥0.001）。沿用 **DashScope OpenAI 兼容模式**（调用链不变），关键点：① **自定义 prompt** 出结构化 JSON（不传 prompt 模型只做纯文本转录），新 prompt 精确描述支付宝「全部持有」列布局（金额→日收益→持有收益→累计收益、占比/持有收益率对位）并过滤余额宝/页签/图标/法律声明；② `min_pixels`/`max_pixels` 作为 `image_url` **同级字段**控制缩放与 token 上限（默认 3072 / 8388608）；③ **上传前 best-effort 压缩** `compress_image_for_vlm`（Pillow 转 JPEG + 仅最长边>2000 才缩小，异常回退原图），仅减上传体积/延迟、不影响 token（token 只与像素数有关，与文件体积无关）；data-URL MIME 随压缩改 `image/jpeg`。仅改 `vlm_holdings_provider.py` + `config.py`（默认模型 + 5 新配置）+ 文档；`holdings_extractor`/auto-回退/本地 PaddleOCR/前端全不动。单测 `test_vlm_holdings_provider.py`（压缩缩放/JPEG/非法图回退/messages 带 min-max_pixels+jpeg mime）+ `test_config.py`（默认值）。设计见 `docs/superpowers/specs/2026-06-25-qwen-vl-ocr-switch-design.md`。
 - **截图识别升级 VLM + 本地解析器修复（2026-06-24）：** 解决「新增持有」截图识别**慢/不准/截不全报错**三问题。根因：①本地 PaddleOCR CPU 推理 6~9s（冷加载再+3.8s）超 5s 目标；②QDII 基金名（`(QDII)`/`（QDII）` 在份额字母前）未被 `COMPLETE_FUND_NAME_RE`/`looks_like_fund_product_name` 匹配 → image1 仅识别 3/6 只；③`is_near_zero(None)` 抛 `TypeError` 使 `/api/ocr` 500、生产经 CloudBase 表现为 `failed to fetch`。方案：新增 `HoldingsExtractor` 抽象层（`vlm` 主 + `local` 回退，`auto` 软回退）插入 `run_ocr_upload_pipeline`，主路走云端 `qwen3-vl-flash`（阿里云百炼 DashScope，图片→结构化 JSON）<5s；本地解析器修两 bug 作可靠兜底（`is_near_zero` None 安全 + `parse_holdings_from_text` try/except 永不抛 + QDII 名正则 + 余额宝/法律声明噪声过滤）。新增 `vlm_holdings_provider.py`/`holdings_extractor.py`/`scripts/smoke_vlm_ocr.py` + 5 配置项（`FUND_AI_OCR_PROVIDER`/`FUND_AI_VLM_OCR_*`）。**隐私**：auto/vlm 模式截图发往阿里云百炼，`local` 强制本地不外传（见隐私段）。单测 `test_alipay_holdings_parser.py`/`test_vlm_holdings_provider.py`/`test_holdings_extractor.py`/`test_ocr_pipeline.py`/`test_config.py`。设计见 `docs/superpowers/specs/2026-06-24-ocr-vlm-upgrade-design.md`、计划见 `docs/superpowers/plans/2026-06-24-ocr-vlm-upgrade.md`。
 - **量化依据进追问上下文（模块4 证据卡延伸，2026-06-24）：** 追问对话上下文用的是 `report_to_markdown(report)`（非 facts），此前不含 evidence。现 `report_export.report_to_markdown` 从 `report.analysis_facts` 取数：① 顶部加「## 组合量化背书」段（`evidence_overview.summary` + backed 占比）；② 「逐基金建议」每条 points 后追加「**量化依据**（综合置信X）：{summary}」（仅该 fund_code 有 evidence 时）。`report_chat._report_chat_system_prompt` 加护栏「量化依据/组合量化背书 是可回测证据，综合置信高可作主理由/中保留/低·不足仅风险提示、不得据此追涨；用户问『为什么这么建议/多大把握』应引用其量化依据」。markdown 导出/下载同步受益。单测 `tests/test_report_export.py`（每基金 evidence 行 / overview 段 / 无 facts 不渲染 / 无 evidence 的基金不出依据行）。后端全量 571 passed。
 - **证据进日报正文（模块4 证据卡延伸，2026-06-24）：** 把每只持仓的 `evidence` 综合置信 + 证据摘要展示到日报每条基金建议**下方**（「量化依据」行），让用户直接看到「这条建议有多少可回测背书」。**后端**：日报存档 facts 此前由 `deepseek_client._compose_analysis_facts` 构建、**不含** evidence（缺 factor_scores/risk_metrics）；现改为在该函数内 best-effort 计算 `build_factor_scores_for_facts`（TTL 缓存，生成 prompt 时多已预热）+ `build_risk_metrics_for_facts`（取日快照）并传入 `build_analysis_facts`，使在线/离线两条报告路径的存档 facts 持仓行均带 `evidence`、顶层带 `evidence_overview`（任一路失败不阻塞）。**前端**：`ReportPanel.FundRecommendationCard` 从 `report.analysis_facts.holdings[].evidence` 取数（`evidenceForFund` 按 fund_code 查），渲染「量化依据」卡（复用 `confidenceTone` 的综合置信 StatusPill + summary）。单测 `test_deepseek_client.py::test_compose_analysis_facts_wires_evidence`（monkeypatch 两 builder→facts 带 evidence/overview）。后端全量 567 passed、前端 vitest 69 passed、tsc 通过。
@@ -100,7 +101,7 @@
 | 类别 | 能力 |
 |------|------|
 | 鉴权 | 邮箱注册/登录（JWT，默认 **30 天**有效）；Web `/login` `/register`；`/settings` 绑定微信（`cloudbaseUid`）；`UserMenu` 显示「未绑微信」；小程序 `POST /api/auth/wechat-login`；开发模式 `FUND_AI_CLOUDBASE_AUTH_DEV_MODE` |
-| 输入 | 养基宝**总览 / 详情** OCR（详情含 6 位代码与关联板块）；**支付宝持有列表 OCR**（预览确认后写入）；确认弹窗可编辑 code/名称/金额并东财搜索；当日列为 `-` 时不填当日收益；**OCR 漏负号**时规则补符号；**截图识别引擎 auto**：有 key 走云端 `qwen3-vl-flash`（结构化 JSON、QDII/截不全鲁棒、<5s），否则/失败回退本地 PaddleOCR |
+| 输入 | 养基宝**总览 / 详情** OCR（详情含 6 位代码与关联板块）；**支付宝持有列表 OCR**（预览确认后写入）；确认弹窗可编辑 code/名称/金额并东财搜索；当日列为 `-` 时不填当日收益；**OCR 漏负号**时规则补符号；**截图识别引擎 auto**：有 key 走云端 `qwen-vl-ocr`（DashScope OpenAI 兼容；自定义 prompt 出结构化 JSON、min/max_pixels 控制 token、上传前 JPEG 压缩；QDII/截不全鲁棒、<5s），否则/失败回退本地 PaddleOCR |
 | 主关联板块 | `fund_primary_sectors` 表 + 全局种子 + 季报重仓推荐；支付宝导入后 **按 fund_code 查表**补板块名（非名称推断）；详情 OCR 自动沉淀 |
 | 当日收益 | 盘中/净值未公布：**板块涨跌估算**（`holding_amount × sector_return%`）；NAV 发布后：**官方日增长率** + `daily_profit = amount × r / (100 + r)`；关联板块列始终东财涨跌；账户汇总附「昨日收益」；**份额×净值**自动更新持有金额（`holding_amount_sync`） |
 | OCR 校验 | OCR 返回 `holding_warnings`；账户汇总为唯一持仓展示与日报输入源（`displayableHoldings` 过滤占位行） |
@@ -700,8 +701,13 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | `FUND_AI_OCR_PROVIDER` | auto | 截图识别引擎：auto（有 key 走云端 VLM 否则本地）/ vlm（强制云端，失败回退本地）/ local（强制本地不外传） |
 | `FUND_AI_VLM_OCR_API_KEY` | — | 阿里云百炼 Key；配置后 auto 启用云端识别（截图发往该 API） |
 | `FUND_AI_VLM_OCR_BASE_URL` | dashscope compatible-mode | DashScope OpenAI 兼容端点 |
-| `FUND_AI_VLM_OCR_MODEL` | qwen3-vl-flash | 视觉模型，可切 qwen3-vl-plus |
+| `FUND_AI_VLM_OCR_MODEL` | qwen-vl-ocr | 文字识别专用模型（稳定版，基于 Qwen3-VL，便宜）；可切 qwen-vl-ocr-latest / qwen3.5-ocr |
 | `FUND_AI_VLM_OCR_TIMEOUT_SECONDS` | 20 | VLM 读超时 |
+| `FUND_AI_VLM_OCR_MIN_PIXELS` | 3072 | 图像最小像素（小于则放大）；qwen-vl-ocr 默认/最小值 |
+| `FUND_AI_VLM_OCR_MAX_PIXELS` | 8388608 | 图像最大像素（大于则缩小）；token 上限兜底（≈8192 图像 token） |
+| `FUND_AI_VLM_OCR_COMPRESS_ENABLED` | true | 上传前转 JPEG 压缩（减体积/延迟，不影响 token） |
+| `FUND_AI_VLM_OCR_JPEG_QUALITY` | 85 | JPEG 画质 |
+| `FUND_AI_VLM_OCR_MAX_IMAGE_SIDE` | 2000 | 仅当最长边超过该值才等比缩小（0=不缩放） |
 
 修改 `.env` 后需重启 API。
 
