@@ -50,6 +50,7 @@ describe("profit accrual defer", () => {
     fund_code: "008281",
     fund_name: "天弘半导体设备指数C",
     holding_amount: 3000,
+    return_percent: 0,
     settled_holding_amount: 3000,
     daily_profit: 79.23,
     daily_return_percent: 2.65,
