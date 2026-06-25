@@ -79,7 +79,7 @@ def enrich_candidates(pool: list[dict]) -> list[dict]:
         code = str(item.get("fund_code", "")).zfill(6)
         name = str(item.get("fund_name", ""))
         holding = Holding(fund_code=code, fund_name=name, holding_amount=0)
-        snapshot, trend = service._snapshot_and_trend_for_holding(holding, trading_days=66)
+        snapshot, trend = service._snapshot_and_trend_for_holding(holding, trading_days=252)
         row = dict(item)
         row["return_1y_percent"] = row.get("return_1y_percent") or snapshot.return_1y_percent
         row["max_drawdown_1y_percent"] = (
@@ -93,7 +93,9 @@ def enrich_candidates(pool: list[dict]) -> list[dict]:
         if trend is not None and getattr(trend, "points", None):
             from app.services.nav_trend_summary import summarize_nav_history
 
-            row["nav_trend"] = summarize_nav_history(trend, recent_sample=5)
+            row["nav_trend"] = summarize_nav_history(
+                trend, recent_sample=5, window_days=66
+            )
         return row
 
     # 候选池最多 25 只，逐只 AkShare 拉取是冷缓存下荐基管线最大耗时来源；

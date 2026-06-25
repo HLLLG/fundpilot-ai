@@ -338,12 +338,12 @@ def _fetch_nav_summaries_sequential(codes: set[str], *, deadline: float) -> dict
 def _nav_summary_for_code(code: str) -> dict | None:
     service = FundDataService()
     holding = Holding(fund_code=code, fund_name=_resolve_fund_name(code), holding_amount=0)
-    _snapshot, trend = service._snapshot_and_trend_for_holding(holding, trading_days=66)
+    _snapshot, trend = service._snapshot_and_trend_for_holding(holding, trading_days=252)
     if trend is None or not getattr(trend, "points", None):
         return None
     from app.services.nav_trend_summary import summarize_nav_history
 
-    return summarize_nav_history(trend, recent_sample=5)
+    return summarize_nav_history(trend, recent_sample=5, window_days=66)
 
 
 def _infer_sector_label(fund_name: str) -> str:

@@ -67,7 +67,10 @@ class Settings(BaseSettings):
     news_summarize_max_points: int = 5
     news_summarize_timeout_seconds: float = 60.0
     news_macro_topic: str = "上证指数"
-    nav_trend_days: int = 66
+    # 拉满 252 让日报/荐基与持仓详情弹窗预热共享 fund_nav_cache（key: code+days）。
+    # 旧 nav_trend_days env 仍兼容（fallback 映射到 nav_cache_pull_days），过渡期一版。
+    nav_cache_pull_days: int = 252
+    nav_trend_window: int = 66
     nav_trend_recent_sample: int = 8
     # 批量净值预热：单次子进程拉多只基金净值（import akshare 一次），
     # 替代逐只各起子进程各 import 的开销。失败自动回退逐只路径。
@@ -196,6 +199,11 @@ class Settings(BaseSettings):
     @property
     def deepseek_configured(self) -> bool:
         return bool(self.deepseek_api_key)
+
+    @property
+    def nav_trend_days(self) -> int:
+        """Deprecated: 旧 env FUND_AI_NAV_TREND_DAYS 仍兼容，映射到 nav_cache_pull_days。"""
+        return self.nav_cache_pull_days
 
     @property
     def news_source_set(self) -> set[str]:

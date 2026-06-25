@@ -37,8 +37,9 @@ class FundDataService:
         trading_days: int | None = None,
     ) -> tuple[list[FundSnapshot], dict[str, dict]]:
         settings = get_settings()
-        days = trading_days if trading_days is not None else settings.nav_trend_days
+        days = trading_days if trading_days is not None else settings.nav_cache_pull_days
         sample = settings.nav_trend_recent_sample
+        window = settings.nav_trend_window
 
         # 逐只 AkShare 拉取是 IO 密集（子进程 + 网络），并发以缩短冷缓存耗时；
         # _snapshot_and_trend_for_holding 内部已捕获异常，返回顺序按持仓原序对齐。
@@ -55,7 +56,7 @@ class FundDataService:
             snapshots.append(snapshot)
             if trend is not None:
                 trends[holding.fund_code] = summarize_nav_history(
-                    trend, recent_sample=sample
+                    trend, recent_sample=sample, window_days=window
                 ) or {}
         return snapshots, trends
 

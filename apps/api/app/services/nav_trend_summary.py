@@ -7,26 +7,39 @@ def summarize_nav_history(
     history: FundNavHistory | None,
     *,
     recent_sample: int = 8,
+    window_days: int | None = 66,
 ) -> dict | None:
+    """从 NAV 历史压成摘要。
+
+    window_days 控制摘要窗口（默认 66 个交易日，保留 LLM 决策口径）；
+    传 None 则使用全部点。recent_5d / recent_nav_series 始终基于真实尾部点，
+    不受 window 影响——保留与现状一致的喂 LLM 行为。
+    """
     if history is None or not history.points:
         return None
     if history.source in {"unavailable", "error"}:
         return None
 
-    points = history.points
+    all_points = history.points
+    if window_days and len(all_points) > window_days:
+        points = all_points[-window_days:]
+    else:
+        points = all_points
+
     navs = [point.nav for point in points]
     high_nav = max(navs)
     low_nav = min(navs)
     latest = points[-1]
     start = points[0]
 
-    period_change = history.period_change_percent
-    if period_change is None and start.nav > 0:
+    period_change = None
+    if start.nav > 0:
         period_change = round((latest.nav / start.nav - 1) * 100, 2)
 
     recent_5d_change = None
-    if len(points) >= 6 and points[-6].nav > 0:
-        recent_5d_change = round((latest.nav / points[-6].nav - 1) * 100, 2)
+    if len(all_points) >= 6 and all_points[-6].nav > 0:
+        # recent_5d 看真实最后 6 点，不被 window 影响
+        recent_5d_change = round((latest.nav / all_points[-6].nav - 1) * 100, 2)
 
     distance_from_high = None
     if high_nav > 0:
@@ -36,12 +49,12 @@ def summarize_nav_history(
     if low_nav > 0:
         distance_from_low = round((latest.nav / low_nav - 1) * 100, 2)
 
-    sample_size = max(3, min(recent_sample, len(points)))
+    sample_size = max(3, min(recent_sample, len(all_points)))
     recent_nav_series = [
         {"date": point.date, "nav": round(point.nav, 4)}
-        for point in points[-sample_size:]
+        for point in all_points[-sample_size:]
     ]
-    recent_5d_daily_change_percent = _recent_daily_nav_changes(points, max_days=5)
+    recent_5d_daily_change_percent = _recent_daily_nav_changes(all_points, max_days=5)
 
     return {
         "period_days": len(points),
