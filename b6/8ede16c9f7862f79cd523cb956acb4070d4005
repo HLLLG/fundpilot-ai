@@ -1,0 +1,52 @@
+apps/api/tests/test_portfolio_holdings_delete.py
+  s_28252ff32818c0::t_ecee31a14964f1 21-25
+apps/web/src/components/Dashboard.tsx
+  s_28252ff32818c0::t_0278f493115c64 761,765-785,787
+apps/api/app/services/ocr_pipeline.py
+  s_28252ff32818c0::t_f045f12e49173f 230,233-240
+apps/api/tests/test_fund_code_resolver_index.py
+  s_28252ff32818c0::t_cac5e3f9cfb544 68-69
+  s_28252ff32818c0::t_66eadb73288397 62-67
+apps/api/tests/test_fund_benchmark_sector.py
+  s_28252ff32818c0::t_e9a530cd458723 41-71
+apps/api/app/services/fund_primary_sector_service.py
+  s_28252ff32818c0::t_b8a73c3a1453e5 440,443-448
+  s_28252ff32818c0::t_7e690ee1f8e24f 154,162,165
+  s_28252ff32818c0::t_265aeb99a44f05 79-81,449
+  s_28252ff32818c0::t_84ad34e9c9cf79 231-235,246,273-300
+apps/api/app/services/profit_accrual_defer.py
+  s_28252ff32818c0::t_a140d0ea4f52f5 26-27,31-37
+apps/api/app/services/portfolio_persistence.py
+  s_28252ff32818c0::t_7265c4b94aa58d 88
+apps/api/app/services/fund_name_utils.py
+  s_28252ff32818c0::t_cf1a219fdc5f8b 146-147
+apps/api/tests/test_profit_accrual_defer.py
+  s_28252ff32818c0::t_75c97570b60ee5 88-104
+  s_28252ff32818c0::t_0ff32ae0506ad5 8-12
+apps/api/app/services/sector_quote_service.py
+  s_28252ff32818c0::t_c844b4965414db 85-87
+apps/api/app/services/holding_amount_sync.py
+  s_28252ff32818c0::t_654a91f7150099 63-85
+  s_28252ff32818c0::t_ee26b5d32e0106 213-220
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.18-trip",
+  "base_commit_sha": "b68ede16c9f7862f79cd523cb956acb4070d4005",
+  "prompts": {},
+  "humans": {
+    "h_375fc341ff3baa": {
+      "author": "hegl <HLLLG@github.com>"
+    }
+  },
+  "sessions": {
+    "s_28252ff32818c0": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "7385c4d1-4bc7-4de5-b1ba-fcec0d48c108",
+        "model": "composer-2.5"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
