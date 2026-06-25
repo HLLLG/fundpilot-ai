@@ -1,0 +1,40 @@
+apps/web/src/lib/discoveryStreamApi.ts
+  s_7aa0720df5e56a::t_836ee1224436d2 17-18
+apps/web/src/components/FundDiscoveryPanel.tsx
+  s_7aa0720df5e56a::t_3e133e2756bf1b 468
+  s_7aa0720df5e56a::t_8e888fa873c360 41
+  s_7aa0720df5e56a::t_31e00ad49c75ed 354
+  s_7aa0720df5e56a::t_d1046f52cd857a 366
+apps/web/src/lib/streamApi.ts
+  s_7aa0720df5e56a::t_6b686ba462396f 6-10
+apps/web/src/components/Dashboard.tsx
+  s_7aa0720df5e56a::t_96b74c3dc91a2e 499
+  s_7aa0720df5e56a::t_79a9c6dea6b0fa 36
+  s_7aa0720df5e56a::t_c50524633b249f 468
+apps/api/tests/test_news_service_prefetch.py
+  s_7aa0720df5e56a::t_5bb14feb007656 9-11,16-20
+  s_7aa0720df5e56a::t_0d176c1bfe5d85 80
+  s_7aa0720df5e56a::t_2fc222bc5b3a44 33
+  s_7aa0720df5e56a::t_14fb6039626240 53
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.18-trip",
+  "base_commit_sha": "8ebe37b1e959b901392a3bc20600c951ccdd077b",
+  "prompts": {},
+  "humans": {
+    "h_375fc341ff3baa": {
+      "author": "hegl <HLLLG@github.com>"
+    }
+  },
+  "sessions": {
+    "s_7aa0720df5e56a": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "36a0b4ed-29dc-49d4-8d6c-5f8f5eb4372b",
+        "model": "composer-2.5"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
