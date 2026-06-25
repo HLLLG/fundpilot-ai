@@ -166,7 +166,6 @@ export function Dashboard() {
   const [pendingOcrResolutions, setPendingOcrResolutions] = useState<FundCodeResolution[]>([]);
   const [pendingOcrNote, setPendingOcrNote] = useState<string | null>(null);
   const [pendingOcrSource, setPendingOcrSource] = useState<string | null>(null);
-  const [isConfirmingOcr, setIsConfirmingOcr] = useState(false);
   const [showAddHoldingModal, setShowAddHoldingModal] = useState(false);
   const [isManualAdding, setIsManualAdding] = useState(false);
   const [showBatchModal, setShowBatchModal] = useState(false);
@@ -759,29 +758,33 @@ export function Dashboard() {
     }
   };
 
-  const handleConfirmOcrHoldings = async () => {
+  const handleConfirmOcrHoldings = () => {
     if (!pendingOcrHoldings?.length) {
       return;
     }
-    const count = pendingOcrHoldings.length;
-    setIsConfirmingOcr(true);
-    try {
-      const applied = await applyPortfolioHoldings(pendingOcrHoldings);
-      setHoldings(applied.holdings);
-      if (applied.portfolio_summary) {
-        setPortfolioSummary(applied.portfolio_summary);
+    const toApply = pendingOcrHoldings;
+    const count = toApply.length;
+
+    setPendingOcrHoldings(null);
+    setPendingOcrResolutions([]);
+    setPendingOcrNote(null);
+    setPendingOcrSource(null);
+    setActiveTab("holdings");
+    setHoldings(toApply);
+    setMessage(`已保存 ${count} 只基金，正在后台更新板块与收益…`);
+    refreshAfterApplyRef.current = true;
+
+    void (async () => {
+      try {
+        const applied = await applyPortfolioHoldings(toApply);
+        setHoldings(applied.holdings);
+        if (applied.portfolio_summary) {
+          setPortfolioSummary(applied.portfolio_summary);
+        }
+      } catch (error) {
+        setMessage(error instanceof Error ? error.message : "确认更新失败。");
       }
-      refreshAfterApplyRef.current = true;
-      setPendingOcrHoldings(null);
-      setPendingOcrResolutions([]);
-      setPendingOcrNote(null);
-      setPendingOcrSource(null);
-      setMessage(`已更新 ${count} 只基金的账户汇总，板块涨跌已刷新。`);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "确认更新失败。");
-    } finally {
-      setIsConfirmingOcr(false);
-    }
+    })();
   };
 
   const handleDeleteHolding = useCallback(
@@ -1189,7 +1192,6 @@ export function Dashboard() {
           fundCodeResolutions={pendingOcrResolutions}
           amountSemanticsNote={pendingOcrNote}
           ocrSource={pendingOcrSource}
-          isBusy={isConfirmingOcr}
           onChange={setPendingOcrHoldings}
           onConfirm={() => void handleConfirmOcrHoldings()}
           onClose={() => {

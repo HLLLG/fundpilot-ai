@@ -76,6 +76,9 @@ _SOURCE_PRIORITY = {
     "name_infer": 20,
 }
 
+# 仅 OCR 详情 / 手动沉淀的板块可挡住业绩基准；总览推断的 alipay_overview 不可靠。
+_HIGH_TRUST_SECTOR_SOURCES = frozenset({"ocr_detail", "manual"})
+
 
 @dataclass(frozen=True)
 class PrimarySectorRecord:
@@ -148,6 +151,7 @@ def resolve_primary_sector(
     *,
     fund_name: str | None = None,
     allow_name_infer: bool = True,
+    fetch_benchmark: bool = True,
 ) -> PrimarySectorRecord | None:
     code = fund_code.strip().zfill(6)
     if len(code) != 6 or code == "000000":
@@ -155,10 +159,10 @@ def resolve_primary_sector(
 
     row = get_fund_primary_sector(code)
     if row and _is_valid_sector_label(row.get("sector_name")):
-        if _SOURCE_PRIORITY.get(row.get("source", ""), 0) > _SOURCE_PRIORITY["benchmark_index"]:
+        if str(row.get("source") or "") in _HIGH_TRUST_SECTOR_SOURCES:
             return _record_from_row(row)
 
-    benchmark_record = _resolve_from_benchmark_index(code)
+    benchmark_record = _resolve_from_benchmark_index(code, fetch=fetch_benchmark)
     if benchmark_record is not None:
         return benchmark_record
 
@@ -224,7 +228,11 @@ def primary_sector_fields_for_holding(
     return fields
 
 
-def apply_primary_sector_to_holding(holding: Holding) -> Holding:
+def apply_primary_sector_to_holding(
+    holding: Holding,
+    *,
+    fetch_benchmark: bool = True,
+) -> Holding:
     if holding.sector_name and not _is_valid_sector_label(holding.sector_name):
         holding = holding.model_copy(update={"sector_name": None})
 
@@ -235,6 +243,7 @@ def apply_primary_sector_to_holding(holding: Holding) -> Holding:
             code,
             fund_name=holding.fund_name,
             allow_name_infer=False,
+            fetch_benchmark=fetch_benchmark,
         )
 
     if record and record.source == "benchmark_index":
@@ -261,8 +270,34 @@ def apply_primary_sector_to_holding(holding: Holding) -> Holding:
     return updated
 
 
-def apply_primary_sector_to_holdings(holdings: list[Holding]) -> list[Holding]:
-    return [apply_primary_sector_to_holding(item) for item in holdings]
+def apply_primary_sector_to_holdings(
+    holdings: list[Holding],
+    *,
+    fetch_benchmark: bool = True,
+) -> list[Holding]:
+    return [
+        apply_primary_sector_to_holding(item, fetch_benchmark=fetch_benchmark)
+        for item in holdings
+    ]
+
+
+def refresh_benchmark_sectors_for_holdings(holdings: list[Holding]) -> list[Holding]:
+    """板块刷新前：为指数型基金拉业绩基准并覆盖不可靠的总览/名称推断板块。"""
+    refreshed: list[Holding] = []
+    for holding in holdings:
+        code = (holding.fund_code or "").strip()
+        if not code or code == "000000":
+            refreshed.append(holding)
+            continue
+        row = get_fund_primary_sector(code)
+        if row and str(row.get("source") or "") in _HIGH_TRUST_SECTOR_SOURCES:
+            refreshed.append(holding)
+            continue
+        if row and str(row.get("source") or "") == "benchmark_index":
+            refreshed.append(apply_primary_sector_to_holding(holding, fetch_benchmark=False))
+            continue
+        refreshed.append(apply_primary_sector_to_holding(holding, fetch_benchmark=True))
+    return refreshed
 
 
 def recommend_sector_from_holdings(fund_code: str) -> PrimarySectorRecord | None:
@@ -402,8 +437,15 @@ print(json.dumps(rows, ensure_ascii=False))
         return None
 
 
-def _resolve_from_benchmark_index(fund_code: str) -> PrimarySectorRecord | None:
+def _resolve_from_benchmark_index(fund_code: str, *, fetch: bool = True) -> PrimarySectorRecord | None:
     from app.services.fund_benchmark_sector import fetch_fund_benchmark_text, resolve_sector_from_benchmark
+
+    existing = get_fund_primary_sector(fund_code)
+    if existing and str(existing.get("source") or "") == "benchmark_index":
+        return _record_from_row(existing)
+
+    if not fetch:
+        return None
 
     benchmark_text = fetch_fund_benchmark_text(fund_code)
     if not benchmark_text:

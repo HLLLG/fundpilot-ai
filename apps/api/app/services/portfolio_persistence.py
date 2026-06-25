@@ -85,7 +85,7 @@ def enrich_loaded_holdings(
     if not with_network:
         from app.services.fund_primary_sector_service import apply_primary_sector_to_holdings
 
-        return apply_primary_sector_to_holdings(enrich_holdings_estimates(holdings))
+        return apply_primary_sector_to_holdings(enrich_holdings_estimates(holdings), fetch_benchmark=False)
     from app.services.transaction_ledger import confirm_and_compute_overrides
 
     overrides = confirm_and_compute_overrides(holdings)

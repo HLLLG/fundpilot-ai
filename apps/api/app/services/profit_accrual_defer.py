@@ -23,17 +23,18 @@ def ocr_signals_pending_profit_accrual(holding: Holding) -> bool:
     """支付宝截图：日收益、持有收益、持有收益率均为 0 → 份额待确认。"""
     if holding.holding_amount <= 0:
         return False
-    ocr_daily = ocr_daily_profit_signal(holding)
-    if ocr_daily is None:
-        return False
-    if not is_near_zero(ocr_daily):
+    holding_return = ocr_holding_return_percent(holding)
+    if holding_return is None or not is_near_zero(holding_return):
         return False
     if holding.holding_profit is not None and not is_near_zero(holding.holding_profit):
         return False
-    holding_return = ocr_holding_return_percent(holding)
-    if holding_return is None:
-        return False
-    return is_near_zero(holding_return)
+    ocr_daily = ocr_daily_profit_signal(holding)
+    if ocr_daily is not None:
+        return is_near_zero(ocr_daily)
+    # 新购行有时只解析出金额 + 持有收益 0，日收益列未落入字段
+    if holding.holding_profit is not None and is_near_zero(holding.holding_profit):
+        return True
+    return False
 
 
 def ocr_signals_active_profit(holding: Holding) -> bool:

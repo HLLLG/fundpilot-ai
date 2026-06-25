@@ -143,6 +143,8 @@ def normalize_fund_name_for_lookup(name: str) -> str:
             result,
             flags=re.IGNORECASE,
         )
+    # 支付宝展示名常带「材料」：天弘半导体材料设备指数C ↔ 东财 天弘半导体设备指数C
+    result = result.replace("半导体材料设备", "半导体设备")
     return result
 
 

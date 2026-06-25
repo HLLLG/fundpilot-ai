@@ -18,7 +18,11 @@ def test_apply_confirmed_holdings_skips_heavy_sector_pipeline(monkeypatch):
     )
     monkeypatch.setattr(
         "app.services.fund_primary_sector_service.apply_primary_sector_to_holdings",
-        lambda holdings: holdings,
+        lambda holdings, **kwargs: holdings,
+    )
+    monkeypatch.setattr(
+        "app.services.holding_amount_sync.bootstrap_holding_baselines",
+        lambda holdings, **kwargs: holdings,
     )
     monkeypatch.setattr(
         "app.services.ocr_pipeline.FundProfileService",

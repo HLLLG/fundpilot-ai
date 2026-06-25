@@ -38,6 +38,37 @@ def test_get_canonical_sector_prefers_semiconductor_material_over_semiconductor(
     assert canon.eastmoney_secid == "2.931743"
 
 
+def test_resolve_primary_sector_benchmark_beats_alipay_overview_row(monkeypatch):
+    benchmark = "中证半导体材料设备主题指数收益率×95%+银行活期存款利率（税后）×5%"
+
+    monkeypatch.setattr(
+        "app.services.fund_benchmark_sector.fetch_fund_benchmark_text",
+        lambda _code: benchmark,
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_service.get_fund_primary_sector",
+        lambda _code: {
+            "fund_code": "021533",
+            "sector_name": "半导体",
+            "source": "alipay_overview",
+            "intraday_index_name": None,
+        },
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_service.get_fund_profile_by_code",
+        lambda _code: None,
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_service.save_fund_primary_sector",
+        lambda **kwargs: kwargs,
+    )
+
+    record = resolve_primary_sector("021533", fund_name="天弘半导体设备指数C")
+    assert record is not None
+    assert record.source == "benchmark_index"
+    assert record.sector_name == "半导体材料"
+
+
 def test_resolve_primary_sector_021533_uses_benchmark(monkeypatch):
     benchmark = "中证半导体材料设备主题指数收益率×95%+银行活期存款利率（税后）×5%"
 

@@ -59,6 +59,14 @@ def test_search_funds_qdii_currency_suffix_finds_rmb_c():
     assert items[0]["fund_code"] == "021277"
 
 
+def test_lookup_fund_code_semiconductor_material_equipment_alias():
+    """支付宝「半导体材料设备」展示名应对齐东财「半导体设备」。"""
+    _install_table([("021533", "天弘半导体设备指数C")])
+    code, source = lookup_fund_code_by_name("天弘半导体材料设备指数C")
+    assert code == "021533"
+    assert source == "akshare"
+
+
 def test_lookup_fund_code_partial_match_still_works():
     _install_table(
         [

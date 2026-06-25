@@ -82,6 +82,9 @@ def refresh_holdings_sector_quotes(
         }
 
     profile_service = FundProfileService()
+    from app.services.fund_primary_sector_service import refresh_benchmark_sectors_for_holdings
+
+    holdings = refresh_benchmark_sectors_for_holdings(holdings)
     holdings = [profile_service.resolve_holding(holding) for holding in holdings]
     lookup_labels = [
         sector_quote_lookup_label(

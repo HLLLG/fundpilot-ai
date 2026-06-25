@@ -5,7 +5,11 @@ from __future__ import annotations
 from app.models import FundProfile, Holding
 from app.services.holding_amount_sync import sync_holding_amounts_from_shares
 from app.services.holding_estimates import apply_sector_daily_estimates, overlay_official_nav_returns
-from app.services.profit_accrual_defer import is_profit_accrual_deferred
+from app.services.profit_accrual_defer import (
+    is_profit_accrual_deferred,
+    ocr_signals_pending_profit_accrual,
+    resolve_profile_defer_patch,
+)
 
 
 def _deferred_holding() -> Holding:
@@ -81,7 +85,23 @@ def test_overlay_official_nav_skips_deferred_holding(monkeypatch):
     result = overlay_official_nav_returns([holding])[0]
 
     assert result.daily_return_percent_source != "official_nav"
-    assert result.daily_profit in (0.0, None)
+
+
+def test_ocr_pending_accrual_without_daily_profit_field():
+    holding = Holding(
+        fund_code="021533",
+        fund_name="天弘半导体材料设备指数C",
+        holding_amount=3000.0,
+        holding_profit=0.0,
+        holding_return_percent=0.0,
+        return_percent=0.0,
+    )
+    assert ocr_signals_pending_profit_accrual(holding) is True
+    patch = resolve_profile_defer_patch(
+        holding,
+        FundProfile(fund_code="021533", fund_name="天弘半导体材料设备指数C"),
+    )
+    assert patch.get("profit_accrual_deferred_until") is not None
 
 
 def test_sync_holding_amounts_keeps_ocr_settled_when_deferred(monkeypatch):

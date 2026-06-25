@@ -60,6 +60,29 @@ def _bootstrap_profile_baseline(
     if profile is None:
         return
 
+    from app.services.profit_accrual_defer import is_profit_accrual_deferred, resolve_profile_defer_patch
+
+    pending_defer = resolve_profile_defer_patch(holding, profile).get(
+        "profit_accrual_deferred_until"
+    )
+    if pending_defer or is_profit_accrual_deferred(profile):
+        patch = {
+            "settled_holding_amount": holding.holding_amount,
+            "holding_amount": holding.holding_amount,
+        }
+        if pending_defer:
+            patch["profit_accrual_deferred_until"] = pending_defer
+        if holding.holding_profit is not None:
+            patch["holding_profit"] = holding.holding_profit
+        return_percent = holding.holding_return_percent
+        if return_percent is None:
+            return_percent = holding.return_percent
+        if return_percent is not None:
+            patch["holding_return_percent"] = return_percent
+        if persist_profile:
+            save_fund_profile(profile.model_copy(update=patch))
+        return
+
     if profile.holding_shares is not None and not force_reset_shares:
         return
 
@@ -187,11 +210,14 @@ def _sync_one_holding(
         )
 
     if override_value is None and shares is None and profile and profile.holding_shares is None:
-        unit_nav = _resolve_unit_nav(code, trade_date, estimate_quote)
-        if unit_nav and unit_nav > 0 and holding.holding_amount > 0:
-            shares = round(holding.holding_amount / unit_nav, 2)
-            if persist_profile:
-                save_fund_profile(profile.model_copy(update={"holding_shares": shares}))
+        from app.services.profit_accrual_defer import is_profit_accrual_deferred
+
+        if not is_profit_accrual_deferred(profile):
+            unit_nav = _resolve_unit_nav(code, trade_date, estimate_quote)
+            if unit_nav and unit_nav > 0 and holding.holding_amount > 0:
+                shares = round(holding.holding_amount / unit_nav, 2)
+                if persist_profile:
+                    save_fund_profile(profile.model_copy(update={"holding_shares": shares}))
 
     settled = _resolve_settled_amount(holding, profile)
     from app.services.profit_accrual_defer import is_profit_accrual_deferred

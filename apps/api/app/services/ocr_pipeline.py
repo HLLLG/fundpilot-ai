@@ -227,9 +227,17 @@ def apply_confirmed_holdings(
     typed = _finalize_confirmed_holdings(typed, profile_service)
     from app.services.fund_primary_sector_service import apply_primary_sector_to_holdings
 
-    typed = apply_primary_sector_to_holdings(typed)
+    typed = apply_primary_sector_to_holdings(typed, fetch_benchmark=False)
 
     profile_sync = profile_service.sync_profiles_from_holdings(typed).model_dump()
+    from app.services.holding_amount_sync import bootstrap_holding_baselines
+
+    typed = bootstrap_holding_baselines(
+        typed,
+        estimate_quotes={},
+        persist_profiles=True,
+        force_reset_shares=False,
+    )
     merged = enrich_holdings_from_profiles(typed)
     processed = enrich_loaded_holdings(merged, with_network=False)
 
