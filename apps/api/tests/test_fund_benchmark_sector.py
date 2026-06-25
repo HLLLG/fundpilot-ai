@@ -69,6 +69,18 @@ def test_resolve_primary_sector_benchmark_beats_alipay_overview_row(monkeypatch)
     assert record.sector_name == "半导体材料"
 
 
+def test_fetch_fund_benchmark_text_falls_back_when_akshare_unavailable(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.fund_benchmark_sector.subprocess.run",
+        lambda *args, **kwargs: type("R", (), {"returncode": 1, "stdout": ""})(),
+    )
+    from app.services.fund_benchmark_sector import fetch_fund_benchmark_text
+
+    text = fetch_fund_benchmark_text("021533")
+    assert text is not None
+    assert "931743" in text or "半导体材料设备" in text
+
+
 def test_resolve_primary_sector_021533_uses_benchmark(monkeypatch):
     benchmark = "中证半导体材料设备主题指数收益率×95%+银行活期存款利率（税后）×5%"
 

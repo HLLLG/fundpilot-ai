@@ -4,9 +4,11 @@
 >
 > **维护：** 功能或架构有实质变化时，同步更新「能力清单」「数据流」「API」「目录」「环境变量」。
 
-**文档版本：** 2026-06-26（业绩基准板块解析 · 当日收益 defer 补强）
+**文档版本：** 2026-06-26（OCR 无感知刷新 · 业绩基准/ defer 二次补强）
 
 **更新记录：**
+- **支付宝 OCR 确认无感知刷新（2026-06-26）：** 修复确认截图后列表估算/持有/板块列闪「—」。**前端**：`mergeHoldingsPreserveQuoteFields`（`holdingMetrics.ts`）在 OCR 确认、apply 回写、板块刷新时保留上一屏行情字段，直至新值返回；`Dashboard.handleConfirmOcrHoldings` 立即关弹窗切持仓 Tab，后台 `apply-holdings` + `refresh-sector-quotes`；去掉「已保存 N 只基金，正在后台…」顶栏提示。**单测** `holdingMetrics.test.ts`。
+- **业绩基准 / defer / 查码二次补强（2026-06-26）：** ① **查码**：`normalize_fund_name_for_lookup` 将「半导体材料设备」→「半导体设备」，修复支付宝名「天弘半导体材料设备指数C」自动匹配 021533。② **板块**：仅 `ocr_detail`/`manual` 可挡业绩基准；`resolve_holding` 优先 `benchmark_index` 并回写档案；`sector_quote_lookup_label` 走 canonical 指数（931743 非 BK1036）；AkShare 失败时 `021533` 业绩基准兜底文案。③ **defer 金额**：`return_percent=0` 不再被当作缺失；defer 时清空 `holding_shares`、锁定 OCR 金额不滚 `份额×净值`。单测 `test_sector_quote_label.py` / `test_fund_code_resolver_index.py` / `test_profit_accrual_defer.py`（154 API passed）。
 - **基金业绩基准 → 关联板块（2026-06-26）：** 指数型基金不再靠 per-fund seed 或基金名子串推断板块。新增 `fund_benchmark_sector.py`：AkShare 雪球概况拉「业绩比较基准」→ 解析跟踪指数（如 931743）→ `THEME_BOARD_INDEX` 映射展示名（如「半导体材料」）。`fund_primary_sector_service.resolve_primary_sector` 新增 source=`benchmark_index`（优先级 65），可覆盖 `alipay_overview`/`name_infer`/`seed` 的错误板块；`sector_canonical.get_canonical_sector` 改最长子串匹配优先，新增「半导体材料」→ `2.931743`。Windows 子进程 stdout 用 `ensure_ascii=True` JSON 防乱码。案例：021533 天弘半导体设备指数 C → 半导体材料（非泛化「半导体」BK1036）。单测 `test_fund_benchmark_sector.py`。设计/计划：`docs/superpowers/specs/2026-06-26-fund-benchmark-sector-design.md` / `docs/superpowers/plans/2026-06-26-fund-benchmark-sector.md`。
 - **当日收益 defer bypass 修复（2026-06-26）：** `profit_accrual_defer` 初版已在 `apply_sector_daily_estimates` 生效，但官方 NAV 公布后 `sector_quote_service`、`holding_amount_sync`、`holding_estimates` 三条路径绕过 defer，导致当日新购仍出现日收益（如 6/25 买入 3000 元、净值更新后显示 +79）。现三处均先检查 `is_profit_accrual_deferred`；前端 `holdingMetrics.ts`/`holdingDisplay.ts` 防御性强制日收益 0。单测 `test_profit_accrual_defer.py` + `holdingMetrics.test.ts`。设计见 `docs/superpowers/specs/2026-06-23-profit-accrual-defer-design.md`（2026-06-26 补强节）。
 - **荐基 LLM 数据包对齐日报（2026-06-25）：** `discovery_payload.build_user_payload` 新增顶层 `news_titles` / `topic_briefs`（复用 `analysis_payload.compact_*`）；`discovery_facts` 透传 `session`、`target_sector_context`（板块热度+主力+分时+信号，见 `discovery_sector_context.py`）、`market_flow`、`candidate_factor_scores`、`selection_strategy`、`dip_swing`、`instruction`；requirements 要求引用北向/南向与 `news.freshness_label`。单测 `test_discovery_payload.py`。
@@ -120,7 +122,7 @@
 | OCR 校验 | OCR 返回 `holding_warnings`；账户汇总为唯一持仓展示与日报输入源（`displayableHoldings` 过滤占位行） |
 | 持仓元数据 | SQLite `fund_profiles` + `fund_primary_sectors` 由 OCR **自动维护**（份额、成本、板块、购入日）；拒绝 `+`/`-`/Tab 标签误存为板块名；`POST /api/fund-profiles/repair-sectors` 清理历史脏数据；查码走东财名称表 + 档案兜底；详情页铅笔改代码 |
 | 简报首页 | **简报** Tab（默认）：`TodayBriefing` — 组合摘要 KPI、板块脉搏、最新日报决策卡、内联 AI 追问；`todayBriefing.ts` 纯前端汇总逻辑 + vitest |
-| 首页看板 | **持仓** Tab：`YangjibaoHoldingsBoard` 养基宝式卡片（`AddHoldingModal` 上传支付宝/养基宝截图）；**localStorage 缓存优先** instant 展示 → `GET /api/portfolio/holdings`（服务端 120s 内存缓存 + `refreshed_at`）→ 后台自动 refresh-sector-quotes；点击行打开 `YangjibaoFundDetail` |
+| 首页看板 | **持仓** Tab：`YangjibaoHoldingsBoard` 养基宝式卡片（`AddHoldingModal` 上传支付宝/养基宝截图）；**localStorage 缓存优先** instant 展示 → `GET /api/portfolio/holdings`（服务端 120s 内存缓存 + `refreshed_at`）→ 后台 `refresh-sector-quotes`（**stale-while-revalidate**：`mergeHoldingsPreserveQuoteFields` 刷新完成前保留上一屏板块/收益）；OCR 确认后立即关弹窗；点击行打开 `YangjibaoFundDetail` |
 | 导航 | `DashboardNav`：桌面 `lg+` 顶栏 6 Tab；手机/平板底栏 5 项 +「更多」 sheet（发现/日报/历史）；`dashboard-shell` 底栏安全区留白 |
 | 导航记忆 | Dashboard 主 Tab（简报/持仓/盈亏分析/市场/推荐基金/生成日报）与 **市场** 子 Tab（主题板块/大跌雷达/美股）均用 `sessionStorage` 刷新后恢复 |
 | 基金详情 | 关联板块分时图（边框/十字线）；**业绩走势**（区间涨跌 vs 沪深300、历史净值分页）；**我的收益**；持有天数滚轮选购入日；持仓明细默认收起 |

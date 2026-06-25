@@ -28,4 +28,8 @@
 1. 改 `holding_estimates.py`
 2. 更新 `holding_metrics_cases.json` 期望值
 3. 跑 `pytest tests/test_holding_client.py tests/test_holding_metrics.py`
+
+## 前端刷新合并（2026-06-26）
+
+OCR 确认、`apply-holdings` 回写、`refresh-sector-quotes` 期间使用 `mergeHoldingsPreserveQuoteFields`（`holdingMetrics.ts`）：按 `fund_code` 合并新列表，**保留**上一屏的 `sector`、`estimated_*`、`daily_*` 等行情字段，直至 API 返回非空新值，避免列表闪「—」。
 4. 跑 `vitest holdingDisplay.test.ts`

@@ -43,6 +43,61 @@ export function displayableHoldings(holdings: Holding[]): Holding[] {
   });
 }
 
+/** OCR / 快速 apply 响应可能缺少板块与收益字段；刷新完成前保留上一屏展示数据。 */
+const PRESERVE_QUOTE_FIELDS = [
+  "sector_return_percent",
+  "sector_return_percent_source",
+  "daily_profit",
+  "daily_return_percent",
+  "daily_return_percent_source",
+  "yesterday_profit",
+  "sector_name",
+  "intraday_index_name",
+  "estimated_holding_return_percent",
+  "estimated_holding_profit",
+  "estimated_daily_return_percent",
+  "holding_return_is_estimated",
+  "daily_return_is_estimated",
+] as const satisfies readonly (keyof Holding)[];
+
+function mergeHoldingQuoteFields(previous: Holding, incoming: Holding): Holding {
+  const merged: Holding = { ...incoming };
+  for (const key of PRESERVE_QUOTE_FIELDS) {
+    const nextValue = incoming[key];
+    const prevValue = previous[key];
+    if ((nextValue === null || nextValue === undefined) && prevValue !== null && prevValue !== undefined) {
+      (merged as Record<keyof Holding, Holding[keyof Holding]>)[key] = prevValue;
+    }
+  }
+  return merged;
+}
+
+export function mergeHoldingsPreserveQuoteFields(
+  previous: Holding[],
+  incoming: Holding[],
+): Holding[] {
+  if (!previous.length) {
+    return incoming;
+  }
+  const prevByCode = new Map(
+    previous
+      .filter((item) => item.fund_code && item.fund_code !== "000000")
+      .map((item) => [item.fund_code, item] as const),
+  );
+  const prevByName = new Map(
+    previous.map((item) => [normalizeHoldingName(item.fund_name || ""), item] as const),
+  );
+  return incoming.map((item) => {
+    const prev =
+      (item.fund_code && item.fund_code !== "000000" ? prevByCode.get(item.fund_code) : undefined) ??
+      prevByName.get(normalizeHoldingName(item.fund_name || ""));
+    if (!prev) {
+      return item;
+    }
+    return mergeHoldingQuoteFields(prev, item);
+  });
+}
+
 export type HoldingIdentity = Pick<Holding, "fund_code" | "fund_name">;
 
 function normalizeHoldingName(name: string): string {

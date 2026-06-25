@@ -61,7 +61,14 @@ import { HistoryRail } from "@/components/HistoryRail";
 import { BackgroundJobsStack } from "@/components/BackgroundJobsStack";
 import { DiscoveryJobStatusFloat } from "@/components/DiscoveryJobStatusFloat";
 import { JobStatusFloat } from "@/components/JobStatusFloat";
-import { displayableHoldings, findHoldingIndex, sumDailyProfit, sumHoldingAmount, type HoldingIdentity } from "@/lib/holdingMetrics";
+import {
+  displayableHoldings,
+  findHoldingIndex,
+  mergeHoldingsPreserveQuoteFields,
+  sumDailyProfit,
+  sumHoldingAmount,
+  type HoldingIdentity,
+} from "@/lib/holdingMetrics";
 import {
   loadCachedPortfolioHoldings,
   saveCachedPortfolioHoldings,
@@ -763,23 +770,34 @@ export function Dashboard() {
       return;
     }
     const toApply = pendingOcrHoldings;
-    const count = toApply.length;
+    const previousHoldings = holdings;
 
     setPendingOcrHoldings(null);
     setPendingOcrResolutions([]);
     setPendingOcrNote(null);
     setPendingOcrSource(null);
     setActiveTab("holdings");
-    setHoldings(toApply);
-    setMessage(`已保存 ${count} 只基金，正在后台更新板块与收益…`);
+    setHoldings(mergeHoldingsPreserveQuoteFields(previousHoldings, toApply));
     refreshAfterApplyRef.current = true;
 
     void (async () => {
       try {
         const applied = await applyPortfolioHoldings(toApply);
-        setHoldings(applied.holdings);
+        setHoldings(mergeHoldingsPreserveQuoteFields(previousHoldings, applied.holdings));
         if (applied.portfolio_summary) {
-          setPortfolioSummary(applied.portfolio_summary);
+          setPortfolioSummary((current) => {
+            const base = current ?? applied.portfolio_summary!;
+            return {
+              ...base,
+              ...applied.portfolio_summary,
+              daily_profit:
+                applied.portfolio_summary?.daily_profit ?? base.daily_profit ?? null,
+              daily_return_percent:
+                applied.portfolio_summary?.daily_return_percent ??
+                base.daily_return_percent ??
+                null,
+            };
+          });
         }
       } catch (error) {
         setMessage(error instanceof Error ? error.message : "确认更新失败。");

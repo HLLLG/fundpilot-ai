@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { Holding } from "@/lib/api";
-import { applySectorDailyEstimate, computeDailyProfit, findHoldingIndex } from "@/lib/holdingMetrics";
+import {
+  applySectorDailyEstimate,
+  computeDailyProfit,
+  findHoldingIndex,
+  mergeHoldingsPreserveQuoteFields,
+} from "@/lib/holdingMetrics";
 import { getDailyProfit } from "@/lib/holdingDisplay";
 
 function holding(fund_code: string, fund_name: string): Holding {
@@ -42,6 +47,46 @@ describe("findHoldingIndex", () => {
         fund_name: "中航机遇领航混合发起C",
       }),
     ).toBe(0);
+  });
+});
+
+describe("mergeHoldingsPreserveQuoteFields", () => {
+  it("keeps sector and daily quote fields until refresh fills incoming", () => {
+    const previous = [
+      holding("010236", "广发电子信息传媒产业精选股票C"),
+      {
+        ...holding("021533", "天弘半导体设备指数C"),
+        sector_return_percent: 3.0,
+        sector_name: "半导体材料",
+        daily_profit: 12.5,
+        daily_return_percent: 0.8,
+      },
+    ];
+    previous[0] = {
+      ...previous[0],
+      sector_return_percent: 4.5,
+      daily_profit: 51.67,
+      holding_profit: 56.25,
+    };
+    const incoming = [
+      {
+        ...holding("010236", "广发电子信息传媒产业精选股票C"),
+        holding_amount: 1556.25,
+        holding_profit: 56.25,
+      },
+      {
+        ...holding("021533", "天弘半导体设备指数C"),
+        holding_amount: 3000,
+        holding_profit: 0,
+        return_percent: 0,
+      },
+    ];
+    const merged = mergeHoldingsPreserveQuoteFields(previous, incoming);
+    expect(merged[0].sector_return_percent).toBe(4.5);
+    expect(merged[0].daily_profit).toBe(51.67);
+    expect(merged[1].holding_amount).toBe(3000);
+    expect(merged[1].holding_profit).toBe(0);
+    expect(merged[1].sector_return_percent).toBe(3.0);
   });
 });
 

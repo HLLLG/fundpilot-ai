@@ -68,3 +68,12 @@ fund_code → 拉取业绩比较基准文案（AkShare 雪球概况等）
 - 不再依赖 per-fund `GLOBAL_FUND_SECTOR_SEEDS` 扩展指数型基金映射。
 
 **验证：** 重启 API 后刷新 021533 持仓；板块应显示「半导体材料」，日内/图表跟 931743。
+
+## 二次补强（2026-06-26）
+
+| 问题 | 修复 |
+|------|------|
+| `alipay_overview` 板块挡住业绩基准 | 仅 `ocr_detail`/`manual` 为高信任；`resolve_holding` 与板块刷新前优先 `benchmark_index` |
+| 涨跌仍走泛化「半导体」BK1036 | `sector_quote_lookup_label` 优先 canonical 指数标签；指数型基金清除名称推断板块后再解析 |
+| AkShare 拉基准失败 | `_KNOWN_BENCHMARK_BY_CODE` 兜底（如 021533） |
+| 支付宝名「半导体材料设备」查码失败 | `normalize_fund_name_for_lookup`：`半导体材料设备`→`半导体设备` |

@@ -14,7 +14,7 @@ def ocr_daily_profit_signal(holding: Holding) -> float | None:
 def ocr_holding_return_percent(holding: Holding) -> float | None:
     if holding.holding_return_percent is not None:
         return holding.holding_return_percent
-    if holding.return_percent:
+    if holding.return_percent is not None:
         return holding.return_percent
     return None
 
@@ -74,6 +74,13 @@ def resolve_profile_defer_patch(
 
 def apply_defer_to_profile(profile: FundProfile, holding: Holding) -> FundProfile:
     patch = resolve_profile_defer_patch(holding, profile)
+    if patch.get("profit_accrual_deferred_until"):
+        patch = {
+            **patch,
+            "holding_shares": None,
+            "settled_holding_amount": holding.holding_amount,
+            "holding_amount": holding.holding_amount,
+        }
     if patch:
         return profile.model_copy(update=patch)
     return profile

@@ -75,15 +75,63 @@ class FundProfileService:
         )
         if profile is None:
             profile = self.find_match(holding.fund_name)
+
+        sector_name = holding.sector_name
+        index_name = holding.intraday_index_name
+        fund_name = holding.fund_name or (profile.fund_name if profile else None)
+        fund_code = holding.fund_code if holding.fund_code != "000000" else (
+            profile.fund_code if profile and profile.fund_code != "000000" else ""
+        )
+        if fund_code:
+            from app.services.fund_primary_sector_service import resolve_primary_sector
+
+            record = resolve_primary_sector(
+                fund_code,
+                fund_name=fund_name,
+                allow_name_infer=False,
+                fetch_benchmark=True,
+            )
+            if record and record.source == "benchmark_index":
+                sector_name = record.sector_name
+                if record.intraday_index_name:
+                    index_name = record.intraday_index_name
+                if profile is not None and (
+                    profile.sector_name != sector_name
+                    or (
+                        index_name
+                        and profile.intraday_index_name != index_name
+                    )
+                ):
+                    from app.database import save_fund_profile
+
+                    save_fund_profile(
+                        profile.model_copy(
+                            update={
+                                "sector_name": sector_name,
+                                **(
+                                    {"intraday_index_name": index_name}
+                                    if index_name
+                                    else {}
+                                ),
+                            }
+                        )
+                    )
+
         if profile is None:
             from app.services.fund_primary_sector_service import primary_sector_fields_for_holding
 
             fields = primary_sector_fields_for_holding(holding, allow_name_infer=False)
             if fields:
-                return holding.model_copy(update=fields)
+                return holding.model_copy(update={**fields, "sector_name": sector_name or fields.get("sector_name")})
+            if sector_name or index_name:
+                return holding.model_copy(
+                    update={
+                        **({"sector_name": sector_name} if sector_name else {}),
+                        **({"intraday_index_name": index_name} if index_name else {}),
+                    }
+                )
             return holding
 
-        sector_name = holding.sector_name
         if not _is_valid_sector_label(sector_name):
             from app.services.fund_primary_sector_service import primary_sector_fields_for_holding
 
@@ -97,7 +145,6 @@ class FundProfileService:
             elif _is_valid_sector_label(profile.sector_name):
                 sector_name = profile.sector_name
 
-        index_name = holding.intraday_index_name
         if not index_name or not _looks_like_index_name(index_name):
             index_name = profile.intraday_index_name
         if not index_name or not _looks_like_index_name(index_name):
@@ -105,9 +152,7 @@ class FundProfileService:
         if not index_name or not _looks_like_index_name(index_name):
             index_name = infer_intraday_index_from_sector(profile.sector_name)
         if not index_name or not _looks_like_index_name(index_name):
-            index_name = infer_intraday_index_from_fund_name(
-                holding.fund_name or profile.fund_name
-            )
+            index_name = infer_intraday_index_from_fund_name(fund_name)
 
         sector_name, index_name = _normalize_index_and_board_fields(sector_name, index_name)
 
@@ -276,7 +321,7 @@ def merge_holding_into_profile(
         updates["holding_profit"] = holding.holding_profit
     if holding.holding_return_percent is not None:
         updates["holding_return_percent"] = holding.holding_return_percent
-    elif holding.return_percent:
+    elif holding.return_percent is not None:
         updates["holding_return_percent"] = holding.return_percent
     if holding.daily_profit is not None:
         updates["daily_profit"] = holding.daily_profit

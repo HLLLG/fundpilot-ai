@@ -93,7 +93,6 @@ def test_ocr_pending_accrual_without_daily_profit_field():
         fund_name="天弘半导体材料设备指数C",
         holding_amount=3000.0,
         holding_profit=0.0,
-        holding_return_percent=0.0,
         return_percent=0.0,
     )
     assert ocr_signals_pending_profit_accrual(holding) is True
@@ -102,6 +101,19 @@ def test_ocr_pending_accrual_without_daily_profit_field():
         FundProfile(fund_code="021533", fund_name="天弘半导体材料设备指数C"),
     )
     assert patch.get("profit_accrual_deferred_until") is not None
+
+
+def test_ocr_pending_accrual_treats_return_percent_zero_as_zero():
+    holding = Holding(
+        fund_code="021533",
+        fund_name="天弘半导体设备指数C",
+        holding_amount=3000.0,
+        holding_profit=0.0,
+        holding_return_percent=None,
+        return_percent=0.0,
+        yesterday_profit=0.0,
+    )
+    assert ocr_signals_pending_profit_accrual(holding) is True
 
 
 def test_sync_holding_amounts_keeps_ocr_settled_when_deferred(monkeypatch):

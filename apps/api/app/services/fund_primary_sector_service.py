@@ -236,6 +236,17 @@ def apply_primary_sector_to_holding(
     if holding.sector_name and not _is_valid_sector_label(holding.sector_name):
         holding = holding.model_copy(update={"sector_name": None})
 
+    from app.services.sector_labels import infer_sector_label_from_fund_name
+
+    inferred = infer_sector_label_from_fund_name(holding.fund_name)
+    if (
+        inferred
+        and holding.sector_name == inferred
+        and holding.fund_name
+        and "指数" in holding.fund_name
+    ):
+        holding = holding.model_copy(update={"sector_name": None, "intraday_index_name": None})
+
     code = holding.fund_code if holding.fund_code != "000000" else ""
     record = None
     if code:

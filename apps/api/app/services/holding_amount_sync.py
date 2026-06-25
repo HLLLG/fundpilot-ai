@@ -69,6 +69,7 @@ def _bootstrap_profile_baseline(
         patch = {
             "settled_holding_amount": holding.holding_amount,
             "holding_amount": holding.holding_amount,
+            "holding_shares": None,
         }
         if pending_defer:
             patch["profit_accrual_deferred_until"] = pending_defer
@@ -223,11 +224,12 @@ def _sync_one_holding(
     from app.services.profit_accrual_defer import is_profit_accrual_deferred
 
     if is_profit_accrual_deferred(profile):
-        if abs(settled - holding.holding_amount) > 0.01 or holding.amount_includes_today is not False:
+        locked = holding.holding_amount if holding.holding_amount > 0 else settled
+        if abs(locked - holding.holding_amount) > 0.01 or holding.amount_includes_today is not False:
             return holding.model_copy(
                 update={
-                    "holding_amount": settled,
-                    "settled_holding_amount": settled,
+                    "holding_amount": locked,
+                    "settled_holding_amount": locked,
                     "amount_includes_today": False,
                 }
             )

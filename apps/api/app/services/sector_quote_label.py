@@ -40,11 +40,15 @@ def sector_quote_lookup_label(
     profile: FundProfile | None = None,
 ) -> str | None:
     """养基宝涨跌口径：ETF 联接/详情 OCR「场内指数」→ 指数；否则关联板块短名（如半导体）。"""
+    from app.services.sector_canonical import get_canonical_sector
+
     board_name = sector_name
     fund_name: str | None = None
+    index_name = intraday_index_name
     if holding is not None:
         board_name = holding.sector_name or board_name
         fund_name = holding.fund_name
+        index_name = holding.intraday_index_name or index_name
         if profile is None and holding.fund_code and holding.fund_code != "000000":
             from app.database import get_fund_profile_by_code
 
@@ -52,25 +56,41 @@ def sector_quote_lookup_label(
     if profile is not None and not fund_name:
         fund_name = profile.fund_name
 
-    from_fund = infer_intraday_index_from_fund_name(fund_name)
-    if from_fund:
-        return from_fund
+    if index_name and _looks_like_index_name(index_name):
+        canon = get_canonical_sector(index_name)
+        if canon:
+            return canon.label
+        normalized = normalize_sector_label(index_name)
+        if normalized:
+            return normalized
+
+    if board_name and _is_valid_sector_label(board_name):
+        canon = get_canonical_sector(board_name)
+        if canon:
+            return canon.label
+        normalized = normalize_sector_label(board_name)
+        if normalized:
+            return normalized
 
     profile_index = _profile_index_quote_label(profile)
     if profile_index:
         return profile_index
 
-    if board_name and normalize_sector_label(board_name):
-        return normalize_sector_label(board_name)
+    from_fund = infer_intraday_index_from_fund_name(fund_name)
+    if from_fund:
+        canon = get_canonical_sector(from_fund)
+        if canon:
+            return canon.label
+        return from_fund
 
-    index_name = intraday_index_name
-    if holding is not None:
-        index_name = holding.intraday_index_name or index_name
     if index_name and normalize_sector_label(index_name):
         return normalize_sector_label(index_name)
 
     inferred = infer_sector_label_from_fund_name(fund_name)
     if inferred:
+        canon = get_canonical_sector(inferred)
+        if canon:
+            return canon.label
         return inferred
     return None
 

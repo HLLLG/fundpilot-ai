@@ -13,6 +13,11 @@ logger = logging.getLogger(__name__)
 
 _SUBPROCESS_TIMEOUT = 45
 
+# AkShare 拉取失败时的兜底（业绩基准文案来自公开基金概况，非持仓种子）
+_KNOWN_BENCHMARK_BY_CODE: dict[str, str] = {
+    "021533": "中证半导体材料设备主题指数收益率×95%+银行活期存款利率（税后）×5%",
+}
+
 _INDEX_CODE_RE = re.compile(r"(?<!\d)(\d{6})(?!\d)")
 
 # 业绩基准文案中的指数名 → 指数代码（长匹配优先）
@@ -147,11 +152,11 @@ print("null")
             check=False,
         )
         if completed.returncode != 0 or not completed.stdout.strip():
-            return None
+            return _KNOWN_BENCHMARK_BY_CODE.get(code)
         raw = completed.stdout.strip()
         if raw == "null":
-            return None
+            return _KNOWN_BENCHMARK_BY_CODE.get(code)
         return json.loads(raw)
     except Exception:
         logger.info("benchmark fetch failed for %s", code, exc_info=True)
-        return None
+        return _KNOWN_BENCHMARK_BY_CODE.get(code)

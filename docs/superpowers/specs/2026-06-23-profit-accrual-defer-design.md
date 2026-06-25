@@ -51,3 +51,11 @@
 **前端防御：** `holdingMetrics.ts` / `holdingDisplay.ts` 在 `profit_accrual_deferred` 时强制日收益为 0。
 
 **单测：** `apps/api/tests/test_profit_accrual_defer.py`（4 项）、`apps/web/src/lib/holdingMetrics.test.ts`（1 项）。
+
+## 二次补强（2026-06-26）
+
+| 问题 | 修复 |
+|------|------|
+| `return_percent=0` 未触发 defer | `ocr_holding_return_percent` 用 `is not None` 判断，`0%` 视为有效 |
+| defer 仍滚份额×净值 | `apply_defer_to_profile` / bootstrap 清空 `holding_shares`，锁定 OCR `holding_amount` |
+| 日收益列未解析时无法 defer | 持有收益≈0 且收益率≈0 时，即使缺日收益字段也视为待确认 |

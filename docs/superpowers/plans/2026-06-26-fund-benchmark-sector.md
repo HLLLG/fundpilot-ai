@@ -17,7 +17,9 @@
 | `sector_canonical` 最长匹配 + 半导体材料 | ✅ | 修复「半导体材料」→「半导体」子串误命中 |
 | Windows 子进程编码修复 | ✅ | `ensure_ascii=True` JSON 输出 |
 | 当日收益 defer bypass 修复 | ✅ | sector_quote / amount_sync / estimates + 前端防御 |
-| 单测 | ✅ | `test_fund_benchmark_sector.py` + `test_profit_accrual_defer.py` |
+| OCR 查码/板块/defer 二次补强 | ✅ | 材料设备别名、resolve_holding、canonical 涨跌、兜底基准 |
+| 前端无感知刷新 | ✅ | `mergeHoldingsPreserveQuoteFields` + 确认后立即切 Tab |
+| 单测 | ✅ | API 154 passed；`holdingMetrics.test.ts` |
 
 ---
 
@@ -26,4 +28,5 @@
 - [x] 021533 → 板块「半导体材料」，指数 931743
 - [x] `get_canonical_sector("半导体材料")` → 931743
 - [x] 当日新购 defer 在官方 NAV 公布后仍日收益为 0
-- [x] API 全量 147 passed
+- [x] API 全量 154 passed
+- [x] OCR 确认后列表不闪「—」（stale-while-revalidate）

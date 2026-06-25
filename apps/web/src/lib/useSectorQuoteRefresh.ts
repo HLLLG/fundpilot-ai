@@ -7,6 +7,7 @@ import type {
   SectorMappingCandidate,
   SectorQuoteMeta,
 } from "@/lib/api";
+import { mergeHoldingsPreserveQuoteFields } from "@/lib/holdingMetrics";
 import {
   applySectorMapping,
   fetchSectorQuotesStatus,
@@ -66,7 +67,7 @@ export function useSectorQuoteRefresh({
       if (generation !== refreshGenerationRef.current) {
         return undefined;
       }
-      onChange(result.holdings);
+      onChange(mergeHoldingsPreserveQuoteFields(holdingsRef.current, result.holdings));
       if (result.holding_warnings?.length) {
         const sectorCodes = new Set(["sector_quote_discrepancy"]);
         const kept = warningsRef.current.filter((warning) => !sectorCodes.has(warning.code));
