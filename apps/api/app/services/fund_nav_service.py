@@ -68,7 +68,20 @@ def get_official_nav_return(fund_code: str, trade_date: str) -> float | None:
         return None
 
 
-def get_latest_unit_nav(fund_code: str) -> float | None:
+def peek_cached_unit_nav(fund_code: str) -> float | None:
+    """仅读内存缓存中的最近单位净值，不触发网络/子进程。"""
+    key = f"unit:{fund_code}"
+    now = time.monotonic()
+    cached = _UNIT_NAV_CACHE.get(key)
+    if cached is None:
+        return None
+    value, expires_at = cached
+    if now < expires_at:
+        return value
+    return None
+
+
+def get_latest_unit_nav(fund_code: str, *, allow_fetch: bool = True) -> float | None:
     """Return the latest published unit NAV from AkShare."""
     key = f"unit:{fund_code}"
     now = time.monotonic()
@@ -78,6 +91,9 @@ def get_latest_unit_nav(fund_code: str) -> float | None:
         value, expires_at = cached
         if now < expires_at:
             return value
+
+    if not allow_fetch:
+        return None
 
     try:
         df = _fetch_nav_df(fund_code)

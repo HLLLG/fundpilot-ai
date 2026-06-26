@@ -25,13 +25,17 @@ def _overlay_sector_fields(base: Holding, patch: Holding) -> Holding:
         updates["intraday_index_name"] = patch.intraday_index_name
     if patch.sector_return_percent is not None:
         updates["sector_return_percent"] = patch.sector_return_percent
+        # 板块刷新与当日收益同源写回；盘中无官方净值时 patch 显式置 None，须覆盖快照残留。
+        updates["daily_return_percent"] = patch.daily_return_percent
+        updates["daily_profit"] = patch.daily_profit
+        updates["daily_return_percent_source"] = patch.daily_return_percent_source
     if patch.sector_return_percent_source is not None:
         updates["sector_return_percent_source"] = patch.sector_return_percent_source
-    if patch.daily_profit is not None:
+    elif patch.daily_profit is not None:
         updates["daily_profit"] = patch.daily_profit
-    if patch.daily_return_percent is not None:
+    elif patch.daily_return_percent is not None:
         updates["daily_return_percent"] = patch.daily_return_percent
-    if patch.daily_return_percent_source is not None:
+    elif patch.daily_return_percent_source is not None:
         updates["daily_return_percent_source"] = patch.daily_return_percent_source
     if patch.yesterday_profit is not None:
         updates["yesterday_profit"] = patch.yesterday_profit

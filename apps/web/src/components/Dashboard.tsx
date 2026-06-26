@@ -66,7 +66,7 @@ import {
   findHoldingIndex,
   mergeHoldingsPreserveQuoteFields,
   sumDailyProfit,
-  sumHoldingAmount,
+  sumPortfolioTotalAssets,
   type HoldingIdentity,
 } from "@/lib/holdingMetrics";
 import {
@@ -816,7 +816,7 @@ export function Dashboard() {
       const rollbackSummary = portfolioSummary;
       const remaining = holdings.filter((_, itemIndex) => itemIndex !== index);
       const display = displayableHoldings(remaining);
-      const totalAssets = sumHoldingAmount(display) || null;
+      const totalAssets = sumPortfolioTotalAssets(display) || null;
       const dailyProfit = display.length > 0 ? sumDailyProfit(display) : null;
       let dailyReturnPercent: number | null = null;
       if (totalAssets != null && dailyProfit != null && totalAssets > dailyProfit) {

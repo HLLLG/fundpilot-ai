@@ -1,9 +1,11 @@
 # 好基灵 — 删除简报页 + 持仓删除 + 三个 Bug 修复（设计）
 
 **日期：** 2026-06-22
-**状态：** 已实现；**2026-06-25 修订**删除数据范围
+**状态：** 已实现；**2026-06-25 修订**删除数据范围；**2026-06-26 修订** apply 秒回 + 缓存估算
 
 > **2026-06-25 修订：** 用户删除基金时改为**彻底删除** `fund_profiles` 与用户级 `fund_primary_sectors`（不再仅归零 `holding_amount`）。修复删除后 `profiles_recovered` 复活与列表 0.00 脏数据。历史**按日日快照**仍保留。
+
+> **2026-06-26 修订：** `apply_confirmed_holdings` 在快速写入基础上增加 `bootstrap(skip_network)` + `refresh_holdings_sector_quotes(cache_only=True)`，确认弹窗秒关且立即展示板块缓存估算；最新行情仍由前端后台 `refresh-sector-quotes(fast)` 补全。详见 `docs/design/holding-metrics-contract.md`。
 
 ## 背景与目标
 
@@ -45,8 +47,8 @@
 - `storage.ts`：`DashboardTabId`/`DASHBOARD_TAB_IDS` 去 `today`；`loadDashboardTab` 默认 `holdings`，旧值 `today` 兜底为 `holdings`。
 
 ### 任务 B（Bug 1）：apply-holdings 快速写入
-- `apply_confirmed_holdings`：保留 finalize 查码 + `apply_primary_sector_to_holdings`(DB) + `sync_profiles_from_holdings`(DB)；用 `enrich_loaded_holdings(with_network=False)` 做展示估算；`save_portfolio_summary` + `save_daily_snapshot` 后立即返回。**不再调用** `process_overview_holdings`。
-- 前端 `Dashboard.tsx`：`handleManualAddHoldings` 与 `handleConfirmOcrHoldings` 成功后显式 `await sectorRefresh.refresh(false, "fast")`，由 `refresh-sector-quotes`（8s 预算、已持久化）补板块/当日收益。
+- `apply_confirmed_holdings`：保留 finalize 查码 + `apply_primary_sector_to_holdings`(DB) + `sync_profiles_from_holdings`(DB)；`bootstrap_holding_baselines(skip_network=True)` 不拉估值/净值子进程；同请求 `refresh_holdings_sector_quotes(cache_only=True)` 读 `sector_spot_cache` 补板块估算；`enrich_holdings_estimates` + `save_portfolio_summary` + `save_daily_snapshot` 后立即返回。**不再调用** `process_overview_holdings`。
+- 前端 `Dashboard.tsx`：确认/手动添加成功后 `refreshAfterApplyRef` 触发后台 `sectorRefresh.refresh(true, "fast")`（不阻塞弹窗关闭），由 `refresh-sector-quotes`（8s 预算、已持久化）补最新行情。
 - 保留 OCR 总览份额基线：`refresh-sector-quotes` 成功后的 `persist_holdings_after_sector_refresh` 已做 `sync_holding_amounts_from_shares`；验证「重新上传总览金额对齐」不回归。
 
 ### 任务 C（Bug 3）：无板块基金估值兜底

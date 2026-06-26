@@ -49,7 +49,8 @@ def test_apply_confirmed_holdings_skips_heavy_sector_pipeline(monkeypatch):
 
     assert called["process"] == 0
     assert len(result["holdings"]) == 1
-    assert result["sector_refresh"] is None
+    assert result["sector_refresh"] is not None
+    assert result["sector_refresh"]["cache_only"] is True
 
 
 def test_remove_holding_from_portfolio_deletes_profile(tmp_path, monkeypatch):

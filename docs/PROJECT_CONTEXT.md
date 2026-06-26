@@ -4,10 +4,11 @@
 >
 > **维护：** 功能或架构有实质变化时，同步更新「能力清单」「数据流」「API」「目录」「环境变量」。
 
-**文档版本：** 2026-06-26（OCR 无感知刷新 · 业绩基准/ defer 二次补强）
+**文档版本：** 2026-06-26（OCR 确认秒回 · 盘中结算额锁定 · 无感知刷新）
 
 **更新记录：**
-- **支付宝 OCR 确认无感知刷新（2026-06-26）：** 修复确认截图后列表估算/持有/板块列闪「—」。**前端**：`mergeHoldingsPreserveQuoteFields`（`holdingMetrics.ts`）在 OCR 确认、apply 回写、板块刷新时保留上一屏行情字段，直至新值返回；`Dashboard.handleConfirmOcrHoldings` 立即关弹窗切持仓 Tab，后台 `apply-holdings` + `refresh-sector-quotes`；去掉「已保存 N 只基金，正在后台…」顶栏提示。**单测** `holdingMetrics.test.ts`。
+- **OCR 确认秒回 + 盘中结算额锁定（2026-06-26）：** 修复 OCR 确认后「正在更新…」久等、盘中持有金额漂移、板块估算与「已更新」标签错误。**① 确认写入提速**：`apply_confirmed_holdings` 改 `bootstrap_holding_baselines(skip_network=True)`（不拉天天基金估值/AkShare 净值子进程），同请求内 `refresh_holdings_sector_quotes(cache_only=True)` 读 `sector_spot_cache` 即时补全板块涨跌与当日估算；前端 `handleConfirmOcrHoldings` 立即关弹窗切持仓 Tab，后台 `apply-holdings` + `refresh-sector-quotes`。**② 盘中结算额**：`settled_holding_amount` 为持有金额展示源；仅官方净值公布后才滚入 `shares×净值`；`holding_client` 下发 `display_holding_amount`；禁止用 `profile.holding_amount` 作盘中 fallback。**③ 估算口径**：`estimated_daily_return_percent` 盘中仅用 `sector_return_percent`（不加 settled 收益率）；板块刷新清空 `daily_*` 时同步清 `official_nav` 残留；盘中 `overlay_official_nav_returns` 短路。**④ 支付宝语义**：「日收益」→ `yesterday_profit`（昨官方净值收益），非 `daily_profit`。单测 `test_apply_holdings_fast_path.py` / `test_holding_amount_sync.py` / `test_sector_refresh_daily_clear.py` / `test_alipay_daily_semantics.py`。契约见 `docs/design/holding-metrics-contract.md`。
+- **支付宝 OCR 确认无感知刷新（2026-06-26）：** 修复确认截图后列表估算/持有/板块列闪「—」。**前端**：`mergeHoldingsPreserveQuoteFields`（`holdingMetrics.ts`）在 OCR 确认、apply 回写、板块刷新时保留上一屏行情字段，直至新值返回。**单测** `holdingMetrics.test.ts`。
 - **业绩基准 / defer / 查码二次补强（2026-06-26）：** ① **查码**：`normalize_fund_name_for_lookup` 将「半导体材料设备」→「半导体设备」，修复支付宝名「天弘半导体材料设备指数C」自动匹配 021533。② **板块**：仅 `ocr_detail`/`manual` 可挡业绩基准；`resolve_holding` 优先 `benchmark_index` 并回写档案；`sector_quote_lookup_label` 走 canonical 指数（931743 非 BK1036）；AkShare 失败时 `021533` 业绩基准兜底文案。③ **defer 金额**：`return_percent=0` 不再被当作缺失；defer 时清空 `holding_shares`、锁定 OCR 金额不滚 `份额×净值`。单测 `test_sector_quote_label.py` / `test_fund_code_resolver_index.py` / `test_profit_accrual_defer.py`（154 API passed）。
 - **基金业绩基准 → 关联板块（2026-06-26）：** 指数型基金不再靠 per-fund seed 或基金名子串推断板块。新增 `fund_benchmark_sector.py`：AkShare 雪球概况拉「业绩比较基准」→ 解析跟踪指数（如 931743）→ `THEME_BOARD_INDEX` 映射展示名（如「半导体材料」）。`fund_primary_sector_service.resolve_primary_sector` 新增 source=`benchmark_index`（优先级 65），可覆盖 `alipay_overview`/`name_infer`/`seed` 的错误板块；`sector_canonical.get_canonical_sector` 改最长子串匹配优先，新增「半导体材料」→ `2.931743`。Windows 子进程 stdout 用 `ensure_ascii=True` JSON 防乱码。案例：021533 天弘半导体设备指数 C → 半导体材料（非泛化「半导体」BK1036）。单测 `test_fund_benchmark_sector.py`。设计/计划：`docs/superpowers/specs/2026-06-26-fund-benchmark-sector-design.md` / `docs/superpowers/plans/2026-06-26-fund-benchmark-sector.md`。
 - **当日收益 defer bypass 修复（2026-06-26）：** `profit_accrual_defer` 初版已在 `apply_sector_daily_estimates` 生效，但官方 NAV 公布后 `sector_quote_service`、`holding_amount_sync`、`holding_estimates` 三条路径绕过 defer，导致当日新购仍出现日收益（如 6/25 买入 3000 元、净值更新后显示 +79）。现三处均先检查 `is_profit_accrual_deferred`；前端 `holdingMetrics.ts`/`holdingDisplay.ts` 防御性强制日收益 0。单测 `test_profit_accrual_defer.py` + `holdingMetrics.test.ts`。设计见 `docs/superpowers/specs/2026-06-23-profit-accrual-defer-design.md`（2026-06-26 补强节）。
@@ -41,7 +42,7 @@
 - **修正 Bug A：百分比收益走复利（2026-06-24）：** 纠正"简单百分比直接相加"的概念 bug——涨 3% 跌 3% 真实是 -0.09% 而非 0%（金额仍可相加，仅百分比改复利）。新增共享 helper `portfolio_profit_analysis._compound_return_percent`，统一应用到：① 收益走势图 `build_daily_trend_series`（组合与指数累计曲线）；② 盈亏日历 `build_calendar_month` 的 `month_cumulative_return_percent` / `month_index_return_percent`（`month_cumulative_profit` 金额仍为求和）；③ 近一周走势 `portfolio_snapshot.build_portfolio_trend_context`；④ 大跌反弹回测 `fund_dip_rebound_backtest`（未来 N 日累计反弹）。展示与计算口径自此统一为复利。
 - **持有天数 + 盈亏日历 + 当日收益递延（2026-06-23）：** ① **持有天数**：修复详情页 `ensure_first_seen_anchor` 在读取时把锚点写成「今天」导致天数恒为 0；改由 `save_profile` 的 `reconcile_first_seen_date` 在持久化时一次性写入（购入日 > OCR 天数回推 > `shares_baseline_date` > 今天）；`shares_baseline_date` 早于错误 `first_seen_date` 时自动回退；读取层用 `_first_seen_anchor_date` 即时纠偏，不再写库。② **盈亏日历**：非交易日（周末 + 法定假日，新浪交易日历）收益固定 **0.00**，不沿用上一交易日快照；**今日**格在组合全部持仓切到 `official_nav` 前显示 **「未更新」**（`is_pending_update`），月累计不计入估算；已公布后用实时持仓重算官方收益。③ **当日收益递延**：支付宝 OCR 当日新购（日收益/持有收益/持有收益率均 ≈0）整行 `profit_accrual_deferred`，板块估算跳过直至下一交易日；`profit_accrual_defer.py`。④ **结算金额**：官方净值公布后 `settled_holding_amount` 滚入 `份额×最新净值`；持有金额展示仍为 settled-only（与支付宝列表口径分离）。设计见 `docs/superpowers/specs/2026-06-20-holding-days-anchor-design.md`、`2026-06-23-profit-accrual-defer-design.md`。
 - **主题板块资金流历史 + 日报板块资金流（2026-06-23）：** ① **历史走势**：市场 → 主题板块展开行，四档明细下方懒加载「主力净流入走势」柱状图（近一周 5 日 / 近一月 20 日）；`GET /api/market/board-flow-history`；`board_fund_flow_history.py` 拉东财 `push2his` `fflow/daykline/get`（`secid=90.{BK}`）；host 优先 `80/82.push2his` + `_COMMON_PARAMS` + 4 轮重试/退避；按 BK 缓存（盘中 15min / 收盘 1h），失败回落 stale cache。② **BK 映射**：指数主题涨跌幅与资金流解耦；`theme_board_snapshot._THEME_BOARD_FLOW` 显式覆盖医药/贵金属/化工/交通运输等；`theme-boards` 每项带 `flow_source_code` 供前端/API 复用。③ **预热**：`refresh_theme_board_snapshot()` 写榜后后台线程限流预热历史资金流缓存。④ **日报 AI**：`sector_fund_flow_context.py` 按持仓关联板块注入 `analysis_facts.holdings[].sector_fund_flow`（当日/5d/20d 累计、四档、pattern 标签）；`trim_analysis_facts_for_llm` 保留摘要。前端 `BoardFlowHistoryChart.tsx` + `ThemeSectorOverview` 展开懒加载。设计见 `docs/superpowers/specs/2026-06-23-board-flow-history-design.md`、`2026-06-23-analysis-sector-fund-flow-design.md`。
-- **移除简报 Tab + 持仓删除 + Bug 修复（2026-06-22，删除行为 2026-06-25 修订）：** ① **信息架构**：删除冗余「简报」Tab 及 `TodayBriefing` 等组件；登录默认落地 **「持仓」**；顶/底导航 5 Tab（持仓/分析/市场/发现/日报）。② **线上 504**：`apply-holdings` 改「快速写入」（仅查码+档案+快照，不做同步板块/净值拉取）；前端 apply 成功后显式 `refresh-sector-quotes`（fast）。③ **无板块新基**：`refresh_holdings_sector_quotes` 在 boards/kline 全空时仍对有 `fund_code` 持仓拉天天基金估值兜底，避免硬失败红条与当日收益 0。④ **支付宝总览 OCR**：持有页判定优先于交易页 marker；扩展 `股票[A-CEH]` 后缀；总览 partial 早退回退切块；fixture `alipay_overview_holdings_5_ocr.txt`。⑤ **删除持仓**：`DELETE /api/portfolio/holdings/{fund_code}`（可选 `fund_name`）；详情页底部「删除该基金」+ 二次确认；**从快照移除并删除 `fund_profiles` + 用户级 `fund_primary_sectors`**（历史日快照保留）。设计见 `docs/superpowers/specs/2026-06-22-holdings-delete-and-fixes-design.md`。
+- **移除简报 Tab + 持仓删除 + Bug 修复（2026-06-22，删除行为 2026-06-25 修订，apply 提速 2026-06-26）：** ① **信息架构**：删除冗余「简报」Tab 及 `TodayBriefing` 等组件；登录默认落地 **「持仓」**；顶/底导航 5 Tab（持仓/分析/市场/发现/日报）。② **线上 504 / 确认久等**：`apply-holdings` 改「快速写入」（仅查码+档案+快照，**2026-06-26** 起同请求 `cache_only` 板块缓存估算，不拉估值/净值子进程）；前端 apply 成功后显式 `refresh-sector-quotes`（fast）后台刷新。③ **无板块新基**：`refresh_holdings_sector_quotes` 在 boards/kline 全空时仍对有 `fund_code` 持仓拉天天基金估值兜底，避免硬失败红条与当日收益 0。④ **支付宝总览 OCR**：持有页判定优先于交易页 marker；扩展 `股票[A-CEH]` 后缀；总览 partial 早退回退切块；fixture `alipay_overview_holdings_5_ocr.txt`。⑤ **删除持仓**：`DELETE /api/portfolio/holdings/{fund_code}`（可选 `fund_name`）；详情页底部「删除该基金」+ 二次确认；**从快照移除并删除 `fund_profiles` + 用户级 `fund_primary_sectors`**（历史日快照保留）。设计见 `docs/superpowers/specs/2026-06-22-holdings-delete-and-fixes-design.md`。
 - **小程序微信登录关联邮箱账号（2026-06-22）：** 修复小程序「微信一键登录」后看不到 Web 端持仓的问题。根因是身份隔离——业务数据按 `userId` 隔离，微信 callContainer 登录用 **openid** 为 key 新建空占位账号（`wx_*@wechat.fundpilot`），而 Web 持仓挂在邮箱账号下；且 Web `bind-wechat` 存的是 CloudBase **uid**，与小程序 openid 不同命名空间，原「Web 填 UID 绑定」路径实际打不通。方案：小程序侧账号打通。后端新增 `POST /api/auth/link-email`（需微信登录 JWT）→ `auth.service.link_email_account`：校验当前为微信占位账号 + 邮箱密码 → `database.merge_wechat_account_into_email_user` 事务内把占位账号 `cloudbaseUid` 迁移到邮箱账号并软删占位账号 → 返回邮箱账号新 JWT；之后每次微信登录稳定命中邮箱账号。小程序新增 `pages/link-email/`，持仓空态加「关联已有邮箱账号」入口，`utils/api.js` 加 `linkEmail()`。后端单测 +3（`tests/test_auth.py`）。
 - **AI 简报首页 + 移动端导航（2026-06-21）：** 方案 B「蚂小财式」简报首页落地。① **信息架构**：登录默认 Tab 改为 **「简报」**（`TodayBriefing`）；原养基宝持有看板独立为 **「持仓」** Tab（`YangjibaoHoldingsBoard`）；主 Tab 顺序：简报 / 持仓 / 分析 / 市场 / 发现 / 日报。② **简报页**：`todayBriefing.ts` 汇总组合 KPI、板块脉搏、嵌入最新日报决策卡（`BriefingDecisionCards`）、内联 AI 追问（`BriefingChatPanel` / `ReportChatPanel inline`）。③ **导航**：`DashboardNav.tsx` — 桌面 `lg`（≥1024px）顶部 6 Tab；手机/平板仅 **底部固定导航**（简报/持仓/分析/市场/更多→发现/日报/历史）；修复 `.dashboard-bottom-nav { display:flex }` 覆盖 Tailwind `hidden` 导致顶底双栏并存；`.dashboard-shell` 底部留白 `5.75rem + safe-area` 避免市场页「数据日期」脚注被底栏遮挡。④ **大跌雷达 UI**：`DipReboundRadar` 改卡片列表（避免表格列宽截断「深度扫描」）。⑤ **落地页/注册**：转化优化（步骤、人群、sticky CTA）。设计/计划见 `docs/superpowers/specs/2026-06-21-ai-briefing-home-design.md`、`docs/superpowers/plans/2026-06-21-ai-briefing-home.md`。
 - **本地开发 DB 回落（2026-06-21）：** 云 MySQL（如腾讯 CynosDB 30min 自动暂停）冷启动超时时，API 不再裸 500 触发浏览器 `Failed to fetch`。`db_connect.connect_with_fallback()` — MySQL 连接失败且 `FUND_AI_DB_FALLBACK_SQLITE=true`（默认，`scripts/dev.sh` 导出）时回落 SQLite；`main.py` 全局 `Exception` → JSON 500；CORS 仍最外层。`.env.example` 已文档化。
@@ -297,8 +298,10 @@ fundpilot-ai/
 ### 账户汇总与持仓元数据
 
 ```text
-今日页 → 支付宝/养基宝总览截图 → POST /api/ocr?preview=true → POST /api/portfolio/apply-holdings
-       → 自动 sync_profiles（fund_profiles 表）+ bootstrap 份额 + sector_refresh
+今日页 → 支付宝/养基宝总览截图 → POST /api/ocr?preview=true
+       → POST /api/portfolio/apply-holdings（秒回：写库 + 板块缓存估算）
+       → 前端关闭确认弹窗 → 后台 refresh-sector-quotes(fast) 刷新最新行情
+       → 自动 sync_profiles（fund_profiles 表）+ bootstrap 份额（skip_network）
 打开应用 → localStorage 恢复持仓（若有）→ GET /api/portfolio/holdings（内存缓存 + refreshed_at）→ 可选自动 refresh-sector-quotes
 点击持仓行 → 基金详情（业绩走势、持有天数、板块分时）
 ```
@@ -417,7 +420,7 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | POST | `/api/auth/link-email` | **小程序**微信占位账号关联已有邮箱账号（需微信登录 JWT；校验邮箱密码后把本次 openid 迁移到邮箱账号并软删占位账号，返回邮箱账号新 JWT） |
 | GET | `/api/auth/me` | 当前用户（需 JWT） |
 | POST | `/api/ocr` | 截图/文本 → holdings；`preview=true` 仅解析不写入；支持支付宝列表 |
-| POST | `/api/portfolio/apply-holdings` | 确认 OCR 预览结果写入持仓与快照；body 可选 `detail_profiles`（养基宝详情 OCR 档案） |
+| POST | `/api/portfolio/apply-holdings` | 确认 OCR 预览写入持仓与快照：**秒回**（skip_network bootstrap + `cache_only` 板块估算）；后台由前端触发 `refresh-sector-quotes` 补全最新行情 |
 | GET | `/api/funds/search?q=` | 东财基金名称表模糊查码（OCR 确认 / 改码 picker） |
 | GET | `/api/funds/{code}/primary-sector` | 查询 fund_code→主关联板块（DB / 档案 / 种子） |
 | POST | `/api/funds/{code}/primary-sector/refresh-holdings` | AkShare 季报重仓推荐板块并写入表 |
@@ -594,7 +597,7 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | 场景 | 公式 |
 |------|------|
 | 官方净值已公布 | `daily_profit = holding_amount × daily_return% / (100 + daily_return%)` |
-| 盘中板块估算 | `daily_profit ≈ holding_amount × sector_return% / 100` |
+| 盘中板块估算 | `daily_profit ≈ settled_holding_amount × sector_return% / 100` |
 
 **昨日收益：** 再上一交易日官方净值涨跌（`compute_yesterday_profit_from_official_nav`），账户汇总「估算当日」列下展示「昨 ±xx」；OCR 详情页 `yesterday_profit` 作兜底。
 
@@ -607,7 +610,7 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 - **`holding_estimates.py`：** `overlay_official_nav_returns`（恢复持仓时补官方净值）、`compute_official_daily_profit`、`enrich_holdings_yesterday_profits`。
 - **`holdingMetrics.ts`：** `applySectorDailyEstimate` 保留 `official_nav`；`computeDailyProfit` / `computeHoldingProfit` 与后端一致。
 - **`YangjibaoHoldingsBoard`：** 估算当日 + 昨日收益子行；关联板块列独立展示东财涨跌；日期取自 `GET /api/trading-session` 的 `effective_trade_date`。
-- **`holding_amount_sync.py`：** OCR 后锁定 `holding_shares`；刷新/恢复时 `shares × unit_nav` 更新金额；有份额时当日收益用 `r/(100+r)` 公式。
+- **`holding_amount_sync.py`：** OCR 后 `bootstrap_holding_baselines(skip_network=True)` 锁定 `settled_holding_amount`；仅官方净值公布时滚入 `shares × 最新净值`；刷新/恢复时盘中锁定结算额；有份额时当日收益用 `r/(100+r)` 或 `settled×sector%/100`。
 
 **缓存策略：** `_NAV_CACHE[f"{fund_code}:{trade_date}"]` TTL 24h（命中）/ 5min（未发布重试）。
 

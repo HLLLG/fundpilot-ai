@@ -213,17 +213,21 @@ def apply_confirmed_holdings(
 ) -> dict:
     """用户确认 OCR 草稿 / 手动新增后：快速写库并立即返回。
 
-    历史实现会在本请求内同步做全量板块刷新 + per-fund 官方净值/估值拉取（无超时预算），
-    在 CloudBase 云托管下极易超过网关超时（~60s）返回 504（且 504 不经 CORS 中间件，
-    浏览器二次报 CORS）。这里改为「快速写入」：只做 查码 + 档案/板块映射（DB）+ 展示层估算，
-    板块涨跌与当日收益由前端在 apply 成功后调用 `POST /api/holdings/refresh-sector-quotes`
-    异步刷新（该端点带 8s 预算并会回写快照）。
+    1. 跳过网络估值/净值拉取，仅用 OCR 金额写档案与快照；
+    2. 用板块行情缓存即时补全 sector 涨跌与当日估算；
+    3. 前端在返回后后台调用 ``refresh-sector-quotes`` 无感知刷新最新行情。
     """
     from app.models import Holding
+    from app.services.holding_amount_sync import bootstrap_holding_baselines
+    from app.services.holding_client import serialize_holdings_for_client
+    from app.services.holding_estimates import clear_client_daily_estimate_fields_batch, enrich_holdings_estimates
     from app.services.portfolio_persistence import enrich_loaded_holdings
+    from app.services.sector_quote_service import refresh_holdings_sector_quotes
 
     profile_service = FundProfileService()
+
     typed = [Holding.model_validate(item) if isinstance(item, dict) else item for item in holdings]
+    typed = clear_client_daily_estimate_fields_batch(typed)
     typed = _finalize_confirmed_holdings(typed, profile_service)
     from app.services.fund_primary_sector_service import apply_primary_sector_to_holdings
 
@@ -239,20 +243,48 @@ def apply_confirmed_holdings(
         force_reset_shares=False,
     )
     merged = enrich_holdings_from_profiles(typed)
+    merged = bootstrap_holding_baselines(merged, force_reset_shares=True, skip_network=True)
     processed = enrich_loaded_holdings(merged, with_network=False)
 
-    total_assets = round(sum(item.holding_amount for item in processed), 2)
+    cache_refresh = refresh_holdings_sector_quotes(processed, cache_only=True)
+    if cache_refresh.get("holdings"):
+        processed = [Holding.model_validate(item) for item in cache_refresh["holdings"]]
+    processed = enrich_holdings_estimates(processed)
+
+    from app.services.holding_estimates import sum_daily_profit
+
+    total_assets = round(
+        sum(
+            (item.settled_holding_amount or item.holding_amount) + (item.daily_profit or 0)
+            for item in processed
+        ),
+        2,
+    )
+    daily_profit = sum_daily_profit(processed)
+    daily_return_percent = None
+    if total_assets > daily_profit > 0:
+        previous = total_assets - daily_profit
+        if previous > 0:
+            daily_return_percent = round(daily_profit / previous * 100, 2)
+
     portfolio_summary = PortfolioSummary(
         total_assets=total_assets,
+        daily_profit=daily_profit,
+        daily_return_percent=daily_return_percent,
         holding_count=len(processed),
     )
     save_portfolio_summary(portfolio_summary)
     save_daily_snapshot(processed, portfolio_summary)
     return {
-        "holdings": [holding.model_dump() for holding in processed],
+        "holdings": serialize_holdings_for_client(processed),
         "portfolio_summary": portfolio_summary.model_dump(mode="json"),
         "profile_sync": profile_sync,
-        "sector_refresh": None,
+        "sector_refresh": {
+            "cache_only": True,
+            "ok": cache_refresh.get("ok"),
+            "matched": (cache_refresh.get("summary") or {}).get("matched", 0),
+            "message": cache_refresh.get("message"),
+        },
     }
 
 
@@ -315,6 +347,11 @@ def _ocr_amount_semantics(ocr_source: str, trading_session: dict) -> dict:
     return {
         "source": "alipay_holdings",
         "holding_amount": "last_trade_day_settlement",
+        "yesterday_profit": "alipay_column_is_prior_trade_day_official_nav",
         "daily_profit": "sector_estimate_after_refresh",
-        "note": "交易日盘中截图的持有金额为上一交易日结算值；当日收益需刷新板块后估算。",
+        "note": (
+            "交易日盘中截图：持有金额为上一交易日结算值；"
+            "「日收益」列为上一交易日官方净值公布后的收益（写入 yesterday_profit），"
+            "不是当日盘中估算；当日收益需刷新板块后估算。"
+        ),
     }

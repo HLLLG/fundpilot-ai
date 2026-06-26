@@ -18,7 +18,7 @@ from app.services.sector_labels import normalize_sector_label
 from app.services.sector_labels import sector_label_key
 from app.services.sector_on_demand import fetch_sector_on_demand
 from app.services.sector_quote_label import sector_display_label, sector_quote_lookup_label
-from app.services.sector_quote_provider import SpotBoardFetchResult, fetch_spot_boards, fetch_spot_boards_result
+from app.services.sector_quote_provider import SpotBoardFetchResult, fetch_spot_boards, fetch_spot_boards_result, load_spot_boards_from_cache_only
 from app.services.sector_quote_resolver import (
     SectorResolveResult,
     mapping_record_from_result,
@@ -49,6 +49,15 @@ def _is_trading_hours() -> bool:
     return session.get("session_kind") == "trading_day_intraday"
 
 
+def _intraday_blocks_official_nav() -> bool:
+    """盘中/收盘前决策窗：当日官方净值未公布，不得标 official_nav。"""
+    session = build_trading_session()
+    return session.get("session_kind") in {
+        "trading_day_intraday",
+        "trading_day_pre_close",
+    }
+
+
 def _get_last_trade_date() -> str:
     """板块涨跌/官方净值所对应的有效交易日（开盘前与周末回溯上一交易日）。"""
     return get_effective_trade_date()
@@ -59,6 +68,7 @@ def refresh_holdings_sector_quotes(
     *,
     force_refresh: bool = False,
     timeout_seconds: float | None = None,
+    cache_only: bool = False,
 ) -> dict:
     settings = get_settings()
     session = build_trading_session()
@@ -99,59 +109,93 @@ def refresh_holdings_sector_quotes(
         "concept": {},
         "industry": {},
     }
-    kline_prefetched = prefetch_canonical_kline_quotes(
-        lookup_labels,
-        boards,
-        timeout_seconds=timeout_seconds,
-    )
-
-    canonical_label_count = len(
-        {
-            normalize_sector_label(label)
-            for label in lookup_labels
-            if label and get_canonical_sector(label)
-        }
-    )
-    need_spot_boards = labels_need_spot_boards(lookup_labels) or (
-        canonical_label_count > 0 and kline_prefetched < canonical_label_count
-    )
-
-    if need_spot_boards:
-        fetch_result = fetch_spot_boards_result(
-            force_refresh=force_refresh,
-            timeout_seconds=timeout_seconds,
-        )
+    if cache_only:
+        fetch_result = load_spot_boards_from_cache_only()
         for board_type in ("index", "concept", "industry"):
-            merged = boards.get(board_type) or {}
-            merged.update(fetch_result.boards.get(board_type) or {})
-            boards[board_type] = merged
-            fetch_result.boards[board_type] = merged
+            boards[board_type] = dict(fetch_result.boards.get(board_type) or {})
+        kline_prefetched = 0
+        estimate_quotes: dict[str, dict] = {}
+        estimate_quotes_loaded = True
     else:
-        fetch_result = SpotBoardFetchResult(
-            boards=boards,
-            provider_path="eastmoney_kline",
-            live_attempted=True,
-            elapsed_seconds=0.0,
-        )
-
-    estimate_quotes: dict[str, dict] = {}
-    if need_spot_boards:
-        estimate_quotes = _maybe_fetch_estimate_quotes(
-            holdings,
-            boards=boards,
-            fetch_result=fetch_result,
+        kline_prefetched = prefetch_canonical_kline_quotes(
+            lookup_labels,
+            boards,
             timeout_seconds=timeout_seconds,
         )
-    estimate_quotes_loaded = (
-        need_spot_boards
-        and timeout_seconds is not None
-        and _board_entry_count(fetch_result.boards) < 8
-    )
+
+        canonical_label_count = len(
+            {
+                normalize_sector_label(label)
+                for label in lookup_labels
+                if label and get_canonical_sector(label)
+            }
+        )
+        need_spot_boards = labels_need_spot_boards(lookup_labels) or (
+            canonical_label_count > 0 and kline_prefetched < canonical_label_count
+        )
+
+        if need_spot_boards:
+            fetch_result = fetch_spot_boards_result(
+                force_refresh=force_refresh,
+                timeout_seconds=timeout_seconds,
+            )
+            for board_type in ("index", "concept", "industry"):
+                merged = boards.get(board_type) or {}
+                merged.update(fetch_result.boards.get(board_type) or {})
+                boards[board_type] = merged
+                fetch_result.boards[board_type] = merged
+        else:
+            fetch_result = SpotBoardFetchResult(
+                boards=boards,
+                provider_path="eastmoney_kline",
+                live_attempted=True,
+                elapsed_seconds=0.0,
+            )
+        estimate_quotes: dict[str, dict] = {}
+        if need_spot_boards:
+            estimate_quotes = _maybe_fetch_estimate_quotes(
+                holdings,
+                boards=boards,
+                fetch_result=fetch_result,
+                timeout_seconds=timeout_seconds,
+            )
+        estimate_quotes_loaded = (
+            need_spot_boards
+            and timeout_seconds is not None
+            and _board_entry_count(fetch_result.boards) < 8
+        )
+
+    if cache_only and not any(boards.values()):
+        return {
+            "ok": True,
+            "message": "板块缓存未命中，后台将刷新",
+            "holdings": [holding.model_dump() for holding in holdings],
+            "items": [],
+            "holding_warnings": [],
+            "summary": {
+                "matched": 0,
+                "unresolved": len(holdings),
+                "needs_mapping": 0,
+                "estimate_fallback": 0,
+                "board_matched": 0,
+                "secid_matched": 0,
+                "provider_path": fetch_result.provider_path,
+                "from_stale_cache": fetch_result.from_stale_cache,
+            },
+            "session": session,
+            "fetched_at": fetched_at.isoformat(),
+            **_provider_meta(fetch_result, provider_path=fetch_result.provider_path),
+        }
 
     # 兜底：当没有任何板块/指数命中（例如全部持仓都是无关联板块的新基金，
     # 如「中航机遇领航混合发起C」）时，仍尝试用天天基金估值给出当日收益，
     # 避免直接硬失败 + 当日收益恒为 0。
-    if not any(boards.values()) and not estimate_quotes and kline_prefetched == 0:
+    if (
+        not cache_only
+        and not any(boards.values())
+        and not estimate_quotes
+        and kline_prefetched == 0
+    ):
         has_real_fund_code = any(
             (holding.fund_code or "").strip() and holding.fund_code != "000000"
             for holding in holdings
@@ -163,7 +207,12 @@ def refresh_holdings_sector_quotes(
             )
             estimate_quotes_loaded = True
 
-    if not any(boards.values()) and not estimate_quotes and kline_prefetched == 0:
+    if (
+        not cache_only
+        and not any(boards.values())
+        and not estimate_quotes
+        and kline_prefetched == 0
+    ):
         return {
             "ok": False,
             "message": "板块行情拉取失败（网络/代理），且没有可用快照，请稍后重试",
@@ -218,7 +267,7 @@ def refresh_holdings_sector_quotes(
             and label_key not in label_boards
             and result.matched_name != label_key
         )
-        if needs_on_demand and timeout_seconds is None:
+        if needs_on_demand and timeout_seconds is None and not cache_only:
             on_demand = fetch_sector_on_demand(lookup_label, boards)
             if on_demand is not None and on_demand.change_percent is not None:
                 result = on_demand
@@ -237,7 +286,7 @@ def refresh_holdings_sector_quotes(
                 message=f"板块涨跌 {result.change_percent:+.2f}% 超出合理范围，已忽略",
             )
         if result.confidence not in {"high", "medium"}:
-            if timeout_seconds is not None and not estimate_quotes_loaded:
+            if timeout_seconds is not None and not estimate_quotes_loaded and not cache_only:
                 estimate_quotes = fetch_fund_estimate_quotes(
                     holdings,
                     timeout_seconds=timeout_seconds,
@@ -273,7 +322,9 @@ def refresh_holdings_sector_quotes(
         new_holding = holding
         if result.confidence in {"high", "medium"} and result.change_percent is not None:
             trade_date = _get_last_trade_date()
-            nav_return = get_official_nav_return(holding.fund_code, trade_date) if holding.fund_code else None
+            nav_return = None
+            if holding.fund_code and not _intraday_blocks_official_nav() and not cache_only:
+                nav_return = get_official_nav_return(holding.fund_code, trade_date)
 
             sector_source = "realtime" if _is_trading_hours() else "closing_estimate"
             update: dict = {

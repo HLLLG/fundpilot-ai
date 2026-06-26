@@ -305,7 +305,9 @@ export function applySectorDailyEstimate(holding: Holding): Holding {
     return holding;
   }
   const sector = holding.sector_return_percent;
-  if (sector == null || holding.holding_amount <= 0) {
+  const amount =
+    holding.settled_holding_amount ?? holding.display_holding_amount ?? holding.holding_amount;
+  if (sector == null || amount <= 0) {
     return {
       ...holding,
       daily_profit: null,
@@ -316,7 +318,7 @@ export function applySectorDailyEstimate(holding: Holding): Holding {
   const includesToday = holdingAmountIncludesTodayReturn(holding);
   return {
     ...holding,
-    daily_profit: computeDailyProfitFromRate(holding.holding_amount, sector, includesToday),
+    daily_profit: computeDailyProfitFromRate(amount, sector, includesToday),
     daily_return_percent: sector,
     daily_return_percent_source: "sector_estimate",
   };
@@ -378,11 +380,7 @@ export function computeEstimatedDailyReturnPercent(holding: Holding): number | n
   if (holding.sector_return_percent == null) {
     return null;
   }
-  const settled = resolveHoldingReturnPercent(holding);
-  if (settled == null) {
-    return null;
-  }
-  return round2(holding.sector_return_percent + settled);
+  return round2(holding.sector_return_percent);
 }
 
 export function holdingDailyReturnIsEstimated(holding: Holding): boolean {
@@ -393,11 +391,7 @@ export function holdingDailyReturnIsEstimated(holding: Holding): boolean {
   ) {
     return false;
   }
-  return (
-    holding.daily_return_percent == null &&
-    holding.sector_return_percent != null &&
-    computeEstimatedDailyReturnPercent(holding) != null
-  );
+  return holding.daily_return_percent == null && holding.sector_return_percent != null;
 }
 
 export function dailyProfitIsEstimated(holding: Holding): boolean {
@@ -450,6 +444,19 @@ export function sumDailyProfit(holdings: Holding[]): number {
 
 export function sumHoldingAmount(holdings: Holding[]): number {
   return round2(holdings.reduce((sum, holding) => sum + holding.holding_amount, 0));
+}
+
+/** 总资产 = Σ(结算持有金额 + 当日收益)；盘中结算额不变，总资产随估算收益动 */
+export function sumPortfolioTotalAssets(holdings: Holding[]): number {
+  return round2(
+    holdings.reduce((sum, holding) => {
+      const settled =
+        holding.settled_holding_amount ??
+        holding.display_holding_amount ??
+        holding.holding_amount;
+      return sum + settled + (computeDailyProfit(holding) ?? 0);
+    }, 0),
+  );
 }
 
 /** 持仓成本总额 = 持有金额 / (1 + 持有收益率) */

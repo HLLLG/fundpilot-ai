@@ -9,7 +9,7 @@ from app.config import get_settings
 from app.services.akshare_spot_client import fetch_boards_via_akshare
 from app.services.eastmoney_spot_client import fetch_eastmoney_boards
 from app.services.sector_quote_browser_provider import fetch_boards_via_browser_command
-from app.services.sector_quote_cache import get_spot_snapshot, save_spot_snapshot
+from app.services.sector_quote_cache import get_spot_snapshot, get_spot_snapshot_any_age, save_spot_snapshot
 from app.services.sector_quote_relay_provider import fetch_boards_via_relay
 
 logger = logging.getLogger(__name__)
@@ -37,6 +37,45 @@ def fetch_spot_boards(
         force_refresh=force_refresh,
         timeout_seconds=timeout_seconds,
     ).boards
+
+
+def load_spot_boards_from_cache_only() -> SpotBoardFetchResult:
+    """仅读板块快照缓存（新鲜或过期均可），不发起任何网络请求。"""
+    start_time = time.time()
+    settings = get_settings()
+    if not settings.sector_quotes_enabled:
+        return SpotBoardFetchResult(
+            boards=_empty_boards(),
+            provider_path="disabled",
+            elapsed_seconds=_elapsed(start_time),
+        )
+
+    today = date.today().isoformat()
+    ttl = float(settings.sector_quotes_ttl_seconds)
+    cache_key = f"spot:all:{today}"
+
+    fresh = get_spot_snapshot(cache_key, ttl_seconds=ttl)
+    if fresh is not None and _boards_cacheable(fresh):
+        return SpotBoardFetchResult(
+            boards=fresh,
+            provider_path="fresh_cache",
+            elapsed_seconds=_elapsed(start_time),
+        )
+
+    stale = get_spot_snapshot_any_age(cache_key)
+    if stale is not None and _boards_cacheable(stale):
+        return SpotBoardFetchResult(
+            boards=stale,
+            provider_path="stale_cache",
+            from_stale_cache=True,
+            elapsed_seconds=_elapsed(start_time),
+        )
+
+    return SpotBoardFetchResult(
+        boards=_empty_boards(),
+        provider_path="cache_miss",
+        elapsed_seconds=_elapsed(start_time),
+    )
 
 
 def fetch_spot_boards_result(

@@ -315,7 +315,8 @@ def merge_holding_into_profile(
 ) -> FundProfile:
     updates: dict = {
         "fund_name": profile.fund_name if not profile.is_provisional else holding.fund_name,
-        "holding_amount": holding.holding_amount,
+        "holding_amount": holding.settled_holding_amount or holding.holding_amount,
+        "settled_holding_amount": holding.settled_holding_amount or holding.holding_amount,
     }
     if holding.holding_profit is not None:
         updates["holding_profit"] = holding.holding_profit
@@ -323,6 +324,8 @@ def merge_holding_into_profile(
         updates["holding_return_percent"] = holding.holding_return_percent
     elif holding.return_percent is not None:
         updates["holding_return_percent"] = holding.return_percent
+    if holding.yesterday_profit is not None:
+        updates["yesterday_profit"] = holding.yesterday_profit
     if holding.daily_profit is not None:
         updates["daily_profit"] = holding.daily_profit
     if _is_valid_sector_label(holding.sector_name):
@@ -350,10 +353,12 @@ def _holding_to_provisional_profile(
         fund_code=code,
         fund_name=holding.fund_name,
         aliases=_aliases_for_name(holding.fund_name),
-        holding_amount=holding.holding_amount,
+        holding_amount=holding.settled_holding_amount or holding.holding_amount,
+        settled_holding_amount=holding.settled_holding_amount or holding.holding_amount,
         holding_profit=holding.holding_profit,
         holding_return_percent=holding.holding_return_percent or holding.return_percent or None,
         daily_profit=holding.daily_profit,
+        yesterday_profit=holding.yesterday_profit,
         sector_name=holding.sector_name,
         sector_return_percent=holding.sector_return_percent,
         intraday_index_name=holding.intraday_index_name,

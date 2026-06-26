@@ -19,7 +19,7 @@ import {
   formatSignedPercent,
   resolveSectorBoardReturnPercent,
   sumDailyProfit,
-  sumHoldingAmount,
+  sumPortfolioTotalAssets,
   displayableHoldings,
   type HoldingIdentity,
 } from "@/lib/holdingMetrics";
@@ -104,7 +104,7 @@ function holdingsSortValue(holding: Holding, key: HoldingsSortKey): number | nul
     case "holding":
       return getEstimatedHoldingProfit(holding);
     case "amount":
-      return holding.holding_amount;
+      return getSettledHoldingAmount(holding);
   }
 }
 
@@ -229,7 +229,7 @@ export function YangjibaoHoldingsBoard({
   const displayHoldings = useMemo(() => displayableHoldings(holdings), [holdings]);
   const refreshNotice = buildSectorRefreshNotice(lastRefreshResult);
 
-  const computedTotal = sumHoldingAmount(displayHoldings);
+  const computedTotal = sumPortfolioTotalAssets(displayHoldings);
   const computedDaily = sumDailyProfit(displayHoldings);
   const totalAssets = computedTotal || portfolioSummary?.total_assets || null;
   const dailyProfit = displayHoldings.length > 0 ? computedDaily : null;

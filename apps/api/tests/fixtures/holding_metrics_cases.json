@@ -10,7 +10,7 @@
       "sector_return_percent": -0.16
     },
     "expected": {
-      "estimated_daily_return_percent": 2.58,
+      "estimated_daily_return_percent": -0.16,
       "daily_return_is_estimated": true
     }
   },

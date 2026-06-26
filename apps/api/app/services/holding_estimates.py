@@ -3,6 +3,26 @@ from __future__ import annotations
 from app.models import Holding
 
 
+def clear_client_daily_estimate_fields(holding: Holding) -> Holding:
+    """确认入库前剥离客户端/OCR 自带的「当日」字段。
+
+    支付宝截图「日收益」语义为上一交易日官方净值结算收益，解析在 ``yesterday_profit``；
+    当日收益仅由板块刷新或当日官方净值覆盖写入。
+    """
+    patch: dict = {
+        "daily_profit": None,
+        "daily_return_percent": None,
+        "daily_return_percent_source": None,
+    }
+    if holding.yesterday_profit is None and holding.daily_profit is not None:
+        patch["yesterday_profit"] = holding.daily_profit
+    return holding.model_copy(update=patch)
+
+
+def clear_client_daily_estimate_fields_batch(holdings: list[Holding]) -> list[Holding]:
+    return [clear_client_daily_estimate_fields(holding) for holding in holdings]
+
+
 def _round2(value: float) -> float:
     return round(value, 2)
 
@@ -237,7 +257,11 @@ def apply_sector_daily_estimates(holding: Holding) -> Holding:
 def overlay_official_nav_returns(holdings: list[Holding]) -> list[Holding]:
     """恢复持仓时若官方净值已公布，覆盖板块估算的当日收益。"""
     from app.services.fund_nav_service import get_official_nav_return
-    from app.services.trading_session import get_effective_trade_date
+    from app.services.trading_session import build_trading_session, get_effective_trade_date
+
+    session = build_trading_session()
+    if session.get("session_kind") in {"trading_day_intraday", "trading_day_pre_close"}:
+        return holdings
 
     trade_date = get_effective_trade_date()
     updated: list[Holding] = []
@@ -299,15 +323,12 @@ def sum_daily_profit(holdings: list[Holding]) -> float:
 
 
 def compute_estimated_daily_return_percent(holding: Holding) -> float | None:
-    """当日基金涨跌：优先 official/daily；否则 sector + 昨日结算（勿与累计持有混淆）。"""
+    """当日基金涨跌：优先 official/daily；否则用 sector_return_percent 估算。"""
     if holding.daily_return_percent is not None:
         return holding.daily_return_percent
-    if holding.sector_return_percent is None:
-        return None
-    settled = resolve_holding_return_percent(holding)
-    if settled is None:
-        return None
-    return round(holding.sector_return_percent + settled, 4)
+    if holding.sector_return_percent is not None:
+        return round(holding.sector_return_percent, 4)
+    return None
 
 
 def holding_daily_return_is_estimated(holding: Holding) -> bool:
@@ -317,11 +338,7 @@ def holding_daily_return_is_estimated(holding: Holding) -> bool:
 
     if is_profit_accrual_deferred(get_profile_for_holding(holding)):
         return False
-    return (
-        holding.daily_return_percent is None
-        and holding.sector_return_percent is not None
-        and compute_estimated_daily_return_percent(holding) is not None
-    )
+    return holding.daily_return_percent is None and holding.sector_return_percent is not None
 
 
 def portfolio_official_nav_settled(holdings: list[Holding]) -> bool:

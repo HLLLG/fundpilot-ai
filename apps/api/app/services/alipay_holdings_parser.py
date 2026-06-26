@@ -359,6 +359,10 @@ def _parse_alipay_overview_holdings(lines: list[str]) -> list[Holding]:
 
 
 def _parse_overview_fund_block(fund_name: str, block_lines: list[str]) -> Holding | None:
+    """四列版式：金额、日收益、持有收益、累计收益。
+
+    「日收益」= 上一交易日官方净值公布后的收益，写入 ``yesterday_profit``（非当日估算）。
+    """
     numbers: list[float] = []
     holding_return_percent: float | None = None
 
