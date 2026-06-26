@@ -2,7 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { AlertCircle, Clock3 } from "lucide-react";
-import { fetchTradingSession, type TradingSession } from "@/lib/api";
+import { type TradingSession } from "@/lib/api";
+import { readTradingSessionCache } from "@/lib/holdingDetailCache";
+import { hydrateTradingSession } from "@/lib/tradingSessionClient";
 
 const sessionTone: Record<string, string> = {
   trading_day_pre_open: "border-slate-200 bg-slate-50 text-slate-800",
@@ -23,19 +25,22 @@ const sessionLabel: Record<string, string> = {
 type LoadState = "loading" | "ready" | "error";
 
 export function TradingSessionBar() {
-  const [session, setSession] = useState<TradingSession | null>(null);
-  const [loadState, setLoadState] = useState<LoadState>("loading");
+  const [session, setSession] = useState<TradingSession | null>(() => readTradingSessionCache());
+  const [loadState, setLoadState] = useState<LoadState>(() =>
+    readTradingSessionCache() ? "ready" : "loading",
+  );
 
   useEffect(() => {
-    void fetchTradingSession()
-      .then((payload) => {
+    return hydrateTradingSession(
+      (payload) => {
         setSession(payload);
         setLoadState("ready");
-      })
-      .catch(() => {
+      },
+      () => {
         setSession(null);
         setLoadState("error");
-      });
+      },
+    );
   }, []);
 
   if (loadState === "loading") {

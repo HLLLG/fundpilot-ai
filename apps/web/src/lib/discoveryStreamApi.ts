@@ -76,7 +76,23 @@ type StreamEvent =
   | { type: "done"; report_id: string; report: FundDiscoveryReport }
   | { type: "error"; message: string };
 
-const FIRST_EVENT_TIMEOUT_MS = 5000;
+const CONNECT_TIMEOUT_MS = 30_000;
+const FIRST_EVENT_TIMEOUT_MS = 90_000;
+
+function mergeAbortSignals(...signals: Array<AbortSignal | undefined>): AbortSignal {
+  const controller = new AbortController();
+  for (const signal of signals) {
+    if (!signal) {
+      continue;
+    }
+    if (signal.aborted) {
+      controller.abort();
+      break;
+    }
+    signal.addEventListener("abort", () => controller.abort(), { once: true });
+  }
+  return controller.signal;
+}
 
 export { appendStreamTokenBuffer, STREAM_TOKEN_BUFFER_MAX };
 
@@ -169,15 +185,30 @@ export async function streamDiscovery(
     signal?: AbortSignal;
   },
 ): Promise<void> {
-  const response = await apiFetch(`${API_BASE}/api/fund-discovery/stream`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(discoveryPayload(holdings, profile, options)),
-    signal: options?.signal,
-  });
+  const connectAbort = new AbortController();
+  const connectTimer = window.setTimeout(() => connectAbort.abort(), CONNECT_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await apiFetch(`${API_BASE}/api/fund-discovery/stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(discoveryPayload(holdings, profile, options)),
+      signal: mergeAbortSignals(options?.signal, connectAbort.signal),
+    });
+  } catch (error) {
+    if (connectAbort.signal.aborted && !options?.signal?.aborted) {
+      throw new Error("连接 API 超时，将回退到后台扫描");
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(connectTimer);
+  }
+
   if (!response.ok || !response.body) {
     throw new Error(await response.text());
   }
+
+  events.onStage?.("connected", "已连接服务端，正在启动扫描…");
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -208,7 +239,7 @@ export async function streamDiscovery(
         throw new DOMException("The operation was aborted.", "AbortError");
       }
       if (timeoutAbort.signal.aborted && !sawEvent) {
-        throw new Error("流式连接超时，将回退到异步扫描");
+        throw new Error("等待流式首包超时，将回退到后台扫描");
       }
       const { done, value } = await reader.read();
       if (done) {

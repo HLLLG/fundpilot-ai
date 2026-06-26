@@ -83,6 +83,7 @@ from app.services.penetration_daily_allocator import allocate_penetration_daily_
 from app.services.holding_client import serialize_holdings_for_client
 from app.services.fund_code_resolver import reconcile_holding_fund_codes, search_funds_by_keyword
 from app.services.portfolio_holdings_service import (
+    apply_server_sector_cache_to_holdings,
     build_portfolio_holdings_response,
     load_persisted_holdings,
     remove_holding_from_portfolio,
@@ -751,9 +752,9 @@ def fund_discovery_stream_endpoint(request: DiscoveryRequest) -> StreamingRespon
 
     return StreamingResponse(
         event_stream(),
-        media_type="text/event-stream",
+        media_type="text/event-stream; charset=utf-8",
         headers={
-            "Cache-Control": "no-cache",
+            "Cache-Control": "no-cache, no-transform",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
         },
@@ -1286,28 +1287,54 @@ def portfolio_evidence_overview() -> dict:
 @app.get("/api/portfolio/holdings")
 def portfolio_holdings() -> dict:
     user_key = str(get_request_user_id())
+
+    def _response_from_holdings(
+        holdings: list[Holding],
+        *,
+        source: str,
+        snapshot_date: str | None,
+        refreshed_at: datetime | None,
+    ) -> dict:
+        enriched = apply_server_sector_cache_to_holdings(holdings)
+        return build_portfolio_holdings_response(
+            enriched,
+            source=source,
+            snapshot_date=snapshot_date,
+            refreshed_at=refreshed_at,
+        )
+
     cached = get_cached_holdings_response()
     if cached is not None:
         try:
             cached_holdings = [
                 Holding.model_validate(item) for item in cached.get("holdings", [])
             ]
-            schedule_warm_holdings_intraday(
+            payload = _response_from_holdings(
                 cached_holdings,
+                source=str(cached.get("source") or "snapshot"),
+                snapshot_date=cached.get("snapshot_date"),
+                refreshed_at=(
+                    datetime.fromisoformat(str(cached["refreshed_at"]).replace("Z", "+00:00"))
+                    if cached.get("refreshed_at")
+                    else None
+                ),
+            )
+            schedule_warm_holdings_intraday(
+                [Holding.model_validate(item) for item in payload.get("holdings", [])],
                 user_key=user_key,
                 user_id=int(user_key) if user_key.isdigit() else None,
                 portfolio_summary=(
-                    PortfolioSummary.model_validate(cached["portfolio_summary"])
-                    if cached.get("portfolio_summary")
+                    PortfolioSummary.model_validate(payload["portfolio_summary"])
+                    if payload.get("portfolio_summary")
                     else None
                 ),
             )
         except Exception:  # noqa: BLE001 — 预热失败不影响响应
-            pass
-        return cached
+            return cached
+        return payload
 
     holdings, source, snapshot_date, refreshed_at = load_persisted_holdings()
-    payload = build_portfolio_holdings_response(
+    payload = _response_from_holdings(
         holdings,
         source=source,
         snapshot_date=snapshot_date,
@@ -1315,7 +1342,7 @@ def portfolio_holdings() -> dict:
     )
     save_cached_holdings_response(payload)
     schedule_warm_holdings_intraday(
-        holdings,
+        [Holding.model_validate(item) for item in payload.get("holdings", [])],
         user_key=user_key,
         user_id=int(user_key) if user_key.isdigit() else None,
         portfolio_summary=(

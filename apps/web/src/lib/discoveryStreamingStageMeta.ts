@@ -1,6 +1,7 @@
 /** 与后端 DISCOVERY_JOB_STAGES 对齐的荐基流式阶段。 */
 
 export const DISCOVERY_STAGE_ORDER = [
+  "connected",
   "sector_heat",
   "dip_prescreen",
   "candidate_pool",
@@ -11,6 +12,7 @@ export const DISCOVERY_STAGE_ORDER = [
 ] as const;
 
 const STAGE_SHORT_LABEL: Record<string, string> = {
+  connected: "已连接",
   sector_heat: "板块热度",
   dip_prescreen: "大跌预筛",
   candidate_pool: "候选池",

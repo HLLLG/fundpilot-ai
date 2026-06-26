@@ -18,6 +18,7 @@ import {
   fetchInvestorProfile,
   fetchPortfolioHoldings,
   fetchPortfolioSummary,
+  fetchSectorQuotesStatus,
   listReports,
   applyPortfolioHoldings,
   applyTransactions,
@@ -162,12 +163,12 @@ export function Dashboard() {
     return index >= 0 ? index : null;
   }, [holdings, selectedHoldingKey]);
   const reportSectionRef = useRef<HTMLDivElement>(null);
-  const shouldRefreshOnLoad = useRef(false);
   const refreshAfterApplyRef = useRef(false);
   const profilePersistReady = useRef(false);
   const promptPersistReady = useRef(false);
   const [isHydratingHoldings, setIsHydratingHoldings] = useState(true);
   const [holdingsRefreshedAt, setHoldingsRefreshedAt] = useState<string | null>(null);
+  const [holdingsPollIntervalMs, setHoldingsPollIntervalMs] = useState(180_000);
   const [isOcrUploading, setIsOcrUploading] = useState(false);
   const [pendingOcrHoldings, setPendingOcrHoldings] = useState<Holding[] | null>(null);
   const [pendingOcrResolutions, setPendingOcrResolutions] = useState<FundCodeResolution[]>([]);
@@ -243,14 +244,14 @@ export function Dashboard() {
         setPortfolioSummary(payload.portfolio_summary);
       }
       if (payload.holdings.length > 0) {
+        const refreshedAt = payload.refreshed_at ?? null;
         setHoldings(payload.holdings);
-        setHoldingsRefreshedAt(payload.refreshed_at ?? null);
+        setHoldingsRefreshedAt(refreshedAt);
         saveCachedPortfolioHoldings({
           holdings: payload.holdings,
           portfolio_summary: payload.portfolio_summary ?? null,
-          refreshed_at: payload.refreshed_at ?? null,
+          refreshed_at: refreshedAt,
         });
-        shouldRefreshOnLoad.current = true;
       }
     } catch {
       if (!hadCachedHoldings) {
@@ -274,7 +275,6 @@ export function Dashboard() {
     if (cached.refreshed_at) {
       setHoldingsRefreshedAt(cached.refreshed_at);
     }
-    shouldRefreshOnLoad.current = true;
     setIsHydratingHoldings(false);
   }, []);
 
@@ -353,24 +353,45 @@ export function Dashboard() {
   }, []);
 
   useEffect(() => {
-    if (!shouldRefreshOnLoad.current || holdings.length === 0) {
+    void fetchSectorQuotesStatus()
+      .then((status) => setHoldingsPollIntervalMs(status.auto_interval_seconds * 1000))
+      .catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    if (holdings.length === 0) {
       return;
     }
-    shouldRefreshOnLoad.current = false;
-    void sectorRefresh.refresh(false);
-    // One-shot refresh after portfolio hydration.
+    let cancelled = false;
+    const tick = async () => {
+      if (cancelled) {
+        return;
+      }
+      try {
+        const status = await fetchSectorQuotesStatus();
+        if (!status.auto_refresh_allowed) {
+          return;
+        }
+        await hydratePortfolio();
+      } catch {
+        // 后台轮询失败不阻断展示
+      }
+    };
+    const timer = window.setInterval(() => void tick(), holdingsPollIntervalMs);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+    // hydratePortfolio 刻意不列入依赖，避免重复拉取
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [holdings.length]);
+  }, [holdings.length, holdingsPollIntervalMs]);
 
-  // apply-holdings 已改为「快速写入」（不在后端做板块拉取），新增/确认成功后在此显式
-  // 触发一次板块刷新补全板块涨跌与当日收益。依赖 holdings 引用变化，确保刷新时
-  // useSectorQuoteRefresh 内部 holdingsRef 已更新为最新持仓。
   useEffect(() => {
     if (!refreshAfterApplyRef.current || holdings.length === 0) {
       return;
     }
     refreshAfterApplyRef.current = false;
-    void sectorRefresh.refresh(true, "fast");
+    void hydratePortfolio();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [holdings]);
 

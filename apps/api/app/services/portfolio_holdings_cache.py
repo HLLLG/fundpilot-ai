@@ -6,7 +6,7 @@ from app.request_context import get_request_user_id
 
 _MEMORY: dict[str, tuple[int, float, dict]] = {}
 _GENERATION = 0
-CACHE_TTL_SECONDS = 120.0
+CACHE_TTL_SECONDS = 240.0
 
 
 def bump_holdings_cache_generation() -> None:

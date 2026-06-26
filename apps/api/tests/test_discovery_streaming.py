@@ -60,7 +60,7 @@ def _patch_pipeline(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     monkeypatch.setattr(
         "app.services.discovery_streaming.summarize_all_topics",
-        lambda market_news: [],
+        lambda market_news, offline_only=False: [],
     )
     monkeypatch.setattr(
         "app.services.discovery_streaming.build_discovery_facts",
@@ -122,6 +122,7 @@ def test_stream_discovery_deep_emits_tool_stages_and_done(monkeypatch: pytest.Mo
     events = list(stream_discovery(_request(mode="deep"), user_id=1))
     types = [e["type"] for e in events]
     stage_names = [e.get("stage") for e in events if e.get("type") == "stage"]
+    assert "connected" in stage_names
     assert "tool_round_1" in stage_names
     assert types[-1] == "done"
 

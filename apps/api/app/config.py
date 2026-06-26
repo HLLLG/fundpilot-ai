@@ -66,6 +66,8 @@ class Settings(BaseSettings):
     news_summarize_model: str | None = None
     news_summarize_max_points: int = 5
     news_summarize_timeout_seconds: float = 60.0
+    news_fetch_timeout_seconds: float = 20.0
+    news_prefetch_total_timeout_seconds: float = 45.0
     news_macro_topic: str = "上证指数"
     # 拉满 252 让日报/荐基与持仓详情弹窗预热共享 fund_nav_cache（key: code+days）。
     # 旧 nav_trend_days env 仍兼容（fallback 映射到 nav_cache_pull_days），过渡期一版。
@@ -79,7 +81,8 @@ class Settings(BaseSettings):
     news_require_today_for_add: bool = True
     db_auto_import_path: Path | None = None
     sector_quotes_enabled: bool = True
-    sector_quotes_ttl_seconds: int = 60
+    # 覆盖 auto_interval 直至下次后台刷新（默认 180s 间隔 + 60s 余量）
+    sector_quotes_ttl_seconds: int = 240
     sector_quotes_respect_manual: bool = False
     sector_quotes_discrepancy_warn: float = 0.5
     sector_quotes_auto_interval_seconds: int = 180

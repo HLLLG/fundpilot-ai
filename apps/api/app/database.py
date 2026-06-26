@@ -515,6 +515,19 @@ def save_fund_profile(profile: FundProfile) -> FundProfile:
     return profile
 
 
+def list_distinct_portfolio_user_ids() -> list[int]:
+    """后台板块刷新：列出有持仓档案或日快照的用户（跨用户查询）。"""
+    with _connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT DISTINCT userId FROM fund_profiles
+            UNION
+            SELECT DISTINCT userId FROM portfolio_daily_snapshots
+            """
+        ).fetchall()
+    return sorted({int(row["userId"]) for row in rows})
+
+
 def list_fund_profiles() -> list[FundProfile]:
     from app.services.fund_profile import _sanitize_profile_sector_fields
 

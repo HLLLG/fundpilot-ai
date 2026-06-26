@@ -15,10 +15,10 @@ import type { Holding, HoldingDetail, PortfolioSummary, SectorQuoteMeta } from "
 import {
   fetchHoldingDetail,
   fetchSectorIntraday,
-  fetchTradingSession,
   updateFundProfile,
   updateFundProfilePurchaseDate,
 } from "@/lib/api";
+import { hydrateTradingSession } from "@/lib/tradingSessionClient";
 import { FundCodeEditModal, isProvisionalFundCode } from "@/components/FundCodeEditModal";
 import { IntradayPercentChart } from "@/components/IntradayPercentChart";
 import { PerformanceTrendPanel } from "@/components/PerformanceTrendPanel";
@@ -50,10 +50,8 @@ import { holdingDisplaySectorLabel, resolveIntradayQuery } from "@/lib/profileSe
 import {
   readHoldingDetailCache,
   readIntradayCache,
-  readTradingSessionCache,
   writeHoldingDetailCache,
   writeIntradayCache,
-  writeTradingSessionCache,
 } from "@/lib/holdingDetailCache";
 import { useAuth } from "@/components/AuthProvider";
 import { isEstimateFallbackMeta } from "@/lib/sectorQuoteStatus";
@@ -484,20 +482,9 @@ export function YangjibaoFundDetail({
   }, [tab, intradayQuery, intradayForceSeq]);
 
   useEffect(() => {
-    const cachedSession = readTradingSessionCache();
-    if (cachedSession) {
-      setQuoteTradeDate(formatTradeDateShort(cachedSession.effective_trade_date));
-    }
-    void fetchTradingSession()
-      .then((session) => {
-        writeTradingSessionCache(session);
-        setQuoteTradeDate(formatTradeDateShort(session.effective_trade_date));
-      })
-      .catch(() => {
-        if (!cachedSession) {
-          setQuoteTradeDate(null);
-        }
-      });
+    return hydrateTradingSession((session) => {
+      setQuoteTradeDate(formatTradeDateShort(session.effective_trade_date));
+    });
   }, []);
 
   const tradeDateLabel = quoteTradeDate ?? "—";

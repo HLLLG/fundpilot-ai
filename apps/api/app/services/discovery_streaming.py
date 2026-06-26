@@ -38,6 +38,7 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
     settings = get_settings()
     try:
         holdings = list(request.holdings)
+        yield _stage("connected")
         yield _stage("sector_heat")
         sector_heat = build_sector_heat_ranking()
         target_sectors = select_target_sectors(
@@ -96,7 +97,7 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
         if not topics:
             topics = ["上证指数"]
         market_news = news_service.prefetch_topics(topics)
-        topic_briefs = summarize_all_topics(market_news)
+        topic_briefs = summarize_all_topics(market_news, offline_only=True)
 
         total_amount = sum(item.holding_amount for item in holdings) or 0.0
         denominator = resolve_weight_denominator(holdings, request.profile)

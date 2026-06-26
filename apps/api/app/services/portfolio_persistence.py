@@ -82,7 +82,7 @@ def enrich_loaded_holdings(
     """恢复持仓时补全展示字段。
 
     默认 ``with_network=False``：仅用快照/档案已有字段做估算，避免 AkShare 子进程拖慢
-    ``GET /api/portfolio/holdings``。份额×净值与官方净值覆盖由前端触发的板块刷新完成。
+    ``GET /api/portfolio/holdings``。板块涨跌由服务端现货缓存叠加（后台每 3min 刷新）。
     """
     if not holdings:
         return holdings

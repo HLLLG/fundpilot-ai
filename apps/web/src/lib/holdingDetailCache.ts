@@ -16,6 +16,8 @@ export const INTRADAY_STALE_MS_CLOSED = 15 * 60 * 1000;
 
 export const TRADING_SESSION_CACHE_KEY = "trading-session";
 export const TRADING_SESSION_STALE_MS = 5 * 60 * 1000;
+/** 刷新页面后仍可读的上次行情日（仅作失败兜底展示） */
+export const TRADING_SESSION_SESSION_MAX_AGE_MS = 60 * 60 * 1000;
 
 export function buildHoldingDetailCacheKey(
   userId: number | null | undefined,
@@ -79,7 +81,14 @@ export function writeIntradayCache(query: IntradayQuery, result: SectorIntradayR
 }
 
 export function readTradingSessionCache(): TradingSession | null {
-  return readClientCache<TradingSession>(TRADING_SESSION_CACHE_KEY, -1, "memory");
+  return (
+    readClientCache<TradingSession>(TRADING_SESSION_CACHE_KEY, -1, "memory") ??
+    readClientCache<TradingSession>(
+      TRADING_SESSION_CACHE_KEY,
+      TRADING_SESSION_SESSION_MAX_AGE_MS,
+      "session",
+    )
+  );
 }
 
 export function isTradingSessionCacheFresh(): boolean {
@@ -89,6 +98,7 @@ export function isTradingSessionCacheFresh(): boolean {
 
 export function writeTradingSessionCache(session: TradingSession): void {
   writeClientCache(TRADING_SESSION_CACHE_KEY, session, "memory");
+  writeClientCache(TRADING_SESSION_CACHE_KEY, session, "session");
 }
 
 export function isLiveTradingSessionKind(sessionKind: string | undefined): boolean {

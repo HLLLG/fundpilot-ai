@@ -11,7 +11,9 @@ import {
   RefreshCw,
   ScanLine,
 } from "lucide-react";
-import { fetchTradingSession, type Holding, type PortfolioSummary } from "@/lib/api";
+import { type Holding, type PortfolioSummary } from "@/lib/api";
+import { hydrateTradingSession } from "@/lib/tradingSessionClient";
+import { readTradingSessionCache } from "@/lib/holdingDetailCache";
 import { SectorMappingModal } from "@/components/SectorMappingModal";
 import {
   cnProfitClass,
@@ -200,7 +202,10 @@ export function YangjibaoHoldingsBoard({
   onBatchTransaction,
   onSelectHolding,
 }: YangjibaoHoldingsBoardProps) {
-  const [quoteTradeDate, setQuoteTradeDate] = useState<string | null>(null);
+  const [quoteTradeDate, setQuoteTradeDate] = useState<string | null>(() => {
+    const cached = readTradingSessionCache();
+    return cached ? formatTradeDateShort(cached.effective_trade_date) : null;
+  });
   const [sortKey, setSortKey] = useState<HoldingsSortKey>("amount");
   const [sortDir, setSortDir] = useState<HoldingsSortDir>("desc");
   const [dailyDisplayMode, setDailyDisplayMode] = useState<DailyDisplayMode>("amount");
@@ -217,13 +222,9 @@ export function YangjibaoHoldingsBoard({
   } = sectorRefresh;
 
   useEffect(() => {
-    void fetchTradingSession()
-      .then((session) => {
-        setQuoteTradeDate(formatTradeDateShort(session.effective_trade_date));
-      })
-      .catch(() => {
-        setQuoteTradeDate(null);
-      });
+    return hydrateTradingSession((session) => {
+      setQuoteTradeDate(formatTradeDateShort(session.effective_trade_date));
+    });
   }, []);
 
   const displayHoldings = useMemo(() => displayableHoldings(holdings), [holdings]);

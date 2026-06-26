@@ -17,6 +17,7 @@ ProgressCallback = Callable[[str, str], None]
 
 DISCOVERY_JOB_STAGES: dict[str, str] = {
     "queued": "排队中…",
+    "connected": "连接已建立…",
     "sector_heat": "计算板块热度…",
     "dip_prescreen": "预筛大跌基金…",
     "candidate_pool": "构建候选基金池…",
@@ -84,7 +85,7 @@ def run_discovery(
     if not topics:
         topics = ["上证指数"]
     market_news = news_service.prefetch_topics(topics)
-    topic_briefs = summarize_all_topics(market_news)
+    topic_briefs = summarize_all_topics(market_news, offline_only=True)
 
     total_amount = sum(item.holding_amount for item in holdings) or 0.0
     denominator = resolve_weight_denominator(holdings, request.profile)

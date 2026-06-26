@@ -97,3 +97,21 @@ def test_prefetch_topics_disabled_returns_empty(monkeypatch):
     service = NewsService()
     monkeypatch.setattr(service.settings, "news_enabled", False)
     assert service.prefetch_topics(["半导体"]) == []
+
+
+def test_prefetch_topics_respects_total_timeout(news_prefetch_enabled, monkeypatch):
+    service = NewsService()
+    monkeypatch.setattr(service.settings, "news_prefetch_total_timeout_seconds", 0.05)
+
+    def slow_search(topic: str, limit: int | None = None):
+        time.sleep(0.3)
+        return [_make_item(topic, f"{topic} title")]
+
+    topics = ["半导体", "商业航天", "新能源车", "医药", "银行"]
+    with patch.object(service, "search", side_effect=slow_search):
+        start = time.monotonic()
+        result = service.prefetch_topics(topics)
+        elapsed = time.monotonic() - start
+
+    assert elapsed < 0.35, f"总超时应尽快返回，实际 {elapsed:.2f}s"
+    assert len(result) <= len(topics)

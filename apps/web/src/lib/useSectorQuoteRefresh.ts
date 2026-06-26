@@ -10,12 +10,10 @@ import type {
 import { mergeHoldingsPreserveQuoteFields } from "@/lib/holdingMetrics";
 import {
   applySectorMapping,
-  fetchSectorQuotesStatus,
   refreshSectorQuotes,
   type RefreshSectorQuotesResult,
 } from "@/lib/api";
 import { isRoutineSectorRefreshMessage } from "@/lib/sectorQuoteStatus";
-const DEFAULT_AUTO_INTERVAL_MS = 180_000;
 
 type MappingQueueItem = {
   index: number;
@@ -42,7 +40,6 @@ export function useSectorQuoteRefresh({
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [sectorMetaByFundCode, setSectorMetaByFundCode] = useState<Record<string, SectorQuoteMeta>>({});
   const [lastFetchedAt, setLastFetchedAt] = useState<string | null>(null);
-  const [autoIntervalMs, setAutoIntervalMs] = useState(DEFAULT_AUTO_INTERVAL_MS);
   const [mappingQueue, setMappingQueue] = useState<MappingQueueItem[]>([]);
   const [refreshError, setRefreshError] = useState<string | null>(null);
   const [lastRefreshResult, setLastRefreshResult] = useState<RefreshSectorQuotesResult | null>(null);
@@ -67,7 +64,10 @@ export function useSectorQuoteRefresh({
       if (generation !== refreshGenerationRef.current) {
         return undefined;
       }
-      onChange(mergeHoldingsPreserveQuoteFields(holdingsRef.current, result.holdings));
+      const nextHoldings = result.ok
+        ? result.holdings
+        : mergeHoldingsPreserveQuoteFields(holdingsRef.current, result.holdings);
+      onChange(nextHoldings);
       if (result.holding_warnings?.length) {
         const sectorCodes = new Set(["sector_quote_discrepancy"]);
         const kept = warningsRef.current.filter((warning) => !sectorCodes.has(warning.code));
@@ -166,38 +166,6 @@ export function useSectorQuoteRefresh({
   const dismissMapping = useCallback(() => {
     setMappingQueue((queue) => queue.slice(1));
   }, []);
-
-  useEffect(() => {
-    void fetchSectorQuotesStatus()
-      .then((status) => setAutoIntervalMs(status.auto_interval_seconds * 1000))
-      .catch(() => undefined);
-  }, []);
-
-  useEffect(() => {
-    if (!holdings.length) {
-      return;
-    }
-    let cancelled = false;
-    const tick = async () => {
-      if (cancelled) {
-        return;
-      }
-      try {
-        const status = await fetchSectorQuotesStatus();
-        if (!status.auto_refresh_allowed) {
-          return;
-        }
-        await refresh(false, "fast");
-      } catch {
-        // background refresh errors are non-fatal
-      }
-    };
-    const timer = window.setInterval(() => void tick(), autoIntervalMs);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [autoIntervalMs, holdings.length, refresh]);
 
   return {
     isRefreshing,

@@ -81,18 +81,25 @@ class NewsService:
         if len(limited) == 1:
             return _rank_news_by_recency(_dedupe_news(self.search(limited[0])))
 
-        from concurrent.futures import ThreadPoolExecutor
+        import time
+        from concurrent.futures import ThreadPoolExecutor, as_completed
 
         max_workers = min(5, len(limited))
+        deadline = time.monotonic() + float(self.settings.news_prefetch_total_timeout_seconds)
+        collected: list[NewsItem] = []
         with ThreadPoolExecutor(
             max_workers=max_workers,
             thread_name_prefix="news-prefetch",
         ) as executor:
-            results = list(executor.map(self.search, limited))
-
-        collected: list[NewsItem] = []
-        for items in results:
-            collected.extend(items)
+            futures = {executor.submit(self.search, topic): topic for topic in limited}
+            for future in as_completed(futures):
+                if time.monotonic() > deadline:
+                    break
+                try:
+                    items = future.result(timeout=0.05)
+                except Exception:
+                    continue
+                collected.extend(items)
         return _rank_news_by_recency(_dedupe_news(collected))
 
     def prefetch_for_holdings(
@@ -104,19 +111,15 @@ class NewsService:
         return self.prefetch_topics(topics)
 
     def _from_eastmoney(self, topic: str, limit: int) -> list[NewsItem]:
-        try:
-            import akshare as ak  # type: ignore[import-not-found]
+        from app.services.eastmoney_news_client import fetch_stock_news_em
 
-            frame = ak.stock_news_em(symbol=topic)
-        except Exception:
-            return []
-
-        if frame is None or frame.empty:
+        rows = fetch_stock_news_em(topic, limit=limit)
+        if not rows:
             return []
 
         today = date.today().isoformat()
         items: list[NewsItem] = []
-        for _, row in frame.head(limit).iterrows():
+        for row in rows:
             title = _cell(row, "新闻标题", "title")
             if not title:
                 continue
@@ -144,25 +147,19 @@ class NewsService:
             return []
 
     def _from_fund_announcements(self, fund_code: str, limit: int) -> list[NewsItem]:
-        try:
-            import akshare as ak  # type: ignore[import-not-found]
+        from app.services.eastmoney_news_client import fetch_fund_announcement_report_em
 
-            frame = ak.fund_announcement_report_em(symbol=fund_code)
-        except Exception:
-            return []
-
-        if frame is None or frame.empty:
+        rows = fetch_fund_announcement_report_em(fund_code, limit=limit)
+        if not rows:
             return []
 
         today = date.today().isoformat()
         items: list[NewsItem] = []
-        for _, row in frame.head(limit).iterrows():
+        for row in rows:
             title = _cell(row, "公告标题", "title")
             if not title:
                 continue
             published = _cell(row, "公告日期", "date")
-            if published and hasattr(published, "isoformat"):
-                published = published.isoformat()
             published_str = _optional_str(published)
             items.append(
                 NewsItem(
@@ -211,6 +208,12 @@ def _rank_news_by_recency(items: list[NewsItem]) -> list[NewsItem]:
 
 
 def _cell(row: object, *names: str) -> str | None:
+    if isinstance(row, dict):
+        for name in names:
+            value = row.get(name)
+            if value is not None and str(value).strip():
+                return str(value).strip()
+        return None
     for name in names:
         if hasattr(row, "index") and name in row.index:  # type: ignore[attr-defined]
             value = row[name]  # type: ignore[index]

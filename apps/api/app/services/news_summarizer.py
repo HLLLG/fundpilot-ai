@@ -197,6 +197,8 @@ def _parse_topic_brief_response(
 def summarize_all_topics(
     items: list[NewsItem],
     settings: Settings | None = None,
+    *,
+    offline_only: bool = False,
 ) -> list[TopicBrief]:
     resolved = settings or get_settings()
     if not items:
@@ -206,14 +208,26 @@ def summarize_all_topics(
     if not grouped:
         return []
 
+    if offline_only or not resolved.news_summarize or not resolved.deepseek_configured:
+        return [
+            build_topic_briefs_offline(topic, group_items)
+            for topic, group_items in sorted(grouped.items())
+        ]
+
     briefs: list[TopicBrief] = []
+    timeout = float(resolved.news_summarize_timeout_seconds)
     with ThreadPoolExecutor(max_workers=2) as executor:
         futures = {
             executor.submit(summarize_topic, topic, group_items, resolved): topic
             for topic, group_items in grouped.items()
         }
         for future in as_completed(futures):
-            briefs.append(future.result())
+            topic = futures[future]
+            group_items = grouped[topic]
+            try:
+                briefs.append(future.result(timeout=timeout))
+            except Exception:
+                briefs.append(build_topic_briefs_offline(topic, group_items))
 
     briefs.sort(key=lambda item: item.topic)
     return briefs

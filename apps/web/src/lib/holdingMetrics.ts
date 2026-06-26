@@ -44,7 +44,7 @@ export function displayableHoldings(holdings: Holding[]): Holding[] {
 }
 
 /** OCR / 快速 apply 响应可能缺少板块与收益字段；刷新完成前保留上一屏展示数据。 */
-const PRESERVE_QUOTE_FIELDS = [
+export const HOLDING_QUOTE_FIELDS = [
   "sector_return_percent",
   "sector_return_percent_source",
   "daily_profit",
@@ -59,6 +59,20 @@ const PRESERVE_QUOTE_FIELDS = [
   "holding_return_is_estimated",
   "daily_return_is_estimated",
 ] as const satisfies readonly (keyof Holding)[];
+
+const PRESERVE_QUOTE_FIELDS = HOLDING_QUOTE_FIELDS;
+
+export function stripHoldingsQuoteFields(holdings: Holding[]): Holding[] {
+  return holdings.map((holding) => {
+    const stripped: Holding = { ...holding };
+    for (const key of HOLDING_QUOTE_FIELDS) {
+      if (key in stripped) {
+        delete stripped[key];
+      }
+    }
+    return stripped;
+  });
+}
 
 function mergeHoldingQuoteFields(previous: Holding, incoming: Holding): Holding {
   const merged: Holding = { ...incoming };

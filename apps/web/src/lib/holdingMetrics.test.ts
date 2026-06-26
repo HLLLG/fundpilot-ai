@@ -88,6 +88,26 @@ describe("mergeHoldingsPreserveQuoteFields", () => {
     expect(merged[1].holding_profit).toBe(0);
     expect(merged[1].sector_return_percent).toBe(3.0);
   });
+
+  it("prefers incoming quote fields when refresh returns new sector data", () => {
+    const previous = [
+      {
+        ...holding("010236", "广发电子信息传媒产业精选股票C"),
+        sector_return_percent: 4.5,
+        daily_profit: 51.67,
+      },
+    ];
+    const incoming = [
+      {
+        ...holding("010236", "广发电子信息传媒产业精选股票C"),
+        sector_return_percent: 1.2,
+        daily_profit: 18.4,
+      },
+    ];
+    const merged = mergeHoldingsPreserveQuoteFields(previous, incoming);
+    expect(merged[0].sector_return_percent).toBe(1.2);
+    expect(merged[0].daily_profit).toBe(18.4);
+  });
 });
 
 describe("profit accrual defer", () => {

@@ -9,6 +9,7 @@ from app.services.db_backup import maybe_auto_import_database
 from app.services.fund_code_resolver import preload_fund_name_table
 from app.services.ocr_engine import schedule_ocr_preload
 from app.services.market_shared_refresh import _refresh_enabled, market_shared_refresh_loop
+from app.services.portfolio_sector_refresh import portfolio_sector_refresh_loop
 
 
 @asynccontextmanager
@@ -26,4 +27,9 @@ async def app_lifespan(_app: FastAPI):
             name="market-shared-refresh",
             daemon=True,
         ).start()
+    threading.Thread(
+        target=portfolio_sector_refresh_loop,
+        name="portfolio-sector-refresh",
+        daemon=True,
+    ).start()
     yield
