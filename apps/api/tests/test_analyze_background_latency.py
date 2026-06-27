@@ -63,6 +63,7 @@ def _deep_runtime() -> AnalysisRuntime:
 
 def test_background_generate_report_uses_offline_topic_briefs(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("FUND_AI_DEEPSEEK_API_KEY", _FAKE_DEEPSEEK_KEY)
+    monkeypatch.setenv("FUND_AI_NEWS_SUMMARIZE", "true")
     refresh_settings()
     monkeypatch.setattr(
         "app.services.deepseek_client.resolve_analysis_runtime",
