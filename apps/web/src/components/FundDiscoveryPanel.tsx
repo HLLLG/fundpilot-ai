@@ -137,7 +137,7 @@ export function FundDiscoveryPanel({
     keepPreviousUnless: () => true,
   });
 
-  const rawSectors = sectorRows ?? [];
+  const rawSectors = useMemo(() => sectorRows ?? [], [sectorRows]);
   const historyReports = historyReportsData ?? [];
 
   const [focusSectors, setFocusSectors] = useState<string[]>(() => loadDiscoveryFocusSectors());

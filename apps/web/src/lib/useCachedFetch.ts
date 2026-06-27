@@ -33,7 +33,6 @@ export function useCachedFetch<T>({
 }: UseCachedFetchOptions<T>) {
   const fetcherRef = useRef(fetcher);
   const keepPreviousUnlessRef = useRef(keepPreviousUnless);
-  const bootstrapRef = useRef(bootstrap);
 
   useEffect(() => {
     fetcherRef.current = fetcher;
@@ -43,15 +42,11 @@ export function useCachedFetch<T>({
     keepPreviousUnlessRef.current = keepPreviousUnless;
   }, [keepPreviousUnless]);
 
-  useEffect(() => {
-    bootstrapRef.current = bootstrap;
-  }, [bootstrap]);
-
   const [data, setData] = useState<T | null>(() => {
     if (!enabled) {
       return null;
     }
-    return readClientCache<T>(cacheKey, -1, storage) ?? bootstrapRef.current?.() ?? null;
+    return readClientCache<T>(cacheKey, -1, storage) ?? bootstrap?.() ?? null;
   });
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(() => enabled && data == null);

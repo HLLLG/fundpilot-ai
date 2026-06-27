@@ -440,7 +440,6 @@ export function Dashboard() {
       return;
     }
     void loadHistory();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab]);
 
   useEffect(() => {
