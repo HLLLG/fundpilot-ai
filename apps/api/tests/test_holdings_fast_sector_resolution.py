@@ -330,6 +330,7 @@ def test_portfolio_holdings_cache_miss_loads_without_benchmark_fetch(monkeypatch
 
     load_fetch_flags: list[bool] = []
     resolve_fetch_flags: list[bool] = []
+    sector_network_fallback_flags: list[bool | None] = []
 
     holding = Holding(
         fund_code="123456",
@@ -350,9 +351,13 @@ def test_portfolio_holdings_cache_miss_loads_without_benchmark_fetch(monkeypatch
         load_fetch_flags.append(fetch_benchmark)
         return [holding], "snapshot", "2026-06-03", None
 
+    def _apply_server_sector_cache(holdings, **kwargs):
+        sector_network_fallback_flags.append(kwargs.get("network_fallback"))
+        return holdings
+
     monkeypatch.setattr(main, "get_cached_holdings_response", lambda: None)
     monkeypatch.setattr(main, "load_persisted_holdings", _load_persisted_holdings)
-    monkeypatch.setattr(main, "apply_server_sector_cache_to_holdings", lambda holdings: holdings)
+    monkeypatch.setattr(main, "apply_server_sector_cache_to_holdings", _apply_server_sector_cache)
     monkeypatch.setattr(main, "save_cached_holdings_response", lambda _payload: None)
     monkeypatch.setattr(main, "schedule_warm_holdings_intraday", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(main, "get_request_user_id", lambda: 1)
@@ -373,6 +378,7 @@ def test_portfolio_holdings_cache_miss_loads_without_benchmark_fetch(monkeypatch
 
     assert load_fetch_flags == [False]
     assert resolve_fetch_flags == [False]
+    assert sector_network_fallback_flags == [False]
     assert payload["source"] == "snapshot"
     assert payload["holdings"][0]["fund_code"] == "123456"
 
