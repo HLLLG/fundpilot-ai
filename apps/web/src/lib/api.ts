@@ -457,6 +457,7 @@ export type AnalysisJob = {
   report?: Report;
   job_kind?: "analysis" | "discovery";
   discovery_report?: FundDiscoveryReport;
+  transient_unavailable?: boolean;
 };
 
 export type DiscoveryRecommendation = {

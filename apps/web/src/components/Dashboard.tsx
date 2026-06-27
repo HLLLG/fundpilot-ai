@@ -266,13 +266,16 @@ export function Dashboard() {
           return;
         }
         const refreshedAt = settlement.refreshed_at ?? null;
-        setHoldings(settlement.holdings);
+        const mergedHoldings = mergeHoldingsPreserveQuoteFields(sourceHoldings, settlement.holdings);
+        setHoldings((current) =>
+          mergeHoldingsPreserveQuoteFields(current.length ? current : sourceHoldings, settlement.holdings),
+        );
         setHoldingsRefreshedAt(refreshedAt);
         if (settlement.portfolio_summary) {
           setPortfolioSummary(settlement.portfolio_summary);
         }
         saveCachedPortfolioHoldings({
-          holdings: settlement.holdings,
+          holdings: mergedHoldings,
           portfolio_summary: settlement.portfolio_summary ?? null,
           refreshed_at: refreshedAt,
         });
@@ -500,6 +503,20 @@ export function Dashboard() {
       holdings,
       portfolioSummary,
       sectorMetaByFundCode: sectorRefresh.sectorMetaByFundCode,
+      onDetailHydrated: (detail) => {
+        setHoldings((current) => {
+          const index = findHoldingIndex(current, {
+            fund_code: detail.holding.fund_code,
+            fund_name: detail.holding.fund_name,
+          });
+          if (index < 0) {
+            return current;
+          }
+          const next = [...current];
+          next[index] = detail.holding;
+          return mergeHoldingsPreserveQuoteFields(current, next);
+        });
+      },
     });
   }, [
     activeTab,

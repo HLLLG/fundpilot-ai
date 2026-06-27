@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import HTTPException
@@ -37,10 +38,18 @@ def resolve_job_status_single_connection(job_id: str) -> dict[str, Any]:
         name = type(exc).__name__
         message = str(exc)
         if "OperationalError" in name or "TimeoutError" in name or "Can't connect" in message:
-            raise HTTPException(
-                status_code=503,
-                detail="数据库连接暂不可用，请稍后重试（扫描任务可能仍在后台运行）",
-            ) from exc
+            now = datetime.now(timezone.utc).isoformat()
+            return {
+                "id": job_id,
+                "status": "running",
+                "error": None,
+                "stage": "transient_unavailable",
+                "stage_label": "数据库连接波动，正在重试...",
+                "analysis_mode": "fast",
+                "created_at": now,
+                "updated_at": now,
+                "transient_unavailable": True,
+            }
         raise
     raise HTTPException(status_code=404, detail="任务不存在")
 

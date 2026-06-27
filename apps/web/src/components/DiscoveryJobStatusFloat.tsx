@@ -38,8 +38,19 @@ export function DiscoveryJobStatusFloat({
       while (!cancelled) {
         try {
           const job = await fetchDiscoveryJob(jobId);
-          transientFailures = 0;
           if (cancelled) return;
+          if (job.transient_unavailable) {
+            transientFailures += 1;
+            if (transientFailures < 8) {
+              setStageLabel(job.stage_label ?? "连接波动，正在重试...");
+              await new Promise((resolve) => setTimeout(resolve, 2000));
+              continue;
+            }
+            setError("数据库连接暂不可用，扫描任务可能仍在后台运行，请稍后查看历史记录。");
+            setState("failed");
+            return;
+          }
+          transientFailures = 0;
           if (job.stage_label) setStageLabel(job.stage_label);
           if (job.status === "completed" && job.discovery_report) {
             setReport(job.discovery_report);

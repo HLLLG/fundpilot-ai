@@ -57,4 +57,50 @@ describe("holdingDetailPrefetch", () => {
     cancel();
     vi.useRealTimers();
   });
+
+  it("notifies the caller when a prefetched detail has fresher quote fields", async () => {
+    vi.useFakeTimers();
+    const holdings: Holding[] = [
+      {
+        fund_code: "008586",
+        fund_name: "华夏人工智能ETF联接C",
+        holding_amount: 2000,
+        return_percent: 5,
+      },
+    ];
+    const hydrated = {
+      ...holdings[0],
+      sector_name: "人工智能",
+      sector_return_percent: 3.66,
+      intraday_index_name: "中证人工智能",
+    };
+    const onDetailHydrated = vi.fn();
+
+    vi.mocked(fetchHoldingDetail).mockResolvedValue({
+      index: 0,
+      holding: hydrated,
+      fund_code_resolved: true,
+      provenance: {},
+    });
+
+    const cancel = scheduleHoldingsDetailPrefetch({
+      userId: 2,
+      holdings,
+      onDetailHydrated,
+    });
+
+    await vi.advanceTimersByTimeAsync(1400);
+
+    expect(onDetailHydrated).toHaveBeenCalledWith(
+      expect.objectContaining({
+        index: 0,
+        holding: expect.objectContaining({
+          fund_code: "008586",
+          sector_return_percent: 3.66,
+        }),
+      }),
+    );
+    cancel();
+    vi.useRealTimers();
+  });
 });

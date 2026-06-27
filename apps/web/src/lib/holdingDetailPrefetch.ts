@@ -24,8 +24,15 @@ export function scheduleHoldingsDetailPrefetch(options: {
   holdings: Holding[];
   portfolioSummary?: PortfolioSummary | null;
   sectorMetaByFundCode?: Record<string, SectorQuoteMeta | undefined>;
+  onDetailHydrated?: (detail: Awaited<ReturnType<typeof fetchHoldingDetail>>) => void;
 }): () => void {
-  const { userId, holdings, portfolioSummary, sectorMetaByFundCode = {} } = options;
+  const {
+    userId,
+    holdings,
+    portfolioSummary,
+    sectorMetaByFundCode = {},
+    onDetailHydrated,
+  } = options;
   const candidates = displayableHoldings(holdings).filter(
     (holding) => holding.fund_code && holding.fund_code !== "000000",
   );
@@ -67,6 +74,7 @@ export function scheduleHoldingsDetailPrefetch(options: {
             return;
           }
           writeHoldingDetailCache(userId, detail.holding.fund_code, detail);
+          onDetailHydrated?.(detail);
         })
         .catch(() => {
           // 预取失败静默忽略，用户点开时再重试
