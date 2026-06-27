@@ -73,6 +73,7 @@ from app.models import (
 )
 from app.services.analyze_pipeline import run_analysis
 from app.services.analyze_streaming import stream_analysis
+from app.services.async_sse import sse_from_sync_iterator
 from app.services.discovery_streaming import stream_discovery
 from app.services.stream_session_store import append_stream_followup
 from app.database import get_portfolio_summary
@@ -150,6 +151,7 @@ from app.services.trading_session import build_trading_session
 settings = get_settings()
 app = FastAPI(title=settings.app_name, lifespan=app_lifespan)
 logger = logging.getLogger(__name__)
+HOLDINGS_READ_TIMEOUT_SECONDS = 25.0
 
 app.add_middleware(AuthMiddleware)
 app.add_middleware(
@@ -610,12 +612,12 @@ def analyze_async(request: AnalysisRequest) -> dict:
 
 
 @app.post("/api/analyze/stream")
-def analyze_stream_endpoint(request: AnalysisRequest) -> StreamingResponse:
+async def analyze_stream_endpoint(request: AnalysisRequest) -> StreamingResponse:
     user_id = get_request_user_id()
 
-    def event_stream():
-        for payload in stream_analysis(request, user_id=user_id):
-            yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+    async def event_stream():
+        async for chunk in sse_from_sync_iterator(stream_analysis(request, user_id=user_id)):
+            yield chunk
 
     return StreamingResponse(
         event_stream(),
@@ -750,15 +752,15 @@ def fund_discovery_async(request: DiscoveryRequest) -> dict:
 
 
 @app.post("/api/fund-discovery/stream")
-def fund_discovery_stream_endpoint(request: DiscoveryRequest) -> StreamingResponse:
+async def fund_discovery_stream_endpoint(request: DiscoveryRequest) -> StreamingResponse:
     if not request.holdings:
-        loaded, _, _, _ = load_persisted_holdings()
+        loaded, _, _, _ = await asyncio.to_thread(load_persisted_holdings)
         request = request.model_copy(update={"holdings": loaded})
     user_id = get_request_user_id()
 
-    def event_stream():
-        for payload in stream_discovery(request, user_id=user_id):
-            yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+    async def event_stream():
+        async for chunk in sse_from_sync_iterator(stream_discovery(request, user_id=user_id)):
+            yield chunk
 
     return StreamingResponse(
         event_stream(),
@@ -1294,8 +1296,7 @@ def portfolio_evidence_overview() -> dict:
         return {"available": False, "overview": {"available": False}, "holdings": []}
 
 
-@app.get("/api/portfolio/holdings")
-def portfolio_holdings() -> dict:
+def _portfolio_holdings_sync() -> dict:
     user_key = str(get_request_user_id())
 
     def _response_from_holdings(
@@ -1365,6 +1366,17 @@ def portfolio_holdings() -> dict:
         ),
     )
     return payload
+
+
+@app.get("/api/portfolio/holdings")
+async def portfolio_holdings() -> dict:
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(_portfolio_holdings_sync),
+            timeout=HOLDINGS_READ_TIMEOUT_SECONDS,
+        )
+    except TimeoutError as exc:
+        raise HTTPException(status_code=503, detail="持仓加载超时，请稍后重试") from exc
 
 
 @app.get("/api/investor-profile")

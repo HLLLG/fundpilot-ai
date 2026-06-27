@@ -374,7 +374,7 @@ def test_portfolio_holdings_cache_miss_loads_without_benchmark_fetch(monkeypatch
         lambda _code: (_ for _ in ()).throw(AssertionError("benchmark fetch should be skipped")),
     )
 
-    payload = main.portfolio_holdings()
+    payload = main._portfolio_holdings_sync()
 
     assert load_fetch_flags == [False]
     assert resolve_fetch_flags == [False]

@@ -179,6 +179,7 @@ export function Dashboard() {
   const [isHydratingHoldings, setIsHydratingHoldings] = useState(true);
   const [holdingsRefreshedAt, setHoldingsRefreshedAt] = useState<string | null>(null);
   const [holdingsPollIntervalMs, setHoldingsPollIntervalMs] = useState(180_000);
+  const backgroundJobActiveRef = useRef(false);
   const [isOcrUploading, setIsOcrUploading] = useState(false);
   const [pendingOcrHoldings, setPendingOcrHoldings] = useState<Holding[] | null>(null);
   const [pendingOcrResolutions, setPendingOcrResolutions] = useState<FundCodeResolution[]>([]);
@@ -285,6 +286,9 @@ export function Dashboard() {
   };
 
   const hydratePortfolio = async () => {
+    if (backgroundJobActiveRef.current) {
+      return;
+    }
     const hadCachedHoldings = loadCachedPortfolioHoldings()?.holdings?.length;
     if (!hadCachedHoldings) {
       setIsHydratingHoldings(true);
@@ -405,6 +409,12 @@ export function Dashboard() {
   }, []);
 
   useEffect(() => {
+    backgroundJobActiveRef.current = Boolean(
+      streamingReport || streamingDiscovery || discoveryJobId || activeJobId,
+    );
+  }, [streamingReport, streamingDiscovery, discoveryJobId, activeJobId]);
+
+  useEffect(() => {
     void fetchSectorQuotesStatus()
       .then((status) => setHoldingsPollIntervalMs(status.auto_interval_seconds * 1000))
       .catch(() => undefined);
@@ -419,8 +429,13 @@ export function Dashboard() {
       if (cancelled) {
         return;
       }
-      // AI 流式任务会长时间占用 API worker；分析进行中跳过后台 holdings 刷新，避免 504
-      if (streamingReport || streamingDiscovery) {
+      // AI 流式/异步任务会占用 API worker；任务进行中跳过后台 holdings 刷新，避免 504
+      if (
+        streamingReport ||
+        streamingDiscovery ||
+        discoveryJobId ||
+        activeJobId
+      ) {
         return;
       }
       try {
@@ -440,7 +455,14 @@ export function Dashboard() {
     };
     // hydratePortfolio 刻意不列入依赖，避免重复拉取
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [holdings.length, holdingsPollIntervalMs, streamingReport, streamingDiscovery]);
+  }, [
+    holdings.length,
+    holdingsPollIntervalMs,
+    streamingReport,
+    streamingDiscovery,
+    discoveryJobId,
+    activeJobId,
+  ]);
 
   useEffect(() => {
     if (!refreshAfterApplyRef.current || holdings.length === 0) {
