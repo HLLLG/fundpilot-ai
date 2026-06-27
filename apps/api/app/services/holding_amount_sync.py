@@ -5,7 +5,11 @@ import logging
 from app.database import get_fund_profile_by_code, save_fund_profile
 from app.models import FundProfile, Holding
 from app.services.fund_estimate_provider import fetch_fund_estimate_quotes
-from app.services.fund_nav_service import get_latest_unit_nav, get_official_nav_return
+from app.services.fund_nav_service import (
+    get_cached_official_nav_return,
+    get_latest_unit_nav,
+    get_official_nav_return,
+)
 from app.services.trading_session import get_effective_trade_date
 
 logger = logging.getLogger(__name__)
@@ -152,6 +156,7 @@ def sync_holding_amounts_from_shares(
     estimate_quotes: dict[str, dict] | None = None,
     persist_profiles: bool = True,
     shares_override: dict[str, float] | None = None,
+    allow_nav_fetch: bool = True,
 ) -> list[Holding]:
     """按档案份额同步结算持有金额：盘中保持上一交易日结算值，官方净值公布后滚入。
 
@@ -183,6 +188,7 @@ def sync_holding_amounts_from_shares(
                 estimate_quote=quotes.get(holding.fund_code or ""),
                 persist_profile=persist_profiles,
                 shares_override=shares_override,
+                allow_nav_fetch=allow_nav_fetch,
             )
         )
     return updated
@@ -235,6 +241,7 @@ def _sync_one_holding(
     estimate_quote: dict | None,
     persist_profile: bool,
     shares_override: dict[str, float] | None = None,
+    allow_nav_fetch: bool = True,
 ) -> Holding:
     code = (holding.fund_code or "").strip()
     if not code or code == "000000" or holding.holding_amount <= 0:
@@ -263,7 +270,12 @@ def _sync_one_holding(
         from app.services.profit_accrual_defer import is_profit_accrual_deferred
 
         if not is_profit_accrual_deferred(profile):
-            unit_nav = _resolve_unit_nav(code, trade_date, estimate_quote)
+            unit_nav = _resolve_unit_nav(
+                code,
+                trade_date,
+                estimate_quote,
+                allow_fetch=allow_nav_fetch,
+            )
             if unit_nav and unit_nav > 0 and holding.holding_amount > 0:
                 shares = round(holding.holding_amount / unit_nav, 2)
                 if persist_profile:
@@ -284,8 +296,12 @@ def _sync_one_holding(
             )
         return holding
 
-    official_return = get_official_nav_return(code, trade_date)
-    official_unit_nav = get_latest_unit_nav(code)
+    official_return = (
+        get_official_nav_return(code, trade_date)
+        if allow_nav_fetch
+        else get_cached_official_nav_return(code, trade_date)
+    )
+    official_unit_nav = get_latest_unit_nav(code, allow_fetch=allow_nav_fetch)
 
     # 交易账本有效份额变化：按最新官方净值重算结算基线（用户确认加减仓）。
     if override_value is not None and shares and official_unit_nav and official_unit_nav > 0:
@@ -345,12 +361,18 @@ def _resolve_unit_nav(
     fund_code: str,
     trade_date: str,
     estimate_quote: dict | None,
+    *,
+    allow_fetch: bool = True,
 ) -> float | None:
-    official_return = get_official_nav_return(fund_code, trade_date)
+    official_return = (
+        get_official_nav_return(fund_code, trade_date)
+        if allow_fetch
+        else get_cached_official_nav_return(fund_code, trade_date)
+    )
     if official_return is not None:
-        return get_latest_unit_nav(fund_code)
+        return get_latest_unit_nav(fund_code, allow_fetch=allow_fetch)
 
-    official = get_latest_unit_nav(fund_code)
+    official = get_latest_unit_nav(fund_code, allow_fetch=allow_fetch)
     if official is not None and official > 0:
         return official
 

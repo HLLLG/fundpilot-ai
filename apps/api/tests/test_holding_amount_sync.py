@@ -32,7 +32,7 @@ def test_intraday_does_not_roll_settled_when_shares_times_nav_drifts(monkeypatch
     )
     monkeypatch.setattr(
         "app.services.holding_amount_sync.get_latest_unit_nav",
-        lambda _code: 9.10038,
+        lambda _code, **_kwargs: 9.10038,
     )
     monkeypatch.setattr(
         "app.services.holding_amount_sync.fetch_fund_estimate_quotes",
@@ -66,7 +66,7 @@ def test_intraday_repairs_polluted_profile_holding_amount(monkeypatch):
     )
     monkeypatch.setattr(
         "app.services.holding_amount_sync.get_latest_unit_nav",
-        lambda _code: 9.10038,
+        lambda _code, **_kwargs: 9.10038,
     )
     monkeypatch.setattr(
         "app.services.holding_amount_sync.fetch_fund_estimate_quotes",
@@ -123,7 +123,7 @@ def test_official_nav_published_rolls_settled(monkeypatch):
     )
     monkeypatch.setattr(
         "app.services.holding_amount_sync.get_latest_unit_nav",
-        lambda _code: 9.10038,
+        lambda _code, **_kwargs: 9.10038,
     )
     monkeypatch.setattr(
         "app.services.holding_amount_sync.fetch_fund_estimate_quotes",

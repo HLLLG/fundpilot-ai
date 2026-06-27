@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, TimeoutError, as_completed
 from datetime import datetime, timezone
 
 import httpx
@@ -214,23 +214,35 @@ def summarize_all_topics(
             for topic, group_items in sorted(grouped.items())
         ]
 
-    briefs: list[TopicBrief] = []
-    timeout = float(resolved.news_summarize_timeout_seconds)
-    with ThreadPoolExecutor(max_workers=2) as executor:
+    briefs_by_topic: dict[str, TopicBrief] = {}
+    timeout = max(0.0, float(resolved.news_summarize_timeout_seconds))
+    executor = ThreadPoolExecutor(max_workers=2)
+    try:
         futures = {
             executor.submit(summarize_topic, topic, group_items, resolved): topic
             for topic, group_items in grouped.items()
         }
-        for future in as_completed(futures):
-            topic = futures[future]
-            group_items = grouped[topic]
-            try:
-                briefs.append(future.result(timeout=timeout))
-            except Exception:
-                briefs.append(build_topic_briefs_offline(topic, group_items))
+        try:
+            for future in as_completed(futures, timeout=timeout):
+                topic = futures[future]
+                group_items = grouped[topic]
+                try:
+                    briefs_by_topic[topic] = future.result()
+                except Exception:
+                    briefs_by_topic[topic] = build_topic_briefs_offline(topic, group_items)
+        except TimeoutError:
+            pass
+        finally:
+            for future in futures:
+                future.cancel()
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
 
-    briefs.sort(key=lambda item: item.topic)
-    return briefs
+    for topic, group_items in grouped.items():
+        if topic not in briefs_by_topic:
+            briefs_by_topic[topic] = build_topic_briefs_offline(topic, group_items)
+
+    return [briefs_by_topic[topic] for topic in sorted(briefs_by_topic)]
 
 
 def merge_topic_briefs(

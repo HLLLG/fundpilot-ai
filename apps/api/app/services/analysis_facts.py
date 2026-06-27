@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from typing import Any
+
 from app.models import (
     FundSnapshot,
     Holding,
@@ -8,6 +11,7 @@ from app.models import (
     RiskAssessment,
     TopicBrief,
 )
+from app.request_context import try_get_request_user_id
 from app.services.investment_presets import is_short_term_style, take_profit_threshold_percent
 from app.services.holding_estimates import build_holding_display_metrics
 from app.services.holding_metrics import (
@@ -27,12 +31,20 @@ from app.services.signal_synthesis import build_evidence_overview, build_holding
 from app.services.trading_session import get_effective_trade_date
 from app.services.risk import holding_weight_percent, resolve_weight_denominator
 from app.services.sector_intraday_summary import summarize_sector_intraday_for_holding
+from app.services.pipeline_concurrency import run_with_request_user
 from app.services.sector_momentum import build_sector_momentum_context
 from app.services.sector_fund_flow_context import (
     build_sector_fund_flow_map,
     sector_fund_flow_for_holding,
 )
+from app.services.sector_labels import normalize_sector_label
 from app.services.sector_quote_label import sector_quote_lookup_label
+
+SIGNAL_BACKTEST_TIMEOUT_SECONDS = 5.0
+SECTOR_FLOW_TIMEOUT_SECONDS = 5.0
+SECTOR_INTRADAY_TIMEOUT_SECONDS = 4.0
+MARKET_FLOW_TIMEOUT_SECONDS = 3.0
+GUARD_POLICY_TIMEOUT_SECONDS = 2.0
 
 
 def _build_sector_intraday_map(holdings: list[Holding]) -> dict[str, dict]:
@@ -46,6 +58,168 @@ def _build_sector_intraday_map(holdings: list[Holding]) -> dict[str, dict]:
         if summary is not None:
             result[label] = summary
     return result
+
+
+def _daily_return_data_source(holding: Holding) -> str | None:
+    if holding.daily_return_percent_source:
+        return holding.daily_return_percent_source
+    if holding.daily_return_percent is not None:
+        return "daily_return"
+    if holding.sector_return_percent is not None:
+        return "sector_estimate"
+    return None
+
+
+def _build_data_freshness(per_fund: list[dict], effective_trade_date: str) -> dict:
+    nav_dates = sorted(
+        {str(row["nav_date"]) for row in per_fund if row.get("nav_date")}
+    )
+    daily_dates = sorted(
+        {
+            str(row["daily_return_trade_date"])
+            for row in per_fund
+            if row.get("daily_return_trade_date")
+        }
+    )
+    return {
+        "effective_trade_date": effective_trade_date,
+        "daily_return_trade_dates": daily_dates,
+        "official_nav_dates": nav_dates,
+        "has_stale_nav_dates": any(
+            nav_date != effective_trade_date for nav_date in nav_dates
+        ),
+        "note": (
+            "effective_trade_date is today's trading/estimate date; nav_date is "
+            "the latest official fund NAV date and may lag before NAV is published."
+        ),
+    }
+
+
+def _run_budgeted_enhancement(
+    func,
+    *,
+    timeout_seconds: float,
+    fallback: Any,
+) -> Any:
+    user_id = try_get_request_user_id()
+
+    def run():
+        if user_id is None:
+            return func()
+        return run_with_request_user(user_id, func)
+
+    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="analysis-facts-budget")
+    future = executor.submit(run)
+    try:
+        return future.result(timeout=timeout_seconds)
+    except FutureTimeoutError:
+        future.cancel()
+        return fallback
+    except Exception:  # noqa: BLE001 - enhancement facts are best-effort
+        return fallback
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
+
+
+def _submit_enhancement(executor: ThreadPoolExecutor, func):
+    user_id = try_get_request_user_id()
+
+    def run():
+        if user_id is None:
+            return func()
+        return run_with_request_user(user_id, func)
+
+    return executor.submit(run)
+
+
+def _enhancement_result(future, *, timeout_seconds: float, fallback: Any) -> Any:
+    try:
+        return future.result(timeout=timeout_seconds)
+    except FutureTimeoutError:
+        future.cancel()
+        return fallback
+    except Exception:  # noqa: BLE001 - enhancement facts are best-effort
+        return fallback
+
+
+def _signal_backtest_unavailable(reason: str) -> dict[str, Any]:
+    return {
+        "enabled": True,
+        "has_data": False,
+        "reason": reason,
+        "message": "板块信号回测未在预算内完成，日报已按基础事实继续。",
+        "summary_lines": [],
+        "sectors": [],
+    }
+
+
+def _market_flow_unavailable(reason: str) -> dict[str, Any]:
+    return {
+        "available": False,
+        "reason": reason,
+        "message": "市场资金流未在预算内完成，日报已按基础事实继续。",
+    }
+
+
+def _guard_policy_unavailable() -> dict[str, Any]:
+    return {
+        "enforce_reversal_block": True,
+        "enforce_pullback_block": True,
+        "tighten_tactical": False,
+        "reason": "guard_policy_timeout",
+        "backtest_summary_lines": [],
+    }
+
+
+def _sector_flow_timeout_map(holdings: list[Holding]) -> dict[str, dict[str, Any]]:
+    result: dict[str, dict[str, Any]] = {}
+    for holding in holdings:
+        label = normalize_sector_label(holding.sector_name)
+        if not label or label in result:
+            continue
+        result[label] = {
+            "available": False,
+            "sector_label": label,
+            "reason": "timeout",
+            "message": "板块资金流未在预算内完成，日报已按基础事实继续。",
+        }
+    return result
+
+
+def _build_budget_holding_display_metrics(holding: Holding) -> dict[str, float | bool | None]:
+    settled = (
+        holding.holding_return_percent
+        if holding.holding_return_percent is not None
+        else holding.return_percent
+    )
+    intraday = holding.daily_return_percent
+    if intraday is None:
+        intraday = holding.sector_return_percent
+
+    if holding.daily_return_percent_source == "official_nav":
+        estimated_return = settled if settled is not None else intraday
+    elif settled is not None and intraday is not None:
+        estimated_return = round(float(settled) + float(intraday), 4)
+    elif settled is not None:
+        estimated_return = float(settled)
+    else:
+        estimated_return = 0.0
+
+    amount = holding.settled_holding_amount or holding.holding_amount
+    estimated_profit = holding.holding_profit
+    if holding.daily_return_percent_source != "official_nav":
+        if estimated_profit is not None and intraday is not None and amount > 0:
+            estimated_profit = round(float(estimated_profit) + amount * float(intraday) / 100, 2)
+        elif estimated_profit is None and amount > 0 and estimated_return is not None:
+            estimated_profit = round(amount * float(estimated_return) / (100 + float(estimated_return)), 2)
+
+    return {
+        "holding_return_percent_settled": settled,
+        "estimated_holding_return_percent": estimated_return,
+        "estimated_holding_profit": estimated_profit,
+        "holding_return_is_estimated": holding.daily_return_percent_source != "official_nav"
+        and intraday is not None,
+    }
 
 
 def build_analysis_facts(
@@ -63,32 +237,96 @@ def build_analysis_facts(
     factor_scores: dict | None = None,
     risk_metrics: dict | None = None,
     for_llm: bool = False,
+    budget_enhancements: bool = False,
 ) -> dict:
     nav_trends = nav_trends_by_code or {}
+    effective_trade_date = (
+        str(session.get("effective_trade_date"))
+        if isinstance(session, dict) and session.get("effective_trade_date")
+        else get_effective_trade_date()
+    )
     total_amount = sum(item.holding_amount for item in holdings) or 0.0
     weight_denominator = resolve_weight_denominator(holdings, profile)
     snapshot_by_code = {item.fund_code: item for item in snapshots}
     sector_labels = sector_labels_from_holdings(holdings)
-    signal_backtest = build_signal_backtest_context(sector_labels)
-    guard_policy = resolve_signal_guard_policy(holdings)
-    sector_flow_map = build_sector_fund_flow_map(
-        holdings,
-        trade_date=(
-            str(session.get("effective_trade_date"))
-            if isinstance(session, dict) and session.get("effective_trade_date")
-            else None
-        ),
-    )
-    intraday_map = _build_sector_intraday_map(holdings)
+    market_flow = None
+    if budget_enhancements:
+        executor = ThreadPoolExecutor(max_workers=5, thread_name_prefix="analysis-facts-budget")
+        try:
+            signal_future = _submit_enhancement(
+                executor,
+                lambda: build_signal_backtest_context(sector_labels),
+            )
+            guard_future = _submit_enhancement(
+                executor,
+                lambda: resolve_signal_guard_policy(holdings),
+            )
+            flow_future = _submit_enhancement(
+                executor,
+                lambda: build_sector_fund_flow_map(
+                    holdings,
+                    trade_date=effective_trade_date,
+                ),
+            )
+            intraday_future = _submit_enhancement(
+                executor,
+                lambda: _build_sector_intraday_map(holdings),
+            )
+            market_flow_future = _submit_enhancement(
+                executor,
+                lambda: build_market_flow_context(trade_date=effective_trade_date),
+            )
+            signal_backtest = _enhancement_result(
+                signal_future,
+                timeout_seconds=SIGNAL_BACKTEST_TIMEOUT_SECONDS,
+                fallback=_signal_backtest_unavailable("timeout"),
+            )
+            guard_policy = _enhancement_result(
+                guard_future,
+                timeout_seconds=GUARD_POLICY_TIMEOUT_SECONDS,
+                fallback=_guard_policy_unavailable(),
+            )
+            sector_flow_map = _enhancement_result(
+                flow_future,
+                timeout_seconds=SECTOR_FLOW_TIMEOUT_SECONDS,
+                fallback=_sector_flow_timeout_map(holdings),
+            )
+            intraday_map = _enhancement_result(
+                intraday_future,
+                timeout_seconds=SECTOR_INTRADAY_TIMEOUT_SECONDS,
+                fallback={},
+            )
+            market_flow = _enhancement_result(
+                market_flow_future,
+                timeout_seconds=MARKET_FLOW_TIMEOUT_SECONDS,
+                fallback=_market_flow_unavailable("timeout"),
+            )
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
+    else:
+        signal_backtest = build_signal_backtest_context(sector_labels)
+        guard_policy = resolve_signal_guard_policy(holdings)
+        sector_flow_map = build_sector_fund_flow_map(
+            holdings,
+            trade_date=effective_trade_date,
+        )
+        intraday_map = _build_sector_intraday_map(holdings)
 
     per_fund: list[dict] = []
     drawdown_limit = abs(profile.max_drawdown_percent)
     for holding in holdings:
         weight = holding_weight_percent(holding, holdings, profile)
         estimated_daily = compute_estimated_daily_return_percent(holding)
-        display = build_holding_display_metrics(holding)
+        display = (
+            _build_budget_holding_display_metrics(holding)
+            if budget_enhancements
+            else build_holding_display_metrics(holding)
+        )
         effective_return = float(display["estimated_holding_return_percent"] or 0)
         snapshot = snapshot_by_code.get(holding.fund_code)
+        daily_return_source = _daily_return_data_source(holding)
+        daily_return_trade_date = effective_trade_date if daily_return_source else None
+        nav_date = snapshot.nav_date if snapshot else None
         row: dict = {
                 "fund_code": holding.fund_code,
                 "fund_name": holding.fund_name,
@@ -110,7 +348,12 @@ def build_analysis_facts(
                 "sector_name": holding.sector_name,
                 "over_concentration": weight > profile.concentration_limit_percent,
                 "latest_nav": snapshot.latest_nav if snapshot else None,
-                "nav_date": snapshot.nav_date if snapshot else None,
+                "nav_date": nav_date,
+                "daily_return_trade_date": daily_return_trade_date,
+                "daily_return_data_source": daily_return_source,
+                "nav_date_is_current_trade_date": (
+                    nav_date == effective_trade_date if nav_date else None
+                ),
                 "fund_type": snapshot.fund_type if snapshot else None,
                 "return_1y_percent": snapshot.return_1y_percent if snapshot else None,
                 "max_drawdown_1y_percent": snapshot.max_drawdown_1y_percent if snapshot else None,
@@ -122,7 +365,11 @@ def build_analysis_facts(
                     nav_trends.get(holding.fund_code),
                 ),
                 "sector_intraday": intraday_map.get(sector_quote_lookup_label(holding) or ""),
-                "sector_fund_flow": sector_fund_flow_for_holding(holding, sector_flow_map),
+                "sector_fund_flow": (
+                    sector_flow_map.get(normalize_sector_label(holding.sector_name))
+                    if budget_enhancements
+                    else sector_fund_flow_for_holding(holding, sector_flow_map)
+                ),
                 "signal_backtest": signal_backtest_for_sector(
                     holding.sector_name,
                     signal_backtest,
@@ -188,6 +435,7 @@ def build_analysis_facts(
         },
         "alerts": [alert.model_dump() for alert in risk.alerts],
         "holdings": per_fund,
+        "data_freshness": _build_data_freshness(per_fund, effective_trade_date),
         "allowed_actions": ["观察", "暂停追涨", "分批加仓", "减仓评估", "风控复核"],
         "news": build_news_pipeline_context(market_news, topic_briefs),
     }
@@ -204,9 +452,12 @@ def build_analysis_facts(
     overview = build_evidence_overview(per_fund)
     if overview.get("available"):
         facts["evidence_overview"] = overview
-    facts["market_flow"] = build_market_flow_context(
-        trade_date=get_effective_trade_date(),
-    )
+    if budget_enhancements:
+        facts["market_flow"] = market_flow or _market_flow_unavailable("timeout")
+    else:
+        facts["market_flow"] = build_market_flow_context(
+            trade_date=effective_trade_date,
+        )
     facts["signal_backtest"] = signal_backtest
     facts["guard_policy"] = {
         "enforce_reversal_block": guard_policy.get("enforce_reversal_block", True),

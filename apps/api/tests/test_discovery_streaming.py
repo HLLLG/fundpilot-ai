@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from unittest.mock import MagicMock
 
 import httpx
@@ -125,6 +126,11 @@ def test_stream_discovery_deep_emits_tool_stages_and_done(monkeypatch: pytest.Mo
     assert "connected" in stage_names
     assert "tool_round_1" in stage_names
     assert types[-1] == "done"
+    assert all(
+        isinstance(e.get("elapsed_ms"), int)
+        for e in events
+        if e.get("type") == "stage"
+    )
 
 
 def test_stream_discovery_emits_skeleton_and_done(monkeypatch: pytest.MonkeyPatch):
@@ -182,3 +188,79 @@ def test_stream_discovery_handles_llm_failure_with_salvage(monkeypatch: pytest.M
     assert events[-1]["type"] in {"done", "error"}
     stage_types = [e.get("stage") for e in events if e.get("type") == "stage"]
     assert "salvage" in stage_types or events[-1]["type"] == "error"
+
+
+def test_stream_discovery_prefetches_news_while_building_candidates(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("FUND_AI_DEEPSEEK_API_KEY", _FAKE_DEEPSEEK_KEY)
+    refresh_settings()
+    monkeypatch.setattr(
+        "app.services.discovery_streaming.build_sector_heat_ranking",
+        lambda: [{"sector_label": "半导体", "heat_score": 1.0}],
+    )
+    monkeypatch.setattr(
+        "app.services.discovery_streaming.select_target_sectors",
+        lambda holdings, focus, heat, profile, scan_mode: ["半导体"],
+    )
+
+    def slow_candidate_pool(*args, **kwargs):
+        time.sleep(0.35)
+        return [{"fund_code": "161725", "fund_name": "招商中证白酒", "sector_label": "白酒"}]
+
+    def slow_enrich(pool):
+        time.sleep(0.35)
+        return pool
+
+    def slow_news(topics):
+        time.sleep(0.35)
+        return []
+
+    monkeypatch.setattr(
+        "app.services.discovery_streaming.build_candidate_pool",
+        slow_candidate_pool,
+    )
+    monkeypatch.setattr(
+        "app.services.discovery_streaming.enrich_candidates",
+        slow_enrich,
+    )
+    monkeypatch.setattr(
+        "app.services.discovery_streaming.NewsService",
+        lambda: MagicMock(prefetch_topics=slow_news),
+    )
+    monkeypatch.setattr(
+        "app.services.discovery_streaming.summarize_all_topics",
+        lambda market_news, offline_only=False: [],
+    )
+    monkeypatch.setattr(
+        "app.services.discovery_streaming.build_discovery_facts",
+        lambda **kwargs: {"candidate_pool": kwargs.get("candidate_pool") or []},
+    )
+    monkeypatch.setattr(
+        "app.services.discovery_streaming.stream_chat_completion",
+        lambda **kwargs: iter(
+            [
+                '{"title":"t","summary":"s","recommendations":[',
+                '{"fund_code":"161725","fund_name":"x","action":"建议关注","points":["p"]}',
+                '],"caveats":["c"]}',
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.discovery_streaming.build_discovery_report_from_parsed",
+        lambda parsed, **kwargs: MagicMock(
+            id="disc-parallel-1",
+            model_dump=lambda mode="json": {"id": "disc-parallel-1", "title": "t"},
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.discovery_streaming.save_discovery_report",
+        lambda report: report,
+    )
+
+    start = time.monotonic()
+    events = list(stream_discovery(_request(), user_id=1))
+    elapsed = time.monotonic() - start
+
+    assert events[-1]["type"] == "done"
+    assert elapsed < 0.9, f"候选池构建与新闻预取应并行，实际 {elapsed:.2f}s"

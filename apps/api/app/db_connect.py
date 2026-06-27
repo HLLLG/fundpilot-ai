@@ -68,14 +68,14 @@ class DbConnection:
         self.dialect = dialect
 
     def execute(self, sql: str, params: tuple | list = ()) -> Any:
-        statement = adapt_sql(sql)
         if self.dialect == "mysql":
+            statement = adapt_sql(sql)
             import pymysql
 
             cursor = self._raw.cursor(pymysql.cursors.DictCursor)
             cursor.execute(statement, params or ())
             return cursor
-        return self._raw.execute(statement, params or ())
+        return self._raw.execute(sql, params or ())
 
     def commit(self) -> None:
         self._raw.commit()

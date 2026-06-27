@@ -27,6 +27,7 @@ import {
   transactionsOcr,
   saveAnalysisPromptRemote,
   saveInvestorProfileRemote,
+  settleOfficialNav,
   startAnalyzeJob,
   type PortfolioSummary,
 } from "@/lib/api";
@@ -34,6 +35,7 @@ import {
   streamAnalysis,
   submitStreamFollowup,
   appendStreamTokenBuffer,
+  markStreamingReportBackgroundFallback,
   streamTimestamp,
   type FundRecommendationPartial,
   type StreamingReportState,
@@ -45,7 +47,7 @@ import { AlipayOcrConfirmModal } from "@/components/AlipayOcrConfirmModal";
 import { BatchTransactionModal } from "@/components/BatchTransactionModal";
 import { BatchTransactionConfirmModal } from "@/components/BatchTransactionConfirmModal";
 import { notifyDesktop, ensureNotificationPermission } from "@/lib/notifications";
-import { formatThinkingNote } from "@/lib/streamingStageMeta";
+import { formatThinkingNote, stageShortLabel } from "@/lib/streamingStageMeta";
 import {
   loadAnalysisMode,
   loadAnalysisPrompt,
@@ -146,6 +148,12 @@ export function Dashboard() {
   const [discoveryTabUnread, setDiscoveryTabUnread] = useState(false);
   const streamAbortRef = useRef<AbortController | null>(null);
   const userLeftReportDuringStreamRef = useRef(false);
+  const lastAnalysisStageRef = useRef<{
+    stage: string;
+    label: string;
+    at: number;
+    startedAt: number;
+  } | null>(null);
   const [discoveryJobId, setDiscoveryJobId] = useState<string | null>(null);
   const [streamingDiscovery, setStreamingDiscovery] = useState<StreamingDiscoveryState | null>(null);
   const discoveryStreamAbortRef = useRef<AbortController | null>(null);
@@ -164,6 +172,8 @@ export function Dashboard() {
   }, [holdings, selectedHoldingKey]);
   const reportSectionRef = useRef<HTMLDivElement>(null);
   const refreshAfterApplyRef = useRef(false);
+  const officialNavSettlementAttemptedRef = useRef(false);
+  const officialNavSettlementInFlightRef = useRef(false);
   const profilePersistReady = useRef(false);
   const promptPersistReady = useRef(false);
   const [isHydratingHoldings, setIsHydratingHoldings] = useState(true);
@@ -233,6 +243,47 @@ export function Dashboard() {
     }
   };
 
+  const settleOfficialNavInBackground = (sourceHoldings: Holding[]) => {
+    if (
+      officialNavSettlementAttemptedRef.current ||
+      officialNavSettlementInFlightRef.current ||
+      sourceHoldings.every((holding) => holding.fund_code === "000000")
+    ) {
+      return;
+    }
+
+    officialNavSettlementAttemptedRef.current = true;
+    officialNavSettlementInFlightRef.current = true;
+    void settleOfficialNav()
+      .then((settlement) => {
+        if (
+          !settlement.ok ||
+          settlement.skipped ||
+          !settlement.updated_count ||
+          settlement.holdings.length === 0
+        ) {
+          return;
+        }
+        const refreshedAt = settlement.refreshed_at ?? null;
+        setHoldings(settlement.holdings);
+        setHoldingsRefreshedAt(refreshedAt);
+        if (settlement.portfolio_summary) {
+          setPortfolioSummary(settlement.portfolio_summary);
+        }
+        saveCachedPortfolioHoldings({
+          holdings: settlement.holdings,
+          portfolio_summary: settlement.portfolio_summary ?? null,
+          refreshed_at: refreshedAt,
+        });
+      })
+      .catch(() => {
+        // Official NAV settlement is opportunistic; keep the hydrated holdings visible.
+      })
+      .finally(() => {
+        officialNavSettlementInFlightRef.current = false;
+      });
+  };
+
   const hydratePortfolio = async () => {
     const hadCachedHoldings = loadCachedPortfolioHoldings()?.holdings?.length;
     if (!hadCachedHoldings) {
@@ -252,6 +303,7 @@ export function Dashboard() {
           portfolio_summary: payload.portfolio_summary ?? null,
           refreshed_at: refreshedAt,
         });
+        settleOfficialNavInBackground(payload.holdings);
       }
     } catch {
       if (!hadCachedHoldings) {
@@ -493,11 +545,17 @@ export function Dashboard() {
         const abortController = new AbortController();
         streamAbortRef.current = abortController;
         const startedAt = streamTimestamp();
+        lastAnalysisStageRef.current = {
+          stage: "fund_data",
+          label: "正在连接流式分析...",
+          at: startedAt,
+          startedAt,
+        };
         setStreamingReport({
           stage: "fund_data",
           stageLabel: "正在连接流式分析…",
-          fundCodes: [],
-          fundNames: [],
+          fundCodes: targetHoldings.map((holding) => holding.fund_code),
+          fundNames: targetHoldings.map((holding) => holding.fund_name),
           partialByCode: {},
           stageLog: [],
           thinkingNotes: [],
@@ -523,7 +581,14 @@ export function Dashboard() {
                 if (!current) {
                   return current;
                 }
-                const entry = { stage, label, at: streamTimestamp() };
+                const at = streamTimestamp();
+                lastAnalysisStageRef.current = {
+                  stage,
+                  label,
+                  at,
+                  startedAt: current.startedAt,
+                };
+                const entry = { stage, label, at };
                 const stageLog = [
                   ...current.stageLog.filter((item) => item.stage !== stage),
                   entry,
@@ -607,8 +672,9 @@ export function Dashboard() {
       } catch (streamError) {
         streamAbortRef.current = null;
         userLeftReportDuringStreamRef.current = false;
-        setStreamingReport(null);
         if (streamError instanceof DOMException && streamError.name === "AbortError") {
+          setStreamingReport(null);
+          lastAnalysisStageRef.current = null;
           setMessage("已停止生成。");
           return;
         }
@@ -619,6 +685,15 @@ export function Dashboard() {
         );
       }
 
+      const lastStage = lastAnalysisStageRef.current;
+      const elapsedText = lastStage
+        ? `${Math.max(0, Math.round((streamTimestamp() - lastStage.startedAt) / 1000))}s`
+        : "";
+      const stageText = lastStage
+        ? `停在「${stageShortLabel(lastStage.stage)}」：${lastStage.label}${elapsedText ? `，累计 ${elapsedText}` : ""}`
+        : "未能定位最后阶段";
+      setMessage(`${stageText}，已切换到后台分析。`);
+
       const jobId = await startAnalyzeJob(
         targetHoldings,
         profile,
@@ -627,6 +702,15 @@ export function Dashboard() {
         analysisPrompt.role_prompt,
       );
       setActiveJobId(jobId);
+      setStreamingReport((current) =>
+        markStreamingReportBackgroundFallback(
+          current,
+          jobId,
+          lastAnalysisStageRef.current
+            ? `停在「${stageShortLabel(lastAnalysisStageRef.current.stage)}」`
+            : "流式生成中断",
+        ),
+      );
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "提交分析任务失败。");
     } finally {
@@ -644,6 +728,7 @@ export function Dashboard() {
   ) => {
     setStreamingReport(null);
     streamAbortRef.current = null;
+    lastAnalysisStageRef.current = null;
     setReport(completedReport);
     await loadHistory();
     setActiveJobId(null);
@@ -1048,8 +1133,8 @@ export function Dashboard() {
                   <ReportPanel
                     report={report}
                     streaming={streamingReport}
-                    onCancelStream={handleCancelStream}
-                    onStreamFollowup={handleStreamFollowup}
+                    onCancelStream={activeJobId ? undefined : handleCancelStream}
+                    onStreamFollowup={activeJobId ? undefined : handleStreamFollowup}
                   />
                 </div>
               ) : null}
@@ -1127,7 +1212,7 @@ export function Dashboard() {
             onCancel={handleCancelDiscoveryStream}
           />
         ) : null}
-        {streamingReport && activeTab !== "report" ? (
+        {streamingReport && activeTab !== "report" && !activeJobId ? (
           <StreamingAnalysisFloat
             streaming={streamingReport}
             onOpenReport={() => setActiveTab("report")}

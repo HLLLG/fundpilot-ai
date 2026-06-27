@@ -41,7 +41,7 @@ def refresh_shared_spot_boards(*, force_refresh: bool = True) -> None:
 def refresh_portfolio_sectors_for_user(user_id: int) -> None:
     token = set_request_user_id(user_id)
     try:
-        holdings, *_ = load_persisted_holdings()
+        holdings, *_ = load_persisted_holdings(fetch_benchmark=False)
         if not holdings:
             return
         result = refresh_holdings_sector_quotes(holdings, cache_only=True)

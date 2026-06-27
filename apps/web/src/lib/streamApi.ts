@@ -53,6 +53,8 @@ export type StreamingReportState = {
   tokenBuffer: string;
   sessionId?: string;
   followupNotes: string[];
+  backgroundJobId?: string;
+  backgroundFallbackReason?: string;
 };
 
 export interface StreamingReportEvents {
@@ -79,6 +81,7 @@ type StreamEvent =
   | { type: "error"; message: string };
 
 const FIRST_EVENT_TIMEOUT_MS = 5000;
+const STREAM_IDLE_TIMEOUT_MS = 120_000;
 export const STREAM_TOKEN_BUFFER_MAX = 2048;
 
 export function appendStreamTokenBuffer(prev: string, chunk: string): string {
@@ -87,6 +90,27 @@ export function appendStreamTokenBuffer(prev: string, chunk: string): string {
     return next;
   }
   return next.slice(-STREAM_TOKEN_BUFFER_MAX);
+}
+
+export function markStreamingReportBackgroundFallback(
+  current: StreamingReportState | null,
+  jobId: string,
+  reason: string,
+): StreamingReportState | null {
+  if (!current) {
+    return current;
+  }
+  const note = `已切换到后台分析：${reason}`;
+  const thinkingNotes = current.thinkingNotes.includes(note)
+    ? current.thinkingNotes
+    : [...current.thinkingNotes, note];
+  return {
+    ...current,
+    stageLabel: `已切换到后台分析，当前停在：${current.stageLabel}`,
+    thinkingNotes,
+    backgroundJobId: jobId,
+    backgroundFallbackReason: reason,
+  };
 }
 
 function analysisPayload(
@@ -157,6 +181,7 @@ export async function streamAnalysis(
     analysisMode?: AnalysisMode;
     systemRolePrompt?: string | null;
     signal?: AbortSignal;
+    idleTimeoutMs?: number;
   },
 ): Promise<void> {
   const analysisMode = options?.analysisMode ?? "fast";
@@ -182,6 +207,7 @@ export async function streamAnalysis(
   const decoder = new TextDecoder();
   let buffer = "";
   let sawEvent = false;
+  let idleTimedOut = false;
 
   const timeoutAbort = new AbortController();
   const linkedSignal = options?.signal;
@@ -199,6 +225,22 @@ export async function streamAnalysis(
       reader.cancel().catch(() => undefined);
     }
   }, FIRST_EVENT_TIMEOUT_MS);
+  const idleTimeoutMs = options?.idleTimeoutMs ?? STREAM_IDLE_TIMEOUT_MS;
+  let idleTimeoutId: number | null = null;
+  const clearIdleTimeout = () => {
+    if (idleTimeoutId !== null) {
+      window.clearTimeout(idleTimeoutId);
+      idleTimeoutId = null;
+    }
+  };
+  const resetIdleTimeout = () => {
+    clearIdleTimeout();
+    idleTimeoutId = window.setTimeout(() => {
+      idleTimedOut = true;
+      timeoutAbort.abort();
+      reader.cancel().catch(() => undefined);
+    }, idleTimeoutMs);
+  };
 
   try {
     while (true) {
@@ -206,10 +248,16 @@ export async function streamAnalysis(
         await reader.cancel().catch(() => undefined);
         throw new DOMException("The operation was aborted.", "AbortError");
       }
+      if (idleTimedOut) {
+        throw new Error("流式生成长时间没有进展 (long time without progress)，已切换到后台任务。");
+      }
       if (timeoutAbort.signal.aborted && !sawEvent) {
         throw new Error("流式连接超时，将回退到异步分析");
       }
       const { done, value } = await reader.read();
+      if (idleTimedOut) {
+        throw new Error("流式生成长时间没有进展 (long time without progress)，已切换到后台任务。");
+      }
       if (done) {
         break;
       }
@@ -224,6 +272,7 @@ export async function streamAnalysis(
           }
           sawEvent = true;
           window.clearTimeout(timeoutId);
+          resetIdleTimeout();
           const outcome = dispatchEvent(event, events);
           if (outcome === "done") {
             return;
@@ -236,6 +285,7 @@ export async function streamAnalysis(
     }
   } finally {
     window.clearTimeout(timeoutId);
+    clearIdleTimeout();
   }
 
   if (!sawEvent) {

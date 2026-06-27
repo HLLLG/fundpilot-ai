@@ -78,6 +78,7 @@ type StreamEvent =
 
 const CONNECT_TIMEOUT_MS = 30_000;
 const FIRST_EVENT_TIMEOUT_MS = 90_000;
+const STREAM_IDLE_TIMEOUT_MS = 120_000;
 
 function mergeAbortSignals(...signals: Array<AbortSignal | undefined>): AbortSignal {
   const controller = new AbortController();
@@ -183,6 +184,7 @@ export async function streamDiscovery(
     dipMinDropPercent?: number;
     systemRolePrompt?: string | null;
     signal?: AbortSignal;
+    idleTimeoutMs?: number;
   },
 ): Promise<void> {
   const connectAbort = new AbortController();
@@ -214,6 +216,7 @@ export async function streamDiscovery(
   const decoder = new TextDecoder();
   let buffer = "";
   let sawEvent = false;
+  let idleTimedOut = false;
 
   const timeoutAbort = new AbortController();
   const linkedSignal = options?.signal;
@@ -231,6 +234,22 @@ export async function streamDiscovery(
       reader.cancel().catch(() => undefined);
     }
   }, FIRST_EVENT_TIMEOUT_MS);
+  const idleTimeoutMs = options?.idleTimeoutMs ?? STREAM_IDLE_TIMEOUT_MS;
+  let idleTimeoutId: number | null = null;
+  const clearIdleTimeout = () => {
+    if (idleTimeoutId !== null) {
+      window.clearTimeout(idleTimeoutId);
+      idleTimeoutId = null;
+    }
+  };
+  const resetIdleTimeout = () => {
+    clearIdleTimeout();
+    idleTimeoutId = window.setTimeout(() => {
+      idleTimedOut = true;
+      timeoutAbort.abort();
+      reader.cancel().catch(() => undefined);
+    }, idleTimeoutMs);
+  };
 
   try {
     while (true) {
@@ -238,10 +257,16 @@ export async function streamDiscovery(
         await reader.cancel().catch(() => undefined);
         throw new DOMException("The operation was aborted.", "AbortError");
       }
+      if (idleTimedOut) {
+        throw new Error("荐基流长时间没有进展 (long time without progress)，已切换到后台任务。");
+      }
       if (timeoutAbort.signal.aborted && !sawEvent) {
         throw new Error("等待流式首包超时，将回退到后台扫描");
       }
       const { done, value } = await reader.read();
+      if (idleTimedOut) {
+        throw new Error("荐基流长时间没有进展 (long time without progress)，已切换到后台任务。");
+      }
       if (done) {
         break;
       }
@@ -256,6 +281,7 @@ export async function streamDiscovery(
           }
           sawEvent = true;
           window.clearTimeout(timeoutId);
+          resetIdleTimeout();
           const outcome = dispatchEvent(event, events);
           if (outcome === "done") {
             return;
@@ -268,6 +294,7 @@ export async function streamDiscovery(
     }
   } finally {
     window.clearTimeout(timeoutId);
+    clearIdleTimeout();
   }
 
   if (!sawEvent) {

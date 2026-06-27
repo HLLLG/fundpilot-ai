@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 import json
 import logging
 
@@ -17,6 +18,8 @@ from app.models import AnalysisRequest, FundSnapshot, RiskAssessment
 from app.services.recommendation_guard import normalize_action_text
 
 logger = logging.getLogger(__name__)
+
+LLM_JUDGE_TIMEOUT_SECONDS = 10.0
 
 
 def judge_parsed_report(
@@ -38,15 +41,30 @@ def judge_parsed_report(
         "rule_judge": True,
         "llm_judge_attempted": False,
         "llm_judge_applied": False,
+        "llm_judge_timeout": False,
     }
     if runtime.mode != "deep" or not get_settings().deepseek_configured:
         return judged, meta
     meta["llm_judge_attempted"] = True
-    reviewed = _llm_judge(judged, facts)
+    reviewed, timed_out = _llm_judge_with_budget(judged, facts)
+    meta["llm_judge_timeout"] = timed_out
     if reviewed is not judged and reviewed.get("fund_recommendations"):
         meta["llm_judge_applied"] = True
         return reviewed, meta
     return judged, meta
+
+
+def _llm_judge_with_budget(parsed: dict, facts: dict) -> tuple[dict, bool]:
+    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="analysis-judge")
+    future = executor.submit(_llm_judge, parsed, facts)
+    try:
+        return future.result(timeout=LLM_JUDGE_TIMEOUT_SECONDS), False
+    except FutureTimeoutError:
+        future.cancel()
+        logger.warning("llm judge timed out after %.1fs, using rule-judged report", LLM_JUDGE_TIMEOUT_SECONDS)
+        return parsed, True
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
 
 
 def _rule_judge(

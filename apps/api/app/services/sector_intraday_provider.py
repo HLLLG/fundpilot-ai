@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from app.config import get_settings
+from app.services.akshare_subprocess import run_akshare_json_script
 from app.services.eastmoney_trends_client import fetch_eastmoney_intraday_trends
 from app.services.sector_intraday_browser_provider import fetch_intraday_via_browser_command
 
@@ -387,22 +388,81 @@ def _fetch_board_intraday(
 
 
 def _call_akshare_index_min(symbol: str):
-    import akshare as ak  # type: ignore[import-not-found]
+    script = f"""
+import json
+import sys
+
+try:
+    import akshare as ak
 
     fn = getattr(ak, "index_zh_a_hist_min_em", None) or getattr(
         ak, "stock_zh_index_hist_min_em", None
     )
     if fn is None:
+        print(json.dumps({{"error": "missing index minute api"}}, ensure_ascii=False))
+        sys.exit(1)
+    frame = fn(symbol={symbol!r}, period="1")
+    if frame is None or frame.empty:
+        print(json.dumps({{"data": []}}, ensure_ascii=False))
+    else:
+        print(json.dumps({{"data": frame.to_dict(orient="records")}}, ensure_ascii=False, default=str))
+except Exception as e:
+    print(json.dumps({{"error": str(e)}}, ensure_ascii=False))
+    sys.exit(1)
+"""
+    payload = run_akshare_json_script(
+        script,
+        label=f"index intraday {symbol}",
+        timeout=60,
+    )
+    if not isinstance(payload, dict):
         return None
-    return fn(symbol=symbol, period="1")
+    return _frame_from_records(payload.get("data"))
 
 
 def _call_akshare_board_min(source_type: str, source_name: str):
-    import akshare as ak  # type: ignore[import-not-found]
+    if source_type not in {"concept", "industry"}:
+        return None
+    script = f"""
+import json
+import sys
 
+try:
+    import akshare as ak
+
+    source_type = {source_type!r}
+    source_name = {source_name!r}
     if source_type == "concept":
-        return ak.stock_board_concept_hist_min_em(symbol=source_name, period="1")
-    return ak.stock_board_industry_hist_min_em(symbol=source_name, period="1")
+        frame = ak.stock_board_concept_hist_min_em(symbol=source_name, period="1")
+    else:
+        frame = ak.stock_board_industry_hist_min_em(symbol=source_name, period="1")
+    if frame is None or frame.empty:
+        print(json.dumps({{"data": []}}, ensure_ascii=False))
+    else:
+        print(json.dumps({{"data": frame.to_dict(orient="records")}}, ensure_ascii=False, default=str))
+except Exception as e:
+    print(json.dumps({{"error": str(e)}}, ensure_ascii=False))
+    sys.exit(1)
+"""
+    payload = run_akshare_json_script(
+        script,
+        label=f"{source_type} intraday {source_name}",
+        timeout=60,
+    )
+    if not isinstance(payload, dict):
+        return None
+    return _frame_from_records(payload.get("data"))
+
+
+def _frame_from_records(records: object):
+    if not isinstance(records, list):
+        return None
+    try:
+        import pandas as pd
+
+        return pd.DataFrame(records)
+    except Exception:
+        return None
 
 
 def _points_from_minute_frame(frame) -> list[IntradayPoint]:

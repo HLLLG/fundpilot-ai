@@ -1089,6 +1089,14 @@ export async function fetchAnalysisJob(jobId: string): Promise<AnalysisJob> {
   return response.json();
 }
 
+export async function fetchDiscoveryJob(jobId: string): Promise<AnalysisJob> {
+  const job = await fetchAnalysisJob(jobId);
+  if (job.job_kind && job.job_kind !== "discovery") {
+    throw new Error("Job is not a discovery task");
+  }
+  return job;
+}
+
 export async function fetchDiscoverySectors(): Promise<DiscoverySectorHeat[]> {
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), 20_000);
@@ -1867,15 +1875,34 @@ export async function getFundTransactions(
 
 export type PortfolioHoldingsPayload = {
   holdings: Holding[];
-  source: "snapshot" | "profiles" | "profiles_recovered" | "empty";
+  source: "snapshot" | "profiles" | "profiles_recovered" | "empty" | "official_nav_settlement";
   snapshot_date?: string | null;
   refreshed_at?: string | null;
   portfolio_summary?: PortfolioSummary | null;
   profile_count?: number;
 };
 
+export type OfficialNavSettlementPayload = PortfolioHoldingsPayload & {
+  ok: boolean;
+  skipped: boolean;
+  reason?: string | null;
+  settlement_date?: string | null;
+  updated_count?: number | null;
+  session?: Record<string, unknown> | null;
+};
+
 export async function fetchPortfolioHoldings(): Promise<PortfolioHoldingsPayload> {
   const response = await apiFetch(`${API_BASE}/api/portfolio/holdings`, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export async function settleOfficialNav(): Promise<OfficialNavSettlementPayload> {
+  const response = await apiFetch(`${API_BASE}/api/portfolio/settle-official-nav`, {
+    method: "POST",
+  });
   if (!response.ok) {
     throw new Error(await response.text());
   }

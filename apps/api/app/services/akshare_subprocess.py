@@ -12,6 +12,47 @@ logger = logging.getLogger(__name__)
 _SUBPROCESS_TIMEOUT = 60
 
 
+def run_akshare_json_script(
+    script: str,
+    *,
+    label: str,
+    timeout: int | float = _SUBPROCESS_TIMEOUT,
+) -> object | None:
+    """Run an AkShare script in a child process and parse its JSON stdout."""
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+            check=False,
+        )
+        if result.returncode != 0 or not result.stdout.strip():
+            logger.warning(
+                "akshare subprocess failed for %s: %s",
+                label,
+                result.stderr[:300] if result.stderr else "no output",
+            )
+            return None
+        payload = json.loads(result.stdout.strip())
+        if isinstance(payload, dict) and payload.get("error"):
+            logger.debug(
+                "akshare subprocess returned error for %s: %s",
+                label,
+                payload.get("error"),
+            )
+            return None
+        return payload
+    except subprocess.TimeoutExpired:
+        logger.warning("akshare subprocess timeout for %s", label)
+        return None
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.warning("akshare subprocess exception for %s: %s", label, exc)
+        return None
+
+
 @lru_cache(maxsize=128)
 def fetch_fund_nav_history(fund_code: str, trading_days: int = 90) -> dict | None:
     """在子进程中获取基金净值走势，避免 py_mini_racer crash 主进程."""
@@ -75,6 +116,60 @@ except Exception as e:
     except Exception as e:
         logger.error(f"akshare subprocess exception for {{fund_code}}: {{e}}")
         return None
+
+
+def fetch_fund_daily_nav_returns(fund_codes: list[str], trade_date: str) -> dict | None:
+    """一次性读取开放式基金最新净值表，返回指定基金在 trade_date 的日增长率/单位净值。"""
+    codes = sorted({str(code).strip().zfill(6) for code in fund_codes if str(code).strip()})
+    if not codes or not trade_date:
+        return {"data": {}}
+    codes_json = json.dumps(codes, ensure_ascii=True)
+    script = f"""
+import akshare as ak
+import json
+
+codes = set({codes_json})
+trade_date = {trade_date!r}
+try:
+    frame = ak.fund_open_fund_daily_em()
+    if frame is None or frame.empty:
+        print(json.dumps({{"error": "empty"}}))
+    else:
+        unit_col = f"{{trade_date}}-单位净值"
+        if unit_col not in frame.columns:
+            print(json.dumps({{"data": {{}}, "date_mismatch": True}}, ensure_ascii=True))
+        else:
+            data = {{}}
+            for _, row in frame.iterrows():
+                code = str(row.get("基金代码", "")).strip().zfill(6)
+                if code not in codes:
+                    continue
+
+                def _num(key):
+                    raw = row.get(key)
+                    if raw is None or str(raw).strip().lower() in ("", "nan", "--"):
+                        return None
+                    try:
+                        return float(raw)
+                    except (TypeError, ValueError):
+                        return None
+
+                daily_growth = _num("日增长率")
+                unit_nav = _num(unit_col)
+                data[code] = {{
+                    "daily_growth": daily_growth,
+                    "unit_nav": unit_nav,
+                    "fund_name": str(row.get("基金简称", "")).strip(),
+                }}
+            print(json.dumps({{"data": data}}, ensure_ascii=True))
+except Exception as e:
+    print(json.dumps({{"error": str(e)}}, ensure_ascii=True))
+"""
+    return run_akshare_json_script(
+        script,
+        label=f"fund_daily_nav_returns:{trade_date}:{len(codes)}",
+        timeout=_SUBPROCESS_TIMEOUT,
+    )
 
 
 def _index_market_symbol(index_symbol: str) -> str:

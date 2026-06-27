@@ -4,16 +4,126 @@ import time
 
 import pandas as pd
 
-from app.services.akshare_subprocess import fetch_fund_nav_history
+from app.services.akshare_subprocess import fetch_fund_daily_nav_returns, fetch_fund_nav_history
+from app.services.sector_quote_cache import get_spot_snapshot, save_spot_snapshot
 
 logger = logging.getLogger(__name__)
 
 TTL_HIT = 86400   # 24h — nav published, won't change
 TTL_MISS = 300    # 5min — nav not yet published, retry soon
+_OFFICIAL_NAV_CACHE_VERSION = "v1"
 
 # In-memory cache: key -> (value: float | None, expires_at: float)
 _NAV_CACHE: dict[str, tuple[float | None, float]] = {}
 _UNIT_NAV_CACHE: dict[str, tuple[float | None, float]] = {}
+
+
+def _official_nav_cache_key(fund_code: str, trade_date: str) -> str:
+    return f"fund:official-nav:{_OFFICIAL_NAV_CACHE_VERSION}:{fund_code}:{trade_date}"
+
+
+def _unit_nav_cache_key(fund_code: str) -> str:
+    return f"unit:{fund_code}"
+
+
+def _cache_nav_return(fund_code: str, trade_date: str, value: float | None, ttl: int) -> None:
+    now = time.monotonic()
+    _NAV_CACHE[f"{fund_code}:{trade_date}"] = (value, now + ttl)
+    if value is not None:
+        save_spot_snapshot(
+            _official_nav_cache_key(fund_code, trade_date),
+            {"value": value},
+        )
+
+
+def _cached_persisted_nav_return(fund_code: str, trade_date: str) -> float | None:
+    payload = get_spot_snapshot(
+        _official_nav_cache_key(fund_code, trade_date),
+        ttl_seconds=TTL_HIT,
+    )
+    if not payload or payload.get("value") is None:
+        return None
+    try:
+        return float(payload["value"])
+    except (TypeError, ValueError):
+        return None
+
+
+def get_cached_official_nav_return(fund_code: str, trade_date: str) -> float | None:
+    """仅读内存/持久缓存中的官方净值涨跌幅，不触发 AkShare。"""
+    key = f"{fund_code}:{trade_date}"
+    now = time.monotonic()
+    cached = _NAV_CACHE.get(key)
+    if cached is not None:
+        value, expires_at = cached
+        if now < expires_at:
+            return value
+    persisted = _cached_persisted_nav_return(fund_code, trade_date)
+    if persisted is not None:
+        _NAV_CACHE[key] = (persisted, now + TTL_HIT)
+    return persisted
+
+
+def prime_official_nav_cache(fund_codes: list[str], trade_date: str) -> dict[str, float]:
+    """批量预热官方净值涨跌幅/单位净值缓存，避免逐只基金启动 AkShare 子进程。"""
+    codes = sorted(
+        {
+            str(code).strip().zfill(6)
+            for code in fund_codes
+            if str(code).strip() and str(code).strip() != "000000"
+        }
+    )
+    if not codes or not trade_date:
+        return {}
+
+    now = time.monotonic()
+    resolved: dict[str, float] = {}
+    missing: list[str] = []
+    for code in codes:
+        cached = get_cached_official_nav_return(code, trade_date)
+        if cached is not None:
+            resolved[code] = cached
+            continue
+        missing.append(code)
+
+    if not missing:
+        return resolved
+
+    payload = fetch_fund_daily_nav_returns(missing, trade_date)
+    rows = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(rows, dict):
+        for code in missing:
+            _NAV_CACHE[f"{code}:{trade_date}"] = (None, now + TTL_MISS)
+        return resolved
+
+    for code in missing:
+        row = rows.get(code)
+        if not isinstance(row, dict):
+            _NAV_CACHE[f"{code}:{trade_date}"] = (None, now + TTL_MISS)
+            continue
+        daily_growth = row.get("daily_growth")
+        unit_nav = row.get("unit_nav")
+        if unit_nav is not None:
+            try:
+                unit_value = round(float(unit_nav), 4)
+                if unit_value > 0:
+                    _UNIT_NAV_CACHE[_unit_nav_cache_key(code)] = (
+                        unit_value,
+                        now + TTL_HIT,
+                    )
+            except (TypeError, ValueError):
+                pass
+        try:
+            nav_return = float(daily_growth)
+        except (TypeError, ValueError):
+            _NAV_CACHE[f"{code}:{trade_date}"] = (None, now + TTL_MISS)
+            continue
+        if math.isnan(nav_return):
+            _NAV_CACHE[f"{code}:{trade_date}"] = (None, now + TTL_MISS)
+            continue
+        _cache_nav_return(code, trade_date, nav_return, TTL_HIT)
+        resolved[code] = nav_return
+    return resolved
 
 
 def _fetch_nav_df(fund_code: str) -> pd.DataFrame:
@@ -43,34 +153,38 @@ def get_official_nav_return(fund_code: str, trade_date: str) -> float | None:
         if now < expires_at:
             return value
 
+    persisted = get_cached_official_nav_return(fund_code, trade_date)
+    if persisted is not None:
+        return persisted
+
     try:
         df = _fetch_nav_df(fund_code)
         if df is None or df.empty:
-            _NAV_CACHE[key] = (None, now + TTL_MISS)
+            _cache_nav_return(fund_code, trade_date, None, TTL_MISS)
             return None
 
         latest = df.iloc[-1]
         latest_date = str(latest["净值日期"])[:10]
         if latest_date != trade_date:
-            _NAV_CACHE[key] = (None, now + TTL_MISS)
+            _cache_nav_return(fund_code, trade_date, None, TTL_MISS)
             return None
 
         nav_return = float(latest["日增长率"])
         if math.isnan(nav_return):
-            _NAV_CACHE[key] = (None, now + TTL_MISS)
+            _cache_nav_return(fund_code, trade_date, None, TTL_MISS)
             return None
-        _NAV_CACHE[key] = (nav_return, now + TTL_HIT)
+        _cache_nav_return(fund_code, trade_date, nav_return, TTL_HIT)
         return nav_return
 
     except Exception:
         logger.exception("Failed to fetch official NAV return for %s on %s", fund_code, trade_date)
-        _NAV_CACHE[key] = (None, now + TTL_MISS)
+        _cache_nav_return(fund_code, trade_date, None, TTL_MISS)
         return None
 
 
 def peek_cached_unit_nav(fund_code: str) -> float | None:
     """仅读内存缓存中的最近单位净值，不触发网络/子进程。"""
-    key = f"unit:{fund_code}"
+    key = _unit_nav_cache_key(fund_code)
     now = time.monotonic()
     cached = _UNIT_NAV_CACHE.get(key)
     if cached is None:
@@ -83,7 +197,7 @@ def peek_cached_unit_nav(fund_code: str) -> float | None:
 
 def get_latest_unit_nav(fund_code: str, *, allow_fetch: bool = True) -> float | None:
     """Return the latest published unit NAV from AkShare."""
-    key = f"unit:{fund_code}"
+    key = _unit_nav_cache_key(fund_code)
     now = time.monotonic()
 
     cached = _UNIT_NAV_CACHE.get(key)

@@ -242,7 +242,7 @@ def apply_confirmed_holdings(
         persist_profiles=True,
         force_reset_shares=False,
     )
-    merged = enrich_holdings_from_profiles(typed)
+    merged = enrich_holdings_from_profiles(typed, fetch_benchmark=False)
     merged = bootstrap_holding_baselines(merged, force_reset_shares=True, skip_network=True)
     processed = enrich_loaded_holdings(merged, with_network=False)
 

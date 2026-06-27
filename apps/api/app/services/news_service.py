@@ -82,24 +82,34 @@ class NewsService:
             return _rank_news_by_recency(_dedupe_news(self.search(limited[0])))
 
         import time
-        from concurrent.futures import ThreadPoolExecutor, as_completed
+        from concurrent.futures import ThreadPoolExecutor, TimeoutError, as_completed
 
         max_workers = min(5, len(limited))
         deadline = time.monotonic() + float(self.settings.news_prefetch_total_timeout_seconds)
         collected: list[NewsItem] = []
-        with ThreadPoolExecutor(
+        executor = ThreadPoolExecutor(
             max_workers=max_workers,
             thread_name_prefix="news-prefetch",
-        ) as executor:
+        )
+        try:
             futures = {executor.submit(self.search, topic): topic for topic in limited}
-            for future in as_completed(futures):
-                if time.monotonic() > deadline:
-                    break
-                try:
-                    items = future.result(timeout=0.05)
-                except Exception:
-                    continue
-                collected.extend(items)
+            timeout = max(0.0, deadline - time.monotonic())
+            try:
+                for future in as_completed(futures, timeout=timeout):
+                    if time.monotonic() > deadline:
+                        break
+                    try:
+                        items = future.result()
+                    except Exception:
+                        continue
+                    collected.extend(items)
+            except TimeoutError:
+                pass
+            finally:
+                for future in futures:
+                    future.cancel()
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
         return _rank_news_by_recency(_dedupe_news(collected))
 
     def prefetch_for_holdings(

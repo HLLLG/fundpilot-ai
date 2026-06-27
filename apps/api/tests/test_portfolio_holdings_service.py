@@ -44,7 +44,7 @@ def test_load_persisted_holdings_prefers_snapshot(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(
         "app.services.portfolio_holdings_service.enrich_holdings_from_profiles",
-        lambda holdings: holdings,
+        lambda holdings, **_kwargs: holdings,
     )
 
     holdings, source, snapshot_date, refreshed_at = load_persisted_holdings()
@@ -77,11 +77,11 @@ def test_load_persisted_holdings_falls_back_to_profiles(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(
         "app.services.portfolio_holdings_service.enrich_holdings_from_profiles",
-        lambda holdings: holdings,
+        lambda holdings, **_kwargs: holdings,
     )
 
     class FakeService:
-        def resolve_holdings(self, holdings):
+        def resolve_holdings(self, holdings, **_kwargs):
             return holdings
 
     monkeypatch.setattr(

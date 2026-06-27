@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from collections.abc import Iterator
+import time
 from typing import Any
 
 import httpx
@@ -27,6 +29,7 @@ from app.services.discovery_sector_heat import build_sector_heat_ranking
 from app.services.discovery_target_sectors import select_target_sectors
 from app.services.news_service import NewsService
 from app.services.news_summarizer import summarize_all_topics
+from app.services.pipeline_concurrency import run_with_request_user
 from app.services.risk import resolve_weight_denominator
 from app.services.streaming_json_parser import StreamingReportParser
 from app.services.discovery_payload import append_output_requirements_to_system, build_user_payload
@@ -36,10 +39,11 @@ from app.services.news_summarizer import merge_topic_briefs
 def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dict[str, Any]]:
     ctx_token = set_request_user_id(user_id)
     settings = get_settings()
+    started_at = time.monotonic()
     try:
         holdings = list(request.holdings)
-        yield _stage("connected")
-        yield _stage("sector_heat")
+        yield _stage("connected", started_at=started_at)
+        yield _stage("sector_heat", started_at=started_at)
         sector_heat = build_sector_heat_ranking()
         target_sectors = select_target_sectors(
             holdings,
@@ -56,28 +60,40 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
         if request.scan_mode == "dip_swing":
             selection_strategy = "dip_rebound"
 
-        if request.scan_mode == "dip_swing":
-            yield _stage("dip_prescreen")
-            from app.services.dip_drop_scanner import build_dip_pool_for_sectors
+        topics = list(dict.fromkeys(target_sectors + list(request.focus_sectors)))
+        if not topics:
+            topics = ["上证指数"]
+        news_service = NewsService()
+        yield _stage("news", started_at=started_at)
+        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="discovery-prep") as executor:
+            news_future = executor.submit(
+                run_with_request_user,
+                user_id,
+                lambda: news_service.prefetch_topics(topics),
+            )
+            if request.scan_mode == "dip_swing":
+                yield _stage("dip_prescreen", started_at=started_at)
+                from app.services.dip_drop_scanner import build_dip_pool_for_sectors
 
-            pool = build_dip_pool_for_sectors(
-                target_sectors,
-                lookback_days=request.dip_lookback_days,
-                min_drop_percent=request.dip_min_drop_percent,
-                exclude_codes=held_codes,
-            )
-            pool = enrich_candidates(pool)
-        else:
-            yield _stage("candidate_pool")
-            pool = build_candidate_pool(
-                target_sectors,
-                exclude_codes=held_codes,
-                fund_type_preference=request.fund_type_preference,
-                selection_strategy=selection_strategy,
-                per_sector=per_sector,
-                pool_cap=pool_cap,
-            )
-            pool = enrich_candidates(pool)
+                pool = build_dip_pool_for_sectors(
+                    target_sectors,
+                    lookback_days=request.dip_lookback_days,
+                    min_drop_percent=request.dip_min_drop_percent,
+                    exclude_codes=held_codes,
+                )
+                pool = enrich_candidates(pool)
+            else:
+                yield _stage("candidate_pool", started_at=started_at)
+                pool = build_candidate_pool(
+                    target_sectors,
+                    exclude_codes=held_codes,
+                    fund_type_preference=request.fund_type_preference,
+                    selection_strategy=selection_strategy,
+                    per_sector=per_sector,
+                    pool_cap=pool_cap,
+                )
+                pool = enrich_candidates(pool)
+            market_news = news_future.result()
 
         fund_codes = [
             str(item.get("fund_code", "")).strip().zfill(6)
@@ -91,12 +107,6 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
             "fund_names": fund_names,
         }
 
-        yield _stage("news")
-        news_service = NewsService()
-        topics = list(dict.fromkeys(target_sectors + list(request.focus_sectors)))
-        if not topics:
-            topics = ["上证指数"]
-        market_news = news_service.prefetch_topics(topics)
         topic_briefs = summarize_all_topics(market_news, offline_only=True)
 
         total_amount = sum(item.holding_amount for item in holdings) or 0.0
@@ -131,12 +141,12 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
                 focus_sectors=list(request.focus_sectors),
                 analysis_mode=request.analysis_mode,
             )
-            yield _stage("saving")
+            yield _stage("saving", started_at=started_at)
             save_discovery_report(report)
             yield _done(report)
             return
 
-        yield _stage("generating")
+        yield _stage("generating", started_at=started_at)
         runtime = resolve_analysis_runtime(settings, request.analysis_mode)
         client = DiscoveryClient()
         user_payload = build_user_payload(
@@ -163,7 +173,7 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
                 on_stage=lambda stage, label: pending_stages.append((stage, label)),
             )
             for stage, label in pending_stages:
-                yield _stage(stage, label)
+                yield _stage(stage, label, started_at=started_at)
             if len(market_news) > initial_news_count:
                 topic_briefs = merge_topic_briefs(topic_briefs, market_news, settings)
         else:
@@ -188,13 +198,13 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
             parsed = _parse_model_json("".join(all_chunks))
         except (httpx.StreamError, httpx.ReadTimeout, httpx.HTTPError) as exc:
             if all_chunks:
-                yield _stage("salvage", "流式中断，已收集部分内容…")
+                yield _stage("salvage", "流式中断，已收集部分内容…", started_at=started_at)
                 parsed = _parse_model_json("".join(all_chunks))
             else:
                 yield {"type": "error", "message": f"{type(exc).__name__}: {exc}"}
                 return
 
-        yield _stage("guarding")
+        yield _stage("guarding", started_at=started_at)
         report = build_discovery_report_from_parsed(
             parsed,
             target_sectors=target_sectors,
@@ -210,7 +220,7 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
             topic_briefs=topic_briefs,
             analysis_mode=request.analysis_mode,
         )
-        yield _stage("saving")
+        yield _stage("saving", started_at=started_at)
         save_discovery_report(report)
         yield _done(report)
     except Exception as exc:  # noqa: BLE001
@@ -219,12 +229,20 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
         reset_request_user_id(ctx_token)
 
 
-def _stage(stage: str, label: str | None = None) -> dict[str, str]:
-    return {
+def _stage(
+    stage: str,
+    label: str | None = None,
+    *,
+    started_at: float | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
         "type": "stage",
         "stage": stage,
         "label": label or DISCOVERY_JOB_STAGES.get(stage, stage),
     }
+    if started_at is not None:
+        payload["elapsed_ms"] = max(0, int((time.monotonic() - started_at) * 1000))
+    return payload
 
 
 def _done(report: FundDiscoveryReport) -> dict[str, Any]:

@@ -469,12 +469,6 @@ export function FundDiscoveryPanel({
   ]);
 
   useEffect(() => {
-    return () => {
-      discoveryStreamAbortRef.current?.abort();
-    };
-  }, [discoveryStreamAbortRef]);
-
-  useEffect(() => {
     onRegisterDiscoveryScanRetry(() => {
       void handleScan();
     });

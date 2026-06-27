@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from app.services.akshare_subprocess import run_akshare_json_script
 from app.services.sector_quote_cache import get_spot_snapshot, save_spot_snapshot
 from app.services.trading_session import build_trading_session
 
@@ -55,11 +56,72 @@ def load_fund_diagnostics(fund_code: str) -> dict:
 
 
 def _fetch_fund_diagnostics_via_akshare(fund_code: str) -> dict:
-    from app.services.fund_data import _load_fund_diagnostics
+    from app.services.fund_data import _parse_overview_frame, _parse_return_frame
 
-    try:
-        import akshare as ak  # type: ignore[import-not-found]
+    script = f"""
+import json
+import sys
 
-        return _load_fund_diagnostics(ak, fund_code)
-    except Exception:
+def _dump_frame(frame):
+    if frame is None or frame.empty:
+        return {{"columns": [], "rows": []}}
+    rows = []
+    for _, row in frame.iterrows():
+        values = []
+        for value in row.tolist():
+            text = str(value)
+            if text.lower() in ("nan", "nat"):
+                values.append(None)
+            else:
+                values.append(value)
+        rows.append(values)
+    return {{
+        "columns": [str(col) for col in frame.columns],
+        "rows": rows,
+    }}
+
+try:
+    import akshare as ak
+
+    overview = ak.fund_open_fund_info_em(symbol={fund_code!r}, indicator="基金概况")
+    cumulative = ak.fund_open_fund_info_em(symbol={fund_code!r}, indicator="累计收益率走势")
+    print(json.dumps({{
+        "overview": _dump_frame(overview),
+        "cumulative": _dump_frame(cumulative),
+    }}, ensure_ascii=False, default=str))
+except Exception as e:
+    print(json.dumps({{"error": str(e)}}, ensure_ascii=False))
+    sys.exit(1)
+"""
+    payload = run_akshare_json_script(
+        script,
+        label=f"fund diagnostics {fund_code}",
+        timeout=60,
+    )
+    if not isinstance(payload, dict):
         return {}
+    diagnostics: dict = {}
+    overview = _frame_from_payload(payload.get("overview"))
+    if overview is not None:
+        diagnostics.update(_parse_overview_frame(overview))
+    cumulative = _frame_from_payload(payload.get("cumulative"))
+    if cumulative is not None:
+        diagnostics.update(_parse_return_frame(cumulative))
+    return diagnostics
+
+
+def _frame_from_payload(payload: object):
+    if not isinstance(payload, dict):
+        return None
+    columns = payload.get("columns")
+    rows = payload.get("rows")
+    if not isinstance(columns, list) or not isinstance(rows, list):
+        return None
+    if not columns:
+        return None
+    try:
+        import pandas as pd
+
+        return pd.DataFrame(rows, columns=[str(col) for col in columns])
+    except Exception:
+        return None

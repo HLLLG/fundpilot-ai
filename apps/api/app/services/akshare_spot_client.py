@@ -8,6 +8,8 @@ import sys
 import time
 from typing import Any
 
+from app.services.akshare_subprocess import run_akshare_json_script
+
 logger = logging.getLogger(__name__)
 
 SpotBoard = dict[str, float]
@@ -123,6 +125,59 @@ def fetch_akshare_board_records(board_type: str) -> list[dict[str, Any]]:
     ]
 
 
+def _fetch_index_boards_subprocess() -> SpotBoard:
+    script = """
+import json
+import os
+import sys
+
+for key in list(os.environ):
+    if "proxy" in key.lower() or "http" in key.lower():
+        os.environ.pop(key, None)
+os.environ["NO_PROXY"] = "*"
+os.environ.pop("REQUESTS_CA_BUNDLE", None)
+os.environ.pop("CURL_CA_BUNDLE", None)
+
+try:
+    import akshare as ak
+
+    result = {}
+    for symbol in ("沪深重要指数", "中证系列指数", "上证系列指数", "深证系列指数"):
+        frame = ak.stock_zh_index_spot_em(symbol=symbol)
+        if frame is None or frame.empty:
+            continue
+        for _, row in frame.iterrows():
+            name = str(row.get("名称", "")).strip()
+            if not name:
+                continue
+            try:
+                result[name] = round(float(row.get("涨跌幅")), 4)
+            except (TypeError, ValueError):
+                continue
+    print(json.dumps({"data": result}, ensure_ascii=False))
+except Exception as e:
+    print(json.dumps({"error": str(e)}, ensure_ascii=False))
+    sys.exit(1)
+"""
+    payload = run_akshare_json_script(
+        script,
+        label="index boards",
+        timeout=120,
+    )
+    if not isinstance(payload, dict):
+        return {}
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        return {}
+    result: SpotBoard = {}
+    for name, change in data.items():
+        try:
+            result[str(name)] = round(float(change), 4)
+        except (TypeError, ValueError):
+            continue
+    return result
+
+
 def fetch_boards_via_akshare(*, include_index: bool = True) -> dict[str, SpotBoard]:
     """httpx 直连失败时，用 AkShare 列表接口兜底（概念/行业；指数可选且较慢）。"""
     boards: dict[str, SpotBoard] = {"concept": {}, "industry": {}, "index": {}}
@@ -139,19 +194,6 @@ def fetch_boards_via_akshare(*, include_index: bool = True) -> dict[str, SpotBoa
     if not include_index:
         return boards
 
-    saved = _clear_proxy_env()
-    try:
-        import akshare as ak  # type: ignore[import-not-found]
-
-        for symbol in ("沪深重要指数", "中证系列指数", "上证系列指数", "深证系列指数"):
-            try:
-                frame = ak.stock_zh_index_spot_em(symbol=symbol)
-                boards["index"].update(_frame_to_board(frame, "名称", "涨跌幅"))
-            except Exception as exc:
-                logger.warning("akshare index board %s failed: %s", symbol, exc)
-    except Exception as exc:
-        logger.warning("akshare index fallback failed: %s", exc)
-    finally:
-        _restore_proxy_env(saved)
+    boards["index"].update(_fetch_index_boards_subprocess())
 
     return boards

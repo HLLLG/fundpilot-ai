@@ -29,6 +29,10 @@ def _overlay_sector_fields(base: Holding, patch: Holding) -> Holding:
         updates["daily_return_percent"] = patch.daily_return_percent
         updates["daily_profit"] = patch.daily_profit
         updates["daily_return_percent_source"] = patch.daily_return_percent_source
+    elif patch.daily_return_percent_source == "official_nav":
+        updates["daily_return_percent"] = patch.daily_return_percent
+        updates["daily_profit"] = patch.daily_profit
+        updates["daily_return_percent_source"] = patch.daily_return_percent_source
     if patch.sector_return_percent_source is not None:
         updates["sector_return_percent_source"] = patch.sector_return_percent_source
     elif patch.daily_profit is not None:

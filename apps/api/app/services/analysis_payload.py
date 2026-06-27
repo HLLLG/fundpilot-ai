@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal
 
+from app.request_context import try_get_request_user_id
 from app.models import (
     AnalysisRequest,
     FundSnapshot,
@@ -17,10 +19,18 @@ from app.services.analysis_facts import build_analysis_facts
 from app.services.holding_metrics import HOLDING_RETURN_SEMANTICS
 from app.services.analysis_runtime import AnalysisMode
 from app.services.news_freshness import build_news_pipeline_context
-from app.services.portfolio_snapshot import build_portfolio_trend_context
+from app.services.pipeline_concurrency import run_with_request_user
+from app.services.portfolio_snapshot import (
+    build_factor_scores_for_facts,
+    build_portfolio_trend_context,
+    build_risk_metrics_for_facts,
+)
 from app.services.trading_session import build_trading_session
 
 AnalysisPayloadPhase = Literal[1, 2, 3]
+
+FACTOR_SCORE_TIMEOUT_SECONDS = 4.0
+RISK_METRICS_TIMEOUT_SECONDS = 3.0
 
 # 迁入 system 的完整输出约束（不再每条请求在 user JSON 重复）
 OUTPUT_REQUIREMENTS_SYSTEM = (
@@ -305,18 +315,54 @@ class AnalysisFactsBundle:
     facts: dict
 
 
+def _enhancement_unavailable(reason: str) -> dict[str, Any]:
+    return {"available": False, "reason": reason}
+
+
+def _run_budgeted_enhancement(
+    func,
+    *,
+    timeout_seconds: float,
+    fallback: dict[str, Any],
+) -> dict[str, Any]:
+    user_id = try_get_request_user_id()
+
+    def run():
+        if user_id is None:
+            return func()
+        return run_with_request_user(user_id, func)
+
+    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="analysis-context-budget")
+    future = executor.submit(run)
+    try:
+        return future.result(timeout=timeout_seconds)
+    except FutureTimeoutError:
+        future.cancel()
+        return fallback
+    except Exception:  # noqa: BLE001 - enhancement facts are best-effort
+        return _enhancement_unavailable("error")
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
+
+
 def _compute_analysis_context(
     holdings: list,
     *,
     analysis_mode: AnalysisMode = "deep",
     phase: AnalysisPayloadPhase = 3,
+    budget_enhancements: bool = False,
 ) -> tuple[dict, dict | None, dict | None, dict | None]:
     session = build_trading_session()
     include_portfolio_trend = not (phase >= 2 and analysis_mode == "fast")
     try:
-        from app.services.portfolio_snapshot import build_factor_scores_for_facts
-
-        factor_scores = build_factor_scores_for_facts(holdings)
+        if budget_enhancements:
+            factor_scores = _run_budgeted_enhancement(
+                lambda: build_factor_scores_for_facts(holdings),
+                timeout_seconds=FACTOR_SCORE_TIMEOUT_SECONDS,
+                fallback=_enhancement_unavailable("timeout"),
+            )
+        else:
+            factor_scores = build_factor_scores_for_facts(holdings)
     except Exception:  # noqa: BLE001 — best-effort，绝不阻塞日报
         factor_scores = None
 
@@ -325,12 +371,18 @@ def _compute_analysis_context(
     risk_metrics = None
     try:
         from app.database import list_portfolio_daily_snapshots
-        from app.services.portfolio_snapshot import build_risk_metrics_for_facts
 
         history_rows = list_portfolio_daily_snapshots(limit=400)
         if include_portfolio_trend:
             portfolio_trend = build_portfolio_trend_context(history_rows=history_rows)
-        risk_metrics = build_risk_metrics_for_facts(history_rows, holdings)
+        if budget_enhancements:
+            risk_metrics = _run_budgeted_enhancement(
+                lambda: build_risk_metrics_for_facts(history_rows, holdings),
+                timeout_seconds=RISK_METRICS_TIMEOUT_SECONDS,
+                fallback=_enhancement_unavailable("timeout"),
+            )
+        else:
+            risk_metrics = build_risk_metrics_for_facts(history_rows, holdings)
     except Exception:  # noqa: BLE001 — best-effort，绝不阻塞日报
         if include_portfolio_trend and portfolio_trend is None:
             portfolio_trend = build_portfolio_trend_context()
@@ -348,6 +400,7 @@ def prepare_analysis_bundle(
     *,
     analysis_mode: AnalysisMode = "deep",
     phase: AnalysisPayloadPhase = 3,
+    budget_enhancements: bool = False,
 ) -> AnalysisFactsBundle:
     """构建完整 analysis_facts（未 trim），供 LLM prompt 与最终存档各用一次。"""
     briefs = topic_briefs or []
@@ -356,6 +409,7 @@ def prepare_analysis_bundle(
         request.holdings,
         analysis_mode=analysis_mode,
         phase=phase,
+        budget_enhancements=budget_enhancements,
     )
     facts = build_analysis_facts(
         request.holdings,
@@ -370,6 +424,7 @@ def prepare_analysis_bundle(
         factor_scores=factor_scores,
         risk_metrics=risk_metrics,
         for_llm=True,
+        budget_enhancements=budget_enhancements,
     )
     return AnalysisFactsBundle(
         session=session,

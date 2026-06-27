@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { CheckCircle, Loader2, XCircle } from "lucide-react";
 import type { FundDiscoveryReport } from "@/lib/api";
-import { fetchAnalysisJob } from "@/lib/api";
+import { fetchDiscoveryJob } from "@/lib/api";
 
 type JobState = "running" | "completed" | "failed";
 
@@ -37,7 +37,7 @@ export function DiscoveryJobStatusFloat({
     const poll = async () => {
       while (!cancelled) {
         try {
-          const job = await fetchAnalysisJob(jobId);
+          const job = await fetchDiscoveryJob(jobId);
           transientFailures = 0;
           if (cancelled) return;
           if (job.stage_label) setStageLabel(job.stage_label);

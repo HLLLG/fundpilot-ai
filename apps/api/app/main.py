@@ -88,6 +88,7 @@ from app.services.portfolio_holdings_service import (
     load_persisted_holdings,
     remove_holding_from_portfolio,
 )
+from app.services.official_nav_settlement import settle_official_nav_for_portfolio
 from app.services.portfolio_holdings_cache import (
     get_cached_holdings_response,
     save_cached_holdings_response,
@@ -407,6 +408,14 @@ def adjust_portfolio_holding(fund_code: str, payload: AdjustHoldingRequest) -> d
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     save_cached_holdings_response(response)
     return response
+
+
+@app.post("/api/portfolio/settle-official-nav")
+def settle_portfolio_official_nav() -> dict:
+    payload = settle_official_nav_for_portfolio()
+    if payload.get("ok") and not payload.get("skipped") and payload.get("holdings"):
+        save_cached_holdings_response(payload)
+    return payload
 
 
 @app.get("/api/funds/search")
@@ -1301,6 +1310,7 @@ def portfolio_holdings() -> dict:
             source=source,
             snapshot_date=snapshot_date,
             refreshed_at=refreshed_at,
+            fetch_benchmark=False,
         )
 
     cached = get_cached_holdings_response()
@@ -1333,7 +1343,9 @@ def portfolio_holdings() -> dict:
             return cached
         return payload
 
-    holdings, source, snapshot_date, refreshed_at = load_persisted_holdings()
+    holdings, source, snapshot_date, refreshed_at = load_persisted_holdings(
+        fetch_benchmark=False,
+    )
     payload = _response_from_holdings(
         holdings,
         source=source,

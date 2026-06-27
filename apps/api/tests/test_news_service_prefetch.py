@@ -115,3 +115,23 @@ def test_prefetch_topics_respects_total_timeout(news_prefetch_enabled, monkeypat
 
     assert elapsed < 0.35, f"总超时应尽快返回，实际 {elapsed:.2f}s"
     assert len(result) <= len(topics)
+
+
+def test_prefetch_topics_total_timeout_does_not_wait_for_blocked_workers(
+    news_prefetch_enabled, monkeypatch
+):
+    service = NewsService()
+    monkeypatch.setattr(service.settings, "news_prefetch_total_timeout_seconds", 0.05)
+
+    def blocked_search(topic: str, limit: int | None = None):
+        time.sleep(1.0)
+        return [_make_item(topic, f"{topic} title")]
+
+    topics = ["半导体", "商业航天", "新能源车", "医药", "银行"]
+    with patch.object(service, "search", side_effect=blocked_search):
+        start = time.monotonic()
+        result = service.prefetch_topics(topics)
+        elapsed = time.monotonic() - start
+
+    assert elapsed < 0.3, f"总超时应不等待阻塞 worker，实际 {elapsed:.2f}s"
+    assert result == []

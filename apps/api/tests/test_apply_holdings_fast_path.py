@@ -35,7 +35,7 @@ def test_apply_confirmed_holdings_skips_network_bootstrap(monkeypatch):
     )
     monkeypatch.setattr(
         "app.services.ocr_pipeline.enrich_holdings_from_profiles",
-        lambda holdings: holdings,
+        lambda holdings, **_kwargs: holdings,
     )
     monkeypatch.setattr(
         "app.services.sector_quote_service.refresh_holdings_sector_quotes",

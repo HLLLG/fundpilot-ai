@@ -92,6 +92,21 @@ describe("ReportPanel streaming", () => {
     expect(screen.getByText(/正在分析 银河创新成长/)).toBeInTheDocument();
   });
 
+  it("keeps a visible frame after falling back before skeleton data arrives", () => {
+    render(
+      <ReportPanel
+        report={null}
+        streaming={streamingState({
+          fundCodes: [],
+          fundNames: [],
+          backgroundJobId: "job-1",
+          backgroundFallbackReason: "stopped at news summary",
+        })}
+      />,
+    );
+    expect(screen.getByTestId("report-background-fallback-frame")).toBeInTheDocument();
+  });
+
   it("renders partial fund recommendation when patch arrives", () => {
     render(
       <ReportPanel

@@ -1,5 +1,7 @@
 """analysis_facts 单次计算 bundle 复用。"""
 
+import time
+
 from app.models import AnalysisRequest, FundSnapshot, Holding, InvestorProfile, RiskAssessment
 from app.services.analysis_payload import (
     AnalysisFactsBundle,
@@ -125,3 +127,185 @@ def test_prepare_analysis_bundle_calls_build_once(monkeypatch):
     bundle = prepare_analysis_bundle(request, risk, snapshots, [])
     build_user_payload(request, risk, snapshots, [], analysis_bundle=bundle)
     assert build_calls["count"] == 1
+
+
+def test_prepare_analysis_bundle_budget_degrades_slow_enhancements(monkeypatch):
+    request = _minimal_request()
+    risk = _minimal_risk()
+    snapshots = [
+        FundSnapshot(
+            fund_code="519674",
+            fund_name="银河创新成长",
+            latest_nav=1.0,
+            source="test",
+        ),
+    ]
+    monkeypatch.setattr("app.services.analysis_payload.FACTOR_SCORE_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr("app.services.analysis_payload.RISK_METRICS_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr("app.services.analysis_facts.SIGNAL_BACKTEST_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr("app.services.analysis_facts.SECTOR_FLOW_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr("app.services.analysis_facts.SECTOR_INTRADAY_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr("app.services.analysis_facts.MARKET_FLOW_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr("app.services.analysis_facts.GUARD_POLICY_TIMEOUT_SECONDS", 0.01)
+
+    def slow_factor(*_args, **_kwargs):
+        time.sleep(0.08)
+        return {"available": True}
+
+    def slow_risk(*_args, **_kwargs):
+        time.sleep(0.08)
+        return {"available": True}
+
+    def slow_signal(*_args, **_kwargs):
+        time.sleep(0.08)
+        return {"has_data": True}
+
+    def slow_flow(*_args, **_kwargs):
+        time.sleep(0.08)
+        return {"半导体": {"available": True}}
+
+    def slow_intraday(*_args, **_kwargs):
+        time.sleep(0.08)
+        return {"半导体": {"pattern_label": "steady_rally"}}
+
+    def slow_market_flow(*_args, **_kwargs):
+        time.sleep(0.08)
+        return {"available": True}
+
+    monkeypatch.setattr("app.services.analysis_payload.build_factor_scores_for_facts", slow_factor)
+    monkeypatch.setattr("app.services.analysis_payload.build_risk_metrics_for_facts", slow_risk)
+    monkeypatch.setattr("app.services.analysis_facts.build_signal_backtest_context", slow_signal)
+    monkeypatch.setattr("app.services.analysis_facts.build_sector_fund_flow_map", slow_flow)
+    monkeypatch.setattr("app.services.analysis_facts._build_sector_intraday_map", slow_intraday)
+    monkeypatch.setattr("app.services.analysis_facts.build_market_flow_context", slow_market_flow)
+
+    start = time.monotonic()
+    bundle = prepare_analysis_bundle(
+        request,
+        risk,
+        snapshots,
+        [],
+        budget_enhancements=True,
+    )
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 0.35
+    assert bundle.factor_scores == {"available": False, "reason": "timeout"}
+    assert bundle.risk_metrics == {"available": False, "reason": "timeout"}
+    assert bundle.facts["signal_backtest"]["has_data"] is False
+    assert bundle.facts["signal_backtest"]["reason"] == "timeout"
+    assert bundle.facts["market_flow"]["available"] is False
+    assert bundle.facts["market_flow"]["reason"] == "timeout"
+    holding = bundle.facts["holdings"][0]
+    assert holding["sector_intraday"] is None
+    assert holding["sector_fund_flow"]["available"] is False
+    assert holding["sector_fund_flow"]["reason"] == "timeout"
+
+
+def test_prepare_analysis_bundle_budget_skips_slow_display_metrics(monkeypatch):
+    request = _minimal_request()
+    risk = _minimal_risk()
+    snapshots = [
+        FundSnapshot(
+            fund_code="519674",
+            fund_name="银河创新成长",
+            latest_nav=1.0,
+            source="test",
+        ),
+    ]
+    monkeypatch.setattr(
+        "app.services.analysis_payload._compute_analysis_context",
+        lambda *_args, **_kwargs: ({}, None, None, None),
+    )
+    monkeypatch.setattr("app.services.analysis_facts.build_signal_backtest_context", lambda *_args: {})
+    monkeypatch.setattr("app.services.analysis_facts.resolve_signal_guard_policy", lambda *_args: {})
+    monkeypatch.setattr("app.services.analysis_facts.build_sector_fund_flow_map", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr("app.services.analysis_facts._build_sector_intraday_map", lambda *_args: {})
+    monkeypatch.setattr("app.services.analysis_facts.build_market_flow_context", lambda *_args, **_kwargs: {})
+
+    def slow_display(*_args, **_kwargs):
+        time.sleep(0.2)
+        return {
+            "holding_return_percent_settled": 0,
+            "estimated_holding_return_percent": 0,
+            "estimated_holding_profit": 0,
+            "holding_return_is_estimated": False,
+        }
+
+    monkeypatch.setattr("app.services.analysis_facts.build_holding_display_metrics", slow_display)
+
+    start = time.monotonic()
+    bundle = prepare_analysis_bundle(
+        request,
+        risk,
+        snapshots,
+        [],
+        budget_enhancements=True,
+    )
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 0.18
+    holding = bundle.facts["holdings"][0]
+    assert holding["estimated_holding_return_percent"] == 0.0
+
+
+def test_prepare_analysis_bundle_budget_runs_fact_enhancements_in_parallel(monkeypatch):
+    request = _minimal_request()
+    risk = _minimal_risk()
+    snapshots = [
+        FundSnapshot(
+            fund_code="519674",
+            fund_name="银河创新成长",
+            latest_nav=1.0,
+            source="test",
+        ),
+    ]
+    monkeypatch.setattr(
+        "app.services.analysis_payload._compute_analysis_context",
+        lambda *_args, **_kwargs: ({}, None, None, None),
+    )
+    monkeypatch.setattr("app.services.analysis_facts.SIGNAL_BACKTEST_TIMEOUT_SECONDS", 0.2)
+    monkeypatch.setattr("app.services.analysis_facts.SECTOR_FLOW_TIMEOUT_SECONDS", 0.2)
+    monkeypatch.setattr("app.services.analysis_facts.SECTOR_INTRADAY_TIMEOUT_SECONDS", 0.2)
+    monkeypatch.setattr("app.services.analysis_facts.MARKET_FLOW_TIMEOUT_SECONDS", 0.2)
+    monkeypatch.setattr("app.services.analysis_facts.GUARD_POLICY_TIMEOUT_SECONDS", 0.2)
+
+    def slow_signal(*_args, **_kwargs):
+        time.sleep(0.08)
+        return {"has_data": False, "summary_lines": ["signal"]}
+
+    def slow_guard(*_args, **_kwargs):
+        time.sleep(0.08)
+        return {"reason": "guard"}
+
+    def slow_flow(*_args, **_kwargs):
+        time.sleep(0.08)
+        return {"半导体": {"available": True, "reason": "flow"}}
+
+    def slow_intraday(*_args, **_kwargs):
+        time.sleep(0.08)
+        return {"半导体": {"pattern_label": "range_bound"}}
+
+    def slow_market_flow(*_args, **_kwargs):
+        time.sleep(0.08)
+        return {"available": True, "reason": "market"}
+
+    monkeypatch.setattr("app.services.analysis_facts.build_signal_backtest_context", slow_signal)
+    monkeypatch.setattr("app.services.analysis_facts.resolve_signal_guard_policy", slow_guard)
+    monkeypatch.setattr("app.services.analysis_facts.build_sector_fund_flow_map", slow_flow)
+    monkeypatch.setattr("app.services.analysis_facts._build_sector_intraday_map", slow_intraday)
+    monkeypatch.setattr("app.services.analysis_facts.build_market_flow_context", slow_market_flow)
+
+    start = time.monotonic()
+    bundle = prepare_analysis_bundle(
+        request,
+        risk,
+        snapshots,
+        [],
+        budget_enhancements=True,
+    )
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 0.25
+    assert bundle.facts["market_flow"]["reason"] == "market"
+    assert bundle.facts["holdings"][0]["sector_fund_flow"]["reason"] == "flow"

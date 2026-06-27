@@ -11,11 +11,15 @@ from app.services.holding_estimates import (
 from app.services.sector_quote_service import refresh_holdings_sector_quotes
 
 
-def enrich_holdings_from_profiles(holdings: list[Holding]) -> list[Holding]:
+def enrich_holdings_from_profiles(
+    holdings: list[Holding],
+    *,
+    fetch_benchmark: bool = True,
+) -> list[Holding]:
     service = FundProfileService()
     enriched: list[Holding] = []
     for holding in holdings:
-        resolved = service.resolve_holding(holding)
+        resolved = service.resolve_holding(holding, fetch_benchmark=fetch_benchmark)
         profile = service._find_profile_for_holding(resolved)
         if profile is None:
             enriched.append(resolved)
@@ -35,6 +39,7 @@ def enrich_holdings_from_profiles(holdings: list[Holding]) -> list[Holding]:
                     code,
                     fund_name=resolved.fund_name or profile.fund_name,
                     allow_name_infer=False,
+                    fetch_benchmark=fetch_benchmark,
                 )
                 if record:
                     patch["sector_name"] = record.sector_name

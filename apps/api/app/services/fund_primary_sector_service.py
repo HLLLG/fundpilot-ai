@@ -5,7 +5,7 @@ import logging
 import subprocess
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app.database import get_fund_primary_sector, get_fund_profile_by_code, save_fund_primary_sector
 from app.models import FundProfile, Holding
@@ -19,6 +19,8 @@ from app.services.sector_labels import infer_sector_label_from_fund_name
 logger = logging.getLogger(__name__)
 
 _SUBPROCESS_TIMEOUT = 90
+_BENCHMARK_MISS_TTL = timedelta(hours=24)
+_benchmark_miss_cache: dict[str, datetime] = {}
 
 # 养基宝常见 fund_code → 主关联板块（全局种子，可被用户 OCR 覆盖）
 GLOBAL_FUND_SECTOR_SEEDS: dict[str, dict[str, str | None]] = {
@@ -209,6 +211,7 @@ def primary_sector_fields_for_holding(
     *,
     fallback_code: str | None = None,
     allow_name_infer: bool = False,
+    fetch_benchmark: bool = True,
 ) -> dict[str, str]:
     if _is_valid_sector_label(holding.sector_name):
         return {}
@@ -219,6 +222,7 @@ def primary_sector_fields_for_holding(
         code,
         fund_name=holding.fund_name,
         allow_name_infer=allow_name_infer,
+        fetch_benchmark=fetch_benchmark,
     )
     if record is None:
         return {}
@@ -292,7 +296,11 @@ def apply_primary_sector_to_holdings(
     ]
 
 
-def refresh_benchmark_sectors_for_holdings(holdings: list[Holding]) -> list[Holding]:
+def refresh_benchmark_sectors_for_holdings(
+    holdings: list[Holding],
+    *,
+    fetch_missing_benchmark: bool = True,
+) -> list[Holding]:
     """板块刷新前：为指数型基金拉业绩基准并覆盖不可靠的总览/名称推断板块。"""
     refreshed: list[Holding] = []
     for holding in holdings:
@@ -307,7 +315,15 @@ def refresh_benchmark_sectors_for_holdings(holdings: list[Holding]) -> list[Hold
         if row and str(row.get("source") or "") == "benchmark_index":
             refreshed.append(apply_primary_sector_to_holding(holding, fetch_benchmark=False))
             continue
-        refreshed.append(apply_primary_sector_to_holding(holding, fetch_benchmark=True))
+        if not fetch_missing_benchmark:
+            refreshed.append(holding)
+            continue
+        refreshed.append(
+            apply_primary_sector_to_holding(
+                holding,
+                fetch_benchmark=fetch_missing_benchmark,
+            )
+        )
     return refreshed
 
 
@@ -457,18 +473,23 @@ def _resolve_from_benchmark_index(fund_code: str, *, fetch: bool = True) -> Prim
 
     if not fetch:
         return None
+    if _benchmark_miss_cached(fund_code):
+        return None
 
     benchmark_text = fetch_fund_benchmark_text(fund_code)
     if not benchmark_text:
+        _remember_benchmark_miss(fund_code)
         return None
     resolved = resolve_sector_from_benchmark(benchmark_text)
     if resolved is None:
+        _remember_benchmark_miss(fund_code)
         return None
     sector_name, intraday_index_name, match = resolved
     if not get_canonical_sector(sector_name):
         from app.services.sector_registry_data import THEME_BOARD_INDEX
 
         if sector_name not in THEME_BOARD_INDEX:
+            _remember_benchmark_miss(fund_code)
             return None
 
     record = PrimarySectorRecord(
@@ -493,7 +514,22 @@ def _resolve_from_benchmark_index(fund_code: str, *, fetch: bool = True) -> Prim
             confidence=record.confidence,
             detail=record.detail,
         )
+    _benchmark_miss_cache.pop(fund_code, None)
     return record
+
+
+def _benchmark_miss_cached(fund_code: str) -> bool:
+    missed_at = _benchmark_miss_cache.get(fund_code)
+    if missed_at is None:
+        return False
+    if datetime.now(timezone.utc) - missed_at >= _BENCHMARK_MISS_TTL:
+        _benchmark_miss_cache.pop(fund_code, None)
+        return False
+    return True
+
+
+def _remember_benchmark_miss(fund_code: str) -> None:
+    _benchmark_miss_cache[fund_code] = datetime.now(timezone.utc)
 
 
 def _record_from_row(row: dict) -> PrimarySectorRecord:

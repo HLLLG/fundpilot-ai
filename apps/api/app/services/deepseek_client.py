@@ -32,7 +32,7 @@ from app.services.analysis_payload import (
     prepare_analysis_bundle,
 )
 from app.services.news_service import NewsService, _dedupe_news
-from app.services.news_summarizer import merge_topic_briefs, summarize_all_topics
+from app.services.news_summarizer import summarize_all_topics
 from app.services.news_citation import apply_news_citation_guards
 from app.services.recommendation_guard import apply_recommendation_guards
 from app.services.report_judge import judge_parsed_report
@@ -115,8 +115,6 @@ class DeepSeekClient:
         )
         progress("news_summarize")
         topic_briefs = _build_topic_briefs(market_news, self.settings)
-        initial_news_count = len(market_news)
-
         if not self.settings.deepseek_configured:
             return _offline_report(
                 request,
@@ -137,8 +135,9 @@ class DeepSeekClient:
                 topic_briefs,
                 nav_trends,
                 analysis_mode=runtime.mode,
+                budget_enhancements=True,
             )
-            parsed, market_news = self._generate_with_tools(
+            parsed, market_news = self._generate_direct_report(
                 request,
                 risk,
                 snapshots,
@@ -148,8 +147,6 @@ class DeepSeekClient:
                 nav_trends,
                 analysis_bundle=analysis_bundle,
             )
-            if len(market_news) > initial_news_count:
-                topic_briefs = merge_topic_briefs(topic_briefs, market_news, self.settings)
             progress("judging")
             parsed, judge_meta = judge_parsed_report(
                 parsed, request, risk, snapshots, runtime,
@@ -304,6 +301,31 @@ class DeepSeekClient:
 
         return messages, _dedupe_news(collected)
 
+    def _generate_direct_report(
+        self,
+        request: AnalysisRequest,
+        risk: RiskAssessment,
+        snapshots: list[FundSnapshot],
+        prefetched_news: list[NewsItem],
+        topic_briefs: list[TopicBrief],
+        runtime: AnalysisRuntime,
+        nav_trends_by_code: dict[str, dict] | None = None,
+        *,
+        analysis_bundle: AnalysisFactsBundle,
+    ) -> tuple[dict, list[NewsItem]]:
+        messages = build_analysis_chat_messages(
+            request,
+            risk,
+            snapshots,
+            prefetched_news,
+            topic_briefs,
+            nav_trends_by_code or {},
+            runtime,
+            analysis_bundle,
+        )
+        parsed = self._generate_report_json(messages, runtime)
+        return parsed, _dedupe_news(prefetched_news)
+
     def _generate_with_tools(
         self,
         request: AnalysisRequest,
@@ -327,6 +349,13 @@ class DeepSeekClient:
             analysis_bundle=analysis_bundle,
         )
 
+        return self._generate_report_json(messages, runtime), _dedupe_news(collected)
+
+    def _generate_report_json(
+        self,
+        messages: list[dict],
+        runtime: AnalysisRuntime,
+    ) -> dict:
         message = self._chat_completion(
             messages=messages,
             tools=None,
@@ -357,7 +386,7 @@ class DeepSeekClient:
             )
             parsed = _parse_model_json(retry_message.get("content") or "")
 
-        return parsed, _dedupe_news(collected)
+        return parsed
 
     def _chat_completion(
         self,
@@ -441,7 +470,7 @@ def _build_topic_briefs(
     resolved = settings or get_settings()
     if not market_news or not getattr(resolved, "news_summarize", True):
         return []
-    return summarize_all_topics(market_news, resolved)  # type: ignore[arg-type]
+    return summarize_all_topics(market_news, resolved, offline_only=True)  # type: ignore[arg-type]
 
 
 def build_analysis_chat_messages(

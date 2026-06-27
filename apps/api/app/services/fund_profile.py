@@ -67,7 +67,12 @@ class FundProfileService:
             self._profiles_cache = list_fund_profiles()
         return self._profiles_cache
 
-    def resolve_holding(self, holding: Holding) -> Holding:
+    def resolve_holding(
+        self,
+        holding: Holding,
+        *,
+        fetch_benchmark: bool = True,
+    ) -> Holding:
         profile = (
             get_fund_profile_by_code(holding.fund_code)
             if holding.fund_code != "000000"
@@ -89,7 +94,7 @@ class FundProfileService:
                 fund_code,
                 fund_name=fund_name,
                 allow_name_infer=False,
-                fetch_benchmark=True,
+                fetch_benchmark=fetch_benchmark,
             )
             if record and record.source == "benchmark_index":
                 sector_name = record.sector_name
@@ -120,7 +125,11 @@ class FundProfileService:
         if profile is None:
             from app.services.fund_primary_sector_service import primary_sector_fields_for_holding
 
-            fields = primary_sector_fields_for_holding(holding, allow_name_infer=False)
+            fields = primary_sector_fields_for_holding(
+                holding,
+                allow_name_infer=False,
+                fetch_benchmark=fetch_benchmark,
+            )
             if fields:
                 return holding.model_copy(update={**fields, "sector_name": sector_name or fields.get("sector_name")})
             if sector_name or index_name:
@@ -139,6 +148,7 @@ class FundProfileService:
                 holding,
                 fallback_code=profile.fund_code,
                 allow_name_infer=False,
+                fetch_benchmark=fetch_benchmark,
             )
             if fields.get("sector_name"):
                 sector_name = fields["sector_name"]
@@ -179,8 +189,16 @@ class FundProfileService:
                 updates["fund_name"] = profile.fund_name
         return holding.model_copy(update=updates)
 
-    def resolve_holdings(self, holdings: list[Holding]) -> list[Holding]:
-        return [self.resolve_holding(holding) for holding in holdings]
+    def resolve_holdings(
+        self,
+        holdings: list[Holding],
+        *,
+        fetch_benchmark: bool = True,
+    ) -> list[Holding]:
+        return [
+            self.resolve_holding(holding, fetch_benchmark=fetch_benchmark)
+            for holding in holdings
+        ]
 
     def find_match(self, fund_name: str) -> FundProfile | None:
         target = normalize_fund_name(fund_name)

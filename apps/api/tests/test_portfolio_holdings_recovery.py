@@ -147,11 +147,11 @@ def test_load_recovers_from_profiles(monkeypatch):
     )
     monkeypatch.setattr(
         "app.services.portfolio_holdings_service.enrich_holdings_from_profiles",
-        lambda holdings: holdings,
+        lambda holdings, **_kwargs: holdings,
     )
 
     class FakeService:
-        def resolve_holdings(self, holdings):
+        def resolve_holdings(self, holdings, **_kwargs):
             return holdings
 
     monkeypatch.setattr(

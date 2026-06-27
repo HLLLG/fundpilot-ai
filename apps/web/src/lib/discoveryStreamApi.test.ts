@@ -27,6 +27,7 @@ describe("streamDiscovery", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
@@ -70,5 +71,50 @@ describe("streamDiscovery", () => {
 
     expect(stages[0]).toBe("connected");
     expect(stages).toContain("sector_heat");
+  });
+
+  it("throws when an active discovery stream stops sending progress events", async () => {
+    vi.useFakeTimers();
+    const encoder = new TextEncoder();
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(
+              encoder.encode(
+                `data: ${JSON.stringify({
+                  type: "stage",
+                  stage: "news",
+                  label: "news fetching",
+                })}\n\n`,
+              ),
+            );
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "text/event-stream" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const pending = streamDiscovery(
+      [{ fund_code: "519674", fund_name: "test", holding_amount: 1000, return_percent: 1 }],
+      {
+        style: "steady",
+        horizon: "half-year",
+        max_drawdown_percent: 8,
+        concentration_limit_percent: 35,
+        expected_investment_amount: 10000,
+        prefer_dca: true,
+        avoid_chasing: true,
+        decision_style: "conservative",
+      },
+      {},
+      { idleTimeoutMs: 50 },
+    );
+    const expectation = expect(pending).rejects.toThrow(/long time without progress/);
+
+    await vi.advanceTimersByTimeAsync(60);
+
+    await expectation;
   });
 });

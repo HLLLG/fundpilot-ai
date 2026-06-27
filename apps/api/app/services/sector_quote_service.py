@@ -94,8 +94,18 @@ def refresh_holdings_sector_quotes(
     profile_service = FundProfileService()
     from app.services.fund_primary_sector_service import refresh_benchmark_sectors_for_holdings
 
-    holdings = refresh_benchmark_sectors_for_holdings(holdings)
-    holdings = [profile_service.resolve_holding(holding) for holding in holdings]
+    fetch_missing_benchmark = not cache_only and timeout_seconds is None
+    holdings = refresh_benchmark_sectors_for_holdings(
+        holdings,
+        fetch_missing_benchmark=fetch_missing_benchmark,
+    )
+    holdings = [
+        profile_service.resolve_holding(
+            holding,
+            fetch_benchmark=fetch_missing_benchmark,
+        )
+        for holding in holdings
+    ]
     lookup_labels = [
         sector_quote_lookup_label(
             holding,
@@ -245,7 +255,11 @@ def refresh_holdings_sector_quotes(
     for index, holding in enumerate(holdings):
         if holding.sector_name and not _is_valid_sector_label(holding.sector_name):
             holding = holding.model_copy(update={"sector_name": None})
-        repair_fields = primary_sector_fields_for_holding(holding, allow_name_infer=True)
+        repair_fields = primary_sector_fields_for_holding(
+            holding,
+            allow_name_infer=True,
+            fetch_benchmark=fetch_missing_benchmark,
+        )
         if repair_fields:
             holding = holding.model_copy(update=repair_fields)
 

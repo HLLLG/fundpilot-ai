@@ -179,7 +179,7 @@ def test_sector_quote_refresh_skips_official_nav_when_deferred(monkeypatch):
     )
 
     class _StubProfileService:
-        def resolve_holding(self, holding: Holding) -> Holding:
+        def resolve_holding(self, holding: Holding, **_kwargs) -> Holding:
             return holding
 
         def _find_profile_for_holding(self, holding: Holding) -> FundProfile:

@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import time
 from unittest.mock import patch
 
-from app.config import get_settings
+from app.config import get_settings, refresh_settings
 from app.models import AnalysisRequest, FundSnapshot, Holding, InvestorProfile, RiskAssessment
 from app.services.analysis_runtime import resolve_analysis_runtime
 
@@ -108,3 +109,49 @@ def test_rule_judge_respects_concentration_using_provided_facts():
         )
 
     assert out["fund_recommendations"][0]["action"] == "减仓评估"
+
+
+def test_deep_judge_times_out_slow_llm_review(monkeypatch):
+    from app.services import report_judge
+
+    monkeypatch.setenv("FUND_AI_DEEPSEEK_API_KEY", "sk-" + "c" * 32)
+    refresh_settings()
+    monkeypatch.setattr("app.services.report_judge.LLM_JUDGE_TIMEOUT_SECONDS", 0.01)
+
+    def slow_llm_judge(*_args, **_kwargs):
+        time.sleep(0.2)
+        return {
+            "title": "changed",
+            "fund_recommendations": [
+                {"fund_code": "519674", "fund_name": "x", "action": "观察"}
+            ],
+        }
+
+    monkeypatch.setattr("app.services.report_judge._llm_judge", slow_llm_judge)
+    parsed = {
+        "title": "test",
+        "summary": "ok",
+        "fund_recommendations": [
+            {"fund_code": "519674", "fund_name": "x", "action": "观察"}
+        ],
+        "caveats": [],
+    }
+    runtime = resolve_analysis_runtime(get_settings(), "deep")
+    snapshots = [FundSnapshot(fund_code="519674", fund_name="x", source="test")]
+
+    start = time.monotonic()
+    out, meta = report_judge.judge_parsed_report(
+        parsed,
+        _request(),
+        _risk(),
+        snapshots,
+        runtime,
+        facts=_fake_facts(),
+    )
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 0.1
+    assert out["title"] == "test"
+    assert meta["llm_judge_attempted"] is True
+    assert meta["llm_judge_timeout"] is True
+    assert meta["llm_judge_applied"] is False

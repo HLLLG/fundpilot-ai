@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from unittest.mock import MagicMock
 
 import httpx
@@ -84,7 +85,7 @@ def _patch_pipeline(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
-def test_stream_analysis_deep_emits_tool_stages_and_done(monkeypatch: pytest.MonkeyPatch):
+def test_stream_analysis_deep_skips_pre_generation_tool_rounds(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("FUND_AI_DEEPSEEK_API_KEY", _FAKE_DEEPSEEK_KEY)
     refresh_settings()
     _patch_pipeline(monkeypatch)
@@ -134,8 +135,13 @@ def test_stream_analysis_deep_emits_tool_stages_and_done(monkeypatch: pytest.Mon
     events = list(stream_analysis(_request(mode="deep"), user_id=1))
     types = [e["type"] for e in events]
     stage_names = [e.get("stage") for e in events if e.get("type") == "stage"]
-    assert "tool_round_1" in stage_names
+    assert "tool_round_1" not in stage_names
     assert types[-1] == "done"
+    assert all(
+        isinstance(e.get("elapsed_ms"), int)
+        for e in events
+        if e.get("type") == "stage"
+    )
 
 
 def test_stream_analysis_emits_skeleton_and_done(monkeypatch: pytest.MonkeyPatch):
@@ -194,3 +200,76 @@ def test_stream_analysis_handles_llm_failure_with_salvage(monkeypatch: pytest.Mo
     assert events[-1]["type"] in {"done", "error"}
     stage_types = [e.get("stage") for e in events if e.get("type") == "stage"]
     assert "salvage" in stage_types or events[-1]["type"] == "error"
+
+
+def test_stream_analysis_prefetches_fund_data_and_news_in_parallel(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("FUND_AI_DEEPSEEK_API_KEY", _FAKE_DEEPSEEK_KEY)
+    refresh_settings()
+
+    monkeypatch.setattr(
+        "app.services.analyze_streaming.FundProfileService",
+        lambda: MagicMock(resolve_holdings=lambda holdings: holdings),
+    )
+    monkeypatch.setattr(
+        "app.services.analyze_streaming.evaluate_portfolio_risk",
+        lambda holdings, profile: _risk(),
+    )
+
+    def slow_fund_data(holdings):
+        time.sleep(0.35)
+        return ([_snapshot()], {})
+
+    def slow_news(holdings, max_topics):
+        time.sleep(0.35)
+        return []
+
+    monkeypatch.setattr(
+        "app.services.analyze_streaming.FundDataService",
+        lambda: MagicMock(get_snapshots_with_nav_trends=slow_fund_data),
+    )
+    monkeypatch.setattr(
+        "app.services.analyze_streaming.NewsService",
+        lambda: MagicMock(prefetch_for_holdings=slow_news),
+    )
+    monkeypatch.setattr(
+        "app.services.analyze_streaming._build_topic_briefs",
+        lambda market_news, settings=None: [],
+    )
+    monkeypatch.setattr(
+        "app.services.analyze_streaming.prepare_analysis_bundle",
+        lambda *args, **kwargs: MagicMock(facts={"holdings": [], "portfolio": {}}),
+    )
+    monkeypatch.setattr(
+        "app.services.analyze_streaming.judge_parsed_report",
+        lambda parsed, *args, **kwargs: (parsed, {}),
+    )
+    monkeypatch.setattr(
+        "app.services.analyze_streaming.stream_chat_completion",
+        lambda **kwargs: iter(
+            [
+                '{"title":"t","summary":"s","fund_recommendations":[',
+                '{"fund_code":"519674","fund_name":"x","action":"观察","points":["p"]}',
+                '],"caveats":["c"]}',
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.analyze_streaming._build_final_report",
+        lambda parsed, **kwargs: MagicMock(
+            id="parallel-1",
+            model_dump=lambda mode="json": {"id": "parallel-1", "title": "t"},
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.analyze_streaming.save_report",
+        lambda report: report,
+    )
+
+    start = time.monotonic()
+    events = list(stream_analysis(_request(), user_id=1))
+    elapsed = time.monotonic() - start
+
+    assert events[-1]["type"] == "done"
+    assert elapsed < 0.55, f"fund_data 与 news_prefetch 应并行，实际 {elapsed:.2f}s"

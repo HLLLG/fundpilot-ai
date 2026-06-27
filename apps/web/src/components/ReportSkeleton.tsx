@@ -32,6 +32,12 @@ function SkeletonCard({ fundCode, fundName }: { fundCode: string; fundName: stri
 
 export function ReportSkeleton({ streaming, onCancel, onFollowup }: ReportSkeletonProps) {
   const { stageLabel, fundCodes, fundNames, title, summary, partialByCode, caveats } = streaming;
+  const showBackgroundFallbackFrame =
+    Boolean(streaming.backgroundJobId) &&
+    !title &&
+    !summary &&
+    fundCodes.length === 0 &&
+    !caveats?.length;
 
   return (
     <section className="glass-panel signal-grid min-w-0 rounded-[28px] p-6" data-testid="report-streaming">
@@ -111,6 +117,26 @@ export function ReportSkeleton({ streaming, onCancel, onFollowup }: ReportSkelet
               {caveats.map((line, index) => (
                 <p key={index}>{line}</p>
               ))}
+            </div>
+          ) : null}
+
+          {showBackgroundFallbackFrame ? (
+            <div
+              className="rounded-xl border border-slate-200 bg-white/80 px-4 py-4"
+              data-testid="report-background-fallback-frame"
+            >
+              <div className="flex items-center gap-2">
+                <div className="h-4 w-28 rounded bg-slate-200" />
+                <div className="h-5 w-20 rounded-full bg-blue-100" />
+              </div>
+              <p className="mt-2 text-xs text-slate-500">
+                后台任务正在继续生成日报，完成后会自动展示报告。
+              </p>
+              <div className="mt-3 space-y-2">
+                <div className="h-3 w-full rounded bg-slate-100" />
+                <div className="h-3 w-5/6 rounded bg-slate-100" />
+                <div className="h-3 w-2/3 rounded bg-slate-100" />
+              </div>
             </div>
           ) : null}
         </div>

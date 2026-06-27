@@ -83,9 +83,13 @@ def build_portfolio_holdings_response(
     source: str,
     snapshot_date: str | None,
     refreshed_at: datetime | None,
+    fetch_benchmark: bool = True,
 ) -> dict:
     holdings = without_inactive_holdings(reconcile_holding_fund_codes(holdings))
-    holdings = FundProfileService().resolve_holdings(holdings)
+    holdings = FundProfileService().resolve_holdings(
+        holdings,
+        fetch_benchmark=fetch_benchmark,
+    )
     summary = get_portfolio_summary()
     profiles = FundProfileService().list_profiles()
     payload = summary.model_dump(mode="json") if summary else {}
@@ -138,7 +142,11 @@ def profile_to_holding(profile: FundProfile) -> Holding:
     )
 
 
-def holdings_from_profiles(*, min_amount: float = 0) -> list[Holding]:
+def holdings_from_profiles(
+    *,
+    min_amount: float = 0,
+    fetch_benchmark: bool = True,
+) -> list[Holding]:
     profiles = list_fund_profiles()
     service = FundProfileService()
     holdings = without_test_holdings(
@@ -150,7 +158,10 @@ def holdings_from_profiles(*, min_amount: float = 0) -> list[Holding]:
     )
     if not holdings:
         return []
-    return service.resolve_holdings(enrich_holdings_from_profiles(holdings))
+    return service.resolve_holdings(
+        enrich_holdings_from_profiles(holdings, fetch_benchmark=fetch_benchmark),
+        fetch_benchmark=fetch_benchmark,
+    )
 
 
 def _holdings_total(holdings: list[Holding]) -> float:
@@ -270,8 +281,11 @@ def sync_portfolio_from_profiles(*, refresh_sectors: bool = True) -> list[Holdin
     return persist_holdings_after_sector_refresh(merged)
 
 
-def load_persisted_holdings() -> tuple[list[Holding], str, str | None, datetime | None]:
-    profile_holdings = holdings_from_profiles()
+def load_persisted_holdings(
+    *,
+    fetch_benchmark: bool = True,
+) -> tuple[list[Holding], str, str | None, datetime | None]:
+    profile_holdings = holdings_from_profiles(fetch_benchmark=fetch_benchmark)
     snapshot = get_most_recent_portfolio_snapshot()
 
     def _finalize(holdings: list[Holding], source: str, snap_date: str | None, refreshed: datetime | None):
@@ -297,7 +311,12 @@ def load_persisted_holdings() -> tuple[list[Holding], str, str | None, datetime 
                         _refreshed_at_from_summary(),
                     )
             merged = without_test_holdings(merge_holdings_with_profiles(holdings))
-            enriched = enrich_loaded_holdings(enrich_holdings_from_profiles(merged))
+            enriched = enrich_loaded_holdings(
+                enrich_holdings_from_profiles(
+                    merged,
+                    fetch_benchmark=fetch_benchmark,
+                )
+            )
             return _finalize(
                 enriched,
                 "snapshot",
