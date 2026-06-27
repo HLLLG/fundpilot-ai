@@ -735,6 +735,25 @@ import { clearAccessToken, getAccessToken, type AuthSession, type AuthUser } fro
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
 
+/** 合并同一页面生命周期内的并发 GET，避免 Strict Mode 双挂载重复请求 */
+function dedupeConcurrentGet<T>(slot: { current: Promise<T> | null }, run: () => Promise<T>): Promise<T> {
+  if (slot.current) {
+    return slot.current;
+  }
+  slot.current = run().finally(() => {
+    slot.current = null;
+  });
+  return slot.current;
+}
+
+const investorProfileRequest: { current: Promise<InvestorProfile> | null } = { current: null };
+const analysisPromptRequest: { current: Promise<AnalysisPromptConfig> | null } = { current: null };
+const discoveryPromptRequest: { current: Promise<DiscoveryPromptConfig> | null } = { current: null };
+const listReportsRequest: { current: Promise<Report[]> | null } = { current: null };
+const listDiscoveryReportsRequest: { current: Promise<FundDiscoveryReport[]> | null } = { current: null };
+const portfolioHoldingsRequest: { current: Promise<PortfolioHoldingsPayload> | null } = { current: null };
+const sectorQuotesStatusRequest: { current: Promise<SectorQuotesStatus> | null } = { current: null };
+
 export type { AuthSession, AuthUser };
 
 export class ApiError extends Error {
@@ -962,11 +981,13 @@ export async function applySectorMapping(
 }
 
 export async function fetchSectorQuotesStatus(): Promise<SectorQuotesStatus> {
-  const response = await apiFetch(`${API_BASE}/api/sector-quotes/status`, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  return response.json();
+  return dedupeConcurrentGet(sectorQuotesStatusRequest, async () => {
+    const response = await apiFetch(`${API_BASE}/api/sector-quotes/status`, { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error(await response.text());
+    }
+    return response.json();
+  });
 }
 
 export type SectorIntradayPoint = {
@@ -1255,11 +1276,13 @@ export async function startDiscoveryJob(
 }
 
 export async function listDiscoveryReports(): Promise<FundDiscoveryReport[]> {
-  const response = await apiFetch(`${API_BASE}/api/fund-discovery/reports`, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  return response.json();
+  return dedupeConcurrentGet(listDiscoveryReportsRequest, async () => {
+    const response = await apiFetch(`${API_BASE}/api/fund-discovery/reports`, { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error(await response.text());
+    }
+    return response.json();
+  });
 }
 
 export async function deleteDiscoveryReport(reportId: string): Promise<void> {
@@ -1286,11 +1309,13 @@ export async function fetchDiscoveryOutcomes(
 }
 
 export async function fetchDiscoveryPrompt(): Promise<DiscoveryPromptConfig> {
-  const response = await apiFetch(`${API_BASE}/api/discovery-prompt`, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  return response.json();
+  return dedupeConcurrentGet(discoveryPromptRequest, async () => {
+    const response = await apiFetch(`${API_BASE}/api/discovery-prompt`, { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error(await response.text());
+    }
+    return response.json();
+  });
 }
 
 export async function saveDiscoveryPromptRemote(
@@ -1360,13 +1385,15 @@ export async function streamDiscoveryChat(
 }
 
 export async function listReports(): Promise<Report[]> {
-  const response = await apiFetch(`${API_BASE}/api/reports`, {
-    cache: "no-store",
+  return dedupeConcurrentGet(listReportsRequest, async () => {
+    const response = await apiFetch(`${API_BASE}/api/reports`, {
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      throw new Error(await response.text());
+    }
+    return response.json();
   });
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  return response.json();
 }
 
 export async function deleteReport(reportId: string): Promise<void> {
@@ -1893,11 +1920,13 @@ export type OfficialNavSettlementPayload = PortfolioHoldingsPayload & {
 };
 
 export async function fetchPortfolioHoldings(): Promise<PortfolioHoldingsPayload> {
-  const response = await apiFetch(`${API_BASE}/api/portfolio/holdings`, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  return response.json();
+  return dedupeConcurrentGet(portfolioHoldingsRequest, async () => {
+    const response = await apiFetch(`${API_BASE}/api/portfolio/holdings`, { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error(await response.text());
+    }
+    return response.json();
+  });
 }
 
 export async function settleOfficialNav(): Promise<OfficialNavSettlementPayload> {
@@ -1919,11 +1948,13 @@ export async function fetchPortfolioSummary(): Promise<PortfolioSummary> {
 }
 
 export async function fetchInvestorProfile(): Promise<InvestorProfile> {
-  const response = await apiFetch(`${API_BASE}/api/investor-profile`, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  return response.json();
+  return dedupeConcurrentGet(investorProfileRequest, async () => {
+    const response = await apiFetch(`${API_BASE}/api/investor-profile`, { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error(await response.text());
+    }
+    return response.json();
+  });
 }
 
 export async function saveInvestorProfileRemote(profile: InvestorProfile): Promise<InvestorProfile> {
@@ -1958,11 +1989,13 @@ export async function evaluateSwingAlerts(
 }
 
 export async function fetchAnalysisPrompt(): Promise<AnalysisPromptConfig> {
-  const response = await apiFetch(`${API_BASE}/api/analysis-prompt`, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  return response.json();
+  return dedupeConcurrentGet(analysisPromptRequest, async () => {
+    const response = await apiFetch(`${API_BASE}/api/analysis-prompt`, { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error(await response.text());
+    }
+    return response.json();
+  });
 }
 
 export async function saveAnalysisPromptRemote(

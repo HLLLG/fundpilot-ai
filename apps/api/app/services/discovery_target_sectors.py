@@ -4,8 +4,9 @@ from typing import Literal
 
 from app.models import Holding, InvestorProfile
 from app.services.risk import holding_weight_percent, resolve_weight_denominator
-from app.services.sector_canonical import get_canonical_sector, list_discovery_sector_labels
+from app.services.sector_canonical import get_canonical_sector
 from app.services.sector_labels import normalize_sector_label
+from app.services.sector_registry import get_sector_entry, list_theme_board_labels
 
 DiscoveryScanMode = Literal["full_market", "portfolio_gap", "dip_swing"]
 
@@ -66,7 +67,7 @@ def _select_full_market_sectors(
             break
 
     if not ordered:
-        for label in list_discovery_sector_labels()[:max_sectors]:
+        for label in list_theme_board_labels()[:max_sectors]:
             if label not in seen:
                 ordered.append(label)
                 seen.add(label)
@@ -109,7 +110,7 @@ def _select_dip_swing_sectors(
             break
 
     if not ordered:
-        for label in list_discovery_sector_labels()[:max_sectors]:
+        for label in list_theme_board_labels()[:max_sectors]:
             if label not in seen:
                 ordered.append(label)
                 seen.add(label)
@@ -150,7 +151,7 @@ def _select_portfolio_gap_sectors(
             break
 
     if not ordered:
-        for label in list_discovery_sector_labels()[:3]:
+        for label in list_theme_board_labels()[:3]:
             if label not in seen:
                 ordered.append(label)
                 seen.add(label)
@@ -176,5 +177,8 @@ def _resolve_sector_label(raw: str) -> str | None:
     label = normalize_sector_label(raw)
     if not label:
         return None
+    entry = get_sector_entry(label)
+    if entry is not None:
+        return entry.label
     canon = get_canonical_sector(label)
     return canon.label if canon else label

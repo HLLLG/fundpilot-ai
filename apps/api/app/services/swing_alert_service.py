@@ -23,7 +23,7 @@ def evaluate_and_record_swing_alerts(
 
     sector_heat: list[dict] | None = None
     if enabled and scope in {"full_market", "both"}:
-        sector_heat = build_sector_heat_ranking()
+        sector_heat = build_sector_heat_ranking(include_5d=False)
 
     items, trade_date, session_kind = evaluate_swing_alerts(
         request.holdings,

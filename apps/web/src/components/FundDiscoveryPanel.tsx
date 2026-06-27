@@ -21,7 +21,6 @@ import type {
 import {
   fetchDiscoveryPrompt,
   fetchDiscoverySectors,
-  fetchSectorLabels,
   listDiscoveryReports,
   saveDiscoveryPromptRemote,
   startDiscoveryJob,
@@ -45,6 +44,7 @@ import {
 import { applyInvestmentPreset } from "@/lib/investmentPresets";
 import { ensureNotificationPermission } from "@/lib/notifications";
 import { loadDiscoveryPrompt, loadDiscoverySectorHeatCache, saveDiscoveryPrompt, saveDiscoverySectorHeatCache } from "@/lib/storage";
+import { useCachedFetch } from "@/lib/useCachedFetch";
 import {
   DISCOVERY_FOCUS_CHANGED_EVENT,
   loadDiscoveryFocusSectors,
@@ -52,6 +52,10 @@ import {
 } from "@/lib/discoveryFocusSectors";
 
 const DISCOVERY_PREFILL_KEY = "fundpilot-discovery-prefill";
+const DISCOVERY_SECTORS_CACHE_KEY = "discovery-panel:sectors";
+const DISCOVERY_REPORTS_CACHE_KEY = "discovery-panel:reports";
+const DISCOVERY_SECTORS_STALE_MS = 30 * 60 * 1000;
+const DISCOVERY_REPORTS_STALE_MS = 2 * 60 * 1000;
 
 type DiscoveryPrefill = {
   scanMode?: DiscoveryScanMode;
@@ -111,13 +115,32 @@ export function FundDiscoveryPanel({
   onDiscoveryStreamStart,
   discoveryStreamAbortRef,
 }: FundDiscoveryPanelProps) {
-  const [rawSectors, setRawSectors] = useState<DiscoverySectorHeat[]>(
-    () => loadDiscoverySectorHeatCache() ?? [],
-  );
+  const {
+    data: sectorRows,
+    error: sectorsError,
+    loading: loadingSectors,
+    refresh: refreshSectors,
+  } = useCachedFetch<DiscoverySectorHeat[]>({
+    cacheKey: DISCOVERY_SECTORS_CACHE_KEY,
+    fetcher: fetchDiscoverySectors,
+    staleTimeMs: DISCOVERY_SECTORS_STALE_MS,
+    bootstrap: () => loadDiscoverySectorHeatCache(),
+    keepPreviousUnless: (rows) => rows.length > 0,
+  });
+  const {
+    data: historyReportsData,
+    refresh: refreshReports,
+  } = useCachedFetch<FundDiscoveryReport[]>({
+    cacheKey: DISCOVERY_REPORTS_CACHE_KEY,
+    fetcher: listDiscoveryReports,
+    staleTimeMs: DISCOVERY_REPORTS_STALE_MS,
+    keepPreviousUnless: () => true,
+  });
+
+  const rawSectors = sectorRows ?? [];
+  const historyReports = historyReportsData ?? [];
+
   const [focusSectors, setFocusSectors] = useState<string[]>(() => loadDiscoveryFocusSectors());
-  const [sectorLabels, setSectorLabels] = useState<string[]>([]);
-  const [loadingSectorLabels, setLoadingSectorLabels] = useState(true);
-  const [sectorLabelsError, setSectorLabelsError] = useState<string | null>(null);
   const [fundTypePreference, setFundTypePreference] = useState<FundTypePreference>("any");
   const [selectionStrategy, setSelectionStrategy] = useState<SelectionStrategy>("balanced");
   const [scanMode, setScanMode] = useState<DiscoveryScanMode>("full_market");
@@ -126,7 +149,6 @@ export function FundDiscoveryPanel({
   const [dipAdvancedOpen, setDipAdvancedOpen] = useState(false);
   const [budgetYuan, setBudgetYuan] = useState<string>("");
   const [report, setReport] = useState<FundDiscoveryReport | null>(null);
-  const [historyReports, setHistoryReports] = useState<FundDiscoveryReport[]>([]);
   const [discoveryPrompt, setDiscoveryPrompt] = useState<DiscoveryPromptConfig>(() =>
     loadDiscoveryPrompt({
       role_prompt: "",
@@ -135,13 +157,16 @@ export function FundDiscoveryPanel({
   );
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [loadingSectors, setLoadingSectors] = useState(
-    () => (loadDiscoverySectorHeatCache() ?? []).length === 0,
-  );
-  const [sectorsError, setSectorsError] = useState<string | null>(null);
   const [previewHolding, setPreviewHolding] = useState<Holding | null>(null);
   const promptPersistReady = useRef(false);
+  const promptChangedByUserRef = useRef(false);
   const [promptReady, setPromptReady] = useState(false);
+
+  useEffect(() => {
+    if (rawSectors.length > 0) {
+      saveDiscoverySectorHeatCache(rawSectors);
+    }
+  }, [rawSectors]);
 
   useEffect(() => {
     if (scanMode === "dip_swing") {
@@ -180,27 +205,10 @@ export function FundDiscoveryPanel({
     return () => window.removeEventListener(DISCOVERY_FOCUS_CHANGED_EVENT, onFocusChanged);
   }, []);
 
-  const loadSectorLabels = useCallback(async () => {
-    setLoadingSectorLabels(true);
-    setSectorLabelsError(null);
-    try {
-      const labels = await fetchSectorLabels();
-      if (labels.length > 0) {
-        setSectorLabels(labels);
-      } else {
-        setSectorLabelsError("板块列表为空，请稍后重试");
-      }
-    } catch (loadError) {
-      setSectorLabelsError(loadError instanceof Error ? loadError.message : "加载板块列表失败");
-    } finally {
-      setLoadingSectorLabels(false);
-    }
-  }, []);
-
   const allSectorLabels = useMemo(() => {
     const seen = new Set<string>();
     const merged: string[] = [];
-    for (const label of [...sectorLabels, ...rawSectors.map((row) => row.sector_label)]) {
+    for (const label of [...rawSectors.map((row) => row.sector_label), ...focusSectors]) {
       const trimmed = label.trim();
       if (!trimmed || seen.has(trimmed)) {
         continue;
@@ -209,43 +217,12 @@ export function FundDiscoveryPanel({
       merged.push(trimmed);
     }
     return merged.sort((a, b) => a.localeCompare(b, "zh-CN"));
-  }, [rawSectors, sectorLabels]);
+  }, [rawSectors, focusSectors]);
 
   const handleFocusSectorsChange = useCallback((next: string[]) => {
     setFocusSectors(next);
     setDiscoveryFocusSectors(next);
   }, []);
-
-  const loadSectors = useCallback(async () => {
-    const cached = loadDiscoverySectorHeatCache();
-    const hadSectors = (cached?.length ?? 0) > 0;
-    if (cached?.length) {
-      setRawSectors(cached);
-    }
-    if (!hadSectors) {
-      setLoadingSectors(true);
-    }
-    setSectorsError(null);
-    try {
-      const rows = await fetchDiscoverySectors();
-      if (rows.length > 0) {
-        setRawSectors(rows);
-        saveDiscoverySectorHeatCache(rows);
-      } else if (!hadSectors) {
-        setSectorsError("板块热度为空，请稍后重试");
-      }
-    } catch (loadError) {
-      if (!hadSectors) {
-        setSectorsError(loadError instanceof Error ? loadError.message : "加载板块热度失败");
-      }
-    } finally {
-      setLoadingSectors(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void loadSectorLabels();
-  }, [loadSectorLabels]);
 
   const dipDeepSectors = useMemo(() => {
     return [...rawSectors]
@@ -256,21 +233,7 @@ export function FundDiscoveryPanel({
 
   const isAggressiveProfile = profile.decision_style === "aggressive";
 
-  const loadHistory = useCallback(async () => {
-    try {
-      const rows = await listDiscoveryReports();
-      setHistoryReports(rows);
-    } catch {
-      // 网络抖动时保留已有列表，避免误显示为空
-    }
-  }, []);
-
   useEffect(() => {
-    void loadSectors();
-  }, [loadSectors]);
-
-  useEffect(() => {
-    void loadHistory();
     void (async () => {
       try {
         const remote = await fetchDiscoveryPrompt();
@@ -283,11 +246,12 @@ export function FundDiscoveryPanel({
         setPromptReady(true);
       }
     })();
-  }, [loadHistory]);
+  }, []);
 
   useEffect(() => {
     if (!promptReady || !promptPersistReady.current) return;
     saveDiscoveryPrompt(discoveryPrompt);
+    if (!promptChangedByUserRef.current) return;
     const storedValue = discoveryPrompt.is_custom ? discoveryPrompt.role_prompt : null;
     void saveDiscoveryPromptRemote(storedValue).catch(() => {
       // 离线时仍保留 localStorage
@@ -297,9 +261,9 @@ export function FundDiscoveryPanel({
   useEffect(() => {
     if (!pendingDiscoveryReport) return;
     setReport(pendingDiscoveryReport);
-    void loadHistory();
+    void refreshReports();
     onPendingDiscoveryReportApplied();
-  }, [pendingDiscoveryReport, loadHistory, onPendingDiscoveryReportApplied]);
+  }, [pendingDiscoveryReport, refreshReports, onPendingDiscoveryReportApplied]);
 
   const toggleSector = (label: string) => {
     if (focusSectors.includes(label)) {
@@ -418,7 +382,7 @@ export function FundDiscoveryPanel({
               discoveryStreamAbortRef.current = null;
               onStreamingDiscoveryChange(null);
               onDiscoveryStreamComplete(completedReport);
-              void loadHistory();
+              void refreshReports();
             },
             onError: (message) => {
               throw new Error(message);
@@ -465,7 +429,7 @@ export function FundDiscoveryPanel({
     dipMinDropPercent,
     scanMode,
     selectionStrategy,
-    loadHistory,
+    refreshReports,
   ]);
 
   useEffect(() => {
@@ -520,13 +484,14 @@ export function FundDiscoveryPanel({
               {discoveryPrompt.is_custom ? (
                 <button
                   type="button"
-                  onClick={() =>
+                  onClick={() => {
+                    promptChangedByUserRef.current = true;
                     setDiscoveryPrompt((current) => ({
                       ...current,
                       role_prompt: current.default_role_prompt,
                       is_custom: false,
-                    }))
-                  }
+                    }));
+                  }}
                   className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-bold text-slate-600 transition hover:bg-slate-50"
                 >
                   <RotateCcw size={12} />
@@ -538,13 +503,14 @@ export function FundDiscoveryPanel({
             </div>
             <RolePromptEditor
               value={discoveryPrompt.role_prompt}
-              onChange={(value) =>
+              onChange={(value) => {
+                promptChangedByUserRef.current = true;
                 setDiscoveryPrompt((current) => ({
                   ...current,
                   role_prompt: value,
                   is_custom: value.trim() !== current.default_role_prompt.trim(),
-                }))
-              }
+                }));
+              }}
             />
           </div>
 
@@ -686,9 +652,9 @@ export function FundDiscoveryPanel({
               onChange={handleFocusSectorsChange}
               allLabels={allSectorLabels}
               heatRows={rawSectors}
-              loading={loadingSectorLabels && allSectorLabels.length === 0}
-              error={sectorLabelsError}
-              onRetry={() => void loadSectorLabels()}
+              loading={loadingSectors && allSectorLabels.length === 0}
+              error={sectorsError}
+              onRetry={() => void refreshSectors()}
             />
             {loadingSectors && rawSectors.length === 0 ? (
               <p className="mt-2 flex items-center gap-2 text-[11px] text-slate-400">
@@ -701,7 +667,7 @@ export function FundDiscoveryPanel({
                 板块热度暂不可用，仍可搜索选择关注方向。
                 <button
                   type="button"
-                  onClick={() => void loadSectors()}
+                  onClick={() => void refreshSectors()}
                   className="ml-1 font-semibold underline"
                 >
                   重试
@@ -809,7 +775,7 @@ export function FundDiscoveryPanel({
       <DiscoveryHistoryRail
         reports={historyReports}
         activeReportId={report?.id}
-        onRefresh={() => void loadHistory()}
+        onRefresh={() => void refreshReports()}
         onSelect={(selected) => setReport(selected)}
         onDeleted={(reportId) => {
           if (report?.id === reportId) {

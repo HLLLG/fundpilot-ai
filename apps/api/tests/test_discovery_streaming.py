@@ -39,7 +39,7 @@ def _request(*, mode: str = "fast") -> DiscoveryRequest:
 def _patch_pipeline(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "app.services.discovery_streaming.build_sector_heat_ranking",
-        lambda: [{"sector_label": "半导体", "heat_score": 1.0}],
+        lambda **_kwargs: [{"sector_label": "半导体", "heat_score": 1.0}],
     )
     monkeypatch.setattr(
         "app.services.discovery_streaming.select_target_sectors",
@@ -197,7 +197,7 @@ def test_stream_discovery_prefetches_news_while_building_candidates(
     refresh_settings()
     monkeypatch.setattr(
         "app.services.discovery_streaming.build_sector_heat_ranking",
-        lambda: [{"sector_label": "半导体", "heat_score": 1.0}],
+        lambda **_kwargs: [{"sector_label": "半导体", "heat_score": 1.0}],
     )
     monkeypatch.setattr(
         "app.services.discovery_streaming.select_target_sectors",

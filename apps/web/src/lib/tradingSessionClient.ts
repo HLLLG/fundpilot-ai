@@ -1,10 +1,13 @@
 import { fetchTradingSession, type TradingSession } from "@/lib/api";
 import {
+  isTradingSessionCacheFresh,
   readTradingSessionCache,
   writeTradingSessionCache,
 } from "@/lib/holdingDetailCache";
 
 const RETRY_DELAYS_MS = [0, 1000, 2500] as const;
+
+let inFlightRefresh: Promise<TradingSession> | null = null;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
@@ -30,6 +33,15 @@ export async function fetchTradingSessionWithRetry(): Promise<TradingSession> {
   throw new Error("Failed to fetch trading session");
 }
 
+function refreshTradingSessionDeduped(): Promise<TradingSession> {
+  if (!inFlightRefresh) {
+    inFlightRefresh = fetchTradingSessionWithRetry().finally(() => {
+      inFlightRefresh = null;
+    });
+  }
+  return inFlightRefresh;
+}
+
 export type TradingSessionLoadMeta = {
   fromCache: boolean;
 };
@@ -47,9 +59,15 @@ export function hydrateTradingSession(
     onSession(cached, { fromCache: true });
   }
 
+  if (cached && isTradingSessionCacheFresh()) {
+    return () => {
+      cancelled = true;
+    };
+  }
+
   void (async () => {
     try {
-      const session = await fetchTradingSessionWithRetry();
+      const session = await refreshTradingSessionDeduped();
       if (cancelled) {
         return;
       }

@@ -3,6 +3,7 @@ import type { TradingSession } from "@/lib/api";
 import { deleteClientCache } from "@/lib/clientCache";
 import {
   TRADING_SESSION_CACHE_KEY,
+  TRADING_SESSION_STALE_MS,
   writeTradingSessionCache,
 } from "@/lib/holdingDetailCache";
 import {
@@ -57,6 +58,7 @@ describe("tradingSessionClient", () => {
       ...sampleSession,
       effective_trade_date: "2026-06-25",
     });
+    vi.advanceTimersByTime(TRADING_SESSION_STALE_MS + 1);
     vi.mocked(fetchTradingSession).mockResolvedValue(sampleSession);
 
     const seen: string[] = [];
@@ -72,6 +74,7 @@ describe("tradingSessionClient", () => {
 
   it("hydrate keeps cache when network fails after retries", async () => {
     writeTradingSessionCache(sampleSession);
+    vi.advanceTimersByTime(TRADING_SESSION_STALE_MS + 1);
     vi.mocked(fetchTradingSession).mockRejectedValue(new Error("Failed to fetch"));
 
     const onError = vi.fn();
@@ -100,5 +103,41 @@ describe("tradingSessionClient", () => {
     cancel();
 
     expect(onError).toHaveBeenCalledTimes(1);
+  });
+
+  it("hydrate dedupes concurrent in-flight refresh", async () => {
+    let resolveFetch: ((value: TradingSession) => void) | undefined;
+    vi.mocked(fetchTradingSession).mockImplementation(
+      () =>
+        new Promise<TradingSession>((resolve) => {
+          resolveFetch = resolve;
+        }),
+    );
+
+    const seen: string[] = [];
+    const cancelA = hydrateTradingSession((session) => {
+      seen.push(`a:${session.effective_trade_date}`);
+    });
+    const cancelB = hydrateTradingSession((session) => {
+      seen.push(`b:${session.effective_trade_date}`);
+    });
+
+    resolveFetch?.(sampleSession);
+    await vi.runAllTimersAsync();
+    cancelA();
+    cancelB();
+
+    expect(fetchTradingSession).toHaveBeenCalledTimes(1);
+    expect(seen).toEqual(["a:2026-06-26", "b:2026-06-26"]);
+  });
+
+  it("hydrate skips network when cache is still fresh", async () => {
+    writeTradingSessionCache(sampleSession);
+
+    const cancel = hydrateTradingSession(() => undefined);
+    await vi.runAllTimersAsync();
+    cancel();
+
+    expect(fetchTradingSession).not.toHaveBeenCalled();
   });
 });

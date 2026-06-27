@@ -176,6 +176,8 @@ export function Dashboard() {
   const officialNavSettlementInFlightRef = useRef(false);
   const profilePersistReady = useRef(false);
   const promptPersistReady = useRef(false);
+  const profileChangedByUserRef = useRef(false);
+  const promptChangedByUserRef = useRef(false);
   const [isHydratingHoldings, setIsHydratingHoldings] = useState(true);
   const [holdingsRefreshedAt, setHoldingsRefreshedAt] = useState<string | null>(null);
   const [holdingsPollIntervalMs, setHoldingsPollIntervalMs] = useState(180_000);
@@ -235,6 +237,29 @@ export function Dashboard() {
       // 网络抖动时保留已有列表
     }
   };
+
+  const handleProfileChange = useCallback((next: InvestorProfile) => {
+    profileChangedByUserRef.current = true;
+    setProfile(next);
+  }, []);
+
+  const handleRolePromptChange = useCallback((value: string) => {
+    promptChangedByUserRef.current = true;
+    setAnalysisPrompt((current) => ({
+      ...current,
+      role_prompt: value.slice(0, 4000),
+      is_custom: value.trim() !== current.default_role_prompt.trim(),
+    }));
+  }, []);
+
+  const handleRolePromptReset = useCallback(() => {
+    promptChangedByUserRef.current = true;
+    setAnalysisPrompt((current) => ({
+      ...current,
+      role_prompt: current.default_role_prompt,
+      is_custom: false,
+    }));
+  }, []);
 
   const loadPortfolioSummary = async () => {
     try {
@@ -405,11 +430,18 @@ export function Dashboard() {
         setPromptReady(true);
       }
     })();
-    void loadHistory();
     void hydratePortfolio();
     // Mount-only bootstrap; avoid re-fetching on callback identity changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (activeTab !== "history") {
+      return;
+    }
+    void loadHistory();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
 
   useEffect(() => {
     backgroundJobActiveRef.current = Boolean(
@@ -530,6 +562,7 @@ export function Dashboard() {
     if (!profileReady || !profilePersistReady.current) return;
     const normalized = normalizeInvestorProfile(profile, defaultProfile);
     saveInvestorProfile(normalized);
+    if (!profileChangedByUserRef.current) return;
     void saveInvestorProfileRemote(normalized).catch(() => {
       // 离线时仍保留 localStorage；下次启动会从本地缓存恢复。
     });
@@ -538,6 +571,7 @@ export function Dashboard() {
   useEffect(() => {
     if (!promptReady || !promptPersistReady.current) return;
     saveAnalysisPrompt(analysisPrompt);
+    if (!promptChangedByUserRef.current) return;
     const storedValue = analysisPrompt.is_custom ? analysisPrompt.role_prompt : null;
     void saveAnalysisPromptRemote(storedValue).catch(() => {
       // 离线时仍保留 localStorage。
@@ -1151,21 +1185,9 @@ export function Dashboard() {
                 rolePrompt={analysisPrompt.role_prompt}
                 isRolePromptCustom={analysisPrompt.is_custom}
                 onAnalysisModeChange={setAnalysisMode}
-                onChange={setProfile}
-                onRolePromptChange={(value) =>
-                  setAnalysisPrompt((current) => ({
-                    ...current,
-                    role_prompt: value.slice(0, 4000),
-                    is_custom: value.trim() !== current.default_role_prompt.trim(),
-                  }))
-                }
-                onRolePromptReset={() =>
-                  setAnalysisPrompt((current) => ({
-                    ...current,
-                    role_prompt: current.default_role_prompt,
-                    is_custom: false,
-                  }))
-                }
+                onChange={handleProfileChange}
+                onRolePromptChange={handleRolePromptChange}
+                onRolePromptReset={handleRolePromptReset}
                 onAnalyze={() => void handleAnalyze()}
                 isBusy={isSubmitting}
                 ocrWarningCount={ocrWarningCount}
@@ -1205,7 +1227,7 @@ export function Dashboard() {
             <FundDiscoveryPanel
               holdings={holdings}
               profile={profile}
-              onProfileChange={setProfile}
+              onProfileChange={handleProfileChange}
               analysisMode={analysisMode}
               onAnalysisModeChange={setAnalysisMode}
               discoveryJobId={discoveryJobId}

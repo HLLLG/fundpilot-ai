@@ -44,7 +44,7 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
         holdings = list(request.holdings)
         yield _stage("connected", started_at=started_at)
         yield _stage("sector_heat", started_at=started_at)
-        sector_heat = build_sector_heat_ranking()
+        sector_heat = build_sector_heat_ranking(include_5d=(request.scan_mode == "dip_swing"))
         target_sectors = select_target_sectors(
             holdings,
             request.focus_sectors,

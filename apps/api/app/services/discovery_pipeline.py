@@ -40,7 +40,7 @@ def run_discovery(
 
     holdings = list(request.holdings)
     progress("sector_heat")
-    sector_heat = build_sector_heat_ranking()
+    sector_heat = build_sector_heat_ranking(include_5d=(request.scan_mode == "dip_swing"))
     target_sectors = select_target_sectors(
         holdings,
         request.focus_sectors,
