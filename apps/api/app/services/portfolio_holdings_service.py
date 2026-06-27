@@ -57,14 +57,18 @@ def _intraday_sector_window() -> bool:
     }
 
 
-def apply_server_sector_cache_to_holdings(holdings: list[Holding]) -> list[Holding]:
-    """读路径：优先服务端板块现货缓存；冷启动缓存未命中时盘中做一次快速拉取。"""
+def apply_server_sector_cache_to_holdings(
+    holdings: list[Holding],
+    *,
+    network_fallback: bool = True,
+) -> list[Holding]:
+    """读路径：优先服务端板块现货缓存；可选盘中缓存未命中时做一次快速拉取。"""
     from app.config import get_settings
 
     if not holdings or not get_settings().sector_quotes_enabled:
         return holdings
     result = refresh_holdings_sector_quotes(holdings, cache_only=True)
-    if _sector_cache_miss(result) and _intraday_sector_window():
+    if network_fallback and _sector_cache_miss(result) and _intraday_sector_window():
         result = refresh_holdings_sector_quotes(
             holdings,
             cache_only=False,

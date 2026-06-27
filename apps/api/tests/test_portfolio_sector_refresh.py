@@ -76,6 +76,38 @@ def test_apply_server_sector_cache_falls_back_to_network_on_cache_miss() -> None
     assert result[0].sector_return_percent == 1.8
 
 
+def test_apply_server_sector_cache_skips_network_when_disabled() -> None:
+    holdings = [
+        Holding(
+            fund_code="519674",
+            fund_name="银河创新成长",
+            holding_amount=1000,
+            sector_name="半导体",
+        )
+    ]
+    cache_miss = {
+        "holdings": [holdings[0].model_dump()],
+        "message": "板块缓存未命中，后台将刷新",
+        "summary": {"provider_path": "cache_miss"},
+    }
+
+    with patch(
+        "app.services.portfolio_holdings_service.refresh_holdings_sector_quotes",
+        return_value=cache_miss,
+    ) as refresh_mock:
+        with patch(
+            "app.services.portfolio_holdings_service._intraday_sector_window",
+            return_value=True,
+        ):
+            with patch(
+                "app.services.portfolio_holdings_service.enrich_holdings_estimates",
+                side_effect=lambda items: items,
+            ):
+                apply_server_sector_cache_to_holdings(holdings, network_fallback=False)
+
+    refresh_mock.assert_called_once_with(holdings, cache_only=True)
+
+
 def test_refresh_all_portfolio_sectors_iterates_users() -> None:
     from app.services.portfolio_sector_refresh import refresh_all_portfolio_sectors
 

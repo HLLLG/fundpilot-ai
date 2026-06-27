@@ -55,6 +55,7 @@ docker build -f apps/api/Dockerfile -t fundpilot-api .
 #   FUND_AI_DEEPSEEK_API_KEY=<你的Key>
 #   FUND_AI_CLOUDBASE_ENV_ID=<环境ID>
 #   FUND_AI_CORS_ORIGINS=https://你的Web域名
+#   FUND_AI_CLOUDBASE_ENV_ID=<环境ID>   # 设后会自动放行 *.webapps.tcloudbase.com
 #   FUND_AI_OCR_PRELOAD=false   # 建议关闭，减小内存
 ```
 
@@ -138,6 +139,60 @@ const API_BASE = "https://你的云托管公网域名"; // 仅 HTTP 回退
 3. 小程序用同一 CloudBase 微信账号登录 → 看到相同持仓
 
 开发联调时可在 CloudBase 控制台或小程序登录响应中查看 UID；生产环境更推荐用 `cloudbaseAccessToken` 绑定（设置页后续可扩展）。
+
+## 7. 常见问题：浏览器报 CORS / Failed to fetch
+
+### 现象
+
+控制台类似：
+
+```text
+Access to fetch at 'https://fundpilot-api-xxx.sh.run.tcloudbase.com/api/portfolio/holdings'
+from origin 'https://fundpilot-web-xxx.webapps.tcloudbase.com'
+has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header...
+```
+
+### 原因 A：API 未允许 Web 域名（最常见）
+
+Web 静态托管与云托管 API 是**不同域名**，必须在 API 服务环境变量中配置跨域：
+
+```bash
+FUND_AI_CORS_ORIGINS=https://fundpilot-web-fundpilot-ai-d1g1j23iof248e1ec.webapps.tcloudbase.com
+FUND_AI_CLOUDBASE_ENV_ID=fundpilot-ai-d1g1j23iof248e1ec
+```
+
+说明：
+
+- `FUND_AI_CORS_ORIGINS`：逗号分隔，填**完整** Web 访问地址（含 `https://`，无尾部 `/`）。
+- 设 `FUND_AI_CLOUDBASE_ENV_ID` 后，API 还会自动放行 `https://*.webapps.tcloudbase.com`（静态托管默认域名）。
+- 修改后需**重新部署/重启**云托管服务。
+
+自测（把 Origin 换成你的 Web 域名）：
+
+```bash
+curl -sI -X OPTIONS "https://你的API域名/api/portfolio/holdings" \
+  -H "Origin: https://你的Web域名" \
+  -H "Access-Control-Request-Method: GET" | grep -i access-control
+```
+
+应看到 `access-control-allow-origin: https://你的Web域名`。
+
+### 原因 B：网关 504 被浏览器误报为 CORS
+
+CloudBase 网关超时（约 60s）时，响应**不经过 FastAPI**，不会带 CORS 头，浏览器同样显示 CORS 错误。
+
+常见触发：
+
+1. **AI 分析进行中切 Tab**：流式日报/荐基会长时间占用 API worker；若云托管仅 **1 个 uvicorn worker**，其它请求（如 `GET /api/portfolio/holdings`）会排队直至 504。Network 里可见 `504 Gateway Timeout` + `X-Cloudbase-Upstream-Status-Code: 504`。
+2. MySQL 冷启动（CynosDB 自动暂停）。
+3. OCR/板块刷新等单次超长请求。
+
+排查与处理：
+
+1. 确认 API 镜像使用 **`--workers 2`**（见 `apps/api/Dockerfile`），重新构建并部署云托管。
+2. 云托管日志是否有 504 / 超时；MySQL 是否自动暂停。
+3. 生产建议 `FUND_AI_DB_FALLBACK_SQLITE=false`，并保证库可快速连通。
+4. 分析进行中页面仍可用 **localStorage 缓存的持仓**；完成后刷新即可。前端已在 AI 流式任务期间暂停后台 holdings 轮询。
 
 ## 环境变量速查
 

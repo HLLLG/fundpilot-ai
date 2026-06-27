@@ -21,4 +21,5 @@ ENV DISABLE_MODEL_SOURCE_CHECK=True
 
 EXPOSE 8000
 
-CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# 2 workers：AI 流式分析会长时间占用 worker；单 worker 会导致其它 API（如 holdings）排队 504
+CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]

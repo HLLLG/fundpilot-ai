@@ -155,6 +155,7 @@ app.add_middleware(AuthMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,
+    allow_origin_regex=settings.resolved_cors_origin_regex,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -1304,7 +1305,7 @@ def portfolio_holdings() -> dict:
         snapshot_date: str | None,
         refreshed_at: datetime | None,
     ) -> dict:
-        enriched = apply_server_sector_cache_to_holdings(holdings)
+        enriched = apply_server_sector_cache_to_holdings(holdings, network_fallback=False)
         return build_portfolio_holdings_response(
             enriched,
             source=source,

@@ -419,6 +419,10 @@ export function Dashboard() {
       if (cancelled) {
         return;
       }
+      // AI 流式任务会长时间占用 API worker；分析进行中跳过后台 holdings 刷新，避免 504
+      if (streamingReport || streamingDiscovery) {
+        return;
+      }
       try {
         const status = await fetchSectorQuotesStatus();
         if (!status.auto_refresh_allowed) {
@@ -436,7 +440,7 @@ export function Dashboard() {
     };
     // hydratePortfolio 刻意不列入依赖，避免重复拉取
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [holdings.length, holdingsPollIntervalMs]);
+  }, [holdings.length, holdingsPollIntervalMs, streamingReport, streamingDiscovery]);
 
   useEffect(() => {
     if (!refreshAfterApplyRef.current || holdings.length === 0) {

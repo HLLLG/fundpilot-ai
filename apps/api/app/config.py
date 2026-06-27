@@ -43,6 +43,8 @@ class Settings(BaseSettings):
     api_host: str = "127.0.0.1"
     api_port: int = 8000
     cors_origins: str = "http://localhost:3001,http://127.0.0.1:3001"
+    # 可选：正则匹配额外 Origin（CloudBase 静态托管默认 *.webapps.tcloudbase.com）
+    cors_origin_regex: str | None = None
     db_path: Path = PROJECT_ROOT / "data" / "app.db"
     upload_dir: Path = PROJECT_ROOT / "uploads"
     deepseek_api_key: str | None = None
@@ -223,6 +225,15 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def resolved_cors_origin_regex(self) -> str | None:
+        explicit = (self.cors_origin_regex or "").strip()
+        if explicit:
+            return explicit
+        if self.cloudbase_env_id:
+            return r"https://[\w-]+\.webapps\.tcloudbase\.com"
+        return None
 
     @property
     def uses_mysql(self) -> bool:
