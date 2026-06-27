@@ -4,6 +4,7 @@ import {
   applySectorDailyEstimate,
   computeDailyProfit,
   findHoldingIndex,
+  mergeSectorIntradayClose,
   mergeHoldingsPreserveQuoteFields,
 } from "@/lib/holdingMetrics";
 import { getDailyProfit } from "@/lib/holdingDisplay";
@@ -130,5 +131,29 @@ describe("profit accrual defer", () => {
     const estimated = applySectorDailyEstimate(deferred);
     expect(estimated.daily_profit).toBe(0);
     expect(estimated.daily_return_percent_source).toBe("pending_accrual");
+  });
+});
+
+describe("mergeSectorIntradayClose", () => {
+  it("updates only the sector board return from intraday close", () => {
+    const current: Holding = {
+      fund_code: "008586",
+      fund_name: "华夏人工智能ETF联接C",
+      holding_amount: 8671.67,
+      return_percent: 9.12,
+      sector_name: "人工智能",
+      sector_return_percent: 3.66,
+      daily_return_percent: 3.66,
+      daily_return_percent_source: "official_nav",
+      daily_profit: 317.32,
+    };
+
+    const merged = mergeSectorIntradayClose(current, -4.62);
+
+    expect(merged.sector_return_percent).toBe(-4.62);
+    expect(merged.sector_return_percent_source).toBe("closing_estimate");
+    expect(merged.daily_return_percent).toBe(3.66);
+    expect(merged.daily_return_percent_source).toBe("official_nav");
+    expect(merged.daily_profit).toBe(317.32);
   });
 });

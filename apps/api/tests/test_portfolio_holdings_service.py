@@ -1,5 +1,9 @@
 from app.models import Holding
-from app.services.portfolio_holdings_service import load_persisted_holdings, profile_to_holding
+from app.services.portfolio_holdings_service import (
+    build_fast_snapshot_holdings_response,
+    load_persisted_holdings,
+    profile_to_holding,
+)
 
 
 def test_profile_to_holding_maps_core_fields():
@@ -54,6 +58,66 @@ def test_load_persisted_holdings_prefers_snapshot(tmp_path, monkeypatch):
     assert refreshed_at.isoformat().startswith("2026-06-03T08:15:00")
     assert len(holdings) == 1
     assert holdings[0].fund_code == "008586"
+
+
+def test_fast_snapshot_response_uses_snapshot_without_slow_resolution(monkeypatch):
+    snapshot_holdings = [
+        Holding(
+            fund_code="008586",
+            fund_name="华夏人工智能ETF联接C",
+            holding_amount=8671.67,
+            settled_holding_amount=8671.67,
+            return_percent=9.12,
+            holding_return_percent=9.12,
+            holding_profit=757.72,
+            sector_name="人工智能",
+            sector_return_percent=-4.62,
+            sector_return_percent_source="closing_estimate",
+        ).model_dump()
+        | {"sector_return_percent_source": "closing_estimate"},
+        Holding(
+            fund_code="123456",
+            fund_name="旧污染估值基金",
+            holding_amount=1000,
+            sector_name="人工智能",
+            sector_return_percent=3.66,
+            daily_return_percent=3.66,
+            daily_return_percent_source="official_nav",
+        ).model_dump(),
+    ]
+    monkeypatch.setattr(
+        "app.services.portfolio_holdings_service.get_most_recent_portfolio_snapshot",
+        lambda: {
+            "snapshot_date": "2026-06-27",
+            "captured_at": "2026-06-27T10:12:56+00:00",
+            "total_assets": 29469.71,
+            "daily_profit": 553.45,
+            "daily_return_percent": 1.91,
+            "holdings": snapshot_holdings,
+        },
+    )
+    monkeypatch.setattr(
+        "app.services.portfolio_holdings_service.list_fund_profiles",
+        lambda: (_ for _ in ()).throw(AssertionError("profiles should not be loaded")),
+    )
+    monkeypatch.setattr(
+        "app.services.portfolio_holdings_service.get_cached_official_nav_return",
+        lambda code, trade_date: 3.66 if code == "008586" and trade_date == "2026-06-26" else None,
+    )
+    monkeypatch.setattr(
+        "app.services.portfolio_holdings_service.get_effective_trade_date",
+        lambda: "2026-06-26",
+    )
+
+    payload = build_fast_snapshot_holdings_response()
+
+    assert payload is not None
+    assert payload["source"] == "snapshot"
+    assert payload["holdings"][0]["sector_return_percent"] == -4.62
+    assert payload["holdings"][0]["estimated_daily_return_percent"] == 3.66
+    assert payload["holdings"][0]["daily_return_percent_source"] == "official_nav"
+    assert payload["holdings"][1]["sector_return_percent"] is None
+    assert payload["portfolio_summary"]["total_assets"] == 29469.71
 
 
 def test_load_persisted_holdings_falls_back_to_profiles(tmp_path, monkeypatch):

@@ -53,11 +53,20 @@ docker build -f apps/api/Dockerfile -t fundpilot-api .
 #   FUND_AI_DATABASE_URL=mysql://...
 #   FUND_AI_JWT_SECRET=<随机32字节以上>
 #   FUND_AI_DEEPSEEK_API_KEY=<你的Key>
-#   FUND_AI_CLOUDBASE_ENV_ID=<环境ID>
-#   FUND_AI_CORS_ORIGINS=https://你的Web域名
 #   FUND_AI_CLOUDBASE_ENV_ID=<环境ID>   # 设后会自动放行 *.webapps.tcloudbase.com
+#   FUND_AI_CORS_ORIGINS=https://你的Web域名
 #   FUND_AI_OCR_PRELOAD=false   # 建议关闭，减小内存
 ```
+
+**云托管规格建议（≤5 人）：**
+
+| 项 | 建议 |
+|----|------|
+| CPU / 内存 | 2 核 / 4GB（与 Dockerfile `--workers 2` 匹配） |
+| **实例副本数** | **≥2**（荐基/日报 SSE 与 holdings 并发时，单副本易 504） |
+| 部署方式 | **必须重新构建并发布 API Docker 镜像**；仅 redeploy Web 不会带上 API 改动 |
+
+修改 API 代码后务必 `docker build -f apps/api/Dockerfile` 并在云托管更新镜像，不要只更新静态 Web。
 
 本地可先验证：
 
@@ -183,9 +192,17 @@ CloudBase 网关超时（约 60s）时，响应**不经过 FastAPI**，不会带
 
 常见触发：
 
-1. **AI 分析进行中切 Tab**：流式日报/荐基会长时间占用 API worker；若云托管仅 **1 个 uvicorn worker**，其它请求（如 `GET /api/portfolio/holdings`）会排队直至 504。Network 里可见 `504 Gateway Timeout` + `X-Cloudbase-Upstream-Status-Code: 504`。
+1. **AI 分析进行中切 Tab**：流式日报/荐基会长时间占用 API worker；若云托管仅 **1 副本 × 2 worker**，其它请求（如 `GET /api/portfolio/holdings`）仍可能排队直至 504。Network 里可见 `504 Gateway Timeout` + `X-Cloudbase-Upstream-Status-Code: 504`。
 2. MySQL 冷启动（CynosDB 自动暂停）。
 3. OCR/板块刷新等单次超长请求。
+
+**缓解（代码已内置）：**
+
+- SSE 走 `async_sse` 后台线程，不阻塞 uvicorn event loop。
+- holdings 有 **快路径**（快照 + 缓存，目标 ~200ms）与 **25s 应用超时**（503「持仓加载超时」，区别于网关 504）。
+- 前端在 AI 流式任务期间暂停 holdings 后台轮询。
+
+**运维建议：** 云托管 **实例副本数 ≥2**；确认已发布含 `--workers 2` 的最新 API 镜像（非仅 Web 静态托管更新）。
 
 排查与处理：
 

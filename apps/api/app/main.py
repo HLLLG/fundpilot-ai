@@ -85,6 +85,7 @@ from app.services.holding_client import serialize_holdings_for_client
 from app.services.fund_code_resolver import reconcile_holding_fund_codes, search_funds_by_keyword
 from app.services.portfolio_holdings_service import (
     apply_server_sector_cache_to_holdings,
+    build_fast_snapshot_holdings_response,
     build_portfolio_holdings_response,
     load_persisted_holdings,
     remove_holding_from_portfolio,
@@ -1317,33 +1318,22 @@ def _portfolio_holdings_sync() -> dict:
 
     cached = get_cached_holdings_response()
     if cached is not None:
-        try:
-            cached_holdings = [
-                Holding.model_validate(item) for item in cached.get("holdings", [])
-            ]
-            payload = _response_from_holdings(
-                cached_holdings,
-                source=str(cached.get("source") or "snapshot"),
-                snapshot_date=cached.get("snapshot_date"),
-                refreshed_at=(
-                    datetime.fromisoformat(str(cached["refreshed_at"]).replace("Z", "+00:00"))
-                    if cached.get("refreshed_at")
-                    else None
-                ),
-            )
-            schedule_warm_holdings_intraday(
-                [Holding.model_validate(item) for item in payload.get("holdings", [])],
-                user_key=user_key,
-                user_id=int(user_key) if user_key.isdigit() else None,
-                portfolio_summary=(
-                    PortfolioSummary.model_validate(payload["portfolio_summary"])
-                    if payload.get("portfolio_summary")
-                    else None
-                ),
-            )
-        except Exception:  # noqa: BLE001 — 预热失败不影响响应
-            return cached
-        return payload
+        return cached
+
+    fast_snapshot = build_fast_snapshot_holdings_response()
+    if fast_snapshot is not None:
+        save_cached_holdings_response(fast_snapshot)
+        schedule_warm_holdings_intraday(
+            [Holding.model_validate(item) for item in fast_snapshot.get("holdings", [])],
+            user_key=user_key,
+            user_id=int(user_key) if user_key.isdigit() else None,
+            portfolio_summary=(
+                PortfolioSummary.model_validate(fast_snapshot["portfolio_summary"])
+                if fast_snapshot.get("portfolio_summary")
+                else None
+            ),
+        )
+        return fast_snapshot
 
     holdings, source, snapshot_date, refreshed_at = load_persisted_holdings(
         fetch_benchmark=False,

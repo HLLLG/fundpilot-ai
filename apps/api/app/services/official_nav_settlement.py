@@ -146,14 +146,23 @@ def _serialize_settlement_holdings_for_client(holdings: list[Holding]) -> list[d
     payloads: list[dict] = []
     for holding in holdings:
         payload = holding.model_dump()
+        sector_return = (
+            holding.sector_return_percent
+            if holding.sector_return_percent_source in {"realtime", "closing_estimate"}
+            else None
+        )
         settled = holding.settled_holding_amount or holding.holding_amount
         payload["settled_holding_amount"] = settled
         payload["display_holding_amount"] = settled
         payload["holding_amount"] = settled
+        payload["sector_return_percent"] = sector_return
+        payload["sector_return_percent_source"] = (
+            holding.sector_return_percent_source if sector_return is not None else None
+        )
         payload["estimated_daily_return_percent"] = (
             holding.daily_return_percent
             if holding.daily_return_percent is not None
-            else holding.sector_return_percent
+            else sector_return
         )
         payload["daily_return_is_estimated"] = holding.daily_return_percent_source != "official_nav"
         payload["estimated_holding_return_percent"] = (

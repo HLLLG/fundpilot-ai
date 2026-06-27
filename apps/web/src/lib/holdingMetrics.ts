@@ -387,6 +387,24 @@ export function resolveSectorBoardReturnPercent(holding: Holding): number | null
   return holding.sector_return_percent ?? null;
 }
 
+export function mergeSectorIntradayClose(
+  holding: Holding,
+  closeChangePercent: number | null | undefined,
+): Holding {
+  if (closeChangePercent === null || closeChangePercent === undefined) {
+    return holding;
+  }
+  const rounded = round2(closeChangePercent);
+  if (holding.sector_return_percent === rounded) {
+    return holding;
+  }
+  return {
+    ...holding,
+    sector_return_percent: rounded,
+    sector_return_percent_source: "closing_estimate",
+  };
+}
+
 export function computeEstimatedDailyReturnPercent(holding: Holding): number | null {
   if (holding.daily_return_percent != null) {
     return holding.daily_return_percent;

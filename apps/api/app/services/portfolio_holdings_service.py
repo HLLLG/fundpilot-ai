@@ -6,15 +6,22 @@ from app.database import get_most_recent_portfolio_snapshot, get_portfolio_summa
 from app.models import FundProfile, Holding, PortfolioSummary
 from app.services.fund_code_resolver import reconcile_holding_fund_codes
 from app.services.fund_name_utils import is_fund_name_match
+from app.services.fund_nav_service import get_cached_official_nav_return
 from app.services.fund_profile import FundProfileService, _is_valid_sector_label
 from app.services.holding_amount_sync import sync_holding_amounts_from_shares
-from app.services.holding_estimates import enrich_holdings_estimates, sum_daily_profit
+from app.services.holding_estimates import (
+    _amount_includes_today_return,
+    compute_daily_profit_from_rate,
+    enrich_holdings_estimates,
+    sum_daily_profit,
+)
 from app.services.holding_filters import is_inactive_holding, is_test_holding, without_inactive_holdings, without_test_holdings
 from app.services.overview_pipeline import enrich_holdings_from_profiles
 from app.services.portfolio_persistence import enrich_loaded_holdings, persist_holdings_after_sector_refresh
 from app.services.sector_quote_service import refresh_holdings_sector_quotes
 from app.services.portfolio_snapshot import save_daily_snapshot
 from app.services.transaction_ledger import confirm_and_compute_overrides
+from app.services.trading_session import get_effective_trade_date
 
 
 def _coerce_utc_datetime(value: object | None) -> datetime | None:
@@ -126,6 +133,151 @@ def build_portfolio_holdings_response(
         "refreshed_at": refreshed_at.isoformat() if refreshed_at else None,
         "portfolio_summary": payload or None,
         "profile_count": len(profiles),
+    }
+
+
+def _fast_round2(value: float) -> float:
+    return round(value, 2)
+
+
+def _fast_trusted_sector_return(holding: Holding) -> float | None:
+    if holding.sector_return_percent_source in {"realtime", "closing_estimate"}:
+        return holding.sector_return_percent
+    return None
+
+
+def _fast_overlay_cached_official_nav(holding: Holding, trade_date: str | None) -> Holding:
+    if (
+        not trade_date
+        or not holding.fund_code
+        or holding.fund_code == "000000"
+        or holding.daily_return_percent_source == "pending_accrual"
+    ):
+        return holding
+    nav_return = get_cached_official_nav_return(holding.fund_code, trade_date)
+    if nav_return is None:
+        return holding
+    amount = holding.settled_holding_amount or holding.holding_amount
+    return holding.model_copy(
+        update={
+            "daily_return_percent": nav_return,
+            "daily_profit": compute_daily_profit_from_rate(
+                amount,
+                nav_return,
+                amount_includes_today=_amount_includes_today_return(holding),
+            ),
+            "daily_return_percent_source": "official_nav",
+        }
+    )
+
+
+def _fast_daily_profit(holding: Holding) -> float | None:
+    if holding.daily_profit is not None:
+        return holding.daily_profit
+    rate = (
+        holding.daily_return_percent
+        if holding.daily_return_percent is not None
+        else _fast_trusted_sector_return(holding)
+    )
+    if rate is None:
+        return None
+    amount = holding.settled_holding_amount or holding.holding_amount
+    if amount <= 0:
+        return None
+    if holding.daily_return_percent_source == "official_nav" and holding.amount_includes_today:
+        return _fast_round2(amount * rate / (100 + rate))
+    return _fast_round2(amount * rate / 100)
+
+
+def _fast_serialize_holding_for_client(holding: Holding) -> dict:
+    payload = holding.model_dump()
+    settled = holding.settled_holding_amount or holding.holding_amount
+    sector_return = _fast_trusted_sector_return(holding)
+    daily_rate = (
+        holding.daily_return_percent
+        if holding.daily_return_percent is not None
+        else sector_return
+    )
+    settled_return = (
+        holding.holding_return_percent
+        if holding.holding_return_percent is not None
+        else holding.return_percent
+    )
+    daily_profit = _fast_daily_profit(holding)
+    estimated_holding_return = settled_return
+    if (
+        holding.daily_return_percent_source not in {"official_nav", "pending_accrual"}
+        and settled_return is not None
+        and daily_rate is not None
+    ):
+        estimated_holding_return = _fast_round2(settled_return + daily_rate)
+    payload["settled_holding_amount"] = settled
+    payload["display_holding_amount"] = settled
+    payload["holding_amount"] = settled
+    payload["sector_return_percent"] = sector_return
+    payload["sector_return_percent_source"] = (
+        holding.sector_return_percent_source if sector_return is not None else None
+    )
+    payload["daily_profit"] = daily_profit
+    payload["estimated_daily_return_percent"] = daily_rate
+    payload["daily_return_is_estimated"] = (
+        holding.daily_return_percent_source not in {"official_nav", "pending_accrual"}
+        and daily_rate is not None
+    )
+    payload["estimated_holding_return_percent"] = estimated_holding_return
+    payload["estimated_holding_profit"] = holding.holding_profit
+    payload["holding_return_is_estimated"] = (
+        holding.daily_return_percent_source not in {"official_nav", "pending_accrual"}
+        and daily_rate is not None
+    )
+    payload["profit_accrual_deferred"] = holding.daily_return_percent_source == "pending_accrual"
+    return payload
+
+
+def build_fast_snapshot_holdings_response() -> dict | None:
+    """Cold-start GET path: return the latest persisted snapshot without slow enrichment."""
+    snapshot = get_most_recent_portfolio_snapshot()
+    if not snapshot or not snapshot.get("holdings"):
+        return None
+    holdings = [
+        Holding.model_validate(item)
+        for item in snapshot.get("holdings", [])
+    ]
+    holdings = without_inactive_holdings(without_test_holdings(holdings))
+    if not holdings:
+        return None
+    trade_date = get_effective_trade_date()
+    holdings = [_fast_overlay_cached_official_nav(holding, trade_date) for holding in holdings]
+    serialized = [_fast_serialize_holding_for_client(holding) for holding in holdings]
+    daily_profit = snapshot.get("daily_profit")
+    if daily_profit is None:
+        daily_profit = _fast_round2(
+            sum(float(item.get("daily_profit") or 0) for item in serialized)
+        )
+    total_assets = snapshot.get("total_assets")
+    if total_assets is None:
+        total_assets = _fast_round2(
+            sum(
+                float(item.get("settled_holding_amount") or item.get("holding_amount") or 0)
+                + float(item.get("daily_profit") or 0)
+                for item in serialized
+            )
+        )
+    summary = {
+        "total_assets": total_assets,
+        "daily_profit": daily_profit,
+        "daily_return_percent": snapshot.get("daily_return_percent"),
+        "holding_count": len(serialized),
+    }
+    captured_at = _coerce_utc_datetime(snapshot.get("captured_at"))
+    return {
+        "holdings": serialized,
+        "source": "snapshot",
+        "snapshot_date": snapshot.get("snapshot_date"),
+        "refreshed_at": captured_at.isoformat() if captured_at else None,
+        "portfolio_summary": summary,
+        "profile_count": None,
+        "fast_snapshot": True,
     }
 
 

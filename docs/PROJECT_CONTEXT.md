@@ -4,9 +4,10 @@
 >
 > **维护：** 功能或架构有实质变化时，同步更新「能力清单」「数据流」「API」「目录」「环境变量」。
 
-**文档版本：** 2026-06-27（持仓快路径提速 · 官方净值结算补刷）
+**文档版本：** 2026-06-27（CloudBase 线上稳定性 · 持仓快路径 · 板块/净值口径）
 
 **更新记录：**
+- **CloudBase 线上稳定性 + 持仓读路径瘦身（2026-06-27）：** 修复 Web 部署后 CORS/504/「持仓加载超时」与荐基/日报 SSE 并发问题。① **CORS**：`FUND_AI_CORS_ORIGINS` + 设 `FUND_AI_CLOUDBASE_ENV_ID` 后自动放行 `*.webapps.tcloudbase.com`（`config.resolved_cors_origin_regex`）；504 无 CORS 头时浏览器误报跨域，见 `docs/deploy/cloudbase.md` §7。② **SSE 不阻塞 worker**：日报/荐基仍走 SSE；`async_sse.sse_from_sync_iterator` + async 流式端点，重计算在后台线程，避免长连接占满 uvicorn worker。Dockerfile **`--workers 2`**；单副本 2 核仍建议在荐基/日报并发时将 CloudBase **实例副本数 ≥2**。③ **GET /api/portfolio/holdings 快路径**：内存缓存命中直接返回；未命中走 **`build_fast_snapshot_holdings_response()`**（只读最近日快照 + 官方净值内存缓存 overlay，**不** triple `resolve_holdings` / 不 `apply_server_sector_cache` 打网）；25s `asyncio.wait_for` 超时返回 503「持仓加载超时」。④ **前端**：AI 日报/荐基/异步 job 进行中跳过 holdings 后台轮询；`settleOfficialNav` / 详情预取用 `mergeHoldingsPreserveQuoteFields`；`mergeSectorIntradayClose` 仅更新板块列、不覆盖官方净值当日收益。⑤ **口径**：`sector_return_percent` 仅 `realtime`/`closing_estimate` 可信；快照里仅有 `official_nav` 的 `sector_return_percent` 视为脏数据不展示；`refresh_holdings_sector_quotes` fast 路径官方 NAV 优先。⑥ **荐基轮询**：MySQL 短暂不可用时 `GET /api/jobs/{id}` 返回 `transient_unavailable` + `status=running`，前端自动重试。单测 `test_async_sse.py` / `test_portfolio_holdings_service.py::test_fast_snapshot_*` / `test_job_status_service.py` / `holdingMetrics.test.ts`。
 - **持仓首次加载提速 + 官方净值结算补刷（2026-06-27）：** 修复持仓页首次启动/后台缓存刷新被基金业绩基准 AkShare 子进程拖慢，以及周末/次日官方净值已公布但持仓仍停留板块估算的问题。① **板块快路径**：`refresh_holdings_sector_quotes(cache_only=True | timeout_seconds=8.0)`、`GET /api/portfolio/holdings`、`load_persisted_holdings(fetch_benchmark=False)`、`apply_confirmed_holdings`、后台 `refresh_portfolio_sectors_for_user` 均禁止为缺失 benchmark 触发 `fetch_fund_benchmark_text`；已缓存 `benchmark_index` 仍应用，手动 accurate/`timeout_seconds=None` 仍可补全；失败 benchmark 有 24h miss cache。② **官方净值结算**：新增 `official_nav_settlement.py` 与 `POST /api/portfolio/settle-official-nav`，非盘中按 `build_trading_session().effective_trade_date` 结算上个有效交易日官方净值，写回 `daily_return_percent` / `daily_profit` / `daily_return_percent_source=official_nav`、summary 与快照；盘中/收盘前跳过，defer 持仓先跳过官方净值查询；持久化合并保留 official_nav 字段。性能关键：`fund_open_fund_daily_em` 全量净值表一次预热本次持仓的官方涨跌幅/单位净值缓存，结算 endpoint 走轻量快照写回，不再逐只基金拉净值历史或复用板块刷新重型持久化链路。③ **前端无感补刷**：`Dashboard.hydratePortfolio` 先快速展示缓存/快照，再后台调用 `settleOfficialNav()`，成功且未 skipped 时回写持仓、summary、refreshed_at 和 localStorage。单测覆盖 `test_holdings_fast_sector_resolution.py`、`test_official_nav_settlement.py`、前端 `api.settlement.test.ts`。
 - **OCR 确认秒回 + 盘中结算额锁定（2026-06-26）：** 修复 OCR 确认后「正在更新…」久等、盘中持有金额漂移、板块估算与「已更新」标签错误。**① 确认写入提速**：`apply_confirmed_holdings` 改 `bootstrap_holding_baselines(skip_network=True)`（不拉天天基金估值/AkShare 净值子进程），同请求内 `refresh_holdings_sector_quotes(cache_only=True)` 读 `sector_spot_cache` 即时补全板块涨跌与当日估算；前端 `handleConfirmOcrHoldings` 立即关弹窗切持仓 Tab，后台 `apply-holdings` + `refresh-sector-quotes`。**② 盘中结算额**：`settled_holding_amount` 为持有金额展示源；仅官方净值公布后才滚入 `shares×净值`；`holding_client` 下发 `display_holding_amount`；禁止用 `profile.holding_amount` 作盘中 fallback。**③ 估算口径**：`estimated_daily_return_percent` 盘中仅用 `sector_return_percent`（不加 settled 收益率）；板块刷新清空 `daily_*` 时同步清 `official_nav` 残留；盘中 `overlay_official_nav_returns` 短路。**④ 支付宝语义**：「日收益」→ `yesterday_profit`（昨官方净值收益），非 `daily_profit`。单测 `test_apply_holdings_fast_path.py` / `test_holding_amount_sync.py` / `test_sector_refresh_daily_clear.py` / `test_alipay_daily_semantics.py`。契约见 `docs/design/holding-metrics-contract.md`。
 - **支付宝 OCR 确认无感知刷新（2026-06-26）：** 修复确认截图后列表估算/持有/板块列闪「—」。**前端**：`mergeHoldingsPreserveQuoteFields`（`holdingMetrics.ts`）在 OCR 确认、apply 回写、板块刷新时保留上一屏行情字段，直至新值返回。**单测** `holdingMetrics.test.ts`。
@@ -480,7 +481,7 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | GET | `/api/sector-quotes/status` | 自动刷新开关/间隔/交易时段 |
 | GET | `/api/sector-quotes/intraday` | 板块分时涨跌 |
 | POST | `/api/holdings/detail` | 单只持仓详情（含 AkShare 查码、净值） |
-| GET | `/api/portfolio/holdings` | 恢复首页持仓（快照优先，否则档案）；响应含 `refreshed_at`；服务端 **120s 内存响应缓存**（`portfolio_holdings_cache.py`，快照写入时失效） |
+| GET | `/api/portfolio/holdings` | 恢复首页持仓；**快路径**：120s 内存缓存命中直接返回 → 否则 `build_fast_snapshot_holdings_response()`（日快照 + 官方净值缓存 overlay，不打网）→ 仍无数据再走档案慢路径；25s 超时 503；响应含 `refreshed_at` / `fast_snapshot` |
 | GET | `/api/portfolio/summary` | 账户汇总 + 全部档案 |
 | GET | `/api/portfolio/dashboard` | 盈亏分析：`range` 为 today/week/month/year/all；可选 `calendar_year`、`calendar_month`；含 profit_trend、profit_calendar、daily_top5、持仓分布、**risk_metrics**（组合风险体检，样本不足时 `available=false`） |
 | GET | `/api/portfolio/risk-correlation` | 持仓相关性矩阵（懒加载，逐只拉 nav-history）；`lookback_days` 默认 120（30~400）；<2 持仓或对齐 <20 日返回 `available=false` |
@@ -731,6 +732,7 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | `FUND_AI_CLOUDBASE_CUSTOM_LOGIN_KEY` | — | 自定义登录私钥 JSON 路径 |
 | `FUND_AI_CLOUDBASE_AUTH_DEV_MODE` | false | `true` 时小程序可用开发 UID（仅本地联调） |
 | `FUND_AI_CORS_ORIGINS` | `http://localhost:3001,http://127.0.0.1:3001` | 允许的前端 Origin（逗号分隔）；生产设为 Web 静态托管域名 |
+| （同上表 `FUND_AI_CLOUDBASE_ENV_ID`） | — | 设后会额外放行 `https://*.webapps.tcloudbase.com`（`config.resolved_cors_origin_regex`） |
 
 ### 板块实时
 

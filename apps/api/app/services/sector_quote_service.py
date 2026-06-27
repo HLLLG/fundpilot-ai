@@ -341,10 +341,7 @@ def refresh_holdings_sector_quotes(
                 nav_return = get_official_nav_return(holding.fund_code, trade_date)
 
             sector_source = "realtime" if _is_trading_hours() else "closing_estimate"
-            update: dict = {
-                "sector_return_percent": result.change_percent,
-                "sector_return_percent_source": sector_source,
-            }
+            update: dict = {}
             display_sector = sector_display_label(holding)
             if _is_valid_sector_label(display_sector) and not _is_valid_sector_label(
                 holding.sector_name
@@ -363,14 +360,26 @@ def refresh_holdings_sector_quotes(
             from app.services.profit_accrual_defer import is_profit_accrual_deferred
 
             profile = profile_service._find_profile_for_holding(holding)
+            amount = holding.settled_holding_amount or holding.holding_amount
+            if estimate_quote is None:
+                update["sector_return_percent"] = result.change_percent
+                update["sector_return_percent_source"] = sector_source
             if nav_return is not None and not is_profit_accrual_deferred(profile):
                 update["daily_return_percent"] = nav_return
                 update["daily_profit"] = compute_daily_profit_from_rate(
-                    holding.holding_amount,
+                    amount,
                     nav_return,
                     amount_includes_today=_amount_includes_today_return(holding),
                 )
                 update["daily_return_percent_source"] = "official_nav"
+            elif estimate_quote is not None and not is_profit_accrual_deferred(profile):
+                update["daily_return_percent"] = result.change_percent
+                update["daily_profit"] = compute_daily_profit_from_rate(
+                    amount,
+                    result.change_percent,
+                    amount_includes_today=_amount_includes_today_return(holding),
+                )
+                update["daily_return_percent_source"] = "sector_estimate"
             else:
                 update["daily_return_percent"] = None
                 update["daily_profit"] = None

@@ -36,6 +36,7 @@ import {
   formatPlainPercent,
   formatSignedMoney,
   formatSignedPercent,
+  mergeSectorIntradayClose,
   resolveSectorBoardReturnPercent,
 } from "@/lib/holdingMetrics";
 import {
@@ -426,6 +427,10 @@ export function YangjibaoFundDetail({
             ? lastPoint
             : null;
       setIntradayClosePercent(close);
+      const merged = mergeSectorIntradayClose(activeHolding, close);
+      if (merged !== activeHolding) {
+        onHoldingResolved?.(holdingIndex, merged);
+      }
     };
 
     if (cachedIntraday && cachedIntraday.points.length >= 2) {
@@ -479,7 +484,7 @@ export function YangjibaoFundDetail({
     return () => {
       intradayRequestSeq.current += 1;
     };
-  }, [tab, intradayQuery, intradayForceSeq]);
+  }, [tab, intradayQuery, intradayForceSeq, activeHolding, holdingIndex, onHoldingResolved]);
 
   useEffect(() => {
     return hydrateTradingSession((session) => {

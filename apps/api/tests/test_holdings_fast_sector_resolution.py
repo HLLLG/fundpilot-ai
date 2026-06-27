@@ -379,8 +379,160 @@ def test_portfolio_holdings_cache_miss_loads_without_benchmark_fetch(monkeypatch
     assert load_fetch_flags == [False]
     assert resolve_fetch_flags == [False]
     assert sector_network_fallback_flags == [False]
-    assert payload["source"] == "snapshot"
-    assert payload["holdings"][0]["fund_code"] == "123456"
+
+
+def test_fund_estimate_fallback_updates_daily_not_sector(monkeypatch):
+    from app.models import Holding
+    from app.services.sector_quote_provider import SpotBoardFetchResult
+    from app.services.sector_quote_resolver import SectorResolveResult
+
+    class FakeProfileService:
+        def resolve_holding(self, holding: Holding, **_kwargs) -> Holding:
+            return holding
+
+        def _find_profile_for_holding(self, _holding):
+            return None
+
+    monkeypatch.setattr(
+        "app.services.sector_quote_service.FundProfileService",
+        FakeProfileService,
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_service.refresh_benchmark_sectors_for_holdings",
+        lambda holdings, **_kwargs: holdings,
+    )
+    monkeypatch.setattr(
+        "app.services.sector_quote_service.primary_sector_fields_for_holding",
+        lambda *_args, **_kwargs: {},
+    )
+    monkeypatch.setattr(
+        "app.services.sector_quote_service.prefetch_canonical_kline_quotes",
+        lambda *_args, **_kwargs: 0,
+    )
+    monkeypatch.setattr(
+        "app.services.sector_quote_service.labels_need_spot_boards",
+        lambda _labels: False,
+    )
+    monkeypatch.setattr(
+        "app.services.sector_quote_service.resolve_sector_quote",
+        lambda *_args, **_kwargs: SectorResolveResult(confidence="none"),
+    )
+    monkeypatch.setattr(
+        "app.services.sector_quote_service.fetch_fund_estimate_quotes",
+        lambda *_args, **_kwargs: {
+            "123456": {"change_percent": 3.66, "fund_name": "Fallback Fund"}
+        },
+    )
+    monkeypatch.setattr(
+        "app.services.sector_quote_service.get_official_nav_return",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "app.services.sector_quote_service.save_sector_mapping",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "app.services.sector_quote_provider.fetch_spot_boards_result",
+        lambda **_kwargs: SpotBoardFetchResult(
+            boards={"index": {}, "concept": {}, "industry": {}},
+            provider_path="empty",
+            live_attempted=True,
+            elapsed_seconds=0.0,
+        ),
+    )
+
+    from app.services.sector_quote_service import refresh_holdings_sector_quotes
+
+    result = refresh_holdings_sector_quotes(
+        [
+            Holding(
+                fund_code="123456",
+                fund_name="Fallback Fund",
+                holding_amount=1000,
+            )
+        ],
+        timeout_seconds=8.0,
+    )
+    holding = Holding.model_validate(result["holdings"][0])
+
+    assert holding.sector_return_percent is None
+    assert holding.sector_return_percent_source is None
+    assert holding.daily_return_percent == 3.66
+    assert holding.daily_return_percent_source == "sector_estimate"
+    assert holding.daily_profit == 36.6
+
+
+def test_official_nav_updates_daily_while_board_keeps_close_change(monkeypatch):
+    from app.models import Holding
+    from app.services.sector_quote_resolver import SectorResolveResult
+
+    class FakeProfileService:
+        def resolve_holding(self, holding: Holding, **_kwargs) -> Holding:
+            return holding
+
+        def _find_profile_for_holding(self, _holding):
+            return None
+
+    monkeypatch.setattr(
+        "app.services.sector_quote_service.FundProfileService",
+        FakeProfileService,
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_service.refresh_benchmark_sectors_for_holdings",
+        lambda holdings, **_kwargs: holdings,
+    )
+    monkeypatch.setattr(
+        "app.services.sector_quote_service.primary_sector_fields_for_holding",
+        lambda *_args, **_kwargs: {},
+    )
+    monkeypatch.setattr(
+        "app.services.sector_quote_service.prefetch_canonical_kline_quotes",
+        lambda *_args, **_kwargs: 1,
+    )
+    monkeypatch.setattr(
+        "app.services.sector_quote_service.labels_need_spot_boards",
+        lambda _labels: False,
+    )
+    monkeypatch.setattr(
+        "app.services.sector_quote_service.resolve_sector_quote",
+        lambda *_args, **_kwargs: SectorResolveResult(
+            confidence="high",
+            change_percent=-4.62,
+            matched_name="人工智能",
+            source_type="index",
+            source_code="930713",
+            message="东财K线",
+            candidates=[],
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.sector_quote_service.get_official_nav_return",
+        lambda *_args, **_kwargs: 3.66,
+    )
+    monkeypatch.setattr(
+        "app.services.sector_quote_service.save_sector_mapping",
+        lambda *_args, **_kwargs: None,
+    )
+
+    from app.services.sector_quote_service import refresh_holdings_sector_quotes
+
+    result = refresh_holdings_sector_quotes(
+        [
+            Holding(
+                fund_code="008586",
+                fund_name="华夏人工智能ETF联接C",
+                holding_amount=8671.67,
+                sector_name="人工智能",
+                intraday_index_name="中证人工智能",
+            )
+        ],
+        timeout_seconds=8.0,
+    )
+    holding = Holding.model_validate(result["holdings"][0])
+
+    assert holding.sector_return_percent == -4.62
+    assert holding.daily_return_percent == 3.66
+    assert holding.daily_return_percent_source == "official_nav"
 
 
 def test_load_persisted_holdings_snapshot_merge_respects_fetch_benchmark_false(monkeypatch):

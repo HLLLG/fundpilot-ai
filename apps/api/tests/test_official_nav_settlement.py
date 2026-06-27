@@ -94,6 +94,26 @@ def test_non_trading_day_settles_official_nav_and_persists_without_refetch(monke
     assert result["portfolio_summary"] == {"daily_profit": 150.0}
 
 
+def test_settlement_serializer_drops_untrusted_legacy_sector_return():
+    from app.services.official_nav_settlement import _serialize_settlement_holdings_for_client
+
+    payload = _serialize_settlement_holdings_for_client(
+        [
+            _holding(
+                sector_return_percent=3.66,
+                sector_return_percent_source=None,
+                daily_return_percent=3.66,
+                daily_return_percent_source="official_nav",
+                daily_profit=366.0,
+            )
+        ]
+    )[0]
+
+    assert payload["sector_return_percent"] is None
+    assert payload["sector_return_percent_source"] is None
+    assert payload["estimated_daily_return_percent"] == 3.66
+
+
 def _empty_payload(
     reason: str,
     session: dict,
