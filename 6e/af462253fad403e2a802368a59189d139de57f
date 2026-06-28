@@ -1,0 +1,366 @@
+apps/api/app/data/amac_benchmark_index_library.json
+  s_6b3dc27dd1dc25::t_d439a95993c1fa 1-4,7-73,77,79-193,197,199-205,209,211-253,257,259-385,389,391-601,607-613,617,619-709,713,715-721,725,727-757,761,763-890,892-925,929,931-973,977,979-997,1001,1003-1141,1145,1147-1225,1229,1231-1237,1241,1243-1393,1397,1399-1489,1493,1495-1501,1505,1507-1525,1529,1531-1705,1709,1711-1717,1721,1723-1729,1733,1735-1741,1745,1747-1849,1853,1855-1857
+  s_6b3dc27dd1dc25::t_04d521eedc05bb 5-6,602-606,710-712,714,758-760,762,891,926-928,930,974-976,978,1226-1228,1230,1238-1240,1242,1742-1744,1746,1850-1852,1854
+  s_6b3dc27dd1dc25::t_dc9865c9e3fb51 74-76,78,194-196,198,206-208,210,254-256,258,386-388,390,614-616,618,722-724,726,998-1000,1002,1142-1144,1146,1394-1396,1398,1490-1492,1494,1502-1504,1506,1526-1528,1530,1706-1708,1710,1718-1720,1722,1730-1732,1734
+apps/api/scripts/probe_sector_5d_sources.py
+  s_6b3dc27dd1dc25::t_9a0aec2210dd6c 1-222
+apps/api/app/services/discovery_facts.py
+  s_6b3dc27dd1dc25::t_054e902ee770cc 11-15
+  s_6b3dc27dd1dc25::t_a2d949c27f4b26 79-83,87
+  s_6b3dc27dd1dc25::t_c0a2d4c7baebeb 124-160
+  s_6b3dc27dd1dc25::t_f82b4b9bbd5329 8
+  s_6b3dc27dd1dc25::t_677ff425e64759 53
+  s_6b3dc27dd1dc25::t_1bed386e17503b 37
+  s_6b3dc27dd1dc25::t_0fcf672aad4027 17
+apps/api/app/services/amac_benchmark_index_data.py
+  s_6b3dc27dd1dc25::t_704b202c27f8ba 1-76,79-93
+  s_6b3dc27dd1dc25::t_ab7cb246c5283f 77-78
+apps/api/tests/test_amac_benchmark_index.py
+  s_6b3dc27dd1dc25::t_1ccbef66456227 1-15,18-43,51-53
+  s_6b3dc27dd1dc25::t_3968d2e042dbd4 16-17
+  s_6b3dc27dd1dc25::t_8a3d87487037ca 44-50
+apps/api/tests/test_dip_radar_sector.py
+  s_6b3dc27dd1dc25::t_1124b0cf0fc85d 1-31,34-43,46-48,51-53
+  s_6b3dc27dd1dc25::t_00fdfdf8a4afce 32
+  s_6b3dc27dd1dc25::t_eb6672ab2691fc 33
+apps/web/src/components/PortfolioDashboard.tsx
+  s_6b3dc27dd1dc25::t_ceff758d44d676 187
+  s_6b3dc27dd1dc25::t_ac05a3effd1f49 50-54
+  s_6b3dc27dd1dc25::t_cfc16b2420e10e 83
+apps/api/app/services/fund_primary_sector_types.py
+  s_6b3dc27dd1dc25::t_15b0cba8683a73 1-13
+apps/api/app/services/portfolio_profit_analysis.py
+  s_6b3dc27dd1dc25::t_c3c043893b0b0d 459-461
+  s_6b3dc27dd1dc25::t_97b7bb7ef1f6bf 246-247,257-258
+  s_6b3dc27dd1dc25::t_323cb229505d0a 376,382-386
+  s_6b3dc27dd1dc25::t_b26117aa16eb64 498
+apps/api/tests/test_holdings_fast_sector_resolution.py
+  s_6b3dc27dd1dc25::t_14e012db8e8dcf 321,323,325-326
+  s_6b3dc27dd1dc25::t_354c471fb32fcc 602-603
+  s_6b3dc27dd1dc25::t_857c371d1d86b1 254,322
+docs/PROJECT_CONTEXT.md
+  s_6b3dc27dd1dc25::t_db77992988331c 127
+  s_6b3dc27dd1dc25::t_97ae174ff0c8c1 139
+  s_6b3dc27dd1dc25::t_d6e8d22e6a1f1f 7,10-13
+  s_6b3dc27dd1dc25::t_f6e10844ab32bb 217-221
+  s_6b3dc27dd1dc25::t_da7c0b6718b645 459
+  s_6b3dc27dd1dc25::t_136aa29d10c3ab 851
+apps/api/app/services/dip_drop_scanner.py
+  s_6b3dc27dd1dc25::t_88eec1e9a6b5d7 9
+  s_6b3dc27dd1dc25::t_4a424b7a1507b6 177,189-190
+  s_6b3dc27dd1dc25::t_b318c66628fca0 209-213
+apps/api/app/main.py
+  s_6b3dc27dd1dc25::t_a188cbb50f0929 38,46
+  s_6b3dc27dd1dc25::t_92ce52e3a98823 105
+  s_6b3dc27dd1dc25::t_594e14904a775c 1237-1249
+  s_6b3dc27dd1dc25::t_4f9d45b89f9885 662-663
+apps/web/src/components/Dashboard.tsx
+  s_6b3dc27dd1dc25::t_6fc1d99e4c8ccd 1224-1226
+  s_6b3dc27dd1dc25::t_21a6f836509b58 71
+  s_6b3dc27dd1dc25::t_936d2b726159f0 508
+  s_6b3dc27dd1dc25::t_ae1a34dec8babf 958,965,970
+apps/api/tests/fixtures/alipay_user_image1_vlm_ocr.txt
+  s_6b3dc27dd1dc25::t_96668ca52c7df7 1-42
+apps/api/app/services/sector_quote_cache.py
+  s_6b3dc27dd1dc25::t_92810455ab29d3 10-32
+apps/api/app/services/dip_radar_snapshot.py
+  s_6b3dc27dd1dc25::t_dc017eb2796c05 20
+  s_6b3dc27dd1dc25::t_8b8b29fcb6d74c 237-241
+  s_6b3dc27dd1dc25::t_7b04d50304e88c 13
+apps/api/app/services/fund_benchmark_sector.py
+  s_6b3dc27dd1dc25::t_50d25ea731312e 69
+  s_6b3dc27dd1dc25::t_4fc1d130f4ae98 49-50
+  s_6b3dc27dd1dc25::t_8b0ac78696b89c 10-13
+  s_6b3dc27dd1dc25::t_9d2bed658076ca 27-42,45,47,51-54
+apps/web/src/lib/holdingMetrics.test.ts
+  s_6b3dc27dd1dc25::t_458308e6a82611 7
+  s_6b3dc27dd1dc25::t_c77aa3bbb10e2b 55-79
+apps/web/src/lib/marketThemeBoard.ts
+  s_6b3dc27dd1dc25::t_9b066d1a1a965f 98-103
+  s_6b3dc27dd1dc25::t_772bd04fe40076 3
+  s_6b3dc27dd1dc25::t_a69f4abc5291ff 15
+apps/web/src/lib/holdingMetrics.ts
+  s_6b3dc27dd1dc25::t_da9fdc3c1715da 115-131
+apps/web/src/components/LandingPage.tsx
+  s_6b3dc27dd1dc25::t_f01c6195769d08 28
+  s_6b3dc27dd1dc25::t_8ce17cd7508422 361
+apps/api/app/services/fund_holdings_sector_infer.py
+  s_6b3dc27dd1dc25::t_a3dcb6d309e627 1-168
+apps/api/app/services/sector_quote_service.py
+  s_6b3dc27dd1dc25::t_29d8c934daaada 97-98,102
+  s_6b3dc27dd1dc25::t_8cedd39b7bbed2 262,264
+apps/miniprogram/tests/request-build-query.property.test.js
+  s_6b3dc27dd1dc25::t_301a7a3a34229c 32
+  s_6b3dc27dd1dc25::t_cb760d64093b0f 5
+apps/api/app/services/discovery_candidate_pool.py
+  s_6b3dc27dd1dc25::t_c5734c2684b83b 255-269
+apps/api/tests/test_fund_sector_auto_match.py
+  s_6b3dc27dd1dc25::t_6180801ec8cd76 1-74
+apps/api/app/database.py
+  s_6b3dc27dd1dc25::t_e9a4c8e00027d3 1234,1236-1253,1255-1256,1259,1261-1270
+  s_6b3dc27dd1dc25::t_3a47442c5868ca 738-749,752-754
+  s_6b3dc27dd1dc25::t_a6a60682741f3c 1233,1235,1254,1257-1258,1260,1271-1346
+  s_6b3dc27dd1dc25::t_556eedc07f9bb5 733-737,750-751,755-762,765-805,807-821,823
+apps/api/app/config.py
+  s_6b3dc27dd1dc25::t_0687390e364c14 131-138
+  s_6b3dc27dd1dc25::t_5a794111b9a9cf 123
+apps/miniprogram/pages/market/market.wxml
+  s_6b3dc27dd1dc25::t_7658acfbb13a9b 56,68-74
+  s_6b3dc27dd1dc25::t_55a74750654721 23
+apps/web/src/components/PortfolioRiskMetricsPanel.tsx
+  s_6b3dc27dd1dc25::t_1cd87db2fe6058 5,109-111,123-146,168-170
+apps/api/app/services/fund_industry_theme_map.py
+  s_6b3dc27dd1dc25::t_8c16e91a9abe72 1-30
+apps/api/app/db_migrations.py
+  s_6b3dc27dd1dc25::t_834681b0398717 440
+  s_6b3dc27dd1dc25::t_3a1fcfc43b8fc3 252-275
+  s_6b3dc27dd1dc25::t_e35bdffeac8aae 8
+apps/api/app/services/fund_primary_sector_precompute_loop.py
+  s_6b3dc27dd1dc25::t_cd686b1f3744ef 1-44
+apps/api/scripts/README.md
+  s_6b3dc27dd1dc25::t_675f5f2eca581f 69-85
+apps/miniprogram/pages/market/market.js
+  s_6b3dc27dd1dc25::t_ce3f703db2dff4 11-12
+  s_6b3dc27dd1dc25::t_63107514c6655f 180
+  s_6b3dc27dd1dc25::t_3ec7990de6b48d 253
+  s_6b3dc27dd1dc25::t_a6e089e37f5ad8 228
+apps/api/tests/test_alipay_block_parser.py
+  s_6b3dc27dd1dc25::t_0e3fb3e1b7b1a9 1-61
+apps/api/tests/conftest.py
+  s_6b3dc27dd1dc25::t_b43ca71e1130fb 98
+  s_6b3dc27dd1dc25::t_0ea20194479903 99,102-103
+apps/api/tests/fixtures/alipay_user_image2_vlm_ocr.txt
+  s_6b3dc27dd1dc25::t_69ebdfc64f4aa2 1-14
+apps/api/app/services/discovery_payload.py
+  s_6b3dc27dd1dc25::t_bf740a32d956e0 23-25,28-41,44-52,55-59,63-66,69-83,118
+  s_6b3dc27dd1dc25::t_899110c763996a 95,98-108,110-117,126,134-136
+  s_6b3dc27dd1dc25::t_91b13652d58fe9 8-12,53,84
+apps/api/app/services/alipay_block_parser.py
+  s_6b3dc27dd1dc25::t_2f297254287e15 85-88
+  s_6b3dc27dd1dc25::t_c1c25d1b81acbf 1-44,52-82,84,89-295
+  s_6b3dc27dd1dc25::t_a35e57d010f476 45-51
+apps/api/tests/test_eastmoney_clist_change.py
+  s_6b3dc27dd1dc25::t_3b2075ee21ae9d 1-3,5,7-9,11-14,16,26,28-29,33-48,76-109,111,114-133,135,137-174,177,179-180
+  s_6b3dc27dd1dc25::t_0c47eb51082624 4,6,10,15,17-25,27,30-32,49-75,110,112-113,134,136,175-176,178,181
+docs/superpowers/specs/2026-06-28-alipay-block-parser-design.md
+  s_6b3dc27dd1dc25::t_16437cd6ee9e4b 1-55
+apps/api/app/services/discovery_prompt.py
+  s_6b3dc27dd1dc25::t_c1aba4ec3bb3a3 13,15,19-38,42-43,49,53,55-56,59-73
+apps/api/scripts/sync_amac_benchmark_index_library.py
+  s_6b3dc27dd1dc25::t_d91f6e457b5531 191-193
+  s_6b3dc27dd1dc25::t_9638da689c7bf5 1-66,94-112,117-190,194-411
+  s_6b3dc27dd1dc25::t_bdf07683add0c5 68-70,72,75-76,79
+  s_6b3dc27dd1dc25::t_9abf586407fdf1 67,71,73-74,77-78,80-83
+  s_6b3dc27dd1dc25::t_23f1ea25b886c5 84-93
+  s_6b3dc27dd1dc25::t_546f1cff51c9ae 113-116
+apps/api/app/services/theme_board_snapshot.py
+  s_6b3dc27dd1dc25::t_e9c12e86ea2282 460-461
+  s_6b3dc27dd1dc25::t_07e0149bb0ece0 101-102
+  s_6b3dc27dd1dc25::t_9010b84e5d562d 567
+  s_6b3dc27dd1dc25::t_c6acccd1fa629d 611
+  s_6b3dc27dd1dc25::t_17d12f569895d1 22-26,344,360-361,372,439
+  s_6b3dc27dd1dc25::t_593ac47221ea5e 347,349,358-359
+  s_6b3dc27dd1dc25::t_e2a211b28b2e72 37
+  s_6b3dc27dd1dc25::t_08ad9e33fe1d04 207
+  s_6b3dc27dd1dc25::t_095e4148630781 185-186
+  s_6b3dc27dd1dc25::t_11f0a96b89be25 644
+  s_6b3dc27dd1dc25::t_539713c98cfc67 31
+  s_6b3dc27dd1dc25::t_8bddd143066de9 277,279-286,295-296,298-307,340-343,345-346,348,350-357,362-371,373-374,376,378,383,385,387-388,393,395,397-402,406-407,409-415,417-426,434-438
+  s_6b3dc27dd1dc25::t_1e64bbbaf76ae7 526
+  s_6b3dc27dd1dc25::t_7f3b83beaffb46 46-47
+  s_6b3dc27dd1dc25::t_14c9acfaf09ec5 408,416,427-433
+  s_6b3dc27dd1dc25::t_2d87f0785ec5e5 272,274-276,278,287,290-294,297,308,310-339
+  s_6b3dc27dd1dc25::t_1636160e00153d 561-564
+  s_6b3dc27dd1dc25::t_b78aac308b7cf6 48
+  s_6b3dc27dd1dc25::t_71b849daa7c900 205
+  s_6b3dc27dd1dc25::t_ee7323afe634fd 177-178
+  s_6b3dc27dd1dc25::t_90de54e27c6429 41-42
+  s_6b3dc27dd1dc25::t_9fecd7dfbeb2b1 40
+  s_6b3dc27dd1dc25::t_8113aef79d5d26 13
+  s_6b3dc27dd1dc25::t_a6b5de184827ae 123-124
+  s_6b3dc27dd1dc25::t_cf036c010a5f79 11-12,14
+apps/api/scripts/profile_dashboard.py
+  s_6b3dc27dd1dc25::t_ece3db939e43a5 64-65
+  s_6b3dc27dd1dc25::t_a992116ee28ae7 1-40,42-45,47-63,66-113
+  s_6b3dc27dd1dc25::t_b76250f6cc753b 46
+  s_6b3dc27dd1dc25::t_254e55d5430b6e 41
+  s_6b3dc27dd1dc25::t_75e78afdf84402 114-122
+apps/api/app/services/fund_primary_sector_global.py
+  s_6b3dc27dd1dc25::t_b0ad6628e245bc 12
+  s_6b3dc27dd1dc25::t_8cde3c05a8a6f8 1-11,13-65
+apps/api/app/db_connect.py
+  s_6b3dc27dd1dc25::t_d4362b15928f9f 6,16-31
+  s_6b3dc27dd1dc25::t_f95077b9f69578 57,60-61,63-65,69,71,74
+docs/superpowers/plans/2026-06-28-alipay-block-parser.md
+  s_6b3dc27dd1dc25::t_a0e05ab26654ae 1-24
+apps/api/app/services/fund_primary_sector_service.py
+  s_6b3dc27dd1dc25::t_e94c2a85af7637 547
+  s_6b3dc27dd1dc25::t_e8d0b408e6bbc2 33-34,41-42,445
+  s_6b3dc27dd1dc25::t_a16b7dcb8a06a7 129,132-135
+  s_6b3dc27dd1dc25::t_92a0c7b0e7498f 7-13
+  s_6b3dc27dd1dc25::t_30c4c2f84fecbb 165-226
+  s_6b3dc27dd1dc25::t_cdc567918166a5 111,113,128,130-131,136
+  s_6b3dc27dd1dc25::t_f4b59115622bb4 49
+  s_6b3dc27dd1dc25::t_2077fa8bebd262 323,325,339,342-344,346-356
+  s_6b3dc27dd1dc25::t_31125532a76b1e 361,364-372,375-376,379,394-395,400-407
+  s_6b3dc27dd1dc25::t_2ee5302834089f 433-439,442-444,446-449,472,474,485-497
+  s_6b3dc27dd1dc25::t_8ead3931e107ff 396-399,408
+  s_6b3dc27dd1dc25::t_c33794847d32d0 233,245
+  s_6b3dc27dd1dc25::t_90400fa9b98b5a 15
+  s_6b3dc27dd1dc25::t_beffa702ff06bd 16-20
+apps/api/app/services/fund_primary_sector_precompute.py
+  s_6b3dc27dd1dc25::t_f8178df84259e9 122-127,129,135
+  s_6b3dc27dd1dc25::t_c2f43d0af6d8d6 8
+  s_6b3dc27dd1dc25::t_01a3fabb012716 1-2,5,7,9-22,27,30-37,39-47,50-52,55-58,60-62,65-68,71-83,86-96,98-99,102-110,112-114,116-118,120-121,128,130-134,136-141,144,146-193,195
+apps/api/app/services/market_shared_refresh.py
+  s_6b3dc27dd1dc25::t_dad45a38e8458f 45-49
+  s_6b3dc27dd1dc25::t_ce587e4dbc4291 51,53,55
+  s_6b3dc27dd1dc25::t_d2944cfc4a9936 124
+  s_6b3dc27dd1dc25::t_21ec21a1c91a21 23-24
+  s_6b3dc27dd1dc25::t_5fb13204610be9 65-76
+  s_6b3dc27dd1dc25::t_27c3960cabae93 116,120-121
+  s_6b3dc27dd1dc25::t_97fbf6cc7947e5 1
+apps/api/app/services/eastmoney_spot_client.py
+  s_6b3dc27dd1dc25::t_736384a46c8137 569-570,585-596,599,610-619,623,625-627,629-654
+  s_6b3dc27dd1dc25::t_b93b8208b62b8c 567-568,571-584,597-598,600-609,620-622,624,628,655-656,658-663,665,667-669,672-682,684-690,692-693,695-696,698,700-701,718-727,732,734-742,744,746-748,750,766-767,769-796,798-806,808-810,812-813,828-830,832,834-835,837-839,841-853,855,857-859
+  s_6b3dc27dd1dc25::t_cd1a7388cb4a35 657,664,666,670-671
+  s_6b3dc27dd1dc25::t_0b1bf1d4a75e45 797,807,811,814-827,831,833,836,840,854,856,860-873
+  s_6b3dc27dd1dc25::t_436396d7f35b20 683,691,694,697,699,702-717,729,733,743,745,749,751-765,768
+  s_6b3dc27dd1dc25::t_cd7bb763bc5de9 728,730-731
+  s_6b3dc27dd1dc25::t_1728d84dfc2a24 6
+apps/api/app/lifespan.py
+  s_6b3dc27dd1dc25::t_3b1f31cc7653eb 26
+  s_6b3dc27dd1dc25::t_1080e6aa8d795c 35-46
+  s_6b3dc27dd1dc25::t_fc9f8db85a29bf 57-61
+  s_6b3dc27dd1dc25::t_e18604b829e44b 3,20-21
+  s_6b3dc27dd1dc25::t_7a67793b7acef5 19
+  s_6b3dc27dd1dc25::t_870a0e036730dd 12-17
+apps/api/app/services/sector_registry_data.py
+  s_6b3dc27dd1dc25::t_c7fb17e403cdc3 116-120
+  s_6b3dc27dd1dc25::t_93dde9bba41415 154
+  s_6b3dc27dd1dc25::t_2606012f598a04 8-9,11-33,48,80-81,83,86,99-113,121-123,126-153,155-159,182-183,214-216
+apps/api/app/services/discovery_sector_heat.py
+  s_6b3dc27dd1dc25::t_7bea693057f94b 62
+  s_6b3dc27dd1dc25::t_61cc38598d4e1b 167
+  s_6b3dc27dd1dc25::t_262fc9c29a682d 107
+  s_6b3dc27dd1dc25::t_122ea0e845499a 82-93
+  s_6b3dc27dd1dc25::t_184770da58fe03 224-225
+  s_6b3dc27dd1dc25::t_47bb537786de25 133,137-138
+apps/api/tests/test_portfolio_profit_analysis.py
+  s_6b3dc27dd1dc25::t_c880a43048897c 269-270
+  s_6b3dc27dd1dc25::t_37770a58686f95 286
+  s_6b3dc27dd1dc25::t_02d868bcd9f3a9 219-268,271-285,287-301
+apps/api/tests/test_fund_primary_sector_global.py
+  s_6b3dc27dd1dc25::t_d6b281c1b10ae9 1-10,13-141
+  s_6b3dc27dd1dc25::t_38b3ad5c42b86f 11-12
+apps/api/tests/test_portfolio_holdings_service.py
+  s_6b3dc27dd1dc25::t_b3c239f76297ff 124-168
+  s_6b3dc27dd1dc25::t_cd20737de4c9fa 4
+apps/api/app/services/portfolio_holdings_service.py
+  s_6b3dc27dd1dc25::t_44e71d5ee2556d 319-321
+  s_6b3dc27dd1dc25::t_d2fa22b7c9928b 284-318,322-328,523
+  s_6b3dc27dd1dc25::t_861b61ab0fbb22 503,509-510,512,517-522,525-527,535
+  s_6b3dc27dd1dc25::t_3f3eafad71d923 329-330
+apps/api/app/services/discovery_candidate_llm.py
+  s_6b3dc27dd1dc25::t_707e095bbb50a9 1-139
+apps/api/tests/test_market_shared_cache.py
+  s_6b3dc27dd1dc25::t_9edf5a5b3e1ccb 38,42-43
+  s_6b3dc27dd1dc25::t_fdcda1d349ab9f 50
+  s_6b3dc27dd1dc25::t_95c02ae337b0de 115
+  s_6b3dc27dd1dc25::t_e27a5180c4ec29 4-5
+  s_6b3dc27dd1dc25::t_b151172c76d804 99
+  s_6b3dc27dd1dc25::t_4d2d3e60a91bee 46-49,51-54,56-72,74,78,80,85-86,89-91
+  s_6b3dc27dd1dc25::t_33bc5dcf34defc 22-25
+  s_6b3dc27dd1dc25::t_7500c18e08cf65 9
+  s_6b3dc27dd1dc25::t_c3172b13dee65f 44
+  s_6b3dc27dd1dc25::t_9a7fb1e3ccfd0d 95-97
+  s_6b3dc27dd1dc25::t_4cb5b84ac08617 3
+  s_6b3dc27dd1dc25::t_659bae8abdd92d 12-16
+  s_6b3dc27dd1dc25::t_f7fc0d8ca7ea9b 137,145
+apps/api/tests/test_alipay_holdings_parser.py
+  s_6b3dc27dd1dc25::t_756530f1d77f5c 62-63
+  s_6b3dc27dd1dc25::t_3858e19a177259 64-85
+apps/api/tests/test_discovery_payload.py
+  s_6b3dc27dd1dc25::t_77dc06d9b33eba 46-55,58,153
+  s_6b3dc27dd1dc25::t_e5b807a0a2c975 7-8
+  s_6b3dc27dd1dc25::t_aeba8a583dea5c 186-199
+  s_6b3dc27dd1dc25::t_0085fb6b43a172 152,154-185
+  s_6b3dc27dd1dc25::t_74cc738d93536d 80-92,96,102-109,112
+apps/api/tests/test_discovery_candidate_llm.py
+  s_6b3dc27dd1dc25::t_764802ba1b9b43 1-117
+apps/api/app/services/sector_registry.py
+  s_6b3dc27dd1dc25::t_67b2c3b11830f9 1-157
+apps/api/tests/test_db_connect_fallback_cache.py
+  s_6b3dc27dd1dc25::t_9e3967cd514b44 1-48
+apps/web/src/lib/api.ts
+  s_6b3dc27dd1dc25::t_4f23337aaf8c15 559
+  s_6b3dc27dd1dc25::t_4c1c572b0a038a 544
+  s_6b3dc27dd1dc25::t_a388985d60268f 2037-2046
+apps/api/app/services/discovery_streaming.py
+  s_6b3dc27dd1dc25::t_e156a0cc4ae47b 161
+  s_6b3dc27dd1dc25::t_cd2dccf5031c00 133
+apps/api/app/services/portfolio_snapshot.py
+  s_6b3dc27dd1dc25::t_163d32685c5abd 532-533,537,539-544,548,556,559
+  s_6b3dc27dd1dc25::t_a2c43a3f2810a6 476,487-489
+  s_6b3dc27dd1dc25::t_05c84fc1ce41b5 529,531
+  s_6b3dc27dd1dc25::t_6e11806468674a 23-45
+apps/web/src/lib/marketThemeBoard.test.ts
+  s_6b3dc27dd1dc25::t_e8e94a6cbc7fdd 20
+apps/api/app/services/discovery_pipeline.py
+  s_6b3dc27dd1dc25::t_94fa662a262b24 111
+apps/api/app/services/alipay_holdings_parser.py
+  s_6b3dc27dd1dc25::t_b02f84d3b8de42 74
+  s_6b3dc27dd1dc25::t_3433759dea7574 114-124
+  s_6b3dc27dd1dc25::t_936914311273a1 244-245
+  s_6b3dc27dd1dc25::t_d663a1e1b29dd7 129-131,133-135
+  s_6b3dc27dd1dc25::t_e7181050dbabc1 593-594
+apps/api/scripts/bench_sector_1d_5d.py
+  s_6b3dc27dd1dc25::t_d77cb83b24f7f8 1-218
+apps/web/src/lib/dipRadar.ts
+  s_6b3dc27dd1dc25::t_65ea9bc32e72af 12-22
+apps/web/src/components/DipReboundRadar.tsx
+  s_6b3dc27dd1dc25::t_b97249ea1d7754 137-140
+  s_6b3dc27dd1dc25::t_8799809ec83262 8-10
+  s_6b3dc27dd1dc25::t_b467f32586d699 56
+  s_6b3dc27dd1dc25::t_a5d6c4faea3da8 205,211
+apps/web/src/components/ThemeSectorOverview.tsx
+  s_6b3dc27dd1dc25::t_b98b51c312bc87 401
+  s_6d469fc5790fad::t_f3814064ebd6b7 408,411-412,415,419-420,427
+  s_6b3dc27dd1dc25::t_3a27d939ba275c 434
+  s_6b3dc27dd1dc25::t_532aae89ac4ce4 313,321,328-337
+  s_6d469fc5790fad::t_be96cc445e7b7d 397-400
+apps/api/app/mysql_bootstrap.py
+  s_6b3dc27dd1dc25::t_b39b52729a67a3 142-153
+apps/api/scripts/precompute_fund_primary_sectors.py
+  s_6b3dc27dd1dc25::t_924444632d1380 1-62,64-70
+  s_6b3dc27dd1dc25::t_d44a7311eb2617 63
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.24-trip",
+  "base_commit_sha": "6eaf462253fad403e2a802368a59189d139de57f",
+  "prompts": {},
+  "humans": {
+    "h_375fc341ff3baa": {
+      "author": "hegl <HLLLG@github.com>"
+    }
+  },
+  "sessions": {
+    "s_6b3dc27dd1dc25": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "ede96790-5172-49c1-9833-22647511df00",
+        "model": "composer-2.5"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    },
+    "s_6d469fc5790fad": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "b70f195d-ebef-45aa-8192-acf321178717",
+        "model": "composer-2.5"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
