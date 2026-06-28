@@ -5,10 +5,16 @@ from app.services.discovery_sector_context import (
     build_candidate_factor_scores,
     build_target_sector_context,
 )
+from app.services.discovery_prompt import DISCOVERY_FACTS_INSTRUCTION
 from app.services.investment_presets import take_profit_threshold_percent
 from app.services.market_flow_client import build_market_flow_context
+from app.services.fund_nav_service import get_cached_official_nav_return
+from app.services.holding_estimates import (
+    compute_estimated_daily_return_percent,
+    resolve_holding_return_percent,
+)
 from app.services.news_freshness import build_news_pipeline_context
-from app.services.risk import resolve_weight_denominator
+from app.services.risk import holding_weight_percent, resolve_weight_denominator
 from app.services.sector_signal_context import build_signal_backtest_context
 from app.services.trading_session import build_trading_session
 
@@ -28,6 +34,7 @@ def build_discovery_facts(
     dip_lookback_days: int = 5,
     dip_min_drop_percent: float = 3.0,
     focus_sectors: list[str] | None = None,
+    fund_type_preference: str = "any",
 ) -> dict:
     total_amount = sum(item.holding_amount for item in holdings) or 0.0
     denominator = resolve_weight_denominator(holdings, profile)
@@ -43,12 +50,7 @@ def build_discovery_facts(
 
     facts: dict = {
         "readonly": True,
-        "instruction": (
-            "以下数字由系统计算；推荐基金代码必须来自 candidate_pool。"
-            "引用 sector_fund_flow / sector_intraday / signal_backtest 时须用给定数字，禁止编造。"
-            "news.freshness_label 须在 summary 或 caveats 体现对决策置信度的影响。"
-            "market_flow 为北向/南向资金解读；factor_scores 按 factor_reliability 置信使用。"
-        ),
+        "instruction": DISCOVERY_FACTS_INSTRUCTION,
         "session": session,
         "profile": {
             "decision_style": profile.decision_style,
@@ -74,9 +76,15 @@ def build_discovery_facts(
             "total_amount": round(total_amount, 2),
             "available_budget_yuan": round(available_budget, 2),
             "held_sectors": _held_sector_summary(holdings),
+            "holdings_slim": _build_holdings_slim(
+                holdings,
+                profile,
+                trade_date=session.get("effective_trade_date"),
+            ),
             "target_sectors": target_sectors,
             "scan_mode": scan_mode,
         },
+        "fund_type_preference": fund_type_preference,
         "sector_heat": sector_heat,
         "target_sector_context": build_target_sector_context(
             list(dict.fromkeys(list(target_sectors) + list(focus_sectors or []))),
@@ -111,6 +119,43 @@ def build_discovery_facts(
         }
 
     return facts
+
+
+def _build_holdings_slim(
+    holdings: list[Holding],
+    profile: InvestorProfile,
+    *,
+    trade_date: str | None,
+) -> list[dict]:
+    rows: list[dict] = []
+    for holding in holdings:
+        effective = holding
+        if trade_date and holding.fund_code and holding.fund_code != "000000":
+            nav_return = get_cached_official_nav_return(holding.fund_code, trade_date)
+            if nav_return is not None and holding.daily_return_percent_source != "official_nav":
+                effective = holding.model_copy(
+                    update={
+                        "daily_return_percent": nav_return,
+                        "daily_return_percent_source": "official_nav",
+                    }
+                )
+        rows.append(
+            {
+                "fund_code": holding.fund_code,
+                "fund_name": holding.fund_name,
+                "sector_name": holding.sector_name,
+                "holding_amount": round(holding.holding_amount, 2),
+                "weight_percent": round(
+                    holding_weight_percent(holding, holdings, profile),
+                    2,
+                ),
+                "holding_return_percent": resolve_holding_return_percent(holding),
+                "estimated_daily_return_percent": compute_estimated_daily_return_percent(
+                    effective
+                ),
+            }
+        )
+    return rows
 
 
 def _held_sector_summary(holdings: list[Holding]) -> list[dict]:

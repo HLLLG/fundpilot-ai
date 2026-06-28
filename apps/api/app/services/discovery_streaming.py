@@ -130,6 +130,7 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
             dip_lookback_days=request.dip_lookback_days,
             dip_min_drop_percent=request.dip_min_drop_percent,
             focus_sectors=list(request.focus_sectors),
+            fund_type_preference=request.fund_type_preference,
         )
 
         if not settings.deepseek_configured:
@@ -157,6 +158,7 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
             market_news=market_news,
             topic_briefs=topic_briefs,
             analysis_mode=request.analysis_mode,
+            fund_type_preference=request.fund_type_preference,
         )
         system_prompt = append_output_requirements_to_system(
             client._system_prompt(runtime.news_tool_max_rounds > 0, request.system_role_prompt)

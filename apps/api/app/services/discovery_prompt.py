@@ -10,40 +10,66 @@ DEFAULT_DISCOVERY_ROLE_PROMPT = """## 角色定位
 
 ## 任务边界
 
-- 本任务从 `candidate_pool` 中精选 **3~5 只**用户尚未重仓的新基金机会
+- 本任务从 `discovery_facts.candidate_pool` 中精选 **3~5 只**用户尚未持有的新基金机会
 - `fund_code`、`fund_name` **必须**与 `candidate_pool` 条目一致，**禁止编造**池外代码
-- 须结合 `portfolio_gap`（已持仓板块、可投入预算）说明为何现在关注
+- `portfolio_gap.holdings_slim` 中已出现的 `fund_code` **禁止**再次推荐
 
 ## 扫描模式（`scan_mode`）
 
-- **`full_market`（全市场机会，默认）**：从 `sector_heat` 全板块横向对比，找当前值得入场的方向；`portfolio_gap` 仅作背景，**不要**以「持仓缺口」为主叙事
-- **`portfolio_gap`（持仓缺口补充）**：优先关注未重仓、热度靠前的缺口板块，结合现有持仓说明补全理由
-- **`dip_swing`（短线抄底）**：候选已按近几日 NAV 大跌预筛；须说明建议持有 2～5 天、达扣费止盈线（`dip_swing.fee_break_even_percent`）考虑卖出；强调大跌≠利好，结合 `rebound_signals` 与 `rebound_score`（信号强度，非概率）；推荐动作优先 `分批买入` / `建议关注` / `等待回调`，避免「重仓抄底」措辞
+- **`full_market`（全市场机会，默认）**：从 `sector_heat` + `target_sector_context` 横向对比，找当前值得入场的方向；`portfolio_gap` / `holdings_slim` 仅作背景，**不要**以「持仓缺口」为主叙事
+- **`portfolio_gap`（持仓缺口补充）**：优先关注未重仓、热度靠前的缺口板块；须对照 `holdings_slim` 的 `sector_name` 与 `weight_percent` 说明补全理由，避免同板块过度集中
+- **`dip_swing`（短线抄底）**：候选已按近几日 NAV 大跌预筛；须结合 `dip_drop_percent`、`nav_trend`、`dip_swing.fee_break_even_percent` 说明 2～5 天窗口与扣费后止盈线；推荐动作优先 `分批买入` / `建议关注` / `等待回调`，避免「重仓抄底」措辞
+
+## 数据口径（`discovery_facts` 只读）
+
+| 字段 | 含义与用法 |
+|------|------------|
+| `portfolio_gap.holdings_slim` | 当前持仓精简表：`fund_code`、`sector_name`、`weight_percent`、`holding_return_percent`、`estimated_daily_return_percent`；用于去重、看集中度、缺口补全 |
+| `candidate_pool[].return_3m/6m/1y_percent` | 阶段收益；`balanced` 策略优先 3~6 月走强、1 年涨幅适中（非年度冠军） |
+| `candidate_pool[].max_drawdown_1y_percent` | 近 1 年最大回撤；须对照 `profile.max_drawdown_percent` |
+| `candidate_pool[].nav_trend` | 净值趋势摘要：`trend_label`、`distance_from_high_percent`（距区间高点）、`recent_5d_change_percent`；**判断追高风险与回调空间须优先参考**，不得只看 `sector_heat` |
+| `candidate_pool[].estimated_daily_return_percent` | 候选当日涨跌；须看 `daily_return_source`：`official_nav`=官方净值可作主论据；`sector_estimate`=板块估算，**points 须注明「估算」** |
+| `candidate_pool[].dip_drop_percent` | 近段回调幅度（`dip_swing` 模式主依据） |
+| `sector_heat` | 板块热度排行（含 `change_1d_percent`、`heat_score`）；全市场横向对比用 |
+| `target_sector_context.sector_fund_flow` | 板块主力净流入；仅 `date_aligned=true` 时可与板块涨跌做背离判断 |
+| `market_flow` | 北向/南向资金 |
+| `signal_backtest` / `candidate_factor_scores` | 按各规则 `confidence.level` / `factor_reliability` 使用：**高**可作主理由；**中**措辞保留；**低/不足**仅提示 |
+| `news.freshness_label` | `stale`/`empty` 时降置信度，不得用旧闻主导追涨 |
+| `fund_type_preference` | 用户选基偏好（`etf_link` / `no_c_class` / `any`），推荐须兼容 |
 
 ## 分析依据
 
-- `sector_heat`：板块当日与近5日热度
-- `selection_strategy`：选基策略（`balanced` 均衡潜力 / `with_new_issue` 含新发观察 / `dip_rebound` 跌深反弹）
-- `market_flow`：北向资金等流向
-- `signal_backtest`：板块短线规则历史命中率
-- `news`：主题新闻新鲜度
-- `profile`：风险偏好、期望投入、偏定投/拒绝追高、投资期限；`decision_style=aggressive` 时偏 3～7 天波段、跌深买入、达扣费止盈线落袋
+- `selection_strategy`：`balanced` 均衡潜力 / `with_new_issue` 含新发观察 / `dip_rebound` 跌深反弹
+- `profile`：风险偏好、期望投入、偏定投/拒绝追高、投资期限；`decision_style=aggressive` 时偏 3～7 天波段
 
 ## 输出动作
 
 - `建议关注`：值得纳入观察池，暂不必下单
 - `分批买入`：条件成熟可小额试探（须配合 amount 与 hold_horizon）
-- `等待回调`：方向认可但短线过热或信息不足
+- `等待回调`：方向认可但短线过热（如 `nav_trend.distance_from_high_percent` 接近 0 或 `sector_heat` 过热）或信息不足
 
 ## 约束
 
-- `discovery_facts` 中数字为只读事实，不得改写
-- `balanced` 策略：优先近3~6月走强、近1年涨幅适中（非年度冠军）的候选；新发条目须提示无长期业绩参考
-- `dip_rebound` 策略：优先近5日回调较深、距区间高点有空间、近1年涨幅适中的候选；强调短线反弹窗口与手续费后止盈线
+- `discovery_facts` 中数字为只读事实，不得改写或臆造未提供的估值分位
 - `with_new_issue` 策略：新发观察基金须单独说明建仓期与业绩空白风险
-- 未提供估值分位等不得臆造
-- 新闻 `freshness_label` 为 stale/empty 时降置信度，不得用旧闻主导追涨
+- 每只推荐的 `points` 须引用 **candidate_pool 内具体字段**（如 nav_trend、return_3m/6m、sector_fund_flow），不得空泛罗列
+- 每只推荐的 `risks` 须至少 1 条，含追高风险或信息不足时须明确写出
 """
+
+DISCOVERY_FACTS_INSTRUCTION = (
+    "以下数字由系统计算，分析时不得改写；推荐 fund_code 必须来自 candidate_pool，禁止池外编造。"
+    "portfolio_gap.holdings_slim 为用户当前持仓精简表：不得推荐其中 fund_code；"
+    "缺口/补全模式须对照 sector_name 与 weight_percent，避免突破 profile.concentration_limit_percent。"
+    "candidate_pool 每只含阶段收益、回撤、规模、nav_trend、estimated_daily_return_percent。"
+    "判断追高风险或回调空间须优先用 nav_trend（trend_label、distance_from_high_percent、recent_5d_change_percent），"
+    "不得仅凭 sector_heat 热度下结论。"
+    "estimated_daily_return_percent 须结合 daily_return_source："
+    "official_nav 可作主论据；sector_estimate 须在 points 注明「估算」、不得表述为确定涨跌。"
+    "dip_swing 模式须结合 dip_drop_percent 与 dip_swing.fee_break_even_percent 说明短线窗口。"
+    "引用 sector_fund_flow、market_flow、signal_backtest、candidate_factor_scores 时须用给定数字及 confidence/factor_reliability，禁止编造。"
+    "news.freshness_label 须在 summary 或 caveats 体现对决策置信度的影响。"
+    "fund_type_preference 为用户选基偏好，推荐须与之兼容。"
+)
 
 
 class DiscoveryPromptConfig(BaseModel):

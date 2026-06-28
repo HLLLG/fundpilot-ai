@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import sqlite3
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
@@ -11,6 +12,22 @@ from urllib.parse import unquote, urlparse
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
+
+_mysql_unreachable_until: float = 0.0
+
+
+def _mysql_fallback_cooldown_seconds() -> float:
+    raw = os.getenv("FUND_AI_MYSQL_FALLBACK_COOLDOWN", "300").strip()
+    try:
+        return max(5.0, float(raw))
+    except ValueError:
+        return 300.0
+
+
+def reset_mysql_fallback_cache() -> None:
+    """测试或运维：清除 MySQL 不可用缓存，强制下次重试主库。"""
+    global _mysql_unreachable_until
+    _mysql_unreachable_until = 0.0
 
 
 def _db_path() -> Path:
@@ -37,17 +54,24 @@ def _connect_primary() -> DbConnection:
 
 
 def connect_with_fallback() -> DbConnection:
+    global _mysql_unreachable_until
     if not uses_mysql():
         return _open_sqlite()
+    if sqlite_fallback_enabled() and time.time() < _mysql_unreachable_until:
+        return _open_sqlite()
     try:
-        return _open_mysql()
+        conn = _open_mysql()
+        _mysql_unreachable_until = 0.0
+        return conn
     except Exception as exc:
         if not sqlite_fallback_enabled():
             raise
+        _mysql_unreachable_until = time.time() + _mysql_fallback_cooldown_seconds()
         logger.warning(
-            "MySQL unavailable (%s); falling back to SQLite at %s",
+            "MySQL unavailable (%s); falling back to SQLite at %s (cooldown %.0fs)",
             exc,
             _db_path(),
+            _mysql_fallback_cooldown_seconds(),
         )
         return _open_sqlite()
 

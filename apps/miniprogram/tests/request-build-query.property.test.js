@@ -2,7 +2,7 @@
 //
 // Property 7 (design.md):
 //   For any 合法枚举取值（range ∈ {today,week,month,year,all}、
-//   lookback_days ∈ {3,5}、sort ∈ {change,streak,inflow}、calendar_year/month），
+//   lookback_days ∈ {3,5}、sort ∈ {change,inflow}、calendar_year/month），
 //   request.js 的 buildQuery(params) 生成的查询串包含且仅包含对应参数与值；
 //   空字符串 / null / undefined 的参数被省略；非对象 / 空对象输入返回 ""。
 //
@@ -29,7 +29,7 @@ const NUM_RUNS = 200; // ≥ 100 次迭代
 // 合法枚举取值生成器（与 design.md / requirements 9.2、9.5、10.3、11.4 对齐）。
 const rangeArb = fc.constantFrom("today", "week", "month", "year", "all");
 const lookbackArb = fc.constantFrom(3, 5);
-const sortArb = fc.constantFrom("change", "streak", "inflow");
+const sortArb = fc.constantFrom("change", "inflow");
 const calendarYearArb = fc.integer({ min: 2000, max: 2099 });
 const calendarMonthArb = fc.integer({ min: 1, max: 12 });
 

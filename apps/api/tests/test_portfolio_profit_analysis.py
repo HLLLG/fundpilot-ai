@@ -216,3 +216,86 @@ def test_load_or_build_intraday_curve_refreshes_index_on_cache(monkeypatch):
     points, trade_date = load_or_build_intraday_curve([], {})
     assert trade_date == "2026-06-14"
     assert points[-1]["index_percent"] == 1.01
+
+
+def test_load_or_build_intraday_curve_cache_only_skips_build(monkeypatch):
+    from app.services.portfolio_profit_analysis import load_or_build_intraday_curve
+
+    monkeypatch.setattr(
+        "app.services.portfolio_profit_analysis.get_portfolio_intraday_curve_entry",
+        lambda trade_date: None,
+    )
+    blend = {"called": False}
+
+    def _blend(*_args, **_kwargs):
+        blend["called"] = True
+        return []
+
+    monkeypatch.setattr("app.services.portfolio_profit_analysis._blend_portfolio_rows", _blend)
+    points, _ = load_or_build_intraday_curve([], {}, cache_only=True)
+    assert points == []
+    assert blend["called"] is False
+
+
+def test_dashboard_summary_uses_live_holdings_for_today(monkeypatch):
+    from app.models import Holding, PortfolioSummary
+    from app.services.portfolio_snapshot import build_dashboard_payload
+
+    live = [
+        Holding(
+            fund_code="000001",
+            fund_name="测试A",
+            holding_amount=10000,
+            daily_profit=-100.0,
+            daily_return_percent=-1.0,
+            return_percent=0,
+        ),
+        Holding(
+            fund_code="000002",
+            fund_name="测试B",
+            holding_amount=5000,
+            daily_profit=-50.0,
+            daily_return_percent=-1.0,
+            return_percent=0,
+        ),
+    ]
+    summary = PortfolioSummary(
+        total_assets=15000,
+        daily_profit=999.0,
+        daily_return_percent=9.99,
+        holding_count=2,
+    )
+    monkeypatch.setattr(
+        "app.services.portfolio_holdings_service.load_dashboard_holdings",
+        lambda: (live, "snapshot", "2026-06-28", None),
+    )
+    monkeypatch.setattr(
+        "app.services.portfolio_snapshot.build_profit_trend",
+        lambda **kwargs: {"kind": "intraday", "trade_date": "2026-06-28", "points": []},
+    )
+    monkeypatch.setattr(
+        "app.services.portfolio_snapshot.build_calendar_month",
+        lambda **kwargs: {"year": 2026, "month": 6, "days": []},
+    )
+    monkeypatch.setattr(
+        "app.services.portfolio_snapshot.build_risk_metrics_payload",
+        lambda *_args, **_kwargs: {"available": False},
+    )
+    monkeypatch.setattr(
+        "app.services.portfolio_snapshot.list_portfolio_daily_snapshots",
+        lambda limit=400, include_holdings=True: [],
+    )
+    monkeypatch.setattr(
+        "app.services.portfolio_snapshot.get_most_recent_portfolio_snapshot",
+        lambda: None,
+    )
+
+    payload = build_dashboard_payload(
+        summary=summary,
+        profiles=[],
+        profit_range="today",
+        calendar_year=2026,
+        calendar_month=6,
+    )
+    assert payload["summary"]["daily_profit"] == -150.0
+    assert payload["summary"]["daily_return_percent"] != 9.99

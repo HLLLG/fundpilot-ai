@@ -74,7 +74,6 @@
           <view class="briefing-page__sector-meta">
             <text wx:if="{{item.kindLabel}}" class="badge briefing-page__sector-kind">{{item.kindLabel}}</text>
             <text wx:if="{{item.in_portfolio}}" class="badge briefing-page__sector-hold">持仓</text>
-            <text wx:if="{{item.consecutive_up_days}}" class="briefing-page__sector-streak">连涨{{item.consecutive_up_days}}天</text>
           </view>
         </view>
         <num-text

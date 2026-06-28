@@ -108,6 +108,7 @@ def run_discovery(
         dip_lookback_days=request.dip_lookback_days,
         dip_min_drop_percent=request.dip_min_drop_percent,
         focus_sectors=list(request.focus_sectors),
+        fund_type_preference=request.fund_type_preference,
     )
 
     progress("generating")

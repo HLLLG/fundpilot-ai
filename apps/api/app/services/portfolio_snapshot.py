@@ -20,6 +20,29 @@ from app.services.portfolio_profit_analysis import (
 )
 
 
+def _dashboard_summary_payload(
+    summary: PortfolioSummary | None,
+    live_holdings: list[Holding],
+    *,
+    profit_range: ProfitRange,
+) -> dict:
+    """分析页 KPI 与持仓页对齐：当日收益用实时持仓汇总，而非仅读 portfolio_summary 表。"""
+    payload = summary.model_dump(mode="json") if summary else {}
+    if profit_range != "today" or not live_holdings:
+        return payload
+    from app.services.holding_estimates import (
+        compute_portfolio_daily_return_percent,
+        sum_daily_profit,
+    )
+
+    daily_profit = sum_daily_profit(live_holdings)
+    payload["daily_profit"] = daily_profit
+    daily_return_percent = compute_portfolio_daily_return_percent(live_holdings, daily_profit)
+    if daily_return_percent is not None:
+        payload["daily_return_percent"] = daily_return_percent
+    return payload
+
+
 def build_risk_metrics_payload(
     history_rows: list[dict],
     holdings_models: list[Holding],
@@ -450,7 +473,7 @@ def build_dashboard_payload(
     calendar_year: int | None = None,
     calendar_month: int | None = None,
 ) -> dict:
-    history_rows = list_portfolio_daily_snapshots(limit=400)
+    history_rows = list_portfolio_daily_snapshots(limit=400, include_holdings=False)
     history = [
         {
             "date": row["snapshot_date"],
@@ -461,8 +484,9 @@ def build_dashboard_payload(
         for row in reversed(history_rows)
     ]
 
-    latest = history_rows[0] if history_rows else None
-    allocation_source = latest.get("holdings", []) if latest else []
+    latest_snapshot = get_most_recent_portfolio_snapshot()
+    latest = latest_snapshot or (history_rows[0] if history_rows else None)
+    allocation_source = latest_snapshot.get("holdings", []) if latest_snapshot else []
     total_assets = (
         (summary.total_assets if summary and summary.total_assets else None)
         or (latest.get("total_assets") if latest else None)
@@ -502,19 +526,26 @@ def build_dashboard_payload(
         if calendar_year and calendar_month
         else default_calendar_anchor()
     )
-    from app.services.portfolio_holdings_service import load_persisted_holdings
+    from app.services.portfolio_holdings_service import load_dashboard_holdings
 
-    live_holdings, *_ = load_persisted_holdings()
-    calendar_holdings = live_holdings if live_holdings else holdings_models
+    live_holdings, *_ = load_dashboard_holdings()
+    trend_holdings = live_holdings if live_holdings else holdings_models
+    calendar_holdings = trend_holdings
     profit_trend = build_profit_trend(
         profit_range=profit_range,
         snapshots=history_rows,
-        holdings=holdings_models,
+        holdings=trend_holdings,
         profiles_by_code=profiles_by_code,
+        intraday_cache_only=True,
+    )
+    summary_payload = _dashboard_summary_payload(
+        summary,
+        trend_holdings,
+        profit_range=profit_range,
     )
     trend_footer = summarize_trend_footer(
         profit_trend,
-        summary_daily_return=summary.daily_return_percent if summary else None,
+        summary_daily_return=summary_payload.get("daily_return_percent"),
     )
     calendar = build_calendar_month(
         year=year,
@@ -522,10 +553,10 @@ def build_dashboard_payload(
         snapshots=history_rows,
         holdings=calendar_holdings,
     )
-    daily_top5 = build_daily_top5(holdings_models)
+    daily_top5 = build_daily_top5(trend_holdings)
 
     return {
-        "summary": summary.model_dump(mode="json") if summary else {},
+        "summary": summary_payload,
         "history": history,
         "allocation": allocation,
         "snapshot_count": len(history_rows),
@@ -536,7 +567,6 @@ def build_dashboard_payload(
         "profit_trend_footer": trend_footer,
         "profit_calendar": calendar,
         "daily_top5": daily_top5,
-        "risk_metrics": build_risk_metrics_payload(history_rows, holdings_models),
     }
 
 

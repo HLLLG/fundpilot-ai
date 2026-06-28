@@ -59,7 +59,7 @@ def build_sector_heat_ranking(
     network_timeout: float = _DEFAULT_NETWORK_TIMEOUT,
     budget_seconds: float | None = None,
 ) -> list[dict]:
-    """扫描 pipeline 板块热度：67 主题板块 1d（theme 快照）+ 可选 5d K 线合并。"""
+    """扫描 pipeline 板块热度：主题板块 1d+5d（theme 快照 clist）+ 缺失时 K 线兜底。"""
     session = build_trading_session()
     trade_date = session.get("effective_trade_date")
     session_kind = session.get("session_kind", "")
@@ -79,16 +79,18 @@ def build_sector_heat_ranking(
     merged = list(rows) if rows else _fallback_theme_sector_heat_rows()
 
     if include_5d and not lightweight and merged:
-        merged = _merge_5d_kline_into_rows(
-            merged,
-            trade_date=trade_date,
-            fetch_canon_series=fetch_canon_series,
-            network_timeout=network_timeout,
-            budget_seconds=(
-                budget_seconds if budget_seconds is not None else _DEFAULT_5D_BUDGET_SECONDS
-            ),
-            max_labels=_DIP_SWING_5D_CANDIDATE_COUNT,
-        )
+        needs_kline = any(_as_float(row.get("change_5d_percent")) is None for row in merged)
+        if needs_kline:
+            merged = _merge_5d_kline_into_rows(
+                merged,
+                trade_date=trade_date,
+                fetch_canon_series=fetch_canon_series,
+                network_timeout=network_timeout,
+                budget_seconds=(
+                    budget_seconds if budget_seconds is not None else _DEFAULT_5D_BUDGET_SECONDS
+                ),
+                max_labels=_DIP_SWING_5D_CANDIDATE_COUNT,
+            )
 
     merged = _append_alias_heat_rows(merged)
     merged = _sort_sector_heat_rows(merged)
@@ -102,7 +104,7 @@ def build_sector_heat_ranking(
 
 
 def build_sector_heat_ranking_for_ui() -> list[dict]:
-    """推荐基金 Tab 关注方向：复用市场主题板块快照（67 标签 + 当日涨跌），秒级返回。"""
+    """推荐基金 Tab 关注方向：复用市场主题板块快照（白名单标签 + 当日涨跌），秒级返回。"""
     rows = _rows_from_theme_board_snapshot()
     if rows:
         rows = _merge_discovery_5d_from_cache(rows)
@@ -128,11 +130,12 @@ def _rows_from_theme_board_snapshot() -> list[dict]:
         if not label:
             continue
         change_1d = _as_float(item.get("change_1d_percent"))
+        change_5d = _as_float(item.get("change_5d_percent"))
         by_label[label] = {
             "sector_label": label,
             "change_1d_percent": change_1d,
-            "change_5d_percent": None,
-            "heat_score": _heat_score(change_1d, None),
+            "change_5d_percent": change_5d,
+            "heat_score": _heat_score(change_1d, change_5d),
         }
 
     if not by_label:
@@ -161,7 +164,7 @@ def _merge_5d_kline_into_rows(
     budget_seconds: float,
     max_labels: int | None = None,
 ) -> list[dict]:
-    """在已有 1d 行上合并近 5 日涨跌（registry 行情引用 → 日 K）。"""
+    """在已有 1d 行上合并近 5 日涨跌；clist 已有 5d 的标签跳过。"""
     by_label = {str(row.get("sector_label") or ""): dict(row) for row in rows}
     labels = _labels_for_5d_kline_fetch(rows, limit=max_labels)
     if not labels:
@@ -217,6 +220,8 @@ def _labels_for_5d_kline_fetch(rows: list[dict], *, limit: int | None) -> list[s
             continue
         change_1d = _as_float(row.get("change_1d_percent"))
         if change_1d is None:
+            continue
+        if _as_float(row.get("change_5d_percent")) is not None:
             continue
         ranked.append((label, change_1d))
     ranked.sort(key=lambda item: item[1])

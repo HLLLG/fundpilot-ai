@@ -66,3 +66,20 @@ python scripts/run_factor_ic.py --universe-mode sampled --sample-pool-size 500 -
 
 即先取榜单前 500 作大池，再等距抽样出 100 只（横跨赢家→输家）。
 **注意**：榜单子进程上限 500 条且清盘基金不在榜，只削弱选择偏差，幸存者偏差仍在。
+
+---
+
+## 关联板块 · 中基协指数库 · 全市场预计算
+
+维护业绩比较基准要素库与全市场基金→板块映射（无 API，部署/运维时运行）：
+
+```bash
+# 从中基协 API 同步 155 指数要素库 → app/data/amac_benchmark_index_library.json
+python scripts/sync_amac_benchmark_index_library.py
+
+# 批量预计算全市场基金关联板块 → fund_primary_sectors_global
+python scripts/precompute_fund_primary_sectors.py --limit 200 --mode benchmark
+python scripts/precompute_fund_primary_sectors.py --mode auto --limit 150
+```
+
+环境变量（见 `.env.example`）：`FUND_AI_FUND_PRIMARY_SECTOR_GLOBAL_ENABLED`、`FUND_AI_FUND_PRIMARY_SECTOR_PRECOMPUTE_*`、TTL 天数等。

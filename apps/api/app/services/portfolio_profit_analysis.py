@@ -243,6 +243,8 @@ def persist_intraday_curve(
 def load_or_build_intraday_curve(
     holdings: list[Holding],
     profiles_by_code: dict[str, FundProfile] | None = None,
+    *,
+    cache_only: bool = False,
 ) -> tuple[list[dict[str, float | str | None]], str | None]:
     session = build_trading_session()
     trade_date = get_effective_trade_date(session_kind=session["session_kind"])
@@ -252,6 +254,8 @@ def load_or_build_intraday_curve(
         if cached_entry.get("holdings_fingerprint") == fingerprint:
             index_points = _fetch_cached_index_intraday()
             return _merge_index_intraday(cached_entry["points"], index_points), trade_date
+    if cache_only:
+        return [], trade_date
     portfolio_rows = _blend_portfolio_rows(holdings, profiles_by_code)
     if portfolio_rows:
         save_portfolio_intraday_curve(
@@ -369,12 +373,17 @@ def build_profit_trend(
     snapshots: list[dict],
     holdings: list[Holding],
     profiles_by_code: dict[str, FundProfile] | None = None,
+    intraday_cache_only: bool = False,
 ) -> dict:
     session = build_trading_session()
     trade_date = get_effective_trade_date(session_kind=session["session_kind"])
 
     if profit_range == "today":
-        points, session_date = load_or_build_intraday_curve(holdings, profiles_by_code)
+        points, session_date = load_or_build_intraday_curve(
+            holdings,
+            profiles_by_code,
+            cache_only=intraday_cache_only,
+        )
         return {
             "kind": "intraday",
             "trade_date": session_date or trade_date,
@@ -447,6 +456,9 @@ def build_calendar_month(
     today_key = today.isoformat()
     official_today = portfolio_official_nav_settled(holdings or [])
     _, days_in_month = calendar.monthrange(year, month)
+    index_lookup = _index_daily_change_lookup(
+        fetch_index_daily_history("000001", trading_days=400)
+    )
 
     days: list[dict] = []
     month_profit = 0.0
@@ -483,7 +495,7 @@ def build_calendar_month(
             month_profit += float(daily_profit)
         if is_trading and daily_return is not None and not is_pending_update:
             month_returns.append(float(daily_return))
-        index_return = _index_return_for_date(key, "000001")
+        index_return = index_lookup.get(key)
         if index_return is not None and is_trading:
             index_returns.append(float(index_return))
 

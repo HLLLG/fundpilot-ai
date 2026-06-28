@@ -71,7 +71,7 @@ ALIPAY_NOISE_MARKERS = (
 PERCENT_LINE_RE = re.compile(r"([+-]?\d+(?:\.\d+)?)\s*%")
 NUMBER_TOKEN_RE = re.compile(r"(?<![\d.])([+-]?\d[\d,]*(?:\.\d+)?)(?![\d.])")
 NEGATIVE_LINE_RE = re.compile(r"^[-—－―+]$")
-NAME_FRAGMENT_RE = re.compile(r"^[\u4e00-\u9fffA-Za-z0-9·]{1,40}$")
+NAME_FRAGMENT_RE = re.compile(r"^[\u4e00-\u9fffA-Za-z0-9·（）()]{1,48}$")
 INLINE_TWO_COLUMN_RE = re.compile(
     r"^\s*([+-]?\d[\d,]*(?:\.\d+)?)\s+([+-]?\d[\d,]*(?:\.\d+)?)\s*$"
 )
@@ -111,28 +111,28 @@ def _count_holding_return_percent_lines(lines: list[str]) -> int:
     )
 
 
+def _is_compact_alipay_overview_layout(lines: list[str]) -> bool:
+    """VLM OCR 常省略「全部持有/名称/金额」页眉，但保留「占比 + 基金名」紧凑版式。"""
+    weight_lines = sum(1 for line in lines if _is_portfolio_weight_line(line))
+    name_lines = sum(
+        1
+        for line in lines
+        if is_alipay_fund_name(line) or looks_like_fund_product_name(line)
+    )
+    return weight_lines >= 2 and name_lines >= 2
+
+
 def parse_alipay_holdings_page(text: str) -> list[Holding]:
     lines = [line.strip() for line in text.splitlines() if line.strip()]
-    if is_alipay_overview_holdings_page(lines):
-        overview = _parse_alipay_overview_holdings(lines)
-        expected = _count_holding_return_percent_lines(lines)
-        if overview and (expected <= 0 or len(overview) >= expected):
-            return _reconcile_alipay_profit_signs(overview)
-    if not is_alipay_holdings_page(lines):
-        return []
+    from app.services.alipay_block_parser import parse_alipay_holdings_multi_strategy
 
-    # 养基宝思路：以基金名为锚点切 block，再从持有收益率行向上解析三列数值
-    holdings = _parse_my_holdings_name_anchored(lines)
-    if len(holdings) >= 2:
-        return _reconcile_alipay_profit_signs(holdings)
-
-    blocks = _split_fund_blocks(lines)
-    holdings = []
-    for block in blocks:
-        holding = _parse_fund_block(block)
-        if holding is not None:
-            holdings.append(holding)
-    return _reconcile_alipay_profit_signs(holdings)
+    if (
+        is_alipay_holdings_page(lines)
+        or _is_compact_alipay_overview_layout(lines)
+        or _find_my_holdings_name_anchors(lines, 0)
+    ):
+        return parse_alipay_holdings_multi_strategy(lines)
+    return []
 
 
 def _parse_my_holdings_name_anchored(lines: list[str]) -> list[Holding]:
@@ -241,6 +241,8 @@ def _find_holding_return_percent(
 ) -> tuple[int | None, float | None, bool]:
     for index in range(len(lines) - 1, -1, -1):
         line = lines[index]
+        if _is_portfolio_weight_line(line):
+            continue
         percent = extract_percent(line)
         if percent is None:
             continue
@@ -588,6 +590,8 @@ def is_alipay_tag_line(line: str) -> bool:
         "金选超额收益",
         "金选指数基金",
         "进阶理财",
+        "基金",
+        "定投",
     )
     if cleaned in tag_words:
         return True

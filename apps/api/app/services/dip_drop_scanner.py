@@ -6,6 +6,7 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 
 from app.database import list_fund_primary_sectors
 from app.models import Holding
+from app.services.fund_primary_sector_service import resolve_sector_labels_for_radar
 from app.services.akshare_subprocess import fetch_open_fund_rank_worst_recent
 from app.services.fund_rank_cache import fetch_open_fund_rank_cached
 from app.services.discovery_candidate_pool import (
@@ -19,8 +20,6 @@ from app.services.discovery_selection_strategy import dip_rebound_score
 from app.services.fund_data import FundDataService
 from app.services.sector_canonical import get_canonical_sector
 from app.services.sector_momentum import _classify_pattern
-from app.services.sector_registry import list_discovery_sector_labels
-
 _MAX_1Y_RETURN_PERCENT = 80.0
 _REBOUND_SCORE_CAP = 35.0
 _RADAR_RANK_LIMIT = 150
@@ -172,18 +171,10 @@ def build_dip_radar_pool_fast(
 ) -> list[dict]:
     """全市场排行快速预筛：先取近1周跌幅榜，再并行拉 NAV 精算近 N 日跌幅。"""
     rank_rows = fetch_rank(limit=_RADAR_RANK_LIMIT) or []
-    try:
-        primary_rows = list_fund_primary_sectors()
-    except RuntimeError:
-        primary_rows = []
-    primary_by_code = {
-        str(row.get("fund_code", "")).zfill(6): str(row.get("sector_name") or "").strip()
-        for row in primary_rows
-        if str(row.get("fund_code", "")).strip()
-    }
 
     # 先用东财排行「近1周」跌幅（与几个交易日大跌语义一致），再对头部串行精算净值
     items: list[dict] = []
+    codes_to_names: dict[str, str] = {}
     for row in rank_rows:
         code = _row_fund_code(row)
         if not code or not _passes_quality(row):
@@ -195,8 +186,8 @@ def build_dip_radar_pool_fast(
         if r1y is not None and r1y > _MAX_1Y_RETURN_PERCENT:
             continue
         name = _row_fund_name(row)
-        sector = primary_by_code.get(code) or _infer_sector_label(name)
-        entry = _entry_from_rank(row, sector_label=sector, selection_reason="大跌雷达")
+        codes_to_names[code] = name
+        entry = _entry_from_rank(row, sector_label="综合", selection_reason="大跌雷达")
         entry.update(
             {
                 "dip_drop_percent": round(r1w, 2),
@@ -214,6 +205,11 @@ def build_dip_radar_pool_fast(
         items.append(entry)
         if len(items) >= pool_cap:
             break
+
+    sector_by_code = resolve_sector_labels_for_radar(codes_to_names, fetch_benchmark=False)
+    for entry in items:
+        code = str(entry.get("fund_code", "")).zfill(6)
+        entry["sector_label"] = sector_by_code.get(code, "综合")
 
     # 对前 N 只串行拉净值，替换为更精确的近5日跌幅（避免并行子进程崩溃）
     refine_codes = [str(i.get("fund_code", "")).zfill(6) for i in items[:_RADAR_NAV_CAP]]
@@ -344,18 +340,6 @@ def _nav_summary_for_code(code: str) -> dict | None:
     from app.services.nav_trend_summary import summarize_nav_history
 
     return summarize_nav_history(trend, recent_sample=5, window_days=66)
-
-
-def _infer_sector_label(fund_name: str) -> str:
-    name = (fund_name or "").strip()
-    if not name:
-        return "综合"
-    for label in list_discovery_sector_labels():
-        canon = get_canonical_sector(label)
-        keywords = _sector_keywords(label, canon)
-        if _name_matches_sector(name, keywords):
-            return label
-    return "综合"
 
 
 def _build_rebound_signals(nav: dict) -> list[dict]:

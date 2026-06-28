@@ -1,4 +1,4 @@
-"""全用户共享市场快照的后台刷新（A 股主题/板块/大跌雷达 + 美股概览）。
+"""全用户共享市场快照的后台刷新（A 股主题/大跌雷达 + 美股概览）。
 
 A 股与美股交易时段独立判定：
 - A 股活跃（9:30–15:00 intraday/pre_close）：每 20min 刷新
@@ -20,7 +20,8 @@ logger = logging.getLogger(__name__)
 _A_SHARE_LIVE_SESSIONS = frozenset({"trading_day_intraday", "trading_day_pre_close"})
 _US_LIVE_SESSIONS = frozenset({"pre_market", "regular", "after_hours"})
 
-_POLL_SECONDS = 1800.0  # 每 30min 唤醒检查是否到达 A 股/美股各自刷新间隔
+# 轮询粒度须小于活跃刷新间隔，否则 20min 配置会被 30min 睡眠拖慢
+_POLL_CAP_SECONDS = 60.0
 _last_a_share_refresh_at = 0.0
 _last_us_refresh_at = 0.0
 
@@ -41,12 +42,17 @@ def _idle_interval_seconds() -> float:
     return float(max(300, int(idle)))
 
 
-def refresh_a_share_market_snapshots() -> None:
-    """主题板块 + 全市场板块资金流 + 大跌雷达（3/5 日）。"""
-    from app.services.dip_radar_snapshot import refresh_dip_radar_snapshots
-    from app.services.theme_board_snapshot import refresh_market_shared_snapshots
+def _poll_seconds() -> float:
+    """daemon 睡眠时长：不超过活跃间隔，默认每 60s 检查一次。"""
+    return min(_POLL_CAP_SECONDS, _live_interval_seconds())
 
-    refresh_market_shared_snapshots()
+
+def refresh_a_share_market_snapshots() -> None:
+    """主题板块 + 大跌雷达（3/5 日）。"""
+    from app.services.dip_radar_snapshot import refresh_dip_radar_snapshots
+    from app.services.theme_board_snapshot import refresh_theme_board_snapshot
+
+    refresh_theme_board_snapshot()
     refresh_dip_radar_snapshots()
 
 
@@ -54,6 +60,18 @@ def refresh_us_market_snapshot() -> None:
     from app.services.us_market_service import get_us_market_snapshot
 
     get_us_market_snapshot(force_refresh=True)
+
+
+def run_startup_market_refresh() -> None:
+    """进程启动时同步刷新共享快照，覆盖 SQLite / 内存中的跨进程遗留缓存。"""
+    global _last_a_share_refresh_at, _last_us_refresh_at
+
+    now = time.monotonic()
+    refresh_a_share_market_snapshots()
+    _last_a_share_refresh_at = now
+    refresh_us_market_snapshot()
+    _last_us_refresh_at = now
+    logger.info("market shared startup refresh completed")
 
 
 def _maybe_refresh_a_share(now: float) -> None:
@@ -95,24 +113,15 @@ def _maybe_refresh_us(now: float) -> None:
 
 
 def market_shared_refresh_loop() -> None:
-    """daemon：启动预热；按 A 股/美股各自时段刷新共享缓存。"""
+    """daemon：周期性刷新（启动同步刷新由 lifespan 调用 run_startup_market_refresh）。"""
     global _last_a_share_refresh_at, _last_us_refresh_at
 
     now = time.monotonic()
-    try:
-        refresh_a_share_market_snapshots()
-        _last_a_share_refresh_at = now
-    except Exception as exc:
-        logger.info("market shared a-share initial refresh failed: %s", exc)
-
-    try:
-        refresh_us_market_snapshot()
-        _last_us_refresh_at = now
-    except Exception as exc:
-        logger.info("market shared us initial refresh failed: %s", exc)
+    _last_a_share_refresh_at = now
+    _last_us_refresh_at = now
 
     while True:
-        time.sleep(_POLL_SECONDS)
+        time.sleep(_poll_seconds())
         now = time.monotonic()
         try:
             _maybe_refresh_a_share(now)

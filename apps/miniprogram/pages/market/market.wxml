@@ -20,7 +20,7 @@
   <!-- ═══════════════════════════════════════════════════════ -->
   <block wx:if="{{subView === 'boards'}}">
 
-    <!-- 排序 Tab（change / streak / inflow，Req 10.3） -->
+    <!-- 排序 Tab（change / inflow，Req 10.3） -->
     <view class="sort-bar">
       <view
         wx:for="{{sortOptions}}"
@@ -53,7 +53,7 @@
             <view wx:if="{{item.in_portfolio}}" class="badge badge--accent board-card__portfolio-badge">持仓</view>
           </view>
 
-          <!-- 核心指标行：日涨跌幅 / 连涨天数 / 主力净流入（Req 10.2） -->
+          <!-- 核心指标行：日涨跌幅 / 5日涨跌 / 主力净流入（Req 10.2） -->
           <view class="board-card__metrics">
             <view class="board-card__metric">
               <text class="board-card__metric-label">日涨跌</text>
@@ -65,10 +65,13 @@
               />
             </view>
             <view class="board-card__metric">
-              <text class="board-card__metric-label">连涨</text>
-              <text class="board-card__metric-value board-card__streak">
-                {{item.consecutive_up_days != null ? item.consecutive_up_days + '天' : '—'}}
-              </text>
+              <text class="board-card__metric-label">5日</text>
+              <num-text
+                value="{{item.change_5d_percent}}"
+                kind="percent"
+                signed="{{true}}"
+                class="board-card__metric-value"
+              />
             </view>
             <view class="board-card__metric">
               <text class="board-card__metric-label">主力净流入</text>

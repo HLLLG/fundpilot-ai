@@ -7,6 +7,10 @@ import subprocess
 import sys
 from dataclasses import dataclass
 
+from app.services.amac_benchmark_index_data import (
+    amac_name_to_code_pairs,
+    amac_theme_label_for_code,
+)
 from app.services.sector_registry_data import THEME_BOARD_INDEX
 
 logger = logging.getLogger(__name__)
@@ -20,26 +24,34 @@ _KNOWN_BENCHMARK_BY_CODE: dict[str, str] = {
 
 _INDEX_CODE_RE = re.compile(r"(?<!\d)(\d{6})(?!\d)")
 
-# 业绩基准文案中的指数名 → 指数代码（长匹配优先）
-_BENCHMARK_NAME_TO_CODE: tuple[tuple[str, str], ...] = tuple(
-    sorted(
-        [
-            ("中证半导体材料设备主题指数", "931743"),
+def _build_benchmark_name_to_code() -> tuple[tuple[str, str], ...]:
+    """从 THEME_BOARD_INDEX 生成指数名 → 代码表（长匹配优先）。"""
+    pairs: set[tuple[str, str]] = set()
+    for label, (_secid, source_code, _kind) in THEME_BOARD_INDEX.items():
+        if not source_code or not source_code.isdigit():
+            continue
+        code = source_code
+        pairs.add((label, code))
+        if not label.startswith("中证"):
+            pairs.add((f"中证{label}", code))
+        if "主题" not in label:
+            pairs.add((f"{label}主题指数", code))
+            pairs.add((f"中证{label}主题指数", code))
+    # 历史别名（指数展示名与注册表 label 不完全一致）
+    pairs.update(
+        {
             ("半导体材料设备主题指数", "931743"),
             ("半导体材料设备", "931743"),
+            ("中证半导体材料设备主题指数", "931743"),
             ("中证半导体产业指数", "931865"),
-            ("中证半导体", "931865"),
-            ("中证人工智能主题指数", "930713"),
-            ("中证人工智能", "930713"),
-            ("中证电网设备主题指数", "931994"),
-            ("中证电网设备", "931994"),
-            ("中证新能源指数", "931151"),
-            ("中证新能源", "931151"),
-        ],
-        key=lambda item: len(item[0]),
-        reverse=True,
+        }
     )
-)
+    for name, code in amac_name_to_code_pairs():
+        pairs.add((name, code))
+    return tuple(sorted(pairs, key=lambda item: len(item[0]), reverse=True))
+
+
+_BENCHMARK_NAME_TO_CODE: tuple[tuple[str, str], ...] = _build_benchmark_name_to_code()
 
 
 @dataclass(frozen=True)
@@ -54,7 +66,7 @@ def _index_code_to_sector_label(index_code: str) -> str | None:
     for label, (_secid, source_code, _kind) in THEME_BOARD_INDEX.items():
         if source_code and source_code.upper() == code:
             return label
-    return None
+    return amac_theme_label_for_code(code)
 
 
 def _intraday_index_name_for_label(sector_label: str, index_name: str | None) -> str | None:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import math
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 import httpx
@@ -563,3 +564,310 @@ def _board_yuan_to_yi(value: float | None) -> float | None:
     if value is None:
         return None
     return round(value / 1e8, 2)
+
+
+# 主题板块批量指标：概念/行业/指数 clist（f3=1d, f109=5d, f62=主力净流入）
+_CLIST_THEME_POOLS: dict[str, dict[str, str]] = {
+    "concept": {
+        "fs": "m:90 t:3 f:!50",
+        "fid": "f3",
+    },
+    "industry": {
+        "fs": "m:90 t:2 f:!50",
+        "fid": "f3",
+    },
+    "index": {
+        "fs": "m:2",
+        "fid": "f12",
+        "wbp2u": "|0|0|0|web",
+    },
+}
+_CLIST_THEME_FIELDS = "f12,f14,f3,f109,f62,f66,f72,f78,f84"
+_CLIST_THEME_PAGE_SIZE = "100"
+_CLIST_THEME_MAX_PAGES = 8
+_CLIST_THEME_METRIC_KEYS = (
+    "change_1d",
+    "change_5d",
+    "main_force_net_yi",
+    "super_large_net_yi",
+    "large_net_yi",
+    "medium_net_yi",
+    "small_net_yi",
+)
+
+
+def _parse_clist_theme_rows(
+    rows: list[dict[str, Any]],
+) -> dict[str, dict[str, float | None]]:
+    by_code: dict[str, dict[str, float | None]] = {}
+    for row in rows:
+        code = row.get("f12")
+        if code in (None, "-", ""):
+            continue
+        key = str(code).strip()
+        if not key:
+            continue
+        parsed = {
+            "change_1d": _as_board_float(row.get("f3")),
+            "change_5d": _as_board_float(row.get("f109")),
+            "main_force_net_yi": _board_yuan_to_yi(_as_board_float(row.get("f62"))),
+            "super_large_net_yi": _board_yuan_to_yi(_as_board_float(row.get("f66"))),
+            "large_net_yi": _board_yuan_to_yi(_as_board_float(row.get("f72"))),
+            "medium_net_yi": _board_yuan_to_yi(_as_board_float(row.get("f78"))),
+            "small_net_yi": _board_yuan_to_yi(_as_board_float(row.get("f84"))),
+        }
+        if all(parsed[key] is None for key in _CLIST_THEME_METRIC_KEYS):
+            continue
+        existing = by_code.get(key)
+        if existing is None:
+            by_code[key] = parsed
+            continue
+        for metric in _CLIST_THEME_METRIC_KEYS:
+            if existing.get(metric) is None and parsed.get(metric) is not None:
+                existing[metric] = parsed[metric]
+    return by_code
+
+
+def _merge_clist_theme_chunks(
+    merged: dict[str, dict[str, float | None]],
+    chunk: dict[str, dict[str, float | None]],
+) -> None:
+    for code, values in chunk.items():
+        if code not in merged:
+            merged[code] = values
+            continue
+        for metric in _CLIST_THEME_METRIC_KEYS:
+            if merged[code].get(metric) is None and values.get(metric) is not None:
+                merged[code][metric] = values[metric]
+
+
+# 兼容旧名
+_CLIST_CHANGE_POOLS = _CLIST_THEME_POOLS
+_CLIST_CHANGE_FIELDS = _CLIST_THEME_FIELDS
+_CLIST_CHANGE_PAGE_SIZE = _CLIST_THEME_PAGE_SIZE
+_CLIST_CHANGE_MAX_PAGES = _CLIST_THEME_MAX_PAGES
+
+
+def _parse_clist_change_rows(
+    rows: list[dict[str, Any]],
+) -> dict[str, dict[str, float | None]]:
+    return _parse_clist_theme_rows(rows)
+
+
+def _fetch_clist_theme_pool(
+    pool_name: str,
+    *,
+    timeout: float = 15.0,
+    max_retries: int = 2,
+    max_pages: int = 3,
+) -> dict[str, dict[str, float | None]]:
+    spec = _CLIST_THEME_POOLS.get(pool_name)
+    if spec is None:
+        raise ValueError(f"unsupported clist theme pool: {pool_name}")
+
+    params = {
+        **_COMMON_PARAMS,
+        "pz": _CLIST_THEME_PAGE_SIZE,
+        "fields": _CLIST_THEME_FIELDS,
+        **spec,
+    }
+    errors: list[str] = []
+    try:
+        with httpx.Client(
+            headers=_EASTMONEY_HEADERS,
+            timeout=timeout,
+            trust_env=False,
+            follow_redirects=True,
+            http2=False,
+        ) as client:
+            return _fetch_paginated_clist_theme(
+                client,
+                params,
+                max_retries=max_retries,
+                max_pages=max_pages,
+            )
+    except Exception as exc:
+        errors.append(f"httpx: {exc}")
+        logger.debug("clist theme pool httpx failed (%s): %s", pool_name, exc)
+
+    try:
+        return _fetch_clist_theme_via_requests(params, timeout=timeout, max_pages=max_pages)
+    except Exception as exc:
+        errors.append(f"requests: {exc}")
+        logger.info("clist theme pool requests fallback failed (%s): %s", pool_name, exc)
+
+    raise RuntimeError("; ".join(errors) or f"clist theme pool {pool_name} failed")
+
+
+def _fetch_clist_change_pool(
+    pool_name: str,
+    *,
+    timeout: float = 15.0,
+    max_retries: int = 2,
+    max_pages: int = 3,
+) -> dict[str, dict[str, float | None]]:
+    return _fetch_clist_theme_pool(
+        pool_name,
+        timeout=timeout,
+        max_retries=max_retries,
+        max_pages=max_pages,
+    )
+
+
+def _fetch_paginated_clist_theme(
+    client: httpx.Client,
+    base_params: dict[str, str],
+    *,
+    max_retries: int,
+    max_pages: int,
+) -> dict[str, dict[str, float | None]]:
+    params = {**base_params, "pn": "1"}
+    first = _request_board_page(client, params, max_retries=max_retries)
+    rows = list(first.get("diff") or [])
+    total = int(first.get("total") or 0)
+    try:
+        page_size = max(int(str(base_params.get("pz", _CLIST_THEME_PAGE_SIZE))), 1)
+    except ValueError:
+        page_size = max(len(rows), 1)
+    total_pages = max(1, math.ceil(total / page_size))
+    merged = _parse_clist_theme_rows(rows)
+    last_page = min(total_pages, max_pages)
+    for page in range(2, last_page + 1):
+        page_params = {**params, "pn": str(page)}
+        try:
+            payload = _request_board_page(
+                client,
+                page_params,
+                max_retries=max_retries,
+            )
+            _merge_clist_theme_chunks(merged, _parse_clist_theme_rows(payload.get("diff") or []))
+        except Exception as exc:
+            logger.debug("clist theme pagination stopped at page %s: %s", page, exc)
+            break
+        time.sleep(0.1)
+    if not merged:
+        raise RuntimeError("clist theme pool returned no rows")
+    return merged
+
+
+def _fetch_paginated_clist_changes(
+    client: httpx.Client,
+    base_params: dict[str, str],
+    *,
+    max_retries: int,
+    max_pages: int,
+) -> dict[str, dict[str, float | None]]:
+    return _fetch_paginated_clist_theme(
+        client,
+        base_params,
+        max_retries=max_retries,
+        max_pages=max_pages,
+    )
+
+
+def _fetch_clist_theme_via_requests(
+    base_params: dict[str, str],
+    *,
+    timeout: float,
+    max_pages: int,
+) -> dict[str, dict[str, float | None]]:
+    import requests
+
+    session = requests.Session()
+    session.trust_env = False
+    last_error: Exception | None = None
+    for host in _CLIST_HOSTS:
+        url = f"https://{host}/api/qt/clist/get"
+        try:
+            merged: dict[str, dict[str, float | None]] = {}
+            for page in range(1, max_pages + 1):
+                page_params = {**base_params, "pn": str(page)}
+                response = session.get(
+                    url,
+                    params=page_params,
+                    headers=_EASTMONEY_HEADERS,
+                    timeout=timeout,
+                )
+                response.raise_for_status()
+                payload = response.json()
+                data = payload.get("data") or {}
+                rows = list(data.get("diff") or [])
+                if not rows:
+                    break
+                _merge_clist_theme_chunks(merged, _parse_clist_theme_rows(rows))
+                total = int(data.get("total") or 0)
+                page_size = max(len(rows), 1)
+                if page >= math.ceil(total / page_size):
+                    break
+                time.sleep(0.1)
+            if merged:
+                return merged
+        except Exception as exc:
+            last_error = exc
+            logger.debug("clist theme requests host=%s failed: %s", host, exc)
+            continue
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("requests clist theme returned no rows")
+
+
+def _fetch_clist_changes_via_requests(
+    base_params: dict[str, str],
+    *,
+    timeout: float,
+    max_pages: int,
+) -> dict[str, dict[str, float | None]]:
+    return _fetch_clist_theme_via_requests(
+        base_params,
+        timeout=timeout,
+        max_pages=max_pages,
+    )
+
+
+def fetch_eastmoney_clist_theme_metrics_by_code(
+    *,
+    timeout: float = 15.0,
+    max_retries: int = 2,
+    max_pages: int = _CLIST_THEME_MAX_PAGES,
+) -> dict[str, dict[str, float | None]]:
+    """东财 clist 批量：1d(f3)+5d(f109)+主力/四档流(f62/f66-f84)，按 f12 索引。"""
+    merged: dict[str, dict[str, float | None]] = {}
+    errors: list[str] = []
+    pool_names = tuple(_CLIST_THEME_POOLS.keys())
+    with ThreadPoolExecutor(max_workers=len(pool_names)) as executor:
+        futures = {
+            executor.submit(
+                _fetch_clist_theme_pool,
+                pool_name,
+                timeout=timeout,
+                max_retries=max_retries,
+                max_pages=max_pages,
+            ): pool_name
+            for pool_name in pool_names
+        }
+        for future in as_completed(futures):
+            pool_name = futures[future]
+            try:
+                chunk = future.result()
+            except Exception as exc:
+                errors.append(f"{pool_name}: {exc}")
+                logger.info("clist theme pool %s failed: %s", pool_name, exc)
+                continue
+            _merge_clist_theme_chunks(merged, chunk)
+    if not merged and errors:
+        raise RuntimeError("; ".join(errors))
+    return merged
+
+
+def fetch_eastmoney_clist_change_by_code(
+    *,
+    timeout: float = 15.0,
+    max_retries: int = 2,
+    max_pages: int = _CLIST_CHANGE_MAX_PAGES,
+) -> dict[str, dict[str, float | None]]:
+    """兼容别名：同 fetch_eastmoney_clist_theme_metrics_by_code。"""
+    return fetch_eastmoney_clist_theme_metrics_by_code(
+        timeout=timeout,
+        max_retries=max_retries,
+        max_pages=max_pages,
+    )

@@ -10,13 +10,14 @@ from app.services.sector_quote_cache import (
     get_spot_snapshot,
     get_spot_snapshot_any_age,
     save_spot_snapshot,
+    snapshot_refreshed_before_process_boot,
 )
 from app.services.sector_registry import get_sector_entry
 from app.services.trading_session import build_trading_session
 
 logger = logging.getLogger(__name__)
 
-_CACHE_VERSION = "v1"
+_CACHE_VERSION = "v2"
 _LIVE_TTL_SECONDS = 60.0
 _CLOSED_TTL_SECONDS = 3600.0
 _EMPTY_CACHE_TTL_SECONDS = 300.0
@@ -233,6 +234,11 @@ def get_dip_radar_snapshot(
         if cached is None:
             cached = get_spot_snapshot_any_age(cache_key)
             stale = cached is not None
+        if cached is not None and snapshot_refreshed_before_process_boot(
+            cached.get("refreshed_at")
+        ):
+            cached = None
+            stale = False
 
     if cached is None or force_refresh:
         cached = build_dip_radar_snapshot(lookback_days=lookback_days)

@@ -541,7 +541,7 @@ export type DiscoverySectorHeat = {
   heat_score?: number | null;
 };
 
-export type MarketThemeBoardSort = "change" | "streak" | "inflow";
+export type MarketThemeBoardSort = "change" | "inflow";
 
 export type MarketThemeBoardKind = "industry" | "concept" | "index";
 
@@ -556,7 +556,7 @@ export type MarketThemeBoardItem = {
   sector_label: string;
   board_kind: MarketThemeBoardKind;
   change_1d_percent?: number | null;
-  consecutive_up_days?: number | null;
+  change_5d_percent?: number | null;
   main_force_net_yi?: number | null;
   flow_tiers?: MarketThemeBoardFlowTiers | null;
   flow_source_code?: string | null;
@@ -2032,6 +2032,16 @@ export async function fetchPortfolioDashboard(options?: {
     `${API_BASE}/api/portfolio/dashboard${query ? `?${query}` : ""}`,
     { cache: "no-store" },
   );
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export async function fetchPortfolioRiskMetrics(): Promise<PortfolioRiskMetrics> {
+  const response = await apiFetch(`${API_BASE}/api/portfolio/risk-metrics`, {
+    cache: "no-store",
+  });
   if (!response.ok) {
     throw new Error(await response.text());
   }

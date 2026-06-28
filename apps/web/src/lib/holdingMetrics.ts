@@ -112,6 +112,23 @@ export function mergeHoldingsPreserveQuoteFields(
   });
 }
 
+/** 分批截图录入：保留已有持仓，同码/同名用新 OCR 覆盖金额与收益，否则追加。 */
+export function mergeHoldingsAppend(
+  previous: Holding[],
+  incoming: Holding[],
+): Holding[] {
+  const merged = [...displayableHoldings(previous)];
+  for (const item of incoming) {
+    const idx = findHoldingIndex(merged, item);
+    if (idx >= 0) {
+      merged[idx] = mergeHoldingQuoteFields(merged[idx], item);
+    } else {
+      merged.push(item);
+    }
+  }
+  return merged;
+}
+
 export type HoldingIdentity = Pick<Holding, "fund_code" | "fund_name">;
 
 function normalizeHoldingName(name: string): string {

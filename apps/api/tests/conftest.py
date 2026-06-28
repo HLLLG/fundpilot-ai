@@ -95,20 +95,12 @@ def _stub_market_data_fetches(monkeypatch):
         lambda _board_type: [],
     )
     monkeypatch.setattr(
-        "app.services.sector_board_snapshot.fetch_eastmoney_board_records",
-        lambda _board_type: [],
+        "app.services.theme_board_snapshot.fetch_eastmoney_clist_theme_metrics_by_code",
+        lambda **_kwargs: {},
     )
     monkeypatch.setattr(
-        "app.services.sector_board_snapshot.fetch_akshare_board_records",
-        lambda _board_type: [],
-    )
-    monkeypatch.setattr(
-        "app.services.theme_board_snapshot.get_sector_board_snapshot",
-        lambda **_kwargs: {"industry": [], "concept": []},
-    )
-    monkeypatch.setattr(
-        "app.services.theme_board_snapshot.fetch_canonical_daily_kline_series",
-        lambda *_args, **_kwargs: [],
+        "app.services.theme_board_snapshot.fetch_eastmoney_kline_close_percent",
+        lambda *_args, **_kwargs: None,
     )
     monkeypatch.setattr(
         "app.services.theme_board_snapshot._load_theme_spot_changes",
@@ -213,25 +205,6 @@ def _stub_market_data_fetches(monkeypatch):
         lambda: list(_STUB_SECTOR_HEAT),
     )
     monkeypatch.setattr(
-        "app.main.get_sector_board_snapshot",
-        lambda **_kwargs: {
-            "trade_date": "2026-06-17",
-            "session_kind": "trading_day_intraday",
-            "available": True,
-            "from_cache": True,
-            "message": None,
-            "industry": [
-                {
-                    "name": "建筑材料",
-                    "code": "BK0425",
-                    "change_percent": 4.02,
-                    "main_force_net_yi": 12.5,
-                }
-            ],
-            "concept": [],
-        },
-    )
-    monkeypatch.setattr(
         "app.main.get_theme_board_snapshot",
         lambda **_kwargs: {
             "trade_date": "2026-06-17",
@@ -247,7 +220,6 @@ def _stub_market_data_fetches(monkeypatch):
                     "sector_label": "商业航天",
                     "board_kind": "concept",
                     "change_1d_percent": 2.78,
-                    "consecutive_up_days": 5,
                     "held_fund_count": 0,
                     "in_portfolio": False,
                     "rank": 1,
@@ -256,7 +228,6 @@ def _stub_market_data_fetches(monkeypatch):
                     "sector_label": "电子",
                     "board_kind": "industry",
                     "change_1d_percent": 1.21,
-                    "consecutive_up_days": 3,
                     "held_fund_count": 0,
                     "in_portfolio": False,
                     "rank": 2,

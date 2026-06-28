@@ -222,8 +222,6 @@ Page({
         kindLabel: BOARD_KIND_LABELS[item.board_kind] || item.board_kind || "",
         change_1d_percent:
           item.change_1d_percent != null ? item.change_1d_percent : null,
-        consecutive_up_days:
-          item.consecutive_up_days != null ? item.consecutive_up_days : null,
         in_portfolio: !!item.in_portfolio,
       });
     }

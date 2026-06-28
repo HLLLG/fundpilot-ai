@@ -281,6 +281,53 @@ def build_fast_snapshot_holdings_response() -> dict | None:
     }
 
 
+def _lightweight_profile_holdings(*, min_amount: float = 0) -> list[Holding]:
+    """仅用于快照恢复判断：读档案金额，不做 resolve / 外网 benchmark。"""
+    return without_test_holdings(
+        [
+            profile_to_holding(profile)
+            for profile in list_fund_profiles()
+            if (profile.holding_amount or 0) > min_amount
+        ]
+    )
+
+
+def load_dashboard_holdings() -> tuple[list[Holding], str, str | None, datetime | None]:
+    """Dashboard 读路径：优先最新快照 + 本地估算，跳过全量 profile resolve。"""
+    snapshot = get_most_recent_portfolio_snapshot()
+    if not snapshot or not snapshot.get("holdings"):
+        return load_persisted_holdings(fetch_benchmark=False)
+
+    holdings = [
+        Holding.model_validate(item)
+        for item in snapshot.get("holdings", [])
+    ]
+    holdings = without_inactive_holdings(without_test_holdings(holdings))
+    if not holdings:
+        return [], "empty", None, None
+
+    profile_holdings = _lightweight_profile_holdings()
+    if _should_recover_from_profiles(
+        holdings,
+        profile_holdings,
+        snapshot_total_assets=snapshot.get("total_assets"),
+    ):
+        return load_persisted_holdings(fetch_benchmark=False)
+
+    trade_date = get_effective_trade_date()
+    holdings = [_fast_overlay_cached_official_nav(holding, trade_date) for holding in holdings]
+    from app.services.holding_estimates import enrich_holdings_estimates
+
+    enriched = enrich_holdings_estimates(holdings)
+    captured_at = _coerce_utc_datetime(snapshot.get("captured_at"))
+    return (
+        enriched,
+        "snapshot",
+        snapshot.get("snapshot_date"),
+        captured_at,
+    )
+
+
 def profile_to_holding(profile: FundProfile) -> Holding:
     holding_return = profile.holding_return_percent
     return Holding(
@@ -441,7 +488,6 @@ def load_persisted_holdings(
     *,
     fetch_benchmark: bool = True,
 ) -> tuple[list[Holding], str, str | None, datetime | None]:
-    profile_holdings = holdings_from_profiles(fetch_benchmark=fetch_benchmark)
     snapshot = get_most_recent_portfolio_snapshot()
 
     def _finalize(holdings: list[Holding], source: str, snap_date: str | None, refreshed: datetime | None):
@@ -454,25 +500,31 @@ def load_persisted_holdings(
         holdings = [Holding.model_validate(item) for item in snapshot["holdings"]]
         if holdings:
             snapshot_total = snapshot.get("total_assets")
+            profile_holdings = _lightweight_profile_holdings()
             if _should_recover_from_profiles(
                 holdings,
                 profile_holdings,
                 snapshot_total_assets=snapshot_total,
             ):
-                if profile_holdings:
+                full_profile_holdings = holdings_from_profiles(fetch_benchmark=fetch_benchmark)
+                if full_profile_holdings:
                     return _finalize(
-                        enrich_loaded_holdings(profile_holdings),
+                        enrich_loaded_holdings(full_profile_holdings),
                         "profiles_recovered",
                         snapshot.get("snapshot_date"),
                         _refreshed_at_from_summary(),
                     )
-            merged = without_test_holdings(merge_holdings_with_profiles(holdings))
-            enriched = enrich_loaded_holdings(
-                enrich_holdings_from_profiles(
-                    merged,
-                    fetch_benchmark=fetch_benchmark,
+            if fetch_benchmark:
+                merged = without_test_holdings(merge_holdings_with_profiles(holdings))
+                enriched = enrich_loaded_holdings(
+                    enrich_holdings_from_profiles(
+                        merged,
+                        fetch_benchmark=fetch_benchmark,
+                    )
                 )
-            )
+            else:
+                merged = without_test_holdings(holdings)
+                enriched = enrich_loaded_holdings(merged)
             return _finalize(
                 enriched,
                 "snapshot",
@@ -480,6 +532,7 @@ def load_persisted_holdings(
                 _coerce_utc_datetime(snapshot.get("captured_at")),
             )
 
+    profile_holdings = holdings_from_profiles(fetch_benchmark=fetch_benchmark)
     if profile_holdings:
         return _finalize(
             enrich_loaded_holdings(profile_holdings),

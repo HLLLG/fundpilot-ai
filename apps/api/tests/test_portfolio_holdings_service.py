@@ -1,6 +1,7 @@
 from app.models import Holding
 from app.services.portfolio_holdings_service import (
     build_fast_snapshot_holdings_response,
+    load_dashboard_holdings,
     load_persisted_holdings,
     profile_to_holding,
 )
@@ -118,6 +119,51 @@ def test_fast_snapshot_response_uses_snapshot_without_slow_resolution(monkeypatc
     assert payload["holdings"][0]["daily_return_percent_source"] == "official_nav"
     assert payload["holdings"][1]["sector_return_percent"] is None
     assert payload["portfolio_summary"]["total_assets"] == 29469.71
+
+
+def test_load_dashboard_holdings_skips_profile_resolve(monkeypatch):
+    snapshot_holdings = [
+        Holding(
+            fund_code="008586",
+            fund_name="华夏人工智能ETF联接C",
+            holding_amount=8671.67,
+            sector_name="人工智能",
+            sector_return_percent=-4.62,
+        ).model_dump(),
+    ]
+    resolve_calls = {"count": 0}
+
+    def _resolve(*_args, **_kwargs):
+        resolve_calls["count"] += 1
+        return []
+
+    monkeypatch.setattr(
+        "app.services.portfolio_holdings_service.get_most_recent_portfolio_snapshot",
+        lambda: {
+            "snapshot_date": "2026-06-27",
+            "captured_at": "2026-06-27T10:12:56+00:00",
+            "holdings": snapshot_holdings,
+        },
+    )
+    monkeypatch.setattr(
+        "app.services.portfolio_holdings_service.list_fund_profiles",
+        lambda: [],
+    )
+    monkeypatch.setattr(
+        "app.services.portfolio_holdings_service.holdings_from_profiles",
+        _resolve,
+    )
+    monkeypatch.setattr(
+        "app.services.portfolio_holdings_service.get_effective_trade_date",
+        lambda: "2026-06-26",
+    )
+
+    holdings, source, snapshot_date, _ = load_dashboard_holdings()
+
+    assert source == "snapshot"
+    assert snapshot_date == "2026-06-27"
+    assert len(holdings) == 1
+    assert resolve_calls["count"] == 0
 
 
 def test_load_persisted_holdings_falls_back_to_profiles(tmp_path, monkeypatch):

@@ -59,3 +59,27 @@ def test_parse_bottom_fixture_two_funds_skips_yuebao():
     assert any("华夏全球科技先锋" in n for n in names)
     assert any("中航机遇领航" in n for n in names)
     assert all("余额" not in n for n in names)
+
+
+def test_parse_user_image1_vlm_fixture_recovers_all_six_funds():
+    text = (FIXTURES / "alipay_user_image1_vlm_ocr.txt").read_text(encoding="utf-8")
+    holdings = parse_holdings_from_text(text)
+    names = [h.fund_name for h in holdings]
+    assert len(holdings) == 6, names
+    assert any("(QDII)" in n or "（QDII）" in n for n in names)
+    zhonghang = next(h for h in holdings if "中航机遇" in h.fund_name)
+    assert zhonghang.holding_amount == 10210.43
+    assert zhonghang.holding_profit == 210.43
+    assert zhonghang.yesterday_profit == 339.5
+    qdii = next(h for h in holdings if "广发全球精选" in h.fund_name)
+    assert qdii.holding_amount == 300.02
+    assert qdii.holding_profit == 0.02
+
+
+def test_parse_user_image2_vlm_fixture_recovers_two_qdii_funds():
+    text = (FIXTURES / "alipay_user_image2_vlm_ocr.txt").read_text(encoding="utf-8")
+    holdings = parse_holdings_from_text(text)
+    names = [h.fund_name for h in holdings]
+    assert len(holdings) == 2, names
+    assert any("天弘全球高端制造" in n for n in names)
+    assert any("富国全球科技互联网" in n for n in names)

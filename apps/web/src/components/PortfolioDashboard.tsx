@@ -47,7 +47,11 @@ function profitClass(value: number | null | undefined) {
   return value > 0 ? "profit-up" : "profit-down";
 }
 
-export function PortfolioDashboard() {
+export function PortfolioDashboard({
+  fallbackSummary = null,
+}: {
+  fallbackSummary?: PortfolioDashboardData["summary"] | null;
+}) {
   const [profitRange, setProfitRange] = useState<ProfitRange>("today");
   const [calendarYear, setCalendarYear] = useState(() => new Date().getFullYear());
   const [calendarMonth, setCalendarMonth] = useState(() => new Date().getMonth() + 1);
@@ -76,7 +80,7 @@ export function PortfolioDashboard() {
 
   const error = fetchError;
 
-  const summary = data?.summary ?? null;
+  const summary = data?.summary ?? fallbackSummary ?? null;
   const footer = data?.profit_trend_footer;
   const headerValue = showReturnHeader ? summary?.daily_return_percent : summary?.daily_profit;
   const displayTone = showReturnHeader ? summary?.daily_return_percent : summary?.daily_profit;
@@ -180,7 +184,7 @@ export function PortfolioDashboard() {
         </div>
       </section>
 
-      <PortfolioRiskMetricsPanel metrics={data?.risk_metrics} />
+      <PortfolioRiskMetricsPanel />
 
       <section className="pl-panel section-card">
         <div className="pl-panel-head">

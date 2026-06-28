@@ -5,6 +5,9 @@ import { Loader2, RotateCcw, Sparkles } from "lucide-react";
 import type { DipRadarResponse } from "@/lib/dipRadar";
 import {
   DIP_RADAR_DISCLAIMER,
+  DIP_RADAR_METRICS_HINT,
+  REBOUND_SCORE_TOOLTIP,
+  REBOUND_SIGNALS_TOOLTIP,
   formatDipPercent,
   formatDipRadarUpdatedFromIso,
   formatReboundScore,
@@ -50,7 +53,7 @@ export function DipReboundRadar({
         <div>
           <h2 className="font-display text-lg font-bold text-slate-800">大跌反弹雷达</h2>
           <p className="mt-0.5 text-xs text-slate-500">
-            近 {lookbackDays} 日净值跌幅较深、附带反弹信号的场外基金
+            近 {lookbackDays} 日净值跌幅较深的场外基金（按跌幅排序，供短线观察）
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -131,6 +134,10 @@ export function DipReboundRadar({
         </div>
       ) : null}
 
+      <p className="rounded-xl border border-slate-100 bg-slate-50/90 px-3 py-2 text-[11px] leading-relaxed text-slate-500">
+        {DIP_RADAR_METRICS_HINT}
+      </p>
+
       <p className="text-xs text-slate-400">{formatDipRadarUpdatedFromIso(data?.refreshed_at)}</p>
 
       {loading && !isDipRadarUsable(data) ? (
@@ -195,13 +202,13 @@ export function DipReboundRadar({
 
                 <div className="mt-3 flex flex-wrap items-center justify-between gap-2.5 border-t border-slate-100/80 pt-3">
                   <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
-                    <span className="text-slate-500">
+                    <span className="text-slate-500" title={REBOUND_SCORE_TOOLTIP}>
                       信号分{" "}
                       <span className={`font-bold tabular-nums ${reboundScoreTone(item.rebound_score)}`}>
                         {formatReboundScore(item.rebound_score)}
                       </span>
                     </span>
-                    <span className="text-slate-500">
+                    <span className="text-slate-500" title={REBOUND_SIGNALS_TOOLTIP}>
                       反弹信号{" "}
                       <span className="font-medium text-slate-700">
                         {formatReboundSignals(item.rebound_signals)}

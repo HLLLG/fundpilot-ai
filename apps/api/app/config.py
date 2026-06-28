@@ -120,7 +120,7 @@ class Settings(BaseSettings):
     cloudbase_auth_dev_mode: bool = False
     # 方案 A 默认关闭：美股 Tab 仅展示指数 + 汇率，不拉 QDII 穿透估值
     us_market_qdii_enabled: bool = False
-    # 主题板块后台刷新：daemon 线程时段感知（盘中 15min / 收盘 1h），前台只读缓存
+    # 主题板块后台刷新：daemon 线程时段感知（A 股活跃 20min / 休市 3h），前台只读缓存
     theme_board_refresh_enabled: bool = True
     theme_board_refresh_interval_seconds: int = 1200  # 盘中/美股活跃时段每 20min
     theme_board_refresh_idle_interval_seconds: int = 10800  # 非活跃时段每 3h（兼容旧 env）
@@ -128,6 +128,14 @@ class Settings(BaseSettings):
     # 持仓详情：按用户内存缓存 + 后台预热（分时/净值/详情）
     holding_detail_cache_ttl_seconds: int = 300
     holding_intraday_warmup_enabled: bool = True
+    # 全市场基金→板块离线预计算（fund_primary_sectors_global）
+    fund_primary_sector_global_enabled: bool = True
+    fund_primary_sector_global_benchmark_ttl_days: int = 30
+    fund_primary_sector_global_holdings_ttl_days: int = 90
+    fund_primary_sector_precompute_enabled: bool = True
+    fund_primary_sector_precompute_batch_size: int = 150
+    fund_primary_sector_precompute_interval_hours: int = 12
+    fund_primary_sector_precompute_startup_delay_seconds: int = 300
     # 组合风险指标无风险利率（年化，小数；夏普/索提诺/Alpha 使用）
     risk_free_rate: float = 0.02
 

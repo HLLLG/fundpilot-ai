@@ -1,6 +1,6 @@
 import type { MarketThemeBoardItem, MarketThemeBoardResponse } from "@/lib/api";
 
-export type ThemeSortColumn = "change" | "inflow";
+export type ThemeSortColumn = "change" | "change5d" | "inflow";
 export type ThemeSortDirection = "asc" | "desc";
 
 export function isMarketThemeBoardUsable(data: MarketThemeBoardResponse | null | undefined): boolean {
@@ -12,7 +12,7 @@ export function acceptMarketThemeBoardFresh(fresh: MarketThemeBoardResponse): bo
 }
 
 export function themeBoardHeading(): string {
-  return "今日板块涨幅榜";
+  return "主题板块涨跌";
 }
 
 export function formatThemeBoardUpdatedAt(date: Date): string {
@@ -95,7 +95,12 @@ export function sortThemeBoardItems(
   column: ThemeSortColumn,
   direction: ThemeSortDirection,
 ): MarketThemeBoardItem[] {
-  const key = column === "change" ? "change_1d_percent" : "main_force_net_yi";
+  const key =
+    column === "change"
+      ? "change_1d_percent"
+      : column === "change5d"
+        ? "change_5d_percent"
+        : "main_force_net_yi";
   const sorted = [...items].sort((left, right) => {
     const leftValue = left[key];
     const rightValue = right[key];

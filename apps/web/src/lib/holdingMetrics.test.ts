@@ -4,6 +4,7 @@ import {
   applySectorDailyEstimate,
   computeDailyProfit,
   findHoldingIndex,
+  mergeHoldingsAppend,
   mergeSectorIntradayClose,
   mergeHoldingsPreserveQuoteFields,
 } from "@/lib/holdingMetrics";
@@ -48,6 +49,31 @@ describe("findHoldingIndex", () => {
         fund_name: "中航机遇领航混合发起C",
       }),
     ).toBe(0);
+  });
+});
+
+describe("mergeHoldingsAppend", () => {
+  it("appends new OCR rows and updates matching fund by code", () => {
+    const previous = [
+      holding("010236", "广发电子信息传媒产业精选股票C"),
+      holding("018957", "中航机遇领航混合C"),
+    ];
+    previous[0].holding_amount = 1000;
+    const incoming = [
+      {
+        ...holding("021277", "广发全球精选股票(QDII)C"),
+        holding_amount: 300.02,
+      },
+      {
+        ...holding("018957", "中航机遇领航混合C"),
+        holding_amount: 10210.43,
+        holding_profit: 210.43,
+      },
+    ];
+    const merged = mergeHoldingsAppend(previous, incoming);
+    expect(merged).toHaveLength(3);
+    expect(merged.find((h) => h.fund_code === "021277")?.holding_amount).toBe(300.02);
+    expect(merged.find((h) => h.fund_code === "018957")?.holding_amount).toBe(10210.43);
   });
 });
 

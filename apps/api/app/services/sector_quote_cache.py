@@ -7,6 +7,29 @@ from datetime import datetime, timezone
 from app.database import _connect
 
 _MEMORY: dict[str, tuple[float, dict]] = {}
+_PROCESS_BOOT_AT: datetime | None = None
+
+
+def mark_process_boot() -> datetime:
+    """记录进程启动时刻；早于该时刻写入的快照视为跨进程遗留缓存。"""
+    global _PROCESS_BOOT_AT
+    _PROCESS_BOOT_AT = datetime.now(timezone.utc)
+    return _PROCESS_BOOT_AT
+
+
+def snapshot_refreshed_before_process_boot(refreshed_at: str | None) -> bool:
+    """快照是否在本进程启动前写入（含 SQLite 遗留、缺失 refreshed_at）。"""
+    if _PROCESS_BOOT_AT is None:
+        return False
+    if not refreshed_at:
+        return True
+    try:
+        ts = datetime.fromisoformat(str(refreshed_at).replace("Z", "+00:00"))
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        return ts.astimezone(timezone.utc) < _PROCESS_BOOT_AT
+    except ValueError:
+        return True
 
 
 def _ensure_cache_table(connection: sqlite3.Connection) -> None:

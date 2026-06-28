@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { PortfolioRiskMetrics } from "@/lib/api";
+import { fetchPortfolioRiskMetrics } from "@/lib/api";
 import { PortfolioCorrelationHeatmap } from "@/components/PortfolioCorrelationHeatmap";
 import {
   alphaHint,
@@ -105,11 +106,9 @@ function MetricCard({ item, locked }: { item: MetricItem; locked: boolean }) {
   );
 }
 
-export function PortfolioRiskMetricsPanel({
-  metrics,
-}: {
-  metrics: PortfolioRiskMetrics | undefined;
-}) {
+export function PortfolioRiskMetricsPanel() {
+  const [metrics, setMetrics] = useState<PortfolioRiskMetrics | undefined>();
+  const [loading, setLoading] = useState(true);
   const [isPro, setIsPro] = useState(false);
   const [showCorrelation, setShowCorrelation] = useState(false);
 
@@ -119,6 +118,30 @@ export function PortfolioRiskMetricsPanel({
     } catch {
       setIsPro(false);
     }
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    fetchPortfolioRiskMetrics()
+      .then((payload) => {
+        if (!cancelled) {
+          setMetrics(payload);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setMetrics(undefined);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const togglePro = () => {
@@ -142,7 +165,9 @@ export function PortfolioRiskMetricsPanel({
         </button>
       </div>
 
-      {!metrics || !metrics.available ? (
+      {loading ? (
+        <div className="empty-state">风险指标加载中…</div>
+      ) : !metrics || !metrics.available ? (
         <div className="empty-state">
           {metrics?.message ?? "历史快照积累中，满 20 个交易日后展示风险体检。"}
         </div>

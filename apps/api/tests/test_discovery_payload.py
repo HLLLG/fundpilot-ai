@@ -1,7 +1,11 @@
 """荐基 LLM user payload 与日报对齐的字段覆盖。"""
 
-from app.models import InvestorProfile, NewsItem, TopicBrief, TopicBriefPoint
-from app.services.discovery_payload import build_user_payload
+from unittest.mock import patch
+
+from app.models import Holding, InvestorProfile, NewsItem, TopicBrief, TopicBriefPoint
+from app.services.discovery_facts import build_discovery_facts
+from app.services.discovery_payload import build_user_payload, _requirements_for_scan_mode
+from app.services.discovery_prompt import DISCOVERY_FACTS_INSTRUCTION
 
 
 def _profile() -> InvestorProfile:
@@ -39,8 +43,19 @@ def _discovery_facts() -> dict:
                 "fund_name": "招商中证白酒",
                 "sector_label": "白酒",
                 "return_1y_percent": 5.0,
+                "return_3m_percent": 2.0,
+                "return_6m_percent": 3.5,
+                "max_drawdown_1y_percent": -10.0,
+                "fund_scale_yi": 50.0,
+                "nav_trend": {
+                    "trend_label": "震荡",
+                    "recent_5d_change_percent": 1.0,
+                    "period_change_percent": 6.0,
+                    "latest_nav": 1.2,
+                },
             }
         ],
+        "fund_type_preference": "etf_link",
     }
 
 
@@ -62,26 +77,39 @@ def test_build_user_payload_includes_daily_report_parity_fields():
             ],
         )
     ]
-    payload = build_user_payload(
-        discovery_facts=_discovery_facts(),
-        profile=_profile(),
-        focus_sectors=["半导体"],
-        scan_mode="full_market",
-        market_news=news,
-        topic_briefs=briefs,
-        analysis_mode="deep",
-    )
+    with patch(
+        "app.services.discovery_candidate_llm.get_cached_official_nav_return",
+        return_value=1.1,
+    ):
+        payload = build_user_payload(
+            discovery_facts=_discovery_facts(),
+            profile=_profile(),
+            focus_sectors=["半导体"],
+            scan_mode="full_market",
+            market_news=news,
+            topic_briefs=briefs,
+            analysis_mode="deep",
+        )
 
     assert payload["news_titles"]
     assert payload["topic_briefs"]
+    assert payload["fund_type_preference"] == "etf_link"
     facts = payload["discovery_facts"]
     assert facts["session"]["session_kind"] == "trading_day_intraday"
     assert facts["target_sector_context"][0]["sector_fund_flow"]["available"] is True
     assert facts["market_flow"]["southbound_net_yi"] == -8.87
     assert facts["instruction"] == "系统数字只读"
-    assert facts["candidate_pool"][0]["fund_code"] == "161725"
+    candidate = facts["candidate_pool"][0]
+    assert candidate["fund_code"] == "161725"
+    assert candidate["return_3m_percent"] == 2.0
+    assert candidate["nav_trend"]["trend_label"] == "震荡"
+    assert "latest_nav" not in candidate["nav_trend"]
+    assert candidate["estimated_daily_return_percent"] == 1.1
+    assert candidate["daily_return_source"] == "official_nav"
+    assert len(facts["sector_heat"]) <= 15
     joined = " ".join(payload["requirements"])
     assert "target_sector_context" in joined
+    assert "holdings_slim" in joined
 
 
 def test_build_user_payload_fast_mode_uses_minimal_briefs():
@@ -121,4 +149,52 @@ def test_gap_scan_mode_requirements():
     )
     joined = " ".join(payload["requirements"])
     assert "portfolio_gap" in joined
+    assert "holdings_slim" in joined
+    assert "target_sector_context" not in joined
+
+
+def test_build_discovery_facts_includes_holdings_slim():
+    holdings = [
+        Holding(
+            fund_code="110011",
+            fund_name="易方达中小盘",
+            sector_name="消费",
+            holding_amount=30000,
+            return_percent=5.0,
+            daily_return_percent=0.5,
+            daily_return_percent_source="sector_estimate",
+        )
+    ]
+    with patch(
+        "app.services.discovery_facts.get_cached_official_nav_return",
+        return_value=1.2,
+    ):
+        facts = build_discovery_facts(
+            holdings=holdings,
+            profile=_profile(),
+            target_sectors=["消费"],
+            sector_heat=[{"sector_label": "消费", "heat_score": 0.8, "change_1d_percent": 1.0}],
+            candidate_pool=[],
+            fund_type_preference="no_c_class",
+        )
+    slim = facts["portfolio_gap"]["holdings_slim"]
+    assert len(slim) == 1
+    assert slim[0]["fund_code"] == "110011"
+    assert slim[0]["weight_percent"] > 0
+    assert slim[0]["estimated_daily_return_percent"] == 1.2
+    assert facts["fund_type_preference"] == "no_c_class"
+    assert facts["instruction"] == DISCOVERY_FACTS_INSTRUCTION
+
+
+def test_dip_swing_requirements_include_short_term_guidance():
+    reqs = _requirements_for_scan_mode("dip_swing")
+    joined = " ".join(reqs)
+    assert "dip_drop_percent" in joined
+    assert "fee_break_even_percent" in joined
+
+
+def test_portfolio_gap_scan_mode_alias():
+    reqs = _requirements_for_scan_mode("gap")
+    joined = " ".join(reqs)
+    assert "holdings_slim" in joined
     assert "target_sector_context" not in joined

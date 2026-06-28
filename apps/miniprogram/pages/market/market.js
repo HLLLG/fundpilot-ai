@@ -8,8 +8,8 @@
 //
 // 主题板块功能（Req 10.1–10.8 / 3.5）：
 //   - GET /api/market/theme-boards 拉取列表，缓存优先（cache:theme:{sort}）
-//   - 每条板块：名称/类型标签/日涨跌幅/连涨天数/主力净流入/持仓标签/资金流四档（Req 10.2/10.4/10.5）
-//   - sort 切换 change/streak/inflow（Req 10.3）
+//   - 每条板块：名称/类型标签/日涨跌幅/5日涨跌/主力净流入/持仓标签/资金流四档（Req 10.2/10.4/10.5）
+//   - sort 切换 change/inflow（Req 10.3）
 //   - 展开/折叠资金流四档明细（Req 10.4）
 //   - 「看大跌基金」：写 navState.setDipRadarSector + 切子视图 dip（Req 10.6）
 //   - 「加入关注方向」：derive.addFocusSector + 写 navState.setDiscoveryFocusSectors + toast（Req 10.7）
@@ -31,7 +31,6 @@ var SUB_VIEWS = [
 // 排序选项
 var SORT_OPTIONS = [
   { label: "涨跌", value: "change" },
-  { label: "连涨", value: "streak" },
   { label: "主力", value: "inflow" },
 ];
 
@@ -178,7 +177,7 @@ Page({
 
   /**
    * 拉取主题板块列表，缓存优先（Req 4.3）。
-   * @param {string} sort  'change' | 'streak' | 'inflow'（Req 10.3）
+   * @param {string} sort  'change' | 'inflow'（Req 10.3）
    */
   _loadThemeBoards: function (sort) {
     var self = this;
@@ -226,7 +225,7 @@ Page({
         sector_label: item.sector_label || "",
         board_kind: item.board_kind || "",
         change_1d_percent: item.change_1d_percent != null ? item.change_1d_percent : null,
-        consecutive_up_days: item.consecutive_up_days != null ? item.consecutive_up_days : null,
+        change_5d_percent: item.change_5d_percent != null ? item.change_5d_percent : null,
         main_force_net_yi: item.main_force_net_yi != null ? item.main_force_net_yi : null,
         flow_tiers: item.flow_tiers || null,   // 资金流四档明细（Req 10.4）
         in_portfolio: !!item.in_portfolio,     // 持仓标签（Req 10.5）
@@ -251,7 +250,7 @@ Page({
   // 排序切换（Req 10.3）
   // ---------------------------------------------------------------------------
 
-  /** 点击排序 Tab：change / streak / inflow */
+  /** 点击排序 Tab：change / inflow */
   onSortTap: function (e) {
     var idx = Number(e.currentTarget.dataset.index);
     if (idx === this.data.sortIndex) return;

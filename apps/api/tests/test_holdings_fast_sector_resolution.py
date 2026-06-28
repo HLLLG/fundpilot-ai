@@ -251,7 +251,7 @@ def test_background_portfolio_sector_refresh_loads_holdings_without_missing_benc
     assert [holding.fund_code for holding in persisted] == ["021533"]
 
 
-def test_refresh_holdings_sector_quotes_fast_timeout_skips_benchmark_fetch_but_accurate_fetches(monkeypatch):
+def test_refresh_holdings_sector_quotes_fast_and_accurate_fetch_benchmark(monkeypatch):
     from app.services.sector_quote_service import SpotBoardFetchResult
 
     calls: list[str] = []
@@ -318,8 +318,12 @@ def test_refresh_holdings_sector_quotes_fast_timeout_skips_benchmark_fetch_but_a
 
     holding = _holding(fund_code="123456", sector_name=None, intraday_index_name=None)
     refresh_holdings_sector_quotes([holding], timeout_seconds=8.0)
-    assert calls == []
+    assert calls == ["123456"]
 
+    from app.services import fund_primary_sector_service
+
+    fund_primary_sector_service._benchmark_miss_cache.clear()
+    calls.clear()
     refresh_holdings_sector_quotes([holding], timeout_seconds=None)
     assert calls == ["123456"]
 
@@ -595,5 +599,5 @@ def test_load_persisted_holdings_snapshot_merge_respects_fetch_benchmark_false(m
     assert source == "snapshot"
     assert snapshot_date == "2026-06-03"
     assert [holding.fund_code for holding in holdings] == ["123456"]
-    assert resolve_fetch_flags == [False]
-    assert enrich_fetch_flags == [False, False]
+    assert resolve_fetch_flags == []
+    assert enrich_fetch_flags == []

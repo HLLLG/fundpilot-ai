@@ -730,31 +730,97 @@ def save_portfolio_daily_snapshot(snapshot: PortfolioDailySnapshot) -> Portfolio
     return snapshot
 
 
-def list_portfolio_daily_snapshots(*, limit: int = 30) -> list[dict[str, Any]]:
+def _snapshot_meta_from_row(row: object) -> dict[str, Any]:
+    data = _row_to_dict(row)
+    snapshot_date = data.get("snapshot_date")
+    if snapshot_date is not None:
+        snapshot_date = str(snapshot_date).strip('"')[:10]
+
+    def _coerce_float(value: object) -> float | None:
+        if value is None:
+            return None
+        text = str(value).strip().strip('"')
+        if not text or text.lower() == "null":
+            return None
+        try:
+            return float(text)
+        except (TypeError, ValueError):
+            return None
+
+    return {
+        "snapshot_date": snapshot_date,
+        "total_assets": _coerce_float(data.get("total_assets")),
+        "daily_profit": _coerce_float(data.get("daily_profit")),
+        "daily_return_percent": _coerce_float(data.get("daily_return_percent")),
+    }
+
+
+def list_portfolio_daily_snapshots(
+    *,
+    limit: int = 30,
+    include_holdings: bool = True,
+) -> list[dict[str, Any]]:
     user_id = _uid()
     with _connect() as connection:
-        rows = connection.execute(
-            """
-            SELECT payload FROM portfolio_daily_snapshots
-            WHERE userId = ?
-            ORDER BY snapshot_date DESC
-            LIMIT ?
-            """,
-            (user_id, limit),
-        ).fetchall()
+        if include_holdings:
+            rows = connection.execute(
+                """
+                SELECT payload FROM portfolio_daily_snapshots
+                WHERE userId = ?
+                ORDER BY snapshot_date DESC
+                LIMIT ?
+                """,
+                (user_id, limit),
+            ).fetchall()
+        elif connection.dialect == "mysql":
+            rows = connection.execute(
+                """
+                SELECT
+                  JSON_UNQUOTE(JSON_EXTRACT(payload, '$.snapshot_date')) AS snapshot_date,
+                  JSON_EXTRACT(payload, '$.total_assets') AS total_assets,
+                  JSON_EXTRACT(payload, '$.daily_profit') AS daily_profit,
+                  JSON_EXTRACT(payload, '$.daily_return_percent') AS daily_return_percent
+                FROM portfolio_daily_snapshots
+                WHERE userId = ?
+                ORDER BY snapshot_date DESC
+                LIMIT ?
+                """,
+                (user_id, limit),
+            ).fetchall()
+        else:
+            rows = connection.execute(
+                """
+                SELECT
+                  json_extract(payload, '$.snapshot_date') AS snapshot_date,
+                  json_extract(payload, '$.total_assets') AS total_assets,
+                  json_extract(payload, '$.daily_profit') AS daily_profit,
+                  json_extract(payload, '$.daily_return_percent') AS daily_return_percent
+                FROM portfolio_daily_snapshots
+                WHERE userId = ?
+                ORDER BY snapshot_date DESC
+                LIMIT ?
+                """,
+                (user_id, limit),
+            ).fetchall()
+
     results: list[dict[str, Any]] = []
+    if include_holdings:
+        for row in rows:
+            data = json.loads(row["payload"])
+            results.append(
+                {
+                    "snapshot_date": data.get("snapshot_date"),
+                    "total_assets": data.get("total_assets"),
+                    "daily_profit": data.get("daily_profit"),
+                    "daily_return_percent": data.get("daily_return_percent"),
+                    "holdings": data.get("holdings") or [],
+                    "captured_at": data.get("captured_at"),
+                }
+            )
+        return results
+
     for row in rows:
-        data = json.loads(row["payload"])
-        results.append(
-            {
-                "snapshot_date": data.get("snapshot_date"),
-                "total_assets": data.get("total_assets"),
-                "daily_profit": data.get("daily_profit"),
-                "daily_return_percent": data.get("daily_return_percent"),
-                "holdings": data.get("holdings") or [],
-                "captured_at": data.get("captured_at"),
-            }
-        )
+        results.append(_snapshot_meta_from_row(row))
     return results
 
 
@@ -1162,6 +1228,120 @@ def list_fund_primary_sectors() -> list[dict[str, Any]]:
             (user_id,),
         ).fetchall()
     return [_row_to_dict(row) for row in rows]
+
+
+def get_fund_primary_sector_global(fund_code: str) -> dict[str, Any] | None:
+    rows = get_fund_primary_sectors_global_by_codes([fund_code])
+    code = fund_code.strip().zfill(6)
+    return rows.get(code)
+
+
+def get_fund_primary_sectors_global_by_codes(
+    fund_codes: set[str] | list[str],
+) -> dict[str, dict[str, Any]]:
+    """批量读取全市场关联板块（未做 TTL 过滤，由调用方判定 freshness）。"""
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw in fund_codes:
+        code = str(raw or "").strip().zfill(6)
+        if len(code) == 6 and code.isdigit() and code not in seen:
+            seen.add(code)
+            normalized.append(code)
+    if not normalized:
+        return {}
+
+    placeholders = ",".join("?" * len(normalized))
+    with _connect() as connection:
+        rows = connection.execute(
+            f"""
+            SELECT fund_code, sector_name, intraday_index_name, source, confidence, detail, resolved_at
+            FROM fund_primary_sectors_global
+            WHERE fund_code IN ({placeholders})
+            """,
+            tuple(normalized),
+        ).fetchall()
+    result: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        payload = _row_to_dict(row)
+        payload["updated_at"] = payload.get("resolved_at")
+        code = str(payload.get("fund_code", "")).zfill(6)
+        if code:
+            result[code] = payload
+    return result
+
+
+def save_fund_primary_sector_global(
+    *,
+    fund_code: str,
+    sector_name: str,
+    intraday_index_name: str | None = None,
+    source: str,
+    confidence: float | None = None,
+    detail: dict | None = None,
+    resolved_at: str | None = None,
+) -> dict[str, Any]:
+    now = resolved_at or datetime.now(timezone.utc).isoformat()
+    code = fund_code.strip().zfill(6)
+    detail_json = json.dumps(detail, ensure_ascii=False) if detail else None
+    with _connect() as connection:
+        connection.execute(
+            """
+            INSERT OR REPLACE INTO fund_primary_sectors_global (
+                fund_code, sector_name, intraday_index_name,
+                source, confidence, detail, resolved_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                code,
+                sector_name,
+                intraday_index_name,
+                source,
+                confidence,
+                detail_json,
+                now,
+            ),
+        )
+        connection.commit()
+    return get_fund_primary_sector_global(code) or {
+        "fund_code": code,
+        "sector_name": sector_name,
+        "intraday_index_name": intraday_index_name,
+        "source": source,
+        "confidence": confidence,
+        "detail": detail,
+        "resolved_at": now,
+        "updated_at": now,
+    }
+
+
+def count_fund_primary_sectors_global() -> int:
+    with _connect() as connection:
+        row = connection.execute(
+            "SELECT COUNT(*) AS cnt FROM fund_primary_sectors_global",
+        ).fetchone()
+    if row is None:
+        return 0
+    return int(_row_to_dict(row).get("cnt") or 0)
+
+
+def list_fund_primary_sectors_global(*, limit: int = 5000) -> list[dict[str, Any]]:
+    with _connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT fund_code, sector_name, intraday_index_name, source, confidence, detail, resolved_at
+            FROM fund_primary_sectors_global
+            ORDER BY resolved_at DESC
+            LIMIT ?
+            """,
+            (max(1, limit),),
+        ).fetchall()
+    result = []
+    for row in rows:
+        payload = _row_to_dict(row)
+        payload["updated_at"] = payload.get("resolved_at")
+        result.append(payload)
+    return result
 
 
 def save_discovery_report(report: FundDiscoveryReport) -> FundDiscoveryReport:

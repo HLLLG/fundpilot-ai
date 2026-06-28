@@ -25,7 +25,7 @@ const FEATURES = [
   {
     icon: Activity,
     title: "实时追踪板块冷暖",
-    desc: "自动关联你的基金所属板块，盘中实时涨跌、连涨天数一目了然。",
+    desc: "自动关联你的基金所属板块，盘中实时涨跌、5日走势一目了然。",
   },
   {
     icon: FileText,
@@ -358,7 +358,7 @@ function DevicePreview() {
         </span>
         <div className="text-left leading-tight">
           <div className="text-[11px] font-bold text-slate-900">板块实时</div>
-          <div className="text-[10px] text-slate-400">半导体 连涨 3 天</div>
+          <div className="text-[10px] text-slate-400">半导体 +2.5% · 5日 +8.1%</div>
         </div>
       </div>
       <div className="float-badge reveal reveal-5 bottom-12 right-[-10px] z-20 hidden sm:flex">

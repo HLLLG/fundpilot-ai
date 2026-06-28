@@ -310,7 +310,7 @@ export function ThemeSectorOverview({
           <p className="py-8 text-center text-sm text-slate-500">{data?.message ?? "暂无主题板块数据"}</p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[320px] text-sm">
+            <table className="w-full min-w-[420px] text-sm">
               <thead>
                 <tr className="text-xs">
                   <th className="w-8 pb-2" aria-hidden />
@@ -318,14 +318,23 @@ export function ThemeSectorOverview({
                   <th className="pb-2 pr-2 text-left font-medium text-slate-400">板块名称</th>
                   <th className="pb-2 pr-2 text-right">
                     <SortColumnHeader
-                      label="涨跌幅"
+                      label="今日"
                       column="change"
                       activeColumn={sortColumn}
                       direction={sortDirection}
                       onSort={handleSort}
                     />
                   </th>
-                  <th className="pb-2 text-right">
+                  <th className="pb-2 pr-2 text-right">
+                    <SortColumnHeader
+                      label="5日"
+                      column="change5d"
+                      activeColumn={sortColumn}
+                      direction={sortDirection}
+                      onSort={handleSort}
+                    />
+                  </th>
+                  <th className="pb-2 pr-2 text-right">
                     <SortColumnHeader
                       label="主力净流入"
                       column="inflow"
@@ -386,36 +395,43 @@ export function ThemeSectorOverview({
                           {formatThemePercent(item.change_1d_percent)}
                         </td>
                         <td
+                          className={`py-3 pr-2 text-right tabular-nums font-medium ${profitToneClass(item.change_5d_percent)}`}
+                        >
+                          {formatThemePercent(item.change_5d_percent)}
+                        </td>
+                        <td
                           className={`py-3 pr-2 text-right tabular-nums font-medium ${profitToneClass(item.main_force_net_yi)}`}
                         >
                           {formatThemeFlowYi(item.main_force_net_yi)}
                         </td>
                         <td className="py-3 text-right">
-                          <div className="flex flex-col items-end gap-1 sm:flex-row sm:justify-end">
+                          <div className="inline-flex items-center justify-end gap-1">
                             <button
                               type="button"
-                              className="rounded-md px-2 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-100"
+                              title="查看该板块大跌基金"
+                              className="rounded-md px-1.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100"
                               onClick={(event) => handleRowAction(event, "dip", item.sector_label)}
                             >
-                              看大跌基金
+                              看大跌
                             </button>
                             <button
                               type="button"
-                              className={`rounded-md px-2 py-1 text-[11px] font-medium ${
+                              title="加入关注方向"
+                              className={`rounded-md px-1.5 py-1 text-xs font-medium ${
                                 focusSectors.includes(item.sector_label)
                                   ? "bg-[var(--brand-soft)] text-[var(--brand-strong)]"
                                   : "text-[var(--brand-strong)] hover:bg-[var(--brand-soft)]"
                               }`}
                               onClick={(event) => handleRowAction(event, "focus", item.sector_label)}
                             >
-                              {focusSectors.includes(item.sector_label) ? "已关注" : "加入关注方向"}
+                              {focusSectors.includes(item.sector_label) ? "已关注" : "加关注"}
                             </button>
                           </div>
                         </td>
                       </tr>
                       {expanded && hasThemeFlowDetail(item) ? (
                         <tr className="bg-slate-50/60">
-                          <td colSpan={6} className="px-3 pb-3 pt-0">
+                          <td colSpan={7} className="px-3 pb-3 pt-0">
                             {item.flow_tiers ? <FlowTierGrid item={item} /> : null}
                             <FlowHistoryPanel
                               flowRange={flowRange}

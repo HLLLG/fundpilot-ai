@@ -2,13 +2,22 @@ from __future__ import annotations
 
 import json
 import logging
-import subprocess
-import sys
-from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from app.database import get_fund_primary_sector, get_fund_profile_by_code, save_fund_primary_sector
+from app.database import (
+    get_fund_primary_sector,
+    get_fund_primary_sectors_global_by_codes,
+    get_fund_profile_by_code,
+    list_fund_primary_sectors,
+    save_fund_primary_sector,
+)
 from app.models import FundProfile, Holding
+from app.request_context import try_get_request_user_id
+from app.services.fund_primary_sector_global import (
+    is_global_sector_fresh,
+    load_fresh_global_sector,
+    promote_record_to_global,
+)
 from app.services.fund_profile import (
     _is_valid_sector_label,
     infer_intraday_index_from_fund_name,
@@ -18,78 +27,26 @@ from app.services.sector_labels import infer_sector_label_from_fund_name
 
 logger = logging.getLogger(__name__)
 
-_SUBPROCESS_TIMEOUT = 90
 _BENCHMARK_MISS_TTL = timedelta(hours=24)
 _benchmark_miss_cache: dict[str, datetime] = {}
 
-# 养基宝常见 fund_code → 主关联板块（全局种子，可被用户 OCR 覆盖）
-GLOBAL_FUND_SECTOR_SEEDS: dict[str, dict[str, str | None]] = {
-    "519674": {"sector_name": "半导体", "intraday_index_name": "中证半导体"},
-    "015945": {"sector_name": "商业航天", "intraday_index_name": None},
-    "008586": {"sector_name": "人工智能", "intraday_index_name": "中证人工智能"},
-    "025856": {"sector_name": "电网设备", "intraday_index_name": "中证电网设备"},
-    # 重仓光模块/CPO，名称无主题关键词
-    "018957": {"sector_name": "CPO", "intraday_index_name": None},
-    # 电子信息传媒产业精选 → 传媒指数
-    "010236": {"sector_name": "传媒", "intraday_index_name": "传媒"},
-}
-
-# 重仓股名称关键词 → 东财概念板块（加权投票）
-_SECTOR_STOCK_KEYWORDS: dict[str, tuple[str, ...]] = {
-    "半导体": (
-        "半导体",
-        "芯片",
-        "集成电路",
-        "华创",
-        "中微",
-        "海光",
-        "韦尔",
-        "兆易",
-        "北方华创",
-        "长电",
-        "澜起",
-        "圣邦",
-    ),
-    "商业航天": (
-        "航天",
-        "航空",
-        "卫星",
-        "沈飞",
-        "航发",
-        "光电",
-        "导弹",
-        "中航",
-        "西飞",
-        "洪都",
-    ),
-    "国防军工": ("军工", "防务", "兵器", "船舶", "重工"),
-    "人工智能": ("人工智能", "AI", "算力", "科大讯飞", "寒武纪", "浪潮"),
-    "电网设备": ("电网", "特变", "许继", "国电南瑞"),
-    "新能源": ("新能源", "锂电", "光伏", "宁德", "比亚迪", "阳光电源"),
-}
+# 已废弃：per-fund 手工种子由业绩基准 / 重仓行业穿透替代（discovery 改读 fund_primary_sectors）。
+GLOBAL_FUND_SECTOR_SEEDS: dict[str, dict[str, str | None]] = {}
 
 _SOURCE_PRIORITY = {
     "ocr_detail": 100,
-    "alipay_overview": 90,
     "manual": 85,
     "holdings_infer": 70,
     "benchmark_index": 65,
-    "seed": 60,
-    "name_infer": 20,
+    "alipay_overview": 50,
+    "name_infer": 10,
 }
 
 # 仅 OCR 详情 / 手动沉淀的板块可挡住业绩基准；总览推断的 alipay_overview 不可靠。
 _HIGH_TRUST_SECTOR_SOURCES = frozenset({"ocr_detail", "manual"})
 
 
-@dataclass(frozen=True)
-class PrimarySectorRecord:
-    fund_code: str
-    sector_name: str
-    intraday_index_name: str | None
-    source: str
-    confidence: float | None = None
-    detail: dict | None = None
+from app.services.fund_primary_sector_types import PrimarySectorRecord
 
 
 def _can_upsert_primary_sector(existing: dict | None, new_source: str) -> bool:
@@ -103,7 +60,6 @@ def _can_upsert_primary_sector(existing: dict | None, new_source: str) -> bool:
     if new_source == "benchmark_index" and old_source in {
         "alipay_overview",
         "name_infer",
-        "seed",
     }:
         return True
     return new_prio >= old_prio and new_source == old_source
@@ -152,8 +108,9 @@ def resolve_primary_sector(
     fund_code: str,
     *,
     fund_name: str | None = None,
-    allow_name_infer: bool = True,
+    allow_name_infer: bool = False,
     fetch_benchmark: bool = True,
+    fetch_holdings_infer: bool = False,
 ) -> PrimarySectorRecord | None:
     code = fund_code.strip().zfill(6)
     if len(code) != 6 or code == "000000":
@@ -167,6 +124,15 @@ def resolve_primary_sector(
     benchmark_record = _resolve_from_benchmark_index(code, fetch=fetch_benchmark)
     if benchmark_record is not None:
         return benchmark_record
+
+    if fetch_holdings_infer:
+        holdings_record = _resolve_from_holdings_infer(code, persist=bool(try_get_request_user_id()))
+        if holdings_record is not None:
+            return holdings_record
+
+    global_row = load_fresh_global_sector(code)
+    if global_row:
+        return _record_from_row({**global_row, "fund_code": code})
 
     if row and _is_valid_sector_label(row.get("sector_name")):
         return _record_from_row(row)
@@ -183,16 +149,6 @@ def resolve_primary_sector(
                 confidence=0.9,
             )
 
-    seed = GLOBAL_FUND_SECTOR_SEEDS.get(code)
-    if seed and _is_valid_sector_label(seed.get("sector_name")):
-        return PrimarySectorRecord(
-            fund_code=code,
-            sector_name=str(seed["sector_name"]),
-            intraday_index_name=seed.get("intraday_index_name"),
-            source="seed",
-            confidence=0.75,
-        )
-
     if allow_name_infer and fund_name:
         inferred = infer_sector_label_from_fund_name(fund_name)
         if inferred and get_canonical_sector(inferred):
@@ -206,12 +162,75 @@ def resolve_primary_sector(
     return None
 
 
+def resolve_sector_labels_for_radar(
+    codes_to_names: dict[str, str],
+    *,
+    fetch_benchmark: bool = False,
+) -> dict[str, str]:
+    """批量解析关联板块（大跌雷达等全市场场景，无用户持仓上下文）。
+
+    优先级：当前用户 fund_primary_sectors → 全市场 global（TTL 内）
+    → resolve_primary_sector（无联网基准）→ discovery 名称关键词 → 「综合」。
+    """
+    if not codes_to_names:
+        return {}
+
+    normalized_codes = {
+        str(code).strip().zfill(6): (name or "").strip()
+        for code, name in codes_to_names.items()
+        if str(code).strip().zfill(6).isdigit()
+    }
+    if not normalized_codes:
+        return {}
+
+    from app.services.discovery_candidate_pool import infer_sector_label_from_discovery_keywords
+
+    user_by_code: dict[str, str] = {}
+    try:
+        for row in list_fund_primary_sectors():
+            code = str(row.get("fund_code", "")).zfill(6)
+            label = str(row.get("sector_name") or "").strip()
+            if code in normalized_codes and _is_valid_sector_label(label):
+                user_by_code[code] = label
+    except RuntimeError:
+        pass
+
+    global_by_code: dict[str, str] = {}
+    for code, row in get_fund_primary_sectors_global_by_codes(set(normalized_codes)).items():
+        if not is_global_sector_fresh(row):
+            continue
+        label = str(row.get("sector_name") or "").strip()
+        if _is_valid_sector_label(label):
+            global_by_code[code] = label
+
+    resolved: dict[str, str] = {}
+    for code, fund_name in normalized_codes.items():
+        if code in user_by_code:
+            resolved[code] = user_by_code[code]
+            continue
+        if code in global_by_code:
+            resolved[code] = global_by_code[code]
+            continue
+        record = resolve_primary_sector(
+            code,
+            fund_name=fund_name or None,
+            allow_name_infer=True,
+            fetch_benchmark=fetch_benchmark,
+        )
+        if record and _is_valid_sector_label(record.sector_name):
+            resolved[code] = record.sector_name
+            continue
+        resolved[code] = infer_sector_label_from_discovery_keywords(fund_name)
+    return resolved
+
+
 def primary_sector_fields_for_holding(
     holding: Holding,
     *,
     fallback_code: str | None = None,
     allow_name_infer: bool = False,
     fetch_benchmark: bool = True,
+    fetch_holdings_infer: bool = False,
 ) -> dict[str, str]:
     if _is_valid_sector_label(holding.sector_name):
         return {}
@@ -223,6 +242,7 @@ def primary_sector_fields_for_holding(
         fund_name=holding.fund_name,
         allow_name_infer=allow_name_infer,
         fetch_benchmark=fetch_benchmark,
+        fetch_holdings_infer=fetch_holdings_infer,
     )
     if record is None:
         return {}
@@ -300,8 +320,9 @@ def refresh_benchmark_sectors_for_holdings(
     holdings: list[Holding],
     *,
     fetch_missing_benchmark: bool = True,
+    fetch_holdings_infer: bool = False,
 ) -> list[Holding]:
-    """板块刷新前：为指数型基金拉业绩基准并覆盖不可靠的总览/名称推断板块。"""
+    """板块刷新前：拉业绩基准；仍无板块时可选重仓行业穿透。"""
     refreshed: list[Holding] = []
     for holding in holdings:
         code = (holding.fund_code or "").strip()
@@ -315,49 +336,47 @@ def refresh_benchmark_sectors_for_holdings(
         if row and str(row.get("source") or "") == "benchmark_index":
             refreshed.append(apply_primary_sector_to_holding(holding, fetch_benchmark=False))
             continue
-        if not fetch_missing_benchmark:
+        if not fetch_missing_benchmark and not fetch_holdings_infer:
             refreshed.append(holding)
             continue
-        refreshed.append(
-            apply_primary_sector_to_holding(
-                holding,
-                fetch_benchmark=fetch_missing_benchmark,
-            )
+        updated = apply_primary_sector_to_holding(
+            holding,
+            fetch_benchmark=fetch_missing_benchmark,
         )
+        if (
+            fetch_holdings_infer
+            and not _is_valid_sector_label(updated.sector_name)
+        ):
+            record = _resolve_from_holdings_infer(code, persist=True)
+            if record is not None:
+                fields: dict[str, str] = {"sector_name": record.sector_name}
+                if record.intraday_index_name and not updated.intraday_index_name:
+                    fields["intraday_index_name"] = record.intraday_index_name
+                updated = updated.model_copy(update=fields)
+        refreshed.append(updated)
     return refreshed
 
 
 def recommend_sector_from_holdings(fund_code: str) -> PrimarySectorRecord | None:
+    return _resolve_from_holdings_infer(fund_code, persist=True)
+
+
+def _resolve_from_holdings_infer(fund_code: str, *, persist: bool = True) -> PrimarySectorRecord | None:
+    from app.services.fund_holdings_sector_infer import (
+        fetch_portfolio_stocks_with_industry,
+        infer_sector_from_portfolio_stocks,
+    )
+
     code = fund_code.strip().zfill(6)
-    payload = _fetch_holdings_subprocess(code)
-    if not payload:
+    stocks = fetch_portfolio_stocks_with_industry(code)
+    if not stocks:
         return None
 
-    scores: dict[str, float] = {}
-    evidence: list[dict] = []
-    for item in payload:
-        name = str(item.get("name", "")).strip()
-        weight = float(item.get("weight", 0) or 0)
-        if not name or weight <= 0:
-            continue
-        matched_labels: set[str] = set()
-        for label, keywords in _SECTOR_STOCK_KEYWORDS.items():
-            if any(keyword in name for keyword in keywords):
-                scores[label] = scores.get(label, 0.0) + weight
-                matched_labels.add(label)
-        if matched_labels:
-            evidence.append({"stock": name, "weight": weight, "labels": sorted(matched_labels)})
-
-    if not scores:
+    inferred = infer_sector_from_portfolio_stocks(code, stocks)
+    if inferred is None:
         return None
 
-    sector_name = max(scores, key=lambda key: scores[key])
-    if scores[sector_name] < 8.0:
-        return None
-
-    if not get_canonical_sector(sector_name):
-        return None
-
+    sector_name, scores, evidence = inferred
     confidence = min(0.92, round(scores[sector_name] / 100.0 + 0.5, 2))
     from app.services.fund_profile import infer_intraday_index_from_sector
 
@@ -372,16 +391,21 @@ def recommend_sector_from_holdings(fund_code: str) -> PrimarySectorRecord | None
         detail={"scores": scores, "evidence": evidence[:8]},
     )
 
-    existing = get_fund_primary_sector(code)
-    if not existing or _SOURCE_PRIORITY.get(existing.get("source", ""), 0) <= _SOURCE_PRIORITY["holdings_infer"]:
-        save_fund_primary_sector(
-            fund_code=code,
-            sector_name=sector_name,
-            intraday_index_name=index_name,
-            source="holdings_infer",
-            confidence=confidence,
-            detail=record.detail,
-        )
+    if persist:
+        existing = get_fund_primary_sector(code)
+        if try_get_request_user_id() is not None and (
+            not existing
+            or _SOURCE_PRIORITY.get(existing.get("source", ""), 0) <= _SOURCE_PRIORITY["holdings_infer"]
+        ):
+            save_fund_primary_sector(
+                fund_code=code,
+                sector_name=sector_name,
+                intraday_index_name=index_name,
+                source="holdings_infer",
+                confidence=confidence,
+                detail=record.detail,
+            )
+        promote_record_to_global(record)
     return record
 
 
@@ -406,70 +430,23 @@ def sync_primary_sectors_from_profiles(profiles: list[FundProfile]) -> int:
     return synced
 
 
-def _fetch_holdings_subprocess(fund_code: str) -> list[dict] | None:
-    script = r"""
-import json
-import sys
-from datetime import datetime
-
-import akshare as ak
-
-code = sys.argv[1]
-years = [str(datetime.now().year), str(datetime.now().year - 1)]
-rows = []
-for year in years:
-    try:
-        frame = ak.fund_portfolio_hold_em(symbol=code, date=year)
-    except Exception:
-        continue
-    if frame is None or frame.empty:
-        continue
-    name_col = "股票名称" if "股票名称" in frame.columns else frame.columns[1]
-    weight_col = "占净值比例" if "占净值比例" in frame.columns else None
-    if weight_col is None:
-        for col in frame.columns:
-            if "比例" in str(col) or "占比" in str(col):
-                weight_col = col
-                break
-    if weight_col is None:
-        continue
-    for _, row in frame.head(10).iterrows():
-        name = str(row[name_col]).strip()
-        try:
-            weight = float(row[weight_col])
-        except Exception:
-            weight = 0.0
-        if name:
-            rows.append({"name": name, "weight": weight})
-    if rows:
-        break
-print(json.dumps(rows, ensure_ascii=False))
-"""
-    try:
-        completed = subprocess.run(
-            [sys.executable, "-c", script, fund_code],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=_SUBPROCESS_TIMEOUT,
-            check=False,
-        )
-        if completed.returncode != 0 or not completed.stdout.strip():
-            return None
-        payload = json.loads(completed.stdout.strip())
-        return payload if isinstance(payload, list) else None
-    except Exception:
-        logger.exception("fund holdings fetch failed for %s", fund_code)
-        return None
-
-
-def _resolve_from_benchmark_index(fund_code: str, *, fetch: bool = True) -> PrimarySectorRecord | None:
+def _resolve_from_benchmark_index(
+    fund_code: str,
+    *,
+    fetch: bool = True,
+    persist_user: bool = True,
+    promote_global: bool = True,
+) -> PrimarySectorRecord | None:
     from app.services.fund_benchmark_sector import fetch_fund_benchmark_text, resolve_sector_from_benchmark
 
-    existing = get_fund_primary_sector(fund_code)
-    if existing and str(existing.get("source") or "") == "benchmark_index":
-        return _record_from_row(existing)
+    global_row = load_fresh_global_sector(fund_code)
+    if global_row:
+        return _record_from_row({**global_row, "fund_code": fund_code.strip().zfill(6)})
+
+    if persist_user and try_get_request_user_id() is not None:
+        existing = get_fund_primary_sector(fund_code)
+        if existing and str(existing.get("source") or "") == "benchmark_index":
+            return _record_from_row(existing)
 
     if not fetch:
         return None
@@ -492,8 +469,9 @@ def _resolve_from_benchmark_index(fund_code: str, *, fetch: bool = True) -> Prim
             _remember_benchmark_miss(fund_code)
             return None
 
+    code = fund_code.strip().zfill(6)
     record = PrimarySectorRecord(
-        fund_code=fund_code,
+        fund_code=code,
         sector_name=sector_name,
         intraday_index_name=intraday_index_name,
         source="benchmark_index",
@@ -504,16 +482,19 @@ def _resolve_from_benchmark_index(fund_code: str, *, fetch: bool = True) -> Prim
             "benchmark_text": match.benchmark_text[:240],
         },
     )
-    existing = get_fund_primary_sector(fund_code)
-    if _can_upsert_primary_sector(existing, "benchmark_index"):
-        save_fund_primary_sector(
-            fund_code=fund_code,
-            sector_name=sector_name,
-            intraday_index_name=intraday_index_name,
-            source="benchmark_index",
-            confidence=record.confidence,
-            detail=record.detail,
-        )
+    if persist_user and try_get_request_user_id() is not None:
+        existing = get_fund_primary_sector(code)
+        if _can_upsert_primary_sector(existing, "benchmark_index"):
+            save_fund_primary_sector(
+                fund_code=code,
+                sector_name=sector_name,
+                intraday_index_name=intraday_index_name,
+                source="benchmark_index",
+                confidence=record.confidence,
+                detail=record.detail,
+            )
+    if promote_global:
+        promote_record_to_global(record)
     _benchmark_miss_cache.pop(fund_code, None)
     return record
 
@@ -563,10 +544,9 @@ def _record_to_dict(record: PrimarySectorRecord | None) -> dict | None:
 
 
 def primary_sector_row_for_api(fund_code: str, *, fund_name: str | None = None) -> dict:
-    record = resolve_primary_sector(fund_code, fund_name=fund_name)
+    record = resolve_primary_sector(fund_code, fund_name=fund_name, fetch_benchmark=True)
     return {
         "fund_code": fund_code.strip().zfill(6),
         "mapping": _record_to_dict(record),
-        "seed_available": fund_code.strip().zfill(6) in GLOBAL_FUND_SECTOR_SEEDS,
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }

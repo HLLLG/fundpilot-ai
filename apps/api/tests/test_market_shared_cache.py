@@ -1,24 +1,28 @@
 """共享市场快照：全用户读同一份服务端缓存。"""
 
-from app.services.market_shared_refresh import (
-    _A_SHARE_LIVE_SESSIONS,
+from datetime import datetime, timedelta, timezone
+
+from app.services.market_shared_refresh import (    _A_SHARE_LIVE_SESSIONS,
     _US_LIVE_SESSIONS,
     _idle_interval_seconds,
     _live_interval_seconds,
+    _poll_seconds,
 )
 from app.services.dip_radar_snapshot import get_dip_radar_snapshot
-from app.services.sector_board_snapshot import get_sector_board_snapshot
-from app.services.sector_quote_cache import save_spot_snapshot
+from app.services.sector_quote_cache import (
+    mark_process_boot,
+    save_spot_snapshot,
+    snapshot_refreshed_before_process_boot,
+)
 from app.services.theme_board_snapshot import (
-    _MARKET_REFRESH_SESSIONS,
     get_theme_board_snapshot,
 )
 
 
-def test_market_refresh_sessions_exclude_after_close():
-    assert "trading_day_after_close" not in _MARKET_REFRESH_SESSIONS
-    assert "non_trading_day" not in _MARKET_REFRESH_SESSIONS
-    assert "trading_day_intraday" in _MARKET_REFRESH_SESSIONS
+def test_a_share_live_sessions_for_refresh():
+    assert "trading_day_intraday" in _A_SHARE_LIVE_SESSIONS
+    assert "trading_day_pre_close" in _A_SHARE_LIVE_SESSIONS
+    assert "trading_day_after_close" not in _A_SHARE_LIVE_SESSIONS
 
 
 def test_a_share_and_us_live_sessions_distinct():
@@ -31,50 +35,68 @@ def test_a_share_and_us_live_sessions_distinct():
 def test_market_shared_interval_defaults():
     live = _live_interval_seconds()
     idle = _idle_interval_seconds()
+    poll = _poll_seconds()
     assert live >= 60
     assert idle >= live
     assert idle >= 300
+    assert poll <= live
+    assert poll <= 60.0
 
 
-def test_sector_board_serves_stale_without_network(monkeypatch):
-    cache_key = "market:sector_boards:v2:2026-06-25"
-    payload = {
-        "trade_date": "2026-06-25",
+def test_snapshot_refreshed_before_process_boot():
+    boot = mark_process_boot()
+    assert snapshot_refreshed_before_process_boot(None) is True
+    assert snapshot_refreshed_before_process_boot(
+        (boot.replace(microsecond=0) - timedelta(seconds=1)).isoformat()
+    ) is True
+    assert snapshot_refreshed_before_process_boot(
+        datetime.now(timezone.utc).isoformat()
+    ) is False
+
+
+def test_theme_board_refreshes_cache_from_prior_process(monkeypatch):
+    mark_process_boot()
+    trade_date = "2026-06-25"
+    cache_key = f"theme:boards:v5:{trade_date}"
+    save_spot_snapshot(
+        cache_key,
+        {
+            "items": [{"sector_label": "旧数据", "change_1d_percent": 0.1}],
+            "trade_date": trade_date,
+            "session_kind": "trading_day_intraday",
+            "refreshed_at": "2020-01-01T00:00:00+00:00",
+        },
+    )
+    refreshed = {
+        "items": [{"sector_label": "新数据", "change_1d_percent": 9.9}],
+        "trade_date": trade_date,
         "session_kind": "trading_day_intraday",
-        "industry": [{"name": "半导体", "code": "BK1036", "change_percent": 1.2, "main_force_net_yi": 1.0}],
-        "concept": [],
+        "refreshed_at": datetime.now(timezone.utc).isoformat(),
     }
-    save_spot_snapshot(cache_key, payload)
-
-    def _should_not_fetch(*_args, **_kwargs):
-        raise AssertionError("network fetch should not run when stale cache exists")
 
     monkeypatch.setattr(
-        "app.services.sector_board_snapshot.build_trading_session",
+        "app.services.theme_board_snapshot.build_trading_session",
         lambda: {
-            "effective_trade_date": "2026-06-25",
+            "effective_trade_date": trade_date,
             "session_kind": "trading_day_intraday",
         },
     )
     monkeypatch.setattr(
-        "app.services.sector_board_snapshot._fetch_all_board_records_parallel",
-        _should_not_fetch,
+        "app.services.theme_board_snapshot.refresh_theme_board_snapshot",
+        lambda **_: refreshed,
     )
 
-    monkeypatch.setattr(
-        "app.services.sector_board_snapshot.get_spot_snapshot",
-        lambda *_args, **_kwargs: None,
-    )
-
-    result = get_sector_board_snapshot(force_refresh=False)
-    assert result["from_cache"] is True
-    assert result["stale"] is True
-    assert result["industry"][0]["name"] == "半导体"
+    payload = get_theme_board_snapshot(force_refresh=False, holdings=[], sort="change")
+    assert payload["from_cache"] is False
+    assert payload["items"][0]["sector_label"] == "新数据"
 
 
 def test_theme_boards_read_from_cache_without_refresh(monkeypatch):
+    from app.services.sector_quote_cache import mark_process_boot
+
+    mark_process_boot()
     trade_date = "2026-06-25"
-    cache_key = f"theme:boards:v3:{trade_date}"
+    cache_key = f"theme:boards:v5:{trade_date}"
     save_spot_snapshot(
         cache_key,
         {
@@ -90,7 +112,7 @@ def test_theme_boards_read_from_cache_without_refresh(monkeypatch):
             ],
             "trade_date": trade_date,
             "session_kind": "trading_day_after_close",
-            "refreshed_at": "2026-06-25T08:00:00+00:00",
+            "refreshed_at": "2099-01-01T00:00:00+00:00",
         },
     )
 
@@ -105,10 +127,6 @@ def test_theme_boards_read_from_cache_without_refresh(monkeypatch):
         "app.services.theme_board_snapshot.refresh_theme_board_snapshot",
         lambda **_: (_ for _ in ()).throw(AssertionError("should not sync refresh")),
     )
-    monkeypatch.setattr(
-        "app.services.theme_board_snapshot.apply_flow_to_items",
-        lambda items: items,
-    )
 
     payload = get_theme_board_snapshot(force_refresh=False, holdings=[], sort="change")
     assert payload["from_cache"] is True
@@ -116,13 +134,15 @@ def test_theme_boards_read_from_cache_without_refresh(monkeypatch):
 
 
 def test_dip_radar_serves_stale_without_network(monkeypatch):
+    mark_process_boot()
     trade_date = "2026-06-25"
-    cache_key = f"dip:radar:v1:{trade_date}:5"
+    cache_key = f"dip:radar:v2:{trade_date}:5"
     save_spot_snapshot(
         cache_key,
         {
             "trade_date": trade_date,
             "lookback_days": 5,
+            "refreshed_at": datetime.now(timezone.utc).isoformat(),
             "items": [
                 {
                     "fund_code": "000001",

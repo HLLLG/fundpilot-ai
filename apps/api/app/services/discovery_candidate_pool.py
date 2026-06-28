@@ -10,7 +10,6 @@ from app.services.discovery_selection_strategy import (
 )
 from app.services.fund_code_resolver import lookup_fund_name_by_code
 from app.services.fund_data import FundDataService, _map_holdings_concurrently
-from app.services.fund_primary_sector_service import GLOBAL_FUND_SECTOR_SEEDS
 from app.services.sector_canonical import get_canonical_sector
 from app.services.akshare_subprocess import fetch_new_fund_offerings
 from app.services.fund_rank_cache import fetch_open_fund_rank_cached
@@ -117,22 +116,6 @@ def _candidates_for_sector(
     canon = get_canonical_sector(sector_label)
     keywords = _sector_keywords(sector_label, canon)
     fixed_entries: list[dict] = []
-
-    for code, seed in GLOBAL_FUND_SECTOR_SEEDS.items():
-        if seed.get("sector_name") != sector_label:
-            continue
-        normalized = code.zfill(6)
-        if normalized in excluded or normalized in seen_codes:
-            continue
-        fixed_entries.append(
-            {
-                "fund_code": normalized,
-                "fund_name": _resolve_fund_name(normalized),
-                "sector_label": sector_label,
-                "selection_reason": "全局种子",
-            }
-        )
-        seen_codes.add(normalized)
 
     for row in primary_rows:
         if row.get("sector_name") != sector_label:
@@ -267,6 +250,21 @@ def _sector_keywords(sector_label: str, canon) -> tuple[str, ...]:
 def _name_matches_sector(name: str, keywords: tuple[str, ...]) -> bool:
     text = name.strip()
     return any(keyword in text for keyword in keywords if keyword)
+
+
+def infer_sector_label_from_discovery_keywords(fund_name: str) -> str:
+    """基金名称关键词 → discovery 板块 label；无匹配时返回「综合」。"""
+    from app.services.sector_registry import list_discovery_sector_labels
+
+    name = (fund_name or "").strip()
+    if not name:
+        return "综合"
+    for label in list_discovery_sector_labels():
+        canon = get_canonical_sector(label)
+        keywords = _sector_keywords(label, canon)
+        if _name_matches_sector(name, keywords):
+            return label
+    return "综合"
 
 
 def _passes_quality(row: dict) -> bool:

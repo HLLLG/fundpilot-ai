@@ -5,7 +5,7 @@ import sqlite3
 from datetime import datetime, timezone
 
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 
 def _now() -> str:
@@ -249,6 +249,30 @@ def _migrate_fund_primary_sectors(connection: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_fund_primary_sectors_global(connection: sqlite3.Connection) -> None:
+    if _table_exists(connection, "fund_primary_sectors_global"):
+        return
+    connection.execute(
+        """
+        CREATE TABLE fund_primary_sectors_global (
+            fund_code TEXT PRIMARY KEY,
+            sector_name TEXT NOT NULL,
+            intraday_index_name TEXT,
+            source TEXT NOT NULL,
+            confidence REAL,
+            detail TEXT,
+            resolved_at TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_fund_primary_sectors_global_resolved
+        ON fund_primary_sectors_global (resolved_at DESC)
+        """
+    )
+
+
 def _migrate_analysis_prompt_state(connection: sqlite3.Connection) -> None:
     if _table_exists(connection, "analysis_prompt_state"):
         return
@@ -413,6 +437,7 @@ def run_migrations(connection: sqlite3.Connection) -> None:
     _migrate_discovery_tables(connection)
     _migrate_discovery_prompt_state(connection)
     _migrate_swing_alert_fired(connection)
+    _migrate_fund_primary_sectors_global(connection)
 
     _ensure_migration_user(connection)
     _set_schema_version(connection, SCHEMA_VERSION)

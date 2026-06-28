@@ -35,6 +35,7 @@ from app.database import (
     get_investor_profile,
     get_analysis_role_prompt,
     get_discovery_role_prompt,
+    get_most_recent_portfolio_snapshot,
     get_ocr_text_cache,
     get_previous_discovery_report,
     get_previous_report,
@@ -42,6 +43,7 @@ from app.database import (
     import_database_file,
     list_discovery_chat_messages,
     list_discovery_reports,
+    list_portfolio_daily_snapshots,
     list_reports,
     save_analysis_role_prompt,
     save_discovery_role_prompt,
@@ -100,6 +102,7 @@ from app.services.portfolio_snapshot import (
     build_dashboard_payload,
     build_factor_scores_payload,
     build_risk_correlation_payload,
+    build_risk_metrics_payload,
 )
 from app.services.job_status_service import resolve_job_status_single_connection
 from app.services.job_store import create_analysis_job
@@ -112,11 +115,6 @@ from app.services.discovery_outcomes import (
     build_discovery_recommendation_accuracy,
 )
 from app.services.discovery_sector_heat import build_sector_heat_ranking, build_sector_heat_ranking_for_ui
-from app.services.sector_board_snapshot import (
-    build_list_payload,
-    build_widget_payload,
-    get_sector_board_snapshot,
-)
 from app.services.dip_radar_snapshot import get_dip_radar_snapshot
 from app.services.board_fund_flow_history import get_board_flow_history
 from app.services.theme_board_snapshot import get_theme_board_snapshot
@@ -656,32 +654,13 @@ def market_sector_labels() -> dict:
     return {"labels": list_theme_board_labels()}
 
 
-@app.get("/api/market/sector-boards")
-def market_sector_boards(
-    view: str = "widget",
-    board_type: str = "industry",
-    sort: str = "change",
-    force_refresh: bool = False,
-) -> dict:
-    snapshot = get_sector_board_snapshot(force_refresh=force_refresh)
-    if view == "list":
-        if board_type not in {"industry", "concept"}:
-            raise HTTPException(status_code=400, detail="board_type 须为 industry 或 concept")
-        if sort not in {"change", "inflow"}:
-            raise HTTPException(status_code=400, detail="sort 须为 change 或 inflow")
-        return build_list_payload(snapshot, board_type=board_type, sort=sort)  # type: ignore[arg-type]
-    if view != "widget":
-        raise HTTPException(status_code=400, detail="view 须为 widget 或 list")
-    return build_widget_payload(snapshot)
-
-
 @app.get("/api/market/theme-boards")
 def market_theme_boards(
     sort: str = "change",
     force_refresh: bool = False,
 ) -> dict:
-    if sort not in {"change", "streak", "inflow"}:
-        raise HTTPException(status_code=400, detail="sort 须为 change、streak 或 inflow")
+    if sort not in {"change", "inflow"}:
+        raise HTTPException(status_code=400, detail="sort 须为 change 或 inflow")
     holdings: list = []
     if get_request_user_id() is not None:
         loaded, _, _, _ = load_persisted_holdings()
@@ -1253,6 +1232,19 @@ def portfolio_dashboard(
     )
     payload["profiles"] = [profile.model_dump(mode="json") for profile in profiles]
     return payload
+
+
+@app.get("/api/portfolio/risk-metrics")
+def portfolio_risk_metrics() -> dict:
+    """组合风险体检（懒加载）：日快照 + 沪深300 对齐后计算 Beta/Alpha 等。"""
+    history_rows = list_portfolio_daily_snapshots(limit=400, include_holdings=False)
+    latest = get_most_recent_portfolio_snapshot()
+    holdings_models = (
+        [Holding.model_validate(item) for item in latest.get("holdings", [])]
+        if latest and latest.get("holdings")
+        else []
+    )
+    return build_risk_metrics_payload(history_rows, holdings_models)
 
 
 @app.get("/api/portfolio/risk-correlation")

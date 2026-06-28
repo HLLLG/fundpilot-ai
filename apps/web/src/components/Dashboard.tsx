@@ -68,6 +68,7 @@ import {
   displayableHoldings,
   findHoldingIndex,
   mergeHoldingsPreserveQuoteFields,
+  mergeHoldingsAppend,
   sumDailyProfit,
   sumPortfolioTotalAssets,
   type HoldingIdentity,
@@ -504,6 +505,7 @@ export function Dashboard() {
     }
     refreshAfterApplyRef.current = false;
     void hydratePortfolio();
+    void sectorRefresh.refresh(false, "fast");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [holdings]);
 
@@ -953,18 +955,19 @@ export function Dashboard() {
     }
     const toApply = pendingOcrHoldings;
     const previousHoldings = holdings;
+    const mergedToApply = mergeHoldingsAppend(previousHoldings, toApply);
 
     setPendingOcrHoldings(null);
     setPendingOcrResolutions([]);
     setPendingOcrNote(null);
     setPendingOcrSource(null);
     setActiveTab("holdings");
-    setHoldings(mergeHoldingsPreserveQuoteFields(previousHoldings, toApply));
+    setHoldings(mergeHoldingsPreserveQuoteFields(previousHoldings, mergedToApply));
     refreshAfterApplyRef.current = true;
 
     void (async () => {
       try {
-        const applied = await applyPortfolioHoldings(toApply);
+        const applied = await applyPortfolioHoldings(mergedToApply);
         setHoldings(mergeHoldingsPreserveQuoteFields(previousHoldings, applied.holdings));
         if (applied.portfolio_summary) {
           setPortfolioSummary((current) => {
@@ -1218,7 +1221,9 @@ export function Dashboard() {
             </div>
           ) : null}
 
-          {activeTab === "dashboard" ? <PortfolioDashboard /> : null}
+          {activeTab === "dashboard" ? (
+            <PortfolioDashboard fallbackSummary={portfolioSummary} />
+          ) : null}
 
           {activeTab === "market" ? <MarketTab /> : null}
 

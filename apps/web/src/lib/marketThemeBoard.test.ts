@@ -17,7 +17,7 @@ import {
 
 describe("marketThemeBoard formatters", () => {
   it("uses fixed gainers heading", () => {
-    expect(themeBoardHeading()).toBe("今日板块涨幅榜");
+    expect(themeBoardHeading()).toBe("主题板块涨跌");
   });
 
   it("formats rank with leading zero", () => {

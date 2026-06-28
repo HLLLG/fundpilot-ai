@@ -139,6 +139,18 @@ def ensure_mysql_schema(connection: Any) -> None:
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """,
         """
+        CREATE TABLE IF NOT EXISTS fund_primary_sectors_global (
+            fund_code VARCHAR(16) NOT NULL PRIMARY KEY,
+            sector_name VARCHAR(255) NOT NULL,
+            intraday_index_name VARCHAR(255) NULL,
+            source VARCHAR(64) NOT NULL,
+            confidence DOUBLE NULL,
+            detail LONGTEXT NULL,
+            resolved_at VARCHAR(64) NOT NULL,
+            INDEX idx_fund_primary_sectors_global_resolved (resolved_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """,
+        """
         CREATE TABLE IF NOT EXISTS ocr_text_cache (
             userId BIGINT NOT NULL,
             cache_key VARCHAR(255) NOT NULL,
