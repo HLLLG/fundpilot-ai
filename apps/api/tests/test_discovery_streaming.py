@@ -274,6 +274,14 @@ def test_stream_discovery_prefetches_news_while_building_candidates(
         "app.services.discovery_streaming.select_target_sectors",
         lambda holdings, focus, heat, profile, scan_mode: ["半导体"],
     )
+    monkeypatch.setattr(
+        "app.services.discovery_streaming.build_sector_flow_map_for_opportunities",
+        lambda *_args, **_kwargs: {},
+    )
+    monkeypatch.setattr(
+        "app.services.discovery_streaming.build_sector_position_map_for_opportunities",
+        lambda *_args, **_kwargs: {},
+    )
 
     def slow_candidate_pool(*args, **kwargs):
         time.sleep(0.35)

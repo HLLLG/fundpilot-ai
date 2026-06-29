@@ -64,8 +64,16 @@ def get_cached_official_nav_return(fund_code: str, trade_date: str) -> float | N
     return persisted
 
 
-def prime_official_nav_cache(fund_codes: list[str], trade_date: str) -> dict[str, float]:
-    """批量预热官方净值涨跌幅/单位净值缓存，避免逐只基金启动 AkShare 子进程。"""
+def prime_official_nav_cache(
+    fund_codes: list[str],
+    trade_date: str,
+    *,
+    cache_only: bool = False,
+) -> dict[str, float]:
+    """批量预热官方净值涨跌幅/单位净值缓存，避免逐只基金启动 AkShare 子进程。
+
+    ``cache_only=True`` 时仅读取已有缓存，不触发 AkShare 拉取（冷启动快照 / OCR 快速确认路径）。
+    """
     codes = sorted(
         {
             str(code).strip().zfill(6)
@@ -86,7 +94,7 @@ def prime_official_nav_cache(fund_codes: list[str], trade_date: str) -> dict[str
             continue
         missing.append(code)
 
-    if not missing:
+    if not missing or cache_only:
         return resolved
 
     payload = fetch_fund_daily_nav_returns(missing, trade_date)

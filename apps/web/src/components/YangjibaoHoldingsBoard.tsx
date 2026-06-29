@@ -22,7 +22,6 @@ import {
   resolveSectorBoardReturnPercent,
   sumDailyProfit,
   sumPortfolioTotalAssets,
-  displayableHoldings,
   navigableHoldings,
   holdingIdentityKey,
   type HoldingIdentity,

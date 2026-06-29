@@ -187,7 +187,6 @@ export function Dashboard() {
   const [holdingsPollIntervalMs, setHoldingsPollIntervalMs] = useState(180_000);
   const backgroundJobActiveRef = useRef(false);
   const holdingsForPrefetchRef = useRef(holdings);
-  holdingsForPrefetchRef.current = holdings;
   const holdingsPrefetchKey = useMemo(
     () =>
       displayableHoldings(holdings)
@@ -537,6 +536,10 @@ export function Dashboard() {
     }
     setHoldingsRefreshedAt(sectorRefresh.lastFetchedAt);
   }, [sectorRefresh.lastFetchedAt]);
+
+  useEffect(() => {
+    holdingsForPrefetchRef.current = holdings;
+  }, [holdings]);
 
   useEffect(() => {
     if (activeTab !== "holdings" || holdingsForPrefetchRef.current.length === 0) {

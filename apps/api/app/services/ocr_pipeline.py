@@ -271,7 +271,7 @@ def apply_confirmed_holdings(
         and not _holding_has_ocr_official_daily(item)
     ]
     if fund_codes_needing_prime:
-        prime_official_nav_cache(fund_codes_needing_prime, trade_date)
+        prime_official_nav_cache(fund_codes_needing_prime, trade_date, cache_only=True)
     processed = [
         holding
         if _holding_has_ocr_official_daily(holding)

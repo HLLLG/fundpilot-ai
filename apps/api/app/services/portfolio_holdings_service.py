@@ -264,7 +264,7 @@ def build_fast_snapshot_holdings_response() -> dict | None:
     ]
     from app.services.fund_nav_service import prime_official_nav_cache
 
-    prime_official_nav_cache(fund_codes, trade_date)
+    prime_official_nav_cache(fund_codes, trade_date, cache_only=True)
     holdings = sync_holding_amounts_from_shares(
         holdings,
         persist_profiles=False,

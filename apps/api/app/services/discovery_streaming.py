@@ -62,10 +62,24 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
             target_sectors,
             list(request.focus_sectors),
         )
-        with ThreadPoolExecutor(
-            max_workers=2,
-            thread_name_prefix="discovery-opportunity-context",
-        ) as executor:
+        topics = list(dict.fromkeys(target_sectors + list(request.focus_sectors)))
+        if not topics:
+            topics = ["上证指数"]
+        news_service = NewsService()
+        per_sector = 3 if request.scan_mode == "full_market" else 5
+        pool_cap = 25
+        held_codes = {h.fund_code.strip().zfill(6) for h in holdings if h.fund_code}
+
+        selection_strategy = request.selection_strategy
+        if request.scan_mode == "dip_swing":
+            selection_strategy = "dip_rebound"
+
+        with ThreadPoolExecutor(max_workers=3, thread_name_prefix="discovery-prep") as executor:
+            news_future = executor.submit(
+                run_with_request_user,
+                user_id,
+                lambda: news_service.prefetch_topics(topics),
+            )
             flow_future = executor.submit(
                 build_sector_flow_map_for_opportunities,
                 sector_heat,
@@ -77,59 +91,48 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
             )
             sector_flow_by_label = flow_future.result()
             sector_position_by_label = position_future.result()
-        sector_opportunities = select_sector_opportunities(
-            sector_heat,
-            sector_flow_by_label=sector_flow_by_label,
-            sector_position_by_label=sector_position_by_label,
-            focus_sectors=list(request.focus_sectors),
-            max_total=8,
-            momentum_slots=4,
-            setup_slots=4,
-        )
-        if sector_opportunities:
-            target_sectors = [str(item["sector_label"]) for item in sector_opportunities]
-        per_sector = 3 if request.scan_mode == "full_market" else 5
-        pool_cap = 25
-        held_codes = {h.fund_code.strip().zfill(6) for h in holdings if h.fund_code}
-
-        selection_strategy = request.selection_strategy
-        if request.scan_mode == "dip_swing":
-            selection_strategy = "dip_rebound"
-
-        topics = list(dict.fromkeys(target_sectors + list(request.focus_sectors)))
-        if not topics:
-            topics = ["上证指数"]
-        news_service = NewsService()
-        yield _stage("news", started_at=started_at)
-        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="discovery-prep") as executor:
-            news_future = executor.submit(
-                run_with_request_user,
-                user_id,
-                lambda: news_service.prefetch_topics(topics),
+            sector_opportunities = select_sector_opportunities(
+                sector_heat,
+                sector_flow_by_label=sector_flow_by_label,
+                sector_position_by_label=sector_position_by_label,
+                focus_sectors=list(request.focus_sectors),
+                max_total=8,
+                momentum_slots=4,
+                setup_slots=4,
             )
+            if sector_opportunities:
+                target_sectors = [str(item["sector_label"]) for item in sector_opportunities]
+            yield _stage("news", started_at=started_at)
             if request.scan_mode == "dip_swing":
                 yield _stage("dip_prescreen", started_at=started_at)
                 from app.services.dip_drop_scanner import build_dip_pool_for_sectors
 
-                pool = build_dip_pool_for_sectors(
-                    target_sectors,
-                    lookback_days=request.dip_lookback_days,
-                    min_drop_percent=request.dip_min_drop_percent,
-                    exclude_codes=held_codes,
+                pool_future = executor.submit(
+                    lambda: enrich_candidates(
+                        build_dip_pool_for_sectors(
+                            target_sectors,
+                            lookback_days=request.dip_lookback_days,
+                            min_drop_percent=request.dip_min_drop_percent,
+                            exclude_codes=held_codes,
+                        )
+                    ),
                 )
-                pool = enrich_candidates(pool)
             else:
                 yield _stage("candidate_pool", started_at=started_at)
-                pool = build_candidate_pool(
-                    target_sectors,
-                    exclude_codes=held_codes,
-                    fund_type_preference=request.fund_type_preference,
-                    selection_strategy=selection_strategy,
-                    per_sector=per_sector,
-                    pool_cap=pool_cap,
-                    sector_opportunities=sector_opportunities,
+                pool_future = executor.submit(
+                    lambda: enrich_candidates(
+                        build_candidate_pool(
+                            target_sectors,
+                            exclude_codes=held_codes,
+                            fund_type_preference=request.fund_type_preference,
+                            selection_strategy=selection_strategy,
+                            per_sector=per_sector,
+                            pool_cap=pool_cap,
+                            sector_opportunities=sector_opportunities,
+                        )
+                    ),
                 )
-                pool = enrich_candidates(pool)
+            pool = pool_future.result()
             market_news = news_future.result()
 
         fund_codes = [

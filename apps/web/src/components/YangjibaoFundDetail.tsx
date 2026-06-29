@@ -459,7 +459,7 @@ export function YangjibaoFundDetail({
     return () => {
       cancelled = true;
     };
-  }, [detailRequestKey, holdingIndex, selectedHolding?.fund_code, userId]);
+  }, [detailRequestKey, holding, holdingIndex, selectedHolding?.fund_code, userId]);
 
   useEffect(() => {
     if (tab !== "sector") {

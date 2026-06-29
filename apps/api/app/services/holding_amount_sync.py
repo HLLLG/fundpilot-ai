@@ -389,7 +389,7 @@ def sync_holding_amounts_from_shares(
     from app.services.fund_nav_service import prime_official_nav_cache
 
     trade_date = get_effective_trade_date()
-    prime_official_nav_cache(sorted(codes), trade_date)
+    prime_official_nav_cache(sorted(codes), trade_date, cache_only=not allow_nav_fetch)
 
     quotes = estimate_quotes
     if quotes is None:
