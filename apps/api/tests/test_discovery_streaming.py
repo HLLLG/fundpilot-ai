@@ -163,6 +163,77 @@ def test_stream_discovery_emits_skeleton_and_done(monkeypatch: pytest.MonkeyPatc
     assert events[-1]["report_id"] == "disc-1"
 
 
+def test_stream_discovery_emits_context_stage_before_model(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("FUND_AI_DEEPSEEK_API_KEY", _FAKE_DEEPSEEK_KEY)
+    refresh_settings()
+    _patch_pipeline(monkeypatch)
+    monkeypatch.setattr(
+        "app.services.discovery_streaming.select_sector_opportunities",
+        lambda heat, **kwargs: [{"sector_label": "半导体", "track": "momentum", "score": 70}],
+    )
+    monkeypatch.setattr(
+        "app.services.discovery_streaming.stream_chat_completion",
+        lambda **kwargs: iter(['{"title":"t","summary":"s","recommendations":[],"caveats":[]}']),
+    )
+    monkeypatch.setattr(
+        "app.services.discovery_streaming.build_discovery_report_from_parsed",
+        lambda parsed, **kwargs: MagicMock(
+            id="ctx-1",
+            model_dump=lambda mode="json": {"id": "ctx-1"},
+        ),
+    )
+
+    events = list(stream_discovery(_request(), user_id=1))
+    labels = [event.get("label", "") for event in events if event.get("type") == "stage"]
+    assert any("整理荐基上下文" in label for label in labels)
+    assert events[-1]["type"] == "done"
+
+
+def test_stream_discovery_passes_position_context_to_sector_opportunities(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("FUND_AI_DEEPSEEK_API_KEY", _FAKE_DEEPSEEK_KEY)
+    refresh_settings()
+    _patch_pipeline(monkeypatch)
+    position_context = {
+        "半导体": {
+            "available": True,
+            "position_label": "pullback_acceptance",
+            "drawdown_from_20d_high_percent": 4.0,
+        }
+    }
+    captured: dict = {}
+    monkeypatch.setattr(
+        "app.services.discovery_streaming.build_sector_position_map_for_opportunities",
+        lambda labels: position_context,
+    )
+
+    def fake_select(heat, **kwargs):
+        captured.update(kwargs)
+        return [{"sector_label": "半导体", "track": "momentum", "score": 70}]
+
+    monkeypatch.setattr(
+        "app.services.discovery_streaming.select_sector_opportunities",
+        fake_select,
+    )
+    monkeypatch.setattr(
+        "app.services.discovery_streaming.stream_chat_completion",
+        lambda **kwargs: iter(['{"title":"t","summary":"s","recommendations":[],"caveats":[]}']),
+    )
+    monkeypatch.setattr(
+        "app.services.discovery_streaming.build_discovery_report_from_parsed",
+        lambda parsed, **kwargs: MagicMock(
+            id="position-ctx-1",
+            model_dump=lambda mode="json": {"id": "position-ctx-1"},
+        ),
+    )
+
+    events = list(stream_discovery(_request(), user_id=1))
+
+    assert events[-1]["type"] == "done"
+    assert captured["sector_position_by_label"]["半导体"]["position_label"] == "pullback_acceptance"
+
+
 def test_stream_discovery_handles_llm_failure_with_salvage(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("FUND_AI_DEEPSEEK_API_KEY", _FAKE_DEEPSEEK_KEY)
     refresh_settings()

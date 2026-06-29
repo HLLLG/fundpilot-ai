@@ -46,6 +46,7 @@ _COMMON_REQUIREMENTS = [
     "每只 recommendations 须含 hold_horizon、risks（至少 1 条）、points（引用 candidate_pool 具体字段）",
     "estimated_daily_return_percent 且 daily_return_source=sector_estimate 时，points 须注明「估算」",
     "判断追高风险须参考 nav_trend.distance_from_high_percent / trend_label，不得只看 sector_heat",
+    "判断板块追高/回调位置须参考 sector_opportunities 的 position_label / 20日回撤 / 放量比",
     "news_bullish 仅引用 news_titles 或 topic_briefs.points.source_titles；无匹配则 []",
     "suggested_amount_yuan 须结合 available_budget_yuan 与 concentration_limit_percent",
     "引用数字须来自 discovery_facts，禁止编造",
@@ -137,6 +138,9 @@ def build_user_payload(
             "target_sector_context": discovery_facts.get("target_sector_context"),
             "market_flow": discovery_facts.get("market_flow"),
             "signal_backtest": discovery_facts.get("signal_backtest"),
+            "sector_opportunities": _slim_sector_opportunities(
+                discovery_facts.get("sector_opportunities") or []
+            ),
             "news": discovery_facts.get("news"),
             "candidate_factor_scores": discovery_facts.get("candidate_factor_scores"),
             "selection_strategy": discovery_facts.get("selection_strategy"),
@@ -149,3 +153,37 @@ def build_user_payload(
 
 def append_output_requirements_to_system(system_prompt: str) -> str:
     return system_prompt.rstrip() + "\n\n" + OUTPUT_DISCOVERY_REQUIREMENTS.strip()
+
+
+def _slim_sector_opportunities(items: list[dict]) -> list[dict]:
+    slimmed: list[dict] = []
+    for item in items[:8]:
+        position = item.get("position_context") or {}
+        row = {
+            "sector_label": item.get("sector_label"),
+            "track": item.get("track"),
+            "score": item.get("score"),
+            "confidence": item.get("confidence"),
+            "entry_hint": item.get("entry_hint"),
+            "evidence": item.get("evidence") or [],
+            "penalties": item.get("penalties") or [],
+            "change_1d_percent": item.get("change_1d_percent"),
+            "change_5d_percent": item.get("change_5d_percent"),
+            "today_main_force_net_yi": item.get("today_main_force_net_yi"),
+            "cumulative_5d_net_yi": item.get("cumulative_5d_net_yi"),
+            "pattern_label": item.get("pattern_label"),
+        }
+        for key in (
+            "position_label",
+            "drawdown_from_20d_high_percent",
+            "distance_from_20d_high_percent",
+            "distance_from_20d_low_percent",
+            "breakout_over_prior_20d_high_percent",
+            "volume_ratio_5d_vs_20d",
+            "up_days_5d",
+            "down_days_5d",
+        ):
+            if key in position:
+                row[key] = position.get(key)
+        slimmed.append(row)
+    return slimmed

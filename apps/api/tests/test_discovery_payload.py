@@ -112,6 +112,41 @@ def test_build_user_payload_includes_daily_report_parity_fields():
     assert "holdings_slim" in joined
 
 
+def test_build_user_payload_includes_sector_opportunities():
+    facts = _discovery_facts()
+    facts["sector_opportunities"] = [
+        {
+            "sector_label": "半导体",
+            "track": "momentum",
+            "score": 81.5,
+            "entry_hint": "可分批关注",
+            "evidence": ["价涨资金配合"],
+            "penalties": [],
+            "position_context": {
+                "position_label": "pullback_acceptance",
+                "drawdown_from_20d_high_percent": 4.17,
+                "distance_from_20d_high_percent": -4.17,
+                "distance_from_20d_low_percent": 15.0,
+                "volume_ratio_5d_vs_20d": 1.18,
+                "up_days_5d": 2,
+                "down_days_5d": 3,
+            },
+        }
+    ]
+    payload = build_user_payload(
+        discovery_facts=facts,
+        profile=_profile(),
+        focus_sectors=["半导体"],
+    )
+    opportunities = payload["discovery_facts"]["sector_opportunities"]
+    assert opportunities[0]["sector_label"] == "半导体"
+    assert opportunities[0]["track"] == "momentum"
+    assert opportunities[0]["entry_hint"] == "可分批关注"
+    assert opportunities[0]["position_label"] == "pullback_acceptance"
+    assert opportunities[0]["drawdown_from_20d_high_percent"] == 4.17
+    assert opportunities[0]["volume_ratio_5d_vs_20d"] == 1.18
+
+
 def test_build_user_payload_fast_mode_uses_minimal_briefs():
     briefs = [
         TopicBrief(
@@ -184,6 +219,35 @@ def test_build_discovery_facts_includes_holdings_slim():
     assert slim[0]["estimated_daily_return_percent"] == 1.2
     assert facts["fund_type_preference"] == "no_c_class"
     assert facts["instruction"] == DISCOVERY_FACTS_INSTRUCTION
+
+
+def test_build_discovery_facts_budget_degrades_slow_signal(monkeypatch):
+    import time
+
+    monkeypatch.setattr("app.services.discovery_facts.SIGNAL_BACKTEST_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr("app.services.discovery_facts.TARGET_SECTOR_CONTEXT_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr("app.services.discovery_facts.MARKET_FLOW_TIMEOUT_SECONDS", 0.01)
+
+    def slow_signal(*_args, **_kwargs):
+        time.sleep(0.08)
+        return {"has_data": True}
+
+    monkeypatch.setattr("app.services.discovery_facts.build_signal_backtest_context", slow_signal)
+
+    start = time.monotonic()
+    facts = build_discovery_facts(
+        holdings=[],
+        profile=_profile(),
+        target_sectors=["半导体"],
+        sector_heat=[],
+        candidate_pool=[],
+        budget_enhancements=True,
+    )
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 0.12
+    assert facts["signal_backtest"]["has_data"] is False
+    assert facts["signal_backtest"]["reason"] == "timeout"
 
 
 def test_dip_swing_requirements_include_short_term_guidance():

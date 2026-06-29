@@ -7,6 +7,8 @@
 **文档版本：** 2026-06-29（市场共享缓存跨进程 stale · holdings 缓存同步）
 
 **更新记录：**
+- **荐基板块位置上下文（2026-06-29）：** 在双轨 `sector_opportunities` 上新增 20 日位置与量能上下文：`position_label`（`high_extended` / `pullback_acceptance` / `base_building` / `early_breakout` / `weak_breakdown`）、距 20 日高/低点、20 日高点回撤、5 日/20 日量比、近 5 日涨跌天数。数据来自现有 canonical 板块日 K（东财/relay/指数兜底；荐基只对前 5 个候选方向启用 AkShare 兜底并受 24s 总预算保护），与板块资金流并行加载；只用于候选方向打分、追高降温、蓄势/突破证据和 LLM 解释，不承诺未来几日必涨。`sector_canonical` 手工映射未命中时会回退 `THEME_BOARD_INDEX`，补足创新药/计算机/恒生科技/港股医药等指数型主题。东财与 AkShare 日 K 解析补充 `volume` / `amount` 供量比计算。单测 `test_discovery_sector_position.py` / `test_discovery_sector_opportunity.py` / `test_sector_daily_kline_provider.py` / `test_eastmoney_daily_kline.py` / `test_discovery_payload.py`。
+- **荐基双轨候选池（2026-06-29）：** 荐基先用主题 1d/5d 与板块主力资金流合成 `sector_opportunities`，按「顺势机会 momentum」与「蓄势观察 setup」双轨均衡选 6~8 个方向；「回调承接」暂作为 `entry_hint` 而非独立取板块轨道。候选池优先按 `fund_primary_sectors_global` / 用户主关联板块反查基金，叠加家族去重、已持有过滤、类型偏好，再交给 LLM 精选。慢 `signal_backtest`、目标板块增强上下文与市场资金流预算化，超时降级继续，避免卡在 AI 分析前上下文阶段。单测 `test_discovery_sector_opportunity.py` / `test_discovery_candidate_pool_opportunity.py` / `test_discovery_payload.py` / `test_discovery_streaming.py`。
 - **市场共享缓存跨进程 stale（2026-06-29）：** 修复 API 进程重启后主题板块/大跌雷达首请求同步打网超时，以及东财不可达时用空 snapshot 覆盖有效磁盘缓存。① **跨进程 stale**：`get_theme_board_snapshot` / `get_dip_radar_snapshot` 对本进程启动前刷新的缓存标 `stale=true` 直接返回，不再同步 `refresh_*` 阻塞请求。② **空写入保护**：`refresh_theme_board_snapshot` 仅当至少一个板块有 live 指标（1d/5d/主力/四档流）才 `save_spot_snapshot`。③ **后台刷新**：`market_shared_refresh_loop` 不再在循环入口预置 `_last_*_refresh_at=now`，首周期可立即尝试刷新。④ **theme-boards 读持仓**：`GET /api/market/theme-boards` 高亮持仓时 `load_persisted_holdings(fetch_benchmark=False)`，避免打开市场 Tab 触发 benchmark 子进程。单测 `test_market_shared_cache.py`。
 - **OCR/板块刷新 holdings 缓存同步（2026-06-29）：** `POST /api/portfolio/apply-holdings` 与 `POST /api/holdings/refresh-sector-quotes` 成功后 `save_cached_holdings_response`；fast 持久化 `sync_holding_amounts_from_shares(estimate_quotes={}, allow_nav_fetch=False)`；OCR apply `skip_network=True`；Dashboard 确认后乐观写 localStorage、不再立即 `hydratePortfolio` 覆盖 stale 行情。单测 `test_apply_holdings_fast_path` / `test_portfolio_sector_refresh` / `Dashboard.applyRefresh.test.ts`。
 - **大跌雷达关联板块（2026-06-28）：** 修复雷达榜单基金几乎全显示「综合」。`dip_drop_scanner.build_dip_radar_pool_fast` 改批量调用 `resolve_sector_labels_for_radar`：用户 `fund_primary_sectors` → TTL 内 `fund_primary_sectors_global` → `resolve_primary_sector`（默认不拉网基准）→ discovery 名称关键词；缓存 key 升 **`dip:radar:v2`**。单测 `test_dip_radar_sector.py`。
@@ -705,7 +707,7 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 |------|------|
 | `today` / `focus_sectors` / `scan_mode` / `profile` | 扫描上下文 |
 | `news_titles` / `topic_briefs` | 与日报同源 `compact_*`；fast 模式 brief 为 minimal |
-| `discovery_facts` | `session`、`portfolio_gap`、`sector_heat`、`target_sector_context`（每板块：热度+`sector_fund_flow`+`sector_intraday`+`signal_backtest`）、`market_flow`、`news`（含 `freshness_label`）、`candidate_factor_scores`、`selection_strategy`、`dip_swing`、`candidate_pool`（slim） |
+| `discovery_facts` | `session`、`portfolio_gap`、`sector_heat`、`sector_opportunities`（双轨方向+资金+20日位置/量能）、`target_sector_context`（每板块：热度+`sector_fund_flow`+`sector_intraday`+`signal_backtest`）、`market_flow`、`news`（含 `freshness_label`）、`candidate_factor_scores`、`selection_strategy`、`dip_swing`、`candidate_pool`（slim） |
 | `requirements` | 全市场 vs 缺口补全两套；须引用 `market_flow` / `target_sector_context` / 可引用标题 |
 
 实现：`discovery_facts.py` + `discovery_sector_context.py`；存档仍保留全量 `discovery_facts`。

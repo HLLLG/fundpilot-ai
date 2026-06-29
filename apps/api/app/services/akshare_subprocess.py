@@ -97,6 +97,8 @@ except Exception as e:
             [sys.executable, "-c", script],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=_SUBPROCESS_TIMEOUT,
             check=False,
         )
@@ -248,6 +250,8 @@ except Exception as e:
             [sys.executable, "-c", script],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=_SUBPROCESS_TIMEOUT,
             check=False,
         )
@@ -524,6 +528,8 @@ try:
                 "close": _num(row.get("收盘")),
                 "high": _num(row.get("最高")),
                 "low": _num(row.get("最低")),
+                "volume": _num(row.get("成交量")),
+                "amount": _num(row.get("成交额")),
                 "change_percent": _num(row.get("涨跌幅")),
             }})
         print(json.dumps({{"data": rows}}))
@@ -535,6 +541,8 @@ except Exception as e:
             [sys.executable, "-c", script],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=_SUBPROCESS_TIMEOUT,
             check=False,
         )
@@ -570,6 +578,8 @@ def _akshare_board_rows_to_daily_bars(
         day = str(row.get("date") or "")[:10]
         close = _as_board_float(row.get("close"))
         high = _as_board_float(row.get("high"))
+        volume = _as_board_float(row.get("volume"))
+        amount = _as_board_float(row.get("amount"))
         change_pct = _as_board_float(row.get("change_percent"))
         if not day or close is None or close <= 0:
             continue
@@ -593,6 +603,8 @@ def _akshare_board_rows_to_daily_bars(
                 "change_percent": change,
                 "high_change_percent": high_change,
                 "close": close,
+                "volume": volume,
+                "amount": amount,
             }
         )
         prior_close = close

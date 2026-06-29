@@ -105,7 +105,7 @@ def fetch_eastmoney_daily_kline_series(
     timeout: float = 12.0,
     max_retries: int = 2,
 ) -> list[DailyKlineBar]:
-    """拉取日 K 序列（时间正序），供板块信号回测；每项含 date / change_percent / high_change_percent。"""
+    """拉取日 K 序列（时间正序），供板块信号回测；含 date/change/high/close，可能含 volume/amount。"""
     cleaned = str(secid).strip()
     if not cleaned and not source_code:
         return []
@@ -218,6 +218,8 @@ def _parse_daily_kline_series(
         day = parts[0].strip().split(" ")[0]
         close = _as_float(parts[2])
         high = _as_float(parts[3])
+        volume = _as_float(parts[5]) if len(parts) > 5 else None
+        amount = _as_float(parts[6]) if len(parts) > 6 else None
         change_pct = _as_float(parts[8]) if len(parts) > 8 else None
         if close is None or close <= 0:
             continue
@@ -249,6 +251,8 @@ def _parse_daily_kline_series(
                 "change_percent": change,
                 "high_change_percent": high_change,
                 "close": close,
+                "volume": volume,
+                "amount": amount,
             }
         )
         prior_close = close

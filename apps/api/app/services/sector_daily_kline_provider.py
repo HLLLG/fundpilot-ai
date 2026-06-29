@@ -31,6 +31,17 @@ def fetch_canonical_daily_kline_series(
     """
     days = max(8, min(max_days, 400))
 
+    if allow_akshare and canon.source_type == "index" and canon.source_code:
+        index_hist = fetch_index_daily_via_akshare(canon.source_code, trading_days=days + 5)
+        if index_hist:
+            converted = _index_history_to_daily_bars(index_hist, max_days=days)
+            if converted:
+                logger.debug(
+                    "canonical daily kline via akshare index for %s",
+                    canon.label,
+                )
+                return converted
+
     series = fetch_eastmoney_daily_kline_series(
         canon.eastmoney_secid,
         source_code=canon.source_code,

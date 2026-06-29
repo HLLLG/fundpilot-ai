@@ -1230,6 +1230,45 @@ def list_fund_primary_sectors() -> list[dict[str, Any]]:
     return [_row_to_dict(row) for row in rows]
 
 
+def list_fund_primary_sectors_by_sector_names(
+    sector_names: list[str],
+    *,
+    limit_per_sector: int = 20,
+) -> list[dict[str, Any]]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw in sector_names:
+        label = str(raw or "").strip()
+        if label and label not in seen:
+            seen.add(label)
+            normalized.append(label)
+    if not normalized:
+        return []
+
+    placeholders = ",".join("?" * len(normalized))
+    with _connect() as connection:
+        rows = connection.execute(
+            f"""
+            SELECT fund_code, sector_name, intraday_index_name, source, confidence, detail, resolved_at
+            FROM fund_primary_sectors_global
+            WHERE sector_name IN ({placeholders})
+            ORDER BY confidence DESC, resolved_at DESC
+            """,
+            tuple(normalized),
+        ).fetchall()
+    counts: dict[str, int] = {}
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        payload = _row_to_dict(row)
+        label = str(payload.get("sector_name") or "")
+        if counts.get(label, 0) >= limit_per_sector:
+            continue
+        payload["updated_at"] = payload.get("resolved_at")
+        result.append(payload)
+        counts[label] = counts.get(label, 0) + 1
+    return result
+
+
 def get_fund_primary_sector_global(fund_code: str) -> dict[str, Any] | None:
     rows = get_fund_primary_sectors_global_by_codes([fund_code])
     code = fund_code.strip().zfill(6)

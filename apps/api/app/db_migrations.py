@@ -251,6 +251,12 @@ def _migrate_fund_primary_sectors(connection: sqlite3.Connection) -> None:
 
 def _migrate_fund_primary_sectors_global(connection: sqlite3.Connection) -> None:
     if _table_exists(connection, "fund_primary_sectors_global"):
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_fund_primary_sectors_global_sector
+            ON fund_primary_sectors_global (sector_name, confidence DESC, resolved_at DESC)
+            """
+        )
         return
     connection.execute(
         """
@@ -269,6 +275,12 @@ def _migrate_fund_primary_sectors_global(connection: sqlite3.Connection) -> None
         """
         CREATE INDEX IF NOT EXISTS idx_fund_primary_sectors_global_resolved
         ON fund_primary_sectors_global (resolved_at DESC)
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_fund_primary_sectors_global_sector
+        ON fund_primary_sectors_global (sector_name, confidence DESC, resolved_at DESC)
         """
     )
 
@@ -382,6 +394,7 @@ def _migrate_swing_alert_fired(connection: sqlite3.Connection) -> None:
 def run_migrations(connection: sqlite3.Connection) -> None:
     version = _get_schema_version(connection)
     if version >= SCHEMA_VERSION:
+        _migrate_fund_primary_sectors_global(connection)
         return
 
     connection.execute(

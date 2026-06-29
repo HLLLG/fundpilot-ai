@@ -285,10 +285,29 @@ def get_canonical_sector(sector_name: str | None) -> CanonicalSector | None:
         return None
     if label in _CANONICAL_BY_LABEL:
         return _CANONICAL_BY_LABEL[label]
+    registry = _canonical_from_theme_registry(label)
+    if registry is not None:
+        return registry
     for key in sorted(_CANONICAL_BY_LABEL.keys(), key=len, reverse=True):
         if key in label:
             return _CANONICAL_BY_LABEL[key]
     return None
+
+
+def _canonical_from_theme_registry(label: str) -> CanonicalSector | None:
+    from app.services.sector_registry_data import THEME_BOARD_INDEX
+
+    row = THEME_BOARD_INDEX.get(label)
+    if row is None:
+        return None
+    secid, source_code, source_type = row
+    return CanonicalSector(
+        label=label,
+        source_type=source_type,
+        source_name=label,
+        eastmoney_secid=secid,
+        source_code=source_code,
+    )
 
 
 # 关联板块短名 → 东财 zz 指数分时（概念板块 90.BK 无稳定分钟线）

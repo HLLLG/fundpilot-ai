@@ -38,6 +38,23 @@ def test_get_canonical_sector_prefers_semiconductor_material_over_semiconductor(
     assert canon.eastmoney_secid == "2.931743"
 
 
+def test_get_canonical_sector_falls_back_to_theme_board_registry():
+    expected = {
+        "创新药": ("2.931152", "931152", "index"),
+        "计算机": ("2.930651", "930651", "index"),
+        "恒生科技": ("2.CESHKB", "CESHKB", "index"),
+        "港股医药": ("2.931787", "931787", "index"),
+    }
+
+    for label, (secid, source_code, source_type) in expected.items():
+        canon = get_canonical_sector(label)
+        assert canon is not None
+        assert canon.label == label
+        assert canon.eastmoney_secid == secid
+        assert canon.source_code == source_code
+        assert canon.source_type == source_type
+
+
 def test_resolve_primary_sector_benchmark_beats_alipay_overview_row(monkeypatch):
     benchmark = "中证半导体材料设备主题指数收益率×95%+银行活期存款利率（税后）×5%"
 
