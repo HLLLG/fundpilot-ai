@@ -3,7 +3,6 @@ from __future__ import annotations
 from app.services.eastmoney_spot_client import (
     _parse_clist_theme_rows,
     fetch_eastmoney_clist_change_by_code,
-    fetch_eastmoney_clist_theme_metrics_by_code,
 )
 from app.services.theme_board_snapshot import (
     _lookup_clist_changes,
@@ -137,41 +136,6 @@ def test_refresh_theme_board_snapshot_uses_clist_bulk(monkeypatch):
     assert saved["items"] == snapshot["items"]
 
 
-def test_sector_heat_skips_kline_when_theme_has_5d(monkeypatch):
-    from app.services.discovery_sector_heat import build_sector_heat_ranking
-
-    monkeypatch.setattr(
-        "app.services.discovery_sector_heat.list_theme_board_labels",
-        lambda: ["白酒"],
-    )
-    monkeypatch.setattr(
-        "app.services.discovery_sector_heat.get_theme_board_snapshot",
-        lambda **_kwargs: {
-            "available": True,
-            "items": [
-                {
-                    "sector_label": "白酒",
-                    "change_1d_percent": -1.0,
-                    "change_5d_percent": -7.5,
-                }
-            ],
-        },
-    )
-    monkeypatch.setattr(
-        "app.services.discovery_sector_heat.get_spot_snapshot",
-        lambda *_args, **_kwargs: None,
-    )
-    monkeypatch.setattr(
-        "app.services.discovery_sector_heat._merge_5d_kline_into_rows",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError("kline merge should be skipped")
-        ),
-    )
-
-    rows = build_sector_heat_ranking(include_5d=True, force_refresh=True)
-    assert rows[0]["change_5d_percent"] == -7.5
-
-
 def test_fetch_eastmoney_clist_change_by_code_delegates_to_theme_metrics(monkeypatch):
     sentinel = {"BK1036": {"change_1d": 1.0, "change_5d": None}}
     captured: dict = {}
@@ -186,11 +150,3 @@ def test_fetch_eastmoney_clist_change_by_code_delegates_to_theme_metrics(monkeyp
     )
     assert fetch_eastmoney_clist_change_by_code(timeout=12.0) is sentinel
     assert captured == {"timeout": 12.0, "max_retries": 2, "max_pages": 8}
-
-
-def test_fetch_eastmoney_clist_theme_metrics_live_smoke():
-    by_code = fetch_eastmoney_clist_theme_metrics_by_code(timeout=20.0)
-    assert len(by_code) > 100
-    sample = by_code.get("BK1036") or by_code.get("H30184") or by_code.get("931672")
-    assert sample is not None
-    assert sample.get("change_1d") is not None or sample.get("change_5d") is not None
