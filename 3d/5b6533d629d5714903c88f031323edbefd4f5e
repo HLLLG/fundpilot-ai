@@ -1,0 +1,171 @@
+apps/web/src/components/YangjibaoFundDetail.tsx
+  s_2c339aef24ffb2::t_2b57ea478fc7ca 411-412
+  s_2c339aef24ffb2::t_a68162c020f3be 409,426,439-440,443,445
+  s_2c339aef24ffb2::t_cbee0eab269f22 84
+  s_2c339aef24ffb2::t_3bdbe5df584d97 265-287
+  s_2c339aef24ffb2::t_33600e1e96826d 35,41,43
+  s_2c339aef24ffb2::t_1e966f0a101c06 500-503
+  s_2c339aef24ffb2::t_e2701905717cfa 622
+  s_2c339aef24ffb2::t_3a054597998cf3 631
+apps/api/app/services/official_nav_settlement.py
+  s_2c339aef24ffb2::t_4590eed0c90fe7 209-219
+apps/web/src/components/YangjibaoHoldingsBoard.tsx
+  s_2c339aef24ffb2::t_3b1b2850efab2e 232
+  s_2c339aef24ffb2::t_5b7aa0e354cc79 433
+  s_2c339aef24ffb2::t_b184adb6cf1856 26-27
+  s_2c339aef24ffb2::t_b1c25c7d8731ff 421
+apps/web/src/components/Dashboard.tsx
+  s_2c339aef24ffb2::t_1df1b497d84946 189-197
+  s_2c339aef24ffb2::t_b1ddfd417b974b 74
+  s_2c339aef24ffb2::t_9faa7f0dd30a16 938
+  s_2c339aef24ffb2::t_35ad24f07dc8d5 73
+  s_2c339aef24ffb2::t_26e98eced9f9b6 965-967,978,982
+  s_2c339aef24ffb2::t_adf22f051f8fdf 72
+  s_2c339aef24ffb2::t_f3b5268cf18a20 178
+  s_2c339aef24ffb2::t_b319a39ffda1a0 556
+  s_2c339aef24ffb2::t_a098c62d8aabef 551
+  s_2c339aef24ffb2::t_296cb0f13068d4 542,547
+  s_2c339aef24ffb2::t_2f843211259cc6 1360-1366
+  s_2c339aef24ffb2::t_41160a1c27655a 1343-1347
+  s_2c339aef24ffb2::t_5792105b8ddac8 1359
+  s_2c339aef24ffb2::t_13db63da837cd2 515,518
+  s_2c339aef24ffb2::t_9ab7b781bba6fa 979-981
+docs/PROJECT_CONTEXT.md
+  s_2c339aef24ffb2::t_9556c89a32fba4 7,10
+apps/api/app/services/holding_amount_sync.py
+  s_2c339aef24ffb2::t_8d4ab409be5f8c 45-51,99-128,130,132,148-171,177-178,180,183-186
+  s_2c339aef24ffb2::t_59ee5438bc998d 673,677,680-681,700-701,711,721-723,725-726,729-731,733-738,740,752-753,758-763,765-766
+  s_2c339aef24ffb2::t_0008bc506a0318 678-679,682-695,699
+  s_2c339aef24ffb2::t_545a40ed691061 389-393
+  s_2c339aef24ffb2::t_839d66bd92b016 567-573,597,601,607-608
+  s_2c339aef24ffb2::t_449313edcf5a27 129,131,133-147
+  s_2c339aef24ffb2::t_0b63e868111db9 18-19,21-27,30,207
+  s_2c339aef24ffb2::t_83ad80fecbcf75 20,28-29,31-44,52-54,172-176,179,181-182,187,194,200,205-206
+  s_2c339aef24ffb2::t_f66e39a434740f 55-98
+  s_2c339aef24ffb2::t_1ee6ff63d664b5 674-675,702-710,712-720,724,727,739,741-751,754-757
+  s_2c339aef24ffb2::t_de40f866157195 289-297,302-303
+  s_2c339aef24ffb2::t_36b3947eab3fe4 188-193,195-199,201-204
+  s_2c339aef24ffb2::t_f8a0caaa5a3a47 470-473
+  s_2c339aef24ffb2::t_bf3c7faa35a467 672
+  s_2c339aef24ffb2::t_cea9ca70834310 288,298-301
+  s_2c339aef24ffb2::t_57041e985ef091 320-327
+  s_2c339aef24ffb2::t_042562ada88c1d 453-469,474-476
+  s_2c339aef24ffb2::t_c3da2908000107 566,577-580,591,594
+  s_2c339aef24ffb2::t_b9082531eaccd1 574-576,581-590,615
+  s_2c339aef24ffb2::t_407acb7bc190a8 208,728,732
+  s_2c339aef24ffb2::t_7ead91a4e76617 598-599
+apps/web/src/components/YangjibaoFundDetail.navigate.test.tsx
+  s_2c339aef24ffb2::t_cd4fdf231e789a 1-79
+docs/design/holding-metrics-contract.md
+  s_2c339aef24ffb2::t_d92bf58315294e 70-91
+apps/api/app/services/sector_intraday_provider.py
+  s_2c339aef24ffb2::t_a614536b6a47f8 35-41
+  s_2c339aef24ffb2::t_bec4a0e91f3fb8 42
+  s_2c339aef24ffb2::t_3a5df77f4a55ec 69-73,78
+apps/api/app/services/fund_nav_service.py
+  s_2c339aef24ffb2::t_6fa56dbbec6b37 173-174
+  s_2c339aef24ffb2::t_c5f92f80d90717 196,200-212,214-216
+  s_2c339aef24ffb2::t_f02b61bee890f8 246
+  s_2c339aef24ffb2::t_1996ed7b7bf9e5 110
+  s_2c339aef24ffb2::t_248c3cb109a892 185-194,213
+  s_2c339aef24ffb2::t_15af1d14b3b468 232
+  s_2c339aef24ffb2::t_02df39bcbac725 175
+apps/web/src/lib/holdingMetrics.test.ts
+  s_2c339aef24ffb2::t_c9873ffe16683c 170-193
+  s_2c339aef24ffb2::t_cb90dbc7dac844 87-105
+  s_2c339aef24ffb2::t_b138a16fbace9d 11
+  s_2c339aef24ffb2::t_646b1c231bb3f8 57-86
+  s_2c339aef24ffb2::t_d0020cbfa933df 10
+apps/api/tests/test_holding_amount_sync.py
+  s_2c339aef24ffb2::t_814bacda62f7f3 366-367
+  s_2c339aef24ffb2::t_fe85334ca0964c 199-216,218-252
+  s_2c339aef24ffb2::t_e3d780f54a4710 217
+  s_2c339aef24ffb2::t_6d87eab8a735aa 253-306,309-311
+  s_2c339aef24ffb2::t_6db6da25195287 165-168
+  s_2c339aef24ffb2::t_fb92c6def9cf58 307-308
+  s_2c339aef24ffb2::t_1ca4274659d348 312-353,356-365
+  s_2c339aef24ffb2::t_6fd2bc1bd47962 354-355
+  s_2c339aef24ffb2::t_525ac9a448a436 6-10
+  s_2c339aef24ffb2::t_d1ae1a7a373fbd 3-4
+  s_2c339aef24ffb2::t_0e3a4890be44ce 148-164,169-198
+apps/api/app/services/ocr_pipeline.py
+  s_2c339aef24ffb2::t_9018b9b61bb94a 261-265,267-268,272
+  s_2c339aef24ffb2::t_a3a6f5057bffd3 211-218,226
+  s_2c339aef24ffb2::t_1b3fb988313dd0 281-295
+  s_2c339aef24ffb2::t_14a6412bd459cd 266,269-271,273-280
+apps/api/app/services/holding_detail_service.py
+  s_2c339aef24ffb2::t_f91350a9793c45 71-80
+  s_2c339aef24ffb2::t_58e5c20f9ae2fe 15-18
+apps/api/tests/test_sector_intraday_cache_completeness.py
+  s_2c339aef24ffb2::t_02e9be55eab6ef 13-18
+  s_2c339aef24ffb2::t_262fb07c9de9c8 1-12,19-64
+apps/api/tests/test_alipay_daily_semantics.py
+  s_2c339aef24ffb2::t_9651740abcd1c2 73-86
+  s_2c339aef24ffb2::t_4fd680fc7ca0d4 87-99,101-118
+  s_2c339aef24ffb2::t_1e68e4a474396d 71-72
+  s_2c339aef24ffb2::t_bd49e3e486a276 100
+  s_2c339aef24ffb2::t_55205c400db079 42-70
+  s_2c339aef24ffb2::t_592c8eab3911f5 3-4
+apps/api/tests/test_apply_holdings_fast_path.py
+  s_2c339aef24ffb2::t_d25b04d688c044 3
+  s_2c339aef24ffb2::t_6d5af50ff1793c 86-125,127-129,131-133,135-147,149-156
+  s_2c339aef24ffb2::t_92767245e70b14 126,130,134
+  s_2c339aef24ffb2::t_e07261c1813718 148
+apps/web/src/lib/holdingMetrics.ts
+  s_2c339aef24ffb2::t_eecd83dbf99972 77-101,111-121
+  s_2c339aef24ffb2::t_47c9e14a677f36 188-210,217,219
+  s_2c339aef24ffb2::t_8e9b7746e07565 399-401
+  s_2c339aef24ffb2::t_7587b40b9c2c3b 306-308
+  s_2c339aef24ffb2::t_93e2d67629f771 594-596
+  s_2c339aef24ffb2::t_88854a947e36ff 152-187,211-216,218,220-221,236
+  s_2c339aef24ffb2::t_a4fc13f7788c2e 122,335-354
+apps/api/app/services/portfolio_holdings_service.py
+  s_2c339aef24ffb2::t_16f1e49b8fdcf5 260-273,282-284,286-299
+  s_2c339aef24ffb2::t_f5bea5a0c783b5 161-170
+apps/api/app/services/holding_estimates.py
+  s_2c339aef24ffb2::t_d3df2acb182a4c 326-338
+  s_2c339aef24ffb2::t_d64730cfed44af 11,13-15,17-18
+  s_2c339aef24ffb2::t_572be243d308ed 16,468
+  s_2c339aef24ffb2::t_e7907dfab19c32 132-134
+  s_2c339aef24ffb2::t_a44447dc97f1bc 232-233
+  s_2c339aef24ffb2::t_b68aa3e6c18ca4 37-50
+  s_2c339aef24ffb2::t_5059dcdbee9d12 205-207
+  s_2c339aef24ffb2::t_c7598c7d102af1 102-106
+  s_2c339aef24ffb2::t_e1186113465a63 465-467,469-470
+  s_2c339aef24ffb2::t_94f885d1416e64 157-166
+apps/api/tests/fixtures/alipay_today_profit_updated_ocr.txt
+  s_2c339aef24ffb2::t_839b242965212e 1-23
+apps/web/src/components/Dashboard.applyRefresh.test.ts
+  s_2c339aef24ffb2::t_b56e50fe106000 11
+  s_2c339aef24ffb2::t_ba3d6c560d2358 20-31
+apps/api/app/services/holding_adjust_service.py
+  s_2c339aef24ffb2::t_315c26f419b120 84-86,91
+  s_2c339aef24ffb2::t_d9c6c3c8daff34 89-90
+apps/api/app/services/alipay_holdings_parser.py
+  s_2c339aef24ffb2::t_33da58c634463a 381
+  s_2c339aef24ffb2::t_ef94db3edbd164 391-395
+  s_2c339aef24ffb2::t_da371b988ce88f 401-406,409-410
+  s_2c339aef24ffb2::t_1f8421c31c7dfa 428,430,439-452,460
+  s_2c339aef24ffb2::t_3bf78c057d4844 94-99,169-170
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.26-trip",
+  "base_commit_sha": "3d5b6533d629d5714903c88f031323edbefd4f5e",
+  "prompts": {},
+  "humans": {
+    "h_375fc341ff3baa": {
+      "author": "hegl <HLLLG@github.com>"
+    }
+  },
+  "sessions": {
+    "s_2c339aef24ffb2": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "29bba662-3d5b-4cd7-9ad4-2ddbd949395e",
+        "model": "composer-2.5"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
