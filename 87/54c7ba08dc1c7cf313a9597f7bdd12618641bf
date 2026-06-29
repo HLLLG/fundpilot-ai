@@ -1,0 +1,25 @@
+apps/api/tests/test_holdings_fast_sector_resolution.py
+  s_a7d009567de892::t_cf749b1444c7dc 228,230-237,244,252
+  s_a7d009567de892::t_4a13dbf4d4eb63 229
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.26-trip",
+  "base_commit_sha": "8754c7ba08dc1c7cf313a9597f7bdd12618641bf",
+  "prompts": {},
+  "humans": {
+    "h_375fc341ff3baa": {
+      "author": "hegl <HLLLG@github.com>"
+    }
+  },
+  "sessions": {
+    "s_a7d009567de892": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "a125ba2d-513d-4a6a-b0a5-99b17b4fd0a5",
+        "model": "composer-2.5"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
