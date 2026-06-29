@@ -69,6 +69,9 @@ import {
   findHoldingIndex,
   mergeHoldingsPreserveQuoteFields,
   mergeHoldingsAppend,
+  withApplyDisplayFields,
+  dedupeHoldingsByCode,
+  patchHoldingRecord,
   sumDailyProfit,
   sumPortfolioTotalAssets,
   type HoldingIdentity,
@@ -172,7 +175,7 @@ export function Dashboard() {
     return index >= 0 ? index : null;
   }, [holdings, selectedHoldingKey]);
   const reportSectionRef = useRef<HTMLDivElement>(null);
-  const refreshAfterApplyRef = useRef(false);
+  const refreshAfterApplyRef = useRef<"sector" | null>(null);
   const officialNavSettlementAttemptedRef = useRef(false);
   const officialNavSettlementInFlightRef = useRef(false);
   const profilePersistReady = useRef(false);
@@ -183,6 +186,15 @@ export function Dashboard() {
   const [holdingsRefreshedAt, setHoldingsRefreshedAt] = useState<string | null>(null);
   const [holdingsPollIntervalMs, setHoldingsPollIntervalMs] = useState(180_000);
   const backgroundJobActiveRef = useRef(false);
+  const holdingsForPrefetchRef = useRef(holdings);
+  holdingsForPrefetchRef.current = holdings;
+  const holdingsPrefetchKey = useMemo(
+    () =>
+      displayableHoldings(holdings)
+        .map((h) => h.fund_code || h.fund_name || "")
+        .join("|"),
+    [holdings],
+  );
   const [isOcrUploading, setIsOcrUploading] = useState(false);
   const [pendingOcrHoldings, setPendingOcrHoldings] = useState<Holding[] | null>(null);
   const [pendingOcrResolutions, setPendingOcrResolutions] = useState<FundCodeResolution[]>([]);
@@ -500,10 +512,10 @@ export function Dashboard() {
   ]);
 
   useEffect(() => {
-    if (!refreshAfterApplyRef.current || holdings.length === 0) {
+    if (refreshAfterApplyRef.current !== "sector" || holdings.length === 0) {
       return;
     }
-    refreshAfterApplyRef.current = false;
+    refreshAfterApplyRef.current = null;
     void sectorRefresh.refresh(false, "fast");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [holdings]);
@@ -527,32 +539,21 @@ export function Dashboard() {
   }, [sectorRefresh.lastFetchedAt]);
 
   useEffect(() => {
-    if (activeTab !== "holdings" || holdings.length === 0) {
+    if (activeTab !== "holdings" || holdingsForPrefetchRef.current.length === 0) {
       return;
     }
     return scheduleHoldingsDetailPrefetch({
       userId: user?.id ?? null,
-      holdings,
+      holdings: holdingsForPrefetchRef.current,
       portfolioSummary,
       sectorMetaByFundCode: sectorRefresh.sectorMetaByFundCode,
       onDetailHydrated: (detail) => {
-        setHoldings((current) => {
-          const index = findHoldingIndex(current, {
-            fund_code: detail.holding.fund_code,
-            fund_name: detail.holding.fund_name,
-          });
-          if (index < 0) {
-            return current;
-          }
-          const next = [...current];
-          next[index] = detail.holding;
-          return mergeHoldingsPreserveQuoteFields(current, next);
-        });
+        setHoldings((current) => patchHoldingRecord(current, detail.holding));
       },
     });
   }, [
     activeTab,
-    holdings,
+    holdingsPrefetchKey,
     portfolioSummary,
     user?.id,
     sectorRefresh.sectorMetaByFundCode,
@@ -934,7 +935,7 @@ export function Dashboard() {
       if (applied.portfolio_summary) {
         setPortfolioSummary(applied.portfolio_summary);
       }
-      refreshAfterApplyRef.current = true;
+      refreshAfterApplyRef.current = "sector";
       setShowAddHoldingModal(false);
       setMessage(
         newHoldings.length === 1
@@ -961,19 +962,24 @@ export function Dashboard() {
     setPendingOcrNote(null);
     setPendingOcrSource(null);
     setActiveTab("holdings");
-    const optimisticHoldings = mergeHoldingsPreserveQuoteFields(previousHoldings, mergedToApply);
+    const optimisticHoldings = withApplyDisplayFields(
+      mergeHoldingsPreserveQuoteFields(previousHoldings, mergedToApply),
+    );
     setHoldings(optimisticHoldings);
     saveCachedPortfolioHoldings({
       holdings: optimisticHoldings,
       portfolio_summary: portfolioSummary,
       refreshed_at: holdingsRefreshedAt,
     });
-    refreshAfterApplyRef.current = true;
 
     void (async () => {
       try {
         const applied = await applyPortfolioHoldings(mergedToApply);
-        const appliedHoldings = mergeHoldingsPreserveQuoteFields(optimisticHoldings, applied.holdings);
+        const appliedHoldings = withApplyDisplayFields(
+          dedupeHoldingsByCode(
+            mergeHoldingsPreserveQuoteFields(previousHoldings, applied.holdings),
+          ),
+        );
         setHoldings(appliedHoldings);
         if (applied.portfolio_summary) {
           setPortfolioSummary((current) => {
@@ -1334,14 +1340,11 @@ export function Dashboard() {
           portfolioSummary={portfolioSummary}
           sectorMeta={sectorRefresh.sectorMetaByFundCode[holdings[selectedHoldingIndex].fund_code]}
           onClose={() => setSelectedHoldingKey(null)}
-          onNavigate={(index) => {
-            const target = holdings[index];
-            if (target) {
-              setSelectedHoldingKey({
-                fund_code: target.fund_code,
-                fund_name: target.fund_name,
-              });
-            }
+          onNavigate={(target) => {
+            setSelectedHoldingKey({
+              fund_code: target.fund_code,
+              fund_name: target.fund_name,
+            });
           }}
           onFundCodeUpdated={async (index, updated) => {
             const next = holdings.map((item, itemIndex) => (itemIndex === index ? updated : item));
@@ -1353,10 +1356,14 @@ export function Dashboard() {
               setMessage(error instanceof Error ? error.message : "持仓持久化失败，请刷新后重试");
             }
           }}
-          onHoldingResolved={(index, resolved) => {
-            setHoldings((current) =>
-              current.map((item, itemIndex) => (itemIndex === index ? resolved : item)),
-            );
+          onHoldingResolved={(_index, resolved) => {
+            setHoldings((current) => {
+              const targetIndex = findHoldingIndex(current, resolved);
+              if (targetIndex < 0) {
+                return current;
+              }
+              return patchHoldingRecord(current, resolved);
+            });
           }}
           onDeleteHolding={handleDeleteHolding}
           onPortfolioUpdated={async (nextHoldings) => {

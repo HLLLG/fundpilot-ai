@@ -158,6 +158,16 @@ def _fast_overlay_cached_official_nav(holding: Holding, trade_date: str | None) 
     if nav_return is None:
         return holding
     amount = holding.settled_holding_amount or holding.holding_amount
+    if (
+        holding.daily_profit is not None
+        and holding.daily_return_percent_source == "official_nav"
+    ):
+        return holding.model_copy(
+            update={
+                "daily_return_percent": nav_return,
+                "daily_return_percent_source": "official_nav",
+            }
+        )
     return holding.model_copy(
         update={
             "daily_return_percent": nav_return,
@@ -247,6 +257,20 @@ def build_fast_snapshot_holdings_response() -> dict | None:
     if not holdings:
         return None
     trade_date = get_effective_trade_date()
+    fund_codes = [
+        holding.fund_code
+        for holding in holdings
+        if (holding.fund_code or "").strip() and holding.fund_code != "000000"
+    ]
+    from app.services.fund_nav_service import prime_official_nav_cache
+
+    prime_official_nav_cache(fund_codes, trade_date)
+    holdings = sync_holding_amounts_from_shares(
+        holdings,
+        persist_profiles=False,
+        allow_nav_fetch=False,
+        estimate_quotes={},
+    )
     holdings = [_fast_overlay_cached_official_nav(holding, trade_date) for holding in holdings]
     serialized = [_fast_serialize_holding_for_client(holding) for holding in holdings]
     daily_profit = snapshot.get("daily_profit")
@@ -255,14 +279,25 @@ def build_fast_snapshot_holdings_response() -> dict | None:
             sum(float(item.get("daily_profit") or 0) for item in serialized)
         )
     total_assets = snapshot.get("total_assets")
+    official_nav_settled = serialized and all(
+        item.get("daily_return_percent_source") == "official_nav" for item in serialized
+    )
     if total_assets is None:
-        total_assets = _fast_round2(
-            sum(
-                float(item.get("settled_holding_amount") or item.get("holding_amount") or 0)
-                + float(item.get("daily_profit") or 0)
-                for item in serialized
+        if official_nav_settled:
+            total_assets = _fast_round2(
+                sum(
+                    float(item.get("settled_holding_amount") or item.get("holding_amount") or 0)
+                    for item in serialized
+                )
             )
-        )
+        else:
+            total_assets = _fast_round2(
+                sum(
+                    float(item.get("settled_holding_amount") or item.get("holding_amount") or 0)
+                    + float(item.get("daily_profit") or 0)
+                    for item in serialized
+                )
+            )
     summary = {
         "total_assets": total_assets,
         "daily_profit": daily_profit,

@@ -23,6 +23,8 @@ import {
   sumDailyProfit,
   sumPortfolioTotalAssets,
   displayableHoldings,
+  navigableHoldings,
+  holdingIdentityKey,
   type HoldingIdentity,
 } from "@/lib/holdingMetrics";
 import {
@@ -227,7 +229,7 @@ export function YangjibaoHoldingsBoard({
     });
   }, []);
 
-  const displayHoldings = useMemo(() => displayableHoldings(holdings), [holdings]);
+  const displayHoldings = useMemo(() => navigableHoldings(holdings), [holdings]);
   const refreshNotice = buildSectorRefreshNotice(lastRefreshResult);
 
   const computedTotal = sumPortfolioTotalAssets(displayHoldings);
@@ -416,7 +418,7 @@ export function YangjibaoHoldingsBoard({
         </div>
 
         <ul className="divide-y divide-slate-100">
-          {sortedHoldings.map((holding) => {
+          {sortedHoldings.map((holding, rowIndex) => {
             const daily = getDailyProfit(holding);
             const estimatedDailyReturn = getEstimatedDailyReturnPercent(holding);
             const holdingProfit = getEstimatedHoldingProfit(holding);
@@ -428,7 +430,7 @@ export function YangjibaoHoldingsBoard({
             const sectorMeta = sectorMetaByFundCode[holding.fund_code] as SectorQuoteMeta | undefined;
             const sectorLabel = holdingDisplaySectorLabel(holding, sectorMeta);
             return (
-              <li key={`${holding.fund_code}-${holding.fund_name}`}>
+              <li key={`${holdingIdentityKey(holding)}-${rowIndex}`}>
                 <button
                   type="button"
                   onClick={() =>

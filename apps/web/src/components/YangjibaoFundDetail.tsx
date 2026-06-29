@@ -32,12 +32,15 @@ import {
   computeCostBasis,
   computeDailyProfit,
   computeHoldingWeight,
+  findHoldingIndex,
   formatPlainMoney,
   formatPlainPercent,
   formatSignedMoney,
   formatSignedPercent,
   mergeSectorIntradayClose,
+  navigableHoldings,
   resolveSectorBoardReturnPercent,
+  type HoldingIdentity,
 } from "@/lib/holdingMetrics";
 import {
   getEstimatedDailyReturnPercent,
@@ -78,7 +81,7 @@ type YangjibaoFundDetailProps = {
   portfolioSummary?: PortfolioSummary | null;
   sectorMeta?: SectorQuoteMeta;
   onClose: () => void;
-  onNavigate: (index: number) => void;
+  onNavigate: (target: HoldingIdentity) => void;
   onHoldingResolved?: (index: number, holding: Holding) => void;
   onFundCodeUpdated?: (index: number, holding: Holding) => void | Promise<void>;
   onDeleteHolding?: (index: number) => void;
@@ -259,8 +262,29 @@ export function YangjibaoFundDetail({
     : "";
   const intradayQueryRef = useRef(intradayQuery);
 
-  const canGoPrev = holdingIndex > 0;
-  const canGoNext = holdingIndex < holdings.length - 1;
+  const navHoldings = useMemo(() => navigableHoldings(holdings), [holdings]);
+  const navIndex = useMemo(() => {
+    const idx = findHoldingIndex(navHoldings, holding);
+    return idx >= 0 ? idx : Math.max(0, Math.min(holdingIndex, navHoldings.length - 1));
+  }, [navHoldings, holding, holdingIndex]);
+  const canWrapNavigate = navHoldings.length > 1;
+
+  function navigateRelative(offset: number) {
+    if (!canWrapNavigate) {
+      return;
+    }
+    const nextIndex = (navIndex + offset + navHoldings.length) % navHoldings.length;
+    const target = navHoldings[nextIndex];
+    if (target) {
+      onNavigate({
+        fund_code: target.fund_code,
+        fund_name: target.fund_name,
+      });
+    }
+  }
+
+  const canGoPrev = canWrapNavigate;
+  const canGoNext = canWrapNavigate;
 
   useEffect(() => {
     activeHoldingRef.current = activeHolding;
@@ -382,9 +406,11 @@ export function YangjibaoFundDetail({
 
   useEffect(() => {
     let cancelled = false;
-    const fundCode = selectedHolding?.fund_code;
-    const cachedDetail = readHoldingDetailCache(userId, fundCode);
     const inputs = detailInputsRef.current;
+    const fundCode = selectedHolding?.fund_code;
+    const resolvedIndex = findHoldingIndex(inputs.holdings, holding);
+    const detailIndex = resolvedIndex >= 0 ? resolvedIndex : holdingIndex;
+    const cachedDetail = readHoldingDetailCache(userId, fundCode);
 
     if (cachedDetail) {
       setDetail(cachedDetail);
@@ -397,7 +423,7 @@ export function YangjibaoFundDetail({
     // 缓存期内也静默后台更新（stale-while-revalidate）
     void fetchHoldingDetail({
       holdings: inputs.holdings,
-      index: holdingIndex,
+      index: detailIndex,
       portfolio_summary: inputs.portfolioSummary,
       sector_quote_meta: inputs.sectorMeta,
     })
@@ -410,11 +436,13 @@ export function YangjibaoFundDetail({
         }
         setDetail(result);
         const latestInputs = detailInputsRef.current;
+        const latestIndex = findHoldingIndex(latestInputs.holdings, holding);
+        const applyIndex = latestIndex >= 0 ? latestIndex : detailIndex;
         if (
           result.fund_code_resolved &&
-          result.holding.fund_code !== latestInputs.holdings[holdingIndex]?.fund_code
+          result.holding.fund_code !== latestInputs.holdings[applyIndex]?.fund_code
         ) {
-          latestInputs.onHoldingResolved?.(holdingIndex, result.holding);
+          latestInputs.onHoldingResolved?.(applyIndex, result.holding);
         }
       })
       .catch((error) => {
@@ -469,7 +497,10 @@ export function YangjibaoFundDetail({
       const currentHolding = activeHoldingRef.current;
       const merged = mergeSectorIntradayClose(currentHolding, close);
       if (merged !== currentHolding) {
-        onHoldingResolvedRef.current?.(holdingIndex, merged);
+        onHoldingResolvedRef.current?.(
+          findHoldingIndex(detailInputsRef.current.holdings, currentHolding),
+          merged,
+        );
       }
     };
 
@@ -588,7 +619,7 @@ export function YangjibaoFundDetail({
                 <button
                   type="button"
                   disabled={!canGoPrev}
-                  onClick={() => onNavigate(holdingIndex - 1)}
+                  onClick={() => navigateRelative(-1)}
                   className="inline-flex h-8 w-8 items-center justify-center rounded-full hover:bg-white/15 disabled:opacity-30"
                   aria-label="上一只"
                 >
@@ -597,7 +628,7 @@ export function YangjibaoFundDetail({
                 <button
                   type="button"
                   disabled={!canGoNext}
-                  onClick={() => onNavigate(holdingIndex + 1)}
+                  onClick={() => navigateRelative(1)}
                   className="inline-flex h-8 w-8 items-center justify-center rounded-full hover:bg-white/15 disabled:opacity-30"
                   aria-label="下一只"
                 >

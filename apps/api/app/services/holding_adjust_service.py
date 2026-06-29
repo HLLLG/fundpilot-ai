@@ -72,9 +72,6 @@ def adjust_holding_in_portfolio(fund_code: str, payload: AdjustHoldingRequest) -
         patch["holding_return_percent"] = return_percent
         patch["return_percent"] = return_percent
 
-    holdings[index] = holding.model_copy(update=patch)
-    holdings = enrich_holdings_estimates(holdings)
-
     if profile is not None:
         profile_patch: dict = {
             "holding_amount": amount,
@@ -84,7 +81,13 @@ def adjust_holding_in_portfolio(fund_code: str, payload: AdjustHoldingRequest) -
             profile_patch["holding_profit"] = profit
         if return_percent is not None:
             profile_patch["holding_return_percent"] = return_percent
+        shares = profile.holding_shares
+        if shares and shares > 0 and amount and profit is not None:
+            profile_patch["holding_cost"] = round((amount - profit) / shares, 4)
         save_fund_profile(profile.model_copy(update=profile_patch))
+
+    holdings[index] = holding.model_copy(update=patch)
+    holdings = enrich_holdings_estimates(holdings)
 
     holdings = without_placeholder_holdings(without_test_holdings(holdings))
     total_assets = round(

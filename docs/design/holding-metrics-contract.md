@@ -67,3 +67,25 @@
 OCR 确认、`apply-holdings` 回写、`refresh-sector-quotes` 期间使用 `mergeHoldingsPreserveQuoteFields`（`holdingMetrics.ts`）：按 `fund_code` 合并新列表，**保留**上一屏的 `sector`、`estimated_*`、`daily_*` 等行情字段，直至 API 返回非空新值，避免列表闪「—」。
 
 4. 跑 `vitest holdingDisplay.test.ts`
+
+## 持仓成本与持有收益（2026-06-30）
+
+| 字段 | 支付宝口径 | 说明 |
+|------|------------|------|
+| `holding_cost` | 持仓成本 | OCR 确认时写入；**不**用 `holding_amount` 或 `shares×净值` 替代 |
+| `holding_profit` | 持有收益（累计） | OCR 含当日累计值时 `_ocr_holding_profit_is_cumulative` 为真，**禁止** `_repair_corrupted_settled_profit` 用档案污染值覆盖 |
+| `holding_return_percent` | 持有收益率 | 由 `holding_profit / holding_cost` 推导；官方净值公布后随结算重算 |
+
+**官方净值结算后：** `holding_amount_sync` 滚入 `settled_holding_amount` 时同步 `_profit_patch_from_rolled_settled`，持有收益/率与支付宝列表对齐；OCR 路径 `skip_roll=True` 锁定 OCR 金额直至下一结算窗口。
+
+## OCR 确认提速（2026-06-30）
+
+- `ocr_pipeline.apply_confirmed_holdings`：OCR 已带官方当日涨跌时 **跳过** `prime_official_nav_cache`（AkShare 全表预热），确认 <1s。
+- 前端 OCR 确认后 **不** 立即 `refresh-sector-quotes`；`seedApplyDisplayFields` / `withApplyDisplayFields` 保留 OCR 持有收益，合并时丢弃 stale `estimated_holding_profit`。
+- 详情预取 hydrate 用 `patchHoldingRecord`（按 `fund_code` 原位更新），**不在 hydrate 时 dedupe**，避免循环切换「下一只」时误删基金。
+
+## 基金详情导航（2026-06-30）
+
+- `navigableHoldings` = `dedupeHoldingsByCode(displayableHoldings)`，仅用于详情页上/下一只循环导航。
+- `onNavigate(HoldingIdentity)` 按 code/name 定位，不用数组下标传递。
+- 预取 effect 依赖 `holdingsPrefetchKey`（fund codes 指纹），避免 `holdings` 每次 hydrate 触发 detail 请求风暴。

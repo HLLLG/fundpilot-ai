@@ -206,7 +206,17 @@ def settle_official_nav_for_portfolio() -> dict:
         holdings,
         settlement_date=settlement_date,
     )
-    if updated_count == 0:
+    from app.services.holding_amount_sync import sync_holding_amounts_from_shares
+
+    settled = sync_holding_amounts_from_shares(
+        settled,
+        persist_profiles=True,
+        allow_nav_fetch=False,
+        estimate_quotes={},
+    )
+    if updated_count == 0 and not any(
+        holding.daily_return_percent_source == "official_nav" for holding in settled
+    ):
         return _empty_response(
             reason="no_nav_available",
             session=session,

@@ -32,6 +32,14 @@ _INTRADAY_COALESCE_WAITERS: dict[str, threading.Event] = {}
 _INTRADAY_COALESCE_RESULT: dict[str, tuple[list[IntradayPoint], str | None, str | None, float | None]] = {}
 
 
+def _is_complete_closed_intraday(points: list[IntradayPoint]) -> bool:
+    """收盘后曲线应包含 15:00 末点；盘中缓存到 14:47 等不完整数据不可复用。"""
+    if len(points) < _MIN_INTRADAY_POINTS_TO_CACHE:
+        return False
+    last_time = str(points[-1].get("time") or "").strip()
+    return last_time >= "15:00"
+
+
 def fetch_sector_intraday(
     source_type: str,
     source_name: str,
@@ -58,12 +66,16 @@ def fetch_sector_intraday(
 
     if not force_refresh:
         cached = get_spot_snapshot(cache_key, ttl_seconds=cache_ttl)
-        if cached is not None and cached.get("points"):
+        cached_points = cached.get("points", []) if cached else []
+        cache_complete = (
+            not closed_session or _is_complete_closed_intraday(cached_points)
+        )
+        if cached is not None and cached_points and cache_complete:
             note = cached.get("note")
             if closed_session and not note:
                 note = f"展示 {trade_date} 收盘分时（09:30–15:00）"
             return (
-                cached.get("points", []),
+                cached_points,
                 note,
                 trade_date,
                 cached.get("close_change_percent"),

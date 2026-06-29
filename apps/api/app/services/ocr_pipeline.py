@@ -208,6 +208,14 @@ def _resolve_fund_codes(
     return resolved_holdings, resolutions
 
 
+def _holding_has_ocr_official_daily(holding) -> bool:
+    """OCR「今日收益更新」已带官方日收益，无需同步拉 AkShare 净值。"""
+    return (
+        holding.daily_return_percent_source == "official_nav"
+        and holding.daily_profit is not None
+    )
+
+
 def apply_confirmed_holdings(
     holdings: list,
 ) -> dict:
@@ -215,7 +223,7 @@ def apply_confirmed_holdings(
 
     1. 跳过网络估值/净值拉取，仅用 OCR 金额写档案与快照；
     2. 用板块行情缓存即时补全 sector 涨跌与当日估算；
-    3. 前端在返回后后台调用 ``refresh-sector-quotes`` 无感知刷新最新行情。
+    3. 返回完整 ``estimated_*`` 展示字段；OCR 确认后前端不再立即触发板块刷新。
     """
     from app.models import Holding
     from app.services.holding_amount_sync import bootstrap_holding_baselines
@@ -250,6 +258,41 @@ def apply_confirmed_holdings(
     cache_refresh = refresh_holdings_sector_quotes(processed, cache_only=True)
     if cache_refresh.get("holdings"):
         processed = [Holding.model_validate(item) for item in cache_refresh["holdings"]]
+    from app.services.trading_session import get_effective_trade_date
+    from app.services.fund_nav_service import prime_official_nav_cache
+    from app.services.portfolio_holdings_service import _fast_overlay_cached_official_nav
+
+    trade_date = get_effective_trade_date()
+    fund_codes_needing_prime = [
+        item.fund_code
+        for item in processed
+        if (item.fund_code or "").strip()
+        and item.fund_code != "000000"
+        and not _holding_has_ocr_official_daily(item)
+    ]
+    if fund_codes_needing_prime:
+        prime_official_nav_cache(fund_codes_needing_prime, trade_date)
+    processed = [
+        holding
+        if _holding_has_ocr_official_daily(holding)
+        else _fast_overlay_cached_official_nav(holding, trade_date)
+        for holding in processed
+    ]
+    from app.services.holding_estimates import _ocr_holding_profit_is_cumulative
+
+    pinned: list[Holding] = []
+    for holding in processed:
+        patch: dict = {
+            "settled_holding_amount": holding.holding_amount,
+            "holding_amount": holding.holding_amount,
+        }
+        if (
+            holding.daily_return_percent_source == "official_nav"
+            or _ocr_holding_profit_is_cumulative(holding)
+        ):
+            patch["amount_includes_today"] = True
+        pinned.append(holding.model_copy(update=patch))
+    processed = pinned
     processed = enrich_holdings_estimates(processed)
 
     from app.services.holding_estimates import sum_daily_profit

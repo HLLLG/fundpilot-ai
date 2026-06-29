@@ -91,6 +91,12 @@ def is_alipay_overview_holdings_page(lines: list[str]) -> bool:
     return all(marker in joined for marker in ("全部持有", "名称/金额", "日收益"))
 
 
+def alipay_today_official_profit_published(lines: list[str]) -> bool:
+    """支付宝持有页出现「今日收益更新」时，日收益列已是当日官方净值收益。"""
+    joined = "\n".join(lines)
+    return "今日收益更新" in joined or "今日收益已更新" in joined
+
+
 def is_alipay_holdings_page(lines: list[str]) -> bool:
     joined = "\n".join(lines)
     if is_alipay_overview_holdings_page(lines):
@@ -131,8 +137,35 @@ def parse_alipay_holdings_page(text: str) -> list[Holding]:
         or _is_compact_alipay_overview_layout(lines)
         or _find_my_holdings_name_anchors(lines, 0)
     ):
-        return parse_alipay_holdings_multi_strategy(lines)
+        holdings = parse_alipay_holdings_multi_strategy(lines)
+        if alipay_today_official_profit_published(lines):
+            holdings = _promote_today_official_daily_profit(holdings)
+        return holdings
     return []
+
+
+def _promote_today_official_daily_profit(holdings: list[Holding]) -> list[Holding]:
+    """「今日收益更新」页：各策略可能把日收益写入 yesterday_profit，统一提升为 daily_profit。"""
+    promoted: list[Holding] = []
+    for holding in holdings:
+        if holding.daily_profit is not None:
+            promoted.append(holding)
+            continue
+        if holding.yesterday_profit is None:
+            promoted.append(holding)
+            continue
+        promoted.append(
+            holding.model_copy(
+                update={
+                    "daily_profit": holding.yesterday_profit,
+                    "yesterday_profit": None,
+                    "daily_return_percent_source": "official_nav",
+                    "amount_includes_today": True,
+                    "settled_holding_amount": holding.holding_amount,
+                }
+            )
+        )
+    return promoted
 
 
 def _parse_my_holdings_name_anchored(lines: list[str]) -> list[Holding]:
@@ -345,6 +378,7 @@ def _parse_alipay_overview_holdings(lines: list[str]) -> list[Holding]:
         return []
 
     holdings: list[Holding] = []
+    today_official = alipay_today_official_profit_published(lines)
     for position, name_index in enumerate(name_indexes):
         next_index = (
             name_indexes[position + 1] if position + 1 < len(name_indexes) else len(lines)
@@ -354,16 +388,26 @@ def _parse_alipay_overview_holdings(lines: list[str]) -> list[Holding]:
             for line in lines[name_index + 1 : next_index]
             if line and not _is_noise_line(line)
         ]
-        holding = _parse_overview_fund_block(lines[name_index], block_lines)
+        holding = _parse_overview_fund_block(
+            lines[name_index],
+            block_lines,
+            today_official_profit=today_official,
+        )
         if holding is not None:
             holdings.append(holding)
     return holdings
 
 
-def _parse_overview_fund_block(fund_name: str, block_lines: list[str]) -> Holding | None:
+def _parse_overview_fund_block(
+    fund_name: str,
+    block_lines: list[str],
+    *,
+    today_official_profit: bool = False,
+) -> Holding | None:
     """四列版式：金额、日收益、持有收益、累计收益。
 
-    「日收益」= 上一交易日官方净值公布后的收益，写入 ``yesterday_profit``（非当日估算）。
+    默认「日收益」= 上一交易日官方净值收益 → ``yesterday_profit``。
+    「今日收益更新」时「日收益」= 当日官方净值收益 → ``daily_profit``。
     """
     numbers: list[float] = []
     holding_return_percent: float | None = None
@@ -381,9 +425,9 @@ def _parse_overview_fund_block(fund_name: str, block_lines: list[str]) -> Holdin
         return None
 
     holding_amount = numbers[0]
-    yesterday_profit = numbers[1] if len(numbers) >= 2 else None
+    daily_column = numbers[1] if len(numbers) >= 2 else None
     holding_profit = numbers[2] if len(numbers) >= 3 else None
-    if holding_profit is None and len(numbers) >= 2:
+    if holding_profit is None and len(numbers) >= 2 and not today_official_profit:
         holding_profit = numbers[1]
 
     holding_profit = infer_holding_profit(
@@ -392,6 +436,20 @@ def _parse_overview_fund_block(fund_name: str, block_lines: list[str]) -> Holdin
         holding_profit=holding_profit,
     )
 
+    if today_official_profit and daily_column is not None:
+        return Holding(
+            fund_code="000000",
+            fund_name=sanitize_fund_name(fund_name),
+            holding_amount=holding_amount,
+            settled_holding_amount=holding_amount,
+            return_percent=holding_return_percent or 0,
+            holding_profit=holding_profit,
+            holding_return_percent=holding_return_percent,
+            daily_profit=daily_column,
+            daily_return_percent_source="official_nav",
+            amount_includes_today=True,
+        )
+
     return Holding(
         fund_code="000000",
         fund_name=sanitize_fund_name(fund_name),
@@ -399,7 +457,7 @@ def _parse_overview_fund_block(fund_name: str, block_lines: list[str]) -> Holdin
         return_percent=holding_return_percent or 0,
         holding_profit=holding_profit,
         holding_return_percent=holding_return_percent,
-        yesterday_profit=yesterday_profit,
+        yesterday_profit=daily_column,
     )
 
 

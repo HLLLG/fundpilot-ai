@@ -8,7 +8,14 @@ def clear_client_daily_estimate_fields(holding: Holding) -> Holding:
 
     支付宝截图「日收益」语义为上一交易日官方净值结算收益，解析在 ``yesterday_profit``；
     当日收益仅由板块刷新或当日官方净值覆盖写入。
+    「今日收益更新」时 OCR 已写入 ``daily_profit`` + ``official_nav``，须保留。
     """
+    if (
+        holding.daily_profit is not None
+        and holding.daily_return_percent_source == "official_nav"
+        and holding.amount_includes_today
+    ):
+        return holding
     patch: dict = {
         "daily_profit": None,
         "daily_return_percent": None,
@@ -25,6 +32,20 @@ def clear_client_daily_estimate_fields_batch(holdings: list[Holding]) -> list[Ho
 
 def _round2(value: float) -> float:
     return round(value, 2)
+
+
+def _ocr_holding_profit_is_cumulative(holding: Holding) -> bool:
+    """支付宝 OCR：持有收益与持有收益率均相对当前持有金额，已是含当日的累计值。"""
+    if holding.holding_profit is None:
+        return False
+    return_percent = resolve_holding_return_percent(holding)
+    amount = holding.settled_holding_amount or holding.holding_amount
+    if return_percent is None or amount <= 0:
+        return False
+    expected = _round2((amount * return_percent) / (100 + return_percent))
+    if expected == 0:
+        return False
+    return abs(holding.holding_profit - expected) <= max(1.0, abs(expected) * 0.02)
 
 
 def resolve_holding_return_percent(holding: Holding) -> float | None:
@@ -78,6 +99,11 @@ def compute_estimated_holding_return_percent(holding: Holding) -> float | None:
         return round(settled, 4) if settled is not None else 0.0
 
     holding = _repair_corrupted_settled_profit(holding)
+    if _ocr_holding_profit_is_cumulative(holding):
+        settled = resolve_holding_return_percent(holding)
+        if settled is not None:
+            return round(settled, 4)
+        return None
     settled = resolve_holding_return_percent(holding)
     if holding.daily_return_percent_source == "official_nav":
         if settled is not None:
@@ -103,6 +129,9 @@ def _repair_corrupted_settled_profit(holding: Holding) -> Holding:
     """份额同步曾误写持有收益时，按昨日结算收益率修复。"""
     from app.database import get_fund_profile_by_code
 
+    if _ocr_holding_profit_is_cumulative(holding):
+        return holding
+
     profile = get_fund_profile_by_code(holding.fund_code) if holding.fund_code else None
     settled_return = resolve_holding_return_percent(holding)
     if profile and profile.holding_return_percent is not None:
@@ -125,6 +154,16 @@ def _repair_corrupted_settled_profit(holding: Holding) -> Holding:
     current_profit = holding.holding_profit
     if current_profit is None:
         return holding
+    if (
+        settled_return is not None
+        and profile_return is not None
+        and abs(settled_return - profile_return) > 0.05
+    ):
+        expected_from_holding = _expected_settled_profit(holding, settled_return)
+        if expected_from_holding is not None and abs(current_profit - expected_from_holding) <= max(
+            1.0, abs(expected_from_holding) * 0.02
+        ):
+            return holding
     delta = abs(current_profit - expected)
     if delta <= max(25.0, abs(expected) * 0.35):
         return holding
@@ -163,6 +202,9 @@ def compute_holding_profit(holding: Holding) -> float | None:
         return settled_profit if settled_profit is not None else 0.0
 
     holding = _repair_corrupted_settled_profit(holding)
+    if _ocr_holding_profit_is_cumulative(holding):
+        if holding.holding_profit is not None:
+            return holding.holding_profit
     if holding.daily_return_percent_source == "official_nav":
         if holding.holding_profit is not None:
             return holding.holding_profit
@@ -186,6 +228,8 @@ def holding_profit_is_estimated(holding: Holding) -> bool:
     from app.services.profit_accrual_defer import get_profile_for_holding, is_profit_accrual_deferred
 
     if is_profit_accrual_deferred(get_profile_for_holding(holding)):
+        return False
+    if _ocr_holding_profit_is_cumulative(holding):
         return False
     if holding.daily_return_percent_source == "official_nav":
         return holding.holding_profit is None
@@ -279,6 +323,19 @@ def overlay_official_nav_returns(holdings: list[Holding]) -> list[Holding]:
             updated.append(holding)
             continue
         amount = holding.settled_holding_amount or holding.holding_amount
+        if (
+            holding.daily_profit is not None
+            and holding.daily_return_percent_source == "official_nav"
+        ):
+            updated.append(
+                holding.model_copy(
+                    update={
+                        "daily_return_percent": nav_return,
+                        "daily_return_percent_source": "official_nav",
+                    }
+                )
+            )
+            continue
         updated.append(
             holding.model_copy(
                 update={
@@ -405,6 +462,12 @@ def compute_daily_profit(holding: Holding) -> float | None:
         return holding.daily_profit
 
     includes_today = _amount_includes_today_return(holding)
+    if (
+        holding.daily_profit is not None
+        and holding.daily_return_percent_source == "official_nav"
+        and holding.amount_includes_today
+    ):
+        return holding.daily_profit
     rate = holding.daily_return_percent
     if rate is not None:
         if holding.daily_return_percent_source == "official_nav" and not includes_today:

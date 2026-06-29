@@ -107,10 +107,7 @@ def prime_official_nav_cache(fund_codes: list[str], trade_date: str) -> dict[str
             try:
                 unit_value = round(float(unit_nav), 4)
                 if unit_value > 0:
-                    _UNIT_NAV_CACHE[_unit_nav_cache_key(code)] = (
-                        unit_value,
-                        now + TTL_HIT,
-                    )
+                    _cache_unit_nav(code, unit_value)
             except (TypeError, ValueError):
                 pass
         try:
@@ -173,6 +170,9 @@ def get_official_nav_return(fund_code: str, trade_date: str) -> float | None:
         if math.isnan(nav_return):
             _cache_nav_return(fund_code, trade_date, None, TTL_MISS)
             return None
+        unit_nav = float(latest["单位净值"])
+        if not math.isnan(unit_nav) and unit_nav > 0:
+            _cache_unit_nav(fund_code, round(unit_nav, 4))
         _cache_nav_return(fund_code, trade_date, nav_return, TTL_HIT)
         return nav_return
 
@@ -182,17 +182,39 @@ def get_official_nav_return(fund_code: str, trade_date: str) -> float | None:
         return None
 
 
+def _unit_nav_persist_key(fund_code: str) -> str:
+    return f"fund:unit-nav:v1:{fund_code}"
+
+
+def _cache_unit_nav(fund_code: str, value: float) -> None:
+    now = time.monotonic()
+    _UNIT_NAV_CACHE[_unit_nav_cache_key(fund_code)] = (value, now + TTL_HIT)
+    save_spot_snapshot(_unit_nav_persist_key(fund_code), {"value": value})
+
+
 def peek_cached_unit_nav(fund_code: str) -> float | None:
-    """仅读内存缓存中的最近单位净值，不触发网络/子进程。"""
+    """仅读内存/持久缓存中的最近单位净值，不触发网络/子进程。"""
     key = _unit_nav_cache_key(fund_code)
     now = time.monotonic()
     cached = _UNIT_NAV_CACHE.get(key)
-    if cached is None:
+    if cached is not None:
+        value, expires_at = cached
+        if now < expires_at:
+            return value
+    persisted = _persisted_unit_nav(fund_code)
+    if persisted is not None:
+        _UNIT_NAV_CACHE[key] = (persisted, now + TTL_HIT)
+    return persisted
+
+
+def _persisted_unit_nav(fund_code: str) -> float | None:
+    payload = get_spot_snapshot(_unit_nav_persist_key(fund_code), ttl_seconds=TTL_HIT)
+    if not payload or payload.get("value") is None:
         return None
-    value, expires_at = cached
-    if now < expires_at:
-        return value
-    return None
+    try:
+        return round(float(payload["value"]), 4)
+    except (TypeError, ValueError):
+        return None
 
 
 def get_latest_unit_nav(fund_code: str, *, allow_fetch: bool = True) -> float | None:
@@ -207,7 +229,7 @@ def get_latest_unit_nav(fund_code: str, *, allow_fetch: bool = True) -> float | 
             return value
 
     if not allow_fetch:
-        return None
+        return _persisted_unit_nav(fund_code)
 
     try:
         df = _fetch_nav_df(fund_code)
@@ -221,7 +243,7 @@ def get_latest_unit_nav(fund_code: str, *, allow_fetch: bool = True) -> float | 
             return None
 
         rounded = round(unit_nav, 4)
-        _UNIT_NAV_CACHE[key] = (rounded, now + TTL_HIT)
+        _cache_unit_nav(fund_code, rounded)
         return rounded
     except Exception:
         logger.exception("Failed to fetch latest unit NAV for %s", fund_code)

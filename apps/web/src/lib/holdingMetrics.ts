@@ -74,6 +74,31 @@ export function stripHoldingsQuoteFields(holdings: Holding[]): Holding[] {
   });
 }
 
+/** apply / OCR 确认：用持久化持有收益同步展示字段，避免保留上一屏 estimated 污染。 */
+export function seedApplyDisplayFields(holding: Holding): Holding {
+  const next: Holding = { ...holding };
+  if (holding.holding_profit != null) {
+    next.estimated_holding_profit =
+      holding.estimated_holding_profit ?? holding.holding_profit;
+    next.holding_return_is_estimated = holding.holding_return_is_estimated ?? false;
+  }
+  if (holding.holding_return_percent != null) {
+    next.estimated_holding_return_percent =
+      holding.estimated_holding_return_percent ?? holding.holding_return_percent;
+  }
+  if (
+    holding.daily_profit != null
+    && holding.daily_return_percent_source === "official_nav"
+  ) {
+    next.daily_return_is_estimated = holding.daily_return_is_estimated ?? false;
+  }
+  return next;
+}
+
+export function withApplyDisplayFields(holdings: Holding[]): Holding[] {
+  return holdings.map(seedApplyDisplayFields);
+}
+
 function mergeHoldingQuoteFields(previous: Holding, incoming: Holding): Holding {
   const merged: Holding = { ...incoming };
   for (const key of PRESERVE_QUOTE_FIELDS) {
@@ -82,6 +107,18 @@ function mergeHoldingQuoteFields(previous: Holding, incoming: Holding): Holding 
     if ((nextValue === null || nextValue === undefined) && prevValue !== null && prevValue !== undefined) {
       (merged as Record<keyof Holding, Holding[keyof Holding]>)[key] = prevValue;
     }
+  }
+  if (incoming.estimated_holding_profit != null) {
+    merged.estimated_holding_profit = incoming.estimated_holding_profit;
+    merged.holding_return_is_estimated = incoming.holding_return_is_estimated ?? false;
+  } else if (incoming.holding_profit != null) {
+    merged.estimated_holding_profit = incoming.holding_profit;
+    merged.holding_return_is_estimated = incoming.holding_return_is_estimated ?? false;
+  }
+  if (incoming.estimated_holding_return_percent != null) {
+    merged.estimated_holding_return_percent = incoming.estimated_holding_return_percent;
+  } else if (incoming.holding_return_percent != null) {
+    merged.estimated_holding_return_percent = incoming.holding_return_percent;
   }
   return merged;
 }
@@ -112,6 +149,76 @@ export function mergeHoldingsPreserveQuoteFields(
   });
 }
 
+export type HoldingIdentity = Pick<Holding, "fund_code" | "fund_name">;
+
+function normalizeHoldingName(name: string): string {
+  return name.replace(/\.\.\./g, "").replace(/[.\s·]/g, "").trim();
+}
+
+export function holdingIdentityKey(holding: HoldingIdentity): string {
+  const code = (holding.fund_code || "").trim();
+  if (code && code !== "000000") {
+    return code;
+  }
+  return normalizeHoldingName(holding.fund_name || "");
+}
+
+/** 同 fund_code / 同名合并为一条，避免导航或 hydrate 产生重复行。 */
+export function dedupeHoldingsByCode(holdings: Holding[]): Holding[] {
+  const byKey = new Map<string, Holding>();
+  const order: string[] = [];
+  for (const item of holdings) {
+    const key = holdingIdentityKey(item);
+    if (!key) {
+      continue;
+    }
+    if (!byKey.has(key)) {
+      order.push(key);
+    }
+    const existing = byKey.get(key);
+    byKey.set(key, existing ? mergeHoldingQuoteFields(existing, item) : item);
+  }
+  return order.map((key) => byKey.get(key)!);
+}
+
+export function navigableHoldings(holdings: Holding[]): Holding[] {
+  return dedupeHoldingsByCode(displayableHoldings(holdings));
+}
+
+export function patchHoldingRecord(holdings: Holding[], patch: Holding): Holding[] {
+  const index = findHoldingIndex(holdings, patch);
+  if (index < 0) {
+    return holdings;
+  }
+  const current = holdings[index];
+  const patchCode = (patch.fund_code || "").trim();
+  const currentCode = (current.fund_code || "").trim();
+  if (
+    patchCode
+    && patchCode !== "000000"
+    && currentCode
+    && currentCode !== "000000"
+    && patchCode !== currentCode
+  ) {
+    return holdings;
+  }
+  return holdings.map((item, itemIndex) =>
+    itemIndex === index ? mergeHoldingQuoteFields(item, patch) : item,
+  );
+}
+
+/** @deprecated Prefer patchHoldingRecord; dedupe on hydrate removed to avoid losing funds. */
+export function updateHoldingAtIndex(
+  holdings: Holding[],
+  index: number,
+  patch: Holding,
+): Holding[] {
+  if (index < 0 || index >= holdings.length) {
+    return holdings;
+  }
+  return patchHoldingRecord(holdings, patch);
+}
+
 /** 分批截图录入：保留已有持仓，同码/同名用新 OCR 覆盖金额与收益，否则追加。 */
 export function mergeHoldingsAppend(
   previous: Holding[],
@@ -126,13 +233,7 @@ export function mergeHoldingsAppend(
       merged.push(item);
     }
   }
-  return merged;
-}
-
-export type HoldingIdentity = Pick<Holding, "fund_code" | "fund_name">;
-
-function normalizeHoldingName(name: string): string {
-  return name.replace(/\.\.\./g, "").replace(/[.\s·]/g, "").trim();
+  return dedupeHoldingsByCode(merged);
 }
 
 /** 在完整持仓数组中定位基金；优先 fund_code，避免排序/刷新后下标错位。 */
@@ -202,6 +303,9 @@ export function resolveIntradayReturnPercent(holding: Holding): number | null {
 export function computeEstimatedHoldingReturnPercent(holding: Holding): number | null {
   const repaired = repairCorruptedSettledProfit(holding);
   const settled = resolveHoldingReturnPercent(repaired);
+  if (ocrHoldingProfitIsCumulative(repaired)) {
+    return settled != null ? round2(settled) : null;
+  }
   if (holding.daily_return_percent_source === "official_nav") {
     if (settled != null) {
       return round2(settled);
@@ -226,6 +330,26 @@ function expectedSettledProfit(holding: Holding, returnPercent: number): number 
     return null;
   }
   return round2((holding.holding_amount * returnPercent) / (100 + returnPercent));
+}
+
+/** 支付宝 OCR：持有收益与收益率相对当前金额自洽，已是含当日的累计值。 */
+function ocrHoldingProfitIsCumulative(holding: Holding): boolean {
+  if (holding.holding_profit == null) {
+    return false;
+  }
+  const returnPercent = resolveHoldingReturnPercent(holding);
+  const amount =
+    holding.settled_holding_amount ??
+    holding.display_holding_amount ??
+    holding.holding_amount;
+  if (returnPercent == null || amount <= 0) {
+    return false;
+  }
+  const expected = round2((amount * returnPercent) / (100 + returnPercent));
+  if (expected === 0) {
+    return false;
+  }
+  return Math.abs(holding.holding_profit - expected) <= Math.max(1, Math.abs(expected) * 0.02);
 }
 
 function repairCorruptedSettledProfit(holding: Holding): Holding {
@@ -272,6 +396,9 @@ function resolveSettledHoldingProfit(holding: Holding): number | null {
  */
 export function computeHoldingProfit(holding: Holding): number | null {
   const repaired = repairCorruptedSettledProfit(holding);
+  if (ocrHoldingProfitIsCumulative(repaired)) {
+    return repaired.holding_profit ?? null;
+  }
   if (repaired.daily_return_percent_source === "official_nav") {
     if (repaired.holding_profit != null) {
       return repaired.holding_profit;
@@ -462,6 +589,9 @@ export function holdingProfitIsEstimated(holding: Holding): boolean {
     holding.daily_return_percent_source === "pending_accrual" ||
     holding.profit_accrual_deferred
   ) {
+    return false;
+  }
+  if (ocrHoldingProfitIsCumulative(holding)) {
     return false;
   }
   if (holding.daily_return_percent_source === "official_nav") {

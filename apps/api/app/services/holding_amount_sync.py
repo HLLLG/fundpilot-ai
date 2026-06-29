@@ -15,6 +15,197 @@ from app.services.trading_session import get_effective_trade_date
 logger = logging.getLogger(__name__)
 
 
+def _compute_rolled_settled_amount(
+    *,
+    baseline: float,
+    official_return: float,
+    shares: float | None,
+    official_unit_nav: float | None,
+) -> float | None:
+    """官方净值公布后滚入结算额：优先 shares×单位净值，否则用昨结算×(1+日涨跌%)。"""
+    if shares and official_unit_nav and official_unit_nav > 0:
+        return round(shares * official_unit_nav, 2)
+    if baseline > 0:
+        return round(baseline * (1 + official_return / 100), 2)
+    return None
+
+
+def _resolve_cumulative_return_percent(
+    holding: Holding,
+    profile: FundProfile | None,
+) -> float | None:
+    cumulative = holding.holding_return_percent
+    if cumulative is None:
+        cumulative = holding.return_percent
+    if cumulative is None and profile is not None:
+        cumulative = profile.holding_return_percent
+    return cumulative
+
+
+def _imputed_market_unit_cost(holding: Holding, shares: float) -> float | None:
+    """昨结算/份额（非支付宝持仓成本价）。"""
+    if shares <= 0:
+        return None
+    settled = holding.settled_holding_amount or holding.holding_amount
+    if settled and settled > 0:
+        return round(settled / shares, 4)
+    return None
+
+
+def _is_imputed_market_unit_cost(
+    unit_cost: float,
+    holding: Holding,
+    shares: float,
+    *,
+    pre_roll: float | None = None,
+) -> bool:
+    if shares <= 0 or unit_cost <= 0:
+        return False
+    tolerance = max(0.002, unit_cost * 0.001)
+    candidates: list[float] = []
+    for amount in (
+        holding.settled_holding_amount,
+        holding.holding_amount,
+    ):
+        if amount and amount > 0:
+            candidates.append(round(amount / shares, 4))
+    if pre_roll and pre_roll > 0:
+        candidates.append(round(pre_roll / shares, 4))
+        if abs(unit_cost * shares - pre_roll) <= max(1.0, pre_roll * 0.003):
+            return True
+    return any(abs(unit_cost - implied) <= tolerance for implied in candidates)
+
+
+def _is_profit_inflation_artifact(
+    holding: Holding,
+    settled: float,
+    pre_roll: float,
+) -> bool:
+    """持有收益被误写成「结算额 − 昨结算额」的滚入污染。"""
+    if holding.holding_profit is None or settled <= pre_roll:
+        return False
+    inflation = round(settled - pre_roll, 2)
+    if inflation <= 0:
+        return False
+    return abs(holding.holding_profit - inflation) <= max(1.0, abs(inflation) * 0.02)
+
+
+def _is_return_polluted_against_pre_roll(holding: Holding, pre_roll: float) -> bool:
+    ret = holding.holding_return_percent or holding.return_percent
+    if ret is None or holding.holding_profit is None or pre_roll <= 0:
+        return False
+    implied = round(holding.holding_profit / pre_roll * 100, 2)
+    return abs(ret - implied) <= 0.05
+
+
+def _infer_purchase_unit_cost(
+    holding: Holding,
+    shares: float,
+    *,
+    market_amount: float | None = None,
+) -> float | None:
+    """支付宝口径：持仓成本价 = (持有金额 − 持有收益) / 份额。"""
+    if shares <= 0:
+        return None
+    amount = market_amount or holding.holding_amount or holding.settled_holding_amount or 0
+    if amount > 0 and holding.holding_profit is not None:
+        total_cost = round(amount - holding.holding_profit, 2)
+        if 0 < total_cost < amount:
+            return round(total_cost / shares, 4)
+    return_percent = holding.holding_return_percent or holding.return_percent
+    if amount > 0 and return_percent is not None and shares > 0:
+        total_cost = round(amount / (1 + return_percent / 100), 2)
+        if total_cost > 0:
+            return round(total_cost / shares, 4)
+    return None
+
+
+def _resolve_purchase_unit_cost(
+    holding: Holding,
+    profile: FundProfile | None,
+    shares: float,
+    *,
+    market_amount: float | None = None,
+    pre_roll: float | None = None,
+) -> float | None:
+    inferred = _infer_purchase_unit_cost(holding, shares, market_amount=market_amount)
+    unit = profile.holding_cost if profile else None
+
+    if inferred is not None and inferred > 0:
+        if unit is None or unit <= 0:
+            return inferred
+        if _is_imputed_market_unit_cost(unit, holding, shares, pre_roll=pre_roll):
+            return inferred
+        if abs(unit - inferred) > max(0.002, inferred * 0.002):
+            return inferred
+
+    if unit and unit > 0 and not _is_imputed_market_unit_cost(
+        unit,
+        holding,
+        shares,
+        pre_roll=pre_roll,
+    ):
+        return round(unit, 4)
+    if inferred is not None and inferred > 0:
+        return inferred
+    return round(unit, 4) if unit and unit > 0 else None
+
+
+def _purchase_cost_total(
+    holding: Holding,
+    profile: FundProfile | None,
+    shares: float,
+    *,
+    market_amount: float | None = None,
+) -> float | None:
+    unit = _resolve_purchase_unit_cost(
+        holding,
+        profile,
+        shares,
+        market_amount=market_amount,
+    )
+    if unit is None or shares <= 0:
+        return None
+    return round(unit * shares, 2)
+
+
+def _pre_roll_settled(
+    holding: Holding,
+    profile: FundProfile | None,
+    *,
+    official_return: float | None,
+    shares: float | None = None,
+    official_unit_nav: float | None = None,
+) -> float:
+    """滚入前结算基线：回到上一交易日结算额（非支付宝持仓成本）。"""
+    settled = _resolve_settled_amount(holding, profile)
+
+    if shares and official_unit_nav and official_unit_nav > 0 and official_return is not None:
+        nav_value = round(shares * official_unit_nav, 2)
+        if abs(settled - nav_value) <= max(1.0, nav_value * 0.003):
+            return round(settled / (1 + official_return / 100), 2)
+
+    if holding.holding_profit is not None and holding.holding_profit > 0:
+        candidate = round(settled - holding.holding_profit, 2)
+        if candidate > 0 and _is_profit_inflation_artifact(holding, settled, candidate):
+            return candidate
+
+    cumulative_return = _resolve_cumulative_return_percent(holding, profile)
+    if (
+        cumulative_return is not None
+        and profile
+        and profile.holding_cost
+        and shares
+        and shares > 0
+    ):
+        principal = round(profile.holding_cost * shares, 2)
+        inflated = round(principal * (1 + cumulative_return / 100), 2)
+        if abs(settled - inflated) <= max(1.0, abs(inflated) * 0.003):
+            return principal
+
+    return settled
+
+
 def bootstrap_holding_baselines(
     holdings: list[Holding],
     *,
@@ -94,6 +285,22 @@ def _bootstrap_profile_baseline(
         return
 
     if profile.holding_shares is not None and not force_reset_shares:
+        shares = profile.holding_shares
+        patch: dict = {
+            "settled_holding_amount": holding.holding_amount,
+            "holding_amount": holding.holding_amount,
+        }
+        if holding.holding_profit is not None:
+            patch["holding_profit"] = holding.holding_profit
+        return_percent = holding.holding_return_percent or holding.return_percent
+        if return_percent is not None:
+            patch["holding_return_percent"] = return_percent
+        if shares and shares > 0:
+            inferred_unit = _infer_purchase_unit_cost(holding, shares)
+            if inferred_unit is not None and inferred_unit > 0:
+                patch["holding_cost"] = inferred_unit
+        if persist_profile:
+            save_fund_profile(profile.model_copy(update=patch))
         return
 
     unit_nav = _resolve_bootstrap_unit_nav(code, estimate_quote, skip_network=skip_network)
@@ -110,9 +317,14 @@ def _bootstrap_profile_baseline(
         "settled_holding_amount": holding.holding_amount,
         "holding_amount": holding.holding_amount,
     }
-    cost_basis = _cost_basis(holding, profile)
-    if cost_basis is not None and cost_basis > 0:
-        patch["holding_cost"] = round(cost_basis / shares, 4)
+    inferred_unit = _infer_purchase_unit_cost(holding, shares)
+    if inferred_unit is not None and inferred_unit > 0:
+        patch["holding_cost"] = inferred_unit
+    elif profile.holding_cost and profile.holding_cost > 0:
+        patch["holding_cost"] = profile.holding_cost
+    elif cost_basis := _cost_basis(holding, profile):
+        if cost_basis > 0:
+            patch["holding_cost"] = round(cost_basis / shares, 4)
     if holding.holding_profit is not None:
         patch["holding_profit"] = holding.holding_profit
     return_percent = holding.holding_return_percent
@@ -174,11 +386,15 @@ def sync_holding_amounts_from_shares(
     if not codes:
         return holdings
 
+    from app.services.fund_nav_service import prime_official_nav_cache
+
+    trade_date = get_effective_trade_date()
+    prime_official_nav_cache(sorted(codes), trade_date)
+
     quotes = estimate_quotes
     if quotes is None:
         quotes = fetch_fund_estimate_quotes(holdings, timeout_seconds=6.0)
 
-    trade_date = get_effective_trade_date()
     updated: list[Holding] = []
     for holding in holdings:
         updated.append(
@@ -232,6 +448,30 @@ def _pin_intraday_settled(
             )
         )
     return holding.model_copy(update=patch)
+
+
+def _should_skip_official_nav_roll(
+    holding: Holding,
+    settled: float,
+    *,
+    official_return: float | None,
+    shares: float | None,
+    official_unit_nav: float | None,
+) -> bool:
+    """OCR/官方净值已更新后的持有金额已是当日结算额，勿再按日涨跌滚入。"""
+    from app.services.holding_estimates import _ocr_holding_profit_is_cumulative
+
+    if holding.amount_includes_today:
+        return True
+    if shares and official_unit_nav and official_unit_nav > 0 and settled > 0:
+        nav_value = round(shares * official_unit_nav, 2)
+        if abs(settled - nav_value) <= max(1.0, nav_value * 0.003):
+            return True
+    if holding.daily_return_percent_source == "official_nav" and _ocr_holding_profit_is_cumulative(
+        holding
+    ):
+        return True
+    return False
 
 
 def _sync_one_holding(
@@ -323,29 +563,56 @@ def _sync_one_holding(
             }
         )
 
-    if shares and official_unit_nav and official_unit_nav > 0:
-        new_settled = round(shares * official_unit_nav, 2)
-        # 仅当日官方净值已公布时滚入；盘中保持上一交易日结算额（不因 shares×昨净值漂移抬升）
-        should_roll = official_return is not None
-        if should_roll:
+    if official_return is not None:
+        pre_roll = _pre_roll_settled(
+            holding,
+            profile,
+            official_return=official_return,
+            shares=shares,
+            official_unit_nav=official_unit_nav,
+        )
+        skip_roll = _should_skip_official_nav_roll(
+            holding,
+            settled,
+            official_return=official_return,
+            shares=shares,
+            official_unit_nav=official_unit_nav,
+        )
+        new_settled = (
+            settled
+            if skip_roll
+            else _compute_rolled_settled_amount(
+                baseline=pre_roll,
+                official_return=official_return,
+                shares=shares,
+                official_unit_nav=official_unit_nav,
+            )
+        )
+        if new_settled is not None:
             profit_patch = _profit_patch_from_rolled_settled(
                 new_settled,
-                shares,
+                shares or 0.0,
                 profile,
                 holding,
+                market_amount=new_settled,
+                pre_roll=pre_roll,
+                settled_before=settled,
             )
+            unit_cost = profit_patch.pop("holding_cost", None)
             profile_patch = {
                 "settled_holding_amount": new_settled,
                 "holding_amount": new_settled,
                 **profit_patch,
             }
+            if unit_cost is not None:
+                profile_patch["holding_cost"] = unit_cost
             if persist_profile and profile is not None:
                 save_fund_profile(profile.model_copy(update=profile_patch))
             return holding.model_copy(
                 update={
                     "holding_amount": new_settled,
                     "settled_holding_amount": new_settled,
-                    "amount_includes_today": False,
+                    "amount_includes_today": holding.amount_includes_today,
                     **profit_patch,
                 }
             )
@@ -402,25 +669,101 @@ def _profit_patch_from_rolled_settled(
     shares: float,
     profile: FundProfile | None,
     holding: Holding,
+    *,
+    market_amount: float | None = None,
+    pre_roll: float | None = None,
+    settled_before: float | None = None,
 ) -> dict:
-    """份额×最近官方净值后，按成本重算昨日结算持有收益（对齐支付宝持有收益列）。"""
-    if profile and profile.holding_cost and profile.holding_cost > 0 and shares > 0:
-        cost = round(profile.holding_cost * shares, 2)
-        if cost > 0:
-            profit = round(new_settled - cost, 2)
-            return_percent = round(profit / cost * 100, 2)
-            return {
-                "holding_profit": profit,
+    """支付宝口径：持有收益 = 持有金额 − 持仓成本；收益率 = 收益 / 成本。"""
+    from app.services.holding_estimates import _ocr_holding_profit_is_cumulative
+
+    patch: dict = {}
+    if shares <= 0:
+        return patch
+
+    if _ocr_holding_profit_is_cumulative(holding):
+        unit_cost = _infer_purchase_unit_cost(
+            holding,
+            shares,
+            market_amount=market_amount or new_settled,
+        )
+        if unit_cost is not None and unit_cost > 0:
+            patch["holding_cost"] = unit_cost
+        return_percent = holding.holding_return_percent or holding.return_percent
+        patch.update(
+            {
+                "holding_profit": holding.holding_profit,
                 "holding_return_percent": return_percent,
                 "return_percent": return_percent,
             }
-    if holding.holding_profit is not None:
-        return {
-            "holding_profit": holding.holding_profit,
-            "holding_return_percent": holding.holding_return_percent or holding.return_percent,
-            "return_percent": holding.holding_return_percent or holding.return_percent,
+        )
+        return patch
+
+    settled_anchor = settled_before if settled_before is not None else (
+        holding.settled_holding_amount or holding.holding_amount
+    )
+    profit_is_artifact = (
+        pre_roll is not None
+        and settled_anchor is not None
+        and _is_profit_inflation_artifact(holding, settled_anchor, pre_roll)
+    )
+    return_is_polluted = pre_roll is not None and _is_return_polluted_against_pre_roll(
+        holding,
+        pre_roll,
+    )
+
+    inference_holding = holding
+    if profit_is_artifact:
+        inference_holding = holding.model_copy(update={"holding_profit": None})
+
+    unit_cost = _resolve_purchase_unit_cost(
+        inference_holding,
+        profile,
+        shares,
+        market_amount=market_amount or new_settled,
+        pre_roll=pre_roll,
+    )
+    if unit_cost is None or unit_cost <= 0:
+        if holding.holding_profit is not None and not profit_is_artifact:
+            return {
+                "holding_profit": holding.holding_profit,
+                "holding_return_percent": holding.holding_return_percent or holding.return_percent,
+                "return_percent": holding.holding_return_percent or holding.return_percent,
+            }
+        return patch
+
+    cost_total = round(unit_cost * shares, 2)
+    profit = round(new_settled - cost_total, 2)
+    return_percent = round(profit / cost_total * 100, 2) if cost_total > 0 else 0.0
+
+    profile_unit = profile.holding_cost if profile else None
+    if profile and (
+        profile_unit is None
+        or (
+            pre_roll is not None
+            and _is_imputed_market_unit_cost(
+                profile_unit,
+                holding,
+                shares,
+                pre_roll=pre_roll,
+            )
+        )
+        or abs(profile_unit - unit_cost) > 0.0005
+    ):
+        patch["holding_cost"] = unit_cost
+
+    if profit_is_artifact and return_is_polluted:
+        # 仅滚入金额；收益/收益率需重新 OCR 或手工修正后再算
+        return patch
+
+    patch.update(
+        {
+            "holding_profit": profit,
+            "holding_return_percent": return_percent,
+            "return_percent": return_percent,
         }
-    return {}
+    )
+    return patch
 
 
 def _cost_basis(holding: Holding, profile: FundProfile | None) -> float | None:

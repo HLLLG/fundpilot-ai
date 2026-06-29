@@ -7,6 +7,8 @@ import {
   mergeHoldingsAppend,
   mergeSectorIntradayClose,
   mergeHoldingsPreserveQuoteFields,
+  dedupeHoldingsByCode,
+  patchHoldingRecord,
 } from "@/lib/holdingMetrics";
 import { getDailyProfit } from "@/lib/holdingDisplay";
 
@@ -49,6 +51,55 @@ describe("findHoldingIndex", () => {
         fund_name: "中航机遇领航混合发起C",
       }),
     ).toBe(0);
+  });
+});
+
+describe("patchHoldingRecord", () => {
+  it("updates one fund without changing portfolio length", () => {
+    const holdings = [
+      holding("008586", "华夏人工智能ETF联接C"),
+      holding("021533", "天弘半导体设备指数C"),
+      holding("015945", "易方达国防军工混合C"),
+    ];
+    const patched = patchHoldingRecord(holdings, {
+      ...holdings[1],
+      sector_return_percent: 8.16,
+    });
+    expect(patched).toHaveLength(3);
+    expect(patched[1].sector_return_percent).toBe(8.16);
+    expect(patched.map((item) => item.fund_code)).toEqual(["008586", "021533", "015945"]);
+  });
+
+  it("ignores patch when fund_code mismatches target row", () => {
+    const holdings = [
+      holding("008586", "华夏人工智能ETF联接C"),
+      holding("021533", "天弘半导体设备指数C"),
+    ];
+    const patched = patchHoldingRecord(holdings, {
+      ...holdings[0],
+      fund_code: "015945",
+      fund_name: "易方达国防军工混合C",
+    });
+    expect(patched).toEqual(holdings);
+  });
+});
+
+describe("dedupeHoldingsByCode", () => {
+  it("merges duplicate fund_code rows into one", () => {
+    const ai = {
+      ...holding("008586", "华夏人工智能ETF联接C"),
+      holding_amount: 13863.07,
+      estimated_holding_profit: -607.85,
+    };
+    const duplicate = {
+      ...holding("008586", "华夏人工智能ETF联接C"),
+      holding_amount: 13863.07,
+      holding_profit: 552.1,
+    };
+    const merged = dedupeHoldingsByCode([ai, duplicate, holding("015945", "易方达国防军工混合C")]);
+    expect(merged).toHaveLength(2);
+    expect(merged[0].fund_code).toBe("008586");
+    expect(merged[0].holding_profit).toBe(552.1);
   });
 });
 
@@ -114,6 +165,30 @@ describe("mergeHoldingsPreserveQuoteFields", () => {
     expect(merged[1].holding_amount).toBe(3000);
     expect(merged[1].holding_profit).toBe(0);
     expect(merged[1].sector_return_percent).toBe(3.0);
+  });
+
+  it("prefers incoming OCR holding profit over stale estimated display fields", () => {
+    const previous = [
+      {
+        ...holding("025856", "华夏中证电网设备主题ETF联接A"),
+        estimated_holding_profit: -607.85,
+        estimated_holding_return_percent: -5.19,
+        holding_return_is_estimated: false,
+      },
+    ];
+    const incoming = [
+      {
+        ...holding("025856", "华夏中证电网设备主题ETF联接A"),
+        holding_amount: 11104.3,
+        holding_profit: 142.18,
+        holding_return_percent: 1.3,
+        daily_profit: -123.22,
+        daily_return_percent_source: "official_nav" as const,
+      },
+    ];
+    const merged = mergeHoldingsPreserveQuoteFields(previous, incoming);
+    expect(merged[0].estimated_holding_profit).toBe(142.18);
+    expect(merged[0].estimated_holding_return_percent).toBe(1.3);
   });
 
   it("prefers incoming quote fields when refresh returns new sector data", () => {

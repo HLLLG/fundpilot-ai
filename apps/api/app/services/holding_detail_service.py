@@ -12,6 +12,10 @@ from app.services.fund_profile import (
     merge_holding_into_profile,
 )
 from app.services.holding_estimates import compute_yesterday_profit
+from app.services.holding_amount_sync import (
+    _infer_purchase_unit_cost,
+    _is_imputed_market_unit_cost,
+)
 
 
 def build_holding_detail(
@@ -63,6 +67,16 @@ def build_holding_detail(
         provenance["holding_cost"] = "ocr_detail"
     if yesterday_profit is not None:
         provenance["yesterday_profit"] = "ocr_detail"
+
+    if holding_shares and holding_shares > 0:
+        inferred = _infer_purchase_unit_cost(resolved, holding_shares)
+        if inferred is not None and inferred > 0:
+            if (
+                holding_cost is None
+                or _is_imputed_market_unit_cost(holding_cost, resolved, holding_shares)
+            ):
+                holding_cost = inferred
+                provenance["holding_cost"] = "computed"
 
     latest_nav: float | None = None
     nav_date: str | None = None
