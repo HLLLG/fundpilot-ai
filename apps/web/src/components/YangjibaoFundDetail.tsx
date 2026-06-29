@@ -195,7 +195,27 @@ export function YangjibaoFundDetail({
   const intradayRequestSeq = useRef(0);
 
   const activeHolding = detail?.holding ?? holding;
+  const activeHoldingRef = useRef(activeHolding);
+  const onHoldingResolvedRef = useRef(onHoldingResolved);
   const provenance = detail?.provenance ?? {};
+  const selectedHolding = holdings[holdingIndex] ?? holding;
+  const detailRequestKey = [
+    holdingIndex,
+    selectedHolding?.fund_code ?? "",
+    selectedHolding?.fund_name ?? "",
+    selectedHolding?.holding_amount ?? "",
+    selectedHolding?.return_percent ?? "",
+    selectedHolding?.holding_profit ?? "",
+    selectedHolding?.holding_return_percent ?? "",
+    selectedHolding?.settled_holding_amount ?? "",
+    selectedHolding?.display_holding_amount ?? "",
+  ].join("|");
+  const detailInputsRef = useRef({
+    holdings,
+    portfolioSummary,
+    sectorMeta,
+    onHoldingResolved,
+  });
 
   const totalAssets =
     portfolioSummary?.total_assets ??
@@ -234,9 +254,25 @@ export function YangjibaoFundDetail({
     () => resolveIntradayQuery(activeHolding, sectorMeta),
     [activeHolding, sectorMeta],
   );
+  const intradayQueryKey = intradayQuery
+    ? `${intradayQuery.source_type}:${intradayQuery.source_name}`
+    : "";
+  const intradayQueryRef = useRef(intradayQuery);
 
   const canGoPrev = holdingIndex > 0;
   const canGoNext = holdingIndex < holdings.length - 1;
+
+  useEffect(() => {
+    activeHoldingRef.current = activeHolding;
+    onHoldingResolvedRef.current = onHoldingResolved;
+    detailInputsRef.current = {
+      holdings,
+      portfolioSummary,
+      sectorMeta,
+      onHoldingResolved,
+    };
+    intradayQueryRef.current = intradayQuery;
+  }, [activeHolding, holdings, intradayQuery, onHoldingResolved, portfolioSummary, sectorMeta]);
 
   async function handlePurchaseDateChange(nextDate: string) {
     if (!canEditPurchaseDate || purchaseDateSaving) {
@@ -346,8 +382,9 @@ export function YangjibaoFundDetail({
 
   useEffect(() => {
     let cancelled = false;
-    const fundCode = holdings[holdingIndex]?.fund_code;
+    const fundCode = selectedHolding?.fund_code;
     const cachedDetail = readHoldingDetailCache(userId, fundCode);
+    const inputs = detailInputsRef.current;
 
     if (cachedDetail) {
       setDetail(cachedDetail);
@@ -359,10 +396,10 @@ export function YangjibaoFundDetail({
 
     // 缓存期内也静默后台更新（stale-while-revalidate）
     void fetchHoldingDetail({
-      holdings,
+      holdings: inputs.holdings,
       index: holdingIndex,
-      portfolio_summary: portfolioSummary,
-      sector_quote_meta: sectorMeta,
+      portfolio_summary: inputs.portfolioSummary,
+      sector_quote_meta: inputs.sectorMeta,
     })
       .then((result) => {
         if (cancelled) {
@@ -372,11 +409,12 @@ export function YangjibaoFundDetail({
           writeHoldingDetailCache(userId, result.holding.fund_code, result);
         }
         setDetail(result);
+        const latestInputs = detailInputsRef.current;
         if (
           result.fund_code_resolved &&
-          result.holding.fund_code !== holdings[holdingIndex]?.fund_code
+          result.holding.fund_code !== latestInputs.holdings[holdingIndex]?.fund_code
         ) {
-          onHoldingResolved?.(holdingIndex, result.holding);
+          latestInputs.onHoldingResolved?.(holdingIndex, result.holding);
         }
       })
       .catch((error) => {
@@ -393,13 +431,14 @@ export function YangjibaoFundDetail({
     return () => {
       cancelled = true;
     };
-  }, [holdingIndex, holdings, portfolioSummary, sectorMeta, onHoldingResolved, userId]);
+  }, [detailRequestKey, holdingIndex, selectedHolding?.fund_code, userId]);
 
   useEffect(() => {
     if (tab !== "sector") {
       return;
     }
-    if (!intradayQuery) {
+    const query = intradayQueryRef.current;
+    if (!query) {
       setIntradayPoints([]);
       setIntradayClosePercent(null);
       setIntradayNote("暂无板块映射，请先在持仓页刷新板块或上传详情截图建档");
@@ -410,7 +449,7 @@ export function YangjibaoFundDetail({
 
     const requestId = ++intradayRequestSeq.current;
     const forceRefresh = intradayForceSeq > 0;
-    const cachedIntraday = !forceRefresh ? readIntradayCache(intradayQuery) : null;
+    const cachedIntraday = !forceRefresh ? readIntradayCache(query) : null;
 
     const applyIntraday = (result: {
       points: Array<{ time: string; percent: number }>;
@@ -427,9 +466,10 @@ export function YangjibaoFundDetail({
             ? lastPoint
             : null;
       setIntradayClosePercent(close);
-      const merged = mergeSectorIntradayClose(activeHolding, close);
-      if (merged !== activeHolding) {
-        onHoldingResolved?.(holdingIndex, merged);
+      const currentHolding = activeHoldingRef.current;
+      const merged = mergeSectorIntradayClose(currentHolding, close);
+      if (merged !== currentHolding) {
+        onHoldingResolvedRef.current?.(holdingIndex, merged);
       }
     };
 
@@ -453,13 +493,13 @@ export function YangjibaoFundDetail({
     void (async () => {
       try {
         const result = await fetchSectorIntraday(
-          intradayQuery,
+          query,
           forceRefresh ? { forceRefresh: true } : undefined,
         );
         if (requestId !== intradayRequestSeq.current) {
           return;
         }
-        writeIntradayCache(intradayQuery, result);
+        writeIntradayCache(query, result);
         if (result.points.length >= 2 || !cachedIntraday) {
           applyIntraday(result);
         } else if (result.note && !cachedIntraday.note) {
@@ -484,7 +524,7 @@ export function YangjibaoFundDetail({
     return () => {
       intradayRequestSeq.current += 1;
     };
-  }, [tab, intradayQuery, intradayForceSeq, activeHolding, holdingIndex, onHoldingResolved]);
+  }, [tab, intradayQueryKey, intradayForceSeq, holdingIndex]);
 
   useEffect(() => {
     return hydrateTradingSession((session) => {
