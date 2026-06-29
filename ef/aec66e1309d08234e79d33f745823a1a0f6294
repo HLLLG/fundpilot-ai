@@ -1,0 +1,40 @@
+apps/api/app/services/discovery_streaming.py
+  s_586be8b1e08169::t_5e60abd7996aeb 65-68,77,83-105,110-118,122-133,135
+apps/api/app/services/fund_nav_service.py
+  s_586be8b1e08169::t_82197b214ba94e 67-76
+  s_586be8b1e08169::t_0eb5491712f68a 97
+apps/api/tests/test_discovery_streaming.py
+  s_586be8b1e08169::t_eae026527c09f9 277-284
+apps/api/app/services/ocr_pipeline.py
+  s_586be8b1e08169::t_549fde1af41604 274
+apps/web/src/components/YangjibaoFundDetail.tsx
+  s_586be8b1e08169::t_c2da3abc775918 462
+apps/api/app/services/portfolio_holdings_service.py
+  s_586be8b1e08169::t_a89ac982fda947 267
+apps/api/app/services/holding_amount_sync.py
+  s_586be8b1e08169::t_adc159c7b3868e 392
+apps/web/src/components/Dashboard.tsx
+  s_586be8b1e08169::t_6d4e30787cd096 541-543
+  s_586be8b1e08169::t_a26b461d258016 540
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.26-trip",
+  "base_commit_sha": "efaec66e1309d08234e79d33f745823a1a0f6294",
+  "prompts": {},
+  "humans": {
+    "h_375fc341ff3baa": {
+      "author": "hegl <HLLLG@github.com>"
+    }
+  },
+  "sessions": {
+    "s_586be8b1e08169": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "b2e3e20d-4464-456e-8d37-7ba64394f1cf",
+        "model": "composer-2.5"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
