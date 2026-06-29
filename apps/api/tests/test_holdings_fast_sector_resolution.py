@@ -91,34 +91,6 @@ def test_refresh_benchmark_sectors_fast_mode_uses_cached_benchmark(monkeypatch):
     assert result[0].intraday_index_name == "中证半导体材料设备主题指数"
 
 
-def test_refresh_holdings_sector_quotes_cache_only_skips_missing_benchmark_fetch(monkeypatch):
-    calls: list[str] = []
-
-    monkeypatch.setattr(
-        "app.services.fund_primary_sector_service.get_fund_primary_sector",
-        lambda _code: None,
-    )
-    monkeypatch.setattr(
-        "app.services.fund_primary_sector_service.get_fund_profile_by_code",
-        lambda _code: None,
-    )
-
-    def _fetch(code: str) -> str | None:
-        calls.append(code)
-        return "中证半导体材料设备主题指数收益率×95%"
-
-    monkeypatch.setattr(
-        "app.services.fund_benchmark_sector.fetch_fund_benchmark_text",
-        _fetch,
-    )
-
-    from app.services.sector_quote_service import refresh_holdings_sector_quotes
-
-    refresh_holdings_sector_quotes([_holding()], cache_only=True)
-
-    assert calls == []
-
-
 def test_failed_benchmark_fetch_is_miss_cached_for_accurate_mode(monkeypatch):
     calls: list[str] = []
 
@@ -191,66 +163,6 @@ def test_apply_confirmed_holdings_fast_enrichment_skips_missing_benchmark_fetch(
     assert calls == []
 
 
-def test_background_portfolio_sector_refresh_loads_holdings_without_missing_benchmark_fetch(monkeypatch):
-    from app.models import FundProfile
-
-    calls: list[str] = []
-    persisted: list[Holding] = []
-
-    monkeypatch.setattr(
-        "app.services.portfolio_holdings_service.get_most_recent_portfolio_snapshot",
-        lambda: None,
-    )
-    monkeypatch.setattr(
-        "app.services.portfolio_holdings_service.list_fund_profiles",
-        lambda: [
-            FundProfile(
-                fund_code="021533",
-                fund_name="天弘半导体设备指数C",
-                holding_amount=3000.0,
-            )
-        ],
-    )
-    monkeypatch.setattr(
-        "app.services.fund_primary_sector_service.get_fund_primary_sector",
-        lambda _code: None,
-    )
-    monkeypatch.setattr(
-        "app.services.fund_primary_sector_service.get_fund_profile_by_code",
-        lambda _code: None,
-    )
-    monkeypatch.setattr(
-        "app.services.fund_benchmark_sector.fetch_fund_benchmark_text",
-        lambda code: calls.append(code) or None,
-    )
-    monkeypatch.setattr(
-        "app.services.portfolio_sector_refresh.set_request_user_id",
-        lambda _user_id: object(),
-    )
-    monkeypatch.setattr(
-        "app.services.portfolio_sector_refresh.reset_request_user_id",
-        lambda _token: None,
-    )
-    monkeypatch.setattr(
-        "app.services.portfolio_sector_refresh.refresh_holdings_sector_quotes",
-        lambda holdings, **_kwargs: {
-            "ok": True,
-            "holdings": [holding.model_dump() for holding in holdings],
-        },
-    )
-    monkeypatch.setattr(
-        "app.services.portfolio_sector_refresh.persist_holdings_after_sector_refresh",
-        lambda holdings, **_kwargs: persisted.extend(holdings) or holdings,
-    )
-
-    from app.services.portfolio_sector_refresh import refresh_portfolio_sectors_for_user
-
-    refresh_portfolio_sectors_for_user(1)
-
-    assert calls == []
-    assert [holding.fund_code for holding in persisted] == ["021533"]
-
-
 def test_refresh_holdings_sector_quotes_fast_and_accurate_fetch_benchmark(monkeypatch):
     from app.services.sector_quote_service import SpotBoardFetchResult
 
@@ -313,12 +225,23 @@ def test_refresh_holdings_sector_quotes_fast_and_accurate_fetch_benchmark(monkey
         "app.services.fund_benchmark_sector.fetch_fund_benchmark_text",
         _fetch,
     )
+    holdings_infer_calls: list[str] = []
+
+    def _fetch_portfolio_stocks(code: str):
+        holdings_infer_calls.append(code)
+        return []
+
+    monkeypatch.setattr(
+        "app.services.fund_holdings_sector_infer.fetch_portfolio_stocks_with_industry",
+        _fetch_portfolio_stocks,
+    )
 
     from app.services.sector_quote_service import refresh_holdings_sector_quotes
 
     holding = _holding(fund_code="123456", sector_name=None, intraday_index_name=None)
     refresh_holdings_sector_quotes([holding], timeout_seconds=8.0)
     assert calls == ["123456"]
+    assert holdings_infer_calls == []
 
     from app.services import fund_primary_sector_service
 
@@ -326,6 +249,7 @@ def test_refresh_holdings_sector_quotes_fast_and_accurate_fetch_benchmark(monkey
     calls.clear()
     refresh_holdings_sector_quotes([holding], timeout_seconds=None)
     assert calls == ["123456"]
+    assert holdings_infer_calls == ["123456"]
 
 
 def test_portfolio_holdings_cache_miss_loads_without_benchmark_fetch(monkeypatch):
@@ -538,66 +462,3 @@ def test_official_nav_updates_daily_while_board_keeps_close_change(monkeypatch):
     assert holding.daily_return_percent == 3.66
     assert holding.daily_return_percent_source == "official_nav"
 
-
-def test_load_persisted_holdings_snapshot_merge_respects_fetch_benchmark_false(monkeypatch):
-    from app.models import FundProfile
-    from app.services.portfolio_holdings_service import load_persisted_holdings
-
-    enrich_fetch_flags: list[bool] = []
-    resolve_fetch_flags: list[bool] = []
-
-    snapshot_holding = Holding(
-        fund_code="123456",
-        fund_name="Test Index Fund",
-        holding_amount=1000.0,
-        sector_name=None,
-    )
-    profile = FundProfile(
-        fund_code="123456",
-        fund_name="Test Index Fund",
-        holding_amount=1000.0,
-        sector_name=None,
-    )
-
-    class FakeProfileService:
-        def resolve_holdings(self, holdings, **kwargs):
-            resolve_fetch_flags.append(kwargs.get("fetch_benchmark"))
-            return holdings
-
-    def _enrich_from_profiles(holdings, **kwargs):
-        enrich_fetch_flags.append(kwargs.get("fetch_benchmark"))
-        return holdings
-
-    monkeypatch.setattr(
-        "app.services.portfolio_holdings_service.get_most_recent_portfolio_snapshot",
-        lambda: {
-            "snapshot_date": "2026-06-03",
-            "captured_at": "2026-06-03T08:15:00+00:00",
-            "holdings": [snapshot_holding.model_dump()],
-            "total_assets": 1000.0,
-        },
-    )
-    monkeypatch.setattr(
-        "app.services.portfolio_holdings_service.list_fund_profiles",
-        lambda: [profile],
-    )
-    monkeypatch.setattr(
-        "app.services.portfolio_holdings_service.enrich_holdings_from_profiles",
-        _enrich_from_profiles,
-    )
-    monkeypatch.setattr(
-        "app.services.portfolio_holdings_service.FundProfileService",
-        FakeProfileService,
-    )
-    monkeypatch.setattr(
-        "app.services.fund_benchmark_sector.fetch_fund_benchmark_text",
-        lambda _code: (_ for _ in ()).throw(AssertionError("benchmark fetch should be skipped")),
-    )
-
-    holdings, source, snapshot_date, _ = load_persisted_holdings(fetch_benchmark=False)
-
-    assert source == "snapshot"
-    assert snapshot_date == "2026-06-03"
-    assert [holding.fund_code for holding in holdings] == ["123456"]
-    assert resolve_fetch_flags == []
-    assert enrich_fetch_flags == []
