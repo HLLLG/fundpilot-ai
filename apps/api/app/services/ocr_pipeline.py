@@ -241,6 +241,7 @@ def apply_confirmed_holdings(
         estimate_quotes={},
         persist_profiles=True,
         force_reset_shares=False,
+        skip_network=True,
     )
     merged = enrich_holdings_from_profiles(typed, fetch_benchmark=False)
     merged = bootstrap_holding_baselines(merged, force_reset_shares=True, skip_network=True)

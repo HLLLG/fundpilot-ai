@@ -1,4 +1,6 @@
 from app.models import Holding
+from app.models import ApplyHoldingsRequest, FundProfile
+from app.main import apply_portfolio_holdings
 from app.services.ocr_pipeline import apply_confirmed_holdings
 
 
@@ -10,8 +12,16 @@ def test_apply_confirmed_holdings_skips_network_bootstrap(monkeypatch):
         lambda *args, **kwargs: fetch_calls.__setitem__("estimate", fetch_calls["estimate"] + 1) or {},
     )
     monkeypatch.setattr(
-        "app.services.fund_nav_service.get_latest_unit_nav",
+        "app.services.holding_amount_sync.get_latest_unit_nav",
         lambda *args, **kwargs: fetch_calls.__setitem__("nav", fetch_calls["nav"] + 1) or None,
+    )
+    monkeypatch.setattr(
+        "app.services.holding_amount_sync.get_fund_profile_by_code",
+        lambda _code: FundProfile(
+            fund_code="001234",
+            fund_name="测试基金混合A",
+            holding_shares=None,
+        ),
     )
     monkeypatch.setattr(
         "app.services.ocr_pipeline._finalize_confirmed_holdings",
@@ -70,3 +80,24 @@ def test_apply_confirmed_holdings_skips_network_bootstrap(monkeypatch):
     assert result["sector_refresh"]["matched"] == 1
     assert result["holdings"][0]["sector_return_percent"] == 1.5
     assert result["holdings"][0]["daily_profit"] is not None
+
+
+def test_apply_portfolio_holdings_updates_holdings_cache(monkeypatch):
+    holding = Holding(
+        fund_code="001234",
+        fund_name="测试基金混合A",
+        holding_amount=13671.67,
+    )
+    payload = {
+        "holdings": [holding.model_dump(mode="json")],
+        "portfolio_summary": {"total_assets": 13671.67, "holding_count": 1},
+    }
+    saved: list[dict] = []
+
+    monkeypatch.setattr("app.main.apply_confirmed_holdings", lambda _holdings: payload)
+    monkeypatch.setattr("app.main.save_cached_holdings_response", lambda item: saved.append(item))
+
+    result = apply_portfolio_holdings(ApplyHoldingsRequest(holdings=[holding]))
+
+    assert result is payload
+    assert saved == [payload]

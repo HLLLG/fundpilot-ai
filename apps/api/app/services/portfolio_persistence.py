@@ -120,7 +120,12 @@ def persist_holdings_after_sector_refresh(
     from app.services.transaction_ledger import confirm_and_compute_overrides
 
     overrides = confirm_and_compute_overrides(merged)
-    synced = sync_holding_amounts_from_shares(merged, shares_override=overrides)
+    synced = sync_holding_amounts_from_shares(
+        merged,
+        shares_override=overrides,
+        estimate_quotes={} if not with_official_nav else None,
+        allow_nav_fetch=with_official_nav,
+    )
     if with_official_nav:
         synced = overlay_official_nav_returns(synced)
     enriched = enrich_holdings_estimates(synced)

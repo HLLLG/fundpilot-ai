@@ -381,9 +381,11 @@ def fund_transactions(fund_code: str) -> dict:
 def apply_portfolio_holdings(payload: ApplyHoldingsRequest) -> dict:
     if not payload.holdings:
         raise HTTPException(status_code=400, detail="持仓不能为空")
-    return apply_confirmed_holdings(
+    response = apply_confirmed_holdings(
         payload.holdings,
     )
+    save_cached_holdings_response(response)
+    return response
 
 
 @app.delete("/api/portfolio/holdings/{fund_code}")
@@ -493,6 +495,7 @@ def refresh_sector_quotes(request: RefreshSectorQuotesRequest) -> dict:
             with_official_nav=request.budget == "accurate",
         )
         result["holdings"] = serialize_holdings_for_client(enriched)
+        save_cached_holdings_response({"holdings": result["holdings"]})
         user_id = get_request_user_id()
         schedule_warm_holdings_intraday(
             enriched,

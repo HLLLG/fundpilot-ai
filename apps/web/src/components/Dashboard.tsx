@@ -504,7 +504,6 @@ export function Dashboard() {
       return;
     }
     refreshAfterApplyRef.current = false;
-    void hydratePortfolio();
     void sectorRefresh.refresh(false, "fast");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [holdings]);
@@ -962,17 +961,24 @@ export function Dashboard() {
     setPendingOcrNote(null);
     setPendingOcrSource(null);
     setActiveTab("holdings");
-    setHoldings(mergeHoldingsPreserveQuoteFields(previousHoldings, mergedToApply));
+    const optimisticHoldings = mergeHoldingsPreserveQuoteFields(previousHoldings, mergedToApply);
+    setHoldings(optimisticHoldings);
+    saveCachedPortfolioHoldings({
+      holdings: optimisticHoldings,
+      portfolio_summary: portfolioSummary,
+      refreshed_at: holdingsRefreshedAt,
+    });
     refreshAfterApplyRef.current = true;
 
     void (async () => {
       try {
         const applied = await applyPortfolioHoldings(mergedToApply);
-        setHoldings(mergeHoldingsPreserveQuoteFields(previousHoldings, applied.holdings));
+        const appliedHoldings = mergeHoldingsPreserveQuoteFields(optimisticHoldings, applied.holdings);
+        setHoldings(appliedHoldings);
         if (applied.portfolio_summary) {
           setPortfolioSummary((current) => {
             const base = current ?? applied.portfolio_summary!;
-            return {
+            const nextSummary = {
               ...base,
               ...applied.portfolio_summary,
               daily_profit:
@@ -982,6 +988,18 @@ export function Dashboard() {
                 base.daily_return_percent ??
                 null,
             };
+            saveCachedPortfolioHoldings({
+              holdings: appliedHoldings,
+              portfolio_summary: nextSummary,
+              refreshed_at: holdingsRefreshedAt,
+            });
+            return nextSummary;
+          });
+        } else {
+          saveCachedPortfolioHoldings({
+            holdings: appliedHoldings,
+            portfolio_summary: portfolioSummary,
+            refreshed_at: holdingsRefreshedAt,
           });
         }
       } catch (error) {
