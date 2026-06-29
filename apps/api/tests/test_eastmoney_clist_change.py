@@ -172,10 +172,25 @@ def test_sector_heat_skips_kline_when_theme_has_5d(monkeypatch):
     assert rows[0]["change_5d_percent"] == -7.5
 
 
+def test_fetch_eastmoney_clist_change_by_code_delegates_to_theme_metrics(monkeypatch):
+    sentinel = {"BK1036": {"change_1d": 1.0, "change_5d": None}}
+    captured: dict = {}
+
+    def _mock_fetch(**kwargs):
+        captured.update(kwargs)
+        return sentinel
+
+    monkeypatch.setattr(
+        "app.services.eastmoney_spot_client.fetch_eastmoney_clist_theme_metrics_by_code",
+        _mock_fetch,
+    )
+    assert fetch_eastmoney_clist_change_by_code(timeout=12.0) is sentinel
+    assert captured == {"timeout": 12.0, "max_retries": 2, "max_pages": 8}
+
+
 def test_fetch_eastmoney_clist_theme_metrics_live_smoke():
     by_code = fetch_eastmoney_clist_theme_metrics_by_code(timeout=20.0)
     assert len(by_code) > 100
     sample = by_code.get("BK1036") or by_code.get("H30184") or by_code.get("931672")
     assert sample is not None
     assert sample.get("change_1d") is not None or sample.get("change_5d") is not None
-    assert fetch_eastmoney_clist_change_by_code(timeout=20.0)  # alias still works
