@@ -114,12 +114,6 @@ def _maybe_refresh_us(now: float) -> None:
 
 def market_shared_refresh_loop() -> None:
     """daemon：周期性刷新（启动同步刷新由 lifespan 调用 run_startup_market_refresh）。"""
-    global _last_a_share_refresh_at, _last_us_refresh_at
-
-    now = time.monotonic()
-    _last_a_share_refresh_at = now
-    _last_us_refresh_at = now
-
     while True:
         time.sleep(_poll_seconds())
         now = time.monotonic()

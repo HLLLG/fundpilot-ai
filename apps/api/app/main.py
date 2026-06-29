@@ -666,7 +666,7 @@ def market_theme_boards(
         raise HTTPException(status_code=400, detail="sort 须为 change 或 inflow")
     holdings: list = []
     if get_request_user_id() is not None:
-        loaded, _, _, _ = load_persisted_holdings()
+        loaded, _, _, _ = load_persisted_holdings(fetch_benchmark=False)
         holdings = loaded
     return get_theme_board_snapshot(
         force_refresh=force_refresh,

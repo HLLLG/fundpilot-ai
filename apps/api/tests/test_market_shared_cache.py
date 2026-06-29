@@ -2,6 +2,8 @@
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from app.services.market_shared_refresh import (    _A_SHARE_LIVE_SESSIONS,
     _US_LIVE_SESSIONS,
     _idle_interval_seconds,
@@ -54,7 +56,7 @@ def test_snapshot_refreshed_before_process_boot():
     ) is False
 
 
-def test_theme_board_refreshes_cache_from_prior_process(monkeypatch):
+def test_theme_board_serves_prior_process_cache_without_sync_refresh(monkeypatch):
     mark_process_boot()
     trade_date = "2026-06-25"
     cache_key = f"theme:boards:v5:{trade_date}"
@@ -67,13 +69,6 @@ def test_theme_board_refreshes_cache_from_prior_process(monkeypatch):
             "refreshed_at": "2020-01-01T00:00:00+00:00",
         },
     )
-    refreshed = {
-        "items": [{"sector_label": "新数据", "change_1d_percent": 9.9}],
-        "trade_date": trade_date,
-        "session_kind": "trading_day_intraday",
-        "refreshed_at": datetime.now(timezone.utc).isoformat(),
-    }
-
     monkeypatch.setattr(
         "app.services.theme_board_snapshot.build_trading_session",
         lambda: {
@@ -83,12 +78,13 @@ def test_theme_board_refreshes_cache_from_prior_process(monkeypatch):
     )
     monkeypatch.setattr(
         "app.services.theme_board_snapshot.refresh_theme_board_snapshot",
-        lambda **_: refreshed,
+        lambda **_: (_ for _ in ()).throw(AssertionError("should not sync refresh")),
     )
 
     payload = get_theme_board_snapshot(force_refresh=False, holdings=[], sort="change")
-    assert payload["from_cache"] is False
-    assert payload["items"][0]["sector_label"] == "新数据"
+    assert payload["from_cache"] is True
+    assert payload["stale"] is True
+    assert payload["items"][0]["sector_label"] == "旧数据"
 
 
 def test_theme_boards_read_from_cache_without_refresh(monkeypatch):
@@ -234,3 +230,129 @@ def test_us_market_serves_stale_without_network(monkeypatch):
     assert snap.from_cache is True
     assert snap.stale is True
     assert snap.available is True
+
+
+def test_dip_radar_serves_prior_process_cache_without_sync_build(monkeypatch):
+    mark_process_boot()
+    trade_date = "2026-06-25"
+    cache_key = f"dip:radar:v2:{trade_date}:5"
+    save_spot_snapshot(
+        cache_key,
+        {
+            "trade_date": trade_date,
+            "lookback_days": 5,
+            "refreshed_at": "2020-01-01T00:00:00+00:00",
+            "items": [
+                {
+                    "fund_code": "000001",
+                    "fund_name": "Old Radar Fund",
+                    "sector_label": "Semiconductor",
+                    "dip_drop_percent": -3.5,
+                    "rank": 1,
+                }
+            ],
+            "sector_dip_leaders": [],
+            "available": True,
+            "session_kind": "trading_day_intraday",
+        },
+    )
+
+    monkeypatch.setattr(
+        "app.services.dip_radar_snapshot.build_trading_session",
+        lambda: {
+            "effective_trade_date": trade_date,
+            "session_kind": "trading_day_intraday",
+        },
+    )
+    monkeypatch.setattr(
+        "app.services.dip_radar_snapshot.build_dip_radar_snapshot",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("should not sync build")),
+    )
+
+    result = get_dip_radar_snapshot(lookback_days=5, force_refresh=False)
+
+    assert result["from_cache"] is True
+    assert result["stale"] is True
+    assert result["items"][0]["fund_name"] == "Old Radar Fund"
+
+
+def test_market_theme_boards_loads_holdings_without_benchmark(monkeypatch):
+    from app import main
+
+    calls: list[dict] = []
+
+    monkeypatch.setattr(main, "get_request_user_id", lambda: "test-user")
+    monkeypatch.setattr(
+        main,
+        "load_persisted_holdings",
+        lambda **kwargs: calls.append(kwargs) or ([], "empty", None, None),
+    )
+    monkeypatch.setattr(
+        main,
+        "get_theme_board_snapshot",
+        lambda **kwargs: {"ok": True, "holdings": kwargs["holdings"]},
+    )
+
+    result = main.market_theme_boards(sort="change", force_refresh=False)
+
+    assert result["ok"] is True
+    assert calls == [{"fetch_benchmark": False}]
+
+
+def test_theme_refresh_does_not_overwrite_cache_when_no_live_changes(monkeypatch):
+    from app.services import theme_board_snapshot as service
+
+    saved: list[tuple[str, dict]] = []
+    monkeypatch.setattr(
+        service,
+        "build_trading_session",
+        lambda: {
+            "effective_trade_date": "2026-06-29",
+            "session_kind": "trading_day_intraday",
+        },
+    )
+    monkeypatch.setattr(
+        service,
+        "list_theme_board_universe",
+        lambda: [
+            {
+                "sector_label": "NoData",
+                "board_kind": "concept",
+                "secid": "90.BK0000",
+                "source_code": "BK0000",
+                "flow_source_code": "BK0000",
+                "change_hint": None,
+            }
+        ],
+    )
+    monkeypatch.setattr(service, "fetch_eastmoney_clist_theme_metrics_by_code", lambda **_kwargs: {})
+    monkeypatch.setattr(service, "_enrich_missing_1d_via_kline", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(service, "_load_theme_spot_changes", lambda: {})
+    monkeypatch.setattr(service, "save_spot_snapshot", lambda key, payload: saved.append((key, payload)))
+
+    snapshot = service.refresh_theme_board_snapshot()
+
+    assert snapshot["items"][0]["change_1d_percent"] is None
+    assert saved == []
+
+
+def test_market_refresh_loop_does_not_mark_recent_before_first_attempt(monkeypatch):
+    from app.services import market_shared_refresh as service
+
+    service._last_a_share_refresh_at = 0.0
+    service._last_us_refresh_at = 0.0
+    seen: dict[str, float] = {}
+
+    monkeypatch.setattr(service, "_poll_seconds", lambda: 0.0)
+    monkeypatch.setattr(service.time, "sleep", lambda _seconds: None)
+
+    def stop_after_first_check(_now: float) -> None:
+        seen["last_a_share_refresh_at"] = service._last_a_share_refresh_at
+        raise SystemExit
+
+    monkeypatch.setattr(service, "_maybe_refresh_a_share", stop_after_first_check)
+
+    with pytest.raises(SystemExit):
+        service.market_shared_refresh_loop()
+
+    assert seen["last_a_share_refresh_at"] == 0.0

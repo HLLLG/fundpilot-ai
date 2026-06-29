@@ -234,11 +234,8 @@ def get_dip_radar_snapshot(
         if cached is None:
             cached = get_spot_snapshot_any_age(cache_key)
             stale = cached is not None
-        if cached is not None and snapshot_refreshed_before_process_boot(
-            cached.get("refreshed_at")
-        ):
-            cached = None
-            stale = False
+        if cached is not None:
+            stale = stale or snapshot_refreshed_before_process_boot(cached.get("refreshed_at"))
 
     if cached is None or force_refresh:
         cached = build_dip_radar_snapshot(lookback_days=lookback_days)

@@ -324,6 +324,17 @@ def _flow_fields_from_clist_row(row: dict[str, float | None] | None) -> dict[str
     }
 
 
+def _has_live_theme_metric(item: dict[str, Any]) -> bool:
+    if item.get("change_1d_percent") is not None:
+        return True
+    if item.get("change_5d_percent") is not None:
+        return True
+    if item.get("main_force_net_yi") is not None:
+        return True
+    tiers = item.get("flow_tiers")
+    return isinstance(tiers, dict) and any(value is not None for value in tiers.values())
+
+
 def _lookup_clist_flow(
     entry: dict[str, Any],
     by_code: dict[str, dict[str, float | None]],
@@ -458,7 +469,8 @@ def refresh_theme_board_snapshot(*, trade_date: str | None = None) -> dict[str, 
         "refreshed_at": datetime.now(timezone.utc).isoformat(),
     }
     cache_key = f"theme:boards:{_CACHE_VERSION}:{resolved_date}"
-    save_spot_snapshot(cache_key, snapshot)
+    if any(_has_live_theme_metric(item) for item in items):
+        save_spot_snapshot(cache_key, snapshot)
 
     flow_codes = [
         str(item.get("flow_source_code") or "").strip()
@@ -555,17 +567,17 @@ def get_theme_board_snapshot(
     cache_key = f"theme:boards:{_CACHE_VERSION}:{trade_date}"
 
     cached: dict[str, Any] | None = None
+    stale = False
     if not force_refresh:
         # 后台线程负责新鲜度；前台接受任意时段缓存，秒出。
         cached = get_spot_snapshot_any_age(cache_key)
-        if cached is not None and snapshot_refreshed_before_process_boot(
-            cached.get("refreshed_at")
-        ):
-            cached = None
+        if cached is not None:
+            stale = snapshot_refreshed_before_process_boot(cached.get("refreshed_at"))
 
     if cached is None or force_refresh:
         cached = refresh_theme_board_snapshot(trade_date=trade_date)
         from_cache = False
+        stale = False
     else:
         from_cache = True
 
@@ -576,7 +588,7 @@ def get_theme_board_snapshot(
         "session_kind": cached.get("session_kind", session_kind),
         "available": available,
         "from_cache": from_cache,
-        "stale": False,
+        "stale": stale,
         "refreshed_at": cached.get("refreshed_at"),
         "message": None if available else "行情暂不可用，请稍后重试",
     }
