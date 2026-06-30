@@ -461,9 +461,10 @@ def _resolve_from_benchmark_index(
 ) -> PrimarySectorRecord | None:
     from app.services.fund_benchmark_sector import fetch_fund_benchmark_text, resolve_sector_from_benchmark
 
-    existing = get_fund_primary_sector(fund_code)
-    if existing and str(existing.get("source") or "") == "benchmark_index":
-        return _record_from_row(existing)
+    if persist_user and try_get_request_user_id() is not None:
+        existing = get_fund_primary_sector(fund_code)
+        if existing and str(existing.get("source") or "") == "benchmark_index":
+            return _record_from_row(existing)
 
     global_row = load_fresh_global_sector(fund_code)
     if global_row:
