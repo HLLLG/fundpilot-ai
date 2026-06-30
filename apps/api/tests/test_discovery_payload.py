@@ -47,6 +47,10 @@ def _discovery_facts() -> dict:
                 "return_6m_percent": 3.5,
                 "max_drawdown_1y_percent": -10.0,
                 "fund_scale_yi": 50.0,
+                "fund_quality_score": 82.5,
+                "sector_fit_score": 36.0,
+                "quality_reasons": ["板块高置信匹配", "近3/6月表现占优"],
+                "quality_penalties": [],
                 "nav_trend": {
                     "trend_label": "震荡",
                     "recent_5d_change_percent": 1.0,
@@ -102,6 +106,9 @@ def test_build_user_payload_includes_daily_report_parity_fields():
     candidate = facts["candidate_pool"][0]
     assert candidate["fund_code"] == "161725"
     assert candidate["return_3m_percent"] == 2.0
+    assert candidate["fund_quality_score"] == 82.5
+    assert candidate["sector_fit_score"] == 36.0
+    assert candidate["quality_reasons"] == ["板块高置信匹配", "近3/6月表现占优"]
     assert candidate["nav_trend"]["trend_label"] == "震荡"
     assert "latest_nav" not in candidate["nav_trend"]
     assert candidate["estimated_daily_return_percent"] == 1.1
@@ -142,9 +149,9 @@ def test_build_user_payload_includes_sector_opportunities():
     assert opportunities[0]["sector_label"] == "半导体"
     assert opportunities[0]["track"] == "momentum"
     assert opportunities[0]["entry_hint"] == "可分批关注"
-    assert opportunities[0]["position_label"] == "pullback_acceptance"
-    assert opportunities[0]["drawdown_from_20d_high_percent"] == 4.17
-    assert opportunities[0]["volume_ratio_5d_vs_20d"] == 1.18
+    assert "position_label" not in opportunities[0]
+    assert "drawdown_from_20d_high_percent" not in opportunities[0]
+    assert "volume_ratio_5d_vs_20d" not in opportunities[0]
 
 
 def test_build_user_payload_fast_mode_uses_minimal_briefs():

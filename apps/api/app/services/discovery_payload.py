@@ -17,7 +17,8 @@ OUTPUT_DISCOVERY_REQUIREMENTS = """
 - summary: 2-4 句市场与配置总结
 - market_view: 对大盘/板块的简短看法
 - recommendations: 数组，3~5 项；每项含 fund_code, fund_name, sector_name, action,
-  suggested_amount_yuan, amount_note, hold_horizon, confidence, points, risks, news_bullish
+  suggested_amount_yuan, amount_note, hold_horizon, confidence, decision_path,
+  sector_evidence, fund_evidence, validation_notes, points, risks, news_bullish
 - caveats: 字符串数组，须含风险提示
 
 recommendations 字段约束：
@@ -26,6 +27,12 @@ recommendations 字段约束：
 - action 仅用：建议关注、分批买入、等待回调
 - confidence 仅用：高、中、低
 - hold_horizon 示例：2-4周、1-3个月、3-6个月；dip_swing 模式可用 2-5天
+- decision_path: 1 句话，必须按「先判断板块方向 → 再比较方向内候选基金质量 → 最后决定动作」说明
+- sector_evidence: 字符串数组，引用 sector_opportunities 中的 score、track、confidence、资金流、pattern；
+  若没有对应 sector_opportunities，须说明使用 sector_heat / target_sector_context 降级判断
+- fund_evidence: 字符串数组，引用 candidate_pool 中的 fund_quality_score、sector_fit_score、
+  quality_reasons、return_3m_percent/return_6m_percent、max_drawdown_1y_percent、fund_scale_yi
+- validation_notes: 字符串数组，写清 quality_penalties、信息缺失、追高风险、新闻 stale/empty 等校验备注；无明显问题则 []
 - points: 字符串数组，每条须引用 candidate_pool 内具体字段（如 nav_trend、return_3m_percent、
   estimated_daily_return_percent、sector_fund_flow）；daily_return_source=sector_estimate 时须写「估算」
 - risks: 字符串数组，每只至少 1 条
@@ -36,7 +43,10 @@ recommendations 字段约束：
 全局约束：
 - 不得推荐 portfolio_gap.holdings_slim 中已持有的 fund_code
 - 不得承诺收益；不得编造 candidate_pool 外的代码或未提供的估值分位
+- full_market 模式须先判断板块方向，再在方向内选基金；不得只按基金近1年收益排序
 - 引用北向/南向用 market_flow；板块主力用 target_sector_context.sector_fund_flow
+- sector_opportunities 是系统已用 1d/5d 涨跌 + 今日/5日主力资金 + pattern 生成的主方向，
+  推荐理由须优先引用它，而不是重新发明方向
 - signal_backtest / candidate_factor_scores 按 confidence.level / factor_reliability 表述
 - summary 或 caveats 须体现 news.freshness_label 对置信度的影响
 """
@@ -44,9 +54,10 @@ recommendations 字段约束：
 _COMMON_REQUIREMENTS = [
     "仅从 discovery_facts.candidate_pool 选 3~5 只，不得推荐 holdings_slim 中已有 fund_code",
     "每只 recommendations 须含 hold_horizon、risks（至少 1 条）、points（引用 candidate_pool 具体字段）",
+    "每只 recommendations 须含 decision_path、sector_evidence、fund_evidence、validation_notes",
+    "先判断板块方向，再比较方向内基金质量分，最后决定动作",
     "estimated_daily_return_percent 且 daily_return_source=sector_estimate 时，points 须注明「估算」",
     "判断追高风险须参考 nav_trend.distance_from_high_percent / trend_label，不得只看 sector_heat",
-    "判断板块追高/回调位置须参考 sector_opportunities 的 position_label / 20日回撤 / 放量比",
     "news_bullish 仅引用 news_titles 或 topic_briefs.points.source_titles；无匹配则 []",
     "suggested_amount_yuan 须结合 available_budget_yuan 与 concentration_limit_percent",
     "引用数字须来自 discovery_facts，禁止编造",
@@ -55,6 +66,8 @@ _COMMON_REQUIREMENTS = [
 _FULL_MARKET_REQUIREMENTS = [
     *_COMMON_REQUIREMENTS,
     "基于 sector_heat 与 target_sector_context 做全市场横向对比",
+    "先判断板块方向（sector_opportunities/target_sector_context），再比较方向内基金质量分，最后决定动作",
+    "sector_opportunities 是系统已用 1d/5d 涨跌 + 今日/5日主力资金 + pattern 生成的主方向，推荐理由须优先引用它",
     "portfolio_gap / holdings_slim 仅作背景，不要以「持仓缺口」为主叙事",
     "market_view 须覆盖热度靠前板块与相对冷门但有机会的方向",
     "引用北向/南向须用 market_flow；板块主力须用 target_sector_context.sector_fund_flow",
@@ -158,7 +171,6 @@ def append_output_requirements_to_system(system_prompt: str) -> str:
 def _slim_sector_opportunities(items: list[dict]) -> list[dict]:
     slimmed: list[dict] = []
     for item in items[:8]:
-        position = item.get("position_context") or {}
         row = {
             "sector_label": item.get("sector_label"),
             "track": item.get("track"),
@@ -173,17 +185,5 @@ def _slim_sector_opportunities(items: list[dict]) -> list[dict]:
             "cumulative_5d_net_yi": item.get("cumulative_5d_net_yi"),
             "pattern_label": item.get("pattern_label"),
         }
-        for key in (
-            "position_label",
-            "drawdown_from_20d_high_percent",
-            "distance_from_20d_high_percent",
-            "distance_from_20d_low_percent",
-            "breakout_over_prior_20d_high_percent",
-            "volume_ratio_5d_vs_20d",
-            "up_days_5d",
-            "down_days_5d",
-        ):
-            if key in position:
-                row[key] = position.get(key)
         slimmed.append(row)
     return slimmed

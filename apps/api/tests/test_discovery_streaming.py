@@ -189,23 +189,17 @@ def test_stream_discovery_emits_context_stage_before_model(monkeypatch: pytest.M
     assert events[-1]["type"] == "done"
 
 
-def test_stream_discovery_passes_position_context_to_sector_opportunities(
+def test_stream_discovery_does_not_fetch_position_context(
     monkeypatch: pytest.MonkeyPatch,
 ):
     monkeypatch.setenv("FUND_AI_DEEPSEEK_API_KEY", _FAKE_DEEPSEEK_KEY)
     refresh_settings()
     _patch_pipeline(monkeypatch)
-    position_context = {
-        "半导体": {
-            "available": True,
-            "position_label": "pullback_acceptance",
-            "drawdown_from_20d_high_percent": 4.0,
-        }
-    }
     captured: dict = {}
     monkeypatch.setattr(
         "app.services.discovery_streaming.build_sector_position_map_for_opportunities",
-        lambda labels: position_context,
+        lambda labels: (_ for _ in ()).throw(AssertionError("position context should not be fetched")),
+        raising=False,
     )
 
     def fake_select(heat, **kwargs):
@@ -231,7 +225,8 @@ def test_stream_discovery_passes_position_context_to_sector_opportunities(
     events = list(stream_discovery(_request(), user_id=1))
 
     assert events[-1]["type"] == "done"
-    assert captured["sector_position_by_label"]["半导体"]["position_label"] == "pullback_acceptance"
+    assert "sector_flow_by_label" in captured
+    assert "sector_position_by_label" not in captured
 
 
 def test_stream_discovery_handles_llm_failure_with_salvage(monkeypatch: pytest.MonkeyPatch):
@@ -264,6 +259,8 @@ def test_stream_discovery_handles_llm_failure_with_salvage(monkeypatch: pytest.M
 def test_stream_discovery_prefetches_news_while_building_candidates(
     monkeypatch: pytest.MonkeyPatch,
 ):
+    from app.request_context import get_request_user_id
+
     monkeypatch.setenv("FUND_AI_DEEPSEEK_API_KEY", _FAKE_DEEPSEEK_KEY)
     refresh_settings()
     monkeypatch.setattr(
@@ -278,12 +275,8 @@ def test_stream_discovery_prefetches_news_while_building_candidates(
         "app.services.discovery_streaming.build_sector_flow_map_for_opportunities",
         lambda *_args, **_kwargs: {},
     )
-    monkeypatch.setattr(
-        "app.services.discovery_streaming.build_sector_position_map_for_opportunities",
-        lambda *_args, **_kwargs: {},
-    )
-
     def slow_candidate_pool(*args, **kwargs):
+        assert get_request_user_id() == 1
         time.sleep(0.35)
         return [{"fund_code": "161725", "fund_name": "招商中证白酒", "sector_label": "白酒"}]
 

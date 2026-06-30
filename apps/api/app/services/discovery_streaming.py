@@ -29,7 +29,6 @@ from app.services.discovery_sector_opportunity import (
     build_sector_flow_map_for_opportunities,
     select_sector_opportunities,
 )
-from app.services.discovery_sector_position import build_sector_position_map_for_opportunities
 from app.services.discovery_sector_heat import build_sector_heat_ranking
 from app.services.discovery_target_sectors import select_target_sectors
 from app.services.news_service import NewsService
@@ -67,7 +66,7 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
             topics = ["上证指数"]
         news_service = NewsService()
         per_sector = 3 if request.scan_mode == "full_market" else 5
-        pool_cap = 25
+        pool_cap = 28
         held_codes = {h.fund_code.strip().zfill(6) for h in holdings if h.fund_code}
 
         selection_strategy = request.selection_strategy
@@ -85,16 +84,10 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
                 sector_heat,
                 flow_labels,
             )
-            position_future = executor.submit(
-                build_sector_position_map_for_opportunities,
-                flow_labels[:5],
-            )
             sector_flow_by_label = flow_future.result()
-            sector_position_by_label = position_future.result()
             sector_opportunities = select_sector_opportunities(
                 sector_heat,
                 sector_flow_by_label=sector_flow_by_label,
-                sector_position_by_label=sector_position_by_label,
                 focus_sectors=list(request.focus_sectors),
                 max_total=8,
                 momentum_slots=4,
@@ -108,6 +101,8 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
                 from app.services.dip_drop_scanner import build_dip_pool_for_sectors
 
                 pool_future = executor.submit(
+                    run_with_request_user,
+                    user_id,
                     lambda: enrich_candidates(
                         build_dip_pool_for_sectors(
                             target_sectors,
@@ -120,6 +115,8 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
             else:
                 yield _stage("candidate_pool", started_at=started_at)
                 pool_future = executor.submit(
+                    run_with_request_user,
+                    user_id,
                     lambda: enrich_candidates(
                         build_candidate_pool(
                             target_sectors,

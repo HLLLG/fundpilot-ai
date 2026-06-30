@@ -26,6 +26,7 @@ DEFAULT_DISCOVERY_ROLE_PROMPT = """## 角色定位
 |------|------------|
 | `portfolio_gap.holdings_slim` | 当前持仓精简表：`fund_code`、`sector_name`、`weight_percent`、`holding_return_percent`、`estimated_daily_return_percent`；用于去重、看集中度、缺口补全 |
 | `candidate_pool[].return_3m/6m/1y_percent` | 阶段收益；`balanced` 策略优先 3~6 月走强、1 年涨幅适中（非年度冠军） |
+| `candidate_pool[].fund_quality_score` / `sector_fit_score` | 系统预筛质量分；优先参考高分候选，同时结合 `quality_reasons` / `quality_penalties` 解释入池原因和短板 |
 | `candidate_pool[].max_drawdown_1y_percent` | 近 1 年最大回撤；须对照 `profile.max_drawdown_percent` |
 | `candidate_pool[].nav_trend` | 净值趋势摘要：`trend_label`、`distance_from_high_percent`（距区间高点）、`recent_5d_change_percent`；**判断追高风险与回调空间须优先参考**，不得只看 `sector_heat` |
 | `candidate_pool[].estimated_daily_return_percent` | 候选当日涨跌；须看 `daily_return_source`：`official_nav`=官方净值可作主论据；`sector_estimate`=板块估算，**points 须注明「估算」** |
@@ -42,6 +43,13 @@ DEFAULT_DISCOVERY_ROLE_PROMPT = """## 角色定位
 - `selection_strategy`：`balanced` 均衡潜力 / `with_new_issue` 含新发观察 / `dip_rebound` 跌深反弹
 - `profile`：风险偏好、期望投入、偏定投/拒绝追高、投资期限；`decision_style=aggressive` 时偏 3～7 天波段
 
+## 决策流程
+
+1. 先判断板块方向：优先读取 `sector_opportunities` 的 `score`、`track`、`confidence`、主力资金与 `pattern_label`；没有对应方向时再降级参考 `sector_heat` / `target_sector_context`
+2. 再比较方向内候选基金：优先 `fund_quality_score`、`sector_fit_score`、`quality_reasons`，同时检查 `quality_penalties`、回撤、规模、用户基金类型偏好
+3. 最后决定动作：方向强且基金质量高但不过热，可 `分批买入`；方向认可但追高或信息缺失，用 `等待回调` / `建议关注`
+4. 每只推荐必须输出 `decision_path`、`sector_evidence`、`fund_evidence`、`validation_notes`，让用户能看懂“为什么是这个方向、为什么是这只基金、还有哪些短板”
+
 ## 输出动作
 
 - `建议关注`：值得纳入观察池，暂不必下单
@@ -52,7 +60,8 @@ DEFAULT_DISCOVERY_ROLE_PROMPT = """## 角色定位
 
 - `discovery_facts` 中数字为只读事实，不得改写或臆造未提供的估值分位
 - `with_new_issue` 策略：新发观察基金须单独说明建仓期与业绩空白风险
-- 每只推荐的 `points` 须引用 **candidate_pool 内具体字段**（如 nav_trend、return_3m/6m、sector_fund_flow），不得空泛罗列
+- `full_market` 模式不得只按基金近 1 年收益排序；必须先从 `sector_opportunities` / `target_sector_context` 判断方向，再在方向内比较候选基金质量
+- 每只推荐的 `points` 须引用 **candidate_pool 内具体字段**（如 fund_quality_score、quality_reasons、nav_trend、return_3m/6m、sector_fund_flow），不得空泛罗列
 - 每只推荐的 `risks` 须至少 1 条，含追高风险或信息不足时须明确写出
 """
 
@@ -60,7 +69,10 @@ DISCOVERY_FACTS_INSTRUCTION = (
     "以下数字由系统计算，分析时不得改写；推荐 fund_code 必须来自 candidate_pool，禁止池外编造。"
     "portfolio_gap.holdings_slim 为用户当前持仓精简表：不得推荐其中 fund_code；"
     "缺口/补全模式须对照 sector_name 与 weight_percent，避免突破 profile.concentration_limit_percent。"
-    "candidate_pool 每只含阶段收益、回撤、规模、nav_trend、estimated_daily_return_percent。"
+    "candidate_pool 每只含 fund_quality_score/sector_fit_score、quality_reasons/quality_penalties、阶段收益、回撤、规模、nav_trend、estimated_daily_return_percent。"
+    "full_market 模式须先用 sector_opportunities 判断板块方向，再在方向内比较基金质量，最后决定动作；不得只按近1年收益排序。"
+    "每只推荐须给出 decision_path、sector_evidence、fund_evidence、validation_notes。"
+    "优先从 fund_quality_score 较高且 quality_penalties 可接受的候选中挑选，但仍须结合风险偏好与追高约束。"
     "判断追高风险或回调空间须优先用 nav_trend（trend_label、distance_from_high_percent、recent_5d_change_percent），"
     "不得仅凭 sector_heat 热度下结论。"
     "estimated_daily_return_percent 须结合 daily_return_source："

@@ -476,6 +476,10 @@ export type DiscoveryRecommendation = {
   fee_break_even_percent?: number | null;
   dip_drop_percent?: number | null;
   rebound_signals?: Array<{ id: string; label: string }>;
+  decision_path?: string;
+  sector_evidence?: string[];
+  fund_evidence?: string[];
+  validation_notes?: string[];
 };
 
 export type FundTypePreference = "any" | "etf_link" | "no_c_class";
@@ -500,6 +504,26 @@ export type DiscoveryCandidatePoolItem = {
   return_6m_percent?: number | null;
   fund_scale_yi?: number | null;
   is_new_issue?: boolean;
+  max_drawdown_1y_percent?: number | null;
+  fund_quality_score?: number | null;
+  sector_fit_score?: number | null;
+  quality_reasons?: string[];
+  quality_penalties?: string[];
+};
+
+export type DiscoverySectorOpportunity = {
+  sector_label: string;
+  track?: string | null;
+  score?: number | null;
+  confidence?: string | null;
+  entry_hint?: string | null;
+  evidence?: string[];
+  penalties?: string[];
+  change_1d_percent?: number | null;
+  change_5d_percent?: number | null;
+  today_main_force_net_yi?: number | null;
+  cumulative_5d_net_yi?: number | null;
+  pattern_label?: string | null;
 };
 
 export type DiscoveryOutcomeItem = {
@@ -529,6 +553,10 @@ export type FundDiscoveryReport = {
   target_sectors: string[];
   candidate_pool?: DiscoveryCandidatePoolItem[];
   recommendations: DiscoveryRecommendation[];
+  discovery_facts?: {
+    sector_opportunities?: DiscoverySectorOpportunity[];
+    [key: string]: unknown;
+  };
   caveats: string[];
   provider: string;
   analysis_mode?: AnalysisMode;

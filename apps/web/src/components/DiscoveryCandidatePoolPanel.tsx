@@ -16,6 +16,20 @@ function formatPercent(value: number | null | undefined): string {
   return `${value}%`;
 }
 
+function formatScore(value: number | null | undefined): string {
+  if (value == null || Number.isNaN(value)) {
+    return "—";
+  }
+  return Number(value).toFixed(2).replace(/\.00$/, "");
+}
+
+function compactList(items: string[] | undefined): string {
+  if (!items?.length) {
+    return "—";
+  }
+  return items.slice(0, 2).join("；");
+}
+
 export function DiscoveryCandidatePoolPanel({
   pool,
   selectedCodes,
@@ -45,16 +59,19 @@ export function DiscoveryCandidatePoolPanel({
       </button>
       {open ? (
         <div className="overflow-x-auto border-t border-slate-100 px-3 pb-4">
-          <table className="w-full min-w-[640px] text-left text-xs">
+          <table className="w-full min-w-[920px] text-left text-xs">
             <thead>
               <tr className="text-slate-500">
                 <th className="px-2 py-2 font-semibold">代码</th>
                 <th className="px-2 py-2 font-semibold">名称</th>
                 <th className="px-2 py-2 font-semibold">板块</th>
+                <th className="px-2 py-2 font-semibold">质量分</th>
+                <th className="px-2 py-2 font-semibold">匹配分</th>
                 <th className="px-2 py-2 font-semibold">近3月</th>
                 <th className="px-2 py-2 font-semibold">近6月</th>
                 <th className="px-2 py-2 font-semibold">近1年</th>
-                <th className="px-2 py-2 font-semibold">入选原因</th>
+                <th className="px-2 py-2 font-semibold">质量理由</th>
+                <th className="px-2 py-2 font-semibold">短板</th>
               </tr>
             </thead>
             <tbody>
@@ -77,6 +94,12 @@ export function DiscoveryCandidatePoolPanel({
                       ) : null}
                     </td>
                     <td className="px-2 py-2 text-slate-600">{item.sector_label ?? "—"}</td>
+                    <td className="px-2 py-2 font-semibold text-slate-800">
+                      {formatScore(item.fund_quality_score)}
+                    </td>
+                    <td className="px-2 py-2 font-semibold text-slate-700">
+                      {formatScore(item.sector_fit_score)}
+                    </td>
                     <td className="px-2 py-2 text-slate-600">
                       {formatPercent(item.return_3m_percent)}
                     </td>
@@ -86,11 +109,16 @@ export function DiscoveryCandidatePoolPanel({
                     <td className="px-2 py-2 text-slate-600">
                       {formatPercent(item.return_1y_percent)}
                     </td>
-                    <td className="px-2 py-2 text-slate-500">
-                      {item.selection_reason ?? "—"}
+                    <td className="max-w-[220px] px-2 py-2 text-slate-600">
+                      {compactList(item.quality_reasons) !== "—"
+                        ? compactList(item.quality_reasons)
+                        : item.selection_reason ?? "—"}
                       {picked ? (
                         <span className="ml-1 font-semibold text-[var(--brand)]">· 已推荐</span>
                       ) : null}
+                    </td>
+                    <td className="max-w-[220px] px-2 py-2 text-amber-800">
+                      {compactList(item.quality_penalties)}
                     </td>
                   </tr>
                 );

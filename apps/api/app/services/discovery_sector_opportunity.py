@@ -37,7 +37,6 @@ def select_sector_opportunities(
     sector_heat: list[dict],
     *,
     sector_flow_by_label: dict[str, dict] | None = None,
-    sector_position_by_label: dict[str, dict] | None = None,
     focus_sectors: list[str] | None = None,
     max_total: int = 8,
     momentum_slots: int = 4,
@@ -45,13 +44,11 @@ def select_sector_opportunities(
     max_per_group: int = 2,
 ) -> list[dict[str, Any]]:
     flow_by_label = sector_flow_by_label or {}
-    position_by_label = sector_position_by_label or {}
     focus = {str(label).strip() for label in (focus_sectors or []) if str(label).strip()}
     scored = [
         _score_row(
             row,
             flow_by_label.get(str(row.get("sector_label") or "").strip()),
-            position_by_label.get(str(row.get("sector_label") or "").strip()),
             focus,
         )
         for row in sector_heat
@@ -140,7 +137,6 @@ def build_sector_flow_map_for_opportunities(
 def _score_row(
     row: dict,
     flow: dict | None,
-    position: dict | None,
     focus: set[str],
 ) -> dict[str, Any] | None:
     label = str(row.get("sector_label") or "").strip()
@@ -154,8 +150,6 @@ def _score_row(
     date_aligned = flow.get("date_aligned") is not False
     today_flow = _num(flow.get("today_main_force_net_yi"))
     flow_5d = _num(flow.get("cumulative_5d_net_yi"))
-    position = position or {}
-    position_label = str(position.get("position_label") or "").strip()
 
     penalties: list[str] = []
     evidence: list[str] = []
@@ -165,10 +159,6 @@ def _score_row(
         penalties.append("资金流日期未对齐")
     if change_1d is not None and change_1d >= 4.0:
         penalties.append("单日涨幅过热")
-    if position_label == "high_extended":
-        penalties.append("20日高位延伸")
-    if position_label == "weak_breakdown":
-        penalties.append("20日弱势破位")
 
     focus_bonus = 6.0 if label in focus else 0.0
     flow_bonus = _positive_score(today_flow, scale=2.0, cap=12.0) + _positive_score(
@@ -195,16 +185,6 @@ def _score_row(
         momentum_score -= 12.0
     if pattern in _DISTRIBUTION_PATTERNS:
         momentum_score -= 30.0
-    if position_label == "high_extended":
-        momentum_score -= 10.0
-    elif position_label == "weak_breakdown":
-        momentum_score -= 16.0
-    elif position_label == "pullback_acceptance":
-        momentum_score += 3.0
-        evidence.append("回调承接位置")
-    elif position_label == "early_breakout":
-        momentum_score += 7.0
-        evidence.append("放量早期突破")
 
     setup_score = (
         _setup_price_score(change_1d, change_5d)
@@ -217,19 +197,6 @@ def _score_row(
         evidence.append("资金拐点或吸筹形态")
     if pattern in _DISTRIBUTION_PATTERNS:
         setup_score -= 28.0
-    if position_label == "high_extended":
-        setup_score -= 8.0
-    elif position_label == "weak_breakdown":
-        setup_score -= 18.0
-    elif position_label == "pullback_acceptance":
-        setup_score += 4.0
-        evidence.append("回调承接位置")
-    elif position_label == "base_building":
-        setup_score += 8.0
-        evidence.append("20日区间蓄势")
-    elif position_label == "early_breakout":
-        setup_score += 5.0
-        evidence.append("放量早期突破")
 
     if pattern in _DISTRIBUTION_PATTERNS and (today_flow or 0.0) <= 0 and (flow_5d or 0.0) <= 0:
         return None
@@ -242,7 +209,7 @@ def _score_row(
         "track": track,
         "score": round(max(momentum_score, setup_score), 2),
         "confidence": _confidence(flow, date_aligned, penalties),
-        "entry_hint": _entry_hint(track, change_1d, change_5d, penalties, position_label),
+        "entry_hint": _entry_hint(track, change_1d, change_5d, penalties),
         "evidence": _unique_evidence(evidence)[:5],
         "penalties": penalties[:5],
         "change_1d_percent": change_1d,
@@ -250,7 +217,6 @@ def _score_row(
         "today_main_force_net_yi": today_flow,
         "cumulative_5d_net_yi": flow_5d,
         "pattern_label": pattern or None,
-        "position_context": _slim_position_context(position),
         "sector_group": _sector_group(label),
     }
 
@@ -284,20 +250,11 @@ def _entry_hint(
     change_1d: float | None,
     change_5d: float | None,
     penalties: list[str],
-    position_label: str = "",
 ) -> str:
     if "资金背离或持续流出" in penalties:
         return "资金背离，暂不入池"
-    if "20日弱势破位" in penalties:
-        return "弱势破位，暂不入池"
-    if "20日高位延伸" in penalties:
-        return "高位谨慎"
     if change_1d is not None and change_1d >= 4.0:
         return "高位谨慎"
-    if position_label == "early_breakout":
-        return "突破初期，分批关注"
-    if position_label == "pullback_acceptance":
-        return "回调承接观察"
     if track == MOMENTUM_TRACK and change_1d is not None and change_1d < 0 and (change_5d or 0) > 0:
         return "回调承接观察"
     if track == SETUP_TRACK:
@@ -367,18 +324,3 @@ def _unique_evidence(items: list[str]) -> list[str]:
             result.append(item)
     return result
 
-
-def _slim_position_context(position: dict) -> dict[str, Any] | None:
-    if not position or not position.get("available"):
-        return None
-    keys = (
-        "position_label",
-        "drawdown_from_20d_high_percent",
-        "distance_from_20d_high_percent",
-        "distance_from_20d_low_percent",
-        "breakout_over_prior_20d_high_percent",
-        "volume_ratio_5d_vs_20d",
-        "up_days_5d",
-        "down_days_5d",
-    )
-    return {key: position.get(key) for key in keys if key in position}

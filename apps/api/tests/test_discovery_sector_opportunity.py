@@ -111,7 +111,7 @@ def test_sector_class_diversification_limits_one_chain_dominance():
     assert "创新药" in labels
 
 
-def test_high_extended_position_adds_chasing_penalty():
+def test_sector_opportunity_does_not_include_position_context():
     heat = [
         {"sector_label": "半导体", "change_1d_percent": 1.0, "change_5d_percent": 4.0, "heat_score": 90},
     ]
@@ -124,67 +124,15 @@ def test_high_extended_position_adds_chasing_penalty():
             "pattern_label": "price_flow_aligned_up",
         }
     }
-    position = {
-        "半导体": {
-            "available": True,
-            "position_label": "high_extended",
-            "drawdown_from_20d_high_percent": 0.8,
-            "distance_from_20d_high_percent": -0.8,
-            "distance_from_20d_low_percent": 18.0,
-            "volume_ratio_5d_vs_20d": 1.05,
-            "up_days_5d": 4,
-            "down_days_5d": 1,
-        }
-    }
-
     result = select_sector_opportunities(
         heat,
         sector_flow_by_label=flow,
-        sector_position_by_label=position,
         focus_sectors=[],
     )
 
-    assert result[0]["entry_hint"] == "高位谨慎"
-    assert "20日高位延伸" in result[0]["penalties"]
-    assert result[0]["position_context"]["position_label"] == "high_extended"
-
-
-def test_setup_position_context_adds_base_building_evidence():
-    heat = [
-        {"sector_label": "创新药", "change_1d_percent": -0.2, "change_5d_percent": -1.0, "heat_score": 50},
-    ]
-    flow = {
-        "创新药": {
-            "available": True,
-            "date_aligned": True,
-            "today_main_force_net_yi": 4.0,
-            "cumulative_5d_net_yi": 2.0,
-            "pattern_label": "accumulation",
-        }
-    }
-    position = {
-        "创新药": {
-            "available": True,
-            "position_label": "base_building",
-            "drawdown_from_20d_high_percent": 4.0,
-            "distance_from_20d_low_percent": 3.0,
-            "volume_ratio_5d_vs_20d": 0.92,
-            "up_days_5d": 2,
-            "down_days_5d": 2,
-        }
-    }
-
-    result = select_sector_opportunities(
-        heat,
-        sector_flow_by_label=flow,
-        sector_position_by_label=position,
-        focus_sectors=[],
-    )
-
-    assert result[0]["track"] == "setup"
-    assert result[0]["entry_hint"] == "蓄势观察"
-    assert "20日区间蓄势" in result[0]["evidence"]
-    assert result[0]["position_context"]["position_label"] == "base_building"
+    assert result[0]["entry_hint"] == "可分批关注"
+    assert "20日高位延伸" not in result[0]["penalties"]
+    assert "position_context" not in result[0]
 
 
 def test_flow_map_for_opportunities_respects_total_budget(monkeypatch):

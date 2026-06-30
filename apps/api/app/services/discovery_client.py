@@ -261,6 +261,7 @@ def build_discovery_report_from_parsed(
         profile=profile,
         budget_yuan=budget_yuan,
         sector_heat=sector_heat,
+        discovery_facts=discovery_facts,
         market_news=market_news,
         topic_briefs=topic_briefs,
         scan_mode=scan_mode,
@@ -312,6 +313,10 @@ def _parse_recommendations(raw: object) -> list[DiscoveryRecommendation]:
                 fee_break_even_percent=_as_float(item.get("fee_break_even_percent")),
                 dip_drop_percent=_as_float(item.get("dip_drop_percent")),
                 rebound_signals=_as_dict_list(item.get("rebound_signals")),
+                decision_path=str(item.get("decision_path") or ""),
+                sector_evidence=_as_str_list(item.get("sector_evidence")),
+                fund_evidence=_as_str_list(item.get("fund_evidence")),
+                validation_notes=_as_str_list(item.get("validation_notes")),
             )
         )
     return results

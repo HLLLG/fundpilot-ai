@@ -327,6 +327,10 @@ class DiscoveryRecommendation(BaseModel):
     fee_break_even_percent: float | None = None
     dip_drop_percent: float | None = None
     rebound_signals: list[dict] = Field(default_factory=list)
+    decision_path: str = ""
+    sector_evidence: list[str] = Field(default_factory=list)
+    fund_evidence: list[str] = Field(default_factory=list)
+    validation_notes: list[str] = Field(default_factory=list)
 
 
 class FundDiscoveryReport(BaseModel):

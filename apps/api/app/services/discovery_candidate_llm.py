@@ -80,6 +80,10 @@ def slim_candidate_for_llm(
         "return_6m_percent": item.get("return_6m_percent"),
         "max_drawdown_1y_percent": item.get("max_drawdown_1y_percent"),
         "fund_scale_yi": item.get("fund_scale_yi"),
+        "fund_quality_score": item.get("fund_quality_score"),
+        "sector_fit_score": item.get("sector_fit_score"),
+        "quality_reasons": item.get("quality_reasons") or [],
+        "quality_penalties": item.get("quality_penalties") or [],
         "selection_reason": item.get("selection_reason"),
     }
     nav = slim_nav_trend_for_llm(item.get("nav_trend"))
