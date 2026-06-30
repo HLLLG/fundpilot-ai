@@ -173,3 +173,81 @@ def test_apply_portfolio_holdings_updates_holdings_cache(monkeypatch):
 
     assert result is payload
     assert saved == [payload]
+
+
+def test_apply_confirmed_holdings_applies_semantic_sector_without_benchmark_fetch(monkeypatch):
+    benchmark_calls: list[str] = []
+
+    monkeypatch.setattr(
+        "app.services.ocr_pipeline._finalize_confirmed_holdings",
+        lambda holdings, _service: holdings,
+    )
+    monkeypatch.setattr(
+        "app.services.ocr_pipeline.save_portfolio_summary",
+        lambda _summary: None,
+    )
+    monkeypatch.setattr(
+        "app.services.ocr_pipeline.save_daily_snapshot",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_service.get_fund_primary_sector",
+        lambda _code: None,
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_service.get_fund_profile_by_code",
+        lambda _code: None,
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_service.save_fund_primary_sector",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "app.services.fund_benchmark_sector.fetch_fund_benchmark_text",
+        lambda code: benchmark_calls.append(code) or None,
+    )
+    monkeypatch.setattr(
+        "app.services.holding_amount_sync.bootstrap_holding_baselines",
+        lambda holdings, **_kwargs: holdings,
+    )
+    monkeypatch.setattr(
+        "app.services.portfolio_persistence.enrich_loaded_holdings",
+        lambda holdings, **_kwargs: holdings,
+    )
+    monkeypatch.setattr(
+        "app.services.ocr_pipeline.enrich_holdings_from_profiles",
+        lambda holdings, **_kwargs: holdings,
+    )
+    monkeypatch.setattr(
+        "app.services.ocr_pipeline.FundProfileService",
+        lambda: type(
+            "StubProfileService",
+            (),
+            {
+                "sync_profiles_from_holdings": lambda self, holdings: type(
+                    "SyncResult", (), {"model_dump": lambda self: {"updated": 0, "created": 0}}
+                )(),
+            },
+        )(),
+    )
+    monkeypatch.setattr(
+        "app.services.sector_quote_service.refresh_holdings_sector_quotes",
+        lambda holdings, **kwargs: {
+            "ok": True,
+            "holdings": [holding.model_dump(mode="json") for holding in holdings],
+            "summary": {"matched": 0},
+        },
+    )
+
+    result = apply_confirmed_holdings(
+        [
+            Holding(
+                fund_code="021277",
+                fund_name="广发全球精选股票(QDII)人民币C",
+                holding_amount=100.0,
+            )
+        ]
+    )
+
+    assert benchmark_calls == []
+    assert result["holdings"][0]["sector_name"] == "全球精选股票"
