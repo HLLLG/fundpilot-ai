@@ -72,3 +72,41 @@ def test_resolve_primary_sector_name_infer_only_when_allowed(monkeypatch):
     assert record is not None
     assert record.source == "name_infer"
     assert record.sector_name == "国防军工"
+
+
+def test_semantic_sector_from_fund_name_matches_competitor_examples():
+    from app.services.sector_labels import infer_semantic_sector_from_fund_name
+
+    cases = {
+        "华夏中证电网设备主题ETF发起式联接C": "电网设备",
+        "中欧上证科创板人工智能指数C": "人工智能",
+        "天弘科创芯片设计主题ETF发起联接C": "科创芯片设计",
+        "富国全球科技互联网股票(QDII)C": "海外基金",
+        "天弘全球高端制造混合(QDII)C": "全球高端制造",
+        "广发全球精选股票(QDII)人民币C": "全球精选股票",
+    }
+
+    for fund_name, expected in cases.items():
+        candidate = infer_semantic_sector_from_fund_name(fund_name)
+        assert candidate is not None, fund_name
+        assert candidate.sector_name == expected
+        assert candidate.source == "semantic_name"
+        assert candidate.confidence >= 0.55
+
+
+def test_semantic_sector_ignores_generic_product_words():
+    from app.services.sector_labels import infer_semantic_sector_from_fund_name
+
+    for fund_name in (
+        "某某灵活配置混合C",
+        "某某成长精选股票A",
+        "某某稳健回报混合C",
+    ):
+        assert infer_semantic_sector_from_fund_name(fund_name) is None
+
+
+def test_legacy_name_infer_keeps_existing_keyword_behavior():
+    from app.services.sector_labels import infer_sector_label_from_fund_name
+
+    assert infer_sector_label_from_fund_name("某某国防军工混合C") == "国防军工"
+    assert infer_sector_label_from_fund_name("某某CPO主题股票A") == "CPO"
