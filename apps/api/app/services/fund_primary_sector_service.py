@@ -274,6 +274,7 @@ def apply_primary_sector_to_holding(
     holding: Holding,
     *,
     fetch_benchmark: bool = True,
+    allow_name_infer: bool = True,
 ) -> Holding:
     if holding.sector_name and not _is_valid_sector_label(holding.sector_name):
         holding = holding.model_copy(update={"sector_name": None})
@@ -295,7 +296,7 @@ def apply_primary_sector_to_holding(
         record = resolve_primary_sector(
             code,
             fund_name=holding.fund_name,
-            allow_name_infer=True,
+            allow_name_infer=allow_name_infer,
             fetch_benchmark=fetch_benchmark,
         )
 
@@ -360,10 +361,11 @@ def refresh_benchmark_sectors_for_holdings(
         updated = apply_primary_sector_to_holding(
             holding,
             fetch_benchmark=fetch_missing_benchmark,
+            allow_name_infer=not fetch_holdings_infer,
         )
         if (
             fetch_holdings_infer
-            and not _is_valid_sector_label(holding.sector_name)
+            and not _is_valid_sector_label(updated.sector_name)
         ):
             record = _resolve_from_holdings_infer(code, persist=True)
             if record is not None:

@@ -129,6 +129,69 @@ def test_refresh_benchmark_sectors_fast_mode_uses_cached_benchmark(monkeypatch):
     assert result[0].intraday_index_name == "中证半导体材料设备主题指数"
 
 
+def test_refresh_benchmark_sectors_keeps_fresh_benchmark_before_holdings_infer(monkeypatch):
+    from app.services.fund_primary_sector_types import PrimarySectorRecord
+
+    holdings_infer_calls: list[str] = []
+
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_service.get_fund_primary_sector",
+        lambda _code: None,
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_service.get_fund_profile_by_code",
+        lambda _code: None,
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_service.save_fund_primary_sector",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_service._resolve_from_benchmark_index",
+        lambda code, **_kwargs: PrimarySectorRecord(
+            fund_code=code,
+            sector_name="人工智能",
+            intraday_index_name="中证人工智能",
+            source="benchmark_index",
+            confidence=0.82,
+        ),
+    )
+
+    def _holdings_infer(code: str, **_kwargs):
+        holdings_infer_calls.append(code)
+        return PrimarySectorRecord(
+            fund_code=code,
+            sector_name="半导体",
+            intraday_index_name=None,
+            source="holdings_infer",
+            confidence=0.9,
+        )
+
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_service._resolve_from_holdings_infer",
+        _holdings_infer,
+    )
+
+    from app.services.fund_primary_sector_service import refresh_benchmark_sectors_for_holdings
+
+    result = refresh_benchmark_sectors_for_holdings(
+        [
+            _holding(
+                fund_code="026790",
+                fund_name="中欧上证科创板人工智能指数C",
+                sector_name=None,
+                intraday_index_name=None,
+            )
+        ],
+        fetch_missing_benchmark=True,
+        fetch_holdings_infer=True,
+    )
+
+    assert holdings_infer_calls == []
+    assert result[0].sector_name == "人工智能"
+    assert result[0].intraday_index_name == "中证人工智能"
+
+
 def test_failed_benchmark_fetch_is_miss_cached_for_accurate_mode(monkeypatch):
     calls: list[str] = []
 
