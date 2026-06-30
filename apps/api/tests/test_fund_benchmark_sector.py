@@ -128,6 +128,55 @@ def test_benchmark_fetch_ignores_holdings_global_cache_when_fetch_enabled(monkey
     assert record.sector_name == "人工智能"
 
 
+def test_fast_resolution_prefers_local_benchmark_over_holdings_global(monkeypatch):
+    saved: list[dict] = []
+
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_service.load_fresh_global_sector",
+        lambda _code: {
+            "fund_code": "026790",
+            "sector_name": "半导体",
+            "intraday_index_name": None,
+            "source": "holdings_infer",
+            "confidence": 0.9,
+            "detail": {},
+        },
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_service.get_fund_primary_sector",
+        lambda _code: {
+            "fund_code": "026790",
+            "sector_name": "人工智能",
+            "intraday_index_name": "中证人工智能",
+            "source": "benchmark_index",
+            "confidence": 0.82,
+            "detail": {},
+        },
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_service.save_fund_primary_sector",
+        lambda **kwargs: saved.append(kwargs),
+    )
+    monkeypatch.setattr(
+        "app.services.fund_benchmark_sector.fetch_fund_benchmark_text",
+        lambda _code: (_ for _ in ()).throw(AssertionError("benchmark fetch should be skipped")),
+    )
+
+    holding = Holding(
+        fund_code="026790",
+        fund_name="中欧上证科创板人工智能指数C",
+        holding_amount=3000.0,
+        sector_name=None,
+        intraday_index_name=None,
+    )
+
+    updated = apply_primary_sector_to_holding(holding, fetch_benchmark=False)
+
+    assert updated.sector_name == "人工智能"
+    assert updated.intraday_index_name == "中证人工智能"
+    assert all(row["source"] == "benchmark_index" for row in saved)
+
+
 def test_fetch_fund_benchmark_text_falls_back_when_akshare_unavailable(monkeypatch):
     monkeypatch.setattr(
         "app.services.fund_benchmark_sector.subprocess.run",

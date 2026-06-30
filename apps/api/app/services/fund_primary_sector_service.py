@@ -461,17 +461,15 @@ def _resolve_from_benchmark_index(
 ) -> PrimarySectorRecord | None:
     from app.services.fund_benchmark_sector import fetch_fund_benchmark_text, resolve_sector_from_benchmark
 
-    global_row = load_fresh_global_sector(fund_code)
-    if global_row and (
-        not fetch
-        or str(global_row.get("source") or "") in {"benchmark_index", "precompute_benchmark"}
-    ):
-        return _record_from_row({**global_row, "fund_code": fund_code.strip().zfill(6)})
+    existing = get_fund_primary_sector(fund_code)
+    if existing and str(existing.get("source") or "") == "benchmark_index":
+        return _record_from_row(existing)
 
-    if persist_user and try_get_request_user_id() is not None:
-        existing = get_fund_primary_sector(fund_code)
-        if existing and str(existing.get("source") or "") == "benchmark_index":
-            return _record_from_row(existing)
+    global_row = load_fresh_global_sector(fund_code)
+    if global_row:
+        global_source = str(global_row.get("source") or "")
+        if not fetch or global_source in {"benchmark_index", "precompute_benchmark"}:
+            return _record_from_row({**global_row, "fund_code": fund_code.strip().zfill(6)})
 
     if not fetch:
         return None
