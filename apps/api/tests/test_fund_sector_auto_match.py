@@ -110,3 +110,10 @@ def test_legacy_name_infer_keeps_existing_keyword_behavior():
 
     assert infer_sector_label_from_fund_name("某某国防军工混合C") == "国防军工"
     assert infer_sector_label_from_fund_name("某某CPO主题股票A") == "CPO"
+
+
+def test_legacy_name_infer_does_not_expand_to_registered_themes():
+    from app.services.sector_labels import infer_sector_label_from_fund_name
+
+    assert infer_sector_label_from_fund_name("某某银行指数A") is None
+    assert infer_sector_label_from_fund_name("某某黄金ETF联接C") is None

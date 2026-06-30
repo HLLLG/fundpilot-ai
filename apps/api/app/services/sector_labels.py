@@ -112,8 +112,8 @@ def _clean_semantic_fund_name(fund_name: str) -> str:
 
 
 def _theme_board_match(normalized: str) -> SemanticSectorCandidate | None:
-    names = set(THEME_BOARD_INDEX) | set(_TOPIC_ALIASES)
-    for token in sorted(names, key=len, reverse=True):
+    names = tuple(dict.fromkeys((*THEME_BOARD_INDEX.keys(), *_TOPIC_ALIASES)))
+    for token in sorted(names, key=lambda label: (-len(label), label)):
         if token in normalized:
             row = THEME_BOARD_INDEX.get(token)
             quote_key = row[1] if row else None
@@ -181,9 +181,6 @@ def infer_sector_label_from_fund_name(fund_name: str | None) -> str | None:
     normalized = normalize_sector_label(fund_name.replace("...", ""))
     if not normalized:
         return None
-    semantic = infer_semantic_sector_from_fund_name(normalized)
-    if semantic is not None and semantic.quote_key:
-        return semantic.sector_name
     for token in sorted(_TOPIC_ALIASES, key=len, reverse=True):
         if token in normalized:
             return token
