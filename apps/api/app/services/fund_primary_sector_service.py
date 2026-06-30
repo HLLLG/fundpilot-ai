@@ -413,19 +413,21 @@ def _resolve_from_holdings_infer(fund_code: str, *, persist: bool = True) -> Pri
 
     if persist:
         existing = get_fund_primary_sector(code)
-        if try_get_request_user_id() is not None and (
-            not existing
-            or _SOURCE_PRIORITY.get(existing.get("source", ""), 0) <= _SOURCE_PRIORITY["holdings_infer"]
-        ):
-            save_fund_primary_sector(
-                fund_code=code,
-                sector_name=sector_name,
-                intraday_index_name=index_name,
-                source="holdings_infer",
-                confidence=confidence,
-                detail=record.detail,
-            )
-        promote_record_to_global(record)
+        existing_source = str((existing or {}).get("source") or "")
+        if existing_source != "benchmark_index":
+            if try_get_request_user_id() is not None and (
+                not existing
+                or _SOURCE_PRIORITY.get(existing_source, 0) <= _SOURCE_PRIORITY["holdings_infer"]
+            ):
+                save_fund_primary_sector(
+                    fund_code=code,
+                    sector_name=sector_name,
+                    intraday_index_name=index_name,
+                    source="holdings_infer",
+                    confidence=confidence,
+                    detail=record.detail,
+                )
+            promote_record_to_global(record)
     return record
 
 
@@ -460,7 +462,10 @@ def _resolve_from_benchmark_index(
     from app.services.fund_benchmark_sector import fetch_fund_benchmark_text, resolve_sector_from_benchmark
 
     global_row = load_fresh_global_sector(fund_code)
-    if global_row:
+    if global_row and (
+        not fetch
+        or str(global_row.get("source") or "") in {"benchmark_index", "precompute_benchmark"}
+    ):
         return _record_from_row({**global_row, "fund_code": fund_code.strip().zfill(6)})
 
     if persist_user and try_get_request_user_id() is not None:

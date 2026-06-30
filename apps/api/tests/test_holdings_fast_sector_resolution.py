@@ -192,6 +192,53 @@ def test_refresh_benchmark_sectors_keeps_fresh_benchmark_before_holdings_infer(m
     assert result[0].intraday_index_name == "中证人工智能"
 
 
+def test_holdings_infer_does_not_persist_or_promote_over_benchmark_user_record(monkeypatch):
+    saved: list[dict] = []
+    promoted: list[object] = []
+
+    monkeypatch.setattr(
+        "app.services.fund_holdings_sector_infer.fetch_portfolio_stocks_with_industry",
+        lambda _code: [object()],
+    )
+    monkeypatch.setattr(
+        "app.services.fund_holdings_sector_infer.infer_sector_from_portfolio_stocks",
+        lambda _code, _stocks: ("半导体", {"半导体": 45.0}, []),
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_service.get_fund_primary_sector",
+        lambda _code: {
+            "fund_code": "026790",
+            "sector_name": "人工智能",
+            "intraday_index_name": "中证人工智能",
+            "source": "benchmark_index",
+            "confidence": 0.82,
+            "detail": {},
+        },
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_service.try_get_request_user_id",
+        lambda: 1,
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_service.save_fund_primary_sector",
+        lambda **kwargs: saved.append(kwargs),
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_service.promote_record_to_global",
+        lambda record: promoted.append(record),
+    )
+
+    from app.services.fund_primary_sector_service import _resolve_from_holdings_infer
+
+    record = _resolve_from_holdings_infer("026790", persist=True)
+
+    assert record is not None
+    assert record.source == "holdings_infer"
+    assert record.sector_name == "半导体"
+    assert saved == []
+    assert promoted == []
+
+
 def test_failed_benchmark_fetch_is_miss_cached_for_accurate_mode(monkeypatch):
     calls: list[str] = []
 

@@ -86,6 +86,48 @@ def test_resolve_primary_sector_benchmark_beats_alipay_overview_row(monkeypatch)
     assert record.sector_name == "半导体材料"
 
 
+def test_benchmark_fetch_ignores_holdings_global_cache_when_fetch_enabled(monkeypatch):
+    benchmark = "中证人工智能主题指数收益率*95%+银行活期存款利率(税后)*5%"
+    fetched: list[str] = []
+
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_service.load_fresh_global_sector",
+        lambda _code: {
+            "fund_code": "026790",
+            "sector_name": "半导体",
+            "intraday_index_name": None,
+            "source": "holdings_infer",
+            "confidence": 0.9,
+            "detail": {},
+        },
+    )
+    monkeypatch.setattr(
+        "app.services.fund_benchmark_sector.fetch_fund_benchmark_text",
+        lambda code: fetched.append(code) or benchmark,
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_service.get_fund_primary_sector",
+        lambda _code: None,
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_service.save_fund_primary_sector",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_service.promote_record_to_global",
+        lambda _record: None,
+    )
+
+    from app.services.fund_primary_sector_service import _resolve_from_benchmark_index
+
+    record = _resolve_from_benchmark_index("026790", fetch=True)
+
+    assert fetched == ["026790"]
+    assert record is not None
+    assert record.source == "benchmark_index"
+    assert record.sector_name == "人工智能"
+
+
 def test_fetch_fund_benchmark_text_falls_back_when_akshare_unavailable(monkeypatch):
     monkeypatch.setattr(
         "app.services.fund_benchmark_sector.subprocess.run",
