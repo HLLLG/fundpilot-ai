@@ -2,6 +2,7 @@
 .agents/
 skills-lock.json
 .venv/
+.worktrees/
 node_modules/
 .next/
 artifacts/
