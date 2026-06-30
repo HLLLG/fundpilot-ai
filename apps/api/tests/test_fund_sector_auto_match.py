@@ -63,6 +63,10 @@ def test_resolve_primary_sector_name_infer_only_when_allowed(monkeypatch):
         "app.services.fund_primary_sector_service._resolve_from_benchmark_index",
         lambda *_args, **_kwargs: None,
     )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_service.infer_semantic_sector_from_fund_name",
+        lambda _fund_name: None,
+    )
 
     record = resolve_primary_sector(
         "999999",
@@ -72,6 +76,33 @@ def test_resolve_primary_sector_name_infer_only_when_allowed(monkeypatch):
     assert record is not None
     assert record.source == "name_infer"
     assert record.sector_name == "国防军工"
+
+
+def test_resolve_primary_sector_uses_semantic_name_when_allowed(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_service.get_fund_primary_sector",
+        lambda _code: None,
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_service.get_fund_profile_by_code",
+        lambda _code: None,
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_service._resolve_from_benchmark_index",
+        lambda *_args, **_kwargs: None,
+    )
+
+    record = resolve_primary_sector(
+        "999998",
+        fund_name="天弘科创芯片设计主题ETF发起联接C",
+        allow_name_infer=True,
+        fetch_benchmark=False,
+    )
+
+    assert record is not None
+    assert record.source == "semantic_name"
+    assert record.sector_name == "科创芯片设计"
+    assert record.confidence >= 0.55
 
 
 def test_semantic_sector_from_fund_name_matches_competitor_examples():

@@ -23,7 +23,10 @@ from app.services.fund_profile import (
     infer_intraday_index_from_fund_name,
 )
 from app.services.sector_canonical import get_canonical_sector
-from app.services.sector_labels import infer_sector_label_from_fund_name
+from app.services.sector_labels import (
+    infer_sector_label_from_fund_name,
+    infer_semantic_sector_from_fund_name,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +42,7 @@ _SOURCE_PRIORITY = {
     "holdings_infer": 70,
     "benchmark_index": 65,
     "alipay_overview": 50,
+    "semantic_name": 40,
     "name_infer": 10,
 }
 
@@ -150,6 +154,20 @@ def resolve_primary_sector(
             )
 
     if allow_name_infer and fund_name:
+        candidate = infer_semantic_sector_from_fund_name(fund_name)
+        if candidate is not None:
+            return PrimarySectorRecord(
+                fund_code=code,
+                sector_name=candidate.sector_name,
+                intraday_index_name=(
+                    infer_intraday_index_from_fund_name(fund_name)
+                    if candidate.quote_key
+                    else None
+                ),
+                source="semantic_name",
+                confidence=candidate.confidence,
+            )
+
         inferred = infer_sector_label_from_fund_name(fund_name)
         if inferred and get_canonical_sector(inferred):
             return PrimarySectorRecord(
@@ -277,7 +295,7 @@ def apply_primary_sector_to_holding(
         record = resolve_primary_sector(
             code,
             fund_name=holding.fund_name,
-            allow_name_infer=False,
+            allow_name_infer=True,
             fetch_benchmark=fetch_benchmark,
         )
 
@@ -337,7 +355,7 @@ def refresh_benchmark_sectors_for_holdings(
             refreshed.append(apply_primary_sector_to_holding(holding, fetch_benchmark=False))
             continue
         if not fetch_missing_benchmark and not fetch_holdings_infer:
-            refreshed.append(holding)
+            refreshed.append(apply_primary_sector_to_holding(holding, fetch_benchmark=False))
             continue
         updated = apply_primary_sector_to_holding(
             holding,
@@ -345,7 +363,7 @@ def refresh_benchmark_sectors_for_holdings(
         )
         if (
             fetch_holdings_infer
-            and not _is_valid_sector_label(updated.sector_name)
+            and not _is_valid_sector_label(holding.sector_name)
         ):
             record = _resolve_from_holdings_infer(code, persist=True)
             if record is not None:

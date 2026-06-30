@@ -59,6 +59,44 @@ def test_refresh_benchmark_sectors_fast_mode_keeps_existing_sector_without_fetch
     assert result[0].intraday_index_name is None
 
 
+def test_refresh_benchmark_sectors_fast_mode_applies_semantic_name_without_fetch(monkeypatch):
+    calls: list[str] = []
+
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_service.get_fund_primary_sector",
+        lambda _code: None,
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_service.get_fund_profile_by_code",
+        lambda _code: None,
+    )
+    monkeypatch.setattr(
+        "app.services.fund_benchmark_sector.fetch_fund_benchmark_text",
+        lambda code: calls.append(code) or None,
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_service.save_fund_primary_sector",
+        lambda **_kwargs: None,
+    )
+
+    from app.services.fund_primary_sector_service import refresh_benchmark_sectors_for_holdings
+
+    result = refresh_benchmark_sectors_for_holdings(
+        [
+            _holding(
+                fund_code="026790",
+                fund_name="中欧上证科创板人工智能指数C",
+                sector_name=None,
+                intraday_index_name=None,
+            )
+        ],
+        fetch_missing_benchmark=False,
+    )
+
+    assert calls == []
+    assert result[0].sector_name == "人工智能"
+
+
 def test_refresh_benchmark_sectors_fast_mode_uses_cached_benchmark(monkeypatch):
     monkeypatch.setattr(
         "app.services.fund_primary_sector_service.get_fund_primary_sector",
