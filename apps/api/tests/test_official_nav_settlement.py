@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.models import FundProfile, Holding
@@ -136,10 +137,11 @@ def _empty_payload(
     }
 
 
-def test_intraday_session_skips_with_complete_payload_without_nav_or_persistence(monkeypatch):
+@pytest.mark.parametrize("session_kind", ["trading_day_intraday", "trading_day_pre_close"])
+def test_live_session_skips_with_complete_payload_without_nav_or_persistence(monkeypatch, session_kind):
     from app.services import official_nav_settlement as service
 
-    monkeypatch.setattr(service, "build_trading_session", lambda: _session("trading_day_intraday"))
+    monkeypatch.setattr(service, "build_trading_session", lambda: _session(session_kind))
     monkeypatch.setattr(
         service,
         "get_official_nav_return",
@@ -155,31 +157,7 @@ def test_intraday_session_skips_with_complete_payload_without_nav_or_persistence
 
     assert result == _empty_payload(
         "intraday_session",
-        _session("trading_day_intraday"),
-        "2026-06-26",
-    )
-
-
-def test_pre_close_session_skips_with_complete_payload_without_nav_or_persistence(monkeypatch):
-    from app.services import official_nav_settlement as service
-
-    monkeypatch.setattr(service, "build_trading_session", lambda: _session("trading_day_pre_close"))
-    monkeypatch.setattr(
-        service,
-        "get_official_nav_return",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("nav should not be called")),
-    )
-    monkeypatch.setattr(
-        service,
-        "_persist_settlement_holdings",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("persist should not be called")),
-    )
-
-    result = service.settle_official_nav_for_portfolio()
-
-    assert result == _empty_payload(
-        "intraday_session",
-        _session("trading_day_pre_close"),
+        _session(session_kind),
         "2026-06-26",
     )
 
@@ -311,19 +289,30 @@ def test_overlay_sector_fields_preserves_official_nav_daily_fields_without_secto
     assert result.daily_return_percent_source == "official_nav"
 
 
-def test_settle_official_nav_endpoint_saves_cache_when_holdings_returned(
+@pytest.mark.parametrize(
+    ("skipped", "expected_saved"),
+    [
+        (False, "saves"),
+        (True, "skips"),
+    ],
+)
+def test_settle_official_nav_endpoint_cache_save_follows_skipped_flag(
     client: TestClient,
     monkeypatch,
+    skipped: bool,
+    expected_saved: str,
 ):
     from app import main
 
     payload = {
         "ok": True,
-        "skipped": False,
-        "updated_count": 1,
+        "skipped": skipped,
+        "updated_count": 0 if skipped else 1,
         "holdings": [{"fund_code": "519674", "fund_name": "Test Fund"}],
         "source": "official_nav_settlement",
     }
+    if skipped:
+        payload["reason"] = "intraday_session"
     saved: list[dict] = []
 
     monkeypatch.setattr(main, "settle_official_nav_for_portfolio", lambda: payload)
@@ -333,33 +322,7 @@ def test_settle_official_nav_endpoint_saves_cache_when_holdings_returned(
 
     assert response.status_code == 200
     assert response.json() == payload
-    assert saved == [payload]
-
-
-def test_settle_official_nav_endpoint_skipped_does_not_save_cache(
-    client: TestClient,
-    monkeypatch,
-):
-    from app import main
-
-    payload = {
-        "ok": True,
-        "skipped": True,
-        "reason": "intraday_session",
-        "updated_count": 0,
-        "holdings": [{"fund_code": "519674", "fund_name": "Test Fund"}],
-        "source": "official_nav_settlement",
-    }
-    saved: list[dict] = []
-
-    monkeypatch.setattr(main, "settle_official_nav_for_portfolio", lambda: payload)
-    monkeypatch.setattr(main, "save_cached_holdings_response", lambda item: saved.append(item))
-
-    response = client.post("/api/portfolio/settle-official-nav")
-
-    assert response.status_code == 200
-    assert response.json() == payload
-    assert saved == []
+    assert saved == ([] if expected_saved == "skips" else [payload])
 
 
 def test_prime_official_nav_cache_batches_daily_nav_and_unit_nav(monkeypatch):

@@ -145,7 +145,9 @@ def test_sync_holding_amounts_keeps_ocr_settled_when_deferred(monkeypatch):
     )
 
     holding = _deferred_holding()
-    result = sync_holding_amounts_from_shares([holding], persist_profiles=False)[0]
+    result = sync_holding_amounts_from_shares(
+        [holding], persist_profiles=False, allow_nav_fetch=False
+    )[0]
 
     assert result.settled_holding_amount == 3000.0
     assert result.holding_amount == 3000.0

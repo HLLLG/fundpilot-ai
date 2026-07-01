@@ -51,7 +51,9 @@ def test_intraday_does_not_roll_settled_when_shares_times_nav_drifts(monkeypatch
         holding_amount=9100.38,
         settled_holding_amount=9068.69,
     )
-    synced = sync_holding_amounts_from_shares([holding], persist_profiles=False)
+    synced = sync_holding_amounts_from_shares(
+        [holding], persist_profiles=False, allow_nav_fetch=False
+    )
     assert synced[0].settled_holding_amount == 9068.69
     assert synced[0].holding_amount == 9068.69
 
@@ -78,14 +80,19 @@ def test_intraday_repairs_polluted_profile_holding_amount(monkeypatch):
         "app.services.holding_amount_sync.fetch_fund_estimate_quotes",
         lambda *_args, **_kwargs: {},
     )
-
+    # 显式 cache_only=True 走缓存快路径，避免真实 AkShare 子进程在无网络的
+    # CI/沙箱环境里长时间挂起（曾因此触发 pytest-timeout）。
     holding = Holding(
         fund_code="008586",
         fund_name="华夏人工智能ETF联接C",
         holding_amount=9100.38,
         settled_holding_amount=9068.69,
     )
-    synced = sync_holding_amounts_from_shares([holding], persist_profiles=False)
+    synced = sync_holding_amounts_from_shares(
+        [holding],
+        persist_profiles=False,
+        allow_nav_fetch=False,
+    )
     assert synced[0].holding_amount == 9068.69
     assert synced[0].settled_holding_amount == 9068.69
 
@@ -136,6 +143,10 @@ def test_official_nav_published_rolls_settled(monkeypatch):
         lambda *_args, **_kwargs: {},
     )
 
+    monkeypatch.setattr(
+        "app.services.fund_nav_service.prime_official_nav_cache",
+        lambda *_args, **_kwargs: {},
+    )
     holding = Holding(
         fund_code="008586",
         fund_name="华夏人工智能ETF联接C",

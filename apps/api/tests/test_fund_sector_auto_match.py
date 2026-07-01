@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from app.services.fund_holdings_sector_infer import (
     HoldingStockRow,
     infer_sector_from_portfolio_stocks,
@@ -10,19 +12,19 @@ from app.services.fund_industry_theme_map import map_industry_to_theme_label
 from app.services.fund_primary_sector_service import resolve_primary_sector
 
 
-def test_map_industry_to_theme_label_semiconductor():
-    assert map_industry_to_theme_label("半导体") == "半导体"
-
-
-def test_map_industry_to_theme_label_em_industry_name():
-    assert map_industry_to_theme_label("半导体设备") == "半导体"
-
-
-def test_map_industry_to_theme_label_generalizes_to_unregistered_industry_name():
-    """白名单没收录的官方行业名也应直接可用，而不是被丢弃。"""
-    assert map_industry_to_theme_label("包装印刷") == "包装印刷"
-    assert map_industry_to_theme_label(None) is None
-    assert map_industry_to_theme_label("") is None
+@pytest.mark.parametrize(
+    ("industry", "expected"),
+    [
+        ("半导体", "半导体"),
+        ("半导体设备", "半导体"),
+        # 白名单没收录的官方行业名也应直接可用，而不是被丢弃。
+        ("包装印刷", "包装印刷"),
+        (None, None),
+        ("", None),
+    ],
+)
+def test_map_industry_to_theme_label(industry, expected):
+    assert map_industry_to_theme_label(industry) == expected
 
 
 def test_infer_sector_from_portfolio_stocks_accepts_unregistered_theme():
@@ -176,29 +178,22 @@ def test_semantic_sector_generalizes_beyond_whitelist_for_real_fund_names():
     assert brand_new_qdii_candidate.confidence >= 0.55
 
 
-def test_semantic_sector_rejects_pure_marketing_phrase_with_no_theme():
-    """回归测试：'中航机遇领航混合发起C' 这类基金公司+纯营销词组合的基金名，不应该被
-    freeform 兜底误当成板块名（历史上曾产出过'中航机遇领航'这种毫无主题含义的假标签）。
-    真实主题（如持仓重仓的 CPO/光通信）只能靠持仓穿透或 LLM 兜底才能推断出来。"""
+def test_semantic_sector_rejects_names_with_no_real_theme():
+    """回归测试：'中航机遇领航混合发起C' 这类基金公司+纯营销词组合、或纯产品类型描述
+    的基金名，不应该被 freeform 兜底误当成板块名（历史上曾产出过'中航机遇领航'这种毫
+    无主题含义的假标签）。真实主题（如持仓重仓的 CPO/光通信）只能靠持仓穿透或 LLM
+    兜底才能推断出来。"""
     from app.services.sector_labels import infer_semantic_sector_from_fund_name
 
     for fund_name in (
         "中航机遇领航混合发起C",
         "某某远见成长混合A",
         "某某睿享精选灵活配置混合C",
-    ):
-        assert infer_semantic_sector_from_fund_name(fund_name) is None, fund_name
-
-
-def test_semantic_sector_ignores_generic_product_words():
-    from app.services.sector_labels import infer_semantic_sector_from_fund_name
-
-    for fund_name in (
         "某某灵活配置混合C",
         "某某成长精选股票A",
         "某某稳健回报混合C",
     ):
-        assert infer_semantic_sector_from_fund_name(fund_name) is None
+        assert infer_semantic_sector_from_fund_name(fund_name) is None, fund_name
 
 
 def test_legacy_name_infer_keeps_existing_keyword_behavior():

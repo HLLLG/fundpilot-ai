@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from app.models import (
     AnalysisRequest,
     FundRecommendation,
@@ -9,6 +11,20 @@ from app.models import (
     RiskAssessment,
 )
 from app.services.recommendation_guard import apply_recommendation_guards
+
+
+@pytest.fixture(autouse=True)
+def _no_live_intraday_reversal_signal(monkeypatch):
+    """这些用例只测「板块方向/量化证据」降级逻辑，避免真实盘中数据（网络/交易日相关）
+    偶发触发 reversal/pullback 分支导致断言随机失败。"""
+    monkeypatch.setattr(
+        "app.services.recommendation_guard.summarize_sector_intraday_for_holding",
+        lambda _holding: None,
+    )
+    monkeypatch.setattr(
+        "app.services.recommendation_guard.build_sector_momentum_context",
+        lambda _holding, _nav_trend: None,
+    )
 
 _TODAY_NEWS = [NewsItem(topic="半导体", title="半导体行业利好消息", is_today=True)]
 

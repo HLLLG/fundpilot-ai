@@ -416,7 +416,7 @@ export function Dashboard() {
       setHoldingsRefreshedAt(cached.refreshed_at);
     }
     setIsHydratingHoldings(false);
-  }, [user?.id]);
+  }, [user?.id, markPortfolioCacheWriteReady]);
 
   const setActiveTab = useCallback((tab: TabId | ((prev: TabId) => TabId)) => {
     setActiveTabState((prev) => {
@@ -1176,7 +1176,15 @@ export function Dashboard() {
           setMessage(error instanceof Error ? error.message : "删除失败，已恢复列表");
         });
     },
-    [holdings, holdingsRefreshedAt, portfolioSummary, sectorRefresh, user?.id],
+    [
+      holdings,
+      holdingsRefreshedAt,
+      portfolioSummary,
+      sectorRefresh,
+      user?.id,
+      enqueuePortfolioMutation,
+      markPortfolioCacheWriteReady,
+    ],
   );
 
   const mergeTransactions = (

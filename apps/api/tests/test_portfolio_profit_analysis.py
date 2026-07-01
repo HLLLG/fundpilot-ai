@@ -149,7 +149,9 @@ def test_build_calendar_month_weekend_profit_is_zero_not_carried():
     assert calendar["month_cumulative_profit"] == 0.0
 
 
-def test_build_calendar_month_today_pending_until_official_nav(monkeypatch):
+def test_build_calendar_month_today_pending_until_official_nav_then_shows_profit(monkeypatch):
+    """当日格子在净值来源是 sector_estimate（估算）时应挂起待更新；
+    换成 official_nav（官方净值已公布）后应展示真实当日收益，且都不沿用旧快照缓存值。"""
     today = date.today()
     today_key = today.isoformat()
     snapshots = [
@@ -159,7 +161,12 @@ def test_build_calendar_month_today_pending_until_official_nav(monkeypatch):
             "daily_return_percent": -1.2,
         }
     ]
-    holdings = [
+    monkeypatch.setattr(
+        "app.services.portfolio_profit_analysis.get_trade_date_set",
+        lambda: frozenset({today_key}),
+    )
+
+    pending_holdings = [
         Holding(
             fund_code="015945",
             fund_name="易方达国防军工混合C",
@@ -169,38 +176,18 @@ def test_build_calendar_month_today_pending_until_official_nav(monkeypatch):
             daily_return_percent_source="sector_estimate",
         )
     ]
-    monkeypatch.setattr(
-        "app.services.portfolio_profit_analysis.get_trade_date_set",
-        lambda: frozenset({today_key}),
-    )
-    calendar = build_calendar_month(
+    pending_calendar = build_calendar_month(
         year=today.year,
         month=today.month,
         snapshots=snapshots,
         trade_dates=frozenset({today_key}),
-        holdings=holdings,
+        holdings=pending_holdings,
     )
-    today_day = next(day for day in calendar["days"] if day["date"] == today_key)
-    assert today_day["is_pending_update"] is True
-    assert today_day["daily_profit"] is None
-    assert today_day not in [
-        day
-        for day in calendar["days"]
-        if day.get("daily_profit") == -629.87
-    ]
+    pending_day = next(day for day in pending_calendar["days"] if day["date"] == today_key)
+    assert pending_day["is_pending_update"] is True
+    assert pending_day["daily_profit"] is None
 
-
-def test_build_calendar_month_today_shows_official_nav_profit(monkeypatch):
-    today = date.today()
-    today_key = today.isoformat()
-    snapshots = [
-        {
-            "snapshot_date": today_key,
-            "daily_profit": -629.87,
-            "daily_return_percent": -1.2,
-        }
-    ]
-    holdings = [
+    settled_holdings = [
         Holding(
             fund_code="015945",
             fund_name="易方达国防军工混合C",
@@ -211,21 +198,17 @@ def test_build_calendar_month_today_shows_official_nav_profit(monkeypatch):
             daily_return_percent_source="official_nav",
         )
     ]
-    monkeypatch.setattr(
-        "app.services.portfolio_profit_analysis.get_trade_date_set",
-        lambda: frozenset({today_key}),
-    )
-    calendar = build_calendar_month(
+    settled_calendar = build_calendar_month(
         year=today.year,
         month=today.month,
         snapshots=snapshots,
         trade_dates=frozenset({today_key}),
-        holdings=holdings,
+        holdings=settled_holdings,
     )
-    today_day = next(day for day in calendar["days"] if day["date"] == today_key)
-    assert today_day["is_pending_update"] is False
-    assert today_day["daily_profit"] is not None
-    assert today_day["daily_profit"] != -629.87
+    settled_day = next(day for day in settled_calendar["days"] if day["date"] == today_key)
+    assert settled_day["is_pending_update"] is False
+    assert settled_day["daily_profit"] is not None
+    assert settled_day["daily_profit"] != -629.87
 
 
 def test_summarize_trend_footer_alpha():
