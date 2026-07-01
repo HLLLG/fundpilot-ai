@@ -11,7 +11,19 @@ export type IntradayPoint = {
 type IntradayPercentChartProps = {
   points: IntradayPoint[];
   height?: number;
+  /** 数据源没有真实分时序列、只拿到当日板块涨跌这一个数字时，用虚线水平线代替空白占位，
+   * 并区别于真实分时曲线（无面积填充、无 hover 时间提示）。 */
+  flat?: boolean;
 };
+
+/** 数据源查不到分时明细、只有当日板块涨跌这一个数字时，合成一条贯穿全交易时段的水平线，
+ * 比"暂无分时数据"占位更直观地传达"我们确实有今天的涨跌幅，只是没有分时走势"。 */
+export function buildFlatIntradayPoints(percent: number): IntradayPoint[] {
+  return [
+    { time: "09:30", percent },
+    { time: "15:00", percent },
+  ];
+}
 
 function formatTimeLabel(time: string) {
   if (time.length >= 5) {
@@ -44,7 +56,7 @@ const CROSSHAIR = {
   horizontal: "#0ea5e9",
 };
 
-export function IntradayPercentChart({ points, height = 200 }: IntradayPercentChartProps) {
+export function IntradayPercentChart({ points, height = 200, flat = false }: IntradayPercentChartProps) {
   const gradientId = useId().replace(/:/g, "");
   const containerRef = useRef<HTMLDivElement>(null);
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
@@ -166,8 +178,14 @@ export function IntradayPercentChart({ points, height = 200 }: IntradayPercentCh
           strokeWidth={1}
           strokeDasharray="4 4"
         />
-        <path d={chart.areaPath} fill={`url(#${gradientId})`} />
-        <path d={chart.linePath} fill="none" stroke={chart.colors.line} strokeWidth={0.9} />
+        {flat ? null : <path d={chart.areaPath} fill={`url(#${gradientId})`} />}
+        <path
+          d={chart.linePath}
+          fill="none"
+          stroke={chart.colors.line}
+          strokeWidth={flat ? 1.2 : 0.9}
+          strokeDasharray={flat ? "5 4" : undefined}
+        />
 
         <text
           x={yLabelX}
@@ -276,6 +294,9 @@ export function IntradayPercentChart({ points, height = 200 }: IntradayPercentCh
           height={chart.chartHeight}
           fill="transparent"
           onMouseMove={(event) => {
+            if (flat) {
+              return;
+            }
             const rect = event.currentTarget.getBoundingClientRect();
             const ratio = (event.clientX - rect.left) / rect.width;
             let bestIndex = 0;

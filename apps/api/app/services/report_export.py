@@ -58,6 +58,10 @@ def report_to_markdown(report: dict[str, Any]) -> str:
             lines.append(f"### {item.get('fund_code')} · {item.get('fund_name')}")
             lines.append("")
             lines.append(f"- **操作**：{item.get('action', '')}")
+            if item.get("confidence"):
+                lines.append(f"- **置信度**：{item['confidence']}")
+            if item.get("hold_horizon"):
+                lines.append(f"- **持有/观察窗口**：{item['hold_horizon']}")
             if item.get("amount_note"):
                 lines.append(f"- **金额**：{item['amount_note']}")
             elif item.get("amount_yuan") is not None:
@@ -69,6 +73,17 @@ def report_to_markdown(report: dict[str, Any]) -> str:
                 composite = (evidence.get("composite") or {}).get("level", "")
                 summary = evidence.get("summary", "")
                 lines.append(f"- **量化依据**（综合置信{composite}）：{summary}")
+            if item.get("decision_path"):
+                lines.append(f"- **决策路径**：{item['decision_path']}")
+            _append_named_list(lines, "板块依据", item.get("sector_evidence"))
+            _append_named_list(lines, "基金依据", item.get("fund_evidence"))
+            _append_named_list(lines, "校验备注", item.get("validation_notes"))
+            item_risks = item.get("risks") or []
+            if item_risks:
+                lines.append("")
+                lines.append("**风险：**")
+                for item_risk in item_risks:
+                    lines.append(f"- {item_risk}")
             lines.append("")
 
     alerts = [alert.get("message") for alert in risk.get("alerts") or [] if alert.get("message")]
@@ -112,3 +127,12 @@ def report_to_markdown(report: dict[str, Any]) -> str:
     lines.append("---")
     lines.append("*仅供个人投研辅助，不构成投资建议。*")
     return "\n".join(lines)
+
+
+def _append_named_list(lines: list[str], title: str, items: object) -> None:
+    if not isinstance(items, list) or not items:
+        return
+    cleaned = [str(item).strip() for item in items if str(item).strip()]
+    if not cleaned:
+        return
+    lines.append(f"- **{title}**：" + "；".join(cleaned))

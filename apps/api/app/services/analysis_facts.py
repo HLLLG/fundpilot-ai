@@ -21,6 +21,7 @@ from app.services.holding_metrics import (
 )
 from app.services.market_flow_client import build_market_flow_context
 from app.services.news_freshness import build_news_pipeline_context
+from app.services.report_sector_opportunity import build_holding_sector_opportunity_context
 from app.services.sector_signal_context import (
     build_signal_backtest_context,
     sector_labels_from_holdings,
@@ -45,6 +46,7 @@ SECTOR_FLOW_TIMEOUT_SECONDS = 5.0
 SECTOR_INTRADAY_TIMEOUT_SECONDS = 4.0
 MARKET_FLOW_TIMEOUT_SECONDS = 3.0
 GUARD_POLICY_TIMEOUT_SECONDS = 2.0
+SECTOR_OPPORTUNITY_TIMEOUT_SECONDS = 5.0
 
 
 def _build_sector_intraday_map(holdings: list[Holding]) -> dict[str, dict]:
@@ -161,6 +163,15 @@ def _market_flow_unavailable(reason: str) -> dict[str, Any]:
     }
 
 
+def _sector_opportunity_unavailable(reason: str) -> dict[str, Any]:
+    return {
+        "available": False,
+        "reason": reason,
+        "held": {},
+        "market_top": [],
+    }
+
+
 def _guard_policy_unavailable() -> dict[str, Any]:
     return {
         "enforce_reversal_block": True,
@@ -251,7 +262,7 @@ def build_analysis_facts(
     sector_labels = sector_labels_from_holdings(holdings)
     market_flow = None
     if budget_enhancements:
-        executor = ThreadPoolExecutor(max_workers=5, thread_name_prefix="analysis-facts-budget")
+        executor = ThreadPoolExecutor(max_workers=6, thread_name_prefix="analysis-facts-budget")
         try:
             signal_future = _submit_enhancement(
                 executor,
@@ -275,6 +286,10 @@ def build_analysis_facts(
             market_flow_future = _submit_enhancement(
                 executor,
                 lambda: build_market_flow_context(trade_date=effective_trade_date),
+            )
+            sector_opportunity_future = _submit_enhancement(
+                executor,
+                lambda: build_holding_sector_opportunity_context(holdings),
             )
             signal_backtest = _enhancement_result(
                 signal_future,
@@ -301,6 +316,11 @@ def build_analysis_facts(
                 timeout_seconds=MARKET_FLOW_TIMEOUT_SECONDS,
                 fallback=_market_flow_unavailable("timeout"),
             )
+            sector_opportunity = _enhancement_result(
+                sector_opportunity_future,
+                timeout_seconds=SECTOR_OPPORTUNITY_TIMEOUT_SECONDS,
+                fallback=_sector_opportunity_unavailable("timeout"),
+            )
         finally:
             executor.shutdown(wait=False, cancel_futures=True)
     else:
@@ -311,6 +331,7 @@ def build_analysis_facts(
             trade_date=effective_trade_date,
         )
         intraday_map = _build_sector_intraday_map(holdings)
+        sector_opportunity = build_holding_sector_opportunity_context(holdings)
 
     per_fund: list[dict] = []
     drawdown_limit = abs(profile.max_drawdown_percent)
@@ -374,6 +395,9 @@ def build_analysis_facts(
                     holding.sector_name,
                     signal_backtest,
                 ),
+                "sector_opportunity": (sector_opportunity.get("held") or {}).get(
+                    normalize_sector_label(holding.sector_name)
+                ),
             }
         if for_llm:
             row["sector_fund_gap_percent"] = compute_sector_fund_gap_percent(holding)
@@ -410,6 +434,12 @@ def build_analysis_facts(
             "量化背书不足、以风险口径表述。"
             "sector_fund_flow.today_main_force_net_yi 正数=净流入、负数=净流出；"
             "仅当 flow_date 与 trade_date 对齐（date_aligned=true）时方可与 sector_return_percent 做背离判断。"
+            "持仓的 sector_opportunity 是该持仓所属板块当前方向判断（track=momentum顺势/setup蓄势，"
+            "confidence=高/中/低/不足）：opportunity_available=false 表示该方向当前不构成机会"
+            "（例如资金持续流出、涨幅透支），须在分析中提示、不得据此建议加仓；"
+            "为 true 时可作为「继续持有/适度加仓」的辅助论据，但仍需结合 evidence 与风险指标。"
+            "sector_rotation.market_top 是当前全市场机会分最高的方向（不含已持有板块），"
+            "仅用于提示「是否存在更强的轮动方向」，不得单独作为清仓已持仓位、追高换仓的理由。"
         ),
         "portfolio": {
             "total_amount": round(total_amount, 2),
@@ -459,6 +489,11 @@ def build_analysis_facts(
             trade_date=effective_trade_date,
         )
     facts["signal_backtest"] = signal_backtest
+    facts["sector_rotation"] = {
+        "available": sector_opportunity.get("available", False),
+        "reason": sector_opportunity.get("reason"),
+        "market_top": sector_opportunity.get("market_top", []),
+    }
     facts["guard_policy"] = {
         "enforce_reversal_block": guard_policy.get("enforce_reversal_block", True),
         "enforce_pullback_block": guard_policy.get("enforce_pullback_block", True),

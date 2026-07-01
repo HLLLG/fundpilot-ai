@@ -56,18 +56,27 @@ def sector_quote_lookup_label(
     if profile is not None and not fund_name:
         fund_name = profile.fund_name
 
+    # 先按"精确度"从高到低尝试有行情源的规范映射：场内指数名 → 板块短名。
+    # 业绩基准原文抠出来的指数名（如"中证高端装备制造指数"）往往不在别名表里，
+    # 若命中不到规范映射就直接把这段原始文本当 query key 用，几乎必然查不到行情——
+    # 应该退回板块短名（如"机械设备"），只要它已注册过行情源即可，不必持续扩充
+    # 指数名别名白名单。
     if index_name and _looks_like_index_name(index_name):
         canon = get_canonical_sector(index_name)
         if canon:
             return canon.label
-        normalized = normalize_sector_label(index_name)
-        if normalized:
-            return normalized
 
     if board_name and _is_valid_sector_label(board_name):
         canon = get_canonical_sector(board_name)
         if canon:
             return canon.label
+
+    if index_name and _looks_like_index_name(index_name):
+        normalized = normalize_sector_label(index_name)
+        if normalized:
+            return normalized
+
+    if board_name and _is_valid_sector_label(board_name):
         normalized = normalize_sector_label(board_name)
         if normalized:
             return normalized
@@ -82,9 +91,6 @@ def sector_quote_lookup_label(
         if canon:
             return canon.label
         return from_fund
-
-    if index_name and normalize_sector_label(index_name):
-        return normalize_sector_label(index_name)
 
     inferred = infer_sector_label_from_fund_name(fund_name)
     if inferred:

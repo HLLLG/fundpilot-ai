@@ -152,12 +152,31 @@ export type Report = {
     news_bullish?: string[];
     news_bearish?: string[];
     points: string[];
+    confidence?: string;
+    hold_horizon?: string;
+    risks?: string[];
+    decision_path?: string;
+    sector_evidence?: string[];
+    fund_evidence?: string[];
+    validation_notes?: string[];
   }>;
   summary: string;
   recommendations: string[];
   caveats: string[];
   provider: string;
   analysis_facts?: Record<string, unknown>;
+};
+
+export type AnalysisFactsHoldingRow = {
+  fund_code?: string;
+  evidence?: HoldingEvidence | null;
+  sector_opportunity?: SectorOpportunity | null;
+};
+
+export type SectorRotationFacts = {
+  available: boolean;
+  reason?: string | null;
+  market_top: SectorOpportunity[];
 };
 
 export type ReportOutcomes = {
@@ -511,7 +530,7 @@ export type DiscoveryCandidatePoolItem = {
   quality_penalties?: string[];
 };
 
-export type DiscoverySectorOpportunity = {
+export type SectorOpportunity = {
   sector_label: string;
   track?: string | null;
   score?: number | null;
@@ -524,7 +543,12 @@ export type DiscoverySectorOpportunity = {
   today_main_force_net_yi?: number | null;
   cumulative_5d_net_yi?: number | null;
   pattern_label?: string | null;
+  /** false = 该方向当前不构成加仓机会，仅作方向参考（日报持仓场景会返回此状态）。 */
+  opportunity_available?: boolean;
 };
+
+/** @deprecated use `SectorOpportunity`（荐基与日报共用同一套板块方向数据结构）。 */
+export type DiscoverySectorOpportunity = SectorOpportunity;
 
 export type DiscoveryOutcomeItem = {
   fund_code: string;
@@ -781,6 +805,10 @@ const listReportsRequest: { current: Promise<Report[]> | null } = { current: nul
 const listDiscoveryReportsRequest: { current: Promise<FundDiscoveryReport[]> | null } = { current: null };
 const portfolioHoldingsRequest: { current: Promise<PortfolioHoldingsPayload> | null } = { current: null };
 const sectorQuotesStatusRequest: { current: Promise<SectorQuotesStatus> | null } = { current: null };
+
+export function invalidatePortfolioHoldingsRequest(): void {
+  portfolioHoldingsRequest.current = null;
+}
 
 export type { AuthSession, AuthUser };
 
@@ -1761,6 +1789,7 @@ export async function applyPortfolioHoldings(
   holdings: Holding[];
   portfolio_summary?: PortfolioSummary | null;
 }> {
+  invalidatePortfolioHoldingsRequest();
   const response = await apiFetch(`${API_BASE}/api/portfolio/apply-holdings`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1781,6 +1810,7 @@ export async function deletePortfolioHolding(
   holdings: Holding[];
   portfolio_summary?: PortfolioSummary | null;
 }> {
+  invalidatePortfolioHoldingsRequest();
   const params = new URLSearchParams();
   if (fundName) {
     params.set("fund_name", fundName);
@@ -1804,6 +1834,7 @@ export async function deletePortfolioHolding(
     }
     throw new Error(text);
   }
+  invalidatePortfolioHoldingsRequest();
   return response.json();
 }
 

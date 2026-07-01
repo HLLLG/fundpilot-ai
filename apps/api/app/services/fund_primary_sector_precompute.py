@@ -21,10 +21,19 @@ from app.services.fund_primary_sector_service import (
     _resolve_from_benchmark_index,
     _resolve_from_holdings_infer,
 )
+from app.services.fund_primary_sector_types import PrimarySectorRecord
 
 logger = logging.getLogger(__name__)
 
-PrecomputeMode = str  # "benchmark" | "holdings" | "auto"
+PrecomputeMode = str  # "benchmark" | "holdings" | "llm" | "auto"
+
+
+def _lookup_fund_name(fund_code: str) -> str | None:
+    """按代码查名称。`_fund_name_table()` 自身已做进程内缓存，这里无需再缓存一层。"""
+    for code, name in _fund_name_table():
+        if code and code.strip().zfill(6) == fund_code and name:
+            return name
+    return None
 
 
 @dataclass
@@ -133,6 +142,25 @@ def precompute_fund_sector(
             record = _resolve_from_holdings_infer(code, persist=False)
             if record is not None:
                 promote_record_to_global(replace(record, source="precompute_holdings"))
+                return "ok"
+
+        if mode in ("llm", "auto") and get_settings().fund_primary_sector_llm_infer_enabled:
+            from app.services.fund_sector_llm_infer import infer_sector_via_llm
+
+            fund_name = _lookup_fund_name(code)
+            llm_result = infer_sector_via_llm(code, fund_name) if fund_name else None
+            if llm_result is not None:
+                sector_name, confidence = llm_result
+                promote_record_to_global(
+                    PrimarySectorRecord(
+                        fund_code=code,
+                        sector_name=sector_name,
+                        intraday_index_name=None,
+                        source="precompute_llm",
+                        confidence=confidence,
+                        detail={"fund_name": fund_name},
+                    )
+                )
                 return "ok"
 
         return "miss"

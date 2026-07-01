@@ -55,3 +55,40 @@ def test_save_profile_invalidates_cache(monkeypatch):
     )
     svc.list_profiles()
     assert calls["n"] == 2
+
+
+def test_save_overview_profile_upserts_low_trust_primary_sector_source(monkeypatch):
+    captured: dict[str, str] = {}
+
+    monkeypatch.setattr(
+        "app.services.fund_profile.list_fund_profiles",
+        lambda: [],
+    )
+    monkeypatch.setattr(
+        "app.services.fund_profile.get_fund_profile_by_code",
+        lambda _code: None,
+    )
+    monkeypatch.setattr(
+        "app.services.fund_profile.save_fund_profile",
+        lambda profile: profile,
+    )
+
+    def fake_upsert(_profile, *, source="ocr_detail"):
+        captured["source"] = source
+
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_service.upsert_primary_sector_from_profile",
+        fake_upsert,
+    )
+
+    FundProfileService().save_profile(
+        FundProfile(
+            fund_code="123456",
+            fund_name="华夏全球科技先锋混合(QDII)C",
+            aliases=[],
+            sector_name="电子",
+            source="alipay-overview",
+        )
+    )
+
+    assert captured["source"] == "alipay_overview"

@@ -37,7 +37,7 @@ import {
 } from "@/lib/holdingDisplay";
 import type { SectorQuoteMeta } from "@/lib/api";
 import { holdingDisplaySectorLabel } from "@/lib/profileSector";
-import { buildSectorRefreshNotice } from "@/lib/sectorQuoteStatus";
+import { buildSectorRefreshNotice, isEstimateFallbackMeta } from "@/lib/sectorQuoteStatus";
 import { formatThemeBoardUpdatedFromIso } from "@/lib/marketThemeBoard";
 import { loadAmountsHidden, saveAmountsHidden } from "@/lib/storage";
 import { formatTradeDateShort } from "@/lib/tradeDateLabel";
@@ -352,7 +352,11 @@ export function YangjibaoHoldingsBoard({
               {refreshError ? (
                 <div className="mt-2 text-xs text-rose-600">{refreshError}</div>
               ) : refreshNotice?.tone === "amber" ? (
-                <div className="mt-2 text-xs leading-5 text-amber-700">{refreshNotice.description}</div>
+                <div className="mt-2 text-xs leading-5 text-amber-700">
+                  部分基金无真实关联板块，已用「
+                  <span className="font-bold">估值</span>
+                  」标签的基金代替展示天天基金净值估值
+                </div>
               ) : null}
             </div>
             <button
@@ -477,13 +481,26 @@ export function YangjibaoHoldingsBoard({
 
                   <div
                     className="min-w-0 text-right leading-tight"
-                    title={sectorLabel !== "—" ? sectorLabel : undefined}
+                    title={
+                      sectorLabel !== "—"
+                        ? isEstimateFallbackMeta(sectorMeta)
+                          ? `${sectorLabel}（无真实关联板块行情，当前用天天基金净值估值代替）`
+                          : sectorLabel
+                        : undefined
+                    }
                   >
                     <div className={`text-[13px] font-black tabular-nums ${cnProfitClass(sectorReturn)}`}>
                       {formatSignedPercent(sectorReturn)}
                     </div>
                     {sectorLabel !== "—" ? (
-                      <div className="truncate text-[10px] font-semibold text-slate-500">{sectorLabel}</div>
+                      <div className="flex items-center justify-end gap-1">
+                        {isEstimateFallbackMeta(sectorMeta) ? (
+                          <span className="shrink-0 rounded border border-amber-200 bg-amber-50 px-1 py-0 text-[8px] font-bold leading-4 text-amber-600">
+                            估值
+                          </span>
+                        ) : null}
+                        <span className="truncate text-[10px] font-semibold text-slate-500">{sectorLabel}</span>
+                      </div>
                     ) : null}
                   </div>
 

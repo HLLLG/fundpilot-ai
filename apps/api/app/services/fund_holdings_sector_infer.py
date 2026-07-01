@@ -4,18 +4,26 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import subprocess
 import sys
 from dataclasses import dataclass
 
 from app.services.fund_industry_theme_map import map_industry_to_theme_label
-from app.services.sector_canonical import get_canonical_sector
 
 logger = logging.getLogger(__name__)
 
 _SUBPROCESS_TIMEOUT = 90
 _MIN_SCORE_PERCENT = 8.0
 _MAX_STOCKS_WITH_INDUSTRY = 8
+
+
+def _subprocess_env() -> dict[str, str]:
+    """强制子进程用 UTF-8 输出，否则 Windows 下中文股票名/行业会被控制台代码页乱码。"""
+    env = os.environ.copy()
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
+    return env
 
 
 @dataclass(frozen=True)
@@ -106,6 +114,7 @@ print(json.dumps(rows, ensure_ascii=False))
             errors="replace",
             timeout=_SUBPROCESS_TIMEOUT,
             check=False,
+            env=_subprocess_env(),
         )
         if completed.returncode != 0 or not completed.stdout.strip():
             return []
@@ -160,9 +169,6 @@ def infer_sector_from_portfolio_stocks(
     sector_name = max(scores, key=lambda key: scores[key])
     if scores[sector_name] < _MIN_SCORE_PERCENT:
         return None
-    if not get_canonical_sector(sector_name):
-        from app.services.sector_registry_data import THEME_BOARD_INDEX
-
-        if sector_name not in THEME_BOARD_INDEX:
-            return None
+    # 不再要求命中白名单/canonical 才接受：展示标签与是否有实时行情已解耦
+    # （sector_quote_service 对没有 canonical 映射的标签会优雅地不展示涨跌%）。
     return sector_name, scores, evidence

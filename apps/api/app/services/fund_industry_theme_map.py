@@ -27,4 +27,12 @@ def map_industry_to_theme_label(industry: str | None) -> str | None:
             if len(label) > best_len:
                 best = label
                 best_len = len(label)
-    return best
+    if best is not None:
+        return best
+
+    # 东财/申万官方行业名本身通常已是恰当的主题短语（如"电池""包装印刷"），
+    # 白名单没收录时直接使用该行业名，而不是丢弃这只重仓股的投票权重——
+    # 否则新基金持仓里出现的生僻行业永远无法参与投票，只能靠不断扩容白名单。
+    if 2 <= len(normalized) <= 10:
+        return normalized
+    return None

@@ -159,6 +159,56 @@ def test_delete_then_load_persisted_holdings_does_not_resurrect_fund(tmp_path, m
     assert get_fund_profile_by_code("026790") is None
 
 
+def test_delete_last_holding_empty_snapshot_blocks_stale_profile_recovery(tmp_path, monkeypatch):
+    """删除最后一只后，最新空快照代表用户已清空，旧档案不能把基金带回来。"""
+    monkeypatch.setenv("FUND_AI_DB_PATH", str(tmp_path / "app.db"))
+    from app.config import refresh_settings
+
+    refresh_settings()
+
+    from app.models import FundProfile
+    from app.services.fund_profile import FundProfileService
+    from app.services.portfolio_holdings_service import load_persisted_holdings
+
+    service = FundProfileService()
+    service.save_profile(
+        FundProfile(
+            fund_code="016665",
+            fund_name="天弘全球高端制造混合(QDII)C",
+            holding_amount=100.0,
+        )
+    )
+    service.save_profile(
+        FundProfile(
+            fund_code="022184",
+            fund_name="富国全球科技互联网股票(QDII)C",
+            holding_amount=1000.0,
+        )
+    )
+    save_daily_snapshot(
+        [
+            Holding(
+                fund_code="016665",
+                fund_name="天弘全球高端制造混合(QDII)C",
+                holding_amount=100.0,
+                return_percent=0,
+            )
+        ],
+        PortfolioSummary(total_assets=100.0, holding_count=1),
+    )
+
+    payload = remove_holding_from_portfolio(
+        "016665",
+        fund_name="天弘全球高端制造混合(QDII)C",
+    )
+    assert payload["holdings"] == []
+
+    loaded, source, _, _ = load_persisted_holdings()
+
+    assert loaded == []
+    assert source == "snapshot"
+
+
 def test_merge_holdings_with_profiles_does_not_readd_deleted_profile(tmp_path, monkeypatch):
     monkeypatch.setenv("FUND_AI_DB_PATH", str(tmp_path / "app.db"))
     from app.config import refresh_settings

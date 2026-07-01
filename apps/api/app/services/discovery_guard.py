@@ -3,6 +3,16 @@ from __future__ import annotations
 import re
 
 from app.models import DiscoveryRecommendation, InvestorProfile, NewsItem, TopicBrief
+from app.services.decision_guard_shared import (
+    append_unique as _append_unique,
+    as_float as _as_float,
+    fmt_abs_num as _fmt_abs_num,
+    fmt_num as _fmt_num,
+    humanize_evidence_text as _humanize_evidence_text,
+    normalize_confidence_label as _normalize_confidence,
+    pattern_label as _pattern_label,
+    track_label as _track_label,
+)
 from app.services.news_citation import _collect_citable_titles, _matches_known_title
 
 
@@ -126,6 +136,7 @@ def apply_discovery_guards(
             )
         _sync_decision_path_with_final_action(copy)
         copy.news_bullish = _filter_news_titles(copy.news_bullish, titles)
+        _humanize_recommendation_text(copy)
         guarded.append(copy)
 
     return guarded[:5], caveats
@@ -138,13 +149,6 @@ def _normalize_discovery_action(action: str) -> str:
     if any(token in text for token in ("分批", "买入", "加仓", "少量", "定投", "试探")):
         return "分批买入"
     return "建议关注"
-
-
-def _normalize_confidence(confidence: str) -> str:
-    text = str(confidence or "").strip()
-    if text in {"高", "中", "低"}:
-        return text
-    return "中"
 
 
 def _should_downgrade_weak_evidence(
@@ -270,6 +274,16 @@ def _backfill_decision_fields(
         )
 
 
+def _humanize_recommendation_text(rec: DiscoveryRecommendation) -> None:
+    rec.decision_path = _humanize_evidence_text(rec.decision_path)
+    rec.amount_note = _humanize_evidence_text(rec.amount_note) if rec.amount_note else rec.amount_note
+    rec.sector_evidence = [_humanize_evidence_text(item) for item in rec.sector_evidence]
+    rec.fund_evidence = [_humanize_evidence_text(item) for item in rec.fund_evidence]
+    rec.validation_notes = [_humanize_evidence_text(item) for item in rec.validation_notes]
+    rec.points = [_humanize_evidence_text(item) for item in rec.points]
+    rec.risks = [_humanize_evidence_text(item) for item in rec.risks]
+
+
 def _build_decision_path(
     rec: DiscoveryRecommendation,
     pool_item: dict,
@@ -283,18 +297,18 @@ def _build_decision_path(
         score = opportunity.get("score")
         if quality is not None and fit is not None:
             return (
-                f"先判断板块方向：{sector}（track={track}，机会分 {_fmt_num(score)}），"
-                f"再在该方向内选择 fund_quality_score={_fmt_num(quality)}、"
-                f"sector_fit_score={_fmt_num(fit)} 的候选基金，动作定为{rec.action}。"
+                f"先判断板块方向：{sector}（{_track_label(track)}，机会分 {_fmt_num(score)}），"
+                f"再在该方向内选择基金质量分 {_fmt_num(quality)}、"
+                f"板块匹配分 {_fmt_num(fit)} 的候选基金，动作定为{rec.action}。"
             )
         return (
-            f"先判断板块方向：{sector}（track={track}，机会分 {_fmt_num(score)}），"
+            f"先判断板块方向：{sector}（{_track_label(track)}，机会分 {_fmt_num(score)}），"
             f"再从候选池内选择匹配基金，动作定为{rec.action}。"
         )
     if quality is not None and fit is not None:
         return (
-            f"先判断板块方向：{sector}，再选择 fund_quality_score={_fmt_num(quality)}、"
-            f"sector_fit_score={_fmt_num(fit)} 的候选基金，动作定为{rec.action}。"
+            f"先判断板块方向：{sector}，再选择基金质量分 {_fmt_num(quality)}、"
+            f"板块匹配分 {_fmt_num(fit)} 的候选基金，动作定为{rec.action}。"
         )
     return f"先判断板块方向：{sector}，再从候选池内选择匹配基金，动作定为{rec.action}。"
 
@@ -309,9 +323,9 @@ def _build_sector_evidence(opportunity: dict | None) -> list[str]:
     if score is not None:
         text = f"机会分 {_fmt_num(score)}"
         if track:
-            text += f"，track={track}"
+            text += f"，{_track_label(track)}"
         if confidence:
-            text += f"，confidence={confidence}"
+            text += f"，置信度{confidence}"
         evidence.append(text)
     today_flow = opportunity.get("today_main_force_net_yi")
     five_day_flow = opportunity.get("cumulative_5d_net_yi")
@@ -324,7 +338,7 @@ def _build_sector_evidence(opportunity: dict | None) -> list[str]:
         evidence.append("，".join(parts))
     pattern = opportunity.get("pattern_label")
     if pattern:
-        evidence.append(f"资金/价格 pattern={pattern}")
+        evidence.append(f"资金/价格信号：{_pattern_label(str(pattern))}")
     evidence.extend(str(item) for item in opportunity.get("evidence") or [] if str(item).strip())
     return evidence
 
@@ -336,9 +350,9 @@ def _build_fund_evidence(pool_item: dict) -> list[str]:
     if quality is not None or fit is not None:
         parts = []
         if quality is not None:
-            parts.append(f"fund_quality_score={_fmt_num(quality)}")
+            parts.append(f"基金质量分 {_fmt_num(quality)}")
         if fit is not None:
-            parts.append(f"sector_fit_score={_fmt_num(fit)}")
+            parts.append(f"板块匹配分 {_fmt_num(fit)}")
         evidence.append("，".join(parts))
     reasons = pool_item.get("quality_reasons") or []
     if reasons:
@@ -370,38 +384,8 @@ def _build_validation_notes(pool_item: dict, opportunity: dict | None) -> list[s
             if str(item).strip()
         )
     if pool_item.get("fund_quality_score") is None:
-        notes.append("候选池缺少 fund_quality_score，置信度需保守")
+        notes.append("候选池缺少基金质量分，置信度需保守")
     return notes
-
-
-def _append_unique(existing: list[str], additions: list[str], *, limit: int) -> list[str]:
-    result: list[str] = []
-    for item in [*existing, *additions]:
-        text = str(item).strip()
-        if text and text not in result:
-            result.append(text)
-        if len(result) >= limit:
-            break
-    return result
-
-
-def _fmt_num(value: object) -> str:
-    if value is None:
-        return "未知"
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return str(value)
-    return f"{number:.2f}".rstrip("0").rstrip(".")
-
-
-def _as_float(value: object) -> float | None:
-    if value is None:
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
 
 
 def _recent_1d_change_percent(nav_trend: dict, pool_item: dict) -> float | None:

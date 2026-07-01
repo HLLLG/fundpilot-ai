@@ -4,8 +4,11 @@ import asyncio
 import hashlib
 import json
 import logging
+import time
 from datetime import date, datetime
 from pathlib import Path
+
+from app._debug_probe import debug_log
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -95,6 +98,7 @@ from app.services.portfolio_holdings_service import (
 from app.services.official_nav_settlement import settle_official_nav_for_portfolio
 from app.services.portfolio_holdings_cache import (
     get_cached_holdings_response,
+    get_holdings_cache_generation,
     save_cached_holdings_response,
 )
 from app.services.portfolio_persistence import persist_holdings_after_sector_refresh
@@ -1294,6 +1298,7 @@ def portfolio_evidence_overview() -> dict:
 
 def _portfolio_holdings_sync() -> dict:
     user_key = str(get_request_user_id())
+    request_generation = get_holdings_cache_generation()
 
     def _response_from_holdings(
         holdings: list[Holding],
@@ -1311,13 +1316,40 @@ def _portfolio_holdings_sync() -> dict:
             fetch_benchmark=False,
         )
 
+    _t0 = time.perf_counter()
     cached = get_cached_holdings_response()
     if cached is not None:
+        # #region agent log
+        debug_log(
+            "main.py:_portfolio_holdings_sync",
+            "cache hit, returning immediately",
+            {"elapsed_ms": round((time.perf_counter() - _t0) * 1000, 1)},
+            hypothesis_id="H4",
+        )
+        # #endregion
         return cached
 
+    _t_fast_start = time.perf_counter()
     fast_snapshot = build_fast_snapshot_holdings_response()
+    # #region agent log
+    debug_log(
+        "main.py:_portfolio_holdings_sync",
+        "build_fast_snapshot_holdings_response finished",
+        {
+            "elapsed_ms": round((time.perf_counter() - _t_fast_start) * 1000, 1),
+            "total_elapsed_ms": round((time.perf_counter() - _t0) * 1000, 1),
+            "is_none": fast_snapshot is None,
+            "holdings_count": len(fast_snapshot.get("holdings", [])) if fast_snapshot else None,
+        },
+        hypothesis_id="H1",
+    )
+    # #endregion
     if fast_snapshot is not None:
-        save_cached_holdings_response(fast_snapshot)
+        if not save_cached_holdings_response(
+            fast_snapshot,
+            expected_generation=request_generation,
+        ):
+            return get_cached_holdings_response() or fast_snapshot
         schedule_warm_holdings_intraday(
             [Holding.model_validate(item) for item in fast_snapshot.get("holdings", [])],
             user_key=user_key,
@@ -1330,16 +1362,31 @@ def _portfolio_holdings_sync() -> dict:
         )
         return fast_snapshot
 
+    _t_slow_start = time.perf_counter()
     holdings, source, snapshot_date, refreshed_at = load_persisted_holdings(
         fetch_benchmark=False,
     )
+    # #region agent log
+    debug_log(
+        "main.py:_portfolio_holdings_sync",
+        "load_persisted_holdings (slow path) finished",
+        {
+            "elapsed_ms": round((time.perf_counter() - _t_slow_start) * 1000, 1),
+            "total_elapsed_ms": round((time.perf_counter() - _t0) * 1000, 1),
+            "holdings_count": len(holdings),
+            "source": source,
+        },
+        hypothesis_id="H4",
+    )
+    # #endregion
     payload = _response_from_holdings(
         holdings,
         source=source,
         snapshot_date=snapshot_date,
         refreshed_at=refreshed_at,
     )
-    save_cached_holdings_response(payload)
+    if not save_cached_holdings_response(payload, expected_generation=request_generation):
+        return get_cached_holdings_response() or payload
     schedule_warm_holdings_intraday(
         [Holding.model_validate(item) for item in payload.get("holdings", [])],
         user_key=user_key,

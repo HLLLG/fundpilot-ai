@@ -17,6 +17,9 @@ from app.services.market_shared_refresh import (
 )
 from app.services.portfolio_sector_refresh import portfolio_sector_refresh_loop
 from app.services.fund_primary_sector_precompute_loop import fund_primary_sector_precompute_loop
+from app.services.fund_primary_sector_backfill import (
+    run_fund_primary_sector_backfill_once_at_startup,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +60,11 @@ async def app_lifespan(_app: FastAPI):
     threading.Thread(
         target=fund_primary_sector_precompute_loop,
         name="fund-primary-sector-precompute",
+        daemon=True,
+    ).start()
+    threading.Thread(
+        target=run_fund_primary_sector_backfill_once_at_startup,
+        name="fund-primary-sector-backfill",
         daemon=True,
     ).start()
     yield

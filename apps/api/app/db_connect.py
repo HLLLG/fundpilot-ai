@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import sqlite3
+import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -14,6 +15,9 @@ from app.config import get_settings
 logger = logging.getLogger(__name__)
 
 _mysql_unreachable_until: float = 0.0
+# 每个线程复用一条 MySQL 连接，避免每次查询都重新握手 + 重跑 24 条 schema DDL
+# （远程云数据库单次往返 ~150-1000ms，逐查询新建连接曾导致单个持仓请求耗时 20s+）。
+_thread_local = threading.local()
 
 
 def _mysql_fallback_cooldown_seconds() -> float:
@@ -87,9 +91,10 @@ def adapt_sql(sql: str) -> str:
 class DbConnection:
     """统一 SQLite / MySQL 连接包装。"""
 
-    def __init__(self, raw: Any, dialect: str) -> None:
+    def __init__(self, raw: Any, dialect: str, *, pooled: bool = False) -> None:
         self._raw = raw
         self.dialect = dialect
+        self._pooled = pooled
 
     def execute(self, sql: str, params: tuple | list = ()) -> Any:
         if self.dialect == "mysql":
@@ -104,7 +109,16 @@ class DbConnection:
     def commit(self) -> None:
         self._raw.commit()
 
+    def rollback(self) -> None:
+        try:
+            self._raw.rollback()
+        except Exception:  # noqa: BLE001 — 回滚失败不应掩盖原始异常
+            pass
+
     def close(self) -> None:
+        if self._pooled:
+            # 保留在线程本地池中复用，不真正关闭底层 socket。
+            return
         self._raw.close()
 
     def __enter__(self) -> DbConnection:
@@ -113,6 +127,8 @@ class DbConnection:
     def __exit__(self, exc_type, exc, tb) -> None:
         if exc_type is None:
             self.commit()
+        else:
+            self.rollback()
         self.close()
 
 
@@ -129,6 +145,18 @@ def _parse_mysql_url(url: str) -> dict[str, Any]:
 
 
 def _open_mysql() -> DbConnection:
+    existing = getattr(_thread_local, "mysql_conn", None)
+    if existing is not None:
+        try:
+            existing.ping(reconnect=True)
+            return DbConnection(existing, "mysql", pooled=True)
+        except Exception:
+            try:
+                existing.close()
+            except Exception:
+                pass
+            _thread_local.mysql_conn = None
+
     import pymysql
 
     from app.mysql_bootstrap import ensure_mysql_schema
@@ -139,7 +167,8 @@ def _open_mysql() -> DbConnection:
         **(_parse_mysql_url(settings.database_url) | {"connect_timeout": 10, "read_timeout": 30, "write_timeout": 30}),
     )
     ensure_mysql_schema(conn)
-    return DbConnection(conn, "mysql")
+    _thread_local.mysql_conn = conn
+    return DbConnection(conn, "mysql", pooled=True)
 
 
 def _open_sqlite() -> DbConnection:

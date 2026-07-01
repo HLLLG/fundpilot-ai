@@ -17,6 +17,10 @@ def bump_holdings_cache_generation() -> None:
     bump_holding_detail_cache_generation()
 
 
+def get_holdings_cache_generation() -> int:
+    return _GENERATION
+
+
 def _cache_key() -> str:
     return f"portfolio:holdings:{get_request_user_id()}"
 
@@ -35,6 +39,9 @@ def get_cached_holdings_response() -> dict | None:
     return payload
 
 
-def save_cached_holdings_response(payload: dict) -> None:
+def save_cached_holdings_response(payload: dict, *, expected_generation: int | None = None) -> bool:
+    if expected_generation is not None and expected_generation != _GENERATION:
+        return False
     key = _cache_key()
     _MEMORY[key] = (_GENERATION, datetime.now(timezone.utc).timestamp(), payload)
+    return True

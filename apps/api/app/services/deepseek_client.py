@@ -544,6 +544,7 @@ def _build_final_report(
         market_news,
         topic_briefs,
         nav_trends_by_code=nav_trends,
+        facts=analysis_bundle.facts,
     )
     facts = finalize_analysis_facts(
         analysis_bundle.facts,
@@ -855,6 +856,7 @@ def _finalize_recommendations(
     topic_briefs: list[TopicBrief] | None = None,
     *,
     nav_trends_by_code: dict[str, dict] | None = None,
+    facts: dict | None = None,
 ) -> tuple[list[str], list[FundRecommendation]]:
     from app.services.market_flow_client import build_market_flow_context
 
@@ -891,6 +893,7 @@ def _finalize_recommendations(
         topic_briefs,
         nav_trends_by_code=nav_trends_by_code,
         northbound_net_yi=northbound,
+        facts=facts,
     )
     fund_recs = apply_news_citation_guards(fund_recs, market_news, topic_briefs)
     return portfolio, fund_recs
@@ -1020,6 +1023,7 @@ def _offline_report(
         briefs,
         nav_trends_by_code=nav_trends,
         northbound_net_yi=northbound,
+        facts=analysis_bundle.facts if analysis_bundle else None,
     )
     fund_recommendations = apply_news_citation_guards(
         fund_recommendations, news, briefs

@@ -9,7 +9,7 @@ import httpx
 import pytest
 
 from app.config import refresh_settings
-from app.models import DiscoveryRequest, Holding, InvestorProfile
+from app.models import DiscoveryRequest, Holding, InvestorProfile, NewsItem
 from app.services.discovery_streaming import stream_discovery
 
 _FAKE_DEEPSEEK_KEY = "sk-" + "a" * 32
@@ -73,7 +73,9 @@ def _patch_pipeline(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
-def test_stream_discovery_deep_emits_tool_stages_and_done(monkeypatch: pytest.MonkeyPatch):
+def test_stream_discovery_deep_uses_prefetched_news_without_tool_rounds(
+    monkeypatch: pytest.MonkeyPatch,
+):
     monkeypatch.setenv("FUND_AI_DEEPSEEK_API_KEY", _FAKE_DEEPSEEK_KEY)
     refresh_settings()
     _patch_pipeline(monkeypatch)
@@ -92,18 +94,30 @@ def test_stream_discovery_deep_emits_tool_stages_and_done(monkeypatch: pytest.Mo
         lambda settings, mode: deep_runtime,
     )
 
-    def fake_tool_rounds(self, **kwargs):
-        on_stage = kwargs.get("on_stage")
-        if on_stage:
-            on_stage("tool_round_1", "正在检索新闻 (1/2)…")
-        return ([{"role": "user", "content": "{}"}], [])
-
     monkeypatch.setattr(
         "app.services.discovery_streaming.DiscoveryClient.run_discovery_news_tool_rounds",
-        fake_tool_rounds,
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("discovery deep should use prefetched news instead of LLM tool rounds")
+        ),
     )
+    monkeypatch.setattr(
+        "app.services.discovery_streaming.NewsService",
+        lambda: MagicMock(
+            prefetch_topics=lambda topics: [
+                NewsItem(
+                    topic="半导体",
+                    title="半导体产业链资金活跃",
+                    source="eastmoney",
+                    published_at="2026-06-30 14:30:00",
+                    is_today=True,
+                )
+            ]
+        ),
+    )
+    captured: dict = {}
 
     def fake_stream(*, messages, model, max_tokens, response_format=None):
+        captured["messages"] = messages
         yield '{"title":"t","summary":"s","recommendations":['
         yield '{"fund_code":"161725","fund_name":"x","action":"建议关注","points":["p"]}'
         yield '],"caveats":["c"]}'
@@ -124,7 +138,8 @@ def test_stream_discovery_deep_emits_tool_stages_and_done(monkeypatch: pytest.Mo
     types = [e["type"] for e in events]
     stage_names = [e.get("stage") for e in events if e.get("type") == "stage"]
     assert "connected" in stage_names
-    assert "tool_round_1" in stage_names
+    assert not any(str(stage).startswith("tool_round_") for stage in stage_names)
+    assert "半导体产业链资金活跃" in str(captured["messages"])
     assert types[-1] == "done"
     assert all(
         isinstance(e.get("elapsed_ms"), int)
@@ -336,3 +351,42 @@ def test_stream_discovery_prefetches_news_while_building_candidates(
 
     assert events[-1]["type"] == "done"
     assert elapsed < 0.9, f"候选池构建与新闻预取应并行，实际 {elapsed:.2f}s"
+
+
+def test_stream_discovery_emits_heartbeat_while_waiting_for_slow_candidates(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("FUND_AI_DEEPSEEK_API_KEY", _FAKE_DEEPSEEK_KEY)
+    refresh_settings()
+    _patch_pipeline(monkeypatch)
+    monkeypatch.setattr("app.services.discovery_streaming.PREP_HEARTBEAT_SECONDS", 0.01)
+    monkeypatch.setattr(
+        "app.services.discovery_streaming.build_sector_flow_map_for_opportunities",
+        lambda *_args, **_kwargs: {},
+    )
+
+    def slow_enrich(pool):
+        time.sleep(0.05)
+        return pool
+
+    monkeypatch.setattr("app.services.discovery_streaming.enrich_candidates", slow_enrich)
+    monkeypatch.setattr(
+        "app.services.discovery_streaming.stream_chat_completion",
+        lambda **kwargs: iter(['{"title":"t","summary":"s","recommendations":[],"caveats":[]}']),
+    )
+    monkeypatch.setattr(
+        "app.services.discovery_streaming.build_discovery_report_from_parsed",
+        lambda parsed, **kwargs: MagicMock(
+            id="heartbeat-1",
+            model_dump=lambda mode="json": {"id": "heartbeat-1"},
+        ),
+    )
+
+    events = list(stream_discovery(_request(), user_id=1))
+    candidate_stages = [
+        event for event in events
+        if event.get("type") == "stage" and event.get("stage") == "candidate_pool"
+    ]
+
+    assert events[-1]["type"] == "done"
+    assert len(candidate_stages) >= 2

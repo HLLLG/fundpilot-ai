@@ -85,7 +85,7 @@ export function DiscoveryCandidatePoolPanel({
                     <td className="px-2 py-2 font-mono font-semibold text-slate-800">
                       {item.fund_code}
                     </td>
-                    <td className="max-w-[140px] truncate px-2 py-2 text-slate-700">
+                    <td className="max-w-[180px] break-words px-2 py-2 text-slate-700">
                       {item.fund_name}
                       {item.is_new_issue ? (
                         <span className="ml-1 rounded bg-amber-100 px-1 py-0.5 text-[10px] font-bold text-amber-800">
@@ -109,7 +109,7 @@ export function DiscoveryCandidatePoolPanel({
                     <td className="px-2 py-2 text-slate-600">
                       {formatPercent(item.return_1y_percent)}
                     </td>
-                    <td className="max-w-[220px] px-2 py-2 text-slate-600">
+                    <td className="max-w-[220px] break-words px-2 py-2 text-slate-600">
                       {compactList(item.quality_reasons) !== "—"
                         ? compactList(item.quality_reasons)
                         : item.selection_reason ?? "—"}
@@ -117,7 +117,7 @@ export function DiscoveryCandidatePoolPanel({
                         <span className="ml-1 font-semibold text-[var(--brand)]">· 已推荐</span>
                       ) : null}
                     </td>
-                    <td className="max-w-[220px] px-2 py-2 text-amber-800">
+                    <td className="max-w-[220px] break-words px-2 py-2 text-amber-800">
                       {compactList(item.quality_penalties)}
                     </td>
                   </tr>

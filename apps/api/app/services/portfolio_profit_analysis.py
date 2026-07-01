@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import calendar
+import contextvars
 import hashlib
 import json
 import time
@@ -161,9 +162,23 @@ def _blend_portfolio_rows(
         return []
 
     max_workers = min(8, len(jobs))
+    # ThreadPoolExecutor 不会自动把调用线程的 contextvars（如当前用户上下文）带到
+    # worker 线程——如果某只持仓在 profiles_by_code 里没有档案（比如刚新增、还没
+    # 跑过 OCR/持仓穿透的基金），_resolve_intraday_for_holding 内部会尝试重新查
+    # 一次基金档案，读用户上下文时就会因为"未设置当前用户上下文"直接抛异常，
+    # 拖垮整批 holdings 的板块行情刷新（包括其它本该成功的持仓）。用
+    # copy_context() 把当前上下文带进每个 worker 即可修复——但同一个 Context
+    # 对象不能被多个线程同时 run（会抛 "cannot enter context: ... is already
+    # entered"），所以要给每个并发任务单独 copy 一份，不能共用一个 ctx。
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = [
-            pool.submit(_fetch_weighted_intraday_map, holding, profile, total)
+            pool.submit(
+                contextvars.copy_context().run,
+                _fetch_weighted_intraday_map,
+                holding,
+                profile,
+                total,
+            )
             for holding, profile in jobs
         ]
         for future in as_completed(futures):

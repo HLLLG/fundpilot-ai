@@ -53,6 +53,19 @@ def _facts() -> dict:
     }
 
 
+def _joined_rec_text(rec) -> str:
+    return " ".join(
+        [
+            rec.decision_path,
+            *rec.sector_evidence,
+            *rec.fund_evidence,
+            *rec.validation_notes,
+            *rec.points,
+            *rec.risks,
+        ]
+    )
+
+
 def test_report_parser_preserves_structured_decision_fields():
     parsed = {
         "title": "机会扫描",
@@ -95,9 +108,11 @@ def test_report_parser_preserves_structured_decision_fields():
 
     rec = report.recommendations[0]
     assert rec.decision_path == "先选半导体材料顺势方向，再选质量分最高的联接基金。"
-    assert rec.sector_evidence == ["机会分 86.5，track=momentum"]
-    assert rec.fund_evidence == ["fund_quality_score=132.25，sector_fit_score=37.12"]
+    assert rec.sector_evidence == ["机会分 86.5，顺势观察"]
+    assert rec.fund_evidence == ["基金质量分 132.25，板块匹配分 37.12"]
     assert rec.validation_notes == ["缺少近1年回撤，先观察"]
+    assert "fund_quality_score" not in _joined_rec_text(rec)
+    assert "track=momentum" not in _joined_rec_text(rec)
 
 
 def test_guard_backfills_decision_evidence_and_corrects_candidate_identity():
@@ -138,9 +153,12 @@ def test_guard_backfills_decision_evidence_and_corrects_candidate_identity():
     assert rec.sector_name == "半导体材料"
     assert "半导体材料" in rec.decision_path
     assert any("机会分 86.5" in item for item in rec.sector_evidence)
-    assert any("fund_quality_score=132.25" in item for item in rec.fund_evidence)
+    assert any("基金质量分 132.25" in item for item in rec.fund_evidence)
     assert any("缺少近1年回撤" in item for item in rec.validation_notes)
     assert any("已按候选池校正基金名称/板块" in item for item in report.caveats)
+    assert "fund_quality_score" not in _joined_rec_text(rec)
+    assert "sector_fit_score" not in _joined_rec_text(rec)
+    assert "track=momentum" not in _joined_rec_text(rec)
 
 
 def test_guard_backfilled_decision_path_uses_final_action_after_chase_control():

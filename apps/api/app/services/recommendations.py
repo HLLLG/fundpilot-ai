@@ -320,6 +320,10 @@ def parse_fund_recommendations_raw(raw: object) -> list[FundRecommendation]:
         if amount_note is not None:
             amount_note = str(amount_note).strip() or None
 
+        confidence = str(entry.get("confidence") or "中").strip() or "中"
+        hold_horizon = str(entry.get("hold_horizon") or "").strip()
+        decision_path = str(entry.get("decision_path") or "").strip()
+
         items.append(
             FundRecommendation(
                 fund_code=fund_code or "000000",
@@ -330,6 +334,13 @@ def parse_fund_recommendations_raw(raw: object) -> list[FundRecommendation]:
                 news_bullish=_string_list(entry.get("news_bullish")),
                 news_bearish=_string_list(entry.get("news_bearish")),
                 points=points,
+                confidence=confidence,
+                hold_horizon=hold_horizon,
+                risks=_string_list(entry.get("risks")),
+                decision_path=decision_path,
+                sector_evidence=_string_list(entry.get("sector_evidence")),
+                fund_evidence=_string_list(entry.get("fund_evidence")),
+                validation_notes=_string_list(entry.get("validation_notes")),
             )
         )
     return merge_fund_recommendations(items)
@@ -362,6 +373,24 @@ def merge_fund_recommendations(items: list[FundRecommendation]) -> list[FundReco
         for headline in item.news_bearish:
             if headline not in existing.news_bearish:
                 existing.news_bearish.append(headline)
+        if item.confidence and existing.confidence == "中" and item.confidence != "中":
+            existing.confidence = item.confidence
+        if item.hold_horizon and not existing.hold_horizon:
+            existing.hold_horizon = item.hold_horizon
+        if item.decision_path and not existing.decision_path:
+            existing.decision_path = item.decision_path
+        for risk in item.risks:
+            if risk not in existing.risks:
+                existing.risks.append(risk)
+        for evidence in item.sector_evidence:
+            if evidence not in existing.sector_evidence:
+                existing.sector_evidence.append(evidence)
+        for evidence in item.fund_evidence:
+            if evidence not in existing.fund_evidence:
+                existing.fund_evidence.append(evidence)
+        for note in item.validation_notes:
+            if note not in existing.validation_notes:
+                existing.validation_notes.append(note)
 
     return [merged[key] for key in order]
 

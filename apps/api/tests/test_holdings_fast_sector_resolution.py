@@ -434,7 +434,7 @@ def test_portfolio_holdings_cache_miss_loads_without_benchmark_fetch(monkeypatch
     monkeypatch.setattr(main, "get_cached_holdings_response", lambda: None)
     monkeypatch.setattr(main, "load_persisted_holdings", _load_persisted_holdings)
     monkeypatch.setattr(main, "apply_server_sector_cache_to_holdings", _apply_server_sector_cache)
-    monkeypatch.setattr(main, "save_cached_holdings_response", lambda _payload: None)
+    monkeypatch.setattr(main, "save_cached_holdings_response", lambda _payload, **_kwargs: None)
     monkeypatch.setattr(main, "schedule_warm_holdings_intraday", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(main, "get_request_user_id", lambda: 1)
     monkeypatch.setattr(
@@ -457,7 +457,13 @@ def test_portfolio_holdings_cache_miss_loads_without_benchmark_fetch(monkeypatch
     assert sector_network_fallback_flags == [False]
 
 
-def test_fund_estimate_fallback_updates_daily_not_sector(monkeypatch):
+def test_fund_estimate_fallback_updates_daily_and_sector(monkeypatch):
+    """天天基金净值估值兜底时，daily_return_percent 固定按 sector_estimate 记账；
+    sector_return_percent 现在也应该一起写回同一个估算值（source 落在
+    realtime/closing_estimate），否则同样落在「海外基金」这类无真实板块可查的
+    持仓里，会出现有的基金（历史上曾匹配过板块、残留旧数据）显示数字、有的
+    （从未匹配过）一直空白的不一致假象——前端用 sectorMeta.provider 单独标
+    "估值兜底"角标区分数据来源，不会和真实板块行情混淆。"""
     from app.models import Holding
     from app.services.sector_quote_provider import SpotBoardFetchResult
     from app.services.sector_quote_resolver import SectorResolveResult
@@ -531,8 +537,8 @@ def test_fund_estimate_fallback_updates_daily_not_sector(monkeypatch):
     )
     holding = Holding.model_validate(result["holdings"][0])
 
-    assert holding.sector_return_percent is None
-    assert holding.sector_return_percent_source is None
+    assert holding.sector_return_percent == 3.66
+    assert holding.sector_return_percent_source in {"realtime", "closing_estimate"}
     assert holding.daily_return_percent == 3.66
     assert holding.daily_return_percent_source == "sector_estimate"
     assert holding.daily_profit == 36.6

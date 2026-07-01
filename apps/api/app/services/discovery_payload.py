@@ -39,6 +39,9 @@ recommendations 字段约束：
 - news_bullish: 字符串数组，仅引用 news_titles 或 topic_briefs.points.source_titles 中已有标题；无则 []
 - suggested_amount_yuan: 正数；须结合 portfolio_gap.available_budget_yuan 与 profile.concentration_limit_percent，
   单只示意金额不得超过可投入预算，且须说明与现有 holdings_slim 同板块合计不超限的理由（amount_note 中体现）
+- 面向用户展示时必须使用中文标签，不要原样输出 fund_quality_score、sector_fit_score、quality_penalties、
+  sector_opportunities、nav_trend、max_drawdown_1y_percent、estimated_daily_return_percent 等内部字段名；
+  可写成“基金质量分”“板块匹配分”“系统校验提示”“系统筛出的主方向”“净值走势”“近1年最大回撤”“今日涨跌估算”等。
 
 全局约束：
 - 不得推荐 portfolio_gap.holdings_slim 中已持有的 fund_code
@@ -49,6 +52,8 @@ recommendations 字段约束：
   推荐理由须优先引用它，而不是重新发明方向
 - signal_backtest / candidate_factor_scores 按 confidence.level / factor_reliability 表述
 - summary 或 caveats 须体现 news.freshness_label 对置信度的影响
+- 新闻由系统预取并已做时效筛选；不得引用 news_titles/topic_briefs 之外的新闻，
+  news.freshness_label 为 stale/empty/aging 时，新闻只能作背景，不能作为买入或追涨主依据
 """
 
 _COMMON_REQUIREMENTS = [
@@ -56,9 +61,11 @@ _COMMON_REQUIREMENTS = [
     "每只 recommendations 须含 hold_horizon、risks（至少 1 条）、points（引用 candidate_pool 具体字段）",
     "每只 recommendations 须含 decision_path、sector_evidence、fund_evidence、validation_notes",
     "先判断板块方向，再比较方向内基金质量分，最后决定动作",
+    "展示文本使用中文标签，不要原样输出 fund_quality_score/sector_fit_score/quality_penalties 等内部字段名",
     "estimated_daily_return_percent 且 daily_return_source=sector_estimate 时，points 须注明「估算」",
     "判断追高风险须参考 nav_trend.distance_from_high_percent / trend_label，不得只看 sector_heat",
     "news_bullish 仅引用 news_titles 或 topic_briefs.points.source_titles；无匹配则 []",
+    "新闻仅使用系统预取的 news_titles/topic_briefs；过旧或为空的新闻不能作为买入主依据",
     "suggested_amount_yuan 须结合 available_budget_yuan 与 concentration_limit_percent",
     "引用数字须来自 discovery_facts，禁止编造",
 ]

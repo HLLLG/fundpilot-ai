@@ -364,9 +364,14 @@ def refresh_holdings_sector_quotes(
 
             profile = profile_service._find_profile_for_holding(holding)
             amount = holding.settled_holding_amount or holding.holding_amount
-            if estimate_quote is None:
-                update["sector_return_percent"] = result.change_percent
-                update["sector_return_percent_source"] = sector_source
+            # 无论是真实板块行情还是天天基金净值估值兜底，只要这轮确实拿到了一个
+            # change_percent，就该写回 sector_return_percent——否则会出现同样落在
+            # 「海外基金」这种伪板块下的持仓里，有的（曾经匹配过真实板块、残留旧值）
+            # 显示数字，有的（从没匹配过）一直空白的不一致假象。估值兜底走的这个
+            # 分支，前端会用 sectorMeta.provider 单独标"估值兜底"角标区分数据来源，
+            # 不会误当成真实板块行情。
+            update["sector_return_percent"] = result.change_percent
+            update["sector_return_percent_source"] = sector_source
             if nav_return is not None and not is_profit_accrual_deferred(profile):
                 update["daily_return_percent"] = nav_return
                 update["daily_profit"] = compute_daily_profit_from_rate(

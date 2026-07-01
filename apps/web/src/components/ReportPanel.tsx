@@ -2,16 +2,19 @@
 
 import { useState } from "react";
 import { BarChart3, Download, Sparkles } from "lucide-react";
-import type { HoldingEvidence, Report } from "@/lib/api";
+import type { AnalysisFactsHoldingRow, HoldingEvidence, Report, SectorRotationFacts } from "@/lib/api";
 import { fetchReportMarkdown } from "@/lib/api";
 import { actionBadgeClass, actionCardClass } from "@/lib/actionStyles";
+import { translateEvidenceText } from "@/lib/decisionText";
 import { confidenceTone } from "@/components/SectorSignalBacktestPanel";
+import { DecisionEvidenceGrid } from "@/components/DecisionEvidenceGrid";
 import { ReportChatPanel } from "@/components/ReportChatPanel";
 import { ReportCollapsibleSection } from "@/components/ReportCollapsibleSection";
 import { RebalanceSimulationPanel } from "@/components/RebalanceSimulationPanel";
 import { ReportNewsBriefPanel } from "@/components/ReportNewsBriefPanel";
 import { ReportOutcomesPanel } from "@/components/ReportOutcomesPanel";
 import { ReportSkeleton } from "@/components/ReportSkeleton";
+import { SectorOpportunityCard } from "@/components/SectorOpportunityCard";
 import { StatusPill } from "@/components/StatusPill";
 
 type ReportPanelProps = {
@@ -79,25 +82,31 @@ function navHintForFund(fundCode: string, snapshots: Report["snapshots"]): strin
 
 type FundRec = Report["fund_recommendations"][number];
 
-function evidenceForFund(
-  fundCode: string,
-  report: Report,
-): HoldingEvidence | null {
-  const facts = report.analysis_facts as
-    | { holdings?: Array<{ fund_code?: string; evidence?: HoldingEvidence }> }
-    | undefined;
-  const row = facts?.holdings?.find((h) => h.fund_code === fundCode);
-  return row?.evidence ?? null;
+function holdingFactsRow(fundCode: string, report: Report): AnalysisFactsHoldingRow | null {
+  const facts = report.analysis_facts as { holdings?: AnalysisFactsHoldingRow[] } | undefined;
+  return facts?.holdings?.find((h) => h.fund_code === fundCode) ?? null;
+}
+
+function evidenceForFund(fundCode: string, report: Report): HoldingEvidence | null {
+  return holdingFactsRow(fundCode, report)?.evidence ?? null;
+}
+
+function sectorRotationFacts(report: Report): SectorRotationFacts | null {
+  const facts = report.analysis_facts as { sector_rotation?: SectorRotationFacts } | undefined;
+  const rotation = facts?.sector_rotation;
+  return rotation?.available ? rotation : null;
 }
 
 function FundRecommendationCard({
   item,
   snapshots,
   evidence,
+  sectorOpportunity,
 }: {
   item: FundRec;
   snapshots: Report["snapshots"];
   evidence?: HoldingEvidence | null;
+  sectorOpportunity?: AnalysisFactsHoldingRow["sector_opportunity"];
 }) {
   const navHint = navHintForFund(item.fund_code, snapshots);
 
@@ -112,9 +121,22 @@ function FundRecommendationCard({
         >
           {item.action}
         </span>
+        {item.confidence ? (
+          <StatusPill tone={confidenceTone(item.confidence)}>置信{item.confidence}</StatusPill>
+        ) : null}
+        {item.hold_horizon ? (
+          <span className="text-xs font-medium text-slate-500">持有/观察 {item.hold_horizon}</span>
+        ) : null}
       </div>
       {navHint ? <p className="mt-1.5 text-xs text-slate-500">{navHint}</p> : null}
       <FundDiagnosticHint fundCode={item.fund_code} snapshots={snapshots} />
+      {sectorOpportunity ? (
+        <p className="mt-1.5 break-words text-xs leading-5 text-slate-500">
+          板块方向：{sectorOpportunity.sector_label}
+          {sectorOpportunity.opportunity_available === false ? "（暂非机会，仅供参考）" : "（当前构成机会）"}
+          {sectorOpportunity.entry_hint ? ` · ${sectorOpportunity.entry_hint}` : ""}
+        </p>
+      ) : null}
       {item.amount_note || item.amount_yuan != null ? (
         <div className="mt-2 rounded-xl bg-white/80 px-3 py-2 text-sm font-bold text-blue-800">
           {item.amount_note ??
@@ -159,6 +181,26 @@ function FundRecommendationCard({
             </StatusPill>
           </div>
           <p className="mt-1.5 text-xs leading-5 text-slate-600">{evidence.summary}</p>
+        </div>
+      ) : null}
+      {item.decision_path ? (
+        <div className="mt-3 rounded-xl border border-blue-100 bg-blue-50/70 px-3 py-2.5 text-sm leading-6 text-blue-950">
+          <div className="text-xs font-black text-blue-900">决策路径</div>
+          <p className="mt-1 break-words [overflow-wrap:anywhere]">{translateEvidenceText(item.decision_path)}</p>
+        </div>
+      ) : null}
+      <DecisionEvidenceGrid
+        sectorEvidence={item.sector_evidence}
+        fundEvidence={item.fund_evidence}
+        validationNotes={item.validation_notes}
+      />
+      {item.risks?.length ? (
+        <div className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          {item.risks.map((risk) => (
+            <div className="break-words [overflow-wrap:anywhere]" key={risk}>
+              ⚠ {translateEvidenceText(risk)}
+            </div>
+          ))}
         </div>
       ) : null}
     </div>
@@ -247,6 +289,7 @@ export function ReportPanel({ report, streaming, onCancelStream, onStreamFollowu
     report.fund_recommendations.length > 0
       ? report.recommendations
       : report.recommendations.filter((line) => !/^\[\d{6}\s*[·｜|]/.test(line.trim()));
+  const sectorRotation = sectorRotationFacts(report);
 
   return (
     <section className="report-shell min-w-0 animate-fade-up" data-testid="report-ready">
@@ -308,6 +351,7 @@ export function ReportPanel({ report, streaming, onCancelStream, onStreamFollowu
                 item={item}
                 snapshots={report.snapshots}
                 evidence={evidenceForFund(item.fund_code, report)}
+                sectorOpportunity={holdingFactsRow(item.fund_code, report)?.sector_opportunity}
               />
             ))}
           </div>
@@ -320,6 +364,19 @@ export function ReportPanel({ report, streaming, onCancelStream, onStreamFollowu
           </div>
         </div>
       </div>
+
+      {sectorRotation && sectorRotation.market_top.length > 0 ? (
+        <ReportCollapsibleSection title="板块轮动参考" className="mb-5">
+          <p className="mb-3 text-xs leading-5 text-slate-500">
+            当前全市场机会分较高、且不在你持仓中的方向，仅供判断「是否存在更强轮动方向」参考，不构成清仓/换仓建议。
+          </p>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {sectorRotation.market_top.map((item) => (
+              <SectorOpportunityCard key={`${item.sector_label}-${item.track ?? "track"}`} item={item} />
+            ))}
+          </div>
+        </ReportCollapsibleSection>
+      ) : null}
 
       <ReportCollapsibleSection title="调仓示意模拟" className="mb-5">
         <RebalanceSimulationPanel reportId={report.id} embedded />

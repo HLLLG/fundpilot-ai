@@ -121,6 +121,73 @@ def test_fast_snapshot_response_uses_snapshot_without_slow_resolution(monkeypatc
     assert payload["portfolio_summary"]["total_assets"] == 29469.71
 
 
+def test_fast_snapshot_response_repairs_cross_market_semantic_sector(monkeypatch):
+    snapshot_holdings = [
+        Holding(
+            fund_code="123456",
+            fund_name="华夏全球科技先锋混合(QDII)C",
+            holding_amount=2500,
+            sector_name="电子",
+        ).model_dump(),
+    ]
+    monkeypatch.setattr(
+        "app.services.portfolio_holdings_service.get_most_recent_portfolio_snapshot",
+        lambda: {
+            "snapshot_date": "2026-07-01",
+            "captured_at": "2026-07-01T03:30:00+00:00",
+            "holdings": snapshot_holdings,
+        },
+    )
+    monkeypatch.setattr(
+        "app.services.portfolio_holdings_service.get_effective_trade_date",
+        lambda: "2026-07-01",
+    )
+    monkeypatch.setattr(
+        "app.services.fund_nav_service.prime_official_nav_cache",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "app.services.portfolio_holdings_service.get_cached_official_nav_return",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "app.services.portfolio_holdings_service.sync_holding_amounts_from_shares",
+        lambda holdings, **_kwargs: holdings,
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_service.get_fund_primary_sector",
+        lambda _code: {
+            "fund_code": "123456",
+            "sector_name": "电子",
+            "intraday_index_name": None,
+            "source": "ocr_detail",
+            "confidence": 0.95,
+            "detail": {"fund_name": "华夏全球科技先锋混合(QDII)C"},
+        },
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_service.get_fund_profile_by_code",
+        lambda _code: None,
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_service.load_fresh_global_sector",
+        lambda _code: None,
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_service._resolve_from_benchmark_index",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_service.save_fund_primary_sector",
+        lambda **_kwargs: None,
+    )
+
+    payload = build_fast_snapshot_holdings_response()
+
+    assert payload is not None
+    assert payload["holdings"][0]["sector_name"] == "海外基金"
+
+
 def test_load_dashboard_holdings_skips_profile_resolve(monkeypatch):
     snapshot_holdings = [
         Holding(

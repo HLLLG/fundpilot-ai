@@ -1,7 +1,10 @@
+import time
 from datetime import date
 
 from app.models import Holding
+from app.request_context import reset_request_user_id, set_request_user_id
 from app.services.portfolio_profit_analysis import (
+    _blend_portfolio_rows,
     build_calendar_month,
     build_daily_top5,
     build_daily_trend_series,
@@ -51,6 +54,60 @@ def test_build_daily_trend_series_accumulates_returns(monkeypatch):
     series = build_daily_trend_series(snapshots)
     assert series[0]["portfolio_percent"] == 1.0
     assert series[1]["portfolio_percent"] == 0.5
+
+
+def test_blend_portfolio_rows_propagates_user_context_to_worker_threads(monkeypatch):
+    """回归：_blend_portfolio_rows 用 ThreadPoolExecutor 并发拉每只持仓的分时，
+    对于 profiles_by_code 里没有档案的持仓（刚新增、还没跑过 OCR/持仓穿透），
+    _resolve_intraday_for_holding 会在 worker 线程里重新查一次基金档案，读取
+    当前用户上下文——ThreadPoolExecutor 默认不会把调用线程的 contextvars 带进
+    worker，之前会直接抛「未设置当前用户上下文」，拖垮整批持仓的板块行情刷新。
+
+    这里用多只持仓（数量对齐 max_workers）+ 人为延迟，强制多个 worker 线程真的
+    并发跑起来，同时覆盖另一个曾经引入的回归：把 copy_context() 只调一次、所有
+    任务共用同一个 Context 对象 —— 同一个 Context 不能被多个线程同时 run，会抛
+    `RuntimeError: cannot enter context: ... is already entered`。必须每个任务
+    各自 copy 一份 Context。
+    """
+    seen_user_ids: list[int] = []
+
+    def fake_get_fund_profile_by_code(_code: str):
+        from app.request_context import get_request_user_id
+
+        time.sleep(0.02)
+        seen_user_ids.append(get_request_user_id())
+        return None
+
+    monkeypatch.setattr("app.database.get_fund_profile_by_code", fake_get_fund_profile_by_code)
+    monkeypatch.setattr(
+        "app.services.portfolio_profit_analysis.fetch_sector_intraday",
+        lambda *_args, **_kwargs: (
+            [{"time": "09:30", "percent": 1.0}, {"time": "10:00", "percent": 1.5}],
+            None,
+            None,
+            None,
+        ),
+    )
+
+    holdings = [
+        Holding(
+            fund_code=f"02127{i}",
+            fund_name=f"广发全球精选股票(QDII)人民币C{i}",
+            sector_name="海外基金",
+            holding_amount=100.0,
+        )
+        for i in range(8)
+    ]
+
+    token = set_request_user_id(4242)
+    try:
+        rows = _blend_portfolio_rows(holdings, profiles_by_code={})
+    finally:
+        reset_request_user_id(token)
+
+    assert seen_user_ids == [4242] * 8
+    assert rows
+    assert {row["time"] for row in rows} == {"09:30", "10:00"}
 
 
 def test_build_calendar_month_marks_holiday():

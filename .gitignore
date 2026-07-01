@@ -22,6 +22,7 @@ uploads/inbox/*
 apps/api/.venv/
 apps/api/.uvicorn-*.log
 apps/api/var/
+debug-*.log
 .tmp-*.html
 apps/web/.next/
 apps/web/out/

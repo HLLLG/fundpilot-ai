@@ -122,6 +122,144 @@ def test_refresh_sector_quotes_updates_holdings_cache(monkeypatch) -> None:
     assert cached == [{"holdings": result["holdings"]}]
 
 
+def test_stale_sector_refresh_cannot_restore_deleted_snapshot_member(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("FUND_AI_DB_PATH", str(tmp_path / "app.db"))
+    from app.config import refresh_settings
+
+    refresh_settings()
+
+    from app.models import Holding, PortfolioSummary
+    from app.services.portfolio_persistence import persist_holdings_after_sector_refresh
+    from app.services.portfolio_snapshot import save_daily_snapshot
+    from app.services.portfolio_holdings_service import load_persisted_holdings
+    monkeypatch.setattr("app.services.portfolio_persistence.persist_intraday_curve", lambda *_args, **_kwargs: None)
+
+    deleted = Holding(
+        fund_code="016665",
+        fund_name="天弘全球高端制造混合(QDII)C",
+        holding_amount=100.0,
+        return_percent=0,
+    )
+    kept = Holding(
+        fund_code="022184",
+        fund_name="富国全球科技互联网股票(QDII)C",
+        holding_amount=1000.0,
+        return_percent=0,
+    )
+    save_daily_snapshot([kept], PortfolioSummary(total_assets=1000.0, holding_count=1))
+
+    enriched = persist_holdings_after_sector_refresh(
+        [
+            deleted.model_copy(update={"sector_return_percent": 1.0}),
+            kept.model_copy(update={"sector_return_percent": 2.0}),
+        ],
+        with_official_nav=False,
+    )
+
+    assert [item.fund_code for item in enriched] == ["022184"]
+    loaded, source, _, _ = load_persisted_holdings(fetch_benchmark=False)
+    assert [item.fund_code for item in loaded] == ["022184"]
+    assert source == "snapshot"
+
+
+def test_stale_sector_refresh_cannot_restore_after_empty_snapshot(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("FUND_AI_DB_PATH", str(tmp_path / "app.db"))
+    from app.config import refresh_settings
+
+    refresh_settings()
+
+    from app.models import Holding, PortfolioSummary
+    from app.services.portfolio_persistence import persist_holdings_after_sector_refresh
+    from app.services.portfolio_snapshot import save_daily_snapshot
+    from app.services.portfolio_holdings_service import load_persisted_holdings
+    monkeypatch.setattr("app.services.portfolio_persistence.persist_intraday_curve", lambda *_args, **_kwargs: None)
+
+    stale = Holding(
+        fund_code="016665",
+        fund_name="天弘全球高端制造混合(QDII)C",
+        holding_amount=100.0,
+        return_percent=0,
+    )
+    save_daily_snapshot([], PortfolioSummary(total_assets=0.0, holding_count=0))
+
+    enriched = persist_holdings_after_sector_refresh(
+        [stale.model_copy(update={"sector_return_percent": 1.0})],
+        with_official_nav=False,
+    )
+
+    assert enriched == []
+    loaded, source, _, _ = load_persisted_holdings(fetch_benchmark=False)
+    assert loaded == []
+    assert source == "snapshot"
+
+
+def test_stale_sector_refresh_cannot_resurrect_fund_deleted_mid_flight(tmp_path, monkeypatch) -> None:
+    """板块刷新耗时期间用户删除了基金：写回快照前必须再对账一次，不能把它复活。
+
+    与 ``test_stale_sector_refresh_cannot_restore_deleted_snapshot_member`` 的区别：
+    那个测试模拟"进入刷新前快照已经变了"；这里模拟更隐蔽的竞态——快照在刷新
+    *进行中*（份额同步这一步耗时网络调用期间）才被删除，此时函数手里已经拿着
+    基于旧快照算出来的 merged 列表，如果不在写回前再看一眼最新快照，就会把
+    刚删除的基金重新写回去。
+    """
+    monkeypatch.setenv("FUND_AI_DB_PATH", str(tmp_path / "app.db"))
+    from app.config import refresh_settings
+
+    refresh_settings()
+
+    from app.models import Holding, PortfolioSummary
+    from app.services.portfolio_persistence import persist_holdings_after_sector_refresh
+    from app.services.portfolio_holdings_service import (
+        load_persisted_holdings,
+        remove_holding_from_portfolio,
+    )
+    from app.services.portfolio_snapshot import save_daily_snapshot
+
+    monkeypatch.setattr(
+        "app.services.portfolio_persistence.persist_intraday_curve", lambda *_args, **_kwargs: None
+    )
+
+    deleted = Holding(
+        fund_code="016665",
+        fund_name="天弘全球高端制造混合(QDII)C",
+        holding_amount=100.0,
+        return_percent=0,
+    )
+    kept = Holding(
+        fund_code="022184",
+        fund_name="富国全球科技互联网股票(QDII)C",
+        holding_amount=1000.0,
+        return_percent=0,
+    )
+    save_daily_snapshot([deleted, kept], PortfolioSummary(total_assets=1100.0, holding_count=2))
+
+    from app.services import portfolio_persistence
+
+    original_sync = portfolio_persistence.sync_holding_amounts_from_shares
+
+    def fake_sync(holdings, **kwargs):
+        # 模拟刷新处理期间（网络耗时）用户在另一个请求里把基金删掉了。
+        remove_holding_from_portfolio("016665", fund_name="天弘全球高端制造混合(QDII)C")
+        return original_sync(holdings, **kwargs)
+
+    monkeypatch.setattr(
+        "app.services.portfolio_persistence.sync_holding_amounts_from_shares", fake_sync
+    )
+
+    enriched = persist_holdings_after_sector_refresh(
+        [
+            deleted.model_copy(update={"sector_return_percent": 1.0}),
+            kept.model_copy(update={"sector_return_percent": 2.0}),
+        ],
+        with_official_nav=False,
+    )
+
+    assert [item.fund_code for item in enriched] == ["022184"]
+    loaded, source, _, _ = load_persisted_holdings(fetch_benchmark=False)
+    assert [item.fund_code for item in loaded] == ["022184"]
+    assert source == "snapshot"
+
+
 def test_apply_server_sector_cache_falls_back_to_network_on_cache_miss() -> None:
     holdings = [
         Holding(

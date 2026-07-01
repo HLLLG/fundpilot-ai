@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from collections.abc import Iterator
 import time
 from typing import Any
@@ -37,7 +37,8 @@ from app.services.pipeline_concurrency import run_with_request_user
 from app.services.risk import resolve_weight_denominator
 from app.services.streaming_json_parser import StreamingReportParser
 from app.services.discovery_payload import append_output_requirements_to_system, build_user_payload
-from app.services.news_summarizer import merge_topic_briefs
+
+PREP_HEARTBEAT_SECONDS = 1.0
 
 
 def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dict[str, Any]]:
@@ -84,7 +85,12 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
                 sector_heat,
                 flow_labels,
             )
-            sector_flow_by_label = flow_future.result()
+            sector_flow_by_label = yield from _await_future_with_progress(
+                flow_future,
+                "sector_heat",
+                "正在补充板块资金流…",
+                started_at=started_at,
+            )
             sector_opportunities = select_sector_opportunities(
                 sector_heat,
                 sector_flow_by_label=sector_flow_by_label,
@@ -129,8 +135,18 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
                         )
                     ),
                 )
-            pool = pool_future.result()
-            market_news = news_future.result()
+            pool = yield from _await_future_with_progress(
+                pool_future,
+                "candidate_pool" if request.scan_mode != "dip_swing" else "dip_prescreen",
+                "正在优选候选基金…",
+                started_at=started_at,
+            )
+            market_news = yield from _await_future_with_progress(
+                news_future,
+                "news",
+                "正在拉取市场要闻…",
+                started_at=started_at,
+            )
 
         fund_codes = [
             str(item.get("fund_code", "")).strip().zfill(6)
@@ -203,23 +219,7 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
         system_prompt = append_output_requirements_to_system(
             client._system_prompt(runtime.news_tool_max_rounds > 0, request.system_role_prompt)
         )
-        initial_news_count = len(market_news)
-        pending_stages: list[tuple[str, str]] = []
-
-        if runtime.news_tool_max_rounds > 0:
-            messages, market_news = client.run_discovery_news_tool_rounds(
-                system_prompt=system_prompt,
-                user_payload=user_payload,
-                prefetched_news=market_news,
-                runtime=runtime,
-                on_stage=lambda stage, label: pending_stages.append((stage, label)),
-            )
-            for stage, label in pending_stages:
-                yield _stage(stage, label, started_at=started_at)
-            if len(market_news) > initial_news_count:
-                topic_briefs = merge_topic_briefs(topic_briefs, market_news, settings)
-        else:
-            messages = build_discovery_chat_messages(system_prompt, user_payload)
+        messages = build_discovery_chat_messages(system_prompt, user_payload)
         parser = StreamingReportParser(
             array_field="recommendations",
             item_partial_field="recommendation",
@@ -285,6 +285,20 @@ def _stage(
     if started_at is not None:
         payload["elapsed_ms"] = max(0, int((time.monotonic() - started_at) * 1000))
     return payload
+
+
+def _await_future_with_progress(
+    future,
+    stage: str,
+    label: str,
+    *,
+    started_at: float,
+) -> Iterator[dict[str, Any]]:
+    while True:
+        try:
+            return future.result(timeout=PREP_HEARTBEAT_SECONDS)
+        except FutureTimeoutError:
+            yield _stage(stage, label, started_at=started_at)
 
 
 def _done(report: FundDiscoveryReport) -> dict[str, Any]:

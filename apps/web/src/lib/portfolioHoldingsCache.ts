@@ -4,7 +4,9 @@ import { stripHoldingsQuoteFields } from "@/lib/holdingMetrics";
 
 
 
-const CACHE_KEY = "fundpilot-portfolio-holdings-v1";
+const LEGACY_CACHE_KEY = "fundpilot-portfolio-holdings-v1";
+const LEGACY_USER_CACHE_KEY_PREFIX = "fundpilot-portfolio-holdings-v2";
+const CACHE_KEY_PREFIX = "fundpilot-portfolio-holdings-v3";
 
 
 
@@ -28,6 +30,23 @@ type CacheEnvelope = CachedPortfolioHoldings & {
 
 };
 
+type CacheUserId = number | null | undefined;
+
+function cacheKeyForUser(userId: CacheUserId): string | null {
+  if (userId == null) {
+    return null;
+  }
+  return `${CACHE_KEY_PREFIX}:${userId}`;
+}
+
+function legacyCacheKeysForUser(userId: CacheUserId): string[] {
+  const keys = [LEGACY_CACHE_KEY];
+  if (userId != null) {
+    keys.push(`${LEGACY_USER_CACHE_KEY_PREFIX}:${userId}`);
+  }
+  return keys;
+}
+
 
 
 /** localStorage 仅缓存金额/名称等静态字段，板块涨跌由后端缓存提供。 */
@@ -40,17 +59,21 @@ function holdingsForCache(holdings: Holding[]): Holding[] {
 
 
 
-export function loadCachedPortfolioHoldings(): CachedPortfolioHoldings | null {
+export function loadCachedPortfolioHoldings(userId: CacheUserId): CachedPortfolioHoldings | null {
 
   if (typeof window === "undefined") {
 
     return null;
 
   }
+  const cacheKey = cacheKeyForUser(userId);
+  if (!cacheKey) {
+    return null;
+  }
 
   try {
 
-    const raw = window.localStorage.getItem(CACHE_KEY);
+    const raw = window.localStorage.getItem(cacheKey);
 
     if (!raw) {
 
@@ -60,7 +83,7 @@ export function loadCachedPortfolioHoldings(): CachedPortfolioHoldings | null {
 
     const envelope = JSON.parse(raw) as CacheEnvelope;
 
-    if (!Array.isArray(envelope.holdings) || envelope.holdings.length === 0) {
+    if (!Array.isArray(envelope.holdings)) {
 
       return null;
 
@@ -90,12 +113,19 @@ export function loadCachedPortfolioHoldings(): CachedPortfolioHoldings | null {
 
 
 
-export function saveCachedPortfolioHoldings(payload: CachedPortfolioHoldings): void {
+export function saveCachedPortfolioHoldings(
+  userId: CacheUserId,
+  payload: CachedPortfolioHoldings,
+): void {
 
-  if (typeof window === "undefined" || payload.holdings.length === 0) {
+  if (typeof window === "undefined") {
 
     return;
 
+  }
+  const cacheKey = cacheKeyForUser(userId);
+  if (!cacheKey) {
+    return;
   }
 
   const refreshedAt = payload.refreshed_at ?? null;
@@ -116,7 +146,10 @@ export function saveCachedPortfolioHoldings(payload: CachedPortfolioHoldings): v
 
   try {
 
-    window.localStorage.setItem(CACHE_KEY, JSON.stringify(envelope));
+    window.localStorage.setItem(cacheKey, JSON.stringify(envelope));
+    for (const legacyKey of legacyCacheKeysForUser(userId)) {
+      window.localStorage.removeItem(legacyKey);
+    }
 
   } catch {
 
@@ -128,7 +161,7 @@ export function saveCachedPortfolioHoldings(payload: CachedPortfolioHoldings): v
 
 
 
-export function clearCachedPortfolioHoldings(): void {
+export function clearCachedPortfolioHoldings(userId?: CacheUserId): void {
 
   if (typeof window === "undefined") {
 
@@ -138,7 +171,13 @@ export function clearCachedPortfolioHoldings(): void {
 
   try {
 
-    window.localStorage.removeItem(CACHE_KEY);
+    const cacheKey = cacheKeyForUser(userId);
+    if (cacheKey) {
+      window.localStorage.removeItem(cacheKey);
+    }
+    for (const legacyKey of legacyCacheKeysForUser(userId)) {
+      window.localStorage.removeItem(legacyKey);
+    }
 
   } catch {
 

@@ -264,6 +264,18 @@ def test_dip_swing_requirements_include_short_term_guidance():
     assert "fee_break_even_percent" in joined
 
 
+def test_discovery_requirements_limit_news_to_system_prefetch():
+    payload = build_user_payload(
+        discovery_facts=_discovery_facts(),
+        profile=_profile(),
+        focus_sectors=["半导体"],
+        scan_mode="full_market",
+    )
+    joined = " ".join(payload["requirements"])
+    assert "系统预取" in joined
+    assert "过旧" in joined
+
+
 def test_portfolio_gap_scan_mode_alias():
     reqs = _requirements_for_scan_mode("gap")
     joined = " ".join(reqs)

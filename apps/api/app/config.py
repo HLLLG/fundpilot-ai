@@ -136,6 +136,11 @@ class Settings(BaseSettings):
     fund_primary_sector_precompute_batch_size: int = 150
     fund_primary_sector_precompute_interval_hours: int = 12
     fund_primary_sector_precompute_startup_delay_seconds: int = 300
+    # 规则（业绩基准/持仓穿透）都推不出主题时，用 DeepSeek 兜底分类（按基金代码全局缓存，只调用一次）
+    fund_primary_sector_llm_infer_enabled: bool = True
+    # 应用启动后延迟一次性扫描存量持仓，把历史遗留的空板块用最新规则链（含 LLM）补全
+    fund_primary_sector_backfill_enabled: bool = True
+    fund_primary_sector_backfill_startup_delay_seconds: int = 90
     # 组合风险指标无风险利率（年化，小数；夏普/索提诺/Alpha 使用）
     risk_free_rate: float = 0.02
 

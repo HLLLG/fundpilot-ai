@@ -147,6 +147,7 @@ def test_prepare_analysis_bundle_budget_degrades_slow_enhancements(monkeypatch):
     monkeypatch.setattr("app.services.analysis_facts.SECTOR_INTRADAY_TIMEOUT_SECONDS", 0.01)
     monkeypatch.setattr("app.services.analysis_facts.MARKET_FLOW_TIMEOUT_SECONDS", 0.01)
     monkeypatch.setattr("app.services.analysis_facts.GUARD_POLICY_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr("app.services.analysis_facts.SECTOR_OPPORTUNITY_TIMEOUT_SECONDS", 0.01)
 
     def slow_factor(*_args, **_kwargs):
         time.sleep(0.08)
@@ -172,12 +173,20 @@ def test_prepare_analysis_bundle_budget_degrades_slow_enhancements(monkeypatch):
         time.sleep(0.08)
         return {"available": True}
 
+    def slow_sector_opportunity(*_args, **_kwargs):
+        time.sleep(0.08)
+        return {"available": True, "held": {}, "market_top": []}
+
     monkeypatch.setattr("app.services.analysis_payload.build_factor_scores_for_facts", slow_factor)
     monkeypatch.setattr("app.services.analysis_payload.build_risk_metrics_for_facts", slow_risk)
     monkeypatch.setattr("app.services.analysis_facts.build_signal_backtest_context", slow_signal)
     monkeypatch.setattr("app.services.analysis_facts.build_sector_fund_flow_map", slow_flow)
     monkeypatch.setattr("app.services.analysis_facts._build_sector_intraday_map", slow_intraday)
     monkeypatch.setattr("app.services.analysis_facts.build_market_flow_context", slow_market_flow)
+    monkeypatch.setattr(
+        "app.services.analysis_facts.build_holding_sector_opportunity_context",
+        slow_sector_opportunity,
+    )
 
     start = time.monotonic()
     bundle = prepare_analysis_bundle(
@@ -222,6 +231,10 @@ def test_prepare_analysis_bundle_budget_skips_slow_display_metrics(monkeypatch):
     monkeypatch.setattr("app.services.analysis_facts.build_sector_fund_flow_map", lambda *_args, **_kwargs: {})
     monkeypatch.setattr("app.services.analysis_facts._build_sector_intraday_map", lambda *_args: {})
     monkeypatch.setattr("app.services.analysis_facts.build_market_flow_context", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(
+        "app.services.analysis_facts.build_holding_sector_opportunity_context",
+        lambda *_args, **_kwargs: {"available": False, "held": {}, "market_top": []},
+    )
 
     def slow_display(*_args, **_kwargs):
         time.sleep(0.2)
@@ -269,6 +282,7 @@ def test_prepare_analysis_bundle_budget_runs_fact_enhancements_in_parallel(monke
     monkeypatch.setattr("app.services.analysis_facts.SECTOR_INTRADAY_TIMEOUT_SECONDS", 0.2)
     monkeypatch.setattr("app.services.analysis_facts.MARKET_FLOW_TIMEOUT_SECONDS", 0.2)
     monkeypatch.setattr("app.services.analysis_facts.GUARD_POLICY_TIMEOUT_SECONDS", 0.2)
+    monkeypatch.setattr("app.services.analysis_facts.SECTOR_OPPORTUNITY_TIMEOUT_SECONDS", 0.2)
 
     def slow_signal(*_args, **_kwargs):
         time.sleep(0.08)
@@ -290,11 +304,19 @@ def test_prepare_analysis_bundle_budget_runs_fact_enhancements_in_parallel(monke
         time.sleep(0.08)
         return {"available": True, "reason": "market"}
 
+    def slow_sector_opportunity(*_args, **_kwargs):
+        time.sleep(0.08)
+        return {"available": True, "held": {}, "market_top": []}
+
     monkeypatch.setattr("app.services.analysis_facts.build_signal_backtest_context", slow_signal)
     monkeypatch.setattr("app.services.analysis_facts.resolve_signal_guard_policy", slow_guard)
     monkeypatch.setattr("app.services.analysis_facts.build_sector_fund_flow_map", slow_flow)
     monkeypatch.setattr("app.services.analysis_facts._build_sector_intraday_map", slow_intraday)
     monkeypatch.setattr("app.services.analysis_facts.build_market_flow_context", slow_market_flow)
+    monkeypatch.setattr(
+        "app.services.analysis_facts.build_holding_sector_opportunity_context",
+        slow_sector_opportunity,
+    )
 
     start = time.monotonic()
     bundle = prepare_analysis_bundle(

@@ -58,7 +58,10 @@ class FundProfileService:
         saved = save_fund_profile(profile)
         from app.services.fund_primary_sector_service import upsert_primary_sector_from_profile
 
-        upsert_primary_sector_from_profile(saved)
+        upsert_primary_sector_from_profile(
+            saved,
+            source=_primary_sector_source_for_profile(saved),
+        )
         self._invalidate_profiles_cache()
         return saved
 
@@ -434,6 +437,15 @@ def migrate_fund_profile_code(
 
     delete_fund_profile(old_code)
     return save_fund_profile(merged)
+
+
+def _primary_sector_source_for_profile(profile: FundProfile) -> str:
+    source = (profile.source or "").strip().lower()
+    if source == "manual":
+        return "manual"
+    if source in {"yangjibao-ocr", "ocr-detail", "ocr_detail", "holding-detail"}:
+        return "ocr_detail"
+    return "alipay_overview"
 
 
 def _is_valid_sector_label(name: str | None) -> bool:

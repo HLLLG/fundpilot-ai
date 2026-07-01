@@ -250,4 +250,5 @@ def test_apply_confirmed_holdings_applies_semantic_sector_without_benchmark_fetc
     )
 
     assert benchmark_calls == []
-    assert result["holdings"][0]["sector_name"] == "全球精选股票"
+    # "全球精选股票"只是"全球"+泛化描述词组合，不是真实主题，退回"海外基金"。
+    assert result["holdings"][0]["sector_name"] == "海外基金"

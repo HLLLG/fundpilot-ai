@@ -5,9 +5,11 @@ import json
 import os
 import secrets
 import sqlite3
+import time
 from pathlib import Path
 from typing import Any
 
+from app._debug_probe import debug_log
 from app.config import get_settings
 from app.db_migrations import run_migrations
 from app.request_context import get_request_user_id
@@ -33,6 +35,11 @@ def _db_path() -> Path:
     return get_settings().db_path
 
 
+# #region agent log
+_CONNECT_COUNT = 0
+# #endregion
+
+
 def _uid() -> int:
     return get_request_user_id()
 
@@ -50,6 +57,9 @@ def _connect():
 
     if uses_mysql():
         return connect()
+    # #region agent log
+    _t_connect_start = time.perf_counter()
+    # #endregion
     path = _db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(path)
@@ -180,6 +190,19 @@ def _connect():
     )
     run_migrations(connection)
     connection.commit()
+    # #region agent log
+    global _CONNECT_COUNT
+    _CONNECT_COUNT += 1
+    debug_log(
+        "database.py:_connect",
+        "sqlite connect + schema setup",
+        {
+            "elapsed_ms": round((time.perf_counter() - _t_connect_start) * 1000, 1),
+            "connect_count_so_far": _CONNECT_COUNT,
+        },
+        hypothesis_id="H2",
+    )
+    # #endregion
     from app.db_connect import DbConnection
 
     return DbConnection(connection, "sqlite")

@@ -36,7 +36,15 @@ RISK_METRICS_TIMEOUT_SECONDS = 3.0
 OUTPUT_REQUIREMENTS_SYSTEM = (
     "输出必须是完整 JSON（不要 Markdown），包含 title、summary、fund_recommendations、caveats。"
     "fund_recommendations 每只持仓基金恰好 1 条；字段含 fund_code、fund_name、action、"
-    "amount_yuan（可选）、amount_note（可选）、news_bullish、news_bearish、points（1-3 条，每条≤60字）。"
+    "amount_yuan（可选）、amount_note（可选）、news_bullish、news_bearish、points（1-3 条，每条≤60字）、"
+    "confidence（高/中/低）、decision_path、sector_evidence、fund_evidence、validation_notes、"
+    "hold_horizon（可选）、risks（至少 1 条）。"
+    "decision_path 为 1 句话，须按「先看该持仓板块方向(sector_opportunity/sector_rotation)→"
+    "再看该基金自身证据(evidence/factor_scores/risk_metrics)→最后给出动作」组织；"
+    "sector_evidence 引用 sector_opportunity 的 track/confidence/pattern_label 或 sector_rotation.market_top；"
+    "fund_evidence 引用 evidence、factor_scores、risk_metrics 等具体字段；"
+    "validation_notes 写明证据不足/样本有限/信息缺口，无问题则 []；"
+    "以上字段缺失时后端会兜底补全，但能给出真实依据时必须给，不得编造未提供的数字。"
     "news_bullish 与 news_bearish 必须是字符串 JSON 数组（如 [\"标题\"]），禁止写成单个字符串；"
     "无则写 [\"暂无明确利好\"] 或 [\"暂无明确利空\"]。"
     "利好/利空标题须能在 news_titles 或 topic_briefs.points.source_titles 中找到对应。"
@@ -58,6 +66,11 @@ OUTPUT_REQUIREMENTS_SYSTEM = (
     "sector_fund_flow.today_main_force_net_yi：正=主力净流入、负=主力净流出；"
     "须与 flow_date 同日且 date_aligned=true 时才可与 sector_return_percent 做量价背离判断；"
     "date_aligned=false 或 pattern_label=flow_date_mismatch 时禁止写出货/诱多等背离结论。"
+    "analysis_facts.holdings[].sector_opportunity 是该持仓板块的方向判断（track顺势/蓄势，"
+    "confidence高中低不足）：opportunity_available=false 表示当前不构成机会（如资金持续流出、"
+    "涨幅透支），只能作为风险提示，不得作为加仓理由；true 时可作为继续持有的辅助论据之一。"
+    "analysis_facts.sector_rotation.market_top 是当前更强的轮动方向参考，仅用于「是否存在更强"
+    "方向」的提示，不得单独作为清仓已持仓位、追高换仓的理由，须结合该持仓自身证据综合判断。"
     "analysis_facts.news.freshness_label 须在 summary 或 caveats 体现对决策置信度的影响。"
     "news_titles 中 source=cls 为财联社快讯。若 nav_trend 为空须在 points 说明。"
 )
@@ -69,6 +82,8 @@ OUTPUT_REQUIREMENTS_USER = [
     "news_bullish/news_bearish 为字符串数组，须来自 news_titles 或 topic_briefs.points.source_titles",
     "每只基金 points 1-3 条：含权重/持有收益/净值或板块数据，且至少 1 条写下一交易日条件化预案",
     "引用 sector_intraday.pattern_label、nav_trend、sector_fund_gap_percent、sector_fund_flow 时须用 analysis_facts 中的数字",
+    "每只基金须含 confidence、decision_path、sector_evidence、fund_evidence、validation_notes、risks（至少1条）",
+    "decision_path 须体现「先判断板块方向(sector_opportunity)→再看基金自身证据→最后给出动作」的顺序",
 ]
 
 _HOLDING_LLM_DROP_KEYS = frozenset(
@@ -261,6 +276,22 @@ def trim_analysis_facts_for_llm(
                     flow_copy = dict(sector_flow)
                     flow_copy.pop("message", None)
                     copy["sector_fund_flow"] = flow_copy
+            sector_opportunity = copy.get("sector_opportunity")
+            if isinstance(sector_opportunity, dict):
+                opportunity_copy = {k: v for k, v in sector_opportunity.items() if k != "sector_group"}
+                if analysis_mode == "fast" and phase >= 2:
+                    opportunity_copy = {
+                        k: opportunity_copy[k]
+                        for k in (
+                            "track",
+                            "confidence",
+                            "opportunity_available",
+                            "entry_hint",
+                            "pattern_label",
+                        )
+                        if k in opportunity_copy
+                    }
+                copy["sector_opportunity"] = opportunity_copy or None
         holdings.append(copy)
     trimmed["holdings"] = holdings
 
@@ -268,6 +299,20 @@ def trim_analysis_facts_for_llm(
     if isinstance(news, dict) and phase >= 1:
         news_copy = {k: news[k] for k in news if k != "topics"}
         trimmed["news"] = news_copy
+
+    rotation = trimmed.get("sector_rotation")
+    if isinstance(rotation, dict) and phase >= 1:
+        market_top = [
+            {k: v for k, v in item.items() if k != "sector_group"}
+            for item in (rotation.get("market_top") or [])
+            if isinstance(item, dict)
+        ]
+        if analysis_mode == "fast" and phase >= 2:
+            market_top = market_top[:3]
+        trimmed["sector_rotation"] = {
+            "available": rotation.get("available", False),
+            "market_top": market_top,
+        }
 
     if phase >= 2 and not is_short_term_style(decision_style):
         trimmed.pop("market_flow", None)

@@ -57,7 +57,7 @@ def merge_holdings_with_snapshot(incoming: list[Holding]) -> list[Holding]:
         return incoming
     previous = [Holding.model_validate(item) for item in snapshot.get("holdings", [])]
     if not previous:
-        return incoming
+        return []
 
     meaningful_incoming = without_placeholder_holdings(without_test_holdings(incoming))
     meaningful_previous = without_placeholder_holdings(without_test_holdings(previous))
@@ -74,7 +74,8 @@ def merge_holdings_with_snapshot(incoming: list[Holding]) -> list[Holding]:
     merged: list[Holding] = []
     for item in incoming:
         prev = by_code.get(item.fund_code) or by_name.get(item.fund_name)
-        merged.append(_overlay_sector_fields(prev, item) if prev else item)
+        if prev is not None:
+            merged.append(_overlay_sector_fields(prev, item))
     return merged
 
 
@@ -99,6 +100,38 @@ def enrich_loaded_holdings(
     overrides = confirm_and_compute_overrides(holdings)
     synced = sync_holding_amounts_from_shares(holdings, shares_override=overrides)
     return enrich_holdings_estimates(overlay_official_nav_returns(synced))
+
+
+def _drop_holdings_removed_during_refresh(enriched: list[Holding]) -> list[Holding]:
+    """写回快照前最后一次对账，防止"删除基金"与"慢速板块刷新"互相踩踏。
+
+    本函数上面从读取快照到这里，中间经过份额同步、官方净值、天天基金估值等
+    多次可能耗时数秒的网络调用；如果用户在这段时间里删除了基金，快照早就变了，
+    但这里手上的 ``enriched`` 仍然是按刷新开始时那份旧持仓算出来的。如果直接把它
+    整份写回快照，就会把用户刚删除的基金重新写回去（即"缓存污染，删除的基金又
+    出现了"）。这里只做成员资格过滤（是否还在最新快照里），不覆盖任何已经算好的
+    金额/收益字段，避免影响本函数原本要更新的净值同步结果。
+    """
+    latest_snapshot = get_most_recent_portfolio_snapshot()
+    if latest_snapshot is None or latest_snapshot.get("holdings") is None:
+        return enriched
+
+    latest_holdings = latest_snapshot.get("holdings") or []
+    latest_codes = {
+        (item.get("fund_code") or "").strip()
+        for item in latest_holdings
+        if (item.get("fund_code") or "").strip() and item.get("fund_code") != "000000"
+    }
+    latest_names = {item.get("fund_name") for item in latest_holdings if item.get("fund_name")}
+    if not latest_codes and not latest_names:
+        return []
+
+    return [
+        holding
+        for holding in enriched
+        if (holding.fund_code and holding.fund_code != "000000" and holding.fund_code in latest_codes)
+        or (holding.fund_name and holding.fund_name in latest_names)
+    ]
 
 
 def persist_holdings_after_sector_refresh(
@@ -129,6 +162,10 @@ def persist_holdings_after_sector_refresh(
     if with_official_nav:
         synced = overlay_official_nav_returns(synced)
     enriched = enrich_holdings_estimates(synced)
+    if not enriched:
+        return enriched
+
+    enriched = _drop_holdings_removed_during_refresh(enriched)
     if not enriched:
         return enriched
 

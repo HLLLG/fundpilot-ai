@@ -125,6 +125,42 @@ def resolve_sector_from_benchmark(
     return sector_label, intraday, match
 
 
+_FREEFORM_INDEX_NAME_RE = re.compile(
+    r"(?:中证|国证|上证|深证|沪深300|沪深|MSCI|标普|纳斯达克|中债)?"
+    r"([\u4e00-\u9fff]{2,14}?)(?:主题)?指数"
+)
+
+
+
+# 宽基/固收类指数命名里常见的"限定词"，本身不是行业主题（例如"中债综合指数""中证全债
+# 指数""中证港股通综合指数"），出现在抠取结果里基本必然是误判——不像风格停用词那样要求
+# 整段短语都是这些词，只要包含其中之一就足以说明抠出来的不是一个真正的板块名。
+_BENCHMARK_NOISE_SUBSTRINGS = ("综合", "全债", "存单", "短融")
+
+
+def extract_freeform_theme_from_benchmark(benchmark_text: str) -> str | None:
+    """业绩基准里的标的指数未注册在白名单时，直接从文案抠出主题短语兜底展示。
+
+    只做"能不能展示一个具体主题标签"，不保证有实时行情——没有白名单命中就没有涨跌%，
+    但至少不会因为指数没注册而把整条记录丢弃（对齐养基宝对生僻/新主题基金的处理）。
+    """
+    text = (benchmark_text or "").strip()
+    if not text:
+        return None
+    from app.services.sector_labels import is_generic_style_phrase
+
+    for match in _FREEFORM_INDEX_NAME_RE.finditer(text):
+        phrase = match.group(1).strip()
+        if not phrase or len(phrase) < 2 or len(phrase) > 12:
+            continue
+        if is_generic_style_phrase(phrase):
+            continue
+        if any(noise in phrase for noise in _BENCHMARK_NOISE_SUBSTRINGS):
+            continue
+        return phrase
+    return None
+
+
 def fetch_fund_benchmark_text(fund_code: str) -> str | None:
     """拉取基金业绩比较基准原文（子进程 AkShare，失败返回 None）。"""
     code = fund_code.strip().zfill(6)

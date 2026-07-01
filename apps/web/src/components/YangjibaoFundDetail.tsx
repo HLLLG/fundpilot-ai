@@ -20,7 +20,7 @@ import {
 } from "@/lib/api";
 import { hydrateTradingSession } from "@/lib/tradingSessionClient";
 import { FundCodeEditModal, isProvisionalFundCode } from "@/components/FundCodeEditModal";
-import { IntradayPercentChart } from "@/components/IntradayPercentChart";
+import { buildFlatIntradayPoints, IntradayPercentChart } from "@/components/IntradayPercentChart";
 import { PerformanceTrendPanel } from "@/components/PerformanceTrendPanel";
 import {
   resolveInitialPurchaseDate,
@@ -50,7 +50,11 @@ import {
 } from "@/lib/holdingDisplay";
 import { HoldingModifyModal } from "@/components/HoldingModifyModal";
 import { SingleFundTransactionModal } from "@/components/SingleFundTransactionModal";
-import { holdingDisplaySectorLabel, resolveIntradayQuery } from "@/lib/profileSector";
+import {
+  holdingDisplaySectorLabel,
+  resolveIntradayFallbackQuery,
+  resolveIntradayQuery,
+} from "@/lib/profileSector";
 import {
   readHoldingDetailCache,
   readIntradayCache,
@@ -245,6 +249,13 @@ export function YangjibaoFundDetail({
   // 盘中优先用分时末点（与曲线同源），避免板块刷新缓存与分时不同步
   const displaySectorReturn =
     tab === "sector" && intradayClosePercent != null ? intradayClosePercent : sectorReturn;
+  // 分时接口拿不到真实序列（如缺 secid 的板块）时，用已确认可信的板块日涨跌画一条
+  // 虚线水平线，好过一直显示"暂无分时数据"的空白占位——至少让用户知道我们确实有
+  // 今天的涨跌幅，只是没有分时走势明细。
+  const flatSectorPoints = useMemo(
+    () => (sectorReturn != null ? buildFlatIntradayPoints(sectorReturn) : null),
+    [sectorReturn],
+  );
   const dataSourceLabel = isEstimateFallbackMeta(sectorMeta)
     ? "估值兜底"
     : sectorMeta?.provider === "eastmoney-kline" || sectorMeta?.source === "live"
@@ -257,10 +268,15 @@ export function YangjibaoFundDetail({
     () => resolveIntradayQuery(activeHolding, sectorMeta),
     [activeHolding, sectorMeta],
   );
+  const intradayFallbackQuery = useMemo(
+    () => resolveIntradayFallbackQuery(activeHolding, intradayQuery),
+    [activeHolding, intradayQuery],
+  );
   const intradayQueryKey = intradayQuery
     ? `${intradayQuery.source_type}:${intradayQuery.source_name}`
     : "";
   const intradayQueryRef = useRef(intradayQuery);
+  const intradayFallbackQueryRef = useRef(intradayFallbackQuery);
 
   const navHoldings = useMemo(() => navigableHoldings(holdings), [holdings]);
   const navIndex = useMemo(() => {
@@ -296,7 +312,16 @@ export function YangjibaoFundDetail({
       onHoldingResolved,
     };
     intradayQueryRef.current = intradayQuery;
-  }, [activeHolding, holdings, intradayQuery, onHoldingResolved, portfolioSummary, sectorMeta]);
+    intradayFallbackQueryRef.current = intradayFallbackQuery;
+  }, [
+    activeHolding,
+    holdings,
+    intradayFallbackQuery,
+    intradayQuery,
+    onHoldingResolved,
+    portfolioSummary,
+    sectorMeta,
+  ]);
 
   async function handlePurchaseDateChange(nextDate: string) {
     if (!canEditPurchaseDate || purchaseDateSaving) {
@@ -523,12 +548,31 @@ export function YangjibaoFundDetail({
 
     void (async () => {
       try {
-        const result = await fetchSectorIntraday(
+        let result = await fetchSectorIntraday(
           query,
           forceRefresh ? { forceRefresh: true } : undefined,
         );
         if (requestId !== intradayRequestSeq.current) {
           return;
+        }
+        // 主查询（常见于业绩基准原文抠出的场内指数名）查不到数据时，退回按"关联板块"
+        // 短名再试一次——短名大多已经注册过行情源，不必强行扩充指数名别名表。
+        const fallbackQuery = intradayFallbackQueryRef.current;
+        if (result.points.length < 2 && fallbackQuery) {
+          try {
+            const fallbackResult = await fetchSectorIntraday(
+              fallbackQuery,
+              forceRefresh ? { forceRefresh: true } : undefined,
+            );
+            if (requestId !== intradayRequestSeq.current) {
+              return;
+            }
+            if (fallbackResult.points.length >= 2) {
+              result = fallbackResult;
+            }
+          } catch {
+            // 兜底查询失败时保留主查询结果（含其 note），静默忽略。
+          }
         }
         writeIntradayCache(query, result);
         if (result.points.length >= 2 || !cachedIntraday) {
@@ -805,12 +849,19 @@ export function YangjibaoFundDetail({
                   <Loader2 size={18} className="mr-2 animate-spin" />
                   加载分时…
                 </div>
-              ) : intradayPoints.length < 2 ? (
+              ) : intradayPoints.length >= 2 ? (
+                <IntradayPercentChart points={intradayPoints} height={200} />
+              ) : flatSectorPoints ? (
+                <div>
+                  <IntradayPercentChart points={flatSectorPoints} height={200} flat />
+                  <div className="mt-1 text-center text-[11px] text-slate-400">
+                    {intradayNote ?? "暂无分时明细，以下按当日板块涨跌绘制水平线"}
+                  </div>
+                </div>
+              ) : (
                 <div className="flex h-[200px] flex-col items-center justify-center gap-1 px-4 text-center text-sm text-slate-400">
                   <span>{intradayNote ?? "暂无分时数据"}</span>
                 </div>
-              ) : (
-                <IntradayPercentChart points={intradayPoints} height={200} />
               )}
               <div className="mt-2 border-t border-slate-100">
                 <div className="flex items-center justify-between gap-2 py-3 text-sm">

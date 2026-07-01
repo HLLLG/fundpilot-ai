@@ -275,6 +275,15 @@ class FundRecommendation(BaseModel):
     news_bullish: list[str] = Field(default_factory=list)
     news_bearish: list[str] = Field(default_factory=list)
     points: list[str] = Field(default_factory=list)
+    # 2026-07 日报升级新增：向荐基（DiscoveryRecommendation）对齐的结构化决策字段。
+    # 全部带默认值以兼容历史报告/离线兜底路径（不产出这些字段时不影响解析与展示）。
+    confidence: str = "中"
+    hold_horizon: str = ""
+    risks: list[str] = Field(default_factory=list)
+    decision_path: str = ""
+    sector_evidence: list[str] = Field(default_factory=list)
+    fund_evidence: list[str] = Field(default_factory=list)
+    validation_notes: list[str] = Field(default_factory=list)
 
 
 class Report(BaseModel):

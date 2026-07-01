@@ -2,10 +2,16 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 from datetime import datetime, timezone
 
 
 SCHEMA_VERSION = 8
+
+# 迁移在应用/后台线程首次建立连接时触发（例如板块快照刷新会 daemon 线程预取资金流历史，
+# 与主线程几乎同时首次打开 sqlite 连接）。同进程内多个线程各自用独立 connection 对同一
+# 库文件跑 _migrate_* 会产生 "table already exists" 之类的竞态，这里用进程内锁串行化。
+_MIGRATION_LOCK = threading.Lock()
 
 
 def _now() -> str:
@@ -392,6 +398,11 @@ def _migrate_swing_alert_fired(connection: sqlite3.Connection) -> None:
 
 
 def run_migrations(connection: sqlite3.Connection) -> None:
+    with _MIGRATION_LOCK:
+        _run_migrations_locked(connection)
+
+
+def _run_migrations_locked(connection: sqlite3.Connection) -> None:
     version = _get_schema_version(connection)
     if version >= SCHEMA_VERSION:
         _migrate_fund_primary_sectors_global(connection)

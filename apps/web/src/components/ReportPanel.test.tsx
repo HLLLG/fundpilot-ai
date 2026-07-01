@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import "@testing-library/jest-dom/vitest";
 
@@ -165,5 +165,65 @@ describe("ReportPanel done", () => {
     expect(screen.getByText("持仓盘点日报")).toBeInTheDocument();
     expect(screen.getByText("今日观望为主。")).toBeInTheDocument();
     expect(screen.getByText(/519674 · 银河创新成长/)).toBeInTheDocument();
+  });
+
+  it("renders structured decision fields and sector direction context when present", () => {
+    const report = sampleReport();
+    report.fund_recommendations = [
+      {
+        fund_code: "519674",
+        fund_name: "银河创新成长",
+        action: "分批加仓",
+        confidence: "高",
+        hold_horizon: "1-2周",
+        decision_path: "先看板块方向，再看基金证据，最后给出动作",
+        sector_evidence: ["顺势观察，置信度高"],
+        fund_evidence: ["三路量化证据综合置信：高"],
+        validation_notes: ["样本有限"],
+        risks: ["板块波动可能导致净值回撤"],
+        points: ["测试要点"],
+      },
+    ];
+    report.analysis_facts = {
+      holdings: [
+        {
+          fund_code: "519674",
+          sector_opportunity: {
+            sector_label: "半导体",
+            track: "momentum",
+            confidence: "高",
+            entry_hint: "资金进入，可少量参与",
+            opportunity_available: true,
+          },
+        },
+      ],
+      sector_rotation: {
+        available: true,
+        market_top: [
+          {
+            sector_label: "医药",
+            track: "setup",
+            confidence: "中",
+            score: 57.2,
+          },
+        ],
+      },
+    };
+
+    render(<ReportPanel report={report} streaming={null} />);
+
+    expect(screen.getByText("置信高")).toBeInTheDocument();
+    expect(screen.getByText("持有/观察 1-2周")).toBeInTheDocument();
+    expect(screen.getByText(/板块方向：半导体/)).toBeInTheDocument();
+    expect(screen.getByText(/当前构成机会/)).toBeInTheDocument();
+    expect(screen.getByText("决策路径")).toBeInTheDocument();
+    expect(screen.getByText("先看板块方向，再看基金证据，最后给出动作")).toBeInTheDocument();
+    expect(screen.getByText("板块依据")).toBeInTheDocument();
+    expect(screen.getByText("基金依据")).toBeInTheDocument();
+    expect(screen.getByText("校验备注")).toBeInTheDocument();
+    expect(screen.getByText(/板块波动可能导致净值回撤/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /板块轮动参考/ }));
+    expect(screen.getByText("医药")).toBeInTheDocument();
   });
 });

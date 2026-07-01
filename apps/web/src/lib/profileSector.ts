@@ -294,6 +294,35 @@ export function resolveIntradayQuery(
   return { source_type: "index", source_name: label };
 }
 
+/**
+ * 分时图兜底查询：业绩基准原文抠出来的场内指数名（如"中证高端装备制造指数"）经常
+ * 不在行情源的别名表里，查不到分时会一直显示"暂无分时数据"；而"关联板块"短名
+ * （如"机械设备"）往往已经注册过行情源。主查询查不到数据时，用这个兜底按板块短名
+ * 再试一次，而不是要求持续扩充指数名别名表。
+ */
+export function resolveIntradayFallbackQuery(
+  holding: Pick<Holding, "fund_code" | "fund_name" | "sector_name" | "intraday_index_name">,
+  primaryQuery: IntradayQuery | null,
+): IntradayQuery | null {
+  const seeded = seededSectorFields(holding);
+  const boardName = (seeded?.sector_name ?? holding.sector_name)?.trim();
+  if (!boardName || isInvalidSectorLabel(boardName)) {
+    return null;
+  }
+  const mappedIndex = intradayIndexForBoard(boardName);
+  const fallback: IntradayQuery = mappedIndex
+    ? { source_type: "index", source_name: mappedIndex }
+    : { source_type: "concept", source_name: boardName };
+  if (
+    primaryQuery &&
+    primaryQuery.source_type === fallback.source_type &&
+    primaryQuery.source_name === fallback.source_name
+  ) {
+    return null;
+  }
+  return fallback;
+}
+
 export function showIntradayIndexHint(
   profile: Pick<FundProfile, "sector_name" | "intraday_index_name">,
 ): boolean {

@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from app.config import get_settings
 from app.services.fund_primary_sector_global import is_global_sector_fresh, load_fresh_global_sector
 from app.services.fund_primary_sector_precompute import iter_precompute_candidates, precompute_fund_sector
 from app.services.fund_primary_sector_types import PrimarySectorRecord
@@ -106,6 +107,78 @@ def test_precompute_fund_sector_writes_global(monkeypatch):
     assert saved == [
         {"fund_code": "021533", "sector_name": "半导体材料", "source": "precompute_benchmark"}
     ]
+
+
+def test_precompute_fund_sector_falls_back_to_llm_when_rules_miss(monkeypatch):
+    saved: list[dict] = []
+
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_precompute.get_fund_primary_sector_global",
+        lambda _code: None,
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_precompute._resolve_from_benchmark_index",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_precompute._resolve_from_holdings_infer",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_precompute._lookup_fund_name",
+        lambda _code: "某某另类主题混合(QDII)C",
+    )
+    monkeypatch.setattr(
+        "app.services.fund_sector_llm_infer.infer_sector_via_llm",
+        lambda _code, _name, **_kwargs: ("另类主题", 0.6),
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_precompute.promote_record_to_global",
+        lambda record: saved.append(
+            {
+                "fund_code": record.fund_code,
+                "sector_name": record.sector_name,
+                "source": record.source,
+                "confidence": record.confidence,
+            }
+        ),
+    )
+
+    status = precompute_fund_sector("654321", mode="auto")
+    assert status == "ok"
+    assert saved == [
+        {
+            "fund_code": "654321",
+            "sector_name": "另类主题",
+            "source": "precompute_llm",
+            "confidence": 0.6,
+        }
+    ]
+
+
+def test_precompute_fund_sector_skips_llm_when_disabled(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_precompute.get_fund_primary_sector_global",
+        lambda _code: None,
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_precompute._resolve_from_benchmark_index",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_precompute._resolve_from_holdings_infer",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        get_settings(), "fund_primary_sector_llm_infer_enabled", False
+    )
+    monkeypatch.setattr(
+        "app.services.fund_sector_llm_infer.infer_sector_via_llm",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("should not call llm")),
+    )
+
+    status = precompute_fund_sector("654321", mode="auto")
+    assert status == "miss"
 
 
 def test_iter_precompute_candidates_prioritizes_missing(monkeypatch):

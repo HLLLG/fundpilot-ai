@@ -58,7 +58,7 @@ describe("portfolioHoldingsCache", () => {
 
     const refreshedAt = new Date().toISOString();
 
-    saveCachedPortfolioHoldings({
+    saveCachedPortfolioHoldings(1, {
 
       holdings: [
 
@@ -98,7 +98,7 @@ describe("portfolioHoldingsCache", () => {
 
 
 
-    const cached = loadCachedPortfolioHoldings();
+    const cached = loadCachedPortfolioHoldings(1);
 
     expect(cached?.holdings[0].holding_amount).toBe(1000);
 
@@ -114,7 +114,7 @@ describe("portfolioHoldingsCache", () => {
 
   it("persists refreshed_at through cache roundtrip", () => {
 
-    saveCachedPortfolioHoldings({
+    saveCachedPortfolioHoldings(1, {
 
       holdings: [
 
@@ -136,7 +136,121 @@ describe("portfolioHoldingsCache", () => {
 
     });
 
-    expect(loadCachedPortfolioHoldings()?.refreshed_at).toBe("2026-06-18T08:00:00.000Z");
+    expect(loadCachedPortfolioHoldings(1)?.refreshed_at).toBe("2026-06-18T08:00:00.000Z");
+
+  });
+
+
+
+  it("does not restore holdings cached for another user", () => {
+
+    saveCachedPortfolioHoldings(1, {
+
+      holdings: [
+
+        {
+
+          fund_code: "519674",
+
+          fund_name: "old user fund",
+
+          holding_amount: 1000,
+
+          return_percent: 1,
+
+        },
+
+      ],
+
+    });
+
+
+
+    expect(loadCachedPortfolioHoldings(2)).toBeNull();
+
+  });
+
+  it("ignores and clears stale v2 user cache entries", () => {
+    window.localStorage.setItem(
+      "fundpilot-portfolio-holdings-v2:1",
+      JSON.stringify({
+        holdings: [
+          {
+            fund_code: "016665",
+            fund_name: "stale v2 fund",
+            holding_amount: 100,
+            return_percent: 0,
+          },
+        ],
+        fetchedAt: Date.now(),
+      }),
+    );
+
+    expect(loadCachedPortfolioHoldings(1)).toBeNull();
+
+    saveCachedPortfolioHoldings(1, {
+      holdings: [],
+      portfolio_summary: { total_assets: 0, holding_count: 0 },
+    });
+
+    expect(window.localStorage.getItem("fundpilot-portfolio-holdings-v2:1")).toBeNull();
+  });
+
+  it("persists an empty holdings list to overwrite stale deleted holdings", () => {
+
+    saveCachedPortfolioHoldings(1, {
+
+      holdings: [
+
+        {
+
+          fund_code: "016665",
+
+          fund_name: "天弘全球高端制造混合(QDII)C",
+
+          holding_amount: 100,
+
+          return_percent: 0,
+
+        },
+
+      ],
+
+      portfolio_summary: {
+
+        total_assets: 100,
+
+        holding_count: 1,
+
+      },
+
+    });
+
+    saveCachedPortfolioHoldings(1, {
+
+      holdings: [],
+
+      portfolio_summary: {
+
+        total_assets: 0,
+
+        holding_count: 0,
+
+      },
+
+      refreshed_at: "2026-07-01T00:03:12.000Z",
+
+    });
+
+    const cached = loadCachedPortfolioHoldings(1);
+
+    expect(cached).not.toBeNull();
+
+    expect(cached?.holdings).toEqual([]);
+
+    expect(cached?.portfolio_summary?.holding_count).toBe(0);
+
+    expect(cached?.refreshed_at).toBe("2026-07-01T00:03:12.000Z");
 
   });
 

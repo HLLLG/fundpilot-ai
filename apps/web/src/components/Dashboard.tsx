@@ -19,6 +19,7 @@ import {
   fetchPortfolioHoldings,
   fetchPortfolioSummary,
   fetchSectorQuotesStatus,
+  invalidatePortfolioHoldingsRequest,
   listReports,
   applyPortfolioHoldings,
   applyTransactions,
@@ -176,6 +177,10 @@ export function Dashboard() {
   }, [holdings, selectedHoldingKey]);
   const reportSectionRef = useRef<HTMLDivElement>(null);
   const refreshAfterApplyRef = useRef<"sector" | null>(null);
+  const initialSectorRefreshDoneRef = useRef(false);
+  const holdingsMutationVersionRef = useRef(0);
+  const portfolioCacheWriteReadyRef = useRef(false);
+  const portfolioMutationQueueRef = useRef<Promise<unknown>>(Promise.resolve());
   const officialNavSettlementAttemptedRef = useRef(false);
   const officialNavSettlementInFlightRef = useRef(false);
   const profilePersistReady = useRef(false);
@@ -237,7 +242,7 @@ export function Dashboard() {
       if (holdings.length === 0) {
         return undefined;
       }
-      const result = await sectorRefresh.refresh(false, "fast");
+      const result = await enqueuePortfolioMutation(() => sectorRefresh.refresh(false, "fast"));
       return result?.holdings;
     },
   });
@@ -281,6 +286,18 @@ export function Dashboard() {
     }
   };
 
+  const markPortfolioCacheWriteReady = useCallback(() => {
+    portfolioCacheWriteReadyRef.current = true;
+  }, []);
+
+  const enqueuePortfolioMutation = useCallback(<T,>(task: () => Promise<T>): Promise<T> => {
+    const queued = portfolioMutationQueueRef.current
+      .catch(() => undefined)
+      .then(task);
+    portfolioMutationQueueRef.current = queued.catch(() => undefined);
+    return queued;
+  }, []);
+
   const settleOfficialNavInBackground = (sourceHoldings: Holding[]) => {
     if (
       officialNavSettlementAttemptedRef.current ||
@@ -292,8 +309,12 @@ export function Dashboard() {
 
     officialNavSettlementAttemptedRef.current = true;
     officialNavSettlementInFlightRef.current = true;
-    void settleOfficialNav()
+    const requestVersion = holdingsMutationVersionRef.current;
+    void enqueuePortfolioMutation(() => settleOfficialNav())
       .then((settlement) => {
+        if (requestVersion !== holdingsMutationVersionRef.current) {
+          return;
+        }
         if (
           !settlement.ok ||
           settlement.skipped ||
@@ -311,7 +332,8 @@ export function Dashboard() {
         if (settlement.portfolio_summary) {
           setPortfolioSummary(settlement.portfolio_summary);
         }
-        saveCachedPortfolioHoldings({
+        markPortfolioCacheWriteReady();
+        saveCachedPortfolioHoldings(user?.id, {
           holdings: mergedHoldings,
           portfolio_summary: settlement.portfolio_summary ?? null,
           refreshed_at: refreshedAt,
@@ -325,45 +347,67 @@ export function Dashboard() {
       });
   };
 
-  const hydratePortfolio = async () => {
+  const HYDRATE_INITIAL_RETRY_COUNT = 2;
+  const HYDRATE_INITIAL_RETRY_DELAY_MS = 1500;
+
+  const hydratePortfolio = async (retriesLeft = HYDRATE_INITIAL_RETRY_COUNT): Promise<void> => {
     if (backgroundJobActiveRef.current) {
       return;
     }
-    const hadCachedHoldings = loadCachedPortfolioHoldings()?.holdings?.length;
-    if (!hadCachedHoldings) {
+    const requestVersion = holdingsMutationVersionRef.current;
+    const hadCachedPortfolio = loadCachedPortfolioHoldings(user?.id) !== null;
+    if (!hadCachedPortfolio) {
       setIsHydratingHoldings(true);
     }
     try {
       const payload = await fetchPortfolioHoldings();
+      if (requestVersion !== holdingsMutationVersionRef.current) {
+        return;
+      }
       if (payload.portfolio_summary) {
         setPortfolioSummary(payload.portfolio_summary);
       }
+      const refreshedAt = payload.refreshed_at ?? null;
+      markPortfolioCacheWriteReady();
+      setHoldings(payload.holdings);
+      setHoldingsRefreshedAt(refreshedAt);
+      saveCachedPortfolioHoldings(user?.id, {
+        holdings: payload.holdings,
+        portfolio_summary: payload.portfolio_summary ?? null,
+        refreshed_at: refreshedAt,
+      });
       if (payload.holdings.length > 0) {
-        const refreshedAt = payload.refreshed_at ?? null;
-        setHoldings(payload.holdings);
-        setHoldingsRefreshedAt(refreshedAt);
-        saveCachedPortfolioHoldings({
-          holdings: payload.holdings,
-          portfolio_summary: payload.portfolio_summary ?? null,
-          refreshed_at: refreshedAt,
-        });
         settleOfficialNavInBackground(payload.holdings);
       }
+      setIsHydratingHoldings(false);
     } catch {
-      if (!hadCachedHoldings) {
+      if (requestVersion !== holdingsMutationVersionRef.current) {
+        return;
+      }
+      // 首次没有本地缓存时，如果第一次拉取恰好撞上后端刚重启/网络抖动等瞬时失败，
+      // 不能马上把"暂未录入基金"的空状态亮出来——那会被用户误读成持仓丢了。
+      // 先保持加载态，短暂延迟后自动重试几次，只有真的多次都失败才降级展示。
+      if (!hadCachedPortfolio && retriesLeft > 0) {
+        window.setTimeout(() => {
+          void hydratePortfolio(retriesLeft - 1);
+        }, HYDRATE_INITIAL_RETRY_DELAY_MS);
+        return;
+      }
+      if (!hadCachedPortfolio) {
         await loadPortfolioSummary();
         setMessage("持仓加载失败，请确认后端 API 正常运行后刷新页面。");
       }
-    } finally {
       setIsHydratingHoldings(false);
     }
   };
 
   useLayoutEffect(() => {
-    const cached = loadCachedPortfolioHoldings();
-    if (!cached?.holdings?.length) {
+    portfolioCacheWriteReadyRef.current = false;
+    const cached = loadCachedPortfolioHoldings(user?.id);
+    if (!cached) {
       return;
     }
+    markPortfolioCacheWriteReady();
     setHoldings(cached.holdings);
     if (cached.portfolio_summary) {
       setPortfolioSummary(cached.portfolio_summary);
@@ -372,7 +416,7 @@ export function Dashboard() {
       setHoldingsRefreshedAt(cached.refreshed_at);
     }
     setIsHydratingHoldings(false);
-  }, []);
+  }, [user?.id]);
 
   const setActiveTab = useCallback((tab: TabId | ((prev: TabId) => TabId)) => {
     setActiveTabState((prev) => {
@@ -489,6 +533,14 @@ export function Dashboard() {
         if (!status.auto_refresh_allowed) {
           return;
         }
+        // 周期轮询本身只是重新读取上次持久化的持仓快照，并不会触发板块实时行情
+        // 的真实刷新（那只在波段信号评估或编辑持仓后才会发生）。这里顺带触发一次
+        // 真实刷新，让"当日涨幅""关联板块"等字段能像正常行情软件一样自动更新。
+        // 必须走 enqueuePortfolioMutation 队列串行执行：refresh-sector-quotes 内部会把
+        // 传入的持仓整份写回快照，如果和同一时间用户正在做的加仓/删除/OCR 确认并发执行，
+        // 耗时更久的旧刷新可能在新的增删之后才落盘，把刚加的基金又冲掉（"批量截图录入
+        // 后基金又消失"）。串行化后，同一时刻只会有一个持仓写操作在跑，彻底消除这种竞态。
+        await enqueuePortfolioMutation(() => sectorRefresh.refresh(false, "fast"));
         await hydratePortfolio();
       } catch {
         // 后台轮询失败不阻断展示
@@ -515,20 +567,32 @@ export function Dashboard() {
       return;
     }
     refreshAfterApplyRef.current = null;
-    void sectorRefresh.refresh(false, "fast");
+    void enqueuePortfolioMutation(() => sectorRefresh.refresh(false, "fast"));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [holdings]);
 
   useEffect(() => {
-    if (holdings.length === 0) {
+    // 板块涨跌只有在"编辑持仓后"或"波段信号评估"（默认关闭）时才会触发真实刷新，
+    // 首次打开页面时展示的都是上次持久化的旧值。这里在持仓首次加载完成后主动
+    // 触发一次真实板块行情刷新，避免用户什么都不做也看不到最新涨跌幅。
+    if (initialSectorRefreshDoneRef.current || holdings.length === 0) {
       return;
     }
-    saveCachedPortfolioHoldings({
+    initialSectorRefreshDoneRef.current = true;
+    void enqueuePortfolioMutation(() => sectorRefresh.refresh(false, "fast"));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [holdings.length]);
+
+  useEffect(() => {
+    if (!portfolioCacheWriteReadyRef.current) {
+      return;
+    }
+    saveCachedPortfolioHoldings(user?.id, {
       holdings,
       portfolio_summary: portfolioSummary,
       refreshed_at: holdingsRefreshedAt,
     });
-  }, [holdings, portfolioSummary, holdingsRefreshedAt]);
+  }, [holdings, portfolioSummary, holdingsRefreshedAt, user?.id]);
 
   useEffect(() => {
     if (!sectorRefresh.lastFetchedAt) {
@@ -929,11 +993,18 @@ export function Dashboard() {
     if (!newHoldings.length) {
       return;
     }
+    holdingsMutationVersionRef.current += 1;
+    const mutationVersion = holdingsMutationVersionRef.current;
+    invalidatePortfolioHoldingsRequest();
     setIsManualAdding(true);
     setMessage(null);
     try {
       const merged = [...displayableHoldings(holdings), ...newHoldings];
-      const applied = await applyPortfolioHoldings(merged);
+      const applied = await enqueuePortfolioMutation(() => applyPortfolioHoldings(merged));
+      if (mutationVersion !== holdingsMutationVersionRef.current) {
+        return;
+      }
+      markPortfolioCacheWriteReady();
       setHoldings(applied.holdings);
       if (applied.portfolio_summary) {
         setPortfolioSummary(applied.portfolio_summary);
@@ -946,6 +1017,9 @@ export function Dashboard() {
           : `已添加 ${newHoldings.length} 只基金到账户汇总。`,
       );
     } catch (error) {
+      if (mutationVersion !== holdingsMutationVersionRef.current) {
+        return;
+      }
       setMessage(error instanceof Error ? error.message : "手动添加失败。");
     } finally {
       setIsManualAdding(false);
@@ -956,6 +1030,9 @@ export function Dashboard() {
     if (!pendingOcrHoldings?.length) {
       return;
     }
+    holdingsMutationVersionRef.current += 1;
+    const mutationVersion = holdingsMutationVersionRef.current;
+    invalidatePortfolioHoldingsRequest();
     const toApply = pendingOcrHoldings;
     const previousHoldings = holdings;
     const mergedToApply = mergeHoldingsAppend(previousHoldings, toApply);
@@ -968,8 +1045,9 @@ export function Dashboard() {
     const optimisticHoldings = withApplyDisplayFields(
       mergeHoldingsPreserveQuoteFields(previousHoldings, mergedToApply),
     );
+    markPortfolioCacheWriteReady();
     setHoldings(optimisticHoldings);
-    saveCachedPortfolioHoldings({
+    saveCachedPortfolioHoldings(user?.id, {
       holdings: optimisticHoldings,
       portfolio_summary: portfolioSummary,
       refreshed_at: holdingsRefreshedAt,
@@ -977,7 +1055,10 @@ export function Dashboard() {
 
     void (async () => {
       try {
-        const applied = await applyPortfolioHoldings(mergedToApply);
+        const applied = await enqueuePortfolioMutation(() => applyPortfolioHoldings(mergedToApply));
+        if (mutationVersion !== holdingsMutationVersionRef.current) {
+          return;
+        }
         const appliedHoldings = withApplyDisplayFields(
           dedupeHoldingsByCode(
             mergeHoldingsPreserveQuoteFields(previousHoldings, applied.holdings),
@@ -997,7 +1078,7 @@ export function Dashboard() {
                 base.daily_return_percent ??
                 null,
             };
-            saveCachedPortfolioHoldings({
+            saveCachedPortfolioHoldings(user?.id, {
               holdings: appliedHoldings,
               portfolio_summary: nextSummary,
               refreshed_at: holdingsRefreshedAt,
@@ -1005,13 +1086,16 @@ export function Dashboard() {
             return nextSummary;
           });
         } else {
-          saveCachedPortfolioHoldings({
+          saveCachedPortfolioHoldings(user?.id, {
             holdings: appliedHoldings,
             portfolio_summary: portfolioSummary,
             refreshed_at: holdingsRefreshedAt,
           });
         }
       } catch (error) {
+        if (mutationVersion !== holdingsMutationVersionRef.current) {
+          return;
+        }
         setMessage(error instanceof Error ? error.message : "确认更新失败。");
       }
     })();
@@ -1024,6 +1108,9 @@ export function Dashboard() {
         return;
       }
 
+      holdingsMutationVersionRef.current += 1;
+      const mutationVersion = holdingsMutationVersionRef.current;
+      invalidatePortfolioHoldingsRequest();
       const rollbackHoldings = holdings;
       const rollbackSummary = portfolioSummary;
       const remaining = holdings.filter((_, itemIndex) => itemIndex !== index);
@@ -1046,10 +1133,11 @@ export function Dashboard() {
         updated_at: new Date().toISOString(),
       };
 
+      markPortfolioCacheWriteReady();
       setHoldings(remaining);
       setPortfolioSummary(optimisticSummary);
       setSelectedHoldingKey(null);
-      saveCachedPortfolioHoldings({
+      saveCachedPortfolioHoldings(user?.id, {
         holdings: remaining,
         portfolio_summary: optimisticSummary,
         refreshed_at: holdingsRefreshedAt,
@@ -1058,22 +1146,29 @@ export function Dashboard() {
 
       sectorRefresh.invalidatePendingRefresh();
 
-      void deletePortfolioHolding(target.fund_code, target.fund_name)
+      void enqueuePortfolioMutation(() => deletePortfolioHolding(target.fund_code, target.fund_name))
         .then((result) => {
+          if (mutationVersion !== holdingsMutationVersionRef.current) {
+            return;
+          }
           setHoldings(result.holdings);
           if (result.portfolio_summary) {
             setPortfolioSummary(result.portfolio_summary);
           }
-          saveCachedPortfolioHoldings({
+          markPortfolioCacheWriteReady();
+          saveCachedPortfolioHoldings(user?.id, {
             holdings: result.holdings,
             portfolio_summary: result.portfolio_summary ?? optimisticSummary,
             refreshed_at: holdingsRefreshedAt,
           });
         })
         .catch((error) => {
+          if (mutationVersion !== holdingsMutationVersionRef.current) {
+            return;
+          }
           setHoldings(rollbackHoldings);
           setPortfolioSummary(rollbackSummary);
-          saveCachedPortfolioHoldings({
+          saveCachedPortfolioHoldings(user?.id, {
             holdings: rollbackHoldings,
             portfolio_summary: rollbackSummary,
             refreshed_at: holdingsRefreshedAt,
@@ -1081,7 +1176,7 @@ export function Dashboard() {
           setMessage(error instanceof Error ? error.message : "删除失败，已恢复列表");
         });
     },
-    [holdings, holdingsRefreshedAt, portfolioSummary, sectorRefresh],
+    [holdings, holdingsRefreshedAt, portfolioSummary, sectorRefresh, user?.id],
   );
 
   const mergeTransactions = (
@@ -1128,16 +1223,26 @@ export function Dashboard() {
       setMessage("没有可应用的交易（请先为交易匹配基金代码）。");
       return;
     }
+    holdingsMutationVersionRef.current += 1;
+    const mutationVersion = holdingsMutationVersionRef.current;
+    invalidatePortfolioHoldingsRequest();
     setIsApplyingTransactions(true);
-    setMessage(null);
+      setMessage(null);
     try {
-      const result = await applyTransactions(toApply);
+      const result = await enqueuePortfolioMutation(() => applyTransactions(toApply));
+      if (mutationVersion !== holdingsMutationVersionRef.current) {
+        return;
+      }
+      markPortfolioCacheWriteReady();
       setHoldings(result.holdings);
       void loadPortfolioSummary();
       setPendingTransactions(null);
       const pendingNote = result.pending > 0 ? `，${result.pending} 笔待净值确认` : "";
       setMessage(`已应用 ${result.inserted} 笔交易${pendingNote}，持仓已更新。`);
     } catch (error) {
+      if (mutationVersion !== holdingsMutationVersionRef.current) {
+        return;
+      }
       setMessage(error instanceof Error ? error.message : "应用交易失败。");
     } finally {
       setIsApplyingTransactions(false);
@@ -1350,12 +1455,22 @@ export function Dashboard() {
             });
           }}
           onFundCodeUpdated={async (index, updated) => {
+            holdingsMutationVersionRef.current += 1;
+            const mutationVersion = holdingsMutationVersionRef.current;
+            invalidatePortfolioHoldingsRequest();
             const next = holdings.map((item, itemIndex) => (itemIndex === index ? updated : item));
+            markPortfolioCacheWriteReady();
             setHoldings(next);
             try {
-              await applyPortfolioHoldings(next);
+              await enqueuePortfolioMutation(() => applyPortfolioHoldings(next));
+              if (mutationVersion !== holdingsMutationVersionRef.current) {
+                return;
+              }
               setMessage(`基金代码已更新为 ${updated.fund_code}`);
             } catch (error) {
+              if (mutationVersion !== holdingsMutationVersionRef.current) {
+                return;
+              }
               setMessage(error instanceof Error ? error.message : "持仓持久化失败，请刷新后重试");
             }
           }}
@@ -1370,10 +1485,20 @@ export function Dashboard() {
           }}
           onDeleteHolding={handleDeleteHolding}
           onPortfolioUpdated={async (nextHoldings) => {
+            holdingsMutationVersionRef.current += 1;
+            const mutationVersion = holdingsMutationVersionRef.current;
+            invalidatePortfolioHoldingsRequest();
+            markPortfolioCacheWriteReady();
             setHoldings(nextHoldings);
             try {
-              await applyPortfolioHoldings(nextHoldings);
+              await enqueuePortfolioMutation(() => applyPortfolioHoldings(nextHoldings));
+              if (mutationVersion !== holdingsMutationVersionRef.current) {
+                return;
+              }
             } catch (error) {
+              if (mutationVersion !== holdingsMutationVersionRef.current) {
+                return;
+              }
               setMessage(error instanceof Error ? error.message : "持仓持久化失败，请刷新后重试");
             }
           }}

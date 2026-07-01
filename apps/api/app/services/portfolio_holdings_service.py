@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import time
 from datetime import datetime, timezone
 
+from app._debug_probe import debug_log
 from app.database import get_most_recent_portfolio_snapshot, get_portfolio_summary, list_fund_profiles, save_portfolio_summary
 from app.models import FundProfile, Holding, PortfolioSummary
 from app.services.fund_code_resolver import reconcile_holding_fund_codes
@@ -256,6 +258,17 @@ def build_fast_snapshot_holdings_response() -> dict | None:
     holdings = without_inactive_holdings(without_test_holdings(holdings))
     if not holdings:
         return None
+    from app.services.fund_primary_sector_service import repair_stale_cross_market_sectors
+
+    holdings = repair_stale_cross_market_sectors(holdings)
+    # #region agent log
+    debug_log(
+        "portfolio_holdings_service.py:build_fast_snapshot_holdings_response",
+        "post-fix: skipping per-holding primary sector resolution (network round trips removed)",
+        {"holdings_count": len(holdings)},
+        hypothesis_id="H1",
+    )
+    # #endregion
     trade_date = get_effective_trade_date()
     fund_codes = [
         holding.fund_code
@@ -531,8 +544,8 @@ def load_persisted_holdings(
             _repair_snapshot_holdings(cleaned)
         return cleaned, source, snap_date, refreshed
 
-    if snapshot and snapshot.get("holdings"):
-        holdings = [Holding.model_validate(item) for item in snapshot["holdings"]]
+    if snapshot and "holdings" in snapshot:
+        holdings = [Holding.model_validate(item) for item in snapshot.get("holdings") or []]
         if holdings:
             snapshot_total = snapshot.get("total_assets")
             profile_holdings = _lightweight_profile_holdings()
@@ -566,6 +579,12 @@ def load_persisted_holdings(
                 snapshot.get("snapshot_date"),
                 _coerce_utc_datetime(snapshot.get("captured_at")),
             )
+        return _finalize(
+            [],
+            "snapshot",
+            snapshot.get("snapshot_date"),
+            _coerce_utc_datetime(snapshot.get("captured_at")),
+        )
 
     profile_holdings = holdings_from_profiles(fetch_benchmark=fetch_benchmark)
     if profile_holdings:
@@ -642,6 +661,35 @@ def _purge_fund_profile(fund_code: str, fund_name: str | None = None) -> None:
     delete_fund_profile(purge_code)
 
 
+def _reconcile_fund_profiles_with_snapshot(
+    *, before: list[Holding], after: list[Holding]
+) -> None:
+    """删除持仓后，清掉任何"快照里已经没有、但档案表里还残留"的基金档案。
+
+    `_purge_fund_profile` 按传入的 fund_code/fund_name 精确匹配删除，遇到历史数据
+    code 对不上、名称有细微差异等情况会静默失败、留下一条孤儿档案。这条孤儿档案
+    不影响当次响应，但下次冷启动（服务端内存缓存过期或重启）重新走
+    `load_persisted_holdings` / `load_dashboard_holdings` 时，
+    `_should_recover_from_profiles` 一看到"档案表基金数 > 快照基金数"，就会误判成
+    "快照被截断"，直接用档案表整个重建持仓——相当于把刚手动删除的基金复活回来。
+    这里在每次删除后做一次全量对账：只要某条档案对应的基金曾经出现在删除前的快照
+    里、但不再出现在删除后的快照里，就直接清掉，避免两边数据来源长期不一致。
+    """
+    before_codes = {item.fund_code for item in before if item.fund_code and item.fund_code != "000000"}
+    after_codes = {item.fund_code for item in after if item.fund_code and item.fund_code != "000000"}
+    stale_codes = before_codes - after_codes
+    if not stale_codes:
+        return
+
+    from app.database import delete_fund_primary_sector, delete_fund_profile
+
+    for profile in list_fund_profiles():
+        profile_code = (profile.fund_code or "").strip()
+        if profile_code and profile_code in stale_codes:
+            delete_fund_primary_sector(profile_code)
+            delete_fund_profile(profile_code)
+
+
 def remove_holding_from_portfolio(
     fund_code: str,
     *,
@@ -713,6 +761,7 @@ def remove_holding_from_portfolio(
     save_daily_snapshot(remaining, summary)
 
     _purge_fund_profile(code, fund_name)
+    _reconcile_fund_profiles_with_snapshot(before=current, after=remaining)
 
     return build_portfolio_holdings_response(
         remaining,
