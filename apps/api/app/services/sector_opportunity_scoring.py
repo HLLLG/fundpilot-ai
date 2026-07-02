@@ -8,7 +8,7 @@ from __future__ import annotations
 为薄封装以维持向后兼容。
 """
 
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError, as_completed
+from concurrent.futures import ThreadPoolExecutor, wait
 from typing import Any
 
 MOMENTUM_TRACK = "momentum"
@@ -127,16 +127,16 @@ def build_sector_flow_map_for_opportunities(
     )
     futures = [executor.submit(load, label) for label in labels]
     try:
-        try:
-            for future in as_completed(futures, timeout=max(0.0, total_timeout_seconds)):
+        done, pending = wait(futures, timeout=max(0.0, total_timeout_seconds))
+        for future in pending:
+            future.cancel()
+        for future in done:
+            try:
                 label, flow = future.result()
-                if flow:
-                    result[label] = flow
-        except FutureTimeoutError:
-            pass
-        finally:
-            for future in futures:
-                future.cancel()
+            except Exception:
+                continue
+            if flow:
+                result[label] = flow
     finally:
         executor.shutdown(wait=False, cancel_futures=True)
     return result

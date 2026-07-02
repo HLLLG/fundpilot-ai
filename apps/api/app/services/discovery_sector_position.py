@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError, as_completed
+from concurrent.futures import ThreadPoolExecutor, wait
 from typing import Any, Callable
 
 PositionFetchFn = Callable[[str], list[dict]]
@@ -91,16 +91,16 @@ def build_sector_position_map_for_opportunities(
     )
     futures = [executor.submit(load, label) for label in labels]
     try:
-        try:
-            for future in as_completed(futures, timeout=max(0.0, total_timeout_seconds)):
+        done, pending = wait(futures, timeout=max(0.0, total_timeout_seconds))
+        for future in pending:
+            future.cancel()
+        for future in done:
+            try:
                 label, context = future.result()
-                if context:
-                    result[label] = context
-        except FutureTimeoutError:
-            pass
-        finally:
-            for future in futures:
-                future.cancel()
+            except Exception:
+                continue
+            if context:
+                result[label] = context
     finally:
         executor.shutdown(wait=False, cancel_futures=True)
     return result

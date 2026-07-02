@@ -1,8 +1,0 @@
-/* components/ocr-uploader/ocr-uploader.wxss */
-/* OCR 上传入口按钮组件 — 最小样式，实际按钮外观由 btnClass 属性控制。 */
-
-.ocr-uploader-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}

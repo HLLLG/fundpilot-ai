@@ -9,36 +9,36 @@ import {
 // 从函数签名推导参数类型，避免依赖尚未在 api.ts 落地的 UsMarketSnapshot 类型（任务 9.1）。
 type UsMarketSnapshotArg = Parameters<typeof acceptUsMarketFresh>[0];
 
-const SHORT_INTERVAL_MS = 45_000;
-const LONG_INTERVAL_MS = 300_000;
+const LIVE_INTERVAL_MS = 1_200_000;
+const IDLE_INTERVAL_MS = 10_800_000;
 
 function makeSnapshot(available: boolean): UsMarketSnapshotArg {
   return { available } as UsMarketSnapshotArg;
 }
 
 describe("usRefreshIntervalMs", () => {
-  // 需求 5.1：盘前 / 盘中高频刷新（短间隔）。
-  it("returns the short interval for pre_market", () => {
-    expect(usRefreshIntervalMs("pre_market")).toBe(SHORT_INTERVAL_MS);
+  // 与服务端 market_shared 对齐：美股活跃时段 20min 刷新。
+  it("returns the live interval for pre_market", () => {
+    expect(usRefreshIntervalMs("pre_market")).toBe(LIVE_INTERVAL_MS);
   });
 
-  it("returns the short interval for regular", () => {
-    expect(usRefreshIntervalMs("regular")).toBe(SHORT_INTERVAL_MS);
+  it("returns the live interval for regular", () => {
+    expect(usRefreshIntervalMs("regular")).toBe(LIVE_INTERVAL_MS);
   });
 
-  // 需求 5.2：盘后 / 休市低频刷新（长间隔）。
-  it("returns the long interval for after_hours", () => {
-    expect(usRefreshIntervalMs("after_hours")).toBe(LONG_INTERVAL_MS);
+  it("returns the live interval for after_hours", () => {
+    expect(usRefreshIntervalMs("after_hours")).toBe(LIVE_INTERVAL_MS);
   });
 
-  it("returns the long interval for closed", () => {
-    expect(usRefreshIntervalMs("closed")).toBe(LONG_INTERVAL_MS);
+  // 休市低频刷新，避免用户请求打源。
+  it("returns the idle interval for closed", () => {
+    expect(usRefreshIntervalMs("closed")).toBe(IDLE_INTERVAL_MS);
   });
 
   it("keeps live-session intervals shorter than rest-session intervals", () => {
     expect(usRefreshIntervalMs("pre_market")).toBe(usRefreshIntervalMs("regular"));
-    expect(usRefreshIntervalMs("after_hours")).toBe(usRefreshIntervalMs("closed"));
-    expect(usRefreshIntervalMs("regular")).toBeLessThan(usRefreshIntervalMs("after_hours"));
+    expect(usRefreshIntervalMs("after_hours")).toBe(usRefreshIntervalMs("regular"));
+    expect(usRefreshIntervalMs("regular")).toBeLessThan(usRefreshIntervalMs("closed"));
   });
 });
 

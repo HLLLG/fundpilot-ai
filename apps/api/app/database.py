@@ -1,15 +1,11 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import os
-import secrets
 import sqlite3
-import time
 from pathlib import Path
 from typing import Any
 
-from app._debug_probe import debug_log
 from app.config import get_settings
 from app.db_migrations import run_migrations
 from app.request_context import get_request_user_id
@@ -35,11 +31,6 @@ def _db_path() -> Path:
     return get_settings().db_path
 
 
-# #region agent log
-_CONNECT_COUNT = 0
-# #endregion
-
-
 def _uid() -> int:
     return get_request_user_id()
 
@@ -57,9 +48,6 @@ def _connect():
 
     if uses_mysql():
         return connect()
-    # #region agent log
-    _t_connect_start = time.perf_counter()
-    # #endregion
     path = _db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(path)
@@ -190,19 +178,6 @@ def _connect():
     )
     run_migrations(connection)
     connection.commit()
-    # #region agent log
-    global _CONNECT_COUNT
-    _CONNECT_COUNT += 1
-    debug_log(
-        "database.py:_connect",
-        "sqlite connect + schema setup",
-        {
-            "elapsed_ms": round((time.perf_counter() - _t_connect_start) * 1000, 1),
-            "connect_count_so_far": _CONNECT_COUNT,
-        },
-        hypothesis_id="H2",
-    )
-    # #endregion
     from app.db_connect import DbConnection
 
     return DbConnection(connection, "sqlite")
@@ -262,127 +237,6 @@ def get_user_by_account(user_account: str) -> dict[str, object] | None:
     if row is None:
         return None
     return _row_to_dict(row)
-
-
-def get_user_by_cloudbase_uid(cloudbase_uid: str) -> dict[str, object] | None:
-    with _connect() as connection:
-        row = connection.execute(
-            """
-            SELECT id, userRole, username, userAccount, passwordHash,
-                   bio, avatarUrl, cloudbaseUid, createdAt, updatedAt, isDeleted, deletedAt
-            FROM users WHERE cloudbaseUid = ? AND isDeleted = 0
-            """,
-            (cloudbase_uid,),
-        ).fetchone()
-    if row is None:
-        return None
-    return _row_to_dict(row)
-
-
-def _wechat_placeholder_account(cloudbase_uid: str) -> str:
-    digest = hashlib.sha256(cloudbase_uid.encode("utf-8")).hexdigest()[:16]
-    return f"wx_{digest}@wechat.fundpilot"
-
-
-def create_wechat_user(*, cloudbase_uid: str, username: str) -> dict[str, object]:
-    from app.auth.passwords import hash_password
-
-    account = _wechat_placeholder_account(cloudbase_uid)
-    now = datetime.now(timezone.utc).isoformat()
-    display_name = username.strip() or "微信用户"
-    with _connect() as connection:
-        cursor = connection.execute(
-            """
-            INSERT INTO users (
-                userRole, username, userAccount, passwordHash,
-                bio, avatarUrl, cloudbaseUid, createdAt, updatedAt, isDeleted, deletedAt
-            ) VALUES (?, ?, ?, ?, '', '', ?, ?, ?, 0, NULL)
-            """,
-            (
-                "user",
-                display_name,
-                account,
-                hash_password(secrets.token_urlsafe(32)),
-                cloudbase_uid,
-                now,
-                now,
-            ),
-        )
-        connection.commit()
-        user_id = int(cursor.lastrowid)
-    user = get_user_by_id(user_id)
-    if user is None:
-        raise RuntimeError("创建微信用户失败")
-    return user
-
-
-def bind_user_cloudbase_uid(user_id: int, cloudbase_uid: str) -> dict[str, object]:
-    existing = get_user_by_cloudbase_uid(cloudbase_uid)
-    if existing is not None and int(existing["id"]) != user_id:
-        raise ValueError("该微信账号已绑定其他用户")
-    now = datetime.now(timezone.utc).isoformat()
-    with _connect() as connection:
-        connection.execute(
-            """
-            UPDATE users SET cloudbaseUid = ?, updatedAt = ?
-            WHERE id = ? AND isDeleted = 0
-            """,
-            (cloudbase_uid, now, user_id),
-        )
-        connection.commit()
-    user = get_user_by_id(user_id)
-    if user is None:
-        raise ValueError("用户不存在")
-    return user
-
-
-def merge_wechat_account_into_email_user(
-    wechat_user_id: int,
-    email_user_id: int,
-) -> dict[str, object]:
-    """把微信占位账号上的 cloudbaseUid 迁移到邮箱账号，并软删占位账号。
-
-    用于小程序「关联已有邮箱账号」：微信登录会先建一个空的占位账号（携带本次
-    openid），关联时把该 openid 搬到真正的邮箱账号上，之后每次微信登录都命中
-    邮箱账号，从而看到 Web 端录入的持仓。占位账号无业务数据，仅软删不迁移。
-    """
-    wechat_user = get_user_by_id(wechat_user_id)
-    if wechat_user is None:
-        raise ValueError("微信账号不存在")
-    email_user = get_user_by_id(email_user_id)
-    if email_user is None:
-        raise ValueError("邮箱账号不存在")
-    if wechat_user_id == email_user_id:
-        raise ValueError("无法关联到自身账号")
-
-    cloudbase_uid = wechat_user.get("cloudbaseUid")
-    if not cloudbase_uid:
-        raise ValueError("当前微信账号缺少标识，无法关联")
-
-    now = datetime.now(timezone.utc).isoformat()
-    with _connect() as connection:
-        # 先解绑并软删占位账号，避免两条记录同时持有同一 cloudbaseUid
-        connection.execute(
-            """
-            UPDATE users
-            SET cloudbaseUid = NULL, isDeleted = 1, deletedAt = ?, updatedAt = ?
-            WHERE id = ?
-            """,
-            (now, now, wechat_user_id),
-        )
-        connection.execute(
-            """
-            UPDATE users SET cloudbaseUid = ?, updatedAt = ?
-            WHERE id = ? AND isDeleted = 0
-            """,
-            (cloudbase_uid, now, email_user_id),
-        )
-        connection.commit()
-
-    merged = get_user_by_id(email_user_id)
-    if merged is None:
-        raise ValueError("邮箱账号不存在")
-    return merged
 
 
 def save_report(report: Report) -> Report:

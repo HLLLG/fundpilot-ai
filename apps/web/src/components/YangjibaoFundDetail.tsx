@@ -223,6 +223,7 @@ export function YangjibaoFundDetail({
     sectorMeta,
     onHoldingResolved,
   });
+  const detailTargetRef = useRef(selectedHolding ?? holding);
 
   const totalAssets =
     portfolioSummary?.total_assets ??
@@ -311,15 +312,18 @@ export function YangjibaoFundDetail({
       sectorMeta,
       onHoldingResolved,
     };
+    detailTargetRef.current = selectedHolding ?? holding;
     intradayQueryRef.current = intradayQuery;
     intradayFallbackQueryRef.current = intradayFallbackQuery;
   }, [
     activeHolding,
+    holding,
     holdings,
     intradayFallbackQuery,
     intradayQuery,
     onHoldingResolved,
     portfolioSummary,
+    selectedHolding,
     sectorMeta,
   ]);
 
@@ -432,8 +436,9 @@ export function YangjibaoFundDetail({
   useEffect(() => {
     let cancelled = false;
     const inputs = detailInputsRef.current;
-    const fundCode = selectedHolding?.fund_code;
-    const resolvedIndex = findHoldingIndex(inputs.holdings, holding);
+    const detailTarget = detailTargetRef.current;
+    const fundCode = detailTarget?.fund_code;
+    const resolvedIndex = findHoldingIndex(inputs.holdings, detailTarget);
     const detailIndex = resolvedIndex >= 0 ? resolvedIndex : holdingIndex;
     const cachedDetail = readHoldingDetailCache(userId, fundCode);
 
@@ -461,7 +466,7 @@ export function YangjibaoFundDetail({
         }
         setDetail(result);
         const latestInputs = detailInputsRef.current;
-        const latestIndex = findHoldingIndex(latestInputs.holdings, holding);
+        const latestIndex = findHoldingIndex(latestInputs.holdings, detailTarget);
         const applyIndex = latestIndex >= 0 ? latestIndex : detailIndex;
         if (
           result.fund_code_resolved &&
@@ -484,7 +489,7 @@ export function YangjibaoFundDetail({
     return () => {
       cancelled = true;
     };
-  }, [detailRequestKey, holding, holdingIndex, selectedHolding?.fund_code, userId]);
+  }, [detailRequestKey, holdingIndex, userId]);
 
   useEffect(() => {
     if (tab !== "sector") {

@@ -115,9 +115,6 @@ class Settings(BaseSettings):
     jwt_access_expire_minutes: int = 43_200  # 30 days
     database_url: str | None = None
     cloudbase_env_id: str | None = None
-    cloudbase_custom_login_key_path: Path | None = None
-    cloudbase_api_base_url: str = "https://tcb-api.tencentcloudapi.com"
-    cloudbase_auth_dev_mode: bool = False
     # 方案 A 默认关闭：美股 Tab 仅展示指数 + 汇率，不拉 QDII 穿透估值
     us_market_qdii_enabled: bool = False
     # 主题板块后台刷新：daemon 线程时段感知（A 股活跃 20min / 休市 3h），前台只读缓存
@@ -155,15 +152,6 @@ class Settings(BaseSettings):
         except (TypeError, ValueError):
             return 0.02
         return number / 100 if number > 1 else number
-
-    @field_validator("cloudbase_custom_login_key_path", mode="before")
-    @classmethod
-    def normalize_cloudbase_key_path(cls, value: object) -> Path | None:
-        if value is None:
-            return None
-        if isinstance(value, str) and not value.strip():
-            return None
-        return Path(value)
 
     @field_validator("database_url", mode="before")
     @classmethod

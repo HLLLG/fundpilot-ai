@@ -1,7 +1,0 @@
-{
-  "navigationBarTitleText": "我的持有",
-  "usingComponents": {
-    "state-view": "/components/state-view/state-view",
-    "num-text": "/components/num-text/num-text"
-  }
-}

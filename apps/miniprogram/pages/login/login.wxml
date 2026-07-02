@@ -1,9 +1,0 @@
-<view class="page">
-  <view class="card">
-    <image class="logo" src="/images/avatar.png" mode="aspectFit" />
-    <text class="title">好基灵</text>
-    <text class="subtitle">微信登录后查看你的基金持仓</text>
-    <button class="btn" loading="{{loading}}" bindtap="onLogin">微信一键登录</button>
-    <text class="error" wx:if="{{error}}">{{error}}</text>
-  </view>
-</view>

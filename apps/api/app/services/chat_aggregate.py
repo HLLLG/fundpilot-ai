@@ -1,10 +1,9 @@
 """Pure aggregation helper for non-streaming (`/chat/sync`) endpoints.
 
-The追问 (follow-up chat) SSE generators (`stream_report_chat` and the荐基
-counterpart) ``yield`` a sequence of JSON event payloads. ``wx.request`` in the
-小程序 cannot consume ``text/event-stream`` responses, so the future
-``POST .../chat/sync`` endpoints reuse those same generators but aggregate the
-streamed events into a single JSON response on the server side.
+The follow-up chat SSE generators (`stream_report_chat` and the discovery
+counterpart) ``yield`` a sequence of JSON event payloads. Non-SSE clients can
+reuse those same generators through ``POST .../chat/sync`` endpoints by
+aggregating the streamed events into a single JSON response on the server side.
 
 ``aggregate_chat_stream`` performs that aggregation as a *pure*, importable,
 side-effect-free function so it can be unit/property tested in isolation
@@ -35,7 +34,7 @@ __all__ = ["AggregatedChat", "aggregate_chat_stream"]
 
 @dataclass
 class AggregatedChat:
-    """Result of aggregating a追问 event stream.
+    """Result of aggregating a follow-up chat event stream.
 
     Attributes:
         content: Full assistant text, the in-order concatenation of every
@@ -96,7 +95,7 @@ def _error_text(event: dict[str, Any]) -> str:
 
 
 def aggregate_chat_stream(events: Iterable[Any]) -> AggregatedChat:
-    """Aggregate a追问 event stream into a single response object.
+    """Aggregate a follow-up chat event stream into a single response object.
 
     Iterates ``events`` (a generator/iterable of追问 events), accumulating
     ``token`` content, capturing the ``done`` event's final message, and the
@@ -105,7 +104,7 @@ def aggregate_chat_stream(events: Iterable[Any]) -> AggregatedChat:
     endpoints map this to HTTP 400).
 
     Args:
-        events: Iterable of追问 events, either ``dict`` objects or JSON
+        events: Iterable of follow-up chat events, either ``dict`` objects or JSON
             string payloads as produced by the SSE generators.
 
     Returns:

@@ -15,7 +15,6 @@ _PUBLIC_EXACT = {
     "/health",
     "/api/auth/register",
     "/api/auth/login",
-    "/api/auth/wechat-login",
     "/docs",
     "/redoc",
     "/openapi.json",

@@ -1,9 +1,0 @@
-{
-  "navigationBarTitleText": "推荐基金",
-  "usingComponents": {
-    "md-view":    "../../components/md-view/md-view",
-    "state-view": "../../components/state-view/state-view",
-    "num-text":   "../../components/num-text/num-text",
-    "chat-panel": "../../components/chat-panel/chat-panel"
-  }
-}

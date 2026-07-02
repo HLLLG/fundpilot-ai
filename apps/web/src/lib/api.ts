@@ -905,24 +905,6 @@ export async function fetchCurrentUser(): Promise<AuthUser> {
   return response.json();
 }
 
-export async function bindWechatAccount(payload: {
-  cloudbaseUid?: string;
-  cloudbaseAccessToken?: string;
-  cloudbaseTicket?: string;
-}): Promise<AuthUser> {
-  const response = await apiFetch(`${API_BASE}/api/auth/bind-wechat`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    const detail = body.detail;
-    throw new Error(typeof detail === "string" ? detail : "绑定失败");
-  }
-  return response.json();
-}
-
 export type SectorQuoteMeta = {
   source: "live" | "ocr" | "manual";
   provider?: string;
@@ -1196,17 +1178,6 @@ export async function fetchDiscoverySectors(): Promise<DiscoverySectorHeat[]> {
   } finally {
     window.clearTimeout(timeoutId);
   }
-}
-
-export async function fetchSectorLabels(): Promise<string[]> {
-  const response = await apiFetch(`${API_BASE}/api/market/sector-labels`, {
-    cache: "no-store",
-  });
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  const body = await response.json();
-  return body.labels ?? [];
 }
 
 export async function fetchMarketThemeBoards(options?: {

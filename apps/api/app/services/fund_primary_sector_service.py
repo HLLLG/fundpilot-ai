@@ -2,10 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
-import time
 from datetime import datetime, timedelta, timezone
 
-from app._debug_probe import debug_log
 from app.database import (
     get_fund_primary_sector,
     get_fund_primary_sectors_global_by_codes,
@@ -505,25 +503,9 @@ def apply_primary_sector_to_holding(
     fetch_benchmark: bool = True,
     allow_name_infer: bool = True,
 ) -> Holding:
-    # #region agent log
-    _t_holding_start = time.perf_counter()
-    # #endregion
-    _result = _apply_primary_sector_to_holding_impl(
+    return _apply_primary_sector_to_holding_impl(
         holding, fetch_benchmark=fetch_benchmark, allow_name_infer=allow_name_infer
     )
-    # #region agent log
-    debug_log(
-        "fund_primary_sector_service.py:apply_primary_sector_to_holding",
-        "resolved one holding",
-        {
-            "fund_code": holding.fund_code,
-            "elapsed_ms": round((time.perf_counter() - _t_holding_start) * 1000, 1),
-            "fetch_benchmark": fetch_benchmark,
-        },
-        hypothesis_id="H1",
-    )
-    # #endregion
-    return _result
 
 
 def _apply_primary_sector_to_holding_impl(

@@ -4,26 +4,19 @@ import asyncio
 import hashlib
 import json
 import logging
-import time
 from datetime import date, datetime
 from pathlib import Path
-
-from app._debug_probe import debug_log
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
-from app.auth.cloudbase_auth import resolve_trusted_wechat_openid
 from app.auth.middleware import AuthMiddleware
-from app.auth.models import BindWechatRequest, LinkEmailRequest, LoginRequest, RegisterRequest, WechatLoginRequest
+from app.auth.models import LoginRequest, RegisterRequest
 from app.auth.service import (
-    bind_wechat_user,
     get_current_user_public,
-    link_email_account,
     login_user,
     register_user,
-    wechat_login_user,
 )
 from app.config import get_settings
 from app.request_context import get_request_user_id
@@ -213,35 +206,6 @@ def auth_me() -> dict:
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return user.model_dump()
-
-
-@app.post("/api/auth/wechat-login")
-def auth_wechat_login(body: WechatLoginRequest, request: Request) -> dict:
-    try:
-        trusted_openid = resolve_trusted_wechat_openid(request.headers)
-        result = wechat_login_user(body, trusted_wechat_openid=trusted_openid)
-    except ValueError as exc:
-        raise HTTPException(status_code=401, detail=str(exc)) from exc
-    return result.model_dump()
-
-
-@app.post("/api/auth/bind-wechat")
-def auth_bind_wechat(body: BindWechatRequest) -> dict:
-    try:
-        user = bind_wechat_user(get_request_user_id(), body)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return user.model_dump()
-
-
-@app.post("/api/auth/link-email")
-def auth_link_email(body: LinkEmailRequest) -> dict:
-    """小程序微信账号关联已有邮箱账号（需微信登录态 JWT）。"""
-    try:
-        result = link_email_account(get_request_user_id(), body)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return result.model_dump()
 
 
 @app.get("/api/reports/recommendation-accuracy")
@@ -1316,34 +1280,11 @@ def _portfolio_holdings_sync() -> dict:
             fetch_benchmark=False,
         )
 
-    _t0 = time.perf_counter()
     cached = get_cached_holdings_response()
     if cached is not None:
-        # #region agent log
-        debug_log(
-            "main.py:_portfolio_holdings_sync",
-            "cache hit, returning immediately",
-            {"elapsed_ms": round((time.perf_counter() - _t0) * 1000, 1)},
-            hypothesis_id="H4",
-        )
-        # #endregion
         return cached
 
-    _t_fast_start = time.perf_counter()
     fast_snapshot = build_fast_snapshot_holdings_response()
-    # #region agent log
-    debug_log(
-        "main.py:_portfolio_holdings_sync",
-        "build_fast_snapshot_holdings_response finished",
-        {
-            "elapsed_ms": round((time.perf_counter() - _t_fast_start) * 1000, 1),
-            "total_elapsed_ms": round((time.perf_counter() - _t0) * 1000, 1),
-            "is_none": fast_snapshot is None,
-            "holdings_count": len(fast_snapshot.get("holdings", [])) if fast_snapshot else None,
-        },
-        hypothesis_id="H1",
-    )
-    # #endregion
     if fast_snapshot is not None:
         if not save_cached_holdings_response(
             fast_snapshot,
@@ -1362,23 +1303,9 @@ def _portfolio_holdings_sync() -> dict:
         )
         return fast_snapshot
 
-    _t_slow_start = time.perf_counter()
     holdings, source, snapshot_date, refreshed_at = load_persisted_holdings(
         fetch_benchmark=False,
     )
-    # #region agent log
-    debug_log(
-        "main.py:_portfolio_holdings_sync",
-        "load_persisted_holdings (slow path) finished",
-        {
-            "elapsed_ms": round((time.perf_counter() - _t_slow_start) * 1000, 1),
-            "total_elapsed_ms": round((time.perf_counter() - _t0) * 1000, 1),
-            "holdings_count": len(holdings),
-            "source": source,
-        },
-        hypothesis_id="H4",
-    )
-    # #endregion
     payload = _response_from_holdings(
         holdings,
         source=source,

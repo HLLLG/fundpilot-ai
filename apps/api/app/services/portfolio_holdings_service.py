@@ -3,7 +3,6 @@ from __future__ import annotations
 import time
 from datetime import datetime, timezone
 
-from app._debug_probe import debug_log
 from app.database import get_most_recent_portfolio_snapshot, get_portfolio_summary, list_fund_profiles, save_portfolio_summary
 from app.models import FundProfile, Holding, PortfolioSummary
 from app.services.fund_code_resolver import reconcile_holding_fund_codes
@@ -261,14 +260,6 @@ def build_fast_snapshot_holdings_response() -> dict | None:
     from app.services.fund_primary_sector_service import repair_stale_cross_market_sectors
 
     holdings = repair_stale_cross_market_sectors(holdings)
-    # #region agent log
-    debug_log(
-        "portfolio_holdings_service.py:build_fast_snapshot_holdings_response",
-        "post-fix: skipping per-holding primary sector resolution (network round trips removed)",
-        {"holdings_count": len(holdings)},
-        hypothesis_id="H1",
-    )
-    # #endregion
     trade_date = get_effective_trade_date()
     fund_codes = [
         holding.fund_code

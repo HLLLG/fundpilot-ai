@@ -1,3 +1,0 @@
-<!-- components/num-text/num-text.wxml -->
-<!-- 红涨绿跌着色 + 千分位 + 正值「+」前缀。tone 由 utils/format.js 判定。Req 1.6 -->
-<text class="num-text u-num num-text--{{tone}} {{isPlaceholder ? 'num-text--placeholder' : ''}}">{{text}}</text>

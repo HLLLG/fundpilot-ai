@@ -89,11 +89,6 @@ export function UserMenu({ onNavigate }: UserMenuProps) {
           >
             <Settings size={16} className="text-blue-600" />
             账号设置
-            {user?.wechatBound ? null : (
-              <span className="ml-auto rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700">
-                未绑微信
-              </span>
-            )}
           </button>
           <button
             type="button"

@@ -7,7 +7,6 @@ export type AuthUser = {
   userAccount: string;
   bio: string;
   avatarUrl: string;
-  wechatBound?: boolean;
 };
 
 export type AuthSession = {
@@ -29,8 +28,4 @@ export function saveAccessToken(token: string): void {
 
 export function clearAccessToken(): void {
   localStorage.removeItem(TOKEN_KEY);
-}
-
-export function isAuthenticated(): boolean {
-  return Boolean(getAccessToken());
 }
