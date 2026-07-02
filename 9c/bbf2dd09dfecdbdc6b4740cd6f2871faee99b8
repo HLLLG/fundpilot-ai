@@ -1,0 +1,34 @@
+apps/api/app/services/analyze_streaming.py
+  s_e11a61f1aeb406::t_0d5ee7d2a128d6 37,49-51
+  s_e11a61f1aeb406::t_cffd1a8860510a 163-173,175-178
+apps/api/app/services/discovery_streaming.py
+  s_e11a61f1aeb406::t_161253600a74ef 38,43-46
+  s_e11a61f1aeb406::t_07e87592a5a9c9 235-245,247-250
+apps/api/tests/test_streaming_heartbeat.py
+  s_e11a61f1aeb406::t_540cede417affc 1-80
+apps/api/app/services/streaming_heartbeat.py
+  s_e11a61f1aeb406::t_8dcf4342fb722b 1-72
+apps/api/tests/test_discovery_streaming.py
+  s_e11a61f1aeb406::t_ddcc5863f5025d 393-432
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.26-trip",
+  "base_commit_sha": "9cbbf2dd09dfecdbdc6b4740cd6f2871faee99b8",
+  "prompts": {},
+  "humans": {
+    "h_375fc341ff3baa": {
+      "author": "hegl <HLLLG@github.com>"
+    }
+  },
+  "sessions": {
+    "s_e11a61f1aeb406": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "5bcbd777-ad24-4f18-ac9c-5ffdf637220f",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
