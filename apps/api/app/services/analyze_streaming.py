@@ -34,6 +34,7 @@ from app.services.news_summarizer import (
 )
 from app.services.pipeline_concurrency import run_with_request_user
 from app.services.risk import evaluate_portfolio_risk
+from app.services.streaming_heartbeat import Heartbeat, iter_with_heartbeat
 from app.services.streaming_json_parser import StreamingReportParser
 from app.services.report_judge import judge_parsed_report
 from app.services.stream_session_store import (
@@ -45,6 +46,9 @@ from app.services.stream_session_store import (
 NEWS_SUMMARY_TIMEOUT_SECONDS = 8.0
 NEWS_SUMMARY_HEARTBEAT_SECONDS = 1.0
 CONTEXT_HEARTBEAT_SECONDS = 1.0
+# 与 discovery_streaming 一致：避免 LLM 首 token 延迟过久导致 SSE 连接被网关
+# （如腾讯云开发 CloudBase，约 60s 空闲阈值）判定超时中断（ERR_ABORT_HANDLER）。
+LLM_HEARTBEAT_SECONDS = 12.0
 
 
 def stream_analysis(request: AnalysisRequest, *, user_id: int) -> Iterator[dict[str, Any]]:
@@ -156,12 +160,22 @@ def stream_analysis(request: AnalysisRequest, *, user_id: int) -> Iterator[dict[
         parsed: dict | None = None
 
         try:
-            for chunk in stream_chat_completion(
-                messages=messages,
-                model=runtime.model,
-                max_tokens=settings.deepseek_max_tokens_report,
-                response_format={"type": "json_object"},
+            for entry in iter_with_heartbeat(
+                stream_chat_completion(
+                    messages=messages,
+                    model=runtime.model,
+                    max_tokens=settings.deepseek_max_tokens_report,
+                    response_format={"type": "json_object"},
+                ),
+                heartbeat_seconds=LLM_HEARTBEAT_SECONDS,
+                heartbeat_factory=lambda: _emit_stage(
+                    session.session_id, "generating", "AI 分析中…", started_at=started_at
+                ),
             ):
+                if isinstance(entry, Heartbeat):
+                    yield entry.value
+                    continue
+                chunk = entry
                 all_chunks.append(chunk)
                 yield {"type": "token", "content": chunk}
                 for partial in parser.feed(chunk):

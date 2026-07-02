@@ -35,10 +35,15 @@ from app.services.news_service import NewsService
 from app.services.news_summarizer import summarize_all_topics
 from app.services.pipeline_concurrency import run_with_request_user
 from app.services.risk import resolve_weight_denominator
+from app.services.streaming_heartbeat import Heartbeat, iter_with_heartbeat
 from app.services.streaming_json_parser import StreamingReportParser
 from app.services.discovery_payload import append_output_requirements_to_system, build_user_payload
 
 PREP_HEARTBEAT_SECONDS = 1.0
+# LLM 首个 token 到达前若长时间无输出，网关（如腾讯云开发 CloudBase）会在 SSE
+# 连接空闲约 60s 后主动断开（ERR_ABORT_HANDLER）。深度模式下模型思考耗时可能
+# 逼近甚至超过该阈值，因此需要更短的心跳间隔持续产出字节，防止连接被判定空闲。
+LLM_HEARTBEAT_SECONDS = 12.0
 
 
 def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dict[str, Any]]:
@@ -227,12 +232,22 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
         all_chunks: list[str] = []
 
         try:
-            for chunk in stream_chat_completion(
-                messages=messages,
-                model=runtime.model,
-                max_tokens=settings.deepseek_max_tokens_report,
-                response_format={"type": "json_object"},
+            for entry in iter_with_heartbeat(
+                stream_chat_completion(
+                    messages=messages,
+                    model=runtime.model,
+                    max_tokens=settings.deepseek_max_tokens_report,
+                    response_format={"type": "json_object"},
+                ),
+                heartbeat_seconds=LLM_HEARTBEAT_SECONDS,
+                heartbeat_factory=lambda: _stage(
+                    "generating", "AI 分析中…", started_at=started_at
+                ),
             ):
+                if isinstance(entry, Heartbeat):
+                    yield entry.value
+                    continue
+                chunk = entry
                 all_chunks.append(chunk)
                 yield {"type": "token", "content": chunk}
                 for partial in parser.feed(chunk):

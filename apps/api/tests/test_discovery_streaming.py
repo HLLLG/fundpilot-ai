@@ -390,3 +390,43 @@ def test_stream_discovery_emits_heartbeat_while_waiting_for_slow_candidates(
 
     assert events[-1]["type"] == "done"
     assert len(candidate_stages) >= 2
+
+
+def test_stream_discovery_emits_heartbeat_while_waiting_for_slow_llm_first_token(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """LLM 首个 token 迟迟不到时应持续产出心跳事件，避免 SSE 连接因空闲被
+    网关（如腾讯云开发 CloudBase）判定超时并强制断开（ERR_ABORT_HANDLER）。
+    """
+    monkeypatch.setenv("FUND_AI_DEEPSEEK_API_KEY", _FAKE_DEEPSEEK_KEY)
+    refresh_settings()
+    _patch_pipeline(monkeypatch)
+    monkeypatch.setattr("app.services.discovery_streaming.LLM_HEARTBEAT_SECONDS", 0.02)
+
+    def slow_first_token_stream(**kwargs):
+        time.sleep(0.08)
+        yield '{"title":"t","summary":"s","recommendations":[],"caveats":[]}'
+
+    monkeypatch.setattr(
+        "app.services.discovery_streaming.stream_chat_completion",
+        slow_first_token_stream,
+    )
+    monkeypatch.setattr(
+        "app.services.discovery_streaming.build_discovery_report_from_parsed",
+        lambda parsed, **kwargs: MagicMock(
+            id="heartbeat-llm-1",
+            model_dump=lambda mode="json": {"id": "heartbeat-llm-1"},
+        ),
+    )
+
+    events = list(stream_discovery(_request(), user_id=1))
+    generating_stages = [
+        event for event in events
+        if event.get("type") == "stage" and event.get("stage") == "generating"
+    ]
+
+    assert events[-1]["type"] == "done"
+    assert len(generating_stages) >= 3, (
+        "预期心跳产生多条 generating 事件（正在整理荐基上下文… + 首个 AI 分析中… + "
+        "至少一次心跳补发），实际未观察到额外心跳事件"
+    )
