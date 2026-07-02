@@ -1,0 +1,37 @@
+docs/superpowers/specs/2026-07-02-ai-decision-sharpening-design.md
+  s_1e0d1aa01de2f7::t_ae6cebb70c0a89 233
+  s_1e0d1aa01de2f7::t_d2e4bab206d677 381
+  s_1e0d1aa01de2f7::t_fa10cd703d8cfd 315
+  s_1e0d1aa01de2f7::t_5322fcb36f9888 339
+  s_1e0d1aa01de2f7::t_989e32b559e880 166
+  s_1e0d1aa01de2f7::t_a68bf2a0ee00ff 383,387,389,391-393
+  s_1e0d1aa01de2f7::t_54c45233148066 1-2,4-165,167-232,234-291,293-314,316,318-324,328-338,340-349,351-366,369-372
+  s_1e0d1aa01de2f7::t_b536291381ac37 3
+  s_1e0d1aa01de2f7::t_92293fe361f535 350
+  s_1e0d1aa01de2f7::t_f076b22a388346 367-368
+  s_1e0d1aa01de2f7::t_1a4185abe94d87 373-380,382,384-386,388,390
+  s_1e0d1aa01de2f7::t_40b1152301f5d0 292
+  s_1e0d1aa01de2f7::t_413377b3c7d927 325-327
+  s_1e0d1aa01de2f7::t_1ca4fcf6e084e9 317
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.26-trip",
+  "base_commit_sha": "86d2ec3cf202bef5953aac0dec962e7b6063bc80",
+  "prompts": {},
+  "humans": {
+    "h_375fc341ff3baa": {
+      "author": "hegl <HLLLG@github.com>"
+    }
+  },
+  "sessions": {
+    "s_1e0d1aa01de2f7": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "f8c170c1-21f7-42fd-8fb6-0388034deb50",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
