@@ -159,6 +159,9 @@ export type Report = {
     sector_evidence?: string[];
     fund_evidence?: string[];
     validation_notes?: string[];
+    /** M2.3：系统计算的仓位调整建议（正=建议加仓、负=建议减仓，相对当前持仓金额）。 */
+    suggested_position_change_percent?: number | null;
+    suggested_position_change_basis?: string;
   }>;
   summary: string;
   recommendations: string[];
@@ -167,10 +170,23 @@ export type Report = {
   analysis_facts?: Record<string, unknown>;
 };
 
+/** M2.1：双向 guard 升级判定结果（decision_guard_shared.resolve_escalation_floor 的输出）。 */
+export type DecisionEscalation = {
+  min_bucket: number | null;
+  min_action_label: string;
+  reasons: string[];
+  suggested_position_change_percent: number | null;
+  basis: string;
+};
+
 export type AnalysisFactsHoldingRow = {
   fund_code?: string;
   evidence?: HoldingEvidence | null;
   sector_opportunity?: SectorOpportunity | null;
+  /** M1.3：该持仓板块「量价背离」信号的历史回测（结构与 SectorSignalBacktestSector 一致）。 */
+  flow_divergence_backtest?: SectorSignalBacktestSector | null;
+  /** M2.1：该持仓的双向 guard 升级判定（未触发时 min_bucket 为 null）。 */
+  escalation?: DecisionEscalation | null;
 };
 
 export type SectorRotationFacts = {
@@ -499,6 +515,18 @@ export type DiscoveryRecommendation = {
   sector_evidence?: string[];
   fund_evidence?: string[];
   validation_notes?: string[];
+  /** M2.3/M4：正=建议提高买入金额权重、负=建议降低（荐基语义，与日报仓位%字段对齐）。 */
+  suggested_position_change_percent?: number | null;
+  suggested_position_change_basis?: string;
+};
+
+/** M4/M5：被双向 guard 剔除的候选（不会出现在 recommendations 里）。 */
+export type EliminatedCandidate = {
+  fund_code: string;
+  fund_name: string;
+  sector_name?: string;
+  reasons: string[];
+  basis: string;
 };
 
 export type FundTypePreference = "any" | "etf_link" | "no_c_class";
@@ -579,9 +607,12 @@ export type FundDiscoveryReport = {
   recommendations: DiscoveryRecommendation[];
   discovery_facts?: {
     sector_opportunities?: DiscoverySectorOpportunity[];
+    market_breadth?: MarketBreadthSignal | null;
     [key: string]: unknown;
   };
   caveats: string[];
+  /** M4/M5：双向 guard 因证据强烈共振剔除的候选（结构化，不必解析 caveats 文案）。 */
+  eliminated_candidates?: EliminatedCandidate[];
   provider: string;
   analysis_mode?: AnalysisMode;
 };
@@ -1558,6 +1589,81 @@ export type SectorSignalBacktest = {
   summary_lines?: string[];
   message?: string;
 };
+
+/** M1.1：大盘情绪温度计（`GET /api/diagnostics/market-breadth`，全用户共享）。 */
+export type MarketBreadthSignal = {
+  available: boolean;
+  reason?: string | null;
+  message?: string | null;
+  stale?: boolean;
+  trade_date?: string;
+  breadth_percentile?: number;
+  breadth_sample_days?: number;
+  sentiment_level?: "冰点" | "低迷" | "中性" | "偏热" | "亢奋";
+  sentiment_level_change?: number | null;
+  limit_up_count?: number | null;
+  limit_down_count?: number | null;
+  limit_up_broken_ratio_percent?: number | null;
+  max_consecutive_boards?: number | null;
+  limit_pool_as_of_date?: string | null;
+  limit_pool_available?: boolean;
+  margin_balance_change_yi?: number | null;
+  margin_scope?: string | null;
+  margin_as_of_date?: string | null;
+  margin_available?: boolean;
+  interpretation?: string;
+  basis?: string;
+};
+
+export async function fetchMarketBreadth(): Promise<MarketBreadthSignal> {
+  const response = await apiFetch(`${API_BASE}/api/diagnostics/market-breadth`, {
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+/** M6.3：灰度复盘摘要（`GET /api/diagnostics/shadow-escalation-digest`）。 */
+export type ShadowEscalationOutcomeItem = {
+  fund_code?: string;
+  sector_label?: string | null;
+  would_be_action?: string;
+  actual_daily_return_percent?: number | null;
+  aligned?: boolean;
+};
+
+export type ShadowEscalationDigest = {
+  available: boolean;
+  /** 当前 FUND_AI_DECISION_ESCALATION_MODE 取值；仅 "shadow" 时该卡片才有意义展示。 */
+  escalation_mode?: "shadow" | "enforced";
+  lookback_days?: number;
+  report_count?: number;
+  discovery_report_count?: number;
+  trigger_count: number;
+  by_sector?: Record<string, number>;
+  by_would_be_action?: Record<string, number>;
+  outcomes?: {
+    verified_count: number;
+    aligned_count: number;
+    items: ShadowEscalationOutcomeItem[];
+  };
+  summary?: string;
+};
+
+export async function fetchShadowEscalationDigest(
+  days = 7,
+): Promise<ShadowEscalationDigest> {
+  const response = await apiFetch(
+    `${API_BASE}/api/diagnostics/shadow-escalation-digest?days=${days}`,
+    { cache: "no-store" },
+  );
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
 
 export async function fetchSectorSignalBacktest(
   days = 120,

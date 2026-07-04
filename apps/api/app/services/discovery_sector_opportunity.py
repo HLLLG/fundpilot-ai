@@ -9,6 +9,7 @@ from __future__ import annotations
 from app.services.sector_opportunity_scoring import (
     MOMENTUM_TRACK,
     SETUP_TRACK,
+    build_sector_divergence_map_for_opportunities,
     build_sector_flow_map_for_opportunities,
     describe_sector_opportunity,
     select_sector_opportunities,
@@ -17,6 +18,7 @@ from app.services.sector_opportunity_scoring import (
 __all__ = [
     "MOMENTUM_TRACK",
     "SETUP_TRACK",
+    "build_sector_divergence_map_for_opportunities",
     "build_sector_flow_map_for_opportunities",
     "describe_sector_opportunity",
     "select_sector_opportunities",

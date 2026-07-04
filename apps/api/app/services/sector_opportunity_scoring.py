@@ -45,6 +45,7 @@ def select_sector_opportunities(
     sector_heat: list[dict],
     *,
     sector_flow_by_label: dict[str, dict] | None = None,
+    sector_divergence_by_label: dict[str, dict] | None = None,
     focus_sectors: list[str] | None = None,
     max_total: int = 8,
     momentum_slots: int = 4,
@@ -52,12 +53,14 @@ def select_sector_opportunities(
     max_per_group: int = 2,
 ) -> list[dict[str, Any]]:
     flow_by_label = sector_flow_by_label or {}
+    divergence_by_label = sector_divergence_by_label or {}
     focus = {str(label).strip() for label in (focus_sectors or []) if str(label).strip()}
     scored = [
         _score_row(
             row,
             flow_by_label.get(str(row.get("sector_label") or "").strip()),
             focus,
+            divergence_backtest=divergence_by_label.get(str(row.get("sector_label") or "").strip()),
         )
         for row in sector_heat
     ]
@@ -142,11 +145,63 @@ def build_sector_flow_map_for_opportunities(
     return result
 
 
+def build_sector_divergence_map_for_opportunities(
+    sector_labels: list[str],
+    *,
+    total_timeout_seconds: float = 6.0,
+    max_workers: int = 4,
+) -> dict[str, dict]:
+    """并发跑量价背离回测（M1.3），供 `_confidence` 升级判定使用。
+
+    比 `build_sector_flow_map_for_opportunities` 更重（涉及 K 线 + 完整资金流历史序列 +
+    T→T+1 循环，而非单次资金流上下文查询），因此默认更低的 `max_workers`；结果本身有
+    24h 缓存（见 `sector_flow_divergence_backtest.build_sector_flow_divergence_backtest`），
+    该函数只是把「按需并发调用 + 总预算超时」这层封装起来，任一板块超时/失败都不影响其他
+    板块，也不阻塞板块机会打分主流程（best-effort）。
+    """
+    from app.services.sector_flow_divergence_backtest import (
+        build_sector_flow_divergence_backtest,
+    )
+
+    labels = _unique_labels(sector_labels)
+    if not labels:
+        return {}
+
+    def load(label: str) -> tuple[str, dict | None]:
+        try:
+            result = build_sector_flow_divergence_backtest(label)
+        except Exception:  # noqa: BLE001 - divergence backtest is best-effort
+            return label, None
+        return label, result if result and result.get("by_rule") else None
+
+    result: dict[str, dict] = {}
+    executor = ThreadPoolExecutor(
+        max_workers=max(1, min(max_workers, len(labels))),
+        thread_name_prefix="sector-opportunity-divergence",
+    )
+    futures = [executor.submit(load, label) for label in labels]
+    try:
+        done, pending = wait(futures, timeout=max(0.0, total_timeout_seconds))
+        for future in pending:
+            future.cancel()
+        for future in done:
+            try:
+                label, divergence = future.result()
+            except Exception:
+                continue
+            if divergence:
+                result[label] = divergence
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
+    return result
+
+
 def describe_sector_opportunity(
     row: dict,
     flow: dict | None,
     *,
     focus: set[str] | None = None,
+    divergence_backtest: dict | None = None,
 ) -> dict[str, Any] | None:
     """给单个板块的方向判断，即使该板块暂不构成「机会」也会返回结果。
 
@@ -154,16 +209,23 @@ def describe_sector_opportunity(
     分数不够或资金背离而整行丢弃——供「本来就持有该板块」的场景使用（日报），需要对已持有
     的方向给出判断，而不是只挑「值得关注的新方向」（荐基）。返回的 `opportunity_available`
     标注该板块当前是否构成一个值得加仓的机会；为 False 时仅作方向参考，不应作为加仓依据。
+
+    `divergence_backtest`（M1.4 新增）：该板块的量价背离历史回测结果（见
+    `sector_flow_divergence_backtest.build_sector_flow_divergence_backtest`），传入时若
+    证据极强（distribution 规则 significant=True 且 edge_percent>=10）confidence 可升至
+    「高」；不传入时行为与此前完全一致（confidence 上限仍为「中」）。
     """
-    return _compute_opportunity_row(row, flow, focus or set())
+    return _compute_opportunity_row(row, flow, focus or set(), divergence_backtest)
 
 
 def _score_row(
     row: dict,
     flow: dict | None,
     focus: set[str],
+    *,
+    divergence_backtest: dict | None = None,
 ) -> dict[str, Any] | None:
-    result = _compute_opportunity_row(row, flow, focus)
+    result = _compute_opportunity_row(row, flow, focus, divergence_backtest)
     if result is None or not result["opportunity_available"]:
         return None
     return {key: value for key, value in result.items() if key != "opportunity_available"}
@@ -173,6 +235,7 @@ def _compute_opportunity_row(
     row: dict,
     flow: dict | None,
     focus: set[str],
+    divergence_backtest: dict | None = None,
 ) -> dict[str, Any] | None:
     label = str(row.get("sector_label") or "").strip()
     if not label:
@@ -242,7 +305,11 @@ def _compute_opportunity_row(
         "sector_label": label,
         "track": track,
         "score": round(max(momentum_score, setup_score), 2),
-        "confidence": "不足" if disqualified else _confidence(flow, date_aligned, penalties),
+        "confidence": (
+            "不足"
+            if disqualified
+            else _confidence(flow, date_aligned, penalties, divergence_backtest)
+        ),
         "entry_hint": _entry_hint(track, change_1d, change_5d, penalties),
         "evidence": _unique_evidence(evidence)[:5],
         "penalties": penalties[:5],
@@ -297,14 +364,51 @@ def _entry_hint(
     return "可分批关注"
 
 
-def _confidence(flow: dict, date_aligned: bool, penalties: list[str]) -> str:
+_DIVERGENCE_EDGE_HIGH_THRESHOLD = 10.0
+
+
+def _confidence(
+    flow: dict,
+    date_aligned: bool,
+    penalties: list[str],
+    divergence_backtest: dict | None = None,
+) -> str:
+    """板块方向置信度。
+
+    M1.4 修复：此前该函数只有「低」（数据不可用/未对齐）与「中」（其余全部情况）两档，
+    机制上就把"高"档位堵死了——无论证据多强都封顶在"中"，prompt 规则要求"中"只能措辞
+    保留、不能作主理由，导致"果断"在架构层面不可能发生。现在当量价背离历史回测
+    （`sector_flow_divergence_backtest.py`，M1.3）证据极强时允许升到"高"：
+    证据强度决定档位，而不是机制性封顶。
+    """
     if not flow or not flow.get("available"):
         return "低"
     if not date_aligned:
         return "低"
-    if penalties:
-        return "中"
+    if _divergence_evidence_is_strong(divergence_backtest, penalties):
+        return "高"
     return "中"
+
+
+def _divergence_evidence_is_strong(divergence_backtest: dict | None, penalties: list[str]) -> bool:
+    if not divergence_backtest:
+        return False
+    by_rule = divergence_backtest.get("by_rule")
+    if not isinstance(by_rule, dict):
+        return False
+    # 「资金背离或持续流出」命中时（distribution 模式），用 distribution 规则的历史回测
+    # 证据判定；否则（当前方向偏多头）用 accumulation 规则。两者结构一致（均来自
+    # signal_backtest_stats.finalize_bucket），只是预测方向相反。
+    rule_id = (
+        "flow_price_distribution"
+        if "资金背离或持续流出" in penalties
+        else "flow_price_accumulation"
+    )
+    bucket = by_rule.get(rule_id)
+    if not isinstance(bucket, dict):
+        return False
+    edge = bucket.get("edge_percent")
+    return bool(bucket.get("significant")) and edge is not None and float(edge) >= _DIVERGENCE_EDGE_HIGH_THRESHOLD
 
 
 def _setup_price_score(change_1d: float | None, change_5d: float | None) -> float:

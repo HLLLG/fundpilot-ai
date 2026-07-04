@@ -278,7 +278,7 @@ def apply_confirmed_holdings(
         else _fast_overlay_cached_official_nav(holding, trade_date)
         for holding in processed
     ]
-    from app.services.holding_estimates import _ocr_holding_profit_is_cumulative
+    from app.database import get_fund_profile_by_code, save_fund_profile
 
     pinned: list[Holding] = []
     for holding in processed:
@@ -286,11 +286,17 @@ def apply_confirmed_holdings(
             "settled_holding_amount": holding.holding_amount,
             "holding_amount": holding.holding_amount,
         }
-        if (
-            holding.daily_return_percent_source == "official_nav"
-            or _ocr_holding_profit_is_cumulative(holding)
-        ):
+        if _holding_has_ocr_official_daily(holding):
             patch["amount_includes_today"] = True
+            # 同步标记「本交易日已结算」，避免下一交易日 sync 把
+            # amount_includes_today 从快照里原样带入误判为「还是今天」。
+            code = (holding.fund_code or "").strip()
+            if code and code != "000000":
+                profile = get_fund_profile_by_code(code)
+                if profile is not None:
+                    save_fund_profile(
+                        profile.model_copy(update={"profit_settled_trade_date": trade_date})
+                    )
         pinned.append(holding.model_copy(update=patch))
     processed = pinned
     processed = enrich_holdings_estimates(processed)

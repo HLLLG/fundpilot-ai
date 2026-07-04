@@ -76,7 +76,7 @@ OCR 确认、`apply-holdings` 回写、`refresh-sector-quotes` 期间使用 `mer
 | `holding_profit` | 持有收益（累计） | OCR 含当日累计值时 `_ocr_holding_profit_is_cumulative` 为真，**禁止** `_repair_corrupted_settled_profit` 用档案污染值覆盖 |
 | `holding_return_percent` | 持有收益率 | 由 `holding_profit / holding_cost` 推导；官方净值公布后随结算重算 |
 
-**官方净值结算后：** `holding_amount_sync` 滚入 `settled_holding_amount` 时同步 `_profit_patch_from_rolled_settled`，持有收益/率与支付宝列表对齐；OCR 路径 `skip_roll=True` 锁定 OCR 金额直至下一结算窗口。
+**官方净值结算后：** `holding_amount_sync` 滚入 `settled_holding_amount` 时同步 `_profit_patch_from_rolled_settled`（`profit = new_settled − profile.holding_cost×shares`）；同日已结算幂等跳过认 `FundProfile.profit_settled_trade_date`；OCR 带官方日涨跌确认时写入该日期。展示层档案污染仍由 `_repair_corrupted_settled_profit` 兜底。
 
 ## OCR 确认提速（2026-06-30）
 

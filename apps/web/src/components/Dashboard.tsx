@@ -98,6 +98,8 @@ import { RecommendationAccuracyPanel } from "@/components/RecommendationAccuracy
 import { SectorSignalBacktestPanel } from "@/components/SectorSignalBacktestPanel";
 import { RiskControls } from "@/components/RiskControls";
 import { DiagnosticsAccordion } from "@/components/DiagnosticsAccordion";
+import { MarketBreadthGauge } from "@/components/MarketBreadthGauge";
+import { ShadowEscalationDigestCard } from "@/components/ShadowEscalationDigestCard";
 import { FundDiscoveryPanel } from "@/components/FundDiscoveryPanel";
 import { FocusSectorToast } from "@/components/FocusSectorToast";
 import { MarketTab } from "@/components/MarketTab";
@@ -1346,6 +1348,8 @@ export function Dashboard() {
                 </div>
               ) : null}
               <DiagnosticsAccordion>
+                <MarketBreadthGauge compact />
+                <ShadowEscalationDigestCard />
                 <NewsPreviewPanel holdings={displayableHoldings(holdings)} profile={profile} />
                 <RecommendationAccuracyPanel />
                 <SectorSignalBacktestPanel

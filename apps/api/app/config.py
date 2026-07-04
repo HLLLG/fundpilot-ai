@@ -4,6 +4,8 @@ import os
 from functools import lru_cache
 from pathlib import Path
 
+from typing import Literal
+
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -140,6 +142,15 @@ class Settings(BaseSettings):
     fund_primary_sector_backfill_startup_delay_seconds: int = 90
     # 组合风险指标无风险利率（年化，小数；夏普/索提诺/Alpha 使用）
     risk_free_rate: float = 0.02
+    # 大盘情绪温度计（M1.1）：新高/新低家数（可回测校准）+ 涨跌停/炸板（当日快照）+ 两融环比
+    market_breadth_enabled: bool = True
+    market_breadth_timeout_seconds: float = 4.0
+    # 量价背离信号回测（M1.3）
+    flow_divergence_backtest_enabled: bool = True
+    # M6：双向 guard 灰度开关。shadow（默认）——M2.1/M4 的升级判定只标注"若启用会被
+    # 升级为 XX"，不真正改变最终 action/剔除候选；enforced——真正生效。观察约 1 个月
+    # （20 个交易日）后由用户本人决定是否切换，见设计文档第 10 节。
+    decision_escalation_mode: Literal["shadow", "enforced"] = "shadow"
 
     @field_validator("risk_free_rate", mode="before")
     @classmethod

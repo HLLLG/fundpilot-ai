@@ -274,7 +274,7 @@ docker compose -f docker-compose.cloud.yml up --build
 
 ## 验证
 
-后端单元测试（约 **304** 项，本地串行 ~28s；默认离线 stub，不访问东财/AkShare/MySQL）：
+后端单元测试（约 **539** 项，本地串行 ~78s；默认离线 stub，不访问东财/AkShare/MySQL）：
 
 ```bash
 cd /d/Code/HL_Project/fundpilot-ai/apps/api

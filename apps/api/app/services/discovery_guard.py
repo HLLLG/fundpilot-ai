@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import re
 
-from app.models import DiscoveryRecommendation, InvestorProfile, NewsItem, TopicBrief
+from app.config import get_settings
+from app.models import DiscoveryRecommendation, EliminatedCandidate, InvestorProfile, NewsItem, TopicBrief
 from app.services.decision_guard_shared import (
     append_unique as _append_unique,
     as_float as _as_float,
@@ -11,6 +12,7 @@ from app.services.decision_guard_shared import (
     humanize_evidence_text as _humanize_evidence_text,
     normalize_confidence_label as _normalize_confidence,
     pattern_label as _pattern_label,
+    resolve_discovery_escalation,
     track_label as _track_label,
 )
 from app.services.news_citation import _collect_citable_titles, _matches_known_title
@@ -28,7 +30,7 @@ def apply_discovery_guards(
     market_news: list[NewsItem] | None = None,
     topic_briefs: list[TopicBrief] | None = None,
     scan_mode: str = "full_market",
-) -> tuple[list[DiscoveryRecommendation], list[str]]:
+) -> tuple[list[DiscoveryRecommendation], list[str], list[EliminatedCandidate]]:
     allowed_codes = {str(item.get("fund_code", "")).zfill(6) for item in candidate_pool}
     pool_by_code = {
         str(item.get("fund_code", "")).zfill(6): item for item in candidate_pool
@@ -41,7 +43,14 @@ def apply_discovery_guards(
     titles = _collect_citable_titles(market_news or [], topic_briefs or [])
     caveats: list[str] = []
     guarded: list[DiscoveryRecommendation] = []
+    eliminated: list[EliminatedCandidate] = []
     allocated_amount = 0.0
+    # M6：与日报 analysis_facts.holdings[].escalation 同一思路——把每只候选"是否触发了
+    # M4 双向升级判定"的结构化结果记录下来（无论 shadow/enforced 都记录，且不管最终
+    # 是否真的生效），供 shadow_escalation_digest.py 聚合复盘读取，避免正则解析 caveats
+    # 文本。写回 discovery_facts（按引用传入，最终会随 FundDiscoveryReport.discovery_facts
+    # 一并落库），仅在真正传入了 dict 时才写（None 表示调用方本就没打算存 facts）。
+    escalation_hints: dict[str, dict] = {}
 
     for rec in recommendations:
         code = rec.fund_code.strip().zfill(6)
@@ -100,6 +109,41 @@ def apply_discovery_guards(
                 ]
 
         opportunity = opportunity_by_sector.get(copy.sector_name)
+
+        # M4 双向 guard：与日报 resolve_escalation_floor 同一套"量价背离显著"入口，
+        # 但荐基语义不同——负向共振时整条剔除候选池（而非降级动作文字），正向共振时
+        # 允许突破常规预算上限的软约束（而非日报的仓位百分比）。两个方向都要求板块
+        # 与基金质量分同时印证，只命中一个维度时交由既有的弱证据降级/常规金额上限处理。
+        escalation = resolve_discovery_escalation(
+            sector_opportunity=opportunity,
+            pool_item=pool_item,
+        )
+        if escalation.get("action"):
+            escalation_hints[code] = escalation
+        # M6：灰度开关——shadow 模式下不真正剔除/提额，只标注"若切换 enforced 会怎样"，
+        # 供 shadow_escalation_digest.py 聚合复盘（与日报 recommendation_guard.py 的
+        # 灰度处理同一套开关、同一种"仅提示不生效"的语义）。
+        enforced = get_settings().decision_escalation_mode == "enforced"
+        if escalation.get("action") == "exclude":
+            basis = str(escalation.get("basis") or "")
+            if enforced:
+                caveats.append(f"已从候选池剔除 {code}（{copy.fund_name}）：{basis}。")
+                eliminated.append(
+                    EliminatedCandidate(
+                        fund_code=code,
+                        fund_name=copy.fund_name,
+                        sector_name=copy.sector_name,
+                        reasons=list(escalation.get("reasons") or []),
+                        basis=basis,
+                    )
+                )
+                continue
+            copy.validation_notes = [
+                *copy.validation_notes,
+                f"【灰度提示，未生效】若启用新版守卫（enforced 模式），"
+                f"{code}（{copy.fund_name}）会被系统从候选池剔除：{basis}。",
+            ]
+
         if _should_downgrade_weak_evidence(copy, pool_item, opportunity):
             previous = copy.action
             copy.action = "建议关注"
@@ -107,7 +151,24 @@ def apply_discovery_guards(
             copy.points = [note, *copy.points]
             caveats.append(f"{code} 证据不足，已将动作从「{previous}」降为「建议关注」。")
 
-        max_single = budget_yuan * profile.concentration_limit_percent / 100
+        amount_boost_multiplier = 1.0
+        if escalation.get("action") == "boost":
+            basis = str(escalation.get("basis") or "")
+            if enforced:
+                amount_boost_multiplier = float(escalation.get("amount_multiplier") or 1.0)
+                copy.points = [
+                    f"量价背离与基金质量共振积极，系统已允许提高建议买入金额上限（{basis}）。",
+                    *copy.points,
+                ]
+                caveats.append(f"{code} 证据强烈支持该方向，已提高建议金额上限。")
+            else:
+                copy.validation_notes = [
+                    *copy.validation_notes,
+                    f"【灰度提示，未生效】若启用新版守卫（enforced 模式），"
+                    f"{code} 的建议买入金额上限会被系统提高：{basis}。",
+                ]
+
+        max_single = budget_yuan * profile.concentration_limit_percent / 100 * amount_boost_multiplier
         if copy.suggested_amount_yuan is not None and max_single > 0:
             if copy.suggested_amount_yuan > max_single:
                 copy.suggested_amount_yuan = round(max_single, 0)
@@ -139,7 +200,11 @@ def apply_discovery_guards(
         _humanize_recommendation_text(copy)
         guarded.append(copy)
 
-    return guarded[:5], caveats
+    if discovery_facts is not None:
+        discovery_facts["escalation_hints"] = escalation_hints
+        discovery_facts["decision_escalation_mode"] = get_settings().decision_escalation_mode
+
+    return guarded[:5], caveats, eliminated
 
 
 def _normalize_discovery_action(action: str) -> str:

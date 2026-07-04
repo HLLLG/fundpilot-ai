@@ -1,5 +1,5 @@
-import type { SectorOpportunity } from "@/lib/api";
-import { formatMetric, patternLabel, trackLabel } from "@/lib/decisionText";
+import type { SectorOpportunity, SectorSignalBacktestSector } from "@/lib/api";
+import { divergenceBacktestLines, formatMetric, patternLabel, trackLabel } from "@/lib/decisionText";
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (
@@ -14,14 +14,21 @@ type SectorOpportunityCardProps = {
   item: SectorOpportunity;
   /** Shown when the sector currently doesn't constitute an actionable opportunity (日报持仓场景). */
   unavailableHint?: string;
+  /** M1.3：该板块「量价背离」信号的历史回测（仅日报持仓场景按板块反查传入，market_top 场景通常没有）。 */
+  divergenceBacktest?: SectorSignalBacktestSector | null;
 };
 
 /**
  * Shared sector-direction card: used by 荐基 ("本次主方向") and 日报
  * ("板块轮动参考" / 持仓板块方向) so both surfaces speak the same visual language.
  */
-export function SectorOpportunityCard({ item, unavailableHint }: SectorOpportunityCardProps) {
+export function SectorOpportunityCard({
+  item,
+  unavailableHint,
+  divergenceBacktest,
+}: SectorOpportunityCardProps) {
   const isUnavailable = item.opportunity_available === false;
+  const divergenceLines = divergenceBacktestLines(divergenceBacktest);
   return (
     <div
       className={`rounded-xl border px-3 py-3 ${
@@ -60,6 +67,16 @@ export function SectorOpportunityCard({ item, unavailableHint }: SectorOpportuni
           {item.pattern_label && item.entry_hint ? " · " : ""}
           {item.entry_hint ?? ""}
         </p>
+      ) : null}
+      {divergenceLines.length ? (
+        <div className="mt-2 rounded-lg border border-blue-100 bg-blue-50/60 px-2.5 py-2">
+          <div className="text-[10px] font-bold text-blue-700">历史回测证据</div>
+          {divergenceLines.map((line) => (
+            <p key={line} className="mt-1 break-words text-xs leading-5 text-blue-900">
+              {line}
+            </p>
+          ))}
+        </div>
       ) : null}
       {isUnavailable && unavailableHint ? (
         <p className="mt-1.5 break-words text-xs leading-5 text-slate-400">{unavailableHint}</p>

@@ -20,6 +20,7 @@ import { DISCOVERY_FOCUS_CHANGED_EVENT } from "@/lib/discoveryFocusSectors";
 import { acceptUsMarketFresh, usRefreshIntervalMs } from "@/lib/usMarketOverview";
 import { useCachedFetch } from "@/lib/useCachedFetch";
 import { DipReboundRadar } from "@/components/DipReboundRadar";
+import { MarketBreadthGauge } from "@/components/MarketBreadthGauge";
 import { ThemeSectorOverview } from "@/components/ThemeSectorOverview";
 import { TradingSessionBar } from "@/components/TradingSessionBar";
 import { UsMarketOverview } from "@/components/UsMarketOverview";
@@ -229,15 +230,18 @@ export function MarketTab() {
       </div>
 
       {subTab === "themes" ? (
-        <ThemeSectorOverview
-          data={themeData}
-          loading={themeLoading && !isMarketThemeBoardUsable(themeData)}
-          revalidating={themeRevalidating}
-          onRefresh={handleRefreshTheme}
-          onViewDipFunds={handleViewDipFunds}
-          onAddFocusSector={handleToggleFocusSector}
-          focusSectors={focusSectors}
-        />
+        <>
+          <MarketBreadthGauge />
+          <ThemeSectorOverview
+            data={themeData}
+            loading={themeLoading && !isMarketThemeBoardUsable(themeData)}
+            revalidating={themeRevalidating}
+            onRefresh={handleRefreshTheme}
+            onViewDipFunds={handleViewDipFunds}
+            onAddFocusSector={handleToggleFocusSector}
+            focusSectors={focusSectors}
+          />
+        </>
       ) : null}
 
       {subTab === "dip_radar" ? (

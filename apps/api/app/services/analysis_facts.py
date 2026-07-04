@@ -19,6 +19,13 @@ from app.services.holding_metrics import (
     compute_sector_fund_gap_percent,
     holding_daily_return_is_estimated,
 )
+from app.config import get_settings
+from app.services.decision_guard_shared import (
+    ACTION_BUCKET_CLEAR_ALL,
+    ACTION_BUCKET_DEEP_REDUCE,
+    resolve_escalation_floor,
+)
+from app.services.market_breadth_signal import build_market_breadth_signal
 from app.services.market_flow_client import build_market_flow_context
 from app.services.news_freshness import build_news_pipeline_context
 from app.services.report_sector_opportunity import build_holding_sector_opportunity_context
@@ -47,6 +54,14 @@ SECTOR_INTRADAY_TIMEOUT_SECONDS = 4.0
 MARKET_FLOW_TIMEOUT_SECONDS = 3.0
 GUARD_POLICY_TIMEOUT_SECONDS = 2.0
 SECTOR_OPPORTUNITY_TIMEOUT_SECONDS = 5.0
+MARKET_BREADTH_TIMEOUT_SECONDS = 3.0
+
+# M2.2：动作词表基础 5 档（始终出现）；「大幅减仓评估」「清仓评估」按 M2.1 触发矩阵
+# 门槛动态追加——没有任一持仓触发对应档位时，prompt 里根本不出现这两个选项
+# （设计原文："避免被滥用/误用吓退用户"）。
+_BASE_ALLOWED_ACTIONS = ("观察", "暂停追涨", "分批加仓", "减仓评估", "风控复核")
+_ESCALATION_DEEP_REDUCE_THRESHOLD = ACTION_BUCKET_DEEP_REDUCE
+_ESCALATION_CLEAR_ALL_THRESHOLD = ACTION_BUCKET_CLEAR_ALL
 
 
 def _build_sector_intraday_map(holdings: list[Holding]) -> dict[str, dict]:
@@ -163,6 +178,14 @@ def _market_flow_unavailable(reason: str) -> dict[str, Any]:
     }
 
 
+def _market_breadth_unavailable(reason: str) -> dict[str, Any]:
+    return {
+        "available": False,
+        "reason": reason,
+        "message": "大盘情绪温度计未在预算内完成，日报已按基础事实继续。",
+    }
+
+
 def _sector_opportunity_unavailable(reason: str) -> dict[str, Any]:
     return {
         "available": False,
@@ -180,6 +203,58 @@ def _guard_policy_unavailable() -> dict[str, Any]:
         "reason": "guard_policy_timeout",
         "backtest_summary_lines": [],
     }
+
+
+def _attach_escalation_to_holdings(
+    per_fund: list[dict],
+    *,
+    market_breadth: dict | None,
+    profile: InvestorProfile,
+) -> None:
+    """给每个持仓行挂上 M2.1 的双向 guard 升级判定结果（key: `escalation`）。
+
+    仅当该行同时具备 `sector_opportunity` 与 `evidence` 时才有意义调用——两者缺失时
+    `resolve_escalation_floor` 本身已能优雅降级返回 `min_bucket=None`（详见该函数
+    docstring），这里不做额外短路，保持单一判定入口。
+    """
+    for row in per_fund:
+        row["escalation"] = resolve_escalation_floor(
+            sector_opportunity=row.get("sector_opportunity"),
+            evidence=row.get("evidence"),
+            market_breadth=market_breadth,
+            over_concentration=bool(row.get("over_concentration")),
+            has_unrealized_gain=(row.get("estimated_holding_return_percent") or 0) > 0,
+            decision_style=profile.decision_style,
+        )
+
+
+def _extra_allowed_actions_for_escalation(per_fund: list[dict]) -> list[str]:
+    """按各持仓的 `escalation.min_bucket` 判断是否需要向 `allowed_actions` 追加
+    「大幅减仓评估」「清仓评估」两个新动作词（M2.2）。
+
+    M6：shadow 灰度期间恒返回空列表——这两个词本身就是本次升级要灰度验证的机制
+    之一，如果 shadow 模式下仍然把它们递给模型选，模型选中后 recommendation_guard.py
+    虽然不会强制生效（见该文件的 shadow 分支），但也不应该让模型在草案阶段就看到、
+    选择这两个新词——灰度观察期的产品意图是"系统内部安静地算、只旁注提示"，不是
+    "开放新选项但事后不生效"。拆成独立函数是为了让 shadow 门控可以脱离完整
+    `build_analysis_facts` 调用链单独测试（原逻辑内联在函数体内、依赖只有在真实
+    facts 组装流程中才会被填充的字段，难以在单测里精确构造）。
+    """
+    if get_settings().decision_escalation_mode != "enforced":
+        return []
+    if any(
+        (row.get("escalation") or {}).get("min_bucket") is not None
+        and row["escalation"]["min_bucket"] <= _ESCALATION_CLEAR_ALL_THRESHOLD
+        for row in per_fund
+    ):
+        return ["清仓评估", "大幅减仓评估"]
+    if any(
+        (row.get("escalation") or {}).get("min_bucket") is not None
+        and row["escalation"]["min_bucket"] <= _ESCALATION_DEEP_REDUCE_THRESHOLD
+        for row in per_fund
+    ):
+        return ["大幅减仓评估"]
+    return []
 
 
 def _sector_flow_timeout_map(holdings: list[Holding]) -> dict[str, dict[str, Any]]:
@@ -261,8 +336,9 @@ def build_analysis_facts(
     snapshot_by_code = {item.fund_code: item for item in snapshots}
     sector_labels = sector_labels_from_holdings(holdings)
     market_flow = None
+    market_breadth = None
     if budget_enhancements:
-        executor = ThreadPoolExecutor(max_workers=6, thread_name_prefix="analysis-facts-budget")
+        executor = ThreadPoolExecutor(max_workers=7, thread_name_prefix="analysis-facts-budget")
         try:
             signal_future = _submit_enhancement(
                 executor,
@@ -290,6 +366,10 @@ def build_analysis_facts(
             sector_opportunity_future = _submit_enhancement(
                 executor,
                 lambda: build_holding_sector_opportunity_context(holdings),
+            )
+            market_breadth_future = _submit_enhancement(
+                executor,
+                lambda: build_market_breadth_signal(effective_trade_date),
             )
             signal_backtest = _enhancement_result(
                 signal_future,
@@ -320,6 +400,11 @@ def build_analysis_facts(
                 sector_opportunity_future,
                 timeout_seconds=SECTOR_OPPORTUNITY_TIMEOUT_SECONDS,
                 fallback=_sector_opportunity_unavailable("timeout"),
+            )
+            market_breadth = _enhancement_result(
+                market_breadth_future,
+                timeout_seconds=MARKET_BREADTH_TIMEOUT_SECONDS,
+                fallback=_market_breadth_unavailable("timeout"),
             )
         finally:
             executor.shutdown(wait=False, cancel_futures=True)
@@ -398,6 +483,9 @@ def build_analysis_facts(
                 "sector_opportunity": (sector_opportunity.get("held") or {}).get(
                     normalize_sector_label(holding.sector_name)
                 ),
+                "flow_divergence_backtest": (sector_opportunity.get("divergence_backtest") or {}).get(
+                    normalize_sector_label(holding.sector_name)
+                ),
             }
         if for_llm:
             row["sector_fund_gap_percent"] = compute_sector_fund_gap_percent(holding)
@@ -440,6 +528,14 @@ def build_analysis_facts(
             "为 true 时可作为「继续持有/适度加仓」的辅助论据，但仍需结合 evidence 与风险指标。"
             "sector_rotation.market_top 是当前全市场机会分最高的方向（不含已持有板块），"
             "仅用于提示「是否存在更强的轮动方向」，不得单独作为清仓已持仓位、追高换仓的理由。"
+            "market_breadth 是大盘情绪温度计：sentiment_level（冰点/低迷/中性/偏热/亢奋）基于"
+            "全市场创新高低家数近2年历史分布百分位自校准，可作为自上而下的风险论据；"
+            "limit_up_count/limit_down_count/limit_up_broken_ratio_percent 仅为当日快照，"
+            "不是历史回测结论，只能作辅助描述、不得单独据此下强结论。"
+            "持仓的 flow_divergence_backtest 是该持仓板块「量价背离」信号的历史回测（区别于"
+            "sector_fund_flow 的定性提示）：按各规则 significant 与 edge_percent 表述，"
+            "significant=true 且 edge_percent 越高，可信度越高；未显著或触发次数不足时"
+            "只能作提示，不得主导追涨或减仓建议。"
         ),
         "portfolio": {
             "total_amount": round(total_amount, 2),
@@ -466,7 +562,7 @@ def build_analysis_facts(
         "alerts": [alert.model_dump() for alert in risk.alerts],
         "holdings": per_fund,
         "data_freshness": _build_data_freshness(per_fund, effective_trade_date),
-        "allowed_actions": ["观察", "暂停追涨", "分批加仓", "减仓评估", "风控复核"],
+        "allowed_actions": list(_BASE_ALLOWED_ACTIONS),
         "news": build_news_pipeline_context(market_news, topic_briefs),
     }
     if session:
@@ -484,10 +580,17 @@ def build_analysis_facts(
         facts["evidence_overview"] = overview
     if budget_enhancements:
         facts["market_flow"] = market_flow or _market_flow_unavailable("timeout")
+        facts["market_breadth"] = market_breadth or _market_breadth_unavailable("timeout")
     else:
         facts["market_flow"] = build_market_flow_context(
             trade_date=effective_trade_date,
         )
+        facts["market_breadth"] = build_market_breadth_signal(effective_trade_date)
+    # M2.1/M2.2：双向 guard 升级判定——须在 market_breadth 就位后才能算，因此放在这里
+    # 而不是 per_fund 主循环内（非 budget_enhancements 路径下 market_breadth 变量在
+    # 循环执行时尚未赋值，只有 facts["market_breadth"] 在此处才是最终值）。
+    _attach_escalation_to_holdings(per_fund, market_breadth=facts["market_breadth"], profile=profile)
+    facts["allowed_actions"].extend(_extra_allowed_actions_for_escalation(per_fund))
     facts["signal_backtest"] = signal_backtest
     facts["sector_rotation"] = {
         "available": sector_opportunity.get("available", False),

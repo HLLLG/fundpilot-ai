@@ -18,6 +18,14 @@ from app.services.sector_signal_rules import (
     predict_for_rule,
     rule_label,
 )
+from app.services.signal_backtest_stats import (
+    EDGE_MIN_PERCENT,
+    FLAT_THRESHOLD as _FLAT_THRESHOLD,
+    MIN_TRIGGERS_FOR_SIGNIFICANCE,
+    baseline_prob as _baseline_prob,
+    direction_fractions as _direction_fractions,
+    finalize_bucket as _finalize_bucket,
+)
 from app.services.trade_calendar_cache import get_trade_date_set
 
 FetchSeriesFn = Callable[[str, str | None], list[DailyKlineBar]]
@@ -27,64 +35,9 @@ _BACKTEST_RESPONSE_TTL_SECONDS = 86400
 _BACKTEST_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 
 # Bug B 修复：命中率基准不是固定 50%，而是「方向感知的自然发生率」+ 统计显著性。
-MIN_TRIGGERS_FOR_SIGNIFICANCE = 30  # 触发次数太少时不下「有效」结论（可能是运气）
-EDGE_MIN_PERCENT = 5.0  # 命中率需超过基准至少这么多个百分点才算真有超额
-_FLAT_THRESHOLD = 0.3  # 与 sector_signal_rules.FLAT_THRESHOLD 对齐
-
-
-def _direction_fractions(changes: list[float]) -> tuple[float, float, float]:
-    """一组日涨跌的方向分布（up, down, flat 占比）。空集返回全 0。"""
-    if not changes:
-        return 0.0, 0.0, 0.0
-    up = down = flat = 0
-    for ch in changes:
-        if abs(ch) < _FLAT_THRESHOLD:
-            flat += 1
-        elif ch > 0:
-            up += 1
-        else:
-            down += 1
-    total = len(changes)
-    return up / total, down / total, flat / total
-
-
-def _baseline_prob(prediction: str, fracs: tuple[float, float, float]) -> float:
-    """某预测方向在随机时点上「自然命中」的概率（方向感知的 base rate）。"""
-    up, down, flat = fracs
-    if prediction == "up":
-        return up
-    if prediction == "down":
-        return down
-    if prediction == "down_or_flat":
-        return down + flat
-    return 0.0
-
-
-def _finalize_bucket(bucket: dict[str, Any]) -> None:
-    """就地补全命中率/基准/超额/显著性。
-
-    显著 = 触发次数 >= 门槛 且 命中率超过基准 > EDGE_MIN_PERCENT。
-    `beats_random` 保留为 `beats_baseline` 的向后兼容别名。
-    """
-    triggers = int(bucket.get("trigger_count") or 0)
-    if triggers <= 0:
-        bucket["hit_rate_percent"] = None
-        bucket["baseline_rate_percent"] = None
-        bucket["edge_percent"] = None
-        bucket["significant"] = False
-        bucket["beats_baseline"] = False
-        bucket["beats_random"] = False
-        return
-    hit_rate = bucket["hit_count"] / triggers * 100
-    baseline = float(bucket.get("expected_random_hits") or 0.0) / triggers * 100
-    edge = hit_rate - baseline
-    significant = triggers >= MIN_TRIGGERS_FOR_SIGNIFICANCE and edge > EDGE_MIN_PERCENT
-    bucket["hit_rate_percent"] = round(hit_rate, 1)
-    bucket["baseline_rate_percent"] = round(baseline, 1)
-    bucket["edge_percent"] = round(edge, 1)
-    bucket["significant"] = significant
-    bucket["beats_baseline"] = significant
-    bucket["beats_random"] = significant
+# 2026-07：常量与 _direction_fractions/_baseline_prob/_finalize_bucket 的具体实现已抽到
+# signal_backtest_stats.py（供 M1.3 量价背离回测复用同一套口径），此处保留同名导入以
+# 向后兼容既有引用（无外部模块引用，纯防御）。
 
 
 def _backtest_cache_key(

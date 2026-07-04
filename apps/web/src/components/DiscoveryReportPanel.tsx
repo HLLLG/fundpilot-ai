@@ -1,5 +1,6 @@
 "use client";
 
+import { TrendingDown, TrendingUp } from "lucide-react";
 import type { DiscoveryRecommendation, FundDiscoveryReport } from "@/lib/api";
 import { actionBadgeClass } from "@/lib/actionStyles";
 import { translateEvidenceText } from "@/lib/decisionText";
@@ -8,6 +9,35 @@ import { DiscoveryCandidatePoolPanel } from "@/components/DiscoveryCandidatePool
 import { DiscoveryChatPanel } from "@/components/DiscoveryChatPanel";
 import { DiscoveryOutcomesPanel } from "@/components/DiscoveryOutcomesPanel";
 import { SectorOpportunityCard } from "@/components/SectorOpportunityCard";
+
+function DiscoveryPositionChangeBadge({
+  percent,
+  basis,
+}: {
+  percent: number;
+  basis?: string | null;
+}) {
+  const isBoost = percent > 0;
+  const Icon = isBoost ? TrendingUp : TrendingDown;
+  const toneClass = isBoost
+    ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+    : "border-rose-200 bg-rose-50 text-rose-900";
+  return (
+    <div className={`mt-2 flex items-start gap-2 rounded-xl border px-3 py-2 ${toneClass}`}>
+      <Icon size={18} className="mt-0.5 flex-shrink-0" />
+      <div className="min-w-0">
+        <div className="text-sm font-black">
+          {isBoost ? "建议提高金额上限" : "建议降低配置"} {Math.abs(percent).toFixed(0)}%
+        </div>
+        {basis ? (
+          <p className="mt-0.5 break-words text-xs leading-5 opacity-80 [overflow-wrap:anywhere]">
+            {translateEvidenceText(basis)}
+          </p>
+        ) : null}
+      </div>
+    </div>
+  );
+}
 
 type DiscoveryReportPanelProps = {
   report: FundDiscoveryReport;
@@ -53,7 +83,11 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
       ) : null}
 
       {report.candidate_pool?.length ? (
-        <DiscoveryCandidatePoolPanel pool={report.candidate_pool} selectedCodes={selectedCodes} />
+        <DiscoveryCandidatePoolPanel
+          pool={report.candidate_pool}
+          selectedCodes={selectedCodes}
+          eliminatedCandidates={report.eliminated_candidates}
+        />
       ) : null}
 
       <section className="grid gap-3">
@@ -117,6 +151,12 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
                   <span className="ml-1 font-normal text-slate-500">（{translateEvidenceText(rec.amount_note)}）</span>
                 ) : null}
               </p>
+            ) : null}
+            {rec.suggested_position_change_percent != null ? (
+              <DiscoveryPositionChangeBadge
+                percent={rec.suggested_position_change_percent}
+                basis={rec.suggested_position_change_basis}
+              />
             ) : null}
             {rec.decision_path ? (
               <div className="mt-3 rounded-xl border border-blue-100 bg-blue-50/70 px-3 py-2.5 text-sm leading-6 text-blue-950">

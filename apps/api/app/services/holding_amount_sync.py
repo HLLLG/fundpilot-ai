@@ -30,18 +30,6 @@ def _compute_rolled_settled_amount(
     return None
 
 
-def _resolve_cumulative_return_percent(
-    holding: Holding,
-    profile: FundProfile | None,
-) -> float | None:
-    cumulative = holding.holding_return_percent
-    if cumulative is None:
-        cumulative = holding.return_percent
-    if cumulative is None and profile is not None:
-        cumulative = profile.holding_return_percent
-    return cumulative
-
-
 def _imputed_market_unit_cost(holding: Holding, shares: float) -> float | None:
     """昨结算/份额（非支付宝持仓成本价）。"""
     if shares <= 0:
@@ -74,28 +62,6 @@ def _is_imputed_market_unit_cost(
         if abs(unit_cost * shares - pre_roll) <= max(1.0, pre_roll * 0.003):
             return True
     return any(abs(unit_cost - implied) <= tolerance for implied in candidates)
-
-
-def _is_profit_inflation_artifact(
-    holding: Holding,
-    settled: float,
-    pre_roll: float,
-) -> bool:
-    """持有收益被误写成「结算额 − 昨结算额」的滚入污染。"""
-    if holding.holding_profit is None or settled <= pre_roll:
-        return False
-    inflation = round(settled - pre_roll, 2)
-    if inflation <= 0:
-        return False
-    return abs(holding.holding_profit - inflation) <= max(1.0, abs(inflation) * 0.02)
-
-
-def _is_return_polluted_against_pre_roll(holding: Holding, pre_roll: float) -> bool:
-    ret = holding.holding_return_percent or holding.return_percent
-    if ret is None or holding.holding_profit is None or pre_roll <= 0:
-        return False
-    implied = round(holding.holding_profit / pre_roll * 100, 2)
-    return abs(ret - implied) <= 0.05
 
 
 def _infer_purchase_unit_cost(
@@ -177,31 +143,27 @@ def _pre_roll_settled(
     shares: float | None = None,
     official_unit_nav: float | None = None,
 ) -> float:
-    """滚入前结算基线：回到上一交易日结算额（非支付宝持仓成本）。"""
+    """滚入前结算基线：回到上一交易日结算额（非支付宝持仓成本）。
+
+    只有 shares×官方单位净值 已经等于当前 settled 这一种情况需要"反推"
+    （说明 settled 已经是今天滚过的净值口径，反推回滚入前的净值口径基线）；
+    其余情况直接信任 settled 本身就是昨日真实结算额，不做任何猜测性改写。
+
+    历史 bug：此前这里还有两段分支，试图用"settled 与 profit/成本×(1+累计
+    收益率) 是否数值吻合"来判断 settled 是否被污染成了成本价——但这两个
+    判断条件本身就是「成本」「收益率」这两个概念的定义式，对任何数据自洽、
+    正常盈利的持仓都恒为真，会把真实的昨日市值错误替换成成本价，导致官方
+    净值结算的基线每天都从成本价重新起算，逐日复利失效。真正的"档案污染"
+    防护由 ``holding_estimates._repair_corrupted_settled_profit`` 在展示/
+    分析层独立处理（用 ``profile.holding_return_percent`` 这个不同来源的
+    信号做交叉校验，而不是用同一份数据的自洽性猜测），此处不需要重复防护。
+    """
     settled = _resolve_settled_amount(holding, profile)
 
     if shares and official_unit_nav and official_unit_nav > 0 and official_return is not None:
         nav_value = round(shares * official_unit_nav, 2)
         if abs(settled - nav_value) <= max(1.0, nav_value * 0.003):
             return round(settled / (1 + official_return / 100), 2)
-
-    if holding.holding_profit is not None and holding.holding_profit > 0:
-        candidate = round(settled - holding.holding_profit, 2)
-        if candidate > 0 and _is_profit_inflation_artifact(holding, settled, candidate):
-            return candidate
-
-    cumulative_return = _resolve_cumulative_return_percent(holding, profile)
-    if (
-        cumulative_return is not None
-        and profile
-        and profile.holding_cost
-        and shares
-        and shares > 0
-    ):
-        principal = round(profile.holding_cost * shares, 2)
-        inflated = round(principal * (1 + cumulative_return / 100), 2)
-        if abs(settled - inflated) <= max(1.0, abs(inflated) * 0.003):
-            return principal
 
     return settled
 
@@ -457,20 +419,25 @@ def _should_skip_official_nav_roll(
     official_return: float | None,
     shares: float | None,
     official_unit_nav: float | None,
+    profile: FundProfile | None,
+    trade_date: str,
 ) -> bool:
-    """OCR/官方净值已更新后的持有金额已是当日结算额，勿再按日涨跌滚入。"""
-    from app.services.holding_estimates import _ocr_holding_profit_is_cumulative
+    """本交易日是否已经用官方净值结算过：用 profile.profit_settled_trade_date
+    显式状态标记判断，同一天多次调用幂等跳过。
 
-    if holding.amount_includes_today:
+    历史 bug：此前用 ``holding.amount_includes_today`` 永久信任（一旦为真、
+    快照持久化后没有任何重置逻辑，第二天读回仍为真）以及
+    ``_ocr_holding_profit_is_cumulative`` 数学恒等式（只要 amount/profit/
+    return% 三者自洽即为真——系统自己结算写回的新三元组同样自洽）作为跳过
+    信号，两者任一都会在第一次正确结算后对所有后续交易日永久返回 True，
+    导致持有收益/结算金额从 OCR 上传起被冻结，官方净值公布后完全不会滚入。
+    """
+    if profile is not None and profile.profit_settled_trade_date == trade_date:
         return True
     if shares and official_unit_nav and official_unit_nav > 0 and settled > 0:
         nav_value = round(shares * official_unit_nav, 2)
         if abs(settled - nav_value) <= max(1.0, nav_value * 0.003):
             return True
-    if holding.daily_return_percent_source == "official_nav" and _ocr_holding_profit_is_cumulative(
-        holding
-    ):
-        return True
     return False
 
 
@@ -577,6 +544,8 @@ def _sync_one_holding(
             official_return=official_return,
             shares=shares,
             official_unit_nav=official_unit_nav,
+            profile=profile,
+            trade_date=trade_date,
         )
         new_settled = (
             settled
@@ -597,11 +566,13 @@ def _sync_one_holding(
                 market_amount=new_settled,
                 pre_roll=pre_roll,
                 settled_before=settled,
+                skip_roll=skip_roll,
             )
             unit_cost = profit_patch.pop("holding_cost", None)
             profile_patch = {
                 "settled_holding_amount": new_settled,
                 "holding_amount": new_settled,
+                "profit_settled_trade_date": trade_date,
                 **profit_patch,
             }
             if unit_cost is not None:
@@ -673,15 +644,25 @@ def _profit_patch_from_rolled_settled(
     market_amount: float | None = None,
     pre_roll: float | None = None,
     settled_before: float | None = None,
+    skip_roll: bool = False,
 ) -> dict:
-    """支付宝口径：持有收益 = 持有金额 − 持仓成本；收益率 = 收益 / 成本。"""
-    from app.services.holding_estimates import _ocr_holding_profit_is_cumulative
+    """支付宝口径：持有收益 = 持有金额 − 持仓成本；收益率 = 收益 / 成本。
 
+    ``skip_roll``：本次结算被 ``_should_skip_official_nav_roll`` 判定为"本交易日
+    已结算过、幂等跳过"（而不是"从未结算过、需要按新净值重算"）时为 True，此时
+    原样保留 holding 上已有的 profit/收益率，不重新推导（避免同一天内多次调用
+    因成本推断的微小误差而漂移）。
+
+    历史 bug：此处曾用 ``_ocr_holding_profit_is_cumulative(holding)``
+    （检测 amount/profit/return% 是否自洽的数学恒等式）代替显式的
+    ``skip_roll`` 信号——但系统自己结算写回的新三元组同样自洽，导致该判定从
+    第一次结算起永久为真，profit 被冻死，官方净值公布后无法再往前滚。
+    """
     patch: dict = {}
     if shares <= 0:
         return patch
 
-    if _ocr_holding_profit_is_cumulative(holding):
+    if skip_roll:
         unit_cost = _infer_purchase_unit_cost(
             holding,
             shares,
@@ -699,62 +680,60 @@ def _profit_patch_from_rolled_settled(
         )
         return patch
 
-    settled_anchor = settled_before if settled_before is not None else (
-        holding.settled_holding_amount or holding.holding_amount
-    )
-    profit_is_artifact = (
-        pre_roll is not None
-        and settled_anchor is not None
-        and _is_profit_inflation_artifact(holding, settled_anchor, pre_roll)
-    )
-    return_is_polluted = pre_roll is not None and _is_return_polluted_against_pre_roll(
-        holding,
-        pre_roll,
+    # 成本基数（cost_total）本质是不变量：只有加减仓才会改变它，官方净值结算
+    # 只应该改变「总值」（new_settled），不应该反过来改变「成本」。因此这里优先
+    # 直接信任档案里持久化的固定成本价 profile.holding_cost（先用
+    # _is_imputed_market_unit_cost 排除它本身被污染成"市值/份额"这种非真实
+    # 成本价的情况——这是 2026-06-30 那次档案污染 bug 的合法防护，继续保留），
+    # 用它算 profit = new_settled − cost_total、return% = profit / cost_total。
+    #
+    # 历史 bug：此前的实现会把 holding 上「当前」的 holding_profit/收益率
+    # （在这条调用路径里其实是上一次结算/OCR 留下的旧值）和 new_settled
+    # （今天刚滚出来的新总值）混在一起反推成本——新旧数据时间点不一致，反推
+    # 出来的成本是错的；而用来"识破这个错误"的 profit_is_artifact /
+    # return_is_polluted 判定本身又是另一个数学恒等式（构造 candidate=settled
+    # −profit 后再检测 profit 是否等于 settled−candidate，代数上必然成立），
+    # 命中后直接放弃重算、原样保留旧 profit——等价于把 profit 冻死。
+    #
+    # 只有当档案完全没有可信的固定成本价时（真正意义上的"首次结算"），才退回
+    # 用 holding 自身当前数据反推成本——此时 holding 上的数据是刚确认的新鲜值，
+    # 不存在新旧时间点错配的问题。
+    profile_unit_cost = profile.holding_cost if profile else None
+    profile_cost_trustworthy = (
+        profile_unit_cost is not None
+        and profile_unit_cost > 0
+        and not _is_imputed_market_unit_cost(
+            profile_unit_cost,
+            holding,
+            shares,
+            pre_roll=pre_roll,
+        )
     )
 
-    inference_holding = holding
-    if profit_is_artifact:
-        inference_holding = holding.model_copy(update={"holding_profit": None})
+    if profile_cost_trustworthy:
+        unit_cost = profile_unit_cost
+    else:
+        # 兜底：档案完全没有可信固定成本价时，用 holding 自身当前数据反推。
+        # 必须显式传 market_amount=None，让 _infer_purchase_unit_cost 内部退回
+        # 用 holding.holding_amount/settled_holding_amount（holding 自己的旧
+        # 金额）配 holding.holding_profit（同一时间点的旧收益）——两者时间点
+        # 一致才能推出正确成本。绝不能传 new_settled（今天刚滚出来的新总值）
+        # 去配旧 profit，那是新旧数据时间点错配的第五处同类恒等式：
+        # cost = new_settled − old_profit，代回 profit = new_settled − cost
+        # 精确还原 old_profit，等于又把 profit 冻死一次。
+        unit_cost = _infer_purchase_unit_cost(holding, shares, market_amount=None)
+        if unit_cost is None or unit_cost <= 0:
+            unit_cost = profile_unit_cost if profile_unit_cost and profile_unit_cost > 0 else None
 
-    unit_cost = _resolve_purchase_unit_cost(
-        inference_holding,
-        profile,
-        shares,
-        market_amount=market_amount or new_settled,
-        pre_roll=pre_roll,
-    )
     if unit_cost is None or unit_cost <= 0:
-        if holding.holding_profit is not None and not profit_is_artifact:
-            return {
-                "holding_profit": holding.holding_profit,
-                "holding_return_percent": holding.holding_return_percent or holding.return_percent,
-                "return_percent": holding.holding_return_percent or holding.return_percent,
-            }
         return patch
 
     cost_total = round(unit_cost * shares, 2)
     profit = round(new_settled - cost_total, 2)
     return_percent = round(profit / cost_total * 100, 2) if cost_total > 0 else 0.0
 
-    profile_unit = profile.holding_cost if profile else None
-    if profile and (
-        profile_unit is None
-        or (
-            pre_roll is not None
-            and _is_imputed_market_unit_cost(
-                profile_unit,
-                holding,
-                shares,
-                pre_roll=pre_roll,
-            )
-        )
-        or abs(profile_unit - unit_cost) > 0.0005
-    ):
+    if not profile_cost_trustworthy or abs((profile_unit_cost or 0) - unit_cost) > 0.0005:
         patch["holding_cost"] = unit_cost
-
-    if profit_is_artifact and return_is_polluted:
-        # 仅滚入金额；收益/收益率需重新 OCR 或手工修正后再算
-        return patch
 
     patch.update(
         {

@@ -79,6 +79,12 @@ DISCOVERY_FACTS_INSTRUCTION = (
     "official_nav 可作主论据；sector_estimate 须在 points 注明「估算」、不得表述为确定涨跌。"
     "dip_swing 模式须结合 dip_drop_percent 与 dip_swing.fee_break_even_percent 说明短线窗口。"
     "引用 sector_fund_flow、market_flow、signal_backtest、candidate_factor_scores 时须用给定数字及 confidence/factor_reliability，禁止编造。"
+    "sector_opportunities.confidence 表述量价背离历史回测证据强度：「高」代表证据显著（回测命中率明显超基准），"
+    "可作为方向判断的主理由、措辞可更果断；「中」需措辞保留；「低/不足」仅能作提示，不得主导买入/剔除决策。"
+    "opportunity_available=false 的方向不得推荐分批买入，只能建议关注或等待回调；系统会在生成后按"
+    "sector_opportunities.confidence 与 fund_quality_score 的共振情况做二次校验，若两者同时印证强烈负向信号，"
+    "候选会被直接从最终报告剔除——因此对 confidence=高 且 opportunity_available=false 的方向，应主动避免"
+    "推荐基金质量分同样偏低的候选，减少被剔除后报告数量不足的情况。"
     "news.freshness_label 须在 summary 或 caveats 体现对决策置信度的影响。"
     "fund_type_preference 为用户选基偏好，推荐须与之兼容。"
 )

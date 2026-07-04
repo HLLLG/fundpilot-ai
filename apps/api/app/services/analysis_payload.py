@@ -73,6 +73,14 @@ OUTPUT_REQUIREMENTS_SYSTEM = (
     "方向」的提示，不得单独作为清仓已持仓位、追高换仓的理由，须结合该持仓自身证据综合判断。"
     "analysis_facts.news.freshness_label 须在 summary 或 caveats 体现对决策置信度的影响。"
     "news_titles 中 source=cls 为财联社快讯。若 nav_trend 为空须在 points 说明。"
+    "analysis_facts.market_breadth 是大盘情绪温度计（自上而下）：sentiment_level 基于全市场"
+    "创新高低家数近2年历史分布百分位自校准，冰点/低迷代表市场情绪偏冷，可作为「即使板块"
+    "本身尚未走弱，仍应降低追涨敏感度」的独立风险论据；涨跌停家数等仅为当日快照，不得"
+    "当作历史回测结论使用。"
+    "analysis_facts.holdings[].flow_divergence_backtest 是该持仓板块「量价背离」信号"
+    "（涨但资金流出/跌但资金流入）的历史回测：by_rule 各桶含 trigger_count、hit_rate_percent、"
+    "edge_percent、significant；significant=true 时可作为该持仓板块方向判断的量化背书之一，"
+    "与 sector_opportunity/evidence 合并判断，不得单独作为加仓或减仓的唯一依据。"
 )
 
 OUTPUT_REQUIREMENTS_USER = [
@@ -292,6 +300,15 @@ def trim_analysis_facts_for_llm(
                         if k in opportunity_copy
                     }
                 copy["sector_opportunity"] = opportunity_copy or None
+            divergence = copy.get("flow_divergence_backtest")
+            if isinstance(divergence, dict) and analysis_mode == "fast" and phase >= 2:
+                # fast 模式只保留 LLM 真正会用到的字段：是否解析成功 + 各规则统计桶
+                # （by_rule 内部结构本身已经很紧凑：trigger_count/hit_rate_percent/
+                # baseline_rate_percent/edge_percent/significant）。
+                copy["flow_divergence_backtest"] = {
+                    "resolved": divergence.get("resolved"),
+                    "by_rule": divergence.get("by_rule") or {},
+                } or None
         holdings.append(copy)
     trimmed["holdings"] = holdings
 
@@ -345,6 +362,18 @@ def trim_analysis_facts_for_llm(
             "has_data": backtest.get("has_data"),
             "summary_lines": (backtest.get("summary_lines") or [])[:2],
         }
+
+    # market_breadth 是自上而下的大盘情绪信号（用户此前踩坑的案例正是"板块微涨但大盘
+    # 整体转冷"），与 market_flow/signal_backtest 偏短线定位不同，不因 decision_style
+    # 是稳健模式而整体裁掉；fast 模式下仅保留 LLM 真正用得到的精简字段控制体积。
+    if phase >= 2 and analysis_mode == "fast" and isinstance(trimmed.get("market_breadth"), dict):
+        breadth = trimmed["market_breadth"]
+        if breadth.get("available"):
+            trimmed["market_breadth"] = {
+                k: breadth[k]
+                for k in ("available", "sentiment_level", "sentiment_level_change", "interpretation")
+                if k in breadth
+            }
 
     return trimmed
 

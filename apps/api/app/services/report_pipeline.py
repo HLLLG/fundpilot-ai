@@ -16,6 +16,8 @@ def build_pipeline_metadata(
     news = market_news or []
     providers = sorted({brief.provider for brief in briefs if brief.provider})
     judge = judge_meta or {}
+    from app.config import get_settings
+
     return {
         "analysis_mode": runtime.mode,
         "model": runtime.model,
@@ -28,4 +30,8 @@ def build_pipeline_metadata(
         "rule_judge": bool(judge.get("rule_judge", True)),
         "llm_judge_attempted": bool(judge.get("llm_judge_attempted", False)),
         "llm_judge_applied": bool(judge.get("llm_judge_applied", False)),
+        # M6：记录生成本报告时的双向 guard 灰度模式，供 shadow_escalation_digest.py
+        # 判断该报告是否属于"灰度观察期"样本（历史报告可能在 shadow/enforced 切换
+        # 前后跨越，不能假设全部报告都是同一模式）。
+        "decision_escalation_mode": get_settings().decision_escalation_mode,
     }

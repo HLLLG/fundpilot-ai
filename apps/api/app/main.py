@@ -124,6 +124,8 @@ from app.services.report_chat_export import report_chat_to_markdown
 from app.services.rebalance_simulator import simulate_rebalance
 from app.services.recommendation_accuracy import build_recommendation_accuracy
 from app.services.sector_signal_backtest import build_sector_signal_backtest
+from app.services.market_breadth_signal import build_market_breadth_signal
+from app.services.shadow_escalation_digest import build_shadow_escalation_digest
 from app.services.recommendation_outcomes import (
     build_recommendation_outcomes,
     build_weekly_recommendation_outcomes,
@@ -225,6 +227,24 @@ def sector_signal_backtest(
         labels or None,
         lookback_days=days,
     )
+
+
+@app.get("/api/diagnostics/market-breadth")
+def market_breadth() -> dict:
+    """大盘情绪温度计（M1.1）：全用户共享（与全市场相关、非按用户区分），供市场 Tab 与
+    生成日报诊断区的 `MarketBreadthGauge` 复用同一份数据，不因认证中间件拦截而额外区分用户。"""
+    return build_market_breadth_signal()
+
+
+@app.get("/api/diagnostics/shadow-escalation-digest")
+def shadow_escalation_digest(days: int = 7) -> dict:
+    """M6.3：灰度复盘摘要（近 N 天双向 guard 升级判定触发情况，按当前登录用户的历史
+    日报/荐基报告聚合）。路径沿用 `/api/diagnostics/*` 既有命名（设计文档原文建议
+    `/api/admin/shadow-digest`，改为与同批新增的 `/api/diagnostics/market-breadth`、
+    已有的 `/api/diagnostics/sector-signal-backtest` 一致的前缀，避免引入 `/api/admin/`
+    这个本项目此前完全没有使用过的新前缀）。"""
+    lookback = max(1, min(days, 30))
+    return build_shadow_escalation_digest(lookback_days=lookback)
 
 
 @app.post("/api/news/preview")

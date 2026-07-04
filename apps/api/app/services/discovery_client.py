@@ -22,6 +22,7 @@ from app.services.deepseek_client import (
     tool_round_stage_label,
 )
 from app.services.discovery_guard import apply_discovery_guards
+from app.services.discovery_judge import judge_parsed_discovery_report
 from app.services.discovery_offline import build_offline_discovery_report
 from app.services.discovery_payload import append_output_requirements_to_system, build_user_payload
 from app.services.discovery_prompt import DEFAULT_DISCOVERY_ROLE_PROMPT, resolve_discovery_role_prompt
@@ -134,6 +135,13 @@ class DiscoveryClient:
             self._system_prompt(runtime.news_tool_max_rounds > 0, system_role_prompt)
         )
         parsed = self._call_model(system_prompt, user_payload, runtime.model)
+        # M4：deep 模式风控复核角色（fast 模式内部直接短路返回，零新增 LLM 调用）。
+        parsed, _judge_meta = judge_parsed_discovery_report(
+            parsed,
+            candidate_pool=candidate_pool,
+            discovery_facts=discovery_facts,
+            analysis_mode=analysis_mode,
+        )
         return build_discovery_report_from_parsed(
             parsed,
             target_sectors=target_sectors,
@@ -254,7 +262,7 @@ def build_discovery_report_from_parsed(
     analysis_mode: str = "fast",
 ) -> FundDiscoveryReport:
     recommendations = _parse_recommendations(parsed.get("recommendations"))
-    guarded, guard_caveats = apply_discovery_guards(
+    guarded, guard_caveats, eliminated = apply_discovery_guards(
         recommendations,
         candidate_pool=candidate_pool,
         held_codes=held_codes,
@@ -281,6 +289,7 @@ def build_discovery_report_from_parsed(
         recommendations=guarded,
         discovery_facts=discovery_facts,
         caveats=caveats,
+        eliminated_candidates=eliminated,
         provider="deepseek",
         analysis_mode=analysis_mode,  # type: ignore[arg-type]
     )

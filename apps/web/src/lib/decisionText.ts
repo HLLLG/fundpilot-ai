@@ -48,6 +48,48 @@ export function formatMetric(value: number | null | undefined): string {
   return Number(value).toFixed(2).replace(/\.00$/, "");
 }
 
+const DIVERGENCE_RULE_LABELS: Record<string, string> = {
+  flow_price_distribution: "涨但资金流出",
+  flow_price_accumulation: "跌但资金流入",
+};
+
+type DivergenceBacktestLike = {
+  sample_days?: number;
+  by_rule?: Record<
+    string,
+    {
+      rule_id: string;
+      label: string;
+      trigger_count: number;
+      hit_rate_percent: number | null;
+      edge_percent?: number | null;
+      significant?: boolean | null;
+    }
+  >;
+} | null | undefined;
+
+/**
+ * M1.3：把 `flow_divergence_backtest.by_rule` 里显著的量价背离规则，压缩成一句
+ * 可直接展示的历史回测证据文案，如"过去 98 个交易日「涨但资金流出」出现 18 次，
+ * 次日下跌概率 72%，超基准 22pp"。只展示 `significant=true` 的规则——不显著的
+ * 桶只是噪音，不应喧宾夺主。共享给 SectorOpportunityCard（板块卡片内嵌）与
+ * ReportPanel（持仓卡片内一句话摘要）两处使用，避免各写一套措辞。
+ */
+export function divergenceBacktestLines(backtest: DivergenceBacktestLike): string[] {
+  if (!backtest?.by_rule) {
+    return [];
+  }
+  const sampleDays = backtest.sample_days;
+  return Object.values(backtest.by_rule)
+    .filter((rule) => rule.significant && rule.hit_rate_percent != null)
+    .map((rule) => {
+      const ruleLabel = DIVERGENCE_RULE_LABELS[rule.rule_id] ?? rule.label;
+      const window = sampleDays ? `过去 ${sampleDays} 个交易日` : "历史窗口内";
+      const edge = rule.edge_percent != null ? `，超基准 ${rule.edge_percent}pp` : "";
+      return `${window}「${ruleLabel}」出现 ${rule.trigger_count} 次，次日命中概率 ${rule.hit_rate_percent}%${edge}`;
+    });
+}
+
 export function translateEvidenceText(text: string): string {
   return text
     .replace(/nav_trend\.distance_from_high_percent\s*(?:=|为|约)?\s*([-+]?\d+(?:\.\d+)?)%?/gi, "距离近期高点约 $1%")

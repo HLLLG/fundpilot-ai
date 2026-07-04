@@ -23,6 +23,7 @@ from app.services.discovery_client import (
     build_discovery_report_from_parsed,
 )
 from app.services.discovery_facts import build_discovery_facts
+from app.services.discovery_judge import judge_parsed_discovery_report
 from app.services.discovery_offline import build_offline_discovery_report
 from app.services.discovery_pipeline import DISCOVERY_JOB_STAGES
 from app.services.discovery_sector_opportunity import (
@@ -262,6 +263,13 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
                 return
 
         yield _stage("guarding", started_at=started_at)
+        # M4：deep 模式风控复核角色（fast 模式内部直接短路返回，零新增 LLM 调用）。
+        parsed, _judge_meta = judge_parsed_discovery_report(
+            parsed,
+            candidate_pool=pool,
+            discovery_facts=discovery_facts,
+            analysis_mode=request.analysis_mode,
+        )
         report = build_discovery_report_from_parsed(
             parsed,
             target_sectors=target_sectors,

@@ -1,11 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { BarChart3, Download, Sparkles } from "lucide-react";
+import { AlertTriangle, BarChart3, Download, Sparkles, TrendingDown, TrendingUp } from "lucide-react";
 import type { AnalysisFactsHoldingRow, HoldingEvidence, Report, SectorRotationFacts } from "@/lib/api";
 import { fetchReportMarkdown } from "@/lib/api";
-import { actionBadgeClass, actionCardClass } from "@/lib/actionStyles";
-import { translateEvidenceText } from "@/lib/decisionText";
+import { actionBadgeClass, actionCardClass, isExtremeAction } from "@/lib/actionStyles";
+import { divergenceBacktestLines, translateEvidenceText } from "@/lib/decisionText";
 import { confidenceTone } from "@/components/SectorSignalBacktestPanel";
 import { DecisionEvidenceGrid } from "@/components/DecisionEvidenceGrid";
 import { ReportChatPanel } from "@/components/ReportChatPanel";
@@ -97,20 +97,81 @@ function sectorRotationFacts(report: Report): SectorRotationFacts | null {
   return rotation?.available ? rotation : null;
 }
 
+function PositionChangeBadge({
+  percent,
+  basis,
+}: {
+  percent: number;
+  basis?: string;
+}) {
+  const isAdd = percent > 0;
+  const Icon = isAdd ? TrendingUp : TrendingDown;
+  const toneClass = isAdd
+    ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+    : "border-rose-200 bg-rose-50 text-rose-900";
+  return (
+    <div className={`mt-2 flex items-start gap-2 rounded-xl border px-3 py-2 ${toneClass}`}>
+      <Icon size={18} className="mt-0.5 flex-shrink-0" />
+      <div className="min-w-0">
+        <div className="text-sm font-black">
+          建议{isAdd ? "加仓" : "减仓"} {Math.abs(percent).toFixed(0)}%
+        </div>
+        {basis ? (
+          <p className="mt-0.5 break-words text-xs leading-5 opacity-80 [overflow-wrap:anywhere]">
+            {translateEvidenceText(basis)}
+          </p>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * M5（设计文档第10节决策#3）：「大幅减仓评估」「清仓评估」等最强动作需要点击展开
+ * 才能看到完整详情，避免用户被最强烈的动作词直接吓到做出非理性操作——先只显示
+ * 一条警示条 + 展开按钮，点击后才显示该卡片原有的全部内容（依据、风险、证据链）。
+ */
+function ExtremeActionGate({
+  action,
+  children,
+}: {
+  action: string;
+  children: React.ReactNode;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  if (expanded) {
+    return <>{children}</>;
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => setExpanded(true)}
+      className="flex w-full items-center gap-2 rounded-xl border-2 border-dashed border-rose-300 bg-rose-50 px-3 py-3 text-left transition hover:bg-rose-100"
+      data-testid="extreme-action-gate"
+    >
+      <AlertTriangle size={20} className="flex-shrink-0 text-rose-600" />
+      <span className="text-sm font-black text-rose-900">
+        系统建议「{action}」，点击查看完整依据
+      </span>
+    </button>
+  );
+}
+
 function FundRecommendationCard({
   item,
   snapshots,
   evidence,
   sectorOpportunity,
+  divergenceBacktest,
 }: {
   item: FundRec;
   snapshots: Report["snapshots"];
   evidence?: HoldingEvidence | null;
   sectorOpportunity?: AnalysisFactsHoldingRow["sector_opportunity"];
+  divergenceBacktest?: AnalysisFactsHoldingRow["flow_divergence_backtest"];
 }) {
   const navHint = navHintForFund(item.fund_code, snapshots);
-
-  return (
+  const cardBody = (
     <div className={`rounded-xl border px-4 py-3.5 ${actionCardClass(item.action)}`}>
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-sm font-black text-slate-950">
@@ -136,6 +197,17 @@ function FundRecommendationCard({
           {sectorOpportunity.opportunity_available === false ? "（暂非机会，仅供参考）" : "（当前构成机会）"}
           {sectorOpportunity.entry_hint ? ` · ${sectorOpportunity.entry_hint}` : ""}
         </p>
+      ) : null}
+      {divergenceBacktestLines(divergenceBacktest).map((line) => (
+        <p key={line} className="mt-1 break-words text-xs leading-5 text-blue-700">
+          历史回测：{line}
+        </p>
+      ))}
+      {item.suggested_position_change_percent != null ? (
+        <PositionChangeBadge
+          percent={item.suggested_position_change_percent}
+          basis={item.suggested_position_change_basis}
+        />
       ) : null}
       {item.amount_note || item.amount_yuan != null ? (
         <div className="mt-2 rounded-xl bg-white/80 px-3 py-2 text-sm font-bold text-blue-800">
@@ -205,6 +277,11 @@ function FundRecommendationCard({
       ) : null}
     </div>
   );
+
+  if (isExtremeAction(item.action)) {
+    return <ExtremeActionGate action={item.action}>{cardBody}</ExtremeActionGate>;
+  }
+  return cardBody;
 }
 
 function displayFundRecommendations(report: Report) {
@@ -352,6 +429,7 @@ export function ReportPanel({ report, streaming, onCancelStream, onStreamFollowu
                 snapshots={report.snapshots}
                 evidence={evidenceForFund(item.fund_code, report)}
                 sectorOpportunity={holdingFactsRow(item.fund_code, report)?.sector_opportunity}
+                divergenceBacktest={holdingFactsRow(item.fund_code, report)?.flow_divergence_backtest}
               />
             ))}
           </div>

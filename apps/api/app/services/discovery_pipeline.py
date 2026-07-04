@@ -8,6 +8,7 @@ from app.services.discovery_candidate_pool import build_candidate_pool, enrich_c
 from app.services.discovery_client import DiscoveryClient
 from app.services.discovery_facts import build_discovery_facts
 from app.services.discovery_sector_opportunity import (
+    build_sector_divergence_map_for_opportunities,
     build_sector_flow_map_for_opportunities,
     select_sector_opportunities,
 )
@@ -61,9 +62,13 @@ def run_discovery(
         sector_heat,
         flow_labels,
     )
+    # M1.4：量价背离历史回测（confidence 升级判定的证据来源），仅对候选方向拉取，
+    # best-effort，任一板块失败/超时不影响其他板块或整体扫描。
+    sector_divergence_by_label = build_sector_divergence_map_for_opportunities(flow_labels)
     sector_opportunities = select_sector_opportunities(
         sector_heat,
         sector_flow_by_label=sector_flow_by_label,
+        sector_divergence_by_label=sector_divergence_by_label,
         focus_sectors=list(request.focus_sectors),
         max_total=8,
         momentum_slots=4,

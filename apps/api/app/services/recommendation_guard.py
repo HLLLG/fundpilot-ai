@@ -12,11 +12,21 @@ from app.models import (
     TopicBrief,
 )
 from app.services.decision_guard_shared import (
+    ACTION_BUCKET_ADD,
+    ACTION_BUCKET_CLEAR_ALL,
+    ACTION_BUCKET_DEEP_REDUCE,
+    ACTION_BUCKET_LABELS as _BUCKET_TO_LABEL,
+    ACTION_BUCKET_PAUSE,
+    ACTION_BUCKET_REDUCE,
+    ACTION_BUCKET_WATCH,
     append_unique as _append_unique,
+    classify_action_bucket as _action_bucket,
+    escalation_severity_rank as _escalation_severity_rank,
     fmt_num as _fmt_num,
     humanize_evidence_text as _humanize_evidence_text,
     normalize_confidence_label as _normalize_confidence,
     pattern_label as _pattern_label,
+    resolve_escalation_floor,
     track_label as _track_label,
 )
 from app.services.market_signal import has_today_market_signal
@@ -27,20 +37,10 @@ from app.services.risk import holding_weight_percent, resolve_weight_denominator
 from app.services.sector_intraday_summary import summarize_sector_intraday_for_holding
 from app.services.sector_momentum import build_sector_momentum_context
 
-# 动作激进度：数值越低越保守（减仓/复核 < 观察 < 暂停 < 加仓）
-_ACTION_BUCKET = {
-    "reduce": 0,
-    "watch": 1,
-    "pause": 2,
-    "add": 3,
-}
-
-_BUCKET_TO_LABEL = {
-    "reduce": "减仓评估",
-    "watch": "观察",
-    "pause": "暂停追涨",
-    "add": "分批加仓",
-}
+# 动作激进度 bucket：数值越低越保守。M2.2 起统一委托给
+# decision_guard_shared.classify_action_bucket()（清仓评估=-2 < 大幅减仓评估=-1 <
+# 减仓评估=0 < 观察=1 < 暂停追涨=2 < 分批加仓=3），本文件不再维护独立判定逻辑，
+# 避免与 decision_guard_shared.py / report_judge.py 三处口径漂移。
 
 
 _REPORT_HUMANIZE_TEXT_REPLACEMENTS = (
@@ -135,18 +135,18 @@ def apply_recommendation_guards(
             risk, holding, request, tactical=tactical, aggressive=aggressive
         )
         if _action_bucket(normalized) > max_bucket:
-            normalized = _BUCKET_TO_LABEL[_bucket_name(max_bucket)]
+            normalized = _BUCKET_TO_LABEL[max_bucket]
 
         facts_row = _facts_row_for_holding(facts, holding) if holding is not None else None
         sector_opportunity = (facts_row or {}).get("sector_opportunity")
         evidence = (facts_row or {}).get("evidence")
 
         weak_note = None
-        if not reversal_note and _action_bucket(normalized) >= 3:
+        if not reversal_note and _action_bucket(normalized) >= ACTION_BUCKET_ADD:
             weak_reasons = _weak_evidence_reasons(sector_opportunity, evidence)
             if weak_reasons:
                 normalized = "观察"
-                max_bucket = min(max_bucket, 1)
+                max_bucket = min(max_bucket, ACTION_BUCKET_WATCH)
                 weak_note = (
                     f"板块或基金证据不足（{'、'.join(weak_reasons)}），"
                     "已将加仓类动作降为「观察」。"
@@ -156,18 +156,56 @@ def apply_recommendation_guards(
             not short_term
             and settings.news_require_today_for_add
             and not today_signal
-            and _action_bucket(normalized) >= 3
+            and _action_bucket(normalized) >= ACTION_BUCKET_ADD
         ):
             normalized = "暂停追涨"
-            max_bucket = min(max_bucket, 2)
+            max_bucket = min(max_bucket, ACTION_BUCKET_PAUSE)
 
-        note = reversal_note or weak_note
+        # M2.1 双向 guard：证据强烈指向风险升级时，即使前面几步的降级仍停在"观察"，
+        # 这里作为最终的保守下限强制继续拉低（甚至拉到"减仓评估/大幅减仓评估/清仓评估"）。
+        # 这是本次升级要修的核心缺陷——旧 guard 只会把"分批加仓"降到"观察"，
+        # 不会在证据极强时进一步升级到减仓类动作。
+        escalation = resolve_escalation_floor(
+            sector_opportunity=sector_opportunity,
+            evidence=evidence,
+            market_breadth=(facts or {}).get("market_breadth"),
+            over_concentration=bool((facts_row or {}).get("over_concentration")),
+            has_unrealized_gain=((facts_row or {}).get("estimated_holding_return_percent") or 0) > 0,
+            decision_style=decision_style,
+        )
+        escalation_note = None
+        shadow_note = None
+        min_bucket = escalation.get("min_bucket")
+        escalation_would_trigger = min_bucket is not None and _escalation_severity_rank(
+            _action_bucket(normalized)
+        ) > _escalation_severity_rank(min_bucket)
+        if escalation_would_trigger:
+            would_be_action = _BUCKET_TO_LABEL[min_bucket]
+            basis = str(escalation.get("basis") or "")
+            if settings.decision_escalation_mode == "enforced":
+                previous_action = normalized
+                normalized = would_be_action
+                escalation_note = (
+                    f"量化证据显示风险已升级，系统已将「{previous_action}」上调为「{normalized}」"
+                    f"（{basis}）。" if basis else f"量化证据显示风险已升级，系统已将「{previous_action}」上调为「{normalized}」。"
+                )
+            else:
+                # M6：shadow 灰度期——不真正改变最终 action/仓位建议，只记录"若切换
+                # enforced 会被系统升级为 XX"到 validation_notes，供
+                # shadow_escalation_digest.py 聚合复盘、也供用户在报告详情里看到。
+                shadow_note = (
+                    f"【灰度提示，未生效】若启用新版守卫（enforced 模式），"
+                    f"本条建议会被系统升级为「{would_be_action}」"
+                    f"（{basis}）。" if basis else f"【灰度提示，未生效】若启用新版守卫（enforced 模式），本条建议会被系统升级为「{would_be_action}」。"
+                )
+
+        note = escalation_note or reversal_note or weak_note
         if (
             not note
             and not short_term
             and settings.news_require_today_for_add
             and not today_signal
-            and _action_bucket(rec.action.strip()) >= 3
+            and _action_bucket(rec.action.strip()) >= ACTION_BUCKET_ADD
             and normalized != rec.action.strip()
         ):
             note = "无当日可引用要闻，已限制激进加仓类动作（更贴盘面、防幻觉）。"
@@ -184,7 +222,16 @@ def apply_recommendation_guards(
         if note:
             copy.points = [note, *copy.points]
         copy.confidence = _normalize_confidence(copy.confidence)
+        if escalation_note is not None:
+            # M2.3：LLM 负责解释、系统负责算数——仓位调整比例由规则表回填，覆盖 LLM 自行
+            # 给出的任何数字（LLM 未给出该字段本就是默认 None，这里统一以系统计算为准）。
+            copy.suggested_position_change_percent = escalation.get("suggested_position_change_percent")
+            copy.suggested_position_change_basis = str(escalation.get("basis") or "")
         _backfill_decision_fields(copy, holding, sector_opportunity, evidence)
+        if shadow_note is not None:
+            # M6：灰度提示须始终可见（不受 `_backfill_decision_fields` 只在为空时才
+            # 回填的规则影响），追加到 validation_notes 末尾，与其它校验备注共存。
+            copy.validation_notes = [*copy.validation_notes, shadow_note]
         _sync_decision_path_with_final_action(copy)
         _humanize_recommendation_text(copy)
         guarded.append(copy)
@@ -234,8 +281,8 @@ def _reversal_signal_block(
 def normalize_action_text(action: str) -> str:
     cleaned = (action or "").strip() or "观察"
     bucket = _action_bucket(cleaned)
-    label = _BUCKET_TO_LABEL[_bucket_name(bucket)]
-    if bucket == 0 and ("复核" in cleaned or "风控" in cleaned):
+    label = _BUCKET_TO_LABEL[bucket]
+    if bucket == ACTION_BUCKET_REDUCE and ("复核" in cleaned or "风控" in cleaned):
         return "风控复核"
     return label
 
@@ -244,9 +291,9 @@ def conservative_action_text(llm_action: str, offline_action: str) -> str:
     llm_bucket = _action_bucket(normalize_action_text(llm_action))
     offline_bucket = _action_bucket(normalize_action_text(offline_action))
     chosen = min(llm_bucket, offline_bucket)
-    if chosen == 0 and ("复核" in offline_action or "风控" in offline_action):
+    if chosen == ACTION_BUCKET_REDUCE and ("复核" in offline_action or "风控" in offline_action):
         return "风控复核"
-    return _BUCKET_TO_LABEL[_bucket_name(chosen)]
+    return _BUCKET_TO_LABEL[chosen]
 
 
 def _offline_by_holding(
@@ -282,24 +329,6 @@ def _match_holding(rec: FundRecommendation, holdings: list[Holding]) -> Holding 
         if holding.fund_name == rec.fund_name:
             return holding
     return None
-
-
-def _action_bucket(action: str) -> int:
-    text = action.strip()
-    if any(token in text for token in ("减仓", "复核", "风控", "降仓")):
-        return 0
-    if any(token in text for token in ("暂停", "勿追涨", "勿追", "观望")):
-        return 2
-    if any(token in text for token in ("加仓", "定投", "分批")):
-        return 3
-    return 1
-
-
-def _bucket_name(bucket: int) -> str:
-    for name, value in _ACTION_BUCKET.items():
-        if value == bucket:
-            return name
-    return "watch"
 
 
 def _max_allowed_bucket(
@@ -464,6 +493,10 @@ def _build_default_risks(rec: FundRecommendation, sector_opportunity: dict | Non
         if sector_opportunity and sector_opportunity.get("opportunity_available") is False:
             return ["板块当前不构成机会，加仓后仍可能面临回调"]
         return ["板块或市场波动可能导致净值短期回撤"]
+    if "清仓" in rec.action:
+        return ["清仓后若板块反弹或情绪回暖，将完全错过修复行情，且丧失该赛道后续机会"]
+    if "大幅减仓" in rec.action:
+        return ["大幅减仓后若判断有误，恢复原仓位需承担新的交易成本和时点风险"]
     if "减仓" in rec.action or "复核" in rec.action:
         return ["减仓后若板块反弹可能错过修复行情"]
     return ["市场波动可能影响短期净值表现"]

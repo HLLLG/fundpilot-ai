@@ -160,6 +160,7 @@ class FundProfile(BaseModel):
     first_seen_date: str | None = None
     profit_accrual_deferred_until: str | None = None
     shares_baseline_date: str | None = None
+    profit_settled_trade_date: str | None = None
     sector_name: str | None = None
     sector_return_percent: float | None = None
     intraday_index_name: str | None = None
@@ -284,6 +285,8 @@ class FundRecommendation(BaseModel):
     sector_evidence: list[str] = Field(default_factory=list)
     fund_evidence: list[str] = Field(default_factory=list)
     validation_notes: list[str] = Field(default_factory=list)
+    suggested_position_change_percent: float | None = None
+    suggested_position_change_basis: str = ""
 
 
 class Report(BaseModel):
@@ -340,6 +343,16 @@ class DiscoveryRecommendation(BaseModel):
     sector_evidence: list[str] = Field(default_factory=list)
     fund_evidence: list[str] = Field(default_factory=list)
     validation_notes: list[str] = Field(default_factory=list)
+    suggested_position_change_percent: float | None = None
+    suggested_position_change_basis: str = ""
+
+
+class EliminatedCandidate(BaseModel):
+    fund_code: str
+    fund_name: str
+    sector_name: str = ""
+    reasons: list[str] = Field(default_factory=list)
+    basis: str = ""
 
 
 class FundDiscoveryReport(BaseModel):
@@ -352,6 +365,7 @@ class FundDiscoveryReport(BaseModel):
     target_sectors: list[str] = Field(default_factory=list)
     candidate_pool: list[dict] = Field(default_factory=list)
     recommendations: list[DiscoveryRecommendation] = Field(default_factory=list)
+    eliminated_candidates: list[EliminatedCandidate] = Field(default_factory=list)
     discovery_facts: dict = Field(default_factory=dict)
     caveats: list[str] = Field(default_factory=list)
     provider: str = "offline"

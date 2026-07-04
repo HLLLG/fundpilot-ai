@@ -4,9 +4,11 @@
 >
 > **维护：** 功能或架构有实质变化时，同步更新「能力清单」「数据流」「API」「目录」「环境变量」。
 
-**文档版本：** 2026-07-02（项目瘦身 + 文档归一化）
+**文档版本：** 2026-07-03（官方净值结算持有收益冻结修复）
 
 **更新记录：**
+- **官方净值结算持有收益冻结修复（2026-07-03）：** 修复 OCR 上传后 `holding_profit` / `settled_holding_amount` 在后续交易日官方净值公布时不再更新、多日持仓收益无法逐日滚动的根因——同一设计缺陷的五处表现：把 holding 上「当前 profit/收益率」当作可信成本推断依据，或用 amount/profit/return% 数学自洽性做「污染检测」，但在结算重算路径里 profit 已是旧值、自洽判定对任何正常盈利持仓恒为真。**① 跳过信号**：`_should_skip_official_nav_roll` 不再认 `amount_includes_today`（快照原样带入、次日仍为真）与 `_ocr_holding_profit_is_cumulative`（恒等式）；改认 `FundProfile.profit_settled_trade_date == 本交易日` + shares×净值幂等；OCR 带官方日涨跌确认时 `ocr_pipeline` 同步写入该日期。**② 收益重算**：`_profit_patch_from_rolled_settled` 结算时优先 `profile.holding_cost`（保留 `_is_imputed_market_unit_cost` 防档案成本被市值污染）；删除 `profit_is_artifact` / `return_is_polluted` 恒等式分支；兜底反推成本时 `market_amount=None`（旧金额配旧 profit，禁止 new_settled 配旧 profit）。**③ 滚入基线**：`_pre_roll_settled` 删除「settled≈成本×(1+累计%)」与 `settled−profit` 两段猜测分支（对正常盈利数据恒为真，会把昨日市值替换成成本价、逐日复利失效）；档案污染改由 `holding_estimates._repair_corrupted_settled_profit`（`profile.holding_return_percent` 交叉校验）在展示层兜底。新增模型字段 `FundProfile.profit_settled_trade_date`。单测 `test_holding_amount_sync.py`（含多日结算、stale `amount_includes_today` 回归）；后端相关 pytest 全绿。
+- **AI 决策"更准更果断"升级 M1~M6（2026-07-02）：** 完整实现 `docs/superpowers/specs/2026-07-02-ai-decision-sharpening-design.md` 设计方案，日报+荐基共享底层信号与守卫基础设施。**M1 数据/信号层**：新增 `market_breadth_signal.py`（大盘情绪温度计：新高/新低家数近2年历史分布百分位自校准 sentiment_level，涨跌停/炸板当日快照，沪市两融环比，best-effort + 缓存 + stale 回退）；新增 `sector_flow_divergence_backtest.py`（量价背离信号 T→T+1 回测，拆 `flow_price_distribution`/`flow_price_accumulation` 两条规则，复用 `signal_backtest_stats.py` 统计口径）；修复 `sector_opportunity_scoring.py::_confidence()` 机制性封顶——只有量价背离显著（`significant=True` 且 `edge_percent>=10`）时才能真正给到"高"档位。**M2 决策/守卫层**：`decision_guard_shared.py` 新增 `resolve_escalation_floor()`（双向 guard 升级判定核心，5 档触发矩阵）+ `ACTION_BUCKET_*` 扩展为 6 档（新增大幅减仓评估=-1/清仓评估=-2）+ `classify_action_bucket()` 统一分类器（替换 `recommendation_guard.py`/`report_judge.py` 各自维护的重复实现）+ `escalation_severity_rank()`（专供升级比较，独立于封顶逻辑的原始 bucket 数值）；`analysis_facts.py` 的 `allowed_actions` 从静态 5 项改为按 escalation 门槛动态追加后两档；`FundRecommendation`/`DiscoveryRecommendation` 新增 `suggested_position_change_percent`/`suggested_position_change_basis`；`recommendation_guard.py` 接入双向 guard（不仅能降级，也能在证据强烈时把"观察"强制升级为"暂停追涨/减仓评估/大幅减仓评估/清仓评估"）。**M3 生成与复核**：fast 模式确认零新增 LLM 调用（`judge_parsed_report` 短路到纯规则 `_rule_judge`）；deep 模式 `report_judge._llm_judge` 升级为"风控经理二次复核"角色，喂入 `escalation_floors` 作为具体红线，硬约束"最终 action 不得比系统计算的最低档位更宽松"（即使复核失灵，`apply_recommendation_guards` 仍会兜底强制封顶，双层防御）。**M4 荐基同步**：`resolve_discovery_escalation()`（荐基语义：无清仓概念，负向共振剔除候选池 `action=exclude`、正向共振允许突破常规金额上限 `action=boost`，两个方向都要求板块+基金质量分双维度共振）；新增 `discovery_judge.py`（同构 `report_judge.py`，措辞替换为"剔除候选/提高建议金额"）；`discovery_guard.py` 接入。**M5 前端展示**：`SectorOpportunityCard.tsx` 新增"历史回测证据"行（复用 `decisionText.ts::divergenceBacktestLines()`）；新增 `MarketBreadthGauge.tsx`（自包含请求，挂载市场 Tab 主题板块子页 + 生成日报诊断区）；`ReportPanel.tsx` 新增仓位变化徽标 `PositionChangeBadge` + 极端动作二次确认 `ExtremeActionGate`（"大幅减仓评估/清仓评估"点击展开才显示完整依据）；`actionStyles.ts` 新增 `deep_reduce`/`clear_all` 玫红色系 tone + `isExtremeAction()`；`DiscoveryCandidatePoolPanel.tsx` 展示"证据强度剔除"（结构化 `EliminatedCandidate` 模型，非正则解析 caveats）；新增 `GET /api/diagnostics/market-breadth` 端点（复用现有 `/api/diagnostics/*` 前缀而非设计原文的 `/api/admin/*`）。**M6 灰度与复盘**：新增配置 `FUND_AI_DECISION_ESCALATION_MODE=shadow|enforced`（默认 `shadow`）——shadow 模式下三处均"只提示不生效"：① `recommendation_guard.py`/`discovery_guard.py` 规则层不真正改变 action/剔除候选/提额，改写入 `validation_notes`（"【灰度提示，未生效】若启用新版守卫会被系统升级为 XX"）；② `analysis_facts.py` 的 `allowed_actions` 不向 LLM 开放"大幅减仓评估/清仓评估"新词表（`_extra_allowed_actions_for_escalation()` 提取为独立函数）；③ `report_judge.py`/`discovery_judge.py` 的 LLM 复核角色 task prompt 在 shadow 下把"硬约束"措辞降级为"仅供参考"，避免模型自行遵照 escalation 提示把 action 改得比 shadow 允许的更保守（这是设计原文未明确提及、经用户确认后补充的关键点——只挡规则层不够）。新增 `shadow_escalation_digest.py`（M6.3：扫描近 7 天报告的结构化 `holdings[].escalation`/`discovery_facts.escalation_hints` 字段聚合触发次数/涉及板块/建议动作/当日走势对照，非正则解析文本）+ `GET /api/diagnostics/shadow-escalation-digest` + 前端 `ShadowEscalationDigestCard.tsx`（仅 shadow 模式下渲染）。测试：后端新增约 90 项单测覆盖 M1~M6 全部规则分支与灰度双模式（`test_market_breadth_signal.py`、`test_sector_flow_divergence_backtest.py`、`test_sector_opportunity_confidence_upgrade.py`、`test_decision_guard_shared.py`、`test_recommendation_guard_evidence.py`、`test_report_judge_facts_reuse.py`、`test_discovery_guard_escalation.py`、`test_discovery_judge.py`、`test_decision_escalation_mode.py`、`test_shadow_escalation_digest.py` 等），后端全量 pytest **539 passed**；前端新增/更新 `MarketBreadthGauge.tsx`/`ShadowEscalationDigestCard.tsx`/`ExtremeActionGate` 等组件，vitest 137 passed、`tsc --noEmit`/`eslint --max-warnings=0`/`next build` 均通过。
 - **项目瘦身与文档归一化（2026-07-02）：** 删除临时 `debug_probe` 调试探针及热路径 info 日志；Web 侧移除未使用的 `isAuthenticated` / `fetchSectorLabels` helper。小程序功能暂时下线，删除 `apps/miniprogram/` 与 `.kiro/specs/miniprogram-web-parity/`，同步移除后端微信/CloudBase 登录兼容接口，Web 账号设置页改为只读账号信息，文档改为 Web/API 私有部署口径。文档侧再次清理 `docs/superpowers/` 历史过程稿，当前权威资料收敛为本文、`docs/design/` 的运维/契约文档、`docs/deploy/` 与 `docs/SECURITY.md`；旧 spec/plan 的已落地结论保留在本文更新记录与对应代码测试中。
 - **日报（report）对齐荐基（discovery）决策能力（2026-07-01）：** 全面提升日报 LLM 决策的可追溯性与准确性，后端优先、Web 前端同步展示，移动端当时未同步。**共享基础设施**：把荐基 `discovery_sector_opportunity.py` 里双轨（momentum 顺势/setup 蓄势）板块打分核心逻辑抽成 `sector_opportunity_scoring.py`（`select_sector_opportunities` / `describe_sector_opportunity`），`discovery_sector_opportunity.py` 改为薄re-export层；`discovery_guard.py` 的人话化/置信度归一化/去重等公共逻辑抽成 `decision_guard_shared.py`，两处 guard 共用同一套标准。**数据增强**：新增 `report_sector_opportunity.py`，用 `describe_sector_opportunity` 给每个持仓板块一个方向判断（即使暂不构成机会也返回 `opportunity_available=False`），并给出全市场机会分最高、未持有的方向作为轮动参考；接入 `analysis_facts.py`（best-effort、超时降级、纳入 budgeted 并行 enhancement，`ThreadPoolExecutor` `max_workers` 5→6）与 `analysis_payload.py` 的 trim 规则；facts 新增每持仓 `sector_opportunity` 与顶层 `sector_rotation.market_top`。**结构化输出**：`FundRecommendation` 模型新增 `confidence` / `hold_horizon` / `risks` / `decision_path` / `sector_evidence` / `fund_evidence` / `validation_notes`（均带默认值，向后兼容旧报告/离线路径）；`DEFAULT_ROLE_PROMPT` 与 `OUTPUT_REQUIREMENTS_SYSTEM/USER` 要求 LLM 按「先判断板块方向 → 再看基金自身证据 → 最后给出动作」输出并附证据链；`parse_fund_recommendations_raw` / `merge_fund_recommendations` 同步解析与合并新字段。**Guard 升级**：`recommendation_guard.py` 新增弱证据降级（板块方向不构成机会 + 基金综合置信不足时，「分批加仓」自动降级为「观察」/「减仓评估」）、结构化字段自动回填（LLM 未给出时用板块/基金证据反推）、`decision_path` 与最终动作同步、全字段人话化输出；`deepseek_client._finalize_recommendations` 透传 `analysis_bundle.facts` 供 guard 使用。**导出/追问同步**：`report_export.py` markdown 新增置信度/持有窗口/决策路径/板块依据/基金依据/校验备注/风险渲染（有则显示、无则跳过，修复了同名变量遮蔽外层 `risk` 字典导致的 `AttributeError`）；`report_chat.py` 系统提示词补充新字段解读说明，避免追问时夸大置信度。**Web 前端**：`ReportPanel` 基金建议卡新增置信度徽标、持有/观察窗口、板块方向提示、决策路径说明框、板块/基金依据+校验备注三栏证据网格、结构化风险提示；新增可折叠「板块轮动参考」区块展示 `sector_rotation.market_top`；把荐基 `DiscoveryReportPanel` 里的证据网格、板块方向卡片、文案人话化函数抽成共享组件/工具（`DecisionEvidenceGrid.tsx`、`SectorOpportunityCard.tsx`、`lib/decisionText.ts`），两处报告的展示风格保持一致。同时修复 `db_migrations.py` 的 SQLite 迁移并发竞态（`threading.Lock` 序列化）。测试：新增 `test_decision_guard_shared.py` / `test_report_sector_opportunity.py` / `test_analysis_payload_sector_opportunity_trim.py` / `test_recommendations_structured_fields.py` / `test_recommendation_guard_evidence.py` / `test_report_export_structured_fields.py`，Web 端 `ReportPanel.test.tsx` / `DiscoveryReportPanel.test.tsx` 补充结构化字段渲染用例；后端全量 pytest 414 passed，前端相关 vitest 与 `tsc --noEmit` 通过；并做了端到端手工验证（模拟 LLM 给出「分批加仓」，因板块资金面弱被正确降级为「减仓评估」且证据链完整回填）。
 - **支付宝口径对齐 + 详情导航修复（2026-06-30）：** 修复 OCR 确认后持仓成本/持有收益/当日收益与支付宝不一致、电网基金持有收益被档案污染覆盖（-607 vs +142）、以及基金详情「下一只」循环切换后某只基金从列表消失。**后端**：`holding_amount_sync` 支付宝成本/收益语义、`holding_cost` bootstrap、官方净值滚结算时 `_profit_patch_from_rolled_settled`；`holding_estimates._ocr_holding_profit_is_cumulative` + `_repair_corrupted_settled_profit` 跳过 OCR 累计持有收益；`ocr_pipeline` OCR 带官方日涨跌时跳过 `prime_official_nav_cache` 加速确认；`alipay_holdings_parser` / `portfolio_holdings_service` 补强。**前端**：`patchHoldingRecord` 按 code 原位 hydrate（**不在 hydrate 时 dedupe**）；`navigableHoldings` + 循环 `onNavigate(identity)`；预取 `holdingsPrefetchKey` 防抖；`withApplyDisplayFields` 保留 OCR 持有收益。单测 `test_holding_amount_sync.py` / `test_alipay_daily_semantics.py` / `test_apply_holdings_fast_path.py` / `holdingMetrics.test.ts` / `YangjibaoFundDetail.navigate.test.tsx`。契约见 `docs/design/holding-metrics-contract.md`。
@@ -161,6 +163,9 @@
 | AI 角色 Prompt（荐基） | `discovery_prompt.py` `DEFAULT_DISCOVERY_ROLE_PROMPT`；持久化 `discovery_prompt_state`（schema v6）；`GET/PUT /api/discovery-prompt`；扫描时 `DiscoveryRequest.system_role_prompt` 传入 `discovery_client` |
 | 复盘/模拟 | outcomes / outcomes-weekly / rebalance-simulation / recommendation-accuracy |
 | 信号诊断 | `GET /api/diagnostics/sector-signal-backtest` — 板块短线规则历史命中率（东财日 K；失败时 relay/AkShare 兜底） |
+| 大盘情绪温度计 | `GET /api/diagnostics/market-breadth`；`MarketBreadthGauge.tsx` 挂市场 Tab + 生成日报诊断区；情绪等级基于全市场新高/新低家数近2年分布自校准，涨跌停/炸板/两融为当日快照 |
+| 双向决策 guard | `decision_guard_shared.resolve_escalation_floor()`（日报）/ `resolve_discovery_escalation()`（荐基）——证据强烈时不仅能降级、也能把"观察"强制升级为"暂停追涨/减仓评估/大幅减仓评估/清仓评估"（日报）或剔除候选池/提高建议金额（荐基）；灰度开关 `FUND_AI_DECISION_ESCALATION_MODE=shadow\|enforced` |
+| 灰度复盘摘要 | `GET /api/diagnostics/shadow-escalation-digest` — 近 N 天双向 guard 升级触发聚合（按板块/建议动作+当日走势对照）；`ShadowEscalationDigestCard.tsx` 仅 shadow 模式下展示 |
 | 交易日语义 | `trading_session.py` + `trade_calendar_cache`；**9:30 前** `trading_day_pre_open` 展示上一交易日（对齐养基宝，周末/节假日同理）；`TradingSessionBar` |
 | 穿透估算 | 未收盘时按板块权重分配账户当日收益 |
 | 板块实时 | **canonical 映射优先**（`sector_canonical` → 东财 `secid` K 线）；未知板块再走 spot 批量表 + `sector_quote_resolver` + `sector_on_demand`；可选中继/浏览器命令；300s 自动 + 手动；低置信度 `SectorMappingModal`；有场内指数时优先指数口径（`sector_quote_lookup_label`） |
@@ -169,7 +174,7 @@
 | 工作流阻塞 | `workflowBlockers`（生成日报前校验，无独立阻塞清单组件） |
 | 数据备份 | SQLite export/import API（`GET/POST /api/database/*`）；Web 面板已移除 |
 | 云部署 | `apps/api/Dockerfile`、`docker-compose.cloud.yml`；`scripts/migrate_sqlite_to_mysql.py`；见 `docs/deploy/cloudbase.md` |
-| CI / E2E | GitHub Actions：`api` 并行 pytest（**304** 项，~1min 量级）+ `web` lint/typecheck/build + Playwright 冒烟 |
+| CI / E2E | GitHub Actions：`api` 并行 pytest（**539** 项，~1min 量级）+ `web` lint/typecheck/build + Playwright 冒烟 |
 | 基金诊断 | AkShare 概况/累计收益；详情页可 AkShare **按名称查码**并持久化 |
 | 分析模式 | 快速 / 深度 |
 | 体验 | Markdown 导出、桌面通知、**Sora 字体 + 中文系统字体栈**（PingFang / HarmonyOS / 雅黑 / Noto）UI；**「静谧蓝海·高级克制」设计语言**（深海蓝 `#2356e0` + 暖金 `#cf9b3e`、毛玻璃 App Bar、会员方案展示区）；**客户端 SWR 缓存**（盈亏分析/详情/业绩走势）；板块刷新 fast 轮询 + accurate 手动；追问侧栏智能滚动 |
@@ -238,6 +243,11 @@ fundpilot-ai/
 │       ├── fund_code_resolver.py / fund_name_utils.py
 │       ├── deepseek_http.py / fund_profile.py / risk.py / fund_data.py
 │       ├── recommendation_guard.py / analysis_facts.py / news_citation.py
+│       ├── decision_guard_shared.py  # 日报+荐基共用：resolve_escalation_floor / resolve_discovery_escalation / classify_action_bucket（AI 决策升级 M2/M4）
+│       ├── market_breadth_signal.py  # 大盘情绪温度计（M1.1，新高低家数自校准 + 涨跌停/炸板 + 两融环比）
+│       ├── sector_flow_divergence_backtest.py  # 量价背离信号 T→T+1 回测（M1.3）
+│       ├── discovery_judge.py  # 荐基 deep 模式风控复核角色（M4，同构 report_judge.py）
+│       ├── shadow_escalation_digest.py  # 灰度复盘摘要聚合（M6.3）
 │       ├── recommendation_outcomes.py / rebalance_simulator.py / report_judge.py
 │       ├── news_service.py / news_summarizer.py / news_cache.py
 │       ├── penetration_daily_allocator.py / market_signal.py / trading_session.py
@@ -284,6 +294,7 @@ fundpilot-ai/
 │       ├── SectorMappingModal / IntradayPercentChart
 │       ├── TradingSessionBar / useChatAutoScroll
 │       ├── RiskControls / DiagnosticsAccordion / NewsPreviewPanel / SectorSignalBacktestPanel
+│       ├── MarketBreadthGauge / ShadowEscalationDigestCard  # AI 决策升级 M5/M6.3
 │       ├── ReportPanel / JobStatusFloat / HistoryRail / UserMenu
 ├── apps/api/Dockerfile
 ├── docker-compose.cloud.yml
@@ -454,6 +465,8 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | GET | `/api/reports/{id}/outcomes-weekly?days=7` | 7 日建议复盘 |
 | GET | `/api/reports/recommendation-accuracy?days=30` | 相邻日报建议命中率（战术/稳健） |
 | GET | `/api/diagnostics/sector-signal-backtest?days=120&sectors=半导体,商业航天` | 板块信号 T→T+1 回测；`sectors` 省略时用全部 canonical |
+| GET | `/api/diagnostics/market-breadth` | 大盘情绪温度计（M1.1，全用户共享，仍需 JWT） |
+| GET | `/api/diagnostics/shadow-escalation-digest?days=7` | 灰度复盘摘要（M6.3，近 N 天双向 guard 升级触发聚合，`days` 夹在 1~30） |
 | GET | `/api/database/export` | 下载 SQLite |
 | POST | `/api/database/import` | 上传替换 DB（自动备份 `.db.bak`） |
 | GET | `/api/jobs/{id}` | 任务状态（日报或推荐基金）；`job_status_service` 单连接先查 `discovery_jobs`；含 `job_kind`、`stage`/`stage_label`；完成时含 `report` 或 `discovery_report`；DB 不可用 503 |
@@ -514,15 +527,16 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 |------|------|
 | **Holding** | 6 位代码、金额、持有/当日/昨日收益、板块；`sector_return_percent_source`（realtime / closing_estimate）；`daily_return_percent_source`（sector_estimate / official_nav）；`yesterday_profit`；见 `holding_analysis_payload` |
 | **InvestorProfile** | 稳健默认；浮亏 8%、集中度 35%、期望投入 3 万（可配置）；`prefer_dca`（弱收益时分批加仓规则）、`avoid_chasing`（板块大涨限加仓档）；随 `profile` 传入 DeepSeek；持久化 `investor_profile_state` |
-| **FundRecommendation** | action、amount_*、news_bullish/bearish、points；**`confidence`**、**`hold_horizon`**、**`risks`**、**`decision_path`**、**`sector_evidence`**、**`fund_evidence`**、**`validation_notes`**（2026-07-01 对齐荐基结构化字段，均带默认值向后兼容） |
+| **FundRecommendation** | action、amount_*、news_bullish/bearish、points；`confidence`、`hold_horizon`、`risks`、`decision_path`、`sector_evidence`、`fund_evidence`、`validation_notes`（2026-07-01 对齐荐基结构化字段）；**`suggested_position_change_percent`**、**`suggested_position_change_basis`**（2026-07-02 M2.3：正=建议加仓、负=建议减仓，由 guard 按规则表回填，覆盖 LLM 自给数字）；`action` 词表扩展为 7 项，新增**大幅减仓评估**/**清仓评估**（按 `escalation` 触发矩阵动态开放，均带默认值向后兼容） |
 | **NewsItem** | topic、title、is_today |
 | **Report** | 含 `fund_recommendations`、`market_news`、`topic_briefs`、`analysis_facts`；`market_context` 保留字段恒 `[]` |
 | **AnalysisRequest** | holdings、profile、ocr_text、**analysis_mode**、**system_role_prompt**（可选，≤4000 字；缺省用 `DEFAULT_ROLE_PROMPT`） |
 | **AnalysisPromptConfig** | `role_prompt`、`is_custom`、`default_role_prompt`；持久化 `analysis_prompt_state` 按 `userId` |
 | **DiscoveryRequest** | `profile`、`analysis_mode`、`focus_sectors`（≤3）、`budget_yuan`、`holdings`、**`fund_type_preference`**、**`selection_strategy`**、**`scan_mode`**（`full_market` \| `portfolio_gap` \| **`dip_swing`**）、**`dip_lookback_days`**（3\|5）、**`dip_min_drop_percent`**、**`system_role_prompt`**（可选，≤4000 字） |
 | **DiscoveryPromptConfig** | `role_prompt`、`is_custom`、`default_role_prompt`；持久化 `discovery_prompt_state`（schema v6）按 `userId` |
-| **DiscoveryRecommendation** | `action`、`suggested_amount_yuan`、`hold_horizon`、`confidence`、`points`、`risks`；**`dip_drop_percent`**、**`rebound_signals`**、**`target_exit_days`**、**`fee_break_even_percent`**（`dip_swing` 波段止盈语义）；**`decision_path`**、**`sector_evidence`**、**`fund_evidence`**、**`validation_notes`**（结构化决策依据，日报 `FundRecommendation` 同款字段与之对齐） |
-| **FundDiscoveryReport** | 推荐报告；含 `candidate_pool`、`discovery_facts`、`recommendations`；表 `fund_discovery_reports` |
+| **DiscoveryRecommendation** | `action`、`suggested_amount_yuan`、`hold_horizon`、`confidence`、`points`、`risks`；**`dip_drop_percent`**、**`rebound_signals`**、**`target_exit_days`**、**`fee_break_even_percent`**（`dip_swing` 波段止盈语义）；**`decision_path`**、**`sector_evidence`**、**`fund_evidence`**、**`validation_notes`**（结构化决策依据，日报 `FundRecommendation` 同款字段与之对齐）；**`suggested_position_change_percent`**、**`suggested_position_change_basis`**（2026-07-02 M2.3/M4：荐基语义下正=建议提高买入金额权重、负=建议降低） |
+| **EliminatedCandidate** | 2026-07-02 M4/M5：被双向 guard 因证据强烈共振剔除的候选（`fund_code`/`fund_name`/`sector_name`/`reasons`/`basis`）；结构化字段，避免前端正则解析 `caveats` 文本 |
+| **FundDiscoveryReport** | 推荐报告；含 `candidate_pool`、`discovery_facts`、`recommendations`、**`eliminated_candidates`**（`EliminatedCandidate[]`，默认空列表向后兼容旧报告）；表 `fund_discovery_reports` |
 | **ChatMessage** | report_id、role、content |
 | **ReportChatRequest** | message、**chat_mode**（fast \| deep） |
 
@@ -625,7 +639,7 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 - **`holding_estimates.py`：** `overlay_official_nav_returns`（恢复持仓时补官方净值）、`compute_official_daily_profit`、`enrich_holdings_yesterday_profits`。
 - **`holdingMetrics.ts`：** `applySectorDailyEstimate` 保留 `official_nav`；`computeDailyProfit` / `computeHoldingProfit` 与后端一致。
 - **`YangjibaoHoldingsBoard`：** 估算当日 + 昨日收益子行；关联板块列独立展示东财涨跌；日期取自 `GET /api/trading-session` 的 `effective_trade_date`。
-- **`holding_amount_sync.py`：** OCR 后 `bootstrap_holding_baselines(skip_network=True)` 锁定 `settled_holding_amount`；仅官方净值公布时滚入 `shares × 最新净值`；刷新/恢复时盘中锁定结算额；有份额时当日收益用 `r/(100+r)` 或 `settled×sector%/100`。
+- **`holding_amount_sync.py`：** OCR 后 `bootstrap_holding_baselines(skip_network=True)` 锁定 `settled_holding_amount`；仅官方净值公布时滚入 `shares × 最新净值` 并重算 `holding_profit`（固定 `profile.holding_cost` 为成本基数）；同日幂等跳过认 `profit_settled_trade_date`（**不再**认 `amount_includes_today` / OCR 自洽恒等式）；刷新/恢复时盘中锁定结算额。
 
 **缓存策略：** `_NAV_CACHE[f"{fund_code}:{trade_date}"]` TTL 24h（命中）/ 5min（未发布重试）。
 
@@ -764,6 +778,10 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | `FUND_AI_THEME_BOARD_REFRESH_INTERVAL_SECONDS` | 900 | 盘中/盘前主题板块刷新间隔（15min） |
 | `FUND_AI_THEME_BOARD_REFRESH_IDLE_INTERVAL_SECONDS` | 3600 | 收盘/非交易日主题板块刷新间隔（1h） |
 | `FUND_AI_RISK_FREE_RATE` | 0.02 | 组合风险指标无风险利率（年化小数；夏普/索提诺/Alpha 用；填 >1 视作百分数自动归一） |
+| `FUND_AI_MARKET_BREADTH_ENABLED` | true | 大盘情绪温度计（M1.1）开关：新高/新低家数（可回测校准）+ 涨跌停/炸板当日快照 + 两融环比 |
+| `FUND_AI_MARKET_BREADTH_TIMEOUT_SECONDS` | 4.0 | 情绪温度计计算超时预算 |
+| `FUND_AI_FLOW_DIVERGENCE_BACKTEST_ENABLED` | true | 量价背离信号回测（M1.3）开关 |
+| `FUND_AI_DECISION_ESCALATION_MODE` | shadow | 双向 guard 灰度开关（M6）：`shadow`（默认）只在 `validation_notes`/`escalation_hints` 标注"若启用会怎样"，不真正改变最终 action/剔除候选/开放新动作词表；`enforced` 真正生效。观察约 1 个月（20 个交易日）后按 `GET /api/diagnostics/shadow-escalation-digest` 摘要自行决定是否切换 |
 
 ### DeepSeek / 新闻
 
@@ -811,7 +829,7 @@ bash scripts/dev.sh    # 或 scripts/dev.ps1
 ```
 
 ```bash
-cd apps/api && ./.venv/Scripts/python.exe -m pytest tests -q          # 301 项，串行 ~25s
+cd apps/api && ./.venv/Scripts/python.exe -m pytest tests -q          # 539 项，串行 ~78s
 cd apps/api && ./.venv/Scripts/python.exe -m pytest tests -q -n auto --dist loadscope  # 与 CI 一致
 cd apps/web && npm run lint && npm run typecheck && npm run build
 cd apps/web && npm run test:e2e   # Playwright 冒烟
@@ -821,7 +839,7 @@ cd apps/web && npm run test:e2e   # Playwright 冒烟
 
 | 项 | 说明 |
 |----|------|
-| 规模 | **304** 项单元测试（自 ~400+ 精简；去掉重复集成测与纯网络拉取测） |
+| 规模 | **539** 项单元测试（曾自 ~400+ 精简去重，后续 M1~M6 等功能迭代持续增补） |
 | 离线 | `conftest.py` autouse stub：交易日历、基金名称表、东财 spot/K 线、板块刷新、`build_sector_heat_ranking` 等 |
 | 数据库 | 测试强制 `FUND_AI_DATABASE_URL=""` → SQLite 文件库；勿在 pytest 期间连生产 MySQL |
 | 超时 | `pytest.ini`：`timeout = 30` |
