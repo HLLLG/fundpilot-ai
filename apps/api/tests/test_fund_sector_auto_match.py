@@ -710,6 +710,14 @@ def test_resolve_primary_sector_falls_back_to_llm_when_existing_row_is_residue(m
         "app.services.fund_sector_llm_infer.infer_sector_via_llm",
         _fake_llm,
     )
+    # _resolve_from_llm_infer 在调用 LLM 之前会先拉重仓股名称喂给 prompt
+    # （_fetch_top_holding_names_for_llm -> fetch_portfolio_stocks_with_industry），
+    # 这是一次真实的 AkShare 子进程网络请求。"018957" 是真实基金代码，未 mock 时
+    # 该请求会真的打网络（此前造成本测试耗时 61s+）。这里 mock 掉，保持单测离线。
+    monkeypatch.setattr(
+        "app.services.fund_holdings_sector_infer.fetch_portfolio_stocks_with_industry",
+        lambda _code: [],
+    )
 
     record = resolve_primary_sector(
         "018957",
@@ -812,6 +820,12 @@ def test_resolve_primary_sector_uses_llm_fallback_only_when_holdings_infer_allow
     monkeypatch.setattr(
         "app.services.fund_sector_llm_infer.infer_sector_via_llm",
         _fake_llm,
+    )
+    # 同上：_resolve_from_llm_infer 调用 LLM 前会先拉重仓股名称，未 mock 时是一次
+    # 真实的 AkShare 子进程请求（哪怕基金代码不存在也要等子进程真正跑完才返回）。
+    monkeypatch.setattr(
+        "app.services.fund_holdings_sector_infer.fetch_portfolio_stocks_with_industry",
+        lambda _code: [],
     )
 
     # fetch_holdings_infer=False：不应该触发 LLM 调用。

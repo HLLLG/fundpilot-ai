@@ -204,6 +204,24 @@ def _stub_market_data_fetches(monkeypatch):
         "app.services.board_fund_flow_history._fetch_flow_history_via_httpx",
         lambda *_args, **_kwargs: [],
     )
+    # 上面的 httpx stub 返回空列表后，fetch_board_flow_series 会继续走 requests 库的
+    # 真实网络兜底（带重试 + time.sleep），这是 build_holding_sector_opportunity_context
+    # (via board flow prefetch) 在单测里另一处意外联网+耗时来源，直接 stub 顶层函数更彻底。
+    monkeypatch.setattr(
+        "app.services.board_fund_flow_history.fetch_board_flow_series",
+        lambda *_args, **_kwargs: [],
+    )
+    # refresh_theme_board_snapshot 刷新后会 fire-and-forget 一个 daemon 线程调用
+    # prefetch_board_flow_histories，对每个板块 code 串行 sleep(0.75s) 限速预热资金流
+    # 历史缓存——线上是合理的节流设计，但在单测里这是一个游离的背景线程，即使
+    # fetch/httpx 都已 stub 到位，仍会导致整个 pytest 进程在所有测试通过之后额外
+    # 挂起数十秒（ThreadPoolExecutor 的 atexit join 钩子会等它跑完，观察到过 hang
+    # 到进程被打断报 "cannot schedule new futures after interpreter shutdown"）。
+    # 单测里这个预热本身没有验证意义，直接整体 stub 为空操作。
+    monkeypatch.setattr(
+        "app.services.board_fund_flow_history.prefetch_board_flow_histories",
+        lambda *_args, **_kwargs: 0,
+    )
     # API routes import this symbol at module load; patching the service alone is not enough.
     monkeypatch.setattr(
         "app.main.build_sector_heat_ranking",
@@ -388,6 +406,29 @@ def _stub_market_data_fetches(monkeypatch):
     monkeypatch.setattr(
         "app.services.dip_radar_snapshot.build_dip_radar_snapshot",
         _stub_dip_radar_build,
+    )
+
+    # 大盘情绪温度计（market_breadth_signal.py）与北向资金摘要（market_flow_client.py）
+    # 都是 build_analysis_facts 非 budget_enhancements 路径末尾无条件调用、且没有超时
+    # 包装的真实 AkShare 子进程请求（stock_a_high_low_statistics/涨跌停池/两融/北向资金），
+    # 此前一直漏 stub，导致任何不传 budget_enhancements=True 的 build_analysis_facts
+    # 单测（如 test_analysis_facts_dates.py）都会真的打网络，是本仓库测试套件里最大的
+    # 几个耗时黑洞之一（单个测试 24~32s）。这里统一在子进程层兜底为空，走各自的
+    # best-effort 降级分支（available=False），不影响断言。
+    monkeypatch.setattr(
+        "app.services.akshare_subprocess.run_akshare_json_script",
+        lambda *_args, **_kwargs: None,
+    )
+    # market_breadth_signal.py 用 `from ... import run_akshare_json_script`（直接导入
+    # 绑定），只 patch 上面的源模块符号够不到它自己模块内的引用，需要单独再 patch 一次
+    # （同 sector_flow_divergence_backtest.fetch_canonical_daily_kline_series 的坑）。
+    monkeypatch.setattr(
+        "app.services.market_breadth_signal.run_akshare_json_script",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "app.services.market_flow_client._fetch_northbound_flow_summary_uncached",
+        lambda _anchor: None,
     )
 
 
