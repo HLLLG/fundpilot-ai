@@ -21,7 +21,13 @@ uploads/inbox/*
 !uploads/inbox/.gitkeep
 apps/api/.venv/
 apps/api/.uvicorn-*.log
-apps/api/var/
+# var/ 下的内容默认是生成物/缓存，不入库；但 factor_ic/ 这一层目录本身要保留
+# 一个 .gitkeep 占位（见该文件注释），保证 Dockerfile 的 COPY 不会因目录在一次
+# 干净 checkout 里完全不存在而报错构建失败。
+apps/api/var/*
+!apps/api/var/factor_ic
+apps/api/var/factor_ic/*
+!apps/api/var/factor_ic/.gitkeep
 debug-*.log
 .tmp-*.html
 apps/web/.next/

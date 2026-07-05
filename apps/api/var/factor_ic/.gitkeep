@@ -1,0 +1,13 @@
+此占位文件保证 var/factor_ic/ 目录在任何 git checkout 里都存在。
+
+var/ 目录默认整体被 .gitignore 排除（其内容多为运行期生成物/缓存，如 var/amac/*）。
+但 var/factor_ic/summary.json 是 apps/api/Dockerfile 与根目录 Dockerfile 在构建镜像时
+会尝试 COPY 的对象（供 factor_confidence.py::load_ic_summary 读取，给持仓因子分挂上
+可回测置信）——若这一层目录本身在 checkout 里完全不存在（不是文件缺失，是目录缺失），
+Docker 的 COPY 指令会直接报错、整个镜像构建失败。放这个占位文件后，目录始终存在，
+COPY 永远不会因目录缺失而失败；summary.json 本身是否在场则决定因子置信这一路是否
+可用，缺失时会诚实降级为「不足」，不会让部署整体挂掉（2026-07-04，方案 B）。
+
+长期方案（方案 C，待办）：summary.json 目前是 2026-06-24 手动跑一次
+`scripts/run_factor_ic.py` 生成的静态快照（25 只基金样本），需要建立定期重新生成
+并同步到部署环境的机制，而不是长期依赖这一份逐渐过时的数据。
