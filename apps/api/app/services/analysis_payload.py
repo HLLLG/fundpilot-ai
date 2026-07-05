@@ -66,6 +66,10 @@ OUTPUT_REQUIREMENTS_SYSTEM = (
     "sector_fund_flow.today_main_force_net_yi：正=主力净流入、负=主力净流出；"
     "须与 flow_date 同日且 date_aligned=true 时才可与 sector_return_percent 做量价背离判断；"
     "date_aligned=false 或 pattern_label=flow_date_mismatch 时禁止写出货/诱多等背离结论。"
+    "sector_fund_flow.flow_tiers 为「今日」资金分档净流入（单位：亿元）："
+    "super_large_net_yi=超大单(机构)、large_net_yi=大单、medium_net_yi=中单(大户)、"
+    "small_net_yi=小单(散户)；flow_structure_hint 已系统解读机构与散户资金是否同向，"
+    "可直接引用其结论，不得凭空推断未给出的机构/散户资金动向。"
     "analysis_facts.holdings[].sector_opportunity 是该持仓板块的方向判断（track顺势/蓄势，"
     "confidence高中低不足）：opportunity_available=false 表示当前不构成机会（如资金持续流出、"
     "涨幅透支），只能作为风险提示，不得作为加仓理由；true 时可作为继续持有的辅助论据之一。"
@@ -275,6 +279,8 @@ def trim_analysis_facts_for_llm(
                             "main_force_direction",
                             "cumulative_5d_net_yi",
                             "cumulative_20d_net_yi",
+                            "flow_tiers",
+                            "flow_structure_hint",
                             "pattern_label",
                             "pattern_hint",
                         )

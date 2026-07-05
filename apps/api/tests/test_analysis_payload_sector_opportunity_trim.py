@@ -81,3 +81,56 @@ def test_missing_sector_opportunity_is_a_noop() -> None:
     trimmed = trim_analysis_facts_for_llm(facts, analysis_mode="deep", phase=3)
     assert "sector_opportunity" not in trimmed["holdings"][0]
     assert trimmed["sector_rotation"] == {"available": False, "market_top": []}
+
+
+def _facts_with_sector_fund_flow(**flow_overrides) -> dict:
+    flow = {
+        "available": True,
+        "sector_label": "半导体",
+        "trade_date": "2026-07-04",
+        "flow_date": "2026-07-04",
+        "date_aligned": True,
+        "today_main_force_net_yi": -8.0,
+        "main_force_direction": "outflow",
+        "cumulative_5d_net_yi": 12.0,
+        "cumulative_20d_net_yi": 30.0,
+        "flow_tiers": {
+            "super_large_net_yi": -20.0,
+            "large_net_yi": -5.0,
+            "medium_net_yi": 10.0,
+            "small_net_yi": 7.0,
+        },
+        "flow_structure_hint": "超大单+大单（机构）净流出而中单+小单（大户/散户）净流入，散户接盘特征明显。",
+        "pattern_label": "weak_outflow",
+        "pattern_hint": "板块弱势且资金持续流出，短线加仓胜率通常不高。",
+    }
+    flow.update(flow_overrides)
+    return {"holdings": [{"fund_code": "000001", "sector_fund_flow": flow}]}
+
+
+def test_fast_mode_sector_fund_flow_keeps_today_tiers_but_not_daily_series() -> None:
+    """2026-07-04：喂给 LLM 的资金结构只保留「今日」四档明细（flow_tiers）+ 系统解读
+    （flow_structure_hint），5d/20d 只给汇总净流入，不含逐日明细序列。"""
+    trimmed = trim_analysis_facts_for_llm(
+        _facts_with_sector_fund_flow(), analysis_mode="fast", phase=2
+    )
+    flow = trimmed["holdings"][0]["sector_fund_flow"]
+    assert flow["flow_tiers"] == {
+        "super_large_net_yi": -20.0,
+        "large_net_yi": -5.0,
+        "medium_net_yi": 10.0,
+        "small_net_yi": 7.0,
+    }
+    assert flow["flow_structure_hint"].startswith("超大单+大单（机构）净流出")
+    assert flow["cumulative_5d_net_yi"] == 12.0
+    assert flow["cumulative_20d_net_yi"] == 30.0
+    assert "recent_5d_main_force_yi" not in flow
+
+
+def test_deep_mode_sector_fund_flow_also_keeps_tiers_and_hint() -> None:
+    trimmed = trim_analysis_facts_for_llm(
+        _facts_with_sector_fund_flow(), analysis_mode="deep", phase=3
+    )
+    flow = trimmed["holdings"][0]["sector_fund_flow"]
+    assert flow["flow_tiers"]["super_large_net_yi"] == -20.0
+    assert flow["flow_structure_hint"].startswith("超大单+大单（机构）净流出")

@@ -29,6 +29,8 @@ def _slim_sector_fund_flow(flow: dict[str, Any]) -> dict[str, Any]:
             "main_force_direction",
             "cumulative_5d_net_yi",
             "cumulative_20d_net_yi",
+            "flow_tiers",
+            "flow_structure_hint",
             "pattern_label",
             "pattern_hint",
         )
