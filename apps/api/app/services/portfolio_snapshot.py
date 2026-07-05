@@ -19,6 +19,10 @@ from app.services.portfolio_profit_analysis import (
     summarize_trend_footer,
 )
 
+# 因子分净值兜底并发上限：与 fund_data.py::_MAX_FETCH_WORKERS 同一量级（逐只是独立
+# AkShare 子进程 + 网络 IO，并发压缩冷缓存耗时；上限避免一次拉太多基金打爆源站）。
+_FACTOR_NAV_LOOKUP_MAX_WORKERS = 8
+
 
 def _dashboard_summary_payload(
     summary: PortfolioSummary | None,
@@ -249,26 +253,59 @@ def build_factor_scores_payload(
     ]
     rank_by_code = {row.fund_code: row for row in universe}
 
-    targets: list[FundFactorInput] = []
-    for holding in holdings_models:
-        code = (holding.fund_code or "").strip()
-        if not code or len(code) != 6 or code == "000000":
-            continue
+    filtered_holdings = [
+        holding
+        for holding in holdings_models
+        if (holding.fund_code or "").strip()
+        and len((holding.fund_code or "").strip()) == 6
+        and (holding.fund_code or "").strip() != "000000"
+    ]
+
+    # 2026-07-04 修复：持仓不在排行榜横截面（`rank_by_code`）里时须走
+    # `_target_from_nav` 净值兜底——这是一次独立的 AkShare 拉取（冷缓存时是子进程
+    # + 网络请求，通常 1~3 秒），此前用 for 循环逐只**串行**执行。喂 LLM 用的这条
+    # 装配路径（`build_factor_scores_for_facts`）只给 4 秒预算
+    # （`analysis_payload.FACTOR_SCORE_TIMEOUT_SECONDS`），持仓里哪怕只有 2~3 只
+    # 冷门/小规模基金不在排行榜前 300 名内，串行拉取就必然超时——这正是「量化证据
+    # 缺失」故障的直接根因之一。改成并发拉取（同 `fund_data.py::_map_holdings_concurrently`
+    # 的模式），5 只基金冷缓存总耗时从 ~5×单只 降到 ~1×单只。
+    targets: list[FundFactorInput | None] = [None] * len(filtered_holdings)
+    nav_lookup_positions: list[int] = []
+    for position, holding in enumerate(filtered_holdings):
+        code = holding.fund_code.strip()
         if code in rank_by_code:
             base = rank_by_code[code]
-            targets.append(
-                FundFactorInput(
-                    fund_code=code,
-                    fund_name=holding.fund_name or base.fund_name,
-                    return_3m_percent=base.return_3m_percent,
-                    return_6m_percent=base.return_6m_percent,
-                    return_1y_percent=base.return_1y_percent,
-                    max_drawdown_1y_percent=base.max_drawdown_1y_percent,
-                    fund_scale_yi=base.fund_scale_yi,
-                )
+            targets[position] = FundFactorInput(
+                fund_code=code,
+                fund_name=holding.fund_name or base.fund_name,
+                return_3m_percent=base.return_3m_percent,
+                return_6m_percent=base.return_6m_percent,
+                return_1y_percent=base.return_1y_percent,
+                max_drawdown_1y_percent=base.max_drawdown_1y_percent,
+                fund_scale_yi=base.fund_scale_yi,
             )
         else:
-            targets.append(_target_from_nav(holding, fetch_nav))
+            nav_lookup_positions.append(position)
+
+    if nav_lookup_positions:
+        if len(nav_lookup_positions) == 1:
+            position = nav_lookup_positions[0]
+            targets[position] = _target_from_nav(filtered_holdings[position], fetch_nav)
+        else:
+            from concurrent.futures import ThreadPoolExecutor
+
+            max_workers = min(_FACTOR_NAV_LOOKUP_MAX_WORKERS, len(nav_lookup_positions))
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                nav_results = list(
+                    executor.map(
+                        lambda position: _target_from_nav(
+                            filtered_holdings[position], fetch_nav
+                        ),
+                        nav_lookup_positions,
+                    )
+                )
+            for position, target in zip(nav_lookup_positions, nav_results):
+                targets[position] = target
 
     result = compute_factor_scores(universe=universe, targets=targets)
     return asdict(result)

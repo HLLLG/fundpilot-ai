@@ -33,6 +33,28 @@ FetchSeriesFn = Callable[[str, str | None], list[DailyKlineBar]]
 _DEFAULT_RULES = ("reversal_down", "sector_weak", "intraday_pullback", "baseline_momentum")
 _BACKTEST_RESPONSE_TTL_SECONDS = 86400
 _BACKTEST_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+# 板块日 K 并发拉取上限：与 fund_data.py::_MAX_FETCH_WORKERS 同一量级（每板块是独立
+# HTTP/子进程 IO，并发压缩冷缓存耗时；上限避免一次拉太多板块打爆源站）。
+_SECTOR_SERIES_MAX_WORKERS = 8
+
+
+def _fetch_series_concurrently(
+    resolved_labels: list[tuple[str, "CanonicalSector"]],
+    fetch: Callable[["CanonicalSector"], list[DailyKlineBar]],
+) -> dict[str, list[DailyKlineBar]]:
+    """并发拉取多个板块的日 K 序列；单板块时直调，避免线程池调度开销。"""
+    if not resolved_labels:
+        return {}
+    if len(resolved_labels) == 1:
+        label, canon = resolved_labels[0]
+        return {label: fetch(canon)}
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    max_workers = min(_SECTOR_SERIES_MAX_WORKERS, len(resolved_labels))
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        series_list = list(executor.map(lambda item: fetch(item[1]), resolved_labels))
+    return {label: series for (label, _canon), series in zip(resolved_labels, series_list)}
 
 # Bug B 修复：命中率基准不是固定 50%，而是「方向感知的自然发生率」+ 统计显著性。
 # 2026-07：常量与 _direction_fractions/_baseline_prob/_finalize_bucket 的具体实现已抽到
@@ -113,9 +135,20 @@ def _build_sector_signal_backtest_impl(
         }
 
     trade_dates = get_trade_date_set()
-    sector_results: list[dict[str, Any]] = []
-    aggregate: dict[str, dict[str, Any]] = {}
 
+    # 2026-07-04 修复：逐板块拉日 K 线（东财 push2delay → sector-relay → AkShare 逐级
+    # 兜底，每级都有自己的超时）此前用 for 循环**串行**执行。喂 LLM 用的这条装配路径
+    # 只给 5 秒预算（`analysis_facts.SIGNAL_BACKTEST_TIMEOUT_SECONDS`），持仓关联的
+    # 板块数量哪怕只有 3~5 个、其中一个走到慢速兜底，串行拉取就足以吃满预算——这是
+    # 「量化证据缺失」故障的另一个直接根因。改成并发拉取（同 `fund_data.py` /
+    # `portfolio_snapshot.py::build_factor_scores_payload` 的模式）：先并发把每个板块
+    # 的日 K 序列取回来，再单线程做统计计算（`_evaluate_rules` 是纯 CPU 计算，量很小，
+    # 没必要并发，并发反而增加锁开销）。
+    fetch = _default_fetch_series_for_canon if fetch_series is None else (
+        lambda canon: fetch_series(canon.eastmoney_secid, canon.source_code)
+    )
+    resolved_labels: list[tuple[str, CanonicalSector]] = []
+    sector_results: list[dict[str, Any]] = []
     for label in labels:
         canon = get_canonical_sector(label)
         if canon is None:
@@ -127,11 +160,13 @@ def _build_sector_signal_backtest_impl(
                 }
             )
             continue
+        resolved_labels.append((label, canon))
 
-        if fetch_series is None:
-            series = _default_fetch_series_for_canon(canon)
-        else:
-            series = fetch_series(canon.eastmoney_secid, canon.source_code)
+    series_by_label = _fetch_series_concurrently(resolved_labels, fetch)
+
+    aggregate: dict[str, dict[str, Any]] = {}
+    for label, canon in resolved_labels:
+        series = series_by_label.get(label) or []
         filtered = _filter_trading_days(series, trade_dates, window)
         if len(filtered) < 3:
             sector_results.append(
