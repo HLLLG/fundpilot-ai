@@ -246,8 +246,14 @@ def _compute_opportunity_row(
     flow = flow or {}
     pattern = str(flow.get("pattern_label") or "").strip()
     date_aligned = flow.get("date_aligned") is not False
-    today_flow = _num(flow.get("today_main_force_net_yi"))
-    flow_5d = _num(flow.get("cumulative_5d_net_yi"))
+    # 资金流日期与涨跌幅日期不对齐（或资金流本身不可用）时，today_main_force_net_yi /
+    # cumulative_5d_net_yi 实际上不代表「今日」资金流，不能再被当作当日证据参与打分
+    # 或写进 evidence/返回字段——否则会出现下游文案一边写"资金日期需核验"、一边又
+    # 言之凿凿地给出"今日主力净流入 XX 亿"这种自相矛盾的展示（真实回归案例：
+    # 2026-07-03 日报把好几天前的旧资金流数字当成当日数据喂给用户/LLM）。
+    flow_available = bool(flow.get("available")) and date_aligned
+    today_flow = _num(flow.get("today_main_force_net_yi")) if flow_available else None
+    flow_5d = _num(flow.get("cumulative_5d_net_yi")) if flow_available else None
 
     penalties: list[str] = []
     evidence: list[str] = []

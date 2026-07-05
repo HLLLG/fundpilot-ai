@@ -554,6 +554,21 @@ def build_theme_board_payload(
     }
 
 
+def get_theme_board_snapshot_cache_only() -> dict[str, Any] | None:
+    """只读主题板块缓存，命中即返回（任意新鲜度），未命中直接返回 None，绝不触发刷新。
+
+    供 `sector_fund_flow_context.py` 在资金流历史序列缺「今日」数据时，复用主题板块
+    实时快照的当日主力净流入（与涨跌幅同一次东财 clist 请求，天然同日对齐）——这类
+    调用点期望是零成本的旁路读取，不应该在缓存未命中时触发一次完整的主题板块刷新
+    （~70 个板块的批量拉取），否则会把一次"资金流上下文查询"的耗时和副作用意外
+    放大成一次"主题榜刷新"。
+    """
+    session = build_trading_session()
+    trade_date = session.get("effective_trade_date")
+    cache_key = f"theme:boards:{_CACHE_VERSION}:{trade_date}"
+    return get_spot_snapshot_any_age(cache_key)
+
+
 def get_theme_board_snapshot(
     *,
     force_refresh: bool = False,
