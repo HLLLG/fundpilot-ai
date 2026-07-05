@@ -99,7 +99,9 @@ def adjust_holding_in_portfolio(fund_code: str, payload: AdjustHoldingRequest) -
     )
     daily_profit = sum_daily_profit(holdings) if holdings else 0.0
     daily_return_percent = None
-    if holdings and total_assets > daily_profit > 0:
+    # 2026-07-04 修复：同 portfolio_persistence.py——去掉 `daily_profit > 0` 的错误门槛，
+    # 平盘/亏损日也应正确算出收益率，而不是写成 None。
+    if holdings:
         previous = total_assets - daily_profit
         if previous > 0:
             daily_return_percent = round(daily_profit / previous * 100, 2)

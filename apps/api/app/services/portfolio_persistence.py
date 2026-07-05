@@ -179,10 +179,14 @@ def persist_holdings_after_sector_refresh(
     )
     daily_profit = sum_daily_profit(enriched)
     daily_return_percent = None
-    if total_assets > daily_profit > 0:
-        previous = total_assets - daily_profit
-        if previous > 0:
-            daily_return_percent = round(daily_profit / previous * 100, 2)
+    # 2026-07-04 修复：此前用 `total_assets > daily_profit > 0` 做门槛，要求 daily_profit
+    # 严格大于 0——平盘（daily_profit=0）或亏损（daily_profit<0）的交易日会被整个跳过，
+    # daily_return_percent 永久写成 None（而不是正确算出 0 或负的收益率）。只要分母
+    # （昨日结算总资产）为正，任何符号的 daily_profit 都应该能算出收益率；对齐
+    # official_nav_settlement.py::_persist_settlement_holdings 的正确写法。
+    previous = total_assets - daily_profit
+    if previous > 0:
+        daily_return_percent = round(daily_profit / previous * 100, 2)
 
     if summary is None:
         summary = PortfolioSummary(
