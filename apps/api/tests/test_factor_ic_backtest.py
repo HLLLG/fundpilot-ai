@@ -215,6 +215,47 @@ def test_runner_sampled_mode_stratifies_pool(tmp_path) -> None:
     assert result["universe_size"] == 12
 
 
+def test_runner_fails_before_nav_fetch_when_rank_is_unavailable(tmp_path) -> None:
+    from scripts.run_factor_ic import FactorIcRankUnavailable, build_ic_report
+
+    nav_calls = 0
+
+    def fetch_nav(*_args):
+        nonlocal nav_calls
+        nav_calls += 1
+        return []
+
+    with pytest.raises(
+        FactorIcRankUnavailable,
+        match="开放式基金排行榜获取失败",
+    ):
+        build_ic_report(
+            fetch_rank=lambda _limit: [],
+            fetch_nav=fetch_nav,
+            out_dir=str(tmp_path),
+            universe_mode="sampled",
+            universe_size=300,
+            sample_pool_size=500,
+        )
+
+    assert nav_calls == 0
+    assert not (tmp_path / "summary.json").exists()
+    assert not (tmp_path / "report.txt").exists()
+
+
+def test_runner_cli_reports_rank_source_failure(monkeypatch, capsys) -> None:
+    from scripts import run_factor_ic as runner
+
+    def fail(**_kwargs):
+        raise runner.FactorIcRankUnavailable("开放式基金排行榜获取失败")
+
+    monkeypatch.setattr(runner, "build_ic_report", fail)
+    monkeypatch.setattr(runner.sys, "argv", ["run_factor_ic.py"])
+
+    assert runner.main() == 2
+    assert "开放式基金排行榜获取失败" in capsys.readouterr().err
+
+
 def _valid_publish_payload() -> dict:
     factors = [
         {

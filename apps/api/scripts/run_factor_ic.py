@@ -47,6 +47,10 @@ _CAVEATS = [
 ]
 
 
+class FactorIcRankUnavailable(RuntimeError):
+    """The external fund ranking source produced no usable universe."""
+
+
 def _default_fetch_rank(limit: int) -> list[dict]:
     from app.services.akshare_subprocess import fetch_open_fund_rank
 
@@ -132,12 +136,18 @@ def build_ic_report(
       - "top"（默认）：取排行榜前 universe_size 名（偏强样本，行为不变）。
       - "sampled"：取前 sample_pool_size 名作大池，再跨业绩段分层抽样出 universe_size 只。
     """
+    rank_limit = sample_pool_size if universe_mode == "sampled" else universe_size
+    rank_candidates = fetch_rank(rank_limit) or []
+    if not rank_candidates:
+        raise FactorIcRankUnavailable(
+            f"开放式基金排行榜获取失败（请求前 {rank_limit} 条）"
+        )
     if universe_mode == "sampled":
         from app.services.fund_universe_sampler import sample_universe
 
-        rank_rows = sample_universe(fetch_rank(sample_pool_size) or [], universe_size)
+        rank_rows = sample_universe(rank_candidates, universe_size)
     else:
-        rank_rows = fetch_rank(universe_size) or []
+        rank_rows = rank_candidates
     codes = [
         (row["fund_code"], row.get("fund_name", ""))
         for row in rank_rows
@@ -225,18 +235,22 @@ def main() -> int:
     parser.add_argument("--out-dir", type=str, default=_DEFAULT_OUT_DIR)
     args = parser.parse_args()
 
-    summary = build_ic_report(
-        out_dir=args.out_dir,
-        universe_size=args.universe_size,
-        universe_mode=args.universe_mode,
-        sample_pool_size=args.sample_pool_size,
-        nav_days=args.nav_days,
-        rebalance_step=args.rebalance_step,
-        forward_days=args.forward_days,
-        factor_lookback=args.factor_lookback,
-        max_workers=args.max_workers,
-        limit_funds=args.limit_funds,
-    )
+    try:
+        summary = build_ic_report(
+            out_dir=args.out_dir,
+            universe_size=args.universe_size,
+            universe_mode=args.universe_mode,
+            sample_pool_size=args.sample_pool_size,
+            nav_days=args.nav_days,
+            rebalance_step=args.rebalance_step,
+            forward_days=args.forward_days,
+            factor_lookback=args.factor_lookback,
+            max_workers=args.max_workers,
+            limit_funds=args.limit_funds,
+        )
+    except FactorIcRankUnavailable as exc:
+        print(f"factor IC generation failed: {exc}", file=sys.stderr)
+        return 2
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     print(f"\n报告已写入: {Path(args.out_dir) / 'report.txt'}")
     return 0 if summary["available"] else 1
