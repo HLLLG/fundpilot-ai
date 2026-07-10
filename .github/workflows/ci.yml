@@ -88,6 +88,7 @@ jobs:
         run: npm run test:e2e
         env:
           CI: "true"
+          FUND_AI_DATABASE_URL: ""
           FUND_AI_DB_PATH: ${{ github.workspace }}/data/ci-e2e.db
           FUND_AI_DEEPSEEK_API_KEY: your-deepseek-key
           FUND_AI_NEWS_ENABLED: "false"

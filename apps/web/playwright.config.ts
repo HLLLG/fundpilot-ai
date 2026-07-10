@@ -21,6 +21,8 @@ export default defineConfig({
     timeout: 120_000,
     env: {
       ...process.env,
+      // 强制 SQLite，避免本机 .env 里的 CloudBase MySQL 被 E2E 写入
+      FUND_AI_DATABASE_URL: "",
       FUND_AI_DB_PATH: process.env.FUND_AI_DB_PATH ?? path.join(__dirname, "..", "..", "data", "playwright-e2e.db"),
       // 占位值会被 config 视为未配置，避免本机 .env 里的真 Key 被读入
       FUND_AI_DEEPSEEK_API_KEY: "your-deepseek-key",

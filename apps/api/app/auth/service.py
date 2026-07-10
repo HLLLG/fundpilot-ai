@@ -8,6 +8,7 @@ from app.auth.models import (
     UserPublic,
 )
 from app.auth.passwords import hash_password, verify_password
+from app.auth.test_account_guard import assert_register_allowed
 from app.database import (
     create_user,
     get_user_by_account,
@@ -27,6 +28,7 @@ def _to_public(user: dict) -> UserPublic:
 
 def register_user(body: RegisterRequest) -> TokenResponse:
     account = body.userAccount.strip().lower()
+    assert_register_allowed(account)
     if get_user_by_account(account) is not None:
         raise ValueError("该邮箱已注册")
     username = body.username.strip() or account.split("@")[0]
