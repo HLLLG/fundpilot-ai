@@ -1,0 +1,54 @@
+name: Factor IC Refresh
+
+on:
+  schedule:
+    - cron: "23 3 * * 0"
+      timezone: "Asia/Shanghai"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: factor-ic-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: apps/api
+    env:
+      PYTHONUTF8: "1"
+      FACTOR_IC_PUBLISH_URL: "https://fundpilot-api-269544-5-1392809852.sh.run.tcloudbase.com/api/internal/factor-ic-snapshots"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: apps/api/requirements.txt
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          pip install --retries 10 --default-timeout=120 -r requirements.txt
+      - name: Generate factor IC summary
+        run: |
+          python scripts/run_factor_ic.py \
+            --universe-mode sampled \
+            --sample-pool-size 500 \
+            --universe-size 300 \
+            --nav-days 750 \
+            --rebalance-step 21 \
+            --forward-days 20 \
+            --factor-lookback 250 \
+            --max-workers 8 \
+            --out-dir "$RUNNER_TEMP/factor-ic"
+      - name: Publish validated summary
+        env:
+          FACTOR_IC_PUBLISH_TOKEN: ${{ secrets.FACTOR_IC_PUBLISH_TOKEN }}
+        run: python scripts/publish_factor_ic.py "$RUNNER_TEMP/factor-ic/summary.json"
