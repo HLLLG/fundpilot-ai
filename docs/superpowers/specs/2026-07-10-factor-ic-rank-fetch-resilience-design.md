@@ -1,6 +1,6 @@
 # Factor IC 排行榜获取容错设计
 
-**状态：** 已确认，待实现
+**状态：** 已实现并验证
 **日期：** 2026-07-10
 **关联实现：** `.github/workflows/factor-ic-refresh.yml`、`apps/api/scripts/run_factor_ic.py`、`apps/api/app/services/akshare_subprocess.py`
 
@@ -65,3 +65,9 @@
 - 在线诊断只用于人工确认同端点的限量响应，不进入自动化测试。
 
 生产验收：修复推送后手动重跑 `Factor IC Refresh`，确认排行榜阶段不再出现 60 秒子进程超时，最终 Actions Summary 包含有效基金数、回测期数和四个因子结果。
+
+## 7. 实现验证
+
+- 排行榜限量、三次重试、runner 提前失败与工作流契约：20 passed。
+- 后端全量测试：656 passed；仅保留既有 Starlette TestClient 弃用警告。
+- 在线只读诊断：同源限量请求返回 500 条标准化基金记录；未调用生产发布 API，未读取发布 Token。
