@@ -67,5 +67,6 @@ def test_factor_ic_refresh_uses_production_environment_url() -> None:
     workflow = _text(".github/workflows/factor-ic-refresh.yml")
     assert "environment: production" in workflow
     assert "vars.FACTOR_IC_REFRESH_ENABLED == 'true'" in workflow
+    assert "github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'" in workflow
     assert "${{ vars.FACTOR_IC_PUBLISH_URL }}" in workflow
     assert "fundpilot-api-269544-5-1392809852.sh.run.tcloudbase.com" not in workflow
