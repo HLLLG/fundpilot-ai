@@ -30,6 +30,23 @@ python scripts/run_factor_ic.py --universe-size 300 --nav-days 750
 读结果：`mean IC` 0.03~0.05 即属可用，`n≥12 且 |t|>2` 才算显著；过高通常是前视偏差。
 **注意**：池为「当前在榜、业绩偏强」样本，有幸存者/选择偏差，IC 偏乐观。
 
+### 发布已校验快照
+
+`run_factor_ic.py` 始终只生成本地文件，不会写入生产数据库。生产发布通常由
+GitHub Actions 执行；确需本地显式发布时，在 `apps/api/` 下配置环境变量后运行：
+
+```bash
+export FACTOR_IC_PUBLISH_URL="https://<api-domain>/api/internal/factor-ic-snapshots"
+export FACTOR_IC_PUBLISH_TOKEN="<publication-only-token>"
+export GITHUB_SHA="<40-character-commit-sha>"
+export GITHUB_RUN_ID="<traceable-run-id>"
+python scripts/publish_factor_ic.py var/factor_ic/summary.json
+```
+
+Token 只通过环境变量进入请求头，不得作为命令行参数、日志或 Actions Summary 内容。
+发布器会在本地先执行固定生产参数与 240 只基金/12 期质量门槛校验；网络错误或
+服务端 `5xx` 最多按 5、15、45 秒退避重试，`409` 视为已有更新快照并安全跳过。
+
 ---
 
 ## 3C 价值/成长风格暴露（收益型风格分析）
