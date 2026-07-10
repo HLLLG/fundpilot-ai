@@ -114,7 +114,7 @@
 ## 7. 获取代码和生产环境变量
 
     cd /srv/fundpilot
-    git clone <仓库SSH或HTTPS地址> repo
+    git clone https://github.com/HLLLG/fundpilot-ai.git repo
     cd repo
     openssl rand -hex 24
     openssl rand -base64 48
