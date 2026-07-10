@@ -4,12 +4,24 @@ import asyncio
 import hashlib
 import json
 import logging
+import secrets
 from datetime import date, datetime
 from pathlib import Path
+from typing import Annotated
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import (
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    Header,
+    HTTPException,
+    Request,
+    UploadFile,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from pydantic import ValidationError
 
 from app.auth.middleware import AuthMiddleware
 from app.auth.models import LoginRequest, RegisterRequest
@@ -125,6 +137,14 @@ from app.services.rebalance_simulator import simulate_rebalance
 from app.services.recommendation_accuracy import build_recommendation_accuracy
 from app.services.sector_signal_backtest import build_sector_signal_backtest
 from app.services.market_breadth_signal import build_market_breadth_signal
+from app.services.factor_confidence import clear_ic_summary_cache
+from app.services.factor_ic_snapshot import (
+    FactorIcNewerSnapshotExists,
+    FactorIcStorageUnavailable,
+    build_factor_ic_status,
+    publish_factor_ic_snapshot,
+    validate_publish_request,
+)
 from app.services.shadow_escalation_digest import build_shadow_escalation_digest
 from app.services.recommendation_outcomes import (
     build_recommendation_outcomes,
@@ -208,6 +228,47 @@ def auth_me() -> dict:
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return user.model_dump()
+
+
+def _require_factor_ic_publish_token(
+    supplied: Annotated[
+        str | None,
+        Header(alias="X-Factor-IC-Publish-Token"),
+    ] = None,
+) -> None:
+    expected = (get_settings().factor_ic_publish_token or "").strip()
+    if not expected:
+        raise HTTPException(status_code=503, detail="因子 IC 发布未配置")
+    if not supplied or not secrets.compare_digest(supplied, expected):
+        raise HTTPException(status_code=401, detail="因子 IC 发布凭证无效")
+
+
+@app.post("/api/internal/factor-ic-snapshots", include_in_schema=False)
+def publish_factor_ic(
+    body: dict,
+    _authorized: None = Depends(_require_factor_ic_publish_token),
+) -> dict:
+    try:
+        request = validate_publish_request(body)
+        result = publish_factor_ic_snapshot(request)
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=exc.errors(include_context=False, include_url=False),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except FactorIcNewerSnapshotExists as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except FactorIcStorageUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    clear_ic_summary_cache()
+    return result
+
+
+@app.get("/api/diagnostics/factor-ic-status")
+def factor_ic_status() -> dict:
+    return build_factor_ic_status()
 
 
 @app.get("/api/reports/recommendation-accuracy")

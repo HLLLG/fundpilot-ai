@@ -15,6 +15,7 @@ _PUBLIC_EXACT = {
     "/health",
     "/api/auth/register",
     "/api/auth/login",
+    "/api/internal/factor-ic-snapshots",
     "/docs",
     "/redoc",
     "/openapi.json",
