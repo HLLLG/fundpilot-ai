@@ -29,6 +29,7 @@ from app.services.factor_ic_backtest import (  # noqa: E402
     NavPoint,
     compute_factor_ic,
 )
+from app.services.factor_ic_snapshot import FACTOR_IC_SCHEMA_VERSION  # noqa: E402
 
 _DEFAULT_OUT_DIR = str(API_ROOT / "var" / "factor_ic")
 
@@ -169,7 +170,8 @@ def build_ic_report(
         factor_lookback=factor_lookback,
     )
 
-    run_date = datetime.now(timezone.utc).date().isoformat()
+    generated_at = datetime.now(timezone.utc)
+    run_date = generated_at.date().isoformat()
     out_path = Path(out_dir)
     out_path.mkdir(parents=True, exist_ok=True)
 
@@ -177,7 +179,9 @@ def build_ic_report(
     (out_path / "report.txt").write_text(report, encoding="utf-8")
 
     summary = {
+        "schema_version": FACTOR_IC_SCHEMA_VERSION,
         "run_date": run_date,
+        "generated_at": generated_at.isoformat(),
         "params": {
             "universe_size": universe_size,
             "universe_mode": universe_mode,
