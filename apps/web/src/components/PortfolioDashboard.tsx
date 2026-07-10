@@ -12,6 +12,7 @@ import { ProfitLossCalendar } from "@/components/ProfitLossCalendar";
 import { PortfolioRiskMetricsPanel } from "@/components/PortfolioRiskMetricsPanel";
 import { PortfolioFactorScoresPanel } from "@/components/PortfolioFactorScoresPanel";
 import { PortfolioEvidenceOverviewPanel } from "@/components/PortfolioEvidenceOverviewPanel";
+import { FactorIcStatusBadge } from "@/components/FactorIcStatusBadge";
 
 const RANGE_TABS: Array<{ id: ProfitRange; label: string }> = [
   { id: "today", label: "当日" },
@@ -188,7 +189,10 @@ export function PortfolioDashboard({
 
       <section className="pl-panel section-card">
         <div className="pl-panel-head">
-          <div className="pl-panel-title">持仓因子体检</div>
+          <div className="min-w-0 space-y-1">
+            <div className="pl-panel-title">持仓因子体检</div>
+            <FactorIcStatusBadge />
+          </div>
           <button
             type="button"
             className="risk-corr-toggle"

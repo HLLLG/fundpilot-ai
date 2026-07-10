@@ -441,6 +441,23 @@ export type PortfolioFactorScores = {
   factor_reliability?: Record<string, FactorReliability> | null;
 };
 
+export type FactorIcStatus = {
+  available: boolean;
+  run_date?: string;
+  generated_at?: string;
+  published_at?: string | null;
+  age_days?: number;
+  stale?: boolean;
+  stale_after_days: number;
+  source: "database" | "local_file" | "unavailable";
+  target_universe_size?: number | null;
+  universe_size?: number | null;
+  universe_mode?: string | null;
+  rebalance_count?: number | null;
+  factor_periods?: Record<string, number | null>;
+  source_commit?: string | null;
+};
+
 export type EvidenceComponent = { source: string; level: string; basis: string };
 
 export type HoldingEvidence = {
@@ -2199,6 +2216,16 @@ export async function fetchPortfolioRiskCorrelation(
 
 export async function fetchPortfolioFactorScores(): Promise<PortfolioFactorScores> {
   const response = await apiFetch(`${API_BASE}/api/portfolio/factor-scores`, {
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export async function fetchFactorIcStatus(): Promise<FactorIcStatus> {
+  const response = await apiFetch(`${API_BASE}/api/diagnostics/factor-ic-status`, {
     cache: "no-store",
   });
   if (!response.ok) {
