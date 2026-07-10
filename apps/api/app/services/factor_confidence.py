@@ -7,13 +7,13 @@
 """
 from __future__ import annotations
 
-import json
 import time
 from pathlib import Path
 
-API_ROOT = Path(__file__).resolve().parents[2]
-SUMMARY_PATH = API_ROOT / "var" / "factor_ic" / "summary.json"
-SUMMARY_TTL_SECONDS = 1800
+from app.services.factor_ic_snapshot import DEFAULT_SUMMARY_PATH, load_factor_ic_summary
+
+SUMMARY_PATH = DEFAULT_SUMMARY_PATH
+SUMMARY_TTL_SECONDS = 300
 
 IC_STRONG = 0.03
 
@@ -28,22 +28,25 @@ FACTOR_IC_KEY: dict[str, str | None] = {
 _SUMMARY_CACHE: dict[str, tuple[float, dict[str, dict]]] = {}
 
 
+def clear_ic_summary_cache() -> None:
+    _SUMMARY_CACHE.clear()
+
+
 def load_ic_summary() -> dict[str, dict]:
-    """best-effort 读 3A summary.json 的 factors → {factor_key: stats}；缺失/损坏→{}。"""
+    """DB 优先、本地兜底读取 factors；缺失或损坏时返回空映射。"""
     now = time.time()
     cached = _SUMMARY_CACHE.get("default")
     if cached and now - cached[0] < SUMMARY_TTL_SECONDS:
         return cached[1]
 
+    raw, _source, _metadata = load_factor_ic_summary(local_path=Path(SUMMARY_PATH))
     result: dict[str, dict] = {}
-    try:
-        raw = json.loads(Path(SUMMARY_PATH).read_text(encoding="utf-8"))
-        for stats in raw.get("factors") or []:
-            key = stats.get("factor")
-            if key:
-                result[key] = stats
-    except (OSError, json.JSONDecodeError, ValueError, TypeError):
-        result = {}
+    for stats in (raw or {}).get("factors") or []:
+        if not isinstance(stats, dict):
+            continue
+        key = stats.get("factor")
+        if key:
+            result[str(key)] = stats
 
     _SUMMARY_CACHE["default"] = (now, result)
     return result

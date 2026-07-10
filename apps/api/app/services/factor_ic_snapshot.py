@@ -7,6 +7,7 @@ import json
 import math
 from collections.abc import Callable
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -24,6 +25,8 @@ EXPECTED_PARAMS = {
 }
 MIN_EFFECTIVE_UNIVERSE = 240
 MIN_VALID_PERIODS = 12
+API_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_SUMMARY_PATH = API_ROOT / "var" / "factor_ic" / "summary.json"
 
 
 class FactorIcNewerSnapshotExists(RuntimeError):
@@ -267,3 +270,101 @@ def publish_factor_ic_snapshot(
     except Exception as exc:
         raise FactorIcStorageUnavailable("factor IC 快照数据库写入失败") from exc
     return {"created": True, "snapshot_id": snapshot_id}
+
+
+def load_factor_ic_summary(
+    *,
+    local_path: Path | None = None,
+    connection_factory: Callable | None = None,
+) -> tuple[dict[str, Any] | None, str, dict[str, Any]]:
+    try:
+        database_row = read_latest_database_snapshot(connection_factory)
+    except Exception:
+        database_row = None
+    if database_row is not None:
+        metadata = {
+            "published_at": database_row["published_at"],
+            "source_commit": database_row["source_commit"],
+            "source_run_id": database_row["source_run_id"],
+        }
+        return database_row["summary"], "database", metadata
+
+    path = local_path or DEFAULT_SUMMARY_PATH
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        return None, "unavailable", {}
+    if not isinstance(raw, dict):
+        return None, "unavailable", {}
+    return raw, "local_file", {}
+
+
+def _unavailable_status(threshold: int) -> dict[str, Any]:
+    return {
+        "available": False,
+        "stale_after_days": threshold,
+        "source": "unavailable",
+    }
+
+
+def build_factor_ic_status(
+    *,
+    stale_after_days: int | None = None,
+    now: datetime | None = None,
+    local_path: Path | None = None,
+    connection_factory: Callable | None = None,
+) -> dict[str, Any]:
+    from app.config import get_settings
+
+    threshold = (
+        stale_after_days
+        if stale_after_days is not None
+        else get_settings().factor_ic_stale_after_days
+    )
+    current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    raw, source, metadata = load_factor_ic_summary(
+        local_path=local_path,
+        connection_factory=connection_factory,
+    )
+    if not raw or not raw.get("run_date") or raw.get("available") is False:
+        return _unavailable_status(threshold)
+    params = raw.get("params")
+    if params is not None and not isinstance(params, dict):
+        return _unavailable_status(threshold)
+    factors = raw.get("factors")
+    if factors is not None and not isinstance(factors, list):
+        return _unavailable_status(threshold)
+
+    generated_at = raw.get("generated_at") or f"{raw['run_date']}T00:00:00+00:00"
+    try:
+        generated = datetime.fromisoformat(str(generated_at).replace("Z", "+00:00"))
+        if generated.tzinfo is None:
+            generated = generated.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return _unavailable_status(threshold)
+
+    generated_utc = generated.astimezone(timezone.utc)
+    age_days = max(0, (current.date() - generated_utc.date()).days)
+    factors = factors or []
+    factor_periods = {
+        str(row.get("factor")): row.get("n_periods")
+        for row in factors
+        if isinstance(row, dict) and row.get("factor")
+    }
+    source_commit = str(metadata.get("source_commit") or "")[:7] or None
+    return {
+        "available": True,
+        "run_date": str(raw["run_date"]),
+        "generated_at": generated.isoformat(),
+        "published_at": metadata.get("published_at"),
+        "age_days": age_days,
+        "stale": age_days >= threshold,
+        "stale_after_days": threshold,
+        "source": source,
+        "target_universe_size": (params or {}).get("universe_size"),
+        "universe_size": raw.get("universe_size"),
+        "universe_mode": (params or {}).get("universe_mode"),
+        "rebalance_count": raw.get("rebalance_count"),
+        "factor_periods": factor_periods,
+        "source_commit": source_commit,
+    }

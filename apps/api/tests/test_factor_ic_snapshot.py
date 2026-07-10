@@ -9,6 +9,8 @@ import pytest
 from app.services.factor_ic_snapshot import (
     FactorIcNewerSnapshotExists,
     FactorIcStorageUnavailable,
+    build_factor_ic_status,
+    load_factor_ic_summary,
     publish_factor_ic_snapshot,
     read_latest_database_snapshot,
     validate_publish_request,
@@ -265,3 +267,122 @@ def test_mysql_bootstrap_contains_factor_ic_snapshot_schema() -> None:
     assert "CREATE TABLE IF NOT EXISTS factor_ic_snapshots" in ddl
     assert "snapshot_id VARCHAR(64) PRIMARY KEY" in ddl
     assert "INDEX idx_factor_ic_generated (generated_at)" in ddl
+
+
+def test_status_uses_database_before_local_file(tmp_path, monkeypatch) -> None:
+    _use_sqlite(monkeypatch, tmp_path, "status.db")
+    now = datetime(2026, 7, 10, 10, tzinfo=timezone.utc)
+    request = validate_publish_request(
+        valid_payload("2026-07-10T09:00:00+00:00"),
+        now=now,
+    )
+    publish_factor_ic_snapshot(request, now=now)
+    local_path = tmp_path / "summary.json"
+    local_path.write_text(
+        '{"available": true, "run_date": "2020-01-01", "universe_size": 1}',
+        encoding="utf-8",
+    )
+
+    status = build_factor_ic_status(now=now, local_path=local_path)
+
+    assert status["source"] == "database"
+    assert status["stale"] is False
+    assert status["universe_size"] == 300
+    assert status["source_commit"] == "aaaaaaa"
+
+
+@pytest.mark.parametrize(
+    ("age_days", "expected_stale"),
+    [(29, False), (30, True), (31, True)],
+)
+def test_status_staleness_boundary(
+    age_days: int,
+    expected_stale: bool,
+    tmp_path,
+    monkeypatch,
+) -> None:
+    from datetime import timedelta
+
+    _use_sqlite(monkeypatch, tmp_path, f"status-{age_days}.db")
+    now = datetime(2026, 7, 10, 10, tzinfo=timezone.utc)
+    generated = now - timedelta(days=age_days)
+    payload = valid_payload(generated.isoformat())
+    payload["summary"]["run_date"] = generated.date().isoformat()
+    request = validate_publish_request(payload, now=generated)
+    publish_factor_ic_snapshot(request, now=generated)
+
+    status = build_factor_ic_status(
+        now=now,
+        local_path=tmp_path / "none.json",
+    )
+
+    assert status["age_days"] == age_days
+    assert status["stale"] is expected_stale
+
+
+def test_local_legacy_summary_is_used_when_database_fails(tmp_path) -> None:
+    local_path = tmp_path / "legacy-summary.json"
+    local_path.write_text(
+        """{
+          "available": true,
+          "run_date": "2026-07-09",
+          "params": {"universe_size": 300, "universe_mode": "top"},
+          "universe_size": 298,
+          "rebalance_count": 34,
+          "factors": [{"factor": "momentum", "n_periods": 33}]
+        }""",
+        encoding="utf-8",
+    )
+
+    def unavailable_database():
+        raise RuntimeError("database offline")
+
+    raw, source, metadata = load_factor_ic_summary(
+        local_path=local_path,
+        connection_factory=unavailable_database,
+    )
+    status = build_factor_ic_status(
+        now=datetime(2026, 7, 10, 10, tzinfo=timezone.utc),
+        local_path=local_path,
+        connection_factory=unavailable_database,
+    )
+
+    assert raw is not None and raw["universe_size"] == 298
+    assert source == "local_file"
+    assert metadata == {}
+    assert status["available"] is True
+    assert status["source"] == "local_file"
+    assert status["generated_at"] == "2026-07-09T00:00:00+00:00"
+    assert status["factor_periods"] == {"momentum": 33}
+
+
+@pytest.mark.parametrize(
+    "contents",
+    [
+        "not-json",
+        '{"available": true, "run_date": "not-a-date"}',
+        '{"available": true}',
+        '{"available": true, "run_date": "2026-07-09", "params": []}',
+    ],
+)
+def test_corrupt_local_summary_degrades_to_unavailable(
+    contents: str,
+    tmp_path,
+) -> None:
+    local_path = tmp_path / "broken-summary.json"
+    local_path.write_text(contents, encoding="utf-8")
+
+    def unavailable_database():
+        raise RuntimeError("database offline")
+
+    status = build_factor_ic_status(
+        now=datetime(2026, 7, 10, 10, tzinfo=timezone.utc),
+        local_path=local_path,
+        connection_factory=unavailable_database,
+    )
+
+    assert status == {
+        "available": False,
+        "stale_after_days": 30,
+        "source": "unavailable",
+    }
