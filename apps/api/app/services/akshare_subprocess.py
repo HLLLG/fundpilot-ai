@@ -5,11 +5,15 @@ import json
 import logging
 import subprocess
 import sys
+import time
 from functools import lru_cache
 
 logger = logging.getLogger(__name__)
 
 _SUBPROCESS_TIMEOUT = 60
+_FUND_RANK_ATTEMPTS = 3
+_FUND_RANK_RETRY_DELAYS = (2.0, 5.0)
+_FUND_RANK_SUBPROCESS_TIMEOUT = 35
 
 
 def run_akshare_json_script(
@@ -277,61 +281,90 @@ except Exception as e:
 
 
 def fetch_open_fund_rank(*, limit: int = 300) -> list[dict] | None:
-    """开放式基金排行（近1年等），子进程拉取避免主进程 crash。"""
+    """读取开放式基金近一年排行榜；限量、有界并重试瞬时失败。"""
     cap = max(50, min(limit, 500))
     script = f"""
-import akshare as ak
+from datetime import date
 import json
+import requests
+from akshare.utils import demjson
+
+end = date.today()
 try:
-    frame = ak.fund_open_fund_rank_em(symbol="全部")
-    if frame is None or frame.empty:
-        print(json.dumps({{"error": "empty"}}))
-    else:
-        rows = []
-        for _, row in frame.head({cap}).iterrows():
-            code = str(row.get("基金代码", "")).strip().zfill(6)
-            name = str(row.get("基金简称", "")).strip()
-            if not code.isdigit() or len(code) != 6:
-                continue
-            def _num(key):
-                raw = row.get(key)
-                if raw is None or str(raw).strip().lower() in ("", "nan", "--"):
-                    return None
-                try:
-                    return float(raw)
-                except (TypeError, ValueError):
-                    return None
-            rows.append({{
-                "fund_code": code,
-                "fund_name": name,
-                "return_1y_percent": _num("近1年"),
-                "return_6m_percent": _num("近6月"),
-                "return_3m_percent": _num("近3月"),
-                "max_drawdown_1y_percent": _num("最大回撤"),
-                "fund_scale_yi": _num("基金规模"),
-            }})
-        print(json.dumps({{"data": rows}}))
-except Exception as e:
-    print(json.dumps({{"error": str(e)}}))
-"""
-    try:
-        result = subprocess.run(
-            [sys.executable, "-c", script],
-            capture_output=True,
-            text=True,
-            timeout=_SUBPROCESS_TIMEOUT,
-            check=False,
-        )
-        if result.returncode != 0 or not result.stdout.strip():
-            logger.warning("akshare fund rank subprocess failed: %s", result.stderr)
-            return None
-        output = json.loads(result.stdout.strip())
-        if output.get("error"):
-            return None
-        return output.get("data") or []
-    except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError) as exc:
-        logger.warning("akshare fund rank exception: %s", exc)
+    start = end.replace(year=end.year - 1)
+except ValueError:
+    start = end.replace(year=end.year - 1, day=28)
+
+params = {{
+    "op": "ph", "dt": "kf", "ft": "all", "rs": "", "gs": "0",
+    "sc": "1nzf", "st": "desc", "sd": start.isoformat(),
+    "ed": end.isoformat(), "qdii": "", "tabSubtype": ",,,,,",
+    "pi": "1", "pn": "{cap}", "dx": "1", "v": "0.1591891419018292",
+}}
+headers = {{
+    "User-Agent": "Mozilla/5.0",
+    "Referer": "https://fund.eastmoney.com/fundguzhi.html",
+}}
+
+def number(parts, index):
+    if index >= len(parts) or parts[index] in ("", "--"):
         return None
+    try:
+        return float(parts[index])
+    except (TypeError, ValueError):
+        return None
+
+try:
+    response = requests.get(
+        "https://fund.eastmoney.com/data/rankhandler.aspx",
+        params=params,
+        headers=headers,
+        timeout=(5, 20),
+    )
+    response.raise_for_status()
+    start_index = response.text.find("{{")
+    end_index = response.text.rfind("}}")
+    if start_index < 0 or end_index < start_index:
+        raise ValueError("rank payload missing object")
+    payload = demjson.decode(response.text[start_index : end_index + 1])
+    rows = []
+    for raw in (payload.get("datas") or [])[:{cap}]:
+        parts = str(raw).split(",")
+        code = parts[0].strip().zfill(6) if parts else ""
+        if not code.isdigit() or len(code) != 6:
+            continue
+        rows.append({{
+            "fund_code": code,
+            "fund_name": parts[1].strip() if len(parts) > 1 else "",
+            "return_1y_percent": number(parts, 11),
+            "return_6m_percent": number(parts, 10),
+            "return_3m_percent": number(parts, 9),
+            "max_drawdown_1y_percent": None,
+            "fund_scale_yi": None,
+        }})
+    if not rows:
+        raise ValueError("empty rank rows")
+    print(json.dumps({{"data": rows}}, ensure_ascii=False))
+except Exception as exc:
+    print(json.dumps({{"error": str(exc)}}, ensure_ascii=False))
+"""
+    for attempt in range(_FUND_RANK_ATTEMPTS):
+        payload = run_akshare_json_script(
+            script,
+            label=f"fund_open_rank:{cap}:attempt-{attempt + 1}",
+            timeout=_FUND_RANK_SUBPROCESS_TIMEOUT,
+        )
+        if isinstance(payload, dict):
+            rows = payload.get("data")
+            if isinstance(rows, list) and rows:
+                return rows
+        if attempt < len(_FUND_RANK_RETRY_DELAYS):
+            time.sleep(_FUND_RANK_RETRY_DELAYS[attempt])
+    logger.warning(
+        "akshare fund rank unavailable after %s attempts",
+        _FUND_RANK_ATTEMPTS,
+    )
+    return None
 
 
 def fetch_open_fund_rank_worst_recent(*, limit: int = 150) -> list[dict] | None:
