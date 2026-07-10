@@ -6,7 +6,7 @@ import threading
 from datetime import datetime, timezone
 
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 # 迁移在应用/后台线程首次建立连接时触发（例如板块快照刷新会 daemon 线程预取资金流历史，
 # 与主线程几乎同时首次打开 sqlite 连接）。同进程内多个线程各自用独立 connection 对同一
@@ -397,6 +397,29 @@ def _migrate_swing_alert_fired(connection: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_factor_ic_snapshots(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS factor_ic_snapshots (
+            snapshot_id TEXT PRIMARY KEY,
+            schema_version INTEGER NOT NULL,
+            run_date TEXT NOT NULL,
+            generated_at TEXT NOT NULL,
+            published_at TEXT NOT NULL,
+            source_commit TEXT NOT NULL,
+            source_run_id TEXT NOT NULL,
+            payload TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_factor_ic_generated
+        ON factor_ic_snapshots (generated_at DESC)
+        """
+    )
+
+
 def run_migrations(connection: sqlite3.Connection) -> None:
     with _MIGRATION_LOCK:
         _run_migrations_locked(connection)
@@ -406,6 +429,7 @@ def _run_migrations_locked(connection: sqlite3.Connection) -> None:
     version = _get_schema_version(connection)
     if version >= SCHEMA_VERSION:
         _migrate_fund_primary_sectors_global(connection)
+        _migrate_factor_ic_snapshots(connection)
         return
 
     connection.execute(
@@ -462,6 +486,7 @@ def _run_migrations_locked(connection: sqlite3.Connection) -> None:
     _migrate_discovery_prompt_state(connection)
     _migrate_swing_alert_fired(connection)
     _migrate_fund_primary_sectors_global(connection)
+    _migrate_factor_ic_snapshots(connection)
 
     _ensure_migration_user(connection)
     _set_schema_version(connection, SCHEMA_VERSION)

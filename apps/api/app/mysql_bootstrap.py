@@ -251,6 +251,19 @@ def ensure_mysql_schema(connection: Any) -> None:
             updated_at VARCHAR(64) NOT NULL
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """,
+        """
+        CREATE TABLE IF NOT EXISTS factor_ic_snapshots (
+            snapshot_id VARCHAR(64) PRIMARY KEY,
+            schema_version INT NOT NULL,
+            run_date VARCHAR(16) NOT NULL,
+            generated_at VARCHAR(64) NOT NULL,
+            published_at VARCHAR(64) NOT NULL,
+            source_commit VARCHAR(64) NOT NULL,
+            source_run_id VARCHAR(64) NOT NULL,
+            payload LONGTEXT NOT NULL,
+            INDEX idx_factor_ic_generated (generated_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """,
     ]
     for statement in statements:
         cursor.execute(statement)

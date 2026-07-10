@@ -26,3 +26,23 @@ def test_run_migrations_backfills_global_primary_sector_table_at_current_version
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='fund_primary_sectors_global'"
     ).fetchone()
     assert row is not None
+
+
+def test_current_schema_still_ensures_factor_ic_snapshot_table() -> None:
+    assert SCHEMA_VERSION == 9
+    connection = sqlite3.connect(":memory:")
+    connection.execute(
+        "CREATE TABLE schema_meta (id INTEGER PRIMARY KEY, version INTEGER NOT NULL)"
+    )
+    connection.execute(
+        "INSERT INTO schema_meta (id, version) VALUES (1, ?)",
+        (SCHEMA_VERSION,),
+    )
+
+    run_migrations(connection)
+
+    table = connection.execute(
+        "SELECT name FROM sqlite_master "
+        "WHERE type='table' AND name='factor_ic_snapshots'"
+    ).fetchone()
+    assert table is not None

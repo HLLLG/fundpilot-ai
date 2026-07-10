@@ -116,6 +116,8 @@ class Settings(BaseSettings):
     jwt_secret: str = "fundpilot-dev-jwt-secret-change-me-32chars"
     jwt_access_expire_minutes: int = 43_200  # 30 days
     database_url: str | None = None
+    factor_ic_publish_token: str | None = None
+    factor_ic_stale_after_days: int = 30
     cloudbase_env_id: str | None = None
     # 方案 A 默认关闭：美股 Tab 仅展示指数 + 汇率，不拉 QDII 穿透估值
     us_market_qdii_enabled: bool = False

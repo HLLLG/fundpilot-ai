@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
+from collections.abc import Callable
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Literal
 
@@ -21,6 +24,14 @@ EXPECTED_PARAMS = {
 }
 MIN_EFFECTIVE_UNIVERSE = 240
 MIN_VALID_PERIODS = 12
+
+
+class FactorIcNewerSnapshotExists(RuntimeError):
+    pass
+
+
+class FactorIcStorageUnavailable(RuntimeError):
+    pass
 
 
 class FactorIcParams(BaseModel):
@@ -122,3 +133,137 @@ def validate_publish_request(
     if generated < current - timedelta(hours=24):
         raise ValueError("generated_at 已超过 24 小时")
     return request
+
+
+def _canonical_summary(
+    request: FactorIcPublishRequest,
+) -> tuple[dict[str, Any], str, str]:
+    summary = request.summary.model_dump(mode="json")
+    summary["generated_at"] = request.summary.generated_at.astimezone(
+        timezone.utc
+    ).isoformat()
+    encoded = json.dumps(
+        summary,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    snapshot_id = hashlib.sha256(
+        f"{request.source_commit}\n{encoded}".encode("utf-8")
+    ).hexdigest()
+    return summary, encoded, snapshot_id
+
+
+def _row_dict(row: object) -> dict[str, Any]:
+    if isinstance(row, dict):
+        return row
+    return dict(row)  # type: ignore[arg-type]
+
+
+def read_latest_database_snapshot(
+    connection_factory: Callable | None = None,
+) -> dict[str, Any] | None:
+    from app.database import _connect
+
+    factory = connection_factory or _connect
+    with factory() as connection:
+        row = connection.execute(
+            """
+            SELECT snapshot_id, generated_at, published_at,
+                   source_commit, source_run_id, payload
+            FROM factor_ic_snapshots
+            ORDER BY generated_at DESC, published_at DESC
+            LIMIT 1
+            """
+        ).fetchone()
+    if row is None:
+        return None
+    data = _row_dict(row)
+    return {
+        "snapshot_id": data["snapshot_id"],
+        "generated_at": data["generated_at"],
+        "published_at": data["published_at"],
+        "source_commit": data["source_commit"],
+        "source_run_id": data["source_run_id"],
+        "summary": json.loads(data["payload"]),
+    }
+
+
+def publish_factor_ic_snapshot(
+    request: FactorIcPublishRequest,
+    *,
+    connection_factory: Callable | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    from app.config import get_settings
+    from app.database import _connect
+
+    factory = connection_factory or _connect
+    current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    summary, encoded, snapshot_id = _canonical_summary(request)
+    generated_at = request.summary.generated_at.astimezone(timezone.utc)
+
+    try:
+        with factory() as connection:
+            dialect = getattr(connection, "dialect", None)
+            if get_settings().uses_mysql and dialect != "mysql":
+                raise FactorIcStorageUnavailable(
+                    "MySQL 不可用，拒绝回落到本地 SQLite 发布"
+                )
+            if dialect == "sqlite":
+                connection.execute("BEGIN IMMEDIATE")
+
+            duplicate = connection.execute(
+                """
+                SELECT snapshot_id
+                FROM factor_ic_snapshots
+                WHERE snapshot_id = ?
+                LIMIT 1
+                """,
+                (snapshot_id,),
+            ).fetchone()
+            if duplicate is not None:
+                return {"created": False, "snapshot_id": snapshot_id}
+
+            latest_query = """
+                SELECT snapshot_id, generated_at
+                FROM factor_ic_snapshots
+                ORDER BY generated_at DESC, published_at DESC
+                LIMIT 1
+            """
+            if dialect == "mysql":
+                latest_query += " FOR UPDATE"
+            existing = connection.execute(latest_query).fetchone()
+            if existing is not None:
+                latest = _row_dict(existing)
+                latest_generated = datetime.fromisoformat(
+                    str(latest["generated_at"])
+                ).astimezone(timezone.utc)
+                if generated_at <= latest_generated:
+                    raise FactorIcNewerSnapshotExists(
+                        "数据库已有更新的 factor IC 快照"
+                    )
+
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO factor_ic_snapshots (
+                    snapshot_id, schema_version, run_date, generated_at,
+                    published_at, source_commit, source_run_id, payload
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    snapshot_id,
+                    request.summary.schema_version,
+                    request.summary.run_date.isoformat(),
+                    str(summary["generated_at"]),
+                    current.isoformat(),
+                    request.source_commit,
+                    request.source_run_id,
+                    encoded,
+                ),
+            )
+    except (FactorIcNewerSnapshotExists, FactorIcStorageUnavailable):
+        raise
+    except Exception as exc:
+        raise FactorIcStorageUnavailable("factor IC 快照数据库写入失败") from exc
+    return {"created": True, "snapshot_id": snapshot_id}
