@@ -1,5 +1,7 @@
 import { Sparkles } from "lucide-react";
 
+import { BRAND } from "@/lib/brand";
+
 type BrandMarkProps = {
   size?: "sm" | "md" | "lg";
   showName?: boolean;
@@ -14,7 +16,7 @@ const SIZES = {
 } as const;
 
 /**
- * 好基灵品牌标识：品牌蓝圆角图标 + 中文名（可选英文辅助）。
+ * 灵析品牌标识：品牌蓝圆角图标 + 中文名（可选英文辅助）。
  * 用于落地页 / 登录注册 / Dashboard 顶部，保持一致性。
  */
 export function BrandMark({
@@ -36,10 +38,12 @@ export function BrandMark({
       </span>
       {showName ? (
         <span className="flex flex-col leading-none">
-          <span className={`font-black tracking-tight text-slate-950 ${s.name}`}>好基灵</span>
+          <span className={`font-black tracking-tight text-slate-950 ${s.name}`}>
+            {BRAND.name}
+          </span>
           {showEnglish ? (
             <span className={`mt-0.5 font-bold uppercase tracking-[0.18em] text-slate-400 ${s.en}`}>
-              FundPilot
+              {BRAND.englishName}
             </span>
           ) : null}
         </span>

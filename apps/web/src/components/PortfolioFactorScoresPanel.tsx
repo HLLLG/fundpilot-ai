@@ -8,6 +8,7 @@ import type {
   PortfolioFactorScores,
 } from "@/lib/api";
 import { fetchPortfolioFactorScores } from "@/lib/api";
+import { BRAND } from "@/lib/brand";
 import {
   compositeSummary,
   factorLabel,
@@ -63,7 +64,7 @@ function FactorBar({
         <div className="factor-bar-fill" style={{ width: `${locked ? 0 : width}%` }} />
       </div>
       <div className="factor-bar-hint">
-        {locked ? "升级「好基灵 Pro」解锁" : factorPercentileHint(factorKey, percentile)}
+        {locked ? `升级「${BRAND.name} Pro」解锁` : factorPercentileHint(factorKey, percentile)}
       </div>
     </div>
   );

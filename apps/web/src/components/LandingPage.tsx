@@ -15,6 +15,7 @@ import {
   TrendingUp,
 } from "lucide-react";
 import { BrandMark } from "@/components/BrandMark";
+import { BRAND } from "@/lib/brand";
 
 const FEATURES = [
   {
@@ -104,7 +105,7 @@ export function LandingPage() {
               <span className="eyebrow-dot">
                 <Sparkles size={11} strokeWidth={2.6} />
               </span>
-              AI 基金投研助手
+              AI 基金研究台
             </span>
             <h1 className="font-display max-w-xl text-[2.6rem] font-extrabold leading-[1.1] tracking-tight text-slate-950 sm:text-6xl">
               截个图，
@@ -112,7 +113,8 @@ export function LandingPage() {
               <span className="landing-gradient-text">就懂你的基金</span>
             </h1>
             <p className="mt-6 max-w-lg text-base leading-7 text-slate-500 sm:text-lg">
-              不用记代码、不用盯盘到眼花。上传一张持仓截图，好基灵帮你理清持仓、追踪板块，每天推送一份
+              不用记代码、不用盯盘到眼花。上传一张持仓截图，{BRAND.name}
+              帮你理清持仓、追踪板块，每天推送一份
               <span className="font-semibold text-slate-700">听得懂的 AI 简报</span>。
             </p>
             <div className="mt-9 flex w-full flex-col items-stretch gap-3 sm:w-auto sm:flex-row sm:items-center">
@@ -193,7 +195,7 @@ export function LandingPage() {
           <div className="mb-7 text-center">
             <span className="section-eyebrow">真实场景</span>
             <h2 className="font-display mt-1.5 text-2xl font-extrabold tracking-tight text-slate-900 sm:text-3xl">
-              基民们这样用好基灵
+              基民们这样用{BRAND.name}
             </h2>
           </div>
           <div className="grid gap-4 sm:grid-cols-3">
@@ -250,7 +252,7 @@ export function LandingPage() {
                 即将上线
               </span>
               <div className="flex items-center gap-2">
-                <span className="text-base font-bold text-slate-900">好基灵 Pro</span>
+                <span className="text-base font-bold text-slate-900">{BRAND.name} Pro</span>
               </div>
               <div className="mt-3 flex items-end gap-1">
                 <span className="plan-price text-4xl">¥19</span>
@@ -310,7 +312,7 @@ export function LandingPage() {
             }}
           />
           <h2 className="font-display text-2xl font-extrabold tracking-tight sm:text-3xl">
-            现在就让好基灵帮你看懂基金
+            现在就让{BRAND.name}帮你看懂基金
           </h2>
           <p className="mx-auto mt-3 max-w-md text-sm leading-6 text-blue-50/85">
             上传一张持仓截图，几分钟内得到属于你的第一份投研日报。
@@ -332,7 +334,9 @@ export function LandingPage() {
           <p className="mx-auto max-w-2xl px-4 text-xs leading-5 text-slate-400">
             投资有风险，入市需谨慎。本工具提供的内容仅供参考，不构成任何投资建议。
           </p>
-          <p className="mt-2 text-xs text-slate-300">© {new Date().getFullYear()} 好基灵 FundPilot</p>
+          <p className="mt-2 text-xs text-slate-300">
+            © {new Date().getFullYear()} {BRAND.name} {BRAND.englishName}
+          </p>
         </footer>
       </div>
 
