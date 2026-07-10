@@ -54,6 +54,7 @@ def test_deploy_workflow_only_deploys_successful_main_ci_commit() -> None:
     assert "branches: [main]" in workflow
     assert "github.event.workflow_run.conclusion == 'success'" in workflow
     assert "github.event.workflow_run.head_sha" in workflow
+    assert "github.ref == 'refs/heads/main'" in workflow
     assert "vars.LIGHTHOUSE_DEPLOY_ENABLED == 'true'" in workflow
     assert "cancel-in-progress: false" in workflow
     assert 'NEXT_PUBLIC_API_BASE_URL: ""' in workflow
