@@ -1,6 +1,6 @@
 # 因子 IC 回测数据自动刷新（GitHub Actions 外部计算 + API 发布）— 设计方案
 
-**状态：** 2026-07-10 重新调研并与用户逐节确认，未实现
+**状态：** 2026-07-10 已实现并完成本地自动验证（后端 652 passed、前端 142 passed + typecheck/lint/build、临时 SQLite 发布闭环）；待用户执行生产 Secret 配置与手动 workflow 验收
 **替代方案：** 本文替代原先基于 CloudBase 后台 daemon 的 C3 设计
 **范围：** GitHub Actions、`apps/api` 快照发布/读取/诊断、`apps/web` 状态展示
 **关联文档：** `docs/TODO_factor_ic_refresh.md`、`docs/PROJECT_CONTEXT.md`
@@ -229,6 +229,7 @@ POST /api/internal/factor-ic-snapshots
 - 未配置 MySQL的本地开发环境允许写 SQLite。
 - `Settings.uses_mysql=True` 时，若连接因故回落为 `dialect="sqlite"`，发布抛出存储不可用错误并返回 `503`。
 - 数据库事务失败时回滚，不留下半条记录。
+- SQLite 用 `BEGIN IMMEDIATE` 串行化“查最新→追加”，MySQL 对最新行使用 `FOR UPDATE`；先按 `snapshot_id` 查重，因此旧快照的同 payload 重试仍返回幂等成功。
 - 读取失败可以继续回退本地 `var/factor_ic/summary.json`，但发布绝不把本地回落伪装成生产成功。
 
 ---
@@ -249,6 +250,8 @@ POST /api/internal/factor-ic-snapshots
 2. 数据库无记录或读取失败时读现有 `SUMMARY_PATH`。
 3. 两者都不可用或损坏时返回 `{}`。
 4. 进程缓存 TTL 从 1800 秒缩短为 300 秒；发布成功后清理处理该请求的进程缓存，其他 worker 最多 5 分钟后切换。
+
+本地灾难兜底即使 JSON 可解析，只要日期、`params` 或 `factors` 结构损坏，诊断状态也返回 `available=false`，不让损坏文件导致 API 500。
 
 诊断状态不经过因子映射缓存，直接读取最新数据库记录，因此发布完成后立即可见。
 

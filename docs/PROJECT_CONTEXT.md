@@ -4,9 +4,10 @@
 >
 > **维护：** 功能或架构有实质变化时，同步更新「能力清单」「数据流」「API」「目录」「环境变量」。
 
-**文档版本：** 2026-07-04（日报「量化证据缺失」根因修复：daily_return_percent 计算门槛 + 因子分/信号回测并发化 + Docker 镜像缺 factor_ic 数据）
+**文档版本：** 2026-07-10（因子 IC 周度外部刷新、共享快照发布与前端新鲜度状态）
 
 **更新记录：**
+- **因子 IC 周度自动刷新（2026-07-10）：** GitHub Actions `Factor IC Refresh` 每周日北京时间 03:23（也支持手动触发）在生产容器外运行固定口径 `sampled 500→300` 回测，不占用 CloudBase API 实例 CPU/线程；runner 输出 schema v1 与 UTC `generated_at`，发布 CLI 和 API 共用质量门槛（`available=true`、有效基金 ≥240、总期数及四因子有效期均 ≥12、统计量有限；不显著结论仍可发布）。`POST /api/internal/factor-ic-snapshots` 只豁免普通 JWT，另用独立 `X-Factor-IC-Publish-Token` 常量时间鉴权；生产配置 MySQL 时拒绝回落 SQLite 写入。SQLite v9/MySQL 新表 `factor_ic_snapshots` 追加保存源码提交、Actions run id 和完整 payload；SQLite `BEGIN IMMEDIATE`、MySQL `FOR UPDATE` 串行化最新快照判断，同 payload 幂等、旧快照 409。`factor_confidence` 改为数据库优先、本地文件兜底、300 秒缓存；损坏兜底文件诚实降级。登录诊断接口 `GET /api/diagnostics/factor-ic-status` 给出来源、样本数和 30 天过期状态，`FactorIcStatusBadge` 显示在“持仓因子体检”标题旁。**本地验证：** 后端 `pytest -n auto --dist loadscope`（本机 auto worker 上限 4）652 passed；前端 142 tests + typecheck + lint 零 warning + build；另用临时 SQLite 完成 500→300、750 日生成→首次/重复/旧版/低质量发布→JWT 状态→置信读取闭环，四因子各 34 个有效期。生产配置与验收见 `docs/deploy/cloudbase.md`，实现设计见 `docs/superpowers/specs/2026-07-04-factor-ic-refresh-automation-design.md`。
 - **日报「量化证据缺失」三处根因修复（2026-07-04）：** 排查生产环境（腾讯云 CynosDB MySQL）真实日报发现每只持仓「量化证据」均显示缺失，直接连库读取最新报告 `analysis_facts` 定位到三个独立死因，逐一修复并验证。**① `daily_return_percent` 计算门槛 bug**：`portfolio_persistence.py::persist_holdings_after_sector_refresh` 与 `holding_adjust_service.py::adjust_holding_in_portfolio` 此前用 `total_assets > daily_profit > 0` 做门槛——要求 `daily_profit` 严格大于 0，导致平盘/亏损交易日的 `daily_return_percent` 被永久写成 `None` 而非正确的 0 或负数，拖慢组合日快照凑够 `risk_metrics` 所需 20 个交易日样本的进度；改为对齐 `official_nav_settlement.py::_persist_settlement_holdings` 的正确写法（只要求分母 `previous=total_assets-daily_profit > 0`，不限制 `daily_profit` 符号）。**② 因子分/板块信号回测串行请求超时**：`portfolio_snapshot.py::build_factor_scores_payload` 对不在开放式基金排行榜横截面里的持仓走 `_target_from_nav` 净值兜底（每次独立 AkShare 拉取），`sector_signal_backtest.py::_build_sector_signal_backtest_impl` 逐板块拉日 K 线，两处均用 `for` 循环**串行**执行，喂 LLM 的装配路径分别只给 4/5 秒预算（`analysis_payload.FACTOR_SCORE_TIMEOUT_SECONDS` / `analysis_facts.SIGNAL_BACKTEST_TIMEOUT_SECONDS`），持仓/关联板块数量哪怕只有 3~5 个，串行拉取就必然超时——均改为 `ThreadPoolExecutor` 并发（`max_workers=8`，同 `fund_data.py::_map_holdings_concurrently` 模式，单项时走直调避免线程池开销）。**③ Docker 镜像未打包因子 IC 回测数据**：`var/factor_ic/summary.json`（`scripts/run_factor_ic.py` 生成，供 `factor_confidence.py::load_ic_summary()` 读取）此前从未打进生产镜像——`apps/api/Dockerfile` 与根目录 `Dockerfile` 均只 `COPY app`，`.gitignore` 又把整个 `apps/api/var/` 排除，容器里该文件永远不存在，因子分置信度这一路在线上恒为「不足」。修复分两层：`.gitignore` 规则从「整个目录排除」改为「内容排除 + 显式放行 `var/factor_ic/` 及新增的 `.gitkeep` 占位文件」（git 语义：父目录被规则整体匹配排除后子路径否定模式不生效，必须先精确到目录层再放行子路径）；两个 Dockerfile 新增 `COPY .../var/factor_ic .../var/factor_ic`（不是裸 `COPY var /app/var`——`var/` 整体在一次干净 checkout 里连空目录都不存在，裸拷贝会让镜像构建直接失败；`.gitkeep` 保证这一层目录必然存在，`summary.json` 本身仍受忽略、缺失时因子分诚实降级为「不足」而不阻塞构建）。长期待办（该数据本身是 2026-06-24 的静态快照，需要定期重新生成机制）记录于新建 `docs/TODO_factor_ic_refresh.md`（GitHub issue 创建因 token 权限不足未能建立）。**验证方式**：每处修复均用 `git stash`/临时 commit + worktree 模拟「还原前 vs 修复后」对比运行，而非仅静态审查代码；新建 `test_daily_return_percent_gating.py`（5 项）、`test_portfolio_snapshot_factor_concurrency.py`（3 项）、`test_sector_signal_backtest_concurrency.py`（3 项，含并发结果按 label 正确映射防错位）、`test_dockerfile_factor_ic_packaging.py`（7 项，用 `git check-ignore`/`git ls-files` 验证、不依赖本机 Docker）。后端全量 pytest 572 passed（含新增 18 项）。
 - **板块资金流"今日"四档结构喂给 LLM（2026-07-04）：** 此前主题板块的机构(超大单)/大单/中单(大户)/小单(散户)四档净流入数据（`flow_tiers`，来自东财 clist 与涨跌幅同一次实时快照拉取）只在市场 Tab 前端展示，未进入喂给 LLM 的 `sector_fund_flow` 上下文（日报 fast 模式与荐基裁剪逻辑均未保留该字段；deep 模式虽保留原始数字但 system prompt 没有解释字段语义，LLM 只能瞪着 `super_large_net_yi` 猜含义）；且机构 vs 散户资金背离的解读（`retail_buy_inst_sell`）此前只嵌在"涨但主力净流出"这一种 pattern 分支里，其余分支即使四档结构同样出现背离也不会提示。**按用户要求的取数原则**——只喂"今日"的资金结构，不喂逐日历史结构，5d/20d 仍只给主力净流入汇总数字：`sector_fund_flow_context.py::_classify_flow_pattern` 新增 `_flow_structure_hint()`，用当日 `super_large_net_yi+large_net_yi`（机构）与 `medium_net_yi+small_net_yi`（大户/散户）的净流入方向对比，生成"机构净流入而散户净流出"等结构化结论句子（`flow_structure_hint` 字段），覆盖全部 pattern 分支而非只有 distribution；同时移除此前存在但未被任何调用方使用的逐日明细数组 `recent_5d_main_force_yi`（保留 `flow_tiers` 只表示"当日"）。`analysis_payload.py`（日报）与 `discovery_sector_context.py`（荐基）的 fast 模式裁剪白名单新增 `flow_tiers`/`flow_structure_hint`；`OUTPUT_REQUIREMENTS_SYSTEM` 与 `discovery_prompt.py::DISCOVERY_FACTS_INSTRUCTION` 补充四档字段中英对照说明（机构/大单/大户/散户），并声明 LLM 应直接引用系统给出的 `flow_structure_hint` 结论、不得自行编造未给出的机构/散户资金动向。单测 `test_sector_fund_flow_context.py`（新增结构解读的正反例 + 无四档数据时返回 None）、`test_analysis_payload_sector_opportunity_trim.py`（新增 fast/deep 裁剪断言）、`test_discovery_sector_context.py`（新建，覆盖 `_slim_sector_fund_flow`）。后端全量 pytest 554 passed。
 - **板块资金流"今日"数据滞后误标修复（2026-07-04）：** 修复日报/荐基的板块方向判断（`sector_opportunity_scoring.py`，2026-07-02 引入）在资金流与涨跌幅"日期不对齐"时，仍把滞后的旧资金流数字当作"今日主力净流入"写进 evidence 文案和返回字段的问题——表现为同一张卡片一边显示"资金日期需核验"，一边又言之凿凿给出具体的"今日主力净流入 XX 亿"（实际是几天前的数据）。**根因**：东财历史资金流接口 `fflow/daykline`（`board_fund_flow_history.py`）盘中常滞后一天才落定"今日"这一行，而主题板块榜的涨跌幅走的是另一路实时快照（`fetch_eastmoney_clist_theme_metrics_by_code`），两路数据源不同步产生日期错位；这不是新 bug，`sector_fund_flow_context.py` 早在 2026-06-25 就已能检测出这种错位（`date_aligned`/`flow_date_mismatch`），但 2026-07-02 新增的机会打分器没有遵守这条既有纪律，检测到错位后只追加警示文案、却让旧数字继续参与打分与展示。**修复（数据源修正，非仅报警）**：`sector_fund_flow_context.py` 新增 `_ensure_today_point`——历史资金流序列缺当日行时，从主题板块缓存（`theme_board_snapshot.get_theme_board_snapshot_cache_only`，只读缓存不触发刷新）拼接同源、同日对齐的实时主力净流入值，而不是放任滞后数据被误标为"今日"；`sector_opportunity_scoring.py::_compute_opportunity_row` 同时加固：即使拼接失败仍标记为未对齐，`today_main_force_net_yi`/`cumulative_5d_net_yi` 置空、不参与打分、不出现在 evidence 里（双层防御，即使前置数据修正万一失效也不会展示自相矛盾的数字）。单测 `test_sector_fund_flow_context.py`（新增拼接场景 + 无匹配板块不误拼场景）、`test_sector_opportunity_flow_date_alignment.py`（新增，覆盖打分/evidence/confidence 三方面）。同时排查了官方净值、持有收益、板块涨跌等其余数据流，未发现同类"旧数据贴今日标签"问题。后端全量 pytest 548 passed。
@@ -152,7 +153,7 @@
 | 基金详情 | 关联板块分时图（边框/十字线）；**业绩走势**（区间涨跌 vs 沪深300、历史净值分页）；**我的收益**；持有天数滚轮选购入日；持仓明细默认收起 |
 | 盈亏分析 | **盈亏分析** Tab：`PortfolioDashboard` — 收益走势（当日/周/月/年/全部）、盈亏日历（周末/假日 **0.00**；今日官方净值未出 **未更新**）、当日 TOP5、持仓甜甜圈；`GET /api/portfolio/dashboard` |
 | 组合风险体检 | `PortfolioRiskMetricsPanel`（盈亏分析 Tab）：波动率/最大回撤/夏普/索提诺/Beta/Alpha/HHI；纯函数 `portfolio_risk_metrics.py`；复利累乘净值曲线；挂在 dashboard 响应 `risk_metrics` 字段；Pro 门控（免费 2 项）。相关性矩阵 `PortfolioCorrelationHeatmap` 经独立懒加载接口 `GET /api/portfolio/risk-correlation` |
-| 持仓因子体检 | `PortfolioFactorScoresPanel`（盈亏分析 Tab，风险体检下方，展开懒加载）：给每只持仓在排行榜横截面里打**动量/风险调整(Calmar)/回撤控制/规模**因子分（z-score→百分位→等级A/B/C/D）；纯函数 `fund_factors.py` + 装配层 `build_factor_scores_payload`（`fetch_open_fund_rank` 做池，不在榜走净值兜底）；独立接口 `GET /api/portfolio/factor-scores`；Pro 门控（免费仅动量）；价值因子/IC 归模块3 |
+| 持仓因子体检 | `PortfolioFactorScoresPanel`（盈亏分析 Tab，风险体检下方，展开懒加载）：给每只持仓在排行榜横截面里打**动量/风险调整(Calmar)/回撤控制/规模**因子分（z-score→百分位→等级A/B/C/D）；纯函数 `fund_factors.py` + 装配层 `build_factor_scores_payload`（`fetch_open_fund_rank` 做池，不在榜走净值兜底）；独立接口 `GET /api/portfolio/factor-scores`；标题下 `FactorIcStatusBadge` 展示共享 IC 快照日期、有效基金数与 30 天过期状态；Pro 门控（免费仅动量） |
 | 市场板块 | **市场** Tab：`MarketTab` — 子 Tab「**主题板块 \| 大跌雷达 \| 美股**」；三者均为**全用户共享**服务端缓存 + stale 回退（含**跨进程 stale**：重启后首请求秒回磁盘缓存并标 `stale`，后台异步刷新）。主题：`ThemeSectorOverview`（`GET /api/market/theme-boards`，读持仓高亮 `fetch_benchmark=False`；**小倍式精选白名单 ~76**（含 AMAC 主题补码）、`board_kind` 标签、涨跌幅+连涨 **push2delay 日 K**、**主力净流入+四档展开+历史走势柱状图（近一周/近一月，`GET /api/market/board-flow-history` 懒加载）**、列头排序、行操作「看大跌基金」「加入关注方向」）；大跌雷达：`DipReboundRadar`（`GET /api/market/dip-radar`，全市场近 1 周跌幅榜预筛 + NAV 精算、`sector_label` 经 **`resolve_sector_labels_for_radar`**、`rebound_score`/反弹信号、**`historical_hint`**、板块 chip 筛选、「深度扫描」跳转荐基 `dip_swing`）；后台 `market_shared_refresh_loop` 活跃 20min / 休市 3h（每 30min 唤醒检查）、前台 SWR |
 | 板块注册表 | `sector_registry` + `sector_registry_data` — 统一主题榜/荐基 chips 的 `market_quote`/`discovery_quote`、别名与 `discovery_eligible`/`theme_board_eligible`；`theme_board_snapshot` 优先读注册表 |
 | 美股概览 | **市场** Tab 子 Tab「美股」：`UsMarketOverview`（`GET /api/market/us-overview`）— 纳指/标普/道指**指数期货**（真实期货，禁回退收盘价）+ USD/CNY 汇率指标卡 + QDII「盘前参考涨跌」列表（基于期货盘前涨跌估算，标注非承诺性预估）；美东时段标签（盘前/盘中/盘后/休市，含夏令时）+ 更新时间；服务端 snapshot + stale 回退 + 优雅降级（`*_status` 标 `ok`/`stale`/`unavailable`，绝不编造数值）；后台与 A 股独立计时（活跃 20min / 休市 3h）；前端 SWR 活跃 20min / 休市 3h、不可见暂停 |
@@ -177,7 +178,7 @@
 | 工作流阻塞 | `workflowBlockers`（生成日报前校验，无独立阻塞清单组件） |
 | 数据备份 | SQLite export/import API（`GET/POST /api/database/*`）；Web 面板已移除 |
 | 云部署 | `apps/api/Dockerfile`、`docker-compose.cloud.yml`；`scripts/migrate_sqlite_to_mysql.py`；见 `docs/deploy/cloudbase.md` |
-| CI / E2E | GitHub Actions：`api` 并行 pytest（**539** 项，~1min 量级）+ `web` lint/typecheck/build + Playwright 冒烟 |
+| CI / E2E | GitHub Actions：`api` 并行 pytest（**652** 项）+ `web` lint/typecheck/build + Playwright 冒烟；另有 `Factor IC Refresh` 周度/手动外部回测 workflow |
 | 基金诊断 | AkShare 概况/累计收益；详情页可 AkShare **按名称查码**并持久化 |
 | 分析模式 | 快速 / 深度 |
 | 体验 | Markdown 导出、桌面通知、**Sora 字体 + 中文系统字体栈**（PingFang / HarmonyOS / 雅黑 / Noto）UI；**「静谧蓝海·高级克制」设计语言**（深海蓝 `#2356e0` + 暖金 `#cf9b3e`、毛玻璃 App Bar、会员方案展示区）；**客户端 SWR 缓存**（盈亏分析/详情/业绩走势）；板块刷新 fast 轮询 + accurate 手动；追问侧栏智能滚动 |
@@ -259,7 +260,7 @@ fundpilot-ai/
 │       ├── fund_factor_nav.py / factor_ic_backtest.py   # 因子NAV共享helper + 因子IC回测引擎（模块3-3A，离线）
 │       ├── fund_style_regression.py / fund_universe_sampler.py  # 价值/成长风格回归(3C) + 分层抽样池(3D)
 │       ├── signal_confidence.py   # 板块信号可信度打分器（模块4-4A，纯函数，喂LLM）
-│       ├── factor_confidence.py   # 因子 IC 置信映射（模块4 竖切3，读3A summary.json 喂LLM）
+│       ├── factor_ic_snapshot.py / factor_confidence.py  # IC 版本契约、共享快照/状态 + 置信映射
 │       ├── risk_confidence.py     # 组合风险度量置信（模块4 竖切4，样本充足度 喂LLM）
 │       ├── signal_synthesis.py    # 信号合成证据卡+组合证据总览（模块4，三路置信聚合 喂LLM/前端）
 │       ├── cls_news_client.py / market_flow_client.py / news_freshness.py
@@ -292,7 +293,7 @@ fundpilot-ai/
 │       ├── FundDiscoveryPanel / DiscoveryReportPanel / DiscoveryChatPanel / DiscoveryJobStatusFloat
 │       ├── DiscoveryHistoryRail / DiscoveryCandidatePoolPanel / DiscoveryOutcomesPanel
 │       ├── YangjibaoHoldingsBoard / YangjibaoFundDetail / AddHoldingModal / AlipayOcrConfirmModal
-│       ├── PortfolioDashboard / ProfitAnalysisTrendChart / ProfitLossCalendar / DailyProfitTop5 / HoldingDonutChart
+│       ├── PortfolioDashboard / FactorIcStatusBadge / ProfitAnalysisTrendChart / ProfitLossCalendar / DailyProfitTop5 / HoldingDonutChart
 │       ├── PerformanceTrendPanel / PerformanceReturnChart / NavHistoryListModal / WheelDatePicker
 │       ├── SectorMappingModal / IntradayPercentChart
 │       ├── TradingSessionBar / useChatAutoScroll
@@ -300,6 +301,7 @@ fundpilot-ai/
 │       ├── MarketBreadthGauge / ShadowEscalationDigestCard  # AI 决策升级 M5/M6.3
 │       ├── ReportPanel / JobStatusFloat / HistoryRail / UserMenu
 ├── apps/api/Dockerfile
+├── .github/workflows/factor-ic-refresh.yml  # 周度/手动生成并发布因子 IC 快照
 ├── docker-compose.cloud.yml
 ├── uploads/
 ├── data/app.db
@@ -448,6 +450,7 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | POST | `/api/auth/register` | 邮箱注册 |
 | POST | `/api/auth/login` | 邮箱登录 |
 | GET | `/api/auth/me` | 当前用户（需 JWT） |
+| POST | `/api/internal/factor-ic-snapshots` | 因子 IC 快照发布（不进 OpenAPI；`X-Factor-IC-Publish-Token` 专用鉴权；质量不达标 422、已有更新 409、共享存储不可用 503） |
 | POST | `/api/ocr` | 截图/文本 → holdings；`preview=true` 仅解析不写入；支持支付宝列表 |
 | POST | `/api/portfolio/apply-holdings` | 确认 OCR 预览写入持仓与快照：**秒回**（skip_network bootstrap + `cache_only` 板块估算）；后台由前端触发 `refresh-sector-quotes` 补全最新行情 |
 | GET | `/api/funds/search?q=` | 东财基金名称表模糊查码（OCR 确认 / 改码 picker） |
@@ -470,6 +473,7 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | GET | `/api/diagnostics/sector-signal-backtest?days=120&sectors=半导体,商业航天` | 板块信号 T→T+1 回测；`sectors` 省略时用全部 canonical |
 | GET | `/api/diagnostics/market-breadth` | 大盘情绪温度计（M1.1，全用户共享，仍需 JWT） |
 | GET | `/api/diagnostics/shadow-escalation-digest?days=7` | 灰度复盘摘要（M6.3，近 N 天双向 guard 升级触发聚合，`days` 夹在 1~30） |
+| GET | `/api/diagnostics/factor-ic-status` | 因子 IC 快照新鲜度（需 JWT）：来源、生成/发布时间、有效基金数、回测期数、四因子有效期、30 天过期状态 |
 | GET | `/api/database/export` | 下载 SQLite |
 | POST | `/api/database/import` | 上传替换 DB（自动备份 `.db.bak`） |
 | GET | `/api/jobs/{id}` | 任务状态（日报或推荐基金）；`job_status_service` 单连接先查 `discovery_jobs`；含 `job_kind`、`stage`/`stage_label`；完成时含 `report` 或 `discovery_report`；DB 不可用 503 |
@@ -758,6 +762,8 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | `FUND_AI_JWT_ACCESS_EXPIRE_MINUTES` | 43200 | JWT 有效期（分钟）；默认 30 天 |
 | `FUND_AI_DATABASE_URL` | — | 设则使用 MySQL（`mysql://user:pass@host:3306/db`）；否则 SQLite `data/app.db` |
 | `FUND_AI_DB_FALLBACK_SQLITE` | true | MySQL 连接失败时回落 SQLite（本地开发推荐；云库自动暂停冷启动时避免 API 500） |
+| `FUND_AI_FACTOR_IC_PUBLISH_TOKEN` | — | 因子 IC 发布专用 Token；CloudBase 与 GitHub Secret `FACTOR_IC_PUBLISH_TOKEN` 使用同一随机值，不得复用 JWT/DeepSeek Secret |
+| `FUND_AI_FACTOR_IC_STALE_AFTER_DAYS` | 30 | 因子 IC 快照过期提示阈值；过期仍可读，等待下次有效快照替换 |
 | `FUND_AI_CLOUDBASE_ENV_ID` | — | CloudBase 环境 ID；用于 Web 静态托管域名 CORS 自动放行 |
 | `FUND_AI_CORS_ORIGINS` | `http://localhost:3001,http://127.0.0.1:3001` | 允许的前端 Origin（逗号分隔）；生产设为 Web 静态托管域名 |
 | （同上表 `FUND_AI_CLOUDBASE_ENV_ID`） | — | 设后会额外放行 `https://*.webapps.tcloudbase.com`（`config.resolved_cors_origin_regex`） |
@@ -832,7 +838,7 @@ bash scripts/dev.sh    # 或 scripts/dev.ps1
 ```
 
 ```bash
-cd apps/api && ./.venv/Scripts/python.exe -m pytest tests -q          # 539 项，串行 ~78s
+cd apps/api && ./.venv/Scripts/python.exe -m pytest tests -q          # 652 项
 cd apps/api && ./.venv/Scripts/python.exe -m pytest tests -q -n auto --dist loadscope  # 与 CI 一致
 cd apps/web && npm run lint && npm run typecheck && npm run build
 cd apps/web && npm run test:e2e   # Playwright 冒烟
@@ -842,7 +848,7 @@ cd apps/web && npm run test:e2e   # Playwright 冒烟
 
 | 项 | 说明 |
 |----|------|
-| 规模 | **539** 项单元测试（曾自 ~400+ 精简去重，后续 M1~M6 等功能迭代持续增补） |
+| 规模 | 后端 **652** 项、前端 **142** 项单元/组件测试 |
 | 离线 | `conftest.py` autouse stub：交易日历、基金名称表、东财 spot/K 线、板块刷新、`build_sector_heat_ranking` 等 |
 | 数据库 | 测试强制 `FUND_AI_DATABASE_URL=""` → SQLite 文件库；勿在 pytest 期间连生产 MySQL |
 | 超时 | `pytest.ini`：`timeout = 30` |
@@ -850,7 +856,7 @@ cd apps/web && npm run test:e2e   # Playwright 冒烟
 | CI 环境变量 | `FUND_AI_OCR_PRELOAD=false`、`FUND_AI_NEWS_ENABLED=false`、`FUND_AI_SECTOR_SIGNAL_BACKTEST_ENABLED=false`、`FUND_AI_TACTICAL_PROMPT_TUNING_ENABLED=false` |
 | 保留覆盖 | 核心 API（OCR/分析/荐基）、持仓指标、OCR 解析、discovery 守卫与候选池、`test_api.py` 集成冒烟 |
 
-Workflow：`.github/workflows/ci.yml`（`api` / `web` / `e2e-smoke` 三 job）。
+Workflow：`.github/workflows/ci.yml`（`api` / `web` / `e2e-smoke` 三 job）与 `.github/workflows/factor-ic-refresh.yml`（周度/手动 IC 刷新）。
 
 ---
 
