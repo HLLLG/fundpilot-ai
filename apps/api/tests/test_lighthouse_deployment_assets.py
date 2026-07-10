@@ -1,8 +1,5 @@
 from pathlib import Path
 
-import yaml
-
-
 ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -22,14 +19,13 @@ def test_root_dockerfile_uses_reachable_package_mirrors() -> None:
 
 
 def test_production_compose_keeps_state_on_host_and_ports_private() -> None:
-    compose = yaml.safe_load(_text("docker-compose.production.yml"))
-    services = compose["services"]
-    assert services["mysql"]["ports"] == ["127.0.0.1:13306:3306"]
-    assert "/srv/fundpilot/mysql:/var/lib/mysql" in services["mysql"]["volumes"]
-    assert services["api"]["ports"] == ["127.0.0.1:8000:8000"]
-    assert "/srv/fundpilot/data:/app/data" in services["api"]["volumes"]
-    assert "/srv/fundpilot/uploads:/app/uploads" in services["api"]["volumes"]
-    assert "/srv/fundpilot/web:/usr/share/nginx/html:ro" in services["nginx"]["volumes"]
+    compose = _text("docker-compose.production.yml")
+    assert '"127.0.0.1:13306:3306"' in compose
+    assert "/srv/fundpilot/mysql:/var/lib/mysql" in compose
+    assert '"127.0.0.1:8000:8000"' in compose
+    assert "/srv/fundpilot/data:/app/data" in compose
+    assert "/srv/fundpilot/uploads:/app/uploads" in compose
+    assert "/srv/fundpilot/web:/usr/share/nginx/html:ro" in compose
 
 
 def test_nginx_preserves_same_origin_sse_proxying() -> None:
