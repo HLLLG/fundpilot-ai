@@ -10,6 +10,11 @@ def _text(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
 
 
+def test_production_environment_file_is_ignored() -> None:
+    ignored = {line.strip() for line in _text(".gitignore").splitlines()}
+    assert ".env.production" in ignored
+
+
 def test_root_dockerfile_uses_reachable_package_mirrors() -> None:
     dockerfile = _text("Dockerfile")
     assert "mirrors.tuna.tsinghua.edu.cn/debian" in dockerfile

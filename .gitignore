@@ -1,4 +1,5 @@
 .env
+.env.production
 .agents/
 skills-lock.json
 .venv/

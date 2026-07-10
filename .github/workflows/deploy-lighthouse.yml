@@ -68,8 +68,8 @@ jobs:
           [[ -n "$LIGHTHOUSE_KNOWN_HOSTS" ]] || { echo "::error::LIGHTHOUSE_KNOWN_HOSTS is empty"; exit 1; }
           [[ "$DEPLOY_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Invalid deploy SHA"; exit 1; }
           install -m 700 -d "$HOME/.ssh"
-          printf '%s\n' "$LIGHTHOUSE_SSH_PRIVATE_KEY" > "$SSH_KEY_PATH"
-          printf '%s\n' "$LIGHTHOUSE_KNOWN_HOSTS" > "$SSH_KNOWN_HOSTS_PATH"
+          printf '%s\n' "$LIGHTHOUSE_SSH_PRIVATE_KEY" | tr -d '\r' > "$SSH_KEY_PATH"
+          printf '%s\n' "$LIGHTHOUSE_KNOWN_HOSTS" | tr -d '\r' > "$SSH_KNOWN_HOSTS_PATH"
           chmod 600 "$SSH_KEY_PATH" "$SSH_KNOWN_HOSTS_PATH"
           ssh-keygen -y -f "$SSH_KEY_PATH" >/dev/null
 
