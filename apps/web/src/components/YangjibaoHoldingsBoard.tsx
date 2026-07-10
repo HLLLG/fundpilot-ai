@@ -12,6 +12,7 @@ import {
   ScanLine,
 } from "lucide-react";
 import { type Holding, type PortfolioSummary } from "@/lib/api";
+import { BRAND } from "@/lib/brand";
 import { hydrateTradingSession } from "@/lib/tradingSessionClient";
 import { readTradingSessionCache } from "@/lib/holdingDetailCache";
 import { SectorMappingModal } from "@/components/SectorMappingModal";
@@ -281,7 +282,8 @@ export function YangjibaoHoldingsBoard({
               </span>
               <h3 className="text-lg font-black text-slate-900">截张图，30 秒看懂你的基金</h3>
               <p className="max-w-xs text-sm leading-6 text-slate-500">
-                上传支付宝或养基宝的持仓截图，好基灵自动识别基金、份额与收益，并实时关联板块涨跌。
+                上传支付宝或养基宝的持仓截图，{BRAND.name}
+                自动识别基金、份额与收益，并实时关联板块涨跌。
               </p>
               {onAddHolding ? (
                 <div className="mt-2 flex flex-wrap items-center justify-center gap-2.5">

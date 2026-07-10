@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { PortfolioRiskMetrics } from "@/lib/api";
 import { fetchPortfolioRiskMetrics } from "@/lib/api";
+import { BRAND } from "@/lib/brand";
 import { PortfolioCorrelationHeatmap } from "@/components/PortfolioCorrelationHeatmap";
 import {
   alphaHint,
@@ -101,7 +102,9 @@ function MetricCard({ item, locked }: { item: MetricItem; locked: boolean }) {
     <div className={`risk-card risk-tone-${item.tone}${locked ? " risk-card-locked" : ""}`}>
       <div className="risk-card-label">{item.label}</div>
       <div className="risk-card-value">{locked ? "•••" : item.value}</div>
-      <div className="risk-card-hint">{locked ? "升级「好基灵 Pro」解锁" : item.hint}</div>
+      <div className="risk-card-hint">
+        {locked ? `升级「${BRAND.name} Pro」解锁` : item.hint}
+      </div>
     </div>
   );
 }

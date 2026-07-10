@@ -13,6 +13,7 @@ import {
   X,
 } from "lucide-react";
 import type { Holding } from "@/lib/api";
+import { BRAND } from "@/lib/brand";
 
 const ALIPAY_GUIDE_IMAGE = "/guides/alipay-holdings-overview.png";
 
@@ -170,7 +171,7 @@ export function AddHoldingModal({
                 {[
                   "打开支付宝 → 我的 → 总资产 → 基金，进入「我的持有」",
                   "截图保存当前持仓总览页",
-                  "回到这里上传截图，好基灵自动识别",
+                  `回到这里上传截图，${BRAND.name}自动识别`,
                 ].map((text, index) => (
                   <li key={index} className="flex items-center gap-3">
                     <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--brand-soft)] text-xs font-black text-[var(--brand-strong)]">

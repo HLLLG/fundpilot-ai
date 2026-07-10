@@ -48,6 +48,7 @@ import { AlipayOcrConfirmModal } from "@/components/AlipayOcrConfirmModal";
 import { BatchTransactionModal } from "@/components/BatchTransactionModal";
 import { BatchTransactionConfirmModal } from "@/components/BatchTransactionConfirmModal";
 import { notifyDesktop, ensureNotificationPermission } from "@/lib/notifications";
+import { BRAND } from "@/lib/brand";
 import { formatThinkingNote, stageShortLabel } from "@/lib/streamingStageMeta";
 import {
   loadAnalysisMode,
@@ -890,7 +891,7 @@ export function Dashboard() {
       setReportTabUnread(true);
     }
 
-    notifyDesktop("FundPilot 日报已生成", { body: completedReport.title });
+    notifyDesktop(`${BRAND.name}日报已生成`, { body: completedReport.title });
     setMessage(
       analysisMode === "fast"
         ? "快速模式日报已生成（Flash + 预取新闻）。"
@@ -911,7 +912,7 @@ export function Dashboard() {
     setPendingDiscoveryReport(completedReport);
     setDiscoveryJobId(null);
     setActiveTab("discovery");
-    notifyDesktop("FundPilot 推荐报告已生成", {
+    notifyDesktop(`${BRAND.name}推荐报告已生成`, {
       body: completedReport.title ?? "推荐基金扫描已完成",
     });
   };
@@ -930,7 +931,7 @@ export function Dashboard() {
         setDiscoveryTabUnread(true);
       }
 
-      notifyDesktop("FundPilot 推荐报告已生成", {
+      notifyDesktop(`${BRAND.name}推荐报告已生成`, {
         body: completedReport.title ?? "推荐基金扫描已完成",
       });
     },
