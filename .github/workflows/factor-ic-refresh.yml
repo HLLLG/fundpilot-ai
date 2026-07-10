@@ -15,17 +15,28 @@ concurrency:
 
 jobs:
   refresh:
+    if: vars.FACTOR_IC_REFRESH_ENABLED == 'true' && (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    environment: production
     defaults:
       run:
         working-directory: apps/api
     env:
       PYTHONUTF8: "1"
-      FACTOR_IC_PUBLISH_URL: "https://fundpilot-api-269544-5-1392809852.sh.run.tcloudbase.com/api/internal/factor-ic-snapshots"
+      FACTOR_IC_PUBLISH_URL: ${{ vars.FACTOR_IC_PUBLISH_URL }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Validate production publish target
+        run: |
+          case "$FACTOR_IC_PUBLISH_URL" in
+            https://*/api/internal/factor-ic-snapshots) ;;
+            *)
+              echo "::error::FACTOR_IC_PUBLISH_URL must be an HTTPS Lighthouse snapshot endpoint"
+              exit 1
+              ;;
+          esac
       - name: Setup Python
         uses: actions/setup-python@v5
         with:

@@ -3,15 +3,21 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN sed -i 's|deb.debian.org/debian|mirrors.tuna.tsinghua.edu.cn/debian|g' \
+      /etc/apt/sources.list.d/debian.sources \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
     libgl1 \
     libglib2.0-0 \
     libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY apps/api/requirements.txt apps/api/requirements-ocr.txt /app/
-RUN pip install --no-cache-dir -r /app/requirements.txt \
-    && pip install --no-cache-dir -r /app/requirements-ocr.txt
+ARG PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+RUN pip install --no-cache-dir --index-url "$PIP_INDEX_URL" \
+      -r /app/requirements.txt \
+    && pip install --no-cache-dir --index-url "$PIP_INDEX_URL" \
+      -r /app/requirements-ocr.txt
 
 COPY apps/api/app /app/app
 
