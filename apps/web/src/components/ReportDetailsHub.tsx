@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ChevronDown,
   ClipboardCheck,
@@ -62,10 +62,19 @@ function sectorRotationFacts(report: Report): SectorRotationFacts | null {
 
 export function ReportDetailsHub({ report, diagnostics }: ReportDetailsHubProps) {
   const [openTool, setOpenTool] = useState<ReportTool | null>(null);
+
+  useEffect(() => {
+    setOpenTool(null);
+  }, [report.id]);
+
+  const diagnosticsContent = useMemo(
+    () => (openTool === "review" && diagnostics ? diagnostics() : null),
+    [diagnostics, openTool],
+  );
   const rotation = sectorRotationFacts(report);
   const availableTools = TOOLS.filter((tool) => {
     if (tool.id === "news") {
-      return Boolean(report.topic_briefs?.length || report.market_news.length);
+      return Boolean(report.topic_briefs?.length);
     }
     if (tool.id === "rotation") {
       return Boolean(rotation?.market_top.length);
@@ -151,7 +160,7 @@ export function ReportDetailsHub({ report, diagnostics }: ReportDetailsHubProps)
       {openTool === "review" ? (
         <div id="report-tool-review" className="mt-4 min-w-0 space-y-4">
           <ReportOutcomesPanel reportId={report.id} embedded />
-          {diagnostics ? diagnostics() : null}
+          {diagnosticsContent}
         </div>
       ) : null}
     </section>
