@@ -1,5 +1,7 @@
 """板块资金流注入日报 facts：日期对齐与正负号语义。"""
 
+import pytest
+
 from app.models import Holding
 from app.services.board_fund_flow_history import parse_board_flow_kline
 from app.services.sector_fund_flow_context import (
@@ -116,6 +118,7 @@ def test_missing_today_row_is_spliced_from_live_theme_board_snapshot(monkeypatch
     monkeypatch.setattr(
         "app.services.theme_board_snapshot.get_theme_board_snapshot_cache_only",
         lambda: {
+            "trade_date": "2026-07-03",
             "items": [
                 {
                     "sector_label": "商业航天",
@@ -160,6 +163,7 @@ def test_live_only_snapshot_makes_today_available_without_fabricating_five_day(m
     monkeypatch.setattr(
         "app.services.theme_board_snapshot.get_theme_board_snapshot_cache_only",
         lambda: {
+            "trade_date": "2026-07-03",
             "items": [
                 {
                     "flow_source_code": "BK0963",
@@ -203,6 +207,7 @@ def test_live_snapshot_replaces_same_day_history_point(monkeypatch):
     monkeypatch.setattr(
         "app.services.theme_board_snapshot.get_theme_board_snapshot_cache_only",
         lambda: {
+            "trade_date": "2026-07-03",
             "items": [
                 {
                     "flow_source_code": "BK0963",
@@ -221,6 +226,71 @@ def test_live_snapshot_replaces_same_day_history_point(monkeypatch):
     assert ctx["today_main_force_net_yi"] == 5.0
     assert ctx["cumulative_5d_net_yi"] == 15.0
     assert ctx["flow_tiers"] == {"large_net_yi": 2.0}
+
+
+@pytest.mark.parametrize("snapshot_trade_date", [None, "2026-07-04"])
+def test_live_snapshot_without_matching_trade_date_is_not_merged(
+    monkeypatch,
+    snapshot_trade_date,
+):
+    series = [{"date": "2026-07-02", "main_force_net_yi": 2.0}]
+    monkeypatch.setattr(
+        "app.services.sector_fund_flow_context.resolve_board_flow_code_for_sector",
+        lambda _label: ("BK0963", "商业航天"),
+    )
+    monkeypatch.setattr(
+        "app.services.sector_fund_flow_context.get_cached_board_flow_series",
+        lambda *_args, **_kwargs: list(series),
+    )
+    monkeypatch.setattr(
+        "app.services.theme_board_snapshot.get_theme_board_snapshot_cache_only",
+        lambda: {
+            "trade_date": snapshot_trade_date,
+            "items": [
+                {
+                    "flow_source_code": "BK0963",
+                    "main_force_net_yi": 50.0,
+                }
+            ],
+        },
+    )
+
+    ctx = build_sector_fund_flow_context("商业航天", trade_date="2026-07-03")
+
+    assert ctx["today_available"] is False
+    assert ctx["history_point_count"] == 1
+    assert ctx["flow_date"] == "2026-07-02"
+    assert ctx["today_main_force_net_yi"] == 2.0
+
+
+def test_mismatched_live_snapshot_does_not_replace_independent_same_day_history(monkeypatch):
+    series = [{"date": "2026-07-03", "main_force_net_yi": 3.0}]
+    monkeypatch.setattr(
+        "app.services.sector_fund_flow_context.resolve_board_flow_code_for_sector",
+        lambda _label: ("BK0963", "商业航天"),
+    )
+    monkeypatch.setattr(
+        "app.services.sector_fund_flow_context.get_cached_board_flow_series",
+        lambda *_args, **_kwargs: list(series),
+    )
+    monkeypatch.setattr(
+        "app.services.theme_board_snapshot.get_theme_board_snapshot_cache_only",
+        lambda: {
+            "trade_date": "2026-07-04",
+            "items": [
+                {
+                    "flow_source_code": "BK0963",
+                    "main_force_net_yi": 50.0,
+                }
+            ],
+        },
+    )
+
+    ctx = build_sector_fund_flow_context("商业航天", trade_date="2026-07-03")
+
+    assert ctx["today_available"] is True
+    assert ctx["history_point_count"] == 1
+    assert ctx["today_main_force_net_yi"] == 3.0
 
 
 def test_future_and_non_finite_points_are_discarded(monkeypatch):
@@ -357,7 +427,16 @@ def test_live_snapshot_without_matching_board_code_does_not_splice(monkeypatch):
     )
     monkeypatch.setattr(
         "app.services.theme_board_snapshot.get_theme_board_snapshot_cache_only",
-        lambda: {"items": [{"sector_label": "白酒", "flow_source_code": "BK0896", "main_force_net_yi": 5.0}]},
+        lambda: {
+            "trade_date": "2026-06-24",
+            "items": [
+                {
+                    "sector_label": "白酒",
+                    "flow_source_code": "BK0896",
+                    "main_force_net_yi": 5.0,
+                }
+            ],
+        },
     )
 
     ctx = build_sector_fund_flow_context(

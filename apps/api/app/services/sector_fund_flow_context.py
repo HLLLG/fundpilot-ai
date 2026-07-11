@@ -116,7 +116,10 @@ def _load_flow_series(board_code: str, trade_date: str) -> list[dict[str, Any]]:
     return series
 
 
-def _live_today_flow_from_theme_board(board_code: str) -> dict[str, Any] | None:
+def _live_today_flow_from_theme_board(
+    board_code: str,
+    trade_date: str,
+) -> dict[str, Any] | None:
     """从主题板块缓存（东财 clist 实时快照，与板块涨跌幅同一次请求）取当日主力净流入。
 
     东财历史资金流接口（``fflow/daykline``）只在收盘后才落定「今日」这一行，盘中
@@ -138,6 +141,8 @@ def _live_today_flow_from_theme_board(board_code: str) -> dict[str, Any] | None:
         return None
     if not snapshot:
         return None
+    if snapshot.get("trade_date") != trade_date:
+        return None
     for item in snapshot.get("items") or []:
         if str(item.get("flow_source_code") or "").strip() != board_code:
             continue
@@ -157,7 +162,7 @@ def _ensure_today_point(
     trade_date: str,
 ) -> list[dict[str, Any]]:
     """Merge the live snapshot as the authoritative point for ``trade_date``."""
-    live = _live_today_flow_from_theme_board(board_code)
+    live = _live_today_flow_from_theme_board(board_code, trade_date)
     candidates = list(series)
     if live is not None:
         candidates.append({"date": trade_date, **live})
