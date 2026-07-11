@@ -29,15 +29,82 @@ def test_no_holding_sector_returns_unavailable() -> None:
     assert result["market_top"] == []
 
 
-def test_sector_heat_error_is_best_effort() -> None:
+def test_sector_heat_error_still_fetches_and_returns_held_flow(monkeypatch) -> None:
+    flow = {
+        "半导体": {
+            "available": True,
+            "date_aligned": True,
+            "today_available": True,
+            "five_day_available": False,
+            "history_point_count": 1,
+            "today_main_force_net_yi": 2.0,
+            "cumulative_5d_net_yi": None,
+            "pattern_label": "flow_turning_positive",
+        }
+    }
+    calls: list[tuple[list[dict], list[str], str | None]] = []
+
+    def fake_flow_map(sector_heat, labels, *, trade_date=None, **_kwargs):
+        calls.append((sector_heat, labels, trade_date))
+        return flow
+
     def boom() -> list[dict]:
         raise RuntimeError("network down")
 
-    result = build_holding_sector_opportunity_context(
-        [_holding("半导体")], fetch_sector_heat=boom
+    monkeypatch.setattr(
+        "app.services.report_sector_opportunity.build_sector_flow_map_for_opportunities",
+        fake_flow_map,
     )
+    monkeypatch.setattr(
+        "app.services.report_sector_opportunity.build_sector_divergence_map_for_opportunities",
+        lambda *_args, **_kwargs: {},
+    )
+    result = build_holding_sector_opportunity_context(
+        [_holding("半导体")],
+        trade_date="2026-07-10",
+        fetch_sector_heat=boom,
+    )
+
+    assert calls == [([], ["半导体"], "2026-07-10")]
     assert result["available"] is False
     assert result["reason"] == "sector_heat_error"
+    assert result["sector_flow_by_label"] is flow
+    assert result["held"]["半导体"]["today_main_force_net_yi"] == 2.0
+    assert result["market_top"] == []
+
+
+def test_held_labels_are_requested_before_heat_candidates_and_trade_date_is_forwarded(
+    monkeypatch,
+) -> None:
+    heat = [
+        _heat_row("证券", change_1d=2.0, change_5d=5.0, heat_score=99.0),
+        _heat_row("半导体", change_1d=1.0, change_5d=3.0, heat_score=80.0),
+        _heat_row("白酒", change_1d=0.5, change_5d=2.0, heat_score=70.0),
+    ]
+    flow: dict[str, dict] = {}
+    calls: list[tuple[list[str], str | None]] = []
+
+    def fake_flow_map(_sector_heat, labels, *, trade_date=None, **_kwargs):
+        calls.append((list(labels), trade_date))
+        return flow
+
+    monkeypatch.setattr(
+        "app.services.report_sector_opportunity.build_sector_flow_map_for_opportunities",
+        fake_flow_map,
+    )
+    monkeypatch.setattr(
+        "app.services.report_sector_opportunity.build_sector_divergence_map_for_opportunities",
+        lambda *_args, **_kwargs: {},
+    )
+
+    result = build_holding_sector_opportunity_context(
+        [_holding("半导体"), _holding("白酒"), _holding("半导体")],
+        trade_date="2026-07-10",
+        fetch_sector_heat=lambda: heat,
+    )
+
+    assert calls == [(["半导体", "白酒", "证券"], "2026-07-10")]
+    assert result["sector_flow_by_label"] is flow
 
 
 def test_held_sector_is_present_even_when_not_a_top_opportunity(monkeypatch) -> None:

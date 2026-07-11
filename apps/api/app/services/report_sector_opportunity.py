@@ -33,6 +33,7 @@ MARKET_TOP_CANDIDATE_LIMIT = 8
 def build_holding_sector_opportunity_context(
     holdings: list[Holding],
     *,
+    trade_date: str | None = None,
     fetch_sector_heat=None,
 ) -> dict[str, Any]:
     """返回 `{available, held: {sector_label: opportunity_row}, market_top: [opportunity_row]}`。
@@ -47,19 +48,23 @@ def build_holding_sector_opportunity_context(
     if not held_labels:
         return _unavailable("no_sector")
 
+    heat_error_reason: str | None = None
     try:
         heat_fetcher = fetch_sector_heat or _default_fetch_sector_heat
-        sector_heat = heat_fetcher() or []
+        sector_heat = [
+            row for row in (heat_fetcher() or []) if isinstance(row, dict)
+        ]
     except Exception:  # noqa: BLE001 - best-effort，绝不阻塞日报
-        return _unavailable("sector_heat_error")
+        sector_heat = []
+        heat_error_reason = "sector_heat_error"
 
     heat_by_label = {
         str(row.get("sector_label") or "").strip(): row
         for row in sector_heat
         if str(row.get("sector_label") or "").strip()
     }
-    if not heat_by_label:
-        return _unavailable("sector_heat_empty")
+    if not heat_by_label and heat_error_reason is None:
+        heat_error_reason = "sector_heat_empty"
 
     top_by_heat = sorted(
         sector_heat,
@@ -82,6 +87,7 @@ def build_holding_sector_opportunity_context(
             build_sector_flow_map_for_opportunities,
             sector_heat,
             flow_labels,
+            trade_date=trade_date,
             total_timeout_seconds=SECTOR_FLOW_BUDGET_SECONDS,
         )
         divergence_future = executor.submit(
@@ -90,7 +96,10 @@ def build_holding_sector_opportunity_context(
             total_timeout_seconds=SECTOR_DIVERGENCE_BUDGET_SECONDS,
         )
         try:
-            flow_by_label = flow_future.result() or {}
+            loaded_flow_by_label = flow_future.result()
+            flow_by_label = (
+                loaded_flow_by_label if isinstance(loaded_flow_by_label, dict) else {}
+            )
         except Exception:  # noqa: BLE001 - best-effort，绝不阻塞日报
             flow_by_label = {}
         try:
@@ -99,16 +108,18 @@ def build_holding_sector_opportunity_context(
             divergence_by_label = {}
 
     held: dict[str, dict[str, Any]] = {}
+    fallback_heat_by_label = _held_fallback_heat_by_label(holdings)
     for label in held_labels:
-        heat_row = heat_by_label.get(label)
-        if heat_row is None:
-            continue
-        opportunity = describe_sector_opportunity(
-            heat_row,
-            flow_by_label.get(label),
-            focus={label},
-            divergence_backtest=divergence_by_label.get(label),
-        )
+        heat_row = heat_by_label.get(label) or fallback_heat_by_label[label]
+        try:
+            opportunity = describe_sector_opportunity(
+                heat_row,
+                flow_by_label.get(label),
+                focus={label},
+                divergence_backtest=divergence_by_label.get(label),
+            )
+        except Exception:  # noqa: BLE001 - one row must not block the report
+            opportunity = None
         if opportunity:
             held[label] = opportunity
 
@@ -128,14 +139,18 @@ def build_holding_sector_opportunity_context(
         item for item in selected if item.get("sector_label") not in held_label_set
     ][:MARKET_TOP_LIMIT]
 
-    return {
-        "available": True,
+    result = {
+        "available": bool(heat_by_label),
         "held": held,
         "market_top": market_top,
+        "sector_flow_by_label": flow_by_label,
         # M1 数据契约（design 第7节）：analysis_facts.holdings[].flow_divergence_backtest
         # 由 analysis_facts.py 从这里按持仓板块 label 反查，避免重复计算同一份回测。
         "divergence_backtest": divergence_by_label,
     }
+    if heat_error_reason is not None:
+        result["reason"] = heat_error_reason
+    return result
 
 
 def _unavailable(reason: str) -> dict[str, Any]:
@@ -144,8 +159,23 @@ def _unavailable(reason: str) -> dict[str, Any]:
         "reason": reason,
         "held": {},
         "market_top": [],
+        "sector_flow_by_label": {},
         "divergence_backtest": {},
     }
+
+
+def _held_fallback_heat_by_label(holdings: list[Holding]) -> dict[str, dict[str, Any]]:
+    """Keep held flow evidence usable when the market heat ranking is unavailable."""
+    result: dict[str, dict[str, Any]] = {}
+    for holding in holdings:
+        label = normalize_sector_label(holding.sector_name)
+        if not label or label in result:
+            continue
+        result[label] = {
+            "sector_label": label,
+            "change_1d_percent": holding.sector_return_percent,
+        }
+    return result
 
 
 def _default_fetch_sector_heat() -> list[dict]:

@@ -232,6 +232,8 @@ def trim_analysis_facts_for_llm(
     phase: AnalysisPayloadPhase = 3,
 ) -> dict[str, Any]:
     trimmed = dict(facts)
+    # Internal report orchestration evidence; never expose it to an LLM/public payload.
+    trimmed.pop("sector_flow_by_label", None)
     holdings = []
     for row in facts.get("holdings") or []:
         if not isinstance(row, dict):
@@ -302,6 +304,11 @@ def trim_analysis_facts_for_llm(
                             "opportunity_available",
                             "entry_hint",
                             "pattern_label",
+                            "today_main_force_net_yi",
+                            "cumulative_5d_net_yi",
+                            "today_available",
+                            "five_day_available",
+                            "history_point_count",
                         )
                         if k in opportunity_copy
                     }

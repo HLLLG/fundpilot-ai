@@ -20,6 +20,9 @@ def _base_facts(**overrides) -> dict:
                     "change_5d_percent": 4.5,
                     "today_main_force_net_yi": 6.0,
                     "cumulative_5d_net_yi": 12.0,
+                    "today_available": True,
+                    "five_day_available": True,
+                    "history_point_count": 8,
                     "pattern_label": "price_flow_aligned_up",
                     "sector_group": "tmt",
                     "opportunity_available": True,
@@ -28,6 +31,7 @@ def _base_facts(**overrides) -> dict:
         ],
         "sector_rotation": {
             "available": True,
+            "sector_flow_by_label": {"白酒": {"available": True}},
             "market_top": [
                 {
                     "sector_label": "白酒",
@@ -69,11 +73,32 @@ def test_fast_mode_phase2_compacts_sector_opportunity_and_caps_market_top() -> N
         "opportunity_available",
         "entry_hint",
         "pattern_label",
+        "today_main_force_net_yi",
+        "cumulative_5d_net_yi",
+        "today_available",
+        "five_day_available",
+        "history_point_count",
     }
     assert opportunity["track"] == "momentum"
+    assert opportunity["today_main_force_net_yi"] == 6.0
+    assert opportunity["cumulative_5d_net_yi"] == 12.0
+    assert opportunity["today_available"] is True
+    assert opportunity["five_day_available"] is True
+    assert opportunity["history_point_count"] == 8
 
     rotation = trimmed["sector_rotation"]
     assert len(rotation["market_top"]) == 3
+    assert "sector_flow_by_label" not in rotation
+
+
+def test_trim_never_exposes_top_level_internal_sector_flow_map() -> None:
+    facts = _base_facts(
+        sector_flow_by_label={"半导体": {"available": True}},
+    )
+
+    trimmed = trim_analysis_facts_for_llm(facts, analysis_mode="deep", phase=3)
+
+    assert "sector_flow_by_label" not in trimmed
 
 
 def test_missing_sector_opportunity_is_a_noop() -> None:

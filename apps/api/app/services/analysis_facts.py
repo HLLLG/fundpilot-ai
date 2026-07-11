@@ -41,15 +41,10 @@ from app.services.risk import holding_weight_percent, resolve_weight_denominator
 from app.services.sector_intraday_summary import summarize_sector_intraday_for_holding
 from app.services.pipeline_concurrency import run_with_request_user
 from app.services.sector_momentum import build_sector_momentum_context
-from app.services.sector_fund_flow_context import (
-    build_sector_fund_flow_map,
-    sector_fund_flow_for_holding,
-)
 from app.services.sector_labels import normalize_sector_label
 from app.services.sector_quote_label import sector_quote_lookup_label
 
 SIGNAL_BACKTEST_TIMEOUT_SECONDS = 5.0
-SECTOR_FLOW_TIMEOUT_SECONDS = 5.0
 SECTOR_INTRADAY_TIMEOUT_SECONDS = 4.0
 MARKET_FLOW_TIMEOUT_SECONDS = 3.0
 GUARD_POLICY_TIMEOUT_SECONDS = 2.0
@@ -186,12 +181,17 @@ def _market_breadth_unavailable(reason: str) -> dict[str, Any]:
     }
 
 
-def _sector_opportunity_unavailable(reason: str) -> dict[str, Any]:
+def _sector_opportunity_unavailable(
+    reason: str,
+    holdings: list[Holding] | None = None,
+) -> dict[str, Any]:
     return {
         "available": False,
         "reason": reason,
         "held": {},
         "market_top": [],
+        "sector_flow_by_label": _sector_flow_unavailable_map(holdings or [], reason),
+        "divergence_backtest": {},
     }
 
 
@@ -257,7 +257,10 @@ def _extra_allowed_actions_for_escalation(per_fund: list[dict]) -> list[str]:
     return []
 
 
-def _sector_flow_timeout_map(holdings: list[Holding]) -> dict[str, dict[str, Any]]:
+def _sector_flow_unavailable_map(
+    holdings: list[Holding],
+    reason: str,
+) -> dict[str, dict[str, Any]]:
     result: dict[str, dict[str, Any]] = {}
     for holding in holdings:
         label = normalize_sector_label(holding.sector_name)
@@ -266,7 +269,7 @@ def _sector_flow_timeout_map(holdings: list[Holding]) -> dict[str, dict[str, Any
         result[label] = {
             "available": False,
             "sector_label": label,
-            "reason": "timeout",
+            "reason": reason,
             "message": "板块资金流未在预算内完成，日报已按基础事实继续。",
         }
     return result
@@ -338,7 +341,7 @@ def build_analysis_facts(
     market_flow = None
     market_breadth = None
     if budget_enhancements:
-        executor = ThreadPoolExecutor(max_workers=7, thread_name_prefix="analysis-facts-budget")
+        executor = ThreadPoolExecutor(max_workers=6, thread_name_prefix="analysis-facts-budget")
         try:
             signal_future = _submit_enhancement(
                 executor,
@@ -347,13 +350,6 @@ def build_analysis_facts(
             guard_future = _submit_enhancement(
                 executor,
                 lambda: resolve_signal_guard_policy(holdings),
-            )
-            flow_future = _submit_enhancement(
-                executor,
-                lambda: build_sector_fund_flow_map(
-                    holdings,
-                    trade_date=effective_trade_date,
-                ),
             )
             intraday_future = _submit_enhancement(
                 executor,
@@ -365,7 +361,10 @@ def build_analysis_facts(
             )
             sector_opportunity_future = _submit_enhancement(
                 executor,
-                lambda: build_holding_sector_opportunity_context(holdings),
+                lambda: build_holding_sector_opportunity_context(
+                    holdings,
+                    trade_date=effective_trade_date,
+                ),
             )
             market_breadth_future = _submit_enhancement(
                 executor,
@@ -381,11 +380,6 @@ def build_analysis_facts(
                 timeout_seconds=GUARD_POLICY_TIMEOUT_SECONDS,
                 fallback=_guard_policy_unavailable(),
             )
-            sector_flow_map = _enhancement_result(
-                flow_future,
-                timeout_seconds=SECTOR_FLOW_TIMEOUT_SECONDS,
-                fallback=_sector_flow_timeout_map(holdings),
-            )
             intraday_map = _enhancement_result(
                 intraday_future,
                 timeout_seconds=SECTOR_INTRADAY_TIMEOUT_SECONDS,
@@ -399,7 +393,7 @@ def build_analysis_facts(
             sector_opportunity = _enhancement_result(
                 sector_opportunity_future,
                 timeout_seconds=SECTOR_OPPORTUNITY_TIMEOUT_SECONDS,
-                fallback=_sector_opportunity_unavailable("timeout"),
+                fallback=_sector_opportunity_unavailable("timeout", holdings),
             )
             market_breadth = _enhancement_result(
                 market_breadth_future,
@@ -411,12 +405,18 @@ def build_analysis_facts(
     else:
         signal_backtest = build_signal_backtest_context(sector_labels)
         guard_policy = resolve_signal_guard_policy(holdings)
-        sector_flow_map = build_sector_fund_flow_map(
-            holdings,
-            trade_date=effective_trade_date,
-        )
         intraday_map = _build_sector_intraday_map(holdings)
-        sector_opportunity = build_holding_sector_opportunity_context(holdings)
+        try:
+            sector_opportunity = build_holding_sector_opportunity_context(
+                holdings,
+                trade_date=effective_trade_date,
+            )
+        except Exception:  # noqa: BLE001 - opportunity/flow evidence is best-effort
+            sector_opportunity = _sector_opportunity_unavailable("error", holdings)
+
+    sector_flow_map = sector_opportunity.get("sector_flow_by_label")
+    if not isinstance(sector_flow_map, dict):
+        sector_flow_map = _sector_flow_unavailable_map(holdings, "unavailable")
 
     per_fund: list[dict] = []
     drawdown_limit = abs(profile.max_drawdown_percent)
@@ -471,10 +471,8 @@ def build_analysis_facts(
                     nav_trends.get(holding.fund_code),
                 ),
                 "sector_intraday": intraday_map.get(sector_quote_lookup_label(holding) or ""),
-                "sector_fund_flow": (
-                    sector_flow_map.get(normalize_sector_label(holding.sector_name))
-                    if budget_enhancements
-                    else sector_fund_flow_for_holding(holding, sector_flow_map)
+                "sector_fund_flow": sector_flow_map.get(
+                    normalize_sector_label(holding.sector_name)
                 ),
                 "signal_backtest": signal_backtest_for_sector(
                     holding.sector_name,
