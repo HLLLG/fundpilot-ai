@@ -3,6 +3,17 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 describe("Dashboard apply refresh flow", () => {
+  it("keeps the report scroll target below the sticky account header", () => {
+    const source = readFileSync(
+      fileURLToPath(new URL("./Dashboard.tsx", import.meta.url)),
+      "utf8",
+    );
+
+    expect(source).toContain(
+      '<div ref={reportSectionRef} className="min-w-0 scroll-mt-20">',
+    );
+  });
+
   it("does not hydrate holdings from server cache immediately after apply", () => {
     const source = readFileSync(
       fileURLToPath(new URL("./Dashboard.tsx", import.meta.url)),

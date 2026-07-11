@@ -115,6 +115,21 @@ it("keeps all three KPI tiles in a shrinkable mobile row", () => {
   }
 });
 
+it("keeps summary actions at least 44px tall on touch screens", () => {
+  render(
+    <ReportSummaryHero
+      report={sampleReport()}
+      needsActionCount={1}
+      isExporting={false}
+      onExport={vi.fn()}
+    />,
+  );
+
+  for (const name of ["组合说明", "报告信息", "导出 Markdown"]) {
+    expect(screen.getByRole("button", { name })).toHaveClass("min-h-11");
+  }
+});
+
 it("omits the portfolio disclosure when no portfolio-level recommendation exists", () => {
   const report = sampleReport();
   report.recommendations = ["[000001 · 观察] 继续跟踪"];

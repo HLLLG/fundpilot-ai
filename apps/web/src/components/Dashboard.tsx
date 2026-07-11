@@ -1339,7 +1339,7 @@ export function Dashboard() {
                 readingModeKey={report?.id ?? null}
               />
               {report || streamingReport ? (
-                <div ref={reportSectionRef} className="min-w-0">
+                <div ref={reportSectionRef} className="min-w-0 scroll-mt-20">
                   <ReportPanel
                     report={report}
                     streaming={streamingReport}

@@ -64,6 +64,16 @@ it("opens settings and collapses again for a new report id", () => {
   expect(screen.queryByText("AI 角色设定")).not.toBeInTheDocument();
 });
 
+it("lets readers collapse settings without regenerating the report", () => {
+  render(<RiskControls {...props()} readingModeKey="report-1" />);
+  fireEvent.click(screen.getByRole("button", { name: "调整设置" }));
+  expect(screen.getByText("AI 角色设定")).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "收起设置" }));
+  expect(screen.getByText("本次生成设置")).toBeInTheDocument();
+  expect(screen.queryByText("AI 角色设定")).not.toBeInTheDocument();
+});
+
 it("shows a clickable label for the DCA preference", () => {
   render(<RiskControls {...props()} readingModeKey={null} />);
   fireEvent.click(screen.getByRole("button", { name: "高级设置" }));

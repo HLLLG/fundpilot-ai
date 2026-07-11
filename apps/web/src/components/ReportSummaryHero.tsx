@@ -106,7 +106,7 @@ export function ReportSummaryHero({
               aria-controls={portfolioId}
               aria-expanded={portfolioOpen}
               onClick={() => setPortfolioOpen((value) => !value)}
-              className="inline-flex items-center gap-1 rounded-lg px-2.5 py-2 text-xs font-bold text-slate-500 transition hover:bg-slate-50 hover:text-[var(--brand-strong)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]"
+              className="inline-flex min-h-11 items-center gap-1 rounded-lg px-2.5 py-2 text-xs font-bold text-slate-500 transition hover:bg-slate-50 hover:text-[var(--brand-strong)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]"
             >
               组合说明
               <ChevronDown
@@ -120,7 +120,7 @@ export function ReportSummaryHero({
             aria-controls={metadataId}
             aria-expanded={metadataOpen}
             onClick={() => setMetadataOpen((value) => !value)}
-            className="inline-flex items-center gap-1 rounded-lg px-2.5 py-2 text-xs font-bold text-slate-500 transition hover:bg-slate-50 hover:text-[var(--brand-strong)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]"
+            className="inline-flex min-h-11 items-center gap-1 rounded-lg px-2.5 py-2 text-xs font-bold text-slate-500 transition hover:bg-slate-50 hover:text-[var(--brand-strong)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]"
           >
             报告信息
             <ChevronDown
@@ -136,7 +136,7 @@ export function ReportSummaryHero({
           aria-label={isExporting ? "正在导出 Markdown" : "导出 Markdown"}
           onClick={onExport}
           disabled={isExporting}
-          className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-[var(--brand-deep)] px-4 py-2 text-sm font-bold text-white shadow-sm transition hover:bg-[var(--brand-strong)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)] disabled:cursor-wait disabled:opacity-60"
+          className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-[var(--brand-deep)] px-4 py-2 text-sm font-bold text-white shadow-sm transition hover:bg-[var(--brand-strong)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)] disabled:cursor-wait disabled:opacity-60"
         >
           {isExporting ? (
             <LoaderCircle aria-hidden="true" className="size-4 animate-spin" />

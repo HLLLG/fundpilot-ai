@@ -113,7 +113,7 @@ export function RiskControls({
   return (
     <section className="report-control-card section-card min-w-0 overflow-hidden">
       <div className="report-control-hero border-b border-[var(--line)] px-4 py-4 sm:px-5">
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2.5">
           <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[var(--brand-soft)] text-[var(--brand-strong)]">
             <ShieldCheck size={20} strokeWidth={2.3} />
@@ -123,21 +123,32 @@ export function RiskControls({
             <p className="mt-0.5 text-xs text-slate-500">AI 结合你的持仓与风险偏好，给出说人话的操作建议</p>
           </div>
         </div>
-        <StatusPill
-          tone={
-            profile.decision_style === "aggressive"
-              ? "red"
+        <div className="ml-auto flex items-center gap-2">
+          <StatusPill
+            tone={
+              profile.decision_style === "aggressive"
+                ? "red"
+                : profile.decision_style === "tactical"
+                  ? "amber"
+                  : "green"
+            }
+          >
+            {profile.decision_style === "aggressive"
+              ? "激进"
               : profile.decision_style === "tactical"
-                ? "amber"
-                : "green"
-          }
-        >
-          {profile.decision_style === "aggressive"
-            ? "激进"
-            : profile.decision_style === "tactical"
-              ? "战术"
-              : "稳健"}
-        </StatusPill>
+                ? "战术"
+                : "稳健"}
+          </StatusPill>
+          {readingModeKey ? (
+            <button
+              type="button"
+              onClick={() => setSettingsOpen(false)}
+              className="btn-secondary min-h-11 !px-3 !py-2 !text-xs"
+            >
+              收起设置
+            </button>
+          ) : null}
+        </div>
       </div>
       </div>
 
