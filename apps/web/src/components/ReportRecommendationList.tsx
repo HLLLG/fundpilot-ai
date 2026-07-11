@@ -36,7 +36,7 @@ export function ReportRecommendationList({
           <div className="mt-3 min-w-0 space-y-3">
             {needsAction.map((item) => (
               <FundRecommendationCard
-                key={item.fund_code}
+                key={`${report.id}:${item.fund_code}`}
                 item={item}
                 report={report}
                 defaultExpanded
@@ -54,7 +54,7 @@ export function ReportRecommendationList({
           <div className="mt-3 min-w-0 space-y-2">
             {observing.map((item) => (
               <FundRecommendationCard
-                key={item.fund_code}
+                key={`${report.id}:${item.fund_code}`}
                 item={item}
                 report={report}
                 defaultExpanded={false}

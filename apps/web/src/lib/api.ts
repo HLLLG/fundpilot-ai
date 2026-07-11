@@ -1759,11 +1759,13 @@ export async function streamReportChat(
     onDone: (message: ReportChatMessage) => void;
     onError?: (message: string) => void;
   },
+  signal?: AbortSignal,
 ): Promise<void> {
   const response = await apiFetch(`${API_BASE}/api/reports/${reportId}/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ message, chat_mode: chatMode }),
+    signal,
   });
   if (!response.ok) {
     throw new Error(await response.text());

@@ -1,0 +1,105 @@
+// @vitest-environment jsdom
+
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import "@testing-library/jest-dom/vitest";
+
+import { ReportChatDrawer } from "@/components/ReportChatDrawer";
+import { ReportChatPanel } from "@/components/ReportChatPanel";
+
+const apiMocks = vi.hoisted(() => ({
+  fetchReportChatHistory: vi.fn(),
+  fetchReportChatMarkdown: vi.fn(),
+  streamReportChat: vi.fn(),
+}));
+
+vi.mock("@/lib/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/api")>();
+  return {
+    ...actual,
+    fetchReportChatHistory: apiMocks.fetchReportChatHistory,
+    fetchReportChatMarkdown: apiMocks.fetchReportChatMarkdown,
+    streamReportChat: apiMocks.streamReportChat,
+  };
+});
+
+beforeEach(() => {
+  apiMocks.fetchReportChatHistory.mockResolvedValue([]);
+  apiMocks.fetchReportChatMarkdown.mockResolvedValue("# chat");
+  apiMocks.streamReportChat.mockImplementation(() => new Promise<void>(() => undefined));
+  Object.defineProperty(HTMLElement.prototype, "scrollTo", {
+    configurable: true,
+    value: vi.fn(),
+  });
+});
+
+afterEach(() => {
+  cleanup();
+  vi.clearAllMocks();
+  window.localStorage.clear();
+  document.body.style.overflow = "";
+});
+
+async function sendQuestion(question: string) {
+  const input = screen.getByPlaceholderText("快速追问…");
+  await waitFor(() => expect(input).toBeEnabled());
+  fireEvent.change(input, { target: { value: question } });
+  fireEvent.click(screen.getByRole("button", { name: "发送" }));
+  await waitFor(() => expect(apiMocks.streamReportChat).toHaveBeenCalled());
+}
+
+describe("ReportChatPanel stream lifecycle", () => {
+  it("aborts the active report-chat stream when the panel unmounts", async () => {
+    const view = render(<ReportChatPanel reportId="report-1" variant="drawer" />);
+
+    await sendQuestion("第一问");
+    const signal = apiMocks.streamReportChat.mock.calls[0]?.[4] as AbortSignal | undefined;
+    expect(signal).toBeInstanceOf(AbortSignal);
+    expect(signal?.aborted).toBe(false);
+
+    view.unmount();
+
+    expect(signal?.aborted).toBe(true);
+  });
+
+  it("cancels the closed drawer stream before a reopened drawer starts another", async () => {
+    render(<ReportChatDrawer reportId="report-1" reportTitle="日报" />);
+    const trigger = screen.getByRole("button", { name: "追问这份日报" });
+    fireEvent.click(trigger);
+
+    await sendQuestion("关闭前的问题");
+    const firstSignal = apiMocks.streamReportChat.mock.calls[0]?.[4] as
+      | AbortSignal
+      | undefined;
+    fireEvent.click(screen.getByRole("button", { name: "关闭追问助手" }));
+
+    expect(firstSignal).toBeInstanceOf(AbortSignal);
+    expect(firstSignal?.aborted).toBe(true);
+
+    fireEvent.click(trigger);
+    await sendQuestion("重开后的问题");
+    const signals = apiMocks.streamReportChat.mock.calls.map((call) => call[4] as AbortSignal);
+
+    expect(apiMocks.streamReportChat).toHaveBeenCalledTimes(2);
+    expect(signals.filter((signal) => !signal.aborted)).toHaveLength(1);
+  });
+});
+
+describe("ReportChatPanel drawer touch targets", () => {
+  it("keeps send, mode, and suggested-prompt controls at least 44px", async () => {
+    render(<ReportChatPanel reportId="report-1" variant="drawer" />);
+
+    const controls = [
+      screen.getByRole("button", { name: /快速/ }),
+      screen.getByRole("button", { name: /深度/ }),
+      screen.getByRole("button", { name: "发送" }),
+      await screen.findByRole("button", { name: "哪只基金风险最高？" }),
+      screen.getByRole("button", { name: "如果今天收盘前只能动一只，优先哪只？" }),
+      screen.getByRole("button", { name: "新闻里对持仓影响最大的是哪条？" }),
+    ];
+
+    for (const control of controls) {
+      expect(control).toHaveClass("min-h-11", "min-w-11");
+    }
+  });
+});

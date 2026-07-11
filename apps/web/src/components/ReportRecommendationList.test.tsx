@@ -136,6 +136,31 @@ it("keeps extreme actions behind the existing confirmation gate", () => {
   expect(screen.queryByRole("button", { name: "为什么这样建议" })).not.toBeInTheDocument();
 });
 
+it("preserves card state within one report and resets it when the report id changes", () => {
+  const firstReport = reportWithExtremeAction();
+  const sameReport = { ...firstReport, title: "同一份日报的新引用" };
+  const nextReport = { ...firstReport, id: "report-2", title: "下一份日报" };
+  const { rerender } = render(<ReportRecommendationList report={firstReport} />);
+
+  fireEvent.click(screen.getByTestId("extreme-action-gate"));
+  fireEvent.click(screen.getByRole("button", { name: "为什么这样建议" }));
+  expect(screen.getByRole("button", { name: "为什么这样建议" })).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
+
+  rerender(<ReportRecommendationList report={sameReport} />);
+  expect(screen.queryByTestId("extreme-action-gate")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "为什么这样建议" })).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
+
+  rerender(<ReportRecommendationList report={nextReport} />);
+  expect(screen.getByTestId("extreme-action-gate")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "为什么这样建议" })).not.toBeInTheDocument();
+});
+
 it("keeps the position percentage but omits a translated basis already used in the summary", () => {
   render(
     <ReportRecommendationList

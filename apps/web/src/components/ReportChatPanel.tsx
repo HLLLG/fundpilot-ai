@@ -39,6 +39,7 @@ export function ReportChatPanel({
   const [isExporting, setIsExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const draftAssistantId = useRef<string | null>(null);
+  const streamAbortRef = useRef<AbortController | null>(null);
   const {
     scrollRef,
     handleScroll,
@@ -83,6 +84,13 @@ export function ReportChatPanel({
     onContentChange();
   }, [messages, onContentChange]);
 
+  useEffect(() => {
+    return () => {
+      streamAbortRef.current?.abort();
+      streamAbortRef.current = null;
+    };
+  }, []);
+
   const handleModeChange = (mode: ReportChatMode) => {
     setChatMode(mode);
     saveReportChatMode(mode);
@@ -99,6 +107,9 @@ export function ReportChatPanel({
     setInput("");
     draftAssistantId.current = null;
     pinToBottomForSend();
+    streamAbortRef.current?.abort();
+    const controller = new AbortController();
+    streamAbortRef.current = controller;
 
     try {
       await streamReportChat(reportId, trimmed, chatMode, {
@@ -139,12 +150,17 @@ export function ReportChatPanel({
           );
         },
         onError: (message) => setError(message),
-      });
+      }, controller.signal);
     } catch (sendError) {
-      setError(sendError instanceof Error ? sendError.message : "发送失败");
+      if (!controller.signal.aborted) {
+        setError(sendError instanceof Error ? sendError.message : "发送失败");
+      }
       draftAssistantId.current = null;
     } finally {
-      setIsStreaming(false);
+      if (streamAbortRef.current === controller) {
+        streamAbortRef.current = null;
+        setIsStreaming(false);
+      }
     }
   };
 
@@ -186,7 +202,7 @@ export function ReportChatPanel({
             type="button"
             onClick={() => void handleExportMarkdown()}
             disabled={isExporting || isLoadingHistory}
-            className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-bold text-slate-600 transition hover:border-blue-300 hover:text-blue-700 disabled:opacity-50"
+            className="inline-flex min-h-11 min-w-11 items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-bold text-slate-600 transition hover:border-blue-300 hover:text-blue-700 disabled:opacity-50"
           >
             <Download size={12} />
             {isExporting ? "导出中" : "导出对话"}
@@ -197,7 +213,7 @@ export function ReportChatPanel({
             type="button"
             disabled={isStreaming}
             onClick={() => handleModeChange("fast")}
-            className={`flex items-center gap-1.5 rounded-xl px-2 py-1.5 text-left text-[11px] font-bold transition ${
+            className={`flex min-h-11 min-w-11 items-center gap-1.5 rounded-xl px-2 py-1.5 text-left text-[11px] font-bold transition ${
               chatMode === "fast"
                 ? "bg-amber-500 text-white"
                 : "bg-white text-slate-600 hover:bg-amber-50"
@@ -217,7 +233,7 @@ export function ReportChatPanel({
             type="button"
             disabled={isStreaming}
             onClick={() => handleModeChange("deep")}
-            className={`flex items-center gap-1.5 rounded-xl px-2 py-1.5 text-left text-[11px] font-bold transition ${
+            className={`flex min-h-11 min-w-11 items-center gap-1.5 rounded-xl px-2 py-1.5 text-left text-[11px] font-bold transition ${
               chatMode === "deep"
                 ? "bg-blue-600 text-white"
                 : "bg-white text-slate-600 hover:bg-blue-50"
@@ -286,7 +302,7 @@ export function ReportChatPanel({
           <button
             type="button"
             onClick={() => scrollToBottom("smooth")}
-            className="absolute bottom-2 right-2 z-10 inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200/80 bg-white/90 text-slate-600 shadow-sm backdrop-blur transition hover:border-blue-300 hover:text-blue-700"
+            className="absolute bottom-2 right-2 z-10 inline-flex h-11 w-11 items-center justify-center rounded-full border border-slate-200/80 bg-white/90 text-slate-600 shadow-sm backdrop-blur transition hover:border-blue-300 hover:text-blue-700"
             aria-label="回到底部"
           >
             <ArrowDown size={14} />
@@ -303,7 +319,7 @@ export function ReportChatPanel({
                 type="button"
                 disabled={isStreaming}
                 onClick={() => void sendMessage(prompt)}
-                className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600 transition hover:border-blue-300 hover:text-blue-700 disabled:opacity-50"
+                className="min-h-11 min-w-11 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600 transition hover:border-blue-300 hover:text-blue-700 disabled:opacity-50"
               >
                 {prompt}
               </button>
@@ -326,12 +342,12 @@ export function ReportChatPanel({
           onChange={(event) => setInput(event.target.value)}
           placeholder={chatMode === "deep" ? "深度追问（可拉最新新闻）…" : "快速追问…"}
           disabled={isStreaming || isLoadingHistory}
-          className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none ring-blue-200 focus:ring-2 disabled:opacity-50"
+          className="min-h-11 min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none ring-blue-200 focus:ring-2 disabled:opacity-50"
         />
         <button
           type="submit"
           disabled={isStreaming || isLoadingHistory || !input.trim()}
-          className="inline-flex items-center justify-center rounded-xl bg-[var(--brand-strong)] px-3 py-2 text-white transition hover:opacity-90 disabled:opacity-50"
+          className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-xl bg-[var(--brand-strong)] px-3 py-2 text-white transition hover:opacity-90 disabled:opacity-50"
           aria-label="发送"
         >
           {isStreaming ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
