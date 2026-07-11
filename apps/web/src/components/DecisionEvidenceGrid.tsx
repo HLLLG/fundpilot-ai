@@ -4,6 +4,7 @@ type DecisionEvidenceGridProps = {
   sectorEvidence?: string[];
   fundEvidence?: string[];
   validationNotes?: string[];
+  className?: string;
 };
 
 /**
@@ -15,6 +16,7 @@ export function DecisionEvidenceGrid({
   sectorEvidence,
   fundEvidence,
   validationNotes,
+  className,
 }: DecisionEvidenceGridProps) {
   const groups = [
     ["板块依据", sectorEvidence],
@@ -25,7 +27,7 @@ export function DecisionEvidenceGrid({
     return null;
   }
   return (
-    <div className="mt-3 grid gap-2 md:grid-cols-3">
+    <div className={`grid gap-2 md:grid-cols-3 ${className ?? ""}`}>
       {groups.map(([title, items]) =>
         items?.length ? (
           <div
