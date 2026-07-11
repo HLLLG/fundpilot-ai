@@ -92,6 +92,12 @@ export function divergenceBacktestLines(backtest: DivergenceBacktestLike): strin
 
 export function translateEvidenceText(text: string): string {
   return text
+    .replace(/\bopportunity\s+absent\b/gi, "当前不构成机会")
+    .replace(/\bopportunity\s+present\b/gi, "当前构成机会")
+    .replace(/机会\s*absent\b/gi, "当前不构成机会")
+    .replace(/机会\s*present\b/gi, "当前构成机会")
+    .replace(/\bdaily_return(?:_percent)?\s*(?:数据)?\s*(?:is\s+)?pending\b/gi, "当日涨跌待确认")
+    .replace(/\bmomentum(?=分位|因子|\b)/gi, "动量")
     .replace(/nav_trend\.distance_from_high_percent\s*(?:=|为|约)?\s*([-+]?\d+(?:\.\d+)?)%?/gi, "距离近期高点约 $1%")
     .replace(/max_drawdown_1y_percent\s*(?:=|为|约)?\s*([-+]?\d+(?:\.\d+)?)%?/gi, (_match, value: string) => `近1年最大回撤约 ${formatAbsPercent(value)}%`)
     .replace(/estimated_daily_return_percent\s*(?:=|为|约)?\s*([-+]?\d+(?:\.\d+)?)%?/gi, "今日涨跌约 $1%")
