@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
+from threading import Lock
 from typing import Any
 
 from app.services.factor_ic_snapshot import DEFAULT_SUMMARY_PATH, load_factor_ic_context
@@ -27,38 +28,50 @@ FACTOR_IC_KEY: dict[str, str | None] = {
 }
 
 _IC_CONTEXT_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+_IC_CONTEXT_CACHE_LOCK = Lock()
+_IC_CONTEXT_CACHE_GENERATION = 0
 
 
 def clear_ic_summary_cache() -> None:
-    _IC_CONTEXT_CACHE.clear()
+    global _IC_CONTEXT_CACHE_GENERATION
+
+    with _IC_CONTEXT_CACHE_LOCK:
+        _IC_CONTEXT_CACHE_GENERATION += 1
+        _IC_CONTEXT_CACHE.clear()
 
 
 def load_ic_context() -> dict[str, Any]:
     """Cache the IC evidence state, status, and usable factor rows together."""
-    now = time.time()
-    cached = _IC_CONTEXT_CACHE.get("default")
-    if cached and now - cached[0] < SUMMARY_TTL_SECONDS:
-        return cached[1]
+    while True:
+        now = time.time()
+        with _IC_CONTEXT_CACHE_LOCK:
+            load_generation = _IC_CONTEXT_CACHE_GENERATION
+            cached = _IC_CONTEXT_CACHE.get("default")
+            if cached and now - cached[0] < SUMMARY_TTL_SECONDS:
+                return cached[1]
 
-    snapshot_context = load_factor_ic_context(local_path=Path(SUMMARY_PATH))
-    state = snapshot_context.get("state", "unavailable")
-    status = snapshot_context.get("status")
-    if not isinstance(status, dict):
-        status = {"available": False, "source": "unavailable"}
+        snapshot_context = load_factor_ic_context(local_path=Path(SUMMARY_PATH))
+        state = snapshot_context.get("state", "unavailable")
+        status = snapshot_context.get("status")
+        if not isinstance(status, dict):
+            status = {"available": False, "source": "unavailable"}
 
-    factors: dict[str, dict] = {}
-    summary = snapshot_context.get("summary")
-    if state == "available" and isinstance(summary, dict):
-        for stats in summary.get("factors") or []:
-            if not isinstance(stats, dict):
+        factors: dict[str, dict] = {}
+        summary = snapshot_context.get("summary")
+        if state == "available" and isinstance(summary, dict):
+            for stats in summary.get("factors") or []:
+                if not isinstance(stats, dict):
+                    continue
+                key = stats.get("factor")
+                if key:
+                    factors[str(key)] = stats
+
+        context = {"state": state, "status": status, "factors": factors}
+        with _IC_CONTEXT_CACHE_LOCK:
+            if _IC_CONTEXT_CACHE_GENERATION != load_generation:
                 continue
-            key = stats.get("factor")
-            if key:
-                factors[str(key)] = stats
-
-    context = {"state": state, "status": status, "factors": factors}
-    _IC_CONTEXT_CACHE["default"] = (now, context)
-    return context
+            _IC_CONTEXT_CACHE["default"] = (now, context)
+            return context
 
 
 def load_ic_summary() -> dict[str, dict]:

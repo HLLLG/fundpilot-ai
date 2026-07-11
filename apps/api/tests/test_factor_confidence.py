@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta, timezone
+from threading import Event, Thread
 
 from app.services import factor_confidence as fc
 
@@ -168,6 +169,63 @@ def test_load_ic_summary_cache_expires_after_five_minutes(monkeypatch) -> None:
     assert cached_context is first_context
     assert cached is first
     assert refreshed["momentum"]["mean_ic"] == 0.02
+
+
+def test_clear_during_context_load_retries_without_caching_old_result(monkeypatch) -> None:
+    first_load_started = Event()
+    release_first_load = Event()
+    load_calls = 0
+    results: list[dict] = []
+    errors: list[BaseException] = []
+
+    def blocking_loader(**_kwargs) -> dict:
+        nonlocal load_calls
+        load_calls += 1
+        if load_calls == 1:
+            first_load_started.set()
+            if not release_first_load.wait(timeout=5):
+                raise TimeoutError("test did not release the first IC context load")
+            return {
+                "state": "stale",
+                "status": {"available": True, "stale": True, "run_date": "old"},
+                "summary": {"factors": []},
+            }
+        return {
+            "state": "available",
+            "status": {"available": True, "stale": False, "run_date": "new"},
+            "summary": {
+                "factors": [
+                    {"factor": "momentum", "mean_ic": 0.04, "significant": True}
+                ]
+            },
+        }
+
+    def load_context() -> None:
+        try:
+            results.append(fc.load_ic_context())
+        except BaseException as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    monkeypatch.setattr(fc, "load_factor_ic_context", blocking_loader)
+    fc.clear_ic_summary_cache()
+
+    worker = Thread(target=load_context, daemon=True)
+    worker.start()
+    assert first_load_started.wait(timeout=5)
+
+    fc.clear_ic_summary_cache()
+    release_first_load.set()
+    worker.join(timeout=5)
+
+    assert not worker.is_alive()
+    assert errors == []
+    assert load_calls == 2
+    assert results[0]["status"]["run_date"] == "new"
+    assert results[0]["factors"]["momentum"]["mean_ic"] == 0.04
+
+    cached = fc.load_ic_context()
+    assert cached is results[0]
+    assert load_calls == 2
 
 
 def test_stale_ic_context_keeps_status_but_excludes_factors(monkeypatch) -> None:
