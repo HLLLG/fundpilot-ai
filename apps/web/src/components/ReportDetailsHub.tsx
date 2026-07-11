@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   ChevronDown,
   ClipboardCheck,
@@ -16,6 +16,11 @@ import { SectorOpportunityCard } from "@/components/SectorOpportunityCard";
 import type { Report, SectorRotationFacts } from "@/lib/api";
 
 type ReportTool = "news" | "rotation" | "rebalance" | "review";
+
+type ReportToolSelection = {
+  reportId: string;
+  tool: ReportTool | null;
+};
 
 type ReportDetailsHubProps = {
   report: Report;
@@ -61,11 +66,11 @@ function sectorRotationFacts(report: Report): SectorRotationFacts | null {
 }
 
 export function ReportDetailsHub({ report, diagnostics }: ReportDetailsHubProps) {
-  const [openTool, setOpenTool] = useState<ReportTool | null>(null);
-
-  useEffect(() => {
-    setOpenTool(null);
-  }, [report.id]);
+  const [selection, setSelection] = useState<ReportToolSelection>(() => ({
+    reportId: report.id,
+    tool: null,
+  }));
+  const openTool = selection.reportId === report.id ? selection.tool : null;
 
   const diagnosticsContent = useMemo(
     () => (openTool === "review" && diagnostics ? diagnostics() : null),
@@ -100,7 +105,13 @@ export function ReportDetailsHub({ report, diagnostics }: ReportDetailsHubProps)
               aria-label={tool.title}
               aria-expanded={isOpen}
               aria-controls={`report-tool-${tool.id}`}
-              onClick={() => setOpenTool((value) => (value === tool.id ? null : tool.id))}
+              onClick={() =>
+                setSelection((value) => ({
+                  reportId: report.id,
+                  tool:
+                    value.reportId === report.id && value.tool === tool.id ? null : tool.id,
+                }))
+              }
               className={`flex min-h-11 min-w-0 items-center gap-3 rounded-xl border px-3 py-3 text-left transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)] ${
                 isOpen
                   ? "border-blue-200 bg-blue-50/70"

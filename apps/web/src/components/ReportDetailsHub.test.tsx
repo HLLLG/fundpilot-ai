@@ -8,20 +8,32 @@ import "@testing-library/jest-dom/vitest";
 import { ReportDetailsHub } from "@/components/ReportDetailsHub";
 import type { Report } from "@/lib/api";
 
+const panelSpies = vi.hoisted(() => ({
+  outcomes: vi.fn(),
+  rebalance: vi.fn(),
+}));
+
 vi.mock("@/components/ReportNewsBriefPanel", () => ({
   ReportNewsBriefPanel: () => <div data-testid="news-panel" />,
 }));
 
 vi.mock("@/components/RebalanceSimulationPanel", () => ({
-  RebalanceSimulationPanel: () => <div data-testid="rebalance-panel" />,
+  RebalanceSimulationPanel: ({ reportId }: { reportId: string }) => {
+    panelSpies.rebalance(reportId);
+    return <div data-testid="rebalance-panel" />;
+  },
 }));
 
 vi.mock("@/components/ReportOutcomesPanel", () => ({
-  ReportOutcomesPanel: () => <div data-testid="outcomes-panel" />,
+  ReportOutcomesPanel: ({ reportId }: { reportId: string }) => {
+    panelSpies.outcomes(reportId);
+    return <div data-testid="outcomes-panel" />;
+  },
 }));
 
 afterEach(() => {
   cleanup();
+  vi.clearAllMocks();
 });
 
 function sampleReport(): Report {
@@ -157,18 +169,39 @@ it("collapses the active panel when its entry is pressed again", () => {
   expect(screen.queryByTestId("news-panel")).not.toBeInTheDocument();
 });
 
-it("resets the active tool when the report id changes", () => {
-  const { rerender } = render(<ReportDetailsHub {...props()} />);
-  fireEvent.click(screen.getByRole("button", { name: "主题要闻摘要" }));
-  expect(screen.getByTestId("news-panel")).toBeInTheDocument();
+it("does not render review content for a newly selected report", () => {
+  const hubProps = props();
+  const { rerender } = render(<ReportDetailsHub {...hubProps} />);
+  fireEvent.click(screen.getByRole("button", { name: "建议复盘与投研诊断" }));
+  expect(screen.getByTestId("outcomes-panel")).toBeInTheDocument();
+  expect(screen.getByTestId("diagnostics-content")).toBeInTheDocument();
+  expect(hubProps.diagnostics).toHaveBeenCalledTimes(1);
 
   const nextReport = sampleReport();
   nextReport.id = "report-2";
-  nextReport.topic_briefs = [];
-  nextReport.analysis_facts = undefined;
+  rerender(<ReportDetailsHub report={nextReport} diagnostics={hubProps.diagnostics} />);
+
+  expect(screen.queryByTestId("outcomes-panel")).not.toBeInTheDocument();
+  expect(screen.queryByTestId("diagnostics-content")).not.toBeInTheDocument();
+  expect(hubProps.diagnostics).toHaveBeenCalledTimes(1);
+  expect(panelSpies.outcomes).not.toHaveBeenCalledWith("report-2");
+  for (const button of screen.getAllByRole("button")) {
+    expect(button).toHaveAttribute("aria-expanded", "false");
+  }
+});
+
+it("does not render rebalance content for a newly selected report", () => {
+  const { rerender } = render(<ReportDetailsHub {...props()} />);
+  fireEvent.click(screen.getByRole("button", { name: "调仓示意模拟" }));
+  expect(screen.getByTestId("rebalance-panel")).toBeInTheDocument();
+  panelSpies.rebalance.mockClear();
+
+  const nextReport = sampleReport();
+  nextReport.id = "report-2";
   rerender(<ReportDetailsHub report={nextReport} />);
 
-  expect(screen.queryByTestId("news-panel")).not.toBeInTheDocument();
+  expect(screen.queryByTestId("rebalance-panel")).not.toBeInTheDocument();
+  expect(panelSpies.rebalance).not.toHaveBeenCalledWith("report-2");
   for (const button of screen.getAllByRole("button")) {
     expect(button).toHaveAttribute("aria-expanded", "false");
   }
