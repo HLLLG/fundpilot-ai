@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError
 from datetime import date
 from math import isfinite
+from threading import BoundedSemaphore, Lock
+from time import monotonic
 from typing import Any
 
 from app.models import Holding
@@ -10,8 +12,35 @@ from app.services.board_fund_flow_history import (
     get_cached_board_flow_series,
     resolve_board_flow_code_for_sector,
 )
+from app.services.eastmoney_spot_client import fetch_eastmoney_current_board_flow
 from app.services.sector_labels import normalize_sector_label
 from app.services.trading_session import get_effective_trade_date
+
+
+_FLOW_HISTORY_BUDGET_SECONDS = 0.3
+_CURRENT_FLOW_BUDGET_SECONDS = 1.4
+_FLOW_IO_MAX_WORKERS = 6
+_FLOW_IO_MAX_IN_FLIGHT = 12
+
+# Cold Eastmoney history calls can take several seconds. Keep them off the
+# request thread and single-flight repeated calls for the same board/date. The
+# semaphore bounds both running and queued work so timed-out requests cannot
+# create an unbounded backlog of retries or threads.
+_HISTORY_EXECUTOR = ThreadPoolExecutor(
+    max_workers=_FLOW_IO_MAX_WORKERS,
+    thread_name_prefix="sector-flow-history",
+)
+_CURRENT_FLOW_EXECUTOR = ThreadPoolExecutor(
+    max_workers=_FLOW_IO_MAX_WORKERS,
+    thread_name_prefix="sector-flow-current",
+)
+_HISTORY_SLOTS = BoundedSemaphore(_FLOW_IO_MAX_IN_FLIGHT)
+_CURRENT_FLOW_SLOTS = BoundedSemaphore(_FLOW_IO_MAX_IN_FLIGHT)
+_HISTORY_FUTURES: dict[tuple[str, str], Future[Any]] = {}
+_CURRENT_FLOW_FUTURES: dict[tuple[str, str], Future[Any]] = {}
+_HISTORY_FUTURES_LOCK = Lock()
+_CURRENT_FLOW_FUTURES_LOCK = Lock()
+_LIVE_FLOW_UNSET = object()
 
 
 def _finite_number(value: object) -> float | None:
@@ -105,15 +134,124 @@ def _main_force_direction(value: float | None) -> str | None:
 
 
 def _load_flow_series(board_code: str, trade_date: str) -> list[dict[str, Any]]:
-    series = _normalize_flow_series(get_cached_board_flow_series(board_code), trade_date)
-    if series and not _series_has_date(series, trade_date):
-        refreshed = _normalize_flow_series(
-            get_cached_board_flow_series(board_code, force_refresh=True),
-            trade_date,
-        )
-        if refreshed:
-            series = refreshed
-    return series
+    # A cached series that ends yesterday is still useful once today's exact
+    # live point is merged. Forcing a refresh here turned that fast cache hit
+    # into a multi-host cold network call and hid both pieces of evidence from
+    # the outer report budget.
+    return _normalize_flow_series(get_cached_board_flow_series(board_code), trade_date)
+
+
+def _submit_singleflight(
+    *,
+    key: tuple[str, str],
+    registry: dict[tuple[str, str], Future[Any]],
+    registry_lock: Lock,
+    slots: BoundedSemaphore,
+    executor: ThreadPoolExecutor,
+    loader,
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any] | None = None,
+) -> Future[Any] | None:
+    """Submit bounded IO without ever waiting for worker cleanup in-request."""
+    with registry_lock:
+        existing = registry.get(key)
+        if existing is not None and not existing.done():
+            return existing
+        if existing is not None:
+            registry.pop(key, None)
+        if not slots.acquire(blocking=False):
+            return None
+        try:
+            future = executor.submit(loader, *args, **(kwargs or {}))
+        except Exception:  # noqa: BLE001 - best-effort capacity guard
+            slots.release()
+            return None
+        registry[key] = future
+
+    def _cleanup(done: Future[Any]) -> None:
+        with registry_lock:
+            if registry.get(key) is done:
+                registry.pop(key, None)
+        slots.release()
+
+    future.add_done_callback(_cleanup)
+    return future
+
+
+def _submit_history_load(board_code: str, trade_date: str) -> Future[Any] | None:
+    return _submit_singleflight(
+        key=(board_code, trade_date),
+        registry=_HISTORY_FUTURES,
+        registry_lock=_HISTORY_FUTURES_LOCK,
+        slots=_HISTORY_SLOTS,
+        executor=_HISTORY_EXECUTOR,
+        loader=_load_flow_series,
+        args=(board_code, trade_date),
+    )
+
+
+def _submit_current_flow_load(board_code: str, trade_date: str) -> Future[Any] | None:
+    secid = board_code if "." in board_code else f"90.{board_code}"
+    return _submit_singleflight(
+        key=(board_code, trade_date),
+        registry=_CURRENT_FLOW_FUTURES,
+        registry_lock=_CURRENT_FLOW_FUTURES_LOCK,
+        slots=_CURRENT_FLOW_SLOTS,
+        executor=_CURRENT_FLOW_EXECUTOR,
+        loader=fetch_eastmoney_current_board_flow,
+        args=(secid,),
+        kwargs={"trade_date": trade_date},
+    )
+
+
+def _future_result_before(
+    future: Future[Any] | None,
+    *,
+    started_at: float,
+    budget_seconds: float,
+) -> Any:
+    if future is None:
+        return None
+    remaining = max(0.0, started_at + max(0.0, budget_seconds) - monotonic())
+    try:
+        return future.result(timeout=remaining)
+    except TimeoutError:
+        return None
+    except Exception:  # noqa: BLE001 - flow evidence is best-effort
+        return None
+
+
+def _matching_theme_board_snapshot(trade_date: str) -> dict[str, Any] | None:
+    try:
+        from app.services.theme_board_snapshot import get_theme_board_snapshot_cache_only
+
+        snapshot = get_theme_board_snapshot_cache_only()
+    except Exception:  # noqa: BLE001 - cache-only evidence is best-effort
+        return None
+    if not isinstance(snapshot, dict) or snapshot.get("trade_date") != trade_date:
+        return None
+    return snapshot
+
+
+def _live_today_flow_from_snapshot(
+    snapshot: dict[str, Any] | None,
+    board_code: str,
+) -> dict[str, Any] | None:
+    if snapshot is None:
+        return None
+    for item in snapshot.get("items") or []:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("flow_source_code") or "").strip() != board_code:
+            continue
+        main_force = _finite_number(item.get("main_force_net_yi"))
+        if main_force is None:
+            return None
+        return {
+            "main_force_net_yi": main_force,
+            "flow_tiers": item.get("flow_tiers"),
+        }
+    return None
 
 
 def _live_today_flow_from_theme_board(
@@ -133,38 +271,24 @@ def _live_today_flow_from_theme_board(
     成本可忽略；缓存未命中或该板块不在主题白名单内时返回 None，调用方据此回退到
     历史序列自身的（可能滞后的）取值。
     """
-    try:
-        from app.services.theme_board_snapshot import get_theme_board_snapshot_cache_only
-
-        snapshot = get_theme_board_snapshot_cache_only()
-    except Exception:  # noqa: BLE001 - best-effort，不可阻塞资金流上下文
-        return None
-    if not snapshot:
-        return None
-    if snapshot.get("trade_date") != trade_date:
-        return None
-    for item in snapshot.get("items") or []:
-        if str(item.get("flow_source_code") or "").strip() != board_code:
-            continue
-        main_force = item.get("main_force_net_yi")
-        if main_force is None:
-            return None
-        return {
-            "main_force_net_yi": main_force,
-            "flow_tiers": item.get("flow_tiers"),
-        }
-    return None
+    return _live_today_flow_from_snapshot(
+        _matching_theme_board_snapshot(trade_date),
+        board_code,
+    )
 
 
 def _ensure_today_point(
     series: list[dict[str, Any]],
     board_code: str,
     trade_date: str,
+    *,
+    live: dict[str, Any] | None | object = _LIVE_FLOW_UNSET,
 ) -> list[dict[str, Any]]:
     """Merge the live snapshot as the authoritative point for ``trade_date``."""
-    live = _live_today_flow_from_theme_board(board_code, trade_date)
+    if live is _LIVE_FLOW_UNSET:
+        live = _live_today_flow_from_theme_board(board_code, trade_date)
     candidates = list(series)
-    if live is not None:
+    if isinstance(live, dict):
         candidates.append({"date": trade_date, **live})
     return _normalize_flow_series(candidates, trade_date)
 
@@ -290,8 +414,61 @@ def build_sector_fund_flow_context(
             "message": "未解析到板块资金流代码",
         }
 
-    series = _load_flow_series(board_code, target_trade_date)
-    series = _ensure_today_point(series, board_code, target_trade_date)
+    io_started_at = monotonic()
+    matching_snapshot = _matching_theme_board_snapshot(target_trade_date)
+    live = _live_today_flow_from_snapshot(matching_snapshot, board_code)
+
+    # Start both independent sources together. History gets only a small
+    # request-time budget; a running cold fetch may finish and warm its cache,
+    # but its cleanup is never awaited by this response.
+    history_future = _submit_history_load(board_code, target_trade_date)
+    # The bulk snapshot's exact trade date is the authority that this is a
+    # current-day fallback. Without it, do not issue a live lookup and risk
+    # mixing today's response into an explicitly historical context.
+    may_fetch_current = live is None and matching_snapshot is not None
+    current_flow_future = (
+        _submit_current_flow_load(board_code, target_trade_date)
+        if may_fetch_current
+        else None
+    )
+
+    loaded_history = _future_result_before(
+        history_future,
+        started_at=io_started_at,
+        budget_seconds=_FLOW_HISTORY_BUDGET_SECONDS,
+    )
+    series = loaded_history if isinstance(loaded_history, list) else []
+
+    # Exact same-day history is already sufficient. Otherwise use the small
+    # targeted fflow window, whose own parser and this caller both enforce the
+    # requested date before labeling it as today's point.
+    if live is None and not _series_has_date(series, target_trade_date):
+        current_flow = _future_result_before(
+            current_flow_future,
+            started_at=io_started_at,
+            budget_seconds=_CURRENT_FLOW_BUDGET_SECONDS,
+        )
+        if (
+            isinstance(current_flow, dict)
+            and current_flow.get("date") == target_trade_date
+            and (
+                main_force := _finite_number(current_flow.get("main_force_net_yi"))
+            )
+            is not None
+        ):
+            live = {
+                "main_force_net_yi": main_force,
+                "flow_tiers": current_flow.get("flow_tiers"),
+            }
+    elif current_flow_future is not None:
+        current_flow_future.cancel()
+
+    series = _ensure_today_point(
+        series,
+        board_code,
+        target_trade_date,
+        live=live,
+    )
     history_point_count = len(series)
     if not series:
         return {

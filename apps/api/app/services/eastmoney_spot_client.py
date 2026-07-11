@@ -36,6 +36,7 @@ _PREFERRED_PUSH_HOST = "17"
 _PUSH2_HOSTS = tuple(f"{host}.push2.eastmoney.com" for host in _HOST_POOL)
 _CLIST_HOSTS = ("push2delay.eastmoney.com",) + _PUSH2_HOSTS
 _STOCK_HOSTS = ("push2delay.eastmoney.com",) + _PUSH2_HOSTS
+_CURRENT_FLOW_HOSTS = ("push2delay.eastmoney.com", "push2.eastmoney.com")
 
 
 def fetch_eastmoney_boards(
@@ -260,6 +261,115 @@ def fetch_eastmoney_quote_by_secid(
         if last_error:
             logger.info("eastmoney secid quote %s failed: %s", cleaned, last_error)
     return None, None
+
+
+def _parse_current_board_flow_kline(
+    raw: object,
+    *,
+    trade_date: str,
+) -> dict[str, Any] | None:
+    """Parse one dated ``fflow/kline`` row without relabeling stale data."""
+    if not isinstance(raw, str):
+        return None
+    parts = [part.strip() for part in raw.split(",")]
+    if len(parts) < 6 or parts[0] != trade_date:
+        return None
+    try:
+        main_force, small, medium, large, super_large = (
+            float(value) for value in parts[1:6]
+        )
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not all(
+        math.isfinite(value)
+        for value in (main_force, small, medium, large, super_large)
+    ):
+        return None
+    return {
+        "date": trade_date,
+        "main_force_net_yi": _board_yuan_to_yi(main_force),
+        "flow_tiers": {
+            "super_large_net_yi": _board_yuan_to_yi(super_large),
+            "large_net_yi": _board_yuan_to_yi(large),
+            "medium_net_yi": _board_yuan_to_yi(medium),
+            "small_net_yi": _board_yuan_to_yi(small),
+        },
+    }
+
+
+def fetch_eastmoney_current_board_flow(
+    secid: str,
+    *,
+    trade_date: str,
+    timeout: float = 1.0,
+    max_retries: int = 1,
+    max_hosts: int = 1,
+) -> dict[str, Any] | None:
+    """Fetch a small, exactly dated board-flow window for one Eastmoney secid.
+
+    This endpoint is the targeted fallback for boards omitted from the bulk
+    theme snapshot.  A response is usable only when one returned kline has the
+    requested trade date; the latest row is never relabeled as that date.
+    """
+    cleaned_secid = str(secid or "").strip()
+    cleaned_trade_date = str(trade_date or "").strip()
+    if not cleaned_secid or not cleaned_trade_date:
+        return None
+
+    params = {
+        "lmt": "10",
+        "klt": "101",
+        "secid": cleaned_secid,
+        "fields1": "f1,f2,f3,f7",
+        "fields2": "f51,f52,f53,f54,f55,f56",
+        "ut": _COMMON_PARAMS["ut"],
+    }
+    host_pool = _CURRENT_FLOW_HOSTS[: max(0, max_hosts)]
+    last_error: Exception | None = None
+
+    with httpx.Client(
+        headers=_EASTMONEY_HEADERS,
+        timeout=timeout,
+        trust_env=False,
+        follow_redirects=True,
+        http2=False,
+    ) as client:
+        for attempt in range(max(0, max_retries)):
+            for host in host_pool:
+                url = f"https://{host}/api/qt/stock/fflow/kline/get"
+                try:
+                    response = client.get(url, params=params)
+                    response.raise_for_status()
+                    klines = ((response.json().get("data") or {}).get("klines") or [])
+                    for raw in klines:
+                        parsed = _parse_current_board_flow_kline(
+                            raw,
+                            trade_date=cleaned_trade_date,
+                        )
+                        if parsed is not None:
+                            return parsed
+                    # Every host serves the same dated series. A successful
+                    # response without the target date is authoritative and
+                    # should not trigger extra host/retry latency.
+                    return None
+                except Exception as exc:
+                    last_error = exc
+                    logger.debug(
+                        "eastmoney current board flow %s host=%s attempt=%s failed: %s",
+                        cleaned_secid,
+                        host,
+                        attempt + 1,
+                        exc,
+                    )
+            if attempt + 1 < max_retries:
+                time.sleep(0.1 * (attempt + 1))
+    if last_error is not None:
+        logger.info(
+            "eastmoney current board flow %s failed: %s",
+            cleaned_secid,
+            last_error,
+        )
+    return None
 
 
 def fetch_eastmoney_sector_quote(

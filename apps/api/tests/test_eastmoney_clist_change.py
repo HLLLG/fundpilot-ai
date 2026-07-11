@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from app.services.eastmoney_spot_client import (
     _parse_clist_theme_rows,
+    fetch_eastmoney_current_board_flow,
     fetch_eastmoney_clist_change_by_code,
 )
 from app.services.theme_board_snapshot import (
@@ -150,3 +151,102 @@ def test_fetch_eastmoney_clist_change_by_code_delegates_to_theme_metrics(monkeyp
     )
     assert fetch_eastmoney_clist_change_by_code(timeout=12.0) is sentinel
     assert captured == {"timeout": 12.0, "max_retries": 2, "max_pages": 8}
+
+
+def test_fetch_current_board_flow_uses_exact_dated_fflow_kline(monkeypatch):
+    captured: dict = {"calls": []}
+
+    class _Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "data": {
+                    "klines": [
+                        "2026-07-09,100000000,200000000,300000000,400000000,500000000",
+                        "2026-07-10,-13483589632,9724399616,3810451456,-3402293248,-10081296384",
+                    ]
+                }
+            }
+
+    class _Client:
+        def __init__(self, **kwargs):
+            captured["client"] = kwargs
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def get(self, url, *, params):
+            captured["calls"].append((url, params))
+            return _Response()
+
+    monkeypatch.setattr("app.services.eastmoney_spot_client.httpx.Client", _Client)
+
+    flow = fetch_eastmoney_current_board_flow(
+        "90.BK0800",
+        trade_date="2026-07-10",
+        timeout=0.25,
+        max_retries=1,
+        max_hosts=1,
+    )
+
+    assert flow == {
+        "date": "2026-07-10",
+        "main_force_net_yi": -134.84,
+        "flow_tiers": {
+            "super_large_net_yi": -100.81,
+            "large_net_yi": -34.02,
+            "medium_net_yi": 38.1,
+            "small_net_yi": 97.24,
+        },
+    }
+    assert captured["client"]["timeout"] == 0.25
+    assert captured["client"]["trust_env"] is False
+    url, params = captured["calls"][0]
+    assert url == "https://push2delay.eastmoney.com/api/qt/stock/fflow/kline/get"
+    assert params == {
+        "lmt": "10",
+        "klt": "101",
+        "secid": "90.BK0800",
+        "fields1": "f1,f2,f3,f7",
+        "fields2": "f51,f52,f53,f54,f55,f56",
+        "ut": "bd1d9ddb04089700cf9c27f6f7426281",
+    }
+
+
+def test_fetch_current_board_flow_rejects_mismatched_response_date(monkeypatch):
+    class _Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"data": {"klines": ["2026-07-09,1,2,3,4,5"]}}
+
+    class _Client:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def get(self, _url, *, params):
+            return _Response()
+
+    monkeypatch.setattr("app.services.eastmoney_spot_client.httpx.Client", _Client)
+
+    assert (
+        fetch_eastmoney_current_board_flow(
+            "90.BK0800",
+            trade_date="2026-07-10",
+            max_retries=1,
+            max_hosts=1,
+        )
+        is None
+    )
