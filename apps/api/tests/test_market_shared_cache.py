@@ -59,7 +59,7 @@ def test_snapshot_refreshed_before_process_boot():
 def test_theme_board_serves_prior_process_cache_without_sync_refresh(monkeypatch):
     mark_process_boot()
     trade_date = "2026-06-25"
-    cache_key = f"theme:boards:v5:{trade_date}"
+    cache_key = f"theme:boards:v6:{trade_date}"
     save_spot_snapshot(
         cache_key,
         {
@@ -92,7 +92,7 @@ def test_theme_boards_read_from_cache_without_refresh(monkeypatch):
 
     mark_process_boot()
     trade_date = "2026-06-25"
-    cache_key = f"theme:boards:v5:{trade_date}"
+    cache_key = f"theme:boards:v6:{trade_date}"
     save_spot_snapshot(
         cache_key,
         {

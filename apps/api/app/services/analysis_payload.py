@@ -280,6 +280,7 @@ def trim_analysis_facts_for_llm(
                             "today_main_force_net_yi",
                             "main_force_direction",
                             "cumulative_5d_net_yi",
+                            "five_day_source",
                             "cumulative_20d_net_yi",
                             "flow_tiers",
                             "flow_structure_hint",
@@ -308,6 +309,7 @@ def trim_analysis_facts_for_llm(
                             "cumulative_5d_net_yi",
                             "today_available",
                             "five_day_available",
+                            "five_day_source",
                             "history_point_count",
                         )
                         if k in opportunity_copy

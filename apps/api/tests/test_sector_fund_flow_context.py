@@ -1,7 +1,8 @@
 """板块资金流注入日报 facts：日期对齐与正负号语义。"""
 
+from concurrent.futures import Future
 from datetime import date, timedelta
-from threading import Event
+from threading import Event, Thread, current_thread
 from time import monotonic
 
 import pytest
@@ -702,6 +703,306 @@ def test_no_live_flow_and_slow_history_degrades_promptly(monkeypatch):
     assert ctx["five_day_available"] is False
     assert ctx["history_point_count"] == 0
     assert "today_main_force_net_yi" not in ctx
+
+
+def test_shared_current_singleflight_is_not_cancelled_by_a_satisfied_caller(monkeypatch):
+    first_history: Future = Future()
+    first_history.set_result(
+        [{"date": "2026-07-10", "main_force_net_yi": -1.0}]
+    )
+    second_history: Future = Future()
+    second_history.set_result([])
+    histories = iter((first_history, second_history))
+    shared_current: Future = Future()
+
+    monkeypatch.setattr(
+        "app.services.sector_fund_flow_context.resolve_board_flow_code_for_sector",
+        lambda _label: ("BK0800", "AI"),
+    )
+    monkeypatch.setattr(
+        "app.services.sector_fund_flow_context._submit_history_load",
+        lambda *_args: next(histories),
+    )
+    monkeypatch.setattr(
+        "app.services.sector_fund_flow_context._submit_current_flow_load",
+        lambda *_args: shared_current,
+    )
+    monkeypatch.setattr(
+        "app.services.theme_board_snapshot.get_theme_board_snapshot_cache_only",
+        lambda: {"trade_date": "2026-07-10", "items": []},
+    )
+
+    first = build_sector_fund_flow_context("AI", trade_date="2026-07-10")
+
+    assert first["today_main_force_net_yi"] == -1.0
+    assert shared_current.cancelled() is False
+
+    shared_current.set_result(
+        {
+            "date": "2026-07-10",
+            "main_force_net_yi": -134.84,
+            "flow_tiers": {},
+        }
+    )
+    second = build_sector_fund_flow_context("AI", trade_date="2026-07-10")
+
+    assert second["today_available"] is True
+    assert second["today_main_force_net_yi"] == -134.84
+
+
+def test_concurrent_caller_cannot_cancel_current_flow_waited_on_by_peer(monkeypatch):
+    exact_history: Future = Future()
+    exact_history.set_result(
+        [{"date": "2026-07-10", "main_force_net_yi": -1.0}]
+    )
+    empty_history: Future = Future()
+    empty_history.set_result([])
+    waiting_on_current = Event()
+
+    class _SharedCurrentFuture(Future):
+        def result(self, timeout=None):
+            if current_thread().name == "flow-waiter":
+                waiting_on_current.set()
+            return super().result(timeout=timeout)
+
+    shared_current = _SharedCurrentFuture()
+    results: dict[str, dict] = {}
+    errors: list[BaseException] = []
+
+    monkeypatch.setattr(
+        "app.services.sector_fund_flow_context.resolve_board_flow_code_for_sector",
+        lambda _label: ("BK0800", "AI"),
+    )
+    monkeypatch.setattr(
+        "app.services.sector_fund_flow_context._submit_history_load",
+        lambda *_args: (
+            exact_history
+            if current_thread().name == "flow-satisfied"
+            else empty_history
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.sector_fund_flow_context._submit_current_flow_load",
+        lambda *_args: shared_current,
+    )
+    monkeypatch.setattr(
+        "app.services.sector_fund_flow_context._CURRENT_FLOW_BUDGET_SECONDS",
+        0.5,
+    )
+    monkeypatch.setattr(
+        "app.services.theme_board_snapshot.get_theme_board_snapshot_cache_only",
+        lambda: {"trade_date": "2026-07-10", "items": []},
+    )
+
+    def _build(key: str) -> None:
+        try:
+            results[key] = build_sector_fund_flow_context(
+                "AI",
+                trade_date="2026-07-10",
+            )
+        except BaseException as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    waiter = Thread(target=_build, args=("waiter",), name="flow-waiter")
+    waiter.start()
+    assert waiting_on_current.wait(timeout=0.2)
+
+    satisfied = Thread(target=_build, args=("satisfied",), name="flow-satisfied")
+    satisfied.start()
+    satisfied.join(timeout=0.2)
+
+    assert satisfied.is_alive() is False
+    assert shared_current.cancelled() is False
+    shared_current.set_result(
+        {
+            "date": "2026-07-10",
+            "main_force_net_yi": -134.84,
+            "flow_tiers": {},
+        }
+    )
+    waiter.join(timeout=0.2)
+
+    assert waiter.is_alive() is False
+    assert errors == []
+    assert results["satisfied"]["today_main_force_net_yi"] == -1.0
+    assert results["waiter"]["today_main_force_net_yi"] == -134.84
+
+
+def test_history_finishing_during_current_wait_is_merged_without_extra_wait(monkeypatch):
+    history_future: Future = Future()
+    history = [
+        {"date": "2026-07-06", "main_force_net_yi": 1.0},
+        {"date": "2026-07-07", "main_force_net_yi": 2.0},
+        {"date": "2026-07-08", "main_force_net_yi": 3.0},
+        {"date": "2026-07-09", "main_force_net_yi": 4.0},
+    ]
+
+    class _CurrentFuture(Future):
+        def result(self, timeout=None):
+            if not history_future.done():
+                history_future.set_result(history)
+            return super().result(timeout=timeout)
+
+    current_future = _CurrentFuture()
+    current_future.set_result(
+        {
+            "date": "2026-07-10",
+            "main_force_net_yi": 5.0,
+            "flow_tiers": {},
+        }
+    )
+
+    monkeypatch.setattr(
+        "app.services.sector_fund_flow_context.resolve_board_flow_code_for_sector",
+        lambda _label: ("BK0800", "AI"),
+    )
+    monkeypatch.setattr(
+        "app.services.sector_fund_flow_context._submit_history_load",
+        lambda *_args: history_future,
+    )
+    monkeypatch.setattr(
+        "app.services.sector_fund_flow_context._submit_current_flow_load",
+        lambda *_args: current_future,
+    )
+    monkeypatch.setattr(
+        "app.services.sector_fund_flow_context._FLOW_HISTORY_BUDGET_SECONDS",
+        0.0,
+    )
+    monkeypatch.setattr(
+        "app.services.theme_board_snapshot.get_theme_board_snapshot_cache_only",
+        lambda: {"trade_date": "2026-07-10", "items": []},
+    )
+
+    ctx = build_sector_fund_flow_context("AI", trade_date="2026-07-10")
+
+    assert ctx["history_point_count"] == 5
+    assert ctx["five_day_available"] is True
+    assert ctx["cumulative_5d_net_yi"] == 15.0
+    assert ctx["five_day_source"] == "history"
+
+
+def test_exact_dated_rank_supplies_five_day_when_raw_history_is_short(monkeypatch):
+    history_future: Future = Future()
+    history_future.set_result(
+        [
+            {"date": "2026-07-08", "main_force_net_yi": 1.0},
+            {"date": "2026-07-09", "main_force_net_yi": 2.0},
+        ]
+    )
+    monkeypatch.setattr(
+        "app.services.sector_fund_flow_context.resolve_board_flow_code_for_sector",
+        lambda _label: ("BK0800", "AI"),
+    )
+    monkeypatch.setattr(
+        "app.services.sector_fund_flow_context._submit_history_load",
+        lambda *_args: history_future,
+    )
+    monkeypatch.setattr(
+        "app.services.theme_board_snapshot.get_theme_board_snapshot_cache_only",
+        lambda: {
+            "trade_date": "2026-07-10",
+            "items": [
+                {
+                    "flow_source_code": "BK0800",
+                    "main_force_net_yi": -134.84,
+                    "cumulative_5d_net_yi": -154.60,
+                    "flow_data_date": "2026-07-10",
+                }
+            ],
+        },
+    )
+
+    ctx = build_sector_fund_flow_context("AI", trade_date="2026-07-10")
+
+    assert ctx["today_available"] is True
+    assert ctx["history_point_count"] == 3
+    assert ctx["five_day_available"] is True
+    assert ctx["cumulative_5d_net_yi"] == -154.60
+    assert ctx["five_day_source"] == "eastmoney_rank"
+
+
+@pytest.mark.parametrize(
+    ("flow_data_date", "rank_value"),
+    [("2026-07-09", -154.60), (None, -154.60), ("2026-07-10", None)],
+)
+def test_rank_is_not_used_when_date_or_value_is_unavailable(
+    monkeypatch,
+    flow_data_date,
+    rank_value,
+):
+    history_future: Future = Future()
+    history_future.set_result([])
+    monkeypatch.setattr(
+        "app.services.sector_fund_flow_context.resolve_board_flow_code_for_sector",
+        lambda _label: ("BK0800", "AI"),
+    )
+    monkeypatch.setattr(
+        "app.services.sector_fund_flow_context._submit_history_load",
+        lambda *_args: history_future,
+    )
+    monkeypatch.setattr(
+        "app.services.theme_board_snapshot.get_theme_board_snapshot_cache_only",
+        lambda: {
+            "trade_date": "2026-07-10",
+            "items": [
+                {
+                    "flow_source_code": "BK0800",
+                    "main_force_net_yi": -134.84,
+                    "cumulative_5d_net_yi": rank_value,
+                    "flow_data_date": flow_data_date,
+                }
+            ],
+        },
+    )
+
+    ctx = build_sector_fund_flow_context("AI", trade_date="2026-07-10")
+
+    assert ctx["today_available"] is True
+    assert ctx["five_day_available"] is False
+    assert ctx["cumulative_5d_net_yi"] is None
+    assert ctx["five_day_source"] is None
+
+
+def test_complete_raw_history_takes_precedence_over_rank_aggregate(monkeypatch):
+    history_future: Future = Future()
+    history_future.set_result(
+        [
+            {"date": "2026-07-06", "main_force_net_yi": 1.0},
+            {"date": "2026-07-07", "main_force_net_yi": 2.0},
+            {"date": "2026-07-08", "main_force_net_yi": 3.0},
+            {"date": "2026-07-09", "main_force_net_yi": 4.0},
+            {"date": "2026-07-10", "main_force_net_yi": 5.0},
+        ]
+    )
+    monkeypatch.setattr(
+        "app.services.sector_fund_flow_context.resolve_board_flow_code_for_sector",
+        lambda _label: ("BK0800", "AI"),
+    )
+    monkeypatch.setattr(
+        "app.services.sector_fund_flow_context._submit_history_load",
+        lambda *_args: history_future,
+    )
+    monkeypatch.setattr(
+        "app.services.theme_board_snapshot.get_theme_board_snapshot_cache_only",
+        lambda: {
+            "trade_date": "2026-07-10",
+            "items": [
+                {
+                    "flow_source_code": "BK0800",
+                    "main_force_net_yi": 5.0,
+                    "cumulative_5d_net_yi": -154.60,
+                    "flow_data_date": "2026-07-10",
+                }
+            ],
+        },
+    )
+
+    ctx = build_sector_fund_flow_context("AI", trade_date="2026-07-10")
+
+    assert ctx["history_point_count"] == 5
+    assert ctx["five_day_available"] is True
+    assert ctx["cumulative_5d_net_yi"] == 15.0
+    assert ctx["five_day_source"] == "history"
 
 
 def test_fast_history_still_merges_with_live_for_exact_5d_and_20d(monkeypatch):

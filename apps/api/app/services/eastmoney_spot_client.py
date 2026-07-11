@@ -4,11 +4,15 @@ import logging
 import math
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import httpx
 
 logger = logging.getLogger(__name__)
+
+_ASIA_SHANGHAI = ZoneInfo("Asia/Shanghai")
 
 _EASTMONEY_HEADERS = {
     "User-Agent": (
@@ -681,18 +685,21 @@ _CLIST_THEME_POOLS: dict[str, dict[str, str]] = {
     "concept": {
         "fs": "m:90 t:3 f:!50",
         "fid": "f3",
+        "stat": "5",
     },
     "industry": {
         "fs": "m:90 t:2 f:!50",
         "fid": "f3",
+        "stat": "5",
     },
     "index": {
         "fs": "m:2",
         "fid": "f12",
         "wbp2u": "|0|0|0|web",
+        "stat": "5",
     },
 }
-_CLIST_THEME_FIELDS = "f12,f14,f3,f109,f62,f66,f72,f78,f84"
+_CLIST_THEME_FIELDS = "f12,f14,f3,f109,f62,f66,f72,f78,f84,f124,f164"
 _CLIST_THEME_PAGE_SIZE = "100"
 _CLIST_THEME_MAX_PAGES = 8
 _CLIST_THEME_METRIC_KEYS = (
@@ -703,13 +710,33 @@ _CLIST_THEME_METRIC_KEYS = (
     "large_net_yi",
     "medium_net_yi",
     "small_net_yi",
+    "cumulative_5d_net_yi",
+    "flow_data_date",
 )
+_ClistThemeMetrics = dict[str, float | str | None]
+_ClistThemeMap = dict[str, _ClistThemeMetrics]
+
+
+def _eastmoney_flow_data_date(value: object) -> str | None:
+    """Convert Eastmoney's f124 epoch to its Asia/Shanghai trading date."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        timestamp = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not math.isfinite(timestamp):
+        return None
+    try:
+        return datetime.fromtimestamp(timestamp, tz=_ASIA_SHANGHAI).date().isoformat()
+    except (OSError, OverflowError, ValueError):
+        return None
 
 
 def _parse_clist_theme_rows(
     rows: list[dict[str, Any]],
-) -> dict[str, dict[str, float | None]]:
-    by_code: dict[str, dict[str, float | None]] = {}
+) -> _ClistThemeMap:
+    by_code: _ClistThemeMap = {}
     for row in rows:
         code = row.get("f12")
         if code in (None, "-", ""):
@@ -717,7 +744,16 @@ def _parse_clist_theme_rows(
         key = str(code).strip()
         if not key:
             continue
-        parsed = {
+        flow_data_date = _eastmoney_flow_data_date(row.get("f124"))
+        raw_five_day_flow = _as_board_float(row.get("f164"))
+        five_day_flow = (
+            _board_yuan_to_yi(raw_five_day_flow)
+            if raw_five_day_flow is not None
+            and math.isfinite(raw_five_day_flow)
+            and flow_data_date is not None
+            else None
+        )
+        parsed: dict[str, float | str | None] = {
             "change_1d": _as_board_float(row.get("f3")),
             "change_5d": _as_board_float(row.get("f109")),
             "main_force_net_yi": _board_yuan_to_yi(_as_board_float(row.get("f62"))),
@@ -725,6 +761,8 @@ def _parse_clist_theme_rows(
             "large_net_yi": _board_yuan_to_yi(_as_board_float(row.get("f72"))),
             "medium_net_yi": _board_yuan_to_yi(_as_board_float(row.get("f78"))),
             "small_net_yi": _board_yuan_to_yi(_as_board_float(row.get("f84"))),
+            "cumulative_5d_net_yi": five_day_flow,
+            "flow_data_date": flow_data_date,
         }
         if all(parsed[key] is None for key in _CLIST_THEME_METRIC_KEYS):
             continue
@@ -739,8 +777,8 @@ def _parse_clist_theme_rows(
 
 
 def _merge_clist_theme_chunks(
-    merged: dict[str, dict[str, float | None]],
-    chunk: dict[str, dict[str, float | None]],
+    merged: _ClistThemeMap,
+    chunk: _ClistThemeMap,
 ) -> None:
     for code, values in chunk.items():
         if code not in merged:
@@ -760,7 +798,7 @@ _CLIST_CHANGE_MAX_PAGES = _CLIST_THEME_MAX_PAGES
 
 def _parse_clist_change_rows(
     rows: list[dict[str, Any]],
-) -> dict[str, dict[str, float | None]]:
+) -> _ClistThemeMap:
     return _parse_clist_theme_rows(rows)
 
 
@@ -770,7 +808,7 @@ def _fetch_clist_theme_pool(
     timeout: float = 15.0,
     max_retries: int = 2,
     max_pages: int = 3,
-) -> dict[str, dict[str, float | None]]:
+) -> _ClistThemeMap:
     spec = _CLIST_THEME_POOLS.get(pool_name)
     if spec is None:
         raise ValueError(f"unsupported clist theme pool: {pool_name}")
@@ -815,7 +853,7 @@ def _fetch_clist_change_pool(
     timeout: float = 15.0,
     max_retries: int = 2,
     max_pages: int = 3,
-) -> dict[str, dict[str, float | None]]:
+) -> _ClistThemeMap:
     return _fetch_clist_theme_pool(
         pool_name,
         timeout=timeout,
@@ -830,7 +868,7 @@ def _fetch_paginated_clist_theme(
     *,
     max_retries: int,
     max_pages: int,
-) -> dict[str, dict[str, float | None]]:
+) -> _ClistThemeMap:
     params = {**base_params, "pn": "1"}
     first = _request_board_page(client, params, max_retries=max_retries)
     rows = list(first.get("diff") or [])
@@ -866,7 +904,7 @@ def _fetch_paginated_clist_changes(
     *,
     max_retries: int,
     max_pages: int,
-) -> dict[str, dict[str, float | None]]:
+) -> _ClistThemeMap:
     return _fetch_paginated_clist_theme(
         client,
         base_params,
@@ -880,7 +918,7 @@ def _fetch_clist_theme_via_requests(
     *,
     timeout: float,
     max_pages: int,
-) -> dict[str, dict[str, float | None]]:
+) -> _ClistThemeMap:
     import requests
 
     session = requests.Session()
@@ -889,7 +927,7 @@ def _fetch_clist_theme_via_requests(
     for host in _CLIST_HOSTS:
         url = f"https://{host}/api/qt/clist/get"
         try:
-            merged: dict[str, dict[str, float | None]] = {}
+            merged: _ClistThemeMap = {}
             for page in range(1, max_pages + 1):
                 page_params = {**base_params, "pn": str(page)}
                 response = session.get(
@@ -926,7 +964,7 @@ def _fetch_clist_changes_via_requests(
     *,
     timeout: float,
     max_pages: int,
-) -> dict[str, dict[str, float | None]]:
+) -> _ClistThemeMap:
     return _fetch_clist_theme_via_requests(
         base_params,
         timeout=timeout,
@@ -939,9 +977,9 @@ def fetch_eastmoney_clist_theme_metrics_by_code(
     timeout: float = 15.0,
     max_retries: int = 2,
     max_pages: int = _CLIST_THEME_MAX_PAGES,
-) -> dict[str, dict[str, float | None]]:
+) -> _ClistThemeMap:
     """东财 clist 批量：1d(f3)+5d(f109)+主力/四档流(f62/f66-f84)，按 f12 索引。"""
-    merged: dict[str, dict[str, float | None]] = {}
+    merged: _ClistThemeMap = {}
     errors: list[str] = []
     pool_names = tuple(_CLIST_THEME_POOLS.keys())
     with ThreadPoolExecutor(max_workers=len(pool_names)) as executor:
@@ -974,7 +1012,7 @@ def fetch_eastmoney_clist_change_by_code(
     timeout: float = 15.0,
     max_retries: int = 2,
     max_pages: int = _CLIST_CHANGE_MAX_PAGES,
-) -> dict[str, dict[str, float | None]]:
+) -> _ClistThemeMap:
     """兼容别名：同 fetch_eastmoney_clist_theme_metrics_by_code。"""
     return fetch_eastmoney_clist_theme_metrics_by_code(
         timeout=timeout,

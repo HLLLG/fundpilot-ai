@@ -221,6 +221,16 @@ def _future_result_before(
         return None
 
 
+def _future_result_if_done(future: Future[Any] | None) -> Any:
+    """Read a late single-flight result without extending request latency."""
+    if future is None or not future.done():
+        return None
+    try:
+        return future.result(timeout=0)
+    except Exception:  # noqa: BLE001 - flow evidence is best-effort
+        return None
+
+
 def _matching_theme_board_snapshot(trade_date: str) -> dict[str, Any] | None:
     try:
         from app.services.theme_board_snapshot import get_theme_board_snapshot_cache_only
@@ -251,6 +261,25 @@ def _live_today_flow_from_snapshot(
             "main_force_net_yi": main_force,
             "flow_tiers": item.get("flow_tiers"),
         }
+    return None
+
+
+def _five_day_rank_from_snapshot(
+    snapshot: dict[str, Any] | None,
+    board_code: str,
+    trade_date: str,
+) -> float | None:
+    """Use only a rank aggregate whose row-level f124 date exactly matches."""
+    if snapshot is None:
+        return None
+    for item in snapshot.get("items") or []:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("flow_source_code") or "").strip() != board_code:
+            continue
+        if str(item.get("flow_data_date") or "").strip() != trade_date:
+            return None
+        return _finite_number(item.get("cumulative_5d_net_yi"))
     return None
 
 
@@ -410,6 +439,7 @@ def build_sector_fund_flow_context(
             "sector_label": label,
             "today_available": False,
             "five_day_available": False,
+            "five_day_source": None,
             "history_point_count": 0,
             "message": "未解析到板块资金流代码",
         }
@@ -417,6 +447,11 @@ def build_sector_fund_flow_context(
     io_started_at = monotonic()
     matching_snapshot = _matching_theme_board_snapshot(target_trade_date)
     live = _live_today_flow_from_snapshot(matching_snapshot, board_code)
+    rank_five_day = _five_day_rank_from_snapshot(
+        matching_snapshot,
+        board_code,
+        target_trade_date,
+    )
 
     # Start both independent sources together. History gets only a small
     # request-time budget; a running cold fetch may finish and warm its cache,
@@ -460,8 +495,12 @@ def build_sector_fund_flow_context(
                 "main_force_net_yi": main_force,
                 "flow_tiers": current_flow.get("flow_tiers"),
             }
-    elif current_flow_future is not None:
-        current_flow_future.cancel()
+    # History may have completed while this request was already waiting for
+    # the current-day lookup. Read that shared result only when done; never
+    # cancel or add another wait because other callers may own the same future.
+    late_history = _future_result_if_done(history_future)
+    if isinstance(late_history, list):
+        series = _normalize_flow_series([*series, *late_history], target_trade_date)
 
     series = _ensure_today_point(
         series,
@@ -478,6 +517,7 @@ def build_sector_fund_flow_context(
             "trade_date": target_trade_date,
             "today_available": False,
             "five_day_available": False,
+            "five_day_source": None,
             "history_point_count": history_point_count,
             "message": "暂无板块历史资金流",
         }
@@ -491,6 +531,7 @@ def build_sector_fund_flow_context(
             "trade_date": target_trade_date,
             "today_available": False,
             "five_day_available": False,
+            "five_day_source": None,
             "history_point_count": history_point_count,
             "message": "暂无板块历史资金流",
         }
@@ -498,12 +539,26 @@ def build_sector_fund_flow_context(
     flow_date = str(point.get("date") or "")
     date_aligned = flow_date == target_trade_date
     today_available = _series_has_date(series, target_trade_date)
-    five_day_available = today_available and history_point_count >= 5
-    recent_5d = _slice_tail(series, 5) if five_day_available else []
+    history_five_day_available = today_available and history_point_count >= 5
+    rank_five_day_available = (
+        today_available
+        and not history_five_day_available
+        and rank_five_day is not None
+    )
+    five_day_available = history_five_day_available or rank_five_day_available
+    recent_5d = _slice_tail(series, 5) if history_five_day_available else []
     recent_20d = _slice_tail(series, 20)
     today_flow = point.get("main_force_net_yi")
     tiers = point.get("flow_tiers")
-    cumulative_5d = _sum_main_force(recent_5d) if five_day_available else None
+    if history_five_day_available:
+        cumulative_5d = _sum_main_force(recent_5d)
+        five_day_source = "history"
+    elif rank_five_day_available:
+        cumulative_5d = round(float(rank_five_day), 2)
+        five_day_source = "eastmoney_rank"
+    else:
+        cumulative_5d = None
+        five_day_source = None
     cumulative_20d = _sum_main_force(recent_20d)
 
     if date_aligned:
@@ -531,6 +586,7 @@ def build_sector_fund_flow_context(
         "date_aligned": date_aligned,
         "today_available": today_available,
         "five_day_available": five_day_available,
+        "five_day_source": five_day_source,
         "history_point_count": history_point_count,
         "today_main_force_net_yi": today_flow,
         "main_force_direction": _main_force_direction(

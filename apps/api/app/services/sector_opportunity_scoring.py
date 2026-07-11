@@ -274,6 +274,7 @@ def _compute_opportunity_row(
     today_flow = raw_today_flow if today_available else None
     flow_5d = raw_flow_5d if five_day_available else None
     history_point_count = flow.get("history_point_count")
+    five_day_source = str(flow.get("five_day_source") or "").strip() or None
 
     penalties: list[str] = []
     evidence: list[str] = []
@@ -343,6 +344,7 @@ def _compute_opportunity_row(
         "change_5d_percent": change_5d,
         "today_available": today_available,
         "five_day_available": five_day_available,
+        "five_day_source": five_day_source,
         "history_point_count": history_point_count,
         "today_main_force_net_yi": today_flow,
         "cumulative_5d_net_yi": flow_5d,

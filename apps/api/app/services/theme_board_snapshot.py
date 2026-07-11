@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 SortMode = Literal["change", "inflow"]
 BoardKind = Literal["industry", "concept", "index"]
 
-_CACHE_VERSION = "v5"
+_CACHE_VERSION = "v6"
 _REFRESH_BUDGET_SECONDS = 30.0
 _KLINE_FALLBACK_BUDGET_SECONDS = 15.0
 _SERIES_TIMEOUT = 8.0
@@ -289,7 +289,7 @@ def _clist_lookup_codes(entry: dict[str, Any], *, prefer_flow: bool) -> list[str
 
 def _lookup_clist_changes(
     entry: dict[str, Any],
-    by_code: dict[str, dict[str, float | None]],
+    by_code: dict[str, dict[str, float | str | None]],
 ) -> tuple[float | None, float | None]:
     """按 source_code / flow_source_code / secid 在东财 clist 批量结果中查 1d+5d。"""
     change_1d: float | None = None
@@ -307,9 +307,16 @@ def _lookup_clist_changes(
     return change_1d, change_5d
 
 
-def _flow_fields_from_clist_row(row: dict[str, float | None] | None) -> dict[str, Any]:
+def _flow_fields_from_clist_row(
+    row: dict[str, float | str | None] | None,
+) -> dict[str, Any]:
     if not row:
-        return {"main_force_net_yi": None, "flow_tiers": None}
+        return {
+            "main_force_net_yi": None,
+            "flow_tiers": None,
+            "cumulative_5d_net_yi": None,
+            "flow_data_date": None,
+        }
     tiers = {
         "super_large_net_yi": row.get("super_large_net_yi"),
         "large_net_yi": row.get("large_net_yi"),
@@ -321,6 +328,8 @@ def _flow_fields_from_clist_row(row: dict[str, float | None] | None) -> dict[str
     return {
         "main_force_net_yi": main_force,
         "flow_tiers": tiers if has_any else None,
+        "cumulative_5d_net_yi": _as_float(row.get("cumulative_5d_net_yi")),
+        "flow_data_date": str(row.get("flow_data_date") or "").strip() or None,
     }
 
 
@@ -331,23 +340,41 @@ def _has_live_theme_metric(item: dict[str, Any]) -> bool:
         return True
     if item.get("main_force_net_yi") is not None:
         return True
+    if item.get("cumulative_5d_net_yi") is not None:
+        return True
     tiers = item.get("flow_tiers")
     return isinstance(tiers, dict) and any(value is not None for value in tiers.values())
 
 
 def _lookup_clist_flow(
     entry: dict[str, Any],
-    by_code: dict[str, dict[str, float | None]],
+    by_code: dict[str, dict[str, float | str | None]],
 ) -> dict[str, Any]:
     """资金流优先 BK(flow_source_code)，指数主题 fallback 到 source_code 的 m:2 f62。"""
+    result = {
+        "main_force_net_yi": None,
+        "flow_tiers": None,
+        "cumulative_5d_net_yi": None,
+        "flow_data_date": None,
+    }
+    current_found = False
+    five_day_found = False
     for code in _clist_lookup_codes(entry, prefer_flow=True):
         row = by_code.get(code)
-        if row is None or row.get("main_force_net_yi") is None:
+        if row is None:
             continue
         fields = _flow_fields_from_clist_row(row)
-        if fields.get("main_force_net_yi") is not None:
-            return fields
-    return {"main_force_net_yi": None, "flow_tiers": None}
+        if not current_found and fields.get("main_force_net_yi") is not None:
+            result["main_force_net_yi"] = fields["main_force_net_yi"]
+            result["flow_tiers"] = fields.get("flow_tiers")
+            current_found = True
+        if not five_day_found and fields.get("cumulative_5d_net_yi") is not None:
+            result["cumulative_5d_net_yi"] = fields["cumulative_5d_net_yi"]
+            result["flow_data_date"] = fields.get("flow_data_date")
+            five_day_found = True
+        if current_found and five_day_found:
+            break
+    return result
 
 
 def _item_from_entry(
@@ -366,7 +393,15 @@ def _item_from_entry(
         "change_1d_percent": _as_float(change_1d),
         "change_5d_percent": _as_float(change_5d),
     }
-    item.update(flow_fields or {"main_force_net_yi": None, "flow_tiers": None})
+    item.update(
+        flow_fields
+        or {
+            "main_force_net_yi": None,
+            "flow_tiers": None,
+            "cumulative_5d_net_yi": None,
+            "flow_data_date": None,
+        }
+    )
     return item
 
 
@@ -422,7 +457,7 @@ def refresh_theme_board_snapshot(*, trade_date: str | None = None) -> dict[str, 
     session_kind = session.get("session_kind", "")
     universe = list_theme_board_universe()
 
-    by_code: dict[str, dict[str, float | None]] = {}
+    by_code: dict[str, dict[str, float | str | None]] = {}
     try:
         by_code = fetch_eastmoney_clist_theme_metrics_by_code(timeout=_SERIES_TIMEOUT)
     except Exception as exc:

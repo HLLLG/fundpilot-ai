@@ -77,6 +77,7 @@ def test_today_and_five_day_availability_are_gated_and_propagated_independently(
         "date_aligned": True,
         "today_available": True,
         "five_day_available": False,
+        "five_day_source": "eastmoney_rank",
         "history_point_count": 2,
         "today_main_force_net_yi": 30.0,
         "cumulative_5d_net_yi": 40.0,
@@ -87,6 +88,7 @@ def test_today_and_five_day_availability_are_gated_and_propagated_independently(
 
     assert result["today_available"] is True
     assert result["five_day_available"] is False
+    assert result["five_day_source"] == "eastmoney_rank"
     assert result["history_point_count"] == 2
     assert result["today_main_force_net_yi"] == 30.0
     assert result["cumulative_5d_net_yi"] is None

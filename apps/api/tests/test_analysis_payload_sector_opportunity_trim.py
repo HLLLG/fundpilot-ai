@@ -22,6 +22,7 @@ def _base_facts(**overrides) -> dict:
                     "cumulative_5d_net_yi": 12.0,
                     "today_available": True,
                     "five_day_available": True,
+                    "five_day_source": "eastmoney_rank",
                     "history_point_count": 8,
                     "pattern_label": "price_flow_aligned_up",
                     "sector_group": "tmt",
@@ -77,6 +78,7 @@ def test_fast_mode_phase2_compacts_sector_opportunity_and_caps_market_top() -> N
         "cumulative_5d_net_yi",
         "today_available",
         "five_day_available",
+        "five_day_source",
         "history_point_count",
     }
     assert opportunity["track"] == "momentum"
@@ -84,6 +86,7 @@ def test_fast_mode_phase2_compacts_sector_opportunity_and_caps_market_top() -> N
     assert opportunity["cumulative_5d_net_yi"] == 12.0
     assert opportunity["today_available"] is True
     assert opportunity["five_day_available"] is True
+    assert opportunity["five_day_source"] == "eastmoney_rank"
     assert opportunity["history_point_count"] == 8
 
     rotation = trimmed["sector_rotation"]
@@ -118,6 +121,7 @@ def _facts_with_sector_fund_flow(**flow_overrides) -> dict:
         "today_main_force_net_yi": -8.0,
         "main_force_direction": "outflow",
         "cumulative_5d_net_yi": 12.0,
+        "five_day_source": "eastmoney_rank",
         "cumulative_20d_net_yi": 30.0,
         "flow_tiers": {
             "super_large_net_yi": -20.0,
@@ -148,6 +152,7 @@ def test_fast_mode_sector_fund_flow_keeps_today_tiers_but_not_daily_series() -> 
     }
     assert flow["flow_structure_hint"].startswith("超大单+大单（机构）净流出")
     assert flow["cumulative_5d_net_yi"] == 12.0
+    assert flow["five_day_source"] == "eastmoney_rank"
     assert flow["cumulative_20d_net_yi"] == 30.0
     assert "recent_5d_main_force_yi" not in flow
 
