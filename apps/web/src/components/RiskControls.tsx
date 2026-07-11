@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ChevronDown, RotateCcw, ShieldCheck, SlidersHorizontal, Sparkles } from "lucide-react";
 import type { AnalysisMode, DecisionStyle, InvestorProfile, SwingMonitorScope } from "@/lib/api";
 import { takeProfitThresholdPercent } from "@/lib/investmentPresets";
@@ -48,6 +48,7 @@ type RiskControlsProps = {
   isBusy: boolean;
   ocrWarningCount?: number;
   hasBlockingErrors?: boolean;
+  readingModeKey?: string | null;
 };
 
 export function RiskControls({
@@ -63,8 +64,51 @@ export function RiskControls({
   isBusy,
   ocrWarningCount = 0,
   hasBlockingErrors = false,
+  readingModeKey = null,
 }: RiskControlsProps) {
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(readingModeKey == null);
+
+  useEffect(() => {
+    setSettingsOpen(readingModeKey == null);
+  }, [readingModeKey]);
+
+  if (readingModeKey && !settingsOpen) {
+    return (
+      <section className="report-control-card section-card min-w-0 overflow-hidden">
+        <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <div className="text-sm font-black text-slate-950">本次生成设置</div>
+            <p className="mt-1 text-xs text-slate-500">
+              {analysisMode === "deep" ? "深度模式" : "快速模式"} · {profileSummary(profile)}
+            </p>
+            {ocrWarningCount > 0 ? (
+              <p className="mt-1 text-xs font-semibold text-amber-800">
+                识别待核对 {ocrWarningCount} 处{hasBlockingErrors ? "，请先处理严重项。" : "。"}
+              </p>
+            ) : null}
+          </div>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setSettingsOpen(true)}
+              className="btn-secondary min-h-11"
+            >
+              调整设置
+            </button>
+            <button
+              type="button"
+              onClick={onAnalyze}
+              disabled={isBusy || hasBlockingErrors}
+              className="btn-primary min-h-11"
+            >
+              {isBusy ? "正在生成..." : hasBlockingErrors ? "请先处理严重项" : "重新生成"}
+            </button>
+          </div>
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section className="report-control-card section-card min-w-0 overflow-hidden">
@@ -354,6 +398,7 @@ export function RiskControls({
               </>
             ) : null}
             <label className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50/50 px-3 py-2.5 text-sm font-semibold text-slate-700">
+              偏好定投
               <input
                 type="checkbox"
                 checked={profile.prefer_dca}
