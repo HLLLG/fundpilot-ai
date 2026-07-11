@@ -139,7 +139,12 @@ export function ReportChatDrawer({ reportId, reportTitle }: ReportChatDrawerProp
               </button>
             </header>
             <div className="min-h-0 flex-1 pb-[env(safe-area-inset-bottom)] sm:pb-0">
-              <ReportChatPanel reportId={reportId} reportTitle={reportTitle} variant="drawer" />
+              <ReportChatPanel
+                key={reportId}
+                reportId={reportId}
+                reportTitle={reportTitle}
+                variant="drawer"
+              />
             </div>
           </section>
         </div>

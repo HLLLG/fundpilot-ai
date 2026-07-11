@@ -6,11 +6,14 @@ import "@testing-library/jest-dom/vitest";
 
 import { ReportChatDrawer } from "@/components/ReportChatDrawer";
 import { ReportChatPanel } from "@/components/ReportChatPanel";
+import type { ReportChatMessage } from "@/lib/api";
 import { installMatchMedia, type MatchMediaController } from "@/test/matchMedia";
 
 const DESKTOP_QUERY = "(min-width: 1280px)";
 
 let matchMedia: MatchMediaController;
+
+type StreamHandlers = Parameters<typeof import("@/lib/api").streamReportChat>[3];
 
 const apiMocks = vi.hoisted(() => ({
   fetchReportChatHistory: vi.fn(),
@@ -110,6 +113,65 @@ describe("ReportChatPanel stream lifecycle", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "关闭追问助手" }));
     expect(signal?.aborted).toBe(true);
+  });
+
+  it("aborts and resets chat state when an open drawer switches reports", async () => {
+    let resolveNewHistory!: (messages: ReportChatMessage[]) => void;
+    const newHistory = new Promise<ReportChatMessage[]>((resolve) => {
+      resolveNewHistory = resolve;
+    });
+    apiMocks.fetchReportChatHistory.mockImplementation((reportId: string) =>
+      reportId === "report-2" ? newHistory : Promise.resolve([]),
+    );
+
+    const view = render(<ReportChatDrawer reportId="report-1" reportTitle="旧日报" />);
+    fireEvent.click(screen.getByRole("button", { name: "追问这份日报" }));
+    await waitFor(() =>
+      expect(apiMocks.fetchReportChatHistory).toHaveBeenNthCalledWith(1, "report-1"),
+    );
+
+    await sendQuestion("旧报告问题");
+    const oldPanel = screen.getByTestId("report-chat-panel");
+    const oldSignal = apiMocks.streamReportChat.mock.calls[0]?.[4] as AbortSignal | undefined;
+    const oldHandlers = apiMocks.streamReportChat.mock.calls[0]?.[3] as StreamHandlers;
+    act(() => {
+      oldHandlers.onUserMessage?.({
+        id: "old-user-message",
+        report_id: "report-1",
+        role: "user",
+        content: "旧报告问题",
+        created_at: "2026-07-11T12:00:00Z",
+      });
+    });
+    expect(screen.getByText("旧报告问题")).toBeInTheDocument();
+    expect(oldSignal?.aborted).toBe(false);
+
+    view.rerender(<ReportChatDrawer reportId="report-2" reportTitle="新日报" />);
+    await waitFor(() =>
+      expect(apiMocks.fetchReportChatHistory).toHaveBeenNthCalledWith(2, "report-2"),
+    );
+
+    expect(oldSignal?.aborted).toBe(true);
+    expect(screen.getByTestId("report-chat-panel")).not.toBe(oldPanel);
+    expect(screen.queryByText("旧报告问题")).not.toBeInTheDocument();
+
+    act(() => oldHandlers.onToken("旧流残片"));
+    expect(screen.queryByText("旧流残片")).not.toBeInTheDocument();
+
+    act(() => {
+      resolveNewHistory([
+        {
+          id: "new-assistant-message",
+          report_id: "report-2",
+          role: "assistant",
+          content: "新报告历史",
+          created_at: "2026-07-11T12:01:00Z",
+        },
+      ]);
+    });
+    expect(await screen.findByText("新报告历史")).toBeInTheDocument();
+    expect(apiMocks.fetchReportChatHistory).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText("旧报告问题")).not.toBeInTheDocument();
   });
 });
 
