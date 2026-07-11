@@ -9,6 +9,7 @@ from __future__ import annotations
 """
 
 from concurrent.futures import ThreadPoolExecutor, wait
+from math import isfinite
 from typing import Any
 
 MOMENTUM_TRACK = "momentum"
@@ -97,6 +98,7 @@ def build_sector_flow_map_for_opportunities(
     sector_heat: list[dict],
     sector_labels: list[str],
     *,
+    trade_date: str | None = None,
     total_timeout_seconds: float = 6.0,
     max_workers: int = 5,
 ) -> dict[str, dict]:
@@ -118,6 +120,7 @@ def build_sector_flow_map_for_opportunities(
             flow = build_sector_fund_flow_context(
                 label,
                 sector_return_percent=change_1d,
+                trade_date=trade_date,
             )
         except Exception:  # noqa: BLE001 - opportunity flow is best-effort
             return label, None
@@ -252,8 +255,25 @@ def _compute_opportunity_row(
     # 言之凿凿地给出"今日主力净流入 XX 亿"这种自相矛盾的展示（真实回归案例：
     # 2026-07-03 日报把好几天前的旧资金流数字当成当日数据喂给用户/LLM）。
     flow_available = bool(flow.get("available")) and date_aligned
-    today_flow = _num(flow.get("today_main_force_net_yi")) if flow_available else None
-    flow_5d = _num(flow.get("cumulative_5d_net_yi")) if flow_available else None
+    raw_today_flow = _num(flow.get("today_main_force_net_yi"))
+    raw_flow_5d = _num(flow.get("cumulative_5d_net_yi"))
+    today_declared_available = (
+        bool(flow.get("today_available"))
+        if "today_available" in flow
+        else raw_today_flow is not None
+    )
+    five_day_declared_available = (
+        bool(flow.get("five_day_available"))
+        if "five_day_available" in flow
+        else raw_flow_5d is not None
+    )
+    today_available = flow_available and today_declared_available and raw_today_flow is not None
+    five_day_available = (
+        flow_available and five_day_declared_available and raw_flow_5d is not None
+    )
+    today_flow = raw_today_flow if today_available else None
+    flow_5d = raw_flow_5d if five_day_available else None
+    history_point_count = flow.get("history_point_count")
 
     penalties: list[str] = []
     evidence: list[str] = []
@@ -321,6 +341,9 @@ def _compute_opportunity_row(
         "penalties": penalties[:5],
         "change_1d_percent": change_1d,
         "change_5d_percent": change_5d,
+        "today_available": today_available,
+        "five_day_available": five_day_available,
+        "history_point_count": history_point_count,
         "today_main_force_net_yi": today_flow,
         "cumulative_5d_net_yi": flow_5d,
         "pattern_label": pattern or None,
@@ -444,9 +467,10 @@ def _num(value: object) -> float | None:
     if value is None:
         return None
     try:
-        return float(value)
-    except (TypeError, ValueError):
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
         return None
+    return number if isfinite(number) else None
 
 
 def _unique_labels(labels: list[str]) -> list[str]:

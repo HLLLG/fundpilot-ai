@@ -8,7 +8,10 @@
 
 from __future__ import annotations
 
-from app.services.sector_opportunity_scoring import describe_sector_opportunity
+from app.services.sector_opportunity_scoring import (
+    build_sector_flow_map_for_opportunities,
+    describe_sector_opportunity,
+)
 
 
 def _heat_row(label: str = "商业航天", *, change_1d: float = 2.24, change_5d: float = 3.26) -> dict:
@@ -62,8 +65,55 @@ def test_aligned_flow_still_boosts_score_normally():
     aligned = describe_sector_opportunity(_heat_row(), aligned_flow, focus=set())
     misaligned = describe_sector_opportunity(_heat_row(), _misaligned_flow(), focus=set())
     assert aligned["today_main_force_net_yi"] == 30.0
+    assert aligned["today_available"] is True
+    assert aligned["five_day_available"] is True
     assert "今日主力净流入" in aligned["evidence"]
     assert aligned["score"] > misaligned["score"]
+
+
+def test_today_and_five_day_availability_are_gated_and_propagated_independently():
+    flow = {
+        "available": True,
+        "date_aligned": True,
+        "today_available": True,
+        "five_day_available": False,
+        "history_point_count": 2,
+        "today_main_force_net_yi": 30.0,
+        "cumulative_5d_net_yi": 40.0,
+        "pattern_label": "price_flow_aligned_up",
+    }
+
+    result = describe_sector_opportunity(_heat_row(), flow, focus=set())
+
+    assert result["today_available"] is True
+    assert result["five_day_available"] is False
+    assert result["history_point_count"] == 2
+    assert result["today_main_force_net_yi"] == 30.0
+    assert result["cumulative_5d_net_yi"] is None
+    assert "今日主力净流入" in result["evidence"]
+    assert "5日主力净流入" not in result["evidence"]
+
+
+def test_opportunity_flow_map_forwards_explicit_trade_date(monkeypatch):
+    calls: list[tuple[str, float | None, str | None]] = []
+
+    def _fake_build(label, *, sector_return_percent=None, trade_date=None):
+        calls.append((label, sector_return_percent, trade_date))
+        return {"available": True, "sector_label": label}
+
+    monkeypatch.setattr(
+        "app.services.sector_fund_flow_context.build_sector_fund_flow_context",
+        _fake_build,
+    )
+
+    result = build_sector_flow_map_for_opportunities(
+        [_heat_row()],
+        ["商业航天"],
+        trade_date="2026-07-03",
+    )
+
+    assert result == {"商业航天": {"available": True, "sector_label": "商业航天"}}
+    assert calls == [("商业航天", 2.24, "2026-07-03")]
 
 
 def test_confidence_stays_low_when_date_misaligned_even_with_strong_divergence_evidence():

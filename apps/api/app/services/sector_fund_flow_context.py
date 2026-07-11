@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from datetime import date
+from math import isfinite
 from typing import Any
 
 from app.models import Holding
@@ -12,11 +14,57 @@ from app.services.sector_labels import normalize_sector_label
 from app.services.trading_session import get_effective_trade_date
 
 
+def _finite_number(value: object) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return number if isfinite(number) else None
+
+
+def _normalize_flow_series(
+    points: list[dict[str, Any]] | None,
+    trade_date: str,
+) -> list[dict[str, Any]]:
+    """Return one finite main-force point per date, sorted through ``trade_date``.
+
+    Source history can contain duplicate/out-of-order rows and partially written
+    non-finite values. Later valid rows win for a duplicate date; this also lets
+    the live point replace a same-day history row when it is appended last.
+    """
+    try:
+        cutoff = date.fromisoformat(str(trade_date).strip())
+    except (TypeError, ValueError):
+        return []
+
+    by_date: dict[str, dict[str, Any]] = {}
+    for raw_point in points or []:
+        if not isinstance(raw_point, dict):
+            continue
+        raw_date = str(raw_point.get("date") or "").strip()
+        try:
+            point_date = date.fromisoformat(raw_date)
+        except ValueError:
+            continue
+        if point_date > cutoff:
+            continue
+        main_force = _finite_number(raw_point.get("main_force_net_yi"))
+        if main_force is None:
+            continue
+        normalized = dict(raw_point)
+        normalized["date"] = point_date.isoformat()
+        normalized["main_force_net_yi"] = main_force
+        by_date[normalized["date"]] = normalized
+    return [by_date[key] for key in sorted(by_date)]
+
+
 def _sum_main_force(points: list[dict[str, Any]]) -> float | None:
     values = [
-        float(point["main_force_net_yi"])
+        number
         for point in points
-        if point.get("main_force_net_yi") is not None
+        if (number := _finite_number(point.get("main_force_net_yi"))) is not None
     ]
     if not values:
         return None
@@ -36,12 +84,10 @@ def _pick_flow_point(series: list[dict[str, Any]], trade_date: str) -> dict[str,
     for point in reversed(series):
         if point.get("date") == trade_date:
             return point
-    on_or_before = [
-        point for point in series if str(point.get("date") or "") <= trade_date
-    ]
+    on_or_before = [point for point in series if str(point.get("date") or "") <= trade_date]
     if on_or_before:
-        return on_or_before[-1]
-    return series[-1]
+        return max(on_or_before, key=lambda point: str(point.get("date") or ""))
+    return None
 
 
 def _series_has_date(series: list[dict[str, Any]], trade_date: str) -> bool:
@@ -59,9 +105,12 @@ def _main_force_direction(value: float | None) -> str | None:
 
 
 def _load_flow_series(board_code: str, trade_date: str) -> list[dict[str, Any]]:
-    series = get_cached_board_flow_series(board_code)
+    series = _normalize_flow_series(get_cached_board_flow_series(board_code), trade_date)
     if series and not _series_has_date(series, trade_date):
-        refreshed = get_cached_board_flow_series(board_code, force_refresh=True)
+        refreshed = _normalize_flow_series(
+            get_cached_board_flow_series(board_code, force_refresh=True),
+            trade_date,
+        )
         if refreshed:
             series = refreshed
     return series
@@ -107,13 +156,12 @@ def _ensure_today_point(
     board_code: str,
     trade_date: str,
 ) -> list[dict[str, Any]]:
-    """历史资金流序列缺当日数据时，拼接主题板块实时快照的当日值，保证与当日涨跌幅同源对齐。"""
-    if _series_has_date(series, trade_date):
-        return series
+    """Merge the live snapshot as the authoritative point for ``trade_date``."""
     live = _live_today_flow_from_theme_board(board_code)
-    if live is None:
-        return series
-    return [*series, {"date": trade_date, **live}]
+    candidates = list(series)
+    if live is not None:
+        candidates.append({"date": trade_date, **live})
+    return _normalize_flow_series(candidates, trade_date)
 
 
 _TIER_STRUCTURE_THRESHOLD = 0.5
@@ -231,18 +279,26 @@ def build_sector_fund_flow_context(
         return {
             "available": False,
             "sector_label": label,
+            "today_available": False,
+            "five_day_available": False,
+            "history_point_count": 0,
             "message": "未解析到板块资金流代码",
         }
 
     series = _load_flow_series(board_code, target_trade_date)
+    series = _ensure_today_point(series, board_code, target_trade_date)
+    history_point_count = len(series)
     if not series:
         return {
             "available": False,
             "sector_label": resolved_label or label,
             "board_code": board_code,
+            "trade_date": target_trade_date,
+            "today_available": False,
+            "five_day_available": False,
+            "history_point_count": history_point_count,
             "message": "暂无板块历史资金流",
         }
-    series = _ensure_today_point(series, board_code, target_trade_date)
 
     point = _pick_flow_point(series, target_trade_date)
     if point is None:
@@ -250,16 +306,22 @@ def build_sector_fund_flow_context(
             "available": False,
             "sector_label": resolved_label or label,
             "board_code": board_code,
+            "trade_date": target_trade_date,
+            "today_available": False,
+            "five_day_available": False,
+            "history_point_count": history_point_count,
             "message": "暂无板块历史资金流",
         }
 
     flow_date = str(point.get("date") or "")
     date_aligned = flow_date == target_trade_date
-    recent_5d = _slice_tail(series, 5)
+    today_available = _series_has_date(series, target_trade_date)
+    five_day_available = today_available and history_point_count >= 5
+    recent_5d = _slice_tail(series, 5) if five_day_available else []
     recent_20d = _slice_tail(series, 20)
     today_flow = point.get("main_force_net_yi")
     tiers = point.get("flow_tiers")
-    cumulative_5d = _sum_main_force(recent_5d)
+    cumulative_5d = _sum_main_force(recent_5d) if five_day_available else None
     cumulative_20d = _sum_main_force(recent_20d)
 
     if date_aligned:
@@ -285,6 +347,9 @@ def build_sector_fund_flow_context(
         "trade_date": target_trade_date,
         "flow_date": flow_date,
         "date_aligned": date_aligned,
+        "today_available": today_available,
+        "five_day_available": five_day_available,
+        "history_point_count": history_point_count,
         "today_main_force_net_yi": today_flow,
         "main_force_direction": _main_force_direction(
             float(today_flow) if today_flow is not None else None

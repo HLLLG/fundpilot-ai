@@ -142,8 +142,203 @@ def test_missing_today_row_is_spliced_from_live_theme_board_snapshot(monkeypatch
     assert ctx["today_main_force_net_yi"] == 41.86
     assert ctx["main_force_direction"] == "inflow"
     assert ctx["pattern_label"] == "price_flow_aligned_up"
-    # 5 日累计须包含拼接后的当日行，不能只统计历史序列里滞后的旧数据。
-    assert ctx["cumulative_5d_net_yi"] == round(-126.92 + 41.86, 2)
+    assert ctx["today_available"] is True
+    assert ctx["five_day_available"] is False
+    assert ctx["history_point_count"] == 2
+    assert ctx["cumulative_5d_net_yi"] is None
+
+
+def test_live_only_snapshot_makes_today_available_without_fabricating_five_day(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.sector_fund_flow_context.resolve_board_flow_code_for_sector",
+        lambda _label: ("BK0963", "商业航天"),
+    )
+    monkeypatch.setattr(
+        "app.services.sector_fund_flow_context.get_cached_board_flow_series",
+        lambda *_args, **_kwargs: [],
+    )
+    monkeypatch.setattr(
+        "app.services.theme_board_snapshot.get_theme_board_snapshot_cache_only",
+        lambda: {
+            "items": [
+                {
+                    "flow_source_code": "BK0963",
+                    "main_force_net_yi": 41.86,
+                    "flow_tiers": {"super_large_net_yi": 34.73},
+                }
+            ]
+        },
+    )
+
+    ctx = build_sector_fund_flow_context(
+        "商业航天",
+        sector_return_percent=2.24,
+        trade_date="2026-07-03",
+    )
+
+    assert ctx["available"] is True
+    assert ctx["today_available"] is True
+    assert ctx["five_day_available"] is False
+    assert ctx["history_point_count"] == 1
+    assert ctx["today_main_force_net_yi"] == 41.86
+    assert ctx["cumulative_5d_net_yi"] is None
+
+
+def test_live_snapshot_replaces_same_day_history_point(monkeypatch):
+    series = [
+        {"date": "2026-06-29", "main_force_net_yi": 1.0},
+        {"date": "2026-06-30", "main_force_net_yi": 2.0},
+        {"date": "2026-07-01", "main_force_net_yi": 3.0},
+        {"date": "2026-07-02", "main_force_net_yi": 4.0},
+        {"date": "2026-07-03", "main_force_net_yi": -100.0},
+    ]
+    monkeypatch.setattr(
+        "app.services.sector_fund_flow_context.resolve_board_flow_code_for_sector",
+        lambda _label: ("BK0963", "商业航天"),
+    )
+    monkeypatch.setattr(
+        "app.services.sector_fund_flow_context.get_cached_board_flow_series",
+        lambda *_args, **_kwargs: list(series),
+    )
+    monkeypatch.setattr(
+        "app.services.theme_board_snapshot.get_theme_board_snapshot_cache_only",
+        lambda: {
+            "items": [
+                {
+                    "flow_source_code": "BK0963",
+                    "main_force_net_yi": 5.0,
+                    "flow_tiers": {"large_net_yi": 2.0},
+                }
+            ]
+        },
+    )
+
+    ctx = build_sector_fund_flow_context("商业航天", trade_date="2026-07-03")
+
+    assert ctx["today_available"] is True
+    assert ctx["five_day_available"] is True
+    assert ctx["history_point_count"] == 5
+    assert ctx["today_main_force_net_yi"] == 5.0
+    assert ctx["cumulative_5d_net_yi"] == 15.0
+    assert ctx["flow_tiers"] == {"large_net_yi": 2.0}
+
+
+def test_future_and_non_finite_points_are_discarded(monkeypatch):
+    series = [
+        {"date": "2026-07-02", "main_force_net_yi": 2.0},
+        {"date": "2026-07-03", "main_force_net_yi": 3.0},
+        {"date": "2026-07-04", "main_force_net_yi": 400.0},
+        {"date": "2026-07-01", "main_force_net_yi": float("nan")},
+        {"date": "2026-06-30", "main_force_net_yi": float("inf")},
+        {"date": "2026-06-29", "main_force_net_yi": "not-a-number"},
+    ]
+    monkeypatch.setattr(
+        "app.services.sector_fund_flow_context.resolve_board_flow_code_for_sector",
+        lambda _label: ("BK0963", "商业航天"),
+    )
+    monkeypatch.setattr(
+        "app.services.sector_fund_flow_context.get_cached_board_flow_series",
+        lambda *_args, **_kwargs: list(series),
+    )
+    monkeypatch.setattr(
+        "app.services.theme_board_snapshot.get_theme_board_snapshot_cache_only",
+        lambda: None,
+    )
+
+    ctx = build_sector_fund_flow_context("商业航天", trade_date="2026-07-03")
+
+    assert ctx["history_point_count"] == 2
+    assert ctx["today_available"] is True
+    assert ctx["five_day_available"] is False
+    assert ctx["cumulative_5d_net_yi"] is None
+    assert ctx["cumulative_20d_net_yi"] == 5.0
+
+
+def test_dates_are_deduplicated_and_sorted_before_latest_five_are_summed(monkeypatch):
+    series = [
+        {"date": "2026-07-06", "main_force_net_yi": 6.0},
+        {"date": "2026-06-29", "main_force_net_yi": 1.0},
+        {"date": "2026-06-30", "main_force_net_yi": 2.0},
+        {"date": "2026-07-01", "main_force_net_yi": 3.0},
+        {"date": "2026-07-01", "main_force_net_yi": 3.0},
+        {"date": "2026-07-02", "main_force_net_yi": 4.0},
+        {"date": "2026-07-03", "main_force_net_yi": 5.0},
+    ]
+    monkeypatch.setattr(
+        "app.services.sector_fund_flow_context.resolve_board_flow_code_for_sector",
+        lambda _label: ("BK0963", "商业航天"),
+    )
+    monkeypatch.setattr(
+        "app.services.sector_fund_flow_context.get_cached_board_flow_series",
+        lambda *_args, **_kwargs: list(series),
+    )
+    monkeypatch.setattr(
+        "app.services.theme_board_snapshot.get_theme_board_snapshot_cache_only",
+        lambda: None,
+    )
+
+    ctx = build_sector_fund_flow_context("商业航天", trade_date="2026-07-06")
+
+    assert ctx["history_point_count"] == 6
+    assert ctx["five_day_available"] is True
+    assert ctx["cumulative_5d_net_yi"] == 20.0
+
+
+def test_fewer_than_five_aligned_points_do_not_produce_five_day_value(monkeypatch):
+    series = [
+        {"date": "2026-06-30", "main_force_net_yi": 1.0},
+        {"date": "2026-07-01", "main_force_net_yi": 2.0},
+        {"date": "2026-07-02", "main_force_net_yi": 3.0},
+        {"date": "2026-07-03", "main_force_net_yi": 4.0},
+    ]
+    monkeypatch.setattr(
+        "app.services.sector_fund_flow_context.resolve_board_flow_code_for_sector",
+        lambda _label: ("BK0963", "商业航天"),
+    )
+    monkeypatch.setattr(
+        "app.services.sector_fund_flow_context.get_cached_board_flow_series",
+        lambda *_args, **_kwargs: list(series),
+    )
+    monkeypatch.setattr(
+        "app.services.theme_board_snapshot.get_theme_board_snapshot_cache_only",
+        lambda: None,
+    )
+
+    ctx = build_sector_fund_flow_context("商业航天", trade_date="2026-07-03")
+
+    assert ctx["today_available"] is True
+    assert ctx["five_day_available"] is False
+    assert ctx["history_point_count"] == 4
+    assert ctx["cumulative_5d_net_yi"] is None
+
+
+def test_exactly_five_aligned_unique_points_produce_five_day_value(monkeypatch):
+    series = [
+        {"date": "2026-06-29", "main_force_net_yi": 1.0},
+        {"date": "2026-06-30", "main_force_net_yi": 2.0},
+        {"date": "2026-07-01", "main_force_net_yi": 3.0},
+        {"date": "2026-07-02", "main_force_net_yi": 4.0},
+        {"date": "2026-07-03", "main_force_net_yi": 5.0},
+    ]
+    monkeypatch.setattr(
+        "app.services.sector_fund_flow_context.resolve_board_flow_code_for_sector",
+        lambda _label: ("BK0963", "商业航天"),
+    )
+    monkeypatch.setattr(
+        "app.services.sector_fund_flow_context.get_cached_board_flow_series",
+        lambda *_args, **_kwargs: list(series),
+    )
+    monkeypatch.setattr(
+        "app.services.theme_board_snapshot.get_theme_board_snapshot_cache_only",
+        lambda: None,
+    )
+
+    ctx = build_sector_fund_flow_context("商业航天", trade_date="2026-07-03")
+
+    assert ctx["today_available"] is True
+    assert ctx["five_day_available"] is True
+    assert ctx["history_point_count"] == 5
+    assert ctx["cumulative_5d_net_yi"] == 15.0
 
 
 def test_live_snapshot_without_matching_board_code_does_not_splice(monkeypatch):
