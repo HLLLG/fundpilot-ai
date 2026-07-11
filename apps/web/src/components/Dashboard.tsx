@@ -98,7 +98,6 @@ import { NewsPreviewPanel } from "@/components/NewsPreviewPanel";
 import { RecommendationAccuracyPanel } from "@/components/RecommendationAccuracyPanel";
 import { SectorSignalBacktestPanel } from "@/components/SectorSignalBacktestPanel";
 import { RiskControls } from "@/components/RiskControls";
-import { DiagnosticsAccordion } from "@/components/DiagnosticsAccordion";
 import { MarketBreadthGauge } from "@/components/MarketBreadthGauge";
 import { ShadowEscalationDigestCard } from "@/components/ShadowEscalationDigestCard";
 import { FundDiscoveryPanel } from "@/components/FundDiscoveryPanel";
@@ -1337,6 +1336,7 @@ export function Dashboard() {
                 isBusy={isSubmitting}
                 ocrWarningCount={ocrWarningCount}
                 hasBlockingErrors={blockingErrors}
+                readingModeKey={report?.id ?? null}
               />
               {report || streamingReport ? (
                 <div ref={reportSectionRef} className="min-w-0">
@@ -1345,24 +1345,29 @@ export function Dashboard() {
                     streaming={streamingReport}
                     onCancelStream={activeJobId ? undefined : handleCancelStream}
                     onStreamFollowup={activeJobId ? undefined : handleStreamFollowup}
+                    diagnostics={() => (
+                      <div className="grid gap-4" data-testid="diagnostics-content">
+                        <MarketBreadthGauge compact />
+                        <ShadowEscalationDigestCard />
+                        <NewsPreviewPanel
+                          holdings={displayableHoldings(holdings)}
+                          profile={profile}
+                        />
+                        <RecommendationAccuracyPanel />
+                        <SectorSignalBacktestPanel
+                          sectorLabels={[
+                            ...new Set(
+                              displayableHoldings(holdings)
+                                .map((item) => item.sector_name?.trim())
+                                .filter((name): name is string => Boolean(name)),
+                            ),
+                          ]}
+                        />
+                      </div>
+                    )}
                   />
                 </div>
               ) : null}
-              <DiagnosticsAccordion>
-                <MarketBreadthGauge compact />
-                <ShadowEscalationDigestCard />
-                <NewsPreviewPanel holdings={displayableHoldings(holdings)} profile={profile} />
-                <RecommendationAccuracyPanel />
-                <SectorSignalBacktestPanel
-                  sectorLabels={[
-                    ...new Set(
-                      displayableHoldings(holdings)
-                        .map((item) => item.sector_name?.trim())
-                        .filter((name): name is string => Boolean(name)),
-                    ),
-                  ]}
-                />
-              </DiagnosticsAccordion>
             </div>
           ) : null}
 

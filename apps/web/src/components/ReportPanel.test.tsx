@@ -69,6 +69,12 @@ function sampleReport(): Report {
         action: "观察",
         points: ["估值偏高，暂不加仓"],
       },
+      {
+        fund_code: "015945",
+        fund_name: "易方达国防军工",
+        action: "分批加仓",
+        points: ["资金面改善，可小额分批"],
+      },
     ],
     recommendations: ["组合整体观望"],
     caveats: ["仅供参考"],
@@ -159,12 +165,28 @@ describe("ReportPanel streaming", () => {
 });
 
 describe("ReportPanel done", () => {
+  it("keeps the floating chat trigger outside transformed report content", () => {
+    render(<ReportPanel report={sampleReport()} streaming={null} />);
+
+    const chatTrigger = screen.getByRole("button", { name: "追问这份日报" });
+    expect(chatTrigger.closest(".animate-fade-up")).toBeNull();
+  });
+
   it("renders full report view after stream completes", () => {
     render(<ReportPanel report={sampleReport()} streaming={null} />);
     expect(screen.getByTestId("report-ready")).toBeInTheDocument();
     expect(screen.getByText("持仓盘点日报")).toBeInTheDocument();
     expect(screen.getByText("今日观望为主。")).toBeInTheDocument();
-    expect(screen.getByText(/519674 · 银河创新成长/)).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "展开 银河创新成长" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "需要处理" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "继续观察" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "追问这份日报" })).toBeInTheDocument();
+    expect(screen.queryByTestId("report-chat-panel")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("逐基金操作建议与依据；宽屏时右侧可追问，窄屏时追问在下方。"),
+    ).not.toBeInTheDocument();
   });
 
   it("renders structured decision fields and sector direction context when present", () => {
@@ -212,16 +234,17 @@ describe("ReportPanel done", () => {
 
     render(<ReportPanel report={report} streaming={null} />);
 
-    expect(screen.getByText("置信高")).toBeInTheDocument();
-    expect(screen.getByText("持有/观察 1-2周")).toBeInTheDocument();
-    expect(screen.getByText(/板块方向：半导体/)).toBeInTheDocument();
-    expect(screen.getByText(/当前构成机会/)).toBeInTheDocument();
-    expect(screen.getByText("决策路径")).toBeInTheDocument();
+    expect(screen.getByText("参考度：高")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "收起 银河创新成长" })).toBeInTheDocument();
+    expect(screen.getByText(/主要风险：板块波动可能导致净值回撤/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "专业依据" }));
+    expect(screen.getByText("半导体")).toBeInTheDocument();
+    expect(screen.getByText("资金进入，可少量参与")).toBeInTheDocument();
     expect(screen.getByText("先看板块方向，再看基金证据，最后给出动作")).toBeInTheDocument();
     expect(screen.getByText("板块依据")).toBeInTheDocument();
     expect(screen.getByText("基金依据")).toBeInTheDocument();
     expect(screen.getByText("校验备注")).toBeInTheDocument();
-    expect(screen.getByText(/板块波动可能导致净值回撤/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /板块轮动参考/ }));
     expect(screen.getByText("医药")).toBeInTheDocument();
