@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 from datetime import date, datetime, timezone
+from threading import Lock
 
 from app.database import (
     get_most_recent_portfolio_snapshot,
@@ -314,10 +315,16 @@ def build_factor_scores_payload(
 _FACTOR_FACTS_CACHE: dict[str, tuple[float, dict]] = {}
 _FACTOR_FACTS_TTL_SECONDS = 3600
 _FACTOR_FACTS_KEYS = ("momentum", "risk_adjusted", "drawdown", "size")
+_FACTOR_FACTS_CACHE_LOCK = Lock()
+_FACTOR_FACTS_CACHE_GENERATION = 0
 
 
 def clear_factor_facts_cache() -> None:
-    _FACTOR_FACTS_CACHE.clear()
+    global _FACTOR_FACTS_CACHE_GENERATION
+
+    with _FACTOR_FACTS_CACHE_LOCK:
+        _FACTOR_FACTS_CACHE_GENERATION += 1
+        _FACTOR_FACTS_CACHE.clear()
 
 
 def _compact_factor_scores(payload: dict, reliability: dict, ic_status: dict) -> dict:
@@ -357,8 +364,9 @@ def build_factor_scores_for_facts(
 ) -> dict:
     """喂 LLM 用的因子分（紧凑 + 挂 3A IC 置信），TTL 缓存 + best-effort。
 
-    计算重（拉排行榜 + 净值），故生产路径按持仓代码缓存 1 小时；注入 fetcher 或
-    ic_factors 时（测试路径）绕过缓存。任意异常 → available=false，不抛、不阻塞日报。
+    计算重（拉排行榜 + 净值），故生产路径按持仓代码缓存基础 payload 1 小时；IC
+    上下文及其置信映射每次重新装配。注入 fetcher 或 ic_factors 时（测试路径）绕过
+    缓存。任意异常 → available=false，不抛、不阻塞日报。
     """
     from app.services.factor_confidence import factor_reliability, load_ic_context
 
@@ -366,19 +374,46 @@ def build_factor_scores_for_facts(
     cache_key = ",".join(
         sorted((h.fund_code or "") for h in holdings_models if h.fund_code)
     )
-    now = time.time()
-    if not injected:
-        cached = _FACTOR_FACTS_CACHE.get(cache_key)
-        if cached and now - cached[0] < _FACTOR_FACTS_TTL_SECONDS:
-            return cached[1]
-
     try:
-        payload = build_factor_scores_payload(
-            holdings_models, fetch_rank=fetch_rank, fetch_nav=fetch_nav
-        )
-        if ic_factors is None:
-            ic_context = load_ic_context()
-        else:
+        now = time.time()
+        with _FACTOR_FACTS_CACHE_LOCK:
+            build_generation = _FACTOR_FACTS_CACHE_GENERATION
+            cached = None if injected else _FACTOR_FACTS_CACHE.get(cache_key)
+            payload = (
+                cached[1]
+                if cached and now - cached[0] < _FACTOR_FACTS_TTL_SECONDS
+                else None
+            )
+
+        if payload is None:
+            payload = build_factor_scores_payload(
+                holdings_models,
+                fetch_rank=fetch_rank,
+                fetch_nav=fetch_nav,
+            )
+            if not injected:
+                with _FACTOR_FACTS_CACHE_LOCK:
+                    if _FACTOR_FACTS_CACHE_GENERATION == build_generation:
+                        _FACTOR_FACTS_CACHE[cache_key] = (now, payload)
+
+        def compose(ic_context: dict) -> dict:
+            state = str(ic_context.get("state") or "unavailable")
+            missing_basis = {
+                "available": "无回测数据",
+                "stale": "IC 回测已过期，暂不参与",
+                "unavailable": "IC 回测未接入",
+            }.get(state, "IC 回测未接入")
+            reliability = factor_reliability(
+                ic_context.get("factors") or {},
+                missing_basis=missing_basis,
+            )
+            return _compact_factor_scores(
+                payload,
+                reliability,
+                {**ic_context.get("status", {}), "state": state},
+            )
+
+        if ic_factors is not None:
             injected_available = bool(ic_factors)
             ic_context = {
                 "state": "available" if injected_available else "unavailable",
@@ -388,27 +423,21 @@ def build_factor_scores_for_facts(
                 },
                 "factors": ic_factors,
             }
-        state = str(ic_context.get("state") or "unavailable")
-        missing_basis = {
-            "available": "无回测数据",
-            "stale": "IC 回测已过期，暂不参与",
-            "unavailable": "IC 回测未接入",
-        }.get(state, "IC 回测未接入")
-        reliability = factor_reliability(
-            ic_context.get("factors") or {},
-            missing_basis=missing_basis,
-        )
-        compact = _compact_factor_scores(
-            payload,
-            reliability,
-            {**ic_context.get("status", {}), "state": state},
-        )
+            return compose(ic_context)
+
+        while True:
+            with _FACTOR_FACTS_CACHE_LOCK:
+                context_generation = _FACTOR_FACTS_CACHE_GENERATION
+            ic_context = load_ic_context()
+            with _FACTOR_FACTS_CACHE_LOCK:
+                if _FACTOR_FACTS_CACHE_GENERATION != context_generation:
+                    continue
+            compact = compose(ic_context)
+            with _FACTOR_FACTS_CACHE_LOCK:
+                if _FACTOR_FACTS_CACHE_GENERATION == context_generation:
+                    return compact
     except Exception:  # noqa: BLE001 — best-effort，绝不阻塞日报
         return {"available": False, "message": "因子分暂不可用"}
-
-    if not injected:
-        _FACTOR_FACTS_CACHE[cache_key] = (now, compact)
-    return compact
 
 
 def build_risk_metrics_for_facts(

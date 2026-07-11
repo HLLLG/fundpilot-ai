@@ -124,6 +124,49 @@ def test_available_ic_state_uses_rows_and_missing_factor_basis(monkeypatch) -> N
     assert result["factor_reliability"]["size"]["basis"] == "规模因子未回测，仅供参考"
 
 
+def test_cached_payload_recomposes_available_then_stale_ic_context(monkeypatch) -> None:
+    payload_calls = 0
+    contexts = iter(
+        [
+            {
+                "state": "available",
+                "status": {"available": True, "stale": False, "source": "database"},
+                "factors": {
+                    "momentum": {"mean_ic": 0.04, "significant": True},
+                },
+            },
+            {
+                "state": "stale",
+                "status": {
+                    "available": True,
+                    "stale": True,
+                    "source": "database",
+                    "age_days": 30,
+                },
+                "factors": {},
+            },
+        ]
+    )
+
+    def fake_payload(*_args, **_kwargs) -> dict:
+        nonlocal payload_calls
+        payload_calls += 1
+        return _factor_payload()
+
+    monkeypatch.setattr(ps, "build_factor_scores_payload", fake_payload)
+    monkeypatch.setattr(fc, "load_ic_context", lambda: next(contexts))
+    ps.clear_factor_facts_cache()
+
+    available = ps.build_factor_scores_for_facts([_holding()])
+    stale = ps.build_factor_scores_for_facts([_holding()])
+
+    assert payload_calls == 1
+    assert available["ic_status"]["state"] == "available"
+    assert available["factor_reliability"]["momentum"]["level"] == "高"
+    assert stale["ic_status"]["state"] == "stale"
+    assert stale["factor_reliability"]["momentum"]["basis"] == "IC 回测已过期，暂不参与"
+
+
 def test_injected_ic_factors_bypass_context_and_preserve_status_contract(monkeypatch) -> None:
     def unexpected_context_load() -> dict:
         raise AssertionError("explicit ic_factors must bypass the shared IC context")
@@ -182,7 +225,76 @@ def test_clear_factor_facts_cache_forces_fresh_payload_and_ic_context(monkeypatc
     ps.clear_factor_facts_cache()
     refreshed = ps.build_factor_scores_for_facts([_holding()])
 
-    assert cached is first
+    assert cached is not first
     assert refreshed is not first
     assert payload_calls == 2
+    assert context_calls == 3
+
+
+def test_clear_during_uncached_build_prevents_stale_cache_repopulation(monkeypatch) -> None:
+    payload_calls = 0
+
+    def payload_that_clears_once(*_args, **_kwargs) -> dict:
+        nonlocal payload_calls
+        payload_calls += 1
+        if payload_calls == 1:
+            ps.clear_factor_facts_cache()
+        return _factor_payload()
+
+    monkeypatch.setattr(ps, "build_factor_scores_payload", payload_that_clears_once)
+    monkeypatch.setattr(
+        fc,
+        "load_ic_context",
+        lambda: {
+            "state": "available",
+            "status": {"available": True, "stale": False, "source": "database"},
+            "factors": {},
+        },
+    )
+    ps.clear_factor_facts_cache()
+
+    ps.build_factor_scores_for_facts([_holding()])
+    ps.build_factor_scores_for_facts([_holding()])
+
+    assert payload_calls == 2
+
+
+def test_generation_change_during_context_load_reloads_before_return(monkeypatch) -> None:
+    context_calls = 0
+
+    def context_that_clears_once() -> dict:
+        nonlocal context_calls
+        context_calls += 1
+        if context_calls == 1:
+            ps.clear_factor_facts_cache()
+            return {
+                "state": "stale",
+                "status": {
+                    "available": True,
+                    "stale": True,
+                    "source": "database",
+                    "age_days": 30,
+                },
+                "factors": {},
+            }
+        return {
+            "state": "available",
+            "status": {"available": True, "stale": False, "source": "database"},
+            "factors": {
+                "momentum": {"mean_ic": 0.04, "significant": True},
+            },
+        }
+
+    monkeypatch.setattr(
+        ps,
+        "build_factor_scores_payload",
+        lambda *_args, **_kwargs: _factor_payload(),
+    )
+    monkeypatch.setattr(fc, "load_ic_context", context_that_clears_once)
+    ps.clear_factor_facts_cache()
+
+    result = ps.build_factor_scores_for_facts([_holding()])
+
     assert context_calls == 2
+    assert result["ic_status"]["state"] == "available"
+    assert result["factor_reliability"]["momentum"]["level"] == "高"
