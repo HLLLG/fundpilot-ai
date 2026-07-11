@@ -115,6 +115,21 @@ it("keeps all three KPI tiles in a shrinkable mobile row", () => {
   }
 });
 
+it("delegates the wide summary split to the report container", () => {
+  render(
+    <ReportSummaryHero
+      report={sampleReport()}
+      needsActionCount={1}
+      isExporting={false}
+      onExport={vi.fn()}
+    />,
+  );
+
+  const layout = screen.getByTestId("report-summary-layout");
+  expect(layout).toHaveClass("report-summary-layout");
+  expect(layout.className).not.toContain("lg:grid-cols");
+});
+
 it("keeps summary actions at least 44px tall on touch screens", () => {
   render(
     <ReportSummaryHero

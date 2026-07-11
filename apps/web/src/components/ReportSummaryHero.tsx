@@ -67,7 +67,10 @@ export function ReportSummaryHero({
 
   return (
     <section aria-labelledby={headingId} className="report-panel overflow-hidden p-4 sm:p-5">
-      <div className="grid min-w-0 gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,25rem)] lg:items-start">
+      <div
+        className="report-summary-layout grid min-w-0 gap-5"
+        data-testid="report-summary-layout"
+      >
         <div className="min-w-0">
           <div className="mb-2 flex flex-wrap gap-2">
             <StatusPill tone={riskTone[report.risk.level]}>

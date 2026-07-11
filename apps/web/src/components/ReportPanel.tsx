@@ -93,7 +93,7 @@ export function ReportPanel({
   const groups = groupFundRecommendations(fundRecommendations);
 
   return (
-    <>
+    <div className="report-workspace min-w-0" data-testid="report-workspace">
       <section
         className="report-shell min-w-0 space-y-4 animate-fade-up"
         data-testid="report-ready"
@@ -108,6 +108,6 @@ export function ReportPanel({
         <ReportDetailsHub report={report} diagnostics={diagnostics} />
       </section>
       <ReportChatDrawer reportId={report.id} reportTitle={report.title} />
-    </>
+    </div>
   );
 }

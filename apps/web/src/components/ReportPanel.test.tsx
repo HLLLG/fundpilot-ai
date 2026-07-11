@@ -165,11 +165,21 @@ describe("ReportPanel streaming", () => {
 });
 
 describe("ReportPanel done", () => {
-  it("keeps the floating chat trigger outside transformed report content", () => {
+  it("places the readable report and chat layer as workspace siblings", () => {
     render(<ReportPanel report={sampleReport()} streaming={null} />);
 
+    const workspace = screen.getByTestId("report-workspace");
+    const report = screen.getByTestId("report-ready");
     const chatTrigger = screen.getByRole("button", { name: "追问这份日报" });
+    expect(report).toHaveClass("report-shell", "animate-fade-up");
+    expect(report.parentElement).toBe(workspace);
+    expect(chatTrigger.parentElement).toBe(workspace);
     expect(chatTrigger.closest(".animate-fade-up")).toBeNull();
+
+    fireEvent.click(chatTrigger);
+    const chatLayer = screen.getByTestId("report-chat-layer");
+    expect(chatLayer.parentElement).toBe(workspace);
+    expect(chatLayer.closest(".animate-fade-up")).toBeNull();
   });
 
   it("renders full report view after stream completes", () => {

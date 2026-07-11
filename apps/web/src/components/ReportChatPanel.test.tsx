@@ -1,11 +1,16 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 
 import { ReportChatDrawer } from "@/components/ReportChatDrawer";
 import { ReportChatPanel } from "@/components/ReportChatPanel";
+import { installMatchMedia, type MatchMediaController } from "@/test/matchMedia";
+
+const DESKTOP_QUERY = "(min-width: 1280px)";
+
+let matchMedia: MatchMediaController;
 
 const apiMocks = vi.hoisted(() => ({
   fetchReportChatHistory: vi.fn(),
@@ -24,6 +29,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
 });
 
 beforeEach(() => {
+  matchMedia = installMatchMedia({ [DESKTOP_QUERY]: false });
   apiMocks.fetchReportChatHistory.mockResolvedValue([]);
   apiMocks.fetchReportChatMarkdown.mockResolvedValue("# chat");
   apiMocks.streamReportChat.mockImplementation(() => new Promise<void>(() => undefined));
@@ -38,6 +44,7 @@ afterEach(() => {
   vi.clearAllMocks();
   window.localStorage.clear();
   document.body.style.overflow = "";
+  matchMedia.restore();
 });
 
 async function sendQuestion(question: string) {
@@ -82,6 +89,27 @@ describe("ReportChatPanel stream lifecycle", () => {
 
     expect(apiMocks.streamReportChat).toHaveBeenCalledTimes(2);
     expect(signals.filter((signal) => !signal.aborted)).toHaveLength(1);
+  });
+
+  it("preserves one history and stream instance across a live desktop breakpoint", async () => {
+    render(<ReportChatDrawer reportId="report-1" reportTitle="日报" />);
+    fireEvent.click(screen.getByRole("button", { name: "追问这份日报" }));
+
+    await waitFor(() => expect(apiMocks.fetchReportChatHistory).toHaveBeenCalledTimes(1));
+    const panel = screen.getByTestId("report-chat-panel");
+    await sendQuestion("跨断点继续的问题");
+    const signal = apiMocks.streamReportChat.mock.calls[0]?.[4] as AbortSignal | undefined;
+    expect(signal?.aborted).toBe(false);
+
+    act(() => matchMedia.setMatches(DESKTOP_QUERY, true));
+
+    expect(screen.getByRole("complementary", { name: "追问这份日报" })).toBeInTheDocument();
+    expect(screen.getByTestId("report-chat-panel")).toBe(panel);
+    expect(apiMocks.fetchReportChatHistory).toHaveBeenCalledTimes(1);
+    expect(signal?.aborted).toBe(false);
+
+    fireEvent.click(screen.getByRole("button", { name: "关闭追问助手" }));
+    expect(signal?.aborted).toBe(true);
   });
 });
 
