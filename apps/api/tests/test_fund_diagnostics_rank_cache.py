@@ -23,7 +23,7 @@ def test_fund_diagnostics_cache_roundtrip():
     save_cached_fund_diagnostics("519674", payload)
     cached = get_cached_fund_diagnostics("519674")
     assert cached == payload
-    assert diagnostics_cache_key("519674") == "fund:diagnostics:v1:519674"
+    assert diagnostics_cache_key("519674") == "fund:diagnostics:v2:519674"
 
 
 def test_load_fund_diagnostics_uses_cache(monkeypatch):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from concurrent.futures import ThreadPoolExecutor
 from typing import Callable, TypeVar
 
@@ -375,28 +376,29 @@ def _parse_return_frame(frame) -> dict:
     if column is None:
         return {}
 
-    series = []
+    growth_indices: list[float] = []
     for value in frame[column].tail(260):
         try:
-            series.append(float(value))
+            cumulative_percent = float(value)
         except (TypeError, ValueError):
             continue
-    if len(series) < 2:
+        if not math.isfinite(cumulative_percent):
+            continue
+        growth_index = 1.0 + cumulative_percent / 100.0
+        if growth_index > 0:
+            growth_indices.append(growth_index)
+    if len(growth_indices) < 2:
         return {}
 
-    start = series[0]
-    end = series[-1]
-    if start == 0:
-        return {}
-
-    return_1y = round((end / start - 1) * 100, 2)
-    peak = series[0]
+    start = growth_indices[0]
+    end = growth_indices[-1]
+    return_1y = round((end / start - 1.0) * 100.0, 2)
+    peak = growth_indices[0]
     max_drawdown = 0.0
-    for point in series:
+    for point in growth_indices:
         peak = max(peak, point)
-        if peak > 0:
-            drawdown = (point / peak - 1) * 100
-            max_drawdown = min(max_drawdown, drawdown)
+        drawdown = (point / peak - 1.0) * 100.0
+        max_drawdown = min(max_drawdown, drawdown)
 
     return {
         "return_1y_percent": return_1y,

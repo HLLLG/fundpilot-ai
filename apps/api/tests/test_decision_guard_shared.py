@@ -50,6 +50,13 @@ def test_humanize_evidence_text_extra_replacements() -> None:
     assert result == "因子回测置信 偏低"
 
 
+def test_humanize_evidence_text_translates_report_enum_leaks():
+    text = "机会absent；daily_return数据pending；track=momentum"
+    assert humanize_evidence_text(text) == (
+        "当前不构成机会；当日涨跌待确认；顺势观察"
+    )
+
+
 def test_track_and_pattern_label_fallback_to_raw() -> None:
     assert track_label("momentum") == "顺势观察"
     assert track_label("setup") == "蓄势观察"

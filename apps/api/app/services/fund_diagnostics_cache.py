@@ -6,7 +6,7 @@ from app.services.akshare_subprocess import run_akshare_json_script
 from app.services.sector_quote_cache import get_spot_snapshot, save_spot_snapshot
 from app.services.trading_session import build_trading_session
 
-_CACHE_VERSION = "v1"
+_CACHE_VERSION = "v2"
 _LIVE_TTL_SECONDS = 3600.0
 _CLOSED_TTL_SECONDS = 86400.0
 _INTRADAY_SESSIONS = {

@@ -112,6 +112,36 @@ def humanize_evidence_text(
         result,
         flags=re.IGNORECASE,
     )
+    result = re.sub(
+        r"\bopportunity\s+absent\b",
+        "当前不构成机会",
+        result,
+        flags=re.IGNORECASE,
+    )
+    result = re.sub(
+        r"\bopportunity\s+present\b",
+        "当前构成机会",
+        result,
+        flags=re.IGNORECASE,
+    )
+    result = re.sub(
+        r"机会\s*absent\b",
+        "当前不构成机会",
+        result,
+        flags=re.IGNORECASE,
+    )
+    result = re.sub(
+        r"机会\s*present\b",
+        "当前构成机会",
+        result,
+        flags=re.IGNORECASE,
+    )
+    result = re.sub(
+        r"\bdaily_return(?:_percent)?\s*(?:数据)?\s*(?:is\s+)?pending\b",
+        "当日涨跌待确认",
+        result,
+        flags=re.IGNORECASE,
+    )
     for old, new in (*_BASE_TEXT_REPLACEMENTS, *extra_text_replacements):
         result = re.sub(re.escape(old), new, result, flags=re.IGNORECASE)
     return result
