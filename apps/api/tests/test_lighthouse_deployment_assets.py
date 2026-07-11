@@ -63,6 +63,15 @@ def test_deploy_workflow_only_deploys_successful_main_ci_commit() -> None:
     assert "LIGHTHOUSE_KNOWN_HOSTS" in workflow
 
 
+def test_deploy_workflow_initializes_ssh_paths_after_runner_starts() -> None:
+    workflow = _text(".github/workflows/deploy-lighthouse.yml")
+
+    assert "${{ runner.temp }}" not in workflow
+    assert 'SSH_KEY_PATH=$RUNNER_TEMP/fundpilot-lighthouse-deploy-key' in workflow
+    assert 'SSH_KNOWN_HOSTS_PATH=$RUNNER_TEMP/fundpilot-known-hosts' in workflow
+    assert '>> "$GITHUB_ENV"' in workflow
+
+
 def test_factor_ic_refresh_uses_production_environment_url() -> None:
     workflow = _text(".github/workflows/factor-ic-refresh.yml")
     assert "environment: production" in workflow

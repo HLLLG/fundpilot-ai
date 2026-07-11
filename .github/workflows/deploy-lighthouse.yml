@@ -27,8 +27,6 @@ jobs:
     environment: production
     env:
       DEPLOY_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
-      SSH_KEY_PATH: ${{ runner.temp }}/fundpilot-lighthouse-deploy-key
-      SSH_KNOWN_HOSTS_PATH: ${{ runner.temp }}/fundpilot-known-hosts
 
     steps:
       - name: Checkout validated commit
@@ -63,6 +61,10 @@ jobs:
           LIGHTHOUSE_KNOWN_HOSTS: ${{ secrets.LIGHTHOUSE_KNOWN_HOSTS }}
         run: |
           set -euo pipefail
+          SSH_KEY_PATH=$RUNNER_TEMP/fundpilot-lighthouse-deploy-key
+          SSH_KNOWN_HOSTS_PATH=$RUNNER_TEMP/fundpilot-known-hosts
+          printf 'SSH_KEY_PATH=%s\nSSH_KNOWN_HOSTS_PATH=%s\n' \
+            "$SSH_KEY_PATH" "$SSH_KNOWN_HOSTS_PATH" >> "$GITHUB_ENV"
           [[ -n "$LIGHTHOUSE_HOST" ]] || { echo "::error::LIGHTHOUSE_HOST is empty"; exit 1; }
           [[ -n "$LIGHTHOUSE_USER" ]] || { echo "::error::LIGHTHOUSE_USER is empty"; exit 1; }
           [[ -n "$LIGHTHOUSE_SSH_PRIVATE_KEY" ]] || { echo "::error::LIGHTHOUSE_SSH_PRIVATE_KEY is empty"; exit 1; }
