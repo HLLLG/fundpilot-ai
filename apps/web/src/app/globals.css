@@ -894,8 +894,28 @@ button:disabled {
   }
 }
 
+.report-workspace,
 .report-shell {
   width: 100%;
+  min-width: 0;
+}
+
+.report-shell {
+  container-name: report-content;
+  container-type: inline-size;
+}
+
+.report-summary-layout {
+  display: grid;
+  min-width: 0;
+  gap: 1.25rem;
+}
+
+@container report-content (min-width: 48rem) {
+  .report-summary-layout {
+    grid-template-columns: minmax(0, 1fr) minmax(18rem, 25rem);
+    align-items: start;
+  }
 }
 
 .report-chat-backdrop {
@@ -904,6 +924,33 @@ button:disabled {
 
 .report-chat-drawer {
   animation: report-drawer-in 220ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
+@media (min-width: 1280px) {
+  .report-workspace:has(.report-chat-drawer) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(360px, 400px);
+    align-items: start;
+    gap: 1.5rem;
+  }
+
+  .report-chat-layer {
+    position: static;
+    inset: auto;
+    z-index: auto;
+    display: contents;
+  }
+
+  .report-chat-layer > .report-chat-drawer {
+    position: sticky;
+    top: 4.5rem;
+    width: 100%;
+    height: min(calc(100dvh - 5.5rem), 60rem);
+    border: 1px solid var(--line);
+    border-radius: 1.25rem;
+    box-shadow: 0 18px 48px rgba(15, 23, 42, 0.12);
+    animation: none;
+  }
 }
 
 .report-panel {
