@@ -10,6 +10,17 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
+function flowMetric(
+  value: number | null | undefined,
+  available: boolean | undefined,
+  missingLabel: string,
+): string {
+  if (available === false || value == null || !Number.isFinite(value)) {
+    return missingLabel;
+  }
+  return `${formatMetric(value)} 亿`;
+}
+
 type SectorOpportunityCardProps = {
   item: SectorOpportunity;
   /** Shown when the sector currently doesn't constitute an actionable opportunity (日报持仓场景). */
@@ -58,8 +69,14 @@ export function SectorOpportunityCard({
       <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-slate-600">
         <Metric label="机会评分" value={formatMetric(item.score)} />
         <Metric label="近1日/近5日" value={`${formatMetric(item.change_1d_percent)} / ${formatMetric(item.change_5d_percent)}%`} />
-        <Metric label="今日主力" value={`${formatMetric(item.today_main_force_net_yi)} 亿`} />
-        <Metric label="5日主力" value={`${formatMetric(item.cumulative_5d_net_yi)} 亿`} />
+        <Metric
+          label="今日主力"
+          value={flowMetric(item.today_main_force_net_yi, item.today_available, "今日数据暂缺")}
+        />
+        <Metric
+          label="5日主力"
+          value={flowMetric(item.cumulative_5d_net_yi, item.five_day_available, "5日历史暂缺")}
+        />
       </div>
       {item.pattern_label || item.entry_hint ? (
         <p className="mt-2 break-words text-xs leading-5 text-slate-500">

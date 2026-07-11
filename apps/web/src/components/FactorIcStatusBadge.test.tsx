@@ -89,7 +89,7 @@ describe("FactorIcStatusBadge", () => {
 
     render(<FactorIcStatusBadge />);
 
-    expect(await screen.findByText("IC 回测暂未生成")).toBeInTheDocument();
+    expect(await screen.findByText("IC 回测数据未接入")).toBeInTheDocument();
   });
 
   it("distinguishes request errors from unavailable data", async () => {

@@ -69,7 +69,7 @@ export function FactorIcStatusBadge() {
     );
   }
   if (!status.available) {
-    return <StatusLine tone="muted">IC 回测暂未生成</StatusLine>;
+    return <StatusLine tone="muted">IC 回测数据未接入</StatusLine>;
   }
   if (status.stale) {
     return (

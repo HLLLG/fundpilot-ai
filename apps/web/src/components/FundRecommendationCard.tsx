@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { AlertTriangle, ChevronDown, TrendingDown, TrendingUp } from "lucide-react";
-import type { AnalysisFactsHoldingRow, Report } from "@/lib/api";
+import type { AnalysisFactsHoldingRow, FactorIcEvidenceStatus, Report } from "@/lib/api";
 import { actionBadgeClass, actionTone, isExtremeAction } from "@/lib/actionStyles";
 import { translateEvidenceText } from "@/lib/decisionText";
 import {
@@ -76,6 +76,32 @@ function navHintForFund(fundCode: string, snapshots: Report["snapshots"]): strin
 function holdingFactsRow(fundCode: string, report: Report): AnalysisFactsHoldingRow | null {
   const facts = report.analysis_facts as { holdings?: AnalysisFactsHoldingRow[] } | undefined;
   return facts?.holdings?.find((holding) => holding.fund_code === fundCode) ?? null;
+}
+
+function reportIcStatus(report: Report): FactorIcEvidenceStatus | null {
+  const facts = report.analysis_facts as {
+    factor_scores?: { ic_status?: FactorIcEvidenceStatus };
+  } | undefined;
+  return facts?.factor_scores?.ic_status ?? null;
+}
+
+function FactorIcNotice({ status }: { status: FactorIcEvidenceStatus | null }) {
+  if (!status || status.state === "available") {
+    return null;
+  }
+  if (status.state === "stale") {
+    return (
+      <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900">
+        IC 回测已过期{status.run_date ? `（${status.run_date}）` : ""}，本次已降级为不参与
+      </div>
+    );
+  }
+  return (
+    <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-700">
+      <h4 className="font-bold text-slate-900">量化回测未接入</h4>
+      当前建议主要依据持仓风险、行情与新闻；IC 不参与本次结论。
+    </div>
+  );
 }
 
 function PositionChangeBadge({
@@ -204,6 +230,7 @@ export function FundRecommendationCard({
   const evidence = holdingFacts?.evidence ?? null;
   const sectorOpportunity = holdingFacts?.sector_opportunity ?? null;
   const divergenceBacktest = holdingFacts?.flow_divergence_backtest ?? null;
+  const icStatus = reportIcStatus(report);
 
   const primaryReason = selectPrimaryReason(item);
   const primaryReasonKey = exactEvidenceKey(primaryReason);
@@ -321,6 +348,7 @@ export function FundRecommendationCard({
             {diagnostic.invalid ? (
               <p className="mt-2 text-xs text-amber-800">指标数据异常，已隐藏</p>
             ) : null}
+            <FactorIcNotice status={icStatus} />
             {sectorOpportunity ? (
               <SectorOpportunityCard item={sectorOpportunity} divergenceBacktest={divergenceBacktest} />
             ) : null}

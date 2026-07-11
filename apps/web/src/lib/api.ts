@@ -458,6 +458,14 @@ export type FactorIcStatus = {
   source_commit?: string | null;
 };
 
+export type FactorIcEvidenceStatus = {
+  state: "unavailable" | "stale" | "available";
+  available: boolean;
+  stale?: boolean;
+  run_date?: string;
+  source?: "database" | "local_file" | "unavailable";
+};
+
 export type EvidenceComponent = { source: string; level: string; basis: string };
 
 export type HoldingEvidence = {
@@ -587,6 +595,9 @@ export type SectorOpportunity = {
   change_5d_percent?: number | null;
   today_main_force_net_yi?: number | null;
   cumulative_5d_net_yi?: number | null;
+  today_available?: boolean;
+  five_day_available?: boolean;
+  history_point_count?: number;
   pattern_label?: string | null;
   /** false = 该方向当前不构成加仓机会，仅作方向参考（日报持仓场景会返回此状态）。 */
   opportunity_available?: boolean;

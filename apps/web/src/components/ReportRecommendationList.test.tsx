@@ -12,6 +12,7 @@ type FundRec = Report["fund_recommendations"][number];
 function buildReport(
   recommendations: FundRec[],
   snapshots: Report["snapshots"] = [],
+  analysisFacts?: Report["analysis_facts"],
 ): Report {
   return {
     id: "report-1",
@@ -33,6 +34,7 @@ function buildReport(
     recommendations: [],
     caveats: [],
     provider: "test",
+    analysis_facts: analysisFacts,
   };
 }
 
@@ -97,6 +99,26 @@ function reportWithExtremeAction(): Report {
   ]);
 }
 
+function reportWithIcState(
+  state: "unavailable" | "stale" | "available",
+): Report {
+  return buildReport(
+    [recommendation({ action: "减仓评估", points: ["集中度超过上限"] })],
+    [],
+    {
+      factor_scores: {
+        ic_status: {
+          state,
+          available: state !== "unavailable",
+          stale: state === "stale",
+          run_date: state === "stale" ? "2026-05-01" : "2026-07-11",
+          source: state === "unavailable" ? "unavailable" : "database",
+        },
+      },
+    },
+  );
+}
+
 it("renders actionable cards before collapsed observation rows", () => {
   render(<ReportRecommendationList report={reportWithReduceAndWatch()} />);
   expect(screen.getByRole("heading", { name: "需要处理" })).toBeInTheDocument();
@@ -128,6 +150,41 @@ it("hides impossible diagnostics and explains the omission in professional evide
   fireEvent.click(screen.getByRole("button", { name: "专业依据" }));
   expect(screen.queryByText("8220.94%")).not.toBeInTheDocument();
   expect(screen.getByText("指标数据异常，已隐藏")).toBeInTheDocument();
+});
+
+it("reveals the unavailable IC explanation only inside open professional evidence", () => {
+  render(<ReportRecommendationList report={reportWithIcState("unavailable")} />);
+
+  expect(screen.queryByText("量化回测未接入")).not.toBeInTheDocument();
+  expect(
+    screen.queryByText("当前建议主要依据持仓风险、行情与新闻；IC 不参与本次结论。"),
+  ).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "专业依据" }));
+
+  expect(screen.getByText("量化回测未接入")).toBeInTheDocument();
+  expect(
+    screen.getByText("当前建议主要依据持仓风险、行情与新闻；IC 不参与本次结论。"),
+  ).toBeInTheDocument();
+});
+
+it("marks stale IC as excluded and shows its run date in professional evidence", () => {
+  render(<ReportRecommendationList report={reportWithIcState("stale")} />);
+
+  expect(screen.queryByText(/IC 回测已过期/)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "专业依据" }));
+
+  expect(
+    screen.getByText("IC 回测已过期（2026-05-01），本次已降级为不参与"),
+  ).toBeInTheDocument();
+});
+
+it("does not add an IC warning when report evidence is available", () => {
+  render(<ReportRecommendationList report={reportWithIcState("available")} />);
+  fireEvent.click(screen.getByRole("button", { name: "专业依据" }));
+
+  expect(screen.queryByText("量化回测未接入")).not.toBeInTheDocument();
+  expect(screen.queryByText(/IC 回测已过期/)).not.toBeInTheDocument();
 });
 
 it("keeps extreme actions behind the existing confirmation gate", () => {
