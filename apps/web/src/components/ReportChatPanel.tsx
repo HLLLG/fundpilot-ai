@@ -11,10 +11,9 @@ import { useChatAutoScroll } from "@/lib/useChatAutoScroll";
 type ReportChatPanelProps = {
   reportId: string;
   reportTitle?: string;
-  /** 侧栏模式：更矮、更紧凑，给决策建议让出宽度 */
+  variant?: "default" | "drawer";
+  /** @deprecated Temporary compatibility for the legacy ReportPanel column. */
   compact?: boolean;
-  /** 简报页内嵌：更矮、隐藏导出 */
-  inline?: boolean;
 };
 
 type LocalMessage = ReportChatMessage & { pending?: boolean };
@@ -25,7 +24,12 @@ const SUGGESTED_PROMPTS = [
   "新闻里对持仓影响最大的是哪条？",
 ];
 
-export function ReportChatPanel({ reportId, reportTitle, compact = false, inline = false }: ReportChatPanelProps) {
+export function ReportChatPanel({
+  reportId,
+  reportTitle,
+  variant = "default",
+  compact = false,
+}: ReportChatPanelProps) {
   const [messages, setMessages] = useState<LocalMessage[]>([]);
   const [input, setInput] = useState("");
   const [chatMode, setChatMode] = useState<ReportChatMode>("fast");
@@ -164,36 +168,29 @@ export function ReportChatPanel({ reportId, reportTitle, compact = false, inline
     }
   };
 
+  const surfaceClass = variant === "drawer"
+    ? "h-full min-h-0 rounded-none border-0 bg-slate-50/90"
+    : compact
+      ? "h-[min(92vh,960px)] min-h-[min(72vh,520px)] rounded-2xl border border-[var(--line)] bg-slate-50/90 lg:min-h-[640px]"
+      : "h-[min(72vh,720px)] min-h-[520px] rounded-2xl border border-[var(--line)] bg-slate-50/90";
+
   return (
-    <div
-      className={`flex flex-col rounded-2xl border border-[var(--line)] bg-slate-50/90 ${
-        inline
-          ? "h-[min(48vh,440px)] min-h-[300px]"
-          : compact
-            ? "h-[min(92vh,960px)] min-h-[min(72vh,520px)] lg:min-h-[640px]"
-            : "h-[min(72vh,720px)] min-h-[520px]"
-      }`}
-      data-testid="report-chat-panel"
-    >
+    <div className={`flex flex-col ${surfaceClass}`} data-testid="report-chat-panel">
       <div className="border-b border-[var(--line)] px-3 py-3">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <MessageCircle size={16} className="text-[var(--brand)]" />
-            <span className="text-sm font-black text-slate-950">
-              {inline ? "继续追问" : "追问助手"}
-            </span>
+            <span className="text-sm font-black text-slate-950">追问助手</span>
           </div>
-          {!inline ? (
-            <button
-              type="button"
-              onClick={() => void handleExportMarkdown()}
-              disabled={isExporting || isLoadingHistory}
-              className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-bold text-slate-600 transition hover:border-blue-300 hover:text-blue-700 disabled:opacity-50"
-            >
-              <Download size={12} />
-              {isExporting ? "导出中" : "导出对话"}
-            </button>
-          ) : null}
+          <button
+            type="button"
+            onClick={() => void handleExportMarkdown()}
+            disabled={isExporting || isLoadingHistory}
+            className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-bold text-slate-600 transition hover:border-blue-300 hover:text-blue-700 disabled:opacity-50"
+          >
+            <Download size={12} />
+            {isExporting ? "导出中" : "导出对话"}
+          </button>
         </div>
         <div className="mt-2 grid grid-cols-2 gap-1.5">
           <button
@@ -254,9 +251,7 @@ export function ReportChatPanel({ reportId, reportTitle, compact = false, inline
 
         {!isLoadingHistory && messages.length === 0 ? (
           <div className="rounded-xl border border-dashed border-slate-200 bg-white/70 px-3 py-4 text-xs leading-6 text-slate-600">
-            {inline
-              ? "对今日简报继续提问，快速模式秒回，深度模式可拉最新新闻。"
-              : "针对上方决策建议继续提问。深度模式可在需要时调用东方财富新闻 Tool 补充最新信息。"}
+            针对上方决策建议继续提问。深度模式可在需要时调用东方财富新闻 Tool 补充最新信息。
           </div>
         ) : null}
 
