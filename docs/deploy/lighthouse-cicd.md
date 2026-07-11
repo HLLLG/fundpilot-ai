@@ -205,6 +205,14 @@ HTTPS 正常后，在服务器生成独立 Token：
 
 手动运行一次 `Factor IC Refresh`，确认发布成功后再依赖每周日的定时任务。
 
+### IC 迁移诊断
+
+- GitHub workflow 显示成功，只能证明该次任务执行完成，不能证明当前 Lighthouse 已收到快照。先核对 run 对应的 commit，再确认该 run 使用的 `FACTOR_IC_PUBLISH_URL` 确实指向当前生产 Lighthouse。
+- POST endpoint 返回 `503 因子 IC 发布未配置` 表示 Lighthouse 缺少 `FUND_AI_FACTOR_IC_PUBLISH_TOKEN`。在获得授权并完成配置前，必须保持 `FACTOR_IC_REFRESH_ENABLED=false`。
+- 生产修复必须使用 HTTPS，并保证 Lighthouse 的专用 `FUND_AI_FACTOR_IC_PUBLISH_TOKEN` 与 GitHub `production` Environment 中的 `FACTOR_IC_PUBLISH_TOKEN` 匹配，发布 URL 也必须来自该 Environment。禁止降级到 HTTP，禁止直接连接或写入生产 MySQL。
+- 本地验证只可发布到任务隔离的 SQLite 和 loopback endpoint；它只能证明生成、鉴权、POST 与落库代码链路，不代表生产迁移完成。
+- 当前已知诊断（不记录任何 secret/token 值）：旧的成功 run 指向原 CloudBase endpoint，当前 Lighthouse 中没有对应 snapshot。
+
 ## 10. 故障定位
 
 Actions 构建失败时，生产服务器不会执行部署。SSH/rsync 失败时检查四个 Environment secrets。服务器脚本失败时检查：
