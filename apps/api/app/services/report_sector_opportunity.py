@@ -66,6 +66,14 @@ def build_holding_sector_opportunity_context(
     if not heat_by_label and heat_error_reason is None:
         heat_error_reason = "sector_heat_empty"
 
+    fallback_heat_by_label = _held_fallback_heat_by_label(holdings)
+    flow_heat = list(sector_heat)
+    flow_heat.extend(
+        fallback_heat_by_label[label]
+        for label in held_labels
+        if label not in heat_by_label
+    )
+
     top_by_heat = sorted(
         sector_heat,
         key=lambda row: _num(row.get("heat_score")) or float("-inf"),
@@ -85,7 +93,7 @@ def build_holding_sector_opportunity_context(
     with ThreadPoolExecutor(max_workers=2, thread_name_prefix="sector-opportunity-ctx") as executor:
         flow_future = executor.submit(
             build_sector_flow_map_for_opportunities,
-            sector_heat,
+            flow_heat,
             flow_labels,
             trade_date=trade_date,
             total_timeout_seconds=SECTOR_FLOW_BUDGET_SECONDS,
@@ -108,18 +116,26 @@ def build_holding_sector_opportunity_context(
             divergence_by_label = {}
 
     held: dict[str, dict[str, Any]] = {}
-    fallback_heat_by_label = _held_fallback_heat_by_label(holdings)
     for label in held_labels:
+        has_market_heat = label in heat_by_label
         heat_row = heat_by_label.get(label) or fallback_heat_by_label[label]
+        flow = flow_by_label.get(label)
         try:
             opportunity = describe_sector_opportunity(
                 heat_row,
-                flow_by_label.get(label),
+                flow,
                 focus={label},
                 divergence_backtest=divergence_by_label.get(label),
             )
         except Exception:  # noqa: BLE001 - one row must not block the report
             opportunity = None
+        if opportunity and not has_market_heat and not _flow_has_usable_evidence(flow):
+            opportunity = {
+                **opportunity,
+                "confidence": "不足",
+                "opportunity_available": False,
+                "entry_hint": "数据不足，保持观察",
+            }
         if opportunity:
             held[label] = opportunity
 
@@ -176,6 +192,29 @@ def _held_fallback_heat_by_label(holdings: list[Holding]) -> dict[str, dict[str,
             "change_1d_percent": holding.sector_return_percent,
         }
     return result
+
+
+def _flow_has_usable_evidence(flow: dict[str, Any] | None) -> bool:
+    if not isinstance(flow, dict) or not flow.get("available"):
+        return False
+    if flow.get("date_aligned") is False:
+        return False
+
+    today = _num(flow.get("today_main_force_net_yi"))
+    five_day = _num(flow.get("cumulative_5d_net_yi"))
+    today_available = (
+        bool(flow.get("today_available"))
+        if "today_available" in flow
+        else today is not None
+    )
+    five_day_available = (
+        bool(flow.get("five_day_available"))
+        if "five_day_available" in flow
+        else five_day is not None
+    )
+    return (today_available and today is not None) or (
+        five_day_available and five_day is not None
+    )
 
 
 def _default_fetch_sector_heat() -> list[dict]:

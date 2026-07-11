@@ -414,9 +414,19 @@ def build_analysis_facts(
         except Exception:  # noqa: BLE001 - opportunity/flow evidence is best-effort
             sector_opportunity = _sector_opportunity_unavailable("error", holdings)
 
-    sector_flow_map = sector_opportunity.get("sector_flow_by_label")
-    if not isinstance(sector_flow_map, dict):
-        sector_flow_map = _sector_flow_unavailable_map(holdings, "unavailable")
+    if not isinstance(sector_opportunity, dict):
+        sector_opportunity = _sector_opportunity_unavailable("unavailable", holdings)
+    raw_sector_flow_map = sector_opportunity.get("sector_flow_by_label")
+    flow_fallback_reason = str(sector_opportunity.get("reason") or "unavailable")
+    sector_flow_map = _sector_flow_unavailable_map(holdings, flow_fallback_reason)
+    if isinstance(raw_sector_flow_map, dict):
+        sector_flow_map.update(
+            {
+                label: flow
+                for label, flow in raw_sector_flow_map.items()
+                if isinstance(label, str) and isinstance(flow, dict)
+            }
+        )
 
     per_fund: list[dict] = []
     drawdown_limit = abs(profile.max_drawdown_percent)

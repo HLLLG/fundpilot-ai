@@ -4,12 +4,17 @@ from app.models import Holding
 from app.services.report_sector_opportunity import build_holding_sector_opportunity_context
 
 
-def _holding(sector_name: str | None) -> Holding:
+def _holding(
+    sector_name: str | None,
+    *,
+    sector_return_percent: float | None = None,
+) -> Holding:
     return Holding(
         fund_code="000001",
         fund_name="测试基金",
         holding_amount=1000.0,
         sector_name=sector_name,
+        sector_return_percent=sector_return_percent,
     )
 
 
@@ -60,17 +65,47 @@ def test_sector_heat_error_still_fetches_and_returns_held_flow(monkeypatch) -> N
         lambda *_args, **_kwargs: {},
     )
     result = build_holding_sector_opportunity_context(
-        [_holding("半导体")],
+        [_holding("半导体", sector_return_percent=-2.5)],
         trade_date="2026-07-10",
         fetch_sector_heat=boom,
     )
 
-    assert calls == [([], ["半导体"], "2026-07-10")]
+    assert calls == [
+        (
+            [{"sector_label": "半导体", "change_1d_percent": -2.5}],
+            ["半导体"],
+            "2026-07-10",
+        )
+    ]
     assert result["available"] is False
     assert result["reason"] == "sector_heat_error"
     assert result["sector_flow_by_label"] is flow
     assert result["held"]["半导体"]["today_main_force_net_yi"] == 2.0
     assert result["market_top"] == []
+
+
+def test_missing_heat_and_flow_never_create_a_positive_held_opportunity(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.services.report_sector_opportunity.build_sector_flow_map_for_opportunities",
+        lambda *_args, **_kwargs: {},
+    )
+    monkeypatch.setattr(
+        "app.services.report_sector_opportunity.build_sector_divergence_map_for_opportunities",
+        lambda *_args, **_kwargs: {},
+    )
+
+    result = build_holding_sector_opportunity_context(
+        [_holding("test-sector")],
+        fetch_sector_heat=lambda: [],
+    )
+
+    held = result["held"]["test-sector"]
+    assert result["available"] is False
+    assert held["opportunity_available"] is False
+    assert held["confidence"] == "不足"
+    assert held["entry_hint"] == "数据不足，保持观察"
 
 
 def test_held_labels_are_requested_before_heat_candidates_and_trade_date_is_forwarded(

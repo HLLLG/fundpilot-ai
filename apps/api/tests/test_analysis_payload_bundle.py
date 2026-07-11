@@ -131,6 +131,74 @@ def test_analysis_facts_opportunity_error_uses_safe_flow_fallback(monkeypatch):
     assert "sector_flow_by_label" not in facts["sector_rotation"]
 
 
+def test_analysis_facts_empty_opportunity_flow_map_uses_safe_rows(monkeypatch):
+    request = _minimal_request()
+    _stub_non_flow_fact_enhancements(monkeypatch)
+    monkeypatch.setattr(
+        "app.services.analysis_facts.build_holding_sector_opportunity_context",
+        lambda *_args, **_kwargs: {
+            "available": False,
+            "reason": "sector_heat_error",
+            "held": {},
+            "market_top": [],
+            "divergence_backtest": {},
+            "sector_flow_by_label": {},
+        },
+    )
+
+    facts = build_analysis_facts(
+        request.holdings,
+        _minimal_risk(),
+        [],
+        request.profile,
+        session={"effective_trade_date": "2026-07-10"},
+    )
+
+    flow = facts["holdings"][0]["sector_fund_flow"]
+    assert flow["available"] is False
+    assert flow["reason"] == "sector_heat_error"
+
+
+def test_analysis_facts_partial_opportunity_flow_map_fills_missing_labels(monkeypatch):
+    request = _minimal_request()
+    request.holdings.append(
+        Holding(
+            fund_code="000002",
+            fund_name="Second Fund",
+            sector_name="other-sector",
+            holding_amount=2000,
+        )
+    )
+    real_flow = {"available": True, "today_main_force_net_yi": 1.25}
+    first_label = request.holdings[0].sector_name
+    _stub_non_flow_fact_enhancements(monkeypatch)
+    monkeypatch.setattr(
+        "app.services.analysis_facts.build_holding_sector_opportunity_context",
+        lambda *_args, **_kwargs: {
+            "available": False,
+            "reason": "partial",
+            "held": {},
+            "market_top": [],
+            "divergence_backtest": {},
+            "sector_flow_by_label": {first_label: real_flow},
+        },
+    )
+
+    facts = build_analysis_facts(
+        request.holdings,
+        _minimal_risk(),
+        [],
+        request.profile,
+        session={"effective_trade_date": "2026-07-10"},
+    )
+
+    assert facts["holdings"][0]["sector_fund_flow"] is real_flow
+    missing_flow = facts["holdings"][1]["sector_fund_flow"]
+    assert missing_flow["available"] is False
+    assert missing_flow["reason"] == "partial"
+    assert "sector_flow_by_label" not in facts["sector_rotation"]
+
+
 def test_build_user_payload_reuses_analysis_bundle(monkeypatch):
     request = _minimal_request()
     risk = _minimal_risk()
