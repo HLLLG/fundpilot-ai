@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -10,6 +11,7 @@ from app.services.factor_ic_snapshot import (
     FactorIcNewerSnapshotExists,
     FactorIcStorageUnavailable,
     build_factor_ic_status,
+    load_factor_ic_context,
     load_factor_ic_summary,
     publish_factor_ic_snapshot,
     read_latest_database_snapshot,
@@ -386,3 +388,109 @@ def test_corrupt_local_summary_degrades_to_unavailable(
         "stale_after_days": 30,
         "source": "unavailable",
     }
+
+
+def test_factor_ic_context_is_unavailable_when_database_and_local_are_missing(
+    tmp_path,
+) -> None:
+    def unavailable_database():
+        raise RuntimeError("database offline")
+
+    context = load_factor_ic_context(
+        now=datetime(2026, 7, 10, 10, tzinfo=timezone.utc),
+        local_path=tmp_path / "missing-summary.json",
+        connection_factory=unavailable_database,
+    )
+
+    assert context == {
+        "state": "unavailable",
+        "status": {
+            "available": False,
+            "stale_after_days": 30,
+            "source": "unavailable",
+        },
+        "summary": None,
+    }
+
+
+def test_factor_ic_context_keeps_expired_summary_visible(tmp_path) -> None:
+    summary = valid_payload("2026-06-01T08:00:00+00:00")["summary"]
+    local_path = tmp_path / "stale-summary.json"
+    local_path.write_text(json.dumps(summary), encoding="utf-8")
+
+    def unavailable_database():
+        raise RuntimeError("database offline")
+
+    context = load_factor_ic_context(
+        stale_after_days=30,
+        now=datetime(2026, 7, 10, 10, tzinfo=timezone.utc),
+        local_path=local_path,
+        connection_factory=unavailable_database,
+    )
+
+    assert context["state"] == "stale"
+    assert context["status"]["available"] is True
+    assert context["status"]["stale"] is True
+    assert context["summary"] == summary
+
+
+def test_factor_ic_context_marks_fresh_summary_available(tmp_path) -> None:
+    summary = valid_payload("2026-07-10T08:00:00+00:00")["summary"]
+    local_path = tmp_path / "fresh-summary.json"
+    local_path.write_text(json.dumps(summary), encoding="utf-8")
+
+    def unavailable_database():
+        raise RuntimeError("database offline")
+
+    context = load_factor_ic_context(
+        stale_after_days=30,
+        now=datetime(2026, 7, 10, 10, tzinfo=timezone.utc),
+        local_path=local_path,
+        connection_factory=unavailable_database,
+    )
+
+    assert context["state"] == "available"
+    assert context["status"]["stale"] is False
+    assert context["summary"] == summary
+
+
+def test_factor_ic_context_reads_storage_once(monkeypatch) -> None:
+    from app.services import factor_ic_snapshot as snapshot
+
+    calls = 0
+    summary = valid_payload("2026-07-10T08:00:00+00:00")["summary"]
+
+    def fake_load(**_kwargs):
+        nonlocal calls
+        calls += 1
+        return summary, "local_file", {}
+
+    monkeypatch.setattr(snapshot, "load_factor_ic_summary", fake_load)
+
+    context = snapshot.load_factor_ic_context(
+        now=datetime(2026, 7, 10, 10, tzinfo=timezone.utc),
+    )
+
+    assert calls == 1
+    assert context["state"] == "available"
+
+
+def test_build_factor_ic_status_reads_storage_once(monkeypatch) -> None:
+    from app.services import factor_ic_snapshot as snapshot
+
+    calls = 0
+    summary = valid_payload("2026-07-10T08:00:00+00:00")["summary"]
+
+    def fake_load(**_kwargs):
+        nonlocal calls
+        calls += 1
+        return summary, "local_file", {}
+
+    monkeypatch.setattr(snapshot, "load_factor_ic_summary", fake_load)
+
+    status = snapshot.build_factor_ic_status(
+        now=datetime(2026, 7, 10, 10, tzinfo=timezone.utc),
+    )
+
+    assert calls == 1
+    assert status["available"] is True

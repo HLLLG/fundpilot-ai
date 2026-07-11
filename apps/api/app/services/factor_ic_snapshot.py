@@ -28,6 +28,8 @@ MIN_VALID_PERIODS = 12
 API_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_SUMMARY_PATH = API_ROOT / "var" / "factor_ic" / "summary.json"
 
+FactorIcEvidenceState = Literal["unavailable", "stale", "available"]
+
 
 class FactorIcNewerSnapshotExists(RuntimeError):
     pass
@@ -307,25 +309,21 @@ def _unavailable_status(threshold: int) -> dict[str, Any]:
     }
 
 
-def build_factor_ic_status(
-    *,
-    stale_after_days: int | None = None,
-    now: datetime | None = None,
-    local_path: Path | None = None,
-    connection_factory: Callable | None = None,
-) -> dict[str, Any]:
-    from app.config import get_settings
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
-    threshold = (
-        stale_after_days
-        if stale_after_days is not None
-        else get_settings().factor_ic_stale_after_days
-    )
-    current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    raw, source, metadata = load_factor_ic_summary(
-        local_path=local_path,
-        connection_factory=connection_factory,
-    )
+
+def _build_factor_ic_status_from_loaded(
+    raw: dict[str, Any] | None,
+    source: str,
+    metadata: dict[str, Any],
+    *,
+    threshold: int,
+    current: datetime,
+) -> dict[str, Any]:
+    """Build status from one already-loaded summary without touching storage."""
     if not raw or not raw.get("run_date") or raw.get("available") is False:
         return _unavailable_status(threshold)
     params = raw.get("params")
@@ -368,3 +366,54 @@ def build_factor_ic_status(
         "factor_periods": factor_periods,
         "source_commit": source_commit,
     }
+
+
+def load_factor_ic_context(
+    *,
+    stale_after_days: int | None = None,
+    now: datetime | None = None,
+    local_path: Path | None = None,
+    connection_factory: Callable | None = None,
+) -> dict[str, Any]:
+    from app.config import get_settings
+
+    threshold = (
+        stale_after_days
+        if stale_after_days is not None
+        else get_settings().factor_ic_stale_after_days
+    )
+    current = _as_utc(now or datetime.now(timezone.utc))
+    raw, source, metadata = load_factor_ic_summary(
+        local_path=local_path,
+        connection_factory=connection_factory,
+    )
+    status = _build_factor_ic_status_from_loaded(
+        raw,
+        source,
+        metadata,
+        threshold=threshold,
+        current=current,
+    )
+    state: FactorIcEvidenceState
+    if not status.get("available"):
+        state = "unavailable"
+    elif status.get("stale"):
+        state = "stale"
+    else:
+        state = "available"
+    return {"state": state, "status": status, "summary": raw}
+
+
+def build_factor_ic_status(
+    *,
+    stale_after_days: int | None = None,
+    now: datetime | None = None,
+    local_path: Path | None = None,
+    connection_factory: Callable | None = None,
+) -> dict[str, Any]:
+    return load_factor_ic_context(
+        stale_after_days=stale_after_days,
+        now=now,
+        local_path=local_path,
+        connection_factory=connection_factory,
+    )["status"]

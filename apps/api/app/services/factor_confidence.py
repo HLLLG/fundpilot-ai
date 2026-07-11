@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
+from typing import Any
 
-from app.services.factor_ic_snapshot import DEFAULT_SUMMARY_PATH, load_factor_ic_summary
+from app.services.factor_ic_snapshot import DEFAULT_SUMMARY_PATH, load_factor_ic_context
 
 SUMMARY_PATH = DEFAULT_SUMMARY_PATH
 SUMMARY_TTL_SECONDS = 300
@@ -25,47 +26,68 @@ FACTOR_IC_KEY: dict[str, str | None] = {
     "size": None,
 }
 
-_SUMMARY_CACHE: dict[str, tuple[float, dict[str, dict]]] = {}
+_IC_CONTEXT_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 
 
 def clear_ic_summary_cache() -> None:
-    _SUMMARY_CACHE.clear()
+    _IC_CONTEXT_CACHE.clear()
 
 
-def load_ic_summary() -> dict[str, dict]:
-    """DB 优先、本地兜底读取 factors；缺失或损坏时返回空映射。"""
+def load_ic_context() -> dict[str, Any]:
+    """Cache the IC evidence state, status, and usable factor rows together."""
     now = time.time()
-    cached = _SUMMARY_CACHE.get("default")
+    cached = _IC_CONTEXT_CACHE.get("default")
     if cached and now - cached[0] < SUMMARY_TTL_SECONDS:
         return cached[1]
 
-    raw, _source, _metadata = load_factor_ic_summary(local_path=Path(SUMMARY_PATH))
-    result: dict[str, dict] = {}
-    for stats in (raw or {}).get("factors") or []:
-        if not isinstance(stats, dict):
-            continue
-        key = stats.get("factor")
-        if key:
-            result[str(key)] = stats
+    snapshot_context = load_factor_ic_context(local_path=Path(SUMMARY_PATH))
+    state = snapshot_context.get("state", "unavailable")
+    status = snapshot_context.get("status")
+    if not isinstance(status, dict):
+        status = {"available": False, "source": "unavailable"}
 
-    _SUMMARY_CACHE["default"] = (now, result)
-    return result
+    factors: dict[str, dict] = {}
+    summary = snapshot_context.get("summary")
+    if state == "available" and isinstance(summary, dict):
+        for stats in summary.get("factors") or []:
+            if not isinstance(stats, dict):
+                continue
+            key = stats.get("factor")
+            if key:
+                factors[str(key)] = stats
+
+    context = {"state": state, "status": status, "factors": factors}
+    _IC_CONTEXT_CACHE["default"] = (now, context)
+    return context
 
 
-def factor_confidence(ic_factors: dict[str, dict], factor_key: str) -> dict:
+def load_ic_summary() -> dict[str, dict]:
+    """Return only currently usable factor rows from the shared IC context cache."""
+    return load_ic_context()["factors"]
+
+
+def factor_confidence(
+    ic_factors: dict[str, dict],
+    factor_key: str,
+    *,
+    missing_basis: str = "无回测数据",
+) -> dict:
     """单因子置信：{level, basis}。"""
-    ic_key = FACTOR_IC_KEY.get(factor_key, None)
-    if ic_key is None:
+    if factor_key == "size":
         return {"level": "不足", "basis": "规模因子未回测，仅供参考"}
+
+    ic_key = FACTOR_IC_KEY.get(factor_key)
+    if ic_key is None:
+        return {"level": "不足", "basis": missing_basis}
 
     stats = (ic_factors or {}).get(ic_key)
     if not stats:
-        return {"level": "不足", "basis": "无回测数据"}
+        return {"level": "不足", "basis": missing_basis}
 
     mean_ic = stats.get("mean_ic")
     significant = bool(stats.get("significant"))
     if mean_ic is None:
-        return {"level": "不足", "basis": "无回测数据"}
+        return {"level": "不足", "basis": missing_basis}
 
     if not significant:
         return {"level": "低", "basis": f"回测不显著（IC {mean_ic:+.3f}），仅描述性"}
@@ -76,7 +98,14 @@ def factor_confidence(ic_factors: dict[str, dict], factor_key: str) -> dict:
     return {"level": "中", "basis": f"回测显著但偏弱（IC {mean_ic:+.3f}），置信中"}
 
 
-def factor_reliability(ic_factors: dict[str, dict] | None = None) -> dict[str, dict]:
+def factor_reliability(
+    ic_factors: dict[str, dict] | None = None,
+    *,
+    missing_basis: str = "无回测数据",
+) -> dict[str, dict]:
     """模块2 四因子各算一次置信，返回 {factor_key: {level, basis}}。"""
     factors = ic_factors if ic_factors is not None else load_ic_summary()
-    return {key: factor_confidence(factors, key) for key in FACTOR_IC_KEY}
+    return {
+        key: factor_confidence(factors, key, missing_basis=missing_basis)
+        for key in FACTOR_IC_KEY
+    }
