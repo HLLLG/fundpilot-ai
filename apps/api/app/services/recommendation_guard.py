@@ -380,7 +380,16 @@ def _weak_evidence_reasons(sector_opportunity: dict | None, evidence: dict | Non
         composite = evidence.get("composite") or {}
         level = str(composite.get("level") or "")
         if level in {"低", "不足"}:
-            reasons.append("量化证据背书弱")
+            has_factor_component = any(
+                component.get("source") == "factor"
+                for component in (evidence.get("components") or [])
+                if isinstance(component, dict)
+            )
+            reasons.append(
+                "量化证据背书弱"
+                if has_factor_component
+                else "IC 回测未覆盖，现有量化证据置信偏低"
+            )
     return _append_unique([], reasons, limit=4)
 
 
@@ -467,6 +476,8 @@ def _build_fund_evidence(evidence: dict | None) -> list[str]:
     if level:
         result.append(f"三路量化证据综合置信：{level}")
     for component in evidence.get("components") or []:
+        if not isinstance(component, dict):
+            continue
         basis = component.get("basis")
         if basis:
             result.append(str(basis))

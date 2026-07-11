@@ -10,7 +10,10 @@ from app.models import (
     NewsItem,
     RiskAssessment,
 )
-from app.services.recommendation_guard import apply_recommendation_guards
+from app.services.recommendation_guard import (
+    _weak_evidence_reasons,
+    apply_recommendation_guards,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -69,6 +72,67 @@ def _facts_with_holding(sector_opportunity=None, evidence=None) -> dict:
     if evidence is not None:
         row["evidence"] = evidence
     return {"holdings": [row]}
+
+
+@pytest.mark.parametrize(
+    "components",
+    [
+        None,
+        [],
+        [{"source": "signal", "level": "低"}],
+        [None, "invalid", {"source": "risk", "level": "不足"}],
+    ],
+)
+def test_weak_composite_without_factor_component_reports_missing_ic_coverage(
+    components,
+) -> None:
+    evidence = {"composite": {"level": "低"}}
+    if components is not None:
+        evidence["components"] = components
+
+    reasons = _weak_evidence_reasons(None, evidence)
+
+    assert "IC 回测未覆盖，现有量化证据置信偏低" in reasons
+    assert "量化证据背书弱" not in reasons
+
+
+def test_weak_composite_with_factor_component_retains_weak_evidence_reason() -> None:
+    reasons = _weak_evidence_reasons(
+        None,
+        {
+            "composite": {"level": "不足"},
+            "components": [
+                "invalid",
+                {"source": "factor", "level": "低"},
+                {"source": "risk", "level": "中"},
+            ],
+        },
+    )
+
+    assert "量化证据背书弱" in reasons
+    assert "IC 回测未覆盖，现有量化证据置信偏低" not in reasons
+
+
+def test_full_guard_ignores_non_dict_evidence_components() -> None:
+    facts = _facts_with_holding(
+        evidence={
+            "composite": {"level": "低"},
+            "components": [None, "invalid", {"source": "risk", "level": "低"}],
+        }
+    )
+
+    _, guarded = apply_recommendation_guards(
+        [_rec()],
+        [],
+        _request(decision_style="tactical"),
+        _risk(),
+        _TODAY_NEWS,
+        [],
+        facts=facts,
+    )
+
+    assert guarded[0].action == "观察"
+    assert any("IC 回测未覆盖，现有量化证据置信偏低" in point for point in guarded[0].points)
 
 
 def test_weak_sector_opportunity_downgrades_add_action() -> None:

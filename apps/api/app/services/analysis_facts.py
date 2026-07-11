@@ -28,6 +28,7 @@ from app.services.decision_guard_shared import (
 from app.services.market_breadth_signal import build_market_breadth_signal
 from app.services.market_flow_client import build_market_flow_context
 from app.services.news_freshness import build_news_pipeline_context
+from app.services.analysis_prompt import IC_EVIDENCE_INSTRUCTION
 from app.services.report_sector_opportunity import build_holding_sector_opportunity_context
 from app.services.sector_signal_context import (
     build_signal_backtest_context,
@@ -516,12 +517,10 @@ def build_analysis_facts(
             "板块信号(signal_backtest)须按各规则 confidence.level 表述："
             "「高」可作主理由；「中」需措辞保留；「低/不足」只能作提示，"
             "不得据此主导追涨或减仓建议。"
-            "因子分(factor_scores)须按 factor_reliability 各因子置信使用："
-            "「高」可作论据；「中」措辞保留；「低/不足」仅作描述、不得作买卖主理由；"
-            "size 因子未回测仅供参考。"
             "组合风险指标(risk_metrics：夏普/回撤/Beta/HHI)为系统计算事实，"
             "按 confidence.level 表述：「高/中」可作风险论据；"
             "「低/不足」须声明样本有限、不得据此下强结论。"
+            f"{IC_EVIDENCE_INSTRUCTION}"
             "持仓的 evidence.composite 是该票三路量化证据(因子IC/板块信号/风险样本)的"
             "综合置信：「高」表多路背书一致、可作主理由；「中」部分支持；"
             "「低/不足」量化背书弱、须以风险口径表述、不得据此追涨。"
