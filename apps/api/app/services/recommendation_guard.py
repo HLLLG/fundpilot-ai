@@ -232,6 +232,7 @@ def apply_recommendation_guards(
             copy.suggested_position_change_percent = escalation.get("suggested_position_change_percent")
             copy.suggested_position_change_basis = str(escalation.get("basis") or "")
         _backfill_decision_fields(copy, holding, sector_opportunity, evidence, ic_status)
+        _enforce_public_ic_evidence(copy, evidence, ic_status)
         if shadow_note is not None:
             # M6：灰度提示须始终可见（不受 `_backfill_decision_fields` 只在为空时才
             # 回填的规则影响），追加到 validation_notes 末尾，与其它校验备注共存。
@@ -454,13 +455,17 @@ def _weak_quantitative_evidence_reason(
 ) -> str | None:
     if _composite_level(evidence) not in {"低", "不足"}:
         return None
+    if _has_usable_factor_component(evidence, ic_status):
+        return "量化证据背书弱"
+    return _status_aware_low_confidence_reason(ic_status)
+
+
+def _status_aware_low_confidence_reason(ic_status: dict | None) -> str:
     state = _ic_state(ic_status)
     if state == "unavailable":
         return "IC 回测未接入，现有非 IC 证据置信偏低"
     if state == "stale":
         return "IC 回测已过期，现有非 IC 证据置信偏低"
-    if _has_usable_factor_component(evidence, ic_status):
-        return "量化证据背书弱"
     return "IC 回测未覆盖，现有量化证据置信偏低"
 
 
@@ -616,6 +621,119 @@ def _build_validation_notes(
     if not sector_opportunity:
         notes.append("暂无独立板块方向数据，方向判断仅供参考")
     return notes
+
+
+def _factor_bases_to_exclude(evidence: dict | None, ic_status: dict | None) -> list[str]:
+    if _has_usable_factor_component(evidence, ic_status) or not isinstance(evidence, dict):
+        return []
+    components = evidence.get("components")
+    if not isinstance(components, (list, tuple)):
+        return []
+    result: list[str] = []
+    for component in components:
+        if not isinstance(component, dict) or component.get("source") != "factor":
+            continue
+        basis = component.get("basis")
+        if isinstance(basis, str) and basis.strip() and basis not in result:
+            result.append(basis)
+    return result
+
+
+def _sanitize_public_ic_text(
+    text: str,
+    *,
+    route_wording: str,
+    weak_replacement: str | None,
+    excluded_factor_bases: list[str],
+    participation_note: str | None,
+) -> str:
+    result = str(text).replace("三路量化证据", route_wording)
+    if weak_replacement:
+        result = result.replace("量化证据背书弱", weak_replacement)
+        result = result.replace("量化背书弱", weak_replacement)
+    for basis in excluded_factor_bases:
+        result = result.replace(basis, participation_note or "")
+    return result.strip()
+
+
+def _dedupe_text_items(items: list[str]) -> list[str]:
+    result: list[str] = []
+    for item in items:
+        text = str(item).strip()
+        if text and text not in result:
+            result.append(text)
+    return result
+
+
+def _append_participation_note_once(text: str, participation_note: str | None) -> str:
+    if not participation_note:
+        return text
+    without_note = text.replace(participation_note, "")
+    without_note = re.sub(r"([；;，,。])(?:\s*[；;，,。])+", r"\1", without_note)
+    without_note = without_note.strip().rstrip("。；;，, ")
+    if not without_note:
+        return f"{participation_note}。"
+    return f"{without_note}；{participation_note}。"
+
+
+def _enforce_public_ic_evidence(
+    rec: FundRecommendation,
+    evidence: dict | None,
+    ic_status: dict | None,
+) -> None:
+    validated_components = _validated_evidence_components(evidence, ic_status)
+    route_wording = f"{len(validated_components)}路已参与量化证据"
+    has_usable_factor = any(
+        component.get("source") == "factor" for component in validated_components
+    )
+    weak_replacement = (
+        None if has_usable_factor else _status_aware_low_confidence_reason(ic_status)
+    )
+    participation_note = _ic_participation_note(evidence, ic_status)
+    excluded_factor_bases = _factor_bases_to_exclude(evidence, ic_status)
+
+    def sanitize(text: str) -> str:
+        return _sanitize_public_ic_text(
+            text,
+            route_wording=route_wording,
+            weak_replacement=weak_replacement,
+            excluded_factor_bases=excluded_factor_bases,
+            participation_note=participation_note,
+        )
+
+    rec.points = _dedupe_text_items([sanitize(item) for item in rec.points])
+    rec.decision_path = _append_participation_note_once(
+        sanitize(rec.decision_path),
+        participation_note,
+    )
+
+    if evidence is not None or ic_status is not None:
+        rec.fund_evidence = _append_unique(
+            [],
+            _build_fund_evidence(evidence, ic_status),
+            limit=4,
+        )
+    else:
+        rec.fund_evidence = _dedupe_text_items(
+            [sanitize(item) for item in rec.fund_evidence]
+        )
+
+    required_validation_notes: list[str] = []
+    weak_reason = _weak_quantitative_evidence_reason(evidence, ic_status)
+    if weak_reason:
+        required_validation_notes.append(weak_reason)
+    if participation_note:
+        required_validation_notes.append(participation_note)
+    optional_validation_notes = [
+        sanitize(item)
+        for item in rec.validation_notes
+        if not any(basis in str(item) for basis in excluded_factor_bases)
+    ]
+    rec.validation_notes = _append_unique(
+        [],
+        [*required_validation_notes, *optional_validation_notes],
+        limit=4,
+    )
 
 
 def _build_default_risks(rec: FundRecommendation, sector_opportunity: dict | None) -> list[str]:

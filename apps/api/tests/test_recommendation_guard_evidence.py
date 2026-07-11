@@ -205,6 +205,91 @@ def test_top_level_ic_status_controls_public_evidence_wording(
         assert "量化证据背书弱" not in public_text
 
 
+@pytest.mark.parametrize(
+    ("ic_state", "weak_reason", "participation_note"),
+    [
+        (
+            "unavailable",
+            "IC 回测未接入，现有非 IC 证据置信偏低",
+            "IC 回测未接入，IC 未参与本次结论",
+        ),
+        (
+            "stale",
+            "IC 回测已过期，现有非 IC 证据置信偏低",
+            "IC 回测已过期，IC 未参与本次结论",
+        ),
+    ],
+)
+def test_prefilled_model_fields_are_sanitized_and_ic_notes_deduplicated(
+    ic_state: str,
+    weak_reason: str,
+    participation_note: str,
+) -> None:
+    factor_basis = "主因子动量·IC偏弱"
+    signal_basis = "板块信号样本偏弱"
+    facts = _facts_with_holding(
+        evidence={
+            "composite": {"level": "低"},
+            "components": [
+                {"source": "factor", "level": "低", "basis": factor_basis},
+                {"source": "signal", "level": "低", "basis": signal_basis},
+            ],
+        }
+    )
+    facts["factor_scores"] = {"ic_status": {"state": ic_state}}
+    model_rec = _rec(
+        points=["三路量化证据综合置信偏低，量化证据背书弱。"],
+        decision_path=(
+            f"三路量化证据综合置信低，量化背书弱，{factor_basis}，"
+            f"动作定为分批加仓；{participation_note}；{participation_note}。"
+        ),
+        fund_evidence=[
+            "三路量化证据综合置信：低",
+            factor_basis,
+            signal_basis,
+            participation_note,
+            participation_note,
+        ],
+        validation_notes=[
+            "量化证据背书弱",
+            factor_basis,
+            participation_note,
+            participation_note,
+            "模型补充备注",
+        ],
+    )
+
+    _, guarded = apply_recommendation_guards(
+        [model_rec],
+        [],
+        _request(decision_style="tactical"),
+        _risk(),
+        _TODAY_NEWS,
+        [],
+        facts=facts,
+    )
+
+    rec = guarded[0]
+    public_text = "\n".join(
+        [*rec.points, rec.decision_path, *rec.fund_evidence, *rec.validation_notes]
+    )
+    assert rec.action == "观察"
+    assert "观察" in rec.decision_path
+    assert "分批加仓" not in rec.decision_path
+    assert "三路量化证据" not in public_text
+    assert "量化证据背书弱" not in public_text
+    assert "量化背书弱" not in public_text
+    assert factor_basis not in public_text
+    assert "1路已参与量化证据" in public_text
+    assert weak_reason in public_text
+    assert signal_basis in rec.fund_evidence
+    assert rec.decision_path.count(participation_note) == 1
+    assert rec.fund_evidence.count(participation_note) == 1
+    assert rec.validation_notes.count(participation_note) == 1
+    assert rec.validation_notes[:2] == [weak_reason, participation_note]
+    assert "模型补充备注" in rec.validation_notes
+
+
 def test_available_ic_with_malformed_factor_uses_uncovered_wording() -> None:
     facts = _facts_with_holding(
         evidence={
