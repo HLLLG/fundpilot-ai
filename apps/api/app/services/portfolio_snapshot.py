@@ -316,7 +316,11 @@ _FACTOR_FACTS_TTL_SECONDS = 3600
 _FACTOR_FACTS_KEYS = ("momentum", "risk_adjusted", "drawdown", "size")
 
 
-def _compact_factor_scores(payload: dict, reliability: dict) -> dict:
+def clear_factor_facts_cache() -> None:
+    _FACTOR_FACTS_CACHE.clear()
+
+
+def _compact_factor_scores(payload: dict, reliability: dict, ic_status: dict) -> dict:
     """把 build_factor_scores_payload 的结果压成紧凑 facts 结构（挂 IC 置信）。"""
     holdings = []
     for fund in payload.get("funds") or []:
@@ -339,6 +343,7 @@ def _compact_factor_scores(payload: dict, reliability: dict) -> dict:
         "available": bool(payload.get("available")),
         "universe_size": payload.get("universe_size", 0),
         "factor_reliability": reliability,
+        "ic_status": ic_status,
         "holdings": holdings,
     }
 
@@ -355,7 +360,7 @@ def build_factor_scores_for_facts(
     计算重（拉排行榜 + 净值），故生产路径按持仓代码缓存 1 小时；注入 fetcher 或
     ic_factors 时（测试路径）绕过缓存。任意异常 → available=false，不抛、不阻塞日报。
     """
-    from app.services.factor_confidence import factor_reliability, load_ic_summary
+    from app.services.factor_confidence import factor_reliability, load_ic_context
 
     injected = fetch_rank is not None or fetch_nav is not None or ic_factors is not None
     cache_key = ",".join(
@@ -371,10 +376,33 @@ def build_factor_scores_for_facts(
         payload = build_factor_scores_payload(
             holdings_models, fetch_rank=fetch_rank, fetch_nav=fetch_nav
         )
+        if ic_factors is None:
+            ic_context = load_ic_context()
+        else:
+            injected_available = bool(ic_factors)
+            ic_context = {
+                "state": "available" if injected_available else "unavailable",
+                "status": {
+                    "available": injected_available,
+                    "source": "injected",
+                },
+                "factors": ic_factors,
+            }
+        state = str(ic_context.get("state") or "unavailable")
+        missing_basis = {
+            "available": "无回测数据",
+            "stale": "IC 回测已过期，暂不参与",
+            "unavailable": "IC 回测未接入",
+        }.get(state, "IC 回测未接入")
         reliability = factor_reliability(
-            ic_factors if ic_factors is not None else load_ic_summary()
+            ic_context.get("factors") or {},
+            missing_basis=missing_basis,
         )
-        compact = _compact_factor_scores(payload, reliability)
+        compact = _compact_factor_scores(
+            payload,
+            reliability,
+            {**ic_context.get("status", {}), "state": state},
+        )
     except Exception:  # noqa: BLE001 — best-effort，绝不阻塞日报
         return {"available": False, "message": "因子分暂不可用"}
 

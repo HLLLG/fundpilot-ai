@@ -25,6 +25,20 @@ def _configure_publish(monkeypatch, tmp_path, *, token: str | None = TOKEN) -> N
     refresh_settings()
 
 
+def _track_cache_clears(monkeypatch) -> dict[str, int]:
+    calls = {"ic_summary": 0, "factor_facts": 0}
+
+    def clear_ic_summary() -> None:
+        calls["ic_summary"] += 1
+
+    def clear_factor_facts() -> None:
+        calls["factor_facts"] += 1
+
+    monkeypatch.setattr("app.main.clear_ic_summary_cache", clear_ic_summary)
+    monkeypatch.setattr("app.main.clear_factor_facts_cache", clear_factor_facts)
+    return calls
+
+
 def test_publish_endpoint_rejects_missing_server_token(monkeypatch, tmp_path) -> None:
     _configure_publish(monkeypatch, tmp_path, token=None)
 
@@ -39,6 +53,7 @@ def test_publish_endpoint_rejects_wrong_token_without_leaking_it(
     tmp_path,
 ) -> None:
     _configure_publish(monkeypatch, tmp_path)
+    cache_clears = _track_cache_clears(monkeypatch)
     supplied = "wrong-secret-token-value"
 
     response = TestClient(app).post(
@@ -49,6 +64,7 @@ def test_publish_endpoint_rejects_wrong_token_without_leaking_it(
 
     assert response.status_code == 401
     assert supplied not in response.text
+    assert cache_clears == {"ic_summary": 0, "factor_facts": 0}
 
 
 def test_publish_token_uses_constant_time_comparison(monkeypatch, tmp_path) -> None:
@@ -96,8 +112,26 @@ def test_publish_endpoint_accepts_valid_token_and_is_idempotent(
     assert TOKEN not in created.text + duplicate.text
 
 
+def test_successful_publish_clears_ic_summary_and_factor_facts_once(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _configure_publish(monkeypatch, tmp_path)
+    cache_clears = _track_cache_clears(monkeypatch)
+
+    response = TestClient(app).post(
+        PUBLISH_PATH,
+        headers={"X-Factor-IC-Publish-Token": TOKEN},
+        json=valid_payload(),
+    )
+
+    assert response.status_code == 200
+    assert cache_clears == {"ic_summary": 1, "factor_facts": 1}
+
+
 def test_publish_endpoint_rejects_invalid_quality(monkeypatch, tmp_path) -> None:
     _configure_publish(monkeypatch, tmp_path)
+    cache_clears = _track_cache_clears(monkeypatch)
     payload = valid_payload()
     payload["summary"]["universe_size"] = 239
 
@@ -109,6 +143,7 @@ def test_publish_endpoint_rejects_invalid_quality(monkeypatch, tmp_path) -> None
 
     assert response.status_code == 422
     assert "有效基金数不足" in response.text
+    assert cache_clears == {"ic_summary": 0, "factor_facts": 0}
 
 
 def test_publish_endpoint_rejects_snapshot_older_than_database(
@@ -132,6 +167,7 @@ def test_publish_endpoint_rejects_snapshot_older_than_database(
 
 def test_publish_endpoint_maps_storage_failure_to_503(monkeypatch, tmp_path) -> None:
     _configure_publish(monkeypatch, tmp_path)
+    cache_clears = _track_cache_clears(monkeypatch)
 
     def unavailable(_request):
         raise FactorIcStorageUnavailable("database unavailable")
@@ -145,6 +181,7 @@ def test_publish_endpoint_maps_storage_failure_to_503(monkeypatch, tmp_path) -> 
 
     assert response.status_code == 503
     assert "database unavailable" in response.text
+    assert cache_clears == {"ic_summary": 0, "factor_facts": 0}
 
 
 def test_only_exact_publish_path_bypasses_user_jwt() -> None:

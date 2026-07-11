@@ -112,6 +112,7 @@ from app.services.portfolio_snapshot import (
     build_factor_scores_payload,
     build_risk_correlation_payload,
     build_risk_metrics_payload,
+    clear_factor_facts_cache,
 )
 from app.services.job_status_service import resolve_job_status_single_connection
 from app.services.job_store import create_analysis_job
@@ -263,6 +264,7 @@ def publish_factor_ic(
     except FactorIcStorageUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     clear_ic_summary_cache()
+    clear_factor_facts_cache()
     return result
 
 
