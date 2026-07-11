@@ -399,10 +399,19 @@ def _parse_return_frame(frame) -> dict:
         peak = max(peak, point)
         drawdown = (point / peak - 1.0) * 100.0
         max_drawdown = min(max_drawdown, drawdown)
+    max_drawdown_1y = round(max_drawdown, 2)
+
+    if not (
+        math.isfinite(return_1y)
+        and -100.0 <= return_1y <= 1000.0
+        and math.isfinite(max_drawdown_1y)
+        and -100.0 <= max_drawdown_1y <= 0.0
+    ):
+        return {}
 
     return {
         "return_1y_percent": return_1y,
-        "max_drawdown_1y_percent": round(max_drawdown, 2),
+        "max_drawdown_1y_percent": max_drawdown_1y,
     }
 
 

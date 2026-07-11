@@ -57,6 +57,20 @@ def test_humanize_evidence_text_translates_report_enum_leaks():
     )
 
 
+def test_humanize_evidence_text_translates_english_opportunity_variants():
+    text = "opportunity absent；opportunity present"
+    assert humanize_evidence_text(text) == "当前不构成机会；当前构成机会"
+
+
+def test_humanize_evidence_text_translates_chinese_prefixed_present():
+    assert humanize_evidence_text("机会present") == "当前构成机会"
+
+
+def test_humanize_evidence_text_translates_pending_daily_return_variants():
+    text = "daily_return_percent pending；daily_return is pending"
+    assert humanize_evidence_text(text) == "当日涨跌待确认；当日涨跌待确认"
+
+
 def test_track_and_pattern_label_fallback_to_raw() -> None:
     assert track_label("momentum") == "顺势观察"
     assert track_label("setup") == "蓄势观察"

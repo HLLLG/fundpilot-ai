@@ -42,3 +42,12 @@ def test_parse_return_frame_skips_invalid_growth_indices_and_non_finite_values()
 
 def test_parse_return_frame_returns_empty_when_fewer_than_two_valid_points():
     assert _parse_return_frame(_frame([-100.0, "bad", 10.0])) == {}
+
+
+def test_parse_return_frame_rejects_excessive_computed_return():
+    assert _parse_return_frame(_frame([-99.0, 20.0])) == {}
+
+
+def test_parse_return_frame_rejects_non_finite_computed_return():
+    near_total_loss = math.nextafter(-100.0, math.inf)
+    assert _parse_return_frame(_frame([near_total_loss, 1e308])) == {}
