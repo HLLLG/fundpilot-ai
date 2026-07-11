@@ -52,6 +52,9 @@ _REPORT_HUMANIZE_TEXT_REPLACEMENTS = (
     ("risk_metrics", "组合风险指标"),
     ("evidence_overview", "组合证据体检"),
 )
+_VALID_EVIDENCE_SOURCES = frozenset({"factor", "signal", "risk"})
+_VALID_EVIDENCE_LEVELS = frozenset({"高", "中", "低", "不足"})
+_VALID_IC_STATES = frozenset({"available", "unavailable", "stale"})
 
 
 def apply_recommendation_guards(
@@ -96,6 +99,7 @@ def apply_recommendation_guards(
     )
     tuning = guard_policy
     today_signal = has_today_market_signal(market_news, topic_briefs)
+    ic_status = _factor_ic_status_from_facts(facts)
 
     guarded: list[FundRecommendation] = []
     for rec in fund_recs:
@@ -143,7 +147,7 @@ def apply_recommendation_guards(
 
         weak_note = None
         if not reversal_note and _action_bucket(normalized) >= ACTION_BUCKET_ADD:
-            weak_reasons = _weak_evidence_reasons(sector_opportunity, evidence)
+            weak_reasons = _weak_evidence_reasons(sector_opportunity, evidence, ic_status)
             if weak_reasons:
                 normalized = "观察"
                 max_bucket = min(max_bucket, ACTION_BUCKET_WATCH)
@@ -227,7 +231,7 @@ def apply_recommendation_guards(
             # 给出的任何数字（LLM 未给出该字段本就是默认 None，这里统一以系统计算为准）。
             copy.suggested_position_change_percent = escalation.get("suggested_position_change_percent")
             copy.suggested_position_change_basis = str(escalation.get("basis") or "")
-        _backfill_decision_fields(copy, holding, sector_opportunity, evidence)
+        _backfill_decision_fields(copy, holding, sector_opportunity, evidence, ic_status)
         if shadow_note is not None:
             # M6：灰度提示须始终可见（不受 `_backfill_decision_fields` 只在为空时才
             # 回填的规则影响），追加到 validation_notes 末尾，与其它校验备注共存。
@@ -364,7 +368,113 @@ def _facts_row_for_holding(facts: dict | None, holding: Holding | None) -> dict 
     return None
 
 
-def _weak_evidence_reasons(sector_opportunity: dict | None, evidence: dict | None) -> list[str]:
+def _factor_ic_status_from_facts(facts: dict | None) -> dict | None:
+    if not isinstance(facts, dict):
+        return None
+    factor_scores = facts.get("factor_scores")
+    if not isinstance(factor_scores, dict) or "ic_status" not in factor_scores:
+        return None
+    ic_status = factor_scores.get("ic_status")
+    return ic_status if isinstance(ic_status, dict) else {}
+
+
+def _ic_state(ic_status: dict | None) -> str | None:
+    if not isinstance(ic_status, dict):
+        return None
+    state = ic_status.get("state")
+    return str(state) if state in _VALID_IC_STATES else None
+
+
+def _composite_level(evidence: dict | None) -> str | None:
+    if not isinstance(evidence, dict):
+        return None
+    composite = evidence.get("composite")
+    if not isinstance(composite, dict):
+        return None
+    level = composite.get("level")
+    return str(level) if level in _VALID_EVIDENCE_LEVELS else None
+
+
+def _validated_evidence_components(
+    evidence: dict | None,
+    ic_status: dict | None,
+) -> list[dict]:
+    if not isinstance(evidence, dict):
+        return []
+    components = evidence.get("components")
+    if not isinstance(components, (list, tuple)):
+        return []
+
+    state = _ic_state(ic_status)
+    factor_may_participate = ic_status is None or state == "available"
+    validated: list[dict] = []
+    seen_sources: set[str] = set()
+    for component in components:
+        if not isinstance(component, dict):
+            continue
+        source = component.get("source")
+        level = component.get("level")
+        basis = component.get("basis")
+        if source not in _VALID_EVIDENCE_SOURCES or level not in _VALID_EVIDENCE_LEVELS:
+            continue
+        if not isinstance(basis, str) or not basis.strip():
+            continue
+        if source == "factor" and not factor_may_participate:
+            continue
+        if source in seen_sources:
+            continue
+        seen_sources.add(source)
+        validated.append(component)
+    return validated
+
+
+def _has_usable_factor_component(evidence: dict | None, ic_status: dict | None) -> bool:
+    return any(
+        component.get("source") == "factor"
+        for component in _validated_evidence_components(evidence, ic_status)
+    )
+
+
+def _ic_participation_note(evidence: dict | None, ic_status: dict | None) -> str | None:
+    state = _ic_state(ic_status)
+    if state == "unavailable":
+        return "IC 回测未接入，IC 未参与本次结论"
+    if state == "stale":
+        return "IC 回测已过期，IC 未参与本次结论"
+    if _has_usable_factor_component(evidence, ic_status):
+        return None
+    if evidence or ic_status is not None:
+        return "IC 回测未覆盖，IC 未参与本次结论"
+    return None
+
+
+def _weak_quantitative_evidence_reason(
+    evidence: dict | None,
+    ic_status: dict | None,
+) -> str | None:
+    if _composite_level(evidence) not in {"低", "不足"}:
+        return None
+    state = _ic_state(ic_status)
+    if state == "unavailable":
+        return "IC 回测未接入，现有非 IC 证据置信偏低"
+    if state == "stale":
+        return "IC 回测已过期，现有非 IC 证据置信偏低"
+    if _has_usable_factor_component(evidence, ic_status):
+        return "量化证据背书弱"
+    return "IC 回测未覆盖，现有量化证据置信偏低"
+
+
+def _evidence_composite_summary(evidence: dict | None, ic_status: dict | None) -> str:
+    component_count = len(_validated_evidence_components(evidence, ic_status))
+    level = _composite_level(evidence) or "不足"
+    return f"{component_count}路已参与量化证据综合置信：{level}"
+
+
+def _weak_evidence_reasons(
+    sector_opportunity: dict | None,
+    evidence: dict | None,
+    ic_status: dict | None = None,
+) -> list[str]:
     """加仓类动作要求「板块方向」与「基金自身证据」至少有一路站得住，否则视为证据不足。"""
     reasons: list[str] = []
     if sector_opportunity:
@@ -376,20 +486,9 @@ def _weak_evidence_reasons(sector_opportunity: dict | None, evidence: dict | Non
         pattern = str(sector_opportunity.get("pattern_label") or "")
         if pattern in {"distribution", "weak_outflow"}:
             reasons.append("板块资金流偏弱")
-    if evidence:
-        composite = evidence.get("composite") or {}
-        level = str(composite.get("level") or "")
-        if level in {"低", "不足"}:
-            has_factor_component = any(
-                component.get("source") == "factor"
-                for component in (evidence.get("components") or [])
-                if isinstance(component, dict)
-            )
-            reasons.append(
-                "量化证据背书弱"
-                if has_factor_component
-                else "IC 回测未覆盖，现有量化证据置信偏低"
-            )
+    weak_quantitative_reason = _weak_quantitative_evidence_reason(evidence, ic_status)
+    if weak_quantitative_reason:
+        reasons.append(weak_quantitative_reason)
     return _append_unique([], reasons, limit=4)
 
 
@@ -398,17 +497,28 @@ def _backfill_decision_fields(
     holding: Holding | None,
     sector_opportunity: dict | None,
     evidence: dict | None,
+    ic_status: dict | None = None,
 ) -> None:
     if not rec.decision_path:
-        rec.decision_path = _build_decision_path(rec, holding, sector_opportunity, evidence)
+        rec.decision_path = _build_decision_path(
+            rec,
+            holding,
+            sector_opportunity,
+            evidence,
+            ic_status,
+        )
     if not rec.sector_evidence:
         rec.sector_evidence = _append_unique([], _build_sector_evidence(sector_opportunity), limit=4)
     if not rec.fund_evidence:
-        rec.fund_evidence = _append_unique([], _build_fund_evidence(evidence), limit=4)
+        rec.fund_evidence = _append_unique(
+            [],
+            _build_fund_evidence(evidence, ic_status),
+            limit=4,
+        )
     if not rec.validation_notes:
         rec.validation_notes = _append_unique(
             [],
-            _build_validation_notes(sector_opportunity, evidence),
+            _build_validation_notes(sector_opportunity, evidence, ic_status),
             limit=4,
         )
     if not rec.risks:
@@ -420,6 +530,7 @@ def _build_decision_path(
     holding: Holding | None,
     sector_opportunity: dict | None,
     evidence: dict | None,
+    ic_status: dict | None = None,
 ) -> str:
     sector = (holding.sector_name if holding else None) or "该持仓板块"
     if sector_opportunity:
@@ -429,10 +540,12 @@ def _build_decision_path(
     else:
         sector_clause = f"先看持仓板块方向：{sector}（暂无独立方向信号）"
     if evidence:
-        level = (evidence.get("composite") or {}).get("level") or "不足"
-        fund_clause = f"再看该基金自身量化证据（综合置信{level}）"
+        fund_clause = f"再看该基金自身量化证据（{_evidence_composite_summary(evidence, ic_status)}）"
     else:
         fund_clause = "再看该基金自身持仓与风控数据"
+    ic_note = _ic_participation_note(evidence, ic_status)
+    if ic_note:
+        fund_clause = f"{fund_clause}；{ic_note}"
     return f"{sector_clause}，{fund_clause}，动作定为{rec.action}。"
 
 
@@ -467,33 +580,39 @@ def _build_sector_evidence(sector_opportunity: dict | None) -> list[str]:
     return evidence
 
 
-def _build_fund_evidence(evidence: dict | None) -> list[str]:
-    if not evidence:
-        return []
+def _build_fund_evidence(
+    evidence: dict | None,
+    ic_status: dict | None = None,
+) -> list[str]:
     result: list[str] = []
-    composite = evidence.get("composite") or {}
-    level = composite.get("level")
-    if level:
-        result.append(f"三路量化证据综合置信：{level}")
-    for component in evidence.get("components") or []:
-        if not isinstance(component, dict):
-            continue
+    if evidence:
+        result.append(_evidence_composite_summary(evidence, ic_status))
+    for component in _validated_evidence_components(evidence, ic_status):
         basis = component.get("basis")
         if basis:
             result.append(str(basis))
+    ic_note = _ic_participation_note(evidence, ic_status)
+    if ic_note:
+        result.append(ic_note)
     return result
 
 
-def _build_validation_notes(sector_opportunity: dict | None, evidence: dict | None) -> list[str]:
+def _build_validation_notes(
+    sector_opportunity: dict | None,
+    evidence: dict | None,
+    ic_status: dict | None = None,
+) -> list[str]:
     notes: list[str] = []
+    weak_quantitative_reason = _weak_quantitative_evidence_reason(evidence, ic_status)
+    if weak_quantitative_reason:
+        notes.append(weak_quantitative_reason)
+    ic_note = _ic_participation_note(evidence, ic_status)
+    if ic_note:
+        notes.append(ic_note)
     if sector_opportunity:
         notes.extend(
             str(item) for item in sector_opportunity.get("penalties") or [] if str(item).strip()
         )
-    if evidence:
-        level = (evidence.get("composite") or {}).get("level")
-        if level in {"低", "不足"}:
-            notes.append("量化证据样本有限，结论须保守表述")
     if not sector_opportunity:
         notes.append("暂无独立板块方向数据，方向判断仅供参考")
     return notes

@@ -28,7 +28,10 @@ from app.services.decision_guard_shared import (
 from app.services.market_breadth_signal import build_market_breadth_signal
 from app.services.market_flow_client import build_market_flow_context
 from app.services.news_freshness import build_news_pipeline_context
-from app.services.analysis_prompt import IC_EVIDENCE_INSTRUCTION
+from app.services.analysis_prompt import (
+    COMPOSITE_EVIDENCE_INSTRUCTION,
+    IC_EVIDENCE_INSTRUCTION,
+)
 from app.services.report_sector_opportunity import build_holding_sector_opportunity_context
 from app.services.sector_signal_context import (
     build_signal_backtest_context,
@@ -521,9 +524,7 @@ def build_analysis_facts(
             "按 confidence.level 表述：「高/中」可作风险论据；"
             "「低/不足」须声明样本有限、不得据此下强结论。"
             f"{IC_EVIDENCE_INSTRUCTION}"
-            "持仓的 evidence.composite 是该票三路量化证据(因子IC/板块信号/风险样本)的"
-            "综合置信：「高」表多路背书一致、可作主理由；「中」部分支持；"
-            "「低/不足」量化背书弱、须以风险口径表述、不得据此追涨。"
+            f"{COMPOSITE_EVIDENCE_INSTRUCTION}"
             "evidence_overview 是组合级量化背书体检：backed_weight_percent 为"
             "「中/高背书」市值占比；占比高→建议可更积极，占比低→须强调多数仓位"
             "量化背书不足、以风险口径表述。"

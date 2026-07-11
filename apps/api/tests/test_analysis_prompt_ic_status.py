@@ -12,6 +12,13 @@ def _ic_instruction() -> str:
     return instruction
 
 
+def _composite_instruction() -> str:
+    instruction = getattr(analysis_prompt, "COMPOSITE_EVIDENCE_INSTRUCTION", None)
+    assert isinstance(instruction, str)
+    assert instruction
+    return instruction
+
+
 def test_ic_instruction_distinguishes_available_unavailable_and_stale_states() -> None:
     instruction = _ic_instruction()
 
@@ -25,15 +32,29 @@ def test_ic_instruction_distinguishes_available_unavailable_and_stale_states() -
 
 def test_default_role_prompt_uses_the_shared_ic_instruction() -> None:
     instruction = _ic_instruction()
+    composite_instruction = _composite_instruction()
 
     assert analysis_prompt.DEFAULT_ROLE_PROMPT.count(instruction) == 1
+    assert analysis_prompt.DEFAULT_ROLE_PROMPT.count(composite_instruction) == 1
     assert "因子分（`factor_scores`）须按 `factor_reliability` 各因子置信使用" not in (
         analysis_prompt.DEFAULT_ROLE_PROMPT
     )
 
 
-def test_analysis_facts_persist_shared_ic_instruction_before_composite_guidance() -> None:
+def test_composite_instruction_only_describes_actual_valid_participants() -> None:
+    instruction = _composite_instruction()
+
+    assert "仅汇总" in instruction
+    assert "实际参与" in instruction
+    assert "结构有效" in instruction
+    assert "不得默认" in instruction
+    assert "ic_status.state" in instruction
+    assert "无有效 `factor` 分量" in instruction
+
+
+def test_analysis_facts_persist_shared_instructions_in_order() -> None:
     instruction = _ic_instruction()
+    composite_instruction = _composite_instruction()
     facts = build_analysis_facts(
         [],
         RiskAssessment(
@@ -49,6 +70,27 @@ def test_analysis_facts_persist_shared_ic_instruction_before_composite_guidance(
 
     persisted = facts["instruction"]
     ic_end = persisted.index(instruction) + len(instruction)
-    composite_start = persisted.index("持仓的 evidence.composite")
+    composite_start = persisted.index(composite_instruction)
     assert persisted.count(instruction) == 1
+    assert persisted.count(composite_instruction) == 1
     assert persisted[ic_end:composite_start] == ""
+
+
+def test_prompt_and_persisted_facts_remove_unconditional_three_route_weak_wording() -> None:
+    facts = build_analysis_facts(
+        [],
+        RiskAssessment(
+            level="medium",
+            weighted_return_percent=0,
+            suggested_action="watch",
+            alerts=[],
+        ),
+        [],
+        InvestorProfile(),
+        session={"effective_trade_date": "2026-07-11"},
+    )
+
+    for text in (analysis_prompt.DEFAULT_ROLE_PROMPT, facts["instruction"]):
+        assert "是该票三路量化证据" not in text
+        assert "「低/不足」量化背书弱" not in text
+        assert "**低/不足**量化背书弱" not in text

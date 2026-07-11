@@ -80,6 +80,7 @@ def _facts_with_holding(sector_opportunity=None, evidence=None) -> dict:
         None,
         [],
         [{"source": "signal", "level": "低"}],
+        [{"source": "factor"}],
         [None, "invalid", {"source": "risk", "level": "不足"}],
     ],
 )
@@ -103,7 +104,7 @@ def test_weak_composite_with_factor_component_retains_weak_evidence_reason() -> 
             "composite": {"level": "不足"},
             "components": [
                 "invalid",
-                {"source": "factor", "level": "低"},
+                {"source": "factor", "level": "低", "basis": "主因子动量·IC偏弱"},
                 {"source": "risk", "level": "中"},
             ],
         },
@@ -133,6 +134,107 @@ def test_full_guard_ignores_non_dict_evidence_components() -> None:
 
     assert guarded[0].action == "观察"
     assert any("IC 回测未覆盖，现有量化证据置信偏低" in point for point in guarded[0].points)
+
+
+@pytest.mark.parametrize(
+    ("ic_state", "weak_reason", "participation_note", "component_count"),
+    [
+        (
+            "unavailable",
+            "IC 回测未接入，现有非 IC 证据置信偏低",
+            "IC 回测未接入，IC 未参与本次结论",
+            1,
+        ),
+        (
+            "stale",
+            "IC 回测已过期，现有非 IC 证据置信偏低",
+            "IC 回测已过期，IC 未参与本次结论",
+            1,
+        ),
+        ("available", "量化证据背书弱", None, 2),
+    ],
+)
+def test_top_level_ic_status_controls_public_evidence_wording(
+    ic_state: str,
+    weak_reason: str,
+    participation_note: str | None,
+    component_count: int,
+) -> None:
+    facts = _facts_with_holding(
+        evidence={
+            "composite": {"level": "低"},
+            "components": [
+                {"source": "factor", "level": "低", "basis": "主因子动量·IC偏弱"},
+                {"source": "signal", "level": "低", "basis": "板块信号样本偏弱"},
+            ],
+        }
+    )
+    facts["factor_scores"] = {"ic_status": {"state": ic_state}}
+
+    _, guarded = apply_recommendation_guards(
+        [_rec()],
+        [],
+        _request(decision_style="tactical"),
+        _risk(),
+        _TODAY_NEWS,
+        [],
+        facts=facts,
+    )
+
+    rec = guarded[0]
+    public_text = "\n".join(
+        [*rec.points, rec.decision_path, *rec.fund_evidence, *rec.validation_notes]
+    )
+    assert rec.action == "观察"
+    assert weak_reason in rec.points[0]
+    assert f"{component_count}路已参与量化证据综合置信" in rec.decision_path
+    assert any(
+        f"{component_count}路已参与量化证据综合置信" in item
+        for item in rec.fund_evidence
+    )
+    assert "三路量化证据" not in public_text
+    assert weak_reason in rec.validation_notes
+
+    if participation_note is None:
+        assert "主因子动量·IC偏弱" in rec.fund_evidence
+    else:
+        assert participation_note in rec.decision_path
+        assert participation_note in rec.fund_evidence
+        assert participation_note in rec.validation_notes
+        assert "主因子动量·IC偏弱" not in rec.fund_evidence
+        assert "量化证据背书弱" not in public_text
+
+
+def test_available_ic_with_malformed_factor_uses_uncovered_wording() -> None:
+    facts = _facts_with_holding(
+        evidence={
+            "composite": {"level": "不足"},
+            "components": [
+                {"source": "factor"},
+                {"source": "signal", "level": "不足", "basis": "板块样本不足"},
+            ],
+        }
+    )
+    facts["factor_scores"] = {"ic_status": {"state": "available"}}
+
+    _, guarded = apply_recommendation_guards(
+        [_rec()],
+        [],
+        _request(decision_style="tactical"),
+        _risk(),
+        _TODAY_NEWS,
+        [],
+        facts=facts,
+    )
+
+    rec = guarded[0]
+    public_text = "\n".join(
+        [*rec.points, rec.decision_path, *rec.fund_evidence, *rec.validation_notes]
+    )
+    assert "IC 回测未覆盖，现有量化证据置信偏低" in rec.points[0]
+    assert "1路已参与量化证据综合置信" in rec.decision_path
+    assert "IC 回测未覆盖，IC 未参与本次结论" in public_text
+    assert "量化证据背书弱" not in public_text
 
 
 def test_weak_sector_opportunity_downgrades_add_action() -> None:
