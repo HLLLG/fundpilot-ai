@@ -34,6 +34,10 @@ const actionAccentClasses = {
   neutral: "border-l-blue-400",
 } as const;
 
+function exactEvidenceKey(value?: string | null): string {
+  return value ? translateEvidenceText(value.trim()).trim() : "";
+}
+
 function FundDiagnosticHint({ snapshot }: { snapshot: Snapshot }) {
   const hints: string[] = [];
   if (snapshot.fund_type) hints.push(`类型 ${snapshot.fund_type}`);
@@ -202,10 +206,34 @@ export function FundRecommendationCard({
   const divergenceBacktest = holdingFacts?.flow_divergence_backtest ?? null;
 
   const primaryReason = selectPrimaryReason(item);
-  const nextPlan = selectNextTradingPlan(item.points);
+  const primaryReasonKey = exactEvidenceKey(primaryReason);
+  const positionChangeBasis =
+    exactEvidenceKey(item.suggested_position_change_basis) === primaryReasonKey
+      ? undefined
+      : item.suggested_position_change_basis;
+  const amountDetail = item.amount_note?.trim()
+    ? item.amount_note
+    : item.amount_yuan != null
+      ? `参考金额：约 ${item.amount_yuan.toLocaleString("zh-CN")} 元`
+      : null;
+  const visibleAmountDetail = exactEvidenceKey(amountDetail) === primaryReasonKey
+    ? null
+    : amountDetail;
+  const nextPlanCandidate = selectNextTradingPlan(item.points);
+  const nextPlan = exactEvidenceKey(nextPlanCandidate) === primaryReasonKey
+    ? null
+    : nextPlanCandidate;
   const bullish = meaningfulNewsLines(item.news_bullish);
   const bearish = meaningfulNewsLines(item.news_bearish);
-  const reasons = keyReasonLines(item);
+  const newsKeys = new Set(
+    [...bullish, ...bearish].map(exactEvidenceKey).filter(Boolean),
+  );
+  const reasons = keyReasonLines(item).filter(
+    (reason) => {
+      const key = exactEvidenceKey(reason);
+      return key !== primaryReasonKey && !newsKeys.has(key);
+    },
+  );
   const diagnostic = safeDiagnosticMetrics(snapshot ?? {});
   const referenceLabel = confidenceDisplayLabel(item.confidence);
   const navHint = navHintForFund(item.fund_code, report.snapshots);
@@ -240,11 +268,11 @@ export function FundRecommendationCard({
           {item.suggested_position_change_percent != null ? (
             <PositionChangeBadge
               percent={item.suggested_position_change_percent}
-              basis={item.suggested_position_change_basis}
+              basis={positionChangeBasis}
             />
-          ) : item.amount_note && item.amount_note !== primaryReason ? (
+          ) : visibleAmountDetail ? (
             <p className="mt-3 break-words rounded-xl bg-blue-50 px-3 py-2 text-sm font-bold text-blue-800 [overflow-wrap:anywhere]">
-              {item.amount_note}
+              {visibleAmountDetail}
             </p>
           ) : null}
           {nextPlan ? (

@@ -135,3 +135,113 @@ it("keeps extreme actions behind the existing confirmation gate", () => {
   expect(screen.getByTestId("extreme-action-gate")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "为什么这样建议" })).not.toBeInTheDocument();
 });
+
+it("keeps the position percentage but omits a translated basis already used in the summary", () => {
+  render(
+    <ReportRecommendationList
+      report={buildReport([
+        recommendation({
+          action: "减仓评估",
+          points: ["其他依据"],
+          suggested_position_change_percent: -20,
+          suggested_position_change_basis: "  return_1y_percent 12.5%  ",
+        }),
+      ])}
+    />,
+  );
+
+  expect(screen.getByText("建议减仓 20%")).toBeInTheDocument();
+  expect(screen.getAllByText("近1年收益 12.5%")).toHaveLength(1);
+});
+
+it("omits a translated fallback point already used as the primary reason", () => {
+  render(
+    <ReportRecommendationList
+      report={buildReport([
+        recommendation({
+          action: "减仓评估",
+          points: ["  momentum分位19  "],
+        }),
+      ])}
+    />,
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "为什么这样建议" }));
+  expect(screen.getAllByText("动量分位19")).toHaveLength(1);
+});
+
+it("renders a sole next-trading-day point only once", () => {
+  render(
+    <ReportRecommendationList
+      report={buildReport([
+        recommendation({
+          action: "减仓评估",
+          points: ["  下交易日：若再跌2%则减仓  "],
+        }),
+      ])}
+    />,
+  );
+
+  expect(screen.getAllByText("下交易日：若再跌2%则减仓")).toHaveLength(1);
+});
+
+it("deduplicates translated news exact matches without removing longer reasons", () => {
+  render(
+    <ReportRecommendationList
+      report={buildReport([
+        recommendation({
+          action: "减仓评估",
+          amount_note: "独立摘要原因",
+          points: [
+            "momentum分位19",
+            "动量分位19但估值偏高",
+            "return_1y_percent 8%",
+          ],
+          news_bullish: ["动量分位19"],
+          news_bearish: ["近1年收益 8%"],
+        }),
+      ])}
+    />,
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "为什么这样建议" }));
+  const why = document.getElementById("000001-why");
+  expect(why).not.toBeNull();
+  expect(within(why!).getByText("有效利好")).toBeInTheDocument();
+  expect(within(why!).getByText("有效利空 / 风险")).toBeInTheDocument();
+  expect(within(why!).getAllByText("动量分位19")).toHaveLength(1);
+  expect(within(why!).getAllByText("近1年收益 8%")).toHaveLength(1);
+  expect(within(why!).getByText("动量分位19但估值偏高")).toBeInTheDocument();
+});
+
+it("restores the formatted amount fallback when no stronger amount detail exists", () => {
+  render(
+    <ReportRecommendationList
+      report={buildReport([
+        recommendation({
+          action: "减仓评估",
+          amount_yuan: 10500,
+          points: ["集中度超过上限"],
+        }),
+      ])}
+    />,
+  );
+
+  expect(screen.getByText("参考金额：约 10,500 元")).toBeInTheDocument();
+});
+
+it("does not repeat the formatted amount fallback already used as the primary reason", () => {
+  render(
+    <ReportRecommendationList
+      report={buildReport([
+        recommendation({
+          action: "减仓评估",
+          amount_yuan: 10500,
+          points: ["  参考金额：约 10,500 元  "],
+        }),
+      ])}
+    />,
+  );
+
+  expect(screen.getAllByText("参考金额：约 10,500 元")).toHaveLength(1);
+});
