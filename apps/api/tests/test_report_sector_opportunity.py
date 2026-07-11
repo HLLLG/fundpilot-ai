@@ -108,6 +108,51 @@ def test_missing_heat_and_flow_never_create_a_positive_held_opportunity(
     assert held["entry_hint"] == "数据不足，保持观察"
 
 
+def test_placeholder_heat_rows_do_not_create_held_or_market_opportunities(
+    monkeypatch,
+) -> None:
+    flow_inputs: list[list[dict]] = []
+
+    def fake_flow_map(sector_heat, *_args, **_kwargs):
+        flow_inputs.append(sector_heat)
+        return {}
+
+    monkeypatch.setattr(
+        "app.services.report_sector_opportunity.build_sector_flow_map_for_opportunities",
+        fake_flow_map,
+    )
+    monkeypatch.setattr(
+        "app.services.report_sector_opportunity.build_sector_divergence_map_for_opportunities",
+        lambda *_args, **_kwargs: {},
+    )
+    placeholder_heat = [
+        {
+            "sector_label": "test-sector",
+            "change_1d_percent": None,
+            "change_5d_percent": None,
+            "heat_score": None,
+        },
+        {
+            "sector_label": "placeholder-candidate",
+            "change_1d_percent": None,
+            "change_5d_percent": None,
+            "heat_score": None,
+        },
+    ]
+
+    result = build_holding_sector_opportunity_context(
+        [_holding("test-sector")],
+        fetch_sector_heat=lambda: placeholder_heat,
+    )
+
+    assert flow_inputs == [
+        [{"sector_label": "test-sector", "change_1d_percent": None}]
+    ]
+    assert result["available"] is False
+    assert result["held"]["test-sector"]["opportunity_available"] is False
+    assert result["market_top"] == []
+
+
 def test_held_labels_are_requested_before_heat_candidates_and_trade_date_is_forwarded(
     monkeypatch,
 ) -> None:

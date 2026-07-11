@@ -58,16 +58,19 @@ def build_holding_sector_opportunity_context(
         sector_heat = []
         heat_error_reason = "sector_heat_error"
 
+    usable_sector_heat = [
+        row for row in sector_heat if _heat_has_usable_evidence(row)
+    ]
     heat_by_label = {
         str(row.get("sector_label") or "").strip(): row
-        for row in sector_heat
+        for row in usable_sector_heat
         if str(row.get("sector_label") or "").strip()
     }
     if not heat_by_label and heat_error_reason is None:
         heat_error_reason = "sector_heat_empty"
 
     fallback_heat_by_label = _held_fallback_heat_by_label(holdings)
-    flow_heat = list(sector_heat)
+    flow_heat = list(usable_sector_heat)
     flow_heat.extend(
         fallback_heat_by_label[label]
         for label in held_labels
@@ -75,7 +78,7 @@ def build_holding_sector_opportunity_context(
     )
 
     top_by_heat = sorted(
-        sector_heat,
+        usable_sector_heat,
         key=lambda row: _num(row.get("heat_score")) or float("-inf"),
         reverse=True,
     )
@@ -141,7 +144,7 @@ def build_holding_sector_opportunity_context(
 
     try:
         selected = select_sector_opportunities(
-            sector_heat,
+            usable_sector_heat,
             sector_flow_by_label=flow_by_label,
             sector_divergence_by_label=divergence_by_label,
             focus_sectors=held_labels,
@@ -192,6 +195,13 @@ def _held_fallback_heat_by_label(holdings: list[Holding]) -> dict[str, dict[str,
             "change_1d_percent": holding.sector_return_percent,
         }
     return result
+
+
+def _heat_has_usable_evidence(row: dict[str, Any]) -> bool:
+    return any(
+        _num(row.get(key)) is not None
+        for key in ("change_1d_percent", "change_5d_percent", "heat_score")
+    )
 
 
 def _flow_has_usable_evidence(flow: dict[str, Any] | None) -> bool:
