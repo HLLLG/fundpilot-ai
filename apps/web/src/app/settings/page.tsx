@@ -8,11 +8,11 @@ export default function SettingsPage() {
   const { user } = useAuth();
 
   return (
-    <div className="landing-hero-bg min-h-screen px-4 py-8">
+    <main className="landing-hero-bg min-h-screen px-4 py-8">
       <div className="mx-auto max-w-lg">
         <Link
           href="/"
-          className="mb-6 inline-flex items-center gap-2 text-sm font-semibold text-slate-600 transition hover:text-[var(--brand)]"
+          className="mb-4 inline-flex min-h-11 items-center gap-2 rounded-full px-2 text-sm font-semibold text-slate-600 transition hover:bg-white hover:text-[var(--brand)]"
         >
           <ArrowLeft size={16} />
           返回首页
@@ -28,23 +28,23 @@ export default function SettingsPage() {
               <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
                 <UserRound size={18} />
               </span>
-              <div>
-                <p className="text-xs font-semibold text-slate-400">用户名</p>
-                <p className="text-sm font-bold text-slate-900">{user?.username || "未命名用户"}</p>
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-semibold text-slate-500">用户名</p>
+                <p className="break-words text-sm font-bold text-slate-900">{user?.username || "未命名用户"}</p>
               </div>
             </div>
             <div className="flex items-center gap-3 rounded-2xl bg-slate-50 px-4 py-3">
               <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
                 <Mail size={18} />
               </span>
-              <div>
-                <p className="text-xs font-semibold text-slate-400">登录邮箱</p>
-                <p className="text-sm font-bold text-slate-900">{user?.userAccount || "未登录"}</p>
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-semibold text-slate-500">登录邮箱</p>
+                <p className="break-all text-sm font-bold text-slate-900">{user?.userAccount || "未登录"}</p>
               </div>
             </div>
           </div>
         </section>
       </div>
-    </div>
+    </main>
   );
 }

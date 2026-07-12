@@ -42,7 +42,7 @@ export function BrandMark({
             {BRAND.name}
           </span>
           {showEnglish ? (
-            <span className={`mt-0.5 font-bold uppercase tracking-[0.18em] text-slate-400 ${s.en}`}>
+            <span className={`mt-0.5 font-bold uppercase tracking-[0.18em] text-slate-500 ${s.en}`}>
               {BRAND.englishName}
             </span>
           ) : null}

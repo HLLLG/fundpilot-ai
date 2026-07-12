@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { PortfolioEvidenceOverview } from "@/lib/api";
 import { fetchPortfolioEvidenceOverview } from "@/lib/api";
+import { InlineNotice } from "@/components/InlineNotice";
 import { StatusPill } from "@/components/StatusPill";
 import { confidenceTone } from "@/components/SectorSignalBacktestPanel";
 
@@ -35,9 +36,10 @@ export function PortfolioEvidenceOverviewPanel({ enabled }: { enabled: boolean }
   const [data, setData] = useState<PortfolioEvidenceOverview | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [retrySequence, setRetrySequence] = useState(0);
 
   useEffect(() => {
-    if (!enabled || data || loading) {
+    if (!enabled || data) {
       return;
     }
     let cancelled = false;
@@ -56,19 +58,33 @@ export function PortfolioEvidenceOverviewPanel({ enabled }: { enabled: boolean }
     return () => {
       cancelled = true;
     };
-  }, [enabled, data, loading]);
+  }, [enabled, data, retrySequence]);
 
   if (!enabled) {
     return null;
   }
   if (loading) {
-    return <div className="factor-note">正在聚合持仓量化证据…</div>;
+    return <InlineNotice tone="info" message="正在聚合持仓量化证据…" />;
   }
   if (error) {
-    return <div className="factor-note">证据总览加载失败：{error}</div>;
+    return (
+      <InlineNotice
+        tone="error"
+        message={`证据总览加载失败：${error}`}
+        action={{
+          label: "重试",
+          onClick: () => setRetrySequence((current) => current + 1),
+        }}
+      />
+    );
   }
   if (!data || !data.available || !data.overview.available) {
-    return <div className="factor-note">暂无足够量化证据可聚合（需因子/信号/风险至少一路覆盖）。</div>;
+    return (
+      <InlineNotice
+        tone="info"
+        message="暂无足够量化证据可聚合（需因子、信号或风险至少一路覆盖）。"
+      />
+    );
   }
 
   const ov = data.overview;

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { History, Loader2 } from "lucide-react";
 import { fetchShadowEscalationDigest, type ShadowEscalationDigest } from "@/lib/api";
+import { InlineNotice } from "@/components/InlineNotice";
 import { StatusPill } from "@/components/StatusPill";
 
 /**
@@ -14,19 +15,22 @@ import { StatusPill } from "@/components/StatusPill";
 export function ShadowEscalationDigestCard() {
   const [data, setData] = useState<ShadowEscalationDigest | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [retrySequence, setRetrySequence] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    setError(null);
     void fetchShadowEscalationDigest(7)
       .then((result) => {
         if (!cancelled) {
           setData(result);
         }
       })
-      .catch(() => {
+      .catch((loadError) => {
         if (!cancelled) {
-          setData(null);
+          setError(loadError instanceof Error ? loadError.message : "灰度复盘加载失败");
         }
       })
       .finally(() => {
@@ -37,7 +41,7 @@ export function ShadowEscalationDigestCard() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [retrySequence]);
 
   if (loading && !data) {
     return (
@@ -51,9 +55,39 @@ export function ShadowEscalationDigestCard() {
     );
   }
 
-  // enforced 模式下灰度已结束，或接口不可用时，不展示该卡片（不占用诊断区版面）。
-  if (!data || !data.available || data.escalation_mode !== "shadow") {
+  if (error && !data) {
+    return (
+      <section className="glass-panel rounded-[24px] p-5">
+        <h3 className="text-lg font-black text-slate-950">灰度复盘摘要</h3>
+        <InlineNotice
+          tone="error"
+          message={`灰度复盘加载失败：${error}`}
+          action={{
+            label: "重试",
+            onClick: () => setRetrySequence((current) => current + 1),
+          }}
+          className="mt-3"
+        />
+      </section>
+    );
+  }
+
+  // enforced 模式下灰度已结束，不展示该卡片（不占用诊断区版面）。
+  if (!data || data.escalation_mode !== "shadow") {
     return null;
+  }
+
+  if (!data.available) {
+    return (
+      <section className="glass-panel rounded-[24px] p-5">
+        <h3 className="text-lg font-black text-slate-950">灰度复盘摘要</h3>
+        <InlineNotice
+          tone="info"
+          message={data.summary ?? "当前暂无可汇总的灰度复盘记录。"}
+          className="mt-3"
+        />
+      </section>
+    );
   }
 
   const bySector = Object.entries(data.by_sector ?? {});
@@ -61,7 +95,11 @@ export function ShadowEscalationDigestCard() {
   const outcomes = data.outcomes;
 
   return (
-    <section className="glass-panel rounded-[24px] p-5" data-testid="shadow-escalation-digest">
+    <section
+      className="glass-panel rounded-[24px] p-5"
+      data-testid="shadow-escalation-digest"
+      aria-busy={loading}
+    >
       <div className="flex items-start gap-3">
         <div className="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-[var(--brand)] text-white">
           <History size={20} />
@@ -77,6 +115,24 @@ export function ShadowEscalationDigestCard() {
           </p>
         </div>
       </div>
+
+      {error ? (
+        <InlineNotice
+          tone="warning"
+          message={`灰度复盘更新失败，继续显示上次成功获取的结果：${error}`}
+          action={{
+            label: "重试",
+            onClick: () => setRetrySequence((current) => current + 1),
+          }}
+          className="mt-3"
+        />
+      ) : loading ? (
+        <InlineNotice
+          tone="info"
+          message="正在更新灰度复盘，当前继续显示已有结果。"
+          className="mt-3"
+        />
+      ) : null}
 
       <p className="mt-3 text-sm leading-6 text-slate-700">{data.summary}</p>
 
@@ -122,7 +178,7 @@ export function ShadowEscalationDigestCard() {
         </div>
       ) : null}
 
-      <p className="mt-3 text-xs leading-5 text-slate-400">
+      <p className="mt-3 text-xs leading-5 text-slate-500">
         观察约 1 个月（约 20 个交易日）后，可结合这份摘要判断是否切换到 enforced
         （切换需修改 FUND_AI_DECISION_ESCALATION_MODE 配置并重启服务）；本卡片仅供参考，不构成投资建议。
       </p>

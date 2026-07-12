@@ -11,7 +11,14 @@ import {
   RefreshCw,
   X,
 } from "lucide-react";
-import type { Holding, HoldingDetail, PortfolioSummary, SectorQuoteMeta } from "@/lib/api";
+import type {
+  Holding,
+  HoldingAdjustmentPatch,
+  HoldingDetail,
+  ParsedTransaction,
+  PortfolioSummary,
+  SectorQuoteMeta,
+} from "@/lib/api";
 import {
   fetchHoldingDetail,
   fetchSectorIntraday,
@@ -64,8 +71,14 @@ import {
 import { useAuth } from "@/components/AuthProvider";
 import { isEstimateFallbackMeta } from "@/lib/sectorQuoteStatus";
 import { formatTradeDateShort } from "@/lib/tradeDateLabel";
+import { useDialogA11y } from "@/lib/useDialogA11y";
 
 type DetailTab = "sector" | "performance" | "profit";
+
+export type HoldingMutationResult = {
+  holdings: Holding[];
+  portfolioSummary?: PortfolioSummary | null;
+};
 
 const PROVENANCE_LABEL: Record<string, string> = {
   ocr_detail: "详情 OCR",
@@ -89,7 +102,11 @@ type YangjibaoFundDetailProps = {
   onHoldingResolved?: (index: number, holding: Holding) => void;
   onFundCodeUpdated?: (index: number, holding: Holding) => void | Promise<void>;
   onDeleteHolding?: (index: number) => void;
-  onPortfolioUpdated?: (holdings: Holding[]) => void | Promise<void>;
+  onAdjustHolding?: (
+    fundCode: string,
+    patch: HoldingAdjustmentPatch,
+  ) => Promise<HoldingMutationResult | null>;
+  onApplyTransaction?: (transaction: ParsedTransaction) => Promise<HoldingMutationResult | null>;
 };
 
 function HeaderStat({
@@ -103,7 +120,7 @@ function HeaderStat({
 }) {
   return (
     <div className="px-2 py-2.5 text-center">
-      <div className="text-[11px] text-slate-400">{label}</div>
+      <div className="text-[11px] text-slate-500">{label}</div>
       <div
         className={`mt-1 text-lg font-black tabular-nums leading-none ${valueClass ?? "text-slate-900"}`}
       >
@@ -128,7 +145,7 @@ function GridStat({
 }) {
   const content = (
     <>
-      <div className="text-[11px] text-slate-400">{label}</div>
+      <div className="text-[11px] text-slate-500">{label}</div>
       <div
         className={`mt-1.5 text-[15px] font-black tabular-nums leading-tight ${valueClass} ${
           clickable ? "underline decoration-dotted decoration-slate-300 underline-offset-2" : ""
@@ -174,7 +191,8 @@ export function YangjibaoFundDetail({
   onHoldingResolved,
   onFundCodeUpdated,
   onDeleteHolding,
-  onPortfolioUpdated,
+  onAdjustHolding,
+  onApplyTransaction,
 }: YangjibaoFundDetailProps) {
   const { user } = useAuth();
   const userId = user?.id ?? null;
@@ -200,6 +218,18 @@ export function YangjibaoFundDetail({
   const [txDirection, setTxDirection] = useState<"buy" | "sell" | null>(null);
   const [intradayForceSeq, setIntradayForceSeq] = useState(0);
   const intradayRequestSeq = useRef(0);
+  const mainCloseButtonRef = useRef<HTMLButtonElement>(null);
+  const deleteCancelButtonRef = useRef<HTMLButtonElement>(null);
+  const detailDialogRef = useDialogA11y<HTMLDivElement>({
+    open: true,
+    onClose,
+    initialFocusRef: mainCloseButtonRef,
+  });
+  const deleteDialogRef = useDialogA11y<HTMLDivElement>({
+    open: deleteConfirmOpen,
+    onClose: () => setDeleteConfirmOpen(false),
+    initialFocusRef: deleteCancelButtonRef,
+  });
 
   const activeHolding = detail?.holding ?? holding;
   const activeHoldingRef = useRef(activeHolding);
@@ -418,20 +448,33 @@ export function YangjibaoFundDetail({
     onClose();
   }
 
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        onClose();
-      }
-    };
-    document.addEventListener("keydown", onKeyDown);
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.removeEventListener("keydown", onKeyDown);
-      document.body.style.overflow = prevOverflow;
-    };
-  }, [onClose]);
+  async function refreshDetailAfterPortfolioMutation(
+    mutationResult: HoldingMutationResult | null,
+  ): Promise<void> {
+    if (!mutationResult) {
+      return;
+    }
+    const nextIndex = findHoldingIndex(mutationResult.holdings, activeHolding);
+    if (nextIndex < 0) {
+      setDetailError("持仓已更新，但暂时无法定位该基金的最新详情。");
+      return;
+    }
+
+    try {
+      setDetailError(null);
+      const result = await fetchHoldingDetail({
+        holdings: mutationResult.holdings,
+        index: nextIndex,
+        portfolio_summary: mutationResult.portfolioSummary ?? portfolioSummary,
+        sector_quote_meta: sectorMeta,
+      });
+      writeHoldingDetailCache(userId, result.holding.fund_code, result);
+      setDetail(result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "详情刷新失败";
+      setDetailError(`持仓已更新，但最新详情暂时无法刷新：${message}`);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -618,14 +661,19 @@ export function YangjibaoFundDetail({
     <div
       className="fixed inset-0 z-[70] flex items-end justify-center bg-slate-950/50 p-0 sm:items-center sm:p-4"
       role="presentation"
-      onClick={onClose}
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          onClose();
+        }
+      }}
     >
       <div
+        ref={detailDialogRef}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-labelledby="fund-detail-title"
         className="flex max-h-[min(100dvh,920px)] w-full max-w-lg flex-col overflow-y-auto overscroll-contain bg-white shadow-2xl sm:max-h-[min(92dvh,860px)] sm:rounded-2xl"
-        onClick={(event) => event.stopPropagation()}
       >
         <div className="sticky top-0 z-10 shrink-0">
           <header
@@ -634,17 +682,18 @@ export function YangjibaoFundDetail({
           >
             <div className="flex items-center justify-between gap-2">
               <button
+                ref={mainCloseButtonRef}
                 type="button"
                 onClick={onClose}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-full hover:bg-white/15"
+                className="inline-flex h-11 w-11 items-center justify-center rounded-full hover:bg-white/15"
                 aria-label="返回"
               >
                 <ChevronLeft size={20} />
               </button>
               <div className="min-w-0 flex-1 text-center">
-                <div id="fund-detail-title" className="truncate text-sm font-bold leading-tight">
+                <h2 id="fund-detail-title" className="truncate text-sm font-bold leading-tight">
                   {activeHolding.fund_name}
-                </div>
+                </h2>
                 <div className="text-[10px] text-white/80">
                   <button
                     type="button"
@@ -652,7 +701,7 @@ export function YangjibaoFundDetail({
                       setFundCodeError(null);
                       setFundCodeEditOpen(true);
                     }}
-                    className={`inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 transition hover:bg-white/15 ${
+                    className={`inline-flex min-h-11 items-center gap-1 rounded-full px-2 py-1 transition hover:bg-white/15 ${
                       needsCodeAttention ? "bg-amber-400/25 text-amber-100" : ""
                     }`}
                     title="修正基金代码"
@@ -669,7 +718,7 @@ export function YangjibaoFundDetail({
                   type="button"
                   disabled={!canGoPrev}
                   onClick={() => navigateRelative(-1)}
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-full hover:bg-white/15 disabled:opacity-30"
+                  className="inline-flex h-11 w-11 items-center justify-center rounded-full hover:bg-white/15 disabled:opacity-30"
                   aria-label="上一只"
                 >
                   <ChevronLeft size={16} />
@@ -678,7 +727,7 @@ export function YangjibaoFundDetail({
                   type="button"
                   disabled={!canGoNext}
                   onClick={() => navigateRelative(1)}
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-full hover:bg-white/15 disabled:opacity-30"
+                  className="inline-flex h-11 w-11 items-center justify-center rounded-full hover:bg-white/15 disabled:opacity-30"
                   aria-label="下一只"
                 >
                   <ChevronRight size={16} />
@@ -686,7 +735,7 @@ export function YangjibaoFundDetail({
                 <button
                   type="button"
                   onClick={onClose}
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-full hover:bg-white/15"
+                  className="inline-flex h-11 w-11 items-center justify-center rounded-full hover:bg-white/15"
                   aria-label="关闭"
                 >
                   <X size={16} />
@@ -718,7 +767,7 @@ export function YangjibaoFundDetail({
         </div>
 
         {detailError ? (
-          <div className="border-b border-rose-100 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">
+          <div role="alert" className="border-b border-rose-100 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">
             {detailError}
           </div>
         ) : null}
@@ -785,7 +834,7 @@ export function YangjibaoFundDetail({
           <button
             type="button"
             onClick={() => setHoldingsExpanded((current) => !current)}
-            className="flex w-full items-center justify-center py-1.5 text-slate-300 transition hover:text-slate-500"
+            className="flex min-h-11 w-full items-center justify-center text-slate-500 transition hover:text-slate-700"
             aria-label={holdingsExpanded ? "收起持仓明细" : "展开持仓明细"}
           >
             {holdingsExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
@@ -793,7 +842,7 @@ export function YangjibaoFundDetail({
         </div>
 
         <div className="border-b border-slate-100 bg-white px-4">
-          <div className="flex gap-6 text-[15px] font-bold">
+          <div className="flex gap-6 text-[15px] font-bold" role="tablist" aria-label="基金详情视图">
             {(
               [
                 ["sector", "关联板块"],
@@ -804,6 +853,10 @@ export function YangjibaoFundDetail({
               <button
                 key={id}
                 type="button"
+                id={`fund-detail-tab-${id}`}
+                role="tab"
+                aria-selected={tab === id}
+                aria-controls={`fund-detail-panel-${id}`}
                 onClick={() => setTab(id)}
                 className={`border-b-[2.5px] py-3 transition ${
                   tab === id
@@ -817,27 +870,32 @@ export function YangjibaoFundDetail({
           </div>
         </div>
 
-        <div className="px-3 py-3">
+        <div
+          id={`fund-detail-panel-${tab}`}
+          role="tabpanel"
+          aria-labelledby={`fund-detail-tab-${tab}`}
+          className="px-3 py-3"
+        >
           {tab === "sector" ? (
             <div>
               <div className="mb-1 flex items-center gap-2 border-b border-slate-100 pb-2 text-xs">
-                <span className="shrink-0 text-slate-400">日期 {tradeDateLabel}</span>
+                <span className="shrink-0 text-slate-500">日期 {tradeDateLabel}</span>
                 <span className="flex min-w-0 flex-1 items-center justify-center gap-0.5 truncate font-bold text-slate-800">
                   {quoteLabel}
-                  <ChevronDown size={12} className="shrink-0 text-slate-400" />
+                  <ChevronDown size={12} className="shrink-0 text-slate-500" />
                 </span>
                 <span
                   className={`shrink-0 text-sm font-black tabular-nums ${cnProfitClass(displaySectorReturn)}`}
                 >
                   {formatSignedPercent(displaySectorReturn)}
                 </span>
-                <span className="flex shrink-0 items-center gap-1 text-[10px] text-slate-400">
+                <span className="flex shrink-0 items-center gap-1 text-[10px] text-slate-500">
                   {dataSourceLabel}
                   <button
                     type="button"
                     onClick={() => setIntradayForceSeq((value) => value + 1)}
                     disabled={intradayRefreshing || intradayLoading}
-                    className="inline-flex items-center hover:text-slate-600 disabled:opacity-50"
+                    className="inline-flex h-11 w-11 items-center justify-center rounded-xl hover:bg-slate-100 hover:text-slate-600 disabled:opacity-50"
                     title="刷新分时"
                     aria-label="刷新分时"
                   >
@@ -850,7 +908,7 @@ export function YangjibaoFundDetail({
                 </span>
               </div>
               {intradayLoading ? (
-                <div className="flex h-[200px] items-center justify-center text-sm text-slate-400">
+                <div className="flex h-[200px] items-center justify-center text-sm text-slate-500">
                   <Loader2 size={18} className="mr-2 animate-spin" />
                   加载分时…
                 </div>
@@ -859,12 +917,12 @@ export function YangjibaoFundDetail({
               ) : flatSectorPoints ? (
                 <div>
                   <IntradayPercentChart points={flatSectorPoints} height={200} flat />
-                  <div className="mt-1 text-center text-[11px] text-slate-400">
+                  <div className="mt-1 text-center text-[11px] text-slate-500">
                     {intradayNote ?? "暂无分时明细，以下按当日板块涨跌绘制水平线"}
                   </div>
                 </div>
               ) : (
-                <div className="flex h-[200px] flex-col items-center justify-center gap-1 px-4 text-center text-sm text-slate-400">
+                <div className="flex h-[200px] flex-col items-center justify-center gap-1 px-4 text-center text-sm text-slate-500">
                   <span>{intradayNote ?? "暂无分时数据"}</span>
                 </div>
               )}
@@ -883,7 +941,7 @@ export function YangjibaoFundDetail({
                 </div>
               </div>
               {intradayNote && intradayPoints.length >= 2 ? (
-                <p className="pb-1 text-center text-[11px] text-slate-400">{intradayNote}</p>
+                <p className="pb-1 text-center text-[11px] text-slate-500">{intradayNote}</p>
               ) : null}
             </div>
           ) : null}
@@ -940,7 +998,7 @@ export function YangjibaoFundDetail({
             <button
               type="button"
               onClick={onClose}
-              className="flex flex-col items-center justify-center gap-1 py-3 text-[11px] font-semibold text-slate-600 hover:bg-slate-50"
+              className="flex min-h-11 flex-col items-center justify-center gap-1 py-3 text-[11px] font-semibold text-slate-600 hover:bg-slate-50"
             >
               <ChevronLeft size={18} className="text-slate-500" />
               返回列表
@@ -948,7 +1006,7 @@ export function YangjibaoFundDetail({
             <button
               type="button"
               onClick={() => setModifyOpen(true)}
-              className="flex flex-col items-center justify-center gap-1 py-3 text-[11px] font-semibold text-[#2356e0] hover:bg-blue-50"
+              className="flex min-h-11 flex-col items-center justify-center gap-1 py-3 text-[11px] font-semibold text-[#2356e0] hover:bg-blue-50"
             >
               <Pencil size={18} className="text-[#2356e0]" />
               修改持仓
@@ -959,7 +1017,7 @@ export function YangjibaoFundDetail({
                 onClick={() => {
                   setDeleteConfirmOpen(true);
                 }}
-                className="flex flex-col items-center justify-center gap-1 py-3 text-[11px] font-semibold text-rose-600 hover:bg-rose-50"
+                className="flex min-h-11 flex-col items-center justify-center gap-1 py-3 text-[11px] font-semibold text-rose-600 hover:bg-rose-50"
               >
                 删除该基金
               </button>
@@ -972,12 +1030,17 @@ export function YangjibaoFundDetail({
         {deleteConfirmOpen ? (
           <div
             className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/40 p-4"
-            onClick={() => setDeleteConfirmOpen(false)}
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) {
+                setDeleteConfirmOpen(false);
+              }
+            }}
             role="presentation"
           >
             <div
+              ref={deleteDialogRef}
+              tabIndex={-1}
               className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl"
-              onClick={(event) => event.stopPropagation()}
               role="dialog"
               aria-modal="true"
               aria-labelledby="delete-holding-title"
@@ -990,16 +1053,17 @@ export function YangjibaoFundDetail({
               </p>
               <div className="mt-4 flex gap-2">
                 <button
+                  ref={deleteCancelButtonRef}
                   type="button"
                   onClick={() => setDeleteConfirmOpen(false)}
-                  className="btn-secondary flex-1 !py-2.5"
+                  className="btn-secondary min-h-11 flex-1 !py-2.5"
                 >
                   取消
                 </button>
                 <button
                   type="button"
                   onClick={handleDeleteHolding}
-                  className="flex-1 rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-rose-700"
+                  className="min-h-11 flex-1 rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-rose-700"
                 >
                   确认删除
                 </button>
@@ -1040,16 +1104,12 @@ export function YangjibaoFundDetail({
           holding={activeHolding}
           holdingDays={holdingDays}
           onClose={() => setModifyOpen(false)}
-          onSaved={async (payload) => {
-            await onPortfolioUpdated?.(payload.holdings);
-            const result = await fetchHoldingDetail({
-              holdings: payload.holdings,
-              index: holdingIndex,
-              portfolio_summary: portfolioSummary,
-              sector_quote_meta: sectorMeta,
-            });
-            writeHoldingDetailCache(userId, result.holding.fund_code, result);
-            setDetail(result);
+          onSubmit={async (patch) => {
+            if (!onAdjustHolding) {
+              throw new Error("当前无法修改持仓，请稍后重试。");
+            }
+            const mutationResult = await onAdjustHolding(activeHolding.fund_code, patch);
+            await refreshDetailAfterPortfolioMutation(mutationResult);
           }}
           onEditPurchaseDate={() => {
             setModifyOpen(false);
@@ -1075,16 +1135,12 @@ export function YangjibaoFundDetail({
           latestNav={detail?.latest_nav ?? undefined}
           navDateLabel={detail?.nav_date ?? undefined}
           onClose={() => setTxDirection(null)}
-          onApplied={async (nextHoldings) => {
-            await onPortfolioUpdated?.(nextHoldings);
-            const result = await fetchHoldingDetail({
-              holdings: nextHoldings,
-              index: holdingIndex,
-              portfolio_summary: portfolioSummary,
-              sector_quote_meta: sectorMeta,
-            });
-            writeHoldingDetailCache(userId, result.holding.fund_code, result);
-            setDetail(result);
+          onSubmit={async (transaction) => {
+            if (!onApplyTransaction) {
+              throw new Error("当前无法同步交易，请稍后重试。");
+            }
+            const mutationResult = await onApplyTransaction(transaction);
+            await refreshDetailAfterPortfolioMutation(mutationResult);
           }}
         />
       </div>
@@ -1107,7 +1163,7 @@ function ProfitRow({
     <div className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50/80 px-3 py-2">
       <div className="min-w-0">
         <div className="text-[11px] text-slate-500">{label}</div>
-        {hint ? <div className="truncate text-[10px] text-slate-400">{hint}</div> : null}
+        {hint ? <div className="truncate text-[10px] text-slate-500">{hint}</div> : null}
       </div>
       <div className={`shrink-0 text-sm font-black tabular-nums ${valueClass}`}>{value}</div>
     </div>
@@ -1137,6 +1193,12 @@ function PurchaseDatePickerModal({
 }) {
   const [draftDate, setDraftDate] = useState<string | null>(null);
   const [pickerSession, setPickerSession] = useState(0);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useDialogA11y<HTMLDivElement>({
+    open: open && draftDate != null,
+    onClose,
+    initialFocusRef: closeButtonRef,
+  });
 
   useEffect(() => {
     if (!open) {
@@ -1151,21 +1213,6 @@ function PurchaseDatePickerModal({
     setDraftDate(initialDate);
     setPickerSession((current) => current + 1);
   }, [firstPurchaseDate, holdingDays, holdingDaysSource, open]);
-
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        onClose();
-      }
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, [open, onClose]);
 
   if (!open || !draftDate) {
     return null;
@@ -1184,15 +1231,21 @@ function PurchaseDatePickerModal({
   return (
     <div
       className="fixed inset-0 z-[80] flex items-end justify-center bg-slate-950/40 p-0 sm:items-center sm:p-4"
-      onClick={onClose}
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          onClose();
+        }
+      }}
       role="presentation"
     >
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         className="w-full max-w-sm rounded-t-3xl bg-white p-5 shadow-2xl sm:rounded-2xl"
-        onClick={(event) => event.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-labelledby="purchase-date-title"
+        aria-busy={saving}
       >
         <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-slate-200 sm:hidden" />
         <div className="flex items-start justify-between gap-3">
@@ -1203,9 +1256,10 @@ function PurchaseDatePickerModal({
             <p className="mt-1 text-xs text-slate-500">滑动选择年月日，保存后每天自动递增</p>
           </div>
           <button
+            ref={closeButtonRef}
             type="button"
             onClick={onClose}
-            className="rounded-full p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+            className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-slate-500 hover:bg-slate-100 hover:text-slate-600"
             aria-label="关闭"
           >
             <X size={18} />
@@ -1213,13 +1267,13 @@ function PurchaseDatePickerModal({
         </div>
 
         <div className="mt-4 rounded-xl border border-slate-100 bg-slate-50 px-4 py-3 text-center">
-          <div className="text-[11px] text-slate-400">
+          <div className="text-[11px] text-slate-500">
             {previewDays != null ? "预计持有天数" : "当前持有天数"}
           </div>
           <div className="mt-1 text-2xl font-black tabular-nums text-slate-900">
             {(previewDays ?? holdingDays) != null ? `${previewDays ?? holdingDays} 天` : "—"}
           </div>
-          {hint && !previewDays ? <div className="mt-1 text-[10px] text-slate-400">{hint}</div> : null}
+          {hint && !previewDays ? <div className="mt-1 text-[10px] text-slate-500">{hint}</div> : null}
         </div>
 
         <div className="mt-4">
@@ -1231,7 +1285,11 @@ function PurchaseDatePickerModal({
           />
         </div>
 
-        {error ? <p className="mt-2 text-xs font-medium text-rose-500">{error}</p> : null}
+        {error ? (
+          <p className="mt-2 text-xs font-medium text-rose-700" role="alert">
+            {error}
+          </p>
+        ) : null}
 
         <div className="mt-4 flex gap-2">
           {firstPurchaseDate ? (
@@ -1239,7 +1297,7 @@ function PurchaseDatePickerModal({
               type="button"
               disabled={saving}
               onClick={() => onDateChange("")}
-              className="flex-1 rounded-xl border border-slate-200 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              className="min-h-11 flex-1 rounded-xl border border-slate-200 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
               清除日期
             </button>
@@ -1248,7 +1306,7 @@ function PurchaseDatePickerModal({
             type="button"
             disabled={saving || !draftDate}
             onClick={() => onDateChange(draftDate)}
-            className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-[var(--brand)] py-2.5 text-sm font-semibold text-white hover:bg-[var(--brand-strong)] disabled:cursor-not-allowed disabled:opacity-50"
+            className="flex min-h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-[var(--brand)] py-2.5 text-sm font-semibold text-white hover:bg-[var(--brand-strong)] disabled:cursor-not-allowed disabled:opacity-50"
           >
             {saving ? <Loader2 size={16} className="animate-spin" /> : null}
             完成

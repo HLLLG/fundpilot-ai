@@ -26,6 +26,7 @@ import {
   startDiscoveryJob,
 } from "@/lib/api";
 import { DiscoveryHistoryRail } from "@/components/DiscoveryHistoryRail";
+import { InlineNotice, type NoticeTone } from "@/components/InlineNotice";
 import { DiscoveryReportPanel } from "@/components/DiscoveryReportPanel";
 import { DiscoverySkeleton } from "@/components/DiscoverySkeleton";
 import { FocusSectorPicker } from "@/components/FocusSectorPicker";
@@ -45,6 +46,7 @@ import { applyInvestmentPreset } from "@/lib/investmentPresets";
 import { ensureNotificationPermission } from "@/lib/notifications";
 import { loadDiscoveryPrompt, loadDiscoverySectorHeatCache, saveDiscoveryPrompt, saveDiscoverySectorHeatCache } from "@/lib/storage";
 import { useCachedFetch } from "@/lib/useCachedFetch";
+import { buildClientCacheKey } from "@/lib/clientCache";
 import {
   DISCOVERY_FOCUS_CHANGED_EVENT,
   loadDiscoveryFocusSectors,
@@ -56,10 +58,20 @@ const DISCOVERY_SECTORS_CACHE_KEY = "discovery-panel:sectors";
 const DISCOVERY_REPORTS_CACHE_KEY = "discovery-panel:reports";
 const DISCOVERY_SECTORS_STALE_MS = 30 * 60 * 1000;
 const DISCOVERY_REPORTS_STALE_MS = 2 * 60 * 1000;
+const DEFAULT_DISCOVERY_PROMPT: DiscoveryPromptConfig = {
+  role_prompt: "",
+  default_role_prompt: "",
+  is_custom: false,
+};
 
 type DiscoveryPrefill = {
   scanMode?: DiscoveryScanMode;
   focusSectors?: string[];
+};
+
+type DiscoveryFeedback = {
+  tone: NoticeTone;
+  message: string;
 };
 
 const SCAN_MODE_OPTIONS: { id: DiscoveryScanMode; label: string; hint: string }[] = [
@@ -81,6 +93,7 @@ const SELECTION_STRATEGY_OPTIONS: { id: SelectionStrategy; label: string; hint: 
 ];
 
 type FundDiscoveryPanelProps = {
+  userId: number | null;
   holdings: Holding[];
   profile: InvestorProfile;
   onProfileChange: (profile: InvestorProfile) => void;
@@ -99,6 +112,7 @@ type FundDiscoveryPanelProps = {
 };
 
 export function FundDiscoveryPanel({
+  userId,
   holdings,
   profile,
   onProfileChange,
@@ -131,9 +145,10 @@ export function FundDiscoveryPanel({
     data: historyReportsData,
     refresh: refreshReports,
   } = useCachedFetch<FundDiscoveryReport[]>({
-    cacheKey: DISCOVERY_REPORTS_CACHE_KEY,
+    cacheKey: buildClientCacheKey(DISCOVERY_REPORTS_CACHE_KEY, userId ?? "anonymous"),
     fetcher: listDiscoveryReports,
     staleTimeMs: DISCOVERY_REPORTS_STALE_MS,
+    enabled: userId != null,
     keepPreviousUnless: () => true,
   });
 
@@ -150,13 +165,12 @@ export function FundDiscoveryPanel({
   const [budgetYuan, setBudgetYuan] = useState<string>("");
   const [report, setReport] = useState<FundDiscoveryReport | null>(null);
   const [discoveryPrompt, setDiscoveryPrompt] = useState<DiscoveryPromptConfig>(() =>
-    loadDiscoveryPrompt({
-      role_prompt: "",
-      default_role_prompt: "",
-    }),
+    loadDiscoveryPrompt(userId, DEFAULT_DISCOVERY_PROMPT),
   );
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<DiscoveryFeedback | null>(null);
+  const [configExpanded, setConfigExpanded] = useState(true);
+  const [rolePromptOpen, setRolePromptOpen] = useState(false);
   const [previewHolding, setPreviewHolding] = useState<Holding | null>(null);
   const promptPersistReady = useRef(false);
   const promptChangedByUserRef = useRef(false);
@@ -234,36 +248,58 @@ export function FundDiscoveryPanel({
   const isAggressiveProfile = profile.decision_style === "aggressive";
 
   useEffect(() => {
+    promptPersistReady.current = false;
+    promptChangedByUserRef.current = false;
+    setPromptReady(false);
+    setDiscoveryPrompt(loadDiscoveryPrompt(userId, DEFAULT_DISCOVERY_PROMPT));
+    if (userId == null) {
+      return;
+    }
+    let cancelled = false;
     void (async () => {
       try {
         const remote = await fetchDiscoveryPrompt();
+        if (cancelled) return;
         setDiscoveryPrompt(remote);
-        saveDiscoveryPrompt(remote);
+        saveDiscoveryPrompt(userId, remote);
       } catch {
-        setDiscoveryPrompt((current) => loadDiscoveryPrompt(current));
+        if (cancelled) return;
+        setDiscoveryPrompt(loadDiscoveryPrompt(userId, DEFAULT_DISCOVERY_PROMPT));
       } finally {
+        if (cancelled) return;
         promptPersistReady.current = true;
         setPromptReady(true);
       }
     })();
-  }, []);
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
 
   useEffect(() => {
     if (!promptReady || !promptPersistReady.current) return;
-    saveDiscoveryPrompt(discoveryPrompt);
+    saveDiscoveryPrompt(userId, discoveryPrompt);
     if (!promptChangedByUserRef.current) return;
     const storedValue = discoveryPrompt.is_custom ? discoveryPrompt.role_prompt : null;
     void saveDiscoveryPromptRemote(storedValue).catch(() => {
       // 离线时仍保留 localStorage
     });
-  }, [discoveryPrompt, promptReady]);
+  }, [discoveryPrompt, promptReady, userId]);
 
   useEffect(() => {
     if (!pendingDiscoveryReport) return;
     setReport(pendingDiscoveryReport);
+    setFeedback(null);
     void refreshReports();
     onPendingDiscoveryReportApplied();
   }, [pendingDiscoveryReport, refreshReports, onPendingDiscoveryReportApplied]);
+
+  const reportId = report?.id ?? null;
+  useEffect(() => {
+    if (reportId) {
+      setConfigExpanded(false);
+    }
+  }, [reportId]);
 
   const toggleSector = (label: string) => {
     if (focusSectors.includes(label)) {
@@ -281,13 +317,18 @@ export function FundDiscoveryPanel({
     discoveryStreamAbortRef.current = null;
     onStreamingDiscoveryChange(null);
     setIsSubmitting(false);
-    setError("已停止扫描。");
+    setFeedback({
+      tone: "info",
+      message: "已停止扫描，当前条件与页面中的已有结果均已保留。",
+    });
   }, [discoveryStreamAbortRef, onStreamingDiscoveryChange]);
 
   const handleScan = useCallback(async () => {
     setIsSubmitting(true);
-    setError(null);
-    setReport(null);
+    setFeedback(null);
+    if (report) {
+      setConfigExpanded(false);
+    }
     const parsedBudget = budgetYuan.trim() ? Number(budgetYuan) : null;
     const scanOptions = {
       analysisMode,
@@ -397,17 +438,22 @@ export function FundDiscoveryPanel({
         if (streamError instanceof DOMException && streamError.name === "AbortError") {
           return;
         }
-        setError(
-          streamError instanceof Error
-            ? `${streamError.message}，已切换到后台扫描。`
-            : "流式扫描失败，已切换到后台扫描。",
-        );
+        setFeedback({
+          tone: "warning",
+          message:
+            streamError instanceof Error
+              ? `${streamError.message}，已切换到后台扫描；完成后会自动更新结果。`
+              : "流式连接中断，已切换到后台扫描；完成后会自动更新结果。",
+        });
       }
 
       const jobId = await startDiscoveryJob(displayableHoldings(holdings), profile, scanOptions);
       onDiscoveryJobIdChange(jobId);
     } catch (scanError) {
-      setError(scanError instanceof Error ? scanError.message : "提交失败");
+      setFeedback({
+        tone: "error",
+        message: scanError instanceof Error ? scanError.message : "提交失败",
+      });
     } finally {
       setIsSubmitting(false);
     }
@@ -430,6 +476,7 @@ export function FundDiscoveryPanel({
     scanMode,
     selectionStrategy,
     refreshReports,
+    report,
   ]);
 
   useEffect(() => {
@@ -451,9 +498,26 @@ export function FundDiscoveryPanel({
     });
   };
 
+  const isRunning = isSubmitting || Boolean(discoveryJobId) || Boolean(streamingDiscovery);
+  const scanModeLabel = SCAN_MODE_OPTIONS.find((item) => item.id === scanMode)?.label ?? "全市场机会";
+  const strategyLabel =
+    SELECTION_STRATEGY_OPTIONS.find((item) => item.id === selectionStrategy)?.label ?? "均衡潜力";
+  const fundTypeLabel =
+    FUND_TYPE_OPTIONS.find((item) => item.id === fundTypePreference)?.label ?? "不限";
+  const configSummary = [
+    scanModeLabel,
+    strategyLabel,
+    `基金类型：${fundTypeLabel}`,
+    analysisMode === "fast" ? "快速分析" : "深度分析",
+    focusSectors.length ? `关注：${focusSectors.join("、")}` : "方向：自动筛选",
+    budgetYuan.trim() ? `预算：¥${budgetYuan.trim()}` : null,
+  ]
+    .filter((item): item is string => Boolean(item))
+    .join(" · ");
+
   return (
     <div className="mx-auto grid min-w-0 max-w-3xl gap-6 xl:max-w-6xl xl:grid-cols-[minmax(0,1fr)_280px]">
-      <div className="grid min-w-0 gap-4">
+      <div className="flex min-w-0 flex-col gap-4">
         <section className="section-card overflow-hidden">
           <div className="report-control-hero border-b border-[var(--line)] px-4 py-4 sm:px-5">
             <div className="flex items-start gap-3">
@@ -469,19 +533,74 @@ export function FundDiscoveryPanel({
             </div>
           </div>
 
-          <div className="p-4 sm:p-5">
+          {report && !configExpanded ? (
+            <div className="p-4 sm:p-5" data-testid="discovery-config-summary">
+              <span id="discovery-scan-settings" hidden />
+              <p className="section-eyebrow">当前运行条件</p>
+              <p className="mt-2 text-sm font-semibold leading-6 text-slate-700">{configSummary}</p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => setConfigExpanded(true)}
+                  aria-expanded={false}
+                  aria-controls="discovery-scan-settings"
+                  className="min-h-11 rounded-full border border-[var(--brand)] bg-white px-4 text-sm font-bold text-[var(--brand-strong)] hover:bg-[var(--brand-soft)]"
+                >
+                  调整条件
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleScan()}
+                  disabled={isRunning}
+                  className="min-h-11 rounded-full bg-[var(--brand-strong)] px-4 text-sm font-bold text-white hover:bg-[var(--brand-deep)] disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {isRunning ? "扫描进行中…" : "重新扫描"}
+                </button>
+              </div>
+            </div>
+          ) : (
+          <div id="discovery-scan-settings" className="p-4 sm:p-5">
           <div>
-            <p className="mb-2 text-[11px] font-bold text-slate-400">投资风格预设</p>
+            <div className="mb-2 flex min-h-11 items-center justify-between gap-3">
+              <p className="text-[11px] font-bold text-slate-500">投资风格预设</p>
+              {report ? (
+                <button
+                  type="button"
+                  onClick={() => setConfigExpanded(false)}
+                  aria-expanded={true}
+                  aria-controls="discovery-scan-settings"
+                  className="min-h-11 rounded-full px-3 text-xs font-bold text-[var(--brand-strong)] hover:bg-[var(--brand-soft)]"
+                >
+                  收起条件
+                </button>
+              ) : null}
+            </div>
             <InvestmentPresetSelector profile={profile} onChange={onProfileChange} compact />
           </div>
 
           <div className="mt-4 overflow-hidden rounded-xl border border-[var(--line)]">
-            <div className="flex items-center justify-between gap-2 border-b border-[var(--line)] px-3 py-2.5">
-              <div className="flex items-center gap-2">
-                <Sparkles size={15} className="text-[var(--brand)]" />
-                <span className="text-xs font-bold text-slate-700">AI 角色设定</span>
-              </div>
-              {discoveryPrompt.is_custom ? (
+            <div className="flex items-center gap-2 px-2">
+              <button
+                type="button"
+                onClick={() => setRolePromptOpen((current) => !current)}
+                className="flex min-h-11 min-w-0 flex-1 items-center justify-between gap-2 rounded-lg px-1 text-left hover:bg-slate-50"
+                aria-expanded={rolePromptOpen}
+                aria-controls="discovery-role-prompt-settings"
+              >
+                <span className="flex min-w-0 items-center gap-2">
+                  <Sparkles size={15} className="shrink-0 text-[var(--brand)]" />
+                  <span className="text-xs font-bold text-slate-700">AI 角色设定（高级）</span>
+                  <span className="truncate text-[11px] font-semibold text-slate-500">
+                    {discoveryPrompt.is_custom ? "已自定义" : "默认模板"}
+                  </span>
+                </span>
+                <ChevronDown
+                  size={15}
+                  className={`shrink-0 text-slate-500 transition ${rolePromptOpen ? "rotate-180" : ""}`}
+                  aria-hidden
+                />
+              </button>
+              {rolePromptOpen && discoveryPrompt.is_custom ? (
                 <button
                   type="button"
                   onClick={() => {
@@ -492,30 +611,36 @@ export function FundDiscoveryPanel({
                       is_custom: false,
                     }));
                   }}
-                  className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-bold text-slate-600 transition hover:bg-slate-50"
+                  className="inline-flex min-h-11 items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 text-[11px] font-bold text-slate-600 transition hover:bg-slate-50"
                 >
                   <RotateCcw size={12} />
                   恢复默认
                 </button>
-              ) : (
-                <span className="text-[11px] font-semibold text-slate-400">默认模板</span>
-              )}
+              ) : null}
             </div>
-            <RolePromptEditor
-              value={discoveryPrompt.role_prompt}
-              onChange={(value) => {
-                promptChangedByUserRef.current = true;
-                setDiscoveryPrompt((current) => ({
-                  ...current,
-                  role_prompt: value,
-                  is_custom: value.trim() !== current.default_role_prompt.trim(),
-                }));
-              }}
-            />
+            {rolePromptOpen ? (
+              <div id="discovery-role-prompt-settings" className="border-t border-[var(--line)]">
+                <RolePromptEditor
+                  value={discoveryPrompt.role_prompt}
+                  onChange={(value) => {
+                    promptChangedByUserRef.current = true;
+                    setDiscoveryPrompt((current) => ({
+                      ...current,
+                      role_prompt: value,
+                      is_custom: value.trim() !== current.default_role_prompt.trim(),
+                    }));
+                  }}
+                />
+              </div>
+            ) : (
+              <p className="border-t border-[var(--line)] px-3 py-2 text-[11px] leading-5 text-slate-500">
+                普通扫描无需调整；仅在需要固定特殊研究方法时展开编辑。
+              </p>
+            )}
           </div>
 
-          <div className="mt-4">
-            <div className="mb-2 text-xs font-semibold text-slate-700">扫描模式</div>
+          <fieldset className="mt-4">
+            <legend className="mb-2 text-xs font-semibold text-slate-700">扫描模式</legend>
             <div className="flex flex-wrap gap-2">
               {SCAN_MODE_OPTIONS.map((option) => (
                 <button
@@ -523,16 +648,18 @@ export function FundDiscoveryPanel({
                   type="button"
                   title={option.hint}
                   onClick={() => setScanMode(option.id)}
-                  className={`chip-btn ${scanMode === option.id ? "chip-btn-active" : ""}`}
+                  aria-pressed={scanMode === option.id}
+                  aria-describedby="discovery-scan-mode-hint"
+                  className={`chip-btn min-h-11 ${scanMode === option.id ? "chip-btn-active" : ""}`}
                 >
                   {option.label}
                 </button>
               ))}
             </div>
-            <p className="mt-1.5 text-[11px] leading-5 text-slate-500">
+            <p id="discovery-scan-mode-hint" className="mt-1.5 text-[11px] leading-5 text-slate-500">
               {SCAN_MODE_OPTIONS.find((item) => item.id === scanMode)?.hint}
             </p>
-          </div>
+          </fieldset>
 
           {scanMode === "dip_swing" && !isAggressiveProfile ? (
             <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50/80 px-3 py-2.5">
@@ -542,7 +669,7 @@ export function FundDiscoveryPanel({
               <button
                 type="button"
                 onClick={() => onProfileChange(applyInvestmentPreset("aggressive_swing", profile))}
-                className="shrink-0 rounded-full border border-rose-300 bg-white px-3 py-1.5 text-xs font-bold text-rose-800 transition hover:bg-rose-100"
+                className="min-h-11 shrink-0 rounded-full border border-rose-300 bg-white px-3 text-xs font-bold text-rose-800 transition hover:bg-rose-100"
               >
                 切换激进波段
               </button>
@@ -554,7 +681,9 @@ export function FundDiscoveryPanel({
               <button
                 type="button"
                 onClick={() => setDipAdvancedOpen((value) => !value)}
-                className="flex w-full items-center justify-between gap-2 px-3 py-2.5 text-left text-xs font-bold text-slate-600 hover:bg-slate-50"
+                aria-expanded={dipAdvancedOpen}
+                aria-controls="discovery-dip-advanced"
+                className="flex min-h-11 w-full items-center justify-between gap-2 px-3 text-left text-xs font-bold text-slate-600 hover:bg-slate-50"
               >
                 <span>抄底筛选（高级）</span>
                 <ChevronDown
@@ -562,17 +691,19 @@ export function FundDiscoveryPanel({
                   className={`shrink-0 transition ${dipAdvancedOpen ? "rotate-180" : ""}`}
                 />
               </button>
-              {dipAdvancedOpen ? (
+              <div id="discovery-dip-advanced">
+                {dipAdvancedOpen ? (
                 <div className="grid gap-3 border-t border-slate-100 p-3 sm:grid-cols-2">
-                  <div>
-                    <p className="mb-2 text-[11px] font-bold text-slate-400">回看天数</p>
+                  <fieldset>
+                    <legend className="mb-2 text-[11px] font-bold text-slate-500">回看天数</legend>
                     <div className="flex flex-wrap gap-2">
                       {([3, 5] as const).map((days) => (
                         <button
                           key={days}
                           type="button"
                           onClick={() => setDipLookbackDays(days)}
-                          className={`rounded-full border px-3 py-1.5 text-xs font-medium transition ${
+                          aria-pressed={dipLookbackDays === days}
+                          className={`min-h-11 rounded-full border px-3 text-xs font-medium transition ${
                             dipLookbackDays === days
                               ? "border-[var(--brand)] bg-[var(--brand)] text-white"
                               : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
@@ -582,16 +713,17 @@ export function FundDiscoveryPanel({
                         </button>
                       ))}
                     </div>
-                  </div>
-                  <div>
-                    <p className="mb-2 text-[11px] font-bold text-slate-400">最小跌幅</p>
+                  </fieldset>
+                  <fieldset>
+                    <legend className="mb-2 text-[11px] font-bold text-slate-500">最小跌幅</legend>
                     <div className="flex flex-wrap gap-2">
                       {([3, 5] as const).map((pct) => (
                         <button
                           key={pct}
                           type="button"
                           onClick={() => setDipMinDropPercent(pct)}
-                          className={`rounded-full border px-3 py-1.5 text-xs font-medium transition ${
+                          aria-pressed={dipMinDropPercent === pct}
+                          className={`min-h-11 rounded-full border px-3 text-xs font-medium transition ${
                             dipMinDropPercent === pct
                               ? "border-[var(--brand)] bg-[var(--brand)] text-white"
                               : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
@@ -601,13 +733,14 @@ export function FundDiscoveryPanel({
                         </button>
                       ))}
                     </div>
-                  </div>
+                  </fieldset>
                 </div>
               ) : (
                 <p className="border-t border-slate-100 px-3 py-2 text-[11px] leading-5 text-slate-500">
                   回看 {dipLookbackDays} 日、板块跌幅 ≥ {dipMinDropPercent}%
                 </p>
-              )}
+                )}
+              </div>
             </div>
           ) : null}
 
@@ -627,9 +760,10 @@ export function FundDiscoveryPanel({
                         key={`dip-${sector.sector_label}`}
                         type="button"
                         onClick={() => toggleSector(sector.sector_label)}
-                        className={`rounded-full border px-3 py-1.5 text-xs font-medium transition ${
+                        aria-pressed={selected}
+                        className={`min-h-11 rounded-full border px-3 text-xs font-medium transition ${
                           selected
-                            ? "border-rose-500 bg-rose-500 text-white"
+                            ? "border-rose-700 bg-rose-700 text-white"
                             : "border-rose-200 bg-rose-50 text-rose-900 hover:bg-rose-100"
                         }`}
                       >
@@ -657,7 +791,7 @@ export function FundDiscoveryPanel({
               onRetry={() => void refreshSectors()}
             />
             {loadingSectors && rawSectors.length === 0 ? (
-              <p className="mt-2 flex items-center gap-2 text-[11px] text-slate-400">
+              <p className="mt-2 flex items-center gap-2 text-[11px] text-slate-500">
                 <Loader2 size={12} className="animate-spin" />
                 同步板块热度…
               </p>
@@ -668,7 +802,7 @@ export function FundDiscoveryPanel({
                 <button
                   type="button"
                   onClick={() => void refreshSectors()}
-                  className="ml-1 font-semibold underline"
+                  className="ml-1 inline-flex min-h-11 items-center rounded-lg px-2 font-semibold underline"
                 >
                   重试
                 </button>
@@ -676,8 +810,8 @@ export function FundDiscoveryPanel({
             ) : null}
           </div>
 
-          <div className="mt-4">
-            <div className="mb-2 text-xs font-semibold text-slate-700">选基策略</div>
+          <fieldset className="mt-4">
+            <legend className="mb-2 text-xs font-semibold text-slate-700">选基策略</legend>
             <div className="flex flex-wrap gap-2">
               {SELECTION_STRATEGY_OPTIONS.map((option) => (
                 <button
@@ -685,32 +819,35 @@ export function FundDiscoveryPanel({
                   type="button"
                   title={option.hint}
                   onClick={() => setSelectionStrategy(option.id)}
-                  className={`chip-btn ${selectionStrategy === option.id ? "chip-btn-active" : ""}`}
+                  aria-pressed={selectionStrategy === option.id}
+                  aria-describedby="discovery-selection-strategy-hint"
+                  className={`chip-btn min-h-11 ${selectionStrategy === option.id ? "chip-btn-active" : ""}`}
                 >
                   {option.label}
                 </button>
               ))}
             </div>
-            <p className="mt-1.5 text-[11px] leading-5 text-slate-500">
+            <p id="discovery-selection-strategy-hint" className="mt-1.5 text-[11px] leading-5 text-slate-500">
               {SELECTION_STRATEGY_OPTIONS.find((item) => item.id === selectionStrategy)?.hint}
             </p>
-          </div>
+          </fieldset>
 
-          <div className="mt-4">
-            <div className="mb-2 text-xs font-semibold text-slate-700">基金类型偏好</div>
+          <fieldset className="mt-4">
+            <legend className="mb-2 text-xs font-semibold text-slate-700">基金类型偏好</legend>
             <div className="flex flex-wrap gap-2">
               {FUND_TYPE_OPTIONS.map((option) => (
                 <button
                   key={option.id}
                   type="button"
                   onClick={() => setFundTypePreference(option.id)}
-                  className={`chip-btn ${fundTypePreference === option.id ? "chip-btn-active" : ""}`}
+                  aria-pressed={fundTypePreference === option.id}
+                  className={`chip-btn min-h-11 ${fundTypePreference === option.id ? "chip-btn-active" : ""}`}
                 >
                   {option.label}
                 </button>
               ))}
             </div>
-          </div>
+          </fieldset>
 
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
             <label className="block text-xs font-semibold text-slate-700">
@@ -722,18 +859,19 @@ export function FundDiscoveryPanel({
                 value={budgetYuan}
                 onChange={(event) => setBudgetYuan(event.target.value)}
                 placeholder="默认按期望投入余额"
-                className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-[var(--brand)]"
+                className="mt-1 min-h-11 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-[var(--brand)]"
               />
             </label>
-            <div>
-              <div className="text-xs font-semibold text-slate-700">分析模式</div>
+            <fieldset>
+              <legend className="text-xs font-semibold text-slate-700">分析模式</legend>
               <div className="mt-1 flex rounded-xl border border-slate-200 p-1">
                 {(["fast", "deep"] as const).map((mode) => (
                   <button
                     key={mode}
                     type="button"
                     onClick={() => onAnalysisModeChange(mode)}
-                    className={`flex-1 rounded-lg px-3 py-2 text-xs font-bold ${
+                    aria-pressed={analysisMode === mode}
+                    className={`min-h-11 flex-1 rounded-lg px-3 py-2 text-xs font-bold ${
                       analysisMode === mode ? "bg-slate-900 text-white" : "text-slate-600"
                     }`}
                   >
@@ -741,33 +879,44 @@ export function FundDiscoveryPanel({
                   </button>
                 ))}
               </div>
-            </div>
+            </fieldset>
           </div>
-
-          {error ? <p className="mt-3 text-sm text-red-600">{error}</p> : null}
 
           <button
             type="button"
             data-testid="discovery-scan-button"
-            disabled={isSubmitting || Boolean(discoveryJobId) || Boolean(streamingDiscovery)}
+            disabled={isRunning}
             onClick={() => void handleScan()}
-            className="btn-primary mt-4 w-full !rounded-xl sm:w-auto"
+            className="btn-primary mt-4 min-h-11 w-full !rounded-xl sm:w-auto"
           >
-            {isSubmitting || discoveryJobId || streamingDiscovery ? (
+            {isRunning ? (
               <Loader2 size={16} className="animate-spin" />
             ) : (
               <Sparkles size={16} />
             )}
-            {discoveryJobId || streamingDiscovery ? "扫描进行中…" : "扫描今日机会"}
+            {isRunning ? "扫描进行中…" : report ? "按当前条件重新扫描" : "扫描今日机会"}
           </button>
           </div>
+          )}
         </section>
+
+        {feedback ? (
+          <InlineNotice
+            tone={feedback.tone}
+            message={feedback.message}
+            onDismiss={() => setFeedback(null)}
+          />
+        ) : null}
 
         {streamingDiscovery ? (
           <DiscoverySkeleton streaming={streamingDiscovery} onCancel={handleCancelStream} />
         ) : null}
 
-        {report && !streamingDiscovery ? (
+        {report && streamingDiscovery ? (
+          <InlineNotice tone="info" message="新扫描正在进行，下方继续显示上次报告，完成后会自动替换。" />
+        ) : null}
+
+        {report ? (
           <DiscoveryReportPanel report={report} onOpenFund={handleOpenFund} />
         ) : null}
       </div>
@@ -776,7 +925,10 @@ export function FundDiscoveryPanel({
         reports={historyReports}
         activeReportId={report?.id}
         onRefresh={() => void refreshReports()}
-        onSelect={(selected) => setReport(selected)}
+        onSelect={(selected) => {
+          setReport(selected);
+          setConfigExpanded(false);
+        }}
         onDeleted={(reportId) => {
           if (report?.id === reportId) {
             setReport(null);

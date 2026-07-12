@@ -11,6 +11,7 @@ import { useChatAutoScroll } from "@/lib/useChatAutoScroll";
 type DiscoveryChatPanelProps = {
   reportId: string;
   reportTitle?: string;
+  variant?: "card" | "drawer";
 };
 
 type LocalMessage = DiscoveryChatMessage & { pending?: boolean };
@@ -21,7 +22,11 @@ const SUGGESTED_PROMPTS = [
   "哪只风险最高，为什么？",
 ];
 
-export function DiscoveryChatPanel({ reportId, reportTitle }: DiscoveryChatPanelProps) {
+export function DiscoveryChatPanel({
+  reportId,
+  reportTitle,
+  variant = "card",
+}: DiscoveryChatPanelProps) {
   const [messages, setMessages] = useState<LocalMessage[]>([]);
   const [input, setInput] = useState("");
   const [chatMode, setChatMode] = useState<AnalysisMode>("fast");
@@ -128,14 +133,22 @@ export function DiscoveryChatPanel({ reportId, reportTitle }: DiscoveryChatPanel
   };
 
   return (
-    <section className="flex h-[min(62vh,560px)] min-h-[400px] flex-col rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="mb-3 flex items-center gap-2">
-        <MessageCircle size={18} className="text-[var(--brand)]" />
-        <h3 className="text-sm font-bold text-slate-900">追问推荐报告</h3>
-        {reportTitle ? (
-          <span className="truncate text-xs text-slate-500">{reportTitle}</span>
-        ) : null}
-      </div>
+    <section
+      className={
+        variant === "drawer"
+          ? "flex h-full min-h-0 flex-col bg-white p-4 sm:p-5"
+          : "flex h-[min(62vh,560px)] min-h-[400px] flex-col rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"
+      }
+    >
+      {variant === "card" ? (
+        <div className="mb-3 flex items-center gap-2">
+          <MessageCircle size={18} className="text-[var(--brand)]" />
+          <h3 className="text-sm font-bold text-slate-900">追问推荐报告</h3>
+          {reportTitle ? (
+            <span className="truncate text-xs text-slate-500">{reportTitle}</span>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="mb-3 flex flex-wrap gap-2">
         {SUGGESTED_PROMPTS.map((prompt) => (
@@ -144,7 +157,7 @@ export function DiscoveryChatPanel({ reportId, reportTitle }: DiscoveryChatPanel
             type="button"
             disabled={isStreaming}
             onClick={() => void handleSend(prompt)}
-            className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs text-slate-600 hover:bg-slate-100 disabled:opacity-50"
+            className="min-h-11 rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 hover:bg-slate-100 disabled:opacity-50"
           >
             {prompt}
           </button>
@@ -155,7 +168,7 @@ export function DiscoveryChatPanel({ reportId, reportTitle }: DiscoveryChatPanel
         <div
           ref={scrollRef}
           onScroll={handleScroll}
-          className="h-full min-h-[min(36vh,320px)] space-y-3 overflow-y-auto rounded-xl border border-slate-100 bg-slate-50/80 p-3"
+          className={`h-full space-y-3 overflow-y-auto rounded-xl border border-slate-100 bg-slate-50/80 p-3 ${variant === "drawer" ? "min-h-0" : "min-h-[min(36vh,320px)]"}`}
         >
         {isLoadingHistory ? (
           <div className="flex items-center gap-2 text-xs text-slate-500">
@@ -188,7 +201,7 @@ export function DiscoveryChatPanel({ reportId, reportTitle }: DiscoveryChatPanel
           <button
             type="button"
             onClick={() => scrollToBottom("smooth")}
-            className="absolute bottom-2 right-2 z-10 inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200/80 bg-white/90 text-slate-600 shadow-sm backdrop-blur transition hover:border-[rgba(37,99,235,0.4)] hover:text-[var(--brand-strong)]"
+            className="absolute bottom-2 right-2 z-10 inline-flex h-11 w-11 items-center justify-center rounded-full border border-slate-200/80 bg-white/90 text-slate-600 shadow-sm backdrop-blur transition hover:border-[rgba(37,99,235,0.4)] hover:text-[var(--brand-strong)]"
             aria-label="回到底部"
           >
             <ArrowDown size={14} />
@@ -196,34 +209,41 @@ export function DiscoveryChatPanel({ reportId, reportTitle }: DiscoveryChatPanel
         ) : null}
       </div>
 
-      {error ? <p className="mb-2 text-xs text-red-600">{error}</p> : null}
+      {error ? (
+        <p role="alert" className="mb-2 text-xs text-red-600">
+          {error}
+        </p>
+      ) : null}
 
       <div className="flex items-center gap-2">
         <div className="flex rounded-lg border border-slate-200 p-0.5 text-xs">
           <button
             type="button"
+            aria-pressed={chatMode === "fast"}
             onClick={() => {
               setChatMode("fast");
               saveReportChatMode("fast");
             }}
-            className={`flex items-center gap-1 rounded-md px-2 py-1 ${chatMode === "fast" ? "bg-slate-900 text-white" : "text-slate-600"}`}
+            className={`flex min-h-11 min-w-11 items-center justify-center gap-1 rounded-md px-2 py-2 ${chatMode === "fast" ? "bg-slate-900 text-white" : "text-slate-600"}`}
           >
             <Zap size={12} />
             快速
           </button>
           <button
             type="button"
+            aria-pressed={chatMode === "deep"}
             onClick={() => {
               setChatMode("deep");
               saveReportChatMode("deep");
             }}
-            className={`flex items-center gap-1 rounded-md px-2 py-1 ${chatMode === "deep" ? "bg-slate-900 text-white" : "text-slate-600"}`}
+            className={`flex min-h-11 min-w-11 items-center justify-center gap-1 rounded-md px-2 py-2 ${chatMode === "deep" ? "bg-slate-900 text-white" : "text-slate-600"}`}
           >
             <Sparkles size={12} />
             深度
           </button>
         </div>
         <input
+          aria-label="追问内容"
           value={input}
           onChange={(event) => setInput(event.target.value)}
           onKeyDown={(event) => {
@@ -233,14 +253,14 @@ export function DiscoveryChatPanel({ reportId, reportTitle }: DiscoveryChatPanel
             }
           }}
           placeholder="继续追问…"
-          className="min-w-0 flex-1 rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-[var(--brand)]"
+          className="min-h-11 min-w-0 flex-1 rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-[var(--brand)]"
           disabled={isStreaming}
         />
         <button
           type="button"
           disabled={isStreaming || !input.trim()}
           onClick={() => void handleSend(input)}
-          className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--brand)] text-white hover:bg-[var(--brand-strong)] disabled:opacity-50"
+          className="inline-flex h-11 w-11 items-center justify-center rounded-xl bg-[var(--brand)] text-white hover:bg-[var(--brand-strong)] disabled:opacity-50"
           aria-label="发送"
         >
           {isStreaming ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { InlineNotice } from "@/components/InlineNotice";
 import type { PortfolioRiskCorrelation } from "@/lib/api";
 import { fetchPortfolioRiskCorrelation } from "@/lib/api";
 
@@ -25,9 +26,10 @@ export function PortfolioCorrelationHeatmap({ enabled }: { enabled: boolean }) {
   const [data, setData] = useState<PortfolioRiskCorrelation | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [retrySequence, setRetrySequence] = useState(0);
 
   useEffect(() => {
-    if (!enabled || data || loading) {
+    if (!enabled || data) {
       return;
     }
     let cancelled = false;
@@ -52,18 +54,24 @@ export function PortfolioCorrelationHeatmap({ enabled }: { enabled: boolean }) {
     return () => {
       cancelled = true;
     };
-  }, [enabled, data, loading]);
+  }, [enabled, data, retrySequence]);
 
   if (!enabled) {
     return null;
   }
 
   if (loading) {
-    return <div className="risk-corr-note">正在拉取各持仓净值并计算相关性…</div>;
+    return <div className="risk-corr-note" role="status">正在拉取各持仓净值并计算相关性…</div>;
   }
 
   if (error) {
-    return <div className="risk-corr-note">相关性加载失败：{error}</div>;
+    return (
+      <InlineNotice
+        tone="error"
+        message={`相关性加载失败：${error}`}
+        action={{ label: "重试", onClick: () => setRetrySequence((current) => current + 1) }}
+      />
+    );
   }
 
   if (!data || !data.available) {
@@ -75,24 +83,55 @@ export function PortfolioCorrelationHeatmap({ enabled }: { enabled: boolean }) {
   return (
     <div className="risk-corr">
       <div
-        className="risk-corr-grid"
-        style={{ gridTemplateColumns: `auto repeat(${codes.length}, minmax(2.25rem, 1fr))` }}
+        className="overflow-x-auto rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] focus-visible:ring-offset-2"
+        role="region"
+        aria-label="持仓相关性矩阵，可横向滚动"
+        tabIndex={0}
       >
-        <div className="risk-corr-corner" />
-        {names.map((name, idx) => (
-          <div key={`col-${codes[idx]}`} className="risk-corr-col-label" title={name}>
-            {shortName(name)}
-          </div>
-        ))}
-        {codes.map((code, row) => (
-          <FragmentRow
-            key={`row-${code}`}
-            label={names[row]}
-            cells={matrix[row]}
-            codes={codes}
-          />
-        ))}
+        <table className="w-full min-w-max border-separate border-spacing-0.5 text-center text-xs">
+          <caption className="sr-only">各持仓近{sampleDays}个对齐交易日的收益相关系数</caption>
+          <thead>
+            <tr>
+              <th scope="col" className="min-w-20 px-1 py-2 text-left text-xs font-bold text-slate-500">基金</th>
+              {names.map((name, idx) => (
+                <th
+                  key={`col-${codes[idx]}`}
+                  scope="col"
+                  className="min-w-12 max-w-20 px-1 py-2 text-xs font-bold text-slate-600"
+                  title={name}
+                >
+                  {shortName(name)}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {codes.map((code, row) => (
+              <tr key={`row-${code}`}>
+                <th
+                  scope="row"
+                  className="max-w-28 px-1 py-2 text-left text-xs font-bold text-slate-600"
+                  title={names[row]}
+                >
+                  {shortName(names[row])}
+                </th>
+                {(matrix[row] ?? []).map((value, col) => (
+                  <td
+                    key={`cell-${code}-${codes[col]}`}
+                    aria-label={`${names[row]}与${names[col]}相关系数${value == null ? "暂无数据" : value.toFixed(2)}`}
+                    className="p-0.5"
+                  >
+                    <span className="risk-corr-cell" style={corrCellStyle(value)}>
+                      {value == null ? "—" : value.toFixed(2)}
+                    </span>
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
+      <p className="mt-2 text-[11px] text-slate-500 sm:hidden">可左右滑动查看完整矩阵</p>
 
       {maxPair ? (
         <div className="risk-corr-insight">
@@ -105,28 +144,5 @@ export function PortfolioCorrelationHeatmap({ enabled }: { enabled: boolean }) {
         基于近 {sampleDays} 个对齐交易日的日收益 · 红=同向 / 绿=反向
       </div>
     </div>
-  );
-}
-
-function FragmentRow({
-  label,
-  cells,
-  codes,
-}: {
-  label: string;
-  cells: Array<number | null>;
-  codes: string[];
-}) {
-  return (
-    <>
-      <div className="risk-corr-row-label" title={label}>
-        {shortName(label)}
-      </div>
-      {cells.map((value, col) => (
-        <div key={`cell-${codes[col]}`} className="risk-corr-cell" style={corrCellStyle(value)}>
-          {value == null ? "—" : value.toFixed(2)}
-        </div>
-      ))}
-    </>
   );
 }

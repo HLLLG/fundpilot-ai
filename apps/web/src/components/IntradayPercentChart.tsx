@@ -126,7 +126,7 @@ export function IntradayPercentChart({ points, height = 200, flat = false }: Int
   if (!chart) {
     return (
       <div
-        className="flex items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-400"
+        className="flex items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-500"
         style={{ height }}
       >
         暂无分时数据
@@ -139,10 +139,48 @@ export function IntradayPercentChart({ points, height = 200, flat = false }: Int
   const yLabelX = chart.plotLeft + 4;
   const yTopLabelY = chart.plotTop + 8;
   const yBottomLabelY = chart.plotBottom - 3;
+  const latest = chart.coords[chart.coords.length - 1];
+  const chartLabel = flat
+    ? `当日涨跌幅水平参考线，${formatRangePercent(latest.percent)}，无分时明细`
+    : `分时涨跌幅走势图，${formatTimeLabel(chart.coords[0].time)}至${formatTimeLabel(latest.time)}，最新${formatRangePercent(latest.percent)}。聚焦后可用左右方向键逐点查看`;
+
+  const moveKeyboardCursor = (key: string) => {
+    if (flat) {
+      return;
+    }
+    if (key === "Home") {
+      setHoverIndex(0);
+      return;
+    }
+    if (key === "End") {
+      setHoverIndex(chart.coords.length - 1);
+      return;
+    }
+    if (key === "ArrowLeft") {
+      setHoverIndex((current) => Math.max(0, (current ?? chart.coords.length) - 1));
+      return;
+    }
+    if (key === "ArrowRight") {
+      setHoverIndex((current) => Math.min(chart.coords.length - 1, (current ?? -1) + 1));
+    }
+  };
 
   return (
     <div ref={containerRef} className="relative w-full">
-      <svg viewBox={`0 0 ${chart.width} ${chart.height}`} className="w-full" role="img">
+      <svg
+        viewBox={`0 0 ${chart.width} ${chart.height}`}
+        className="w-full rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] focus-visible:ring-offset-2"
+        role="img"
+        aria-label={chartLabel}
+        tabIndex={flat ? -1 : 0}
+        onKeyDown={(event) => {
+          if (["Home", "End", "ArrowLeft", "ArrowRight"].includes(event.key)) {
+            event.preventDefault();
+            moveKeyboardCursor(event.key);
+          }
+        }}
+        onBlur={() => setHoverIndex(null)}
+      >
         <defs>
           <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor={chart.colors.fillStart} />
@@ -191,7 +229,7 @@ export function IntradayPercentChart({ points, height = 200, flat = false }: Int
           x={yLabelX}
           y={yTopLabelY}
           textAnchor="start"
-          className="fill-slate-400 font-medium tabular-nums"
+          className="fill-slate-500 font-medium tabular-nums"
           fontSize={8}
         >
           {formatRangePercent(chart.halfSpan)}
@@ -200,7 +238,7 @@ export function IntradayPercentChart({ points, height = 200, flat = false }: Int
           x={yLabelX}
           y={yBottomLabelY}
           textAnchor="start"
-          className="fill-slate-400 font-medium tabular-nums"
+          className="fill-slate-500 font-medium tabular-nums"
           fontSize={8}
         >
           {formatRangePercent(-chart.halfSpan)}
@@ -268,14 +306,14 @@ export function IntradayPercentChart({ points, height = 200, flat = false }: Int
           </>
         ) : null}
 
-        <text x={chart.padding.left} y={chart.height - 8} className="fill-slate-400 text-[10px]">
+        <text x={chart.padding.left} y={chart.height - 8} className="fill-slate-500 text-[10px]">
           09:30
         </text>
         <text
           x={chart.padding.left + chart.chartWidth / 2}
           y={chart.height - 8}
           textAnchor="middle"
-          className="fill-slate-400 text-[10px]"
+          className="fill-slate-500 text-[10px]"
         >
           11:30/13:00
         </text>
@@ -283,7 +321,7 @@ export function IntradayPercentChart({ points, height = 200, flat = false }: Int
           x={chart.width - chart.padding.right}
           y={chart.height - 8}
           textAnchor="end"
-          className="fill-slate-400 text-[10px]"
+          className="fill-slate-500 text-[10px]"
         >
           15:00
         </text>
@@ -293,7 +331,7 @@ export function IntradayPercentChart({ points, height = 200, flat = false }: Int
           width={chart.chartWidth}
           height={chart.chartHeight}
           fill="transparent"
-          onMouseMove={(event) => {
+          onPointerMove={(event) => {
             if (flat) {
               return;
             }
@@ -310,9 +348,12 @@ export function IntradayPercentChart({ points, height = 200, flat = false }: Int
             }
             setHoverIndex(bestIndex);
           }}
-          onMouseLeave={() => setHoverIndex(null)}
+          onPointerLeave={() => setHoverIndex(null)}
         />
       </svg>
+      <p className="sr-only" aria-live="polite">
+        {active ? `${formatTimeLabel(active.time)}，涨跌幅${formatRangePercent(active.percent)}` : ""}
+      </p>
     </div>
   );
 }

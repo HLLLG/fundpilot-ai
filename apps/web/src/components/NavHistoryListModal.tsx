@@ -5,6 +5,7 @@ import { Loader2, X } from "lucide-react";
 import type { FundNavPoint } from "@/lib/api";
 import { fetchFundNavHistoryPage } from "@/lib/api";
 import { cnSignedPercent, formatSignedPercent } from "@/lib/performanceTrend";
+import { useDialogA11y } from "@/lib/useDialogA11y";
 
 type NavHistoryListModalProps = {
   fundCode: string;
@@ -30,6 +31,12 @@ export function NavHistoryListModal({ fundCode, fundName, onClose }: NavHistoryL
   const loadingMoreRef = useRef(false);
   const sentinelRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useDialogA11y<HTMLDivElement>({
+    open: true,
+    onClose,
+    initialFocusRef: closeButtonRef,
+  });
 
   const loadPage = useCallback(
     async (before: string | null, append: boolean) => {
@@ -72,21 +79,6 @@ export function NavHistoryListModal({ fundCode, fundName, onClose }: NavHistoryL
   }, [loadPage]);
 
   useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        onClose();
-      }
-    };
-    document.addEventListener("keydown", onKeyDown);
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.removeEventListener("keydown", onKeyDown);
-      document.body.style.overflow = prevOverflow;
-    };
-  }, [onClose]);
-
-  useEffect(() => {
     const sentinel = sentinelRef.current;
     const root = listRef.current;
     if (!sentinel || !root) {
@@ -112,30 +104,36 @@ export function NavHistoryListModal({ fundCode, fundName, onClose }: NavHistoryL
       role="presentation"
     >
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         className="flex max-h-[88vh] w-full max-w-lg flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl sm:rounded-2xl"
         onClick={(event) => event.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-labelledby="nav-history-title"
+        aria-describedby="nav-history-fund-name"
       >
         <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
           <div className="min-w-0">
-            <h3 id="nav-history-title" className="truncate text-base font-bold text-slate-900">
+            <h2 id="nav-history-title" className="truncate text-base font-bold text-slate-900">
               历史净值
-            </h3>
-            <p className="truncate text-xs text-slate-500">{fundName}</p>
+            </h2>
+            <p id="nav-history-fund-name" className="truncate text-xs text-slate-500">
+              {fundName}
+            </p>
           </div>
           <button
+            ref={closeButtonRef}
             type="button"
             onClick={onClose}
-            className="rounded-full p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+            className="touch-target inline-flex items-center justify-center rounded-full text-slate-500 hover:bg-slate-100 hover:text-slate-600"
             aria-label="关闭"
           >
             <X size={18} />
           </button>
         </div>
 
-        <div className="grid grid-cols-3 border-b border-slate-100 bg-slate-50/80 px-4 py-2 text-[11px] font-semibold text-slate-400">
+        <div className="grid grid-cols-3 border-b border-slate-100 bg-slate-50/80 px-4 py-2 text-[11px] font-semibold text-slate-500">
           <span>日期</span>
           <span className="text-center">净值</span>
           <span className="text-right">日涨幅</span>
@@ -143,14 +141,16 @@ export function NavHistoryListModal({ fundCode, fundName, onClose }: NavHistoryL
 
         <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto">
           {loading ? (
-            <div className="flex items-center justify-center py-16 text-sm text-slate-400">
+            <div className="flex items-center justify-center py-16 text-sm text-slate-500" role="status">
               <Loader2 size={18} className="mr-2 animate-spin" />
               加载中…
             </div>
           ) : error && rows.length === 0 ? (
-            <div className="px-4 py-12 text-center text-sm text-rose-600">{error}</div>
+            <div className="px-4 py-12 text-center text-sm text-rose-600" role="alert">
+              {error}
+            </div>
           ) : rows.length === 0 ? (
-            <div className="px-4 py-12 text-center text-sm text-slate-400">暂无历史净值</div>
+            <div className="px-4 py-12 text-center text-sm text-slate-500">暂无历史净值</div>
           ) : (
             <>
               {rows.map((row) => (
@@ -165,7 +165,7 @@ export function NavHistoryListModal({ fundCode, fundName, onClose }: NavHistoryL
                   </span>
                 </div>
               ))}
-              <div ref={sentinelRef} className="py-4 text-center text-xs text-slate-400">
+              <div ref={sentinelRef} className="py-4 text-center text-xs text-slate-500">
                 {loadingMore ? (
                   <span className="inline-flex items-center gap-2">
                     <Loader2 size={14} className="animate-spin" />

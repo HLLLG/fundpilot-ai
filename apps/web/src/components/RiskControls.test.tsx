@@ -45,33 +45,37 @@ function props(): ComponentProps<typeof RiskControls> {
 
 it("shows full generation controls when there is no completed report", () => {
   render(<RiskControls {...props()} readingModeKey={null} />);
-  expect(screen.getByText("AI 角色设定")).toBeInTheDocument();
+  const rolePromptTrigger = screen.getByRole("button", { name: /AI 角色设定（高级）/ });
+  expect(rolePromptTrigger).toHaveAttribute("aria-expanded", "false");
+  expect(screen.queryByTestId("role-prompt-editor")).not.toBeInTheDocument();
+  fireEvent.click(rolePromptTrigger);
+  expect(screen.getByTestId("role-prompt-editor")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "生成今日操作建议" })).toBeInTheDocument();
 });
 
 it("collapses to a reading summary when a report exists", () => {
   render(<RiskControls {...props()} readingModeKey="report-1" />);
   expect(screen.getByText("本次生成设置")).toBeInTheDocument();
-  expect(screen.queryByText("AI 角色设定")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /AI 角色设定（高级）/ })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "重新生成" })).toBeInTheDocument();
 });
 
 it("opens settings and collapses again for a new report id", () => {
   const view = render(<RiskControls {...props()} readingModeKey="report-1" />);
   fireEvent.click(screen.getByRole("button", { name: "调整设置" }));
-  expect(screen.getByText("AI 角色设定")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /AI 角色设定（高级）/ })).toBeInTheDocument();
   view.rerender(<RiskControls {...props()} readingModeKey="report-2" />);
-  expect(screen.queryByText("AI 角色设定")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /AI 角色设定（高级）/ })).not.toBeInTheDocument();
 });
 
 it("lets readers collapse settings without regenerating the report", () => {
   render(<RiskControls {...props()} readingModeKey="report-1" />);
   fireEvent.click(screen.getByRole("button", { name: "调整设置" }));
-  expect(screen.getByText("AI 角色设定")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /AI 角色设定（高级）/ })).toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("button", { name: "收起设置" }));
   expect(screen.getByText("本次生成设置")).toBeInTheDocument();
-  expect(screen.queryByText("AI 角色设定")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /AI 角色设定（高级）/ })).not.toBeInTheDocument();
 });
 
 it("shows a clickable label for the DCA preference", () => {

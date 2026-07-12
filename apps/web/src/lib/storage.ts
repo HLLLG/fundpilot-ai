@@ -7,6 +7,80 @@ const DISCOVERY_SECTORS_KEY = "fundpilot-discovery-sectors";
 const MODE_KEY = "fundpilot-analysis-mode";
 const CHAT_MODE_KEY = "fundpilot-report-chat-mode";
 
+const USER_SCOPED_STORAGE_VERSION = 1;
+
+type UserStorageId = number | null | undefined;
+
+type UserScopedStorageBucket<T> = {
+  version: typeof USER_SCOPED_STORAGE_VERSION;
+  byUserId: Record<string, T>;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Read account-owned data only from the versioned bucket format. The previous
+ * single-value format intentionally is not migrated because it has no owner and
+ * therefore cannot be exposed safely after an account switch.
+ */
+function loadUserScopedValue<T>(key: string, userId: UserStorageId): T | null {
+  if (typeof window === "undefined" || userId == null) {
+    return null;
+  }
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw) as unknown;
+    if (
+      !isRecord(parsed) ||
+      parsed.version !== USER_SCOPED_STORAGE_VERSION ||
+      !isRecord(parsed.byUserId)
+    ) {
+      return null;
+    }
+    return (parsed.byUserId[String(userId)] as T | undefined) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function saveUserScopedValue<T>(key: string, userId: UserStorageId, value: T): void {
+  if (typeof window === "undefined" || userId == null) {
+    return;
+  }
+  try {
+    const raw = window.localStorage.getItem(key);
+    let parsed: unknown = null;
+    if (raw) {
+      try {
+        parsed = JSON.parse(raw) as unknown;
+      } catch {
+        // A malformed or legacy ownerless value is safe to replace with a bucket.
+      }
+    }
+    const existingByUserId =
+      isRecord(parsed) &&
+      parsed.version === USER_SCOPED_STORAGE_VERSION &&
+      isRecord(parsed.byUserId)
+        ? parsed.byUserId
+        : {};
+    const bucket: UserScopedStorageBucket<T> = {
+      version: USER_SCOPED_STORAGE_VERSION,
+      byUserId: {
+        ...(existingByUserId as Record<string, T>),
+        [String(userId)]: value,
+      },
+    };
+    window.localStorage.setItem(key, JSON.stringify(bucket));
+  } catch {
+    // Ignore unavailable or malformed localStorage; remote state remains authoritative.
+  }
+}
+
 export type AnalysisMode = "fast" | "deep";
 export type ReportChatMode = AnalysisMode;
 
@@ -60,48 +134,27 @@ export function normalizeInvestorProfile(
   };
 }
 
-export function loadInvestorProfile(fallback: InvestorProfile): InvestorProfile {
-  if (typeof window === "undefined") {
-    return normalizeInvestorProfile(fallback, fallback);
-  }
-  try {
-    const raw = window.localStorage.getItem(PROFILE_KEY);
-    if (!raw) {
-      return normalizeInvestorProfile(fallback, fallback);
-    }
-    return normalizeInvestorProfile(JSON.parse(raw) as Partial<InvestorProfile>, fallback);
-  } catch {
-    return normalizeInvestorProfile(fallback, fallback);
-  }
+export function loadInvestorProfile(
+  userId: UserStorageId,
+  fallback: InvestorProfile,
+): InvestorProfile {
+  const stored = loadUserScopedValue<Partial<InvestorProfile>>(PROFILE_KEY, userId);
+  return normalizeInvestorProfile(stored, fallback);
 }
 
-export function saveInvestorProfile(profile: InvestorProfile) {
-  if (typeof window === "undefined") {
-    return;
-  }
-  window.localStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
+export function saveInvestorProfile(userId: UserStorageId, profile: InvestorProfile) {
+  saveUserScopedValue(PROFILE_KEY, userId, profile);
 }
 
 export function loadAnalysisPrompt(
+  userId: UserStorageId,
   fallback: Pick<AnalysisPromptConfig, "role_prompt" | "default_role_prompt">,
 ): AnalysisPromptConfig {
-  if (typeof window === "undefined") {
-    return {
-      role_prompt: fallback.role_prompt,
-      is_custom: false,
-      default_role_prompt: fallback.default_role_prompt,
-    };
-  }
-  try {
-    const raw = window.localStorage.getItem(ANALYSIS_PROMPT_KEY);
-    if (!raw) {
-      return {
-        role_prompt: fallback.role_prompt,
-        is_custom: false,
-        default_role_prompt: fallback.default_role_prompt,
-      };
-    }
-    const parsed = JSON.parse(raw) as Partial<AnalysisPromptConfig>;
+  const parsed = loadUserScopedValue<Partial<AnalysisPromptConfig>>(
+    ANALYSIS_PROMPT_KEY,
+    userId,
+  );
+  if (parsed) {
     const rolePrompt = parsed.role_prompt?.trim() || fallback.role_prompt;
     const defaultRolePrompt =
       parsed.default_role_prompt?.trim() || fallback.default_role_prompt;
@@ -110,42 +163,27 @@ export function loadAnalysisPrompt(
       is_custom: Boolean(parsed.is_custom),
       default_role_prompt: defaultRolePrompt,
     };
-  } catch {
-    return {
-      role_prompt: fallback.role_prompt,
-      is_custom: false,
-      default_role_prompt: fallback.default_role_prompt,
-    };
   }
+  return {
+    role_prompt: fallback.role_prompt,
+    is_custom: false,
+    default_role_prompt: fallback.default_role_prompt,
+  };
 }
 
-export function saveAnalysisPrompt(config: AnalysisPromptConfig) {
-  if (typeof window === "undefined") {
-    return;
-  }
-  window.localStorage.setItem(ANALYSIS_PROMPT_KEY, JSON.stringify(config));
+export function saveAnalysisPrompt(userId: UserStorageId, config: AnalysisPromptConfig) {
+  saveUserScopedValue(ANALYSIS_PROMPT_KEY, userId, config);
 }
 
 export function loadDiscoveryPrompt(
+  userId: UserStorageId,
   fallback: Pick<DiscoveryPromptConfig, "role_prompt" | "default_role_prompt">,
 ): DiscoveryPromptConfig {
-  if (typeof window === "undefined") {
-    return {
-      role_prompt: fallback.role_prompt,
-      is_custom: false,
-      default_role_prompt: fallback.default_role_prompt,
-    };
-  }
-  try {
-    const raw = window.localStorage.getItem(DISCOVERY_PROMPT_KEY);
-    if (!raw) {
-      return {
-        role_prompt: fallback.role_prompt,
-        is_custom: false,
-        default_role_prompt: fallback.default_role_prompt,
-      };
-    }
-    const parsed = JSON.parse(raw) as Partial<DiscoveryPromptConfig>;
+  const parsed = loadUserScopedValue<Partial<DiscoveryPromptConfig>>(
+    DISCOVERY_PROMPT_KEY,
+    userId,
+  );
+  if (parsed) {
     const rolePrompt = parsed.role_prompt?.trim() || fallback.role_prompt;
     const defaultRolePrompt =
       parsed.default_role_prompt?.trim() || fallback.default_role_prompt;
@@ -154,20 +192,16 @@ export function loadDiscoveryPrompt(
       is_custom: Boolean(parsed.is_custom),
       default_role_prompt: defaultRolePrompt,
     };
-  } catch {
-    return {
-      role_prompt: fallback.role_prompt,
-      is_custom: false,
-      default_role_prompt: fallback.default_role_prompt,
-    };
   }
+  return {
+    role_prompt: fallback.role_prompt,
+    is_custom: false,
+    default_role_prompt: fallback.default_role_prompt,
+  };
 }
 
-export function saveDiscoveryPrompt(config: DiscoveryPromptConfig) {
-  if (typeof window === "undefined") {
-    return;
-  }
-  window.localStorage.setItem(DISCOVERY_PROMPT_KEY, JSON.stringify(config));
+export function saveDiscoveryPrompt(userId: UserStorageId, config: DiscoveryPromptConfig) {
+  saveUserScopedValue(DISCOVERY_PROMPT_KEY, userId, config);
 }
 
 export function loadAnalysisMode(fallback: AnalysisMode = "deep"): AnalysisMode {

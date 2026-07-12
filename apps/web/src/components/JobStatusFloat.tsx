@@ -96,7 +96,7 @@ export function JobStatusFloat({ jobId, onComplete, onClose, onRetry }: JobStatu
       {state === "completed" && (
         <div>
           <div className="flex items-start gap-3">
-            <CheckCircle size={20} className="mt-0.5 shrink-0 text-emerald-500" />
+            <CheckCircle size={20} className="mt-0.5 shrink-0 text-emerald-700" />
             <div className="text-sm font-bold text-slate-900">报告已生成</div>
           </div>
           <div className="mt-3 flex gap-2">
@@ -105,14 +105,14 @@ export function JobStatusFloat({ jobId, onComplete, onClose, onRetry }: JobStatu
               onClick={() => {
                 if (report) onComplete(report);
               }}
-              className="flex-1 rounded-xl bg-blue-600 px-3 py-2 text-xs font-bold text-white hover:bg-blue-700"
+              className="min-h-11 flex-1 rounded-xl bg-blue-600 px-3 py-2 text-xs font-bold text-white hover:bg-blue-700"
             >
               查看报告
             </button>
             <button
               type="button"
               onClick={onClose}
-              className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50"
+              className="min-h-11 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50"
             >
               关闭
             </button>
@@ -123,7 +123,7 @@ export function JobStatusFloat({ jobId, onComplete, onClose, onRetry }: JobStatu
       {state === "failed" && (
         <div>
           <div className="flex items-start gap-3">
-            <XCircle size={20} className="mt-0.5 shrink-0 text-red-500" />
+            <XCircle size={20} className="mt-0.5 shrink-0 text-red-700" />
             <div>
               <div className="text-sm font-bold text-slate-900">分析失败</div>
               {error && (
@@ -135,14 +135,14 @@ export function JobStatusFloat({ jobId, onComplete, onClose, onRetry }: JobStatu
             <button
               type="button"
               onClick={onRetry}
-              className="flex-1 rounded-xl bg-blue-600 px-3 py-2 text-xs font-bold text-white hover:bg-blue-700"
+              className="min-h-11 flex-1 rounded-xl bg-blue-600 px-3 py-2 text-xs font-bold text-white hover:bg-blue-700"
             >
               重试
             </button>
             <button
               type="button"
               onClick={onClose}
-              className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50"
+              className="min-h-11 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50"
             >
               关闭
             </button>

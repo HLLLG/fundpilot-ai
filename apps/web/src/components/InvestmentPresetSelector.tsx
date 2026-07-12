@@ -31,6 +31,7 @@ export function InvestmentPresetSelector({
             type="button"
             data-testid={`investment-preset-${option.id}`}
             onClick={() => onChange(applyInvestmentPreset(option.id, profile))}
+            aria-pressed={preset === option.id}
             className={`rounded-xl border px-3 py-2.5 text-left transition ${
               preset === option.id
                 ? option.id === "aggressive_swing"

@@ -20,7 +20,7 @@ function StatusLine({
   children: React.ReactNode;
 }) {
   const tones = {
-    loading: "text-slate-400 [&>i]:bg-slate-300",
+    loading: "text-slate-500 [&>i]:bg-slate-300",
     fresh:
       "text-slate-500 [&>i]:bg-emerald-500 [&>i]:shadow-[0_0_0_3px_rgba(16,185,129,0.10)]",
     stale:

@@ -2,12 +2,15 @@
 
 import { useRef } from "react";
 import { ArrowDownLeft, ArrowUpRight, ChevronLeft, ChevronRight } from "lucide-react";
+import { OCR_PRIVACY_COPY } from "@/lib/ocrPrivacy";
+import { useDialogA11y } from "@/lib/useDialogA11y";
 
 type BatchTransactionModalProps = {
   open: boolean;
   onClose: () => void;
   onUpload: (file: File) => void;
   isUploading?: boolean;
+  errorMessage?: string | null;
 };
 
 export function BatchTransactionModal({
@@ -15,39 +18,50 @@ export function BatchTransactionModal({
   onClose,
   onUpload,
   isUploading = false,
+  errorMessage = null,
 }: BatchTransactionModalProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const requestClose = () => {
+    if (!isUploading) {
+      onClose();
+    }
+  };
+  const dialogRef = useDialogA11y<HTMLDivElement>({
+    open,
+    onClose: requestClose,
+    initialFocusRef: closeButtonRef,
+  });
 
   if (!open) {
     return null;
   }
 
-  const handleBackdropClose = () => {
-    if (isUploading) {
-      return;
-    }
-    onClose();
-  };
-
   return (
     <div
       className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/40 sm:items-center sm:p-4"
-      onClick={handleBackdropClose}
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          requestClose();
+        }
+      }}
       role="presentation"
     >
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         className="flex max-h-[94vh] w-full max-w-md flex-col overflow-hidden rounded-t-[28px] bg-[#f5f7fa] shadow-2xl sm:rounded-[28px]"
-        onClick={(event) => event.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-labelledby="batch-transaction-modal-title"
       >
         <header className="relative flex items-center justify-center border-b border-slate-200/70 bg-white px-4 py-3.5">
           <button
+            ref={closeButtonRef}
             type="button"
             onClick={onClose}
             disabled={isUploading}
-            className="absolute left-3 inline-flex h-9 w-9 items-center justify-center rounded-full text-slate-600 transition hover:bg-slate-100 disabled:opacity-50"
+            className="touch-target absolute left-2 inline-flex items-center justify-center rounded-full text-slate-600 transition hover:bg-slate-100 disabled:opacity-50"
             aria-label="关闭"
           >
             <ChevronLeft size={22} strokeWidth={2.25} />
@@ -61,9 +75,17 @@ export function BatchTransactionModal({
           <TransactionRecordGuide />
           <p className="mt-6 text-center text-[15px] leading-7 text-slate-800">
             上传
-            <span className="font-bold text-[#4a86e8]">「交易记录」</span>
+            <span className="font-bold text-[var(--brand-strong)]">「交易记录」</span>
             截图即可加减仓、同步买卖点
           </p>
+          <p className="mt-4 rounded-xl border border-blue-100 bg-blue-50/70 px-3 py-2 text-xs leading-5 text-slate-600">
+            {OCR_PRIVACY_COPY.uploadNotice}
+          </p>
+          {errorMessage ? (
+            <p role="alert" className="mt-3 w-full rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm leading-5 text-rose-800">
+              {errorMessage}
+            </p>
+          ) : null}
         </div>
 
         <div className="space-y-3 bg-[#f5f7fa] px-5 pb-8 pt-3">
@@ -72,6 +94,7 @@ export function BatchTransactionModal({
             type="file"
             accept="image/*"
             className="sr-only"
+            tabIndex={-1}
             disabled={isUploading}
             onChange={(event) => {
               const file = event.target.files?.[0];
@@ -143,7 +166,7 @@ function GuideRow({
       <span className="min-w-0 flex-1 truncate text-[8px] font-medium text-slate-700">{name}</span>
       <span
         className={`shrink-0 text-[8px] font-bold tabular-nums ${
-          isBuy ? "text-rose-600" : "text-emerald-600"
+          isBuy ? "profit-up" : "profit-down"
         }`}
       >
         {amount}

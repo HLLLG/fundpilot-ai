@@ -100,7 +100,7 @@ export function DiscoveryJobStatusFloat({
       {state === "completed" ? (
         <div>
           <div className="flex items-start gap-3">
-            <CheckCircle size={20} className="mt-0.5 shrink-0 text-emerald-500" />
+            <CheckCircle size={20} className="mt-0.5 shrink-0 text-emerald-700" />
             <div className="text-sm font-bold text-slate-900">推荐报告已生成</div>
           </div>
           <div className="mt-3 flex gap-2">
@@ -109,14 +109,14 @@ export function DiscoveryJobStatusFloat({
               onClick={() => {
                 if (report) onComplete(report);
               }}
-              className="flex-1 rounded-xl bg-[var(--brand)] px-3 py-2 text-xs font-bold text-white hover:bg-[var(--brand-strong)]"
+              className="min-h-11 flex-1 rounded-xl bg-[var(--brand)] px-3 py-2 text-xs font-bold text-white hover:bg-[var(--brand-strong)]"
             >
               查看报告
             </button>
             <button
               type="button"
               onClick={onClose}
-              className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50"
+              className="min-h-11 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50"
             >
               关闭
             </button>
@@ -127,7 +127,7 @@ export function DiscoveryJobStatusFloat({
       {state === "failed" ? (
         <div>
           <div className="flex items-start gap-3">
-            <XCircle size={20} className="mt-0.5 shrink-0 text-red-500" />
+            <XCircle size={20} className="mt-0.5 shrink-0 text-red-700" />
             <div>
               <div className="text-sm font-bold text-slate-900">扫描失败</div>
               {error ? (
@@ -139,14 +139,14 @@ export function DiscoveryJobStatusFloat({
             <button
               type="button"
               onClick={onRetry}
-              className="flex-1 rounded-xl bg-[var(--brand)] px-3 py-2 text-xs font-bold text-white hover:bg-[var(--brand-strong)]"
+              className="min-h-11 flex-1 rounded-xl bg-[var(--brand)] px-3 py-2 text-xs font-bold text-white hover:bg-[var(--brand-strong)]"
             >
               重试
             </button>
             <button
               type="button"
               onClick={onClose}
-              className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50"
+              className="min-h-11 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50"
             >
               关闭
             </button>

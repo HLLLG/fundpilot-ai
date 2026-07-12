@@ -48,6 +48,8 @@ jobs:
         run: npm ci
         env:
           NPM_CONFIG_REGISTRY: https://registry.npmjs.org/
+      - name: Test
+        run: npm test
       - name: Lint
         run: npm run lint
       - name: Typecheck

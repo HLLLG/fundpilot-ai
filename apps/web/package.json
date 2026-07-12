@@ -9,7 +9,10 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test"
+    "test:e2e": "npm run test:e2e:api && npm run test:e2e:ui",
+    "test:e2e:api": "playwright test --config=playwright.config.ts",
+    "test:e2e:ui": "playwright test --config=playwright.ui.config.ts",
+    "test:e2e:ui:mobile": "playwright test --config=playwright.ui.config.ts --project=mobile-320"
   },
   "dependencies": {
     "@tailwindcss/postcss": "^4.1.18",

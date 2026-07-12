@@ -36,7 +36,7 @@ export function StreamingAnalysisFloat({
         <button
           type="button"
           onClick={onCancel}
-          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 hover:bg-slate-100"
+          className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-full text-slate-500 hover:bg-slate-100"
           aria-label="取消分析"
         >
           <X size={16} />
@@ -46,7 +46,7 @@ export function StreamingAnalysisFloat({
         <button
           type="button"
           onClick={onOpenReport}
-          className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-blue-600 px-3 py-2 text-xs font-bold text-white hover:bg-blue-700"
+          className="inline-flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-xl bg-blue-600 px-3 py-2 text-xs font-bold text-white hover:bg-blue-700"
         >
           <ExternalLink size={14} />
           查看进度

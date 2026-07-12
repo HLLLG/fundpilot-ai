@@ -25,6 +25,28 @@ import { ThemeSectorOverview } from "@/components/ThemeSectorOverview";
 import { TradingSessionBar } from "@/components/TradingSessionBar";
 import { UsMarketOverview } from "@/components/UsMarketOverview";
 import { YangjibaoFundDetail } from "@/components/YangjibaoFundDetail";
+import { InlineNotice } from "@/components/InlineNotice";
+
+export function MarketFetchNotice({
+  error,
+  hasData,
+  onRetry,
+}: {
+  error: string | null;
+  hasData: boolean;
+  onRetry: () => void;
+}) {
+  if (!error) {
+    return null;
+  }
+  return (
+    <InlineNotice
+      tone={hasData ? "warning" : "error"}
+      message={hasData ? `本次更新失败，继续显示上次数据：${error}` : `市场数据加载失败：${error}`}
+      action={{ label: "重试", onClick: onRetry }}
+    />
+  );
+}
 
 export function MarketTab() {
   const [subTab, setSubTab] = useState<MarketSubTab>(() => loadMarketSubTab());
@@ -44,6 +66,7 @@ export function MarketTab() {
     data: themeData,
     loading: themeLoading,
     revalidating: themeRevalidating,
+    error: themeError,
     refresh: refreshTheme,
   } = useCachedFetch({
     cacheKey: themeCacheKey,
@@ -62,6 +85,7 @@ export function MarketTab() {
     data: usData,
     loading: usLoading,
     revalidating: usRevalidating,
+    error: usError,
     refresh: refreshUs,
   } = useCachedFetch({
     cacheKey: usCacheKey,
@@ -76,6 +100,7 @@ export function MarketTab() {
     data: dipData,
     loading: dipLoading,
     revalidating: dipRevalidating,
+    error: dipError,
     refresh: refreshDip,
   } = useCachedFetch({
     cacheKey: dipCacheKey,
@@ -232,38 +257,63 @@ export function MarketTab() {
       {subTab === "themes" ? (
         <>
           <MarketBreadthGauge />
-          <ThemeSectorOverview
-            data={themeData}
-            loading={themeLoading && !isMarketThemeBoardUsable(themeData)}
-            revalidating={themeRevalidating}
-            onRefresh={handleRefreshTheme}
-            onViewDipFunds={handleViewDipFunds}
-            onAddFocusSector={handleToggleFocusSector}
-            focusSectors={focusSectors}
+          <MarketFetchNotice
+            error={themeError}
+            hasData={isMarketThemeBoardUsable(themeData)}
+            onRetry={handleRefreshTheme}
           />
+          {!themeError || isMarketThemeBoardUsable(themeData) ? (
+            <ThemeSectorOverview
+              data={themeData}
+              loading={themeLoading && !isMarketThemeBoardUsable(themeData)}
+              revalidating={themeRevalidating}
+              onRefresh={handleRefreshTheme}
+              onViewDipFunds={handleViewDipFunds}
+              onAddFocusSector={handleToggleFocusSector}
+              focusSectors={focusSectors}
+            />
+          ) : null}
         </>
       ) : null}
 
       {subTab === "dip_radar" ? (
-        <DipReboundRadar
-          data={dipData}
-          loading={dipLoading && dipData == null}
-          revalidating={dipRevalidating}
-          lookbackDays={dipLookbackDays}
-          onLookbackDaysChange={setDipLookbackDays}
-          sectorFilter={dipSectorFilter}
-          onSectorFilterChange={handleDipSectorFilterChange}
-          onRefresh={handleRefreshDip}
-          onOpenFund={handleOpenFund}
-        />
+        <>
+          <MarketFetchNotice
+            error={dipError}
+            hasData={dipData != null}
+            onRetry={handleRefreshDip}
+          />
+          {!dipError || dipData != null ? (
+            <DipReboundRadar
+              data={dipData}
+              loading={dipLoading && dipData == null}
+              revalidating={dipRevalidating}
+              lookbackDays={dipLookbackDays}
+              onLookbackDaysChange={setDipLookbackDays}
+              sectorFilter={dipSectorFilter}
+              onSectorFilterChange={handleDipSectorFilterChange}
+              onRefresh={handleRefreshDip}
+              onOpenFund={handleOpenFund}
+            />
+          ) : null}
+        </>
       ) : null}
 
       {subTab === "us" ? (
-        <UsMarketOverview data={usData} loading={usLoading} revalidating={usRevalidating} />
+        <>
+          <MarketFetchNotice
+            error={usError}
+            hasData={usData != null}
+            onRetry={() => void refreshUs()}
+          />
+          {!usError || usData != null ? (
+            <UsMarketOverview data={usData} loading={usLoading} revalidating={usRevalidating} />
+          ) : null}
+        </>
       ) : null}
 
       {subTab === "themes" && footerDate ? (
-        <p className="mt-2 pb-2 text-center text-xs text-slate-400 lg:pb-0">
+        <p className="mt-2 pb-2 text-center text-xs text-slate-500 lg:pb-0">
           数据日期 {footerDate}
           {footerRevalidating
             ? " · 更新中…"

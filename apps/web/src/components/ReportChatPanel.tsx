@@ -211,11 +211,12 @@ export function ReportChatPanel({
         <div className="mt-2 grid grid-cols-2 gap-1.5">
           <button
             type="button"
+            aria-pressed={chatMode === "fast"}
             disabled={isStreaming}
             onClick={() => handleModeChange("fast")}
             className={`flex min-h-11 min-w-11 items-center gap-1.5 rounded-xl px-2 py-1.5 text-left text-[11px] font-bold transition ${
               chatMode === "fast"
-                ? "bg-amber-500 text-white"
+                ? "bg-amber-700 text-white"
                 : "bg-white text-slate-600 hover:bg-amber-50"
             }`}
           >
@@ -223,7 +224,7 @@ export function ReportChatPanel({
             <span>
               快速
               <span
-                className={`block text-[9px] font-semibold ${chatMode === "fast" ? "text-amber-100" : "text-slate-400"}`}
+                className={`block text-[9px] font-semibold ${chatMode === "fast" ? "text-amber-100" : "text-slate-500"}`}
               >
                 Flash
               </span>
@@ -231,6 +232,7 @@ export function ReportChatPanel({
           </button>
           <button
             type="button"
+            aria-pressed={chatMode === "deep"}
             disabled={isStreaming}
             onClick={() => handleModeChange("deep")}
             className={`flex min-h-11 min-w-11 items-center gap-1.5 rounded-xl px-2 py-1.5 text-left text-[11px] font-bold transition ${
@@ -243,7 +245,7 @@ export function ReportChatPanel({
             <span>
               深度
               <span
-                className={`block text-[9px] font-semibold ${chatMode === "deep" ? "text-blue-100" : "text-slate-400"}`}
+                className={`block text-[9px] font-semibold ${chatMode === "deep" ? "text-blue-100" : "text-slate-500"}`}
               >
                 Pro · 可拉新闻
               </span>
@@ -327,7 +329,11 @@ export function ReportChatPanel({
           </div>
         ) : null}
 
-        {error ? <p className="px-3 pb-1 text-xs text-rose-600">{error}</p> : null}
+        {error ? (
+          <p role="alert" className="px-3 pb-1 text-xs text-rose-600">
+            {error}
+          </p>
+        ) : null}
 
         <form
           className="flex gap-2 p-3 pt-0"
@@ -337,6 +343,7 @@ export function ReportChatPanel({
           }}
         >
         <input
+          aria-label="追问内容"
           type="text"
           value={input}
           onChange={(event) => setInput(event.target.value)}

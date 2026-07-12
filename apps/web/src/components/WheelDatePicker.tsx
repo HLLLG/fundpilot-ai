@@ -1,17 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, type KeyboardEvent } from "react";
 
 const ITEM_HEIGHT = 44;
 const PADDING_COUNT = 2;
 
 type WheelColumnProps = {
+  label: string;
   items: Array<{ value: number; label: string }>;
   value: number;
   onChange: (value: number) => void;
 };
 
-function WheelColumn({ items, value, onChange }: WheelColumnProps) {
+function WheelColumn({ label, items, value, onChange }: WheelColumnProps) {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const scrollEndTimer = useRef<number | null>(null);
   const syncingRef = useRef(false);
@@ -70,14 +71,52 @@ function WheelColumn({ items, value, onChange }: WheelColumnProps) {
     }, 90);
   };
 
+  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    let nextIndex: number | null = null;
+    if (event.key === "ArrowUp") {
+      nextIndex = selectedIndex - 1;
+    } else if (event.key === "ArrowDown") {
+      nextIndex = selectedIndex + 1;
+    } else if (event.key === "PageUp") {
+      nextIndex = selectedIndex - 5;
+    } else if (event.key === "PageDown") {
+      nextIndex = selectedIndex + 5;
+    } else if (event.key === "Home") {
+      nextIndex = 0;
+    } else if (event.key === "End") {
+      nextIndex = items.length - 1;
+    }
+
+    if (nextIndex == null || items.length === 0) {
+      return;
+    }
+    event.preventDefault();
+    const clampedIndex = Math.max(0, Math.min(items.length - 1, nextIndex));
+    scrollToIndex(clampedIndex, true);
+    const nextValue = items[clampedIndex]?.value;
+    if (nextValue != null && nextValue !== value) {
+      onChange(nextValue);
+    }
+  };
+
+  const selectedItem = items[selectedIndex];
+
   return (
     <div className="relative h-[220px] flex-1 overflow-hidden">
       <div
         ref={scrollerRef}
+        role="spinbutton"
+        tabIndex={0}
+        aria-label={label}
+        aria-valuemin={items[0]?.value}
+        aria-valuemax={items[items.length - 1]?.value}
+        aria-valuenow={selectedItem?.value}
+        aria-valuetext={selectedItem?.label}
         onScroll={handleScroll}
         onMouseUp={settleSelection}
         onTouchEnd={settleSelection}
-        className="h-full overflow-y-auto scroll-smooth [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+        onKeyDown={handleKeyDown}
+        className="h-full overflow-y-auto scroll-smooth rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] focus-visible:ring-inset [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
         style={{ scrollSnapType: "y mandatory" }}
       >
         {Array.from({ length: PADDING_COUNT }, (_, index) => (
@@ -88,6 +127,7 @@ function WheelColumn({ items, value, onChange }: WheelColumnProps) {
             key={item.value}
             style={{ height: ITEM_HEIGHT, scrollSnapAlign: "center" }}
             className="flex items-center justify-center text-[17px] font-semibold tabular-nums text-slate-800"
+            aria-hidden="true"
           >
             {item.label}
           </div>
@@ -213,16 +253,19 @@ export function WheelDatePicker({
       />
       <div className="relative z-0 flex px-1">
         <WheelColumn
+          label="年份"
           items={years}
           value={year}
           onChange={(nextYear) => emitChange(nextYear, month, day)}
         />
         <WheelColumn
+          label="月份"
           items={months}
           value={month}
           onChange={(nextMonth) => emitChange(year, nextMonth, day)}
         />
         <WheelColumn
+          label="日期"
           items={days}
           value={Math.min(day, days[days.length - 1]?.value ?? day)}
           onChange={(nextDay) => emitChange(year, month, nextDay)}

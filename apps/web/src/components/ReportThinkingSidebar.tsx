@@ -54,7 +54,7 @@ export function ReportThinkingSidebar({ streaming, onFollowup }: ReportThinkingS
     >
       <div className="mb-3 flex items-center justify-between gap-2">
         <h3 className="text-xs font-black uppercase tracking-wide text-slate-500">分析过程</h3>
-        <span className="text-xs font-bold text-slate-400">{elapsedSeconds(streaming.startedAt)}</span>
+        <span className="text-xs font-bold text-slate-500">{elapsedSeconds(streaming.startedAt)}</span>
       </div>
 
       <ol className="space-y-2">
@@ -71,7 +71,7 @@ export function ReportThinkingSidebar({ streaming, onFollowup }: ReportThinkingS
               data-status={status}
             >
               {status === "done" ? (
-                <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-emerald-500" />
+                <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-emerald-700" />
               ) : status === "active" ? (
                 <Loader2 size={16} className="mt-0.5 shrink-0 animate-spin text-[var(--brand-strong)]" />
               ) : (
@@ -80,7 +80,7 @@ export function ReportThinkingSidebar({ streaming, onFollowup }: ReportThinkingS
               <div className="min-w-0">
                 <div
                   className={`font-bold ${
-                    status === "pending" ? "text-slate-400" : "text-slate-800"
+                    status === "pending" ? "text-slate-500" : "text-slate-800"
                   }`}
                 >
                   {stageShortLabel(stageId)}
@@ -124,6 +124,7 @@ export function ReportThinkingSidebar({ streaming, onFollowup }: ReportThinkingS
             </ul>
           ) : null}
           <textarea
+            aria-label="补充分析要求"
             value={followupDraft}
             onChange={(event) => setFollowupDraft(event.target.value)}
             rows={2}
@@ -131,13 +132,15 @@ export function ReportThinkingSidebar({ streaming, onFollowup }: ReportThinkingS
             className="mt-2 w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-[var(--brand)]"
           />
           {followupError ? (
-            <p className="mt-1 text-[11px] text-red-600">{followupError}</p>
+            <p role="alert" className="mt-1 text-[11px] text-red-600">
+              {followupError}
+            </p>
           ) : null}
           <button
             type="button"
             disabled={followupSending || !followupDraft.trim()}
             onClick={() => void handleFollowupSubmit()}
-            className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1.5 text-[11px] font-bold text-white disabled:opacity-50"
+            className="mt-2 inline-flex min-h-11 items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1.5 text-[11px] font-bold text-white disabled:opacity-50"
           >
             {followupSending ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
             发送补充

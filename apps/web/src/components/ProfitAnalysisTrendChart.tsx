@@ -5,25 +5,86 @@ import type { ProfitTrend } from "@/lib/api";
 import { clockToSessionRatio } from "@/lib/intradayChartTime";
 
 const INDEX_COLOR = "#5B8DEF";
-const AXIS_FONT_SIZE = 5;
-const AXIS_LABEL_CLASS = "fill-slate-400 tabular-nums";
+const AXIS_FONT_SIZE = 12;
+const AXIS_LABEL_CLASS = "fill-slate-500 tabular-nums";
 
 type ProfitAnalysisTrendChartProps = {
   trend: ProfitTrend | null | undefined;
   height?: number;
 };
 
+function finiteChartValue(value: number | null | undefined): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+export function mapProfitTrendValues(points: ProfitTrend["points"]) {
+  return points.map((point) => ({
+    portfolioPercent: finiteChartValue(point.portfolio_percent),
+    indexPercent: finiteChartValue(point.index_percent),
+  }));
+}
+
+export function buildSegmentedLinePath(points: Array<{ x: number; y: number | null }>): string {
+  let drawing = false;
+  const commands: string[] = [];
+  for (const point of points) {
+    if (point.y == null) {
+      drawing = false;
+      continue;
+    }
+    commands.push(`${drawing ? "L" : "M"} ${point.x} ${point.y}`);
+    drawing = true;
+  }
+  return commands.join(" ");
+}
+
+function buildSegmentedAreaPath(
+  points: Array<{ x: number; y: number | null }>,
+  baselineY: number,
+): string {
+  const segments: Array<Array<{ x: number; y: number }>> = [];
+  let segment: Array<{ x: number; y: number }> = [];
+
+  const flush = () => {
+    if (segment.length >= 2) {
+      segments.push(segment);
+    }
+    segment = [];
+  };
+
+  for (const point of points) {
+    if (point.y == null) {
+      flush();
+      continue;
+    }
+    segment.push({ x: point.x, y: point.y });
+  }
+  flush();
+
+  return segments
+    .map((current) => {
+      const line = current
+        .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`)
+        .join(" ");
+      const first = current[0];
+      const last = current[current.length - 1];
+      return `${line} L ${last.x} ${baselineY} L ${first.x} ${baselineY} Z`;
+    })
+    .join(" ");
+}
+
 function formatPercent(value: number | null | undefined) {
-  if (value == null || Number.isNaN(value)) {
+  const finiteValue = finiteChartValue(value);
+  if (finiteValue == null) {
     return "—";
   }
-  const rounded = Math.round(value * 100) / 100;
+  const rounded = Math.round(finiteValue * 100) / 100;
   return `${rounded > 0 ? "+" : ""}${rounded.toFixed(2)}%`;
 }
 
 const Y_AXIS_STEP = 0.75;
 
-function formatAxisLabel(value: number) {
+export function formatProfitAxisLabel(value: number) {
   const rounded = Math.round(value * 100) / 100;
   if (Math.abs(rounded) < 0.005) {
     return "0.00%";
@@ -61,7 +122,7 @@ function buildYTicks(min: number, max: number, step: number = Y_AXIS_STEP) {
 }
 
 function leftPaddingForLabels(maxAbs: number) {
-  const sample = formatAxisLabel(maxAbs);
+  const sample = formatProfitAxisLabel(maxAbs);
   return Math.max(46, sample.length * 5.8 + 10);
 }
 
@@ -97,10 +158,26 @@ export function ProfitAnalysisTrendChart({ trend, height = 200 }: ProfitAnalysis
       return null;
     }
 
-    const portfolioValues = points.map((point) => point.portfolio_percent ?? 0);
-    const indexValues = points
-      .map((point) => point.index_percent)
-      .filter((value): value is number => value != null && !Number.isNaN(value));
+    const mappedValues = mapProfitTrendValues(points);
+    const portfolioValues = mappedValues
+      .map((point) => point.portfolioPercent)
+      .filter((value): value is number => value != null);
+    const indexValues = mappedValues
+      .map((point) => point.indexPercent)
+      .filter((value): value is number => value != null);
+    const hasContinuousSeries = mappedValues.some((point, index) => {
+      if (index === 0) {
+        return false;
+      }
+      const previous = mappedValues[index - 1];
+      return (
+        (point.portfolioPercent != null && previous.portfolioPercent != null) ||
+        (point.indexPercent != null && previous.indexPercent != null)
+      );
+    });
+    if (!hasContinuousSeries) {
+      return null;
+    }
     const axisValues = [...portfolioValues, ...indexValues];
     const { min, max } = computeAxisBounds(axisValues);
     const yTickValues = buildYTicks(min, max);
@@ -118,6 +195,7 @@ export function ProfitAnalysisTrendChart({ trend, height = 200 }: ProfitAnalysis
     const toY = (percent: number) => plotBottom - ((percent - min) / range) * chartHeight;
 
     const coords = points.map((point, index) => {
+      const mapped = mappedValues[index];
       const sessionRatio =
         trend?.kind === "intraday"
           ? clockToSessionRatio(point.time ?? "09:30")
@@ -132,29 +210,29 @@ export function ProfitAnalysisTrendChart({ trend, height = 200 }: ProfitAnalysis
         ...point,
         x,
         sessionRatio,
-        portfolioY: toY(point.portfolio_percent ?? 0),
-        indexY: point.index_percent != null ? toY(point.index_percent) : null,
+        portfolioY:
+          mapped.portfolioPercent != null ? toY(mapped.portfolioPercent) : null,
+        indexY: mapped.indexPercent != null ? toY(mapped.indexPercent) : null,
         index,
       };
     });
 
-    const portfolioPath = coords
-      .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.portfolioY}`)
-      .join(" ");
-    const portfolioArea = `${portfolioPath} L ${coords[coords.length - 1].x} ${plotBottom} L ${coords[0].x} ${plotBottom} Z`;
-    const indexPath =
-      coords.filter((point) => point.indexY != null).length >= 2
-        ? coords
-            .filter((point) => point.indexY != null)
-            .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.indexY}`)
-            .join(" ")
-        : null;
+    const portfolioPath = buildSegmentedLinePath(
+      coords.map((point) => ({ x: point.x, y: point.portfolioY })),
+    );
+    const portfolioArea = buildSegmentedAreaPath(
+      coords.map((point) => ({ x: point.x, y: point.portfolioY })),
+      plotBottom,
+    );
+    const indexPath = buildSegmentedLinePath(
+      coords.map((point) => ({ x: point.x, y: point.indexY })),
+    );
 
     const baselineY = toY(0);
     const yTicks = yTickValues.map((value) => ({
       value,
       y: toY(value),
-      label: formatAxisLabel(value),
+      label: formatProfitAxisLabel(value),
       isZero: Math.abs(value) < Y_AXIS_STEP / 2,
     }));
 
@@ -168,6 +246,14 @@ export function ProfitAnalysisTrendChart({ trend, height = 200 }: ProfitAnalysis
 
     const latestPortfolio = portfolioValues[portfolioValues.length - 1] ?? 0;
     const colors = portfolioColors(latestPortfolio);
+    let latestDataIndex = coords.length - 1;
+    while (
+      latestDataIndex > 0 &&
+      coords[latestDataIndex].portfolioY == null &&
+      coords[latestDataIndex].indexY == null
+    ) {
+      latestDataIndex -= 1;
+    }
 
     return {
       width,
@@ -186,13 +272,14 @@ export function ProfitAnalysisTrendChart({ trend, height = 200 }: ProfitAnalysis
       plotBottom,
       chartWidth,
       colors,
+      latestDataIndex,
     };
   }, [height, trend]);
 
   if (!chart) {
     return (
       <div
-        className="flex items-center justify-center rounded-xl bg-slate-50 text-sm text-slate-400"
+        className="flex items-center justify-center rounded-xl bg-slate-50 text-sm text-slate-500"
         style={{ height }}
       >
         暂无走势数据
@@ -200,15 +287,55 @@ export function ProfitAnalysisTrendChart({ trend, height = 200 }: ProfitAnalysis
     );
   }
 
-  const active = hoverIndex != null ? chart.coords[hoverIndex] : chart.coords[chart.coords.length - 1];
+  const active =
+    hoverIndex != null ? chart.coords[hoverIndex] : chart.coords[chart.latestDataIndex];
+  const interactiveIndices = chart.coords
+    .filter((point) => point.portfolioY != null || point.indexY != null)
+    .map((point) => point.index);
+  const latest = chart.coords[chart.latestDataIndex];
+  const latestLabel = latest
+    ? `${latest.time ?? latest.date ?? "最新数据"}，组合${formatPercent(latest.portfolio_percent)}，上证${formatPercent(latest.index_percent)}`
+    : "暂无可读数据";
+  const chartLabel = `收益走势图，${latestLabel}。聚焦后可用左右方向键逐点查看`;
+
+  const moveKeyboardCursor = (key: string) => {
+    if (interactiveIndices.length === 0) {
+      return;
+    }
+    if (key === "Home") {
+      setHoverIndex(interactiveIndices[0]);
+      return;
+    }
+    if (key === "End") {
+      setHoverIndex(interactiveIndices[interactiveIndices.length - 1]);
+      return;
+    }
+
+    const currentPosition = hoverIndex == null ? -1 : interactiveIndices.indexOf(hoverIndex);
+    if (key === "ArrowRight") {
+      const nextPosition = Math.min(interactiveIndices.length - 1, currentPosition + 1);
+      setHoverIndex(interactiveIndices[Math.max(0, nextPosition)]);
+    } else if (key === "ArrowLeft") {
+      const fallbackPosition = currentPosition < 0 ? interactiveIndices.length : currentPosition;
+      setHoverIndex(interactiveIndices[Math.max(0, fallbackPosition - 1)]);
+    }
+  };
 
   return (
     <div className="relative w-full select-none">
       <svg
         viewBox={`0 0 ${chart.width} ${chart.height}`}
-        className="w-full overflow-visible"
+        className="w-full overflow-visible rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] focus-visible:ring-offset-2"
         role="img"
-        aria-label="收益走势"
+        aria-label={chartLabel}
+        tabIndex={0}
+        onKeyDown={(event) => {
+          if (["Home", "End", "ArrowLeft", "ArrowRight"].includes(event.key)) {
+            event.preventDefault();
+            moveKeyboardCursor(event.key);
+          }
+        }}
+        onBlur={() => setHoverIndex(null)}
       >
         <defs>
           <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
@@ -260,7 +387,13 @@ export function ProfitAnalysisTrendChart({ trend, height = 200 }: ProfitAnalysis
           </g>
         ))}
 
-        <path d={chart.portfolioArea} fill={`url(#${gradientId})`} clipPath={`url(#${gradientId}-plot)`} />
+        {chart.portfolioArea ? (
+          <path
+            d={chart.portfolioArea}
+            fill={`url(#${gradientId})`}
+            clipPath={`url(#${gradientId}-plot)`}
+          />
+        ) : null}
         {chart.indexPath ? (
           <path
             d={chart.indexPath}
@@ -273,15 +406,17 @@ export function ProfitAnalysisTrendChart({ trend, height = 200 }: ProfitAnalysis
             clipPath={`url(#${gradientId}-plot)`}
           />
         ) : null}
-        <path
-          d={chart.portfolioPath}
-          fill="none"
-          stroke={chart.colors.line}
-          strokeWidth={1.1}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          clipPath={`url(#${gradientId}-plot)`}
-        />
+        {chart.portfolioPath ? (
+          <path
+            d={chart.portfolioPath}
+            fill="none"
+            stroke={chart.colors.line}
+            strokeWidth={1.1}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            clipPath={`url(#${gradientId}-plot)`}
+          />
+        ) : null}
 
         {active ? (
           <>
@@ -295,7 +430,16 @@ export function ProfitAnalysisTrendChart({ trend, height = 200 }: ProfitAnalysis
               strokeDasharray="3 3"
               opacity={0.7}
             />
-            <circle cx={active.x} cy={active.portfolioY} r="2.5" fill="#fff" stroke={chart.colors.line} strokeWidth={1.1} />
+            {active.portfolioY != null ? (
+              <circle
+                cx={active.x}
+                cy={active.portfolioY}
+                r="2.5"
+                fill="#fff"
+                stroke={chart.colors.line}
+                strokeWidth={1.1}
+              />
+            ) : null}
             {active.indexY != null ? (
               <circle cx={active.x} cy={active.indexY} r="2" fill="#fff" stroke={INDEX_COLOR} strokeWidth={1} />
             ) : null}
@@ -314,6 +458,9 @@ export function ProfitAnalysisTrendChart({ trend, height = 200 }: ProfitAnalysis
             let bestIndex = 0;
             let bestDistance = Number.POSITIVE_INFINITY;
             for (const point of chart.coords) {
+              if (point.portfolioY == null && point.indexY == null) {
+                continue;
+              }
               const distance = Math.abs(point.sessionRatio - ratio);
               if (distance < bestDistance) {
                 bestDistance = distance;
@@ -380,10 +527,15 @@ export function ProfitAnalysisTrendChart({ trend, height = 200 }: ProfitAnalysis
       {hoverIndex != null && active ? (
         <div className="pointer-events-none absolute left-1/2 top-2 -translate-x-1/2 rounded-lg border border-slate-200/80 bg-white/95 px-2.5 py-1.5 text-[11px] font-bold shadow-sm backdrop-blur-sm">
           <span style={{ color: chart.colors.line }}>我的 {formatPercent(active.portfolio_percent)}</span>
-          <span className="mx-1.5 text-slate-300">·</span>
+          <span className="mx-1.5 text-slate-500">·</span>
           <span style={{ color: INDEX_COLOR }}>上证 {formatPercent(active.index_percent)}</span>
         </div>
       ) : null}
+      <p className="sr-only" aria-live="polite">
+        {hoverIndex != null && active
+          ? `${active.time ?? active.date ?? "当前点"}，组合${formatPercent(active.portfolio_percent)}，上证${formatPercent(active.index_percent)}`
+          : ""}
+      </p>
     </div>
   );
 }

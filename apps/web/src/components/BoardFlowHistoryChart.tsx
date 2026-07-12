@@ -10,12 +10,23 @@ type BoardFlowHistoryChartProps = {
   height?: number;
 };
 
-function formatAxisYi(value: number): string {
+const AXIS_FONT_SIZE = 12;
+const DATE_FONT_SIZE = 11;
+
+function finiteFlowValue(value: number | null | undefined): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+export function mapBoardFlowHistoryValues(points: BoardFlowHistoryPoint[]) {
+  return points.map((point) => finiteFlowValue(point.main_force_net_yi));
+}
+
+export function formatBoardFlowAxisYi(value: number): string {
   const rounded = Math.round(value * 100) / 100;
   if (Math.abs(rounded) < 0.005) {
     return "0";
   }
-  return `${Math.abs(rounded).toFixed(1)}`;
+  return `${rounded > 0 ? "+" : ""}${rounded.toFixed(1)}`;
 }
 
 function formatDateLabel(date: string): string {
@@ -58,11 +69,15 @@ export function BoardFlowHistoryChart({
       return null;
     }
 
-    const values = points.map((point) => point.main_force_net_yi ?? 0);
+    const mappedValues = mapBoardFlowHistoryValues(points);
+    const values = mappedValues.filter((value): value is number => value != null);
+    if (values.length === 0) {
+      return null;
+    }
     const maxAbs = Math.max(...values.map((value) => Math.abs(value)), 0.01);
     const axisMax = Math.ceil(maxAbs * 1.15 * 10) / 10;
     const width = 320;
-    const paddingLeft = 36;
+    const paddingLeft = 44;
     const paddingRight = 8;
     const paddingTop = 8;
     const paddingBottom = 22;
@@ -79,23 +94,31 @@ export function BoardFlowHistoryChart({
     };
 
     const bars = points.map((point, index) => {
-      const value = point.main_force_net_yi ?? 0;
+      const value = mappedValues[index];
       const xCenter = paddingLeft + barSlot * index + barSlot / 2;
-      const yValue = yForValue(value);
-      const yTop = Math.min(zeroY, yValue);
-      const barHeight = Math.max(Math.abs(yValue - zeroY), value === 0 ? 1 : 2);
-      const fill = value >= 0 ? "#e11d48" : "#059669";
-      return {
+      const common = {
         key: `${point.date}-${index}`,
-        x: xCenter - barWidth / 2,
-        y: yTop,
-        width: barWidth,
-        height: barHeight,
-        fill,
         value,
         date: point.date,
         labelX: xCenter,
         showLabel: labelFlags[index] ?? false,
+      };
+      if (value == null) {
+        return { ...common, rect: null };
+      }
+      const yValue = yForValue(value);
+      const yTop = Math.min(zeroY, yValue);
+      const barHeight = Math.max(Math.abs(yValue - zeroY), value === 0 ? 1 : 2);
+      const fill = value > 0 ? "#e11d48" : value < 0 ? "#059669" : "#94a3b8";
+      return {
+        ...common,
+        rect: {
+          x: xCenter - barWidth / 2,
+          y: yTop,
+          width: barWidth,
+          height: barHeight,
+          fill,
+        },
       };
     });
 
@@ -116,14 +139,14 @@ export function BoardFlowHistoryChart({
   }, [height, points]);
 
   if (!chart) {
-    return <p className="py-6 text-center text-xs text-slate-400">暂无历史资金流数据</p>;
+    return <p className="py-6 text-center text-xs text-slate-500">暂无历史资金流数据</p>;
   }
 
   return (
     <div className="space-y-2">
       {cumulativeNetYi != null ? (
         <div className="flex items-baseline justify-between text-xs">
-          <span className="text-slate-400">区间累计主力净流入</span>
+          <span className="text-slate-500">区间累计主力净流入</span>
           <span className={`tabular-nums font-semibold ${profitToneClass(cumulativeNetYi)}`}>
             {formatThemeFlowYi(cumulativeNetYi)}
           </span>
@@ -134,7 +157,7 @@ export function BoardFlowHistoryChart({
         viewBox={`0 0 ${chart.width} ${chart.height}`}
         className="w-full max-w-full"
         role="img"
-        aria-label="板块主力净流入历史柱状图"
+        aria-label="板块主力净流入历史柱状图，单位亿元"
       >
         <defs>
           <linearGradient id={`${gradientId}-zero`} x1="0" y1="0" x2="0" y2="1">
@@ -160,9 +183,10 @@ export function BoardFlowHistoryChart({
                 x={chart.paddingLeft - 4}
                 y={y + 3}
                 textAnchor="end"
-                className="fill-slate-400 text-[5px] tabular-nums"
+                className="fill-slate-500 tabular-nums"
+                fontSize={AXIS_FONT_SIZE}
               >
-                {formatAxisYi(tick)}
+                {formatBoardFlowAxisYi(tick)}
               </text>
             </g>
           );
@@ -170,25 +194,28 @@ export function BoardFlowHistoryChart({
 
         {chart.bars.map((bar) => (
           <g key={bar.key}>
-            <rect
-              x={bar.x}
-              y={bar.y}
-              width={bar.width}
-              height={bar.height}
-              rx={2}
-              fill={bar.fill}
-              opacity={0.92}
-            >
-              <title>
-                {bar.date} 主力 {formatThemeFlowYi(bar.value)}
-              </title>
-            </rect>
+            {bar.rect && bar.value != null ? (
+              <rect
+                x={bar.rect.x}
+                y={bar.rect.y}
+                width={bar.rect.width}
+                height={bar.rect.height}
+                rx={2}
+                fill={bar.rect.fill}
+                opacity={0.92}
+              >
+                <title>
+                  {bar.date} 主力 {formatThemeFlowYi(bar.value)}
+                </title>
+              </rect>
+            ) : null}
             {bar.showLabel ? (
               <text
                 x={bar.labelX}
                 y={chart.height - 6}
                 textAnchor="middle"
-                className="fill-slate-400 text-[5px] tabular-nums"
+                className="fill-slate-500 tabular-nums"
+                fontSize={DATE_FONT_SIZE}
               >
                 {formatDateLabel(bar.date)}
               </text>

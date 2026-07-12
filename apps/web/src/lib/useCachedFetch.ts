@@ -83,6 +83,7 @@ export function useCachedFetch<T>({
         if (cached == null) {
           setLoading(true);
         }
+        setError(null);
         try {
           const fresh = await fetcherRef.current();
           const acceptFresh =
@@ -93,9 +94,7 @@ export function useCachedFetch<T>({
             setError(null);
           }
         } catch (loadError) {
-          if (cached == null) {
-            setError(loadError instanceof Error ? loadError.message : "加载失败");
-          }
+          setError(loadError instanceof Error ? loadError.message : "加载失败");
         } finally {
           setLoading(false);
           setRevalidating(false);

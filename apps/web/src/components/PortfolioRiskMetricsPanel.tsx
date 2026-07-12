@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import type { PortfolioRiskMetrics } from "@/lib/api";
 import { fetchPortfolioRiskMetrics } from "@/lib/api";
 import { BRAND } from "@/lib/brand";
+import { InlineNotice } from "@/components/InlineNotice";
 import { PortfolioCorrelationHeatmap } from "@/components/PortfolioCorrelationHeatmap";
 import {
   alphaHint,
@@ -110,8 +111,10 @@ function MetricCard({ item, locked }: { item: MetricItem; locked: boolean }) {
 }
 
 export function PortfolioRiskMetricsPanel() {
-  const [metrics, setMetrics] = useState<PortfolioRiskMetrics | undefined>();
+  const [metrics, setMetrics] = useState<PortfolioRiskMetrics | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [retrySequence, setRetrySequence] = useState(0);
   const [isPro, setIsPro] = useState(false);
   const [showCorrelation, setShowCorrelation] = useState(false);
 
@@ -126,15 +129,16 @@ export function PortfolioRiskMetricsPanel() {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    setError(null);
     fetchPortfolioRiskMetrics()
       .then((payload) => {
         if (!cancelled) {
           setMetrics(payload);
         }
       })
-      .catch(() => {
+      .catch((loadError) => {
         if (!cancelled) {
-          setMetrics(undefined);
+          setError(loadError instanceof Error ? loadError.message : "风险指标加载失败");
         }
       })
       .finally(() => {
@@ -145,7 +149,7 @@ export function PortfolioRiskMetricsPanel() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [retrySequence]);
 
   const togglePro = () => {
     setIsPro((current) => {
@@ -160,19 +164,40 @@ export function PortfolioRiskMetricsPanel() {
   };
 
   return (
-    <section className="pl-panel section-card">
+    <section className="pl-panel section-card" aria-busy={loading}>
       <div className="pl-panel-head">
-        <div className="pl-panel-title">组合风险体检</div>
+        <h2 className="pl-panel-title">组合风险体检</h2>
         <button type="button" className="risk-pro-toggle" onClick={togglePro}>
           {isPro ? "Pro 已解锁" : "升级解锁"}
         </button>
       </div>
 
-      {loading ? (
+      {error ? (
+        <InlineNotice
+          tone={metrics ? "warning" : "error"}
+          message={
+            metrics
+              ? `风险指标更新失败，继续显示上次成功获取的数据：${error}`
+              : `风险指标加载失败：${error}`
+          }
+          action={{
+            label: "重试",
+            onClick: () => setRetrySequence((current) => current + 1),
+          }}
+          className="mb-3"
+        />
+      ) : loading && metrics ? (
+        <InlineNotice tone="info" message="正在更新风险指标，当前继续显示已有数据。" className="mb-3" />
+      ) : null}
+
+      {loading && !metrics ? (
         <div className="empty-state">风险指标加载中…</div>
-      ) : !metrics || !metrics.available ? (
+      ) : !metrics ? null : !metrics.available ? (
         <div className="empty-state">
-          {metrics?.message ?? "历史快照积累中，满 20 个交易日后展示风险体检。"}
+          {metrics.message ??
+            (metrics.sample_days > 0
+              ? `当前有 ${metrics.sample_days} 个交易日样本，暂不足以生成风险体检。`
+              : "暂缺少可用于风险体检的历史快照。")}
         </div>
       ) : (
         <>

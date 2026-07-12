@@ -846,27 +846,41 @@ import { clearAccessToken, getAccessToken, type AuthSession, type AuthUser } fro
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
 
-/** 合并同一页面生命周期内的并发 GET，避免 Strict Mode 双挂载重复请求 */
-function dedupeConcurrentGet<T>(slot: { current: Promise<T> | null }, run: () => Promise<T>): Promise<T> {
-  if (slot.current) {
-    return slot.current;
+/** Merge concurrent GETs within one ownership scope, avoiding Strict Mode duplicates. */
+function dedupeConcurrentGet<T>(
+  requests: Map<string, Promise<T>>,
+  scope: string,
+  run: () => Promise<T>,
+): Promise<T> {
+  const inFlight = requests.get(scope);
+  if (inFlight) {
+    return inFlight;
   }
-  slot.current = run().finally(() => {
-    slot.current = null;
-  });
-  return slot.current;
+  const task = run();
+  requests.set(scope, task);
+  const clear = () => {
+    if (requests.get(scope) === task) {
+      requests.delete(scope);
+    }
+  };
+  void task.then(clear, clear);
+  return task;
 }
 
-const investorProfileRequest: { current: Promise<InvestorProfile> | null } = { current: null };
-const analysisPromptRequest: { current: Promise<AnalysisPromptConfig> | null } = { current: null };
-const discoveryPromptRequest: { current: Promise<DiscoveryPromptConfig> | null } = { current: null };
-const listReportsRequest: { current: Promise<Report[]> | null } = { current: null };
-const listDiscoveryReportsRequest: { current: Promise<FundDiscoveryReport[]> | null } = { current: null };
-const portfolioHoldingsRequest: { current: Promise<PortfolioHoldingsPayload> | null } = { current: null };
-const sectorQuotesStatusRequest: { current: Promise<SectorQuotesStatus> | null } = { current: null };
+function authenticatedRequestScope(): string {
+  return getAccessToken() ?? "unauthenticated";
+}
+
+const investorProfileRequests = new Map<string, Promise<InvestorProfile>>();
+const analysisPromptRequests = new Map<string, Promise<AnalysisPromptConfig>>();
+const discoveryPromptRequests = new Map<string, Promise<DiscoveryPromptConfig>>();
+const listReportsRequests = new Map<string, Promise<Report[]>>();
+const listDiscoveryReportsRequests = new Map<string, Promise<FundDiscoveryReport[]>>();
+const portfolioHoldingsRequests = new Map<string, Promise<PortfolioHoldingsPayload>>();
+const sectorQuotesStatusRequests = new Map<string, Promise<SectorQuotesStatus>>();
 
 export function invalidatePortfolioHoldingsRequest(): void {
-  portfolioHoldingsRequest.current = null;
+  portfolioHoldingsRequests.clear();
 }
 
 export type { AuthSession, AuthUser };
@@ -908,6 +922,7 @@ async function apiFetch(input: string, init?: RequestInit): Promise<Response> {
     response.status === 401 &&
     typeof window !== "undefined" &&
     token &&
+    getAccessToken() === token &&
     !isAuthEntrypoint(input)
   ) {
     clearAccessToken();
@@ -1078,7 +1093,7 @@ export async function applySectorMapping(
 }
 
 export async function fetchSectorQuotesStatus(): Promise<SectorQuotesStatus> {
-  return dedupeConcurrentGet(sectorQuotesStatusRequest, async () => {
+  return dedupeConcurrentGet(sectorQuotesStatusRequests, "global", async () => {
     const response = await apiFetch(`${API_BASE}/api/sector-quotes/status`, { cache: "no-store" });
     if (!response.ok) {
       throw new Error(await response.text());
@@ -1362,13 +1377,17 @@ export async function startDiscoveryJob(
 }
 
 export async function listDiscoveryReports(): Promise<FundDiscoveryReport[]> {
-  return dedupeConcurrentGet(listDiscoveryReportsRequest, async () => {
+  return dedupeConcurrentGet(
+    listDiscoveryReportsRequests,
+    authenticatedRequestScope(),
+    async () => {
     const response = await apiFetch(`${API_BASE}/api/fund-discovery/reports`, { cache: "no-store" });
     if (!response.ok) {
       throw new Error(await response.text());
     }
     return response.json();
-  });
+    },
+  );
 }
 
 export async function deleteDiscoveryReport(reportId: string): Promise<void> {
@@ -1395,7 +1414,7 @@ export async function fetchDiscoveryOutcomes(
 }
 
 export async function fetchDiscoveryPrompt(): Promise<DiscoveryPromptConfig> {
-  return dedupeConcurrentGet(discoveryPromptRequest, async () => {
+  return dedupeConcurrentGet(discoveryPromptRequests, authenticatedRequestScope(), async () => {
     const response = await apiFetch(`${API_BASE}/api/discovery-prompt`, { cache: "no-store" });
     if (!response.ok) {
       throw new Error(await response.text());
@@ -1471,7 +1490,7 @@ export async function streamDiscoveryChat(
 }
 
 export async function listReports(): Promise<Report[]> {
-  return dedupeConcurrentGet(listReportsRequest, async () => {
+  return dedupeConcurrentGet(listReportsRequests, authenticatedRequestScope(), async () => {
     const response = await apiFetch(`${API_BASE}/api/reports`, {
       cache: "no-store",
     });
@@ -2032,13 +2051,15 @@ export async function applyTransactions(
   return response.json();
 }
 
+export type HoldingAdjustmentPatch = {
+  settled_holding_amount?: number | null;
+  holding_profit?: number | null;
+  holding_return_percent?: number | null;
+};
+
 export async function adjustHolding(
   fundCode: string,
-  patch: {
-    settled_holding_amount?: number | null;
-    holding_profit?: number | null;
-    holding_return_percent?: number | null;
-  },
+  patch: HoldingAdjustmentPatch,
 ): Promise<PortfolioHoldingsPayload> {
   const response = await apiFetch(
     `${API_BASE}/api/portfolio/holdings/${encodeURIComponent(fundCode)}/adjust`,
@@ -2086,7 +2107,7 @@ export type OfficialNavSettlementPayload = PortfolioHoldingsPayload & {
 };
 
 export async function fetchPortfolioHoldings(): Promise<PortfolioHoldingsPayload> {
-  return dedupeConcurrentGet(portfolioHoldingsRequest, async () => {
+  return dedupeConcurrentGet(portfolioHoldingsRequests, authenticatedRequestScope(), async () => {
     const response = await apiFetch(`${API_BASE}/api/portfolio/holdings`, { cache: "no-store" });
     if (!response.ok) {
       throw new Error(await response.text());
@@ -2114,7 +2135,7 @@ export async function fetchPortfolioSummary(): Promise<PortfolioSummary> {
 }
 
 export async function fetchInvestorProfile(): Promise<InvestorProfile> {
-  return dedupeConcurrentGet(investorProfileRequest, async () => {
+  return dedupeConcurrentGet(investorProfileRequests, authenticatedRequestScope(), async () => {
     const response = await apiFetch(`${API_BASE}/api/investor-profile`, { cache: "no-store" });
     if (!response.ok) {
       throw new Error(await response.text());
@@ -2155,7 +2176,7 @@ export async function evaluateSwingAlerts(
 }
 
 export async function fetchAnalysisPrompt(): Promise<AnalysisPromptConfig> {
-  return dedupeConcurrentGet(analysisPromptRequest, async () => {
+  return dedupeConcurrentGet(analysisPromptRequests, authenticatedRequestScope(), async () => {
     const response = await apiFetch(`${API_BASE}/api/analysis-prompt`, { cache: "no-store" });
     if (!response.ok) {
       throw new Error(await response.text());

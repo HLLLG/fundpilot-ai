@@ -11,8 +11,9 @@ vi.mock("@/components/DiscoveryOutcomesPanel", () => ({
   DiscoveryOutcomesPanel: () => <div data-testid="outcomes-panel" />,
 }));
 
-vi.mock("@/components/DiscoveryChatPanel", () => ({
-  DiscoveryChatPanel: () => <div data-testid="chat-panel" />,
+vi.mock("@/components/DiscoveryChatDrawer", () => ({
+  DiscoveryChatDrawer: ({ open }: { open: boolean }) =>
+    open ? <div data-testid="chat-drawer" /> : null,
 }));
 
 afterEach(() => {
@@ -87,7 +88,7 @@ function sampleReport(): FundDiscoveryReport {
 }
 
 describe("DiscoveryReportPanel", () => {
-  it("renders sector opportunities and structured recommendation evidence", () => {
+  it("renders action-first recommendations and discloses professional evidence on demand", () => {
     render(<DiscoveryReportPanel report={sampleReport()} />);
 
     expect(screen.getByText("本次主方向")).toBeInTheDocument();
@@ -96,11 +97,16 @@ describe("DiscoveryReportPanel", () => {
     expect(screen.getAllByText(/顺势观察/).length).toBeGreaterThan(0);
     expect(screen.queryByText(/track=momentum/)).not.toBeInTheDocument();
     expect(screen.queryByText(/pattern=/)).not.toBeInTheDocument();
-    expect(screen.getByText("决策路径")).toBeInTheDocument();
-    expect(screen.getByText(/系统校验后最终动作调整为建议关注/)).toBeInTheDocument();
-    expect(screen.getByText("板块依据")).toBeInTheDocument();
-    expect(screen.getByText("基金依据")).toBeInTheDocument();
-    expect(screen.getByText("校验备注")).toBeInTheDocument();
+    expect(screen.getByText("优先行动")).toBeInTheDocument();
+    expect(screen.getByText(/核心理由/)).toBeInTheDocument();
+    const evidenceDisclosure = screen.getByText("查看决策路径与专业依据");
+    expect(screen.getByText("决策路径")).not.toBeVisible();
+    fireEvent.click(evidenceDisclosure);
+    expect(screen.getByText("决策路径")).toBeVisible();
+    expect(screen.getByText(/系统校验后最终动作调整为建议关注/)).toBeVisible();
+    expect(screen.getByText("板块依据")).toBeVisible();
+    expect(screen.getByText("基金依据")).toBeVisible();
+    expect(screen.getByText("校验备注")).toBeVisible();
     expect(screen.getAllByText(/基金质量分 53.37/).length).toBeGreaterThan(0);
     expect(screen.queryByText(/fund_quality_score=/)).not.toBeInTheDocument();
     expect(screen.getAllByText(/距离近期高点约 0.0%/).length).toBeGreaterThan(0);
@@ -121,11 +127,24 @@ describe("DiscoveryReportPanel", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /本次候选池/ }));
 
-    expect(screen.getByText("质量分")).toBeInTheDocument();
-    expect(screen.getByText("匹配分")).toBeInTheDocument();
-    expect(screen.getByText("53.37")).toBeInTheDocument();
-    expect(screen.getByText("37.12")).toBeInTheDocument();
+    expect(screen.getAllByText("质量分").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("匹配分").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("53.37").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("37.12").length).toBeGreaterThan(0);
     expect(screen.getAllByText(/板块高置信匹配/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/缺少基金规模/).length).toBeGreaterThan(0);
+  });
+
+  it("does not mount the long follow-up chat until requested", () => {
+    render(<DiscoveryReportPanel report={sampleReport()} />);
+
+    expect(screen.queryByTestId("chat-drawer")).not.toBeInTheDocument();
+    const trigger = screen.getByRole("button", { name: "追问本次推荐" });
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(trigger).toHaveAttribute("aria-haspopup", "dialog");
+    expect(trigger).toHaveAttribute("aria-controls", "discovery-report-chat-disc-1");
+    fireEvent.click(trigger);
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByTestId("chat-drawer")).toBeInTheDocument();
   });
 });

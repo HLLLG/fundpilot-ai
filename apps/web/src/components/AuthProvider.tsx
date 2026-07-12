@@ -17,6 +17,7 @@ import {
   type AuthUser,
 } from "@/lib/auth";
 import { ApiError, fetchCurrentUser } from "@/lib/api";
+import { BrandMark } from "@/components/BrandMark";
 
 type AuthContextValue = {
   user: AuthUser | null;
@@ -29,7 +30,7 @@ type AuthContextValue = {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-const PUBLIC_PATHS = new Set(["/login", "/register"]);
+const PUBLIC_PATHS = new Set(["/", "/login", "/register"]);
 const AUTH_BOOTSTRAP_RETRIES = 5;
 const AUTH_BOOTSTRAP_RETRY_MS = 800;
 
@@ -128,33 +129,71 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [user, loading, bootstrapError, setSession, logout, refreshUser],
   );
 
-  if (loading) {
+  const retryBootstrap = () => {
+    setLoading(true);
+    void refreshUser().finally(() => setLoading(false));
+  };
+
+  const clearBrokenSession = () => {
+    clearAccessToken();
+    setUser(null);
+    setBootstrapError(null);
+    router.replace("/");
+  };
+
+  if (loading && !PUBLIC_PATHS.has(pathname)) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-50 text-sm text-slate-500">
-        加载中…
-      </div>
+      <main className="premium-bg flex min-h-screen items-center justify-center px-4">
+        <div className="section-card flex items-center gap-3 px-5 py-4 text-sm text-slate-600" role="status">
+          <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-[var(--brand)]" aria-hidden />
+          正在恢复登录状态…
+        </div>
+      </main>
     );
   }
 
   if (!user && getAccessToken() && bootstrapError) {
+    if (PUBLIC_PATHS.has(pathname)) {
+      return (
+        <AuthContext.Provider value={value}>
+          <div
+            className="fixed inset-x-3 top-3 z-[80] mx-auto flex max-w-2xl flex-col gap-2 rounded-2xl border border-amber-200 bg-amber-50/95 px-4 py-3 text-sm text-amber-950 shadow-lg backdrop-blur sm:flex-row sm:items-center sm:justify-between"
+            role="alert"
+          >
+            <span className="leading-6">登录状态暂时无法验证，公开页面仍可正常浏览。</span>
+            <div className="flex shrink-0 gap-2">
+              <button type="button" onClick={retryBootstrap} className="min-h-11 rounded-full bg-amber-950 px-4 text-xs font-bold text-white">
+                重试连接
+              </button>
+              <button type="button" onClick={clearBrokenSession} className="min-h-11 rounded-full border border-amber-300 bg-white px-4 text-xs font-bold text-amber-950">
+                清除失效登录
+              </button>
+            </div>
+          </div>
+          {children}
+        </AuthContext.Provider>
+      );
+    }
+
     return (
-      <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-slate-50 px-4 text-center">
-        <p className="text-sm text-slate-600">{bootstrapError}</p>
-        <button
-          type="button"
-          onClick={() => {
-            setLoading(true);
-            void refreshUser().finally(() => setLoading(false));
-          }}
-          className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
-        >
-          重试连接
-        </button>
-      </div>
+      <main className="premium-bg flex min-h-screen items-center justify-center px-4 py-10">
+        <section className="section-card w-full max-w-md p-6 text-center sm:p-8" aria-labelledby="auth-recovery-title">
+          <div className="mb-6 flex justify-center"><BrandMark size="lg" showEnglish /></div>
+          <h1 id="auth-recovery-title" className="text-xl font-black text-slate-950">暂时无法恢复登录</h1>
+          <p className="mt-3 text-sm leading-6 text-slate-600" role="alert">{bootstrapError}</p>
+          <div className="mt-6 grid gap-2 sm:grid-cols-2">
+            <button type="button" onClick={retryBootstrap} className="btn-primary w-full">重试连接</button>
+            <button type="button" onClick={() => router.replace("/")} className="btn-secondary w-full">返回公开首页</button>
+          </div>
+          <button type="button" onClick={clearBrokenSession} className="btn-ghost mt-2 w-full text-amber-800">
+            清除失效登录状态
+          </button>
+        </section>
+      </main>
     );
   }
 
-  if (!user && !PUBLIC_PATHS.has(pathname) && pathname !== "/" && !getAccessToken()) {
+  if (!user && !PUBLIC_PATHS.has(pathname) && !getAccessToken()) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-50 text-sm text-slate-500">
         跳转登录…

@@ -698,5 +698,5 @@ export function cnProfitClass(value: number | null | undefined) {
   if (value === null || value === undefined || value === 0) {
     return "text-slate-500";
   }
-  return value > 0 ? "text-rose-600" : "text-emerald-600";
+  return value > 0 ? "profit-up" : "profit-down";
 }

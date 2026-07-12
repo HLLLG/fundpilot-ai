@@ -47,7 +47,7 @@ export function DailyProfitTop5({ gainers, losers }: DailyProfitTop5Props) {
       </div>
 
       {rows.length === 0 ? (
-        <div className="py-6 text-center text-sm text-slate-400">
+        <div className="py-6 text-center text-sm text-slate-500">
           暂无{tab === "gainers" ? "盈利" : "亏损"}基金
         </div>
       ) : (
@@ -57,7 +57,7 @@ export function DailyProfitTop5({ gainers, losers }: DailyProfitTop5Props) {
               key={`${row.fund_code}-${row.fund_name}`}
               className="flex items-center gap-3 rounded-xl bg-slate-50/80 px-3 py-2.5"
             >
-              <span className="w-4 shrink-0 text-center text-xs font-black text-slate-300">
+              <span className="w-4 shrink-0 text-center text-xs font-black text-slate-500">
                 {index + 1}
               </span>
               <div className="min-w-0 flex-1">

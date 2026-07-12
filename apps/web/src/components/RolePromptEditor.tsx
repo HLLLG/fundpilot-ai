@@ -29,7 +29,8 @@ export function RolePromptEditor({ value, onChange }: RolePromptEditorProps) {
             key={id}
             type="button"
             onClick={() => setMode(id)}
-            className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11px] font-bold transition ${
+            aria-pressed={mode === id}
+            className={`inline-flex min-h-11 items-center gap-1 rounded-lg px-2.5 text-[11px] font-bold transition ${
               mode === id
                 ? "bg-[var(--brand-soft)] text-[var(--brand-strong)]"
                 : "text-slate-500 hover:bg-slate-100 hover:text-slate-700"

@@ -50,7 +50,7 @@ export function formatThemeRank(rank: number | undefined, index: number): string
 
 export function themeRankClass(rank: number | undefined, index: number): string {
   const value = rank ?? index + 1;
-  return value <= 3 ? "font-semibold text-amber-500" : "font-medium text-slate-500";
+  return value <= 3 ? "font-semibold text-amber-700" : "font-medium text-slate-500";
 }
 
 export function formatThemePercent(value: number | null | undefined): string {

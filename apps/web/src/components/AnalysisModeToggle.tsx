@@ -34,14 +34,15 @@ export function AnalysisModeToggle({ mode, onChange, compact = false }: Analysis
 
   return (
     <div className="rounded-3xl bg-white p-2 shadow-sm">
-      <div className="mb-2 px-2 text-xs font-bold text-slate-400">分析模式</div>
+      <div className="mb-2 px-2 text-xs font-bold text-slate-500">分析模式</div>
       <div className="grid grid-cols-2 gap-2">
         <button
           type="button"
           onClick={() => onChange("fast")}
-          className={`rounded-2xl px-3 py-2.5 text-sm font-bold transition ${
+          aria-pressed={mode === "fast"}
+          className={`min-h-11 rounded-2xl px-3 py-2.5 text-sm font-bold transition ${
             mode === "fast"
-              ? "bg-amber-500 text-white shadow-md"
+              ? "bg-amber-700 text-white shadow-md"
               : "bg-slate-50 text-slate-600 hover:bg-amber-50"
           }`}
         >
@@ -50,7 +51,8 @@ export function AnalysisModeToggle({ mode, onChange, compact = false }: Analysis
         <button
           type="button"
           onClick={() => onChange("deep")}
-          className={`rounded-2xl px-3 py-2.5 text-sm font-bold transition ${
+          aria-pressed={mode === "deep"}
+          className={`min-h-11 rounded-2xl px-3 py-2.5 text-sm font-bold transition ${
             mode === "deep"
               ? "bg-[var(--brand)] text-white shadow-md"
               : "bg-slate-50 text-slate-600 hover:bg-[var(--brand-soft)]"

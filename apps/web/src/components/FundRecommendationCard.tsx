@@ -280,7 +280,7 @@ export function FundRecommendationCard({
           <strong className="min-w-0 break-words text-sm text-slate-950 [overflow-wrap:anywhere]">
             {item.fund_name}
           </strong>
-          <span className="text-xs text-slate-400">{item.fund_code}</span>
+          <span className="text-xs text-slate-500">{item.fund_code}</span>
           {referenceLabel ? <span className="text-xs text-slate-500">{referenceLabel}</span> : null}
           <span className={`ml-auto max-w-full rounded-full border px-2 py-0.5 text-xs font-bold ${actionBadgeClass(item.action)}`}>
             {item.action}

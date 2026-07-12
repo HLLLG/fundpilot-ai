@@ -55,7 +55,7 @@ export function TradingSessionBar() {
     return (
       <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-slate-600">
         <div className="flex items-center gap-2 text-sm font-bold">
-          <AlertCircle size={16} className="text-slate-400" />
+          <AlertCircle size={16} className="text-slate-500" />
           <span>交易日历暂不可用</span>
         </div>
         <p className="mt-1 text-xs leading-5 text-slate-500">

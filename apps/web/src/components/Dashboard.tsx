@@ -1,13 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { X } from "lucide-react";
 import type {
   AnalysisMode,
   AnalysisPromptConfig,
   FundCodeResolution,
   FundDiscoveryReport,
   Holding,
+  HoldingAdjustmentPatch,
   HoldingFieldWarning,
   InvestorProfile,
   ParsedTransaction,
@@ -21,6 +21,7 @@ import {
   fetchSectorQuotesStatus,
   invalidatePortfolioHoldingsRequest,
   listReports,
+  adjustHolding,
   applyPortfolioHoldings,
   applyTransactions,
   deletePortfolioHolding,
@@ -92,8 +93,14 @@ import { PortfolioDashboard } from "@/components/PortfolioDashboard";
 import { ReportPanel } from "@/components/ReportPanel";
 import { StreamingAnalysisFloat } from "@/components/StreamingAnalysisFloat";
 import { DiscoveryStreamingFloat } from "@/components/DiscoveryStreamingFloat";
-import { YangjibaoHoldingsBoard } from "@/components/YangjibaoHoldingsBoard";
-import { YangjibaoFundDetail } from "@/components/YangjibaoFundDetail";
+import {
+  YangjibaoHoldingsBoard,
+  type PortfolioLoadState,
+} from "@/components/YangjibaoHoldingsBoard";
+import {
+  YangjibaoFundDetail,
+  type HoldingMutationResult,
+} from "@/components/YangjibaoFundDetail";
 import { NewsPreviewPanel } from "@/components/NewsPreviewPanel";
 import { RecommendationAccuracyPanel } from "@/components/RecommendationAccuracyPanel";
 import { SectorSignalBacktestPanel } from "@/components/SectorSignalBacktestPanel";
@@ -106,6 +113,7 @@ import { MarketTab } from "@/components/MarketTab";
 import { UserMenu } from "@/components/UserMenu";
 import { BrandMark } from "@/components/BrandMark";
 import { DashboardNav } from "@/components/DashboardNav";
+import { InlineNotice, type NoticeTone } from "@/components/InlineNotice";
 const defaultProfile: InvestorProfile = {
   style: "稳健",
   horizon: "半年到一年",
@@ -134,16 +142,19 @@ export function Dashboard() {
   const { user } = useAuth();
   const [holdings, setHoldings] = useState<Holding[]>([]);
   const [profile, setProfile] = useState<InvestorProfile>(() =>
-    loadInvestorProfile(defaultProfile),
+    loadInvestorProfile(user?.id, defaultProfile),
   );
   const [analysisPrompt, setAnalysisPrompt] = useState<AnalysisPromptConfig>(() =>
-    loadAnalysisPrompt(defaultAnalysisPrompt),
+    loadAnalysisPrompt(user?.id, defaultAnalysisPrompt),
   );
   const [report, setReport] = useState<Report | null>(null);
   const [reports, setReports] = useState<Report[]>([]);
   const [portfolioSummary, setPortfolioSummary] = useState<PortfolioSummary | null>(null);
   const [holdingWarnings, setHoldingWarnings] = useState<HoldingFieldWarning[]>([]);
-  const [message, setMessage] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ message: string; tone: NoticeTone } | null>(null);
+  const setMessage = useCallback((message: string | null, tone: NoticeTone = "info") => {
+    setNotice(message ? { message, tone } : null);
+  }, []);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [activeTab, setActiveTabState] = useState<TabId>("holdings");
   const [analysisMode, setAnalysisMode] = useState<AnalysisMode>("deep");
@@ -190,6 +201,8 @@ export function Dashboard() {
   const profileChangedByUserRef = useRef(false);
   const promptChangedByUserRef = useRef(false);
   const [isHydratingHoldings, setIsHydratingHoldings] = useState(true);
+  const [portfolioLoadState, setPortfolioLoadState] = useState<PortfolioLoadState>("loading");
+  const [portfolioLoadError, setPortfolioLoadError] = useState<string | null>(null);
   const [holdingsRefreshedAt, setHoldingsRefreshedAt] = useState<string | null>(null);
   const [holdingsPollIntervalMs, setHoldingsPollIntervalMs] = useState(180_000);
   const backgroundJobActiveRef = useRef(false);
@@ -208,10 +221,15 @@ export function Dashboard() {
   const [pendingOcrSource, setPendingOcrSource] = useState<string | null>(null);
   const [showAddHoldingModal, setShowAddHoldingModal] = useState(false);
   const [isManualAdding, setIsManualAdding] = useState(false);
+  const [addHoldingError, setAddHoldingError] = useState<string | null>(null);
+  const [isApplyingOcrHoldings, setIsApplyingOcrHoldings] = useState(false);
+  const [ocrApplyError, setOcrApplyError] = useState<string | null>(null);
   const [showBatchModal, setShowBatchModal] = useState(false);
   const [isBatchUploading, setIsBatchUploading] = useState(false);
+  const [batchUploadError, setBatchUploadError] = useState<string | null>(null);
   const [pendingTransactions, setPendingTransactions] = useState<ParsedTransaction[] | null>(null);
   const [isApplyingTransactions, setIsApplyingTransactions] = useState(false);
+  const [transactionApplyError, setTransactionApplyError] = useState<string | null>(null);
 
   const workflowBlockers = useMemo(
     () =>
@@ -358,6 +376,8 @@ export function Dashboard() {
     }
     const requestVersion = holdingsMutationVersionRef.current;
     const hadCachedPortfolio = loadCachedPortfolioHoldings(user?.id) !== null;
+    setPortfolioLoadState(hadCachedPortfolio ? "refreshing" : "loading");
+    setPortfolioLoadError(null);
     if (!hadCachedPortfolio) {
       setIsHydratingHoldings(true);
     }
@@ -373,6 +393,8 @@ export function Dashboard() {
       markPortfolioCacheWriteReady();
       setHoldings(payload.holdings);
       setHoldingsRefreshedAt(refreshedAt);
+      setPortfolioLoadState("ready");
+      setPortfolioLoadError(null);
       saveCachedPortfolioHoldings(user?.id, {
         holdings: payload.holdings,
         portfolio_summary: payload.portfolio_summary ?? null,
@@ -395,10 +417,14 @@ export function Dashboard() {
         }, HYDRATE_INITIAL_RETRY_DELAY_MS);
         return;
       }
+      const loadMessage = hadCachedPortfolio
+        ? "最新持仓暂时加载失败，当前显示的是上次缓存。"
+        : "持仓加载失败，请确认后端 API 正常运行后重试。";
       if (!hadCachedPortfolio) {
         await loadPortfolioSummary();
-        setMessage("持仓加载失败，请确认后端 API 正常运行后刷新页面。");
       }
+      setPortfolioLoadState(hadCachedPortfolio ? "stale" : "error");
+      setPortfolioLoadError(loadMessage);
       setIsHydratingHoldings(false);
     }
   };
@@ -411,6 +437,7 @@ export function Dashboard() {
     }
     markPortfolioCacheWriteReady();
     setHoldings(cached.holdings);
+    setPortfolioLoadState("refreshing");
     if (cached.portfolio_summary) {
       setPortfolioSummary(cached.portfolio_summary);
     }
@@ -468,9 +495,9 @@ export function Dashboard() {
         const remote = await fetchInvestorProfile();
         const normalized = normalizeInvestorProfile(remote, defaultProfile);
         setProfile(normalized);
-        saveInvestorProfile(normalized);
+        saveInvestorProfile(user?.id, normalized);
       } catch {
-        setProfile((current) => normalizeInvestorProfile(current, defaultProfile));
+        setProfile((current) => loadInvestorProfile(user?.id, current));
       } finally {
         profilePersistReady.current = true;
         setProfileReady(true);
@@ -480,9 +507,9 @@ export function Dashboard() {
       try {
         const remote = await fetchAnalysisPrompt();
         setAnalysisPrompt(remote);
-        saveAnalysisPrompt(remote);
+        saveAnalysisPrompt(user?.id, remote);
       } catch {
-        setAnalysisPrompt((current) => loadAnalysisPrompt(current));
+        setAnalysisPrompt((current) => loadAnalysisPrompt(user?.id, current));
       } finally {
         promptPersistReady.current = true;
         setPromptReady(true);
@@ -631,22 +658,22 @@ export function Dashboard() {
   useEffect(() => {
     if (!profileReady || !profilePersistReady.current) return;
     const normalized = normalizeInvestorProfile(profile, defaultProfile);
-    saveInvestorProfile(normalized);
+    saveInvestorProfile(user?.id, normalized);
     if (!profileChangedByUserRef.current) return;
     void saveInvestorProfileRemote(normalized).catch(() => {
       // 离线时仍保留 localStorage；下次启动会从本地缓存恢复。
     });
-  }, [profile, profileReady]);
+  }, [profile, profileReady, user?.id]);
 
   useEffect(() => {
     if (!promptReady || !promptPersistReady.current) return;
-    saveAnalysisPrompt(analysisPrompt);
+    saveAnalysisPrompt(user?.id, analysisPrompt);
     if (!promptChangedByUserRef.current) return;
     const storedValue = analysisPrompt.is_custom ? analysisPrompt.role_prompt : null;
     void saveAnalysisPromptRemote(storedValue).catch(() => {
       // 离线时仍保留 localStorage。
     });
-  }, [analysisPrompt, promptReady]);
+  }, [analysisPrompt, promptReady, user?.id]);
 
   useEffect(() => {
     if (!profileReady) return;
@@ -660,7 +687,7 @@ export function Dashboard() {
     setStreamingReport(null);
     setIsSubmitting(false);
     setMessage("已停止生成。");
-  }, []);
+  }, [setMessage]);
 
   const handleStreamFollowup = useCallback(
     async (message: string) => {
@@ -680,7 +707,7 @@ export function Dashboard() {
 
   const runAnalyze = async (targetHoldings: Holding[]) => {
     if (!targetHoldings.length) {
-      setMessage("请先上传截图或录入至少一条持仓。");
+      setMessage("请先上传截图或录入至少一条持仓。", "warning");
       return;
     }
     setIsSubmitting(true);
@@ -859,7 +886,7 @@ export function Dashboard() {
         ),
       );
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "提交分析任务失败。");
+      setMessage(error instanceof Error ? error.message : "提交分析任务失败。", "error");
     } finally {
       setIsSubmitting(false);
     }
@@ -895,6 +922,7 @@ export function Dashboard() {
       analysisMode === "fast"
         ? "快速模式日报已生成（Flash + 预取新闻）。"
         : "日报已生成并保存到历史记录。",
+      "success",
     );
   };
 
@@ -943,7 +971,7 @@ export function Dashboard() {
     userLeftDiscoveryDuringStreamRef.current = false;
     setStreamingDiscovery(null);
     setMessage("已停止扫描。");
-  }, []);
+  }, [setMessage]);
 
   const handleDiscoveryJobClose = () => {
     setDiscoveryJobId(null);
@@ -964,6 +992,7 @@ export function Dashboard() {
 
   const handleOcrUpload = async (selectedFile: File) => {
     setIsOcrUploading(true);
+    setAddHoldingError(null);
     setMessage(null);
     try {
       const formData = new FormData();
@@ -985,7 +1014,9 @@ export function Dashboard() {
       setShowAddHoldingModal(false);
       setActiveTab("holdings");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "截图识别失败。");
+      const errorMessage = error instanceof Error ? error.message : "截图识别失败。";
+      setAddHoldingError(errorMessage);
+      setMessage(errorMessage, "error");
     } finally {
       setIsOcrUploading(false);
     }
@@ -999,6 +1030,7 @@ export function Dashboard() {
     const mutationVersion = holdingsMutationVersionRef.current;
     invalidatePortfolioHoldingsRequest();
     setIsManualAdding(true);
+    setAddHoldingError(null);
     setMessage(null);
     try {
       const merged = [...displayableHoldings(holdings), ...newHoldings];
@@ -1017,18 +1049,21 @@ export function Dashboard() {
         newHoldings.length === 1
           ? `已添加 ${newHoldings[0].fund_name} 到账户汇总。`
           : `已添加 ${newHoldings.length} 只基金到账户汇总。`,
+        "success",
       );
     } catch (error) {
       if (mutationVersion !== holdingsMutationVersionRef.current) {
         return;
       }
-      setMessage(error instanceof Error ? error.message : "手动添加失败。");
+      const errorMessage = error instanceof Error ? error.message : "手动添加失败。";
+      setAddHoldingError(errorMessage);
+      setMessage(errorMessage, "error");
     } finally {
       setIsManualAdding(false);
     }
   };
 
-  const handleConfirmOcrHoldings = () => {
+  const handleConfirmOcrHoldings = async () => {
     if (!pendingOcrHoldings?.length) {
       return;
     }
@@ -1038,69 +1073,57 @@ export function Dashboard() {
     const toApply = pendingOcrHoldings;
     const previousHoldings = holdings;
     const mergedToApply = mergeHoldingsAppend(previousHoldings, toApply);
+    setIsApplyingOcrHoldings(true);
+    setOcrApplyError(null);
+    setMessage(null);
 
-    setPendingOcrHoldings(null);
-    setPendingOcrResolutions([]);
-    setPendingOcrNote(null);
-    setPendingOcrSource(null);
-    setActiveTab("holdings");
-    const optimisticHoldings = withApplyDisplayFields(
-      mergeHoldingsPreserveQuoteFields(previousHoldings, mergedToApply),
-    );
-    markPortfolioCacheWriteReady();
-    setHoldings(optimisticHoldings);
-    saveCachedPortfolioHoldings(user?.id, {
-      holdings: optimisticHoldings,
-      portfolio_summary: portfolioSummary,
-      refreshed_at: holdingsRefreshedAt,
-    });
-
-    void (async () => {
-      try {
-        const applied = await enqueuePortfolioMutation(() => applyPortfolioHoldings(mergedToApply));
-        if (mutationVersion !== holdingsMutationVersionRef.current) {
-          return;
-        }
-        const appliedHoldings = withApplyDisplayFields(
-          dedupeHoldingsByCode(
-            mergeHoldingsPreserveQuoteFields(previousHoldings, applied.holdings),
-          ),
-        );
-        setHoldings(appliedHoldings);
-        if (applied.portfolio_summary) {
-          setPortfolioSummary((current) => {
-            const base = current ?? applied.portfolio_summary!;
-            const nextSummary = {
-              ...base,
-              ...applied.portfolio_summary,
-              daily_profit:
-                applied.portfolio_summary?.daily_profit ?? base.daily_profit ?? null,
-              daily_return_percent:
-                applied.portfolio_summary?.daily_return_percent ??
-                base.daily_return_percent ??
-                null,
-            };
-            saveCachedPortfolioHoldings(user?.id, {
-              holdings: appliedHoldings,
-              portfolio_summary: nextSummary,
-              refreshed_at: holdingsRefreshedAt,
-            });
-            return nextSummary;
-          });
-        } else {
-          saveCachedPortfolioHoldings(user?.id, {
-            holdings: appliedHoldings,
-            portfolio_summary: portfolioSummary,
-            refreshed_at: holdingsRefreshedAt,
-          });
-        }
-      } catch (error) {
-        if (mutationVersion !== holdingsMutationVersionRef.current) {
-          return;
-        }
-        setMessage(error instanceof Error ? error.message : "确认更新失败。");
+    try {
+      const applied = await enqueuePortfolioMutation(() => applyPortfolioHoldings(mergedToApply));
+      if (mutationVersion !== holdingsMutationVersionRef.current) {
+        return;
       }
-    })();
+      const appliedHoldings = withApplyDisplayFields(
+        dedupeHoldingsByCode(
+          mergeHoldingsPreserveQuoteFields(previousHoldings, applied.holdings),
+        ),
+      );
+      const nextSummary = applied.portfolio_summary
+        ? {
+            ...(portfolioSummary ?? applied.portfolio_summary),
+            ...applied.portfolio_summary,
+            daily_profit:
+              applied.portfolio_summary.daily_profit ?? portfolioSummary?.daily_profit ?? null,
+            daily_return_percent:
+              applied.portfolio_summary.daily_return_percent ??
+              portfolioSummary?.daily_return_percent ??
+              null,
+          }
+        : portfolioSummary;
+
+      markPortfolioCacheWriteReady();
+      setHoldings(appliedHoldings);
+      setPortfolioSummary(nextSummary);
+      saveCachedPortfolioHoldings(user?.id, {
+        holdings: appliedHoldings,
+        portfolio_summary: nextSummary,
+        refreshed_at: holdingsRefreshedAt,
+      });
+      setPendingOcrHoldings(null);
+      setPendingOcrResolutions([]);
+      setPendingOcrNote(null);
+      setPendingOcrSource(null);
+      setActiveTab("holdings");
+      setMessage(`已确认并保存 ${toApply.length} 只基金。`, "success");
+    } catch (error) {
+      if (mutationVersion !== holdingsMutationVersionRef.current) {
+        return;
+      }
+      const errorMessage = error instanceof Error ? error.message : "确认更新失败。";
+      setOcrApplyError(errorMessage);
+      setMessage(errorMessage, "error");
+    } finally {
+      setIsApplyingOcrHoldings(false);
+    }
   };
 
   const handleDeleteHolding = useCallback(
@@ -1144,7 +1167,7 @@ export function Dashboard() {
         portfolio_summary: optimisticSummary,
         refreshed_at: holdingsRefreshedAt,
       });
-      setMessage(`已移除 ${target.fund_name}`);
+      setMessage(`已从列表移除 ${target.fund_name}，正在同步。`);
 
       sectorRefresh.invalidatePendingRefresh();
 
@@ -1158,11 +1181,12 @@ export function Dashboard() {
             setPortfolioSummary(result.portfolio_summary);
           }
           markPortfolioCacheWriteReady();
-          saveCachedPortfolioHoldings(user?.id, {
-            holdings: result.holdings,
-            portfolio_summary: result.portfolio_summary ?? optimisticSummary,
-            refreshed_at: holdingsRefreshedAt,
-          });
+           saveCachedPortfolioHoldings(user?.id, {
+             holdings: result.holdings,
+             portfolio_summary: result.portfolio_summary ?? optimisticSummary,
+             refreshed_at: holdingsRefreshedAt,
+           });
+           setMessage(`已移除 ${target.fund_name}`, "success");
         })
         .catch((error) => {
           if (mutationVersion !== holdingsMutationVersionRef.current) {
@@ -1175,7 +1199,7 @@ export function Dashboard() {
             portfolio_summary: rollbackSummary,
             refreshed_at: holdingsRefreshedAt,
           });
-          setMessage(error instanceof Error ? error.message : "删除失败，已恢复列表");
+          setMessage(error instanceof Error ? error.message : "删除失败，已恢复列表", "error");
         });
     },
     [
@@ -1186,6 +1210,7 @@ export function Dashboard() {
       user?.id,
       enqueuePortfolioMutation,
       markPortfolioCacheWriteReady,
+      setMessage,
     ],
   );
 
@@ -1209,6 +1234,7 @@ export function Dashboard() {
 
   const handleBatchUpload = async (selectedFile: File) => {
     setIsBatchUploading(true);
+    setBatchUploadError(null);
     setMessage(null);
     try {
       const result = await transactionsOcr(selectedFile);
@@ -1218,7 +1244,9 @@ export function Dashboard() {
       setShowBatchModal(false);
       setPendingTransactions((prev) => mergeTransactions(prev ?? [], result.transactions));
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "交易记录识别失败。");
+      const errorMessage = error instanceof Error ? error.message : "交易记录识别失败。";
+      setBatchUploadError(errorMessage);
+      setMessage(errorMessage, "error");
     } finally {
       setIsBatchUploading(false);
     }
@@ -1230,14 +1258,17 @@ export function Dashboard() {
     }
     const toApply = pendingTransactions.filter((tx) => Boolean(tx.fund_code));
     if (!toApply.length) {
-      setMessage("没有可应用的交易（请先为交易匹配基金代码）。");
+      const errorMessage = "没有可应用的交易，请先为交易匹配基金代码。";
+      setTransactionApplyError(errorMessage);
+      setMessage(errorMessage, "warning");
       return;
     }
     holdingsMutationVersionRef.current += 1;
     const mutationVersion = holdingsMutationVersionRef.current;
     invalidatePortfolioHoldingsRequest();
     setIsApplyingTransactions(true);
-      setMessage(null);
+    setTransactionApplyError(null);
+    setMessage(null);
     try {
       const result = await enqueuePortfolioMutation(() => applyTransactions(toApply));
       if (mutationVersion !== holdingsMutationVersionRef.current) {
@@ -1248,54 +1279,129 @@ export function Dashboard() {
       void loadPortfolioSummary();
       setPendingTransactions(null);
       const pendingNote = result.pending > 0 ? `，${result.pending} 笔待净值确认` : "";
-      setMessage(`已应用 ${result.inserted} 笔交易${pendingNote}，持仓已更新。`);
+      setMessage(`已应用 ${result.inserted} 笔交易${pendingNote}，持仓已更新。`, "success");
     } catch (error) {
       if (mutationVersion !== holdingsMutationVersionRef.current) {
         return;
       }
-      setMessage(error instanceof Error ? error.message : "应用交易失败。");
+      const errorMessage = error instanceof Error ? error.message : "应用交易失败。";
+      setTransactionApplyError(errorMessage);
+      setMessage(errorMessage, "error");
     } finally {
       setIsApplyingTransactions(false);
     }
   };
 
+  const handleSingleFundTransaction = async (
+    transaction: ParsedTransaction,
+  ): Promise<HoldingMutationResult | null> => {
+    holdingsMutationVersionRef.current += 1;
+    const mutationVersion = holdingsMutationVersionRef.current;
+    invalidatePortfolioHoldingsRequest();
+
+    const result = await enqueuePortfolioMutation(() => applyTransactions([transaction]));
+    let nextSummary = portfolioSummary;
+    try {
+      nextSummary = await fetchPortfolioSummary();
+    } catch {
+      // 交易已经成功写入；汇总刷新失败时沿用当前汇总，避免诱导用户重复提交交易。
+    }
+    if (mutationVersion !== holdingsMutationVersionRef.current) {
+      return null;
+    }
+
+    markPortfolioCacheWriteReady();
+    setHoldings(result.holdings);
+    if (nextSummary) {
+      setPortfolioSummary(nextSummary);
+    }
+    setPortfolioLoadState("ready");
+    setPortfolioLoadError(null);
+    saveCachedPortfolioHoldings(user?.id, {
+      holdings: result.holdings,
+      portfolio_summary: nextSummary,
+      refreshed_at: holdingsRefreshedAt,
+    });
+    return { holdings: result.holdings, portfolioSummary: nextSummary };
+  };
+
+  const handleAdjustHolding = async (
+    fundCode: string,
+    patch: HoldingAdjustmentPatch,
+  ): Promise<HoldingMutationResult | null> => {
+    holdingsMutationVersionRef.current += 1;
+    const mutationVersion = holdingsMutationVersionRef.current;
+    invalidatePortfolioHoldingsRequest();
+
+    const result = await enqueuePortfolioMutation(() => adjustHolding(fundCode, patch));
+    if (mutationVersion !== holdingsMutationVersionRef.current) {
+      return null;
+    }
+
+    const nextSummary = result.portfolio_summary ?? portfolioSummary;
+    const nextRefreshedAt = result.refreshed_at ?? holdingsRefreshedAt;
+    markPortfolioCacheWriteReady();
+    setHoldings(result.holdings);
+    if (result.portfolio_summary) {
+      setPortfolioSummary(result.portfolio_summary);
+    }
+    if (result.refreshed_at) {
+      setHoldingsRefreshedAt(result.refreshed_at);
+    }
+    setPortfolioLoadState("ready");
+    setPortfolioLoadError(null);
+    saveCachedPortfolioHoldings(user?.id, {
+      holdings: result.holdings,
+      portfolio_summary: nextSummary,
+      refreshed_at: nextRefreshedAt,
+    });
+    return { holdings: result.holdings, portfolioSummary: nextSummary };
+  };
+
   return (
-    <main className="premium-bg min-h-screen">
+    <div className="premium-bg min-h-screen">
+      <a href="#main-content" className="skip-link">跳到主要内容</a>
       <div className="dashboard-shell mx-auto flex min-h-screen w-full max-w-6xl flex-col px-4 py-3 sm:px-5 sm:py-4">
-        <nav
-          className="sticky top-0 z-40 -mx-4 mb-3 flex items-center justify-between gap-3 border-b border-[var(--line)] px-4 py-2.5 backdrop-blur-md sm:-mx-5 sm:px-5"
-          style={{ background: "rgba(243, 246, 252, 0.82)" }}
+        <header
+          className="sticky top-0 z-40 -mx-4 mb-3 flex items-center justify-between gap-3 border-b border-[var(--line)] px-4 py-2.5 sm:-mx-5 sm:px-5"
+          style={{ background: "rgba(243, 246, 252, 0.97)" }}
         >
           <BrandMark size="md" />
-          <UserMenu onNavigate={setActiveTab} />
-        </nav>
-
-        <DashboardNav
-          activeTab={activeTab}
-          reportTabUnread={reportTabUnread}
-          discoveryTabUnread={discoveryTabUnread}
-          onSelect={setActiveTab}
-          onSelectHistory={() => setActiveTab("history")}
-        />
-
-        {message ? (
-          <div
-            className="mb-3 flex items-start justify-between gap-3 rounded-xl border border-blue-100 bg-white px-3 py-2.5 text-sm text-slate-700"
-            role="status"
-          >
-            <span className="leading-6">{message}</span>
-            <button
-              type="button"
-              onClick={() => setMessage(null)}
-              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-slate-400 hover:bg-slate-100"
-              aria-label="关闭提示"
-            >
-              <X size={14} />
-            </button>
+          <div className="min-w-0 flex-1">
+            <DashboardNav
+              activeTab={activeTab}
+              reportTabUnread={reportTabUnread}
+              discoveryTabUnread={discoveryTabUnread}
+              onSelect={setActiveTab}
+              onSelectHistory={() => setActiveTab("history")}
+            />
           </div>
+          <UserMenu onNavigate={setActiveTab} />
+        </header>
+
+        {notice ? (
+          <InlineNotice
+            tone={notice.tone}
+            message={notice.message}
+            onDismiss={() => setMessage(null)}
+            className="mb-3"
+          />
         ) : null}
 
-        <div className="min-w-0 flex-1 pb-6">
+        <main id="main-content" tabIndex={-1} className="min-w-0 flex-1 pb-6">
+          <h1 className="sr-only">
+            {activeTab === "holdings"
+              ? "账户持仓"
+              : activeTab === "dashboard"
+                ? "盈亏分析"
+                : activeTab === "market"
+                  ? "市场行情"
+                  : activeTab === "discovery"
+                    ? "发现基金"
+                    : activeTab === "report"
+                      ? "投研日报"
+                      : "历史日报"}
+          </h1>
           {activeTab === "holdings" ? (
             <div className="w-full">
               {swingAlerts.alertsActive ? (
@@ -1313,8 +1419,17 @@ export function Dashboard() {
                 sectorRefresh={sectorRefresh}
                 refreshedAt={holdingsRefreshedAt}
                 isLoading={isHydratingHoldings && holdings.length === 0}
-                onAddHolding={() => setShowAddHoldingModal(true)}
-                onBatchTransaction={() => setShowBatchModal(true)}
+                loadState={portfolioLoadState}
+                loadError={portfolioLoadError}
+                onRetryLoad={() => void hydratePortfolio()}
+                onAddHolding={() => {
+                  setAddHoldingError(null);
+                  setShowAddHoldingModal(true);
+                }}
+                onBatchTransaction={() => {
+                  setBatchUploadError(null);
+                  setShowBatchModal(true);
+                }}
                 onSelectHolding={setSelectedHoldingKey}
               />
             </div>
@@ -1372,13 +1487,14 @@ export function Dashboard() {
           ) : null}
 
           {activeTab === "dashboard" ? (
-            <PortfolioDashboard fallbackSummary={portfolioSummary} />
+            <PortfolioDashboard userId={user?.id ?? null} fallbackSummary={portfolioSummary} />
           ) : null}
 
           {activeTab === "market" ? <MarketTab /> : null}
 
           {activeTab === "discovery" ? (
             <FundDiscoveryPanel
+              userId={user?.id ?? null}
               holdings={holdings}
               profile={profile}
               onProfileChange={handleProfileChange}
@@ -1420,7 +1536,7 @@ export function Dashboard() {
             />
             </div>
           ) : null}
-        </div>
+        </main>
       </div>
 
       <BackgroundJobsStack>
@@ -1484,12 +1600,12 @@ export function Dashboard() {
               if (mutationVersion !== holdingsMutationVersionRef.current) {
                 return;
               }
-              setMessage(`基金代码已更新为 ${updated.fund_code}`);
+              setMessage(`基金代码已更新为 ${updated.fund_code}`, "success");
             } catch (error) {
               if (mutationVersion !== holdingsMutationVersionRef.current) {
                 return;
               }
-              setMessage(error instanceof Error ? error.message : "持仓持久化失败，请刷新后重试");
+              setMessage(error instanceof Error ? error.message : "持仓持久化失败，请刷新后重试", "error");
             }
           }}
           onHoldingResolved={(_index, resolved) => {
@@ -1502,51 +1618,54 @@ export function Dashboard() {
             });
           }}
           onDeleteHolding={handleDeleteHolding}
-          onPortfolioUpdated={async (nextHoldings) => {
-            holdingsMutationVersionRef.current += 1;
-            const mutationVersion = holdingsMutationVersionRef.current;
-            invalidatePortfolioHoldingsRequest();
-            markPortfolioCacheWriteReady();
-            setHoldings(nextHoldings);
-            try {
-              await enqueuePortfolioMutation(() => applyPortfolioHoldings(nextHoldings));
-              if (mutationVersion !== holdingsMutationVersionRef.current) {
-                return;
-              }
-            } catch (error) {
-              if (mutationVersion !== holdingsMutationVersionRef.current) {
-                return;
-              }
-              setMessage(error instanceof Error ? error.message : "持仓持久化失败，请刷新后重试");
-            }
-          }}
+          onAdjustHolding={handleAdjustHolding}
+          onApplyTransaction={handleSingleFundTransaction}
         />
       ) : null}
 
       <AddHoldingModal
         open={showAddHoldingModal}
-        onClose={() => setShowAddHoldingModal(false)}
+        onClose={() => {
+          setShowAddHoldingModal(false);
+          setAddHoldingError(null);
+        }}
         onUpload={(file) => void handleOcrUpload(file)}
         onManualSubmit={(items) => handleManualAddHoldings(items)}
         isUploading={isOcrUploading}
         isSubmitting={isManualAdding}
+        errorMessage={addHoldingError}
       />
 
       <BatchTransactionModal
         open={showBatchModal}
-        onClose={() => setShowBatchModal(false)}
+        onClose={() => {
+          setShowBatchModal(false);
+          setBatchUploadError(null);
+        }}
         onUpload={(file) => void handleBatchUpload(file)}
         isUploading={isBatchUploading}
+        errorMessage={batchUploadError}
       />
 
-      {pendingTransactions ? (
+      {pendingTransactions && !showBatchModal ? (
         <BatchTransactionConfirmModal
           transactions={pendingTransactions}
           isBusy={isApplyingTransactions}
-          onChange={setPendingTransactions}
+          errorMessage={transactionApplyError}
+          onChange={(transactions) => {
+            setTransactionApplyError(null);
+            setPendingTransactions(transactions);
+          }}
           onConfirm={() => void handleApplyTransactions()}
-          onContinueUpload={() => setShowBatchModal(true)}
-          onClose={() => setPendingTransactions(null)}
+          onContinueUpload={() => {
+            setBatchUploadError(null);
+            setTransactionApplyError(null);
+            setShowBatchModal(true);
+          }}
+          onClose={() => {
+            setTransactionApplyError(null);
+            setPendingTransactions(null);
+          }}
         />
       ) : null}
 
@@ -1556,9 +1675,15 @@ export function Dashboard() {
           fundCodeResolutions={pendingOcrResolutions}
           amountSemanticsNote={pendingOcrNote}
           ocrSource={pendingOcrSource}
-          onChange={setPendingOcrHoldings}
+          isBusy={isApplyingOcrHoldings}
+          errorMessage={ocrApplyError}
+          onChange={(nextHoldings) => {
+            setOcrApplyError(null);
+            setPendingOcrHoldings(nextHoldings);
+          }}
           onConfirm={() => void handleConfirmOcrHoldings()}
           onClose={() => {
+            setOcrApplyError(null);
             setPendingOcrHoldings(null);
             setPendingOcrResolutions([]);
             setPendingOcrNote(null);
@@ -1567,6 +1692,6 @@ export function Dashboard() {
         />
       ) : null}
       <FocusSectorToast />
-    </main>
+    </div>
   );
 }

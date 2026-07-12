@@ -16,15 +16,17 @@
 
   /* 暖金点缀（仅用于「钱 / 收益 / 高光」，克制） */
   --accent: #cf9b3e;
-  --accent-strong: #a9781b;
+  --accent-strong: #8a5b08;
   --accent-soft: #f8f1de;
 
   /* 涨跌色：A 股习惯，红涨绿跌（不变） */
-  --profit-up: #e23049;
-  --profit-down: #0aa37a;
+  --profit-up: #c81e3a;
+  --profit-down: #047857;
 
   --muted: #5b6880;
-  --muted-soft: #8a96ac;
+  --muted-soft: #64748b;
+  --surface-muted: #f1f5f9;
+  --control-border: rgba(13, 27, 62, 0.18);
 
   /* 圆角 */
   --radius-card: 20px;
@@ -44,7 +46,7 @@
 }
 
 html {
-  min-width: 320px;
+  min-width: 0;
   background: var(--background);
 }
 
@@ -94,6 +96,35 @@ button:disabled {
   cursor: not-allowed;
 }
 
+:where(a, button, input, select, textarea, [role="button"], [tabindex]):focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 3px;
+}
+
+.touch-target {
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+}
+
+.skip-link {
+  position: fixed;
+  top: 0.75rem;
+  left: 0.75rem;
+  z-index: 100;
+  transform: translateY(-160%);
+  border-radius: 9999px;
+  background: var(--brand-deep);
+  padding: 0.7rem 1rem;
+  color: #fff;
+  font-size: 0.875rem;
+  font-weight: 800;
+  transition: transform 0.15s ease;
+}
+
+.skip-link:focus-visible {
+  transform: translateY(0);
+}
+
 .premium-bg {
   background:
     radial-gradient(900px 360px at 50% -80px, rgba(35, 86, 224, 0.07) 0%, transparent 70%),
@@ -134,6 +165,7 @@ button:disabled {
 .tab-segment-btn {
   flex: 1 1 0;
   min-width: 0;
+  min-height: 2.75rem;
   border-radius: 10px;
   padding: 0.45rem 0.25rem;
   font-size: 0.75rem;
@@ -177,6 +209,7 @@ button:disabled {
   padding: 0.75rem 1.5rem;
   font-size: 0.9375rem;
   font-weight: 700;
+  min-height: 2.75rem;
   color: #fff;
   background: linear-gradient(180deg, var(--brand) 0%, var(--brand-strong) 100%);
   box-shadow: var(--shadow-brand);
@@ -207,6 +240,7 @@ button:disabled {
   padding: 0.75rem 1.5rem;
   font-size: 0.9375rem;
   font-weight: 700;
+  min-height: 2.75rem;
   color: var(--brand-strong);
   background: #fff;
   border: 1px solid rgba(35, 86, 224, 0.22);
@@ -227,6 +261,7 @@ button:disabled {
   padding: 0.75rem 1.5rem;
   font-size: 0.9375rem;
   font-weight: 700;
+  min-height: 2.75rem;
   color: #fff;
   background: linear-gradient(180deg, var(--accent) 0%, var(--accent-strong) 100%);
   box-shadow: 0 8px 20px rgba(251, 140, 59, 0.28);
@@ -246,6 +281,7 @@ button:disabled {
   padding: 0.5rem 1rem;
   font-size: 0.875rem;
   font-weight: 700;
+  min-height: 2.75rem;
   color: var(--muted);
   transition: background 0.15s ease, color 0.15s ease;
 }
@@ -275,6 +311,7 @@ button:disabled {
 
 .input-field {
   width: 100%;
+  min-height: 2.75rem;
   border-radius: var(--radius-control);
   border: 1px solid var(--line);
   background: #fff;
@@ -384,6 +421,11 @@ button:disabled {
 }
 
 .pl-toggle-btn {
+  display: inline-flex;
+  min-height: 2.75rem;
+  min-width: 2.75rem;
+  align-items: center;
+  justify-content: center;
   border-radius: 6px;
   padding: 0.25rem 0.625rem;
   font-size: 0.6875rem;
@@ -409,6 +451,7 @@ button:disabled {
 .pl-range-tab {
   position: relative;
   flex: 1;
+  min-height: 2.75rem;
   padding: 0.625rem 0.25rem;
   font-size: 0.8125rem;
   font-weight: 600;
@@ -438,6 +481,7 @@ button:disabled {
 }
 
 .pl-panel {
+  min-width: 0;
   margin-top: 0.75rem;
   padding: 1rem;
   border: 1px solid var(--line);
@@ -455,6 +499,10 @@ button:disabled {
 }
 
 .risk-pro-toggle {
+  display: inline-flex;
+  min-height: 2.75rem;
+  align-items: center;
+  justify-content: center;
   font-size: 0.6875rem;
   font-weight: 700;
   padding: 0.25rem 0.625rem;
@@ -547,6 +595,7 @@ button:disabled {
 
 .risk-corr-toggle {
   width: 100%;
+  min-height: 2.75rem;
   font-size: 0.75rem;
   font-weight: 700;
   padding: 0.5rem 0.75rem;
@@ -698,7 +747,7 @@ button:disabled {
   font-size: 0.625rem;
   font-weight: 600;
   color: var(--muted, #64748b);
-  background: var(--muted-soft, #f1f5f9);
+  background: var(--surface-muted, #f1f5f9);
   border-radius: 6px;
   padding: 0.0625rem 0.3125rem;
 }
@@ -762,7 +811,7 @@ button:disabled {
   margin-top: 0.1875rem;
   height: 6px;
   border-radius: 999px;
-  background: var(--muted-soft, #f1f5f9);
+  background: var(--surface-muted, #f1f5f9);
   overflow: hidden;
 }
 
@@ -1320,6 +1369,7 @@ button:disabled {
 .dashboard-more-item {
   display: flex;
   width: 100%;
+  min-height: 2.75rem;
   align-items: center;
   gap: 0.65rem;
   padding: 0.75rem 1rem;
@@ -1358,8 +1408,9 @@ button:disabled {
 /* ── 选项 Chip（发现基金等）── */
 .chip-btn {
   border-radius: 9999px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--control-border);
   background: rgba(13, 27, 62, 0.03);
+  min-height: 2.75rem;
   padding: 0.375rem 0.875rem;
   font-size: 0.75rem;
   font-weight: 600;
@@ -1411,4 +1462,32 @@ button:disabled {
 
 .dip-radar-row:hover {
   background: rgba(35, 86, 224, 0.03);
+}
+
+.auth-inline-link,
+.auth-back-link {
+  display: inline-flex;
+  min-height: 2.75rem;
+  align-items: center;
+  justify-content: center;
+}
+
+.auth-inline-link {
+  margin-block: -0.75rem;
+  padding-inline: 0.25rem;
+}
+
+.auth-back-link {
+  padding-inline: 0.75rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

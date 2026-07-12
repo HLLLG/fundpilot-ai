@@ -67,6 +67,7 @@ export function RiskControls({
   readingModeKey = null,
 }: RiskControlsProps) {
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [rolePromptOpen, setRolePromptOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(readingModeKey == null);
 
   useEffect(() => {
@@ -156,30 +157,52 @@ export function RiskControls({
       <AnalysisModeToggle mode={analysisMode} onChange={onAnalysisModeChange} compact />
 
       <div className="mt-4">
-        <p className="mb-2 text-[11px] font-bold text-slate-400">投资风格预设</p>
+        <p className="mb-2 text-[11px] font-bold text-slate-500">投资风格预设</p>
         <InvestmentPresetSelector profile={profile} onChange={onChange} compact />
       </div>
 
       <div className="mt-4 overflow-hidden rounded-xl border border-slate-100">
-        <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-3 py-2.5">
-          <div className="flex items-center gap-2">
-            <Sparkles size={15} className="text-[var(--brand)]" />
-            <span className="text-xs font-bold text-slate-700">AI 角色设定</span>
-          </div>
-          {isRolePromptCustom ? (
+        <div className="flex items-center gap-2 px-2">
+          <button
+            type="button"
+            onClick={() => setRolePromptOpen((current) => !current)}
+            className="flex min-h-11 min-w-0 flex-1 items-center justify-between gap-2 rounded-lg px-1 text-left hover:bg-slate-50"
+            aria-expanded={rolePromptOpen}
+            aria-controls="report-role-prompt-settings"
+          >
+            <span className="flex min-w-0 items-center gap-2">
+              <Sparkles size={15} className="shrink-0 text-[var(--brand)]" />
+              <span className="text-xs font-bold text-slate-700">AI 角色设定（高级）</span>
+              <span className="truncate text-[11px] font-semibold text-slate-500">
+                {isRolePromptCustom ? "已自定义" : "默认模板"}
+              </span>
+            </span>
+            <ChevronDown
+              size={15}
+              className={`shrink-0 text-slate-500 transition ${rolePromptOpen ? "rotate-180" : ""}`}
+              aria-hidden
+            />
+          </button>
+          {rolePromptOpen && isRolePromptCustom ? (
             <button
               type="button"
               onClick={onRolePromptReset}
-              className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-bold text-slate-600 transition hover:bg-slate-50"
+              className="inline-flex min-h-11 items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 text-[11px] font-bold text-slate-600 transition hover:bg-slate-50"
             >
               <RotateCcw size={12} />
               恢复默认
             </button>
-          ) : (
-            <span className="text-[11px] font-semibold text-slate-400">默认模板</span>
-          )}
+          ) : null}
         </div>
-        <RolePromptEditor value={rolePrompt} onChange={onRolePromptChange} />
+        {rolePromptOpen ? (
+          <div id="report-role-prompt-settings" className="border-t border-slate-100">
+            <RolePromptEditor value={rolePrompt} onChange={onRolePromptChange} />
+          </div>
+        ) : (
+          <p id="report-role-prompt-settings" className="border-t border-slate-100 px-3 py-2 text-[11px] leading-5 text-slate-500">
+            普通日报无需调整；仅在需要固定特殊研究方法时展开编辑。
+          </p>
+        )}
       </div>
 
       {ocrWarningCount > 0 ? (
@@ -208,35 +231,37 @@ export function RiskControls({
         <button
           type="button"
           onClick={() => setAdvancedOpen((value) => !value)}
-          className="flex w-full items-center justify-between gap-2 px-3 py-2.5 text-left text-xs font-bold text-slate-600 hover:bg-slate-50"
+          className="flex min-h-11 w-full items-center justify-between gap-2 px-3 text-left text-xs font-bold text-slate-600 hover:bg-slate-50"
+          aria-expanded={advancedOpen}
+          aria-controls="report-advanced-settings"
         >
           <span>高级设置</span>
           <ChevronDown size={14} className={`shrink-0 transition ${advancedOpen ? "rotate-180" : ""}`} />
         </button>
         {!advancedOpen ? (
-          <p className="border-t border-slate-100 px-3 py-2 text-[11px] leading-5 text-slate-500">
+          <p id="report-advanced-settings" className="border-t border-slate-100 px-3 py-2 text-[11px] leading-5 text-slate-500">
             {profileSummary(profile)}
           </p>
         ) : (
-          <div className="grid gap-3 border-t border-slate-100 p-3 sm:grid-cols-2">
+          <div id="report-advanced-settings" className="grid gap-3 border-t border-slate-100 p-3 sm:grid-cols-2">
             <label className="block rounded-xl border border-slate-100 bg-slate-50/50 p-3">
-              <span className="text-[11px] font-bold text-slate-400">投资风格</span>
+              <span className="text-[11px] font-bold text-slate-500">投资风格</span>
               <input
                 value={profile.style}
                 onChange={(event) => onChange({ ...profile, style: event.target.value })}
-                className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-sm font-semibold outline-none focus:border-[var(--brand)]"
+                className="mt-1.5 min-h-11 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm font-semibold outline-none focus:border-[var(--brand)]"
               />
             </label>
             <label className="block rounded-xl border border-slate-100 bg-slate-50/50 p-3">
-              <span className="text-[11px] font-bold text-slate-400">持有周期</span>
+              <span className="text-[11px] font-bold text-slate-500">持有周期</span>
               <input
                 value={profile.horizon}
                 onChange={(event) => onChange({ ...profile, horizon: event.target.value })}
-                className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-sm font-semibold outline-none focus:border-[var(--brand)]"
+                className="mt-1.5 min-h-11 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm font-semibold outline-none focus:border-[var(--brand)]"
               />
             </label>
             <label className="block rounded-xl border border-slate-100 bg-slate-50/50 p-3">
-              <span className="text-[11px] font-bold text-slate-400">最大浮亏线</span>
+              <span className="text-[11px] font-bold text-slate-500">最大浮亏线</span>
               <div className="mt-2 flex items-center gap-2">
                 <input
                   type="range"
@@ -254,7 +279,7 @@ export function RiskControls({
               </div>
             </label>
             <label className="block rounded-xl border border-slate-100 bg-slate-50/50 p-3">
-              <span className="text-[11px] font-bold text-slate-400">单只集中度上限</span>
+              <span className="text-[11px] font-bold text-slate-500">单只集中度上限</span>
               <div className="mt-2 flex items-center gap-2">
                 <input
                   type="range"
@@ -272,7 +297,7 @@ export function RiskControls({
               </div>
             </label>
             <label className="block rounded-xl border border-slate-100 bg-slate-50/50 p-3 sm:col-span-2">
-              <span className="text-[11px] font-bold text-slate-400">期望投入总额</span>
+              <span className="text-[11px] font-bold text-slate-500">期望投入总额</span>
               <div className="mt-2 flex items-center gap-2">
                 <input
                   type="range"
@@ -294,8 +319,8 @@ export function RiskControls({
               </div>
             </label>
             <label className="block rounded-xl border border-slate-100 bg-slate-50/50 p-3 sm:col-span-2">
-              <span className="text-[11px] font-bold text-slate-400">决策风格</span>
-              <div className="mt-2 grid grid-cols-3 gap-2">
+              <span className="text-[11px] font-bold text-slate-500">决策风格</span>
+              <div className="mt-2 grid grid-cols-3 gap-2" role="group" aria-label="决策风格">
                 {(
                   [
                     ["conservative", "稳健"],
@@ -306,8 +331,9 @@ export function RiskControls({
                   <button
                     key={value}
                     type="button"
+                    aria-pressed={(profile.decision_style ?? "conservative") === value}
                     onClick={() => onChange({ ...profile, decision_style: value })}
-                    className={`rounded-lg border px-2 py-1.5 text-xs font-bold transition ${
+                    className={`min-h-11 rounded-lg border px-2 py-2 text-xs font-bold transition ${
                       (profile.decision_style ?? "conservative") === value
                         ? value === "aggressive"
                           ? "border-rose-300 bg-rose-50 text-rose-900"
@@ -325,7 +351,7 @@ export function RiskControls({
             {(profile.decision_style === "aggressive" || profile.swing_alerts_enabled) ? (
               <>
                 <label className="block rounded-xl border border-slate-100 bg-slate-50/50 p-3 sm:col-span-2">
-                  <span className="text-[11px] font-bold text-slate-400">
+                  <span className="text-[11px] font-bold text-slate-500">
                     买卖合计手续费（%）· 扣费止盈线约 {takeProfitThresholdPercent(profile)}%
                   </span>
                   <div className="mt-2 flex items-center gap-2">
@@ -349,7 +375,7 @@ export function RiskControls({
                   </div>
                 </label>
                 <label className="block rounded-xl border border-slate-100 bg-slate-50/50 p-3 sm:col-span-2">
-                  <span className="text-[11px] font-bold text-slate-400">期望净赚（%）</span>
+                  <span className="text-[11px] font-bold text-slate-500">期望净赚（%）</span>
                   <div className="mt-2 flex items-center gap-2">
                     <input
                       type="range"
@@ -370,7 +396,7 @@ export function RiskControls({
                     </span>
                   </div>
                 </label>
-                <label className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50/50 px-3 py-2.5 text-sm font-semibold text-slate-700 sm:col-span-2">
+                <label className="flex min-h-11 items-center justify-between rounded-xl border border-slate-100 bg-slate-50/50 px-3 py-2.5 text-sm font-semibold text-slate-700 sm:col-span-2">
                   盘中波段盯盘提醒
                   <input
                     type="checkbox"
@@ -382,8 +408,8 @@ export function RiskControls({
                   />
                 </label>
                 <label className="block rounded-xl border border-slate-100 bg-slate-50/50 p-3 sm:col-span-2">
-                  <span className="text-[11px] font-bold text-slate-400">盯盘范围</span>
-                  <div className="mt-2 grid grid-cols-3 gap-2">
+                  <span className="text-[11px] font-bold text-slate-500">盯盘范围</span>
+                  <div className="mt-2 grid grid-cols-3 gap-2" role="group" aria-label="盯盘范围">
                     {(
                       [
                         ["holdings", "仅持仓"],
@@ -394,8 +420,9 @@ export function RiskControls({
                       <button
                         key={value}
                         type="button"
+                        aria-pressed={(profile.swing_monitor_scope ?? "both") === value}
                         onClick={() => onChange({ ...profile, swing_monitor_scope: value })}
-                        className={`rounded-lg border px-2 py-1.5 text-xs font-bold transition ${
+                        className={`min-h-11 rounded-lg border px-2 py-2 text-xs font-bold transition ${
                           (profile.swing_monitor_scope ?? "both") === value
                             ? "border-rose-300 bg-rose-50 text-rose-900"
                             : "border-slate-200 bg-white text-slate-600"
@@ -408,7 +435,7 @@ export function RiskControls({
                 </label>
               </>
             ) : null}
-            <label className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50/50 px-3 py-2.5 text-sm font-semibold text-slate-700">
+            <label className="flex min-h-11 items-center justify-between rounded-xl border border-slate-100 bg-slate-50/50 px-3 py-2.5 text-sm font-semibold text-slate-700">
               偏好定投
               <input
                 type="checkbox"
@@ -417,7 +444,7 @@ export function RiskControls({
                 className="h-4 w-4 accent-blue-600"
               />
             </label>
-            <label className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50/50 px-3 py-2.5 text-sm font-semibold text-slate-700">
+            <label className="flex min-h-11 items-center justify-between rounded-xl border border-slate-100 bg-slate-50/50 px-3 py-2.5 text-sm font-semibold text-slate-700">
               拒绝追高
               <input
                 type="checkbox"

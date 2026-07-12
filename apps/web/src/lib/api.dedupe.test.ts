@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.resetModules();
+  window.localStorage.clear();
 });
 
 describe("bootstrap API dedupe", () => {
@@ -70,5 +71,96 @@ describe("bootstrap API dedupe", () => {
     expect(first).toEqual(payload);
     expect(second).toEqual(payload);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("never shares authenticated GET promises across access tokens during a switch race", async () => {
+    type PendingRequest = {
+      url: string;
+      authorization: string | null;
+      resolve: (response: Response) => void;
+    };
+    const pending: PendingRequest[] = [];
+    const fetchMock = vi.fn().mockImplementation(
+      (input: string | URL | Request, init?: RequestInit) =>
+        new Promise<Response>((resolve) => {
+          pending.push({
+            url: String(input),
+            authorization: new Headers(init?.headers).get("Authorization"),
+            resolve,
+          });
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const api = await import("@/lib/api");
+    const authenticatedGets: Array<{ path: string; run: () => Promise<unknown> }> = [
+      { path: "/api/investor-profile", run: api.fetchInvestorProfile },
+      { path: "/api/analysis-prompt", run: api.fetchAnalysisPrompt },
+      { path: "/api/discovery-prompt", run: api.fetchDiscoveryPrompt },
+      { path: "/api/reports", run: api.listReports },
+      { path: "/api/fund-discovery/reports", run: api.listDiscoveryReports },
+      { path: "/api/portfolio/holdings", run: api.fetchPortfolioHoldings },
+    ];
+
+    const responseBody = (path: string, owner: string) =>
+      path.endsWith("/reports") ? [{ owner }] : { owner };
+    const resultOwner = (value: unknown): unknown =>
+      Array.isArray(value)
+        ? (value[0] as { owner?: unknown } | undefined)?.owner
+        : (value as { owner?: unknown }).owner;
+
+    for (const { path, run } of authenticatedGets) {
+      const requestStart = pending.length;
+      window.localStorage.setItem("fundpilot_access_token", "token-a");
+      const accountA = run();
+      window.localStorage.setItem("fundpilot_access_token", "token-b");
+      const accountB = run();
+
+      const [requestA, requestB] = pending.slice(requestStart);
+      expect(requestA).toMatchObject({ authorization: "Bearer token-a" });
+      expect(requestB).toMatchObject({ authorization: "Bearer token-b" });
+      expect(requestA.url).toContain(path);
+      expect(requestB.url).toContain(path);
+
+      requestB.resolve(
+        new Response(JSON.stringify(responseBody(path, "account-b")), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+      requestA.resolve(
+        new Response(JSON.stringify(responseBody(path, "account-a")), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+
+      expect(resultOwner(await accountB)).toBe("account-b");
+      expect(resultOwner(await accountA)).toBe("account-a");
+    }
+
+    expect(fetchMock).toHaveBeenCalledTimes(authenticatedGets.length * 2);
+  });
+
+  it("does not let a late 401 from the previous account clear the new session", async () => {
+    let resolveRequest: ((response: Response) => void) | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation(
+        () =>
+          new Promise<Response>((resolve) => {
+            resolveRequest = resolve;
+          }),
+      ),
+    );
+    const { fetchInvestorProfile } = await import("@/lib/api");
+
+    window.localStorage.setItem("fundpilot_access_token", "token-a");
+    const previousAccountRequest = fetchInvestorProfile();
+    window.localStorage.setItem("fundpilot_access_token", "token-b");
+    resolveRequest?.(new Response("unauthorized", { status: 401 }));
+
+    await expect(previousAccountRequest).rejects.toThrow("unauthorized");
+    expect(window.localStorage.getItem("fundpilot_access_token")).toBe("token-b");
   });
 });

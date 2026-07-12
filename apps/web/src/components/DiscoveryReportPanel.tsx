@@ -1,12 +1,13 @@
 "use client";
 
-import { TrendingDown, TrendingUp } from "lucide-react";
+import { useState } from "react";
+import { ChevronDown, MessageCircle, TrendingDown, TrendingUp } from "lucide-react";
 import type { DiscoveryRecommendation, FundDiscoveryReport } from "@/lib/api";
 import { actionBadgeClass } from "@/lib/actionStyles";
 import { translateEvidenceText } from "@/lib/decisionText";
 import { DecisionEvidenceGrid } from "@/components/DecisionEvidenceGrid";
 import { DiscoveryCandidatePoolPanel } from "@/components/DiscoveryCandidatePoolPanel";
-import { DiscoveryChatPanel } from "@/components/DiscoveryChatPanel";
+import { DiscoveryChatDrawer } from "@/components/DiscoveryChatDrawer";
 import { DiscoveryOutcomesPanel } from "@/components/DiscoveryOutcomesPanel";
 import { SectorOpportunityCard } from "@/components/SectorOpportunityCard";
 
@@ -47,6 +48,8 @@ type DiscoveryReportPanelProps = {
 export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPanelProps) {
   const selectedCodes = report.recommendations.map((item) => item.fund_code);
   const sectorOpportunities = report.discovery_facts?.sector_opportunities ?? [];
+  const [chatOpen, setChatOpen] = useState(false);
+  const chatDrawerId = `discovery-report-chat-${report.id}`;
 
   return (
     <div className="grid min-w-0 gap-4">
@@ -82,15 +85,14 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
         </section>
       ) : null}
 
-      {report.candidate_pool?.length ? (
-        <DiscoveryCandidatePoolPanel
-          pool={report.candidate_pool}
-          selectedCodes={selectedCodes}
-          eliminatedCandidates={report.eliminated_candidates}
-        />
-      ) : null}
-
-      <section className="grid gap-3">
+      <section className="grid gap-3" aria-labelledby="discovery-actions-title">
+        <div className="flex items-end justify-between gap-3 px-1">
+          <div>
+            <h3 id="discovery-actions-title" className="text-base font-black text-slate-950">优先行动</h3>
+            <p className="mt-1 text-xs text-slate-500">先看动作、金额与主要风险，专业依据按需展开。</p>
+          </div>
+          <span className="shrink-0 text-xs font-bold text-slate-500">{report.recommendations.length} 只</span>
+        </div>
         {report.recommendations.map((rec) => (
           <article
             key={rec.fund_code}
@@ -100,7 +102,7 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
               <button
                 type="button"
                 onClick={() => onOpenFund?.(rec)}
-                className="min-w-0 text-left transition hover:text-[var(--brand-strong)]"
+                className="min-h-11 min-w-0 rounded-lg text-left transition hover:text-[var(--brand-strong)]"
               >
                 <div className="break-words text-sm font-bold text-slate-900">
                   [{rec.fund_code}] {rec.fund_name}
@@ -158,22 +160,12 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
                 basis={rec.suggested_position_change_basis}
               />
             ) : null}
-            {rec.decision_path ? (
-              <div className="mt-3 rounded-xl border border-blue-100 bg-blue-50/70 px-3 py-2.5 text-sm leading-6 text-blue-950">
-                <div className="text-xs font-black text-blue-900">决策路径</div>
-                <p className="mt-1 break-words [overflow-wrap:anywhere]">{translateEvidenceText(rec.decision_path)}</p>
-              </div>
+            {rec.points?.[0] ? (
+              <p className="mt-3 break-words text-sm leading-6 text-slate-700 [overflow-wrap:anywhere]">
+                <span className="font-black text-slate-900">核心理由：</span>
+                {translateEvidenceText(rec.points[0])}
+              </p>
             ) : null}
-            <DecisionEvidenceGrid
-              sectorEvidence={rec.sector_evidence}
-              fundEvidence={rec.fund_evidence}
-              validationNotes={rec.validation_notes}
-            />
-            <ul className="mt-3 space-y-1 text-sm text-slate-700">
-              {(rec.points ?? []).map((point) => (
-                <li className="break-words [overflow-wrap:anywhere]" key={point}>· {translateEvidenceText(point)}</li>
-              ))}
-            </ul>
             {(rec.risks ?? []).length ? (
               <div className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-900">
                 {(rec.risks ?? []).map((risk) => (
@@ -181,11 +173,47 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
                 ))}
               </div>
             ) : null}
+            {rec.decision_path || rec.sector_evidence?.length || rec.fund_evidence?.length || rec.validation_notes?.length || (rec.points?.length ?? 0) > 1 ? (
+              <details className="mt-3 overflow-hidden rounded-xl border border-slate-200 bg-slate-50/60">
+                <summary className="flex min-h-11 cursor-pointer items-center justify-between gap-2 px-3 text-xs font-black text-slate-700 hover:bg-slate-100">
+                  查看决策路径与专业依据
+                  <ChevronDown size={16} className="text-slate-500" aria-hidden />
+                </summary>
+                <div className="space-y-3 border-t border-slate-200 p-3">
+                  {rec.decision_path ? (
+                    <div className="rounded-xl border border-blue-100 bg-blue-50/70 px-3 py-2.5 text-sm leading-6 text-blue-950">
+                      <div className="text-xs font-black text-blue-900">决策路径</div>
+                      <p className="mt-1 break-words [overflow-wrap:anywhere]">{translateEvidenceText(rec.decision_path)}</p>
+                    </div>
+                  ) : null}
+                  <DecisionEvidenceGrid
+                    sectorEvidence={rec.sector_evidence}
+                    fundEvidence={rec.fund_evidence}
+                    validationNotes={rec.validation_notes}
+                  />
+                  {(rec.points?.length ?? 0) > 1 ? (
+                    <ul className="space-y-1 text-sm text-slate-700">
+                      {(rec.points ?? []).slice(1).map((point) => (
+                        <li className="break-words [overflow-wrap:anywhere]" key={point}>· {translateEvidenceText(point)}</li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </div>
+              </details>
+            ) : null}
           </article>
         ))}
       </section>
 
       <DiscoveryOutcomesPanel reportId={report.id} />
+
+      {report.candidate_pool?.length ? (
+        <DiscoveryCandidatePoolPanel
+          pool={report.candidate_pool}
+          selectedCodes={selectedCodes}
+          eliminatedCandidates={report.eliminated_candidates}
+        />
+      ) : null}
 
       {report.caveats?.length ? (
         <section className="rounded-xl border border-amber-100 bg-amber-50/80 px-4 py-3 text-xs leading-5 text-amber-900">
@@ -195,7 +223,32 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
         </section>
       ) : null}
 
-      <DiscoveryChatPanel reportId={report.id} reportTitle={report.title} />
+      <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <button
+          type="button"
+          onClick={() => setChatOpen(true)}
+          className="flex min-h-14 w-full items-center justify-between gap-3 px-4 text-left"
+          aria-expanded={chatOpen}
+          aria-controls={chatDrawerId}
+          aria-haspopup="dialog"
+        >
+          <span className="flex items-center gap-2 text-sm font-black text-slate-900">
+            <MessageCircle size={18} className="text-[var(--brand)]" aria-hidden />
+            追问本次推荐
+          </span>
+          <span className="text-xs font-bold text-[var(--brand-strong)]" aria-hidden>
+            打开追问面板
+          </span>
+        </button>
+      </section>
+
+      <DiscoveryChatDrawer
+        id={chatDrawerId}
+        open={chatOpen}
+        onClose={() => setChatOpen(false)}
+        reportId={report.id}
+        reportTitle={report.title}
+      />
     </div>
   );
 }

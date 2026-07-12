@@ -14,6 +14,8 @@ import {
 } from "lucide-react";
 import type { Holding } from "@/lib/api";
 import { BRAND } from "@/lib/brand";
+import { OCR_PRIVACY_COPY } from "@/lib/ocrPrivacy";
+import { useDialogA11y } from "@/lib/useDialogA11y";
 
 const ALIPAY_GUIDE_IMAGE = "/guides/alipay-holdings-overview.png";
 
@@ -35,6 +37,7 @@ type AddHoldingModalProps = {
   onManualSubmit: (holdings: Holding[]) => void | Promise<void>;
   isUploading?: boolean;
   isSubmitting?: boolean;
+  errorMessage?: string | null;
 };
 
 type ManualEntry = {
@@ -62,11 +65,24 @@ export function AddHoldingModal({
   onManualSubmit,
   isUploading = false,
   isSubmitting = false,
+  errorMessage = null,
 }: AddHoldingModalProps) {
   const [mode, setMode] = useState<"chooser" | "manual">("chooser");
   const [entries, setEntries] = useState<ManualEntry[]>([createManualEntry()]);
   const [formError, setFormError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const busy = isUploading || isSubmitting;
+  const requestClose = () => {
+    if (!busy) {
+      onClose();
+    }
+  };
+  const dialogRef = useDialogA11y<HTMLDivElement>({
+    open,
+    onClose: requestClose,
+    initialFocusRef: closeButtonRef,
+  });
 
   useEffect(() => {
     if (!open) {
@@ -79,8 +95,6 @@ export function AddHoldingModal({
   if (!open) {
     return null;
   }
-
-  const busy = isUploading || isSubmitting;
 
   const validCount = entries.filter((entry) => isEntryValid(entry)).length;
   const canSubmit = validCount > 0 && !busy;
@@ -118,30 +132,29 @@ export function AddHoldingModal({
     await onManualSubmit(parsed);
   };
 
-  const handleBackdropClose = () => {
-    if (busy) {
-      return;
-    }
-    onClose();
-  };
-
   const channelCopy = ALIPAY_CHANNEL_COPY;
 
   return (
     <div
       className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/40 sm:items-center sm:p-4"
-      onClick={handleBackdropClose}
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          requestClose();
+        }
+      }}
       role="presentation"
     >
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         className="flex max-h-[94vh] w-full max-w-md flex-col overflow-hidden rounded-t-[28px] bg-[#f5f7fa] shadow-2xl sm:rounded-[28px]"
-        onClick={(event) => event.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-labelledby="add-holding-modal-title"
       >
         <header className="relative flex items-center justify-center border-b border-slate-200/70 bg-white px-4 py-3.5">
           <button
+            ref={closeButtonRef}
             type="button"
             onClick={() => {
               if (mode === "manual") {
@@ -152,7 +165,7 @@ export function AddHoldingModal({
               onClose();
             }}
             disabled={busy}
-            className="absolute left-3 inline-flex h-9 w-9 items-center justify-center rounded-full text-slate-600 transition hover:bg-slate-100 disabled:opacity-50"
+            className="touch-target absolute left-2 inline-flex items-center justify-center rounded-full text-slate-600 transition hover:bg-slate-100 disabled:opacity-50"
             aria-label={mode === "manual" ? "返回" : "关闭"}
           >
             <ChevronLeft size={22} strokeWidth={2.25} />
@@ -181,6 +194,14 @@ export function AddHoldingModal({
                   </li>
                 ))}
               </ol>
+              <p className="mt-4 rounded-xl border border-blue-100 bg-blue-50/70 px-3 py-2 text-xs leading-5 text-slate-600">
+                {OCR_PRIVACY_COPY.uploadNotice}
+              </p>
+              {errorMessage ? (
+                <p role="alert" className="mt-3 w-full rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm leading-5 text-rose-800">
+                  {errorMessage}
+                </p>
+              ) : null}
             </div>
 
             <div className="space-y-3 bg-[#f5f7fa] px-5 pb-8 pt-3">
@@ -189,6 +210,7 @@ export function AddHoldingModal({
                 type="file"
                 accept="image/*"
                 className="sr-only"
+                tabIndex={-1}
                 disabled={busy}
                 onChange={(event) => {
                   const file = event.target.files?.[0];
@@ -240,7 +262,7 @@ export function AddHoldingModal({
                 type="button"
                 disabled={busy}
                 onClick={() => setEntries((current) => [...current, createManualEntry()])}
-                className="mt-3 flex w-full items-center justify-end gap-1.5 text-sm font-bold text-[var(--brand)] transition hover:text-[var(--brand-strong)] disabled:opacity-50"
+                className="mt-3 flex min-h-11 w-full items-center justify-end gap-1.5 rounded-xl px-2 text-sm font-bold text-[var(--brand)] transition hover:bg-[var(--brand-soft)] hover:text-[var(--brand-strong)] disabled:opacity-50"
               >
                 <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-[var(--brand)]">
                   <Plus size={12} strokeWidth={2.5} />
@@ -248,9 +270,9 @@ export function AddHoldingModal({
                 继续添加
               </button>
 
-              {formError ? (
-                <p className="mt-3 rounded-xl border border-rose-100 bg-rose-50 px-3 py-2 text-xs text-rose-700">
-                  {formError}
+              {formError || errorMessage ? (
+                <p role="alert" className="mt-3 rounded-xl border border-rose-100 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                  {formError ?? errorMessage}
                 </p>
               ) : null}
             </div>
@@ -298,7 +320,7 @@ function ManualEntryCard({
         <button
           type="button"
           onClick={onRemove}
-          className="absolute right-3 top-3 inline-flex h-7 w-7 items-center justify-center rounded-full text-slate-300 transition hover:bg-slate-100 hover:text-slate-500"
+          className="touch-target absolute right-1.5 top-1.5 inline-flex items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-slate-600"
           aria-label="删除此条"
         >
           <X size={16} />
@@ -339,7 +361,7 @@ function ManualEntryCard({
           <button
             type="button"
             onClick={() => onChange({ collapsed: true })}
-            className="mt-1 flex w-full flex-col items-center gap-0.5 py-1 text-xs font-medium text-[var(--brand)]"
+            className="mt-1 flex min-h-11 w-full flex-col items-center justify-center gap-0.5 rounded-xl text-xs font-medium text-[var(--brand)] hover:bg-[var(--brand-soft)]"
           >
             <ChevronUp size={16} strokeWidth={2.25} />
             收起
@@ -364,16 +386,16 @@ function ManualRow({
   inputMode?: "decimal" | "text";
 }) {
   return (
-    <div className="mb-2 flex items-center gap-3 rounded-xl bg-[#f0f2f5] px-4 py-3.5 last:mb-0">
+    <label className="mb-2 flex min-h-11 items-center gap-3 rounded-xl bg-[#f0f2f5] px-4 py-3.5 last:mb-0">
       <span className="shrink-0 text-[15px] font-medium text-slate-800">{label}</span>
       <input
         value={value}
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
         inputMode={inputMode}
-        className="min-w-0 flex-1 bg-transparent text-right text-[14px] text-slate-900 outline-none placeholder:text-slate-400"
+        className="min-w-0 flex-1 bg-transparent text-right text-[14px] text-slate-900 outline-none placeholder:text-slate-500"
       />
-    </div>
+    </label>
   );
 }
 

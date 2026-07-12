@@ -135,7 +135,7 @@ export function ReportDetailsHub({ report, diagnostics }: ReportDetailsHubProps)
               <ChevronDown
                 aria-hidden="true"
                 size={16}
-                className={`shrink-0 text-slate-400 transition-transform ${isOpen ? "rotate-180" : ""}`}
+                className={`shrink-0 text-slate-500 transition-transform ${isOpen ? "rotate-180" : ""}`}
               />
             </button>
           );

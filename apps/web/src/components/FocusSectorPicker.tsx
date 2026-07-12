@@ -111,7 +111,11 @@ export function FocusSectorPicker({
       <div className="rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-xs text-red-700">
         <p>{error}</p>
         {onRetry ? (
-          <button type="button" onClick={onRetry} className="mt-2 font-semibold text-red-800 underline">
+          <button
+            type="button"
+            onClick={onRetry}
+            className="mt-2 inline-flex min-h-11 items-center rounded-lg px-2 font-semibold text-red-800 underline"
+          >
             重试
           </button>
         ) : null}
@@ -124,29 +128,25 @@ export function FocusSectorPicker({
       {selected.length > 0 ? (
         <div className="flex flex-wrap gap-2">
           {selected.map((label) => (
-            <span
+            <button
               key={label}
-              className="inline-flex items-center gap-1 rounded-full border border-[var(--brand)] bg-[var(--brand-soft)] px-2.5 py-1 text-xs font-medium text-[var(--brand-strong)]"
+              type="button"
+              aria-label={`取消关注 ${label}`}
+              onClick={() => removeLabel(label)}
+              className="inline-flex min-h-11 items-center gap-1 rounded-full border border-[var(--brand)] bg-[var(--brand-soft)] px-3 text-xs font-medium text-[var(--brand-strong)] hover:bg-blue-100"
             >
               {label}
-              <button
-                type="button"
-                aria-label={`取消关注 ${label}`}
-                onClick={() => removeLabel(label)}
-                className="rounded-full p-0.5 hover:bg-white/60"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            </span>
+              <X className="h-3 w-3" aria-hidden="true" />
+            </button>
           ))}
         </div>
       ) : (
-        <p className="text-[11px] text-slate-400">未选择时将按板块热度自动扫描</p>
+        <p className="text-[11px] text-slate-500">未选择时将按板块热度自动扫描</p>
       )}
 
       <div className="relative">
-        <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-          <Search className="h-4 w-4 shrink-0 text-slate-400" />
+        <div className="flex min-h-11 items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3">
+          <Search className="h-4 w-4 shrink-0 text-slate-500" />
           <input
             type="text"
             value={query}
@@ -170,11 +170,15 @@ export function FocusSectorPicker({
                 : `搜索或浏览全部 ${optionLabels.length} 个板块…`
             }
             disabled={selected.length >= MAX_FOCUS}
-            className="min-w-0 flex-1 bg-transparent text-sm text-slate-800 outline-none placeholder:text-slate-400 disabled:cursor-not-allowed"
+            className="min-h-11 min-w-0 flex-1 bg-transparent text-sm text-slate-800 outline-none placeholder:text-slate-500 disabled:cursor-not-allowed"
+            role="combobox"
+            aria-label="搜索关注方向"
+            aria-expanded={open && selected.length < MAX_FOCUS}
+            aria-autocomplete="list"
             aria-controls={listId}
             autoComplete="off"
           />
-          <ChevronDown className={`h-4 w-4 text-slate-400 transition ${open ? "rotate-180" : ""}`} />
+          <ChevronDown className={`h-4 w-4 text-slate-500 transition ${open ? "rotate-180" : ""}`} />
         </div>
 
         {open && selected.length < MAX_FOCUS ? (
@@ -184,7 +188,7 @@ export function FocusSectorPicker({
             className="absolute z-20 mt-1 max-h-64 w-full overflow-y-auto rounded-xl border border-slate-200 bg-white py-1 shadow-lg"
           >
             {filtered.length === 0 ? (
-              <li className="px-3 py-2 text-xs text-slate-400">无匹配板块</li>
+              <li className="px-3 py-2 text-xs text-slate-500">无匹配板块</li>
             ) : (
               filtered.map((label) => {
                 const heatText = formatHeat(label);
@@ -194,12 +198,12 @@ export function FocusSectorPicker({
                       type="button"
                       role="option"
                       aria-selected={false}
-                      className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+                      className="flex min-h-11 w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
                       onClick={() => addLabel(label)}
                     >
                       <span>{label}</span>
                       {heatText ? (
-                        <span className="shrink-0 text-xs tabular-nums text-slate-400">{heatText}</span>
+                        <span className="shrink-0 text-xs tabular-nums text-slate-500">{heatText}</span>
                       ) : null}
                     </button>
                   </li>
@@ -210,7 +214,7 @@ export function FocusSectorPicker({
         ) : null}
       </div>
 
-      <p className="text-[11px] leading-5 text-slate-400">
+      <p className="text-[11px] leading-5 text-slate-500">
         共 {optionLabels.length} 个主题板块可选；也可在市场 → 主题板块点击「加入关注方向」
       </p>
     </div>

@@ -132,7 +132,7 @@ export function PerformanceReturnChart({
   if (!chart) {
     return (
       <div
-        className="flex items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-400"
+        className="flex items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-500"
         style={{ height }}
       >
         净值数据不足，无法绘制走势图
@@ -143,10 +143,47 @@ export function PerformanceReturnChart({
   const isHovering = hoverIndex != null;
   const active = isHovering ? chart.coords[hoverIndex] : null;
   const selectedMarker = markerPoints.find((marker) => marker.date === selectedMarkerDate) ?? null;
+  const latest = chart.coords[chart.coords.length - 1];
+  const chartLabel = `基金累计收益走势图，${chart.coords[0].date}至${latest.date}，最新基金收益${formatSignedPercent(latest.fundPercent)}${
+    showBenchmark && latest.benchPercent != null
+      ? `，对比基准${formatSignedPercent(latest.benchPercent)}`
+      : ""
+  }。聚焦后可用左右方向键逐日查看`;
+
+  const moveKeyboardCursor = (key: string) => {
+    if (key === "Home") {
+      setHoverIndex(0);
+      return;
+    }
+    if (key === "End") {
+      setHoverIndex(chart.coords.length - 1);
+      return;
+    }
+    if (key === "ArrowLeft") {
+      setHoverIndex((current) => Math.max(0, (current ?? chart.coords.length) - 1));
+      return;
+    }
+    if (key === "ArrowRight") {
+      setHoverIndex((current) => Math.min(chart.coords.length - 1, (current ?? -1) + 1));
+    }
+  };
 
   return (
     <div ref={containerRef} className="relative w-full">
-      <svg viewBox={`0 0 ${chart.width} ${chart.height}`} className="w-full touch-none select-none" role="img">
+      <svg
+        viewBox={`0 0 ${chart.width} ${chart.height}`}
+        className="w-full touch-none select-none rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] focus-visible:ring-offset-2"
+        role="img"
+        aria-label={chartLabel}
+        tabIndex={0}
+        onKeyDown={(event) => {
+          if (["Home", "End", "ArrowLeft", "ArrowRight"].includes(event.key)) {
+            event.preventDefault();
+            moveKeyboardCursor(event.key);
+          }
+        }}
+        onBlur={() => setHoverIndex(null)}
+      >
         <defs>
           <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor="rgba(61, 126, 255, 0.18)" />
@@ -212,14 +249,14 @@ export function PerformanceReturnChart({
           );
         })}
 
-        <text x={chart.plotLeft + 4} y={chart.plotTop + 8} fontSize={8} className="fill-slate-400 font-medium tabular-nums">
+        <text x={chart.plotLeft + 4} y={chart.plotTop + 8} fontSize={8} className="fill-slate-500 font-medium tabular-nums">
           {formatSignedPercent(chart.max)}
         </text>
         <text
           x={chart.plotLeft + 4}
           y={chart.plotBottom - 3}
           fontSize={8}
-          className="fill-slate-400 font-medium tabular-nums"
+          className="fill-slate-500 font-medium tabular-nums"
         >
           {formatSignedPercent(chart.min)}
         </text>
@@ -288,14 +325,14 @@ export function PerformanceReturnChart({
           </>
         ) : null}
 
-        <text x={chart.plotLeft} y={chart.height - 8} className="fill-slate-400 text-[10px]">
+        <text x={chart.plotLeft} y={chart.height - 8} className="fill-slate-500 text-[10px]">
           {points[0].date}
         </text>
         <text
           x={chart.plotLeft + chart.chartWidth / 2}
           y={chart.height - 8}
           textAnchor="middle"
-          className="fill-slate-400 text-[10px]"
+          className="fill-slate-500 text-[10px]"
         >
           {points[chart.midDateIndex].date}
         </text>
@@ -303,7 +340,7 @@ export function PerformanceReturnChart({
           x={chart.plotRight}
           y={chart.height - 8}
           textAnchor="end"
-          className="fill-slate-400 text-[10px]"
+          className="fill-slate-500 text-[10px]"
         >
           {points[points.length - 1].date}
         </text>
@@ -314,15 +351,43 @@ export function PerformanceReturnChart({
           width={chart.chartWidth}
           height={chart.chartHeight}
           fill="transparent"
-          onMouseMove={(event) => {
+          onPointerMove={(event) => {
             const rect = event.currentTarget.getBoundingClientRect();
             const ratio = (event.clientX - rect.left) / rect.width;
             const index = Math.round(ratio * (chart.coords.length - 1));
             setHoverIndex(Math.max(0, Math.min(chart.coords.length - 1, index)));
           }}
-          onMouseLeave={() => setHoverIndex(null)}
+          onPointerLeave={() => setHoverIndex(null)}
         />
       </svg>
+
+      <p className="sr-only" aria-live="polite">
+        {active
+          ? `${active.date}，基金收益${formatSignedPercent(active.fundPercent)}${
+              active.benchPercent != null
+                ? `，对比基准${formatSignedPercent(active.benchPercent)}`
+                : ""
+            }`
+          : ""}
+      </p>
+
+      {markerPoints.length > 0 ? (
+        <div className="mt-2 flex flex-wrap gap-2" aria-label="交易记录日期">
+          {markerPoints.map((marker) => (
+            <button
+              key={`marker-control-${marker.date}`}
+              type="button"
+              onClick={() =>
+                setSelectedMarkerDate((current) => (current === marker.date ? null : marker.date))
+              }
+              className="touch-target inline-flex items-center rounded-full border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 hover:border-[var(--brand)] hover:text-[var(--brand)]"
+              aria-expanded={selectedMarkerDate === marker.date}
+            >
+              {marker.date.slice(5)} · {marker.kind === "buy" ? "加仓" : marker.kind === "sell" ? "减仓" : "待确认"}
+            </button>
+          ))}
+        </div>
+      ) : null}
 
       {selectedMarker ? (
         <div
@@ -336,7 +401,7 @@ export function PerformanceReturnChart({
             <button
               type="button"
               onClick={() => setSelectedMarkerDate(null)}
-              className="text-slate-400 hover:text-slate-600"
+              className="inline-flex h-11 w-11 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-700"
               aria-label="关闭"
             >
               ✕
@@ -349,7 +414,7 @@ export function PerformanceReturnChart({
                 <li key={index} className="flex items-center justify-between gap-2">
                   <span
                     className={`shrink-0 rounded px-1 py-0.5 text-[10px] font-bold ${
-                      isBuy ? "bg-rose-100 text-rose-600" : "bg-emerald-100 text-emerald-600"
+                      isBuy ? "bg-rose-100 profit-up" : "bg-emerald-100 profit-down"
                     }`}
                   >
                     {isBuy ? "加仓" : "减仓"}
@@ -358,7 +423,7 @@ export function PerformanceReturnChart({
                   <span className="font-bold tabular-nums text-slate-800">
                     {item.amount_yuan.toLocaleString("zh-CN", { minimumFractionDigits: 2 })}
                   </span>
-                  <span className="shrink-0 text-[10px] tabular-nums text-slate-400">
+                  <span className="shrink-0 text-[10px] tabular-nums text-slate-500">
                     {item.trade_time.slice(5, 16)}
                   </span>
                 </li>

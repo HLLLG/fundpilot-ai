@@ -50,7 +50,7 @@ export function reboundScoreTone(value: number | null | undefined): string {
     return "text-slate-500";
   }
   if (value >= 70) {
-    return "text-emerald-600";
+    return "profit-down";
   }
   if (value >= 45) {
     return "text-amber-600";

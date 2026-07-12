@@ -97,7 +97,7 @@ export function DipReboundRadar({
           </span>
           <button
             type="button"
-            className="font-semibold text-[var(--brand-strong)] underline"
+            className="inline-flex min-h-11 items-center font-semibold text-[var(--brand-strong)] underline"
             onClick={() => onSectorFilterChange(null)}
           >
             查看全部
@@ -106,10 +106,11 @@ export function DipReboundRadar({
       ) : null}
 
       {leaders.length > 0 ? (
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2" role="group" aria-label="板块筛选">
           <button
             type="button"
-            className={`badge ${sectorFilter == null ? "bg-[var(--brand-soft)] text-[var(--brand-strong)]" : ""}`}
+            aria-pressed={sectorFilter == null}
+            className={`badge min-h-11 ${sectorFilter == null ? "bg-[var(--brand-soft)] text-[var(--brand-strong)]" : ""}`}
             onClick={() => onSectorFilterChange(null)}
           >
             全部
@@ -118,7 +119,8 @@ export function DipReboundRadar({
             <button
               key={leader.sector_label}
               type="button"
-              className={`badge ${sectorFilter === leader.sector_label ? "bg-[var(--brand-soft)] text-[var(--brand-strong)]" : ""}`}
+              aria-pressed={sectorFilter === leader.sector_label}
+              className={`badge min-h-11 ${sectorFilter === leader.sector_label ? "bg-[var(--brand-soft)] text-[var(--brand-strong)]" : ""}`}
               onClick={() =>
                 onSectorFilterChange(
                   sectorFilter === leader.sector_label ? null : leader.sector_label,
@@ -138,11 +140,11 @@ export function DipReboundRadar({
         {DIP_RADAR_METRICS_HINT}
       </p>
 
-      <p className="text-xs text-slate-400">{formatDipRadarUpdatedFromIso(data?.refreshed_at)}</p>
+      <p className="text-xs text-slate-500">{formatDipRadarUpdatedFromIso(data?.refreshed_at)}</p>
 
       {loading && !isDipRadarUsable(data) ? (
         <div className="empty-state py-10">
-          <Loader2 className="mx-auto h-6 w-6 animate-spin text-slate-400" />
+          <Loader2 className="mx-auto h-6 w-6 animate-spin text-slate-500" />
           <p className="mt-2 text-sm text-slate-500">扫描大跌基金…</p>
         </div>
       ) : null}
@@ -151,7 +153,7 @@ export function DipReboundRadar({
         <div className="empty-state py-10">
           <p className="text-sm text-slate-600">{data?.message ?? "暂无符合跌幅阈值的基金"}</p>
           {data?.scan_stats ? (
-            <p className="mt-2 text-xs text-slate-400">
+            <p className="mt-2 text-xs text-slate-500">
               {data.scan_stats.sector_filter ? (
                 <>
                   全市场扫描命中 {data.scan_stats.total_matches ?? data.scan_stats.matches ?? 0} 只
@@ -167,7 +169,7 @@ export function DipReboundRadar({
               )}
             </p>
           ) : null}
-          <p className="mt-2 text-xs text-slate-400">
+          <p className="mt-2 text-xs text-slate-500">
             可切换 3 日回看、点击刷新，或稍后在交易日盘中再试
           </p>
         </div>
@@ -181,7 +183,7 @@ export function DipReboundRadar({
                 <div className="flex items-start justify-between gap-3">
                   <button
                     type="button"
-                    className="min-w-0 flex-1 text-left"
+                    className="min-h-11 min-w-0 flex-1 text-left"
                     onClick={() => onOpenFund?.(item.fund_code, item.fund_name)}
                   >
                     <div className="text-sm font-semibold leading-snug text-slate-900">{item.fund_name}</div>
@@ -196,7 +198,7 @@ export function DipReboundRadar({
                     >
                       {formatDipPercent(item.dip_drop_percent)}
                     </div>
-                    <div className="mt-0.5 text-[10px] font-semibold text-slate-400">近 {lookbackDays} 日</div>
+                    <div className="mt-0.5 text-[10px] font-semibold text-slate-500">近 {lookbackDays} 日</div>
                   </div>
                 </div>
 
@@ -238,7 +240,7 @@ export function DipReboundRadar({
         </div>
       ) : null}
 
-      <p className="text-center text-[11px] leading-relaxed text-slate-400">{DIP_RADAR_DISCLAIMER}</p>
+      <p className="text-center text-[11px] leading-relaxed text-slate-500">{DIP_RADAR_DISCLAIMER}</p>
     </div>
   );
 }

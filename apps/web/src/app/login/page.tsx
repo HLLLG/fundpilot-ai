@@ -6,6 +6,7 @@ import { FormEvent, useState } from "react";
 import { loginUser } from "@/lib/api";
 import { useAuth } from "@/components/AuthProvider";
 import { BrandMark } from "@/components/BrandMark";
+import { safeLoginRedirect } from "@/lib/authRedirect";
 
 export default function LoginPage() {
   const { setSession } = useAuth();
@@ -24,7 +25,7 @@ export default function LoginPage() {
       const session = await loginUser({ userAccount, password });
       setSession(session.accessToken, session.user);
       const redirect = searchParams.get("redirect");
-      router.replace(redirect ? decodeURIComponent(redirect) : "/");
+      router.replace(safeLoginRedirect(redirect));
     } catch (err) {
       setError(err instanceof Error ? err.message : "登录失败");
     } finally {
@@ -33,7 +34,7 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="landing-hero-bg flex min-h-screen flex-col items-center justify-center px-4 py-10">
+    <main className="landing-hero-bg flex min-h-screen flex-col items-center justify-center px-4 py-10">
       <Link href="/" className="mb-7">
         <BrandMark size="lg" showEnglish />
       </Link>
@@ -49,6 +50,8 @@ export default function LoginPage() {
               type="email"
               required
               autoComplete="email"
+              aria-invalid={Boolean(error)}
+              aria-describedby={error ? "login-error" : undefined}
               value={userAccount}
               onChange={(e) => setUserAccount(e.target.value)}
               className="input-field mt-1.5"
@@ -61,6 +64,8 @@ export default function LoginPage() {
               type="password"
               required
               autoComplete="current-password"
+              aria-invalid={Boolean(error)}
+              aria-describedby={error ? "login-error" : undefined}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               className="input-field mt-1.5"
@@ -68,22 +73,22 @@ export default function LoginPage() {
             />
           </label>
           {error ? (
-            <p className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>
+            <p id="login-error" role="alert" className="rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
           ) : null}
-          <button type="submit" disabled={submitting} className="btn-primary w-full">
+          <button type="submit" disabled={submitting} aria-busy={submitting} className="btn-primary w-full">
             {submitting ? "登录中…" : "登录"}
           </button>
         </form>
         <p className="mt-6 text-center text-sm text-slate-500">
           还没有账号？{" "}
-          <Link href="/register" className="font-semibold text-[var(--brand)] hover:underline">
+          <Link href="/register" className="auth-inline-link font-semibold text-[var(--brand)] hover:underline">
             免费注册
           </Link>
         </p>
       </div>
-      <Link href="/" className="mt-6 text-xs text-slate-400 hover:text-slate-600">
+      <Link href="/" className="auth-back-link mt-3 text-xs text-slate-500 hover:text-slate-700">
         ← 返回首页
       </Link>
-    </div>
+    </main>
   );
 }

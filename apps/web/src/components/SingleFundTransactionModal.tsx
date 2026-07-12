@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ChevronLeft, Loader2 } from "lucide-react";
 import type { Holding, ParsedTransaction } from "@/lib/api";
-import { applyTransactions } from "@/lib/api";
 import { formatPlainMoney } from "@/lib/holdingMetrics";
+import { useDialogA11y } from "@/lib/useDialogA11y";
 
 type TradeTiming = "before_close" | "after_close";
 
@@ -16,7 +16,7 @@ type SingleFundTransactionModalProps = {
   latestNav?: number | null;
   navDateLabel?: string | null;
   onClose: () => void;
-  onApplied: (holdings: Holding[]) => void | Promise<void>;
+  onSubmit: (transaction: ParsedTransaction) => void | Promise<void>;
 };
 
 function buildTradeTime(timing: TradeTiming): string {
@@ -37,12 +37,23 @@ export function SingleFundTransactionModal({
   latestNav,
   navDateLabel,
   onClose,
-  onApplied,
+  onSubmit,
 }: SingleFundTransactionModalProps) {
   const [sharesInput, setSharesInput] = useState("");
   const [timing, setTiming] = useState<TradeTiming>("after_close");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const requestClose = () => {
+    if (!saving) {
+      onClose();
+    }
+  };
+  const dialogRef = useDialogA11y<HTMLDivElement>({
+    open,
+    onClose: requestClose,
+    initialFocusRef: closeButtonRef,
+  });
 
   const isSell = direction === "sell";
   const title = isSell ? "支付宝-同步减仓" : "支付宝-同步加仓";
@@ -94,8 +105,7 @@ export function SingleFundTransactionModal({
     setSaving(true);
     setError(null);
     try {
-      const result = await applyTransactions([tx]);
-      await onApplied(result.holdings);
+      await onSubmit(tx);
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : "提交失败");
@@ -114,30 +124,35 @@ export function SingleFundTransactionModal({
   return (
     <div
       className="fixed inset-0 z-[80] flex items-end justify-center bg-slate-950/40 sm:items-center sm:p-4"
-      onClick={() => {
-        if (!saving) {
-          onClose();
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          requestClose();
         }
       }}
       role="presentation"
     >
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         className="flex max-h-[94vh] w-full max-w-md flex-col overflow-hidden rounded-t-[28px] bg-[#f5f7fa] shadow-2xl sm:rounded-[28px]"
-        onClick={(event) => event.stopPropagation()}
         role="dialog"
         aria-modal="true"
+        aria-labelledby="single-fund-transaction-title"
       >
         <header className="relative flex items-center justify-center border-b border-slate-200/70 bg-white px-4 py-3.5">
           <button
+            ref={closeButtonRef}
             type="button"
-            onClick={onClose}
+            onClick={requestClose}
             disabled={saving}
-            className="absolute left-3 inline-flex h-9 w-9 items-center justify-center rounded-full text-slate-600 hover:bg-slate-100 disabled:opacity-50"
+            className="absolute left-3 inline-flex h-11 w-11 items-center justify-center rounded-full text-slate-600 hover:bg-slate-100 disabled:opacity-50"
             aria-label="返回"
           >
             <ChevronLeft size={22} />
           </button>
-          <h2 className="text-base font-bold text-slate-900">{title}</h2>
+          <h2 id="single-fund-transaction-title" className="text-base font-bold text-slate-900">
+            {title}
+          </h2>
         </header>
 
         <div className="space-y-4 overflow-y-auto px-4 py-4">
@@ -160,14 +175,16 @@ export function SingleFundTransactionModal({
               {isSell ? "同步卖出份额" : "同步买入份额"}
             </div>
             {isSell && max != null ? (
-              <p className="mt-1 text-xs text-slate-400">最多可选 {formatPlainMoney(max)} 份</p>
+              <p className="mt-1 text-xs text-slate-500">最多可选 {formatPlainMoney(max)} 份</p>
             ) : null}
             <input
               value={sharesInput}
               onChange={(event) => setSharesInput(event.target.value)}
+              disabled={saving}
               inputMode="decimal"
+              aria-label={isSell ? "同步卖出份额" : "同步买入份额"}
               placeholder={isSell && max != null ? `最多 ${formatPlainMoney(max)} 份` : "请输入份额"}
-              className="input-field mt-3 w-full text-lg font-bold tabular-nums"
+              className="input-field mt-3 w-full text-lg font-bold tabular-nums disabled:cursor-wait disabled:opacity-60"
             />
             {isSell ? (
               <div className="mt-3 flex flex-wrap gap-2">
@@ -181,7 +198,8 @@ export function SingleFundTransactionModal({
                     key={item.label}
                     type="button"
                     onClick={() => applyRatio(item.ratio)}
-                    className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-100"
+                    disabled={saving}
+                    className="min-h-11 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-100 disabled:cursor-wait disabled:opacity-60"
                   >
                     {item.label}
                   </button>
@@ -198,14 +216,20 @@ export function SingleFundTransactionModal({
             <select
               value={timing}
               onChange={(event) => setTiming(event.target.value as TradeTiming)}
-              className="input-field mt-2 w-full"
+              disabled={saving}
+              aria-label="原平台成交时间"
+              className="input-field mt-2 w-full disabled:cursor-wait disabled:opacity-60"
             >
               <option value="before_close">当天下午 3 点前</option>
               <option value="after_close">当天下午 3 点后</option>
             </select>
           </div>
 
-          {error ? <p className="text-sm font-medium text-rose-600">{error}</p> : null}
+          {error ? (
+            <p className="text-sm font-medium text-rose-600" role="alert">
+              {error}
+            </p>
+          ) : null}
         </div>
 
         <div className="border-t border-slate-200 bg-white px-4 py-4">
@@ -213,7 +237,7 @@ export function SingleFundTransactionModal({
             type="button"
             disabled={saving}
             onClick={() => void handleConfirm()}
-            className="btn-primary w-full !py-3.5"
+            className="btn-primary min-h-11 w-full !py-3.5"
           >
             {saving ? (
               <>

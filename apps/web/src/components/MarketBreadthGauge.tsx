@@ -42,7 +42,7 @@ function formatCount(value: number | null | undefined): string {
 function Metric({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0 rounded-xl bg-white px-3 py-2 ring-1 ring-slate-100">
-      <div className="text-[10px] font-bold text-slate-400">{label}</div>
+      <div className="text-[10px] font-bold text-slate-500">{label}</div>
       <div className="mt-0.5 break-words text-sm font-semibold text-slate-800">{value}</div>
     </div>
   );
@@ -154,7 +154,7 @@ export function MarketBreadthGauge({ compact = false }: MarketBreadthGaugeProps)
         </div>
       ) : null}
 
-      <p className="mt-3 text-xs leading-5 text-slate-400">
+      <p className="mt-3 text-xs leading-5 text-slate-500">
         情绪档位基于近2年全市场创新高/创新低家数分布自校准；涨跌停/炸板/连板为当日快照，非历史回测结论，仅供辅助参考，不构成投资建议。
       </p>
     </section>

@@ -103,5 +103,5 @@ export function cnSignedPercent(value: number | null | undefined) {
   if (value == null || Number.isNaN(value) || Math.abs(value) < 0.005) {
     return "text-slate-500";
   }
-  return value > 0 ? "text-rose-600" : "text-emerald-600";
+  return value > 0 ? "profit-up" : "profit-down";
 }

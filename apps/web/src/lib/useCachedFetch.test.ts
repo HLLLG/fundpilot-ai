@@ -2,7 +2,7 @@
 
 import { renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { deleteClientCache } from "@/lib/clientCache";
+import { deleteClientCache, writeClientCache } from "@/lib/clientCache";
 import { useCachedFetch } from "@/lib/useCachedFetch";
 
 const CACHE_KEY = "test:dedupe";
@@ -59,5 +59,25 @@ describe("useCachedFetch", () => {
     });
 
     expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("keeps stale data visible while exposing a background refresh failure", async () => {
+    writeClientCache(CACHE_KEY, ["cached"], "memory");
+    const fetcher = vi.fn().mockRejectedValue(new Error("行情服务超时"));
+
+    const { result } = renderHook(() =>
+      useCachedFetch({
+        cacheKey: CACHE_KEY,
+        fetcher,
+        staleTimeMs: -1,
+      }),
+    );
+
+    expect(result.current.data).toEqual(["cached"]);
+    await waitFor(() => {
+      expect(result.current.error).toBe("行情服务超时");
+    });
+    expect(result.current.data).toEqual(["cached"]);
+    expect(result.current.loading).toBe(false);
   });
 });

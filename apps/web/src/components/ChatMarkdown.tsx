@@ -61,8 +61,13 @@ const components: Components = {
     </pre>
   ),
   table: ({ children }) => (
-    <div className="mb-3 overflow-x-auto last:mb-0">
-      <table className="w-full border-collapse text-left text-xs">{children}</table>
+    <div
+      className="mb-3 overflow-x-auto rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] focus-visible:ring-offset-2 last:mb-0"
+      role="region"
+      aria-label="对话数据表格，可左右滚动查看"
+      tabIndex={0}
+    >
+      <table className="min-w-max w-full border-collapse text-left text-xs">{children}</table>
     </div>
   ),
   th: ({ children }) => (

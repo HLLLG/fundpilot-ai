@@ -125,7 +125,7 @@ export function ReportNewsBriefPanel({ briefs, marketNews = [] }: ReportNewsBrie
       <div className="mb-4 flex items-center gap-2 text-sm font-black text-slate-950">
         <Newspaper size={18} className="text-[var(--brand)]" />
         主题要闻摘要
-        <span className="text-xs font-semibold text-slate-400">（点击要点或出处跳转原文）</span>
+        <span className="text-xs font-semibold text-slate-500">（点击要点或出处跳转原文）</span>
       </div>
       <div className="space-y-4">
         {briefs.map((brief) => (
@@ -135,7 +135,7 @@ export function ReportNewsBriefPanel({ briefs, marketNews = [] }: ReportNewsBrie
           >
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h3 className="text-sm font-black text-slate-950">{brief.topic}</h3>
-              <span className="text-[10px] font-bold text-slate-400">
+              <span className="text-[10px] font-bold text-slate-500">
                 {brief.news_count} 条 · {brief.provider}
               </span>
             </div>

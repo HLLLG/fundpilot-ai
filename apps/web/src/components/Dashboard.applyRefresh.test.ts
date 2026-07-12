@@ -103,6 +103,33 @@ describe("Dashboard apply refresh flow", () => {
     );
   });
 
+  it("keeps the OCR draft visible until persistence succeeds", () => {
+    const source = readFileSync(
+      fileURLToPath(new URL("./Dashboard.tsx", import.meta.url)),
+      "utf8",
+    );
+    const ocrHandler = source.slice(
+      source.indexOf("const handleConfirmOcrHoldings"),
+      source.indexOf("const handleDeleteHolding"),
+    );
+    const persistIndex = ocrHandler.indexOf("await enqueuePortfolioMutation");
+
+    expect(persistIndex).toBeGreaterThan(-1);
+    expect(ocrHandler.indexOf("setPendingOcrHoldings(null);")).toBeGreaterThan(persistIndex);
+    expect(ocrHandler.indexOf("setHoldings(appliedHoldings);")).toBeGreaterThan(persistIndex);
+    expect(ocrHandler).toContain("setOcrApplyError(errorMessage);");
+  });
+
+  it("swaps the transaction review for the upload dialog without stacking both", () => {
+    const source = readFileSync(
+      fileURLToPath(new URL("./Dashboard.tsx", import.meta.url)),
+      "utf8",
+    );
+
+    expect(source).toContain("{pendingTransactions && !showBatchModal ? (");
+    expect(source).toContain("setPendingTransactions((prev) => mergeTransactions(prev ?? [], result.transactions))");
+  });
+
   it("versions all portfolio persistence entrypoints that can race", () => {
     const source = readFileSync(
       fileURLToPath(new URL("./Dashboard.tsx", import.meta.url)),
@@ -114,27 +141,81 @@ describe("Dashboard apply refresh flow", () => {
     );
     const transactionApplyHandler = source.slice(
       source.indexOf("const handleApplyTransactions"),
-      source.indexOf("return (", source.indexOf("const handleApplyTransactions")),
+      source.indexOf("const handleSingleFundTransaction"),
     );
     const fundCodeUpdateHandler = source.slice(
       source.indexOf("onFundCodeUpdated={async"),
       source.indexOf("onHoldingResolved=", source.indexOf("onFundCodeUpdated={async")),
     );
-    const portfolioUpdatedHandler = source.slice(
-      source.indexOf("onPortfolioUpdated={async"),
-      source.indexOf("</YangjibaoFundDetail>", source.indexOf("onPortfolioUpdated={async")),
+    const singleTransactionHandler = source.slice(
+      source.indexOf("const handleSingleFundTransaction"),
+      source.indexOf("const handleAdjustHolding"),
+    );
+    const adjustHoldingHandler = source.slice(
+      source.indexOf("const handleAdjustHolding"),
+      source.indexOf("return (", source.indexOf("const handleAdjustHolding")),
     );
 
     for (const handler of [
       manualAddHandler,
       transactionApplyHandler,
       fundCodeUpdateHandler,
-      portfolioUpdatedHandler,
+      singleTransactionHandler,
+      adjustHoldingHandler,
     ]) {
       expect(handler).toContain("holdingsMutationVersionRef.current += 1;");
       expect(handler).toContain("const mutationVersion = holdingsMutationVersionRef.current;");
       expect(handler).toContain("if (mutationVersion !== holdingsMutationVersionRef.current)");
     }
+  });
+
+  it("routes single-fund writes through the queue without a second whole-portfolio write", () => {
+    const source = readFileSync(
+      fileURLToPath(new URL("./Dashboard.tsx", import.meta.url)),
+      "utf8",
+    );
+    const singleTransactionHandler = source.slice(
+      source.indexOf("const handleSingleFundTransaction"),
+      source.indexOf("const handleAdjustHolding"),
+    );
+    const adjustHoldingHandler = source.slice(
+      source.indexOf("const handleAdjustHolding"),
+      source.indexOf("return (", source.indexOf("const handleAdjustHolding")),
+    );
+
+    expect(singleTransactionHandler).toContain(
+      "enqueuePortfolioMutation(() => applyTransactions([transaction]))",
+    );
+    expect(singleTransactionHandler).not.toContain("applyPortfolioHoldings");
+    expect(adjustHoldingHandler).toContain(
+      "enqueuePortfolioMutation(() => adjustHolding(fundCode, patch))",
+    );
+    expect(adjustHoldingHandler).not.toContain("applyPortfolioHoldings");
+    expect(source).toContain("onAdjustHolding={handleAdjustHolding}");
+    expect(source).toContain("onApplyTransaction={handleSingleFundTransaction}");
+    expect(source).not.toContain("onPortfolioUpdated=");
+  });
+
+  it("keeps mutation APIs out of the single-fund modal components", () => {
+    const transactionModalSource = readFileSync(
+      fileURLToPath(new URL("./SingleFundTransactionModal.tsx", import.meta.url)),
+      "utf8",
+    );
+    const modifyModalSource = readFileSync(
+      fileURLToPath(new URL("./HoldingModifyModal.tsx", import.meta.url)),
+      "utf8",
+    );
+    const detailSource = readFileSync(
+      fileURLToPath(new URL("./YangjibaoFundDetail.tsx", import.meta.url)),
+      "utf8",
+    );
+
+    expect(transactionModalSource).not.toContain("applyTransactions(");
+    expect(modifyModalSource).not.toContain("adjustHolding(");
+    expect(transactionModalSource).toContain("await onSubmit(tx);");
+    expect(modifyModalSource).toContain("await onSubmit({");
+    expect(detailSource).toContain("refreshDetailAfterPortfolioMutation");
+    expect(detailSource).toContain("持仓已更新，但最新详情暂时无法刷新");
   });
 
   it("does not persist the initial empty holdings before cache is ready", () => {

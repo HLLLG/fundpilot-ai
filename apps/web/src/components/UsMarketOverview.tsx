@@ -119,7 +119,7 @@ function MetricCard({
       </div>
 
       {unavailable ? (
-        <div className="mt-2 text-sm font-medium text-slate-400">暂不可用</div>
+        <div className="mt-2 text-sm font-medium text-slate-500">暂不可用</div>
       ) : (
         <div className="mt-1.5">
           <div className="text-base font-semibold tabular-nums text-slate-900">
@@ -191,10 +191,10 @@ export function UsMarketOverview({ data, loading, revalidating = false }: UsMark
           <span className="inline-flex items-center rounded-full bg-slate-900 px-3 py-1 text-xs font-medium text-white">
             美股 · {sessionLabel}
           </span>
-          {data.et_date ? <span className="text-xs text-slate-400">{data.et_date} ET</span> : null}
+          {data.et_date ? <span className="text-xs text-slate-500">{data.et_date} ET</span> : null}
         </div>
         {revalidating ? (
-          <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-400" aria-hidden />
+          <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-500" aria-hidden />
         ) : null}
       </div>
 
@@ -203,11 +203,11 @@ export function UsMarketOverview({ data, loading, revalidating = false }: UsMark
           {renderFuturesCards(data.futures, data.session_kind)}
           {renderUsdCnyCard(data.usd_cny)}
         </div>
-        <p className="mt-3 text-xs leading-relaxed text-slate-400">{A_SHARE_CONTEXT_HINT}</p>
+        <p className="mt-3 text-xs leading-relaxed text-slate-500">{A_SHARE_CONTEXT_HINT}</p>
       </div>
 
       {updatedAt ? (
-        <p className="text-center text-xs text-slate-400">
+        <p className="text-center text-xs text-slate-500">
           更新时间 {updatedAt}
           {data.stale ? " · 上次缓存" : data.from_cache ? " · 缓存" : ""}
         </p>

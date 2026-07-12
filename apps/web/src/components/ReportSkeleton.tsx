@@ -52,7 +52,7 @@ export function ReportSkeleton({ streaming, onCancel, onFollowup }: ReportSkelet
               <button
                 type="button"
                 onClick={onCancel}
-                className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-600 hover:border-slate-300"
+                className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-600 hover:border-slate-300"
                 data-testid="stream-cancel-btn"
               >
                 <X size={14} />

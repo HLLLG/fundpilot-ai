@@ -216,7 +216,7 @@ export function PerformanceTrendPanel({
 
   if (!enabled) {
     return (
-      <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-400">
+      <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
         正在匹配基金代码，或请上传详情页 OCR 补全
       </div>
     );
@@ -236,7 +236,7 @@ export function PerformanceTrendPanel({
           <span className="h-0.5 w-4 rounded-full bg-[#f59e0b]" />
           <span className="inline-flex items-center gap-0.5">
             {benchHistory?.name ?? "沪深300"}
-            <ChevronDown size={12} className="text-slate-400" />
+            <ChevronDown size={12} className="text-slate-500" />
           </span>
           <span className={`font-semibold tabular-nums ${cnSignedPercent(benchPeriodChange)}`}>
             {formatSignedPercent(benchPeriodChange)}
@@ -252,7 +252,7 @@ export function PerformanceTrendPanel({
       </div>
 
       {loading ? (
-        <div className="flex h-[220px] items-center justify-center text-sm text-slate-400">
+        <div className="flex h-[220px] items-center justify-center text-sm text-slate-500">
           <Loader2 size={18} className="mr-2 animate-spin" />
           加载业绩走势…
         </div>
@@ -268,7 +268,7 @@ export function PerformanceTrendPanel({
           markers={tradeMarkers}
         />
       ) : (
-        <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-400">
+        <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
           {fundHistory?.note ?? "暂无净值历史数据"}
         </div>
       )}
@@ -280,10 +280,11 @@ export function PerformanceTrendPanel({
             <button
               key={period.label}
               type="button"
+              aria-pressed={active}
               onClick={() => setDays(period.days)}
-              className={`flex-1 rounded-full px-1 py-1.5 text-[12px] font-semibold transition ${
+              className={`min-h-11 flex-1 rounded-full px-1 py-2 text-[12px] font-semibold transition ${
                 active
-                  ? "bg-[#edf3ff] text-[#3d7eff]"
+                  ? "bg-[#edf3ff] text-[var(--brand-strong)]"
                   : "text-slate-500 hover:bg-slate-50 hover:text-slate-700"
               }`}
             >
@@ -295,7 +296,7 @@ export function PerformanceTrendPanel({
 
       <div className="mt-4 overflow-hidden rounded-xl border border-slate-100 bg-white">
         {previewLoading ? (
-          <div className="flex items-center justify-center py-8 text-sm text-slate-400">
+          <div className="flex items-center justify-center py-8 text-sm text-slate-500">
             <Loader2 size={16} className="mr-2 animate-spin" />
             加载近1月净值…
           </div>
@@ -305,14 +306,14 @@ export function PerformanceTrendPanel({
         <button
           type="button"
           onClick={() => setHistoryOpen(true)}
-          className="flex w-full items-center justify-center gap-1 border-t border-slate-100 py-3 text-[12px] font-semibold text-[#3d7eff] hover:bg-slate-50"
+          className="flex min-h-11 w-full items-center justify-center gap-1 border-t border-slate-100 py-3 text-[12px] font-semibold text-[var(--brand-strong)] hover:bg-slate-50"
         >
           查看历史净值
           <ChevronRight size={14} />
         </button>
       </div>
 
-      <p className="mt-2 px-1 text-center text-[10px] text-slate-400">
+      <p className="mt-2 px-1 text-center text-[10px] text-slate-500">
         {fundName} · 公开单位净值 · 东财
       </p>
 

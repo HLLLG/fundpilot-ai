@@ -4,7 +4,7 @@ import { divergenceBacktestLines, formatMetric, patternLabel, trackLabel } from 
 function Metric({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0 rounded-lg bg-white px-2 py-1.5 ring-1 ring-slate-100">
-      <div className="text-[10px] font-bold text-slate-400">{label}</div>
+      <div className="text-[10px] font-bold text-slate-500">{label}</div>
       <div className="mt-0.5 break-words font-semibold text-slate-800">{value}</div>
     </div>
   );
@@ -96,7 +96,7 @@ export function SectorOpportunityCard({
         </div>
       ) : null}
       {isUnavailable && unavailableHint ? (
-        <p className="mt-1.5 break-words text-xs leading-5 text-slate-400">{unavailableHint}</p>
+        <p className="mt-1.5 break-words text-xs leading-5 text-slate-500">{unavailableHint}</p>
       ) : null}
     </div>
   );

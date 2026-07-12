@@ -7,6 +7,7 @@ import {
   type SectorSignalBacktest,
   type SectorSignalBacktestRule,
 } from "@/lib/api";
+import { InlineNotice } from "@/components/InlineNotice";
 import { StatusPill } from "@/components/StatusPill";
 
 type SectorSignalBacktestPanelProps = {
@@ -66,26 +67,46 @@ export function SectorSignalBacktestPanel({
   title = "板块信号回测",
   compact = false,
 }: SectorSignalBacktestPanelProps) {
-  const [data, setData] = useState<SectorSignalBacktest | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<{
+    requestKey: string;
+    data: SectorSignalBacktest;
+  } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [errorResult, setErrorResult] = useState<{
+    requestKey: string;
+    message: string;
+  } | null>(null);
+  const [retrySequence, setRetrySequence] = useState(0);
 
   const sectorsKey = useMemo(
     () => (sectorLabels?.length ? [...sectorLabels].sort().join("|") : ""),
     [sectorLabels],
   );
+  const requestedSectorLabels = useMemo(
+    () => (sectorsKey ? sectorsKey.split("|") : undefined),
+    [sectorsKey],
+  );
+  const requestKey = `${lookbackDays}:${sectorsKey}`;
+  const data = result?.requestKey === requestKey ? result.data : null;
+  const error = errorResult?.requestKey === requestKey ? errorResult.message : null;
+  const pending = loading || (!data && !error);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    void fetchSectorSignalBacktest(lookbackDays, sectorLabels)
+    setErrorResult(null);
+    void fetchSectorSignalBacktest(lookbackDays, requestedSectorLabels)
       .then((result) => {
         if (!cancelled) {
-          setData(result);
+          setResult({ requestKey, data: result });
         }
       })
-      .catch(() => {
+      .catch((loadError) => {
         if (!cancelled) {
-          setData(null);
+          setErrorResult({
+            requestKey,
+            message: loadError instanceof Error ? loadError.message : "板块信号回测加载失败",
+          });
         }
       })
       .finally(() => {
@@ -96,11 +117,31 @@ export function SectorSignalBacktestPanel({
     return () => {
       cancelled = true;
     };
-  }, [lookbackDays, sectorsKey, sectorLabels]);
+  }, [lookbackDays, requestKey, requestedSectorLabels, retrySequence]);
 
-  if (loading && !data) {
+  const retry = () => setRetrySequence((current) => current + 1);
+  const updateNotice = error ? (
+    <InlineNotice
+      tone={data ? "warning" : "error"}
+      message={
+        data
+          ? `板块信号回测更新失败，继续显示上次成功获取的结果：${error}`
+          : `板块信号回测加载失败：${error}`
+      }
+      action={{ label: "重试", onClick: retry }}
+      className="mt-3"
+    />
+  ) : pending && data ? (
+    <InlineNotice
+      tone="info"
+      message="正在更新板块信号回测，当前继续显示已有结果。"
+      className="mt-3"
+    />
+  ) : null;
+
+  if (pending && !data) {
     return (
-      <section className="glass-panel rounded-[24px] p-5">
+      <section className="glass-panel rounded-[24px] p-5" aria-busy="true">
         <h3 className="text-lg font-black text-slate-950">{title}</h3>
         <p className="mt-2 text-sm text-slate-600">正在拉取板块日线并计算 T→T+1 命中率…</p>
       </section>
@@ -108,14 +149,31 @@ export function SectorSignalBacktestPanel({
   }
 
   if (!data) {
-    return null;
+    return (
+      <section className="glass-panel rounded-[24px] p-5">
+        <h3 className="text-lg font-black text-slate-950">{title}</h3>
+        {updateNotice ?? (
+          <InlineNotice
+            tone="error"
+            message="板块信号回测暂未返回结果。"
+            action={{ label: "重试", onClick: retry }}
+            className="mt-3"
+          />
+        )}
+      </section>
+    );
   }
 
   if (data.enabled === false) {
     return (
       <section className="glass-panel rounded-[24px] p-5">
         <h3 className="text-lg font-black text-slate-950">{title}</h3>
-        <p className="mt-2 text-sm text-slate-600">{data.message}</p>
+        {updateNotice}
+        <InlineNotice
+          tone="info"
+          message={data.message ?? "当前环境未启用板块信号回测。"}
+          className="mt-3"
+        />
       </section>
     );
   }
@@ -124,9 +182,12 @@ export function SectorSignalBacktestPanel({
     return (
       <section className="glass-panel rounded-[24px] p-5">
         <h3 className="text-lg font-black text-slate-950">{title}</h3>
-        <p className="mt-2 text-sm text-slate-600">
-          {data.message ?? "暂无有效回测数据，请确认板块映射或稍后重试。"}
-        </p>
+        {updateNotice}
+        <InlineNotice
+          tone="info"
+          message={data.message ?? "暂无有效回测数据，请确认板块映射或稍后重试。"}
+          className="mt-3"
+        />
       </section>
     );
   }
@@ -134,7 +195,7 @@ export function SectorSignalBacktestPanel({
   const rules = Object.values(data.by_rule ?? {});
 
   return (
-    <section className="glass-panel rounded-[24px] p-5">
+    <section className="glass-panel rounded-[24px] p-5" aria-busy={pending}>
       <div className="mb-4 flex items-start gap-3">
         <div className="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-[var(--brand)] text-white">
           <LineChart size={20} />
@@ -147,6 +208,8 @@ export function SectorSignalBacktestPanel({
           </p>
         </div>
       </div>
+
+      {updateNotice}
 
       <div className="space-y-2">
         {data.summary_lines?.map((line) => (

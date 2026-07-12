@@ -62,7 +62,7 @@ export function NewsPreviewPanel({ holdings, profile }: NewsPreviewPanelProps) {
     <section className="glass-panel rounded-[24px] p-5">
       <div className="mb-4 flex items-start justify-between gap-3">
         <div>
-          <div className="mb-2 inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-sky-500 text-white">
+          <div className="mb-2 inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-sky-700 text-white">
             <Newspaper size={20} />
           </div>
           <h3 className="text-lg font-black text-slate-950">要闻时效自检</h3>
@@ -74,7 +74,7 @@ export function NewsPreviewPanel({ holdings, profile }: NewsPreviewPanelProps) {
           type="button"
           onClick={() => void load()}
           disabled={loading}
-          className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:border-blue-300 disabled:opacity-50"
+          className="inline-flex min-h-11 items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:border-blue-300 disabled:opacity-50"
         >
           <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
           刷新
@@ -82,7 +82,7 @@ export function NewsPreviewPanel({ holdings, profile }: NewsPreviewPanelProps) {
       </div>
 
       {error ? (
-        <p className="rounded-2xl border border-rose-100 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+        <p role="alert" className="rounded-2xl border border-rose-100 bg-rose-50 px-4 py-3 text-sm text-rose-800">
           {error}
         </p>
       ) : null}

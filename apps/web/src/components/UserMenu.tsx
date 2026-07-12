@@ -16,11 +16,14 @@ export function UserMenu({ onNavigate }: UserMenuProps) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!open) {
       return;
     }
+    const trigger = triggerRef.current;
     const onPointerDown = (event: MouseEvent) => {
       if (!rootRef.current?.contains(event.target as Node)) {
         setOpen(false);
@@ -29,13 +32,38 @@ export function UserMenu({ onNavigate }: UserMenuProps) {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         setOpen(false);
+        return;
+      }
+      if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+        return;
+      }
+      const items = Array.from(
+        menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [],
+      );
+      if (!items.length) {
+        return;
+      }
+      event.preventDefault();
+      const currentIndex = items.indexOf(document.activeElement as HTMLElement);
+      if (event.key === "Home") {
+        items[0].focus();
+      } else if (event.key === "End") {
+        items[items.length - 1].focus();
+      } else {
+        const delta = event.key === "ArrowDown" ? 1 : -1;
+        const nextIndex = currentIndex < 0 ? 0 : (currentIndex + delta + items.length) % items.length;
+        items[nextIndex].focus();
       }
     };
+    menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
     document.addEventListener("mousedown", onPointerDown);
     document.addEventListener("keydown", onKeyDown);
     return () => {
       document.removeEventListener("mousedown", onPointerDown);
       document.removeEventListener("keydown", onKeyDown);
+      if (trigger?.isConnected) {
+        trigger.focus();
+      }
     };
   }, [open]);
 
@@ -45,11 +73,14 @@ export function UserMenu({ onNavigate }: UserMenuProps) {
   return (
     <div ref={rootRef} className="relative z-50">
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => setOpen((value) => !value)}
         className="flex items-center gap-2 rounded-full border border-slate-200 bg-white py-1 pl-1 pr-2.5 shadow-sm transition hover:border-blue-200 hover:bg-blue-50/40"
         aria-expanded={open}
         aria-haspopup="menu"
+        aria-controls="user-menu-popover"
+        aria-label="打开账号菜单"
       >
         {user?.avatarUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
@@ -65,13 +96,16 @@ export function UserMenu({ onNavigate }: UserMenuProps) {
         )}
         <ChevronDown
           size={16}
-          className={`text-slate-400 transition ${open ? "rotate-180" : ""}`}
+          className={`text-slate-500 transition ${open ? "rotate-180" : ""}`}
         />
       </button>
 
       {open ? (
         <div
+          ref={menuRef}
+          id="user-menu-popover"
           role="menu"
+          aria-label="账号菜单"
           className="absolute right-0 z-[60] mt-2 w-56 overflow-hidden rounded-2xl border border-slate-200 bg-white py-1.5 shadow-[0_16px_40px_rgba(15,23,42,0.12)]"
         >
           <div className="border-b border-slate-100 px-3 py-2.5">
@@ -81,7 +115,7 @@ export function UserMenu({ onNavigate }: UserMenuProps) {
           <button
             type="button"
             role="menuitem"
-            className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-bold text-slate-700 transition hover:bg-slate-50"
+            className="flex min-h-11 w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-bold text-slate-700 transition hover:bg-slate-50"
             onClick={() => {
               setOpen(false);
               router.push("/settings");
@@ -93,7 +127,7 @@ export function UserMenu({ onNavigate }: UserMenuProps) {
           <button
             type="button"
             role="menuitem"
-            className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-bold text-slate-700 transition hover:bg-slate-50"
+            className="flex min-h-11 w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-bold text-slate-700 transition hover:bg-slate-50"
             onClick={() => {
               setOpen(false);
               onNavigate("history");
@@ -105,7 +139,7 @@ export function UserMenu({ onNavigate }: UserMenuProps) {
           <button
             type="button"
             role="menuitem"
-            className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-bold text-slate-700 transition hover:bg-slate-50"
+            className="flex min-h-11 w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-bold text-slate-700 transition hover:bg-slate-50"
             onClick={() => {
               setOpen(false);
               logout();

@@ -2,9 +2,11 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Search, X } from "lucide-react";
+import { InlineNotice } from "@/components/InlineNotice";
 import type { FundSearchItem, Holding } from "@/lib/api";
 import { searchFunds } from "@/lib/api";
 import { cnProfitClass } from "@/lib/holdingMetrics";
+import { useDialogA11y } from "@/lib/useDialogA11y";
 
 type FundCodeResolution = {
   fund_name: string;
@@ -20,6 +22,7 @@ type AlipayOcrConfirmModalProps = {
   amountSemanticsNote?: string | null;
   ocrSource?: string | null;
   isBusy?: boolean;
+  errorMessage?: string | null;
   onChange: (holdings: Holding[]) => void;
   onConfirm: () => void;
   onClose: () => void;
@@ -95,34 +98,50 @@ function FundCodeSearchPanel({
   }, [query]);
 
   return (
-    <div className="absolute left-0 right-0 top-full z-20 mt-1 max-h-48 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-lg">
+    <div
+      className="absolute left-0 right-0 top-full z-20 mt-1 max-h-48 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-lg"
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          event.stopPropagation();
+          onClose();
+        }
+      }}
+    >
       <div className="flex items-center gap-2 border-b border-slate-100 px-3 py-2">
         <input
           value={query}
           onChange={(event) => setQuery(event.target.value)}
+          aria-label="搜索基金"
           placeholder="输入基金名称或代码"
-          className="min-w-0 flex-1 rounded-lg border border-slate-200 px-2 py-1.5 text-xs outline-none focus:border-blue-400"
+          className="min-h-11 min-w-0 flex-1 rounded-lg border border-slate-200 px-2 py-1.5 text-xs outline-none focus:border-blue-400"
           autoFocus
         />
         <button
           type="button"
           onClick={onClose}
-          className="shrink-0 rounded-lg px-2 py-1.5 text-xs font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
+          aria-label="取消基金搜索"
+          className="min-h-11 shrink-0 rounded-lg px-2 py-1.5 text-xs font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
         >
           取消
         </button>
       </div>
-      {loading ? <div className="px-3 py-3 text-xs text-slate-400">搜索中...</div> : null}
-      {error ? <div className="px-3 py-3 text-xs text-rose-600">{error}</div> : null}
+      {loading ? <div className="px-3 py-3 text-xs text-slate-500">搜索中...</div> : null}
+      {error ? (
+        <div role="alert" className="px-3 py-3 text-xs text-rose-700">
+          {error}
+        </div>
+      ) : null}
       {!loading && !error && items.length === 0 ? (
-        <div className="px-3 py-3 text-xs text-slate-400">输入名称或代码搜索</div>
+        <div className="px-3 py-3 text-xs text-slate-500">输入名称或代码搜索</div>
       ) : null}
       {items.map((item) => (
         <button
           key={item.fund_code}
           type="button"
           onClick={() => onSelect(item)}
-          className="flex w-full flex-col items-start gap-0.5 border-b border-slate-50 px-3 py-2.5 text-left transition hover:bg-blue-50"
+          aria-label={`选择 ${item.fund_name}（${item.fund_code}）`}
+          className="flex min-h-11 w-full flex-col items-start justify-center gap-0.5 border-b border-slate-50 px-3 py-2.5 text-left transition hover:bg-blue-50"
         >
           <span className="text-xs font-bold tabular-nums text-blue-700">{item.fund_code}</span>
           <span className="text-xs text-slate-700">{item.fund_name}</span>
@@ -137,6 +156,7 @@ export function AlipayOcrConfirmModal({
   fundCodeResolutions = [],
   amountSemanticsNote,
   isBusy = false,
+  errorMessage = null,
   onChange,
   onConfirm,
   onClose,
@@ -147,6 +167,19 @@ export function AlipayOcrConfirmModal({
   );
   const [searchIndex, setSearchIndex] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const searchTriggerRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const requestClose = () => {
+    if (!isBusy) {
+      onClose();
+    }
+  };
+  const dialogRef = useDialogA11y<HTMLDivElement>({
+    open: true,
+    onClose: requestClose,
+    initialFocusRef: closeButtonRef,
+    closeOnEscape: searchIndex === null,
+  });
   const unresolvedCount = holdings.filter((holding) => {
     const resolution = resolutionByName.get(holding.fund_name);
     const code = displayCode(holding, resolution);
@@ -183,12 +216,35 @@ export function AlipayOcrConfirmModal({
     setSearchQuery(holdings[index]?.fund_name ?? "");
   };
 
+  const closeSearch = (index: number | null = searchIndex) => {
+    setSearchIndex(null);
+    if (index != null) {
+      window.requestAnimationFrame(() => searchTriggerRefs.current[index]?.focus());
+    }
+  };
+
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/45 p-4 sm:items-center">
-      <div className="flex max-h-[88vh] w-full max-w-xl flex-col overflow-hidden rounded-[28px] bg-white shadow-2xl">
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/45 p-4 sm:items-center"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          requestClose();
+        }
+      }}
+      role="presentation"
+    >
+      <div
+        ref={dialogRef}
+        tabIndex={-1}
+        className="flex max-h-[88vh] w-full max-w-xl flex-col overflow-hidden rounded-[28px] bg-white shadow-2xl"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="ocr-confirm-modal-title"
+        aria-busy={isBusy}
+      >
         <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
           <div>
-            <h2 className="text-lg font-black text-slate-950">
+            <h2 id="ocr-confirm-modal-title" className="text-lg font-black text-slate-950">
               确认识别结果
             </h2>
             <p className="mt-1 text-xs leading-5 text-slate-500">
@@ -196,14 +252,22 @@ export function AlipayOcrConfirmModal({
             </p>
           </div>
           <button
+            ref={closeButtonRef}
             type="button"
-            onClick={onClose}
-            className="inline-flex h-9 w-9 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+            onClick={requestClose}
+            disabled={isBusy}
+            className="touch-target inline-flex items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
             aria-label="关闭"
           >
             <X size={18} />
           </button>
         </div>
+
+        {errorMessage ? (
+          <div className="px-4 pt-4">
+            <InlineNotice tone="error" message={errorMessage} />
+          </div>
+        ) : null}
 
         {amountSemanticsNote ? (
           <div className="border-b border-blue-100 bg-blue-50 px-5 py-3 text-xs leading-5 text-blue-800">
@@ -238,21 +302,26 @@ export function AlipayOcrConfirmModal({
                       <div className="flex items-center gap-2">
                         <input
                           value={code}
+                          inputMode="numeric"
+                          aria-label={`基金代码：${holding.fund_name || `第 ${index + 1} 只基金`}`}
                           onChange={(event) => {
                             const next = event.target.value.replace(/\D/g, "").slice(0, 6);
                             updateAt(index, { fund_code: next || "000000" });
                           }}
                           placeholder="待匹配"
-                          className={`w-24 rounded-lg border px-2 py-1 text-xs font-bold tabular-nums outline-none focus:border-blue-400 ${
+                          className={`min-h-11 w-24 rounded-lg border px-2 py-2 text-xs font-bold tabular-nums outline-none focus:border-blue-400 ${
                             unresolved
                               ? "border-amber-300 bg-amber-50 text-amber-800"
                               : "border-slate-200 bg-white text-slate-800"
                           }`}
                         />
                         <button
+                          ref={(node) => {
+                            searchTriggerRefs.current[index] = node;
+                          }}
                           type="button"
                           onClick={() => openSearch(index)}
-                          className={`inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] font-semibold transition ${
+                          className={`inline-flex min-h-11 items-center gap-1 rounded-lg border px-2 py-2 text-[11px] font-semibold transition ${
                             unresolved
                               ? "border-amber-400 bg-amber-100 text-amber-900 hover:border-amber-500"
                               : "border-slate-200 bg-white text-slate-600 hover:border-blue-300 hover:text-blue-700"
@@ -262,7 +331,7 @@ export function AlipayOcrConfirmModal({
                           {unresolved ? "搜索匹配" : "搜索"}
                         </button>
                         {resolution?.source ? (
-                          <span className="text-[10px] text-slate-400">
+                          <span className="text-[10px] text-slate-500">
                             {resolution.source === "fuzzy" ? "模糊匹配" : resolution.source}
                           </span>
                         ) : null}
@@ -278,22 +347,23 @@ export function AlipayOcrConfirmModal({
                               fund_code: item.fund_code,
                               fund_name: item.fund_name,
                             });
-                            setSearchIndex(null);
+                            closeSearch(index);
                           }}
-                          onClose={() => setSearchIndex(null)}
+                          onClose={() => closeSearch(index)}
                         />
                       ) : null}
                     </div>
                     <input
                       value={holding.fund_name}
+                      aria-label={`基金名称：第 ${index + 1} 只基金`}
                       onChange={(event) => updateAt(index, { fund_name: event.target.value })}
-                      className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm font-black text-slate-950 outline-none focus:border-blue-400"
+                      className="min-h-11 w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-sm font-black text-slate-950 outline-none focus:border-blue-400"
                     />
                   </div>
                   <button
                     type="button"
                     onClick={() => removeAt(index)}
-                    className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-white hover:text-rose-600"
+                    className="touch-target inline-flex shrink-0 items-center justify-center rounded-full text-slate-500 transition hover:bg-white hover:text-rose-600"
                     aria-label="移除"
                   >
                     <X size={16} />
@@ -302,27 +372,31 @@ export function AlipayOcrConfirmModal({
 
                 <div className="grid grid-cols-2 gap-3 text-sm">
                   <div>
-                    <div className="text-[11px] font-semibold text-slate-400">持有金额</div>
+                    <div className="text-[11px] font-semibold text-slate-500">持有金额</div>
                     <input
                       value={String(holding.holding_amount ?? 0)}
+                      inputMode="decimal"
+                      aria-label={`持有金额：${holding.fund_name || `第 ${index + 1} 只基金`}`}
                       onChange={(event) =>
                         updateAt(index, { holding_amount: parseAmountInput(event.target.value) })
                       }
-                      className="mt-0.5 w-full rounded-lg border border-slate-200 bg-white px-2 py-1 font-black tabular-nums text-slate-950 outline-none focus:border-blue-400"
+                      className="mt-0.5 min-h-11 w-full rounded-lg border border-slate-200 bg-white px-2 py-2 font-black tabular-nums text-slate-950 outline-none focus:border-blue-400"
                     />
                   </div>
                   <div>
-                    <div className="text-[11px] font-semibold text-slate-400">持有收益</div>
+                    <div className="text-[11px] font-semibold text-slate-500">持有收益</div>
                     <input
                       value={
                         holding.holding_profit === null || holding.holding_profit === undefined
                           ? ""
                           : String(holding.holding_profit)
                       }
+                      inputMode="decimal"
+                      aria-label={`持有收益：${holding.fund_name || `第 ${index + 1} 只基金`}`}
                       onChange={(event) =>
                         updateAt(index, { holding_profit: parseProfitInput(event.target.value) })
                       }
-                      className={`mt-0.5 w-full rounded-lg border border-slate-200 bg-white px-2 py-1 text-right font-black tabular-nums outline-none focus:border-blue-400 ${cnProfitClass(holding.holding_profit)}`}
+                      className={`mt-0.5 min-h-11 w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-right font-black tabular-nums outline-none focus:border-blue-400 ${cnProfitClass(holding.holding_profit)}`}
                     />
                   </div>
                 </div>
@@ -336,7 +410,7 @@ export function AlipayOcrConfirmModal({
             type="button"
             disabled={isBusy || holdings.length === 0}
             onClick={onConfirm}
-            className="w-full rounded-2xl bg-blue-600 px-4 py-3 text-sm font-black text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+            className="min-h-11 w-full rounded-2xl bg-blue-600 px-4 py-3 text-sm font-black text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {isBusy ? "正在更新..." : `完成（${holdings.length}）`}
           </button>

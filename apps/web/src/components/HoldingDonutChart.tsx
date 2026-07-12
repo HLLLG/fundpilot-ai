@@ -4,15 +4,15 @@ import { useMemo } from "react";
 import type { PortfolioAllocationRow } from "@/lib/api";
 
 const SLICE_COLORS = [
-  "#3b82f6",
-  "#6366f1",
-  "#8b5cf6",
-  "#ec4899",
-  "#f97316",
-  "#14b8a6",
-  "#22c55e",
-  "#eab308",
+  "#2356e0",
+  "#3d7eff",
+  "#6b9af5",
+  "#0f766e",
+  "#d39a21",
+  "#64748b",
 ];
+
+const MAX_VISIBLE_SLICES = 6;
 
 type HoldingDonutChartProps = {
   rows: PortfolioAllocationRow[];
@@ -40,9 +40,31 @@ function describeArc(
 }
 
 export function HoldingDonutChart({ rows }: HoldingDonutChartProps) {
+  const displayRows = useMemo(() => {
+    const sorted = [...rows].sort((left, right) => right.weight_percent - left.weight_percent);
+    if (sorted.length <= MAX_VISIBLE_SLICES) {
+      return sorted;
+    }
+    const leaders = sorted.slice(0, MAX_VISIBLE_SLICES - 1);
+    const remainder = sorted.slice(MAX_VISIBLE_SLICES - 1);
+    return [
+      ...leaders,
+      {
+        fund_code: "__other__",
+        fund_name: "其他",
+        holding_amount: remainder.reduce((sum, row) => sum + row.holding_amount, 0),
+        weight_percent: remainder.reduce((sum, row) => sum + row.weight_percent, 0),
+        daily_profit: remainder.some((row) => row.daily_profit != null)
+          ? remainder.reduce((sum, row) => sum + (row.daily_profit ?? 0), 0)
+          : null,
+        holding_return_percent: null,
+      },
+    ];
+  }, [rows]);
+
   const slices = useMemo(() => {
-    const total = rows.reduce((sum, row) => sum + row.weight_percent, 0) || 100;
-    return rows.reduce<
+    const total = displayRows.reduce((sum, row) => sum + row.weight_percent, 0) || 100;
+    return displayRows.reduce<
       Array<{ row: PortfolioAllocationRow; start: number; end: number; color: string }>
     >((acc, row, index) => {
       const sweep = (row.weight_percent / total) * 360;
@@ -55,7 +77,7 @@ export function HoldingDonutChart({ rows }: HoldingDonutChartProps) {
       });
       return acc;
     }, []);
-  }, [rows]);
+  }, [displayRows]);
 
   if (!rows.length) {
     return (
@@ -72,8 +94,13 @@ export function HoldingDonutChart({ rows }: HoldingDonutChartProps) {
   const innerRadius = 54;
 
   return (
-    <div className="flex flex-col items-center gap-4 lg:flex-row lg:items-start lg:justify-center">
-      <svg viewBox={`0 0 ${size} ${size}`} className="h-56 w-56 shrink-0">
+    <div className="grid justify-items-center gap-4 lg:grid-cols-[auto_minmax(0,1fr)] lg:items-start">
+      <svg
+        viewBox={`0 0 ${size} ${size}`}
+        className="h-56 w-56 shrink-0"
+        role="img"
+        aria-label={`持仓分布图，共${rows.length}只基金；最大持仓${slices[0]?.row.fund_name ?? "未知"}${slices[0]?.row.weight_percent.toFixed(1) ?? "0"}%`}
+      >
         <circle cx={cx} cy={cy} r={innerRadius} fill="#fff" />
         {slices.map((slice) => (
           <path
@@ -81,7 +108,9 @@ export function HoldingDonutChart({ rows }: HoldingDonutChartProps) {
             d={`${describeArc(cx, cy, radius, slice.start, slice.end)} L ${cx} ${cy} Z`}
             fill={slice.color}
             opacity={0.92}
-          />
+          >
+            <title>{`${slice.row.fund_name} ${slice.row.weight_percent.toFixed(1)}%`}</title>
+          </path>
         ))}
         <circle cx={cx} cy={cy} r={innerRadius} fill="#fff" />
         <text x={cx} y={cy - 4} textAnchor="middle" className="fill-slate-900 text-[13px] font-black">
@@ -91,14 +120,33 @@ export function HoldingDonutChart({ rows }: HoldingDonutChartProps) {
           {rows.length} 只
         </text>
       </svg>
-      <div className="grid w-full max-w-sm gap-2">
+      <div className="w-full max-w-sm">
+      <ul className="grid gap-2" aria-label="持仓占比图例">
         {slices.map((slice) => (
-          <div key={`${slice.row.fund_code}-legend`} className="flex items-center gap-2 text-sm">
-            <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: slice.color }} />
+          <li key={`${slice.row.fund_code}-legend`} className="flex min-h-8 items-center gap-2 text-sm">
+            <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: slice.color }} aria-hidden />
             <span className="min-w-0 flex-1 truncate font-semibold text-slate-800">{slice.row.fund_name}</span>
             <span className="font-black text-slate-900">{slice.row.weight_percent.toFixed(1)}%</span>
-          </div>
+          </li>
         ))}
+      </ul>
+      {rows.length > MAX_VISIBLE_SLICES ? (
+        <details className="mt-3 overflow-hidden rounded-xl border border-slate-200 bg-white">
+          <summary className="flex min-h-11 cursor-pointer items-center px-3 text-xs font-bold text-slate-700">
+            查看全部 {rows.length} 只持仓明细
+          </summary>
+          <ul className="max-h-64 space-y-2 overflow-y-auto border-t border-slate-100 p-3 text-xs">
+            {[...rows]
+              .sort((left, right) => right.weight_percent - left.weight_percent)
+              .map((row) => (
+                <li key={`full-${row.fund_code}-${row.fund_name}`} className="flex items-start justify-between gap-3">
+                  <span className="min-w-0 break-words text-slate-700">{row.fund_name}</span>
+                  <span className="shrink-0 font-black tabular-nums text-slate-900">{row.weight_percent.toFixed(1)}%</span>
+                </li>
+              ))}
+          </ul>
+        </details>
+      ) : null}
       </div>
     </div>
   );

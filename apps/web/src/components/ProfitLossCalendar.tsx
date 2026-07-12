@@ -1,7 +1,7 @@
 "use client";
 
 import { ChevronLeft, ChevronRight, ArrowLeftRight } from "lucide-react";
-import type { ProfitCalendar } from "@/lib/api";
+import type { ProfitCalendar, ProfitCalendarDay } from "@/lib/api";
 
 const WEEKDAY_LABELS = ["一", "二", "三", "四", "五", "六", "日"];
 
@@ -30,16 +30,37 @@ function formatReturn(value: number | null | undefined) {
 
 function cellTone(value: number | null | undefined) {
   if (value == null || value === 0) {
-    return "bg-slate-50 text-slate-400";
+    return "bg-slate-50 text-slate-500";
   }
-  return value > 0 ? "bg-rose-50 text-rose-600" : "bg-emerald-50 text-emerald-600";
+  return value > 0 ? "bg-rose-50 profit-up" : "bg-emerald-50 profit-down";
 }
 
 function profitTextClass(value: number | null | undefined) {
   if (value == null || value === 0) {
     return "text-slate-500";
   }
-  return value > 0 ? "text-rose-600" : "text-emerald-600";
+  return value > 0 ? "profit-up" : "profit-down";
+}
+
+export function profitCalendarCellLabel(
+  day: ProfitCalendarDay,
+  showReturnPercent: boolean,
+): string {
+  const metricLabel = showReturnPercent ? "收益率" : "收益额";
+  const value = showReturnPercent ? day.daily_return_percent : day.daily_profit;
+  const dateLabel = `${day.date.slice(0, 4)}年${Number(day.date.slice(5, 7))}月${Number(day.date.slice(8, 10))}日`;
+  if (day.is_pending_update) {
+    return `${dateLabel}${day.is_today ? "，今天" : ""}，${metricLabel}未更新`;
+  }
+  if (!day.is_trading_day) {
+    return `${dateLabel}${day.is_today ? "，今天" : ""}，休市`;
+  }
+  if (value == null) {
+    return `${dateLabel}${day.is_today ? "，今天" : ""}，${metricLabel}暂无数据`;
+  }
+  return `${dateLabel}${day.is_today ? "，今天" : ""}，${metricLabel}${
+    showReturnPercent ? formatReturn(value) : `${formatMoney(value)}元`
+  }`;
 }
 
 export function ProfitLossCalendar({
@@ -59,6 +80,12 @@ export function ProfitLossCalendar({
     ...Array.from({ length: offset }, () => null),
     ...calendar.days,
   ];
+  while (cells.length % 7 !== 0) {
+    cells.push(null);
+  }
+  const weeks = Array.from({ length: cells.length / 7 }, (_, index) =>
+    cells.slice(index * 7, index * 7 + 7),
+  );
 
   function shiftMonth(delta: number) {
     const date = new Date(year, month - 1 + delta, 1);
@@ -68,11 +95,12 @@ export function ProfitLossCalendar({
   return (
     <section className="pl-panel">
       <div className="pl-panel-head">
-        <div className="pl-panel-title">盈亏日历</div>
+        <h2 className="pl-panel-title">盈亏日历</h2>
         <button
           type="button"
           onClick={onToggleMode}
-          className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-500 hover:text-slate-800"
+          className="touch-target inline-flex items-center gap-1 rounded-lg px-2 text-xs font-bold text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+          aria-label={`切换为${showReturnPercent ? "收益额" : "收益率"}`}
         >
           <ArrowLeftRight size={12} />
           {showReturnPercent ? "收益额" : "收益率"}
@@ -83,7 +111,8 @@ export function ProfitLossCalendar({
         <button
           type="button"
           onClick={() => shiftMonth(-1)}
-          className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+          className="touch-target flex items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+          aria-label="上个月"
         >
           <ChevronLeft size={18} />
         </button>
@@ -93,64 +122,70 @@ export function ProfitLossCalendar({
         <button
           type="button"
           onClick={() => shiftMonth(1)}
-          className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+          className="touch-target flex items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+          aria-label="下个月"
         >
           <ChevronRight size={18} />
         </button>
       </div>
 
-      <div className="grid grid-cols-7 gap-1 text-center text-[11px] font-bold text-slate-400">
-        {WEEKDAY_LABELS.map((label) => (
-          <div key={label} className="py-1">
-            {label}
-          </div>
-        ))}
-      </div>
+      <table className="w-full table-fixed border-separate border-spacing-1 text-center">
+        <caption className="sr-only">
+          {year}年{month}月{showReturnPercent ? "每日收益率" : "每日收益额"}
+        </caption>
+        <thead>
+          <tr className="text-xs font-bold text-slate-500">
+            {WEEKDAY_LABELS.map((label) => (
+              <th key={label} scope="col" className="py-1 font-bold">
+                周{label}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {weeks.map((week, weekIndex) => (
+            <tr key={`week-${weekIndex}`}>
+              {week.map((day, dayIndex) => {
+                if (!day) {
+                  return <td key={`empty-${weekIndex}-${dayIndex}`} aria-hidden="true" />;
+                }
+                const value = showReturnPercent ? day.daily_return_percent : day.daily_profit;
+                const isClosedDay = !day.is_trading_day;
+                const isPending = Boolean(day.is_pending_update);
+                const display = isPending
+                  ? "未更新"
+                  : isClosedDay
+                    ? "休市"
+                    : showReturnPercent
+                      ? formatReturn(value)
+                      : formatMoney(value);
+                const tone = isPending
+                  ? day.is_today
+                    ? "bg-[var(--brand)] text-white ring-2 ring-[var(--brand-soft)]"
+                    : "bg-slate-50 text-slate-500"
+                  : isClosedDay
+                    ? "bg-slate-50 text-slate-500"
+                    : day.is_today
+                      ? "bg-[var(--brand)] text-white ring-2 ring-[var(--brand-soft)]"
+                      : cellTone(typeof value === "number" ? value : null);
 
-      <div className="grid grid-cols-7 gap-1">
-        {cells.map((day, index) => {
-          if (!day) {
-            return <div key={`empty-${index}`} />;
-          }
-          const value = showReturnPercent ? day.daily_return_percent : day.daily_profit;
-          const isClosedDay = !day.is_trading_day;
-          const isPending = Boolean(day.is_pending_update);
-          const display = isPending
-            ? "未更新"
-            : isClosedDay
-              ? showReturnPercent
-                ? formatReturn(0)
-                : formatMoney(0)
-              : showReturnPercent
-                ? formatReturn(value)
-                : formatMoney(value);
-          const tone = isPending
-            ? day.is_today
-              ? "bg-[var(--brand)] text-white ring-2 ring-[var(--brand-soft)]"
-              : "bg-slate-50 text-slate-400"
-            : isClosedDay
-              ? "bg-slate-50 text-slate-400"
-              : day.is_today
-                ? "bg-[var(--brand)] text-white ring-2 ring-[var(--brand-soft)]"
-                : cellTone(typeof value === "number" ? value : null);
-
-          return (
-            <div
-              key={day.date}
-              className={`min-h-[52px] rounded-lg px-0.5 py-1 text-center ${tone}`}
-            >
-              <div className="text-[10px] font-bold opacity-80">{day.is_today ? "今" : day.day}</div>
-              {display ? (
-                <div
-                  className={`mt-0.5 font-bold leading-tight ${isPending ? "text-[8px] opacity-90" : "text-[9px]"}`}
-                >
-                  {display}
-                </div>
-              ) : null}
-            </div>
-          );
-        })}
-      </div>
+                return (
+                  <td key={day.date} aria-label={profitCalendarCellLabel(day, showReturnPercent)}>
+                    <div className={`min-h-14 rounded-lg px-0.5 py-1.5 text-center ${tone}`}>
+                      <div className="text-xs font-bold opacity-80">{day.is_today ? "今" : day.day}</div>
+                      {display ? (
+                        <div className="mt-1 text-[11px] font-bold leading-tight">
+                          {display}
+                        </div>
+                      ) : null}
+                    </div>
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
 
       <div className="pl-chart-footer !mt-3 !border-t !pt-3">
         <span>

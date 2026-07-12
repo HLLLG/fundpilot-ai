@@ -24,7 +24,7 @@ export function DiscoveryStreamingFloat({
       data-testid="discovery-streaming-float"
     >
       <div className="flex items-start gap-3">
-        <Loader2 size={20} className="mt-0.5 shrink-0 animate-spin text-emerald-600" />
+        <Loader2 size={20} className="mt-0.5 shrink-0 animate-spin text-emerald-700" />
         <div className="min-w-0 flex-1">
           <div className="text-sm font-bold text-slate-900">{streaming.stageLabel}</div>
           <div className="mt-0.5 text-xs text-slate-500">
@@ -36,7 +36,7 @@ export function DiscoveryStreamingFloat({
         <button
           type="button"
           onClick={onCancel}
-          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 hover:bg-slate-100"
+          className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-full text-slate-500 hover:bg-slate-100"
           aria-label="取消扫描"
         >
           <X size={16} />
@@ -46,7 +46,7 @@ export function DiscoveryStreamingFloat({
         <button
           type="button"
           onClick={onOpenDiscovery}
-          className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700"
+          className="inline-flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-xl bg-emerald-700 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-800"
         >
           <ExternalLink size={14} />
           查看进度

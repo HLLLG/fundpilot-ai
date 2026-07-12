@@ -34,7 +34,7 @@ export function ReportCollapsibleSection({
         </div>
         <ChevronDown
           size={18}
-          className={`shrink-0 text-slate-400 transition ${open ? "rotate-180" : ""}`}
+          className={`shrink-0 text-slate-500 transition ${open ? "rotate-180" : ""}`}
         />
       </button>
       {open ? <div className="mt-4">{children}</div> : null}

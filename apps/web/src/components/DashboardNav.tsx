@@ -71,6 +71,8 @@ export function DashboardNav({
   const moreMenuUnread = reportTabUnread || discoveryTabUnread;
   const [moreOpen, setMoreOpen] = useState(false);
   const moreRef = useRef<HTMLDivElement>(null);
+  const moreTriggerRef = useRef<HTMLButtonElement>(null);
+  const moreMenuRef = useRef<HTMLDivElement>(null);
 
   const highlightedDesktop = isPrimaryTab(activeTab) ? activeTab : null;
 
@@ -78,19 +80,54 @@ export function DashboardNav({
     if (!moreOpen) {
       return;
     }
+    const trigger = moreTriggerRef.current;
     const onPointerDown = (event: MouseEvent) => {
       if (!moreRef.current?.contains(event.target as Node)) {
         setMoreOpen(false);
       }
     };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setMoreOpen(false);
+        return;
+      }
+      if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+        return;
+      }
+      const items = Array.from(
+        moreMenuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [],
+      );
+      if (!items.length) {
+        return;
+      }
+      event.preventDefault();
+      const currentIndex = items.indexOf(document.activeElement as HTMLElement);
+      if (event.key === "Home") {
+        items[0].focus();
+      } else if (event.key === "End") {
+        items[items.length - 1].focus();
+      } else {
+        const delta = event.key === "ArrowDown" ? 1 : -1;
+        const nextIndex = currentIndex < 0 ? 0 : (currentIndex + delta + items.length) % items.length;
+        items[nextIndex].focus();
+      }
+    };
+    moreMenuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
     document.addEventListener("mousedown", onPointerDown);
-    return () => document.removeEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+      if (trigger?.isConnected) {
+        trigger.focus();
+      }
+    };
   }, [moreOpen]);
 
   return (
     <>
       {/* Desktop top tabs — phones & tablets use bottom nav only */}
-      <div className="dashboard-top-nav mb-3 hidden lg:block">
+      <nav className="dashboard-top-nav hidden min-w-0 lg:block" aria-label="主导航">
         <div className="tab-segment overflow-x-auto">
           {DESKTOP_TABS.map((tab) => (
             <button
@@ -118,7 +155,7 @@ export function DashboardNav({
             </button>
           ))}
         </div>
-      </div>
+      </nav>
 
       {/* Mobile bottom nav */}
       <nav className="dashboard-bottom-nav" aria-label="主导航">
@@ -140,10 +177,14 @@ export function DashboardNav({
 
         <div ref={moreRef} className="relative flex flex-1">
           <button
+            ref={moreTriggerRef}
             type="button"
             onClick={() => setMoreOpen((v) => !v)}
             aria-current={isMobileMoreActive(activeTab) ? "page" : undefined}
             aria-expanded={moreOpen}
+            aria-haspopup="menu"
+            aria-controls="dashboard-more-menu"
+            aria-label={moreMenuUnread ? "更多导航，有新内容" : "更多导航"}
             className="dashboard-bottom-nav-btn relative w-full"
           >
             {moreMenuUnread ? (
@@ -155,10 +196,17 @@ export function DashboardNav({
             ) : null}
             <MoreHorizontal size={20} strokeWidth={isMobileMoreActive(activeTab) ? 2.5 : 2} />
             <span>更多</span>
+            {moreMenuUnread ? <span className="sr-only">有新内容</span> : null}
           </button>
 
           {moreOpen ? (
-            <div className="dashboard-more-sheet" role="menu">
+            <div
+              ref={moreMenuRef}
+              id="dashboard-more-menu"
+              className="dashboard-more-sheet"
+              role="menu"
+              aria-label="更多页面"
+            >
               {MOBILE_MORE.map(({ id, label, icon: Icon }) => (
                 <button
                   key={id}
