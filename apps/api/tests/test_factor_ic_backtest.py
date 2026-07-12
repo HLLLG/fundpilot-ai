@@ -215,6 +215,45 @@ def test_runner_sampled_mode_stratifies_pool(tmp_path) -> None:
     assert result["universe_size"] == 12
 
 
+def test_runner_stratified_mode_fetches_full_pool_before_sampling(tmp_path) -> None:
+    from scripts.run_factor_ic import build_ic_report
+
+    calendar = [f"D{index:04d}" for index in range(400)]
+    seen_limits: list[int] = []
+
+    def fetch_rank(limit: int) -> list[dict]:
+        seen_limits.append(limit)
+        return [
+            {
+                "fund_code": f"{index:06d}",
+                "fund_name": f"基金{index}A",
+                "fund_type": "gp" if index % 2 else "zq",
+                "return_1y_percent": 100 - index,
+            }
+            for index in range(60)
+        ]
+
+    def fetch_nav(code: str, _name: str, _days: int) -> list[NavPoint]:
+        index = int(code) + 1
+        return [
+            NavPoint(day, (1.0 + 0.0001 * index) ** offset)
+            for offset, day in enumerate(calendar)
+        ]
+
+    result = build_ic_report(
+        fetch_rank=fetch_rank,
+        fetch_nav=fetch_nav,
+        out_dir=str(tmp_path),
+        universe_size=20,
+        universe_mode="stratified",
+        sample_pool_size=5000,
+        nav_days=400,
+    )
+    assert seen_limits == [5000]
+    assert result["coverage"]["source_share_classes"] == 60
+    assert result["coverage"]["sampled_portfolios"] == 20
+
+
 def test_runner_fails_before_nav_fetch_when_rank_is_unavailable(tmp_path) -> None:
     from scripts.run_factor_ic import FactorIcRankUnavailable, build_ic_report
 

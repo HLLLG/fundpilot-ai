@@ -7,7 +7,10 @@ IC_EVIDENCE_INSTRUCTION = (
     "仅当 `available` 时，才可按 `factor_reliability` 的强弱使用因子 IC；"
     "`unavailable` 时须表述「IC 回测未接入，IC 未参与本次结论」；"
     "`stale` 时须表述「IC 回测已过期，IC 未参与本次结论」；"
-    "后两种状态不得称为「量化背书弱」。"
+    "后两种状态不得称为「量化背书弱」。v2 数据中还须逐只检查 holding 的 "
+    "`peer_group`、`applicable`、`feature_completeness` 与 `factor_reliability`："
+    "仅使用该基金自身同类组的可靠性；`applicable=false`、同类样本不足或特征不完整时，"
+    "IC 不参与结论。若依据写明「反向/均值回归」，不得把高因子百分位解释为正面证据。"
 )
 
 COMPOSITE_EVIDENCE_INSTRUCTION = (

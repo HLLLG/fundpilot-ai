@@ -29,7 +29,14 @@ from app.services.factor_ic_backtest import (  # noqa: E402
     NavPoint,
     compute_factor_ic,
 )
-from app.services.factor_ic_snapshot import FACTOR_IC_SCHEMA_VERSION  # noqa: E402
+from app.services.factor_ic_snapshot import (  # noqa: E402
+    CURRENT_FACTOR_IC_SCHEMA_VERSION,
+    FACTOR_IC_SCHEMA_VERSION,
+)
+from app.services.factor_ic_research import (  # noqa: E402
+    DEFAULT_FORWARD_HORIZONS,
+    build_research_model,
+)
 
 _DEFAULT_OUT_DIR = str(API_ROOT / "var" / "factor_ic")
 
@@ -45,6 +52,13 @@ _CAVEATS = [
     "结论仅用于因子之间的相对比较，不代表全市场真实预测力。",
     "单因子单期 Rank IC 在 0.03~0.05 即属可用；过高通常意味着前视偏差。",
 ]
+_V2_CAVEATS = [
+    "基金池来自当前仍存续目录，历史时点基金池尚在逐期积累，仍存在幸存者偏差。",
+    "A/C 等份额已按名称保守合并，并按股票/混合/债券/指数/QDII/FOF 分组；分类不明时不借用全局 IC。",
+    "收益优先用日增长率重建总收益指数；缺失时才回落单位净值比值，覆盖率低于门槛拒绝发布。",
+    "规模因子缺少历史规模序列，继续标记为未回测，不进入 IC 结论。",
+    "结论包含 5/20/60 日、HAC 区间与末段留出稳定性；当前幸存者池阶段最高只授予中等置信。",
+]
 
 
 class FactorIcRankUnavailable(RuntimeError):
@@ -52,30 +66,26 @@ class FactorIcRankUnavailable(RuntimeError):
 
 
 def _default_fetch_rank(limit: int) -> list[dict]:
-    from app.services.akshare_subprocess import fetch_open_fund_rank
+    from app.services.akshare_subprocess import fetch_open_fund_universe
 
-    return fetch_open_fund_rank(limit=limit) or []
+    return fetch_open_fund_universe(limit=limit) or []
 
 
 def _default_fetch_nav(code: str, name: str, trading_days: int) -> list[NavPoint]:
     from app.services.akshare_subprocess import fetch_fund_nav_history
+    from app.services.fund_factor_nav import build_total_return_index
 
     payload = fetch_fund_nav_history(code, trading_days=trading_days)
     if not payload or not payload.get("data"):
         return []
-    points: list[NavPoint] = []
-    for row in payload["data"]:
-        nav = row.get("nav")
-        day = str(row.get("date", ""))[:10]
-        if nav is None or not day:
-            continue
-        try:
-            nav_f = float(nav)
-        except (TypeError, ValueError):
-            continue
-        if nav_f > 0:
-            points.append(NavPoint(day, nav_f))
-    return points
+    series = build_total_return_index(payload["data"])
+    if series.return_coverage >= 0.95:
+        return_source = "daily_growth"
+    elif series.return_coverage >= 0.80:
+        return_source = "mixed_total_return"
+    else:
+        return_source = "nav_ratio_fallback"
+    return [NavPoint(day, value, return_source) for day, value in series.points]
 
 
 def _verdict(stats) -> str:
@@ -89,15 +99,22 @@ def _verdict(stats) -> str:
     return f"{direction}有效 ✓"
 
 
-def _render_report(result, *, run_date: str, universe_effective: int) -> str:
+def _render_report(
+    result,
+    *,
+    run_date: str,
+    universe_effective: int,
+    rebalance_step: int,
+    caveats: list[str],
+) -> str:
     lines: list[str] = []
     lines.append(f"因子有效性回测 (Rank IC)  运行: {run_date}")
     lines.append(
         f"池: 排行榜 {universe_effective} 只 (有效)  "
-        f"再平衡: 每{result.forward_days}日前瞻  "
+        f"再平衡: 每{rebalance_step}个净值日  前瞻: {result.forward_days}日  "
         f"期数: {result.rebalance_count}"
     )
-    for c in _CAVEATS:
+    for c in caveats:
         lines.append(f"⚠ {c}")
     lines.append("-" * 64)
     lines.append(
@@ -129,20 +146,31 @@ def build_ic_report(
     limit_funds: int | None = None,
     universe_mode: str = "top",
     sample_pool_size: int = 500,
+    forward_horizons: tuple[int, ...] = DEFAULT_FORWARD_HORIZONS,
 ) -> dict:
     """取数 → 组面板 → 跑引擎 → 落盘 report.txt + summary.json，返回结果 dict。
 
     universe_mode:
       - "top"（默认）：取排行榜前 universe_size 名（偏强样本，行为不变）。
-      - "sampled"：取前 sample_pool_size 名作大池，再跨业绩段分层抽样出 universe_size 只。
+      - "sampled"：取前 sample_pool_size 名作大池，再跨业绩段等距抽样。
+      - "stratified"：拉全目录、份额去重后按基金类别和业绩分位抽样。
     """
-    rank_limit = sample_pool_size if universe_mode == "sampled" else universe_size
+    rank_limit = (
+        sample_pool_size
+        if universe_mode in {"sampled", "stratified"}
+        else universe_size
+    )
     rank_candidates = fetch_rank(rank_limit) or []
     if not rank_candidates:
         raise FactorIcRankUnavailable(
             f"开放式基金排行榜获取失败（请求前 {rank_limit} 条）"
         )
-    if universe_mode == "sampled":
+    all_rank_rows = rank_candidates
+    if universe_mode == "stratified":
+        from app.services.fund_universe_sampler import stratified_sample_universe
+
+        rank_rows = stratified_sample_universe(rank_candidates, universe_size)
+    elif universe_mode == "sampled":
         from app.services.fund_universe_sampler import sample_universe
 
         rank_rows = sample_universe(rank_candidates, universe_size)
@@ -179,38 +207,81 @@ def build_ic_report(
         forward_days=forward_days,
         factor_lookback=factor_lookback,
     )
+    research_model = build_research_model(
+        nav_panel=nav_panel,
+        sampled_rows=rank_rows,
+        all_rows=all_rank_rows,
+        factor_lookback=factor_lookback,
+        rebalance_step=rebalance_step,
+        forward_horizons=forward_horizons,
+    )
+    from app.services.fund_universe_sampler import universe_coverage
+
+    coverage = universe_coverage(all_rank_rows, rank_rows)
+    coverage["effective_nav_portfolios"] = len(nav_panel)
+    coverage["effective_nav_rate"] = round(len(nav_panel) / len(rank_rows), 4) if rank_rows else 0.0
+    nav_source_counts: dict[str, int] = {}
+    for points in nav_panel.values():
+        source = str(points[0].return_source or "injected_or_unknown") if points else "empty"
+        nav_source_counts[source] = nav_source_counts.get(source, 0) + 1
+    coverage["nav_return_source_counts"] = nav_source_counts
+    preferred_count = sum(
+        nav_source_counts.get(key, 0)
+        for key in ("daily_growth", "mixed_total_return", "injected_or_unknown")
+    )
+    coverage["total_return_preferred_portfolios"] = preferred_count
+    coverage["total_return_preferred_rate"] = (
+        round(preferred_count / len(nav_panel), 4) if nav_panel else 0.0
+    )
 
     generated_at = datetime.now(timezone.utc)
     run_date = generated_at.date().isoformat()
     out_path = Path(out_dir)
     out_path.mkdir(parents=True, exist_ok=True)
 
-    report = _render_report(result, run_date=run_date, universe_effective=len(nav_panel))
+    caveats = _V2_CAVEATS if universe_mode == "stratified" else _CAVEATS
+    report = _render_report(
+        result,
+        run_date=run_date,
+        universe_effective=len(nav_panel),
+        rebalance_step=rebalance_step,
+        caveats=caveats,
+    )
     (out_path / "report.txt").write_text(report, encoding="utf-8")
 
+    params = {
+        "universe_size": universe_size,
+        "universe_mode": universe_mode,
+        "sample_pool_size": sample_pool_size,
+        "nav_days": nav_days,
+        "rebalance_step": rebalance_step,
+        "forward_days": forward_days,
+        "factor_lookback": factor_lookback,
+    }
+    if universe_mode == "stratified":
+        params["forward_horizons"] = list(forward_horizons)
+
     summary = {
-        "schema_version": FACTOR_IC_SCHEMA_VERSION,
+        "schema_version": (
+            CURRENT_FACTOR_IC_SCHEMA_VERSION
+            if universe_mode == "stratified"
+            else FACTOR_IC_SCHEMA_VERSION
+        ),
         "run_date": run_date,
         "generated_at": generated_at.isoformat(),
-        "params": {
-            "universe_size": universe_size,
-            "universe_mode": universe_mode,
-            "sample_pool_size": sample_pool_size,
-            "nav_days": nav_days,
-            "rebalance_step": rebalance_step,
-            "forward_days": forward_days,
-            "factor_lookback": factor_lookback,
-        },
+        "params": params,
         "available": result.available,
         "message": result.message,
         "universe_size": result.universe_size,
         "rebalance_count": result.rebalance_count,
         "forward_days": result.forward_days,
-        "caveats": _CAVEATS,
+        "caveats": caveats,
         "factors": [
             {k: v for k, v in asdict(stats).items() if k != "ic_series"}
             for stats in result.factors
         ],
+        "coverage": coverage,
+        "research_model": research_model,
     }
     (out_path / "summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -222,18 +293,22 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="因子有效性回测 (Rank IC)")
     parser.add_argument("--universe-size", type=int, default=300)
     parser.add_argument(
-        "--universe-mode", choices=["top", "sampled"], default="top",
-        help="top=榜单前N(偏强); sampled=大池跨业绩段分层抽样",
+        "--universe-mode", choices=["top", "sampled", "stratified"], default="top",
+        help="top=榜单前N; sampled=大池等距抽样; stratified=全目录去重分类抽样",
     )
     parser.add_argument("--sample-pool-size", type=int, default=500)
     parser.add_argument("--nav-days", type=int, default=750)
     parser.add_argument("--rebalance-step", type=int, default=DEFAULT_REBALANCE_STEP)
     parser.add_argument("--forward-days", type=int, default=DEFAULT_FORWARD_DAYS)
     parser.add_argument("--factor-lookback", type=int, default=DEFAULT_FACTOR_LOOKBACK)
+    parser.add_argument("--forward-horizons", type=str, default="5,20,60")
     parser.add_argument("--max-workers", type=int, default=8)
     parser.add_argument("--limit-funds", type=int, default=None, help="调试用，限制只数")
     parser.add_argument("--out-dir", type=str, default=_DEFAULT_OUT_DIR)
     args = parser.parse_args()
+    forward_horizons = tuple(
+        sorted({int(value) for value in args.forward_horizons.split(",") if value.strip()})
+    )
 
     try:
         summary = build_ic_report(
@@ -245,13 +320,28 @@ def main() -> int:
             rebalance_step=args.rebalance_step,
             forward_days=args.forward_days,
             factor_lookback=args.factor_lookback,
+            forward_horizons=forward_horizons,
             max_workers=args.max_workers,
             limit_funds=args.limit_funds,
         )
     except FactorIcRankUnavailable as exc:
         print(f"factor IC generation failed: {exc}", file=sys.stderr)
         return 2
-    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    console_summary = {
+        key: value
+        for key, value in summary.items()
+        if key not in {"research_model"}
+    }
+    model = summary.get("research_model") or {}
+    console_summary["segments"] = {
+        key: {
+            "label": segment.get("label"),
+            "sampled_portfolios": segment.get("sampled_portfolios"),
+            "primary": (segment.get("horizons") or {}).get("20"),
+        }
+        for key, segment in (model.get("segments") or {}).items()
+    }
+    print(json.dumps(console_summary, ensure_ascii=False, indent=2))
     print(f"\n报告已写入: {Path(args.out_dir) / 'report.txt'}")
     return 0 if summary["available"] else 1
 

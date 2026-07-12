@@ -17,7 +17,7 @@ jobs:
   refresh:
     if: vars.FACTOR_IC_REFRESH_ENABLED == 'true' && (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
     environment: production
     defaults:
       run:
@@ -40,14 +40,15 @@ jobs:
       - name: Generate factor IC summary
         run: |
           python scripts/run_factor_ic.py \
-            --universe-mode sampled \
-            --sample-pool-size 500 \
-            --universe-size 300 \
-            --nav-days 750 \
-            --rebalance-step 21 \
+            --universe-mode stratified \
+            --sample-pool-size 25000 \
+            --universe-size 1500 \
+            --nav-days 1500 \
+            --rebalance-step 10 \
             --forward-days 20 \
+            --forward-horizons 5,20,60 \
             --factor-lookback 250 \
-            --max-workers 8 \
+            --max-workers 16 \
             --out-dir "$RUNNER_TEMP/factor-ic"
       - name: Configure Lighthouse SSH identity
         env:

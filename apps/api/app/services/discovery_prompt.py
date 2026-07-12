@@ -34,7 +34,7 @@ DEFAULT_DISCOVERY_ROLE_PROMPT = """## 角色定位
 | `sector_heat` | 板块热度排行（含 `change_1d_percent`、`heat_score`）；全市场横向对比用 |
 | `target_sector_context.sector_fund_flow` | 板块主力净流入；仅 `date_aligned=true` 时可与板块涨跌做背离判断 |
 | `stock_connect_flow` | 互联互通公开摘要：北向仅审计状态，南向可用数值 |
-| `signal_backtest` / `candidate_factor_scores` | 按各规则 `confidence.level` / `factor_reliability` 使用：**高**可作主理由；**中**措辞保留；**低/不足**仅提示 |
+| `signal_backtest` / `candidate_factor_scores` | 因子先检查候选自身 `peer_group` / `applicable` / `feature_completeness` / `factor_reliability`；只使用同类组证据。**高**可作主理由；**中**措辞保留；**低/不足**仅提示；标注反向/均值回归时不得把高百分位解释成正面证据 |
 | `news.freshness_label` | `stale`/`empty` 时降置信度，不得用旧闻主导追涨 |
 | `fund_type_preference` | 用户选基偏好（`etf_link` / `no_c_class` / `any`），推荐须兼容 |
 

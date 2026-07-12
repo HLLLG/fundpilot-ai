@@ -14,6 +14,7 @@ _SUBPROCESS_TIMEOUT = 60
 _FUND_RANK_ATTEMPTS = 3
 _FUND_RANK_RETRY_DELAYS = (2.0, 5.0)
 _FUND_RANK_SUBPROCESS_TIMEOUT = 35
+_FUND_UNIVERSE_SUBPROCESS_TIMEOUT = 150
 
 
 def run_akshare_json_script(
@@ -424,6 +425,117 @@ except Exception as exc:
         "akshare fund rank unavailable after %s attempts",
         _FUND_RANK_ATTEMPTS,
     )
+    return None
+
+
+def fetch_open_fund_universe(*, limit: int = 20_000) -> list[dict] | None:
+    """分页读取开放式基金全目录，并保留东财基金类别供分层研究使用。"""
+    cap = max(300, min(int(limit), 25_000))
+    script = f"""
+from concurrent.futures import ThreadPoolExecutor
+from datetime import date
+import json
+import requests
+from akshare.utils import demjson
+
+cap = {cap}
+fund_types = ("gp", "hh", "zq", "zs", "qdii", "fof")
+end = date.today()
+try:
+    start = end.replace(year=end.year - 1)
+except ValueError:
+    start = end.replace(year=end.year - 1, day=28)
+headers = {{
+    "User-Agent": "Mozilla/5.0",
+    "Referer": "https://fund.eastmoney.com/fundguzhi.html",
+}}
+
+def number(parts, index):
+    if index >= len(parts) or parts[index] in ("", "--"):
+        return None
+    try:
+        return float(parts[index])
+    except (TypeError, ValueError):
+        return None
+
+def fetch_page(fund_type, page):
+    params = {{
+        "op": "ph", "dt": "kf", "ft": fund_type, "rs": "", "gs": "0",
+        "sc": "1nzf", "st": "desc", "sd": start.isoformat(),
+        "ed": end.isoformat(), "qdii": "", "tabSubtype": ",,,,,",
+        "pi": str(page), "pn": "500", "dx": "1", "v": "0.1591891419018292",
+    }}
+    response = requests.get(
+        "https://fund.eastmoney.com/data/rankhandler.aspx",
+        params=params,
+        headers=headers,
+        timeout=(5, 25),
+    )
+    response.raise_for_status()
+    start_index = response.text.find("{{")
+    end_index = response.text.rfind("}}")
+    if start_index < 0 or end_index < start_index:
+        raise ValueError("rank payload missing object")
+    return demjson.decode(response.text[start_index : end_index + 1])
+
+def parse_rows(payload, fund_type):
+    rows = []
+    for raw in payload.get("datas") or []:
+        parts = str(raw).split(",")
+        code = parts[0].strip().zfill(6) if parts else ""
+        if not code.isdigit() or len(code) != 6:
+            continue
+        rows.append({{
+            "fund_code": code,
+            "fund_name": parts[1].strip() if len(parts) > 1 else "",
+            "fund_type": fund_type,
+            "nav_date": parts[3].strip() if len(parts) > 3 else None,
+            "established_date": parts[16].strip() if len(parts) > 16 else None,
+            "return_1y_percent": number(parts, 11),
+            "return_6m_percent": number(parts, 10),
+            "return_3m_percent": number(parts, 9),
+            "max_drawdown_1y_percent": None,
+            "fund_scale_yi": None,
+        }})
+    return rows
+
+try:
+    first_pages = {{fund_type: fetch_page(fund_type, 1) for fund_type in fund_types}}
+    jobs = []
+    for fund_type, payload in first_pages.items():
+        pages = int(payload.get("allPages") or 1)
+        jobs.extend((fund_type, page) for page in range(2, pages + 1))
+    page_payloads = []
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        for job, payload in zip(jobs, pool.map(lambda job: fetch_page(*job), jobs)):
+            page_payloads.append((job[0], payload))
+    rows = []
+    for fund_type in fund_types:
+        rows.extend(parse_rows(first_pages[fund_type], fund_type))
+    for fund_type, payload in page_payloads:
+        rows.extend(parse_rows(payload, fund_type))
+    seen = set()
+    unique = []
+    for row in rows:
+        if row["fund_code"] in seen:
+            continue
+        seen.add(row["fund_code"])
+        unique.append(row)
+        if len(unique) >= cap:
+            break
+    print(json.dumps({{"data": unique}}, ensure_ascii=False))
+except Exception as exc:
+    print(json.dumps({{"error": str(exc)}}, ensure_ascii=False))
+"""
+    payload = run_akshare_json_script(
+        script,
+        label=f"fund_open_universe:{cap}",
+        timeout=_FUND_UNIVERSE_SUBPROCESS_TIMEOUT,
+    )
+    if isinstance(payload, dict):
+        rows = payload.get("data")
+        if isinstance(rows, list) and rows:
+            return rows
     return None
 
 

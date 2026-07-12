@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import bisect
 from dataclasses import dataclass, field
+from datetime import date
 
 MIN_CROSS_SECTION = 10  # 单期横截面有效基金数下限
 MIN_PERIODS = 12  # 有效期数下限（少于此不下显著性结论）
@@ -27,6 +28,7 @@ FACTOR_ORDER = ("momentum", "risk_adjusted", "drawdown", "composite")
 class NavPoint:
     date: str
     nav: float
+    return_source: str | None = None
 
 
 @dataclass
@@ -40,6 +42,12 @@ class FactorICStats:
     positive_ratio: float | None
     significant: bool
     ic_series: list[float] = field(default_factory=list)
+    standard_error: float | None = None
+    ci_low: float | None = None
+    ci_high: float | None = None
+    oos_mean_ic: float | None = None
+    oos_positive_ratio: float | None = None
+    direction_stable: bool = False
 
 
 @dataclass
@@ -121,11 +129,23 @@ def _rank_ic_for_period(
 # ---------------------------------------------------------------------------
 
 
-def _nav_asof(dates: list[str], navs: list[float], as_of: str) -> float | None:
+def _nav_asof(
+    dates: list[str],
+    navs: list[float],
+    as_of: str,
+    *,
+    max_stale_days: int | None = None,
+) -> float | None:
     """date <= as_of 的最后一个净值（>0）。"""
     idx = bisect.bisect_right(dates, as_of) - 1
     if idx < 0:
         return None
+    if max_stale_days is not None:
+        try:
+            if (date.fromisoformat(as_of) - date.fromisoformat(dates[idx])).days > max_stale_days:
+                return None
+        except ValueError:
+            pass
     nav = navs[idx]
     return nav if nav > 0 else None
 
@@ -144,7 +164,32 @@ def _navs_upto(dates: list[str], navs: list[float], as_of: str, lookback: int) -
 # ---------------------------------------------------------------------------
 
 
-def _aggregate(factor: str, raw_ics: list[float | None]) -> FactorICStats:
+def _newey_west_standard_error(values: list[float], lags: int) -> float | None:
+    n = len(values)
+    if n < 2:
+        return None
+    mean = sum(values) / n
+    centered = [value - mean for value in values]
+    long_run_variance = sum(value * value for value in centered) / n
+    max_lag = min(max(0, lags), n - 1)
+    for lag in range(1, max_lag + 1):
+        covariance = sum(
+            centered[index] * centered[index - lag]
+            for index in range(lag, n)
+        ) / n
+        weight = 1.0 - lag / (max_lag + 1)
+        long_run_variance += 2.0 * weight * covariance
+    if long_run_variance <= 1e-15:
+        return None
+    return (long_run_variance / n) ** 0.5
+
+
+def _aggregate(
+    factor: str,
+    raw_ics: list[float | None],
+    *,
+    hac_lags: int = 0,
+) -> FactorICStats:
     ics = [v for v in raw_ics if v is not None]
     n = len(ics)
     if n == 0:
@@ -156,8 +201,24 @@ def _aggregate(factor: str, raw_ics: list[float | None]) -> FactorICStats:
     else:
         std = 0.0
     icir = mean / std if std > 1e-12 else None
-    t_stat = mean / (std / n**0.5) if std > 1e-12 else None
+    standard_error = _newey_west_standard_error(ics, hac_lags)
+    t_stat = mean / standard_error if standard_error and standard_error > 1e-12 else None
     pos = sum(1 for v in ics if v > 0) / n
+    ci_low = mean - 1.96 * standard_error if standard_error is not None else None
+    ci_high = mean + 1.96 * standard_error if standard_error is not None else None
+    split = max(1, (n * 2) // 3)
+    train = ics[:split]
+    oos = ics[split:]
+    train_mean = sum(train) / len(train) if train else None
+    oos_mean = sum(oos) / len(oos) if oos else None
+    oos_positive = sum(value > 0 for value in oos) / len(oos) if oos else None
+    direction_stable = bool(
+        train_mean is not None
+        and oos_mean is not None
+        and abs(train_mean) >= 0.01
+        and abs(oos_mean) >= 0.01
+        and train_mean * oos_mean > 0
+    )
     significant = n >= MIN_PERIODS and t_stat is not None and abs(t_stat) > T_SIGNIF
     return FactorICStats(
         factor=factor,
@@ -169,6 +230,12 @@ def _aggregate(factor: str, raw_ics: list[float | None]) -> FactorICStats:
         positive_ratio=round(pos, 3),
         significant=significant,
         ic_series=[round(v, 4) for v in ics],
+        standard_error=round(standard_error, 4) if standard_error is not None else None,
+        ci_low=round(ci_low, 4) if ci_low is not None else None,
+        ci_high=round(ci_high, 4) if ci_high is not None else None,
+        oos_mean_ic=round(oos_mean, 4) if oos_mean is not None else None,
+        oos_positive_ratio=round(oos_positive, 3) if oos_positive is not None else None,
+        direction_stable=direction_stable,
     )
 
 
@@ -198,6 +265,7 @@ def compute_factor_ic(
     forward_days: int = DEFAULT_FORWARD_DAYS,
     factor_lookback: int = DEFAULT_FACTOR_LOOKBACK,
     min_cross_section: int = MIN_CROSS_SECTION,
+    max_stale_days: int = 7,
 ) -> FactorICResult:
     """walk-forward Rank IC 回测。
 
@@ -229,7 +297,7 @@ def compute_factor_ic(
     # 锚定再平衡日
     anchors = [
         i
-        for i in range(0, len(calendar), rebalance_step)
+        for i in range(max(0, factor_lookback - 1), len(calendar), rebalance_step)
         if i + forward_days < len(calendar)
     ]
 
@@ -246,12 +314,16 @@ def compute_factor_ic(
 
         for code, (dates, navs) in indexed.items():
             slice_navs = _navs_upto(dates, navs, t_date, factor_lookback)
-            raws = _raw_factors_at(slice_navs)
+            raws = (
+                _raw_factors_at(slice_navs)
+                if len(slice_navs) >= factor_lookback
+                else {factor: None for factor in SINGLE_FACTORS}
+            )
             for f in SINGLE_FACTORS:
                 raws_by_factor[f][code] = raws[f]
 
-            nav_t = _nav_asof(dates, navs, t_date)
-            nav_fwd = _nav_asof(dates, navs, fwd_date)
+            nav_t = _nav_asof(dates, navs, t_date, max_stale_days=max_stale_days)
+            nav_fwd = _nav_asof(dates, navs, fwd_date, max_stale_days=max_stale_days)
             if nav_t and nav_fwd and nav_t > 0:
                 forward_rets[code] = nav_fwd / nav_t - 1.0
             else:
@@ -285,7 +357,8 @@ def compute_factor_ic(
             )
         )
 
-    factors = [_aggregate(f, ic_series[f]) for f in FACTOR_ORDER]
+    hac_lags = max(0, (forward_days - 1) // max(1, rebalance_step))
+    factors = [_aggregate(f, ic_series[f], hac_lags=hac_lags) for f in FACTOR_ORDER]
     return FactorICResult(
         available=True,
         universe_size=universe_size,

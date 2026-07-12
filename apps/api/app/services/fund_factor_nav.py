@@ -8,6 +8,98 @@
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import Any
+
+
+@dataclass(frozen=True)
+class TotalReturnSeries:
+    points: list[tuple[str, float]]
+    daily_return_points: int
+    nav_ratio_points: int
+    invalid_points: int
+
+    @property
+    def return_coverage(self) -> float:
+        transitions = max(0, len(self.points) - 1)
+        return self.daily_return_points / transitions if transitions else 0.0
+
+
+def build_total_return_index(rows: list[dict[str, Any]]) -> TotalReturnSeries:
+    """用日增长率优先重建总收益指数；缺失时才回落到单位净值比值。"""
+    normalized: dict[str, tuple[float | None, float | None]] = {}
+    for row in rows:
+        day = str(row.get("date") or "")[:10]
+        if not day:
+            continue
+        try:
+            nav = float(row["nav"]) if row.get("nav") is not None else None
+        except (TypeError, ValueError):
+            nav = None
+        growth_raw = row.get("daily_growth", row.get("daily_return_percent"))
+        try:
+            growth = float(growth_raw) if growth_raw is not None else None
+        except (TypeError, ValueError):
+            growth = None
+        normalized[day] = (nav if nav and nav > 0 else None, growth)
+
+    points: list[tuple[str, float]] = []
+    index_value = 1.0
+    previous_nav: float | None = None
+    daily_count = 0
+    nav_count = 0
+    invalid_count = 0
+    for day in sorted(normalized):
+        nav, growth = normalized[day]
+        if not points:
+            if nav is None:
+                invalid_count += 1
+                continue
+            points.append((day, index_value))
+            previous_nav = nav
+            continue
+
+        period_return: float | None = None
+        if growth is not None and -99.9 < growth < 1_000:
+            period_return = growth / 100.0
+            daily_count += 1
+        elif nav is not None and previous_nav is not None and previous_nav > 0:
+            period_return = nav / previous_nav - 1.0
+            nav_count += 1
+
+        if period_return is None or period_return <= -0.999 or period_return > 10:
+            invalid_count += 1
+            if nav is not None:
+                previous_nav = nav
+            continue
+        index_value *= 1.0 + period_return
+        if index_value <= 0:
+            invalid_count += 1
+            continue
+        points.append((day, index_value))
+        if nav is not None:
+            previous_nav = nav
+
+    return TotalReturnSeries(
+        points=points,
+        daily_return_points=daily_count,
+        nav_ratio_points=nav_count,
+        invalid_points=invalid_count,
+    )
+
+
+def total_return_navs_from_points(points: list[Any]) -> TotalReturnSeries:
+    return build_total_return_index(
+        [
+            {
+                "date": getattr(point, "date", None),
+                "nav": getattr(point, "nav", None),
+                "daily_return_percent": getattr(point, "daily_return_percent", None),
+            }
+            for point in points
+        ]
+    )
+
 
 def window_return_percent(navs: list[float], window: int) -> float | None:
     """升序净值序列近 window 个交易日区间收益(%)；不足则尽力从最早点算。"""
@@ -37,3 +129,24 @@ def factor_input_from_navs(code: str, name: str, navs: list[float]):
         max_drawdown_1y_percent=mdd,
         fund_scale_yi=None,
     )
+
+
+def factor_input_from_points(
+    code: str,
+    name: str,
+    points: list[Any],
+    *,
+    require_complete: bool = False,
+    minimum_points: int = 250,
+):
+    series = total_return_navs_from_points(points)
+    if require_complete and len(series.points) < minimum_points:
+        from app.services.fund_factors import FundFactorInput
+
+        return FundFactorInput(fund_code=code, fund_name=name)
+    selected = (
+        series.points[-minimum_points:]
+        if require_complete
+        else series.points
+    )
+    return factor_input_from_navs(code, name, [value for _, value in selected])

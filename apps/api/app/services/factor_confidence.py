@@ -66,7 +66,17 @@ def load_ic_context() -> dict[str, Any]:
                 if key:
                     factors[str(key)] = stats
 
-        context = {"state": state, "status": status, "factors": factors}
+        research_model = (
+            summary.get("research_model")
+            if isinstance(summary, dict) and isinstance(summary.get("research_model"), dict)
+            else None
+        )
+        context = {
+            "state": state,
+            "status": status,
+            "factors": factors,
+            "research_model": research_model,
+        }
         with _IC_CONTEXT_CACHE_LOCK:
             if _IC_CONTEXT_CACHE_GENERATION != load_generation:
                 continue
@@ -115,10 +125,61 @@ def factor_reliability(
     ic_factors: dict[str, dict] | None = None,
     *,
     missing_basis: str = "无回测数据",
+    research_model: dict | None = None,
+    segment: str | None = None,
 ) -> dict[str, dict]:
     """模块2 四因子各算一次置信，返回 {factor_key: {level, basis}}。"""
+    if research_model and segment:
+        return {
+            key: _research_factor_confidence(research_model, segment, key)
+            for key in FACTOR_IC_KEY
+        }
     factors = ic_factors if ic_factors is not None else load_ic_summary()
     return {
         key: factor_confidence(factors, key, missing_basis=missing_basis)
         for key in FACTOR_IC_KEY
+    }
+
+
+def _research_factor_confidence(
+    research_model: dict,
+    segment: str,
+    factor_key: str,
+) -> dict:
+    if factor_key == "size":
+        return {"level": "不足", "basis": "规模因子无历史规模序列，未回测"}
+    horizon = str(research_model.get("primary_horizon") or 20)
+    segment_row = (research_model.get("segments") or {}).get(segment) or {}
+    horizon_row = (segment_row.get("horizons") or {}).get(horizon) or {}
+    stats = next(
+        (
+            row
+            for row in horizon_row.get("factors") or []
+            if row.get("factor") == factor_key
+        ),
+        None,
+    )
+    if not stats or not (horizon_row.get("qualified") or {}).get(factor_key):
+        return {"level": "不足", "basis": "同类基金样本或样本外时期不足"}
+    mean_ic = stats.get("mean_ic")
+    oos_ic = stats.get("oos_mean_ic")
+    if mean_ic is None or oos_ic is None:
+        return {"level": "不足", "basis": "同类 IC 统计不完整"}
+    label = str(segment_row.get("label") or segment)
+    if mean_ic < 0 or oos_ic < 0:
+        return {
+            "level": "低",
+            "basis": f"{label}未来{horizon}日呈反向/均值回归（IC {mean_ic:+.3f}，样本外 {oos_ic:+.3f}）",
+        }
+    stable = bool(stats.get("direction_stable"))
+    ci_low = stats.get("ci_low")
+    if stable and ci_low is not None and ci_low > 0:
+        # 当前仍是 current-survivors cohort；在积累 point-in-time 历史前不授予“高”。
+        return {
+            "level": "中",
+            "basis": f"{label}未来{horizon}日同类 IC 正向且样本外稳定（{mean_ic:+.3f}），仍受幸存者样本限制",
+        }
+    return {
+        "level": "低",
+        "basis": f"{label}未来{horizon}日 IC {mean_ic:+.3f}，样本外/区间稳定性不足",
     }

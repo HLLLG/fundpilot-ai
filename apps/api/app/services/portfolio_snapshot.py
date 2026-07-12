@@ -179,30 +179,33 @@ def _target_from_nav(holding: Holding, fetch_nav) -> "object":
 
     规模无法从净值取，置 None（size 因子权重低、合成时按剩余权重归一）。
     """
-    from app.services.fund_factor_nav import factor_input_from_navs
+    from app.services.fund_factor_nav import factor_input_from_points
     from app.services.fund_factors import FundFactorInput
 
     code = holding.fund_code
     name = holding.fund_name or ""
     try:
-        points = fetch_nav(code, name, 250)
+        points = fetch_nav(code, name, 270)
     except Exception:
         points = []
 
-    pairs: list[tuple[str, float]] = []
-    for point in points or []:
-        nav = getattr(point, "nav", None)
-        day = str(getattr(point, "date", "") or "")[:10]
-        if nav is None or float(nav) <= 0 or not day:
-            continue
-        pairs.append((day, float(nav)))
-    pairs.sort(key=lambda x: x[0])
-    navs = [nav for _, nav in pairs]
-
-    if len(navs) < 2:
+    valid_points = [
+        point
+        for point in points or []
+        if getattr(point, "nav", None) is not None
+        and float(getattr(point, "nav")) > 0
+        and str(getattr(point, "date", "") or "")[:10]
+    ]
+    valid_points.sort(key=lambda point: str(getattr(point, "date", "")))
+    if len(valid_points) < 2:
         return FundFactorInput(fund_code=code, fund_name=name)
-
-    return factor_input_from_navs(code, name, navs)
+    return factor_input_from_points(
+        code,
+        name,
+        valid_points,
+        require_complete=True,
+        minimum_points=250,
+    )
 
 
 def build_factor_scores_payload(
@@ -210,6 +213,7 @@ def build_factor_scores_payload(
     *,
     fetch_rank=None,
     fetch_nav=None,
+    research_model: dict | None = None,
 ) -> dict:
     """从开放式基金排行榜横截面 + 持仓净值装配因子评分（纯函数 compute_factor_scores 取数层）。
 
@@ -237,6 +241,46 @@ def build_factor_scores_payload(
                 code, name, trading_days=trading_days
             )
             return history.points
+
+    if research_model:
+        from app.services.factor_ic_research import score_targets_with_research_model
+
+        filtered = [
+            holding
+            for holding in holdings_models
+            if (holding.fund_code or "").strip().isdigit()
+            and len((holding.fund_code or "").strip()) == 6
+            and (holding.fund_code or "").strip() != "000000"
+        ]
+        if len(filtered) <= 1:
+            targets = [_target_from_nav(holding, fetch_nav) for holding in filtered]
+        else:
+            from concurrent.futures import ThreadPoolExecutor
+
+            with ThreadPoolExecutor(
+                max_workers=min(_FACTOR_NAV_LOOKUP_MAX_WORKERS, len(filtered))
+            ) as executor:
+                targets = list(
+                    executor.map(
+                        lambda holding: _target_from_nav(holding, fetch_nav),
+                        filtered,
+                    )
+                )
+        funds = score_targets_with_research_model(
+            targets=targets,
+            model=research_model,
+        )
+        applicable = [fund for fund in funds if fund.get("applicable")]
+        return {
+            "available": bool(applicable),
+            "universe_size": max(
+                (int(fund.get("peer_count") or 0) for fund in applicable),
+                default=0,
+            ),
+            "message": None if applicable else "没有与同类研究池匹配且特征完整的基金。",
+            "funds": funds,
+            "model_version": research_model.get("version"),
+        }
 
     rank_rows = fetch_rank() or []
     universe = [
@@ -327,7 +371,13 @@ def clear_factor_facts_cache() -> None:
         _FACTOR_FACTS_CACHE.clear()
 
 
-def _compact_factor_scores(payload: dict, reliability: dict, ic_status: dict) -> dict:
+def _compact_factor_scores(
+    payload: dict,
+    reliability: dict,
+    ic_status: dict,
+    *,
+    research_model: dict | None = None,
+) -> dict:
     """把 build_factor_scores_payload 的结果压成紧凑 facts 结构（挂 IC 置信）。"""
     holdings = []
     for fund in payload.get("funds") or []:
@@ -337,19 +387,36 @@ def _compact_factor_scores(payload: dict, reliability: dict, ic_status: dict) ->
             detail = factors.get(key) or {}
             pct = detail.get("percentile")
             percentiles[key] = round(pct) if pct is not None else None
-        holdings.append(
-            {
-                "fund_code": fund.get("fund_code"),
-                "fund_name": fund.get("fund_name"),
-                "composite_grade": fund.get("composite_grade"),
-                "composite_score": fund.get("composite_score"),
-                "factor_percentiles": percentiles,
-            }
-        )
+        row = {
+            "fund_code": fund.get("fund_code"),
+            "fund_name": fund.get("fund_name"),
+            "composite_grade": fund.get("composite_grade"),
+            "composite_score": fund.get("composite_score"),
+            "factor_percentiles": percentiles,
+            "peer_group": fund.get("peer_group"),
+            "peer_group_label": fund.get("peer_group_label"),
+            "peer_count": fund.get("peer_count"),
+            "feature_count": fund.get("feature_count"),
+            "feature_completeness": fund.get("feature_completeness"),
+            "applicable": fund.get("applicable", True),
+        }
+        if research_model and row["peer_group"]:
+            from app.services.factor_confidence import factor_reliability
+
+            row["factor_reliability"] = factor_reliability(
+                {},
+                research_model=research_model,
+                segment=str(row["peer_group"]),
+            )
+        holdings.append(row)
     return {
         "available": bool(payload.get("available")),
         "universe_size": payload.get("universe_size", 0),
-        "factor_reliability": reliability,
+        "factor_reliability": {} if research_model else reliability,
+        "reliability_scope": (
+            "per_fund_peer_group" if research_model else "global_legacy"
+        ),
+        "model_version": payload.get("model_version"),
         "ic_status": ic_status,
         "holdings": holdings,
     }
@@ -375,6 +442,17 @@ def build_factor_scores_for_facts(
         sorted((h.fund_code or "") for h in holdings_models if h.fund_code)
     )
     try:
+        ic_context_for_call: dict | None = None
+        if ic_factors is None:
+            while True:
+                with _FACTOR_FACTS_CACHE_LOCK:
+                    context_generation = _FACTOR_FACTS_CACHE_GENERATION
+                candidate_context = load_ic_context()
+                with _FACTOR_FACTS_CACHE_LOCK:
+                    if _FACTOR_FACTS_CACHE_GENERATION != context_generation:
+                        continue
+                ic_context_for_call = candidate_context
+                break
         now = time.time()
         with _FACTOR_FACTS_CACHE_LOCK:
             build_generation = _FACTOR_FACTS_CACHE_GENERATION
@@ -386,10 +464,12 @@ def build_factor_scores_for_facts(
             )
 
         if payload is None:
+            research_model = (ic_context_for_call or {}).get("research_model")
             payload = build_factor_scores_payload(
                 holdings_models,
                 fetch_rank=fetch_rank,
                 fetch_nav=fetch_nav,
+                research_model=research_model if isinstance(research_model, dict) else None,
             )
             if not injected:
                 with _FACTOR_FACTS_CACHE_LOCK:
@@ -411,6 +491,11 @@ def build_factor_scores_for_facts(
                 payload,
                 reliability,
                 {**ic_context.get("status", {}), "state": state},
+                research_model=(
+                    ic_context.get("research_model")
+                    if isinstance(ic_context.get("research_model"), dict)
+                    else None
+                ),
             )
 
         if ic_factors is not None:
@@ -425,17 +510,7 @@ def build_factor_scores_for_facts(
             }
             return compose(ic_context)
 
-        while True:
-            with _FACTOR_FACTS_CACHE_LOCK:
-                context_generation = _FACTOR_FACTS_CACHE_GENERATION
-            ic_context = load_ic_context()
-            with _FACTOR_FACTS_CACHE_LOCK:
-                if _FACTOR_FACTS_CACHE_GENERATION != context_generation:
-                    continue
-            compact = compose(ic_context)
-            with _FACTOR_FACTS_CACHE_LOCK:
-                if _FACTOR_FACTS_CACHE_GENERATION == context_generation:
-                    return compact
+        return compose(ic_context_for_call or {})
     except Exception:  # noqa: BLE001 — best-effort，绝不阻塞日报
         return {"available": False, "message": "因子分暂不可用"}
 

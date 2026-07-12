@@ -13,6 +13,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 FACTOR_IC_SCHEMA_VERSION = 1
+CURRENT_FACTOR_IC_SCHEMA_VERSION = 2
 FACTOR_NAMES = frozenset({"momentum", "risk_adjusted", "drawdown", "composite"})
 EXPECTED_PARAMS = {
     "universe_size": 300,
@@ -23,7 +24,18 @@ EXPECTED_PARAMS = {
     "forward_days": 20,
     "factor_lookback": 250,
 }
+V2_EXPECTED_PARAMS = {
+    "universe_size": 1500,
+    "universe_mode": "stratified",
+    "sample_pool_size": 25000,
+    "nav_days": 1500,
+    "rebalance_step": 10,
+    "forward_days": 20,
+    "factor_lookback": 250,
+    "forward_horizons": [5, 20, 60],
+}
 MIN_EFFECTIVE_UNIVERSE = 240
+V2_MIN_EFFECTIVE_UNIVERSE = 1200
 MIN_VALID_PERIODS = 12
 API_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_SUMMARY_PATH = API_ROOT / "var" / "factor_ic" / "summary.json"
@@ -43,12 +55,13 @@ class FactorIcParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     universe_size: int
-    universe_mode: Literal["top", "sampled"]
+    universe_mode: Literal["top", "sampled", "stratified"]
     sample_pool_size: int
     nav_days: int
     rebalance_step: int
     forward_days: int
     factor_lookback: int
+    forward_horizons: list[int] | None = None
 
 
 class FactorIcFactorStats(BaseModel):
@@ -62,6 +75,12 @@ class FactorIcFactorStats(BaseModel):
     t_stat: float | None = None
     positive_ratio: float | None = None
     significant: bool
+    standard_error: float | None = None
+    ci_low: float | None = None
+    ci_high: float | None = None
+    oos_mean_ic: float | None = None
+    oos_positive_ratio: float | None = None
+    direction_stable: bool = False
 
     @model_validator(mode="after")
     def validate_statistics(self) -> "FactorIcFactorStats":
@@ -73,12 +92,19 @@ class FactorIcFactorStats(BaseModel):
             or not -1 <= self.mean_ic <= 1
         ):
             raise ValueError(f"{self.factor} mean_ic 非法")
-        for name in ("ic_std", "icir", "t_stat", "positive_ratio"):
+        for name in (
+            "ic_std", "icir", "t_stat", "positive_ratio", "standard_error",
+            "ci_low", "ci_high", "oos_mean_ic", "oos_positive_ratio",
+        ):
             value = getattr(self, name)
             if value is not None and not math.isfinite(value):
                 raise ValueError(f"{self.factor} {name} 必须是有限数字")
         if self.positive_ratio is not None and not 0 <= self.positive_ratio <= 1:
             raise ValueError(f"{self.factor} positive_ratio 非法")
+        if self.oos_positive_ratio is not None and not 0 <= self.oos_positive_ratio <= 1:
+            raise ValueError(f"{self.factor} oos_positive_ratio 非法")
+        if self.oos_mean_ic is not None and not -1 <= self.oos_mean_ic <= 1:
+            raise ValueError(f"{self.factor} oos_mean_ic 非法")
         return self
 
 
@@ -94,17 +120,33 @@ class FactorIcSummary(BaseModel):
     rebalance_count: int
     forward_days: int
     factors: list[FactorIcFactorStats]
+    coverage: dict[str, Any] | None = None
+    research_model: dict[str, Any] | None = None
 
     @model_validator(mode="after")
     def validate_quality(self) -> "FactorIcSummary":
-        if self.schema_version != FACTOR_IC_SCHEMA_VERSION:
+        if self.schema_version not in {
+            FACTOR_IC_SCHEMA_VERSION,
+            CURRENT_FACTOR_IC_SCHEMA_VERSION,
+        }:
             raise ValueError("不支持的 factor IC schema_version")
-        if self.params.model_dump() != EXPECTED_PARAMS:
+        params = self.params.model_dump(exclude_none=True)
+        expected_params = (
+            V2_EXPECTED_PARAMS
+            if self.schema_version == CURRENT_FACTOR_IC_SCHEMA_VERSION
+            else EXPECTED_PARAMS
+        )
+        if params != expected_params:
             raise ValueError("回测参数不是固定生产口径")
         if not self.available:
             raise ValueError("回测结果不可用")
-        if self.universe_size < MIN_EFFECTIVE_UNIVERSE:
-            raise ValueError(f"有效基金数不足 {MIN_EFFECTIVE_UNIVERSE}")
+        minimum_universe = (
+            V2_MIN_EFFECTIVE_UNIVERSE
+            if self.schema_version == CURRENT_FACTOR_IC_SCHEMA_VERSION
+            else MIN_EFFECTIVE_UNIVERSE
+        )
+        if self.universe_size < minimum_universe:
+            raise ValueError(f"有效基金数不足 {minimum_universe}")
         if self.rebalance_count < MIN_VALID_PERIODS:
             raise ValueError(f"回测期数不足 {MIN_VALID_PERIODS}")
         names = [row.factor for row in self.factors]
@@ -114,7 +156,49 @@ class FactorIcSummary(BaseModel):
             raise ValueError("generated_at 必须包含时区")
         if self.run_date != self.generated_at.astimezone(timezone.utc).date():
             raise ValueError("run_date 必须等于 generated_at 的 UTC 日期")
+        if self.schema_version == CURRENT_FACTOR_IC_SCHEMA_VERSION:
+            self._validate_v2_research_model()
         return self
+
+    def _validate_v2_research_model(self) -> None:
+        coverage = self.coverage or {}
+        if int(coverage.get("source_share_classes") or 0) < 5_000:
+            raise ValueError("v2 全量基金目录覆盖不足")
+        if int(coverage.get("unique_portfolios") or 0) < self.universe_size:
+            raise ValueError("v2 去重基金组合数不足")
+        if int(coverage.get("effective_nav_portfolios") or 0) < V2_MIN_EFFECTIVE_UNIVERSE:
+            raise ValueError("v2 有效总收益序列不足")
+        if float(coverage.get("total_return_preferred_rate") or 0) < 0.8:
+            raise ValueError("v2 总收益口径覆盖率不足 80%")
+
+        model = self.research_model or {}
+        if model.get("version") != "factor_ic.v2":
+            raise ValueError("v2 research_model 版本非法")
+        if model.get("cohort_mode") != "current_survivors":
+            raise ValueError("v2 cohort_mode 非法")
+        segments = model.get("segments")
+        peers = model.get("peer_distributions")
+        classifications = model.get("fund_classifications")
+        if not isinstance(segments, dict) or len(segments) < 4:
+            raise ValueError("v2 分类 IC 覆盖不足")
+        if not isinstance(peers, dict) or len(peers) < 4:
+            raise ValueError("v2 同类分布覆盖不足")
+        if not isinstance(classifications, dict) or len(classifications) < 5_000:
+            raise ValueError("v2 基金分类映射覆盖不足")
+        primary_horizon = str(model.get("primary_horizon") or 20)
+        qualified_segments = 0
+        for key, segment in segments.items():
+            if not isinstance(segment, dict):
+                continue
+            horizon = (segment.get("horizons") or {}).get(primary_horizon) or {}
+            qualified = horizon.get("qualified") or {}
+            peer = peers.get(key) if isinstance(peers.get(key), dict) else {}
+            if any(bool(value) for value in qualified.values()) and int(
+                peer.get("eligible_count") or 0
+            ) >= 20:
+                qualified_segments += 1
+        if qualified_segments < 4:
+            raise ValueError("v2 主周期合格同类组不足 4 类")
 
 
 class FactorIcPublishRequest(BaseModel):
@@ -350,8 +434,32 @@ def _build_factor_ic_status_from_loaded(
         if isinstance(row, dict) and row.get("factor")
     }
     source_commit = str(metadata.get("source_commit") or "")[:7] or None
+    coverage = raw.get("coverage") if isinstance(raw.get("coverage"), dict) else {}
+    research_model = (
+        raw.get("research_model")
+        if isinstance(raw.get("research_model"), dict)
+        else {}
+    )
+    primary_horizon = str(research_model.get("primary_horizon") or 20)
+    segment_status = {}
+    for key, segment in (research_model.get("segments") or {}).items():
+        if not isinstance(segment, dict):
+            continue
+        horizon = (segment.get("horizons") or {}).get(primary_horizon) or {}
+        segment_status[str(key)] = {
+            "label": segment.get("label"),
+            "sampled_portfolios": segment.get("sampled_portfolios"),
+            "universe_size": horizon.get("universe_size"),
+            "rebalance_count": horizon.get("rebalance_count"),
+            "qualified_factors": sorted(
+                factor
+                for factor, qualified in (horizon.get("qualified") or {}).items()
+                if qualified
+            ),
+        }
     return {
         "available": True,
+        "schema_version": raw.get("schema_version", 1),
         "run_date": str(raw["run_date"]),
         "generated_at": generated.isoformat(),
         "published_at": metadata.get("published_at"),
@@ -364,6 +472,24 @@ def _build_factor_ic_status_from_loaded(
         "universe_mode": (params or {}).get("universe_mode"),
         "rebalance_count": raw.get("rebalance_count"),
         "factor_periods": factor_periods,
+        "forward_horizons": (params or {}).get("forward_horizons") or [raw.get("forward_days")],
+        "coverage": {
+            key: coverage.get(key)
+            for key in (
+                "source_share_classes",
+                "unique_portfolios",
+                "sampled_portfolios",
+                "effective_nav_portfolios",
+                "effective_nav_rate",
+                "total_return_preferred_portfolios",
+                "total_return_preferred_rate",
+                "nav_return_source_counts",
+                "sampled_by_type",
+            )
+            if key in coverage
+        },
+        "segments": segment_status,
+        "cohort_mode": research_model.get("cohort_mode"),
         "source_commit": source_commit,
     }
 

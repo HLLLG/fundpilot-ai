@@ -43,10 +43,14 @@ def _factor_component(fund_code: str, factor_scores: dict | None) -> dict | None
             break
     if not row:
         return None
+    reliability = row.get("factor_reliability") or reliability
+    if row.get("applicable") is False:
+        return None
     percentiles = row.get("factor_percentiles") or {}
 
     # 候选：IC 置信非「不足」的因子，按百分位降序取主因子
     candidates = []
+    reliability_rank = {"高": 3, "中": 2, "低": 1}
     for key in _FACTOR_KEYS:
         rel = reliability.get(key)
         pct = percentiles.get(key)
@@ -54,11 +58,11 @@ def _factor_component(fund_code: str, factor_scores: dict | None) -> dict | None
             continue
         if pct is None:
             continue
-        candidates.append((pct, key, rel))
+        candidates.append((reliability_rank.get(str(rel.get("level")), 0), pct, key, rel))
     if not candidates:
         return None
-    candidates.sort(key=lambda x: x[0], reverse=True)
-    pct, key, rel = candidates[0]
+    candidates.sort(key=lambda x: (x[0], x[1]), reverse=True)
+    _, pct, key, rel = candidates[0]
     label = _FACTOR_LABEL.get(key, key)
     return {
         "source": "factor",

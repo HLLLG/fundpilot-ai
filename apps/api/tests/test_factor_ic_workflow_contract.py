@@ -14,16 +14,17 @@ def test_factor_ic_workflow_is_read_only_and_uses_fixed_contract() -> None:
     assert "contents: read" in text
     assert "group: factor-ic-refresh" in text
     assert "cancel-in-progress: false" in text
-    assert "timeout-minutes: 45" in text
+    assert "timeout-minutes: 90" in text
     assert "working-directory: apps/api" in text
-    assert "--universe-mode sampled" in text
-    assert "--sample-pool-size 500" in text
-    assert "--universe-size 300" in text
-    assert "--nav-days 750" in text
-    assert "--rebalance-step 21" in text
+    assert "--universe-mode stratified" in text
+    assert "--sample-pool-size 25000" in text
+    assert "--universe-size 1500" in text
+    assert "--nav-days 1500" in text
+    assert "--rebalance-step 10" in text
     assert "--forward-days 20" in text
+    assert "--forward-horizons 5,20,60" in text
     assert "--factor-lookback 250" in text
-    assert "--max-workers 8" in text
+    assert "--max-workers 16" in text
     assert '--out-dir "$RUNNER_TEMP/factor-ic"' in text
     assert "secrets.FACTOR_IC_PUBLISH_TOKEN" in text
     assert "secrets.LIGHTHOUSE_SSH_PRIVATE_KEY" in text

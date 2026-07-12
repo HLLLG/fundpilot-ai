@@ -87,6 +87,18 @@ def _write_actions_summary(summary: dict, result: str) -> None:
         f"- {row['factor']}: IC {row['mean_ic']:+.4f}, n={row['n_periods']}"
         for row in summary.get("factors") or []
     ]
+    coverage = summary.get("coverage") or {}
+    segment_lines = []
+    model = summary.get("research_model") or {}
+    for segment in (model.get("segments") or {}).values():
+        primary = (segment.get("horizons") or {}).get("20") or {}
+        qualified = [
+            key for key, value in (primary.get("qualified") or {}).items() if value
+        ]
+        segment_lines.append(
+            f"- {segment.get('label')}: n={primary.get('universe_size', 0)}, "
+            f"qualified={','.join(qualified) or 'none'}"
+        )
     text = "\n".join(
         [
             "## Factor IC Refresh",
@@ -95,7 +107,10 @@ def _write_actions_summary(summary: dict, result: str) -> None:
             f"- generated_at: {summary['generated_at']}",
             f"- universe_size: {summary['universe_size']}",
             f"- rebalance_count: {summary['rebalance_count']}",
+            f"- source_share_classes: {coverage.get('source_share_classes', 'n/a')}",
+            f"- unique_portfolios: {coverage.get('unique_portfolios', 'n/a')}",
             *factor_lines,
+            *segment_lines,
             "",
         ]
     )

@@ -13,22 +13,26 @@
 回测模块2 的因子（动量/风险调整/回撤/综合）到底有没有预测力。
 
 ```bash
-python scripts/run_factor_ic.py --universe-size 300 --nav-days 750
+python scripts/run_factor_ic.py \
+  --universe-mode stratified --sample-pool-size 25000 --universe-size 1500 \
+  --nav-days 1500 --rebalance-step 10 --forward-horizons 5,20,60 --max-workers 16
 ```
 
 常用参数：
 
 | 参数 | 默认 | 说明 |
 |------|------|------|
-| `--universe-size` | 300 | 基金池只数 |
-| `--nav-days` | 750 | 每只基金拉多少交易日 NAV |
-| `--universe-mode` | `top` | `top`=榜单前N(偏强样本)；`sampled`=大池跨业绩段分层抽样（见 3D） |
-| `--sample-pool-size` | 500 | `sampled` 模式下的大池容量（上限 500） |
+| `--universe-size` | 300 | 目标研究池只数；生产固定 1500 |
+| `--nav-days` | 750 | 每只基金拉多少净值观测；生产固定 1500 |
+| `--universe-mode` | `top` | `stratified`=全目录、份额去重、分类分层；生产使用此模式 |
+| `--sample-pool-size` | 500 | 元数据大池；`stratified` 生产固定 25000，覆盖当前全目录并留增长空间 |
+| `--forward-horizons` | `5,20,60` | 分类 IC 前瞻周期 |
 | `--limit-funds` | 无 | 调试用，限制只数 |
 | `--out-dir` | `var/factor_ic` | 输出目录 |
 
-读结果：`mean IC` 0.03~0.05 即属可用，`n≥12 且 |t|>2` 才算显著；过高通常是前视偏差。
-**注意**：池为「当前在榜、业绩偏强」样本，有幸存者/选择偏差，IC 偏乐观。
+生产 v2 按同类基金读取 `mean_ic`、HAC 区间、`oos_mean_ic` 与
+`direction_stable`；不能只看普通 t 值。完整口径见
+[`docs/design/FACTOR_IC_V2.md`](../../../docs/design/FACTOR_IC_V2.md)。
 
 ### 发布已校验快照
 
@@ -44,7 +48,8 @@ python scripts/publish_factor_ic.py var/factor_ic/summary.json
 ```
 
 Token 只通过环境变量进入请求头，不得作为命令行参数、日志或 Actions Summary 内容。
-发布器会在本地先执行固定生产参数与 240 只基金/12 期质量门槛校验；网络错误或
+发布器会在本地先执行版本化固定参数与覆盖质量门槛；v2 要求有效总收益序列至少
+1200、总收益优先覆盖率至少 80%、分类研究模型至少覆盖四类。网络错误或
 服务端 `5xx` 最多按 5、15、45 秒退避重试，`409` 视为已有更新快照并安全跳过。
 
 ---
@@ -73,7 +78,7 @@ python scripts/run_style_factor.py --universe-size 200 --nav-days 250
 
 ---
 
-## 3D 分层抽样基金池
+## 3D 分层抽样基金池（旧 v1 调试口径）
 
 不是独立脚本，而是 3A 的一个开关：把池从「取前 N 名」换成「跨业绩段分层抽样」以降偏差。
 
@@ -82,7 +87,8 @@ python scripts/run_factor_ic.py --universe-mode sampled --sample-pool-size 500 -
 ```
 
 即先取榜单前 500 作大池，再等距抽样出 100 只（横跨赢家→输家）。
-**注意**：榜单子进程上限 500 条且清盘基金不在榜，只削弱选择偏差，幸存者偏差仍在。
+生产不再使用此口径；v2 使用 `stratified` 拉全目录、份额去重并按类别分层。旧入口仅为
+回归和小样本调试保留。
 
 ---
 
