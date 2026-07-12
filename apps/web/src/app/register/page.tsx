@@ -25,19 +25,25 @@ export default function RegisterPage() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  async function onSubmit(event: FormEvent) {
+  async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
-    if (password !== confirmPassword) {
+    const formData = new FormData(event.currentTarget);
+    const submittedUsername = String(formData.get("username") ?? "");
+    const submittedUserAccount = String(formData.get("userAccount") ?? "");
+    const submittedPassword = String(formData.get("password") ?? "");
+    const submittedConfirmPassword = String(formData.get("confirmPassword") ?? "");
+
+    if (submittedPassword !== submittedConfirmPassword) {
       setError("两次输入的密码不一致");
       return;
     }
     setSubmitting(true);
     try {
       const session = await registerUser({
-        userAccount,
-        password,
-        username: username || undefined,
+        userAccount: submittedUserAccount,
+        password: submittedPassword,
+        username: submittedUsername || undefined,
       });
       setSession(session.accessToken, session.user);
       router.replace("/");
@@ -92,6 +98,7 @@ export default function RegisterPage() {
               昵称（可选）
               <input
                 type="text"
+                name="username"
                 autoComplete="nickname"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
@@ -103,6 +110,7 @@ export default function RegisterPage() {
               邮箱
               <input
                 type="email"
+                name="userAccount"
                 required
                 autoComplete="email"
                 aria-invalid={Boolean(error)}
@@ -117,6 +125,7 @@ export default function RegisterPage() {
               密码
               <input
                 type="password"
+                name="password"
                 required
                 minLength={8}
                 autoComplete="new-password"
@@ -132,6 +141,7 @@ export default function RegisterPage() {
               确认密码
               <input
                 type="password"
+                name="confirmPassword"
                 required
                 minLength={8}
                 autoComplete="new-password"
