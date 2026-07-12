@@ -72,10 +72,16 @@ def test_deploy_workflow_initializes_ssh_paths_after_runner_starts() -> None:
     assert '>> "$GITHUB_ENV"' in workflow
 
 
-def test_factor_ic_refresh_uses_production_environment_url() -> None:
+def test_factor_ic_refresh_publishes_through_private_ssh_tunnel() -> None:
     workflow = _text(".github/workflows/factor-ic-refresh.yml")
     assert "environment: production" in workflow
     assert "vars.FACTOR_IC_REFRESH_ENABLED == 'true'" in workflow
     assert "github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'" in workflow
-    assert "${{ vars.FACTOR_IC_PUBLISH_URL }}" in workflow
+    assert "${{ vars.FACTOR_IC_PUBLISH_URL }}" not in workflow
+    assert "LIGHTHOUSE_SSH_PRIVATE_KEY" in workflow
+    assert "LIGHTHOUSE_KNOWN_HOSTS" in workflow
+    assert "ExitOnForwardFailure=yes" in workflow
+    assert "127.0.0.1:18000:127.0.0.1:8000" in workflow
+    assert "http://127.0.0.1:18000/api/internal/factor-ic-snapshots" in workflow
+    assert "trap cleanup EXIT" in workflow
     assert "fundpilot-api-269544-5-1392809852.sh.run.tcloudbase.com" not in workflow

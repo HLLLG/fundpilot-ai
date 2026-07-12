@@ -24,19 +24,9 @@ jobs:
         working-directory: apps/api
     env:
       PYTHONUTF8: "1"
-      FACTOR_IC_PUBLISH_URL: ${{ vars.FACTOR_IC_PUBLISH_URL }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Validate production publish target
-        run: |
-          case "$FACTOR_IC_PUBLISH_URL" in
-            https://*/api/internal/factor-ic-snapshots) ;;
-            *)
-              echo "::error::FACTOR_IC_PUBLISH_URL must be an HTTPS Lighthouse snapshot endpoint"
-              exit 1
-              ;;
-          esac
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -59,7 +49,64 @@ jobs:
             --factor-lookback 250 \
             --max-workers 8 \
             --out-dir "$RUNNER_TEMP/factor-ic"
-      - name: Publish validated summary
+      - name: Configure Lighthouse SSH identity
         env:
+          LIGHTHOUSE_HOST: ${{ secrets.LIGHTHOUSE_HOST }}
+          LIGHTHOUSE_USER: ${{ secrets.LIGHTHOUSE_USER }}
+          LIGHTHOUSE_SSH_PRIVATE_KEY: ${{ secrets.LIGHTHOUSE_SSH_PRIVATE_KEY }}
+          LIGHTHOUSE_KNOWN_HOSTS: ${{ secrets.LIGHTHOUSE_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          SSH_KEY_PATH=$RUNNER_TEMP/fundpilot-factor-ic-key
+          SSH_KNOWN_HOSTS_PATH=$RUNNER_TEMP/fundpilot-factor-ic-known-hosts
+          printf 'SSH_KEY_PATH=%s\nSSH_KNOWN_HOSTS_PATH=%s\n' \
+            "$SSH_KEY_PATH" "$SSH_KNOWN_HOSTS_PATH" >> "$GITHUB_ENV"
+          [[ -n "$LIGHTHOUSE_HOST" ]] || { echo "::error::LIGHTHOUSE_HOST is empty"; exit 1; }
+          [[ -n "$LIGHTHOUSE_USER" ]] || { echo "::error::LIGHTHOUSE_USER is empty"; exit 1; }
+          [[ -n "$LIGHTHOUSE_SSH_PRIVATE_KEY" ]] || { echo "::error::LIGHTHOUSE_SSH_PRIVATE_KEY is empty"; exit 1; }
+          [[ -n "$LIGHTHOUSE_KNOWN_HOSTS" ]] || { echo "::error::LIGHTHOUSE_KNOWN_HOSTS is empty"; exit 1; }
+          printf '%s\n' "$LIGHTHOUSE_SSH_PRIVATE_KEY" | tr -d '\r' > "$SSH_KEY_PATH"
+          printf '%s\n' "$LIGHTHOUSE_KNOWN_HOSTS" | tr -d '\r' > "$SSH_KNOWN_HOSTS_PATH"
+          chmod 600 "$SSH_KEY_PATH" "$SSH_KNOWN_HOSTS_PATH"
+          ssh-keygen -y -f "$SSH_KEY_PATH" >/dev/null
+      - name: Publish validated summary through SSH tunnel
+        env:
+          LIGHTHOUSE_HOST: ${{ secrets.LIGHTHOUSE_HOST }}
+          LIGHTHOUSE_USER: ${{ secrets.LIGHTHOUSE_USER }}
           FACTOR_IC_PUBLISH_TOKEN: ${{ secrets.FACTOR_IC_PUBLISH_TOKEN }}
-        run: python scripts/publish_factor_ic.py "$RUNNER_TEMP/factor-ic/summary.json"
+          FACTOR_IC_PUBLISH_URL: http://127.0.0.1:18000/api/internal/factor-ic-snapshots
+        run: |
+          set -euo pipefail
+          [[ -n "$FACTOR_IC_PUBLISH_TOKEN" ]] || { echo "::error::FACTOR_IC_PUBLISH_TOKEN is empty"; exit 1; }
+          target="${LIGHTHOUSE_USER}@${LIGHTHOUSE_HOST}"
+          ssh_options=(-i "$SSH_KEY_PATH" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$SSH_KNOWN_HOSTS_PATH")
+          tunnel_pid=""
+          cleanup() {
+            if [[ -n "$tunnel_pid" ]] && kill -0 "$tunnel_pid" 2>/dev/null; then
+              kill "$tunnel_pid" 2>/dev/null || true
+              wait "$tunnel_pid" 2>/dev/null || true
+            fi
+          }
+          trap cleanup EXIT
+          ssh "${ssh_options[@]}" \
+            -o ExitOnForwardFailure=yes \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=3 \
+            -T -N -L 127.0.0.1:18000:127.0.0.1:8000 \
+            "$target" &
+          tunnel_pid=$!
+          tunnel_ready=false
+          for attempt in {1..15}; do
+            if ! kill -0 "$tunnel_pid" 2>/dev/null; then
+              wait "$tunnel_pid"
+              exit 1
+            fi
+            if curl -fsS --max-time 2 http://127.0.0.1:18000/health >/dev/null; then
+              tunnel_ready=true
+              break
+            fi
+            echo "waiting for Factor IC SSH tunnel ($attempt/15)"
+            sleep 2
+          done
+          [[ "$tunnel_ready" == true ]] || { echo "::error::Lighthouse API is unavailable through the SSH tunnel"; exit 1; }
+          python scripts/publish_factor_ic.py "$RUNNER_TEMP/factor-ic/summary.json"

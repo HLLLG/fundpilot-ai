@@ -26,6 +26,11 @@ def test_factor_ic_workflow_is_read_only_and_uses_fixed_contract() -> None:
     assert "--max-workers 8" in text
     assert '--out-dir "$RUNNER_TEMP/factor-ic"' in text
     assert "secrets.FACTOR_IC_PUBLISH_TOKEN" in text
+    assert "secrets.LIGHTHOUSE_SSH_PRIVATE_KEY" in text
+    assert "secrets.LIGHTHOUSE_KNOWN_HOSTS" in text
+    assert "ExitOnForwardFailure=yes" in text
+    assert "127.0.0.1:18000:127.0.0.1:8000" in text
+    assert "curl -fsS --max-time 2 http://127.0.0.1:18000/health" in text
     assert "scripts/publish_factor_ic.py" in text
     assert "requirements-ocr" not in text
     assert "git push" not in text
