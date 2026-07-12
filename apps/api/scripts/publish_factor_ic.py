@@ -20,6 +20,7 @@ if str(API_ROOT) not in sys.path:
 from app.services.factor_ic_snapshot import validate_publish_request  # noqa: E402
 
 RETRY_DELAYS = (5, 15, 45)
+PUBLISH_TIMEOUT_SECONDS = 90.0
 
 
 def publish_summary(
@@ -51,7 +52,7 @@ def publish_summary(
                 url,
                 json=body,
                 headers=headers,
-                timeout=30.0,
+                timeout=PUBLISH_TIMEOUT_SECONDS,
             )
         except httpx.RequestError:
             if attempt == len(RETRY_DELAYS):

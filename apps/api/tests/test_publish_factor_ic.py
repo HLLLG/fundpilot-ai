@@ -7,6 +7,7 @@ import httpx
 import pytest
 
 from scripts.publish_factor_ic import (
+    PUBLISH_TIMEOUT_SECONDS,
     RETRY_DELAYS,
     _required_env,
     _write_actions_summary,
@@ -83,7 +84,7 @@ def test_retries_5xx_and_never_places_token_in_body(tmp_path) -> None:
         client.calls[0]["headers"]["X-Factor-IC-Publish-Token"]
         == "secret-token-value"
     )
-    assert client.calls[0]["timeout"] == 30.0
+    assert client.calls[0]["timeout"] == PUBLISH_TIMEOUT_SECONDS == 90.0
 
 
 def test_four_total_attempts_use_bounded_backoff(tmp_path) -> None:
