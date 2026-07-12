@@ -871,7 +871,7 @@ cd apps/web && npm run test:e2e         # 发布前按需跑完整七视口
 | CI 环境变量 | `FUND_AI_OCR_PRELOAD=false`、`FUND_AI_NEWS_ENABLED=false`、`FUND_AI_SECTOR_SIGNAL_BACKTEST_ENABLED=false`、`FUND_AI_TACTICAL_PROMPT_TUNING_ENABLED=false` |
 | 保留覆盖 | 核心 API（OCR/分析/荐基）、持仓指标、OCR 解析、discovery 守卫与候选池、`test_api.py` 集成冒烟 |
 
-Workflow：`.github/workflows/ci.yml`（`api` / `web` / `e2e-smoke` 三 job）与 `.github/workflows/factor-ic-refresh.yml`（周度/手动 IC 刷新）。
+Workflow：`.github/workflows/ci.yml`（`api` / `web` / `e2e-smoke` 三 job 并行启动；smoke 自带独立 API，不等待单测 job）与 `.github/workflows/factor-ic-refresh.yml`（周度/手动 IC 刷新）。
 
 ---
 
