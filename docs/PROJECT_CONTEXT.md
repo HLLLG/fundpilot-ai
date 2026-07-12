@@ -855,14 +855,15 @@ bash scripts/dev.sh    # 或 scripts/dev.ps1
 cd apps/api && ./.venv/Scripts/python.exe -m pytest tests -q          # 922 项
 cd apps/api && ./.venv/Scripts/python.exe -m pytest tests -q -n auto --dist loadscope  # 与 CI 一致
 cd apps/web && npm run lint && npm run typecheck && npm run build
-cd apps/web && npm run test:e2e   # Playwright 冒烟
+cd apps/web && npm run test:e2e:smoke   # CI 同款：桌面/平板/最窄手机三个代表视口
+cd apps/web && npm run test:e2e         # 发布前按需跑完整七视口
 ```
 
 ### 测试与 CI
 
 | 项 | 说明 |
 |----|------|
-| 规模 | 后端 **922** 项、前端 **333** 项单元/组件测试；production UI E2E **63 passed / 21 expected skips** |
+| 规模 | 后端 **922** 项、前端 **333** 项单元/组件测试；完整 production UI E2E **63 passed / 21 expected skips**。日常 CI 只跑 desktop-1440、tablet-768、mobile-320 三个代表视口（36 次执行，比七视口 84 次减少 57%），完整七视口保留为 `npm run test:e2e` 手动验收 |
 | 离线 | `conftest.py` autouse stub：交易日历、基金名称表、东财 spot/K 线、板块刷新、`build_sector_heat_ranking` 等 |
 | 数据库 | 测试强制 `FUND_AI_DATABASE_URL=""` → SQLite 文件库；勿在 pytest 期间连生产 MySQL |
 | 超时 | `pytest.ini`：`timeout = 30` |

@@ -87,7 +87,7 @@ jobs:
       - name: Install Playwright
         run: npx playwright install --with-deps chromium
       - name: Run smoke tests
-        run: npm run test:e2e
+        run: npm run test:e2e:smoke
         env:
           CI: "true"
           FUND_AI_DATABASE_URL: ""
@@ -95,6 +95,7 @@ jobs:
           FUND_AI_DEEPSEEK_API_KEY: your-deepseek-key
           FUND_AI_NEWS_ENABLED: "false"
           FUND_AI_NEWS_SUMMARIZE: "false"
+          FUND_AI_MARKET_BREADTH_ENABLED: "false"
           FUND_AI_SECTOR_SIGNAL_BACKTEST_ENABLED: "false"
           FUND_AI_TACTICAL_PROMPT_TUNING_ENABLED: "false"
           FUND_AI_OCR_PRELOAD: "false"
