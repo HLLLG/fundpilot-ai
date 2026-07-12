@@ -125,6 +125,7 @@ export default function RegisterPage() {
             已有账号？{" "}
             <Link
               href="/login"
+              prefetch={false}
               className="auth-inline-link inline-flex min-h-11 min-w-11 items-center justify-center font-semibold text-[var(--brand-strong)] hover:underline"
             >
               登录

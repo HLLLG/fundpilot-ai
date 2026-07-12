@@ -77,7 +77,11 @@ export default function LoginPage() {
         </form>
         <p className="mt-7 text-sm text-[var(--muted)]">
           还没有账号？{" "}
-          <Link href="/register" className="auth-inline-link font-semibold text-[var(--brand-strong)] hover:underline">
+          <Link
+            href="/register"
+            prefetch={false}
+            className="auth-inline-link font-semibold text-[var(--brand-strong)] hover:underline"
+          >
             免费注册
           </Link>
         </p>

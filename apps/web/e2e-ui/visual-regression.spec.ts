@@ -6,6 +6,7 @@ const VISUAL_PROJECTS = new Set(["desktop-1440", "mobile-390", "mobile-320"]);
 for (const route of ["/", "/login", "/register"] as const) {
   test(`${route} 稳定视觉基线`, async ({ page }, testInfo) => {
     test.skip(!VISUAL_PROJECTS.has(testInfo.project.name), "视觉回归保留代表性桌面与移动视口");
+    test.skip(process.platform !== "win32", "当前视觉基线由 Windows Chromium 维护");
     await page.addInitScript(() => {
       window.localStorage.clear();
       window.sessionStorage.clear();
