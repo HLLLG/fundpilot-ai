@@ -115,6 +115,13 @@ def test_stream_analysis_times_out_slow_topic_briefs_and_continues(
 ):
     monkeypatch.setenv("FUND_AI_DEEPSEEK_API_KEY", _FAKE_DEEPSEEK_KEY)
     refresh_settings()
+    # This assertion measures the topic-summary timeout only. A cold temporary
+    # database migration in the portfolio provenance preflight is covered by its
+    # own contract tests and must not consume this 200 ms budget.
+    monkeypatch.setattr(
+        "app.services.analyze_streaming.resolve_portfolio_preflight",
+        lambda holdings, **_kwargs: MagicMock(holdings=holdings, context={}),
+    )
     monkeypatch.setattr("app.services.analyze_streaming.NEWS_SUMMARY_TIMEOUT_SECONDS", 0.05)
     monkeypatch.setattr("app.services.analyze_streaming.NEWS_SUMMARY_HEARTBEAT_SECONDS", 0.01)
     monkeypatch.setattr(

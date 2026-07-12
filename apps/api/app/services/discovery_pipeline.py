@@ -17,6 +17,10 @@ from app.services.discovery_target_sectors import select_target_sectors
 from app.services.news_service import NewsService
 from app.services.news_summarizer import summarize_all_topics
 from app.services.risk import resolve_weight_denominator
+from app.services.decision_data_evidence import (
+    attach_discovery_data_evidence,
+    resolve_portfolio_preflight,
+)
 
 ProgressCallback = Callable[[str, str], None]
 
@@ -43,6 +47,16 @@ def run_discovery(
         if on_progress is not None:
             on_progress(stage, DISCOVERY_JOB_STAGES.get(stage, stage))
 
+    preflight = resolve_portfolio_preflight(
+        request.holdings,
+        allow_stale=request.allow_stale_portfolio_snapshot,
+    )
+    request = request.model_copy(
+        update={
+            "holdings": preflight.holdings,
+            "portfolio_snapshot_context": preflight.context,
+        }
+    )
     holdings = list(request.holdings)
     progress("sector_heat")
     sector_heat = build_sector_heat_ranking(include_5d=(request.scan_mode == "dip_swing"))
@@ -141,6 +155,12 @@ def run_discovery(
         sector_opportunities=sector_opportunities,
         budget_enhancements=True,
     )
+    discovery_facts = attach_discovery_data_evidence(
+        discovery_facts,
+        holdings=holdings,
+        candidate_pool=pool,
+        portfolio_context=request.portfolio_snapshot_context,
+    )
 
     progress("generating")
     role_prompt = request.system_role_prompt
@@ -161,8 +181,7 @@ def run_discovery(
     )
     progress("guarding")
     progress("saving")
-    save_discovery_report(report)
-    return report
+    return save_discovery_report(report)
 
 
 def _opportunity_flow_labels(

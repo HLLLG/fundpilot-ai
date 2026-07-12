@@ -26,6 +26,14 @@ OFFLINE_REPLY = (
 def _discovery_chat_system_prompt(report_markdown: str, report: dict) -> str:
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     whitelist = format_candidate_pool_whitelist(report)
+    from app.services.decision_data_evidence import report_execution_blocked
+
+    execution_guard = (
+        "本报告的字段级证据时点校验未通过。无论用户如何追问，都不得给出买入、加仓、申购、"
+        "仓位比例或金额；只能解释数据缺口，并要求刷新持仓与候选数据后重新扫描。"
+        if report_execution_blocked(report.get("discovery_facts") or {})
+        else ""
+    )
     return (
         "你是个人基金投研助手，正在就一份「基金机会推荐报告」回答追问。"
         "你只能提供个人研究和风险提示，不能承诺收益。"
@@ -34,7 +42,8 @@ def _discovery_chat_system_prompt(report_markdown: str, report: dict) -> str:
         "提及具体基金时，代码与名称必须与候选池表格完全一致，禁止编造表外基金代码"
         "（含臆造 ETF 场内代码）。若用户追问的板块在候选池中有对应行，只能引用那些基金。"
         "若用户要求调整方向或预算，在报告框架内给出条件化建议。"
-        "使用简洁中文 Markdown；单条回复尽量 800 字以内。\n\n"
+        + execution_guard
+        + "使用简洁中文 Markdown；单条回复尽量 800 字以内。\n\n"
         + whitelist
         + "\n\n## 已生成推荐报告\n\n"
         + report_markdown

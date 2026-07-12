@@ -97,6 +97,8 @@ export function SingleFundTransactionModal({
       fund_name: holding.fund_name,
       fund_code: holding.fund_code,
       amount_yuan: amountYuan,
+      confirmed_shares: parsedShares,
+      fee_yuan: null,
       trade_time: buildTradeTime(timing),
       confirm_date: null,
       in_progress: false,

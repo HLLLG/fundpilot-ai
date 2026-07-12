@@ -9,9 +9,9 @@ describe("Dashboard apply refresh flow", () => {
       "utf8",
     );
 
-    expect(source).toContain(
-      '<div ref={reportSectionRef} className="min-w-0 scroll-mt-20">',
-    );
+    expect(source).toContain("ref={reportSectionRef}");
+    expect(source).toContain('aria-label="日报阅读区"');
+    expect(source).toContain('className="min-w-0 scroll-mt-24 outline-none"');
   });
 
   it("does not hydrate holdings from server cache immediately after apply", () => {

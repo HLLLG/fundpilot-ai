@@ -26,7 +26,16 @@ def resolve_signal_guard_policy(
     days = backtest_days or settings.sector_signal_backtest_days
     min_triggers = settings.sector_signal_backtest_min_triggers
 
-    accuracy = resolve_accuracy_tuning(lookback_reports=reports_window)
+    accuracy = (
+        resolve_accuracy_tuning(lookback_reports=reports_window)
+        if settings.tactical_prompt_tuning_enabled
+        else {
+            "tighten_tactical": False,
+            "reason": None,
+            "hints": [],
+            "stats": {"disabled": True},
+        }
+    )
     backtest = build_signal_backtest_context(
         labels,
         lookback_days=days,

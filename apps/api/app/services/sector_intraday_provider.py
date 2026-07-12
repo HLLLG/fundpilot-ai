@@ -426,6 +426,7 @@ except Exception as e:
         script,
         label=f"index intraday {symbol}",
         timeout=60,
+        warn_on_failure=False,
     )
     if not isinstance(payload, dict):
         return None
@@ -460,6 +461,7 @@ except Exception as e:
         script,
         label=f"{source_type} intraday {source_name}",
         timeout=60,
+        warn_on_failure=False,
     )
     if not isinstance(payload, dict):
         return None

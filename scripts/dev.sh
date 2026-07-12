@@ -12,6 +12,14 @@ if [[ ! -f "$API_PYTHON" ]]; then
   "$API_PYTHON" -m pip install -r "$API_DIR/requirements.txt"
 fi
 
+# A node_modules directory can exist while its package binaries are missing
+# (for example after an interrupted install). Check the actual Next.js launcher
+# instead of only checking for the directory.
+if [[ ! -x "$WEB_DIR/node_modules/.bin/next" && ! -f "$WEB_DIR/node_modules/.bin/next.cmd" ]]; then
+  echo "Installing frontend dependencies..."
+  (cd "$WEB_DIR" && npm ci)
+fi
+
 cleanup() {
   echo ""
   echo "Stopping FundPilot AI..."

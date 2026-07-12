@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, History, RefreshCw, Trash2, X } from "lucide-react";
 import type { Report } from "@/lib/api";
 import { deleteReport } from "@/lib/api";
@@ -10,16 +10,30 @@ import { useDialogA11y } from "@/lib/useDialogA11y";
 
 type HistoryRailProps = {
   reports: Report[];
+  activeReportId?: string | null;
   onRefresh: () => void;
   onSelect: (report: Report) => void;
   onDeleted?: (reportId: string) => void;
+  initialLimit?: number;
 };
 
 type DeleteIntent =
   | { kind: "single"; reports: [Report] }
   | { kind: "batch"; reports: Report[] };
 
-export function HistoryRail({ reports, onRefresh, onSelect, onDeleted }: HistoryRailProps) {
+function reportDateText(value: string): string {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString("zh-CN");
+}
+
+export function HistoryRail({
+  reports,
+  activeReportId,
+  onRefresh,
+  onSelect,
+  onDeleted,
+  initialLimit = 20,
+}: HistoryRailProps) {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [batchMode, setBatchMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
@@ -30,6 +44,8 @@ export function HistoryRail({ reports, onRefresh, onSelect, onDeleted }: History
     tone: "error" | "warning";
   } | null>(null);
   const cancelDeleteButtonRef = useRef<HTMLButtonElement>(null);
+  const [visibleCount, setVisibleCount] = useState(initialLimit);
+  const [query, setQuery] = useState("");
   const deleteDialogRef = useDialogA11y<HTMLDivElement>({
     open: deleteIntent != null,
     onClose: () => setDeleteIntent(null),
@@ -38,6 +54,28 @@ export function HistoryRail({ reports, onRefresh, onSelect, onDeleted }: History
 
   const selectedCount = selectedIds.size;
   const allSelected = reports.length > 0 && selectedCount === reports.length;
+  const filteredReports = useMemo(() => {
+    const keyword = query.trim().toLocaleLowerCase("zh-CN");
+    if (!keyword) return reports;
+    return reports.filter((item) =>
+      [item.title, reportDateText(item.created_at), item.risk.level]
+        .join(" ")
+        .toLocaleLowerCase("zh-CN")
+        .includes(keyword),
+    );
+  }, [query, reports]);
+  const visibleReports = useMemo(() => {
+    if (batchMode) return filteredReports;
+    const visible = filteredReports.slice(0, visibleCount);
+    const active = filteredReports.find((item) => item.id === activeReportId);
+    if (active && !visible.some((item) => item.id === active.id)) visible.push(active);
+    return visible;
+  }, [activeReportId, batchMode, filteredReports, visibleCount]);
+  const hasMore = !batchMode && visibleCount < filteredReports.length;
+
+  useEffect(() => {
+    setVisibleCount(initialLimit);
+  }, [initialLimit, query, reports.length]);
 
   const exitBatchMode = () => {
     setBatchMode(false);
@@ -131,11 +169,14 @@ export function HistoryRail({ reports, onRefresh, onSelect, onDeleted }: History
   const deletePreview = deleteIntent?.reports.slice(0, 3) ?? [];
 
   return (
-    <aside className="glass-panel min-w-0 rounded-[28px] p-5">
+    <aside className="history-archive min-w-0 p-4 sm:p-5">
       <div className="mb-5 flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2 font-black text-slate-950">
           <History size={18} />
           历史日报
+          <span className="history-count" aria-label={`共 ${reports.length} 份历史日报`}>
+            {reports.length}
+          </span>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
           {batchMode ? (
@@ -175,7 +216,7 @@ export function HistoryRail({ reports, onRefresh, onSelect, onDeleted }: History
                   onClick={() => setBatchMode(true)}
                   className="min-h-11 min-w-11 rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 transition hover:border-rose-300 hover:text-rose-700"
                 >
-                  批量删除
+                  管理
                 </button>
               ) : null}
               <button
@@ -197,23 +238,42 @@ export function HistoryRail({ reports, onRefresh, onSelect, onDeleted }: History
           className="mb-3"
         />
       ) : null}
-      <div className="space-y-3">
+      {!batchMode && reports.length > 0 ? (
+        <label className="history-search-field">
+          <span className="sr-only">搜索历史日报</span>
+          <input
+            type="search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="搜索标题、日期或风险等级"
+            className="min-h-11"
+          />
+        </label>
+      ) : null}
+      <div className="history-scroll-region" data-testid="report-history-scroll-region">
         {reports.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-6 text-center text-sm text-slate-500">
             生成第一份日报后会自动保存到这里。
           </div>
         ) : null}
-        {reports.map((report) => {
+        {reports.length > 0 && filteredReports.length === 0 ? (
+          <div className="history-empty-search">没有匹配的历史日报，请换一个关键词。</div>
+        ) : null}
+        {visibleReports.map((report) => {
           const selected = selectedIds.has(report.id);
+          const active = report.id === activeReportId;
           return (
             <div
               key={report.id}
-              className={`flex items-stretch gap-2 rounded-2xl bg-white p-2 shadow-sm transition ${
+              data-testid="report-history-item"
+              className={`history-archive-row flex items-stretch gap-2 border-b border-[var(--line)] py-2 transition ${
                 batchMode
                   ? selected
                     ? "ring-2 ring-rose-200"
                     : ""
-                  : "hover:-translate-y-0.5 hover:shadow-md"
+                  : active
+                    ? "is-active"
+                    : "hover:bg-[var(--brand-soft)]"
               }`}
             >
               {batchMode ? (
@@ -238,6 +298,8 @@ export function HistoryRail({ reports, onRefresh, onSelect, onDeleted }: History
                   onSelect(report);
                 }}
                 disabled={batchDeleting}
+                aria-current={!batchMode && active ? "true" : undefined}
+                aria-pressed={!batchMode ? active : undefined}
                 className="min-h-11 min-w-0 flex-1 rounded-xl px-3 py-2 text-left disabled:opacity-60"
               >
                 <div className="mb-2 flex items-center justify-between gap-3">
@@ -268,6 +330,15 @@ export function HistoryRail({ reports, onRefresh, onSelect, onDeleted }: History
           );
         })}
       </div>
+      {hasMore ? (
+        <button
+          type="button"
+          onClick={() => setVisibleCount((count) => Math.min(count + initialLimit, filteredReports.length))}
+          className="btn-ghost mt-3 min-h-11 w-full text-xs"
+        >
+          再显示 {Math.min(initialLimit, filteredReports.length - visibleCount)} 份日报
+        </button>
+      ) : null}
       {deleteIntent ? (
         <div
           className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/45 p-4"

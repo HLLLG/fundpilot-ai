@@ -107,6 +107,11 @@ def judge_parsed_discovery_report(
         return parsed, meta
     if not isinstance(parsed.get("recommendations"), list):
         return parsed, meta
+    # M6 安全边界：shadow 期间只观察确定性 escalation_hints，不允许二次
+    # LLM 复核改写 action、候选集合或建议金额。调用前短路，避免无效费用与延迟。
+    if get_settings().decision_escalation_mode != "enforced":
+        meta["llm_judge_skipped_reason"] = "decision_escalation_shadow"
+        return parsed, meta
 
     escalation_hints = _escalation_hints_by_fund_code(candidate_pool, discovery_facts)
     meta["llm_judge_attempted"] = True

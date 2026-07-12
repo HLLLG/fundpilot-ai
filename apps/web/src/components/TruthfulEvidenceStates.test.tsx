@@ -11,7 +11,6 @@ import type {
   RebalanceSimulation,
   RecommendationAccuracy,
   ReportOutcomes,
-  ReportWeeklyOutcomes,
   SectorSignalBacktest,
   ShadowEscalationDigest,
 } from "@/lib/api";
@@ -41,6 +40,45 @@ import { RecommendationAccuracyPanel } from "@/components/RecommendationAccuracy
 import { ReportOutcomesPanel } from "@/components/ReportOutcomesPanel";
 import { SectorSignalBacktestPanel } from "@/components/SectorSignalBacktestPanel";
 import { ShadowEscalationDigestCard } from "@/components/ShadowEscalationDigestCard";
+
+const decisionMetrics = {
+  gross_direction: {
+    eligible_count: 3,
+    mature_count: 3,
+    unavailable_count: 0,
+    hit_count: 2,
+    miss_count: 1,
+    coverage_percent: 100,
+    hit_rate_percent: 66.7,
+  },
+  positive_net_return: {
+    eligible_count: 3,
+    mature_count: 2,
+    unavailable_count: 1,
+    hit_count: 1,
+    miss_count: 1,
+    coverage_percent: 66.7,
+    hit_rate_percent: 50,
+  },
+  gross_excess: {
+    eligible_count: 3,
+    mature_count: 1,
+    unavailable_count: 2,
+    hit_count: 1,
+    miss_count: 0,
+    coverage_percent: 33.3,
+    hit_rate_percent: 100,
+  },
+  net_excess: {
+    eligible_count: 3,
+    mature_count: 1,
+    unavailable_count: 2,
+    hit_count: 0,
+    miss_count: 1,
+    coverage_percent: 33.3,
+    hit_rate_percent: 0,
+  },
+};
 
 afterEach(() => {
   cleanup();
@@ -133,7 +171,13 @@ describe("truthful evidence panel states", () => {
   it("keeps discovery outcome failures actionable and renders the API empty reason after retry", async () => {
     const emptyOutcomes: DiscoveryOutcomesPayload = {
       has_data: false,
-      message: "报告生成不足 7 日，暂不能复盘。",
+      days: 5,
+      horizon: "T+5",
+      eligible_count: 1,
+      mature_count: 0,
+      pending_count: 1,
+      coverage_percent: 0,
+      message: "T+5 尚未成熟，暂不能判定命中。",
       items: [],
     };
     apiMocks.fetchDiscoveryOutcomes
@@ -142,9 +186,10 @@ describe("truthful evidence panel states", () => {
 
     render(<DiscoveryOutcomesPanel reportId="discovery-1" />);
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("推荐复盘加载失败：净值服务超时");
+    expect(await screen.findByRole("alert")).toHaveTextContent("荐基 T+5 复盘加载失败：净值服务超时");
     fireEvent.click(screen.getByRole("button", { name: "重试" }));
-    expect(await screen.findByText("报告生成不足 7 日，暂不能复盘。")).toBeInTheDocument();
+    expect(await screen.findByText("T+5 尚未成熟，暂不能判定命中。")).toBeInTheDocument();
+    expect(apiMocks.fetchDiscoveryOutcomes).toHaveBeenLastCalledWith("discovery-1", 5);
   });
 
   it("shows recommendation-accuracy errors and a distinct successful empty result", async () => {
@@ -161,38 +206,116 @@ describe("truthful evidence panel states", () => {
 
     render(<RecommendationAccuracyPanel />);
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("建议准确率加载失败");
+    expect(await screen.findByRole("alert")).toHaveTextContent("T+N 复盘加载失败");
     fireEvent.click(screen.getByRole("button", { name: "重试" }));
     expect(
-      await screen.findByText("准确率统计已生成，但暂无可展示的决策风格样本。"),
+      await screen.findByText("复盘已生成，但暂无可展示的决策风格样本。"),
     ).toBeInTheDocument();
   });
 
-  it("shows a partial report-outcomes failure without hiding the successful weekly result", async () => {
+  it("renders bounded forward T+N maturity and keeps auto tuning disabled", async () => {
+    const forwardAccuracy: RecommendationAccuracy = {
+      metric_status: "forward_nav_v1",
+      is_experimental: true,
+      auto_tuning_eligible: false,
+      warning: "四口径仅供人工复盘，真实费用与样本量达标前不进入自动调参。",
+      has_enough_data: true,
+      report_count: 2,
+      selected_report_count: 2,
+      formal_v2_report_count: 1,
+      horizons: [1, 5, 20],
+      metrics: decisionMetrics,
+      legacy_reference: {
+        excluded_from_formal_v2: true,
+        report_count: 1,
+        recommendation_count: 2,
+        eligible_count: 2,
+        mature_count: 1,
+        hit_rate_percent: 100,
+      },
+      by_horizon: {
+        "T+1": {
+          horizon_trading_days: 1,
+          eligible_count: 3,
+          mature_count: 3,
+          skipped_count: 0,
+          hit_count: 2,
+          miss_count: 1,
+          hit_rate_percent: 66.7,
+          coverage_percent: 100,
+        },
+      },
+      by_style: {
+        tactical: {
+          decision_style: "tactical",
+          paired_count: 2,
+          eligible_count: 3,
+          observation_count: 1,
+          hit_count: 2,
+          miss_count: 1,
+          hit_rate_percent: 66.7,
+          by_horizon: {
+            "T+1": {
+              horizon_trading_days: 1,
+              eligible_count: 3,
+              mature_count: 3,
+              skipped_count: 0,
+              hit_count: 2,
+              miss_count: 1,
+              hit_rate_percent: 66.7,
+              coverage_percent: 100,
+            },
+          },
+        },
+      },
+    };
+    apiMocks.fetchRecommendationAccuracy.mockResolvedValue(forwardAccuracy);
+
+    render(<RecommendationAccuracyPanel />);
+
+    expect(await screen.findByText("T+N 决策复盘")).toBeInTheDocument();
+    expect(screen.getByText(/不进入自动调参/)).toBeInTheDocument();
+    expect(screen.getAllByText("66.7%").length).toBeGreaterThan(0);
+    expect(screen.queryByText(/300%/)).not.toBeInTheDocument();
+    expect(screen.getByText(/观察\/复核 1 条/)).toBeInTheDocument();
+    expect(screen.getByText("假设费后正收益")).toBeInTheDocument();
+    expect(screen.getByText("合同基准超额")).toBeInTheDocument();
+    expect(screen.getByText(/默认 1.5%/)).toBeInTheDocument();
+    expect(screen.getByText(/不是平台实际扣费/)).toBeInTheDocument();
+    expect(screen.getByText("旧口径历史参考")).toBeInTheDocument();
+    expect(screen.getByText("已排除正式 V2 统计")).toBeInTheDocument();
+  });
+
+  it("keeps a T+N report-outcomes failure actionable and renders the mature contract after retry", async () => {
     const current: ReportOutcomes = {
       has_baseline: false,
-      message: "还没有上一份日报可供对比。",
-      items: [],
-    };
-    const weekly: ReportWeeklyOutcomes = {
-      has_baseline: false,
-      message: "7 日内报告样本不足。",
+      has_data: false,
+      message: "T+1 尚未成熟。",
+      by_horizon: {
+        "T+1": {
+          horizon_trading_days: 1,
+          eligible_count: 1,
+          mature_count: 0,
+          skipped_count: 1,
+          hit_count: 0,
+          miss_count: 0,
+          hit_rate_percent: null,
+          coverage_percent: 0,
+        },
+      },
       items: [],
     };
     apiMocks.fetchReportOutcomes
-      .mockRejectedValueOnce(new Error("当期复盘接口超时"))
+      .mockRejectedValueOnce(new Error("净值复盘接口超时"))
       .mockResolvedValueOnce(current);
-    apiMocks.fetchReportWeeklyOutcomes.mockResolvedValue(weekly);
 
     render(<ReportOutcomesPanel reportId="report-1" embedded />);
 
-    expect(await screen.findByText("7 日内报告样本不足。")).toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "当期复盘加载失败，7 日结果仍可查看",
-    );
-    fireEvent.click(screen.getByRole("button", { name: "重试当期" }));
-    expect(await screen.findByText("还没有上一份日报可供对比。")).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("T+N 复盘加载失败");
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+    expect((await screen.findAllByText("T+1 尚未成熟。")).length).toBeGreaterThan(0);
     await waitFor(() => expect(apiMocks.fetchReportOutcomes).toHaveBeenCalledTimes(2));
+    expect(apiMocks.fetchReportWeeklyOutcomes).not.toHaveBeenCalled();
   });
 
   it("does not silently hide a shadow-digest request failure", async () => {

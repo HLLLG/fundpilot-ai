@@ -1,246 +1,208 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { CalendarRange, History } from "lucide-react";
-import {
-  fetchReportOutcomes,
-  fetchReportWeeklyOutcomes,
-  type ReportOutcomes,
-  type ReportWeeklyOutcomes,
-} from "@/lib/api";
+import { useEffect, useMemo, useState } from "react";
+import { History, TimerReset } from "lucide-react";
+import { fetchReportOutcomes, type ReportOutcomeItem, type ReportOutcomes } from "@/lib/api";
 import { InlineNotice } from "@/components/InlineNotice";
+import { StatusPill } from "@/components/StatusPill";
+import {
+  DecisionMetricGrid,
+  FeeBenchmarkMethodNote,
+} from "@/components/DecisionMetricGrid";
 
 type ReportOutcomesPanelProps = {
   reportId: string;
   embedded?: boolean;
 };
 
-function OutcomeItems({ outcomes }: { outcomes: ReportOutcomes }) {
-  if (!outcomes.has_baseline) {
-    return (
-      <InlineNotice
-        tone="info"
-        message={outcomes.message ?? "缺少可对比的上一份报告，暂无法生成复盘。"}
-      />
-    );
-  }
+function percent(value: number | null | undefined) {
+  return value === null || value === undefined ? "—" : `${value}%`;
+}
 
+function signedPercent(value: number) {
+  return `${value > 0 ? "+" : ""}${value}%`;
+}
+
+function statusMeta(item: ReportOutcomeItem, horizon: string) {
+  const result = item.by_horizon?.[horizon];
+  if (item.evaluation_class === "observation" || result?.status === "observation") {
+    return { label: "观察单列", tone: "blue" as const };
+  }
+  if (result?.status === "mature") {
+    return result.direction_hit
+      ? { label: "方向一致", tone: "green" as const }
+      : { label: "方向不一致", tone: "red" as const };
+  }
+  if (result?.status === "immature") return { label: "待成熟", tone: "amber" as const };
+  if (result?.status === "data_unavailable") return { label: "数据缺口", tone: "amber" as const };
+  return { label: "未评价", tone: "dark" as const };
+}
+
+function OutcomeItems({ outcomes, horizon }: { outcomes: ReportOutcomes; horizon: string }) {
+  if (!outcomes.items.length) {
+    return <InlineNotice tone="info" message="暂无基金级复盘明细；请等待样本成熟或检查净值数据源。" />;
+  }
   return (
-    <>
-      {outcomes.portfolio_trend_summary ? (
-        <p className="mb-3 text-sm font-semibold text-slate-700">{outcomes.portfolio_trend_summary}</p>
-      ) : null}
-      {outcomes.portfolio_return_delta !== null && outcomes.portfolio_return_delta !== undefined ? (
-        <p className="mb-3 text-sm font-semibold text-slate-700">
-          组合加权收益率变化：{outcomes.portfolio_return_delta > 0 ? "+" : ""}
-          {outcomes.portfolio_return_delta}%
-          {outcomes.portfolio_assets_delta_percent !== null &&
-          outcomes.portfolio_assets_delta_percent !== undefined
-            ? ` · 近一周资产约 ${outcomes.portfolio_assets_delta_percent > 0 ? "+" : ""}${outcomes.portfolio_assets_delta_percent}%`
-            : ""}
-        </p>
-      ) : null}
-      <div className="space-y-2">
-        {outcomes.items.map((item) => (
-          <div key={item.fund_code} className="rounded-2xl bg-white px-4 py-3 text-sm text-slate-700">
-            <div className="font-black text-slate-950">
-              {item.fund_name}（{item.fund_code}）
+    <div className="space-y-2">
+      {outcomes.items.map((item) => {
+        const result = item.by_horizon?.[horizon];
+        const meta = statusMeta(item, horizon);
+        return (
+          <div key={`${item.fund_code}-${item.action ?? item.current_action ?? "action"}`} className="rounded-2xl border border-slate-200/80 bg-white px-4 py-3 text-sm text-slate-700 shadow-sm">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <div className="font-black text-slate-950">{item.fund_name}（{item.fund_code}）</div>
+                <div className="mt-1 text-xs text-slate-500">报告动作：{item.action ?? item.current_action ?? "—"}</div>
+              </div>
+              <StatusPill tone={meta.tone}>{meta.label}</StatusPill>
             </div>
-            <div className="mt-1 text-xs text-slate-500">
-              上一份建议：{item.previous_action} → 本次：{item.current_action}
-              {item.daily_return_delta !== null && item.daily_return_delta !== undefined
-                ? ` · 当日涨跌变化 ${item.daily_return_delta > 0 ? "+" : ""}${item.daily_return_delta}%`
-                : item.holding_return_delta !== null && item.holding_return_delta !== undefined
-                  ? ` · 持有收益变化 ${item.holding_return_delta > 0 ? "+" : ""}${item.holding_return_delta}%`
-                  : ""}
+            <div className="mt-2 text-xs leading-5 text-slate-600">
+              {result?.return_percent !== undefined
+                ? `${horizon} 净值变化 ${result.return_percent > 0 ? "+" : ""}${result.return_percent}% · 目标净值日 ${result.target_nav_date ?? "—"}`
+                : result?.status === "immature"
+                  ? `${horizon} 尚未成熟，当前只有 ${result.available_forward_trading_days ?? 0} 个后续净值日。`
+                  : item.assessment}
             </div>
-            <div className="mt-2 text-xs leading-5 text-slate-600">{item.assessment}</div>
+            {result ? (
+              <div className="mt-2 flex flex-wrap gap-1.5 text-[10px] font-bold tabular-nums">
+                {result.positive_net_return_percent !== null && result.positive_net_return_percent !== undefined ? (
+                  <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-amber-800">
+                    假设费后 {signedPercent(result.positive_net_return_percent)}
+                  </span>
+                ) : null}
+                {result.gross_excess_return_percent !== null && result.gross_excess_return_percent !== undefined ? (
+                  <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-1 text-blue-800">
+                    合同基准超额 {signedPercent(result.gross_excess_return_percent)}
+                  </span>
+                ) : null}
+                {result.net_excess_return_percent !== null && result.net_excess_return_percent !== undefined ? (
+                  <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-emerald-800">
+                    费后合同超额 {signedPercent(result.net_excess_return_percent)}
+                  </span>
+                ) : null}
+                {result.benchmark?.reference_return_percent !== null && result.benchmark?.reference_return_percent !== undefined ? (
+                  <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-slate-600">
+                    代理参考 {signedPercent(result.benchmark.reference_return_percent)} · 不计正式
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
           </div>
-        ))}
-        {outcomes.items.length === 0 ? (
-          <InlineNotice tone="info" message="已有对比基准，但暂无基金级复盘明细。" />
-        ) : null}
-      </div>
-    </>
+        );
+      })}
+    </div>
   );
 }
 
 export function ReportOutcomesPanel({ reportId, embedded = false }: ReportOutcomesPanelProps) {
-  const [outcomesResult, setOutcomesResult] = useState<{
-    reportId: string;
-    data: ReportOutcomes;
-  } | null>(null);
-  const [weeklyResult, setWeeklyResult] = useState<{
-    reportId: string;
-    data: ReportWeeklyOutcomes;
-  } | null>(null);
-  const [outcomesLoading, setOutcomesLoading] = useState(true);
-  const [weeklyLoading, setWeeklyLoading] = useState(true);
-  const [outcomesErrorResult, setOutcomesErrorResult] = useState<{
-    reportId: string;
-    message: string;
-  } | null>(null);
-  const [weeklyErrorResult, setWeeklyErrorResult] = useState<{
-    reportId: string;
-    message: string;
-  } | null>(null);
-  const [outcomesRetrySequence, setOutcomesRetrySequence] = useState(0);
-  const [weeklyRetrySequence, setWeeklyRetrySequence] = useState(0);
-  const outcomes = outcomesResult?.reportId === reportId ? outcomesResult.data : null;
-  const weekly = weeklyResult?.reportId === reportId ? weeklyResult.data : null;
-  const outcomesError =
-    outcomesErrorResult?.reportId === reportId ? outcomesErrorResult.message : null;
-  const weeklyError = weeklyErrorResult?.reportId === reportId ? weeklyErrorResult.message : null;
+  const [result, setResult] = useState<{ reportId: string; data: ReportOutcomes } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [errorResult, setErrorResult] = useState<{ reportId: string; message: string } | null>(null);
+  const [retrySequence, setRetrySequence] = useState(0);
+  const [activeHorizon, setActiveHorizon] = useState("T+1");
+  const outcomes = result?.reportId === reportId ? result.data : null;
+  const error = errorResult?.reportId === reportId ? errorResult.message : null;
 
   useEffect(() => {
     let cancelled = false;
-    setOutcomesLoading(true);
-    setOutcomesErrorResult(null);
+    setLoading(true);
+    setErrorResult(null);
     void fetchReportOutcomes(reportId)
       .then((data) => {
         if (!cancelled) {
-          setOutcomesResult({ reportId, data });
+          setResult({ reportId, data });
+          const first = Object.keys(data.by_horizon ?? {})[0];
+          if (first) setActiveHorizon(first);
         }
       })
       .catch((loadError) => {
         if (!cancelled) {
-          setOutcomesErrorResult({
+          setErrorResult({
             reportId,
-            message: loadError instanceof Error ? loadError.message : "当期复盘加载失败",
+            message: loadError instanceof Error ? loadError.message : "T+N 复盘加载失败",
           });
         }
       })
       .finally(() => {
-        if (!cancelled) {
-          setOutcomesLoading(false);
-        }
+        if (!cancelled) setLoading(false);
       });
     return () => {
       cancelled = true;
     };
-  }, [outcomesRetrySequence, reportId]);
+  }, [reportId, retrySequence]);
 
-  useEffect(() => {
-    let cancelled = false;
-    setWeeklyLoading(true);
-    setWeeklyErrorResult(null);
-    void fetchReportWeeklyOutcomes(reportId)
-      .then((data) => {
-        if (!cancelled) {
-          setWeeklyResult({ reportId, data });
-        }
-      })
-      .catch((loadError) => {
-        if (!cancelled) {
-          setWeeklyErrorResult({
-            reportId,
-            message: loadError instanceof Error ? loadError.message : "7 日复盘加载失败",
-          });
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setWeeklyLoading(false);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [reportId, weeklyRetrySequence]);
-
-  const outcomesPending = outcomesLoading || (!outcomes && !outcomesError);
-  const weeklyPending = weeklyLoading || (!weekly && !weeklyError);
-  const isLoading = outcomesPending || weeklyPending;
-  const initialLoading =
-    outcomesPending && weeklyPending && !outcomes && !weekly && !outcomesError && !weeklyError;
-  const hasAnyResult = Boolean(outcomes || weekly);
+  const horizonEntries = useMemo(() => Object.entries(outcomes?.by_horizon ?? {}), [outcomes]);
+  const activeStats = outcomes?.by_horizon?.[activeHorizon];
+  const frozenFeePercent = outcomes?.items.find(
+    (item) => item.fee_policy?.fee_source === "user_assumption",
+  )?.fee_policy?.round_trip_fee_percent;
+  const pending = loading || (!outcomes && !error);
 
   const body = (
-    <div className="space-y-5" aria-busy={isLoading}>
-      {initialLoading ? (
-        <InlineNotice tone="info" message="正在加载当期与 7 日建议复盘…" />
-      ) : null}
-      {!initialLoading && outcomesPending ? (
+    <div className="space-y-4" aria-busy={pending}>
+      {pending ? <InlineNotice tone="info" message={outcomes ? "正在更新成熟样本…" : "正在计算 T+N 净值复盘…"} /> : null}
+      {error ? (
         <InlineNotice
-          tone="info"
-          message={outcomes ? "正在更新当期复盘，当前继续显示已有结果。" : "正在加载当期复盘…"}
+          tone={outcomes ? "warning" : "error"}
+          message={outcomes ? `T+N 复盘更新失败，继续显示上次结果：${error}` : `T+N 复盘加载失败：${error}`}
+          action={{ label: "重试", onClick: () => setRetrySequence((current) => current + 1) }}
         />
       ) : null}
-      {!initialLoading && weeklyPending ? (
-        <InlineNotice
-          tone="info"
-          message={weekly ? "正在更新 7 日复盘，当前继续显示已有结果。" : "正在加载 7 日复盘…"}
-        />
-      ) : null}
-      {outcomesError ? (
-        <InlineNotice
-          tone={hasAnyResult ? "warning" : "error"}
-          message={
-            outcomes
-              ? `当期复盘更新失败，继续显示上次成功获取的结果：${outcomesError}`
-              : weekly
-                ? `当期复盘加载失败，7 日结果仍可查看：${outcomesError}`
-                : `当期复盘加载失败：${outcomesError}`
-          }
-          action={{
-            label: "重试当期",
-            onClick: () => setOutcomesRetrySequence((current) => current + 1),
-          }}
-        />
-      ) : null}
-      {weeklyError ? (
-        <InlineNotice
-          tone={hasAnyResult ? "warning" : "error"}
-          message={
-            weekly
-              ? `7 日复盘更新失败，继续显示上次成功获取的结果：${weeklyError}`
-              : outcomes
-                ? `7 日复盘加载失败，当期结果仍可查看：${weeklyError}`
-                : `7 日复盘加载失败：${weeklyError}`
-          }
-          action={{
-            label: "重试 7 日",
-            onClick: () => setWeeklyRetrySequence((current) => current + 1),
-          }}
-        />
-      ) : null}
-      {outcomes ? <OutcomeItems outcomes={outcomes} /> : null}
-      {weekly?.reversal_stats?.summary_line ? (
-        <div className="rounded-2xl border border-amber-100 bg-amber-50/60 p-4 text-sm text-amber-950">
-          <div className="font-black">涨后回吐复盘</div>
-          <p className="mt-1 leading-6">{weekly.reversal_stats.summary_line}</p>
-        </div>
-      ) : null}
-      {weekly ? (
-        <div className="rounded-2xl border border-[rgba(37,99,235,0.18)] bg-[var(--brand-soft)] p-4">
-          <div className="mb-2 flex items-center gap-2 text-sm font-black text-slate-950">
-            <CalendarRange size={16} className="text-[var(--brand)]" />
-            7 日建议复盘
-          </div>
-          {!weekly.has_baseline ? (
-            <p className="text-sm text-slate-600">{weekly.message}</p>
-          ) : (
+
+      {outcomes ? (
+        <>
+          <InlineNotice
+            tone="info"
+            message="结果按基金自身估值日计算；观察/复核动作单列。缺少费用假设或完整基金合同基准时，对应指标显示未覆盖，不会被算成命中或失败。"
+          />
+          {outcomes.message ? <p className="text-sm leading-6 text-slate-700">{outcomes.message}</p> : null}
+          {horizonEntries.length ? (
+            <div className="grid gap-2 sm:grid-cols-3">
+              {horizonEntries.map(([label, stats]) => (
+                <button
+                  key={label}
+                  type="button"
+                  onClick={() => setActiveHorizon(label)}
+                  aria-pressed={activeHorizon === label}
+                  className={`rounded-2xl border px-4 py-3 text-left transition ${
+                    activeHorizon === label
+                      ? "border-slate-950 bg-slate-950 text-white shadow-md"
+                      : "border-slate-200 bg-white text-slate-700 hover:border-slate-400"
+                  }`}
+                >
+                  <div className="text-xs font-black tracking-[0.12em]">{label}</div>
+                  <div className="mt-2 text-sm font-bold tabular-nums">成熟 {stats.mature_count}/{stats.eligible_count}</div>
+                  <div className={`mt-1 text-[11px] ${activeHorizon === label ? "text-slate-300" : "text-slate-500"}`}>
+                    覆盖 {percent(stats.coverage_percent)} · 方向吻合 {percent(stats.hit_rate_percent)}
+                  </div>
+                </button>
+              ))}
+            </div>
+          ) : null}
+          {activeStats ? (
             <>
-              {weekly.summary ? (
-                <p className="mb-3 text-sm font-semibold text-[var(--brand-strong)]">{weekly.summary}</p>
-              ) : null}
-              <OutcomeItems outcomes={weekly} />
+              <DecisionMetricGrid metrics={activeStats.metrics} />
+              <FeeBenchmarkMethodNote feePercent={frozenFeePercent} />
+              <div className="flex flex-wrap gap-2 text-xs text-slate-600">
+                <StatusPill tone="green">成熟 {activeStats.mature_count}</StatusPill>
+                <StatusPill tone="amber">未成熟/跳过 {activeStats.skipped_count}</StatusPill>
+                <span className="self-center">观察/复核 {outcomes.observation_count ?? 0} 条单列</span>
+              </div>
             </>
-          )}
-        </div>
+          ) : null}
+          <OutcomeItems outcomes={outcomes} horizon={activeHorizon} />
+        </>
       ) : null}
     </div>
   );
 
-  if (embedded) {
-    return body;
-  }
-
+  if (embedded) return body;
   return (
-    <div className="mb-5 rounded-[24px] border border-[rgba(37,99,235,0.18)] bg-[var(--brand-soft)] p-5">
+    <div className="mb-5 rounded-[24px] border border-slate-200 bg-slate-50/80 p-5">
       <div className="mb-3 flex items-center gap-2 text-sm font-black text-slate-950">
-        <History size={18} className="text-[var(--brand)]" />
-        建议复盘
+        <History size={18} className="text-emerald-700" />
+        建议 T+N 复盘
+        <TimerReset size={14} className="text-slate-400" />
       </div>
       {body}
     </div>

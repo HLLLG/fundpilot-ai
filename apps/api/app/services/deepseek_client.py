@@ -445,7 +445,8 @@ def _system_prompt(
     elif tactical:
         base += (
             "当前为战术短线模式：在遵守集中度与风险复核前提下，优先最大化当日收盘前与下一交易日的战术收益空间；"
-            "须结合 sector_intraday（分时形态）、sector_momentum（涨后回吐等）、market_flow（北向资金）与 news.freshness_label；"
+            "须结合 sector_intraday（分时形态）、sector_momentum（涨后回吐等）、stock_connect_flow 与 news.freshness_label；"
+            "北向实时净买额不参与决策，stock_connect_flow 中南向数据仅作港股资金面的独立参考；"
             "对「涨一天跌一天」场景须明确次日冲高回落时的止盈/观望条件，但仍不得承诺收益。"
         )
         settings = get_settings()
@@ -562,6 +563,11 @@ def _build_final_report(
     )
     caveats = _append_news_pipeline_caveats(caveats, topic_briefs, market_news)
     caveats = _append_pipeline_caveats(caveats, facts)
+    from app.services.decision_data_evidence import report_execution_blocked
+
+    summary = parsed.get("summary") or fallback.summary
+    if report_execution_blocked(facts):
+        summary = "字段级证据时点校验未通过，本次报告仅保留观察与风险复核；请刷新持仓和行情后重新生成。"
     return Report(
         title=parsed.get("title", "每日基金操作日报"),
         risk=risk,
@@ -571,7 +577,7 @@ def _build_final_report(
         market_news=market_news,
         topic_briefs=topic_briefs,
         fund_recommendations=fund_recs,
-        summary=parsed.get("summary") or fallback.summary,
+        summary=summary,
         recommendations=portfolio_recs,
         caveats=caveats,
         provider=runtime.model,
@@ -858,10 +864,6 @@ def _finalize_recommendations(
     nav_trends_by_code: dict[str, dict] | None = None,
     facts: dict | None = None,
 ) -> tuple[list[str], list[FundRecommendation]]:
-    from app.services.market_flow_client import build_market_flow_context
-
-    flow = build_market_flow_context()
-    northbound = flow.get("northbound_net_yi") if flow.get("available") else None
     raw_lines = parsed.get("recommendations")
     if isinstance(raw_lines, list) and raw_lines:
         all_lines = [str(item) for item in raw_lines]
@@ -892,7 +894,6 @@ def _finalize_recommendations(
         market_news,
         topic_briefs,
         nav_trends_by_code=nav_trends_by_code,
-        northbound_net_yi=northbound,
         facts=facts,
     )
     fund_recs = apply_news_citation_guards(fund_recs, market_news, topic_briefs)
@@ -901,6 +902,18 @@ def _finalize_recommendations(
 
 def _append_pipeline_caveats(caveats: list[str], facts: dict) -> list[str]:
     result = list(caveats)
+    from app.services.decision_data_evidence import (
+        portfolio_snapshot_caveats,
+        report_execution_blocked,
+    )
+
+    for caveat in portfolio_snapshot_caveats(facts):
+        if caveat not in result:
+            result.append(caveat)
+    if report_execution_blocked(facts):
+        note = "字段级证据时点校验未通过，系统已隐藏仓位动作、金额及相关可执行措辞。"
+        if note not in result:
+            result.append(note)
     pipeline = facts.get("pipeline") or {}
     session = facts.get("session") or {}
     mode = pipeline.get("analysis_mode")
@@ -993,10 +1006,6 @@ def _offline_report(
 
     weight_denominator = resolve_weight_denominator(request.holdings, request.profile) or 1
     nav_trends = nav_trends_by_code or {}
-    from app.services.market_flow_client import build_market_flow_context
-
-    flow = build_market_flow_context()
-    northbound = flow.get("northbound_net_yi") if flow.get("available") else None
     fund_recommendations = [
         build_offline_fund_recommendation(
             holding,
@@ -1005,7 +1014,6 @@ def _offline_report(
             request.profile,
             market_news=news,
             nav_trend=nav_trends.get(holding.fund_code),
-            northbound_net_yi=northbound,
         )
         for holding in request.holdings
     ]
@@ -1014,6 +1022,15 @@ def _offline_report(
         recommendations.append("当前信息不足以支持新增买入，建议等待净值、公告和市场信息更新。")
 
     runtime = resolve_analysis_runtime(get_settings(), request.analysis_mode)
+    bundle = analysis_bundle or prepare_analysis_bundle(
+        request,
+        risk,
+        snapshots,
+        news,
+        briefs,
+        nav_trends,
+        analysis_mode=runtime.mode,
+    )
     recommendations, fund_recommendations = apply_recommendation_guards(
         fund_recommendations,
         recommendations,
@@ -1022,8 +1039,7 @@ def _offline_report(
         news,
         briefs,
         nav_trends_by_code=nav_trends,
-        northbound_net_yi=northbound,
-        facts=analysis_bundle.facts if analysis_bundle else None,
+        facts=bundle.facts,
     )
     fund_recommendations = apply_news_citation_guards(
         fund_recommendations, news, briefs
@@ -1037,15 +1053,6 @@ def _offline_report(
         caveats.append("本次未能拉取到有效新闻条目，政策与资金面判断请结合公开信息人工复核。")
     caveats = _append_news_pipeline_caveats(caveats, briefs, news)
 
-    bundle = analysis_bundle or prepare_analysis_bundle(
-        request,
-        risk,
-        snapshots,
-        news,
-        briefs,
-        nav_trends,
-        analysis_mode=runtime.mode,
-    )
     facts = finalize_analysis_facts(
         bundle.facts,
         market_news=news,
@@ -1058,6 +1065,20 @@ def _offline_report(
         ),
     )
     caveats = _append_pipeline_caveats(caveats, facts)
+    from app.services.decision_data_evidence import report_execution_blocked
+
+    summary = (
+        f"本地规则评估：组合加权收益率 {risk.weighted_return_percent:.2f}%，"
+        f"风险等级为 {risk.level}。"
+        + (f" 已抓取 {len(news)} 条近期新闻" if news else "")
+        + (
+            f"（{len(briefs)} 个主题摘要）。"
+            if briefs
+            else ("供参考。" if news else "")
+        )
+    )
+    if report_execution_blocked(facts):
+        summary = "字段级证据时点校验未通过，本次仅保留观察与风险复核；请刷新数据后重新生成。"
     return Report(
         title="每日基金操作日报",
         risk=risk,
@@ -1066,16 +1087,7 @@ def _offline_report(
         market_context=[],
         market_news=news,
         topic_briefs=briefs,
-        summary=(
-            f"本地规则评估：组合加权收益率 {risk.weighted_return_percent:.2f}%，"
-            f"风险等级为 {risk.level}。"
-            + (f" 已抓取 {len(news)} 条近期新闻" if news else "")
-            + (
-                f"（{len(briefs)} 个主题摘要）。"
-                if briefs
-                else ("供参考。" if news else "")
-            )
-        ),
+        summary=summary,
         fund_recommendations=fund_recommendations,
         recommendations=recommendations,
         caveats=caveats,

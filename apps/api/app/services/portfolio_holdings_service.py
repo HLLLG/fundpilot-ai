@@ -703,6 +703,13 @@ def remove_holding_from_portfolio(
 
     if matched_in_snapshot:
         remaining = [item for item in current if not _holding_matches_target(item, code, fund_name)]
+        removed_codes = sorted(
+            {
+                item.fund_code
+                for item in matched_in_snapshot
+                if item.fund_code and item.fund_code != "000000"
+            }
+        )
     else:
         from app.database import get_fund_profile_by_code
 
@@ -712,6 +719,7 @@ def remove_holding_from_portfolio(
         if profile is None:
             raise LookupError("未找到要删除的持仓")
         remaining = current
+        removed_codes = [profile.fund_code]
 
     remaining = without_test_holdings(remaining)
 
@@ -746,6 +754,25 @@ def remove_holding_from_portfolio(
                 "holding_count": len(remaining),
                 "updated_at": datetime.now(timezone.utc),
             }
+        )
+
+    # Close the immutable position ledger before mutating the compatibility
+    # snapshot/profile. If a later compatibility write fails, the visible
+    # membership and ledger disagree and decision preflight safely degrades;
+    # retrying the deletion heals the remaining side.
+    from app.services.portfolio_ledger_service import close_portfolio_position
+
+    removal_context = "|".join(
+        [
+            str(snapshot.get("snapshot_date") or ""),
+            ",".join(sorted(item.fund_code for item in current)),
+            ",".join(sorted(item.fund_code for item in remaining)),
+        ]
+    )
+    for removed_code in removed_codes:
+        close_portfolio_position(
+            removed_code,
+            source_context=removal_context,
         )
 
     save_portfolio_summary(summary)

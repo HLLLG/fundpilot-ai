@@ -1,5 +1,3 @@
-import { Sparkles } from "lucide-react";
-
 import { BRAND } from "@/lib/brand";
 
 type BrandMarkProps = {
@@ -10,13 +8,13 @@ type BrandMarkProps = {
 };
 
 const SIZES = {
-  sm: { box: "h-8 w-8 rounded-xl", icon: 16, name: "text-base", en: "text-[10px]" },
-  md: { box: "h-9 w-9 rounded-xl", icon: 18, name: "text-lg", en: "text-[11px]" },
-  lg: { box: "h-12 w-12 rounded-2xl", icon: 24, name: "text-2xl", en: "text-xs" },
+  sm: { box: "h-8 w-8", name: "text-base", en: "text-[9px]" },
+  md: { box: "h-9 w-9", name: "text-lg", en: "text-[10px]" },
+  lg: { box: "h-11 w-11", name: "text-2xl", en: "text-[11px]" },
 } as const;
 
 /**
- * 灵析品牌标识：品牌蓝圆角图标 + 中文名（可选英文辅助）。
+ * 灵析品牌标识：以数据刻度与「析」的拆解感组成专属研究台印记。
  * 用于落地页 / 登录注册 / Dashboard 顶部，保持一致性。
  */
 export function BrandMark({
@@ -29,20 +27,19 @@ export function BrandMark({
   return (
     <span className={`inline-flex items-center gap-2.5 ${className}`.trim()}>
       <span
-        className={`flex items-center justify-center text-white shadow-[0_6px_16px_rgba(35,86,224,0.30)] ${s.box}`}
-        style={{
-          background: "linear-gradient(180deg, var(--brand) 0%, var(--brand-strong) 100%)",
-        }}
+        className={`brand-seal relative flex items-center justify-center overflow-hidden ${s.box}`}
+        aria-hidden="true"
       >
-        <Sparkles size={s.icon} strokeWidth={2.4} />
+        <span className="brand-seal-rail" />
+        <span className="brand-seal-glyph">析</span>
       </span>
       {showName ? (
         <span className="flex flex-col leading-none">
-          <span className={`font-black tracking-tight text-slate-950 ${s.name}`}>
+          <span className={`font-display font-bold text-[var(--brand-deep)] ${s.name}`}>
             {BRAND.name}
           </span>
           {showEnglish ? (
-            <span className={`mt-0.5 font-bold uppercase tracking-[0.18em] text-slate-500 ${s.en}`}>
+            <span className={`mt-1 font-bold uppercase tracking-[0.24em] text-[var(--accent-strong)] ${s.en}`}>
               {BRAND.englishName}
             </span>
           ) : null}

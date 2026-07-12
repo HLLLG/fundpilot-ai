@@ -36,6 +36,17 @@ test("公共落地页具备清晰主路径与关键语义", async ({ page }) => 
   await expectNoHorizontalOverflow(page);
 });
 
+test("移动固定主操作只在首屏主操作离开后出现", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.startsWith("mobile-"), "仅移动视口需要固定主操作");
+  await page.goto("/");
+
+  await expect(page.getByTestId("landing-primary-cta")).toBeVisible();
+  await expect(page.getByTestId("landing-sticky-cta")).toHaveCount(0);
+  await page.getByTestId("landing-steps").scrollIntoViewIfNeeded();
+  await expect(page.getByTestId("landing-sticky-cta")).toBeVisible();
+  await expectNoHorizontalOverflow(page);
+});
+
 test("登录页暴露可命名表单控件且移动端不溢出", async ({ page }) => {
   const response = await page.goto("/login");
   expect(response?.ok()).toBeTruthy();

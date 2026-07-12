@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import logging
 import time
-from functools import lru_cache
 
 import requests
 
@@ -41,7 +40,6 @@ def _sina_symbol(index_symbol: str) -> str:
     return f"sh{code}"
 
 
-@lru_cache(maxsize=64)
 def _fetch_index_daily_history_impl(index_symbol: str, trading_days: int = 252) -> dict | None:
     """拉取指数日线收盘价，优先新浪（AkShare 指数接口在部分网络下不稳定）。"""
     days = max(20, min(trading_days, 800))

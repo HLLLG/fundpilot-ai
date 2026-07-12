@@ -21,6 +21,7 @@ def run_akshare_json_script(
     *,
     label: str,
     timeout: int | float = _SUBPROCESS_TIMEOUT,
+    warn_on_failure: bool = True,
 ) -> object | None:
     """Run an AkShare script in a child process and parse its JSON stdout."""
     try:
@@ -33,20 +34,35 @@ def run_akshare_json_script(
             timeout=timeout,
             check=False,
         )
-        if result.returncode != 0 or not result.stdout.strip():
-            logger.warning(
+        stdout = result.stdout or ""
+        if not stdout.strip():
+            log = logger.warning if warn_on_failure else logger.debug
+            log(
                 "akshare subprocess failed for %s: %s",
                 label,
                 result.stderr[:300] if result.stderr else "no output",
             )
             return None
-        payload = json.loads(result.stdout.strip())
+
+        payload = _parse_json_stdout(stdout)
+        if payload is None:
+            log = logger.warning if warn_on_failure else logger.debug
+            log(
+                "akshare subprocess returned invalid JSON for %s: %r",
+                label,
+                stdout[-300:],
+            )
+            return None
         if isinstance(payload, dict) and payload.get("error"):
             logger.debug(
                 "akshare subprocess returned error for %s: %s",
                 label,
                 payload.get("error"),
             )
+            return None
+        if result.returncode != 0:
+            log = logger.warning if warn_on_failure else logger.debug
+            log("akshare subprocess exited rc=%s for %s", result.returncode, label)
             return None
         return payload
     except subprocess.TimeoutExpired:
@@ -57,8 +73,28 @@ def run_akshare_json_script(
         return None
 
 
-@lru_cache(maxsize=128)
-def fetch_fund_nav_history(fund_code: str, trading_days: int = 90) -> dict | None:
+def _parse_json_stdout(stdout: str) -> object | None:
+    """Return the last valid JSON value, ignoring optional provider diagnostics."""
+    text = (stdout or "").strip()
+    if not text:
+        return None
+    for candidate in (text, *reversed(text.splitlines())):
+        candidate = candidate.strip()
+        if not candidate:
+            continue
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+    return None
+
+
+@lru_cache(maxsize=512)
+def _fetch_fund_nav_history_cached(
+    fund_code: str,
+    trading_days: int,
+    _cache_hour: int,
+) -> dict | None:
     """在子进程中获取基金净值走势，避免 py_mini_racer crash 主进程."""
     script = f"""
 import akshare as ak
@@ -124,6 +160,16 @@ except Exception as e:
         return None
 
 
+def fetch_fund_nav_history(fund_code: str, trading_days: int = 90) -> dict | None:
+    """Fetch NAV rows with an hourly cache key so pending outcomes can mature."""
+
+    return _fetch_fund_nav_history_cached(
+        fund_code,
+        max(1, int(trading_days)),
+        int(time.time() // 3600),
+    )
+
+
 def fetch_fund_daily_nav_returns(fund_codes: list[str], trade_date: str) -> dict | None:
     """一次性读取开放式基金最新净值表，返回指定基金在 trade_date 的日增长率/单位净值。"""
     codes = sorted({str(code).strip().zfill(6) for code in fund_codes if str(code).strip()})
@@ -187,8 +233,12 @@ def _index_market_symbol(index_symbol: str) -> str:
     return f"sh{code}"
 
 
-@lru_cache(maxsize=64)
-def fetch_index_daily_history(index_symbol: str, trading_days: int = 252) -> dict | None:
+@lru_cache(maxsize=256)
+def _fetch_index_daily_history_cached(
+    index_symbol: str,
+    trading_days: int,
+    _cache_hour: int,
+) -> dict | None:
     """在子进程中获取指数日线，用于业绩走势对比基准。"""
     market_symbol = _index_market_symbol(index_symbol)
     calendar_days = max(45, int(trading_days * 1.8))
@@ -278,6 +328,16 @@ except Exception as e:
     except Exception as exc:
         logger.error("akshare index subprocess exception for %s: %s", index_symbol, exc)
         return None
+
+
+def fetch_index_daily_history(index_symbol: str, trading_days: int = 252) -> dict | None:
+    """Fetch index closes with an hourly cache key for outcome materialization."""
+
+    return _fetch_index_daily_history_cached(
+        index_symbol,
+        max(1, int(trading_days)),
+        int(time.time() // 3600),
+    )
 
 
 def fetch_open_fund_rank(*, limit: int = 300) -> list[dict] | None:

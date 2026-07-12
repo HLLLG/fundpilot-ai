@@ -236,7 +236,7 @@ export function AlipayOcrConfirmModal({
       <div
         ref={dialogRef}
         tabIndex={-1}
-        className="flex max-h-[88vh] w-full max-w-xl flex-col overflow-hidden rounded-[28px] bg-white shadow-2xl"
+        className="workflow-dialog flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-[18px] bg-[var(--panel)] shadow-[var(--shadow-lg)]"
         role="dialog"
         aria-modal="true"
         aria-labelledby="ocr-confirm-modal-title"
@@ -263,6 +263,12 @@ export function AlipayOcrConfirmModal({
           </button>
         </div>
 
+        <ol className="workflow-rail" aria-label="持仓导入进度">
+          <li className="is-done"><span>01</span><strong>截图进入</strong></li>
+          <li aria-current="step"><span>02</span><strong>校对数据</strong></li>
+          <li><span>03</span><strong>确认写入</strong></li>
+        </ol>
+
         {errorMessage ? (
           <div className="px-4 pt-4">
             <InlineNotice tone="error" message={errorMessage} />
@@ -281,7 +287,7 @@ export function AlipayOcrConfirmModal({
           </div>
         ) : null}
 
-        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-4">
+        <div className="ocr-review-list min-h-0 flex-1 overflow-y-auto px-4 py-2 sm:px-5">
           {holdings.map((holding, index) => {
             const resolution = resolutionByName.get(holding.fund_name);
             const code = displayCode(holding, resolution);
@@ -290,10 +296,10 @@ export function AlipayOcrConfirmModal({
             return (
               <div
                 key={`${holding.fund_name}-${index}`}
-                className={`rounded-2xl border px-4 py-3 ${
+                className={`ocr-review-row border-b px-1 py-4 sm:px-2 ${
                   unresolved
-                    ? "border-amber-300 bg-amber-50/80 ring-1 ring-amber-200"
-                    : "border-slate-200 bg-slate-50/70"
+                    ? "border-amber-300 bg-amber-50/50"
+                    : "border-[var(--line)] bg-transparent"
                 }`}
               >
                 <div className="mb-3 flex items-start justify-between gap-3">
@@ -410,7 +416,7 @@ export function AlipayOcrConfirmModal({
             type="button"
             disabled={isBusy || holdings.length === 0}
             onClick={onConfirm}
-            className="min-h-11 w-full rounded-2xl bg-blue-600 px-4 py-3 text-sm font-black text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+            className="btn-primary min-h-11 w-full px-4 py-3 text-sm font-bold disabled:cursor-not-allowed disabled:opacity-50"
           >
             {isBusy ? "正在更新..." : `完成（${holdings.length}）`}
           </button>

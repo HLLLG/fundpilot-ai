@@ -71,25 +71,35 @@ def _resolve_intraday_for_holding(
     if not index_name and profile is not None:
         index_name = (profile.intraday_index_name or "").strip()
     if index_name:
-        return "index", index_name
+        canonical = get_intraday_canonical_sector(index_name)
+        if canonical is not None:
+            return canonical.source_type, canonical.source_name
 
     board_name = (holding.sector_name or "").strip()
     if board_name:
         mapped = infer_intraday_index_from_sector(board_name)
         if mapped:
-            return "index", mapped
+            canonical = get_intraday_canonical_sector(mapped)
+            if canonical is not None:
+                return canonical.source_type, canonical.source_name
+
+        canonical = get_intraday_canonical_sector(board_name)
+        if canonical is not None:
+            return canonical.source_type, canonical.source_name
 
     label = sector_quote_lookup_label(holding, profile=profile)
     if not label:
         return None
 
     canon = get_intraday_canonical_sector(label)
-    if canon is not None and canon.source_type == "index":
-        return "index", canon.source_name or label
+    if canon is not None:
+        return canon.source_type, canon.source_name
 
-    if board_name:
-        return "concept", board_name
-    return "index", label
+    # 基金名称、投资风格或地域分类并不等于可查询的东财概念板块。例如
+    # “海外基金”“信澳业绩驱动”“全球高端制造”没有稳定 secid；把它们直接交给
+    # AkShare 只会产生空子进程和重复重试。无可靠映射时明确返回 None，由组合曲线
+    # 使用已有缓存/大盘基准降级，不伪造板块分时。
+    return None
 
 
 def _holdings_intraday_fingerprint(

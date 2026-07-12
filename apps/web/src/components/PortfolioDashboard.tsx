@@ -226,8 +226,8 @@ export function PortfolioDashboard({
         : "#64748b";
 
   return (
-    <div className="pl-page mx-auto max-w-3xl">
-      <div className="section-card briefing-hero overflow-hidden">
+    <div className="pl-page mx-auto max-w-5xl">
+      <div className="analysis-hero briefing-hero overflow-hidden">
         <div className="pl-hero !rounded-none !border-0 !bg-transparent">
           <div className="pl-hero-label">{hero.label}</div>
           <div className={`pl-hero-value ${profitClass(hero.value)}`}>
@@ -268,7 +268,7 @@ export function PortfolioDashboard({
         </div>
       </div>
 
-      <div className="section-card mt-3 overflow-hidden">
+      <div className="analysis-range mt-3 overflow-hidden">
       <div className="pl-range-bar !rounded-none !border-0 !border-t !border-[var(--line)]" role="tablist" aria-label="时间范围">
         {RANGE_TABS.map((tab) => (
           <button

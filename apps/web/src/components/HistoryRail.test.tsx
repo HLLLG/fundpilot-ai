@@ -113,7 +113,7 @@ describe("HistoryRail", () => {
     );
     expect(screen.getByText("日报甲").closest("button")).toHaveClass("min-h-11");
 
-    const batchModeButton = screen.getByRole("button", { name: "批量删除" });
+    const batchModeButton = screen.getByRole("button", { name: "管理" });
     expect(batchModeButton).toHaveClass("min-h-11", "min-w-11");
     fireEvent.click(batchModeButton);
 

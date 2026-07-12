@@ -222,10 +222,10 @@ export function MarketTab() {
   const footerFromCache = themeData?.from_cache;
 
   return (
-    <div className="mx-auto grid max-w-3xl gap-4">
+    <div className="market-workspace mx-auto grid max-w-5xl gap-4">
       <TradingSessionBar />
 
-      <div className="section-card overflow-hidden p-1">
+      <div className="market-nav overflow-hidden">
       <div className="tab-segment !border-0 !bg-transparent">
         <button
           type="button"

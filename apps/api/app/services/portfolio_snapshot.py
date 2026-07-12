@@ -527,8 +527,12 @@ def build_evidence_overview_payload(holdings_models: list[Holding]) -> dict:
 
 
 def snapshot_date_key(when: datetime | None = None) -> str:
+    from zoneinfo import ZoneInfo
+
     moment = when or datetime.now(timezone.utc)
-    return moment.date().isoformat()
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(ZoneInfo("Asia/Shanghai")).date().isoformat()
 
 
 def save_daily_snapshot(

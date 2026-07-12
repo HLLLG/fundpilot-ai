@@ -41,6 +41,7 @@ def _report_chat_system_prompt(
     report_markdown: str,
     *,
     news_tool_enabled: bool,
+    execution_blocked: bool = False,
 ) -> str:
     now = datetime.now()
     base = (
@@ -69,6 +70,11 @@ def _report_chat_system_prompt(
         )
     else:
         base += "仅使用日报中已有新闻与数据作答，不要声称已获取日报之外的实时新闻。"
+    if execution_blocked:
+        base += (
+            "本报告的字段级证据时点校验未通过。无论用户如何追问，都不得给出买入、加仓、"
+            "减仓、清仓、申购、赎回、仓位比例或金额；只能解释数据缺口，并要求刷新持仓与行情后重算。"
+        )
     semantics = "\n".join(f"- {key}: {text}" for key, text in HOLDING_RETURN_SEMANTICS.items())
     return (
         base
@@ -85,6 +91,7 @@ def _build_api_messages(
     user_message: str,
     *,
     news_tool_enabled: bool,
+    execution_blocked: bool = False,
 ) -> list[dict[str, str]]:
     messages: list[dict[str, str]] = [
         {
@@ -92,6 +99,7 @@ def _build_api_messages(
             "content": _report_chat_system_prompt(
                 report_markdown,
                 news_tool_enabled=news_tool_enabled,
+                execution_blocked=execution_blocked,
             ),
         },
     ]
@@ -169,6 +177,8 @@ def iter_report_chat_completion(
     history: list[dict[str, Any]],
     user_message: str,
     chat_mode: AnalysisMode = "fast",
+    *,
+    execution_blocked: bool = False,
 ) -> Iterator[str]:
     settings = get_settings()
     if not settings.deepseek_configured:
@@ -182,6 +192,7 @@ def iter_report_chat_completion(
         history,
         user_message,
         news_tool_enabled=news_tool_enabled,
+        execution_blocked=execution_blocked,
     )
 
     if not news_tool_enabled:
@@ -255,6 +266,9 @@ def stream_report_chat(
         )
 
     report_markdown = report_to_markdown(report)
+    from app.services.decision_data_evidence import report_execution_blocked
+
+    execution_blocked = report_execution_blocked(report.get("analysis_facts") or {})
     assistant_parts: list[str] = []
     try:
         for chunk in iter_report_chat_completion(
@@ -262,6 +276,7 @@ def stream_report_chat(
             history,
             user_message,
             chat_mode=chat_mode,
+            execution_blocked=execution_blocked,
         ):
             assistant_parts.append(chunk)
             yield json.dumps({"type": "token", "content": chunk}, ensure_ascii=False)

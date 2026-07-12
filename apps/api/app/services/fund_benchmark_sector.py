@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -21,6 +22,8 @@ _SUBPROCESS_TIMEOUT = 45
 _KNOWN_BENCHMARK_BY_CODE: dict[str, str] = {
     "021533": "中证半导体材料设备主题指数收益率×95%+银行活期存款利率（税后）×5%",
 }
+
+_BENCHMARK_FETCH_METADATA: dict[tuple[str, str], dict[str, object]] = {}
 
 _INDEX_CODE_RE = re.compile(r"(?<!\d)(\d{6})(?!\d)")
 
@@ -185,7 +188,8 @@ for _, row in frame.iterrows():
     if "业绩比较基准" in item or "跟踪标的" in item or item == "标的指数":
         value = row.get("value")
         if value is not None and str(value).strip():
-            print(json.dumps(str(value).strip(), ensure_ascii=True))
+            kind = "performance_benchmark" if "业绩比较基准" in item else "tracking_target"
+            print(json.dumps({"text": str(value).strip(), "kind": kind}, ensure_ascii=True))
             raise SystemExit(0)
 print("null")
 """
@@ -200,11 +204,76 @@ print("null")
             check=False,
         )
         if completed.returncode != 0 or not completed.stdout.strip():
-            return _KNOWN_BENCHMARK_BY_CODE.get(code)
+            return _static_benchmark_fallback(code)
         raw = completed.stdout.strip()
         if raw == "null":
-            return _KNOWN_BENCHMARK_BY_CODE.get(code)
-        return json.loads(raw)
+            return _static_benchmark_fallback(code)
+        decoded = json.loads(raw)
+        if isinstance(decoded, dict):
+            text = str(decoded.get("text") or "").strip()
+            kind = str(decoded.get("kind") or "unknown").strip()
+        else:
+            # Compatibility with an older subprocess payload.  Unknown field
+            # provenance is intentionally not eligible for a formal benchmark.
+            text = str(decoded or "").strip()
+            kind = "unknown"
+        if not text:
+            return _static_benchmark_fallback(code)
+        _remember_benchmark_fetch_metadata(
+            code,
+            text,
+            kind=kind,
+            source_kind="live_fund_disclosure",
+        )
+        return text
     except Exception:
         logger.info("benchmark fetch failed for %s", code, exc_info=True)
-        return _KNOWN_BENCHMARK_BY_CODE.get(code)
+        return _static_benchmark_fallback(code)
+
+
+def get_fund_benchmark_fetch_metadata(
+    fund_code: str,
+    benchmark_text: str,
+) -> dict[str, object]:
+    code = fund_code.strip().zfill(6)
+    text = str(benchmark_text or "").strip()
+    return dict(
+        _BENCHMARK_FETCH_METADATA.get(
+            (code, text),
+            {
+                "benchmark_text_kind": "unknown",
+                "benchmark_text_source_kind": "unknown",
+                "benchmark_text_length": len(text),
+                "benchmark_text_hash": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                "benchmark_text_truncated": False,
+            },
+        )
+    )
+
+
+def _remember_benchmark_fetch_metadata(
+    code: str,
+    text: str,
+    *,
+    kind: str,
+    source_kind: str,
+) -> None:
+    _BENCHMARK_FETCH_METADATA[(code, text)] = {
+        "benchmark_text_kind": kind,
+        "benchmark_text_source_kind": source_kind,
+        "benchmark_text_length": len(text),
+        "benchmark_text_hash": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+        "benchmark_text_truncated": False,
+    }
+
+
+def _static_benchmark_fallback(code: str) -> str | None:
+    text = _KNOWN_BENCHMARK_BY_CODE.get(code)
+    if text:
+        _remember_benchmark_fetch_metadata(
+            code,
+            text,
+            kind="performance_benchmark",
+            source_kind="static_fallback",
+        )
+    return text

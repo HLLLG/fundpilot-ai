@@ -3,8 +3,13 @@
 from unittest.mock import patch
 
 from app.models import Holding, InvestorProfile, NewsItem, TopicBrief, TopicBriefPoint
+from app.services.analysis_payload import OUTPUT_REQUIREMENTS_SYSTEM, OUTPUT_REQUIREMENTS_USER
 from app.services.discovery_facts import build_discovery_facts
-from app.services.discovery_payload import build_user_payload, _requirements_for_scan_mode
+from app.services.discovery_payload import (
+    OUTPUT_DISCOVERY_REQUIREMENTS,
+    _requirements_for_scan_mode,
+    build_user_payload,
+)
 from app.services.discovery_prompt import DISCOVERY_FACTS_INSTRUCTION
 
 
@@ -24,6 +29,15 @@ def _discovery_facts() -> dict:
         "session": {"session_kind": "trading_day_intraday", "effective_trade_date": "2026-06-25"},
         "profile": {"decision_style": "conservative"},
         "portfolio_gap": {"holding_count": 1, "available_budget_yuan": 50000},
+        "portfolio_position_truth": {
+            "schema_version": "portfolio_position_truth.compact.v1",
+            "position_complete": True,
+            "ledger_truncated": False,
+            "pending_transaction_count": 0,
+            "conflict_count": 0,
+            "cash": {"balance_yuan": "1234.56", "known": True},
+            "positions": [],
+        },
         "sector_heat": [{"sector_label": "半导体", "heat_score": 0.9}],
         "target_sector_context": [
             {
@@ -32,7 +46,10 @@ def _discovery_facts() -> dict:
                 "sector_fund_flow": {"available": True, "today_main_force_net_yi": 1.2},
             }
         ],
-        "market_flow": {"northbound_net_yi": 0, "southbound_net_yi": -8.87},
+        "stock_connect_flow": {
+            "northbound_status": "not_disclosed",
+            "southbound_net_yi": -8.87,
+        },
         "signal_backtest": {"available": True, "sectors": []},
         "news": {"freshness_label": "偏旧", "topic_count": 2},
         "candidate_factor_scores": {"available": False},
@@ -101,8 +118,10 @@ def test_build_user_payload_includes_daily_report_parity_fields():
     facts = payload["discovery_facts"]
     assert facts["session"]["session_kind"] == "trading_day_intraday"
     assert facts["target_sector_context"][0]["sector_fund_flow"]["available"] is True
-    assert facts["market_flow"]["southbound_net_yi"] == -8.87
+    assert facts["stock_connect_flow"]["southbound_net_yi"] == -8.87
+    assert "northbound_net_yi" not in facts["stock_connect_flow"]
     assert facts["instruction"] == "系统数字只读"
+    assert facts["portfolio_position_truth"]["cash"]["balance_yuan"] == "1234.56"
     candidate = facts["candidate_pool"][0]
     assert candidate["fund_code"] == "161725"
     assert candidate["return_3m_percent"] == 2.0
@@ -117,6 +136,20 @@ def test_build_user_payload_includes_daily_report_parity_fields():
     joined = " ".join(payload["requirements"])
     assert "target_sector_context" in joined
     assert "holdings_slim" in joined
+
+
+def test_daily_and_discovery_prompts_fail_closed_on_unknown_position_truth() -> None:
+    daily_prompt = OUTPUT_REQUIREMENTS_SYSTEM + " ".join(OUTPUT_REQUIREMENTS_USER)
+    discovery_prompt = OUTPUT_DISCOVERY_REQUIREMENTS + " ".join(
+        _requirements_for_scan_mode("full_market")
+    )
+
+    for prompt in (daily_prompt, discovery_prompt):
+        assert "portfolio_position_truth" in prompt
+        assert "unknown/null" in prompt
+        assert "pending/conflict" in prompt
+    assert "amount_yuan" in daily_prompt
+    assert "suggested_amount_yuan" in discovery_prompt
 
 
 def test_build_user_payload_includes_sector_opportunities():
@@ -233,7 +266,10 @@ def test_build_discovery_facts_budget_degrades_slow_signal(monkeypatch):
 
     monkeypatch.setattr("app.services.discovery_facts.SIGNAL_BACKTEST_TIMEOUT_SECONDS", 0.01)
     monkeypatch.setattr("app.services.discovery_facts.TARGET_SECTOR_CONTEXT_TIMEOUT_SECONDS", 0.01)
-    monkeypatch.setattr("app.services.discovery_facts.MARKET_FLOW_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(
+        "app.services.discovery_facts.STOCK_CONNECT_FLOW_TIMEOUT_SECONDS",
+        0.01,
+    )
 
     def slow_signal(*_args, **_kwargs):
         time.sleep(0.08)

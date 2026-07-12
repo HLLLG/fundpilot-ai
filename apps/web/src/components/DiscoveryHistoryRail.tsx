@@ -1,7 +1,7 @@
 "use client";
 
-import { useRef, useState } from "react";
-import { AlertTriangle, History, RefreshCw, Trash2, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { AlertTriangle, ChevronRight, History, RefreshCw, Trash2, X } from "lucide-react";
 import type { FundDiscoveryReport } from "@/lib/api";
 import { deleteDiscoveryReport } from "@/lib/api";
 import { InlineNotice } from "@/components/InlineNotice";
@@ -13,6 +13,9 @@ type DiscoveryHistoryRailProps = {
   onRefresh: () => void;
   onSelect: (report: FundDiscoveryReport) => void;
   onDeleted?: (reportId: string) => void;
+  variant?: "rail" | "drawer";
+  onOpenAll?: () => void;
+  initialLimit?: number;
 };
 
 type DeleteIntent =
@@ -25,6 +28,9 @@ export function DiscoveryHistoryRail({
   onRefresh,
   onSelect,
   onDeleted,
+  variant = "rail",
+  onOpenAll,
+  initialLimit = 12,
 }: DiscoveryHistoryRailProps) {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [batchMode, setBatchMode] = useState(false);
@@ -36,6 +42,8 @@ export function DiscoveryHistoryRail({
     tone: "error" | "warning";
   } | null>(null);
   const cancelDeleteButtonRef = useRef<HTMLButtonElement>(null);
+  const [visibleCount, setVisibleCount] = useState(initialLimit);
+  const [query, setQuery] = useState("");
   const deleteDialogRef = useDialogA11y<HTMLDivElement>({
     open: deleteIntent != null,
     onClose: () => setDeleteIntent(null),
@@ -44,6 +52,28 @@ export function DiscoveryHistoryRail({
 
   const selectedCount = selectedIds.size;
   const allSelected = reports.length > 0 && selectedCount === reports.length;
+  const filteredReports = useMemo(() => {
+    const keyword = query.trim().toLocaleLowerCase("zh-CN");
+    if (!keyword) return reports;
+    return reports.filter((item) =>
+      [item.title, ...(item.target_sectors ?? []), new Date(item.created_at).toLocaleDateString("zh-CN")]
+        .join(" ")
+        .toLocaleLowerCase("zh-CN")
+        .includes(keyword),
+    );
+  }, [query, reports]);
+  const visibleReports = useMemo(() => {
+    if (batchMode) return filteredReports;
+    const visible = filteredReports.slice(0, visibleCount);
+    const active = filteredReports.find((item) => item.id === activeReportId);
+    if (active && !visible.some((item) => item.id === active.id)) visible.push(active);
+    return visible;
+  }, [activeReportId, batchMode, filteredReports, visibleCount]);
+  const hasMore = !batchMode && visibleCount < filteredReports.length;
+
+  useEffect(() => {
+    setVisibleCount(initialLimit);
+  }, [initialLimit, query, reports.length]);
 
   const exitBatchMode = () => {
     setBatchMode(false);
@@ -136,11 +166,14 @@ export function DiscoveryHistoryRail({
   const deletePreview = deleteIntent?.reports.slice(0, 3) ?? [];
 
   return (
-    <aside className="glass-panel min-w-0 rounded-[28px] p-5">
-      <div className="mb-5 flex items-center justify-between gap-2">
+    <aside className={`discovery-history-rail min-w-0 ${variant === "drawer" ? "is-drawer" : "is-rail"}`}>
+      <div className="discovery-history-toolbar">
         <div className="flex items-center gap-2 font-black text-slate-950">
           <History size={18} />
-          历史推荐
+          <span>历史推荐</span>
+          <span className="history-count" aria-label={`共 ${reports.length} 份历史推荐`}>
+            {reports.length}
+          </span>
         </div>
         <div className="flex items-center gap-2">
           {batchMode ? (
@@ -180,7 +213,7 @@ export function DiscoveryHistoryRail({
                   onClick={() => setBatchMode(true)}
                   className="min-h-11 rounded-full border border-slate-200 bg-white px-3 text-xs font-bold text-slate-600 transition hover:border-rose-300 hover:text-rose-700"
                 >
-                  批量删除
+                  管理
                 </button>
               ) : null}
               <button
@@ -202,18 +235,38 @@ export function DiscoveryHistoryRail({
           className="mb-3"
         />
       ) : null}
-      <div className="space-y-3">
+      {variant === "drawer" && !batchMode && reports.length > 0 ? (
+        <label className="history-search-field">
+          <span className="sr-only">搜索历史推荐</span>
+          <input
+            type="search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="搜索标题、板块或日期"
+            className="min-h-11"
+          />
+        </label>
+      ) : null}
+      <div
+        className="history-scroll-region"
+        data-testid="discovery-history-scroll-region"
+        aria-label="历史推荐列表"
+      >
         {reports.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-6 text-center text-sm text-slate-500">
             完成首次扫描后会自动保存到这里。
           </div>
         ) : null}
-        {reports.map((item) => {
+        {reports.length > 0 && filteredReports.length === 0 ? (
+          <div className="history-empty-search">没有匹配的历史推荐，请换一个关键词。</div>
+        ) : null}
+        {visibleReports.map((item) => {
           const active = item.id === activeReportId;
           const selected = selectedIds.has(item.id);
           return (
             <div
               key={item.id}
+              data-testid="discovery-history-item"
               className={`flex items-stretch gap-2 rounded-2xl p-2 shadow-sm transition ${
                 batchMode
                   ? selected
@@ -239,6 +292,7 @@ export function DiscoveryHistoryRail({
               <button
                 type="button"
                 aria-current={!batchMode && active ? "true" : undefined}
+                aria-pressed={!batchMode ? active : undefined}
                 onClick={() => {
                   if (batchMode) {
                     toggleSelected(item.id);
@@ -277,6 +331,25 @@ export function DiscoveryHistoryRail({
           );
         })}
       </div>
+      {!batchMode && reports.length > 0 ? (
+        <div className="history-rail-footer">
+          {hasMore ? (
+            <button
+              type="button"
+              onClick={() => setVisibleCount((count) => Math.min(count + initialLimit, filteredReports.length))}
+              className="btn-ghost min-h-11 flex-1 text-xs"
+            >
+              再显示 {Math.min(initialLimit, filteredReports.length - visibleCount)} 份
+            </button>
+          ) : null}
+          {variant === "rail" && onOpenAll ? (
+            <button type="button" onClick={onOpenAll} className="history-open-all min-h-11">
+              全部历史
+              <ChevronRight size={15} />
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       {deleteIntent ? (
         <div
           className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/45 p-4"

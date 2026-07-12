@@ -195,27 +195,144 @@ export type SectorRotationFacts = {
   market_top: SectorOpportunity[];
 };
 
+export type OutcomeHorizonStats = {
+  horizon_trading_days: number;
+  eligible_count: number;
+  mature_count: number;
+  skipped_count: number;
+  hit_count: number;
+  miss_count: number;
+  hit_rate_percent: number | null;
+  coverage_percent: number | null;
+  metric_contract_version?: string;
+  metrics?: OutcomeMetricSummary;
+  gross_direction?: OutcomeMetricStats;
+  positive_net_return?: OutcomeMetricStats;
+  gross_excess?: OutcomeMetricStats;
+  net_excess?: OutcomeMetricStats;
+};
+
+export type OutcomeMetricName =
+  | "gross_direction"
+  | "positive_net_return"
+  | "gross_excess"
+  | "net_excess";
+
+export type OutcomeMetricResult = {
+  eligible: boolean;
+  mature: boolean;
+  value_percent: number | null;
+  hit: boolean | null;
+  unavailable_reason?: string | null;
+  metadata?: Record<string, unknown>;
+};
+
+export type OutcomeMetricStats = {
+  eligible_count: number;
+  mature_count: number;
+  unavailable_count: number;
+  hit_count: number;
+  miss_count: number;
+  coverage_percent: number | null;
+  hit_rate_percent: number | null;
+};
+
+export type OutcomeMetricSummary = Partial<Record<OutcomeMetricName, OutcomeMetricStats>>;
+export type OutcomeMetricResults = Partial<Record<OutcomeMetricName, OutcomeMetricResult>>;
+
+export type FrozenFeePolicy = {
+  status?: string;
+  fee_source?: "user_assumption" | "unavailable" | string;
+  round_trip_fee_percent?: number | null;
+  fee_calculation?: string | null;
+  is_actual_cost?: boolean;
+  recurring_fund_expenses?: string;
+};
+
+export type OutcomeBenchmark = {
+  tier?: "fund_contract_exact" | "tracked_index_exact" | "category_proxy" | "unavailable" | string;
+  available?: boolean;
+  formal_excess_eligible?: boolean;
+  return_percent?: number | null;
+  reference_return_percent?: number | null;
+  reason?: string | null;
+  mapping_id?: string | null;
+};
+
+export type ReportOutcomeHorizon = {
+  status: "mature" | "immature" | "data_unavailable" | "observation" | "invalid" | string;
+  maturity_status?: string;
+  horizon_trading_days: number;
+  target_nav?: number;
+  target_nav_date?: string | null;
+  available_forward_trading_days?: number;
+  return_percent?: number;
+  direction_hit?: boolean | null;
+  skip_reason?: string;
+  metrics?: OutcomeMetricResults;
+  benchmark?: OutcomeBenchmark;
+  gross_direction_return_percent?: number | null;
+  gross_direction_hit?: boolean | null;
+  positive_net_return_percent?: number | null;
+  positive_net_return_hit?: boolean | null;
+  gross_excess_return_percent?: number | null;
+  gross_excess_hit?: boolean | null;
+  net_excess_return_percent?: number | null;
+  net_excess_hit?: boolean | null;
+};
+
+export type ReportOutcomeItem = {
+  fund_code: string;
+  fund_name: string;
+  action?: string;
+  current_action?: string;
+  evaluation_class?: "bullish" | "bearish" | "observation" | "invalid" | string;
+  baseline_nav?: number | null;
+  baseline_nav_date?: string | null;
+  by_horizon?: Record<string, ReportOutcomeHorizon>;
+  fee_policy?: FrozenFeePolicy;
+  benchmark?: OutcomeBenchmark;
+  metric_contract_version?: string;
+  assessment: string;
+  // Historical adjacent-report fields remain optional for old stored responses.
+  previous_action?: string;
+  holding_return_before?: number | null;
+  holding_return_after?: number | null;
+  holding_return_delta?: number | null;
+  daily_return_before?: number | null;
+  daily_return_after?: number | null;
+  daily_return_delta?: number | null;
+};
+
 export type ReportOutcomes = {
+  schema_version?: string;
+  metric_status?: string;
+  metric_version?: string;
+  evaluation_basis?: string;
   has_baseline: boolean;
+  has_data?: boolean;
   message?: string;
+  horizons?: number[];
+  eligible_count?: number;
+  mature_count?: number;
+  skipped_count?: number;
+  observation_count?: number;
+  coverage_percent?: number | null;
+  by_horizon?: Record<string, OutcomeHorizonStats>;
+  metric_contract_version?: string;
+  metrics?: OutcomeMetricSummary;
+  event_contract?: {
+    persistence?: string;
+    decision_event_schema_version?: string;
+    outcome_observation_schema_version?: string;
+    metric_contract_version?: string;
+  };
   previous_report_id?: string;
   previous_created_at?: string;
   portfolio_return_delta?: number | null;
   portfolio_trend_summary?: string | null;
   portfolio_assets_delta_percent?: number | null;
-  items: Array<{
-    fund_code: string;
-    fund_name: string;
-    previous_action?: string;
-    current_action?: string;
-    holding_return_before?: number | null;
-    holding_return_after?: number | null;
-    holding_return_delta?: number | null;
-    daily_return_before?: number | null;
-    daily_return_after?: number | null;
-    daily_return_delta?: number | null;
-    assessment: string;
-  }>;
+  items: ReportOutcomeItem[];
 };
 
 export type ReversalStats = {
@@ -611,14 +728,84 @@ export type DiscoveryOutcomeItem = {
   fund_name: string;
   action: string;
   period_change_percent?: number | null;
-  direction_aligned?: boolean;
+  action_category?: "buy" | "watch_only" | "conditional_wait" | "unknown" | string;
+  eligible?: boolean;
+  mature?: boolean;
+  skipped?: boolean;
+  status?: "hit" | "miss" | "pending" | "skipped" | string;
+  skip_reason?: string | null;
+  horizon_trading_days?: number;
+  observed_forward_trading_days?: number;
+  baseline_nav_date?: string | null;
+  target_nav_date?: string | null;
+  partial_change_percent?: number | null;
+  direction_aligned?: boolean | null;
   assessment?: string;
   hit_take_profit_within_days?: boolean | null;
+  metric_contract_version?: string;
+  metrics?: OutcomeMetricResults;
+  fee_policy?: FrozenFeePolicy;
+  benchmark?: OutcomeBenchmark;
+  gross_direction_return_percent?: number | null;
+  gross_direction_hit?: boolean | null;
+  positive_net_return_percent?: number | null;
+  positive_net_return_hit?: boolean | null;
+  gross_excess_return_percent?: number | null;
+  gross_excess_hit?: boolean | null;
+  net_excess_return_percent?: number | null;
+  net_excess_hit?: boolean | null;
+};
+
+export type OutcomeLegacyReference = {
+  excluded_from_formal_v2: boolean;
+  reason?: string;
+  report_count?: number;
+  total_count?: number;
+  recommendation_count?: number;
+  eligible_count?: number;
+  observation_count?: number;
+  mature_count?: number;
+  pending_count?: number;
+  skipped_count?: number;
+  coverage_percent?: number | null;
+  hit_count?: number;
+  hit_rate_percent?: number | null;
+  metrics?: OutcomeMetricSummary;
+  by_horizon?: Record<string, OutcomeHorizonStats>;
+  by_style?: Record<string, RecommendationAccuracyBucket>;
+  summary_lines?: string[];
 };
 
 export type DiscoveryOutcomesPayload = {
+  schema_version?: string;
   has_data: boolean;
   days?: number;
+  horizon?: string;
+  supported_horizons?: number[];
+  total_count?: number;
+  eligible_count?: number;
+  mature_count?: number;
+  pending_count?: number;
+  skipped_count?: number;
+  coverage_percent?: number | null;
+  hit_count?: number;
+  hit_rate_percent?: number | null;
+  hit_definition?: string;
+  benchmark?: { available: boolean; reason?: string; [key: string]: unknown };
+  metric_contract_version?: string;
+  metrics?: OutcomeMetricSummary;
+  gross_direction?: OutcomeMetricStats;
+  positive_net_return?: OutcomeMetricStats;
+  gross_excess?: OutcomeMetricStats;
+  net_excess?: OutcomeMetricStats;
+  formal_v2_report_count?: number;
+  legacy_reference?: OutcomeLegacyReference;
+  event_contract?: {
+    persistence?: string;
+    decision_event_schema_version?: string;
+    outcome_observation_schema_version?: string;
+    metric_contract_version?: string;
+  };
   message: string;
   items: DiscoveryOutcomeItem[];
 };
@@ -1569,9 +1756,18 @@ export type NewsPreviewResponse = {
 export type RecommendationAccuracyBucket = {
   decision_style: string;
   paired_count: number;
+  report_count?: number;
+  recommendation_count?: number;
+  eligible_count?: number;
+  observation_count?: number;
+  mature_count?: number;
+  skipped_count?: number;
+  coverage_percent?: number | null;
   hit_count: number;
   miss_count: number;
-  hit_rate_percent: number;
+  hit_rate_percent: number | null;
+  by_horizon?: Record<string, OutcomeHorizonStats>;
+  metrics?: OutcomeMetricSummary;
   reversal?: ReversalStats & { aggressive_miss_rate_percent?: number | null };
   items?: Array<{
     fund_code?: string;
@@ -1583,12 +1779,29 @@ export type RecommendationAccuracyBucket = {
 };
 
 export type RecommendationAccuracy = {
+  metric_status?: "legacy_experimental" | string;
+  is_experimental?: boolean;
+  auto_tuning_eligible?: boolean;
+  warning?: string;
   has_enough_data: boolean;
   message?: string;
   paired_days?: number;
   report_count?: number;
+  selected_report_count?: number;
+  formal_v2_report_count?: number;
+  horizons?: number[];
+  recommendation_count?: number;
+  eligible_count?: number;
+  observation_count?: number;
+  mature_count?: number;
+  skipped_count?: number;
+  coverage_percent?: number | null;
+  by_horizon?: Record<string, OutcomeHorizonStats>;
+  metric_contract_version?: string;
+  metrics?: OutcomeMetricSummary;
   by_style?: Record<string, RecommendationAccuracyBucket>;
   summary_lines?: string[];
+  legacy_reference?: OutcomeLegacyReference;
 };
 
 export async function fetchRecommendationAccuracy(
@@ -1991,6 +2204,10 @@ export type ParsedTransaction = {
   fund_name: string;
   fund_code: string | null;
   amount_yuan: number;
+  /** 用户从原平台确认的实际成交份额；缺失时后端只能按金额/净值估算。 */
+  confirmed_shares?: number | null;
+  /** 原平台实际收取的申购/赎回费；未知必须保持 null，不能当作 0。 */
+  fee_yuan?: number | null;
   trade_time: string; // "YYYY-MM-DD HH:MM:SS"
   confirm_date: string | null;
   in_progress: boolean;
@@ -2008,6 +2225,8 @@ export type FundTransaction = {
   status: "pending" | "confirmed" | "superseded" | "skipped";
   shares_delta: number | null;
   nav_on_confirm: number | null;
+  fee_yuan?: number | null;
+  shares_source?: "user_confirmed" | "derived_amount_nav" | "unknown" | string;
   dedup_key: string;
   created_at: string;
 };
@@ -2082,6 +2301,74 @@ export async function getFundTransactions(
     `${API_BASE}/api/funds/${encodeURIComponent(code)}/transactions`,
     { cache: "no-store" },
   );
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export type LedgerSharesQuality =
+  | "user_confirmed"
+  | "estimated_baseline"
+  | "estimated_legacy"
+  | "derived_transaction"
+  | "unknown"
+  | string;
+
+export type PortfolioLedgerPosition = {
+  fund_code: string;
+  fund_name?: string | null;
+  settled_shares: string | number | null;
+  cost_basis_total_cny?: string | number | null;
+  average_unit_cost?: string | number | null;
+  market_value_cny?: string | number | null;
+  shares_quality: LedgerSharesQuality;
+  cost_quality?: LedgerSharesQuality;
+};
+
+export type PortfolioLedgerBaselineStatus = {
+  schema_version?: string;
+  status: "confirmed" | "estimated" | "missing" | "partial" | string;
+  ledger_version?: string | null;
+  position_as_of?: string | null;
+  captured_at?: string | null;
+  position_complete?: boolean;
+  cash?: {
+    balance_cny: string | number | null;
+    status: "known" | "unknown" | "estimated" | string;
+  };
+  positions: PortfolioLedgerPosition[];
+  message?: string;
+};
+
+export type ConfirmPortfolioLedgerBaselineRequest = {
+  as_of_date: string;
+  cash_balance_yuan?: number | null;
+  positions: Array<{
+    fund_code: string;
+    confirmed_shares: number;
+    cost_basis_total_yuan?: number | null;
+  }>;
+};
+
+export async function fetchPortfolioLedgerBaseline(): Promise<PortfolioLedgerBaselineStatus> {
+  const response = await apiFetch(`${API_BASE}/api/portfolio/ledger-baseline`, {
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export async function confirmPortfolioLedgerBaseline(
+  payload: ConfirmPortfolioLedgerBaselineRequest,
+): Promise<PortfolioLedgerBaselineStatus> {
+  const response = await apiFetch(`${API_BASE}/api/portfolio/ledger-baseline`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
   if (!response.ok) {
     throw new Error(await response.text());
   }

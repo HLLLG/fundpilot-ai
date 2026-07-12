@@ -54,6 +54,8 @@ it("keeps a single-fund transaction draft visible when the parent mutation fails
       direction: "buy",
       fund_code: "008586",
       amount_yuan: 25,
+      confirmed_shares: 12.5,
+      fee_yuan: null,
       confirm_date: null,
       in_progress: false,
     }),

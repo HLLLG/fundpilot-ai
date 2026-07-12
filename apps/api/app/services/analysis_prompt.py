@@ -36,7 +36,7 @@ DEFAULT_ROLE_PROMPT = f"""## 角色定位
 
 - `profile`：风险偏好、浮亏线、期望投入、偏定投/拒绝追高
 - `risk` 评估、持仓金额与集中度
-- `analysis_facts`：`nav_trend`、`sector_momentum`、`sector_intraday`、`sector_fund_flow`、`market_flow`
+- `analysis_facts`：`nav_trend`、`sector_momentum`、`sector_intraday`、`sector_fund_flow`、`stock_connect_flow`
 - `topic_briefs` 与 `prefetched_news`（**优先当日**）
 
 ## 决策时点

@@ -278,6 +278,12 @@ def test_stream_discovery_prefetches_news_while_building_candidates(
 
     monkeypatch.setenv("FUND_AI_DEEPSEEK_API_KEY", _FAKE_DEEPSEEK_KEY)
     refresh_settings()
+    # Isolate the candidate/news concurrency being measured from the cold
+    # portfolio-provenance database migration covered by dedicated tests.
+    monkeypatch.setattr(
+        "app.services.discovery_streaming.resolve_portfolio_preflight",
+        lambda holdings, **_kwargs: MagicMock(holdings=holdings, context={}),
+    )
     monkeypatch.setattr(
         "app.services.discovery_streaming.build_sector_heat_ranking",
         lambda **_kwargs: [{"sector_label": "半导体", "heat_score": 1.0}],

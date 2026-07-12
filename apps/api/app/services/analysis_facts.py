@@ -26,7 +26,10 @@ from app.services.decision_guard_shared import (
     resolve_escalation_floor,
 )
 from app.services.market_breadth_signal import build_market_breadth_signal
-from app.services.market_flow_client import build_market_flow_context
+from app.services.market_flow_client import (
+    NORTHBOUND_NOT_DISCLOSED_REASON,
+    build_stock_connect_flow_context,
+)
 from app.services.news_freshness import build_news_pipeline_context
 from app.services.analysis_prompt import (
     COMPOSITE_EVIDENCE_INSTRUCTION,
@@ -50,7 +53,7 @@ from app.services.sector_quote_label import sector_quote_lookup_label
 
 SIGNAL_BACKTEST_TIMEOUT_SECONDS = 5.0
 SECTOR_INTRADAY_TIMEOUT_SECONDS = 4.0
-MARKET_FLOW_TIMEOUT_SECONDS = 3.0
+STOCK_CONNECT_FLOW_TIMEOUT_SECONDS = 3.0
 GUARD_POLICY_TIMEOUT_SECONDS = 2.0
 SECTOR_OPPORTUNITY_TIMEOUT_SECONDS = 5.0
 MARKET_BREADTH_TIMEOUT_SECONDS = 3.0
@@ -169,11 +172,16 @@ def _signal_backtest_unavailable(reason: str) -> dict[str, Any]:
     }
 
 
-def _market_flow_unavailable(reason: str) -> dict[str, Any]:
+def _stock_connect_flow_unavailable(reason: str) -> dict[str, Any]:
     return {
+        "schema_version": "stock_connect_flow.v1",
         "available": False,
         "reason": reason,
-        "message": "市场资金流未在预算内完成，日报已按基础事实继续。",
+        "northbound_status": "not_disclosed",
+        "northbound_reason": NORTHBOUND_NOT_DISCLOSED_REASON,
+        "southbound_available": False,
+        "southbound_net_yi": None,
+        "message": "互联互通资金摘要未在预算内完成，日报已按基础事实继续。",
     }
 
 
@@ -342,7 +350,7 @@ def build_analysis_facts(
     weight_denominator = resolve_weight_denominator(holdings, profile)
     snapshot_by_code = {item.fund_code: item for item in snapshots}
     sector_labels = sector_labels_from_holdings(holdings)
-    market_flow = None
+    stock_connect_flow = None
     market_breadth = None
     if budget_enhancements:
         executor = ThreadPoolExecutor(max_workers=6, thread_name_prefix="analysis-facts-budget")
@@ -359,9 +367,9 @@ def build_analysis_facts(
                 executor,
                 lambda: _build_sector_intraday_map(holdings),
             )
-            market_flow_future = _submit_enhancement(
+            stock_connect_flow_future = _submit_enhancement(
                 executor,
-                lambda: build_market_flow_context(trade_date=effective_trade_date),
+                lambda: build_stock_connect_flow_context(trade_date=effective_trade_date),
             )
             sector_opportunity_future = _submit_enhancement(
                 executor,
@@ -389,10 +397,10 @@ def build_analysis_facts(
                 timeout_seconds=SECTOR_INTRADAY_TIMEOUT_SECONDS,
                 fallback={},
             )
-            market_flow = _enhancement_result(
-                market_flow_future,
-                timeout_seconds=MARKET_FLOW_TIMEOUT_SECONDS,
-                fallback=_market_flow_unavailable("timeout"),
+            stock_connect_flow = _enhancement_result(
+                stock_connect_flow_future,
+                timeout_seconds=STOCK_CONNECT_FLOW_TIMEOUT_SECONDS,
+                fallback=_stock_connect_flow_unavailable("timeout"),
             )
             sector_opportunity = _enhancement_result(
                 sector_opportunity_future,
@@ -556,9 +564,11 @@ def build_analysis_facts(
             "suggested_action": risk.suggested_action,
             "max_drawdown_limit_percent": profile.max_drawdown_percent,
             "concentration_limit_percent": profile.concentration_limit_percent,
+            # Freeze the user's transaction-cost assumption for point-in-time
+            # outcome evaluation. It is never presented as an actual platform fee.
+            "round_trip_fee_percent": profile.round_trip_fee_percent,
             **(
                 {
-                    "round_trip_fee_percent": profile.round_trip_fee_percent,
                     "min_net_profit_percent": profile.min_net_profit_percent,
                     "take_profit_threshold_percent": take_profit_threshold_percent(profile),
                     "hold_days_target": profile.hold_days_target,
@@ -587,10 +597,12 @@ def build_analysis_facts(
     if overview.get("available"):
         facts["evidence_overview"] = overview
     if budget_enhancements:
-        facts["market_flow"] = market_flow or _market_flow_unavailable("timeout")
+        facts["stock_connect_flow"] = (
+            stock_connect_flow or _stock_connect_flow_unavailable("timeout")
+        )
         facts["market_breadth"] = market_breadth or _market_breadth_unavailable("timeout")
     else:
-        facts["market_flow"] = build_market_flow_context(
+        facts["stock_connect_flow"] = build_stock_connect_flow_context(
             trade_date=effective_trade_date,
         )
         facts["market_breadth"] = build_market_breadth_signal(effective_trade_date)

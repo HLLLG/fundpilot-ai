@@ -37,6 +37,7 @@ from app.services.risk import evaluate_portfolio_risk
 from app.services.streaming_heartbeat import Heartbeat, iter_with_heartbeat
 from app.services.streaming_json_parser import StreamingReportParser
 from app.services.report_judge import judge_parsed_report
+from app.services.decision_data_evidence import resolve_portfolio_preflight
 from app.services.stream_session_store import (
     create_stream_session,
     delete_stream_session,
@@ -53,15 +54,24 @@ LLM_HEARTBEAT_SECONDS = 12.0
 
 def stream_analysis(request: AnalysisRequest, *, user_id: int) -> Iterator[dict[str, Any]]:
     """把 run_analysis 拆成可流式产出 SSE 事件的版本（fast / deep）。"""
-    if not request.holdings:
-        yield {"type": "error", "message": "至少需要一条基金持仓"}
-        return
-
     ctx_token = set_request_user_id(user_id)
     settings = get_settings()
     session = create_stream_session()
     started_at = time.monotonic()
     try:
+        preflight = resolve_portfolio_preflight(
+            request.holdings,
+            allow_stale=request.allow_stale_portfolio_snapshot,
+        )
+        request = request.model_copy(
+            update={
+                "holdings": preflight.holdings,
+                "portfolio_snapshot_context": preflight.context,
+            }
+        )
+        if not request.holdings:
+            yield {"type": "error", "message": "至少需要一条基金持仓"}
+            return
         yield {"type": "session", "session_id": session.session_id}
         resolved = FundProfileService().resolve_holdings(request.holdings)
         enriched = request.model_copy(update={"holdings": resolved})
@@ -137,7 +147,7 @@ def stream_analysis(request: AnalysisRequest, *, user_id: int) -> Iterator[dict[
                 analysis_bundle=bundle,
             )
             yield _emit_stage(session.session_id, "saving", started_at=started_at)
-            save_report(report)
+            report = save_report(report)
             yield _done(report)
             return
 
@@ -226,7 +236,7 @@ def stream_analysis(request: AnalysisRequest, *, user_id: int) -> Iterator[dict[
             runtime=runtime,
         )
         yield _emit_stage(session.session_id, "saving", started_at=started_at)
-        save_report(report)
+        report = save_report(report)
         yield _done(report)
     except Exception as exc:  # noqa: BLE001
         yield {"type": "error", "message": f"{type(exc).__name__}: {exc}"}

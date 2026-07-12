@@ -6,7 +6,7 @@ import threading
 from datetime import datetime, timezone
 
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 # 迁移在应用/后台线程首次建立连接时触发（例如板块快照刷新会 daemon 线程预取资金流历史，
 # 与主线程几乎同时首次打开 sqlite 连接）。同进程内多个线程各自用独立 connection 对同一
@@ -420,6 +420,207 @@ def _migrate_factor_ic_snapshots(connection: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_decision_accuracy_v2(connection: sqlite3.Connection) -> None:
+    """Create the durable decision/outcome and append-only ledger substrate.
+
+    This function is intentionally safe to run even when ``schema_meta`` already
+    advertises the current version.  A previous bootstrap can be interrupted
+    between DDL statements, and copied databases occasionally carry a version
+    marker without every optional table.  ``IF NOT EXISTS`` makes that case
+    self-healing without rewriting any existing decision evidence.
+
+    No table has a foreign key to ``reports`` or discovery reports.  Those legacy
+    stores use replace-style writes, while decision evidence must remain stable.
+    """
+    statements = [
+        """
+        CREATE TABLE IF NOT EXISTS decision_portfolio_snapshots (
+            userId INTEGER NOT NULL,
+            snapshot_id TEXT NOT NULL,
+            account_id TEXT NOT NULL DEFAULT 'default',
+            snapshot_at TEXT NOT NULL,
+            snapshot_date TEXT NOT NULL,
+            source_type TEXT NOT NULL,
+            truth_status TEXT NOT NULL,
+            ledger_version TEXT,
+            cash_yuan REAL,
+            total_market_value_yuan REAL,
+            content_hash TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (userId, snapshot_id)
+        )
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_decision_snapshots_user_date
+        ON decision_portfolio_snapshots (userId, snapshot_date DESC, snapshot_at DESC)
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS decision_events (
+            userId INTEGER NOT NULL,
+            event_id TEXT NOT NULL,
+            schema_version TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            source_type TEXT NOT NULL,
+            source_report_id TEXT,
+            decision_at TEXT NOT NULL,
+            decision_date TEXT NOT NULL,
+            fund_code TEXT,
+            fund_name TEXT,
+            proposed_action TEXT,
+            final_action TEXT NOT NULL,
+            action_category TEXT NOT NULL,
+            eligible INTEGER NOT NULL DEFAULT 0,
+            amount_yuan REAL,
+            portfolio_snapshot_id TEXT,
+            benchmark_mapping_id TEXT,
+            fee_model TEXT,
+            is_backfilled INTEGER NOT NULL DEFAULT 0,
+            metric_eligible INTEGER NOT NULL DEFAULT 1,
+            content_hash TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (userId, event_id)
+        )
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_decision_events_user_report
+        ON decision_events (userId, source_type, source_report_id)
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_decision_events_user_date
+        ON decision_events (userId, decision_date DESC, fund_code)
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS outcome_observations (
+            userId INTEGER NOT NULL,
+            observation_id TEXT NOT NULL,
+            decision_event_id TEXT NOT NULL,
+            horizon_trading_days INTEGER NOT NULL,
+            target_date TEXT,
+            status TEXT NOT NULL,
+            is_terminal INTEGER NOT NULL DEFAULT 0,
+            revision_no INTEGER NOT NULL DEFAULT 1,
+            observed_at TEXT NOT NULL,
+            finalized_at TEXT,
+            content_hash TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (userId, observation_id),
+            UNIQUE (userId, decision_event_id, horizon_trading_days)
+        )
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_outcome_observations_event
+        ON outcome_observations (userId, decision_event_id, horizon_trading_days)
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_outcome_observations_pending
+        ON outcome_observations (userId, status, target_date)
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS outcome_observation_revisions (
+            userId INTEGER NOT NULL,
+            observation_id TEXT NOT NULL,
+            revision_no INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            is_terminal INTEGER NOT NULL,
+            observed_at TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (userId, observation_id, revision_no)
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS fund_benchmark_mappings (
+            userId INTEGER NOT NULL,
+            mapping_id TEXT NOT NULL,
+            fund_code TEXT NOT NULL,
+            benchmark_kind TEXT NOT NULL,
+            completeness TEXT NOT NULL,
+            benchmark_name TEXT NOT NULL,
+            benchmark_code TEXT,
+            valid_from TEXT NOT NULL,
+            valid_to TEXT,
+            source TEXT NOT NULL,
+            source_ref TEXT,
+            content_hash TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (userId, mapping_id)
+        )
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_fund_benchmark_effective
+        ON fund_benchmark_mappings
+            (userId, fund_code, valid_from DESC, valid_to, benchmark_kind)
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS portfolio_ledger_events (
+            event_revision_id TEXT PRIMARY KEY,
+            logical_event_id TEXT NOT NULL,
+            userId INTEGER NOT NULL,
+            account_id TEXT NOT NULL,
+            revision_no INTEGER NOT NULL,
+            event_type TEXT NOT NULL,
+            fund_code TEXT,
+            effective_at TEXT NOT NULL,
+            recorded_at TEXT NOT NULL,
+            status TEXT NOT NULL,
+            source TEXT NOT NULL,
+            source_ref TEXT,
+            event_hash TEXT NOT NULL,
+            previous_hash TEXT,
+            payload_hash TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE (userId, account_id, logical_event_id, revision_no)
+        )
+        """,
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_portfolio_ledger_source_ref
+        ON portfolio_ledger_events (userId, account_id, source, source_ref)
+        WHERE source_ref IS NOT NULL
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_portfolio_ledger_effective
+        ON portfolio_ledger_events
+            (userId, account_id, effective_at, recorded_at, event_revision_id)
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS portfolio_ledger_heads (
+            userId INTEGER NOT NULL,
+            account_id TEXT NOT NULL,
+            revision INTEGER NOT NULL,
+            chain_hash TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (userId, account_id)
+        )
+        """,
+    ]
+    for statement in statements:
+        connection.execute(statement)
+
+    # ``fund_transactions`` predates schema versioning for confirmed execution
+    # truth.  Additive repair preserves legacy rows (which remain explicitly
+    # derived/unknown) and also heals databases whose version marker was copied.
+    if _table_exists(connection, "fund_transactions"):
+        transaction_columns = {
+            "confirmed_shares": "REAL",
+            "fee_yuan": "REAL",
+            "shares_source": "TEXT",
+            "in_progress": "INTEGER NOT NULL DEFAULT 0",
+            "confirmed_at": "TEXT",
+        }
+        for column, definition in transaction_columns.items():
+            if not _column_exists(connection, "fund_transactions", column):
+                connection.execute(
+                    f"ALTER TABLE fund_transactions ADD COLUMN {column} {definition}"
+                )
+
+
 def run_migrations(connection: sqlite3.Connection) -> None:
     with _MIGRATION_LOCK:
         _run_migrations_locked(connection)
@@ -430,6 +631,7 @@ def _run_migrations_locked(connection: sqlite3.Connection) -> None:
     if version >= SCHEMA_VERSION:
         _migrate_fund_primary_sectors_global(connection)
         _migrate_factor_ic_snapshots(connection)
+        _migrate_decision_accuracy_v2(connection)
         return
 
     connection.execute(
@@ -487,6 +689,7 @@ def _run_migrations_locked(connection: sqlite3.Connection) -> None:
     _migrate_swing_alert_fired(connection)
     _migrate_fund_primary_sectors_global(connection)
     _migrate_factor_ic_snapshots(connection)
+    _migrate_decision_accuracy_v2(connection)
 
     _ensure_migration_user(connection)
     _set_schema_version(connection, SCHEMA_VERSION)

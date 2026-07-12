@@ -6,17 +6,14 @@
 覆盖三个必须同时被 shadow 挡住的面：
 1. 日报规则层 recommendation_guard.py 的 action/仓位%不真正改变，只写 validation_notes。
 2. 荐基规则层 discovery_guard.py 的候选不真正被剔除/不真正提额，只写 validation_notes。
-3. deep 模式 LLM 复核角色的 task prompt——硬约束措辞须降级为"仅供参考"，避免模型自己
-   听话地把 action/剔除执行了，让 shadow 模式名不副实（这是本次实现前与用户确认过的
-   易漏点：设计文档原文只提到"M2.1 触发的升级"，未明确提及 M3.2 的 LLM 复核角色）。
+3. deep 模式 LLM 复核角色在 shadow 下须于请求前直接跳过，不能让模型自行改写
+   action/候选/金额，也不能产生一笔不会应用的额外调用。
 
 `conftest.py::_auth_env` 默认把测试环境切到 enforced（保持 M2~M4 历史测试的原始意图
 不受影响），本文件内的用例显式 monkeypatch 回 shadow 来验证"只提示不生效"这一行为。
 """
 
 from __future__ import annotations
-
-import json
 
 import pytest
 
@@ -170,44 +167,18 @@ def test_enforced_mode_still_changes_action(monkeypatch):
     refresh_settings()
 
 
-def test_shadow_mode_report_judge_task_prompt_is_non_binding(shadow_mode, monkeypatch):
-    """M3.2 的风控复核角色在 shadow 模式下，task prompt 措辞不得包含"硬约束"这类
-    强制性表述，避免模型自行遵照 escalation_floors 把 action 改得比 shadow 模式
-    本该允许的更保守（这是用户确认的关键点：只挡规则层不够，LLM 措辞也要挡）。"""
+def test_shadow_mode_report_judge_skips_llm_and_freezes_decisions(shadow_mode, monkeypatch):
+    """shadow 下 deep 风控复核必须在请求前短路，不能依赖模型遵守非约束 Prompt。"""
     from app.services import report_judge
 
     monkeypatch.setenv("FUND_AI_DEEPSEEK_API_KEY", "sk-" + "c" * 32)
     refresh_settings()
-
-    captured: dict = {}
-
-    class _FakeResponse:
-        def raise_for_status(self):
-            return None
-
-        def json(self):
-            return {
-                "choices": [
-                    {
-                        "message": {
-                            "content": json.dumps(
-                                {
-                                    "title": "reviewed",
-                                    "fund_recommendations": [
-                                        {"fund_code": "519674", "fund_name": "银河创新成长", "action": "观察"}
-                                    ],
-                                }
-                            )
-                        }
-                    }
-                ]
-            }
-
-    def fake_post(url, *, headers, json, timeout):  # noqa: A002
-        captured["user"] = json["messages"][1]["content"]
-        return _FakeResponse()
-
-    monkeypatch.setattr("httpx.post", fake_post)
+    monkeypatch.setattr(
+        "httpx.post",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("shadow 模式不应调用二次 LLM judge")
+        ),
+    )
 
     facts = _strong_divergence_facts()
     facts["holdings"][0]["escalation"] = {
@@ -221,7 +192,13 @@ def test_shadow_mode_report_judge_task_prompt_is_non_binding(shadow_mode, monkey
         "title": "test",
         "summary": "ok",
         "fund_recommendations": [
-            {"fund_code": "519674", "fund_name": "银河创新成长", "action": "观察"}
+            {
+                "fund_code": "519674",
+                "fund_name": "银河创新成长",
+                "action": "观察",
+                "amount_yuan": 1000,
+                "suggested_position_change_percent": None,
+            }
         ],
         "caveats": [],
     }
@@ -232,15 +209,17 @@ def test_shadow_mode_report_judge_task_prompt_is_non_binding(shadow_mode, monkey
 
     snapshots = [FundSnapshot(fund_code="519674", fund_name="银河创新成长", source="test")]
 
-    report_judge.judge_parsed_report(parsed, _request(), _risk(), snapshots, runtime, facts=facts)
+    result, meta = report_judge.judge_parsed_report(
+        parsed, _request(), _risk(), snapshots, runtime, facts=facts
+    )
 
-    task_text = json.loads(captured["user"])["task"]
-    # 断言"不是硬约束"这一否定表述存在，而不是断言"硬约束"整个子串不出现——shadow
-    # 版 prompt 会明确说"不是硬约束"来解除强制性，这本身就包含该子串；真正要验证
-    # 的是没有出现"必须对齐"这类强制语气的表述（enforced 版才有）。
-    assert "不是硬约束" in task_text
-    assert "灰度观察期" in task_text
-    assert "不要求最终 action 必须对齐" in task_text
+    final_rec = result["fund_recommendations"][0]
+    assert final_rec["action"] == "观察"
+    assert final_rec["amount_yuan"] == 1000
+    assert final_rec["suggested_position_change_percent"] is None
+    assert meta["llm_judge_attempted"] is False
+    assert meta["llm_judge_applied"] is False
+    assert meta["llm_judge_skipped_reason"] == "decision_escalation_shadow"
 
 
 # --- M6：荐基侧 shadow/enforced（discovery_guard.py） -----------------------------------
@@ -381,43 +360,18 @@ def test_discovery_enforced_mode_still_excludes_candidate(monkeypatch) -> None:
     refresh_settings()
 
 
-def test_discovery_shadow_mode_llm_judge_task_prompt_is_non_binding(shadow_mode, monkeypatch) -> None:
-    """discovery_judge.py 的 shadow 版 task prompt 同样不得包含"硬约束"措辞。"""
+def test_discovery_shadow_mode_skips_llm_and_freezes_decisions(shadow_mode, monkeypatch) -> None:
+    """荐基 shadow 在请求前短路，候选集合、动作和金额自然保持草案值。"""
     from app.services.discovery_judge import judge_parsed_discovery_report
 
     monkeypatch.setenv("FUND_AI_DEEPSEEK_API_KEY", "sk-" + "c" * 32)
     refresh_settings()
-
-    captured: dict = {}
-
-    class _FakeResponse:
-        def raise_for_status(self):
-            return None
-
-        def json(self):
-            return {
-                "choices": [
-                    {
-                        "message": {
-                            "content": json.dumps(
-                                {
-                                    "title": "reviewed",
-                                    "summary": "ok",
-                                    "market_view": "ok",
-                                    "recommendations": [_discovery_rec()],
-                                    "caveats": [],
-                                }
-                            )
-                        }
-                    }
-                ]
-            }
-
-    def fake_post(url, *, headers, json, timeout):  # noqa: A002
-        captured["user"] = json["messages"][1]["content"]
-        return _FakeResponse()
-
-    monkeypatch.setattr("httpx.post", fake_post)
+    monkeypatch.setattr(
+        "httpx.post",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("shadow 模式不应调用二次 LLM judge")
+        ),
+    )
 
     parsed = {
         "title": "机会扫描",
@@ -426,19 +380,19 @@ def test_discovery_shadow_mode_llm_judge_task_prompt_is_non_binding(shadow_mode,
         "recommendations": [_discovery_rec()],
         "caveats": [],
     }
-    judge_parsed_discovery_report(
+    result, meta = judge_parsed_discovery_report(
         parsed,
         candidate_pool=[_discovery_pool_item(fund_quality_score=40.0)],
         discovery_facts={"sector_opportunities": [_discovery_opportunity(opportunity_available=False)]},
         analysis_mode="deep",
     )
-    task_text = json.loads(captured["user"])["task"]
-    # 断言"不是硬约束"这一否定表述存在，而不是断言"硬约束"整个子串不出现——shadow
-    # 版 prompt 会明确说"仅作参考信息，不是硬约束"来解除强制性，这本身就包含
-    # 该子串；真正要验证的是没有出现"必须执行"这类强制语气的表述。
-    assert "不是硬约束" in task_text
-    assert "必须从" not in task_text
-    assert "灰度观察期" in task_text
+    assert result is parsed
+    assert len(result["recommendations"]) == 1
+    assert result["recommendations"][0]["action"] == "建议关注"
+    assert result["recommendations"][0]["suggested_amount_yuan"] is None
+    assert meta["llm_judge_attempted"] is False
+    assert meta["llm_judge_applied"] is False
+    assert meta["llm_judge_skipped_reason"] == "decision_escalation_shadow"
 
 
 # --- M6：allowed_actions 词表在 shadow 模式下不向 LLM 开放新增两档 ------------------------

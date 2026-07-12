@@ -2,16 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronDown, History, LogOut, Settings } from "lucide-react";
+import { ChevronDown, LogOut, Settings } from "lucide-react";
 import { useAuth } from "@/components/AuthProvider";
 
-export type UserMenuTarget = "history";
-
-type UserMenuProps = {
-  onNavigate: (target: UserMenuTarget) => void;
-};
-
-export function UserMenu({ onNavigate }: UserMenuProps) {
+export function UserMenu() {
   const { user, logout } = useAuth();
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -123,18 +117,6 @@ export function UserMenu({ onNavigate }: UserMenuProps) {
           >
             <Settings size={16} className="text-blue-600" />
             账号设置
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            className="flex min-h-11 w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-bold text-slate-700 transition hover:bg-slate-50"
-            onClick={() => {
-              setOpen(false);
-              onNavigate("history");
-            }}
-          >
-            <History size={16} className="text-blue-600" />
-            历史日报
           </button>
           <button
             type="button"

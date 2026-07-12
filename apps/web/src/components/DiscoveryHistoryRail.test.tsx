@@ -91,7 +91,7 @@ describe("DiscoveryHistoryRail", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "批量删除" }));
+    fireEvent.click(screen.getByRole("button", { name: "管理" }));
     fireEvent.click(screen.getByRole("checkbox", { name: "选择推荐报告 推荐甲" }));
     fireEvent.click(screen.getByRole("button", { name: "删除(1)" }));
 

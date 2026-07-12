@@ -207,6 +207,13 @@ def test_stream_analysis_prefetches_fund_data_and_news_in_parallel(
 ):
     monkeypatch.setenv("FUND_AI_DEEPSEEK_API_KEY", _FAKE_DEEPSEEK_KEY)
     refresh_settings()
+    # This case measures only the two remote-prefetch branches. Portfolio
+    # provenance preflight has its own contract tests and a cold test database
+    # migration would otherwise pollute the latency assertion.
+    monkeypatch.setattr(
+        "app.services.analyze_streaming.resolve_portfolio_preflight",
+        lambda holdings, **_kwargs: MagicMock(holdings=holdings, context={}),
+    )
 
     monkeypatch.setattr(
         "app.services.analyze_streaming.FundProfileService",

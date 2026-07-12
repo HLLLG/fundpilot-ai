@@ -147,7 +147,7 @@ export function AddHoldingModal({
       <div
         ref={dialogRef}
         tabIndex={-1}
-        className="flex max-h-[94vh] w-full max-w-md flex-col overflow-hidden rounded-t-[28px] bg-[#f5f7fa] shadow-2xl sm:rounded-[28px]"
+        className="workflow-dialog flex max-h-[94vh] w-full max-w-lg flex-col overflow-hidden rounded-t-[18px] bg-[var(--panel)] shadow-[var(--shadow-lg)] sm:rounded-[18px]"
         role="dialog"
         aria-modal="true"
         aria-labelledby="add-holding-modal-title"
@@ -174,6 +174,12 @@ export function AddHoldingModal({
             {mode === "manual" ? "新增到持有" : channelCopy.title}
           </h2>
         </header>
+
+        <ol className="workflow-rail" aria-label="持仓导入进度">
+          <li aria-current="step"><span>01</span><strong>截图进入</strong></li>
+          <li><span>02</span><strong>校对数据</strong></li>
+          <li><span>03</span><strong>确认写入</strong></li>
+        </ol>
 
         {mode === "chooser" ? (
           <>
@@ -224,7 +230,7 @@ export function AddHoldingModal({
                 type="button"
                 disabled={busy}
                 onClick={() => fileInputRef.current?.click()}
-                className="flex w-full items-center justify-center gap-1 rounded-full bg-gradient-to-r from-[var(--brand)] to-[var(--brand-strong)] px-4 py-4 text-[16px] font-bold text-white shadow-[0_10px_24px_rgba(37,99,235,0.32)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60"
+                className="btn-primary w-full py-4 text-[16px]"
               >
                 {isUploading ? "识别中..." : "去相册选择"}
                 {!isUploading ? <ChevronRight size={18} strokeWidth={2.5} /> : null}
@@ -236,7 +242,7 @@ export function AddHoldingModal({
                   setFormError(null);
                   setMode("manual");
                 }}
-                className="flex w-full items-center justify-center gap-2 rounded-full border border-[rgba(37,99,235,0.22)] bg-[var(--brand-soft)] px-4 py-4 text-[16px] font-bold text-[var(--brand)] transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60"
+                className="btn-ghost w-full py-3 text-[15px]"
               >
                 <PenLine size={18} strokeWidth={2.25} />
                 手动输入
@@ -282,9 +288,9 @@ export function AddHoldingModal({
                 type="button"
                 disabled={!canSubmit}
                 onClick={() => void handleManualSubmit()}
-                className={`w-full rounded-full px-4 py-4 text-[16px] font-bold transition ${
+                className={`w-full rounded-[var(--radius-control)] px-4 py-4 text-[16px] font-bold transition ${
                   canSubmit
-                    ? "bg-gradient-to-r from-[var(--brand)] to-[var(--brand-strong)] text-white shadow-[0_10px_24px_rgba(37,99,235,0.32)] hover:brightness-105"
+                    ? "bg-[var(--brand-deep)] text-white shadow-[var(--shadow-sm)] hover:bg-[var(--brand-strong)]"
                     : "bg-[#d9e8ff] text-[#8eb3ef]"
                 } disabled:cursor-not-allowed`}
               >

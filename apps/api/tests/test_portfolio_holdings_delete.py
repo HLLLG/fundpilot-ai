@@ -1,7 +1,46 @@
-from app.models import Holding, PortfolioSummary
+from datetime import date, datetime, timedelta, timezone
+
+from app.models import FundTransaction, Holding, PortfolioSummary
 from app.services.ocr_pipeline import apply_confirmed_holdings
 from app.services.portfolio_holdings_service import remove_holding_from_portfolio
 from app.services.portfolio_snapshot import save_daily_snapshot
+
+
+def test_delete_endpoint_maps_position_store_outage_to_503(monkeypatch):
+    from fastapi import HTTPException
+
+    from app import main
+    from app.services.portfolio_ledger_service import PositionTruthStoreUnavailable
+
+    def unavailable(*_args, **_kwargs):
+        raise PositionTruthStoreUnavailable("primary unavailable")
+
+    monkeypatch.setattr(main, "remove_holding_from_portfolio", unavailable)
+    try:
+        main.delete_portfolio_holding("001234")
+    except HTTPException as exc:
+        assert exc.status_code == 503
+    else:  # pragma: no cover
+        raise AssertionError("position truth outages must surface as 503")
+
+
+def test_delete_endpoint_maps_unsettled_trade_conflict_to_409(monkeypatch):
+    from fastapi import HTTPException
+
+    from app import main
+    from app.services.portfolio_ledger_service import PositionCloseConflict
+
+    def conflict(*_args, **_kwargs):
+        raise PositionCloseConflict(["future-tx"])
+
+    monkeypatch.setattr(main, "remove_holding_from_portfolio", conflict)
+    try:
+        main.delete_portfolio_holding("001234")
+    except HTTPException as exc:
+        assert exc.status_code == 409
+        assert exc.detail["transaction_ids"] == ["future-tx"]
+    else:  # pragma: no cover
+        raise AssertionError("unsettled trades must block holding deletion")
 
 
 def test_apply_confirmed_holdings_skips_heavy_sector_pipeline(monkeypatch):
@@ -104,6 +143,84 @@ def test_remove_holding_from_portfolio_deletes_profile(tmp_path, monkeypatch):
 
     assert get_fund_profile_by_code("001234") is None
     assert get_fund_profile_by_code("005678") is not None
+
+    # Removing the compatibility snapshot/profile must also close immutable
+    # ledger truth, otherwise the next decision preflight resurrects a ghost.
+    from app.services.decision_repository import list_portfolio_ledger_events
+    from app.services.portfolio_ledger import fold_ledger_events
+
+    ledger = list_portfolio_ledger_events(user_id=1, fund_code="001234")
+    assert ledger
+    state = fold_ledger_events(
+        ledger,
+        position_as_of="2099-01-01",
+        known_at="2099-01-01T23:59:59+08:00",
+    )
+    assert not any(
+        row["fund_code"] == "001234" and float(row["settled_shares"]) > 0
+        for row in state["positions"]
+    )
+
+
+def test_remove_holding_is_blocked_while_future_transaction_is_known(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("FUND_AI_DB_PATH", str(tmp_path / "app.db"))
+    from app.config import refresh_settings
+    from app.database import (
+        get_fund_profile_by_code,
+        insert_fund_transaction,
+    )
+    from app.models import FundProfile
+    from app.services.fund_profile import FundProfileService
+    from app.services.portfolio_ledger_service import PositionCloseConflict
+
+    refresh_settings()
+    FundProfileService().save_profile(
+        FundProfile(
+            fund_code="001234",
+            fund_name="测试基金混合A",
+            holding_amount=1000,
+        )
+    )
+    save_daily_snapshot(
+        [
+            Holding(
+                fund_code="001234",
+                fund_name="测试基金混合A",
+                holding_amount=1000,
+            )
+        ],
+        PortfolioSummary(total_assets=1000, holding_count=1),
+    )
+    future = (date.today() + timedelta(days=3)).isoformat()
+    assert insert_fund_transaction(
+        FundTransaction(
+            id="future-tx",
+            fund_code="001234",
+            fund_name="测试基金混合A",
+            direction="buy",
+            amount_yuan=100,
+            trade_time=f"{date.today().isoformat()} 14:00:00",
+            confirm_date=future,
+            status="pending",
+            confirmed_shares=10,
+            shares_source="user_confirmed",
+            in_progress=True,
+            dedup_key="future-delete-conflict",
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+    )
+
+    try:
+        remove_holding_from_portfolio("001234")
+    except PositionCloseConflict as exc:
+        assert exc.transaction_ids == ["future-tx"]
+    else:  # pragma: no cover
+        raise AssertionError("known future trades must be handled before deletion")
+
+    assert get_fund_profile_by_code("001234") is not None
 
 
 def test_delete_then_load_persisted_holdings_does_not_resurrect_fund(tmp_path, monkeypatch):

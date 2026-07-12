@@ -58,6 +58,12 @@ def judge_parsed_report(
     }
     if runtime.mode != "deep" or not get_settings().deepseek_configured:
         return judged, meta
+    # M6 安全边界：shadow 的含义是“只观察确定性 escalation 提示，不让二次
+    # LLM 复核改变最终决策”。在发起请求前直接短路，既不依赖 Prompt 自觉，也
+    # 避免产生一笔注定不会应用的模型调用与延迟。
+    if get_settings().decision_escalation_mode != "enforced":
+        meta["llm_judge_skipped_reason"] = "decision_escalation_shadow"
+        return judged, meta
     meta["llm_judge_attempted"] = True
     escalation_floors = _escalation_floor_by_fund_code(judged, facts)
     reviewed, timed_out = _llm_judge_with_budget(judged, facts, escalation_floors)

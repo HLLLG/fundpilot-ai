@@ -111,6 +111,30 @@ def test_missing_sector_opportunity_is_a_noop() -> None:
     assert trimmed["sector_rotation"] == {"available": False, "market_top": []}
 
 
+def test_trim_keeps_compact_position_truth_without_exposing_full_snapshot() -> None:
+    compact = {
+        "schema_version": "portfolio_position_truth.compact.v1",
+        "position_complete": False,
+        "ledger_truncated": True,
+        "cash": {"known": False, "balance_yuan": None},
+        "positions": [],
+    }
+    facts = _base_facts(
+        portfolio_position_truth=compact,
+        portfolio_snapshot={
+            "snapshot_id": "snapshot-1",
+            "authoritative": True,
+            "position_snapshot": {"raw_events": ["must-not-leak"]},
+        },
+    )
+
+    trimmed = trim_analysis_facts_for_llm(facts, analysis_mode="deep", phase=3)
+
+    assert trimmed["portfolio_position_truth"] == compact
+    assert trimmed["portfolio_snapshot"]["snapshot_id"] == "snapshot-1"
+    assert "position_snapshot" not in trimmed["portfolio_snapshot"]
+
+
 def _facts_with_sector_fund_flow(**flow_overrides) -> dict:
     flow = {
         "available": True,

@@ -67,6 +67,7 @@ from app.models import (
     AnalysisRequest,
     ApplyHoldingsRequest,
     ApplyTransactionsRequest,
+    ConfirmPortfolioLedgerBaselineRequest,
     DiscoveryChatRequest,
     DiscoveryPromptSaveRequest,
     DiscoveryRequest,
@@ -83,6 +84,7 @@ from app.models import (
 )
 from app.services.analyze_pipeline import run_analysis
 from app.services.analyze_streaming import stream_analysis
+from app.services.decision_data_evidence import resolve_portfolio_preflight
 from app.services.async_sse import sse_from_sync_iterator
 from app.services.discovery_streaming import stream_discovery
 from app.services.stream_session_store import append_stream_followup
@@ -275,8 +277,21 @@ def factor_ic_status() -> dict:
 
 @app.get("/api/reports/recommendation-accuracy")
 def recommendation_accuracy(days: int = 30) -> dict:
+    from app.services.decision_outcome_persistence import (
+        OutcomeEvidenceConflict,
+        OutcomeEvidencePersistenceError,
+    )
+
     limit = max(2, min(days, 50))
-    return build_recommendation_accuracy(limit_reports=limit)
+    try:
+        return build_recommendation_accuracy(
+            limit_reports=limit,
+            persist_outcomes=True,
+        )
+    except OutcomeEvidenceConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except OutcomeEvidencePersistenceError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @app.get("/api/diagnostics/sector-signal-backtest")
@@ -412,9 +427,55 @@ def _build_transactions_ocr_response(
 
 @app.post("/api/transactions/apply")
 def apply_transactions(payload: ApplyTransactionsRequest) -> dict:
-    from app.services.transaction_ledger import apply_parsed_transactions
+    from app.services.portfolio_ledger_service import PositionTruthStoreUnavailable
+    from app.services.transaction_ledger import (
+        TransactionTruthConflict,
+        apply_parsed_transactions,
+    )
 
-    return apply_parsed_transactions(payload.transactions)
+    try:
+        return apply_parsed_transactions(payload.transactions)
+    except TransactionTruthConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"message": str(exc), "conflicts": exc.conflicts},
+        ) from exc
+    except PositionTruthStoreUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.get("/api/portfolio/ledger-baseline")
+def portfolio_ledger_baseline_status() -> dict:
+    from app.services.portfolio_ledger_service import (
+        get_portfolio_ledger_baseline_status,
+    )
+
+    return get_portfolio_ledger_baseline_status()
+
+
+@app.put("/api/portfolio/ledger-baseline")
+def confirm_ledger_baseline(
+    payload: ConfirmPortfolioLedgerBaselineRequest,
+) -> dict:
+    from app.services.portfolio_ledger_service import (
+        PositionTruthStoreUnavailable,
+        confirm_portfolio_ledger_baseline,
+    )
+
+    try:
+        result = confirm_portfolio_ledger_baseline(payload)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except PositionTruthStoreUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    # Portfolio read cache is intentionally not reused after an authoritative
+    # baseline change; the Web client also hydrates immediately after success.
+    from app.services.portfolio_holdings_cache import bump_holdings_cache_generation
+
+    bump_holdings_cache_generation()
+    return result
 
 
 @app.get("/api/funds/{fund_code}/transactions")
@@ -441,12 +502,24 @@ def apply_portfolio_holdings(payload: ApplyHoldingsRequest) -> dict:
 
 @app.delete("/api/portfolio/holdings/{fund_code}")
 def delete_portfolio_holding(fund_code: str, fund_name: str | None = None) -> dict:
+    from app.services.portfolio_ledger_service import (
+        PositionCloseConflict,
+        PositionTruthStoreUnavailable,
+    )
+
     try:
         payload = remove_holding_from_portfolio(fund_code, fund_name=fund_name)
+    except PositionCloseConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"message": str(exc), "transaction_ids": exc.transaction_ids},
+        ) from exc
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except PositionTruthStoreUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     save_cached_holdings_response(payload)
     return payload
 
@@ -658,8 +731,18 @@ def analyze(request: AnalysisRequest) -> dict:
 
 @app.post("/api/analyze/async")
 def analyze_async(request: AnalysisRequest) -> dict:
-    if not request.holdings:
+    try:
+        preflight = resolve_portfolio_preflight(
+            request.holdings,
+            allow_stale=request.allow_stale_portfolio_snapshot,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not preflight.holdings:
         raise HTTPException(status_code=400, detail="至少需要一条基金持仓")
+    # Keep the original client body in the queued payload. The worker performs
+    # the authoritative preflight again and must still be able to audit a client
+    # versus server mismatch instead of comparing the server snapshot to itself.
     job_id = create_analysis_job(request)
     return {"job_id": job_id, "status": "pending"}
 
@@ -840,18 +923,45 @@ def fund_discovery_report_diff(report_id: str) -> dict:
 
 @app.get("/api/fund-discovery/reports/{report_id}/outcomes")
 def fund_discovery_report_outcomes(report_id: str, days: int = 7) -> dict:
+    from app.services.decision_outcome_persistence import (
+        OutcomeEvidenceConflict,
+        OutcomeEvidencePersistenceError,
+        persist_discovery_outcome_result,
+    )
+
     report = get_discovery_report(report_id)
     if report is None:
         raise HTTPException(status_code=404, detail="报告不存在")
     window = max(1, min(days, 60))
-    return build_discovery_outcomes(report, days=window)
+    result = build_discovery_outcomes(report, days=window)
+    try:
+        return persist_discovery_outcome_result(report, result)
+    except OutcomeEvidenceConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except OutcomeEvidencePersistenceError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @app.get("/api/fund-discovery/recommendation-accuracy")
 def fund_discovery_recommendation_accuracy(days: int = 30) -> dict:
-    window = max(7, min(days, 90))
+    from app.services.decision_outcome_persistence import (
+        OutcomeEvidenceConflict,
+        OutcomeEvidencePersistenceError,
+    )
+
+    # 兼容旧 7/30 日调用，同时开放新版 T+5/T+20/T+60 研究窗口。
+    window = max(1, min(days, 90))
     reports = list_discovery_reports(limit=30)
-    return build_discovery_recommendation_accuracy(reports, days=window)
+    try:
+        return build_discovery_recommendation_accuracy(
+            reports,
+            days=window,
+            persist_outcomes=True,
+        )
+    except OutcomeEvidenceConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except OutcomeEvidencePersistenceError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @app.get("/api/fund-discovery/reports/{report_id}/markdown")
@@ -938,21 +1048,49 @@ def report_detail(report_id: str) -> dict:
 
 @app.get("/api/reports/{report_id}/outcomes")
 def report_outcomes(report_id: str) -> dict:
+    from app.services.decision_outcome_persistence import (
+        OutcomeEvidenceConflict,
+        OutcomeEvidencePersistenceError,
+        persist_daily_outcome_result,
+    )
+
     current = get_report(report_id)
     if current is None:
         raise HTTPException(status_code=404, detail="报告不存在")
     previous = get_previous_report(report_id)
-    return build_recommendation_outcomes(current, previous)
+    result = build_recommendation_outcomes(current, previous)
+    try:
+        return persist_daily_outcome_result(current, result)
+    except OutcomeEvidenceConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except OutcomeEvidencePersistenceError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @app.get("/api/reports/{report_id}/outcomes-weekly")
 def report_outcomes_weekly(report_id: str, days: int = 7) -> dict:
+    from app.services.decision_outcome_persistence import (
+        OutcomeEvidenceConflict,
+        OutcomeEvidencePersistenceError,
+        persist_daily_outcome_result,
+    )
+
     current = get_report(report_id)
     if current is None:
         raise HTTPException(status_code=404, detail="报告不存在")
     window = max(3, min(days, 30))
     baseline = get_baseline_report_by_days(report_id, days=window)
-    return build_weekly_recommendation_outcomes(current, baseline, baseline_days=window)
+    result = build_weekly_recommendation_outcomes(
+        current,
+        baseline,
+        baseline_days=window,
+    )
+    try:
+        return persist_daily_outcome_result(current, result)
+    except OutcomeEvidenceConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except OutcomeEvidencePersistenceError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @app.get("/api/database/export")

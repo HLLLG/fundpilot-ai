@@ -276,13 +276,24 @@ def build_discovery_report_from_parsed(
     )
     caveats = _as_str_list(parsed.get("caveats"))
     caveats.extend(guard_caveats)
+    from app.services.decision_data_evidence import (
+        portfolio_snapshot_caveats,
+        report_execution_blocked,
+    )
+
+    caveats.extend(item for item in portfolio_snapshot_caveats(discovery_facts) if item not in caveats)
     if _DISCLAIMER not in caveats:
         caveats.insert(0, _DISCLAIMER)
+    summary = str(parsed.get("summary") or "")
+    market_view = str(parsed.get("market_view") or "")
+    if report_execution_blocked(discovery_facts):
+        summary = "字段级证据时点校验未通过，本次仅保留观察候选；请刷新持仓与候选数据后重新扫描。"
+        market_view = "当前证据只足以描述市场背景，不支持买入方向或金额判断。"
 
     return FundDiscoveryReport(
         title=str(parsed.get("title") or "今日基金机会扫描"),
-        summary=str(parsed.get("summary") or ""),
-        market_view=str(parsed.get("market_view") or ""),
+        summary=summary,
+        market_view=market_view,
         focus_sectors=focus_sectors,
         target_sectors=target_sectors,
         candidate_pool=candidate_pool,

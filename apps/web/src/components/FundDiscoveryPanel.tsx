@@ -5,7 +5,7 @@ import type {
   MutableRefObject,
   SetStateAction,
 } from "react";
-import { ChevronDown, Loader2, RotateCcw, Sparkles, Target } from "lucide-react";
+import { ChevronDown, History, Loader2, RotateCcw, Sparkles, Target } from "lucide-react";
 import type {
   AnalysisMode,
   DiscoveryPromptConfig,
@@ -25,7 +25,7 @@ import {
   saveDiscoveryPromptRemote,
   startDiscoveryJob,
 } from "@/lib/api";
-import { DiscoveryHistoryRail } from "@/components/DiscoveryHistoryRail";
+import { DiscoveryHistoryWorkspace } from "@/components/DiscoveryHistoryWorkspace";
 import { InlineNotice, type NoticeTone } from "@/components/InlineNotice";
 import { DiscoveryReportPanel } from "@/components/DiscoveryReportPanel";
 import { DiscoverySkeleton } from "@/components/DiscoverySkeleton";
@@ -153,7 +153,13 @@ export function FundDiscoveryPanel({
   });
 
   const rawSectors = useMemo(() => sectorRows ?? [], [sectorRows]);
-  const historyReports = historyReportsData ?? [];
+  const historyReports = useMemo(
+    () =>
+      [...(historyReportsData ?? [])].sort(
+        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+      ),
+    [historyReportsData],
+  );
 
   const [focusSectors, setFocusSectors] = useState<string[]>(() => loadDiscoveryFocusSectors());
   const [fundTypePreference, setFundTypePreference] = useState<FundTypePreference>("any");
@@ -172,6 +178,8 @@ export function FundDiscoveryPanel({
   const [configExpanded, setConfigExpanded] = useState(true);
   const [rolePromptOpen, setRolePromptOpen] = useState(false);
   const [previewHolding, setPreviewHolding] = useState<Holding | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const reportRegionRef = useRef<HTMLDivElement>(null);
   const promptPersistReady = useRef(false);
   const promptChangedByUserRef = useRef(false);
   const [promptReady, setPromptReady] = useState(false);
@@ -515,23 +523,63 @@ export function FundDiscoveryPanel({
     .filter((item): item is string => Boolean(item))
     .join(" · ");
 
+  const selectHistoryReport = useCallback((selected: FundDiscoveryReport) => {
+    setReport(selected);
+    setConfigExpanded(false);
+    window.setTimeout(() => {
+      reportRegionRef.current?.focus();
+      reportRegionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 0);
+  }, []);
+
+  const handleHistoryDeleted = useCallback(
+    (deletedId: string) => {
+      if (report?.id !== deletedId) return;
+      const remaining = historyReports.filter((item) => item.id !== deletedId);
+      const deletedIndex = historyReports.findIndex((item) => item.id === deletedId);
+      const adjacent = remaining[Math.min(Math.max(deletedIndex, 0), remaining.length - 1)] ?? null;
+      setReport(adjacent);
+    },
+    [historyReports, report?.id],
+  );
+
   return (
-    <div className="mx-auto grid min-w-0 max-w-3xl gap-6 xl:max-w-6xl xl:grid-cols-[minmax(0,1fr)_280px]">
+    <div className="discovery-workspace mx-auto grid min-w-0 max-w-5xl gap-6 xl:max-w-6xl xl:grid-cols-[minmax(0,1fr)_300px]">
       <div className="flex min-w-0 flex-col gap-4">
-        <section className="section-card overflow-hidden">
+        <section className="discovery-composer overflow-hidden">
           <div className="report-control-hero border-b border-[var(--line)] px-4 py-4 sm:px-5">
-            <div className="flex items-start gap-3">
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[var(--brand-soft)] text-[var(--brand-strong)]">
-                <Target size={20} strokeWidth={2.3} />
-              </span>
-              <div>
-                <h2 className="font-display text-lg font-extrabold text-slate-950">发现基金机会</h2>
-                <p className="mt-1 text-sm leading-6 text-slate-600">
-                  从全市场板块热度中筛选候选，AI 精选 3～5 只值得关注的机会。仅供参考，不构成投资建议。
-                </p>
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex min-w-0 items-start gap-3">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[var(--brand-soft)] text-[var(--brand-strong)]">
+                  <Target size={20} strokeWidth={2.3} />
+                </span>
+                <div className="min-w-0">
+                  <h2 className="font-display text-lg font-extrabold text-slate-950">发现基金机会</h2>
+                  <p className="mt-1 text-sm leading-6 text-slate-600">
+                    从全市场板块热度中筛选候选，AI 精选 3～5 只值得关注的机会。仅供参考，不构成投资建议。
+                  </p>
+                </div>
               </div>
+              <button
+                type="button"
+                onClick={() => setHistoryOpen(true)}
+                className="discovery-history-trigger min-h-11 shrink-0 xl:hidden"
+                aria-haspopup="dialog"
+                aria-expanded={historyOpen}
+                aria-label={`历史推荐${historyReports.length ? `，共 ${historyReports.length} 份` : ""}`}
+              >
+                <History size={17} />
+                <span>历史推荐</span>
+                {historyReports.length ? <strong>{historyReports.length}</strong> : null}
+              </button>
             </div>
           </div>
+
+          <ol className="discovery-decision-rail" aria-label="基金扫描流程">
+            <li className={!isRunning && !report ? "is-current" : "is-done"}><span>01</span>方向与约束</li>
+            <li className={isRunning ? "is-current" : report ? "is-done" : ""}><span>02</span>扫描与验证</li>
+            <li className={report ? "is-current" : ""}><span>03</span>候选与依据</li>
+          </ol>
 
           {report && !configExpanded ? (
             <div className="p-4 sm:p-5" data-testid="discovery-config-summary">
@@ -544,7 +592,7 @@ export function FundDiscoveryPanel({
                   onClick={() => setConfigExpanded(true)}
                   aria-expanded={false}
                   aria-controls="discovery-scan-settings"
-                  className="min-h-11 rounded-full border border-[var(--brand)] bg-white px-4 text-sm font-bold text-[var(--brand-strong)] hover:bg-[var(--brand-soft)]"
+                  className="btn-secondary min-h-11 px-4 text-sm"
                 >
                   调整条件
                 </button>
@@ -552,7 +600,7 @@ export function FundDiscoveryPanel({
                   type="button"
                   onClick={() => void handleScan()}
                   disabled={isRunning}
-                  className="min-h-11 rounded-full bg-[var(--brand-strong)] px-4 text-sm font-bold text-white hover:bg-[var(--brand-deep)] disabled:cursor-not-allowed disabled:opacity-60"
+                  className="btn-primary min-h-11 px-4 text-sm disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {isRunning ? "扫描进行中…" : "重新扫描"}
                 </button>
@@ -917,23 +965,26 @@ export function FundDiscoveryPanel({
         ) : null}
 
         {report ? (
-          <DiscoveryReportPanel report={report} onOpenFund={handleOpenFund} />
+          <div
+            ref={reportRegionRef}
+            tabIndex={-1}
+            aria-label="推荐报告阅读区"
+            className="scroll-mt-24 outline-none"
+          >
+            <DiscoveryReportPanel report={report} onOpenFund={handleOpenFund} />
+          </div>
         ) : null}
       </div>
 
-      <DiscoveryHistoryRail
+      <DiscoveryHistoryWorkspace
         reports={historyReports}
         activeReportId={report?.id}
+        open={historyOpen}
+        onOpen={() => setHistoryOpen(true)}
+        onClose={() => setHistoryOpen(false)}
         onRefresh={() => void refreshReports()}
-        onSelect={(selected) => {
-          setReport(selected);
-          setConfigExpanded(false);
-        }}
-        onDeleted={(reportId) => {
-          if (report?.id === reportId) {
-            setReport(null);
-          }
-        }}
+        onSelect={(selected) => selectHistoryReport(selected)}
+        onDeleted={handleHistoryDeleted}
       />
 
       {previewHolding ? (

@@ -5,6 +5,7 @@ import {
   ArrowDown,
   ArrowLeftRight,
   ArrowUp,
+  BookCheck,
   Eye,
   EyeOff,
   Plus,
@@ -71,6 +72,7 @@ type YangjibaoHoldingsBoardProps = {
   className?: string;
   onAddHolding?: () => void;
   onBatchTransaction?: () => void;
+  onConfirmLedgerBaseline?: () => void;
   onSelectHolding?: (holding: HoldingIdentity) => void;
 };
 
@@ -223,6 +225,7 @@ export function YangjibaoHoldingsBoard({
   className,
   onAddHolding,
   onBatchTransaction,
+  onConfirmLedgerBaseline,
   onSelectHolding,
 }: YangjibaoHoldingsBoardProps) {
   const [quoteTradeDate, setQuoteTradeDate] = useState<string | null>(() => {
@@ -288,7 +291,7 @@ export function YangjibaoHoldingsBoard({
   if (!displayHoldings.length) {
     return (
       <section className={`mx-auto w-full ${sectionClassName}`}>
-        <div className="section-card overflow-hidden">
+        <div className="holdings-workspace overflow-hidden">
           {effectiveLoadState === "loading" || effectiveLoadState === "refreshing" ? (
             <div className="px-5 py-12 text-center">
               <p className="text-sm font-bold text-slate-500">账户汇总</p>
@@ -352,7 +355,7 @@ export function YangjibaoHoldingsBoard({
 
   return (
     <section className={`mx-auto w-full ${sectionClassName}`}>
-      <div className="section-card overflow-hidden">
+      <div className="holdings-workspace overflow-hidden">
         {effectiveLoadState === "refreshing" ? (
           <InlineNotice
             tone="info"
@@ -367,7 +370,7 @@ export function YangjibaoHoldingsBoard({
             className="m-3"
           />
         ) : null}
-        <div className="holdings-hero border-b border-slate-100 px-4 pb-3.5 pt-4">
+        <div className="holdings-hero holdings-summary border-b border-[var(--line-strong)] px-4 pb-5 pt-4 sm:px-6 sm:pt-5">
           <div className="mb-2 flex items-center justify-end gap-1">
             <button
               type="button"
@@ -515,7 +518,7 @@ export function YangjibaoHoldingsBoard({
           />
         </div>
 
-        <ul className="space-y-2 bg-slate-50/70 p-2 sm:space-y-0 sm:divide-y sm:divide-slate-100 sm:bg-white sm:p-0">
+        <ul className="holdings-ledger space-y-2 p-2 sm:space-y-0 sm:divide-y sm:divide-[var(--line)] sm:p-0">
           {sortedHoldings.map((holding, rowIndex) => {
             const daily = getDailyProfit(holding);
             const estimatedDailyReturn = getEstimatedDailyReturnPercent(holding);
@@ -554,7 +557,7 @@ export function YangjibaoHoldingsBoard({
                     })
                   }
                   aria-label={rowAriaLabel}
-                  className="grid min-h-11 w-full grid-cols-3 gap-x-2 gap-y-3 rounded-2xl border border-slate-100 bg-white px-3 py-3 text-left shadow-sm transition hover:border-blue-100 hover:bg-blue-50/40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)] active:bg-slate-100 sm:grid-cols-[minmax(0,1fr)_4.25rem_minmax(3.5rem,5rem)_4.25rem] sm:gap-1 sm:rounded-none sm:border-0 sm:bg-transparent sm:px-4 sm:py-2 sm:shadow-none sm:hover:bg-slate-50"
+                  className="holding-ledger-row grid min-h-11 w-full grid-cols-3 gap-x-2 gap-y-3 rounded-[var(--radius-control)] border border-[var(--line)] bg-[var(--panel)] px-3 py-3 text-left transition hover:border-[var(--line-strong)] hover:bg-[var(--brand-soft)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)] active:bg-[var(--surface-muted)] sm:grid-cols-[minmax(0,1fr)_4.25rem_minmax(3.5rem,5rem)_4.25rem] sm:gap-1 sm:rounded-none sm:border-0 sm:bg-transparent sm:px-4 sm:py-2"
                 >
                   <div className="col-span-3 min-w-0 sm:col-span-1">
                     <div className="flex items-center gap-1">
@@ -656,6 +659,16 @@ export function YangjibaoHoldingsBoard({
               >
                 <ArrowLeftRight size={16} />
                 批量加减仓
+              </button>
+            ) : null}
+            {onConfirmLedgerBaseline ? (
+              <button
+                type="button"
+                onClick={onConfirmLedgerBaseline}
+                className="flex min-h-11 flex-1 items-center justify-center gap-1.5 border-l border-slate-100 bg-slate-950 px-2 py-2.5 text-sm font-bold text-emerald-200 transition hover:bg-slate-900 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-emerald-400"
+              >
+                <BookCheck size={16} />
+                账本基线
               </button>
             ) : null}
           </div>

@@ -180,7 +180,7 @@ def test_us_market_serves_stale_without_network(monkeypatch):
     from app.models import UsFuturesQuote, UsMarketSnapshot, UsdCnyQuote
     from app.services.us_market_service import get_us_market_snapshot
 
-    cache_key = "market:us_overview:v8:live:2026-06-25"
+    cache_key = "market:us_overview:v9:live:2026-06-25"
     payload = UsMarketSnapshot(
         session_kind="regular",
         session_label="盘中",

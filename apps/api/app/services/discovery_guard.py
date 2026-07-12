@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from math import isfinite
 
 from app.config import get_settings
 from app.models import DiscoveryRecommendation, EliminatedCandidate, InvestorProfile, NewsItem, TopicBrief
@@ -16,6 +17,23 @@ from app.services.decision_guard_shared import (
     track_label as _track_label,
 )
 from app.services.news_citation import _collect_citable_titles, _matches_known_title
+
+
+def _known_portfolio_cash_yuan(discovery_facts: dict | None) -> float | None:
+    truth = (discovery_facts or {}).get("portfolio_position_truth")
+    if not isinstance(truth, dict):
+        return None
+    cash = truth.get("cash")
+    if not isinstance(cash, dict) or cash.get("known") is not True:
+        # Unknown cash is not zero.  The explicit request budget remains the only
+        # cap until the user confirms a cash baseline.
+        return None
+    value = _as_float(cash.get("balance_yuan"))
+    if value is None or not isfinite(value):
+        # A row claiming to be known but lacking a usable value is internally
+        # inconsistent; fail closed for executable amounts.
+        return 0.0
+    return max(value, 0.0)
 
 
 def apply_discovery_guards(
@@ -45,12 +63,43 @@ def apply_discovery_guards(
     guarded: list[DiscoveryRecommendation] = []
     eliminated: list[EliminatedCandidate] = []
     allocated_amount = 0.0
+    requested_budget_yuan = max(_as_float(budget_yuan) or 0.0, 0.0)
+    known_cash_yuan = _known_portfolio_cash_yuan(discovery_facts)
+    spendable_budget_yuan = (
+        min(requested_budget_yuan, known_cash_yuan)
+        if known_cash_yuan is not None
+        else requested_budget_yuan
+    )
+    if known_cash_yuan == 0:
+        caveats.append("已确认可用现金为 0，本次仅保留观察候选，不生成可执行买入金额。")
+    elif known_cash_yuan is not None and known_cash_yuan < requested_budget_yuan:
+        caveats.append(
+            f"示意买入总额已按已确认可用现金 {known_cash_yuan:.2f} 元封顶。"
+        )
     # M6：与日报 analysis_facts.holdings[].escalation 同一思路——把每只候选"是否触发了
     # M4 双向升级判定"的结构化结果记录下来（无论 shadow/enforced 都记录，且不管最终
     # 是否真的生效），供 shadow_escalation_digest.py 聚合复盘读取，避免正则解析 caveats
     # 文本。写回 discovery_facts（按引用传入，最终会随 FundDiscoveryReport.discovery_facts
     # 一并落库），仅在真正传入了 dict 时才写（None 表示调用方本就没打算存 facts）。
     escalation_hints: dict[str, dict] = {}
+    portfolio_snapshot = (discovery_facts or {}).get("portfolio_snapshot")
+    degraded_portfolio_snapshot = bool(
+        isinstance(portfolio_snapshot, dict)
+        and (
+            portfolio_snapshot.get("stale")
+            or not portfolio_snapshot.get("authoritative")
+            or portfolio_snapshot.get("position_complete") is False
+            or int(portfolio_snapshot.get("pending_transaction_count") or 0) > 0
+        )
+    )
+    from app.services.decision_data_evidence import (
+        contains_executable_decision_text,
+        decision_evidence_allows_action,
+        safe_blocked_points,
+    )
+    if degraded_portfolio_snapshot:
+        caveats.append("持仓快照未达到权威可执行条件，本次已禁止买入动作与示意金额，仅保留观察候选。")
+    evidence_blocked_codes: dict[str, list[str]] = {}
 
     for rec in recommendations:
         code = rec.fund_code.strip().zfill(6)
@@ -62,6 +111,14 @@ def apply_discovery_guards(
             continue
 
         copy = rec.model_copy(deep=True)
+        evidence_allowed, evidence_reasons = decision_evidence_allows_action(
+            discovery_facts,
+            scope="discovery",
+            fund_code=code,
+        )
+        execution_blocked = degraded_portfolio_snapshot or not evidence_allowed
+        if execution_blocked:
+            evidence_blocked_codes[code] = evidence_reasons
         normalized_action = _normalize_discovery_action(copy.action)
         if normalized_action != copy.action:
             copy.points = [
@@ -70,6 +127,16 @@ def apply_discovery_guards(
             ]
             copy.action = normalized_action
         copy.confidence = _normalize_confidence(copy.confidence)
+        if execution_blocked:
+            if copy.action == "分批买入":
+                copy.action = "建议关注"
+            copy.suggested_amount_yuan = None
+            copy.amount_note = "持仓快照过期，未生成可执行金额"
+            copy.confidence = "低"
+            copy.validation_notes = [
+                *copy.validation_notes,
+                "持仓快照过期或尚未服务端确认；组合缺口、集中度与预算只可作背景，不具备买入执行条件。",
+            ]
         pool_item = pool_by_code.get(code, {})
         if pool_item:
             corrected = _align_candidate_identity(copy, pool_item)
@@ -124,7 +191,7 @@ def apply_discovery_guards(
         # 供 shadow_escalation_digest.py 聚合复盘（与日报 recommendation_guard.py 的
         # 灰度处理同一套开关、同一种"仅提示不生效"的语义）。
         enforced = get_settings().decision_escalation_mode == "enforced"
-        if escalation.get("action") == "exclude":
+        if escalation.get("action") == "exclude" and not execution_blocked:
             basis = str(escalation.get("basis") or "")
             if enforced:
                 caveats.append(f"已从候选池剔除 {code}（{copy.fund_name}）：{basis}。")
@@ -152,7 +219,7 @@ def apply_discovery_guards(
             caveats.append(f"{code} 证据不足，已将动作从「{previous}」降为「建议关注」。")
 
         amount_boost_multiplier = 1.0
-        if escalation.get("action") == "boost":
+        if escalation.get("action") == "boost" and not execution_blocked:
             basis = str(escalation.get("basis") or "")
             if enforced:
                 amount_boost_multiplier = float(escalation.get("amount_multiplier") or 1.0)
@@ -168,7 +235,17 @@ def apply_discovery_guards(
                     f"{code} 的建议买入金额上限会被系统提高：{basis}。",
                 ]
 
-        max_single = budget_yuan * profile.concentration_limit_percent / 100 * amount_boost_multiplier
+        max_single = (
+            spendable_budget_yuan
+            * profile.concentration_limit_percent
+            / 100
+            * amount_boost_multiplier
+        )
+        if copy.suggested_amount_yuan is not None and spendable_budget_yuan <= 0:
+            copy.suggested_amount_yuan = None
+            copy.amount_note = (
+                "已确认可执行预算或可用现金为 0，本次未生成买入金额。"
+            )
         if copy.suggested_amount_yuan is not None and max_single > 0:
             if copy.suggested_amount_yuan > max_single:
                 copy.suggested_amount_yuan = round(max_single, 0)
@@ -176,8 +253,8 @@ def apply_discovery_guards(
                     f"示意金额已压至单只集中度上限约 {profile.concentration_limit_percent:.0f}%"
                 )
 
-        if copy.suggested_amount_yuan is not None and budget_yuan > 0:
-            remaining = max(float(budget_yuan) - allocated_amount, 0.0)
+        if copy.suggested_amount_yuan is not None and spendable_budget_yuan > 0:
+            remaining = max(spendable_budget_yuan - allocated_amount, 0.0)
             if copy.suggested_amount_yuan > remaining:
                 adjusted = round(remaining, 0)
                 copy.suggested_amount_yuan = adjusted if adjusted >= 100 else None
@@ -196,6 +273,25 @@ def apply_discovery_guards(
                 opportunity,
             )
         _sync_decision_path_with_final_action(copy)
+        if execution_blocked:
+            copy.action = "建议关注"
+            copy.suggested_amount_yuan = None
+            copy.amount_note = "字段级证据未达到时点可用条件，未生成可执行金额"
+            copy.confidence = "低"
+            copy.points = safe_blocked_points(
+                copy.points,
+                fallback="字段级证据未达到可执行条件，本条仅保留观察候选。",
+            )
+            copy.decision_path = "证据时点校验未通过，系统阻断买入动作并降为建议关注。"
+            copy.sector_evidence = [
+                value for value in copy.sector_evidence if not contains_executable_decision_text(value)
+            ]
+            copy.fund_evidence = [
+                value for value in copy.fund_evidence if not contains_executable_decision_text(value)
+            ]
+            copy.validation_notes = [
+                value for value in copy.validation_notes if not contains_executable_decision_text(value)
+            ] + ["字段级证据时点校验未通过，买入动作与金额已被确定性阻断。"]
         copy.news_bullish = _filter_news_titles(copy.news_bullish, titles)
         _humanize_recommendation_text(copy)
         guarded.append(copy)
@@ -203,6 +299,13 @@ def apply_discovery_guards(
     if discovery_facts is not None:
         discovery_facts["escalation_hints"] = escalation_hints
         discovery_facts["decision_escalation_mode"] = get_settings().decision_escalation_mode
+        discovery_facts["data_evidence_guard"] = {
+            "execution_blocked": bool(evidence_blocked_codes),
+            "blocked_fund_codes": sorted(evidence_blocked_codes),
+            "reasons_by_fund": evidence_blocked_codes,
+        }
+    if evidence_blocked_codes and not degraded_portfolio_snapshot:
+        caveats.append("部分候选的字段级证据时点不可用，已降为观察并清除买入金额。")
 
     return guarded[:5], caveats, eliminated
 

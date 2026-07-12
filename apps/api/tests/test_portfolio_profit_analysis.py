@@ -5,6 +5,7 @@ from app.models import Holding
 from app.request_context import reset_request_user_id, set_request_user_id
 from app.services.portfolio_profit_analysis import (
     _blend_portfolio_rows,
+    _resolve_intraday_for_holding,
     build_calendar_month,
     build_daily_top5,
     build_daily_trend_series,
@@ -78,7 +79,17 @@ def test_blend_portfolio_rows_propagates_user_context_to_worker_threads(monkeypa
         seen_user_ids.append(get_request_user_id())
         return None
 
+    def fake_sector_quote_lookup_label(holding, **_kwargs):
+        from app.database import get_fund_profile_by_code
+
+        get_fund_profile_by_code(holding.fund_code)
+        return "人工智能"
+
     monkeypatch.setattr("app.database.get_fund_profile_by_code", fake_get_fund_profile_by_code)
+    monkeypatch.setattr(
+        "app.services.portfolio_profit_analysis.sector_quote_lookup_label",
+        fake_sector_quote_lookup_label,
+    )
     monkeypatch.setattr(
         "app.services.portfolio_profit_analysis.fetch_sector_intraday",
         lambda *_args, **_kwargs: (
@@ -92,7 +103,7 @@ def test_blend_portfolio_rows_propagates_user_context_to_worker_threads(monkeypa
     holdings = [
         Holding(
             fund_code=f"02127{i}",
-            fund_name=f"广发全球精选股票(QDII)人民币C{i}",
+            fund_name=f"广发人工智能主题混合C{i}",
             sector_name="海外基金",
             holding_amount=100.0,
         )
@@ -108,6 +119,29 @@ def test_blend_portfolio_rows_propagates_user_context_to_worker_threads(monkeypa
     assert seen_user_ids == [4242] * 8
     assert rows
     assert {row["time"] for row in rows} == {"09:30", "10:00"}
+
+
+def test_resolve_intraday_skips_semantic_labels_without_market_mapping():
+    for label in ("海外基金", "信澳业绩驱动", "全球高端制造", "新兴市场"):
+        holding = Holding(
+            fund_code="021276",
+            fund_name=label,
+            sector_name=label,
+            holding_amount=100.0,
+        )
+        assert _resolve_intraday_for_holding(holding, None) is None
+
+
+def test_resolve_intraday_uses_canonical_market_mapping():
+    holding = Holding(
+        fund_code="021276",
+        fund_name="测试基金",
+        sector_name="人工智能",
+        holding_amount=100.0,
+    )
+    source_type, source_name = _resolve_intraday_for_holding(holding, None) or (None, None)
+    assert source_type == "index"
+    assert source_name
 
 
 def test_build_calendar_month_marks_holiday():

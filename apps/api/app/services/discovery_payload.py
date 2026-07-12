@@ -47,11 +47,15 @@ recommendations 字段约束：
 - 不得推荐 portfolio_gap.holdings_slim 中已持有的 fund_code
 - 不得承诺收益；不得编造 candidate_pool 外的代码或未提供的估值分位
 - full_market 模式须先判断板块方向，再在方向内选基金；不得只按基金近1年收益排序
-- 引用北向/南向用 market_flow；板块主力用 target_sector_context.sector_fund_flow
+- 北向实时净买额不再提供、不得推断；南向资金用 stock_connect_flow；板块主力用 target_sector_context.sector_fund_flow
 - sector_opportunities 是系统已用 1d/5d 涨跌 + 今日/5日主力资金 + pattern 生成的主方向，
   推荐理由须优先引用它，而不是重新发明方向
 - signal_backtest / candidate_factor_scores 按 confidence.level / factor_reliability 表述
 - summary 或 caveats 须体现 news.freshness_label 对置信度的影响
+- data_evidence 是字段级时点证据；stale/unavailable/none 不得支撑买入动作，is_estimate=true 必须降置信度
+- discovery_facts.portfolio_position_truth 是持仓份额、成本和现金的唯一真值摘要；unknown/null 不得按 0 猜测；
+  position_complete=false、ledger_truncated=true 或存在 pending/conflict 时，suggested_amount_yuan 必须为 null，
+  不得生成任何可执行买入金额
 - 新闻由系统预取并已做时效筛选；不得引用 news_titles/topic_briefs 之外的新闻，
   news.freshness_label 为 stale/empty/aging 时，新闻只能作背景，不能作为买入或追涨主依据
 """
@@ -68,6 +72,8 @@ _COMMON_REQUIREMENTS = [
     "新闻仅使用系统预取的 news_titles/topic_briefs；过旧或为空的新闻不能作为买入主依据",
     "suggested_amount_yuan 须结合 available_budget_yuan 与 concentration_limit_percent",
     "引用数字须来自 discovery_facts，禁止编造",
+    "须按 data_evidence 校验数据时点、置信度与是否估算；过期或不可用字段不得支撑动作",
+    "portfolio_position_truth 中 unknown/null 不得按 0；position_complete=false、ledger_truncated=true 或存在 pending/conflict 时 suggested_amount_yuan 必须为空",
 ]
 
 _FULL_MARKET_REQUIREMENTS = [
@@ -77,7 +83,7 @@ _FULL_MARKET_REQUIREMENTS = [
     "sector_opportunities 是系统已用 1d/5d 涨跌 + 今日/5日主力资金 + pattern 生成的主方向，推荐理由须优先引用它",
     "portfolio_gap / holdings_slim 仅作背景，不要以「持仓缺口」为主叙事",
     "market_view 须覆盖热度靠前板块与相对冷门但有机会的方向",
-    "引用北向/南向须用 market_flow；板块主力须用 target_sector_context.sector_fund_flow",
+    "北向实时净买额不参与决策；引用南向须用 stock_connect_flow；板块主力须用 target_sector_context.sector_fund_flow",
 ]
 
 _GAP_REQUIREMENTS = [
@@ -156,7 +162,7 @@ def build_user_payload(
             "fund_type_preference": resolved_fund_type,
             "sector_heat": trimmed_heat,
             "target_sector_context": discovery_facts.get("target_sector_context"),
-            "market_flow": discovery_facts.get("market_flow"),
+            "stock_connect_flow": discovery_facts.get("stock_connect_flow"),
             "signal_backtest": discovery_facts.get("signal_backtest"),
             "sector_opportunities": _slim_sector_opportunities(
                 discovery_facts.get("sector_opportunities") or []
@@ -165,6 +171,9 @@ def build_user_payload(
             "candidate_factor_scores": discovery_facts.get("candidate_factor_scores"),
             "selection_strategy": discovery_facts.get("selection_strategy"),
             "dip_swing": discovery_facts.get("dip_swing"),
+            "portfolio_snapshot": discovery_facts.get("portfolio_snapshot"),
+            "portfolio_position_truth": discovery_facts.get("portfolio_position_truth"),
+            "data_evidence": discovery_facts.get("data_evidence"),
             "candidate_pool": slim_pool,
         },
         "requirements": requirements,

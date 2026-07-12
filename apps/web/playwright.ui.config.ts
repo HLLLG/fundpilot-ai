@@ -1,6 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
-const UI_BASE_URL = "http://127.0.0.1:3001";
+const UI_BASE_URL = process.env.PLAYWRIGHT_UI_BASE_URL ?? "http://127.0.0.1:3001";
+const UI_PORT = new URL(UI_BASE_URL).port || "3001";
 
 export default defineConfig({
   testDir: "./e2e-ui",
@@ -31,6 +32,14 @@ export default defineConfig({
       },
     },
     {
+      name: "desktop-1280",
+      use: {
+        ...devices["Desktop Chrome"],
+        browserName: "chromium",
+        viewport: { width: 1280, height: 800 },
+      },
+    },
+    {
       name: "desktop-1024",
       use: {
         ...devices["Desktop Chrome"],
@@ -45,6 +54,16 @@ export default defineConfig({
         viewport: { width: 768, height: 1024 },
         deviceScaleFactor: 1,
         hasTouch: true,
+      },
+    },
+    {
+      name: "mobile-430",
+      use: {
+        browserName: "chromium",
+        viewport: { width: 430, height: 932 },
+        deviceScaleFactor: 1,
+        hasTouch: true,
+        isMobile: true,
       },
     },
     {
@@ -69,13 +88,14 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: "npm run dev",
+    command: "npm run build && node scripts/serve-static.mjs",
     url: UI_BASE_URL,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
     env: {
       ...process.env,
       NEXT_TELEMETRY_DISABLED: "1",
+      PORT: UI_PORT,
       // Authenticated-shell tests intercept this same-origin API namespace.
       NEXT_PUBLIC_API_BASE_URL: UI_BASE_URL,
     },

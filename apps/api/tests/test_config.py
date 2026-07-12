@@ -1,4 +1,4 @@
-from app.config import refresh_settings
+from app.config import Settings, refresh_settings
 from tests.conftest import PYTEST_PLACEHOLDER_DEEPSEEK_KEY, PYTEST_VALID_DEEPSEEK_KEY
 
 
@@ -46,3 +46,11 @@ def test_vlm_ocr_settings_defaults(monkeypatch):
     assert s.vlm_ocr_compress_enabled is True
     assert s.vlm_ocr_jpeg_quality == 85
     assert s.vlm_ocr_max_image_side == 2000
+
+
+def test_tactical_prompt_tuning_is_disabled_by_default(monkeypatch):
+    monkeypatch.delenv("FUND_AI_TACTICAL_PROMPT_TUNING_ENABLED", raising=False)
+
+    settings = Settings(_env_file=None)
+
+    assert settings.tactical_prompt_tuning_enabled is False

@@ -48,6 +48,7 @@ import { useAuth } from "@/components/AuthProvider";
 import { AlipayOcrConfirmModal } from "@/components/AlipayOcrConfirmModal";
 import { BatchTransactionModal } from "@/components/BatchTransactionModal";
 import { BatchTransactionConfirmModal } from "@/components/BatchTransactionConfirmModal";
+import { LedgerBaselineModal } from "@/components/LedgerBaselineModal";
 import { notifyDesktop, ensureNotificationPermission } from "@/lib/notifications";
 import { BRAND } from "@/lib/brand";
 import { formatThinkingNote, stageShortLabel } from "@/lib/streamingStageMeta";
@@ -63,7 +64,8 @@ import {
   saveInvestorProfile,
   type DashboardTabId,
 } from "@/lib/storage";
-import { HistoryRail } from "@/components/HistoryRail";
+import { ReportNavigator } from "@/components/ReportNavigator";
+import { ReportHistoryDrawer } from "@/components/ReportHistoryDrawer";
 import { BackgroundJobsStack } from "@/components/BackgroundJobsStack";
 import { DiscoveryJobStatusFloat } from "@/components/DiscoveryJobStatusFloat";
 import { JobStatusFloat } from "@/components/JobStatusFloat";
@@ -138,6 +140,18 @@ const defaultAnalysisPrompt: AnalysisPromptConfig = {
   default_role_prompt: "",
 };
 
+function reportDateKey(value: string | undefined): string | null {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
+
 export function Dashboard() {
   const { user } = useAuth();
   const [holdings, setHoldings] = useState<Holding[]>([]);
@@ -149,6 +163,9 @@ export function Dashboard() {
   );
   const [report, setReport] = useState<Report | null>(null);
   const [reports, setReports] = useState<Report[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [reportHistoryOpen, setReportHistoryOpen] = useState(false);
   const [portfolioSummary, setPortfolioSummary] = useState<PortfolioSummary | null>(null);
   const [holdingWarnings, setHoldingWarnings] = useState<HoldingFieldWarning[]>([]);
   const [notice, setNotice] = useState<{ message: string; tone: NoticeTone } | null>(null);
@@ -224,7 +241,9 @@ export function Dashboard() {
   const [addHoldingError, setAddHoldingError] = useState<string | null>(null);
   const [isApplyingOcrHoldings, setIsApplyingOcrHoldings] = useState(false);
   const [ocrApplyError, setOcrApplyError] = useState<string | null>(null);
+  const [ocrCompletionCount, setOcrCompletionCount] = useState<number | null>(null);
   const [showBatchModal, setShowBatchModal] = useState(false);
+  const [showLedgerBaselineModal, setShowLedgerBaselineModal] = useState(false);
   const [isBatchUploading, setIsBatchUploading] = useState(false);
   const [batchUploadError, setBatchUploadError] = useState<string | null>(null);
   const [pendingTransactions, setPendingTransactions] = useState<ParsedTransaction[] | null>(null);
@@ -267,13 +286,22 @@ export function Dashboard() {
     },
   });
 
-  const loadHistory = async () => {
+  const loadHistory = useCallback(async (): Promise<Report[] | null> => {
+    setHistoryLoading(true);
     try {
-      setReports(await listReports());
+      const next = [...(await listReports())].sort(
+        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+      );
+      setReports(next);
+      setHistoryError(null);
+      return next;
     } catch {
-      // 网络抖动时保留已有列表
+      setHistoryError("历史日报加载失败，当前日报仍保留。可稍后重试。");
+      return null;
+    } finally {
+      setHistoryLoading(false);
     }
-  };
+  }, []);
 
   const handleProfileChange = useCallback((next: InvestorProfile) => {
     profileChangedByUserRef.current = true;
@@ -449,7 +477,8 @@ export function Dashboard() {
 
   const setActiveTab = useCallback((tab: TabId | ((prev: TabId) => TabId)) => {
     setActiveTabState((prev) => {
-      const next = typeof tab === "function" ? tab(prev) : tab;
+      const requested = typeof tab === "function" ? tab(prev) : tab;
+      const next = requested === "history" ? "report" : requested;
       if (next === "report") {
         setReportTabUnread(false);
       }
@@ -474,7 +503,9 @@ export function Dashboard() {
   }, [activeTab, streamingDiscovery]);
 
   useLayoutEffect(() => {
-    setActiveTabState(loadDashboardTab());
+    const stored = loadDashboardTab();
+    const urlReportId = new URLSearchParams(window.location.search).get("report");
+    setActiveTabState(stored === "history" || urlReportId ? "report" : stored);
   }, []);
 
   useEffect(() => {
@@ -521,11 +552,91 @@ export function Dashboard() {
   }, []);
 
   useEffect(() => {
-    if (activeTab !== "history") {
-      return;
-    }
+    if (activeTab !== "report" && activeTab !== "history") return;
     void loadHistory();
-  }, [activeTab]);
+  }, [activeTab, loadHistory]);
+
+  const orderedReports = useMemo(
+    () =>
+      [...reports].sort(
+        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+      ),
+    [reports],
+  );
+  const todayKey = reportDateKey(new Date().toISOString());
+  const todayReport = orderedReports.find((item) => reportDateKey(item.created_at) === todayKey) ?? null;
+  const currentReportIndex = report
+    ? orderedReports.findIndex((item) => item.id === report.id)
+    : -1;
+  const previousReport = report
+    ? orderedReports[currentReportIndex + 1] ?? null
+    : orderedReports[0] ?? null;
+  const nextReport = currentReportIndex > 0 ? orderedReports[currentReportIndex - 1] : null;
+  const viewingToday = !report || report.id === todayReport?.id;
+
+  const updateReportUrl = useCallback((reportId: string | null, mode: "push" | "replace") => {
+    const url = new URL(window.location.href);
+    if (reportId) url.searchParams.set("report", reportId);
+    else url.searchParams.delete("report");
+    const nextUrl = `${url.pathname}${url.search}${url.hash}`;
+    if (mode === "push") window.history.pushState({}, "", nextUrl);
+    else window.history.replaceState({}, "", nextUrl);
+  }, []);
+
+  const focusReportRegion = useCallback(() => {
+    window.setTimeout(() => {
+      reportSectionRef.current?.focus();
+      reportSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 0);
+  }, []);
+
+  const selectReportInContext = useCallback(
+    (selected: Report, mode: "push" | "replace" = "push") => {
+      setReport(selected);
+      setActiveTab("report");
+      updateReportUrl(selected.id, mode);
+      focusReportRegion();
+    },
+    [focusReportRegion, setActiveTab, updateReportUrl],
+  );
+
+  const returnToToday = useCallback(() => {
+    setReport(todayReport);
+    setActiveTab("report");
+    updateReportUrl(null, "push");
+    focusReportRegion();
+  }, [focusReportRegion, setActiveTab, todayReport, updateReportUrl]);
+
+  const handleReportDeleted = useCallback(
+    (deletedId: string) => {
+      const deletedIndex = orderedReports.findIndex((item) => item.id === deletedId);
+      const remaining = orderedReports.filter((item) => item.id !== deletedId);
+      setReports(remaining);
+      if (report?.id !== deletedId) return;
+      const adjacent = remaining[Math.min(Math.max(deletedIndex, 0), remaining.length - 1)] ?? null;
+      setReport(adjacent);
+      updateReportUrl(adjacent?.id ?? null, "replace");
+    },
+    [orderedReports, report?.id, updateReportUrl],
+  );
+
+  useEffect(() => {
+    const restoreReportFromUrl = () => {
+      const reportId = new URLSearchParams(window.location.search).get("report");
+      if (reportId) {
+        const restored = orderedReports.find((item) => item.id === reportId);
+        if (restored) {
+          setReport(restored);
+          setActiveTab("report");
+        }
+        return;
+      }
+      if (activeTab === "report") setReport(todayReport);
+    };
+    restoreReportFromUrl();
+    window.addEventListener("popstate", restoreReportFromUrl);
+    return () => window.removeEventListener("popstate", restoreReportFromUrl);
+  }, [activeTab, orderedReports, setActiveTab, todayReport]);
 
   useEffect(() => {
     backgroundJobActiveRef.current = Boolean(
@@ -910,6 +1021,7 @@ export function Dashboard() {
     const shouldNavigate = options?.navigateToReport !== false;
     if (shouldNavigate) {
       setActiveTab("report");
+      updateReportUrl(null, "replace");
       requestAnimationFrame(() => {
         reportSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
       });
@@ -1113,6 +1225,7 @@ export function Dashboard() {
       setPendingOcrNote(null);
       setPendingOcrSource(null);
       setActiveTab("holdings");
+      setOcrCompletionCount(toApply.length);
       setMessage(`已确认并保存 ${toApply.length} 只基金。`, "success");
     } catch (error) {
       if (mutationVersion !== holdingsMutationVersionRef.current) {
@@ -1358,13 +1471,21 @@ export function Dashboard() {
     return { holdings: result.holdings, portfolioSummary: nextSummary };
   };
 
+  const activePageMeta = {
+    holdings: ["账户持仓", "先确认组合状态，再进入单只基金的风险与行动。", "PORTFOLIO"],
+    dashboard: ["盈亏分析", "围绕关键数字、趋势与异常变化组织个人投研视图。", "PERFORMANCE"],
+    market: ["市场观察", "查看市场温度、板块资金与数据日期。", "MARKET"],
+    discovery: ["发现基金", "从投资方向到候选依据，按决策节奏完成扫描。", "DISCOVERY"],
+    report: ["投研日报", "结论先行，风险、行动与专业证据渐进展开。", "DAILY BRIEF"],
+    history: ["历史日报", "按日期回看判断、证据和后续变化。", "ARCHIVE"],
+  }[activeTab];
+
   return (
     <div className="premium-bg min-h-screen">
       <a href="#main-content" className="skip-link">跳到主要内容</a>
-      <div className="dashboard-shell mx-auto flex min-h-screen w-full max-w-6xl flex-col px-4 py-3 sm:px-5 sm:py-4">
+      <div className="dashboard-shell mx-auto flex min-h-screen w-full max-w-[1240px] flex-col px-4 py-3 sm:px-6 sm:py-4">
         <header
-          className="sticky top-0 z-40 -mx-4 mb-3 flex items-center justify-between gap-3 border-b border-[var(--line)] px-4 py-2.5 sm:-mx-5 sm:px-5"
-          style={{ background: "rgba(243, 246, 252, 0.97)" }}
+          className="app-masthead sticky top-0 z-40 -mx-4 mb-3 flex items-center justify-between gap-4 border-b border-[var(--line)] px-4 py-2.5 sm:-mx-6 sm:px-6"
         >
           <BrandMark size="md" />
           <div className="min-w-0 flex-1">
@@ -1373,10 +1494,9 @@ export function Dashboard() {
               reportTabUnread={reportTabUnread}
               discoveryTabUnread={discoveryTabUnread}
               onSelect={setActiveTab}
-              onSelectHistory={() => setActiveTab("history")}
             />
           </div>
-          <UserMenu onNavigate={setActiveTab} />
+          <UserMenu />
         </header>
 
         {notice ? (
@@ -1388,20 +1508,22 @@ export function Dashboard() {
           />
         ) : null}
 
+        <section className="app-page-heading" aria-labelledby="app-page-title">
+          <div>
+            <p>{activePageMeta[2]}</p>
+            <h1 id="app-page-title" className="font-display">{activePageMeta[0]}</h1>
+          </div>
+          <p>{activePageMeta[1]}</p>
+        </section>
+
+        {ocrCompletionCount !== null ? (
+          <section className="workflow-completion" role="status" aria-live="polite">
+            <div><span aria-hidden="true">✓</span><p><strong>持仓恢复完成</strong>已写入 {ocrCompletionCount} 只基金，接下来可查看组合状态或进入基金详情。</p></div>
+            <button type="button" onClick={() => setOcrCompletionCount(null)} className="btn-ghost min-h-11">知道了</button>
+          </section>
+        ) : null}
+
         <main id="main-content" tabIndex={-1} className="min-w-0 flex-1 pb-6">
-          <h1 className="sr-only">
-            {activeTab === "holdings"
-              ? "账户持仓"
-              : activeTab === "dashboard"
-                ? "盈亏分析"
-                : activeTab === "market"
-                  ? "市场行情"
-                  : activeTab === "discovery"
-                    ? "发现基金"
-                    : activeTab === "report"
-                      ? "投研日报"
-                      : "历史日报"}
-          </h1>
           {activeTab === "holdings" ? (
             <div className="w-full">
               {swingAlerts.alertsActive ? (
@@ -1430,6 +1552,7 @@ export function Dashboard() {
                   setBatchUploadError(null);
                   setShowBatchModal(true);
                 }}
+                onConfirmLedgerBaseline={() => setShowLedgerBaselineModal(true)}
                 onSelectHolding={setSelectedHoldingKey}
               />
             </div>
@@ -1438,6 +1561,37 @@ export function Dashboard() {
           {activeTab === "report" ? (
             <div className="grid min-w-0 gap-4">
               <TradingSessionBar />
+              <ReportNavigator
+                currentReport={report}
+                reportCount={orderedReports.length}
+                currentLabel={
+                  report
+                    ? reportDateKey(report.created_at) === todayKey
+                      ? "今日日报"
+                      : `历史日报 · ${reportDateKey(report.created_at) ?? "日期未知"}`
+                    : "今日"
+                }
+                currentStatus={
+                  report
+                    ? `风险等级 ${report.risk.level} · 当前报告已选中`
+                    : orderedReports.length
+                      ? "可生成今日判断，或直接回看最近一份历史日报"
+                      : "生成第一份日报后，这里会建立连续日期导航"
+                }
+                hasPrevious={Boolean(previousReport)}
+                hasNext={Boolean(nextReport)}
+                canReturnToday={!viewingToday}
+                historyLoading={historyLoading}
+                historyError={historyError}
+                onPrevious={() => {
+                  if (previousReport) selectReportInContext(previousReport);
+                }}
+                onNext={() => {
+                  if (nextReport) selectReportInContext(nextReport);
+                }}
+                onToday={returnToToday}
+                onOpenHistory={() => setReportHistoryOpen(true)}
+              />
               <RiskControls
                 profile={profile}
                 analysisMode={analysisMode}
@@ -1454,7 +1608,12 @@ export function Dashboard() {
                 readingModeKey={report?.id ?? null}
               />
               {report || streamingReport ? (
-                <div ref={reportSectionRef} className="min-w-0 scroll-mt-20">
+                <div
+                  ref={reportSectionRef}
+                  tabIndex={-1}
+                  aria-label="日报阅读区"
+                  className="min-w-0 scroll-mt-24 outline-none"
+                >
                   <ReportPanel
                     report={report}
                     streaming={streamingReport}
@@ -1515,28 +1674,19 @@ export function Dashboard() {
             />
           ) : null}
 
-          {activeTab === "history" ? (
-            <div className="grid gap-6">
-              <SectorSignalBacktestPanel title="板块信号历史回测（全部 canonical）" />
-              <HistoryRail
-              reports={reports}
-              onRefresh={loadHistory}
-              onSelect={(selectedReport) => {
-                setReport(selectedReport);
-                setActiveTab("report");
-                requestAnimationFrame(() => {
-                  reportSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-                });
-              }}
-              onDeleted={(reportId) => {
-                if (report?.id === reportId) {
-                  setReport(null);
-                }
-              }}
-            />
-            </div>
-          ) : null}
         </main>
+
+        <ReportHistoryDrawer
+          open={reportHistoryOpen}
+          reports={orderedReports}
+          activeReportId={report?.id}
+          loading={historyLoading}
+          error={historyError}
+          onClose={() => setReportHistoryOpen(false)}
+          onRefresh={loadHistory}
+          onSelect={(selected) => selectReportInContext(selected)}
+          onDeleted={handleReportDeleted}
+        />
       </div>
 
       <BackgroundJobsStack>
@@ -1634,6 +1784,16 @@ export function Dashboard() {
         isUploading={isOcrUploading}
         isSubmitting={isManualAdding}
         errorMessage={addHoldingError}
+      />
+
+      <LedgerBaselineModal
+        open={showLedgerBaselineModal}
+        holdings={displayableHoldings(holdings)}
+        onClose={() => setShowLedgerBaselineModal(false)}
+        onConfirmed={async () => {
+          setMessage("决策账本基线已确认，后续日报与荐基将引用新的账本版本。", "success");
+          await hydratePortfolio();
+        }}
       />
 
       <BatchTransactionModal

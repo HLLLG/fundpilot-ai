@@ -3,6 +3,9 @@ from __future__ import annotations
 from typing import Any
 
 
+MYSQL_SCHEMA_VERSION = 10
+
+
 def ensure_mysql_schema(connection: Any) -> None:
     cursor = connection.cursor()
     statements = [
@@ -107,6 +110,11 @@ def ensure_mysql_schema(connection: Any) -> None:
             status VARCHAR(16) NOT NULL,
             shares_delta DOUBLE NULL,
             nav_on_confirm DOUBLE NULL,
+            confirmed_shares DOUBLE NULL,
+            fee_yuan DOUBLE NULL,
+            shares_source VARCHAR(32) NULL,
+            in_progress TINYINT NOT NULL DEFAULT 0,
+            confirmed_at VARCHAR(64) NULL,
             dedup_key VARCHAR(255) NOT NULL,
             created_at VARCHAR(64) NOT NULL,
             UNIQUE KEY uq_fund_tx_dedup (userId, dedup_key),
@@ -264,10 +272,205 @@ def ensure_mysql_schema(connection: Any) -> None:
             INDEX idx_factor_ic_generated (generated_at)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """,
+        """
+        CREATE TABLE IF NOT EXISTS decision_portfolio_snapshots (
+            userId BIGINT NOT NULL,
+            snapshot_id VARCHAR(64) NOT NULL,
+            account_id VARCHAR(128) NOT NULL DEFAULT 'default',
+            snapshot_at VARCHAR(64) NOT NULL,
+            snapshot_date VARCHAR(16) NOT NULL,
+            source_type VARCHAR(64) NOT NULL,
+            truth_status VARCHAR(32) NOT NULL,
+            ledger_version VARCHAR(128) NULL,
+            cash_yuan DOUBLE NULL,
+            total_market_value_yuan DOUBLE NULL,
+            content_hash VARCHAR(64) NOT NULL,
+            payload LONGTEXT NOT NULL,
+            created_at VARCHAR(64) NOT NULL,
+            PRIMARY KEY (userId, snapshot_id),
+            INDEX idx_decision_snapshots_user_date (userId, snapshot_date, snapshot_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS decision_events (
+            userId BIGINT NOT NULL,
+            event_id VARCHAR(255) NOT NULL,
+            schema_version VARCHAR(64) NOT NULL,
+            event_type VARCHAR(64) NOT NULL,
+            source_type VARCHAR(32) NOT NULL,
+            source_report_id VARCHAR(64) NULL,
+            decision_at VARCHAR(64) NOT NULL,
+            decision_date VARCHAR(16) NOT NULL,
+            fund_code VARCHAR(32) NULL,
+            fund_name VARCHAR(255) NULL,
+            proposed_action VARCHAR(255) NULL,
+            final_action VARCHAR(255) NOT NULL,
+            action_category VARCHAR(32) NOT NULL,
+            eligible TINYINT NOT NULL DEFAULT 0,
+            amount_yuan DOUBLE NULL,
+            portfolio_snapshot_id VARCHAR(64) NULL,
+            benchmark_mapping_id VARCHAR(64) NULL,
+            fee_model VARCHAR(64) NULL,
+            is_backfilled TINYINT NOT NULL DEFAULT 0,
+            metric_eligible TINYINT NOT NULL DEFAULT 1,
+            content_hash VARCHAR(64) NOT NULL,
+            payload LONGTEXT NOT NULL,
+            created_at VARCHAR(64) NOT NULL,
+            PRIMARY KEY (userId, event_id),
+            INDEX idx_decision_events_user_report
+                (userId, source_type, source_report_id),
+            INDEX idx_decision_events_user_date
+                (userId, decision_date, fund_code)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS outcome_observations (
+            userId BIGINT NOT NULL,
+            observation_id VARCHAR(255) NOT NULL,
+            decision_event_id VARCHAR(255) NOT NULL,
+            horizon_trading_days INT NOT NULL,
+            target_date VARCHAR(16) NULL,
+            status VARCHAR(32) NOT NULL,
+            is_terminal TINYINT NOT NULL DEFAULT 0,
+            revision_no INT NOT NULL DEFAULT 1,
+            observed_at VARCHAR(64) NOT NULL,
+            finalized_at VARCHAR(64) NULL,
+            content_hash VARCHAR(64) NOT NULL,
+            payload LONGTEXT NOT NULL,
+            created_at VARCHAR(64) NOT NULL,
+            updated_at VARCHAR(64) NOT NULL,
+            PRIMARY KEY (userId, observation_id),
+            UNIQUE KEY uq_outcome_event_horizon
+                (userId, decision_event_id, horizon_trading_days),
+            INDEX idx_outcome_observations_pending (userId, status, target_date)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS outcome_observation_revisions (
+            userId BIGINT NOT NULL,
+            observation_id VARCHAR(255) NOT NULL,
+            revision_no INT NOT NULL,
+            status VARCHAR(32) NOT NULL,
+            is_terminal TINYINT NOT NULL,
+            observed_at VARCHAR(64) NOT NULL,
+            content_hash VARCHAR(64) NOT NULL,
+            payload LONGTEXT NOT NULL,
+            created_at VARCHAR(64) NOT NULL,
+            PRIMARY KEY (userId, observation_id, revision_no)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS fund_benchmark_mappings (
+            userId BIGINT NOT NULL,
+            mapping_id VARCHAR(64) NOT NULL,
+            fund_code VARCHAR(32) NOT NULL,
+            benchmark_kind VARCHAR(32) NOT NULL,
+            completeness VARCHAR(32) NOT NULL,
+            benchmark_name VARCHAR(500) NOT NULL,
+            benchmark_code VARCHAR(64) NULL,
+            valid_from VARCHAR(16) NOT NULL,
+            valid_to VARCHAR(16) NULL,
+            source VARCHAR(64) NOT NULL,
+            source_ref VARCHAR(512) NULL,
+            content_hash VARCHAR(64) NOT NULL,
+            payload LONGTEXT NOT NULL,
+            created_at VARCHAR(64) NOT NULL,
+            PRIMARY KEY (userId, mapping_id),
+            INDEX idx_fund_benchmark_effective
+                (userId, fund_code, valid_from, valid_to, benchmark_kind)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS portfolio_ledger_events (
+            event_revision_id VARCHAR(64) PRIMARY KEY,
+            logical_event_id VARCHAR(255) NOT NULL,
+            userId BIGINT NOT NULL,
+            account_id VARCHAR(128) NOT NULL,
+            revision_no INT NOT NULL,
+            event_type VARCHAR(64) NOT NULL,
+            fund_code VARCHAR(32) NULL,
+            effective_at VARCHAR(64) NOT NULL,
+            recorded_at VARCHAR(64) NOT NULL,
+            status VARCHAR(32) NOT NULL,
+            source VARCHAR(64) NOT NULL,
+            source_ref VARCHAR(255) NULL,
+            event_hash VARCHAR(64) NOT NULL,
+            previous_hash VARCHAR(64) NULL,
+            payload_hash VARCHAR(64) NOT NULL,
+            payload LONGTEXT NOT NULL,
+            created_at VARCHAR(64) NOT NULL,
+            UNIQUE KEY uq_portfolio_ledger_logical_revision
+                (userId, account_id, logical_event_id, revision_no),
+            UNIQUE KEY uq_portfolio_ledger_source_ref
+                (userId, account_id, source, source_ref),
+            INDEX idx_portfolio_ledger_effective
+                (userId, account_id, effective_at, recorded_at, event_revision_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS portfolio_ledger_heads (
+            userId BIGINT NOT NULL,
+            account_id VARCHAR(128) NOT NULL,
+            revision BIGINT NOT NULL,
+            chain_hash VARCHAR(64) NOT NULL,
+            updated_at VARCHAR(64) NOT NULL,
+            PRIMARY KEY (userId, account_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """,
     ]
     for statement in statements:
         cursor.execute(statement)
+
+    # Existing MySQL installations need additive repair because CREATE TABLE IF
+    # NOT EXISTS does not add columns introduced by later application versions.
+    fetchone = getattr(cursor, "fetchone", None)
+    if callable(fetchone):
+        transaction_columns = {
+            "confirmed_shares": "DOUBLE NULL",
+            "fee_yuan": "DOUBLE NULL",
+            "shares_source": "VARCHAR(32) NULL",
+            "in_progress": "TINYINT NOT NULL DEFAULT 0",
+            "confirmed_at": "VARCHAR(64) NULL",
+        }
+        for column, definition in transaction_columns.items():
+            cursor.execute(
+                f"""
+                SELECT 1 FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE()
+                  AND TABLE_NAME = 'fund_transactions'
+                  AND COLUMN_NAME = '{column}'
+                """
+            )
+            if fetchone() is None:
+                cursor.execute(
+                    f"ALTER TABLE fund_transactions ADD COLUMN {column} {definition}"
+                )
+        # Ledger versions are content-addressed strings (for example
+        # ``pl1:4:abc123``), not counters.  Early v10 DDL declared BIGINT and
+        # would reject every real snapshot on MySQL.
+        cursor.execute(
+            """
+            SELECT DATA_TYPE FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = 'decision_portfolio_snapshots'
+              AND COLUMN_NAME = 'ledger_version'
+            """
+        )
+        ledger_version_column = fetchone()
+        if ledger_version_column is not None:
+            if isinstance(ledger_version_column, dict):
+                ledger_type = str(ledger_version_column.get("DATA_TYPE") or "").lower()
+            else:
+                ledger_type = str(ledger_version_column[0] or "").lower()
+            if ledger_type not in {"varchar", "char", "text", "mediumtext", "longtext"}:
+                cursor.execute(
+                    "ALTER TABLE decision_portfolio_snapshots "
+                    "MODIFY COLUMN ledger_version VARCHAR(128) NULL"
+                )
     cursor.execute(
-        "INSERT IGNORE INTO schema_meta (id, version) VALUES (1, 2)"
+        f"""
+        INSERT INTO schema_meta (id, version) VALUES (1, {MYSQL_SCHEMA_VERSION})
+        ON DUPLICATE KEY UPDATE version = GREATEST(version, VALUES(version))
+        """
     )
     connection.commit()

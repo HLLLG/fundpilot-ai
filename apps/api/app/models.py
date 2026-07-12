@@ -1,14 +1,16 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any, Literal
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 TransactionDirection = Literal["buy", "sell"]
 TransactionStatus = Literal["pending", "confirmed", "superseded", "skipped"]
+TransactionSharesSource = Literal["user_confirmed", "derived_amount_nav"]
 
 Action = Literal["watch", "pause_add", "staggered_add", "risk_review"]
 RiskLevel = Literal["low", "medium", "high"]
@@ -80,6 +82,23 @@ AnalysisMode = Literal["fast", "deep"]
 DailyProfitSource = Literal["settled", "penetration_estimate"]
 SectorReturnSource = Literal["realtime", "closing_estimate"]
 DailyReturnSource = Literal["sector_estimate", "official_nav", "pending_accrual"]
+DataSourceType = Literal["first_party", "official", "third_party", "derived", "user_input"]
+DataFreshness = Literal["fresh", "aging", "stale", "unknown", "unavailable"]
+DataConfidence = Literal["high", "medium", "low", "none"]
+
+
+class DataEvidence(BaseModel):
+    """A point-in-time provenance envelope for one decision fact."""
+
+    fact_id: str
+    source: str
+    source_type: DataSourceType
+    as_of_date: str | None = None
+    available_at: datetime | None = None
+    fetched_at: datetime
+    freshness: DataFreshness = "unknown"
+    confidence: DataConfidence = "none"
+    is_estimate: bool = False
 
 
 class AnalysisRequest(BaseModel):
@@ -88,6 +107,10 @@ class AnalysisRequest(BaseModel):
     ocr_text: str | None = None
     analysis_mode: AnalysisMode = "deep"
     system_role_prompt: str | None = Field(default=None, max_length=4000)
+    # Public opt-in for an explicitly degraded run. The server always overwrites the
+    # excluded context below, so clients cannot forge provenance metadata.
+    allow_stale_portfolio_snapshot: bool = False
+    portfolio_snapshot_context: dict[str, Any] | None = Field(default=None, exclude=True)
 
 
 class StreamFollowupRequest(BaseModel):
@@ -176,6 +199,54 @@ class ParsedTransaction(BaseModel):
     trade_time: str            # "YYYY-MM-DD HH:MM:SS"
     confirm_date: str | None = None   # ISO date
     in_progress: bool = False
+    # SingleFundTransactionModal 输入的是用户已在原平台确认的实际份额。
+    # 旧 OCR 请求没有这两个字段，继续兼容并在确认时降级为 amount/nav 推算。
+    confirmed_shares: float | None = Field(default=None, gt=0)
+    fee_yuan: float | None = Field(default=None, ge=0)
+
+    @field_validator("fund_code")
+    @classmethod
+    def normalize_fund_code(cls, value: str | None) -> str | None:
+        if value is None or not str(value).strip():
+            return None
+        text = str(value).strip()
+        if not text.isdigit() or len(text) > 6:
+            raise ValueError("fund_code 必须是最多六位数字")
+        return text.zfill(6)
+
+    @field_validator("trade_time")
+    @classmethod
+    def validate_trade_time(cls, value: str) -> str:
+        text = str(value or "").strip().replace("/", "-").replace("T", " ")
+        text = " ".join(text.split())
+        if not text:
+            raise ValueError("trade_time 不能为空")
+        parsed: datetime | None = None
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+            try:
+                parsed = datetime.strptime(text, fmt)
+                break
+            except ValueError:
+                continue
+        if parsed is None:
+            try:
+                parsed = datetime.fromisoformat(text)
+            except ValueError as exc:
+                raise ValueError("trade_time 必须是有效的 ISO 日期或时间") from exc
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone(ZoneInfo("Asia/Shanghai")).replace(tzinfo=None)
+        return parsed.strftime("%Y-%m-%d %H:%M:%S")
+
+    @field_validator("confirm_date")
+    @classmethod
+    def validate_confirm_date(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = str(value).strip()
+        try:
+            return date.fromisoformat(text).isoformat()
+        except ValueError as exc:
+            raise ValueError("confirm_date 必须是 YYYY-MM-DD") from exc
 
 
 class FundTransaction(BaseModel):
@@ -189,12 +260,29 @@ class FundTransaction(BaseModel):
     status: TransactionStatus = "pending"
     shares_delta: float | None = None
     nav_on_confirm: float | None = None
+    confirmed_shares: float | None = Field(default=None, gt=0)
+    fee_yuan: float | None = Field(default=None, ge=0)
+    shares_source: TransactionSharesSource | None = None
+    in_progress: bool = False
+    confirmed_at: str | None = None
     dedup_key: str
     created_at: str
 
 
 class ApplyTransactionsRequest(BaseModel):
     transactions: list[ParsedTransaction] = Field(default_factory=list)
+
+
+class LedgerBaselinePositionInput(BaseModel):
+    fund_code: str = Field(..., min_length=6, max_length=6)
+    confirmed_shares: float = Field(..., gt=0)
+    cost_basis_total_yuan: float | None = Field(default=None, ge=0)
+
+
+class ConfirmPortfolioLedgerBaselineRequest(BaseModel):
+    as_of_date: date
+    cash_balance_yuan: float | None = Field(default=None, ge=0)
+    positions: list[LedgerBaselinePositionInput] = Field(min_length=1)
 
 
 class PortfolioSummary(BaseModel):
@@ -305,6 +393,8 @@ class Report(BaseModel):
     caveats: list[str]
     provider: str = "offline"
     analysis_facts: dict = Field(default_factory=dict)
+    decision_contract: dict[str, Any] = Field(default_factory=dict)
+    decision_events: list[dict[str, Any]] = Field(default_factory=list)
 
 
 ChatRole = Literal["user", "assistant"]
@@ -370,6 +460,8 @@ class FundDiscoveryReport(BaseModel):
     caveats: list[str] = Field(default_factory=list)
     provider: str = "offline"
     analysis_mode: AnalysisMode = "deep"
+    decision_contract: dict[str, Any] = Field(default_factory=dict)
+    decision_events: list[dict[str, Any]] = Field(default_factory=list)
 
 
 FundTypePreference = Literal["any", "etf_link", "no_c_class"]
@@ -393,6 +485,8 @@ class DiscoveryRequest(BaseModel):
     dip_lookback_days: int = Field(default=5, ge=3, le=5)
     dip_min_drop_percent: float = Field(default=3.0, ge=1.0, le=15.0)
     system_role_prompt: str | None = Field(default=None, max_length=4000)
+    allow_stale_portfolio_snapshot: bool = False
+    portfolio_snapshot_context: dict[str, Any] | None = Field(default=None, exclude=True)
 
 
 class DiscoveryChatMessage(BaseModel):

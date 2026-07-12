@@ -87,3 +87,22 @@ it("shows recovery actions instead of private content when session recovery fail
   expect(screen.getByRole("button", { name: "返回公开首页" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "清除失效登录状态" })).toBeInTheDocument();
 });
+
+it("keeps root URL state intact for an authenticated dashboard session", async () => {
+  mocks.fetchCurrentUser.mockResolvedValue({
+    id: 1,
+    username: "日报用户",
+    userAccount: "report@example.com",
+  });
+  render(
+    <AuthProvider>
+      <main>工作台</main>
+    </AuthProvider>,
+  );
+
+  await act(async () => {
+    await vi.runAllTimersAsync();
+  });
+  expect(screen.getByText("工作台")).toBeInTheDocument();
+  expect(mocks.replace).not.toHaveBeenCalled();
+});

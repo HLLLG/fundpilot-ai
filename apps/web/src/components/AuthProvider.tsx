@@ -106,7 +106,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       router.replace(`/login?redirect=${redirect}`);
       return;
     }
-    if (user && isPublic) {
+    // 已登录用户在根路径本身就会渲染 Dashboard；不要再次 replace("/")，否则会
+    // 清掉日报导航使用的 ?report=... 可恢复状态。登录/注册页仍回到工作台。
+    if (user && isPublic && pathname !== "/") {
       router.replace("/");
     }
   }, [loading, user, pathname, router]);

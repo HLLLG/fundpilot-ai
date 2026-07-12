@@ -236,11 +236,10 @@ test("模拟登录态可进入响应式应用壳层", async ({ page }) => {
   await page.keyboard.press("Enter");
   await expect(page.getByRole("menu", { name: "账号菜单" })).toBeVisible();
   const settingsMenuItem = page.getByRole("menuitem", { name: "账号设置" });
-  const historyMenuItem = page.getByRole("menuitem", { name: "历史日报" });
   await expect(settingsMenuItem).toBeFocused();
   await expectMinimumTapTarget(settingsMenuItem);
   await page.keyboard.press("ArrowDown");
-  await expect(historyMenuItem).toBeFocused();
+  await expect(page.getByRole("menuitem", { name: "退出登录" })).toBeFocused();
   await page.keyboard.press("Home");
   await expect(settingsMenuItem).toBeFocused();
   await page.keyboard.press("End");
@@ -261,7 +260,7 @@ test("模拟登录态可进入响应式应用壳层", async ({ page }) => {
     await page.keyboard.press("ArrowDown");
     await expect(page.getByRole("menuitem", { name: "生成日报" })).toBeFocused();
     await page.keyboard.press("End");
-    await expect(page.getByRole("menuitem", { name: "历史日报" })).toBeFocused();
+    await expect(page.getByRole("menuitem", { name: "生成日报" })).toBeFocused();
     await page.keyboard.press("Escape");
     await expect(page.getByRole("menu", { name: "更多页面" })).toBeHidden();
     await expect(moreTrigger).toBeFocused();

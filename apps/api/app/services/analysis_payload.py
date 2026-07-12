@@ -26,6 +26,7 @@ from app.services.portfolio_snapshot import (
     build_risk_metrics_for_facts,
 )
 from app.services.trading_session import build_trading_session
+from app.services.decision_data_evidence import attach_analysis_data_evidence
 
 AnalysisPayloadPhase = Literal[1, 2, 3]
 
@@ -34,6 +35,9 @@ RISK_METRICS_TIMEOUT_SECONDS = 3.0
 
 # 迁入 system 的完整输出约束（不再每条请求在 user JSON 重复）
 OUTPUT_REQUIREMENTS_SYSTEM = (
+    "analysis_facts.portfolio_position_truth 是持仓份额、成本和现金的唯一真值摘要；"
+    "unknown/null 不得按 0 猜测；position_complete=false、ledger_truncated=true 或存在 "
+    "pending/conflict 时，amount_yuan 必须为 null，且不得生成任何可执行仓位金额。"
     "输出必须是完整 JSON（不要 Markdown），包含 title、summary、fund_recommendations、caveats。"
     "fund_recommendations 每只持仓基金恰好 1 条；字段含 fund_code、fund_name、action、"
     "amount_yuan（可选）、amount_note（可选）、news_bullish、news_bearish、points（1-3 条，每条≤60字）、"
@@ -61,7 +65,8 @@ OUTPUT_REQUIREMENTS_SYSTEM = (
     "estimated_holding_return_percent（累计持有）、daily_return_percent（当日）。"
     "基金代码 000000 须提示补全代码。不做实盘交易指令。"
     "analysis_facts.holdings[].nav_trend 为净值摘要，不得编造未给出的序列；"
-    "sector_momentum/sector_intraday/sector_fund_flow 为短线提示；market_flow 为北向资金解读（若提供）。"
+    "sector_momentum/sector_intraday/sector_fund_flow 为短线提示；stock_connect_flow 仅提供南向数值，"
+    "北向只保留 not_disclosed 审计状态、不得用于决策；南向仅作港股资金面的独立参考。"
     "sector_fund_flow.pattern_hint 可辅助判断高位出货、低位洗盘等，须用给定数字不得编造。"
     "sector_fund_flow.today_main_force_net_yi：正=主力净流入、负=主力净流出；"
     "须与 flow_date 同日且 date_aligned=true 时才可与 sector_return_percent 做量价背离判断；"
@@ -76,6 +81,8 @@ OUTPUT_REQUIREMENTS_SYSTEM = (
     "analysis_facts.sector_rotation.market_top 是当前更强的轮动方向参考，仅用于「是否存在更强"
     "方向」的提示，不得单独作为清仓已持仓位、追高换仓的理由，须结合该持仓自身证据综合判断。"
     "analysis_facts.news.freshness_label 须在 summary 或 caveats 体现对决策置信度的影响。"
+    "analysis_facts.data_evidence 是字段级时点证据：freshness=stale/unavailable 或 confidence=none 的事实"
+    "不得支撑动作；is_estimate=true 的数字必须明确写为估算并降低结论置信度。"
     "news_titles 中 source=cls 为财联社快讯。若 nav_trend 为空须在 points 说明。"
     "analysis_facts.market_breadth 是大盘情绪温度计（自上而下）：sentiment_level 基于全市场"
     "创新高低家数近2年历史分布百分位自校准，冰点/低迷代表市场情绪偏冷，可作为「即使板块"
@@ -88,6 +95,7 @@ OUTPUT_REQUIREMENTS_SYSTEM = (
 )
 
 OUTPUT_REQUIREMENTS_USER = [
+    "portfolio_position_truth 中 unknown/null 不得按 0；position_complete=false、ledger_truncated=true 或存在 pending/conflict 时 amount_yuan 必须为空",
     "analysis_facts 为系统计算的只读事实，不得改写其中任何数字",
     "输出 title、summary、fund_recommendations、caveats；每只基金恰好 1 条 recommendation",
     "action 仅限 analysis_facts.allowed_actions；risk_review 或 high 禁止加仓类",
@@ -347,7 +355,7 @@ def trim_analysis_facts_for_llm(
         }
 
     if phase >= 2 and not is_short_term_style(decision_style):
-        trimmed.pop("market_flow", None)
+        trimmed.pop("stock_connect_flow", None)
         trimmed.pop("signal_backtest", None)
         trimmed.pop("prompt_tuning", None)
         guard = trimmed.get("guard_policy")
@@ -379,7 +387,7 @@ def trim_analysis_facts_for_llm(
         }
 
     # market_breadth 是自上而下的大盘情绪信号（用户此前踩坑的案例正是"板块微涨但大盘
-    # 整体转冷"），与 market_flow/signal_backtest 偏短线定位不同，不因 decision_style
+    # 整体转冷"），与 stock_connect_flow/signal_backtest 偏短线定位不同，不因 decision_style
     # 是稳健模式而整体裁掉；fast 模式下仅保留 LLM 真正用得到的精简字段控制体积。
     if phase >= 2 and analysis_mode == "fast" and isinstance(trimmed.get("market_breadth"), dict):
         breadth = trimmed["market_breadth"]
@@ -389,6 +397,49 @@ def trim_analysis_facts_for_llm(
                 for k in ("available", "sentiment_level", "sentiment_level_change", "interpretation")
                 if k in breadth
             }
+
+    snapshot = trimmed.get("portfolio_snapshot")
+    if isinstance(snapshot, dict):
+        trimmed["portfolio_snapshot"] = {
+            key: snapshot.get(key)
+            for key in (
+                "snapshot_id",
+                "source",
+                "authoritative",
+                "as_of_date",
+                "effective_trade_date",
+                "client_snapshot_mismatch",
+                "stale",
+                "degraded",
+                "freshness",
+                "degradation_reason",
+            )
+        }
+    evidence = trimmed.get("data_evidence")
+    if isinstance(evidence, dict):
+        trimmed["data_evidence"] = {
+            "schema_version": evidence.get("schema_version"),
+            "decision_ready": evidence.get("decision_ready"),
+            "blocking_reasons": evidence.get("blocking_reasons") or [],
+            "items": [
+                {
+                    key: item.get(key)
+                    for key in (
+                        "fact_id",
+                        "source",
+                        "source_type",
+                        "as_of_date",
+                        "available_at",
+                        "fetched_at",
+                        "freshness",
+                        "confidence",
+                        "is_estimate",
+                    )
+                }
+                for item in (evidence.get("items") or [])
+                if isinstance(item, dict)
+            ],
+        }
 
     return trimmed
 
@@ -514,6 +565,12 @@ def prepare_analysis_bundle(
         risk_metrics=risk_metrics,
         for_llm=True,
         budget_enhancements=budget_enhancements,
+    )
+    facts = attach_analysis_data_evidence(
+        facts,
+        holdings=request.holdings,
+        snapshots=snapshots,
+        portfolio_context=request.portfolio_snapshot_context,
     )
     return AnalysisFactsBundle(
         session=session,

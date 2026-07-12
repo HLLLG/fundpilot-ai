@@ -7,6 +7,7 @@ from app.services.deepseek_client import DeepSeekClient, JOB_STAGES
 from app.services.fund_data import FundDataService
 from app.services.fund_profile import FundProfileService
 from app.services.risk import evaluate_portfolio_risk
+from app.services.decision_data_evidence import resolve_portfolio_preflight
 from app.database import save_report
 
 ProgressCallback = Callable[[str, str], None]
@@ -16,6 +17,16 @@ def run_analysis(
     request: AnalysisRequest,
     on_progress: ProgressCallback | None = None,
 ) -> Report:
+    preflight = resolve_portfolio_preflight(
+        request.holdings,
+        allow_stale=request.allow_stale_portfolio_snapshot,
+    )
+    request = request.model_copy(
+        update={
+            "holdings": preflight.holdings,
+            "portfolio_snapshot_context": preflight.context,
+        }
+    )
     if not request.holdings:
         raise ValueError("至少需要一条基金持仓")
 
@@ -38,5 +49,4 @@ def run_analysis(
         on_progress=on_progress,
     )
     progress("saving")
-    save_report(report)
-    return report
+    return save_report(report)

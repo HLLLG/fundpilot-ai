@@ -8,7 +8,7 @@ GATE 实跑修正（akshare==1.18.64，见 tasks.md 任务 1.1 结论）::
     主选 ``fx_quote_baidu(symbol="美元")`` 在本环境返回上游 HTTP 403（不可达），
     但在其它可联网环境可用，故保留为**主选尝试**。本环境真实可达的兜底为
     ``currency_boc_safe()``（外管局中间价日频，与竞品「汇率」口径一致），其次
-    ``currency_boc_sina(symbol="美元")``；数值单位为「分」（如 ``680.96`` →
+    ``currency_boc_sina(symbol="美元", start_date=..., end_date=...)``；数值单位为「分」（如 ``680.96`` →
     ``6.8096`` CNY/USD，需除以 100）。
 
 **硬约束（需求 1.2 / 7.5）：** 禁止填占位常量；数值仅来自真实采集，采集失败返回
@@ -70,11 +70,19 @@ except Exception as exc:  # noqa: BLE001
     sys.exit(1)
 """
 
-# 备选 2：中行人民币牌价（日频历史序列；本环境可能止于 2023）。
+# 备选 2：中行人民币牌价（日频历史序列）。AkShare 的默认日期固定在 2023，
+# 必须显式传入滚动窗口，否则会把历史值误当成最新汇率。
 _BOC_SINA_SCRIPT = _CHILD_PREAMBLE + """
 try:
     import akshare as ak
-    frame = ak.currency_boc_sina(symbol="美元")
+    from datetime import date, timedelta
+    end = date.today()
+    start = end - timedelta(days=45)
+    frame = ak.currency_boc_sina(
+        symbol="美元",
+        start_date=start.strftime("%Y%m%d"),
+        end_date=end.strftime("%Y%m%d"),
+    )
     _emit_frame(frame)
 except Exception as exc:  # noqa: BLE001
     print(json.dumps({"error": str(exc)}, ensure_ascii=False))
@@ -284,6 +292,8 @@ def _run_akshare(script: str, *, label: str) -> dict[str, Any] | None:
             [sys.executable, "-c", script],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=_SUBPROCESS_TIMEOUT,
             check=False,
         )
@@ -294,7 +304,8 @@ def _run_akshare(script: str, *, label: str) -> dict[str, Any] | None:
         logger.error("us forex subprocess OSError (%s): %s", label, exc)
         return None
 
-    if result.returncode != 0 or not result.stdout.strip():
+    stdout = result.stdout or ""
+    if not stdout.strip():
         logger.debug(
             "us forex subprocess failed (%s): rc=%s stderr=%s",
             label,
@@ -303,20 +314,49 @@ def _run_akshare(script: str, *, label: str) -> dict[str, Any] | None:
         )
         return None
 
-    try:
-        payload = json.loads(result.stdout.strip())
-    except json.JSONDecodeError as exc:
-        logger.warning("us forex subprocess JSON parse failed (%s): %s", label, exc)
+    payload = _parse_json_stdout(stdout)
+    if payload is None:
+        logger.warning(
+            "us forex subprocess JSON parse failed (%s): rc=%s stdout=%r",
+            label,
+            result.returncode,
+            stdout[-200:],
+        )
         return None
 
-    if not isinstance(payload, dict) or payload.get("error"):
+    if result.returncode != 0 or payload.get("error"):
         logger.debug(
             "us forex source error (%s): %s",
             label,
-            payload.get("error") if isinstance(payload, dict) else "bad payload",
+            payload.get("error") or f"subprocess rc={result.returncode}",
         )
         return None
     return payload
+
+
+def _parse_json_stdout(stdout: str) -> dict[str, Any] | None:
+    """解析 AkShare stdout，兼容上游在 JSON 前打印诊断信息。
+
+    ``fx_quote_baidu`` 在 HTTP 403 时会先打印 ``[pn=0] 接口返回异常``，随后才由
+    我们的子进程脚本输出结构化 ``{"error": ...}``。只解析整段文本会把这种可预期
+    的源级失败误报成 JSON 异常；倒序读取最后一个合法 JSON 行即可保留降级语义。
+    """
+    text = (stdout or "").strip()
+    if not text:
+        return None
+
+    candidates = [text, *reversed(text.splitlines())]
+    for candidate in candidates:
+        candidate = candidate.strip()
+        if not candidate:
+            continue
+        try:
+            payload = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            return payload
+    return None
 
 
 def fetch_usd_cny() -> dict[str, Any] | None:
@@ -343,7 +383,7 @@ def fetch_usd_cny() -> dict[str, Any] | None:
         if quote is not None:
             return quote
 
-    # 3) 最后备选：中行牌价（部分环境数据陈旧）。
+    # 3) 最后备选：中行牌价（日频滚动 45 天窗口）。
     boc_payload = _run_akshare(_BOC_SINA_SCRIPT, label="currency_boc_sina")
     if boc_payload is not None:
         quote = _parse_boc_sina_payload(boc_payload)

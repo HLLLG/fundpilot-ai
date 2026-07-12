@@ -66,7 +66,6 @@ def apply_recommendation_guards(
     topic_briefs: list[TopicBrief] | None = None,
     *,
     nav_trends_by_code: dict[str, dict] | None = None,
-    northbound_net_yi: float | None = None,
     facts: dict | None = None,
 ) -> tuple[list[str], list[FundRecommendation]]:
     weight_denominator = resolve_weight_denominator(request.holdings, request.profile) or 1
@@ -75,7 +74,6 @@ def apply_recommendation_guards(
         weight_denominator,
         market_news,
         nav_trends_by_code=nav_trends_by_code,
-        northbound_net_yi=northbound_net_yi,
     )
     settings = get_settings()
     decision_style = request.profile.decision_style
@@ -100,15 +98,44 @@ def apply_recommendation_guards(
     tuning = guard_policy
     today_signal = has_today_market_signal(market_news, topic_briefs)
     ic_status = _factor_ic_status_from_facts(facts)
+    portfolio_snapshot = (facts or {}).get("portfolio_snapshot")
+    degraded_portfolio_snapshot = bool(
+        isinstance(portfolio_snapshot, dict)
+        and (
+            portfolio_snapshot.get("stale")
+            or not portfolio_snapshot.get("authoritative")
+            or portfolio_snapshot.get("position_complete") is False
+            or int(portfolio_snapshot.get("pending_transaction_count") or 0) > 0
+        )
+    )
+    from app.services.decision_data_evidence import (
+        contains_executable_decision_text,
+        decision_evidence_allows_action,
+        safe_blocked_points,
+    )
 
     guarded: list[FundRecommendation] = []
+    evidence_blocked_codes: dict[str, list[str]] = {}
     for rec in fund_recs:
         holding = _match_holding(rec, request.holdings)
         offline = None
         if holding is not None:
             offline = offline_map.get(holding.fund_code) or offline_map.get(holding.fund_name)
 
+        evidence_allowed, evidence_reasons = decision_evidence_allows_action(
+            facts,
+            scope="analysis",
+            fund_code=(holding.fund_code if holding is not None else rec.fund_code),
+        )
+        execution_blocked = degraded_portfolio_snapshot or not evidence_allowed
+        if execution_blocked:
+            evidence_blocked_codes[rec.fund_code] = evidence_reasons
+
         normalized = normalize_action_text(rec.action)
+        snapshot_note = None
+        if execution_blocked and _action_bucket(normalized) >= ACTION_BUCKET_ADD:
+            normalized = "观察"
+            snapshot_note = "持仓与字段级证据未达到可执行条件，本次已禁止仓位动作。"
 
         nav_trend = None
         if holding is not None and nav_trends_by_code:
@@ -203,7 +230,20 @@ def apply_recommendation_guards(
                     f"（{basis}）。" if basis else f"【灰度提示，未生效】若启用新版守卫（enforced 模式），本条建议会被系统升级为「{would_be_action}」。"
                 )
 
-        note = escalation_note or reversal_note or weak_note
+        # A degraded portfolio cannot support any executable position change,
+        # including a reduction inferred from stale weights. Keep only a neutral
+        # observation, or a generic risk review when the independent portfolio
+        # risk gate is already high.
+        if execution_blocked:
+            normalized = (
+                "风控复核"
+                if risk.level == "high" or risk.suggested_action == "risk_review"
+                else "观察"
+            )
+            escalation_note = None
+            shadow_note = None
+
+        note = escalation_note or snapshot_note or reversal_note or weak_note
         if (
             not note
             and not short_term
@@ -223,6 +263,16 @@ def apply_recommendation_guards(
             note = f"已规范动作表述为「{normalized}」。"
 
         copy = rec.model_copy(update={"action": normalized})
+        if execution_blocked:
+            copy.amount_yuan = None
+            copy.amount_note = "字段级证据未达到时点可用条件，未生成可执行金额"
+            copy.suggested_position_change_percent = None
+            copy.suggested_position_change_basis = "决策证据未达到时点可用条件，禁止据此计算仓位变化"
+            copy.confidence = "低"
+            copy.validation_notes = [
+                *copy.validation_notes,
+                "持仓或字段级证据过期、未知或尚未服务端确认；金额、权重和仓位动作不具备执行条件。",
+            ]
         if note:
             copy.points = [note, *copy.points]
         copy.confidence = _normalize_confidence(copy.confidence)
@@ -238,11 +288,30 @@ def apply_recommendation_guards(
             # 回填的规则影响），追加到 validation_notes 末尾，与其它校验备注共存。
             copy.validation_notes = [*copy.validation_notes, shadow_note]
         _sync_decision_path_with_final_action(copy)
+        if execution_blocked:
+            copy.points = safe_blocked_points(
+                copy.points,
+                fallback="字段级证据未达到可执行条件，本条仅保留观察/风险复核。",
+            )
+            copy.decision_path = "证据时点校验未通过，系统阻断仓位动作并降为观察/风险复核。"
+            copy.sector_evidence = [
+                value for value in copy.sector_evidence if not contains_executable_decision_text(value)
+            ]
+            copy.fund_evidence = [
+                value for value in copy.fund_evidence if not contains_executable_decision_text(value)
+            ]
+            copy.validation_notes = [
+                value for value in copy.validation_notes if not contains_executable_decision_text(value)
+            ] + ["字段级证据时点校验未通过，仓位动作已被确定性阻断。"]
         _humanize_recommendation_text(copy)
         guarded.append(copy)
 
     portfolio = _guard_portfolio_lines(portfolio_lines, risk)
-    if not short_term and settings.news_require_today_for_add and not today_signal:
+    if evidence_blocked_codes:
+        hint = "持仓或字段级证据未达到时点可用条件：本次仅保留观察/风险复核，已隐藏仓位动作与金额措辞。"
+        safe_portfolio = [line for line in portfolio if not contains_executable_decision_text(line)]
+        portfolio = [hint, *safe_portfolio[:1]]
+    elif not short_term and settings.news_require_today_for_add and not today_signal:
         hint = "当日无已引用要闻支撑，组合级建议以观察/控风险为主，不宜激进加仓。"
         if not portfolio or hint not in portfolio[0]:
             portfolio = [hint, *portfolio]
@@ -262,6 +331,12 @@ def apply_recommendation_guards(
             hint = str(tuning["reason"])
         if not portfolio or hint not in portfolio[0]:
             portfolio = [hint, *portfolio]
+    if isinstance(facts, dict):
+        facts["data_evidence_guard"] = {
+            "execution_blocked": bool(evidence_blocked_codes),
+            "blocked_fund_codes": sorted(evidence_blocked_codes),
+            "reasons_by_fund": evidence_blocked_codes,
+        }
     return portfolio, guarded
 
 
@@ -307,7 +382,6 @@ def _offline_by_holding(
     market_news: list[NewsItem] | None,
     *,
     nav_trends_by_code: dict[str, dict] | None = None,
-    northbound_net_yi: float | None = None,
 ) -> dict[str, FundRecommendation]:
     nav_trends = nav_trends_by_code or {}
     mapping: dict[str, FundRecommendation] = {}
@@ -320,7 +394,6 @@ def _offline_by_holding(
             request.profile,
             market_news=market_news,
             nav_trend=nav_trends.get(holding.fund_code),
-            northbound_net_yi=northbound_net_yi,
         )
         mapping[holding.fund_code] = offline
         mapping[holding.fund_name] = offline

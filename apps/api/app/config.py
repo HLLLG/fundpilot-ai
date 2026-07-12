@@ -61,7 +61,9 @@ class Settings(BaseSettings):
     news_per_topic: int = 5
     news_tool_max_rounds: int = 1
     news_sources: str = "eastmoney,cls,announcement,macro"
-    tactical_prompt_tuning_enabled: bool = True
+    # 旧日报复盘口径尚未按真实 T+N 收益与成熟样本重建，禁止默认参与 Prompt 调参。
+    # 保留环境变量覆盖能力，仅供修复后的受控验证显式开启。
+    tactical_prompt_tuning_enabled: bool = False
     tactical_prompt_tuning_lookback_reports: int = 30
     sector_signal_backtest_enabled: bool = True
     sector_signal_backtest_days: int = 120

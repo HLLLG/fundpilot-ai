@@ -777,6 +777,7 @@ def _resolve_from_benchmark_index(
     from app.services.fund_benchmark_sector import (
         extract_freeform_theme_from_benchmark,
         fetch_fund_benchmark_text,
+        get_fund_benchmark_fetch_metadata,
         resolve_sector_from_benchmark,
     )
 
@@ -801,16 +802,18 @@ def _resolve_from_benchmark_index(
         _remember_benchmark_miss(fund_code)
         return None
     resolved = resolve_sector_from_benchmark(benchmark_text)
+    benchmark_metadata = get_fund_benchmark_fetch_metadata(fund_code, benchmark_text)
     code = fund_code.strip().zfill(6)
     source = "benchmark_index"
-    detail: dict[str, str | None]
+    detail: dict
     confidence = 0.82
     if resolved is not None:
         sector_name, intraday_index_name, match = resolved
         detail = {
             "index_code": match.index_code,
             "index_name": match.index_name,
-            "benchmark_text": match.benchmark_text[:240],
+            "benchmark_text": match.benchmark_text,
+            **benchmark_metadata,
         }
     else:
         # 指数代码/名称不在白名单里也不整条丢弃：从业绩基准原文抠出主题短语兜底展示，
@@ -823,7 +826,7 @@ def _resolve_from_benchmark_index(
         intraday_index_name = None
         source = "benchmark_freeform"
         confidence = 0.6
-        detail = {"benchmark_text": benchmark_text[:240]}
+        detail = {"benchmark_text": benchmark_text, **benchmark_metadata}
 
     intraday_index_name = _usable_intraday_index_name(intraday_index_name, sector_name)
 

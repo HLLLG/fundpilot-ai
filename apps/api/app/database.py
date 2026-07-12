@@ -47,7 +47,14 @@ def _connect():
     from app.db_connect import connect, uses_mysql
 
     if uses_mysql():
-        return connect()
+        candidate = connect()
+        if str(getattr(candidate, "dialect", "")) == "mysql":
+            return candidate
+        # MySQL may be configured while ``connect`` returns the explicitly
+        # enabled local SQLite fallback.  That fallback still needs the same
+        # bootstrap and migrations as a normal SQLite deployment; otherwise a
+        # fresh outage database has no reports/decision tables at all.
+        candidate.close()
     path = _db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(path)
@@ -159,6 +166,11 @@ def _connect():
             status TEXT NOT NULL,
             shares_delta REAL,
             nav_on_confirm REAL,
+            confirmed_shares REAL,
+            fee_yuan REAL,
+            shares_source TEXT,
+            in_progress INTEGER NOT NULL DEFAULT 0,
+            confirmed_at TEXT,
             dedup_key TEXT NOT NULL,
             created_at TEXT NOT NULL
         )
@@ -240,23 +252,96 @@ def get_user_by_account(user_account: str) -> dict[str, object] | None:
 
 
 def save_report(report: Report) -> Report:
-    payload = report.model_dump(mode="json")
     user_id = _uid()
     with _connect() as connection:
+        from app.services.benchmark_mapping_service import (
+            freeze_report_benchmark_specs,
+        )
+        from app.services.decision_contract import (
+            attach_decision_bundle,
+            build_report_decision_bundle,
+        )
+
+        store_authority = _decision_store_authority(connection)
+        frozen_payload, benchmark_mappings = freeze_report_benchmark_specs(
+            report.model_dump(mode="json"),
+            decision_kind="daily",
+            user_id=user_id,
+            connection=connection,
+        )
+        bundle = build_report_decision_bundle(
+            frozen_payload,
+            decision_kind="daily",
+            store_authority=store_authority,
+        )
+        bundle["benchmark_mappings"] = benchmark_mappings
+        payload = attach_decision_bundle(frozen_payload, bundle)
+        saved_report = Report.model_validate(payload)
         connection.execute(
             """
             INSERT OR REPLACE INTO reports (id, created_at, payload, userId)
             VALUES (?, ?, ?, ?)
             """,
             (
-                report.id,
-                report.created_at.isoformat(),
+                saved_report.id,
+                saved_report.created_at.isoformat(),
                 json.dumps(payload, ensure_ascii=False),
                 user_id,
             ),
         )
-        connection.commit()
-    return report
+        _persist_decision_bundle(
+            connection,
+            user_id=user_id,
+            bundle=bundle,
+        )
+    return saved_report
+
+
+def _decision_store_authority(connection: Any) -> str:
+    configured_mysql = get_settings().uses_mysql
+    dialect = str(getattr(connection, "dialect", "sqlite"))
+    if configured_mysql and dialect != "mysql":
+        return "fallback_non_audited"
+    return "primary"
+
+
+def _persist_decision_bundle(
+    connection: Any,
+    *,
+    user_id: int,
+    bundle: dict[str, Any],
+) -> None:
+    from app.services.decision_repository import (
+        put_fund_benchmark_mapping,
+        put_decision_event,
+        put_decision_portfolio_snapshot,
+        upsert_outcome_observation,
+    )
+
+    for mapping in bundle.get("benchmark_mappings") or []:
+        if isinstance(mapping, dict):
+            put_fund_benchmark_mapping(
+                user_id=user_id,
+                mapping=mapping,
+                connection=connection,
+            )
+    snapshot = bundle.get("position_snapshot")
+    if isinstance(snapshot, dict) and snapshot.get("snapshot_id"):
+        put_decision_portfolio_snapshot(
+            user_id=user_id,
+            snapshot=snapshot,
+            connection=connection,
+        )
+    for event in bundle.get("events") or []:
+        if isinstance(event, dict):
+            put_decision_event(user_id=user_id, event=event, connection=connection)
+    for observation in bundle.get("observations") or []:
+        if isinstance(observation, dict):
+            upsert_outcome_observation(
+                user_id=user_id,
+                observation=observation,
+                connection=connection,
+            )
 
 
 def list_reports() -> list[dict[str, Any]]:
@@ -468,6 +553,15 @@ def _fund_transaction_from_row(row: object) -> FundTransaction:
         nav_on_confirm=(
             float(data["nav_on_confirm"]) if data.get("nav_on_confirm") is not None else None
         ),
+        confirmed_shares=(
+            float(data["confirmed_shares"])
+            if data.get("confirmed_shares") is not None
+            else None
+        ),
+        fee_yuan=(float(data["fee_yuan"]) if data.get("fee_yuan") is not None else None),
+        shares_source=(str(data["shares_source"]) if data.get("shares_source") else None),
+        in_progress=bool(data.get("in_progress")),
+        confirmed_at=(str(data["confirmed_at"]) if data.get("confirmed_at") else None),
         dedup_key=str(data["dedup_key"]),
         created_at=str(data["created_at"]),
     )
@@ -477,46 +571,97 @@ def insert_fund_transaction(tx: FundTransaction) -> bool:
     """写入交易记录；命中唯一 (userId, dedup_key) 时忽略并返回 False。"""
     user_id = _uid()
     with _connect() as connection:
-        cursor = connection.execute(
-            """
-            INSERT OR IGNORE INTO fund_transactions (
-                id, userId, fund_code, fund_name, direction, amount_yuan,
-                trade_time, confirm_date, status, shares_delta, nav_on_confirm,
-                dedup_key, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                tx.id,
-                user_id,
-                tx.fund_code,
-                tx.fund_name,
-                tx.direction,
-                tx.amount_yuan,
-                tx.trade_time,
-                tx.confirm_date,
-                tx.status,
-                tx.shares_delta,
-                tx.nav_on_confirm,
-                tx.dedup_key,
-                tx.created_at,
-            ),
-        )
-        connection.commit()
+        cursor = _insert_fund_transaction_on_connection(connection, tx, user_id=user_id)
     return cursor.rowcount > 0
+
+
+def _insert_fund_transaction_on_connection(
+    connection: Any,
+    tx: FundTransaction,
+    *,
+    user_id: int,
+) -> Any:
+    return connection.execute(
+        """
+        INSERT OR IGNORE INTO fund_transactions (
+            id, userId, fund_code, fund_name, direction, amount_yuan,
+            trade_time, confirm_date, status, shares_delta, nav_on_confirm,
+            confirmed_shares, fee_yuan, shares_source, in_progress, confirmed_at,
+            dedup_key, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            tx.id,
+            user_id,
+            tx.fund_code,
+            tx.fund_name,
+            tx.direction,
+            tx.amount_yuan,
+            tx.trade_time,
+            tx.confirm_date,
+            tx.status,
+            tx.shares_delta,
+            tx.nav_on_confirm,
+            tx.confirmed_shares,
+            tx.fee_yuan,
+            tx.shares_source,
+            int(tx.in_progress),
+            tx.confirmed_at,
+            tx.dedup_key,
+            tx.created_at,
+        ),
+    )
+
+
+def _get_fund_transaction_by_dedup_on_connection(
+    connection: Any,
+    *,
+    user_id: int,
+    dedup_key: str,
+) -> FundTransaction | None:
+    row = connection.execute(
+        "SELECT * FROM fund_transactions WHERE userId = ? AND dedup_key = ?",
+        (user_id, dedup_key),
+    ).fetchone()
+    return _fund_transaction_from_row(row) if row is not None else None
+
+
+def _list_fund_transactions_on_connection(
+    connection: Any,
+    *,
+    user_id: int,
+) -> list[FundTransaction]:
+    rows = connection.execute(
+        "SELECT * FROM fund_transactions WHERE userId = ? "
+        "ORDER BY confirm_date ASC, trade_time ASC",
+        (user_id,),
+    ).fetchall()
+    return [_fund_transaction_from_row(row) for row in rows]
+
+
+def _get_pending_fund_transaction_on_connection(
+    connection: Any,
+    *,
+    user_id: int,
+    id: str,
+) -> FundTransaction | None:
+    lock = " FOR UPDATE" if str(getattr(connection, "dialect", "sqlite")) == "mysql" else ""
+    row = connection.execute(
+        "SELECT * FROM fund_transactions "
+        "WHERE userId = ? AND id = ? AND status = 'pending'" + lock,
+        (user_id, id),
+    ).fetchone()
+    return _fund_transaction_from_row(row) if row is not None else None
 
 
 def list_fund_transactions(fund_code: str | None = None) -> list[FundTransaction]:
     user_id = _uid()
     with _connect() as connection:
         if fund_code is None:
-            rows = connection.execute(
-                """
-                SELECT * FROM fund_transactions
-                WHERE userId = ?
-                ORDER BY confirm_date ASC, trade_time ASC
-                """,
-                (user_id,),
-            ).fetchall()
+            return _list_fund_transactions_on_connection(
+                connection,
+                user_id=user_id,
+            )
         else:
             rows = connection.execute(
                 """
@@ -549,18 +694,70 @@ def update_fund_transaction(
     status: str,
     shares_delta: float | None = None,
     nav_on_confirm: float | None = None,
+    confirmed_shares: float | None = None,
+    fee_yuan: float | None = None,
+    shares_source: str | None = None,
+    in_progress: bool | None = None,
+    confirmed_at: str | None = None,
 ) -> None:
     user_id = _uid()
     with _connect() as connection:
-        connection.execute(
-            """
-            UPDATE fund_transactions
-            SET status = ?, shares_delta = ?, nav_on_confirm = ?
-            WHERE userId = ? AND id = ?
-            """,
-            (status, shares_delta, nav_on_confirm, user_id, id),
+        _update_fund_transaction_on_connection(
+            connection,
+            user_id=user_id,
+            id=id,
+            status=status,
+            shares_delta=shares_delta,
+            nav_on_confirm=nav_on_confirm,
+            confirmed_shares=confirmed_shares,
+            fee_yuan=fee_yuan,
+            shares_source=shares_source,
+            in_progress=in_progress,
+            confirmed_at=confirmed_at,
         )
-        connection.commit()
+
+
+def _update_fund_transaction_on_connection(
+    connection: Any,
+    *,
+    user_id: int,
+    id: str,
+    status: str,
+    shares_delta: float | None = None,
+    nav_on_confirm: float | None = None,
+    confirmed_shares: float | None = None,
+    fee_yuan: float | None = None,
+    shares_source: str | None = None,
+    in_progress: bool | None = None,
+    confirmed_at: str | None = None,
+) -> None:
+    connection.execute(
+        """
+        UPDATE fund_transactions
+        SET status = ?,
+            shares_delta = COALESCE(?, shares_delta),
+            nav_on_confirm = COALESCE(?, nav_on_confirm),
+            confirmed_shares = COALESCE(?, confirmed_shares),
+            fee_yuan = COALESCE(?, fee_yuan),
+            shares_source = COALESCE(?, shares_source),
+            in_progress = CASE WHEN ? IS NULL THEN in_progress ELSE ? END,
+            confirmed_at = COALESCE(?, confirmed_at)
+        WHERE userId = ? AND id = ?
+        """,
+        (
+            status,
+            shares_delta,
+            nav_on_confirm,
+            confirmed_shares,
+            fee_yuan,
+            shares_source,
+            None if in_progress is None else int(in_progress),
+            None if in_progress is None else int(in_progress),
+            confirmed_at,
+            user_id,
+            id,
+        ),
+    )
 
 
 def delete_fund_transaction(id: str) -> None:
@@ -1261,23 +1458,49 @@ def list_fund_primary_sectors_global(*, limit: int = 5000) -> list[dict[str, Any
 
 
 def save_discovery_report(report: FundDiscoveryReport) -> FundDiscoveryReport:
-    payload = report.model_dump(mode="json")
     user_id = _uid()
     with _connect() as connection:
+        from app.services.benchmark_mapping_service import (
+            freeze_report_benchmark_specs,
+        )
+        from app.services.decision_contract import (
+            attach_decision_bundle,
+            build_report_decision_bundle,
+        )
+
+        store_authority = _decision_store_authority(connection)
+        frozen_payload, benchmark_mappings = freeze_report_benchmark_specs(
+            report.model_dump(mode="json"),
+            decision_kind="discovery",
+            user_id=user_id,
+            connection=connection,
+        )
+        bundle = build_report_decision_bundle(
+            frozen_payload,
+            decision_kind="discovery",
+            store_authority=store_authority,
+        )
+        bundle["benchmark_mappings"] = benchmark_mappings
+        payload = attach_decision_bundle(frozen_payload, bundle)
+        saved_report = FundDiscoveryReport.model_validate(payload)
         connection.execute(
             """
             INSERT OR REPLACE INTO fund_discovery_reports (id, created_at, payload, userId)
             VALUES (?, ?, ?, ?)
             """,
             (
-                report.id,
-                report.created_at.isoformat(),
+                saved_report.id,
+                saved_report.created_at.isoformat(),
                 json.dumps(payload, ensure_ascii=False),
                 user_id,
             ),
         )
-        connection.commit()
-    return report
+        _persist_decision_bundle(
+            connection,
+            user_id=user_id,
+            bundle=bundle,
+        )
+    return saved_report
 
 
 def list_discovery_reports(*, limit: int = 30) -> list[dict[str, Any]]:

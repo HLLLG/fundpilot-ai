@@ -9,7 +9,10 @@ from app.services.discovery_sector_context import (
 )
 from app.services.discovery_prompt import DISCOVERY_FACTS_INSTRUCTION
 from app.services.investment_presets import take_profit_threshold_percent
-from app.services.market_flow_client import build_market_flow_context
+from app.services.market_flow_client import (
+    NORTHBOUND_NOT_DISCLOSED_REASON,
+    build_stock_connect_flow_context,
+)
 from app.services.fund_nav_service import get_cached_official_nav_return
 from app.services.holding_estimates import (
     compute_estimated_daily_return_percent,
@@ -22,7 +25,7 @@ from app.services.trading_session import build_trading_session
 
 SIGNAL_BACKTEST_TIMEOUT_SECONDS = 5.0
 TARGET_SECTOR_CONTEXT_TIMEOUT_SECONDS = 5.0
-MARKET_FLOW_TIMEOUT_SECONDS = 3.0
+STOCK_CONNECT_FLOW_TIMEOUT_SECONDS = 3.0
 
 
 def build_discovery_facts(
@@ -76,10 +79,10 @@ def build_discovery_facts(
             trade_date=session.get("effective_trade_date"),
         )
     )
-    market_flow = (
-        _budgeted_market_flow(session.get("effective_trade_date"))
+    stock_connect_flow = (
+        _budgeted_stock_connect_flow(session.get("effective_trade_date"))
         if budget_enhancements
-        else build_market_flow_context(session.get("effective_trade_date"))
+        else build_stock_connect_flow_context(session.get("effective_trade_date"))
     )
 
     facts: dict = {
@@ -94,9 +97,11 @@ def build_discovery_facts(
             "concentration_limit_percent": profile.concentration_limit_percent,
             "expected_investment_amount": profile.expected_investment_amount,
             "horizon": profile.horizon,
+            # Point-in-time user assumption used only for estimated fee-adjusted
+            # outcomes; recurring fund expenses are already embedded in NAV.
+            "round_trip_fee_percent": profile.round_trip_fee_percent,
             **(
                 {
-                    "round_trip_fee_percent": profile.round_trip_fee_percent,
                     "min_net_profit_percent": profile.min_net_profit_percent,
                     "take_profit_threshold_percent": take_profit_threshold_percent(profile),
                     "hold_days_target": profile.hold_days_target,
@@ -122,7 +127,7 @@ def build_discovery_facts(
         "sector_heat": sector_heat,
         "sector_opportunities": list(sector_opportunities or []),
         "target_sector_context": target_sector_context,
-        "market_flow": market_flow,
+        "stock_connect_flow": stock_connect_flow,
         "signal_backtest": signal_backtest,
         "news": build_news_pipeline_context(market_news, topic_briefs),
         "candidate_pool": candidate_pool,
@@ -203,16 +208,19 @@ def _budgeted_target_sector_context(
         executor.shutdown(wait=False, cancel_futures=True)
 
 
-def _budgeted_market_flow(trade_date: str | None) -> dict:
-    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="discovery-market-flow-budget")
-    future = executor.submit(lambda: build_market_flow_context(trade_date))
+def _budgeted_stock_connect_flow(trade_date: str | None) -> dict:
+    executor = ThreadPoolExecutor(
+        max_workers=1,
+        thread_name_prefix="discovery-stock-connect-flow-budget",
+    )
+    future = executor.submit(lambda: build_stock_connect_flow_context(trade_date))
     try:
-        return future.result(timeout=MARKET_FLOW_TIMEOUT_SECONDS)
+        return future.result(timeout=STOCK_CONNECT_FLOW_TIMEOUT_SECONDS)
     except FutureTimeoutError:
         future.cancel()
-        return _market_flow_unavailable("timeout")
+        return _stock_connect_flow_unavailable("timeout")
     except Exception:  # noqa: BLE001 - market flow is best-effort
-        return _market_flow_unavailable("error")
+        return _stock_connect_flow_unavailable("error")
     finally:
         executor.shutdown(wait=False, cancel_futures=True)
 
@@ -243,11 +251,16 @@ def _basic_target_sector_context(
     return result
 
 
-def _market_flow_unavailable(reason: str) -> dict:
+def _stock_connect_flow_unavailable(reason: str) -> dict:
     return {
+        "schema_version": "stock_connect_flow.v1",
         "available": False,
         "reason": reason,
-        "message": "市场资金流未在预算内完成，荐基已按板块机会事实继续。",
+        "northbound_status": "not_disclosed",
+        "northbound_reason": NORTHBOUND_NOT_DISCLOSED_REASON,
+        "southbound_available": False,
+        "southbound_net_yi": None,
+        "message": "互联互通资金摘要未在预算内完成，荐基已按板块机会事实继续。",
     }
 
 

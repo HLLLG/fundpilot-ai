@@ -39,6 +39,10 @@ from app.services.risk import resolve_weight_denominator
 from app.services.streaming_heartbeat import Heartbeat, iter_with_heartbeat
 from app.services.streaming_json_parser import StreamingReportParser
 from app.services.discovery_payload import append_output_requirements_to_system, build_user_payload
+from app.services.decision_data_evidence import (
+    attach_discovery_data_evidence,
+    resolve_portfolio_preflight,
+)
 
 PREP_HEARTBEAT_SECONDS = 1.0
 # LLM 首个 token 到达前若长时间无输出，网关（如腾讯云开发 CloudBase）会在 SSE
@@ -52,6 +56,16 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
     settings = get_settings()
     started_at = time.monotonic()
     try:
+        preflight = resolve_portfolio_preflight(
+            request.holdings,
+            allow_stale=request.allow_stale_portfolio_snapshot,
+        )
+        request = request.model_copy(
+            update={
+                "holdings": preflight.holdings,
+                "portfolio_snapshot_context": preflight.context,
+            }
+        )
         holdings = list(request.holdings)
         yield _stage("connected", started_at=started_at)
         yield _stage("sector_heat", started_at=started_at)
@@ -194,6 +208,12 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
             sector_opportunities=sector_opportunities,
             budget_enhancements=True,
         )
+        discovery_facts = attach_discovery_data_evidence(
+            discovery_facts,
+            holdings=holdings,
+            candidate_pool=pool,
+            portfolio_context=request.portfolio_snapshot_context,
+        )
 
         if not settings.deepseek_configured:
             report = build_offline_discovery_report(
@@ -205,7 +225,7 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
                 analysis_mode=request.analysis_mode,
             )
             yield _stage("saving", started_at=started_at)
-            save_discovery_report(report)
+            report = save_discovery_report(report)
             yield _done(report)
             return
 
@@ -286,7 +306,7 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
             analysis_mode=request.analysis_mode,
         )
         yield _stage("saving", started_at=started_at)
-        save_discovery_report(report)
+        report = save_discovery_report(report)
         yield _done(report)
     except Exception as exc:  # noqa: BLE001
         yield {"type": "error", "message": f"{type(exc).__name__}: {exc}"}

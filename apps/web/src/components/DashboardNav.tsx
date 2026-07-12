@@ -3,7 +3,6 @@
 import {
   Activity,
   FileText,
-  History,
   LayoutList,
   MoreHorizontal,
   PieChart,
@@ -22,7 +21,6 @@ type DashboardNavProps = {
   reportTabUnread?: boolean;
   discoveryTabUnread?: boolean;
   onSelect: (tab: PrimaryDashboardTab) => void;
-  onSelectHistory: () => void;
 };
 
 const DESKTOP_TABS: Array<{ id: PrimaryDashboardTab; label: string }> = [
@@ -44,13 +42,12 @@ const MOBILE_PRIMARY: Array<{
 ];
 
 const MOBILE_MORE: Array<{
-  id: PrimaryDashboardTab | "history";
+  id: PrimaryDashboardTab;
   label: string;
   icon: typeof LayoutList;
 }> = [
   { id: "discovery", label: "发现基金", icon: Search },
   { id: "report", label: "生成日报", icon: FileText },
-  { id: "history", label: "历史日报", icon: History },
 ];
 
 function isPrimaryTab(tab: DashboardTabId): tab is PrimaryDashboardTab {
@@ -66,7 +63,6 @@ export function DashboardNav({
   reportTabUnread = false,
   discoveryTabUnread = false,
   onSelect,
-  onSelectHistory,
 }: DashboardNavProps) {
   const moreMenuUnread = reportTabUnread || discoveryTabUnread;
   const [moreOpen, setMoreOpen] = useState(false);
@@ -215,10 +211,6 @@ export function DashboardNav({
                   className="dashboard-more-item"
                   onClick={() => {
                     setMoreOpen(false);
-                    if (id === "history") {
-                      onSelectHistory();
-                      return;
-                    }
                     onSelect(id);
                   }}
                 >

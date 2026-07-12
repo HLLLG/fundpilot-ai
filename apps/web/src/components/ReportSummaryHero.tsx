@@ -32,10 +32,10 @@ const actionLabel = {
 function Metric({ label, value, emphasis = false }: MetricProps) {
   return (
     <div
-      className={`min-w-0 rounded-2xl border px-2 py-3 text-center sm:px-4 sm:py-3.5 ${
+      className={`report-metric min-w-0 px-2 py-3 text-center sm:px-4 sm:py-3.5 ${
         emphasis
-          ? "border-blue-200/80 bg-[var(--brand-soft)]"
-          : "border-slate-100 bg-slate-50/80"
+          ? "is-emphasis"
+          : ""
       }`}
     >
       <dt className="break-words text-[10px] font-bold leading-4 tracking-wide text-slate-500 sm:text-xs">
@@ -66,7 +66,7 @@ export function ReportSummaryHero({
   const portfolioLines = portfolioRecommendationLines(report);
 
   return (
-    <section aria-labelledby={headingId} className="report-panel overflow-hidden p-4 sm:p-5">
+    <section aria-labelledby={headingId} className="report-editorial-hero overflow-hidden p-4 sm:p-6">
       <div
         className="report-summary-layout grid min-w-0 gap-5"
         data-testid="report-summary-layout"
@@ -100,6 +100,15 @@ export function ReportSummaryHero({
           <Metric label="需要处理" value={`${needsActionCount} 只`} />
         </dl>
       </div>
+
+      <ol className="report-decision-track" aria-label="日报决策轨道">
+        <li><span>01</span><strong>数据时间</strong><small>{report.created_at.slice(0, 10)}</small></li>
+        <li><span>02</span><strong>组合变化</strong><small>累计 · {report.risk.weighted_return_percent}%</small></li>
+        <li><span>03</span><strong>风险判断</strong><small>{riskLabel[report.risk.level]}</small></li>
+        <li className="is-active"><span>04</span><strong>建议动作</strong><small>动作 · {actionLabel[report.risk.suggested_action]}</small></li>
+        <li><span>05</span><strong>支撑证据</strong><small>按需展开</small></li>
+        <li><span>06</span><strong>后续追问</strong><small>保持上下文</small></li>
+      </ol>
 
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-3">
         <div className="flex flex-wrap gap-1">

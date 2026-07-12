@@ -17,9 +17,7 @@ def build_aggressive_swing_offline_fund_recommendation(
     market_news: list[NewsItem] | None = None,
     *,
     nav_trend: dict | None = None,
-    northbound_net_yi: float | None = None,
 ) -> FundRecommendation:
-    _ = northbound_net_yi
     momentum = build_sector_momentum_context(holding, nav_trend)
     intraday = summarize_sector_intraday_for_holding(holding)
     sector = holding.sector_return_percent

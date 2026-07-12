@@ -4,8 +4,24 @@ from app.services.recommendation_accuracy import build_recommendation_accuracy
 
 
 def resolve_accuracy_tuning(*, lookback_reports: int = 30) -> dict:
-    """根据相邻日报复盘统计战术收紧（不含板块回测）。"""
+    """读取实验性 T+N 复盘；当前硬禁用自动调参（不含板块回测）。"""
     accuracy = build_recommendation_accuracy(limit_reports=lookback_reports)
+    # T+N 分母虽已重建，但基准、费率与足量样本校准尚未完成，不能进入自动
+    # 决策。这里是配置开关之外的第二道硬门：即使有人显式把
+    # FUND_AI_TACTICAL_PROMPT_TUNING_ENABLED 打开，也必须由评价器明确声明 eligible
+    # 才能生成调参提示；字段缺失同样按不合格处理。
+    if accuracy.get("auto_tuning_eligible") is not True:
+        return {
+            "tighten_tactical": False,
+            "reason": accuracy.get("warning"),
+            "hints": [],
+            "stats": {
+                "disabled": True,
+                "disabled_reason": "accuracy_not_eligible",
+                "metric_status": accuracy.get("metric_status"),
+                "paired_days": accuracy.get("paired_days"),
+            },
+        }
     tactical = (accuracy.get("by_style") or {}).get("tactical") or {}
     reversal = tactical.get("reversal") or {}
 
@@ -44,5 +60,5 @@ def resolve_accuracy_tuning(*, lookback_reports: int = 30) -> dict:
 
 
 def resolve_prompt_tuning_hints(*, lookback_reports: int = 30) -> dict:
-    """兼容旧调用：仅日报复盘统计。"""
+    """兼容旧调用：仅使用实验性日报 T+N 复盘统计（自动调参仍关闭）。"""
     return resolve_accuracy_tuning(lookback_reports=lookback_reports)

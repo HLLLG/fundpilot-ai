@@ -27,16 +27,15 @@ afterEach(() => {
 
 describe("UserMenu", () => {
   it("moves focus through the menu and restores it on Escape", () => {
-    render(<UserMenu onNavigate={vi.fn()} />);
+    render(<UserMenu />);
     const trigger = screen.getByRole("button", { name: "打开账号菜单" });
     fireEvent.click(trigger);
 
     const settings = screen.getByRole("menuitem", { name: "账号设置" });
-    const history = screen.getByRole("menuitem", { name: "历史日报" });
     const logout = screen.getByRole("menuitem", { name: "退出登录" });
     expect(settings).toHaveFocus();
     fireEvent.keyDown(document, { key: "ArrowDown" });
-    expect(history).toHaveFocus();
+    expect(logout).toHaveFocus();
     fireEvent.keyDown(document, { key: "End" });
     expect(logout).toHaveFocus();
     fireEvent.keyDown(document, { key: "Escape" });
@@ -45,18 +44,13 @@ describe("UserMenu", () => {
   });
 
   it("routes and invokes actions from 44px menu items", () => {
-    const onNavigate = vi.fn();
-    render(<UserMenu onNavigate={onNavigate} />);
+    render(<UserMenu />);
     const trigger = screen.getByRole("button", { name: "打开账号菜单" });
     fireEvent.click(trigger);
     const settings = screen.getByRole("menuitem", { name: "账号设置" });
     expect(settings).toHaveClass("min-h-11");
     fireEvent.click(settings);
     expect(mocks.push).toHaveBeenCalledWith("/settings");
-
-    fireEvent.click(trigger);
-    fireEvent.click(screen.getByRole("menuitem", { name: "历史日报" }));
-    expect(onNavigate).toHaveBeenCalledWith("history");
 
     fireEvent.click(trigger);
     fireEvent.click(screen.getByRole("menuitem", { name: "退出登录" }));

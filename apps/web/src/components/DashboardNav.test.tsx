@@ -13,7 +13,6 @@ it("exposes semantic navigation and the current destination", () => {
     <DashboardNav
       activeTab="holdings"
       onSelect={vi.fn()}
-      onSelectHistory={vi.fn()}
     />,
   );
   expect(screen.getAllByRole("navigation", { name: "主导航" })).toHaveLength(2);
@@ -26,7 +25,6 @@ it("moves focus through the mobile more menu and restores it on Escape", () => {
       activeTab="holdings"
       reportTabUnread
       onSelect={vi.fn()}
-      onSelectHistory={vi.fn()}
     />,
   );
   const trigger = screen.getByRole("button", { name: "更多导航，有新内容" });

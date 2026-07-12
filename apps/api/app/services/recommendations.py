@@ -192,7 +192,6 @@ def build_offline_fund_recommendation(
     market_news: list[NewsItem] | None = None,
     *,
     nav_trend: dict | None = None,
-    northbound_net_yi: float | None = None,
 ) -> FundRecommendation:
     if profile.decision_style == "tactical":
         from app.services.tactical_recommendations import (
@@ -206,7 +205,6 @@ def build_offline_fund_recommendation(
             profile,
             market_news,
             nav_trend=nav_trend,
-            northbound_net_yi=northbound_net_yi,
         )
 
     if profile.decision_style == "aggressive":
@@ -221,7 +219,6 @@ def build_offline_fund_recommendation(
             profile,
             market_news,
             nav_trend=nav_trend,
-            northbound_net_yi=northbound_net_yi,
         )
 
     action = "观察"

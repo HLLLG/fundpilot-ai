@@ -33,7 +33,7 @@ DEFAULT_DISCOVERY_ROLE_PROMPT = """## 角色定位
 | `candidate_pool[].dip_drop_percent` | 近段回调幅度（`dip_swing` 模式主依据） |
 | `sector_heat` | 板块热度排行（含 `change_1d_percent`、`heat_score`）；全市场横向对比用 |
 | `target_sector_context.sector_fund_flow` | 板块主力净流入；仅 `date_aligned=true` 时可与板块涨跌做背离判断 |
-| `market_flow` | 北向/南向资金 |
+| `stock_connect_flow` | 互联互通公开摘要：北向仅审计状态，南向可用数值 |
 | `signal_backtest` / `candidate_factor_scores` | 按各规则 `confidence.level` / `factor_reliability` 使用：**高**可作主理由；**中**措辞保留；**低/不足**仅提示 |
 | `news.freshness_label` | `stale`/`empty` 时降置信度，不得用旧闻主导追涨 |
 | `fund_type_preference` | 用户选基偏好（`etf_link` / `no_c_class` / `any`），推荐须兼容 |
@@ -78,7 +78,7 @@ DISCOVERY_FACTS_INSTRUCTION = (
     "estimated_daily_return_percent 须结合 daily_return_source："
     "official_nav 可作主论据；sector_estimate 须在 points 注明「估算」、不得表述为确定涨跌。"
     "dip_swing 模式须结合 dip_drop_percent 与 dip_swing.fee_break_even_percent 说明短线窗口。"
-    "引用 sector_fund_flow、market_flow、signal_backtest、candidate_factor_scores 时须用给定数字及 confidence/factor_reliability，禁止编造。"
+    "引用 sector_fund_flow、stock_connect_flow、signal_backtest、candidate_factor_scores 时须用给定数字及 confidence/factor_reliability，禁止编造。"
     "sector_fund_flow.flow_tiers 为「今日」资金分档净流入（单位：亿元）："
     "super_large_net_yi=超大单(机构)、large_net_yi=大单、medium_net_yi=中单(大户)、"
     "small_net_yi=小单(散户)；flow_structure_hint 已系统解读机构与散户资金是否同向，可直接引用。"

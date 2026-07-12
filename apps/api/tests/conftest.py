@@ -408,7 +408,7 @@ def _stub_market_data_fetches(monkeypatch):
         _stub_dip_radar_build,
     )
 
-    # 大盘情绪温度计（market_breadth_signal.py）与北向资金摘要（market_flow_client.py）
+    # 大盘情绪温度计（market_breadth_signal.py）与互联互通摘要（market_flow_client.py）
     # 都是 build_analysis_facts 非 budget_enhancements 路径末尾无条件调用、且没有超时
     # 包装的真实 AkShare 子进程请求（stock_a_high_low_statistics/涨跌停池/两融/北向资金），
     # 此前一直漏 stub，导致任何不传 budget_enhancements=True 的 build_analysis_facts
@@ -427,7 +427,7 @@ def _stub_market_data_fetches(monkeypatch):
         lambda *_args, **_kwargs: None,
     )
     monkeypatch.setattr(
-        "app.services.market_flow_client._fetch_northbound_flow_summary_uncached",
+        "app.services.market_flow_client._fetch_stock_connect_flow_summary_uncached",
         lambda _anchor: None,
     )
 

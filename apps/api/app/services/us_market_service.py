@@ -65,7 +65,7 @@ logger = logging.getLogger(__name__)
 # 时段感知 TTL（秒）：盘前/盘中高频；盘后/休市低频（需求 4.3 / 4.4，Property 4）。
 _LIVE_TTL_SECONDS = 60.0
 _CLOSED_TTL_SECONDS = 1800.0
-_CACHE_VERSION = "v8"
+_CACHE_VERSION = "v9"
 _STOCK_QUOTES_CACHE_VERSION = "v3"
 _FUNDGZ_CACHE_VERSION = "v1"
 

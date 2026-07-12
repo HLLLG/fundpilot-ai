@@ -15,7 +15,6 @@ def build_tactical_offline_fund_recommendation(
     market_news: list[NewsItem] | None = None,
     *,
     nav_trend: dict | None = None,
-    northbound_net_yi: float | None = None,
 ) -> FundRecommendation:
     momentum = build_sector_momentum_context(holding, nav_trend)
     intraday = summarize_sector_intraday_for_holding(holding)
@@ -34,9 +33,9 @@ def build_tactical_offline_fund_recommendation(
         points.append(
             f"短线回吐/冲高回落信号（{label}），战术上优先锁定浮盈或减至上限以内。"
         )
-    elif _should_momentum_add(sector, momentum, intraday, northbound_net_yi):
+    elif _should_momentum_add(sector, momentum, intraday):
         action = "分批加仓"
-        points.append(_momentum_reason(sector, momentum, intraday, northbound_net_yi))
+        points.append(_momentum_reason(sector, momentum, intraday))
         points.append("战术追涨：次日若板块冲高回落，应缩小加仓或转观察。")
     elif sector is not None and sector <= -2.0:
         action = "观察"
@@ -76,7 +75,6 @@ def _should_momentum_add(
     sector: float | None,
     momentum: dict | None,
     intraday: dict | None,
-    northbound_net_yi: float | None,
 ) -> bool:
     if sector is None:
         return False
@@ -88,8 +86,6 @@ def _should_momentum_add(
         return True
     if momentum_label == "sector_fund_same_day_strong" and sector >= 2.0:
         return True
-    if northbound_net_yi is not None and northbound_net_yi >= 20 and sector >= 1.5:
-        return True
     return sector >= 3.0 and intraday_label != "intraday_pullback"
 
 
@@ -97,7 +93,6 @@ def _momentum_reason(
     sector: float | None,
     momentum: dict | None,
     intraday: dict | None,
-    northbound_net_yi: float | None,
 ) -> str:
     parts: list[str] = []
     if sector is not None:
@@ -106,8 +101,6 @@ def _momentum_reason(
         parts.append(f"分时 {intraday['pattern_label']}")
     if momentum and momentum.get("pattern_label"):
         parts.append(f"净值动能 {momentum['pattern_label']}")
-    if northbound_net_yi is not None and northbound_net_yi >= 20:
-        parts.append(f"北向净流入约 {northbound_net_yi:.0f} 亿")
     return "战术动量共振：" + "，".join(parts) + "，可小额分批跟随。"
 
 
