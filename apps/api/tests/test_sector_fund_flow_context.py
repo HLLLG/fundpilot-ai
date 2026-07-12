@@ -476,9 +476,11 @@ def test_flow_tiers_and_structure_hint_are_returned_for_institutional_vs_retail_
         "app.services.sector_fund_flow_context.resolve_board_flow_code_for_sector",
         lambda _label: ("BK1036", "半导体"),
     )
+    history_future: Future[list[dict[str, object]]] = Future()
+    history_future.set_result(list(series))
     monkeypatch.setattr(
-        "app.services.sector_fund_flow_context.get_cached_board_flow_series",
-        lambda *_args, **_kwargs: list(series),
+        "app.services.sector_fund_flow_context._submit_history_load",
+        lambda *_args, **_kwargs: history_future,
     )
 
     ctx = build_sector_fund_flow_context(
@@ -498,9 +500,11 @@ def test_flow_structure_hint_is_none_when_tiers_missing(monkeypatch):
         "app.services.sector_fund_flow_context.resolve_board_flow_code_for_sector",
         lambda _label: ("BK1036", "半导体"),
     )
+    history_future: Future[list[dict[str, object]]] = Future()
+    history_future.set_result(list(series))
     monkeypatch.setattr(
-        "app.services.sector_fund_flow_context.get_cached_board_flow_series",
-        lambda *_args, **_kwargs: list(series),
+        "app.services.sector_fund_flow_context._submit_history_load",
+        lambda *_args, **_kwargs: history_future,
     )
     ctx = build_sector_fund_flow_context(
         "半导体",
