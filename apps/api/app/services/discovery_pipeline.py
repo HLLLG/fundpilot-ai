@@ -4,7 +4,11 @@ from collections.abc import Callable
 
 from app.database import save_discovery_report
 from app.models import DiscoveryRequest, FundDiscoveryReport
-from app.services.discovery_candidate_pool import build_candidate_pool, enrich_candidates
+from app.services.discovery_candidate_pool import (
+    build_candidate_pool,
+    enrich_candidates,
+    finalize_candidate_pool,
+)
 from app.services.discovery_client import DiscoveryClient
 from app.services.discovery_facts import build_discovery_facts
 from app.services.discovery_sector_opportunity import (
@@ -28,7 +32,6 @@ DISCOVERY_JOB_STAGES: dict[str, str] = {
     "queued": "排队中…",
     "connected": "连接已建立…",
     "sector_heat": "计算板块热度…",
-    "dip_prescreen": "预筛大跌基金…",
     "candidate_pool": "构建候选基金池…",
     "news": "拉取市场要闻…",
     "generating": "AI 分析中…",
@@ -59,7 +62,7 @@ def run_discovery(
     )
     holdings = list(request.holdings)
     progress("sector_heat")
-    sector_heat = build_sector_heat_ranking(include_5d=(request.scan_mode == "dip_swing"))
+    sector_heat = build_sector_heat_ranking()
     target_sectors = select_target_sectors(
         holdings,
         request.focus_sectors,
@@ -92,34 +95,28 @@ def run_discovery(
         target_sectors = [str(item["sector_label"]) for item in sector_opportunities]
     per_sector = 3
     pool_cap = 28
+    prescreen_per_sector = per_sector + 1
+    prescreen_pool_cap = pool_cap + max(4, min(len(target_sectors), 8))
     held_codes = {h.fund_code.strip().zfill(6) for h in holdings if h.fund_code}
 
-    # 主荐基只保留自动质量优选；短线入口仅作为大跌雷达的兼容研究模式。
-    selection_strategy = "dip_rebound" if request.scan_mode == "dip_swing" else "balanced"
-
-    if request.scan_mode == "dip_swing":
-        progress("dip_prescreen")
-        from app.services.dip_drop_scanner import build_dip_pool_for_sectors
-
-        pool = build_dip_pool_for_sectors(
-            target_sectors,
-            lookback_days=request.dip_lookback_days,
-            min_drop_percent=request.dip_min_drop_percent,
-            exclude_codes=held_codes,
-        )
-        pool = enrich_candidates(pool)
-    else:
-        progress("candidate_pool")
-        pool = build_candidate_pool(
-            target_sectors,
-            exclude_codes=held_codes,
-            fund_type_preference="any",
-            selection_strategy=selection_strategy,
-            per_sector=per_sector,
-            pool_cap=pool_cap,
-            sector_opportunities=sector_opportunities,
-        )
-        pool = enrich_candidates(pool)
+    selection_strategy = "balanced"
+    progress("candidate_pool")
+    pool = build_candidate_pool(
+        target_sectors,
+        exclude_codes=held_codes,
+        fund_type_preference="any",
+        selection_strategy=selection_strategy,
+        per_sector=prescreen_per_sector,
+        pool_cap=prescreen_pool_cap,
+        sector_opportunities=sector_opportunities,
+    )
+    pool = enrich_candidates(pool)
+    pool = finalize_candidate_pool(
+        pool,
+        target_sectors,
+        per_sector=per_sector,
+        pool_cap=pool_cap,
+    )
 
     progress("news")
     news_service = NewsService()
@@ -147,8 +144,6 @@ def run_discovery(
         budget_yuan=budget,
         selection_strategy=selection_strategy,
         scan_mode=request.scan_mode,
-        dip_lookback_days=request.dip_lookback_days,
-        dip_min_drop_percent=request.dip_min_drop_percent,
         focus_sectors=list(request.focus_sectors),
         fund_type_preference="any",
         sector_opportunities=sector_opportunities,

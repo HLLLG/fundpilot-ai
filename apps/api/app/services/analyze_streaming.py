@@ -187,7 +187,6 @@ def stream_analysis(request: AnalysisRequest, *, user_id: int) -> Iterator[dict[
                     continue
                 chunk = entry
                 all_chunks.append(chunk)
-                yield {"type": "token", "content": chunk}
                 for partial in parser.feed(chunk):
                     yield partial
             parsed = _parse_model_json("".join(all_chunks))

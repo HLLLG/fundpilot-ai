@@ -30,12 +30,15 @@ from app.services.factor_ic_backtest import (  # noqa: E402
     compute_factor_ic,
 )
 from app.services.factor_ic_snapshot import (  # noqa: E402
-    CURRENT_FACTOR_IC_SCHEMA_VERSION,
     FACTOR_IC_SCHEMA_VERSION,
+    POINT_IN_TIME_FACTOR_IC_SCHEMA_VERSION,
+    V2_FACTOR_IC_SCHEMA_VERSION,
 )
 from app.services.factor_ic_research import (  # noqa: E402
     DEFAULT_FORWARD_HORIZONS,
     build_research_model,
+    build_v3_research_model,
+    is_v3_research_model_publishable,
 )
 
 _DEFAULT_OUT_DIR = str(API_ROOT / "var" / "factor_ic")
@@ -58,6 +61,15 @@ _V2_CAVEATS = [
     "收益优先用日增长率重建总收益指数；缺失时才回落单位净值比值，覆盖率低于门槛拒绝发布。",
     "规模因子缺少历史规模序列，继续标记为未回测，不进入 IC 结论。",
     "结论包含 5/20/60 日、HAC 区间与末段留出稳定性；当前幸存者池阶段最高只授予中等置信。",
+]
+_V3_CAVEATS = [
+    "历史每个锚点仅使用当时已发布且不超过 7 日的基金池快照，清盘/退出基金不会被当前目录抹去。",
+    "验证使用 5 折 expanding walk-forward、20 个交易日 embargo，并以 Benjamini-Hochberg q 值控制多重检验。",
+    "A/C 等份额按底层组合保守合并；总收益、分类和净值覆盖未达硬门槛时自动退回 v2，不伪装 PIT 证据。",
+    "规模因子缺少历史规模序列，继续标记为未回测，不进入 IC 结论。",
+    "合格因子还须通过同类相对总收益分位组合、HAC 区间、样本外价差和 0.5% 成本门槛；只有统计显著不再算可用。",
+    "股票/混合、债券、指数、QDII、FOF 使用同源 NAV 类型因子；指数 tracking 缺精确时点基准时明确标记不足。",
+    "当前 PIT 仅冻结历史基金池 membership；NAV 修订时点不可得，普通基金因子统一滞后 1 个交易日、QDII 滞后 2 日，并以下一交易日首个可执行 NAV 计收益，因此置信最高仍为中。",
 ]
 
 
@@ -86,6 +98,23 @@ def _default_fetch_nav(code: str, name: str, trading_days: int) -> list[NavPoint
     else:
         return_source = "nav_ratio_fallback"
     return [NavPoint(day, value, return_source) for day, value in series.points]
+
+
+def _load_pit_snapshot_file(path: str | None) -> list[dict]:
+    if not path:
+        return []
+    try:
+        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        return []
+    return _coerce_snapshot_rows(payload)
+
+
+def _coerce_snapshot_rows(payload) -> list[dict]:
+    rows = payload.get("snapshots") if isinstance(payload, dict) else payload
+    if not isinstance(rows, list):
+        return []
+    return [row for row in rows if isinstance(row, dict)]
 
 
 def _verdict(stats) -> str:
@@ -136,6 +165,7 @@ def build_ic_report(
     *,
     fetch_rank=_default_fetch_rank,
     fetch_nav=_default_fetch_nav,
+    fetch_pit_snapshots=None,
     out_dir: str = _DEFAULT_OUT_DIR,
     universe_size: int = 300,
     nav_days: int = 750,
@@ -147,6 +177,13 @@ def build_ic_report(
     universe_mode: str = "top",
     sample_pool_size: int = 500,
     forward_horizons: tuple[int, ...] = DEFAULT_FORWARD_HORIZONS,
+    pit_mode: str = "auto",
+    pit_history_days: int = 1600,
+    pit_max_snapshot_age_days: int = 7,
+    pit_walk_forward_folds: int = 5,
+    pit_embargo_trading_days: int = 20,
+    universe_snapshots: list[dict] | None = None,
+    pit_snapshot_file: str | None = None,
 ) -> dict:
     """取数 → 组面板 → 跑引擎 → 落盘 report.txt + summary.json，返回结果 dict。
 
@@ -176,11 +213,43 @@ def build_ic_report(
         rank_rows = sample_universe(rank_candidates, universe_size)
     else:
         rank_rows = rank_candidates
-    codes = [
+    base_codes = [
         (row["fund_code"], row.get("fund_name", ""))
         for row in rank_rows
         if row.get("fund_code")
     ]
+    snapshots: list[dict] = []
+    if universe_mode == "stratified" and pit_mode != "off":
+        snapshot_payload = (
+            universe_snapshots
+            if universe_snapshots is not None
+            else _load_pit_snapshot_file(pit_snapshot_file)
+            or (
+                fetch_pit_snapshots(pit_history_days)
+                if fetch_pit_snapshots
+                else []
+            )
+        )
+        snapshots = _coerce_snapshot_rows(snapshot_payload)
+    fetch_items: dict[str, tuple[str, str]] = {
+        str(code): (str(code), str(name or "")) for code, name in base_codes
+    }
+    for snapshot in snapshots:
+        if not isinstance(snapshot, dict):
+            continue
+        members = snapshot.get("members") or []
+        if isinstance(members, dict):
+            members = [
+                {"fund_code": code, **(row if isinstance(row, dict) else {})}
+                for code, row in members.items()
+            ]
+        for member in members:
+            if not isinstance(member, dict):
+                continue
+            code = str(member.get("fund_code") or "").strip()
+            if code and code not in fetch_items:
+                fetch_items[code] = (code, str(member.get("fund_name") or ""))
+    codes = list(fetch_items.values())
     if limit_funds is not None:
         codes = codes[:limit_funds]
 
@@ -191,12 +260,19 @@ def build_ic_report(
         except Exception:
             return code, []
 
-    nav_panel: dict[str, list[NavPoint]] = {}
+    fetched_nav_panel: dict[str, list[NavPoint]] = {}
     if codes:
         with ThreadPoolExecutor(max_workers=max(1, min(max_workers, len(codes)))) as pool:
             for code, points in pool.map(_one, codes):
                 if points and len(points) >= 2:
-                    nav_panel[code] = sorted(points, key=lambda p: p.date)
+                    fetched_nav_panel[code] = sorted(points, key=lambda p: p.date)
+
+    base_code_set = {str(code) for code, _ in base_codes}
+    nav_panel = {
+        code: points
+        for code, points in fetched_nav_panel.items()
+        if code in base_code_set
+    }
 
     calendar = sorted({p.date for pts in nav_panel.values() for p in pts})
 
@@ -207,13 +283,35 @@ def build_ic_report(
         forward_days=forward_days,
         factor_lookback=factor_lookback,
     )
-    research_model = build_research_model(
-        nav_panel=nav_panel,
-        sampled_rows=rank_rows,
-        all_rows=all_rank_rows,
-        factor_lookback=factor_lookback,
-        rebalance_step=rebalance_step,
-        forward_horizons=forward_horizons,
+    v3_candidate = None
+    pit_failure_reason = None
+    if snapshots:
+        try:
+            v3_candidate = build_v3_research_model(
+                nav_panel=fetched_nav_panel,
+                universe_snapshots=snapshots,
+                current_all_rows=all_rank_rows,
+                factor_lookback=factor_lookback,
+                rebalance_step=rebalance_step,
+                forward_horizons=forward_horizons,
+                max_snapshot_age_days=pit_max_snapshot_age_days,
+                walk_forward_folds=pit_walk_forward_folds,
+                embargo_trading_days=pit_embargo_trading_days,
+            )
+        except Exception:
+            pit_failure_reason = "pit_research_failed"
+    use_v3 = bool(v3_candidate and is_v3_research_model_publishable(v3_candidate))
+    research_model = (
+        v3_candidate
+        if use_v3
+        else build_research_model(
+            nav_panel=nav_panel,
+            sampled_rows=rank_rows,
+            all_rows=all_rank_rows,
+            factor_lookback=factor_lookback,
+            rebalance_step=rebalance_step,
+            forward_horizons=forward_horizons,
+        )
     )
     from app.services.fund_universe_sampler import universe_coverage
 
@@ -239,7 +337,11 @@ def build_ic_report(
     out_path = Path(out_dir)
     out_path.mkdir(parents=True, exist_ok=True)
 
-    caveats = _V2_CAVEATS if universe_mode == "stratified" else _CAVEATS
+    caveats = (
+        _V3_CAVEATS
+        if use_v3
+        else _V2_CAVEATS if universe_mode == "stratified" else _CAVEATS
+    )
     report = _render_report(
         result,
         run_date=run_date,
@@ -260,10 +362,21 @@ def build_ic_report(
     }
     if universe_mode == "stratified":
         params["forward_horizons"] = list(forward_horizons)
+    if use_v3:
+        params.update(
+            {
+                "pit_history_days": pit_history_days,
+                "pit_max_snapshot_age_days": pit_max_snapshot_age_days,
+                "pit_walk_forward_folds": pit_walk_forward_folds,
+                "pit_embargo_trading_days": pit_embargo_trading_days,
+            }
+        )
 
     summary = {
         "schema_version": (
-            CURRENT_FACTOR_IC_SCHEMA_VERSION
+            POINT_IN_TIME_FACTOR_IC_SCHEMA_VERSION
+            if use_v3
+            else V2_FACTOR_IC_SCHEMA_VERSION
             if universe_mode == "stratified"
             else FACTOR_IC_SCHEMA_VERSION
         ),
@@ -283,6 +396,21 @@ def build_ic_report(
         "coverage": coverage,
         "research_model": research_model,
     }
+    if universe_mode == "stratified" and not use_v3:
+        pit = (v3_candidate or {}).get("point_in_time") or {}
+        summary["pit_upgrade"] = {
+            "state": "collecting" if snapshots else "unavailable",
+            "snapshot_count": len(snapshots),
+            "effective_anchor_count": pit.get("effective_anchor_count", 0),
+            "anchor_coverage_rate": pit.get("anchor_coverage_rate", 0.0),
+            "cohort_nav_coverage_rate": pit.get("cohort_nav_coverage_rate", 0.0),
+            "reason": pit_failure_reason
+            or (
+                "v3_quality_gate_not_met"
+                if snapshots
+                else "pit_snapshot_history_unavailable"
+            ),
+        }
     (out_path / "summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
     )
@@ -302,6 +430,24 @@ def main() -> int:
     parser.add_argument("--forward-days", type=int, default=DEFAULT_FORWARD_DAYS)
     parser.add_argument("--factor-lookback", type=int, default=DEFAULT_FACTOR_LOOKBACK)
     parser.add_argument("--forward-horizons", type=str, default="5,20,60")
+    parser.add_argument(
+        "--pit-mode",
+        choices=["auto", "off"],
+        default="auto",
+        help="auto=有足够PIT快照时发布v3，不足自动降级v2；off=禁用PIT研究",
+    )
+    parser.add_argument("--pit-history-days", type=int, default=1600)
+    parser.add_argument("--pit-max-snapshot-age-days", type=int, default=7)
+    parser.add_argument("--pit-walk-forward-folds", type=int, default=5)
+    parser.add_argument("--pit-embargo-trading-days", type=int, default=20)
+    parser.add_argument(
+        "--pit-history",
+        "--pit-snapshot-file",
+        dest="pit_snapshot_file",
+        type=str,
+        default=None,
+        help="可选的PIT基金池快照JSON；缺失或不足时自动降级v2",
+    )
     parser.add_argument("--max-workers", type=int, default=8)
     parser.add_argument("--limit-funds", type=int, default=None, help="调试用，限制只数")
     parser.add_argument("--out-dir", type=str, default=_DEFAULT_OUT_DIR)
@@ -321,6 +467,12 @@ def main() -> int:
             forward_days=args.forward_days,
             factor_lookback=args.factor_lookback,
             forward_horizons=forward_horizons,
+            pit_mode=args.pit_mode,
+            pit_history_days=args.pit_history_days,
+            pit_max_snapshot_age_days=args.pit_max_snapshot_age_days,
+            pit_walk_forward_folds=args.pit_walk_forward_folds,
+            pit_embargo_trading_days=args.pit_embargo_trading_days,
+            pit_snapshot_file=args.pit_snapshot_file,
             max_workers=args.max_workers,
             limit_funds=args.limit_funds,
         )

@@ -1,12 +1,22 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronDown, Layers, ShieldAlert } from "lucide-react";
+import { ChevronDown, CircleHelp, Layers, ShieldAlert } from "lucide-react";
 import type { DiscoveryCandidatePoolItem, EliminatedCandidate } from "@/lib/api";
 import { translateEvidenceText } from "@/lib/decisionText";
 import { useMediaQuery } from "@/lib/useMediaQuery";
 
 const DESKTOP_QUERY = "(min-width: 1024px)";
+
+const CORE_FIELD_LABELS: Record<string, string> = {
+  return_3m_percent: "近3月收益",
+  return_6m_percent: "近6月收益",
+  max_drawdown_1y_percent: "近1年回撤",
+  fund_scale_yi: "最新规模",
+  established_date: "成立日期",
+  fund_manager: "基金经理",
+  nav_date: "净值日期",
+};
 
 export type DiscoveryCandidateDecisionStatus =
   | "actionable"
@@ -42,6 +52,19 @@ type DiscoveryCandidatePoolPanelProps = {
   eliminatedCandidates?: EliminatedCandidate[];
 };
 
+type CandidateQualityPresentation = {
+  fieldLabel: string;
+  fieldBadgeClass: string;
+  gateLabel: string;
+  gateBadgeClass: string;
+  missingLabels: string[];
+  staleLabels: string[];
+  pending: boolean;
+  impact: string;
+  degraded: boolean;
+  unknown: boolean;
+};
+
 function formatPercent(value: number | null | undefined): string {
   if (value == null || Number.isNaN(value)) {
     return "—";
@@ -56,11 +79,183 @@ function formatScore(value: number | null | undefined): string {
   return Number(value).toFixed(2).replace(/\.00$/, "");
 }
 
-function compactList(items: string[] | undefined): string {
-  if (!items?.length) {
-    return "—";
+function listText(items: string[] | undefined, fallback = "—"): string {
+  return items?.length ? items.join("；") : fallback;
+}
+
+function profileSourceLabel(source: string): string {
+  if (source.includes("fund_scale_open_sina")) return "新浪基金规模";
+  if (source.includes("fund_individual_basic_info_xq")) return "雪球/蛋卷基金详情";
+  return "基金资料源";
+}
+
+function qualityPresentation(
+  item: DiscoveryCandidatePoolItem,
+  eliminated: boolean,
+): CandidateQualityPresentation {
+  const gate = item.quality_gate;
+  if (!gate) {
+    return {
+      fieldLabel: "完整性未记录",
+      fieldBadgeClass: "bg-slate-100 text-slate-700",
+      gateLabel: eliminated ? "已剔除" : "门禁状态未知",
+      gateBadgeClass: eliminated
+        ? "bg-rose-100 text-rose-800"
+        : "bg-slate-100 text-slate-700",
+      missingLabels: [],
+      staleLabels: [],
+      pending: false,
+      impact: eliminated
+        ? "已被系统剔除，不会进入推荐。"
+        : "缺少历史质量门禁快照，应按保守口径理解，不能仅凭该行形成买入动作。",
+      degraded: eliminated,
+      unknown: true,
+    };
   }
-  return items.slice(0, 2).join("；");
+
+  const missingLabels = gate.missing_fields.map(
+    (field) => CORE_FIELD_LABELS[field] ?? "其他核心字段",
+  );
+  const staleLabels = [
+    ...new Set([
+      ...(item.profile_stale_fields ?? []),
+      ...(gate.profile_stale_fields ?? []),
+    ]),
+  ].map((field) => CORE_FIELD_LABELS[field] ?? "其他档案字段");
+  const pending = missingLabels.length > 0 || staleLabels.length > 0;
+  const excluded = eliminated || gate.status === "excluded";
+  const degraded = excluded || gate.status === "watch_only";
+
+  return {
+    fieldLabel: pending
+      ? `待补/刷新 ${new Set([...missingLabels, ...staleLabels]).size} 项`
+      : "核心字段完整",
+    fieldBadgeClass: pending
+      ? "bg-amber-100 text-amber-900"
+      : "bg-emerald-100 text-emerald-900",
+    gateLabel: excluded ? "已剔除" : degraded ? "质量降级" : "质量门禁通过",
+    gateBadgeClass: excluded
+      ? "bg-rose-100 text-rose-800"
+      : degraded
+        ? "bg-slate-200 text-slate-800"
+        : "bg-emerald-100 text-emerald-900",
+    missingLabels,
+    staleLabels,
+    pending,
+    impact: excluded
+      ? "该候选已被系统剔除，不会进入推荐。"
+      : degraded
+        ? "该候选仅作研究观察，不会形成可执行买入动作。"
+        : "核心字段质量门禁已通过；最终动作仍需结合策略与风险守卫。",
+    degraded,
+    unknown: false,
+  };
+}
+
+function QualityDetails({
+  item,
+  quality,
+  eliminated,
+  className = "",
+}: {
+  item: DiscoveryCandidatePoolItem;
+  quality: CandidateQualityPresentation;
+  eliminated: boolean;
+  className?: string;
+}) {
+  const profileFacts = [
+    item.fund_scale_yi != null
+      ? `规模 ${formatScore(item.fund_scale_yi)} 亿元（${
+          item.fund_scale_basis === "nav_times_xq_latest_shares"
+            ? "净值×雪球最近份额估算"
+            : "净值×最近份额估算"
+        }）`
+      : null,
+    item.fund_manager ? `经理 ${item.fund_manager}` : null,
+    item.established_date ? `成立 ${item.established_date}` : null,
+  ].filter(Boolean);
+  const profileStatus = item.profile_status ?? item.quality_gate?.profile_status;
+  const profileSources = item.profile_sources ?? item.quality_gate?.profile_sources ?? [];
+  const staleFieldLabels = quality.staleLabels;
+  const reason = eliminated
+    ? "已被证据强度规则剔除"
+    : listText(item.quality_reasons, item.selection_reason ?? "暂无补充理由");
+
+  return (
+    <details className={`group rounded-xl border border-slate-200 bg-white/85 ${className}`}>
+      <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 rounded-xl px-3 text-xs font-bold text-slate-700 outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] focus-visible:ring-offset-2 [&::-webkit-details-marker]:hidden">
+        <span>查看数据完整性与质量依据</span>
+        <ChevronDown
+          size={15}
+          aria-hidden="true"
+          className="shrink-0 text-slate-400 transition group-open:rotate-180"
+        />
+      </summary>
+      <div className="space-y-1.5 border-t border-slate-100 px-3 py-2.5 text-xs leading-5 text-slate-600">
+        {item.quality_gate ? (
+          <p className="text-slate-500">
+            字段覆盖 {item.quality_gate.coverage_percent}%
+            {item.quality_gate.data_as_of ? ` · 数据时点 ${item.quality_gate.data_as_of}` : ""}
+          </p>
+        ) : null}
+        {quality.missingLabels.length ? (
+          <p>
+            <span className="font-bold text-amber-900">待补字段：</span>
+            {quality.missingLabels.join("、")}
+          </p>
+        ) : null}
+        {profileFacts.length ? (
+          <p>
+            <span className="font-bold text-slate-800">核心档案：</span>
+            {profileFacts.join(" · ")}
+          </p>
+        ) : null}
+        {profileStatus ? (
+          <p className="text-slate-500">
+            档案补全：
+            {profileStatus === "complete"
+              ? "核心档案已补全"
+              : profileStatus === "partial"
+                ? "部分字段待补"
+                : profileStatus === "stale_fallback"
+                  ? "刷新失败，使用过期缓存"
+                  : profileStatus === "unavailable"
+                    ? "双源暂不可用"
+                    : "状态待确认"}
+            {profileSources.length
+              ? ` · ${[...new Set(profileSources.map(profileSourceLabel))].join(" + ")}`
+              : ""}
+          </p>
+        ) : null}
+        {staleFieldLabels.length ? (
+          <p className="font-semibold text-amber-900">
+            <span className="font-bold">待刷新字段：</span>
+            {staleFieldLabels.join("、")}
+          </p>
+        ) : null}
+        <p>
+          <span className="font-bold text-slate-800">质量依据：</span>
+          {reason}
+        </p>
+        {item.quality_gate?.reasons.length ? (
+          <p>
+            <span className="font-bold text-slate-800">门禁原因：</span>
+            {listText(item.quality_gate.reasons)}
+          </p>
+        ) : null}
+        {item.quality_penalties?.length ? (
+          <p>
+            <span className="font-bold text-amber-900">风险短板：</span>
+            {listText(item.quality_penalties)}
+          </p>
+        ) : null}
+        <p className={quality.degraded ? "font-semibold text-amber-900" : "text-slate-500"}>
+          <span className="font-bold">决策影响：</span>
+          {quality.impact}
+        </p>
+      </div>
+    </details>
+  );
 }
 
 export function DiscoveryCandidatePoolPanel({
@@ -77,39 +272,89 @@ export function DiscoveryCandidatePoolPanel({
 
   const selected = new Set(selectedCodes);
   const eliminatedByCode = new Map(eliminatedCandidates.map((item) => [item.fund_code, item]));
+  const presentations = new Map(
+    pool.map((item) => [
+      item.fund_code,
+      qualityPresentation(item, eliminatedByCode.has(item.fund_code)),
+    ]),
+  );
+  const completeCount = pool.filter(
+    (item) => !presentations.get(item.fund_code)?.unknown && !presentations.get(item.fund_code)?.pending,
+  ).length;
+  const pendingCount = pool.filter(
+    (item) => Boolean(presentations.get(item.fund_code)?.pending),
+  ).length;
+  const degradedCount = pool.filter(
+    (item) => presentations.get(item.fund_code)?.degraded,
+  ).length;
+  const unknownCount = pool.filter(
+    (item) => presentations.get(item.fund_code)?.unknown,
+  ).length;
 
   return (
     <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
-        className="flex min-h-11 w-full items-center justify-between gap-2 px-5 py-4 text-left"
+        className="flex min-h-11 w-full items-start justify-between gap-3 px-5 py-4 text-left"
         aria-expanded={open}
         aria-controls="discovery-candidate-pool-content"
       >
-        <div className="flex items-center gap-2 text-sm font-bold text-slate-900">
-          <Layers size={16} className="text-[var(--brand)]" />
-          本次候选池（{pool.length} 只）
-          {eliminatedCandidates.length ? (
-            <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-bold text-rose-800">
-              {eliminatedCandidates.length} 只已被系统剔除
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 text-sm font-bold text-slate-900">
+            <Layers size={16} className="shrink-0 text-[var(--brand)]" />
+            本次候选池（{pool.length} 只）
+          </div>
+          <div
+            className="mt-2 flex flex-wrap gap-1.5 text-[11px] font-bold"
+            aria-label={`核心字段完整 ${completeCount} 只，待补全或刷新 ${pendingCount} 只，质量降级 ${degradedCount} 只，状态未记录 ${unknownCount} 只`}
+          >
+            <span className="rounded-full bg-emerald-100 px-2 py-1 text-emerald-900">
+              字段完整 {completeCount}
             </span>
-          ) : null}
+            <span className="rounded-full bg-amber-100 px-2 py-1 text-amber-900">
+              待补/刷新 {pendingCount}
+            </span>
+            <span className="rounded-full bg-slate-200 px-2 py-1 text-slate-800">
+              质量降级 {degradedCount}
+            </span>
+            {unknownCount ? (
+              <span className="rounded-full bg-slate-100 px-2 py-1 text-slate-700">
+                状态未记录 {unknownCount}
+              </span>
+            ) : null}
+          </div>
         </div>
         <ChevronDown
           size={18}
-          className={`text-slate-500 transition ${open ? "rotate-180" : ""}`}
+          aria-hidden="true"
+          className={`mt-1 shrink-0 text-slate-500 transition ${open ? "rotate-180" : ""}`}
         />
       </button>
       {open ? (
         <div id="discovery-candidate-pool-content" className="border-t border-slate-100">
+          <div className="mx-3 mt-3 flex items-start gap-2 rounded-xl bg-slate-50 px-3 py-2.5 text-xs leading-5 text-slate-600">
+            <CircleHelp size={15} aria-hidden="true" className="mt-0.5 shrink-0 text-slate-500" />
+            <p>
+              核心字段缺失会触发质量降级，候选仅作研究观察；已剔除项不会进入推荐。
+              “字段完整”也不等于必然买入，仍需通过策略与风险守卫。
+            </p>
+          </div>
+
           {eliminatedCandidates.length ? (
-            <div className="mx-3 mt-3 rounded-xl border border-rose-200 bg-rose-50/80 px-3 py-2.5">
-              <div className="flex items-center gap-1.5 text-xs font-black text-rose-900">
-                <ShieldAlert size={14} />
-                证据强度剔除（量价背离信号显著 + 基金质量分同样偏低）
-              </div>
-              <ul className="mt-1.5 space-y-1 text-xs leading-5 text-rose-900">
+            <details className="group mx-3 mt-3 rounded-xl border border-rose-200 bg-rose-50/80">
+              <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 px-3 text-xs font-black text-rose-900 [&::-webkit-details-marker]:hidden">
+                <span className="flex items-center gap-1.5">
+                  <ShieldAlert size={14} aria-hidden="true" />
+                  系统已剔除 {eliminatedCandidates.length} 只候选
+                </span>
+                <ChevronDown
+                  size={15}
+                  aria-hidden="true"
+                  className="transition group-open:rotate-180"
+                />
+              </summary>
+              <ul className="space-y-1 border-t border-rose-200 px-3 py-2.5 text-xs leading-5 text-rose-900">
                 {eliminatedCandidates.map((item) => (
                   <li key={item.fund_code} className="break-words [overflow-wrap:anywhere]">
                     <span className="font-mono font-semibold">{item.fund_code}</span> {item.fund_name}
@@ -118,183 +363,179 @@ export function DiscoveryCandidatePoolPanel({
                   </li>
                 ))}
               </ul>
-            </div>
+            </details>
           ) : null}
+
           {!isDesktop ? (
-          <div className="grid gap-3 px-3 pb-4 pt-3">
-            {pool.map((item) => {
-              const picked = selected.has(item.fund_code);
-              const eliminated = eliminatedByCode.get(item.fund_code);
-              const decisionStatus =
-                decisionStatusByCode[item.fund_code] ?? (picked ? "actionable" : undefined);
-              const decisionMeta = decisionStatus ? DECISION_STATUS_META[decisionStatus] : null;
-              const reasons =
-                compactList(item.quality_reasons) !== "—"
-                  ? compactList(item.quality_reasons)
-                  : item.selection_reason ?? "—";
-              return (
-                <article
-                  key={`mobile-${item.fund_code}`}
-                  className={`rounded-2xl border p-3 ${
-                    eliminated
-                      ? "border-rose-200 bg-rose-50/70"
-                      : decisionMeta
-                        ? decisionMeta.rowClass
-                        : "border-slate-200 bg-white"
-                  }`}
-                  aria-label={`${item.fund_name}，${eliminated ? "已剔除" : decisionMeta?.label ?? "候选"}`}
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <h3 className={`break-words text-sm font-black text-slate-900 ${eliminated ? "line-through" : ""}`}>
-                        {item.fund_name}
-                      </h3>
-                      <p className="mt-1 text-xs text-slate-500">
-                        <span className="font-mono font-bold">{item.fund_code}</span>
-                        {item.sector_label ? ` · ${item.sector_label}` : ""}
-                      </p>
-                    </div>
-                    <div className="flex shrink-0 flex-wrap justify-end gap-1">
-                      {item.is_new_issue ? (
-                        <span className="rounded-full bg-amber-100 px-2 py-1 text-[11px] font-bold text-amber-800">新发</span>
-                      ) : null}
-                      {eliminated || decisionMeta ? (
+            <div className="grid gap-3 px-3 pb-4 pt-3">
+              {pool.map((item) => {
+                const picked = selected.has(item.fund_code);
+                const eliminated = eliminatedByCode.has(item.fund_code);
+                const decisionStatus =
+                  decisionStatusByCode[item.fund_code] ?? (picked ? "actionable" : undefined);
+                const decisionMeta = decisionStatus ? DECISION_STATUS_META[decisionStatus] : null;
+                const quality = presentations.get(item.fund_code)!;
+                return (
+                  <article
+                    key={`mobile-${item.fund_code}`}
+                    className={`rounded-2xl border p-3 ${
+                      eliminated
+                        ? "border-rose-200 bg-rose-50/70"
+                        : decisionMeta
+                          ? decisionMeta.rowClass
+                          : "border-slate-200 bg-white"
+                    }`}
+                    aria-label={`${item.fund_name}，${eliminated ? "已剔除" : decisionMeta?.label ?? quality.gateLabel}`}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <h3 className={`break-words text-sm font-black text-slate-900 ${eliminated ? "line-through" : ""}`}>
+                          {item.fund_name}
+                        </h3>
+                        <p className="mt-1 text-xs text-slate-500">
+                          <span className="font-mono font-bold">{item.fund_code}</span>
+                          {item.sector_label ? ` · ${item.sector_label}` : ""}
+                        </p>
+                      </div>
+                      <div className="flex shrink-0 flex-wrap justify-end gap-1">
+                        {item.is_new_issue ? (
+                          <span className="rounded-full bg-amber-100 px-2 py-1 text-[11px] font-bold text-amber-800">新发</span>
+                        ) : null}
+                        <span className={`rounded-full px-2 py-1 text-[11px] font-bold ${quality.fieldBadgeClass}`}>
+                          {quality.fieldLabel}
+                        </span>
                         <span className={`rounded-full px-2 py-1 text-[11px] font-bold ${
                           eliminated
                             ? "bg-rose-100 text-rose-800"
-                            : decisionMeta?.badgeClass ?? "bg-slate-100 text-slate-700"
+                            : decisionMeta?.badgeClass ?? quality.gateBadgeClass
                         }`}>
-                          {eliminated ? "已剔除" : decisionMeta?.label}
+                          {eliminated ? "已剔除" : decisionMeta?.label ?? quality.gateLabel}
                         </span>
-                      ) : null}
-                    </div>
-                  </div>
-
-                  <dl className="mt-3 grid grid-cols-2 gap-2 text-xs">
-                    {[
-                      ["质量分", formatScore(item.fund_quality_score)],
-                      ["匹配分", formatScore(item.sector_fit_score)],
-                      ["近3月", formatPercent(item.return_3m_percent)],
-                      ["近1年", formatPercent(item.return_1y_percent)],
-                    ].map(([label, value]) => (
-                      <div key={label} className="rounded-xl bg-white/80 px-3 py-2">
-                        <dt className="text-slate-500">{label}</dt>
-                        <dd className="mt-1 font-black tabular-nums text-slate-900">{value}</dd>
                       </div>
-                    ))}
-                  </dl>
-
-                  <details className="mt-2 rounded-xl border border-slate-200 bg-white/80">
-                    <summary className="flex min-h-11 cursor-pointer items-center px-3 text-xs font-bold text-slate-700">
-                      查看质量理由与短板
-                    </summary>
-                    <div className="border-t border-slate-100 px-3 py-2 text-xs leading-5 text-slate-600">
-                      <p><span className="font-bold text-slate-800">理由：</span>{eliminated ? "已被证据强度规则剔除" : reasons}</p>
-                      <p className="mt-1 text-amber-800"><span className="font-bold">短板：</span>{compactList(item.quality_penalties)}</p>
-                      {item.return_6m_percent != null ? (
-                        <p className="mt-1">近6月：{formatPercent(item.return_6m_percent)}</p>
-                      ) : null}
                     </div>
-                  </details>
-                </article>
-              );
-            })}
-          </div>
+
+                    <dl className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                      {[
+                        ["质量分", formatScore(item.fund_quality_score)],
+                        ["匹配分", formatScore(item.sector_fit_score)],
+                        ["近3月", formatPercent(item.return_3m_percent)],
+                        ["近1年", formatPercent(item.return_1y_percent)],
+                      ].map(([label, value]) => (
+                        <div key={label} className="rounded-xl bg-white/80 px-3 py-2">
+                          <dt className="text-slate-500">{label}</dt>
+                          <dd className="mt-1 font-black tabular-nums text-slate-900">{value}</dd>
+                        </div>
+                      ))}
+                    </dl>
+
+                    <QualityDetails
+                      item={item}
+                      quality={quality}
+                      eliminated={eliminated}
+                      className="mt-2"
+                    />
+                  </article>
+                );
+              })}
+            </div>
           ) : (
-          <div
-            className="overflow-x-auto px-3 pb-4 pt-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] focus-visible:ring-inset"
-            role="region"
-            aria-label="基金候选池明细表，可左右滚动查看"
-            tabIndex={0}
-          >
-            <table className="w-full min-w-[920px] text-left text-xs">
-              <caption className="sr-only">本次基金候选池评分、收益和质量依据</caption>
-              <thead>
-                <tr className="text-slate-500">
-                  <th scope="col" className="px-2 py-2 font-semibold">代码</th>
-                  <th scope="col" className="px-2 py-2 font-semibold">名称</th>
-                  <th scope="col" className="px-2 py-2 font-semibold">板块</th>
-                  <th scope="col" className="px-2 py-2 font-semibold">质量分</th>
-                  <th scope="col" className="px-2 py-2 font-semibold">匹配分</th>
-                  <th scope="col" className="px-2 py-2 font-semibold">近3月</th>
-                  <th scope="col" className="px-2 py-2 font-semibold">近6月</th>
-                  <th scope="col" className="px-2 py-2 font-semibold">近1年</th>
-                  <th scope="col" className="px-2 py-2 font-semibold">质量理由</th>
-                  <th scope="col" className="px-2 py-2 font-semibold">短板</th>
-                </tr>
-              </thead>
-              <tbody>
-                {pool.map((item) => {
-                  const picked = selected.has(item.fund_code);
-                  const eliminated = eliminatedByCode.get(item.fund_code);
-                  const decisionStatus =
-                    decisionStatusByCode[item.fund_code] ?? (picked ? "actionable" : undefined);
-                  const decisionMeta = decisionStatus ? DECISION_STATUS_META[decisionStatus] : null;
-                  return (
-                    <tr
-                      key={item.fund_code}
-                      className={
-                        eliminated
-                          ? "bg-rose-50/60 text-rose-700"
-                          : decisionStatus === "actionable"
-                            ? "bg-emerald-50/70"
-                            : decisionStatus === "conditional_wait"
-                              ? "bg-amber-50/60"
-                              : decisionStatus === "watch_only"
-                                ? "bg-slate-50/80"
-                            : "border-t border-slate-50"
-                      }
-                    >
-                      <th scope="row" className="px-2 py-2 text-left font-mono font-semibold text-slate-800">
-                        {item.fund_code}
-                      </th>
-                      <td className="max-w-[180px] break-words px-2 py-2 text-slate-700">
-                        <span className={eliminated ? "line-through" : ""}>{item.fund_name}</span>
-                        {item.is_new_issue ? (
-                          <span className="ml-1 rounded bg-amber-100 px-1 py-0.5 text-[10px] font-bold text-amber-800">
-                            新发
-                          </span>
-                        ) : null}
-                      </td>
-                      <td className="px-2 py-2 text-slate-600">{item.sector_label ?? "—"}</td>
-                      <td className="px-2 py-2 font-semibold text-slate-800">
-                        {formatScore(item.fund_quality_score)}
-                      </td>
-                      <td className="px-2 py-2 font-semibold text-slate-700">
-                        {formatScore(item.sector_fit_score)}
-                      </td>
-                      <td className="px-2 py-2 text-slate-600">
-                        {formatPercent(item.return_3m_percent)}
-                      </td>
-                      <td className="px-2 py-2 text-slate-600">
-                        {formatPercent(item.return_6m_percent)}
-                      </td>
-                      <td className="px-2 py-2 text-slate-600">
-                        {formatPercent(item.return_1y_percent)}
-                      </td>
-                      <td className="max-w-[220px] break-words px-2 py-2 text-slate-600">
-                        {eliminated ? (
-                          <span className="font-semibold text-rose-700">· 已剔除</span>
-                        ) : (
-                          <>
-                            {compactList(item.quality_reasons) !== "—"
-                              ? compactList(item.quality_reasons)
-                              : item.selection_reason ?? "—"}
-                            {decisionMeta ? (
-                              <span className="ml-1 font-semibold text-slate-700">· {decisionMeta.label}</span>
-                            ) : null}
-                          </>
-                        )}
-                      </td>
-                      <td className="max-w-[220px] break-words px-2 py-2 text-amber-800">
-                        {compactList(item.quality_penalties)}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+            <div
+              className="overflow-x-auto px-3 pb-4 pt-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] focus-visible:ring-inset"
+              role="region"
+              aria-label="基金候选池明细表，可左右滚动查看"
+              tabIndex={0}
+            >
+              <table className="w-full min-w-[860px] text-left text-xs">
+                <caption className="sr-only">本次基金候选池评分、收益、数据完整性和质量门禁状态</caption>
+                <thead>
+                  <tr className="text-slate-500">
+                    <th scope="col" className="px-2 py-2 font-semibold">代码</th>
+                    <th scope="col" className="px-2 py-2 font-semibold">名称</th>
+                    <th scope="col" className="px-2 py-2 font-semibold">板块</th>
+                    <th scope="col" className="px-2 py-2 font-semibold">质量分</th>
+                    <th scope="col" className="px-2 py-2 font-semibold">匹配分</th>
+                    <th scope="col" className="px-2 py-2 font-semibold">近3月</th>
+                    <th scope="col" className="px-2 py-2 font-semibold">近6月</th>
+                    <th scope="col" className="px-2 py-2 font-semibold">近1年</th>
+                    <th scope="col" className="px-2 py-2 font-semibold">证据状态</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pool.map((item) => {
+                    const picked = selected.has(item.fund_code);
+                    const eliminated = eliminatedByCode.has(item.fund_code);
+                    const decisionStatus =
+                      decisionStatusByCode[item.fund_code] ?? (picked ? "actionable" : undefined);
+                    const decisionMeta = decisionStatus ? DECISION_STATUS_META[decisionStatus] : null;
+                    const quality = presentations.get(item.fund_code)!;
+                    return (
+                      <tr
+                        key={item.fund_code}
+                        className={
+                          eliminated
+                            ? "bg-rose-50/60 text-rose-700"
+                            : decisionStatus === "actionable"
+                              ? "bg-emerald-50/70"
+                              : decisionStatus === "conditional_wait"
+                                ? "bg-amber-50/60"
+                                : decisionStatus === "watch_only"
+                                  ? "bg-slate-50/80"
+                                  : "border-t border-slate-50"
+                        }
+                      >
+                        <th scope="row" className="px-2 py-2 text-left font-mono font-semibold text-slate-800">
+                          {item.fund_code}
+                        </th>
+                        <td className="max-w-[180px] break-words px-2 py-2 text-slate-700">
+                          <span className={eliminated ? "line-through" : ""}>{item.fund_name}</span>
+                          {item.is_new_issue ? (
+                            <span className="ml-1 rounded bg-amber-100 px-1 py-0.5 text-[10px] font-bold text-amber-800">
+                              新发
+                            </span>
+                          ) : null}
+                        </td>
+                        <td className="px-2 py-2 text-slate-600">{item.sector_label ?? "—"}</td>
+                        <td className="px-2 py-2 font-semibold text-slate-800">
+                          {formatScore(item.fund_quality_score)}
+                        </td>
+                        <td className="px-2 py-2 font-semibold text-slate-700">
+                          {formatScore(item.sector_fit_score)}
+                        </td>
+                        <td className="px-2 py-2 text-slate-600">
+                          {formatPercent(item.return_3m_percent)}
+                        </td>
+                        <td className="px-2 py-2 text-slate-600">
+                          {formatPercent(item.return_6m_percent)}
+                        </td>
+                        <td className="px-2 py-2 text-slate-600">
+                          {formatPercent(item.return_1y_percent)}
+                        </td>
+                        <td className="w-[250px] px-2 py-2 align-top">
+                          <div className="flex flex-wrap gap-1">
+                            <span className={`rounded-full px-2 py-1 text-[11px] font-bold ${quality.fieldBadgeClass}`}>
+                              {quality.fieldLabel}
+                            </span>
+                            <span className={`rounded-full px-2 py-1 text-[11px] font-bold ${
+                              eliminated
+                                ? "bg-rose-100 text-rose-800"
+                                : decisionMeta?.badgeClass ?? quality.gateBadgeClass
+                            }`}>
+                              {eliminated ? "已剔除" : decisionMeta?.label ?? quality.gateLabel}
+                            </span>
+                          </div>
+                          <QualityDetails
+                            item={item}
+                            quality={quality}
+                            eliminated={eliminated}
+                            className="mt-1.5"
+                          />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
       ) : null}

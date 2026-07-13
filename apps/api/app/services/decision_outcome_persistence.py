@@ -30,9 +30,15 @@ _RETRYABLE_DISCOVERY_REASONS = {
 def persist_daily_outcome_result(
     report: Mapping[str, Any],
     result: dict[str, Any],
+    *,
+    allowed_event_horizons: Mapping[str, set[int]] | None = None,
 ) -> dict[str, Any]:
     observations: list[dict[str, Any]] = []
     eligible_events = _eligible_v2_event_horizons(report)
+    if allowed_event_horizons is not None:
+        eligible_events = _intersect_event_horizons(
+            eligible_events, allowed_event_horizons
+        )
     for item in result.get("items") or []:
         if not isinstance(item, Mapping):
             continue
@@ -58,8 +64,14 @@ def persist_daily_outcome_result(
 def persist_discovery_outcome_result(
     report: Mapping[str, Any],
     result: dict[str, Any],
+    *,
+    allowed_event_horizons: Mapping[str, set[int]] | None = None,
 ) -> dict[str, Any]:
     eligible_events = _eligible_v2_event_horizons(report)
+    if allowed_event_horizons is not None:
+        eligible_events = _intersect_event_horizons(
+            eligible_events, allowed_event_horizons
+        )
     observations = [
         _normalize_observation(observation)
         for observation in result.get("outcome_observations") or []
@@ -158,6 +170,36 @@ def _eligible_v2_event_horizons(
                 if parsed > 0:
                     horizons.add(parsed)
             result[event_id] = horizons
+    return result
+
+
+def _intersect_event_horizons(
+    eligible: Mapping[str, set[int]],
+    allowed: Mapping[str, set[int]],
+) -> dict[str, set[int]]:
+    """Restrict writes to the scheduler's still-pending snapshot.
+
+    This prevents a report with one pending horizon from recomputing and touching
+    already-terminal sibling horizons. A concurrent terminal write remains
+    protected by the repository's immutable conflict check.
+    """
+    result: dict[str, set[int]] = {}
+    for event_id, horizons in eligible.items():
+        if event_id not in allowed:
+            continue
+        normalized: set[int] = set()
+        for value in allowed.get(event_id, set()):
+            if isinstance(value, bool):
+                continue
+            try:
+                parsed = int(value)
+            except (TypeError, ValueError):
+                continue
+            if parsed > 0:
+                normalized.add(parsed)
+        intersection = set(horizons) & normalized
+        if intersection:
+            result[event_id] = intersection
     return result
 
 

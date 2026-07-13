@@ -68,11 +68,9 @@ export function useSectorQuoteRefresh({
         ? result.holdings
         : mergeHoldingsPreserveQuoteFields(holdingsRef.current, result.holdings);
       onChange(nextHoldings);
-      if (result.holding_warnings?.length) {
-        const sectorCodes = new Set(["sector_quote_discrepancy"]);
-        const kept = warningsRef.current.filter((warning) => !sectorCodes.has(warning.code));
-        onWarningsChange?.([...kept, ...result.holding_warnings]);
-      }
+      const sectorCodes = new Set(["sector_quote_discrepancy"]);
+      const kept = warningsRef.current.filter((warning) => !sectorCodes.has(warning.code));
+      onWarningsChange?.([...kept, ...(result.holding_warnings ?? [])]);
       const metaMap: Record<string, SectorQuoteMeta> = {};
       const pending: MappingQueueItem[] = [];
       for (const item of result.items) {

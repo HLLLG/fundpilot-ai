@@ -23,13 +23,14 @@ def test_factor_ic_status_endpoint_requires_jwt() -> None:
 def test_factor_ic_status_endpoint_returns_latest_snapshot(auth_client) -> None:
     now = datetime.now(timezone.utc).replace(microsecond=0)
     request = validate_publish_request(valid_payload(now.isoformat()), now=now)
-    publish_factor_ic_snapshot(request, now=now)
+    published = publish_factor_ic_snapshot(request, now=now)
 
     response = auth_client.get(STATUS_PATH)
 
     assert response.status_code == 200
     body = response.json()
     assert body["available"] is True
+    assert body["snapshot_id"] == published["snapshot_id"]
     assert body["source"] == "database"
     assert body["stale"] is False
     assert body["universe_size"] == 300

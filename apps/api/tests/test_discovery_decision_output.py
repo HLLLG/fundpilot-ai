@@ -23,6 +23,7 @@ def _candidate_pool() -> list[dict]:
             "sector_label": "半导体材料",
             "fund_quality_score": 132.25,
             "sector_fit_score": 37.12,
+            "quality_gate": {"status": "eligible", "eligible": True, "reasons": []},
             "quality_reasons": ["板块高置信匹配", "近3/6月表现占优"],
             "quality_penalties": ["缺少近1年回撤"],
             "return_3m_percent": 18.2,
@@ -113,6 +114,45 @@ def test_report_parser_preserves_structured_decision_fields():
     assert rec.validation_notes == ["缺少近1年回撤，先观察"]
     assert "fund_quality_score" not in _joined_rec_text(rec)
     assert "track=momentum" not in _joined_rec_text(rec)
+
+
+def test_report_parser_drops_retired_market_evidence_from_llm_output():
+    parsed = {
+        "title": "机会扫描",
+        "summary": "市场震荡。北向实时净买额暂停披露，影响判断。仍需控制仓位。",
+        "market_view": "北向资金缺失，方向判断受限。",
+        "recommendations": [
+            {
+                "fund_code": "020357",
+                "fund_name": "华夏半导体材料设备ETF联接C",
+                "sector_name": "半导体材料",
+                "action": "建议关注",
+                "validation_notes": ["北向资金不可用", "真实申购费率待核验"],
+                "risks": ["短线波动较高"],
+            }
+        ],
+        "caveats": ["北向数据无法判断外资情绪", "仅供研究参考"],
+    }
+
+    report = build_discovery_report_from_parsed(
+        parsed,
+        target_sectors=["半导体材料"],
+        focus_sectors=[],
+        scan_mode="full_market",
+        candidate_pool=_candidate_pool(),
+        discovery_facts=_facts(),
+        profile=_profile(),
+        held_codes=set(),
+        budget_yuan=50000,
+        sector_heat=[{"sector_label": "半导体材料", "change_1d_percent": 2.0}],
+        analysis_mode="fast",
+    )
+
+    rendered = str(report.model_dump(mode="json"))
+    assert "北向" not in rendered
+    assert report.summary == "市场震荡。仍需控制仓位。"
+    assert "真实申购费率待核验" in report.recommendations[0].validation_notes
+    assert "仅供研究参考" in report.caveats
 
 
 def test_guard_backfills_decision_evidence_and_corrects_candidate_identity():
@@ -207,6 +247,7 @@ def test_guard_normalizes_action_confidence_and_downgrades_weak_evidence():
             "sector_label": "半导体",
             "fund_quality_score": 48.0,
             "sector_fit_score": 12.0,
+            "quality_gate": {"status": "eligible", "eligible": True, "reasons": []},
             "quality_reasons": ["近3/6月表现占优"],
             "quality_penalties": ["板块匹配置信偏低", "缺少近1年回撤"],
             "return_3m_percent": 115.45,
@@ -278,6 +319,7 @@ def test_guard_caps_total_suggested_amount_to_budget():
             "sector_label": "半导体材料",
             "fund_quality_score": 132.25,
             "sector_fit_score": 37.12,
+            "quality_gate": {"status": "eligible", "eligible": True, "reasons": []},
         },
         {
             "fund_code": "006081",
@@ -285,6 +327,7 @@ def test_guard_caps_total_suggested_amount_to_budget():
             "sector_label": "电子",
             "fund_quality_score": 90.0,
             "sector_fit_score": 35.0,
+            "quality_gate": {"status": "eligible", "eligible": True, "reasons": []},
         },
     ]
     parsed = {
@@ -407,6 +450,7 @@ def test_guard_removes_free_text_conflicting_action_from_decision_path():
             "sector_label": "电子",
             "fund_quality_score": 90.0,
             "sector_fit_score": 35.0,
+            "quality_gate": {"status": "eligible", "eligible": True, "reasons": []},
         }
     ]
 

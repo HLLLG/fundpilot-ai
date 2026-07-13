@@ -27,6 +27,7 @@ from app.services.discovery_offline import build_offline_discovery_report
 from app.services.discovery_payload import append_output_requirements_to_system, build_user_payload
 from app.services.discovery_prompt import DEFAULT_DISCOVERY_ROLE_PROMPT, resolve_discovery_role_prompt
 from app.services.news_service import NewsService, _dedupe_news
+from app.services.retired_market_evidence import sanitize_retired_market_evidence
 
 ProgressCallback = Callable[[str, str], None]
 
@@ -261,6 +262,7 @@ def build_discovery_report_from_parsed(
     topic_briefs: list[TopicBrief] | None = None,
     analysis_mode: str = "fast",
 ) -> FundDiscoveryReport:
+    parsed = sanitize_retired_market_evidence(parsed)
     recommendations = _parse_recommendations(parsed.get("recommendations"))
     guarded, guard_caveats, eliminated = apply_discovery_guards(
         recommendations,
@@ -329,10 +331,6 @@ def _parse_recommendations(raw: object) -> list[DiscoveryRecommendation]:
                 points=_as_str_list(item.get("points")),
                 risks=_as_str_list(item.get("risks")),
                 news_bullish=_as_str_list(item.get("news_bullish")),
-                target_exit_days=_as_int(item.get("target_exit_days")),
-                fee_break_even_percent=_as_float(item.get("fee_break_even_percent")),
-                dip_drop_percent=_as_float(item.get("dip_drop_percent")),
-                rebound_signals=_as_dict_list(item.get("rebound_signals")),
                 decision_path=str(item.get("decision_path") or ""),
                 sector_evidence=_as_str_list(item.get("sector_evidence")),
                 fund_evidence=_as_str_list(item.get("fund_evidence")),
@@ -362,18 +360,3 @@ def _as_float(value: object) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
-
-
-def _as_int(value: object) -> int | None:
-    if value is None:
-        return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _as_dict_list(value: object) -> list[dict]:
-    if not isinstance(value, list):
-        return []
-    return [item for item in value if isinstance(item, dict)]

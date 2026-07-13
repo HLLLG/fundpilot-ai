@@ -13,6 +13,7 @@ from __future__ import annotations
 import math
 import statistics
 from dataclasses import dataclass, field
+from typing import Any
 
 MIN_UNIVERSE_SIZE = 30  # 横截面有效样本少于此，不打分
 WINSOR_LOWER_PCT = 5.0  # 去极值下分位
@@ -48,6 +49,19 @@ class FundFactorInput:
     return_1y_percent: float | None = None
     max_drawdown_1y_percent: float | None = None  # 负数，如 -22.0
     fund_scale_yi: float | None = None
+    # 目标基金线上特征的真实时点链。研究模型的 run_date 不能替代这些字段：
+    # 前者回答“横截面/IC 模型何时生成”，这里回答“该基金收益特征算到哪一天”。
+    feature_as_of: str | None = None
+    feature_observed_at: str | None = None
+    feature_source: str | None = None
+    return_coverage: float | None = None
+    nav_age_trading_days: int | None = None
+    feature_freshness: str = "unknown"
+    feature_max_age_trading_days: int | None = None
+    # 由 fund_type_factors 的同源 NAV 定义生成。旧调用不提供时保持空映射，
+    # 因而完全向后兼容；线上只消费已通过 v3 同类 qualification 的键。
+    typed_feature_values: dict[str, float | None] = field(default_factory=dict)
+    typed_feature_meta: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass

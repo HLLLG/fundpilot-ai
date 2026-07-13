@@ -47,7 +47,6 @@ def _discovery_facts() -> dict:
             }
         ],
         "stock_connect_flow": {
-            "northbound_status": "not_disclosed",
             "southbound_net_yi": -8.87,
         },
         "signal_backtest": {"available": True, "sectors": []},
@@ -291,13 +290,6 @@ def test_build_discovery_facts_budget_degrades_slow_signal(monkeypatch):
     assert elapsed < 0.12
     assert facts["signal_backtest"]["has_data"] is False
     assert facts["signal_backtest"]["reason"] == "timeout"
-
-
-def test_dip_swing_requirements_include_short_term_guidance():
-    reqs = _requirements_for_scan_mode("dip_swing")
-    joined = " ".join(reqs)
-    assert "dip_drop_percent" in joined
-    assert "fee_break_even_percent" in joined
 
 
 def test_discovery_requirements_limit_news_to_system_prefetch():

@@ -549,68 +549,6 @@ def resolve_primary_sector(
     return None
 
 
-def resolve_sector_labels_for_radar(
-    codes_to_names: dict[str, str],
-    *,
-    fetch_benchmark: bool = False,
-) -> dict[str, str]:
-    """批量解析关联板块（大跌雷达等全市场场景，无用户持仓上下文）。
-
-    优先级：当前用户 fund_primary_sectors → 全市场 global（TTL 内）
-    → resolve_primary_sector（无联网基准）→ discovery 名称关键词 → 「综合」。
-    """
-    if not codes_to_names:
-        return {}
-
-    normalized_codes = {
-        str(code).strip().zfill(6): (name or "").strip()
-        for code, name in codes_to_names.items()
-        if str(code).strip().zfill(6).isdigit()
-    }
-    if not normalized_codes:
-        return {}
-
-    from app.services.discovery_candidate_pool import infer_sector_label_from_discovery_keywords
-
-    user_by_code: dict[str, str] = {}
-    try:
-        for row in list_fund_primary_sectors():
-            code = str(row.get("fund_code", "")).zfill(6)
-            label = str(row.get("sector_name") or "").strip()
-            if code in normalized_codes and _is_valid_sector_label(label):
-                user_by_code[code] = label
-    except RuntimeError:
-        pass
-
-    global_by_code: dict[str, str] = {}
-    for code, row in get_fund_primary_sectors_global_by_codes(set(normalized_codes)).items():
-        if not is_global_sector_fresh(row):
-            continue
-        label = str(row.get("sector_name") or "").strip()
-        if _is_valid_sector_label(label):
-            global_by_code[code] = label
-
-    resolved: dict[str, str] = {}
-    for code, fund_name in normalized_codes.items():
-        if code in user_by_code:
-            resolved[code] = user_by_code[code]
-            continue
-        if code in global_by_code:
-            resolved[code] = global_by_code[code]
-            continue
-        record = resolve_primary_sector(
-            code,
-            fund_name=fund_name or None,
-            allow_name_infer=True,
-            fetch_benchmark=fetch_benchmark,
-        )
-        if record and _is_valid_sector_label(record.sector_name):
-            resolved[code] = record.sector_name
-            continue
-        resolved[code] = infer_sector_label_from_discovery_keywords(fund_name)
-    return resolved
-
-
 def primary_sector_fields_for_holding(
     holding: Holding,
     *,

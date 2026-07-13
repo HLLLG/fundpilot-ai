@@ -448,6 +448,7 @@ def fetch_open_fund_universe(
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 import json
+import math
 import requests
 from akshare.utils import demjson
 
@@ -470,6 +471,23 @@ def number(parts, index):
         return float(parts[index])
     except (TypeError, ValueError):
         return None
+
+def observed_number(parts, index, field):
+    if index >= len(parts) or parts[index].strip() in ("", "--"):
+        return None
+    try:
+        value = float(parts[index])
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{{field}} is not numeric") from exc
+    if not math.isfinite(value):
+        raise ValueError(f"{{field}} is not finite")
+    return value
+
+def text(parts, index):
+    if index >= len(parts):
+        return None
+    value = parts[index].strip()
+    return None if value in ("", "--") else value
 
 def fetch_page(fund_type, page):
     params = {{
@@ -498,11 +516,16 @@ def parse_rows(payload, fund_type):
         code = parts[0].strip().zfill(6) if parts else ""
         if not code.isdigit() or len(code) != 6:
             continue
+        latest_nav = observed_number(parts, 4, "latest_nav")
+        if latest_nav is not None and latest_nav <= 0:
+            raise ValueError("latest_nav must be positive")
         rows.append({{
             "fund_code": code,
             "fund_name": parts[1].strip() if len(parts) > 1 else "",
             "fund_type": fund_type,
-            "nav_date": parts[3].strip() if len(parts) > 3 else None,
+            "nav_date": text(parts, 3),
+            "latest_nav": latest_nav,
+            "daily_growth_percent": observed_number(parts, 6, "daily_growth_percent"),
             "established_date": parts[16].strip() if len(parts) > 16 else None,
             "return_1y_percent": number(parts, 11),
             "return_6m_percent": number(parts, 10),
@@ -628,6 +651,7 @@ for symbol in symbols:
                 "fund_category": symbol.replace("基金", ""),
                 "latest_nav": nav,
                 "fund_scale_yi": round(current_scale_yi, 4) if current_scale_yi is not None else None,
+                "fund_scale_basis": "nav_times_latest_shares",
                 "established_date": iso_date(row.get("成立日期")),
                 "fund_manager": str(row.get("基金经理") or "").strip() or None,
                 "profile_updated_at": iso_date(row.get("更新日期")),
@@ -652,75 +676,115 @@ print(json.dumps({{"data": list(rows.values()), "errors": errors}}, ensure_ascii
     return None
 
 
-def fetch_open_fund_rank_worst_recent(*, limit: int = 150) -> list[dict] | None:
-    """近1周跌幅靠前的开放式基金（雷达预筛；排行表默认 head 是涨幅冠军，不适用大跌扫描）。"""
-    cap = max(80, min(limit, 300))
-    script = f"""
-import akshare as ak
-import json
-try:
-    frame = ak.fund_open_fund_rank_em(symbol="全部")
-    if frame is None or frame.empty:
-        print(json.dumps({{"error": "empty"}}))
-    else:
-        def _num(raw):
-            if raw is None or str(raw).strip().lower() in ("", "nan", "--"):
-                return None
-            try:
-                return float(raw)
-            except (TypeError, ValueError):
-                return None
+def fetch_fund_basic_profiles_xq(
+    fund_codes: list[str],
+    *,
+    timeout_seconds: int | float = 35,
+) -> list[dict] | None:
+    """按代码批量读取基金基本资料，作为规模/经理补全的独立回退源。
 
-        frame = frame.copy()
-        frame["_w1"] = frame["近1周"].map(_num)
-        frame = frame.sort_values("_w1", ascending=True, na_position="last")
-        rows = []
-        for _, row in frame.iterrows():
-            code = str(row.get("基金代码", "")).strip().zfill(6)
-            name = str(row.get("基金简称", "")).strip()
-            if not code.isdigit() or len(code) != 6:
-                continue
-            scale = _num(row.get("基金规模"))
-            if scale is not None and scale < 1.0:
-                continue
-            r1w = _num(row.get("近1周"))
-            if r1w is None:
-                continue
-            rows.append({{
-                "fund_code": code,
-                "fund_name": name,
-                "return_1w_percent": r1w,
-                "return_1m_percent": _num("近1月"),
-                "return_3m_percent": _num("近3月"),
-                "return_6m_percent": _num("近6月"),
-                "return_1y_percent": _num("近1年"),
-                "max_drawdown_1y_percent": _num("最大回撤"),
-                "fund_scale_yi": scale,
-            }})
-            if len(rows) >= {cap}:
-                break
-        print(json.dumps({{"data": rows}}))
-except Exception as e:
-    print(json.dumps({{"error": str(e)}}))
-"""
-    try:
-        result = subprocess.run(
-            [sys.executable, "-c", script],
-            capture_output=True,
-            text=True,
-            timeout=_SUBPROCESS_TIMEOUT,
-            check=False,
-        )
-        if result.returncode != 0 or not result.stdout.strip():
-            logger.warning("akshare fund worst-rank subprocess failed: %s", result.stderr)
-            return None
-        output = json.loads(result.stdout.strip())
-        if output.get("error"):
-            return None
-        return output.get("data") or []
-    except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError) as exc:
-        logger.warning("akshare fund worst-rank exception: %s", exc)
+    雪球基金接口单次只返回一只基金，因此放在同一个隔离子进程内做有限并发，
+    避免主 API 进程加载第三方运行时，也避免候选池逐只串行等待。
+    """
+
+    targets = sorted(
+        {
+            str(code).strip().zfill(6)
+            for code in fund_codes
+            if str(code).strip().isdigit()
+        }
+    )[:80]
+    if not targets:
+        return []
+    script = f"""
+import json
+import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+import akshare as ak
+
+targets = {targets!r}
+
+def clean(value):
+    if value is None:
         return None
+    text = str(value).strip()
+    if text.lower() in ("", "nan", "nat", "none", "<na>", "--"):
+        return None
+    return text
+
+def shares_yi(value):
+    text = clean(value)
+    if text is None:
+        return None
+    normalized = text.replace(",", "").replace(" ", "")
+    matched = re.search(r"[-+]?\\d+(?:\\.\\d+)?", normalized)
+    if matched is None:
+        return None
+    number = float(matched.group(0))
+    if number <= 0:
+        return None
+    if "亿" in normalized:
+        return round(number, 4)
+    if "万" in normalized:
+        return round(number / 10000.0, 4)
+    return None
+
+def fetch_one(code):
+    try:
+        try:
+            frame = ak.fund_individual_basic_info_xq(symbol=code, timeout=6)
+        except TypeError:
+            frame = ak.fund_individual_basic_info_xq(symbol=code)
+        if frame is None or frame.empty:
+            return None
+        mapping = {{}}
+        for _, row in frame.iterrows():
+            key = clean(row.get("item"))
+            if key is None:
+                key = clean(row.get("字段"))
+            if key is None:
+                continue
+            mapping[key] = row.get("value") if "value" in row else row.get("值")
+        return {{
+            "fund_code": code,
+            "fund_name": clean(mapping.get("基金名称")) or clean(mapping.get("基金简称")),
+            "fund_category": clean(mapping.get("基金类型")),
+            # AKShare 将蛋卷接口的 totshare 重命名为“最新规模”，但原始
+            # 字段实际是基金份额，不是资产净值。这里只保存亿份，待候选
+            # 已取得最新单位净值后再估算 AUM，避免把 12.46 亿份误写成
+            # 12.46 亿元并参与清盘阈值判断。
+            "fund_shares_yi": shares_yi(mapping.get("最新规模")),
+            "fund_shares_basis": "xq_latest_reported_shares",
+            "established_date": clean(mapping.get("成立时间")) or clean(mapping.get("成立日期")),
+            "fund_manager": clean(mapping.get("基金经理")),
+            "profile_source": "xq.fund_individual_basic_info_xq",
+        }}
+    except Exception:
+        return None
+
+rows = []
+worker_count = max(1, min(6, len(targets)))
+with ThreadPoolExecutor(max_workers=worker_count) as executor:
+    futures = {{executor.submit(fetch_one, code): code for code in targets}}
+    for future in as_completed(futures):
+        row = future.result()
+        if row is not None:
+            rows.append(row)
+
+rows.sort(key=lambda item: item["fund_code"])
+print(json.dumps({{"data": rows}}, ensure_ascii=False))
+"""
+    payload = run_akshare_json_script(
+        script,
+        label=f"fund_basic_profiles_xq:{len(targets)}",
+        timeout=timeout_seconds,
+    )
+    if isinstance(payload, dict):
+        rows = payload.get("data")
+        if isinstance(rows, list):
+            return rows
+    return None
 
 
 def fetch_new_fund_offerings(*, limit: int = 300) -> list[dict] | None:

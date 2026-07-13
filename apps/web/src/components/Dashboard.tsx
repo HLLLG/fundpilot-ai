@@ -340,8 +340,9 @@ export function Dashboard() {
     [holdings, holdingWarnings, profile, report?.created_at],
   );
 
-  const ocrWarningCount = holdingWarnings.length;
   const blockingErrors = hasBlockingErrors(workflowBlockers);
+  const blockingMessage =
+    workflowBlockers.find((item) => item.severity === "error")?.message ?? null;
 
   const sectorRefresh = useSectorQuoteRefresh({
     holdings,
@@ -1213,7 +1214,6 @@ export function Dashboard() {
       setPendingOcrResolutions(result.fund_code_resolutions ?? []);
       setPendingOcrNote(result.amount_semantics?.note ?? null);
       setPendingOcrSource(result.ocr_source ?? null);
-      setHoldingWarnings(result.holding_warnings ?? []);
       setShowAddHoldingModal(false);
       setActiveTab("holdings");
     } catch (error) {
@@ -1243,6 +1243,7 @@ export function Dashboard() {
       }
       markPortfolioCacheWriteReady();
       setHoldings(applied.holdings);
+      setHoldingWarnings(applied.holding_warnings ?? []);
       if (applied.portfolio_summary) {
         setPortfolioSummary(applied.portfolio_summary);
       }
@@ -1305,6 +1306,7 @@ export function Dashboard() {
 
       markPortfolioCacheWriteReady();
       setHoldings(appliedHoldings);
+      setHoldingWarnings(applied.holding_warnings ?? []);
       setPortfolioSummary(nextSummary);
       saveCachedPortfolioHoldings(user?.id, {
         holdings: appliedHoldings,
@@ -1694,8 +1696,8 @@ export function Dashboard() {
                 onRolePromptReset={handleRolePromptReset}
                 onAnalyze={() => void handleAnalyze()}
                 isBusy={isSubmitting}
-                ocrWarningCount={ocrWarningCount}
                 hasBlockingErrors={blockingErrors}
+                blockingMessage={blockingMessage}
                 readingModeKey={report?.id ?? null}
               />
               {report || streamingReport ? (
@@ -1825,10 +1827,11 @@ export function Dashboard() {
             markPortfolioCacheWriteReady();
             setHoldings(next);
             try {
-              await enqueuePortfolioMutation(() => applyPortfolioHoldings(next));
+              const applied = await enqueuePortfolioMutation(() => applyPortfolioHoldings(next));
               if (mutationVersion !== holdingsMutationVersionRef.current) {
                 return;
               }
+              setHoldingWarnings(applied.holding_warnings ?? []);
               setMessage(`基金代码已更新为 ${updated.fund_code}`, "success");
             } catch (error) {
               if (mutationVersion !== holdingsMutationVersionRef.current) {

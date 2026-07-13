@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 
-MYSQL_SCHEMA_VERSION = 10
+MYSQL_SCHEMA_VERSION = 11
 
 
 def ensure_mysql_schema(connection: Any) -> None:
@@ -270,6 +270,47 @@ def ensure_mysql_schema(connection: Any) -> None:
             source_run_id VARCHAR(64) NOT NULL,
             payload LONGTEXT NOT NULL,
             INDEX idx_factor_ic_generated (generated_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS factor_ic_universe_snapshots (
+            snapshot_id VARCHAR(64) PRIMARY KEY,
+            schema_version INT NOT NULL,
+            snapshot_date VARCHAR(16) NOT NULL,
+            available_at VARCHAR(64) NOT NULL,
+            captured_at VARCHAR(64) NOT NULL,
+            published_at VARCHAR(64) NOT NULL,
+            source VARCHAR(64) NOT NULL,
+            source_share_count INT NOT NULL,
+            deduped_fund_count INT NOT NULL,
+            sampled_fund_count INT NOT NULL,
+            sample_target INT NOT NULL,
+            fund_type_count INT NOT NULL,
+            source_commit VARCHAR(64) NOT NULL,
+            source_run_id VARCHAR(64) NOT NULL,
+            content_hash VARCHAR(64) NOT NULL,
+            payload LONGTEXT NOT NULL,
+            INDEX idx_factor_ic_universe_date (snapshot_date, available_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS factor_ic_universe_members (
+            snapshot_id VARCHAR(64) NOT NULL,
+            fund_code VARCHAR(16) NOT NULL,
+            fund_name VARCHAR(255) NOT NULL,
+            fund_type VARCHAR(32) NOT NULL,
+            share_class VARCHAR(16) NULL,
+            canonical_portfolio_key VARCHAR(64) NOT NULL,
+            inception_date VARCHAR(16) NULL,
+            available_at VARCHAR(64) NOT NULL,
+            source_rank INT NULL,
+            content_hash VARCHAR(64) NOT NULL,
+            payload LONGTEXT NOT NULL,
+            created_at VARCHAR(64) NOT NULL,
+            PRIMARY KEY (snapshot_id, fund_code),
+            INDEX idx_factor_ic_universe_member_code (fund_code, snapshot_id),
+            INDEX idx_factor_ic_universe_member_type (snapshot_id, fund_type),
+            INDEX idx_factor_ic_universe_member_portfolio (canonical_portfolio_key, snapshot_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """,
         """

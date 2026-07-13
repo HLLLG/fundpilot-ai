@@ -86,6 +86,28 @@ def test_parser_finalize_fallback():
     assert result["summary"] == "s"
 
 
+def test_parser_sanitizes_retired_evidence_in_partial_and_final_payloads():
+    parser = StreamingReportParser(array_field="recommendations", item_partial_field="recommendation")
+    payload = (
+        '{"title":"t","summary":"市场震荡。北向资金不可用。仍需控制仓位。",'
+        '"recommendations":[{"fund_code":"001188","validation_notes":'
+        '["北向实时净买额暂停披露","费率待核验"]}],'
+        '"caveats":["北向缺失影响判断","仅供参考"]}'
+    )
+
+    events = list(parser.feed(payload))
+    rendered = str(events)
+    assert "北向" not in rendered
+    summary = next(event["value"] for event in events if event.get("field") == "summary")
+    assert summary == "市场震荡。仍需控制仓位。"
+    caveats = next(event["value"] for event in events if event.get("field") == "caveats")
+    assert caveats == ["仅供参考"]
+
+    finalized = parser.finalize(payload)
+    assert "北向" not in str(finalized)
+    assert finalized["recommendations"][0]["validation_notes"] == ["费率待核验"]
+
+
 def test_parser_invalid_json_does_not_raise():
     parser = StreamingReportParser()
     events = _collect_feed(parser, ['not json at all {{{'])

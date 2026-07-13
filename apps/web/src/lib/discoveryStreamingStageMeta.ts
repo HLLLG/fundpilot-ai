@@ -3,7 +3,6 @@
 const STAGE_SHORT_LABEL: Record<string, string> = {
   connected: "已连接",
   sector_heat: "板块热度",
-  dip_prescreen: "大跌预筛",
   candidate_pool: "候选池",
   news: "市场要闻",
   generating: "AI 分析",

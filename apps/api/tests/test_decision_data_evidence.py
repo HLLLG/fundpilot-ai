@@ -369,6 +369,7 @@ def test_degraded_discovery_snapshot_guard_removes_buy_action_and_amount():
                 "sector_label": "半导体",
                 "fund_quality_score": 80,
                 "sector_fit_score": 80,
+                "quality_gate": {"status": "eligible", "eligible": True, "reasons": []},
             }
         ],
         held_codes=set(),
@@ -434,6 +435,7 @@ def test_discovery_guard_caps_amount_by_known_cash_without_treating_unknown_as_z
                 "sector_label": "半导体",
                 "fund_quality_score": 80,
                 "sector_fit_score": 80,
+                "quality_gate": {"status": "eligible", "eligible": True, "reasons": []},
             }
         ],
         held_codes=set(),
@@ -542,6 +544,7 @@ def test_unknown_candidate_evidence_is_consumed_by_discovery_final_guard():
                 "sector_label": "半导体",
                 "fund_quality_score": 80,
                 "sector_fit_score": 80,
+                "quality_gate": {"status": "eligible", "eligible": True, "reasons": []},
             }
         ],
         held_codes=set(),

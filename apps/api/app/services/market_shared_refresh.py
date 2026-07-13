@@ -1,4 +1,4 @@
-"""全用户共享市场快照的后台刷新（A 股主题/大跌雷达 + 美股概览）。
+"""全用户共享市场快照的后台刷新（A 股主题 + 美股概览）。
 
 A 股与美股交易时段独立判定：
 - A 股活跃（9:30–15:00 intraday/pre_close）：每 20min 刷新
@@ -58,12 +58,10 @@ def _poll_seconds() -> float:
 
 
 def refresh_a_share_market_snapshots() -> None:
-    """主题板块 + 大跌雷达（3/5 日）。"""
-    from app.services.dip_radar_snapshot import refresh_dip_radar_snapshots
+    """刷新 A 股主题板块快照。"""
     from app.services.theme_board_snapshot import refresh_theme_board_snapshot
 
     refresh_theme_board_snapshot()
-    refresh_dip_radar_snapshots()
 
 
 def _try_acquire_market_breadth_lease(*, ttl_seconds: float) -> bool:

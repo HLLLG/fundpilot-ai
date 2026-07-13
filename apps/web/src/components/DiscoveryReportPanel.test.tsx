@@ -192,33 +192,6 @@ describe("DiscoveryReportPanel", () => {
     expect(screen.queryByText("已推荐")).not.toBeInTheDocument();
   });
 
-  it("never promotes a dip_swing research report into an executable recommendation", () => {
-    const report = sampleReport();
-    report.discovery_facts = {
-      ...report.discovery_facts,
-      data_evidence_guard: {
-        execution_blocked: false,
-        blocked_fund_codes: [],
-      },
-      effective_configuration: {
-        scan_goal: "dip_swing",
-        selection_policy: "dip_rebound_research",
-      },
-    };
-    report.recommendations = [
-      { ...report.recommendations[0], action: "分批买入", suggested_amount_yuan: 1000 },
-    ];
-    report.decision_events = [
-      { fund_code: "006081", action_category: "buy", eligible: true },
-    ];
-
-    render(<DiscoveryReportPanel report={report} />);
-
-    expect(screen.getByText("本次暂无可执行建议")).toBeInTheDocument();
-    expect(screen.getByText("研究观察")).toBeInTheDocument();
-    expect(screen.queryByText("可执行建议")).not.toBeInTheDocument();
-  });
-
   it("does not mount the long follow-up chat until requested", () => {
     render(<DiscoveryReportPanel report={sampleReport()} />);
 

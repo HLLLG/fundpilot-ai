@@ -29,7 +29,7 @@ def test_run_migrations_backfills_global_primary_sector_table_at_current_version
 
 
 def test_current_schema_still_ensures_factor_ic_snapshot_table() -> None:
-    assert SCHEMA_VERSION == 10
+    assert SCHEMA_VERSION == 11
     connection = sqlite3.connect(":memory:")
     connection.execute(
         "CREATE TABLE schema_meta (id INTEGER PRIMARY KEY, version INTEGER NOT NULL)"

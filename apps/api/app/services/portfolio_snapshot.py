@@ -175,7 +175,13 @@ def build_risk_correlation_payload(
     return asdict(matrix)
 
 
-def _target_from_nav(holding: Holding, fetch_nav) -> "object":
+def _target_from_nav(
+    holding: Holding,
+    fetch_nav,
+    *,
+    effective_trade_date: str | None = None,
+    fund_type: str | None = None,
+) -> "object":
     """持仓不在排行榜池时，用净值序列算同口径因子原始值（复用共享 helper）。
 
     规模无法从净值取，置 None（size 因子权重低、合成时按剩余权重归一）。
@@ -206,6 +212,9 @@ def _target_from_nav(holding: Holding, fetch_nav) -> "object":
         valid_points,
         require_complete=True,
         minimum_points=250,
+        effective_trade_date=effective_trade_date,
+        fund_type=fund_type,
+        source="fund_nav_history",
     )
 
 
@@ -245,6 +254,7 @@ def build_factor_scores_payload(
 
     if research_model:
         from app.services.factor_ic_research import score_targets_with_research_model
+        from app.services.trading_session import get_effective_trade_date
 
         filtered = [
             holding
@@ -253,8 +263,19 @@ def build_factor_scores_payload(
             and len((holding.fund_code or "").strip()) == 6
             and (holding.fund_code or "").strip() != "000000"
         ]
+        classifications = research_model.get("fund_classifications") or {}
+        effective_trade_date = get_effective_trade_date()
+
+        def target_from_nav(holding: Holding):
+            return _target_from_nav(
+                holding,
+                fetch_nav,
+                effective_trade_date=effective_trade_date,
+                fund_type=str(classifications.get(holding.fund_code) or "unknown"),
+            )
+
         if len(filtered) <= 1:
-            targets = [_target_from_nav(holding, fetch_nav) for holding in filtered]
+            targets = [target_from_nav(holding) for holding in filtered]
         else:
             from concurrent.futures import ThreadPoolExecutor
 
@@ -263,7 +284,7 @@ def build_factor_scores_payload(
             ) as executor:
                 targets = list(
                     executor.map(
-                        lambda holding: _target_from_nav(holding, fetch_nav),
+                        target_from_nav,
                         filtered,
                     )
                 )
@@ -391,6 +412,12 @@ def _compact_factor_scores(
     research_model: dict | None = None,
 ) -> dict:
     """把 build_factor_scores_payload 的结果压成紧凑 facts 结构（挂 IC 置信）。"""
+    ic_state = str(ic_status.get("state") or "").strip().lower()
+    ic_usable = bool(
+        ic_state == "available"
+        and ic_status.get("stale") is not True
+        and ic_status.get("available", True) is not False
+    )
     holdings = []
     for fund in payload.get("funds") or []:
         factors = fund.get("factors") or {}
@@ -411,8 +438,44 @@ def _compact_factor_scores(
             "feature_count": fund.get("feature_count"),
             "feature_completeness": fund.get("feature_completeness"),
             "applicable": fund.get("applicable", True),
+            "base_composite_score": fund.get("base_composite_score"),
+            "typed_factor_schema": fund.get("typed_factor_schema") if ic_usable else None,
+            "typed_used_keys": (
+                list(fund.get("typed_factor_candidates") or [])
+                if ic_usable and fund.get("typed_factor_applicable")
+                else []
+            ),
+            "typed_factor_percentiles": (
+                fund.get("typed_factor_percentiles") or {} if ic_usable else {}
+            ),
+            "typed_factor_reliability": (
+                fund.get("typed_factor_reliability") or {} if ic_usable else {}
+            ),
+            "typed_factor_applicable": bool(
+                ic_usable and fund.get("typed_factor_applicable")
+            ),
+            "typed_feature_completeness": (
+                fund.get("typed_feature_completeness", 0.0) if ic_usable else 0.0
+            ),
+            "typed_factor_score": fund.get("typed_factor_score") if ic_usable else None,
+            "typed_factor_basis": (
+                fund.get("typed_factor_basis")
+                if ic_usable
+                else "IC 快照非当前可用状态，类型因子未参与"
+            ),
+            "target_feature_as_of": fund.get("target_feature_as_of"),
+            "target_feature_observed_at": fund.get("target_feature_observed_at"),
+            "target_feature_source": fund.get("target_feature_source"),
+            "target_return_coverage": fund.get("target_return_coverage"),
+            "target_nav_age_trading_days": fund.get(
+                "target_nav_age_trading_days"
+            ),
+            "target_feature_freshness": fund.get("target_feature_freshness"),
+            "target_feature_max_age_trading_days": fund.get(
+                "target_feature_max_age_trading_days"
+            ),
         }
-        if research_model and row["peer_group"]:
+        if ic_usable and research_model and row["peer_group"]:
             from app.services.factor_confidence import factor_reliability
 
             row["factor_reliability"] = factor_reliability(
@@ -424,7 +487,7 @@ def _compact_factor_scores(
     return {
         "available": bool(payload.get("available")),
         "universe_size": payload.get("universe_size", 0),
-        "factor_reliability": {} if research_model else reliability,
+        "factor_reliability": {} if research_model and ic_usable else reliability,
         "reliability_scope": (
             "per_fund_peer_group" if research_model else "global_legacy"
         ),
@@ -509,10 +572,24 @@ def build_factor_scores_for_facts(
                 ic_context.get("factors") or {},
                 missing_basis=missing_basis,
             )
+            status = ic_context.get("status") or {}
+            if (
+                state != "available"
+                or status.get("stale") is True
+                or status.get("available", True) is False
+            ):
+                reliability = {
+                    key: (
+                        reliability.get(key)
+                        if key == "size" and isinstance(reliability.get(key), dict)
+                        else {"level": "不足", "basis": missing_basis}
+                    )
+                    for key in _FACTOR_FACTS_KEYS
+                }
             return _compact_factor_scores(
                 payload,
                 reliability,
-                {**ic_context.get("status", {}), "state": state},
+                {**status, "state": state},
                 research_model=(
                     ic_context.get("research_model")
                     if isinstance(ic_context.get("research_model"), dict)

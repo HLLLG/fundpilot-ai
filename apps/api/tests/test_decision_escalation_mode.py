@@ -241,6 +241,7 @@ def _discovery_pool_item(*, fund_quality_score: float) -> dict:
         "sector_label": "半导体材料",
         "fund_quality_score": fund_quality_score,
         "sector_fit_score": 37.12,
+        "quality_gate": {"status": "eligible", "eligible": True, "reasons": []},
         "quality_reasons": ["近3/6月表现占优"],
         "quality_penalties": [],
         "return_3m_percent": 18.2,

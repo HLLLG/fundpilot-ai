@@ -80,11 +80,14 @@ def slim_candidate_for_llm(
         "return_6m_percent": item.get("return_6m_percent"),
         "max_drawdown_1y_percent": item.get("max_drawdown_1y_percent"),
         "fund_scale_yi": item.get("fund_scale_yi"),
+        "fund_scale_basis": item.get("fund_scale_basis"),
         "management_fee": item.get("management_fee"),
         "fund_type": item.get("fund_type"),
         "fund_manager": item.get("fund_manager"),
         "established_date": item.get("established_date"),
         "profile_updated_at": item.get("profile_updated_at"),
+        "profile_status": item.get("profile_status"),
+        "profile_sources": item.get("profile_sources") or [],
         "share_class": item.get("share_class"),
         "share_class_fee_status": item.get("share_class_fee_status"),
         "fund_quality_score": item.get("fund_quality_score"),
@@ -101,9 +104,6 @@ def slim_candidate_for_llm(
     nav = slim_nav_trend_for_llm(item.get("nav_trend"))
     if nav:
         row["nav_trend"] = nav
-    dip = item.get("dip_drop_percent")
-    if dip is not None:
-        row["dip_drop_percent"] = dip
     if daily is not None:
         row["estimated_daily_return_percent"] = daily
         row["daily_return_source"] = source

@@ -351,9 +351,10 @@ def test_local_legacy_summary_is_used_when_database_fails(tmp_path) -> None:
 
     assert raw is not None and raw["universe_size"] == 298
     assert source == "local_file"
-    assert metadata == {}
+    assert len(metadata["snapshot_id"]) == 64
     assert status["available"] is True
     assert status["source"] == "local_file"
+    assert status["snapshot_id"] == metadata["snapshot_id"]
     assert status["generated_at"] == "2026-07-09T00:00:00+00:00"
     assert status["factor_periods"] == {"momentum": 33}
 

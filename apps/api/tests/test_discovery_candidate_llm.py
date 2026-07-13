@@ -74,7 +74,6 @@ def test_slim_candidate_for_llm_includes_extended_fields():
         "return_6m_percent": 3.0,
         "max_drawdown_1y_percent": -12.0,
         "fund_scale_yi": 80.0,
-        "dip_drop_percent": -4.2,
         "nav_trend": {
             "trend_label": "回调",
             "period_change_percent": 6.0,
@@ -95,7 +94,6 @@ def test_slim_candidate_for_llm_includes_extended_fields():
     assert row["return_3m_percent"] == 2.0
     assert row["nav_trend"]["trend_label"] == "回调"
     assert "latest_nav" not in row["nav_trend"]
-    assert row["dip_drop_percent"] == -4.2
     assert row["estimated_daily_return_percent"] == 0.8
     assert row["daily_return_source"] == "official_nav"
 

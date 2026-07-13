@@ -234,7 +234,7 @@ def test_benchmark_is_explicitly_unavailable_instead_of_fabricated():
 
 def test_take_profit_is_unknown_until_its_own_horizon_matures():
     report = _report(_rec())
-    report["discovery_facts"] = {"dip_swing": {"fee_break_even_percent": 1.0}}
+    report["discovery_facts"] = {"profile": {"take_profit_threshold_percent": 1.0}}
 
     result = build_discovery_outcomes(
         report,

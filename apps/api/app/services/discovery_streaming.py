@@ -16,7 +16,11 @@ from app.request_context import reset_request_user_id, set_request_user_id
 from app.services.analysis_runtime import resolve_analysis_runtime
 from app.services.deepseek_client import _parse_model_json
 from app.services.deepseek_streaming import stream_chat_completion
-from app.services.discovery_candidate_pool import build_candidate_pool, enrich_candidates
+from app.services.discovery_candidate_pool import (
+    build_candidate_pool,
+    enrich_candidates,
+    finalize_candidate_pool,
+)
 from app.services.discovery_client import (
     DiscoveryClient,
     build_discovery_chat_messages,
@@ -70,7 +74,7 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
         holdings = list(request.holdings)
         yield _stage("connected", started_at=started_at)
         yield _stage("sector_heat", started_at=started_at)
-        sector_heat = build_sector_heat_ranking(include_5d=(request.scan_mode == "dip_swing"))
+        sector_heat = build_sector_heat_ranking()
         target_sectors = select_target_sectors(
             holdings,
             request.focus_sectors,
@@ -88,7 +92,7 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
         pool_cap = 28
         held_codes = {h.fund_code.strip().zfill(6) for h in holdings if h.fund_code}
 
-        selection_strategy = "dip_rebound" if request.scan_mode == "dip_swing" else "balanced"
+        selection_strategy = "balanced"
 
         with ThreadPoolExecutor(max_workers=3, thread_name_prefix="discovery-prep") as executor:
             flow_future = executor.submit(
@@ -123,6 +127,8 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
             )
             if request.scan_mode == "full_market" and sector_opportunities:
                 target_sectors = [str(item["sector_label"]) for item in sector_opportunities]
+            prescreen_per_sector = per_sector + 1
+            prescreen_pool_cap = pool_cap + max(4, min(len(target_sectors), 8))
             topics = list(dict.fromkeys(target_sectors + list(request.focus_sectors)))
             if not topics:
                 topics = ["上证指数"]
@@ -132,42 +138,30 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
                 lambda: news_service.prefetch_topics(topics),
             )
             yield _stage("news", started_at=started_at)
-            if request.scan_mode == "dip_swing":
-                yield _stage("dip_prescreen", started_at=started_at)
-                from app.services.dip_drop_scanner import build_dip_pool_for_sectors
-
-                pool_future = executor.submit(
-                    run_with_request_user,
-                    user_id,
-                    lambda: enrich_candidates(
-                        build_dip_pool_for_sectors(
-                            target_sectors,
-                            lookback_days=request.dip_lookback_days,
-                            min_drop_percent=request.dip_min_drop_percent,
-                            exclude_codes=held_codes,
-                        )
-                    ),
-                )
-            else:
-                yield _stage("candidate_pool", started_at=started_at)
-                pool_future = executor.submit(
-                    run_with_request_user,
-                    user_id,
-                    lambda: enrich_candidates(
+            yield _stage("candidate_pool", started_at=started_at)
+            pool_future = executor.submit(
+                run_with_request_user,
+                user_id,
+                lambda: finalize_candidate_pool(
+                    enrich_candidates(
                         build_candidate_pool(
                             target_sectors,
                             exclude_codes=held_codes,
                             fund_type_preference="any",
                             selection_strategy=selection_strategy,
-                            per_sector=per_sector,
-                            pool_cap=pool_cap,
+                            per_sector=prescreen_per_sector,
+                            pool_cap=prescreen_pool_cap,
                             sector_opportunities=sector_opportunities,
                         )
                     ),
-                )
+                    target_sectors,
+                    per_sector=per_sector,
+                    pool_cap=pool_cap,
+                ),
+            )
             pool = yield from _await_future_with_progress(
                 pool_future,
-                "candidate_pool" if request.scan_mode != "dip_swing" else "dip_prescreen",
+                "candidate_pool",
                 "正在优选候选基金…",
                 started_at=started_at,
             )
@@ -211,8 +205,6 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
             budget_yuan=budget,
             selection_strategy=selection_strategy,
             scan_mode=request.scan_mode,
-            dip_lookback_days=request.dip_lookback_days,
-            dip_min_drop_percent=request.dip_min_drop_percent,
             focus_sectors=list(request.focus_sectors),
             fund_type_preference="any",
             sector_opportunities=sector_opportunities,
@@ -280,7 +272,6 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
                     continue
                 chunk = entry
                 all_chunks.append(chunk)
-                yield {"type": "token", "content": chunk}
                 for partial in parser.feed(chunk):
                     yield partial
             parsed = _parse_model_json("".join(all_chunks))

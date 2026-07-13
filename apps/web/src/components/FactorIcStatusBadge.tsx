@@ -78,9 +78,18 @@ export function FactorIcStatusBadge() {
       </StatusLine>
     );
   }
+  const scope =
+    status.cohort_mode === "point_in_time"
+      ? status.point_in_time?.point_in_time_scope === "nav_observation_pit" &&
+        status.point_in_time?.nav_revision_pit === true
+        ? "完整PIT"
+        : "成员PIT"
+      : status.pit_upgrade?.state === "collecting"
+        ? `PIT积累${status.pit_upgrade.effective_anchor_count ?? 0}锚点`
+        : "当前存续样本";
   return (
     <StatusLine tone="fresh">
-      IC 回测：{shortDate(status.run_date)} · {status.universe_size ?? "—"}只基金
+      IC：{shortDate(status.run_date)} · {status.universe_size ?? "—"}只 · {scope}
     </StatusLine>
   );
 }

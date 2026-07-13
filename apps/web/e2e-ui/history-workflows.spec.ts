@@ -174,41 +174,37 @@ async function openPrimary(page: Page, destination: "discovery" | "report") {
   await page.getByRole("menuitem", { name: destination === "discovery" ? "发现基金" : "生成日报" }).click();
 }
 
-test("100 条发现历史保持有界，并在桌面侧栏或移动抽屉内连续切换", async ({ page }, testInfo) => {
+test("100 条发现历史保持有界，并在统一历史抽屉内连续切换", async ({ page }, testInfo) => {
   await installHistoryStubs(page, { discoveryCount: 100 });
   await enterDashboard(page);
   await openPrimary(page, "discovery");
   await expect(page.getByRole("heading", { level: 1, name: "发现基金" })).toBeVisible();
 
-  if ((page.viewportSize()?.width ?? 1440) >= 1280) {
-    const desktopHistory = page.getByTestId("discovery-history-desktop");
-    await expect(desktopHistory).toBeVisible();
-    await expect(desktopHistory.getByTestId("discovery-history-item")).toHaveCount(12);
-    const metrics = await desktopHistory.evaluate((element) => {
-      const list = element.querySelector<HTMLElement>('[data-testid="discovery-history-scroll-region"]')!;
-      const rect = element.getBoundingClientRect();
-      return {
-        bottom: rect.bottom,
-        viewport: window.innerHeight,
-        overflowY: getComputedStyle(list).overflowY,
-      };
-    });
-    expect(metrics.bottom).toBeLessThanOrEqual(metrics.viewport);
-    expect(metrics.overflowY).toBe("auto");
-    await desktopHistory.getByRole("button", { name: /全部历史/ }).click();
-  } else {
-    const trigger = page.getByRole("button", { name: /历史推荐/ });
-    await expect(trigger).toBeVisible();
-    await trigger.focus();
-    await trigger.click();
-    await expect(page.getByRole("dialog", { name: "历史推荐" })).toBeVisible();
-    await page.keyboard.press("Escape");
-    await expect(page.getByRole("dialog", { name: "历史推荐" })).toBeHidden();
-    await expect(trigger).toBeFocused();
-    await trigger.click();
-  }
-
+  const trigger = page.getByRole("button", { name: /历史推荐/ });
+  await expect(trigger).toBeVisible();
+  await trigger.focus();
+  await trigger.click();
   const dialog = page.getByRole("dialog", { name: "历史推荐" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByTestId("discovery-history-item")).toHaveCount(20);
+  await dialog.evaluate(async (element) => {
+    await Promise.all(element.getAnimations().map((animation) => animation.finished));
+  });
+  const metrics = await dialog.getByTestId("history-drawer-scroll-region").evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return {
+      bottom: rect.bottom,
+      viewport: window.innerHeight,
+      overflowY: getComputedStyle(element).overflowY,
+    };
+  });
+  expect(metrics.bottom).toBeLessThanOrEqual(metrics.viewport);
+  expect(metrics.overflowY).toBe("auto");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect(trigger).toBeFocused();
+  await trigger.click();
+  await expect(dialog).toBeVisible();
   await page.waitForTimeout(260);
   await page.screenshot({ path: testInfo.outputPath("discovery-history-after.png") });
   const search = dialog.getByRole("searchbox", { name: "搜索历史推荐" });

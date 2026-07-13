@@ -69,6 +69,23 @@ describe("import confirmation dialogs", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "搜索匹配" })).toHaveFocus());
   });
 
+  it("keeps unresolved funds inside the actionable OCR review step", () => {
+    const onConfirm = vi.fn();
+    render(
+      <AlipayOcrConfirmModal
+        holdings={[{ ...holding, fund_code: "000000" }]}
+        onChange={vi.fn()}
+        onConfirm={onConfirm}
+        onClose={vi.fn()}
+      />,
+    );
+
+    const confirm = screen.getByRole("button", { name: "请先补全基金代码（1）" });
+    expect(confirm).toBeDisabled();
+    fireEvent.click(confirm);
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
   it("keeps every batch-transaction fund-search control named and at least 44px tall", async () => {
     vi.mocked(searchFunds).mockResolvedValue([
       { fund_code: "110023", fund_name: "示例搜索基金" },

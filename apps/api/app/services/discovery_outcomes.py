@@ -115,7 +115,7 @@ def build_discovery_outcomes(
         )
 
     items: list[dict[str, Any]] = []
-    fee_threshold = _resolve_fee_break_even(report)
+    take_profit_threshold = _resolve_take_profit_threshold(report)
     fallback_fee_policy = fee_policy_from_report(report, decision_kind="discovery")
     for recommendation_index, rec in enumerate(recommendations):
         if not isinstance(rec, dict):
@@ -182,7 +182,7 @@ def build_discovery_outcomes(
             since=created_at,
             days=horizon_days,
             fetch_nav=fetch_nav,
-            fee_break_even_percent=fee_threshold,
+            take_profit_threshold_percent=take_profit_threshold,
             take_profit_days=_TAKE_PROFIT_DAYS,
             fee_policy=fee_policy,
             benchmark_spec=benchmark_spec,
@@ -379,7 +379,7 @@ def _outcome_for_fund(
     since: datetime,
     days: int,
     fetch_nav,
-    fee_break_even_percent: float | None = None,
+    take_profit_threshold_percent: float | None = None,
     take_profit_days: int = _TAKE_PROFIT_DAYS,
     fee_policy: dict[str, Any] | None = None,
     benchmark_spec: dict[str, Any] | None = None,
@@ -484,7 +484,7 @@ def _outcome_for_fund(
                 points,
                 baseline_index=baseline_index,
                 forward_trading_days=take_profit_days,
-                threshold_percent=fee_break_even_percent,
+                threshold_percent=take_profit_threshold_percent,
             ),
         }
 
@@ -532,7 +532,7 @@ def _outcome_for_fund(
             points,
             baseline_index=baseline_index,
             forward_trading_days=take_profit_days,
-            threshold_percent=fee_break_even_percent,
+            threshold_percent=take_profit_threshold_percent,
         ),
     }
 
@@ -1031,18 +1031,8 @@ def _normalize_horizon_days(days: object) -> int:
     return max(1, min(value, _MAX_HORIZON_DAYS))
 
 
-def _resolve_fee_break_even(report: dict[str, Any]) -> float | None:
+def _resolve_take_profit_threshold(report: dict[str, Any]) -> float | None:
     facts = report.get("discovery_facts") or {}
-    dip = facts.get("dip_swing") or {}
-    dip_threshold = _as_float(dip.get("fee_break_even_percent"))
-    if dip_threshold is not None and dip_threshold >= 0:
-        return dip_threshold
-    for rec in report.get("recommendations") or []:
-        if not isinstance(rec, dict):
-            continue
-        rec_threshold = _as_float(rec.get("fee_break_even_percent"))
-        if rec_threshold is not None and rec_threshold >= 0:
-            return rec_threshold
     profile = facts.get("profile") or {}
     profile_threshold = _as_float(profile.get("take_profit_threshold_percent"))
     if profile_threshold is not None and profile_threshold >= 0:

@@ -414,11 +414,15 @@ export function AlipayOcrConfirmModal({
         <div className="border-t border-slate-100 px-4 py-4">
           <button
             type="button"
-            disabled={isBusy || holdings.length === 0}
+            disabled={isBusy || holdings.length === 0 || unresolvedCount > 0}
             onClick={onConfirm}
             className="btn-primary min-h-11 w-full px-4 py-3 text-sm font-bold disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {isBusy ? "正在更新..." : `完成（${holdings.length}）`}
+            {isBusy
+              ? "正在更新..."
+              : unresolvedCount > 0
+                ? `请先补全基金代码（${unresolvedCount}）`
+                : `完成（${holdings.length}）`}
           </button>
         </div>
       </div>

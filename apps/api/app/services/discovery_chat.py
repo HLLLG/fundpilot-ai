@@ -16,6 +16,7 @@ from app.services.discovery_chat_guard import (
 )
 from app.services.discovery_export import discovery_report_to_markdown
 from app.services.report_chat_runtime import resolve_report_chat_runtime
+from app.services.retired_market_evidence import sanitize_retired_market_evidence
 
 OFFLINE_REPLY = (
     "当前未配置有效的 DeepSeek API Key，无法在线追问。"
@@ -58,6 +59,7 @@ def stream_discovery_chat(
     report = get_discovery_report(discovery_report_id)
     if report is None:
         raise ValueError("报告不存在")
+    report = sanitize_retired_market_evidence(report)
 
     history = list_discovery_chat_messages(discovery_report_id)
     user_record = save_discovery_chat_message(

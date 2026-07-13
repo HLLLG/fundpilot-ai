@@ -8,6 +8,7 @@ from collections.abc import Iterator
 from typing import Any
 
 from app.services.deepseek_client import _extract_json_string_field, _parse_model_json
+from app.services.retired_market_evidence import sanitize_retired_market_evidence
 
 _PARTIAL_EVENT = "report_partial"
 
@@ -60,11 +61,17 @@ class StreamingReportParser:
                 yield _partial("caveats", caveats)
 
     def finalize(self, full_text: str) -> dict:
-        return _parse_model_json(full_text or self._buffer)
+        return sanitize_retired_market_evidence(
+            _parse_model_json(full_text or self._buffer)
+        )
 
 
 def _partial(field: str, value: Any) -> dict:
-    return {"type": _PARTIAL_EVENT, "field": field, "value": value}
+    return {
+        "type": _PARTIAL_EVENT,
+        "field": field,
+        "value": sanitize_retired_market_evidence(value),
+    }
 
 
 class _RecommendationArrayScanner:

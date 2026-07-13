@@ -1,16 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Holding, UsSessionKind } from "@/lib/api";
-import { fetchDipRadar, fetchMarketThemeBoards, fetchUsMarketOverview } from "@/lib/api";
+import type { UsSessionKind } from "@/lib/api";
+import { fetchMarketThemeBoards, fetchUsMarketOverview } from "@/lib/api";
 import { buildClientCacheKey } from "@/lib/clientCache";
-import { acceptDipRadarFresh } from "@/lib/dipRadar";
 import {
   acceptMarketThemeBoardFresh,
   isMarketThemeBoardUsable,
-  loadDipRadarSectorFilter,
   loadMarketSubTab,
-  saveDipRadarSectorFilter,
   saveMarketSubTab,
   type MarketSubTab,
 } from "@/lib/marketThemeBoard";
@@ -21,12 +18,10 @@ import {
 } from "@/lib/discoveryFocusSectors";
 import { acceptUsMarketFresh, usRefreshIntervalMs } from "@/lib/usMarketOverview";
 import { useCachedFetch } from "@/lib/useCachedFetch";
-import { DipReboundRadar } from "@/components/DipReboundRadar";
 import { MarketBreadthGauge } from "@/components/MarketBreadthGauge";
 import { ThemeSectorOverview } from "@/components/ThemeSectorOverview";
 import { TradingSessionBar } from "@/components/TradingSessionBar";
 import { UsMarketOverview } from "@/components/UsMarketOverview";
-import { YangjibaoFundDetail } from "@/components/YangjibaoFundDetail";
 import { InlineNotice } from "@/components/InlineNotice";
 
 export function MarketFetchNotice({
@@ -53,16 +48,11 @@ export function MarketFetchNotice({
 export function MarketTab() {
   const [subTab, setSubTab] = useState<MarketSubTab>(() => loadMarketSubTab());
   const [usSessionKind, setUsSessionKind] = useState<UsSessionKind>("closed");
-  const [dipLookbackDays, setDipLookbackDays] = useState<3 | 5>(5);
-  const [dipSectorFilter, setDipSectorFilter] = useState<string | null>(() => loadDipRadarSectorFilter());
   const [focusSectors, setFocusSectors] = useState<string[]>(() => loadDiscoveryFocusSectors());
-  const [previewHolding, setPreviewHolding] = useState<Holding | null>(null);
   const forceThemeRefreshRef = useRef(false);
-  const forceDipRefreshRef = useRef(false);
 
   const themeCacheKey = buildClientCacheKey("market-theme-boards");
   const usCacheKey = buildClientCacheKey("market-us-overview");
-  const dipCacheKey = buildClientCacheKey(`market-dip-radar:${dipLookbackDays}:${dipSectorFilter ?? "all"}`);
 
   const {
     data: themeData,
@@ -96,26 +86,6 @@ export function MarketTab() {
     fetcher: () => fetchUsMarketOverview(),
     keepPreviousUnless: acceptUsMarketFresh,
     enabled: subTab === "us",
-  });
-
-  const {
-    data: dipData,
-    loading: dipLoading,
-    revalidating: dipRevalidating,
-    error: dipError,
-    refresh: refreshDip,
-  } = useCachedFetch({
-    cacheKey: dipCacheKey,
-    staleTimeMs: 1_200_000,
-    storage: "session",
-    fetcher: () =>
-      fetchDipRadar({
-        lookbackDays: dipLookbackDays,
-        sector: dipSectorFilter,
-        forceRefresh: forceDipRefreshRef.current,
-      }),
-    keepPreviousUnless: acceptDipRadarFresh,
-    enabled: subTab === "dip_radar",
   });
 
   useEffect(() => {
@@ -173,26 +143,8 @@ export function MarketTab() {
     saveMarketSubTab(next);
   }, []);
 
-  const handleViewDipFunds = useCallback(
-    (sectorLabel: string) => {
-      saveDipRadarSectorFilter(sectorLabel);
-      setDipSectorFilter(sectorLabel);
-      handleSubTabChange("dip_radar");
-    },
-    [handleSubTabChange],
-  );
-
   const handleToggleFocusSector = useCallback((sectorLabel: string) => {
     toggleDiscoveryFocusSector(sectorLabel);
-  }, []);
-
-  const handleDipSectorFilterChange = useCallback((sector: string | null) => {
-    setDipSectorFilter(sector);
-    if (sector) {
-      saveDipRadarSectorFilter(sector);
-    } else {
-      saveDipRadarSectorFilter("");
-    }
   }, []);
 
   const handleRefreshTheme = useCallback(() => {
@@ -201,22 +153,6 @@ export function MarketTab() {
       forceThemeRefreshRef.current = false;
     });
   }, [refreshTheme]);
-
-  const handleRefreshDip = useCallback(() => {
-    forceDipRefreshRef.current = true;
-    void refreshDip().finally(() => {
-      forceDipRefreshRef.current = false;
-    });
-  }, [refreshDip]);
-
-  const handleOpenFund = useCallback((fundCode: string, fundName: string) => {
-    setPreviewHolding({
-      fund_code: fundCode,
-      fund_name: fundName,
-      holding_amount: 0,
-      return_percent: 0,
-    });
-  }, []);
 
   const footerDate = themeData?.trade_date;
   const footerRevalidating = themeRevalidating;
@@ -236,14 +172,6 @@ export function MarketTab() {
           onClick={() => handleSubTabChange("themes")}
         >
           主题板块
-        </button>
-        <button
-          type="button"
-          className="tab-segment-btn"
-          aria-pressed={subTab === "dip_radar"}
-          onClick={() => handleSubTabChange("dip_radar")}
-        >
-          大跌雷达
         </button>
         <button
           type="button"
@@ -270,32 +198,8 @@ export function MarketTab() {
               loading={themeLoading && !isMarketThemeBoardUsable(themeData)}
               revalidating={themeRevalidating}
               onRefresh={handleRefreshTheme}
-              onViewDipFunds={handleViewDipFunds}
               onAddFocusSector={handleToggleFocusSector}
               focusSectors={focusSectors}
-            />
-          ) : null}
-        </>
-      ) : null}
-
-      {subTab === "dip_radar" ? (
-        <>
-          <MarketFetchNotice
-            error={dipError}
-            hasData={dipData != null}
-            onRetry={handleRefreshDip}
-          />
-          {!dipError || dipData != null ? (
-            <DipReboundRadar
-              data={dipData}
-              loading={dipLoading && dipData == null}
-              revalidating={dipRevalidating}
-              lookbackDays={dipLookbackDays}
-              onLookbackDaysChange={setDipLookbackDays}
-              sectorFilter={dipSectorFilter}
-              onSectorFilterChange={handleDipSectorFilterChange}
-              onRefresh={handleRefreshDip}
-              onOpenFund={handleOpenFund}
             />
           ) : null}
         </>
@@ -327,15 +231,6 @@ export function MarketTab() {
         </p>
       ) : null}
 
-      {previewHolding ? (
-        <YangjibaoFundDetail
-          holding={previewHolding}
-          holdingIndex={0}
-          holdings={[previewHolding]}
-          onClose={() => setPreviewHolding(null)}
-          onNavigate={() => undefined}
-        />
-      ) : null}
     </div>
   );
 }

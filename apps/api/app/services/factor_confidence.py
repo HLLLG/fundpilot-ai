@@ -161,8 +161,15 @@ def _research_factor_confidence(
     )
     if not stats or not (horizon_row.get("qualified") or {}).get(factor_key):
         return {"level": "不足", "basis": "同类基金样本或样本外时期不足"}
+    is_point_in_time = research_model.get("cohort_mode") == "point_in_time"
+    if is_point_in_time and (
+        (stats.get("economic_significance") or {}).get("qualified") is not True
+    ):
+        return {"level": "不足", "basis": "PIT 因子未通过净成本经济显著性门槛"}
     mean_ic = stats.get("mean_ic")
     oos_ic = stats.get("oos_mean_ic")
+    if oos_ic is None:
+        oos_ic = (stats.get("walk_forward") or {}).get("oos_mean_ic")
     if mean_ic is None or oos_ic is None:
         return {"level": "不足", "basis": "同类 IC 统计不完整"}
     label = str(segment_row.get("label") or segment)
@@ -171,10 +178,47 @@ def _research_factor_confidence(
             "level": "低",
             "basis": f"{label}未来{horizon}日呈反向/均值回归（IC {mean_ic:+.3f}，样本外 {oos_ic:+.3f}）",
         }
-    stable = bool(stats.get("direction_stable"))
+    walk_forward = stats.get("walk_forward") or {}
+    stable = bool(
+        stats.get("direction_stable")
+        or (
+            is_point_in_time
+            and int(walk_forward.get("valid_fold_count") or 0) == 5
+            and int(walk_forward.get("same_direction_folds") or 0) >= 4
+        )
+    )
     ci_low = stats.get("ci_low")
     if stable and ci_low is not None and ci_low > 0:
-        # 当前仍是 current-survivors cohort；在积累 point-in-time 历史前不授予“高”。
+        economic = stats.get("economic_significance") or {}
+        point_in_time = research_model.get("point_in_time") or {}
+        nav_observation_pit = bool(
+            point_in_time.get("point_in_time_scope") == "nav_observation_pit"
+            and point_in_time.get("nav_revision_pit") is True
+        )
+        if (
+            is_point_in_time
+            and nav_observation_pit
+            and economic.get("qualified") is True
+        ):
+            return {
+                "level": "高",
+                "basis": (
+                    f"{label}未来{horizon}日 PIT IC 正向且经济门槛通过"
+                    f"（IC {mean_ic:+.3f}，同类价差 "
+                    f"{float(economic.get('top_bottom_spread') or 0):+.2%}，"
+                    f"0.5%成本后仍为正）"
+                ),
+            }
+        if is_point_in_time and economic.get("qualified") is True:
+            return {
+                "level": "中",
+                "basis": (
+                    f"{label}未来{horizon}日 membership PIT 与经济门槛通过"
+                    f"（IC {mean_ic:+.3f}），但仅成员PIT、NAV修订时点未冻结，"
+                    "仅按保守滞后处理"
+                ),
+            }
+        # current-survivors v2 最高只授予中等置信。
         return {
             "level": "中",
             "basis": f"{label}未来{horizon}日同类 IC 正向且样本外稳定（{mean_ic:+.3f}），仍受幸存者样本限制",

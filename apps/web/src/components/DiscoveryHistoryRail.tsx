@@ -145,6 +145,7 @@ export function DiscoveryHistoryRail({
       <div
         className="history-scroll-region"
         data-testid="discovery-history-scroll-region"
+        role="region"
         aria-label="历史推荐列表"
       >
         {reports.length === 0 ? (

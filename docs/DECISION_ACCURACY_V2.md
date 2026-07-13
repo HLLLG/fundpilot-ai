@@ -23,12 +23,13 @@ flowchart LR
   H --> I["四维正式统计 + legacy reference"]
 ```
 
-## 1. 沪深港通数据收尾
+## 1. 南向资金契约
 
-- 决策 facts 只保留 `stock_connect_flow` 契约。
-- 北向实时净买额不再披露后，数值字段已从新 facts、Prompt、离线推荐和 guard 中删除。
-- 仅保留 `northbound_status=not_disclosed` 与原因，说明为何不可用；兼容入口固定返回 `None`，不得重新进入决策。
-- 南向净流入继续作为港股资金面的独立参考，但必须满足交易日对齐和缓存过期边界。
+- 决策 facts 只保留 `stock_connect_flow.v2` 南向契约。
+- 已永久退役不可持续披露的外资流向证据：数值、不可用状态、原因、兼容入口和 Prompt 缺失提示均不再进入新决策。
+- 联合源数据在子进程边界只保留南向行；南向净流入仅作为港股资金面的独立参考，并必须满足交易日对齐和缓存过期边界。
+- 最终输出守卫会删除模型自行生成的已退役证据字段与句子，避免把“数据不可用”再次包装成风险因子。
+- 流式界面只接收清洗后的结构化 partial；历史报告在展示、导出和追问边界清洗副本，但不修改数据库中的不可变审计原文。
 
 ## 2. 实际仓位账本与 PortfolioSnapshot
 
@@ -114,6 +115,9 @@ flowchart LR
 - Observation 使用 revision 表记录每次取数；pending/data unavailable 可重试，成熟终态被锁定。
 - 对相同终态的重试幂等；若后续来源给出与已冻结终态不同的净值，返回证据冲突（HTTP 409），不静默覆盖。
 - 正式统计只纳入 `persistence=persisted`、主存储、`audit_eligible=true`、DecisionEvent v2 且事件可评价的样本。
+- 每日 `Decision Outcome Settlement` 自动处理日报 T+1/5/20 与荐基 T+5/20/60 的 pending 观察；数据源暂缺时保持可重试，成熟终态不可改写。生产配置 MySQL 时拒绝回落 SQLite，避免结算写入错误数据库。
+- `quant_evidence.v2` 冻结模型快照 ID/生成与发布时间，以及目标基金特征截止日、观察时间、来源、净值交易日年龄和收益覆盖；二者不再共用一个含混的 `data_as_of`。模型尚未发布、时间来自未来、普通基金净值超过 1 个交易日、QDII 超过 2 个交易日或覆盖不足时退出正式量化校准。
+- 线上校准仅做影子报告：按决策日、模型、同类、可靠性、因子家族/键/方向/百分位与 horizon 分组，明确属于条件相关而非因果；永不自动调权或改 Prompt/Guard。
 
 ## 8. 历史回填与迁移
 
@@ -122,18 +126,18 @@ flowchart LR
 - 回填按 `source_type + source_report_id` 去重，并在 dry-run 阶段预检不可变内容哈希冲突。
 - SQLite→MySQL 迁移默认 dry-run；新证据表 insert-only，同内容跳过、异内容硬失败并整笔回滚，不使用 `REPLACE` 覆盖不可变证据或账本链。
 
-## 9. 当前落地状态（2026-07-12）
+## 9. 当前落地状态（2026-07-13）
 
-- 当前 SQLite 已升级到 schema v10；MySQL bootstrap 与 SQLite→MySQL 迁移脚本已同步，但尚未执行生产 MySQL 迁移。
+- 当前 SQLite 已升级到 schema v11；新增成员 PIT 基金池快照/成员表，MySQL bootstrap 与 SQLite→MySQL 迁移脚本已同步。
 - 已对本地现有历史数据执行一次正式回填：扫描日报 8 份，新增 legacy DecisionEvent 26 条、PortfolioSnapshot 6 份；当前库没有可回填的历史荐基报告。
 - 同一回填命令二次执行新增 0 条，证明 `source_type + source_report_id` 幂等边界生效；完整性检查、外键检查、事件/快照证据哈希均通过，原日报和荐基表保持字节一致。
 - 历史数据无法可靠还原决策后各估值日当时可得的净值、费用与完整基准，因此 `outcome_observations=0` 是预期结果；所有回填事件均 `metric_eligible=false`，不会污染正式 V2。
 - 正式四指标样本从改造后新生成的日报和荐基开始积累；成熟前保持 pending，数据缺失保持 unavailable，不使用当前数据反推历史结论。
-- 最终本地验证：API 922 项通过；Web 333 项通过；typecheck、lint、Next production build 通过；production UI E2E 63 项通过、21 项按环境预期跳过。
+- 本轮新增结果自动结算、量化证据冻结和线上影子校准；最终本地验收：API **1180 passed**，Web **382 passed**，typecheck、lint、Next production build 全通过；CI 同口径 smoke 为 API **3 passed**、三视口 UI **30 passed / 6 expected skips / 0 failed**。
 
 ## 验收边界
 
-- 新决策 facts 不存在可被使用的北向净买额数值。
+- 新决策 facts、Prompt 和报告输出均不存在已退役外资流向的数值、状态或缺失提示。
 - `null/unknown` 不按 0 猜测；pending/conflict/incomplete position 不产生可执行金额。
 - 实际份额不被 legacy 金额/NAV 或重复交易二次累计；删除持仓不留下正份额 ghost。
 - 日报按 T+1/T+5/T+20、荐基按 T+5/T+20/T+60 的基金估值日成熟样本评价。

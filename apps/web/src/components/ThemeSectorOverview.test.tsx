@@ -85,7 +85,6 @@ function flowHistory(): BoardFlowHistoryResponse {
 describe("ThemeSectorOverview responsive presentation", () => {
   it("renders complete mobile cards without mounting the desktop table", () => {
     vi.mocked(fetchBoardFlowHistory).mockResolvedValue(flowHistory());
-    const onViewDipFunds = vi.fn();
     const onAddFocusSector = vi.fn();
 
     render(
@@ -94,7 +93,6 @@ describe("ThemeSectorOverview responsive presentation", () => {
         loading={false}
         revalidating={false}
         onRefresh={vi.fn()}
-        onViewDipFunds={onViewDipFunds}
         onAddFocusSector={onAddFocusSector}
         focusSectors={[]}
       />,
@@ -111,9 +109,7 @@ describe("ThemeSectorOverview responsive presentation", () => {
     expect(within(mobileCard).getByText("-1.20%")).toBeInTheDocument();
     expect(within(mobileCard).getByText("+12.50亿")).toBeInTheDocument();
 
-    fireEvent.click(within(mobileCard).getByRole("button", { name: "看大跌" }));
     fireEvent.click(within(mobileCard).getByRole("button", { name: "加关注" }));
-    expect(onViewDipFunds).toHaveBeenCalledWith("半导体");
     expect(onAddFocusSector).toHaveBeenCalledWith("半导体");
     expect(screen.queryByTestId("theme-sector-desktop-table")).not.toBeInTheDocument();
   });

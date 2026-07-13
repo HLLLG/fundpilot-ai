@@ -46,8 +46,8 @@ type RiskControlsProps = {
   onRolePromptReset: () => void;
   onAnalyze: () => void;
   isBusy: boolean;
-  ocrWarningCount?: number;
   hasBlockingErrors?: boolean;
+  blockingMessage?: string | null;
   readingModeKey?: string | null;
 };
 
@@ -62,8 +62,8 @@ export function RiskControls({
   onRolePromptReset,
   onAnalyze,
   isBusy,
-  ocrWarningCount = 0,
   hasBlockingErrors = false,
+  blockingMessage = null,
   readingModeKey = null,
 }: RiskControlsProps) {
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -83,9 +83,9 @@ export function RiskControls({
             <p className="mt-1 text-xs text-slate-500">
               {analysisMode === "deep" ? "深度模式" : "快速模式"} · {profileSummary(profile)}
             </p>
-            {ocrWarningCount > 0 ? (
-              <p className="mt-1 text-xs font-semibold text-amber-800">
-                识别待核对 {ocrWarningCount} 处{hasBlockingErrors ? "，请先处理严重项。" : "。"}
+            {hasBlockingErrors && blockingMessage ? (
+              <p className="mt-1 text-xs font-semibold text-rose-700" role="alert">
+                {blockingMessage}
               </p>
             ) : null}
           </div>
@@ -205,10 +205,12 @@ export function RiskControls({
         )}
       </div>
 
-      {ocrWarningCount > 0 ? (
-        <p className="mt-3 rounded-xl border border-amber-100 bg-amber-50 px-3 py-2 text-xs font-semibold leading-5 text-amber-900">
-          识别待核对 {ocrWarningCount} 处
-          {hasBlockingErrors ? "，请先处理严重项。" : "，可继续生成。"}
+      {hasBlockingErrors && blockingMessage ? (
+        <p
+          className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold leading-5 text-rose-800"
+          role="alert"
+        >
+          {blockingMessage}
         </p>
       ) : null}
 

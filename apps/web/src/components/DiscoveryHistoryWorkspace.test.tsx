@@ -29,22 +29,35 @@ afterEach(() => {
   document.body.style.overflow = "";
 });
 
-it("bounds a 100-report desktop rail and keeps an off-page active report available", () => {
+it("keeps history out of the reading area until the drawer is requested", () => {
   const reports = makeReports(100);
-  render(
+  const view = render(
     <DiscoveryHistoryWorkspace
       reports={reports}
       activeReportId="discovery-80"
       open={false}
-      onOpen={vi.fn()}
       onClose={vi.fn()}
       onRefresh={vi.fn()}
       onSelect={vi.fn()}
     />,
   );
 
-  expect(screen.getByTestId("discovery-history-desktop")).toBeInTheDocument();
-  expect(screen.getAllByTestId("discovery-history-item")).toHaveLength(13);
+  expect(screen.queryByRole("dialog", { name: "历史推荐" })).not.toBeInTheDocument();
+  expect(screen.queryByTestId("discovery-history-item")).not.toBeInTheDocument();
+
+  view.rerender(
+    <DiscoveryHistoryWorkspace
+      reports={reports}
+      activeReportId="discovery-80"
+      open
+      onClose={vi.fn()}
+      onRefresh={vi.fn()}
+      onSelect={vi.fn()}
+    />,
+  );
+
+  expect(screen.getByRole("dialog", { name: "历史推荐" })).toBeInTheDocument();
+  expect(screen.getAllByTestId("discovery-history-item")).toHaveLength(21);
   expect(screen.getByTestId("discovery-history-scroll-region")).toHaveClass(
     "history-scroll-region",
   );
@@ -67,7 +80,6 @@ it("opens a focus-managed drawer, selects in context, closes and restores focus"
           reports={reports}
           activeReportId="discovery-1"
           open={open}
-          onOpen={() => setOpen(true)}
           onClose={() => setOpen(false)}
           onRefresh={vi.fn()}
           onSelect={onSelect}

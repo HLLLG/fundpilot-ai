@@ -425,10 +425,6 @@ class DiscoveryRecommendation(BaseModel):
     points: list[str] = Field(default_factory=list)
     risks: list[str] = Field(default_factory=list)
     news_bullish: list[str] = Field(default_factory=list)
-    target_exit_days: int | None = None
-    fee_break_even_percent: float | None = None
-    dip_drop_percent: float | None = None
-    rebound_signals: list[dict] = Field(default_factory=list)
     decision_path: str = ""
     sector_evidence: list[str] = Field(default_factory=list)
     fund_evidence: list[str] = Field(default_factory=list)
@@ -465,8 +461,8 @@ class FundDiscoveryReport(BaseModel):
 
 
 FundTypePreference = Literal["any", "etf_link", "no_c_class"]
-SelectionStrategy = Literal["balanced", "with_new_issue", "dip_rebound"]
-DiscoveryScanMode = Literal["full_market", "portfolio_gap", "dip_swing"]
+SelectionStrategy = Literal["balanced", "with_new_issue"]
+DiscoveryScanMode = Literal["full_market", "portfolio_gap"]
 
 
 class DiscoveryPromptSaveRequest(BaseModel):
@@ -482,8 +478,6 @@ class DiscoveryRequest(BaseModel):
     fund_type_preference: FundTypePreference = "any"
     selection_strategy: SelectionStrategy = "balanced"
     scan_mode: DiscoveryScanMode = "full_market"
-    dip_lookback_days: int = Field(default=5, ge=3, le=5)
-    dip_min_drop_percent: float = Field(default=3.0, ge=1.0, le=15.0)
     system_role_prompt: str | None = Field(default=None, max_length=4000)
     allow_stale_portfolio_snapshot: bool = False
     portfolio_snapshot_context: dict[str, Any] | None = Field(default=None, exclude=True)

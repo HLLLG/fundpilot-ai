@@ -66,7 +66,7 @@ OUTPUT_REQUIREMENTS_SYSTEM = (
     "基金代码 000000 须提示补全代码。不做实盘交易指令。"
     "analysis_facts.holdings[].nav_trend 为净值摘要，不得编造未给出的序列；"
     "sector_momentum/sector_intraday/sector_fund_flow 为短线提示；stock_connect_flow 仅提供南向数值，"
-    "北向只保留 not_disclosed 审计状态、不得用于决策；南向仅作港股资金面的独立参考。"
+    "并且只作港股资金面的独立参考。"
     "sector_fund_flow.pattern_hint 可辅助判断高位出货、低位洗盘等，须用给定数字不得编造。"
     "sector_fund_flow.today_main_force_net_yi：正=主力净流入、负=主力净流出；"
     "须与 flow_date 同日且 date_aligned=true 时才可与 sector_return_percent 做量价背离判断；"

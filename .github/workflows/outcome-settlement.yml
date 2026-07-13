@@ -1,0 +1,58 @@
+name: Decision Outcome Settlement
+
+on:
+  schedule:
+    - cron: "35 23 * * *"
+      timezone: "Asia/Shanghai"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: decision-outcome-settlement-production
+  cancel-in-progress: false
+
+jobs:
+  settle:
+    if: vars.LIGHTHOUSE_DEPLOY_ENABLED == 'true' && (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    steps:
+      - name: Configure Lighthouse SSH identity
+        env:
+          LIGHTHOUSE_HOST: ${{ secrets.LIGHTHOUSE_HOST }}
+          LIGHTHOUSE_USER: ${{ secrets.LIGHTHOUSE_USER }}
+          LIGHTHOUSE_SSH_PRIVATE_KEY: ${{ secrets.LIGHTHOUSE_SSH_PRIVATE_KEY }}
+          LIGHTHOUSE_KNOWN_HOSTS: ${{ secrets.LIGHTHOUSE_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          SSH_KEY_PATH=$RUNNER_TEMP/fundpilot-outcome-settlement-key
+          SSH_KNOWN_HOSTS_PATH=$RUNNER_TEMP/fundpilot-outcome-settlement-known-hosts
+          printf 'SSH_KEY_PATH=%s\nSSH_KNOWN_HOSTS_PATH=%s\n' \
+            "$SSH_KEY_PATH" "$SSH_KNOWN_HOSTS_PATH" >> "$GITHUB_ENV"
+          [[ -n "$LIGHTHOUSE_HOST" ]] || { echo "::error::LIGHTHOUSE_HOST is empty"; exit 1; }
+          [[ -n "$LIGHTHOUSE_USER" ]] || { echo "::error::LIGHTHOUSE_USER is empty"; exit 1; }
+          [[ -n "$LIGHTHOUSE_SSH_PRIVATE_KEY" ]] || { echo "::error::LIGHTHOUSE_SSH_PRIVATE_KEY is empty"; exit 1; }
+          [[ -n "$LIGHTHOUSE_KNOWN_HOSTS" ]] || { echo "::error::LIGHTHOUSE_KNOWN_HOSTS is empty"; exit 1; }
+          printf '%s\n' "$LIGHTHOUSE_SSH_PRIVATE_KEY" | tr -d '\r' > "$SSH_KEY_PATH"
+          printf '%s\n' "$LIGHTHOUSE_KNOWN_HOSTS" | tr -d '\r' > "$SSH_KNOWN_HOSTS_PATH"
+          chmod 600 "$SSH_KEY_PATH" "$SSH_KNOWN_HOSTS_PATH"
+          ssh-keygen -y -f "$SSH_KEY_PATH" >/dev/null
+
+      - name: Settle pending T+N outcomes in production
+        env:
+          LIGHTHOUSE_HOST: ${{ secrets.LIGHTHOUSE_HOST }}
+          LIGHTHOUSE_USER: ${{ secrets.LIGHTHOUSE_USER }}
+        run: |
+          set -euo pipefail
+          target="${LIGHTHOUSE_USER}@${LIGHTHOUSE_HOST}"
+          ssh_options=(-i "$SSH_KEY_PATH" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$SSH_KNOWN_HOSTS_PATH")
+          ssh "${ssh_options[@]}" "$target" \
+            "cd /srv/fundpilot/repo && docker compose --env-file .env.production -f docker-compose.production.yml exec -T api python scripts/settle_pending_outcomes.py"
+
+      - name: Record settlement contract
+        run: |
+          echo "Settled pending daily T+1/T+5/T+20 and discovery T+5/T+20/T+60 outcomes." >> "$GITHUB_STEP_SUMMARY"
+          echo "Terminal observations remain immutable; retryable source gaps stay pending." >> "$GITHUB_STEP_SUMMARY"

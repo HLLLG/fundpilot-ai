@@ -5,13 +5,13 @@ import os
 
 import pytest
 
-from app.services.market_shared_refresh import (    _A_SHARE_LIVE_SESSIONS,
+from app.services.market_shared_refresh import (
+    _A_SHARE_LIVE_SESSIONS,
     _US_LIVE_SESSIONS,
     _idle_interval_seconds,
     _live_interval_seconds,
     _poll_seconds,
 )
-from app.services.dip_radar_snapshot import get_dip_radar_snapshot
 from app.services.sector_quote_cache import (
     mark_process_boot,
     save_spot_snapshot,
@@ -130,53 +130,6 @@ def test_theme_boards_read_from_cache_without_refresh(monkeypatch):
     assert payload["items"][0]["sector_label"] == "半导体"
 
 
-def test_dip_radar_serves_stale_without_network(monkeypatch):
-    mark_process_boot()
-    trade_date = "2026-06-25"
-    cache_key = f"dip:radar:v2:{trade_date}:5"
-    save_spot_snapshot(
-        cache_key,
-        {
-            "trade_date": trade_date,
-            "lookback_days": 5,
-            "refreshed_at": datetime.now(timezone.utc).isoformat(),
-            "items": [
-                {
-                    "fund_code": "000001",
-                    "fund_name": "测试基金",
-                    "sector_label": "半导体",
-                    "dip_drop_percent": -3.5,
-                    "rank": 1,
-                }
-            ],
-            "sector_dip_leaders": [],
-            "available": True,
-            "session_kind": "trading_day_intraday",
-        },
-    )
-
-    monkeypatch.setattr(
-        "app.services.dip_radar_snapshot.build_trading_session",
-        lambda: {
-            "effective_trade_date": trade_date,
-            "session_kind": "trading_day_intraday",
-        },
-    )
-    monkeypatch.setattr(
-        "app.services.dip_radar_snapshot.get_spot_snapshot",
-        lambda *_args, **_kwargs: None,
-    )
-    monkeypatch.setattr(
-        "app.services.dip_radar_snapshot.build_dip_radar_snapshot",
-        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("should not sync build")),
-    )
-
-    result = get_dip_radar_snapshot(lookback_days=5, force_refresh=False)
-    assert result["from_cache"] is True
-    assert result["stale"] is True
-    assert result["items"][0]["fund_name"] == "测试基金"
-
-
 def test_us_market_serves_stale_without_network(monkeypatch):
     from app.models import UsFuturesQuote, UsMarketSnapshot, UsdCnyQuote
     from app.services.us_market_service import get_us_market_snapshot
@@ -231,50 +184,6 @@ def test_us_market_serves_stale_without_network(monkeypatch):
     assert snap.from_cache is True
     assert snap.stale is True
     assert snap.available is True
-
-
-def test_dip_radar_serves_prior_process_cache_without_sync_build(monkeypatch):
-    mark_process_boot()
-    trade_date = "2026-06-25"
-    cache_key = f"dip:radar:v2:{trade_date}:5"
-    save_spot_snapshot(
-        cache_key,
-        {
-            "trade_date": trade_date,
-            "lookback_days": 5,
-            "refreshed_at": "2020-01-01T00:00:00+00:00",
-            "items": [
-                {
-                    "fund_code": "000001",
-                    "fund_name": "Old Radar Fund",
-                    "sector_label": "Semiconductor",
-                    "dip_drop_percent": -3.5,
-                    "rank": 1,
-                }
-            ],
-            "sector_dip_leaders": [],
-            "available": True,
-            "session_kind": "trading_day_intraday",
-        },
-    )
-
-    monkeypatch.setattr(
-        "app.services.dip_radar_snapshot.build_trading_session",
-        lambda: {
-            "effective_trade_date": trade_date,
-            "session_kind": "trading_day_intraday",
-        },
-    )
-    monkeypatch.setattr(
-        "app.services.dip_radar_snapshot.build_dip_radar_snapshot",
-        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("should not sync build")),
-    )
-
-    result = get_dip_radar_snapshot(lookback_days=5, force_refresh=False)
-
-    assert result["from_cache"] is True
-    assert result["stale"] is True
-    assert result["items"][0]["fund_name"] == "Old Radar Fund"
 
 
 def test_market_theme_boards_loads_holdings_without_benchmark(monkeypatch):

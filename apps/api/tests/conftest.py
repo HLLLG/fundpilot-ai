@@ -176,27 +176,6 @@ def _stub_market_data_fetches(monkeypatch):
         lambda **_kwargs: [],
     )
     monkeypatch.setattr(
-        "app.services.dip_drop_scanner.build_dip_pool_for_sectors",
-        lambda *_args, **_kwargs: [
-            {
-                "fund_code": "519674",
-                "fund_name": "银河创新成长",
-                "sector_label": "半导体",
-                "dip_drop_percent": -5.2,
-                "rebound_score": 72.0,
-                "rebound_signals": [{"id": "two_day_reversal_up", "label": "近两日先跌后涨"}],
-            },
-            {
-                "fund_code": "015945",
-                "fund_name": "易方达国防军工",
-                "sector_label": "国防军工",
-                "dip_drop_percent": -4.1,
-                "rebound_score": 65.0,
-                "rebound_signals": [],
-            },
-        ],
-    )
-    monkeypatch.setattr(
         "app.services.akshare_subprocess.fetch_board_daily_kline_series",
         lambda *_args, **_kwargs: [],
     )
@@ -371,46 +350,9 @@ def _stub_market_data_fetches(monkeypatch):
 
     monkeypatch.setattr("app.main.get_us_market_snapshot", _stub_us_market_snapshot)
 
-    def _stub_dip_radar_build(**_kwargs):
-        return {
-            "refreshed_at": "2026-06-17T06:00:00+00:00",
-            "trade_date": "2026-06-17",
-            "lookback_days": _kwargs.get("lookback_days", 5),
-            "fee_break_even_percent": 2.5,
-            "items": [
-                {
-                    "fund_code": "519674",
-                    "fund_name": "银河创新成长",
-                    "sector_label": "半导体",
-                    "dip_drop_percent": -5.2,
-                    "rebound_score": 72.0,
-                    "rebound_signals": [{"id": "two_day_reversal_up", "label": "近两日先跌后涨"}],
-                    "rank": 1,
-                }
-            ],
-            "sector_dip_leaders": [
-                {
-                    "sector_label": "半导体",
-                    "avg_dip_drop_percent": -5.2,
-                    "fund_count": 1,
-                    "min_dip_drop_percent": -5.2,
-                }
-            ],
-            "available": True,
-            "from_cache": False,
-            "stale": False,
-            "session_kind": "trading_day_intraday",
-            "message": None,
-        }
-
-    monkeypatch.setattr(
-        "app.services.dip_radar_snapshot.build_dip_radar_snapshot",
-        _stub_dip_radar_build,
-    )
-
     # 大盘情绪温度计（market_breadth_signal.py）与互联互通摘要（market_flow_client.py）
     # 都是 build_analysis_facts 非 budget_enhancements 路径末尾无条件调用、且没有超时
-    # 包装的真实 AkShare 子进程请求（stock_a_high_low_statistics/涨跌停池/两融/北向资金），
+    # 包装的真实 AkShare 子进程请求（stock_a_high_low_statistics/涨跌停池/两融/南向资金），
     # 此前一直漏 stub，导致任何不传 budget_enhancements=True 的 build_analysis_facts
     # 单测（如 test_analysis_facts_dates.py）都会真的打网络，是本仓库测试套件里最大的
     # 几个耗时黑洞之一（单个测试 24~32s）。这里统一在子进程层兜底为空，走各自的

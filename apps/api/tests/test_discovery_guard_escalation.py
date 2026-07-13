@@ -25,6 +25,7 @@ def _pool_item(*, fund_quality_score: float | None) -> dict:
         "fund_name": "华夏半导体材料设备ETF联接C",
         "sector_label": "半导体材料",
         "sector_fit_score": 37.12,
+        "quality_gate": {"status": "eligible", "eligible": True, "reasons": []},
         "quality_reasons": ["近3/6月表现占优"],
         "quality_penalties": [],
         "return_3m_percent": 18.2,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime
+from math import isfinite
 
 from app.database import (
     get_fund_profile_by_code,
@@ -196,12 +197,26 @@ def enrich_candidates(pool: list[dict]) -> list[dict]:
             "established_date",
             "profile_updated_at",
             "profile_source",
+            "profile_sources",
+            "profile_checked_at",
+            "profile_status",
+            "profile_missing_fields",
+            "profile_stale_fields",
+            "fund_scale_basis",
+            "fund_shares_yi",
+            "fund_shares_basis",
         ):
             if profile.get(key) is not None:
                 row[key] = profile[key]
         row["fund_scale_yi"] = _first_present(
             profile.get("fund_scale_yi"), row.get("fund_scale_yi")
         )
+        if row.get("fund_scale_yi") is None:
+            shares_yi = _num(profile.get("fund_shares_yi"))
+            latest_nav = _num(row.get("latest_nav"))
+            if shares_yi is not None and shares_yi > 0 and latest_nav is not None and latest_nav > 0:
+                row["fund_scale_yi"] = round(shares_yi * latest_nav, 4)
+                row["fund_scale_basis"] = "nav_times_xq_latest_shares"
         row["fund_type"] = _first_present(
             profile.get("fund_category"), row.get("fund_type")
         )
@@ -210,27 +225,84 @@ def enrich_candidates(pool: list[dict]) -> list[dict]:
         row["quality_score_version"] = "fund_quality.v2"
         rescored.append(row)
 
-    dip_mode = any(item.get("dip_drop_percent") is not None for item in rescored)
-    if dip_mode:
-        from app.services.discovery_selection_strategy import dip_rebound_score
-
-        rescored.sort(
-            key=lambda item: (
-                _quality_gate_rank(item),
-                dip_rebound_score(item),
-                _num(item.get("fund_quality_score")) or -999.0,
-            ),
-            reverse=True,
-        )
-    else:
-        rescored.sort(
-            key=lambda item: (
-                _quality_gate_rank(item),
-                _num(item.get("fund_quality_score")) or -999.0,
-            ),
-            reverse=True,
-        )
+    rescored.sort(
+        key=lambda item: (
+            _quality_gate_rank(item),
+            _num(item.get("fund_quality_score")) or -999.0,
+        ),
+        reverse=True,
+    )
     return rescored
+
+
+def finalize_candidate_pool(
+    pool: list[dict],
+    target_sectors: list[str],
+    *,
+    per_sector: int = 3,
+    pool_cap: int = _POOL_CAP,
+) -> list[dict]:
+    """在核心字段补全后再做最终准入与板块配额分配。
+
+    初筛阶段尚不知道规模、经理和完整回撤。这里移除硬性排除项，并先为每个
+    目标板块保留质量最高的候选，再用剩余高质量候选补足总池，避免低规模基金
+    在补全前占满板块名额、把更可靠的后备基金挡在池外。
+    """
+
+    if pool_cap <= 0 or per_sector <= 0:
+        return []
+    acceptable = [
+        dict(item)
+        for item in pool
+        if str((item.get("quality_gate") or {}).get("status") or "watch_only")
+        != "excluded"
+    ]
+    acceptable.sort(
+        key=lambda item: (
+            _quality_gate_rank(item),
+            _num(item.get("fund_quality_score")) or -999.0,
+            _num(item.get("sector_fit_score")) or -999.0,
+        ),
+        reverse=True,
+    )
+
+    selected: list[dict] = []
+    selected_codes: set[str] = set()
+    for sector in dict.fromkeys(str(item).strip() for item in target_sectors if str(item).strip()):
+        sector_rows = [
+            item for item in acceptable if str(item.get("sector_label") or "") == sector
+        ]
+        for item in sector_rows[:per_sector]:
+            code = str(item.get("fund_code") or "").zfill(6)
+            if code in selected_codes:
+                continue
+            selected.append(item)
+            selected_codes.add(code)
+            if len(selected) >= pool_cap:
+                break
+        if len(selected) >= pool_cap:
+            break
+
+    if len(selected) < pool_cap:
+        for item in acceptable:
+            code = str(item.get("fund_code") or "").zfill(6)
+            if code in selected_codes:
+                continue
+            selected.append(item)
+            selected_codes.add(code)
+            if len(selected) >= pool_cap:
+                break
+
+    selected.sort(
+        key=lambda item: (
+            _quality_gate_rank(item),
+            _num(item.get("fund_quality_score")) or -999.0,
+        ),
+        reverse=True,
+    )
+    for rank, item in enumerate(selected, start=1):
+        item["candidate_final_rank"] = rank
+    return selected
 
 
 def _candidates_for_sector(
@@ -319,25 +391,13 @@ def _candidates_for_sector(
         or entry.get("is_new_issue")
         or _passes_quality(entry)
     ]
-    if selection_strategy == "dip_rebound":
-        from app.services.discovery_selection_strategy import dip_rebound_score
-
-        scored.sort(
-            key=lambda item: (
-                dip_rebound_score(item),
-                float(item.get("fund_quality_score") or -999),
-                _share_class_rank(str(item.get("fund_name") or "")),
-            ),
-            reverse=True,
-        )
-    else:
-        scored.sort(
-            key=lambda item: (
-                float(item.get("fund_quality_score") or -999),
-                _share_class_rank(str(item.get("fund_name") or "")),
-            ),
-            reverse=True,
-        )
+    scored.sort(
+        key=lambda item: (
+            float(item.get("fund_quality_score") or -999),
+            _share_class_rank(str(item.get("fund_name") or "")),
+        ),
+        reverse=True,
+    )
 
     selected: list[dict] = []
     local_family_seen: set[str] = set()
@@ -450,10 +510,7 @@ def rank_candidates_balanced_fallback(
     selection_strategy: SelectionStrategy = "balanced",
     family_seen: set[str] | None = None,
 ) -> list[dict]:
-    from app.services.discovery_selection_strategy import (
-        rank_candidates_balanced,
-        rank_candidates_dip_rebound,
-    )
+    from app.services.discovery_selection_strategy import rank_candidates_balanced
 
     candidates: list[dict] = []
     family_seen = family_seen if family_seen is not None else set()
@@ -471,8 +528,6 @@ def rank_candidates_balanced_fallback(
         candidates.append(_entry_from_rank(row, sector_label="综合", selection_reason="排行补位"))
         if family:
             family_seen.add(family)
-    if selection_strategy == "dip_rebound":
-        return rank_candidates_dip_rebound(candidates)
     return rank_candidates_balanced(candidates)
 
 
@@ -578,23 +633,45 @@ def _bounded_performance_score(
 def _with_data_quality_gate(entry: dict) -> dict:
     row = dict(entry)
     missing = [field for field in _CORE_QUALITY_FIELDS if not _has_value(row.get(field))]
+    profile_status = str(row.get("profile_status") or "")
+    stale_fields = {
+        str(field)
+        for field in row.get("profile_stale_fields") or []
+        if str(field) in _CORE_QUALITY_FIELDS
+    }
+    if profile_status == "stale_fallback":
+        stale_fields.update(
+            field
+            for field in ("fund_scale_yi", "established_date", "fund_manager")
+            if _has_value(row.get(field))
+        )
+    row["profile_stale_fields"] = sorted(stale_fields)
+    coverage_gaps = set(missing) | stale_fields
     coverage = round(
-        (len(_CORE_QUALITY_FIELDS) - len(missing)) / len(_CORE_QUALITY_FIELDS) * 100,
+        (len(_CORE_QUALITY_FIELDS) - len(coverage_gaps))
+        / len(_CORE_QUALITY_FIELDS)
+        * 100,
         1,
     )
     reasons: list[str] = []
     status = "eligible"
 
     scale = _num(row.get("fund_scale_yi"))
-    if scale is not None and scale < _HARD_MIN_SCALE_YI:
+    scale_label = "最新估算规模"
+    scale_is_stale = "fund_scale_yi" in stale_fields
+    if not scale_is_stale and scale is not None and scale < _HARD_MIN_SCALE_YI:
         status = "excluded"
-        reasons.append("最新估算规模低于0.5亿元，清盘与流动性风险偏高")
-    elif scale is not None and scale < _MIN_SCALE_YI:
+        reasons.append(f"{scale_label}低于0.5亿元，清盘与流动性风险偏高")
+    elif not scale_is_stale and scale is not None and scale < _MIN_SCALE_YI:
         status = "watch_only"
-        reasons.append("最新估算规模低于1亿元，暂不生成可执行买入动作")
+        reasons.append(f"{scale_label}低于1亿元，暂不生成可执行买入动作")
 
     established = _parse_iso_date(row.get("established_date"))
-    if established is not None and (date.today() - established).days < _MIN_HISTORY_DAYS:
+    if (
+        "established_date" not in stale_fields
+        and established is not None
+        and (date.today() - established).days < _MIN_HISTORY_DAYS
+    ):
         status = "excluded"
         reasons.append("成立不足1年，缺少可验证的完整业绩周期")
 
@@ -608,8 +685,21 @@ def _with_data_quality_gate(entry: dict) -> dict:
         status = "watch_only"
         reasons.append("最新净值超过7个自然日，时点不足")
 
+    if status != "excluded" and profile_status == "stale_fallback":
+        status = "watch_only"
+        reasons.append("基金档案缓存已过期且本次刷新失败，仅保留研究观察")
+
+    if status != "excluded" and profile_status == "partial":
+        status = "watch_only"
+        if row.get("profile_stale_fields"):
+            reasons.append("基金档案本次仅部分刷新，仍含过期字段，仅保留研究观察")
+        else:
+            reasons.append("基金档案仅部分补全，已按低置信候选处理")
+
     if status != "excluded" and missing:
         status = "watch_only"
+        if profile_status == "unavailable":
+            reasons.append("基金档案双源补全暂不可用，已禁止生成可执行买入动作")
         labels = {
             "return_3m_percent": "近3月收益",
             "return_6m_percent": "近6月收益",
@@ -628,6 +718,10 @@ def _with_data_quality_gate(entry: dict) -> dict:
         "missing_fields": missing,
         "coverage_percent": coverage,
         "data_as_of": row.get("nav_date") or row.get("profile_updated_at"),
+        "profile_status": row.get("profile_status"),
+        "profile_sources": row.get("profile_sources") or [],
+        "profile_checked_at": row.get("profile_checked_at"),
+        "profile_stale_fields": sorted(stale_fields),
     }
     return row
 
@@ -677,8 +771,17 @@ def _parse_iso_date(value: object) -> date | None:
 
 
 def _has_value(value: object) -> bool:
-    text = str(value or "").strip()
-    return bool(text and "\ufffd" not in text and text not in {"--", "未知", "None"})
+    if value is None:
+        return False
+    if isinstance(value, (int, float)):
+        return isfinite(float(value))
+    text = str(value).strip()
+    return bool(
+        text
+        and "\ufffd" not in text
+        and text not in {"--", "未知", "None"}
+        and text.lower() not in {"nan", "inf", "+inf", "-inf"}
+    )
 
 
 def _clamp(value: float, lower: float, upper: float) -> float:
@@ -716,6 +819,10 @@ def _risk_score(row: dict, penalties: list[str], reasons: list[str]) -> float:
 
 
 def _scale_score(row: dict, penalties: list[str], reasons: list[str]) -> float:
+    stale_fields = {str(field) for field in row.get("profile_stale_fields") or []}
+    if row.get("profile_status") == "stale_fallback" or "fund_scale_yi" in stale_fields:
+        penalties.append("基金规模证据已过期")
+        return 0.0
     scale = _num(row.get("fund_scale_yi"))
     if scale is None:
         penalties.append("缺少基金规模")
@@ -885,9 +992,10 @@ def _num(value: object) -> float | None:
     if value is None:
         return None
     try:
-        return float(value)
+        parsed = float(value)
     except (TypeError, ValueError):
         return None
+    return parsed if isfinite(parsed) else None
 
 
 def _unique_text(items: list[str]) -> list[str]:

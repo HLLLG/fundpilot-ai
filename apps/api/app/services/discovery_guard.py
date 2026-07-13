@@ -61,8 +61,14 @@ def apply_discovery_guards(
     caveats: list[str] = []
     guarded: list[DiscoveryRecommendation] = []
     eliminated: list[EliminatedCandidate] = []
+    seen_recommendation_codes: set[str] = set()
     allocated_amount = 0.0
-    requested_budget_yuan = max(_as_float(budget_yuan) or 0.0, 0.0)
+    parsed_budget = _as_float(budget_yuan)
+    requested_budget_yuan = (
+        max(parsed_budget, 0.0)
+        if parsed_budget is not None and isfinite(parsed_budget)
+        else 0.0
+    )
     known_cash_yuan = _known_portfolio_cash_yuan(discovery_facts)
     spendable_budget_yuan = (
         min(requested_budget_yuan, known_cash_yuan)
@@ -99,9 +105,48 @@ def apply_discovery_guards(
     if degraded_portfolio_snapshot:
         caveats.append("持仓快照未达到权威可执行条件，本次已禁止买入动作与示意金额，仅保留观察候选。")
     evidence_blocked_codes: dict[str, list[str]] = {}
+    factor_scores = (discovery_facts or {}).get("candidate_factor_scores")
+    quant_gate_active = isinstance(factor_scores, dict)
+    quant_covered_codes = {
+        str(code).zfill(6)
+        for code in (
+            factor_scores.get("applicable_fund_codes")
+            if isinstance(factor_scores, dict)
+            else []
+        )
+        or []
+    }
+    factor_ic_status = (
+        factor_scores.get("ic_status") if isinstance(factor_scores, dict) else {}
+    )
+    factor_ic_usable = bool(
+        isinstance(factor_ic_status, dict)
+        and str(factor_ic_status.get("state") or "").strip().lower() == "available"
+        and factor_ic_status.get("stale") is not True
+        and factor_ic_status.get("available", True) is not False
+        and factor_scores.get("available") is True
+    )
+    if (
+        quant_gate_active
+        and factor_ic_usable
+        and not quant_covered_codes
+        and isinstance(factor_scores, dict)
+    ):
+        quant_covered_codes = {
+            str(row.get("fund_code") or "").zfill(6)
+            for row in factor_scores.get("holdings") or []
+            if isinstance(row, dict) and row.get("applicable") is True
+        }
+    if quant_gate_active and not factor_ic_usable:
+        quant_covered_codes = set()
+    quant_blocked_codes: set[str] = set()
 
     for rec in recommendations:
         code = rec.fund_code.strip().zfill(6)
+        if code in seen_recommendation_codes:
+            caveats.append(f"已忽略重复推荐 {code}（{rec.fund_name}），同一基金仅保留首条决策。")
+            continue
+        seen_recommendation_codes.add(code)
         if code not in allowed_codes:
             caveats.append(f"已剔除池外基金 {code}（{rec.fund_name}）。")
             continue
@@ -116,7 +161,12 @@ def apply_discovery_guards(
             if isinstance(pool_item.get("quality_gate"), dict)
             else {}
         )
-        quality_status = str(quality_gate.get("status") or "eligible")
+        raw_quality_status = str(quality_gate.get("status") or "").strip()
+        quality_status = (
+            raw_quality_status
+            if raw_quality_status in {"eligible", "watch_only", "excluded"}
+            else "watch_only"
+        )
         if quality_status == "excluded":
             reasons = [str(item) for item in quality_gate.get("reasons") or []]
             eliminated.append(
@@ -146,6 +196,42 @@ def apply_discovery_guards(
             ]
             copy.action = normalized_action
         copy.confidence = _normalize_confidence(copy.confidence)
+        if quality_status == "watch_only":
+            quality_reasons = [
+                str(item) for item in quality_gate.get("reasons") or [] if str(item).strip()
+            ]
+            if raw_quality_status not in {"watch_only", "excluded"}:
+                quality_reasons.insert(0, "候选质量门禁缺失或状态不可识别")
+            copy.action = "建议关注"
+            copy.suggested_amount_yuan = None
+            copy.amount_note = "候选质量门禁仅允许研究观察，未生成可执行买入金额"
+            if copy.confidence == "高":
+                copy.confidence = "中"
+            reason_text = "；".join(quality_reasons[:2]) or "候选核心字段或质量条件未达准入线"
+            copy.points = [
+                f"质量门禁仅允许研究观察：{reason_text}。",
+                *copy.points,
+            ]
+            copy.validation_notes = [
+                *copy.validation_notes,
+                "候选状态为 watch_only，系统已确定性阻断买入动作与金额。",
+            ]
+            caveats.append(f"{code} 未通过可执行质量门禁，已降为研究观察。")
+        if quant_gate_active and code not in quant_covered_codes:
+            quant_blocked_codes.add(code)
+            if copy.action == "分批买入":
+                copy.action = "建议关注"
+            copy.suggested_amount_yuan = None
+            copy.amount_note = "该候选未进入当前量化覆盖集合，未生成可执行金额"
+            copy.confidence = "低"
+            copy.points = [
+                "量化证据未覆盖该候选，系统仅保留观察，不以未验证因子支持买入。",
+                *copy.points,
+            ]
+            copy.validation_notes = [
+                *copy.validation_notes,
+                "候选未进入当前量化 finalists，须待净值时点与同类因子校验完成后再评估。",
+            ]
         if execution_blocked:
             if copy.action == "分批买入":
                 copy.action = "建议关注"
@@ -182,15 +268,6 @@ def apply_discovery_guards(
                 copy.action = "等待回调"
                 copy.points = list(copy.points) + [
                     f"净值距区间高点仅 {float(dist_high):+.1f}%，短线追高风险偏高。"
-                ]
-
-        if scan_mode == "dip_swing" and copy.action == "分批买入":
-            nav_trend = pool_item.get("nav_trend") or {}
-            recent_1d = _recent_1d_change_percent(nav_trend, pool_item)
-            if recent_1d is not None and recent_1d > 3.0:
-                copy.action = "建议关注"
-                copy.points = list(copy.points) + [
-                    f"近1日净值涨幅 {recent_1d:+.2f}% 偏高，短线抄底模式避免追涨。"
                 ]
 
         drawdown = _as_float(pool_item.get("max_drawdown_1y_percent"))
@@ -254,7 +331,11 @@ def apply_discovery_guards(
             caveats.append(f"{code} 证据不足，已将动作从「{previous}」降为「建议关注」。")
 
         amount_boost_multiplier = 1.0
-        if escalation.get("action") == "boost" and not execution_blocked:
+        if (
+            escalation.get("action") == "boost"
+            and not execution_blocked
+            and quality_status == "eligible"
+        ):
             basis = str(escalation.get("basis") or "")
             if enforced:
                 amount_boost_multiplier = float(escalation.get("amount_multiplier") or 1.0)
@@ -282,6 +363,21 @@ def apply_discovery_guards(
             / 100
             * amount_boost_multiplier
         )
+        amount = _as_float(copy.suggested_amount_yuan)
+        if copy.suggested_amount_yuan is not None and (
+            amount is None or not isfinite(amount) or amount <= 0
+        ):
+            copy.action = "建议关注"
+            copy.suggested_amount_yuan = None
+            copy.amount_note = "建议金额不是有效正数，系统已阻断买入并降为研究观察。"
+            copy.points = ["建议金额校验未通过，未保留可执行买入动作。", *copy.points]
+            copy.validation_notes = [
+                *copy.validation_notes,
+                "建议金额必须为有限正数；异常金额已被确定性守卫清除。",
+            ]
+        elif amount is not None:
+            copy.suggested_amount_yuan = amount
+
         if copy.suggested_amount_yuan is not None and spendable_budget_yuan <= 0:
             copy.suggested_amount_yuan = None
             copy.amount_note = (
@@ -306,6 +402,20 @@ def apply_discovery_guards(
                 caveats.append(f"{code} 示意金额已按总预算剩余额度压缩。")
             if copy.suggested_amount_yuan is not None:
                 allocated_amount += float(copy.suggested_amount_yuan)
+
+        if copy.action == "分批买入":
+            final_amount = _as_float(copy.suggested_amount_yuan)
+            if final_amount is None or not isfinite(final_amount) or final_amount <= 0:
+                copy.action = "建议关注"
+                copy.suggested_amount_yuan = None
+                copy.amount_note = _join_amount_note(
+                    copy.amount_note,
+                    "预算或金额未达到可执行条件，动作已降为研究观察",
+                )
+                copy.points = [
+                    "当前没有可执行的有限正数金额，系统未保留买入指令。",
+                    *copy.points,
+                ]
 
         if pool_item:
             _backfill_decision_fields(
@@ -344,15 +454,36 @@ def apply_discovery_guards(
             "execution_blocked": bool(evidence_blocked_codes),
             "blocked_fund_codes": sorted(evidence_blocked_codes),
             "reasons_by_fund": evidence_blocked_codes,
+            "quant_evidence_blocked_fund_codes": sorted(quant_blocked_codes),
         }
     if evidence_blocked_codes and not degraded_portfolio_snapshot:
         caveats.append("部分候选的字段级证据时点不可用，已降为观察并清除买入金额。")
+    if quant_blocked_codes:
+        caveats.append("部分候选未进入当前量化覆盖集合，已降为观察并清除买入金额。")
 
     return guarded[:5], caveats, eliminated
 
 
 def _normalize_discovery_action(action: str) -> str:
     text = str(action or "").strip()
+    if re.search(r"(?:不|勿|莫|禁止|避免|停止|暂停|暂缓|暂不|不宜|不适合|无需|无须).{0,4}(?:买入|加仓)", text):
+        return "建议关注"
+    if any(
+        token in text
+        for token in (
+            "不建议买入",
+            "不建议加仓",
+            "暂不买入",
+            "暂不加仓",
+            "不买入",
+            "不加仓",
+            "停止买入",
+            "停止加仓",
+            "避免买入",
+            "禁止买入",
+        )
+    ):
+        return "建议关注"
     if any(token in text for token in ("回调", "暂停", "追高", "等一等", "观望")):
         return "等待回调"
     if any(token in text for token in ("分批", "买入", "加仓", "少量", "定投", "试探")):
@@ -602,19 +733,6 @@ def _build_validation_notes(pool_item: dict, opportunity: dict | None) -> list[s
     if pool_item.get("fund_quality_score") is None:
         notes.append("候选池缺少基金质量分，置信度需保守")
     return notes
-
-
-def _recent_1d_change_percent(nav_trend: dict, pool_item: dict) -> float | None:
-    daily = nav_trend.get("recent_5d_daily_change_percent")
-    if isinstance(daily, list) and daily:
-        try:
-            return float(daily[-1])
-        except (TypeError, ValueError):
-            pass
-    dip = pool_item.get("dip_drop_percent")
-    if dip is not None:
-        return None
-    return None
 
 
 def _filter_news_titles(headlines: list[str], known_titles: list[str]) -> list[str]:

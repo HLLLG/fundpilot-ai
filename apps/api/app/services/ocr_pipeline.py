@@ -7,7 +7,11 @@ from app.config import get_settings
 from app.models import Holding, PortfolioSummary
 from app.database import save_fund_profile, save_portfolio_summary
 from app.services.fund_profile import FundProfileService
-from app.services.holding_validation import build_holding_review, enrich_portfolio_summary_source
+from app.services.holding_validation import (
+    build_holding_review,
+    enrich_portfolio_summary_source,
+    validate_holdings,
+)
 from app.services.holdings_extractor import ExtractionResult, extract_holdings
 from app.services.fund_code_resolver import (
     UNRESOLVED_FUND_CODE_HINT,
@@ -347,9 +351,14 @@ def apply_confirmed_holdings(
     )
     save_portfolio_summary(portfolio_summary)
     save_daily_snapshot(processed, portfolio_summary)
+    holding_warnings = validate_holdings(processed)
     return {
         "holdings": serialize_holdings_for_client(processed),
         "portfolio_summary": portfolio_summary.model_dump(mode="json"),
+        "holding_warnings": [item.model_dump() for item in holding_warnings],
+        "warning_count": len(
+            [warning for warning in holding_warnings if warning.severity != "info"]
+        ),
         "profile_sync": profile_sync,
         "sector_refresh": {
             "cache_only": True,

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import type { PortfolioEvidenceOverview } from "@/lib/api";
 import { fetchPortfolioEvidenceOverview } from "@/lib/api";
 import { InlineNotice } from "@/components/InlineNotice";
+import { QuantEvidenceSummary } from "@/components/QuantEvidenceSummary";
 import { StatusPill } from "@/components/StatusPill";
 import { confidenceTone } from "@/components/SectorSignalBacktestPanel";
 
@@ -22,7 +23,7 @@ function LevelBar({ level, percent }: { level: string; percent: number }) {
   return (
     <div className={`factor-bar factor-tone-${TONE_CLASS[tone] ?? "neutral"}`}>
       <div className="factor-bar-head">
-        <span className="factor-bar-label">综合置信 {level}</span>
+        <span className="factor-bar-label">正向支持 {level}</span>
         <span className="factor-bar-value">{percent.toFixed(0)}%</span>
       </div>
       <div className="factor-bar-track">
@@ -96,7 +97,7 @@ export function PortfolioEvidenceOverviewPanel({ enabled }: { enabled: boolean }
         <span style={{ fontSize: 22, fontWeight: 900 }}>
           {(ov.backed_weight_percent ?? 0).toFixed(0)}%
         </span>{" "}
-        市值有中/高量化背书 · {ov.summary}
+        市值有中/高正向量化支持
       </div>
       <div className="factor-bars">
         {LEVEL_ORDER.filter((lv) => (weights[lv] ?? 0) > 0).map((lv) => (
@@ -108,18 +109,20 @@ export function PortfolioEvidenceOverviewPanel({ enabled }: { enabled: boolean }
           <div key={h.fund_code} className="factor-fund-card" title={h.evidence.summary}>
             <div className="factor-fund-head">
               <StatusPill tone={confidenceTone(h.evidence.composite.level)}>
-                {h.evidence.composite.level}
+                支持 {h.evidence.composite.level}
               </StatusPill>
               <div className="factor-fund-meta">
                 <div className="factor-fund-name">{h.fund_name || h.fund_code}</div>
-                <div className="factor-fund-score">{h.evidence.summary}</div>
+                <div className="mt-2">
+                  <QuantEvidenceSummary evidence={h.evidence} compact />
+                </div>
               </div>
             </div>
           </div>
         ))}
       </div>
       <div className="factor-foot">
-        证据覆盖 {ov.covered_holdings}/{ov.total_holdings} 只 · 三路量化置信（因子IC/板块信号/风险样本）市值加权
+        证据覆盖 {ov.covered_holdings}/{ov.total_holdings} 只 · 收益证据按方向汇总；风险样本只作守卫，不计入正向背书
       </div>
     </div>
   );

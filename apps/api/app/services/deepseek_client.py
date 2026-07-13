@@ -37,6 +37,7 @@ from app.services.news_citation import apply_news_citation_guards
 from app.services.recommendation_guard import apply_recommendation_guards
 from app.services.report_judge import judge_parsed_report
 from app.services.report_pipeline import build_pipeline_metadata
+from app.services.retired_market_evidence import sanitize_retired_market_evidence
 from app.services.recommendations import (
     build_offline_fund_recommendation,
     enrich_fund_recommendations,
@@ -446,7 +447,7 @@ def _system_prompt(
         base += (
             "当前为战术短线模式：在遵守集中度与风险复核前提下，优先最大化当日收盘前与下一交易日的战术收益空间；"
             "须结合 sector_intraday（分时形态）、sector_momentum（涨后回吐等）、stock_connect_flow 与 news.freshness_label；"
-            "北向实时净买额不参与决策，stock_connect_flow 中南向数据仅作港股资金面的独立参考；"
+            "stock_connect_flow 中的南向数据仅作港股资金面的独立参考；"
             "对「涨一天跌一天」场景须明确次日冲高回落时的止盈/观望条件，但仍不得承诺收益。"
         )
         settings = get_settings()
@@ -528,6 +529,7 @@ def _build_final_report(
     judge_meta: dict,
     runtime: AnalysisRuntime,
 ) -> Report:
+    parsed = sanitize_retired_market_evidence(parsed)
     fallback = _offline_report(
         request,
         risk,

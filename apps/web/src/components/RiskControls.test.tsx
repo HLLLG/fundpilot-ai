@@ -38,8 +38,8 @@ function props(): ComponentProps<typeof RiskControls> {
     onRolePromptReset: vi.fn(),
     onAnalyze: vi.fn(),
     isBusy: false,
-    ocrWarningCount: 0,
     hasBlockingErrors: false,
+    blockingMessage: null,
   };
 }
 
@@ -82,4 +82,21 @@ it("shows a clickable label for the DCA preference", () => {
   render(<RiskControls {...props()} readingModeKey={null} />);
   fireEvent.click(screen.getByRole("button", { name: "高级设置" }));
   expect(screen.getByRole("checkbox", { name: "偏好定投" })).toBeInTheDocument();
+});
+
+it("shows only actionable blocking details instead of a generic review count", () => {
+  render(
+    <RiskControls
+      {...props()}
+      hasBlockingErrors
+      blockingMessage="持仓数据异常：当日收益额与当日收益率符号不一致。"
+      readingModeKey={null}
+    />,
+  );
+
+  expect(
+    screen.getByRole("alert"),
+  ).toHaveTextContent("持仓数据异常：当日收益额与当日收益率符号不一致。");
+  expect(screen.queryByText(/识别待核对/)).not.toBeInTheDocument();
+  expect(screen.getByTestId("analyze")).toBeDisabled();
 });

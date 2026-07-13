@@ -35,7 +35,6 @@ type ThemeSectorOverviewProps = {
   loading: boolean;
   revalidating: boolean;
   onRefresh: () => void;
-  onViewDipFunds?: (sectorLabel: string) => void;
   onAddFocusSector?: (sectorLabel: string) => void;
   focusSectors?: string[];
 };
@@ -254,25 +253,16 @@ function ThemeExpandButton({
 function ThemeRowActions({
   item,
   focused,
-  onViewDipFunds,
   onAddFocusSector,
   mobile = false,
 }: {
   item: MarketThemeBoardItem;
   focused: boolean;
-  onViewDipFunds?: (sectorLabel: string) => void;
   onAddFocusSector?: (sectorLabel: string) => void;
   mobile?: boolean;
 }) {
   return (
     <div className={mobile ? "contents" : "inline-flex items-center justify-end gap-1"}>
-      <button
-        type="button"
-        className={`${mobile ? "w-full" : ""} min-h-11 rounded-lg px-2 text-xs font-medium text-slate-600 transition hover:bg-slate-100`}
-        onClick={() => onViewDipFunds?.(item.sector_label)}
-      >
-        看大跌
-      </button>
       <button
         type="button"
         className={`${mobile ? "w-full" : ""} min-h-11 rounded-lg px-2 text-xs font-medium transition ${
@@ -326,7 +316,6 @@ export function ThemeSectorOverview({
   loading,
   revalidating,
   onRefresh,
-  onViewDipFunds,
   onAddFocusSector,
   focusSectors = [],
 }: ThemeSectorOverviewProps) {
@@ -542,7 +531,7 @@ export function ThemeSectorOverview({
                       </div>
                     </dl>
 
-                    <div className="mt-3 grid grid-cols-3 gap-2">
+                    <div className="mt-3 grid grid-cols-2 gap-2">
                       {expandable ? (
                         <ThemeExpandButton
                           item={item}
@@ -559,7 +548,6 @@ export function ThemeSectorOverview({
                       <ThemeRowActions
                         item={item}
                         focused={focused}
-                        onViewDipFunds={onViewDipFunds}
                         onAddFocusSector={onAddFocusSector}
                         mobile
                       />
@@ -713,7 +701,6 @@ export function ThemeSectorOverview({
                             <ThemeRowActions
                               item={item}
                               focused={focused}
-                              onViewDipFunds={onViewDipFunds}
                               onAddFocusSector={onAddFocusSector}
                             />
                           </td>

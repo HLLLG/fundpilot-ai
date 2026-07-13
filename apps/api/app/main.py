@@ -127,13 +127,13 @@ from app.services.discovery_outcomes import (
     build_discovery_recommendation_accuracy,
 )
 from app.services.discovery_sector_heat import build_sector_heat_ranking, build_sector_heat_ranking_for_ui
-from app.services.dip_radar_snapshot import get_dip_radar_snapshot
 from app.services.board_fund_flow_history import get_board_flow_history
 from app.services.theme_board_snapshot import get_theme_board_snapshot
 from app.services.us_market_service import get_us_market_snapshot
 from app.services.ocr_pipeline import apply_confirmed_holdings, run_ocr_upload_pipeline
 from app.services.report_diff import diff_reports
 from app.services.report_chat import stream_report_chat
+from app.services.retired_market_evidence import sanitize_retired_market_evidence
 from app.services.chat_aggregate import aggregate_chat_stream
 from app.services.report_chat_export import report_chat_to_markdown
 from app.services.rebalance_simulator import simulate_rebalance
@@ -147,6 +147,17 @@ from app.services.factor_ic_snapshot import (
     build_factor_ic_status,
     publish_factor_ic_snapshot,
     validate_publish_request,
+)
+from app.services.factor_live_calibration import (
+    FactorLiveCalibrationStorageUnavailable,
+    build_factor_live_calibration_status,
+)
+from app.services.factor_ic_universe_snapshot import (
+    FactorIcUniverseConflict,
+    FactorIcUniverseStorageUnavailable,
+    publish_factor_ic_universe_snapshot,
+    read_factor_ic_universe_history,
+    validate_factor_ic_universe_publish_request,
 )
 from app.services.shadow_escalation_digest import build_shadow_escalation_digest
 from app.services.recommendation_outcomes import (
@@ -270,9 +281,64 @@ def publish_factor_ic(
     return result
 
 
+@app.post("/api/internal/factor-ic-universe-snapshots", include_in_schema=False)
+def publish_factor_ic_universe(
+    body: dict,
+    _authorized: None = Depends(_require_factor_ic_publish_token),
+) -> dict:
+    try:
+        request = validate_factor_ic_universe_publish_request(body)
+        return publish_factor_ic_universe_snapshot(request)
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=exc.errors(include_context=False, include_url=False),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except FactorIcUniverseConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except FactorIcUniverseStorageUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.get("/api/internal/factor-ic-universe-snapshots", include_in_schema=False)
+def get_factor_ic_universe_history(
+    start_date: date | None = None,
+    end_date: date | None = None,
+    days: int = 365,
+    max_snapshots: int = 60,
+    stride_days: int = 7,
+    include_members: bool = True,
+    _authorized: None = Depends(_require_factor_ic_publish_token),
+) -> dict:
+    try:
+        return read_factor_ic_universe_history(
+            start_date=start_date,
+            end_date=end_date,
+            days=days,
+            max_snapshots=max_snapshots,
+            stride_days=stride_days,
+            include_members=include_members,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except FactorIcUniverseStorageUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
 @app.get("/api/diagnostics/factor-ic-status")
 def factor_ic_status() -> dict:
     return build_factor_ic_status()
+
+
+@app.get("/api/diagnostics/factor-live-calibration")
+def factor_live_calibration() -> dict:
+    """当前用户的只读量化影子校准；达到门槛也只进入人工复核。"""
+    try:
+        return build_factor_live_calibration_status(user_id=get_request_user_id())
+    except FactorLiveCalibrationStorageUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @app.get("/api/reports/recommendation-accuracy")
@@ -828,25 +894,6 @@ def market_board_flow_history(
     )
 
 
-@app.get("/api/market/dip-radar")
-def market_dip_radar(
-    lookback_days: int = 5,
-    sector: str | None = None,
-    limit: int = 20,
-    force_refresh: bool = False,
-) -> dict:
-    if lookback_days not in {3, 5}:
-        raise HTTPException(status_code=400, detail="lookback_days 须为 3 或 5")
-    if limit < 1 or limit > 50:
-        raise HTTPException(status_code=400, detail="limit 须在 1～50 之间")
-    return get_dip_radar_snapshot(
-        lookback_days=lookback_days,
-        sector=sector,
-        limit=limit,
-        force_refresh=force_refresh,
-    )
-
-
 @app.get("/api/market/us-overview")
 def market_us_overview(force_refresh: bool = False) -> dict:
     """美股概览：纳指/标普/道指期货 + USD/CNY + QDII 盘前参考涨跌。
@@ -892,7 +939,10 @@ async def fund_discovery_stream_endpoint(request: DiscoveryRequest) -> Streaming
 
 @app.get("/api/fund-discovery/reports")
 def fund_discovery_reports() -> list[dict]:
-    return list_discovery_reports()
+    return [
+        sanitize_retired_market_evidence(report)
+        for report in list_discovery_reports()
+    ]
 
 
 @app.get("/api/fund-discovery/reports/{report_id}")
@@ -900,7 +950,7 @@ def fund_discovery_report_detail(report_id: str) -> dict:
     report = get_discovery_report(report_id)
     if report is None:
         raise HTTPException(status_code=404, detail="报告不存在")
-    return report
+    return sanitize_retired_market_evidence(report)
 
 
 @app.delete("/api/fund-discovery/reports/{report_id}")
@@ -918,7 +968,13 @@ def fund_discovery_report_diff(report_id: str) -> dict:
     previous = get_previous_discovery_report(report_id)
     if previous is None:
         return {"has_previous": False, "message": "暂无上一份推荐报告"}
-    return {"has_previous": True, **diff_discovery_reports(current, previous)}
+    return {
+        "has_previous": True,
+        **diff_discovery_reports(
+            sanitize_retired_market_evidence(current),
+            sanitize_retired_market_evidence(previous),
+        ),
+    }
 
 
 @app.get("/api/fund-discovery/reports/{report_id}/outcomes")
@@ -969,7 +1025,11 @@ def fund_discovery_report_markdown(report_id: str) -> dict:
     report = get_discovery_report(report_id)
     if report is None:
         raise HTTPException(status_code=404, detail="报告不存在")
-    return {"markdown": discovery_report_to_markdown(report)}
+    return {
+        "markdown": discovery_report_to_markdown(
+            sanitize_retired_market_evidence(report)
+        )
+    }
 
 
 @app.get("/api/fund-discovery/reports/{report_id}/chat")
@@ -1035,7 +1095,7 @@ def fund_discovery_chat_sync(report_id: str, body: DiscoveryChatRequest) -> dict
 
 @app.get("/api/reports")
 def reports() -> list[dict]:
-    return list_reports()
+    return [sanitize_retired_market_evidence(report) for report in list_reports()]
 
 
 @app.get("/api/reports/{report_id}")
@@ -1043,7 +1103,7 @@ def report_detail(report_id: str) -> dict:
     report = get_report(report_id)
     if report is None:
         raise HTTPException(status_code=404, detail="报告不存在")
-    return report
+    return sanitize_retired_market_evidence(report)
 
 
 @app.get("/api/reports/{report_id}/outcomes")
@@ -1167,7 +1227,10 @@ def report_diff(report_id: str) -> dict:
         return {"has_previous": False, "diff": None}
     return {
         "has_previous": True,
-        "diff": diff_reports(current, previous),
+        "diff": diff_reports(
+            sanitize_retired_market_evidence(current),
+            sanitize_retired_market_evidence(previous),
+        ),
     }
 
 
@@ -1176,7 +1239,9 @@ def report_markdown(report_id: str) -> dict:
     report = get_report(report_id)
     if report is None:
         raise HTTPException(status_code=404, detail="报告不存在")
-    return {"markdown": report_to_markdown(report)}
+    return {
+        "markdown": report_to_markdown(sanitize_retired_market_evidence(report))
+    }
 
 
 @app.get("/api/reports/{report_id}/chat")

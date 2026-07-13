@@ -111,6 +111,17 @@ def build_candidate_factor_scores(candidate_pool: list[dict]) -> dict[str, Any]:
         if not isinstance(item.get("quality_gate"), dict)
         or item["quality_gate"].get("status") == "eligible"
     ]
+    # The pool can be larger than the online NAV budget. Quantify the strongest
+    # quality finalists first rather than relying on incidental upstream order.
+    eligible.sort(
+        key=lambda item: (
+            float(item.get("fund_quality_score") or 0),
+            float(item.get("sector_fit_score") or 0),
+            float((item.get("quality_gate") or {}).get("coverage_percent") or 0),
+        ),
+        reverse=True,
+    )
+    selected_codes: list[str] = []
     for item in eligible[:12]:
         code = str(item.get("fund_code") or "").strip()
         if not code:
@@ -122,9 +133,42 @@ def build_candidate_factor_scores(candidate_pool: list[dict]) -> dict[str, Any]:
                 holding_amount=0.0,
             )
         )
+        selected_codes.append(code.zfill(6))
     if not stubs:
         return {"available": False, "message": "无候选基金"}
     try:
-        return build_factor_scores_for_facts(stubs)
+        result = build_factor_scores_for_facts(stubs)
+        holdings = result.get("holdings") if isinstance(result, dict) else []
+        ic_status = result.get("ic_status") if isinstance(result, dict) else {}
+        ic_usable = bool(
+            isinstance(ic_status, dict)
+            and str(ic_status.get("state") or "").strip().lower() == "available"
+            and ic_status.get("stale") is not True
+            and ic_status.get("available", True) is not False
+            and result.get("available") is True
+        )
+        applicable_codes = sorted(
+            {
+                str(row.get("fund_code") or "").zfill(6)
+                for row in holdings or []
+                if ic_usable
+                and isinstance(row, dict)
+                and row.get("applicable") is True
+            }
+        )
+        return {
+            **result,
+            "selection_policy": "top_quality_eligible",
+            "eligible_candidate_count": len(eligible),
+            "coverage_limit": 12,
+            "selected_fund_codes": selected_codes,
+            "applicable_fund_codes": applicable_codes,
+            "applicable_coverage_percent": round(
+                len(applicable_codes) / len(eligible) * 100,
+                1,
+            )
+            if eligible
+            else 0.0,
+        }
     except Exception:  # noqa: BLE001
         return {"available": False, "message": "因子分暂不可用"}

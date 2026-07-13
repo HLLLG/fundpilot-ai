@@ -104,8 +104,6 @@ function discoveryPayload(
     fundTypePreference?: FundTypePreference;
     selectionStrategy?: SelectionStrategy;
     scanMode?: DiscoveryScanMode;
-    dipLookbackDays?: number;
-    dipMinDropPercent?: number;
     systemRolePrompt?: string | null;
   },
 ) {
@@ -118,8 +116,6 @@ function discoveryPayload(
     fund_type_preference: options?.fundTypePreference ?? "any",
     selection_strategy: options?.selectionStrategy ?? "balanced",
     scan_mode: options?.scanMode ?? "full_market",
-    dip_lookback_days: options?.dipLookbackDays ?? 5,
-    dip_min_drop_percent: options?.dipMinDropPercent ?? 3.0,
     system_role_prompt: options?.systemRolePrompt?.trim() || null,
   };
 }
@@ -177,8 +173,6 @@ export async function streamDiscovery(
     fundTypePreference?: FundTypePreference;
     selectionStrategy?: SelectionStrategy;
     scanMode?: DiscoveryScanMode;
-    dipLookbackDays?: number;
-    dipMinDropPercent?: number;
     systemRolePrompt?: string | null;
     signal?: AbortSignal;
     idleTimeoutMs?: number;

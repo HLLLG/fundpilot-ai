@@ -1465,15 +1465,6 @@ button:disabled {
   box-shadow: 0 -8px 24px rgba(11, 32, 84, 0.08);
 }
 
-/* ── 大跌反弹雷达列表 ── */
-.dip-radar-row {
-  transition: background 0.15s ease;
-}
-
-.dip-radar-row:hover {
-  background: rgba(35, 86, 224, 0.03);
-}
-
 .auth-inline-link,
 .auth-back-link {
   display: inline-flex;
@@ -1865,7 +1856,6 @@ button:disabled {
 .history-archive-row.is-active { background:var(--accent-soft); box-shadow:inset 3px 0 var(--accent); }
 .history-count { display:inline-flex; min-width:1.6rem; height:1.6rem; align-items:center; justify-content:center; border-radius:var(--radius-control); color:var(--brand-deep); background:var(--accent-soft); font-size:.625rem; font-variant-numeric:tabular-nums; }
 
-.discovery-history-desktop { display:none; min-width:0; align-self:start; }
 .discovery-history-rail { display:flex; min-height:0; flex-direction:column; padding:1rem; border:1px solid var(--line); border-radius:var(--radius-card); background:var(--panel); }
 .discovery-history-toolbar { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:.6rem; padding-bottom:.8rem; border-bottom:1px solid var(--line); }
 .history-scroll-region { min-height:0; overscroll-behavior:contain; scrollbar-gutter:stable; }
@@ -1882,7 +1872,7 @@ button:disabled {
 .discovery-history-trigger strong { display:grid; min-width:1.4rem; height:1.4rem; place-items:center; border-radius:50%; color:#fff; background:var(--brand); font-size:.625rem; font-variant-numeric:tabular-nums; }
 
 .history-drawer-backdrop { position:fixed; z-index:90; inset:0; display:flex; justify-content:flex-end; background:rgba(6,20,29,.48); animation:fade-in var(--motion-base) var(--ease-out); }
-.history-drawer-shell { display:flex; width:min(30rem,100%); min-height:0; flex-direction:column; background:var(--panel); box-shadow:var(--shadow-lg); animation:drawer-enter 220ms var(--ease-out); }
+.history-drawer-shell { display:flex; width:min(30rem,100%); height:100%; min-height:0; max-height:100dvh; overflow:hidden; flex-direction:column; background:var(--panel); box-shadow:var(--shadow-lg); animation:drawer-enter 220ms var(--ease-out); }
 .history-drawer-handle { display:none; }
 .history-drawer-header { display:flex; flex:0 0 auto; align-items:flex-start; gap:.75rem; padding:1rem; border-bottom:1px solid var(--line-strong); background:var(--panel); }
 .history-drawer-back,.history-drawer-close { display:inline-flex; align-items:center; justify-content:center; gap:.3rem; border-radius:var(--radius-control); color:var(--brand-deep); font-size:.75rem; font-weight:800; }
@@ -1911,11 +1901,6 @@ button:disabled {
 
 @keyframes drawer-enter { from { opacity:0; transform:translateX(1.5rem); } to { opacity:1; transform:translateX(0); } }
 
-@media (min-width:1280px) {
-  .discovery-history-desktop { display:block; position:sticky; top:5.25rem; max-height:calc(100dvh - 20rem); }
-  .discovery-history-rail.is-rail { max-height:calc(100dvh - 20rem); }
-}
-
 @media (max-width:1023px) {
   /* backdrop-filter 会让内部 fixed 底栏改以 header 为包含块，最终与头像重叠。 */
   .app-masthead { backdrop-filter:none; }
@@ -1933,7 +1918,7 @@ button:disabled {
   .report-navigator-actions { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); }
   .report-navigator-actions button { width:100%; padding-inline:.4rem; }
   .history-drawer-backdrop { align-items:flex-end; }
-  .history-drawer-shell { width:100%; max-height:92dvh; border-radius:var(--radius-card) var(--radius-card) 0 0; animation:sheet-enter 220ms var(--ease-out); }
+  .history-drawer-shell { width:100%; height:92vh; height:92dvh; max-height:92dvh; border-radius:var(--radius-card) var(--radius-card) 0 0; animation:sheet-enter 220ms var(--ease-out); }
   .history-drawer-handle { display:block; width:2.5rem; height:.25rem; flex:0 0 auto; align-self:center; margin:.5rem 0 0; border-radius:999px; background:var(--line-strong); }
   .history-drawer-header { padding:.65rem .75rem .75rem; }
   .history-drawer-scroll { padding:.75rem; padding-bottom:calc(5.5rem + env(safe-area-inset-bottom)); }

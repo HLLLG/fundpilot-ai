@@ -83,6 +83,8 @@ def test_apply_confirmed_holdings_skips_network_bootstrap(monkeypatch):
     assert result["sector_refresh"]["matched"] == 1
     assert result["holdings"][0]["sector_return_percent"] == 1.5
     assert result["holdings"][0]["daily_profit"] is not None
+    assert result["holding_warnings"] == []
+    assert result["warning_count"] == 0
 
 
 def test_apply_confirmed_holdings_skips_nav_prime_when_ocr_has_official_daily(monkeypatch):
@@ -147,6 +149,7 @@ def test_apply_confirmed_holdings_skips_nav_prime_when_ocr_has_official_daily(mo
         holding_profit=142.18,
         holding_return_percent=1.30,
         daily_profit=-123.22,
+        daily_return_percent=1.0,
         daily_return_percent_source="official_nav",
         amount_includes_today=True,
     )
@@ -155,6 +158,10 @@ def test_apply_confirmed_holdings_skips_nav_prime_when_ocr_has_official_daily(mo
     assert prime_calls == []
     assert result["holdings"][0]["daily_profit"] == -123.22
     assert result["holdings"][0]["estimated_holding_profit"] == pytest.approx(142.18, abs=0.1)
+    assert [warning["code"] for warning in result["holding_warnings"]] == [
+        "daily_profit_sign_mismatch"
+    ]
+    assert result["warning_count"] == 1
 
 
 def test_apply_portfolio_holdings_updates_holdings_cache(monkeypatch):

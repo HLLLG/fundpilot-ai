@@ -30,14 +30,18 @@ export function buildWorkflowBlockers(input: {
   const warnWarnings = warnings.filter((item) => item.severity === "warn");
 
   if (errorWarnings.length) {
+    const firstError = errorWarnings[0];
+    const remainingCount = errorWarnings.length - 1;
     blockers.push({
-      id: "ocr-errors",
+      id: "holding-data-errors",
       severity: "error",
-      message: `OCR 有 ${errorWarnings.length} 处严重异常，建议修正后再生成报告。`,
+      message: `持仓数据异常：${firstError.message}${
+        remainingCount > 0 ? `（另有 ${remainingCount} 处）` : ""
+      }`,
     });
   } else if (warnWarnings.length) {
     blockers.push({
-      id: "ocr-warns",
+      id: "holding-data-warns",
       severity: "warn",
       message: `有 ${warnWarnings.length} 处待核对（多为收益符号/合计），确认无误后可生成。`,
     });

@@ -32,10 +32,7 @@ from app.services.decision_guard_shared import (
     resolve_escalation_floor,
 )
 from app.services.market_breadth_signal import build_market_breadth_signal
-from app.services.market_flow_client import (
-    NORTHBOUND_NOT_DISCLOSED_REASON,
-    build_stock_connect_flow_context,
-)
+from app.services.market_flow_client import build_stock_connect_flow_context
 from app.services.news_freshness import build_news_pipeline_context
 from app.services.analysis_prompt import (
     COMPOSITE_EVIDENCE_INSTRUCTION,
@@ -181,11 +178,9 @@ def _signal_backtest_unavailable(reason: str) -> dict[str, Any]:
 
 def _stock_connect_flow_unavailable(reason: str) -> dict[str, Any]:
     return {
-        "schema_version": "stock_connect_flow.v1",
+        "schema_version": "stock_connect_flow.v2",
         "available": False,
         "reason": reason,
-        "northbound_status": "not_disclosed",
-        "northbound_reason": NORTHBOUND_NOT_DISCLOSED_REASON,
         "southbound_available": False,
         "southbound_net_yi": None,
         "message": "互联互通资金摘要未在预算内完成，日报已按基础事实继续。",
@@ -571,9 +566,9 @@ def build_analysis_facts(
             "「低/不足」须声明样本有限、不得据此下强结论。"
             f"{IC_EVIDENCE_INSTRUCTION}"
             f"{COMPOSITE_EVIDENCE_INSTRUCTION}"
-            "evidence_overview 是组合级量化背书体检：backed_weight_percent 为"
-            "「中/高背书」市值占比；占比高→建议可更积极，占比低→须强调多数仓位"
-            "量化背书不足、以风险口径表述。"
+            "evidence_overview 是组合级证据质量体检：backed_weight_percent 仅表示"
+            "「中/高正向支持」市值占比；历史规则未提供当日触发方向时不得计入支持，"
+            "风险样本只作守卫。该占比不能单独触发更积极动作，仍须结合风险、估值与时效。"
             "sector_fund_flow.today_main_force_net_yi 正数=净流入、负数=净流出；"
             "仅当 flow_date 与 trade_date 对齐（date_aligned=true）时方可与 sector_return_percent 做背离判断。"
             "持仓的 sector_opportunity 是该持仓所属板块当前方向判断（track=momentum顺势/setup蓄势，"

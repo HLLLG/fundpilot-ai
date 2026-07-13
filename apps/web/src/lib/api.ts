@@ -550,6 +550,8 @@ export type PortfolioFactorScores = {
 
 export type FactorIcStatus = {
   available: boolean;
+  snapshot_id?: string | null;
+  schema_version?: number;
   run_date?: string;
   generated_at?: string;
   published_at?: string | null;
@@ -562,6 +564,29 @@ export type FactorIcStatus = {
   universe_mode?: string | null;
   rebalance_count?: number | null;
   factor_periods?: Record<string, number | null>;
+  cohort_mode?: "current_survivors" | "point_in_time" | string | null;
+  point_in_time?: {
+    snapshot_id?: string | null;
+    snapshot_date?: string | null;
+    effective_anchor_count?: number;
+    anchor_coverage_rate?: number;
+    cohort_nav_coverage_rate?: number;
+    publishable?: boolean;
+    point_in_time_scope?: "membership_only" | "nav_observation_pit" | string;
+    nav_revision_pit?: boolean;
+    nav_publication_lag_trading_days?: Record<string, number>;
+    execution_entry_offset_trading_days?: number;
+    mature_anchor_count_by_horizon?: Record<string, number>;
+  } | null;
+  pit_upgrade?: {
+    state?: "collecting" | "unavailable" | "active" | string;
+    snapshot_count?: number;
+    effective_anchor_count?: number;
+    anchor_coverage_rate?: number;
+    cohort_nav_coverage_rate?: number;
+    reason?: string;
+  } | null;
+  pit_coverage?: Record<string, unknown> | null;
   source_commit?: string | null;
 };
 
@@ -573,11 +598,53 @@ export type FactorIcEvidenceStatus = {
   source?: "database" | "local_file" | "unavailable";
 };
 
-export type EvidenceComponent = { source: string; level: string; basis: string };
+export type EvidenceLevelMetric = {
+  level: string;
+  score?: number | null;
+  basis?: string;
+};
+
+export type EvidenceCoverageMetric = {
+  level: string;
+  percent?: number | null;
+  basis?: string;
+};
+
+export type EvidenceFreshnessMetric = {
+  status: "fresh" | "stale" | "unavailable" | "unknown" | string;
+  as_of?: string | null;
+  basis?: string;
+};
+
+export type EvidenceComponent = {
+  source: string;
+  role?: "return_signal" | "risk_guard" | string;
+  level: string;
+  basis: string;
+  reliability?: EvidenceLevelMetric;
+  direction?: "positive" | "negative" | "mixed" | "neutral" | "risk" | "unknown" | string;
+  effect_size?: EvidenceLevelMetric;
+  coverage?: EvidenceCoverageMetric;
+  freshness?: EvidenceFreshnessMetric;
+};
 
 export type HoldingEvidence = {
-  composite: { level: string; score: number };
+  schema_version?: string;
+  composite: {
+    level: string;
+    score: number;
+    reliability?: EvidenceLevelMetric;
+    direction?: "positive" | "negative" | "mixed" | "neutral" | "unknown" | string;
+    effect_size?: EvidenceLevelMetric;
+    coverage?: EvidenceCoverageMetric;
+    freshness?: EvidenceFreshnessMetric;
+    positive_component_count?: number;
+    negative_component_count?: number;
+    neutral_component_count?: number;
+    risk_guard_count?: number;
+  };
   components: EvidenceComponent[];
+  risk_guards?: EvidenceComponent[];
   summary: string;
 };
 
@@ -588,6 +655,8 @@ export type EvidenceOverview = {
   count_by_level?: Record<string, number>;
   weight_by_level?: Record<string, number>;
   backed_weight_percent?: number;
+  direction_counts?: Record<string, number>;
+  risk_guard_weight_percent?: number;
   summary?: string;
 };
 
@@ -639,10 +708,6 @@ export type DiscoveryRecommendation = {
   points?: string[];
   risks?: string[];
   news_bullish?: string[];
-  target_exit_days?: number | null;
-  fee_break_even_percent?: number | null;
-  dip_drop_percent?: number | null;
-  rebound_signals?: Array<{ id: string; label: string }>;
   decision_path?: string;
   sector_evidence?: string[];
   fund_evidence?: string[];
@@ -670,6 +735,10 @@ export type DiscoveryCandidateQualityGate = {
   missing_fields: string[];
   coverage_percent: number;
   data_as_of?: string | null;
+  profile_status?: "complete" | "partial" | "stale_fallback" | "unavailable" | string | null;
+  profile_sources?: string[];
+  profile_checked_at?: string | null;
+  profile_stale_fields?: string[];
 };
 
 export type DiscoveryCandidateQualitySummary = {
@@ -679,6 +748,9 @@ export type DiscoveryCandidateQualitySummary = {
   total_count: number;
   required_fields: string[];
   coverage_percent: number;
+  missing_field_counts?: Record<string, number>;
+  profile_status_counts?: Record<string, number>;
+  profile_source_counts?: Record<string, number>;
 };
 
 export type DiscoveryDataEvidenceGuard = {
@@ -703,9 +775,9 @@ export type DiscoveryDecisionEvent = {
 
 export type FundTypePreference = "any" | "etf_link" | "no_c_class";
 
-export type SelectionStrategy = "balanced" | "with_new_issue" | "dip_rebound";
+export type SelectionStrategy = "balanced" | "with_new_issue";
 
-export type DiscoveryScanMode = "full_market" | "portfolio_gap" | "dip_swing";
+export type DiscoveryScanMode = "full_market" | "portfolio_gap";
 
 export type DiscoveryPromptConfig = {
   role_prompt: string;
@@ -722,6 +794,16 @@ export type DiscoveryCandidatePoolItem = {
   return_3m_percent?: number | null;
   return_6m_percent?: number | null;
   fund_scale_yi?: number | null;
+  fund_scale_basis?: "nav_times_latest_shares" | "nav_times_xq_latest_shares" | string | null;
+  fund_shares_yi?: number | null;
+  fund_shares_basis?: "xq_latest_reported_shares" | string | null;
+  fund_manager?: string | null;
+  established_date?: string | null;
+  nav_date?: string | null;
+  profile_updated_at?: string | null;
+  profile_status?: "complete" | "partial" | "stale_fallback" | "unavailable" | string | null;
+  profile_sources?: string[];
+  profile_stale_fields?: string[];
   is_new_issue?: boolean;
   max_drawdown_1y_percent?: number | null;
   fund_quality_score?: number | null;
@@ -862,7 +944,7 @@ export type FundDiscoveryReport = {
     };
     effective_configuration?: {
       scan_goal?: DiscoveryScanMode | string;
-      selection_policy?: "auto_quality" | "dip_rebound_research" | string;
+      selection_policy?: string;
       share_class_policy?: string;
       legacy_fund_type_preference?: FundTypePreference | string;
     };
@@ -939,59 +1021,6 @@ export type BoardFlowHistoryResponse = {
   cumulative_net_yi?: number | null;
   from_cache?: boolean;
   refreshed_at?: string | null;
-  message?: string | null;
-};
-
-export type DipRadarReboundSignal = {
-  id: string;
-  label: string;
-};
-
-export type DipRadarItem = {
-  fund_code: string;
-  fund_name: string;
-  sector_label: string;
-  dip_drop_percent?: number | null;
-  change_1d_percent?: number | null;
-  rebound_score?: number | null;
-  rebound_signals?: DipRadarReboundSignal[];
-  rank?: number;
-  historical_hint?: {
-    sample_count?: number;
-    sample_days?: number;
-    rebound_rate_3d_percent?: number;
-    note?: string;
-  } | null;
-};
-
-export type DipRadarSectorLeader = {
-  sector_label: string;
-  avg_dip_drop_percent?: number | null;
-  min_dip_drop_percent?: number | null;
-  fund_count?: number;
-};
-
-export type DipRadarResponse = {
-  refreshed_at?: string | null;
-  trade_date?: string | null;
-  lookback_days: number;
-  fee_break_even_percent?: number | null;
-  items: DipRadarItem[];
-  sector_dip_leaders?: DipRadarSectorLeader[];
-  scan_stats?: {
-    rank_shortlist?: number;
-    dip_threshold_percent?: number;
-    lookback_days?: number;
-    matches?: number;
-    total_matches?: number;
-    sector_filter?: string;
-    nav_fallback?: string;
-  } | null;
-  sector_filter?: string | null;
-  available: boolean;
-  from_cache?: boolean;
-  stale?: boolean;
-  session_kind?: string | null;
   message?: string | null;
 };
 
@@ -1530,31 +1559,6 @@ export async function fetchBoardFlowHistory(options: {
   return response.json();
 }
 
-export async function fetchDipRadar(options?: {
-  lookbackDays?: 3 | 5;
-  sector?: string | null;
-  limit?: number;
-  forceRefresh?: boolean;
-}): Promise<DipRadarResponse> {
-  const params = new URLSearchParams({
-    lookback_days: String(options?.lookbackDays ?? 5),
-    limit: String(options?.limit ?? 20),
-  });
-  if (options?.sector) {
-    params.set("sector", options.sector);
-  }
-  if (options?.forceRefresh) {
-    params.set("force_refresh", "true");
-  }
-  const response = await apiFetch(`${API_BASE}/api/market/dip-radar?${params}`, {
-    cache: "no-store",
-  });
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  return response.json();
-}
-
 export async function fetchUsMarketOverview(
   forceRefresh = false,
 ): Promise<UsMarketSnapshot> {
@@ -1581,8 +1585,6 @@ export async function startDiscoveryJob(
     fundTypePreference?: FundTypePreference;
     selectionStrategy?: SelectionStrategy;
     scanMode?: DiscoveryScanMode;
-    dipLookbackDays?: number;
-    dipMinDropPercent?: number;
     systemRolePrompt?: string | null;
   },
 ): Promise<string> {
@@ -1598,8 +1600,6 @@ export async function startDiscoveryJob(
       fund_type_preference: options?.fundTypePreference ?? "any",
       selection_strategy: options?.selectionStrategy ?? "balanced",
       scan_mode: options?.scanMode ?? "full_market",
-      dip_lookback_days: options?.dipLookbackDays ?? 5,
-      dip_min_drop_percent: options?.dipMinDropPercent ?? 3.0,
       system_role_prompt: options?.systemRolePrompt ?? null,
     }),
   });
@@ -2185,6 +2185,8 @@ export async function applyPortfolioHoldings(
 ): Promise<{
   holdings: Holding[];
   portfolio_summary?: PortfolioSummary | null;
+  holding_warnings?: HoldingFieldWarning[];
+  warning_count?: number;
 }> {
   invalidatePortfolioHoldingsRequest();
   const response = await apiFetch(`${API_BASE}/api/portfolio/apply-holdings`, {

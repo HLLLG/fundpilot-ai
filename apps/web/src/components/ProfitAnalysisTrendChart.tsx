@@ -1,12 +1,14 @@
 "use client";
 
-import { useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { ProfitTrend } from "@/lib/api";
 import { clockToSessionRatio } from "@/lib/intradayChartTime";
 
 const INDEX_COLOR = "#5B8DEF";
-const AXIS_FONT_SIZE = 12;
-const AXIS_LABEL_CLASS = "fill-slate-500 tabular-nums";
+const AXIS_FONT_SIZE = 10;
+const AXIS_LABEL_CLASS = "fill-slate-400 tabular-nums";
+const DEFAULT_CHART_WIDTH = 720;
+const MIN_CHART_WIDTH = 280;
 
 type ProfitAnalysisTrendChartProps = {
   trend: ProfitTrend | null | undefined;
@@ -151,6 +153,42 @@ function portfolioColors(latest: number) {
 export function ProfitAnalysisTrendChart({ trend, height = 200 }: ProfitAnalysisTrendChartProps) {
   const gradientId = useId().replace(/:/g, "");
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [containerWidth, setContainerWidth] = useState<number | null>(null);
+
+  useEffect(() => {
+    const node = containerRef.current;
+    if (!node) {
+      return;
+    }
+
+    const updateWidth = (nextWidth?: number) => {
+      const measured = nextWidth ?? node.getBoundingClientRect().width;
+      if (!Number.isFinite(measured) || measured <= 0) {
+        return;
+      }
+      const rounded = Math.round(measured);
+      setContainerWidth((current) => (current === rounded ? current : rounded));
+    };
+
+    updateWidth();
+    if (typeof ResizeObserver !== "undefined") {
+      const observer = new ResizeObserver((entries) => {
+        updateWidth(entries[0]?.contentRect.width);
+      });
+      observer.observe(node);
+      return () => observer.disconnect();
+    }
+
+    const handleResize = () => updateWidth();
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
+
+  const responsiveWidth = Math.max(
+    MIN_CHART_WIDTH,
+    containerWidth ?? DEFAULT_CHART_WIDTH,
+  );
 
   const chart = useMemo(() => {
     const points = trend?.points ?? [];
@@ -183,7 +221,7 @@ export function ProfitAnalysisTrendChart({ trend, height = 200 }: ProfitAnalysis
     const yTickValues = buildYTicks(min, max);
     const leftPad = leftPaddingForLabels(Math.max(Math.abs(min), Math.abs(max)));
     const padding = { top: 12, right: 10, bottom: 14, left: leftPad };
-    const width = 360 + (leftPad - 46);
+    const width = responsiveWidth;
     const chartWidth = width - padding.left - padding.right;
     const chartHeight = height - padding.top - padding.bottom;
     const range = max - min || 1;
@@ -274,11 +312,12 @@ export function ProfitAnalysisTrendChart({ trend, height = 200 }: ProfitAnalysis
       colors,
       latestDataIndex,
     };
-  }, [height, trend]);
+  }, [height, responsiveWidth, trend]);
 
   if (!chart) {
     return (
       <div
+        ref={containerRef}
         className="flex items-center justify-center rounded-xl bg-slate-50 text-sm text-slate-500"
         style={{ height }}
       >
@@ -322,10 +361,13 @@ export function ProfitAnalysisTrendChart({ trend, height = 200 }: ProfitAnalysis
   };
 
   return (
-    <div className="relative w-full select-none">
+    <div ref={containerRef} className="relative w-full select-none">
       <svg
         viewBox={`0 0 ${chart.width} ${chart.height}`}
-        className="w-full overflow-visible rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] focus-visible:ring-offset-2"
+        width="100%"
+        height={height}
+        preserveAspectRatio="none"
+        className="block w-full overflow-visible rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] focus-visible:ring-offset-2"
         role="img"
         aria-label={chartLabel}
         tabIndex={0}

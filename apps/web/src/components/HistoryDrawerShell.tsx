@@ -45,6 +45,7 @@ export function HistoryDrawerShell({
         role="dialog"
         aria-modal="true"
         aria-labelledby={labelledById}
+        aria-describedby={description ? `${labelledById}-description` : undefined}
         className="history-drawer-shell"
       >
         <div className="history-drawer-handle" aria-hidden="true" />
@@ -63,7 +64,11 @@ export function HistoryDrawerShell({
             <h2 id={labelledById} className="font-display truncate text-lg font-extrabold text-slate-950">
               {title}
             </h2>
-            {description ? <p className="mt-0.5 text-xs leading-5 text-slate-500">{description}</p> : null}
+            {description ? (
+              <p id={`${labelledById}-description`} className="mt-0.5 text-xs leading-5 text-slate-500">
+                {description}
+              </p>
+            ) : null}
           </div>
           <button
             type="button"

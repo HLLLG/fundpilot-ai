@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from app.services import discovery_candidate_pool, dip_drop_scanner
+from app.services import discovery_candidate_pool
 
 
 def test_build_candidate_pool_uses_full_universe_before_rank_fallback():
@@ -38,30 +38,3 @@ def test_build_candidate_pool_uses_full_universe_before_rank_fallback():
     assert universe.called
     assert not cached.called, "全量横截面可用时不应退回赢家榜"
     assert not raw.called, "不应直调 akshare_subprocess.fetch_open_fund_rank"
-
-
-def test_build_dip_pool_for_sectors_uses_recent_loser_rank_by_default():
-    """conftest._stub_market_data_fetches 把整个 build_dip_pool_for_sectors stub 掉了；
-    本测试 reload 模块拿回真实实现，再 patch 内部 fetcher 验证默认走 fund_rank_cache。"""
-    import importlib
-
-    fresh = importlib.reload(dip_drop_scanner)
-
-    with (
-        patch(
-            "app.services.dip_drop_scanner.fetch_open_fund_rank_worst_recent",
-            return_value=[],
-        ) as cached,
-        patch(
-            "app.services.akshare_subprocess.fetch_open_fund_rank",
-            return_value=[],
-        ) as raw,
-    ):
-        fresh.build_dip_pool_for_sectors(
-            target_sectors=["半导体"],
-            lookback_days=5,
-            min_drop_percent=3.0,
-        )
-
-    assert cached.called, "大跌扫描应走近期跌幅榜，而不是年度冠军榜"
-    assert not raw.called

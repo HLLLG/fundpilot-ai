@@ -58,6 +58,24 @@ TABLES = [
         ],
     ),
     (
+        "factor_ic_universe_snapshots",
+        [
+            "snapshot_id", "schema_version", "snapshot_date", "available_at",
+            "captured_at", "published_at", "source", "source_share_count",
+            "deduped_fund_count", "sampled_fund_count", "sample_target",
+            "fund_type_count", "source_commit", "source_run_id", "content_hash",
+            "payload",
+        ],
+    ),
+    (
+        "factor_ic_universe_members",
+        [
+            "snapshot_id", "fund_code", "fund_name", "fund_type", "share_class",
+            "canonical_portfolio_key", "inception_date", "available_at",
+            "source_rank", "content_hash", "payload", "created_at",
+        ],
+    ),
+    (
         "fund_transactions",
         [
             "id", "userId", "fund_code", "fund_name", "direction", "amount_yuan",
@@ -151,6 +169,11 @@ SOURCE_COLUMN_DEFAULTS: dict[str, dict[str, str]] = {
 # an absent identity or skip an identical one, but must never replace it.
 # Comparison fields intentionally exclude storage timestamps.
 IMMUTABLE_TABLES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
+    "factor_ic_universe_snapshots": (("snapshot_id",), ("content_hash",)),
+    "factor_ic_universe_members": (
+        ("snapshot_id", "fund_code"),
+        ("content_hash",),
+    ),
     "decision_portfolio_snapshots": (("userId", "snapshot_id"), ("content_hash",)),
     "decision_events": (("userId", "event_id"), ("content_hash",)),
     "outcome_observations": (

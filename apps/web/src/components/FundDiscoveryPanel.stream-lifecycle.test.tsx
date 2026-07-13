@@ -207,11 +207,22 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
       .mockImplementationOnce(() => new Promise(() => undefined));
 
     const accountA = renderPanel({ userId: 9_101 });
+    const accountATrigger = await screen.findByRole("button", {
+      name: "历史推荐，共 1 份",
+    });
+    expect(accountATrigger).toHaveAttribute("aria-haspopup", "dialog");
+    expect(accountATrigger).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(accountATrigger);
+    expect(accountATrigger).toHaveAttribute("aria-expanded", "true");
     await screen.findByText("Account A private discovery report");
     accountA.unmount();
 
     renderPanel({ userId: 9_202 });
 
+    const accountBTrigger = screen.getByRole("button", { name: "历史推荐" });
+    expect(accountBTrigger).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(accountBTrigger);
+    expect(screen.getByRole("dialog", { name: "历史推荐" })).toBeInTheDocument();
     expect(screen.queryByText("Account A private discovery report")).not.toBeInTheDocument();
     expect(listDiscoveryReports).toHaveBeenCalledTimes(2);
   });
@@ -255,7 +266,6 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
     expect(screen.getByRole("group", { name: "推荐目标" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "市场优选" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: "组合补缺" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "短线抄底" })).not.toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "选基策略" })).not.toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "基金类型偏好" })).not.toBeInTheDocument();
     expect(screen.getByText("系统自动选基")).toBeInTheDocument();
@@ -276,20 +286,19 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
     });
   });
 
-  it("keeps dip_swing only as a high-risk state entered by external prefill", async () => {
-    window.sessionStorage.setItem(
-      "fundpilot-discovery-prefill",
-      JSON.stringify({ scanMode: "dip_swing", focusSectors: ["半导体"] }),
-    );
+  it("labels reports from a retired scan goal as a generic historical mode", async () => {
+    renderPanel({
+      pendingDiscoveryReport: {
+        ...discoveryReport(),
+        discovery_facts: {
+          effective_configuration: {
+            scan_goal: "retired_mode",
+          },
+        },
+      },
+    });
 
-    renderPanel();
-
-    expect(await screen.findByTestId("discovery-high-risk-research-state")).toHaveTextContent(
-      "高风险反弹研究状态",
-    );
-    expect(screen.queryByRole("button", { name: "短线抄底" })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "返回市场优选" }));
-    expect(screen.getByRole("button", { name: "市场优选" })).toHaveAttribute("aria-pressed", "true");
+    expect(await screen.findByTestId("discovery-config-summary")).toHaveTextContent("历史模式");
   });
 
   it("collapses completed reports to a run summary and keeps the old report during fallback", async () => {

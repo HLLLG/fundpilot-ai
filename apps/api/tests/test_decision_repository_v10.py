@@ -54,8 +54,8 @@ def test_schema_v9_to_v10_and_transaction_truth_columns() -> None:
 
     run_migrations(connection)
 
-    assert SCHEMA_VERSION == 10
-    assert connection.execute("SELECT version FROM schema_meta WHERE id = 1").fetchone()[0] == 10
+    assert SCHEMA_VERSION == 11
+    assert connection.execute("SELECT version FROM schema_meta WHERE id = 1").fetchone()[0] == 11
     expected = {
         "decision_portfolio_snapshots",
         "decision_events",
@@ -425,7 +425,7 @@ def test_mysql_bootstrap_has_v10_durable_decision_and_ledger_ddl() -> None:
 
     ensure_mysql_schema(Connection())
     ddl = "\n".join(statements)
-    assert MYSQL_SCHEMA_VERSION == 10
+    assert MYSQL_SCHEMA_VERSION == 11
     for table in (
         "decision_portfolio_snapshots",
         "decision_events",

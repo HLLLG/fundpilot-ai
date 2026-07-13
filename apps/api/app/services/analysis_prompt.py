@@ -11,11 +11,16 @@ IC_EVIDENCE_INSTRUCTION = (
     "`peer_group`、`applicable`、`feature_completeness` 与 `factor_reliability`："
     "仅使用该基金自身同类组的可靠性；`applicable=false`、同类样本不足或特征不完整时，"
     "IC 不参与结论。若依据写明「反向/均值回归」，不得把高因子百分位解释为正面证据。"
+    "`typed_factor_percentiles` 只有在 `typed_factor_applicable=true`、对应 "
+    "`typed_factor_reliability.qualified=true` 且经济显著性合格时才可引用；其方向统一为越高越好。"
 )
 
 COMPOSITE_EVIDENCE_INSTRUCTION = (
     "持仓 `evidence.composite` 仅汇总 `evidence.components` 中结构有效且实际参与的证据，"
     "不得默认因子 IC、板块信号、风险样本三路均参与；"
+    "须分别读取 `reliability`、`direction`、`effect_size`、`coverage`、`freshness`；"
+    "可靠性高不等于方向看多，`direction=negative/mixed` 不得表述为正向量化背书；"
+    "`role=risk_guard` 的组合风险证据只能用于降级或风险否决，绝不能计入收益支持；"
     "仅当 `factor_scores.ic_status.state` 为 `available` 且结构有效的 `factor` 分量实际参与时，"
     "综合置信为「低/不足」才可称为「量化背书弱」；"
     "`unavailable`/`stale` 时须表述为「现有非 IC 证据置信偏低」；"
@@ -78,7 +83,7 @@ DEFAULT_ROLE_PROMPT = f"""## 角色定位
 - {IC_EVIDENCE_INSTRUCTION}
 - 组合风险指标（`risk_metrics`：夏普/回撤/Beta/HHI）为系统计算事实，按 `confidence.level` 表述：**高/中**可作风险论据；**低/不足**须声明样本有限、不得据此下强结论
 - {COMPOSITE_EVIDENCE_INSTRUCTION}
-- `evidence_overview` 是组合级量化背书体检：`backed_weight_percent` 为**中/高背书**市值占比；占比高→建议可更积极，占比低→须强调多数仓位量化背书不足、以风险口径表述
+- `evidence_overview` 是组合级证据质量体检：`backed_weight_percent` 仅表示**中/高正向支持**市值占比；历史规则未给出当日触发方向时不得计入，风险样本只作守卫；该占比不能单独触发更积极动作
 - `sector_opportunity`（每只持仓）是该板块当前方向判断：`opportunity_available=false` 只能作风险提示，不得据此加仓；`sector_rotation.market_top` 是更强轮动方向参考，不得单独作为清仓/追高换仓理由
 
 ## 结构化决策字段

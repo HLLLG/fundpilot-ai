@@ -47,11 +47,58 @@ describe("FactorIcStatusBadge", () => {
 
     render(<FactorIcStatusBadge />);
 
-    expect(await screen.findByText("IC 回测：7月10日 · 300只基金")).toBeInTheDocument();
+    expect(await screen.findByText("IC：7月10日 · 300只 · 当前存续样本")).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith(
       "http://127.0.0.1:8000/api/diagnostics/factor-ic-status",
       expect.objectContaining({ cache: "no-store" }),
     );
+  });
+
+  it("shows PIT collection honestly before the strict v3 gate matures", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          available: true,
+          run_date: "2026-07-13",
+          stale: false,
+          stale_after_days: 30,
+          source: "database",
+          universe_size: 1500,
+          cohort_mode: "current_survivors",
+          pit_upgrade: { state: "collecting", effective_anchor_count: 8 },
+        }),
+      ),
+    );
+
+    render(<FactorIcStatusBadge />);
+
+    expect(await screen.findByText("IC：7月13日 · 1500只 · PIT积累8锚点")).toBeInTheDocument();
+  });
+
+  it("marks a qualified v3 snapshot as point-in-time evidence", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          available: true,
+          run_date: "2027-08-01",
+          stale: false,
+          stale_after_days: 30,
+          source: "database",
+          universe_size: 1500,
+          cohort_mode: "point_in_time",
+          point_in_time: {
+            point_in_time_scope: "membership_only",
+            nav_revision_pit: false,
+          },
+        }),
+      ),
+    );
+
+    render(<FactorIcStatusBadge />);
+
+    expect(await screen.findByText("IC：8月1日 · 1500只 · 成员PIT")).toBeInTheDocument();
   });
 
   it("renders an explicit stale warning", async () => {

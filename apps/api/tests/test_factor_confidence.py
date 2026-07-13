@@ -71,6 +71,106 @@ def test_factor_reliability_covers_all_four() -> None:
     assert reliability["size"]["basis"] == "规模因子未回测，仅供参考"
 
 
+def _research_model(
+    *,
+    cohort_mode: str,
+    economic_qualified: bool,
+    nav_observation_pit: bool = False,
+) -> dict:
+    stats = {
+        "factor": "momentum",
+        "mean_ic": 0.05,
+        "ci_low": 0.01,
+        "direction_stable": True,
+        # PIT 的 OOS 均值位于 walk_forward；该结构用于防消费断链回归。
+        "walk_forward": {
+            "oos_mean_ic": 0.04,
+            "valid_fold_count": 5,
+            "same_direction_folds": 5,
+        },
+        "economic_significance": {
+            "qualified": economic_qualified,
+            "top_bottom_spread": 0.02,
+        },
+    }
+    return {
+        "cohort_mode": cohort_mode,
+        "point_in_time": {
+            "point_in_time_scope": (
+                "nav_observation_pit" if nav_observation_pit else "membership_only"
+            ),
+            "nav_revision_pit": nav_observation_pit,
+        },
+        "primary_horizon": 20,
+        "segments": {
+            "gp": {
+                "label": "主动股票",
+                "horizons": {
+                    "20": {
+                        "qualified": {"momentum": True},
+                        "factors": [stats],
+                    }
+                },
+            }
+        },
+    }
+
+
+def test_point_in_time_qualified_economic_factor_can_be_high() -> None:
+    result = fc.factor_reliability(
+        research_model=_research_model(
+            cohort_mode="point_in_time",
+            economic_qualified=True,
+            nav_observation_pit=True,
+        ),
+        segment="gp",
+    )
+
+    assert result["momentum"]["level"] == "高"
+    assert "PIT" in result["momentum"]["basis"]
+    assert "经济门槛" in result["momentum"]["basis"]
+
+
+def test_current_survivor_factor_remains_capped_at_medium() -> None:
+    result = fc.factor_reliability(
+        research_model=_research_model(
+            cohort_mode="current_survivors",
+            economic_qualified=True,
+        ),
+        segment="gp",
+    )
+
+    assert result["momentum"]["level"] == "中"
+    assert "幸存者" in result["momentum"]["basis"]
+
+
+def test_point_in_time_without_economic_gate_is_not_high() -> None:
+    result = fc.factor_reliability(
+        research_model=_research_model(
+            cohort_mode="point_in_time",
+            economic_qualified=False,
+        ),
+        segment="gp",
+    )
+
+    assert result["momentum"]["level"] != "高"
+
+
+def test_membership_only_pit_remains_capped_at_medium() -> None:
+    result = fc.factor_reliability(
+        research_model=_research_model(
+            cohort_mode="point_in_time",
+            economic_qualified=True,
+            nav_observation_pit=False,
+        ),
+        segment="gp",
+    )
+
+    assert result["momentum"]["level"] == "中"
+    assert "NAV" in result["momentum"]["basis"]
+    assert "NAV修订时点未冻结" in result["momentum"]["basis"]
+
+
 def test_load_ic_summary_reads_local_fallback(tmp_path, monkeypatch) -> None:
     now = datetime.now(timezone.utc).replace(microsecond=0)
     payload = {

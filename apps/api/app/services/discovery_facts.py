@@ -9,10 +9,7 @@ from app.services.discovery_sector_context import (
 )
 from app.services.discovery_prompt import DISCOVERY_FACTS_INSTRUCTION
 from app.services.investment_presets import take_profit_threshold_percent
-from app.services.market_flow_client import (
-    NORTHBOUND_NOT_DISCLOSED_REASON,
-    build_stock_connect_flow_context,
-)
+from app.services.market_flow_client import build_stock_connect_flow_context
 from app.services.fund_nav_service import get_cached_official_nav_return
 from app.services.holding_estimates import (
     compute_estimated_daily_return_percent,
@@ -40,8 +37,6 @@ def build_discovery_facts(
     budget_yuan: float | None = None,
     selection_strategy: str = "balanced",
     scan_mode: str = "full_market",
-    dip_lookback_days: int = 5,
-    dip_min_drop_percent: float = 3.0,
     focus_sectors: list[str] | None = None,
     fund_type_preference: str = "any",
     sector_opportunities: list[dict] | None = None,
@@ -60,9 +55,6 @@ def build_discovery_facts(
         else build_signal_backtest_context(target_sectors)
     )
     session = build_trading_session()
-    fee_break_even = take_profit_threshold_percent(profile)
-    target_exit_days = profile.hold_days_target or 5
-
     target_context_labels = list(dict.fromkeys(list(target_sectors) + list(focus_sectors or [])))
     target_sector_context = (
         _budgeted_target_sector_context(
@@ -136,37 +128,29 @@ def build_discovery_facts(
         "selection_strategy": selection_strategy,
         "effective_configuration": {
             "scan_goal": scan_mode,
-            "selection_policy": (
-                "dip_rebound_research" if scan_mode == "dip_swing" else "auto_quality"
-            ),
+            "selection_policy": "auto_quality",
             "share_class_policy": "family_dedupe_fee_verification_required",
             "legacy_fund_type_preference": fund_type_preference,
         },
     }
 
-    if scan_mode == "dip_swing":
-        dip_values = [
-            float(item["dip_drop_percent"])
-            for item in candidate_pool
-            if item.get("dip_drop_percent") is not None
-        ]
-        avg_drop = round(sum(dip_values) / len(dip_values), 2) if dip_values else None
-        facts["dip_swing"] = {
-            "lookback_days": dip_lookback_days,
-            "min_drop_percent": dip_min_drop_percent,
-            "fee_break_even_percent": fee_break_even,
-            "target_exit_days": target_exit_days,
-            "pool_prescreen_stats": {
-                "candidates": len(candidate_pool),
-                "avg_drop": avg_drop,
-            },
-        }
-
     return facts
 
 
 def _candidate_quality_summary(candidate_pool: list[dict]) -> dict:
+    required_fields = [
+        "return_3m_percent",
+        "return_6m_percent",
+        "max_drawdown_1y_percent",
+        "fund_scale_yi",
+        "established_date",
+        "fund_manager",
+        "nav_date",
+    ]
     statuses = {"eligible": 0, "watch_only": 0, "excluded": 0}
+    missing_field_counts = {field: 0 for field in required_fields}
+    profile_status_counts: dict[str, int] = {}
+    profile_source_counts: dict[str, int] = {}
     coverage_values: list[float] = []
     for item in candidate_pool:
         gate = item.get("quality_gate") if isinstance(item.get("quality_gate"), dict) else {}
@@ -174,6 +158,15 @@ def _candidate_quality_summary(candidate_pool: list[dict]) -> dict:
         if status not in statuses:
             status = "watch_only"
         statuses[status] += 1
+        for field in gate.get("missing_fields") or []:
+            if field in missing_field_counts:
+                missing_field_counts[field] += 1
+        profile_status = str(gate.get("profile_status") or item.get("profile_status") or "unknown")
+        profile_status_counts[profile_status] = profile_status_counts.get(profile_status, 0) + 1
+        for source in gate.get("profile_sources") or item.get("profile_sources") or []:
+            label = str(source).strip()
+            if label:
+                profile_source_counts[label] = profile_source_counts.get(label, 0) + 1
         value = gate.get("coverage_percent")
         try:
             if value is not None:
@@ -185,15 +178,10 @@ def _candidate_quality_summary(candidate_pool: list[dict]) -> dict:
         "eligible_count": statuses["eligible"],
         "watch_only_count": statuses["watch_only"],
         "excluded_count": statuses["excluded"],
-        "required_fields": [
-            "return_3m_percent",
-            "return_6m_percent",
-            "max_drawdown_1y_percent",
-            "fund_scale_yi",
-            "established_date",
-            "fund_manager",
-            "nav_date",
-        ],
+        "required_fields": required_fields,
+        "missing_field_counts": missing_field_counts,
+        "profile_status_counts": profile_status_counts,
+        "profile_source_counts": profile_source_counts,
         "coverage_percent": (
             round(sum(coverage_values) / len(coverage_values), 1)
             if coverage_values
@@ -299,11 +287,9 @@ def _basic_target_sector_context(
 
 def _stock_connect_flow_unavailable(reason: str) -> dict:
     return {
-        "schema_version": "stock_connect_flow.v1",
+        "schema_version": "stock_connect_flow.v2",
         "available": False,
         "reason": reason,
-        "northbound_status": "not_disclosed",
-        "northbound_reason": NORTHBOUND_NOT_DISCLOSED_REASON,
         "southbound_available": False,
         "southbound_net_yi": None,
         "message": "互联互通资金摘要未在预算内完成，荐基已按板块机会事实继续。",

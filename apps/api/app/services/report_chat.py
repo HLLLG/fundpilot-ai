@@ -26,6 +26,7 @@ from app.services.news_service import NewsService
 from app.services.report_chat_runtime import resolve_report_chat_runtime
 from app.services.holding_metrics import HOLDING_RETURN_SEMANTICS
 from app.services.report_export import report_to_markdown
+from app.services.retired_market_evidence import sanitize_retired_market_evidence
 
 REPORT_CHAT_MAX_TOKENS = 4096
 
@@ -247,6 +248,7 @@ def stream_report_chat(
     report = get_report(report_id)
     if report is None:
         raise ValueError("报告不存在")
+    report = sanitize_retired_market_evidence(report)
 
     history = list_report_chat_messages(report_id)
     user_record = save_chat_message(

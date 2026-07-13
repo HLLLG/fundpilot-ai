@@ -14,6 +14,7 @@ import {
   selectPrimaryReason,
 } from "@/lib/reportPresentation";
 import { DecisionEvidenceGrid } from "@/components/DecisionEvidenceGrid";
+import { QuantEvidenceSummary } from "@/components/QuantEvidenceSummary";
 import { SectorOpportunityCard } from "@/components/SectorOpportunityCard";
 
 type Snapshot = Report["snapshots"][number];
@@ -353,9 +354,10 @@ export function FundRecommendationCard({
               <SectorOpportunityCard item={sectorOpportunity} divergenceBacktest={divergenceBacktest} />
             ) : null}
             {evidence ? (
-              <p className="mt-3 break-words text-xs leading-5 text-slate-600 [overflow-wrap:anywhere]">
-                完整量化证据：{evidence.summary}
-              </p>
+              <div className="mt-3 rounded-xl border border-slate-200/80 bg-slate-50/70 p-3">
+                <div className="mb-2 text-[11px] font-semibold tracking-[0.12em] text-slate-500">量化证据质量</div>
+                <QuantEvidenceSummary evidence={evidence} />
+              </div>
             ) : null}
             {item.decision_path ? (
               <p className="mt-3 break-words text-sm leading-6 text-blue-950 [overflow-wrap:anywhere]">

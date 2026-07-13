@@ -26,7 +26,7 @@ recommendations 字段约束：
 - sector_name 须与 candidate_pool 中该基金的 sector_label 一致
 - action 仅用：建议关注、分批买入、等待回调
 - confidence 仅用：高、中、低
-- hold_horizon 示例：2-4周、1-3个月、3-6个月；dip_swing 模式可用 2-5天
+- hold_horizon 示例：2-4周、1-3个月、3-6个月
 - decision_path: 1 句话，必须按「先判断板块方向 → 再比较方向内候选基金质量 → 最后决定动作」说明
 - sector_evidence: 字符串数组，引用 sector_opportunities 中的 score、track、confidence、资金流、pattern；
   若没有对应 sector_opportunities，须说明使用 sector_heat / target_sector_context 降级判断
@@ -51,10 +51,11 @@ recommendations 字段约束：
 - 不得承诺收益；不得编造 candidate_pool 外的代码或未提供的估值分位
 - share_class_fee_status=unverified 时须在 validation_notes 明确“真实申购/赎回费用待执行前核验”，不得宣称已选出最低成本份额
 - full_market 模式须先判断板块方向，再在方向内选基金；不得只按基金近1年收益排序
-- 北向实时净买额不再提供、不得推断；南向资金用 stock_connect_flow；板块主力用 target_sector_context.sector_fund_flow
+- 南向资金仅使用 stock_connect_flow，并只作港股资金面参考；板块主力使用 target_sector_context.sector_fund_flow
 - sector_opportunities 是系统已用 1d/5d 涨跌 + 今日/5日主力资金 + pattern 生成的主方向，
   推荐理由须优先引用它，而不是重新发明方向
 - signal_backtest / candidate_factor_scores 按 confidence.level / factor_reliability 表述
+- 仅 candidate_factor_scores.applicable_fund_codes 内候选可使用 action=分批买入；未量化覆盖候选只能观察/等待
 - summary 或 caveats 须体现 news.freshness_label 对置信度的影响
 - data_evidence 是字段级时点证据；stale/unavailable/none 不得支撑买入动作，is_estimate=true 必须降置信度
 - discovery_facts.portfolio_position_truth 是持仓份额、成本和现金的唯一真值摘要；unknown/null 不得按 0 猜测；
@@ -77,6 +78,7 @@ _COMMON_REQUIREMENTS = [
     "新闻仅使用系统预取的 news_titles/topic_briefs；过旧或为空的新闻不能作为买入主依据",
     "仅分批买入可给 suggested_amount_yuan；建议关注/等待回调必须为 null，并结合 available_budget_yuan 与 concentration_limit_percent",
     "引用数字须来自 discovery_facts，禁止编造",
+    "只有 candidate_factor_scores.applicable_fund_codes 覆盖的候选可分批买入；未覆盖候选只能观察/等待",
     "须按 data_evidence 校验数据时点、置信度与是否估算；过期或不可用字段不得支撑动作",
     "portfolio_position_truth 中 unknown/null 不得按 0；position_complete=false、ledger_truncated=true 或存在 pending/conflict 时 suggested_amount_yuan 必须为空",
     "share_class_fee_status=unverified 时须提示真实申购/赎回费用待核验，不得宣称份额成本最优",
@@ -89,7 +91,7 @@ _FULL_MARKET_REQUIREMENTS = [
     "sector_opportunities 是系统已用 1d/5d 涨跌 + 今日/5日主力资金 + pattern 生成的主方向，推荐理由须优先引用它",
     "portfolio_gap / holdings_slim 仅作背景，不要以「持仓缺口」为主叙事",
     "market_view 须覆盖热度靠前板块与相对冷门但有机会的方向",
-    "北向实时净买额不参与决策；引用南向须用 stock_connect_flow；板块主力须用 target_sector_context.sector_fund_flow",
+    "引用南向须用 stock_connect_flow 且仅作港股资金面参考；板块主力须用 target_sector_context.sector_fund_flow",
 ]
 
 _GAP_REQUIREMENTS = [
@@ -99,20 +101,10 @@ _GAP_REQUIREMENTS = [
     "同 sector_name 合计权重不得超过 concentration_limit_percent，须在 amount_note 说明",
 ]
 
-_DIP_SWING_REQUIREMENTS = [
-    *_COMMON_REQUIREMENTS,
-    "须结合 dip_drop_percent、nav_trend、dip_swing.fee_break_even_percent 说明 2~5 天短线窗口",
-    "强调大跌≠利好；优先 分批买入 / 建议关注 / 等待回调，避免重仓抄底措辞",
-    "hold_horizon 建议 2-5天；须提示达 fee_break_even_percent 考虑止盈",
-]
-
-
 def _requirements_for_scan_mode(scan_mode: str) -> list[str]:
     normalized = scan_mode if scan_mode != "gap" else "portfolio_gap"
     if normalized == "full_market":
         return _FULL_MARKET_REQUIREMENTS
-    if normalized == "dip_swing":
-        return _DIP_SWING_REQUIREMENTS
     return _GAP_REQUIREMENTS
 
 
@@ -176,7 +168,6 @@ def build_user_payload(
             "news": discovery_facts.get("news"),
             "candidate_factor_scores": discovery_facts.get("candidate_factor_scores"),
             "selection_strategy": discovery_facts.get("selection_strategy"),
-            "dip_swing": discovery_facts.get("dip_swing"),
             "portfolio_snapshot": discovery_facts.get("portfolio_snapshot"),
             "portfolio_position_truth": discovery_facts.get("portfolio_position_truth"),
             "data_evidence": discovery_facts.get("data_evidence"),

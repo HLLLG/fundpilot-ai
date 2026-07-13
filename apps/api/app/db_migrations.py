@@ -6,7 +6,7 @@ import threading
 from datetime import datetime, timezone
 
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 # 迁移在应用/后台线程首次建立连接时触发（例如板块快照刷新会 daemon 线程预取资金流历史，
 # 与主线程几乎同时首次打开 sqlite 连接）。同进程内多个线程各自用独立 connection 对同一
@@ -420,6 +420,80 @@ def _migrate_factor_ic_snapshots(connection: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_factor_ic_universe_snapshots(connection: sqlite3.Connection) -> None:
+    """Create the append-only point-in-time universe store.
+
+    The two tables are deliberately independent from the current-survivor IC
+    summary.  A universe snapshot is immutable evidence; later captures append
+    another identity instead of replacing what a historical run could see.
+    """
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS factor_ic_universe_snapshots (
+            snapshot_id TEXT PRIMARY KEY,
+            schema_version INTEGER NOT NULL,
+            snapshot_date TEXT NOT NULL,
+            available_at TEXT NOT NULL,
+            captured_at TEXT NOT NULL,
+            published_at TEXT NOT NULL,
+            source TEXT NOT NULL,
+            source_share_count INTEGER NOT NULL,
+            deduped_fund_count INTEGER NOT NULL,
+            sampled_fund_count INTEGER NOT NULL,
+            sample_target INTEGER NOT NULL,
+            fund_type_count INTEGER NOT NULL,
+            source_commit TEXT NOT NULL,
+            source_run_id TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            payload TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_factor_ic_universe_date
+        ON factor_ic_universe_snapshots (snapshot_date DESC, available_at DESC)
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS factor_ic_universe_members (
+            snapshot_id TEXT NOT NULL,
+            fund_code TEXT NOT NULL,
+            fund_name TEXT NOT NULL,
+            fund_type TEXT NOT NULL,
+            share_class TEXT,
+            canonical_portfolio_key TEXT NOT NULL,
+            inception_date TEXT,
+            available_at TEXT NOT NULL,
+            source_rank INTEGER,
+            content_hash TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (snapshot_id, fund_code)
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_factor_ic_universe_member_code
+        ON factor_ic_universe_members (fund_code, snapshot_id)
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_factor_ic_universe_member_type
+        ON factor_ic_universe_members (snapshot_id, fund_type)
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_factor_ic_universe_member_portfolio
+        ON factor_ic_universe_members (canonical_portfolio_key, snapshot_id)
+        """
+    )
+
+
 def _migrate_decision_accuracy_v2(connection: sqlite3.Connection) -> None:
     """Create the durable decision/outcome and append-only ledger substrate.
 
@@ -631,6 +705,7 @@ def _run_migrations_locked(connection: sqlite3.Connection) -> None:
     if version >= SCHEMA_VERSION:
         _migrate_fund_primary_sectors_global(connection)
         _migrate_factor_ic_snapshots(connection)
+        _migrate_factor_ic_universe_snapshots(connection)
         _migrate_decision_accuracy_v2(connection)
         return
 
@@ -689,6 +764,7 @@ def _run_migrations_locked(connection: sqlite3.Connection) -> None:
     _migrate_swing_alert_fired(connection)
     _migrate_fund_primary_sectors_global(connection)
     _migrate_factor_ic_snapshots(connection)
+    _migrate_factor_ic_universe_snapshots(connection)
     _migrate_decision_accuracy_v2(connection)
 
     _ensure_migration_user(connection)

@@ -40,7 +40,6 @@ import {
   type DiscoveryRecommendationPartial,
   type StreamingDiscoveryState,
 } from "@/lib/discoveryStreamApi";
-import { applyInvestmentPreset } from "@/lib/investmentPresets";
 import { ensureNotificationPermission } from "@/lib/notifications";
 import { loadDiscoveryPrompt, loadDiscoverySectorHeatCache, saveDiscoveryPrompt, saveDiscoverySectorHeatCache } from "@/lib/storage";
 import { useCachedFetch } from "@/lib/useCachedFetch";
@@ -51,7 +50,6 @@ import {
   setDiscoveryFocusSectors,
 } from "@/lib/discoveryFocusSectors";
 
-const DISCOVERY_PREFILL_KEY = "fundpilot-discovery-prefill";
 const DISCOVERY_SECTORS_CACHE_KEY = "discovery-panel:sectors";
 const DISCOVERY_REPORTS_CACHE_KEY = "discovery-panel:reports";
 const DISCOVERY_SECTORS_STALE_MS = 30 * 60 * 1000;
@@ -62,17 +60,12 @@ const DEFAULT_DISCOVERY_PROMPT: DiscoveryPromptConfig = {
   is_custom: false,
 };
 
-type DiscoveryPrefill = {
-  scanMode?: DiscoveryScanMode;
-  focusSectors?: string[];
-};
-
 type DiscoveryFeedback = {
   tone: NoticeTone;
   message: string;
 };
 
-const PRIMARY_SCAN_MODE_OPTIONS: { id: Exclude<DiscoveryScanMode, "dip_swing">; label: string; hint: string }[] = [
+const PRIMARY_SCAN_MODE_OPTIONS: { id: DiscoveryScanMode; label: string; hint: string }[] = [
   { id: "full_market", label: "市场优选", hint: "跨方向比较后，只保留证据与质量门通过的候选" },
   { id: "portfolio_gap", label: "组合补缺", hint: "优先未重仓、热度靠前的缺口板块" },
 ];
@@ -80,7 +73,6 @@ const PRIMARY_SCAN_MODE_OPTIONS: { id: Exclude<DiscoveryScanMode, "dip_swing">; 
 const SCAN_MODE_LABELS: Record<DiscoveryScanMode, string> = {
   full_market: "市场优选",
   portfolio_gap: "组合补缺",
-  dip_swing: "高风险反弹研究",
 };
 
 type FundDiscoveryPanelProps = {
@@ -154,9 +146,6 @@ export function FundDiscoveryPanel({
 
   const [focusSectors, setFocusSectors] = useState<string[]>(() => loadDiscoveryFocusSectors());
   const [scanMode, setScanMode] = useState<DiscoveryScanMode>("full_market");
-  const [dipLookbackDays, setDipLookbackDays] = useState<3 | 5>(5);
-  const [dipMinDropPercent, setDipMinDropPercent] = useState<3 | 5>(3);
-  const [dipAdvancedOpen, setDipAdvancedOpen] = useState(false);
   const [budgetYuan, setBudgetYuan] = useState<string>("");
   const [report, setReport] = useState<FundDiscoveryReport | null>(null);
   const [discoveryPrompt, setDiscoveryPrompt] = useState<DiscoveryPromptConfig>(() =>
@@ -178,29 +167,6 @@ export function FundDiscoveryPanel({
       saveDiscoverySectorHeatCache(rawSectors);
     }
   }, [rawSectors]);
-
-  useEffect(() => {
-    try {
-      const raw = window.sessionStorage.getItem(DISCOVERY_PREFILL_KEY);
-      if (raw) {
-        window.sessionStorage.removeItem(DISCOVERY_PREFILL_KEY);
-        const prefill = JSON.parse(raw) as DiscoveryPrefill;
-        if (prefill.scanMode) {
-          setScanMode(prefill.scanMode);
-        }
-        if (prefill.focusSectors?.length) {
-          setFocusSectors(prefill.focusSectors.slice(0, 3));
-        }
-      } else {
-        const labels = loadDiscoveryFocusSectors();
-        if (labels.length) {
-          setFocusSectors(labels);
-        }
-      }
-    } catch {
-      // ignore malformed prefill
-    }
-  }, []);
 
   useEffect(() => {
     const onFocusChanged = (event: Event) => {
@@ -228,15 +194,6 @@ export function FundDiscoveryPanel({
     setFocusSectors(next);
     setDiscoveryFocusSectors(next);
   }, []);
-
-  const dipDeepSectors = useMemo(() => {
-    return [...rawSectors]
-      .filter((row) => row.change_5d_percent != null)
-      .sort((a, b) => (a.change_5d_percent ?? 0) - (b.change_5d_percent ?? 0))
-      .slice(0, 5);
-  }, [rawSectors]);
-
-  const isAggressiveProfile = profile.decision_style === "aggressive";
 
   useEffect(() => {
     promptPersistReady.current = false;
@@ -292,17 +249,6 @@ export function FundDiscoveryPanel({
     }
   }, [reportId]);
 
-  const toggleSector = (label: string) => {
-    if (focusSectors.includes(label)) {
-      handleFocusSectorsChange(focusSectors.filter((item) => item !== label));
-      return;
-    }
-    if (focusSectors.length >= 3) {
-      return;
-    }
-    handleFocusSectorsChange([...focusSectors, label]);
-  };
-
   const handleCancelStream = useCallback(() => {
     discoveryStreamAbortRef.current?.abort();
     discoveryStreamAbortRef.current = null;
@@ -326,10 +272,8 @@ export function FundDiscoveryPanel({
       focusSectors,
       budgetYuan: parsedBudget && !Number.isNaN(parsedBudget) ? parsedBudget : null,
       fundTypePreference: "any" as const,
-      selectionStrategy: scanMode === "dip_swing" ? ("dip_rebound" as const) : ("balanced" as const),
+      selectionStrategy: "balanced" as const,
       scanMode,
-      dipLookbackDays: scanMode === "dip_swing" ? dipLookbackDays : undefined,
-      dipMinDropPercent: scanMode === "dip_swing" ? dipMinDropPercent : undefined,
       systemRolePrompt: discoveryPrompt.is_custom ? discoveryPrompt.role_prompt : null,
     };
 
@@ -461,8 +405,6 @@ export function FundDiscoveryPanel({
     onDiscoveryStreamStart,
     onStreamingDiscoveryChange,
     profile,
-    dipLookbackDays,
-    dipMinDropPercent,
     scanMode,
     refreshReports,
     report,
@@ -491,28 +433,24 @@ export function FundDiscoveryPanel({
   const reportedScanGoal =
     report?.discovery_facts?.effective_configuration?.scan_goal ??
     report?.discovery_facts?.portfolio_gap?.scan_mode;
-  const summaryScanMode: DiscoveryScanMode =
-    reportedScanGoal === "full_market" ||
-    reportedScanGoal === "portfolio_gap" ||
-    reportedScanGoal === "dip_swing"
-      ? reportedScanGoal
-      : scanMode;
+  const summaryScanModeLabel =
+    reportedScanGoal === "full_market" || reportedScanGoal === "portfolio_gap"
+      ? SCAN_MODE_LABELS[reportedScanGoal]
+      : report
+        ? "历史模式"
+        : SCAN_MODE_LABELS[scanMode];
   const summaryAnalysisMode = report?.analysis_mode ?? analysisMode;
   const summaryFocusSectors = report ? report.focus_sectors : focusSectors;
   const reportedSelectionPolicy =
     report?.discovery_facts?.effective_configuration?.selection_policy ??
     report?.discovery_facts?.selection_strategy;
   const summarySelectionLabel = report
-    ? reportedSelectionPolicy === "dip_rebound_research" || reportedSelectionPolicy === "dip_rebound"
-      ? "反弹研究策略"
-      : reportedSelectionPolicy === "with_new_issue"
+    ? reportedSelectionPolicy === "with_new_issue"
         ? "历史策略：含新发观察"
         : reportedSelectionPolicy === "balanced"
           ? "均衡质量策略"
           : "自动质量优选"
-    : summaryScanMode === "dip_swing"
-      ? "反弹研究策略"
-      : "自动质量优选";
+    : "自动质量优选";
   const reportedShareClassPolicy =
     report?.discovery_facts?.effective_configuration?.share_class_policy;
   const reportedFundTypePreference =
@@ -526,7 +464,7 @@ export function FundDiscoveryPanel({
         ? "历史偏好：排除C类"
         : "基金类型不限";
   const configSummary = [
-    SCAN_MODE_LABELS[summaryScanMode],
+    summaryScanModeLabel,
     summarySelectionLabel,
     summaryShareClassLabel,
     summaryAnalysisMode === "fast" ? "快速分析" : "深度分析",
@@ -557,7 +495,7 @@ export function FundDiscoveryPanel({
   );
 
   return (
-    <div className="discovery-workspace mx-auto grid min-w-0 max-w-5xl gap-6 xl:max-w-6xl xl:grid-cols-[minmax(0,1fr)_300px]">
+    <div className="discovery-workspace mx-auto grid min-w-0 max-w-6xl gap-6">
       <div className="flex min-w-0 flex-col gap-4">
         <section className="discovery-composer overflow-hidden">
           <div className="report-control-hero border-b border-[var(--line)] px-4 py-4 sm:px-5">
@@ -576,7 +514,7 @@ export function FundDiscoveryPanel({
               <button
                 type="button"
                 onClick={() => setHistoryOpen(true)}
-                className="discovery-history-trigger min-h-11 shrink-0 xl:hidden"
+                className="discovery-history-trigger min-h-11 shrink-0"
                 aria-haspopup="dialog"
                 aria-expanded={historyOpen}
                 aria-label={`历史推荐${historyReports.length ? `，共 ${historyReports.length} 份` : ""}`}
@@ -718,153 +656,14 @@ export function FundDiscoveryPanel({
               ))}
             </div>
             <p id="discovery-scan-mode-hint" className="mt-1.5 text-[11px] leading-5 text-slate-500">
-              {scanMode === "dip_swing"
-                ? "由大跌雷达进入的高风险反弹研究，仅生成等待或观察线索。"
-                : PRIMARY_SCAN_MODE_OPTIONS.find((item) => item.id === scanMode)?.hint}
+              {PRIMARY_SCAN_MODE_OPTIONS.find((item) => item.id === scanMode)?.hint}
             </p>
           </fieldset>
-
-          {scanMode === "dip_swing" ? (
-            <div
-              className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50/80 px-3 py-2.5"
-              data-testid="discovery-high-risk-research-state"
-            >
-              <div>
-                <p className="text-xs font-black text-rose-950">高风险反弹研究状态</p>
-                <p className="mt-0.5 text-[11px] leading-5 text-rose-900">
-                  此入口仅兼容大跌雷达预填，不属于常规荐基；候选默认按研究观察处理。
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setScanMode("full_market")}
-                className="min-h-11 shrink-0 rounded-full border border-rose-300 bg-white px-3 text-xs font-bold text-rose-900 transition hover:bg-rose-100"
-              >
-                返回市场优选
-              </button>
-            </div>
-          ) : null}
-
-          {scanMode === "dip_swing" && !isAggressiveProfile ? (
-            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50/80 px-3 py-2.5">
-              <p className="text-xs font-semibold leading-5 text-rose-900">
-                高风险反弹研究仅适合「激进波段」预设（3～7 天、扣费后止盈）。
-              </p>
-              <button
-                type="button"
-                onClick={() => onProfileChange(applyInvestmentPreset("aggressive_swing", profile))}
-                className="min-h-11 shrink-0 rounded-full border border-rose-300 bg-white px-3 text-xs font-bold text-rose-800 transition hover:bg-rose-100"
-              >
-                切换激进波段
-              </button>
-            </div>
-          ) : null}
-
-          {scanMode === "dip_swing" ? (
-            <div className="mt-4 overflow-hidden rounded-xl border border-slate-100">
-              <button
-                type="button"
-                onClick={() => setDipAdvancedOpen((value) => !value)}
-                aria-expanded={dipAdvancedOpen}
-                aria-controls="discovery-dip-advanced"
-                className="flex min-h-11 w-full items-center justify-between gap-2 px-3 text-left text-xs font-bold text-slate-600 hover:bg-slate-50"
-              >
-                <span>抄底筛选（高级）</span>
-                <ChevronDown
-                  size={14}
-                  className={`shrink-0 transition ${dipAdvancedOpen ? "rotate-180" : ""}`}
-                />
-              </button>
-              <div id="discovery-dip-advanced">
-                {dipAdvancedOpen ? (
-                <div className="grid gap-3 border-t border-slate-100 p-3 sm:grid-cols-2">
-                  <fieldset>
-                    <legend className="mb-2 text-[11px] font-bold text-slate-500">回看天数</legend>
-                    <div className="flex flex-wrap gap-2">
-                      {([3, 5] as const).map((days) => (
-                        <button
-                          key={days}
-                          type="button"
-                          onClick={() => setDipLookbackDays(days)}
-                          aria-pressed={dipLookbackDays === days}
-                          className={`min-h-11 rounded-full border px-3 text-xs font-medium transition ${
-                            dipLookbackDays === days
-                              ? "border-[var(--brand)] bg-[var(--brand)] text-white"
-                              : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
-                          }`}
-                        >
-                          {days} 日
-                        </button>
-                      ))}
-                    </div>
-                  </fieldset>
-                  <fieldset>
-                    <legend className="mb-2 text-[11px] font-bold text-slate-500">最小跌幅</legend>
-                    <div className="flex flex-wrap gap-2">
-                      {([3, 5] as const).map((pct) => (
-                        <button
-                          key={pct}
-                          type="button"
-                          onClick={() => setDipMinDropPercent(pct)}
-                          aria-pressed={dipMinDropPercent === pct}
-                          className={`min-h-11 rounded-full border px-3 text-xs font-medium transition ${
-                            dipMinDropPercent === pct
-                              ? "border-[var(--brand)] bg-[var(--brand)] text-white"
-                              : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
-                          }`}
-                        >
-                          ≥ {pct}%
-                        </button>
-                      ))}
-                    </div>
-                  </fieldset>
-                </div>
-              ) : (
-                <p className="border-t border-slate-100 px-3 py-2 text-[11px] leading-5 text-slate-500">
-                  回看 {dipLookbackDays} 日、板块跌幅 ≥ {dipMinDropPercent}%
-                </p>
-                )}
-              </div>
-            </div>
-          ) : null}
 
           <div className="mt-4">
             <div className="mb-2 text-xs font-semibold text-slate-700">
               关注方向（可选，最多 3 个）
             </div>
-            {scanMode === "dip_swing" && dipDeepSectors.length > 0 ? (
-              <div className="mb-3">
-                <p className="mb-2 text-[11px] font-bold text-rose-600">今日跌深板块</p>
-                <div className="flex flex-wrap gap-2">
-                  {dipDeepSectors.map((sector) => {
-                    const selected = focusSectors.includes(sector.sector_label);
-                    const change5d = sector.change_5d_percent;
-                    return (
-                      <button
-                        key={`dip-${sector.sector_label}`}
-                        type="button"
-                        onClick={() => toggleSector(sector.sector_label)}
-                        aria-pressed={selected}
-                        className={`min-h-11 rounded-full border px-3 text-xs font-medium transition ${
-                          selected
-                            ? "border-rose-700 bg-rose-700 text-white"
-                            : "border-rose-200 bg-rose-50 text-rose-900 hover:bg-rose-100"
-                        }`}
-                      >
-                        {sector.sector_label}
-                        {change5d != null ? (
-                          <span className={selected ? "text-rose-100" : "text-rose-700"}>
-                            {" "}
-                            {change5d >= 0 ? "+" : ""}
-                            {change5d.toFixed(2)}%
-                          </span>
-                        ) : null}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            ) : null}
             <FocusSectorPicker
               selected={focusSectors}
               onChange={handleFocusSectorsChange}
@@ -984,7 +783,6 @@ export function FundDiscoveryPanel({
         reports={historyReports}
         activeReportId={report?.id}
         open={historyOpen}
-        onOpen={() => setHistoryOpen(true)}
         onClose={() => setHistoryOpen(false)}
         onRefresh={() => void refreshReports()}
         onSelect={(selected) => selectHistoryReport(selected)}

@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timezone
+import math
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Literal
 from zoneinfo import ZoneInfo
 
@@ -16,6 +17,7 @@ POLICY_VERSION = "decision_policy.2026-07.v3"
 FEE_MODEL_VERSION = "fee_assumption.initial_principal_haircut.v1"
 ANALYSIS_PROMPT_VERSION = "analysis_prompt.2026-07.v3"
 DISCOVERY_PROMPT_VERSION = "discovery_prompt.2026-07.v3"
+QUANT_EVIDENCE_SNAPSHOT_SCHEMA_VERSION = "quant_evidence.v2"
 
 _CN_TZ = ZoneInfo("Asia/Shanghai")
 _DAILY_HORIZONS = (1, 5, 20)
@@ -171,6 +173,12 @@ def _build_events(
         evaluation_class = _evaluation_class(action, decision_kind)
         event_id = f"{decision_kind}:{report_id}:{index}:{code or 'invalid'}"
         benchmark = dict(benchmark_by_code.get(code or "") or _benchmark_unavailable())
+        quant_evidence = _freeze_quant_evidence(
+            facts,
+            decision_kind=decision_kind,
+            fund_code=code,
+            frozen_at=decision_at,
+        )
         event = {
             "schema_version": DECISION_EVENT_SCHEMA_VERSION,
             "event_id": event_id,
@@ -222,6 +230,10 @@ def _build_events(
             ),
             "benchmark": benchmark,
             "fee_policy": fee_policy,
+            # Point-in-time factor evidence is part of the immutable event.  It
+            # must never be reconstructed from a newer IC snapshot during
+            # outcome evaluation or calibration.
+            "quant_evidence": quant_evidence,
             "model_version": model_version,
             "prompt_version": prompt_version,
             "policy_version": POLICY_VERSION,
@@ -240,6 +252,359 @@ def _build_events(
         event["payload_hash"] = payload_hash(event)
         events.append(event)
     return events
+
+
+def _freeze_quant_evidence(
+    facts: dict[str, Any],
+    *,
+    decision_kind: Literal["daily", "discovery"],
+    fund_code: str | None,
+    frozen_at: str,
+) -> dict[str, Any]:
+    """Freeze only the factor evidence already present at decision time.
+
+    The helper intentionally does not call the IC loader or any data provider.
+    Missing/stale evidence therefore stays unavailable forever for this event,
+    instead of being silently backfilled from a future snapshot.
+    """
+
+    source_key = (
+        "factor_scores" if decision_kind == "daily" else "candidate_factor_scores"
+    )
+    raw = facts.get(source_key)
+    source = dict(raw) if isinstance(raw, dict) else {}
+    status_raw = source.get("ic_status")
+    status = dict(status_raw) if isinstance(status_raw, dict) else {}
+    normalized_code = _fund_code(fund_code)
+    row = next(
+        (
+            dict(item)
+            for item in source.get("holdings") or []
+            if isinstance(item, dict)
+            and normalized_code is not None
+            and _fund_code(item.get("fund_code")) == normalized_code
+        ),
+        None,
+    )
+
+    reliability_source = (
+        row.get("factor_reliability")
+        if isinstance(row, dict) and isinstance(row.get("factor_reliability"), dict)
+        else source.get("factor_reliability")
+    )
+    reliability = (
+        json.loads(canonical_json(reliability_source))
+        if isinstance(reliability_source, dict)
+        else {}
+    )
+    percentiles_source = row.get("factor_percentiles") if isinstance(row, dict) else None
+    percentiles = (
+        json.loads(canonical_json(percentiles_source))
+        if isinstance(percentiles_source, dict)
+        else {}
+    )
+    typed_percentiles_source = (
+        row.get("typed_factor_percentiles") if isinstance(row, dict) else None
+    )
+    typed_percentiles = (
+        json.loads(canonical_json(typed_percentiles_source))
+        if isinstance(typed_percentiles_source, dict)
+        else {}
+    )
+    typed_reliability_source = (
+        row.get("typed_factor_reliability") if isinstance(row, dict) else None
+    )
+    typed_reliability = (
+        json.loads(canonical_json(typed_reliability_source))
+        if isinstance(typed_reliability_source, dict)
+        else {}
+    )
+    raw_typed_used_keys = row.get("typed_used_keys") if isinstance(row, dict) else None
+    typed_used_keys = (
+        sorted(
+            {
+                str(key).strip()
+                for key in raw_typed_used_keys
+                if str(key).strip()
+            }
+        )
+        if isinstance(raw_typed_used_keys, (list, tuple, set, frozenset))
+        else []
+    )
+    typed_applicable = bool(
+        isinstance(row, dict) and row.get("typed_factor_applicable")
+    )
+    reliability_selection = _factor_reliability_selection(
+        percentiles,
+        reliability,
+        typed_percentiles=typed_percentiles,
+        typed_reliability=typed_reliability,
+        typed_used_keys=typed_used_keys,
+        typed_applicable=typed_applicable,
+    )
+    snapshot_id = _optional_text(status.get("snapshot_id"))
+    factor_model_version = _optional_text(source.get("model_version"))
+    model_data_as_of = _optional_text(
+        status.get("run_date") or status.get("generated_at")
+    )
+    model_generated_at = _optional_text(status.get("generated_at"))
+    model_published_at = _optional_text(status.get("published_at"))
+    target_feature_as_of = (
+        _optional_text(row.get("target_feature_as_of"))
+        if isinstance(row, dict)
+        else None
+    )
+    target_feature_observed_at = (
+        _optional_text(row.get("target_feature_observed_at"))
+        if isinstance(row, dict)
+        else None
+    )
+    target_feature_freshness = (
+        _optional_text(row.get("target_feature_freshness"))
+        if isinstance(row, dict)
+        else None
+    )
+    cohort_mode = _optional_text(status.get("cohort_mode"))
+    status_state = str(status.get("state") or "").strip().lower()
+    if not status_state:
+        status_state = "available" if status.get("available") else "unavailable"
+
+    reason: str | None = None
+    if not isinstance(raw, dict) or not source:
+        reason = "factor_evidence_not_attached_at_decision_time"
+    elif not source.get("available"):
+        reason = "factor_scores_unavailable_at_decision_time"
+    elif row is None:
+        reason = "fund_factor_row_missing_at_decision_time"
+    elif status_state != "available" or status.get("stale") is True:
+        reason = "factor_ic_snapshot_not_current_at_decision_time"
+    elif snapshot_id is None:
+        reason = "factor_snapshot_id_missing_at_decision_time"
+    elif factor_model_version is None:
+        reason = "factor_model_version_missing_at_decision_time"
+    elif model_generated_at is None:
+        reason = "factor_model_generated_at_missing_at_decision_time"
+    elif model_published_at is None:
+        reason = "factor_model_published_at_missing_at_decision_time"
+    elif not _audit_timestamp_not_after(
+        model_generated_at,
+        frozen_at,
+        tolerance=timedelta(minutes=5),
+    ):
+        reason = "factor_model_generated_after_decision_time"
+    elif not _audit_timestamp_not_after(
+        model_published_at,
+        frozen_at,
+        tolerance=timedelta(minutes=5),
+    ):
+        reason = "factor_model_published_after_decision_time"
+    elif target_feature_as_of is None:
+        reason = "target_factor_feature_as_of_missing_at_decision_time"
+    elif target_feature_observed_at is None:
+        reason = "target_factor_feature_observed_at_missing_at_decision_time"
+    elif not _audit_timestamp_not_after(
+        target_feature_observed_at,
+        frozen_at,
+        tolerance=timedelta(minutes=5),
+    ):
+        reason = "target_factor_feature_observed_after_decision_time"
+    elif target_feature_freshness != "fresh":
+        reason = "target_factor_feature_not_fresh_at_decision_time"
+
+    row_applicable = bool(row.get("applicable", True)) if isinstance(row, dict) else False
+    applicable = reason is None and row_applicable
+    if reason is None and not row_applicable:
+        reason = "fund_factor_evidence_not_applicable"
+
+    return {
+        "schema_version": QUANT_EVIDENCE_SNAPSHOT_SCHEMA_VERSION,
+        "state": "available" if reason is None else "unavailable",
+        "reason": reason,
+        "source": source_key,
+        "factor_snapshot_id": snapshot_id,
+        "model_version": factor_model_version,
+        "schema": status.get("schema_version"),
+        "cohort_mode": cohort_mode,
+        "peer_group": row.get("peer_group") if isinstance(row, dict) else None,
+        "composite_score": row.get("composite_score") if isinstance(row, dict) else None,
+        "composite_grade": row.get("composite_grade") if isinstance(row, dict) else None,
+        "base_composite_score": (
+            row.get("base_composite_score") if isinstance(row, dict) else None
+        ),
+        "factor_percentiles": percentiles,
+        "reliability": reliability,
+        "reliability_bucket": reliability_selection["level"],
+        "reliability_factor_key": reliability_selection["factor_key"],
+        "reliability_factor_family": reliability_selection["factor_family"],
+        "reliability_factor_percentile": reliability_selection["percentile"],
+        "reliability_factor_direction": reliability_selection["direction"],
+        "typed_factor_schema": (
+            row.get("typed_factor_schema") if isinstance(row, dict) else None
+        ),
+        "typed_used_keys": typed_used_keys,
+        "typed_factor_percentiles": typed_percentiles,
+        "typed_factor_reliability": typed_reliability,
+        "typed_factor_applicable": typed_applicable,
+        "typed_feature_completeness": (
+            row.get("typed_feature_completeness") if isinstance(row, dict) else None
+        ),
+        "typed_factor_score": (
+            row.get("typed_factor_score") if isinstance(row, dict) else None
+        ),
+        "typed_factor_basis": (
+            row.get("typed_factor_basis") if isinstance(row, dict) else None
+        ),
+        "applicable": applicable,
+        # Backward-compatible name now means the target feature date; model time
+        # is frozen separately so neither can masquerade as the other.
+        "data_as_of": target_feature_as_of,
+        "model_data_as_of": model_data_as_of,
+        "model_generated_at": model_generated_at,
+        "model_published_at": model_published_at,
+        "target_feature_as_of": target_feature_as_of,
+        "target_feature_observed_at": target_feature_observed_at,
+        "target_feature_source": (
+            row.get("target_feature_source") if isinstance(row, dict) else None
+        ),
+        "target_return_coverage": (
+            row.get("target_return_coverage") if isinstance(row, dict) else None
+        ),
+        "target_nav_age_trading_days": (
+            row.get("target_nav_age_trading_days")
+            if isinstance(row, dict)
+            else None
+        ),
+        "target_feature_freshness": target_feature_freshness,
+        "target_feature_max_age_trading_days": (
+            row.get("target_feature_max_age_trading_days")
+            if isinstance(row, dict)
+            else None
+        ),
+        "frozen_at": frozen_at,
+    }
+
+
+def _audit_timestamp_not_after(
+    value: str,
+    frozen_at: str,
+    *,
+    tolerance: timedelta,
+) -> bool:
+    """Return false for malformed/naive/future audit timestamps."""
+
+    try:
+        observed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        frozen = datetime.fromisoformat(frozen_at.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return False
+    if observed.tzinfo is None or frozen.tzinfo is None:
+        return False
+    return observed.astimezone(timezone.utc) <= (
+        frozen.astimezone(timezone.utc) + tolerance
+    )
+
+
+def _factor_reliability_selection(
+    percentiles: dict[str, Any],
+    reliability: dict[str, Any],
+    *,
+    typed_percentiles: dict[str, Any],
+    typed_reliability: dict[str, Any],
+    typed_used_keys: list[str],
+    typed_applicable: bool,
+) -> dict[str, Any]:
+    """Select the evidence family whose live contribution is being calibrated."""
+
+    score_by_level = {"高": 3, "中": 2, "低": 1}
+    common_candidates: list[tuple[int, float, str, str, str, float, str]] = []
+    for key in ("momentum", "risk_adjusted", "drawdown"):
+        detail = reliability.get(key)
+        if not isinstance(detail, dict):
+            continue
+        level = str(detail.get("level") or "").strip()
+        if level not in score_by_level:
+            continue
+        try:
+            percentile = float(percentiles.get(key))
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(percentile):
+            continue
+        common_candidates.append(
+            (
+                score_by_level[level],
+                abs(percentile - 50.0),
+                key,
+                "common",
+                level,
+                percentile,
+                str(detail.get("basis") or ""),
+            )
+        )
+    typed_candidates: list[tuple[int, float, str, str, str, float, str]] = []
+    if typed_applicable:
+        for key in typed_used_keys:
+            detail = typed_reliability.get(key)
+            if not isinstance(detail, dict):
+                continue
+            level = str(detail.get("level") or "").strip()
+            economic = detail.get("economic_significance")
+            if (
+                level not in score_by_level
+                or detail.get("qualified") is not True
+                or detail.get("orientation") != "higher_is_better"
+                or not isinstance(economic, dict)
+                or economic.get("qualified") is not True
+            ):
+                continue
+            try:
+                percentile = float(typed_percentiles.get(key))
+            except (TypeError, ValueError):
+                continue
+            if not math.isfinite(percentile):
+                continue
+            typed_candidates.append(
+                (
+                    score_by_level[level],
+                    abs(percentile - 50.0),
+                    key,
+                    "fund_type_specific",
+                    level,
+                    percentile,
+                    str(detail.get("basis") or ""),
+                )
+            )
+    # 类型因子属于这轮要独立校准的新证据：只要它确实进入最终 70/30 分数，
+    # 校准分桶就跟随该类型因子，而不是被更成熟的基础因子覆盖；没有实际采用
+    # 的类型因子时才回落到基础因子。
+    candidates = typed_candidates or common_candidates
+    if not candidates:
+        return {
+            "level": "不足",
+            "factor_key": None,
+            "factor_family": None,
+            "percentile": None,
+            "direction": "unknown",
+        }
+    candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    _, _, key, family, level, percentile, basis = candidates[0]
+    direction = (
+        "neutral"
+        if 45 <= percentile <= 55
+        else "positive" if percentile > 55 else "negative"
+    )
+    if "反向" in basis or "均值回归" in basis:
+        direction = {"positive": "negative", "negative": "positive"}.get(
+            direction,
+            direction,
+        )
+    return {
+        "level": level,
+        "factor_key": key,
+        "factor_family": family,
+        "percentile": round(percentile, 4),
+        "direction": direction,
+    }
 
 
 def _recommendations(
@@ -390,6 +755,13 @@ def _fund_code(value: object) -> str | None:
         return None
     code = text.zfill(6)
     return code if len(code) == 6 and code != "000000" else None
+
+
+def _optional_text(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 def _non_negative_float(value: object) -> float | None:

@@ -131,14 +131,14 @@ export function nextThemeSortState(
 
 const SUB_TAB_STORAGE_KEY = "fundpilot-market-sub-tab";
 
-export type MarketSubTab = "themes" | "us" | "dip_radar";
+export type MarketSubTab = "themes" | "us";
 
 export function loadMarketSubTab(): MarketSubTab {
   if (typeof window === "undefined") {
     return "themes";
   }
   const stored = window.sessionStorage.getItem(SUB_TAB_STORAGE_KEY);
-  if (stored === "us" || stored === "dip_radar") {
+  if (stored === "us") {
     return stored;
   }
   return "themes";
@@ -149,26 +149,4 @@ export function saveMarketSubTab(tab: MarketSubTab): void {
     return;
   }
   window.sessionStorage.setItem(SUB_TAB_STORAGE_KEY, tab);
-}
-
-const DIP_RADAR_SECTOR_KEY = "fundpilot-dip-radar-sector";
-
-export function loadDipRadarSectorFilter(): string | null {
-  if (typeof window === "undefined") {
-    return null;
-  }
-  const stored = window.sessionStorage.getItem(DIP_RADAR_SECTOR_KEY);
-  return stored?.trim() || null;
-}
-
-export function saveDipRadarSectorFilter(sector: string): void {
-  if (typeof window === "undefined") {
-    return;
-  }
-  const trimmed = sector.trim();
-  if (!trimmed) {
-    window.sessionStorage.removeItem(DIP_RADAR_SECTOR_KEY);
-    return;
-  }
-  window.sessionStorage.setItem(DIP_RADAR_SECTOR_KEY, trimmed);
 }
