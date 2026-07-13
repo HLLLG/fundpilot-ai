@@ -1,4 +1,4 @@
-import { chromium } from "playwright";
+import { chromium } from "@playwright/test";
 
 const HOST_POOL = ["79", "88", "48", "17", "33", "91"];
 const COMMON_PARAMS = {

@@ -88,11 +88,40 @@ def test_fast_mode_phase2_compacts_sector_opportunity_and_caps_market_top() -> N
     assert opportunity["five_day_available"] is True
     assert opportunity["five_day_source"] == "eastmoney_rank"
     assert opportunity["history_point_count"] == 8
-
     rotation = trimmed["sector_rotation"]
     assert len(rotation["market_top"]) == 3
     assert "sector_flow_by_label" not in rotation
 
+
+def test_fast_mode_keeps_intraday_breadth_provenance_and_guard_eligibility() -> None:
+    facts = _base_facts(
+        market_breadth={
+            "available": True,
+            "signal_mode": "intraday",
+            "source_mode": "intraday_live",
+            "trade_date": "2026-07-13",
+            "as_of_datetime": "2026-07-13 10:05:00",
+            "freshness_status": "live",
+            "decision_eligible": True,
+            "sentiment_level": "低迷",
+            "sentiment_level_change": -1,
+            "activity_percent": 17.82,
+            "advance_count": 927,
+            "decline_count": 4214,
+            "interpretation": "盘中市场情绪低迷",
+            "closing_breadth_percentile": 31.8,
+        }
+    )
+
+    trimmed = trim_analysis_facts_for_llm(facts, analysis_mode="fast", phase=2)
+    breadth = trimmed["market_breadth"]
+
+    assert breadth["signal_mode"] == "intraday"
+    assert breadth["source_mode"] == "intraday_live"
+    assert breadth["decision_eligible"] is True
+    assert breadth["as_of_datetime"] == "2026-07-13 10:05:00"
+    assert breadth["activity_percent"] == 17.82
+    assert "closing_breadth_percentile" not in breadth
 
 def test_trim_never_exposes_top_level_internal_sector_flow_map() -> None:
     facts = _base_facts(

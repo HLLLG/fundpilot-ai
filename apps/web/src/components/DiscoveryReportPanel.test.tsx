@@ -42,6 +42,11 @@ function sampleReport(): FundDiscoveryReport {
           pattern_label: "distribution",
         },
       ],
+      data_evidence_guard: {
+        execution_blocked: true,
+        blocked_fund_codes: ["006081"],
+        reasons_by_fund: { "006081": ["字段时点不可用"] },
+      },
     },
     candidate_pool: [
       {
@@ -81,6 +86,14 @@ function sampleReport(): FundDiscoveryReport {
         news_bullish: [],
       },
     ],
+    decision_events: [
+      {
+        fund_code: "006081",
+        final_action: "建议关注",
+        action_category: "watch_only",
+        eligible: false,
+      },
+    ],
     caveats: ["仅供参考"],
     provider: "deepseek",
     analysis_mode: "fast",
@@ -88,7 +101,7 @@ function sampleReport(): FundDiscoveryReport {
 }
 
 describe("DiscoveryReportPanel", () => {
-  it("renders action-first recommendations and discloses professional evidence on demand", () => {
+  it("keeps evidence-blocked recommendations in research observation instead of priority action", () => {
     render(<DiscoveryReportPanel report={sampleReport()} />);
 
     expect(screen.getByText("本次主方向")).toBeInTheDocument();
@@ -97,7 +110,11 @@ describe("DiscoveryReportPanel", () => {
     expect(screen.getAllByText(/顺势观察/).length).toBeGreaterThan(0);
     expect(screen.queryByText(/track=momentum/)).not.toBeInTheDocument();
     expect(screen.queryByText(/pattern=/)).not.toBeInTheDocument();
-    expect(screen.getByText("优先行动")).toBeInTheDocument();
+    expect(screen.getByText("本次暂无可执行建议")).toBeInTheDocument();
+    expect(screen.getByText("研究观察")).toBeInTheDocument();
+    expect(screen.getByText(/其中 1 只被字段级证据守卫降为观察/)).toBeInTheDocument();
+    expect(screen.queryByText("优先行动")).not.toBeInTheDocument();
+    expect(screen.queryByText("可执行建议")).not.toBeInTheDocument();
     expect(screen.getByText(/核心理由/)).toBeInTheDocument();
     const evidenceDisclosure = screen.getByText("查看决策路径与专业依据");
     expect(screen.getByText("决策路径")).not.toBeVisible();
@@ -133,6 +150,73 @@ describe("DiscoveryReportPanel", () => {
     expect(screen.getAllByText("37.12").length).toBeGreaterThan(0);
     expect(screen.getAllByText(/板块高置信匹配/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/缺少基金规模/).length).toBeGreaterThan(0);
+  });
+
+  it("separates executable, conditional and observation decisions by structured events", () => {
+    const report = sampleReport();
+    const base = report.recommendations[0];
+    report.discovery_facts = {
+      ...report.discovery_facts,
+      data_evidence_guard: {
+        execution_blocked: true,
+        blocked_fund_codes: ["000003"],
+      },
+    };
+    report.recommendations = [
+      { ...base, fund_code: "000001", fund_name: "可执行基金", action: "分批买入" },
+      { ...base, fund_code: "000002", fund_name: "等待基金", action: "等待回调" },
+      { ...base, fund_code: "000003", fund_name: "观察基金", action: "建议关注" },
+    ];
+    report.candidate_pool = report.recommendations.map((item) => ({
+      fund_code: item.fund_code,
+      fund_name: item.fund_name,
+      sector_label: item.sector_name,
+    }));
+    report.decision_events = [
+      { fund_code: "000001", action_category: "buy", eligible: true },
+      { fund_code: "000002", action_category: "conditional_wait", eligible: false },
+      { fund_code: "000003", action_category: "watch_only", eligible: false },
+    ];
+
+    render(<DiscoveryReportPanel report={report} />);
+
+    expect(screen.getByText("1 只通过可执行校验")).toBeInTheDocument();
+    expect(screen.getByText("可执行建议")).toBeInTheDocument();
+    expect(screen.getByText("等待条件")).toBeInTheDocument();
+    expect(screen.getByText("研究观察")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /本次候选池/ }));
+    expect(screen.getAllByText("可执行").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("等待条件").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("研究观察").length).toBeGreaterThan(0);
+    expect(screen.queryByText("已推荐")).not.toBeInTheDocument();
+  });
+
+  it("never promotes a dip_swing research report into an executable recommendation", () => {
+    const report = sampleReport();
+    report.discovery_facts = {
+      ...report.discovery_facts,
+      data_evidence_guard: {
+        execution_blocked: false,
+        blocked_fund_codes: [],
+      },
+      effective_configuration: {
+        scan_goal: "dip_swing",
+        selection_policy: "dip_rebound_research",
+      },
+    };
+    report.recommendations = [
+      { ...report.recommendations[0], action: "分批买入", suggested_amount_yuan: 1000 },
+    ];
+    report.decision_events = [
+      { fund_code: "006081", action_category: "buy", eligible: true },
+    ];
+
+    render(<DiscoveryReportPanel report={report} />);
+
+    expect(screen.getByText("本次暂无可执行建议")).toBeInTheDocument();
+    expect(screen.getByText("研究观察")).toBeInTheDocument();
+    expect(screen.queryByText("可执行建议")).not.toBeInTheDocument();
   });
 
   it("does not mount the long follow-up chat until requested", () => {

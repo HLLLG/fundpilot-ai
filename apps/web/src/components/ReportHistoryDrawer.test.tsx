@@ -1,15 +1,20 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 
 import { ReportHistoryDrawer } from "@/components/ReportHistoryDrawer";
 import type { Report } from "@/lib/api";
 
-vi.mock("@/lib/api", () => ({ deleteReport: vi.fn() }));
-vi.mock("@/components/SectorSignalBacktestPanel", () => ({
-  SectorSignalBacktestPanel: () => <div>回测内容</div>,
+const apiMocks = vi.hoisted(() => ({
+  deleteReport: vi.fn(),
+  fetchSectorSignalBacktest: vi.fn(),
+}));
+
+vi.mock("@/lib/api", () => ({
+  deleteReport: apiMocks.deleteReport,
+  fetchSectorSignalBacktest: apiMocks.fetchSectorSignalBacktest,
 }));
 
 function report(id: string, title: string): Report {
@@ -30,8 +35,16 @@ function report(id: string, title: string): Report {
   };
 }
 
+beforeEach(() => {
+  apiMocks.fetchSectorSignalBacktest.mockResolvedValue({
+    enabled: false,
+    message: "回测已按需加载",
+  });
+});
+
 afterEach(() => {
   cleanup();
+  vi.clearAllMocks();
   document.body.style.overflow = "";
 });
 
@@ -59,4 +72,37 @@ it("marks the current report and closes the drawer after selection", () => {
   fireEvent.click(within(dialog).getByText("日报乙").closest("button")!);
   expect(onSelect).toHaveBeenCalledWith(reports[1]);
   expect(onClose).toHaveBeenCalledTimes(1);
+});
+
+it("requests the sector backtest only while its disclosure is expanded", async () => {
+  render(
+    <ReportHistoryDrawer
+      open
+      reports={[report("r1", "日报甲")]}
+      activeReportId="r1"
+      onClose={vi.fn()}
+      onRefresh={vi.fn()}
+      onSelect={vi.fn()}
+      onDeleted={vi.fn()}
+    />,
+  );
+
+  const summary = screen.getByText("研究分析与板块回测");
+  const disclosure = summary.closest("details");
+  expect(disclosure).not.toHaveAttribute("open");
+  expect(apiMocks.fetchSectorSignalBacktest).not.toHaveBeenCalled();
+  expect(screen.queryByText("回测已按需加载")).not.toBeInTheDocument();
+
+  fireEvent.click(summary);
+
+  await waitFor(() => expect(disclosure).toHaveAttribute("open"));
+  await waitFor(() => expect(apiMocks.fetchSectorSignalBacktest).toHaveBeenCalledOnce());
+  expect(apiMocks.fetchSectorSignalBacktest).toHaveBeenCalledWith(120, undefined);
+  expect(await screen.findByText("回测已按需加载")).toBeInTheDocument();
+
+  fireEvent.click(summary);
+
+  await waitFor(() => expect(disclosure).not.toHaveAttribute("open"));
+  expect(screen.queryByText("回测已按需加载")).not.toBeInTheDocument();
+  expect(apiMocks.fetchSectorSignalBacktest).toHaveBeenCalledOnce();
 });

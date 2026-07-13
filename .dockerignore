@@ -1,0 +1,39 @@
+# Version control, editor metadata, and local secrets
+.git
+.github
+.agents
+.cursor
+.kiro
+.superpowers
+.vscode
+.worktrees
+.env
+.env.*
+!.env.example
+
+# Local data and generated artifacts
+data
+uploads
+docs
+artifacts
+dist
+build
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.hypothesis
+**/*.log
+
+# Services and tooling that are not copied by the root API image
+apps/web
+apps/sector-relay
+apps/api/.venv
+apps/api/tests
+apps/api/scripts
+deploy
+scripts
+
+# API runtime caches; retain the factor IC artifact directory copied by Dockerfile
+apps/api/var/*
+!apps/api/var/factor_ic
+!apps/api/var/factor_ic/**

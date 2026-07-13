@@ -8,7 +8,6 @@ from app.models import DiscoveryRecommendation, EliminatedCandidate, InvestorPro
 from app.services.decision_guard_shared import (
     append_unique as _append_unique,
     as_float as _as_float,
-    fmt_abs_num as _fmt_abs_num,
     fmt_num as _fmt_num,
     humanize_evidence_text as _humanize_evidence_text,
     normalize_confidence_label as _normalize_confidence,
@@ -111,6 +110,26 @@ def apply_discovery_guards(
             continue
 
         copy = rec.model_copy(deep=True)
+        pool_item = pool_by_code.get(code, {})
+        quality_gate = (
+            pool_item.get("quality_gate")
+            if isinstance(pool_item.get("quality_gate"), dict)
+            else {}
+        )
+        quality_status = str(quality_gate.get("status") or "eligible")
+        if quality_status == "excluded":
+            reasons = [str(item) for item in quality_gate.get("reasons") or []]
+            eliminated.append(
+                EliminatedCandidate(
+                    fund_code=code,
+                    fund_name=str(pool_item.get("fund_name") or copy.fund_name),
+                    sector_name=str(pool_item.get("sector_label") or copy.sector_name),
+                    reasons=reasons or ["候选质量准入未通过"],
+                    basis="候选质量准入未通过，未进入最终推荐。",
+                )
+            )
+            caveats.append(f"已剔除 {code}（{copy.fund_name}）：候选质量准入未通过。")
+            continue
         evidence_allowed, evidence_reasons = decision_evidence_allows_action(
             discovery_facts,
             scope="discovery",
@@ -137,7 +156,6 @@ def apply_discovery_guards(
                 *copy.validation_notes,
                 "持仓快照过期或尚未服务端确认；组合缺口、集中度与预算只可作背景，不具备买入执行条件。",
             ]
-        pool_item = pool_by_code.get(code, {})
         if pool_item:
             corrected = _align_candidate_identity(copy, pool_item)
             if corrected:
@@ -174,6 +192,23 @@ def apply_discovery_guards(
                 copy.points = list(copy.points) + [
                     f"近1日净值涨幅 {recent_1d:+.2f}% 偏高，短线抄底模式避免追涨。"
                 ]
+
+        drawdown = _as_float(pool_item.get("max_drawdown_1y_percent"))
+        drawdown_limit = _profile_drawdown_limit(profile)
+        if (
+            copy.action == "分批买入"
+            and drawdown is not None
+            and abs(drawdown) > drawdown_limit
+        ):
+            copy.action = "建议关注"
+            copy.points = [
+                f"近1年最大回撤 {drawdown:.2f}% 超过当前风格的候选准入线 {drawdown_limit:.1f}%，仅保留观察。",
+                *copy.points,
+            ]
+            copy.validation_notes = [
+                *copy.validation_notes,
+                "候选历史回撤与当前投资风格不匹配，系统已阻断买入动作。",
+            ]
 
         opportunity = opportunity_by_sector.get(copy.sector_name)
 
@@ -234,6 +269,12 @@ def apply_discovery_guards(
                     f"【灰度提示，未生效】若启用新版守卫（enforced 模式），"
                     f"{code} 的建议买入金额上限会被系统提高：{basis}。",
                 ]
+
+        if copy.action != "分批买入":
+            copy.suggested_amount_yuan = None
+            copy.amount_note = (
+                "当前为观察或等待条件，未生成可执行买入金额。"
+            )
 
         max_single = (
             spendable_budget_yuan
@@ -317,6 +358,13 @@ def _normalize_discovery_action(action: str) -> str:
     if any(token in text for token in ("分批", "买入", "加仓", "少量", "定投", "试探")):
         return "分批买入"
     return "建议关注"
+
+
+def _profile_drawdown_limit(profile: InvestorProfile) -> float:
+    base = max(float(profile.max_drawdown_percent or 0.0), 0.0)
+    if profile.decision_style == "aggressive":
+        return max(40.0, base * 3.0)
+    return max(20.0, base * 2.0)
 
 
 def _should_downgrade_weak_evidence(

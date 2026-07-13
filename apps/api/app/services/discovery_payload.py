@@ -16,7 +16,7 @@ OUTPUT_DISCOVERY_REQUIREMENTS = """
 - title: 报告标题
 - summary: 2-4 句市场与配置总结
 - market_view: 对大盘/板块的简短看法
-- recommendations: 数组，3~5 项；每项含 fund_code, fund_name, sector_name, action,
+- recommendations: 数组，0~3 项；没有合格候选时允许为空；每项含 fund_code, fund_name, sector_name, action,
   suggested_amount_yuan, amount_note, hold_horizon, confidence, decision_path,
   sector_evidence, fund_evidence, validation_notes, points, risks, news_bullish
 - caveats: 字符串数组，须含风险提示
@@ -37,15 +37,19 @@ recommendations 字段约束：
   estimated_daily_return_percent、sector_fund_flow）；daily_return_source=sector_estimate 时须写「估算」
 - risks: 字符串数组，每只至少 1 条
 - news_bullish: 字符串数组，仅引用 news_titles 或 topic_briefs.points.source_titles 中已有标题；无则 []
-- suggested_amount_yuan: 正数；须结合 portfolio_gap.available_budget_yuan 与 profile.concentration_limit_percent，
-  单只示意金额不得超过可投入预算，且须说明与现有 holdings_slim 同板块合计不超限的理由（amount_note 中体现）
+- suggested_amount_yuan: 仅 action=分批买入时可为正数；建议关注/等待回调必须为 null。买入时须结合
+  portfolio_gap.available_budget_yuan 与 profile.concentration_limit_percent，单只示意金额不得超过可投入预算，
+  且须说明与现有 holdings_slim 同板块合计不超限的理由（amount_note 中体现）
 - 面向用户展示时必须使用中文标签，不要原样输出 fund_quality_score、sector_fit_score、quality_penalties、
   sector_opportunities、nav_trend、max_drawdown_1y_percent、estimated_daily_return_percent 等内部字段名；
   可写成“基金质量分”“板块匹配分”“系统校验提示”“系统筛出的主方向”“净值走势”“近1年最大回撤”“今日涨跌估算”等。
 
 全局约束：
 - 不得推荐 portfolio_gap.holdings_slim 中已持有的 fund_code
+- 仅 quality_gate.status=eligible 的候选可用 action=分批买入；watch_only 只可建议关注/等待回调；
+  excluded 不得进入 recommendations。没有 eligible 候选时须明确“本次暂无可执行买入建议”，不得凑满数量
 - 不得承诺收益；不得编造 candidate_pool 外的代码或未提供的估值分位
+- share_class_fee_status=unverified 时须在 validation_notes 明确“真实申购/赎回费用待执行前核验”，不得宣称已选出最低成本份额
 - full_market 模式须先判断板块方向，再在方向内选基金；不得只按基金近1年收益排序
 - 北向实时净买额不再提供、不得推断；南向资金用 stock_connect_flow；板块主力用 target_sector_context.sector_fund_flow
 - sector_opportunities 是系统已用 1d/5d 涨跌 + 今日/5日主力资金 + pattern 生成的主方向，
@@ -61,7 +65,8 @@ recommendations 字段约束：
 """
 
 _COMMON_REQUIREMENTS = [
-    "仅从 discovery_facts.candidate_pool 选 3~5 只，不得推荐 holdings_slim 中已有 fund_code",
+    "仅从 discovery_facts.candidate_pool 选 0~3 只，不得推荐 holdings_slim 中已有 fund_code；无合格候选时允许空数组",
+    "quality_gate=eligible 才可分批买入；watch_only 只能观察/等待，excluded 禁止推荐；不得为凑数降门槛",
     "每只 recommendations 须含 hold_horizon、risks（至少 1 条）、points（引用 candidate_pool 具体字段）",
     "每只 recommendations 须含 decision_path、sector_evidence、fund_evidence、validation_notes",
     "先判断板块方向，再比较方向内基金质量分，最后决定动作",
@@ -70,10 +75,11 @@ _COMMON_REQUIREMENTS = [
     "判断追高风险须参考 nav_trend.distance_from_high_percent / trend_label，不得只看 sector_heat",
     "news_bullish 仅引用 news_titles 或 topic_briefs.points.source_titles；无匹配则 []",
     "新闻仅使用系统预取的 news_titles/topic_briefs；过旧或为空的新闻不能作为买入主依据",
-    "suggested_amount_yuan 须结合 available_budget_yuan 与 concentration_limit_percent",
+    "仅分批买入可给 suggested_amount_yuan；建议关注/等待回调必须为 null，并结合 available_budget_yuan 与 concentration_limit_percent",
     "引用数字须来自 discovery_facts，禁止编造",
     "须按 data_evidence 校验数据时点、置信度与是否估算；过期或不可用字段不得支撑动作",
     "portfolio_position_truth 中 unknown/null 不得按 0；position_complete=false、ledger_truncated=true 或存在 pending/conflict 时 suggested_amount_yuan 必须为空",
+    "share_class_fee_status=unverified 时须提示真实申购/赎回费用待核验，不得宣称份额成本最优",
 ]
 
 _FULL_MARKET_REQUIREMENTS = [

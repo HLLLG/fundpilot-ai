@@ -343,16 +343,6 @@ export type ReversalStats = {
   summary_line: string;
 };
 
-export type ReportWeeklyOutcomes = ReportOutcomes & {
-  baseline_days?: number;
-  baseline_report_id?: string;
-  baseline_created_at?: string;
-  summary?: string | null;
-  hit_count?: number;
-  miss_count?: number;
-  reversal_stats?: ReversalStats;
-};
-
 export type TradingSession = {
   timezone: string;
   local_datetime: string;
@@ -671,6 +661,46 @@ export type EliminatedCandidate = {
   basis: string;
 };
 
+export type DiscoveryQualityGateStatus = "eligible" | "watch_only" | "excluded";
+
+export type DiscoveryCandidateQualityGate = {
+  eligible: boolean;
+  status: DiscoveryQualityGateStatus;
+  reasons: string[];
+  missing_fields: string[];
+  coverage_percent: number;
+  data_as_of?: string | null;
+};
+
+export type DiscoveryCandidateQualitySummary = {
+  eligible_count: number;
+  watch_only_count: number;
+  excluded_count: number;
+  total_count: number;
+  required_fields: string[];
+  coverage_percent: number;
+};
+
+export type DiscoveryDataEvidenceGuard = {
+  execution_blocked: boolean;
+  blocked_fund_codes: string[];
+  reasons_by_fund?: Record<string, string[] | string>;
+};
+
+export type DiscoveryDecisionActionCategory =
+  | "buy"
+  | "watch_only"
+  | "conditional_wait"
+  | "invalid";
+
+export type DiscoveryDecisionEvent = {
+  fund_code?: string | null;
+  final_action?: string | null;
+  action_category?: DiscoveryDecisionActionCategory | string;
+  evaluation_class?: DiscoveryDecisionActionCategory | string;
+  eligible?: boolean;
+};
+
 export type FundTypePreference = "any" | "etf_link" | "no_c_class";
 
 export type SelectionStrategy = "balanced" | "with_new_issue" | "dip_rebound";
@@ -698,6 +728,7 @@ export type DiscoveryCandidatePoolItem = {
   sector_fit_score?: number | null;
   quality_reasons?: string[];
   quality_penalties?: string[];
+  quality_gate?: DiscoveryCandidateQualityGate;
 };
 
 export type SectorOpportunity = {
@@ -823,6 +854,20 @@ export type FundDiscoveryReport = {
   discovery_facts?: {
     sector_opportunities?: DiscoverySectorOpportunity[];
     market_breadth?: MarketBreadthSignal | null;
+    selection_strategy?: SelectionStrategy | string;
+    fund_type_preference?: FundTypePreference | string;
+    portfolio_gap?: {
+      scan_mode?: DiscoveryScanMode | string;
+      [key: string]: unknown;
+    };
+    effective_configuration?: {
+      scan_goal?: DiscoveryScanMode | string;
+      selection_policy?: "auto_quality" | "dip_rebound_research" | string;
+      share_class_policy?: string;
+      legacy_fund_type_preference?: FundTypePreference | string;
+    };
+    data_evidence_guard?: DiscoveryDataEvidenceGuard;
+    candidate_quality_summary?: DiscoveryCandidateQualitySummary;
     [key: string]: unknown;
   };
   caveats: string[];
@@ -830,6 +875,8 @@ export type FundDiscoveryReport = {
   eliminated_candidates?: EliminatedCandidate[];
   provider: string;
   analysis_mode?: AnalysisMode;
+  decision_events?: DiscoveryDecisionEvent[];
+  decision_contract?: Record<string, unknown>;
 };
 
 export type DiscoverySectorHeat = {
@@ -1707,20 +1754,6 @@ export async function fetchReportOutcomes(reportId: string): Promise<ReportOutco
   return response.json();
 }
 
-export async function fetchReportWeeklyOutcomes(
-  reportId: string,
-  days = 7,
-): Promise<ReportWeeklyOutcomes> {
-  const response = await apiFetch(
-    `${API_BASE}/api/reports/${reportId}/outcomes-weekly?days=${days}`,
-    { cache: "no-store" },
-  );
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  return response.json();
-}
-
 export async function fetchTradingSession(): Promise<TradingSession> {
   const response = await apiFetch(`${API_BASE}/api/trading-session`, { cache: "no-store" });
   if (!response.ok) {
@@ -1857,6 +1890,31 @@ export type MarketBreadthSignal = {
   message?: string | null;
   stale?: boolean;
   trade_date?: string;
+  /** 当前温度计口径：盘中准实时或收盘口径。 */
+  signal_mode?: "intraday" | "closing";
+  /** 更细的数据来源，用于区分盘中、收盘和上一收盘回退。 */
+  source_mode?:
+    | "intraday_live"
+    | "intraday_final"
+    | "closing"
+    | "previous_close_fallback";
+  as_of_datetime?: string | null;
+  freshness_seconds?: number | null;
+  freshness_status?: "live" | "fresh" | "stale";
+  decision_eligible?: boolean;
+  decision_status?: string | null;
+  decision_message?: string | null;
+  advance_count?: number | null;
+  decline_count?: number | null;
+  flat_count?: number | null;
+  activity_percent?: number | null;
+  advance_ratio_percent?: number | null;
+  real_limit_up_count?: number | null;
+  real_limit_down_count?: number | null;
+  /** 盘中信号所引用的最近完整收盘锚点。 */
+  closing_trade_date?: string | null;
+  closing_breadth_percentile?: number | null;
+  closing_sentiment_level?: "冰点" | "低迷" | "中性" | "偏热" | "亢奋" | null;
   breadth_percentile?: number;
   breadth_sample_days?: number;
   sentiment_level?: "冰点" | "低迷" | "中性" | "偏热" | "亢奋";
@@ -2684,7 +2742,6 @@ export async function fetchIndexDailyHistory(
 }
 
 export {
-  streamAnalysis,
   type FundRecommendationPartial,
   type StreamingPartialField,
   type StreamingReportEvents,

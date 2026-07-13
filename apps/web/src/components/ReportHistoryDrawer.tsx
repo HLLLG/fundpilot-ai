@@ -1,6 +1,7 @@
 "use client";
 
 import { FlaskConical } from "lucide-react";
+import { useState } from "react";
 
 import type { Report } from "@/lib/api";
 import { HistoryDrawerShell } from "@/components/HistoryDrawerShell";
@@ -19,6 +20,27 @@ type ReportHistoryDrawerProps = {
   onSelect: (report: Report) => void;
   onDeleted: (reportId: string) => void;
 };
+
+function HistoryResearchDisclosure() {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <details
+      className="history-research-disclosure"
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
+      <summary className="min-h-11">
+        <FlaskConical size={16} />
+        研究分析与板块回测
+      </summary>
+      {open ? (
+        <div className="pt-3">
+          <SectorSignalBacktestPanel title="板块信号历史回测（全部 canonical）" />
+        </div>
+      ) : null}
+    </details>
+  );
+}
 
 export function ReportHistoryDrawer({
   open,
@@ -55,15 +77,7 @@ export function ReportHistoryDrawer({
         }}
         onDeleted={onDeleted}
       />
-      <details className="history-research-disclosure">
-        <summary className="min-h-11">
-          <FlaskConical size={16} />
-          研究分析与板块回测
-        </summary>
-        <div className="pt-3">
-          <SectorSignalBacktestPanel title="板块信号历史回测（全部 canonical）" />
-        </div>
-      </details>
+      <HistoryResearchDisclosure />
     </HistoryDrawerShell>
   );
 }

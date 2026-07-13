@@ -1,0 +1,16 @@
+.venv
+.env
+.env.*
+.pytest_cache
+.hypothesis
+.ruff_cache
+tests
+scripts
+**/__pycache__
+**/*.py[cod]
+**/*.log
+
+# Retain only the factor IC artifact directory copied by Dockerfile.
+var/*
+!var/factor_ic
+!var/factor_ic/**

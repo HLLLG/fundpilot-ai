@@ -7,8 +7,13 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app.config import get_settings
+from app.database import save_fund_primary_sector_global
 from app.services.fund_primary_sector_global import is_global_sector_fresh, load_fresh_global_sector
-from app.services.fund_primary_sector_precompute import iter_precompute_candidates, precompute_fund_sector
+from app.services.fund_primary_sector_precompute import (
+    iter_precompute_candidates,
+    precompute_fund_sector,
+    run_precompute_batch,
+)
 from app.services.fund_primary_sector_types import PrimarySectorRecord
 from app.services.fund_primary_sector_service import resolve_primary_sector
 
@@ -77,8 +82,8 @@ def test_precompute_fund_sector_writes_global(monkeypatch):
     saved: list[dict] = []
 
     monkeypatch.setattr(
-        "app.services.fund_primary_sector_precompute.get_fund_primary_sector_global",
-        lambda _code: None,
+        "app.services.fund_primary_sector_precompute.get_fund_primary_sectors_global_by_codes",
+        lambda _codes: {},
     )
     monkeypatch.setattr(
         "app.services.fund_primary_sector_precompute._resolve_from_benchmark_index",
@@ -113,8 +118,8 @@ def test_precompute_fund_sector_falls_back_to_llm_when_rules_miss(monkeypatch):
     saved: list[dict] = []
 
     monkeypatch.setattr(
-        "app.services.fund_primary_sector_precompute.get_fund_primary_sector_global",
-        lambda _code: None,
+        "app.services.fund_primary_sector_precompute.get_fund_primary_sectors_global_by_codes",
+        lambda _codes: {},
     )
     monkeypatch.setattr(
         "app.services.fund_primary_sector_precompute._resolve_from_benchmark_index",
@@ -158,8 +163,8 @@ def test_precompute_fund_sector_falls_back_to_llm_when_rules_miss(monkeypatch):
 
 def test_precompute_fund_sector_skips_llm_when_disabled(monkeypatch):
     monkeypatch.setattr(
-        "app.services.fund_primary_sector_precompute.get_fund_primary_sector_global",
-        lambda _code: None,
+        "app.services.fund_primary_sector_precompute.get_fund_primary_sectors_global_by_codes",
+        lambda _codes: {},
     )
     monkeypatch.setattr(
         "app.services.fund_primary_sector_precompute._resolve_from_benchmark_index",
@@ -187,23 +192,220 @@ def test_iter_precompute_candidates_prioritizes_missing(monkeypatch):
         lambda: [("111111", "A"), ("222222", "B"), ("333333", "C")],
     )
 
-    def _global(code: str):
-        if code == "222222":
-            return {
-                "fund_code": code,
-                "source": "precompute_benchmark",
-                "resolved_at": datetime.now(timezone.utc).isoformat(),
-            }
-        return None
+    calls: list[set[str]] = []
+    global_rows = {
+        "222222": {
+            "fund_code": "222222",
+            "source": "precompute_benchmark",
+            "resolved_at": datetime.now(timezone.utc).isoformat(),
+        },
+        "333333": {
+            "fund_code": "333333",
+            "source": "precompute_benchmark",
+            "resolved_at": (datetime.now(timezone.utc) - timedelta(days=60)).isoformat(),
+        },
+    }
+
+    def _global(codes: set[str]):
+        calls.append(set(codes))
+        return global_rows
 
     monkeypatch.setattr(
-        "app.services.fund_primary_sector_precompute.get_fund_primary_sector_global",
+        "app.services.fund_primary_sector_precompute.get_fund_primary_sectors_global_by_codes",
         _global,
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_precompute.load_precompute_status",
+        lambda: {},
     )
 
     candidates = iter_precompute_candidates(limit=3, force=False)
-    assert candidates[0] == "111111"
-    assert "333333" in candidates
+    assert candidates == ["111111", "333333", "222222"]
+    assert calls == [{"111111", "222222", "333333"}]
+
+    forced = iter_precompute_candidates(
+        limit=3,
+        force=True,
+        global_rows_by_code=global_rows,
+    )
+    assert forced == ["111111", "222222", "333333"]
+    assert calls == [{"111111", "222222", "333333"}]
+
+
+def test_run_precompute_batch_reuses_promoted_row_for_duplicate_code(monkeypatch):
+    batch_calls: list[set[str]] = []
+    resolver_calls: list[dict] = []
+    promoted: list[PrimarySectorRecord] = []
+    saved_status: list[dict] = []
+    count_calls = {"value": 0}
+
+    def _batch_get(codes: set[str]):
+        batch_calls.append(set(codes))
+        return {}
+
+    def _resolve(code: str, **kwargs):
+        resolver_calls.append(kwargs)
+        return PrimarySectorRecord(
+            fund_code=code,
+            sector_name="半导体",
+            intraday_index_name=None,
+            source="benchmark_index",
+            confidence=0.82,
+        )
+
+    def _promote(record: PrimarySectorRecord):
+        promoted.append(record)
+
+    def _count():
+        count_calls["value"] += 1
+        return 1
+
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_precompute._fund_name_table",
+        lambda: [("111111", "A")],
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_precompute.get_fund_primary_sectors_global_by_codes",
+        _batch_get,
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_precompute.global_sector_enabled",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_precompute.is_global_sector_fresh",
+        lambda row: bool(row and row.get("resolved_at")),
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_precompute._resolve_from_benchmark_index",
+        _resolve,
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_precompute.promote_record_to_global",
+        _promote,
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_precompute.load_precompute_status",
+        lambda: {},
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_precompute.save_precompute_status",
+        lambda payload: saved_status.append(payload),
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_precompute.count_fund_primary_sectors_global",
+        _count,
+    )
+
+    result = run_precompute_batch(
+        limit=2,
+        mode="benchmark",
+        fund_codes=["111111", "111111"],
+        sleep_seconds=0,
+    )
+
+    assert result.to_dict() == {
+        "ok": 1,
+        "skipped": 1,
+        "miss": 0,
+        "error": 0,
+        "processed": 2,
+        "errors": [],
+    }
+    assert batch_calls == [{"111111"}]
+    assert len(resolver_calls) == 1
+    assert resolver_calls[0]["preloaded_global_row"] is None
+    assert [record.source for record in promoted] == ["precompute_benchmark"]
+    assert count_calls == {"value": 1}
+    assert saved_status[0]["global_count"] == 1
+
+
+def test_precompute_stale_row_forces_benchmark_refresh(monkeypatch):
+    stale_row = {
+        "fund_code": "111111",
+        "sector_name": "旧板块",
+        "source": "precompute_benchmark",
+        "resolved_at": (datetime.now(timezone.utc) - timedelta(days=60)).isoformat(),
+    }
+    rows = {"111111": stale_row}
+    resolver_rows: list[dict | None] = []
+
+    def _resolve(code: str, **kwargs):
+        resolver_rows.append(kwargs["preloaded_global_row"])
+        return PrimarySectorRecord(
+            fund_code=code,
+            sector_name="新板块",
+            intraday_index_name=None,
+            source="benchmark_index",
+        )
+
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_precompute.global_sector_enabled",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_precompute.is_global_sector_fresh",
+        lambda row: row is not stale_row,
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_precompute._resolve_from_benchmark_index",
+        _resolve,
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_precompute.promote_record_to_global",
+        lambda _record: None,
+    )
+
+    assert (
+        precompute_fund_sector(
+            "111111",
+            mode="benchmark",
+            global_rows_by_code=rows,
+        )
+        == "ok"
+    )
+    assert resolver_rows == [None]
+    assert rows["111111"]["sector_name"] == "新板块"
+    assert rows["111111"]["source"] == "precompute_benchmark"
+
+
+def test_benchmark_resolver_skips_point_lookup_for_preloaded_missing_row(monkeypatch):
+    from app.services.fund_primary_sector_service import _resolve_from_benchmark_index
+
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_service.load_fresh_global_sector",
+        lambda _code: (_ for _ in ()).throw(AssertionError("point lookup must not run")),
+    )
+
+    assert (
+        _resolve_from_benchmark_index(
+            "111111",
+            fetch=False,
+            persist_user=False,
+            promote_global=False,
+            preloaded_global_row=None,
+        )
+        is None
+    )
+
+
+def test_save_global_sector_returns_written_row_without_point_read(monkeypatch):
+    monkeypatch.setattr(
+        "app.database.get_fund_primary_sector_global",
+        lambda _code: (_ for _ in ()).throw(AssertionError("write must not read back")),
+    )
+
+    saved = save_fund_primary_sector_global(
+        fund_code="111111",
+        sector_name="半导体",
+        source="precompute_benchmark",
+        confidence=0.82,
+    )
+
+    assert saved["fund_code"] == "111111"
+    assert saved["sector_name"] == "半导体"
+    assert saved["source"] == "precompute_benchmark"
+    assert saved["resolved_at"] == saved["updated_at"]
 
 
 def test_load_fresh_global_sector_disabled(monkeypatch):

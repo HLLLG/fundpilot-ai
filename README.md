@@ -188,7 +188,7 @@ cd /d/Code/HL_Project/fundpilot-ai/apps/api
 # 如果 .venv 已存在，可以跳过这行
 /d/Users/hegl/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe -m venv .venv
 
-./.venv/Scripts/python.exe -m pip install -r requirements.txt
+./.venv/Scripts/python.exe -m pip install -r requirements-dev.txt
 ```
 
 前端：
@@ -206,6 +206,8 @@ cd /d/Code/HL_Project/fundpilot-ai/apps/api
 ```
 
 PaddleOCR 依赖较大，首次安装和首次识别会比较慢。你也可以先用文本粘贴和手动校对跑完整流程。
+
+Docker 镜像默认仍安装本地 OCR 作为云端 VLM 的故障回退。如果部署环境已明确只使用云端 VLM、并接受 VLM 不可用时截图识别暂时失败，可在构建时传入 `--build-arg INSTALL_LOCAL_OCR=false`，省去约 550 MiB 的 PaddleOCR 及其传递依赖；Compose 可设置同名环境变量。该选项不会影响文本录入和其他分析功能。
 
 ## 启动
 

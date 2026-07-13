@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
   AnalysisMode,
@@ -43,12 +44,7 @@ import {
   type StreamingReportState,
 } from "@/lib/streamApi";
 import type { StreamingDiscoveryState } from "@/lib/discoveryStreamApi";
-import { AddHoldingModal } from "@/components/AddHoldingModal";
 import { useAuth } from "@/components/AuthProvider";
-import { AlipayOcrConfirmModal } from "@/components/AlipayOcrConfirmModal";
-import { BatchTransactionModal } from "@/components/BatchTransactionModal";
-import { BatchTransactionConfirmModal } from "@/components/BatchTransactionConfirmModal";
-import { LedgerBaselineModal } from "@/components/LedgerBaselineModal";
 import { notifyDesktop, ensureNotificationPermission } from "@/lib/notifications";
 import { BRAND } from "@/lib/brand";
 import { formatThinkingNote, stageShortLabel } from "@/lib/streamingStageMeta";
@@ -65,7 +61,6 @@ import {
   type DashboardTabId,
 } from "@/lib/storage";
 import { ReportNavigator } from "@/components/ReportNavigator";
-import { ReportHistoryDrawer } from "@/components/ReportHistoryDrawer";
 import { BackgroundJobsStack } from "@/components/BackgroundJobsStack";
 import { DiscoveryJobStatusFloat } from "@/components/DiscoveryJobStatusFloat";
 import { JobStatusFloat } from "@/components/JobStatusFloat";
@@ -88,34 +83,116 @@ import {
 import { scheduleHoldingsDetailPrefetch } from "@/lib/holdingDetailPrefetch";
 import { useSectorQuoteRefresh } from "@/lib/useSectorQuoteRefresh";
 import { useSwingAlerts } from "@/lib/useSwingAlerts";
+import { startVisibilityAwarePolling } from "@/lib/visibilityPolling";
 import { SwingAlertsPanel } from "@/components/SwingAlertsPanel";
 import { buildWorkflowBlockers, hasBlockingErrors } from "@/lib/workflowBlockers";
 import { TradingSessionBar } from "@/components/TradingSessionBar";
-import { PortfolioDashboard } from "@/components/PortfolioDashboard";
-import { ReportPanel } from "@/components/ReportPanel";
 import { StreamingAnalysisFloat } from "@/components/StreamingAnalysisFloat";
 import { DiscoveryStreamingFloat } from "@/components/DiscoveryStreamingFloat";
 import {
   YangjibaoHoldingsBoard,
   type PortfolioLoadState,
 } from "@/components/YangjibaoHoldingsBoard";
-import {
-  YangjibaoFundDetail,
-  type HoldingMutationResult,
-} from "@/components/YangjibaoFundDetail";
-import { NewsPreviewPanel } from "@/components/NewsPreviewPanel";
-import { RecommendationAccuracyPanel } from "@/components/RecommendationAccuracyPanel";
-import { SectorSignalBacktestPanel } from "@/components/SectorSignalBacktestPanel";
+import type { HoldingMutationResult } from "@/components/YangjibaoFundDetail";
 import { RiskControls } from "@/components/RiskControls";
-import { MarketBreadthGauge } from "@/components/MarketBreadthGauge";
-import { ShadowEscalationDigestCard } from "@/components/ShadowEscalationDigestCard";
-import { FundDiscoveryPanel } from "@/components/FundDiscoveryPanel";
 import { FocusSectorToast } from "@/components/FocusSectorToast";
-import { MarketTab } from "@/components/MarketTab";
 import { UserMenu } from "@/components/UserMenu";
 import { BrandMark } from "@/components/BrandMark";
 import { DashboardNav } from "@/components/DashboardNav";
 import { InlineNotice, type NoticeTone } from "@/components/InlineNotice";
+
+function DashboardTabLoading({ label }: { label: string }) {
+  return (
+    <section className="section-card flex min-h-40 items-center justify-center text-sm text-slate-500" role="status">
+      正在加载{label}…
+    </section>
+  );
+}
+
+function DeferredInteractionLoading({ label }: { label: string }) {
+  return (
+    <div
+      className="pointer-events-none fixed inset-x-0 bottom-4 z-[70] flex justify-center px-4"
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+    >
+      <span className="rounded-full border border-slate-200 bg-white/95 px-4 py-2 text-sm font-medium text-slate-600 shadow-lg backdrop-blur">
+        正在加载{label}…
+      </span>
+    </div>
+  );
+}
+
+const PortfolioDashboard = dynamic(
+  () => import("@/components/PortfolioDashboard").then((module) => module.PortfolioDashboard),
+  { loading: () => <DashboardTabLoading label="组合看板" /> },
+);
+const ReportPanel = dynamic(
+  () => import("@/components/ReportPanel").then((module) => module.ReportPanel),
+  { loading: () => <DashboardTabLoading label="日报复盘" /> },
+);
+const ReportDiagnostics = dynamic(
+  () =>
+    import("@/components/ReportDiagnostics").then(
+      (module) => module.ReportDiagnostics,
+    ),
+  { loading: () => <InlineNotice tone="info" message="正在加载投研诊断…" /> },
+);
+const ReportHistoryDrawer = dynamic(
+  () =>
+    import("@/components/ReportHistoryDrawer").then(
+      (module) => module.ReportHistoryDrawer,
+    ),
+  { loading: () => <DeferredInteractionLoading label="历史日报" /> },
+);
+const FundDiscoveryPanel = dynamic(
+  () => import("@/components/FundDiscoveryPanel").then((module) => module.FundDiscoveryPanel),
+  { loading: () => <DashboardTabLoading label="推荐基金" /> },
+);
+const MarketTab = dynamic(
+  () => import("@/components/MarketTab").then((module) => module.MarketTab),
+  { loading: () => <DashboardTabLoading label="市场行情" /> },
+);
+const YangjibaoFundDetail = dynamic(
+  () =>
+    import("@/components/YangjibaoFundDetail").then(
+      (module) => module.YangjibaoFundDetail,
+    ),
+  { loading: () => <DeferredInteractionLoading label="基金详情" /> },
+);
+const AddHoldingModal = dynamic(
+  () => import("@/components/AddHoldingModal").then((module) => module.AddHoldingModal),
+  { loading: () => <DeferredInteractionLoading label="添加持仓" /> },
+);
+const LedgerBaselineModal = dynamic(
+  () =>
+    import("@/components/LedgerBaselineModal").then(
+      (module) => module.LedgerBaselineModal,
+    ),
+  { loading: () => <DeferredInteractionLoading label="决策账本" /> },
+);
+const BatchTransactionModal = dynamic(
+  () =>
+    import("@/components/BatchTransactionModal").then(
+      (module) => module.BatchTransactionModal,
+    ),
+  { loading: () => <DeferredInteractionLoading label="交易导入" /> },
+);
+const BatchTransactionConfirmModal = dynamic(
+  () =>
+    import("@/components/BatchTransactionConfirmModal").then(
+      (module) => module.BatchTransactionConfirmModal,
+    ),
+  { loading: () => <DeferredInteractionLoading label="交易确认" /> },
+);
+const AlipayOcrConfirmModal = dynamic(
+  () =>
+    import("@/components/AlipayOcrConfirmModal").then(
+      (module) => module.AlipayOcrConfirmModal,
+    ),
+  { loading: () => <DeferredInteractionLoading label="截图持仓确认" /> },
+);
 const defaultProfile: InvestorProfile = {
   style: "稳健",
   horizon: "半年到一年",
@@ -655,8 +732,9 @@ export function Dashboard() {
       return;
     }
     let cancelled = false;
+    let tickInFlight = false;
     const tick = async () => {
-      if (cancelled) {
+      if (cancelled || tickInFlight || document.visibilityState !== "visible") {
         return;
       }
       // AI 流式/异步任务会占用 API worker；任务进行中跳过后台 holdings 刷新，避免 504
@@ -668,9 +746,14 @@ export function Dashboard() {
       ) {
         return;
       }
+      tickInFlight = true;
       try {
         const status = await fetchSectorQuotesStatus();
-        if (!status.auto_refresh_allowed) {
+        if (
+          cancelled ||
+          document.visibilityState !== "visible" ||
+          !status.auto_refresh_allowed
+        ) {
           return;
         }
         // 周期轮询本身只是重新读取上次持久化的持仓快照，并不会触发板块实时行情
@@ -681,15 +764,23 @@ export function Dashboard() {
         // 耗时更久的旧刷新可能在新的增删之后才落盘，把刚加的基金又冲掉（"批量截图录入
         // 后基金又消失"）。串行化后，同一时刻只会有一个持仓写操作在跑，彻底消除这种竞态。
         await enqueuePortfolioMutation(() => sectorRefresh.refresh(false, "fast"));
+        if (cancelled || document.visibilityState !== "visible") {
+          return;
+        }
         await hydratePortfolio();
       } catch {
         // 后台轮询失败不阻断展示
+      } finally {
+        tickInFlight = false;
       }
     };
-    const timer = window.setInterval(() => void tick(), holdingsPollIntervalMs);
+    const stopPolling = startVisibilityAwarePolling({
+      intervalMs: holdingsPollIntervalMs,
+      onTick: () => void tick(),
+    });
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      stopPolling();
     };
     // hydratePortfolio 刻意不列入依赖，避免重复拉取
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1620,24 +1711,10 @@ export function Dashboard() {
                     onCancelStream={activeJobId ? undefined : handleCancelStream}
                     onStreamFollowup={activeJobId ? undefined : handleStreamFollowup}
                     diagnostics={() => (
-                      <div className="grid gap-4" data-testid="diagnostics-content">
-                        <MarketBreadthGauge compact />
-                        <ShadowEscalationDigestCard />
-                        <NewsPreviewPanel
-                          holdings={displayableHoldings(holdings)}
-                          profile={profile}
-                        />
-                        <RecommendationAccuracyPanel />
-                        <SectorSignalBacktestPanel
-                          sectorLabels={[
-                            ...new Set(
-                              displayableHoldings(holdings)
-                                .map((item) => item.sector_name?.trim())
-                                .filter((name): name is string => Boolean(name)),
-                            ),
-                          ]}
-                        />
-                      </div>
+                      <ReportDiagnostics
+                        holdings={displayableHoldings(holdings)}
+                        profile={profile}
+                      />
                     )}
                   />
                 </div>
@@ -1676,17 +1753,19 @@ export function Dashboard() {
 
         </main>
 
-        <ReportHistoryDrawer
-          open={reportHistoryOpen}
-          reports={orderedReports}
-          activeReportId={report?.id}
-          loading={historyLoading}
-          error={historyError}
-          onClose={() => setReportHistoryOpen(false)}
-          onRefresh={loadHistory}
-          onSelect={(selected) => selectReportInContext(selected)}
-          onDeleted={handleReportDeleted}
-        />
+        {reportHistoryOpen ? (
+          <ReportHistoryDrawer
+            open={reportHistoryOpen}
+            reports={orderedReports}
+            activeReportId={report?.id}
+            loading={historyLoading}
+            error={historyError}
+            onClose={() => setReportHistoryOpen(false)}
+            onRefresh={loadHistory}
+            onSelect={(selected) => selectReportInContext(selected)}
+            onDeleted={handleReportDeleted}
+          />
+        ) : null}
       </div>
 
       <BackgroundJobsStack>
@@ -1773,39 +1852,45 @@ export function Dashboard() {
         />
       ) : null}
 
-      <AddHoldingModal
-        open={showAddHoldingModal}
-        onClose={() => {
-          setShowAddHoldingModal(false);
-          setAddHoldingError(null);
-        }}
-        onUpload={(file) => void handleOcrUpload(file)}
-        onManualSubmit={(items) => handleManualAddHoldings(items)}
-        isUploading={isOcrUploading}
-        isSubmitting={isManualAdding}
-        errorMessage={addHoldingError}
-      />
+      {showAddHoldingModal ? (
+        <AddHoldingModal
+          open={showAddHoldingModal}
+          onClose={() => {
+            setShowAddHoldingModal(false);
+            setAddHoldingError(null);
+          }}
+          onUpload={(file) => void handleOcrUpload(file)}
+          onManualSubmit={(items) => handleManualAddHoldings(items)}
+          isUploading={isOcrUploading}
+          isSubmitting={isManualAdding}
+          errorMessage={addHoldingError}
+        />
+      ) : null}
 
-      <LedgerBaselineModal
-        open={showLedgerBaselineModal}
-        holdings={displayableHoldings(holdings)}
-        onClose={() => setShowLedgerBaselineModal(false)}
-        onConfirmed={async () => {
-          setMessage("决策账本基线已确认，后续日报与荐基将引用新的账本版本。", "success");
-          await hydratePortfolio();
-        }}
-      />
+      {showLedgerBaselineModal ? (
+        <LedgerBaselineModal
+          open={showLedgerBaselineModal}
+          holdings={displayableHoldings(holdings)}
+          onClose={() => setShowLedgerBaselineModal(false)}
+          onConfirmed={async () => {
+            setMessage("决策账本基线已确认，后续日报与荐基将引用新的账本版本。", "success");
+            await hydratePortfolio();
+          }}
+        />
+      ) : null}
 
-      <BatchTransactionModal
-        open={showBatchModal}
-        onClose={() => {
-          setShowBatchModal(false);
-          setBatchUploadError(null);
-        }}
-        onUpload={(file) => void handleBatchUpload(file)}
-        isUploading={isBatchUploading}
-        errorMessage={batchUploadError}
-      />
+      {showBatchModal ? (
+        <BatchTransactionModal
+          open={showBatchModal}
+          onClose={() => {
+            setShowBatchModal(false);
+            setBatchUploadError(null);
+          }}
+          onUpload={(file) => void handleBatchUpload(file)}
+          isUploading={isBatchUploading}
+          errorMessage={batchUploadError}
+        />
+      ) : null}
 
       {pendingTransactions && !showBatchModal ? (
         <BatchTransactionConfirmModal

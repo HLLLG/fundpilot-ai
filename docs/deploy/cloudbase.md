@@ -36,7 +36,7 @@ python scripts/migrate_sqlite_to_mysql.py --sqlite data/app.db
 
 ```bash
 # 项目根目录
-docker build -t fundpilot-api -f apps/api/Dockerfile .
+docker build -t fundpilot-api -f apps/api/Dockerfile apps/api
 ```
 
 云托管环境变量示例：

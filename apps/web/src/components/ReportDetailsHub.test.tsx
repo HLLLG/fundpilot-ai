@@ -126,6 +126,20 @@ it("mounts only the selected detail panel and invokes diagnostics lazily", () =>
   expect(screen.queryByTestId("diagnostics-content")).not.toBeInTheDocument();
 });
 
+it("does not invoke diagnostics while other report tools are opened", () => {
+  const hubProps = props();
+  render(<ReportDetailsHub {...hubProps} />);
+
+  for (const toolName of ["主题要闻摘要", "板块轮动参考", "调仓示意模拟"]) {
+    const entry = screen.getByRole("button", { name: toolName });
+    fireEvent.click(entry);
+    expect(hubProps.diagnostics).not.toHaveBeenCalled();
+    fireEvent.click(entry);
+  }
+
+  expect(screen.queryByTestId("diagnostics-content")).not.toBeInTheDocument();
+});
+
 it("only offers data-backed news and rotation entries", () => {
   const report = sampleReport();
   report.topic_briefs = [];

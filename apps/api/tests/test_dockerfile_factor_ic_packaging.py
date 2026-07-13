@@ -96,6 +96,15 @@ def test_root_dockerfile_copies_factor_ic_directory() -> None:
     ), "不应使用裸 `COPY apps/api/var /app/var`（该目录整体在干净 checkout 里不存在）"
 
 
+def test_local_ocr_is_optional_but_remains_enabled_by_default() -> None:
+    """云端 VLM 部署可主动瘦身，但默认值必须保留本地 OCR 回退能力。"""
+    for dockerfile in (API_ROOT / "Dockerfile", REPO_ROOT / "Dockerfile"):
+        text = dockerfile.read_text(encoding="utf-8")
+        assert "ARG INSTALL_LOCAL_OCR=true" in text
+        assert 'if [ "$INSTALL_LOCAL_OCR" = "true" ]' in text
+        assert "requirements-ocr.txt" in text
+
+
 def test_fresh_checkout_simulation_has_factor_ic_directory_via_git_archive() -> None:
     """用 `git ls-files` 模拟「一次干净 checkout 会实际落地哪些文件」，直接证明
     var/factor_ic/ 这一层目录必然存在（哪怕只有 .gitkeep），而不是仅凭

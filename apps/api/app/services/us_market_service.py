@@ -404,14 +404,6 @@ def _degrade_market_quotes(
     return quotes, _aggregate_status(statuses)
 
 
-def _degrade_futures(
-    raw_futures: list[dict[str, Any]] | None,
-    prev: dict[str, Any] | None,
-) -> tuple[list[UsFuturesQuote], str]:
-    """兼容旧调用：仅期货单源降级（测试 / 回退）。"""
-    return _degrade_market_quotes("pre_market", raw_futures, None, prev)
-
-
 def _aggregate_status(statuses: list[str]) -> str:
     """整体状态：任一 ok→ok；否则任一 stale→stale；否则 unavailable。"""
     if any(s == "ok" for s in statuses):

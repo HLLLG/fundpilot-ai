@@ -4,6 +4,9 @@ import { useEffect, useState } from "react";
 import { SlidersHorizontal } from "lucide-react";
 import { InlineNotice } from "@/components/InlineNotice";
 import { fetchRebalanceSimulation, type RebalanceSimulation } from "@/lib/api";
+import { useMediaQuery } from "@/lib/useMediaQuery";
+
+const DESKTOP_QUERY = "(min-width: 640px)";
 
 type RebalanceSimulationPanelProps = {
   reportId: string;
@@ -14,6 +17,7 @@ export function RebalanceSimulationPanel({
   reportId,
   embedded = false,
 }: RebalanceSimulationPanelProps) {
+  const isDesktop = useMediaQuery(DESKTOP_QUERY);
   const [result, setResult] = useState<{
     reportId: string;
     data: RebalanceSimulation;
@@ -91,60 +95,8 @@ export function RebalanceSimulationPanel({
             </ul>
           ) : null}
           {simulation.rows.length > 0 ? (
-            <>
-              <div className="grid gap-2 sm:hidden" role="list" aria-label="模拟调仓明细">
-                {simulation.rows.map((row) => (
-                  <article
-                    key={`mobile-${row.fund_code}`}
-                    role="listitem"
-                    className="rounded-2xl border border-slate-200 bg-white p-3"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <h4 className="break-words text-sm font-bold text-slate-900">
-                          {row.fund_name}
-                        </h4>
-                        <p className="mt-0.5 text-xs text-slate-500">{row.fund_code}</p>
-                      </div>
-                      <span className="shrink-0 rounded-full bg-[var(--brand-soft)] px-2 py-1 text-xs font-bold text-[var(--brand-strong)]">
-                        {row.action}
-                      </span>
-                    </div>
-                    <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
-                      <div>
-                        <dt className="text-slate-500">金额变动</dt>
-                        <dd className="mt-0.5 font-bold text-slate-800">
-                          {row.delta_yuan > 0 ? "+" : ""}
-                          {row.delta_yuan.toLocaleString("zh-CN")} 元
-                        </dd>
-                      </div>
-                      <div>
-                        <dt className="text-slate-500">当前仓位</dt>
-                        <dd className="mt-0.5 font-bold text-slate-800">
-                          {row.current_weight_percent}%
-                        </dd>
-                      </div>
-                      <div className="col-span-2">
-                        <dt className="text-slate-500">模拟后仓位</dt>
-                        <dd className="mt-0.5 font-bold text-slate-800">
-                          {row.simulated_weight_percent}%
-                          <span className="ml-1 font-medium text-slate-500">
-                            （{row.weight_delta_percent > 0 ? "+" : ""}
-                            {row.weight_delta_percent} 个百分点）
-                          </span>
-                        </dd>
-                      </div>
-                    </dl>
-                    {row.amount_note ? (
-                      <p className="mt-2 break-words text-xs leading-5 text-slate-500">
-                        {row.amount_note}
-                      </p>
-                    ) : null}
-                  </article>
-                ))}
-              </div>
-
-              <div className="hidden sm:block">
+            isDesktop ? (
+              <div>
                 <div
                   className="overflow-x-auto rounded-2xl bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
                   role="region"
@@ -194,7 +146,59 @@ export function RebalanceSimulationPanel({
                 </div>
                 <p className="mt-1 text-xs text-slate-500">表格内容较宽时可左右滚动查看。</p>
               </div>
-            </>
+            ) : (
+              <div className="grid gap-2" role="list" aria-label="模拟调仓明细">
+                {simulation.rows.map((row) => (
+                  <article
+                    key={row.fund_code}
+                    role="listitem"
+                    className="rounded-2xl border border-slate-200 bg-white p-3"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <h4 className="break-words text-sm font-bold text-slate-900">
+                          {row.fund_name}
+                        </h4>
+                        <p className="mt-0.5 text-xs text-slate-500">{row.fund_code}</p>
+                      </div>
+                      <span className="shrink-0 rounded-full bg-[var(--brand-soft)] px-2 py-1 text-xs font-bold text-[var(--brand-strong)]">
+                        {row.action}
+                      </span>
+                    </div>
+                    <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
+                      <div>
+                        <dt className="text-slate-500">金额变动</dt>
+                        <dd className="mt-0.5 font-bold text-slate-800">
+                          {row.delta_yuan > 0 ? "+" : ""}
+                          {row.delta_yuan.toLocaleString("zh-CN")} 元
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="text-slate-500">当前仓位</dt>
+                        <dd className="mt-0.5 font-bold text-slate-800">
+                          {row.current_weight_percent}%
+                        </dd>
+                      </div>
+                      <div className="col-span-2">
+                        <dt className="text-slate-500">模拟后仓位</dt>
+                        <dd className="mt-0.5 font-bold text-slate-800">
+                          {row.simulated_weight_percent}%
+                          <span className="ml-1 font-medium text-slate-500">
+                            （{row.weight_delta_percent > 0 ? "+" : ""}
+                            {row.weight_delta_percent} 个百分点）
+                          </span>
+                        </dd>
+                      </div>
+                    </dl>
+                    {row.amount_note ? (
+                      <p className="mt-2 break-words text-xs leading-5 text-slate-500">
+                        {row.amount_note}
+                      </p>
+                    ) : null}
+                  </article>
+                ))}
+              </div>
+            )
           ) : (
             <InlineNotice tone="info" message="本报告暂无可模拟的调仓动作。" />
           )}

@@ -15,10 +15,18 @@ export function actionTone(action: string): ActionTone {
   // "大幅减仓评估"/"清仓评估" 会被"减仓"子串误判为普通 reduce 档位。
   if (text.includes("清仓")) return "clear_all";
   if (text.includes("大幅减仓")) return "deep_reduce";
-  if (text.includes("加仓") || text.includes("定投")) return "add";
   if (text.includes("减仓") || text.includes("复核") || text.includes("风控")) return "reduce";
-  if (text.includes("暂停")) return "pause";
-  if (text.includes("观察")) return "watch";
+  if (text.includes("暂停") || text.includes("等待") || text.includes("回调")) return "pause";
+  if (
+    text.includes("加仓") ||
+    text.includes("定投") ||
+    text.includes("买入") ||
+    text.includes("申购") ||
+    text.includes("分批")
+  ) {
+    return "add";
+  }
+  if (text.includes("观察") || text.includes("关注")) return "watch";
   return "neutral";
 }
 
@@ -33,19 +41,5 @@ const toneClasses: Record<ActionTone, string> = {
 };
 
 export function actionBadgeClass(action: string): string {
-  return toneClasses[actionTone(action)];
-}
-
-const cardToneClasses: Record<ActionTone, string> = {
-  add: "border-emerald-100 bg-emerald-50/70",
-  reduce: "border-orange-100 bg-orange-50/70",
-  deep_reduce: "border-rose-200 bg-rose-50/80",
-  clear_all: "border-rose-300 bg-rose-50",
-  pause: "border-amber-100 bg-amber-50/60",
-  watch: "border-slate-200 bg-slate-50/80",
-  neutral: "border-blue-100 bg-blue-50/60",
-};
-
-export function actionCardClass(action: string): string {
-  return cardToneClasses[actionTone(action)];
+  return `inline-flex shrink-0 items-center rounded-full border px-2.5 py-1 text-xs font-bold ${toneClasses[actionTone(action)]}`;
 }

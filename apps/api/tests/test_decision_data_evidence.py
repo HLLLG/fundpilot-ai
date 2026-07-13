@@ -190,6 +190,29 @@ def test_analysis_evidence_is_field_level_and_estimates_are_explicit():
     assert payload["schema_version"] == "1.0"
 
 
+def test_market_breadth_explicit_stale_status_overrides_same_trade_date():
+    from app.services.decision_data_evidence import build_analysis_data_evidence
+
+    payload = build_analysis_data_evidence(
+        [_holding(1000)],
+        snapshots=[],
+        facts={
+            "session": {"effective_trade_date": "2026-07-13"},
+            "market_breadth": {
+                "available": True,
+                "trade_date": "2026-07-13",
+                "stale": True,
+                "freshness_status": "stale",
+                "decision_eligible": False,
+            },
+        },
+        portfolio_context=None,
+    )
+
+    by_id = {item["fact_id"]: item for item in payload["items"]}
+    assert by_id["market.market_breadth"]["freshness"] == "stale"
+
+
 def test_empty_server_snapshot_cannot_be_overridden_by_stale_client_holdings(monkeypatch):
     from app.services import decision_data_evidence as service
 

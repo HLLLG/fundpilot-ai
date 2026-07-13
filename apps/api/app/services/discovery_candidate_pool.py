@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from datetime import date, datetime
+
 from app.database import (
     get_fund_profile_by_code,
     list_fund_primary_sectors,
@@ -8,17 +11,31 @@ from app.database import (
 from app.models import Holding
 from app.services.discovery_selection_strategy import (
     SelectionStrategy,
-    balanced_score,
 )
 from app.services.fund_code_resolver import lookup_fund_name_by_code
 from app.services.fund_data import FundDataService, _map_holdings_concurrently
 from app.services.sector_canonical import get_canonical_sector
 from app.services.akshare_subprocess import fetch_new_fund_offerings
+from app.services.fund_discovery_data_cache import (
+    fetch_discovery_fund_universe_cached,
+    fetch_fund_research_profiles_cached,
+)
 from app.services.fund_rank_cache import fetch_open_fund_rank_cached
 
 _POOL_CAP = 28
 _PER_SECTOR = 5
 _MIN_SCALE_YI = 1.0
+_HARD_MIN_SCALE_YI = 0.5
+_MIN_HISTORY_DAYS = 365
+_CORE_QUALITY_FIELDS = (
+    "return_3m_percent",
+    "return_6m_percent",
+    "max_drawdown_1y_percent",
+    "fund_scale_yi",
+    "established_date",
+    "fund_manager",
+    "nav_date",
+)
 
 
 def build_candidate_pool(
@@ -33,13 +50,19 @@ def build_candidate_pool(
     fetch_new_funds=None,
     sector_opportunities: list[dict] | None = None,
 ) -> list[dict]:
-    # 默认 fetcher 在调用时 lookup，便于 monkeypatch 与共享缓存对齐。
+    # 默认使用全量、分类型的开放式基金横截面，避免“近1年涨幅前300名”造成
+    # 赢家偏差；冷启动失败时再降级到前500名排行。注入 fetch_rank 仍保留给测试。
+    universe_mode = "injected"
     if fetch_rank is None:
-        fetch_rank = fetch_open_fund_rank_cached
+        rank_rows = fetch_discovery_fund_universe_cached(limit=20_000) or []
+        universe_mode = "full" if rank_rows else "top_500_fallback"
+        if not rank_rows:
+            rank_rows = fetch_open_fund_rank_cached(limit=500) or []
+    else:
+        rank_rows = fetch_rank(limit=300) or []
     if fetch_new_funds is None:
         fetch_new_funds = fetch_new_fund_offerings
     excluded = {code.strip().zfill(6) for code in (exclude_codes or set())}
-    rank_rows = fetch_rank(limit=300) or []
     rank_by_code = {
         str(row.get("fund_code", "")).zfill(6): row
         for row in rank_rows
@@ -85,6 +108,9 @@ def build_candidate_pool(
             family_seen=family_seen,
             limit=sector_limit,
         )
+        for candidate in sector_candidates:
+            candidate["candidate_universe_mode"] = universe_mode
+            candidate["candidate_universe_size"] = len(rank_rows)
         collected.extend(sector_candidates[:sector_limit])
         if len(collected) >= pool_cap:
             break
@@ -99,6 +125,8 @@ def build_candidate_pool(
             family_seen=family_seen,
         )
         for entry in fallback_ranked:
+            entry["candidate_universe_mode"] = universe_mode
+            entry["candidate_universe_size"] = len(rank_rows)
             collected.append(entry)
             seen_codes.add(str(entry.get("fund_code", "")).zfill(6))
             family_seen.add(_family_key(str(entry.get("fund_name") or "")))
@@ -110,6 +138,13 @@ def build_candidate_pool(
 
 def enrich_candidates(pool: list[dict]) -> list[dict]:
     service = FundDataService()
+    codes = [str(item.get("fund_code") or "").zfill(6) for item in pool]
+
+    profile_executor = ThreadPoolExecutor(
+        max_workers=1,
+        thread_name_prefix="discovery-fund-profile",
+    )
+    profile_future = profile_executor.submit(fetch_fund_research_profiles_cached, codes)
 
     def _enrich_one(item: dict) -> dict:
         code = str(item.get("fund_code", "")).zfill(6)
@@ -117,15 +152,20 @@ def enrich_candidates(pool: list[dict]) -> list[dict]:
         holding = Holding(fund_code=code, fund_name=name, holding_amount=0)
         snapshot, trend = service._snapshot_and_trend_for_holding(holding, trading_days=252)
         row = dict(item)
-        row["return_1y_percent"] = row.get("return_1y_percent") or snapshot.return_1y_percent
-        row["max_drawdown_1y_percent"] = (
-            row.get("max_drawdown_1y_percent") or snapshot.max_drawdown_1y_percent
+        row["return_1y_percent"] = _first_present(
+            row.get("return_1y_percent"), snapshot.return_1y_percent
         )
-        row["fund_scale_yi"] = row.get("fund_scale_yi") or snapshot.fund_scale_yi
+        row["max_drawdown_1y_percent"] = _first_valid_drawdown(
+            row.get("max_drawdown_1y_percent"),
+            snapshot.max_drawdown_1y_percent,
+        )
+        row["fund_scale_yi"] = _first_present(
+            row.get("fund_scale_yi"), snapshot.fund_scale_yi
+        )
         row["management_fee"] = snapshot.management_fee
-        row["fund_type"] = snapshot.fund_type
-        row["latest_nav"] = snapshot.latest_nav
-        row["nav_date"] = snapshot.nav_date
+        row["fund_type"] = _first_present(snapshot.fund_type, row.get("fund_type"))
+        row["latest_nav"] = _first_present(snapshot.latest_nav, row.get("latest_nav"))
+        row["nav_date"] = _first_present(snapshot.nav_date, row.get("nav_date"))
         if trend is not None and getattr(trend, "points", None):
             from app.services.nav_trend_summary import summarize_nav_history
 
@@ -136,7 +176,61 @@ def enrich_candidates(pool: list[dict]) -> list[dict]:
 
     # 候选池最多 25 只，逐只 AkShare 拉取是冷缓存下荐基管线最大耗时来源；
     # 并发执行（IO 密集，_snapshot_and_trend_for_holding 内部已兜底异常）保序返回。
-    return _map_holdings_concurrently(pool, _enrich_one)
+    try:
+        enriched = _map_holdings_concurrently(pool, _enrich_one)
+        try:
+            profiles = profile_future.result()
+        except Exception:  # noqa: BLE001 - research profile is best-effort
+            profiles = {}
+    finally:
+        profile_executor.shutdown(wait=False, cancel_futures=True)
+
+    rescored: list[dict] = []
+    for raw in enriched:
+        row = dict(raw)
+        code = str(row.get("fund_code") or "").zfill(6)
+        profile = profiles.get(code) or {}
+        for key in (
+            "fund_category",
+            "fund_manager",
+            "established_date",
+            "profile_updated_at",
+            "profile_source",
+        ):
+            if profile.get(key) is not None:
+                row[key] = profile[key]
+        row["fund_scale_yi"] = _first_present(
+            profile.get("fund_scale_yi"), row.get("fund_scale_yi")
+        )
+        row["fund_type"] = _first_present(
+            profile.get("fund_category"), row.get("fund_type")
+        )
+        row = _with_data_quality_gate(row)
+        row = _with_quality_score(row, fund_type_preference="any")
+        row["quality_score_version"] = "fund_quality.v2"
+        rescored.append(row)
+
+    dip_mode = any(item.get("dip_drop_percent") is not None for item in rescored)
+    if dip_mode:
+        from app.services.discovery_selection_strategy import dip_rebound_score
+
+        rescored.sort(
+            key=lambda item: (
+                _quality_gate_rank(item),
+                dip_rebound_score(item),
+                _num(item.get("fund_quality_score")) or -999.0,
+            ),
+            reverse=True,
+        )
+    else:
+        rescored.sort(
+            key=lambda item: (
+                _quality_gate_rank(item),
+                _num(item.get("fund_quality_score")) or -999.0,
+            ),
+            reverse=True,
+        )
+    return rescored
 
 
 def _candidates_for_sector(
@@ -221,8 +315,29 @@ def _candidates_for_sector(
     scored = [
         _with_quality_score(entry, fund_type_preference=fund_type_preference)
         for entry in entries_by_code.values()
+        if selection_strategy == "with_new_issue"
+        or entry.get("is_new_issue")
+        or _passes_quality(entry)
     ]
-    scored.sort(key=lambda item: float(item.get("fund_quality_score") or -999), reverse=True)
+    if selection_strategy == "dip_rebound":
+        from app.services.discovery_selection_strategy import dip_rebound_score
+
+        scored.sort(
+            key=lambda item: (
+                dip_rebound_score(item),
+                float(item.get("fund_quality_score") or -999),
+                _share_class_rank(str(item.get("fund_name") or "")),
+            ),
+            reverse=True,
+        )
+    else:
+        scored.sort(
+            key=lambda item: (
+                float(item.get("fund_quality_score") or -999),
+                _share_class_rank(str(item.get("fund_name") or "")),
+            ),
+            reverse=True,
+        )
 
     selected: list[dict] = []
     local_family_seen: set[str] = set()
@@ -279,6 +394,9 @@ def _merge_rank_metrics(entry: dict, rank_row: dict | None) -> dict:
         "return_3m_percent",
         "max_drawdown_1y_percent",
         "fund_scale_yi",
+        "fund_type",
+        "nav_date",
+        "established_date",
     ):
         if merged.get(key) is None and rank_row.get(key) is not None:
             merged[key] = rank_row.get(key)
@@ -370,13 +488,19 @@ def _entry_from_rank(row: dict, *, sector_label: str, selection_reason: str) -> 
         "return_3m_percent": row.get("return_3m_percent"),
         "max_drawdown_1y_percent": row.get("max_drawdown_1y_percent"),
         "fund_scale_yi": row.get("fund_scale_yi"),
+        "fund_type": row.get("fund_type"),
+        "nav_date": row.get("nav_date"),
+        "established_date": row.get("established_date"),
     }
 
 
 def _with_quality_score(entry: dict, *, fund_type_preference: str) -> dict:
     row = dict(entry)
     reasons: list[str] = []
-    penalties: list[str] = []
+    gate = row.get("quality_gate") if isinstance(row.get("quality_gate"), dict) else {}
+    penalties: list[str] = [
+        str(item) for item in gate.get("reasons") or [] if str(item).strip()
+    ]
 
     sector_fit = _sector_fit_score(row)
     if sector_fit >= 34:
@@ -386,25 +510,179 @@ def _with_quality_score(entry: dict, *, fund_type_preference: str) -> dict:
     else:
         penalties.append("板块匹配置信偏低")
 
-    performance = balanced_score(row)
+    performance = _bounded_performance_score(row, penalties, reasons)
     r3m = _num(row.get("return_3m_percent"))
     r6m = _num(row.get("return_6m_percent"))
     if r3m is None and r6m is None:
         penalties.append("缺少近3/6月收益")
-        performance -= 6.0
     elif (r3m or 0.0) > 5 or (r6m or 0.0) > 10:
         reasons.append("近3/6月表现占优")
 
     risk_score = _risk_score(row, penalties, reasons)
     scale_score = _scale_score(row, penalties, reasons)
     type_score = _type_preference_score(row, fund_type_preference, reasons)
+    if not _has_value(row.get("management_fee")):
+        penalties.append("管理费率未核验；净值已反映历史经常性费用")
+    name = str(row.get("fund_name") or "")
+    if name:
+        row["share_class"] = "C" if _is_c_class_fund(name) else "A/其他"
+        row["share_class_fee_status"] = "unverified"
 
-    score = sector_fit + performance + risk_score + scale_score + type_score
+    coverage = _num(gate.get("coverage_percent")) or 0.0
+    data_score = coverage / 10.0
+    score = sector_fit + performance + risk_score + scale_score + type_score + data_score
     row["sector_fit_score"] = round(sector_fit, 2)
-    row["fund_quality_score"] = round(score, 2)
+    row["fund_quality_score"] = round(max(0.0, min(100.0, score)), 2)
+    row["quality_score_components"] = {
+        "sector_fit": round(sector_fit, 2),
+        "performance": round(performance, 2),
+        "drawdown_control": round(risk_score, 2),
+        "scale": round(scale_score, 2),
+        "data_completeness": round(data_score, 2),
+        "legacy_type_preference": round(type_score, 2),
+    }
     row["quality_reasons"] = _unique_text(reasons)[:4]
     row["quality_penalties"] = _unique_text(penalties)[:4]
     return row
+
+
+def _bounded_performance_score(
+    row: dict,
+    penalties: list[str],
+    reasons: list[str],
+) -> float:
+    """把阶段收益压到 0~25，防止单只暴涨基金把总分推过100。"""
+
+    r3m = _num(row.get("return_3m_percent"))
+    r6m = _num(row.get("return_6m_percent"))
+    r1y = _num(row.get("return_1y_percent"))
+    if r3m is None and r6m is None:
+        penalties.append("缺少近3/6月收益")
+        return 0.0
+
+    score = 0.0
+    if r3m is not None:
+        score += _clamp((r3m + 10.0) / 40.0, 0.0, 1.0) * 11.0
+    if r6m is not None:
+        score += _clamp((r6m + 15.0) / 65.0, 0.0, 1.0) * 11.0
+    if r1y is not None and -10.0 <= r1y <= 70.0:
+        score += 3.0
+    elif r1y is not None and r1y > 100.0:
+        penalties.append("近1年涨幅过高，存在追高偏差")
+        score -= min(5.0, (r1y - 100.0) / 20.0)
+    if score >= 17.0:
+        reasons.append("近3/6月表现占优")
+    return _clamp(score, 0.0, 25.0)
+
+
+def _with_data_quality_gate(entry: dict) -> dict:
+    row = dict(entry)
+    missing = [field for field in _CORE_QUALITY_FIELDS if not _has_value(row.get(field))]
+    coverage = round(
+        (len(_CORE_QUALITY_FIELDS) - len(missing)) / len(_CORE_QUALITY_FIELDS) * 100,
+        1,
+    )
+    reasons: list[str] = []
+    status = "eligible"
+
+    scale = _num(row.get("fund_scale_yi"))
+    if scale is not None and scale < _HARD_MIN_SCALE_YI:
+        status = "excluded"
+        reasons.append("最新估算规模低于0.5亿元，清盘与流动性风险偏高")
+    elif scale is not None and scale < _MIN_SCALE_YI:
+        status = "watch_only"
+        reasons.append("最新估算规模低于1亿元，暂不生成可执行买入动作")
+
+    established = _parse_iso_date(row.get("established_date"))
+    if established is not None and (date.today() - established).days < _MIN_HISTORY_DAYS:
+        status = "excluded"
+        reasons.append("成立不足1年，缺少可验证的完整业绩周期")
+
+    drawdown = _num(row.get("max_drawdown_1y_percent"))
+    if status != "excluded" and drawdown is not None and abs(drawdown) > 50.0:
+        status = "watch_only"
+        reasons.append("近1年最大回撤超过50%，仅保留研究观察")
+
+    nav_date = _parse_iso_date(row.get("nav_date"))
+    if status != "excluded" and nav_date is not None and (date.today() - nav_date).days > 7:
+        status = "watch_only"
+        reasons.append("最新净值超过7个自然日，时点不足")
+
+    if status != "excluded" and missing:
+        status = "watch_only"
+        labels = {
+            "return_3m_percent": "近3月收益",
+            "return_6m_percent": "近6月收益",
+            "max_drawdown_1y_percent": "近1年回撤",
+            "fund_scale_yi": "最新规模",
+            "established_date": "成立日期",
+            "fund_manager": "基金经理",
+            "nav_date": "净值日期",
+        }
+        reasons.append("核心字段缺失：" + "、".join(labels.get(field, field) for field in missing))
+
+    row["quality_gate"] = {
+        "eligible": status == "eligible",
+        "status": status,
+        "reasons": _unique_text(reasons),
+        "missing_fields": missing,
+        "coverage_percent": coverage,
+        "data_as_of": row.get("nav_date") or row.get("profile_updated_at"),
+    }
+    return row
+
+
+def _quality_gate_rank(item: dict) -> int:
+    gate = item.get("quality_gate") if isinstance(item.get("quality_gate"), dict) else {}
+    return {"eligible": 2, "watch_only": 1, "excluded": 0}.get(
+        str(gate.get("status") or "watch_only"),
+        1,
+    )
+
+
+def _first_present(*values: object) -> object | None:
+    for value in values:
+        if value is not None:
+            return value
+    return None
+
+
+def _valid_drawdown(value: object) -> float | None:
+    parsed = _num(value)
+    if parsed is None or parsed > 0.0 or parsed < -100.0:
+        return None
+    return parsed
+
+
+def _first_valid_drawdown(*values: object) -> float | None:
+    for value in values:
+        parsed = _valid_drawdown(value)
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _parse_iso_date(value: object) -> date | None:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    text = str(value or "").strip()[:10].replace("/", "-")
+    if not text:
+        return None
+    try:
+        return date.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def _has_value(value: object) -> bool:
+    text = str(value or "").strip()
+    return bool(text and "\ufffd" not in text and text not in {"--", "未知", "None"})
+
+
+def _clamp(value: float, lower: float, upper: float) -> float:
+    return max(lower, min(upper, value))
 
 
 def _sector_fit_score(row: dict) -> float:
@@ -423,35 +701,38 @@ def _risk_score(row: dict, penalties: list[str], reasons: list[str]) -> float:
     drawdown = _num(row.get("max_drawdown_1y_percent"))
     if drawdown is None:
         penalties.append("缺少近1年回撤")
-        return -2.0
+        return 0.0
     depth = abs(drawdown)
     if depth <= 20:
         reasons.append("近1年回撤可控")
-        return 6.0
+        return 15.0
     if depth <= 30:
-        return 2.0
+        return 10.0
     if depth >= 40:
         penalties.append("近1年回撤偏大")
-        return -8.0
+        return 0.0
     penalties.append("近1年回撤略高")
-    return -3.0
+    return 5.0
 
 
 def _scale_score(row: dict, penalties: list[str], reasons: list[str]) -> float:
     scale = _num(row.get("fund_scale_yi"))
     if scale is None:
         penalties.append("缺少基金规模")
-        return -3.0
-    if scale < _MIN_SCALE_YI:
+        return 0.0
+    if scale < _HARD_MIN_SCALE_YI:
         penalties.append("基金规模过小")
-        return -99.0
+        return 0.0
+    if scale < _MIN_SCALE_YI:
+        penalties.append("基金规模低于1亿元")
+        return 2.0
     if scale < 3:
         penalties.append("基金规模偏小")
-        return -4.0
+        return 5.0
     if scale <= 120:
         reasons.append("基金规模适中")
-        return 4.0
-    return 1.0
+        return 10.0
+    return 7.0
 
 
 def _type_preference_score(row: dict, preference: str, reasons: list[str]) -> float:
@@ -562,6 +843,9 @@ def infer_sector_label_from_discovery_keywords(fund_name: str) -> str:
 
 
 def _passes_quality(row: dict) -> bool:
+    established = _parse_iso_date(row.get("established_date"))
+    if established is not None and (date.today() - established).days < _MIN_HISTORY_DAYS:
+        return False
     scale = row.get("fund_scale_yi")
     if scale is not None:
         try:
@@ -588,8 +872,13 @@ def _matches_fund_type_preference(name: str, preference: str) -> bool:
     if preference == "no_c_class":
         return not _is_c_class_fund(name)
     if preference == "etf_link":
-        return _is_etf_link_fund(name)
+        # 历史 API 字段继续兼容，但“优先”只能加分，不能把主动基金硬过滤为空。
+        return True
     return True
+
+
+def _share_class_rank(name: str) -> int:
+    return 0 if _is_c_class_fund(name) else 1
 
 
 def _num(value: object) -> float | None:

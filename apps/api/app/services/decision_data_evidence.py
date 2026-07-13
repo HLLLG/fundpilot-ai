@@ -408,6 +408,13 @@ def _analysis_context_evidence(
     if isinstance(breadth, dict):
         breadth_available = bool(breadth.get("available"))
         breadth_date = str(breadth.get("trade_date") or "")[:10] or None
+        breadth_freshness = str(breadth.get("freshness_status") or "")
+        if breadth.get("stale") is True or breadth_freshness == "stale":
+            evidence_freshness = "stale"
+        elif breadth_date == effective_trade_date:
+            evidence_freshness = "fresh"
+        else:
+            evidence_freshness = "aging" if breadth_date else "unknown"
         items.append(
             _field_evidence(
                 fact_id="market.market_breadth",
@@ -419,11 +426,7 @@ def _analysis_context_evidence(
                 confidence="medium",
                 is_estimate=False,
                 available=breadth_available,
-                freshness=(
-                    "fresh"
-                    if breadth_date == effective_trade_date
-                    else ("aging" if breadth_date else "unknown")
-                ),
+                freshness=evidence_freshness,
             )
         )
 
@@ -906,6 +909,23 @@ def decision_evidence_allows_action(
     }
     code = str(fund_code or "").strip().zfill(6)
     if scope == "discovery":
+        pool_item = next(
+            (
+                item
+                for item in (facts or {}).get("candidate_pool") or []
+                if isinstance(item, dict)
+                and str(item.get("fund_code") or "").strip().zfill(6) == code
+            ),
+            None,
+        )
+        quality_gate = (
+            pool_item.get("quality_gate")
+            if isinstance(pool_item, dict) and isinstance(pool_item.get("quality_gate"), dict)
+            else None
+        )
+        if quality_gate is not None and quality_gate.get("status") != "eligible":
+            status = str(quality_gate.get("status") or "watch_only")
+            return False, [f"candidate_quality_gate_{status}"]
         required = f"candidates.{code}.candidate_metrics"
         if not _usable_evidence(items.get(required)):
             return False, ["candidate_metrics_not_point_in_time_usable"]

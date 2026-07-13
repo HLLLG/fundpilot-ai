@@ -131,8 +131,17 @@ def build_discovery_facts(
         "signal_backtest": signal_backtest,
         "news": build_news_pipeline_context(market_news, topic_briefs),
         "candidate_pool": candidate_pool,
+        "candidate_quality_summary": _candidate_quality_summary(candidate_pool),
         "candidate_factor_scores": build_candidate_factor_scores(candidate_pool),
         "selection_strategy": selection_strategy,
+        "effective_configuration": {
+            "scan_goal": scan_mode,
+            "selection_policy": (
+                "dip_rebound_research" if scan_mode == "dip_swing" else "auto_quality"
+            ),
+            "share_class_policy": "family_dedupe_fee_verification_required",
+            "legacy_fund_type_preference": fund_type_preference,
+        },
     }
 
     if scan_mode == "dip_swing":
@@ -154,6 +163,43 @@ def build_discovery_facts(
         }
 
     return facts
+
+
+def _candidate_quality_summary(candidate_pool: list[dict]) -> dict:
+    statuses = {"eligible": 0, "watch_only": 0, "excluded": 0}
+    coverage_values: list[float] = []
+    for item in candidate_pool:
+        gate = item.get("quality_gate") if isinstance(item.get("quality_gate"), dict) else {}
+        status = str(gate.get("status") or "watch_only")
+        if status not in statuses:
+            status = "watch_only"
+        statuses[status] += 1
+        value = gate.get("coverage_percent")
+        try:
+            if value is not None:
+                coverage_values.append(float(value))
+        except (TypeError, ValueError):
+            pass
+    return {
+        "total_count": len(candidate_pool),
+        "eligible_count": statuses["eligible"],
+        "watch_only_count": statuses["watch_only"],
+        "excluded_count": statuses["excluded"],
+        "required_fields": [
+            "return_3m_percent",
+            "return_6m_percent",
+            "max_drawdown_1y_percent",
+            "fund_scale_yi",
+            "established_date",
+            "fund_manager",
+            "nav_date",
+        ],
+        "coverage_percent": (
+            round(sum(coverage_values) / len(coverage_values), 1)
+            if coverage_values
+            else 0.0
+        ),
+    }
 
 
 def _signal_backtest_unavailable(reason: str) -> dict:

@@ -130,7 +130,7 @@ def test_boosts_amount_cap_when_positive_resonance() -> None:
     report = _run(
         pool_item=_pool_item(fund_quality_score=80.0),
         opportunity=_opportunity(opportunity_available=True),
-        rec_kwargs={"action": "建议关注", "suggested_amount_yuan": 18000},
+        rec_kwargs={"action": "分批买入", "suggested_amount_yuan": 18000},
     )
     assert len(report.recommendations) == 1
     rec = report.recommendations[0]
@@ -145,7 +145,7 @@ def test_does_not_boost_when_fund_quality_only_moderate() -> None:
     report = _run(
         pool_item=_pool_item(fund_quality_score=60.0),
         opportunity=_opportunity(opportunity_available=True),
-        rec_kwargs={"action": "建议关注", "suggested_amount_yuan": 18000},
+        rec_kwargs={"action": "分批买入", "suggested_amount_yuan": 18000},
     )
     assert len(report.recommendations) == 1
     rec = report.recommendations[0]

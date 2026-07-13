@@ -4,11 +4,13 @@ import time
 from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 
-from app.database import list_fund_primary_sectors
+from app.database import (
+    list_fund_primary_sectors,
+    list_fund_primary_sectors_by_sector_names,
+)
 from app.models import Holding
 from app.services.fund_primary_sector_service import resolve_sector_labels_for_radar
 from app.services.akshare_subprocess import fetch_open_fund_rank_worst_recent
-from app.services.fund_rank_cache import fetch_open_fund_rank_cached
 from app.services.discovery_candidate_pool import (
     _entry_from_rank,
     _name_matches_sector,
@@ -98,16 +100,19 @@ def build_dip_pool_for_sectors(
     exclude_codes: set[str] | None = None,
     per_sector_top: int = 8,
     pool_cap: int = 30,
-    budget_seconds: float = 15.0,
+    budget_seconds: float = 25.0,
     fetch_rank=None,
 ) -> list[dict]:
     """Build dip-swing candidate pool across target sectors with NAV prescreen."""
-    # 默认 fetcher 在调用时 lookup，便于 monkeypatch 与共享缓存对齐。
+    # 大跌研究必须从近期跌幅榜取样，不能复用近1年涨幅冠军榜。
     if fetch_rank is None:
-        fetch_rank = fetch_open_fund_rank_cached
+        fetch_rank = fetch_open_fund_rank_worst_recent
     excluded = {code.strip().zfill(6) for code in (exclude_codes or set())}
     rank_rows = fetch_rank(limit=300) or []
-    primary_rows = list_fund_primary_sectors()
+    primary_rows = list_fund_primary_sectors() + list_fund_primary_sectors_by_sector_names(
+        target_sectors,
+        limit_per_sector=30,
+    )
     deadline = time.monotonic() + max(budget_seconds, 1.0)
 
     sector_keywords: dict[str, tuple[str, ...]] = {}
@@ -134,7 +139,11 @@ def build_dip_pool_for_sectors(
             if code and code not in excluded:
                 codes_to_fetch.add(code)
 
-    nav_by_code = _fetch_nav_summaries(codes_to_fetch, deadline=deadline)
+    nav_by_code = _fetch_nav_summaries(
+        codes_to_fetch,
+        deadline=deadline,
+        max_workers=4,
+    )
 
     collected: list[dict] = []
     seen_codes: set[str] = set()
@@ -352,8 +361,8 @@ def _build_rebound_signals(nav: dict) -> list[dict]:
     label = pattern.get("label")
     if label == "two_day_reversal_up":
         signals.append({"id": "two_day_reversal_up", "label": "近两日先跌后涨"})
-    if len(daily_changes) >= 10 and all(change < 0 for change in daily_changes[-10:]):
-        signals.append({"id": "persistent_decline", "label": "持续阴跌"})
+    if len(daily_changes) >= 5 and all(change < 0 for change in daily_changes[-5:]):
+        signals.append({"id": "persistent_decline", "label": "近5日连续下跌"})
     if label == "sector_weak":
         signals.append({"id": "sector_stabilizing", "label": "板块跌势放缓"})
     return signals

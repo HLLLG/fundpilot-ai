@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from app.config import refresh_settings
 from app.services import market_breadth_signal as service
 from app.services.market_breadth_signal import (
@@ -291,3 +293,212 @@ def test_fetch_high_low_breadth_history_dedupes_by_date(monkeypatch):
     assert rows[0]["date"] == "2026-06-30"
     assert rows[0]["high20"] == 120.0  # 保留同日最后一条
     assert rows[1]["date"] == "2026-07-01"
+
+
+def _session(kind: str, *, calendar_date: str = "2026-07-13", effective: str | None = None) -> dict:
+    return {
+        "session_kind": kind,
+        "calendar_date": calendar_date,
+        "effective_trade_date": effective or calendar_date,
+    }
+
+
+def _live_activity(as_of: str = "2026-07-13 10:00:00") -> dict:
+    return {
+        "available": True,
+        "advance_count": 1000,
+        "decline_count": 4000,
+        "flat_count": 50,
+        "activity_percent": 19.8,
+        "advance_ratio_percent": 19.8,
+        "limit_up_count": 30,
+        "limit_down_count": 12,
+        "real_limit_up_count": 20,
+        "real_limit_down_count": 8,
+        "as_of_datetime": as_of,
+    }
+
+
+def test_intraday_uses_current_trade_date_and_is_guard_eligible_when_fresh(monkeypatch):
+    closing = {
+        "available": True,
+        "trade_date": "2026-07-10",
+        "sentiment_level": "中性",
+        "breadth_percentile": 50.0,
+        "decision_eligible": True,
+        "freshness_status": "fresh",
+        "stale": False,
+    }
+    monkeypatch.setattr(service, "build_trading_session", lambda: _session("trading_day_intraday"))
+    monkeypatch.setattr(service, "_now_cn", lambda: datetime(2026, 7, 13, 10, 1, tzinfo=service._CN_TZ))
+    monkeypatch.setattr(service, "get_previous_trade_date", lambda *_a: "2026-07-10")
+    monkeypatch.setattr(service, "get_spot_snapshot", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        service,
+        "get_spot_snapshot_any_age",
+        lambda key: closing if ":closing:" in key else None,
+    )
+    monkeypatch.setattr(service, "save_spot_snapshot", lambda *_a, **_k: None)
+    monkeypatch.setattr(service, "_fetch_intraday_market_activity", lambda **_k: _live_activity())
+
+    result = build_market_breadth_signal("2026-07-13")
+
+    assert result["trade_date"] == "2026-07-13"
+    assert result["signal_mode"] == "intraday"
+    assert result["source_mode"] == "intraday_live"
+    assert result["advance_count"] == 1000
+    assert result["closing_trade_date"] == "2026-07-10"
+    assert result["sentiment_level_change"] is None
+    assert result["decision_eligible"] is True
+    assert result["freshness_status"] == "live"
+
+
+def test_intraday_opening_observation_is_not_guard_eligible(monkeypatch):
+    monkeypatch.setattr(service, "build_trading_session", lambda: _session("trading_day_intraday"))
+    monkeypatch.setattr(service, "_now_cn", lambda: datetime(2026, 7, 13, 9, 32, tzinfo=service._CN_TZ))
+    monkeypatch.setattr(service, "get_previous_trade_date", lambda *_a: "2026-07-10")
+    monkeypatch.setattr(service, "get_spot_snapshot", lambda *_a, **_k: None)
+    monkeypatch.setattr(service, "get_spot_snapshot_any_age", lambda *_a, **_k: None)
+    monkeypatch.setattr(service, "save_spot_snapshot", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        service,
+        "_fetch_intraday_market_activity",
+        lambda **_k: _live_activity("2026-07-13 09:32:00"),
+    )
+
+    result = build_market_breadth_signal("2026-07-13")
+
+    assert result["stale"] is False
+    assert result["decision_eligible"] is False
+    assert result["decision_status"] == "opening_observation"
+
+
+def test_intraday_source_failure_returns_stale_display_only_snapshot(monkeypatch):
+    cached = {
+        **_live_activity("2026-07-13 09:40:00"),
+        "signal_mode": "intraday",
+        "source_mode": "intraday_live",
+        "sentiment_level": "冰点",
+        "sentiment_level_change": -2,
+        "decision_eligible": True,
+    }
+    monkeypatch.setattr(service, "build_trading_session", lambda: _session("trading_day_intraday"))
+    monkeypatch.setattr(service, "get_spot_snapshot", lambda *_a, **_k: None)
+    monkeypatch.setattr(service, "get_spot_snapshot_any_age", lambda *_a, **_k: cached)
+    monkeypatch.setattr(service, "_fetch_intraday_market_activity", lambda **_k: None)
+
+    result = build_market_breadth_signal("2026-07-13", force_refresh=True)
+
+    assert result["available"] is True
+    assert result["stale"] is True
+    assert result["decision_eligible"] is False
+    assert result["decision_status"] == "ineligible_source_fallback"
+
+
+def test_after_close_freezes_last_confirmed_intraday_snapshot(monkeypatch):
+    cached = {
+        **_live_activity("2026-07-13 14:59:00"),
+        "trade_date": "2026-07-13",
+        "sentiment_level": "低迷",
+        "sentiment_level_change": -1,
+    }
+    monkeypatch.setattr(service, "build_trading_session", lambda: _session("trading_day_after_close"))
+    monkeypatch.setattr(service, "get_spot_snapshot_any_age", lambda *_a, **_k: cached)
+
+    result = build_market_breadth_signal("2026-07-13")
+
+    assert result["source_mode"] == "intraday_final"
+    assert result["freshness_status"] == "fresh"
+    assert result["decision_eligible"] is True
+
+
+def test_after_close_does_not_freeze_1455_snapshot_as_final(monkeypatch):
+    cached = {
+        **_live_activity("2026-07-13 14:55:00"),
+        "trade_date": "2026-07-13",
+        "sentiment_level": "低迷",
+    }
+    closing_fallback = {
+        "available": True,
+        "trade_date": "2026-07-13",
+        "signal_mode": "closing",
+        "source_mode": "closing",
+        "decision_eligible": False,
+        "stale": True,
+    }
+    fetch_calls: list[bool] = []
+    monkeypatch.setattr(service, "build_trading_session", lambda: _session("trading_day_after_close"))
+    monkeypatch.setattr(service, "get_spot_snapshot_any_age", lambda *_a, **_k: cached)
+    monkeypatch.setattr(
+        service,
+        "_fetch_intraday_market_activity",
+        lambda **_k: fetch_calls.append(True) or None,
+    )
+    monkeypatch.setattr(service, "_build_closing_signal", lambda *_a, **_k: closing_fallback)
+
+    result = build_market_breadth_signal("2026-07-13")
+
+    assert fetch_calls == [True]
+    assert result["source_mode"] == "closing"
+    assert result["decision_eligible"] is False
+
+
+def test_fetch_intraday_market_activity_normalizes_legu_payload(monkeypatch):
+    monkeypatch.setattr(
+        service,
+        "run_akshare_json_script",
+        lambda *_a, **_k: {
+            "advance_count": 972.0,
+            "decline_count": 4167.0,
+            "flat_count": 58.0,
+            "limit_up_count": 22.0,
+            "limit_down_count": 17.0,
+            "real_limit_up_count": 15.0,
+            "real_limit_down_count": 12.0,
+            "activity_percent": 18.68,
+            "as_of_datetime": "2026-07-13 09:55:00",
+        },
+    )
+
+    result = service._fetch_intraday_market_activity(timeout=4.0)
+
+    assert result is not None
+    assert result["advance_count"] == 972
+    assert result["activity_percent"] == 18.68
+    assert result["as_of_datetime"] == "2026-07-13T09:55:00+08:00"
+
+
+def test_intraday_never_compares_activity_level_with_closing_percentile_level(monkeypatch):
+    closing = {
+        "available": True,
+        "trade_date": "2026-07-10",
+        "sentiment_level": "亢奋",
+        "decision_eligible": True,
+        "freshness_status": "fresh",
+        "stale": False,
+    }
+    result = service._compose_intraday_signal(
+        _live_activity(),
+        closing=closing,
+        anchor="2026-07-13",
+        session=_session("trading_day_intraday"),
+    )
+
+    assert result["sentiment_level"] == "低迷"
+    assert result["sentiment_level_change"] is None
+
+
+def test_fetch_intraday_market_activity_rejects_incomplete_market_sample(monkeypatch):
+    monkeypatch.setattr(
+        service,
+        "run_akshare_json_script",
+        lambda *_a, **_k: {
+            "advance_count": 20,
+            "decline_count": 30,
+            "flat_count": 0,
+            "activity_percent": 40.0,
+            "as_of_datetime": "2026-07-13 10:00:00",
+        },
+    )
+
+    assert service._fetch_intraday_market_activity(timeout=4.0) is None

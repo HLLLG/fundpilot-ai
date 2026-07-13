@@ -5,7 +5,7 @@ const AFTERNOON_OPEN_MINUTES = 13 * 60;
 const CLOSE_MINUTES = 15 * 60;
 const SESSION_MINUTES = 240;
 
-export function parseClockMinutes(time: string): number | null {
+function parseClockMinutes(time: string): number | null {
   const match = /^(\d{1,2}):(\d{2})/.exec(time.trim());
   if (!match) {
     return null;

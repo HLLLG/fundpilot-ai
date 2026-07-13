@@ -789,19 +789,6 @@ def _merge_clist_theme_chunks(
                 merged[code][metric] = values[metric]
 
 
-# 兼容旧名
-_CLIST_CHANGE_POOLS = _CLIST_THEME_POOLS
-_CLIST_CHANGE_FIELDS = _CLIST_THEME_FIELDS
-_CLIST_CHANGE_PAGE_SIZE = _CLIST_THEME_PAGE_SIZE
-_CLIST_CHANGE_MAX_PAGES = _CLIST_THEME_MAX_PAGES
-
-
-def _parse_clist_change_rows(
-    rows: list[dict[str, Any]],
-) -> _ClistThemeMap:
-    return _parse_clist_theme_rows(rows)
-
-
 def _fetch_clist_theme_pool(
     pool_name: str,
     *,
@@ -847,21 +834,6 @@ def _fetch_clist_theme_pool(
     raise RuntimeError("; ".join(errors) or f"clist theme pool {pool_name} failed")
 
 
-def _fetch_clist_change_pool(
-    pool_name: str,
-    *,
-    timeout: float = 15.0,
-    max_retries: int = 2,
-    max_pages: int = 3,
-) -> _ClistThemeMap:
-    return _fetch_clist_theme_pool(
-        pool_name,
-        timeout=timeout,
-        max_retries=max_retries,
-        max_pages=max_pages,
-    )
-
-
 def _fetch_paginated_clist_theme(
     client: httpx.Client,
     base_params: dict[str, str],
@@ -896,21 +868,6 @@ def _fetch_paginated_clist_theme(
     if not merged:
         raise RuntimeError("clist theme pool returned no rows")
     return merged
-
-
-def _fetch_paginated_clist_changes(
-    client: httpx.Client,
-    base_params: dict[str, str],
-    *,
-    max_retries: int,
-    max_pages: int,
-) -> _ClistThemeMap:
-    return _fetch_paginated_clist_theme(
-        client,
-        base_params,
-        max_retries=max_retries,
-        max_pages=max_pages,
-    )
 
 
 def _fetch_clist_theme_via_requests(
@@ -959,19 +916,6 @@ def _fetch_clist_theme_via_requests(
     raise RuntimeError("requests clist theme returned no rows")
 
 
-def _fetch_clist_changes_via_requests(
-    base_params: dict[str, str],
-    *,
-    timeout: float,
-    max_pages: int,
-) -> _ClistThemeMap:
-    return _fetch_clist_theme_via_requests(
-        base_params,
-        timeout=timeout,
-        max_pages=max_pages,
-    )
-
-
 def fetch_eastmoney_clist_theme_metrics_by_code(
     *,
     timeout: float = 15.0,
@@ -1011,7 +955,7 @@ def fetch_eastmoney_clist_change_by_code(
     *,
     timeout: float = 15.0,
     max_retries: int = 2,
-    max_pages: int = _CLIST_CHANGE_MAX_PAGES,
+    max_pages: int = _CLIST_THEME_MAX_PAGES,
 ) -> _ClistThemeMap:
     """兼容别名：同 fetch_eastmoney_clist_theme_metrics_by_code。"""
     return fetch_eastmoney_clist_theme_metrics_by_code(

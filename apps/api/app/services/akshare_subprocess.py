@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import subprocess
 import sys
 import time
@@ -15,6 +16,13 @@ _FUND_RANK_ATTEMPTS = 3
 _FUND_RANK_RETRY_DELAYS = (2.0, 5.0)
 _FUND_RANK_SUBPROCESS_TIMEOUT = 35
 _FUND_UNIVERSE_SUBPROCESS_TIMEOUT = 150
+
+
+def _utf8_subprocess_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
+    return env
 
 
 def run_akshare_json_script(
@@ -34,6 +42,7 @@ def run_akshare_json_script(
             errors="replace",
             timeout=timeout,
             check=False,
+            env=_utf8_subprocess_env(),
         )
         stdout = result.stdout or ""
         if not stdout.strip():
@@ -428,7 +437,11 @@ except Exception as exc:
     return None
 
 
-def fetch_open_fund_universe(*, limit: int = 20_000) -> list[dict] | None:
+def fetch_open_fund_universe(
+    *,
+    limit: int = 20_000,
+    timeout_seconds: int | float | None = None,
+) -> list[dict] | None:
     """分页读取开放式基金全目录，并保留东财基金类别供分层研究使用。"""
     cap = max(300, min(int(limit), 25_000))
     script = f"""
@@ -530,11 +543,111 @@ except Exception as exc:
     payload = run_akshare_json_script(
         script,
         label=f"fund_open_universe:{cap}",
-        timeout=_FUND_UNIVERSE_SUBPROCESS_TIMEOUT,
+        timeout=timeout_seconds or _FUND_UNIVERSE_SUBPROCESS_TIMEOUT,
     )
     if isinstance(payload, dict):
         rows = payload.get("data")
         if isinstance(rows, list) and rows:
+            return rows
+    return None
+
+
+def fetch_open_fund_research_profiles(
+    fund_codes: list[str],
+    *,
+    timeout_seconds: int | float = 45,
+) -> list[dict] | None:
+    """读取候选基金的规模、经理和成立日期，供荐基准入守卫使用。
+
+    Sina 的开放式基金规模接口按大类返回全表。这里在子进程内只序列化目标代码，
+    并在目标全部命中后停止继续拉取，避免把数万行明细传回 API 进程。
+    """
+
+    targets = sorted(
+        {
+            str(code).strip().zfill(6)
+            for code in fund_codes
+            if str(code).strip().isdigit()
+        }
+    )[:80]
+    if not targets:
+        return []
+    script = f"""
+import akshare as ak
+import json
+
+targets = set({targets!r})
+symbols = (
+    "股票型基金",
+    "混合型基金",
+    "债券型基金",
+    "QDII基金",
+)
+
+def number(value):
+    if value is None or str(value).strip().lower() in ("", "nan", "--", "nat"):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+def iso_date(value):
+    if value is None or str(value).strip().lower() in ("", "nan", "nat", "--"):
+        return None
+    if hasattr(value, "date"):
+        try:
+            return value.date().isoformat()
+        except Exception:
+            pass
+    text = str(value).strip().replace("/", "-")
+    return text[:10] if len(text) >= 10 else text
+
+rows = {{}}
+errors = []
+for symbol in symbols:
+    try:
+        frame = ak.fund_scale_open_sina(symbol=symbol)
+        if frame is None or frame.empty:
+            continue
+        for _, row in frame.iterrows():
+            raw_code = str(row.get("基金代码", "")).strip().split(".", 1)[0]
+            code = raw_code.zfill(6)
+            if code not in targets or code in rows:
+                continue
+            nav = number(row.get("单位净值"))
+            shares = number(row.get("最近总份额"))
+            current_scale_yi = (
+                nav * shares / 100_000_000
+                if nav is not None and shares is not None and nav > 0 and shares > 0
+                else None
+            )
+            rows[code] = {{
+                "fund_code": code,
+                "fund_name": str(row.get("基金简称") or "").strip(),
+                "fund_category": symbol.replace("基金", ""),
+                "latest_nav": nav,
+                "fund_scale_yi": round(current_scale_yi, 4) if current_scale_yi is not None else None,
+                "established_date": iso_date(row.get("成立日期")),
+                "fund_manager": str(row.get("基金经理") or "").strip() or None,
+                "profile_updated_at": iso_date(row.get("更新日期")),
+                "profile_source": "sina.fund_scale_open_sina",
+            }}
+        if targets.issubset(rows):
+            break
+    except Exception as exc:
+        errors.append(f"{{symbol}}:{{type(exc).__name__}}")
+
+print(json.dumps({{"data": list(rows.values()), "errors": errors}}, ensure_ascii=False))
+"""
+    payload = run_akshare_json_script(
+        script,
+        label=f"fund_research_profiles:{len(targets)}",
+        timeout=timeout_seconds,
+    )
+    if isinstance(payload, dict):
+        rows = payload.get("data")
+        if isinstance(rows, list):
             return rows
     return None
 

@@ -321,23 +321,6 @@ def _parse_nav_points(data: list[dict]) -> list[FundNavPoint]:
     return points
 
 
-def _load_fund_diagnostics(ak: object, fund_code: str) -> dict:
-    diagnostics: dict = {}
-    try:
-        overview = ak.fund_open_fund_info_em(symbol=fund_code, indicator="基金概况")  # type: ignore[attr-defined]
-        diagnostics.update(_parse_overview_frame(overview))
-    except Exception:
-        pass
-
-    try:
-        cumulative = ak.fund_open_fund_info_em(symbol=fund_code, indicator="累计收益率走势")  # type: ignore[attr-defined]
-        diagnostics.update(_parse_return_frame(cumulative))
-    except Exception:
-        pass
-
-    return diagnostics
-
-
 def _parse_overview_frame(frame) -> dict:
     result: dict = {}
     if frame is None or frame.empty:

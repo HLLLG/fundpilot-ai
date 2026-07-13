@@ -105,7 +105,13 @@ def build_candidate_factor_scores(candidate_pool: list[dict]) -> dict[str, Any]:
     from app.services.portfolio_snapshot import build_factor_scores_for_facts
 
     stubs: list[Holding] = []
-    for item in candidate_pool[:12]:
+    eligible = [
+        item
+        for item in candidate_pool
+        if not isinstance(item.get("quality_gate"), dict)
+        or item["quality_gate"].get("status") == "eligible"
+    ]
+    for item in eligible[:12]:
         code = str(item.get("fund_code") or "").strip()
         if not code:
             continue

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
+from heapq import nsmallest
 from typing import Any, Callable, Iterable
 from zoneinfo import ZoneInfo
 
@@ -557,7 +558,7 @@ def _shift_trading_days(
     trade_dates: frozenset[str] | None,
 ) -> str | None:
     if trade_dates:
-        future = sorted(day for day in trade_dates if day > anchor_date)
+        future = nsmallest(count, (day for day in trade_dates if day > anchor_date))
         return future[count - 1] if len(future) >= count else None
 
     try:
@@ -573,30 +574,6 @@ def _shift_trading_days(
         if remaining == 0:
             return cursor.isoformat()
     return None
-
-
-def _trading_days_between(
-    start_date: str,
-    end_date: str | None,
-    *,
-    trade_dates: frozenset[str] | None,
-) -> int:
-    if not end_date or end_date <= start_date:
-        return 0
-    if trade_dates:
-        return sum(1 for day in trade_dates if start_date < day <= end_date)
-    try:
-        start = date.fromisoformat(start_date)
-        end = date.fromisoformat(end_date)
-    except ValueError:
-        return 0
-    cursor = start
-    count = 0
-    while cursor < end:
-        cursor += timedelta(days=1)
-        if cursor.weekday() < 5:
-            count += 1
-    return count
 
 
 def _is_trade_date(value: str, *, trade_dates: frozenset[str] | None) -> bool:

@@ -553,7 +553,13 @@ def test_deep_reduce_action_produces_matching_default_risk_text() -> None:
         sector_opportunity=_strong_divergence_opportunity(penalties=[]),
         evidence={"composite": {"level": "不足", "score": 0.0}},
     )
-    market_breadth = {"sentiment_level": "冰点", "sentiment_level_change": -2}
+    market_breadth = {
+        "sentiment_level": "冰点",
+        "sentiment_level_change": -2,
+        "decision_eligible": True,
+        "freshness_status": "fresh",
+        "stale": False,
+    }
     request = _request(decision_style="conservative")
     # 手工构造一个集中度超限的持仓场景：期望投入设小一点让 weight_percent 超过上限。
     request.profile.expected_investment_amount = 10000

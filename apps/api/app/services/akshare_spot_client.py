@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import subprocess
 import sys
 import time
@@ -13,39 +12,6 @@ from app.services.akshare_subprocess import run_akshare_json_script
 logger = logging.getLogger(__name__)
 
 SpotBoard = dict[str, float]
-
-
-def _clear_proxy_env() -> dict[str, str]:
-    saved: dict[str, str] = {}
-    for key in list(os.environ):
-        if "proxy" in key.lower():
-            saved[key] = os.environ.pop(key)
-    os.environ["NO_PROXY"] = "*"
-    return saved
-
-
-def _restore_proxy_env(saved: dict[str, str]) -> None:
-    os.environ.pop("NO_PROXY", None)
-    os.environ.update(saved)
-
-
-def _frame_to_board(frame: Any, name_col: str, change_col: str) -> SpotBoard:
-    if frame is None or getattr(frame, "empty", True):
-        return {}
-    result: SpotBoard = {}
-    for _, row in frame.iterrows():
-        name = row.get(name_col)
-        change = row.get(change_col)
-        if name is None or change is None:
-            continue
-        cleaned = str(name).strip()
-        if not cleaned:
-            continue
-        try:
-            result[cleaned] = round(float(change), 4)
-        except (TypeError, ValueError):
-            continue
-    return result
 
 
 def _fetch_board_kind_subprocess(kind: str) -> SpotBoard:

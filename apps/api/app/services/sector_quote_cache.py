@@ -2,24 +2,57 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections import OrderedDict
 from datetime import datetime, timezone
+from threading import RLock
 
 from app.database import _connect
 
-_MEMORY: dict[str, tuple[float, dict]] = {}
+_MEMORY: OrderedDict[str, tuple[float, dict]] = OrderedDict()
+_MEMORY_MAX_ENTRIES = 512
+_MEMORY_LOCK = RLock()
 _PROCESS_BOOT_AT: datetime | None = None
+
+
+def _get_memory_snapshot(
+    cache_key: str,
+    now: float,
+    *,
+    ttl_seconds: float | None,
+) -> tuple[bool, dict | None]:
+    with _MEMORY_LOCK:
+        cached = _MEMORY.get(cache_key)
+        if cached is None:
+            return False, None
+        cached_at, payload = cached
+        if ttl_seconds is not None and now - cached_at > ttl_seconds:
+            _MEMORY.pop(cache_key, None)
+            return False, None
+        _MEMORY.move_to_end(cache_key)
+        return True, payload
+
+
+def _save_memory_snapshot(cache_key: str, cached_at: float, payload: dict) -> None:
+    with _MEMORY_LOCK:
+        _MEMORY[cache_key] = (cached_at, payload)
+        _MEMORY.move_to_end(cache_key)
+        while len(_MEMORY) > _MEMORY_MAX_ENTRIES:
+            _MEMORY.popitem(last=False)
 
 
 def mark_process_boot() -> datetime:
     """记录进程启动时刻；早于该时刻写入的快照视为跨进程遗留缓存。"""
     global _PROCESS_BOOT_AT
-    _PROCESS_BOOT_AT = datetime.now(timezone.utc)
-    return _PROCESS_BOOT_AT
+    with _MEMORY_LOCK:
+        _PROCESS_BOOT_AT = datetime.now(timezone.utc)
+        return _PROCESS_BOOT_AT
 
 
 def snapshot_refreshed_before_process_boot(refreshed_at: str | None) -> bool:
     """快照是否在本进程启动前写入（含 SQLite 遗留、缺失 refreshed_at）。"""
-    if _PROCESS_BOOT_AT is None:
+    with _MEMORY_LOCK:
+        process_boot_at = _PROCESS_BOOT_AT
+    if process_boot_at is None:
         return False
     if not refreshed_at:
         return True
@@ -27,7 +60,7 @@ def snapshot_refreshed_before_process_boot(refreshed_at: str | None) -> bool:
         ts = datetime.fromisoformat(str(refreshed_at).replace("Z", "+00:00"))
         if ts.tzinfo is None:
             ts = ts.replace(tzinfo=timezone.utc)
-        return ts.astimezone(timezone.utc) < _PROCESS_BOOT_AT
+        return ts.astimezone(timezone.utc) < process_boot_at
     except ValueError:
         return True
 
@@ -46,11 +79,13 @@ def _ensure_cache_table(connection: sqlite3.Connection) -> None:
 
 def get_spot_snapshot(cache_key: str, *, ttl_seconds: float) -> dict | None:
     now = datetime.now(timezone.utc).timestamp()
-    cached = _MEMORY.get(cache_key)
-    if cached is not None:
-        ts, payload = cached
-        if now - ts <= ttl_seconds:
-            return payload
+    found, payload = _get_memory_snapshot(
+        cache_key,
+        now,
+        ttl_seconds=ttl_seconds,
+    )
+    if found:
+        return payload
 
     with _connect() as connection:
         _ensure_cache_table(connection)
@@ -67,16 +102,16 @@ def get_spot_snapshot(cache_key: str, *, ttl_seconds: float) -> dict | None:
         return None
 
     payload = json.loads(row["payload"])
-    _MEMORY[cache_key] = (now, payload)
+    _save_memory_snapshot(cache_key, now, payload)
     return payload
 
 
 def get_spot_snapshot_any_age(cache_key: str) -> dict | None:
     """读取缓存（忽略 TTL），用于 stale-while-revalidate 回退。"""
     now = datetime.now(timezone.utc).timestamp()
-    cached = _MEMORY.get(cache_key)
-    if cached is not None:
-        return cached[1]
+    found, payload = _get_memory_snapshot(cache_key, now, ttl_seconds=None)
+    if found:
+        return payload
 
     with _connect() as connection:
         _ensure_cache_table(connection)
@@ -88,14 +123,14 @@ def get_spot_snapshot_any_age(cache_key: str) -> dict | None:
         return None
 
     payload = json.loads(row["payload"])
-    _MEMORY[cache_key] = (now, payload)
+    _save_memory_snapshot(cache_key, now, payload)
     return payload
 
 
 def save_spot_snapshot(cache_key: str, payload: dict) -> None:
     now = datetime.now(timezone.utc)
     encoded = json.dumps(payload, ensure_ascii=False)
-    _MEMORY[cache_key] = (now.timestamp(), payload)
+    _save_memory_snapshot(cache_key, now.timestamp(), payload)
     with _connect() as connection:
         _ensure_cache_table(connection)
         connection.execute(

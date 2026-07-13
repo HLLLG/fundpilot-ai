@@ -98,7 +98,13 @@ def test_allowed_actions_appends_deep_reduce_and_clear_all_when_row5_triggered()
         "penalties": ["资金背离或持续流出", "单日涨幅过热"],
     }
     facts["holdings"][0]["evidence"] = {"composite": {"level": "不足"}}
-    facts["market_breadth"] = {"sentiment_level": "冰点", "sentiment_level_change": -2}
+    facts["market_breadth"] = {
+        "sentiment_level": "冰点",
+        "sentiment_level_change": -2,
+        "decision_eligible": True,
+        "freshness_status": "fresh",
+        "stale": False,
+    }
     from app.services.analysis_facts import _attach_escalation_to_holdings
 
     _attach_escalation_to_holdings(

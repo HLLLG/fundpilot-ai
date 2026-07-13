@@ -55,7 +55,7 @@ def _patch_persist_deps(monkeypatch, captured: dict) -> None:
     monkeypatch.setattr(
         "app.services.portfolio_persistence.save_daily_snapshot", lambda *_a, **_k: None
     )
-    monkeypatch.setattr("app.database.get_fund_profile_by_code", lambda _code: None)
+    monkeypatch.setattr("app.services.portfolio_persistence.list_fund_profiles", lambda: [])
     monkeypatch.setattr(
         "app.services.portfolio_persistence.persist_intraday_curve", lambda *_a, **_k: None
     )

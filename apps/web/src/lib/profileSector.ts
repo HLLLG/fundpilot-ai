@@ -1,4 +1,4 @@
-import type { FundProfile, Holding, SectorQuoteMeta } from "@/lib/api";
+import type { Holding, SectorQuoteMeta } from "@/lib/api";
 import { isEstimateFallbackMeta } from "@/lib/sectorQuoteStatus";
 
 const FUND_NAME_TOPIC_TOKENS = [
@@ -60,7 +60,7 @@ function seededSectorLabel(
   return seeded.sector_name;
 }
 
-export function inferSectorLabelFromFundName(fundName: string | null | undefined): string | null {
+function inferSectorLabelFromFundName(fundName: string | null | undefined): string | null {
   const normalized = (fundName || "").replace("...", "").replace(/\s+/g, "");
   if (!normalized) {
     return null;
@@ -96,20 +96,7 @@ export function holdingDisplaySectorLabel(
   return "—";
 }
 
-/** 档案/持仓展示用：关联板块短名 */
-export function profileRelatedBoardLabel(
-  profile: Pick<FundProfile, "sector_name" | "intraday_index_name">,
-): string {
-  if (profile.sector_name?.trim() && !isInvalidSectorLabel(profile.sector_name)) {
-    return profile.sector_name;
-  }
-  if (profile.intraday_index_name?.trim()) {
-    return profile.intraday_index_name;
-  }
-  return "—";
-}
-
-export function holdingRelatedBoardLabel(
+function holdingRelatedBoardLabel(
   holding: Pick<Holding, "sector_name" | "intraday_index_name">,
 ): string {
   if (holding.sector_name?.trim() && !isInvalidSectorLabel(holding.sector_name)) {
@@ -160,7 +147,7 @@ function inferIndexFromFundName(fundName: string | null | undefined): string | n
 }
 
 /** 与后端 sector_quote_lookup_label 一致：ETF 联接 / OCR 场内指数 → 指数；否则关联板块短名 */
-export function sectorQuoteLookupLabel(
+function sectorQuoteLookupLabel(
   holding: Pick<Holding, "fund_code" | "fund_name" | "sector_name" | "intraday_index_name">,
 ): string | null {
   const fromFund = inferIndexFromFundName(holding.fund_name);
@@ -321,17 +308,4 @@ export function resolveIntradayFallbackQuery(
     return null;
   }
   return fallback;
-}
-
-export function showIntradayIndexHint(
-  profile: Pick<FundProfile, "sector_name" | "intraday_index_name">,
-): boolean {
-  const board = profile.sector_name?.trim();
-  const index = profile.intraday_index_name?.trim();
-  return Boolean(
-    board &&
-      index &&
-      !isInvalidSectorLabel(board) &&
-      board !== index,
-  );
 }

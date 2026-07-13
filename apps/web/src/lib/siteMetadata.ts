@@ -20,7 +20,7 @@ export const SITE_METADATA: Metadata = {
     description: BRAND.description,
     images: [
       {
-        url: "/icon.png",
+        url: "/social-card.jpg",
         width: 512,
         height: 512,
         alt: BRAND.name,
@@ -28,12 +28,13 @@ export const SITE_METADATA: Metadata = {
     ],
   },
   twitter: {
-    card: "summary_large_image",
+    card: "summary",
     title: BRAND.title,
     description: BRAND.description,
-    images: ["/icon.png"],
+    images: ["/social-card.jpg"],
   },
   icons: {
-    icon: [{ url: "/icon.svg", type: "image/svg+xml" }],
+    icon: [{ url: "/icon.png", type: "image/png", sizes: "64x64" }],
+    apple: [{ url: "/apple-icon.png", type: "image/png", sizes: "180x180" }],
   },
 };

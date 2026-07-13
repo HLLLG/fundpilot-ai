@@ -6,7 +6,9 @@ import logging
 import re
 import subprocess
 import sys
+from collections import OrderedDict
 from dataclasses import dataclass
+from threading import RLock
 
 from app.services.amac_benchmark_index_data import (
     amac_name_to_code_pairs,
@@ -23,7 +25,12 @@ _KNOWN_BENCHMARK_BY_CODE: dict[str, str] = {
     "021533": "中证半导体材料设备主题指数收益率×95%+银行活期存款利率（税后）×5%",
 }
 
-_BENCHMARK_FETCH_METADATA: dict[tuple[str, str], dict[str, object]] = {}
+_BENCHMARK_FETCH_METADATA: OrderedDict[
+    tuple[str, str],
+    dict[str, object],
+] = OrderedDict()
+_BENCHMARK_FETCH_METADATA_MAX_ENTRIES = 512
+_BENCHMARK_FETCH_METADATA_LOCK = RLock()
 
 _INDEX_CODE_RE = re.compile(r"(?<!\d)(\d{6})(?!\d)")
 
@@ -237,18 +244,19 @@ def get_fund_benchmark_fetch_metadata(
 ) -> dict[str, object]:
     code = fund_code.strip().zfill(6)
     text = str(benchmark_text or "").strip()
-    return dict(
-        _BENCHMARK_FETCH_METADATA.get(
-            (code, text),
-            {
-                "benchmark_text_kind": "unknown",
-                "benchmark_text_source_kind": "unknown",
-                "benchmark_text_length": len(text),
-                "benchmark_text_hash": hashlib.sha256(text.encode("utf-8")).hexdigest(),
-                "benchmark_text_truncated": False,
-            },
-        )
-    )
+    key = (code, text)
+    with _BENCHMARK_FETCH_METADATA_LOCK:
+        metadata = _BENCHMARK_FETCH_METADATA.get(key)
+        if metadata is not None:
+            _BENCHMARK_FETCH_METADATA.move_to_end(key)
+            return dict(metadata)
+    return {
+        "benchmark_text_kind": "unknown",
+        "benchmark_text_source_kind": "unknown",
+        "benchmark_text_length": len(text),
+        "benchmark_text_hash": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+        "benchmark_text_truncated": False,
+    }
 
 
 def _remember_benchmark_fetch_metadata(
@@ -258,13 +266,22 @@ def _remember_benchmark_fetch_metadata(
     kind: str,
     source_kind: str,
 ) -> None:
-    _BENCHMARK_FETCH_METADATA[(code, text)] = {
+    key = (code, text)
+    metadata = {
         "benchmark_text_kind": kind,
         "benchmark_text_source_kind": source_kind,
         "benchmark_text_length": len(text),
         "benchmark_text_hash": hashlib.sha256(text.encode("utf-8")).hexdigest(),
         "benchmark_text_truncated": False,
     }
+    with _BENCHMARK_FETCH_METADATA_LOCK:
+        _BENCHMARK_FETCH_METADATA[key] = metadata
+        _BENCHMARK_FETCH_METADATA.move_to_end(key)
+        while (
+            len(_BENCHMARK_FETCH_METADATA)
+            > _BENCHMARK_FETCH_METADATA_MAX_ENTRIES
+        ):
+            _BENCHMARK_FETCH_METADATA.popitem(last=False)
 
 
 def _static_benchmark_fallback(code: str) -> str | None:

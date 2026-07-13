@@ -22,6 +22,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        INSTALL_LOCAL_OCR: ${INSTALL_LOCAL_OCR:-true}
     restart: unless-stopped
     env_file: .env.production
     environment:

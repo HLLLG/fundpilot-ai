@@ -80,11 +80,23 @@ def slim_candidate_for_llm(
         "return_6m_percent": item.get("return_6m_percent"),
         "max_drawdown_1y_percent": item.get("max_drawdown_1y_percent"),
         "fund_scale_yi": item.get("fund_scale_yi"),
+        "management_fee": item.get("management_fee"),
+        "fund_type": item.get("fund_type"),
+        "fund_manager": item.get("fund_manager"),
+        "established_date": item.get("established_date"),
+        "profile_updated_at": item.get("profile_updated_at"),
+        "share_class": item.get("share_class"),
+        "share_class_fee_status": item.get("share_class_fee_status"),
         "fund_quality_score": item.get("fund_quality_score"),
         "sector_fit_score": item.get("sector_fit_score"),
+        "quality_score_version": item.get("quality_score_version"),
+        "quality_score_components": item.get("quality_score_components") or {},
+        "quality_gate": item.get("quality_gate") or {},
         "quality_reasons": item.get("quality_reasons") or [],
         "quality_penalties": item.get("quality_penalties") or [],
         "selection_reason": item.get("selection_reason"),
+        "candidate_universe_mode": item.get("candidate_universe_mode"),
+        "candidate_universe_size": item.get("candidate_universe_size"),
     }
     nav = slim_nav_trend_for_llm(item.get("nav_trend"))
     if nav:

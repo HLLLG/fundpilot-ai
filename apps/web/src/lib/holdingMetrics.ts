@@ -8,7 +8,7 @@ import type { Holding } from "@/lib/api";
 const TEST_FUND_CODES = new Set(["000001"]);
 const TEST_NAME_PREFIXES = ["测试", "新基金"];
 
-export function isTestHolding(holding: Holding): boolean {
+function isTestHolding(holding: Holding): boolean {
   if (TEST_FUND_CODES.has(holding.fund_code)) {
     return true;
   }
@@ -16,12 +16,12 @@ export function isTestHolding(holding: Holding): boolean {
   return TEST_NAME_PREFIXES.some((prefix) => name.startsWith(prefix));
 }
 
-export function withoutTestHoldings(holdings: Holding[]): Holding[] {
+function withoutTestHoldings(holdings: Holding[]): Holding[] {
   return holdings.filter((holding) => !isTestHolding(holding));
 }
 
 /** OCR 草稿占位行（000000 / 待录入），不在账户汇总与日报中展示。 */
-export function isPlaceholderHolding(holding: Holding): boolean {
+function isPlaceholderHolding(holding: Holding): boolean {
   if (holding.fund_code === "000000") {
     return true;
   }
@@ -44,7 +44,7 @@ export function displayableHoldings(holdings: Holding[]): Holding[] {
 }
 
 /** OCR / 快速 apply 响应可能缺少板块与收益字段；刷新完成前保留上一屏展示数据。 */
-export const HOLDING_QUOTE_FIELDS = [
+const HOLDING_QUOTE_FIELDS = [
   "sector_return_percent",
   "sector_return_percent_source",
   "daily_profit",
@@ -75,7 +75,7 @@ export function stripHoldingsQuoteFields(holdings: Holding[]): Holding[] {
 }
 
 /** apply / OCR 确认：用持久化持有收益同步展示字段，避免保留上一屏 estimated 污染。 */
-export function seedApplyDisplayFields(holding: Holding): Holding {
+function seedApplyDisplayFields(holding: Holding): Holding {
   const next: Holding = { ...holding };
   if (holding.holding_profit != null) {
     next.estimated_holding_profit =
@@ -207,18 +207,6 @@ export function patchHoldingRecord(holdings: Holding[], patch: Holding): Holding
   );
 }
 
-/** @deprecated Prefer patchHoldingRecord; dedupe on hydrate removed to avoid losing funds. */
-export function updateHoldingAtIndex(
-  holdings: Holding[],
-  index: number,
-  patch: Holding,
-): Holding[] {
-  if (index < 0 || index >= holdings.length) {
-    return holdings;
-  }
-  return patchHoldingRecord(holdings, patch);
-}
-
 /** 分批截图录入：保留已有持仓，同码/同名用新 OCR 覆盖金额与收益，否则追加。 */
 export function mergeHoldingsAppend(
   previous: Holding[],
@@ -268,7 +256,7 @@ function round2(value: number) {
 }
 
 /** 持有收益率（昨日结算，不含今日涨跌） */
-export function resolveHoldingReturnPercent(holding: Holding): number | null {
+function resolveHoldingReturnPercent(holding: Holding): number | null {
   if (holding.holding_return_percent != null) {
     return holding.holding_return_percent;
   }
@@ -279,7 +267,7 @@ export function resolveHoldingReturnPercent(holding: Holding): number | null {
 }
 
 /** 当日涨跌分量：官方净值已公布时用净值，否则用关联板块涨跌。 */
-export function resolveIntradayReturnPercent(holding: Holding): number | null {
+function resolveIntradayReturnPercent(holding: Holding): number | null {
   if (
     holding.daily_return_percent_source === "official_nav" &&
     holding.daily_return_percent != null
@@ -425,14 +413,14 @@ export function computeHoldingProfit(holding: Holding): number | null {
 }
 
 /** 持有金额是否已含当日涨跌（份额×净值同步后） */
-export function holdingAmountIncludesTodayReturn(holding: Holding): boolean {
+function holdingAmountIncludesTodayReturn(holding: Holding): boolean {
   if (holding.amount_includes_today != null) {
     return holding.amount_includes_today;
   }
   return false;
 }
 
-export function computeDailyProfitFromRate(
+function computeDailyProfitFromRate(
   holdingAmount: number,
   dailyReturnPercent: number,
   amountIncludesToday: boolean,
@@ -486,16 +474,11 @@ export function applySectorDailyEstimate(holding: Holding): Holding {
  * 当日收益额：优先已写入的 daily_profit；官方净值或板块涨跌估算。
  */
 /** 官方净值当日收益：结算前金额 × 日涨幅 = 现金额 × r / (100 + r)。 */
-export function computeOfficialDailyProfit(
+function computeOfficialDailyProfit(
   holdingAmount: number,
   dailyReturnPercent: number,
 ): number {
   return round2((holdingAmount * dailyReturnPercent) / (100 + dailyReturnPercent));
-}
-
-/** 昨日收益：由后端写入上一交易日官方净值收益，或 OCR 兜底。 */
-export function computeYesterdayProfit(holding: Holding): number | null {
-  return holding.yesterday_profit ?? null;
 }
 
 export function computeDailyProfit(holding: Holding): number | null {
@@ -603,26 +586,10 @@ export function holdingProfitIsEstimated(holding: Holding): boolean {
   return holding.holding_profit == null && computeHoldingProfit(holding) != null;
 }
 
-/** 板块刷新后补全可持久化字段（当日收益由 applySectorDailyEstimate 负责） */
-export function enrichHoldingComputedFields(holding: Holding): Holding {
-  const withDaily = applySectorDailyEstimate(holding);
-  const holdingReturn = resolveHoldingReturnPercent(withDaily);
-  const holdingProfit = resolveSettledHoldingProfit(withDaily);
-  return {
-    ...withDaily,
-    holding_return_percent: holdingReturn,
-    holding_profit: holdingProfit,
-  };
-}
-
 export function sumDailyProfit(holdings: Holding[]): number {
   return round2(
     holdings.reduce((sum, holding) => sum + (computeDailyProfit(holding) ?? 0), 0),
   );
-}
-
-export function sumHoldingAmount(holdings: Holding[]): number {
-  return round2(holdings.reduce((sum, holding) => sum + holding.holding_amount, 0));
 }
 
 /** 总资产 = Σ(结算持有金额 + 当日收益)；盘中结算额不变，总资产随估算收益动 */

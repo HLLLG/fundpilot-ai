@@ -6,8 +6,15 @@ from typing import Any
 from app.config import get_settings
 from app.database import get_sector_mapping, save_sector_mapping
 from app.models import Holding, HoldingFieldWarning, SectorMappingCandidate, SectorQuoteMeta
-from app.services.fund_primary_sector_service import primary_sector_fields_for_holding
-from app.services.fund_profile import FundProfileService, _is_valid_sector_label
+from app.services.fund_primary_sector_service import (
+    PrimarySectorBatchContext,
+    primary_sector_fields_for_holding,
+)
+from app.services.fund_profile import (
+    FundProfileService,
+    _is_valid_sector_label,
+    match_profiles_to_holdings,
+)
 from app.services.fund_estimate_provider import fetch_fund_estimate_quotes
 from app.services.sector_canonical import (
     get_canonical_sector,
@@ -44,25 +51,6 @@ class _EstimateResult:
         self.candidates = []
 
 
-def _is_trading_hours() -> bool:
-    session = build_trading_session()
-    return session.get("session_kind") == "trading_day_intraday"
-
-
-def _intraday_blocks_official_nav() -> bool:
-    """盘中/收盘前决策窗：当日官方净值未公布，不得标 official_nav。"""
-    session = build_trading_session()
-    return session.get("session_kind") in {
-        "trading_day_intraday",
-        "trading_day_pre_close",
-    }
-
-
-def _get_last_trade_date() -> str:
-    """板块涨跌/官方净值所对应的有效交易日（开盘前与周末回溯上一交易日）。"""
-    return get_effective_trade_date()
-
-
 def refresh_holdings_sector_quotes(
     holdings: list[Holding],
     *,
@@ -72,6 +60,15 @@ def refresh_holdings_sector_quotes(
 ) -> dict:
     settings = get_settings()
     session = build_trading_session()
+    session_kind = str(session.get("session_kind") or "")
+    effective_trade_date = str(
+        session.get("effective_trade_date") or get_effective_trade_date()
+    )
+    is_trading_hours = session_kind == "trading_day_intraday"
+    intraday_blocks_official_nav = session_kind in {
+        "trading_day_intraday",
+        "trading_day_pre_close",
+    }
     fetched_at = datetime.now(timezone.utc)
 
     if not settings.sector_quotes_enabled:
@@ -96,24 +93,38 @@ def refresh_holdings_sector_quotes(
 
     fetch_missing_benchmark = not cache_only
     fetch_holdings_infer = not cache_only and timeout_seconds is None
+    profiles_snapshot = profile_service.list_profiles()
+    initial_profiles = match_profiles_to_holdings(holdings, profiles_snapshot)
+    active_profile_codes = {
+        profile.fund_code
+        for profile in initial_profiles
+        if profile is not None and profile.fund_code != "000000"
+    }
+    batch_context = PrimarySectorBatchContext.load(
+        {
+            *(holding.fund_code for holding in holdings),
+            *active_profile_codes,
+        },
+        profiles=profiles_snapshot,
+    )
     holdings = refresh_benchmark_sectors_for_holdings(
         holdings,
         fetch_missing_benchmark=fetch_missing_benchmark,
         fetch_holdings_infer=fetch_holdings_infer,
+        batch_context=batch_context,
     )
-    holdings = [
-        profile_service.resolve_holding(
-            holding,
-            fetch_benchmark=fetch_missing_benchmark,
-        )
-        for holding in holdings
-    ]
+    holdings, profiles = profile_service.resolve_holdings_with_profiles(
+        holdings,
+        fetch_benchmark=fetch_missing_benchmark,
+        profiles_snapshot=profiles_snapshot,
+        primary_sector_batch_context=batch_context,
+    )
     lookup_labels = [
         sector_quote_lookup_label(
             holding,
-            profile=profile_service._find_profile_for_holding(holding),
+            profile=profile,
         )
-        for holding in holdings
+        for holding, profile in zip(holdings, profiles)
     ]
 
     boards: dict[str, dict[str, float]] = {
@@ -253,8 +264,10 @@ def refresh_holdings_sector_quotes(
     needs_mapping = 0
     estimate_fallback = 0
     secid_matched = 0
+    mapping_cache: dict[str, dict[str, Any] | None] = {}
 
     for index, holding in enumerate(holdings):
+        profile = profiles[index]
         if holding.sector_name and not _is_valid_sector_label(holding.sector_name):
             holding = holding.model_copy(update={"sector_name": None})
         repair_fields = primary_sector_fields_for_holding(
@@ -262,26 +275,34 @@ def refresh_holdings_sector_quotes(
             allow_name_infer=False,
             fetch_benchmark=fetch_missing_benchmark,
             fetch_holdings_infer=fetch_holdings_infer,
+            batch_context=batch_context,
         )
         if repair_fields:
             holding = holding.model_copy(update=repair_fields)
 
         lookup_label = sector_quote_lookup_label(
             holding,
-            profile=profile_service._find_profile_for_holding(holding),
+            profile=profile,
         )
         label_key = sector_label_key(lookup_label)
-        persisted = None if force_refresh else (get_sector_mapping(label_key) if label_key else None)
+        persisted = None
+        if not force_refresh and label_key:
+            if label_key not in mapping_cache:
+                mapping_cache[label_key] = get_sector_mapping(label_key)
+            persisted = mapping_cache[label_key]
         result = resolve_sector_quote(
             holding.sector_name,
             boards,
             persisted_mapping=persisted,
             quote_label=lookup_label,
         )
-        label_boards = (boards.get("concept") or {}) | (boards.get("industry") or {}) | (boards.get("index") or {})
+        label_in_boards = bool(label_key) and any(
+            label_key in (boards.get(board_type) or {})
+            for board_type in ("concept", "industry", "index")
+        )
         needs_on_demand = result.confidence not in {"high", "medium"} or (
             label_key
-            and label_key not in label_boards
+            and not label_in_boards
             and result.matched_name != label_key
         )
         if needs_on_demand and timeout_seconds is None and not cache_only:
@@ -338,12 +359,14 @@ def refresh_holdings_sector_quotes(
 
         new_holding = holding
         if result.confidence in {"high", "medium"} and result.change_percent is not None:
-            trade_date = _get_last_trade_date()
             nav_return = None
-            if holding.fund_code and not _intraday_blocks_official_nav() and not cache_only:
-                nav_return = get_official_nav_return(holding.fund_code, trade_date)
+            if holding.fund_code and not intraday_blocks_official_nav and not cache_only:
+                nav_return = get_official_nav_return(
+                    holding.fund_code,
+                    effective_trade_date,
+                )
 
-            sector_source = "realtime" if _is_trading_hours() else "closing_estimate"
+            sector_source = "realtime" if is_trading_hours else "closing_estimate"
             update: dict = {}
             display_sector = sector_display_label(holding)
             if _is_valid_sector_label(display_sector) and not _is_valid_sector_label(
@@ -362,7 +385,6 @@ def refresh_holdings_sector_quotes(
                 )
             from app.services.profit_accrual_defer import is_profit_accrual_deferred
 
-            profile = profile_service._find_profile_for_holding(holding)
             amount = holding.settled_holding_amount or holding.holding_amount
             # 无论是真实板块行情还是天天基金净值估值兜底，只要这轮确实拿到了一个
             # change_percent，就该写回 sector_return_percent——否则会出现同样落在
@@ -402,7 +424,9 @@ def refresh_holdings_sector_quotes(
                 secid_matched += 1
             record = mapping_record_from_result(lookup_label, result)
             if record is not None:
-                save_sector_mapping(record)
+                saved_mapping = save_sector_mapping(record)
+                if label_key:
+                    mapping_cache[label_key] = saved_mapping or record
             if (
                 nav_return is None
                 and estimate_quote is None

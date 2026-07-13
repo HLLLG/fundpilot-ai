@@ -3,7 +3,24 @@ type CacheEnvelope<T> = {
   data: T;
 };
 
+export const CLIENT_CACHE_MEMORY_MAX_ENTRIES = 256;
+
 const memoryStore = new Map<string, CacheEnvelope<unknown>>();
+
+function touchMemoryEntry(key: string, envelope: CacheEnvelope<unknown>): void {
+  memoryStore.delete(key);
+  memoryStore.set(key, envelope);
+}
+
+function evictMemoryOverflow(): void {
+  while (memoryStore.size > CLIENT_CACHE_MEMORY_MAX_ENTRIES) {
+    const oldestKey = memoryStore.keys().next().value;
+    if (oldestKey === undefined) {
+      return;
+    }
+    memoryStore.delete(oldestKey);
+  }
+}
 
 function readSession(key: string): CacheEnvelope<unknown> | null {
   if (typeof window === "undefined") {
@@ -48,7 +65,13 @@ export function readClientCache<T>(
     return null;
   }
   if (maxAgeMs >= 0 && Date.now() - envelope.fetchedAt > maxAgeMs) {
+    if (storage === "memory") {
+      memoryStore.delete(key);
+    }
     return null;
+  }
+  if (storage === "memory") {
+    touchMemoryEntry(key, envelope);
   }
   return envelope.data as T;
 }
@@ -63,7 +86,8 @@ export function writeClientCache<T>(
     writeSession(key, data);
     return;
   }
-  memoryStore.set(key, envelope);
+  touchMemoryEntry(key, envelope);
+  evictMemoryOverflow();
 }
 
 export function deleteClientCache(key: string, storage: ClientCacheStorage = "memory"): void {

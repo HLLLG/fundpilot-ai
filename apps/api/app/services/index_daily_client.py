@@ -3,13 +3,17 @@ from __future__ import annotations
 import json
 import logging
 import time
+from collections import OrderedDict
+from threading import RLock
 
 import requests
 
 logger = logging.getLogger(__name__)
 
 INDEX_DAILY_RESPONSE_TTL_SECONDS = 3600
-_INDEX_TTL_CACHE: dict[str, tuple[float, dict | None]] = {}
+INDEX_DAILY_RESPONSE_CACHE_MAX_ENTRIES = 128
+_INDEX_TTL_CACHE: OrderedDict[str, tuple[float, dict | None]] = OrderedDict()
+_INDEX_TTL_CACHE_LOCK = RLock()
 
 _HEADERS = {
     "User-Agent": (
@@ -90,10 +94,20 @@ def _fetch_index_daily_history_impl(index_symbol: str, trading_days: int = 252) 
 
 def fetch_index_daily_history(index_symbol: str, trading_days: int = 252) -> dict | None:
     key = f"{index_symbol.strip()}:{max(20, min(trading_days, 800))}"
-    now = time.time()
-    cached = _INDEX_TTL_CACHE.get(key)
-    if cached is not None and now - cached[0] < INDEX_DAILY_RESPONSE_TTL_SECONDS:
-        return cached[1]
+    now = time.monotonic()
+    with _INDEX_TTL_CACHE_LOCK:
+        cached = _INDEX_TTL_CACHE.get(key)
+        if cached is not None:
+            cached_at, value = cached
+            if now - cached_at < INDEX_DAILY_RESPONSE_TTL_SECONDS:
+                _INDEX_TTL_CACHE.move_to_end(key)
+                return value
+            _INDEX_TTL_CACHE.pop(key, None)
+
     result = _fetch_index_daily_history_impl(index_symbol, trading_days)
-    _INDEX_TTL_CACHE[key] = (now, result)
+    with _INDEX_TTL_CACHE_LOCK:
+        _INDEX_TTL_CACHE[key] = (now, result)
+        _INDEX_TTL_CACHE.move_to_end(key)
+        while len(_INDEX_TTL_CACHE) > max(1, INDEX_DAILY_RESPONSE_CACHE_MAX_ENTRIES):
+            _INDEX_TTL_CACHE.popitem(last=False)
     return result

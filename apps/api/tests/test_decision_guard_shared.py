@@ -115,7 +115,13 @@ def _evidence(level: str) -> dict:
 
 
 def _breadth(*, sentiment_level: str = "冰点", change: int = -2) -> dict:
-    return {"sentiment_level": sentiment_level, "sentiment_level_change": change}
+    return {
+        "sentiment_level": sentiment_level,
+        "sentiment_level_change": change,
+        "decision_eligible": True,
+        "freshness_status": "fresh",
+        "stale": False,
+    }
 
 
 def test_no_escalation_when_sector_opportunity_missing() -> None:
@@ -300,6 +306,26 @@ def test_row4_requires_sentiment_both_ice_and_dropping() -> None:
         decision_style="conservative",
     )
     assert dropping_but_not_ice["min_bucket"] == ACTION_BUCKET_REDUCE
+
+
+def test_row4_rejects_stale_or_legacy_breadth_for_hard_guard() -> None:
+    """过期、明确不合格或缺少资格字段的旧缓存都只能展示，不能触发第4档。"""
+    candidates = [
+        {"sentiment_level": "冰点", "sentiment_level_change": -2},
+        {**_breadth(), "decision_eligible": False},
+        {**_breadth(), "stale": True},
+        {**_breadth(), "freshness_status": "stale"},
+    ]
+    for breadth in candidates:
+        result = resolve_escalation_floor(
+            sector_opportunity=_opportunity(),
+            evidence=_evidence("不足"),
+            market_breadth=breadth,
+            over_concentration=True,
+            has_unrealized_gain=False,
+            decision_style="conservative",
+        )
+        assert result["min_bucket"] == ACTION_BUCKET_REDUCE
 
 
 def test_row5_clear_all_conservative_requires_two_penalties() -> None:

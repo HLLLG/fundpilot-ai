@@ -9,6 +9,9 @@ A 股与美股交易时段独立判定：
 from __future__ import annotations
 
 import logging
+import os
+from pathlib import Path
+import tempfile
 import time
 
 from app.config import get_settings
@@ -23,11 +26,14 @@ _US_LIVE_SESSIONS = frozenset({"pre_market", "regular", "after_hours"})
 # 轮询粒度须小于活跃刷新间隔，否则 20min 配置会被 30min 睡眠拖慢
 _POLL_CAP_SECONDS = 60.0
 _last_a_share_refresh_at = 0.0
+_last_market_breadth_refresh_at = 0.0
 _last_us_refresh_at = 0.0
+_MARKET_BREADTH_LEASE_PATH = Path(tempfile.gettempdir()) / "fundpilot-market-breadth-v2.lease"
 
 
 def _refresh_enabled() -> bool:
-    return bool(get_settings().theme_board_refresh_enabled)
+    settings = get_settings()
+    return bool(settings.theme_board_refresh_enabled or settings.market_breadth_enabled)
 
 
 def _live_interval_seconds() -> float:
@@ -44,7 +50,11 @@ def _idle_interval_seconds() -> float:
 
 def _poll_seconds() -> float:
     """daemon 睡眠时长：不超过活跃间隔，默认每 60s 检查一次。"""
-    return min(_POLL_CAP_SECONDS, _live_interval_seconds())
+    breadth_interval = max(
+        60,
+        int(get_settings().market_breadth_live_refresh_interval_seconds),
+    )
+    return min(_POLL_CAP_SECONDS, _live_interval_seconds(), float(breadth_interval))
 
 
 def refresh_a_share_market_snapshots() -> None:
@@ -56,6 +66,51 @@ def refresh_a_share_market_snapshots() -> None:
     refresh_dip_radar_snapshots()
 
 
+def _try_acquire_market_breadth_lease(*, ttl_seconds: float) -> bool:
+    """用原子文件创建为同一容器内的多 worker 提供 best-effort 刷新租约。"""
+    now = time.time()
+    lease_path = _MARKET_BREADTH_LEASE_PATH
+    lease_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        descriptor = os.open(lease_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
+        try:
+            if now - lease_path.stat().st_mtime < ttl_seconds:
+                return False
+            lease_path.unlink()
+        except FileNotFoundError:
+            pass
+        try:
+            descriptor = os.open(lease_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            return False
+    try:
+        os.write(descriptor, str(now).encode("ascii"))
+    finally:
+        os.close(descriptor)
+    return True
+
+
+def refresh_market_breadth_snapshot() -> None:
+    from app.services.market_breadth_signal import (
+        build_market_breadth_signal,
+        refresh_market_breadth_closing_background,
+    )
+
+    settings = get_settings()
+    if not settings.market_breadth_enabled:
+        return
+    lease_ttl = float(
+        max(60, int(getattr(settings, "market_breadth_live_refresh_interval_seconds", 300)))
+    )
+    if not _try_acquire_market_breadth_lease(ttl_seconds=lease_ttl):
+        return
+    # 租约保证同一刷新窗口只有一个 worker 打外源，因此持租约者可强制刷新，避免缓存 TTL
+    # 与租约起点相差数秒后形成“隔一轮才真刷新”的约 10 分钟节奏。
+    build_market_breadth_signal(force_refresh=True)
+    refresh_market_breadth_closing_background()
+
+
 def refresh_us_market_snapshot() -> None:
     from app.services.us_market_service import get_us_market_snapshot
 
@@ -64,18 +119,24 @@ def refresh_us_market_snapshot() -> None:
 
 def run_startup_market_refresh() -> None:
     """进程启动时同步刷新共享快照，覆盖 SQLite / 内存中的跨进程遗留缓存。"""
-    global _last_a_share_refresh_at, _last_us_refresh_at
+    global _last_a_share_refresh_at, _last_market_breadth_refresh_at, _last_us_refresh_at
 
     now = time.monotonic()
-    refresh_a_share_market_snapshots()
-    _last_a_share_refresh_at = now
-    refresh_us_market_snapshot()
-    _last_us_refresh_at = now
+    if get_settings().theme_board_refresh_enabled:
+        refresh_a_share_market_snapshots()
+        _last_a_share_refresh_at = now
+    refresh_market_breadth_snapshot()
+    _last_market_breadth_refresh_at = now
+    if get_settings().theme_board_refresh_enabled:
+        refresh_us_market_snapshot()
+        _last_us_refresh_at = now
     logger.info("market shared startup refresh completed")
 
 
 def _maybe_refresh_a_share(now: float) -> None:
     global _last_a_share_refresh_at
+    if not get_settings().theme_board_refresh_enabled:
+        return
     session_kind = build_trading_session().get("session_kind", "")
     interval = (
         _live_interval_seconds()
@@ -93,8 +154,32 @@ def _maybe_refresh_a_share(now: float) -> None:
     )
 
 
+def _maybe_refresh_market_breadth(now: float) -> None:
+    global _last_market_breadth_refresh_at
+    settings = get_settings()
+    if not settings.market_breadth_enabled:
+        return
+    session_kind = str(build_trading_session().get("session_kind") or "")
+    interval = (
+        float(max(60, int(settings.market_breadth_live_refresh_interval_seconds)))
+        if session_kind in _A_SHARE_LIVE_SESSIONS
+        else _idle_interval_seconds()
+    )
+    if now - _last_market_breadth_refresh_at < interval:
+        return
+    refresh_market_breadth_snapshot()
+    _last_market_breadth_refresh_at = now
+    logger.debug(
+        "market shared breadth refresh done session=%s interval=%ss",
+        session_kind,
+        int(interval),
+    )
+
+
 def _maybe_refresh_us(now: float) -> None:
     global _last_us_refresh_at
+    if not get_settings().theme_board_refresh_enabled:
+        return
     session_kind = detect_us_session().get("session_kind", "")
     interval = (
         _live_interval_seconds()
@@ -121,6 +206,10 @@ def market_shared_refresh_loop() -> None:
             _maybe_refresh_a_share(now)
         except Exception as exc:
             logger.info("market shared a-share refresh failed: %s", exc)
+        try:
+            _maybe_refresh_market_breadth(now)
+        except Exception as exc:
+            logger.info("market shared breadth refresh failed: %s", exc)
         try:
             _maybe_refresh_us(now)
         except Exception as exc:

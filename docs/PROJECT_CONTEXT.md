@@ -4,9 +4,10 @@
 >
 > **维护：** 功能或架构有实质变化时，同步更新「能力清单」「数据流」「API」「目录」「环境变量」。
 
-**文档版本：** 2026-07-12（日报 / 荐基决策准确性 V2 收尾、历史回填与全量验收）
+**文档版本：** 2026-07-13（荐基质量 V2：入口收敛、全量候选、质量准入与诚实分层）
 
 **更新记录：**
+- **荐基质量 V2（2026-07-13）：** 荐基主入口从「3 扫描模式 × 3 策略 × 3 类型偏好」收敛为 **市场优选 / 组合补缺**两个真实意图；常规路径统一自动质量优选，短线抄底只保留大跌雷达外部预填的高风险研究兼容，含新发/跌深反弹/ETF联接优先/排除C类不再作为主界面选择。修复 `sector_opportunities` 无条件覆盖模式目标导致组合补缺失效、普通路径 `dip_rebound` 实际不排序、ETF「优先」实为硬过滤、流式路径缺量价背离且新闻主题早于最终方向、非买入动作仍携带金额、所有观察项误列「优先行动」等问题。候选横截面由近1年赢家榜前300升级为**分页全量开放式基金目录（实测约1.99万份额）**，24h 共享缓存、失败才回退前500；候选补充最新估算规模、成立日期、基金经理、类型和数据日期，补数后重算 0～100 有界质量分，异常回撤（<-100%）丢弃并回退有效值。新增 `quality_gate`：规模低于0.5亿元或成立不足1年直接剔除，规模0.5～1亿元、核心字段不全、净值过期或回撤超过50%仅研究观察；`data_evidence` 与最终 guard 强制遵守该门槛，非买入动作后端一律清空金额，LLM 允许输出 0～3 只且禁止凑数。前端按结构化 decision event 分为「可执行建议 / 等待条件 / 研究观察」，0只时明确暂无可执行建议，候选池不再把观察项标为已推荐；历史摘要读取报告实际配置。A/C 等同基金份额当前只做家族去重，真实申赎费用明确标为执行前待核验，不虚称成本最优。全量技术审计与后续限制见 [FUND_DISCOVERY_QUALITY_V2.md](design/FUND_DISCOVERY_QUALITY_V2.md)。
 - **Factor IC v2 分类研究池与基金级证据（2026-07-12）：** IC 生产口径从“近一年榜前 500→等距 300、全类型混算”升级为“分页全目录→A/C 等份额保守去重→六类别分层 1,500 个独立组合”。历史收益优先用日增长率重建总收益指数，线上持仓/荐基与离线 IC 共用同一特征引擎并强制完整 250 日窗口；规模因子因缺历史规模继续明确未回测。股票、混合、债券、指数、QDII、FOF 分别计算 5/20/60 日 Rank IC，统计加入 HAC/Newey-West 标准误、95% 区间、末 1/3 留出表现与方向稳定性。v2 快照携带同类评分分布和全目录分类映射；每只目标基金只使用自己的 peer group，未知类别、历史/特征不足或反向 IC fail-closed，当前幸存者 cohort 在 point-in-time 历史积累前最高只授予中等置信。发布质量门槛提高到有效总收益序列 ≥1,200、总收益优先覆盖 ≥80%、分类/同类分布 ≥4 类，失败保留旧快照；v1 继续可读。**生产验收：** 19,945 份额→10,414 独立组合→1,500 样本，六类分别 152/677/242/197/87/145，日增长率总收益序列 1,500/1,500，Actions 运行 12 分 10 秒，20 日分类回测 124～150 期，schema v2 经 SSH 隧道幂等写入 MySQL。详见 [FACTOR_IC_V2.md](design/FACTOR_IC_V2.md)。
 - **因子 IC 无域名安全发布（2026-07-12）：** `Factor IC Refresh` 不再依赖生产域名或 `FACTOR_IC_PUBLISH_URL`，而是复用 `production` Environment 的 Lighthouse SSH 凭据，在 GitHub Runner `127.0.0.1:18000` 与服务器私网监听 `127.0.0.1:8000` 之间建立临时加密隧道；隧道强制 known-host 校验、转发建立失败即退出、发布前检查远端 `/health`，并在成功或失败退出时清理 SSH 进程。因子快照仍通过原内部 API 和独立发布 Token 鉴权写入 MySQL，不开放 8000 公网端口、不经公网明文 HTTP，也不直接连接生产数据库。
 - **日报 / 荐基决策准确性 V2 完整闭环（2026-07-12）：** SQLite v10 / MySQL 新增不可变 `decision_portfolio_snapshots`、`decision_events`、`fund_benchmark_mappings`、修订式 `outcome_observations` 与哈希链 `portfolio_ledger_events`。用户可一次性确认实际份额、可选成本和现金；交易优先使用实际份额，未知费用保持 unknown，删除持仓追加零份额关闭事件，pending/未来确认/冲突/账本截断会 fail-closed；生产 MySQL fallback 不允许写入仓位真值。报告生成在同一事务冻结仓位、费用假设、模型/Prompt/策略版本与点时基准：仅完整基金业绩比较基准合同进入正式超额，跟踪指数/类别代理只作参考。日报与荐基统一按基金自身估值日评价 QDII 等品种，结果拆为毛方向、假设费后正收益、合同基准毛超额、合同基准假设费后超额四项；正式统计仅纳入持久化、主存储、可审计 DecisionEvent v2，legacy 继续可见但排除。OutcomeObservation pending 可修订、成熟终态锁定并在冲突时返回 409。前端新增账本基线确认和四指标审计网格；回填/SQLite→MySQL 迁移默认 dry-run、不可变表 insert-only。**本地库回填实绩：** 扫描 8 份历史日报，写入 26 条 legacy 决策事件和 6 份快照；本库无可回填荐基记录，未伪造历史 outcome；二次执行新增 0，数据库完整性、外键、事件/快照哈希及原报告字节一致性全部通过。**最终验证：** API **922 passed**；Web **333 passed**，typecheck、lint、Next production build 全通过；七视口 production UI E2E **63 passed / 21 expected skips / 0 failed**。完整契约见 [DECISION_ACCURACY_V2.md](DECISION_ACCURACY_V2.md)。
@@ -168,12 +169,12 @@
 | 报告 | 组合摘要 + `fund_recommendations` + `topic_briefs` + `market_news`；`analysis_facts`；守卫 + 深度 `report_judge` |
 | 喂模型数据包 | `analysis_payload.build_user_payload()` 瘦身 user JSON（约 -50%）；落库仍全量 `analysis_facts` |
 | 生成日报 | 「生成日报」Tab：`RiskControls`（**AI 角色设定**可编辑 + 高级设置折叠风控）+ `NewsPreviewPanel` / `SectorSignalBacktestPanel` / `RecommendationAccuracyPanel`；诊断项收进 `DiagnosticsAccordion`；日报 **仅分析已有持仓**，荐新基见独立 Tab |
-| 推荐基金 | 「推荐基金」Tab：`FundDiscoveryPanel` — **扫描模式**（`full_market` \| `portfolio_gap` \| **`dip_swing`**）、**19 个**关注方向、`dip_drop_scanner` 大跌预筛、**选基策略**（含 `dip_rebound`）、荐基角色、基金类型偏好、预算、快速/深度；`DiscoveryReportPanel` + `DiscoveryHistoryRail`（含批量删除）+ `DiscoveryOutcomesPanel` |
+| 推荐基金 | 「推荐基金」Tab：`FundDiscoveryPanel` — 主入口只保留 **市场优选**（`full_market`）/ **组合补缺**（`portfolio_gap`）、19 个关注方向、自动质量策略、荐基角色、预算、快速/深度；`dip_swing` 仅兼容大跌雷达高风险研究预填；报告按可执行/等待/观察分层，并展示质量门、候选池、历史与复盘 |
 | AI 角色 Prompt（日报） | `analysis_prompt.py` `DEFAULT_ROLE_PROMPT`；用户自定义 `role_prompt`（≤4000 字）持久化 `analysis_prompt_state`；`GET/PUT /api/analysis-prompt`；生成时 `system_role_prompt` 传入 `POST /api/analyze/async` |
 | AI 角色 Prompt（荐基） | `discovery_prompt.py` `DEFAULT_DISCOVERY_ROLE_PROMPT`；持久化 `discovery_prompt_state`（schema v6）；`GET/PUT /api/discovery-prompt`；扫描时 `DiscoveryRequest.system_role_prompt` 传入 `discovery_client` |
 | 复盘/模拟 | outcomes / outcomes-weekly / rebalance-simulation / recommendation-accuracy |
 | 信号诊断 | `GET /api/diagnostics/sector-signal-backtest` — 板块短线规则历史命中率（东财日 K；失败时 relay/AkShare 兜底） |
-| 大盘情绪温度计 | `GET /api/diagnostics/market-breadth`；`MarketBreadthGauge.tsx` 挂市场 Tab + 生成日报诊断区；情绪等级基于全市场新高/新低家数近2年分布自校准，涨跌停/炸板/两融为当日快照 |
+| 大盘情绪温度计 | `GET /api/diagnostics/market-breadth`；`MarketBreadthGauge.tsx` 挂市场 Tab + 生成日报诊断区；交易时段用乐咕赚钱效应生成当日准实时情绪（默认 5min 刷新），收盘后冻结当日终值至下一交易日开盘；全市场新高/新低近2年分位仅作为独立收盘锚点；响应显式提供时点、新鲜度与 `decision_eligible`，过期/回退数据只展示、不进入 hard guard |
 | 双向决策 guard | `decision_guard_shared.resolve_escalation_floor()`（日报）/ `resolve_discovery_escalation()`（荐基）——证据强烈时不仅能降级、也能把"观察"强制升级为"暂停追涨/减仓评估/大幅减仓评估/清仓评估"（日报）或剔除候选池/提高建议金额（荐基）；灰度开关 `FUND_AI_DECISION_ESCALATION_MODE=shadow\|enforced` |
 | 灰度复盘摘要 | `GET /api/diagnostics/shadow-escalation-digest` — 近 N 天双向 guard 升级触发聚合（按板块/建议动作+当日走势对照）；`ShadowEscalationDigestCard.tsx` 仅 shadow 模式下展示 |
 | 交易日语义 | `trading_session.py` + `trade_calendar_cache`；**9:30 前** `trading_day_pre_open` 展示上一交易日（对齐养基宝，周末/节假日同理）；`TradingSessionBar` |
@@ -330,7 +331,7 @@ fundpilot-ai/
 2. 「简报」看组合摘要与最新决策；「持仓」Tab 管理持有列表；启动自动恢复上次持仓；点刷新更新板块涨跌
 3. 需更新金额时 →「持仓」页「新增持有」上传支付宝/养基宝总览截图
 4. 「盈亏分析」Tab 查看收益走势、盈亏日历、当日 TOP5、持仓分布
-5. 「推荐基金」Tab 可选关注板块、投资预设/选基策略、预算 → **扫描今日机会**（可与日报并行，右下角双浮层进度）
+5. 「推荐基金」Tab 选择市场优选/组合补缺、关注板块、投资预设与预算 → **扫描今日机会**；选基策略与基金类型由系统自动处理（可与日报并行，右下角双浮层进度）
 6. 「生成日报」Tab 确认投资预设与 **AI 角色设定** → 选快速/深度 → 生成日报
 7. 点击持仓行 → 基金详情（板块分时、业绩走势、我的收益）；低置信度板块 → 映射弹窗
 8. 可上传**支付宝持有列表**截图 → 预览确认 → 写入持仓
@@ -407,7 +408,7 @@ POST /api/fund-discovery/async {
   fund_type_preference?, scan_mode?, selection_strategy?,
   dip_lookback_days?, dip_min_drop_percent?, system_role_prompt?
 } → job_id
-  → discovery_pipeline: 板块热度 → 窄池(15~25)；**scan_mode=dip_swing** 时 `dip_drop_scanner` 预筛大跌候选并强制 `dip_rebound` → 新闻摘要 → DeepSeek → discovery_guard
+  → discovery_pipeline: 模式目标板块 → 全量基金横截面 → 补充净值/回撤/规模/经理/成立日期 → quality_gate + 0~100质量分 → 新闻摘要 → DeepSeek解释 → data_evidence/discovery_guard；**scan_mode=dip_swing** 仅为大跌雷达研究兼容
   → GET /api/jobs/{id} 轮询（job_kind=discovery；单连接查询；完成时含 discovery_report）
   → DiscoveryReportPanel + DiscoveryHistoryRail；POST .../chat SSE 追问
 ```
@@ -492,7 +493,7 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | GET | `/api/market/dip-radar` | 大跌反弹雷达：`lookback_days`（3\|5，默认 5）、可选 `sector`（注册表 label）、`limit`（默认 20）、`force_refresh`；`dip_drop_scanner.build_dip_radar_pool_fast` 全市场近 1 周跌幅榜预筛 + 头部 NAV 精算；`items[].sector_label` 经 `resolve_sector_labels_for_radar`（用户表 → global → resolve）；缓存 `dip:radar:v2:{trade_date}:{lookback}`（盘中 60s / 收盘 1h）；响应含 `rebound_score`、`rebound_signals`、**`historical_hint`**、`sector_dip_leaders` |
 | GET | `/api/market/us-overview` | 美股概览快照（`UsMarketSnapshot`）：纳指/标普/道指**指数期货** + USD/CNY 汇率 + QDII「盘前参考涨跌」列表 + 美东时段（`session_kind`/`session_label`，含夏令时）+ `updated_at`；`force_refresh` 跳过服务端时段感知缓存；无需 JWT；任一数据源失败仍返回 200，经 `futures_status`/`forex_status`/`qdii_status`/`available`/`stale`/`message` 表达陈旧或不可用，绝不回退收盘价或编造数值 |
 | GET | `/api/fund-discovery/sectors` | 荐基关注方向 chips：`build_sector_heat_ranking_for_ui()`（当日涨跌轻量拉取、12s 预算；超时回退全部标签）；扫描 pipeline 仍用完整 `build_sector_heat_ranking()` |
-| POST | `/api/fund-discovery/async` | 创建推荐基金异步任务；body `DiscoveryRequest`；**`scan_mode=dip_swing`** 时走大跌预筛 + `dip_rebound` 选基策略（流式失败回退） |
+| POST | `/api/fund-discovery/async` | 创建推荐基金异步任务；body `DiscoveryRequest`；常规路径服务端归一为自动质量优选 + 类型不限，`dip_swing` 仅走大跌雷达研究预筛（流式失败回退） |
 | POST | `/api/fund-discovery/stream` | SSE 流式荐基；fast/deep 均支持；事件含 `recommendation` partial |
 | GET | `/api/fund-discovery/reports` | 最近 30 条推荐报告 |
 | GET | `/api/fund-discovery/reports/{id}` | 推荐报告详情 |
@@ -555,7 +556,7 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | **DecisionEvent v2 / OutcomeObservation v2** | 固化动作、固定 horizons、费用假设与审计版本；结果 pending 可修订、成熟终态锁定，正式统计拆成四项指标 |
 | **AnalysisRequest** | holdings、profile、ocr_text、**analysis_mode**、**system_role_prompt**（可选，≤4000 字；缺省用 `DEFAULT_ROLE_PROMPT`） |
 | **AnalysisPromptConfig** | `role_prompt`、`is_custom`、`default_role_prompt`；持久化 `analysis_prompt_state` 按 `userId` |
-| **DiscoveryRequest** | `profile`、`analysis_mode`、`focus_sectors`（≤3）、`budget_yuan`、`holdings`、**`fund_type_preference`**、**`selection_strategy`**、**`scan_mode`**（`full_market` \| `portfolio_gap` \| **`dip_swing`**）、**`dip_lookback_days`**（3\|5）、**`dip_min_drop_percent`**、**`system_role_prompt`**（可选，≤4000 字） |
+| **DiscoveryRequest** | `profile`、`analysis_mode`、`focus_sectors`（≤3）、`budget_yuan`、`holdings`、**`scan_mode`**（主界面 `full_market` \| `portfolio_gap`；`dip_swing` 仅研究预填）、`system_role_prompt`（可选，≤4000 字）；`fund_type_preference` / `selection_strategy` / dip 参数继续接受旧客户端但常规路径由服务端归一 |
 | **DiscoveryPromptConfig** | `role_prompt`、`is_custom`、`default_role_prompt`；持久化 `discovery_prompt_state`（schema v6）按 `userId` |
 | **DiscoveryRecommendation** | `action`、`suggested_amount_yuan`、`hold_horizon`、`confidence`、`points`、`risks`；**`dip_drop_percent`**、**`rebound_signals`**、**`target_exit_days`**、**`fee_break_even_percent`**（`dip_swing` 波段止盈语义）；**`decision_path`**、**`sector_evidence`**、**`fund_evidence`**、**`validation_notes`**（结构化决策依据，日报 `FundRecommendation` 同款字段与之对齐）；**`suggested_position_change_percent`**、**`suggested_position_change_basis`**（2026-07-02 M2.3/M4：荐基语义下正=建议提高买入金额权重、负=建议降低） |
 | **EliminatedCandidate** | 2026-07-02 M4/M5：被双向 guard 因证据强烈共振剔除的候选（`fund_code`/`fund_name`/`sector_name`/`reasons`/`basis`）；结构化字段，避免前端正则解析 `caveats` 文本 |
@@ -757,7 +758,7 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 
 - **简报 Tab：** `TodayBriefing` 组合 KPI + 板块脉搏 + 决策卡 + 内联追问；可跳转持仓/市场/日报。
 - **持仓 / 生成日报 Tab：** 持有看板 vs 交易日历 + **AI 角色设定** + 风控画像 + `ReportPanel`。
-- **推荐基金 Tab：** `FundDiscoveryPanel`（**扫描模式**含 `dip_swing`、19 板块关注方向、localStorage 热度缓存、荐基角色、基金类型偏好）+ `DiscoveryReportPanel` + `DiscoveryHistoryRail`（批量删除）+ `DiscoveryChatPanel`；`DiscoveryJobStatusFloat` 轮询失败自动重试；大跌雷达「深度扫描」经 `fundpilot-discovery-prefill` + `fundpilot-dashboard-tab` 事件预填并跳转；主题板块「加入关注方向」经 `fundpilot-discovery-focus-sectors` 预填 chips。
+- **推荐基金 Tab：** `FundDiscoveryPanel`（市场优选/组合补缺、19 板块关注方向、localStorage 热度缓存、荐基角色、自动质量策略）+ `DiscoveryReportPanel`（可执行/等待/观察分层）+ `DiscoveryHistoryRail`（批量删除）+ `DiscoveryChatPanel`；`DiscoveryJobStatusFloat` 轮询失败自动重试；大跌雷达「深度扫描」仍经 `fundpilot-discovery-prefill` + `fundpilot-dashboard-tab` 进入 `dip_swing` 高风险研究状态；主题板块「加入关注方向」经 `fundpilot-discovery-focus-sectors` 预填 chips。
 - **市场 Tab：** 子 Tab 主题板块 / **大跌雷达** / 美股；`loadMarketSubTab` + `fundpilot-dip-radar-sector` sessionStorage；主题行「看大跌基金」带板块过滤切雷达子 Tab。
 - **缓存：** `clientCache.ts` / `useCachedFetch.ts` — 盈亏分析 `sessionStorage`、详情/NAV `memory`；`portfolioHoldingsCache.ts` — 持有 **localStorage** 优先展示；`loadDashboardTab` / `saveDashboardTab` — 主 Tab **sessionStorage**；`loadMarketSubTab` — 市场子 Tab；`loadDiscoverySectorHeatCache` 板块热度 30min；板块 `useSectorQuoteRefresh` 后台 `fast`、手动 `accurate`。
 - **认证：** `AuthProvider` 注入 JWT；未登录访问受保护页会跳转 `/login`；`apiFetch` 自动带 `Authorization: Bearer`；CORS 中间件置于最外层（含 401 响应）。
@@ -803,8 +804,11 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | `FUND_AI_THEME_BOARD_REFRESH_INTERVAL_SECONDS` | 900 | 盘中/盘前主题板块刷新间隔（15min） |
 | `FUND_AI_THEME_BOARD_REFRESH_IDLE_INTERVAL_SECONDS` | 3600 | 收盘/非交易日主题板块刷新间隔（1h） |
 | `FUND_AI_RISK_FREE_RATE` | 0.02 | 组合风险指标无风险利率（年化小数；夏普/索提诺/Alpha 用；填 >1 视作百分数自动归一） |
-| `FUND_AI_MARKET_BREADTH_ENABLED` | true | 大盘情绪温度计（M1.1）开关：新高/新低家数（可回测校准）+ 涨跌停/炸板当日快照 + 两融环比 |
+| `FUND_AI_MARKET_BREADTH_ENABLED` | true | 大盘情绪温度计开关：盘中赚钱效应准实时信号 + 新高/新低收盘锚点 + 涨跌停/炸板 + 两融环比 |
 | `FUND_AI_MARKET_BREADTH_TIMEOUT_SECONDS` | 4.0 | 情绪温度计计算超时预算 |
+| `FUND_AI_MARKET_BREADTH_LIVE_REFRESH_INTERVAL_SECONDS` | 300 | 交易时段盘中赚钱效应刷新间隔（秒） |
+| `FUND_AI_MARKET_BREADTH_LIVE_FRESHNESS_SECONDS` | 600 | 盘中快照可进入 hard guard 的最大数据年龄（秒） |
+| `FUND_AI_MARKET_BREADTH_LIVE_GUARD_DELAY_MINUTES` | 5 | 开盘后仅观察、不允许盘中情绪进入 hard guard 的缓冲分钟数 |
 | `FUND_AI_FLOW_DIVERGENCE_BACKTEST_ENABLED` | true | 量价背离信号回测（M1.3）开关 |
 | `FUND_AI_DECISION_ESCALATION_MODE` | shadow | 双向 guard 灰度开关（M6）：`shadow`（默认）只在 `validation_notes`/`escalation_hints` 标注"若启用会怎样"，不真正改变最终 action/剔除候选/开放新动作词表；`enforced` 真正生效。观察约 1 个月（20 个交易日）后按 `GET /api/diagnostics/shadow-escalation-digest` 摘要自行决定是否切换 |
 

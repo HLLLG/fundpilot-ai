@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import json
 import logging
+from collections import OrderedDict
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from threading import RLock
+from typing import Iterable
 
 from app.database import (
     get_fund_primary_sector,
@@ -32,7 +36,10 @@ from app.services.sector_labels import (
 logger = logging.getLogger(__name__)
 
 _BENCHMARK_MISS_TTL = timedelta(hours=24)
-_benchmark_miss_cache: dict[str, datetime] = {}
+_BENCHMARK_MISS_CACHE_MAX_ENTRIES = 512
+_benchmark_miss_cache: OrderedDict[str, datetime] = OrderedDict()
+_benchmark_miss_cache_lock = RLock()
+_GLOBAL_ROW_NOT_PRELOADED = object()
 
 # 已废弃：per-fund 手工种子由业绩基准 / 重仓行业穿透替代（discovery 改读 fund_primary_sectors）。
 GLOBAL_FUND_SECTOR_SEEDS: dict[str, dict[str, str | None]] = {}
@@ -58,6 +65,90 @@ _HIGH_TRUST_SECTOR_SOURCES = frozenset({"ocr_detail", "manual"})
 
 
 from app.services.fund_primary_sector_types import PrimarySectorRecord
+
+
+@dataclass
+class PrimarySectorBatchContext:
+    """Request-local snapshots used by batch holding resolution.
+
+    The regular single-fund APIs deliberately keep their point-query behavior. Batch
+    callers can opt into this context so every resolver in the chain observes the
+    same user/global/profile snapshot, including rows written earlier in the batch.
+    """
+
+    user_rows_by_code: dict[str, dict] = field(default_factory=dict)
+    global_rows_by_code: dict[str, dict] = field(default_factory=dict)
+    profiles_by_code: dict[str, FundProfile] = field(default_factory=dict)
+
+    @classmethod
+    def load(
+        cls,
+        fund_codes: Iterable[str],
+        *,
+        profiles: Iterable[FundProfile] = (),
+    ) -> "PrimarySectorBatchContext":
+        normalized_codes = {
+            str(raw or "").strip().zfill(6)
+            for raw in fund_codes
+            if str(raw or "").strip()
+        }
+        normalized_codes.discard("000000")
+        normalized_codes = {code for code in normalized_codes if len(code) == 6}
+
+        user_rows_by_code: dict[str, dict] = {}
+        if normalized_codes:
+            try:
+                for row in list_fund_primary_sectors():
+                    code = str(row.get("fund_code") or "").strip().zfill(6)
+                    if code in normalized_codes:
+                        user_rows_by_code[code] = row
+            except RuntimeError:
+                # Background jobs may not have a request-scoped user database.
+                pass
+
+        global_rows_by_code = (
+            get_fund_primary_sectors_global_by_codes(normalized_codes)
+            if normalized_codes
+            else {}
+        )
+        profiles_by_code = {
+            profile.fund_code: profile
+            for profile in profiles
+            if profile.fund_code and profile.fund_code != "000000"
+        }
+        return cls(
+            user_rows_by_code=user_rows_by_code,
+            global_rows_by_code=global_rows_by_code,
+            profiles_by_code=profiles_by_code,
+        )
+
+    @staticmethod
+    def _code(raw: str) -> str:
+        return str(raw or "").strip().zfill(6)
+
+    def user_row(self, fund_code: str) -> dict | None:
+        return self.user_rows_by_code.get(self._code(fund_code))
+
+    def fresh_global_row(self, fund_code: str) -> dict | None:
+        row = self.global_rows_by_code.get(self._code(fund_code))
+        return row if is_global_sector_fresh(row) else None
+
+    def profile(self, fund_code: str) -> FundProfile | None:
+        return self.profiles_by_code.get(self._code(fund_code))
+
+    def remember_user_row(self, row: dict | None) -> None:
+        if not row:
+            return
+        code = self._code(str(row.get("fund_code") or ""))
+        if code and code != "000000":
+            self.user_rows_by_code[code] = row
+
+    def remember_global_row(self, row: dict | None) -> None:
+        if not row:
+            return
+        code = self._code(str(row.get("fund_code") or ""))
+        if code and code != "000000":
+            self.global_rows_by_code[code] = row
 
 
 def _is_cross_market_theme_fund(fund_name: str | None) -> bool:
@@ -252,7 +343,12 @@ def _can_upsert_primary_sector(
     return new_prio >= old_prio and new_source == old_source
 
 
-def upsert_primary_sector_from_profile(profile: FundProfile, *, source: str = "ocr_detail") -> None:
+def upsert_primary_sector_from_profile(
+    profile: FundProfile,
+    *,
+    source: str = "ocr_detail",
+    batch_context: PrimarySectorBatchContext | None = None,
+) -> None:
     if not profile.fund_code or profile.fund_code == "000000":
         return
     if not _is_valid_sector_label(profile.sector_name):
@@ -263,10 +359,14 @@ def upsert_primary_sector_from_profile(profile: FundProfile, *, source: str = "o
         # 总览页展示的只是基金名称残留（非真实主题），不值得当作可信来源写入，
         # 避免其数字优先级挡住后续持仓穿透/LLM 兜底给出的正确结果。
         return
-    existing = get_fund_primary_sector(profile.fund_code)
+    existing = (
+        batch_context.user_row(profile.fund_code)
+        if batch_context is not None
+        else get_fund_primary_sector(profile.fund_code)
+    )
     if existing and not _can_upsert_primary_sector(existing, source, fund_name=profile.fund_name):
         return
-    save_fund_primary_sector(
+    saved = save_fund_primary_sector(
         fund_code=profile.fund_code,
         sector_name=profile.sector_name or "",
         intraday_index_name=profile.intraday_index_name,
@@ -274,9 +374,16 @@ def upsert_primary_sector_from_profile(profile: FundProfile, *, source: str = "o
         confidence=0.95 if source == "ocr_detail" else 0.9,
         detail={"fund_name": profile.fund_name},
     )
+    if batch_context is not None:
+        batch_context.remember_user_row(saved)
 
 
-def upsert_primary_sector_from_holding(holding: Holding, *, source: str) -> None:
+def upsert_primary_sector_from_holding(
+    holding: Holding,
+    *,
+    source: str,
+    batch_context: PrimarySectorBatchContext | None = None,
+) -> None:
     if not holding.fund_code or holding.fund_code == "000000":
         return
     if not _is_valid_sector_label(holding.sector_name):
@@ -285,13 +392,17 @@ def upsert_primary_sector_from_holding(holding: Holding, *, source: str) -> None
         holding.fund_name, holding.sector_name
     ):
         return
-    existing = get_fund_primary_sector(holding.fund_code)
+    existing = (
+        batch_context.user_row(holding.fund_code)
+        if batch_context is not None
+        else get_fund_primary_sector(holding.fund_code)
+    )
     if existing and not _can_upsert_primary_sector(existing, source, fund_name=holding.fund_name):
         return
     index_name = holding.intraday_index_name
     if not index_name:
         index_name = infer_intraday_index_from_fund_name(holding.fund_name)
-    save_fund_primary_sector(
+    saved = save_fund_primary_sector(
         fund_code=holding.fund_code,
         sector_name=holding.sector_name or "",
         intraday_index_name=index_name,
@@ -299,6 +410,8 @@ def upsert_primary_sector_from_holding(holding: Holding, *, source: str) -> None
         confidence=0.88,
         detail={"fund_name": holding.fund_name},
     )
+    if batch_context is not None:
+        batch_context.remember_user_row(saved)
 
 
 def resolve_primary_sector(
@@ -308,6 +421,7 @@ def resolve_primary_sector(
     allow_name_infer: bool = False,
     fetch_benchmark: bool = True,
     fetch_holdings_infer: bool = False,
+    batch_context: PrimarySectorBatchContext | None = None,
 ) -> PrimarySectorRecord | None:
     code = fund_code.strip().zfill(6)
     if len(code) != 6 or code == "000000":
@@ -324,7 +438,11 @@ def resolve_primary_sector(
         else None
     )
 
-    row = get_fund_primary_sector(code)
+    row = (
+        batch_context.user_row(code)
+        if batch_context is not None
+        else get_fund_primary_sector(code)
+    )
     if row and _is_valid_sector_label(row.get("sector_name")):
         source = str(row.get("source") or "")
         if source == "manual":
@@ -340,16 +458,28 @@ def resolve_primary_sector(
     if _should_prefer_semantic_before_market_sources(fund_name, semantic_candidate):
         return _semantic_record_from_candidate(code, fund_name or "", semantic_candidate)
 
-    benchmark_record = _resolve_from_benchmark_index(code, fetch=fetch_benchmark)
+    benchmark_record = _resolve_from_benchmark_index(
+        code,
+        fetch=fetch_benchmark,
+        batch_context=batch_context,
+    )
     if benchmark_record is not None:
         return benchmark_record
 
     if fetch_holdings_infer:
-        holdings_record = _resolve_from_holdings_infer(code, persist=bool(try_get_request_user_id()))
+        holdings_record = _resolve_from_holdings_infer(
+            code,
+            persist=bool(try_get_request_user_id()),
+            batch_context=batch_context,
+        )
         if holdings_record is not None:
             return holdings_record
 
-    global_row = load_fresh_global_sector(code)
+    global_row = (
+        batch_context.fresh_global_row(code)
+        if batch_context is not None
+        else load_fresh_global_sector(code)
+    )
     if global_row:
         return _record_from_row({**global_row, "fund_code": code})
 
@@ -365,11 +495,19 @@ def resolve_primary_sector(
         and row
         and _is_valid_sector_label(row.get("sector_name"))
     ):
-        llm_record = _resolve_from_llm_infer(code, fund_name)
+        llm_record = _resolve_from_llm_infer(
+            code,
+            fund_name,
+            batch_context=batch_context,
+        )
         if llm_record is not None:
             return llm_record
 
-    profile = get_fund_profile_by_code(code)
+    profile = (
+        batch_context.profile(code)
+        if batch_context is not None
+        else get_fund_profile_by_code(code)
+    )
     if profile and _is_valid_sector_label(profile.sector_name):
         # 支付宝总览 OCR 不含可靠板块名，勿用档案里的推断值挡住业绩基准。
         if profile.source != "alipay-overview":
@@ -401,7 +539,11 @@ def resolve_primary_sector(
     # 与持仓穿透（同样发子进程/网络请求）共享同一开关，不新增参数、也不会
     # 悄悄拖慢默认的冷启动/低时延路径。
     if fetch_holdings_infer and allow_name_infer and fund_name:
-        llm_record = _resolve_from_llm_infer(code, fund_name)
+        llm_record = _resolve_from_llm_infer(
+            code,
+            fund_name,
+            batch_context=batch_context,
+        )
         if llm_record is not None:
             return llm_record
     return None
@@ -476,6 +618,7 @@ def primary_sector_fields_for_holding(
     allow_name_infer: bool = False,
     fetch_benchmark: bool = True,
     fetch_holdings_infer: bool = False,
+    batch_context: PrimarySectorBatchContext | None = None,
 ) -> dict[str, str]:
     if _is_valid_sector_label(holding.sector_name):
         return {}
@@ -488,6 +631,7 @@ def primary_sector_fields_for_holding(
         allow_name_infer=allow_name_infer,
         fetch_benchmark=fetch_benchmark,
         fetch_holdings_infer=fetch_holdings_infer,
+        batch_context=batch_context,
     )
     if record is None:
         return {}
@@ -502,9 +646,13 @@ def apply_primary_sector_to_holding(
     *,
     fetch_benchmark: bool = True,
     allow_name_infer: bool = True,
+    batch_context: PrimarySectorBatchContext | None = None,
 ) -> Holding:
     return _apply_primary_sector_to_holding_impl(
-        holding, fetch_benchmark=fetch_benchmark, allow_name_infer=allow_name_infer
+        holding,
+        fetch_benchmark=fetch_benchmark,
+        allow_name_infer=allow_name_infer,
+        batch_context=batch_context,
     )
 
 
@@ -513,6 +661,7 @@ def _apply_primary_sector_to_holding_impl(
     *,
     fetch_benchmark: bool = True,
     allow_name_infer: bool = True,
+    batch_context: PrimarySectorBatchContext | None = None,
 ) -> Holding:
     if holding.sector_name and not _is_trustworthy_sector_label(
         holding.fund_name, holding.sector_name
@@ -538,6 +687,7 @@ def _apply_primary_sector_to_holding_impl(
             fund_name=holding.fund_name,
             allow_name_infer=allow_name_infer,
             fetch_benchmark=fetch_benchmark,
+            batch_context=batch_context,
         )
 
     if record and _record_should_override_holding_sector(holding, record):
@@ -546,12 +696,20 @@ def _apply_primary_sector_to_holding_impl(
             fields["intraday_index_name"] = record.intraday_index_name
         if holding.sector_name != record.sector_name or holding.intraday_index_name != record.intraday_index_name:
             updated = holding.model_copy(update=fields)
-            upsert_primary_sector_from_holding(updated, source=record.source)
+            upsert_primary_sector_from_holding(
+                updated,
+                source=record.source,
+                batch_context=batch_context,
+            )
             return updated
 
     if _is_valid_sector_label(holding.sector_name):
         if holding.fund_code and holding.fund_code != "000000":
-            upsert_primary_sector_from_holding(holding, source="alipay_overview")
+            upsert_primary_sector_from_holding(
+                holding,
+                source="alipay_overview",
+                batch_context=batch_context,
+            )
         return holding
 
     if record is None:
@@ -560,7 +718,11 @@ def _apply_primary_sector_to_holding_impl(
     if record.intraday_index_name and not holding.intraday_index_name:
         fields["intraday_index_name"] = record.intraday_index_name
     updated = holding.model_copy(update=fields)
-    upsert_primary_sector_from_holding(updated, source=record.source)
+    upsert_primary_sector_from_holding(
+        updated,
+        source=record.source,
+        batch_context=batch_context,
+    )
     return updated
 
 
@@ -568,9 +730,14 @@ def apply_primary_sector_to_holdings(
     holdings: list[Holding],
     *,
     fetch_benchmark: bool = True,
+    batch_context: PrimarySectorBatchContext | None = None,
 ) -> list[Holding]:
     return [
-        apply_primary_sector_to_holding(item, fetch_benchmark=fetch_benchmark)
+        apply_primary_sector_to_holding(
+            item,
+            fetch_benchmark=fetch_benchmark,
+            batch_context=batch_context,
+        )
         for item in holdings
     ]
 
@@ -580,6 +747,7 @@ def refresh_benchmark_sectors_for_holdings(
     *,
     fetch_missing_benchmark: bool = True,
     fetch_holdings_infer: bool = False,
+    batch_context: PrimarySectorBatchContext | None = None,
 ) -> list[Holding]:
     """板块刷新前：拉业绩基准；仍无板块时可选重仓行业穿透。"""
     refreshed: list[Holding] = []
@@ -588,20 +756,37 @@ def refresh_benchmark_sectors_for_holdings(
         if not code or code == "000000":
             refreshed.append(holding)
             continue
-        row = get_fund_primary_sector(code)
+        row = (
+            batch_context.user_row(code)
+            if batch_context is not None
+            else get_fund_primary_sector(code)
+        )
         if row and str(row.get("source") or "") in _HIGH_TRUST_SECTOR_SOURCES:
             refreshed.append(holding)
             continue
         if row and str(row.get("source") or "") == "benchmark_index":
-            refreshed.append(apply_primary_sector_to_holding(holding, fetch_benchmark=False))
+            refreshed.append(
+                apply_primary_sector_to_holding(
+                    holding,
+                    fetch_benchmark=False,
+                    batch_context=batch_context,
+                )
+            )
             continue
         if not fetch_missing_benchmark and not fetch_holdings_infer:
-            refreshed.append(apply_primary_sector_to_holding(holding, fetch_benchmark=False))
+            refreshed.append(
+                apply_primary_sector_to_holding(
+                    holding,
+                    fetch_benchmark=False,
+                    batch_context=batch_context,
+                )
+            )
             continue
         updated = apply_primary_sector_to_holding(
             holding,
             fetch_benchmark=fetch_missing_benchmark,
             allow_name_infer=not fetch_holdings_infer,
+            batch_context=batch_context,
         )
         stocks_for_code = None
         if (
@@ -613,7 +798,12 @@ def refresh_benchmark_sectors_for_holdings(
             )
 
             stocks_for_code = fetch_portfolio_stocks_with_industry(code)
-            record = _resolve_from_holdings_infer(code, persist=True, stocks=stocks_for_code)
+            record = _resolve_from_holdings_infer(
+                code,
+                persist=True,
+                stocks=stocks_for_code,
+                batch_context=batch_context,
+            )
             if record is not None:
                 fields: dict[str, str] = {"sector_name": record.sector_name}
                 if record.intraday_index_name and not updated.intraday_index_name:
@@ -626,7 +816,12 @@ def refresh_benchmark_sectors_for_holdings(
         ):
             # 复用上面已经拉取过的重仓股名称，避免同一只基金重复发子进程/网络请求。
             top_holdings = [s.name for s in (stocks_for_code or []) if s.name]
-            llm_record = _resolve_from_llm_infer(code, updated.fund_name, top_holdings=top_holdings)
+            llm_record = _resolve_from_llm_infer(
+                code,
+                updated.fund_name,
+                top_holdings=top_holdings,
+                batch_context=batch_context,
+            )
             if llm_record is not None:
                 updated = updated.model_copy(update={"sector_name": llm_record.sector_name})
         refreshed.append(updated)
@@ -642,6 +837,7 @@ def _resolve_from_holdings_infer(
     *,
     persist: bool = True,
     stocks: list | None = None,
+    batch_context: PrimarySectorBatchContext | None = None,
 ) -> PrimarySectorRecord | None:
     from app.services.fund_holdings_sector_infer import (
         fetch_portfolio_stocks_with_industry,
@@ -674,14 +870,18 @@ def _resolve_from_holdings_infer(
     )
 
     if persist:
-        existing = get_fund_primary_sector(code)
+        existing = (
+            batch_context.user_row(code)
+            if batch_context is not None
+            else get_fund_primary_sector(code)
+        )
         existing_source = str((existing or {}).get("source") or "")
         if existing_source != "benchmark_index":
             if try_get_request_user_id() is not None and (
                 not existing
                 or _SOURCE_PRIORITY.get(existing_source, 0) <= _SOURCE_PRIORITY["holdings_infer"]
             ):
-                save_fund_primary_sector(
+                saved = save_fund_primary_sector(
                     fund_code=code,
                     sector_name=sector_name,
                     intraday_index_name=index_name,
@@ -689,7 +889,11 @@ def _resolve_from_holdings_infer(
                     confidence=confidence,
                     detail=record.detail,
                 )
-            promote_record_to_global(record)
+                if batch_context is not None:
+                    batch_context.remember_user_row(saved)
+            global_row = promote_record_to_global(record)
+            if batch_context is not None:
+                batch_context.remember_global_row(global_row)
     return record
 
 
@@ -709,11 +913,16 @@ def _resolve_from_llm_infer(
     fund_name: str,
     *,
     top_holdings: list[str] | None = None,
+    batch_context: PrimarySectorBatchContext | None = None,
 ) -> PrimarySectorRecord | None:
     from app.services.fund_sector_llm_infer import infer_sector_via_llm
 
     code = fund_code.strip().zfill(6)
-    global_row = load_fresh_global_sector(code)
+    global_row = (
+        batch_context.fresh_global_row(code)
+        if batch_context is not None
+        else load_fresh_global_sector(code)
+    )
     if global_row and str(global_row.get("source") or "") in {"llm_infer", "precompute_llm"}:
         return _record_from_row({**global_row, "fund_code": code})
 
@@ -732,9 +941,13 @@ def _resolve_from_llm_infer(
         detail={"fund_name": fund_name},
     )
     if try_get_request_user_id() is not None:
-        existing = get_fund_primary_sector(code)
+        existing = (
+            batch_context.user_row(code)
+            if batch_context is not None
+            else get_fund_primary_sector(code)
+        )
         if _can_upsert_primary_sector(existing, "llm_infer", fund_name=fund_name):
-            save_fund_primary_sector(
+            saved = save_fund_primary_sector(
                 fund_code=code,
                 sector_name=sector_name,
                 intraday_index_name=None,
@@ -742,7 +955,11 @@ def _resolve_from_llm_infer(
                 confidence=confidence,
                 detail=record.detail,
             )
-    promote_record_to_global(record)
+            if batch_context is not None:
+                batch_context.remember_user_row(saved)
+    global_saved = promote_record_to_global(record)
+    if batch_context is not None:
+        batch_context.remember_global_row(global_saved)
     return record
 
 
@@ -773,6 +990,8 @@ def _resolve_from_benchmark_index(
     fetch: bool = True,
     persist_user: bool = True,
     promote_global: bool = True,
+    preloaded_global_row: dict | None | object = _GLOBAL_ROW_NOT_PRELOADED,
+    batch_context: PrimarySectorBatchContext | None = None,
 ) -> PrimarySectorRecord | None:
     from app.services.fund_benchmark_sector import (
         extract_freeform_theme_from_benchmark,
@@ -782,11 +1001,23 @@ def _resolve_from_benchmark_index(
     )
 
     if persist_user and try_get_request_user_id() is not None:
-        existing = get_fund_primary_sector(fund_code)
+        existing = (
+            batch_context.user_row(fund_code)
+            if batch_context is not None
+            else get_fund_primary_sector(fund_code)
+        )
         if existing and str(existing.get("source") or "") == "benchmark_index":
             return _record_from_row(existing)
 
-    global_row = load_fresh_global_sector(fund_code)
+    global_row = (
+        batch_context.fresh_global_row(fund_code)
+        if batch_context is not None
+        else (
+            load_fresh_global_sector(fund_code)
+            if preloaded_global_row is _GLOBAL_ROW_NOT_PRELOADED
+            else preloaded_global_row
+        )
+    )
     if global_row:
         global_source = str(global_row.get("source") or "")
         if not fetch or global_source in {"benchmark_index", "precompute_benchmark"}:
@@ -839,9 +1070,13 @@ def _resolve_from_benchmark_index(
         detail=detail,
     )
     if persist_user and try_get_request_user_id() is not None:
-        existing = get_fund_primary_sector(code)
+        existing = (
+            batch_context.user_row(code)
+            if batch_context is not None
+            else get_fund_primary_sector(code)
+        )
         if _can_upsert_primary_sector(existing, source):
-            save_fund_primary_sector(
+            saved = save_fund_primary_sector(
                 fund_code=code,
                 sector_name=sector_name,
                 intraday_index_name=intraday_index_name,
@@ -849,24 +1084,46 @@ def _resolve_from_benchmark_index(
                 confidence=record.confidence,
                 detail=record.detail,
             )
+            if batch_context is not None:
+                batch_context.remember_user_row(saved)
     if promote_global:
-        promote_record_to_global(record)
-    _benchmark_miss_cache.pop(fund_code, None)
+        global_saved = promote_record_to_global(record)
+        if batch_context is not None:
+            batch_context.remember_global_row(global_saved)
+    with _benchmark_miss_cache_lock:
+        _benchmark_miss_cache.pop(fund_code, None)
     return record
 
 
 def _benchmark_miss_cached(fund_code: str) -> bool:
-    missed_at = _benchmark_miss_cache.get(fund_code)
-    if missed_at is None:
-        return False
-    if datetime.now(timezone.utc) - missed_at >= _BENCHMARK_MISS_TTL:
-        _benchmark_miss_cache.pop(fund_code, None)
-        return False
-    return True
+    now = datetime.now(timezone.utc)
+    with _benchmark_miss_cache_lock:
+        _prune_benchmark_miss_cache(now)
+        missed_at = _benchmark_miss_cache.get(fund_code)
+        if missed_at is None:
+            return False
+        _benchmark_miss_cache.move_to_end(fund_code)
+        return True
 
 
 def _remember_benchmark_miss(fund_code: str) -> None:
-    _benchmark_miss_cache[fund_code] = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc)
+    with _benchmark_miss_cache_lock:
+        _prune_benchmark_miss_cache(now)
+        _benchmark_miss_cache[fund_code] = now
+        _benchmark_miss_cache.move_to_end(fund_code)
+        while len(_benchmark_miss_cache) > _BENCHMARK_MISS_CACHE_MAX_ENTRIES:
+            _benchmark_miss_cache.popitem(last=False)
+
+
+def _prune_benchmark_miss_cache(now: datetime) -> None:
+    expired_codes = [
+        code
+        for code, missed_at in _benchmark_miss_cache.items()
+        if now - missed_at >= _BENCHMARK_MISS_TTL
+    ]
+    for code in expired_codes:
+        _benchmark_miss_cache.pop(code, None)
 
 
 def _record_from_row(row: dict) -> PrimarySectorRecord:

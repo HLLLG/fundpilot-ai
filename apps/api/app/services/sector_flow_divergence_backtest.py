@@ -32,6 +32,8 @@ baseline_rate_percent/edge_percent/significant`），只是拆成 `flow_price_di
 """
 
 import time
+from collections import OrderedDict
+from threading import RLock
 from typing import Any
 
 from app.config import get_settings
@@ -60,7 +62,38 @@ _RULE_LABELS = {
 }
 
 _BACKTEST_RESPONSE_TTL_SECONDS = 86400
-_BACKTEST_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+_BACKTEST_CACHE: OrderedDict[str, tuple[float, dict[str, Any]]] = OrderedDict()
+_BACKTEST_CACHE_MAX_ENTRIES = 128
+_BACKTEST_CACHE_LOCK = RLock()
+
+
+def _prune_backtest_cache_locked(now: float) -> None:
+    expired = [
+        key
+        for key, (cached_at, _result) in _BACKTEST_CACHE.items()
+        if now - cached_at >= _BACKTEST_RESPONSE_TTL_SECONDS
+    ]
+    for key in expired:
+        _BACKTEST_CACHE.pop(key, None)
+
+
+def _get_cached_backtest(cache_key: str, now: float) -> dict[str, Any] | None:
+    with _BACKTEST_CACHE_LOCK:
+        _prune_backtest_cache_locked(now)
+        cached = _BACKTEST_CACHE.get(cache_key)
+        if cached is None:
+            return None
+        _BACKTEST_CACHE.move_to_end(cache_key)
+        return cached[1]
+
+
+def _set_cached_backtest(cache_key: str, result: dict[str, Any], now: float) -> None:
+    with _BACKTEST_CACHE_LOCK:
+        _prune_backtest_cache_locked(now)
+        _BACKTEST_CACHE[cache_key] = (now, result)
+        _BACKTEST_CACHE.move_to_end(cache_key)
+        while len(_BACKTEST_CACHE) > _BACKTEST_CACHE_MAX_ENTRIES:
+            _BACKTEST_CACHE.popitem(last=False)
 
 
 def _align_kline_and_flow(
@@ -218,9 +251,9 @@ def build_sector_flow_divergence_backtest(
     cache_key = _cache_key(label, lookback_days)
     if not injected:
         now = time.time()
-        cached = _BACKTEST_CACHE.get(cache_key)
-        if cached is not None and now - cached[0] < _BACKTEST_RESPONSE_TTL_SECONDS:
-            return cached[1]
+        cached = _get_cached_backtest(cache_key, now)
+        if cached is not None:
+            return cached
 
     kline_fetcher = fetch_kline or _default_fetch_kline
     kline_series = kline_fetcher(label)
@@ -254,5 +287,5 @@ def build_sector_flow_divergence_backtest(
     result["sector_label"] = label
 
     if not injected and result.get("by_rule"):
-        _BACKTEST_CACHE[cache_key] = (time.time(), result)
+        _set_cached_backtest(cache_key, result, time.time())
     return result

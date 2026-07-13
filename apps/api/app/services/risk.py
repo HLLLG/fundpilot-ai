@@ -2,14 +2,23 @@ from __future__ import annotations
 
 from app.models import Holding, InvestorProfile, RiskAlert, RiskAssessment
 from app.services.holding_estimates import resolve_effective_holding_return_percent
+from app.services.holding_profile_batch import (
+    MatchedProfilesArg,
+    PROFILES_NOT_PROVIDED,
+    ProfilesSnapshotArg,
+    resolve_matched_profiles,
+)
 
 
 def resolve_weight_denominator(
     holdings: list[Holding],
     profile: InvestorProfile,
+    *,
+    actual_total: float | None = None,
 ) -> float:
     """持仓占比分母：优先用期望投入额（减仓后仍按计划规模算集中度）。"""
-    actual_total = sum(holding.holding_amount for holding in holdings)
+    if actual_total is None:
+        actual_total = sum(holding.holding_amount for holding in holdings)
     expected = profile.expected_investment_amount
     if expected is not None and expected > 0:
         return expected
@@ -30,10 +39,34 @@ def holding_weight_percent(
 def evaluate_portfolio_risk(
     holdings: list[Holding],
     profile: InvestorProfile,
+    *,
+    profiles_snapshot: ProfilesSnapshotArg = PROFILES_NOT_PROVIDED,
+    matched_profiles: MatchedProfilesArg = PROFILES_NOT_PROVIDED,
 ) -> RiskAssessment:
+    resolved_profiles = resolve_matched_profiles(
+        holdings,
+        profiles_snapshot=profiles_snapshot,
+        matched_profiles=matched_profiles,
+    )
     total_amount = sum(holding.holding_amount for holding in holdings)
-    weight_denominator = resolve_weight_denominator(holdings, profile)
-    weighted_return = _weighted_return_percent(holdings, total_amount)
+    weight_denominator = resolve_weight_denominator(
+        holdings,
+        profile,
+        actual_total=total_amount,
+    )
+    effective_returns = [
+        resolve_effective_holding_return_percent(holding, profile=holding_profile)
+        for holding, holding_profile in zip(
+            holdings,
+            resolved_profiles,
+            strict=True,
+        )
+    ]
+    weighted_return = _weighted_return_percent(
+        holdings,
+        total_amount,
+        effective_returns,
+    )
     alerts: list[RiskAlert] = []
 
     if weighted_return <= -abs(profile.max_drawdown_percent):
@@ -47,8 +80,7 @@ def evaluate_portfolio_risk(
         )
 
     drawdown_limit = abs(profile.max_drawdown_percent)
-    for holding in holdings:
-        effective_return = resolve_effective_holding_return_percent(holding)
+    for holding, effective_return in zip(holdings, effective_returns, strict=True):
         if effective_return <= -drawdown_limit:
             alerts.append(
                 RiskAlert(
@@ -64,7 +96,7 @@ def evaluate_portfolio_risk(
 
     if weight_denominator > 0:
         for holding in holdings:
-            weight = holding_weight_percent(holding, holdings, profile)
+            weight = holding.holding_amount / weight_denominator * 100
             if weight > profile.concentration_limit_percent:
                 evidence = f"{holding.holding_amount:.2f} / {weight_denominator:.2f}"
                 if (
@@ -110,10 +142,18 @@ def evaluate_portfolio_risk(
     )
 
 
-def _weighted_return_percent(holdings: list[Holding], total_amount: float) -> float:
+def _weighted_return_percent(
+    holdings: list[Holding],
+    total_amount: float,
+    effective_returns: list[float],
+) -> float:
     if total_amount <= 0:
         return 0
     return sum(
-        holding.holding_amount * resolve_effective_holding_return_percent(holding)
-        for holding in holdings
+        holding.holding_amount * effective_return
+        for holding, effective_return in zip(
+            holdings,
+            effective_returns,
+            strict=True,
+        )
     ) / total_amount

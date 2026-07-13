@@ -10,7 +10,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from app.config import get_settings
-from app.database import count_fund_primary_sectors_global, get_fund_primary_sector_global
+from app.database import (
+    count_fund_primary_sectors_global,
+    get_fund_primary_sectors_global_by_codes,
+)
 from app.services.fund_code_resolver import _fund_name_table
 from app.services.fund_primary_sector_global import (
     global_sector_enabled,
@@ -77,11 +80,35 @@ def save_precompute_status(payload: dict) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _promote_and_remember(
+    record: PrimarySectorRecord,
+    *,
+    source: str,
+    global_rows_by_code: dict[str, dict],
+) -> None:
+    promoted_record = replace(record, source=source)
+    saved = promote_record_to_global(promoted_record)
+    if saved is None:
+        resolved_at = datetime.now(timezone.utc).isoformat()
+        saved = {
+            "fund_code": promoted_record.fund_code,
+            "sector_name": promoted_record.sector_name,
+            "intraday_index_name": promoted_record.intraday_index_name,
+            "source": promoted_record.source,
+            "confidence": promoted_record.confidence,
+            "detail": promoted_record.detail,
+            "resolved_at": resolved_at,
+            "updated_at": resolved_at,
+        }
+    global_rows_by_code[promoted_record.fund_code] = saved
+
+
 def iter_precompute_candidates(
     *,
     limit: int,
     force: bool = False,
     fund_codes: list[str] | None = None,
+    global_rows_by_code: dict[str, dict] | None = None,
 ) -> list[str]:
     """优先：无全局记录 → TTL 过期 → 名称表顺序。"""
     if fund_codes:
@@ -92,11 +119,14 @@ def iter_precompute_candidates(
     if not ordered:
         return []
 
+    if global_rows_by_code is None:
+        global_rows_by_code = get_fund_primary_sectors_global_by_codes(set(ordered))
+
     missing: list[str] = []
     stale: list[str] = []
     fresh: list[str] = []
     for code in ordered:
-        row = get_fund_primary_sector_global(code)
+        row = global_rows_by_code.get(code)
         if row is None:
             missing.append(code)
         elif force or not is_global_sector_fresh(row):
@@ -105,7 +135,20 @@ def iter_precompute_candidates(
             fresh.append(code)
 
     candidates = missing + stale + fresh
-    return candidates[:limit]
+    if not candidates:
+        return []
+    status = load_precompute_status()
+    try:
+        status_universe_size = int(status.get("candidate_universe_size") or 0)
+        cursor = (
+            int(status.get("candidate_cursor") or 0) % len(candidates)
+            if status_universe_size == len(ordered)
+            else 0
+        )
+    except (TypeError, ValueError):
+        cursor = 0
+    rotated = candidates[cursor:] + candidates[:cursor]
+    return rotated[:limit]
 
 
 def precompute_fund_sector(
@@ -113,6 +156,7 @@ def precompute_fund_sector(
     *,
     mode: PrecomputeMode = "benchmark",
     force: bool = False,
+    global_rows_by_code: dict[str, dict] | None = None,
 ) -> str:
     """返回 ok | skipped | miss | error。"""
     if not global_sector_enabled():
@@ -122,8 +166,11 @@ def precompute_fund_sector(
     if len(code) != 6:
         return "error"
 
-    existing = get_fund_primary_sector_global(code)
-    if existing and is_global_sector_fresh(existing) and not force:
+    if global_rows_by_code is None:
+        global_rows_by_code = get_fund_primary_sectors_global_by_codes([code])
+    existing = global_rows_by_code.get(code)
+    existing_is_fresh = bool(existing and is_global_sector_fresh(existing))
+    if existing_is_fresh and not force:
         return "skipped"
 
     try:
@@ -133,15 +180,24 @@ def precompute_fund_sector(
                 fetch=True,
                 persist_user=False,
                 promote_global=False,
+                preloaded_global_row=existing if existing_is_fresh else None,
             )
             if record is not None:
-                promote_record_to_global(replace(record, source="precompute_benchmark"))
+                _promote_and_remember(
+                    record,
+                    source="precompute_benchmark",
+                    global_rows_by_code=global_rows_by_code,
+                )
                 return "ok"
 
         if mode in ("holdings", "auto"):
             record = _resolve_from_holdings_infer(code, persist=False)
             if record is not None:
-                promote_record_to_global(replace(record, source="precompute_holdings"))
+                _promote_and_remember(
+                    record,
+                    source="precompute_holdings",
+                    global_rows_by_code=global_rows_by_code,
+                )
                 return "ok"
 
         if mode in ("llm", "auto") and get_settings().fund_primary_sector_llm_infer_enabled:
@@ -151,7 +207,7 @@ def precompute_fund_sector(
             llm_result = infer_sector_via_llm(code, fund_name) if fund_name else None
             if llm_result is not None:
                 sector_name, confidence = llm_result
-                promote_record_to_global(
+                _promote_and_remember(
                     PrimarySectorRecord(
                         fund_code=code,
                         sector_name=sector_name,
@@ -159,7 +215,9 @@ def precompute_fund_sector(
                         source="precompute_llm",
                         confidence=confidence,
                         detail={"fund_name": fund_name},
-                    )
+                    ),
+                    source="precompute_llm",
+                    global_rows_by_code=global_rows_by_code,
                 )
                 return "ok"
 
@@ -182,12 +240,33 @@ def run_precompute_batch(
     batch_limit = max(1, batch_limit)
 
     result = PrecomputeBatchResult()
-    candidates = iter_precompute_candidates(limit=batch_limit, force=force, fund_codes=fund_codes)
+    previous_status = load_precompute_status()
+    try:
+        previous_cursor = int(previous_status.get("candidate_cursor") or 0)
+    except (TypeError, ValueError):
+        previous_cursor = 0
+    preload_codes = (
+        [code.strip().zfill(6) for code in fund_codes if code.strip()][:batch_limit]
+        if fund_codes
+        else [code.zfill(6) for code, _name in _fund_name_table() if code]
+    )
+    global_rows_by_code = get_fund_primary_sectors_global_by_codes(set(preload_codes))
+    candidates = iter_precompute_candidates(
+        limit=batch_limit,
+        force=force,
+        fund_codes=fund_codes,
+        global_rows_by_code=global_rows_by_code,
+    )
     started = datetime.now(timezone.utc)
 
     for code in candidates:
         result.processed += 1
-        status = precompute_fund_sector(code, mode=mode, force=force)
+        status = precompute_fund_sector(
+            code,
+            mode=mode,
+            force=force,
+            global_rows_by_code=global_rows_by_code,
+        )
         if status == "ok":
             result.ok += 1
         elif status == "skipped":
@@ -201,13 +280,22 @@ def run_precompute_batch(
         if sleep_seconds > 0:
             time.sleep(sleep_seconds)
 
+    universe_size = len(_fund_name_table())
+    next_cursor = (
+        (previous_cursor + result.processed) % universe_size
+        if not fund_codes and universe_size > 0
+        else previous_cursor
+    )
+    global_count = count_fund_primary_sectors_global()
     save_precompute_status(
         {
             "last_run_at": started.isoformat(),
             "finished_at": datetime.now(timezone.utc).isoformat(),
             "mode": mode,
             "force": force,
-            "global_count": count_fund_primary_sectors_global(),
+            "global_count": global_count,
+            "candidate_cursor": next_cursor,
+            "candidate_universe_size": universe_size,
             **result.to_dict(),
         }
     )
@@ -218,6 +306,6 @@ def run_precompute_batch(
         result.skipped,
         result.miss,
         result.error,
-        count_fund_primary_sectors_global(),
+        global_count,
     )
     return result

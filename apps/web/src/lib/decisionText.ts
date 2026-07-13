@@ -33,7 +33,7 @@ export function trackLabel(track: string): string {
   return track;
 }
 
-export function formatAbsPercent(value: string | number): string {
+function formatAbsPercent(value: string | number): string {
   const number = Number(value);
   if (!Number.isFinite(number)) {
     return String(value);

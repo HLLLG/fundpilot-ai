@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Iterable
 from datetime import date, timedelta
+from typing import TYPE_CHECKING
 
 from app.database import (
     delete_fund_profile,
@@ -14,6 +16,9 @@ from app.models import FundProfile, Holding, ProfileSyncResult
 
 
 from app.services.fund_name_utils import is_fund_name_match, normalize_fund_name
+
+if TYPE_CHECKING:
+    from app.services.fund_primary_sector_service import PrimarySectorBatchContext
 
 
 # 关联板块判定时需要排除的养基宝详情页 Tab 标签（被 _looks_like_board_label 复用）
@@ -27,15 +32,39 @@ class FundProfileService:
     def _invalidate_profiles_cache(self) -> None:
         self._profiles_cache = None
 
-    def save_profile(self, profile: FundProfile) -> FundProfile:
-        existing = self.find_match(profile.fund_name)
+    def save_profile(
+        self,
+        profile: FundProfile,
+        *,
+        batch_profiles_by_code: dict[str, FundProfile] | None = None,
+        primary_sector_batch_context: "PrimarySectorBatchContext | None" = None,
+    ) -> FundProfile:
+        existing = (
+            self._find_name_match_in(
+                profile.fund_name,
+                batch_profiles_by_code.values(),
+            )
+            if batch_profiles_by_code is not None
+            else self.find_match(profile.fund_name)
+        )
         if (
             existing is not None
             and existing.is_provisional
             and existing.fund_code != profile.fund_code
         ):
             delete_fund_profile(existing.fund_code)
-        by_code = get_fund_profile_by_code(profile.fund_code)
+            if batch_profiles_by_code is not None:
+                batch_profiles_by_code.pop(existing.fund_code, None)
+            if primary_sector_batch_context is not None:
+                primary_sector_batch_context.profiles_by_code.pop(
+                    existing.fund_code,
+                    None,
+                )
+        by_code = (
+            batch_profiles_by_code.get(profile.fund_code)
+            if batch_profiles_by_code is not None
+            else get_fund_profile_by_code(profile.fund_code)
+        )
         if by_code is not None and (existing is None or by_code.fund_code == profile.fund_code):
             existing = by_code
         elif existing is not None and existing.fund_code != profile.fund_code:
@@ -58,10 +87,22 @@ class FundProfileService:
         saved = save_fund_profile(profile)
         from app.services.fund_primary_sector_service import upsert_primary_sector_from_profile
 
-        upsert_primary_sector_from_profile(
-            saved,
-            source=_primary_sector_source_for_profile(saved),
-        )
+        primary_sector_source = _primary_sector_source_for_profile(saved)
+        if primary_sector_batch_context is None:
+            upsert_primary_sector_from_profile(
+                saved,
+                source=primary_sector_source,
+            )
+        else:
+            upsert_primary_sector_from_profile(
+                saved,
+                source=primary_sector_source,
+                batch_context=primary_sector_batch_context,
+            )
+        if batch_profiles_by_code is not None:
+            batch_profiles_by_code[saved.fund_code] = saved
+        if primary_sector_batch_context is not None:
+            primary_sector_batch_context.profiles_by_code[saved.fund_code] = saved
         self._invalidate_profiles_cache()
         return saved
 
@@ -84,6 +125,21 @@ class FundProfileService:
         if profile is None:
             profile = self.find_match(holding.fund_name)
 
+        return self._resolve_holding_with_profile(
+            holding,
+            profile,
+            fetch_benchmark=fetch_benchmark,
+        )
+
+    def _resolve_holding_with_profile(
+        self,
+        holding: Holding,
+        profile: FundProfile | None,
+        *,
+        fetch_benchmark: bool,
+        batch_profiles_by_code: dict[str, FundProfile] | None = None,
+        primary_sector_batch_context: "PrimarySectorBatchContext | None" = None,
+    ) -> Holding:
         sector_name = holding.sector_name
         index_name = holding.intraday_index_name
         fund_name = holding.fund_name or (profile.fund_name if profile else None)
@@ -98,6 +154,7 @@ class FundProfileService:
                 fund_name=fund_name,
                 allow_name_infer=False,
                 fetch_benchmark=fetch_benchmark,
+                batch_context=primary_sector_batch_context,
             )
             if record and record.source == "benchmark_index":
                 sector_name = record.sector_name
@@ -110,9 +167,7 @@ class FundProfileService:
                         and profile.intraday_index_name != index_name
                     )
                 ):
-                    from app.database import save_fund_profile
-
-                    save_fund_profile(
+                    saved_profile = save_fund_profile(
                         profile.model_copy(
                             update={
                                 "sector_name": sector_name,
@@ -124,6 +179,9 @@ class FundProfileService:
                             }
                         )
                     )
+                    self._invalidate_profiles_cache()
+                    if batch_profiles_by_code is not None:
+                        batch_profiles_by_code[saved_profile.fund_code] = saved_profile
 
         if profile is None:
             from app.services.fund_primary_sector_service import primary_sector_fields_for_holding
@@ -132,6 +190,7 @@ class FundProfileService:
                 holding,
                 allow_name_infer=False,
                 fetch_benchmark=fetch_benchmark,
+                batch_context=primary_sector_batch_context,
             )
             if fields:
                 return holding.model_copy(update={**fields, "sector_name": sector_name or fields.get("sector_name")})
@@ -152,6 +211,7 @@ class FundProfileService:
                 fallback_code=profile.fund_code,
                 allow_name_infer=False,
                 fetch_benchmark=fetch_benchmark,
+                batch_context=primary_sector_batch_context,
             )
             if fields.get("sector_name"):
                 sector_name = fields["sector_name"]
@@ -197,21 +257,93 @@ class FundProfileService:
         holdings: list[Holding],
         *,
         fetch_benchmark: bool = True,
+        profiles_snapshot: list[FundProfile] | None = None,
+        primary_sector_batch_context: "PrimarySectorBatchContext | None" = None,
     ) -> list[Holding]:
-        return [
-            self.resolve_holding(holding, fetch_benchmark=fetch_benchmark)
-            for holding in holdings
-        ]
+        resolved, _ = self.resolve_holdings_with_profiles(
+            holdings,
+            fetch_benchmark=fetch_benchmark,
+            profiles_snapshot=profiles_snapshot,
+            primary_sector_batch_context=primary_sector_batch_context,
+        )
+        return resolved
 
-    def find_match(self, fund_name: str) -> FundProfile | None:
+    def resolve_holdings_with_profiles(
+        self,
+        holdings: list[Holding],
+        *,
+        fetch_benchmark: bool = True,
+        profiles_snapshot: list[FundProfile] | None = None,
+        primary_sector_batch_context: "PrimarySectorBatchContext | None" = None,
+    ) -> tuple[list[Holding], list[FundProfile | None]]:
+        if not holdings:
+            return [], []
+        profiles = profiles_snapshot if profiles_snapshot is not None else self.list_profiles()
+        by_code = (
+            primary_sector_batch_context.profiles_by_code
+            if primary_sector_batch_context is not None
+            else {profile.fund_code: profile for profile in profiles}
+        )
+        for profile in profiles:
+            by_code.setdefault(profile.fund_code, profile)
+
+        resolved: list[Holding] = []
+        matched_profiles: list[FundProfile | None] = []
+        for holding in holdings:
+            profile = self._find_profile_in(holding, by_code=by_code, profiles=profiles)
+            resolved_holding = self._resolve_holding_with_profile(
+                holding,
+                profile,
+                fetch_benchmark=fetch_benchmark,
+                batch_profiles_by_code=by_code,
+                primary_sector_batch_context=primary_sector_batch_context,
+            )
+            resolved.append(resolved_holding)
+            matched_profiles.append(
+                self._find_profile_in(
+                    resolved_holding,
+                    by_code=by_code,
+                    profiles=profiles,
+                )
+            )
+        return resolved, matched_profiles
+
+    @staticmethod
+    def _find_profile_in(
+        holding: Holding,
+        *,
+        by_code: dict[str, FundProfile],
+        profiles: Iterable[FundProfile],
+    ) -> FundProfile | None:
+        if holding.fund_code != "000000":
+            profile = by_code.get(holding.fund_code)
+            if profile is not None:
+                return profile
+        profile = FundProfileService._find_name_match_in(
+            holding.fund_name,
+            profiles,
+        )
+        return by_code.get(profile.fund_code, profile) if profile is not None else None
+
+    @staticmethod
+    def _find_name_match_in(
+        fund_name: str,
+        profiles: Iterable[FundProfile],
+    ) -> FundProfile | None:
         target = normalize_fund_name(fund_name)
         if not target:
             return None
-        for profile in self.list_profiles():
+        for profile in profiles:
             candidates = [profile.fund_name, *profile.aliases]
-            if any(is_fund_name_match(target, normalize_fund_name(candidate)) for candidate in candidates):
+            if any(
+                is_fund_name_match(target, normalize_fund_name(candidate))
+                for candidate in candidates
+            ):
                 return profile
         return None
+
+    def find_match(self, fund_name: str) -> FundProfile | None:
+        return self._find_name_match_in(fund_name, self.list_profiles())
 
     def sync_profiles_from_holdings(self, holdings: list[Holding]) -> ProfileSyncResult:
         if not holdings:
@@ -221,15 +353,66 @@ class FundProfileService:
         updated = 0
         created = 0
 
+        profiles = self.list_profiles()
+        profiles_by_code = {profile.fund_code: profile for profile in profiles}
+        primary_sector_batch_context = None
+        has_primary_sector = any(
+            _is_valid_sector_label(item.sector_name) for item in profiles
+        ) or any(_is_valid_sector_label(item.sector_name) for item in holdings)
+        if has_primary_sector:
+            from app.services.fund_primary_sector_service import PrimarySectorBatchContext
+
+            candidate_codes = {
+                *profiles_by_code,
+                *(
+                    holding.fund_code
+                    if holding.fund_code != "000000"
+                    else provisional_code_for_name(holding.fund_name)
+                    for holding in holdings
+                ),
+            }
+            primary_sector_batch_context = PrimarySectorBatchContext.load(
+                candidate_codes,
+                profiles=profiles,
+            )
+
         for holding in holdings:
-            profile = self._find_profile_for_holding(holding)
+            profile = self._find_profile_in(
+                holding,
+                by_code=profiles_by_code,
+                profiles=profiles_by_code.values(),
+            )
             if (
                 profile is not None
                 and holding.fund_code != "000000"
                 and profile.fund_code != holding.fund_code
             ):
+                if profile.is_provisional:
+                    migrated = merge_holding_into_profile(
+                        profile,
+                        holding,
+                        total_amount=total_amount if total_amount > 0 else None,
+                    ).model_copy(
+                        update={
+                            "fund_code": holding.fund_code,
+                            "is_provisional": False,
+                        }
+                    )
+                    self.save_profile(
+                        migrated,
+                        batch_profiles_by_code=profiles_by_code,
+                        primary_sector_batch_context=primary_sector_batch_context,
+                    )
+                    created += 1
+                    continue
                 # 早期 OCR 可能把错误代码写进 profile，确认后用东财查码结果覆盖
                 delete_fund_profile(profile.fund_code)
+                profiles_by_code.pop(profile.fund_code, None)
+                if primary_sector_batch_context is not None:
+                    primary_sector_batch_context.profiles_by_code.pop(
+                        profile.fund_code,
+                        None,
+                    )
                 profile = None
 
             if profile is None:
@@ -241,7 +424,11 @@ class FundProfileService:
                         fund_code=holding.fund_code,
                         is_provisional=False,
                     )
-                self.save_profile(profile)
+                self.save_profile(
+                    profile,
+                    batch_profiles_by_code=profiles_by_code,
+                    primary_sector_batch_context=primary_sector_batch_context,
+                )
                 created += 1
                 continue
 
@@ -250,18 +437,38 @@ class FundProfileService:
                 holding,
                 total_amount=total_amount if total_amount > 0 else None,
             )
-            self.save_profile(merged)
+            self.save_profile(
+                merged,
+                batch_profiles_by_code=profiles_by_code,
+                primary_sector_batch_context=primary_sector_batch_context,
+            )
             updated += 1
 
         self._invalidate_profiles_cache()
         return ProfileSyncResult(updated=updated, created=created)
 
-    def _find_profile_for_holding(self, holding: Holding) -> FundProfile | None:
-        if holding.fund_code != "000000":
-            by_code = get_fund_profile_by_code(holding.fund_code)
-            if by_code is not None:
-                return by_code
-        return self.find_match(holding.fund_name)
+
+def match_profiles_to_holdings(
+    holdings: list[Holding],
+    profiles: list[FundProfile],
+    *,
+    profiles_by_code: dict[str, FundProfile] | None = None,
+) -> list[FundProfile | None]:
+    """Match holdings against an already loaded profile snapshot without DB reads."""
+
+    by_code = (
+        profiles_by_code
+        if profiles_by_code is not None
+        else {profile.fund_code: profile for profile in profiles}
+    )
+    return [
+        FundProfileService._find_profile_in(
+            holding,
+            by_code=by_code,
+            profiles=profiles,
+        )
+        for holding in holdings
+    ]
 
 
 def resolve_first_seen_anchor(profile: FundProfile, *, today: date | None = None) -> str:

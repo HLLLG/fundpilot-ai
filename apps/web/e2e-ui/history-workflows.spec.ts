@@ -156,6 +156,7 @@ async function installHistoryStubs(
 }
 
 async function enterDashboard(page: Page, url = "/") {
+  await page.clock.setFixedTime(new Date(TRADING_SESSION.local_datetime));
   await page.addInitScript(() => {
     window.localStorage.clear();
     window.localStorage.setItem("fundpilot_access_token", "history-ui-token");

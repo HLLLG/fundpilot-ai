@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 from typing import Literal
 
-SelectionStrategy = Literal["balanced", "with_new_issue"]
+SelectionStrategy = Literal["balanced", "with_new_issue", "dip_rebound"]
 
 _NEW_ISSUE_MAX_AGE_DAYS = 180
 _NEW_ISSUE_SLOTS = 2

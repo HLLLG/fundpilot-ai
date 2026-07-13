@@ -1,8 +1,15 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import date, datetime, timedelta
+from typing import Any
 
-from app.database import get_fund_profile_by_code, list_portfolio_daily_snapshots, save_fund_profile
+from app.database import (
+    get_fund_profile_by_code,
+    list_fund_profiles,
+    list_portfolio_daily_snapshots,
+    save_fund_profile,
+)
 from app.models import FundProfile, Holding, HoldingDetailResponse, PortfolioSummary, SectorQuoteMeta
 from app.services.fund_code_resolver import lookup_fund_code_by_name
 from app.services.fund_data import FundDataService
@@ -11,11 +18,136 @@ from app.services.fund_profile import (
     _aliases_for_name,
     merge_holding_into_profile,
 )
+from app.services.fund_primary_sector_service import PrimarySectorBatchContext
 from app.services.holding_estimates import compute_yesterday_profit
 from app.services.holding_amount_sync import (
     _infer_purchase_unit_cost,
     _is_imputed_market_unit_cost,
 )
+
+
+class HoldingDetailDataContext:
+    """Request-local profile/snapshot data shared by holding-detail builds."""
+
+    def __init__(self) -> None:
+        self._profiles_loaded = False
+        self._profiles: list[FundProfile] = []
+        self._profiles_by_code: dict[str, FundProfile] = {}
+        self._primary_sector_context: PrimarySectorBatchContext | None = None
+        self._primary_sector_loaded_codes: frozenset[str] = frozenset()
+        self._snapshots_loaded = False
+        self._snapshots: list[dict[str, Any]] = []
+
+    @property
+    def profiles_by_code(self) -> dict[str, FundProfile] | None:
+        if not self._profiles_loaded:
+            return None
+        return self._profiles_by_code
+
+    def preload_profiles(self) -> None:
+        if self._profiles_loaded:
+            return
+        profiles = list_fund_profiles()
+        self._profiles = profiles
+        self._profiles_by_code = {profile.fund_code: profile for profile in profiles}
+        self._profiles_loaded = True
+
+    def preload_snapshots(self) -> None:
+        if self._snapshots_loaded:
+            return
+        self._snapshots = list_portfolio_daily_snapshots(limit=365)
+        self._snapshots_loaded = True
+
+    def preload_primary_sectors(self, holdings: list[Holding]) -> None:
+        if self._primary_sector_context is not None or not self._profiles_loaded:
+            return
+
+        profile_service = FundProfileService()
+        codes: set[str] = set()
+        for holding in holdings:
+            direct_code = self._primary_sector_code(holding.fund_code)
+            if direct_code is not None:
+                codes.add(direct_code)
+            profile = profile_service._find_profile_in(
+                holding,
+                by_code=self._profiles_by_code,
+                profiles=self._profiles,
+            )
+            if profile is not None:
+                profile_code = self._primary_sector_code(profile.fund_code)
+                if profile_code is not None:
+                    codes.add(profile_code)
+
+        primary_context = PrimarySectorBatchContext.load(
+            codes,
+            profiles=self._profiles,
+        )
+        # Share the mutable map so a profile saved earlier in the batch is visible
+        # to later primary-sector fallbacks without another database read.
+        primary_context.profiles_by_code = self._profiles_by_code
+        self._primary_sector_context = primary_context
+        self._primary_sector_loaded_codes = frozenset(codes)
+
+    def primary_sector_context_for(
+        self,
+        holding: Holding,
+        profile: FundProfile | None,
+    ) -> PrimarySectorBatchContext | None:
+        if self._primary_sector_context is None:
+            return None
+        raw_code = holding.fund_code
+        if raw_code == "000000" and profile is not None:
+            raw_code = profile.fund_code
+        code = self._primary_sector_code(raw_code)
+        if code is None or code not in self._primary_sector_loaded_codes:
+            return None
+        return self._primary_sector_context
+
+    @staticmethod
+    def _primary_sector_code(raw_code: str | None) -> str | None:
+        code = str(raw_code or "").strip().zfill(6)
+        if len(code) != 6 or code == "000000":
+            return None
+        return code
+
+    def find_profile(
+        self,
+        holding: Holding,
+        profile_service: FundProfileService,
+    ) -> FundProfile | None:
+        if self._profiles_loaded:
+            return profile_service._find_profile_in(
+                holding,
+                by_code=self._profiles_by_code,
+                profiles=self._profiles,
+            )
+
+        profile = (
+            get_fund_profile_by_code(holding.fund_code)
+            if holding.fund_code != "000000"
+            else None
+        )
+        if profile is None:
+            profile = profile_service.find_match(holding.fund_name)
+        return profile
+
+    def remember_profile(self, profile: FundProfile) -> None:
+        if not self._profiles_loaded:
+            return
+        existing = self._profiles_by_code.get(profile.fund_code)
+        self._profiles_by_code[profile.fund_code] = profile
+        if existing is None:
+            self._profiles.append(profile)
+            return
+        for index, item in enumerate(self._profiles):
+            if item.fund_code == profile.fund_code:
+                self._profiles[index] = profile
+                break
+
+    def snapshots(self) -> list[dict[str, Any]]:
+        if not self._snapshots_loaded:
+            self.preload_snapshots()
+        return self._snapshots
 
 
 def build_holding_detail(
@@ -24,6 +156,7 @@ def build_holding_detail(
     *,
     portfolio_summary: PortfolioSummary | None = None,
     sector_quote_meta: SectorQuoteMeta | None = None,
+    data_context: HoldingDetailDataContext | None = None,
 ) -> HoldingDetailResponse:
     if index < 0 or index >= len(holdings):
         raise ValueError("持仓索引超出范围")
@@ -31,8 +164,19 @@ def build_holding_detail(
     holding = holdings[index]
     provenance: dict[str, str] = {}
     profile_service = FundProfileService()
+    context = data_context or HoldingDetailDataContext()
 
-    resolved = profile_service.resolve_holding(holding)
+    profile = context.find_profile(holding, profile_service)
+    resolved = profile_service._resolve_holding_with_profile(
+        holding,
+        profile,
+        fetch_benchmark=True,
+        batch_profiles_by_code=context.profiles_by_code,
+        primary_sector_batch_context=context.primary_sector_context_for(
+            holding,
+            profile,
+        ),
+    )
     fund_code_source: str | None = None
     if resolved.fund_code != holding.fund_code:
         fund_code_source = "profile"
@@ -41,9 +185,9 @@ def build_holding_detail(
         if looked_up:
             resolved = holding.model_copy(update={"fund_code": looked_up})
             fund_code_source = lookup_source or "akshare"
-            existing = get_fund_profile_by_code(looked_up) or profile_service.find_match(holding.fund_name)
-            if existing is None:
-                save_fund_profile(
+            profile = context.find_profile(resolved, profile_service)
+            if profile is None:
+                profile = save_fund_profile(
                     FundProfile(
                         fund_code=looked_up,
                         fund_name=holding.fund_name,
@@ -53,10 +197,7 @@ def build_holding_detail(
                         is_provisional=False,
                     )
                 )
-
-    profile = get_fund_profile_by_code(resolved.fund_code)
-    if profile is None:
-        profile = profile_service.find_match(resolved.fund_name)
+                context.remember_profile(profile)
 
     holding_shares = profile.holding_shares if profile else None
     holding_cost = profile.holding_cost if profile else None
@@ -109,7 +250,10 @@ def build_holding_detail(
                     provenance["yesterday_profit"] = "nav"
 
     if yesterday_profit is None:
-        snapshot_value = _yesterday_profit_from_snapshots(resolved)
+        snapshot_value = _yesterday_profit_from_snapshots(
+            resolved,
+            snapshots=context.snapshots(),
+        )
         if snapshot_value is not None:
             yesterday_profit = snapshot_value
             provenance["yesterday_profit"] = "snapshot"
@@ -118,7 +262,11 @@ def build_holding_detail(
             if yesterday_profit is not None:
                 provenance["yesterday_profit"] = "computed"
 
-    holding_days, holding_days_source = _resolve_holding_days(profile, resolved)
+    holding_days, holding_days_source = _resolve_holding_days(
+        profile,
+        resolved,
+        snapshot_loader=context.snapshots,
+    )
     if holding_days_source is not None:
         provenance["holding_days"] = holding_days_source
     first_purchase_date = profile.first_purchase_date if profile else None
@@ -153,13 +301,21 @@ def _cost_basis(holding: Holding) -> float | None:
     return round(holding.holding_amount / (1 + return_percent / 100), 2)
 
 
-def _yesterday_profit_from_snapshots(holding: Holding) -> float | None:
-    snapshots = list_portfolio_daily_snapshots(limit=14)
-    if len(snapshots) < 2:
+def _yesterday_profit_from_snapshots(
+    holding: Holding,
+    *,
+    snapshots: list[dict[str, Any]] | None = None,
+) -> float | None:
+    recent_snapshots = (
+        snapshots[:14]
+        if snapshots is not None
+        else list_portfolio_daily_snapshots(limit=14)
+    )
+    if len(recent_snapshots) < 2:
         return None
 
     today_key = date.today().isoformat()
-    for snapshot in snapshots[1:]:
+    for snapshot in recent_snapshots[1:]:
         if snapshot.get("snapshot_date") == today_key:
             continue
         for item in snapshot.get("holdings") or []:
@@ -173,6 +329,8 @@ def _yesterday_profit_from_snapshots(holding: Holding) -> float | None:
 def _resolve_holding_days(
     profile: FundProfile | None,
     holding: Holding,
+    *,
+    snapshot_loader: Callable[[], list[dict[str, Any]]] | None = None,
 ) -> tuple[int | None, str | None]:
     if profile and profile.first_purchase_date:
         try:
@@ -189,7 +347,8 @@ def _resolve_holding_days(
         except ValueError:
             pass
 
-    snapshot_days = _holding_days_from_snapshots(holding)
+    snapshots = snapshot_loader() if snapshot_loader is not None else None
+    snapshot_days = _holding_days_from_snapshots(holding, snapshots=snapshots)
     ocr_days = profile.holding_days if profile else None
     aged_ocr_days: int | None = None
 
@@ -242,8 +401,13 @@ def _holding_days_as_of_date(profile: FundProfile | None) -> date | None:
     return date.today()
 
 
-def _holding_days_from_snapshots(holding: Holding) -> int | None:
-    snapshots = list_portfolio_daily_snapshots(limit=365)
+def _holding_days_from_snapshots(
+    holding: Holding,
+    *,
+    snapshots: list[dict[str, Any]] | None = None,
+) -> int | None:
+    if snapshots is None:
+        snapshots = list_portfolio_daily_snapshots(limit=365)
     if not snapshots:
         return None
 

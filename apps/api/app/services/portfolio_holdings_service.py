@@ -8,7 +8,11 @@ from app.models import FundProfile, Holding, PortfolioSummary
 from app.services.fund_code_resolver import reconcile_holding_fund_codes
 from app.services.fund_name_utils import is_fund_name_match
 from app.services.fund_nav_service import get_cached_official_nav_return
-from app.services.fund_profile import FundProfileService, _is_valid_sector_label
+from app.services.fund_profile import (
+    FundProfileService,
+    _is_valid_sector_label,
+    match_profiles_to_holdings,
+)
 from app.services.holding_amount_sync import sync_holding_amounts_from_shares
 from app.services.holding_estimates import (
     _amount_includes_today_return,
@@ -98,12 +102,29 @@ def build_portfolio_holdings_response(
     fetch_benchmark: bool = True,
 ) -> dict:
     holdings = without_inactive_holdings(reconcile_holding_fund_codes(holdings))
-    holdings = FundProfileService().resolve_holdings(
+    profile_service = FundProfileService()
+    profiles = profile_service.list_profiles()
+    initial_profiles = match_profiles_to_holdings(holdings, profiles)
+    from app.services.fund_primary_sector_service import PrimarySectorBatchContext
+
+    batch_context = PrimarySectorBatchContext.load(
+        {
+            *(holding.fund_code for holding in holdings),
+            *(
+                profile.fund_code
+                for profile in initial_profiles
+                if profile is not None
+            ),
+        },
+        profiles=profiles,
+    )
+    holdings, matched_profiles = profile_service.resolve_holdings_with_profiles(
         holdings,
         fetch_benchmark=fetch_benchmark,
+        profiles_snapshot=profiles,
+        primary_sector_batch_context=batch_context,
     )
     summary = get_portfolio_summary()
-    profiles = FundProfileService().list_profiles()
     payload = summary.model_dump(mode="json") if summary else {}
     total_from_holdings = round(
         sum(
@@ -128,7 +149,10 @@ def build_portfolio_holdings_response(
     from app.services.holding_client import serialize_holdings_for_client
 
     return {
-        "holdings": serialize_holdings_for_client(holdings),
+        "holdings": serialize_holdings_for_client(
+            holdings,
+            matched_profiles=matched_profiles,
+        ),
         "source": source,
         "snapshot_date": snapshot_date,
         "refreshed_at": refreshed_at.isoformat() if refreshed_at else None,
@@ -456,50 +480,61 @@ def merge_holdings_with_profiles(
     profiles: list[FundProfile] | None = None,
 ) -> list[Holding]:
     """以基金档案为准合并持仓列表；金额/收益不在此覆盖，由自动同步负责。"""
-    if profiles is None:
-        profiles = [
-            profile
-            for profile in list_fund_profiles()
-            if (profile.holding_amount or 0) > 0
-            and not is_test_holding(profile_to_holding(profile))
-        ]
-    if not profiles:
-        return snapshot_holdings
-
-    by_code = {
-        row.fund_code: row
-        for row in snapshot_holdings
-        if row.fund_code and row.fund_code != "000000"
+    all_profiles = list_fund_profiles() if profiles is None else list(profiles)
+    profiles_by_code = {profile.fund_code: profile for profile in all_profiles}
+    active_profiles = [
+        profile
+        for profile in all_profiles
+        if (profile.holding_amount or 0) > 0
+        and not is_test_holding(profile_to_holding(profile))
+    ]
+    matched_profiles = match_profiles_to_holdings(
+        snapshot_holdings,
+        all_profiles,
+        profiles_by_code=profiles_by_code,
+    )
+    snapshot_by_profile_code = {
+        profile.fund_code: row
+        for row, profile in zip(snapshot_holdings, matched_profiles, strict=True)
+        if profile is not None and (profile.holding_amount or 0) > 0
     }
-    by_name = {row.fund_name: row for row in snapshot_holdings}
 
     merged: list[Holding] = []
     seen_codes: set[str] = set()
+    seen_names: set[str] = set()
     allow_profile_only = not snapshot_holdings
 
-    for profile in profiles:
-        existing = by_code.get(profile.fund_code) or by_name.get(profile.fund_name)
+    for profile in active_profiles:
+        if profile.fund_code in seen_codes:
+            continue
+        existing = snapshot_by_profile_code.get(profile.fund_code)
         if existing is not None:
-            merged.append(_overlay_profile_onto_holding(existing, profile))
+            holding = _overlay_profile_onto_holding(existing, profile)
+            merged.append(holding)
             seen_codes.add(profile.fund_code)
+            seen_names.add(holding.fund_name)
         elif allow_profile_only:
-            merged.append(profile_to_holding(profile))
+            holding = profile_to_holding(profile)
+            merged.append(holding)
             seen_codes.add(profile.fund_code)
+            seen_names.add(holding.fund_name)
 
-    for row in snapshot_holdings:
+    for row, matched_profile in zip(snapshot_holdings, matched_profiles, strict=True):
         if row.fund_code in seen_codes or is_test_holding(row):
             continue
         if is_inactive_holding(row):
             continue
-        if row.fund_code and row.fund_code != "000000":
-            from app.database import get_fund_profile_by_code
-
-            profile = get_fund_profile_by_code(row.fund_code)
-            if profile is not None and (profile.holding_amount or 0) <= 0:
+        if matched_profile is not None:
+            if (matched_profile.holding_amount or 0) <= 0:
                 continue
-        if row.fund_name in {item.fund_name for item in merged}:
+            if matched_profile.fund_code in seen_codes:
+                continue
+        if row.fund_name in seen_names:
             continue
         merged.append(row)
+        if row.fund_code and row.fund_code != "000000":
+            seen_codes.add(row.fund_code)
+        seen_names.add(row.fund_name)
 
     return without_inactive_holdings(merged)
 

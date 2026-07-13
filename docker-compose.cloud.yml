@@ -21,6 +21,8 @@ services:
     build:
       context: apps/api
       dockerfile: Dockerfile
+      args:
+        INSTALL_LOCAL_OCR: ${INSTALL_LOCAL_OCR:-true}
     ports:
       - "8000:8000"
     environment:

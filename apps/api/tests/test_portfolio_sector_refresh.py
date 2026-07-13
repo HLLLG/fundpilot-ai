@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from app.models import Holding, RefreshSectorQuotesRequest
+from app.models import FundProfile, Holding, RefreshSectorQuotesRequest
 from app.main import refresh_sector_quotes
 from app.services.portfolio_holdings_service import apply_server_sector_cache_to_holdings
 from app.services.portfolio_persistence import persist_holdings_after_sector_refresh
@@ -65,7 +65,7 @@ def test_fast_sector_refresh_persistence_skips_nav_and_estimate_network(monkeypa
     monkeypatch.setattr("app.services.portfolio_persistence.get_portfolio_summary", lambda: None)
     monkeypatch.setattr("app.services.portfolio_persistence.save_portfolio_summary", lambda _summary: None)
     monkeypatch.setattr("app.services.portfolio_persistence.save_daily_snapshot", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("app.database.get_fund_profile_by_code", lambda _code: None)
+    monkeypatch.setattr("app.services.portfolio_persistence.list_fund_profiles", lambda: [])
     monkeypatch.setattr("app.services.portfolio_persistence.persist_intraday_curve", lambda *_args, **_kwargs: None)
 
     persist_holdings_after_sector_refresh([holding], with_official_nav=False)
@@ -77,6 +77,72 @@ def test_fast_sector_refresh_persistence_skips_nav_and_estimate_network(monkeypa
             "allow_nav_fetch": False,
         }
     ]
+
+
+def test_sector_refresh_bulk_loads_profiles_once(monkeypatch) -> None:
+    holdings = [
+        Holding(
+            fund_code=f"{100000 + index:06d}",
+            fund_name=f"样本基金 {index}",
+            holding_amount=1000,
+            sector_name="半导体",
+            sector_return_percent=1.2,
+        )
+        for index in range(1, 6)
+    ]
+    profiles = [
+        FundProfile(
+            fund_code=holding.fund_code,
+            fund_name=holding.fund_name,
+            holding_amount=holding.holding_amount,
+        )
+        for holding in holdings
+    ]
+    calls = {"profiles": 0}
+    persisted_profiles: list[dict[str, FundProfile]] = []
+
+    monkeypatch.setattr(
+        "app.services.portfolio_persistence.get_most_recent_portfolio_snapshot",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        "app.services.transaction_ledger.confirm_and_compute_overrides",
+        lambda _holdings: {},
+    )
+    monkeypatch.setattr(
+        "app.services.portfolio_persistence.sync_holding_amounts_from_shares",
+        lambda items, **_kwargs: items,
+    )
+    monkeypatch.setattr(
+        "app.services.portfolio_persistence.get_portfolio_summary",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        "app.services.portfolio_persistence.save_portfolio_summary",
+        lambda _summary: None,
+    )
+    monkeypatch.setattr(
+        "app.services.portfolio_persistence.save_daily_snapshot",
+        lambda *_args, **_kwargs: None,
+    )
+
+    def load_profiles() -> list[FundProfile]:
+        calls["profiles"] += 1
+        return profiles
+
+    monkeypatch.setattr(
+        "app.services.portfolio_persistence.list_fund_profiles",
+        load_profiles,
+    )
+    monkeypatch.setattr(
+        "app.services.portfolio_persistence.persist_intraday_curve",
+        lambda _holdings, profile_map: persisted_profiles.append(profile_map),
+    )
+
+    persist_holdings_after_sector_refresh(holdings, with_official_nav=False)
+
+    assert calls == {"profiles": 1}
+    assert set(persisted_profiles[0]) == {holding.fund_code for holding in holdings}
 
 
 def test_refresh_sector_quotes_updates_holdings_cache(monkeypatch) -> None:

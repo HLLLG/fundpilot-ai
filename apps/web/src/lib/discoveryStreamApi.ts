@@ -9,10 +9,7 @@ import type {
   InvestorProfile,
   SelectionStrategy,
 } from "@/lib/api";
-import {
-  appendStreamTokenBuffer,
-  STREAM_TOKEN_BUFFER_MAX,
-} from "@/lib/streamApi";
+import { appendStreamTokenBuffer } from "@/lib/streamApi";
 
 export { streamTimestamp } from "@/lib/streamApi";
 
@@ -95,7 +92,7 @@ function mergeAbortSignals(...signals: Array<AbortSignal | undefined>): AbortSig
   return controller.signal;
 }
 
-export { appendStreamTokenBuffer, STREAM_TOKEN_BUFFER_MAX };
+export { appendStreamTokenBuffer };
 
 function discoveryPayload(
   holdings: Holding[],

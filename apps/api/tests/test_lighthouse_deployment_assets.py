@@ -72,6 +72,16 @@ def test_deploy_workflow_initializes_ssh_paths_after_runner_starts() -> None:
     assert '>> "$GITHUB_ENV"' in workflow
 
 
+def test_ci_builds_static_frontend_once_in_ui_smoke() -> None:
+    workflow = _text(".github/workflows/ci.yml")
+    ui_config = _text("apps/web/playwright.ui.config.ts")
+
+    assert "npm run test:e2e:smoke" in workflow
+    assert "npm run build" not in workflow
+    assert ui_config.count("npm run build") == 1
+    assert 'NEXT_PUBLIC_API_BASE_URL: ""' in ui_config
+
+
 def test_factor_ic_refresh_publishes_through_private_ssh_tunnel() -> None:
     workflow = _text(".github/workflows/factor-ic-refresh.yml")
     assert "environment: production" in workflow

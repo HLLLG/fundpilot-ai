@@ -77,8 +77,8 @@ def test_overlay_official_nav_skips_deferred_holding(monkeypatch):
         lambda _code, _date: 2.65,
     )
     monkeypatch.setattr(
-        "app.services.profit_accrual_defer.get_profile_for_holding",
-        lambda _h: _deferred_profile(),
+        "app.database.list_fund_profiles",
+        lambda: [_deferred_profile()],
     )
 
     holding = _deferred_holding()
@@ -140,8 +140,8 @@ def test_sync_holding_amounts_keeps_ocr_settled_when_deferred(monkeypatch):
 
     profile = _deferred_profile()
     monkeypatch.setattr(
-        "app.services.holding_amount_sync.get_fund_profile_by_code",
-        lambda _code: profile,
+        "app.services.holding_amount_sync.list_fund_profiles",
+        lambda: [profile],
     )
 
     holding = _deferred_holding()

@@ -84,10 +84,11 @@ OUTPUT_REQUIREMENTS_SYSTEM = (
     "analysis_facts.data_evidence 是字段级时点证据：freshness=stale/unavailable 或 confidence=none 的事实"
     "不得支撑动作；is_estimate=true 的数字必须明确写为估算并降低结论置信度。"
     "news_titles 中 source=cls 为财联社快讯。若 nav_trend 为空须在 points 说明。"
-    "analysis_facts.market_breadth 是大盘情绪温度计（自上而下）：sentiment_level 基于全市场"
-    "创新高低家数近2年历史分布百分位自校准，冰点/低迷代表市场情绪偏冷，可作为「即使板块"
-    "本身尚未走弱，仍应降低追涨敏感度」的独立风险论据；涨跌停家数等仅为当日快照，不得"
-    "当作历史回测结论使用。"
+    "analysis_facts.market_breadth 是大盘情绪温度计（自上而下）：signal_mode=closing 的"
+    "sentiment_level 才是近2年创新高低百分位口径；signal_mode=intraday 则是当日上涨/下跌/"
+    "平盘与赚钱效应准实时口径，closing_* 仅为上一完整交易日背景，不得混称历史百分位。"
+    "decision_eligible=false 或 freshness_status=stale 时只能作背景，禁止支撑强动作。"
+    "涨跌停家数等仅为当日快照，不得当作历史回测结论使用。"
     "analysis_facts.holdings[].flow_divergence_backtest 是该持仓板块「量价背离」信号"
     "（涨但资金流出/跌但资金流入）的历史回测：by_rule 各桶含 trigger_count、hit_rate_percent、"
     "edge_percent、significant；significant=true 时可作为该持仓板块方向判断的量化背书之一，"
@@ -394,7 +395,21 @@ def trim_analysis_facts_for_llm(
         if breadth.get("available"):
             trimmed["market_breadth"] = {
                 k: breadth[k]
-                for k in ("available", "sentiment_level", "sentiment_level_change", "interpretation")
+                for k in (
+                    "available",
+                    "signal_mode",
+                    "source_mode",
+                    "trade_date",
+                    "as_of_datetime",
+                    "freshness_status",
+                    "decision_eligible",
+                    "sentiment_level",
+                    "sentiment_level_change",
+                    "activity_percent",
+                    "advance_count",
+                    "decline_count",
+                    "interpretation",
+                )
                 if k in breadth
             }
 

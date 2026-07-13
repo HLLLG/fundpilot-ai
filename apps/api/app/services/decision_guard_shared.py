@@ -372,8 +372,22 @@ def resolve_escalation_floor(
             reasons.append("当前持仓浮盈，落袋压力更小，建议提高减仓比例")
 
         breadth = market_breadth or {}
-        sentiment_ice = str(breadth.get("sentiment_level") or "") == "冰点"
-        sentiment_dropping = (breadth.get("sentiment_level_change") or 0) <= -2
+        # 大盘情绪允许作为背景交给 LLM，但只有来源明确标记为可决策、且并非 stale 的
+        # 快照才能提升确定性 hard guard。缺少资格字段的旧缓存也按不合格处理，避免旧日
+        # 冰点数据在新交易日误触发大幅减仓/清仓。
+        breadth_guard_eligible = (
+            breadth.get("decision_eligible") is True
+            and breadth.get("stale") is not True
+            and str(breadth.get("freshness_status") or "") != "stale"
+        )
+        sentiment_ice = (
+            breadth_guard_eligible
+            and str(breadth.get("sentiment_level") or "") == "冰点"
+        )
+        sentiment_dropping = (
+            breadth_guard_eligible
+            and (breadth.get("sentiment_level_change") or 0) <= -2
+        )
         breadth_extreme = sentiment_ice and sentiment_dropping
         row4_triggered = (
             (breadth_extreme or over_concentration)

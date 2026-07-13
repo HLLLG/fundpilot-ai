@@ -1,6 +1,16 @@
 from __future__ import annotations
 
+import pytest
+
 from app.services.discovery_candidate_pool import build_candidate_pool
+
+
+@pytest.fixture(autouse=True)
+def _disable_live_full_universe(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.discovery_candidate_pool.fetch_discovery_fund_universe_cached",
+        lambda limit=20_000: [],
+    )
 
 
 def test_candidate_pool_uses_sector_primary_rows_before_name_matching(monkeypatch):

@@ -1,4 +1,4 @@
-"""F2 回归：荐基候选池默认 fetcher 接 fund_rank_cache（共享 1h 缓存）。"""
+"""荐基候选池默认使用全量横截面，并保留有界降级路径。"""
 
 from __future__ import annotations
 
@@ -7,15 +7,19 @@ from unittest.mock import patch
 from app.services import discovery_candidate_pool, dip_drop_scanner
 
 
-def test_build_candidate_pool_uses_rank_cache_by_default():
-    """默认不显式注入 fetcher 时，应调用 fund_rank_cache.fetch_open_fund_rank_cached，
-    而不是直接走 akshare_subprocess.fetch_open_fund_rank。
-
-    Python `from X import Y` 让 Y 成为消费模块的本地名，因此 patch 路径必须是
-    消费模块的本地绑定（discovery_candidate_pool.fetch_open_fund_rank_cached），
-    而不是定义源（fund_rank_cache.fetch_open_fund_rank_cached）。
-    """
+def test_build_candidate_pool_uses_full_universe_before_rank_fallback():
     with (
+        patch(
+            "app.services.discovery_candidate_pool.fetch_discovery_fund_universe_cached",
+            return_value=[
+                {
+                    "fund_code": "000001",
+                    "fund_name": "测试半导体基金A",
+                    "return_3m_percent": 3.0,
+                    "return_6m_percent": 6.0,
+                }
+            ],
+        ) as universe,
         patch(
             "app.services.discovery_candidate_pool.fetch_open_fund_rank_cached",
             return_value=[],
@@ -31,11 +35,12 @@ def test_build_candidate_pool_uses_rank_cache_by_default():
     ):
         discovery_candidate_pool.build_candidate_pool(target_sectors=["半导体"])
 
-    assert cached.called, "应走 fund_rank_cache.fetch_open_fund_rank_cached"
+    assert universe.called
+    assert not cached.called, "全量横截面可用时不应退回赢家榜"
     assert not raw.called, "不应直调 akshare_subprocess.fetch_open_fund_rank"
 
 
-def test_build_dip_pool_for_sectors_uses_rank_cache_by_default():
+def test_build_dip_pool_for_sectors_uses_recent_loser_rank_by_default():
     """conftest._stub_market_data_fetches 把整个 build_dip_pool_for_sectors stub 掉了；
     本测试 reload 模块拿回真实实现，再 patch 内部 fetcher 验证默认走 fund_rank_cache。"""
     import importlib
@@ -44,7 +49,7 @@ def test_build_dip_pool_for_sectors_uses_rank_cache_by_default():
 
     with (
         patch(
-            "app.services.dip_drop_scanner.fetch_open_fund_rank_cached",
+            "app.services.dip_drop_scanner.fetch_open_fund_rank_worst_recent",
             return_value=[],
         ) as cached,
         patch(
@@ -58,5 +63,5 @@ def test_build_dip_pool_for_sectors_uses_rank_cache_by_default():
             min_drop_percent=3.0,
         )
 
-    assert cached.called, "build_dip_pool_for_sectors 应走 fund_rank_cache"
+    assert cached.called, "大跌扫描应走近期跌幅榜，而不是年度冠军榜"
     assert not raw.called

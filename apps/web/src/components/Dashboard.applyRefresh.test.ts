@@ -130,6 +130,69 @@ describe("Dashboard apply refresh flow", () => {
     expect(source).toContain("setPendingTransactions((prev) => mergeTransactions(prev ?? [], result.transactions))");
   });
 
+  it("loads interaction-only panels, drawers, and modal components on demand", () => {
+    const source = readFileSync(
+      fileURLToPath(new URL("./Dashboard.tsx", import.meta.url)),
+      "utf8",
+    );
+
+    for (const componentName of [
+      "YangjibaoFundDetail",
+      "AddHoldingModal",
+      "LedgerBaselineModal",
+      "BatchTransactionModal",
+      "BatchTransactionConfirmModal",
+      "AlipayOcrConfirmModal",
+      "ReportDiagnostics",
+      "ReportHistoryDrawer",
+    ]) {
+      expect(source).toMatch(
+        new RegExp(
+          `import\\("@/components/${componentName}"\\)[\\s\\S]*?module\\.${componentName}`,
+        ),
+      );
+    }
+    expect(source).not.toContain('import { YangjibaoFundDetail');
+    for (const moduleName of [
+      "AddHoldingModal",
+      "LedgerBaselineModal",
+      "BatchTransactionModal",
+      "BatchTransactionConfirmModal",
+      "AlipayOcrConfirmModal",
+      "ReportDiagnostics",
+      "ReportHistoryDrawer",
+    ]) {
+      expect(source).not.toContain(`from "@/components/${moduleName}"`);
+    }
+    for (const moduleName of [
+      "MarketBreadthGauge",
+      "NewsPreviewPanel",
+      "RecommendationAccuracyPanel",
+      "SectorSignalBacktestPanel",
+      "ShadowEscalationDigestCard",
+    ]) {
+      expect(source).not.toContain(`from "@/components/${moduleName}"`);
+    }
+
+    expect(source).toContain("{selectedHoldingIndex !== null && holdings[selectedHoldingIndex] ? (");
+    expect(source).toContain("{showAddHoldingModal ? (");
+    expect(source).toContain("{showLedgerBaselineModal ? (");
+    expect(source).toContain("{showBatchModal ? (");
+    expect(source).toContain("{pendingTransactions && !showBatchModal ? (");
+    expect(source).toContain("{pendingOcrHoldings ? (");
+    expect(source).toContain("{reportHistoryOpen ? (");
+    expect(source).toContain("diagnostics={() => (");
+    expect(source).toContain("<ReportDiagnostics");
+
+    const loadingFallback = source.slice(
+      source.indexOf("function DeferredInteractionLoading"),
+      source.indexOf("const PortfolioDashboard"),
+    );
+    expect(loadingFallback).toContain('role="status"');
+    expect(loadingFallback).not.toContain('role="dialog"');
+    expect(loadingFallback).not.toContain("aria-modal");
+  });
+
   it("versions all portfolio persistence entrypoints that can race", () => {
     const source = readFileSync(
       fileURLToPath(new URL("./Dashboard.tsx", import.meta.url)),

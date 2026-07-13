@@ -16,11 +16,32 @@ def enrich_holdings_from_profiles(
     *,
     fetch_benchmark: bool = True,
 ) -> list[Holding]:
+    if not holdings:
+        return []
+
     service = FundProfileService()
+    profiles = service.list_profiles()
+    # Share one map across resolution and enrichment so a profile saved earlier in
+    # the batch is immediately visible to later duplicate-code or alias holdings.
+    profiles_by_code = {profile.fund_code: profile for profile in profiles}
     enriched: list[Holding] = []
     for holding in holdings:
-        resolved = service.resolve_holding(holding, fetch_benchmark=fetch_benchmark)
-        profile = service._find_profile_for_holding(resolved)
+        profile = service._find_profile_in(
+            holding,
+            by_code=profiles_by_code,
+            profiles=profiles,
+        )
+        resolved = service._resolve_holding_with_profile(
+            holding,
+            profile,
+            fetch_benchmark=fetch_benchmark,
+            batch_profiles_by_code=profiles_by_code,
+        )
+        profile = service._find_profile_in(
+            resolved,
+            by_code=profiles_by_code,
+            profiles=profiles,
+        )
         if profile is None:
             enriched.append(resolved)
             continue

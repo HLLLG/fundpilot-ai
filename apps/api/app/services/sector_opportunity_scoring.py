@@ -362,18 +362,22 @@ def _take_with_group_limit(
 ) -> list[dict[str, Any]]:
     picked: list[dict[str, Any]] = []
     counts: dict[str, int] = {}
+    selected_labels: set[str] = set()
     for item in already_selected:
         group = str(item.get("sector_group") or item.get("sector_label"))
         counts[group] = counts.get(group, 0) + 1
+        selected_labels.add(str(item["sector_label"]))
     for row in rows:
         if len(picked) >= limit:
             break
-        if row["sector_label"] in {item["sector_label"] for item in [*already_selected, *picked]}:
+        label = str(row["sector_label"])
+        if label in selected_labels:
             continue
-        group = str(row.get("sector_group") or row["sector_label"])
+        group = str(row.get("sector_group") or label)
         if counts.get(group, 0) >= max_per_group:
             continue
         picked.append(row)
+        selected_labels.add(label)
         counts[group] = counts.get(group, 0) + 1
     return picked
 

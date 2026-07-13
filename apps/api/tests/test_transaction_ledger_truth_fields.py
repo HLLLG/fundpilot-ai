@@ -180,9 +180,9 @@ def test_effective_shares_only_fold_confirmed_transactions(monkeypatch) -> None:
         _transaction(id="pending", status="pending", shares_delta=20),
         _transaction(id="skipped", status="skipped", shares_delta=30),
     ]
-    monkeypatch.setattr(transaction_ledger, "get_fund_profile_by_code", lambda _code: profile)
+    monkeypatch.setattr(transaction_ledger, "list_fund_profiles", lambda: [profile])
     monkeypatch.setattr(
-        transaction_ledger, "list_fund_transactions", lambda **_kwargs: transactions
+        transaction_ledger, "list_fund_transactions", lambda: transactions
     )
 
     assert transaction_ledger.compute_effective_shares_map(["000001"]) == {
@@ -211,14 +211,125 @@ def test_effective_shares_respects_as_of_cutoff(monkeypatch) -> None:
             shares_delta=20,
         ),
     ]
-    monkeypatch.setattr(transaction_ledger, "get_fund_profile_by_code", lambda _code: profile)
+    monkeypatch.setattr(transaction_ledger, "list_fund_profiles", lambda: [profile])
     monkeypatch.setattr(
-        transaction_ledger, "list_fund_transactions", lambda **_kwargs: transactions
+        transaction_ledger, "list_fund_transactions", lambda: transactions
     )
 
     assert transaction_ledger.compute_effective_shares_map(
         ["000001"], as_of_date="2026-07-05"
     ) == {"000001": 110.0}
+
+
+def test_effective_shares_bulk_loads_profiles_and_transactions_once(monkeypatch) -> None:
+    codes = [f"{index:06d}" for index in range(1, 11)]
+    profiles = [
+        FundProfile(
+            fund_code=code,
+            fund_name=f"测试基金 {code}",
+            holding_shares=100,
+            shares_baseline_date="2026-06-30",
+        )
+        for code in codes
+    ]
+    transactions = [
+        _transaction(
+            id=f"tx-{code}",
+            fund_code=code,
+            status="confirmed",
+            shares_delta=1,
+        )
+        for code in codes
+    ]
+    calls = {"profiles": 0, "transactions": 0}
+
+    def load_profiles() -> list[FundProfile]:
+        calls["profiles"] += 1
+        return profiles
+
+    def load_transactions() -> list[FundTransaction]:
+        calls["transactions"] += 1
+        return transactions
+
+    monkeypatch.setattr(transaction_ledger, "list_fund_profiles", load_profiles)
+    monkeypatch.setattr(transaction_ledger, "list_fund_transactions", load_transactions)
+
+    result = transaction_ledger.compute_effective_shares_map(codes)
+
+    assert result == {code: 101.0 for code in codes}
+    assert calls == {"profiles": 1, "transactions": 1}
+
+
+def test_apply_reuses_one_profile_snapshot_for_repeated_and_distinct_codes(
+    monkeypatch,
+) -> None:
+    from app.database import (
+        get_fund_profile_by_code as load_profile,
+        list_fund_profiles as load_profiles,
+    )
+    from app.services import fund_profile
+
+    calls = {"profile_lists": 0, "profile_points": []}
+
+    def counted_list_profiles() -> list[FundProfile]:
+        calls["profile_lists"] += 1
+        return load_profiles()
+
+    def counted_get_profile(code: str) -> FundProfile | None:
+        calls["profile_points"].append(code)
+        return load_profile(code)
+
+    monkeypatch.setattr(transaction_ledger, "list_fund_profiles", counted_list_profiles)
+    monkeypatch.setattr(fund_profile, "list_fund_profiles", counted_list_profiles)
+    monkeypatch.setattr(fund_profile, "get_fund_profile_by_code", counted_get_profile)
+    monkeypatch.setattr(
+        transaction_ledger,
+        "get_latest_unit_nav",
+        lambda code: {"100001": 2.0, "100002": 3.0}[code],
+    )
+    monkeypatch.setattr(
+        "app.services.portfolio_holdings_service.sync_portfolio_from_profiles",
+        lambda **_kwargs: [],
+    )
+    items = [
+        ParsedTransaction(
+            direction="buy",
+            fund_name="Fund One",
+            fund_code="100001",
+            amount_yuan=20,
+            confirmed_shares=10,
+            trade_time="2026-07-01 14:30:00",
+            confirm_date="2026-07-01",
+        ),
+        ParsedTransaction(
+            direction="buy",
+            fund_name="Fund One",
+            fund_code="100001",
+            amount_yuan=10,
+            confirmed_shares=5,
+            trade_time="2026-07-01 14:31:00",
+            confirm_date="2026-07-01",
+        ),
+        ParsedTransaction(
+            direction="buy",
+            fund_name="Fund Two",
+            fund_code="100002",
+            amount_yuan=60,
+            confirmed_shares=20,
+            trade_time="2026-07-01 14:32:00",
+            confirm_date="2026-07-01",
+        ),
+    ]
+
+    result = transaction_ledger.apply_parsed_transactions(items)
+
+    assert result["inserted"] == 3
+    assert result["skipped"] == 0
+    assert calls["profile_lists"] == 1
+    assert calls["profile_points"] == []
+    profiles = {profile.fund_code: profile for profile in load_profiles()}
+    assert profiles["100001"].holding_amount == 30.0
+    assert profiles["100002"].holding_amount == 60.0
 
 
 def test_apply_preserves_confirmed_shares_fee_and_progress_state(monkeypatch) -> None:
@@ -230,13 +341,17 @@ def test_apply_preserves_confirmed_shares_fee_and_progress_state(monkeypatch) ->
     )
     monkeypatch.setattr(
         transaction_ledger,
-        "get_fund_profile_by_code",
-        lambda _code: FundProfile(
+        "list_fund_profiles",
+        lambda: [FundProfile(
             fund_code="000001", fund_name="测试基金", holding_amount=100
-        ),
+        )],
     )
     monkeypatch.setattr(transaction_ledger, "confirm_pending_transactions", lambda: 0)
-    monkeypatch.setattr(transaction_ledger, "_seed_amounts_for_new_positions", lambda _codes: None)
+    monkeypatch.setattr(
+        transaction_ledger,
+        "_seed_amounts_for_new_positions",
+        lambda _codes, _profiles: None,
+    )
     monkeypatch.setattr(transaction_ledger, "list_pending_fund_transactions", lambda: [])
     monkeypatch.setattr(
         "app.services.portfolio_holdings_service.sync_portfolio_from_profiles",
@@ -311,7 +426,11 @@ def test_apply_atomically_double_writes_pending_and_confirmed_ledger(monkeypatch
     from app.database import list_fund_transactions
     from app.services.portfolio_ledger import fold_ledger_events
 
-    monkeypatch.setattr(transaction_ledger, "_seed_amounts_for_new_positions", lambda _codes: None)
+    monkeypatch.setattr(
+        transaction_ledger,
+        "_seed_amounts_for_new_positions",
+        lambda _codes, _profiles: None,
+    )
     monkeypatch.setattr(
         "app.services.portfolio_holdings_service.sync_portfolio_from_profiles",
         lambda **_kwargs: [],
@@ -476,7 +595,11 @@ def test_duplicate_with_different_confirmed_truth_returns_conflict_before_writes
 ) -> None:
     from app.database import list_fund_transactions
 
-    monkeypatch.setattr(transaction_ledger, "_seed_amounts_for_new_positions", lambda _codes: None)
+    monkeypatch.setattr(
+        transaction_ledger,
+        "_seed_amounts_for_new_positions",
+        lambda _codes, _profiles: None,
+    )
     monkeypatch.setattr(
         "app.services.portfolio_holdings_service.sync_portfolio_from_profiles",
         lambda **_kwargs: [],
@@ -512,9 +635,28 @@ def test_duplicate_with_different_confirmed_truth_returns_conflict_before_writes
 
 
 def test_exact_retry_heals_missing_new_buy_profile(monkeypatch) -> None:
-    from app.database import delete_fund_profile, get_fund_profile_by_code
+    from app.database import (
+        delete_fund_profile,
+        get_fund_profile_by_code,
+        list_fund_profiles as load_profiles,
+    )
+    from app.services import fund_profile
 
-    monkeypatch.setattr(transaction_ledger, "_seed_amounts_for_new_positions", lambda _codes: None)
+    profile_list_calls = 0
+
+    def counted_list_profiles() -> list[FundProfile]:
+        nonlocal profile_list_calls
+        profile_list_calls += 1
+        return load_profiles()
+
+    monkeypatch.setattr(transaction_ledger, "list_fund_profiles", counted_list_profiles)
+    monkeypatch.setattr(fund_profile, "list_fund_profiles", counted_list_profiles)
+
+    monkeypatch.setattr(
+        transaction_ledger,
+        "_seed_amounts_for_new_positions",
+        lambda _codes, _profiles: None,
+    )
     monkeypatch.setattr(
         "app.services.portfolio_holdings_service.sync_portfolio_from_profiles",
         lambda **_kwargs: [],
@@ -530,12 +672,14 @@ def test_exact_retry_heals_missing_new_buy_profile(monkeypatch) -> None:
 
     first = transaction_ledger.apply_parsed_transactions([item])
     assert first["inserted"] == 1
+    assert profile_list_calls == 1
     assert get_fund_profile_by_code("008586") is not None
     assert delete_fund_profile("008586") is True
 
     retry = transaction_ledger.apply_parsed_transactions([item])
     assert retry["inserted"] == 0
     assert retry["skipped"] == 1
+    assert profile_list_calls == 2
     healed = get_fund_profile_by_code("008586")
     assert healed is not None
     assert healed.is_provisional is True
@@ -556,7 +700,11 @@ def test_canonical_request_reuses_legacy_formatted_dedup_record(monkeypatch) -> 
         dedup_key="legacy-un-normalized-key",
     )
     assert insert_fund_transaction(legacy) is True
-    monkeypatch.setattr(transaction_ledger, "_seed_amounts_for_new_positions", lambda _codes: None)
+    monkeypatch.setattr(
+        transaction_ledger,
+        "_seed_amounts_for_new_positions",
+        lambda _codes, _profiles: None,
+    )
     monkeypatch.setattr(
         "app.services.portfolio_holdings_service.sync_portfolio_from_profiles",
         lambda **_kwargs: [],

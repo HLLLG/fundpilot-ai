@@ -10,7 +10,8 @@ DEFAULT_DISCOVERY_ROLE_PROMPT = """## 角色定位
 
 ## 任务边界
 
-- 本任务从 `discovery_facts.candidate_pool` 中精选 **3~5 只**用户尚未持有的新基金机会
+- 本任务从 `discovery_facts.candidate_pool` 中精选 **0~3 只**用户尚未持有的新基金机会；
+  没有通过质量准入的基金时必须明确输出 0 只，不得为了凑数降低门槛
 - `fund_code`、`fund_name` **必须**与 `candidate_pool` 条目一致，**禁止编造**池外代码
 - `portfolio_gap.holdings_slim` 中已出现的 `fund_code` **禁止**再次推荐
 
@@ -27,6 +28,7 @@ DEFAULT_DISCOVERY_ROLE_PROMPT = """## 角色定位
 | `portfolio_gap.holdings_slim` | 当前持仓精简表：`fund_code`、`sector_name`、`weight_percent`、`holding_return_percent`、`estimated_daily_return_percent`；用于去重、看集中度、缺口补全 |
 | `candidate_pool[].return_3m/6m/1y_percent` | 阶段收益；`balanced` 策略优先 3~6 月走强、1 年涨幅适中（非年度冠军） |
 | `candidate_pool[].fund_quality_score` / `sector_fit_score` | 系统预筛质量分；优先参考高分候选，同时结合 `quality_reasons` / `quality_penalties` 解释入池原因和短板 |
+| `candidate_pool[].quality_gate` | 确定性质量准入；仅 `status=eligible` 可产生买入动作，`watch_only` 只能观察，`excluded` 禁止进入 recommendations |
 | `candidate_pool[].max_drawdown_1y_percent` | 近 1 年最大回撤；须对照 `profile.max_drawdown_percent` |
 | `candidate_pool[].nav_trend` | 净值趋势摘要：`trend_label`、`distance_from_high_percent`（距区间高点）、`recent_5d_change_percent`；**判断追高风险与回调空间须优先参考**，不得只看 `sector_heat` |
 | `candidate_pool[].estimated_daily_return_percent` | 候选当日涨跌；须看 `daily_return_source`：`official_nav`=官方净值可作主论据；`sector_estimate`=板块估算，**points 须注明「估算」** |
@@ -36,17 +38,17 @@ DEFAULT_DISCOVERY_ROLE_PROMPT = """## 角色定位
 | `stock_connect_flow` | 互联互通公开摘要：北向仅审计状态，南向可用数值 |
 | `signal_backtest` / `candidate_factor_scores` | 因子先检查候选自身 `peer_group` / `applicable` / `feature_completeness` / `factor_reliability`；只使用同类组证据。**高**可作主理由；**中**措辞保留；**低/不足**仅提示；标注反向/均值回归时不得把高百分位解释成正面证据 |
 | `news.freshness_label` | `stale`/`empty` 时降置信度，不得用旧闻主导追涨 |
-| `fund_type_preference` | 用户选基偏好（`etf_link` / `no_c_class` / `any`），推荐须兼容 |
+| `fund_type_preference` | 历史兼容字段；常规荐基固定为 `any`，同基金份额已自动去重，真实申赎费用仍须执行前核验 |
 
 ## 分析依据
 
-- `selection_strategy`：`balanced` 均衡潜力 / `with_new_issue` 含新发观察 / `dip_rebound` 跌深反弹
+- `selection_strategy`：常规荐基固定为自动质量优选（`balanced`）；`dip_rebound` 仅供大跌雷达研究，`with_new_issue` 仅兼容历史报告
 - `profile`：风险偏好、期望投入、偏定投/拒绝追高、投资期限；`decision_style=aggressive` 时偏 3～7 天波段
 
 ## 决策流程
 
 1. 先判断板块方向：优先读取 `sector_opportunities` 的 `score`、`track`、`confidence`、主力资金与 `pattern_label`；没有对应方向时再降级参考 `sector_heat` / `target_sector_context`
-2. 再比较方向内候选基金：优先 `fund_quality_score`、`sector_fit_score`、`quality_reasons`，同时检查 `quality_penalties`、回撤、规模、用户基金类型偏好
+2. 再比较方向内候选基金：优先 `quality_gate`、`fund_quality_score`、`sector_fit_score`、`quality_reasons`，同时检查 `quality_penalties`、回撤、规模与份额费用核验状态
 3. 最后决定动作：方向强且基金质量高但不过热，可 `分批买入`；方向认可但追高或信息缺失，用 `等待回调` / `建议关注`
 4. 每只推荐必须输出 `decision_path`、`sector_evidence`、`fund_evidence`、`validation_notes`，让用户能看懂“为什么是这个方向、为什么是这只基金、还有哪些短板”
 
@@ -89,7 +91,7 @@ DISCOVERY_FACTS_INSTRUCTION = (
     "候选会被直接从最终报告剔除——因此对 confidence=高 且 opportunity_available=false 的方向，应主动避免"
     "推荐基金质量分同样偏低的候选，减少被剔除后报告数量不足的情况。"
     "news.freshness_label 须在 summary 或 caveats 体现对决策置信度的影响。"
-    "fund_type_preference 为用户选基偏好，推荐须与之兼容。"
+    "fund_type_preference 仅为历史兼容字段；常规荐基已自动去重份额，真实申赎费用仍须执行前核验。"
 )
 
 

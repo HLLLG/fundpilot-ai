@@ -1,6 +1,7 @@
 """共享市场快照：全用户读同一份服务端缓存。"""
 
 from datetime import datetime, timedelta, timezone
+import os
 
 import pytest
 
@@ -356,3 +357,79 @@ def test_market_refresh_loop_does_not_mark_recent_before_first_attempt(monkeypat
         service.market_shared_refresh_loop()
 
     assert seen["last_a_share_refresh_at"] == 0.0
+
+
+def test_breadth_refresh_does_not_reenable_disabled_theme_refresh(monkeypatch):
+    """breadth 可独立启动共享线程，但不得绕过原主题/美股总开关。"""
+    from types import SimpleNamespace
+
+    from app.services import market_shared_refresh as service
+
+    settings = SimpleNamespace(
+        theme_board_refresh_enabled=False,
+        market_breadth_enabled=True,
+    )
+    calls: list[str] = []
+    monkeypatch.setattr(service, "get_settings", lambda: settings)
+    monkeypatch.setattr(
+        service,
+        "refresh_a_share_market_snapshots",
+        lambda: calls.append("a_share"),
+    )
+    monkeypatch.setattr(
+        service,
+        "refresh_us_market_snapshot",
+        lambda: calls.append("us"),
+    )
+
+    assert service._refresh_enabled() is True
+    service._maybe_refresh_a_share(999999.0)
+    service._maybe_refresh_us(999999.0)
+    assert calls == []
+
+
+def test_market_breadth_refresh_lease_dedupes_workers(tmp_path, monkeypatch):
+    """同一租约窗口仅一个 worker 获准刷新，过期后可由下一轮接管。"""
+    from app.services import market_shared_refresh as service
+
+    lease = tmp_path / "breadth.lease"
+    now = {"value": 1000.0}
+    monkeypatch.setattr(service, "_MARKET_BREADTH_LEASE_PATH", lease)
+    monkeypatch.setattr(service.time, "time", lambda: now["value"])
+
+    assert service._try_acquire_market_breadth_lease(ttl_seconds=300) is True
+    assert service._try_acquire_market_breadth_lease(ttl_seconds=300) is False
+
+    now["value"] += 301
+    os.utime(lease, (now["value"] - 301, now["value"] - 301))
+    assert service._try_acquire_market_breadth_lease(ttl_seconds=300) is True
+
+
+def test_background_breadth_refresh_forces_only_the_lease_holder(tmp_path, monkeypatch):
+    """拿到跨 worker 租约的唯一刷新者应严格按5分钟节奏强制更新盘中源。"""
+    from types import SimpleNamespace
+
+    from app.services import market_breadth_signal, market_shared_refresh as service
+
+    calls: list[bool] = []
+    monkeypatch.setattr(service, "_MARKET_BREADTH_LEASE_PATH", tmp_path / "breadth.lease")
+    monkeypatch.setattr(
+        service,
+        "get_settings",
+        lambda: SimpleNamespace(market_breadth_enabled=True),
+    )
+    monkeypatch.setattr(
+        market_breadth_signal,
+        "build_market_breadth_signal",
+        lambda **kwargs: calls.append(bool(kwargs.get("force_refresh"))) or {},
+    )
+    monkeypatch.setattr(
+        market_breadth_signal,
+        "refresh_market_breadth_closing_background",
+        lambda: {},
+    )
+
+    service.refresh_market_breadth_snapshot()
+    service.refresh_market_breadth_snapshot()
+
+    assert calls == [True]

@@ -27,6 +27,7 @@ from app.services.discovery_judge import judge_parsed_discovery_report
 from app.services.discovery_offline import build_offline_discovery_report
 from app.services.discovery_pipeline import DISCOVERY_JOB_STAGES
 from app.services.discovery_sector_opportunity import (
+    build_sector_divergence_map_for_opportunities,
     build_sector_flow_map_for_opportunities,
     select_sector_opportunities,
 )
@@ -82,27 +83,21 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
             target_sectors,
             list(request.focus_sectors),
         )
-        topics = list(dict.fromkeys(target_sectors + list(request.focus_sectors)))
-        if not topics:
-            topics = ["上证指数"]
         news_service = NewsService()
-        per_sector = 3 if request.scan_mode == "full_market" else 5
+        per_sector = 3
         pool_cap = 28
         held_codes = {h.fund_code.strip().zfill(6) for h in holdings if h.fund_code}
 
-        selection_strategy = request.selection_strategy
-        if request.scan_mode == "dip_swing":
-            selection_strategy = "dip_rebound"
+        selection_strategy = "dip_rebound" if request.scan_mode == "dip_swing" else "balanced"
 
         with ThreadPoolExecutor(max_workers=3, thread_name_prefix="discovery-prep") as executor:
-            news_future = executor.submit(
-                run_with_request_user,
-                user_id,
-                lambda: news_service.prefetch_topics(topics),
-            )
             flow_future = executor.submit(
                 build_sector_flow_map_for_opportunities,
                 sector_heat,
+                flow_labels,
+            )
+            divergence_future = executor.submit(
+                build_sector_divergence_map_for_opportunities,
                 flow_labels,
             )
             sector_flow_by_label = yield from _await_future_with_progress(
@@ -111,16 +106,31 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
                 "正在补充板块资金流…",
                 started_at=started_at,
             )
+            sector_divergence_by_label = yield from _await_future_with_progress(
+                divergence_future,
+                "sector_heat",
+                "正在校验板块信号历史表现…",
+                started_at=started_at,
+            )
             sector_opportunities = select_sector_opportunities(
                 sector_heat,
                 sector_flow_by_label=sector_flow_by_label,
+                sector_divergence_by_label=sector_divergence_by_label,
                 focus_sectors=list(request.focus_sectors),
                 max_total=8,
                 momentum_slots=4,
                 setup_slots=4,
             )
-            if sector_opportunities:
+            if request.scan_mode == "full_market" and sector_opportunities:
                 target_sectors = [str(item["sector_label"]) for item in sector_opportunities]
+            topics = list(dict.fromkeys(target_sectors + list(request.focus_sectors)))
+            if not topics:
+                topics = ["上证指数"]
+            news_future = executor.submit(
+                run_with_request_user,
+                user_id,
+                lambda: news_service.prefetch_topics(topics),
+            )
             yield _stage("news", started_at=started_at)
             if request.scan_mode == "dip_swing":
                 yield _stage("dip_prescreen", started_at=started_at)
@@ -147,7 +157,7 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
                         build_candidate_pool(
                             target_sectors,
                             exclude_codes=held_codes,
-                            fund_type_preference=request.fund_type_preference,
+                            fund_type_preference="any",
                             selection_strategy=selection_strategy,
                             per_sector=per_sector,
                             pool_cap=pool_cap,
@@ -204,7 +214,7 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
             dip_lookback_days=request.dip_lookback_days,
             dip_min_drop_percent=request.dip_min_drop_percent,
             focus_sectors=list(request.focus_sectors),
-            fund_type_preference=request.fund_type_preference,
+            fund_type_preference="any",
             sector_opportunities=sector_opportunities,
             budget_enhancements=True,
         )
@@ -240,7 +250,7 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
             market_news=market_news,
             topic_briefs=topic_briefs,
             analysis_mode=request.analysis_mode,
-            fund_type_preference=request.fund_type_preference,
+            fund_type_preference="any",
         )
         system_prompt = append_output_requirements_to_system(
             client._system_prompt(runtime.news_tool_max_rounds > 0, request.system_role_prompt)

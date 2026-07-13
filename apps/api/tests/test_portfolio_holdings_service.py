@@ -303,3 +303,67 @@ def test_enrich_loaded_holdings_skips_network_by_default(monkeypatch):
     enriched = enrich_loaded_holdings([holding])
     assert enriched[0].fund_code == "519674"
     assert enriched[0].daily_profit is not None
+
+
+def test_merge_holdings_uses_one_full_profile_snapshot_without_point_queries(monkeypatch):
+    from app import database
+    from app.models import FundProfile
+    from app.services import portfolio_holdings_service as service
+
+    profiles = [
+        FundProfile(
+            fund_code="111111",
+            fund_name="Canonical Code Fund",
+            holding_amount=100,
+        ),
+        FundProfile(
+            fund_code="222222",
+            fund_name="Canonical Alias Fund",
+            aliases=["Alias Snapshot Fund"],
+            holding_amount=200,
+        ),
+        FundProfile(
+            fund_code="333333",
+            fund_name="Inactive Fund",
+            aliases=["Inactive Alias"],
+            holding_amount=0,
+        ),
+        FundProfile(
+            fund_code="666666",
+            fund_name="Profile Missing From Snapshot",
+            holding_amount=600,
+        ),
+    ]
+    snapshot = [
+        Holding(fund_code="111111", fund_name="First Duplicate", holding_amount=10),
+        Holding(fund_code="111111", fund_name="Second Duplicate", holding_amount=20),
+        Holding(fund_code="999999", fund_name="Alias Snapshot Fund", holding_amount=30),
+        Holding(fund_code="444444", fund_name="No Profile Fund", holding_amount=40),
+        Holding(fund_code="888888", fund_name="Inactive Alias", holding_amount=50),
+        Holding(fund_code="555555", fund_name="Inactive Snapshot", holding_amount=0),
+        Holding(fund_code="444444", fund_name="Duplicate Unknown Code", holding_amount=41),
+    ]
+    profile_reads = 0
+
+    def _list_profiles():
+        nonlocal profile_reads
+        profile_reads += 1
+        return profiles
+
+    monkeypatch.setattr(service, "list_fund_profiles", _list_profiles)
+    monkeypatch.setattr(
+        database,
+        "get_fund_profile_by_code",
+        lambda _code: (_ for _ in ()).throw(AssertionError("point profile query")),
+    )
+
+    merged = service.merge_holdings_with_profiles(snapshot)
+
+    assert profile_reads == 1
+    assert [item.fund_code for item in merged] == ["111111", "222222", "444444"]
+    assert [item.fund_name for item in merged] == [
+        "Canonical Code Fund",
+        "Canonical Alias Fund",
+        "No Profile Fund",
+    ]
+    assert [item.holding_amount for item in merged] == [20, 30, 40]

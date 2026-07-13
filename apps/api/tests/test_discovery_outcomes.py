@@ -397,3 +397,52 @@ def test_duplicate_fund_decisions_receive_stable_unique_event_ids():
     assert len(first["outcome_observations"]) == 3
     assert first["outcome_observations"][2]["status"] == "skipped"
     assert first["outcome_observations"][2]["source"] == "not_applicable"
+
+
+def test_duplicate_buy_recommendations_fetch_nav_once_per_request():
+    calls: list[tuple[str, int]] = []
+
+    def fetch(code: str, *, trading_days: int):
+        calls.append((code, trading_days))
+        return {"data": _nav_rows(8)}
+
+    result = build_discovery_outcomes(
+        _report(
+            _rec("110011", "分批买入"),
+            _rec("110011", "少量买入"),
+        ),
+        days=5,
+        fetch_nav=fetch,
+    )
+
+    assert len(calls) == 1
+    assert calls[0][0] == "110011"
+    assert [item["mature"] for item in result["items"]] == [True, True]
+
+
+def test_accuracy_fetches_repeated_fund_once_at_largest_required_window(monkeypatch):
+    from app.services import discovery_outcomes as service
+
+    pull_days_by_date = {
+        "2026-01-05": 90,
+        "2026-02-02": 120,
+    }
+    monkeypatch.setattr(
+        service,
+        "_nav_pull_days",
+        lambda executable_date, _horizon: pull_days_by_date[executable_date],
+    )
+    calls: list[tuple[str, int]] = []
+
+    def fetch(code: str, *, trading_days: int):
+        calls.append((code, trading_days))
+        return {"data": _nav_rows(60)}
+
+    reports = [
+        _report(_rec("110011"), created_at="2026-01-05T10:00:00+08:00"),
+        _report(_rec("110011"), created_at="2026-02-02T10:00:00+08:00"),
+    ]
+
+    build_discovery_recommendation_accuracy(reports, days=5, fetch_nav=fetch)
+
+    assert calls == [("110011", 120)]

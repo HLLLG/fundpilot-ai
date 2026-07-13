@@ -317,11 +317,11 @@ def test_refresh_holdings_sector_quotes_fast_and_accurate_fetch_benchmark(monkey
     calls: list[str] = []
 
     class FakeProfileService:
-        def resolve_holding(self, holding, **_kwargs):
-            return holding
+        def list_profiles(self):
+            return []
 
-        def _find_profile_for_holding(self, _holding):
-            return None
+        def resolve_holdings_with_profiles(self, holdings, **_kwargs):
+            return holdings, [None] * len(holdings)
 
     monkeypatch.setattr(
         "app.services.sector_quote_service.FundProfileService",
@@ -387,17 +387,22 @@ def test_refresh_holdings_sector_quotes_fast_and_accurate_fetch_benchmark(monkey
     from app.services.sector_quote_service import refresh_holdings_sector_quotes
 
     holding = _holding(fund_code="123456", sector_name=None, intraday_index_name=None)
-    refresh_holdings_sector_quotes([holding], timeout_seconds=8.0)
+    fast_result = refresh_holdings_sector_quotes([holding], timeout_seconds=8.0)
     assert calls == ["123456"]
     assert holdings_infer_calls == []
+    assert fast_result["ok"] is False
+    assert fast_result["provider_failed"] is True
+    assert fast_result["holdings"][0]["fund_code"] == "123456"
 
     from app.services import fund_primary_sector_service
 
     fund_primary_sector_service._benchmark_miss_cache.clear()
     calls.clear()
-    refresh_holdings_sector_quotes([holding], timeout_seconds=None)
+    accurate_result = refresh_holdings_sector_quotes([holding], timeout_seconds=None)
     assert calls == ["123456"]
     assert holdings_infer_calls == ["123456"]
+    assert accurate_result["ok"] is False
+    assert accurate_result["provider_failed"] is True
 
 
 def test_portfolio_holdings_cache_miss_loads_without_benchmark_fetch(monkeypatch):
@@ -416,9 +421,9 @@ def test_portfolio_holdings_cache_miss_loads_without_benchmark_fetch(monkeypatch
     )
 
     class FakeProfileService:
-        def resolve_holdings(self, holdings, **kwargs):
+        def resolve_holdings_with_profiles(self, holdings, **kwargs):
             resolve_fetch_flags.append(kwargs.get("fetch_benchmark"))
-            return holdings
+            return holdings, [None] * len(holdings)
 
         def list_profiles(self):
             return []
@@ -469,11 +474,11 @@ def test_fund_estimate_fallback_updates_daily_and_sector(monkeypatch):
     from app.services.sector_quote_resolver import SectorResolveResult
 
     class FakeProfileService:
-        def resolve_holding(self, holding: Holding, **_kwargs) -> Holding:
-            return holding
+        def list_profiles(self):
+            return []
 
-        def _find_profile_for_holding(self, _holding):
-            return None
+        def resolve_holdings_with_profiles(self, holdings, **_kwargs):
+            return holdings, [None] * len(holdings)
 
     monkeypatch.setattr(
         "app.services.sector_quote_service.FundProfileService",
@@ -549,11 +554,11 @@ def test_official_nav_updates_daily_while_board_keeps_close_change(monkeypatch):
     from app.services.sector_quote_resolver import SectorResolveResult
 
     class FakeProfileService:
-        def resolve_holding(self, holding: Holding, **_kwargs) -> Holding:
-            return holding
+        def list_profiles(self):
+            return []
 
-        def _find_profile_for_holding(self, _holding):
-            return None
+        def resolve_holdings_with_profiles(self, holdings, **_kwargs):
+            return holdings, [None] * len(holdings)
 
     monkeypatch.setattr(
         "app.services.sector_quote_service.FundProfileService",
@@ -615,4 +620,305 @@ def test_official_nav_updates_daily_while_board_keeps_close_change(monkeypatch):
     assert holding.sector_return_percent == -4.62
     assert holding.daily_return_percent == 3.66
     assert holding.daily_return_percent_source == "official_nav"
+
+
+def test_sector_refresh_reuses_profiles_session_and_mapping(monkeypatch):
+    from app.models import Holding
+    from app.services.sector_quote_resolver import SectorResolveResult
+
+    profile_snapshot_reads: list[str] = []
+    session_calls: list[str] = []
+    mapping_reads: list[str] = []
+    persisted_mappings: list[dict | None] = []
+    nav_calls: list[tuple[str, str]] = []
+
+    class FakeProfileService:
+        def list_profiles(self):
+            profile_snapshot_reads.append("list")
+            return []
+
+        def resolve_holdings_with_profiles(self, holdings, **kwargs):
+            assert kwargs["profiles_snapshot"] == []
+            return holdings, [None] * len(holdings)
+
+    monkeypatch.setattr(
+        "app.services.sector_quote_service.FundProfileService",
+        FakeProfileService,
+    )
+    monkeypatch.setattr(
+        "app.services.sector_quote_service.build_trading_session",
+        lambda: session_calls.append("called")
+        or {
+            "session_kind": "trading_day_after_close",
+            "effective_trade_date": "2026-07-13",
+        },
+    )
+    monkeypatch.setattr(
+        "app.services.sector_quote_service.get_effective_trade_date",
+        lambda: (_ for _ in ()).throw(
+            AssertionError("session effective_trade_date should be reused")
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_service.refresh_benchmark_sectors_for_holdings",
+        lambda holdings, **_kwargs: holdings,
+    )
+    monkeypatch.setattr(
+        "app.services.sector_quote_service.primary_sector_fields_for_holding",
+        lambda *_args, **_kwargs: {},
+    )
+    monkeypatch.setattr(
+        "app.services.sector_quote_service.prefetch_canonical_kline_quotes",
+        lambda *_args, **_kwargs: 1,
+    )
+    monkeypatch.setattr(
+        "app.services.sector_quote_service.labels_need_spot_boards",
+        lambda _labels: False,
+    )
+
+    def resolve_quote(*_args, persisted_mapping=None, **_kwargs):
+        persisted_mappings.append(persisted_mapping)
+        return SectorResolveResult(
+            confidence="high",
+            change_percent=1.2,
+            matched_name="人工智能",
+            source_type="index",
+            source_code="930713",
+            message="东财K线",
+            candidates=[],
+        )
+
+    monkeypatch.setattr(
+        "app.services.sector_quote_service.resolve_sector_quote",
+        resolve_quote,
+    )
+    monkeypatch.setattr(
+        "app.services.sector_quote_service.get_sector_mapping",
+        lambda label: mapping_reads.append(label) or None,
+    )
+    monkeypatch.setattr(
+        "app.services.sector_quote_service.save_sector_mapping",
+        lambda record: record,
+    )
+    monkeypatch.setattr(
+        "app.services.sector_quote_service.get_official_nav_return",
+        lambda code, trade_date: nav_calls.append((code, trade_date)) or 0.8,
+    )
+
+    from app.services.sector_quote_service import refresh_holdings_sector_quotes
+
+    holdings = [
+        Holding(
+            fund_code=code,
+            fund_name=f"人工智能基金 {code}",
+            holding_amount=1000,
+            sector_name="人工智能",
+        )
+        for code in ("100001", "100002")
+    ]
+    refresh_holdings_sector_quotes(holdings, timeout_seconds=8.0)
+
+    assert profile_snapshot_reads == ["list"]
+    assert session_calls == ["called"]
+    assert mapping_reads == ["人工智能"]
+    assert persisted_mappings[0] is None
+    assert persisted_mappings[1] is not None
+    assert nav_calls == [
+        ("100001", "2026-07-13"),
+        ("100002", "2026-07-13"),
+    ]
+
+
+def test_sector_refresh_batches_profile_and_primary_sector_snapshots_for_duplicate_aliases(
+    monkeypatch,
+):
+    from app.models import FundProfile
+    from app.services.sector_quote_resolver import SectorResolveResult
+
+    calls = {"profiles": 0, "primary_user": 0, "primary_global": 0}
+    profile = FundProfile(
+        fund_code="123456",
+        fund_name="人工智能主题基金",
+        aliases=["AI别名基金"],
+        sector_name="人工智能",
+        intraday_index_name="中证人工智能",
+        source="ocr-detail",
+    )
+
+    def list_profiles():
+        calls["profiles"] += 1
+        return [profile]
+
+    def list_primary_user():
+        calls["primary_user"] += 1
+        return [
+            {
+                "fund_code": "123456",
+                "sector_name": "人工智能",
+                "intraday_index_name": "中证人工智能",
+                "source": "ocr_detail",
+                "confidence": 0.95,
+            }
+        ]
+
+    def list_primary_global(codes):
+        calls["primary_global"] += 1
+        assert set(codes) == {"123456"}
+        return {}
+
+    def point_lookup_forbidden(*_args, **_kwargs):
+        raise AssertionError("batch sector refresh must not use a point lookup")
+
+    monkeypatch.setattr("app.services.fund_profile.list_fund_profiles", list_profiles)
+    monkeypatch.setattr(
+        "app.services.fund_profile.get_fund_profile_by_code",
+        point_lookup_forbidden,
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_service.list_fund_primary_sectors",
+        list_primary_user,
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_service.get_fund_primary_sectors_global_by_codes",
+        list_primary_global,
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_service.get_fund_primary_sector",
+        point_lookup_forbidden,
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_service.get_fund_profile_by_code",
+        point_lookup_forbidden,
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_service.load_fresh_global_sector",
+        point_lookup_forbidden,
+    )
+    monkeypatch.setattr(
+        "app.services.sector_quote_service.prefetch_canonical_kline_quotes",
+        lambda *_args, **_kwargs: 1,
+    )
+    monkeypatch.setattr(
+        "app.services.sector_quote_service.labels_need_spot_boards",
+        lambda _labels: False,
+    )
+    monkeypatch.setattr(
+        "app.services.sector_quote_service.resolve_sector_quote",
+        lambda *_args, **_kwargs: SectorResolveResult(
+            confidence="high",
+            change_percent=1.25,
+            matched_name="人工智能",
+            source_type="index",
+            source_code="930713",
+            message="东财K线",
+            candidates=[],
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.sector_quote_service.get_official_nav_return",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "app.services.sector_quote_service.save_sector_mapping",
+        lambda record: record,
+    )
+
+    from app.services.sector_quote_service import refresh_holdings_sector_quotes
+
+    result = refresh_holdings_sector_quotes(
+        [
+            Holding(
+                fund_code="123456",
+                fund_name="人工智能主题基金",
+                holding_amount=1000,
+            ),
+            Holding(
+                fund_code="123456",
+                fund_name="AI别名基金",
+                holding_amount=500,
+            ),
+            Holding(
+                fund_code="000000",
+                fund_name="AI别名基金",
+                holding_amount=250,
+            ),
+        ],
+        timeout_seconds=8.0,
+    )
+
+    assert result["ok"] is True
+    assert [item["fund_code"] for item in result["holdings"]] == [
+        "123456",
+        "123456",
+        "123456",
+    ]
+    assert calls == {"profiles": 1, "primary_user": 1, "primary_global": 1}
+
+
+def test_primary_sector_batch_context_reuses_saved_row_for_source_priority(monkeypatch):
+    from app.services.fund_primary_sector_service import (
+        PrimarySectorBatchContext,
+        upsert_primary_sector_from_holding,
+    )
+
+    saves: list[dict] = []
+
+    def save_primary(**payload):
+        saved = {**payload, "updated_at": "2026-07-13T00:00:00+00:00"}
+        saves.append(saved)
+        return saved
+
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_service.save_fund_primary_sector",
+        save_primary,
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_service.get_fund_primary_sector",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("batch context must reuse the saved row")
+        ),
+    )
+    context = PrimarySectorBatchContext()
+    holding = Holding(
+        fund_code="123456",
+        fund_name="人工智能主题基金",
+        holding_amount=1000,
+        sector_name="人工智能",
+    )
+
+    upsert_primary_sector_from_holding(
+        holding,
+        source="alipay_overview",
+        batch_context=context,
+    )
+    upsert_primary_sector_from_holding(
+        holding.model_copy(update={"sector_name": "半导体"}),
+        source="name_infer",
+        batch_context=context,
+    )
+
+    assert len(saves) == 1
+    assert context.user_row("123456")["sector_name"] == "人工智能"
+
+
+def test_save_user_primary_sector_does_not_read_back(monkeypatch):
+    from app.database import save_fund_primary_sector
+
+    monkeypatch.setattr(
+        "app.database.get_fund_primary_sector",
+        lambda _code: (_ for _ in ()).throw(
+            AssertionError("write must return its known payload without a point read")
+        ),
+    )
+
+    saved = save_fund_primary_sector(
+        fund_code="123456",
+        sector_name="人工智能",
+        source="benchmark_index",
+        confidence=0.82,
+    )
+
+    assert saved["fund_code"] == "123456"
+    assert saved["sector_name"] == "人工智能"
+    assert saved["source"] == "benchmark_index"
 

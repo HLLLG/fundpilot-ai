@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 /** Distance from bottom (px) still counts as "following" the stream. */
-export const CHAT_SCROLL_BOTTOM_THRESHOLD_PX = 64;
+const CHAT_SCROLL_BOTTOM_THRESHOLD_PX = 64;
 
-export function isChatScrollNearBottom(
+function isChatScrollNearBottom(
   scrollTop: number,
   scrollHeight: number,
   clientHeight: number,

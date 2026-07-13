@@ -282,7 +282,7 @@ export function todayIsoDate() {
   return `${now.getFullYear()}-${month}-${day}`;
 }
 
-export function inferPurchaseDateFromHoldingDays(holdingDays: number) {
+function inferPurchaseDateFromHoldingDays(holdingDays: number) {
   const today = parseIsoDate(todayIsoDate());
   if (!today) {
     return todayIsoDate();

@@ -51,12 +51,6 @@ def sqlite_fallback_enabled() -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
-def _connect_primary() -> DbConnection:
-    if uses_mysql():
-        return _open_mysql()
-    return _open_sqlite()
-
-
 def connect_with_fallback() -> DbConnection:
     global _mysql_unreachable_until
     if not uses_mysql():

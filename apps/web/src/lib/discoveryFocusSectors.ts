@@ -30,7 +30,7 @@ export function loadDiscoveryFocusSectors(): string[] {
   }
 }
 
-export function saveDiscoveryFocusSectors(sectors: string[]): void {
+function saveDiscoveryFocusSectors(sectors: string[]): void {
   if (typeof window === "undefined") {
     return;
   }
@@ -45,7 +45,7 @@ export function saveDiscoveryFocusSectors(sectors: string[]): void {
   );
 }
 
-export function showFocusSectorToast(message: string): void {
+function showFocusSectorToast(message: string): void {
   if (typeof window === "undefined" || !message.trim()) {
     return;
   }
@@ -59,7 +59,7 @@ function dispatchResult(result: FocusSectorActionResult): string[] {
 }
 
 /** Prepend sector; cap at 3 unique labels. */
-export function addDiscoveryFocusSector(sector: string): string[] {
+function addDiscoveryFocusSector(sector: string): string[] {
   const trimmed = sector.trim();
   if (!trimmed) {
     return loadDiscoveryFocusSectors();
@@ -87,7 +87,7 @@ export function addDiscoveryFocusSector(sector: string): string[] {
   });
 }
 
-export function removeDiscoveryFocusSector(sector: string): string[] {
+function removeDiscoveryFocusSector(sector: string): string[] {
   const trimmed = sector.trim();
   const current = loadDiscoveryFocusSectors();
   if (!trimmed || !current.includes(trimmed)) {

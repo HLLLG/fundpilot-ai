@@ -336,7 +336,7 @@ def test_discovery_shadow_mode_does_not_boost_amount(shadow_mode) -> None:
     report = _run_discovery(
         pool_item=_discovery_pool_item(fund_quality_score=80.0),
         opportunity=_discovery_opportunity(opportunity_available=True),
-        rec_kwargs={"action": "建议关注", "suggested_amount_yuan": 18000},
+        rec_kwargs={"action": "分批买入", "suggested_amount_yuan": 18000},
     )
     rec = report.recommendations[0]
     # 常规上限 15000（budget 50000 * concentration 30%），shadow 模式下不应被 boost。

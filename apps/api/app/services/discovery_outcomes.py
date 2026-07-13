@@ -34,6 +34,24 @@ _EVENT_SCHEMA_VERSION = "1.0"
 _NAV_OBSERVATION_SOURCE = "akshare.fund_open_fund_info_em"
 
 
+def _memoized_nav_fetcher(fetch_nav, *, trading_days_override: int | None = None):
+    cache: dict[tuple[str, int], object] = {}
+
+    def fetch(code: str, *, trading_days: int):
+        effective_days = (
+            trading_days_override
+            if trading_days_override is not None
+            else trading_days
+        )
+        normalized_code = _normalize_fund_code(code) or str(code).strip()
+        key = (normalized_code, effective_days)
+        if key not in cache:
+            cache[key] = fetch_nav(code, trading_days=effective_days)
+        return cache[key]
+
+    return fetch
+
+
 def build_discovery_outcomes(
     report: dict[str, Any],
     *,
@@ -42,6 +60,7 @@ def build_discovery_outcomes(
     fetch_benchmark: BenchmarkFetcher | None = default_benchmark_fetcher,
 ) -> dict[str, Any]:
     horizon_days = _normalize_horizon_days(days)
+    fetch_nav = _memoized_nav_fetcher(fetch_nav)
     recommendations = report.get("recommendations") or []
     if not recommendations:
         return _build_outcome_response(
@@ -221,11 +240,23 @@ def build_discovery_recommendation_accuracy(
     legacy_items: list[dict[str, Any]] = []
     formal_report_ids: set[str] = set()
     legacy_report_ids: set[str] = set()
+    max_pull_days = max(
+        (
+            _nav_pull_days(_resolve_executable_date(created_at), horizon_days)
+            for report in reports
+            if (created_at := _parse_datetime(report.get("created_at"))) is not None
+        ),
+        default=None,
+    )
+    shared_fetch_nav = _memoized_nav_fetcher(
+        fetch_nav,
+        trading_days_override=max_pull_days,
+    )
     for report in reports:
         outcome = build_discovery_outcomes(
             report,
             days=horizon_days,
-            fetch_nav=fetch_nav,
+            fetch_nav=shared_fetch_nav,
             fetch_benchmark=fetch_benchmark,
         )
         if persist_outcomes:

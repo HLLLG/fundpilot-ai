@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from app.database import get_most_recent_portfolio_snapshot, get_portfolio_summary, save_portfolio_summary
+from app.database import (
+    get_most_recent_portfolio_snapshot,
+    get_portfolio_summary,
+    list_fund_profiles,
+    save_portfolio_summary,
+)
 from app.models import Holding, PortfolioSummary
 from app.services.holding_amount_sync import sync_holding_amounts_from_shares
 from app.services.holding_estimates import (
@@ -208,14 +213,15 @@ def persist_holdings_after_sector_refresh(
 
     save_portfolio_summary(summary)
     save_daily_snapshot(enriched, summary)
-    from app.database import get_fund_profile_by_code
-    from app.models import FundProfile
-
-    profiles_by_code: dict[str, FundProfile] = {}
-    for holding in enriched:
-        if holding.fund_code and holding.fund_code != "000000":
-            profile = get_fund_profile_by_code(holding.fund_code)
-            if profile is not None:
-                profiles_by_code[holding.fund_code] = profile
+    active_codes = {
+        holding.fund_code
+        for holding in enriched
+        if holding.fund_code and holding.fund_code != "000000"
+    }
+    profiles_by_code = {
+        profile.fund_code: profile
+        for profile in list_fund_profiles()
+        if profile.fund_code in active_codes
+    }
     persist_intraday_curve(enriched, profiles_by_code)
     return enriched

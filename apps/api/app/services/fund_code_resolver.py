@@ -74,6 +74,7 @@ _fund_name_index_cache: _FundNameIndex | None = None
 class _FundNameIndex:
     """东财基金名称表内存索引：by_code、归一化名、名称/bigram 子串搜索。"""
 
+    source_table: list[tuple[str, str]]
     table: tuple[tuple[str, str], ...]
     by_code: dict[str, str]
     by_normalized: dict[str, tuple[tuple[str, str], ...]]
@@ -127,6 +128,7 @@ def _build_fund_name_index(table: list[tuple[str, str]]) -> _FundNameIndex:
         key: tuple(rows) for key, rows in by_normalized_lists.items()
     }
     return _FundNameIndex(
+        source_table=table,
         table=tuple(table),
         by_code=by_code,
         by_normalized=by_normalized,
@@ -142,7 +144,7 @@ def _build_fund_name_index(table: list[tuple[str, str]]) -> _FundNameIndex:
 def _fund_name_index() -> _FundNameIndex:
     global _fund_name_index_cache
     table = _fund_name_table()
-    if _fund_name_index_cache is None or _fund_name_index_cache.table != tuple(table):
+    if _fund_name_index_cache is None or _fund_name_index_cache.source_table is not table:
         _fund_name_index_cache = _build_fund_name_index(table)
     return _fund_name_index_cache
 
@@ -159,9 +161,9 @@ def clear_all_fund_name_table_caches() -> None:
 
 
 def preload_fund_name_table() -> None:
-    """启动时预热基金名称表，避免首次 OCR 查码卡顿。"""
+    """启动时预热基金名称表及索引，避免首次 OCR 查码承担索引构建开销。"""
     try:
-        _fund_name_table()
+        _fund_name_index()
     except Exception:
         pass
 

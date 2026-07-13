@@ -1,6 +1,9 @@
 import logging
 import math
 import time
+from collections import OrderedDict
+from threading import RLock
+from typing import TypeVar
 
 import pandas as pd
 
@@ -12,10 +15,49 @@ logger = logging.getLogger(__name__)
 TTL_HIT = 86400   # 24h — nav published, won't change
 TTL_MISS = 300    # 5min — nav not yet published, retry soon
 _OFFICIAL_NAV_CACHE_VERSION = "v1"
+_NAV_CACHE_MAX_ENTRIES = 4096
+_UNIT_NAV_CACHE_MAX_ENTRIES = 4096
 
 # In-memory cache: key -> (value: float | None, expires_at: float)
-_NAV_CACHE: dict[str, tuple[float | None, float]] = {}
-_UNIT_NAV_CACHE: dict[str, tuple[float | None, float]] = {}
+_NAV_CACHE: OrderedDict[str, tuple[float | None, float]] = OrderedDict()
+_UNIT_NAV_CACHE: OrderedDict[str, tuple[float | None, float]] = OrderedDict()
+_NAV_CACHE_LOCK = RLock()
+_UNIT_NAV_CACHE_LOCK = RLock()
+
+_CacheValue = TypeVar("_CacheValue")
+
+
+def _get_memory_cache(
+    cache: OrderedDict[str, tuple[_CacheValue, float]],
+    lock: RLock,
+    key: str,
+    now: float,
+) -> tuple[bool, _CacheValue | None]:
+    with lock:
+        cached = cache.get(key)
+        if cached is None:
+            return False, None
+        value, expires_at = cached
+        if now >= expires_at:
+            cache.pop(key, None)
+            return False, None
+        cache.move_to_end(key)
+        return True, value
+
+
+def _set_memory_cache(
+    cache: OrderedDict[str, tuple[_CacheValue, float]],
+    lock: RLock,
+    max_entries: int,
+    key: str,
+    value: _CacheValue,
+    expires_at: float,
+) -> None:
+    with lock:
+        cache[key] = (value, expires_at)
+        cache.move_to_end(key)
+        while len(cache) > max(1, max_entries):
+            cache.popitem(last=False)
 
 
 def _official_nav_cache_key(fund_code: str, trade_date: str) -> str:
@@ -28,7 +70,14 @@ def _unit_nav_cache_key(fund_code: str) -> str:
 
 def _cache_nav_return(fund_code: str, trade_date: str, value: float | None, ttl: int) -> None:
     now = time.monotonic()
-    _NAV_CACHE[f"{fund_code}:{trade_date}"] = (value, now + ttl)
+    _set_memory_cache(
+        _NAV_CACHE,
+        _NAV_CACHE_LOCK,
+        _NAV_CACHE_MAX_ENTRIES,
+        f"{fund_code}:{trade_date}",
+        value,
+        now + ttl,
+    )
     if value is not None:
         save_spot_snapshot(
             _official_nav_cache_key(fund_code, trade_date),
@@ -53,14 +102,19 @@ def get_cached_official_nav_return(fund_code: str, trade_date: str) -> float | N
     """仅读内存/持久缓存中的官方净值涨跌幅，不触发 AkShare。"""
     key = f"{fund_code}:{trade_date}"
     now = time.monotonic()
-    cached = _NAV_CACHE.get(key)
-    if cached is not None:
-        value, expires_at = cached
-        if now < expires_at:
-            return value
+    found, value = _get_memory_cache(_NAV_CACHE, _NAV_CACHE_LOCK, key, now)
+    if found:
+        return value
     persisted = _cached_persisted_nav_return(fund_code, trade_date)
     if persisted is not None:
-        _NAV_CACHE[key] = (persisted, now + TTL_HIT)
+        _set_memory_cache(
+            _NAV_CACHE,
+            _NAV_CACHE_LOCK,
+            _NAV_CACHE_MAX_ENTRIES,
+            key,
+            persisted,
+            now + TTL_HIT,
+        )
     return persisted
 
 
@@ -84,7 +138,6 @@ def prime_official_nav_cache(
     if not codes or not trade_date:
         return {}
 
-    now = time.monotonic()
     resolved: dict[str, float] = {}
     missing: list[str] = []
     for code in codes:
@@ -101,13 +154,13 @@ def prime_official_nav_cache(
     rows = payload.get("data") if isinstance(payload, dict) else None
     if not isinstance(rows, dict):
         for code in missing:
-            _NAV_CACHE[f"{code}:{trade_date}"] = (None, now + TTL_MISS)
+            _cache_nav_return(code, trade_date, None, TTL_MISS)
         return resolved
 
     for code in missing:
         row = rows.get(code)
         if not isinstance(row, dict):
-            _NAV_CACHE[f"{code}:{trade_date}"] = (None, now + TTL_MISS)
+            _cache_nav_return(code, trade_date, None, TTL_MISS)
             continue
         daily_growth = row.get("daily_growth")
         unit_nav = row.get("unit_nav")
@@ -121,10 +174,10 @@ def prime_official_nav_cache(
         try:
             nav_return = float(daily_growth)
         except (TypeError, ValueError):
-            _NAV_CACHE[f"{code}:{trade_date}"] = (None, now + TTL_MISS)
+            _cache_nav_return(code, trade_date, None, TTL_MISS)
             continue
         if math.isnan(nav_return):
-            _NAV_CACHE[f"{code}:{trade_date}"] = (None, now + TTL_MISS)
+            _cache_nav_return(code, trade_date, None, TTL_MISS)
             continue
         _cache_nav_return(code, trade_date, nav_return, TTL_HIT)
         resolved[code] = nav_return
@@ -152,11 +205,9 @@ def get_official_nav_return(fund_code: str, trade_date: str) -> float | None:
     key = f"{fund_code}:{trade_date}"
     now = time.monotonic()
 
-    cached = _NAV_CACHE.get(key)
-    if cached is not None:
-        value, expires_at = cached
-        if now < expires_at:
-            return value
+    found, value = _get_memory_cache(_NAV_CACHE, _NAV_CACHE_LOCK, key, now)
+    if found:
+        return value
 
     persisted = get_cached_official_nav_return(fund_code, trade_date)
     if persisted is not None:
@@ -194,9 +245,26 @@ def _unit_nav_persist_key(fund_code: str) -> str:
     return f"fund:unit-nav:v1:{fund_code}"
 
 
+def _cache_unit_nav_memory(
+    key: str,
+    value: float | None,
+    ttl: int,
+    *,
+    now: float | None = None,
+) -> None:
+    cached_at = time.monotonic() if now is None else now
+    _set_memory_cache(
+        _UNIT_NAV_CACHE,
+        _UNIT_NAV_CACHE_LOCK,
+        _UNIT_NAV_CACHE_MAX_ENTRIES,
+        key,
+        value,
+        cached_at + ttl,
+    )
+
+
 def _cache_unit_nav(fund_code: str, value: float) -> None:
-    now = time.monotonic()
-    _UNIT_NAV_CACHE[_unit_nav_cache_key(fund_code)] = (value, now + TTL_HIT)
+    _cache_unit_nav_memory(_unit_nav_cache_key(fund_code), value, TTL_HIT)
     save_spot_snapshot(_unit_nav_persist_key(fund_code), {"value": value})
 
 
@@ -204,14 +272,12 @@ def peek_cached_unit_nav(fund_code: str) -> float | None:
     """仅读内存/持久缓存中的最近单位净值，不触发网络/子进程。"""
     key = _unit_nav_cache_key(fund_code)
     now = time.monotonic()
-    cached = _UNIT_NAV_CACHE.get(key)
-    if cached is not None:
-        value, expires_at = cached
-        if now < expires_at:
-            return value
+    found, value = _get_memory_cache(_UNIT_NAV_CACHE, _UNIT_NAV_CACHE_LOCK, key, now)
+    if found:
+        return value
     persisted = _persisted_unit_nav(fund_code)
     if persisted is not None:
-        _UNIT_NAV_CACHE[key] = (persisted, now + TTL_HIT)
+        _cache_unit_nav_memory(key, persisted, TTL_HIT, now=now)
     return persisted
 
 
@@ -230,11 +296,9 @@ def get_latest_unit_nav(fund_code: str, *, allow_fetch: bool = True) -> float | 
     key = _unit_nav_cache_key(fund_code)
     now = time.monotonic()
 
-    cached = _UNIT_NAV_CACHE.get(key)
-    if cached is not None:
-        value, expires_at = cached
-        if now < expires_at:
-            return value
+    found, value = _get_memory_cache(_UNIT_NAV_CACHE, _UNIT_NAV_CACHE_LOCK, key, now)
+    if found:
+        return value
 
     if not allow_fetch:
         return _persisted_unit_nav(fund_code)
@@ -242,12 +306,12 @@ def get_latest_unit_nav(fund_code: str, *, allow_fetch: bool = True) -> float | 
     try:
         df = _fetch_nav_df(fund_code)
         if df is None or df.empty:
-            _UNIT_NAV_CACHE[key] = (None, now + TTL_MISS)
+            _cache_unit_nav_memory(key, None, TTL_MISS, now=now)
             return None
 
         unit_nav = float(df.iloc[-1]["单位净值"])
         if math.isnan(unit_nav) or unit_nav <= 0:
-            _UNIT_NAV_CACHE[key] = (None, now + TTL_MISS)
+            _cache_unit_nav_memory(key, None, TTL_MISS, now=now)
             return None
 
         rounded = round(unit_nav, 4)
@@ -255,7 +319,7 @@ def get_latest_unit_nav(fund_code: str, *, allow_fetch: bool = True) -> float | 
         return rounded
     except Exception:
         logger.exception("Failed to fetch latest unit NAV for %s", fund_code)
-        _UNIT_NAV_CACHE[key] = (None, now + TTL_MISS)
+        _cache_unit_nav_memory(key, None, TTL_MISS, now=now)
         return None
 
 
@@ -267,46 +331,43 @@ def get_unit_nav_on_date(fund_code: str, trade_date: str) -> float | None:
     key = f"unitdate:{fund_code}:{trade_date}"
     now = time.monotonic()
 
-    cached = _UNIT_NAV_CACHE.get(key)
-    if cached is not None:
-        value, expires_at = cached
-        if now < expires_at:
-            return value
+    found, value = _get_memory_cache(_UNIT_NAV_CACHE, _UNIT_NAV_CACHE_LOCK, key, now)
+    if found:
+        return value
 
     try:
         df = _fetch_nav_df(fund_code)
         if df is None or df.empty:
-            _UNIT_NAV_CACHE[key] = (None, now + TTL_MISS)
+            _cache_unit_nav_memory(key, None, TTL_MISS, now=now)
             return None
 
         frame = df.copy()
         frame["_date"] = frame["净值日期"].astype(str).str[:10]
         matches = frame.index[frame["_date"] == trade_date].tolist()
         if not matches:
-            _UNIT_NAV_CACHE[key] = (None, now + TTL_MISS)
+            _cache_unit_nav_memory(key, None, TTL_MISS, now=now)
             return None
 
         unit_nav = float(frame.loc[matches[-1], "单位净值"])
         if math.isnan(unit_nav) or unit_nav <= 0:
-            _UNIT_NAV_CACHE[key] = (None, now + TTL_MISS)
+            _cache_unit_nav_memory(key, None, TTL_MISS, now=now)
             return None
 
         rounded = round(unit_nav, 4)
-        _UNIT_NAV_CACHE[key] = (rounded, now + TTL_HIT)
+        _cache_unit_nav_memory(key, rounded, TTL_HIT, now=now)
         return rounded
     except Exception:
         logger.exception("Failed to fetch unit NAV for %s on %s", fund_code, trade_date)
-        _UNIT_NAV_CACHE[key] = (None, now + TTL_MISS)
+        _cache_unit_nav_memory(key, None, TTL_MISS, now=now)
         return None
 
 
-def compute_yesterday_profit_from_official_nav(
+def get_yesterday_profit_nav_returns(
     fund_code: str,
-    holding_amount: float,
     trade_date: str,
-) -> float | None:
-    """上一交易日官方净值收益额：上一交易日收盘金额 × 上一交易日净值涨跌幅。"""
-    if not fund_code or fund_code == "000000" or holding_amount <= 0:
+) -> tuple[float, float] | None:
+    """返回计算昨日收益所需的当日、前一日官方净值涨跌幅。"""
+    if not fund_code or fund_code == "000000":
         return None
     try:
         df = _fetch_nav_df(fund_code)
@@ -329,12 +390,39 @@ def compute_yesterday_profit_from_official_nav(
         prev_return = float(prev_row["日增长率"])
         if math.isnan(latest_return) or math.isnan(prev_return):
             return None
-        amount_before_latest = holding_amount / (1 + latest_return / 100)
-        return round(amount_before_latest * prev_return / 100, 2)
+        return latest_return, prev_return
     except Exception:
         logger.exception(
-            "Failed to compute yesterday profit from NAV for %s on %s",
+            "Failed to load yesterday profit NAV inputs for %s on %s",
             fund_code,
             trade_date,
         )
         return None
+
+
+def compute_yesterday_profit_from_nav_returns(
+    holding_amount: float,
+    nav_returns: tuple[float, float] | None,
+) -> float | None:
+    if holding_amount <= 0 or nav_returns is None:
+        return None
+    latest_return, prev_return = nav_returns
+    denominator = 1 + latest_return / 100
+    if denominator == 0:
+        return None
+    amount_before_latest = holding_amount / denominator
+    return round(amount_before_latest * prev_return / 100, 2)
+
+
+def compute_yesterday_profit_from_official_nav(
+    fund_code: str,
+    holding_amount: float,
+    trade_date: str,
+) -> float | None:
+    """上一交易日官方净值收益额：上一交易日收盘金额 × 上一交易日净值涨跌幅。"""
+    if not fund_code or fund_code == "000000" or holding_amount <= 0:
+        return None
+    return compute_yesterday_profit_from_nav_returns(
+        holding_amount,
+        get_yesterday_profit_nav_returns(fund_code, trade_date),
+    )

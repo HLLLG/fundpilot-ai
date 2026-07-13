@@ -4,8 +4,8 @@ import logging
 from pathlib import Path
 
 from app.config import get_settings
-from app.models import PortfolioSummary
-from app.database import save_portfolio_summary
+from app.models import Holding, PortfolioSummary
+from app.database import save_fund_profile, save_portfolio_summary
 from app.services.fund_profile import FundProfileService
 from app.services.holding_validation import build_holding_review, enrich_portfolio_summary_source
 from app.services.holdings_extractor import ExtractionResult, extract_holdings
@@ -216,6 +216,45 @@ def _holding_has_ocr_official_daily(holding) -> bool:
     )
 
 
+def _pin_confirmed_holding_settlements(
+    holdings: list[Holding],
+    *,
+    trade_date: str,
+    profile_service: FundProfileService,
+) -> list[Holding]:
+    """Pin confirmed amounts and mark official-NAV profiles with one profile read."""
+    official_codes = {
+        code
+        for holding in holdings
+        if _holding_has_ocr_official_daily(holding)
+        if (code := (holding.fund_code or "").strip()) and code != "000000"
+    }
+    profiles_by_code = (
+        {profile.fund_code: profile for profile in profile_service.list_profiles()}
+        if official_codes
+        else {}
+    )
+    saved_codes: set[str] = set()
+    pinned: list[Holding] = []
+    for holding in holdings:
+        patch: dict = {
+            "settled_holding_amount": holding.holding_amount,
+            "holding_amount": holding.holding_amount,
+        }
+        if _holding_has_ocr_official_daily(holding):
+            patch["amount_includes_today"] = True
+            code = (holding.fund_code or "").strip()
+            profile = profiles_by_code.get(code)
+            if profile is not None and code not in saved_codes:
+                saved = save_fund_profile(
+                    profile.model_copy(update={"profit_settled_trade_date": trade_date})
+                )
+                profiles_by_code[saved.fund_code] = saved
+                saved_codes.add(code)
+        pinned.append(holding.model_copy(update=patch))
+    return pinned
+
+
 def apply_confirmed_holdings(
     holdings: list,
 ) -> dict:
@@ -225,7 +264,6 @@ def apply_confirmed_holdings(
     2. 用板块行情缓存即时补全 sector 涨跌与当日估算；
     3. 返回完整 ``estimated_*`` 展示字段；OCR 确认后前端不再立即触发板块刷新。
     """
-    from app.models import Holding
     from app.services.holding_amount_sync import bootstrap_holding_baselines
     from app.services.holding_client import serialize_holdings_for_client
     from app.services.holding_estimates import clear_client_daily_estimate_fields_batch, enrich_holdings_estimates
@@ -278,27 +316,11 @@ def apply_confirmed_holdings(
         else _fast_overlay_cached_official_nav(holding, trade_date)
         for holding in processed
     ]
-    from app.database import get_fund_profile_by_code, save_fund_profile
-
-    pinned: list[Holding] = []
-    for holding in processed:
-        patch: dict = {
-            "settled_holding_amount": holding.holding_amount,
-            "holding_amount": holding.holding_amount,
-        }
-        if _holding_has_ocr_official_daily(holding):
-            patch["amount_includes_today"] = True
-            # 同步标记「本交易日已结算」，避免下一交易日 sync 把
-            # amount_includes_today 从快照里原样带入误判为「还是今天」。
-            code = (holding.fund_code or "").strip()
-            if code and code != "000000":
-                profile = get_fund_profile_by_code(code)
-                if profile is not None:
-                    save_fund_profile(
-                        profile.model_copy(update={"profit_settled_trade_date": trade_date})
-                    )
-        pinned.append(holding.model_copy(update=patch))
-    processed = pinned
+    processed = _pin_confirmed_holding_settlements(
+        processed,
+        trade_date=trade_date,
+        profile_service=profile_service,
+    )
     processed = enrich_holdings_estimates(processed)
 
     from app.services.holding_estimates import sum_daily_profit

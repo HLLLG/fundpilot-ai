@@ -107,16 +107,6 @@ def is_alipay_holdings_page(lines: list[str]) -> bool:
     return percent_blocks >= 2 and "￥" not in joined
 
 
-def _count_holding_return_percent_lines(lines: list[str]) -> int:
-    return sum(
-        1
-        for line in lines
-        if extract_percent(line) is not None
-        and not _is_header_line(line)
-        and not _is_portfolio_weight_line(line)
-    )
-
-
 def _is_compact_alipay_overview_layout(lines: list[str]) -> bool:
     """VLM OCR 常省略「全部持有/名称/金额」页眉，但保留「占比 + 基金名」紧凑版式。"""
     weight_lines = sum(1 for line in lines if _is_portfolio_weight_line(line))

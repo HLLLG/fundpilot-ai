@@ -1,0 +1,10 @@
+**
+!apps
+!apps/api
+!apps/api/app
+!apps/api/app/services
+!apps/api/app/services/eastmoney_spot_client.py
+!apps/sector-relay
+!apps/sector-relay/Dockerfile
+!apps/sector-relay/requirements.txt
+!apps/sector-relay/main.py

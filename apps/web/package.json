@@ -17,17 +17,16 @@
     "test:e2e:ui:mobile": "playwright test --config=playwright.ui.config.ts --project=mobile-320"
   },
   "dependencies": {
-    "@tailwindcss/postcss": "^4.1.18",
     "lucide-react": "^0.561.0",
     "next": "^16.2.2",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "react-markdown": "^10.1.0",
-    "remark-gfm": "^4.0.1",
-    "tailwindcss": "^4.1.18"
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0",
+    "@tailwindcss/postcss": "^4.1.18",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@types/node": "^25.0.3",
@@ -36,7 +35,7 @@
     "eslint": "^9.39.2",
     "eslint-config-next": "^16.2.2",
     "jsdom": "^29.1.1",
-    "playwright": "^1.60.0",
+    "tailwindcss": "^4.1.18",
     "typescript": "^5.9.3",
     "vitest": "^3.2.6"
   }

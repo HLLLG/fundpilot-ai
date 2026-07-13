@@ -10,10 +10,13 @@ from __future__ import annotations
 这三个接口实际仅能回溯约 30 个交易日（超出即报错"该接口只能获取最近30个交易日的
 数据"），无法支撑历史校准。改为双轨方案（已与用户确认）：
 
-- **主信号（可回测/自校准）：** `stock_a_high_low_statistics` 全市场创新高/创新低
+- **收盘锚点（可回测/自校准）：** `stock_a_high_low_statistics` 全市场创新高/创新低
   家数，实测有约 2 年历史。用"今日 20 日净新高家数（high20-low20）在近 2 年分布中的
   百分位"动态计算情绪档位——阈值不是写死的常量，而是每次都用真实历史分布现算，
   这就是设计里"先测算再定阈值"的落地方式，且自动随市场状态漂移更新。
+- **盘中主信号（准实时）：** `stock_market_activity_legu` 当前赚钱效应，按上涨/下跌/平盘
+  家数与真实涨跌停计算当日情绪档位；交易时段每 5 分钟刷新，显式携带源站统计时间、
+  新鲜度和 `decision_eligible`，不把上一交易日收盘百分位冒充为当天实时数据。
 - **辅助信号（当日快照，明确不做历史校准）：** 涨停/跌停家数、炸板率、连板高度——
   来自涨跌停池接口，仅用于当日快照解读文案，字段/文案均标注"当日快照"而非可回测结论。
 - **两融环比：** `stock_margin_sse`（区间查询，历史稳定）；深市 `stock_margin_szse`
@@ -25,7 +28,8 @@ from __future__ import annotations
 """
 
 import logging
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from app.config import get_settings
 from app.services.akshare_subprocess import run_akshare_json_script
@@ -34,79 +38,535 @@ from app.services.sector_quote_cache import (
     get_spot_snapshot_any_age,
     save_spot_snapshot,
 )
-from app.services.trading_session import build_trading_session
+from app.services.trading_session import build_trading_session, get_previous_trade_date
 
 logger = logging.getLogger(__name__)
 
-_CACHE_VERSION = "v1"
-_LIVE_TTL_SECONDS = 1800.0
+_CACHE_VERSION = "v2"
 _CLOSED_TTL_SECONDS = 3600.0
-_INTRADAY_SESSIONS = {
-    "trading_day_intraday",
-    "trading_day_pre_close",
-    "trading_day_pre_open",
-}
 # 涨跌停池按日查询遇到空数据（周末/假日/尚未收盘）时，向前回退查找最近有效交易日的最大尝试次数。
 _MAX_LOOKBACK_ATTEMPTS = 6
 _MIN_BREADTH_SAMPLE_DAYS = 60
+_MIN_INTRADAY_MARKET_SAMPLE = 1000
 
 # 情绪档位：由冷到热；档位序号用于计算 sentiment_level_change（跨档位差）。
 SENTIMENT_LEVELS = ("冰点", "低迷", "中性", "偏热", "亢奋")
+_CN_TZ = ZoneInfo("Asia/Shanghai")
+_LIVE_SESSION_KINDS = {"trading_day_intraday", "trading_day_pre_close"}
+_SOURCE_INTRADAY = "intraday_live"
+_SOURCE_INTRADAY_FINAL = "intraday_final"
+_SOURCE_CLOSING = "closing"
+_SOURCE_PREVIOUS_CLOSE_FALLBACK = "previous_close_fallback"
+_INTRADAY_FINAL_CUTOFF_HOUR = 14
+_INTRADAY_FINAL_CUTOFF_MINUTE = 59
 
 
-def _cache_ttl_seconds() -> float:
-    session_kind = str(build_trading_session().get("session_kind") or "")
-    if session_kind in _INTRADAY_SESSIONS:
-        return _LIVE_TTL_SECONDS
+def _cache_ttl_seconds(*, signal_mode: str = "closing") -> float:
+    if signal_mode == "intraday":
+        settings = get_settings()
+        return float(max(60, int(settings.market_breadth_live_refresh_interval_seconds)))
     return _CLOSED_TTL_SECONDS
 
 
-def _cache_key(trade_date: str) -> str:
-    return f"market:breadth:{_CACHE_VERSION}:{trade_date[:10]}"
+def _cache_key(trade_date: str, *, signal_mode: str = "closing") -> str:
+    return f"market:breadth:{_CACHE_VERSION}:{signal_mode}:{trade_date[:10]}"
 
 
-def build_market_breadth_signal(trade_date: str | None = None) -> dict:
-    """大盘情绪温度计主入口。`available=False` 时不阻塞日报（详见模块 docstring）。"""
+def _now_cn() -> datetime:
+    return datetime.now(_CN_TZ)
+
+
+def build_market_breadth_signal(
+    trade_date: str | None = None,
+    *,
+    force_refresh: bool = False,
+) -> dict:
+    """大盘情绪温度计主入口。
+
+    交易时段优先返回乐咕赚钱效应盘中快照；其他时段返回最近完整收盘口径。盘中源
+    失败时允许返回上一笔快照供展示，但会显式标成 stale 且禁止参与确定性 guard。
+    """
     settings = get_settings()
     if not settings.market_breadth_enabled:
         return {
             "available": False,
             "reason": "disabled",
+            "decision_eligible": False,
             "message": "大盘情绪温度计已关闭（FUND_AI_MARKET_BREADTH_ENABLED=false）。",
         }
 
+    session = build_trading_session()
     anchor = (
         trade_date
-        or build_trading_session().get("effective_trade_date")
+        or session.get("effective_trade_date")
         or date.today().isoformat()
     )[:10]
-    cache_key = _cache_key(anchor)
-    cached = get_spot_snapshot(cache_key, ttl_seconds=_cache_ttl_seconds())
-    if cached is not None:
-        return dict(cached)
+    session_kind = str(session.get("session_kind") or "")
+    calendar_date = str(session.get("calendar_date") or "")[:10]
+    is_current_live = session_kind in _LIVE_SESSION_KINDS and anchor == calendar_date
 
-    result = _build_market_breadth_signal_uncached(anchor, settings.market_breadth_timeout_seconds)
+    if is_current_live:
+        return _build_intraday_signal(
+            anchor,
+            session=session,
+            timeout=settings.market_breadth_timeout_seconds,
+            force_refresh=force_refresh,
+        )
+
+    # 收盘后先把源站当天终值落盘；下一交易日开盘前（含周末）继续展示这笔终值。
+    may_use_final = (
+        (session_kind == "trading_day_after_close" and anchor == calendar_date)
+        or (session_kind in {"trading_day_pre_open", "non_trading_day"} and anchor != calendar_date)
+    )
+    if may_use_final:
+        final = _load_or_build_intraday_final(
+            anchor,
+            session=session,
+            timeout=settings.market_breadth_timeout_seconds,
+            allow_fetch=session_kind == "trading_day_after_close",
+        )
+        if final is not None:
+            return final
+
+    return _build_closing_signal(
+        anchor,
+        timeout=settings.market_breadth_timeout_seconds,
+        force_refresh=force_refresh,
+    )
+
+
+def _build_closing_signal(
+    anchor: str,
+    *,
+    timeout: float,
+    force_refresh: bool = False,
+) -> dict:
+    cache_key = _cache_key(anchor, signal_mode="closing")
+    if not force_refresh:
+        cached = get_spot_snapshot(
+            cache_key,
+            ttl_seconds=_cache_ttl_seconds(signal_mode="closing"),
+        )
+        if cached is not None:
+            return dict(cached)
+
+    result = _build_market_breadth_signal_uncached(anchor, timeout)
+    result = _with_closing_metadata(result, anchor=anchor)
     if result.get("available"):
         save_spot_snapshot(cache_key, result)
         return result
 
     stale = get_spot_snapshot_any_age(cache_key)
     if stale:
-        stale_copy = dict(stale)
-        stale_copy["stale"] = True
-        return stale_copy
+        return _mark_stale(stale, reason="closing_source_failed")
     return result
+
+
+def _build_intraday_signal(
+    anchor: str,
+    *,
+    session: dict,
+    timeout: float,
+    force_refresh: bool,
+) -> dict:
+    cache_key = _cache_key(anchor, signal_mode="intraday")
+    if not force_refresh:
+        cached = get_spot_snapshot(
+            cache_key,
+            ttl_seconds=_cache_ttl_seconds(signal_mode="intraday"),
+        )
+        if cached is not None:
+            return _refresh_intraday_metadata(cached, anchor=anchor, session=session)
+
+    activity = _fetch_intraday_market_activity(timeout=timeout)
+    if activity is not None:
+        previous_trade_date = get_previous_trade_date(anchor) or anchor
+        # 日报增强预算很短：盘中请求只读独立的收盘背景缓存，不串行等待历史/两融源。
+        # 后台刷新线程会单独预热该缓存；即使暂缺背景，也不影响当天实时广度展示。
+        closing = _cached_closing_background(previous_trade_date)
+        result = _compose_intraday_signal(
+            activity,
+            closing=closing,
+            anchor=anchor,
+            session=session,
+        )
+        if result.get("available"):
+            save_spot_snapshot(cache_key, result)
+            return result
+
+    stale = get_spot_snapshot_any_age(cache_key)
+    if stale:
+        return _mark_stale(stale, reason="intraday_source_failed")
+
+    previous_trade_date = get_previous_trade_date(anchor) or anchor
+    closing = _cached_closing_background(previous_trade_date)
+    if not closing:
+        closing = _build_closing_signal(previous_trade_date, timeout=timeout)
+    fallback = dict(closing)
+    fallback.update(
+        {
+            "source_mode": _SOURCE_PREVIOUS_CLOSE_FALLBACK,
+            "decision_eligible": False,
+            "decision_status": "ineligible_source_fallback",
+            "decision_message": "盘中实时源暂不可用，展示上一交易日收盘背景，不参与硬守卫。",
+            "stale": True,
+            "freshness_status": "stale",
+        }
+    )
+    return fallback
+
+
+def _load_or_build_intraday_final(
+    anchor: str,
+    *,
+    session: dict,
+    timeout: float,
+    allow_fetch: bool,
+) -> dict | None:
+    cache_key = _cache_key(anchor, signal_mode="intraday")
+    cached = get_spot_snapshot_any_age(cache_key)
+    if cached and _is_valid_intraday_final(cached, anchor=anchor):
+        return _freeze_intraday_snapshot(cached)
+
+    if not allow_fetch:
+        return None
+
+    activity = _fetch_intraday_market_activity(timeout=timeout)
+    if activity is None or not _is_valid_intraday_final(activity, anchor=anchor):
+        return None
+    previous_trade_date = get_previous_trade_date(anchor) or anchor
+    closing = _cached_closing_background(previous_trade_date)
+    result = _compose_intraday_signal(
+        activity,
+        closing=closing,
+        anchor=anchor,
+        session=session,
+        final=True,
+    )
+    save_spot_snapshot(cache_key, result)
+    return result
+
+
+def _fetch_intraday_market_activity(*, timeout: float) -> dict | None:
+    """获取乐咕当前赚钱效应。该接口含源站统计时间，可据此做严格时效校验。"""
+    script = """
+import akshare as ak
+import json
+try:
+    frame = ak.stock_market_activity_legu()
+    if frame is None or frame.empty:
+        print(json.dumps({"error": "empty"}))
+    else:
+        items = {}
+        for _, row in frame.iterrows():
+            key = str(row.get("item", "")).strip()
+            if key:
+                items[key] = row.get("value")
+        def _number(key):
+            raw = items.get(key)
+            if raw is None:
+                return None
+            try:
+                return float(str(raw).replace("%", "").strip())
+            except (TypeError, ValueError):
+                return None
+        print(json.dumps({
+            "advance_count": _number("上涨"),
+            "decline_count": _number("下跌"),
+            "flat_count": _number("平盘"),
+            "limit_up_count": _number("涨停"),
+            "limit_down_count": _number("跌停"),
+            "real_limit_up_count": _number("真实涨停"),
+            "real_limit_down_count": _number("真实跌停"),
+            "activity_percent": _number("活跃度"),
+            "as_of_datetime": str(items.get("统计日期") or ""),
+        }, ensure_ascii=True))
+except Exception as e:
+    print(json.dumps({"error": str(e)}, ensure_ascii=True))
+"""
+    payload = run_akshare_json_script(
+        script,
+        label="market_breadth_intraday_activity",
+        timeout=timeout,
+    )
+    if not isinstance(payload, dict) or payload.get("error"):
+        return None
+    advance = _as_number(payload.get("advance_count"))
+    decline = _as_number(payload.get("decline_count"))
+    flat = _as_number(payload.get("flat_count"))
+    if advance is None or decline is None:
+        return None
+    total = advance + decline + (flat or 0)
+    activity = _as_number(payload.get("activity_percent"))
+    if total < _MIN_INTRADAY_MARKET_SAMPLE:
+        return None
+    if activity is None and total > 0:
+        activity = round(advance / total * 100, 2)
+    parsed_as_of = _parse_as_of_datetime(payload.get("as_of_datetime"))
+    return {
+        "available": True,
+        "advance_count": int(advance),
+        "decline_count": int(decline),
+        "flat_count": int(flat or 0),
+        "activity_percent": activity,
+        "advance_ratio_percent": round(advance / total * 100, 2) if total > 0 else None,
+        "limit_up_count": _as_int(payload.get("limit_up_count")),
+        "limit_down_count": _as_int(payload.get("limit_down_count")),
+        "real_limit_up_count": _as_int(payload.get("real_limit_up_count")),
+        "real_limit_down_count": _as_int(payload.get("real_limit_down_count")),
+        # 对外统一为带 Asia/Shanghai 偏移的 ISO 8601，避免浏览器按本机时区误解无时区字符串。
+        "as_of_datetime": parsed_as_of.isoformat() if parsed_as_of is not None else None,
+    }
+
+
+def _compose_intraday_signal(
+    activity: dict,
+    *,
+    closing: dict,
+    anchor: str,
+    session: dict,
+    final: bool = False,
+) -> dict:
+    activity_percent = _as_number(activity.get("activity_percent"))
+    live_level = (
+        _sentiment_level_from_percentile(activity_percent)
+        if activity_percent is not None
+        else None
+    )
+    closing_level = str(closing.get("sentiment_level") or "") or None
+    # 盘中赚钱效应档位与收盘创新高/低历史百分位不是同一统计口径，禁止跨口径相减。
+    # 后续若积累同日盘中平滑基准，可在同口径内恢复 level_change；目前安全返回 None。
+    level_change = None
+
+    result = {
+        "available": True,
+        "trade_date": anchor,
+        "signal_mode": "intraday",
+        "source_mode": _SOURCE_INTRADAY_FINAL if final else _SOURCE_INTRADAY,
+        "as_of_datetime": activity.get("as_of_datetime"),
+        "breadth_percentile": None,
+        "breadth_sample_days": closing.get("breadth_sample_days"),
+        "sentiment_level": live_level,
+        "sentiment_level_change": level_change,
+        "advance_count": activity.get("advance_count"),
+        "decline_count": activity.get("decline_count"),
+        "flat_count": activity.get("flat_count"),
+        "activity_percent": activity_percent,
+        "advance_ratio_percent": activity.get("advance_ratio_percent"),
+        "limit_up_count": activity.get("limit_up_count"),
+        "limit_down_count": activity.get("limit_down_count"),
+        "real_limit_up_count": activity.get("real_limit_up_count"),
+        "real_limit_down_count": activity.get("real_limit_down_count"),
+        "limit_pool_as_of_date": anchor,
+        "limit_pool_available": True,
+        "limit_up_broken_ratio_percent": None,
+        "max_consecutive_boards": None,
+        "margin_balance_change_yi": closing.get("margin_balance_change_yi"),
+        "margin_scope": closing.get("margin_scope"),
+        "margin_as_of_date": closing.get("margin_as_of_date"),
+        "margin_available": bool(closing.get("margin_available")),
+        "closing_trade_date": closing.get("trade_date"),
+        "closing_breadth_percentile": closing.get("breadth_percentile"),
+        "closing_sentiment_level": closing_level,
+        "interpretation": _build_intraday_interpretation(activity, live_level),
+        "basis": (
+            "盘中档位基于乐咕当前赚钱效应（上涨/下跌/平盘及涨跌停）准实时计算；"
+            "近2年创新高低百分位仅作为上一完整交易日背景，不冒充盘中历史分位。"
+        ),
+    }
+    if final:
+        return _freeze_intraday_snapshot(result)
+    return _refresh_intraday_metadata(result, anchor=anchor, session=session)
+
+
+def _refresh_intraday_metadata(payload: dict, *, anchor: str, session: dict) -> dict:
+    result = dict(payload)
+    settings = get_settings()
+    age = _snapshot_age_seconds(result.get("as_of_datetime"))
+    source_date = str(result.get("as_of_datetime") or "")[:10]
+    current = _now_cn()
+    ready_at = current.replace(hour=9, minute=30, second=0, microsecond=0) + timedelta(
+        minutes=max(0, int(settings.market_breadth_live_guard_delay_minutes))
+    )
+    source_matches = source_date == anchor
+    fresh = age is not None and age <= settings.market_breadth_live_freshness_seconds
+    in_live_session = str(session.get("session_kind") or "") in _LIVE_SESSION_KINDS
+    eligible = bool(source_matches and fresh and in_live_session and current >= ready_at)
+    result.update(
+        {
+            "signal_mode": "intraday",
+            "source_mode": _SOURCE_INTRADAY,
+            "freshness_seconds": round(age, 1) if age is not None else None,
+            "freshness_status": "live" if fresh and source_matches else "stale",
+            "stale": not (fresh and source_matches),
+            "decision_eligible": eligible,
+        }
+    )
+    if not source_matches:
+        status = "ineligible_date_mismatch"
+        message = "实时源统计日期不是当前交易日，仅供背景展示，不参与硬守卫。"
+    elif not fresh:
+        status = "ineligible_stale"
+        message = "实时快照已超过时效阈值，仅供背景展示，不参与硬守卫。"
+    elif current < ready_at:
+        status = "opening_observation"
+        message = "开盘初期波动较大，当前仅观察，达到稳定窗口后再参与硬守卫。"
+    elif not in_live_session:
+        status = "ineligible_session"
+        message = "当前不在交易时段，盘中快照不参与硬守卫。"
+    else:
+        status = "eligible"
+        message = "当前交易日盘中快照新鲜，可参与决策守卫。"
+    result["decision_status"] = status
+    result["decision_message"] = message
+    return result
+
+
+def _freeze_intraday_snapshot(payload: dict) -> dict:
+    result = dict(payload)
+    result.update(
+        {
+            "signal_mode": "intraday",
+            "source_mode": _SOURCE_INTRADAY_FINAL,
+            "freshness_status": "fresh",
+            "stale": False,
+            "decision_eligible": True,
+            "decision_status": "eligible_final",
+            "decision_message": "已冻结为最近完整交易日终值，可参与决策守卫。",
+        }
+    )
+    return result
+
+
+def _cached_closing_background(trade_date: str) -> dict:
+    cached = get_spot_snapshot_any_age(_cache_key(trade_date, signal_mode="closing"))
+    return dict(cached) if cached else {}
+
+
+def refresh_market_breadth_closing_background() -> dict:
+    """供共享后台线程预热最近完整交易日背景，避免挤占日报/页面请求预算。"""
+    session = build_trading_session()
+    anchor = str(session.get("effective_trade_date") or "")[:10]
+    if str(session.get("session_kind") or "") in _LIVE_SESSION_KINDS:
+        anchor = get_previous_trade_date(anchor) or anchor
+    return _build_closing_signal(
+        anchor or date.today().isoformat(),
+        timeout=get_settings().market_breadth_timeout_seconds,
+        force_refresh=False,
+    )
+
+
+def _is_valid_intraday_final(payload: dict, *, anchor: str) -> bool:
+    parsed = _parse_as_of_datetime(payload.get("as_of_datetime"))
+    if parsed is None or parsed.date().isoformat() != anchor:
+        return False
+    # 终值确认与盘中 freshness 是两种语义：不得把 14:50 等仍在交易的快照冻结成收盘值。
+    final_cutoff = parsed.replace(
+        hour=_INTRADAY_FINAL_CUTOFF_HOUR,
+        minute=_INTRADAY_FINAL_CUTOFF_MINUTE,
+        second=0,
+        microsecond=0,
+    )
+    return parsed >= final_cutoff
+
+
+def _with_closing_metadata(payload: dict, *, anchor: str) -> dict:
+    result = dict(payload)
+    breadth_date = str(result.get("trade_date") or "")[:10]
+    eligible = bool(result.get("available") and breadth_date == anchor)
+    result.update(
+        {
+            "signal_mode": "closing",
+            "source_mode": _SOURCE_CLOSING,
+            "as_of_datetime": f"{breadth_date}T15:00:00+08:00" if breadth_date else None,
+            "freshness_seconds": None,
+            "freshness_status": "fresh" if eligible else "stale",
+            "stale": not eligible,
+            "decision_eligible": eligible,
+            "decision_status": "eligible" if eligible else "ineligible_stale",
+            "decision_message": (
+                "最近完整交易日收盘信号可参与决策守卫。"
+                if eligible
+                else "收盘信号未更新到有效交易日，仅供背景展示，不参与硬守卫。"
+            ),
+        }
+    )
+    return result
+
+
+def _mark_stale(payload: dict, *, reason: str) -> dict:
+    result = dict(payload)
+    result.update(
+        {
+            "stale": True,
+            "freshness_status": "stale",
+            "decision_eligible": False,
+            "decision_status": "ineligible_source_fallback",
+            "decision_message": "数据源刷新失败，当前为降级快照，仅供展示，不参与硬守卫。",
+            "stale_reason": reason,
+        }
+    )
+    return result
+
+
+def _parse_as_of_datetime(value: object) -> datetime | None:
+    text = str(value or "").strip().replace("Z", "+00:00")
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=_CN_TZ)
+    return parsed.astimezone(_CN_TZ)
+
+
+def _snapshot_age_seconds(value: object) -> float | None:
+    parsed = _parse_as_of_datetime(value)
+    if parsed is None:
+        return None
+    return max(0.0, (_now_cn() - parsed).total_seconds())
+
+
+def _as_number(value: object) -> float | None:
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _as_int(value: object) -> int | None:
+    number = _as_number(value)
+    return int(number) if number is not None else None
+
+
+def _build_intraday_interpretation(activity: dict, level: str | None) -> str:
+    advance = activity.get("advance_count")
+    decline = activity.get("decline_count")
+    activity_percent = activity.get("activity_percent")
+    return (
+        f"盘中市场情绪{level or '待确认'}，上涨{advance}家、下跌{decline}家，"
+        f"赚钱效应约{activity_percent}%。该信号按源站统计时间动态更新。"
+    )
 
 
 def _build_market_breadth_signal_uncached(anchor: str, timeout: float) -> dict:
     breadth_rows = _fetch_high_low_breadth_history(timeout=timeout)
-    sentiment = _compute_sentiment(breadth_rows) if breadth_rows else None
+    # 历史日期调用必须截断到 anchor，避免使用未来数据；当天盘中则自然只会取到最近收盘日。
+    rows_to_anchor = (
+        [row for row in breadth_rows if str(row.get("date") or "")[:10] <= anchor]
+        if breadth_rows
+        else []
+    )
+    sentiment = _compute_sentiment(rows_to_anchor) if rows_to_anchor else None
 
     if sentiment is None:
         return {
             "available": False,
             "trade_date": anchor,
             "reason": "breadth_history_unavailable",
+            "decision_eligible": False,
             "message": "全市场创新高/创新低家数历史暂不可用，情绪温度计本次跳过。",
         }
 

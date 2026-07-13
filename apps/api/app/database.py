@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+from collections import OrderedDict
 from pathlib import Path
+from threading import RLock
 from typing import Any
 
 from app.config import get_settings
-from app.db_migrations import run_migrations
+from app.db_migrations import SCHEMA_VERSION, run_migrations
 from app.request_context import get_request_user_id
 from datetime import datetime, timezone
 
@@ -22,6 +24,12 @@ from app.models import (
     PortfolioSummary,
     Report,
 )
+
+
+_SQLITE_SCHEMA_CACHE_MAX_PATHS = 32
+_SqliteSchemaIdentity = tuple[str, int, int, int, int]
+_SQLITE_SCHEMA_INIT_LOCK = RLock()
+_SQLITE_SCHEMA_INIT_CACHE: OrderedDict[str, _SqliteSchemaIdentity] = OrderedDict()
 
 
 def _db_path() -> Path:
@@ -43,22 +51,46 @@ def _row_to_dict(row: object) -> dict[str, object]:
     return dict(row)
 
 
-def _connect():
-    from app.db_connect import connect, uses_mysql
+def _sqlite_path_cache_key(path: Path) -> str:
+    return os.path.normcase(str(path.expanduser().resolve(strict=False)))
 
-    if uses_mysql():
-        candidate = connect()
-        if str(getattr(candidate, "dialect", "")) == "mysql":
-            return candidate
-        # MySQL may be configured while ``connect`` returns the explicitly
-        # enabled local SQLite fallback.  That fallback still needs the same
-        # bootstrap and migrations as a normal SQLite deployment; otherwise a
-        # fresh outage database has no reports/decision tables at all.
-        candidate.close()
-    path = _db_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(path)
-    connection.row_factory = sqlite3.Row
+
+def _sqlite_schema_identity(
+    path: Path,
+    connection: sqlite3.Connection,
+) -> _SqliteSchemaIdentity:
+    resolved = path.expanduser().resolve(strict=False)
+    cache_key = os.path.normcase(str(resolved))
+    stat = resolved.stat()
+    row = connection.execute("PRAGMA schema_version").fetchone()
+    schema_version = int(row[0]) if row is not None else 0
+    return (
+        cache_key,
+        int(stat.st_dev),
+        int(stat.st_ino),
+        schema_version,
+        int(SCHEMA_VERSION),
+    )
+
+
+def _clear_sqlite_schema_init_cache(path: Path | None = None) -> None:
+    """Invalidate the process-local SQLite bootstrap memo.
+
+    Tests that monkeypatch the bootstrap implementation for an already-opened
+    path can clear a single entry. Runtime database import uses the same hook
+    because its in-place copy deliberately preserves the target inode.
+    """
+
+    with _SQLITE_SCHEMA_INIT_LOCK:
+        if path is None:
+            _SQLITE_SCHEMA_INIT_CACHE.clear()
+            return
+        _SQLITE_SCHEMA_INIT_CACHE.pop(_sqlite_path_cache_key(path), None)
+
+
+def _bootstrap_sqlite_schema(connection: sqlite3.Connection) -> None:
+    """Run the historical SQLite bootstrap and migrations unchanged."""
+
     connection.execute(
         """
         CREATE TABLE IF NOT EXISTS reports (
@@ -189,9 +221,61 @@ def _connect():
         """
     )
     run_migrations(connection)
-    connection.commit()
-    from app.db_connect import DbConnection
 
+
+def _ensure_sqlite_schema_initialized(
+    path: Path,
+    connection: sqlite3.Connection,
+) -> None:
+    with _SQLITE_SCHEMA_INIT_LOCK:
+        # Identity reads share the import/bootstrap lock, so a connection never
+        # inspects a file while an in-process import is replacing its contents.
+        current_identity = _sqlite_schema_identity(path, connection)
+        cache_key = current_identity[0]
+        cached_identity = _SQLITE_SCHEMA_INIT_CACHE.get(cache_key)
+        if cached_identity == current_identity:
+            _SQLITE_SCHEMA_INIT_CACHE.move_to_end(cache_key)
+            return
+
+        _SQLITE_SCHEMA_INIT_CACHE.pop(cache_key, None)
+        try:
+            _bootstrap_sqlite_schema(connection)
+            connection.commit()
+            initialized_identity = _sqlite_schema_identity(path, connection)
+        except Exception:
+            try:
+                connection.rollback()
+            except sqlite3.Error:
+                pass
+            raise
+
+        _SQLITE_SCHEMA_INIT_CACHE[cache_key] = initialized_identity
+        _SQLITE_SCHEMA_INIT_CACHE.move_to_end(cache_key)
+        while len(_SQLITE_SCHEMA_INIT_CACHE) > _SQLITE_SCHEMA_CACHE_MAX_PATHS:
+            _SQLITE_SCHEMA_INIT_CACHE.popitem(last=False)
+
+
+def _connect():
+    from app.db_connect import DbConnection, connect, uses_mysql
+
+    if uses_mysql():
+        candidate = connect()
+        if str(getattr(candidate, "dialect", "")) == "mysql":
+            return candidate
+        # MySQL may be configured while ``connect`` returns the explicitly
+        # enabled local SQLite fallback.  That fallback still needs the same
+        # bootstrap and migrations as a normal SQLite deployment; otherwise a
+        # fresh outage database has no reports/decision tables at all.
+        candidate.close()
+    path = _db_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(path)
+    connection.row_factory = sqlite3.Row
+    try:
+        _ensure_sqlite_schema_initialized(path, connection)
+    except Exception:
+        connection.close()
+        raise
     return DbConnection(connection, "sqlite")
 
 
@@ -430,12 +514,20 @@ def import_database_file(source: Path, *, backup_current: bool = True) -> dict[s
     if not source.exists():
         raise FileNotFoundError(f"数据库文件不存在：{source}")
 
-    backup_path: Path | None = None
-    if backup_current and target.exists():
-        backup_path = target.with_suffix(".db.bak")
-        backup_path.write_bytes(target.read_bytes())
+    with _SQLITE_SCHEMA_INIT_LOCK:
+        # ``write_bytes`` replaces the contents in place, so st_dev/st_ino may
+        # remain unchanged. Explicit invalidation guarantees that the imported
+        # schema receives the complete bootstrap on its next connection.
+        _clear_sqlite_schema_init_cache(target)
+        backup_path: Path | None = None
+        if backup_current and target.exists():
+            backup_path = target.with_suffix(".db.bak")
+            backup_path.write_bytes(target.read_bytes())
 
-    target.write_bytes(source.read_bytes())
+        try:
+            target.write_bytes(source.read_bytes())
+        finally:
+            _clear_sqlite_schema_init_cache(target)
     return {
         "imported_from": str(source),
         "target": str(target),
@@ -1266,7 +1358,7 @@ def save_fund_primary_sector(
             ),
         )
         connection.commit()
-    return get_fund_primary_sector(code) or {
+    return {
         "fund_code": code,
         "sector_name": sector_name,
         "intraday_index_name": intraday_index_name,
@@ -1416,7 +1508,7 @@ def save_fund_primary_sector_global(
             ),
         )
         connection.commit()
-    return get_fund_primary_sector_global(code) or {
+    return {
         "fund_code": code,
         "sector_name": sector_name,
         "intraday_index_name": intraday_index_name,

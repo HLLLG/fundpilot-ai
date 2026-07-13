@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from collections import OrderedDict
 from collections.abc import Callable
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -29,7 +30,11 @@ _MIN_INTRADAY_POINTS_TO_CACHE = 30
 # 合并并发请求，避免详情页连打东财导致偶发空数据
 _INTRADAY_COALESCE_LOCK = threading.Lock()
 _INTRADAY_COALESCE_WAITERS: dict[str, threading.Event] = {}
-_INTRADAY_COALESCE_RESULT: dict[str, tuple[list[IntradayPoint], str | None, str | None, float | None]] = {}
+_INTRADAY_COALESCE_RESULT: OrderedDict[
+    str,
+    tuple[list[IntradayPoint], str | None, str | None, float | None],
+] = OrderedDict()
+_INTRADAY_COALESCE_RESULT_MAX_ENTRIES = 64
 
 
 def _is_complete_closed_intraday(points: list[IntradayPoint]) -> bool:
@@ -112,17 +117,29 @@ def _coalesce_intraday_fetch(
         event.wait(timeout=90.0)
         with _INTRADAY_COALESCE_LOCK:
             cached = _INTRADAY_COALESCE_RESULT.get(cache_key)
+            if cached is not None:
+                _INTRADAY_COALESCE_RESULT.move_to_end(cache_key)
         if cached is not None:
             return cached
         return loader()
 
     try:
         result = loader()
-    finally:
+    except BaseException:
         with _INTRADAY_COALESCE_LOCK:
-            _INTRADAY_COALESCE_RESULT[cache_key] = result
             _INTRADAY_COALESCE_WAITERS.pop(cache_key, None)
             event.set()
+        raise
+    with _INTRADAY_COALESCE_LOCK:
+        _INTRADAY_COALESCE_RESULT[cache_key] = result
+        _INTRADAY_COALESCE_RESULT.move_to_end(cache_key)
+        while (
+            len(_INTRADAY_COALESCE_RESULT)
+            > _INTRADAY_COALESCE_RESULT_MAX_ENTRIES
+        ):
+            _INTRADAY_COALESCE_RESULT.popitem(last=False)
+        _INTRADAY_COALESCE_WAITERS.pop(cache_key, None)
+        event.set()
     return result
 
 

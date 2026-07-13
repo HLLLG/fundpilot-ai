@@ -60,7 +60,7 @@ def test_non_trading_day_settles_official_nav_and_persists_without_refetch(monke
         "prime_official_nav_cache",
         lambda codes, date: primed.append((list(codes), date)) or {},
     )
-    monkeypatch.setattr(service, "get_profile_for_holding", lambda _holding: None)
+    monkeypatch.setattr(service, "list_fund_profiles", lambda: [])
     monkeypatch.setattr(service, "is_profit_accrual_deferred", lambda _profile: False)
 
     def _persist(holdings, *, fetched_at=None):
@@ -198,7 +198,7 @@ def test_portfolio_settlement_without_nav_skips_without_persistence(monkeypatch)
         return [holding], "snapshot", "2026-06-27", None
 
     monkeypatch.setattr(service, "_load_settlement_holdings", _load_settlement_holdings)
-    monkeypatch.setattr(service, "get_profile_for_holding", lambda _holding: None)
+    monkeypatch.setattr(service, "list_fund_profiles", lambda: [])
     monkeypatch.setattr(service, "is_profit_accrual_deferred", lambda _profile: False)
     monkeypatch.setattr(service, "get_official_nav_return", lambda _code, _date: None)
     monkeypatch.setattr(service, "prime_official_nav_cache", lambda *_args, **_kwargs: {})
@@ -222,6 +222,7 @@ def test_missing_official_nav_keeps_sector_estimate(monkeypatch):
     from app.services import official_nav_settlement as service
 
     holding = _holding()
+    monkeypatch.setattr(service, "list_fund_profiles", lambda: [])
     monkeypatch.setattr(service, "get_official_nav_return", lambda _code, _date: None)
 
     updated, count = service.settle_official_nav_for_holdings(
@@ -252,7 +253,7 @@ def test_deferred_holding_is_not_overwritten_by_official_nav(monkeypatch):
         "get_official_nav_return",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("nav should not be called")),
     )
-    monkeypatch.setattr(service, "get_profile_for_holding", lambda _holding: profile)
+    monkeypatch.setattr(service, "list_fund_profiles", lambda: [profile])
     monkeypatch.setattr(service, "is_profit_accrual_deferred", lambda _profile: True)
 
     updated, count = service.settle_official_nav_for_holdings(
@@ -264,6 +265,67 @@ def test_deferred_holding_is_not_overwritten_by_official_nav(monkeypatch):
     assert updated[0].daily_return_percent_source == "pending_accrual"
     assert updated[0].daily_return_percent == 0.0
     assert updated[0].daily_profit == 0.0
+
+
+def test_settlement_batches_profile_matches_without_point_queries(monkeypatch):
+    from app import database
+    from app.services import official_nav_settlement as service
+
+    profile = FundProfile(
+        fund_code="111111",
+        fund_name="Canonical Deferred Fund",
+        aliases=["Deferred Fund Alias"],
+        profit_accrual_deferred_until="2026-06-26",
+    )
+    profile_reads = 0
+    nav_calls: list[str] = []
+
+    def _list_profiles():
+        nonlocal profile_reads
+        profile_reads += 1
+        return [profile]
+
+    def _get_nav(code: str, _date: str) -> float:
+        nav_calls.append(code)
+        return 1.25
+
+    monkeypatch.setattr(service, "list_fund_profiles", _list_profiles)
+    monkeypatch.setattr(service, "get_official_nav_return", _get_nav)
+    monkeypatch.setattr(
+        service,
+        "is_profit_accrual_deferred",
+        lambda item: bool(item and item.profit_accrual_deferred_until),
+    )
+    monkeypatch.setattr(
+        database,
+        "get_fund_profile_by_code",
+        lambda _code: (_ for _ in ()).throw(AssertionError("point profile query")),
+    )
+    holdings = [
+        _holding(fund_code="111111", fund_name="Canonical Deferred Fund"),
+        _holding(fund_code="111111", fund_name="Duplicate Code Row"),
+        _holding(fund_code="999999", fund_name="Deferred Fund Alias"),
+        _holding(fund_code="222222", fund_name="No Profile Fund"),
+        _holding(fund_code="000000", fund_name="Placeholder Fund"),
+    ]
+
+    updated, count = service.settle_official_nav_for_holdings(
+        holdings,
+        settlement_date="2026-06-26",
+    )
+
+    assert profile_reads == 1
+    assert nav_calls == ["222222"]
+    assert count == 1
+    assert [item.daily_return_percent_source for item in updated] == [
+        "sector_estimate",
+        "sector_estimate",
+        "sector_estimate",
+        "official_nav",
+        "sector_estimate",
+    ]
+    assert updated[3].daily_return_percent == 1.25
+    assert updated[3].daily_profit == 125.0
 
 
 def test_overlay_sector_fields_preserves_official_nav_daily_fields_without_sector_return():

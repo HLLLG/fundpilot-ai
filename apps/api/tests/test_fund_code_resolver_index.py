@@ -5,6 +5,7 @@ from app.services.fund_code_resolver import (
     clear_all_fund_name_table_caches,
     lookup_fund_code_by_name,
     lookup_fund_name_by_code,
+    preload_fund_name_table,
     search_funds_by_keyword,
 )
 
@@ -13,6 +14,63 @@ def _install_table(table: list[tuple[str, str]]) -> None:
     clear_all_fund_name_table_caches()
     fcr._fund_name_table_cache = table
     fcr._fund_name_index_cache = None
+
+
+def test_preload_fund_name_table_builds_index_once(monkeypatch):
+    _install_table(
+        [
+            ("025857", "华夏中证电网设备主题ETF联接C"),
+            ("026790", "中欧上证科创板人工智能指数C"),
+        ]
+    )
+    original = fcr._build_fund_name_index
+    build_calls = 0
+
+    def tracked_build(table):
+        nonlocal build_calls
+        build_calls += 1
+        return original(table)
+
+    monkeypatch.setattr(fcr, "_build_fund_name_index", tracked_build)
+
+    preload_fund_name_table()
+    preload_fund_name_table()
+
+    assert build_calls == 1
+    assert fcr._fund_name_index_cache is not None
+
+
+def test_cached_fund_name_index_does_not_rescan_source_table():
+    class IterationCountingTable(list):
+        iterations = 0
+
+        def __iter__(self):
+            self.iterations += 1
+            return super().__iter__()
+
+    table = IterationCountingTable(
+        [
+            ("025857", "华夏中证电网设备主题ETF联接C"),
+            ("026790", "中欧上证科创板人工智能指数C"),
+        ]
+    )
+    _install_table(table)
+    cached = fcr._fund_name_index()
+    table.iterations = 0
+
+    assert fcr._fund_name_index() is cached
+    assert table.iterations == 0
+
+
+def test_fund_name_index_rebuilds_when_source_table_is_replaced():
+    _install_table([("025857", "华夏中证电网设备主题ETF联接C")])
+    first = fcr._fund_name_index()
+    fcr._fund_name_table_cache = [("026790", "中欧上证科创板人工智能指数C")]
+
+    rebuilt = fcr._fund_name_index()
+
+    assert rebuilt is not first
+    assert rebuilt.by_code == {"026790": "中欧上证科创板人工智能指数C"}
 
 
 def test_lookup_fund_code_exact_match_via_index():

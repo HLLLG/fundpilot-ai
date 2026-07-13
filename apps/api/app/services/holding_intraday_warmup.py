@@ -5,16 +5,16 @@ import threading
 import time
 
 from app.config import get_settings
-from app.database import get_fund_profile_by_code
 from app.models import Holding, PortfolioSummary, SectorQuoteMeta
 from app.request_context import reset_request_user_id, set_request_user_id
 from app.services.fund_nav_cache import warm_fund_nav
+from app.services.fund_profile import FundProfileService
 from app.services.holding_detail_cache import (
     get_cached_holding_detail,
     holding_detail_fingerprint,
     save_cached_holding_detail,
 )
-from app.services.holding_detail_service import build_holding_detail
+from app.services.holding_detail_service import HoldingDetailDataContext, build_holding_detail
 from app.services.portfolio_profit_analysis import _resolve_intraday_for_holding
 from app.services.sector_intraday_provider import fetch_sector_intraday
 from app.services.trading_session import build_trading_session
@@ -24,6 +24,8 @@ logger = logging.getLogger(__name__)
 _WARMUP_LOCK = threading.Lock()
 _LAST_WARMUP_AT: dict[str, float] = {}
 _MIN_WARMUP_INTERVAL_SECONDS = 120.0
+_WARMUP_STATE_TTL_SECONDS = 3600.0
+_MAX_WARMUP_KEYS = 1024
 _DETAIL_NAV_TRADING_DAYS = 252
 
 
@@ -39,14 +41,27 @@ def collect_unique_fund_codes(holdings: list[Holding]) -> list[str]:
     return ordered
 
 
-def collect_intraday_queries(holdings: list[Holding]) -> list[tuple[str, str]]:
+def collect_intraday_queries(
+    holdings: list[Holding],
+    *,
+    data_context: HoldingDetailDataContext | None = None,
+) -> list[tuple[str, str]]:
     """去重后的 (source_type, source_name) 列表，供后台预热板块分时。"""
+    eligible = [
+        holding
+        for holding in holdings
+        if holding.fund_code and holding.fund_code != "000000"
+    ]
+    if not eligible:
+        return []
+
+    context = data_context or HoldingDetailDataContext()
+    context.preload_profiles()
+    profile_service = FundProfileService()
     seen: set[tuple[str, str]] = set()
     ordered: list[tuple[str, str]] = []
-    for holding in holdings:
-        if not holding.fund_code or holding.fund_code == "000000":
-            continue
-        profile = get_fund_profile_by_code(holding.fund_code)
+    for holding in eligible:
+        profile = context.find_profile(holding, profile_service)
         query = _resolve_intraday_for_holding(holding, profile)
         if query is None:
             continue
@@ -83,14 +98,23 @@ def warm_fund_nav_histories(
     return warmed
 
 
-def warm_holdings_intraday(holdings: list[Holding], *, user_key: str = "global") -> int:
+def warm_holdings_intraday(
+    holdings: list[Holding],
+    *,
+    user_key: str = "global",
+    data_context: HoldingDetailDataContext | None = None,
+) -> int:
     """Best-effort 预热持仓关联板块分时（走服务端全局 intraday 缓存，非 force_refresh）。"""
     if not get_settings().sector_quotes_enabled:
         return 0
     if not holdings:
         return 0
 
-    queries = collect_intraday_queries(holdings)
+    try:
+        queries = collect_intraday_queries(holdings, data_context=data_context)
+    except Exception:  # noqa: BLE001
+        logger.debug("intraday profile preload failed", exc_info=True)
+        return 0
     if not queries:
         return 0
 
@@ -122,6 +146,7 @@ def warm_holding_details(
     user_id: int,
     portfolio_summary: PortfolioSummary | None = None,
     sector_quote_meta: SectorQuoteMeta | None = None,
+    data_context: HoldingDetailDataContext | None = None,
 ) -> int:
     """Best-effort 预热用户级 holding detail 缓存。"""
     if not holdings:
@@ -130,6 +155,7 @@ def warm_holding_details(
     token = set_request_user_id(user_id)
     warmed = 0
     try:
+        pending: list[tuple[int, Holding, str]] = []
         for index, holding in enumerate(holdings):
             if not holding.fund_code or holding.fund_code == "000000":
                 continue
@@ -139,12 +165,35 @@ def warm_holding_details(
             )
             if get_cached_holding_detail(holding.fund_code, fingerprint) is not None:
                 continue
+            pending.append((index, holding, fingerprint))
+
+        if not pending:
+            return 0
+
+        context = data_context or HoldingDetailDataContext()
+        try:
+            context.preload_profiles()
+        except Exception:  # noqa: BLE001
+            logger.debug("holding detail profile preload failed", exc_info=True)
+        try:
+            context.preload_primary_sectors(holdings)
+        except Exception:  # noqa: BLE001
+            logger.debug("holding detail primary-sector preload failed", exc_info=True)
+        try:
+            context.preload_snapshots()
+        except Exception:  # noqa: BLE001
+            logger.debug("holding detail snapshot preload failed", exc_info=True)
+
+        for index, holding, fingerprint in pending:
+            if get_cached_holding_detail(holding.fund_code, fingerprint) is not None:
+                continue
             try:
                 detail = build_holding_detail(
                     holdings,
                     index,
                     portfolio_summary=portfolio_summary,
                     sector_quote_meta=sector_quote_meta,
+                    data_context=context,
                 )
                 save_cached_holding_detail(
                     holding.fund_code,
@@ -173,20 +222,57 @@ def warm_holdings_cache(
     portfolio_summary: PortfolioSummary | None = None,
 ) -> dict[str, int]:
     """分时（基金级）+ 净值（基金级）+ 详情（用户级）三层预热。"""
-    nav_warmed = warm_fund_nav_histories(holdings)
-    intraday_warmed = warm_holdings_intraday(holdings, user_key=user_key)
-    detail_warmed = 0
-    if user_id is not None:
-        detail_warmed = warm_holding_details(
+    token = set_request_user_id(user_id) if user_id is not None else None
+    data_context = HoldingDetailDataContext()
+    try:
+        nav_warmed = warm_fund_nav_histories(holdings)
+        intraday_warmed = warm_holdings_intraday(
             holdings,
-            user_id=user_id,
-            portfolio_summary=portfolio_summary,
+            user_key=user_key,
+            data_context=data_context,
         )
-    return {
-        "nav": nav_warmed,
-        "intraday": intraday_warmed,
-        "detail": detail_warmed,
-    }
+        detail_warmed = 0
+        if user_id is not None:
+            detail_warmed = warm_holding_details(
+                holdings,
+                user_id=user_id,
+                portfolio_summary=portfolio_summary,
+                data_context=data_context,
+            )
+        return {
+            "nav": nav_warmed,
+            "intraday": intraday_warmed,
+            "detail": detail_warmed,
+        }
+    finally:
+        if token is not None:
+            reset_request_user_id(token)
+
+
+def _prune_warmup_state(now: float, *, incoming_key: str) -> None:
+    stale_keys = [
+        key
+        for key, warmed_at in _LAST_WARMUP_AT.items()
+        if now - warmed_at >= _WARMUP_STATE_TTL_SECONDS
+    ]
+    for key in stale_keys:
+        _LAST_WARMUP_AT.pop(key, None)
+
+    capacity = max(1, _MAX_WARMUP_KEYS)
+    reserve = 0 if incoming_key in _LAST_WARMUP_AT else 1
+    overflow = len(_LAST_WARMUP_AT) + reserve - capacity
+    if overflow <= 0:
+        return
+    eviction_candidates = sorted(
+        (
+            (key, warmed_at)
+            for key, warmed_at in _LAST_WARMUP_AT.items()
+            if key != incoming_key
+        ),
+        key=lambda item: item[1],
+    )
+    for key, _warmed_at in eviction_candidates[:overflow]:
+        _LAST_WARMUP_AT.pop(key, None)
 
 
 def schedule_warm_holdings_intraday(
@@ -210,6 +296,7 @@ def schedule_warm_holdings_intraday(
 
     now = time.monotonic()
     with _WARMUP_LOCK:
+        _prune_warmup_state(now, incoming_key=key)
         last = _LAST_WARMUP_AT.get(key, 0.0)
         session = build_trading_session()
         interval = _MIN_WARMUP_INTERVAL_SECONDS

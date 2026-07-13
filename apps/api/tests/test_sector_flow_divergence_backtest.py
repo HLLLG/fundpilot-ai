@@ -198,3 +198,53 @@ def test_build_sector_flow_divergence_backtest_caches_result(monkeypatch):
 
     assert first == second
     assert calls["count"] == 1  # 第二次应命中缓存，未重新拉取
+
+
+def test_backtest_cache_is_lru_bounded(monkeypatch):
+    from app.services import sector_flow_divergence_backtest as service
+
+    service._BACKTEST_CACHE.clear()
+    monkeypatch.setattr(service, "_BACKTEST_CACHE_MAX_ENTRIES", 2)
+    monkeypatch.setattr(service.time, "time", lambda: 100.0)
+    kline, flow = _build_known_signal_series(60)
+    calls: list[str] = []
+
+    def _fetch_kline(label):
+        calls.append(label)
+        return kline
+
+    monkeypatch.setattr(service, "_default_fetch_kline", _fetch_kline)
+    monkeypatch.setattr(service, "_default_fetch_flow", lambda _label: ("BK1036", flow))
+
+    for label in ("半导体", "芯片", "半导体", "算力"):
+        service.build_sector_flow_divergence_backtest(label, lookback_days=60)
+
+    assert calls == ["半导体", "芯片", "算力"]
+    assert list(service._BACKTEST_CACHE) == [
+        service._cache_key("半导体", 60),
+        service._cache_key("算力", 60),
+    ]
+
+
+def test_backtest_cache_prunes_expired_result(monkeypatch):
+    from app.services import sector_flow_divergence_backtest as service
+
+    service._BACKTEST_CACHE.clear()
+    now = [100.0]
+    monkeypatch.setattr(service.time, "time", lambda: now[0])
+    kline, flow = _build_known_signal_series(60)
+    calls = {"count": 0}
+
+    def _fetch_kline(_label):
+        calls["count"] += 1
+        return kline
+
+    monkeypatch.setattr(service, "_default_fetch_kline", _fetch_kline)
+    monkeypatch.setattr(service, "_default_fetch_flow", lambda _label: ("BK1036", flow))
+
+    service.build_sector_flow_divergence_backtest("半导体", lookback_days=60)
+    now[0] += service._BACKTEST_RESPONSE_TTL_SECONDS + 1
+    service.build_sector_flow_divergence_backtest("芯片", lookback_days=60)
+
+    assert calls["count"] == 2
+    assert list(service._BACKTEST_CACHE) == [service._cache_key("芯片", 60)]

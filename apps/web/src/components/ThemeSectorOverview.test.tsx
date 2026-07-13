@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ThemeSectorOverview } from "@/components/ThemeSectorOverview";
 import {
@@ -10,15 +10,24 @@ import {
   type BoardFlowHistoryResponse,
   type MarketThemeBoardResponse,
 } from "@/lib/api";
+import { installMatchMedia, type MatchMediaController } from "@/test/matchMedia";
+
+const DESKTOP_QUERY = "(min-width: 640px)";
+let matchMedia: MatchMediaController;
 
 vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
   return { ...actual, fetchBoardFlowHistory: vi.fn() };
 });
 
+beforeEach(() => {
+  matchMedia = installMatchMedia({ [DESKTOP_QUERY]: false });
+});
+
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  matchMedia.restore();
 });
 
 function themeData(): MarketThemeBoardResponse {
@@ -74,7 +83,7 @@ function flowHistory(): BoardFlowHistoryResponse {
 }
 
 describe("ThemeSectorOverview responsive presentation", () => {
-  it("renders complete mobile cards and a semantic sortable desktop table", async () => {
+  it("renders complete mobile cards without mounting the desktop table", () => {
     vi.mocked(fetchBoardFlowHistory).mockResolvedValue(flowHistory());
     const onViewDipFunds = vi.fn();
     const onAddFocusSector = vi.fn();
@@ -92,7 +101,6 @@ describe("ThemeSectorOverview responsive presentation", () => {
     );
 
     const mobileList = screen.getByTestId("theme-sector-mobile-list");
-    expect(mobileList).toHaveClass("sm:hidden");
     const mobileCard = within(mobileList).getByTestId("theme-sector-mobile-card-半导体");
     expect(within(mobileCard).getByText("半导体")).toBeInTheDocument();
     expect(within(mobileCard).getByText("今日")).toBeInTheDocument();
@@ -107,9 +115,22 @@ describe("ThemeSectorOverview responsive presentation", () => {
     fireEvent.click(within(mobileCard).getByRole("button", { name: "加关注" }));
     expect(onViewDipFunds).toHaveBeenCalledWith("半导体");
     expect(onAddFocusSector).toHaveBeenCalledWith("半导体");
+    expect(screen.queryByTestId("theme-sector-desktop-table")).not.toBeInTheDocument();
+  });
+
+  it("renders a semantic sortable desktop table without mounting mobile cards", async () => {
+    matchMedia.setMatches(DESKTOP_QUERY, true);
+    vi.mocked(fetchBoardFlowHistory).mockResolvedValue(flowHistory());
+    render(
+      <ThemeSectorOverview
+        data={themeData()}
+        loading={false}
+        revalidating={false}
+        onRefresh={vi.fn()}
+      />,
+    );
 
     const desktopWrapper = screen.getByTestId("theme-sector-desktop-table");
-    expect(desktopWrapper).toHaveClass("hidden", "sm:block");
     const table = within(desktopWrapper).getByRole("table", {
       name: /主题板块行情/,
     });
@@ -135,6 +156,36 @@ describe("ThemeSectorOverview responsive presentation", () => {
     expect(detailsId).toBeTruthy();
     expect(document.getElementById(detailsId ?? "")).toBeInTheDocument();
     await waitFor(() => expect(fetchBoardFlowHistory).toHaveBeenCalledTimes(1));
+    expect(screen.queryByTestId("theme-sector-mobile-list")).not.toBeInTheDocument();
+  });
+
+  it("preserves expanded history when switching from mobile to desktop", async () => {
+    vi.mocked(fetchBoardFlowHistory).mockResolvedValue(flowHistory());
+    render(
+      <ThemeSectorOverview
+        data={themeData()}
+        loading={false}
+        revalidating={false}
+        onRefresh={vi.fn()}
+      />,
+    );
+
+    const mobileCard = screen.getByTestId("theme-sector-mobile-card-半导体");
+    fireEvent.click(
+      within(mobileCard).getByRole("button", { name: "展开半导体资金详情" }),
+    );
+    await waitFor(() => expect(fetchBoardFlowHistory).toHaveBeenCalledTimes(1));
+    expect(await within(mobileCard).findByRole("img")).toBeInTheDocument();
+
+    act(() => matchMedia.setMatches(DESKTOP_QUERY, true));
+
+    expect(screen.queryByTestId("theme-sector-mobile-list")).not.toBeInTheDocument();
+    const desktopTable = screen.getByTestId("theme-sector-desktop-table");
+    expect(
+      within(desktopTable).getByRole("button", { name: "收起半导体资金详情" }),
+    ).toHaveAttribute("aria-expanded", "true");
+    expect(within(desktopTable).getByRole("img")).toBeInTheDocument();
+    expect(fetchBoardFlowHistory).toHaveBeenCalledTimes(1);
   });
 
   it("pages long mobile board lists instead of mounting every card at once", () => {

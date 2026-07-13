@@ -19,6 +19,12 @@ from app.services.holding_metrics import (
     compute_sector_fund_gap_percent,
     holding_daily_return_is_estimated,
 )
+from app.services.holding_profile_batch import (
+    MatchedProfilesArg,
+    PROFILES_NOT_PROVIDED,
+    ProfilesSnapshotArg,
+    resolve_matched_profiles,
+)
 from app.config import get_settings
 from app.services.decision_guard_shared import (
     ACTION_BUCKET_CLEAR_ALL,
@@ -44,8 +50,8 @@ from app.services.sector_signal_context import (
 from app.services.signal_guard_policy import resolve_signal_guard_policy
 from app.services.signal_synthesis import build_evidence_overview, build_holding_evidence
 from app.services.trading_session import get_effective_trade_date
-from app.services.risk import holding_weight_percent, resolve_weight_denominator
-from app.services.sector_intraday_summary import summarize_sector_intraday_for_holding
+from app.services.risk import resolve_weight_denominator
+from app.services.sector_intraday_summary import summarize_sector_intraday_for_label
 from app.services.pipeline_concurrency import run_with_request_user
 from app.services.sector_momentum import build_sector_momentum_context
 from app.services.sector_labels import normalize_sector_label
@@ -66,14 +72,15 @@ _ESCALATION_DEEP_REDUCE_THRESHOLD = ACTION_BUCKET_DEEP_REDUCE
 _ESCALATION_CLEAR_ALL_THRESHOLD = ACTION_BUCKET_CLEAR_ALL
 
 
-def _build_sector_intraday_map(holdings: list[Holding]) -> dict[str, dict]:
+def _build_sector_intraday_map(
+    quote_labels: list[str | None],
+) -> dict[str, dict]:
     """按板块 label 去重，复用全局 intraday 缓存。"""
     result: dict[str, dict] = {}
-    for holding in holdings:
-        label = sector_quote_lookup_label(holding)
+    for label in quote_labels:
         if not label or label in result:
             continue
-        summary = summarize_sector_intraday_for_holding(holding)
+        summary = summarize_sector_intraday_for_label(label)
         if summary is not None:
             result[label] = summary
     return result
@@ -339,7 +346,22 @@ def build_analysis_facts(
     risk_metrics: dict | None = None,
     for_llm: bool = False,
     budget_enhancements: bool = False,
+    profiles_snapshot: ProfilesSnapshotArg = PROFILES_NOT_PROVIDED,
+    matched_profiles: MatchedProfilesArg = PROFILES_NOT_PROVIDED,
 ) -> dict:
+    resolved_profiles = resolve_matched_profiles(
+        holdings,
+        profiles_snapshot=profiles_snapshot,
+        matched_profiles=matched_profiles,
+    )
+    quote_labels = [
+        sector_quote_lookup_label(holding, profile=holding_profile)
+        for holding, holding_profile in zip(
+            holdings,
+            resolved_profiles,
+            strict=True,
+        )
+    ]
     nav_trends = nav_trends_by_code or {}
     effective_trade_date = (
         str(session.get("effective_trade_date"))
@@ -347,7 +369,11 @@ def build_analysis_facts(
         else get_effective_trade_date()
     )
     total_amount = sum(item.holding_amount for item in holdings) or 0.0
-    weight_denominator = resolve_weight_denominator(holdings, profile)
+    weight_denominator = resolve_weight_denominator(
+        holdings,
+        profile,
+        actual_total=total_amount,
+    )
     snapshot_by_code = {item.fund_code: item for item in snapshots}
     sector_labels = sector_labels_from_holdings(holdings)
     stock_connect_flow = None
@@ -365,7 +391,7 @@ def build_analysis_facts(
             )
             intraday_future = _submit_enhancement(
                 executor,
-                lambda: _build_sector_intraday_map(holdings),
+                lambda: _build_sector_intraday_map(quote_labels),
             )
             stock_connect_flow_future = _submit_enhancement(
                 executor,
@@ -417,7 +443,7 @@ def build_analysis_facts(
     else:
         signal_backtest = build_signal_backtest_context(sector_labels)
         guard_policy = resolve_signal_guard_policy(holdings)
-        intraday_map = _build_sector_intraday_map(holdings)
+        intraday_map = _build_sector_intraday_map(quote_labels)
         try:
             sector_opportunity = build_holding_sector_opportunity_context(
                 holdings,
@@ -442,13 +468,22 @@ def build_analysis_facts(
 
     per_fund: list[dict] = []
     drawdown_limit = abs(profile.max_drawdown_percent)
-    for holding in holdings:
-        weight = holding_weight_percent(holding, holdings, profile)
+    for holding, holding_profile, quote_label in zip(
+        holdings,
+        resolved_profiles,
+        quote_labels,
+        strict=True,
+    ):
+        weight = (
+            holding.holding_amount / weight_denominator * 100
+            if weight_denominator > 0
+            else 0.0
+        )
         estimated_daily = compute_estimated_daily_return_percent(holding)
         display = (
             _build_budget_holding_display_metrics(holding)
             if budget_enhancements
-            else build_holding_display_metrics(holding)
+            else build_holding_display_metrics(holding, profile=holding_profile)
         )
         effective_return = float(display["estimated_holding_return_percent"] or 0)
         snapshot = snapshot_by_code.get(holding.fund_code)
@@ -470,7 +505,10 @@ def build_analysis_facts(
                 "daily_return_percent": holding.daily_return_percent,
                 "daily_return_percent_source": holding.daily_return_percent_source,
                 "estimated_daily_return_percent": estimated_daily,
-                "daily_return_is_estimated": holding_daily_return_is_estimated(holding),
+                "daily_return_is_estimated": holding_daily_return_is_estimated(
+                    holding,
+                    profile=holding_profile,
+                ),
                 "daily_profit": holding.daily_profit,
                 "holding_profit": holding.holding_profit,
                 "sector_name": holding.sector_name,
@@ -492,7 +530,7 @@ def build_analysis_facts(
                     holding,
                     nav_trends.get(holding.fund_code),
                 ),
-                "sector_intraday": intraday_map.get(sector_quote_lookup_label(holding) or ""),
+                "sector_intraday": intraday_map.get(quote_label or ""),
                 "sector_fund_flow": sector_flow_map.get(
                     normalize_sector_label(holding.sector_name)
                 ),
@@ -544,8 +582,11 @@ def build_analysis_facts(
             "为 true 时可作为「继续持有/适度加仓」的辅助论据，但仍需结合 evidence 与风险指标。"
             "sector_rotation.market_top 是当前全市场机会分最高的方向（不含已持有板块），"
             "仅用于提示「是否存在更强的轮动方向」，不得单独作为清仓已持仓位、追高换仓的理由。"
-            "market_breadth 是大盘情绪温度计：sentiment_level（冰点/低迷/中性/偏热/亢奋）基于"
-            "全市场创新高低家数近2年历史分布百分位自校准，可作为自上而下的风险论据；"
+            "market_breadth 是大盘情绪温度计：signal_mode=closing 时 sentiment_level 基于"
+            "全市场创新高低家数近2年历史分布百分位自校准；signal_mode=intraday 时基于"
+            "当日上涨/下跌/平盘及赚钱效应准实时计算，closing_* 字段仅为上一完整交易日背景。"
+            "只有 decision_eligible=true 且 freshness_status 非 stale 时才可支撑 hard guard；"
+            "否则只能作背景并明确数据时点。"
             "limit_up_count/limit_down_count/limit_up_broken_ratio_percent 仅为当日快照，"
             "不是历史回测结论，只能作辅助描述、不得单独据此下强结论。"
             "持仓的 flow_divergence_backtest 是该持仓板块「量价背离」信号的历史回测（区别于"

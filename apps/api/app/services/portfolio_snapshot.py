@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from collections import OrderedDict
 from datetime import date, datetime, timezone
 from threading import Lock
 
@@ -356,11 +357,22 @@ def build_factor_scores_payload(
     return asdict(result)
 
 
-_FACTOR_FACTS_CACHE: dict[str, tuple[float, dict]] = {}
+_FACTOR_FACTS_CACHE: OrderedDict[str, tuple[float, dict]] = OrderedDict()
 _FACTOR_FACTS_TTL_SECONDS = 3600
+_FACTOR_FACTS_CACHE_MAX_ENTRIES = 128
 _FACTOR_FACTS_KEYS = ("momentum", "risk_adjusted", "drawdown", "size")
 _FACTOR_FACTS_CACHE_LOCK = Lock()
 _FACTOR_FACTS_CACHE_GENERATION = 0
+
+
+def _prune_factor_facts_cache_locked(now: float) -> None:
+    expired = [
+        key
+        for key, (cached_at, _payload) in _FACTOR_FACTS_CACHE.items()
+        if now - cached_at >= _FACTOR_FACTS_TTL_SECONDS
+    ]
+    for key in expired:
+        _FACTOR_FACTS_CACHE.pop(key, None)
 
 
 def clear_factor_facts_cache() -> None:
@@ -456,10 +468,13 @@ def build_factor_scores_for_facts(
         now = time.time()
         with _FACTOR_FACTS_CACHE_LOCK:
             build_generation = _FACTOR_FACTS_CACHE_GENERATION
+            _prune_factor_facts_cache_locked(now)
             cached = None if injected else _FACTOR_FACTS_CACHE.get(cache_key)
+            if cached is not None:
+                _FACTOR_FACTS_CACHE.move_to_end(cache_key)
             payload = (
                 cached[1]
-                if cached and now - cached[0] < _FACTOR_FACTS_TTL_SECONDS
+                if cached is not None
                 else None
             )
 
@@ -474,7 +489,14 @@ def build_factor_scores_for_facts(
             if not injected:
                 with _FACTOR_FACTS_CACHE_LOCK:
                     if _FACTOR_FACTS_CACHE_GENERATION == build_generation:
+                        _prune_factor_facts_cache_locked(now)
                         _FACTOR_FACTS_CACHE[cache_key] = (now, payload)
+                        _FACTOR_FACTS_CACHE.move_to_end(cache_key)
+                        while (
+                            len(_FACTOR_FACTS_CACHE)
+                            > _FACTOR_FACTS_CACHE_MAX_ENTRIES
+                        ):
+                            _FACTOR_FACTS_CACHE.popitem(last=False)
 
         def compose(ic_context: dict) -> dict:
             state = str(ic_context.get("state") or "unavailable")

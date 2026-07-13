@@ -23,7 +23,7 @@ from app.models import (
     RiskAssessment,
     TopicBrief,
 )
-from app.services.analysis_runtime import AnalysisMode, AnalysisRuntime, resolve_analysis_runtime
+from app.services.analysis_runtime import AnalysisRuntime, resolve_analysis_runtime
 from app.services.analysis_payload import (
     AnalysisFactsBundle,
     append_output_requirements_to_system,
@@ -598,28 +598,6 @@ def _append_news_pipeline_caveats(
     return result
 
 
-def _user_payload(
-    request: AnalysisRequest,
-    risk: RiskAssessment,
-    snapshots: list[FundSnapshot],
-    prefetched_news: list[NewsItem],
-    topic_briefs: list[TopicBrief] | None = None,
-    nav_trends_by_code: dict[str, dict] | None = None,
-    *,
-    analysis_mode: AnalysisMode = "deep",
-) -> dict:
-    """Legacy alias; prefer build_user_payload from analysis_payload."""
-    return build_user_payload(
-        request,
-        risk,
-        snapshots,
-        prefetched_news,
-        topic_briefs,
-        nav_trends_by_code,
-        analysis_mode=analysis_mode,
-    )
-
-
 def _build_chat_payload(
     *,
     messages: list[dict],
@@ -677,32 +655,6 @@ def _execute_fetch_market_news(
             "items": [item.model_dump() for item in items],
         },
         ensure_ascii=False,
-    )
-
-
-def _build_payload(
-    request: AnalysisRequest,
-    risk: RiskAssessment,
-    snapshots: list[FundSnapshot],
-    model: str,
-    max_tokens: int,
-) -> dict:
-    """Legacy single-shot payload (tests)."""
-    return _build_chat_payload(
-        messages=[
-            {"role": "system", "content": _system_prompt(get_settings().news_enabled)},
-            {
-                "role": "user",
-                "content": json.dumps(
-                    _user_payload(request, risk, snapshots, []),
-                    ensure_ascii=False,
-                ),
-            },
-        ],
-        model=model,
-        max_tokens=max_tokens,
-        tools=None,
-        response_format={"type": "json_object"},
     )
 
 
@@ -957,28 +909,6 @@ def _append_pipeline_caveats(caveats: list[str], facts: dict) -> list[str]:
     if policy_reason and policy_reason not in result:
         result.append(str(policy_reason))
     return result
-
-
-def _format_decision_recommendation(
-    *,
-    fund_name: str,
-    action: str,
-    weight: float,
-    daily: str,
-    daily_return: str,
-    holding_profit: str,
-    holding_return: str,
-    sector: str,
-    sector_change: str,
-    fund_code: str,
-) -> str:
-    code_gap = "；需补全基金代码后核对净值/公告" if fund_code == "000000" else ""
-    return (
-        f"{fund_name}｜决策：{action}｜依据：仓位{weight:.1f}%，"
-        f"当日{daily}/{daily_return}，持有{holding_profit}/{holding_return}，"
-        f"板块{sector}{sector_change}｜触发：集中度、当日异动与持有收益背离复核"
-        f"｜风险：追涨、单一主题拥挤和数据缺口{code_gap}"
-    )
 
 
 def _offline_report(

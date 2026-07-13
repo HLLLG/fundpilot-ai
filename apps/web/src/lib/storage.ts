@@ -84,7 +84,7 @@ function saveUserScopedValue<T>(key: string, userId: UserStorageId, value: T): v
 export type AnalysisMode = "fast" | "deep";
 export type ReportChatMode = AnalysisMode;
 
-export const DEFAULT_EXPECTED_INVESTMENT_AMOUNT = 30_000;
+const DEFAULT_EXPECTED_INVESTMENT_AMOUNT = 30_000;
 
 export function normalizeInvestorProfile(
   raw: Partial<InvestorProfile> | null | undefined,

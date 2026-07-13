@@ -172,18 +172,3 @@ export function saveDipRadarSectorFilter(sector: string): void {
   }
   window.sessionStorage.setItem(DIP_RADAR_SECTOR_KEY, trimmed);
 }
-
-export function clearDipRadarSectorFilter(): void {
-  if (typeof window === "undefined") {
-    return;
-  }
-  window.sessionStorage.removeItem(DIP_RADAR_SECTOR_KEY);
-}
-
-export {
-  addDiscoveryFocusSector,
-  loadDiscoveryFocusSectors,
-  removeDiscoveryFocusSector,
-  saveDiscoveryFocusSectors,
-  toggleDiscoveryFocusSector,
-} from "@/lib/discoveryFocusSectors";

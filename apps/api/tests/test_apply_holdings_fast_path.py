@@ -17,12 +17,14 @@ def test_apply_confirmed_holdings_skips_network_bootstrap(monkeypatch):
         lambda *args, **kwargs: fetch_calls.__setitem__("nav", fetch_calls["nav"] + 1) or None,
     )
     monkeypatch.setattr(
-        "app.services.holding_amount_sync.get_fund_profile_by_code",
-        lambda _code: FundProfile(
-            fund_code="001234",
-            fund_name="测试基金混合A",
-            holding_shares=None,
-        ),
+        "app.services.holding_amount_sync.list_fund_profiles",
+        lambda: [
+            FundProfile(
+                fund_code="001234",
+                fund_name="测试基金混合A",
+                holding_shares=None,
+            )
+        ],
     )
     monkeypatch.setattr(
         "app.services.ocr_pipeline._finalize_confirmed_holdings",
@@ -100,6 +102,7 @@ def test_apply_confirmed_holdings_skips_nav_prime_when_ocr_has_official_daily(mo
             "StubProfileService",
             (),
             {
+                "list_profiles": lambda self: [],
                 "sync_profiles_from_holdings": lambda self, holdings: type(
                     "SyncResult", (), {"model_dump": lambda self: {"updated": 0, "created": 0}}
                 )(),

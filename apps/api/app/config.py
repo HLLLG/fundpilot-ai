@@ -149,6 +149,10 @@ class Settings(BaseSettings):
     # 大盘情绪温度计（M1.1）：新高/新低家数（可回测校准）+ 涨跌停/炸板（当日快照）+ 两融环比
     market_breadth_enabled: bool = True
     market_breadth_timeout_seconds: float = 4.0
+    # 盘中赚钱效应准实时刷新与硬守卫资格：默认 5 分钟刷新、10 分钟过期、开盘 5 分钟后才准入。
+    market_breadth_live_refresh_interval_seconds: int = 300
+    market_breadth_live_freshness_seconds: int = 600
+    market_breadth_live_guard_delay_minutes: int = 5
     # 量价背离信号回测（M1.3）
     flow_divergence_backtest_enabled: bool = True
     # M6：双向 guard 灰度开关。shadow（默认）——M2.1/M4 的升级判定只标注"若启用会被

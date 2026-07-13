@@ -3,14 +3,13 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+from collections import OrderedDict
 from collections.abc import Callable
+from threading import RLock
 from typing import Any
 
 from app.services.sector_daily_kline_provider import fetch_canonical_daily_kline_series
-from app.services.eastmoney_trends_client import (
-    DailyKlineBar,
-    fetch_eastmoney_daily_kline_series,
-)
+from app.services.eastmoney_trends_client import DailyKlineBar
 from app.services.sector_canonical import CanonicalSector, get_canonical_sector, list_canonical_sector_labels
 from app.services.sector_signal_rules import (
     SIGNAL_RULE_IDS,
@@ -20,7 +19,6 @@ from app.services.sector_signal_rules import (
 )
 from app.services.signal_backtest_stats import (
     EDGE_MIN_PERCENT,
-    FLAT_THRESHOLD as _FLAT_THRESHOLD,
     MIN_TRIGGERS_FOR_SIGNIFICANCE,
     baseline_prob as _baseline_prob,
     direction_fractions as _direction_fractions,
@@ -32,10 +30,41 @@ FetchSeriesFn = Callable[[str, str | None], list[DailyKlineBar]]
 
 _DEFAULT_RULES = ("reversal_down", "sector_weak", "intraday_pullback", "baseline_momentum")
 _BACKTEST_RESPONSE_TTL_SECONDS = 86400
-_BACKTEST_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+_BACKTEST_CACHE: OrderedDict[str, tuple[float, dict[str, Any]]] = OrderedDict()
+_BACKTEST_CACHE_MAX_ENTRIES = 128
+_BACKTEST_CACHE_LOCK = RLock()
 # 板块日 K 并发拉取上限：与 fund_data.py::_MAX_FETCH_WORKERS 同一量级（每板块是独立
 # HTTP/子进程 IO，并发压缩冷缓存耗时；上限避免一次拉太多板块打爆源站）。
 _SECTOR_SERIES_MAX_WORKERS = 8
+
+
+def _prune_backtest_cache_locked(now: float) -> None:
+    expired = [
+        key
+        for key, (cached_at, _result) in _BACKTEST_CACHE.items()
+        if now - cached_at >= _BACKTEST_RESPONSE_TTL_SECONDS
+    ]
+    for key in expired:
+        _BACKTEST_CACHE.pop(key, None)
+
+
+def _get_cached_backtest(cache_key: str, now: float) -> dict[str, Any] | None:
+    with _BACKTEST_CACHE_LOCK:
+        _prune_backtest_cache_locked(now)
+        cached = _BACKTEST_CACHE.get(cache_key)
+        if cached is None:
+            return None
+        _BACKTEST_CACHE.move_to_end(cache_key)
+        return cached[1]
+
+
+def _set_cached_backtest(cache_key: str, result: dict[str, Any], now: float) -> None:
+    with _BACKTEST_CACHE_LOCK:
+        _prune_backtest_cache_locked(now)
+        _BACKTEST_CACHE[cache_key] = (now, result)
+        _BACKTEST_CACHE.move_to_end(cache_key)
+        while len(_BACKTEST_CACHE) > _BACKTEST_CACHE_MAX_ENTRIES:
+            _BACKTEST_CACHE.popitem(last=False)
 
 
 def _fetch_series_concurrently(
@@ -87,9 +116,9 @@ def build_sector_signal_backtest(
     if fetch_series is None:
         cache_key = _backtest_cache_key(sector_labels, lookback_days, rules)
         now = time.time()
-        cached = _BACKTEST_CACHE.get(cache_key)
-        if cached is not None and now - cached[0] < _BACKTEST_RESPONSE_TTL_SECONDS:
-            return cached[1]
+        cached = _get_cached_backtest(cache_key, now)
+        if cached is not None:
+            return cached
     else:
         cache_key = None
 
@@ -101,7 +130,7 @@ def build_sector_signal_backtest(
             fetch_series=None,
         )
         if result.get("has_data"):
-            _BACKTEST_CACHE[cache_key] = (time.time(), result)
+            _set_cached_backtest(cache_key, result, time.time())
         return result
 
     return _build_sector_signal_backtest_impl(
@@ -222,16 +251,6 @@ def _resolve_sector_labels(sector_labels: list[str] | None) -> list[str]:
 
 def _default_fetch_series_for_canon(canon: CanonicalSector) -> list[DailyKlineBar]:
     return fetch_canonical_daily_kline_series(canon, max_days=400, timeout=10.0)
-
-
-def _default_fetch_series(secid: str, source_code: str | None) -> list[DailyKlineBar]:
-    return fetch_eastmoney_daily_kline_series(
-        secid,
-        source_code=source_code,
-        max_days=400,
-        timeout=10.0,
-        max_retries=1,
-    )
 
 
 def _filter_trading_days(

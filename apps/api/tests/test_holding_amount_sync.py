@@ -3,7 +3,11 @@
 import pytest
 
 from app.models import FundProfile, Holding
-from app.services.holding_amount_sync import sync_holding_amounts_from_shares
+from app.services.holding_amount_sync import (
+    bootstrap_holding_baselines,
+    resolve_display_settled_amount,
+    sync_holding_amounts_from_shares,
+)
 
 
 def _intraday_session(monkeypatch):
@@ -29,8 +33,8 @@ def test_intraday_does_not_roll_settled_when_shares_times_nav_drifts(monkeypatch
         holding_cost=8.5,
     )
     monkeypatch.setattr(
-        "app.services.holding_amount_sync.get_fund_profile_by_code",
-        lambda _code: profile,
+        "app.services.holding_amount_sync.list_fund_profiles",
+        lambda: [profile],
     )
     monkeypatch.setattr(
         "app.services.holding_amount_sync.get_latest_unit_nav",
@@ -65,8 +69,8 @@ def test_intraday_repairs_polluted_profile_holding_amount(monkeypatch):
         holding_shares=1000.0,
     )
     monkeypatch.setattr(
-        "app.services.holding_amount_sync.get_fund_profile_by_code",
-        lambda _code: profile,
+        "app.services.holding_amount_sync.list_fund_profiles",
+        lambda: [profile],
     )
     monkeypatch.setattr(
         "app.services.holding_amount_sync.get_latest_unit_nav",
@@ -127,8 +131,8 @@ def test_official_nav_published_rolls_settled(monkeypatch):
         holding_cost=8.5,
     )
     monkeypatch.setattr(
-        "app.services.holding_amount_sync.get_fund_profile_by_code",
-        lambda _code: profile,
+        "app.services.holding_amount_sync.list_fund_profiles",
+        lambda: [profile],
     )
     monkeypatch.setattr(
         "app.services.holding_amount_sync.get_latest_unit_nav",
@@ -182,8 +186,8 @@ def test_official_nav_rolls_settled_from_cached_return_without_unit_nav(monkeypa
         holding_cost=1.85,
     )
     monkeypatch.setattr(
-        "app.services.holding_amount_sync.get_fund_profile_by_code",
-        lambda _code: profile,
+        "app.services.holding_amount_sync.list_fund_profiles",
+        lambda: [profile],
     )
     monkeypatch.setattr(
         "app.services.holding_amount_sync.fetch_fund_estimate_quotes",
@@ -245,8 +249,8 @@ def test_official_nav_rolls_settled_forward_using_profile_cost_as_ground_truth(m
         holding_return_percent=4.26,
     )
     monkeypatch.setattr(
-        "app.services.holding_amount_sync.get_fund_profile_by_code",
-        lambda _code: profile,
+        "app.services.holding_amount_sync.list_fund_profiles",
+        lambda: [profile],
     )
     monkeypatch.setattr(
         "app.services.holding_amount_sync.fetch_fund_estimate_quotes",
@@ -302,8 +306,8 @@ def test_alipay_cost_profit_return_alignment(monkeypatch):
         holding_cost=1.85,
     )
     monkeypatch.setattr(
-        "app.services.holding_amount_sync.get_fund_profile_by_code",
-        lambda _code: profile,
+        "app.services.holding_amount_sync.list_fund_profiles",
+        lambda: [profile],
     )
     monkeypatch.setattr(
         "app.services.holding_amount_sync.fetch_fund_estimate_quotes",
@@ -365,8 +369,8 @@ def test_ocr_official_nav_amount_not_rolled_again(monkeypatch):
         profit_settled_trade_date="2026-06-26",
     )
     monkeypatch.setattr(
-        "app.services.holding_amount_sync.get_fund_profile_by_code",
-        lambda _code: profile,
+        "app.services.holding_amount_sync.list_fund_profiles",
+        lambda: [profile],
     )
     monkeypatch.setattr(
         "app.services.holding_amount_sync.fetch_fund_estimate_quotes",
@@ -434,8 +438,8 @@ def test_ocr_official_nav_amount_rolled_next_trading_day_despite_stale_amount_in
         profit_settled_trade_date="2026-06-26",
     )
     monkeypatch.setattr(
-        "app.services.holding_amount_sync.get_fund_profile_by_code",
-        lambda _code: profile,
+        "app.services.holding_amount_sync.list_fund_profiles",
+        lambda: [profile],
     )
     holding = Holding(
         fund_code="025856",
@@ -486,8 +490,8 @@ def test_official_nav_settlement_updates_holding_profit_across_multiple_days(mon
         holding_cost=9.804,
     )
     monkeypatch.setattr(
-        "app.services.holding_amount_sync.get_fund_profile_by_code",
-        lambda _code: profile,
+        "app.services.holding_amount_sync.list_fund_profiles",
+        lambda: [profile],
     )
 
     # day0：OCR 上传时刻的持有收益（196.0）。
@@ -586,8 +590,8 @@ def test_amount_includes_today_true_from_snapshot_does_not_freeze_settlement(mon
         holding_cost=9.804,
     )
     monkeypatch.setattr(
-        "app.services.holding_amount_sync.get_fund_profile_by_code",
-        lambda _code: profile,
+        "app.services.holding_amount_sync.list_fund_profiles",
+        lambda: [profile],
     )
 
     # 模拟：上一次 OCR 确认写入快照时 amount_includes_today 被设为 True，
@@ -605,3 +609,227 @@ def test_amount_includes_today_true_from_snapshot_does_not_freeze_settlement(mon
 
     # 新交易日官方净值 +2.0% 已公布，结算金额应该反映它，不应永久停在昨天的 10000。
     assert synced.settled_holding_amount != pytest.approx(10000.0, abs=0.01)
+
+
+def test_batch_paths_load_profiles_once_without_point_queries(monkeypatch):
+    profiles = [
+        FundProfile(
+            fund_code="001111",
+            fund_name="基金一",
+            holding_shares=100.0,
+            settled_holding_amount=100.0,
+        ),
+        FundProfile(
+            fund_code="002222",
+            fund_name="基金二",
+            holding_shares=200.0,
+            settled_holding_amount=200.0,
+        ),
+    ]
+    list_calls = 0
+
+    def list_profiles():
+        nonlocal list_calls
+        list_calls += 1
+        return profiles
+
+    monkeypatch.setattr(
+        "app.services.holding_amount_sync.list_fund_profiles",
+        list_profiles,
+    )
+    monkeypatch.setattr(
+        "app.services.holding_amount_sync.get_fund_profile_by_code",
+        lambda _code: (_ for _ in ()).throw(AssertionError("batch path used point query")),
+    )
+    holdings = [
+        Holding(fund_code="001111", fund_name="基金一", holding_amount=100.0),
+        Holding(fund_code="002222", fund_name="基金二", holding_amount=200.0),
+    ]
+
+    bootstrap_holding_baselines(
+        holdings,
+        estimate_quotes={},
+        persist_profiles=False,
+        skip_network=True,
+    )
+    assert list_calls == 1
+
+    monkeypatch.setattr(
+        "app.services.fund_nav_service.prime_official_nav_cache",
+        lambda *_args, **_kwargs: {},
+    )
+    monkeypatch.setattr(
+        "app.services.holding_amount_sync.get_effective_trade_date",
+        lambda: "2026-07-13",
+    )
+    monkeypatch.setattr(
+        "app.services.holding_amount_sync.get_cached_official_nav_return",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "app.services.holding_amount_sync.get_latest_unit_nav",
+        lambda *_args, **_kwargs: None,
+    )
+    sync_holding_amounts_from_shares(
+        holdings,
+        estimate_quotes={},
+        persist_profiles=False,
+        allow_nav_fetch=False,
+    )
+    assert list_calls == 2
+
+
+def test_bootstrap_batch_reuses_saved_profile_for_duplicate_code(monkeypatch):
+    profile = FundProfile(
+        fund_code="001111",
+        fund_name="原名称",
+        holding_shares=100.0,
+    )
+    saved: list[FundProfile] = []
+
+    monkeypatch.setattr(
+        "app.services.holding_amount_sync.list_fund_profiles",
+        lambda: [profile],
+    )
+
+    def save_profile(current: FundProfile) -> FundProfile:
+        saved.append(current)
+        if len(saved) == 1:
+            return current.model_copy(update={"fund_name": "已回写名称"})
+        return current
+
+    monkeypatch.setattr(
+        "app.services.holding_amount_sync.save_fund_profile",
+        save_profile,
+    )
+    holdings = [
+        Holding(
+            fund_code="001111",
+            fund_name="基金一",
+            holding_amount=100.0,
+            holding_profit=10.0,
+        ),
+        Holding(fund_code="001111", fund_name="基金一", holding_amount=200.0),
+    ]
+
+    bootstrap_holding_baselines(
+        holdings,
+        estimate_quotes={},
+        skip_network=True,
+    )
+
+    assert len(saved) == 2
+    assert saved[1].fund_name == "已回写名称"
+    assert saved[1].holding_profit == 10.0
+
+
+def test_sync_batch_reuses_saved_profile_for_duplicate_code(monkeypatch):
+    profile = FundProfile(
+        fund_code="001111",
+        fund_name="原名称",
+        holding_shares=100.0,
+        settled_holding_amount=100.0,
+    )
+    saved: list[FundProfile] = []
+
+    monkeypatch.setattr(
+        "app.services.holding_amount_sync.list_fund_profiles",
+        lambda: [profile],
+    )
+    monkeypatch.setattr(
+        "app.services.fund_nav_service.prime_official_nav_cache",
+        lambda *_args, **_kwargs: {},
+    )
+    monkeypatch.setattr(
+        "app.services.holding_amount_sync.get_effective_trade_date",
+        lambda: "2026-07-13",
+    )
+    monkeypatch.setattr(
+        "app.services.holding_amount_sync.get_cached_official_nav_return",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "app.services.holding_amount_sync.get_latest_unit_nav",
+        lambda *_args, **_kwargs: None,
+    )
+
+    def save_profile(current: FundProfile) -> FundProfile:
+        saved.append(current)
+        if len(saved) == 1:
+            return current.model_copy(update={"fund_name": "已回写名称"})
+        return current
+
+    monkeypatch.setattr(
+        "app.services.holding_amount_sync.save_fund_profile",
+        save_profile,
+    )
+    holdings = [
+        Holding(
+            fund_code="001111",
+            fund_name="基金一",
+            holding_amount=100.0,
+            settled_holding_amount=100.0,
+        ),
+        Holding(
+            fund_code="001111",
+            fund_name="基金一",
+            holding_amount=100.0,
+            settled_holding_amount=100.0,
+        ),
+    ]
+
+    sync_holding_amounts_from_shares(
+        holdings,
+        estimate_quotes={},
+        allow_nav_fetch=False,
+    )
+
+    assert len(saved) == 2
+    assert saved[1].fund_name == "已回写名称"
+
+
+def test_empty_batch_paths_do_not_load_profiles(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.holding_amount_sync.list_fund_profiles",
+        lambda: (_ for _ in ()).throw(AssertionError("empty batch queried profiles")),
+    )
+
+    assert bootstrap_holding_baselines([]) == []
+    assert sync_holding_amounts_from_shares([]) == []
+
+    placeholder = Holding(
+        fund_code="000000",
+        fund_name="待匹配基金",
+        holding_amount=0.0,
+    )
+    assert bootstrap_holding_baselines(
+        [placeholder],
+        estimate_quotes={},
+        skip_network=True,
+    )
+    assert sync_holding_amounts_from_shares(
+        [placeholder],
+        estimate_quotes={},
+        allow_nav_fetch=False,
+    ) == [placeholder]
+
+
+def test_resolve_display_settled_amount_keeps_single_point_lookup(monkeypatch):
+    profile = FundProfile(
+        fund_code="001111",
+        fund_name="基金一",
+        settled_holding_amount=88.0,
+    )
+    point_queries: list[str] = []
+    monkeypatch.setattr(
+        "app.services.holding_amount_sync.get_fund_profile_by_code",
+        lambda code: point_queries.append(code) or profile,
+    )
+    monkeypatch.setattr(
+        "app.services.holding_amount_sync.list_fund_profiles",
+        lambda: (_ for _ in ()).throw(AssertionError("single path used batch query")),
+    )
+    holding = Holding(fund_code="001111", fund_name="基金一", holding_amount=100.0)
+
+    assert resolve_display_settled_amount(holding) == 88.0
+    assert point_queries == ["001111"]

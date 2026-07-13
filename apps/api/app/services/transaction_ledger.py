@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from datetime import date, datetime, timedelta, timezone
+from typing import TYPE_CHECKING
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
@@ -13,8 +14,8 @@ from app.database import (
     _insert_fund_transaction_on_connection,
     _list_fund_transactions_on_connection,
     _update_fund_transaction_on_connection,
-    get_fund_profile_by_code,
     insert_fund_transaction,
+    list_fund_profiles,
     list_fund_transactions,
     list_pending_fund_transactions,
     save_fund_profile,
@@ -29,6 +30,9 @@ from app.services.portfolio_ledger_service import (
     ensure_primary_position_store,
     transaction_ledger_event_from_fund_transaction,
 )
+
+if TYPE_CHECKING:
+    from app.services.fund_profile import FundProfileService
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +155,7 @@ def compute_effective_shares_map(
     fund_codes: list[str],
     *,
     as_of_date: str | None = None,
+    profiles_by_code: dict[str, FundProfile] | None = None,
 ) -> dict[str, float]:
     """对每个有 profile 且 holding_shares 非空的 code，计算有效份额。
 
@@ -159,19 +164,38 @@ def compute_effective_shares_map(
     用 confirm_date > baseline_date 过滤：重传总览（基线日前移）后早于基线的交易
     自动不再叠加，避免双重计数。返回值 ≤ 0 表示已清仓。
     """
-    result: dict[str, float] = {}
+    codes = {code for code in fund_codes if code and code != "000000"}
+    if not codes:
+        return {}
+
     cutoff_date = as_of_date or _current_china_date().isoformat()
-    for code in {c for c in fund_codes if c and c != "000000"}:
-        profile = get_fund_profile_by_code(code)
-        if profile is None or profile.holding_shares is None:
+    if profiles_by_code is None:
+        profiles = {
+            profile.fund_code: profile
+            for profile in list_fund_profiles()
+            if profile.fund_code in codes and profile.holding_shares is not None
+        }
+    else:
+        profiles = {
+            code: profile
+            for code in codes
+            if (profile := profiles_by_code.get(code)) is not None
+            and profile.holding_shares is not None
+        }
+    effective_by_code = {
+        code: float(profile.holding_shares)
+        for code, profile in profiles.items()
+    }
+    for tx in list_fund_transactions():
+        profile = profiles.get(tx.fund_code or "")
+        if profile is None or tx.status != "confirmed" or tx.shares_delta is None:
             continue
         baseline_date = profile.shares_baseline_date or _MIN_BASELINE_DATE
-        effective = profile.holding_shares
-        for tx in list_fund_transactions(fund_code=code):
-            if tx.status != "confirmed" or tx.shares_delta is None:
-                continue
-            if baseline_date < tx.confirm_date <= cutoff_date:
-                effective += tx.shares_delta
+        if baseline_date < tx.confirm_date <= cutoff_date:
+            effective_by_code[profile.fund_code] += tx.shares_delta
+
+    result: dict[str, float] = {}
+    for code, effective in effective_by_code.items():
         # User-confirmed shares are persisted to six decimal places.  The
         # compatibility read model must not throw four of those decimals away;
         # only legacy amount/NAV-derived transactions are intentionally rounded
@@ -375,7 +399,13 @@ def _pending_transaction(
     )
 
 
-def _ensure_buy_profile(item: ParsedTransaction, *, confirm_date: str) -> None:
+def _ensure_buy_profile(
+    item: ParsedTransaction,
+    *,
+    confirm_date: str,
+    profiles_by_code: dict[str, FundProfile],
+    profile_service: FundProfileService,
+) -> None:
     """Create or heal the compatibility profile for a newly bought fund.
 
     The transaction and ledger commit before this compatibility write.  An
@@ -387,12 +417,13 @@ def _ensure_buy_profile(item: ParsedTransaction, *, confirm_date: str) -> None:
     if (
         item.direction != "buy"
         or not item.fund_code
-        or get_fund_profile_by_code(item.fund_code) is not None
+        or item.fund_code in profiles_by_code
     ):
         return
-    from app.services.fund_profile import FundProfileService
 
-    FundProfileService().save_profile(
+    # FundProfileService preserves provisional-name reconciliation and
+    # primary-sector side effects while the shared snapshot avoids point reads.
+    profile_service.save_profile(
         FundProfile(
             fund_code=item.fund_code,
             fund_name=item.fund_name,
@@ -401,26 +432,37 @@ def _ensure_buy_profile(item: ParsedTransaction, *, confirm_date: str) -> None:
             shares_baseline_date=_previous_day(confirm_date),
             source="alipay-transaction",
             is_provisional=True,
-        )
+        ),
+        batch_profiles_by_code=profiles_by_code,
     )
+    # save_profile invalidates its own cache. Re-prime it with the now-current
+    # batch snapshot so the next distinct code still avoids a full-table read.
+    profile_service._profiles_cache = list(profiles_by_code.values())
 
 
-def _seed_amounts_for_new_positions(fund_codes: list[str]) -> None:
+def _seed_amounts_for_new_positions(
+    fund_codes: list[str],
+    profiles_by_code: dict[str, FundProfile],
+) -> None:
     """给全新建仓（holding_amount=0）的基金按有效份额 × 最新净值写入初始金额，
     使其能进入 merge_holdings_with_profiles 展示；精确金额随后由 sync override 重算。"""
-    effective_map = compute_effective_shares_map(fund_codes)
+    effective_map = compute_effective_shares_map(
+        fund_codes,
+        profiles_by_code=profiles_by_code,
+    )
     for code, effective in effective_map.items():
         if effective <= 0:
             continue
-        profile = get_fund_profile_by_code(code)
+        profile = profiles_by_code.get(code)
         if profile is None or (profile.holding_amount or 0) > 0:
             continue
         nav = get_latest_unit_nav(code)
         if nav is None or nav <= 0:
             continue
-        save_fund_profile(
+        saved = save_fund_profile(
             profile.model_copy(update={"holding_amount": round(effective * nav, 2)})
         )
+        profiles_by_code[saved.fund_code] = saved
 
 
 def apply_parsed_transactions(parsed: list[ParsedTransaction]) -> dict:
@@ -438,6 +480,16 @@ def apply_parsed_transactions(parsed: list[ParsedTransaction]) -> dict:
         key=lambda row: row[2],
     )
     processed: list[tuple[ParsedTransaction, str, bool]] = []
+
+    # One mutable snapshot serves profile existence checks, profile creation,
+    # effective-share folding, and amount seeding for the entire transaction
+    # batch. Empty/invalid batches keep the zero-query fast path.
+    profiles = list_fund_profiles() if valid_items else []
+    profiles_by_code = {profile.fund_code: profile for profile in profiles}
+    from app.services.fund_profile import FundProfileService
+
+    profile_service = FundProfileService()
+    profile_service._profiles_cache = profiles
 
     if insert_fund_transaction is not _ORIGINAL_INSERT_FUND_TRANSACTION:
         # Compatibility seam used by unit tests and external adapters.
@@ -512,7 +564,12 @@ def apply_parsed_transactions(parsed: list[ParsedTransaction]) -> dict:
         # This compatibility repair is intentionally executed for exact
         # duplicates too: the prior attempt may have committed the ledger and
         # then failed while creating the provisional profile.
-        _ensure_buy_profile(item, confirm_date=confirm_date)
+        _ensure_buy_profile(
+            item,
+            confirm_date=confirm_date,
+            profiles_by_code=profiles_by_code,
+            profile_service=profile_service,
+        )
 
         if not was_inserted:
             skipped += 1
@@ -520,7 +577,10 @@ def apply_parsed_transactions(parsed: list[ParsedTransaction]) -> dict:
         inserted += 1
 
     confirm_pending_transactions()
-    _seed_amounts_for_new_positions([item.fund_code for item in parsed if item.fund_code])
+    _seed_amounts_for_new_positions(
+        [item.fund_code for item in parsed if item.fund_code],
+        profiles_by_code,
+    )
 
     from app.services.portfolio_holdings_service import sync_portfolio_from_profiles
 

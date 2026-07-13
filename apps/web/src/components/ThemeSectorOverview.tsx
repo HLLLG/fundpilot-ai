@@ -10,6 +10,7 @@ import type {
   MarketThemeBoardResponse,
 } from "@/lib/api";
 import { fetchBoardFlowHistory } from "@/lib/api";
+import { useMediaQuery } from "@/lib/useMediaQuery";
 import {
   boardKindClass,
   formatBoardKindLabel,
@@ -41,6 +42,7 @@ type ThemeSectorOverviewProps = {
 
 const FLOW_HISTORY_LOAD_FAILED = "历史资金流加载失败";
 const MOBILE_PAGE_SIZE = 10;
+const DESKTOP_QUERY = "(min-width: 640px)";
 
 function flowHistoryCacheId(label: string, boardCode?: string | null) {
   return `${label}:${boardCode ?? ""}`;
@@ -339,6 +341,7 @@ export function ThemeSectorOverview({
   const [sortColumn, setSortColumn] = useState<ThemeSortColumn>("change");
   const [sortDirection, setSortDirection] = useState<ThemeSortDirection>("desc");
   const [mobileVisibleCount, setMobileVisibleCount] = useState(MOBILE_PAGE_SIZE);
+  const isDesktop = useMediaQuery(DESKTOP_QUERY);
   const showData = isMarketThemeBoardUsable(data);
 
   useEffect(() => {
@@ -477,8 +480,8 @@ export function ThemeSectorOverview({
         ) : !showData ? (
           <p className="py-8 text-center text-sm text-slate-500">{data?.message ?? "暂无主题板块数据"}</p>
         ) : (
-          <>
-            <div className="space-y-3 sm:hidden" data-testid="theme-sector-mobile-list">
+          !isDesktop ? (
+            <div className="space-y-3" data-testid="theme-sector-mobile-list">
               {mobileItems.map((item, index) => {
                 const expandable = hasThemeFlowDetail(item);
                 const expanded = expandedItem?.label === item.sector_label;
@@ -597,7 +600,8 @@ export function ThemeSectorOverview({
               ) : null}
             </div>
 
-            <div className="hidden overflow-x-auto sm:block" data-testid="theme-sector-desktop-table">
+          ) : (
+            <div className="overflow-x-auto" data-testid="theme-sector-desktop-table">
               <table className="w-full min-w-[560px] text-sm">
                 <caption className="sr-only">主题板块行情，可按今日、5日和主力净流入排序</caption>
                 <thead>
@@ -735,7 +739,7 @@ export function ThemeSectorOverview({
                 </tbody>
               </table>
             </div>
-          </>
+          )
         )}
       </div>
     </section>

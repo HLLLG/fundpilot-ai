@@ -11,6 +11,13 @@ from app.services.fund_profile import (
 from app.services.sector_labels import infer_sector_label_from_fund_name, normalize_sector_label
 
 
+class _ProfileNotProvided:
+    pass
+
+
+_PROFILE_NOT_PROVIDED = _ProfileNotProvided()
+
+
 def _profile_index_quote_label(profile: FundProfile | None) -> str | None:
     """档案 OCR「场内指数 + 关联板块」双字段时，涨跌口径走指数名。"""
     if profile is None or not profile.intraday_index_name:
@@ -37,7 +44,7 @@ def sector_quote_lookup_label(
     *,
     sector_name: str | None = None,
     intraday_index_name: str | None = None,
-    profile: FundProfile | None = None,
+    profile: FundProfile | None | _ProfileNotProvided = _PROFILE_NOT_PROVIDED,
 ) -> str | None:
     """养基宝涨跌口径：ETF 联接/详情 OCR「场内指数」→ 指数；否则关联板块短名（如半导体）。"""
     from app.services.sector_canonical import get_canonical_sector
@@ -49,10 +56,16 @@ def sector_quote_lookup_label(
         board_name = holding.sector_name or board_name
         fund_name = holding.fund_name
         index_name = holding.intraday_index_name or index_name
-        if profile is None and holding.fund_code and holding.fund_code != "000000":
+        if (
+            isinstance(profile, _ProfileNotProvided)
+            and holding.fund_code
+            and holding.fund_code != "000000"
+        ):
             from app.database import get_fund_profile_by_code
 
             profile = get_fund_profile_by_code(holding.fund_code)
+    if isinstance(profile, _ProfileNotProvided):
+        profile = None
     if profile is not None and not fund_name:
         fund_name = profile.fund_name
 

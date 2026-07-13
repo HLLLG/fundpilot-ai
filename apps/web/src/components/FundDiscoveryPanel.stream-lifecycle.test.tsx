@@ -249,33 +249,70 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
     await waitFor(() => expect(saveDiscoveryPromptRemote).toHaveBeenCalledWith("changed prompt"));
   });
 
-  it("exposes complete first-run configuration as labelled, pressed button groups", () => {
+  it("keeps only the two high-value recommendation goals in the main entry", () => {
     renderPanel();
 
-    expect(screen.getByRole("group", { name: "扫描模式" })).toBeInTheDocument();
-    expect(screen.getByRole("group", { name: "选基策略" })).toBeInTheDocument();
-    expect(screen.getByRole("group", { name: "基金类型偏好" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "全市场机会" })).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByRole("button", { name: "均衡潜力" })).toHaveClass("min-h-11");
-    expect(screen.getByRole("button", { name: "不限" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("group", { name: "推荐目标" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "市场优选" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "组合补缺" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "短线抄底" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "选基策略" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "基金类型偏好" })).not.toBeInTheDocument();
+    expect(screen.getByText("系统自动选基")).toBeInTheDocument();
+  });
 
-    fireEvent.click(screen.getByRole("button", { name: "短线抄底" }));
-    const advanced = screen.getByRole("button", { name: "抄底筛选（高级）" });
-    expect(advanced).toHaveAttribute("aria-expanded", "false");
-    expect(advanced).toHaveAttribute("aria-controls", "discovery-dip-advanced");
-    fireEvent.click(advanced);
-    expect(advanced).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByRole("group", { name: "回看天数" })).toBeInTheDocument();
+  it("sends the fixed automatic quality and share-class policies for normal scans", async () => {
+    renderPanel();
+
+    fireEvent.click(screen.getByRole("button", { name: "组合补缺" }));
+    fireEvent.click(screen.getByRole("button", { name: "扫描今日机会" }));
+
+    await waitFor(() => expect(streamDiscovery).toHaveBeenCalled());
+    const options = vi.mocked(streamDiscovery).mock.calls[0]?.[3];
+    expect(options).toMatchObject({
+      scanMode: "portfolio_gap",
+      selectionStrategy: "balanced",
+      fundTypePreference: "any",
+    });
+  });
+
+  it("keeps dip_swing only as a high-risk state entered by external prefill", async () => {
+    window.sessionStorage.setItem(
+      "fundpilot-discovery-prefill",
+      JSON.stringify({ scanMode: "dip_swing", focusSectors: ["半导体"] }),
+    );
+
+    renderPanel();
+
+    expect(await screen.findByTestId("discovery-high-risk-research-state")).toHaveTextContent(
+      "高风险反弹研究状态",
+    );
+    expect(screen.queryByRole("button", { name: "短线抄底" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "返回市场优选" }));
+    expect(screen.getByRole("button", { name: "市场优选" })).toHaveAttribute("aria-pressed", "true");
   });
 
   it("collapses completed reports to a run summary and keeps the old report during fallback", async () => {
     vi.mocked(streamDiscovery).mockRejectedValueOnce(new Error("流式连接波动"));
-    renderPanel({ pendingDiscoveryReport: discoveryReport() });
+    renderPanel({
+      pendingDiscoveryReport: {
+        ...discoveryReport(),
+        analysis_mode: "deep",
+        focus_sectors: ["医药"],
+        discovery_facts: {
+          effective_configuration: {
+            scan_goal: "portfolio_gap",
+            selection_policy: "auto_quality",
+            share_class_policy: "family_dedupe_then_cost_check",
+          },
+        },
+      },
+    });
 
     expect(await screen.findByTestId("discovery-config-summary")).toHaveTextContent(
-      "全市场机会 · 均衡潜力 · 基金类型：不限 · 快速分析",
+      "组合补缺 · 自动质量优选 · 同基金份额自动去重（费用待核对） · 深度分析 · 关注：医药",
     );
-    expect(screen.queryByRole("group", { name: "扫描模式" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "推荐目标" })).not.toBeInTheDocument();
     expect(screen.getByTestId("discovery-report-stub")).toHaveTextContent("上一份机会报告");
     expect(screen.getByRole("button", { name: "调整条件" })).toHaveClass("min-h-11");
 
@@ -288,7 +325,7 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
     expect(screen.getByTestId("discovery-report-stub")).toHaveTextContent("上一份机会报告");
 
     fireEvent.click(screen.getByRole("button", { name: "调整条件" }));
-    expect(screen.getByRole("group", { name: "扫描模式" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "推荐目标" })).toBeInTheDocument();
   });
 
   it("keeps the previous report visible while a new stream is running", async () => {

@@ -2,15 +2,22 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libgl1 \
-    libglib2.0-0 \
-    libgomp1 \
-    && rm -rf /var/lib/apt/lists/*
+ARG INSTALL_LOCAL_OCR=true
+
+RUN if [ "$INSTALL_LOCAL_OCR" = "true" ]; then \
+      apt-get update \
+      && apt-get install -y --no-install-recommends \
+        libgl1 \
+        libglib2.0-0 \
+        libgomp1 \
+      && rm -rf /var/lib/apt/lists/*; \
+    fi
 
 COPY requirements.txt requirements-ocr.txt /app/
 RUN pip install --no-cache-dir -r /app/requirements.txt \
-    && pip install --no-cache-dir -r /app/requirements-ocr.txt
+    && if [ "$INSTALL_LOCAL_OCR" = "true" ]; then \
+      pip install --no-cache-dir -r /app/requirements-ocr.txt; \
+    fi
 
 COPY app /app/app
 

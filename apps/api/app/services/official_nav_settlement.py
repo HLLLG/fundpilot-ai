@@ -2,17 +2,19 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from app.database import get_most_recent_portfolio_snapshot, save_portfolio_summary
+from app.database import (
+    get_most_recent_portfolio_snapshot,
+    list_fund_profiles,
+    save_portfolio_summary,
+)
 from app.models import Holding, PortfolioSummary
 from app.services.fund_nav_service import get_official_nav_return, prime_official_nav_cache
+from app.services.fund_profile import match_profiles_to_holdings
 from app.services.holding_estimates import compute_daily_profit_from_rate, sum_daily_profit
 from app.services.holding_filters import without_inactive_holdings, without_placeholder_holdings, without_test_holdings
 from app.services.portfolio_holdings_service import load_persisted_holdings
 from app.services.portfolio_snapshot import save_daily_snapshot
-from app.services.profit_accrual_defer import (
-    get_profile_for_holding,
-    is_profit_accrual_deferred,
-)
+from app.services.profit_accrual_defer import is_profit_accrual_deferred
 from app.services.trading_session import build_trading_session
 
 SOURCE = "official_nav_settlement"
@@ -48,16 +50,30 @@ def settle_official_nav_for_holdings(
 ) -> tuple[list[Holding], int]:
     if settlement_date is None:
         settlement_date = str(build_trading_session().get("effective_trade_date") or "")
+    if not holdings:
+        return [], 0
+    if not any(
+        (holding.fund_code or "").strip() not in {"", "000000"}
+        for holding in holdings
+    ):
+        return list(holdings), 0
 
+    profiles = list_fund_profiles()
+    profiles_by_code = {profile.fund_code: profile for profile in profiles}
+    matched_profiles = match_profiles_to_holdings(
+        holdings,
+        profiles,
+        profiles_by_code=profiles_by_code,
+    )
     updated: list[Holding] = []
     updated_count = 0
-    for holding in holdings:
+    for holding, profile in zip(holdings, matched_profiles, strict=True):
         code = (holding.fund_code or "").strip()
         if not code or code == "000000":
             updated.append(holding)
             continue
 
-        if is_profit_accrual_deferred(get_profile_for_holding(holding)):
+        if is_profit_accrual_deferred(profile):
             updated.append(holding)
             continue
 

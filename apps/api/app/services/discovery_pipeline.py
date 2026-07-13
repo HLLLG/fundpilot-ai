@@ -88,15 +88,14 @@ def run_discovery(
         momentum_slots=4,
         setup_slots=4,
     )
-    if sector_opportunities:
+    if request.scan_mode == "full_market" and sector_opportunities:
         target_sectors = [str(item["sector_label"]) for item in sector_opportunities]
-    per_sector = 3 if request.scan_mode == "full_market" else 5
+    per_sector = 3
     pool_cap = 28
     held_codes = {h.fund_code.strip().zfill(6) for h in holdings if h.fund_code}
 
-    selection_strategy = request.selection_strategy
-    if request.scan_mode == "dip_swing":
-        selection_strategy = "dip_rebound"
+    # 主荐基只保留自动质量优选；短线入口仅作为大跌雷达的兼容研究模式。
+    selection_strategy = "dip_rebound" if request.scan_mode == "dip_swing" else "balanced"
 
     if request.scan_mode == "dip_swing":
         progress("dip_prescreen")
@@ -114,7 +113,7 @@ def run_discovery(
         pool = build_candidate_pool(
             target_sectors,
             exclude_codes=held_codes,
-            fund_type_preference=request.fund_type_preference,
+            fund_type_preference="any",
             selection_strategy=selection_strategy,
             per_sector=per_sector,
             pool_cap=pool_cap,
@@ -151,7 +150,7 @@ def run_discovery(
         dip_lookback_days=request.dip_lookback_days,
         dip_min_drop_percent=request.dip_min_drop_percent,
         focus_sectors=list(request.focus_sectors),
-        fund_type_preference=request.fund_type_preference,
+        fund_type_preference="any",
         sector_opportunities=sector_opportunities,
         budget_enhancements=True,
     )

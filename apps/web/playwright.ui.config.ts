@@ -97,7 +97,7 @@ export default defineConfig({
       NEXT_TELEMETRY_DISABLED: "1",
       PORT: UI_PORT,
       // Authenticated-shell tests intercept this same-origin API namespace.
-      NEXT_PUBLIC_API_BASE_URL: UI_BASE_URL,
+      NEXT_PUBLIC_API_BASE_URL: "",
     },
   },
 });

@@ -5,46 +5,12 @@ export function isEstimateFallbackMeta(meta?: SectorQuoteMeta | null): boolean {
 }
 
 /** 板块行情拉取时间（后端 UTC ISO → 本地 HH:mm，供持仓校对展示） */
-export function formatSectorQuoteFetchedAt(iso: string | null | undefined): string | null {
-  if (!iso?.trim()) {
-    return null;
-  }
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) {
-    return iso.length >= 16 ? iso.slice(11, 16) : null;
-  }
-  return date.toLocaleTimeString("zh-CN", {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
-}
-
 /** 后台自动/手动刷新成功后的统计文案，无需打扰用户。 */
 export function isRoutineSectorRefreshMessage(message: string | null | undefined): boolean {
   if (!message?.trim()) {
     return false;
   }
   return message.startsWith("已刷新 ") || message.startsWith("已用上次快照更新 ");
-}
-
-export function sectorQuoteBadgeLabel(meta?: SectorQuoteMeta | null): string | null {
-  if (!meta) {
-    return null;
-  }
-  if (isEstimateFallbackMeta(meta)) {
-    return "估值兜底";
-  }
-  if (meta.source === "live") {
-    return "实时板块";
-  }
-  if (meta.confidence === "low") {
-    return "待选映射";
-  }
-  if (meta.confidence === "none") {
-    return "未匹配";
-  }
-  return "OCR";
 }
 
 export function buildSectorRefreshNotice(

@@ -17,8 +17,12 @@ def build_offline_discovery_report(
     from app.services.decision_data_evidence import portfolio_snapshot_caveats
 
     ranked = sorted(
-        candidate_pool,
-        key=lambda item: item.get("return_1y_percent") or -999,
+        [
+            item
+            for item in candidate_pool
+            if (item.get("quality_gate") or {}).get("status") != "excluded"
+        ],
+        key=lambda item: item.get("fund_quality_score") or -999,
         reverse=True,
     )[:3]
     recommendations: list[DiscoveryRecommendation] = []
@@ -31,7 +35,7 @@ def build_offline_discovery_report(
 
     evidence_blocked_codes: dict[str, list[str]] = {}
     budget = discovery_facts.get("portfolio_gap", {}).get("available_budget_yuan") or 0.0
-    per_fund = round(max(budget, profile.expected_investment_amount or 30000) * 0.15, 0)
+    _ = budget
 
     for item in ranked:
         code = str(item.get("fund_code", "")).zfill(6)
@@ -49,17 +53,13 @@ def build_offline_discovery_report(
                 fund_name=str(item.get("fund_name", "")),
                 sector_name=str(item.get("sector_label", "")),
                 action="建议关注",
-                suggested_amount_yuan=(per_fund if per_fund >= 100 and not execution_blocked else None),
-                amount_note=(
-                    "持仓快照未达到权威可执行条件，未生成示意金额"
-                    if execution_blocked
-                    else ("离线规则示意金额，请结合预算调整" if per_fund >= 100 else None)
-                ),
+                suggested_amount_yuan=None,
+                amount_note="离线兜底仅保留观察，不生成可执行买入金额",
                 hold_horizon=profile.horizon or "1-3个月",
                 confidence="低" if execution_blocked else "中",
                 points=[
                     f"板块 {item.get('sector_label')} 纳入今日扫描",
-                    f"近1年收益约 {item.get('return_1y_percent')}%（若有）",
+                    f"基金质量分约 {item.get('fund_quality_score')}（若有）",
                     "当前为离线兜底，接入 DeepSeek 后可获更完整解读",
                 ],
                 risks=[

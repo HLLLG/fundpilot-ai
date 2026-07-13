@@ -62,6 +62,12 @@ export function useCachedFetch<T>({
         const inFlight = inFlightRevalidates.get(cacheKey);
         if (inFlight) {
           await inFlight;
+          const shared = readClientCache<T>(cacheKey, -1, storage);
+          if (shared != null) {
+            setData(shared);
+            setError(null);
+          }
+          setLoading(false);
           return;
         }
       }

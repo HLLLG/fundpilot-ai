@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import time
+from collections import OrderedDict
 from dataclasses import asdict
+from threading import RLock
 from typing import Any
 
 from app.config import get_settings
@@ -12,8 +14,39 @@ from app.services.sector_signal_backtest import build_sector_signal_backtest
 from app.services.sector_signal_rules import rule_label
 from app.services.signal_confidence import score_signal
 
-_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+_CACHE: OrderedDict[str, tuple[float, dict[str, Any]]] = OrderedDict()
 _CACHE_TTL_SECONDS = 3600
+_CACHE_MAX_ENTRIES = 64
+_CACHE_LOCK = RLock()
+
+
+def _prune_cache_locked(now: float) -> None:
+    expired = [
+        key
+        for key, (cached_at, _value) in _CACHE.items()
+        if now - cached_at >= _CACHE_TTL_SECONDS
+    ]
+    for key in expired:
+        _CACHE.pop(key, None)
+
+
+def _get_cached(cache_key: str, now: float) -> dict[str, Any] | None:
+    with _CACHE_LOCK:
+        _prune_cache_locked(now)
+        cached = _CACHE.get(cache_key)
+        if cached is None:
+            return None
+        _CACHE.move_to_end(cache_key)
+        return cached[1]
+
+
+def _set_cached(cache_key: str, value: dict[str, Any], now: float) -> None:
+    with _CACHE_LOCK:
+        _prune_cache_locked(now)
+        _CACHE[cache_key] = (now, value)
+        _CACHE.move_to_end(cache_key)
+        while len(_CACHE) > _CACHE_MAX_ENTRIES:
+            _CACHE.popitem(last=False)
 
 
 def sector_labels_from_holdings(holdings: list[Holding]) -> list[str]:
@@ -51,9 +84,9 @@ def build_signal_backtest_context(
     window = lookback_days or settings.sector_signal_backtest_days
     cache_key = f"{','.join(sorted(labels))}:{window}"
     now = time.time()
-    cached = _CACHE.get(cache_key)
-    if cached and now - cached[0] < _CACHE_TTL_SECONDS:
-        return cached[1]
+    cached = _get_cached(cache_key, now)
+    if cached is not None:
+        return cached
 
     full = build_sector_signal_backtest(
         labels or None,
@@ -61,7 +94,7 @@ def build_signal_backtest_context(
         fetch_series=fetch_series,
     )
     compact = _compact_backtest_context(full, window)
-    _CACHE[cache_key] = (now, compact)
+    _set_cached(cache_key, compact, now)
     return compact
 
 

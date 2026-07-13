@@ -6,7 +6,7 @@ import { evaluateSwingAlerts } from "@/lib/api";
 import { ensureNotificationPermission, notifyDesktop } from "@/lib/notifications";
 
 /** 盘中波段信号自动评估间隔（与板块 UI 刷新解耦） */
-export const SWING_ALERT_EVALUATE_INTERVAL_MS = 15 * 60 * 1000;
+const SWING_ALERT_EVALUATE_INTERVAL_MS = 15 * 60 * 1000;
 
 type UseSwingAlertsOptions = {
   holdings: Holding[];

@@ -11,13 +11,10 @@ import type { IntradayQuery } from "@/lib/profileSector";
 export const HOLDING_DETAIL_STALE_MS = 5 * 60 * 1000;
 
 /** 板块分时：盘中 60s / 收盘后 15min；展示缓存后仍会静默拉取最新 */
-export const INTRADAY_STALE_MS_LIVE = 60 * 1000;
-export const INTRADAY_STALE_MS_CLOSED = 15 * 60 * 1000;
-
 export const TRADING_SESSION_CACHE_KEY = "trading-session";
 export const TRADING_SESSION_STALE_MS = 5 * 60 * 1000;
 /** 刷新页面后仍可读的上次行情日（仅作失败兜底展示） */
-export const TRADING_SESSION_SESSION_MAX_AGE_MS = 60 * 60 * 1000;
+const TRADING_SESSION_SESSION_MAX_AGE_MS = 60 * 60 * 1000;
 
 export function buildHoldingDetailCacheKey(
   userId: number | null | undefined,
@@ -67,15 +64,6 @@ export function readIntradayCache(query: IntradayQuery): SectorIntradayResult | 
   return readClientCache<SectorIntradayResult>(buildIntradayCacheKey(query), -1, "memory");
 }
 
-export function isIntradayCacheFresh(
-  query: IntradayQuery,
-  options: { liveSession: boolean },
-): boolean {
-  const staleMs = options.liveSession ? INTRADAY_STALE_MS_LIVE : INTRADAY_STALE_MS_CLOSED;
-  const ageMs = peekClientCacheAgeMs(buildIntradayCacheKey(query), "memory");
-  return ageMs != null && ageMs <= staleMs;
-}
-
 export function writeIntradayCache(query: IntradayQuery, result: SectorIntradayResult): void {
   writeClientCache(buildIntradayCacheKey(query), result, "memory");
 }
@@ -99,11 +87,4 @@ export function isTradingSessionCacheFresh(): boolean {
 export function writeTradingSessionCache(session: TradingSession): void {
   writeClientCache(TRADING_SESSION_CACHE_KEY, session, "memory");
   writeClientCache(TRADING_SESSION_CACHE_KEY, session, "session");
-}
-
-export function isLiveTradingSessionKind(sessionKind: string | undefined): boolean {
-  return (
-    sessionKind === "trading_day_intraday" ||
-    sessionKind === "trading_day_pre_close"
-  );
 }

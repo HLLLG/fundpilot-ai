@@ -8,7 +8,6 @@ import { PerformanceReturnChart, type TradeMarker } from "@/components/Performan
 import type { FundNavHistory, FundTransaction, IndexDailyHistory } from "@/lib/api";
 import {
   fetchFundNavHistory,
-  fetchFundNavHistoryPage,
   fetchIndexDailyHistory,
   getFundTransactions,
 } from "@/lib/api";
@@ -23,7 +22,16 @@ import {
 const PREVIEW_LIMIT = 22;
 const NAV_HISTORY_TTL_MS = 24 * 60 * 60 * 1000;
 const INDEX_DAILY_TTL_MS = 60 * 60 * 1000;
-const NAV_PREVIEW_TTL_MS = 24 * 60 * 60 * 1000;
+
+function buildPreviewSeries(points: FundNavHistory["points"]) {
+  return points.slice(-PREVIEW_LIMIT).map((point) => ({
+    date: point.date.slice(0, 10),
+    nav: point.nav,
+    dailyReturn: point.daily_return_percent ?? null,
+    fundPercent: 0,
+    benchPercent: null,
+  }));
+}
 
 type PerformanceTrendPanelProps = {
   fundCode: string;
@@ -41,9 +49,7 @@ export function PerformanceTrendPanel({
   const [days, setDays] = useState(63);
   const [fundHistory, setFundHistory] = useState<FundNavHistory | null>(null);
   const [benchHistory, setBenchHistory] = useState<IndexDailyHistory | null>(null);
-  const [previewSeries, setPreviewSeries] = useState<ReturnType<typeof buildPerformanceSeries>>([]);
   const [loading, setLoading] = useState(false);
-  const [previewLoading, setPreviewLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [transactions, setTransactions] = useState<FundTransaction[]>([]);
@@ -119,33 +125,41 @@ export function PerformanceTrendPanel({
     const cachedFund = readClientCache<FundNavHistory>(fundCacheKey, NAV_HISTORY_TTL_MS);
     const cachedBench = readClientCache<IndexDailyHistory>(benchCacheKey, INDEX_DAILY_TTL_MS);
 
-    if (cachedFund) {
-      setFundHistory(cachedFund);
-    }
-    if (cachedBench) {
-      setBenchHistory(cachedBench);
-    }
+    setFundHistory(cachedFund ?? null);
+    setBenchHistory(cachedBench ?? null);
     setLoading(!cachedFund || !cachedBench);
     setError(null);
 
-    void Promise.all([
-      cachedFund ? Promise.resolve(cachedFund) : fetchFundNavHistory(fundCode, days),
-      cachedBench ? Promise.resolve(cachedBench) : fetchIndexDailyHistory("000300", days),
-    ])
-      .then(([fund, bench]) => {
+    const fundRequest = cachedFund
+      ? Promise.resolve(cachedFund)
+      : fetchFundNavHistory(fundCode, days);
+    const benchRequest = cachedBench
+      ? Promise.resolve(cachedBench)
+      : fetchIndexDailyHistory("000300", days);
+
+    void Promise.allSettled([fundRequest, benchRequest])
+      .then(([fundResult, benchResult]) => {
         if (cancelled) {
           return;
         }
-        writeClientCache(fundCacheKey, fund);
-        writeClientCache(benchCacheKey, bench);
-        setFundHistory(fund);
-        setBenchHistory(bench);
-      })
-      .catch((loadError) => {
-        if (!cancelled && !cachedFund && !cachedBench) {
+
+        if (fundResult.status === "fulfilled") {
+          writeClientCache(fundCacheKey, fundResult.value);
+          setFundHistory(fundResult.value);
+        }
+        if (benchResult.status === "fulfilled") {
+          writeClientCache(benchCacheKey, benchResult.value);
+          setBenchHistory(benchResult.value);
+        }
+
+        const loadError =
+          fundResult.status === "rejected"
+            ? fundResult.reason
+            : benchResult.status === "rejected" && !cachedFund && !cachedBench
+              ? benchResult.reason
+              : null;
+        if (loadError) {
           setError(loadError instanceof Error ? loadError.message : "加载业绩走势失败");
-          setFundHistory(null);
-          setBenchHistory(null);
         }
       })
       .finally(() => {
@@ -158,57 +172,15 @@ export function PerformanceTrendPanel({
     };
   }, [days, enabled, fundCode]);
 
-  useEffect(() => {
-    if (!enabled || fundCode === "000000") {
-      return;
-    }
-    let cancelled = false;
-    const previewCacheKey = buildClientCacheKey("fund-nav-preview", fundCode, PREVIEW_LIMIT);
-    const cachedPreview = readClientCache<
-      ReturnType<typeof buildPerformanceSeries>
-    >(previewCacheKey, NAV_PREVIEW_TTL_MS);
-
-    if (cachedPreview?.length) {
-      setPreviewSeries(cachedPreview);
-      setPreviewLoading(false);
-    } else {
-      setPreviewLoading(true);
-    }
-
-    void fetchFundNavHistoryPage(fundCode, { limit: PREVIEW_LIMIT })
-      .then((page) => {
-        if (cancelled) {
-          return;
-        }
-        const nextSeries = page.points.map((point) => ({
-          date: point.date.slice(0, 10),
-          nav: point.nav,
-          dailyReturn: point.daily_return_percent ?? null,
-          fundPercent: 0,
-          benchPercent: null,
-        }));
-        writeClientCache(previewCacheKey, nextSeries);
-        setPreviewSeries(nextSeries);
-      })
-      .catch(() => {
-        if (!cancelled && !cachedPreview?.length) {
-          setPreviewSeries([]);
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setPreviewLoading(false);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [enabled, fundCode]);
-
   const series = useMemo(
     () => buildPerformanceSeries(fundHistory?.points ?? [], benchHistory?.points ?? []),
     [benchHistory?.points, fundHistory?.points],
   );
+  const previewSeries = useMemo(
+    () => (fundHistory?.fund_code === fundCode ? buildPreviewSeries(fundHistory.points) : []),
+    [fundCode, fundHistory],
+  );
+  const previewLoading = loading && fundHistory?.fund_code !== fundCode;
 
   const fundPeriodChange = fundHistory?.period_change_percent ?? series.at(-1)?.fundPercent ?? null;
   const benchPeriodChange = series.at(-1)?.benchPercent ?? benchHistory?.period_change_percent ?? null;

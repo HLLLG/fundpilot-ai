@@ -22,7 +22,6 @@ const apiMocks = vi.hoisted(() => ({
   fetchRebalanceSimulation: vi.fn(),
   fetchRecommendationAccuracy: vi.fn(),
   fetchReportOutcomes: vi.fn(),
-  fetchReportWeeklyOutcomes: vi.fn(),
   fetchSectorSignalBacktest: vi.fn(),
   fetchShadowEscalationDigest: vi.fn(),
 }));
@@ -108,7 +107,7 @@ describe("truthful evidence panel states", () => {
     expect(apiMocks.fetchPortfolioRiskMetrics).toHaveBeenCalledTimes(2);
   });
 
-  it("offers retry for rebalance failures and exposes mobile cards plus a desktop table", async () => {
+  it("offers retry for rebalance failures and exposes mobile cards", async () => {
     const simulation: RebalanceSimulation = {
       assumption: "仅模拟报告中的示意金额，不会执行真实交易。",
       current_total: 10_000,
@@ -140,14 +139,7 @@ describe("truthful evidence panel states", () => {
     fireEvent.click(screen.getByRole("button", { name: "重试" }));
 
     expect(await screen.findByRole("list", { name: "模拟调仓明细" })).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "模拟调仓明细，可横向滚动" })).toHaveAttribute(
-      "tabindex",
-      "0",
-    );
-    expect(
-      screen.getByRole("table", { name: "各基金当前仓位与模拟调仓后的金额、仓位变化" }),
-    ).toBeInTheDocument();
-    expect(screen.getByText("表格内容较宽时可左右滚动查看。")).toBeInTheDocument();
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
   });
 
   it("separates a sector-backtest failure from a real no-data response", async () => {
@@ -315,7 +307,6 @@ describe("truthful evidence panel states", () => {
     fireEvent.click(screen.getByRole("button", { name: "重试" }));
     expect((await screen.findAllByText("T+1 尚未成熟。")).length).toBeGreaterThan(0);
     await waitFor(() => expect(apiMocks.fetchReportOutcomes).toHaveBeenCalledTimes(2));
-    expect(apiMocks.fetchReportWeeklyOutcomes).not.toHaveBeenCalled();
   });
 
   it("does not silently hide a shadow-digest request failure", async () => {

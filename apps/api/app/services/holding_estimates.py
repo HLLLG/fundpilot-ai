@@ -1,6 +1,49 @@
 from __future__ import annotations
 
-from app.models import Holding
+from app.models import FundProfile, Holding
+
+
+class _ProfileNotProvided:
+    pass
+
+
+_PROFILE_NOT_PROVIDED = _ProfileNotProvided()
+_ProfileArg = FundProfile | None | _ProfileNotProvided
+
+
+def _profile_for_holding(
+    holding: Holding,
+    profile: _ProfileArg = _PROFILE_NOT_PROVIDED,
+) -> FundProfile | None:
+    if not isinstance(profile, _ProfileNotProvided):
+        return profile
+    from app.services.profit_accrual_defer import get_profile_for_holding
+
+    return get_profile_for_holding(holding)
+
+
+def _load_profiles_by_code(holdings: list[Holding]) -> dict[str, FundProfile]:
+    codes = {
+        (holding.fund_code or "").strip()
+        for holding in holdings
+        if (holding.fund_code or "").strip() not in {"", "000000"}
+    }
+    if not codes:
+        return {}
+    from app.database import list_fund_profiles
+
+    return {
+        profile.fund_code: profile
+        for profile in list_fund_profiles()
+        if profile.fund_code in codes
+    }
+
+
+def _profile_from_map(
+    holding: Holding,
+    profiles_by_code: dict[str, FundProfile],
+) -> FundProfile | None:
+    return profiles_by_code.get((holding.fund_code or "").strip())
 
 
 def clear_client_daily_estimate_fields(holding: Holding) -> Holding:
@@ -67,9 +110,13 @@ def resolve_intraday_return_percent(holding: Holding) -> float | None:
     return None
 
 
-def resolve_effective_holding_return_percent(holding: Holding) -> float:
+def resolve_effective_holding_return_percent(
+    holding: Holding,
+    *,
+    profile: _ProfileArg = _PROFILE_NOT_PROVIDED,
+) -> float:
     """与前端 computeEstimatedHoldingReturnPercent 一致，供风控/分析/LLM 使用。"""
-    estimated = compute_estimated_holding_return_percent(holding)
+    estimated = compute_estimated_holding_return_percent(holding, profile=profile)
     if estimated is not None:
         return float(estimated)
     settled = resolve_holding_return_percent(holding)
@@ -78,27 +125,42 @@ def resolve_effective_holding_return_percent(holding: Holding) -> float:
     return float(holding.return_percent)
 
 
-def build_holding_display_metrics(holding: Holding) -> dict[str, float | bool | None]:
+def build_holding_display_metrics(
+    holding: Holding,
+    *,
+    profile: _ProfileArg = _PROFILE_NOT_PROVIDED,
+) -> dict[str, float | bool | None]:
     """界面「持有」列与 analysis_facts 共用口径。"""
+    profile = _profile_for_holding(holding, profile)
     settled = resolve_holding_return_percent(holding)
     return {
         "holding_return_percent_settled": settled if settled is not None else holding.return_percent,
-        "estimated_holding_return_percent": resolve_effective_holding_return_percent(holding),
-        "estimated_holding_profit": compute_holding_profit(holding),
-        "holding_return_is_estimated": holding_profit_is_estimated(holding),
+        "estimated_holding_return_percent": resolve_effective_holding_return_percent(
+            holding,
+            profile=profile,
+        ),
+        "estimated_holding_profit": compute_holding_profit(holding, profile=profile),
+        "holding_return_is_estimated": holding_profit_is_estimated(
+            holding,
+            profile=profile,
+        ),
     }
 
 
-def compute_estimated_holding_return_percent(holding: Holding) -> float | None:
+def compute_estimated_holding_return_percent(
+    holding: Holding,
+    *,
+    profile: _ProfileArg = _PROFILE_NOT_PROVIDED,
+) -> float | None:
     """持有收益率：净值公布后 OCR 值为含当日总值；盘中为昨日结算 + 板块涨跌。"""
-    from app.services.profit_accrual_defer import get_profile_for_holding, is_profit_accrual_deferred
+    from app.services.profit_accrual_defer import is_profit_accrual_deferred
 
-    profile = get_profile_for_holding(holding)
+    profile = _profile_for_holding(holding, profile)
     if is_profit_accrual_deferred(profile):
         settled = resolve_holding_return_percent(holding)
         return round(settled, 4) if settled is not None else 0.0
 
-    holding = _repair_corrupted_settled_profit(holding)
+    holding = _repair_corrupted_settled_profit(holding, profile=profile)
     if _ocr_holding_profit_is_cumulative(holding):
         settled = resolve_holding_return_percent(holding)
         if settled is not None:
@@ -125,14 +187,16 @@ def _expected_settled_profit(holding: Holding, return_percent: float) -> float |
     return _round2((holding.holding_amount * return_percent) / (100 + return_percent))
 
 
-def _repair_corrupted_settled_profit(holding: Holding) -> Holding:
+def _repair_corrupted_settled_profit(
+    holding: Holding,
+    *,
+    profile: _ProfileArg = _PROFILE_NOT_PROVIDED,
+) -> Holding:
     """份额同步曾误写持有收益时，按昨日结算收益率修复。"""
-    from app.database import get_fund_profile_by_code
-
     if _ocr_holding_profit_is_cumulative(holding):
         return holding
 
-    profile = get_fund_profile_by_code(holding.fund_code) if holding.fund_code else None
+    profile = _profile_for_holding(holding, profile)
     settled_return = resolve_holding_return_percent(holding)
     if profile and profile.holding_return_percent is not None:
         profile_return = profile.holding_return_percent
@@ -183,8 +247,12 @@ def _repair_corrupted_settled_profit(holding: Holding) -> Holding:
     return holding.model_copy(update=patch)
 
 
-def resolve_settled_holding_profit(holding: Holding) -> float | None:
-    holding = _repair_corrupted_settled_profit(holding)
+def resolve_settled_holding_profit(
+    holding: Holding,
+    *,
+    profile: _ProfileArg = _PROFILE_NOT_PROVIDED,
+) -> float | None:
+    holding = _repair_corrupted_settled_profit(holding, profile=profile)
     if holding.holding_profit is not None:
         return holding.holding_profit
     return_percent = resolve_holding_return_percent(holding)
@@ -193,41 +261,50 @@ def resolve_settled_holding_profit(holding: Holding) -> float | None:
     return _expected_settled_profit(holding, return_percent)
 
 
-def compute_holding_profit(holding: Holding) -> float | None:
-    from app.services.profit_accrual_defer import get_profile_for_holding, is_profit_accrual_deferred
+def compute_holding_profit(
+    holding: Holding,
+    *,
+    profile: _ProfileArg = _PROFILE_NOT_PROVIDED,
+) -> float | None:
+    from app.services.profit_accrual_defer import is_profit_accrual_deferred
 
-    profile = get_profile_for_holding(holding)
+    profile = _profile_for_holding(holding, profile)
     if is_profit_accrual_deferred(profile):
-        settled_profit = resolve_settled_holding_profit(holding)
+        settled_profit = resolve_settled_holding_profit(holding, profile=profile)
         return settled_profit if settled_profit is not None else 0.0
 
-    holding = _repair_corrupted_settled_profit(holding)
+    holding = _repair_corrupted_settled_profit(holding, profile=profile)
     if _ocr_holding_profit_is_cumulative(holding):
         if holding.holding_profit is not None:
             return holding.holding_profit
     if holding.daily_return_percent_source == "official_nav":
         if holding.holding_profit is not None:
             return holding.holding_profit
-        estimated_return = compute_estimated_holding_return_percent(holding)
+        estimated_return = compute_estimated_holding_return_percent(holding, profile=profile)
         if estimated_return is None or holding.holding_amount <= 0:
             return None
         return _round2((holding.holding_amount * estimated_return) / (100 + estimated_return))
-    settled_profit = resolve_settled_holding_profit(holding)
+    settled_profit = resolve_settled_holding_profit(holding, profile=profile)
     daily_profit = compute_daily_profit(holding)
     if settled_profit is not None and daily_profit is not None:
         return _round2(settled_profit + daily_profit)
     if settled_profit is not None:
         return settled_profit
-    estimated_return = compute_estimated_holding_return_percent(holding)
+    estimated_return = compute_estimated_holding_return_percent(holding, profile=profile)
     if estimated_return is None or holding.holding_amount <= 0:
         return None
     return _round2((holding.holding_amount * estimated_return) / (100 + estimated_return))
 
 
-def holding_profit_is_estimated(holding: Holding) -> bool:
-    from app.services.profit_accrual_defer import get_profile_for_holding, is_profit_accrual_deferred
+def holding_profit_is_estimated(
+    holding: Holding,
+    *,
+    profile: _ProfileArg = _PROFILE_NOT_PROVIDED,
+) -> bool:
+    from app.services.profit_accrual_defer import is_profit_accrual_deferred
 
-    if is_profit_accrual_deferred(get_profile_for_holding(holding)):
+    profile = _profile_for_holding(holding, profile)
+    if is_profit_accrual_deferred(profile):
         return False
     if _ocr_holding_profit_is_cumulative(holding):
         return False
@@ -235,7 +312,10 @@ def holding_profit_is_estimated(holding: Holding) -> bool:
         return holding.holding_profit is None
     if resolve_intraday_return_percent(holding) is not None:
         return True
-    return holding.holding_profit is None and compute_holding_profit(holding) is not None
+    return (
+        holding.holding_profit is None
+        and compute_holding_profit(holding, profile=profile) is not None
+    )
 
 
 def _amount_includes_today_return(holding: Holding) -> bool:
@@ -257,14 +337,18 @@ def compute_daily_profit_from_rate(
     return _round2(holding_amount * daily_return_percent / 100)
 
 
-def apply_sector_daily_estimates(holding: Holding) -> Holding:
+def apply_sector_daily_estimates(
+    holding: Holding,
+    *,
+    profile: _ProfileArg = _PROFILE_NOT_PROVIDED,
+) -> Holding:
     """刷新板块后重算当日收益，忽略 OCR 截图中的当日收益。
 
     若已写入官方净值当日收益率，则保留（关联板块列仍用 sector_return_percent）。
     若档案标记份额待确认（当日买入），则当日收益保持 0，不用板块覆盖。"""
-    from app.services.profit_accrual_defer import get_profile_for_holding, is_profit_accrual_deferred
+    from app.services.profit_accrual_defer import is_profit_accrual_deferred
 
-    if is_profit_accrual_deferred(get_profile_for_holding(holding)):
+    if is_profit_accrual_deferred(_profile_for_holding(holding, profile)):
         return holding.model_copy(
             update={
                 "daily_profit": 0.0,
@@ -308,6 +392,7 @@ def overlay_official_nav_returns(holdings: list[Holding]) -> list[Holding]:
         return holdings
 
     trade_date = get_effective_trade_date()
+    profiles_by_code = _load_profiles_by_code(holdings)
     updated: list[Holding] = []
     for holding in holdings:
         if not holding.fund_code or holding.fund_code == "000000":
@@ -317,9 +402,9 @@ def overlay_official_nav_returns(holdings: list[Holding]) -> list[Holding]:
         if nav_return is None:
             updated.append(holding)
             continue
-        from app.services.profit_accrual_defer import get_profile_for_holding, is_profit_accrual_deferred
+        from app.services.profit_accrual_defer import is_profit_accrual_deferred
 
-        if is_profit_accrual_deferred(get_profile_for_holding(holding)):
+        if is_profit_accrual_deferred(_profile_from_map(holding, profiles_by_code)):
             updated.append(holding)
             continue
         amount = holding.settled_holding_amount or holding.holding_amount
@@ -352,14 +437,19 @@ def overlay_official_nav_returns(holdings: list[Holding]) -> list[Holding]:
     return updated
 
 
-def enrich_holding_estimates(holding: Holding) -> Holding:
+def enrich_holding_estimates(
+    holding: Holding,
+    *,
+    profile: _ProfileArg = _PROFILE_NOT_PROVIDED,
+) -> Holding:
     """补全可持久化字段；含当日涨跌的持有收益仅在展示/分析层计算。"""
-    holding = _repair_corrupted_settled_profit(holding)
+    profile = _profile_for_holding(holding, profile)
+    holding = _repair_corrupted_settled_profit(holding, profile=profile)
     includes_today = _amount_includes_today_return(holding)
-    holding = apply_sector_daily_estimates(holding)
+    holding = apply_sector_daily_estimates(holding, profile=profile)
     daily_profit = compute_daily_profit(holding)
     holding_return = resolve_holding_return_percent(holding)
-    holding_profit = resolve_settled_holding_profit(holding)
+    holding_profit = resolve_settled_holding_profit(holding, profile=profile)
     patch: dict = {
         "holding_return_percent": holding_return,
         "holding_profit": holding_profit,
@@ -371,8 +461,18 @@ def enrich_holding_estimates(holding: Holding) -> Holding:
 
 
 def enrich_holdings_estimates(holdings: list[Holding]) -> list[Holding]:
-    estimated = [enrich_holding_estimates(holding) for holding in holdings]
-    return enrich_holdings_yesterday_profits(estimated)
+    profiles_by_code = _load_profiles_by_code(holdings)
+    estimated = [
+        enrich_holding_estimates(
+            holding,
+            profile=_profile_from_map(holding, profiles_by_code),
+        )
+        for holding in holdings
+    ]
+    return enrich_holdings_yesterday_profits(
+        estimated,
+        profiles_by_code=profiles_by_code,
+    )
 
 
 def sum_daily_profit(holdings: list[Holding]) -> float:
@@ -388,19 +488,23 @@ def compute_estimated_daily_return_percent(holding: Holding) -> float | None:
     return None
 
 
-def holding_daily_return_is_estimated(holding: Holding) -> bool:
+def holding_daily_return_is_estimated(
+    holding: Holding,
+    *,
+    profile: _ProfileArg = _PROFILE_NOT_PROVIDED,
+) -> bool:
     if holding.daily_return_percent_source in {"official_nav", "pending_accrual"}:
         return False
-    from app.services.profit_accrual_defer import get_profile_for_holding, is_profit_accrual_deferred
+    from app.services.profit_accrual_defer import is_profit_accrual_deferred
 
-    if is_profit_accrual_deferred(get_profile_for_holding(holding)):
+    if is_profit_accrual_deferred(_profile_for_holding(holding, profile)):
         return False
     return holding.daily_return_percent is None and holding.sector_return_percent is not None
 
 
 def portfolio_official_nav_settled(holdings: list[Holding]) -> bool:
     """组合当日收益是否已全部切到官方净值（盈亏日历「今日」展示条件）。"""
-    from app.services.profit_accrual_defer import get_profile_for_holding, is_profit_accrual_deferred
+    from app.services.profit_accrual_defer import is_profit_accrual_deferred
 
     active = [
         holding
@@ -412,9 +516,10 @@ def portfolio_official_nav_settled(holdings: list[Holding]) -> bool:
     if not active:
         return False
 
+    profiles_by_code = _load_profiles_by_code(active)
     counted = 0
     for holding in active:
-        if is_profit_accrual_deferred(get_profile_for_holding(holding)):
+        if is_profit_accrual_deferred(_profile_from_map(holding, profiles_by_code)):
             continue
         if holding.daily_return_percent_source == "pending_accrual":
             continue
@@ -493,18 +598,28 @@ def compute_yesterday_profit(
     holding: Holding,
     *,
     profile_yesterday_profit: float | None = None,
+    official_nav_returns: tuple[float, float] | None = None,
+    fetch_official_nav: bool = True,
 ) -> float | None:
     """昨日收益：上一交易日官方净值涨跌；OCR 仅作兜底。"""
     if holding.fund_code and holding.fund_code != "000000" and holding.holding_amount > 0:
-        from app.services.fund_nav_service import compute_yesterday_profit_from_official_nav
+        from app.services.fund_nav_service import (
+            compute_yesterday_profit_from_nav_returns,
+            compute_yesterday_profit_from_official_nav,
+        )
         from app.services.trading_session import get_effective_trade_date
 
-        trade_date = get_effective_trade_date()
-        nav_yesterday = compute_yesterday_profit_from_official_nav(
-            holding.fund_code,
-            holding.holding_amount,
-            trade_date,
-        )
+        if fetch_official_nav:
+            nav_yesterday = compute_yesterday_profit_from_official_nav(
+                holding.fund_code,
+                holding.holding_amount,
+                get_effective_trade_date(),
+            )
+        else:
+            nav_yesterday = compute_yesterday_profit_from_nav_returns(
+                holding.holding_amount,
+                official_nav_returns,
+            )
         if nav_yesterday is not None:
             return nav_yesterday
 
@@ -519,26 +634,63 @@ def enrich_yesterday_profit(
     holding: Holding,
     *,
     profile_yesterday_profit: float | None = None,
+    official_nav_returns: tuple[float, float] | None = None,
+    fetch_official_nav: bool = True,
 ) -> Holding:
     if holding.yesterday_profit is not None:
         return holding
     computed = compute_yesterday_profit(
         holding,
         profile_yesterday_profit=profile_yesterday_profit,
+        official_nav_returns=official_nav_returns,
+        fetch_official_nav=fetch_official_nav,
     )
     if computed is None:
         return holding
     return holding.model_copy(update={"yesterday_profit": computed})
 
 
-def enrich_holdings_yesterday_profits(holdings: list[Holding]) -> list[Holding]:
-    from app.database import get_fund_profile_by_code
+def enrich_holdings_yesterday_profits(
+    holdings: list[Holding],
+    *,
+    profiles_by_code: dict[str, FundProfile] | None = None,
+) -> list[Holding]:
+    from app.services.fund_data import _map_holdings_concurrently
+    from app.services.fund_nav_service import get_yesterday_profit_nav_returns
+    from app.services.trading_session import get_effective_trade_date
+
+    if profiles_by_code is None:
+        profiles_by_code = _load_profiles_by_code(holdings)
+
+    missing_codes = {
+        (holding.fund_code or "").strip()
+        for holding in holdings
+        if holding.yesterday_profit is None
+        and holding.holding_amount > 0
+        and (holding.fund_code or "").strip() not in {"", "000000"}
+    }
+    trade_date = get_effective_trade_date() if missing_codes else ""
+    nav_returns_by_code = dict(
+        _map_holdings_concurrently(
+            sorted(missing_codes),
+            lambda code: (
+                code,
+                get_yesterday_profit_nav_returns(code, trade_date),
+            ),
+        )
+    )
 
     enriched: list[Holding] = []
     for holding in holdings:
-        profile = get_fund_profile_by_code(holding.fund_code) if holding.fund_code else None
+        code = (holding.fund_code or "").strip()
+        profile = profiles_by_code.get(code)
         profile_yesterday = profile.yesterday_profit if profile else None
         enriched.append(
-            enrich_yesterday_profit(holding, profile_yesterday_profit=profile_yesterday)
+            enrich_yesterday_profit(
+                holding,
+                profile_yesterday_profit=profile_yesterday,
+                official_nav_returns=nav_returns_by_code.get(code),
+                fetch_official_nav=False,
+            )
         )
     return enriched

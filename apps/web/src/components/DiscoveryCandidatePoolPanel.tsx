@@ -4,10 +4,40 @@ import { useState } from "react";
 import { ChevronDown, Layers, ShieldAlert } from "lucide-react";
 import type { DiscoveryCandidatePoolItem, EliminatedCandidate } from "@/lib/api";
 import { translateEvidenceText } from "@/lib/decisionText";
+import { useMediaQuery } from "@/lib/useMediaQuery";
+
+const DESKTOP_QUERY = "(min-width: 1024px)";
+
+export type DiscoveryCandidateDecisionStatus =
+  | "actionable"
+  | "conditional_wait"
+  | "watch_only";
+
+const DECISION_STATUS_META: Record<
+  DiscoveryCandidateDecisionStatus,
+  { label: string; badgeClass: string; rowClass: string }
+> = {
+  actionable: {
+    label: "可执行",
+    badgeClass: "bg-emerald-100 text-emerald-900",
+    rowClass: "border-emerald-200 bg-emerald-50/70",
+  },
+  conditional_wait: {
+    label: "等待条件",
+    badgeClass: "bg-amber-100 text-amber-900",
+    rowClass: "border-amber-200 bg-amber-50/70",
+  },
+  watch_only: {
+    label: "研究观察",
+    badgeClass: "bg-slate-200 text-slate-800",
+    rowClass: "border-slate-200 bg-slate-50/80",
+  },
+};
 
 type DiscoveryCandidatePoolPanelProps = {
   pool: DiscoveryCandidatePoolItem[];
-  selectedCodes: string[];
+  selectedCodes?: string[];
+  decisionStatusByCode?: Record<string, DiscoveryCandidateDecisionStatus>;
   /** M4/M5：被双向 guard 因证据强烈共振剔除的候选（不出现在 recommendations 里）。 */
   eliminatedCandidates?: EliminatedCandidate[];
 };
@@ -35,10 +65,12 @@ function compactList(items: string[] | undefined): string {
 
 export function DiscoveryCandidatePoolPanel({
   pool,
-  selectedCodes,
+  selectedCodes = [],
+  decisionStatusByCode = {},
   eliminatedCandidates = [],
 }: DiscoveryCandidatePoolPanelProps) {
   const [open, setOpen] = useState(false);
+  const isDesktop = useMediaQuery(DESKTOP_QUERY);
   if (!pool.length) {
     return null;
   }
@@ -88,10 +120,14 @@ export function DiscoveryCandidatePoolPanel({
               </ul>
             </div>
           ) : null}
-          <div className="grid gap-3 px-3 pb-4 pt-3 lg:hidden">
+          {!isDesktop ? (
+          <div className="grid gap-3 px-3 pb-4 pt-3">
             {pool.map((item) => {
               const picked = selected.has(item.fund_code);
               const eliminated = eliminatedByCode.get(item.fund_code);
+              const decisionStatus =
+                decisionStatusByCode[item.fund_code] ?? (picked ? "actionable" : undefined);
+              const decisionMeta = decisionStatus ? DECISION_STATUS_META[decisionStatus] : null;
               const reasons =
                 compactList(item.quality_reasons) !== "—"
                   ? compactList(item.quality_reasons)
@@ -102,11 +138,11 @@ export function DiscoveryCandidatePoolPanel({
                   className={`rounded-2xl border p-3 ${
                     eliminated
                       ? "border-rose-200 bg-rose-50/70"
-                      : picked
-                        ? "border-blue-200 bg-[var(--brand-soft)]"
+                      : decisionMeta
+                        ? decisionMeta.rowClass
                         : "border-slate-200 bg-white"
                   }`}
-                  aria-label={`${item.fund_name}，${eliminated ? "已剔除" : picked ? "已推荐" : "候选"}`}
+                  aria-label={`${item.fund_name}，${eliminated ? "已剔除" : decisionMeta?.label ?? "候选"}`}
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
@@ -122,11 +158,13 @@ export function DiscoveryCandidatePoolPanel({
                       {item.is_new_issue ? (
                         <span className="rounded-full bg-amber-100 px-2 py-1 text-[11px] font-bold text-amber-800">新发</span>
                       ) : null}
-                      {eliminated || picked ? (
+                      {eliminated || decisionMeta ? (
                         <span className={`rounded-full px-2 py-1 text-[11px] font-bold ${
-                          eliminated ? "bg-rose-100 text-rose-800" : "bg-blue-100 text-blue-800"
+                          eliminated
+                            ? "bg-rose-100 text-rose-800"
+                            : decisionMeta?.badgeClass ?? "bg-slate-100 text-slate-700"
                         }`}>
-                          {eliminated ? "已剔除" : "已推荐"}
+                          {eliminated ? "已剔除" : decisionMeta?.label}
                         </span>
                       ) : null}
                     </div>
@@ -162,9 +200,9 @@ export function DiscoveryCandidatePoolPanel({
               );
             })}
           </div>
-
+          ) : (
           <div
-            className="hidden overflow-x-auto px-3 pb-4 pt-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] focus-visible:ring-inset lg:block"
+            className="overflow-x-auto px-3 pb-4 pt-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] focus-visible:ring-inset"
             role="region"
             aria-label="基金候选池明细表，可左右滚动查看"
             tabIndex={0}
@@ -189,14 +227,21 @@ export function DiscoveryCandidatePoolPanel({
                 {pool.map((item) => {
                   const picked = selected.has(item.fund_code);
                   const eliminated = eliminatedByCode.get(item.fund_code);
+                  const decisionStatus =
+                    decisionStatusByCode[item.fund_code] ?? (picked ? "actionable" : undefined);
+                  const decisionMeta = decisionStatus ? DECISION_STATUS_META[decisionStatus] : null;
                   return (
                     <tr
                       key={item.fund_code}
                       className={
                         eliminated
                           ? "bg-rose-50/60 text-rose-700"
-                          : picked
-                            ? "bg-[var(--brand-soft)]"
+                          : decisionStatus === "actionable"
+                            ? "bg-emerald-50/70"
+                            : decisionStatus === "conditional_wait"
+                              ? "bg-amber-50/60"
+                              : decisionStatus === "watch_only"
+                                ? "bg-slate-50/80"
                             : "border-t border-slate-50"
                       }
                     >
@@ -235,8 +280,8 @@ export function DiscoveryCandidatePoolPanel({
                             {compactList(item.quality_reasons) !== "—"
                               ? compactList(item.quality_reasons)
                               : item.selection_reason ?? "—"}
-                            {picked ? (
-                              <span className="ml-1 font-semibold text-[var(--brand)]">· 已推荐</span>
+                            {decisionMeta ? (
+                              <span className="ml-1 font-semibold text-slate-700">· {decisionMeta.label}</span>
                             ) : null}
                           </>
                         )}
@@ -250,6 +295,7 @@ export function DiscoveryCandidatePoolPanel({
               </tbody>
             </table>
           </div>
+          )}
         </div>
       ) : null}
     </section>

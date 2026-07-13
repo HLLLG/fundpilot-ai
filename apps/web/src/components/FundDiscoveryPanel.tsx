@@ -12,10 +12,8 @@ import type {
   DiscoveryRecommendation,
   DiscoverySectorHeat,
   FundDiscoveryReport,
-  FundTypePreference,
   Holding,
   InvestorProfile,
-  SelectionStrategy,
   DiscoveryScanMode,
 } from "@/lib/api";
 import {
@@ -74,23 +72,16 @@ type DiscoveryFeedback = {
   message: string;
 };
 
-const SCAN_MODE_OPTIONS: { id: DiscoveryScanMode; label: string; hint: string }[] = [
-  { id: "full_market", label: "全市场机会", hint: "多板块横向对比，不限于持仓缺口" },
-  { id: "portfolio_gap", label: "持仓缺口补充", hint: "优先未重仓、热度靠前的缺口板块" },
-  { id: "dip_swing", label: "短线抄底", hint: "近几日大跌、有反弹信号；默认 2～5 天波段" },
+const PRIMARY_SCAN_MODE_OPTIONS: { id: Exclude<DiscoveryScanMode, "dip_swing">; label: string; hint: string }[] = [
+  { id: "full_market", label: "市场优选", hint: "跨方向比较后，只保留证据与质量门通过的候选" },
+  { id: "portfolio_gap", label: "组合补缺", hint: "优先未重仓、热度靠前的缺口板块" },
 ];
 
-const FUND_TYPE_OPTIONS: { id: FundTypePreference; label: string }[] = [
-  { id: "any", label: "不限" },
-  { id: "etf_link", label: "ETF联接优先" },
-  { id: "no_c_class", label: "排除C类" },
-];
-
-const SELECTION_STRATEGY_OPTIONS: { id: SelectionStrategy; label: string; hint: string }[] = [
-  { id: "balanced", label: "均衡潜力", hint: "近3~6月走强、避免追年度冠军" },
-  { id: "with_new_issue", label: "含新发观察", hint: "混入近6月新发 + 均衡老基" },
-  { id: "dip_rebound", label: "跌深反弹", hint: "近5日回调较深、距高点有反弹空间" },
-];
+const SCAN_MODE_LABELS: Record<DiscoveryScanMode, string> = {
+  full_market: "市场优选",
+  portfolio_gap: "组合补缺",
+  dip_swing: "高风险反弹研究",
+};
 
 type FundDiscoveryPanelProps = {
   userId: number | null;
@@ -162,8 +153,6 @@ export function FundDiscoveryPanel({
   );
 
   const [focusSectors, setFocusSectors] = useState<string[]>(() => loadDiscoveryFocusSectors());
-  const [fundTypePreference, setFundTypePreference] = useState<FundTypePreference>("any");
-  const [selectionStrategy, setSelectionStrategy] = useState<SelectionStrategy>("balanced");
   const [scanMode, setScanMode] = useState<DiscoveryScanMode>("full_market");
   const [dipLookbackDays, setDipLookbackDays] = useState<3 | 5>(5);
   const [dipMinDropPercent, setDipMinDropPercent] = useState<3 | 5>(3);
@@ -189,12 +178,6 @@ export function FundDiscoveryPanel({
       saveDiscoverySectorHeatCache(rawSectors);
     }
   }, [rawSectors]);
-
-  useEffect(() => {
-    if (scanMode === "dip_swing") {
-      setSelectionStrategy("dip_rebound");
-    }
-  }, [scanMode]);
 
   useEffect(() => {
     try {
@@ -342,8 +325,8 @@ export function FundDiscoveryPanel({
       analysisMode,
       focusSectors,
       budgetYuan: parsedBudget && !Number.isNaN(parsedBudget) ? parsedBudget : null,
-      fundTypePreference,
-      selectionStrategy,
+      fundTypePreference: "any" as const,
+      selectionStrategy: scanMode === "dip_swing" ? ("dip_rebound" as const) : ("balanced" as const),
       scanMode,
       dipLookbackDays: scanMode === "dip_swing" ? dipLookbackDays : undefined,
       dipMinDropPercent: scanMode === "dip_swing" ? dipMinDropPercent : undefined,
@@ -472,7 +455,6 @@ export function FundDiscoveryPanel({
     discoveryPrompt.role_prompt,
     discoveryStreamAbortRef,
     focusSectors,
-    fundTypePreference,
     holdings,
     onDiscoveryJobIdChange,
     onDiscoveryStreamComplete,
@@ -482,7 +464,6 @@ export function FundDiscoveryPanel({
     dipLookbackDays,
     dipMinDropPercent,
     scanMode,
-    selectionStrategy,
     refreshReports,
     report,
   ]);
@@ -507,18 +488,50 @@ export function FundDiscoveryPanel({
   };
 
   const isRunning = isSubmitting || Boolean(discoveryJobId) || Boolean(streamingDiscovery);
-  const scanModeLabel = SCAN_MODE_OPTIONS.find((item) => item.id === scanMode)?.label ?? "全市场机会";
-  const strategyLabel =
-    SELECTION_STRATEGY_OPTIONS.find((item) => item.id === selectionStrategy)?.label ?? "均衡潜力";
-  const fundTypeLabel =
-    FUND_TYPE_OPTIONS.find((item) => item.id === fundTypePreference)?.label ?? "不限";
+  const reportedScanGoal =
+    report?.discovery_facts?.effective_configuration?.scan_goal ??
+    report?.discovery_facts?.portfolio_gap?.scan_mode;
+  const summaryScanMode: DiscoveryScanMode =
+    reportedScanGoal === "full_market" ||
+    reportedScanGoal === "portfolio_gap" ||
+    reportedScanGoal === "dip_swing"
+      ? reportedScanGoal
+      : scanMode;
+  const summaryAnalysisMode = report?.analysis_mode ?? analysisMode;
+  const summaryFocusSectors = report ? report.focus_sectors : focusSectors;
+  const reportedSelectionPolicy =
+    report?.discovery_facts?.effective_configuration?.selection_policy ??
+    report?.discovery_facts?.selection_strategy;
+  const summarySelectionLabel = report
+    ? reportedSelectionPolicy === "dip_rebound_research" || reportedSelectionPolicy === "dip_rebound"
+      ? "反弹研究策略"
+      : reportedSelectionPolicy === "with_new_issue"
+        ? "历史策略：含新发观察"
+        : reportedSelectionPolicy === "balanced"
+          ? "均衡质量策略"
+          : "自动质量优选"
+    : summaryScanMode === "dip_swing"
+      ? "反弹研究策略"
+      : "自动质量优选";
+  const reportedShareClassPolicy =
+    report?.discovery_facts?.effective_configuration?.share_class_policy;
+  const reportedFundTypePreference =
+    report?.discovery_facts?.effective_configuration?.legacy_fund_type_preference ??
+    report?.discovery_facts?.fund_type_preference;
+  const summaryShareClassLabel = !report || reportedShareClassPolicy
+    ? "同基金份额自动去重（费用待核对）"
+    : reportedFundTypePreference === "etf_link"
+      ? "历史偏好：ETF联接"
+      : reportedFundTypePreference === "no_c_class"
+        ? "历史偏好：排除C类"
+        : "基金类型不限";
   const configSummary = [
-    scanModeLabel,
-    strategyLabel,
-    `基金类型：${fundTypeLabel}`,
-    analysisMode === "fast" ? "快速分析" : "深度分析",
-    focusSectors.length ? `关注：${focusSectors.join("、")}` : "方向：自动筛选",
-    budgetYuan.trim() ? `预算：¥${budgetYuan.trim()}` : null,
+    SCAN_MODE_LABELS[summaryScanMode],
+    summarySelectionLabel,
+    summaryShareClassLabel,
+    summaryAnalysisMode === "fast" ? "快速分析" : "深度分析",
+    summaryFocusSectors.length ? `关注：${summaryFocusSectors.join("、")}` : "方向：自动筛选",
+    !report && budgetYuan.trim() ? `预算：¥${budgetYuan.trim()}` : null,
   ]
     .filter((item): item is string => Boolean(item))
     .join(" · ");
@@ -556,7 +569,7 @@ export function FundDiscoveryPanel({
                 <div className="min-w-0">
                   <h2 className="font-display text-lg font-extrabold text-slate-950">发现基金机会</h2>
                   <p className="mt-1 text-sm leading-6 text-slate-600">
-                    从全市场板块热度中筛选候选，AI 精选 3～5 只值得关注的机会。仅供参考，不构成投资建议。
+                    系统先做数据与质量准入，再给出 0～3 只可执行或观察候选；没有合格基金时不会凑数。仅供参考，不构成投资建议。
                   </p>
                 </div>
               </div>
@@ -688,9 +701,9 @@ export function FundDiscoveryPanel({
           </div>
 
           <fieldset className="mt-4">
-            <legend className="mb-2 text-xs font-semibold text-slate-700">扫描模式</legend>
+            <legend className="mb-2 text-xs font-semibold text-slate-700">推荐目标</legend>
             <div className="flex flex-wrap gap-2">
-              {SCAN_MODE_OPTIONS.map((option) => (
+              {PRIMARY_SCAN_MODE_OPTIONS.map((option) => (
                 <button
                   key={option.id}
                   type="button"
@@ -705,14 +718,37 @@ export function FundDiscoveryPanel({
               ))}
             </div>
             <p id="discovery-scan-mode-hint" className="mt-1.5 text-[11px] leading-5 text-slate-500">
-              {SCAN_MODE_OPTIONS.find((item) => item.id === scanMode)?.hint}
+              {scanMode === "dip_swing"
+                ? "由大跌雷达进入的高风险反弹研究，仅生成等待或观察线索。"
+                : PRIMARY_SCAN_MODE_OPTIONS.find((item) => item.id === scanMode)?.hint}
             </p>
           </fieldset>
+
+          {scanMode === "dip_swing" ? (
+            <div
+              className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50/80 px-3 py-2.5"
+              data-testid="discovery-high-risk-research-state"
+            >
+              <div>
+                <p className="text-xs font-black text-rose-950">高风险反弹研究状态</p>
+                <p className="mt-0.5 text-[11px] leading-5 text-rose-900">
+                  此入口仅兼容大跌雷达预填，不属于常规荐基；候选默认按研究观察处理。
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setScanMode("full_market")}
+                className="min-h-11 shrink-0 rounded-full border border-rose-300 bg-white px-3 text-xs font-bold text-rose-900 transition hover:bg-rose-100"
+              >
+                返回市场优选
+              </button>
+            </div>
+          ) : null}
 
           {scanMode === "dip_swing" && !isAggressiveProfile ? (
             <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50/80 px-3 py-2.5">
               <p className="text-xs font-semibold leading-5 text-rose-900">
-                短线抄底更适合「激进波段」预设（3～7 天、扣费后止盈）。
+                高风险反弹研究仅适合「激进波段」预设（3～7 天、扣费后止盈）。
               </p>
               <button
                 type="button"
@@ -858,44 +894,12 @@ export function FundDiscoveryPanel({
             ) : null}
           </div>
 
-          <fieldset className="mt-4">
-            <legend className="mb-2 text-xs font-semibold text-slate-700">选基策略</legend>
-            <div className="flex flex-wrap gap-2">
-              {SELECTION_STRATEGY_OPTIONS.map((option) => (
-                <button
-                  key={option.id}
-                  type="button"
-                  title={option.hint}
-                  onClick={() => setSelectionStrategy(option.id)}
-                  aria-pressed={selectionStrategy === option.id}
-                  aria-describedby="discovery-selection-strategy-hint"
-                  className={`chip-btn min-h-11 ${selectionStrategy === option.id ? "chip-btn-active" : ""}`}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-            <p id="discovery-selection-strategy-hint" className="mt-1.5 text-[11px] leading-5 text-slate-500">
-              {SELECTION_STRATEGY_OPTIONS.find((item) => item.id === selectionStrategy)?.hint}
+          <div className="mt-4 rounded-xl border border-slate-100 bg-slate-50/80 px-3 py-2.5">
+            <p className="text-xs font-black text-slate-800">系统自动选基</p>
+            <p className="mt-1 text-[11px] leading-5 text-slate-500">
+              自动执行质量门、证据时点校验与同基金份额去重，再按预计持有期比较份额成本。
             </p>
-          </fieldset>
-
-          <fieldset className="mt-4">
-            <legend className="mb-2 text-xs font-semibold text-slate-700">基金类型偏好</legend>
-            <div className="flex flex-wrap gap-2">
-              {FUND_TYPE_OPTIONS.map((option) => (
-                <button
-                  key={option.id}
-                  type="button"
-                  onClick={() => setFundTypePreference(option.id)}
-                  aria-pressed={fundTypePreference === option.id}
-                  className={`chip-btn min-h-11 ${fundTypePreference === option.id ? "chip-btn-active" : ""}`}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-          </fieldset>
+          </div>
 
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
             <label className="block text-xs font-semibold text-slate-700">

@@ -5,9 +5,9 @@ from app.services import factor_confidence as fc
 from app.services import portfolio_snapshot as ps
 
 
-def _holding() -> Holding:
+def _holding(fund_code: str = "000001") -> Holding:
     return Holding(
-        fund_code="000001",
+        fund_code=fund_code,
         fund_name="测试基金",
         holding_amount=1000.0,
     )
@@ -298,3 +298,59 @@ def test_generation_change_during_context_load_reloads_before_return(monkeypatch
     assert context_calls == 2
     assert result["ic_status"]["state"] == "available"
     assert result["factor_reliability"]["momentum"]["level"] == "高"
+
+
+def test_factor_facts_cache_is_lru_bounded(monkeypatch) -> None:
+    payload_calls: list[str] = []
+
+    def fake_payload(holdings, **_kwargs) -> dict:
+        payload_calls.append(holdings[0].fund_code)
+        return _factor_payload()
+
+    monkeypatch.setattr(ps, "_FACTOR_FACTS_CACHE_MAX_ENTRIES", 2)
+    monkeypatch.setattr(ps.time, "time", lambda: 100.0)
+    monkeypatch.setattr(ps, "build_factor_scores_payload", fake_payload)
+    monkeypatch.setattr(
+        fc,
+        "load_ic_context",
+        lambda: {
+            "state": "unavailable",
+            "status": {"available": False},
+            "factors": {},
+        },
+    )
+    ps.clear_factor_facts_cache()
+
+    ps.build_factor_scores_for_facts([_holding("000001")])
+    ps.build_factor_scores_for_facts([_holding("000002")])
+    ps.build_factor_scores_for_facts([_holding("000001")])
+    ps.build_factor_scores_for_facts([_holding("000003")])
+
+    assert payload_calls == ["000001", "000002", "000003"]
+    assert list(ps._FACTOR_FACTS_CACHE) == ["000001", "000003"]
+
+
+def test_factor_facts_cache_prunes_expired_entries(monkeypatch) -> None:
+    now = [100.0]
+    monkeypatch.setattr(ps.time, "time", lambda: now[0])
+    monkeypatch.setattr(
+        ps,
+        "build_factor_scores_payload",
+        lambda *_args, **_kwargs: _factor_payload(),
+    )
+    monkeypatch.setattr(
+        fc,
+        "load_ic_context",
+        lambda: {
+            "state": "unavailable",
+            "status": {"available": False},
+            "factors": {},
+        },
+    )
+    ps.clear_factor_facts_cache()
+
+    ps.build_factor_scores_for_facts([_holding("000001")])
+    now[0] += ps._FACTOR_FACTS_TTL_SECONDS + 1
+    ps.build_factor_scores_for_facts([_holding("000002")])
+
+    assert list(ps._FACTOR_FACTS_CACHE) == ["000002"]

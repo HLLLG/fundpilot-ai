@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 
-from app.database import get_fund_profile_by_code, save_fund_profile
+from app.database import get_fund_profile_by_code, list_fund_profiles, save_fund_profile
 from app.models import FundProfile, Holding
 from app.services.fund_estimate_provider import fetch_fund_estimate_quotes
 from app.services.fund_nav_service import (
@@ -13,6 +13,23 @@ from app.services.fund_nav_service import (
 from app.services.trading_session import get_effective_trade_date
 
 logger = logging.getLogger(__name__)
+
+
+class _ProfileNotProvided:
+    pass
+
+
+_PROFILE_NOT_PROVIDED = _ProfileNotProvided()
+
+
+def _load_profiles_by_code(codes: set[str]) -> dict[str, FundProfile]:
+    if not codes:
+        return {}
+    return {
+        profile.fund_code.strip(): profile
+        for profile in list_fund_profiles()
+        if profile.fund_code.strip() in codes
+    }
 
 
 def _compute_rolled_settled_amount(
@@ -186,15 +203,27 @@ def bootstrap_holding_baselines(
     elif quotes is None:
         quotes = {}
 
+    codes = {
+        (holding.fund_code or "").strip()
+        for holding in holdings
+        if (holding.fund_code or "").strip() not in {"", "000000"}
+        and holding.holding_amount > 0
+    }
+    profiles_by_code = _load_profiles_by_code(codes)
     updated: list[Holding] = []
     for holding in holdings:
-        _bootstrap_profile_baseline(
+        code = (holding.fund_code or "").strip()
+        profile = profiles_by_code.get(code)
+        latest_profile = _bootstrap_profile_baseline(
             holding,
+            profile=profile,
             estimate_quote=quotes.get(holding.fund_code or ""),
             persist_profile=persist_profiles,
             force_reset_shares=force_reset_shares,
             skip_network=skip_network,
         )
+        if latest_profile is not None:
+            profiles_by_code[latest_profile.fund_code.strip()] = latest_profile
         updated.append(
             holding.model_copy(
                 update={
@@ -209,18 +238,18 @@ def bootstrap_holding_baselines(
 def _bootstrap_profile_baseline(
     holding: Holding,
     *,
+    profile: FundProfile | None,
     estimate_quote: dict | None,
     persist_profile: bool,
     force_reset_shares: bool,
     skip_network: bool = False,
-) -> None:
+) -> FundProfile | None:
     code = (holding.fund_code or "").strip()
     if not code or code == "000000" or holding.holding_amount <= 0:
-        return
+        return profile
 
-    profile = get_fund_profile_by_code(code)
     if profile is None:
-        return
+        return None
 
     from app.services.profit_accrual_defer import is_profit_accrual_deferred, resolve_profile_defer_patch
 
@@ -243,8 +272,8 @@ def _bootstrap_profile_baseline(
         if return_percent is not None:
             patch["holding_return_percent"] = return_percent
         if persist_profile:
-            save_fund_profile(profile.model_copy(update=patch))
-        return
+            return save_fund_profile(profile.model_copy(update=patch))
+        return profile
 
     if profile.holding_shares is not None and not force_reset_shares:
         shares = profile.holding_shares
@@ -262,16 +291,16 @@ def _bootstrap_profile_baseline(
             if inferred_unit is not None and inferred_unit > 0:
                 patch["holding_cost"] = inferred_unit
         if persist_profile:
-            save_fund_profile(profile.model_copy(update=patch))
-        return
+            return save_fund_profile(profile.model_copy(update=patch))
+        return profile
 
     unit_nav = _resolve_bootstrap_unit_nav(code, estimate_quote, skip_network=skip_network)
     if unit_nav is None or unit_nav <= 0:
-        return
+        return profile
 
     shares = round(holding.holding_amount / unit_nav, 2)
     if shares <= 0:
-        return
+        return profile
 
     patch: dict = {
         "holding_shares": shares,
@@ -296,7 +325,8 @@ def _bootstrap_profile_baseline(
         patch["holding_return_percent"] = return_percent
 
     if persist_profile:
-        save_fund_profile(profile.model_copy(update=patch))
+        return save_fund_profile(profile.model_copy(update=patch))
+    return profile
 
 
 def _resolve_bootstrap_unit_nav(
@@ -344,9 +374,12 @@ def sync_holding_amounts_from_shares(
         holding.fund_code.strip()
         for holding in holdings
         if (holding.fund_code or "").strip() and holding.fund_code != "000000"
+        and holding.holding_amount > 0
     }
     if not codes:
         return holdings
+
+    profiles_by_code = _load_profiles_by_code(codes)
 
     from app.services.fund_nav_service import prime_official_nav_cache
 
@@ -359,16 +392,19 @@ def sync_holding_amounts_from_shares(
 
     updated: list[Holding] = []
     for holding in holdings:
-        updated.append(
-            _sync_one_holding(
-                holding,
-                trade_date=trade_date,
-                estimate_quote=quotes.get(holding.fund_code or ""),
-                persist_profile=persist_profiles,
-                shares_override=shares_override,
-                allow_nav_fetch=allow_nav_fetch,
-            )
+        code = (holding.fund_code or "").strip()
+        synced_holding, latest_profile = _sync_one_holding(
+            holding,
+            profile=profiles_by_code.get(code),
+            trade_date=trade_date,
+            estimate_quote=quotes.get(holding.fund_code or ""),
+            persist_profile=persist_profiles,
+            shares_override=shares_override,
+            allow_nav_fetch=allow_nav_fetch,
         )
+        updated.append(synced_holding)
+        if latest_profile is not None:
+            profiles_by_code[latest_profile.fund_code.strip()] = latest_profile
     return updated
 
 
@@ -381,9 +417,14 @@ def _resolve_settled_amount(holding: Holding, profile: FundProfile | None) -> fl
     return holding.holding_amount
 
 
-def resolve_display_settled_amount(holding: Holding) -> float:
+def resolve_display_settled_amount(
+    holding: Holding,
+    *,
+    profile: FundProfile | None | _ProfileNotProvided = _PROFILE_NOT_PROVIDED,
+) -> float:
     """API/展示层：上一交易日结算持有金额。"""
-    profile = get_fund_profile_by_code(holding.fund_code) if holding.fund_code else None
+    if isinstance(profile, _ProfileNotProvided):
+        profile = get_fund_profile_by_code(holding.fund_code) if holding.fund_code else None
     return _resolve_settled_amount(holding, profile)
 
 
@@ -393,7 +434,7 @@ def _pin_intraday_settled(
     settled: float,
     *,
     persist_profile: bool,
-) -> Holding:
+) -> tuple[Holding, FundProfile | None]:
     """盘中锁定 holding/settled；顺带修复档案里被污染的 holding_amount。"""
     patch = {
         "holding_amount": settled,
@@ -401,7 +442,7 @@ def _pin_intraday_settled(
         "amount_includes_today": False,
     }
     if persist_profile and profile is not None:
-        save_fund_profile(
+        profile = save_fund_profile(
             profile.model_copy(
                 update={
                     "settled_holding_amount": settled,
@@ -409,7 +450,7 @@ def _pin_intraday_settled(
                 }
             )
         )
-    return holding.model_copy(update=patch)
+    return holding.model_copy(update=patch), profile
 
 
 def _should_skip_official_nav_roll(
@@ -444,17 +485,17 @@ def _should_skip_official_nav_roll(
 def _sync_one_holding(
     holding: Holding,
     *,
+    profile: FundProfile | None,
     trade_date: str,
     estimate_quote: dict | None,
     persist_profile: bool,
     shares_override: dict[str, float] | None = None,
     allow_nav_fetch: bool = True,
-) -> Holding:
+) -> tuple[Holding, FundProfile | None]:
     code = (holding.fund_code or "").strip()
     if not code or code == "000000" or holding.holding_amount <= 0:
-        return holding
+        return holding, profile
 
-    profile = get_fund_profile_by_code(code)
     override_value = shares_override.get(code) if shares_override else None
     if override_value is not None:
         shares = override_value
@@ -464,13 +505,16 @@ def _sync_one_holding(
     # 清仓：账本有效份额 ≤ 0 → 金额归零（不写回档案，由展示层过滤）。
     if override_value is not None and override_value <= 0:
         if holding.holding_amount == 0:
-            return holding
-        return holding.model_copy(
-            update={
-                "holding_amount": 0.0,
-                "settled_holding_amount": 0.0,
-                "amount_includes_today": False,
-            }
+            return holding, profile
+        return (
+            holding.model_copy(
+                update={
+                    "holding_amount": 0.0,
+                    "settled_holding_amount": 0.0,
+                    "amount_includes_today": False,
+                }
+            ),
+            profile,
         )
 
     if override_value is None and shares is None and profile and profile.holding_shares is None:
@@ -486,7 +530,9 @@ def _sync_one_holding(
             if unit_nav and unit_nav > 0 and holding.holding_amount > 0:
                 shares = round(holding.holding_amount / unit_nav, 2)
                 if persist_profile:
-                    save_fund_profile(profile.model_copy(update={"holding_shares": shares}))
+                    profile = save_fund_profile(
+                        profile.model_copy(update={"holding_shares": shares})
+                    )
 
     settled = _resolve_settled_amount(holding, profile)
     from app.services.profit_accrual_defer import is_profit_accrual_deferred
@@ -494,14 +540,17 @@ def _sync_one_holding(
     if is_profit_accrual_deferred(profile):
         locked = holding.holding_amount if holding.holding_amount > 0 else settled
         if abs(locked - holding.holding_amount) > 0.01 or holding.amount_includes_today is not False:
-            return holding.model_copy(
-                update={
-                    "holding_amount": locked,
-                    "settled_holding_amount": locked,
-                    "amount_includes_today": False,
-                }
+            return (
+                holding.model_copy(
+                    update={
+                        "holding_amount": locked,
+                        "settled_holding_amount": locked,
+                        "amount_includes_today": False,
+                    }
+                ),
+                profile,
             )
-        return holding
+        return holding, profile
 
     official_return = (
         get_official_nav_return(code, trade_date)
@@ -514,7 +563,7 @@ def _sync_one_holding(
     if override_value is not None and shares and official_unit_nav and official_unit_nav > 0:
         new_settled = round(shares * official_unit_nav, 2)
         if persist_profile and profile is not None:
-            save_fund_profile(
+            profile = save_fund_profile(
                 profile.model_copy(
                     update={
                         "settled_holding_amount": new_settled,
@@ -522,12 +571,15 @@ def _sync_one_holding(
                     }
                 )
             )
-        return holding.model_copy(
-            update={
-                "holding_amount": new_settled,
-                "settled_holding_amount": new_settled,
-                "amount_includes_today": False,
-            }
+        return (
+            holding.model_copy(
+                update={
+                    "holding_amount": new_settled,
+                    "settled_holding_amount": new_settled,
+                    "amount_includes_today": False,
+                }
+            ),
+            profile,
         )
 
     if official_return is not None:
@@ -565,7 +617,6 @@ def _sync_one_holding(
                 holding,
                 market_amount=new_settled,
                 pre_roll=pre_roll,
-                settled_before=settled,
                 skip_roll=skip_roll,
             )
             unit_cost = profit_patch.pop("holding_cost", None)
@@ -578,21 +629,24 @@ def _sync_one_holding(
             if unit_cost is not None:
                 profile_patch["holding_cost"] = unit_cost
             if persist_profile and profile is not None:
-                save_fund_profile(profile.model_copy(update=profile_patch))
-            return holding.model_copy(
-                update={
-                    "holding_amount": new_settled,
-                    "settled_holding_amount": new_settled,
-                    "amount_includes_today": holding.amount_includes_today,
-                    **profit_patch,
-                }
+                profile = save_fund_profile(profile.model_copy(update=profile_patch))
+            return (
+                holding.model_copy(
+                    update={
+                        "holding_amount": new_settled,
+                        "settled_holding_amount": new_settled,
+                        "amount_includes_today": holding.amount_includes_today,
+                        **profit_patch,
+                    }
+                ),
+                profile,
             )
 
     if abs(settled - holding.holding_amount) > 0.01 or holding.amount_includes_today is not False:
         return _pin_intraday_settled(holding, profile, settled, persist_profile=persist_profile)
     if official_return is None:
         return _pin_intraday_settled(holding, profile, settled, persist_profile=persist_profile)
-    return holding
+    return holding, profile
 
 
 def _resolve_unit_nav(
@@ -643,7 +697,6 @@ def _profit_patch_from_rolled_settled(
     *,
     market_amount: float | None = None,
     pre_roll: float | None = None,
-    settled_before: float | None = None,
     skip_roll: bool = False,
 ) -> dict:
     """支付宝口径：持有收益 = 持有金额 − 持仓成本；收益率 = 收益 / 成本。

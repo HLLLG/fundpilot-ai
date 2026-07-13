@@ -9,14 +9,16 @@ import {
   acceptMarketThemeBoardFresh,
   isMarketThemeBoardUsable,
   loadDipRadarSectorFilter,
-  loadDiscoveryFocusSectors,
   loadMarketSubTab,
   saveDipRadarSectorFilter,
   saveMarketSubTab,
-  toggleDiscoveryFocusSector,
   type MarketSubTab,
 } from "@/lib/marketThemeBoard";
-import { DISCOVERY_FOCUS_CHANGED_EVENT } from "@/lib/discoveryFocusSectors";
+import {
+  DISCOVERY_FOCUS_CHANGED_EVENT,
+  loadDiscoveryFocusSectors,
+  toggleDiscoveryFocusSector,
+} from "@/lib/discoveryFocusSectors";
 import { acceptUsMarketFresh, usRefreshIntervalMs } from "@/lib/usMarketOverview";
 import { useCachedFetch } from "@/lib/useCachedFetch";
 import { DipReboundRadar } from "@/components/DipReboundRadar";
