@@ -29,7 +29,8 @@ apps/web
 apps/sector-relay
 apps/api/.venv
 apps/api/tests
-apps/api/scripts
+apps/api/scripts/*
+!apps/api/scripts/settle_pending_outcomes.py
 deploy
 scripts
 

@@ -5,7 +5,8 @@
 .hypothesis
 .ruff_cache
 tests
-scripts
+scripts/*
+!scripts/settle_pending_outcomes.py
 **/__pycache__
 **/*.py[cod]
 **/*.log
