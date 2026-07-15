@@ -557,6 +557,13 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
   }, [report.candidate_pool, report.recommendations]);
   const selectedCodes = groupedRecommendations.actionable.map((item) => item.fund_code);
   const blockedCount = report.discovery_facts?.data_evidence_guard?.blocked_fund_codes?.length ?? 0;
+  const discoveryStrategy =
+    report.discovery_facts?.effective_configuration?.discovery_strategy;
+  const strategySummary = discoveryStrategy === "opportunity_first"
+    ? "机会优先 · 20～60交易日 · 历史回撤用于调整首批仓位"
+    : discoveryStrategy === "risk_first"
+      ? "稳健筛选 · 历史波动与量化覆盖执行严格门槛"
+      : null;
   const decisionHeadline = groupedRecommendations.actionable.length
     ? `${groupedRecommendations.actionable.length} 只通过可执行校验`
     : "本次暂无可执行建议";
@@ -578,6 +585,11 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
               <p className="text-[10px] font-black tracking-[0.2em] text-cyan-100/75">DISCOVERY BRIEF · 荐基决策简报</p>
               <h2 className="font-display mt-2 text-xl font-extrabold leading-tight text-white sm:text-2xl">{report.title}</h2>
               <p className="mt-2 line-clamp-3 text-sm leading-6 text-slate-200">{report.summary}</p>
+              {strategySummary ? (
+                <p className="mt-3 inline-flex rounded-full border border-cyan-100/20 bg-white/10 px-3 py-1 text-[11px] font-black text-cyan-50">
+                  {strategySummary}
+                </p>
+              ) : null}
             </div>
             <button
               type="button"

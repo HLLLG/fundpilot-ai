@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import re
 import secrets
 from datetime import date, datetime
 from pathlib import Path
@@ -206,7 +207,39 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
     if isinstance(exc, HTTPException):
         raise exc
     logger.exception("Unhandled error on %s %s", request.method, request.url.path)
-    return JSONResponse(status_code=500, content={"detail": "服务器内部错误，请稍后重试"})
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "服务器内部错误，请稍后重试"},
+        headers=_cors_error_response_headers(request),
+    )
+
+
+def _cors_error_response_headers(request: Request) -> dict[str, str]:
+    """Keep allowed origins visible when ServerErrorMiddleware builds a 500.
+
+    Starlette's outer ServerErrorMiddleware catches exceptions after they have
+    crossed the configured CORSMiddleware, so its generated response otherwise
+    lacks CORS headers and browsers misreport the underlying 500 as a CORS
+    failure. Never reflect an origin unless it matches the configured policy.
+    """
+
+    origin = str(request.headers.get("origin") or "").strip()
+    if not origin:
+        return {}
+    allowed = origin in settings.cors_origin_list
+    pattern = settings.resolved_cors_origin_regex
+    if not allowed and pattern:
+        try:
+            allowed = re.fullmatch(pattern, origin) is not None
+        except re.error:
+            allowed = False
+    if not allowed:
+        return {}
+    return {
+        "Access-Control-Allow-Origin": origin,
+        "Access-Control-Allow-Credentials": "true",
+        "Vary": "Origin",
+    }
 
 
 @app.get("/health")

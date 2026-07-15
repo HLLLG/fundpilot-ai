@@ -65,7 +65,9 @@ recommendations 字段约束：
 - sector_opportunities 是系统已用 1d/5d 涨跌 + 今日/5日主力资金 + pattern 生成的主方向，
   推荐理由须优先引用它，而不是重新发明方向
 - signal_backtest / candidate_factor_scores 按 confidence.level / factor_reliability 表述
-- 仅 candidate_factor_scores.execution_qualified_fund_codes 内候选可使用 action=分批买入；descriptive_applicable_fund_codes 只可描述，不能作为执行资格
+- candidate_factor_scores.execution_qualified_fund_codes 只可作为量化加分证据；opportunity_first 下未覆盖不得单独否决买入，risk_first 下仍作为买入白名单；任何模式都不得把描述性覆盖写成量化背书
+- profile.account_loss_review_percent 只用于账户/现有持仓亏损复核，不得直接与候选基金近1年最大回撤比较
+- discovery_strategy=opportunity_first 时，持有目标按 20～60 个交易日理解；优先使用 nav_trend 的 20/60 日收益与最大回撤，一年回撤只影响风险提示与服务端仓位
 - peer_research 只允许同组逐维比较；仅 applicable=true 且 available=true 的指标可解释，不适用与缺失不得补值；execution_tilt_eligible=false 时不得把分位用于执行提额
 - benchmark_research.comparison_role=tracking_reference 时只能称“跟踪参考”，不得称正式超额
 - benchmark_metrics 只有 status=qualified 才可引用；正式超额须同时满足 formal_excess_eligible=true，
@@ -101,7 +103,7 @@ _COMMON_REQUIREMENTS = [
     "新闻仅使用系统预取的 news_titles/topic_briefs；过旧或为空的新闻不能作为买入主依据",
     "suggested_amount_yuan 始终为 null；最终金额由服务端确定性 allocator 统一计算，模型不得分配金额",
     "引用数字须来自 discovery_facts，禁止编造",
-    "只有 candidate_factor_scores.execution_qualified_fund_codes 覆盖的候选可分批买入；描述性覆盖不等于执行资格",
+    "量化执行资格只可增加置信度；opportunity_first 下未覆盖本身不否决买入，risk_first 下仍要求量化执行资格；描述性覆盖永远不等于量化背书",
     "须按 data_evidence 校验数据时点、置信度与是否估算；过期或不可用字段不得支撑动作",
     "portfolio_position_truth 中 unknown/null 不得按 0；position_complete=false、ledger_truncated=true 或存在 pending/conflict 时 suggested_amount_yuan 必须为空",
     "share_class_fee_status=unverified 时须提示真实申购/赎回费用待核验，不得宣称份额成本最优",
@@ -165,6 +167,11 @@ def build_user_payload(
     )
     resolved_fund_type = fund_type_preference or discovery_facts.get("fund_type_preference") or "any"
     requirements = _requirements_for_scan_mode(scan_mode)
+    discovery_strategy = str(
+        discovery_facts.get("discovery_strategy")
+        or (discovery_facts.get("effective_configuration") or {}).get("discovery_strategy")
+        or "opportunity_first"
+    )
     briefs = topic_briefs or []
     news = market_news or []
     minimal_briefs = analysis_mode == "fast"
@@ -175,6 +182,7 @@ def build_user_payload(
         ),
         "focus_sectors": focus_sectors,
         "scan_mode": scan_mode,
+        "discovery_strategy": discovery_strategy,
         "fund_type_preference": resolved_fund_type,
         "profile": discovery_facts.get("profile") or profile.model_dump(mode="json"),
         "news_titles": compact_news_titles(news, briefs),
@@ -203,6 +211,10 @@ def build_user_payload(
                 "benchmark_research_contract"
             ),
             "selection_strategy": discovery_facts.get("selection_strategy"),
+            "discovery_strategy": discovery_strategy,
+            "discovery_strategy_contract": discovery_facts.get(
+                "discovery_strategy_contract"
+            ),
             "portfolio_snapshot": compact_portfolio_snapshot_for_llm(
                 discovery_facts.get("portfolio_snapshot")
                 if isinstance(discovery_facts.get("portfolio_snapshot"), dict)

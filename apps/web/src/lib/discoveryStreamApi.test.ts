@@ -71,6 +71,10 @@ describe("streamDiscovery", () => {
 
     expect(stages[0]).toBe("connected");
     expect(stages).toContain("sector_heat");
+    const requestBody = JSON.parse(
+      String((fetchMock.mock.calls[0]?.[1] as RequestInit | undefined)?.body),
+    );
+    expect(requestBody.discovery_strategy).toBe("opportunity_first");
   });
 
   it("throws when an active discovery stream stops sending progress events", async () => {

@@ -9,6 +9,7 @@ from app.services.discovery_sector_context import (
     build_target_sector_context,
 )
 from app.services.discovery_prompt import DISCOVERY_FACTS_INSTRUCTION
+from app.services.discovery_strategy import strategy_contract
 from app.services.investment_presets import take_profit_threshold_percent
 from app.services.market_flow_client import build_stock_connect_flow_context
 from app.services.fund_nav_service import get_cached_official_nav_return
@@ -39,6 +40,7 @@ def build_discovery_facts(
     budget_yuan: float | None = None,
     selection_strategy: str = "balanced",
     scan_mode: str = "full_market",
+    discovery_strategy: str = "opportunity_first",
     focus_sectors: list[str] | None = None,
     fund_type_preference: str = "any",
     sector_opportunities: list[dict] | None = None,
@@ -89,6 +91,7 @@ def build_discovery_facts(
             "prefer_dca": profile.prefer_dca,
             "avoid_chasing": profile.avoid_chasing,
             "max_drawdown_percent": profile.max_drawdown_percent,
+            "account_loss_review_percent": profile.max_drawdown_percent,
             "concentration_limit_percent": profile.concentration_limit_percent,
             "expected_investment_amount": profile.expected_investment_amount,
             "horizon": profile.horizon,
@@ -138,8 +141,12 @@ def build_discovery_facts(
         "candidate_peer_summary": _candidate_peer_summary(candidate_pool),
         "candidate_factor_scores": build_candidate_factor_scores(candidate_pool),
         "selection_strategy": selection_strategy,
+        "discovery_strategy": discovery_strategy,
+        "discovery_strategy_contract": strategy_contract(discovery_strategy),
         "effective_configuration": {
             "scan_goal": scan_mode,
+            "discovery_strategy": discovery_strategy,
+            "discovery_strategy_contract": strategy_contract(discovery_strategy),
             "selection_policy": "auto_quality",
             "share_class_policy": (
                 "tradeability_first_family_selection_standard_fee_upper_bound"

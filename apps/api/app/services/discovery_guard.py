@@ -21,11 +21,15 @@ from app.services.news_citation import _collect_citable_titles, _matches_known_t
 from app.services.sector_canonical import get_canonical_sector, get_intraday_canonical_sector
 from app.services.sector_labels import normalize_sector_label
 from app.services.discovery_sector_context import execution_qualified_fund_codes
+from app.services.discovery_strategy import (
+    discovery_horizon_label,
+    discovery_minimum_holding_days,
+    strategy_from_facts,
+)
 from app.services.fund_tradeability import (
     assess_tradeability_for_amount,
     build_tradeability_gate,
     compact_tradeability_for_llm,
-    resolve_profile_min_holding_days,
 )
 
 
@@ -282,6 +286,8 @@ def apply_discovery_guards(
     if degraded_portfolio_snapshot:
         caveats.append("持仓快照未达到权威可执行条件，本次已禁止买入动作与示意金额，仅保留观察候选。")
     evidence_blocked_codes: dict[str, list[str]] = {}
+    discovery_strategy = strategy_from_facts(discovery_facts)
+    opportunity_first = discovery_strategy == "opportunity_first"
     factor_scores = (discovery_facts or {}).get("candidate_factor_scores")
     quant_gate_active = isinstance(factor_scores, dict)
     quant_covered_codes = set(
@@ -302,7 +308,11 @@ def apply_discovery_guards(
     if quant_gate_active and not factor_ic_usable:
         quant_covered_codes = set()
     quant_blocked_codes: set[str] = set()
-    profile_min_holding_days = resolve_profile_min_holding_days(profile)
+    quant_uncovered_codes: set[str] = set()
+    profile_min_holding_days = discovery_minimum_holding_days(
+        discovery_strategy,
+        profile,
+    )
 
     for rec in recommendations:
         code = rec.fund_code.strip().zfill(6)
@@ -368,6 +378,8 @@ def apply_discovery_guards(
             ]
             copy.action = normalized_action
         copy.confidence = _normalize_confidence(copy.confidence)
+        if opportunity_first:
+            copy.hold_horizon = discovery_horizon_label(discovery_strategy, profile)
         if quality_status == "watch_only":
             quality_reasons = [
                 str(item) for item in quality_gate.get("reasons") or [] if str(item).strip()
@@ -390,20 +402,33 @@ def apply_discovery_guards(
             ]
             caveats.append(f"{code} 未通过可执行质量门禁，已降为研究观察。")
         if quant_gate_active and code not in quant_covered_codes:
-            quant_blocked_codes.add(code)
-            if copy.action == "分批买入":
-                copy.action = "建议关注"
-            copy.suggested_amount_yuan = None
-            copy.amount_note = "该候选未进入当前量化覆盖集合，未生成可执行金额"
-            copy.confidence = "低"
-            copy.points = [
-                "量化证据未覆盖该候选，系统仅保留观察，不以未验证因子支持买入。",
-                *copy.points,
-            ]
-            copy.validation_notes = [
-                *copy.validation_notes,
-                "候选未进入当前量化 finalists，须待净值时点与同类因子校验完成后再评估。",
-            ]
+            if opportunity_first:
+                quant_uncovered_codes.add(code)
+                if copy.confidence == "高":
+                    copy.confidence = "中"
+                copy.points = [
+                    *copy.points,
+                    "量化模型目前没有给这只基金加分；本次只按板块机会、基金质量、净值趋势和交易条件判断。",
+                ]
+                copy.validation_notes = [
+                    *copy.validation_notes,
+                    "量化因子未覆盖仅降低置信度，不代表基金本身出现明确负面信号。",
+                ]
+            else:
+                quant_blocked_codes.add(code)
+                if copy.action == "分批买入":
+                    copy.action = "建议关注"
+                copy.suggested_amount_yuan = None
+                copy.amount_note = "该候选未进入当前量化覆盖集合，未生成可执行金额"
+                copy.confidence = "低"
+                copy.points = [
+                    "量化证据未覆盖该候选，系统仅保留观察，不以未验证因子支持买入。",
+                    *copy.points,
+                ]
+                copy.validation_notes = [
+                    *copy.validation_notes,
+                    "候选未进入当前量化最终名单，须待净值时点与同类因子校验完成后再评估。",
+                ]
         if execution_blocked:
             if copy.action == "分批买入":
                 copy.action = "建议关注"
@@ -418,48 +443,97 @@ def apply_discovery_guards(
             corrected = _align_candidate_identity(copy, pool_item)
             if corrected:
                 caveats.append(f"已按候选池校正基金名称/板块：{code}。")
+        opportunity = opportunity_by_sector.get(copy.sector_name)
         sector_move = heat_by_sector.get(copy.sector_name)
-        chase_threshold = 6.0 if profile.decision_style == "aggressive" else 4.0
-        if profile.avoid_chasing and sector_move is not None and sector_move >= chase_threshold:
-            if copy.action == "分批买入":
-                copy.action = "等待回调"
-                copy.points = list(copy.points) + [
-                    f"板块当日 {sector_move:+.2f}% 偏热，拒绝追高模式下建议等待回调。"
-                ]
-
+        nav_trend = pool_item.get("nav_trend") or {}
+        if not isinstance(nav_trend, Mapping):
+            nav_trend = {}
+        dist_high = _as_float(nav_trend.get("distance_from_high_percent"))
+        recent_5d = _as_float(nav_trend.get("recent_5d_change_percent"))
+        recent_20d = _as_float(nav_trend.get("return_20d_percent"))
         if profile.avoid_chasing and copy.action == "分批买入":
-            r1y = pool_item.get("return_1y_percent")
-            nav_trend = pool_item.get("nav_trend") or {}
-            dist_high = nav_trend.get("distance_from_high_percent")
-            if r1y is not None and float(r1y) >= 100.0:
-                copy.action = "等待回调"
-                copy.points = list(copy.points) + [
-                    f"近1年涨幅 {float(r1y):+.1f}% 偏高，拒绝追高模式下建议等待回调。"
-                ]
-            elif dist_high is not None and float(dist_high) > -5.0:
-                copy.action = "等待回调"
-                copy.points = list(copy.points) + [
-                    f"净值距区间高点仅 {float(dist_high):+.1f}%，短线追高风险偏高。"
-                ]
+            if opportunity_first:
+                pattern = str((opportunity or {}).get("pattern_label") or "")
+                five_day_flow = _as_float(
+                    (opportunity or {}).get("cumulative_5d_net_yi")
+                )
+                flow_is_weak = pattern in {"distribution", "weak_outflow"} or (
+                    five_day_flow is not None and five_day_flow < 0
+                )
+                price_is_extended = bool(
+                    (sector_move is not None and float(sector_move) >= 7.0)
+                    or (
+                        dist_high is not None
+                        and dist_high > -2.0
+                        and recent_5d is not None
+                        and recent_5d >= 6.0
+                    )
+                    or (
+                        recent_20d is not None
+                        and recent_20d >= 15.0
+                        and recent_5d is not None
+                        and recent_5d >= 4.0
+                    )
+                )
+                if price_is_extended and flow_is_weak:
+                    copy.action = "等待回调"
+                    copy.points = list(copy.points) + [
+                        "短线涨幅已经偏快且5日资金没有继续确认，先等回调或资金重新转强。"
+                    ]
+            else:
+                chase_threshold = 6.0 if profile.decision_style == "aggressive" else 4.0
+                if sector_move is not None and sector_move >= chase_threshold:
+                    copy.action = "等待回调"
+                    copy.points = list(copy.points) + [
+                        f"板块当日 {sector_move:+.2f}% 偏热，拒绝追高模式下建议等待回调。"
+                    ]
+                else:
+                    r1y = pool_item.get("return_1y_percent")
+                    if r1y is not None and float(r1y) >= 100.0:
+                        copy.action = "等待回调"
+                        copy.points = list(copy.points) + [
+                            f"近1年涨幅 {float(r1y):+.1f}% 偏高，拒绝追高模式下建议等待回调。"
+                        ]
+                    elif dist_high is not None and dist_high > -5.0:
+                        copy.action = "等待回调"
+                        copy.points = list(copy.points) + [
+                            f"净值距区间高点仅 {dist_high:+.1f}%，短线追高风险偏高。"
+                        ]
 
         drawdown = _as_float(pool_item.get("max_drawdown_1y_percent"))
         drawdown_limit = _profile_drawdown_limit(profile)
-        if (
-            copy.action == "分批买入"
-            and drawdown is not None
-            and abs(drawdown) > drawdown_limit
-        ):
-            copy.action = "建议关注"
-            copy.points = [
-                f"近1年最大回撤 {drawdown:.2f}% 超过当前风格的候选准入线 {drawdown_limit:.1f}%，仅保留观察。",
-                *copy.points,
-            ]
-            copy.validation_notes = [
-                *copy.validation_notes,
-                "候选历史回撤与当前投资风格不匹配，系统已阻断买入动作。",
-            ]
-
-        opportunity = opportunity_by_sector.get(copy.sector_name)
+        if drawdown is not None and abs(drawdown) > drawdown_limit:
+            if opportunity_first:
+                copy.points = _remove_legacy_drawdown_profile_comparisons(copy.points)
+                copy.risks = _remove_legacy_drawdown_profile_comparisons(copy.risks)
+                copy.fund_evidence = _remove_legacy_drawdown_profile_comparisons(
+                    copy.fund_evidence
+                )
+                copy.validation_notes = _remove_legacy_drawdown_profile_comparisons(
+                    copy.validation_notes
+                )
+                horizon_context = _horizon_drawdown_context(nav_trend)
+                copy.risks = [
+                    (
+                        f"历史波动偏高：近1年最大回撤 {drawdown:.2f}%"
+                        f"{horizon_context}；这不会单独否决当前机会，但会压低首批仓位。"
+                    ),
+                    *copy.risks,
+                ]
+                copy.validation_notes = [
+                    *copy.validation_notes,
+                    "账户亏损复核线与候选历史回撤已分开判断；历史回撤只参与风险提示和仓位缩放。",
+                ]
+            elif copy.action == "分批买入":
+                copy.action = "建议关注"
+                copy.points = [
+                    f"近1年最大回撤 {drawdown:.2f}% 超过当前风格的候选准入线 {drawdown_limit:.1f}%，仅保留观察。",
+                    *copy.points,
+                ]
+                copy.validation_notes = [
+                    *copy.validation_notes,
+                    "候选历史回撤与当前投资风格不匹配，系统已阻断买入动作。",
+                ]
 
         # M4 双向 guard：与日报 resolve_escalation_floor 同一套"量价背离显著"入口，
         # 但荐基语义不同——负向共振时整条剔除候选池（而非降级动作文字），正向共振时
@@ -643,9 +717,9 @@ def apply_discovery_guards(
                         tradeability,
                         amount_yuan=copy.suggested_amount_yuan,
                         hold_horizon=(
-                            f"用户预设最短持有期 {profile_min_holding_days} 天"
+                            f"荐基策略最短持有期 {profile_min_holding_days} 天"
                             if profile_min_holding_days is not None
-                            else profile.horizon
+                            else discovery_horizon_label(discovery_strategy, profile)
                         ),
                         minimum_holding_days=profile_min_holding_days,
                     )
@@ -745,11 +819,14 @@ def apply_discovery_guards(
             "blocked_fund_codes": sorted(evidence_blocked_codes),
             "reasons_by_fund": evidence_blocked_codes,
             "quant_evidence_blocked_fund_codes": sorted(quant_blocked_codes),
+            "quant_evidence_uncovered_fund_codes": sorted(quant_uncovered_codes),
         }
     if evidence_blocked_codes and not degraded_portfolio_snapshot:
         caveats.append("部分候选的字段级证据时点不可用，已降为观察并清除买入金额。")
     if quant_blocked_codes:
         caveats.append("部分候选未进入当前量化覆盖集合，已降为观察并清除买入金额。")
+    if quant_uncovered_codes:
+        caveats.append("部分候选暂无量化因子加分；系统已降低置信度，但未把“未覆盖”误判为负面信号。")
 
     return guarded[:5], caveats, eliminated
 
@@ -867,6 +944,35 @@ def _profile_drawdown_limit(profile: InvestorProfile) -> float:
     if profile.decision_style == "aggressive":
         return max(40.0, base * 3.0)
     return max(20.0, base * 2.0)
+
+
+def _remove_legacy_drawdown_profile_comparisons(values: list[str]) -> list[str]:
+    mismatch_markers = (
+        "风险偏好",
+        "风险承受",
+        "心理压力",
+        "严重不符",
+        "不匹配",
+        "复核线",
+        "准入线",
+    )
+    return [
+        str(value)
+        for value in values
+        if not (
+            "最大回撤" in str(value)
+            and any(marker in str(value) for marker in mismatch_markers)
+        )
+    ]
+
+
+def _horizon_drawdown_context(nav_trend: Mapping[str, object]) -> str:
+    parts: list[str] = []
+    for days in (20, 60):
+        value = _as_float(nav_trend.get(f"max_drawdown_{days}d_percent"))
+        if value is not None:
+            parts.append(f"近{days}日最大回撤 {value:.2f}%")
+    return "，" + "、".join(parts) if parts else ""
 
 
 def _should_downgrade_weak_evidence(

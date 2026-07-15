@@ -15,6 +15,7 @@ import type {
   Holding,
   InvestorProfile,
   DiscoveryScanMode,
+  DiscoveryStrategy,
 } from "@/lib/api";
 import {
   fetchDiscoveryPrompt,
@@ -29,7 +30,7 @@ import { InlineNotice, type NoticeTone } from "@/components/InlineNotice";
 import { DiscoveryReportPanel } from "@/components/DiscoveryReportPanel";
 import { DiscoverySkeleton } from "@/components/DiscoverySkeleton";
 import { FocusSectorPicker } from "@/components/FocusSectorPicker";
-import { InvestmentPresetSelector } from "@/components/InvestmentPresetSelector";
+import { DiscoveryStrategySelector } from "@/components/DiscoveryStrategySelector";
 import { RolePromptEditor } from "@/components/RolePromptEditor";
 import { YangjibaoFundDetail } from "@/components/YangjibaoFundDetail";
 import { displayableHoldings } from "@/lib/holdingMetrics";
@@ -80,7 +81,6 @@ type FundDiscoveryPanelProps = {
   userId: number | null;
   holdings: Holding[];
   profile: InvestorProfile;
-  onProfileChange: (profile: InvestorProfile) => void;
   analysisMode: AnalysisMode;
   onAnalysisModeChange: (mode: AnalysisMode) => void;
   discoveryJobId: string | null;
@@ -99,7 +99,6 @@ export function FundDiscoveryPanel({
   userId,
   holdings,
   profile,
-  onProfileChange,
   analysisMode,
   onAnalysisModeChange,
   discoveryJobId,
@@ -147,6 +146,9 @@ export function FundDiscoveryPanel({
 
   const [focusSectors, setFocusSectors] = useState<string[]>(() => loadDiscoveryFocusSectors());
   const [scanMode, setScanMode] = useState<DiscoveryScanMode>("full_market");
+  const [discoveryStrategy, setDiscoveryStrategy] = useState<DiscoveryStrategy>(
+    "opportunity_first",
+  );
   const [budgetYuan, setBudgetYuan] = useState<string>("");
   const [report, setReport] = useState<FundDiscoveryReport | null>(null);
   const [discoveryPrompt, setDiscoveryPrompt] = useState<DiscoveryPromptConfig>(() =>
@@ -275,6 +277,7 @@ export function FundDiscoveryPanel({
       fundTypePreference: "any" as const,
       selectionStrategy: "balanced" as const,
       scanMode,
+      discoveryStrategy,
       systemRolePrompt: discoveryPrompt.is_custom ? discoveryPrompt.role_prompt : null,
     };
 
@@ -398,6 +401,7 @@ export function FundDiscoveryPanel({
     budgetYuan,
     discoveryPrompt.is_custom,
     discoveryPrompt.role_prompt,
+    discoveryStrategy,
     discoveryStreamAbortRef,
     focusSectors,
     holdings,
@@ -441,6 +445,17 @@ export function FundDiscoveryPanel({
         ? "历史模式"
         : SCAN_MODE_LABELS[scanMode];
   const summaryAnalysisMode = report?.analysis_mode ?? analysisMode;
+  const reportedDiscoveryStrategy =
+    report?.discovery_facts?.effective_configuration?.discovery_strategy;
+  const summaryDiscoveryStrategy = report
+    ? reportedDiscoveryStrategy === "opportunity_first"
+      ? "机会优先（20～60交易日）"
+      : reportedDiscoveryStrategy === "risk_first"
+        ? "稳健筛选"
+        : "历史稳健策略"
+    : discoveryStrategy === "opportunity_first"
+      ? "机会优先（20～60交易日）"
+      : "稳健筛选";
   const summaryFocusSectors = report ? report.focus_sectors : focusSectors;
   const reportedSelectionPolicy =
     report?.discovery_facts?.effective_configuration?.selection_policy ??
@@ -466,6 +481,7 @@ export function FundDiscoveryPanel({
         : "基金类型不限";
   const configSummary = [
     summaryScanModeLabel,
+    summaryDiscoveryStrategy,
     summarySelectionLabel,
     summaryShareClassLabel,
     summaryAnalysisMode === "fast" ? "快速分析" : "深度分析",
@@ -508,7 +524,7 @@ export function FundDiscoveryPanel({
                 <div className="min-w-0">
                   <h2 className="font-display text-lg font-extrabold text-slate-950">发现基金机会</h2>
                   <p className="mt-1 text-sm leading-6 text-slate-600">
-                    系统先做数据与质量准入，再给出 0～3 只可执行或观察候选；没有合格基金时不会凑数。仅供参考，不构成投资建议。
+                    先找当前机会，再用历史回撤、波动与持仓相关性控制首批金额；没有合格基金时不会凑数。仅供参考，不构成投资建议。
                   </p>
                 </div>
               </div>
@@ -562,7 +578,7 @@ export function FundDiscoveryPanel({
           <div id="discovery-scan-settings" className="p-4 sm:p-5">
           <div>
             <div className="mb-2 flex min-h-11 items-center justify-between gap-3">
-              <p className="text-[11px] font-bold text-slate-500">投资风格预设</p>
+              <p className="text-[11px] font-bold text-slate-500">荐基决策策略</p>
               {report ? (
                 <button
                   type="button"
@@ -575,7 +591,10 @@ export function FundDiscoveryPanel({
                 </button>
               ) : null}
             </div>
-            <InvestmentPresetSelector profile={profile} onChange={onProfileChange} compact />
+            <DiscoveryStrategySelector
+              value={discoveryStrategy}
+              onChange={setDiscoveryStrategy}
+            />
           </div>
 
           <div className="mt-4 overflow-hidden rounded-xl border border-[var(--line)]">

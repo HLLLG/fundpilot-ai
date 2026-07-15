@@ -8,6 +8,7 @@ from app.services.fund_lookthrough_claim_validator import (
     validate_fund_lookthrough_claims,
 )
 from app.services.provider_fallback import apply_provider_failure_to_facts
+from app.services.discovery_strategy import discovery_horizon_label, strategy_from_facts
 
 _DISCLAIMER = "仅供参考，不构成投资建议；基金有风险，决策需结合自身承受能力。"
 
@@ -55,6 +56,7 @@ def build_offline_discovery_report(
         )
     budget = discovery_facts.get("portfolio_gap", {}).get("available_budget_yuan") or 0.0
     _ = budget
+    discovery_strategy = strategy_from_facts(discovery_facts)
 
     for item in ranked:
         code = str(item.get("fund_code", "")).zfill(6)
@@ -74,7 +76,7 @@ def build_offline_discovery_report(
                 action="建议关注",
                 suggested_amount_yuan=None,
                 amount_note="离线兜底仅保留观察，不生成可执行买入金额",
-                hold_horizon=profile.horizon or "1-3个月",
+                hold_horizon=discovery_horizon_label(discovery_strategy, profile),
                 confidence="低" if execution_blocked else "中",
                 points=[
                     f"板块 {item.get('sector_label')} 纳入今日扫描",

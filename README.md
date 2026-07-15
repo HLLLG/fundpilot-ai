@@ -165,6 +165,7 @@ FUND_AI_JWT_SECRET=change-me-to-a-random-secret-at-least-32-chars
 | `FUND_AI_JWT_SECRET` | JWT 签名密钥（本地开发也建议设置） |
 | `FUND_AI_JWT_ACCESS_EXPIRE_MINUTES` | JWT 有效期（分钟）；默认 43200（30 天） |
 | `FUND_AI_DATABASE_URL` | 设则使用 MySQL；省略则用 `data/app.db` |
+| `FUND_AI_MYSQL_SCHEMA_LOCK_TIMEOUT_SECONDS` | 多进程启动时 MySQL schema 锁等待秒数；默认 60，进程内并发自动合并 |
 | `FUND_AI_CLOUDBASE_ENV_ID` | CloudBase 环境 ID；用于 Web 静态托管域名 CORS 自动放行 |
 
 `.env` 已被 `.gitignore` 忽略，不会提交到 Git。

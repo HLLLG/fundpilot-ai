@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import json
+import os
 from typing import Any
 
 from app.services.decision_quality_rollout import (
@@ -75,6 +76,14 @@ class MySqlBootstrapContractError(RuntimeError):
     """The primary MySQL schema cannot enforce a required safety contract."""
 
 
+def _mysql_schema_lock_timeout_seconds() -> int:
+    raw = os.getenv("FUND_AI_MYSQL_SCHEMA_LOCK_TIMEOUT_SECONDS", "60").strip()
+    try:
+        return max(10, min(int(raw), 300))
+    except ValueError:
+        return 60
+
+
 def _canonical_guard_json(value: object) -> str:
     return json.dumps(
         value,
@@ -113,7 +122,8 @@ def _mysql_schema_named_lock(cursor: Any):
         yield
         return
     cursor.execute(
-        f"SELECT GET_LOCK('{MYSQL_SCHEMA_LOCK_NAME}', 10) AS lock_acquired"
+        f"SELECT GET_LOCK('{MYSQL_SCHEMA_LOCK_NAME}', "
+        f"{_mysql_schema_lock_timeout_seconds()}) AS lock_acquired"
     )
     row = fetchone()
     acquired = (

@@ -3,6 +3,7 @@ import type {
   AnalysisMode,
   DiscoveryRecommendation,
   DiscoveryScanMode,
+  DiscoveryStrategy,
   FundDiscoveryReport,
   FundTypePreference,
   Holding,
@@ -104,6 +105,7 @@ function discoveryPayload(
     fundTypePreference?: FundTypePreference;
     selectionStrategy?: SelectionStrategy;
     scanMode?: DiscoveryScanMode;
+    discoveryStrategy?: DiscoveryStrategy;
     systemRolePrompt?: string | null;
   },
 ) {
@@ -116,6 +118,7 @@ function discoveryPayload(
     fund_type_preference: options?.fundTypePreference ?? "any",
     selection_strategy: options?.selectionStrategy ?? "balanced",
     scan_mode: options?.scanMode ?? "full_market",
+    discovery_strategy: options?.discoveryStrategy ?? "opportunity_first",
     system_role_prompt: options?.systemRolePrompt?.trim() || null,
   };
 }

@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.config import get_settings
+from app.db_connect import initialize_database_connection
 from app.services.db_backup import maybe_auto_import_database
 from app.services.fund_code_resolver import preload_fund_name_table
 from app.services.ocr_engine import schedule_ocr_preload
@@ -28,6 +29,10 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def app_lifespan(_app: FastAPI):
     mark_process_boot()
+    # Complete MySQL schema bootstrap before request handling and before any
+    # background worker opens its own thread-local connection. Subsequent
+    # connections share the per-process schema-ready marker.
+    initialize_database_connection()
     maybe_auto_import_database()
     schedule_ocr_preload()
     if get_settings().fund_name_preload_enabled:

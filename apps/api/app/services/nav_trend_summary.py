@@ -55,6 +55,8 @@ def summarize_nav_history(
         for point in all_points[-sample_size:]
     ]
     recent_5d_daily_change_percent = _recent_daily_nav_changes(all_points, max_days=5)
+    horizon_20d = _window_return_and_drawdown(all_points, trading_days=20)
+    horizon_60d = _window_return_and_drawdown(all_points, trading_days=60)
 
     return {
         "period_days": len(points),
@@ -68,8 +70,38 @@ def summarize_nav_history(
         "distance_from_high_percent": distance_from_high,
         "distance_from_low_percent": distance_from_low,
         "trend_label": _trend_label(period_change, recent_5d_change),
+        "return_20d_percent": horizon_20d.get("return_percent"),
+        "max_drawdown_20d_percent": horizon_20d.get("max_drawdown_percent"),
+        "return_60d_percent": horizon_60d.get("return_percent"),
+        "max_drawdown_60d_percent": horizon_60d.get("max_drawdown_percent"),
         "source": history.source,
         "recent_nav_series": recent_nav_series,
+    }
+
+
+def _window_return_and_drawdown(
+    points: list[FundNavPoint],
+    *,
+    trading_days: int,
+) -> dict[str, float]:
+    """Return horizon-matched metrics only when the full window is available."""
+
+    if trading_days <= 0 or len(points) < trading_days + 1:
+        return {}
+    window = points[-(trading_days + 1) :]
+    if window[0].nav <= 0:
+        return {}
+    period_return = (window[-1].nav / window[0].nav - 1) * 100
+    peak = window[0].nav
+    max_drawdown = 0.0
+    for point in window:
+        if point.nav <= 0:
+            return {}
+        peak = max(peak, point.nav)
+        max_drawdown = min(max_drawdown, (point.nav / peak - 1) * 100)
+    return {
+        "return_percent": round(period_return, 2),
+        "max_drawdown_percent": round(max_drawdown, 2),
     }
 
 

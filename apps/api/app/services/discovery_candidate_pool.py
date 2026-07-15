@@ -515,6 +515,7 @@ def finalize_candidate_pool(
     per_sector: int = 3,
     pool_cap: int = _POOL_CAP,
     minimum_holding_days: int | None = None,
+    discovery_strategy: str = "risk_first",
     audit_sink: dict | None = None,
     stage_audit_sink: dict | None = None,
 ) -> list[dict]:
@@ -541,6 +542,11 @@ def finalize_candidate_pool(
     acceptable.sort(
         key=lambda item: (
             _quality_gate_rank(item),
+            *(
+                (_opportunity_rank_value(item),)
+                if discovery_strategy == "opportunity_first"
+                else ()
+            ),
             _num(item.get("fund_quality_score")) or -999.0,
             _num(item.get("sector_fit_score")) or -999.0,
         ),
@@ -577,6 +583,11 @@ def finalize_candidate_pool(
     selected.sort(
         key=lambda item: (
             _quality_gate_rank(item),
+            *(
+                (_opportunity_rank_value(item),)
+                if discovery_strategy == "opportunity_first"
+                else ()
+            ),
             _num(item.get("fund_quality_score")) or -999.0,
         ),
         reverse=True,
@@ -600,6 +611,11 @@ def finalize_candidate_pool(
             selected=selected,
         )
     return selected
+
+
+def _opportunity_rank_value(item: dict) -> float:
+    value = _num(item.get("opportunity_score_20_60d"))
+    return value if value is not None else -999.0
 
 
 def _populate_candidate_selection_stage_trace(
@@ -1364,6 +1380,13 @@ def _with_quality_score(entry: dict, *, fund_type_preference: str) -> dict:
     }
     row["quality_reasons"] = _unique_text(reasons)[:4]
     row["quality_penalties"] = _unique_text(penalties)[:4]
+    from app.services.discovery_selection_strategy import (
+        OPPORTUNITY_SCORE_VERSION,
+        current_opportunity_score,
+    )
+
+    row["opportunity_score_20_60d"] = current_opportunity_score(row)
+    row["opportunity_score_version"] = OPPORTUNITY_SCORE_VERSION
     return row
 
 

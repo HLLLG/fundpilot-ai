@@ -102,6 +102,22 @@ function sampleReport(): FundDiscoveryReport {
 }
 
 describe("DiscoveryReportPanel", () => {
+  it("shows the opportunity-first horizon and explains how drawdown is used", () => {
+    const report = sampleReport();
+    report.discovery_facts = {
+      ...report.discovery_facts,
+      effective_configuration: {
+        discovery_strategy: "opportunity_first",
+      },
+    };
+
+    render(<DiscoveryReportPanel report={report} />);
+
+    expect(
+      screen.getByText("机会优先 · 20～60交易日 · 历史回撤用于调整首批仓位"),
+    ).toBeInTheDocument();
+  });
+
   it("renders repeated evidence text without duplicate React keys", () => {
     const report = sampleReport();
     const repeatedPoint = report.recommendations[0].points?.[1] ?? "repeated point";

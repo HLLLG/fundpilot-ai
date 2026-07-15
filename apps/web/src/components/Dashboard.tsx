@@ -1741,7 +1741,6 @@ export function Dashboard() {
               userId={user?.id ?? null}
               holdings={holdings}
               profile={profile}
-              onProfileChange={handleProfileChange}
               analysisMode={analysisMode}
               onAnalysisModeChange={setAnalysisMode}
               discoveryJobId={discoveryJobId}

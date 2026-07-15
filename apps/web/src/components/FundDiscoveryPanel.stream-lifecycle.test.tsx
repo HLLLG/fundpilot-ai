@@ -116,7 +116,6 @@ function renderPanel(overrides: Partial<ComponentProps<typeof FundDiscoveryPanel
     userId: 101,
     holdings: [holding()],
     profile: profile(),
-    onProfileChange: vi.fn(),
     analysisMode: "fast",
     onAnalysisModeChange: vi.fn(),
     discoveryJobId: null,
@@ -145,7 +144,6 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
         userId={101}
         holdings={[holding()]}
         profile={profile()}
-        onProfileChange={vi.fn()}
         analysisMode={"fast" as AnalysisMode}
         onAnalysisModeChange={vi.fn()}
         discoveryJobId={null}
@@ -171,7 +169,6 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
         userId={101}
         holdings={[holding()]}
         profile={profile()}
-        onProfileChange={vi.fn()}
         analysisMode={"fast" as AnalysisMode}
         onAnalysisModeChange={vi.fn()}
         discoveryJobId={null}
@@ -233,7 +230,6 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
         userId={101}
         holdings={[holding()]}
         profile={profile()}
-        onProfileChange={vi.fn()}
         analysisMode={"fast" as AnalysisMode}
         onAnalysisModeChange={vi.fn()}
         discoveryJobId={null}
@@ -301,6 +297,24 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
       scanMode: "portfolio_gap",
       selectionStrategy: "balanced",
       fundTypePreference: "any",
+      discoveryStrategy: "opportunity_first",
+    });
+  });
+
+  it("defaults to opportunity-first and can explicitly request the legacy risk-first guard", async () => {
+    renderPanel();
+
+    expect(screen.getByRole("group", { name: "荐基决策策略" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /机会优先/ })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    fireEvent.click(screen.getByRole("button", { name: /稳健筛选/ }));
+    fireEvent.click(screen.getByRole("button", { name: "扫描今日机会" }));
+
+    await waitFor(() => expect(streamDiscovery).toHaveBeenCalled());
+    expect(vi.mocked(streamDiscovery).mock.calls[0]?.[3]).toMatchObject({
+      discoveryStrategy: "risk_first",
     });
   });
 
@@ -337,7 +351,7 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
     });
 
     expect(await screen.findByTestId("discovery-config-summary")).toHaveTextContent(
-      "组合补缺 · 自动质量优选 · 同基金份额自动去重（费用待核对） · 深度分析 · 关注：医药",
+      "组合补缺 · 历史稳健策略 · 自动质量优选 · 同基金份额自动去重（费用待核对） · 深度分析 · 关注：医药",
     );
     expect(screen.queryByRole("group", { name: "推荐目标" })).not.toBeInTheDocument();
     expect(screen.getByTestId("discovery-report-stub")).toHaveTextContent("上一份机会报告");

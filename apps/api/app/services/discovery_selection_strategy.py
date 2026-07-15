@@ -8,6 +8,7 @@ SelectionStrategy = Literal["balanced", "with_new_issue"]
 _NEW_ISSUE_MAX_AGE_DAYS = 180
 _NEW_ISSUE_SLOTS = 2
 _PER_SECTOR = 5
+OPPORTUNITY_SCORE_VERSION = "opportunity_20_60d.v1"
 
 
 def balanced_score(row: dict) -> float:
@@ -38,6 +39,59 @@ def rank_candidates_balanced(candidates: list[dict]) -> list[dict]:
     scored = [(balanced_score(item), item) for item in candidates]
     scored.sort(key=lambda pair: pair[0], reverse=True)
     return [item for _, item in scored]
+
+
+def current_opportunity_score(row: dict) -> float | None:
+    """Bounded 20/60-day setup score used only after hard quality admission.
+
+    This is a ranking aid, not an expected-return forecast. It rewards either
+    a confirmed multi-window trend or a controlled pullback whose last five
+    days have turned up, while penalizing an extended move with deteriorating
+    horizon drawdown.
+    """
+
+    nav_trend = row.get("nav_trend")
+    if not isinstance(nav_trend, dict):
+        return None
+    r5 = _num(nav_trend.get("recent_5d_change_percent"))
+    r20 = _num(nav_trend.get("return_20d_percent"))
+    r60 = _num(nav_trend.get("return_60d_percent"))
+    dd20 = _num(nav_trend.get("max_drawdown_20d_percent"))
+    dd60 = _num(nav_trend.get("max_drawdown_60d_percent"))
+    distance_high = _num(nav_trend.get("distance_from_high_percent"))
+    if all(value is None for value in (r5, r20, r60, dd20, dd60)):
+        return None
+
+    score = 50.0
+    if r20 is not None:
+        score += _clamp(r20, -12.0, 18.0) * 1.1
+    if r60 is not None:
+        score += _clamp(r60, -18.0, 30.0) * 0.45
+    if r5 is not None:
+        score += _clamp(r5, -6.0, 6.0) * 1.8
+    # Pullback layout: the medium window is still below its start, but the
+    # latest week has turned upward rather than continuing to fall.
+    if r20 is not None and r20 < 0 and r5 is not None and r5 > 0:
+        score += 7.0
+    # Trend entry: both decision windows agree and the last week has not rolled over.
+    if r20 is not None and r60 is not None and r20 > 0 and r60 > 0 and (r5 or 0) >= 0:
+        score += 6.0
+    if dd20 is not None:
+        score -= max(0.0, abs(dd20) - 8.0) * 0.7
+    if dd60 is not None:
+        score -= max(0.0, abs(dd60) - 15.0) * 0.35
+    if (
+        distance_high is not None
+        and distance_high > -2.0
+        and r5 is not None
+        and r5 >= 5.0
+    ):
+        score -= 10.0
+    return round(_clamp(score, 0.0, 100.0), 2)
+
+
+def _clamp(value: float, lower: float, upper: float) -> float:
+    return max(lower, min(upper, value))
 
 
 def pick_sector_candidates(

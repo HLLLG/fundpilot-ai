@@ -1341,6 +1341,8 @@ export type DiscoveryDataEvidenceGuard = {
   execution_blocked: boolean;
   blocked_fund_codes: string[];
   reasons_by_fund?: Record<string, string[] | string>;
+  quant_evidence_blocked_fund_codes?: string[];
+  quant_evidence_uncovered_fund_codes?: string[];
 };
 
 export type DiscoveryDecisionActionCategory =
@@ -1362,6 +1364,7 @@ export type FundTypePreference = "any" | "etf_link" | "no_c_class";
 export type SelectionStrategy = "balanced" | "with_new_issue";
 
 export type DiscoveryScanMode = "full_market" | "portfolio_gap";
+export type DiscoveryStrategy = "opportunity_first" | "risk_first";
 
 export type DiscoveryPromptConfig = {
   role_prompt: string;
@@ -1391,6 +1394,8 @@ export type DiscoveryCandidatePoolItem = {
   is_new_issue?: boolean;
   max_drawdown_1y_percent?: number | null;
   fund_quality_score?: number | null;
+  opportunity_score_20_60d?: number | null;
+  opportunity_score_version?: string | null;
   sector_fit_score?: number | null;
   quality_reasons?: string[];
   quality_penalties?: string[];
@@ -1541,6 +1546,15 @@ export type FundDiscoveryReport = {
     };
     effective_configuration?: {
       scan_goal?: DiscoveryScanMode | string;
+      discovery_strategy?: DiscoveryStrategy | string;
+      discovery_strategy_contract?: {
+        id?: DiscoveryStrategy | string;
+        label?: string;
+        target_horizon?: string;
+        signal_windows_trading_days?: number[];
+        candidate_drawdown_policy?: string;
+        quant_coverage_policy?: string;
+      };
       selection_policy?: string;
       share_class_policy?: string;
       legacy_fund_type_preference?: FundTypePreference | string;
@@ -2185,6 +2199,7 @@ export async function startDiscoveryJob(
     fundTypePreference?: FundTypePreference;
     selectionStrategy?: SelectionStrategy;
     scanMode?: DiscoveryScanMode;
+    discoveryStrategy?: DiscoveryStrategy;
     systemRolePrompt?: string | null;
   },
 ): Promise<string> {
@@ -2200,6 +2215,7 @@ export async function startDiscoveryJob(
       fund_type_preference: options?.fundTypePreference ?? "any",
       selection_strategy: options?.selectionStrategy ?? "balanced",
       scan_mode: options?.scanMode ?? "full_market",
+      discovery_strategy: options?.discoveryStrategy ?? "opportunity_first",
       system_role_prompt: options?.systemRolePrompt ?? null,
     }),
   });

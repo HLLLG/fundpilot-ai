@@ -11,10 +11,14 @@ from app.models import DiscoveryRecommendation, InvestorProfile
 from app.services.discovery_allocation_risk import build_discovery_risk_context
 from app.services.discovery_allocator import allocate_discovery_candidates
 from app.services.discovery_guard import finalize_discovery_allocation_projection
+from app.services.discovery_strategy import (
+    discovery_horizon_label,
+    discovery_minimum_holding_days,
+    strategy_from_facts,
+)
 from app.services.fund_tradeability import (
     assess_tradeability_for_amount,
     build_tradeability_gate,
-    resolve_profile_min_holding_days,
 )
 
 
@@ -76,6 +80,12 @@ def apply_deterministic_discovery_allocation(
         for item in candidate_pool
         if isinstance(item, Mapping)
     }
+    discovery_strategy = strategy_from_facts(discovery_facts)
+    strategy_horizon = discovery_horizon_label(discovery_strategy, profile)
+    minimum_holding_days = discovery_minimum_holding_days(
+        discovery_strategy,
+        profile,
+    )
     proposed_buys = [
         item
         for item in recommendations
@@ -157,14 +167,13 @@ def apply_deterministic_discovery_allocation(
                 if isinstance(source.get("tradeability"), Mapping)
                 else None
             )
-            minimum_holding_days = resolve_profile_min_holding_days(profile)
             assessment = assess_tradeability_for_amount(
                 tradeability,
                 amount_yuan=amount,
                 hold_horizon=(
-                    f"用户预设最短持有期 {minimum_holding_days} 天"
+                    f"荐基策略最短持有期 {minimum_holding_days} 天"
                     if minimum_holding_days is not None
-                    else profile.horizon
+                    else strategy_horizon
                 ),
                 minimum_holding_days=minimum_holding_days,
             )
@@ -246,7 +255,8 @@ def apply_deterministic_discovery_allocation(
         copy.cost_assessment = cost_by_code.get(code) or {}
         copy.amount_note = (
             "当前首批金额由系统按已确认现金、总预算、已有板块敞口、"
-            "集中度、候选相关性、购买起点和单日限额统一计算；后续批次不预先承诺金额。"
+            "集中度、候选历史回撤、波动、相关性、购买起点和单日限额统一计算；"
+            "风险越高首批权重越低，后续批次不预先承诺金额。"
         )
         total_cost = _finite_number(
             copy.cost_assessment.get("estimated_total_cost_upper_bound_percent")

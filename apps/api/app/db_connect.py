@@ -18,6 +18,8 @@ _mysql_unreachable_until: float = 0.0
 # 每个线程复用一条 MySQL 连接，避免每次查询都重新握手 + 重跑 24 条 schema DDL
 # （远程云数据库单次往返 ~150-1000ms，逐查询新建连接曾导致单个持仓请求耗时 20s+）。
 _thread_local = threading.local()
+_mysql_schema_bootstrap_lock = threading.Lock()
+_mysql_schema_ready_key: tuple[str, int, str, str] | None = None
 
 
 def _mysql_fallback_cooldown_seconds() -> float:
@@ -32,6 +34,29 @@ def reset_mysql_fallback_cache() -> None:
     """测试或运维：清除 MySQL 不可用缓存，强制下次重试主库。"""
     global _mysql_unreachable_until
     _mysql_unreachable_until = 0.0
+
+
+def reset_mysql_bootstrap_cache() -> None:
+    """Clear the per-process schema-ready marker.
+
+    Runtime code normally never needs this: a new deployment starts a new
+    process, while the connection key automatically detects a changed target.
+    Tests and explicit operational reconfiguration can use it to force one
+    fresh bootstrap.
+    """
+
+    global _mysql_schema_ready_key
+    with _mysql_schema_bootstrap_lock:
+        _mysql_schema_ready_key = None
+
+    existing = getattr(_thread_local, "mysql_conn", None)
+    if existing is not None:
+        try:
+            existing.close()
+        except Exception:
+            pass
+    _thread_local.mysql_conn = None
+    _thread_local.mysql_connection_key = None
 
 
 def _db_path() -> Path:
@@ -145,9 +170,45 @@ def _parse_mysql_url(url: str) -> dict[str, Any]:
     }
 
 
+def _mysql_connection_key(settings: Any) -> tuple[str, int, str, str]:
+    """Return a password-free identity for the configured primary database."""
+
+    assert settings.database_url
+    parsed = _parse_mysql_url(settings.database_url)
+    return (
+        str(parsed["host"]),
+        int(parsed["port"]),
+        str(parsed["user"]),
+        str(parsed["database"]),
+    )
+
+
+def _ensure_mysql_schema_once(connection: Any, connection_key: tuple[str, int, str, str]) -> None:
+    """Run heavyweight schema bootstrap once per process and database target.
+
+    FastAPI's thread pool creates several thread-local MySQL connections during
+    the first page load. Without this single-flight guard every connection runs
+    the full bootstrap and competes for the same MySQL named lock. Waiting
+    threads now share the first result and skip repeated DDL/metadata checks.
+    """
+
+    global _mysql_schema_ready_key
+    from app.mysql_bootstrap import ensure_mysql_schema
+
+    with _mysql_schema_bootstrap_lock:
+        if _mysql_schema_ready_key == connection_key:
+            return
+        ensure_mysql_schema(connection)
+        _mysql_schema_ready_key = connection_key
+
+
 def _open_mysql() -> DbConnection:
+    settings = get_settings()
+    assert settings.database_url
+    connection_key = _mysql_connection_key(settings)
     existing = getattr(_thread_local, "mysql_conn", None)
-    if existing is not None:
+    existing_key = getattr(_thread_local, "mysql_connection_key", None)
+    if existing is not None and existing_key == connection_key:
         try:
             existing.ping(reconnect=True)
             return DbConnection(existing, "mysql", pooled=True)
@@ -157,19 +218,41 @@ def _open_mysql() -> DbConnection:
             except Exception:
                 pass
             _thread_local.mysql_conn = None
+            _thread_local.mysql_connection_key = None
+    elif existing is not None:
+        try:
+            existing.close()
+        except Exception:
+            pass
+        _thread_local.mysql_conn = None
+        _thread_local.mysql_connection_key = None
 
     import pymysql
 
-    from app.mysql_bootstrap import ensure_mysql_schema
-
-    settings = get_settings()
-    assert settings.database_url
     conn = pymysql.connect(
         **(_parse_mysql_url(settings.database_url) | {"connect_timeout": 10, "read_timeout": 30, "write_timeout": 30}),
     )
-    ensure_mysql_schema(conn)
+    try:
+        _ensure_mysql_schema_once(conn, connection_key)
+    except Exception:
+        # Do not leak a connection after bootstrap failure; connection-scoped
+        # MySQL named locks are also guaranteed to be released on close.
+        try:
+            conn.close()
+        finally:
+            _thread_local.mysql_conn = None
+            _thread_local.mysql_connection_key = None
+        raise
     _thread_local.mysql_conn = conn
+    _thread_local.mysql_connection_key = connection_key
     return DbConnection(conn, "mysql", pooled=True)
+
+
+def initialize_database_connection() -> None:
+    """Warm the configured store before request/background concurrency starts."""
+
+    connection = connect_with_fallback()
+    connection.close()
 
 
 def _open_sqlite() -> DbConnection:

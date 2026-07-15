@@ -76,7 +76,7 @@ from app.services.decision_time_call import (
     prefetch_fund_announcements_compat,
 )
 
-from app.services.fund_tradeability import resolve_profile_min_holding_days
+from app.services.discovery_strategy import discovery_minimum_holding_days
 from app.services.candidate_selection_audit import (
     build_pipeline_candidate_selection_audit_v2,
 )
@@ -215,9 +215,11 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
                     target_sectors,
                     per_sector=per_sector,
                     pool_cap=pool_cap,
-                    minimum_holding_days=resolve_profile_min_holding_days(
-                        request.profile
+                    minimum_holding_days=discovery_minimum_holding_days(
+                        request.discovery_strategy,
+                        request.profile,
                     ),
+                    discovery_strategy=request.discovery_strategy,
                     audit_sink=candidate_selection_audit_v1,
                     stage_audit_sink=candidate_selection_stages,
                 ),
@@ -326,6 +328,7 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
             budget_yuan=budget,
             selection_strategy=selection_strategy,
             scan_mode=request.scan_mode,
+            discovery_strategy=request.discovery_strategy,
             focus_sectors=list(request.focus_sectors),
             fund_type_preference="any",
             sector_opportunities=sector_opportunities,
