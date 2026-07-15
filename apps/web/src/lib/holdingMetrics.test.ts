@@ -3,6 +3,7 @@ import type { Holding } from "@/lib/api";
 import {
   applySectorDailyEstimate,
   computeDailyProfit,
+  displayableHoldings,
   findHoldingIndex,
   mergeHoldingsAppend,
   mergeSectorIntradayClose,
@@ -20,6 +21,17 @@ function holding(fund_code: string, fund_name: string): Holding {
     return_percent: 1,
   };
 }
+
+describe("displayableHoldings", () => {
+  it("excludes explicit audit fixtures from the live portfolio", () => {
+    expect(
+      displayableHoldings([
+        holding("008586", "audit"),
+        holding("010236", "广发电子信息传媒股票C"),
+      ]).map((item) => item.fund_code),
+    ).toEqual(["010236"]);
+  });
+});
 
 describe("findHoldingIndex", () => {
   it("finds by fund_code after array reorder", () => {

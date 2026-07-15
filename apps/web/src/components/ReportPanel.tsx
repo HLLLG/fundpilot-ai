@@ -8,11 +8,12 @@ import { ReportRecommendationList } from "@/components/ReportRecommendationList"
 import { ReportSkeleton } from "@/components/ReportSkeleton";
 import { ReportSummaryHero } from "@/components/ReportSummaryHero";
 import { StatusPill } from "@/components/StatusPill";
-import type { Report } from "@/lib/api";
+import type { Holding, Report } from "@/lib/api";
 import { fetchReportMarkdown } from "@/lib/api";
 import {
   displayFundRecommendations,
   groupFundRecommendations,
+  scopeReportToCurrentHoldings,
 } from "@/lib/reportPresentation";
 
 type ReportPanelProps = {
@@ -21,6 +22,8 @@ type ReportPanelProps = {
   onCancelStream?: () => void;
   onStreamFollowup?: (message: string) => Promise<void>;
   diagnostics?: () => React.ReactNode;
+  currentHoldings?: Holding[];
+  onConfirmLedgerBaseline?: () => void;
 };
 
 export function ReportPanel({
@@ -29,6 +32,8 @@ export function ReportPanel({
   onCancelStream,
   onStreamFollowup,
   diagnostics,
+  currentHoldings,
+  onConfirmLedgerBaseline,
 }: ReportPanelProps) {
   const [isExporting, setIsExporting] = useState(false);
 
@@ -89,7 +94,9 @@ export function ReportPanel({
     );
   }
 
-  const fundRecommendations = displayFundRecommendations(report);
+  const scoped = scopeReportToCurrentHoldings(report, currentHoldings);
+  const viewReport = scoped.report;
+  const fundRecommendations = displayFundRecommendations(viewReport);
   const groups = groupFundRecommendations(fundRecommendations);
 
   return (
@@ -99,15 +106,24 @@ export function ReportPanel({
         data-testid="report-ready"
       >
         <ReportSummaryHero
-          report={report}
+          report={viewReport}
           needsActionCount={groups.needsAction.length}
           isExporting={isExporting}
           onExport={() => void handleExportMarkdown()}
         />
-        <ReportRecommendationList report={report} recommendations={fundRecommendations} />
-        <ReportDetailsHub report={report} diagnostics={diagnostics} />
+        {scoped.hiddenRecommendationCount > 0 ? (
+          <p className="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+            持仓已更新，已自动隐藏 {scoped.hiddenRecommendationCount} 条不属于当前持仓的旧建议。
+          </p>
+        ) : null}
+        <ReportRecommendationList
+          report={viewReport}
+          recommendations={fundRecommendations}
+          onConfirmLedgerBaseline={onConfirmLedgerBaseline}
+        />
+        <ReportDetailsHub report={viewReport} diagnostics={diagnostics} />
       </section>
-      <ReportChatDrawer reportId={report.id} reportTitle={report.title} />
+      <ReportChatDrawer reportId={viewReport.id} reportTitle={viewReport.title} />
     </div>
   );
 }

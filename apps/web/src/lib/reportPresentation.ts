@@ -1,14 +1,83 @@
-import type { Report } from "@/lib/api";
+import type { Holding, Report } from "@/lib/api";
 import { actionTone } from "@/lib/actionStyles";
 import { translateEvidenceText } from "@/lib/decisionText";
 
 export type FundRecommendation = Report["fund_recommendations"][number];
 type Snapshot = Report["snapshots"][number];
 
+export type CurrentPortfolioReportView = {
+  report: Report;
+  hiddenRecommendationCount: number;
+};
+
 const EMPTY_NEWS = new Set(["", "无", "暂无", "暂无利好", "暂无利空", "暂无明确利好", "暂无明确利空"]);
 const ACTION_TONES = new Set(["add", "reduce", "deep_reduce", "clear_all"]);
 const GUARD_NOTE = /已按.*(?:风控|规则).*调整|对照本地规则/;
 const NEXT_PLAN = /(?:下一交易日|下交易日|开盘)/;
+
+function normalizedFundName(value?: string | null): string {
+  return (value ?? "").replace(/\s+/g, "").trim();
+}
+
+/**
+ * The latest report can outlive a portfolio edit. Keep the stored report intact
+ * for audit/export, but scope its active on-screen view to today's holdings so
+ * deleted profile rows cannot still look like current positions.
+ */
+export function scopeReportToCurrentHoldings(
+  report: Report,
+  currentHoldings?: Holding[],
+): CurrentPortfolioReportView {
+  if (!currentHoldings?.length || !report.fund_recommendations.length) {
+    return { report, hiddenRecommendationCount: 0 };
+  }
+
+  const codes = new Set(
+    currentHoldings
+      .map((holding) => holding.fund_code?.trim())
+      .filter((code): code is string => Boolean(code && code !== "000000")),
+  );
+  const names = new Set(
+    currentHoldings
+      .map((holding) => normalizedFundName(holding.fund_name))
+      .filter(Boolean),
+  );
+  const isCurrent = (item: { fund_code?: string | null; fund_name?: string | null }) => {
+    const code = item.fund_code?.trim();
+    if (code && code !== "000000") return codes.has(code);
+    return names.has(normalizedFundName(item.fund_name));
+  };
+
+  const fundRecommendations = report.fund_recommendations.filter(isCurrent);
+  const hiddenRecommendationCount =
+    report.fund_recommendations.length - fundRecommendations.length;
+  if (hiddenRecommendationCount <= 0) {
+    return { report, hiddenRecommendationCount: 0 };
+  }
+
+  const facts = report.analysis_facts as
+    | (Report["analysis_facts"] & { holdings?: Array<{ fund_code?: string; fund_name?: string }> })
+    | undefined;
+  const analysisFacts = facts
+    ? {
+        ...facts,
+        holdings: Array.isArray(facts.holdings)
+          ? facts.holdings.filter(isCurrent)
+          : facts.holdings,
+      }
+    : report.analysis_facts;
+
+  return {
+    report: {
+      ...report,
+      holdings: report.holdings.filter(isCurrent),
+      snapshots: report.snapshots.filter(isCurrent),
+      fund_recommendations: fundRecommendations,
+      analysis_facts: analysisFacts,
+    },
+    hiddenRecommendationCount,
+  };
+}
 
 export function meaningfulNewsLines(values?: string[]): string[] {
   const result: string[] = [];

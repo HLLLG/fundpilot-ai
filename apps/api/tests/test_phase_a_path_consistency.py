@@ -650,7 +650,7 @@ def test_daily_final_projection_matches_service_sse_and_background(
     assert [item["action"] for item in projection] == ["观察", "观察"]
     assert all(item["amount"] is None and item["position"] is None for item in projection)
     assert all(
-        any("确定性阻断" in note for note in item["guard_notes"])
+        any("暂时关闭仓位操作" in note for note in item["guard_notes"])
         for item in projection
     )
     assert projection == _daily_projection(events[-1]["report"])

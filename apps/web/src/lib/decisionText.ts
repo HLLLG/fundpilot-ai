@@ -92,6 +92,10 @@ export function divergenceBacktestLines(backtest: DivergenceBacktestLike): strin
 
 export function translateEvidenceText(text: string): string {
   return text
+    .replace(/字段级证据未达到可执行条件，本条仅保留观察(?:\/风险复核)?。?/g, "关键信息还不够完整或不够新，先观察，等数据更新后再判断。")
+    .replace(/字段级证据未达到时点可用条件，未生成可执行金额/g, "关键信息还不够完整或不够新，因此暂不提供买卖金额。")
+    .replace(/持仓与字段级证据未达到可执行条件，本次已禁止仓位动作。?/g, "持仓份额、成本或关键行情还未确认完整且为最新，因此暂不提供加减仓操作。")
+    .replace(/字段级证据时点校验未通过，仓位动作已被确定性阻断。?/g, "关键信息完整性与更新时间校验未通过，系统已暂时关闭仓位操作。")
     .replace(/\bopportunity\s+absent\b/gi, "当前不构成机会")
     .replace(/\bopportunity\s+present\b/gi, "当前构成机会")
     .replace(/机会\s*absent\b/gi, "当前不构成机会")

@@ -1714,6 +1714,10 @@ export function Dashboard() {
                     streaming={streamingReport}
                     onCancelStream={activeJobId ? undefined : handleCancelStream}
                     onStreamFollowup={activeJobId ? undefined : handleStreamFollowup}
+                    currentHoldings={
+                      report?.id === todayReport?.id ? displayableHoldings(holdings) : undefined
+                    }
+                    onConfirmLedgerBaseline={() => setShowLedgerBaselineModal(true)}
                     diagnostics={() => (
                       <ReportDiagnostics
                         holdings={displayableHoldings(holdings)}

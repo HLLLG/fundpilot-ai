@@ -369,14 +369,6 @@ def load_dashboard_holdings() -> tuple[list[Holding], str, str | None, datetime 
     if not holdings:
         return [], "empty", None, None
 
-    profile_holdings = _lightweight_profile_holdings()
-    if _should_recover_from_profiles(
-        holdings,
-        profile_holdings,
-        snapshot_total_assets=snapshot.get("total_assets"),
-    ):
-        return load_persisted_holdings(fetch_benchmark=False)
-
     trade_date = get_effective_trade_date()
     holdings = [_fast_overlay_cached_official_nav(holding, trade_date) for holding in holdings]
     from app.services.holding_estimates import enrich_holdings_estimates
@@ -428,33 +420,6 @@ def holdings_from_profiles(
         enrich_holdings_from_profiles(holdings, fetch_benchmark=fetch_benchmark),
         fetch_benchmark=fetch_benchmark,
     )
-
-
-def _holdings_total(holdings: list[Holding]) -> float:
-    return round(sum(holding.holding_amount for holding in holdings), 2)
-
-
-def _should_recover_from_profiles(
-    snapshot_holdings: list[Holding],
-    profile_holdings: list[Holding],
-    *,
-    snapshot_total_assets: float | None = None,
-) -> bool:
-    if not profile_holdings:
-        return False
-    if len(snapshot_holdings) < len(profile_holdings):
-        return True
-    snap_total = _holdings_total(snapshot_holdings)
-    profile_total = _holdings_total(profile_holdings)
-    if profile_total > snap_total * 1.05:
-        return True
-    if (
-        snapshot_total_assets
-        and snap_total > 0
-        and float(snapshot_total_assets) > snap_total * 1.2
-    ):
-        return True
-    return False
 
 
 def _overlay_profile_onto_holding(base: Holding, profile: FundProfile) -> Holding:
@@ -573,21 +538,10 @@ def load_persisted_holdings(
     if snapshot and "holdings" in snapshot:
         holdings = [Holding.model_validate(item) for item in snapshot.get("holdings") or []]
         if holdings:
-            snapshot_total = snapshot.get("total_assets")
-            profile_holdings = _lightweight_profile_holdings()
-            if _should_recover_from_profiles(
-                holdings,
-                profile_holdings,
-                snapshot_total_assets=snapshot_total,
-            ):
-                full_profile_holdings = holdings_from_profiles(fetch_benchmark=fetch_benchmark)
-                if full_profile_holdings:
-                    return _finalize(
-                        enrich_loaded_holdings(full_profile_holdings),
-                        "profiles_recovered",
-                        snapshot.get("snapshot_date"),
-                        _refreshed_at_from_summary(),
-                    )
+            # The daily snapshot is the authoritative membership list. Profiles
+            # are mutable metadata and may retain funds that the user already
+            # removed; using their count/amount to "recover" a non-empty snapshot
+            # resurrected those stale rows in daily reports.
             if fetch_benchmark:
                 merged = without_test_holdings(merge_holdings_with_profiles(holdings))
                 enriched = enrich_loaded_holdings(

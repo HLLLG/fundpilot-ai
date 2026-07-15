@@ -8,6 +8,7 @@ import {
   meaningfulNewsLines,
   portfolioRecommendationLines,
   safeDiagnosticMetrics,
+  scopeReportToCurrentHoldings,
   selectNextTradingPlan,
   selectPrimaryReason,
 } from "@/lib/reportPresentation";
@@ -106,5 +107,45 @@ describe("daily report presentation", () => {
     expect(
       safeDiagnosticMetrics({ return_1y_percent: 12.3, max_drawdown_1y_percent: -18.6 }),
     ).toEqual({ hints: ["近1年 12.3%", "最大回撤 -18.6%"], invalid: false });
+  });
+
+  it("scopes the latest report view to the current authoritative holdings", () => {
+    const report = {
+      holdings: [
+        { fund_code: "010236", fund_name: "当前基金", holding_amount: 1_000 },
+        { fund_code: "021627", fund_name: "旧基金", holding_amount: 2_000 },
+      ],
+      snapshots: [
+        { fund_code: "010236", fund_name: "当前基金" },
+        { fund_code: "021627", fund_name: "旧基金" },
+      ],
+      fund_recommendations: [
+        rec({ fund_code: "010236", fund_name: "当前基金" }),
+        rec({ fund_code: "021627", fund_name: "旧基金" }),
+      ],
+      analysis_facts: {
+        holdings: [{ fund_code: "010236" }, { fund_code: "021627" }],
+      },
+    } as unknown as Report;
+
+    const scoped = scopeReportToCurrentHoldings(report, [
+      {
+        fund_code: "010236",
+        fund_name: "当前基金",
+        holding_amount: 1_000,
+        return_percent: 0,
+      },
+    ]);
+
+    expect(scoped.hiddenRecommendationCount).toBe(1);
+    expect(scoped.report.fund_recommendations.map((item) => item.fund_code)).toEqual([
+      "010236",
+    ]);
+    expect(scoped.report.holdings.map((item) => item.fund_code)).toEqual(["010236"]);
+    expect(scoped.report.snapshots.map((item) => item.fund_code)).toEqual(["010236"]);
+    expect(
+      (scoped.report.analysis_facts as { holdings: Array<{ fund_code: string }> }).holdings,
+    ).toEqual([{ fund_code: "010236" }]);
+    expect(report.fund_recommendations).toHaveLength(2);
   });
 });

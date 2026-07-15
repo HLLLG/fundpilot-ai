@@ -761,7 +761,7 @@ def _build_final_report(
 
     summary = parsed.get("summary") or fallback.summary
     if report_execution_blocked(facts):
-        summary = "字段级证据时点校验未通过，本次报告仅保留观察与风险复核；请刷新持仓和行情后重新生成。"
+        summary = "持仓份额、成本或关键行情还未确认完整且为最新，本次只做观察和风险提示；请更新数据后重新生成。"
     report = Report(
         **({"created_at": decision_at} if decision_at is not None else {}),
         title=parsed.get("title", "每日基金操作日报"),
@@ -1306,7 +1306,7 @@ def _append_pipeline_caveats(caveats: list[str], facts: dict) -> list[str]:
         if caveat not in result:
             result.append(caveat)
     if report_execution_blocked(facts):
-        note = "字段级证据时点校验未通过，系统已隐藏仓位动作、金额及相关可执行措辞。"
+        note = "关键信息完整性与更新时间校验未通过，系统已暂时隐藏仓位动作和买卖金额。"
         if note not in result:
             result.append(note)
     pipeline = facts.get("pipeline") or {}
@@ -1488,7 +1488,7 @@ def _offline_report(
         )
     )
     if report_execution_blocked(facts):
-        summary = "字段级证据时点校验未通过，本次仅保留观察与风险复核；请刷新数据后重新生成。"
+        summary = "持仓份额、成本或关键行情还未确认完整且为最新，本次只做观察和风险提示；请更新数据后重新生成。"
     if provider_failure is not None:
         summary = f"{summary}\n\n{provider_failure.message}"
         if provider_failure.message not in caveats:

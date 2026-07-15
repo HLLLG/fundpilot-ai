@@ -145,7 +145,7 @@ def apply_recommendation_guards(
         snapshot_note = None
         if execution_blocked and _action_bucket(normalized) >= ACTION_BUCKET_ADD:
             normalized = "观察"
-            snapshot_note = "持仓与字段级证据未达到可执行条件，本次已禁止仓位动作。"
+            snapshot_note = "持仓份额、成本或关键行情还未确认完整且为最新，因此暂不提供加减仓操作。"
 
         nav_trend = None
         if holding is not None and nav_trends_by_code:
@@ -314,13 +314,13 @@ def apply_recommendation_guards(
         )
         if execution_blocked:
             copy.amount_yuan = None
-            copy.amount_note = "字段级证据未达到时点可用条件，未生成可执行金额"
+            copy.amount_note = "关键信息还不够完整或不够新，因此暂不提供买卖金额。"
             copy.suggested_position_change_percent = None
             copy.suggested_position_change_basis = "决策证据未达到时点可用条件，禁止据此计算仓位变化"
             copy.confidence = "低"
             copy.validation_notes = [
                 *copy.validation_notes,
-                "持仓或字段级证据过期、未知或尚未服务端确认；金额、权重和仓位动作不具备执行条件。",
+                "持仓份额、成本或关键行情尚未确认完整且为最新；本次不提供金额、权重和仓位动作。",
             ]
         if note:
             copy.points = [note, *copy.points]
@@ -350,7 +350,7 @@ def apply_recommendation_guards(
         if execution_blocked:
             copy.points = safe_blocked_points(
                 copy.points,
-                fallback="字段级证据未达到可执行条件，本条仅保留观察/风险复核。",
+                fallback="关键信息还不够完整或不够新，先观察，等数据更新后再判断。",
             )
             copy.decision_path = "证据时点校验未通过，系统阻断仓位动作并降为观察/风险复核。"
             copy.sector_evidence = [
@@ -361,7 +361,7 @@ def apply_recommendation_guards(
             ]
             copy.validation_notes = [
                 value for value in copy.validation_notes if not contains_executable_decision_text(value)
-            ] + ["字段级证据时点校验未通过，仓位动作已被确定性阻断。"]
+            ] + ["关键信息完整性与更新时间校验未通过，系统已暂时关闭仓位操作。"]
         _enforce_final_execution_projection(copy, original_action=original_action)
         _humanize_recommendation_text(copy)
         guarded.append(copy)
@@ -373,7 +373,7 @@ def apply_recommendation_guards(
     if not portfolio:
         portfolio = ["组合级执行动作以逐基金卡片中的系统校验结果为准。"]
     if evidence_blocked_codes:
-        hint = "持仓或字段级证据未达到时点可用条件：本次仅保留观察/风险复核，已隐藏仓位动作与金额措辞。"
+        hint = "部分持仓的份额、成本或关键行情还未确认完整且为最新：本次只做观察和风险提示，暂不显示仓位动作与金额。"
         safe_portfolio = [line for line in portfolio if not contains_executable_decision_text(line)]
         portfolio = [hint, *safe_portfolio[:1]]
     elif not short_term and settings.news_require_today_for_add and not today_signal:

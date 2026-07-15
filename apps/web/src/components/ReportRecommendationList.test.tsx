@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import type { Report } from "@/lib/api";
 import { ReportRecommendationList } from "@/components/ReportRecommendationList";
 
@@ -125,6 +125,35 @@ it("renders actionable cards before collapsed observation rows", () => {
   expect(screen.getByRole("heading", { name: "继续观察" })).toBeInTheDocument();
   expect(screen.getByText("建议降至约 10,500 元")).toBeInTheDocument();
   expect(screen.queryByText("完整量化证据")).not.toBeInTheDocument();
+});
+
+it("explains an incomplete ledger and links directly to baseline confirmation", () => {
+  const onConfirm = vi.fn();
+  const report = buildReport(
+    [recommendation({ points: ["字段级证据未达到可执行条件，本条仅保留观察/风险复核。"] })],
+    [],
+    {
+      data_evidence_guard: {
+        execution_blocked: true,
+        reasons_by_fund: {
+          "000001": ["incomplete_or_unsettled_position_ledger"],
+        },
+      },
+    },
+  );
+
+  render(
+    <ReportRecommendationList
+      report={report}
+      onConfirmLedgerBaseline={onConfirm}
+    />,
+  );
+
+  expect(screen.getByText("为什么现在只有“观察”？")).toBeInTheDocument();
+  expect(screen.getByText(/系统还不能确认每只基金的实际份额和成本/)).toBeInTheDocument();
+  expect(screen.queryByText(/字段级证据/)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "去确认账本基线" }));
+  expect(onConfirm).toHaveBeenCalledOnce();
 });
 
 it("keeps observation detail collapsed until the row is opened", () => {

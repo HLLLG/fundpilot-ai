@@ -7,12 +7,16 @@ import type { Holding } from "@/lib/api";
 
 const TEST_FUND_CODES = new Set(["000001"]);
 const TEST_NAME_PREFIXES = ["测试", "新基金"];
+const TEST_FUND_NAMES = new Set(["audit"]);
 
 function isTestHolding(holding: Holding): boolean {
   if (TEST_FUND_CODES.has(holding.fund_code)) {
     return true;
   }
   const name = (holding.fund_name || "").trim();
+  if (TEST_FUND_NAMES.has(name.toLowerCase())) {
+    return true;
+  }
   return TEST_NAME_PREFIXES.some((prefix) => name.startsWith(prefix));
 }
 
