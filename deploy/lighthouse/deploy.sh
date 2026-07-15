@@ -28,9 +28,9 @@ if [[ ! -f "$repo_root/.env.production" ]]; then
 fi
 required_web_files=(
     "index.html"
-    "login/index.html"
-    "register/index.html"
-    "settings/index.html"
+    "login.html"
+    "register.html"
+    "settings.html"
 )
 for required_web_file in "${required_web_files[@]}"; do
     if [[ ! -f "$release_web/$required_web_file" ]]; then

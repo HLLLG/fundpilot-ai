@@ -252,8 +252,8 @@ function DiscoveryRecommendationCard({
       ) : null}
       {(rec.risks ?? []).length ? (
         <div className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-900">
-          {(rec.risks ?? []).map((risk) => (
-            <div className="break-words [overflow-wrap:anywhere]" key={risk}>⚠ {translateEvidenceText(risk)}</div>
+          {(rec.risks ?? []).map((risk, riskIndex) => (
+            <div className="break-words [overflow-wrap:anywhere]" key={`${risk}-${riskIndex}`}>⚠ {translateEvidenceText(risk)}</div>
           ))}
         </div>
       ) : null}
@@ -277,8 +277,8 @@ function DiscoveryRecommendationCard({
             />
             {(rec.points?.length ?? 0) > 1 ? (
               <ul className="space-y-1 text-sm text-slate-700">
-                {(rec.points ?? []).slice(1).map((point) => (
-                  <li className="break-words [overflow-wrap:anywhere]" key={point}>· {translateEvidenceText(point)}</li>
+                {(rec.points ?? []).slice(1).map((point, pointIndex) => (
+                  <li className="break-words [overflow-wrap:anywhere]" key={`${point}-${pointIndex}`}>· {translateEvidenceText(point)}</li>
                 ))}
               </ul>
             ) : null}
@@ -414,8 +414,8 @@ function RecommendationGroup({
         </div>
         <span className="shrink-0 text-xs font-bold text-slate-500">{recommendations.length} 只</span>
       </div>
-      {recommendations.map((rec) => (
-        <DiscoveryRecommendationCard key={rec.fund_code} rec={rec} onOpenFund={onOpenFund} />
+      {recommendations.map((rec, recommendationIndex) => (
+        <DiscoveryRecommendationCard key={`${rec.fund_code}-${recommendationIndex}`} rec={rec} onOpenFund={onOpenFund} />
       ))}
     </section>
   );
@@ -492,8 +492,8 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
             </span>
           </div>
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
-            {sectorOpportunities.slice(0, 4).map((item) => (
-              <SectorOpportunityCard key={`${item.sector_label}-${item.track ?? "track"}`} item={item} />
+            {sectorOpportunities.slice(0, 4).map((item, opportunityIndex) => (
+              <SectorOpportunityCard key={`${item.sector_label}-${item.track ?? "track"}-${opportunityIndex}`} item={item} />
             ))}
           </div>
         </section>
@@ -565,8 +565,8 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
 
       {report.caveats?.length ? (
         <section className="rounded-xl border border-amber-100 bg-amber-50/80 px-4 py-3 text-xs leading-5 text-amber-900">
-          {report.caveats.map((line) => (
-            <p className="break-words [overflow-wrap:anywhere]" key={line}>{translateEvidenceText(line)}</p>
+          {report.caveats.map((line, lineIndex) => (
+            <p className="break-words [overflow-wrap:anywhere]" key={`${line}-${lineIndex}`}>{translateEvidenceText(line)}</p>
           ))}
         </section>
       ) : null}

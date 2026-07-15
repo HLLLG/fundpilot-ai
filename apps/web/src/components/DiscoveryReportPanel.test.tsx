@@ -18,6 +18,7 @@ vi.mock("@/components/DiscoveryChatDrawer", () => ({
 
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
 });
 
 function sampleReport(): FundDiscoveryReport {
@@ -101,6 +102,27 @@ function sampleReport(): FundDiscoveryReport {
 }
 
 describe("DiscoveryReportPanel", () => {
+  it("renders repeated evidence text without duplicate React keys", () => {
+    const report = sampleReport();
+    const repeatedPoint = report.recommendations[0].points?.[1] ?? "repeated point";
+    report.recommendations[0].points = [
+      report.recommendations[0].points?.[0] ?? "primary point",
+      repeatedPoint,
+      repeatedPoint,
+    ];
+    report.recommendations[0].risks = ["repeated risk", "repeated risk"];
+    report.caveats = ["repeated caveat", "repeated caveat"];
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    render(<DiscoveryReportPanel report={report} />);
+
+    expect(
+      consoleError.mock.calls.some((args) =>
+        args.some((value) => String(value).includes("same key")),
+      ),
+    ).toBe(false);
+  });
+
   it("keeps evidence-blocked recommendations in research observation instead of priority action", () => {
     render(<DiscoveryReportPanel report={sampleReport()} />);
 
