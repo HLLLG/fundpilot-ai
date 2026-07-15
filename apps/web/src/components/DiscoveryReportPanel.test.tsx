@@ -128,17 +128,19 @@ describe("DiscoveryReportPanel", () => {
 
     expect(screen.getByText("本次主方向")).toBeInTheDocument();
     expect(screen.getByText("电子")).toBeInTheDocument();
-    expect(screen.getByText(/机会分 66.46/)).toBeInTheDocument();
     expect(screen.getAllByText(/顺势观察/).length).toBeGreaterThan(0);
     expect(screen.queryByText(/track=momentum/)).not.toBeInTheDocument();
     expect(screen.queryByText(/pattern=/)).not.toBeInTheDocument();
     expect(screen.getByText("本次暂无可执行建议")).toBeInTheDocument();
     expect(screen.getByText("研究观察")).toBeInTheDocument();
-    expect(screen.getByText(/其中 1 只被字段级证据守卫降为观察/)).toBeInTheDocument();
+    expect(screen.getByText(/有 1 只候选的关键资料不完整或不够新/)).toBeInTheDocument();
+    expect(screen.queryByText(/字段级证据守卫/)).not.toBeInTheDocument();
     expect(screen.queryByText("优先行动")).not.toBeInTheDocument();
     expect(screen.queryByText("可执行建议")).not.toBeInTheDocument();
+    expect(screen.queryByText(/核心理由/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /查看 1 只/ }));
     expect(screen.getByText(/核心理由/)).toBeInTheDocument();
-    const evidenceDisclosure = screen.getByText("查看决策路径与专业依据");
+    const evidenceDisclosure = screen.getByText("查看交易条件与完整依据");
     expect(screen.getByText("决策路径")).not.toBeVisible();
     fireEvent.click(evidenceDisclosure);
     expect(screen.getByText("决策路径")).toBeVisible();
@@ -268,6 +270,8 @@ describe("DiscoveryReportPanel", () => {
 
     render(<DiscoveryReportPanel report={report} />);
 
+    fireEvent.click(screen.getByRole("button", { name: /查看 1 只/ }));
+    fireEvent.click(screen.getByText("查看交易条件与完整依据"));
     const evidence = screen.getByRole("region", { name: "交易条件与成本核验" });
     expect(evidence).toHaveTextContent("申购限大额");
     expect(evidence).toHaveTextContent("赎回开放");
@@ -446,6 +450,8 @@ describe("DiscoveryReportPanel", () => {
     expect(screen.getByText("研究观察")).toBeInTheDocument();
     expect(screen.queryByText("可执行建议")).not.toBeInTheDocument();
     expect(screen.getByText("组合风险上下文未通过或未记录")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /查看 1 只/ }));
+    fireEvent.click(screen.getByText("查看交易条件与完整依据"));
     expect(screen.getByLabelText("历史参考金额")).toHaveTextContent("¥999,999");
   });
 
@@ -489,6 +495,7 @@ describe("DiscoveryReportPanel", () => {
 
     render(<DiscoveryReportPanel report={report} />);
 
+    fireEvent.click(screen.getByRole("button", { name: /持仓穿透与重合证据/ }));
     const evidence = screen.getByRole("region", { name: "基金持仓穿透证据" });
     expect(evidence).toHaveTextContent("海富通电子传媒股票A");
     expect(evidence).toHaveTextContent("006081");
@@ -497,5 +504,16 @@ describe("DiscoveryReportPanel", () => {
     );
     expect(evidence).not.toHaveTextContent(/≥\s*0%/);
     expect(evidence).not.toHaveTextContent("完全分散");
+  });
+
+  it("loads historical outcomes only after the user opens the research panel", () => {
+    render(<DiscoveryReportPanel report={sampleReport()} />);
+
+    expect(screen.queryByTestId("outcomes-panel")).not.toBeInTheDocument();
+    const trigger = screen.getByRole("button", { name: /历史效果复盘/ });
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(trigger);
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByTestId("outcomes-panel")).toBeInTheDocument();
   });
 });

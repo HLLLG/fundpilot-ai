@@ -2,8 +2,11 @@
 
 import { useMemo, useState } from "react";
 import {
+  BarChart3,
+  BookOpenCheck,
   ChevronDown,
   CircleDollarSign,
+  FileSearch,
   MessageCircle,
   ShieldAlert,
   ShieldCheck,
@@ -166,16 +169,46 @@ function recommendationStatus(
 function DiscoveryRecommendationCard({
   rec,
   onOpenFund,
+  compact = false,
 }: {
   rec: DiscoveryRecommendation;
   onOpenFund?: (recommendation: DiscoveryRecommendation) => void;
+  compact?: boolean;
 }) {
   const verifiedInitialTranche = isCurrentVerifiedAllocation(rec);
   const futureTranche = rec.allocation?.future_tranches?.find(
     (item) => item.revalidation_required !== false,
   );
+  const tradeabilityGate =
+    rec.tradeability_gate ??
+    rec.tradeability?.tradeability_gate ??
+    rec.cost_assessment?.tradeability_gate;
+  const hasTradeabilityEvidence = Boolean(
+    (rec.tradeability && Object.keys(rec.tradeability).length) ||
+      (tradeabilityGate && Object.keys(tradeabilityGate).length) ||
+      (rec.cost_assessment && Object.keys(rec.cost_assessment).length),
+  );
+  const tradeabilitySummary = tradeabilityGate?.status === "eligible"
+    ? { label: "交易条件通过", className: "bg-emerald-50 text-emerald-800 ring-emerald-200" }
+    : tradeabilityGate?.status
+      ? { label: "交易条件需复核", className: "bg-amber-50 text-amber-900 ring-amber-200" }
+      : hasTradeabilityEvidence
+        ? { label: "交易信息待核验", className: "bg-slate-50 text-slate-700 ring-slate-200" }
+        : null;
+  const hasProfessionalDetails = Boolean(
+    hasTradeabilityEvidence ||
+      rec.decision_path ||
+      rec.sector_evidence?.length ||
+      rec.fund_evidence?.length ||
+      rec.validation_notes?.length ||
+      (rec.points?.length ?? 0) > 1 ||
+      (rec.risks?.length ?? 0) > 1 ||
+      (!verifiedInitialTranche && rec.suggested_amount_yuan != null),
+  );
   return (
-    <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+    <article className={`rounded-2xl border bg-white shadow-sm ${
+      compact ? "border-slate-200/80 p-3.5" : "border-slate-200 p-4"
+    }`}>
       <div className="flex flex-wrap items-start justify-between gap-2">
         <button
           type="button"
@@ -192,9 +225,16 @@ function DiscoveryRecommendationCard({
           </div>
           <div className="mt-1 text-[11px] font-medium text-[var(--brand)]">查看基金详情 →</div>
         </button>
-        <span className={actionBadgeClass(rec.action)}>{rec.action}</span>
+        <div className="flex flex-wrap justify-end gap-1.5">
+          {tradeabilitySummary ? (
+            <span className={`rounded-full px-2 py-1 text-[10px] font-black ring-1 ${tradeabilitySummary.className}`}>
+              {tradeabilitySummary.label}
+            </span>
+          ) : null}
+          <span className={actionBadgeClass(rec.action)}>{rec.action}</span>
+        </div>
       </div>
-      {rec.suggested_amount_yuan != null ? (
+      {rec.suggested_amount_yuan != null && (verifiedInitialTranche || !compact) ? (
         <div
           aria-label={verifiedInitialTranche ? "当前已验证首批金额" : "历史参考金额"}
           className={`mt-2 rounded-xl border px-3 py-2.5 ${
@@ -233,11 +273,6 @@ function DiscoveryRecommendationCard({
           </p>
         </div>
       ) : null}
-      <FundTradeabilityEvidence
-        tradeability={rec.tradeability}
-        tradeabilityGate={rec.tradeability_gate}
-        costAssessment={rec.cost_assessment}
-      />
       {rec.suggested_position_change_percent != null ? (
         <DiscoveryPositionChangeBadge
           percent={rec.suggested_position_change_percent}
@@ -252,18 +287,34 @@ function DiscoveryRecommendationCard({
       ) : null}
       {(rec.risks ?? []).length ? (
         <div className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-900">
-          {(rec.risks ?? []).map((risk, riskIndex) => (
-            <div className="break-words [overflow-wrap:anywhere]" key={`${risk}-${riskIndex}`}>⚠ {translateEvidenceText(risk)}</div>
-          ))}
+          <div className="break-words [overflow-wrap:anywhere]">⚠ {translateEvidenceText(rec.risks?.[0] ?? "")}</div>
         </div>
       ) : null}
-      {rec.decision_path || rec.sector_evidence?.length || rec.fund_evidence?.length || rec.validation_notes?.length || (rec.points?.length ?? 0) > 1 ? (
-        <details className="mt-3 overflow-hidden rounded-xl border border-slate-200 bg-slate-50/60">
-          <summary className="flex min-h-11 cursor-pointer items-center justify-between gap-2 px-3 text-xs font-black text-slate-700 hover:bg-slate-100">
-            查看决策路径与专业依据
-            <ChevronDown size={16} className="text-slate-500" aria-hidden />
+      {hasProfessionalDetails ? (
+        <details className="group mt-3 overflow-hidden rounded-xl border border-slate-200 bg-slate-50/60">
+          <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 px-3 text-xs font-black text-slate-700 hover:bg-slate-100 [&::-webkit-details-marker]:hidden">
+            查看交易条件与完整依据
+            <ChevronDown size={16} className="text-slate-500 transition group-open:rotate-180" aria-hidden />
           </summary>
           <div className="space-y-3 border-t border-slate-200 p-3">
+            {!verifiedInitialTranche && rec.suggested_amount_yuan != null ? (
+              <div aria-label="历史参考金额" className="rounded-xl border border-slate-200 bg-white px-3 py-2.5">
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <span className="text-[11px] font-black tracking-wide text-slate-600">历史参考金额</span>
+                  <strong className="font-mono text-lg tabular-nums text-slate-900">
+                    {formatYuan(rec.suggested_amount_yuan)}
+                  </strong>
+                </div>
+                <p className="mt-1 text-[11px] leading-5 text-slate-500">不作为本次可执行金额。</p>
+              </div>
+            ) : null}
+            {hasTradeabilityEvidence ? (
+              <FundTradeabilityEvidence
+                tradeability={rec.tradeability}
+                tradeabilityGate={rec.tradeability_gate}
+                costAssessment={rec.cost_assessment}
+              />
+            ) : null}
             {rec.decision_path ? (
               <div className="rounded-xl border border-blue-100 bg-blue-50/70 px-3 py-2.5 text-sm leading-6 text-blue-950">
                 <div className="text-xs font-black text-blue-900">决策路径</div>
@@ -281,6 +332,14 @@ function DiscoveryRecommendationCard({
                   <li className="break-words [overflow-wrap:anywhere]" key={`${point}-${pointIndex}`}>· {translateEvidenceText(point)}</li>
                 ))}
               </ul>
+            ) : null}
+            {(rec.risks?.length ?? 0) > 1 ? (
+              <div className="rounded-xl bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900">
+                <p className="font-black">其他风险</p>
+                {(rec.risks ?? []).slice(1).map((risk, riskIndex) => (
+                  <p className="mt-1 break-words [overflow-wrap:anywhere]" key={`${risk}-${riskIndex}`}>· {translateEvidenceText(risk)}</p>
+                ))}
+              </div>
             ) : null}
           </div>
         </details>
@@ -322,32 +381,38 @@ function DiscoveryAllocationPlanPanel({ report }: { report: FundDiscoveryReport 
       aria-label="确定性首批分配"
       className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"
     >
-      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 px-4 py-3.5">
-        <div>
-          <h3 className="flex items-center gap-2 text-sm font-black text-slate-950">
-            <CircleDollarSign size={17} aria-hidden="true" className="text-[var(--brand)]" />
-            确定性首批分配
-          </h3>
-          <p className="mt-1 text-[11px] leading-5 text-slate-500">
-            金额由现金、集中度、交易门槛与组合风险统一计算，不采用模型草案金额或顺序。
-          </p>
-        </div>
-        <span className={`rounded-full border px-2 py-1 text-[11px] font-black ${
-          plan.status === "allocated"
-            ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-            : plan.status === "partial"
-              ? "border-amber-200 bg-amber-50 text-amber-900"
-              : "border-slate-200 bg-slate-100 text-slate-700"
-        }`}>
-          {plan.status === "allocated"
-            ? "首批已分配"
-            : plan.status === "partial"
-              ? "首批部分分配"
-              : "未形成首批金额"}
-        </span>
-      </div>
+      <details className="group">
+        <summary className="flex cursor-pointer list-none items-start justify-between gap-3 px-4 py-3.5 outline-none hover:bg-slate-50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--brand)] [&::-webkit-details-marker]:hidden">
+          <div className="min-w-0">
+            <h3 className="flex items-center gap-2 text-sm font-black text-slate-950">
+              <CircleDollarSign size={17} aria-hidden="true" className="text-[var(--brand)]" />
+              首批资金安排
+            </h3>
+            <p className="mt-1 text-[11px] leading-5 text-slate-500">
+              {plan.status === "allocated" || plan.status === "partial"
+                ? `本次已分配 ${formatYuan(budget.allocated_current_tranche_yuan, "¥0")}，展开查看预算与风控明细。`
+                : "本次未形成可执行金额，展开查看被拦截的原因。"}
+            </p>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <span className={`rounded-full border px-2 py-1 text-[11px] font-black ${
+              plan.status === "allocated"
+                ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                : plan.status === "partial"
+                  ? "border-amber-200 bg-amber-50 text-amber-900"
+                  : "border-slate-200 bg-slate-100 text-slate-700"
+            }`}>
+              {plan.status === "allocated"
+                ? "首批已分配"
+                : plan.status === "partial"
+                  ? "首批部分分配"
+                  : "未形成首批金额"}
+            </span>
+            <ChevronDown size={17} aria-hidden="true" className="text-slate-500 transition group-open:rotate-180" />
+          </div>
+        </summary>
 
-      <dl className="grid grid-cols-2 border-b border-slate-100 sm:grid-cols-3">
+      <dl className="grid grid-cols-2 border-y border-slate-100 sm:grid-cols-3">
         {metrics.map(([label, value]) => (
           <div key={label} className="border-b border-r border-slate-100 px-3 py-2.5 last:border-r-0 sm:border-b-0">
             <dt className="text-[10px] font-semibold text-slate-500">{label}</dt>
@@ -385,6 +450,7 @@ function DiscoveryAllocationPlanPanel({ report }: { report: FundDiscoveryReport 
       <p className="border-t border-slate-100 px-4 py-2.5 text-[11px] font-semibold leading-5 text-slate-600">
         后续批次不预设金额；执行前必须重新核验交易状态、现金、敞口与风险。
       </p>
+      </details>
     </section>
   );
 }
@@ -395,13 +461,16 @@ function RecommendationGroup({
   description,
   recommendations,
   onOpenFund,
+  collapsible = false,
 }: {
   id: string;
   title: string;
   description: string;
   recommendations: DiscoveryRecommendation[];
   onOpenFund?: (recommendation: DiscoveryRecommendation) => void;
+  collapsible?: boolean;
 }) {
+  const [open, setOpen] = useState(!collapsible);
   if (!recommendations.length) {
     return null;
   }
@@ -412,11 +481,33 @@ function RecommendationGroup({
           <h3 id={id} className="text-base font-black text-slate-950">{title}</h3>
           <p className="mt-1 text-xs leading-5 text-slate-500">{description}</p>
         </div>
-        <span className="shrink-0 text-xs font-bold text-slate-500">{recommendations.length} 只</span>
+        {collapsible ? (
+          <button
+            type="button"
+            onClick={() => setOpen((value) => !value)}
+            aria-expanded={open}
+            aria-controls={`${id}-content`}
+            className="inline-flex min-h-10 shrink-0 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 text-xs font-black text-slate-700 shadow-sm hover:bg-slate-50"
+          >
+            {open ? "收起" : `查看 ${recommendations.length} 只`}
+            <ChevronDown size={14} aria-hidden="true" className={`transition ${open ? "rotate-180" : ""}`} />
+          </button>
+        ) : (
+          <span className="shrink-0 text-xs font-bold text-slate-500">{recommendations.length} 只</span>
+        )}
       </div>
-      {recommendations.map((rec, recommendationIndex) => (
-        <DiscoveryRecommendationCard key={`${rec.fund_code}-${recommendationIndex}`} rec={rec} onOpenFund={onOpenFund} />
-      ))}
+      {open ? (
+        <div id={`${id}-content`} className="grid gap-3">
+          {recommendations.map((rec, recommendationIndex) => (
+            <DiscoveryRecommendationCard
+              key={`${rec.fund_code}-${recommendationIndex}`}
+              rec={rec}
+              onOpenFund={onOpenFund}
+              compact={collapsible}
+            />
+          ))}
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -425,6 +516,8 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
   const sectorOpportunities = report.discovery_facts?.sector_opportunities ?? [];
   const lookthrough = report.discovery_facts?.fund_lookthrough;
   const [chatOpen, setChatOpen] = useState(false);
+  const [lookthroughOpen, setLookthroughOpen] = useState(false);
+  const [outcomesOpen, setOutcomesOpen] = useState(false);
   const chatDrawerId = `discovery-report-chat-${report.id}`;
   const groupedRecommendations = useMemo(() => {
     const actionable: DiscoveryRecommendation[] = [];
@@ -464,76 +557,102 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
   }, [report.candidate_pool, report.recommendations]);
   const selectedCodes = groupedRecommendations.actionable.map((item) => item.fund_code);
   const blockedCount = report.discovery_facts?.data_evidence_guard?.blocked_fund_codes?.length ?? 0;
+  const decisionHeadline = groupedRecommendations.actionable.length
+    ? `${groupedRecommendations.actionable.length} 只通过可执行校验`
+    : "本次暂无可执行建议";
+  const nextStep = groupedRecommendations.actionable.length
+    ? "先查看可执行候选和首批金额；真正下单前再核对交易状态。"
+    : groupedRecommendations.conditionalWait.length
+      ? "先等待设定条件出现，下一次扫描会重新判断；现在无需买入。"
+      : "把这些基金加入观察即可；关键资料补齐前，不需要采取买入动作。";
 
   return (
-    <div className="grid min-w-0 gap-4">
-      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h2 className="font-display text-lg font-extrabold text-slate-950">{report.title}</h2>
-        <p className="mt-2 text-sm leading-6 text-slate-600">{report.summary}</p>
-        {report.market_view ? (
-          <p className="mt-3 text-sm leading-6 text-slate-700">
-            <span className="font-semibold text-slate-900">市场观点：</span>
-            {report.market_view}
-          </p>
-        ) : null}
-        {report.target_sectors?.length ? (
-          <p className="mt-2 text-xs text-slate-500">
-            扫描板块：{report.target_sectors.join("、")}
-          </p>
-        ) : null}
-      </section>
-
-      {sectorOpportunities.length ? (
-        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h3 className="text-sm font-black text-slate-950">本次主方向</h3>
-            <span className="text-xs font-medium text-slate-500">
-              系统按近期涨跌、主力资金和资金动作预筛
-            </span>
-          </div>
-          <div className="mt-3 grid gap-2 sm:grid-cols-2">
-            {sectorOpportunities.slice(0, 4).map((item, opportunityIndex) => (
-              <SectorOpportunityCard key={`${item.sector_label}-${item.track ?? "track"}-${opportunityIndex}`} item={item} />
-            ))}
-          </div>
-        </section>
-      ) : null}
-
+    <div className="grid min-w-0 gap-5">
       <section
         data-testid="discovery-decision-summary"
-        className={`rounded-2xl border px-4 py-3 shadow-sm ${
-          groupedRecommendations.actionable.length
-            ? "border-emerald-200 bg-emerald-50/80"
-            : "border-amber-200 bg-amber-50/80"
-        }`}
+        className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"
       >
-        <h3 className="text-sm font-black text-slate-950">
-          {groupedRecommendations.actionable.length
-            ? `${groupedRecommendations.actionable.length} 只通过可执行校验`
-            : "本次暂无可执行建议"}
-        </h3>
-        <p className="mt-1 text-xs leading-5 text-slate-700">
-          {groupedRecommendations.actionable.length
-            ? "仅下方“可执行建议”通过结构化动作、字段时点与基金质量校验，仍需由你最终确认。"
-            : "当前候选未同时通过动作、字段时点与基金质量校验，不应据此直接买入。"}
-          {blockedCount > 0 ? ` 其中 ${blockedCount} 只被字段级证据守卫降为观察。` : ""}
-        </p>
+        <div className="bg-[linear-gradient(135deg,#071f29_0%,#123847_65%,#176b70_145%)] px-5 py-5 text-white sm:px-6">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="min-w-0 max-w-3xl">
+              <p className="text-[10px] font-black tracking-[0.2em] text-cyan-100/75">DISCOVERY BRIEF · 荐基决策简报</p>
+              <h2 className="font-display mt-2 text-xl font-extrabold leading-tight text-white sm:text-2xl">{report.title}</h2>
+              <p className="mt-2 line-clamp-3 text-sm leading-6 text-slate-200">{report.summary}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setChatOpen(true)}
+              className="inline-flex min-h-11 shrink-0 items-center gap-2 rounded-xl border border-white/15 bg-white/10 px-3 text-xs font-black text-white transition hover:bg-white/15"
+              aria-expanded={chatOpen}
+              aria-controls={chatDrawerId}
+              aria-haspopup="dialog"
+            >
+              <MessageCircle size={16} aria-hidden="true" />
+              追问本次推荐
+            </button>
+          </div>
+        </div>
+
+        <div className="grid gap-4 px-5 py-4 sm:px-6 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
+          <div className="min-w-0">
+            <div className="flex items-start gap-3">
+              <span className={`mt-0.5 inline-flex size-9 shrink-0 items-center justify-center rounded-full ${
+                groupedRecommendations.actionable.length
+                  ? "bg-emerald-100 text-emerald-800"
+                  : "bg-amber-100 text-amber-900"
+              }`}>
+                {groupedRecommendations.actionable.length ? <ShieldCheck size={19} /> : <ShieldAlert size={19} />}
+              </span>
+              <div>
+                <h3 className="text-base font-black text-slate-950">{decisionHeadline}</h3>
+                <p className="mt-1 text-sm leading-6 text-slate-600">
+                  {blockedCount > 0
+                    ? `有 ${blockedCount} 只候选的关键资料不完整或不够新，系统已保守列为“观察”；资料补齐前不会建议买入。`
+                    : groupedRecommendations.actionable.length
+                      ? "以下候选已通过动作、数据时点、基金质量和交易条件校验，仍需由你最终确认。"
+                      : "候选尚未同时通过数据、质量和交易条件校验，因此不建议直接买入。"}
+                </p>
+              </div>
+            </div>
+            <div className="mt-3 rounded-xl bg-slate-50 px-3 py-2.5 text-xs leading-5 text-slate-700">
+              <span className="font-black text-slate-950">下一步：</span>{nextStep}
+            </div>
+          </div>
+
+          <dl className="grid grid-cols-3 gap-px overflow-hidden rounded-xl bg-slate-200 ring-1 ring-slate-200 lg:min-w-[280px]">
+            {[
+              ["可执行", groupedRecommendations.actionable.length, "text-emerald-800"],
+              ["等条件", groupedRecommendations.conditionalWait.length, "text-amber-800"],
+              ["仅观察", groupedRecommendations.watchOnly.length, "text-slate-700"],
+            ].map(([label, value, className]) => (
+              <div key={String(label)} className="bg-white px-3 py-2.5 text-center">
+                <dt className="text-[10px] font-bold text-slate-500">{label}</dt>
+                <dd className={`mt-1 font-mono text-lg font-black tabular-nums ${className}`}>{value}</dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+
+        {report.market_view || report.target_sectors?.length ? (
+          <details className="group border-t border-slate-100">
+            <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 px-5 text-xs font-black text-slate-600 hover:bg-slate-50 sm:px-6 [&::-webkit-details-marker]:hidden">
+              展开市场判断与扫描范围
+              <ChevronDown size={15} aria-hidden="true" className="transition group-open:rotate-180" />
+            </summary>
+            <div className="space-y-2 border-t border-slate-100 bg-slate-50/60 px-5 py-3 text-sm leading-6 text-slate-700 sm:px-6">
+              {report.market_view ? <p><span className="font-black text-slate-900">市场判断：</span>{report.market_view}</p> : null}
+              {report.target_sectors?.length ? <p className="text-xs text-slate-500">扫描范围：{report.target_sectors.join("、")}</p> : null}
+            </div>
+          </details>
+        ) : null}
       </section>
 
       <DiscoveryAllocationPlanPanel report={report} />
 
-      {lookthrough ? (
-        <FundLookthroughEvidence
-          research={lookthrough}
-          candidateNames={candidateNames}
-          context="discovery"
-        />
-      ) : null}
-
       <RecommendationGroup
         id="discovery-actionable-title"
         title="可执行建议"
-        description="仅包含结构化决策为买入，且证据守卫与质量门均通过的候选。"
+        description="优先看金额、核心理由和主要风险；交易细节按需展开。"
         recommendations={groupedRecommendations.actionable}
         onOpenFund={onOpenFund}
       />
@@ -544,50 +663,126 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
         recommendations={groupedRecommendations.conditionalWait}
         onOpenFund={onOpenFund}
       />
-      <RecommendationGroup
-        id="discovery-watch-title"
-        title="研究观察"
-        description="仅保留研究线索，不构成买入建议，也不计入可执行推荐。"
-        recommendations={groupedRecommendations.watchOnly}
-        onOpenFund={onOpenFund}
-      />
 
-      <DiscoveryOutcomesPanel reportId={report.id} />
-
-      {report.candidate_pool?.length ? (
-        <DiscoveryCandidatePoolPanel
-          pool={report.candidate_pool}
-          selectedCodes={selectedCodes}
-          decisionStatusByCode={groupedRecommendations.decisionStatusByCode}
-          eliminatedCandidates={report.eliminated_candidates}
-        />
-      ) : null}
-
-      {report.caveats?.length ? (
-        <section className="rounded-xl border border-amber-100 bg-amber-50/80 px-4 py-3 text-xs leading-5 text-amber-900">
-          {report.caveats.map((line, lineIndex) => (
-            <p className="break-words [overflow-wrap:anywhere]" key={`${line}-${lineIndex}`}>{translateEvidenceText(line)}</p>
-          ))}
+      {sectorOpportunities.length ? (
+        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-sm font-black text-slate-950">本次主方向</h3>
+            <span className="text-xs font-medium text-slate-500">
+              默认只展示评分最高的 2 个方向
+            </span>
+          </div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            {sectorOpportunities.slice(0, 2).map((item, opportunityIndex) => (
+              <SectorOpportunityCard key={`${item.sector_label}-${item.track ?? "track"}-${opportunityIndex}`} item={item} />
+            ))}
+          </div>
+          {sectorOpportunities.length > 2 ? (
+            <details className="group mt-3 rounded-xl border border-slate-200 bg-slate-50/60">
+              <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 px-3 text-xs font-black text-slate-700 [&::-webkit-details-marker]:hidden">
+                查看另外 {sectorOpportunities.length - 2} 个研究方向
+                <ChevronDown size={15} aria-hidden="true" className="transition group-open:rotate-180" />
+              </summary>
+              <div className="grid gap-2 border-t border-slate-200 p-3 sm:grid-cols-2">
+                {sectorOpportunities.slice(2).map((item, opportunityIndex) => (
+                  <SectorOpportunityCard key={`${item.sector_label}-${item.track ?? "track"}-${opportunityIndex + 2}`} item={item} />
+                ))}
+              </div>
+            </details>
+          ) : null}
         </section>
       ) : null}
 
-      <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <button
-          type="button"
-          onClick={() => setChatOpen(true)}
-          className="flex min-h-14 w-full items-center justify-between gap-3 px-4 text-left"
-          aria-expanded={chatOpen}
-          aria-controls={chatDrawerId}
-          aria-haspopup="dialog"
-        >
-          <span className="flex items-center gap-2 text-sm font-black text-slate-900">
-            <MessageCircle size={18} className="text-[var(--brand)]" aria-hidden />
-            追问本次推荐
-          </span>
-          <span className="text-xs font-bold text-[var(--brand-strong)]" aria-hidden>
-            打开追问面板
-          </span>
-        </button>
+      <RecommendationGroup
+        id="discovery-watch-title"
+        title="研究观察"
+        description="仅保留研究线索，不构成买入建议；默认收起以减少干扰。"
+        recommendations={groupedRecommendations.watchOnly}
+        onOpenFund={onOpenFund}
+        collapsible
+      />
+
+      <section className="grid gap-3" aria-labelledby="discovery-research-library-title">
+        <div className="px-1">
+          <h3 id="discovery-research-library-title" className="flex items-center gap-2 text-base font-black text-slate-950">
+            <BookOpenCheck size={18} aria-hidden="true" className="text-[var(--brand)]" />
+            专业研究资料
+          </h3>
+          <p className="mt-1 text-xs leading-5 text-slate-500">用于复核结论的专业资料，平时无需逐项阅读。</p>
+        </div>
+
+        {lookthrough ? (
+          <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+            <button
+              type="button"
+              onClick={() => setLookthroughOpen((value) => !value)}
+              className="flex min-h-14 w-full items-center justify-between gap-3 px-4 text-left"
+              aria-expanded={lookthroughOpen}
+              aria-controls="discovery-lookthrough-content"
+            >
+              <span className="min-w-0">
+                <span className="flex items-center gap-2 text-sm font-black text-slate-900">
+                  <FileSearch size={17} aria-hidden="true" className="text-[var(--brand)]" />
+                  持仓穿透与重合证据
+                </span>
+                <span className="mt-1 block text-xs text-slate-500">查看候选基金与现有持仓是否存在集中或重合风险。</span>
+              </span>
+              <ChevronDown size={17} aria-hidden="true" className={`shrink-0 text-slate-500 transition ${lookthroughOpen ? "rotate-180" : ""}`} />
+            </button>
+            {lookthroughOpen ? (
+              <div id="discovery-lookthrough-content" className="border-t border-slate-100 p-3">
+                <FundLookthroughEvidence research={lookthrough} candidateNames={candidateNames} context="discovery" />
+              </div>
+            ) : null}
+          </section>
+        ) : null}
+
+        {report.candidate_pool?.length ? (
+          <DiscoveryCandidatePoolPanel
+            pool={report.candidate_pool}
+            selectedCodes={selectedCodes}
+            decisionStatusByCode={groupedRecommendations.decisionStatusByCode}
+            eliminatedCandidates={report.eliminated_candidates}
+          />
+        ) : null}
+
+        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <button
+            type="button"
+            onClick={() => setOutcomesOpen((value) => !value)}
+            className="flex min-h-14 w-full items-center justify-between gap-3 px-4 text-left"
+            aria-expanded={outcomesOpen}
+            aria-controls="discovery-outcomes-content"
+          >
+            <span className="min-w-0">
+              <span className="flex items-center gap-2 text-sm font-black text-slate-900">
+                <BarChart3 size={17} aria-hidden="true" className="text-[var(--brand)]" />
+                历史效果复盘
+              </span>
+              <span className="mt-1 block text-xs text-slate-500">按 T+5 / T+20 / T+60 检查历史推荐表现，展开后再加载。</span>
+            </span>
+            <ChevronDown size={17} aria-hidden="true" className={`shrink-0 text-slate-500 transition ${outcomesOpen ? "rotate-180" : ""}`} />
+          </button>
+          {outcomesOpen ? (
+            <div id="discovery-outcomes-content" className="border-t border-slate-100 p-3">
+              <DiscoveryOutcomesPanel reportId={report.id} />
+            </div>
+          ) : null}
+        </section>
+
+        {report.caveats?.length ? (
+          <details className="group rounded-2xl border border-amber-200/80 bg-amber-50/70 shadow-sm">
+            <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-2 px-4 text-xs font-black text-amber-950 [&::-webkit-details-marker]:hidden">
+              使用边界与免责声明（{report.caveats.length} 条）
+              <ChevronDown size={15} aria-hidden="true" className="transition group-open:rotate-180" />
+            </summary>
+            <div className="space-y-1 border-t border-amber-200 px-4 py-3 text-xs leading-5 text-amber-900">
+              {report.caveats.map((line, lineIndex) => (
+                <p className="break-words [overflow-wrap:anywhere]" key={`${line}-${lineIndex}`}>{translateEvidenceText(line)}</p>
+              ))}
+            </div>
+          </details>
+        ) : null}
       </section>
 
       <DiscoveryChatDrawer
