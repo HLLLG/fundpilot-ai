@@ -376,6 +376,42 @@ def _ensure_mysql_migration_guard_contract(cursor: Any, fetchall: Any) -> None:
                 start=1,
             )
         )
+        legacy_payload_columns = tuple(
+            (
+                (*expected[:5], actual[5])
+                if expected[0] == "rollout_marker_payload"
+                else expected
+            )
+            for actual, expected in zip(columns, expected_columns, strict=False)
+        )
+        payload_collation = (
+            columns[5][5]
+            if len(columns) == len(expected_columns)
+            else None
+        )
+        if (
+            columns == legacy_payload_columns
+            and columns != expected_columns
+            and isinstance(payload_collation, str)
+            and payload_collation.lower().startswith("utf8mb4_")
+        ):
+            # Early v16 builds created this column with the server's utf8mb4
+            # default collation. Changing only its collation is lossless and
+            # lets existing installations converge on the exact contract.
+            cursor.execute(
+                f"ALTER TABLE {MYSQL_MIGRATION_GUARD_TABLE} "
+                "MODIFY COLUMN rollout_marker_payload LONGTEXT "
+                "CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL"
+            )
+            cursor.execute(
+                "SELECT COLUMN_NAME, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH, "
+                "IS_NULLABLE, ORDINAL_POSITION, COLLATION_NAME "
+                "FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA = DATABASE() "
+                f"AND TABLE_NAME = '{MYSQL_MIGRATION_GUARD_TABLE}' "
+                "ORDER BY ORDINAL_POSITION"
+            )
+            columns = tuple(_mysql_dq_column_contract(row) for row in fetchall())
         if columns != expected_columns:
             raise MySqlBootstrapContractError(
                 "MySQL migration guard columns conflict with the exact contract"
@@ -1451,6 +1487,7 @@ def _ensure_mysql_schema_locked(
                     "MODIFY COLUMN ledger_version VARCHAR(128) NULL"
                 )
     if callable(fetchall):
+        _repair_legacy_decision_quality_mysql_contracts(cursor, fetchall)
         _ensure_decision_quality_mysql_contracts(cursor, fetchall)
         _ensure_prompt_shadow_mysql_contracts(cursor, fetchall)
 
@@ -1952,6 +1989,79 @@ _MYSQL_DQ_COLUMN_CONTRACTS = {
     ),
 }
 
+# Two tables can exist in this shape when an early decision-quality build ran
+# before the v16 exact binary-identity DDL was finalized.  Keep this allowlist
+# deliberately narrow: it is an upgrade path, not a relaxed schema contract.
+_MYSQL_DQ_LEGACY_COLUMN_CONTRACTS = {
+    "decision_quality_input_artifacts": (
+        ("userId", "bigint", None, "NO", None),
+        ("artifact_id", "varchar", 96, "NO", None),
+        ("schema_version", "varchar", 64, "NO", None),
+        ("artifact_type", "varchar", 64, "NO", None),
+        ("artifact_schema_version", "varchar", 64, "NO", None),
+        ("source_type", "varchar", 64, "NO", None),
+        ("source_report_id", "varchar", 128, "YES", None),
+        ("decision_event_id", "varchar", 255, "YES", None),
+        ("decision_at", "varchar", 64, "YES", None),
+        ("available_at", "varchar", 64, "NO", None),
+        ("recorded_at", "varchar", 64, "NO", None),
+        ("store_authority", "varchar", 32, "NO", None),
+        ("audit_eligible", "tinyint", None, "NO", None),
+        ("content_hash", "varchar", 64, "NO", None),
+        ("payload", "longtext", None, "NO", None),
+        ("created_at", "varchar", 64, "NO", None),
+        ("logical_key", "varchar", 255, "YES", "binary"),
+    ),
+    "decision_quality_evaluation_snapshots": (
+        ("userId", "bigint", None, "NO", None),
+        ("snapshot_id", "varchar", 96, "NO", None),
+        ("schema_version", "varchar", 64, "NO", None),
+        ("evaluation_as_of", "varchar", 64, "NO", None),
+        ("evaluator_schema_version", "varchar", 64, "NO", None),
+        ("evaluator_version", "varchar", 128, "NO", None),
+        ("status", "varchar", 32, "NO", None),
+        ("evaluation_hash", "varchar", 64, "NO", None),
+        ("input_manifest_hash", "varchar", 64, "NO", None),
+        ("config_hash", "varchar", 64, "NO", None),
+        ("readiness_status", "varchar", 64, "NO", None),
+        ("human_review_status", "varchar", 64, "NO", None),
+        ("automatic_promotion_allowed", "tinyint", None, "NO", None),
+        ("store_authority", "varchar", 32, "NO", None),
+        ("audit_eligible", "tinyint", None, "NO", None),
+        ("content_hash", "varchar", 64, "NO", None),
+        ("payload", "longtext", None, "NO", None),
+        ("created_at", "varchar", 64, "NO", None),
+    ),
+}
+
+_MYSQL_DQ_LEGACY_REPAIR_DDLS = {
+    "decision_quality_input_artifacts": """
+        ALTER TABLE decision_quality_input_artifacts
+            MODIFY COLUMN artifact_id VARCHAR(96)
+                CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            MODIFY COLUMN artifact_type VARCHAR(64)
+                CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+            MODIFY COLUMN logical_key VARCHAR(255)
+                CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NULL
+                AFTER artifact_schema_version,
+            MODIFY COLUMN content_hash CHAR(64)
+                CHARACTER SET ascii COLLATE ascii_bin NOT NULL
+    """,
+    "decision_quality_evaluation_snapshots": """
+        ALTER TABLE decision_quality_evaluation_snapshots
+            MODIFY COLUMN snapshot_id VARCHAR(96)
+                CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            MODIFY COLUMN evaluation_hash CHAR(64)
+                CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            MODIFY COLUMN input_manifest_hash CHAR(64)
+                CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            MODIFY COLUMN config_hash CHAR(64)
+                CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            MODIFY COLUMN content_hash CHAR(64)
+                CHARACTER SET ascii COLLATE ascii_bin NOT NULL
+    """,
+}
+
 _MYSQL_DQ_INDEX_CONTRACTS = {
     "decision_quality_input_artifacts": {
         "PRIMARY": (0, ("userId", "artifact_id")),
@@ -2229,6 +2339,72 @@ def _ensure_decision_quality_mysql_contracts(
     except Exception as exc:  # noqa: BLE001 - metadata is a release contract
         raise MySqlBootstrapContractError(
             "MySQL decision-quality metadata cannot be verified"
+        ) from exc
+
+
+def _repair_legacy_decision_quality_mysql_contracts(
+    cursor: Any,
+    fetchall: Any,
+) -> None:
+    """Upgrade only the explicitly recognized early-v16 table shapes."""
+
+    try:
+        for table, legacy_columns in _MYSQL_DQ_LEGACY_COLUMN_CONTRACTS.items():
+            cursor.execute(
+                "SELECT COLUMN_NAME, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH, "
+                "IS_NULLABLE, ORDINAL_POSITION, COLLATION_NAME "
+                "FROM information_schema.COLUMNS "
+                f"WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '{table}' "
+                "ORDER BY ORDINAL_POSITION"
+            )
+            observed = tuple(_mysql_dq_column_contract(row) for row in fetchall())
+            canonical_columns = _MYSQL_DQ_COLUMN_CONTRACTS[table]
+            if len(observed) == len(canonical_columns) and all(
+                _valid_mysql_dq_column(
+                    observed[position - 1],
+                    expected=expected,
+                    position=position,
+                )
+                for position, expected in enumerate(canonical_columns, start=1)
+            ):
+                continue
+            if len(observed) != len(legacy_columns) or any(
+                not _valid_mysql_dq_column(
+                    observed[position - 1],
+                    expected=expected,
+                    position=position,
+                )
+                for position, expected in enumerate(legacy_columns, start=1)
+            ):
+                continue
+            cursor.execute(
+                "SELECT INDEX_NAME, NON_UNIQUE, SEQ_IN_INDEX, COLUMN_NAME, SUB_PART "
+                "FROM information_schema.STATISTICS "
+                f"WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '{table}' "
+                "ORDER BY INDEX_NAME, SEQ_IN_INDEX"
+            )
+            observed_indexes: dict[str, list[tuple[int, int, str, Any]]] = {}
+            for row in fetchall():
+                name, non_unique, sequence, column, sub_part = (
+                    _mysql_receipt_index_part(row)
+                )
+                observed_indexes.setdefault(name, []).append(
+                    (non_unique, sequence, column, sub_part)
+                )
+            expected_indexes = _MYSQL_DQ_INDEX_CONTRACTS[table]
+            if set(observed_indexes) != set(expected_indexes) or any(
+                observed_indexes.get(name)
+                != [
+                    (non_unique, position, column, None)
+                    for position, column in enumerate(columns, start=1)
+                ]
+                for name, (non_unique, columns) in expected_indexes.items()
+            ):
+                continue
+            cursor.execute(_MYSQL_DQ_LEGACY_REPAIR_DDLS[table])
+    except Exception as exc:  # noqa: BLE001 - repair must fail closed
+        raise MySqlBootstrapContractError(
+            "MySQL legacy decision-quality contract cannot be upgraded safely"
         ) from exc
 
 

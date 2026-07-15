@@ -18,6 +18,7 @@ from app.mysql_bootstrap import (
     _normalize_mysql_migration_guard,
     _read_mysql_migration_guard,
     _read_mysql_rollout_singleton,
+    _repair_legacy_decision_quality_mysql_contracts,
     _verify_mysql_migration_guard_access,
     prepare_mysql_migration_guard,
 )
@@ -59,6 +60,7 @@ class _GuardCursor:
         *,
         guard_rows: list[tuple[Any, ...]] | None = None,
         engine: str = "InnoDB",
+        payload_collation: str = "utf8mb4_bin",
         column_drift: tuple[int, tuple[Any, ...]] | None = None,
         index_rows: list[tuple[Any, ...]] | None = None,
     ) -> None:
@@ -67,7 +69,16 @@ class _GuardCursor:
         self.last_statement = ""
         self.last_params: tuple[Any, ...] = ()
         self.columns = [
-            (name, data_type, length, nullable, position, collation)
+            (
+                name,
+                data_type,
+                length,
+                nullable,
+                position,
+                payload_collation
+                if name == "rollout_marker_payload"
+                else collation,
+            )
             for position, (
                 name,
                 data_type,
@@ -93,6 +104,10 @@ class _GuardCursor:
             f"INSERT INTO {MYSQL_MIGRATION_GUARD_TABLE}"
         ):
             self.guard_rows = [(*self.last_params, None)]
+        elif self.last_statement.startswith(
+            f"ALTER TABLE {MYSQL_MIGRATION_GUARD_TABLE} MODIFY COLUMN rollout_marker_payload"
+        ):
+            self.columns[5] = (*self.columns[5][:5], "utf8mb4_bin")
         elif self.last_statement.startswith(
             f"UPDATE {MYSQL_MIGRATION_GUARD_TABLE} SET status = %s, completed_at = NULL"
         ):
@@ -135,6 +150,14 @@ def test_guard_exact_metadata_contract_accepts_canonical_table() -> None:
     cursor = _GuardCursor()
 
     _ensure_mysql_migration_guard_contract(cursor, cursor.fetchall)
+
+
+def test_guard_repairs_legacy_server_default_payload_collation() -> None:
+    cursor = _GuardCursor(payload_collation="utf8mb4_0900_ai_ci")
+
+    _ensure_mysql_migration_guard_contract(cursor, cursor.fetchall)
+
+    assert cursor.columns[5][5] == "utf8mb4_bin"
 
 
 @pytest.mark.parametrize(
@@ -213,12 +236,21 @@ def test_pre_v14_guard_reuses_one_stable_generated_marker() -> None:
 
 
 class _QualityMetadataCursor:
-    def __init__(self, *, mutation: str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        mutation: str | None = None,
+        legacy: bool = False,
+    ) -> None:
         self.last_statement = ""
         self.mutation = mutation
+        self.legacy = legacy
+        self.repaired_tables: set[str] = set()
 
     def execute(self, statement: str) -> None:
         self.last_statement = " ".join(statement.split())
+        if self.last_statement.startswith("ALTER TABLE "):
+            self.repaired_tables.add(self.last_statement.split()[2])
 
     def _table(self) -> str:
         return self.last_statement.split("TABLE_NAME = '", 1)[1].split("'", 1)[0]
@@ -243,6 +275,35 @@ class _QualityMetadataCursor:
                     collation_rule,
                 ) in enumerate(_MYSQL_DQ_COLUMN_CONTRACTS[table], start=1)
             ]
+            if self.legacy and table not in self.repaired_tables:
+                if table == "decision_quality_input_artifacts":
+                    logical_key = rows.pop(5)
+                    rows[1] = (*rows[1][:5], "utf8mb4_0900_ai_ci")
+                    rows[3] = (*rows[3][:5], "utf8mb4_0900_ai_ci")
+                    rows[13] = (
+                        "content_hash",
+                        "varchar",
+                        64,
+                        "NO",
+                        14,
+                        "utf8mb4_0900_ai_ci",
+                    )
+                    rows.append((*logical_key[:4], 17, logical_key[5]))
+                    rows = [
+                        (*row[:4], position, row[5])
+                        for position, row in enumerate(rows, 1)
+                    ]
+                elif table == "decision_quality_evaluation_snapshots":
+                    rows[1] = (*rows[1][:5], "utf8mb4_0900_ai_ci")
+                    for index in (7, 8, 9, 15):
+                        rows[index] = (
+                            rows[index][0],
+                            "varchar",
+                            64,
+                            rows[index][3],
+                            rows[index][4],
+                            "utf8mb4_0900_ai_ci",
+                        )
             if self.mutation == "identity_collation" and table == "decision_quality_input_artifacts":
                 row = rows[1]
                 rows[1] = (*row[:5], "utf8mb4_general_ci")
@@ -262,6 +323,18 @@ class _QualityMetadataCursor:
 def test_five_ledger_metadata_contract_accepts_exact_binary_identities() -> None:
     cursor = _QualityMetadataCursor()
     _ensure_decision_quality_mysql_contracts(cursor, cursor.fetchall)
+
+
+def test_early_v16_quality_tables_are_repaired_before_exact_validation() -> None:
+    cursor = _QualityMetadataCursor(legacy=True)
+
+    _repair_legacy_decision_quality_mysql_contracts(cursor, cursor.fetchall)
+    _ensure_decision_quality_mysql_contracts(cursor, cursor.fetchall)
+
+    assert cursor.repaired_tables == {
+        "decision_quality_input_artifacts",
+        "decision_quality_evaluation_snapshots",
+    }
 
 
 @pytest.mark.parametrize(
