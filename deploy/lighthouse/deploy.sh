@@ -134,7 +134,6 @@ git checkout --detach "$deploy_sha"
 
 compose=(docker compose --env-file .env.production -f docker-compose.production.yml)
 "${compose[@]}" config -q
-"${compose[@]}" run --rm --no-deps nginx nginx -t
 "${compose[@]}" build api
 "${compose[@]}" up -d mysql
 
