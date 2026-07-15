@@ -18,6 +18,7 @@ release_web="$release_root/web"
 web_root="/srv/fundpilot/web"
 lock_file="/srv/fundpilot/deploy.lock"
 deployed_sha_file="/srv/fundpilot/DEPLOYED_SHA"
+rollback_marker="/tmp/fundpilot-rollback-$deploy_sha"
 previous_sha=""
 deployment_error_status=""
 web_was_activated=false
@@ -80,6 +81,7 @@ rollback_release() {
 
     echo "rolling back to previously healthy release $previous_sha" >&2
     git checkout --detach "$previous_sha" || return 1
+    export FUND_AI_API_IMAGE="fundpilot-api:$previous_sha"
 
     local rollback_compose=(docker compose --env-file .env.production -f docker-compose.production.yml)
     "${rollback_compose[@]}" config -q || return 1
@@ -121,6 +123,10 @@ on_deployment_error() {
     local status="${deployment_error_status:-$command_status}"
     trap - ERR
     set +e
+    if [[ -e "$rollback_marker" ]]; then
+        exit "$status"
+    fi
+    : > "$rollback_marker"
     rollback_release
     local rollback_status=$?
     if [[ $rollback_status -ne 0 ]]; then
@@ -129,8 +135,10 @@ on_deployment_error() {
     exit "$status"
 }
 
+rm -f "$rollback_marker"
 trap on_deployment_error ERR
 git checkout --detach "$deploy_sha"
+export FUND_AI_API_IMAGE="fundpilot-api:$deploy_sha"
 
 compose=(docker compose --env-file .env.production -f docker-compose.production.yml)
 "${compose[@]}" config -q
@@ -156,9 +164,9 @@ fi
 
 # Runtime credentials remain least-privilege. This one-shot release process
 # owns additive DDL and immutable trigger creation before the API is replaced.
-api_image="$("${compose[@]}" images -q api)"
-if [[ -z "$api_image" ]]; then
-    echo "built API image could not be resolved" >&2
+api_image="$FUND_AI_API_IMAGE"
+if ! docker image inspect "$api_image" >/dev/null; then
+    echo "built API image could not be resolved: $api_image" >&2
     deployment_error_status=70
     false
 fi
@@ -201,5 +209,6 @@ curl -fsS http://127.0.0.1/settings/ >/dev/null
 curl -fsS http://127.0.0.1/api/trading-session >/dev/null
 
 printf '%s\n' "$deploy_sha" > "$deployed_sha_file"
+rm -f "$rollback_marker"
 trap - ERR
 echo "FundPilot deployment succeeded: $deploy_sha"

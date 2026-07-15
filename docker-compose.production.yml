@@ -19,6 +19,7 @@ services:
       retries: 18
 
   api:
+    image: ${FUND_AI_API_IMAGE:-fundpilot-api:latest}
     build:
       context: .
       dockerfile: Dockerfile
