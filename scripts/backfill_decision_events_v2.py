@@ -3,15 +3,19 @@
 
 Safety is deliberately conservative:
 
-* the default mode is a read-only dry run; ``--apply`` is required to write;
+* the default mode is a read-only dry run;
+* once the storage-owned D2 rollout marker exists, ``--apply`` is explicitly
+  refused; the flag remains only so old operational calls fail closed with an
+  auditable reason instead of silently changing behavior;
 * source reports are read directly with keyset pagination (no list API limits);
 * source report JSON is never updated;
 * backfilled events are permanently excluded from formal V2 metrics;
 * current benchmark mappings, fee settings, portfolio state and trade calendars
   are never consulted while reconstructing historical evidence.
 
-The script currently targets the local SQLite store.  It uses the same immutable
-repositories as normal writes, making retries deterministic and conflict-aware.
+The script currently targets the local SQLite store.  Current schema migrations
+activate D2 before any write, so supported use is historical inventory/preview,
+not reconstruction of formal evidence.
 """
 
 from __future__ import annotations
@@ -475,6 +479,7 @@ def _blank_summary(*, apply: bool, batch_size: int) -> dict[str, Any]:
         "events_inserted": 0,
         "events_existing": 0,
         "immutable_conflicts": 0,
+        "rollout_status": "not_checked",
         "errors": [],
     }
 
@@ -506,7 +511,7 @@ def backfill_database(
     apply: bool = False,
     batch_size: int = 200,
 ) -> dict[str, Any]:
-    """Plan or apply the legacy evidence backfill to a SQLite database."""
+    """Preview legacy evidence; fail closed if apply reaches a D2 store."""
 
     path = Path(sqlite_path)
     if not path.exists():
@@ -525,6 +530,30 @@ def backfill_database(
 
             run_migrations(connection)
             connection.commit()
+
+        rollout_marker = None
+        if _table_exists(connection, "decision_quality_contract_rollouts"):
+            rollout_marker = connection.execute(
+                "SELECT required_from, marker_hash "
+                "FROM decision_quality_contract_rollouts "
+                "WHERE contract_name = 'decision_quality_formal_replay'"
+            ).fetchone()
+        apply_blocked = rollout_marker is not None
+        summary["rollout_status"] = (
+            "legacy_apply_blocked_after_d2_rollout"
+            if apply_blocked
+            else "pre_d2_rollout_preview"
+        )
+        if apply and apply_blocked:
+            summary["errors"].append(
+                {
+                    "table": "decision_quality_contract_rollouts",
+                    "report_id": None,
+                    "error": "legacy_decision_backfill_apply_blocked_after_d2_rollout",
+                    "required_from": str(rollout_marker["required_from"]),
+                    "marker_hash": str(rollout_marker["marker_hash"]),
+                }
+            )
 
         latest_daily = _latest_daily_report_ids(connection, batch_size=batch_size)
         for kind, table in _SOURCE_TABLES.items():
@@ -658,7 +687,7 @@ def backfill_database(
                     # siblings when any immutable child has diverged.
                     continue
 
-                if not apply:
+                if not apply or apply_blocked:
                     continue
 
                 try:
@@ -717,7 +746,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--apply",
         action="store_true",
-        help="实际写入；不传时严格 dry-run",
+        help="旧运维兼容参数；D2 rollout marker 存在时明确拒绝写入",
     )
     return parser
 

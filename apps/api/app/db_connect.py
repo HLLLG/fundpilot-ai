@@ -62,6 +62,13 @@ def connect_with_fallback() -> DbConnection:
         _mysql_unreachable_until = 0.0
         return conn
     except Exception as exc:
+        # A reachable primary database that cannot enforce an immutable schema
+        # contract is not a transient connectivity outage.  Falling back here
+        # would hide a release/privilege defect behind a local SQLite success.
+        from app.mysql_bootstrap import MySqlBootstrapContractError
+
+        if isinstance(exc, MySqlBootstrapContractError):
+            raise
         if not sqlite_fallback_enabled():
             raise
         _mysql_unreachable_until = time.time() + _mysql_fallback_cooldown_seconds()

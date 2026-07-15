@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from collections.abc import Iterator
+from copy import deepcopy
+import logging
 import time
 from typing import Any
 
@@ -13,17 +15,33 @@ from app.config import get_settings
 from app.database import save_discovery_report
 from app.models import DiscoveryRequest, FundDiscoveryReport
 from app.request_context import reset_request_user_id, set_request_user_id
-from app.services.analysis_runtime import resolve_analysis_runtime
-from app.services.deepseek_client import _parse_model_json
+from app.services.analysis_runtime import (
+    limit_news_topics_for_runtime,
+    resolve_analysis_runtime,
+)
+from app.services.deepseek_client import (
+    _is_usable_interrupted_response,
+    _is_valid_discovery_report_payload,
+    _parse_model_json,
+)
 from app.services.deepseek_streaming import stream_chat_completion
+from app.services.deepseek_http import ProviderOutputError, classify_deepseek_failure
 from app.services.discovery_candidate_pool import (
+    attach_candidate_benchmark_research,
     build_candidate_pool,
     enrich_candidates,
     finalize_candidate_pool,
 )
+from app.services.benchmark_mapping_service import load_decision_benchmark_specs
+from app.services.fund_benchmark_research import (
+    attach_fund_benchmark_metrics,
+    build_fund_benchmark_research_batch,
+    summarize_benchmark_research,
+)
 from app.services.discovery_client import (
     DiscoveryClient,
     build_discovery_chat_messages,
+    build_discovery_prompt_provenance,
     build_discovery_report_from_parsed,
 )
 from app.services.discovery_facts import build_discovery_facts
@@ -37,18 +55,34 @@ from app.services.discovery_sector_opportunity import (
 )
 from app.services.discovery_sector_heat import build_sector_heat_ranking
 from app.services.discovery_target_sectors import select_target_sectors
-from app.services.news_service import NewsService
+from app.services.news_service import (
+    NewsService,
+    announcement_fetch_facts,
+    merge_market_news_with_announcements,
+)
 from app.services.news_summarizer import summarize_all_topics
 from app.services.pipeline_concurrency import run_with_request_user
 from app.services.risk import resolve_weight_denominator
 from app.services.streaming_heartbeat import Heartbeat, iter_with_heartbeat
-from app.services.streaming_json_parser import StreamingReportParser
 from app.services.discovery_payload import append_output_requirements_to_system, build_user_payload
 from app.services.decision_data_evidence import (
     attach_discovery_data_evidence,
     resolve_portfolio_preflight,
 )
+from app.services.report_pipeline import build_pipeline_metadata
+from app.services.decision_clock import capture_decision_clock
+from app.services.decision_time_call import (
+    call_with_optional_time,
+    prefetch_fund_announcements_compat,
+)
 
+from app.services.fund_tradeability import resolve_profile_min_holding_days
+from app.services.candidate_selection_audit import (
+    build_pipeline_candidate_selection_audit_v2,
+)
+from app.services.fund_lookthrough_context import build_fund_lookthrough_context
+
+logger = logging.getLogger(__name__)
 PREP_HEARTBEAT_SECONDS = 1.0
 # LLM 首个 token 到达前若长时间无输出，网关（如腾讯云开发 CloudBase）会在 SSE
 # 连接空闲约 60s 后主动断开（ERR_ABORT_HANDLER）。深度模式下模型思考耗时可能
@@ -59,11 +93,15 @@ LLM_HEARTBEAT_SECONDS = 12.0
 def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dict[str, Any]]:
     ctx_token = set_request_user_id(user_id)
     settings = get_settings()
+    decision_clock = capture_decision_clock()
+    decision_at = decision_clock.decision_at
+    runtime = resolve_analysis_runtime(settings, request.analysis_mode)
     started_at = time.monotonic()
     try:
         preflight = resolve_portfolio_preflight(
             request.holdings,
             allow_stale=request.allow_stale_portfolio_snapshot,
+            now=decision_at,
         )
         request = request.model_copy(
             update={
@@ -74,7 +112,11 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
         holdings = list(request.holdings)
         yield _stage("connected", started_at=started_at)
         yield _stage("sector_heat", started_at=started_at)
-        sector_heat = build_sector_heat_ranking()
+        sector_heat = call_with_optional_time(
+            build_sector_heat_ranking,
+            keyword="decision_at",
+            decision_at=decision_at,
+        )
         target_sectors = select_target_sectors(
             holdings,
             request.focus_sectors,
@@ -93,6 +135,9 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
         held_codes = {h.fund_code.strip().zfill(6) for h in holdings if h.fund_code}
 
         selection_strategy = "balanced"
+        recall_audit: dict = {}
+        candidate_selection_audit_v1: dict = {}
+        candidate_selection_stages: dict = {}
 
         with ThreadPoolExecutor(max_workers=3, thread_name_prefix="discovery-prep") as executor:
             flow_future = executor.submit(
@@ -132,10 +177,16 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
             topics = list(dict.fromkeys(target_sectors + list(request.focus_sectors)))
             if not topics:
                 topics = ["上证指数"]
+            topics = limit_news_topics_for_runtime(topics, runtime)
             news_future = executor.submit(
                 run_with_request_user,
                 user_id,
-                lambda: news_service.prefetch_topics(topics),
+                lambda: call_with_optional_time(
+                    news_service.prefetch_topics,
+                    topics,
+                    keyword="now",
+                    decision_at=decision_at,
+                ),
             )
             yield _stage("news", started_at=started_at)
             yield _stage("candidate_pool", started_at=started_at)
@@ -143,20 +194,32 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
                 run_with_request_user,
                 user_id,
                 lambda: finalize_candidate_pool(
-                    enrich_candidates(
-                        build_candidate_pool(
+                    call_with_optional_time(
+                        enrich_candidates,
+                        call_with_optional_time(
+                            build_candidate_pool,
                             target_sectors,
+                            keyword="decision_at",
+                            decision_at=decision_at,
                             exclude_codes=held_codes,
                             fund_type_preference="any",
                             selection_strategy=selection_strategy,
                             per_sector=prescreen_per_sector,
                             pool_cap=prescreen_pool_cap,
                             sector_opportunities=sector_opportunities,
-                        )
+                            recall_audit_sink=recall_audit,
+                        ),
+                        keyword="decision_at",
+                        decision_at=decision_at,
                     ),
                     target_sectors,
                     per_sector=per_sector,
                     pool_cap=pool_cap,
+                    minimum_holding_days=resolve_profile_min_holding_days(
+                        request.profile
+                    ),
+                    audit_sink=candidate_selection_audit_v1,
+                    stage_audit_sink=candidate_selection_stages,
                 ),
             )
             pool = yield from _await_future_with_progress(
@@ -165,12 +228,64 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
                 "正在优选候选基金…",
                 started_at=started_at,
             )
+            candidate_selection_audit = build_pipeline_candidate_selection_audit_v2(
+                decision_at=decision_at,
+                recall_snapshot=recall_audit,
+                gate_candidates=candidate_selection_stages.get("gate_candidates") or [],
+                prescreen_candidates=candidate_selection_stages.get("prescreen_candidates") or [],
+                final_candidates=candidate_selection_stages.get("final_candidates") or pool,
+            )
+            benchmark_specs = load_decision_benchmark_specs(
+                [item.get("fund_code") for item in pool],
+                decision_at=decision_at,
+            )
+            pool = attach_candidate_benchmark_research(
+                pool,
+                benchmark_specs,
+                decision_at=decision_at,
+            )
+            benchmark_metrics = build_fund_benchmark_research_batch(
+                pool,
+                decision_at=decision_at,
+            )
+            pool = attach_fund_benchmark_metrics(pool, benchmark_metrics)
+            lookthrough_future = executor.submit(
+                run_with_request_user,
+                user_id,
+                lambda: build_fund_lookthrough_context(
+                    holdings,
+                    pool,
+                    decision_at=decision_at,
+                    analysis_mode=request.analysis_mode,
+                    portfolio_context=request.portfolio_snapshot_context,
+                ),
+            )
             market_news = yield from _await_future_with_progress(
                 news_future,
                 "news",
                 "正在拉取市场要闻…",
                 started_at=started_at,
             )
+            fund_lookthrough = yield from _await_future_with_progress(
+                lookthrough_future,
+                "candidate_pool",
+                "正在核验基金披露持仓与组合重合度…",
+                started_at=started_at,
+            )
+
+        announcement_result = prefetch_fund_announcements_compat(
+            news_service,
+            [str(item.get("fund_code") or "") for item in pool[:12]],
+            decision_at=decision_at,
+        )
+        market_news = merge_market_news_with_announcements(
+            market_news,
+            list(announcement_result.get("items") or []),
+            now=decision_at,
+        )
+        announcement_meta = announcement_fetch_facts(
+            announcement_result
+        )
 
         fund_codes = [
             str(item.get("fund_code", "")).strip().zfill(6)
@@ -184,7 +299,13 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
             "fund_names": fund_names,
         }
 
-        topic_briefs = summarize_all_topics(market_news, offline_only=True)
+        topic_briefs = call_with_optional_time(
+            summarize_all_topics,
+            market_news,
+            keyword="now",
+            decision_at=decision_at,
+            offline_only=True,
+        )
         yield _stage("generating", "正在整理荐基上下文…", started_at=started_at)
 
         total_amount = sum(item.holding_amount for item in holdings) or 0.0
@@ -209,13 +330,52 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
             fund_type_preference="any",
             sector_opportunities=sector_opportunities,
             budget_enhancements=True,
+            decision_at=decision_at,
         )
+        discovery_facts["fund_announcements"] = announcement_meta
+        discovery_facts["candidate_selection_audit"] = candidate_selection_audit
+        discovery_facts["candidate_selection_audit_v1"] = candidate_selection_audit_v1
+        discovery_facts["benchmark_specs"] = benchmark_specs
+        discovery_facts["benchmark_contract"] = {
+            "schema_version": "fund_benchmark_mapping.v1",
+            "lookup_policy": "cached_point_in_time_before_generation",
+            "formal_excess_policy": "verified_fund_contract_only",
+            "available_count": sum(
+                1
+                for spec in benchmark_specs.values()
+                if spec.get("tier") != "unavailable"
+            ),
+            "unavailable_count": sum(
+                1
+                for spec in benchmark_specs.values()
+                if spec.get("tier") == "unavailable"
+            ),
+        }
+        discovery_facts["benchmark_research"] = benchmark_metrics
+        discovery_facts["benchmark_research_contract"] = summarize_benchmark_research(
+            benchmark_metrics
+        )
+        discovery_facts["fund_lookthrough"] = fund_lookthrough
         discovery_facts = attach_discovery_data_evidence(
             discovery_facts,
             holdings=holdings,
             candidate_pool=pool,
             portfolio_context=request.portfolio_snapshot_context,
         )
+        base_pipeline = build_pipeline_metadata(
+            runtime=runtime,
+            market_news=market_news,
+            topic_briefs=topic_briefs,
+            judge_meta={},
+        )
+        base_pipeline.update(
+            {
+                "provider": "offline" if not settings.deepseek_configured else "deepseek",
+                "provider_status": "offline" if not settings.deepseek_configured else "pending",
+                "attempted_model": None if not settings.deepseek_configured else runtime.model,
+            }
+        )
+        discovery_facts["pipeline"] = base_pipeline
 
         if not settings.deepseek_configured:
             report = build_offline_discovery_report(
@@ -225,6 +385,7 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
                 profile=request.profile,
                 focus_sectors=list(request.focus_sectors),
                 analysis_mode=request.analysis_mode,
+                decision_at=decision_at,
             )
             yield _stage("saving", started_at=started_at)
             report = save_discovery_report(report)
@@ -232,7 +393,6 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
             return
 
         yield _stage("generating", started_at=started_at)
-        runtime = resolve_analysis_runtime(settings, request.analysis_mode)
         client = DiscoveryClient()
         user_payload = build_user_payload(
             discovery_facts=discovery_facts,
@@ -245,23 +405,79 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
             fund_type_preference="any",
         )
         system_prompt = append_output_requirements_to_system(
-            client._system_prompt(runtime.news_tool_max_rounds > 0, request.system_role_prompt)
+            client._system_prompt(
+                runtime.news_tool_max_rounds > 0,
+                request.system_role_prompt,
+                session=discovery_facts.get("session"),
+            )
         )
         messages = build_discovery_chat_messages(system_prompt, user_payload)
-        parser = StreamingReportParser(
-            array_field="recommendations",
-            item_partial_field="recommendation",
+        shadow_capture = None
+        try:
+            from app.services.discovery_prompt import DEFAULT_DISCOVERY_ROLE_PROMPT
+            from app.services.prompt_shadow_service import (
+                PROMPT_SHADOW_CHALLENGER_ROLE_PROMPT,
+                prepare_prompt_shadow_champion,
+            )
+
+            challenger_system_prompt = append_output_requirements_to_system(
+                client._system_prompt(
+                    False,
+                    PROMPT_SHADOW_CHALLENGER_ROLE_PROMPT,
+                    session=discovery_facts.get("session"),
+                )
+            )
+            shadow_capture = prepare_prompt_shadow_champion(
+                user_id=user_id,
+                transport="stream",
+                champion_system_prompt=system_prompt,
+                challenger_system_prompt=challenger_system_prompt,
+                user_payload=user_payload,
+                model=runtime.model,
+                max_tokens=settings.deepseek_max_tokens_report,
+                target_sectors=target_sectors,
+                focus_sectors=list(request.focus_sectors),
+                scan_mode=request.scan_mode,
+                candidate_pool=pool,
+                discovery_facts=discovery_facts,
+                profile=request.profile,
+                held_codes=held_codes,
+                budget_yuan=budget,
+                sector_heat=sector_heat,
+                market_news=market_news,
+                topic_briefs=topic_briefs,
+                analysis_mode=request.analysis_mode,
+                decision_at=decision_at,
+                default_prompt_only=(
+                    request.system_role_prompt is None
+                    or request.system_role_prompt == DEFAULT_DISCOVERY_ROLE_PROMPT
+                ),
+                news_tool_rounds=runtime.news_tool_max_rounds,
+            )
+        except Exception:  # noqa: BLE001 - champion stream must remain fail-open
+            logger.exception("prompt-shadow streaming preregistration skipped")
+            shadow_capture = None
+        attempted_prompt_contract = build_discovery_prompt_provenance(
+            role_prompt=request.system_role_prompt,
+            messages=messages,
+            user_payload=user_payload,
+            runtime=runtime,
+            judge_meta={},
         )
         all_chunks: list[str] = []
+        stream_interrupted = False
+        stream_arguments: dict[str, Any] = {
+            "messages": messages,
+            "model": runtime.model,
+            "max_tokens": settings.deepseek_max_tokens_report,
+            "response_format": {"type": "json_object"},
+        }
+        if shadow_capture is not None:
+            stream_arguments["trace_collector"] = shadow_capture.trace_collector
 
         try:
             for entry in iter_with_heartbeat(
-                stream_chat_completion(
-                    messages=messages,
-                    model=runtime.model,
-                    max_tokens=settings.deepseek_max_tokens_report,
-                    response_format={"type": "json_object"},
-                ),
+                stream_chat_completion(**stream_arguments),
                 heartbeat_seconds=LLM_HEARTBEAT_SECONDS,
                 heartbeat_factory=lambda: _stage(
                     "generating", "AI 分析中…", started_at=started_at
@@ -272,25 +488,142 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
                     continue
                 chunk = entry
                 all_chunks.append(chunk)
-                for partial in parser.feed(chunk):
-                    yield partial
+                # Raw model fragments are never SSE output.  The discovery
+                # report becomes visible only after judge + deterministic guards.
             parsed = _parse_model_json("".join(all_chunks))
         except (httpx.StreamError, httpx.ReadTimeout, httpx.HTTPError) as exc:
             if all_chunks:
-                yield _stage("salvage", "流式中断，已收集部分内容…", started_at=started_at)
-                parsed = _parse_model_json("".join(all_chunks))
+                interrupted_content = "".join(all_chunks)
+                candidate = _parse_model_json(interrupted_content)
+                if _is_usable_interrupted_response(
+                    interrupted_content,
+                    candidate,
+                    report_kind="discovery",
+                ):
+                    stream_interrupted = True
+                    yield _stage("salvage", "流式中断，已收集部分内容…", started_at=started_at)
+                    parsed = candidate
+                else:
+                    failure = classify_deepseek_failure(exc)
+                    report = build_offline_discovery_report(
+                        target_sectors=target_sectors,
+                        candidate_pool=pool,
+                        discovery_facts=discovery_facts,
+                        profile=request.profile,
+                        focus_sectors=list(request.focus_sectors),
+                        analysis_mode=request.analysis_mode,
+                        provider_failure=failure,
+                        attempted_model=runtime.model,
+                        prompt_contract=attempted_prompt_contract,
+                        decision_at=decision_at,
+                    )
+                    yield _stage("saving", started_at=started_at)
+                    report = save_discovery_report(report)
+                    _finalize_stream_shadow(
+                        shadow_capture,
+                        report,
+                        parse_status="provider_error",
+                        raw_content=interrupted_content,
+                        parsed_payload=None,
+                    )
+                    yield _done(report)
+                    return
             else:
-                yield {"type": "error", "message": f"{type(exc).__name__}: {exc}"}
+                failure = classify_deepseek_failure(exc)
+                report = build_offline_discovery_report(
+                    target_sectors=target_sectors,
+                    candidate_pool=pool,
+                    discovery_facts=discovery_facts,
+                    profile=request.profile,
+                    focus_sectors=list(request.focus_sectors),
+                    analysis_mode=request.analysis_mode,
+                    provider_failure=failure,
+                    attempted_model=runtime.model,
+                    prompt_contract=attempted_prompt_contract,
+                    decision_at=decision_at,
+                )
+                yield _stage("saving", started_at=started_at)
+                report = save_discovery_report(report)
+                _finalize_stream_shadow(
+                    shadow_capture,
+                    report,
+                    parse_status="provider_error",
+                    raw_content=None,
+                    parsed_payload=None,
+                )
+                yield _done(report)
                 return
 
+        if not all_chunks or (
+            not stream_interrupted
+            and (
+                parsed.get("_truncated")
+                or not _is_valid_discovery_report_payload(parsed)
+            )
+        ):
+            category = "empty_content" if not all_chunks else "invalid_json"
+            failure = classify_deepseek_failure(ProviderOutputError(category))
+            report = build_offline_discovery_report(
+                target_sectors=target_sectors,
+                candidate_pool=pool,
+                discovery_facts=discovery_facts,
+                profile=request.profile,
+                focus_sectors=list(request.focus_sectors),
+                analysis_mode=request.analysis_mode,
+                provider_failure=failure,
+                attempted_model=runtime.model,
+                prompt_contract=attempted_prompt_contract,
+                decision_at=decision_at,
+            )
+            yield _stage("saving", started_at=started_at)
+            report = save_discovery_report(report)
+            _finalize_stream_shadow(
+                shadow_capture,
+                report,
+                parse_status="empty" if not all_chunks else "invalid",
+                raw_content="".join(all_chunks) if all_chunks else None,
+                parsed_payload=None,
+            )
+            yield _done(report)
+            return
+
+        raw_parsed = deepcopy(parsed)
+        if stream_interrupted and shadow_capture is not None:
+            try:
+                shadow_capture.trace_collector.mark_interrupted_salvaged()
+            except Exception:  # noqa: BLE001 - do not disturb champion salvage
+                logger.exception("prompt-shadow interrupted trace could not be salvaged")
+                shadow_capture = None
         yield _stage("guarding", started_at=started_at)
         # M4：deep 模式风控复核角色（fast 模式内部直接短路返回，零新增 LLM 调用）。
-        parsed, _judge_meta = judge_parsed_discovery_report(
+        parsed, judge_meta = judge_parsed_discovery_report(
             parsed,
             candidate_pool=pool,
             discovery_facts=discovery_facts,
             analysis_mode=request.analysis_mode,
         )
+        prompt_contract = build_discovery_prompt_provenance(
+            role_prompt=request.system_role_prompt,
+            messages=messages,
+            user_payload=user_payload,
+            runtime=runtime,
+            judge_meta=judge_meta,
+        )
+        pipeline = build_pipeline_metadata(
+            runtime=runtime,
+            market_news=market_news,
+            topic_briefs=topic_briefs,
+            judge_meta=judge_meta,
+        )
+        pipeline.update(
+            {
+                "provider": "deepseek",
+                "provider_status": "success",
+                "attempted_model": runtime.model,
+                "prompt_contract": prompt_contract,
+            }
+        )
+        discovery_facts["pipeline"] = pipeline
         report = build_discovery_report_from_parsed(
             parsed,
             target_sectors=target_sectors,
@@ -305,14 +638,47 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
             market_news=market_news,
             topic_briefs=topic_briefs,
             analysis_mode=request.analysis_mode,
+            provider_model=runtime.model,
+            decision_at=decision_at,
         )
         yield _stage("saving", started_at=started_at)
         report = save_discovery_report(report)
+        _finalize_stream_shadow(
+            shadow_capture,
+            report,
+            parse_status=("interrupted_salvaged" if stream_interrupted else "valid"),
+            raw_content="".join(all_chunks),
+            parsed_payload=raw_parsed,
+        )
         yield _done(report)
     except Exception as exc:  # noqa: BLE001
         yield {"type": "error", "message": f"{type(exc).__name__}: {exc}"}
     finally:
         reset_request_user_id(ctx_token)
+
+
+def _finalize_stream_shadow(
+    capture: Any,
+    report: FundDiscoveryReport,
+    *,
+    parse_status: str,
+    raw_content: str | None,
+    parsed_payload: dict[str, Any] | None,
+) -> None:
+    if capture is None:
+        return
+    try:
+        from app.services.prompt_shadow_service import finalize_prompt_shadow_champion
+
+        finalize_prompt_shadow_champion(
+            capture=capture,
+            report=report,
+            parse_status=parse_status,
+            raw_content=raw_content,
+            parsed_payload=parsed_payload,
+        )
+    except Exception:  # noqa: BLE001 - committed champion remains authoritative
+        logger.exception("prompt-shadow streaming evidence finalization deferred")
 
 
 def _stage(

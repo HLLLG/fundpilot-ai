@@ -13,16 +13,28 @@ from app.services.deepseek_http import (
     deepseek_chat_url,
     deepseek_request_headers,
 )
+from app.services.news_freshness import normalize_news_now
 
 
 def group_news_by_topic(items: list[NewsItem]) -> dict[str, list[NewsItem]]:
     grouped: dict[str, list[NewsItem]] = defaultdict(list)
     for item in items:
-        grouped[item.topic].append(item)
+        # Cross-topic de-duplication keeps one canonical article and records the
+        # other associations in ``related_topics``. Every downstream topic brief
+        # must still see that article, otherwise de-duplication silently removes
+        # evidence from the non-canonical fund/sector.
+        for topic in dict.fromkeys([item.topic, *item.related_topics]):
+            if topic:
+                grouped[topic].append(item)
     return dict(grouped)
 
 
-def build_topic_briefs_offline(topic: str, items: list[NewsItem]) -> TopicBrief:
+def build_topic_briefs_offline(
+    topic: str,
+    items: list[NewsItem],
+    *,
+    now: datetime | None = None,
+) -> TopicBrief:
     titles = [item.title for item in items[:5] if item.title]
     summary = (
         f"「{topic}」共 {len(items)} 条相关新闻（规则摘要，未调用模型）。"
@@ -43,7 +55,7 @@ def build_topic_briefs_offline(topic: str, items: list[NewsItem]) -> TopicBrief:
         summary=summary[:300],
         points=points,
         news_count=len(items),
-        summarized_at=datetime.now(timezone.utc),
+        summarized_at=normalize_news_now(now).astimezone(timezone.utc),
         provider="rule-fallback",
     )
 
@@ -52,6 +64,8 @@ def summarize_topic(
     topic: str,
     items: list[NewsItem],
     settings: Settings | None = None,
+    *,
+    now: datetime | None = None,
 ) -> TopicBrief:
     resolved = settings or get_settings()
     if not items:
@@ -64,18 +78,20 @@ def summarize_topic(
         )
 
     if not resolved.news_summarize or not resolved.deepseek_configured:
-        return build_topic_briefs_offline(topic, items)
+        return build_topic_briefs_offline(topic, items, now=now)
 
     try:
-        return _summarize_topic_with_flash(topic, items, resolved)
+        return _summarize_topic_with_flash(topic, items, resolved, now=now)
     except Exception:
-        return build_topic_briefs_offline(topic, items)
+        return build_topic_briefs_offline(topic, items, now=now)
 
 
 def _summarize_topic_with_flash(
     topic: str,
     items: list[NewsItem],
     settings: Settings,
+    *,
+    now: datetime | None = None,
 ) -> TopicBrief:
     max_points = max(1, min(settings.news_summarize_max_points, 5))
     payload_items = [
@@ -91,7 +107,7 @@ def _summarize_topic_with_flash(
     user_content = json.dumps(
         {
             "topic": topic,
-            "today": datetime.now().date().isoformat(),
+            "today": normalize_news_now(now).date().isoformat(),
             "items": payload_items,
             "max_points": max_points,
             "rules": [
@@ -134,7 +150,7 @@ def _summarize_topic_with_flash(
     response.raise_for_status()
     content = response.json()["choices"][0]["message"].get("content") or "{}"
     parsed = json.loads(content)
-    return _parse_topic_brief_response(topic, items, parsed, settings)
+    return _parse_topic_brief_response(topic, items, parsed, settings, now=now)
 
 
 def _parse_topic_brief_response(
@@ -142,9 +158,16 @@ def _parse_topic_brief_response(
     items: list[NewsItem],
     parsed: dict,
     settings: Settings,
+    *,
+    now: datetime | None = None,
 ) -> TopicBrief:
     known_titles = {item.title for item in items}
     title_to_url = {item.title: item.url for item in items if item.url}
+    title_to_today: dict[str, bool] = {}
+    for item in items:
+        title_to_today[item.title] = title_to_today.get(item.title, False) or bool(
+            item.is_today
+        )
 
     points: list[TopicBriefPoint] = []
     for raw in parsed.get("points") or []:
@@ -167,7 +190,10 @@ def _parse_topic_brief_response(
             TopicBriefPoint(
                 headline=headline,
                 sentiment=sentiment,  # type: ignore[arg-type]
-                is_today=bool(raw.get("is_today")),
+                # Freshness is a source fact, not a model judgment. Derive it
+                # from validated citations so an LLM cannot promote stale news
+                # (and strings such as "false" cannot become truthy).
+                is_today=any(title_to_today.get(title, False) for title in source_titles),
                 source_titles=source_titles[:3],
                 source_urls=[
                     url for title in source_titles if (url := title_to_url.get(title))
@@ -179,17 +205,17 @@ def _parse_topic_brief_response(
 
     summary = str(parsed.get("summary", "")).strip()[:300]
     if not summary:
-        summary = build_topic_briefs_offline(topic, items).summary
+        summary = build_topic_briefs_offline(topic, items, now=now).summary
 
     if not points:
-        return build_topic_briefs_offline(topic, items)
+        return build_topic_briefs_offline(topic, items, now=now)
 
     return TopicBrief(
         topic=topic,
         summary=summary,
         points=points,
         news_count=len(items),
-        summarized_at=datetime.now(timezone.utc),
+        summarized_at=normalize_news_now(now).astimezone(timezone.utc),
         provider=settings.resolved_news_summarize_model,
     )
 
@@ -199,8 +225,10 @@ def summarize_all_topics(
     settings: Settings | None = None,
     *,
     offline_only: bool = False,
+    now: datetime | None = None,
 ) -> list[TopicBrief]:
     resolved = settings or get_settings()
+    resolved_now = normalize_news_now(now)
     if not items:
         return []
 
@@ -210,7 +238,7 @@ def summarize_all_topics(
 
     if offline_only or not resolved.news_summarize or not resolved.deepseek_configured:
         return [
-            build_topic_briefs_offline(topic, group_items)
+            build_topic_briefs_offline(topic, group_items, now=resolved_now)
             for topic, group_items in sorted(grouped.items())
         ]
 
@@ -219,7 +247,13 @@ def summarize_all_topics(
     executor = ThreadPoolExecutor(max_workers=2)
     try:
         futures = {
-            executor.submit(summarize_topic, topic, group_items, resolved): topic
+            executor.submit(
+                summarize_topic,
+                topic,
+                group_items,
+                resolved,
+                now=resolved_now,
+            ): topic
             for topic, group_items in grouped.items()
         }
         try:
@@ -229,7 +263,9 @@ def summarize_all_topics(
                 try:
                     briefs_by_topic[topic] = future.result()
                 except Exception:
-                    briefs_by_topic[topic] = build_topic_briefs_offline(topic, group_items)
+                    briefs_by_topic[topic] = build_topic_briefs_offline(
+                        topic, group_items, now=resolved_now
+                    )
         except TimeoutError:
             pass
         finally:
@@ -240,7 +276,9 @@ def summarize_all_topics(
 
     for topic, group_items in grouped.items():
         if topic not in briefs_by_topic:
-            briefs_by_topic[topic] = build_topic_briefs_offline(topic, group_items)
+            briefs_by_topic[topic] = build_topic_briefs_offline(
+                topic, group_items, now=resolved_now
+            )
 
     return [briefs_by_topic[topic] for topic in sorted(briefs_by_topic)]
 

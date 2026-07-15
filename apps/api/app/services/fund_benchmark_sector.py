@@ -32,6 +32,11 @@ _BENCHMARK_FETCH_METADATA: OrderedDict[
 _BENCHMARK_FETCH_METADATA_MAX_ENTRIES = 512
 _BENCHMARK_FETCH_METADATA_LOCK = RLock()
 
+# `fund_individual_basic_info_xq` is an aggregator profile exposed through
+# AkShare. It is useful as reference metadata, but it is not a verified
+# fund-manager disclosure or contract source.
+_XQ_AKSHARE_SOURCE_KIND = "xq_akshare_aggregator"
+
 _INDEX_CODE_RE = re.compile(r"(?<!\d)(\d{6})(?!\d)")
 
 def _build_benchmark_name_to_code() -> tuple[tuple[str, str], ...]:
@@ -230,7 +235,7 @@ print("null")
             code,
             text,
             kind=kind,
-            source_kind="live_fund_disclosure",
+            source_kind=_XQ_AKSHARE_SOURCE_KIND,
         )
         return text
     except Exception:

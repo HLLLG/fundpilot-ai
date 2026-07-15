@@ -74,6 +74,27 @@ class Settings(BaseSettings):
     news_summarize_timeout_seconds: float = 60.0
     news_fetch_timeout_seconds: float = 20.0
     news_prefetch_total_timeout_seconds: float = 45.0
+    # 基金公告与市场/行业主题使用独立预算和缓存契约，避免持仓数挤占 news_max_topics。
+    news_announcement_max_funds: int = 20
+    news_announcement_per_fund: int = 3
+    news_announcement_cache_ttl_seconds: int = 21_600
+    news_announcement_prefetch_total_timeout_seconds: float = 20.0
+    # Phase B 可交易性：申购状态短缓存，费率规则日级缓存；历史 decision_at
+    # 只能读取当时已经存在的快照，禁止用当前页面回填历史决策。
+    fund_tradeability_status_cache_ttl_seconds: int = 900
+    fund_tradeability_fee_cache_ttl_seconds: int = 86_400
+    fund_tradeability_status_timeout_seconds: float = 20.0
+    fund_tradeability_fee_timeout_seconds: float = 30.0
+    fund_tradeability_current_window_seconds: int = 600
+    # Phase C fund-disclosure look-through. Fast reports stay store-only; deep
+    # reports may refresh current aging/stale disclosures within a bounded batch.
+    fund_holdings_context_max_funds: int = 40
+    fund_holdings_context_live_max_funds: int = 8
+    fund_holdings_context_workers: int = 4
+    fund_holdings_context_total_timeout_seconds: float = 18.0
+    fund_holdings_context_fast_timeout_seconds: float = 2.0
+    fund_holdings_refresh_check_ttl_seconds: int = 21_600
+    fund_holdings_refresh_retry_ttl_seconds: int = 900
     news_macro_topic: str = "上证指数"
     # 拉满 252 让日报/荐基与持仓详情弹窗预热共享 fund_nav_cache（key: code+days）。
     # 旧 nav_trend_days env 仍兼容（fallback 映射到 nav_cache_pull_days），过渡期一版。
@@ -99,6 +120,9 @@ class Settings(BaseSettings):
     sector_quotes_browser_command: str | None = None
     sector_intraday_browser_command: str | None = None
     sector_quotes_browser_timeout_seconds: float = 4.0
+    # 基金名称全集仅用于 OCR/模糊查码预热；受限网络、测试和只跑 API 的部署可关闭，
+    # 实际查码时仍会按需加载，不改变业务契约。
+    fund_name_preload_enabled: bool = True
     ocr_preload: bool = True
     ocr_use_mobile_models: bool = True
     ocr_max_image_side: int = 1280
@@ -119,6 +143,20 @@ class Settings(BaseSettings):
     jwt_access_expire_minutes: int = 43_200  # 30 days
     database_url: str | None = None
     factor_ic_publish_token: str | None = None
+    # D2 decision-quality snapshots use a dedicated read-only credential.  It
+    # is deliberately not shared with JWT or factor snapshot publication.
+    decision_quality_read_token: str | None = None
+    # D5.1 paired prompt shadowing is opt-in and never changes the champion
+    # response.  The secret is used only for deterministic assignment; leaving
+    # it unset makes an enabled deployment fail closed for shadow eligibility.
+    prompt_shadow_enabled: bool = False
+    prompt_shadow_assignment_secret: str | None = None
+    prompt_shadow_assignment_key_id: str = "prompt-shadow-assignment-v1"
+    prompt_shadow_sample_basis_points: int = 10_000
+    prompt_shadow_max_challenger_calls_per_day: int = 100
+    prompt_shadow_worker_batch_size: int = 8
+    prompt_shadow_lease_seconds: int = 180
+    prompt_shadow_challenger_deadline_seconds: int = 900
     factor_ic_stale_after_days: int = 30
     cloudbase_env_id: str | None = None
     # 方案 A 默认关闭：美股 Tab 仅展示指数 + 汇率，不拉 QDII 穿透估值

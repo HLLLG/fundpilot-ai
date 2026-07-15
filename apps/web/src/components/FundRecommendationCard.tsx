@@ -16,12 +16,14 @@ import {
 import { DecisionEvidenceGrid } from "@/components/DecisionEvidenceGrid";
 import { QuantEvidenceSummary } from "@/components/QuantEvidenceSummary";
 import { SectorOpportunityCard } from "@/components/SectorOpportunityCard";
+import { FundTradeabilityEvidence } from "@/components/FundTradeabilityEvidence";
 
 type Snapshot = Report["snapshots"][number];
 
 type FundRecommendationCardProps = {
   item: Report["fund_recommendations"][number];
   report: Report;
+  recommendationIndex: number;
   defaultExpanded: boolean;
 };
 
@@ -54,8 +56,7 @@ function FundDiagnosticHint({ snapshot }: { snapshot: Snapshot }) {
   );
 }
 
-function navHintForFund(fundCode: string, snapshots: Report["snapshots"]): string | null {
-  const snapshot = snapshots.find((item) => item.fund_code === fundCode);
+function navHintForSnapshot(snapshot: Snapshot | undefined): string | null {
   if (!snapshot) {
     return null;
   }
@@ -74,9 +75,48 @@ function navHintForFund(fundCode: string, snapshots: Report["snapshots"]): strin
   return null;
 }
 
-function holdingFactsRow(fundCode: string, report: Report): AnalysisFactsHoldingRow | null {
+function holdingFactsRow(
+  recommendationIndex: number,
+  item: Report["fund_recommendations"][number],
+  report: Report,
+): AnalysisFactsHoldingRow | null {
   const facts = report.analysis_facts as { holdings?: AnalysisFactsHoldingRow[] } | undefined;
-  return facts?.holdings?.find((holding) => holding.fund_code === fundCode) ?? null;
+  const rows = facts?.holdings;
+  if (!rows?.length) {
+    return null;
+  }
+
+  const aligned = rows[recommendationIndex];
+  if (aligned) {
+    return aligned;
+  }
+
+  const matches = rows.filter((holding) => holding.fund_code === item.fund_code);
+  return matches.length === 1 ? matches[0] : null;
+}
+
+function snapshotForRecommendation(
+  recommendationIndex: number,
+  item: Report["fund_recommendations"][number],
+  report: Report,
+): Snapshot | undefined {
+  const aligned = report.snapshots[recommendationIndex];
+  if (aligned) {
+    return aligned;
+  }
+
+  const exactMatches = report.snapshots.filter(
+    (snapshot) =>
+      snapshot.fund_code === item.fund_code && snapshot.fund_name === item.fund_name,
+  );
+  if (exactMatches.length === 1) {
+    return exactMatches[0];
+  }
+
+  const codeMatches = report.snapshots.filter(
+    (snapshot) => snapshot.fund_code === item.fund_code,
+  );
+  return codeMatches.length === 1 ? codeMatches[0] : undefined;
 }
 
 function reportIcStatus(report: Report): FactorIcEvidenceStatus | null {
@@ -221,16 +261,26 @@ function NewsBlock({
 export function FundRecommendationCard({
   item,
   report,
+  recommendationIndex,
   defaultExpanded,
 }: FundRecommendationCardProps) {
   const [summaryOpen, setSummaryOpen] = useState(defaultExpanded);
   const [whyOpen, setWhyOpen] = useState(false);
   const [professionalOpen, setProfessionalOpen] = useState(false);
-  const snapshot = report.snapshots.find((entry) => entry.fund_code === item.fund_code);
-  const holdingFacts = holdingFactsRow(item.fund_code, report);
+  const stableIdentity = `${item.fund_code}-${recommendationIndex}`;
+  const snapshot = snapshotForRecommendation(recommendationIndex, item, report);
+  const holdingFacts = holdingFactsRow(recommendationIndex, item, report);
   const evidence = holdingFacts?.evidence ?? null;
   const sectorOpportunity = holdingFacts?.sector_opportunity ?? null;
   const divergenceBacktest = holdingFacts?.flow_divergence_backtest ?? null;
+  const tradeability = item.tradeability ?? holdingFacts?.tradeability;
+  const transactionExecution =
+    item.transaction_execution ?? holdingFacts?.transaction_execution;
+  const hasTradeability = Boolean(
+    (tradeability && Object.keys(tradeability).length > 0) ||
+      (transactionExecution && Object.keys(transactionExecution).length > 0),
+  );
+  const isReductionReview = /减仓|清仓/.test(item.action);
   const icStatus = reportIcStatus(report);
 
   const primaryReason = selectPrimaryReason(item);
@@ -264,7 +314,7 @@ export function FundRecommendationCard({
   );
   const diagnostic = safeDiagnosticMetrics(snapshot ?? {});
   const referenceLabel = confidenceDisplayLabel(item.confidence);
-  const navHint = navHintForFund(item.fund_code, report.snapshots);
+  const navHint = navHintForSnapshot(snapshot);
   const actionAccentClass = actionAccentClasses[actionTone(item.action)];
 
   const cardBody = (
@@ -273,7 +323,7 @@ export function FundRecommendationCard({
         type="button"
         onClick={() => setSummaryOpen((value) => !value)}
         aria-expanded={summaryOpen}
-        aria-controls={`${item.fund_code}-summary`}
+        aria-controls={`${stableIdentity}-summary`}
         aria-label={`${summaryOpen ? "收起" : "展开"} ${item.fund_name}`}
         className="flex min-h-11 w-full min-w-0 flex-col gap-2 px-4 py-3 text-left"
       >
@@ -292,7 +342,7 @@ export function FundRecommendationCard({
         </span>
       </button>
       {summaryOpen ? (
-        <div id={`${item.fund_code}-summary`} className="min-w-0 border-t border-slate-100 px-4 pb-4">
+        <div id={`${stableIdentity}-summary`} className="min-w-0 border-t border-slate-100 px-4 pb-4">
           {item.suggested_position_change_percent != null ? (
             <PositionChangeBadge
               percent={item.suggested_position_change_percent}
@@ -314,7 +364,7 @@ export function FundRecommendationCard({
             </p>
           ) : null}
           <Disclosure
-            id={`${item.fund_code}-why`}
+            id={`${stableIdentity}-why`}
             title="为什么这样建议"
             open={whyOpen}
             onToggle={() => setWhyOpen((value) => !value)}
@@ -337,7 +387,7 @@ export function FundRecommendationCard({
             ) : null}
           </Disclosure>
           <Disclosure
-            id={`${item.fund_code}-professional`}
+            id={`${stableIdentity}-professional`}
             title="专业依据"
             open={professionalOpen}
             onToggle={() => setProfessionalOpen((value) => !value)}
@@ -350,6 +400,21 @@ export function FundRecommendationCard({
               <p className="mt-2 text-xs text-amber-800">指标数据异常，已隐藏</p>
             ) : null}
             <FactorIcNotice status={icStatus} />
+            {hasTradeability ? (
+              <div className="mt-3 space-y-2">
+                <FundTradeabilityEvidence
+                  tradeability={tradeability}
+                  holdingTransactionExecution={transactionExecution}
+                  compact
+                />
+                {isReductionReview &&
+                transactionExecution?.reduction_amount_status === "manual_review" ? (
+                  <p className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] leading-5 text-amber-900">
+                    逐笔申购时间未核验：减仓前需人工确认锁定期与适用赎回费，系统不自动生成减仓金额。
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
             {sectorOpportunity ? (
               <SectorOpportunityCard item={sectorOpportunity} divergenceBacktest={divergenceBacktest} />
             ) : null}

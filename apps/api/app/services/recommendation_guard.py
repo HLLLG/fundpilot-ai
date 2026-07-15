@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from math import isfinite
 
 from app.config import get_settings
 from app.models import (
@@ -36,6 +37,10 @@ from app.services.recommendations import build_offline_fund_recommendation
 from app.services.risk import holding_weight_percent, resolve_weight_denominator
 from app.services.sector_intraday_summary import summarize_sector_intraday_for_holding
 from app.services.sector_momentum import build_sector_momentum_context
+from app.services.daily_tradeability import (
+    assess_holding_add_amount,
+    build_holding_transaction_execution,
+)
 
 # 动作激进度 bucket：数值越低越保守。M2.2 起统一委托给
 # decision_guard_shared.classify_action_bucket()（清仓评估=-2 < 大幅减仓评估=-1 <
@@ -117,21 +122,26 @@ def apply_recommendation_guards(
     guarded: list[FundRecommendation] = []
     evidence_blocked_codes: dict[str, list[str]] = {}
     for rec in fund_recs:
+        original_action = rec.action
+        rec = _strip_untrusted_execution_text(rec)
         holding = _match_holding(rec, request.holdings)
         offline = None
         if holding is not None:
             offline = offline_map.get(holding.fund_code) or offline_map.get(holding.fund_name)
 
+        normalized = normalize_action_text(rec.action)
+        facts_row = _facts_row_for_holding(facts, holding) if holding is not None else None
+
         evidence_allowed, evidence_reasons = decision_evidence_allows_action(
             facts,
             scope="analysis",
             fund_code=(holding.fund_code if holding is not None else rec.fund_code),
+            direction=_execution_direction(normalized),
         )
         execution_blocked = degraded_portfolio_snapshot or not evidence_allowed
         if execution_blocked:
             evidence_blocked_codes[rec.fund_code] = evidence_reasons
 
-        normalized = normalize_action_text(rec.action)
         snapshot_note = None
         if execution_blocked and _action_bucket(normalized) >= ACTION_BUCKET_ADD:
             normalized = "观察"
@@ -168,7 +178,6 @@ def apply_recommendation_guards(
         if _action_bucket(normalized) > max_bucket:
             normalized = _BUCKET_TO_LABEL[max_bucket]
 
-        facts_row = _facts_row_for_holding(facts, holding) if holding is not None else None
         sector_opportunity = (facts_row or {}).get("sector_opportunity")
         evidence = (facts_row or {}).get("evidence")
 
@@ -243,7 +252,40 @@ def apply_recommendation_guards(
             escalation_note = None
             shadow_note = None
 
-        note = escalation_note or snapshot_note or reversal_note or weak_note
+        allowed_actions = {
+            str(value).strip()
+            for value in (facts or {}).get("allowed_actions") or []
+            if str(value).strip()
+        }
+        if allowed_actions and normalized not in allowed_actions:
+            normalized = "观察"
+            escalation_note = None
+            note_forbidden_action = "该动作不在本轮 allowed_actions 中，系统已降为观察。"
+        else:
+            note_forbidden_action = None
+
+        (
+            normalized,
+            approved_amount_yuan,
+            tradeability_review_required,
+            tradeability_note,
+            trusted_tradeability,
+            trusted_transaction_execution,
+        ) = _apply_holding_tradeability_guard(
+            normalized,
+            amount_yuan=rec.amount_yuan,
+            holding=holding,
+            facts_row=facts_row,
+        )
+
+        note = (
+            note_forbidden_action
+            or tradeability_note
+            or escalation_note
+            or snapshot_note
+            or reversal_note
+            or weak_note
+        )
         if (
             not note
             and not short_term
@@ -262,7 +304,14 @@ def apply_recommendation_guards(
         elif not note and normalized != rec.action.strip():
             note = f"已规范动作表述为「{normalized}」。"
 
-        copy = rec.model_copy(update={"action": normalized})
+        copy = rec.model_copy(
+            update={
+                "action": normalized,
+                "amount_yuan": approved_amount_yuan,
+                "tradeability": trusted_tradeability,
+                "transaction_execution": trusted_transaction_execution,
+            }
+        )
         if execution_blocked:
             copy.amount_yuan = None
             copy.amount_note = "字段级证据未达到时点可用条件，未生成可执行金额"
@@ -281,6 +330,16 @@ def apply_recommendation_guards(
             # 给出的任何数字（LLM 未给出该字段本就是默认 None，这里统一以系统计算为准）。
             copy.suggested_position_change_percent = escalation.get("suggested_position_change_percent")
             copy.suggested_position_change_basis = str(escalation.get("basis") or "")
+        if tradeability_review_required:
+            copy.amount_yuan = None
+            copy.amount_note = None
+            copy.suggested_position_change_percent = None
+            copy.suggested_position_change_basis = ""
+            copy.confidence = "低"
+            copy.validation_notes = [
+                *copy.validation_notes,
+                "交易条件或逐笔持有期未达到自动执行条件；本条仅供人工复核。",
+            ]
         _backfill_decision_fields(copy, holding, sector_opportunity, evidence, ic_status)
         _enforce_public_ic_evidence(copy, evidence, ic_status)
         if shadow_note is not None:
@@ -303,10 +362,16 @@ def apply_recommendation_guards(
             copy.validation_notes = [
                 value for value in copy.validation_notes if not contains_executable_decision_text(value)
             ] + ["字段级证据时点校验未通过，仓位动作已被确定性阻断。"]
+        _enforce_final_execution_projection(copy, original_action=original_action)
         _humanize_recommendation_text(copy)
         guarded.append(copy)
 
     portfolio = _guard_portfolio_lines(portfolio_lines, risk)
+    from app.services.decision_data_evidence import contains_trade_instruction_text
+
+    portfolio = [line for line in portfolio if not contains_trade_instruction_text(line)]
+    if not portfolio:
+        portfolio = ["组合级执行动作以逐基金卡片中的系统校验结果为准。"]
     if evidence_blocked_codes:
         hint = "持仓或字段级证据未达到时点可用条件：本次仅保留观察/风险复核，已隐藏仓位动作与金额措辞。"
         safe_portfolio = [line for line in portfolio if not contains_executable_decision_text(line)]
@@ -365,6 +430,203 @@ def normalize_action_text(action: str) -> str:
     if bucket == ACTION_BUCKET_REDUCE and ("复核" in cleaned or "风控" in cleaned):
         return "风控复核"
     return label
+
+
+def _execution_direction(action: str) -> str:
+    normalized = normalize_action_text(action)
+    if normalized == "分批加仓":
+        return "add"
+    if any(token in normalized for token in ("减仓", "清仓")):
+        return "reduce"
+    return "none"
+
+
+def _apply_holding_tradeability_guard(
+    normalized_action: str,
+    *,
+    amount_yuan: float | None,
+    holding: Holding | None,
+    facts_row: dict | None,
+) -> tuple[str, float | None, bool, str | None, dict, dict]:
+    """Apply the server-owned daily transaction contract to one final action.
+
+    Missing keys mean a historical pre-contract report and remain compatible.
+    New preparation runs always include the key, even when the provider failed,
+    so they fail closed rather than inheriting model-authored execution fields.
+    """
+
+    raw_tradeability = (
+        facts_row.get("tradeability")
+        if isinstance(facts_row, dict) and isinstance(facts_row.get("tradeability"), dict)
+        else {}
+    )
+    has_tradeability_contract = bool(
+        isinstance(facts_row, dict) and "tradeability" in facts_row
+    )
+    if not has_tradeability_contract:
+        return normalized_action, amount_yuan, False, None, {}, {}
+
+    holding_amount = holding.holding_amount if holding is not None else None
+    transaction_execution = (
+        dict(facts_row.get("transaction_execution"))
+        if isinstance(facts_row.get("transaction_execution"), dict)
+        else build_holding_transaction_execution(
+            raw_tradeability,
+            holding_amount_yuan=holding_amount,
+        )
+    )
+    direction = _execution_direction(normalized_action)
+    if direction == "add":
+        amount_assessment = assess_holding_add_amount(
+            raw_tradeability,
+            holding_amount_yuan=holding_amount,
+            amount_yuan=amount_yuan,
+        )
+        transaction_execution["amount_assessment"] = amount_assessment
+        if not amount_assessment.get("executable"):
+            return (
+                "观察",
+                None,
+                True,
+                "追加申购状态、追加起购额、单日限额或建议金额未通过核验，已降为观察。",
+                dict(raw_tradeability),
+                transaction_execution,
+            )
+        approved_amount = float(amount_assessment["approved_amount_yuan"])
+        note = None
+        if amount_assessment.get("amount_capped_by_daily_limit"):
+            note = (
+                f"建议金额已按已核验的单日申购限额下调为 {approved_amount:,.0f} 元；"
+                "下单前仍需复核渠道剩余额度。"
+            )
+        return (
+            normalized_action,
+            approved_amount,
+            False,
+            note,
+            dict(raw_tradeability),
+            transaction_execution,
+        )
+
+    if direction == "reduce":
+        if transaction_execution.get("redemption_status") != "eligible":
+            return (
+                "风控复核",
+                None,
+                True,
+                "赎回状态未达到时点可执行条件，已降为人工风控复核。",
+                dict(raw_tradeability),
+                transaction_execution,
+            )
+        return (
+            normalized_action,
+            None,
+            True,
+            "赎回开放已核验，但缺少逐笔申购时间，无法确认锁定期与适用赎回费；"
+            "仅保留减仓评估，不生成金额或仓位比例。",
+            dict(raw_tradeability),
+            transaction_execution,
+        )
+
+    return (
+        normalized_action,
+        None if _execution_direction(normalized_action) == "none" else amount_yuan,
+        False,
+        None,
+        dict(raw_tradeability),
+        transaction_execution,
+    )
+
+
+def _strip_untrusted_execution_text(rec: FundRecommendation) -> FundRecommendation:
+    """Remove free-text trade instructions before deterministic notes are added."""
+    from app.services.decision_data_evidence import (
+        contains_high_risk_trade_instruction_text,
+        contains_trade_instruction_text,
+    )
+
+    copy = rec.model_copy(deep=True)
+    copy.points = [
+        value for value in copy.points if not contains_trade_instruction_text(value)
+    ]
+    copy.sector_evidence = [
+        value
+        for value in copy.sector_evidence
+        if not contains_trade_instruction_text(value)
+    ]
+    copy.fund_evidence = [
+        value
+        for value in copy.fund_evidence
+        if not contains_trade_instruction_text(value)
+    ]
+    copy.validation_notes = [
+        value
+        for value in copy.validation_notes
+        if not contains_trade_instruction_text(value)
+    ]
+    copy.risks = [
+        value for value in copy.risks if not contains_trade_instruction_text(value)
+    ]
+    if contains_high_risk_trade_instruction_text(copy.decision_path):
+        copy.decision_path = ""
+    copy.amount_note = None
+    copy.suggested_position_change_percent = None
+    copy.suggested_position_change_basis = ""
+    return copy
+
+
+def _enforce_final_execution_projection(
+    rec: FundRecommendation,
+    *,
+    original_action: str,
+) -> None:
+    """Project every user-visible execution field from the final guarded action."""
+    final_direction = _execution_direction(rec.action)
+    original_direction = _execution_direction(original_action)
+    if final_direction == "none" or final_direction != original_direction:
+        rec.amount_yuan = None
+        rec.amount_note = None
+    if final_direction == "none":
+        rec.suggested_position_change_percent = None
+        rec.suggested_position_change_basis = ""
+
+    amount = rec.amount_yuan
+    if amount is not None and (not isfinite(float(amount)) or float(amount) <= 0):
+        rec.amount_yuan = None
+        rec.amount_note = None
+    if rec.amount_yuan is not None:
+        verb = "加仓" if final_direction == "add" else "减仓"
+        rec.amount_note = (
+            f"系统校验后的示意{verb}金额约 {float(rec.amount_yuan):,.0f} 元；"
+            "实际操作前请核对净值、费用与可用资金。"
+        )
+
+    position = rec.suggested_position_change_percent
+    if position is not None:
+        valid_sign = (final_direction == "add" and position > 0) or (
+            final_direction == "reduce" and position < 0
+        )
+        if not valid_sign or not isfinite(float(position)):
+            rec.suggested_position_change_percent = None
+            rec.suggested_position_change_basis = ""
+        else:
+            rec.suggested_position_change_basis = (
+                f"系统依据最终动作「{rec.action}」及确定性规则计算，非模型自由给值"
+            )
+
+    rec.risks = rec.risks or _build_default_risks(rec, None)
+
+    projection = f"系统校验后的最终动作：{rec.action}。"
+    if rec.amount_yuan is not None:
+        projection += f"示意金额约 {float(rec.amount_yuan):,.0f} 元。"
+    rec.points = [*rec.points, projection]
+    if rec.decision_path:
+        rec.decision_path = (
+            f"{rec.decision_path.rstrip('。')}。系统校验后的最终动作：{rec.action}。"
+        )
+    else:
+        rec.decision_path = f"确定性守卫完成身份、证据与风险校验；最终动作：{rec.action}。"
+    rec.validation_notes.append("执行字段已按最终动作重新投影，原始模型指令不直接作为执行依据。")
 
 
 def conservative_action_text(llm_action: str, offline_action: str) -> str:

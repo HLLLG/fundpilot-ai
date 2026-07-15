@@ -71,7 +71,7 @@ def _insert_cached_benchmark(
             "银行活期存款利率（税后）×5%"
         ),
         "benchmark_text_kind": "performance_benchmark",
-        "benchmark_text_source_kind": "live_fund_disclosure",
+        "benchmark_text_source_kind": "verified_fund_contract",
         "benchmark_text_truncated": False,
     }
     with _connect() as connection:
@@ -115,6 +115,33 @@ def test_tracking_target_is_reference_only_even_when_text_is_complete() -> None:
             "index_name": "沪深300指数",
             "benchmark_text": "沪深300指数",
             "benchmark_text_kind": "tracking_target",
+            "benchmark_text_source_kind": "xq_akshare_aggregator",
+            "benchmark_text_truncated": False,
+        },
+    )
+    with _connect() as connection:
+        spec, mapping = freeze_fund_benchmark_spec(
+            fund_code="021533",
+            decision_at="2026-07-10T06:30:00+00:00",
+            user_id=1,
+            connection=connection,
+        )
+
+    assert mapping is not None
+    assert spec["tier"] == "tracked_index_exact"
+    assert spec["formal_excess_eligible"] is False
+    assert spec["contract_verification_kind"] == "xq_akshare_aggregator"
+
+
+def test_legacy_live_disclosure_label_is_not_trusted_as_formal_contract() -> None:
+    _insert_cached_benchmark(
+        available_at="2026-07-09T00:00:00+00:00",
+        detail_override={
+            "index_code": "931743",
+            "index_name": "reference index",
+            "benchmark_text": "reference index 931743 x 100%",
+            "benchmark_text_kind": "performance_benchmark",
+            # Historical Xueqiu/AkShare rows used this over-strong label.
             "benchmark_text_source_kind": "live_fund_disclosure",
             "benchmark_text_truncated": False,
         },
@@ -130,6 +157,8 @@ def test_tracking_target_is_reference_only_even_when_text_is_complete() -> None:
     assert mapping is not None
     assert spec["tier"] == "tracked_index_exact"
     assert spec["formal_excess_eligible"] is False
+    assert spec["contract_verification_kind"] == "live_fund_disclosure"
+    assert spec["reason"] == "tracking_index_is_reference_only"
 
 
 def test_truncated_or_static_fallback_text_cannot_become_formal_contract() -> None:
@@ -194,6 +223,9 @@ def test_save_report_freezes_and_persists_complete_contract_mapping() -> None:
     assert event["benchmark"]["tier"] == "fund_contract_exact"
     assert event["benchmark"]["status"] == "complete"
     assert event["benchmark"]["formal_excess_eligible"] is True
+    assert event["benchmark"]["contract_verification_kind"] == (
+        "verified_fund_contract"
+    )
     assert event["benchmark_mapping_id"]
     with _connect() as connection:
         mapping = connection.execute(
@@ -205,4 +237,6 @@ def test_save_report_freezes_and_persists_complete_contract_mapping() -> None:
     assert mapping["mapping_id"] == event["benchmark_mapping_id"]
     assert mapping["benchmark_kind"] == "official_contract"
     assert mapping["completeness"] == "complete"
-    assert len(json.loads(mapping["payload"])["components"]) == 2
+    stored_payload = json.loads(mapping["payload"])
+    assert len(stored_payload["components"]) == 2
+    assert stored_payload["contract_verification_kind"] == "verified_fund_contract"

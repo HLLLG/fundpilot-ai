@@ -163,9 +163,33 @@ def test_deep_mode_sends_risk_review_persona_with_escalation_hints(monkeypatch):
     monkeypatch.setattr("httpx.post", fake_post)
 
     parsed = _parsed()
+    parsed["recommendations"][0]["validation_notes"] = [
+        {
+            "position_snapshot": {
+                "raw_events": ["DISCOVERY_DRAFT_LEDGER_LEAK_SENTINEL"]
+            }
+        }
+    ]
+    parsed["candidate_pool"] = [
+        {"raw_candidate": "DISCOVERY_DRAFT_POOL_LEAK_SENTINEL"}
+    ]
+    candidate_pool = _candidate_pool(fund_quality_score=40.0)
+    candidate_pool[0]["custom_payload"] = {
+        "raw_snapshot": "DISCOVERY_JUDGE_LEAK_SENTINEL"
+    }
+    candidate_pool[0]["quality_gate"] = {
+        "eligible": False,
+        "status": "excluded",
+        "reasons": ["hard_gate"],
+        "custom_snapshot": "DISCOVERY_QUALITY_GATE_LEAK_SENTINEL",
+    }
+    candidate_pool[0]["quality_score_components"] = {
+        "sector_fit": 20.0,
+        "custom_component": {"raw": "DISCOVERY_QUALITY_COMPONENT_LEAK_SENTINEL"},
+    }
     out, meta = judge_parsed_discovery_report(
         parsed,
-        candidate_pool=_candidate_pool(fund_quality_score=40.0),
+        candidate_pool=candidate_pool,
         discovery_facts=_discovery_facts(opportunity_available=False),
         analysis_mode="deep",
     )
@@ -177,6 +201,14 @@ def test_deep_mode_sends_risk_review_persona_with_escalation_hints(monkeypatch):
     user_payload = json.loads(captured["user"])
     assert user_payload["escalation_hints"]["020357"]["action"] == "exclude"
     assert "escalation_hints" in user_payload["task"]
+    assert "custom_payload" not in user_payload["candidate_pool"][0]
+    assert "DISCOVERY_JUDGE_LEAK_SENTINEL" not in captured["user"]
+    assert "DISCOVERY_DRAFT_LEDGER_LEAK_SENTINEL" not in captured["user"]
+    assert "DISCOVERY_DRAFT_POOL_LEAK_SENTINEL" not in captured["user"]
+    assert "DISCOVERY_QUALITY_GATE_LEAK_SENTINEL" not in captured["user"]
+    assert "DISCOVERY_QUALITY_COMPONENT_LEAK_SENTINEL" not in captured["user"]
+    assert "validation_notes" not in user_payload["draft_report"]["recommendations"][0]
+    assert "candidate_pool" not in user_payload["draft_report"]
 
 
 def test_deep_mode_falls_back_to_draft_when_llm_response_invalid(monkeypatch):

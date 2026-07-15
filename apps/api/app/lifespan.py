@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from app.config import get_settings
 from app.services.db_backup import maybe_auto_import_database
 from app.services.fund_code_resolver import preload_fund_name_table
 from app.services.ocr_engine import schedule_ocr_preload
@@ -29,11 +30,12 @@ async def app_lifespan(_app: FastAPI):
     mark_process_boot()
     maybe_auto_import_database()
     schedule_ocr_preload()
-    threading.Thread(
-        target=preload_fund_name_table,
-        name="fund-name-table-preload",
-        daemon=True,
-    ).start()
+    if get_settings().fund_name_preload_enabled:
+        threading.Thread(
+            target=preload_fund_name_table,
+            name="fund-name-table-preload",
+            daemon=True,
+        ).start()
     if _refresh_enabled():
 
         def _startup_refresh() -> None:
@@ -67,4 +69,12 @@ async def app_lifespan(_app: FastAPI):
         name="fund-primary-sector-backfill",
         daemon=True,
     ).start()
+    if get_settings().prompt_shadow_enabled:
+        from app.services.prompt_shadow_worker import prompt_shadow_worker_loop
+
+        threading.Thread(
+            target=prompt_shadow_worker_loop,
+            name="prompt-shadow-worker",
+            daemon=True,
+        ).start()
     yield

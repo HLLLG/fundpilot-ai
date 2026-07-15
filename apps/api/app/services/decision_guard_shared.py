@@ -243,6 +243,12 @@ ACTION_BUCKET_LABELS: dict[int, str] = {
     ACTION_BUCKET_ADD: "分批加仓",
 }
 
+_NEGATED_ACTION_RE = re.compile(
+    r"(?:不建议|暂不|不要|不宜|不应|无需|无须|禁止|避免|停止|暂停|勿|莫|不)"
+    r"[^，。；;]{0,8}"
+    r"(清仓|大幅减仓|减仓|降仓|止盈|止损|卖出|赎回|加仓|买入|申购|定投|分批|投入)"
+)
+
 
 # 用于"双向 guard 升级判定"的保守度排名，与上面 ACTION_BUCKET_* 的原始数值顺序
 # 故意不完全一致：ACTION_BUCKET_PAUSE(2) 数值大于 ACTION_BUCKET_WATCH(1)，这是
@@ -286,11 +292,20 @@ def classify_action_bucket(action: str) -> int:
     权威判定，避免两处随时间各自漂移。
     """
     text = (action or "").strip()
+    negated = _NEGATED_ACTION_RE.search(text)
+    if negated is not None:
+        token = negated.group(1)
+        if token in {"加仓", "买入", "申购", "定投", "分批", "投入"}:
+            return ACTION_BUCKET_PAUSE
+        return ACTION_BUCKET_WATCH
     if "清仓" in text:
         return ACTION_BUCKET_CLEAR_ALL
     if "大幅减仓" in text:
         return ACTION_BUCKET_DEEP_REDUCE
-    if any(token in text for token in ("减仓", "复核", "风控", "降仓")):
+    if any(
+        token in text
+        for token in ("减仓", "复核", "风控", "降仓", "止盈", "止损", "卖出", "赎回")
+    ):
         return ACTION_BUCKET_REDUCE
     if any(token in text for token in ("暂停", "勿追涨", "勿追", "观望")):
         return ACTION_BUCKET_PAUSE

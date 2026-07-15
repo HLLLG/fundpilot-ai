@@ -183,6 +183,10 @@ def test_candidate_pool_dedupes_same_fund_family(monkeypatch):
     codes = [item["fund_code"] for item in pool]
     assert len({"020639", "020640"} & set(codes)) == 1
     assert "021533" in codes
+    family_row = next(item for item in pool if item["fund_code"] in {"020639", "020640"})
+    assert {
+        item["fund_code"] for item in family_row["_share_family_alternatives"]
+    } == ({"020639", "020640"} - {family_row["fund_code"]})
 
 
 def test_candidate_pool_dedupes_ranked_family_entries(monkeypatch):
@@ -203,3 +207,7 @@ def test_candidate_pool_dedupes_ranked_family_entries(monkeypatch):
     codes = [item["fund_code"] for item in pool]
     assert len({"020639", "020640"} & set(codes)) == 1
     assert "021533" in codes
+    family_row = next(item for item in pool if item["fund_code"] in {"020639", "020640"})
+    assert {
+        item["fund_code"] for item in family_row["_share_family_alternatives"]
+    } == ({"020639", "020640"} - {family_row["fund_code"]})

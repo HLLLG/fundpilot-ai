@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from collections.abc import Mapping
+from datetime import datetime
 from typing import Any
 
 from app.models import (
@@ -46,13 +48,15 @@ from app.services.sector_signal_context import (
 )
 from app.services.signal_guard_policy import resolve_signal_guard_policy
 from app.services.signal_synthesis import build_evidence_overview, build_holding_evidence
-from app.services.trading_session import get_effective_trade_date
+from app.services.trading_session import build_trading_session, get_effective_trade_date
 from app.services.risk import resolve_weight_denominator
 from app.services.sector_intraday_summary import summarize_sector_intraday_for_label
 from app.services.pipeline_concurrency import run_with_request_user
 from app.services.sector_momentum import build_sector_momentum_context
 from app.services.sector_labels import normalize_sector_label
 from app.services.sector_quote_label import sector_quote_lookup_label
+from app.services.daily_tradeability import build_holding_transaction_execution
+from app.services.fund_tradeability import compact_tradeability_for_llm
 
 SIGNAL_BACKTEST_TIMEOUT_SECONDS = 5.0
 SECTOR_INTRADAY_TIMEOUT_SECONDS = 4.0
@@ -60,6 +64,8 @@ STOCK_CONNECT_FLOW_TIMEOUT_SECONDS = 3.0
 GUARD_POLICY_TIMEOUT_SECONDS = 2.0
 SECTOR_OPPORTUNITY_TIMEOUT_SECONDS = 5.0
 MARKET_BREADTH_TIMEOUT_SECONDS = 3.0
+FUND_SCALE_FRESH_DAYS = 120
+FUND_SCALE_AGING_DAYS = 240
 
 # M2.2：动作词表基础 5 档（始终出现）；「大幅减仓评估」「清仓评估」按 M2.1 触发矩阵
 # 门槛动态追加——没有任一持仓触发对应档位时，prompt 里根本不出现这两个选项
@@ -91,6 +97,24 @@ def _daily_return_data_source(holding: Holding) -> str | None:
     if holding.sector_return_percent is not None:
         return "sector_estimate"
     return None
+
+
+def _fund_scale_freshness(as_of: str | None, effective_trade_date: str) -> str:
+    if not as_of:
+        return "unknown"
+    try:
+        scale_date = datetime.fromisoformat(str(as_of)[:10]).date()
+        decision_date = datetime.fromisoformat(str(effective_trade_date)[:10]).date()
+    except ValueError:
+        return "unknown"
+    age_days = (decision_date - scale_date).days
+    if age_days < 0:
+        return "unknown"
+    if age_days <= FUND_SCALE_FRESH_DAYS:
+        return "fresh"
+    if age_days <= FUND_SCALE_AGING_DAYS:
+        return "aging"
+    return "stale"
 
 
 def _build_data_freshness(per_fund: list[dict], effective_trade_date: str) -> dict:
@@ -271,6 +295,15 @@ def _extra_allowed_actions_for_escalation(per_fund: list[dict]) -> list[str]:
     return []
 
 
+def build_allowed_actions(per_fund: list[dict]) -> list[str]:
+    """Return the complete action contract exposed for this analysis run.
+
+    Keeping the base actions and shadow/enforced escalation extensions behind one
+    builder prevents prompts and judges from maintaining a second, drifting list.
+    """
+    return [*_BASE_ALLOWED_ACTIONS, *_extra_allowed_actions_for_escalation(per_fund)]
+
+
 def _sector_flow_unavailable_map(
     holdings: list[Holding],
     reason: str,
@@ -341,6 +374,8 @@ def build_analysis_facts(
     risk_metrics: dict | None = None,
     for_llm: bool = False,
     budget_enhancements: bool = False,
+    decision_at: datetime | None = None,
+    tradeability_profiles: Mapping[str, Mapping[str, Any]] | None = None,
     profiles_snapshot: ProfilesSnapshotArg = PROFILES_NOT_PROVIDED,
     matched_profiles: MatchedProfilesArg = PROFILES_NOT_PROVIDED,
 ) -> dict:
@@ -358,9 +393,14 @@ def build_analysis_facts(
         )
     ]
     nav_trends = nav_trends_by_code or {}
+    resolved_session = (
+        session
+        if isinstance(session, dict)
+        else (build_trading_session(decision_at) if decision_at is not None else None)
+    )
     effective_trade_date = (
-        str(session.get("effective_trade_date"))
-        if isinstance(session, dict) and session.get("effective_trade_date")
+        str(resolved_session.get("effective_trade_date"))
+        if isinstance(resolved_session, dict) and resolved_session.get("effective_trade_date")
         else get_effective_trade_date()
     )
     total_amount = sum(item.holding_amount for item in holdings) or 0.0
@@ -520,6 +560,16 @@ def build_analysis_facts(
                 "max_drawdown_1y_percent": snapshot.max_drawdown_1y_percent if snapshot else None,
                 "management_fee": snapshot.management_fee if snapshot else None,
                 "fund_scale_yi": snapshot.fund_scale_yi if snapshot else None,
+                "fund_scale_source": snapshot.fund_scale_source if snapshot else None,
+                "fund_scale_as_of": snapshot.fund_scale_as_of if snapshot else None,
+                "fund_scale_freshness": (
+                    _fund_scale_freshness(
+                        snapshot.fund_scale_as_of,
+                        effective_trade_date,
+                    )
+                    if snapshot
+                    else "unknown"
+                ),
                 "nav_trend": nav_trends.get(holding.fund_code),
                 "sector_momentum": build_sector_momentum_context(
                     holding,
@@ -540,6 +590,16 @@ def build_analysis_facts(
                     normalize_sector_label(holding.sector_name)
                 ),
             }
+        if tradeability_profiles is not None:
+            raw_tradeability = tradeability_profiles.get(holding.fund_code)
+            tradeability = compact_tradeability_for_llm(
+                raw_tradeability if isinstance(raw_tradeability, Mapping) else None
+            )
+            row["tradeability"] = tradeability
+            row["transaction_execution"] = build_holding_transaction_execution(
+                tradeability,
+                holding_amount_yuan=holding.holding_amount,
+            )
         if for_llm:
             row["sector_fund_gap_percent"] = compute_sector_fund_gap_percent(holding)
         evidence = build_holding_evidence(
@@ -617,10 +677,14 @@ def build_analysis_facts(
         "holdings": per_fund,
         "data_freshness": _build_data_freshness(per_fund, effective_trade_date),
         "allowed_actions": list(_BASE_ALLOWED_ACTIONS),
-        "news": build_news_pipeline_context(market_news, topic_briefs),
+        "news": build_news_pipeline_context(
+            market_news,
+            topic_briefs,
+            now=decision_at,
+        ),
     }
-    if session:
-        facts["session"] = session
+    if resolved_session:
+        facts["session"] = resolved_session
     if pipeline:
         facts["pipeline"] = pipeline
     if portfolio_trend:
@@ -646,7 +710,7 @@ def build_analysis_facts(
     # 而不是 per_fund 主循环内（非 budget_enhancements 路径下 market_breadth 变量在
     # 循环执行时尚未赋值，只有 facts["market_breadth"] 在此处才是最终值）。
     _attach_escalation_to_holdings(per_fund, market_breadth=facts["market_breadth"], profile=profile)
-    facts["allowed_actions"].extend(_extra_allowed_actions_for_escalation(per_fund))
+    facts["allowed_actions"] = build_allowed_actions(per_fund)
     facts["signal_backtest"] = signal_backtest
     facts["sector_rotation"] = {
         "available": sector_opportunity.get("available", False),
@@ -662,4 +726,16 @@ def build_analysis_facts(
     }
     if is_short_term_style(profile.decision_style):
         facts["prompt_tuning"] = guard_policy
+    if tradeability_profiles is not None:
+        facts["transaction_execution_semantics"] = {
+            "schema_version": "holding_transaction_execution_semantics.v1",
+            "add": (
+                "日报对象是现有持仓；只使用明确的追加申购门槛，不得以首次起购额替代。"
+                "add_status 非 eligible 或金额未通过 amount assessment 时不得输出加仓动作。"
+            ),
+            "reduce": (
+                "赎回开放不等于某个持仓批次已过锁定期。当前无逐笔 acquisition lot，"
+                "减仓只能人工复核，不得输出金额或仓位比例。"
+            ),
+        }
     return facts

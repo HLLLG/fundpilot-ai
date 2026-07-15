@@ -1,13 +1,26 @@
 """在独立子进程调用 AkShare，避免 py_mini_racer 在主进程中 crash."""
 from __future__ import annotations
 
+from collections import OrderedDict
+from copy import deepcopy
+from datetime import datetime, timezone
+from functools import lru_cache
+from importlib.metadata import PackageNotFoundError, version as package_version
 import json
 import logging
 import os
+import platform
 import subprocess
 import sys
+import threading
 import time
-from functools import lru_cache
+from typing import Any
+
+from app.services.decision_quality_provider_receipts import (
+    DecisionQualityProviderRead,
+    build_provider_origin_receipt,
+    build_provider_read,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +29,23 @@ _FUND_RANK_ATTEMPTS = 3
 _FUND_RANK_RETRY_DELAYS = (2.0, 5.0)
 _FUND_RANK_SUBPROCESS_TIMEOUT = 35
 _FUND_UNIVERSE_SUBPROCESS_TIMEOUT = 150
+
+_FUND_NAV_PROVIDER_ID = "akshare.fund_open_fund_info_em"
+_FUND_NAV_OPERATION = "fund_open_fund_info_em"
+_FUND_NAV_INDICATOR = "单位净值走势"
+_FUND_NAV_ADAPTER_CONTRACT_VERSION_V1 = "decision_quality_fund_nav_adapter.v1"
+_FUND_NAV_ADAPTER_CONTRACT_VERSION = _FUND_NAV_ADAPTER_CONTRACT_VERSION_V1
+_FUND_NAV_CACHE_POLICY_V1 = "utc_hour_lru_512.v1"
+_FUND_NAV_CACHE_POLICY = _FUND_NAV_CACHE_POLICY_V1
+_FUND_NAV_UPSTREAM_RAW_REASON = (
+    "akshare exposes a dataframe; this receipt captures adapter stdout, not "
+    "the upstream HTTP response"
+)
+_FUND_NAV_QUALITY_CACHE_MAXSIZE = 512
+_FUND_NAV_QUALITY_CACHE: OrderedDict[
+    tuple[str, int, str, str, int], tuple[dict[str, Any], object]
+] = OrderedDict()
+_FUND_NAV_QUALITY_CACHE_LOCK = threading.RLock()
 
 
 def _utf8_subprocess_env() -> dict[str, str]:
@@ -170,8 +200,434 @@ except Exception as e:
         return None
 
 
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _akshare_version() -> str:
+    try:
+        return package_version("akshare")
+    except PackageNotFoundError:
+        return "unavailable"
+
+
+def _fund_nav_history_script_v1(
+    fund_code: str,
+    trading_days: int,
+    indicator: str,
+) -> str:
+    code_literal = json.dumps(fund_code, ensure_ascii=True)
+    indicator_literal = json.dumps(indicator, ensure_ascii=False)
+    return f"""
+import akshare as ak
+import json
+try:
+    frame = ak.fund_open_fund_info_em(symbol={code_literal}, indicator={indicator_literal})
+    if frame is None or frame.empty:
+        print(json.dumps({{"error": "empty"}}))
+    else:
+        if len(frame) > {trading_days}:
+            frame = frame.iloc[-{trading_days}:]
+        data = []
+        for _, row in frame.iterrows():
+            growth_raw = row.get("日增长率")
+            daily_growth = None
+            if growth_raw is not None and str(growth_raw).strip().lower() not in ("", "nan"):
+                try:
+                    daily_growth = float(growth_raw)
+                except (TypeError, ValueError):
+                    daily_growth = None
+            nav_raw = row.get("单位净值")
+            nav_value = None
+            if nav_raw is not None and str(nav_raw).strip().lower() not in ("", "nan"):
+                try:
+                    nav_value = float(nav_raw)
+                except (TypeError, ValueError):
+                    nav_value = None
+            data.append({{
+                "date": str(row.get("净值日期", "")),
+                "nav": nav_value,
+                "daily_growth": daily_growth,
+            }})
+        print(json.dumps({{"data": data}}, ensure_ascii=False))
+except Exception as exc:
+    print(json.dumps({{"error": str(exc)}}, ensure_ascii=False))
+"""
+
+
+def _fund_nav_history_script(
+    fund_code: str,
+    trading_days: int,
+    indicator: str,
+) -> str:
+    """Build the current production adapter script.
+
+    Historical contract builders remain separately named so a future contract
+    bump cannot invalidate already-frozen origin receipts.
+    """
+
+    return _fund_nav_history_script_v1(fund_code, trading_days, indicator)
+
+
+def _fund_nav_cache_key_material(
+    *,
+    fund_code: str,
+    trading_days: int,
+    indicator: str,
+    cache_hour: int,
+) -> dict[str, object]:
+    return {
+        "provider_id": _FUND_NAV_PROVIDER_ID,
+        "operation": _FUND_NAV_OPERATION,
+        "parameters": {
+            "fund_code": fund_code,
+            "trading_days": trading_days,
+            "indicator": indicator,
+        },
+        "adapter_contract_version": _FUND_NAV_ADAPTER_CONTRACT_VERSION,
+        "cache_hour": cache_hour,
+    }
+
+
+def _fund_nav_cache_key_material_v1(
+    *,
+    fund_code: str,
+    trading_days: int,
+    indicator: str,
+    cache_hour: int,
+) -> dict[str, object]:
+    return {
+        "provider_id": _FUND_NAV_PROVIDER_ID,
+        "operation": _FUND_NAV_OPERATION,
+        "parameters": {
+            "fund_code": fund_code,
+            "trading_days": trading_days,
+            "indicator": indicator,
+        },
+        "adapter_contract_version": _FUND_NAV_ADAPTER_CONTRACT_VERSION_V1,
+        "cache_hour": cache_hour,
+    }
+
+
+def fund_nav_quality_adapter_policy_material(
+    *,
+    fund_code: str,
+    trading_days: int,
+    cache_hour: int,
+    contract_version: str | None = None,
+) -> dict[str, object]:
+    """Expose the exact request-specific production NAV adapter inputs.
+
+    This is intentionally a builder: the production script embeds the frozen
+    fund identity and requested lookback, so a verifier must reconstruct that
+    exact script rather than trust a self-declared script hash.
+    """
+
+    requested = contract_version or _FUND_NAV_ADAPTER_CONTRACT_VERSION
+    if requested != _FUND_NAV_ADAPTER_CONTRACT_VERSION_V1:
+        raise ValueError("unknown fund-NAV quality adapter contract")
+    policy_fund_code = "__candidate_fund_code__"
+    policy_trading_days = 2_147_483_647
+    policy_cache_hour = 2_147_483_647
+    return {
+        "provider_id": _FUND_NAV_PROVIDER_ID,
+        "operation": _FUND_NAV_OPERATION,
+        "request_parameters": {
+            "fund_code": fund_code,
+            "trading_days": trading_days,
+            "indicator": _FUND_NAV_INDICATOR,
+        },
+        "adapter_contract_version": _FUND_NAV_ADAPTER_CONTRACT_VERSION_V1,
+        "adapter_script": _fund_nav_history_script_v1(
+            fund_code,
+            trading_days,
+            _FUND_NAV_INDICATOR,
+        ),
+        "adapter_policy_script": _fund_nav_history_script_v1(
+            policy_fund_code,
+            policy_trading_days,
+            _FUND_NAV_INDICATOR,
+        ),
+        "cache_policy": _FUND_NAV_CACHE_POLICY_V1,
+        "cache_key_material": _fund_nav_cache_key_material_v1(
+            fund_code=fund_code,
+            trading_days=trading_days,
+            indicator=_FUND_NAV_INDICATOR,
+            cache_hour=cache_hour,
+        ),
+        "cache_key_policy_material": _fund_nav_cache_key_material_v1(
+            fund_code=policy_fund_code,
+            trading_days=policy_trading_days,
+            indicator=_FUND_NAV_INDICATOR,
+            cache_hour=policy_cache_hour,
+        ),
+        "library_name": "akshare",
+    }
+
+
+def _normalize_fund_nav_payload(parsed: object) -> dict[str, object] | None:
+    if not isinstance(parsed, dict):
+        return None
+    rows = parsed.get("data")
+    if not isinstance(rows, list):
+        return None
+    if any(not isinstance(row, dict) for row in rows):
+        return None
+    return {"data": deepcopy(rows)}
+
+
+def _timeout_stdout_bytes(exc: subprocess.TimeoutExpired) -> bytes:
+    value = exc.stdout or b""
+    return value.encode("utf-8") if isinstance(value, str) else bytes(value)
+
+
+def _build_fund_nav_origin_read(
+    *,
+    fund_code: str,
+    trading_days: int,
+    indicator: str,
+    script: str,
+    started_at: str,
+    completed_at: str,
+    stdout: bytes,
+    parsed_payload: object,
+    normalized_payload: object,
+    status: str,
+    cache_hour: int,
+) -> DecisionQualityProviderRead:
+    parameters = {
+        "fund_code": fund_code,
+        "trading_days": trading_days,
+        "indicator": indicator,
+    }
+    receipt = build_provider_origin_receipt(
+        provider_id=_FUND_NAV_PROVIDER_ID,
+        operation=_FUND_NAV_OPERATION,
+        request_parameters=parameters,
+        request_started_at=started_at,
+        response_completed_at=completed_at,
+        response_status=status,
+        adapter_contract_version=_FUND_NAV_ADAPTER_CONTRACT_VERSION,
+        adapter_script=script,
+        library_name="akshare",
+        library_version=_akshare_version(),
+        python_version=platform.python_version(),
+        cache_policy=_FUND_NAV_CACHE_POLICY,
+        cache_key_material=_fund_nav_cache_key_material(
+            fund_code=fund_code,
+            trading_days=trading_days,
+            indicator=indicator,
+            cache_hour=cache_hour,
+        ),
+        stdout_bytes=stdout,
+        parsed_payload=parsed_payload,
+        normalized_payload=normalized_payload,
+        upstream_raw_unavailable_reason=_FUND_NAV_UPSTREAM_RAW_REASON,
+    )
+    return build_provider_read(
+        origin_receipt=receipt,
+        normalized_payload=normalized_payload,
+        cache_status="miss",
+        cache_layer="live",
+        served_at=completed_at,
+    )
+
+
+def _capture_fund_nav_quality_origin(
+    fund_code: str,
+    *,
+    trading_days: int,
+    indicator: str,
+    cache_hour: int,
+    request_started_at: str | None = None,
+) -> DecisionQualityProviderRead:
+    script = _fund_nav_history_script(fund_code, trading_days, indicator)
+    started_at = request_started_at or _utc_now()
+    stdout = b""
+    parsed: object = None
+    normalized: object = None
+    status = "exception"
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=False,
+            timeout=_SUBPROCESS_TIMEOUT,
+            check=False,
+            env=_utf8_subprocess_env(),
+        )
+        stdout = bytes(result.stdout or b"")
+        try:
+            decoded = stdout.decode("utf-8")
+        except UnicodeDecodeError:
+            decoded = ""
+        parsed = _parse_json_stdout(decoded)
+        normalized = _normalize_fund_nav_payload(parsed)
+        if result.returncode != 0:
+            status = "subprocess_error"
+            normalized = None
+        elif not stdout.strip():
+            status = "empty"
+            normalized = None
+        elif parsed is None:
+            status = "invalid_json"
+            normalized = None
+        elif isinstance(parsed, dict) and parsed.get("error"):
+            status = "provider_error"
+            normalized = None
+        elif normalized is None:
+            status = "invalid_payload"
+        else:
+            status = "success"
+    except subprocess.TimeoutExpired as exc:
+        stdout = _timeout_stdout_bytes(exc)
+        try:
+            parsed = _parse_json_stdout(stdout.decode("utf-8"))
+        except UnicodeDecodeError:
+            parsed = None
+        normalized = None
+        status = "timeout"
+    except Exception:
+        stdout = b""
+        parsed = None
+        normalized = None
+        status = "exception"
+    completed_at = _utc_now()
+    return _build_fund_nav_origin_read(
+        fund_code=fund_code,
+        trading_days=trading_days,
+        indicator=indicator,
+        script=script,
+        started_at=started_at,
+        completed_at=completed_at,
+        stdout=stdout,
+        parsed_payload=parsed,
+        normalized_payload=normalized,
+        status=status,
+        cache_hour=cache_hour,
+    )
+
+
+def _fund_nav_quality_cache_key(
+    *,
+    fund_code: str,
+    trading_days: int,
+    indicator: str,
+    cache_hour: int,
+) -> tuple[str, int, str, str, int]:
+    return (
+        fund_code,
+        trading_days,
+        indicator,
+        _FUND_NAV_ADAPTER_CONTRACT_VERSION,
+        cache_hour,
+    )
+
+
+def clear_fund_nav_quality_cache() -> None:
+    with _FUND_NAV_QUALITY_CACHE_LOCK:
+        _FUND_NAV_QUALITY_CACHE.clear()
+
+
+def _fetch_fund_nav_history_quality_read_for_hour(
+    fund_code: str,
+    *,
+    trading_days: int,
+    indicator: str,
+    cache_hour: int,
+    request_started_at: str | None = None,
+) -> DecisionQualityProviderRead:
+    key = _fund_nav_quality_cache_key(
+        fund_code=fund_code,
+        trading_days=trading_days,
+        indicator=indicator,
+        cache_hour=cache_hour,
+    )
+    served_at = request_started_at or _utc_now()
+    with _FUND_NAV_QUALITY_CACHE_LOCK:
+        cached = _FUND_NAV_QUALITY_CACHE.pop(key, None)
+        if cached is not None:
+            origin, normalized = cached
+            _FUND_NAV_QUALITY_CACHE[key] = (origin, normalized)
+            return build_provider_read(
+                origin_receipt=origin,
+                normalized_payload=normalized,
+                cache_status="hit",
+                cache_layer="process",
+                served_at=served_at,
+            )
+
+    capture_kwargs: dict[str, Any] = {}
+    if request_started_at is not None:
+        capture_kwargs["request_started_at"] = request_started_at
+    captured = _capture_fund_nav_quality_origin(
+        fund_code,
+        trading_days=trading_days,
+        indicator=indicator,
+        cache_hour=cache_hour,
+        **capture_kwargs,
+    )
+    with _FUND_NAV_QUALITY_CACHE_LOCK:
+        _FUND_NAV_QUALITY_CACHE[key] = (
+            deepcopy(captured.origin_receipt),
+            deepcopy(captured.normalized_payload),
+        )
+        while len(_FUND_NAV_QUALITY_CACHE) > _FUND_NAV_QUALITY_CACHE_MAXSIZE:
+            _FUND_NAV_QUALITY_CACHE.popitem(last=False)
+    return captured
+
+
+def fetch_fund_nav_history_quality_read(
+    fund_code: str,
+    trading_days: int = 90,
+    *,
+    indicator: str = _FUND_NAV_INDICATOR,
+) -> DecisionQualityProviderRead:
+    """Fetch NAV history with a frozen origin receipt and delivery metadata."""
+
+    normalized_code = str(fund_code).strip()
+    safe_days = max(1, int(trading_days))
+    normalized_indicator = str(indicator).strip()
+    if not normalized_code:
+        raise ValueError("fund_code is required")
+    if not normalized_indicator:
+        raise ValueError("indicator is required")
+    request_started_at = _utc_now()
+    cache_hour = int(
+        datetime.fromisoformat(request_started_at).astimezone(timezone.utc).timestamp()
+        // 3600
+    )
+    return _fetch_fund_nav_history_quality_read_for_hour(
+        normalized_code,
+        trading_days=safe_days,
+        indicator=normalized_indicator,
+        cache_hour=cache_hour,
+        request_started_at=request_started_at,
+    )
+
+
+def _fund_nav_payload_from_quality_read(
+    fund_code: str,
+    trading_days: int,
+    _cache_hour: int,
+) -> dict | None:
+    """Compatibility helper retaining the historical explicit hour argument."""
+
+    read = _fetch_fund_nav_history_quality_read_for_hour(
+        str(fund_code).strip(),
+        trading_days=max(1, int(trading_days)),
+        indicator=_FUND_NAV_INDICATOR,
+        cache_hour=int(_cache_hour),
+    )
+    return (
+        deepcopy(read.normalized_payload)
+        if read.ok and isinstance(read.normalized_payload, dict)
+        else None
+    )
+
+
 def fetch_fund_nav_history(fund_code: str, trading_days: int = 90) -> dict | None:
-    """Fetch NAV rows with an hourly cache key so pending outcomes can mature."""
+    """Fetch NAV rows with the historical payload-only hourly cache."""
 
     return _fetch_fund_nav_history_cached(
         fund_code,

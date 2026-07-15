@@ -12,6 +12,7 @@ dist/
 build/
 __pycache__/
 .pytest_cache/
+.tmp/
 *.pyc
 *.tsbuildinfo
 data/*

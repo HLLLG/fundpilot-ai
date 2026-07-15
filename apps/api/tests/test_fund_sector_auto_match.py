@@ -6,6 +6,7 @@ import pytest
 
 from app.services.fund_holdings_sector_infer import (
     HoldingStockRow,
+    assess_sector_from_portfolio_stocks,
     infer_sector_from_portfolio_stocks,
 )
 from app.services.fund_industry_theme_map import map_industry_to_theme_label
@@ -51,6 +52,108 @@ def test_infer_sector_from_portfolio_stocks_weighted_vote():
     assert sector_name == "半导体"
     assert scores["半导体"] == 17.5
     assert len(evidence) == 3
+
+
+def test_current_industry_labels_remain_research_only_without_pit_lineage():
+    coverage = {"portfolio_weight_coverage_percent": 30.0}
+    assessment = assess_sector_from_portfolio_stocks(
+        [
+            HoldingStockRow(
+                name="北方华创",
+                stock_code="002371",
+                weight=18.0,
+                industry="半导体",
+                coverage=coverage,
+            ),
+            HoldingStockRow(
+                name="中微公司",
+                stock_code="688012",
+                weight=10.0,
+                industry="半导体",
+                coverage=coverage,
+            ),
+        ]
+    )
+
+    assert assessment["sector_name"] == "半导体"
+    assert assessment["status"] == "research_only"
+    assert assessment["qualification"]["research_clue_available"] is True
+    assert assessment["qualification"]["sector_inference_eligible"] is False
+    assert assessment["qualification"]["research_only"] is True
+    assert "industry_evidence_not_pit_qualified" in assessment["qualification"][
+        "reason_codes"
+    ]
+
+
+def test_pit_industry_labels_need_coverage_and_dominance_for_primary_sector():
+    coverage = {"portfolio_weight_coverage_percent": 35.0}
+    assessment = assess_sector_from_portfolio_stocks(
+        [
+            HoldingStockRow(
+                name="北方华创",
+                stock_code="002371",
+                weight=18.0,
+                industry="半导体",
+                coverage=coverage,
+                industry_available_at="2026-07-20T09:00:00+08:00",
+                industry_source="industry_snapshot",
+                industry_ref_id="industry-20260720",
+                industry_pit_qualified=True,
+            ),
+            HoldingStockRow(
+                name="中微公司",
+                stock_code="688012",
+                weight=10.0,
+                industry="半导体设备",
+                coverage=coverage,
+                industry_available_at="2026-07-20T09:00:00+08:00",
+                industry_source="industry_snapshot",
+                industry_ref_id="industry-20260720",
+                industry_pit_qualified=True,
+            ),
+            HoldingStockRow(
+                name="招商银行",
+                stock_code="600036",
+                weight=3.0,
+                industry="银行",
+                coverage=coverage,
+                industry_available_at="2026-07-20T09:00:00+08:00",
+                industry_source="industry_snapshot",
+                industry_ref_id="industry-20260720",
+                industry_pit_qualified=True,
+            ),
+        ]
+    )
+
+    assert assessment["status"] == "qualified"
+    assert assessment["qualification"]["industry_pit_qualified"] is True
+    assert assessment["qualification"]["coverage_qualified"] is True
+    assert assessment["qualification"]["dominance_qualified"] is True
+    assert assessment["qualification"]["sector_inference_eligible"] is True
+    assert assessment["qualification"]["research_only"] is False
+
+
+def test_pit_industry_labels_with_low_coverage_are_only_a_clue():
+    assessment = assess_sector_from_portfolio_stocks(
+        [
+            HoldingStockRow(
+                name="北方华创",
+                weight=9.0,
+                industry="半导体",
+                coverage={"portfolio_weight_coverage_percent": 12.0},
+                industry_available_at="2026-07-20T09:00:00+08:00",
+                industry_source="industry_snapshot",
+                industry_ref_id="industry-20260720",
+                industry_pit_qualified=True,
+            )
+        ]
+    )
+
+    assert assessment["qualification"]["industry_pit_qualified"] is True
+    assert assessment["qualification"]["sector_inference_eligible"] is False
+    assert "industry_classification_coverage_insufficient" in assessment[
+        "qualification"
+    ]["reason_codes"]
 
 
 def test_resolve_primary_sector_skips_name_infer_by_default(monkeypatch):

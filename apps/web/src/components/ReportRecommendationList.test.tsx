@@ -133,7 +133,7 @@ it("keeps observation detail collapsed until the row is opened", () => {
   expect(toggle).toHaveAttribute("aria-expanded", "false");
   fireEvent.click(toggle);
   expect(toggle).toHaveAttribute("aria-expanded", "true");
-  const summary = document.getElementById("000002-summary");
+  const summary = document.getElementById("000002-1-summary");
   expect(summary).not.toBeNull();
   expect(within(summary!).getByRole("button", { name: "为什么这样建议" })).toBeInTheDocument();
 });
@@ -185,6 +185,46 @@ it("does not add an IC warning when report evidence is available", () => {
 
   expect(screen.queryByText("量化回测未接入")).not.toBeInTheDocument();
   expect(screen.queryByText(/IC 回测已过期/)).not.toBeInTheDocument();
+});
+
+it("shows verified holding tradeability and the lot-level manual-review boundary", () => {
+  render(
+    <ReportRecommendationList
+      report={buildReport([
+        recommendation({
+          action: "减仓评估",
+          tradeability: {
+            data_status: "complete",
+            freshness: "fresh",
+            purchase_state: "open",
+            purchase_status: "开放申购",
+            redemption_state: "open",
+            redemption_status: "开放赎回",
+            minimum_initial_purchase_yuan: 10,
+            minimum_additional_purchase_yuan: 100,
+            daily_purchase_limit_yuan: 5000,
+            daily_purchase_limit_unlimited: false,
+            source_ids: ["eastmoney.fund_purchase_em"],
+            checked_at: "2026-07-14T10:00:00+08:00",
+          },
+          transaction_execution: {
+            add_status: "eligible",
+            redemption_status: "eligible",
+            acquisition_lot_status: "unverified",
+            reduction_amount_status: "manual_review",
+          },
+        }),
+      ])}
+    />,
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "专业依据" }));
+
+  expect(screen.getByLabelText("基金交易条件")).toBeInTheDocument();
+  expect(screen.getByText("申购开放")).toBeInTheDocument();
+  expect(screen.getByText("赎回开放")).toBeInTheDocument();
+  expect(screen.getByText("追加门禁通过")).toBeInTheDocument();
+  expect(screen.getByText(/逐笔申购时间未核验/)).toBeInTheDocument();
 });
 
 it("keeps extreme actions behind the existing confirmation gate", () => {
@@ -287,7 +327,7 @@ it("deduplicates translated news exact matches without removing longer reasons",
   );
 
   fireEvent.click(screen.getByRole("button", { name: "为什么这样建议" }));
-  const why = document.getElementById("000001-why");
+  const why = document.getElementById("000001-0-why");
   expect(why).not.toBeNull();
   expect(within(why!).getByText("有效利好")).toBeInTheDocument();
   expect(within(why!).getByText("有效利空 / 风险")).toBeInTheDocument();
@@ -326,4 +366,90 @@ it("does not repeat the formatted amount fallback already used as the primary re
   );
 
   expect(screen.getAllByText("参考金额：约 10,500 元")).toHaveLength(1);
+});
+
+it("binds duplicate fund codes to snapshots and facts by authoritative holding index", () => {
+  const recommendations = [
+    recommendation({
+      fund_code: "000000",
+      fund_name: "未知基金甲",
+      action: "减仓评估",
+      points: ["甲基金风险"],
+    }),
+    recommendation({
+      fund_code: "000000",
+      fund_name: "未知基金乙",
+      action: "减仓评估",
+      points: ["乙基金风险"],
+    }),
+  ];
+  const report = buildReport(
+    recommendations,
+    [
+      {
+        fund_code: "000000",
+        fund_name: "未知基金甲",
+        latest_nav: 1.01,
+        nav_date: "2026-07-10",
+        source: "test-a",
+      },
+      {
+        fund_code: "000000",
+        fund_name: "未知基金乙",
+        latest_nav: 2.02,
+        nav_date: "2026-07-11",
+        source: "test-b",
+      },
+    ],
+    {
+      holdings: [
+        {
+          fund_code: "000000",
+          sector_opportunity: {
+            sector_label: "板块甲",
+            score: 61,
+          },
+        },
+        {
+          fund_code: "000000",
+          sector_opportunity: {
+            sector_label: "板块乙",
+            score: 82,
+          },
+        },
+      ],
+    },
+  );
+  report.holdings = [
+    {
+      fund_code: "000000",
+      fund_name: "未知基金甲",
+      holding_amount: 1_000,
+      return_percent: 0,
+    },
+    {
+      fund_code: "000000",
+      fund_name: "未知基金乙",
+      holding_amount: 2_000,
+      return_percent: 0,
+    },
+  ];
+
+  render(<ReportRecommendationList report={report} />);
+
+  const firstToggle = screen.getByRole("button", { name: "收起 未知基金甲" });
+  const secondToggle = screen.getByRole("button", { name: "收起 未知基金乙" });
+  expect(firstToggle).toHaveAttribute("aria-controls", "000000-0-summary");
+  expect(secondToggle).toHaveAttribute("aria-controls", "000000-1-summary");
+
+  const firstSummary = document.getElementById("000000-0-summary");
+  const secondSummary = document.getElementById("000000-1-summary");
+  expect(firstSummary).not.toBeNull();
+  expect(secondSummary).not.toBeNull();
+
+  fireEvent.click(within(secondSummary!).getByRole("button", { name: "专业依据" }));
+  expect(within(secondSummary!).getByText("最新净值 2.02 · 日期 2026-07-11")).toBeInTheDocument();
+  expect(within(secondSummary!).getByText("板块乙")).toBeInTheDocument();
+  expect(within(secondSummary!).queryByText("最新净值 1.01 · 日期 2026-07-10")).not.toBeInTheDocument();
+  expect(within(secondSummary!).queryByText("板块甲")).not.toBeInTheDocument();
 });

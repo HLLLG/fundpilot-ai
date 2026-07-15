@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from app.models import AnalysisRequest, FundRecommendation, InvestorProfile
+from collections import Counter
+
+from app.models import AnalysisRequest, FundRecommendation, Holding, InvestorProfile
 from app.services.recommendations import suggest_trade_amount
 from app.services.risk import holding_weight_percent, resolve_weight_denominator
 
@@ -11,13 +13,15 @@ def simulate_rebalance(
 ) -> dict:
     total_amount = sum(holding.holding_amount for holding in request.holdings) or 1.0
     weight_denominator = resolve_weight_denominator(request.holdings, request.profile) or 1.0
-    rec_by_code = {rec.fund_code: rec for rec in fund_recommendations}
+    recommendations_by_holding = _bind_recommendations_to_holdings(
+        request.holdings,
+        fund_recommendations,
+    )
     rows: list[dict] = []
     simulated_total = 0.0
 
-    for holding in request.holdings:
+    for holding, rec in zip(request.holdings, recommendations_by_holding, strict=True):
         weight = holding_weight_percent(holding, request.holdings, request.profile)
-        rec = rec_by_code.get(holding.fund_code)
         action = rec.action if rec else "观察"
         amount_yuan = rec.amount_yuan if rec else None
         amount_note = rec.amount_note if rec else None
@@ -72,6 +76,101 @@ def simulate_rebalance(
         "rows": rows,
         "warnings": _warnings(rows, request.profile),
     }
+
+
+def _bind_recommendations_to_holdings(
+    holdings: list[Holding],
+    recommendations: list[FundRecommendation],
+) -> list[FundRecommendation | None]:
+    """Bind closed recommendations without collapsing duplicate fund codes.
+
+    The daily recommendation canonicalizer emits one item per holding in the
+    authoritative holding order. Keep that stable index when the identity at
+    the same position agrees. Historical payloads may fall back to a unique
+    real code or a complete exact-identity group, but no recommendation is ever
+    broadcast through a lossy ``fund_code -> recommendation`` mapping.
+    """
+
+    bound: list[FundRecommendation | None] = [None] * len(holdings)
+    consumed_recommendation_indexes: set[int] = set()
+    holding_identity_counts = Counter(
+        (item.fund_code, item.fund_name) for item in holdings
+    )
+    recommendation_identity_counts = Counter(
+        (item.fund_code, item.fund_name) for item in recommendations
+    )
+
+    for holding_index, holding in enumerate(holdings):
+        if holding_index >= len(recommendations):
+            continue
+        recommendation = recommendations[holding_index]
+        identity = (holding.fund_code, holding.fund_name)
+        if (
+            _same_holding_identity(holding, recommendation)
+            and holding_identity_counts[identity]
+            == recommendation_identity_counts[identity]
+        ):
+            bound[holding_index] = recommendation
+            consumed_recommendation_indexes.add(holding_index)
+
+    holding_code_counts = Counter(item.fund_code for item in holdings)
+    recommendation_code_counts = Counter(item.fund_code for item in recommendations)
+    for holding_index, holding in enumerate(holdings):
+        if bound[holding_index] is not None:
+            continue
+        if not _is_real_fund_code(holding.fund_code):
+            continue
+        if (
+            holding_code_counts[holding.fund_code] != 1
+            or recommendation_code_counts[holding.fund_code] != 1
+        ):
+            continue
+        for recommendation_index, recommendation in enumerate(recommendations):
+            if recommendation_index in consumed_recommendation_indexes:
+                continue
+            if recommendation.fund_code != holding.fund_code:
+                continue
+            bound[holding_index] = recommendation
+            consumed_recommendation_indexes.add(recommendation_index)
+            break
+
+    for holding_index, holding in enumerate(holdings):
+        if bound[holding_index] is not None:
+            continue
+        matching_recommendation_indexes = [
+            recommendation_index
+            for recommendation_index, recommendation in enumerate(recommendations)
+            if recommendation_index not in consumed_recommendation_indexes
+            and _same_holding_identity(holding, recommendation)
+        ]
+        matching_unbound_holding_count = sum(
+            1
+            for candidate_index, candidate in enumerate(holdings)
+            if bound[candidate_index] is None
+            and candidate.fund_code == holding.fund_code
+            and candidate.fund_name == holding.fund_name
+        )
+        if len(matching_recommendation_indexes) != matching_unbound_holding_count:
+            continue
+        recommendation_index = matching_recommendation_indexes[0]
+        bound[holding_index] = recommendations[recommendation_index]
+        consumed_recommendation_indexes.add(recommendation_index)
+
+    return bound
+
+
+def _same_holding_identity(
+    holding: Holding,
+    recommendation: FundRecommendation,
+) -> bool:
+    return (
+        recommendation.fund_code == holding.fund_code
+        and recommendation.fund_name == holding.fund_name
+    )
+
+
+def _is_real_fund_code(code: str) -> bool:
+    return code != "000000" and len(code) == 6 and code.isdigit()
 
 
 def _delta_for_action(

@@ -173,9 +173,73 @@ def test_stream_discovery_emits_skeleton_and_done(monkeypatch: pytest.MonkeyPatc
     events = list(stream_discovery(_request(), user_id=1))
     types = [e["type"] for e in events]
     assert "skeleton" in types
-    assert "report_partial" in types
+    assert "report_partial" not in types
     assert types[-1] == "done"
     assert events[-1]["report_id"] == "disc-1"
+
+
+def test_stream_discovery_never_exposes_raw_recommendation_partials(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("FUND_AI_DEEPSEEK_API_KEY", _FAKE_DEEPSEEK_KEY)
+    refresh_settings()
+    _patch_pipeline(monkeypatch)
+
+    raw_action = "RAW_UNGUARDED_BUY"
+    raw_point = "RAW_UNGUARDED_AMOUNT_999999"
+
+    def fake_stream(*, messages, model, max_tokens, response_format=None):
+        yield f'{{"title":"t","summary":"{raw_action}","recommendations":['
+        yield (
+            '{"fund_code":"161725","fund_name":"x",'
+            f'"action":"{raw_action}","suggested_amount_yuan":999999,'
+            f'"points":["{raw_point}"]}},'
+        )
+        yield (
+            '{"fund_code":"161725","fund_name":"x",'
+            '"action":"CONFLICTING_RAW_ACTION","points":["other"]}'
+        )
+        yield f'],"caveats":["{raw_point}"]}}'
+
+    safe_report = {
+        "id": "guarded-discovery-1",
+        "title": "t",
+        "recommendations": [
+            {
+                "fund_code": "161725",
+                "fund_name": "x",
+                "action": "\u5efa\u8bae\u5173\u6ce8",
+                "suggested_amount_yuan": None,
+                "points": ["guarded"],
+            }
+        ],
+    }
+    monkeypatch.setattr(
+        "app.services.discovery_streaming.stream_chat_completion",
+        fake_stream,
+    )
+    monkeypatch.setattr(
+        "app.services.discovery_streaming.build_discovery_report_from_parsed",
+        lambda parsed, **kwargs: MagicMock(
+            id="guarded-discovery-1",
+            model_dump=lambda mode="json": safe_report,
+        ),
+    )
+
+    events = list(stream_discovery(_request(), user_id=1))
+    partials = [event for event in events if event.get("type") == "report_partial"]
+    pre_done_text = repr(events[:-1])
+
+    assert partials == []
+    assert raw_action not in pre_done_text
+    assert raw_point not in pre_done_text
+    assert events[-1]["type"] == "done"
+    assert events[-1]["report"] == safe_report
+    assert {event.get("stage") for event in events if event.get("type") == "stage"} >= {
+        "generating",
+        "guarding",
+        "saving",
+    }
 
 
 def test_stream_discovery_emits_context_stage_before_model(monkeypatch: pytest.MonkeyPatch):
@@ -250,7 +314,7 @@ def test_stream_discovery_handles_llm_failure_with_salvage(monkeypatch: pytest.M
     _patch_pipeline(monkeypatch)
 
     def failing_stream(**kwargs):
-        yield '{"title":"t","recommendations":[{"fund_code":"161725"'
+        yield '{"title":"t","summary":"usable partial","recommendations":[{"fund_code":"161725"'
         raise httpx.ReadError("connection lost")
 
     monkeypatch.setattr(
@@ -269,6 +333,128 @@ def test_stream_discovery_handles_llm_failure_with_salvage(monkeypatch: pytest.M
     assert events[-1]["type"] in {"done", "error"}
     stage_types = [e.get("stage") for e in events if e.get("type") == "stage"]
     assert "salvage" in stage_types or events[-1]["type"] == "error"
+
+
+def test_stream_discovery_unusable_interrupted_fragment_falls_back(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("FUND_AI_DEEPSEEK_API_KEY", _FAKE_DEEPSEEK_KEY)
+    refresh_settings()
+    _patch_pipeline(monkeypatch)
+    captured: dict = {}
+
+    def failing_stream(**kwargs):
+        yield "{"
+        raise httpx.ReadError("private-provider-fragment")
+
+    def fake_offline_report(**kwargs):
+        captured.update(kwargs)
+        return MagicMock(
+            id="discovery-fallback-unusable-partial",
+            model_dump=lambda mode="json": {
+                "id": "discovery-fallback-unusable-partial"
+            },
+        )
+
+    monkeypatch.setattr(
+        "app.services.discovery_streaming.stream_chat_completion",
+        failing_stream,
+    )
+    monkeypatch.setattr(
+        "app.services.discovery_streaming.build_offline_discovery_report",
+        fake_offline_report,
+    )
+
+    events = list(stream_discovery(_request(), user_id=1))
+
+    assert events[-1]["type"] == "done"
+    assert captured["provider_failure"].category == "transport_error"
+    assert "salvage" not in {
+        event.get("stage") for event in events if event.get("type") == "stage"
+    }
+    assert "private-provider-fragment" not in repr(events)
+
+
+def test_stream_discovery_zero_token_timeout_saves_safe_fallback_and_finishes(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("FUND_AI_DEEPSEEK_API_KEY", _FAKE_DEEPSEEK_KEY)
+    refresh_settings()
+    _patch_pipeline(monkeypatch)
+
+    secret = "provider-body-must-not-leak"
+
+    def failing_stream(**kwargs):
+        if False:
+            yield ""
+        raise httpx.ReadTimeout(secret)
+
+    captured: dict = {}
+
+    def fake_offline_report(**kwargs):
+        captured.update(kwargs)
+        return MagicMock(
+            id="discovery-fallback-timeout",
+            model_dump=lambda mode="json": {
+                "id": "discovery-fallback-timeout",
+                "provider": "offline-fallback",
+            },
+        )
+
+    monkeypatch.setattr(
+        "app.services.discovery_streaming.stream_chat_completion",
+        failing_stream,
+    )
+    monkeypatch.setattr(
+        "app.services.discovery_streaming.build_offline_discovery_report",
+        fake_offline_report,
+    )
+
+    events = list(stream_discovery(_request(), user_id=1))
+
+    assert events[-1]["type"] == "done"
+    assert events[-1]["report_id"] == "discovery-fallback-timeout"
+    assert not any(event.get("type") == "error" for event in events)
+    assert captured["provider_failure"].category == "timeout"
+    assert captured["attempted_model"]
+    assert captured["prompt_contract"]["schema_version"] == "prompt_contract.v1"
+    assert secret not in repr(events)
+    assert secret not in repr(captured["prompt_contract"])
+
+
+def test_stream_discovery_dirty_json_saves_safe_fallback_and_finishes(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("FUND_AI_DEEPSEEK_API_KEY", _FAKE_DEEPSEEK_KEY)
+    refresh_settings()
+    _patch_pipeline(monkeypatch)
+    captured: dict = {}
+
+    monkeypatch.setattr(
+        "app.services.discovery_streaming.stream_chat_completion",
+        lambda **kwargs: iter(["{}"]),
+    )
+
+    def fake_offline_report(**kwargs):
+        captured.update(kwargs)
+        return MagicMock(
+            id="discovery-fallback-invalid-json",
+            model_dump=lambda mode="json": {
+                "id": "discovery-fallback-invalid-json",
+                "provider": "offline-fallback",
+            },
+        )
+
+    monkeypatch.setattr(
+        "app.services.discovery_streaming.build_offline_discovery_report",
+        fake_offline_report,
+    )
+
+    events = list(stream_discovery(_request(), user_id=1))
+
+    assert events[-1]["type"] == "done"
+    assert not any(event.get("type") == "error" for event in events)
+    assert captured["provider_failure"].category == "invalid_json"
 
 
 def test_stream_discovery_prefetches_news_while_building_candidates(

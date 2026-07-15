@@ -1,10 +1,18 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronDown, CircleHelp, Layers, ShieldAlert } from "lucide-react";
+import {
+  BarChart3,
+  ChevronDown,
+  CircleHelp,
+  Layers,
+  Scale,
+  ShieldAlert,
+} from "lucide-react";
 import type { DiscoveryCandidatePoolItem, EliminatedCandidate } from "@/lib/api";
 import { translateEvidenceText } from "@/lib/decisionText";
 import { useMediaQuery } from "@/lib/useMediaQuery";
+import { FundTradeabilityEvidence } from "@/components/FundTradeabilityEvidence";
 
 const DESKTOP_QUERY = "(min-width: 1024px)";
 
@@ -87,6 +95,233 @@ function profileSourceLabel(source: string): string {
   if (source.includes("fund_scale_open_sina")) return "新浪基金规模";
   if (source.includes("fund_individual_basic_info_xq")) return "雪球/蛋卷基金详情";
   return "基金资料源";
+}
+
+const PEER_METRIC_ORDER = [
+  "return_3m_percent",
+  "return_6m_percent",
+  "return_1y_percent",
+  "max_drawdown_1y_percent",
+  "fund_scale_yi",
+] as const;
+
+function peerStatusLabel(status: string | undefined): string {
+  if (status === "qualified") return "描述数据完整";
+  if (status === "descriptive_only") return "样本仅供描述";
+  if (status === "insufficient") return "样本不足";
+  return "描述状态未记录";
+}
+
+function formatPeerPercentile(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "分位缺失";
+  return `${Number(value).toFixed(1)} 分位`;
+}
+
+function formatSignedPercent(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "—";
+  const rounded = Number(value).toFixed(2);
+  return `${value > 0 ? "+" : ""}${rounded}%`;
+}
+
+function ResearchEvidence({ item }: { item: DiscoveryCandidatePoolItem }) {
+  const peerRank =
+    item.peer_rank && Object.keys(item.peer_rank).length
+      ? item.peer_rank
+      : item.peer_research;
+  const peerGroup =
+    item.peer_group && Object.keys(item.peer_group).length
+      ? item.peer_group
+      : peerRank?.peer_group;
+  const groupLabel = peerGroup?.group_label ?? peerRank?.group_label;
+  const peerCount =
+    peerRank?.universe?.independent_peer_family_count ??
+    peerRank?.independent_peer_family_count;
+  const metrics = peerRank?.metrics ?? {};
+  const orderedMetrics = [
+    ...PEER_METRIC_ORDER.filter((key) => metrics[key]),
+    ...Object.keys(metrics).filter(
+      (key) => !PEER_METRIC_ORDER.includes(key as (typeof PEER_METRIC_ORDER)[number]),
+    ),
+  ]
+    .map((key) => [key, metrics[key]] as const)
+    .filter(
+      ([, metric]) =>
+        metric &&
+        metric.applicable !== false &&
+        metric.applicability !== "not_applicable" &&
+        (metric.percentile != null || metric.sample_count != null),
+    );
+  const benchmark = [
+    item.benchmark_research,
+    item.benchmark_comparison,
+    peerGroup?.benchmark,
+    peerRank?.benchmark,
+  ].find((value) => value && Object.keys(value).length);
+  const benchmarkMetrics = item.benchmark_metrics;
+  const benchmarkSpec = item.benchmark_spec;
+  const benchmarkName =
+    benchmarkMetrics?.benchmark_name ??
+    benchmarkMetrics?.benchmark_code ??
+    benchmark?.benchmark_name ??
+    benchmark?.benchmark_code ??
+    benchmarkSpec?.benchmark_name ??
+    benchmarkSpec?.benchmark_code;
+  const formalBenchmark =
+    benchmark?.comparison_role === "formal_excess" &&
+    benchmark.formal_excess_eligible === true &&
+    Boolean(benchmark.mapping_id) &&
+    (benchmark.qualified === true ||
+      benchmark.contract_verification_kind === "verified_fund_contract");
+  const trackingReference = benchmark?.comparison_role === "tracking_reference";
+  const metricsRole = benchmarkMetrics?.comparison_role;
+  const effectiveFormalBenchmark =
+    benchmarkMetrics?.formal_excess_eligible === true && metricsRole === "formal_excess";
+  const effectiveTrackingReference = metricsRole === "tracking_reference";
+  const verifiedFormalBenchmark =
+    formalBenchmark ||
+    (benchmarkMetrics?.status === "qualified" && effectiveFormalBenchmark);
+  const visibleTrackingReference = trackingReference || effectiveTrackingReference;
+  const benchmarkHorizonEntry = (["1y", "6m", "3m"] as const)
+    .map((key) => [key, benchmarkMetrics?.horizons?.[key]] as const)
+    .find(([, value]) => value?.status === "available");
+  const benchmarkHorizonLabel = benchmarkHorizonEntry?.[0] === "1y"
+    ? "近1年"
+    : benchmarkHorizonEntry?.[0] === "6m"
+      ? "近6月"
+      : benchmarkHorizonEntry?.[0] === "3m"
+        ? "近3月"
+        : null;
+  const benchmarkHorizon = benchmarkHorizonEntry?.[1];
+  const comparisonDifference = effectiveFormalBenchmark
+    ? benchmarkHorizon?.formal_excess_return_percent
+    : effectiveTrackingReference
+      ? benchmarkHorizon?.reference_difference_percent
+      : null;
+  const rollingWinRate = effectiveFormalBenchmark
+    ? benchmarkMetrics?.rolling_comparison?.formal_excess_win_rate_percent
+    : effectiveTrackingReference
+      ? benchmarkMetrics?.rolling_comparison?.reference_outperformance_rate_percent
+      : null;
+  const hasPeer = Boolean(groupLabel || peerRank?.status || orderedMetrics.length);
+  const hasBenchmark = Boolean(
+    benchmarkName || benchmark?.comparison_role || benchmarkMetrics?.status,
+  );
+
+  if (!hasPeer && !hasBenchmark) {
+    return (
+      <div
+        aria-label="同类研究与基准未记录"
+        className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-2 text-[11px] leading-5 text-slate-500"
+      >
+        历史报告未记录同类分位与基准角色
+      </div>
+    );
+  }
+
+  return (
+    <div
+      role="group"
+      aria-label="同类研究与基准"
+      className="space-y-2 rounded-xl border border-slate-200 bg-slate-50/80 p-2.5"
+    >
+      {hasPeer ? (
+        <div>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="inline-flex items-center gap-1 text-[11px] font-black text-slate-800">
+              <BarChart3 size={13} aria-hidden="true" className="text-[var(--brand)]" />
+              {groupLabel || "同类组待确认"}
+            </span>
+            <span className="rounded-full border border-slate-200 bg-white px-1.5 py-0.5 text-[10px] font-bold text-slate-600">
+              {peerStatusLabel(peerRank?.status)}
+            </span>
+          </div>
+          {peerCount != null ? (
+            <p className="mt-1 text-[10px] tabular-nums text-slate-500">
+              独立基金家族样本 {peerCount}
+            </p>
+          ) : null}
+          {orderedMetrics.length ? (
+            <dl className="mt-1.5 grid grid-cols-2 gap-x-2 gap-y-1 text-[10px] leading-4">
+              {orderedMetrics.map(([key, metric]) => (
+                <div key={key} className="min-w-0 border-t border-slate-200/80 pt-1">
+                  <dt className="truncate text-slate-500">{metric.label ?? key}</dt>
+                  <dd className="font-bold tabular-nums text-slate-800">
+                    {formatPeerPercentile(metric.percentile)}
+                    {metric.sample_count != null ? ` · n=${metric.sample_count}` : ""}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          ) : null}
+          <p className="mt-1.5 text-[10px] font-semibold leading-4 text-amber-800">
+            仅研究描述，不参与金额分配
+          </p>
+        </div>
+      ) : null}
+
+      {hasBenchmark ? (
+        <div className="border-t border-slate-200 pt-2">
+          <div className="flex items-start gap-1.5">
+            <Scale size={13} aria-hidden="true" className="mt-0.5 shrink-0 text-slate-500" />
+            <div className="min-w-0 text-[10px] leading-4">
+              <p className="font-black text-slate-800">
+                {verifiedFormalBenchmark
+                  ? "正式业绩基准"
+                  : visibleTrackingReference
+                    ? "跟踪参考（非正式基准）"
+                    : "基准线索（身份未核验）"}
+              </p>
+              <p className="break-words text-slate-600 [overflow-wrap:anywhere]">
+                {benchmarkName || "未记录基准名称"}
+              </p>
+              {benchmarkMetrics?.status === "qualified" && benchmarkHorizon ? (
+                <dl className="mt-1.5 space-y-1 border-t border-slate-200/80 pt-1.5 tabular-nums text-slate-600">
+                  <div className="flex flex-wrap justify-between gap-x-2">
+                    <dt>
+                      {benchmarkHorizonLabel}
+                      {effectiveFormalBenchmark ? "正式超额" : "相对参考差异"}
+                    </dt>
+                    <dd className="font-black text-slate-800">
+                      {formatSignedPercent(comparisonDifference)}
+                    </dd>
+                  </div>
+                  <div className="flex flex-wrap justify-between gap-x-2">
+                    <dt>基金 / 参考收益</dt>
+                    <dd className="font-semibold text-slate-700">
+                      {formatSignedPercent(benchmarkHorizon.fund_return_percent)} / {formatSignedPercent(benchmarkHorizon.benchmark_return_percent)}
+                    </dd>
+                  </div>
+                  {rollingWinRate != null ? (
+                    <div className="flex flex-wrap justify-between gap-x-2">
+                      <dt>{benchmarkMetrics.rolling_comparison?.window_days ?? 20}日滚动胜率</dt>
+                      <dd className="font-semibold text-slate-700">{Number(rollingWinRate).toFixed(1)}%</dd>
+                    </div>
+                  ) : null}
+                  <div className="flex flex-wrap justify-between gap-x-2">
+                    <dt>对齐样本</dt>
+                    <dd className="font-semibold text-slate-700">
+                      {benchmarkMetrics.alignment?.common_return_sample_days ?? "—"} 日
+                    </dd>
+                  </div>
+                </dl>
+              ) : benchmarkMetrics?.status ? (
+                <p className="mt-1 text-slate-500">
+                  对齐指标暂不可用
+                  {benchmarkMetrics.reason_codes?.length
+                    ? `（${benchmarkMetrics.reason_codes.join("、")}）`
+                    : ""}
+                </p>
+              ) : null}
+              {!verifiedFormalBenchmark ? (
+                <p className="mt-0.5 text-slate-500">不得用于正式超额收益判断</p>
+              ) : null}
+              <p className="mt-1 font-semibold text-amber-800">对齐指标仅研究描述，不参与金额分配</p>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 function qualityPresentation(
@@ -337,7 +572,8 @@ export function DiscoveryCandidatePoolPanel({
             <CircleHelp size={15} aria-hidden="true" className="mt-0.5 shrink-0 text-slate-500" />
             <p>
               核心字段缺失会触发质量降级，候选仅作研究观察；已剔除项不会进入推荐。
-              “字段完整”也不等于必然买入，仍需通过策略与风险守卫。
+              “字段完整”也不等于必然买入，仍需通过策略与风险守卫。同类分位只作描述性研究，
+              不参与金额；只有通过合同核验的正式基准才能用于超额收益判断。
             </p>
           </div>
 
@@ -428,6 +664,19 @@ export function DiscoveryCandidatePoolPanel({
                       ))}
                     </dl>
 
+                    <div className="mt-2">
+                      <FundTradeabilityEvidence
+                        tradeability={item.tradeability}
+                        tradeabilityGate={item.tradeability_gate}
+                        costAssessment={item.cost_assessment}
+                        compact
+                      />
+                    </div>
+
+                    <div className="mt-2">
+                      <ResearchEvidence item={item} />
+                    </div>
+
                     <QualityDetails
                       item={item}
                       quality={quality}
@@ -445,8 +694,8 @@ export function DiscoveryCandidatePoolPanel({
               aria-label="基金候选池明细表，可左右滚动查看"
               tabIndex={0}
             >
-              <table className="w-full min-w-[860px] text-left text-xs">
-                <caption className="sr-only">本次基金候选池评分、收益、数据完整性和质量门禁状态</caption>
+              <table className="w-full min-w-[1480px] text-left text-xs">
+                <caption className="sr-only">本次基金候选池评分、收益、交易条件、同类研究、基准角色、数据完整性和质量门禁状态</caption>
                 <thead>
                   <tr className="text-slate-500">
                     <th scope="col" className="px-2 py-2 font-semibold">代码</th>
@@ -457,6 +706,8 @@ export function DiscoveryCandidatePoolPanel({
                     <th scope="col" className="px-2 py-2 font-semibold">近3月</th>
                     <th scope="col" className="px-2 py-2 font-semibold">近6月</th>
                     <th scope="col" className="px-2 py-2 font-semibold">近1年</th>
+                    <th scope="col" className="px-2 py-2 font-semibold">交易条件</th>
+                    <th scope="col" className="px-2 py-2 font-semibold">同类研究 / 基准</th>
                     <th scope="col" className="px-2 py-2 font-semibold">证据状态</th>
                   </tr>
                 </thead>
@@ -509,6 +760,17 @@ export function DiscoveryCandidatePoolPanel({
                         </td>
                         <td className="px-2 py-2 text-slate-600">
                           {formatPercent(item.return_1y_percent)}
+                        </td>
+                        <td className="w-[300px] px-2 py-2 align-top">
+                          <FundTradeabilityEvidence
+                            tradeability={item.tradeability}
+                            tradeabilityGate={item.tradeability_gate}
+                            costAssessment={item.cost_assessment}
+                            compact
+                          />
+                        </td>
+                        <td className="w-[320px] px-2 py-2 align-top">
+                          <ResearchEvidence item={item} />
                         </td>
                         <td className="w-[250px] px-2 py-2 align-top">
                           <div className="flex flex-wrap gap-1">

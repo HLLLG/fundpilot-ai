@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from app.services.sector_quote_cache import get_spot_snapshot, save_spot_snapshot
 from app.services.sector_registry import list_theme_board_labels
 from app.services.theme_board_snapshot import get_theme_board_snapshot
@@ -35,9 +37,10 @@ def _fallback_theme_sector_heat_rows() -> list[dict]:
 def build_sector_heat_ranking(
     *,
     force_refresh: bool = False,
+    decision_at: datetime | None = None,
 ) -> list[dict]:
     """扫描 pipeline 板块热度，复用主题板块共享快照。"""
-    session = build_trading_session()
+    session = build_trading_session(decision_at)
     trade_date = session.get("effective_trade_date")
     session_kind = session.get("session_kind", "")
     cache_ttl = (

@@ -1,15 +1,21 @@
 from __future__ import annotations
 
-from datetime import date
-
 from app.models import InvestorProfile, NewsItem, TopicBrief
-from app.services.analysis_payload import compact_news_titles, compact_topic_briefs
+from app.services.analysis_payload import (
+    compact_data_evidence_for_llm,
+    compact_news_titles,
+    compact_portfolio_position_truth_for_llm,
+    compact_portfolio_snapshot_for_llm,
+    compact_topic_briefs,
+)
 from app.services.analysis_runtime import AnalysisMode
 from app.services.discovery_candidate_llm import (
-    build_sector_change_index,
-    slim_candidate_for_llm,
+    slim_candidate_pool_for_llm,
     trim_sector_heat_for_llm,
 )
+from app.services.news_freshness import normalize_news_now
+from app.services.news_service import compact_announcement_fetch_status
+from app.services.fund_lookthrough_research import compact_fund_lookthrough_for_llm
 
 OUTPUT_DISCOVERY_REQUIREMENTS = """
 你必须只输出一个 JSON 对象（不要 Markdown 代码块），字段：
@@ -31,15 +37,14 @@ recommendations 字段约束：
 - sector_evidence: 字符串数组，引用 sector_opportunities 中的 score、track、confidence、资金流、pattern；
   若没有对应 sector_opportunities，须说明使用 sector_heat / target_sector_context 降级判断
 - fund_evidence: 字符串数组，引用 candidate_pool 中的 fund_quality_score、sector_fit_score、
-  quality_reasons、return_3m_percent/return_6m_percent、max_drawdown_1y_percent、fund_scale_yi
+  quality_reasons、return_3m_percent/return_6m_percent、max_drawdown_1y_percent、fund_scale_yi、tradeability
 - validation_notes: 字符串数组，写清 quality_penalties、信息缺失、追高风险、新闻 stale/empty 等校验备注；无明显问题则 []
 - points: 字符串数组，每条须引用 candidate_pool 内具体字段（如 nav_trend、return_3m_percent、
   estimated_daily_return_percent、sector_fund_flow）；daily_return_source=sector_estimate 时须写「估算」
 - risks: 字符串数组，每只至少 1 条
 - news_bullish: 字符串数组，仅引用 news_titles 或 topic_briefs.points.source_titles 中已有标题；无则 []
-- suggested_amount_yuan: 仅 action=分批买入时可为正数；建议关注/等待回调必须为 null。买入时须结合
-  portfolio_gap.available_budget_yuan 与 profile.concentration_limit_percent，单只示意金额不得超过可投入预算，
-  且须说明与现有 holdings_slim 同板块合计不超限的理由（amount_note 中体现）
+- suggested_amount_yuan: 始终输出 null。模型只判断候选与动作；服务端会忽略模型金额，并在最终守卫后按
+  可用现金、预算、已有板块敞口、集中度、候选相关性、购买起点与日限额统一计算可核验首批金额
 - 面向用户展示时必须使用中文标签，不要原样输出 fund_quality_score、sector_fit_score、quality_penalties、
   sector_opportunities、nav_trend、max_drawdown_1y_percent、estimated_daily_return_percent 等内部字段名；
   可写成“基金质量分”“板块匹配分”“系统校验提示”“系统筛出的主方向”“净值走势”“近1年最大回撤”“今日涨跌估算”等。
@@ -49,13 +54,22 @@ recommendations 字段约束：
 - 仅 quality_gate.status=eligible 的候选可用 action=分批买入；watch_only 只可建议关注/等待回调；
   excluded 不得进入 recommendations。没有 eligible 候选时须明确“本次暂无可执行买入建议”，不得凑满数量
 - 不得承诺收益；不得编造 candidate_pool 外的代码或未提供的估值分位
-- share_class_fee_status=unverified 时须在 validation_notes 明确“真实申购/赎回费用待执行前核验”，不得宣称已选出最低成本份额
+- 仅 tradeability.freshness=fresh、purchase_state=open/limited、购买起点与日限额可核验的候选可提出分批买入；
+  suspended/closed/unknown、双源冲突或限额未知时只能观察。服务端最终金额必须不低于购买起点且不超过日限额
+- share_class_fee_status=standard_upper_bound_available 表示未折扣标准费率上限可复算，不代表用户销售平台最终费率；
+  unverified 时须在 validation_notes 明确“真实申购/赎回费用待执行前核验”，不得宣称已选出最低成本份额
+- 短周期持有必须结合 tradeability.standard_purchase_fee_tiers、redemption_fee_tiers 和销售服务费；
+  费用不可核验、最短持有不足7天或标准费率上限成本过高时只能观察，不得用预期涨幅抵消费用门禁
 - full_market 模式须先判断板块方向，再在方向内选基金；不得只按基金近1年收益排序
 - 南向资金仅使用 stock_connect_flow，并只作港股资金面参考；板块主力使用 target_sector_context.sector_fund_flow
 - sector_opportunities 是系统已用 1d/5d 涨跌 + 今日/5日主力资金 + pattern 生成的主方向，
   推荐理由须优先引用它，而不是重新发明方向
 - signal_backtest / candidate_factor_scores 按 confidence.level / factor_reliability 表述
-- 仅 candidate_factor_scores.applicable_fund_codes 内候选可使用 action=分批买入；未量化覆盖候选只能观察/等待
+- 仅 candidate_factor_scores.execution_qualified_fund_codes 内候选可使用 action=分批买入；descriptive_applicable_fund_codes 只可描述，不能作为执行资格
+- peer_research 只允许同组逐维比较；仅 applicable=true 且 available=true 的指标可解释，不适用与缺失不得补值；execution_tilt_eligible=false 时不得把分位用于执行提额
+- benchmark_research.comparison_role=tracking_reference 时只能称“跟踪参考”，不得称正式超额
+- benchmark_metrics 只有 status=qualified 才可引用；正式超额须同时满足 formal_excess_eligible=true，
+  tracking_reference 的差值只能称“相对跟踪参考差异”；所有基准指标仅作描述，不得用于金额倾斜
 - summary 或 caveats 须体现 news.freshness_label 对置信度的影响
 - data_evidence 是字段级时点证据；stale/unavailable/none 不得支撑买入动作，is_estimate=true 必须降置信度
 - discovery_facts.portfolio_position_truth 是持仓份额、成本和现金的唯一真值摘要；unknown/null 不得按 0 猜测；
@@ -65,7 +79,16 @@ recommendations 字段约束：
   news.freshness_label 为 stale/empty/aging 时，新闻只能作背景，不能作为买入或追涨主依据
 """
 
+HOLDINGS_LOOKTHROUGH_REQUIREMENT = (
+    "fund_lookthrough is reported-as-of disclosed-scope research only: retain unknown "
+    "mass; no common disclosed security is not exact zero full-portfolio overlap; "
+    "missing/stale/cross-vintage/low-coverage evidence may only reduce confidence and "
+    "never improve a candidate; periodic disclosures never authorize allocation as "
+    "current complete holdings."
+)
+
 _COMMON_REQUIREMENTS = [
+    HOLDINGS_LOOKTHROUGH_REQUIREMENT,
     "仅从 discovery_facts.candidate_pool 选 0~3 只，不得推荐 holdings_slim 中已有 fund_code；无合格候选时允许空数组",
     "quality_gate=eligible 才可分批买入；watch_only 只能观察/等待，excluded 禁止推荐；不得为凑数降门槛",
     "每只 recommendations 须含 hold_horizon、risks（至少 1 条）、points（引用 candidate_pool 具体字段）",
@@ -76,12 +99,17 @@ _COMMON_REQUIREMENTS = [
     "判断追高风险须参考 nav_trend.distance_from_high_percent / trend_label，不得只看 sector_heat",
     "news_bullish 仅引用 news_titles 或 topic_briefs.points.source_titles；无匹配则 []",
     "新闻仅使用系统预取的 news_titles/topic_briefs；过旧或为空的新闻不能作为买入主依据",
-    "仅分批买入可给 suggested_amount_yuan；建议关注/等待回调必须为 null，并结合 available_budget_yuan 与 concentration_limit_percent",
+    "suggested_amount_yuan 始终为 null；最终金额由服务端确定性 allocator 统一计算，模型不得分配金额",
     "引用数字须来自 discovery_facts，禁止编造",
-    "只有 candidate_factor_scores.applicable_fund_codes 覆盖的候选可分批买入；未覆盖候选只能观察/等待",
+    "只有 candidate_factor_scores.execution_qualified_fund_codes 覆盖的候选可分批买入；描述性覆盖不等于执行资格",
     "须按 data_evidence 校验数据时点、置信度与是否估算；过期或不可用字段不得支撑动作",
     "portfolio_position_truth 中 unknown/null 不得按 0；position_complete=false、ledger_truncated=true 或存在 pending/conflict 时 suggested_amount_yuan 必须为空",
     "share_class_fee_status=unverified 时须提示真实申购/赎回费用待核验，不得宣称份额成本最优",
+    "tradeability 必须 fresh 且可申购；金额不得低于购买起点或突破单日限额，未知/冲突一律只观察",
+    "标准费率仅是未折扣上限；短周期须通过持有期赎回费与销售服务费门禁，不得用收益预期绕过",
+    "peer_research 仅作同组逐维研究；只解释 applicable=true 且 available=true 的指标，不适用与缺失不得补值；execution_tilt_eligible=false 时不得作为执行倾斜",
+    "benchmark_research 仅 formal_excess_eligible=true 可称正式超额；tracking_reference 只能称跟踪参考",
+    "benchmark_metrics 仅 status=qualified 可引用，且只作描述；基准身份本身不能证明跑赢，任何指标不得用于金额倾斜",
 ]
 
 _FULL_MARKET_REQUIREMENTS = [
@@ -123,17 +151,13 @@ def build_user_payload(
     session = discovery_facts.get("session") or {}
     trade_date = session.get("effective_trade_date")
     sector_heat_full = discovery_facts.get("sector_heat") or []
-    sector_change_index = build_sector_change_index(sector_heat_full)
     portfolio_gap = discovery_facts.get("portfolio_gap") or {}
     target_sectors = list(portfolio_gap.get("target_sectors") or [])
-    slim_pool = [
-        slim_candidate_for_llm(
-            item,
-            sector_change_index=sector_change_index,
-            trade_date=trade_date,
-        )
-        for item in pool
-    ]
+    slim_pool = slim_candidate_pool_for_llm(
+        pool,
+        sector_heat=sector_heat_full,
+        trade_date=trade_date,
+    )
     trimmed_heat = trim_sector_heat_for_llm(
         sector_heat_full,
         target_sectors=target_sectors,
@@ -145,7 +169,10 @@ def build_user_payload(
     news = market_news or []
     minimal_briefs = analysis_mode == "fast"
     return {
-        "today": date.today().isoformat(),
+        "today": str(
+            session.get("calendar_date")
+            or normalize_news_now().date().isoformat()
+        ),
         "focus_sectors": focus_sectors,
         "scan_mode": scan_mode,
         "fund_type_preference": resolved_fund_type,
@@ -166,11 +193,36 @@ def build_user_payload(
                 discovery_facts.get("sector_opportunities") or []
             ),
             "news": discovery_facts.get("news"),
+            "fund_announcements": compact_announcement_fetch_status(
+                discovery_facts.get("fund_announcements") or {}
+            ),
             "candidate_factor_scores": discovery_facts.get("candidate_factor_scores"),
+            "candidate_peer_summary": discovery_facts.get("candidate_peer_summary"),
+            "benchmark_contract": discovery_facts.get("benchmark_contract"),
+            "benchmark_research_contract": discovery_facts.get(
+                "benchmark_research_contract"
+            ),
             "selection_strategy": discovery_facts.get("selection_strategy"),
-            "portfolio_snapshot": discovery_facts.get("portfolio_snapshot"),
-            "portfolio_position_truth": discovery_facts.get("portfolio_position_truth"),
-            "data_evidence": discovery_facts.get("data_evidence"),
+            "portfolio_snapshot": compact_portfolio_snapshot_for_llm(
+                discovery_facts.get("portfolio_snapshot")
+                if isinstance(discovery_facts.get("portfolio_snapshot"), dict)
+                else None
+            ),
+            "portfolio_position_truth": compact_portfolio_position_truth_for_llm(
+                discovery_facts.get("portfolio_position_truth")
+                if isinstance(discovery_facts.get("portfolio_position_truth"), dict)
+                else None
+            ),
+            "data_evidence": compact_data_evidence_for_llm(
+                discovery_facts.get("data_evidence")
+                if isinstance(discovery_facts.get("data_evidence"), dict)
+                else None
+            ),
+            "fund_lookthrough": compact_fund_lookthrough_for_llm(
+                discovery_facts.get("fund_lookthrough")
+                if isinstance(discovery_facts.get("fund_lookthrough"), dict)
+                else None
+            ),
             "candidate_pool": slim_pool,
         },
         "requirements": requirements,
@@ -178,7 +230,13 @@ def build_user_payload(
 
 
 def append_output_requirements_to_system(system_prompt: str) -> str:
-    return system_prompt.rstrip() + "\n\n" + OUTPUT_DISCOVERY_REQUIREMENTS.strip()
+    return (
+        system_prompt.rstrip()
+        + "\n\n"
+        + OUTPUT_DISCOVERY_REQUIREMENTS.strip()
+        + "\n- "
+        + HOLDINGS_LOOKTHROUGH_REQUIREMENT
+    )
 
 
 def _slim_sector_opportunities(items: list[dict]) -> list[dict]:

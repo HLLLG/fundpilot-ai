@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
+from math import isfinite
 from collections.abc import Mapping
 from typing import Any
 
@@ -11,10 +13,20 @@ from app.models import DataEvidence, FundSnapshot, Holding
 from app.request_context import try_get_request_user_id
 from app.services.portfolio_holdings_service import load_persisted_holdings
 from app.services.trading_session import build_trading_session
+from app.services.fund_tradeability import build_tradeability_gate
+from app.services.daily_tradeability import build_holding_transaction_execution
 
 
 class StalePortfolioSnapshotError(ValueError):
     """Raised when a decision would use a portfolio older than its trade date."""
+
+
+def _as_float(value: object) -> float | None:
+    try:
+        parsed = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return parsed if isfinite(parsed) else None
 
 
 @dataclass(frozen=True)
@@ -193,7 +205,8 @@ def resolve_portfolio_preflight(
     holdings = list(persisted if authoritative else requested_holdings)
     source = persisted_source if authoritative else "client_request"
     effective_trade_date = str(
-        build_trading_session().get("effective_trade_date") or fetched_at.date().isoformat()
+        build_trading_session(now).get("effective_trade_date")
+        or fetched_at.date().isoformat()
     )
     as_of_date = snapshot_date if authoritative and snapshot_date else effective_trade_date
 
@@ -367,6 +380,14 @@ def _coerce_datetime(value: object) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+def _snapshot_dependency_available_at(snapshot: Mapping[str, Any]) -> datetime | None:
+    available_at = _coerce_datetime(snapshot.get("available_at"))
+    first_observed_at = _coerce_datetime(snapshot.get("first_observed_at"))
+    if available_at is None or first_observed_at is None:
+        return None
+    return max(available_at, first_observed_at)
+
+
 def _analysis_context_evidence(
     facts: dict[str, Any],
     effective_trade_date: str,
@@ -515,6 +536,175 @@ def _analysis_context_evidence(
                 ),
             )
         )
+    lookthrough = facts.get("fund_lookthrough")
+    if isinstance(lookthrough, dict):
+        lookthrough_status = str(lookthrough.get("status") or "unavailable")
+        existing_rows = [
+            row
+            for row in lookthrough.get("existing_funds") or []
+            if isinstance(row, dict)
+        ]
+        qualified_existing_rows = []
+        for row in existing_rows:
+            snapshot = row.get("snapshot")
+            lookthrough_row = row.get("lookthrough")
+            if (
+                row.get("status") == "qualified"
+                and isinstance(snapshot, dict)
+                and snapshot.get("disclosed_overlap_lower_bound_eligible") is True
+                and isinstance(lookthrough_row, dict)
+                and (_as_float(lookthrough_row.get("identity_known_disclosed_mass_percent")) or 0)
+                > 0
+            ):
+                qualified_existing_rows.append(row)
+        existing_snapshots = [
+            row.get("snapshot")
+            for row in qualified_existing_rows
+            if isinstance(row.get("snapshot"), dict)
+        ]
+        existing_as_of = {
+            str(row.get("as_of_date") or "")[:10]
+            for row in existing_snapshots
+            if str(row.get("as_of_date") or "").strip()
+        }
+        portfolio_as_of = next(iter(existing_as_of)) if len(existing_as_of) == 1 else None
+        existing_freshness = {
+            str(row.get("current_freshness_label") or "unknown")
+            for row in existing_snapshots
+        }
+        portfolio_freshness = (
+            "stale"
+            if "stale" in existing_freshness
+            else (
+                "aging"
+                if len(existing_as_of) == 1 and existing_snapshots
+                else "unknown"
+            )
+        )
+        portfolio = lookthrough.get("portfolio")
+        portfolio_identity_mass = (
+            _as_float(portfolio.get("identity_known_security_mass_lower_bound_percent"))
+            if isinstance(portfolio, dict)
+            else None
+        )
+        portfolio_dependency_times = [
+            _snapshot_dependency_available_at(snapshot)
+            for snapshot in existing_snapshots
+        ]
+        portfolio_available_at = (
+            max(value for value in portfolio_dependency_times if value is not None)
+            if portfolio_dependency_times
+            and all(value is not None for value in portfolio_dependency_times)
+            else None
+        )
+        portfolio_available = bool(
+            isinstance(portfolio, dict)
+            and lookthrough_status in {"qualified", "partial"}
+            and qualified_existing_rows
+            and portfolio_identity_mass is not None
+            and portfolio_identity_mass > 0
+            and portfolio_available_at is not None
+        )
+        items.append(
+            _field_evidence(
+                fact_id="fund_lookthrough:portfolio",
+                source="fund_lookthrough_research",
+                source_type="derived",
+                as_of_date=portfolio_as_of,
+                available_at=portfolio_available_at,
+                fetched_at=fetched_at,
+                confidence="medium" if portfolio_available else "none",
+                is_estimate=False,
+                available=portfolio_available,
+                freshness=portfolio_freshness,
+            )
+        )
+        resolution_audit = lookthrough.get("resolution_audit")
+        resolution_rows = (
+            resolution_audit.get("rows")
+            if isinstance(resolution_audit, dict)
+            else []
+        )
+        for raw in resolution_rows or []:
+            if not isinstance(raw, dict):
+                continue
+            raw_code = str(raw.get("fund_code") or "").strip()
+            code = raw_code.zfill(6)
+            snapshot_ref = str(raw.get("snapshot_ref") or "").strip().lower()
+            if (
+                re.fullmatch(r"\d{1,6}", raw_code) is None
+                or code == "000000"
+                or re.fullmatch(r"[0-9a-f]{12}", snapshot_ref) is None
+            ):
+                continue
+            available = raw.get("qualified") is True
+            snapshot_freshness = str(raw.get("freshness") or "unknown")
+            if snapshot_freshness == "fresh":
+                snapshot_freshness = "aging"
+            items.append(
+                _field_evidence(
+                    fact_id=f"holdings_snapshot:{code}:{snapshot_ref}",
+                    source="fund_holdings_snapshot_repository",
+                    source_type="derived",
+                    as_of_date=str(raw.get("as_of_date") or "")[:10] or None,
+                    available_at=_coerce_datetime(
+                        raw.get("first_observed_at") or raw.get("available_at")
+                    ),
+                    fetched_at=fetched_at,
+                    confidence="medium" if available else "none",
+                    is_estimate=False,
+                    available=available,
+                    freshness=snapshot_freshness,
+                )
+            )
+        for raw in lookthrough.get("candidates") or []:
+            if not isinstance(raw, dict):
+                continue
+            raw_code = str(raw.get("fund_code") or "").strip()
+            code = raw_code.zfill(6)
+            status = str(raw.get("status") or "unavailable")
+            if re.fullmatch(r"\d{1,6}", raw_code) is None or code == "000000":
+                continue
+            candidate_snapshot = (
+                raw.get("snapshot") if isinstance(raw.get("snapshot"), dict) else {}
+            )
+            candidate_capabilities = raw.get("capabilities")
+            candidate_available_at = _snapshot_dependency_available_at(
+                candidate_snapshot
+            )
+            available = bool(
+                status == "qualified"
+                and isinstance(candidate_capabilities, dict)
+                and candidate_capabilities.get("research_eligible") is True
+                and candidate_available_at is not None
+            )
+            candidate_freshness_raw = str(
+                candidate_snapshot.get("current_freshness_label") or "unknown"
+            )
+            candidate_freshness = (
+                "stale"
+                if candidate_freshness_raw == "stale"
+                else (
+                    "aging"
+                    if candidate_freshness_raw in {"fresh", "aging"}
+                    else "unknown"
+                )
+            )
+            items.append(
+                _field_evidence(
+                    fact_id=f"fund_lookthrough:candidate:{code}",
+                    source="fund_lookthrough_research",
+                    source_type="derived",
+                    as_of_date=str(candidate_snapshot.get("as_of_date") or "")[:10]
+                    or None,
+                    available_at=candidate_available_at,
+                    fetched_at=fetched_at,
+                    confidence="medium" if available else "none",
+                    is_estimate=False,
+                    available=available,
+                    freshness=candidate_freshness,
+                )
+            )
     return items
 
 
@@ -564,8 +754,14 @@ def build_analysis_data_evidence(
     }
 
     snapshot_by_code = {snapshot.fund_code: snapshot for snapshot in snapshots}
-    for holding in holdings:
+    fact_rows = facts.get("holdings") if isinstance(facts.get("holdings"), list) else []
+    for holding_index, holding in enumerate(holdings):
         prefix = f"holdings.{holding.fund_code}"
+        fact_row = (
+            fact_rows[holding_index]
+            if holding_index < len(fact_rows) and isinstance(fact_rows[holding_index], dict)
+            else {}
+        )
         position_row = position_rows.get(holding.fund_code)
         shares_quality = str((position_row or {}).get("shares_quality") or "unknown")
         shares_confirmed = shares_quality in {"user_confirmed", "platform_confirmed"}
@@ -703,6 +899,102 @@ def build_analysis_data_evidence(
             )
         )
 
+        # New reports always carry a structured tradeability snapshot, including
+        # explicit unavailable records. Older reports omit the key and remain
+        # readable without being silently rewritten.
+        if "tradeability" in fact_row:
+            tradeability = (
+                fact_row.get("tradeability")
+                if isinstance(fact_row.get("tradeability"), dict)
+                else {}
+            )
+            transaction_execution = (
+                fact_row.get("transaction_execution")
+                if isinstance(fact_row.get("transaction_execution"), dict)
+                else build_holding_transaction_execution(
+                    tradeability,
+                    holding_amount_yuan=holding.holding_amount,
+                )
+            )
+            tradeability_usable = bool(
+                str(tradeability.get("schema_version") or "")
+                == "fund_tradeability.v1"
+                and str(tradeability.get("data_status") or "")
+                in {"complete", "partial"}
+                and str(tradeability.get("freshness") or "") == "fresh"
+                and tradeability.get("source_conflict") is not True
+                and str(tradeability.get("checked_at") or "").strip()
+                and any(
+                    str(source).strip()
+                    for source in tradeability.get("source_ids") or []
+                )
+            )
+            sources = "+".join(
+                str(source)
+                for source in tradeability.get("source_ids") or []
+                if str(source).strip()
+            )
+            checked_at = _coerce_datetime(tradeability.get("checked_at"))
+            items.append(
+                _field_evidence(
+                    fact_id=f"{prefix}.tradeability",
+                    source=sources or "fund_tradeability_pipeline",
+                    source_type="third_party",
+                    as_of_date=effective_trade_date,
+                    available_at=checked_at,
+                    fetched_at=fetched_at,
+                    confidence="high" if tradeability_usable else "none",
+                    is_estimate=False,
+                    available=tradeability_usable,
+                    freshness=str(tradeability.get("freshness") or "unavailable"),
+                )
+            )
+            add_usable = transaction_execution.get("add_status") == "eligible"
+            items.append(
+                _field_evidence(
+                    fact_id=f"{prefix}.purchase_execution",
+                    source=sources or "fund_tradeability_pipeline",
+                    source_type="third_party",
+                    as_of_date=effective_trade_date,
+                    available_at=checked_at,
+                    fetched_at=fetched_at,
+                    confidence="high" if add_usable else "none",
+                    is_estimate=False,
+                    available=add_usable,
+                    freshness=str(tradeability.get("freshness") or "unavailable"),
+                )
+            )
+            redemption_usable = (
+                transaction_execution.get("redemption_status") == "eligible"
+            )
+            items.append(
+                _field_evidence(
+                    fact_id=f"{prefix}.redemption_execution",
+                    source=sources or "fund_tradeability_pipeline",
+                    source_type="third_party",
+                    as_of_date=effective_trade_date,
+                    available_at=checked_at,
+                    fetched_at=fetched_at,
+                    confidence="high" if redemption_usable else "none",
+                    is_estimate=False,
+                    available=redemption_usable,
+                    freshness=str(tradeability.get("freshness") or "unavailable"),
+                )
+            )
+            items.append(
+                _field_evidence(
+                    fact_id=f"{prefix}.redemption_lot_cost",
+                    source="portfolio_transaction_lots",
+                    source_type="first_party",
+                    as_of_date=effective_trade_date,
+                    fetched_at=fetched_at,
+                    confidence="none",
+                    is_estimate=False,
+                    available=False,
+                    freshness="unavailable",
+                )
+            )
+
     items.extend(_analysis_context_evidence(facts, effective_trade_date, fetched_at))
 
     blocking_reasons: list[str] = []
@@ -807,10 +1099,17 @@ def attach_discovery_data_evidence(
             or (nav_trend.get("latest_date") if isinstance(nav_trend, dict) else None)
             or (nav_trend.get("latest_nav_date") if isinstance(nav_trend, dict) else None)
         )
+        parsed_nav_date = _valid_iso_date(str(nav_date)[:10] if nav_date else None)
+        parsed_effective_date = _valid_iso_date(effective_trade_date)
+        candidate_metrics_available = bool(
+            parsed_nav_date is not None
+            and parsed_effective_date is not None
+            and parsed_nav_date <= parsed_effective_date
+        )
         candidate_freshness = (
             "fresh"
-            if nav_date and str(nav_date)[:10] == effective_trade_date
-            else ("aging" if nav_date else "unknown")
+            if candidate_metrics_available and parsed_nav_date == parsed_effective_date
+            else ("aging" if candidate_metrics_available else "unavailable")
         )
         items.append(
             _field_evidence(
@@ -821,9 +1120,120 @@ def attach_discovery_data_evidence(
                 fetched_at=fetched_at,
                 confidence="medium",
                 is_estimate=True,
+                available=candidate_metrics_available,
                 freshness=candidate_freshness,
             )
         )
+        tradeability = candidate.get("tradeability")
+        tradeability_gate = (
+            build_tradeability_gate(tradeability)
+            if isinstance(tradeability, dict)
+            else build_tradeability_gate(None)
+        )
+        tradeability_available = bool(
+            isinstance(tradeability, dict)
+            and tradeability_gate.get("status") == "eligible"
+        )
+        tradeability_source = (
+            "+".join(str(item) for item in tradeability.get("source_ids") or [])
+            if isinstance(tradeability, dict)
+            else ""
+        )
+        items.append(
+            _field_evidence(
+                fact_id=f"candidates.{code}.tradeability",
+                source=tradeability_source or "fund_tradeability_pipeline",
+                source_type="third_party",
+                as_of_date=effective_trade_date,
+                available_at=(
+                    _coerce_datetime(tradeability.get("checked_at"))
+                    if isinstance(tradeability, dict)
+                    else None
+                ),
+                fetched_at=fetched_at,
+                confidence="high" if tradeability_available else "none",
+                is_estimate=False,
+                available=tradeability_available,
+                freshness=(
+                    str(tradeability.get("freshness") or "unavailable")
+                    if isinstance(tradeability, dict)
+                    else "unavailable"
+                ),
+            )
+        )
+        benchmark_metrics = (
+            candidate.get("benchmark_metrics")
+            if isinstance(candidate.get("benchmark_metrics"), dict)
+            else {}
+        )
+        if benchmark_metrics:
+            alignment = (
+                benchmark_metrics.get("alignment")
+                if isinstance(benchmark_metrics.get("alignment"), dict)
+                else {}
+            )
+            fund_series = (
+                benchmark_metrics.get("fund_series")
+                if isinstance(benchmark_metrics.get("fund_series"), dict)
+                else {}
+            )
+            components = [
+                row
+                for row in benchmark_metrics.get("components") or []
+                if isinstance(row, dict)
+            ]
+            benchmark_sources = list(
+                dict.fromkeys(
+                    str(value).strip()
+                    for value in [
+                        fund_series.get("source"),
+                        *(row.get("source") for row in components),
+                    ]
+                    if str(value or "").strip()
+                )
+            )
+            available_moments = [
+                moment
+                for moment in [
+                    _coerce_datetime(fund_series.get("available_at")),
+                    *(
+                        _coerce_datetime(row.get("available_at"))
+                        for row in components
+                    ),
+                ]
+                if moment is not None
+            ]
+            benchmark_as_of = str(
+                alignment.get("last_common_date")
+                or benchmark_metrics.get("effective_trade_date")
+                or ""
+            ).strip()
+            benchmark_available = bool(
+                benchmark_metrics.get("status") == "qualified"
+                and benchmark_metrics.get("qualified") is True
+                and benchmark_sources
+                and benchmark_as_of
+            )
+            benchmark_freshness = (
+                "fresh"
+                if benchmark_as_of == effective_trade_date
+                else ("aging" if benchmark_as_of else "unavailable")
+            )
+            items.append(
+                _field_evidence(
+                    fact_id=f"candidates.{code}.benchmark_metrics",
+                    source="+".join(benchmark_sources)
+                    or "fund_benchmark_research_pipeline",
+                    source_type="derived",
+                    as_of_date=benchmark_as_of or None,
+                    available_at=max(available_moments) if available_moments else None,
+                    fetched_at=fetched_at,
+                    confidence="medium" if benchmark_available else "none",
+                    is_estimate=False,
+                    available=benchmark_available,
+                    freshness=benchmark_freshness,
+                )
+            )
     items.extend(_analysis_context_evidence(facts, effective_trade_date, fetched_at))
     blocking_reasons: list[str] = []
     if portfolio_context and portfolio_context.get("stale"):
@@ -873,6 +1283,14 @@ _EXECUTABLE_TEXT_TOKENS = (
     "仓位调整",
     "元",
 )
+_TRADE_ACTION_RE = re.compile(r"(?:加仓|买入|申购|定投|投入|减仓|降仓|清仓|卖出|赎回)")
+_TRADE_INSTRUCTION_CUE_RE = re.compile(
+    r"(?:立即|马上|一次性|全仓|今日执行|执行|操作|建议|应当|应该|务必|"
+    r"需要|需|请|计划|目标|考虑|优先|分批|动作|金额|仓位|\d[\d,.]*\s*元)"
+)
+_HIGH_RISK_TRADE_CUE_RE = re.compile(
+    r"(?:立即|马上|一次性|全仓|今日执行|务必|\d[\d,.]*\s*元)"
+)
 
 
 def _usable_evidence(item: dict[str, Any] | None) -> bool:
@@ -888,6 +1306,7 @@ def decision_evidence_allows_action(
     *,
     scope: str,
     fund_code: str,
+    direction: str | None = None,
 ) -> tuple[bool, list[str]]:
     """Deterministic final gate for evidence required by an executable action.
 
@@ -929,6 +1348,9 @@ def decision_evidence_allows_action(
         required = f"candidates.{code}.candidate_metrics"
         if not _usable_evidence(items.get(required)):
             return False, ["candidate_metrics_not_point_in_time_usable"]
+        tradeability_required = f"candidates.{code}.tradeability"
+        if not _usable_evidence(items.get(tradeability_required)):
+            return False, ["candidate_tradeability_not_point_in_time_usable"]
         return True, []
 
     amount_id = f"holdings.{code}.holding_amount"
@@ -941,12 +1363,43 @@ def decision_evidence_allows_action(
     )
     if not any(_usable_evidence(items.get(fact_id)) for fact_id in directional_ids):
         reasons.append("directional_evidence_not_point_in_time_usable")
+    tradeability_id = f"holdings.{code}.tradeability"
+    # The key is absent only on reports from before this evidence contract.
+    # Newly prepared reports always emit it, even when the provider is down.
+    if tradeability_id in items:
+        if direction == "add" and not _usable_evidence(
+            items.get(f"holdings.{code}.purchase_execution")
+        ):
+            reasons.append("holding_purchase_execution_not_point_in_time_usable")
+        if direction == "reduce" and not _usable_evidence(
+            items.get(f"holdings.{code}.redemption_execution")
+        ):
+            reasons.append("holding_redemption_execution_not_point_in_time_usable")
     return not reasons, reasons
 
 
 def contains_executable_decision_text(value: object) -> bool:
     text = str(value or "")
     return any(token in text for token in _EXECUTABLE_TEXT_TOKENS)
+
+
+def contains_trade_instruction_text(value: object) -> bool:
+    """Detect an actionable instruction without flagging neutral fee/news facts."""
+    text = str(value or "").strip()
+    if not _TRADE_ACTION_RE.search(text):
+        return False
+    if _TRADE_INSTRUCTION_CUE_RE.search(text) is not None:
+        return True
+    return re.fullmatch(
+        r"(?:建议|请)?(?:立即|分批|少量)?"
+        r"(?:加仓|买入|申购|定投|投入|减仓|降仓|清仓|卖出|赎回)(?:评估)?",
+        text,
+    ) is not None
+
+
+def contains_high_risk_trade_instruction_text(value: object) -> bool:
+    text = str(value or "").strip()
+    return bool(_TRADE_ACTION_RE.search(text) and _HIGH_RISK_TRADE_CUE_RE.search(text))
 
 
 def safe_blocked_points(values: list[str], *, fallback: str) -> list[str]:

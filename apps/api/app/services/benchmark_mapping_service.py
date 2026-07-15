@@ -16,7 +16,58 @@ _BENCHMARK_SOURCES = {"benchmark_index", "precompute_benchmark"}
 _WEIGHT_RE = re.compile(r"(?:[×xX*])\s*(\d+(?:\.\d+)?)\s*[%％]")
 _SPLIT_RE = re.compile(r"[+＋]")
 _CASH_TOKENS = ("存款", "活期", "货币市场工具")
-_FORMAL_SOURCE_KINDS = {"live_fund_disclosure", "verified_fund_contract"}
+# Formal excess requires an independently verified contract record. The old
+# `live_fund_disclosure` label was historically also written for Xueqiu data
+# fetched through AkShare, so it is intentionally no longer trusted here.
+_FORMAL_SOURCE_KINDS = {"verified_fund_contract"}
+
+
+def load_decision_benchmark_specs(
+    fund_codes: Iterable[object],
+    *,
+    decision_at: str | datetime,
+) -> dict[str, dict[str, Any]]:
+    """Load already-cached PIT benchmark mappings before model generation.
+
+    The report persistence layer freezes the same contract again when saving,
+    but generation must see the benchmark role early enough to reason about it.
+    This reader performs no provider/network lookup and never upgrades missing
+    historical evidence. When no request user is available (for example an
+    isolated unit test), every code gets an explicit unavailable contract.
+    """
+
+    codes = list(
+        dict.fromkeys(
+            code
+            for raw in fund_codes
+            if (code := _fund_code(raw)) is not None
+        )
+    )
+    if not codes:
+        return {}
+
+    from app.request_context import try_get_request_user_id
+
+    user_id = try_get_request_user_id()
+    if user_id is None:
+        return {
+            code: _unavailable("request_user_context_unavailable") for code in codes
+        }
+
+    from app.database import _connect
+
+    frozen_at = _canonical_datetime(decision_at)
+    specs: dict[str, dict[str, Any]] = {}
+    with _connect() as connection:
+        for code in codes:
+            spec, _mapping_row = freeze_fund_benchmark_spec(
+                fund_code=code,
+                decision_at=frozen_at,
+                user_id=user_id,
+                connection=connection,
+            )
+            specs[code] = spec
+    return specs
 
 
 def freeze_report_benchmark_specs(
@@ -118,6 +169,7 @@ def freeze_fund_benchmark_spec(
         mapping = _mapping(
             fund_code=code,
             benchmark_kind="official_contract",
+            contract_verification_kind=benchmark_source_kind,
             completeness=completeness,
             benchmark_name=benchmark_text[:500],
             benchmark_code=(
@@ -159,6 +211,7 @@ def freeze_fund_benchmark_spec(
         mapping = _mapping(
             fund_code=code,
             benchmark_kind="tracking_index",
+            contract_verification_kind=benchmark_source_kind,
             completeness="complete",
             benchmark_name=benchmark_text or index_name or index_code,
             benchmark_code=index_code,
@@ -271,6 +324,7 @@ def _mapping(
     *,
     fund_code: str,
     benchmark_kind: str,
+    contract_verification_kind: str | None,
     completeness: str,
     benchmark_name: str,
     benchmark_code: str | None,
@@ -286,6 +340,11 @@ def _mapping(
         "schema_version": BENCHMARK_MAPPING_SCHEMA_VERSION,
         "fund_code": fund_code,
         "benchmark_kind": benchmark_kind,
+        # This field is deliberately frozen into the immutable mapping.  A
+        # downstream peer/benchmark evaluator must not infer formal-contract
+        # provenance from a friendly source label or from complete-looking
+        # text.  Historical mappings without this field therefore fail closed.
+        "contract_verification_kind": contract_verification_kind,
         "completeness": completeness,
         "benchmark_name": benchmark_name,
         "benchmark_code": benchmark_code,
@@ -400,6 +459,7 @@ def _unavailable(reason: str) -> dict[str, Any]:
         "status": "unavailable",
         "formal_excess_eligible": False,
         "mapping_id": None,
+        "contract_verification_kind": None,
         "reason": reason,
         "components": [],
     }
@@ -461,5 +521,6 @@ __all__ = [
     "BENCHMARK_MAPPING_SCHEMA_VERSION",
     "freeze_fund_benchmark_spec",
     "freeze_report_benchmark_specs",
+    "load_decision_benchmark_specs",
     "parse_fund_contract_components",
 ]

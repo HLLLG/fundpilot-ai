@@ -100,6 +100,7 @@ import { UserMenu } from "@/components/UserMenu";
 import { BrandMark } from "@/components/BrandMark";
 import { DashboardNav } from "@/components/DashboardNav";
 import { InlineNotice, type NoticeTone } from "@/components/InlineNotice";
+import { activeAnalysisRolePrompt } from "@/lib/analysisPrompt";
 
 function DashboardTabLoading({ label }: { label: string }) {
   return (
@@ -390,8 +391,8 @@ export function Dashboard() {
     promptChangedByUserRef.current = true;
     setAnalysisPrompt((current) => ({
       ...current,
-      role_prompt: value.slice(0, 4000),
-      is_custom: value.trim() !== current.default_role_prompt.trim(),
+      role_prompt: value.slice(0, 2000),
+      is_custom: Boolean(value.trim()),
     }));
   }, []);
 
@@ -913,6 +914,7 @@ export function Dashboard() {
       setMessage("请先上传截图或录入至少一条持仓。", "warning");
       return;
     }
+    const systemRolePrompt = activeAnalysisRolePrompt(analysisPrompt);
     setIsSubmitting(true);
     setMessage(null);
     try {
@@ -1041,7 +1043,7 @@ export function Dashboard() {
           },
           {
             analysisMode,
-            systemRolePrompt: analysisPrompt.role_prompt,
+            systemRolePrompt,
             signal: abortController.signal,
           },
         );
@@ -1076,7 +1078,7 @@ export function Dashboard() {
         profile,
         undefined,
         analysisMode,
-        analysisPrompt.role_prompt,
+        systemRolePrompt,
       );
       setActiveJobId(jobId);
       setStreamingReport((current) =>
@@ -1124,8 +1126,8 @@ export function Dashboard() {
     notifyDesktop(`${BRAND.name}日报已生成`, { body: completedReport.title });
     setMessage(
       analysisMode === "fast"
-        ? "快速模式日报已生成（Flash + 预取新闻）。"
-        : "日报已生成并保存到历史记录。",
+        ? "快速模式日报已生成（Flash + 较少主题预取）。"
+        : "深度模式日报已生成（Pro + 有界扩展证据 + 可选风控审校）。",
       "success",
     );
   };
@@ -1688,7 +1690,7 @@ export function Dashboard() {
               <RiskControls
                 profile={profile}
                 analysisMode={analysisMode}
-                rolePrompt={analysisPrompt.role_prompt}
+                rolePrompt={analysisPrompt.is_custom ? analysisPrompt.role_prompt : ""}
                 isRolePromptCustom={analysisPrompt.is_custom}
                 onAnalysisModeChange={setAnalysisMode}
                 onChange={handleProfileChange}

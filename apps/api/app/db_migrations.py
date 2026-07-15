@@ -5,8 +5,13 @@ import sqlite3
 import threading
 from datetime import datetime, timezone
 
+from app.services.decision_quality_rollout import (
+    DECISION_QUALITY_ROLLOUT_CONTRACT_NAME,
+    build_decision_quality_rollout_marker,
+)
 
-SCHEMA_VERSION = 11
+
+SCHEMA_VERSION = 16
 
 # 迁移在应用/后台线程首次建立连接时触发（例如板块快照刷新会 daemon 线程预取资金流历史，
 # 与主线程几乎同时首次打开 sqlite 连接）。同进程内多个线程各自用独立 connection 对同一
@@ -29,6 +34,89 @@ def _table_exists(connection: sqlite3.Connection, name: str) -> bool:
 def _column_exists(connection: sqlite3.Connection, table: str, column: str) -> bool:
     rows = connection.execute(f"PRAGMA table_info({table})").fetchall()
     return any(row[1] == column for row in rows)
+
+
+def _normalized_sql_contract(statement: str) -> str:
+    return " ".join(str(statement or "").lower().split()).rstrip(";").strip()
+
+
+def _ensure_sqlite_trigger_contract(
+    connection: sqlite3.Connection,
+    *,
+    name: str,
+    table: str,
+    stored_sql: str,
+) -> None:
+    create_sql = stored_sql.replace(
+        "CREATE TRIGGER ",
+        "CREATE TRIGGER IF NOT EXISTS ",
+        1,
+    )
+    connection.execute(create_sql)
+    row = connection.execute(
+        "SELECT tbl_name, sql FROM sqlite_master "
+        "WHERE type = 'trigger' AND name = ?",
+        (name,),
+    ).fetchone()
+    if (
+        row is None
+        or str(row[0]) != table
+        or _normalized_sql_contract(row[1])
+        != _normalized_sql_contract(stored_sql)
+    ):
+        raise RuntimeError(
+            f"SQLite trigger {name} conflicts with immutable ledger contract"
+        )
+
+
+def _ensure_sqlite_table_contract(
+    connection: sqlite3.Connection,
+    *,
+    name: str,
+    stored_sql: str,
+) -> None:
+    row = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (name,),
+    ).fetchone()
+    if (
+        row is None
+        or _normalized_sql_contract(row[0])
+        != _normalized_sql_contract(stored_sql)
+    ):
+        raise RuntimeError(f"SQLite table {name} conflicts with storage contract")
+
+
+def _ensure_sqlite_index_contract(
+    connection: sqlite3.Connection,
+    *,
+    table: str,
+    name: str,
+    columns: tuple[str, ...],
+    unique: bool,
+    stored_sql: str,
+) -> None:
+    rows = connection.execute(f"PRAGMA index_list({table})").fetchall()
+    row = next((item for item in rows if str(item[1]) == name), None)
+    observed_columns = tuple(
+        str(item[2])
+        for item in connection.execute(f"PRAGMA index_info({name})").fetchall()
+    )
+    sql_row = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?",
+        (name,),
+    ).fetchone()
+    if (
+        row is None
+        or int(row[2]) != int(unique)
+        or len(row) < 5
+        or int(row[4]) != 0
+        or observed_columns != columns
+        or sql_row is None
+        or _normalized_sql_contract(sql_row[0])
+        != _normalized_sql_contract(stored_sql)
+    ):
+        raise RuntimeError(f"SQLite index {name} conflicts with storage contract")
 
 
 def _get_schema_version(connection: sqlite3.Connection) -> int:
@@ -494,6 +582,64 @@ def _migrate_factor_ic_universe_snapshots(connection: sqlite3.Connection) -> Non
     )
 
 
+def _migrate_fund_holdings_snapshots(connection: sqlite3.Connection) -> None:
+    """Create the immutable point-in-time fund holdings evidence store.
+
+    ``available_at`` is nullable on purpose: a capture with unknown publication
+    time is still useful audit evidence, but repository PIT reads must never
+    treat it as information that was available to a historical decision.
+    ``snapshot_hash`` identifies business content, so a repeated capture is
+    idempotent while a corrected disclosure appends a new immutable row.
+    """
+
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS fund_holdings_snapshots (
+            id TEXT PRIMARY KEY,
+            fund_master_key TEXT NOT NULL,
+            fund_code TEXT NOT NULL,
+            report_period TEXT,
+            as_of_date TEXT,
+            available_at TEXT,
+            first_observed_at TEXT NOT NULL,
+            source_hash TEXT NOT NULL,
+            snapshot_hash TEXT NOT NULL UNIQUE,
+            schema_version TEXT NOT NULL,
+            status TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_fund_holdings_snapshot_hash
+        ON fund_holdings_snapshots (snapshot_hash)
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_fund_holdings_snapshots_code_pit
+        ON fund_holdings_snapshots
+            (fund_code, available_at DESC, status, first_observed_at DESC)
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_fund_holdings_snapshots_master_pit
+        ON fund_holdings_snapshots
+            (fund_master_key, available_at DESC, status, first_observed_at DESC)
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_fund_holdings_snapshots_period
+        ON fund_holdings_snapshots
+            (fund_master_key, report_period, available_at DESC)
+        """
+    )
+
+
 def _migrate_decision_accuracy_v2(connection: sqlite3.Connection) -> None:
     """Create the durable decision/outcome and append-only ledger substrate.
 
@@ -695,6 +841,496 @@ def _migrate_decision_accuracy_v2(connection: sqlite3.Connection) -> None:
                 )
 
 
+def _migrate_decision_quality_snapshots(connection: sqlite3.Connection) -> None:
+    """Create immutable inputs and outputs for point-in-time quality evaluation.
+
+    The report stores are intentionally replaceable, so candidate-selection and
+    claim audits cannot use them as their long-lived trust boundary.  These two
+    content-addressed tables keep exact evaluation inputs and results independent
+    from report retention, without adding foreign keys to replace-style stores.
+    """
+
+    statements = [
+        """
+        CREATE TABLE IF NOT EXISTS decision_quality_input_artifacts (
+            userId INTEGER NOT NULL,
+            artifact_id TEXT NOT NULL,
+            schema_version TEXT NOT NULL,
+            artifact_type TEXT NOT NULL,
+            artifact_schema_version TEXT NOT NULL,
+            logical_key TEXT,
+            source_type TEXT NOT NULL,
+            source_report_id TEXT,
+            decision_event_id TEXT,
+            decision_at TEXT,
+            available_at TEXT NOT NULL,
+            recorded_at TEXT NOT NULL,
+            store_authority TEXT NOT NULL,
+            audit_eligible INTEGER NOT NULL DEFAULT 0,
+            content_hash TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (userId, artifact_id),
+            UNIQUE (userId, artifact_type, content_hash)
+        )
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_decision_quality_artifacts_report
+        ON decision_quality_input_artifacts
+            (userId, artifact_type, source_report_id, recorded_at DESC)
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_decision_quality_artifacts_event
+        ON decision_quality_input_artifacts
+            (userId, decision_event_id, artifact_type)
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS decision_quality_evaluation_snapshots (
+            userId INTEGER NOT NULL,
+            snapshot_id TEXT NOT NULL,
+            schema_version TEXT NOT NULL,
+            evaluation_as_of TEXT NOT NULL,
+            evaluator_schema_version TEXT NOT NULL,
+            evaluator_version TEXT NOT NULL,
+            status TEXT NOT NULL,
+            evaluation_hash TEXT NOT NULL,
+            input_manifest_hash TEXT NOT NULL,
+            config_hash TEXT NOT NULL,
+            readiness_status TEXT NOT NULL,
+            human_review_status TEXT NOT NULL,
+            automatic_promotion_allowed INTEGER NOT NULL DEFAULT 0,
+            store_authority TEXT NOT NULL,
+            audit_eligible INTEGER NOT NULL DEFAULT 1,
+            content_hash TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (userId, snapshot_id),
+            UNIQUE (userId, content_hash)
+        )
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_decision_quality_snapshots_cutoff
+        ON decision_quality_evaluation_snapshots
+            (userId, evaluation_as_of DESC, created_at DESC)
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_decision_quality_snapshots_status
+        ON decision_quality_evaluation_snapshots
+            (userId, status, evaluation_as_of DESC)
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_decision_quality_snapshots_review
+        ON decision_quality_evaluation_snapshots
+            (userId, readiness_status, human_review_status, evaluation_as_of DESC)
+        """,
+    ]
+    for statement in statements:
+        connection.execute(statement)
+    if not _column_exists(
+        connection, "decision_quality_input_artifacts", "logical_key"
+    ):
+        connection.execute(
+            "ALTER TABLE decision_quality_input_artifacts "
+            "ADD COLUMN logical_key TEXT"
+        )
+    connection.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS "
+        "uq_decision_quality_artifact_logical_key "
+        "ON decision_quality_input_artifacts "
+        "(userId, artifact_type, logical_key)"
+    )
+    logical_index_rows = connection.execute(
+        "PRAGMA index_list(decision_quality_input_artifacts)"
+    ).fetchall()
+    logical_index = next(
+        (
+            row
+            for row in logical_index_rows
+            if str(row[1]) == "uq_decision_quality_artifact_logical_key"
+        ),
+        None,
+    )
+    logical_columns = [
+        str(row[2])
+        for row in connection.execute(
+            "PRAGMA index_info(uq_decision_quality_artifact_logical_key)"
+        ).fetchall()
+    ]
+    logical_index_sql_row = connection.execute(
+        "SELECT sql FROM sqlite_master "
+        "WHERE type = 'index' "
+        "AND name = 'uq_decision_quality_artifact_logical_key'"
+    ).fetchone()
+    expected_logical_index_sql = (
+        "CREATE UNIQUE INDEX uq_decision_quality_artifact_logical_key "
+        "ON decision_quality_input_artifacts "
+        "(userId, artifact_type, logical_key)"
+    )
+    if (
+        logical_index is None
+        or int(logical_index[2]) != 1
+        or len(logical_index) < 5
+        or int(logical_index[4]) != 0
+        or logical_columns != ["userId", "artifact_type", "logical_key"]
+        or logical_index_sql_row is None
+        or _normalized_sql_contract(logical_index_sql_row[0])
+        != _normalized_sql_contract(expected_logical_index_sql)
+    ):
+        raise RuntimeError(
+            "decision-quality logical identity index conflicts with contract"
+        )
+    for table, prefix in (
+        ("decision_quality_input_artifacts", "decision_quality_artifacts"),
+        ("decision_quality_evaluation_snapshots", "decision_quality_snapshots"),
+    ):
+        _ensure_sqlite_trigger_contract(
+            connection,
+            name=f"{prefix}_no_update",
+            table=table,
+            stored_sql=f"""
+            CREATE TRIGGER {prefix}_no_update
+            BEFORE UPDATE ON {table}
+            BEGIN
+                SELECT RAISE(ABORT, '{table} is append-only');
+            END
+            """,
+        )
+        _ensure_sqlite_trigger_contract(
+            connection,
+            name=f"{prefix}_no_delete",
+            table=table,
+            stored_sql=f"""
+            CREATE TRIGGER {prefix}_no_delete
+            BEFORE DELETE ON {table}
+            BEGIN
+                SELECT RAISE(ABORT, '{table} is append-only');
+            END
+            """,
+        )
+
+
+def _migrate_decision_quality_receipts(connection: sqlite3.Connection) -> None:
+    artifact_table_sql = """
+        CREATE TABLE decision_quality_artifact_receipts (
+            userId INTEGER NOT NULL,
+            artifact_id TEXT NOT NULL,
+            receipt_id TEXT NOT NULL,
+            schema_version TEXT NOT NULL,
+            receipt_policy TEXT NOT NULL,
+            artifact_type TEXT NOT NULL,
+            artifact_content_hash TEXT NOT NULL,
+            source_row_created_at TEXT NOT NULL,
+            source_visible_at TEXT NOT NULL,
+            store_authority TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (userId, artifact_id)
+        )
+    """
+    provider_table_sql = """
+        CREATE TABLE decision_quality_provider_receipts (
+            receipt_id TEXT PRIMARY KEY,
+            schema_version TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            operation TEXT NOT NULL,
+            capture_mode TEXT NOT NULL,
+            request_hash TEXT NOT NULL,
+            adapter_output_sha256 TEXT NOT NULL,
+            adapter_output_bytes INTEGER NOT NULL,
+            normalized_payload_hash TEXT NOT NULL,
+            origin_fetched_at TEXT NOT NULL,
+            completed_at TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+    """
+    connection.execute(
+        artifact_table_sql.replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ", 1)
+    )
+    connection.execute(
+        provider_table_sql.replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ", 1)
+    )
+    _ensure_sqlite_table_contract(
+        connection,
+        name="decision_quality_artifact_receipts",
+        stored_sql=artifact_table_sql,
+    )
+    _ensure_sqlite_table_contract(
+        connection,
+        name="decision_quality_provider_receipts",
+        stored_sql=provider_table_sql,
+    )
+
+    index_contracts = (
+        (
+            "decision_quality_artifact_receipts",
+            "uq_decision_quality_artifact_receipt_id",
+            ("userId", "receipt_id"),
+            True,
+        ),
+        (
+            "decision_quality_artifact_receipts",
+            "uq_decision_quality_artifact_receipt_content",
+            ("userId", "content_hash"),
+            True,
+        ),
+        (
+            "decision_quality_artifact_receipts",
+            "idx_decision_quality_artifact_receipts_visibility",
+            ("userId", "source_visible_at", "artifact_id"),
+            False,
+        ),
+        (
+            "decision_quality_provider_receipts",
+            "uq_decision_quality_provider_receipt_content",
+            ("content_hash",),
+            True,
+        ),
+        (
+            "decision_quality_provider_receipts",
+            "idx_decision_quality_provider_receipts_lookup",
+            ("provider", "operation", "completed_at"),
+            False,
+        ),
+    )
+    for table, name, columns, unique in index_contracts:
+        unique_sql = "UNIQUE " if unique else ""
+        stored_sql = (
+            f"CREATE {unique_sql}INDEX {name} ON {table} "
+            f"({', '.join(columns)})"
+        )
+        connection.execute(
+            stored_sql.replace(" INDEX ", " INDEX IF NOT EXISTS ", 1)
+        )
+        _ensure_sqlite_index_contract(
+            connection,
+            table=table,
+            name=name,
+            columns=columns,
+            unique=unique,
+            stored_sql=stored_sql,
+        )
+
+    for table, prefix in (
+        (
+            "decision_quality_artifact_receipts",
+            "decision_quality_artifact_receipts",
+        ),
+        (
+            "decision_quality_provider_receipts",
+            "decision_quality_provider_receipts",
+        ),
+    ):
+        for event in ("update", "delete"):
+            _ensure_sqlite_trigger_contract(
+                connection,
+                name=f"{prefix}_no_{event}",
+                table=table,
+                stored_sql=f"""
+                CREATE TRIGGER {prefix}_no_{event}
+                BEFORE {event.upper()} ON {table}
+                BEGIN
+                    SELECT RAISE(ABORT, '{table} is append-only');
+                END
+                """,
+            )
+
+
+def _migrate_decision_quality_rollout(
+    connection: sqlite3.Connection,
+    *,
+    initialize: bool,
+) -> None:
+    """Create, and only during the v14 upgrade initialize, the D2 boundary.
+
+    A database already advertising v14 must never receive a replacement marker:
+    recreating it at a later wall-clock time would silently grandfather events
+    written after the original activation boundary.  Missing/tampered rows are
+    therefore left for repository and snapshot readers to reject fail-closed.
+    """
+
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS decision_quality_contract_rollouts (
+            contract_name TEXT PRIMARY KEY,
+            schema_version TEXT NOT NULL,
+            contract_version TEXT NOT NULL,
+            required_from TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            hash_algorithm TEXT NOT NULL,
+            canonicalization TEXT NOT NULL,
+            marker_hash TEXT NOT NULL UNIQUE
+        )
+        """
+    )
+    if initialize:
+        marker = build_decision_quality_rollout_marker(_now())
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO decision_quality_contract_rollouts (
+                contract_name, schema_version, contract_version, required_from,
+                created_at, hash_algorithm, canonicalization, marker_hash
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                marker["contract_name"],
+                marker["schema_version"],
+                marker["contract_version"],
+                marker["required_from"],
+                marker["created_at"],
+                marker["hash_algorithm"],
+                marker["canonicalization"],
+                marker["marker_hash"],
+            ),
+        )
+    # SQLite has no table-level append-only primitive.  These triggers make the
+    # singleton boundary immutable even to accidental application SQL; direct
+    # corruption is additionally caught by the canonical marker hash.
+    _ensure_sqlite_trigger_contract(
+        connection,
+        name="decision_quality_rollout_no_update",
+        table="decision_quality_contract_rollouts",
+        stored_sql=f"""
+        CREATE TRIGGER decision_quality_rollout_no_update
+        BEFORE UPDATE ON decision_quality_contract_rollouts
+        WHEN OLD.contract_name = '{DECISION_QUALITY_ROLLOUT_CONTRACT_NAME}'
+        BEGIN
+            SELECT RAISE(ABORT, 'decision-quality rollout marker is immutable');
+        END
+        """,
+    )
+    _ensure_sqlite_trigger_contract(
+        connection,
+        name="decision_quality_rollout_no_delete",
+        table="decision_quality_contract_rollouts",
+        stored_sql=f"""
+        CREATE TRIGGER decision_quality_rollout_no_delete
+        BEFORE DELETE ON decision_quality_contract_rollouts
+        WHEN OLD.contract_name = '{DECISION_QUALITY_ROLLOUT_CONTRACT_NAME}'
+        BEGIN
+            SELECT RAISE(ABORT, 'decision-quality rollout marker is immutable');
+        END
+        """,
+    )
+
+
+def _migrate_prompt_shadow_operations(connection: sqlite3.Connection) -> None:
+    """Create the mutable D5.1 run-state and daily-budget ledgers.
+
+    These tables are deliberately operational rather than evaluation evidence.
+    Immutable policy, registration, attempt, and output records continue to use
+    the decision-quality artifact ledger and its post-commit receipts.
+    """
+
+    run_table_sql = """
+        CREATE TABLE prompt_shadow_runs (
+            userId INTEGER NOT NULL,
+            run_id TEXT NOT NULL,
+            schema_version TEXT NOT NULL,
+            policy_id TEXT NOT NULL,
+            policy_hash TEXT NOT NULL,
+            decision_at TEXT NOT NULL,
+            registration_artifact_id TEXT NOT NULL,
+            champion_attempt_artifact_id TEXT,
+            champion_output_artifact_id TEXT,
+            champion_report_id TEXT,
+            challenger_attempt_artifact_id TEXT,
+            challenger_output_artifact_id TEXT,
+            status TEXT NOT NULL,
+            state_version INTEGER NOT NULL DEFAULT 0,
+            challenger_deadline_at TEXT,
+            lease_owner_hash TEXT,
+            lease_token_hash TEXT,
+            lease_acquired_at TEXT,
+            lease_expires_at TEXT,
+            champion_network_started_at TEXT,
+            challenger_network_started_at TEXT,
+            budget_scope_key TEXT,
+            budget_date_local TEXT,
+            budget_reserved_at TEXT,
+            terminal_reason TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (userId, run_id),
+            UNIQUE (userId, registration_artifact_id),
+            UNIQUE (userId, champion_attempt_artifact_id),
+            UNIQUE (userId, champion_output_artifact_id),
+            UNIQUE (userId, challenger_attempt_artifact_id),
+            UNIQUE (userId, challenger_output_artifact_id)
+        )
+    """
+    budget_table_sql = """
+        CREATE TABLE prompt_shadow_budget_counters (
+            scope_key TEXT NOT NULL,
+            budget_date_local TEXT NOT NULL,
+            schema_version TEXT NOT NULL,
+            policy_id TEXT NOT NULL,
+            policy_hash TEXT NOT NULL,
+            max_calls INTEGER NOT NULL,
+            reserved_calls INTEGER NOT NULL,
+            started_calls INTEGER NOT NULL,
+            completed_calls INTEGER NOT NULL,
+            failed_calls INTEGER NOT NULL,
+            state_version INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (scope_key, budget_date_local)
+        )
+    """
+    for table_sql in (run_table_sql, budget_table_sql):
+        connection.execute(
+            table_sql.replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ", 1)
+        )
+    _ensure_sqlite_table_contract(
+        connection,
+        name="prompt_shadow_runs",
+        stored_sql=run_table_sql,
+    )
+    _ensure_sqlite_table_contract(
+        connection,
+        name="prompt_shadow_budget_counters",
+        stored_sql=budget_table_sql,
+    )
+
+    index_contracts = (
+        (
+            "prompt_shadow_runs",
+            "idx_prompt_shadow_runs_worker",
+            ("status", "lease_expires_at", "challenger_deadline_at", "created_at"),
+        ),
+        (
+            "prompt_shadow_runs",
+            "idx_prompt_shadow_runs_decision",
+            ("userId", "decision_at", "run_id"),
+        ),
+        (
+            "prompt_shadow_runs",
+            "idx_prompt_shadow_runs_report",
+            ("userId", "champion_report_id"),
+        ),
+        (
+            "prompt_shadow_budget_counters",
+            "idx_prompt_shadow_budget_policy",
+            ("policy_hash", "budget_date_local"),
+        ),
+    )
+    for table, name, columns in index_contracts:
+        stored_sql = f"CREATE INDEX {name} ON {table} ({', '.join(columns)})"
+        connection.execute(
+            stored_sql.replace(" INDEX ", " INDEX IF NOT EXISTS ", 1)
+        )
+        _ensure_sqlite_index_contract(
+            connection,
+            table=table,
+            name=name,
+            columns=columns,
+            unique=False,
+            stored_sql=stored_sql,
+        )
+
+
 def run_migrations(connection: sqlite3.Connection) -> None:
     with _MIGRATION_LOCK:
         _run_migrations_locked(connection)
@@ -706,7 +1342,12 @@ def _run_migrations_locked(connection: sqlite3.Connection) -> None:
         _migrate_fund_primary_sectors_global(connection)
         _migrate_factor_ic_snapshots(connection)
         _migrate_factor_ic_universe_snapshots(connection)
+        _migrate_fund_holdings_snapshots(connection)
         _migrate_decision_accuracy_v2(connection)
+        _migrate_decision_quality_snapshots(connection)
+        _migrate_decision_quality_receipts(connection)
+        _migrate_decision_quality_rollout(connection, initialize=False)
+        _migrate_prompt_shadow_operations(connection)
         return
 
     connection.execute(
@@ -765,7 +1406,12 @@ def _run_migrations_locked(connection: sqlite3.Connection) -> None:
     _migrate_fund_primary_sectors_global(connection)
     _migrate_factor_ic_snapshots(connection)
     _migrate_factor_ic_universe_snapshots(connection)
+    _migrate_fund_holdings_snapshots(connection)
     _migrate_decision_accuracy_v2(connection)
+    _migrate_decision_quality_snapshots(connection)
+    _migrate_decision_quality_receipts(connection)
+    _migrate_decision_quality_rollout(connection, initialize=version < 14)
+    _migrate_prompt_shadow_operations(connection)
 
     _ensure_migration_user(connection)
     _set_schema_version(connection, SCHEMA_VERSION)

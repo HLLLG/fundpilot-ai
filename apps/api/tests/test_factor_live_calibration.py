@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.services.decision_contract import build_decision_replay_bundle, payload_hash
 from app.services.decision_repository import put_decision_event, upsert_outcome_observation
 from app.services.factor_live_calibration import (
     FactorLiveCalibrationStorageUnavailable,
@@ -15,7 +16,7 @@ from app.services.factor_live_calibration import (
 
 def _event(index: int, *, decision_date: str, evidence_state: str = "available") -> dict:
     event_id = f"daily:r{index}:0:008586"
-    return {
+    event = {
         "schema_version": "decision_event.v2",
         "event_id": event_id,
         "event_type": "daily_fund_decision",
@@ -27,7 +28,9 @@ def _event(index: int, *, decision_date: str, evidence_state: str = "available")
         "fund_name": "测试基金",
         "final_action": "分批加仓",
         "action_category": "bullish",
+        "evaluation_class": "bullish",
         "eligible": True,
+        "horizons": [1, 5, 20],
         "metric_eligible": True,
         "audit_eligible": True,
         "store_authority": "primary",
@@ -49,6 +52,67 @@ def _event(index: int, *, decision_date: str, evidence_state: str = "available")
             "data_as_of": decision_date,
         },
     }
+    evidence_at = f"{decision_date}T06:30:01+00:00"
+    bundle = build_decision_replay_bundle(
+        facts={
+            "data_evidence": {
+                "schema_version": "1.0",
+                "generated_at": evidence_at,
+                "items": [
+                    {
+                        "fact_id": f"factor.{event_id}",
+                        "source": "factor_snapshot",
+                        "available_at": f"{decision_date}T06:29:00+00:00",
+                        "fetched_at": evidence_at,
+                    }
+                ],
+            }
+        },
+        decision_kind="daily",
+        decision_at=event["decision_at"],
+        recorded_at=evidence_at,
+        source_report_id=f"r{index}",
+        model_version="factor-live-test",
+        prompt_version="factor-live-test",
+        prompt_contract=None,
+        fee_policy={},
+    )
+    manifest = bundle["variant_manifest"]
+    event.update(
+        {
+            "quality_contract_version": "decision_quality_contract.v1",
+            "replay_contract_required": True,
+            "decision_kind": "daily",
+            "recorded_at": bundle["recorded_at"],
+            "replay_refs": bundle["replay_refs"],
+            "replay_bundle": bundle,
+            "replay_bundle_hash": bundle["bundle_hash"],
+            "variant_manifest": manifest,
+            "fee_policy": {},
+            **{
+                field: manifest[field]
+                for field in (
+                    "model_version",
+                    "model_hash",
+                    "prompt_version",
+                    "prompt_hash",
+                    "prompt_contract_hash",
+                    "strategy_version",
+                    "strategy_hash",
+                    "policy_version",
+                    "policy_hash",
+                    "data_version",
+                    "data_hash",
+                    "evidence_hash",
+                    "fee_model_version",
+                    "fee_model_hash",
+                    "variant_hash",
+                )
+            },
+        }
+    )
+    event["payload_hash"] = payload_hash(event)
+    return event
 
 
 def _observation(

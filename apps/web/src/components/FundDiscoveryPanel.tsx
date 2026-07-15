@@ -24,6 +24,7 @@ import {
   startDiscoveryJob,
 } from "@/lib/api";
 import { DiscoveryHistoryWorkspace } from "@/components/DiscoveryHistoryWorkspace";
+import { AnalysisModeToggle } from "@/components/AnalysisModeToggle";
 import { InlineNotice, type NoticeTone } from "@/components/InlineNotice";
 import { DiscoveryReportPanel } from "@/components/DiscoveryReportPanel";
 import { DiscoverySkeleton } from "@/components/DiscoverySkeleton";
@@ -588,9 +589,9 @@ export function FundDiscoveryPanel({
               >
                 <span className="flex min-w-0 items-center gap-2">
                   <Sparkles size={15} className="shrink-0 text-[var(--brand)]" />
-                  <span className="text-xs font-bold text-slate-700">AI 角色设定（高级）</span>
+                  <span className="text-xs font-bold text-slate-700">AI 分析偏好附录（高级）</span>
                   <span className="truncate text-[11px] font-semibold text-slate-500">
-                    {discoveryPrompt.is_custom ? "已自定义" : "默认模板"}
+                    {discoveryPrompt.is_custom ? "已添加" : "未添加"}
                   </span>
                 </span>
                 <ChevronDown
@@ -613,27 +614,27 @@ export function FundDiscoveryPanel({
                   className="inline-flex min-h-11 items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 text-[11px] font-bold text-slate-600 transition hover:bg-slate-50"
                 >
                   <RotateCcw size={12} />
-                  恢复默认
+                  清空附录
                 </button>
               ) : null}
             </div>
             {rolePromptOpen ? (
               <div id="discovery-role-prompt-settings" className="border-t border-[var(--line)]">
                 <RolePromptEditor
-                  value={discoveryPrompt.role_prompt}
+                  value={discoveryPrompt.is_custom ? discoveryPrompt.role_prompt : ""}
                   onChange={(value) => {
                     promptChangedByUserRef.current = true;
                     setDiscoveryPrompt((current) => ({
                       ...current,
                       role_prompt: value,
-                      is_custom: value.trim() !== current.default_role_prompt.trim(),
+                      is_custom: Boolean(value.trim()),
                     }));
                   }}
                 />
               </div>
             ) : (
               <p className="border-t border-[var(--line)] px-3 py-2 text-[11px] leading-5 text-slate-500">
-                普通扫描无需调整；仅在需要固定特殊研究方法时展开编辑。
+                普通扫描无需填写；附录只能补充表达风格和关注角度，不能修改系统决策约束。
               </p>
             )}
           </div>
@@ -696,7 +697,7 @@ export function FundDiscoveryPanel({
           <div className="mt-4 rounded-xl border border-slate-100 bg-slate-50/80 px-3 py-2.5">
             <p className="text-xs font-black text-slate-800">系统自动选基</p>
             <p className="mt-1 text-[11px] leading-5 text-slate-500">
-              自动执行质量门、证据时点校验与同基金份额去重，再按预计持有期比较份额成本。
+              自动核验申购状态、首次起购额与单日限额；费用可得时按未折扣标准费率估算上限，下单前仍需复核。
             </p>
           </div>
 
@@ -715,20 +716,12 @@ export function FundDiscoveryPanel({
             </label>
             <fieldset>
               <legend className="text-xs font-semibold text-slate-700">分析模式</legend>
-              <div className="mt-1 flex rounded-xl border border-slate-200 p-1">
-                {(["fast", "deep"] as const).map((mode) => (
-                  <button
-                    key={mode}
-                    type="button"
-                    onClick={() => onAnalysisModeChange(mode)}
-                    aria-pressed={analysisMode === mode}
-                    className={`min-h-11 flex-1 rounded-lg px-3 py-2 text-xs font-bold ${
-                      analysisMode === mode ? "bg-slate-900 text-white" : "text-slate-600"
-                    }`}
-                  >
-                    {mode === "fast" ? "快速" : "深度"}
-                  </button>
-                ))}
+              <div className="mt-1">
+                <AnalysisModeToggle
+                  mode={analysisMode}
+                  onChange={onAnalysisModeChange}
+                  compact
+                />
               </div>
             </fieldset>
           </div>

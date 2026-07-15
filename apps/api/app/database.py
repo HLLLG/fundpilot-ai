@@ -1,18 +1,20 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
+import re
 import sqlite3
 from collections import OrderedDict
+from contextlib import contextmanager
+from datetime import date, datetime, timezone
 from pathlib import Path
 from threading import RLock
-from typing import Any
+from typing import Any, Iterator, Mapping
 
 from app.config import get_settings
 from app.db_migrations import SCHEMA_VERSION, run_migrations
 from app.request_context import get_request_user_id
-from datetime import datetime, timezone
-
 from app.models import (
     ChatMessage,
     DiscoveryChatMessage,
@@ -30,6 +32,10 @@ _SQLITE_SCHEMA_CACHE_MAX_PATHS = 32
 _SqliteSchemaIdentity = tuple[str, int, int, int, int]
 _SQLITE_SCHEMA_INIT_LOCK = RLock()
 _SQLITE_SCHEMA_INIT_CACHE: OrderedDict[str, _SqliteSchemaIdentity] = OrderedDict()
+
+_FUND_HOLDINGS_SNAPSHOT_SCHEMA = "fund_holdings_snapshot.v1"
+_SHA256_HEX_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+logger = logging.getLogger(__name__)
 
 
 def _db_path() -> Path:
@@ -337,6 +343,7 @@ def get_user_by_account(user_account: str) -> dict[str, object] | None:
 
 def save_report(report: Report) -> Report:
     user_id = _uid()
+    quality_artifacts: list[dict[str, Any]] = []
     with _connect() as connection:
         from app.services.benchmark_mapping_service import (
             freeze_report_benchmark_specs,
@@ -373,11 +380,18 @@ def save_report(report: Report) -> Report:
                 user_id,
             ),
         )
-        _persist_decision_bundle(
+        report_recorded_at = datetime.now(timezone.utc).isoformat()
+        quality_artifacts = _persist_decision_bundle(
             connection,
             user_id=user_id,
             bundle=bundle,
+            report_payload=payload,
+            report_recorded_at=report_recorded_at,
         )
+    _finalize_committed_decision_quality_artifacts(
+        user_id=user_id,
+        artifacts=quality_artifacts,
+    )
     return saved_report
 
 
@@ -394,7 +408,9 @@ def _persist_decision_bundle(
     *,
     user_id: int,
     bundle: dict[str, Any],
-) -> None:
+    report_payload: dict[str, Any],
+    report_recorded_at: str,
+) -> list[dict[str, Any]]:
     from app.services.decision_repository import (
         put_fund_benchmark_mapping,
         put_decision_event,
@@ -416,15 +432,76 @@ def _persist_decision_bundle(
             snapshot=snapshot,
             connection=connection,
         )
+    saved_events: list[dict[str, Any]] = []
     for event in bundle.get("events") or []:
         if isinstance(event, dict):
-            put_decision_event(user_id=user_id, event=event, connection=connection)
+            saved_events.append(
+                put_decision_event(
+                    user_id=user_id,
+                    event=event,
+                    connection=connection,
+                )
+            )
     for observation in bundle.get("observations") or []:
         if isinstance(observation, dict):
             upsert_outcome_observation(
                 user_id=user_id,
                 observation=observation,
                 connection=connection,
+            )
+    from app.services.decision_quality_artifacts import (
+        persist_report_decision_quality_artifacts,
+    )
+
+    contract = bundle.get("contract") or {}
+    return persist_report_decision_quality_artifacts(
+        user_id=user_id,
+        report=report_payload,
+        saved_events=saved_events,
+        source_type=str(contract.get("decision_kind") or ""),
+        store_authority=str(contract.get("store_authority") or ""),
+        report_recorded_at=report_recorded_at,
+        connection=connection,
+    )
+
+
+def _finalize_committed_decision_quality_artifacts(
+    *,
+    user_id: int,
+    artifacts: list[dict[str, Any]],
+) -> None:
+    """Best-effort Phase 2 receipts after the report transaction committed.
+
+    A receipt failure must not imply that the already committed report and
+    decision bundle rolled back.  The append-only reconciliation job can retry
+    any missing receipt; until then, D4 evaluation treats the artifact as
+    pending instead of formal evidence.
+    """
+
+    from app.services.decision_repository import (
+        finalize_decision_quality_artifact_receipt,
+    )
+
+    for row in artifacts:
+        payload = row.get("payload")
+        if not isinstance(payload, Mapping) or payload.get("store_authority") != "primary":
+            continue
+        artifact_id = str(payload.get("artifact_id") or "").strip()
+        if not artifact_id:
+            logger.error(
+                "committed decision-quality artifact has no artifact_id",
+                extra={"user_id": user_id},
+            )
+            continue
+        try:
+            finalize_decision_quality_artifact_receipt(
+                user_id=user_id,
+                artifact_id=artifact_id,
+            )
+        except Exception:  # noqa: BLE001 - reconciliation owns durable retries
+            logger.exception(
+                "decision-quality post-commit receipt remains pending",
+                extra={"user_id": user_id, "artifact_id": artifact_id},
             )
 
 
@@ -1551,6 +1628,7 @@ def list_fund_primary_sectors_global(*, limit: int = 5000) -> list[dict[str, Any
 
 def save_discovery_report(report: FundDiscoveryReport) -> FundDiscoveryReport:
     user_id = _uid()
+    quality_artifacts: list[dict[str, Any]] = []
     with _connect() as connection:
         from app.services.benchmark_mapping_service import (
             freeze_report_benchmark_specs,
@@ -1587,11 +1665,18 @@ def save_discovery_report(report: FundDiscoveryReport) -> FundDiscoveryReport:
                 user_id,
             ),
         )
-        _persist_decision_bundle(
+        report_recorded_at = datetime.now(timezone.utc).isoformat()
+        quality_artifacts = _persist_decision_bundle(
             connection,
             user_id=user_id,
             bundle=bundle,
+            report_payload=payload,
+            report_recorded_at=report_recorded_at,
         )
+    _finalize_committed_decision_quality_artifacts(
+        user_id=user_id,
+        artifacts=quality_artifacts,
+    )
     return saved_report
 
 
@@ -1683,3 +1768,472 @@ def save_discovery_chat_message(message: DiscoveryChatMessage) -> DiscoveryChatM
         )
         connection.commit()
     return message
+
+
+class FundHoldingsSnapshotConflict(RuntimeError):
+    """A snapshot hash was reused for different immutable evidence."""
+
+
+def _snapshot_text(value: object, field: str, *, required: bool = False) -> str | None:
+    text = str(value).strip() if value is not None else ""
+    if required and not text:
+        raise ValueError(f"{field} is required")
+    return text or None
+
+
+def _normalize_snapshot_timestamp(
+    value: object,
+    *,
+    field: str,
+    required: bool = False,
+) -> str | None:
+    if value is None or (isinstance(value, str) and not value.strip()):
+        if required:
+            raise ValueError(f"{field} is required")
+        return None
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        text = str(value).strip().replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError as exc:
+            raise ValueError(f"{field} must be an ISO datetime") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError(f"{field} must be timezone-aware")
+    return parsed.astimezone(timezone.utc).isoformat(timespec="microseconds")
+
+
+def _snapshot_verified_master_key(snapshot: Mapping[str, Any], fund_code: str) -> str:
+    explicit = _snapshot_text(snapshot.get("fund_master_key"), "fund_master_key")
+    family_hint = snapshot.get("family_hint")
+    verified_key: str | None = None
+    if isinstance(family_hint, Mapping):
+        is_verified = (
+            family_hint.get("verified") is True
+            and str(family_hint.get("status") or "").strip().lower() == "verified"
+            and family_hint.get("hard_merge_applied") is True
+        )
+        if is_verified:
+            for key in ("fund_master_key", "verified_master_key", "hinted_master_key"):
+                verified_key = _snapshot_text(family_hint.get(key), key)
+                if verified_key is not None:
+                    break
+
+    if explicit is None:
+        return verified_key or fund_code
+    if explicit == fund_code or (verified_key is not None and explicit == verified_key):
+        return explicit
+    raise ValueError(
+        "fund_master_key may differ from fund_code only with a verified hard-merge mapping"
+    )
+
+
+def _normalize_fund_holdings_snapshot(snapshot: Mapping[str, Any]) -> dict[str, Any]:
+    if not isinstance(snapshot, Mapping):
+        raise TypeError("snapshot must be a mapping")
+
+    fund_code = _snapshot_text(snapshot.get("fund_code"), "fund_code", required=True)
+    assert fund_code is not None
+    fund_master_key = _snapshot_verified_master_key(snapshot, fund_code)
+    schema_version = _snapshot_text(
+        snapshot.get("schema_version") or snapshot.get("schema"), "schema_version", required=True
+    )
+    status = _snapshot_text(snapshot.get("status"), "status", required=True)
+    source_hash = _snapshot_text(snapshot.get("source_hash"), "source_hash", required=True)
+    snapshot_hash = _snapshot_text(
+        snapshot.get("snapshot_hash"), "snapshot_hash", required=True
+    )
+    assert schema_version is not None and status is not None
+    assert source_hash is not None and snapshot_hash is not None
+    status = status.lower()
+    if _SHA256_HEX_PATTERN.fullmatch(source_hash) is None:
+        raise ValueError("source_hash must be a lowercase SHA-256 hex digest")
+    if _SHA256_HEX_PATTERN.fullmatch(snapshot_hash) is None:
+        raise ValueError("snapshot_hash must be a lowercase SHA-256 hex digest")
+    from app.services.fund_holdings_snapshot import (
+        validate_fund_holdings_snapshot_hash,
+    )
+
+    if not validate_fund_holdings_snapshot_hash(snapshot):
+        raise ValueError("snapshot_hash does not match canonical snapshot content")
+
+    report_period = _snapshot_text(snapshot.get("report_period"), "report_period")
+    if report_period is not None and re.fullmatch(r"\d{4}-Q[1-4]", report_period) is None:
+        raise ValueError("report_period must use YYYY-Qn")
+    as_of_date = _snapshot_text(snapshot.get("as_of_date"), "as_of_date")
+    if as_of_date is not None:
+        try:
+            as_of_date = date.fromisoformat(as_of_date).isoformat()
+        except ValueError as exc:
+            raise ValueError("as_of_date must be an ISO date") from exc
+    available_at = _normalize_snapshot_timestamp(
+        snapshot.get("available_at"), field="available_at"
+    )
+    first_observed_at = datetime.now(timezone.utc).isoformat(timespec="microseconds")
+
+    if status == "qualified":
+        qualification = snapshot.get("qualification")
+        source_validation = snapshot.get("source_validation")
+        if schema_version != _FUND_HOLDINGS_SNAPSHOT_SCHEMA:
+            raise ValueError("qualified snapshot must use fund_holdings_snapshot.v1")
+        if snapshot.get("qualified") is not True:
+            raise ValueError("qualified status requires qualified=true")
+        if (
+            not isinstance(source_validation, Mapping)
+            or source_validation.get("schema_version")
+            != "fund_holdings_source_validation.v1"
+            or source_validation.get("status") != "qualified"
+            or source_validation.get("qualified") is not True
+            or source_validation.get("valid_snapshot") is not True
+        ):
+            raise ValueError(
+                "qualified snapshot requires immutable source_validation"
+            )
+        if not isinstance(qualification, Mapping) or not all(
+            qualification.get(field) is True
+            for field in (
+                "qualified",
+                "valid_snapshot",
+                "pit_eligible",
+                "disclosure_scope_identified",
+                "weight_validation_passed",
+            )
+        ):
+            raise ValueError("qualified snapshot requires a complete qualification contract")
+        if report_period is None or as_of_date is None:
+            raise ValueError("qualified snapshot requires report_period and as_of_date")
+        if available_at is None:
+            raise ValueError("qualified snapshot requires a known available_at")
+        if datetime.fromisoformat(available_at).date() < date.fromisoformat(as_of_date):
+            raise ValueError("available_at cannot precede as_of_date for a qualified snapshot")
+        if datetime.fromisoformat(available_at) > datetime.fromisoformat(first_observed_at):
+            raise ValueError("available_at cannot be later than first_observed_at")
+
+    # Keep the immutable payload's original timestamp representation.  The
+    # indexed column is normalized to UTC for lexical PIT queries, while the
+    # content-addressed snapshot may intentionally use a Shanghai offset.  If
+    # we rewrote the payload to the indexed representation, snapshot_hash
+    # would no longer be reproducible from the persisted evidence.
+    payload = dict(snapshot)
+    payload.update(
+        {
+            "schema_version": schema_version,
+            "fund_code": fund_code,
+            "fund_master_key": fund_master_key,
+            "report_period": report_period,
+            "as_of_date": as_of_date,
+            # Observation time is storage-owned; callers cannot backdate it.
+            "first_observed_at": first_observed_at,
+            "source_hash": source_hash,
+            "snapshot_hash": snapshot_hash,
+            "status": status,
+        }
+    )
+    created_at = first_observed_at
+    return {
+        "id": f"fhs_{snapshot_hash}",
+        "fund_master_key": fund_master_key,
+        "fund_code": fund_code,
+        "report_period": report_period,
+        "as_of_date": as_of_date,
+        "available_at": available_at,
+        "first_observed_at": first_observed_at,
+        "source_hash": source_hash,
+        "snapshot_hash": snapshot_hash,
+        "schema_version": schema_version,
+        "status": status,
+        "payload_json": json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ),
+        "created_at": created_at,
+    }
+
+
+@contextmanager
+def _fund_holdings_snapshot_connection(connection: Any | None) -> Iterator[Any]:
+    if connection is not None:
+        yield connection
+        return
+    owned = _connect()
+    try:
+        yield owned
+        owned.commit()
+    except Exception:
+        owned.rollback()
+        raise
+    finally:
+        owned.close()
+
+
+def _decode_fund_holdings_snapshot_row(row: dict[str, Any]) -> dict[str, Any]:
+    result = _row_to_dict(row)
+    payload = result.get("payload_json")
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except json.JSONDecodeError:
+            payload = None
+    result["payload_json"] = payload
+    result["payload"] = payload
+    return result
+
+
+def _load_fund_holdings_snapshot(db: Any, snapshot_hash: str) -> dict[str, Any] | None:
+    row = db.execute(
+        "SELECT * FROM fund_holdings_snapshots WHERE snapshot_hash = ?",
+        (snapshot_hash,),
+    ).fetchone()
+    return None if row is None else _row_to_dict(row)
+
+
+_FUND_HOLDINGS_IMMUTABLE_COLUMNS = (
+    "fund_master_key",
+    "fund_code",
+    "report_period",
+    "as_of_date",
+    "available_at",
+    "source_hash",
+    "snapshot_hash",
+    "schema_version",
+    "status",
+)
+
+
+def _assert_same_fund_holdings_snapshot(
+    stored: Mapping[str, Any],
+    candidate: Mapping[str, Any],
+) -> None:
+    mismatched = [
+        field
+        for field in _FUND_HOLDINGS_IMMUTABLE_COLUMNS
+        if stored.get(field) != candidate.get(field)
+    ]
+    if mismatched:
+        raise FundHoldingsSnapshotConflict(
+            "snapshot_hash already exists with different immutable fields: "
+            + ", ".join(mismatched)
+        )
+
+
+def _snapshot_save_result(row: dict[str, Any], *, stored: bool) -> dict[str, Any]:
+    record = _decode_fund_holdings_snapshot_row(row)
+    return {
+        "id": record["id"],
+        "stored": stored,
+        "duplicate": not stored,
+        "record": record,
+        "snapshot": record.get("payload"),
+    }
+
+
+def save_fund_holdings_snapshot(
+    snapshot: Mapping[str, Any],
+    *,
+    connection: Any | None = None,
+) -> dict[str, Any]:
+    """Append one immutable holdings revision, or return its existing twin."""
+
+    candidate = _normalize_fund_holdings_snapshot(snapshot)
+    with _fund_holdings_snapshot_connection(connection) as db:
+        existing = _load_fund_holdings_snapshot(db, candidate["snapshot_hash"])
+        if existing is not None:
+            _assert_same_fund_holdings_snapshot(existing, candidate)
+            return _snapshot_save_result(existing, stored=False)
+
+        columns = (
+            "id",
+            "fund_master_key",
+            "fund_code",
+            "report_period",
+            "as_of_date",
+            "available_at",
+            "first_observed_at",
+            "source_hash",
+            "snapshot_hash",
+            "schema_version",
+            "status",
+            "payload_json",
+            "created_at",
+        )
+        placeholders = ", ".join("?" for _ in columns)
+        try:
+            db.execute(
+                f"INSERT INTO fund_holdings_snapshots ({', '.join(columns)}) "
+                f"VALUES ({placeholders})",
+                tuple(candidate[column] for column in columns),
+            )
+        except Exception:
+            raced = _load_fund_holdings_snapshot(db, candidate["snapshot_hash"])
+            if raced is None:
+                raise
+            _assert_same_fund_holdings_snapshot(raced, candidate)
+            return _snapshot_save_result(raced, stored=False)
+
+        inserted = _load_fund_holdings_snapshot(db, candidate["snapshot_hash"])
+        if inserted is None:
+            raise RuntimeError("fund holdings snapshot insert was not observable")
+        return _snapshot_save_result(inserted, stored=True)
+
+
+put_fund_holdings_snapshot = save_fund_holdings_snapshot
+
+
+def _stored_fund_holdings_snapshot_is_qualified(record: Mapping[str, Any]) -> bool:
+    if (
+        record.get("status") != "qualified"
+        or record.get("schema_version") != _FUND_HOLDINGS_SNAPSHOT_SCHEMA
+        or record.get("available_at") is None
+    ):
+        return False
+    try:
+        _normalize_snapshot_timestamp(
+            record["available_at"], field="available_at", required=True
+        )
+    except ValueError:
+        return False
+    payload = record.get("payload")
+    if not isinstance(payload, Mapping) or payload.get("qualified") is not True:
+        return False
+    # Indexed status and duplicated envelope fields are only lookup aids.  The
+    # immutable payload remains the trust boundary, so a row whose content no
+    # longer matches its address must never be returned as decision evidence.
+    from app.services.fund_holdings_snapshot import (
+        validate_fund_holdings_snapshot_hash,
+    )
+
+    if not validate_fund_holdings_snapshot_hash(payload):
+        return False
+    source_validation = payload.get("source_validation")
+    if (
+        not isinstance(source_validation, Mapping)
+        or source_validation.get("schema_version")
+        != "fund_holdings_source_validation.v1"
+        or source_validation.get("status") != "qualified"
+        or source_validation.get("qualified") is not True
+        or source_validation.get("valid_snapshot") is not True
+    ):
+        return False
+    qualification = payload.get("qualification")
+    if not isinstance(qualification, Mapping) or not all(
+        qualification.get(field) is True
+        for field in (
+            "qualified",
+            "valid_snapshot",
+            "pit_eligible",
+            "disclosure_scope_identified",
+            "weight_validation_passed",
+        )
+    ):
+        return False
+    for field in _FUND_HOLDINGS_IMMUTABLE_COLUMNS:
+        if field == "available_at":
+            try:
+                payload_time = _normalize_snapshot_timestamp(
+                    payload.get(field), field=field, required=True
+                )
+            except ValueError:
+                return False
+            if payload_time != record.get(field):
+                return False
+            continue
+        if payload.get(field) != record.get(field):
+            return False
+    return True
+
+
+def list_fund_holdings_snapshots(
+    *,
+    fund_code: str | None = None,
+    fund_master_key: str | None = None,
+    decision_at: datetime | str | None = None,
+    qualified_only: bool = False,
+    limit: int = 100,
+    connection: Any | None = None,
+) -> list[dict[str, Any]]:
+    """List immutable revisions, optionally constrained to a PIT decision clock."""
+
+    normalized_code = _snapshot_text(fund_code, "fund_code")
+    normalized_master = _snapshot_text(fund_master_key, "fund_master_key")
+    if normalized_code is None and normalized_master is None:
+        raise ValueError("fund_code or fund_master_key is required")
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0 or limit > 1000:
+        raise ValueError("limit must be an integer between 1 and 1000")
+
+    where: list[str] = []
+    params: list[Any] = []
+    if normalized_code is not None:
+        where.append("fund_code = ?")
+        params.append(normalized_code)
+    if normalized_master is not None:
+        where.append("fund_master_key = ?")
+        params.append(normalized_master)
+    if decision_at is not None:
+        normalized_decision_at = _normalize_snapshot_timestamp(
+            decision_at, field="decision_at", required=True
+        )
+        # A report can have an old official publication time but only be first
+        # captured (or silently revised by the upstream current endpoint) much
+        # later.  Historical replay must not backfill that newer observation
+        # into a decision that predates our immutable capture.
+        where.extend(
+            (
+                "available_at IS NOT NULL",
+                "available_at <= ?",
+                "first_observed_at <= ?",
+            )
+        )
+        params.extend((normalized_decision_at, normalized_decision_at))
+    if qualified_only:
+        where.extend(
+            (
+                "status = ?",
+                "schema_version = ?",
+                "available_at IS NOT NULL",
+            )
+        )
+        params.extend(("qualified", _FUND_HOLDINGS_SNAPSHOT_SCHEMA))
+
+    sql = (
+        "SELECT * FROM fund_holdings_snapshots WHERE "
+        + " AND ".join(where)
+        + " ORDER BY available_at DESC, first_observed_at DESC, created_at DESC, id DESC"
+    )
+    with _fund_holdings_snapshot_connection(connection) as db:
+        rows = db.execute(sql, tuple(params)).fetchall()
+        records = [
+            _decode_fund_holdings_snapshot_row(_row_to_dict(row))
+            for row in rows
+        ]
+    if qualified_only:
+        records = [
+            record
+            for record in records
+            if _stored_fund_holdings_snapshot_is_qualified(record)
+        ]
+    return records[:limit]
+
+
+def get_latest_fund_holdings_snapshot(
+    *,
+    decision_at: datetime | str,
+    fund_code: str | None = None,
+    fund_master_key: str | None = None,
+    qualified_only: bool = True,
+    connection: Any | None = None,
+) -> dict[str, Any] | None:
+    """Return the newest eligible revision known at an aware decision time."""
+
+    records = list_fund_holdings_snapshots(
+        fund_code=fund_code,
+        fund_master_key=fund_master_key,
+        decision_at=decision_at,
+        qualified_only=qualified_only,
+        limit=1,
+        connection=connection,
+    )
+    return records[0] if records else None

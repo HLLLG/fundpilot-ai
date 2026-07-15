@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from collections import Counter
 import json
 import logging
 
@@ -14,12 +15,17 @@ from app.services.deepseek_http import (
     deepseek_request_headers,
     deepseek_timeout,
 )
-from app.models import AnalysisRequest, FundSnapshot, RiskAssessment
+from app.models import AnalysisRequest, FundRecommendation, FundSnapshot, RiskAssessment
 from app.services.decision_guard_shared import (
     ACTION_BUCKET_ADD,
     classify_action_bucket as _action_bucket,
 )
 from app.services.recommendation_guard import normalize_action_text
+from app.services.recommendations import (
+    build_offline_fund_recommendations,
+    canonicalize_fund_recommendations,
+    parse_fund_recommendations_raw,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +40,7 @@ def judge_parsed_report(
     runtime: AnalysisRuntime,
     *,
     facts: dict,
+    fallback_recommendations: list[FundRecommendation] | None = None,
 ) -> tuple[dict, dict]:
     """对 LLM 生成的 draft 报告做规则 + 可选 LLM 审校。
 
@@ -49,9 +56,15 @@ def judge_parsed_report(
     该 guard 内部同样调 `resolve_escalation_floor()` 强制封顶，所以这层 LLM 复核
     是"锦上添花的更聪明的复核"，不是唯一的风控红线（真正的硬约束在规则 guard）。
     """
-    judged = _rule_judge(parsed, request, risk, facts)
+    canonicalized = _canonicalize_draft_report(
+        parsed,
+        request,
+        fallback_recommendations=fallback_recommendations,
+    )
+    judged = _rule_judge(canonicalized, request, risk, facts)
     meta = {
         "rule_judge": True,
+        "draft_canonicalized": True,
         "llm_judge_attempted": False,
         "llm_judge_applied": False,
         "llm_judge_timeout": False,
@@ -70,8 +83,40 @@ def judge_parsed_report(
     meta["llm_judge_timeout"] = timed_out
     if reviewed is not judged and reviewed.get("fund_recommendations"):
         meta["llm_judge_applied"] = True
-        return reviewed, meta
+        # The second model is still untrusted output. Re-apply the deterministic
+        # identity and action contracts so it cannot introduce an outsider or an
+        # action that this run's analysis_facts.allowed_actions did not expose.
+        reviewed = _canonicalize_draft_report(
+            reviewed,
+            request,
+            fallback_recommendations=fallback_recommendations,
+        )
+        return _rule_judge(reviewed, request, risk, facts), meta
     return judged, meta
+
+
+def _canonicalize_draft_report(
+    parsed: dict,
+    request: AnalysisRequest,
+    *,
+    fallback_recommendations: list[FundRecommendation] | None = None,
+) -> dict:
+    """Close untrusted judge input over the authoritative holdings first."""
+    fallback = fallback_recommendations or build_offline_fund_recommendations(request)
+    draft = parse_fund_recommendations_raw(
+        parsed.get("fund_recommendations"), merge_items=False
+    )
+    canonical = canonicalize_fund_recommendations(
+        draft,
+        request.holdings,
+        fallback_recommendations=fallback,
+    )
+    result = dict(parsed)
+    result["fund_recommendations"] = [
+        {**item.model_dump(mode="json"), "holding_index": index}
+        for index, item in enumerate(canonical)
+    ]
+    return result
 
 
 def _escalation_floor_by_fund_code(parsed: dict, facts: dict) -> dict[str, dict]:
@@ -81,14 +126,21 @@ def _escalation_floor_by_fund_code(parsed: dict, facts: dict) -> dict[str, dict]
     facts 里的持仓行若已经在 `analysis_facts._attach_escalation_to_holdings` 中
     挂了 `escalation` 字段（fast/deep 均会挂），直接复用即可，无需重复计算。
     """
+    rows = [row for row in facts.get("holdings") or [] if isinstance(row, dict)]
+    counts = Counter(str(row.get("fund_code") or "").strip() for row in rows)
     result: dict[str, dict] = {}
-    for row in facts.get("holdings") or []:
-        if not isinstance(row, dict):
-            continue
+    for index, row in enumerate(rows):
         code = str(row.get("fund_code") or "").strip()
         escalation = row.get("escalation")
         if code and isinstance(escalation, dict) and escalation.get("min_bucket") is not None:
-            result[code] = escalation
+            if code != "000000" and counts[code] == 1:
+                result[code] = escalation
+            else:
+                result[f"holding_index:{index}:{code}"] = {
+                    **escalation,
+                    "holding_index": index,
+                    "fund_code": code,
+                }
     return result
 
 
@@ -113,10 +165,7 @@ def _rule_judge(
     risk: RiskAssessment,
     facts: dict,
 ) -> dict:
-    weight_by_code = {
-        item["fund_code"]: item["weight_percent"]
-        for item in facts.get("holdings") or []
-    }
+    fact_rows = [row for row in facts.get("holdings") or [] if isinstance(row, dict)]
     allowed = set(facts.get("allowed_actions") or [])
 
     raw_recs = parsed.get("fund_recommendations")
@@ -124,7 +173,7 @@ def _rule_judge(
         return parsed
 
     fixed_recs: list[dict] = []
-    for entry in raw_recs:
+    for index, entry in enumerate(raw_recs):
         if not isinstance(entry, dict):
             continue
         copy = dict(entry)
@@ -132,9 +181,15 @@ def _rule_judge(
         if action not in allowed:
             action = "观察"
         code = str(copy.get("fund_code", "")).strip()
+        weight_percent = None
+        if index < len(fact_rows):
+            weight_percent = fact_rows[index].get("weight_percent")
         if risk.suggested_action == "risk_review" and _action_bucket(action) >= ACTION_BUCKET_ADD:
             action = "暂停追涨"
-        if code in weight_by_code and weight_by_code[code] > request.profile.concentration_limit_percent:
+        if (
+            isinstance(weight_percent, (int, float))
+            and weight_percent > request.profile.concentration_limit_percent
+        ):
             if _action_bucket(action) >= ACTION_BUCKET_ADD:
                 action = "减仓评估"
         copy["action"] = action
@@ -158,7 +213,8 @@ _RISK_REVIEW_TASK_PROMPT_ENFORCED = (
     "你是风控经理，正在复核基金经理草拟的日报建议（draft_report.fund_recommendations）。\n"
     "输入：draft_report（草案）+ facts（含量价背离回测 flow_divergence_backtest、"
     "大盘情绪 market_breadth、三路量化证据 evidence 等）+ escalation_floors"
-    "（系统已按 facts 计算出的每只基金的最低动作档位，键为 fund_code）。\n"
+    "（系统已按 facts 计算出的每只持仓最低动作档位；唯一代码用 fund_code，"
+    "重复/未知代码用 holding_index 稳定键）。\n"
     "任务：\n"
     "1. 对草案中「观察/分批加仓」的建议，检查是否忽视了强空头证据"
     "（量价背离显著、板块方向不构成机会、情绪骤冷、量化证据背书不足）；"
@@ -184,7 +240,8 @@ _RISK_REVIEW_TASK_PROMPT_SHADOW = (
     "输入：draft_report（草案）+ facts（含量价背离回测 flow_divergence_backtest、"
     "大盘情绪 market_breadth、三路量化证据 evidence 等）+ escalation_floors"
     "（系统按 facts 计算出的、每只基金"
-    "「若启用新版守卫后会建议的」最低动作档位，键为 fund_code——当前处于灰度观察期，"
+    "「若启用新版守卫后会建议的」最低动作档位；唯一代码用 fund_code，"
+    "重复/未知代码用 holding_index 稳定键——当前处于灰度观察期，"
     "这些档位仅供参考，不是必须遵守的约束）。\n"
     "任务：\n"
     "1. 对草案中「观察/分批加仓」的建议，检查是否忽视了强空头证据"
@@ -208,14 +265,23 @@ def _llm_judge(
     escalation_floors: dict[str, dict] | None = None,
 ) -> dict:
     settings = get_settings()
+    from app.services.analysis_payload import (
+        compact_daily_draft_report_for_llm,
+        trim_analysis_facts_for_llm,
+    )
+
+    # The second-model review must consume the exact same compact facts contract
+    # as primary generation.  Reusing full server facts here would re-expose
+    # ledger snapshots and internal audits after the first LLM call.
+    llm_facts = trim_analysis_facts_for_llm(facts)
     task_prompt = (
         _RISK_REVIEW_TASK_PROMPT_ENFORCED
         if settings.decision_escalation_mode == "enforced"
         else _RISK_REVIEW_TASK_PROMPT_SHADOW
     )
     payload = {
-        "facts": facts,
-        "draft_report": parsed,
+        "facts": llm_facts,
+        "draft_report": compact_daily_draft_report_for_llm(parsed),
         "escalation_floors": escalation_floors or {},
         "task": task_prompt,
     }

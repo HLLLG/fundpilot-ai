@@ -24,6 +24,7 @@ def _candidate_pool() -> list[dict]:
             "fund_quality_score": 132.25,
             "sector_fit_score": 37.12,
             "quality_gate": {"status": "eligible", "eligible": True, "reasons": []},
+            "tradeability": _verified_tradeability(),
             "quality_reasons": ["板块高置信匹配", "近3/6月表现占优"],
             "quality_penalties": ["缺少近1年回撤"],
             "return_3m_percent": 18.2,
@@ -36,7 +37,23 @@ def _candidate_pool() -> list[dict]:
 
 def _facts() -> dict:
     return {
-        "portfolio_gap": {"available_budget_yuan": 50000, "holdings_slim": []},
+        "portfolio_snapshot": {
+            "stale": False,
+            "authoritative": True,
+            "position_complete": True,
+            "pending_transaction_count": 0,
+        },
+        "portfolio_position_truth": {
+            "position_complete": True,
+            "cash": {"known": True, "balance_yuan": 50000},
+            "positions": [],
+        },
+        "portfolio_gap": {
+            "available_budget_yuan": 50000,
+            "total_amount": 0,
+            "weight_denominator_yuan": 100000,
+            "holdings_slim": [],
+        },
         "sector_opportunities": [
             {
                 "sector_label": "半导体材料",
@@ -148,6 +165,43 @@ def test_report_parser_drops_retired_market_evidence_from_llm_output():
         analysis_mode="fast",
     )
 
+
+def _verified_tradeability() -> dict:
+    return {
+        "data_status": "partial",
+        "freshness": "fresh",
+        "purchase_state": "open",
+        "redemption_state": "open",
+        "currency": "CNY",
+        "minimum_purchase_yuan": 10.0,
+        "daily_purchase_limit_yuan": None,
+        "daily_purchase_limit_unlimited": True,
+        "standard_purchase_fee_tiers": [
+            {
+                "condition": "全部",
+                "fee_type": "percent",
+                "fee_percent": 0.0,
+                "flat_fee_yuan": None,
+                "min_amount_yuan": None,
+                "max_amount_yuan": None,
+                "source_rate": "standard_undiscounted",
+            }
+        ],
+        "redemption_fee_tiers": [
+            {
+                "condition": "大于等于0天",
+                "min_days": 0,
+                "max_days": None,
+                "fee_percent": 0.0,
+            }
+        ],
+        "sales_service_fee_annual_percent": 0.0,
+        "sales_service_fee_status": "known_zero",
+        "fee_freshness": "fresh",
+        "source_conflict": False,
+        "source_ids": ["pytest.tradeability"],
+    }
+
     rendered = str(report.model_dump(mode="json"))
     assert "北向" not in rendered
     assert report.summary == "市场震荡。仍需控制仓位。"
@@ -248,6 +302,7 @@ def test_guard_normalizes_action_confidence_and_downgrades_weak_evidence():
             "fund_quality_score": 48.0,
             "sector_fit_score": 12.0,
             "quality_gate": {"status": "eligible", "eligible": True, "reasons": []},
+            "tradeability": _verified_tradeability(),
             "quality_reasons": ["近3/6月表现占优"],
             "quality_penalties": ["板块匹配置信偏低", "缺少近1年回撤"],
             "return_3m_percent": 115.45,
@@ -320,6 +375,7 @@ def test_guard_caps_total_suggested_amount_to_budget():
             "fund_quality_score": 132.25,
             "sector_fit_score": 37.12,
             "quality_gate": {"status": "eligible", "eligible": True, "reasons": []},
+            "tradeability": _verified_tradeability(),
         },
         {
             "fund_code": "006081",
@@ -328,6 +384,7 @@ def test_guard_caps_total_suggested_amount_to_budget():
             "fund_quality_score": 90.0,
             "sector_fit_score": 35.0,
             "quality_gate": {"status": "eligible", "eligible": True, "reasons": []},
+            "tradeability": _verified_tradeability(),
         },
     ]
     parsed = {
@@ -370,7 +427,25 @@ def test_guard_caps_total_suggested_amount_to_budget():
         focus_sectors=[],
         scan_mode="full_market",
         candidate_pool=pool,
-        discovery_facts={"portfolio_gap": {"available_budget_yuan": 50000}},
+        discovery_facts={
+            "portfolio_snapshot": {
+                "stale": False,
+                "authoritative": True,
+                "position_complete": True,
+                "pending_transaction_count": 0,
+            },
+            "portfolio_position_truth": {
+                "position_complete": True,
+                "cash": {"known": True, "balance_yuan": 50000},
+                "positions": [],
+            },
+            "portfolio_gap": {
+                "available_budget_yuan": 50000,
+                "total_amount": 0,
+                "weight_denominator_yuan": 100000,
+                "holdings_slim": [],
+            },
+        },
         profile=profile,
         held_codes=set(),
         budget_yuan=50000,
@@ -380,8 +455,16 @@ def test_guard_caps_total_suggested_amount_to_budget():
 
     amounts = [rec.suggested_amount_yuan or 0 for rec in report.recommendations]
     assert sum(amounts) <= 50000
-    assert amounts == [40000, 10000]
-    assert any("总预算" in line for line in report.caveats)
+    # LLM 的两个 4 万元提议被完全忽略；保守策略当前首批只使用预算的 25%，
+    # 再由确定性 allocator 在候选间分配并按 100 元步长取整。
+    assert sum(amounts) == 12500
+    assert sorted(amounts) == [6200, 6300]
+    assert report.allocation_plan["policy"]["llm_amount_and_prose_ignored"] is True
+    assert report.allocation_plan["budget"]["current_tranche_cap_yuan"] == 12500
+    assert (
+        report.allocation_plan["unallocated_budget"]["deferred_future_tranches_yuan"]
+        == 37500
+    )
 
 
 def test_guard_syncs_llm_decision_path_after_action_change():
@@ -451,6 +534,7 @@ def test_guard_removes_free_text_conflicting_action_from_decision_path():
             "fund_quality_score": 90.0,
             "sector_fit_score": 35.0,
             "quality_gate": {"status": "eligible", "eligible": True, "reasons": []},
+            "tradeability": _verified_tradeability(),
         }
     ]
 

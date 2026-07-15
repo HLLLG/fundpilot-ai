@@ -32,10 +32,46 @@ def _pool_item(*, fund_quality_score: float | None) -> dict:
         "return_6m_percent": 31.4,
         "return_1y_percent": 42.0,
         "nav_trend": {"distance_from_high_percent": -8.5, "trend_label": "回调企稳"},
+        "tradeability": _verified_tradeability(),
     }
     if fund_quality_score is not None:
         entry["fund_quality_score"] = fund_quality_score
     return entry
+
+
+def _verified_tradeability() -> dict:
+    return {
+        "schema_version": "fund_tradeability.v1",
+        "fund_code": "020357",
+        "data_status": "complete",
+        "freshness": "fresh",
+        "can_purchase": True,
+        "purchase_state": "open",
+        "redemption_state": "open",
+        "currency": "CNY",
+        "minimum_purchase_yuan": 10.0,
+        "daily_purchase_limit_yuan": None,
+        "daily_purchase_limit_unlimited": True,
+        "revalidation_required": True,
+        "standard_purchase_fee_tiers": [
+            {
+                "condition": "all",
+                "fee_type": "percent",
+                "fee_percent": 0.0,
+                "source_rate": "standard_undiscounted",
+            }
+        ],
+        "redemption_fee_tiers": [
+            {"condition": ">=7d", "min_days": 7, "fee_percent": 0.0}
+        ],
+        "sales_service_fee_annual_percent": 0.0,
+        "share_class_fee_status": "standard_upper_bound_available",
+        "source_conflict": False,
+        "missing_fields": [],
+        "source_ids": ["pytest.tradeability"],
+        "checked_at": "2026-06-10T10:00:00+08:00",
+        "effective_at": "2026-06-10T10:00:00+08:00",
+    }
 
 
 def _rec(*, action: str = "建议关注", suggested_amount_yuan: float | None = None) -> dict:
@@ -76,6 +112,7 @@ def _run(
     profile: InvestorProfile | None = None,
     budget_yuan: float = 50000,
 ):
+    resolved_profile = profile or _profile()
     parsed = {
         "title": "机会扫描",
         "summary": "半导体材料方向。",
@@ -83,7 +120,25 @@ def _run(
         "caveats": [],
     }
     facts = {
-        "portfolio_gap": {"available_budget_yuan": budget_yuan, "holdings_slim": []},
+        "portfolio_snapshot": {
+            "stale": False,
+            "authoritative": True,
+            "position_complete": True,
+            "pending_transaction_count": 0,
+        },
+        "portfolio_position_truth": {
+            "position_complete": True,
+            "cash": {"known": True, "balance_yuan": budget_yuan},
+            "positions": [],
+        },
+        "portfolio_gap": {
+            "available_budget_yuan": budget_yuan,
+            "total_amount": 0,
+            "weight_denominator_yuan": (
+                resolved_profile.expected_investment_amount or 0
+            ),
+            "holdings_slim": [],
+        },
         "sector_opportunities": [opportunity],
     }
     return build_discovery_report_from_parsed(
@@ -93,7 +148,7 @@ def _run(
         scan_mode="full_market",
         candidate_pool=[pool_item],
         discovery_facts=facts,
-        profile=profile or _profile(),
+        profile=resolved_profile,
         held_codes=set(),
         budget_yuan=budget_yuan,
         sector_heat=[{"sector_label": "半导体材料", "change_1d_percent": 1.0}],
@@ -125,9 +180,8 @@ def test_does_not_exclude_when_fund_quality_strong_despite_weak_sector() -> None
     assert not any("已从候选池剔除" in line for line in report.caveats)
 
 
-def test_boosts_amount_cap_when_positive_resonance() -> None:
-    """量价背离显著 + 板块构成机会 + 基金质量分也够高：允许突破常规预算上限给更高
-    建议金额（本例集中度上限=30%，budget=50000 → 常规上限 15000，boost 1.2x → 18000）。"""
+def test_boost_keeps_amount_below_hard_cap_when_positive_resonance() -> None:
+    """积极共振只能提高软建议目标，不能突破预算集中度硬上限。"""
     report = _run(
         pool_item=_pool_item(fund_quality_score=80.0),
         opportunity=_opportunity(opportunity_available=True),
@@ -135,9 +189,8 @@ def test_boosts_amount_cap_when_positive_resonance() -> None:
     )
     assert len(report.recommendations) == 1
     rec = report.recommendations[0]
-    # 常规上限 15000 会被压缩，boost 后上限 18000 不压缩，原样保留。
-    assert rec.suggested_amount_yuan == 18000
-    assert any("已提高建议金额上限" in line for line in report.caveats)
+    assert rec.suggested_amount_yuan == 12500
+    assert any("软建议金额" in line for line in report.caveats)
     assert any("量价背离与基金质量共振积极" in point for point in rec.points)
 
 
@@ -150,8 +203,8 @@ def test_does_not_boost_when_fund_quality_only_moderate() -> None:
     )
     assert len(report.recommendations) == 1
     rec = report.recommendations[0]
-    # 常规上限 15000（budget 50000 * concentration 30%），未 boost，应被压缩到 15000。
-    assert rec.suggested_amount_yuan == 15000
+    # LLM boost 不再改金额；保守策略统一首批比例为预算的 25%。
+    assert rec.suggested_amount_yuan == 12500
     assert not any("已提高建议金额上限" in line for line in report.caveats)
 
 

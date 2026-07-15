@@ -1,13 +1,22 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import logging
 
+from app.config import get_settings
 from app.database import save_discovery_report
 from app.models import DiscoveryRequest, FundDiscoveryReport
 from app.services.discovery_candidate_pool import (
+    attach_candidate_benchmark_research,
     build_candidate_pool,
     enrich_candidates,
     finalize_candidate_pool,
+)
+from app.services.benchmark_mapping_service import load_decision_benchmark_specs
+from app.services.fund_benchmark_research import (
+    attach_fund_benchmark_metrics,
+    build_fund_benchmark_research_batch,
+    summarize_benchmark_research,
 )
 from app.services.discovery_client import DiscoveryClient
 from app.services.discovery_facts import build_discovery_facts
@@ -18,14 +27,34 @@ from app.services.discovery_sector_opportunity import (
 )
 from app.services.discovery_sector_heat import build_sector_heat_ranking
 from app.services.discovery_target_sectors import select_target_sectors
-from app.services.news_service import NewsService
+from app.services.analysis_runtime import (
+    limit_news_topics_for_runtime,
+    resolve_analysis_runtime,
+)
+from app.services.news_service import (
+    NewsService,
+    announcement_fetch_facts,
+    merge_market_news_with_announcements,
+)
 from app.services.news_summarizer import summarize_all_topics
 from app.services.risk import resolve_weight_denominator
 from app.services.decision_data_evidence import (
     attach_discovery_data_evidence,
     resolve_portfolio_preflight,
 )
+from app.services.decision_clock import capture_decision_clock
+from app.services.decision_time_call import (
+    call_with_optional_time,
+    prefetch_fund_announcements_compat,
+)
 
+from app.services.fund_tradeability import resolve_profile_min_holding_days
+from app.services.candidate_selection_audit import (
+    build_pipeline_candidate_selection_audit_v2,
+)
+from app.services.fund_lookthrough_context import build_fund_lookthrough_context
+
+logger = logging.getLogger(__name__)
 ProgressCallback = Callable[[str, str], None]
 
 DISCOVERY_JOB_STAGES: dict[str, str] = {
@@ -46,6 +75,9 @@ def run_discovery(
     request: DiscoveryRequest,
     on_progress: ProgressCallback | None = None,
 ) -> FundDiscoveryReport:
+    decision_clock = capture_decision_clock()
+    decision_at = decision_clock.decision_at
+    runtime = resolve_analysis_runtime(get_settings(), request.analysis_mode)
     def progress(stage: str) -> None:
         if on_progress is not None:
             on_progress(stage, DISCOVERY_JOB_STAGES.get(stage, stage))
@@ -53,6 +85,7 @@ def run_discovery(
     preflight = resolve_portfolio_preflight(
         request.holdings,
         allow_stale=request.allow_stale_portfolio_snapshot,
+        now=decision_at,
     )
     request = request.model_copy(
         update={
@@ -62,7 +95,11 @@ def run_discovery(
     )
     holdings = list(request.holdings)
     progress("sector_heat")
-    sector_heat = build_sector_heat_ranking()
+    sector_heat = call_with_optional_time(
+        build_sector_heat_ranking,
+        keyword="decision_at",
+        decision_at=decision_at,
+    )
     target_sectors = select_target_sectors(
         holdings,
         request.focus_sectors,
@@ -101,30 +138,89 @@ def run_discovery(
 
     selection_strategy = "balanced"
     progress("candidate_pool")
-    pool = build_candidate_pool(
+    recall_audit: dict = {}
+    pool = call_with_optional_time(
+        build_candidate_pool,
         target_sectors,
+        keyword="decision_at",
+        decision_at=decision_at,
         exclude_codes=held_codes,
         fund_type_preference="any",
         selection_strategy=selection_strategy,
         per_sector=prescreen_per_sector,
         pool_cap=prescreen_pool_cap,
         sector_opportunities=sector_opportunities,
+        recall_audit_sink=recall_audit,
     )
-    pool = enrich_candidates(pool)
+    pool = call_with_optional_time(
+        enrich_candidates,
+        pool,
+        keyword="decision_at",
+        decision_at=decision_at,
+    )
+    candidate_selection_audit_v1: dict = {}
+    candidate_selection_stages: dict = {}
     pool = finalize_candidate_pool(
         pool,
         target_sectors,
         per_sector=per_sector,
         pool_cap=pool_cap,
+        minimum_holding_days=resolve_profile_min_holding_days(request.profile),
+        audit_sink=candidate_selection_audit_v1,
+        stage_audit_sink=candidate_selection_stages,
     )
+    candidate_selection_audit = build_pipeline_candidate_selection_audit_v2(
+        decision_at=decision_at,
+        recall_snapshot=recall_audit,
+        gate_candidates=candidate_selection_stages.get("gate_candidates") or [],
+        prescreen_candidates=candidate_selection_stages.get("prescreen_candidates") or [],
+        final_candidates=candidate_selection_stages.get("final_candidates") or pool,
+    )
+    benchmark_specs = load_decision_benchmark_specs(
+        [item.get("fund_code") for item in pool],
+        decision_at=decision_at,
+    )
+    pool = attach_candidate_benchmark_research(
+        pool,
+        benchmark_specs,
+        decision_at=decision_at,
+    )
+    benchmark_metrics = build_fund_benchmark_research_batch(
+        pool,
+        decision_at=decision_at,
+    )
+    pool = attach_fund_benchmark_metrics(pool, benchmark_metrics)
 
     progress("news")
     news_service = NewsService()
     topics = list(dict.fromkeys(target_sectors + request.focus_sectors))
     if not topics:
         topics = ["上证指数"]
-    market_news = news_service.prefetch_topics(topics)
-    topic_briefs = summarize_all_topics(market_news, offline_only=True)
+    topics = limit_news_topics_for_runtime(topics, runtime)
+    market_news = call_with_optional_time(
+        news_service.prefetch_topics,
+        topics,
+        keyword="now",
+        decision_at=decision_at,
+    )
+    announcement_result = prefetch_fund_announcements_compat(
+        news_service,
+        [str(item.get("fund_code") or "") for item in pool[:12]],
+        decision_at=decision_at,
+    )
+    market_news = merge_market_news_with_announcements(
+        market_news,
+        list(announcement_result.get("items") or []),
+        now=decision_at,
+    )
+    announcement_meta = announcement_fetch_facts(announcement_result)
+    topic_briefs = call_with_optional_time(
+        summarize_all_topics,
+        market_news,
+        keyword="now",
+        decision_at=decision_at,
+        offline_only=True,
+    )
 
     total_amount = sum(item.holding_amount for item in holdings) or 0.0
     denominator = resolve_weight_denominator(holdings, request.profile)
@@ -148,6 +244,33 @@ def run_discovery(
         fund_type_preference="any",
         sector_opportunities=sector_opportunities,
         budget_enhancements=True,
+        decision_at=decision_at,
+    )
+    discovery_facts["fund_announcements"] = announcement_meta
+    discovery_facts["candidate_selection_audit"] = candidate_selection_audit
+    discovery_facts["candidate_selection_audit_v1"] = candidate_selection_audit_v1
+    discovery_facts["benchmark_specs"] = benchmark_specs
+    discovery_facts["benchmark_contract"] = {
+        "schema_version": "fund_benchmark_mapping.v1",
+        "lookup_policy": "cached_point_in_time_before_generation",
+        "formal_excess_policy": "verified_fund_contract_only",
+        "available_count": sum(
+            1 for spec in benchmark_specs.values() if spec.get("tier") != "unavailable"
+        ),
+        "unavailable_count": sum(
+            1 for spec in benchmark_specs.values() if spec.get("tier") == "unavailable"
+        ),
+    }
+    discovery_facts["benchmark_research"] = benchmark_metrics
+    discovery_facts["benchmark_research_contract"] = summarize_benchmark_research(
+        benchmark_metrics
+    )
+    discovery_facts["fund_lookthrough"] = build_fund_lookthrough_context(
+        holdings,
+        pool,
+        decision_at=decision_at,
+        analysis_mode=request.analysis_mode,
+        portfolio_context=request.portfolio_snapshot_context,
     )
     discovery_facts = attach_discovery_data_evidence(
         discovery_facts,
@@ -158,7 +281,8 @@ def run_discovery(
 
     progress("generating")
     role_prompt = request.system_role_prompt
-    report = DiscoveryClient().generate_report(
+    client = DiscoveryClient()
+    report = client.generate_report(
         target_sectors=target_sectors,
         focus_sectors=list(request.focus_sectors),
         scan_mode=request.scan_mode,
@@ -172,10 +296,46 @@ def run_discovery(
         topic_briefs=topic_briefs,
         analysis_mode=request.analysis_mode,
         system_role_prompt=role_prompt,
+        decision_at=decision_at,
+        announcement_meta=announcement_meta,
     )
     progress("guarding")
     progress("saving")
-    return save_discovery_report(report)
+    saved = save_discovery_report(report)
+    # Tests and compatible third-party adapters may provide a minimal
+    # DiscoveryClient replacement that predates the optional shadow channel.
+    # The champion report must remain authoritative in that case.
+    capture = getattr(client, "_prompt_shadow_capture", None)
+    if capture is not None:
+        try:
+            from app.services.prompt_shadow_service import (
+                finalize_prompt_shadow_champion,
+            )
+
+            trace = capture.trace_collector.require_trace()
+            category = str(trace.get("error_category") or "")
+            if client._last_report_parsed_payload is not None:
+                parse_status = "valid"
+            elif category == "empty_content":
+                parse_status = "empty"
+            elif trace.get("outcome") == "timeout":
+                parse_status = "timeout"
+            elif trace.get("outcome") == "http_error":
+                parse_status = "http_error"
+            elif trace.get("outcome") in {"transport_error", "interrupted"}:
+                parse_status = "provider_error"
+            else:
+                parse_status = "invalid"
+            finalize_prompt_shadow_champion(
+                capture=capture,
+                report=saved,
+                parse_status=parse_status,
+                raw_content=client._last_report_raw_content,
+                parsed_payload=client._last_report_parsed_payload,
+            )
+        except Exception:  # noqa: BLE001 - saved champion is authoritative
+            logger.exception("prompt-shadow champion evidence finalization deferred")
+    return saved
 
 
 def _opportunity_flow_labels(

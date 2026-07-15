@@ -6,16 +6,18 @@ import {
   ClipboardCheck,
   Newspaper,
   RefreshCw,
+  ScanSearch,
   SlidersHorizontal,
 } from "lucide-react";
 
+import { FundLookthroughEvidence } from "@/components/FundLookthroughEvidence";
 import { RebalanceSimulationPanel } from "@/components/RebalanceSimulationPanel";
 import { ReportNewsBriefPanel } from "@/components/ReportNewsBriefPanel";
 import { ReportOutcomesPanel } from "@/components/ReportOutcomesPanel";
 import { SectorOpportunityCard } from "@/components/SectorOpportunityCard";
-import type { Report, SectorRotationFacts } from "@/lib/api";
+import type { FundLookthroughResearch, Report, SectorRotationFacts } from "@/lib/api";
 
-type ReportTool = "news" | "rotation" | "rebalance" | "review";
+type ReportTool = "news" | "rotation" | "lookthrough" | "rebalance" | "review";
 
 type ReportToolSelection = {
   reportId: string;
@@ -39,6 +41,12 @@ const TOOLS = [
     title: "板块轮动参考",
     hint: "查看未持有的强势方向",
     icon: RefreshCw,
+  },
+  {
+    id: "lookthrough",
+    title: "持仓穿透证据",
+    hint: "核对披露下限与未知质量",
+    icon: ScanSearch,
   },
   {
     id: "rebalance",
@@ -65,6 +73,22 @@ function sectorRotationFacts(report: Report): SectorRotationFacts | null {
   return rotation?.available ? rotation : null;
 }
 
+function fundLookthroughResearch(report: Report): FundLookthroughResearch | null {
+  const research = report.analysis_facts?.fund_lookthrough;
+  return research && typeof research === "object" ? research : null;
+}
+
+function reportFundNames(report: Report): Record<string, string> {
+  const names: Record<string, string> = {};
+  for (const fund of [...report.snapshots, ...report.fund_recommendations]) {
+    const rawCode = fund.fund_code.trim();
+    const code = /^\d{1,6}$/.test(rawCode) ? rawCode.padStart(6, "0") : rawCode;
+    names[rawCode] = fund.fund_name;
+    names[code] = fund.fund_name;
+  }
+  return names;
+}
+
 export function ReportDetailsHub({ report, diagnostics }: ReportDetailsHubProps) {
   const [selection, setSelection] = useState<ReportToolSelection>(() => ({
     reportId: report.id,
@@ -77,12 +101,17 @@ export function ReportDetailsHub({ report, diagnostics }: ReportDetailsHubProps)
     [diagnostics, openTool],
   );
   const rotation = sectorRotationFacts(report);
+  const lookthrough = fundLookthroughResearch(report);
+  const candidateNames = reportFundNames(report);
   const availableTools = TOOLS.filter((tool) => {
     if (tool.id === "news") {
       return Boolean(report.topic_briefs?.length);
     }
     if (tool.id === "rotation") {
       return Boolean(rotation?.market_top.length);
+    }
+    if (tool.id === "lookthrough") {
+      return Boolean(lookthrough);
     }
     return true;
   });
@@ -159,6 +188,16 @@ export function ReportDetailsHub({ report, diagnostics }: ReportDetailsHubProps)
               item={item}
             />
           ))}
+        </div>
+      ) : null}
+
+      {openTool === "lookthrough" ? (
+        <div id="report-tool-lookthrough" className="mt-4 min-w-0">
+          <FundLookthroughEvidence
+            research={lookthrough}
+            candidateNames={candidateNames}
+            context="daily"
+          />
         </div>
       ) : null}
 

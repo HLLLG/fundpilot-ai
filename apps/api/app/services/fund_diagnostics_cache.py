@@ -6,7 +6,7 @@ from app.services.akshare_subprocess import run_akshare_json_script
 from app.services.sector_quote_cache import get_spot_snapshot, save_spot_snapshot
 from app.services.trading_session import build_trading_session
 
-_CACHE_VERSION = "v2"
+_CACHE_VERSION = "v4"
 _LIVE_TTL_SECONDS = 3600.0
 _CLOSED_TTL_SECONDS = 86400.0
 _INTRADAY_SESSIONS = {
@@ -44,7 +44,7 @@ def save_cached_fund_diagnostics(fund_code: str, diagnostics: dict) -> None:
 
 
 def load_fund_diagnostics(fund_code: str) -> dict:
-    """cache-aside：AkShare 基金概况 + 累计收益率。"""
+    """cache-aside：AkShare 基金概览 + 累计收益率。"""
     cached = get_cached_fund_diagnostics(fund_code)
     if cached is not None:
         return dict(cached)
@@ -83,7 +83,7 @@ def _dump_frame(frame):
 try:
     import akshare as ak
 
-    overview = ak.fund_open_fund_info_em(symbol={fund_code!r}, indicator="基金概况")
+    overview = ak.fund_overview_em(symbol={fund_code!r})
     cumulative = ak.fund_open_fund_info_em(symbol={fund_code!r}, indicator="累计收益率走势")
     print(json.dumps({{
         "overview": _dump_frame(overview),

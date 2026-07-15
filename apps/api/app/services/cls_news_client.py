@@ -4,17 +4,20 @@ import json
 import logging
 import subprocess
 import sys
-from datetime import date
-from functools import lru_cache
+from datetime import datetime
 
 from app.models import NewsItem
+from app.services.news_freshness import (
+    is_news_published_today,
+    normalize_news_now,
+    parse_news_published_at,
+)
 
 logger = logging.getLogger(__name__)
 
 _CLS_TIMEOUT_SECONDS = 25
 
 
-@lru_cache(maxsize=2)
 def fetch_cls_headlines(limit: int = 40) -> list[dict]:
     script = f"""
 import akshare as ak
@@ -25,7 +28,7 @@ try:
         print(json.dumps({{"items": []}}))
     else:
         items = []
-        for _, row in frame.head({max(limit, 1)}).iterrows():
+        for _, row in frame.iterrows():
             items.append({{str(k): (None if v != v else str(v)) for k, v in row.items()}})
         print(json.dumps({{"items": items}}))
 except Exception as e:
@@ -42,18 +45,24 @@ except Exception as e:
         if result.returncode != 0 or not result.stdout.strip():
             return []
         payload = json.loads(result.stdout.strip())
-        return payload.get("items") or []
+        items = payload.get("items") or []
+        return _rank_cls_rows(items)[: max(limit, 1)]
     except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError) as exc:
         logger.debug("cls news fetch failed: %s", exc)
         return []
 
 
-def search_cls_news(topic: str, limit: int = 5) -> list[NewsItem]:
+def search_cls_news(
+    topic: str,
+    limit: int = 5,
+    *,
+    now: datetime | None = None,
+) -> list[NewsItem]:
     topic = topic.strip()
     if not topic:
         return []
 
-    today = date.today().isoformat()
+    resolved_now = normalize_news_now(now)
     keywords = _topic_keywords(topic)
     matched: list[NewsItem] = []
     for row in fetch_cls_headlines(limit=60):
@@ -64,7 +73,7 @@ def search_cls_news(topic: str, limit: int = 5) -> list[NewsItem]:
         text = f"{title} {body}"
         if not any(keyword in text for keyword in keywords):
             continue
-        published = _cell(row, "发布时间", "发布日期", "date", "time") or ""
+        published = _published_at(row)
         matched.append(
             NewsItem(
                 topic=topic,
@@ -73,12 +82,10 @@ def search_cls_news(topic: str, limit: int = 5) -> list[NewsItem]:
                 source="cls",
                 url=_cell(row, "链接", "url"),
                 snippet=_truncate(body or title),
-                is_today=_is_today(published, today),
+                is_today=is_news_published_today(published, resolved_now),
             )
         )
-        if len(matched) >= limit:
-            break
-    return matched
+    return _rank_cls_items(matched)[: max(limit, 1)]
 
 
 def _topic_keywords(topic: str) -> list[str]:
@@ -98,10 +105,52 @@ def _cell(row: dict, *names: str) -> str | None:
     return None
 
 
-def _is_today(published: str | None, today: str) -> bool:
-    if not published:
-        return False
-    return today in published[:10]
+def _published_at(row: dict) -> str:
+    """Merge the split date/time shape returned by ``stock_info_global_cls``."""
+    date_part = _cell(row, "发布日期", "date")
+    time_part = _cell(row, "发布时间", "time")
+    if date_part and time_part:
+        parsed_date = parse_news_published_at(date_part)
+        if parsed_date.calendar_date is not None and not parsed_date.has_time:
+            combined = f"{date_part} {time_part}"
+            if parse_news_published_at(combined).calendar_date is not None:
+                return combined
+        if parse_news_published_at(time_part).calendar_date is not None:
+            return time_part
+    return date_part or time_part or ""
+
+
+def _published_sort_key(value: str | None) -> tuple[int, int, float]:
+    parsed = parse_news_published_at(value)
+    if parsed.calendar_date is None:
+        return (-1, 0, float("-inf"))
+    return (
+        parsed.calendar_date.toordinal(),
+        1 if parsed.moment is not None else 0,
+        parsed.moment.timestamp() if parsed.moment is not None else 0.0,
+    )
+
+
+def _rank_cls_rows(rows: list[dict]) -> list[dict]:
+    return sorted(
+        rows,
+        key=lambda row: (
+            _published_sort_key(_published_at(row)),
+            str(_cell(row, "标题", "title") or ""),
+        ),
+        reverse=True,
+    )
+
+
+def _rank_cls_items(items: list[NewsItem]) -> list[NewsItem]:
+    return sorted(
+        items,
+        key=lambda item: (
+            _published_sort_key(item.published_at),
+            item.title,
+        ),
+        reverse=True,
+    )
 
 
 def _truncate(value: str, max_len: int = 200) -> str | None:

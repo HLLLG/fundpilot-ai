@@ -96,7 +96,9 @@ def test_background_generate_report_uses_offline_topic_briefs(monkeypatch: pytes
         "_chat_completion",
         lambda self, **kwargs: {
             "content": (
-                '{"title":"t","summary":"s","fund_recommendations":[],'
+                '{"title":"t","summary":"s","fund_recommendations":['
+                '{"fund_code":"519674","fund_name":"Galaxy Growth",'
+                '"action":"观察","points":["p"]}],'
                 '"recommendations":[],"caveats":[]}'
             )
         },
@@ -145,7 +147,9 @@ def test_background_generate_report_skips_pre_generation_tool_rounds(
         "_chat_completion",
         lambda self, **kwargs: {
             "content": (
-                '{"title":"t","summary":"s","fund_recommendations":[],'
+                '{"title":"t","summary":"s","fund_recommendations":['
+                '{"fund_code":"519674","fund_name":"Galaxy Growth",'
+                '"action":"观察","points":["p"]}],'
                 '"recommendations":[],"caveats":[]}'
             )
         },

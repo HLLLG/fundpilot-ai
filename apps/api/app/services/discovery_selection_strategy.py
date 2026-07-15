@@ -53,6 +53,7 @@ def pick_sector_candidates(
     selection_strategy: SelectionStrategy,
     name_matches_sector,
     matches_fund_type,
+    as_of_date: date | None = None,
 ) -> list[dict]:
     """Pick up to _PER_SECTOR entries for one sector."""
     results = list(fixed_entries)
@@ -71,6 +72,7 @@ def pick_sector_candidates(
             limit=min(_NEW_ISSUE_SLOTS, remaining),
             name_matches_sector=name_matches_sector,
             matches_fund_type=matches_fund_type,
+            as_of_date=as_of_date,
         )
         results.extend(new_picks)
         remaining = max(_PER_SECTOR - len(results), 0)
@@ -103,11 +105,12 @@ def _pick_new_issue_for_sector(
     limit: int,
     name_matches_sector,
     matches_fund_type,
+    as_of_date: date | None = None,
 ) -> list[dict]:
     if limit <= 0:
         return []
 
-    cutoff = date.today() - timedelta(days=_NEW_ISSUE_MAX_AGE_DAYS)
+    cutoff = (as_of_date or date.today()) - timedelta(days=_NEW_ISSUE_MAX_AGE_DAYS)
     picks: list[dict] = []
     for row in rows:
         code = str(row.get("fund_code", "")).zfill(6)

@@ -234,6 +234,33 @@ def test_fetch_fund_benchmark_text_falls_back_when_akshare_unavailable(monkeypat
     assert "931743" in text or "半导体材料设备" in text
 
 
+def test_fetch_fund_benchmark_text_marks_xq_akshare_as_aggregator(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.fund_benchmark_sector.subprocess.run",
+        lambda *args, **kwargs: type(
+            "R",
+            (),
+            {
+                "returncode": 0,
+                "stdout": (
+                    '{"text":"reference index 931743 x 100%",'
+                    '"kind":"performance_benchmark"}'
+                ),
+            },
+        )(),
+    )
+    from app.services.fund_benchmark_sector import (
+        fetch_fund_benchmark_text,
+        get_fund_benchmark_fetch_metadata,
+    )
+
+    text = fetch_fund_benchmark_text("021533")
+    assert text == "reference index 931743 x 100%"
+    metadata = get_fund_benchmark_fetch_metadata("021533", text)
+    assert metadata["benchmark_text_kind"] == "performance_benchmark"
+    assert metadata["benchmark_text_source_kind"] == "xq_akshare_aggregator"
+
+
 def test_resolve_primary_sector_021533_uses_benchmark(monkeypatch):
     benchmark = "中证半导体材料设备主题指数收益率×95%+银行活期存款利率（税后）×5%"
 

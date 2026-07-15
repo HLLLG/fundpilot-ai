@@ -34,14 +34,18 @@ export function ReportRecommendationList({
             {needsAction.length} 只基金存在明确仓位动作
           </p>
           <div className="mt-3 min-w-0 space-y-3">
-            {needsAction.map((item) => (
-              <FundRecommendationCard
-                key={`${report.id}:${item.fund_code}`}
-                item={item}
-                report={report}
-                defaultExpanded
-              />
-            ))}
+            {needsAction.map((item) => {
+              const recommendationIndex = items.indexOf(item);
+              return (
+                <FundRecommendationCard
+                  key={`${report.id}:${recommendationIndex}:${item.fund_code}`}
+                  item={item}
+                  report={report}
+                  recommendationIndex={recommendationIndex}
+                  defaultExpanded
+                />
+              );
+            })}
           </div>
         </div>
       ) : null}
@@ -52,14 +56,18 @@ export function ReportRecommendationList({
             {observing.length} 只基金暂无立即交易动作
           </p>
           <div className="mt-3 min-w-0 space-y-2">
-            {observing.map((item) => (
-              <FundRecommendationCard
-                key={`${report.id}:${item.fund_code}`}
-                item={item}
-                report={report}
-                defaultExpanded={false}
-              />
-            ))}
+            {observing.map((item) => {
+              const recommendationIndex = items.indexOf(item);
+              return (
+                <FundRecommendationCard
+                  key={`${report.id}:${recommendationIndex}:${item.fund_code}`}
+                  item={item}
+                  report={report}
+                  recommendationIndex={recommendationIndex}
+                  defaultExpanded={false}
+                />
+              );
+            })}
           </div>
         </div>
       ) : null}

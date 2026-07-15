@@ -172,9 +172,9 @@ export function RiskControls({
           >
             <span className="flex min-w-0 items-center gap-2">
               <Sparkles size={15} className="shrink-0 text-[var(--brand)]" />
-              <span className="text-xs font-bold text-slate-700">AI 角色设定（高级）</span>
+              <span className="text-xs font-bold text-slate-700">AI 分析偏好附录（高级）</span>
               <span className="truncate text-[11px] font-semibold text-slate-500">
-                {isRolePromptCustom ? "已自定义" : "默认模板"}
+                {isRolePromptCustom ? "已添加" : "未添加"}
               </span>
             </span>
             <ChevronDown
@@ -190,7 +190,7 @@ export function RiskControls({
               className="inline-flex min-h-11 items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 text-[11px] font-bold text-slate-600 transition hover:bg-slate-50"
             >
               <RotateCcw size={12} />
-              恢复默认
+              清空附录
             </button>
           ) : null}
         </div>
@@ -200,7 +200,7 @@ export function RiskControls({
           </div>
         ) : (
           <p id="report-role-prompt-settings" className="border-t border-slate-100 px-3 py-2 text-[11px] leading-5 text-slate-500">
-            普通日报无需调整；仅在需要固定特殊研究方法时展开编辑。
+            普通日报无需填写；附录只能补充表达风格和关注角度，不能修改系统决策约束。
           </p>
         )}
       </div>

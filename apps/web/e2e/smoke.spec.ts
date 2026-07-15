@@ -38,6 +38,7 @@ test("offline analyze persists report", async ({ request }) => {
   const response = await request.post("/api/analyze", {
     headers: { Authorization: `Bearer ${token}` },
     data: {
+      analysis_mode: "fast",
       holdings: [
         {
           fund_code: "000000",

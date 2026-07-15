@@ -17,7 +17,11 @@ if str(_REPOSITORY_ROOT) not in sys.path:
 
 from app.db_migrations import run_migrations
 from scripts.backfill_decision_events_v2 import backfill_database
-from app.services.decision_repository import put_decision_event
+from app.services.decision_repository import (
+    canonical_json,
+    decision_event_content_hash,
+    normalize_decision_event,
+)
 from scripts.migrate_sqlite_to_mysql import (
     TABLES,
     ImmutableMigrationConflict,
@@ -195,62 +199,24 @@ def test_backfill_is_dry_run_by_default_full_scan_and_idempotent(tmp_path: Path)
 
     applied = backfill_database(path, apply=True, batch_size=7)
 
-    assert applied["errors"] == []
-    assert applied["events_inserted"] == daily_count + discovery_count
-    assert applied["snapshots_inserted"] == daily_count
+    assert applied["rollout_status"] == "legacy_apply_blocked_after_d2_rollout"
+    assert len(applied["errors"]) == 1
+    assert applied["errors"][0]["error"] == (
+        "legacy_decision_backfill_apply_blocked_after_d2_rollout"
+    )
+    assert len(applied["errors"][0]["marker_hash"]) == 64
+    assert applied["events_planned"] == daily_count + discovery_count
+    assert applied["events_inserted"] == 0
+    assert applied["snapshots_inserted"] == 0
     connection = sqlite3.connect(path)
-    connection.row_factory = sqlite3.Row
-    events = connection.execute(
-        "SELECT * FROM decision_events ORDER BY source_type, source_report_id"
-    ).fetchall()
-    assert len(events) == daily_count + discovery_count
-    assert all(row["is_backfilled"] == 1 for row in events)
-    assert all(row["metric_eligible"] == 0 for row in events)
+    assert connection.execute("SELECT COUNT(*) FROM decision_events").fetchone()[0] == 0
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM decision_portfolio_snapshots"
+        ).fetchone()[0]
+        == 0
+    )
     assert connection.execute("SELECT COUNT(*) FROM outcome_observations").fetchone()[0] == 0
-
-    older = json.loads(
-        connection.execute(
-            "SELECT payload FROM decision_events WHERE source_report_id = 'daily-000'"
-        ).fetchone()[0]
-    )
-    latest = json.loads(
-        connection.execute(
-            "SELECT payload FROM decision_events WHERE source_report_id = 'daily-001'"
-        ).fetchone()[0]
-    )
-    assert older["audit_status"] == "superseded_same_day"
-    assert older["audit_eligible"] is False
-    assert latest["audit_status"] == "legacy_backfilled"
-    assert latest["audit_eligible"] is True
-
-    # Historical facts intentionally contain tempting current-looking values;
-    # the backfill must still freeze both contracts as unavailable.
-    assert latest["benchmark"]["status"] == "unavailable"
-    assert latest["benchmark"]["components"] == []
-    assert latest["benchmark_mapping_id"] is None
-    assert latest["fee_policy"]["round_trip_fee_percent"] is None
-    assert latest["fee_policy"]["fee_source"] == "unavailable"
-
-    snapshot = json.loads(
-        connection.execute(
-            "SELECT payload FROM decision_portfolio_snapshots LIMIT 1"
-        ).fetchone()[0]
-    )
-    assert snapshot["authoritative"] is False
-    assert snapshot["position_complete"] is False
-    assert snapshot["source_paths"] == [
-        "report.holdings",
-        "analysis_facts.holdings",
-    ]
-
-    discovery_event = connection.execute(
-        """
-        SELECT portfolio_snapshot_id, payload FROM decision_events
-        WHERE source_report_id = 'discovery-000'
-        """
-    ).fetchone()
-    assert discovery_event["portfolio_snapshot_id"] is None
-    assert json.loads(discovery_event["payload"])["position_truth_status"] == "unknown"
 
     # Source report JSON is byte-for-byte unchanged.
     for (table, report_id), original in original_payloads.items():
@@ -258,20 +224,6 @@ def test_backfill_is_dry_run_by_default_full_scan_and_idempotent(tmp_path: Path)
             f"SELECT payload FROM {table} WHERE id = ?", (report_id,)
         ).fetchone()[0]
         assert current == original
-    connection.close()
-
-    repeated = backfill_database(path, apply=True, batch_size=5)
-    assert repeated["errors"] == []
-    assert repeated["events_inserted"] == 0
-    assert repeated["snapshots_inserted"] == 0
-    assert repeated["events_existing"] == daily_count + discovery_count
-    assert repeated["snapshots_existing"] == daily_count
-
-    connection = sqlite3.connect(path)
-    assert (
-        connection.execute("SELECT COUNT(*) FROM decision_events").fetchone()[0]
-        == daily_count + discovery_count
-    )
     connection.close()
 
 
@@ -307,22 +259,18 @@ def test_discovery_snapshot_is_only_built_from_embedded_historical_positions(
 
     result = backfill_database(path, apply=True, batch_size=1)
 
-    assert result["snapshots_inserted"] == 1
+    assert result["rollout_status"] == "legacy_apply_blocked_after_d2_rollout"
+    assert result["snapshots_planned"] == 1
+    assert result["snapshots_inserted"] == 0
+    assert result["events_inserted"] == 0
     connection = sqlite3.connect(path)
-    rows = dict(
+    assert connection.execute("SELECT COUNT(*) FROM decision_events").fetchone()[0] == 0
+    assert (
         connection.execute(
-            "SELECT source_report_id, portfolio_snapshot_id FROM decision_events"
-        ).fetchall()
-    )
-    assert rows["no-position"] is None
-    assert rows["with-position"] is not None
-    payload = json.loads(
-        connection.execute(
-            "SELECT payload FROM decision_portfolio_snapshots"
+            "SELECT COUNT(*) FROM decision_portfolio_snapshots"
         ).fetchone()[0]
+        == 0
     )
-    assert payload["authoritative"] is False
-    assert payload["position_complete"] is False
     connection.close()
 
 
@@ -358,9 +306,8 @@ def test_backfill_v2_presence_is_scoped_by_daily_or_discovery(tmp_path: Path) ->
     created = "2025-03-01T02:00:00+00:00"
     connection = sqlite3.connect(path)
     connection.row_factory = sqlite3.Row
-    put_decision_event(
-        user_id=1,
-        event={
+    existing_event = normalize_decision_event(
+        {
             "schema_version": "decision_event.v2",
             "event_id": "daily:shared-report:0:000001",
             "event_type": "daily_fund_decision",
@@ -374,8 +321,36 @@ def test_backfill_v2_presence_is_scoped_by_daily_or_discovery(tmp_path: Path) ->
             "action_category": "observation",
             "is_backfilled": False,
             "metric_eligible": True,
-        },
-        connection=connection,
+        }
+    )
+    connection.execute(
+        """
+        INSERT INTO decision_events (
+            userId, event_id, schema_version, event_type, source_type,
+            source_report_id, decision_at, decision_date, fund_code, fund_name,
+            final_action, action_category, eligible, is_backfilled,
+            metric_eligible, content_hash, payload, created_at
+        ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            existing_event["event_id"],
+            existing_event["schema_version"],
+            existing_event["event_type"],
+            existing_event["source_type"],
+            existing_event["source_report_id"],
+            existing_event["decision_at"],
+            existing_event["decision_date"],
+            existing_event["fund_code"],
+            existing_event["fund_name"],
+            existing_event["final_action"],
+            existing_event["action_category"],
+            int(bool(existing_event["eligible"])),
+            int(bool(existing_event["is_backfilled"])),
+            int(bool(existing_event["metric_eligible"])),
+            decision_event_content_hash(existing_event),
+            canonical_json(existing_event),
+            created,
+        ),
     )
     discovery = _discovery_payload("shared-report", created)
     connection.execute(
@@ -391,7 +366,9 @@ def test_backfill_v2_presence_is_scoped_by_daily_or_discovery(tmp_path: Path) ->
     result = backfill_database(path, apply=True, batch_size=1)
 
     assert result["reports_skipped_v2"] == 0
-    assert result["events_inserted"] == 1
+    assert result["rollout_status"] == "legacy_apply_blocked_after_d2_rollout"
+    assert result["events_planned"] == 1
+    assert result["events_inserted"] == 0
     connection = sqlite3.connect(path)
     assert (
         connection.execute(
@@ -400,12 +377,12 @@ def test_backfill_v2_presence_is_scoped_by_daily_or_discovery(tmp_path: Path) ->
             WHERE source_type = 'discovery' AND source_report_id = 'shared-report'
             """
         ).fetchone()[0]
-        == 1
+        == 0
     )
     connection.close()
 
 
-def test_backfill_dry_run_preflights_immutable_hash_conflicts(tmp_path: Path) -> None:
+def test_backfill_dry_run_previews_but_apply_is_rollout_blocked(tmp_path: Path) -> None:
     path = tmp_path / "backfill-conflict.db"
     _initialise_database(path)
     created = "2025-04-01T02:00:00+00:00"
@@ -417,33 +394,21 @@ def test_backfill_dry_run_preflights_immutable_hash_conflicts(tmp_path: Path) ->
     )
     connection.commit()
     connection.close()
-    first = backfill_database(path, apply=True)
-    assert first["events_inserted"] == 1
-
-    changed = _daily_payload("conflicting-report", created)
-    changed["fund_recommendations"][0]["action"] = "清仓"
-    connection = sqlite3.connect(path)
-    before = connection.execute(
-        "SELECT content_hash FROM decision_events"
-    ).fetchone()[0]
-    connection.execute(
-        "UPDATE reports SET payload = ? WHERE id = ?",
-        (json.dumps(changed, ensure_ascii=False), "conflicting-report"),
-    )
-    connection.commit()
-    connection.close()
 
     dry_run = backfill_database(path)
 
     assert dry_run["mode"] == "dry-run"
-    assert dry_run["immutable_conflicts"] == 1
-    assert dry_run["errors"][0]["error"] == "immutable_content_hash_conflict"
+    assert dry_run["rollout_status"] == "legacy_apply_blocked_after_d2_rollout"
+    assert dry_run["events_planned"] == 1
+    assert dry_run["errors"] == []
     applied = backfill_database(path, apply=True)
-    assert applied["immutable_conflicts"] == 1
+    assert applied["rollout_status"] == "legacy_apply_blocked_after_d2_rollout"
+    assert applied["errors"][0]["error"] == (
+        "legacy_decision_backfill_apply_blocked_after_d2_rollout"
+    )
     assert applied["events_inserted"] == 0
     connection = sqlite3.connect(path)
-    assert connection.execute("SELECT COUNT(*) FROM decision_events").fetchone()[0] == 1
-    assert connection.execute("SELECT content_hash FROM decision_events").fetchone()[0] == before
+    assert connection.execute("SELECT COUNT(*) FROM decision_events").fetchone()[0] == 0
     connection.close()
 
 

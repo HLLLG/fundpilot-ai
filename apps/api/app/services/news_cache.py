@@ -31,6 +31,7 @@ def get_cached_news(
     cache_date: str | None = None,
     *,
     max_age_seconds: int | None = None,
+    now: datetime | None = None,
 ) -> list[NewsItem] | None:
     key = _cache_key(topic, cache_date)
     with _connect() as connection:
@@ -45,8 +46,8 @@ def get_cached_news(
         updated_at = str(row["updated_at"] or "")
         try:
             parsed = datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
-            age = (datetime.now(timezone.utc) - parsed.astimezone(timezone.utc)).total_seconds()
-            if age > max_age_seconds:
+            age = (_as_utc(now) - _as_utc(parsed)).total_seconds()
+            if age < 0 or age > max_age_seconds:
                 return None
         except ValueError:
             return None
@@ -58,10 +59,12 @@ def save_cached_news(
     topic: str,
     items: list[NewsItem],
     cache_date: str | None = None,
+    *,
+    now: datetime | None = None,
 ) -> None:
     key = _cache_key(topic, cache_date)
     payload = json.dumps([item.model_dump(mode="json") for item in items], ensure_ascii=False)
-    now = datetime.now(timezone.utc).isoformat()
+    updated_at = _as_utc(now).isoformat()
     with _connect() as connection:
         _ensure_cache_table(connection)
         connection.execute(
@@ -69,6 +72,13 @@ def save_cached_news(
             INSERT OR REPLACE INTO news_cache (cache_key, payload, updated_at)
             VALUES (?, ?, ?)
             """,
-            (key, payload, now),
+            (key, payload, updated_at),
         )
         connection.commit()
+
+
+def _as_utc(value: datetime | None) -> datetime:
+    resolved = value or datetime.now(timezone.utc)
+    if resolved.tzinfo is None:
+        return resolved.replace(tzinfo=timezone.utc)
+    return resolved.astimezone(timezone.utc)

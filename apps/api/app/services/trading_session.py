@@ -51,6 +51,7 @@ def build_trading_session(when: datetime | None = None) -> dict:
 
     return {
         "timezone": "Asia/Shanghai",
+        "decision_at": moment.isoformat(),
         "local_datetime": moment.strftime("%Y-%m-%d %H:%M"),
         "calendar_date": today.isoformat(),
         "effective_trade_date": effective_trade_date,

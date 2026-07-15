@@ -9,6 +9,7 @@ from app.services.fund_profile import FundProfileService
 from app.services.risk import evaluate_portfolio_risk
 from app.services.decision_data_evidence import resolve_portfolio_preflight
 from app.database import save_report
+from app.services.decision_clock import capture_decision_clock
 
 ProgressCallback = Callable[[str, str], None]
 
@@ -17,9 +18,11 @@ def run_analysis(
     request: AnalysisRequest,
     on_progress: ProgressCallback | None = None,
 ) -> Report:
+    decision_clock = capture_decision_clock()
     preflight = resolve_portfolio_preflight(
         request.holdings,
         allow_stale=request.allow_stale_portfolio_snapshot,
+        now=decision_clock.decision_at,
     )
     request = request.model_copy(
         update={
@@ -47,6 +50,7 @@ def run_analysis(
         snapshots,
         nav_trends_by_code=nav_trends,
         on_progress=on_progress,
+        decision_at=decision_clock.decision_at,
     )
     progress("saving")
     return save_report(report)

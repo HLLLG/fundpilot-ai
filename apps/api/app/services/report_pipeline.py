@@ -21,7 +21,13 @@ def build_pipeline_metadata(
     return {
         "analysis_mode": runtime.mode,
         "model": runtime.model,
-        "news_tool_rounds": runtime.news_tool_max_rounds,
+        # ``news_tool_rounds`` is retained for older readers, but now has the
+        # only truthful meaning it can have: rounds actually executed by the
+        # main report generator.  Configured capacity is a separate field.
+        "news_retrieval_policy": runtime.news_retrieval_policy,
+        "news_tool_rounds": runtime.news_tool_rounds_executed,
+        "news_tool_rounds_configured": runtime.news_tool_rounds_configured,
+        "news_tool_rounds_executed": runtime.news_tool_rounds_executed,
         "news_count": len(news),
         "today_news_count": count_today_news(news),
         "topic_brief_count": len(briefs),

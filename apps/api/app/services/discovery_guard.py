@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import re
-from math import isfinite
+from collections.abc import Mapping
+from dataclasses import dataclass
+from math import floor, isfinite
 
 from app.config import get_settings
 from app.models import DiscoveryRecommendation, EliminatedCandidate, InvestorProfile, NewsItem, TopicBrief
@@ -16,6 +18,179 @@ from app.services.decision_guard_shared import (
     track_label as _track_label,
 )
 from app.services.news_citation import _collect_citable_titles, _matches_known_title
+from app.services.sector_canonical import get_canonical_sector, get_intraday_canonical_sector
+from app.services.sector_labels import normalize_sector_label
+from app.services.discovery_sector_context import execution_qualified_fund_codes
+from app.services.fund_tradeability import (
+    assess_tradeability_for_amount,
+    build_tradeability_gate,
+    compact_tradeability_for_llm,
+    resolve_profile_min_holding_days,
+)
+
+
+@dataclass(frozen=True)
+class AmountCapResult:
+    """Deterministic executable ceiling for one discovery recommendation."""
+
+    available: bool
+    cap_yuan: float | None
+    existing_sector_amount_yuan: float | None = None
+    reasons: tuple[str, ...] = ()
+
+
+def _normalized_sector_key(value: object) -> str:
+    label = normalize_sector_label(str(value or ""))
+    canonical = get_intraday_canonical_sector(label) or get_canonical_sector(label)
+    if canonical is not None:
+        label = normalize_sector_label(canonical.label)
+    return label.casefold()
+
+
+def _finite_nonnegative(value: object) -> float | None:
+    parsed = _as_float(value)
+    if parsed is None or not isfinite(parsed) or parsed < 0:
+        return None
+    return float(parsed)
+
+
+def resolve_discovery_amount_cap(
+    *,
+    portfolio_truth: Mapping[str, object] | None,
+    holdings_slim: list[dict] | None,
+    candidate_sector: str,
+    allocated_by_sector: Mapping[str, float],
+    allocated_total_yuan: float,
+    request_budget_yuan: float,
+    concentration_limit_percent: float,
+    weight_denominator_yuan: float | None,
+) -> AmountCapResult:
+    """Resolve the hard amount cap without trusting an LLM-proposed amount.
+
+    The cap is the minimum remaining allowance across request budget, confirmed
+    cash, the request-level concentration budget, and the portfolio's existing
+    plus newly allocated exposure to the same sector. Unknown cash or sector
+    exposure is never interpreted as zero.
+    """
+
+    reasons: list[str] = []
+    sector_key = _normalized_sector_key(candidate_sector)
+    if not sector_key or sector_key in {"未分类", "未知", "unknown"}:
+        reasons.append("sector_exposure_unknown")
+
+    allocated_total = _finite_nonnegative(allocated_total_yuan)
+    request_budget = _finite_nonnegative(request_budget_yuan)
+    concentration_limit = _finite_nonnegative(concentration_limit_percent)
+    denominator = _finite_nonnegative(weight_denominator_yuan)
+    if (
+        allocated_total is None
+        or request_budget is None
+        or concentration_limit is None
+        or concentration_limit > 100
+    ):
+        reasons.append("invalid_amount_input")
+
+    truth = portfolio_truth if isinstance(portfolio_truth, Mapping) else None
+    cash_balance: float | None = None
+    if truth is None:
+        reasons.append("cash_unknown")
+    else:
+        cash = truth.get("cash")
+        if not isinstance(cash, Mapping) or cash.get("known") is not True:
+            reasons.append("cash_unknown")
+        else:
+            cash_balance = _finite_nonnegative(cash.get("balance_yuan"))
+            if cash_balance is None:
+                reasons.append("invalid_cash_balance")
+        if (
+            truth.get("position_complete") is not True
+            or truth.get("ledger_truncated") is True
+            or int(_finite_nonnegative(truth.get("pending_transaction_count")) or 0) > 0
+            or int(_finite_nonnegative(truth.get("conflict_count")) or 0) > 0
+        ):
+            reasons.append("position_truth_incomplete")
+
+    rows = holdings_slim if isinstance(holdings_slim, list) else None
+    if rows is None:
+        reasons.append("sector_exposure_unknown")
+        rows = []
+    existing_total = 0.0
+    existing_sector_amount = 0.0
+    for row in rows:
+        if not isinstance(row, dict):
+            reasons.append("sector_exposure_unknown")
+            continue
+        amount = _finite_nonnegative(row.get("holding_amount"))
+        if amount is None:
+            reasons.append("sector_exposure_unknown")
+            continue
+        existing_total += amount
+        if amount <= 0:
+            continue
+        holding_sector = _normalized_sector_key(row.get("sector_name"))
+        if not holding_sector or holding_sector in {"未分类", "未知", "unknown"}:
+            reasons.append("sector_exposure_unknown")
+            continue
+        if holding_sector == sector_key:
+            existing_sector_amount += amount
+
+    normalized_allocations: dict[str, float] = {}
+    for raw_sector, raw_amount in allocated_by_sector.items():
+        allocation = _finite_nonnegative(raw_amount)
+        allocation_sector = _normalized_sector_key(raw_sector)
+        if allocation is None or not allocation_sector:
+            reasons.append("invalid_amount_input")
+            continue
+        normalized_allocations[allocation_sector] = (
+            normalized_allocations.get(allocation_sector, 0.0) + allocation
+        )
+    allocated_sector = normalized_allocations.get(sector_key, 0.0)
+
+    if denominator is None:
+        reasons.append("invalid_amount_input")
+    elif denominator <= 0 and request_budget is not None:
+        # A genuinely empty portfolio still needs a denominator for its first
+        # allocation. The explicit request budget is the most conservative
+        # transaction-scale truth available at this boundary.
+        denominator = max(existing_total, request_budget)
+
+    if reasons:
+        return AmountCapResult(
+            available=False,
+            cap_yuan=None,
+            existing_sector_amount_yuan=(
+                round(existing_sector_amount, 2) if rows is not None else None
+            ),
+            reasons=tuple(dict.fromkeys(reasons)),
+        )
+
+    assert allocated_total is not None
+    assert request_budget is not None
+    assert concentration_limit is not None
+    assert denominator is not None
+    assert cash_balance is not None
+    limit_ratio = concentration_limit / 100
+    remaining_request_budget = max(request_budget - allocated_total, 0.0)
+    remaining_cash = max(cash_balance - allocated_total, 0.0)
+    remaining_request_sector = max(
+        request_budget * limit_ratio - allocated_sector,
+        0.0,
+    )
+    remaining_portfolio_sector = max(
+        denominator * limit_ratio - existing_sector_amount - allocated_sector,
+        0.0,
+    )
+    cap = min(
+        remaining_request_budget,
+        remaining_cash,
+        remaining_request_sector,
+        remaining_portfolio_sector,
+    )
+    return AmountCapResult(
+        available=True,
+        cap_yuan=floor(max(cap, 0.0) * 100) / 100,
+        existing_sector_amount_yuan=round(existing_sector_amount, 2),
+    )
 
 
 def _known_portfolio_cash_yuan(discovery_facts: dict | None) -> float | None:
@@ -24,8 +199,9 @@ def _known_portfolio_cash_yuan(discovery_facts: dict | None) -> float | None:
         return None
     cash = truth.get("cash")
     if not isinstance(cash, dict) or cash.get("known") is not True:
-        # Unknown cash is not zero.  The explicit request budget remains the only
-        # cap until the user confirms a cash baseline.
+        # Unknown cash is not zero. The amount-cap resolver distinguishes this
+        # state and fails closed instead of silently treating the request budget
+        # as confirmed cash.
         return None
     value = _as_float(cash.get("balance_yuan"))
     if value is None or not isfinite(value):
@@ -63,6 +239,7 @@ def apply_discovery_guards(
     eliminated: list[EliminatedCandidate] = []
     seen_recommendation_codes: set[str] = set()
     allocated_amount = 0.0
+    allocated_by_sector: dict[str, float] = {}
     parsed_budget = _as_float(budget_yuan)
     requested_budget_yuan = (
         max(parsed_budget, 0.0)
@@ -107,15 +284,11 @@ def apply_discovery_guards(
     evidence_blocked_codes: dict[str, list[str]] = {}
     factor_scores = (discovery_facts or {}).get("candidate_factor_scores")
     quant_gate_active = isinstance(factor_scores, dict)
-    quant_covered_codes = {
-        str(code).zfill(6)
-        for code in (
-            factor_scores.get("applicable_fund_codes")
-            if isinstance(factor_scores, dict)
-            else []
-        )
-        or []
-    }
+    quant_covered_codes = set(
+        execution_qualified_fund_codes(factor_scores)
+        if isinstance(factor_scores, dict)
+        else []
+    )
     factor_ic_status = (
         factor_scores.get("ic_status") if isinstance(factor_scores, dict) else {}
     )
@@ -126,20 +299,10 @@ def apply_discovery_guards(
         and factor_ic_status.get("available", True) is not False
         and factor_scores.get("available") is True
     )
-    if (
-        quant_gate_active
-        and factor_ic_usable
-        and not quant_covered_codes
-        and isinstance(factor_scores, dict)
-    ):
-        quant_covered_codes = {
-            str(row.get("fund_code") or "").zfill(6)
-            for row in factor_scores.get("holdings") or []
-            if isinstance(row, dict) and row.get("applicable") is True
-        }
     if quant_gate_active and not factor_ic_usable:
         quant_covered_codes = set()
     quant_blocked_codes: set[str] = set()
+    profile_min_holding_days = resolve_profile_min_holding_days(profile)
 
     for rec in recommendations:
         code = rec.fund_code.strip().zfill(6)
@@ -154,8 +317,17 @@ def apply_discovery_guards(
             caveats.append(f"已持有 {code}，不作为新买入推荐。")
             continue
 
-        copy = rec.model_copy(deep=True)
+        copy = _strip_untrusted_discovery_execution_text(rec)
         pool_item = pool_by_code.get(code, {})
+        tradeability = (
+            pool_item.get("tradeability")
+            if isinstance(pool_item.get("tradeability"), Mapping)
+            else None
+        )
+        tradeability_gate = build_tradeability_gate(tradeability)
+        # LLM 输出中的同名字段不可信；始终以候选事实快照覆盖。
+        copy.tradeability = compact_tradeability_for_llm(tradeability)
+        copy.cost_assessment = {}
         quality_gate = (
             pool_item.get("quality_gate")
             if isinstance(pool_item.get("quality_gate"), dict)
@@ -330,7 +502,6 @@ def apply_discovery_guards(
             copy.points = [note, *copy.points]
             caveats.append(f"{code} 证据不足，已将动作从「{previous}」降为「建议关注」。")
 
-        amount_boost_multiplier = 1.0
         if (
             escalation.get("action") == "boost"
             and not execution_blocked
@@ -338,12 +509,14 @@ def apply_discovery_guards(
         ):
             basis = str(escalation.get("basis") or "")
             if enforced:
-                amount_boost_multiplier = float(escalation.get("amount_multiplier") or 1.0)
                 copy.points = [
-                    f"量价背离与基金质量共振积极，系统已允许提高建议买入金额上限（{basis}）。",
+                    f"量价背离与基金质量共振积极，仅形成软建议提额信号，"
+                    f"但仍受现金、预算和集中度硬上限约束（{basis}）。",
                     *copy.points,
                 ]
-                caveats.append(f"{code} 证据强烈支持该方向，已提高建议金额上限。")
+                caveats.append(
+                    f"{code} 证据强烈支持该方向，形成软建议金额提额信号；硬上限保持不变。"
+                )
             else:
                 copy.validation_notes = [
                     *copy.validation_notes,
@@ -357,12 +530,6 @@ def apply_discovery_guards(
                 "当前为观察或等待条件，未生成可执行买入金额。"
             )
 
-        max_single = (
-            spendable_budget_yuan
-            * profile.concentration_limit_percent
-            / 100
-            * amount_boost_multiplier
-        )
         amount = _as_float(copy.suggested_amount_yuan)
         if copy.suggested_amount_yuan is not None and (
             amount is None or not isfinite(amount) or amount <= 0
@@ -383,25 +550,147 @@ def apply_discovery_guards(
             copy.amount_note = (
                 "已确认可执行预算或可用现金为 0，本次未生成买入金额。"
             )
-        if copy.suggested_amount_yuan is not None and max_single > 0:
-            if copy.suggested_amount_yuan > max_single:
-                copy.suggested_amount_yuan = round(max_single, 0)
-                copy.amount_note = (
-                    f"示意金额已压至单只集中度上限约 {profile.concentration_limit_percent:.0f}%"
-                )
-
         if copy.suggested_amount_yuan is not None and spendable_budget_yuan > 0:
-            remaining = max(spendable_budget_yuan - allocated_amount, 0.0)
-            if copy.suggested_amount_yuan > remaining:
-                adjusted = round(remaining, 0)
-                copy.suggested_amount_yuan = adjusted if adjusted >= 100 else None
+            portfolio_gap = (discovery_facts or {}).get("portfolio_gap")
+            if not isinstance(portfolio_gap, dict):
+                portfolio_gap = {}
+            portfolio_truth = (discovery_facts or {}).get("portfolio_position_truth")
+            if not isinstance(portfolio_truth, Mapping):
+                portfolio_truth = None
+            holdings_slim = portfolio_gap.get("holdings_slim")
+            if not isinstance(holdings_slim, list):
+                positions = (
+                    portfolio_truth.get("positions")
+                    if isinstance(portfolio_truth, Mapping)
+                    else None
+                )
+                holdings_slim = [] if isinstance(positions, list) and not positions else None
+            denominator = _as_float(portfolio_gap.get("weight_denominator_yuan"))
+            if denominator is None:
+                denominator = _as_float(profile.expected_investment_amount)
+            if denominator is None:
+                denominator = _as_float(portfolio_gap.get("total_amount"))
+            if denominator is None:
+                denominator = 0.0
+            cap = resolve_discovery_amount_cap(
+                portfolio_truth=portfolio_truth,
+                holdings_slim=holdings_slim,
+                candidate_sector=copy.sector_name,
+                allocated_by_sector=allocated_by_sector,
+                allocated_total_yuan=allocated_amount,
+                request_budget_yuan=requested_budget_yuan,
+                concentration_limit_percent=profile.concentration_limit_percent,
+                weight_denominator_yuan=denominator,
+            )
+            if not cap.available:
+                copy.suggested_amount_yuan = None
                 copy.amount_note = _join_amount_note(
                     copy.amount_note,
-                    f"示意金额已按总预算剩余额度压缩至约 {adjusted:.0f} 元",
+                    "现金或同板块敞口无法完整核验，系统已清除可执行金额",
                 )
-                caveats.append(f"{code} 示意金额已按总预算剩余额度压缩。")
-            if copy.suggested_amount_yuan is not None:
-                allocated_amount += float(copy.suggested_amount_yuan)
+                copy.validation_notes = [
+                    *copy.validation_notes,
+                    "金额硬上限缺少可核验的现金、仓位或板块敞口；未知值未按 0 处理。",
+                ]
+                caveats.append(f"{code} 金额硬上限无法完整核验，已阻断可执行金额。")
+            else:
+                hard_cap = float(cap.cap_yuan or 0.0)
+                if hard_cap < 100:
+                    copy.suggested_amount_yuan = None
+                    copy.amount_note = _join_amount_note(
+                        copy.amount_note,
+                        (
+                            "现金、总预算或同板块集中度剩余额度低于 100 元，"
+                            "未达到最小示意执行额"
+                        ),
+                    )
+                    caveats.append(
+                        f"{code} 的确定性硬上限低于最小示意执行额，已清除金额。"
+                    )
+                elif copy.suggested_amount_yuan > hard_cap:
+                    adjusted = float(floor(hard_cap))
+                    copy.suggested_amount_yuan = adjusted
+                    copy.amount_note = _join_amount_note(
+                        copy.amount_note,
+                        (
+                            "示意金额已按现金、总预算及已有/本轮同板块"
+                            f"集中度硬上限压缩至约 {adjusted:.0f} 元"
+                        ),
+                    )
+                    caveats.append(
+                        f"{code} 示意金额已按现金、总预算或同板块集中度硬上限压缩。"
+                    )
+                if copy.suggested_amount_yuan is not None:
+                    trade_limit = _as_float(
+                        tradeability_gate.get("max_purchase_yuan")
+                    )
+                    if (
+                        trade_limit is not None
+                        and isfinite(trade_limit)
+                        and trade_limit >= 0
+                        and copy.suggested_amount_yuan > trade_limit
+                    ):
+                        adjusted = float(floor(trade_limit))
+                        copy.suggested_amount_yuan = adjusted if adjusted > 0 else None
+                        copy.amount_note = _join_amount_note(
+                            copy.amount_note,
+                            f"示意金额已按该份额单日申购限额压缩至约 {adjusted:.0f} 元",
+                        )
+                        caveats.append(f"{code} 示意金额已按份额单日申购限额压缩。")
+
+                if copy.suggested_amount_yuan is not None:
+                    assessment = assess_tradeability_for_amount(
+                        tradeability,
+                        amount_yuan=copy.suggested_amount_yuan,
+                        hold_horizon=(
+                            f"用户预设最短持有期 {profile_min_holding_days} 天"
+                            if profile_min_holding_days is not None
+                            else profile.horizon
+                        ),
+                        minimum_holding_days=profile_min_holding_days,
+                    )
+                    copy.cost_assessment = assessment
+                    if assessment.get("executable") is not True:
+                        notes = [
+                            str(item)
+                            for item in assessment.get("notes") or []
+                            if str(item).strip()
+                        ]
+                        copy.action = "建议关注"
+                        copy.suggested_amount_yuan = None
+                        copy.amount_note = _join_amount_note(
+                            copy.amount_note,
+                            "份额可交易性或持有期费用门禁未通过，已清除可执行金额",
+                        )
+                        copy.validation_notes = [
+                            *copy.validation_notes,
+                            *(notes[:3] or ["份额可交易性门禁未通过"]),
+                        ]
+                        caveats.append(
+                            f"{code} 未通过申购状态、限额、购买起点或持有期费用门禁，已降为研究观察。"
+                        )
+                    else:
+                        total_cost = _as_float(
+                            assessment.get("estimated_total_cost_upper_bound_percent")
+                        )
+                        if total_cost is not None:
+                            copy.amount_note = _join_amount_note(
+                                copy.amount_note,
+                                f"按未折扣标准费率估算的最低持有期成本上限约 {total_cost:.2f}%",
+                            )
+                        if assessment.get("fee_status") == "execution_verification_required":
+                            copy.validation_notes = [
+                                *copy.validation_notes,
+                                "销售平台实际申购/赎回费仍须下单前核验，当前未宣称成本最优。",
+                            ]
+
+                if copy.suggested_amount_yuan is not None:
+                    final_allocated = float(copy.suggested_amount_yuan)
+                    allocated_amount += final_allocated
+                    sector_key = _normalized_sector_key(copy.sector_name)
+                    allocated_by_sector[sector_key] = (
+                        allocated_by_sector.get(sector_key, 0.0) + final_allocated
+                    )
 
         if copy.action == "分批买入":
             final_amount = _as_float(copy.suggested_amount_yuan)
@@ -443,6 +732,7 @@ def apply_discovery_guards(
             copy.validation_notes = [
                 value for value in copy.validation_notes if not contains_executable_decision_text(value)
             ] + ["字段级证据时点校验未通过，买入动作与金额已被确定性阻断。"]
+        _enforce_discovery_execution_projection(copy)
         copy.news_bullish = _filter_news_titles(copy.news_bullish, titles)
         _humanize_recommendation_text(copy)
         guarded.append(copy)
@@ -489,6 +779,87 @@ def _normalize_discovery_action(action: str) -> str:
     if any(token in text for token in ("分批", "买入", "加仓", "少量", "定投", "试探")):
         return "分批买入"
     return "建议关注"
+
+
+def finalize_discovery_allocation_projection(
+    recommendation: DiscoveryRecommendation,
+) -> DiscoveryRecommendation:
+    """Re-synchronize user-facing execution fields after server allocation."""
+
+    _sync_decision_path_with_final_action(recommendation)
+    _enforce_discovery_execution_projection(recommendation)
+    return recommendation
+
+
+def _strip_untrusted_discovery_execution_text(
+    rec: DiscoveryRecommendation,
+) -> DiscoveryRecommendation:
+    from app.services.decision_data_evidence import (
+        contains_high_risk_trade_instruction_text,
+        contains_trade_instruction_text,
+    )
+
+    copy = rec.model_copy(deep=True)
+    copy.points = [
+        value for value in copy.points if not contains_trade_instruction_text(value)
+    ]
+    copy.sector_evidence = [
+        value
+        for value in copy.sector_evidence
+        if not contains_trade_instruction_text(value)
+    ]
+    copy.fund_evidence = [
+        value
+        for value in copy.fund_evidence
+        if not contains_trade_instruction_text(value)
+    ]
+    copy.validation_notes = [
+        value
+        for value in copy.validation_notes
+        if not contains_trade_instruction_text(value)
+    ]
+    copy.risks = [
+        value for value in copy.risks if not contains_trade_instruction_text(value)
+    ]
+    if contains_high_risk_trade_instruction_text(copy.decision_path):
+        copy.decision_path = ""
+    copy.amount_note = None
+    copy.suggested_position_change_percent = None
+    copy.suggested_position_change_basis = ""
+    return copy
+
+
+def _enforce_discovery_execution_projection(rec: DiscoveryRecommendation) -> None:
+    executable = rec.action == "分批买入"
+    amount = _as_float(rec.suggested_amount_yuan)
+    if not executable or amount is None or not isfinite(amount) or amount <= 0:
+        rec.suggested_amount_yuan = None
+        rec.amount_note = "最终动作非买入或金额未通过校验，系统未生成可执行金额。"
+        rec.suggested_position_change_percent = None
+        rec.suggested_position_change_basis = ""
+    else:
+        rec.suggested_amount_yuan = float(amount)
+        rec.amount_note = (
+            f"系统校验后的示意买入金额约 {float(amount):,.0f} 元；"
+            "不得突破已确认现金、请求预算与同板块集中度硬上限。"
+        )
+        position = rec.suggested_position_change_percent
+        if position is not None and (
+            not isfinite(float(position)) or float(position) <= 0
+        ):
+            rec.suggested_position_change_percent = None
+            rec.suggested_position_change_basis = ""
+        elif position is not None:
+            rec.suggested_position_change_basis = (
+                "系统依据最终买入动作与确定性规则计算，非模型自由给值"
+            )
+
+    projection = f"系统校验后的最终动作：{rec.action}。"
+    if rec.suggested_amount_yuan is not None:
+        projection += f"示意金额约 {float(rec.suggested_amount_yuan):,.0f} 元。"
+    rec.points = [*rec.points, projection]
+    if not rec.decision_path:
+        rec.decision_path = f"确定性守卫完成候选、证据与预算校验；最终动作：{rec.action}。"
 
 
 def _profile_drawdown_limit(profile: InvestorProfile) -> float:

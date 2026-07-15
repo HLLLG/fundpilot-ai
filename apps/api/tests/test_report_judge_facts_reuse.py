@@ -66,9 +66,26 @@ def test_judge_does_not_call_build_analysis_facts():
         "title": "test",
         "summary": "ok",
         "fund_recommendations": [
-            {"fund_code": "519674", "fund_name": "银河创新成长", "action": "观察"}
+            {
+                "fund_code": "519674",
+                "fund_name": "银河创新成长",
+                "action": "观察",
+                # The legacy parser stringifies arbitrary objects in text-list
+                # fields. The review payload must not carry that serialized
+                # server-only state into the second model.
+                "validation_notes": [
+                    {
+                        "position_snapshot": {
+                            "raw_events": ["JUDGE_DRAFT_LEDGER_LEAK_SENTINEL"]
+                        }
+                    }
+                ],
+            }
         ],
         "caveats": [],
+        "claim_audit_shadow": {
+            "changes": ["JUDGE_DRAFT_AUDIT_LEAK_SENTINEL"]
+        },
     }
     snapshots = [FundSnapshot(fund_code="519674", fund_name="银河创新成长", source="test")]
     runtime = resolve_analysis_runtime(get_settings(), "fast")
@@ -329,6 +346,43 @@ def test_deep_mode_llm_judge_receives_risk_review_persona_and_escalation_floors(
             },
         }
     ]
+    facts["fund_lookthrough"] = {
+        "schema_version": "fund_lookthrough_research.v1",
+        "status": "qualified",
+        "scope": "portfolio_only",
+        "research_qualified": True,
+        "execution_qualified": False,
+        "reason_codes": [],
+        "qualification": {},
+        "capabilities": {},
+        "portfolio": {
+            "scope": "fund_holdings_only",
+            "security_exposure_lower_bounds": [],
+            "industry_exposure_lower_bounds": [],
+            "listing_market_exposure_lower_bounds": [],
+        },
+        "existing_funds": [
+            {
+                "fund_code": "519674",
+                "snapshot": {
+                    "holdings": [{"security_code": "600001", "weight_percent": 20}]
+                },
+            }
+        ],
+        "candidates": [],
+        "resolution_audit": {"rows": [{"snapshot_ref": "a" * 12}]},
+        "raw_holdings_included": False,
+    }
+    facts["portfolio_snapshot"] = {
+        "snapshot_id": "snapshot-1",
+        "authoritative": True,
+        "position_snapshot": {
+            "raw_events": [{"secret": "JUDGE_LEDGER_LEAK_SENTINEL"}]
+        },
+    }
+    facts["fund_lookthrough_claim_audit"] = {
+        "changes": [{"replacement": "JUDGE_AUDIT_LEAK_SENTINEL"}]
+    }
     parsed = {
         "title": "test",
         "summary": "ok",
@@ -353,4 +407,17 @@ def test_deep_mode_llm_judge_receives_risk_review_persona_and_escalation_floors(
         "519674": facts["holdings"][0]["escalation"]
     }
     assert "escalation_floors" in user_payload["task"]
+    judge_lookthrough = user_payload["facts"]["fund_lookthrough"]
+    assert judge_lookthrough["raw_holdings_included"] is False
+    assert "resolution_audit" not in judge_lookthrough
+    assert '"holdings":' not in json.dumps(judge_lookthrough, ensure_ascii=False)
+    serialized_user_payload = json.dumps(user_payload, ensure_ascii=False)
+    assert "position_snapshot" not in serialized_user_payload
+    assert "fund_lookthrough_claim_audit" not in serialized_user_payload
+    assert "JUDGE_LEDGER_LEAK_SENTINEL" not in serialized_user_payload
+    assert "JUDGE_AUDIT_LEAK_SENTINEL" not in serialized_user_payload
+    assert "JUDGE_DRAFT_LEDGER_LEAK_SENTINEL" not in serialized_user_payload
+    assert "JUDGE_DRAFT_AUDIT_LEAK_SENTINEL" not in serialized_user_payload
+    assert "validation_notes" not in user_payload["draft_report"]["fund_recommendations"][0]
+    assert "claim_audit_shadow" not in user_payload["draft_report"]
     assert "双向校验" in user_payload["task"]

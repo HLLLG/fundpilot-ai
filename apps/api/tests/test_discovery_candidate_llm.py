@@ -74,6 +74,7 @@ def test_slim_candidate_for_llm_includes_extended_fields():
         "return_6m_percent": 3.0,
         "max_drawdown_1y_percent": -12.0,
         "fund_scale_yi": 80.0,
+        "sector_match_kind": "primary",
         "nav_trend": {
             "trend_label": "回调",
             "period_change_percent": 6.0,
@@ -96,6 +97,105 @@ def test_slim_candidate_for_llm_includes_extended_fields():
     assert "latest_nav" not in row["nav_trend"]
     assert row["estimated_daily_return_percent"] == 0.8
     assert row["daily_return_source"] == "official_nav"
+    assert row["sector_match_kind"] == "primary"
+
+
+def test_slim_candidate_for_llm_deeply_allow_lists_quality_fields():
+    row = slim_candidate_for_llm(
+        {
+            "fund_code": "161725",
+            "fund_name": "candidate",
+            "selection_reason": {"raw": "SCALAR_CONTAINER_LEAK_SENTINEL"},
+            "profile_sources": [
+                "official",
+                {"raw": "PROFILE_SOURCE_LEAK_SENTINEL"},
+            ],
+            "quality_gate": {
+                "eligible": True,
+                "status": "eligible",
+                "reasons": ["ok"],
+                "custom_snapshot": "QUALITY_GATE_LEAK_SENTINEL",
+            },
+            "quality_score_components": {
+                "sector_fit": 20.0,
+                "custom_component": {"raw": "QUALITY_COMPONENT_LEAK_SENTINEL"},
+            },
+            "custom_payload": {"raw": "CUSTOM_CANDIDATE_LEAK_SENTINEL"},
+        },
+        sector_change_index={},
+        trade_date=None,
+    )
+
+    serialized = str(row)
+    assert row["selection_reason"] is None
+    assert row["profile_sources"] == ["official"]
+    assert row["quality_gate"] == {
+        "eligible": True,
+        "status": "eligible",
+        "reasons": ["ok"],
+    }
+    assert row["quality_score_components"] == {"sector_fit": 20.0}
+    assert "LEAK_SENTINEL" not in serialized
+
+
+def test_slim_candidate_preserves_peer_metric_applicability_semantics():
+    row = slim_candidate_for_llm(
+        {
+            "fund_code": "000001",
+            "peer_group": {"group_key": "domestic.equity.active"},
+            "peer_rank": {
+                "schema_version": "peer_rank.v2",
+                "metric_registry_version": "peer_metric_registry.v2",
+                "metric_profile": "equity",
+                "metrics": {
+                    "return_3m_percent": {
+                        "label": "近3月收益",
+                        "orientation": "higher_is_better",
+                        "role": "performance",
+                        "applicable": True,
+                        "applicability": "applicable",
+                        "available": True,
+                        "availability": "available",
+                        "value": 3.2,
+                        "percentile": 70.0,
+                        "sample_count": 30,
+                        "coverage_rate": 0.9,
+                        "qualified": True,
+                        "qualification_required": True,
+                    },
+                    "tracking_error_1y_percent": {
+                        "label": "近1年跟踪误差",
+                        "orientation": "lower_is_better",
+                        "role": "index_tracking",
+                        "applicable": False,
+                        "applicability": "not_applicable",
+                        "available": False,
+                        "availability": "not_applicable",
+                        "value": None,
+                        "percentile": None,
+                        "sample_count": 0,
+                        "coverage_rate": None,
+                        "qualified": False,
+                        "qualification_required": False,
+                        "reason": "metric_not_applicable_to_equity",
+                    },
+                },
+            },
+        },
+        sector_change_index={},
+        trade_date=None,
+    )["peer_research"]
+
+    assert row["metric_profile"] == "equity"
+    assert row["metrics"]["return_3m_percent"]["applicable"] is True
+    assert row["metrics"]["return_3m_percent"]["available"] is True
+    assert row["metrics"]["tracking_error_1y_percent"]["applicability"] == (
+        "not_applicable"
+    )
+    assert row["metrics"]["tracking_error_1y_percent"]["available"] is False
+    assert row["metrics"]["tracking_error_1y_percent"][
+        "qualification_required"
+    ] is False
 
 
 def test_trim_sector_heat_for_llm_keeps_targets_and_top_heat():

@@ -103,6 +103,126 @@ export type TopicBrief = {
   provider: string;
 };
 
+/**
+ * 基金持仓穿透研究只表达“已披露范围内的下限”，不会把未披露质量补成 0。
+ * 后端会随数据源逐步补充审计字段，因此这里保留开放索引以兼容历史报告与新快照。
+ */
+export type FundLookthroughSnapshot = {
+  schema_version?: string | null;
+  fund_code?: string | null;
+  report_period?: string | null;
+  as_of_date?: string | null;
+  available_at?: string | null;
+  checked_at?: string | null;
+  current_freshness_label?: string | null;
+  current_report_age_days?: number | null;
+  status?: string | null;
+  [key: string]: unknown;
+};
+
+export type FundLookthroughExposure = {
+  security_key?: string | null;
+  security_code?: string | null;
+  security_name?: string | null;
+  industry?: string | null;
+  industry_name?: string | null;
+  listing_market?: string | null;
+  label?: string | null;
+  exposure_lower_bound_percent?: number | null;
+  weight_lower_bound_percent?: number | null;
+  overlap_contribution_lower_bound_percent?: number | null;
+  [key: string]: unknown;
+};
+
+export type FundLookthroughPortfolio = {
+  scope?: string | null;
+  identity_known_security_mass_lower_bound_percent?: number | null;
+  disclosed_security_mass_lower_bound_percent?: number | null;
+  unknown_account_mass_percent?: number | null;
+  unknown_fund_holdings_scope_mass_percent?: number | null;
+  industry_unknown_mass_percent?: number | null;
+  listing_market_unknown_mass_percent?: number | null;
+  security_exposure_lower_bounds?: FundLookthroughExposure[] | null;
+  industry_exposure_lower_bounds?: FundLookthroughExposure[] | null;
+  listing_market_exposure_lower_bounds?: FundLookthroughExposure[] | null;
+  /** Compact LLM snapshots use the `top_` aliases. */
+  top_security_exposure_lower_bounds?: FundLookthroughExposure[] | null;
+  top_industry_exposure_lower_bounds?: FundLookthroughExposure[] | null;
+  top_listing_market_exposure_lower_bounds?: FundLookthroughExposure[] | null;
+  snapshot?: FundLookthroughSnapshot | null;
+  [key: string]: unknown;
+};
+
+export type FundLookthroughCommonSecurity = FundLookthroughExposure & {
+  portfolio_exposure_lower_bound_percent?: number | null;
+  candidate_weight_percent?: number | null;
+  existing_weight_percent?: number | null;
+};
+
+export type FundLookthroughVintageAlignment = {
+  status?: "same_as_of_date" | "cross_vintage" | "mixed" | string | null;
+  as_of_date?: string | null;
+  candidate_as_of_date?: string | null;
+  portfolio_as_of_date?: string | null;
+  [key: string]: unknown;
+};
+
+export type FundLookthroughCandidate = {
+  fund_code?: string | null;
+  fund_name?: string | null;
+  status?: string | null;
+  execution_qualified?: boolean | null;
+  reason_codes?: string[] | null;
+  portfolio_security_overlap_lower_bound_percent?: number | null;
+  portfolio_security_overlap_lower_bound?: number | null;
+  common_disclosed_weight_percent?: number | null;
+  portfolio_overlap_interpretation?: string | null;
+  max_existing_fund_overlap_lower_bound_percent?: number | null;
+  max_existing_fund_overlap_lower_bound?: number | null;
+  max_existing_fund_code?: string | null;
+  max_existing_fund_name?: string | null;
+  top_common_with_portfolio?: FundLookthroughCommonSecurity[] | null;
+  top_common_securities?: FundLookthroughCommonSecurity[] | null;
+  vintage_alignment?: FundLookthroughVintageAlignment | null;
+  vintage_aligned?: boolean | null;
+  snapshot?: FundLookthroughSnapshot | null;
+  [key: string]: unknown;
+};
+
+export type FundLookthroughExistingFund = {
+  fund_code?: string | null;
+  fund_name?: string | null;
+  status?: string | null;
+  snapshot?: FundLookthroughSnapshot | null;
+  [key: string]: unknown;
+};
+
+export type FundLookthroughCapability = {
+  status?: string | null;
+  [key: string]: unknown;
+};
+
+export type FundLookthroughResearch = {
+  schema_version?: string | null;
+  status?: "qualified" | "complete" | "partial" | "unavailable" | "invalid" | string | null;
+  decision_at?: string | null;
+  research_qualified?: boolean | null;
+  execution_qualified?: boolean | null;
+  portfolio_execution_qualified?: boolean | null;
+  reason_codes?: string[] | null;
+  scope?: string | Record<string, unknown> | null;
+  qualification?: Record<string, unknown> | null;
+  capabilities?: Record<string, FundLookthroughCapability | null | undefined> | null;
+  portfolio?: FundLookthroughPortfolio | null;
+  existing_funds?: FundLookthroughExistingFund[] | null;
+  candidates?:
+    | FundLookthroughCandidate[]
+    | Record<string, FundLookthroughCandidate | null | undefined>
+    | null;
+  resolution_audit?: Record<string, unknown> | unknown[] | null;
+  [key: string]: unknown;
+};
+
 export type Report = {
   id: string;
   created_at: string;
@@ -159,6 +279,8 @@ export type Report = {
     sector_evidence?: string[];
     fund_evidence?: string[];
     validation_notes?: string[];
+    tradeability?: FundTradeability;
+    transaction_execution?: HoldingTransactionExecution;
     /** M2.3：系统计算的仓位调整建议（正=建议加仓、负=建议减仓，相对当前持仓金额）。 */
     suggested_position_change_percent?: number | null;
     suggested_position_change_basis?: string;
@@ -167,7 +289,10 @@ export type Report = {
   recommendations: string[];
   caveats: string[];
   provider: string;
-  analysis_facts?: Record<string, unknown>;
+  analysis_facts?: {
+    fund_lookthrough?: FundLookthroughResearch | null;
+    [key: string]: unknown;
+  };
 };
 
 /** M2.1：双向 guard 升级判定结果（decision_guard_shared.resolve_escalation_floor 的输出）。 */
@@ -183,6 +308,8 @@ export type AnalysisFactsHoldingRow = {
   fund_code?: string;
   evidence?: HoldingEvidence | null;
   sector_opportunity?: SectorOpportunity | null;
+  tradeability?: FundTradeability;
+  transaction_execution?: HoldingTransactionExecution;
   /** M1.3：该持仓板块「量价背离」信号的历史回测（结构与 SectorSignalBacktestSector 一致）。 */
   flow_divergence_backtest?: SectorSignalBacktestSector | null;
   /** M2.1：该持仓的双向 guard 升级判定（未触发时 min_bucket 为 null）。 */
@@ -696,6 +823,455 @@ export type AnalysisJob = {
   transient_unavailable?: boolean;
 };
 
+export type FundTradeabilityGateStatus = "eligible" | "watch_only" | "excluded" | string;
+
+export type FundTradeabilityGate = {
+  schema_version?: string;
+  status?: FundTradeabilityGateStatus;
+  effective_initial_min_purchase_yuan?: number | null;
+  effective_additional_min_purchase_yuan?: number | null;
+  /** Compatibility alias retained by older Phase B snapshots. */
+  effective_min_purchase_yuan?: number | null;
+  max_purchase_yuan?: number | null;
+  max_purchase_unlimited?: boolean;
+  max_period?: "day" | string;
+  max_scope?: string;
+  revalidation_required?: boolean;
+  reason_codes?: string[];
+};
+
+export type FundTransactionFeeTier = {
+  condition?: string;
+  fee_type?: "percent" | "flat" | string;
+  fee_percent?: number | null;
+  flat_fee_yuan?: number | null;
+  min_amount_yuan?: number | null;
+  max_amount_yuan?: number | null;
+  min_holding_days?: number | null;
+  max_holding_days?: number | null;
+  source_rate?: string;
+  [key: string]: unknown;
+};
+
+export type FundTradeability = {
+  schema_version?: string;
+  fund_code?: string;
+  data_status?: "complete" | "partial" | "stale" | "unavailable" | string;
+  freshness?: "fresh" | "stale" | "unavailable" | string;
+  can_purchase?: boolean | null;
+  purchase_state?:
+    | "open"
+    | "limited"
+    | "suspended"
+    | "closed"
+    | "subscription_period"
+    | "exchange_only"
+    | "unknown"
+    | string;
+  purchase_status?: string | null;
+  redemption_state?: "open" | "suspended" | "closed" | "exchange_only" | "unknown" | string;
+  redemption_status?: string | null;
+  currency?: "CNY" | "unknown" | string;
+  minimum_purchase_yuan?: number | null;
+  minimum_initial_purchase_yuan?: number | null;
+  minimum_additional_purchase_yuan?: number | null;
+  minimums?: {
+    initial_yuan?: number | null;
+    additional_yuan?: number | null;
+    status?: string;
+  };
+  daily_purchase_limit_yuan?: number | null;
+  daily_purchase_limit_unlimited?: boolean;
+  daily_purchase_limit_scope?: string;
+  purchase_limit?: {
+    amount_yuan?: number | null;
+    kind?: "finite" | "unlimited" | "unknown" | string;
+    period?: string;
+    scope?: string;
+  };
+  tradeability_gate?: FundTradeabilityGate;
+  revalidation_required?: boolean;
+  next_open_date?: string | null;
+  purchase_confirmation?: string | null;
+  redemption_confirmation?: string | null;
+  explicit_minimum_holding_days?: number | null;
+  minimum_holding_period_status?: "explicit_from_fund_name" | "unverified" | string;
+  listed_platform_purchase_fee_percent?: number | null;
+  listed_platform_fee_semantics?: string | null;
+  standard_purchase_fee_tiers?: FundTransactionFeeTier[];
+  redemption_fee_tiers?: FundTransactionFeeTier[];
+  sales_service_fee_annual_percent?: number | null;
+  management_fee_annual_percent?: number | null;
+  custody_fee_annual_percent?: number | null;
+  share_class_fee_status?: string;
+  fee_checked_at?: string | null;
+  fee_freshness?: "fresh" | "stale" | "unavailable" | string;
+  source_conflict?: boolean;
+  missing_fields?: string[];
+  source_ids?: string[];
+  source_urls?: string[];
+  checked_at?: string | null;
+  effective_at?: string | null;
+  instruction?: string;
+};
+
+export type HoldingTransactionExecution = {
+  schema_version?: string;
+  existing_holding_confirmed?: boolean;
+  purchase_minimum_basis?: "existing_holding_additional_purchase" | string;
+  first_or_additional_semantics?: string;
+  add_status?: "eligible" | "watch_only" | string;
+  add_block_reasons?: string[];
+  effective_additional_min_purchase_yuan?: number | null;
+  max_purchase_yuan?: number | null;
+  max_purchase_unlimited?: boolean;
+  redemption_status?: "eligible" | "watch_only" | string;
+  redemption_block_reasons?: string[];
+  acquisition_lot_status?: "unverified" | string;
+  minimum_holding_period_at_lot_status?: "unverified" | string;
+  redemption_fee_at_lot_age_status?: "unverified" | string;
+  redemption_fee_rules_status?: "available_for_manual_review" | "unavailable" | string;
+  reduction_amount_status?: "manual_review" | string;
+  revalidation_required?: boolean;
+  instruction?: string;
+  amount_assessment?: {
+    schema_version?: string;
+    executable?: boolean;
+    requested_amount_yuan?: number | null;
+    approved_amount_yuan?: number | null;
+    amount_capped_by_daily_limit?: boolean;
+    minimum_additional_purchase_yuan?: number | null;
+    daily_purchase_limit_yuan?: number | null;
+    daily_purchase_limit_unlimited?: boolean;
+    block_reasons?: string[];
+  };
+};
+
+export type FundTransactionCostAssessment = {
+  schema_version?: string;
+  executable?: boolean;
+  amount_yuan?: number | null;
+  hold_horizon?: string | null;
+  minimum_holding_days?: number | null;
+  fund_minimum_holding_days?: number | null;
+  minimum_purchase_yuan?: number | null;
+  tradeability_gate?: FundTradeabilityGate;
+  daily_purchase_limit_yuan?: number | null;
+  daily_purchase_limit_unlimited?: boolean;
+  purchase_fee_standard_upper_bound?: {
+    fee_type?: "percent" | "flat" | string;
+    fee_percent?: number | null;
+    flat_fee_yuan?: number | null;
+    fee_yuan?: number | null;
+    condition?: string;
+    source_rate?: string;
+  } | null;
+  redemption_fee_percent_at_minimum_horizon?: number | null;
+  sales_service_fee_percent_for_minimum_horizon?: number | null;
+  estimated_total_cost_upper_bound_percent?: number | null;
+  fee_status?: "standard_upper_bound_available" | "execution_verification_required" | "unavailable" | string;
+  block_reasons?: string[];
+  notes?: string[];
+  source_ids?: string[];
+  checked_at?: string | null;
+  fee_checked_at?: string | null;
+  fee_freshness?: "fresh" | "stale" | "unavailable" | string;
+  instruction?: string;
+};
+
+export type DiscoveryBenchmarkResearch = {
+  schema_version?: string;
+  mapping_id?: string | null;
+  benchmark_code?: string | null;
+  benchmark_name?: string | null;
+  comparison_role?: "formal_excess" | "tracking_reference" | "unavailable" | string;
+  formal_excess_eligible?: boolean;
+  qualified?: boolean;
+  contract_verification_kind?: string | null;
+  available_at?: string | null;
+  reason?: string | null;
+  instruction?: string;
+  [key: string]: unknown;
+};
+
+export type DiscoveryBenchmarkSpec = DiscoveryBenchmarkResearch & {
+  tier?: "fund_contract_exact" | "tracked_index_exact" | "unavailable" | string;
+  status?: string;
+  benchmark_kind?: "official_contract" | "tracking_index" | string;
+  completeness?: "complete" | "incomplete" | string;
+  components?: Array<Record<string, unknown>>;
+};
+
+export type DiscoveryBenchmarkHorizonMetrics = {
+  status?: "available" | "unavailable" | string;
+  start_date?: string | null;
+  end_date?: string | null;
+  fund_return_percent?: number | null;
+  benchmark_return_percent?: number | null;
+  formal_excess_return_percent?: number | null;
+  reference_difference_percent?: number | null;
+  fund_max_drawdown_percent?: number | null;
+  benchmark_max_drawdown_percent?: number | null;
+  drawdown_advantage_percent?: number | null;
+  [key: string]: unknown;
+};
+
+export type DiscoveryBenchmarkMetrics = DiscoveryBenchmarkResearch & {
+  status?: "qualified" | "insufficient" | "unavailable" | string;
+  descriptive_only?: boolean;
+  execution_tilt_eligible?: boolean;
+  effective_trade_date?: string | null;
+  reason_codes?: string[];
+  alignment?: {
+    common_return_sample_days?: number | null;
+    first_common_date?: string | null;
+    last_common_date?: string | null;
+    [key: string]: unknown;
+  };
+  horizons?: Record<string, DiscoveryBenchmarkHorizonMetrics>;
+  rolling_comparison?: {
+    window_days?: number | null;
+    window_count?: number | null;
+    formal_excess_win_rate_percent?: number | null;
+    reference_outperformance_rate_percent?: number | null;
+    difference_stability_percent?: number | null;
+    [key: string]: unknown;
+  };
+  tracking_metrics?: {
+    applicable?: boolean;
+    available?: boolean;
+    tracking_difference_percent?: number | null;
+    annualized_tracking_error_percent?: number | null;
+    [key: string]: unknown;
+  };
+};
+
+export type DiscoveryPeerGroup = {
+  schema_version?: string;
+  decision_at?: string;
+  group_key?: string | null;
+  group_label?: string | null;
+  fund_type_key?: string | null;
+  asset_class?: string | null;
+  management_style?: string | null;
+  region?: string | null;
+  bond_subtype?: string | null;
+  mixed_subtype?: string | null;
+  qdii_subtype?: string | null;
+  qdii_region?: string | null;
+  fof_subtype?: string | null;
+  risk_bucket?: string | null;
+  exposure_bucket?: string | null;
+  reference_code?: string | null;
+  classification_sources?: string[];
+  classification_confidence?: "high" | "medium" | "low" | string;
+  qualified?: boolean;
+  reason?: string | null;
+  reasons?: string[];
+  warnings?: string[];
+  applicable_metrics?: string[];
+  benchmark?: DiscoveryBenchmarkResearch;
+  [key: string]: unknown;
+};
+
+export type DiscoveryPeerRankMetric = {
+  label?: string;
+  orientation?: string;
+  role?: "performance" | "risk" | "capacity_context_only" | string;
+  applicable?: boolean;
+  applicability?: "applicable" | "not_applicable" | string;
+  available?: boolean;
+  availability?: "available" | "unavailable" | "not_applicable" | string;
+  value?: number | null;
+  value_available_at?: string | null;
+  value_as_of?: string | null;
+  value_source?: string | null;
+  independent_peer_family_count?: number;
+  sample_count?: number;
+  coverage_rate?: number;
+  percentile?: number | null;
+  qualified?: boolean;
+  qualification_required?: boolean;
+  reason?: string | null;
+  reasons?: string[];
+  peer_sample_hash?: string;
+  [key: string]: unknown;
+};
+
+export type DiscoveryPeerRank = {
+  schema_version?: string;
+  decision_at?: string;
+  target_fund_code?: string | null;
+  target_family_key?: string;
+  /** Compact `peer_research` snapshots expose group metadata at the top level. */
+  group_key?: string | null;
+  group_label?: string | null;
+  classification_confidence?: "high" | "medium" | "low" | string;
+  metric_registry_version?: string;
+  metric_profile?: string;
+  independent_peer_family_count?: number;
+  peer_group?: DiscoveryPeerGroup;
+  status?: "qualified" | "descriptive_only" | "insufficient" | string;
+  qualified?: boolean;
+  research_shadow_rerank_eligible?: boolean;
+  execution_tilt_eligible?: boolean;
+  execution_tilt_gate?: {
+    status?: string;
+    eligible?: boolean;
+    required_method?: string;
+    reason?: string | null;
+  };
+  reason?: string | null;
+  reasons?: string[];
+  qualification_policy?: Record<string, unknown>;
+  universe?: {
+    raw_member_count?: number;
+    point_in_time_member_count?: number;
+    membership_unavailable_or_future_count?: number;
+    group_share_class_count?: number;
+    independent_peer_family_count?: number;
+    target_family_share_class_count_excluded?: number;
+    duplicate_share_class_count?: number;
+    [key: string]: unknown;
+  };
+  metrics?: Record<string, DiscoveryPeerRankMetric>;
+  descriptive_percentile_count?: number;
+  applicable_metric_count?: number;
+  available_applicable_metric_count?: number;
+  not_applicable_metric_count?: number;
+  descriptive_performance_percentile?: number | null;
+  descriptive_performance_semantics?: string;
+  qualified_metric_count?: number;
+  target_metric_coverage_rate?: number;
+  benchmark?: DiscoveryBenchmarkResearch;
+  [key: string]: unknown;
+};
+
+export type DiscoveryFutureTranche = {
+  sequence?: number;
+  amount_yuan?: number | null;
+  revalidation_required?: boolean;
+  preconditions?: string[];
+  [key: string]: unknown;
+};
+
+export type DiscoveryAllocation = {
+  fund_code?: string;
+  sector_name?: string;
+  suggested_amount_yuan?: number | null;
+  amount_semantics?: "current_verified_initial_tranche" | string;
+  constraint_snapshot?: {
+    effective_initial_min_purchase_yuan?: number | null;
+    candidate_purchase_cap_yuan?: number | null;
+    amount_step_yuan?: number | null;
+    [key: string]: unknown;
+  };
+  priority?: {
+    qualified_priority_score?: number | null;
+    qualified_peer_score_percentile?: number | null;
+    peer_tilt_status?: string;
+    risk_multiplier?: number | null;
+    current_portfolio_correlation_penalty?: number | null;
+    combined_weight?: number | null;
+    [key: string]: unknown;
+  };
+  future_tranches?: DiscoveryFutureTranche[];
+  revalidation_required?: boolean;
+  [key: string]: unknown;
+};
+
+export type DiscoveryAllocationRiskSummary = {
+  schema_version?: string;
+  status?: "qualified" | "unqualified" | "risk_context_unavailable" | string;
+  reason_codes?: string[];
+  fallback_rule?: string | null;
+  [key: string]: unknown;
+};
+
+export type DiscoveryAllocationPlan = {
+  schema_version?: string;
+  status?: "allocated" | "partial" | "blocked" | string;
+  allocation_mode?: string;
+  amount_semantics?: "current_verified_initial_tranche" | string;
+  policy?: {
+    decision_style?: string;
+    prefer_dca?: boolean;
+    nominal_current_tranche_ratio?: number;
+    applied_current_tranche_ratio?: number;
+    amount_step_yuan?: number;
+    concentration_denominator_yuan?: number;
+    concentration_limit_percent?: number;
+    stable_tie_break?: string;
+    candidate_order_ignored?: boolean;
+    llm_amount_and_prose_ignored?: boolean;
+    risk_weight_method?: string;
+    [key: string]: unknown;
+  };
+  risk_context?: DiscoveryAllocationRiskSummary;
+  budget?: {
+    requested_yuan?: number | null;
+    confirmed_cash_yuan?: number | null;
+    spendable_yuan?: number | null;
+    current_tranche_cap_yuan?: number | null;
+    allocated_current_tranche_yuan?: number | null;
+    [key: string]: unknown;
+  };
+  sector_constraints?: Array<Record<string, unknown>>;
+  allocations?: DiscoveryAllocation[];
+  excluded_candidates?: Array<{
+    fund_code?: string;
+    sector_name?: string;
+    reason_codes?: string[];
+    [key: string]: unknown;
+  }>;
+  unallocated_budget?: {
+    amount_yuan?: number | null;
+    current_tranche_unallocated_yuan?: number | null;
+    deferred_future_tranches_yuan?: number | null;
+    unavailable_due_to_cash_yuan?: number | null;
+    reason_codes?: string[];
+    [key: string]: unknown;
+  };
+  revalidation_required?: boolean;
+  [key: string]: unknown;
+};
+
+export type DiscoveryRiskContext = {
+  schema_version?: string;
+  status?: "qualified" | "unqualified" | string;
+  qualified?: boolean;
+  decision_at?: string | null;
+  effective_trade_date?: string | null;
+  configuration?: Record<string, unknown>;
+  candidate_codes?: string[];
+  holding_codes?: string[];
+  candidate_common_return_sample_days?: number;
+  current_holdings_nav_amount_coverage_ratio?: number;
+  current_holdings_nav_amount_coverage_percent?: number;
+  current_holdings_covered_amount_yuan?: number;
+  current_holdings_total_amount_yuan?: number;
+  max_drawdown_percent_by_code?: Record<string, number>;
+  covariance_by_code?: Record<string, Record<string, number>>;
+  correlation_by_code?: Record<string, Record<string, number>>;
+  candidate_to_current_holding_correlation_by_code?: Record<
+    string,
+    Record<string, number>
+  >;
+  positive_correlation_penalty_to_current_holdings_by_code?: Record<string, number>;
+  scenario_drawdown?: {
+    current_portfolio_max_drawdown_percent?: number;
+    current_portfolio_return_sample_days?: number;
+    equal_weight_candidate_basket_max_drawdown_percent?: number;
+    equal_weight_candidate_basket_return_sample_days?: number;
+    current_portfolio_basis?: string;
+    [key: string]: unknown;
+  };
+  series_by_code?: Record<string, Record<string, unknown>>;
+  reason_codes?: string[];
+  snapshot_hash?: string;
+  [key: string]: unknown;
+};
+
 export type DiscoveryRecommendation = {
   fund_code: string;
   fund_name: string;
@@ -712,6 +1288,10 @@ export type DiscoveryRecommendation = {
   sector_evidence?: string[];
   fund_evidence?: string[];
   validation_notes?: string[];
+  tradeability?: FundTradeability;
+  tradeability_gate?: FundTradeabilityGate;
+  cost_assessment?: FundTransactionCostAssessment;
+  allocation?: DiscoveryAllocation;
   /** M2.3/M4：正=建议提高买入金额权重、负=建议降低（荐基语义，与日报仓位%字段对齐）。 */
   suggested_position_change_percent?: number | null;
   suggested_position_change_basis?: string;
@@ -739,6 +1319,10 @@ export type DiscoveryCandidateQualityGate = {
   profile_sources?: string[];
   profile_checked_at?: string | null;
   profile_stale_fields?: string[];
+  tradeability_status?: string | null;
+  tradeability_checked_at?: string | null;
+  purchase_state?: string | null;
+  tradeability_gate_status?: FundTradeabilityGateStatus | null;
 };
 
 export type DiscoveryCandidateQualitySummary = {
@@ -811,6 +1395,18 @@ export type DiscoveryCandidatePoolItem = {
   quality_reasons?: string[];
   quality_penalties?: string[];
   quality_gate?: DiscoveryCandidateQualityGate;
+  tradeability?: FundTradeability;
+  tradeability_gate?: FundTradeabilityGate;
+  cost_assessment?: FundTransactionCostAssessment;
+  peer_group?: DiscoveryPeerGroup;
+  peer_rank?: DiscoveryPeerRank;
+  /** Compact generation payload retained by some snapshots. */
+  peer_research?: DiscoveryPeerRank;
+  benchmark_spec?: DiscoveryBenchmarkSpec;
+  benchmark_comparison?: DiscoveryBenchmarkResearch;
+  /** Compact generation payload retained by some snapshots. */
+  benchmark_research?: DiscoveryBenchmarkResearch;
+  benchmark_metrics?: DiscoveryBenchmarkMetrics;
 };
 
 export type SectorOpportunity = {
@@ -933,6 +1529,7 @@ export type FundDiscoveryReport = {
   target_sectors: string[];
   candidate_pool?: DiscoveryCandidatePoolItem[];
   recommendations: DiscoveryRecommendation[];
+  allocation_plan?: DiscoveryAllocationPlan;
   discovery_facts?: {
     sector_opportunities?: DiscoverySectorOpportunity[];
     market_breadth?: MarketBreadthSignal | null;
@@ -950,6 +1547,9 @@ export type FundDiscoveryReport = {
     };
     data_evidence_guard?: DiscoveryDataEvidenceGuard;
     candidate_quality_summary?: DiscoveryCandidateQualitySummary;
+    risk_context?: DiscoveryRiskContext;
+    allocation_plan?: DiscoveryAllocationPlan;
+    fund_lookthrough?: FundLookthroughResearch | null;
     [key: string]: unknown;
   };
   caveats: string[];

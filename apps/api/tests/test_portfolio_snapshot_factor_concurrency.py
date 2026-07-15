@@ -63,6 +63,28 @@ def test_single_nav_fallback_still_works_without_thread_pool_overhead() -> None:
     assert result["available"] is False  # universe 为空，样本不足
 
 
+def test_unresolved_only_holdings_do_not_fetch_external_factor_universe() -> None:
+    calls = {"rank": 0, "nav": 0}
+
+    def fake_rank():
+        calls["rank"] += 1
+        raise AssertionError("unresolved holdings must not fetch the rank universe")
+
+    def fake_nav(_code: str, _name: str, _trading_days: int):
+        calls["nav"] += 1
+        raise AssertionError("unresolved holdings must not fetch NAV history")
+
+    result = build_factor_scores_payload(
+        [_holding("000000")],
+        fetch_rank=fake_rank,
+        fetch_nav=fake_nav,
+    )
+
+    assert calls == {"rank": 0, "nav": 0}
+    assert result["available"] is False
+    assert result["universe_size"] == 0
+
+
 def test_mixed_rank_hit_and_nav_fallback_preserves_correct_targets() -> None:
     """部分持仓在排行榜命中、部分走净值兜底时，两类目标都要正确出现在结果里，
     且顺序/字段不因并发化而错位（并发结果按原始位置写回，不按完成顺序）。"""

@@ -42,6 +42,8 @@ jobs:
           ssh-keygen -y -f "$SSH_KEY_PATH" >/dev/null
 
       - name: Settle pending T+N outcomes in production
+        id: settlement
+        continue-on-error: true
         env:
           LIGHTHOUSE_HOST: ${{ secrets.LIGHTHOUSE_HOST }}
           LIGHTHOUSE_USER: ${{ secrets.LIGHTHOUSE_USER }}
@@ -52,7 +54,37 @@ jobs:
           ssh "${ssh_options[@]}" "$target" \
             "cd /srv/fundpilot/repo && docker compose --env-file .env.production -f docker-compose.production.yml exec -T api python scripts/settle_pending_outcomes.py"
 
-      - name: Record settlement contract
+      - name: Persist point-in-time decision-quality snapshots
+        id: quality-snapshot
+        if: always()
+        continue-on-error: true
+        env:
+          LIGHTHOUSE_HOST: ${{ secrets.LIGHTHOUSE_HOST }}
+          LIGHTHOUSE_USER: ${{ secrets.LIGHTHOUSE_USER }}
         run: |
-          echo "Settled pending daily T+1/T+5/T+20 and discovery T+5/T+20/T+60 outcomes." >> "$GITHUB_STEP_SUMMARY"
-          echo "Terminal observations remain immutable; retryable source gaps stay pending." >> "$GITHUB_STEP_SUMMARY"
+          set -euo pipefail
+          target="${LIGHTHOUSE_USER}@${LIGHTHOUSE_HOST}"
+          evaluation_as_of="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          ssh_options=(-i "$SSH_KEY_PATH" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$SSH_KNOWN_HOSTS_PATH")
+          ssh "${ssh_options[@]}" "$target" \
+            "cd /srv/fundpilot/repo && docker compose --env-file .env.production -f docker-compose.production.yml exec -T api python scripts/evaluate_decision_quality.py --all-users --evaluation-as-of '$evaluation_as_of' --window-days 365 --format summary"
+
+      - name: Record settlement contract
+        if: always()
+        run: |
+          echo "Settlement step outcome: ${{ steps.settlement.outcome }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Decision-quality snapshot step outcome: ${{ steps.quality-snapshot.outcome }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Attempted post-commit receipt reconciliation, daily T+1/T+5/T+20, discovery T+5/T+20/T+60, and forward-only candidate T+20 settlement." >> "$GITHUB_STEP_SUMMARY"
+          echo "Contract: D4 candidate labels require audit/outcome post-commit receipts plus live calendar/NAV adapter-output receipts; missing evidence remains pending and never becomes zero." >> "$GITHUB_STEP_SUMMARY"
+          echo "Contract: legacy candidate v3/v2 artifacts are manifested only and are never upgraded into D4 metrics." >> "$GITHUB_STEP_SUMMARY"
+          echo "Contract: terminal observations are immutable and readiness never auto-promotes a strategy." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail after isolated settlement and snapshot attempts
+        if: always()
+        run: |
+          settlement_outcome='${{ steps.settlement.outcome }}'
+          snapshot_outcome='${{ steps.quality-snapshot.outcome }}'
+          if [[ "$settlement_outcome" != "success" || "$snapshot_outcome" != "success" ]]; then
+            echo "::error::settlement=$settlement_outcome quality_snapshot=$snapshot_outcome"
+            exit 1
+          fi

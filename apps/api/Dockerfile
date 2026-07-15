@@ -21,6 +21,7 @@ RUN pip install --no-cache-dir -r /app/requirements.txt \
 
 COPY app /app/app
 COPY scripts/settle_pending_outcomes.py /app/scripts/settle_pending_outcomes.py
+COPY scripts/evaluate_decision_quality.py /app/scripts/evaluate_decision_quality.py
 
 # 2026-07-04（方案 B，见 apps/api/var/factor_ic/.gitkeep 注释）：因子 IC 离线回测
 # 产物（scripts/run_factor_ic.py 生成，供 factor_confidence.py::load_ic_summary 读取，

@@ -3,10 +3,8 @@ from __future__ import annotations
 """M4（决策更准更果断升级）：荐基 deep 模式风控复核角色。
 
 对齐日报 `report_judge.py` 的 M3.2 设计（同一套"风控经理二次复核"思路），但荐基语义
-不同——没有"减仓/清仓已持仓"的概念，复核结果体现为"从 recommendations 里整条移除"
-或"允许更高的建议买入金额"。复用同一个 prompt 模板骨架，只是把"清仓/减仓"相关措辞
-替换为"剔除候选/提高建议金额"（设计文档 M4 原文："复用同一个 prompt 模板，替换
-'清仓/减仓'相关措辞为'剔除/降低建议金额'"）。
+不同——没有"减仓/清仓已持仓"的概念，复核结果只允许改变候选与动作；金额始终由
+确定性 allocator 统一计算，任何 LLM 复核金额都会被忽略。
 
 与日报 M3.1 相同的产品定位：fast 模式完全不调用本模块（零新增 LLM 调用）；调用方
 （`DiscoveryClient.generate_report` / `discovery_streaming.stream_discovery`）只在
@@ -25,6 +23,7 @@ import logging
 import httpx
 
 from app.config import get_settings
+from app.services.discovery_candidate_llm import slim_candidate_pool_for_llm
 from app.services.decision_guard_shared import resolve_discovery_escalation
 from app.services.deepseek_http import (
     deepseek_chat_url,
@@ -52,8 +51,8 @@ _RISK_REVIEW_TASK_PROMPT_ENFORCED = (
     "机会、基金质量分同样偏低）；若两项证据共振，须把该推荐从 recommendations 数组中"
     "整条移除——荐基没有「清仓」概念，负向共振的处理方式是移除候选，不是改写动作文字。\n"
     "3. 硬约束：escalation_hints 中 action=exclude 的 fund_code 必须从 recommendations 中"
-    "移除；action=boost 的 fund_code 可以给更高的 suggested_amount_yuan（在候选池预算上限"
-    "基础上提高，但不得超过总预算）。\n"
+    "移除；action=boost 只能影响是否升级为分批买入及解释，suggested_amount_yuan 必须为 null，"
+    "金额由服务端确定性 allocator 统一计算。\n"
     "仅输出完整 JSON，结构同 draft_report（title、summary、market_view、recommendations、"
     "caveats），字段名与 draft_report 完全一致，不要新增或删除字段。"
 )
@@ -77,8 +76,8 @@ _RISK_REVIEW_TASK_PROMPT_SHADOW = (
     "2. 对草案中「分批买入」的推荐，检查是否忽视了强空头证据（量价背离显著、板块方向不构成"
     "机会、基金质量分同样偏低），可在 points/risks 里如实提示，但不必移除该推荐。\n"
     "3. 当前是灰度观察期：escalation_hints 仅作参考信息，不是硬约束，"
-    "不要求把 action=exclude 的 fund_code 从 recommendations 移除，也不要求给"
-    "action=boost 的 fund_code 更高金额；正常按你的专业判断输出即可。\n"
+    "不要求把 action=exclude 的 fund_code 从 recommendations 移除；action=boost 也不得"
+    "改写金额，suggested_amount_yuan 保持 null。正常按你的专业判断输出即可。\n"
     "仅输出完整 JSON，结构同 draft_report（title、summary、market_view、recommendations、"
     "caveats），字段名与 draft_report 完全一致，不要新增或删除字段。"
 )
@@ -179,14 +178,22 @@ def _llm_judge(
     escalation_hints: dict[str, dict],
 ) -> dict:
     settings = get_settings()
+    from app.services.analysis_payload import compact_discovery_draft_report_for_llm
+
     task_prompt = (
         _RISK_REVIEW_TASK_PROMPT_ENFORCED
         if settings.decision_escalation_mode == "enforced"
         else _RISK_REVIEW_TASK_PROMPT_SHADOW
     )
     payload = {
-        "draft_report": parsed,
-        "candidate_pool": candidate_pool,
+        "draft_report": compact_discovery_draft_report_for_llm(parsed),
+        "candidate_pool": slim_candidate_pool_for_llm(
+            candidate_pool,
+            sector_heat=discovery_facts.get("sector_heat") or [],
+            trade_date=(discovery_facts.get("session") or {}).get(
+                "effective_trade_date"
+            ),
+        ),
         "sector_opportunities": discovery_facts.get("sector_opportunities") or [],
         "escalation_hints": escalation_hints,
         "task": task_prompt,

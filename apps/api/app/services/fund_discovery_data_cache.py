@@ -12,7 +12,7 @@ from app.services.sector_quote_cache import (
     save_spot_snapshot,
 )
 
-_UNIVERSE_CACHE_KEY = "fund:discovery_universe:v3:utf8:20000"
+_UNIVERSE_CACHE_KEY = "fund:discovery_universe:v4:pit:20000"
 _PROFILE_CACHE_KEY = "fund:discovery_profiles:v4:share-safe"
 _UNIVERSE_TTL_SECONDS = 24 * 60 * 60
 _PROFILE_TTL_SECONDS = 36 * 60 * 60
@@ -29,19 +29,53 @@ def fetch_discovery_fund_universe_cached(*, limit: int = 20_000) -> list[dict]:
         ttl_seconds=_UNIVERSE_TTL_SECONDS,
     )
     if isinstance(cached, dict) and isinstance(cached.get("rows"), list):
-        return list(cached["rows"])
+        return _universe_rows_with_snapshot_contract(cached)
 
     from app.services.akshare_subprocess import fetch_open_fund_universe
 
     rows = fetch_open_fund_universe(limit=limit, timeout_seconds=55) or []
     if rows:
-        save_spot_snapshot(_UNIVERSE_CACHE_KEY, {"rows": rows})
-        return rows
+        snapshot = {
+            "schema_version": "fund_universe_snapshot.v1",
+            "snapshot_available_at": datetime.now(timezone.utc).isoformat(),
+            "source": "eastmoney_open_fund_universe",
+            "rows": rows,
+        }
+        save_spot_snapshot(_UNIVERSE_CACHE_KEY, snapshot)
+        return _universe_rows_with_snapshot_contract(snapshot)
 
     stale = get_spot_snapshot_any_age(_UNIVERSE_CACHE_KEY)
     if isinstance(stale, dict) and isinstance(stale.get("rows"), list):
-        return list(stale["rows"])
+        return _universe_rows_with_snapshot_contract(stale)
     return []
+
+
+def _universe_rows_with_snapshot_contract(payload: dict) -> list[dict]:
+    """Expose one frozen availability instant for catalogue and rank fields."""
+
+    available_at = payload.get("snapshot_available_at")
+    source = str(payload.get("source") or "fund_universe_snapshot")
+    result: list[dict] = []
+    for raw in payload.get("rows") or []:
+        if not isinstance(raw, dict):
+            continue
+        row = dict(raw)
+        if available_at:
+            row.setdefault("membership_available_at", available_at)
+            row.setdefault("snapshot_available_at", available_at)
+            for field in (
+                "return_3m_percent",
+                "return_6m_percent",
+                "return_1y_percent",
+                "max_drawdown_1y_percent",
+                "fund_scale_yi",
+            ):
+                if row.get(field) is not None:
+                    row.setdefault(f"{field}_available_at", available_at)
+                    row.setdefault(f"{field}_source", source)
+        row.setdefault("source", source)
+        result.append(row)
+    return result
 
 
 def fetch_fund_research_profiles_cached(fund_codes: list[str]) -> dict[str, dict]:

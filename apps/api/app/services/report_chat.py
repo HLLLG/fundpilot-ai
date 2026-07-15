@@ -126,10 +126,14 @@ def _parse_stream_line(line: str) -> str | None:
         parsed = json.loads(payload)
     except json.JSONDecodeError:
         return None
+    if not isinstance(parsed, dict):
+        return None
     choices = parsed.get("choices") or []
-    if not choices:
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
         return None
     delta = choices[0].get("delta") or {}
+    if not isinstance(delta, dict):
+        return None
     content = delta.get("content")
     if isinstance(content, str) and content:
         return content

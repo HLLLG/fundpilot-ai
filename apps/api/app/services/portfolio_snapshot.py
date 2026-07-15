@@ -68,8 +68,15 @@ def build_risk_metrics_payload(
     # 1. 组合日收益序列（history_rows 最新在前 → 反转成按日期升序）
     rows = [row for row in reversed(history_rows)]
 
-    index_history = fetch_index_daily_history("000300", trading_days=400)
-    index_lookup = _index_daily_change_lookup(index_history)
+    # 没有任何组合日收益时，不启动无意义的外部指数请求。除了缩短首份报告，
+    # 这也避免离线/降级分析在已经确定“样本不足”后遗留网络子进程。
+    has_portfolio_returns = any(
+        row.get("daily_return_percent") is not None for row in rows
+    )
+    index_lookup: dict[str, float] = {}
+    if has_portfolio_returns:
+        index_history = fetch_index_daily_history("000300", trading_days=400)
+        index_lookup = _index_daily_change_lookup(index_history)
 
     # 2. 逐日对齐：仅保留组合与沪深300都有数据的交易日
     portfolio_returns: list[float] = []
@@ -304,6 +311,18 @@ def build_factor_scores_payload(
             "model_version": research_model.get("version"),
         }
 
+    filtered_holdings = [
+        holding
+        for holding in holdings_models
+        if (holding.fund_code or "").strip()
+        and len((holding.fund_code or "").strip()) == 6
+        and (holding.fund_code or "").strip() != "000000"
+    ]
+    if not filtered_holdings:
+        # 未识别代码没有可评分目标；拉取整个排行榜既不能改善输出，还会让
+        # 离线/首份报告无谓依赖外部网络。
+        return asdict(compute_factor_scores(universe=[], targets=[]))
+
     rank_rows = fetch_rank() or []
     universe = [
         FundFactorInput(
@@ -319,14 +338,6 @@ def build_factor_scores_payload(
         if row.get("fund_code")
     ]
     rank_by_code = {row.fund_code: row for row in universe}
-
-    filtered_holdings = [
-        holding
-        for holding in holdings_models
-        if (holding.fund_code or "").strip()
-        and len((holding.fund_code or "").strip()) == 6
-        and (holding.fund_code or "").strip() != "000000"
-    ]
 
     # 2026-07-04 修复：持仓不在排行榜横截面（`rank_by_code`）里时须走
     # `_target_from_nav` 净值兜底——这是一次独立的 AkShare 拉取（冷缓存时是子进程
@@ -426,6 +437,25 @@ def _compact_factor_scores(
             detail = factors.get(key) or {}
             pct = detail.get("percentile")
             percentiles[key] = round(pct) if pct is not None else None
+        execution_factor_keys = [
+            str(key)
+            for key in (fund.get("execution_qualified_factor_keys") or [])
+            if str(key).strip()
+        ]
+        execution_qualified = bool(
+            ic_usable
+            and fund.get("execution_qualified") is True
+            and execution_factor_keys
+        )
+        execution_qualification = dict(
+            fund.get("execution_qualification") or {}
+        )
+        if not ic_usable:
+            execution_qualification = {
+                **execution_qualification,
+                "status": "insufficient",
+                "reason": "factor_ic_snapshot_not_current",
+            }
         row = {
             "fund_code": fund.get("fund_code"),
             "fund_name": fund.get("fund_name"),
@@ -438,6 +468,14 @@ def _compact_factor_scores(
             "feature_count": fund.get("feature_count"),
             "feature_completeness": fund.get("feature_completeness"),
             "applicable": fund.get("applicable", True),
+            "descriptive_applicable": fund.get(
+                "descriptive_applicable", fund.get("applicable", True)
+            ),
+            "execution_qualified": execution_qualified,
+            "execution_qualified_factor_keys": (
+                execution_factor_keys if ic_usable else []
+            ),
+            "execution_qualification": execution_qualification,
             "base_composite_score": fund.get("base_composite_score"),
             "typed_factor_schema": fund.get("typed_factor_schema") if ic_usable else None,
             "typed_used_keys": (

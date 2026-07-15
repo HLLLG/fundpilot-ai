@@ -37,6 +37,8 @@
 - **日报数据口径**：AI 分析使用 `estimated_holding_return_percent`，与持有页「持有」列一致（盘中含板块估算）。
 - **调仓示意**：报告页展开「调仓示意模拟」；AI 未填金额时按集中度或减仓动作自动补算变动额。
 - **决策准确性 V2**：日报与荐基会冻结决策时点持仓、数据证据、费用假设和基准映射，并按基金自身估值日分别评价毛方向、假设费后正收益、合同基准毛超额和合同基准假设费后超额；legacy 报告只作参考，不进入正式分母。完整契约见 [docs/DECISION_ACCURACY_V2.md](docs/DECISION_ACCURACY_V2.md)。
+- **候选排序 D4（内部 shadow）**：冻结荐基 `prescreen` 全集、K=3 与保守次日入场的共同 T+20 路径；audit/outcome 使用数据库可见后的独立 receipt，日历/NAV 使用 live adapter stdout、请求参数、版本、解析与规范化 hash 绑定的追加式来源 receipt，只有完整 source-verified 标签才计算 Precision/NDCG/regret。它不同于报告 UI 的单基金 T+5/T+20/T+60 复盘，当前无普通用户界面、不调用 LLM 调参，也不会自动修改 Prompt、权重、Guard 或执行交易。详见 [准确性 V4 设计](docs/design/RECOMMENDATION_DAILY_ACCURACY_V4.md#phase-d4-提交时点与来源验真链2026-07-15)。
+- **配对 Prompt D5（默认关闭）**：只在荐基“全市场 + 快速 + 默认角色”范围内，把完全相同的事实、候选池、模型参数和确定性 Guard 预注册为 champion/challenger 配对实验；挑战者在后台单次运行，绝不替换用户已收到的报告。评估按上海本地决策日等权，缺失/超时保留在分母，T+20 标签与完整 receipt 闭环后才计算效用与回撤门禁；即使通过也只能进入人工复核，不能自动改 Prompt。日报不在本期真实双调用范围内。完整边界见 [准确性 V4 设计](docs/design/RECOMMENDATION_DAILY_ACCURACY_V4.md)。
 
 **分析模式（生成日报）：**
 
@@ -140,6 +142,11 @@ FUND_AI_DEEPSEEK_MODEL_FAST=deepseek-v4-flash
 FUND_AI_DEEPSEEK_TIMEOUT_SECONDS=300
 FUND_AI_DEEPSEEK_MAX_TOKENS=384000
 FUND_AI_DEEPSEEK_MAX_TOKENS_REPORT=384000
+# 可选的内部 paired Prompt 实验；默认关闭。密钥必须使用独立随机值且不得提交。
+FUND_AI_PROMPT_SHADOW_ENABLED=false
+FUND_AI_PROMPT_SHADOW_ASSIGNMENT_SECRET=
+FUND_AI_PROMPT_SHADOW_SAMPLE_BASIS_POINTS=10000
+FUND_AI_PROMPT_SHADOW_MAX_CHALLENGER_CALLS_PER_DAY=100
 FUND_AI_NEWS_ENABLED=true
 FUND_AI_NEWS_MAX_TOPICS=5
 FUND_AI_NEWS_PER_TOPIC=5
@@ -277,7 +284,7 @@ docker compose -f docker-compose.cloud.yml up --build
 
 ## 验证
 
-后端单元测试（约 **539** 项，本地串行 ~78s；默认离线 stub，不访问东财/AkShare/MySQL）：
+后端单元测试（当前 **1998** 项，本机串行约 106s；默认离线 stub，不访问东财/AkShare/MySQL）：
 
 ```bash
 cd /d/Code/HL_Project/fundpilot-ai/apps/api
@@ -295,6 +302,7 @@ cd /d/Code/HL_Project/fundpilot-ai/apps/api
 
 ```bash
 export FUND_AI_DATABASE_URL=
+export FUND_AI_FUND_NAME_PRELOAD_ENABLED=false
 export FUND_AI_OCR_PRELOAD=false
 export FUND_AI_NEWS_ENABLED=false
 export FUND_AI_SECTOR_SIGNAL_BACKTEST_ENABLED=false

@@ -5,6 +5,7 @@ import time
 from app.config import get_settings
 from app.models import NewsItem
 from app.services.news_summarizer import (
+    _parse_topic_brief_response,
     build_topic_briefs_offline,
     summarize_all_topics,
 )
@@ -49,3 +50,44 @@ def test_summarize_all_topics_total_timeout_falls_back_without_waiting_for_block
     assert elapsed < 0.3, f"摘要总超时应快速降级，实际 {elapsed:.2f}s"
     assert {brief.topic for brief in briefs} == {"半导体", "白酒", "商业航天", "人工智能"}
     assert all(brief.provider == "rule-fallback" for brief in briefs)
+
+
+def test_topic_brief_today_flag_is_derived_from_validated_sources() -> None:
+    settings = get_settings()
+    items = [
+        NewsItem(
+            topic="chip",
+            title="stale source",
+            published_at="2026-07-12",
+            source="test",
+            is_today=False,
+        ),
+        NewsItem(
+            topic="chip",
+            title="today source",
+            published_at="2026-07-13 10:00",
+            source="test",
+            is_today=True,
+        ),
+    ]
+    parsed = {
+        "summary": "source-backed brief",
+        "points": [
+            {
+                "headline": "model promotes stale source",
+                "sentiment": "bullish",
+                "is_today": True,
+                "source_titles": ["stale source"],
+            },
+            {
+                "headline": "model demotes today's source",
+                "sentiment": "neutral",
+                "is_today": "false",
+                "source_titles": ["today source"],
+            },
+        ],
+    }
+
+    brief = _parse_topic_brief_response("chip", items, parsed, settings)
+
+    assert [point.is_today for point in brief.points] == [False, True]

@@ -52,6 +52,20 @@ def _offline_external_data(monkeypatch):
         "app.services.fund_code_resolver._fetch_fund_name_table_subprocess",
         lambda: [],
     )
+    monkeypatch.setattr(
+        "app.services.fund_lookthrough_context.resolve_fund_holdings_snapshot_at_decision",
+        lambda _code, **kwargs: {
+            "status": "unavailable",
+            "qualified": False,
+            "reason_codes": ["pytest_store_only_snapshot_missing"],
+            "decision_at": kwargs.get("decision_at").isoformat()
+            if hasattr(kwargs.get("decision_at"), "isoformat")
+            else None,
+            "source": "append_only_store",
+            "snapshot": None,
+            "record": None,
+        },
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -72,6 +86,92 @@ def _stub_market_data_fetches(monkeypatch):
             "holdings": serialized,
             "items": [],
             "summary": {"matched": 0, "unresolved": 0, "needs_mapping": 0},
+        }
+
+    def _verified_tradeability(codes, *, decision_at=None, **_kwargs):
+        checked_at = (
+            decision_at.isoformat()
+            if hasattr(decision_at, "isoformat")
+            else "2026-06-10T10:00:00+08:00"
+        )
+        return {
+            str(code).zfill(6): {
+                "schema_version": "fund_tradeability.v1",
+                "fund_code": str(code).zfill(6),
+                "data_status": "complete",
+                "freshness": "fresh",
+                "can_purchase": True,
+                "purchase_state": "open",
+                "purchase_status": "开放申购",
+                "redemption_state": "open",
+                "redemption_status": "开放赎回",
+                "currency": "CNY",
+                "minimum_purchase_yuan": 10.0,
+                "minimum_initial_purchase_yuan": 10.0,
+                "minimum_additional_purchase_yuan": 10.0,
+                "daily_purchase_limit_yuan": None,
+                "daily_purchase_limit_unlimited": True,
+                "daily_purchase_limit_scope": "pytest_unlimited",
+                "revalidation_required": True,
+                "standard_purchase_fee_tiers": [
+                    {
+                        "condition": "小于100万元",
+                        "min_amount_yuan": None,
+                        "max_amount_yuan": 1_000_000.0,
+                        "min_inclusive": True,
+                        "max_inclusive": False,
+                        "fee_type": "percent",
+                        "fee_percent": 0.0,
+                        "flat_fee_yuan": None,
+                        "source_rate": "standard_undiscounted",
+                    }
+                ],
+                "redemption_fee_tiers": [
+                    {
+                        "condition": "大于等于7天",
+                        "min_days": 7,
+                        "max_days": None,
+                        "fee_percent": 0.0,
+                    }
+                ],
+                "sales_service_fee_annual_percent": 0.0,
+                "share_class_fee_status": "standard_upper_bound_available",
+                "source_conflict": False,
+                "missing_fields": [],
+                "source_ids": ["pytest.tradeability"],
+                "source_urls": [],
+                "checked_at": checked_at,
+                "fee_checked_at": checked_at,
+                "fee_freshness": "fresh",
+                "effective_at": checked_at,
+            }
+            for code in codes
+        }
+
+    def _qualified_discovery_risk(candidate_rows, _holdings_slim, **_kwargs):
+        codes = sorted(
+            {
+                str(row.get("fund_code") or "").zfill(6)
+                for row in candidate_rows
+                if isinstance(row, dict) and row.get("fund_code")
+            }
+        )
+        return {
+            "schema_version": "discovery_risk_context.v1",
+            "status": "qualified",
+            "qualified": True,
+            "reason_codes": [],
+            "max_drawdown_percent_by_code": {code: 10.0 for code in codes},
+            "covariance_by_code": {
+                code: {
+                    other: (0.04 if code == other else 0.0)
+                    for other in codes
+                }
+                for code in codes
+            },
+            "positive_correlation_penalty_to_current_holdings_by_code": {
+                code: 0.0 for code in codes
+            },
         }
 
     monkeypatch.setattr(
@@ -166,6 +266,18 @@ def _stub_market_data_fetches(monkeypatch):
     monkeypatch.setattr(
         "app.services.akshare_subprocess.fetch_fund_nav_history",
         lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "app.services.discovery_candidate_pool.resolve_fund_tradeability_profiles",
+        _verified_tradeability,
+    )
+    monkeypatch.setattr(
+        "app.services.discovery_allocation_service.build_discovery_risk_context",
+        _qualified_discovery_risk,
+    )
+    monkeypatch.setattr(
+        "app.services.analysis_payload.resolve_fund_tradeability_profiles",
+        _verified_tradeability,
     )
     monkeypatch.setattr(
         "app.services.fund_nav_service.fetch_fund_nav_history",

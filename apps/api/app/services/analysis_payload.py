@@ -3,6 +3,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from datetime import datetime
+from collections.abc import Callable, Mapping
 from typing import Any, Literal
 
 from app.request_context import try_get_request_user_id
@@ -18,7 +19,8 @@ from app.services.investment_presets import is_short_term_style, take_profit_thr
 from app.services.analysis_facts import build_analysis_facts
 from app.services.holding_metrics import HOLDING_RETURN_SEMANTICS
 from app.services.analysis_runtime import AnalysisMode
-from app.services.news_freshness import build_news_pipeline_context
+from app.services.news_freshness import build_news_pipeline_context, normalize_news_now
+from app.services.news_service import compact_announcement_fetch_status
 from app.services.pipeline_concurrency import run_with_request_user
 from app.services.portfolio_snapshot import (
     build_factor_scores_for_facts,
@@ -27,6 +29,22 @@ from app.services.portfolio_snapshot import (
 )
 from app.services.trading_session import build_trading_session
 from app.services.decision_data_evidence import attach_analysis_data_evidence
+from app.services.benchmark_mapping_service import (
+    BENCHMARK_MAPPING_SCHEMA_VERSION,
+    load_decision_benchmark_specs,
+)
+from app.services.fund_benchmark_research import (
+    BENCHMARK_RESEARCH_SCHEMA_VERSION,
+    build_fund_benchmark_research_batch,
+    summarize_benchmark_research,
+)
+from app.services.fund_tradeability import (
+    build_tradeability_gate,
+    compact_tradeability_for_llm,
+    resolve_fund_tradeability_profiles,
+)
+from app.services.fund_lookthrough_context import build_fund_lookthrough_context
+from app.services.fund_lookthrough_research import compact_fund_lookthrough_for_llm
 
 AnalysisPayloadPhase = Literal[1, 2, 3]
 
@@ -54,9 +72,14 @@ OUTPUT_REQUIREMENTS_SYSTEM = (
     "利好/利空标题须能在 news_titles 或 topic_briefs.points.source_titles 中找到对应。"
     "须遵循 analysis_facts.session.decision_window 与 session_kind 调整措辞，"
     "非 trading_day_pre_close 时不要写「收盘前必须今日下单」。"
-    "收盘前决策 action 仅限 analysis_facts.allowed_actions 五选一。"
+    "action 的唯一合法集合是 analysis_facts.allowed_actions；必须逐字从该数组选择，不得依赖固定数量或另造动作。"
     "若 analysis_facts.portfolio.suggested_action 为 risk_review 或 risk_level 为 high，禁止加仓类 action。"
-    "涉及加仓/减仓须给 amount_yuan 或 amount_note（结合 holding_amount 与 concentration_limit_percent）。"
+    "analysis_facts.holdings[].transaction_execution 是交易执行硬门禁："
+    "分批加仓仅在 add_status=eligible 且 amount_yuan 通过追加起购额与单日限额核验时才可输出；"
+    "减仓类动作即使 redemption_status=eligible，也不得猜测逐笔持有期、锁定期或赎回费，"
+    "acquisition_lot_status=unverified 时只能给人工复核建议，不得输出金额或仓位比例。"
+    "仅当加仓通过 transaction_execution 门禁时才可给 amount_yuan；"
+    "减仓因逐笔批次未知时只写人工复核说明，不得给 amount_yuan 或仓位比例。"
     "recommendations 可省略或仅 1 条组合级说明，禁止长新闻摘要堆砌。"
     "判断当日涨跌优先 daily_return_percent，否则用 sector_return_percent 估算；"
     "判断累计持有收益/浮亏须用 estimated_holding_return_percent（与界面「持有」列一致），"
@@ -107,13 +130,353 @@ OUTPUT_REQUIREMENTS_USER = [
     "decision_path 须体现「先判断板块方向(sector_opportunity)→再看基金自身证据→最后给出动作」的顺序",
 ]
 
+BENCHMARK_OUTPUT_REQUIREMENTS_SYSTEM = (
+    "analysis_facts.benchmark_specs is read-only point-in-time evidence loaded before generation. "
+    "Only tier=fund_contract_exact with formal_excess_eligible=true is a formal performance "
+    "benchmark. tracked_index_exact is reference-only; unavailable benchmark identity must "
+    "never be guessed or upgraded. Benchmark identity alone never proves outperformance. "
+    "Use numeric fund-versus-benchmark claims only from qualified analysis_facts.benchmark_research; "
+    "formal_excess values require comparison_role=formal_excess, while tracking_reference values "
+    "must be described only as reference/tracking differences."
+)
+OUTPUT_REQUIREMENTS_SYSTEM = (
+    OUTPUT_REQUIREMENTS_SYSTEM + "\n" + BENCHMARK_OUTPUT_REQUIREMENTS_SYSTEM
+)
+OUTPUT_REQUIREMENTS_USER.append(
+    "benchmark_specs 仅用于其声明的角色：正式合同基准可评估超额，"
+    "跟踪指数仅作参照，unavailable 不得猜测；没有 qualified benchmark_research 时不得声称跑赢或跟踪良好"
+)
+HOLDINGS_LOOKTHROUGH_REQUIREMENT = (
+    "fund_lookthrough contains reported-as-of, disclosed-scope lower bounds only. "
+    "Retain unknown mass; no common disclosed security is not exact zero full-portfolio "
+    "overlap. Missing, stale, cross-vintage, or low-coverage evidence may only reduce "
+    "confidence and must never support a more aggressive action. Periodic disclosures "
+    "never authorize allocation as current complete holdings."
+)
+OUTPUT_REQUIREMENTS_SYSTEM = (
+    OUTPUT_REQUIREMENTS_SYSTEM + "\n" + HOLDINGS_LOOKTHROUGH_REQUIREMENT
+)
+OUTPUT_REQUIREMENTS_USER.append(HOLDINGS_LOOKTHROUGH_REQUIREMENT)
+
 _HOLDING_LLM_DROP_KEYS = frozenset(
     {
         "management_fee",
         "fund_scale_yi",
-        "fund_type",
+        "fund_scale_evidence",
+        "fund_scale_source",
+        "fund_scale_as_of",
+        "fund_scale_freshness",
+        "fund_scale_fetched_at",
+        "fund_scale_basis",
+        "management_fee_annual_recurring",
     }
 )
+
+_MANAGEMENT_FEE_SEMANTICS = (
+    "基金管理的经常性年费率，已持续体现在基金净值中；不是本次申购费或赎回费，"
+    "不得从收益、预算或建议金额中再次扣除。"
+)
+
+_PORTFOLIO_SNAPSHOT_LLM_KEYS = (
+    "snapshot_id",
+    "source",
+    "authoritative",
+    "as_of_date",
+    "effective_trade_date",
+    "client_snapshot_mismatch",
+    "stale",
+    "degraded",
+    "freshness",
+    "degradation_reason",
+)
+_DATA_EVIDENCE_ITEM_LLM_KEYS = (
+    "fact_id",
+    "source",
+    "source_type",
+    "as_of_date",
+    "available_at",
+    "fetched_at",
+    "freshness",
+    "confidence",
+    "is_estimate",
+)
+_POSITION_TRUTH_LLM_KEYS = (
+    "schema_version",
+    "snapshot_id",
+    "ledger_version",
+    "position_as_of",
+    "position_complete",
+    "position_truth_status",
+    "pending_transaction_count",
+    "known_unsettled_transaction_count",
+    "conflict_count",
+    "ledger_truncated",
+    "total_market_value_yuan",
+    "instruction",
+)
+_POSITION_TRUTH_ROW_LLM_KEYS = (
+    "fund_code",
+    "fund_name",
+    "settled_shares",
+    "shares_quality",
+    "market_value_yuan",
+    "cost_basis_total_yuan",
+    "cost_quality",
+    "fee_complete",
+)
+
+_DAILY_DRAFT_SCALAR_LLM_KEYS = (
+    "fund_code",
+    "fund_name",
+    "action",
+    "amount_yuan",
+    "amount_note",
+    "confidence",
+    "hold_horizon",
+    "decision_path",
+    "suggested_position_change_percent",
+    "suggested_position_change_basis",
+    "holding_index",
+)
+_DISCOVERY_DRAFT_SCALAR_LLM_KEYS = (
+    "fund_code",
+    "fund_name",
+    "sector_name",
+    "action",
+    "suggested_amount_yuan",
+    "amount_note",
+    "confidence",
+    "hold_horizon",
+    "decision_path",
+    "suggested_position_change_percent",
+    "suggested_position_change_basis",
+)
+_DAILY_DRAFT_TEXT_LIST_LLM_KEYS = (
+    "news_bullish",
+    "news_bearish",
+    "points",
+    "risks",
+    "sector_evidence",
+    "fund_evidence",
+)
+_DISCOVERY_DRAFT_TEXT_LIST_LLM_KEYS = (
+    "news_bullish",
+    "points",
+    "risks",
+    "sector_evidence",
+    "fund_evidence",
+)
+
+
+def _llm_scalar(value: Any) -> Any:
+    return value if value is None or isinstance(value, (str, int, float, bool)) else None
+
+
+def _compact_draft_report_for_llm(
+    value: Mapping[str, Any] | None,
+    *,
+    recommendation_key: str,
+    top_level_keys: tuple[str, ...],
+    scalar_keys: tuple[str, ...],
+    text_list_keys: tuple[str, ...],
+) -> dict[str, Any]:
+    """Allow-list an untrusted model draft before sending it to another model.
+
+    ``validation_notes`` is deliberately omitted.  Older parsers stringify
+    arbitrary nested values in that field, so even a scalar-only re-projection
+    cannot prove that it is prose rather than a serialized ledger or audit.  The
+    review model can recreate notes from the compact facts it receives.
+    """
+
+    if not isinstance(value, Mapping):
+        return {recommendation_key: []}
+    result = {
+        key: _llm_scalar(value.get(key))
+        for key in top_level_keys
+        if key in value
+    }
+    result["caveats"] = [
+        item for item in value.get("caveats") or [] if isinstance(item, str)
+    ]
+    recommendations: list[dict[str, Any]] = []
+    for raw in value.get(recommendation_key) or []:
+        if not isinstance(raw, Mapping):
+            continue
+        row = {
+            key: _llm_scalar(raw.get(key))
+            for key in scalar_keys
+            if key in raw
+        }
+        for key in text_list_keys:
+            if key not in raw:
+                continue
+            row[key] = [
+                item for item in raw.get(key) or [] if isinstance(item, str)
+            ]
+        recommendations.append(row)
+    result[recommendation_key] = recommendations
+    return result
+
+
+def compact_daily_draft_report_for_llm(
+    value: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    return _compact_draft_report_for_llm(
+        value,
+        recommendation_key="fund_recommendations",
+        top_level_keys=("title", "summary"),
+        scalar_keys=_DAILY_DRAFT_SCALAR_LLM_KEYS,
+        text_list_keys=_DAILY_DRAFT_TEXT_LIST_LLM_KEYS,
+    )
+
+
+def compact_discovery_draft_report_for_llm(
+    value: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    return _compact_draft_report_for_llm(
+        value,
+        recommendation_key="recommendations",
+        top_level_keys=("title", "summary", "market_view"),
+        scalar_keys=_DISCOVERY_DRAFT_SCALAR_LLM_KEYS,
+        text_list_keys=_DISCOVERY_DRAFT_TEXT_LIST_LLM_KEYS,
+    )
+
+
+def compact_portfolio_snapshot_for_llm(
+    value: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Project portfolio provenance without exposing ledger/position internals."""
+
+    if not isinstance(value, Mapping):
+        return None
+    return {
+        key: _llm_scalar(value.get(key))
+        for key in _PORTFOLIO_SNAPSHOT_LLM_KEYS
+    }
+
+
+def compact_data_evidence_for_llm(
+    value: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Project the evidence registry through a scalar-only field allow-list."""
+
+    if not isinstance(value, Mapping):
+        return None
+    return {
+        "schema_version": _llm_scalar(value.get("schema_version")),
+        "decision_ready": _llm_scalar(value.get("decision_ready")),
+        "blocking_reasons": [
+            reason
+            for reason in value.get("blocking_reasons") or []
+            if isinstance(reason, str)
+        ],
+        "items": [
+            {
+                key: _llm_scalar(item.get(key))
+                for key in _DATA_EVIDENCE_ITEM_LLM_KEYS
+            }
+            for item in value.get("items") or []
+            if isinstance(item, Mapping)
+        ],
+    }
+
+
+def compact_portfolio_position_truth_for_llm(
+    value: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Re-project compact position truth so injected ledger fields cannot hitchhike."""
+
+    if not isinstance(value, Mapping):
+        return None
+    result = {
+        key: _llm_scalar(value.get(key))
+        for key in _POSITION_TRUTH_LLM_KEYS
+        if key in value
+    }
+    cash = value.get("cash")
+    if isinstance(cash, Mapping):
+        result["cash"] = {
+            key: _llm_scalar(cash.get(key))
+            for key in ("balance_yuan", "known", "quality")
+            if key in cash
+        }
+    result["positions"] = [
+        {
+            key: _llm_scalar(row.get(key))
+            for key in _POSITION_TRUTH_ROW_LLM_KEYS
+            if key in row
+        }
+        for row in value.get("positions") or []
+        if isinstance(row, Mapping)
+    ]
+    return result
+
+
+def _safe_fund_scale_for_llm(row: dict[str, Any]) -> tuple[float, dict[str, Any]] | None:
+    """Return scale only with a complete point-in-time provenance envelope.
+
+    A bare AUM number is especially easy for a model to over-weight.  Existing
+    snapshots do not always carry the diagnostic fetch metadata, so the safe
+    behavior is to omit that number until the caller supplies source, as-of and
+    freshness together.  This helper accepts both the new nested envelope and
+    flat compatibility keys while emitting one canonical structure.
+    """
+
+    raw_value = row.get("fund_scale_yi")
+    try:
+        value = float(raw_value)
+    except (TypeError, ValueError):
+        return None
+    if value <= 0:
+        return None
+
+    raw_evidence = row.get("fund_scale_evidence")
+    evidence = dict(raw_evidence) if isinstance(raw_evidence, dict) else {}
+    source = str(evidence.get("source") or row.get("fund_scale_source") or "").strip()
+    as_of = str(
+        evidence.get("as_of")
+        or evidence.get("as_of_date")
+        or row.get("fund_scale_as_of")
+        or ""
+    ).strip()
+    freshness = str(
+        evidence.get("freshness") or row.get("fund_scale_freshness") or ""
+    ).strip().lower()
+    if not source or not as_of or freshness not in {
+        "fresh",
+        "aging",
+        "stale",
+        "unknown",
+        "unavailable",
+    }:
+        return None
+
+    canonical_evidence: dict[str, Any] = {
+        "source": source,
+        "as_of": as_of,
+        "freshness": freshness,
+        # Only explicitly fresh scale may support a strong action.  Aging and
+        # stale values can remain visible as background, but never as a trigger.
+        "decision_eligible": freshness == "fresh",
+    }
+    fetched_at = evidence.get("fetched_at") or row.get("fund_scale_fetched_at")
+    if fetched_at:
+        canonical_evidence["fetched_at"] = str(fetched_at)
+    basis = evidence.get("basis") or row.get("fund_scale_basis")
+    if basis:
+        canonical_evidence["basis"] = str(basis)
+    return value, canonical_evidence
+
+
+def _safe_management_fee_for_llm(value: object) -> dict[str, Any] | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    return {
+        "annual_rate": text,
+        "already_reflected_in_nav": True,
+        "transaction_fee": False,
+    }
 
 
 def compact_news_titles(
@@ -144,17 +507,31 @@ def compact_news_titles(
     else:
         items = items[:max_items]
     compact: list[dict[str, Any]] = []
-    seen: set[str] = set()
+    seen: set[tuple[str, ...]] = set()
+    announcement_topics_by_title: dict[str, set[str]] = {}
+    for item in market_news:
+        if item.source != "fund-announcement":
+            continue
+        title = item.title.strip()
+        if title:
+            announcement_topics_by_title.setdefault(title, set()).add(item.topic)
     for item in items:
         title = item.title.strip()
-        if not title or title in seen:
+        identity = _compact_news_identity(
+            title=title,
+            topic=item.topic,
+            source=item.source,
+        )
+        if not title or identity in seen:
             continue
-        seen.add(title)
+        seen.add(identity)
         row: dict[str, Any] = {
             "topic": item.topic,
             "title": title,
             "is_today": item.is_today,
         }
+        if item.related_topics:
+            row["related_topics"] = list(dict.fromkeys(item.related_topics))
         if item.published_at:
             row["published_at"] = item.published_at
         if item.source:
@@ -165,9 +542,19 @@ def compact_news_titles(
         for point in brief.points:
             for raw_title in point.source_titles:
                 title = str(raw_title).strip()
-                if not title or title in seen:
+                source = (
+                    "fund-announcement"
+                    if brief.topic in announcement_topics_by_title.get(title, set())
+                    else None
+                )
+                identity = _compact_news_identity(
+                    title=title,
+                    topic=brief.topic,
+                    source=source,
+                )
+                if not title or identity in seen:
                     continue
-                seen.add(title)
+                seen.add(identity)
                 compact.append(
                     {
                         "topic": brief.topic,
@@ -179,6 +566,17 @@ def compact_news_titles(
                 if len(compact) >= max_items + 8:
                     break
     return compact[: max_items + 8]
+
+
+def _compact_news_identity(
+    *,
+    title: str,
+    topic: str,
+    source: str | None,
+) -> tuple[str, ...]:
+    if source == "fund-announcement":
+        return ("fund-announcement", str(topic).strip(), title)
+    return ("title", title)
 
 
 def compact_topic_briefs(
@@ -214,6 +612,8 @@ def compact_topic_briefs(
 
 def slim_profile_for_llm(profile: InvestorProfile) -> dict[str, Any]:
     payload: dict[str, Any] = {
+        "style": profile.style,
+        "horizon": profile.horizon,
         "decision_style": profile.decision_style,
         "prefer_dca": profile.prefer_dca,
         "avoid_chasing": profile.avoid_chasing,
@@ -241,15 +641,47 @@ def trim_analysis_facts_for_llm(
     phase: AnalysisPayloadPhase = 3,
 ) -> dict[str, Any]:
     trimmed = dict(facts)
+    benchmark_specs = facts.get("benchmark_specs")
+    if isinstance(benchmark_specs, Mapping):
+        trimmed["benchmark_specs"] = {
+            str(code): _compact_benchmark_spec_for_llm(spec)
+            for code, spec in benchmark_specs.items()
+            if isinstance(spec, Mapping)
+        }
+    announcement_facts = trimmed.get("fund_announcements")
+    if isinstance(announcement_facts, dict):
+        trimmed["fund_announcements"] = compact_announcement_fetch_status(
+            announcement_facts
+        )
+    if "fund_lookthrough" in trimmed:
+        trimmed["fund_lookthrough"] = compact_fund_lookthrough_for_llm(
+            trimmed.get("fund_lookthrough")
+            if isinstance(trimmed.get("fund_lookthrough"), Mapping)
+            else None
+        )
     # Internal report orchestration evidence; never expose it to an LLM/public payload.
     trimmed.pop("sector_flow_by_label", None)
+    trimmed.pop("fund_lookthrough_claim_audit", None)
     holdings = []
+    has_management_fee = False
     for row in facts.get("holdings") or []:
         if not isinstance(row, dict):
             continue
         copy = dict(row)
+        if "tradeability" in row:
+            raw_tradeability = row.get("tradeability")
+            copy["tradeability"] = compact_tradeability_for_llm(
+                raw_tradeability if isinstance(raw_tradeability, Mapping) else None
+            )
+        safe_scale = _safe_fund_scale_for_llm(row)
+        safe_management_fee = _safe_management_fee_for_llm(row.get("management_fee"))
         for key in _HOLDING_LLM_DROP_KEYS:
             copy.pop(key, None)
+        if safe_scale is not None:
+            copy["fund_scale_yi"], copy["fund_scale_evidence"] = safe_scale
+        if safe_management_fee is not None:
+            copy["management_fee_annual_recurring"] = safe_management_fee
+            has_management_fee = True
         if phase >= 2 and not is_short_term_style(decision_style):
             copy.pop("signal_backtest", None)
         if phase >= 1:
@@ -335,6 +767,11 @@ def trim_analysis_facts_for_llm(
                 } or None
         holdings.append(copy)
     trimmed["holdings"] = holdings
+    if has_management_fee:
+        semantics = trimmed.get("fund_fact_semantics")
+        semantic_copy = dict(semantics) if isinstance(semantics, dict) else {}
+        semantic_copy["management_fee_annual_recurring"] = _MANAGEMENT_FEE_SEMANTICS
+        trimmed["fund_fact_semantics"] = semantic_copy
 
     news = trimmed.get("news")
     if isinstance(news, dict) and phase >= 1:
@@ -413,50 +850,63 @@ def trim_analysis_facts_for_llm(
                 if k in breadth
             }
 
+    position_truth = trimmed.get("portfolio_position_truth")
+    if isinstance(position_truth, Mapping):
+        trimmed["portfolio_position_truth"] = (
+            compact_portfolio_position_truth_for_llm(position_truth)
+        )
     snapshot = trimmed.get("portfolio_snapshot")
-    if isinstance(snapshot, dict):
-        trimmed["portfolio_snapshot"] = {
-            key: snapshot.get(key)
-            for key in (
-                "snapshot_id",
-                "source",
-                "authoritative",
-                "as_of_date",
-                "effective_trade_date",
-                "client_snapshot_mismatch",
-                "stale",
-                "degraded",
-                "freshness",
-                "degradation_reason",
-            )
-        }
+    if isinstance(snapshot, Mapping):
+        trimmed["portfolio_snapshot"] = compact_portfolio_snapshot_for_llm(snapshot)
     evidence = trimmed.get("data_evidence")
-    if isinstance(evidence, dict):
-        trimmed["data_evidence"] = {
-            "schema_version": evidence.get("schema_version"),
-            "decision_ready": evidence.get("decision_ready"),
-            "blocking_reasons": evidence.get("blocking_reasons") or [],
-            "items": [
-                {
-                    key: item.get(key)
-                    for key in (
-                        "fact_id",
-                        "source",
-                        "source_type",
-                        "as_of_date",
-                        "available_at",
-                        "fetched_at",
-                        "freshness",
-                        "confidence",
-                        "is_estimate",
-                    )
-                }
-                for item in (evidence.get("items") or [])
-                if isinstance(item, dict)
-            ],
-        }
+    if isinstance(evidence, Mapping):
+        trimmed["data_evidence"] = compact_data_evidence_for_llm(evidence)
 
     return trimmed
+
+
+def _compact_benchmark_spec_for_llm(spec: Mapping[str, Any]) -> dict[str, Any]:
+    """Keep benchmark identity/role/evidence while excluding verbose raw contract text."""
+
+    components: list[dict[str, Any]] = []
+    for value in spec.get("components") or []:
+        if not isinstance(value, Mapping):
+            continue
+        components.append(
+            {
+                key: value.get(key)
+                for key in (
+                    "component_id",
+                    "component_type",
+                    "name",
+                    "benchmark_code",
+                    "weight_percent",
+                    "max_lag_calendar_days",
+                )
+                if value.get(key) is not None
+            }
+        )
+    return {
+        key: spec.get(key)
+        for key in (
+            "schema_version",
+            "mapping_id",
+            "tier",
+            "status",
+            "fund_code",
+            "benchmark_kind",
+            "contract_verification_kind",
+            "completeness",
+            "benchmark_name",
+            "benchmark_code",
+            "valid_from",
+            "available_at",
+            "confidence",
+            "formal_excess_eligible",
+            "reason",
+        )
+        if spec.get(key) is not None
+    } | {"components": components}
 
 
 @dataclass
@@ -468,6 +918,201 @@ class AnalysisFactsBundle:
     risk_metrics: dict | None
     portfolio_trend: dict | None
     facts: dict
+
+
+TradeabilityResolver = Callable[..., dict[str, dict[str, Any]]]
+BenchmarkResolver = Callable[..., dict[str, dict[str, Any]]]
+BenchmarkResearchResolver = Callable[..., dict[str, dict[str, Any]]]
+
+
+def _unavailable_holding_benchmark(*, reason: str) -> dict[str, Any]:
+    return {
+        "schema_version": BENCHMARK_MAPPING_SCHEMA_VERSION,
+        "tier": "unavailable",
+        "status": "unavailable",
+        "formal_excess_eligible": False,
+        "mapping_id": None,
+        "contract_verification_kind": None,
+        "reason": reason,
+        "components": [],
+    }
+
+
+def _resolve_holding_benchmark_specs(
+    holdings: list,
+    *,
+    decision_at: datetime | None,
+    resolver: BenchmarkResolver,
+) -> dict[str, dict[str, Any]]:
+    """Resolve cached PIT benchmark roles without making report generation brittle."""
+
+    codes = sorted(
+        {
+            str(getattr(holding, "fund_code", "") or "").strip().zfill(6)
+            for holding in holdings
+            if str(getattr(holding, "fund_code", "") or "").strip()
+        }
+    )
+    resolvable = [code for code in codes if code != "000000"]
+    try:
+        resolved = (
+            resolver(
+                resolvable,
+                decision_at=normalize_news_now(decision_at),
+            )
+            if resolvable
+            else {}
+        )
+    except Exception:  # noqa: BLE001 - missing mappings fail closed, not fatal
+        resolved = {}
+
+    normalized = {
+        str(code).strip().zfill(6): dict(row)
+        for code, row in (resolved.items() if isinstance(resolved, Mapping) else [])
+        if isinstance(row, Mapping)
+    }
+    return {
+        code: normalized.get(code)
+        or _unavailable_holding_benchmark(
+            reason=(
+                "unresolved_fund_code"
+                if code == "000000"
+                else "point_in_time_benchmark_mapping_unavailable"
+            )
+        )
+        for code in codes
+    }
+
+
+def _benchmark_contract(specs: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
+    rows = [dict(value) for value in specs.values() if isinstance(value, Mapping)]
+    return {
+        "schema_version": BENCHMARK_MAPPING_SCHEMA_VERSION,
+        "lookup_policy": "cached_point_in_time_before_generation",
+        "formal_excess_policy": "verified_fund_contract_only",
+        "reference_policy": "tracked_index_never_formal",
+        "formal_count": sum(
+            1
+            for row in rows
+            if row.get("tier") == "fund_contract_exact"
+            and row.get("formal_excess_eligible") is True
+        ),
+        "reference_count": sum(
+            1 for row in rows if row.get("tier") == "tracked_index_exact"
+        ),
+        "unavailable_count": sum(
+            1 for row in rows if row.get("tier") == "unavailable"
+        ),
+    }
+
+
+def _holding_benchmark_research_rows(
+    holdings: list,
+    specs: Mapping[str, Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for holding in holdings:
+        code = str(getattr(holding, "fund_code", "") or "").strip().zfill(6)
+        if not code or code == "000000":
+            continue
+        rows.append(
+            {
+                "fund_code": code,
+                "fund_name": str(getattr(holding, "fund_name", "") or code),
+                "fund_type": getattr(holding, "fund_type", None),
+                "benchmark_spec": dict(specs.get(code) or {}),
+            }
+        )
+    return rows
+
+
+def _unavailable_benchmark_metrics(
+    specs: Mapping[str, Mapping[str, Any]],
+    *,
+    reason: str,
+) -> dict[str, dict[str, Any]]:
+    return {
+        code: {
+            "schema_version": BENCHMARK_RESEARCH_SCHEMA_VERSION,
+            "status": "unavailable",
+            "qualified": False,
+            "descriptive_only": True,
+            "execution_tilt_eligible": False,
+            "comparison_role": "unavailable",
+            "formal_excess_eligible": False,
+            "mapping_id": spec.get("mapping_id"),
+            "benchmark_code": spec.get("benchmark_code"),
+            "benchmark_name": spec.get("benchmark_name"),
+            "reason_codes": [reason],
+        }
+        for code, spec in specs.items()
+    }
+
+
+def _unavailable_holding_tradeability(
+    fund_code: str,
+    *,
+    decision_at: datetime | None,
+    reason: str,
+) -> dict[str, Any]:
+    effective_at = normalize_news_now(decision_at).isoformat()
+    result: dict[str, Any] = {
+        "schema_version": "fund_tradeability.v1",
+        "fund_code": fund_code,
+        "data_status": "unavailable",
+        "freshness": "unavailable",
+        "purchase_state": "unknown",
+        "redemption_state": "unknown",
+        "currency": "unknown",
+        "daily_purchase_limit_unlimited": False,
+        "source_conflict": False,
+        "missing_fields": ["purchase_status", "redemption_status", "additional_minimum"],
+        "source_ids": [],
+        "checked_at": None,
+        "effective_at": effective_at,
+        "revalidation_required": True,
+        "unavailable_reason": reason,
+        "instruction": "交易条件不可核验，本次不得生成可执行加仓或减仓金额。",
+    }
+    result["tradeability_gate"] = build_tradeability_gate(result)
+    return result
+
+
+def _resolve_holding_tradeability_profiles(
+    holdings: list,
+    *,
+    decision_at: datetime | None,
+    resolver: TradeabilityResolver,
+) -> dict[str, dict[str, Any]]:
+    codes = sorted(
+        {
+            str(getattr(holding, "fund_code", "") or "").strip().zfill(6)
+            for holding in holdings
+            if str(getattr(holding, "fund_code", "") or "").strip()
+        }
+    )
+    resolvable = [code for code in codes if code != "000000"]
+    try:
+        resolved = resolver(resolvable, decision_at=decision_at) if resolvable else {}
+    except Exception:  # noqa: BLE001 - missing tradeability must fail closed, not fail the report
+        resolved = {}
+    normalized_resolved = {
+        str(code).strip().zfill(6): row
+        for code, row in (resolved.items() if isinstance(resolved, Mapping) else [])
+    }
+    output: dict[str, dict[str, Any]] = {}
+    for code in codes:
+        row = normalized_resolved.get(code)
+        output[code] = (
+            dict(row)
+            if isinstance(row, Mapping)
+            else _unavailable_holding_tradeability(
+                code,
+                decision_at=decision_at,
+                reason=("unresolved_fund_code" if code == "000000" else "provider_unavailable"),
+            )
+        )
+    return output
 
 
 def _enhancement_unavailable(reason: str) -> dict[str, Any]:
@@ -506,8 +1151,9 @@ def _compute_analysis_context(
     analysis_mode: AnalysisMode = "deep",
     phase: AnalysisPayloadPhase = 3,
     budget_enhancements: bool = False,
+    decision_at: datetime | None = None,
 ) -> tuple[dict, dict | None, dict | None, dict | None]:
-    session = build_trading_session()
+    session = build_trading_session(decision_at)
     include_portfolio_trend = not (phase >= 2 and analysis_mode == "fast")
     try:
         if budget_enhancements:
@@ -556,16 +1202,91 @@ def prepare_analysis_bundle(
     analysis_mode: AnalysisMode = "deep",
     phase: AnalysisPayloadPhase = 3,
     budget_enhancements: bool = False,
+    decision_at: datetime | None = None,
+    tradeability_resolver: TradeabilityResolver | None = None,
+    benchmark_resolver: BenchmarkResolver | None = None,
+    benchmark_research_resolver: BenchmarkResearchResolver | None = None,
 ) -> AnalysisFactsBundle:
     """构建完整 analysis_facts（未 trim），供 LLM prompt 与最终存档各用一次。"""
     briefs = topic_briefs or []
     nav_trends = nav_trends_by_code or {}
-    session, factor_scores, risk_metrics, portfolio_trend = _compute_analysis_context(
-        request.holdings,
-        analysis_mode=analysis_mode,
-        phase=phase,
-        budget_enhancements=budget_enhancements,
+    resolver = tradeability_resolver or resolve_fund_tradeability_profiles
+    resolve_benchmarks = benchmark_resolver or load_decision_benchmark_specs
+    resolve_benchmark_research = (
+        benchmark_research_resolver or build_fund_benchmark_research_batch
     )
+    user_id = try_get_request_user_id()
+
+    def resolve_tradeability() -> dict[str, dict[str, Any]]:
+        def work() -> dict[str, dict[str, Any]]:
+            return _resolve_holding_tradeability_profiles(
+                request.holdings,
+                decision_at=decision_at,
+                resolver=resolver,
+            )
+
+        return work() if user_id is None else run_with_request_user(user_id, work)
+
+    def resolve_benchmark_context() -> tuple[
+        dict[str, dict[str, Any]],
+        dict[str, dict[str, Any]],
+    ]:
+        def work() -> tuple[
+            dict[str, dict[str, Any]],
+            dict[str, dict[str, Any]],
+        ]:
+            specs = _resolve_holding_benchmark_specs(
+                request.holdings,
+                decision_at=decision_at,
+                resolver=resolve_benchmarks,
+            )
+            rows = _holding_benchmark_research_rows(request.holdings, specs)
+            try:
+                research = resolve_benchmark_research(
+                    rows,
+                    decision_at=normalize_news_now(decision_at),
+                )
+            except Exception:  # noqa: BLE001 - research remains descriptive/fail-closed
+                research = _unavailable_benchmark_metrics(
+                    specs,
+                    reason="benchmark_research_provider_unavailable",
+                )
+            return specs, research
+
+        return work() if user_id is None else run_with_request_user(user_id, work)
+
+    # Tradeability I/O runs alongside the existing context computation, while
+    # the latter stays on the request thread so database/request context behavior
+    # is unchanged.
+    def resolve_lookthrough() -> dict[str, Any]:
+        def work() -> dict[str, Any]:
+            return build_fund_lookthrough_context(
+                request.holdings,
+                [],
+                decision_at=normalize_news_now(decision_at),
+                analysis_mode=analysis_mode,
+                portfolio_context=request.portfolio_snapshot_context,
+            )
+
+        return work() if user_id is None else run_with_request_user(user_id, work)
+
+    executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="analysis-evidence")
+    tradeability_future = executor.submit(resolve_tradeability)
+    benchmark_future = executor.submit(resolve_benchmark_context)
+    lookthrough_future = executor.submit(resolve_lookthrough)
+    try:
+        session, factor_scores, risk_metrics, portfolio_trend = _compute_analysis_context(
+            request.holdings,
+            analysis_mode=analysis_mode,
+            phase=phase,
+            budget_enhancements=budget_enhancements,
+            decision_at=decision_at,
+        )
+        tradeability_profiles = tradeability_future.result()
+        benchmark_specs, benchmark_research = benchmark_future.result()
+        fund_lookthrough = lookthrough_future.result()
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
     facts = build_analysis_facts(
         request.holdings,
         risk,
@@ -580,7 +1301,16 @@ def prepare_analysis_bundle(
         risk_metrics=risk_metrics,
         for_llm=True,
         budget_enhancements=budget_enhancements,
+        decision_at=decision_at,
+        tradeability_profiles=tradeability_profiles,
     )
+    facts["benchmark_specs"] = benchmark_specs
+    facts["benchmark_contract"] = _benchmark_contract(benchmark_specs)
+    facts["benchmark_research"] = benchmark_research
+    facts["benchmark_research_contract"] = summarize_benchmark_research(
+        benchmark_research
+    )
+    facts["fund_lookthrough"] = fund_lookthrough
     facts = attach_analysis_data_evidence(
         facts,
         holdings=request.holdings,
@@ -602,11 +1332,16 @@ def finalize_analysis_facts(
     market_news: list[NewsItem] | None = None,
     topic_briefs: list[TopicBrief] | None = None,
     pipeline: dict | None = None,
+    decision_at: datetime | None = None,
 ) -> dict:
     """在预计算 facts 上叠加 pipeline / 更新后的 news，避免重复 build_analysis_facts。"""
     facts = dict(base_facts)
     if market_news is not None or topic_briefs is not None:
-        facts["news"] = build_news_pipeline_context(market_news or [], topic_briefs)
+        facts["news"] = build_news_pipeline_context(
+            market_news or [],
+            topic_briefs,
+            now=decision_at,
+        )
     if pipeline is not None:
         facts["pipeline"] = pipeline
     return facts
@@ -624,6 +1359,7 @@ def build_user_payload(
     phase: AnalysisPayloadPhase = 3,
     analysis_bundle: AnalysisFactsBundle | None = None,
     operator_notes: list[str] | None = None,
+    decision_at: datetime | None = None,
 ) -> dict:
     briefs = topic_briefs or []
     bundle = analysis_bundle or prepare_analysis_bundle(
@@ -635,6 +1371,7 @@ def build_user_payload(
         nav_trends_by_code,
         analysis_mode=analysis_mode,
         phase=phase,
+        decision_at=decision_at,
     )
     facts = trim_analysis_facts_for_llm(
         bundle.facts,
@@ -645,7 +1382,10 @@ def build_user_payload(
 
     minimal_briefs = phase >= 2 and analysis_mode == "fast"
     payload: dict = {
-        "today": datetime.now().date().isoformat(),
+        "today": str(
+            bundle.session.get("calendar_date")
+            or normalize_news_now(decision_at).date().isoformat()
+        ),
         "profile": slim_profile_for_llm(request.profile),
         "holding_return_semantics": HOLDING_RETURN_SEMANTICS,
         "analysis_facts": facts,
@@ -659,4 +1399,4 @@ def build_user_payload(
 
 
 def append_output_requirements_to_system(system_prompt: str) -> str:
-    return system_prompt + OUTPUT_REQUIREMENTS_SYSTEM
+    return system_prompt.rstrip() + "\n\n" + OUTPUT_REQUIREMENTS_SYSTEM

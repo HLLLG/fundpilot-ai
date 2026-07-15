@@ -20,7 +20,7 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import ValidationError
 
 from app.auth.middleware import AuthMiddleware
@@ -85,6 +85,11 @@ from app.models import (
 from app.services.analyze_pipeline import run_analysis
 from app.services.analyze_streaming import stream_analysis
 from app.services.decision_data_evidence import resolve_portfolio_preflight
+from app.services.decision_quality_snapshot import (
+    DecisionQualitySnapshotContractError,
+    DecisionQualitySnapshotStorageError,
+    read_latest_decision_quality_snapshot,
+)
 from app.services.async_sse import sse_from_sync_iterator
 from app.services.discovery_streaming import stream_discovery
 from app.services.stream_session_store import append_stream_followup
@@ -255,6 +260,100 @@ def _require_factor_ic_publish_token(
         raise HTTPException(status_code=503, detail="因子 IC 发布未配置")
     if not supplied or not secrets.compare_digest(supplied, expected):
         raise HTTPException(status_code=401, detail="因子 IC 发布凭证无效")
+
+
+def _require_decision_quality_read_token(
+    supplied: Annotated[
+        str | None,
+        Header(alias="X-Decision-Quality-Read-Token"),
+    ] = None,
+) -> None:
+    """Authorize the isolated read-only D2 operations surface."""
+
+    no_store = {"Cache-Control": "private, no-store, max-age=0"}
+    expected = (get_settings().decision_quality_read_token or "").strip()
+    if not expected:
+        raise HTTPException(
+            status_code=503,
+            detail="决策质量快照只读接口未配置",
+            headers=no_store,
+        )
+    if not supplied or not secrets.compare_digest(supplied, expected):
+        raise HTTPException(
+            status_code=401,
+            detail="决策质量快照只读凭证无效",
+            headers=no_store,
+        )
+
+
+def _etag_matches(if_none_match: str | None, etag: str) -> bool:
+    if not if_none_match:
+        return False
+    for candidate in if_none_match.split(","):
+        normalized = candidate.strip()
+        if normalized == "*":
+            return True
+        if normalized.startswith("W/"):
+            normalized = normalized[2:].strip()
+        if normalized == etag:
+            return True
+    return False
+
+
+@app.get(
+    "/api/internal/decision-quality/evaluations/latest",
+    include_in_schema=False,
+)
+def get_latest_decision_quality_evaluation(
+    user_id: str | None = None,
+    if_none_match: Annotated[str | None, Header(alias="If-None-Match")] = None,
+    _authorized: None = Depends(_require_decision_quality_read_token),
+) -> Response:
+    """Return one precomputed, redacted snapshot without running evaluation."""
+
+    response_headers = {
+        "Cache-Control": "private, no-store, max-age=0",
+        "Pragma": "no-cache",
+        "X-Content-Type-Options": "nosniff",
+    }
+    if user_id is None or not user_id.strip().isdigit() or int(user_id) <= 0:
+        raise HTTPException(
+            status_code=422,
+            detail="user_id 必须为正整数",
+            headers=response_headers,
+        )
+    normalized_user_id = int(user_id)
+    try:
+        payload = read_latest_decision_quality_snapshot(user_id=normalized_user_id)
+    except (
+        DecisionQualitySnapshotContractError,
+        DecisionQualitySnapshotStorageError,
+    ) as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="决策质量快照暂不可用",
+            headers=response_headers,
+        ) from exc
+    if payload is None:
+        raise HTTPException(
+            status_code=404,
+            detail="尚无预计算的决策质量快照",
+            headers=response_headers,
+        )
+    content_hash = str(payload.get("content_hash") or "").strip().lower()
+    if len(content_hash) != 64 or any(
+        character not in "0123456789abcdef" for character in content_hash
+    ):
+        raise HTTPException(
+            status_code=503,
+            detail="决策质量快照暂不可用",
+            headers=response_headers,
+        )
+    etag = f'"{content_hash}"'
+    response_headers["ETag"] = etag
+    if _etag_matches(if_none_match, etag):
+        return Response(status_code=304, headers=response_headers)
+    return JSONResponse(content=payload, headers=response_headers)
 
 
 @app.post("/api/internal/factor-ic-snapshots", include_in_schema=False)

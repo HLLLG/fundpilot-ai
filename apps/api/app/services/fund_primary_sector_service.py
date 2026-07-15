@@ -6,7 +6,7 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from threading import RLock
-from typing import Iterable
+from typing import Any, Iterable, Mapping
 
 from app.database import (
     get_fund_primary_sector,
@@ -727,19 +727,23 @@ def refresh_benchmark_sectors_for_holdings(
             batch_context=batch_context,
         )
         stocks_for_code = None
+        holdings_evidence_for_code = None
         if (
             fetch_holdings_infer
             and not _is_trustworthy_sector_label(updated.fund_name, updated.sector_name)
         ):
             from app.services.fund_holdings_sector_infer import (
-                fetch_portfolio_stocks_with_industry,
+                fetch_portfolio_stocks_with_industry_evidence,
             )
 
-            stocks_for_code = fetch_portfolio_stocks_with_industry(code)
+            holdings_evidence_for_code = fetch_portfolio_stocks_with_industry_evidence(code)
+            raw_stocks = holdings_evidence_for_code.get("stocks")
+            stocks_for_code = list(raw_stocks) if isinstance(raw_stocks, list) else []
             record = _resolve_from_holdings_infer(
                 code,
                 persist=True,
                 stocks=stocks_for_code,
+                evidence_payload=holdings_evidence_for_code,
                 batch_context=batch_context,
             )
             if record is not None:
@@ -775,24 +779,42 @@ def _resolve_from_holdings_infer(
     *,
     persist: bool = True,
     stocks: list | None = None,
+    evidence_payload: Mapping[str, Any] | None = None,
     batch_context: PrimarySectorBatchContext | None = None,
 ) -> PrimarySectorRecord | None:
     from app.services.fund_holdings_sector_infer import (
-        fetch_portfolio_stocks_with_industry,
-        infer_sector_from_portfolio_stocks,
+        assess_sector_from_portfolio_stocks,
+        fetch_portfolio_stocks_with_industry_evidence,
     )
 
     code = fund_code.strip().zfill(6)
-    if stocks is None:
-        stocks = fetch_portfolio_stocks_with_industry(code)
+    if evidence_payload is None and stocks is None:
+        evidence_payload = fetch_portfolio_stocks_with_industry_evidence(code)
+        raw_stocks = evidence_payload.get("stocks")
+        stocks = list(raw_stocks) if isinstance(raw_stocks, list) else []
     if not stocks:
         return None
 
-    inferred = infer_sector_from_portfolio_stocks(code, stocks)
-    if inferred is None:
+    sector_clue = (
+        evidence_payload.get("sector_clue")
+        if isinstance(evidence_payload, Mapping)
+        else None
+    )
+    if not isinstance(sector_clue, Mapping):
+        sector_clue = assess_sector_from_portfolio_stocks(stocks)
+    qualification = sector_clue.get("qualification")
+    if (
+        not isinstance(qualification, Mapping)
+        or qualification.get("sector_inference_eligible") is not True
+        or qualification.get("research_only") is not False
+    ):
         return None
 
-    sector_name, scores, evidence = inferred
+    sector_name = str(sector_clue.get("sector_name") or "").strip()
+    scores = sector_clue.get("scores")
+    evidence = sector_clue.get("evidence")
+    if not sector_name or not isinstance(scores, Mapping) or not isinstance(evidence, list):
+        return None
     confidence = min(0.92, round(scores[sector_name] / 100.0 + 0.5, 2))
     from app.services.fund_profile import infer_intraday_index_from_sector
 
@@ -804,7 +826,12 @@ def _resolve_from_holdings_infer(
         intraday_index_name=index_name,
         source="holdings_infer",
         confidence=confidence,
-        detail={"scores": scores, "evidence": evidence[:8]},
+        detail={
+            "scores": dict(scores),
+            "evidence": evidence[:8],
+            "coverage": sector_clue.get("coverage"),
+            "qualification": dict(qualification),
+        },
     )
 
     if persist:

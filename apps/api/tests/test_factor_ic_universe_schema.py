@@ -25,10 +25,13 @@ _insert_immutable_row = _MIGRATION._insert_immutable_row
 
 
 def test_schema_v11_creates_and_self_heals_pit_universe_tables_and_indexes() -> None:
-    assert SCHEMA_VERSION == 11
+    assert SCHEMA_VERSION == 16
     connection = sqlite3.connect(":memory:")
     run_migrations(connection)
-    assert connection.execute("SELECT version FROM schema_meta WHERE id=1").fetchone()[0] == 11
+    assert (
+        connection.execute("SELECT version FROM schema_meta WHERE id=1").fetchone()[0]
+        == SCHEMA_VERSION
+    )
     for table in ("factor_ic_universe_snapshots", "factor_ic_universe_members"):
         assert connection.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
@@ -54,7 +57,7 @@ def test_schema_v11_creates_and_self_heals_pit_universe_tables_and_indexes() -> 
 
 
 def test_mysql_bootstrap_and_sqlite_migration_keep_pit_tables_immutable() -> None:
-    assert MYSQL_SCHEMA_VERSION == 11
+    assert MYSQL_SCHEMA_VERSION == 16
     statements: list[str] = []
 
     class Cursor:
@@ -96,7 +99,13 @@ def test_sqlite_to_mysql_migration_rejects_pit_identity_hash_conflict() -> None:
             self.statements.append(statement)
 
         def fetchone(self):
-            return {"content_hash": "destination-hash"}
+            # Migration now compares the exact identity as well as content so
+            # case-insensitive destination collations cannot hide identity
+            # drift.  Mirror the columns selected by the real cursor.
+            return {
+                "snapshot_id": "snapshot-1",
+                "content_hash": "destination-hash",
+            }
 
     cursor = Cursor()
     with pytest.raises(ImmutableMigrationConflict, match="不可变表"):
@@ -107,4 +116,4 @@ def test_sqlite_to_mysql_migration_rejects_pit_identity_hash_conflict() -> None:
             values=("snapshot-1", "source-hash"),
         )
     assert len(cursor.statements) == 1
-    assert cursor.statements[0].startswith("SELECT content_hash")
+    assert cursor.statements[0].startswith("SELECT snapshot_id, content_hash")

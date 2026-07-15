@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import re
+from collections import defaultdict
+from collections.abc import Iterable, Sequence
 from typing import Any
 
 from app.models import (
@@ -165,14 +167,15 @@ def classify_sector_news(
 
 
 def _news_matches_holding(item: NewsItem, holding: Holding, sector: str) -> bool:
-    topic = item.topic
-    if topic == holding.fund_code:
-        return True
-    if sector and (topic in sector or sector in topic):
-        return True
-    for token in ("人工智能", "电网设备", "半导体", "国防军工", "商业航天"):
-        if token in holding.fund_name and token in topic:
+    topics = dict.fromkeys([item.topic, *item.related_topics])
+    for topic in topics:
+        if topic == holding.fund_code:
             return True
+        if sector and (topic in sector or sector in topic):
+            return True
+        for token in ("人工智能", "电网设备", "半导体", "国防军工", "商业航天"):
+            if token in holding.fund_name and token in topic:
+                return True
     return False
 
 
@@ -291,7 +294,38 @@ def build_offline_fund_recommendation(
     return attach_sector_news(rec, holding, market_news or [])
 
 
-def parse_fund_recommendations_raw(raw: object) -> list[FundRecommendation]:
+def build_offline_fund_recommendations(
+    request: AnalysisRequest,
+    market_news: list[NewsItem] | None = None,
+    *,
+    nav_trends_by_code: dict[str, dict] | None = None,
+) -> list[FundRecommendation]:
+    """Build the shared holdings-complete local fallback without applying guards."""
+    denominator = resolve_weight_denominator(request.holdings, request.profile) or 1
+    nav_trends = nav_trends_by_code or {}
+    fallback = [
+        build_offline_fund_recommendation(
+            holding,
+            holding_weight_percent(holding, request.holdings, request.profile),
+            denominator,
+            request.profile,
+            market_news=market_news or [],
+            nav_trend=nav_trends.get(holding.fund_code),
+        )
+        for holding in request.holdings
+    ]
+    return canonicalize_fund_recommendations(
+        fallback,
+        request.holdings,
+        fallback_recommendations=fallback,
+    )
+
+
+def parse_fund_recommendations_raw(
+    raw: object,
+    *,
+    merge_items: bool = True,
+) -> list[FundRecommendation]:
     if not isinstance(raw, list):
         return []
 
@@ -320,6 +354,12 @@ def parse_fund_recommendations_raw(raw: object) -> list[FundRecommendation]:
         confidence = str(entry.get("confidence") or "中").strip() or "中"
         hold_horizon = str(entry.get("hold_horizon") or "").strip()
         decision_path = str(entry.get("decision_path") or "").strip()
+        suggested_position_change_percent = _coerce_number(
+            entry.get("suggested_position_change_percent")
+        )
+        suggested_position_change_basis = str(
+            entry.get("suggested_position_change_basis") or ""
+        ).strip()
 
         items.append(
             FundRecommendation(
@@ -338,9 +378,324 @@ def parse_fund_recommendations_raw(raw: object) -> list[FundRecommendation]:
                 sector_evidence=_string_list(entry.get("sector_evidence")),
                 fund_evidence=_string_list(entry.get("fund_evidence")),
                 validation_notes=_string_list(entry.get("validation_notes")),
+                suggested_position_change_percent=suggested_position_change_percent,
+                suggested_position_change_basis=suggested_position_change_basis,
             )
         )
-    return merge_fund_recommendations(items)
+    return merge_fund_recommendations(items) if merge_items else items
+
+
+def canonicalize_fund_recommendations(
+    items: Sequence[FundRecommendation],
+    holdings: Sequence[Holding],
+    *,
+    fallback_recommendations: Sequence[FundRecommendation] | None = None,
+) -> list[FundRecommendation]:
+    """Close model output over the server-owned holdings list.
+
+    The function is deliberately pure and idempotent: it never mutates its inputs,
+    emits exactly one item per holding in holding order, drops out-of-portfolio
+    suggestions, and fails closed when duplicate suggestions disagree.
+    """
+    holding_list = list(holdings)
+    if not holding_list:
+        return []
+
+    assigned = _assign_recommendations_to_holdings(items, holding_list)
+    fallback_assigned = _assign_recommendations_to_holdings(
+        fallback_recommendations or [], holding_list
+    )
+
+    result: list[FundRecommendation] = []
+    for index, holding in enumerate(holding_list):
+        candidates = assigned[index]
+        if candidates:
+            recommendation = _merge_canonical_candidates(candidates)
+        elif fallback_assigned[index]:
+            recommendation = _merge_canonical_candidates(fallback_assigned[index])
+            fallback_note = "模型未返回该持仓的有效建议，系统已采用本地保守规则补齐。"
+            if fallback_note not in recommendation.validation_notes:
+                recommendation.validation_notes.append(fallback_note)
+        else:
+            recommendation = _missing_holding_recommendation(holding)
+
+        recommendation.fund_code = holding.fund_code
+        recommendation.fund_name = holding.fund_name
+        result.append(recommendation)
+    return result
+
+
+def _assign_recommendations_to_holdings(
+    items: Sequence[FundRecommendation],
+    holdings: list[Holding],
+) -> list[list[FundRecommendation]]:
+    grouped: list[list[tuple[int, FundRecommendation]]] = [[] for _ in holdings]
+    by_code: dict[str, list[int]] = defaultdict(list)
+    by_name: dict[str, list[int]] = defaultdict(list)
+    for index, holding in enumerate(holdings):
+        code = _valid_identity_code(holding.fund_code)
+        if code is not None:
+            by_code[code].append(index)
+        by_name[_normalize_fund_name(holding.fund_name)].append(index)
+    placeholder_holding_indices = [
+        index
+        for index, holding in enumerate(holdings)
+        if _valid_identity_code(holding.fund_code) is None
+    ]
+
+    indexed_items = list(enumerate(items))
+    valid_code_items: list[tuple[int, FundRecommendation]] = []
+    fallback_identity_items: list[tuple[int, FundRecommendation]] = []
+    for indexed in indexed_items:
+        if _valid_identity_code(indexed[1].fund_code) is not None:
+            valid_code_items.append(indexed)
+        else:
+            fallback_identity_items.append(indexed)
+
+    # A real six-digit code is authoritative. Process it first so weaker name
+    # matching cannot claim an ambiguous duplicate-code holding ahead of it.
+    for input_index, item in valid_code_items:
+        code = _valid_identity_code(item.fund_code)
+        candidates = by_code.get(code or "", [])
+        if not candidates:
+            # A valid code outside the request is an outsider, even when its name
+            # happens to imitate one of the user's holdings.
+            continue
+        target = _choose_stable_holding_index(
+            candidates,
+            grouped,
+            preferred_name=_normalize_fund_name(item.fund_name),
+            holdings=holdings,
+        )
+        grouped[target].append((input_index, item.model_copy(deep=True)))
+
+    for input_index, item in fallback_identity_items:
+        normalized_name = _normalize_fund_name(item.fund_name)
+        candidates = by_name.get(normalized_name, [])
+        if not candidates:
+            # Unknown/placeholder identities may be aligned by stable request
+            # order. A concrete but foreign name is discarded instead of being
+            # allowed to smuggle an action into the portfolio.
+            if not _is_placeholder_fund_name(normalized_name):
+                continue
+            # A placeholder model identity may only consume an authoritative
+            # placeholder holding. Letting it fall through to every holding can
+            # smuggle an action/amount onto a valid unique fund code.
+            candidates = placeholder_holding_indices
+            if not candidates:
+                continue
+        target = _choose_stable_holding_index(
+            candidates,
+            grouped,
+            preferred_name=normalized_name,
+            holdings=holdings,
+        )
+        grouped[target].append((input_index, item.model_copy(deep=True)))
+
+    return [
+        [item for _, item in sorted(group, key=lambda pair: pair[0])]
+        for group in grouped
+    ]
+
+
+def _choose_stable_holding_index(
+    candidates: Sequence[int],
+    grouped: Sequence[list[tuple[int, FundRecommendation]]],
+    *,
+    preferred_name: str,
+    holdings: Sequence[Holding],
+) -> int:
+    name_matches = [
+        index
+        for index in candidates
+        if _normalize_fund_name(holdings[index].fund_name) == preferred_name
+    ]
+    ordered = name_matches or list(candidates)
+    for index in ordered:
+        if not grouped[index]:
+            return index
+    return ordered[0]
+
+
+def _merge_canonical_candidates(
+    candidates: Sequence[FundRecommendation],
+) -> FundRecommendation:
+    from app.services.recommendation_guard import normalize_action_text
+
+    copies = [item.model_copy(deep=True) for item in candidates]
+    normalized_actions = [normalize_action_text(item.action) for item in copies]
+    unique_actions = list(dict.fromkeys(normalized_actions))
+    result = copies[0]
+    result.action = unique_actions[0]
+
+    for field in (
+        "news_bullish",
+        "news_bearish",
+        "points",
+        "risks",
+        "sector_evidence",
+        "fund_evidence",
+        "validation_notes",
+    ):
+        setattr(result, field, _stable_unique_strings(copies, field))
+
+    result.confidence = _least_confident(item.confidence for item in copies)
+    result.hold_horizon = _first_nonempty(item.hold_horizon for item in copies)
+    result.decision_path = _first_nonempty(item.decision_path for item in copies)
+
+    if len(unique_actions) > 1:
+        result.action = (
+            "风控复核"
+            if any(_is_risk_or_reduction_action(action) for action in unique_actions)
+            else "观察"
+        )
+        result.amount_yuan = None
+        result.amount_note = None
+        result.suggested_position_change_percent = None
+        result.suggested_position_change_basis = ""
+        result.confidence = "低"
+        conflict_note = (
+            f"检测到同一持仓的重复建议动作冲突（{' / '.join(unique_actions)}），"
+            f"系统已清除可执行金额并降为{result.action}。"
+        )
+        if conflict_note not in result.validation_notes:
+            result.validation_notes.append(conflict_note)
+        return result
+
+    if _has_action_conflict_note(result):
+        result.action = (
+            "风控复核" if _is_risk_or_reduction_action(result.action) else "观察"
+        )
+        result.amount_yuan = None
+        result.amount_note = None
+        result.suggested_position_change_percent = None
+        result.suggested_position_change_basis = ""
+        result.confidence = "低"
+        return result
+
+    if _has_amount_conflict_note(result):
+        result.amount_yuan = None
+        result.amount_note = None
+        result.confidence = "低"
+    else:
+        amount_values = _unique_non_null(item.amount_yuan for item in copies)
+        if len(amount_values) <= 1:
+            result.amount_yuan = amount_values[0] if amount_values else None
+            result.amount_note = (
+                _first_nonempty(item.amount_note for item in copies) or None
+            )
+        else:
+            result.amount_yuan = None
+            result.amount_note = None
+            result.confidence = "低"
+            note = "同一动作的重复建议金额不一致，系统已清除金额并要求人工复核。"
+            if note not in result.validation_notes:
+                result.validation_notes.append(note)
+
+    if _has_position_conflict_note(result):
+        result.suggested_position_change_percent = None
+        result.suggested_position_change_basis = ""
+        result.confidence = "低"
+    else:
+        position_values = _unique_non_null(
+            item.suggested_position_change_percent for item in copies
+        )
+        if len(position_values) <= 1:
+            result.suggested_position_change_percent = (
+                position_values[0] if position_values else None
+            )
+            result.suggested_position_change_basis = _first_nonempty(
+                item.suggested_position_change_basis for item in copies
+            )
+        else:
+            result.suggested_position_change_percent = None
+            result.suggested_position_change_basis = ""
+            result.confidence = "低"
+            note = "同一动作的重复建议仓位变化不一致，系统已清除仓位比例并要求人工复核。"
+            if note not in result.validation_notes:
+                result.validation_notes.append(note)
+    return result
+
+
+def _missing_holding_recommendation(holding: Holding) -> FundRecommendation:
+    note = "模型未返回该持仓的有效建议，系统已按保守规则补为观察。"
+    return FundRecommendation(
+        fund_code=holding.fund_code,
+        fund_name=holding.fund_name,
+        action="观察",
+        confidence="低",
+        points=[note],
+        risks=["建议缺失，操作前需人工复核持仓与最新数据。"],
+        validation_notes=[note],
+    )
+
+
+def _valid_identity_code(value: object) -> str | None:
+    code = str(value or "").strip()
+    if code != "000000" and re.fullmatch(r"[0-9]{6}", code):
+        return code
+    return None
+
+
+def _normalize_fund_name(value: object) -> str:
+    return re.sub(r"\s+", "", str(value or "")).casefold()
+
+
+def _is_placeholder_fund_name(value: str) -> bool:
+    return value in {"", "000000", "未知", "未知基金", "基金", "unknown"}
+
+
+def _stable_unique_strings(
+    items: Sequence[FundRecommendation], field: str
+) -> list[str]:
+    result: list[str] = []
+    for item in items:
+        for value in getattr(item, field):
+            if value and value not in result:
+                result.append(value)
+    return result
+
+
+def _least_confident(values: Iterable[object]) -> str:
+    ordered = {"低": 0, "中": 1, "高": 2}
+    cleaned = [str(value or "中").strip() or "中" for value in values]
+    return min(cleaned, key=lambda value: ordered.get(value, 0), default="中")
+
+
+def _first_nonempty(values: Iterable[object]) -> str:
+    return next((str(value).strip() for value in values if str(value or "").strip()), "")
+
+
+def _unique_non_null(values: Iterable[float | None]) -> list[float]:
+    result: list[float] = []
+    for value in values:
+        if value is not None and value not in result:
+            result.append(value)
+    return result
+
+
+def _is_risk_or_reduction_action(action: str) -> bool:
+    return any(token in action for token in ("减仓", "清仓", "风控", "复核"))
+
+
+def _has_action_conflict_note(item: FundRecommendation) -> bool:
+    return any("重复建议动作冲突" in note for note in item.validation_notes)
+
+
+def _has_amount_conflict_note(item: FundRecommendation) -> bool:
+    return any("重复建议金额不一致" in note for note in item.validation_notes)
+
+
+def _has_position_conflict_note(item: FundRecommendation) -> bool:
+    return any("重复建议仓位变化不一致" in note for note in item.validation_notes)
+
+
+def _has_executable_conflict_note(item: FundRecommendation) -> bool:
+    return (
+        _has_action_conflict_note(item)
+        or _has_amount_conflict_note(item)
+        or _has_position_conflict_note(item)
+    )
 
 
 def merge_fund_recommendations(items: list[FundRecommendation]) -> list[FundRecommendation]:
@@ -398,8 +753,7 @@ def group_strings_to_fund_recommendations(
 ) -> list[FundRecommendation]:
     by_code = {holding.fund_code: holding for holding in holdings if holding.fund_code != "000000"}
     by_name = {holding.fund_name: holding for holding in holdings}
-    grouped: dict[str, FundRecommendation] = {}
-    order: list[str] = []
+    parsed: list[FundRecommendation] = []
 
     for line in lines:
         line = line.strip()
@@ -411,7 +765,6 @@ def group_strings_to_fund_recommendations(
             code, action, rest = match.group(1), match.group(2).strip(), match.group(3).strip()
             holding = by_code.get(code)
             name = holding.fund_name if holding else code
-            key = code
             point = rest or action
             action_label = action
         else:
@@ -420,7 +773,6 @@ def group_strings_to_fund_recommendations(
                 name, action_label, _ = pipe.group(1), pipe.group(2).strip(), line
                 holding = by_name.get(name.strip())
                 code = holding.fund_code if holding else "000000"
-                key = code if code != "000000" else name.strip()
                 point = line
             else:
                 code_match = re.search(r"\b(\d{6})\b", line)
@@ -429,26 +781,22 @@ def group_strings_to_fund_recommendations(
                 code = code_match.group(1)
                 holding = by_code.get(code)
                 name = holding.fund_name if holding else code
-                key = code
                 action_label = "观察"
                 point = line
 
-        if key not in grouped:
-            grouped[key] = FundRecommendation(
+        parsed.append(
+            FundRecommendation(
                 fund_code=code,
                 fund_name=name,
                 action=action_label,
                 points=[point] if point else [],
             )
-            order.append(key)
-        else:
-            existing = grouped[key]
-            if _action_priority(action_label) > _action_priority(existing.action):
-                existing.action = action_label
-            if point and point not in existing.points:
-                existing.points.append(point)
+        )
 
-    return [grouped[key] for key in order]
+    # Keep duplicates intact. The holdings-aware canonicalizer at the shared
+    # report outlet must see disagreements so it can fail closed instead of
+    # selecting the most aggressive legacy line.
+    return parsed
 
 
 def enrich_fund_recommendations(
@@ -456,20 +804,33 @@ def enrich_fund_recommendations(
     request: AnalysisRequest,
     market_news: list[NewsItem] | None = None,
     topic_briefs: list[TopicBrief] | None = None,
+    *,
+    merge_items: bool = True,
 ) -> list[FundRecommendation]:
     weight_denominator = resolve_weight_denominator(request.holdings, request.profile) or 1
     holding_by_code = {h.fund_code: h for h in request.holdings}
     holding_by_name = {h.fund_name: h for h in request.holdings}
 
     enriched: list[FundRecommendation] = []
-    for item in items:
-        holding = holding_by_code.get(item.fund_code) or holding_by_name.get(item.fund_name)
+    for index, item in enumerate(items):
+        holding = None
+        if index < len(request.holdings):
+            aligned = request.holdings[index]
+            if (
+                item.fund_code == aligned.fund_code
+                and item.fund_name == aligned.fund_name
+            ):
+                holding = aligned
+        if holding is None:
+            holding = holding_by_code.get(item.fund_code) or holding_by_name.get(
+                item.fund_name
+            )
         copy = item.model_copy(deep=True)
         if holding:
             copy.fund_code = holding.fund_code
             copy.fund_name = holding.fund_name
             weight = holding_weight_percent(holding, request.holdings, request.profile)
-            if copy.amount_yuan is None:
+            if copy.amount_yuan is None and not _has_executable_conflict_note(copy):
                 amount_yuan, amount_note = suggest_trade_amount(
                     holding, weight, weight_denominator, request.profile, copy.action
                 )
@@ -485,7 +846,7 @@ def enrich_fund_recommendations(
                 else:
                     copy = attach_sector_news(copy, holding, market_news)
         enriched.append(copy)
-    return merge_fund_recommendations(enriched)
+    return merge_fund_recommendations(enriched) if merge_items else enriched
 
 
 def portfolio_recommendation_lines(lines: list[str], holdings: list[Holding]) -> list[str]:
@@ -526,3 +887,12 @@ def _coerce_amount(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return round(amount, 0) if amount >= 0 else None
+
+
+def _coerce_number(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None

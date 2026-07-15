@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from types import SimpleNamespace
 
 import pytest
@@ -62,7 +63,7 @@ def test_enrichment_recomputes_bounded_score_and_quality_gate(monkeypatch):
     item = result[0]
     assert item["max_drawdown_1y_percent"] == -20.0
     assert 0 <= item["fund_quality_score"] <= 100
-    assert item["quality_score_version"] == "fund_quality.v2"
+    assert item["quality_score_version"] == "fund_quality.v3"
     assert item["quality_gate"]["status"] == "eligible"
     assert item["quality_gate"]["coverage_percent"] == 100.0
 
@@ -226,6 +227,26 @@ def test_zero_returns_and_drawdown_are_valid_core_values_but_non_finite_values_a
     )
 
 
+@pytest.mark.parametrize("nav_date", ["2099-01-01", "not-a-date"])
+def test_candidate_quality_gate_rejects_future_or_invalid_nav_dates(nav_date: str):
+    item = _with_data_quality_gate(
+        {
+            "fund_scale_yi": 3.0,
+            "return_3m_percent": 1.0,
+            "return_6m_percent": 2.0,
+            "max_drawdown_1y_percent": -10.0,
+            "established_date": "2020-01-01",
+            "fund_manager": "测试经理",
+            "nav_date": nav_date,
+        },
+        as_of_date=date(2026, 7, 14),
+    )
+
+    assert item["quality_gate"]["status"] == "excluded"
+    assert item["quality_gate"]["eligible"] is False
+    assert any("时点" in reason for reason in item["quality_gate"]["reasons"])
+
+
 def test_enrichment_propagates_partial_profile_stale_fields(monkeypatch):
     monkeypatch.setattr(
         "app.services.discovery_candidate_pool.FundDataService._snapshot_and_trend_for_holding",
@@ -298,6 +319,121 @@ def test_final_candidate_pool_drops_excluded_and_backfills_by_sector():
 
     assert [item["fund_code"] for item in result] == ["000002", "000004", "000003"]
     assert [item["candidate_final_rank"] for item in result] == [1, 2, 3]
+
+
+def test_final_candidate_pool_selects_open_share_after_family_evidence() -> None:
+    base_tradeability = {
+        "data_status": "complete",
+        "freshness": "fresh",
+        "redemption_state": "open",
+        "currency": "CNY",
+        "minimum_purchase_yuan": 10.0,
+        "daily_purchase_limit_yuan": None,
+        "daily_purchase_limit_unlimited": True,
+    }
+    pool = [
+        {
+            "fund_code": "020639",
+            "fund_name": "广发半导体设备ETF联接A",
+            "fund_type": "指数型",
+            "sector_label": "半导体",
+            "fund_quality_score": 90,
+            "quality_gate": {"status": "eligible"},
+            "tradeability": {**base_tradeability, "purchase_state": "suspended"},
+        },
+        {
+            "fund_code": "020640",
+            "fund_name": "广发半导体设备ETF联接C",
+            "fund_type": "指数型",
+            "sector_label": "半导体",
+            "fund_quality_score": 88,
+            "quality_gate": {"status": "eligible"},
+            "tradeability": {**base_tradeability, "purchase_state": "open"},
+        },
+    ]
+
+    result = finalize_candidate_pool(pool, ["半导体"], per_sector=1, pool_cap=1)
+
+    assert [item["fund_code"] for item in result] == ["020640"]
+    assert result[0]["share_family"]["member_codes"] == ["020640", "020639"]
+    assert result[0]["share_family"]["selected_basis"] == (
+        "tradeability_gate_then_legacy_share_class_priority"
+    )
+    assert result[0]["share_family"]["fee_comparison_status"] == "not_compared"
+
+
+def test_final_candidate_pool_compares_share_cost_at_profile_horizon() -> None:
+    def tradeability(*, purchase_fee: float, sales_service_fee: float) -> dict:
+        return {
+            "data_status": "complete",
+            "freshness": "fresh",
+            "purchase_state": "open",
+            "redemption_state": "open",
+            "currency": "CNY",
+            "minimum_purchase_yuan": 10.0,
+            "daily_purchase_limit_yuan": None,
+            "daily_purchase_limit_unlimited": True,
+            "standard_purchase_fee_tiers": [
+                {
+                    "condition": "全部",
+                    "fee_type": "percent",
+                    "fee_percent": purchase_fee,
+                    "flat_fee_yuan": None,
+                    "min_amount_yuan": None,
+                    "max_amount_yuan": None,
+                    "source_rate": "standard_undiscounted",
+                }
+            ],
+            "redemption_fee_tiers": [
+                {
+                    "condition": "大于等于0天",
+                    "min_days": 0,
+                    "max_days": None,
+                    "fee_percent": 0.0,
+                }
+            ],
+            "sales_service_fee_annual_percent": sales_service_fee,
+        }
+
+    pool = [
+        {
+            "fund_code": "020639",
+            "fund_name": "广发半导体设备ETF联接A",
+            "fund_type": "指数型",
+            "sector_label": "半导体",
+            "fund_quality_score": 90,
+            "quality_gate": {"status": "eligible"},
+            "tradeability": tradeability(purchase_fee=1.2, sales_service_fee=0.0),
+        },
+        {
+            "fund_code": "020640",
+            "fund_name": "广发半导体设备ETF联接C",
+            "fund_type": "指数型",
+            "sector_label": "半导体",
+            "fund_quality_score": 88,
+            "quality_gate": {"status": "eligible"},
+            "tradeability": tradeability(purchase_fee=0.0, sales_service_fee=0.3),
+        },
+    ]
+
+    result = finalize_candidate_pool(
+        pool,
+        ["半导体"],
+        per_sector=1,
+        pool_cap=1,
+        minimum_holding_days=180,
+    )
+
+    assert [item["fund_code"] for item in result] == ["020640"]
+    family = result[0]["share_family"]
+    assert family["selected_basis"] == "standard_cost_upper_bound_at_profile_horizon"
+    assert family["fee_comparison_status"] == (
+        "compared_standard_upper_bound_at_profile_horizon"
+    )
+    assert family["comparison_amount_yuan"] == 100.0
+    assert family["member_cost_upper_bound_percent"]["020640"] < family[
+        "member_cost_upper_bound_percent"
+    ]["020639"]
 
 
 def test_guard_removes_excluded_candidate_and_clears_non_buy_amounts():
@@ -526,6 +662,40 @@ def _eligible_guard_candidate(*, quality_gate: dict | None = None) -> dict:
         "sector_label": "半导体",
         "fund_quality_score": 90.0,
         "sector_fit_score": 38.0,
+        "tradeability": {
+            "data_status": "partial",
+            "freshness": "fresh",
+            "purchase_state": "open",
+            "redemption_state": "open",
+            "currency": "CNY",
+            "minimum_purchase_yuan": 10.0,
+            "daily_purchase_limit_yuan": None,
+            "daily_purchase_limit_unlimited": True,
+            "standard_purchase_fee_tiers": [
+                {
+                    "condition": "全部",
+                    "fee_type": "percent",
+                    "fee_percent": 0.0,
+                    "flat_fee_yuan": None,
+                    "min_amount_yuan": None,
+                    "max_amount_yuan": None,
+                    "source_rate": "standard_undiscounted",
+                }
+            ],
+            "redemption_fee_tiers": [
+                {
+                    "condition": "大于等于0天",
+                    "min_days": 0,
+                    "max_days": None,
+                    "fee_percent": 0.0,
+                }
+            ],
+            "sales_service_fee_annual_percent": 0.0,
+            "sales_service_fee_status": "known_zero",
+            "fee_freshness": "fresh",
+            "source_conflict": False,
+            "source_ids": ["pytest.tradeability"],
+        },
     }
     if quality_gate is not None:
         candidate["quality_gate"] = quality_gate
@@ -537,15 +707,38 @@ def _run_guard_for_test(
     candidate: dict,
     *,
     budget_yuan: float = 10_000,
+    extra_facts: dict | None = None,
 ):
+    profile = InvestorProfile(concentration_limit_percent=100)
+    facts = {
+        "candidate_pool": [candidate],
+        "portfolio_snapshot": {
+            "stale": False,
+            "authoritative": True,
+            "position_complete": True,
+            "pending_transaction_count": 0,
+        },
+        "portfolio_position_truth": {
+            "position_complete": True,
+            "cash": {"known": True, "balance_yuan": budget_yuan},
+            "positions": [],
+        },
+        "portfolio_gap": {
+            "available_budget_yuan": budget_yuan,
+            "total_amount": 0,
+            "weight_denominator_yuan": 0,
+            "holdings_slim": [],
+        },
+    }
+    facts.update(extra_facts or {})
     return apply_discovery_guards(
         recommendations,
         candidate_pool=[candidate],
         held_codes=set(),
-        profile=InvestorProfile(concentration_limit_percent=100),
+        profile=profile,
         budget_yuan=budget_yuan,
         sector_heat=[],
-        discovery_facts={"candidate_pool": [candidate]},
+        discovery_facts=facts,
     )
 
 
@@ -598,6 +791,47 @@ def test_guard_deduplicates_same_fund_before_allocating_budget():
     assert len(guarded) == 1
     assert guarded[0].suggested_amount_yuan == 1000
     assert any("重复推荐" in caveat for caveat in caveats)
+
+
+def test_guard_never_uses_legacy_descriptive_factor_alias_for_execution():
+    candidate = _eligible_guard_candidate(
+        quality_gate={"status": "eligible", "eligible": True, "reasons": []}
+    )
+    guarded, _, _ = _run_guard_for_test(
+        [
+            DiscoveryRecommendation(
+                fund_code="020356",
+                fund_name="守卫测试基金A",
+                sector_name="半导体",
+                action="分批买入",
+                suggested_amount_yuan=1000,
+            )
+        ],
+        candidate,
+        extra_facts={
+            "candidate_factor_scores": {
+                "available": True,
+                "ic_status": {
+                    "state": "available",
+                    "available": True,
+                    "stale": False,
+                },
+                "applicable_fund_codes": ["020356"],
+                "holdings": [
+                    {
+                        "fund_code": "020356",
+                        "applicable": True,
+                        "descriptive_applicable": True,
+                        "execution_qualified": False,
+                    }
+                ],
+            }
+        },
+    )
+
+    assert guarded[0].action == "建议关注"
+    assert guarded[0].suggested_amount_yuan is None
+    assert "量化证据未覆盖" in guarded[0].points[0]
 
 
 @pytest.mark.parametrize("invalid_amount", [-1000.0, float("nan"), float("inf")])

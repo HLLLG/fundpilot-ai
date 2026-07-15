@@ -187,7 +187,7 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
     );
 
     await waitFor(() => expect(fetchDiscoveryPrompt).toHaveBeenCalled());
-    expect(screen.getByRole("button", { name: /AI 角色设定（高级）/ })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: /AI 分析偏好附录（高级）/ })).toHaveAttribute(
       "aria-expanded",
       "false",
     );
@@ -249,7 +249,7 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
     );
 
     await waitFor(() => expect(fetchDiscoveryPrompt).toHaveBeenCalled());
-    fireEvent.click(screen.getByRole("button", { name: /AI 角色设定（高级）/ }));
+    fireEvent.click(screen.getByRole("button", { name: /AI 分析偏好附录（高级）/ }));
     await waitFor(() => expect(document.body.textContent).toContain("remote prompt"));
     vi.mocked(saveDiscoveryPromptRemote).mockClear();
     fireEvent.click(screen.getByRole("button", { name: /编辑/ }));
@@ -269,6 +269,24 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
     expect(screen.queryByRole("group", { name: "选基策略" })).not.toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "基金类型偏好" })).not.toBeInTheDocument();
     expect(screen.getByText("系统自动选基")).toBeInTheDocument();
+  });
+
+  it("uses the truthful shared fast and deep mode descriptions", () => {
+    const onAnalysisModeChange = vi.fn();
+    renderPanel({
+      analysisMode: "deep",
+      onAnalysisModeChange,
+    });
+
+    expect(screen.getByRole("button", { name: "快速 · Flash" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "深度 · Pro" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByText("Pro 模型 · 有界扩展证据 · 可选风控审校")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "快速 · Flash" }));
+    expect(onAnalysisModeChange).toHaveBeenCalledWith("fast");
   });
 
   it("sends the fixed automatic quality and share-class policies for normal scans", async () => {

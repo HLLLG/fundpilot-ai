@@ -1,6 +1,13 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from app.models import DiscoveryRecommendation, FundDiscoveryReport, InvestorProfile
+from app.services.deepseek_http import ProviderFailure
+from app.services.fund_lookthrough_claim_validator import (
+    validate_fund_lookthrough_claims,
+)
+from app.services.provider_fallback import apply_provider_failure_to_facts
 
 _DISCLAIMER = "仅供参考，不构成投资建议；基金有风险，决策需结合自身承受能力。"
 
@@ -13,6 +20,10 @@ def build_offline_discovery_report(
     profile: InvestorProfile,
     focus_sectors: list[str],
     analysis_mode: str = "deep",
+    provider_failure: ProviderFailure | None = None,
+    attempted_model: str | None = None,
+    prompt_contract: dict | None = None,
+    decision_at: datetime | None = None,
 ) -> FundDiscoveryReport:
     from app.services.decision_data_evidence import portfolio_snapshot_caveats
 
@@ -34,6 +45,14 @@ def build_offline_discovery_report(
     from app.services.decision_data_evidence import decision_evidence_allows_action
 
     evidence_blocked_codes: dict[str, list[str]] = {}
+    provider_failed = provider_failure is not None
+    if provider_failure is not None:
+        apply_provider_failure_to_facts(
+            discovery_facts,
+            failure=provider_failure,
+            attempted_model=attempted_model or "unknown",
+            prompt_contract=prompt_contract,
+        )
     budget = discovery_facts.get("portfolio_gap", {}).get("available_budget_yuan") or 0.0
     _ = budget
 
@@ -44,7 +63,7 @@ def build_offline_discovery_report(
             scope="discovery",
             fund_code=code,
         )
-        execution_blocked = degraded_portfolio or not evidence_allowed
+        execution_blocked = provider_failed or degraded_portfolio or not evidence_allowed
         if execution_blocked:
             evidence_blocked_codes[code] = evidence_reasons
         recommendations.append(
@@ -73,16 +92,30 @@ def build_offline_discovery_report(
             )
         )
 
+    existing_guard = (
+        dict(discovery_facts.get("data_evidence_guard") or {})
+        if isinstance(discovery_facts.get("data_evidence_guard"), dict)
+        else {}
+    )
     discovery_facts["data_evidence_guard"] = {
-        "execution_blocked": bool(evidence_blocked_codes),
+        **existing_guard,
+        "execution_blocked": provider_failed or bool(evidence_blocked_codes),
         "blocked_fund_codes": sorted(evidence_blocked_codes),
         "reasons_by_fund": evidence_blocked_codes,
     }
+    if provider_failure is not None:
+        apply_provider_failure_to_facts(
+            discovery_facts,
+            failure=provider_failure,
+            attempted_model=attempted_model or "unknown",
+            prompt_contract=prompt_contract,
+        )
 
     from app.services.decision_data_evidence import report_execution_blocked
 
     blocked = report_execution_blocked(discovery_facts)
-    return FundDiscoveryReport(
+    report = FundDiscoveryReport(
+        **({"created_at": decision_at} if decision_at is not None else {}),
         title="今日基金机会扫描（离线）",
         summary=(
             "字段级证据时点校验未通过，本次仅保留观察候选；请刷新数据后重新扫描。"
@@ -102,8 +135,31 @@ def build_offline_discovery_report(
         caveats=[
             _DISCLAIMER,
             "当前为离线兜底报告。",
+            *([provider_failure.message] if provider_failure is not None else []),
             *portfolio_snapshot_caveats(discovery_facts),
         ],
-        provider="offline",
+        provider="offline-fallback" if provider_failed else "offline",
         analysis_mode=analysis_mode,  # type: ignore[arg-type]
     )
+    return _validate_offline_discovery_fund_lookthrough_claims(report)
+
+
+def _validate_offline_discovery_fund_lookthrough_claims(
+    report: FundDiscoveryReport,
+) -> FundDiscoveryReport:
+    """Run the same post-guard claim validator used by online discovery."""
+
+    payload = report.model_dump(mode="python")
+    discovery_facts = payload.get("discovery_facts")
+    full_facts = discovery_facts if isinstance(discovery_facts, dict) else {}
+    fund_lookthrough = full_facts.get("fund_lookthrough")
+    cleaned, audit = validate_fund_lookthrough_claims(
+        payload,
+        fund_lookthrough if isinstance(fund_lookthrough, dict) else None,
+    )
+    cleaned_facts = cleaned.get("discovery_facts")
+    if not isinstance(cleaned_facts, dict):
+        cleaned_facts = {}
+        cleaned["discovery_facts"] = cleaned_facts
+    cleaned_facts["fund_lookthrough_claim_audit"] = audit
+    return FundDiscoveryReport.model_validate(cleaned)

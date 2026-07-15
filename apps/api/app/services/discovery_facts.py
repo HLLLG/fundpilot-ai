@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from datetime import datetime
 
 from app.models import Holding, InvestorProfile, NewsItem, TopicBrief
 from app.services.discovery_sector_context import (
@@ -11,6 +12,7 @@ from app.services.discovery_prompt import DISCOVERY_FACTS_INSTRUCTION
 from app.services.investment_presets import take_profit_threshold_percent
 from app.services.market_flow_client import build_stock_connect_flow_context
 from app.services.fund_nav_service import get_cached_official_nav_return
+from app.services.fund_tradeability import build_tradeability_gate
 from app.services.holding_estimates import (
     compute_estimated_daily_return_percent,
     resolve_holding_return_percent,
@@ -41,6 +43,7 @@ def build_discovery_facts(
     fund_type_preference: str = "any",
     sector_opportunities: list[dict] | None = None,
     budget_enhancements: bool = False,
+    decision_at: datetime | None = None,
 ) -> dict:
     total_amount = sum(item.holding_amount for item in holdings) or 0.0
     denominator = resolve_weight_denominator(holdings, profile)
@@ -54,7 +57,7 @@ def build_discovery_facts(
         if budget_enhancements
         else build_signal_backtest_context(target_sectors)
     )
-    session = build_trading_session()
+    session = build_trading_session(decision_at)
     target_context_labels = list(dict.fromkeys(list(target_sectors) + list(focus_sectors or [])))
     target_sector_context = (
         _budgeted_target_sector_context(
@@ -105,6 +108,10 @@ def build_discovery_facts(
         "portfolio_gap": {
             "holding_count": len(holdings),
             "total_amount": round(total_amount, 2),
+            "weight_denominator_yuan": round(denominator, 2),
+            "sector_exposure_complete": all(
+                bool((holding.sector_name or "").strip()) for holding in holdings
+            ),
             "available_budget_yuan": round(available_budget, 2),
             "held_sectors": _held_sector_summary(holdings),
             "holdings_slim": _build_holdings_slim(
@@ -121,20 +128,66 @@ def build_discovery_facts(
         "target_sector_context": target_sector_context,
         "stock_connect_flow": stock_connect_flow,
         "signal_backtest": signal_backtest,
-        "news": build_news_pipeline_context(market_news, topic_briefs),
+        "news": build_news_pipeline_context(
+            market_news,
+            topic_briefs,
+            now=decision_at,
+        ),
         "candidate_pool": candidate_pool,
         "candidate_quality_summary": _candidate_quality_summary(candidate_pool),
+        "candidate_peer_summary": _candidate_peer_summary(candidate_pool),
         "candidate_factor_scores": build_candidate_factor_scores(candidate_pool),
         "selection_strategy": selection_strategy,
         "effective_configuration": {
             "scan_goal": scan_mode,
             "selection_policy": "auto_quality",
-            "share_class_policy": "family_dedupe_fee_verification_required",
+            "share_class_policy": (
+                "tradeability_first_family_selection_standard_fee_upper_bound"
+            ),
             "legacy_fund_type_preference": fund_type_preference,
         },
     }
 
     return facts
+
+
+def _candidate_peer_summary(candidate_pool: list[dict]) -> dict:
+    statuses: dict[str, int] = {}
+    groups: dict[str, int] = {}
+    formal = 0
+    reference = 0
+    for item in candidate_pool:
+        peer = item.get("peer_rank") if isinstance(item.get("peer_rank"), dict) else {}
+        group = item.get("peer_group") if isinstance(item.get("peer_group"), dict) else {}
+        benchmark = (
+            item.get("benchmark_comparison")
+            if isinstance(item.get("benchmark_comparison"), dict)
+            else {}
+        )
+        status = str(peer.get("status") or "unavailable")
+        statuses[status] = statuses.get(status, 0) + 1
+        group_key = str(group.get("group_key") or "unclassified")
+        groups[group_key] = groups.get(group_key, 0) + 1
+        if benchmark.get("comparison_role") == "formal_excess":
+            formal += 1
+        elif benchmark.get("comparison_role") == "tracking_reference":
+            reference += 1
+    return {
+        "schema_version": "candidate_peer_summary.v1",
+        "status_counts": statuses,
+        "group_counts": groups,
+        "formal_benchmark_count": formal,
+        "tracking_reference_count": reference,
+        "execution_tilt_count": sum(
+            1
+            for item in candidate_pool
+            if isinstance(item.get("peer_rank"), dict)
+            and item["peer_rank"].get("execution_tilt_eligible") is True
+        ),
+        "instruction": (
+            "同类分位与基准角色用于研究解释；未经独立执行验证不得改变金额。"
+        ),
+    }
 
 
 def _candidate_quality_summary(candidate_pool: list[dict]) -> dict:
@@ -151,6 +204,10 @@ def _candidate_quality_summary(candidate_pool: list[dict]) -> dict:
     missing_field_counts = {field: 0 for field in required_fields}
     profile_status_counts: dict[str, int] = {}
     profile_source_counts: dict[str, int] = {}
+    tradeability_gate_counts = {"eligible": 0, "watch_only": 0, "excluded": 0}
+    purchase_state_counts: dict[str, int] = {}
+    fee_status_counts: dict[str, int] = {}
+    revalidation_required_count = 0
     coverage_values: list[float] = []
     for item in candidate_pool:
         gate = item.get("quality_gate") if isinstance(item.get("quality_gate"), dict) else {}
@@ -173,6 +230,24 @@ def _candidate_quality_summary(candidate_pool: list[dict]) -> dict:
                 coverage_values.append(float(value))
         except (TypeError, ValueError):
             pass
+        tradeability = (
+            item.get("tradeability")
+            if isinstance(item.get("tradeability"), dict)
+            else None
+        )
+        execution_gate = build_tradeability_gate(tradeability)
+        gate_status = str(execution_gate.get("status") or "watch_only")
+        if gate_status not in tradeability_gate_counts:
+            gate_status = "watch_only"
+        tradeability_gate_counts[gate_status] += 1
+        purchase_state = str((tradeability or {}).get("purchase_state") or "unknown")
+        purchase_state_counts[purchase_state] = purchase_state_counts.get(purchase_state, 0) + 1
+        fee_status = str(
+            (tradeability or {}).get("share_class_fee_status") or "unverified"
+        )
+        fee_status_counts[fee_status] = fee_status_counts.get(fee_status, 0) + 1
+        if execution_gate.get("revalidation_required") is True:
+            revalidation_required_count += 1
     return {
         "total_count": len(candidate_pool),
         "eligible_count": statuses["eligible"],
@@ -182,6 +257,10 @@ def _candidate_quality_summary(candidate_pool: list[dict]) -> dict:
         "missing_field_counts": missing_field_counts,
         "profile_status_counts": profile_status_counts,
         "profile_source_counts": profile_source_counts,
+        "tradeability_gate_counts": tradeability_gate_counts,
+        "purchase_state_counts": purchase_state_counts,
+        "fee_status_counts": fee_status_counts,
+        "revalidation_required_count": revalidation_required_count,
         "coverage_percent": (
             round(sum(coverage_values) / len(coverage_values), 1)
             if coverage_values

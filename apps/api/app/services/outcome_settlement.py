@@ -2,12 +2,13 @@
 
 该服务直接读取持久化 decision_events/outcome_observations，不依赖任何 GET
 端点。只重算调度开始时仍处于非终态的 event+horizon；终态证据保持不可变，
-并发写入冲突会 fail-closed 抛出异常。
+单个 target 的并发冲突会 fail-closed 记录失败并继续健康 target，全局加载与
+主存储权威错误仍直接抛出。
 """
 from __future__ import annotations
 
 import json
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import date
 from typing import Any, Callable, Iterable, Mapping
 
@@ -71,13 +72,20 @@ def settle_pending_outcomes(
         connection_factory=connection_factory,
     )
     if not targets:
-        return _summary(anchor=anchor, targets=[], orphaned=orphaned, results=[])
+        return _summary(
+            anchor=anchor,
+            targets=[],
+            orphaned=orphaned,
+            results=[],
+            failures=[],
+        )
 
     resolved_trade_dates = (
         trade_dates if trade_dates is not None else get_trade_date_set()
     )
     nav_fetch = _memoized_fetcher(fetch_nav)
     results: list[dict[str, Any]] = []
+    failures: list[dict[str, Any]] = []
 
     from app.request_context import reset_request_user_id, set_request_user_id
 
@@ -123,22 +131,43 @@ def settle_pending_outcomes(
                     results.append(
                         _result_row(user_id, source_type, report_id, result, allowed)
                     )
-        except OutcomeEvidenceConflict as exc:
-            raise OutcomeSettlementConflict(
-                f"terminal outcome conflict: user={user_id}, source={source_type}, report={report_id}"
-            ) from exc
-        except OutcomeEvidencePersistenceError as exc:
-            raise OutcomeSettlementError(
-                f"outcome persistence failed: user={user_id}, source={source_type}, report={report_id}"
-            ) from exc
-        except Exception as exc:  # noqa: BLE001 - one report failure aborts the cron run
-            raise OutcomeSettlementError(
-                f"outcome evaluation failed: user={user_id}, source={source_type}, report={report_id}"
-            ) from exc
+        except OutcomeEvidenceConflict:
+            failures.append(
+                _failure_row(
+                    user_id,
+                    source_type,
+                    report_id,
+                    reason="terminal_outcome_conflict",
+                )
+            )
+        except OutcomeEvidencePersistenceError:
+            failures.append(
+                _failure_row(
+                    user_id,
+                    source_type,
+                    report_id,
+                    reason="outcome_persistence_failed",
+                )
+            )
+        except Exception:  # noqa: BLE001 - isolate one bad report from healthy tenants
+            failures.append(
+                _failure_row(
+                    user_id,
+                    source_type,
+                    report_id,
+                    reason="outcome_evaluation_failed",
+                )
+            )
         finally:
             reset_request_user_id(token)
 
-    return _summary(anchor=anchor, targets=targets, orphaned=orphaned, results=results)
+    return _summary(
+        anchor=anchor,
+        targets=targets,
+        orphaned=orphaned,
+        results=results,
+        failures=failures,
+    )
 
 
 def _settle_daily(
@@ -387,21 +416,45 @@ def _result_row(
     }
 
 
+def _failure_row(
+    user_id: int,
+    source_type: str,
+    report_id: str,
+    *,
+    reason: str,
+) -> dict[str, Any]:
+    return {
+        "user_id": user_id,
+        "source_type": source_type,
+        "report_id": report_id,
+        "reason": reason,
+    }
+
+
 def _summary(
     *,
     anchor: str,
     targets: list[dict[str, Any]],
     orphaned: list[dict[str, Any]],
     results: list[dict[str, Any]],
+    failures: list[dict[str, Any]],
 ) -> dict[str, Any]:
     pending_count = sum(
         len(horizons)
         for target in targets
         for horizons in target["pending_event_horizons"].values()
     )
+    failure_reasons = Counter(str(row["reason"]) for row in failures)
+    status = (
+        "completed_with_failures"
+        if failures
+        else "completed_with_orphans"
+        if orphaned
+        else "completed"
+    )
     return {
         "schema_version": "outcome_settlement.v1",
-        "status": "completed_with_orphans" if orphaned else "completed",
+        "status": status,
         "as_of_date": anchor,
         "report_count": len(targets),
         "pending_horizon_count": pending_count,
@@ -410,6 +463,14 @@ def _summary(
         "terminal_count": sum(row["terminal_count"] for row in results),
         "orphaned_count": len(orphaned),
         "orphaned": orphaned,
+        "failed_target_count": len(failures),
+        "failed_user_ids": sorted(
+            {int(row["user_id"]) for row in failures}
+        ),
+        "failure_reasons": [
+            {"reason": reason, "count": count}
+            for reason, count in sorted(failure_reasons.items())
+        ],
         "results": results,
     }
 

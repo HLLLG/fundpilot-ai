@@ -142,6 +142,7 @@ class NewsItem(BaseModel):
     url: str | None = None
     snippet: str | None = None
     is_today: bool = False
+    related_topics: list[str] = Field(default_factory=list)
 
 
 NewsSentiment = Literal["bullish", "bearish", "neutral"]
@@ -351,6 +352,8 @@ class FundSnapshot(BaseModel):
     fund_type: str | None = None
     management_fee: str | None = None
     fund_scale_yi: float | None = None
+    fund_scale_source: str | None = None
+    fund_scale_as_of: str | None = None
     return_1y_percent: float | None = None
     max_drawdown_1y_percent: float | None = None
 
@@ -373,6 +376,10 @@ class FundRecommendation(BaseModel):
     sector_evidence: list[str] = Field(default_factory=list)
     fund_evidence: list[str] = Field(default_factory=list)
     validation_notes: list[str] = Field(default_factory=list)
+    # Server-owned daily execution facts. Defaults preserve historical reports;
+    # the final guard overwrites any same-named fields from model output.
+    tradeability: dict[str, Any] = Field(default_factory=dict)
+    transaction_execution: dict[str, Any] = Field(default_factory=dict)
     suggested_position_change_percent: float | None = None
     suggested_position_change_basis: str = ""
 
@@ -429,6 +436,10 @@ class DiscoveryRecommendation(BaseModel):
     sector_evidence: list[str] = Field(default_factory=list)
     fund_evidence: list[str] = Field(default_factory=list)
     validation_notes: list[str] = Field(default_factory=list)
+    # 服务端确定性附加；不信任 LLM 草案里的同名字段，最终由候选事实与金额门禁覆盖。
+    tradeability: dict[str, Any] = Field(default_factory=dict)
+    cost_assessment: dict[str, Any] = Field(default_factory=dict)
+    allocation: dict[str, Any] = Field(default_factory=dict)
     suggested_position_change_percent: float | None = None
     suggested_position_change_basis: str = ""
 
@@ -451,6 +462,7 @@ class FundDiscoveryReport(BaseModel):
     target_sectors: list[str] = Field(default_factory=list)
     candidate_pool: list[dict] = Field(default_factory=list)
     recommendations: list[DiscoveryRecommendation] = Field(default_factory=list)
+    allocation_plan: dict[str, Any] = Field(default_factory=dict)
     eliminated_candidates: list[EliminatedCandidate] = Field(default_factory=list)
     discovery_facts: dict = Field(default_factory=dict)
     caveats: list[str] = Field(default_factory=list)

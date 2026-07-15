@@ -132,6 +132,11 @@
     FUND_AI_DATABASE_URL=mysql://fundpilot:与MYSQL_PASSWORD相同@mysql:3306/fundpilot
     FUND_AI_DB_FALLBACK_SQLITE=false
     FUND_AI_JWT_SECRET=替换为随机Base64值
+    FUND_AI_DECISION_QUALITY_READ_TOKEN=
+    FUND_AI_PROMPT_SHADOW_ENABLED=false
+    FUND_AI_PROMPT_SHADOW_ASSIGNMENT_SECRET=
+    FUND_AI_PROMPT_SHADOW_SAMPLE_BASIS_POINTS=10000
+    FUND_AI_PROMPT_SHADOW_MAX_CHALLENGER_CALLS_PER_DAY=100
     FUND_AI_CORS_ORIGINS=https://app.example.com
     FUND_AI_DEEPSEEK_API_KEY=替换为现有DeepSeek_Key
     FUND_AI_OCR_PRELOAD=false
@@ -144,6 +149,28 @@
     FUND_AI_THEME_BOARD_REFRESH_ENABLED=true
 
 不填写 `FUND_AI_CLOUDBASE_ENV_ID`。新站不应复用本机 `.env`，以免带入本地数据库路径或旧 Key。
+
+`FUND_AI_DECISION_QUALITY_READ_TOKEN` 是可选的内部只读 Token。需要读取最新预计算质量快照时，
+用独立随机值填写，并只通过 `X-Decision-Quality-Read-Token` 请求头传递；不得复用 JWT、因子 IC
+发布 Token 或模型 Key。不开放该运维读面时保持为空。
+
+`FUND_AI_PROMPT_SHADOW_ENABLED` 默认必须保持 `false`。只有准备承担额外模型调用成本、
+并需要积累荐基 `full_market + fast + 默认角色` 的真实 paired 样本时才开启；同时用新的
+独立随机值填写 `FUND_AI_PROMPT_SHADOW_ASSIGNMENT_SECRET`，按流量调整抽样 basis points 和
+上海自然日上限。挑战者只在后台运行，不替换用户报告；密钥不得复用或写入数据库。
+
+`MYSQL_USER` 必须对 `MYSQL_DATABASE` 拥有 `TRIGGER` 与质量账 additive DDL 所需权限。API
+bootstrap 会为 `decision_quality_contract_rollouts`、`decision_quality_input_artifacts`、
+`decision_quality_evaluation_snapshots`、`decision_quality_artifact_receipts`、
+`decision_quality_provider_receipts` 创建并逐次校验 10 个不可变触发器，同时验真候选终态的
+`logical_key VARCHAR(255) NULL` 与 `(userId, artifact_type, logical_key)` 非前缀唯一索引；权限不足、
+同名触发器不是精确无条件 `SIGNAL`、列/索引冲突或 DDL 后无法验真时都会失败关闭，不会回落本地
+SQLite。多 worker 并发 bootstrap 只有在异常后重读 metadata 确认契约已完整建立时才幂等成功。
+schema v16 还要求 `prompt_shadow_runs` 与 `prompt_shadow_budget_counters` 使用 InnoDB 并满足
+精确列/索引契约；它们是 lease、状态机和预算计数用的可变运营表，不创建不可变触发器。
+Docker 官方 MySQL 初始化账号后，首次上线仍应通过 `SHOW GRANTS`、`SHOW TRIGGERS`、
+`SHOW COLUMNS FROM decision_quality_input_artifacts` 与
+`SHOW INDEX FROM decision_quality_input_artifacts` 核对该能力。
 
 ## 8. 创建 Docker Compose 和初始 Nginx 配置
 
@@ -383,6 +410,51 @@
     15 3 * * * /usr/local/sbin/fundpilot-backup >> /srv/fundpilot/backups/backup.log 2>&1
 
 本地备份不等于灾备。每周将最新 SQL 与 `/srv/fundpilot/uploads/` 同步至 COS 或另一受控存储，并每季度完整恢复测试一次。
+
+恢复测试不能只核对业务表行数。恢复后先启动一次 API 让 bootstrap 验真，再执行：
+
+    cd /srv/fundpilot/repo
+    set -a; . ./.env.production; set +a
+    docker compose --env-file .env.production -f docker-compose.production.yml up -d mysql api
+    docker compose --env-file .env.production -f docker-compose.production.yml exec -T mysql mysql -u root -p"$MYSQL_ROOT_PASSWORD" "$MYSQL_DATABASE" -e 'SHOW TRIGGERS;'
+    docker compose --env-file .env.production -f docker-compose.production.yml exec -T mysql mysql -u root -p"$MYSQL_ROOT_PASSWORD" "$MYSQL_DATABASE" -e "SHOW COLUMNS FROM decision_quality_input_artifacts LIKE 'logical_key';"
+    docker compose --env-file .env.production -f docker-compose.production.yml exec -T mysql mysql -u root -p"$MYSQL_ROOT_PASSWORD" "$MYSQL_DATABASE" -e "SHOW INDEX FROM decision_quality_input_artifacts WHERE Key_name = 'uq_decision_quality_artifact_logical_key';"
+    docker compose --env-file .env.production -f docker-compose.production.yml exec -T mysql mysql -u root -p"$MYSQL_ROOT_PASSWORD" "$MYSQL_DATABASE" -e "SHOW CREATE TABLE decision_quality_artifact_receipts; SHOW CREATE TABLE decision_quality_provider_receipts;"
+    docker compose --env-file .env.production -f docker-compose.production.yml exec -T mysql mysql -u root -p"$MYSQL_ROOT_PASSWORD" "$MYSQL_DATABASE" -e "SHOW CREATE TABLE prompt_shadow_runs; SHOW CREATE TABLE prompt_shadow_budget_counters;"
+
+结果必须包含质量账 10 个 `BEFORE UPDATE/DELETE` 不可变触发器；`logical_key` 必须为可空的
+`varchar(255)`；唯一索引必须按 `userId`、`artifact_type`、`logical_key` 三列完整排列，
+`Non_unique=0` 且各列 `Sub_part` 为空（不能是前缀索引）。同时复核第 9 节的业务表行数，
+API bootstrap 日志中不得出现质量账契约或 SQLite fallback 错误。
+两张 Prompt shadow 运营表必须为 InnoDB，且不能带质量账的 UPDATE/DELETE 阻断触发器。
+
+### 12.1 配置每日 outcome 结算与 D4 质量快照
+
+`.github/workflows/outcome-settlement.yml` 是当前轻量服务器的生产定时任务。它通过 SSH 进入
+`/srv/fundpilot/repo`，再在 API 容器内执行结算和不可变质量快照。先在 GitHub 的
+`production` Environment 中配置以下 Secrets：
+
+- `LIGHTHOUSE_HOST`：轻量服务器域名或公网 IP。
+- `LIGHTHOUSE_USER`：仅具备所需部署目录和 Docker 权限的 SSH 用户。
+- `LIGHTHOUSE_SSH_PRIVATE_KEY`：对应服务器 `authorized_keys` 的专用私钥。
+- `LIGHTHOUSE_KNOWN_HOSTS`：已在可信通道核对指纹的服务器 known_hosts 记录；不要在任务运行时盲目信任新主机密钥。
+
+再将 GitHub Actions Variable `LIGHTHOUSE_DEPLOY_ENABLED` 设为 `true`（可放在仓库级或
+`production` Environment）。未设置时定时 job 会按设计跳过；手动触发时应从 `main` 分支运行。
+私钥、known_hosts 和生产 `.env` 都不得写入仓库或 Actions Summary。
+
+工作流会让 settlement 与 point-in-time snapshot **各自独立尝试**，最后统一汇总两步状态；
+不得改成 `command1 && command2`，否则第一步失败会跳过第二步。结算输出
+`completed_with_pending` 表示证据尚未齐备，是后续交易日可重试的成功状态，缺失证据不会被
+写成 0。若任一结算层返回 `failed_user_ids`，CLI 会以退出码 2 触发告警，但健康租户已经成功
+落库的不可变结果必须保留；修复失败租户后重跑即可，不要回滚整批结果。
+
+D4 settlement 在两条 outcome 链之前先做 artifact receipt anti-join reconcile；三步均独立失败
+隔离。正式候选样本必须同时具备 audit post-commit receipt、live calendar/NAV adapter output
+receipt、outcome post-commit receipt。缺 audit/outcome receipt 的 v4 样本仍留在覆盖率分母但不
+产生指标；provider receipt 缺失或绑定冲突会按租户失败关闭。旧 audit v3 / plan v2 / outcome v2
+不得回填成 D4，只进入 input manifest 的 ignored 诊断。所有阶段均保持
+`automatic_promotion_allowed=false`。
 
 日常巡检：
 

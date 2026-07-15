@@ -192,17 +192,25 @@ def test_refresh_benchmark_sectors_keeps_fresh_benchmark_before_holdings_infer(m
     assert result[0].intraday_index_name == "中证人工智能"
 
 
-def test_holdings_infer_does_not_persist_or_promote_over_benchmark_user_record(monkeypatch):
+def test_research_only_holdings_clue_is_not_persisted_or_promoted(monkeypatch):
     saved: list[dict] = []
     promoted: list[object] = []
 
     monkeypatch.setattr(
-        "app.services.fund_holdings_sector_infer.fetch_portfolio_stocks_with_industry",
-        lambda _code: [object()],
-    )
-    monkeypatch.setattr(
-        "app.services.fund_holdings_sector_infer.infer_sector_from_portfolio_stocks",
-        lambda _code, _stocks: ("半导体", {"半导体": 45.0}, []),
+        "app.services.fund_holdings_sector_infer.fetch_portfolio_stocks_with_industry_evidence",
+        lambda _code: {
+            "stocks": [object()],
+            "sector_clue": {
+                "sector_name": "半导体",
+                "scores": {"半导体": 45.0},
+                "evidence": [],
+                "qualification": {
+                    "sector_inference_eligible": False,
+                    "research_only": True,
+                    "reason_codes": ["industry_evidence_not_pit_qualified"],
+                },
+            },
+        },
     )
     monkeypatch.setattr(
         "app.services.fund_primary_sector_service.get_fund_primary_sector",
@@ -232,9 +240,7 @@ def test_holdings_infer_does_not_persist_or_promote_over_benchmark_user_record(m
 
     record = _resolve_from_holdings_infer("026790", persist=True)
 
-    assert record is not None
-    assert record.source == "holdings_infer"
-    assert record.sector_name == "半导体"
+    assert record is None
     assert saved == []
     assert promoted == []
 
@@ -377,10 +383,10 @@ def test_refresh_holdings_sector_quotes_fast_and_accurate_fetch_benchmark(monkey
 
     def _fetch_portfolio_stocks(code: str):
         holdings_infer_calls.append(code)
-        return []
+        return {"stocks": [], "sector_clue": None}
 
     monkeypatch.setattr(
-        "app.services.fund_holdings_sector_infer.fetch_portfolio_stocks_with_industry",
+        "app.services.fund_holdings_sector_infer.fetch_portfolio_stocks_with_industry_evidence",
         _fetch_portfolio_stocks,
     )
 

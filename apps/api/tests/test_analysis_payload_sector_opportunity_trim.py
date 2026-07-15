@@ -153,7 +153,10 @@ def test_trim_keeps_compact_position_truth_without_exposing_full_snapshot() -> N
         portfolio_snapshot={
             "snapshot_id": "snapshot-1",
             "authoritative": True,
-            "position_snapshot": {"raw_events": ["must-not-leak"]},
+            "position_snapshot": {"raw_events": ["LEDGER_LEAK_SENTINEL"]},
+        },
+        fund_lookthrough_claim_audit={
+            "changes": [{"replacement": "CLAIM_AUDIT_LEAK_SENTINEL"}]
         },
     )
 
@@ -162,6 +165,9 @@ def test_trim_keeps_compact_position_truth_without_exposing_full_snapshot() -> N
     assert trimmed["portfolio_position_truth"] == compact
     assert trimmed["portfolio_snapshot"]["snapshot_id"] == "snapshot-1"
     assert "position_snapshot" not in trimmed["portfolio_snapshot"]
+    assert "fund_lookthrough_claim_audit" not in trimmed
+    assert "LEDGER_LEAK_SENTINEL" not in str(trimmed)
+    assert "CLAIM_AUDIT_LEAK_SENTINEL" not in str(trimmed)
 
 
 def _facts_with_sector_fund_flow(**flow_overrides) -> dict:

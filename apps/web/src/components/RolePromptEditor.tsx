@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Eye, PencilLine } from "lucide-react";
 import { ChatMarkdown } from "@/components/ChatMarkdown";
 
-const MAX_ROLE_PROMPT_LENGTH = 4000;
+const MAX_USER_APPENDIX_LENGTH = 2000;
 
 type RolePromptMode = "preview" | "edit";
 
@@ -47,19 +47,19 @@ export function RolePromptEditor({ value, onChange }: RolePromptEditorProps) {
           className="role-prompt-markdown max-h-72 overflow-y-auto rounded-lg border border-slate-100 bg-gradient-to-b from-slate-50/90 to-white px-3 py-2.5 [&_.chat-markdown]:text-xs [&_.chat-markdown_h4]:text-xs [&_.chat-markdown_h5]:text-[11px] [&_.chat-markdown_li]:leading-6 [&_.chat-markdown_p]:mb-2 [&_.chat-markdown_p]:leading-6 [&_.chat-markdown_table]:text-[11px] [&_.chat-markdown_ul]:mb-2"
           data-testid="analysis-role-prompt-preview"
         >
-          <ChatMarkdown content={value || "_暂无内容，请切换到编辑填写角色设定。_"} />
+          <ChatMarkdown content={value || "_未添加分析偏好；系统将使用内置安全契约。_"} />
         </div>
       ) : (
         <label className="block">
-          <span className="sr-only">大模型通用 Prompt 角色设定</span>
+          <span className="sr-only">大模型分析偏好附录</span>
           <textarea
             value={value}
             onChange={(event) => onChange(event.target.value)}
-            maxLength={MAX_ROLE_PROMPT_LENGTH}
+            maxLength={MAX_USER_APPENDIX_LENGTH}
             rows={12}
             data-testid="analysis-role-prompt"
             className="w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono text-xs leading-5 text-slate-800 outline-none focus:border-[var(--brand)]"
-            placeholder="支持 Markdown：可用 ## 标题、- 列表、`代码` 等格式…"
+            placeholder="例如：优先说明回撤与费用；结论先行、语言简洁。不能修改系统事实、动作、金额或输出格式。"
           />
         </label>
       )}
@@ -67,11 +67,11 @@ export function RolePromptEditor({ value, onChange }: RolePromptEditorProps) {
       <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-slate-500">
         <span>
           {mode === "preview"
-            ? "预览为渲染效果；修改请切到「编辑」。系统仍会追加新闻规则与 JSON 约束。"
-            : "支持 Markdown 语法；切到「预览」查看排版效果。"}
+            ? "这里只预览用户偏好附录；系统事实、动作、金额、引用与 JSON 契约始终由服务端固定。"
+            : "附录只影响表达与关注角度；冲突内容会被忽略，旧版自定义全文也会按附录安全包裹。"}
         </span>
         <span className="shrink-0 tabular-nums">
-          {value.length}/{MAX_ROLE_PROMPT_LENGTH}
+          {value.length}/{MAX_USER_APPENDIX_LENGTH}
         </span>
       </div>
     </div>

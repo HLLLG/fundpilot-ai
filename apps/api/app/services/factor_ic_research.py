@@ -34,6 +34,7 @@ from app.services.fund_type_factors import (
 
 RESEARCH_MODEL_VERSION = "factor_ic.v2"
 POINT_IN_TIME_RESEARCH_MODEL_VERSION = "factor_ic.v3"
+EXECUTION_QUALIFICATION_METHOD = "pit_v3_statistical_and_economic"
 DEFAULT_FORWARD_HORIZONS = (5, 20, 60)
 DEFAULT_PRIMARY_HORIZON = 20
 MIN_SEGMENT_CROSS_SECTION = 20
@@ -415,6 +416,45 @@ def _stored_stats(payload: dict[str, Any] | None) -> SimpleNamespace | None:
     return SimpleNamespace(mean=float(mean), std=float(std))
 
 
+def _execution_qualified_factor_keys(
+    *,
+    model: dict[str, Any],
+    qualified: dict[str, Any],
+    factor_rows: dict[str, dict[str, Any]],
+    details: dict[str, FactorDetail],
+    qualified_type_keys: list[str],
+    typed_percentiles: dict[str, float | None],
+) -> list[str]:
+    """Return only target-usable factors passing both PIT qualification gates."""
+    if (
+        model.get("version") != POINT_IN_TIME_RESEARCH_MODEL_VERSION
+        or model.get("cohort_mode") != "point_in_time"
+    ):
+        return []
+
+    common = [
+        key
+        for key in SINGLE_FACTORS
+        if qualified.get(key) is True
+        and details.get(key) is not None
+        and details[key].percentile is not None
+        and ((factor_rows.get(key) or {}).get("economic_significance") or {}).get(
+            "qualified"
+        )
+        is True
+    ]
+    typed = [
+        key
+        for key in qualified_type_keys
+        if typed_percentiles.get(key) is not None
+        and ((factor_rows.get(key) or {}).get("economic_significance") or {}).get(
+            "qualified"
+        )
+        is True
+    ]
+    return sorted(set(common + typed))
+
+
 def score_targets_with_research_model(
     *,
     targets: list[FundFactorInput],
@@ -547,6 +587,35 @@ def score_targets_with_research_model(
             if typed_complete
             else None
         )
+        feature_count = sum(
+            detail.percentile is not None for detail in details.values()
+        )
+        descriptive_applicable = bool(
+            segment != "unknown"
+            and feature_count >= 2
+            and target.feature_freshness != "insufficient"
+        )
+        execution_factor_keys = _execution_qualified_factor_keys(
+            model=model,
+            qualified=qualified,
+            factor_rows=factor_rows,
+            details=details,
+            qualified_type_keys=qualified_type_keys,
+            typed_percentiles=typed_percentiles,
+        )
+        execution_qualified = bool(
+            descriptive_applicable
+            and target.feature_freshness == "fresh"
+            and execution_factor_keys
+        )
+        if not descriptive_applicable:
+            execution_reason = "descriptive_factor_input_not_applicable"
+        elif target.feature_freshness != "fresh":
+            execution_reason = "target_factor_feature_not_fresh"
+        elif not execution_factor_keys:
+            execution_reason = "no_statistically_and_economically_qualified_factor"
+        else:
+            execution_reason = None
         # 仅 PIT v3 + 经济门槛合格 + 目标时点特征完整时，类型因子才进入线上分数。
         base_composite_score = composite_score
         if typed_score is not None and composite_score is not None:
@@ -559,7 +628,6 @@ def score_targets_with_research_model(
             composite_grade=_grade(composite_score),
             factors=details,
         )
-        feature_count = sum(detail.percentile is not None for detail in details.values())
         scored.append(
             {
                 **asdict(fund),
@@ -568,11 +636,18 @@ def score_targets_with_research_model(
                 "peer_count": int(peer.get("eligible_count") or 0),
                 "feature_count": feature_count,
                 "feature_completeness": round(feature_count / len(FACTOR_KEYS), 2),
-                "applicable": bool(
-                    segment != "unknown"
-                    and feature_count >= 2
-                    and target.feature_freshness != "insufficient"
-                ),
+                # `applicable` remains descriptive for backward compatibility.
+                # It must not be used as an execution whitelist.
+                "applicable": descriptive_applicable,
+                "descriptive_applicable": descriptive_applicable,
+                "execution_qualified": execution_qualified,
+                "execution_qualified_factor_keys": execution_factor_keys,
+                "execution_qualification": {
+                    "status": "qualified" if execution_qualified else "insufficient",
+                    "method": EXECUTION_QUALIFICATION_METHOD,
+                    "primary_horizon_days": primary_horizon,
+                    "reason": execution_reason,
+                },
                 "base_composite_score": base_composite_score,
                 "typed_factor_schema": TYPE_FACTOR_SCHEMA_VERSION,
                 "typed_factor_candidates": qualified_type_keys,

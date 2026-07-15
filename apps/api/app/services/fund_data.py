@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import re
 from concurrent.futures import ThreadPoolExecutor
 from typing import Callable, TypeVar
 
@@ -199,6 +200,8 @@ class FundDataService:
             fund_type=diagnostics.get("fund_type"),
             management_fee=diagnostics.get("management_fee"),
             fund_scale_yi=diagnostics.get("fund_scale_yi"),
+            fund_scale_source=diagnostics.get("fund_scale_source"),
+            fund_scale_as_of=diagnostics.get("fund_scale_as_of"),
             return_1y_percent=diagnostics.get("return_1y_percent"),
             max_drawdown_1y_percent=diagnostics.get("max_drawdown_1y_percent"),
         )
@@ -321,26 +324,52 @@ def _parse_nav_points(data: list[dict]) -> list[FundNavPoint]:
     return points
 
 
-def _parse_overview_frame(frame) -> dict:
+def _parse_overview_frame(
+    frame,
+    *,
+    source: str = "akshare.fund_overview_em",
+) -> dict:
     result: dict = {}
     if frame is None or frame.empty:
         return result
 
     columns = list(frame.columns)
-    if len(columns) >= 2:
+    recognized_columns = {
+        "基金类型",
+        "类型",
+        "管理费",
+        "管理费率",
+        "净资产规模",
+        "资产规模",
+    }
+    if len(frame) == 1 and any(
+        str(column).strip() in recognized_columns for column in columns
+    ):
+        pairs = (
+            (str(column).strip(), str(frame.iloc[0][column]))
+            for column in columns
+        )
+    elif len(columns) >= 2:
         keys = frame.iloc[:, 0].astype(str).tolist()
         values = frame.iloc[:, 1].astype(str).tolist()
         pairs = zip(keys, values)
     else:
         pairs = []
 
-    for key, value in pairs:
+    for raw_key, value in pairs:
+        key = raw_key.strip()
         if "基金类型" in key or "类型" == key:
             result["fund_type"] = value
         if "管理费" in key or "管理费率" in key:
             result["management_fee"] = value
-        if "规模" in key or "资产规模" in key:
-            result["fund_scale_yi"] = _parse_scale_yi(value)
+        if key in {"净资产规模", "资产规模"}:
+            scale = _parse_scale_yi(value)
+            if scale is not None:
+                result["fund_scale_yi"] = scale
+                result["fund_scale_source"] = source
+                as_of = _extract_scale_as_of(f"{key} {value}")
+                if as_of is not None:
+                    result["fund_scale_as_of"] = as_of
     return result
 
 
@@ -400,11 +429,32 @@ def _parse_return_frame(frame) -> dict:
 
 def _parse_scale_yi(text: str) -> float | None:
     cleaned = text.replace(",", "").strip()
+    number = re.search(r"[-+]?\d+(?:\.\d+)?", cleaned)
+    if number is None:
+        return None
     try:
         if "亿" in cleaned:
-            return round(float(cleaned.replace("亿元", "").replace("亿", "")), 2)
+            return round(float(number.group(0)), 2)
         if "万" in cleaned:
-            return round(float(cleaned.replace("万元", "").replace("万", "")) / 10000, 4)
-        return round(float(cleaned), 2)
+            return round(float(number.group(0)) / 10000, 4)
+        return round(float(number.group(0)), 2)
     except ValueError:
+        return None
+
+
+def _extract_scale_as_of(text: str) -> str | None:
+    match = re.search(
+        r"(?P<year>20\d{2})\s*(?:[-/.年])\s*(?P<month>\d{1,2})"
+        r"\s*(?:[-/.月])\s*(?P<day>\d{1,2})\s*日?",
+        str(text),
+    )
+    if match is None:
+        return None
+    try:
+        return (
+            f"{int(match.group('year')):04d}-"
+            f"{int(match.group('month')):02d}-"
+            f"{int(match.group('day')):02d}"
+        )
+    except (TypeError, ValueError):
         return None

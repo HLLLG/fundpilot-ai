@@ -170,9 +170,71 @@ def test_stream_analysis_emits_skeleton_and_done(monkeypatch: pytest.MonkeyPatch
     types = [e["type"] for e in events]
     assert types[0] == "session"
     assert "skeleton" in types
-    assert "report_partial" in types
+    assert "report_partial" not in types
     assert types[-1] == "done"
     assert events[-1]["report_id"] == "report-1"
+
+
+def test_stream_analysis_never_exposes_raw_recommendation_partials(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("FUND_AI_DEEPSEEK_API_KEY", _FAKE_DEEPSEEK_KEY)
+    refresh_settings()
+    _patch_pipeline(monkeypatch)
+
+    raw_action = "RAW_UNGUARDED_ACTION"
+    raw_point = "RAW_UNGUARDED_POINT"
+
+    def fake_stream(*, messages, model, max_tokens, response_format=None):
+        yield f'{{"title":"t","summary":"{raw_action}","fund_recommendations":['
+        yield (
+            '{"fund_code":"519674","fund_name":"x",'
+            f'"action":"{raw_action}","points":["{raw_point}"]}},'
+        )
+        yield (
+            '{"fund_code":"519674","fund_name":"x",'
+            '"action":"CONFLICTING_RAW_ACTION","points":["other"]}'
+        )
+        yield f'],"caveats":["{raw_point}"]}}'
+
+    safe_report = {
+        "id": "guarded-report-1",
+        "title": "t",
+        "fund_recommendations": [
+            {
+                "fund_code": "519674",
+                "fund_name": "x",
+                "action": "\u89c2\u5bdf",
+                "points": ["guarded"],
+            }
+        ],
+    }
+    monkeypatch.setattr(
+        "app.services.analyze_streaming.stream_chat_completion",
+        fake_stream,
+    )
+    monkeypatch.setattr(
+        "app.services.analyze_streaming._build_final_report",
+        lambda parsed, **kwargs: MagicMock(
+            id="guarded-report-1",
+            model_dump=lambda mode="json": safe_report,
+        ),
+    )
+
+    events = list(stream_analysis(_request(), user_id=1))
+    partials = [event for event in events if event.get("type") == "report_partial"]
+    pre_done_text = repr(events[:-1])
+
+    assert partials == []
+    assert raw_action not in pre_done_text
+    assert raw_point not in pre_done_text
+    assert events[-1]["type"] == "done"
+    assert events[-1]["report"] == safe_report
+    assert {event.get("stage") for event in events if event.get("type") == "stage"} >= {
+        "generating",
+        "judging",
+        "saving",
+    }
 
 
 def test_stream_analysis_handles_llm_failure_with_salvage(monkeypatch: pytest.MonkeyPatch):
@@ -181,7 +243,7 @@ def test_stream_analysis_handles_llm_failure_with_salvage(monkeypatch: pytest.Mo
     _patch_pipeline(monkeypatch)
 
     def failing_stream(**kwargs):
-        yield '{"title":"t","fund_recommendations":[{"fund_code":"519674"'
+        yield '{"title":"t","summary":"usable partial","fund_recommendations":[{"fund_code":"519674"'
         raise httpx.ReadError("connection lost")
 
     monkeypatch.setattr(
@@ -200,6 +262,126 @@ def test_stream_analysis_handles_llm_failure_with_salvage(monkeypatch: pytest.Mo
     assert events[-1]["type"] in {"done", "error"}
     stage_types = [e.get("stage") for e in events if e.get("type") == "stage"]
     assert "salvage" in stage_types or events[-1]["type"] == "error"
+
+
+def test_stream_analysis_unusable_interrupted_fragment_falls_back(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("FUND_AI_DEEPSEEK_API_KEY", _FAKE_DEEPSEEK_KEY)
+    refresh_settings()
+    _patch_pipeline(monkeypatch)
+    captured: dict = {}
+
+    def failing_stream(**kwargs):
+        yield "{"
+        raise httpx.ReadError("private-provider-fragment")
+
+    def fake_offline_report(*args, **kwargs):
+        captured.update(kwargs)
+        return MagicMock(
+            id="fallback-unusable-partial",
+            model_dump=lambda mode="json": {"id": "fallback-unusable-partial"},
+        )
+
+    monkeypatch.setattr(
+        "app.services.analyze_streaming.stream_chat_completion",
+        failing_stream,
+    )
+    monkeypatch.setattr(
+        "app.services.analyze_streaming._offline_report",
+        fake_offline_report,
+    )
+
+    events = list(stream_analysis(_request(), user_id=1))
+
+    assert events[-1]["type"] == "done"
+    assert captured["provider_failure"].category == "transport_error"
+    assert "salvage" not in {
+        event.get("stage") for event in events if event.get("type") == "stage"
+    }
+    assert "private-provider-fragment" not in repr(events)
+
+
+def test_stream_analysis_zero_token_timeout_saves_safe_fallback_and_finishes(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("FUND_AI_DEEPSEEK_API_KEY", _FAKE_DEEPSEEK_KEY)
+    refresh_settings()
+    _patch_pipeline(monkeypatch)
+
+    secret = "provider-body-must-not-leak"
+
+    def failing_stream(**kwargs):
+        if False:
+            yield ""
+        raise httpx.ReadTimeout(secret)
+
+    captured: dict = {}
+
+    def fake_offline_report(*args, **kwargs):
+        captured.update(kwargs)
+        return MagicMock(
+            id="fallback-timeout",
+            model_dump=lambda mode="json": {
+                "id": "fallback-timeout",
+                "provider": "offline-fallback",
+            },
+        )
+
+    monkeypatch.setattr(
+        "app.services.analyze_streaming.stream_chat_completion",
+        failing_stream,
+    )
+    monkeypatch.setattr(
+        "app.services.analyze_streaming._offline_report",
+        fake_offline_report,
+    )
+
+    events = list(stream_analysis(_request(), user_id=1))
+
+    assert events[-1]["type"] == "done"
+    assert events[-1]["report_id"] == "fallback-timeout"
+    assert not any(event.get("type") == "error" for event in events)
+    assert captured["provider_failure"].category == "timeout"
+    assert captured["attempted_model"]
+    assert captured["prompt_contract"]["schema_version"] == "prompt_contract.v1"
+    assert secret not in repr(events)
+    assert secret not in repr(captured["prompt_contract"])
+
+
+def test_stream_analysis_dirty_json_saves_safe_fallback_and_finishes(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("FUND_AI_DEEPSEEK_API_KEY", _FAKE_DEEPSEEK_KEY)
+    refresh_settings()
+    _patch_pipeline(monkeypatch)
+    captured: dict = {}
+
+    monkeypatch.setattr(
+        "app.services.analyze_streaming.stream_chat_completion",
+        lambda **kwargs: iter(["{}"]),
+    )
+
+    def fake_offline_report(*args, **kwargs):
+        captured.update(kwargs)
+        return MagicMock(
+            id="fallback-invalid-json",
+            model_dump=lambda mode="json": {
+                "id": "fallback-invalid-json",
+                "provider": "offline-fallback",
+            },
+        )
+
+    monkeypatch.setattr(
+        "app.services.analyze_streaming._offline_report",
+        fake_offline_report,
+    )
+
+    events = list(stream_analysis(_request(), user_id=1))
+
+    assert events[-1]["type"] == "done"
+    assert not any(event.get("type") == "error" for event in events)
+    assert captured["provider_failure"].category == "invalid_json"
 
 
 def test_stream_analysis_prefetches_fund_data_and_news_in_parallel(

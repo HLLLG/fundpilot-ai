@@ -259,6 +259,23 @@ describe("Dashboard apply refresh flow", () => {
     expect(source).not.toContain("onPortfolioUpdated=");
   });
 
+  it("uses the same custom-only role prompt for streaming and background analysis", () => {
+    const source = readFileSync(
+      fileURLToPath(new URL("./Dashboard.tsx", import.meta.url)),
+      "utf8",
+    );
+    const runAnalyze = source.slice(
+      source.indexOf("const runAnalyze"),
+      source.indexOf("const handleAnalyze"),
+    );
+
+    expect(runAnalyze).toContain(
+      "const systemRolePrompt = activeAnalysisRolePrompt(analysisPrompt);",
+    );
+    expect(runAnalyze).toContain("systemRolePrompt,");
+    expect(runAnalyze).not.toContain("analysisPrompt.role_prompt,");
+  });
+
   it("keeps mutation APIs out of the single-fund modal components", () => {
     const transactionModalSource = readFileSync(
       fileURLToPath(new URL("./SingleFundTransactionModal.tsx", import.meta.url)),

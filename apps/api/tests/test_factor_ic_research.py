@@ -1,6 +1,8 @@
 from app.services.factor_confidence import factor_reliability
 from app.services.factor_ic_backtest import NavPoint
 from app.services.factor_ic_research import (
+    EXECUTION_QUALIFICATION_METHOD,
+    POINT_IN_TIME_RESEARCH_MODEL_VERSION,
     RESEARCH_MODEL_VERSION,
     build_peer_distributions,
     score_targets_with_research_model,
@@ -60,6 +62,67 @@ def test_target_is_scored_only_against_its_own_peer_group() -> None:
     assert row["peer_count"] == 20
     assert row["feature_count"] == 2
     assert row["applicable"] is True
+
+
+def test_execution_qualification_requires_statistical_and_economic_gate() -> None:
+    panel, classifications = _panel()
+    peers = build_peer_distributions(
+        nav_panel=panel,
+        classifications=classifications,
+        factor_lookback=250,
+    )
+    model = {
+        "version": POINT_IN_TIME_RESEARCH_MODEL_VERSION,
+        "cohort_mode": "point_in_time",
+        "primary_horizon": 20,
+        "fund_classifications": classifications,
+        "peer_distributions": peers,
+        "segments": {
+            "gp": {
+                "horizons": {
+                    "20": {
+                        "qualified": {"momentum": True},
+                        "factors": [
+                            {
+                                "factor": "momentum",
+                                "economic_significance": {"qualified": True},
+                            }
+                        ],
+                    }
+                }
+            }
+        },
+    }
+    target = factor_input_from_navs(
+        "000001",
+        "target",
+        [point.nav for point in panel["000001"]],
+        feature_freshness="fresh",
+    )
+
+    row = score_targets_with_research_model(targets=[target], model=model)[0]
+
+    assert row["descriptive_applicable"] is True
+    assert row["execution_qualified"] is True
+    assert row["execution_qualified_factor_keys"] == ["momentum"]
+    assert row["execution_qualification"] == {
+        "status": "qualified",
+        "method": EXECUTION_QUALIFICATION_METHOD,
+        "primary_horizon_days": "20",
+        "reason": None,
+    }
+
+    model["segments"]["gp"]["horizons"]["20"]["factors"][0][
+        "economic_significance"
+    ]["qualified"] = False
+    row = score_targets_with_research_model(targets=[target], model=model)[0]
+
+    assert row["descriptive_applicable"] is True
+    assert row["execution_qualified"] is False
+    assert row["execution_qualified_factor_keys"] == []
+    assert row["execution_qualification"]["reason"] == (
+        "no_statistically_and_economically_qualified_factor"
+    )
 
 
 def test_unknown_target_fails_closed_instead_of_borrowing_global_ic() -> None:

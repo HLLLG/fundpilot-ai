@@ -150,8 +150,40 @@ it("only offers data-backed news and rotation entries", () => {
 
   expect(screen.queryByRole("button", { name: "主题要闻摘要" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "板块轮动参考" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "持仓穿透证据" })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "调仓示意模拟" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "建议复盘与投研诊断" })).toBeInTheDocument();
+});
+
+it("offers daily lookthrough evidence only when the analysis facts contain it", () => {
+  const report = sampleReport();
+  report.analysis_facts = {
+    ...report.analysis_facts,
+    fund_lookthrough: {
+      status: "partial",
+      decision_at: "2026-07-14T10:00:00+08:00",
+      portfolio: {
+        scope: "fund_holdings_only",
+        identity_known_security_mass_lower_bound_percent: 35,
+        unknown_fund_holdings_scope_mass_percent: 65,
+      },
+      candidates: [],
+    },
+  };
+
+  render(<ReportDetailsHub report={report} />);
+
+  const trigger = screen.getByRole("button", { name: "持仓穿透证据" });
+  expect(trigger).toHaveAttribute("aria-expanded", "false");
+  expect(screen.queryByRole("region", { name: "基金持仓穿透证据" })).not.toBeInTheDocument();
+
+  fireEvent.click(trigger);
+
+  expect(trigger).toHaveAttribute("aria-expanded", "true");
+  const evidence = screen.getByRole("region", { name: "基金持仓穿透证据" });
+  expect(evidence).toHaveTextContent("部分披露");
+  expect(evidence).toHaveTextContent("≥ 35%");
+  expect(evidence).toHaveTextContent("65%");
 });
 
 it("hides the news entry when only raw market news is available", () => {

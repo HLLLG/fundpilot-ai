@@ -20,9 +20,11 @@ from app.models import (
     Report,
     RiskAssessment,
 )
-from app.services.decision_outcome_persistence import OutcomeEvidenceConflict
+from app.services.decision_outcome_persistence import (
+    OutcomeEvidenceConflict,
+    OutcomeEvidencePersistenceError,
+)
 from app.services.outcome_settlement import (
-    OutcomeSettlementConflict,
     settle_pending_outcomes,
     OutcomeSettlementError,
 )
@@ -156,31 +158,84 @@ def test_scheduled_settlement_matures_daily_and_discovery_without_get() -> None:
     assert len(_observation_rows()) == 6
 
 
-def test_terminal_race_conflict_fails_closed(monkeypatch) -> None:
-    target = {
-        "user_id": 1,
-        "source_type": "daily",
-        "report_id": "r1",
-        "pending_event_horizons": {"daily:r1:0:000001": {1}},
-        "report": {"id": "r1"},
-    }
+@pytest.mark.parametrize(
+    ("failure", "expected_reason"),
+    [
+        (
+            OutcomeEvidenceConflict("different terminal evidence"),
+            "terminal_outcome_conflict",
+        ),
+        (
+            OutcomeEvidencePersistenceError("primary store unavailable"),
+            "outcome_persistence_failed",
+        ),
+        (RuntimeError("provider adapter failed"), "outcome_evaluation_failed"),
+    ],
+)
+def test_bad_target_is_classified_without_blocking_healthy_tenant(
+    monkeypatch,
+    failure: Exception,
+    expected_reason: str,
+) -> None:
+    targets = [
+        {
+            "user_id": 1,
+            "source_type": "daily",
+            "report_id": "bad-report",
+            "pending_event_horizons": {"daily:bad-report:0:000001": {1}},
+            "report": {"id": "bad-report"},
+        },
+        {
+            "user_id": 2,
+            "source_type": "daily",
+            "report_id": "healthy-report",
+            "pending_event_horizons": {"daily:healthy-report:0:000002": {1}},
+            "report": {"id": "healthy-report"},
+        },
+    ]
     monkeypatch.setattr(
         "app.services.outcome_settlement._load_pending_targets",
-        lambda **_kwargs: ([target], []),
+        lambda **_kwargs: (targets, []),
     )
 
-    def conflict(*_args, **_kwargs):
-        raise OutcomeEvidenceConflict("different terminal evidence")
+    calls: list[str] = []
 
-    monkeypatch.setattr("app.services.outcome_settlement._settle_daily", conflict)
+    def settle(report, **_kwargs):
+        report_id = str(report["id"])
+        calls.append(report_id)
+        if report_id == "bad-report":
+            raise failure
+        return {
+            "outcome_evidence": {
+                "status": "persisted",
+                "attempted_count": 1,
+                "persisted_count": 1,
+                "terminal_count": 1,
+            }
+        }
 
-    with pytest.raises(OutcomeSettlementConflict, match="terminal outcome conflict"):
-        settle_pending_outcomes(
-            as_of_date="2026-07-13",
-            fetch_nav=_nav,
-            fetch_benchmark=None,
-            trade_dates=frozenset(),
-        )
+    monkeypatch.setattr("app.services.outcome_settlement._settle_daily", settle)
+
+    result = settle_pending_outcomes(
+        as_of_date="2026-07-13",
+        fetch_nav=_nav,
+        fetch_benchmark=None,
+        trade_dates=frozenset(),
+    )
+
+    assert calls == ["bad-report", "healthy-report"]
+    assert result["status"] == "completed_with_failures"
+    assert result["report_count"] == 2
+    assert result["pending_horizon_count"] == 2
+    assert result["attempted_count"] == 1
+    assert result["persisted_count"] == 1
+    assert result["terminal_count"] == 1
+    assert result["failed_target_count"] == 1
+    assert result["failed_user_ids"] == [1]
+    assert result["failure_reasons"] == [
+        {"reason": expected_reason, "count": 1}
+    ]
+    assert [row["user_id"] for row in result["results"]] == [2]
 
 
 def test_deleted_visible_report_settles_from_frozen_decision_event() -> None:

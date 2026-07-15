@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from app.services.decision_contract import build_report_decision_bundle
 from app.services.decision_outcome_persistence import (
     OutcomeEvidenceConflict,
     persist_daily_outcome_result,
@@ -12,24 +13,58 @@ from app.services.decision_repository import (
 )
 
 
-def _event(*, eligible: bool = True) -> dict:
-    return {
-        "schema_version": "decision_event.v2",
-        "event_id": "daily:r1:0:008586",
-        "event_type": "daily_fund_decision",
-        "decision_at": "2026-07-01T06:00:00+00:00",
-        "decision_date": "2026-07-01",
-        "report_id": "r1",
-        "recommendation_index": 0,
-        "fund_code": "008586",
-        "fund_name": "华夏人工智能ETF联接C",
-        "action": "分批加仓",
-        "action_category": "bullish",
-        "evaluation_class": "bullish",
-        "eligible": eligible,
-        "metric_eligible": True,
-        "horizons": [5],
+def _event(
+    *,
+    eligible: bool = True,
+    decision_kind: str = "daily",
+    report_id: str = "r1",
+) -> dict:
+    action = (
+        "分批加仓"
+        if decision_kind == "daily" and eligible
+        else "分批买入"
+        if eligible
+        else "观察"
+    )
+    report = {
+        "id": report_id,
+        "created_at": "2026-07-01T06:00:00+00:00",
+        "provider": "deepseek-chat",
+        (
+            "fund_recommendations"
+            if decision_kind == "daily"
+            else "recommendations"
+        ): [
+            {
+                "fund_code": "008586",
+                "fund_name": "华夏人工智能ETF联接C",
+                "action": action,
+            }
+        ],
+        "analysis_facts" if decision_kind == "daily" else "discovery_facts": {
+            "data_evidence": {
+                "schema_version": "1.0",
+                "generated_at": "2026-07-01T06:00:02+00:00",
+                "decision_ready": True,
+                "items": [
+                    {
+                        "fact_id": "fund.008586.nav",
+                        "source": "official_nav",
+                        "source_type": "official",
+                        "available_at": "2026-07-01T05:59:00+00:00",
+                        "fetched_at": "2026-07-01T06:00:02+00:00",
+                        "freshness": "fresh",
+                        "confidence": "high",
+                        "is_estimate": False,
+                    }
+                ],
+            }
+        },
     }
+    return build_report_decision_bundle(
+        report,
+        decision_kind=decision_kind,  # type: ignore[arg-type]
+    )["events"][0]
 
 
 def _report(event: dict | None = None) -> dict:
@@ -141,11 +176,7 @@ def test_changed_terminal_nav_is_rejected_instead_of_overwriting_frozen_result()
 
 
 def test_discovery_retryable_nav_gap_stays_non_terminal() -> None:
-    event = _event()
-    event["event_id"] = "discovery:d1:0:008586"
-    event["event_type"] = "fund_discovery_decision"
-    event["action_category"] = "buy"
-    event["evaluation_class"] = "buy"
+    event = _event(decision_kind="discovery", report_id="d1")
     _initialise(event)
     report = _report(event)
     result = {

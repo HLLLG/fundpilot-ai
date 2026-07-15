@@ -248,6 +248,42 @@ def _discovery_pool_item(*, fund_quality_score: float) -> dict:
         "return_6m_percent": 31.4,
         "return_1y_percent": 42.0,
         "nav_trend": {"distance_from_high_percent": -8.5, "trend_label": "回调企稳"},
+        "tradeability": _verified_discovery_tradeability(),
+    }
+
+
+def _verified_discovery_tradeability() -> dict:
+    return {
+        "schema_version": "fund_tradeability.v1",
+        "fund_code": "020357",
+        "data_status": "complete",
+        "freshness": "fresh",
+        "can_purchase": True,
+        "purchase_state": "open",
+        "redemption_state": "open",
+        "currency": "CNY",
+        "minimum_purchase_yuan": 10.0,
+        "daily_purchase_limit_yuan": None,
+        "daily_purchase_limit_unlimited": True,
+        "revalidation_required": True,
+        "standard_purchase_fee_tiers": [
+            {
+                "condition": "all",
+                "fee_type": "percent",
+                "fee_percent": 0.0,
+                "source_rate": "standard_undiscounted",
+            }
+        ],
+        "redemption_fee_tiers": [
+            {"condition": ">=7d", "min_days": 7, "fee_percent": 0.0}
+        ],
+        "sales_service_fee_annual_percent": 0.0,
+        "share_class_fee_status": "standard_upper_bound_available",
+        "source_conflict": False,
+        "missing_fields": [],
+        "source_ids": ["pytest.tradeability"],
+        "checked_at": "2026-06-10T10:00:00+08:00",
+        "effective_at": "2026-06-10T10:00:00+08:00",
     }
 
 
@@ -291,6 +327,7 @@ def _run_discovery(
 ):
     from app.services.discovery_client import build_discovery_report_from_parsed
 
+    resolved_profile = profile or _discovery_profile()
     parsed = {
         "title": "机会扫描",
         "summary": "半导体材料方向。",
@@ -298,7 +335,25 @@ def _run_discovery(
         "caveats": [],
     }
     facts = {
-        "portfolio_gap": {"available_budget_yuan": budget_yuan, "holdings_slim": []},
+        "portfolio_snapshot": {
+            "stale": False,
+            "authoritative": True,
+            "position_complete": True,
+            "pending_transaction_count": 0,
+        },
+        "portfolio_position_truth": {
+            "position_complete": True,
+            "cash": {"known": True, "balance_yuan": budget_yuan},
+            "positions": [],
+        },
+        "portfolio_gap": {
+            "available_budget_yuan": budget_yuan,
+            "total_amount": 0,
+            "weight_denominator_yuan": (
+                resolved_profile.expected_investment_amount or 0
+            ),
+            "holdings_slim": [],
+        },
         "sector_opportunities": [opportunity],
     }
     return build_discovery_report_from_parsed(
@@ -308,7 +363,7 @@ def _run_discovery(
         scan_mode="full_market",
         candidate_pool=[pool_item],
         discovery_facts=facts,
-        profile=profile or _discovery_profile(),
+        profile=resolved_profile,
         held_codes=set(),
         budget_yuan=budget_yuan,
         sector_heat=[{"sector_label": "半导体材料", "change_1d_percent": 1.0}],
@@ -340,8 +395,8 @@ def test_discovery_shadow_mode_does_not_boost_amount(shadow_mode) -> None:
         rec_kwargs={"action": "分批买入", "suggested_amount_yuan": 18000},
     )
     rec = report.recommendations[0]
-    # 常规上限 15000（budget 50000 * concentration 30%），shadow 模式下不应被 boost。
-    assert rec.suggested_amount_yuan == 15000
+    # shadow boost 不影响金额；保守策略统一首批比例为预算的 25%。
+    assert rec.suggested_amount_yuan == 12500
     notes = " ".join(rec.validation_notes)
     assert "灰度提示" in notes
     assert "提高" in notes

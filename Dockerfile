@@ -27,6 +27,7 @@ RUN pip install --no-cache-dir --index-url "$PIP_INDEX_URL" \
 
 COPY apps/api/app /app/app
 COPY apps/api/scripts/settle_pending_outcomes.py /app/scripts/settle_pending_outcomes.py
+COPY apps/api/scripts/evaluate_decision_quality.py /app/scripts/evaluate_decision_quality.py
 
 # 2026-07-04（方案 B，见 apps/api/var/factor_ic/.gitkeep 注释）：因子 IC 离线回测
 # 产物（scripts/run_factor_ic.py 生成，供 factor_confidence.py::load_ic_summary 读取，

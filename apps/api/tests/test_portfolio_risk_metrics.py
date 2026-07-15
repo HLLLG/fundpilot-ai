@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.models import Holding
+from app.services.portfolio_snapshot import build_risk_metrics_payload
 from app.services.portfolio_risk_metrics import (
     MIN_CORRELATION_SAMPLE_DAYS,
     MIN_SAMPLE_DAYS,
@@ -26,6 +28,23 @@ def test_insufficient_sample_returns_unavailable():
     )
     assert m.available is False
     assert m.sample_days == 5
+
+
+def test_empty_portfolio_history_does_not_fetch_external_index(monkeypatch):
+    def unexpected_fetch(*_args, **_kwargs):
+        raise AssertionError("empty portfolio history must not fetch index data")
+
+    monkeypatch.setattr(
+        "app.services.index_daily_client.fetch_index_daily_history",
+        unexpected_fetch,
+    )
+    payload = build_risk_metrics_payload(
+        [],
+        [Holding(fund_code="000000", fund_name="未知基金", holding_amount=100.0)],
+    )
+
+    assert payload["available"] is False
+    assert payload["sample_days"] == 0
 
 
 def test_zero_volatility_returns_none_sharpe():

@@ -26,7 +26,11 @@ def _discovery_facts() -> dict:
     return {
         "readonly": True,
         "instruction": "系统数字只读",
-        "session": {"session_kind": "trading_day_intraday", "effective_trade_date": "2026-06-25"},
+        "session": {
+            "session_kind": "trading_day_intraday",
+            "calendar_date": "2026-06-26",
+            "effective_trade_date": "2026-06-25",
+        },
         "profile": {"decision_style": "conservative"},
         "portfolio_gap": {"holding_count": 1, "available_budget_yuan": 50000},
         "portfolio_position_truth": {
@@ -113,6 +117,7 @@ def test_build_user_payload_includes_daily_report_parity_fields():
 
     assert payload["news_titles"]
     assert payload["topic_briefs"]
+    assert payload["today"] == "2026-06-26"
     assert payload["fund_type_preference"] == "etf_link"
     facts = payload["discovery_facts"]
     assert facts["session"]["session_kind"] == "trading_day_intraday"
@@ -149,6 +154,12 @@ def test_daily_and_discovery_prompts_fail_closed_on_unknown_position_truth() -> 
         assert "pending/conflict" in prompt
     assert "amount_yuan" in daily_prompt
     assert "suggested_amount_yuan" in discovery_prompt
+
+    for prompt in (daily_prompt, discovery_prompt):
+        assert "reported-as-of" in prompt
+        assert "unknown mass" in prompt
+        assert "no common disclosed security" in prompt
+        assert "never authorize allocation" in prompt
 
 
 def test_build_user_payload_includes_sector_opportunities():

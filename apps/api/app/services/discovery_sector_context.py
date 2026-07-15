@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.services.factor_ic_research import EXECUTION_QUALIFICATION_METHOD
 from app.services.sector_fund_flow_context import build_sector_fund_flow_context
 from app.services.sector_intraday_summary import summarize_sector_intraday_for_label
 from app.services.sector_signal_context import signal_backtest_for_sector
@@ -99,6 +100,47 @@ def build_target_sector_context(
     return result
 
 
+def execution_qualified_fund_codes(factor_scores: dict[str, Any]) -> list[str]:
+    """Derive the executable whitelist from explicit PIT-qualified rows only.
+
+    This intentionally ignores the legacy `applicable_fund_codes` field:
+    descriptive factor coverage is not evidence that a return factor passed
+    both the statistical and economic gates.
+    """
+    status = factor_scores.get("ic_status")
+    ic_usable = bool(
+        isinstance(status, dict)
+        and str(status.get("state") or "").strip().lower() == "available"
+        and status.get("stale") is not True
+        and status.get("available", True) is not False
+        and factor_scores.get("available") is True
+    )
+    if not ic_usable:
+        return []
+
+    codes: set[str] = set()
+    for row in factor_scores.get("holdings") or []:
+        if not isinstance(row, dict) or row.get("execution_qualified") is not True:
+            continue
+        keys = [
+            str(key).strip()
+            for key in (row.get("execution_qualified_factor_keys") or [])
+            if str(key).strip()
+        ]
+        qualification = row.get("execution_qualification") or {}
+        if (
+            not keys
+            or not isinstance(qualification, dict)
+            or qualification.get("status") != "qualified"
+            or qualification.get("method") != EXECUTION_QUALIFICATION_METHOD
+        ):
+            continue
+        code = str(row.get("fund_code") or "").strip()
+        if code:
+            codes.add(code.zfill(6))
+    return sorted(codes)
+
+
 def build_candidate_factor_scores(candidate_pool: list[dict]) -> dict[str, Any]:
     """候选基金因子分（best-effort，与日报 factor_scores 同源）。"""
     from app.models import Holding
@@ -147,24 +189,44 @@ def build_candidate_factor_scores(candidate_pool: list[dict]) -> dict[str, Any]:
             and ic_status.get("available", True) is not False
             and result.get("available") is True
         )
-        applicable_codes = sorted(
+        descriptive_applicable_codes = sorted(
             {
                 str(row.get("fund_code") or "").zfill(6)
                 for row in holdings or []
                 if ic_usable
                 and isinstance(row, dict)
-                and row.get("applicable") is True
+                and row.get("descriptive_applicable", row.get("applicable")) is True
             }
         )
+        execution_codes = execution_qualified_fund_codes(result)
         return {
             **result,
             "selection_policy": "top_quality_eligible",
             "eligible_candidate_count": len(eligible),
             "coverage_limit": 12,
             "selected_fund_codes": selected_codes,
-            "applicable_fund_codes": applicable_codes,
+            "descriptive_applicable_fund_codes": descriptive_applicable_codes,
+            "execution_qualified_fund_codes": execution_codes,
+            # Compatibility for the current Guard and prompt.  The old name
+            # now aliases the strict executable set, never descriptive coverage.
+            "applicable_fund_codes": execution_codes,
+            "applicable_fund_codes_semantics": (
+                "legacy_alias_of_execution_qualified_fund_codes"
+            ),
+            "descriptive_applicable_coverage_percent": round(
+                len(descriptive_applicable_codes) / len(eligible) * 100,
+                1,
+            )
+            if eligible
+            else 0.0,
+            "execution_qualified_coverage_percent": round(
+                len(execution_codes) / len(eligible) * 100,
+                1,
+            )
+            if eligible
+            else 0.0,
             "applicable_coverage_percent": round(
-                len(applicable_codes) / len(eligible) * 100,
+                len(execution_codes) / len(eligible) * 100,
                 1,
             )
             if eligible

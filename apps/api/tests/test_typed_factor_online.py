@@ -70,7 +70,9 @@ def test_qualified_type_factor_is_used_by_online_scoring() -> None:
         classifications=classifications,
         factor_lookback=250,
     )
-    target = factor_input_from_navs("999999", "目标", _navs(20))
+    target = factor_input_from_navs(
+        "999999", "目标", _navs(20), feature_freshness="fresh"
+    )
 
     [result] = score_targets_with_research_model(
         targets=[target],
@@ -84,6 +86,8 @@ def test_qualified_type_factor_is_used_by_online_scoring() -> None:
     assert result["typed_factor_reliability"]["medium_momentum"]["level"] == "中"
     assert "NAV修订时点未冻结" in result["typed_factor_reliability"]["medium_momentum"]["basis"]
     assert result["typed_factor_score"] is not None
+    assert result["execution_qualified"] is True
+    assert result["execution_qualified_factor_keys"] == ["medium_momentum"]
 
 
 def test_type_factor_is_high_only_after_nav_observation_pit() -> None:
@@ -130,6 +134,7 @@ def test_type_factor_fails_closed_when_target_nav_feature_is_missing() -> None:
 
     assert result["typed_factor_applicable"] is False
     assert result["typed_factor_score"] is None
+    assert result["execution_qualified"] is False
     assert result["typed_factor_reliability"]["medium_momentum"]["level"] == "不足"
 
 

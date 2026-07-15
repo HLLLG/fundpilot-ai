@@ -12,6 +12,123 @@ from app.models import (
     InvestorProfile,
     RiskAssessment,
 )
+from app.services.decision_data_evidence import attach_discovery_data_evidence
+
+
+def _verified_tradeability() -> dict:
+    return {
+        "data_status": "complete",
+        "freshness": "fresh",
+        "purchase_state": "open",
+        "redemption_state": "open",
+        "currency": "CNY",
+        "minimum_purchase_yuan": 10.0,
+        "daily_purchase_limit_yuan": None,
+        "daily_purchase_limit_unlimited": True,
+        "standard_purchase_fee_tiers": [
+            {
+                "condition": "全部",
+                "fee_type": "percent",
+                "fee_percent": 0.0,
+                "flat_fee_yuan": None,
+                "min_amount_yuan": None,
+                "max_amount_yuan": None,
+                "source_rate": "standard_undiscounted",
+            }
+        ],
+        "redemption_fee_tiers": [
+            {
+                "condition": "大于等于0天",
+                "min_days": 0,
+                "max_days": None,
+                "fee_percent": 0.0,
+            }
+        ],
+        "sales_service_fee_annual_percent": 0.0,
+        "sales_service_fee_status": "known_zero",
+        "fee_freshness": "fresh",
+        "conflicts": [],
+        "source_ids": ["pytest.tradeability"],
+    }
+
+
+def test_discovery_benchmark_metrics_get_field_level_evidence() -> None:
+    facts = {
+        "session": {"effective_trade_date": "2026-07-14"},
+        "candidate_pool": [],
+    }
+    candidate = {
+        "fund_code": "000001",
+        "benchmark_metrics": {
+            "schema_version": "fund_benchmark_research.v1",
+            "status": "qualified",
+            "qualified": True,
+            "effective_trade_date": "2026-07-14",
+            "alignment": {"last_common_date": "2026-07-14"},
+            "fund_series": {
+                "source": "fund_nav_provider",
+                "available_at": "2026-07-14T15:55:00+08:00",
+            },
+            "components": [
+                {
+                    "source": "benchmark_component_provider",
+                    "available_at": "2026-07-14T15:56:00+08:00",
+                }
+            ],
+        },
+    }
+
+    enriched = attach_discovery_data_evidence(
+        facts,
+        holdings=[],
+        candidate_pool=[candidate],
+        portfolio_context=None,
+    )
+    evidence = {
+        row["fact_id"]: row for row in enriched["data_evidence"]["items"]
+    }
+    row = evidence["candidates.000001.benchmark_metrics"]
+
+    assert row["source"] == "fund_nav_provider+benchmark_component_provider"
+    assert row["source_type"] == "derived"
+    assert row["as_of_date"] == "2026-07-14"
+    assert row["freshness"] == "fresh"
+    assert row["confidence"] == "medium"
+    assert row["is_estimate"] is False
+
+
+def test_future_candidate_nav_is_unavailable_and_cannot_authorize_action() -> None:
+    from app.services.decision_data_evidence import decision_evidence_allows_action
+
+    candidate = {
+        "fund_code": "000001",
+        "nav_date": "2099-01-01",
+        "quality_gate": {"status": "eligible", "eligible": True, "reasons": []},
+        "tradeability": _verified_tradeability(),
+    }
+    enriched = attach_discovery_data_evidence(
+        {
+            "session": {"effective_trade_date": "2026-07-14"},
+            "candidate_pool": [candidate],
+        },
+        holdings=[],
+        candidate_pool=[candidate],
+        portfolio_context=None,
+    )
+    evidence = {
+        row["fact_id"]: row for row in enriched["data_evidence"]["items"]
+    }
+
+    metric = evidence["candidates.000001.candidate_metrics"]
+    assert metric["as_of_date"] == "2099-01-01"
+    assert metric["source"] == "unavailable"
+    assert metric["freshness"] == "unavailable"
+    assert metric["confidence"] == "none"
+    assert decision_evidence_allows_action(
+        enriched,
+        scope="discovery",
+        fund_code="000001",
+    ) == (False, ["candidate_metrics_not_point_in_time_usable"])
 
 
 def _holding(
@@ -71,7 +188,7 @@ def test_portfolio_preflight_prefers_fresh_server_snapshot_and_audits_mismatch(m
     monkeypatch.setattr(
         service,
         "build_trading_session",
-        lambda: {"effective_trade_date": "2026-07-10"},
+        lambda *_args: {"effective_trade_date": "2026-07-10"},
     )
 
     result = service.resolve_portfolio_preflight([_holding(999, fund_code="000002")])
@@ -110,7 +227,7 @@ def test_portfolio_preflight_blocks_stale_server_snapshot_by_default(monkeypatch
     monkeypatch.setattr(
         service,
         "build_trading_session",
-        lambda: {"effective_trade_date": "2026-07-10"},
+        lambda *_args: {"effective_trade_date": "2026-07-10"},
     )
 
     with pytest.raises(service.StalePortfolioSnapshotError, match="2026-07-09"):
@@ -133,7 +250,7 @@ def test_portfolio_preflight_allows_only_explicit_stale_degradation(monkeypatch)
     monkeypatch.setattr(
         service,
         "build_trading_session",
-        lambda: {"effective_trade_date": "2026-07-10"},
+        lambda *_args: {"effective_trade_date": "2026-07-10"},
     )
 
     result = service.resolve_portfolio_preflight(
@@ -158,7 +275,7 @@ def test_portfolio_preflight_marks_first_run_client_input_as_non_authoritative(m
     monkeypatch.setattr(
         service,
         "build_trading_session",
-        lambda: {"effective_trade_date": "2026-07-10"},
+        lambda *_args: {"effective_trade_date": "2026-07-10"},
     )
 
     result = service.resolve_portfolio_preflight([_holding(1000)])
@@ -213,6 +330,174 @@ def test_market_breadth_explicit_stale_status_overrides_same_trade_date():
     assert by_id["market.market_breadth"]["freshness"] == "stale"
 
 
+def test_lookthrough_evidence_uses_disclosure_vintage_and_hash_refs() -> None:
+    from app.services.decision_data_evidence import build_analysis_data_evidence
+
+    payload = build_analysis_data_evidence(
+        [_holding(1000)],
+        snapshots=[],
+        facts={
+            "session": {"effective_trade_date": "2026-07-14"},
+            "fund_lookthrough": {
+                "status": "partial",
+                "decision_at": "2026-07-14T10:00:00+08:00",
+                "portfolio": {
+                    "scope": "fund_holdings_only",
+                    "identity_known_security_mass_lower_bound_percent": 10.0,
+                },
+                "existing_funds": [
+                    {
+                        "status": "qualified",
+                        "snapshot": {
+                            "as_of_date": "2026-03-31",
+                            "current_freshness_label": "fresh",
+                            "disclosed_overlap_lower_bound_eligible": True,
+                            "available_at": "2026-04-20T09:00:00+08:00",
+                            "first_observed_at": "2026-04-22T09:00:00+08:00",
+                        },
+                        "lookthrough": {
+                            "identity_known_disclosed_mass_percent": 20.0,
+                        },
+                    },
+                    {
+                        "status": "qualified",
+                        "snapshot": {
+                            "as_of_date": "2026-06-30",
+                            "current_freshness_label": "aging",
+                            "disclosed_overlap_lower_bound_eligible": True,
+                            "available_at": "2026-07-20T09:00:00+08:00",
+                            "first_observed_at": "2026-07-21T09:00:00+08:00",
+                        },
+                        "lookthrough": {
+                            "identity_known_disclosed_mass_percent": 20.0,
+                        },
+                    },
+                ],
+                "candidates": [
+                    {
+                        "fund_code": "000002",
+                        "status": "qualified",
+                        "snapshot": {
+                            "as_of_date": "2026-06-30",
+                            "current_freshness_label": "fresh",
+                            "available_at": "2026-07-20T09:00:00+08:00",
+                            "first_observed_at": "2026-07-22T09:00:00+08:00",
+                        },
+                        "capabilities": {"research_eligible": True},
+                    }
+                ],
+                "resolution_audit": {
+                    "rows": [
+                        {
+                            "fund_code": "000001",
+                            "qualified": True,
+                            "snapshot_ref": "abcdef123456",
+                            "freshness": "fresh",
+                            "as_of_date": "2026-03-31",
+                            "first_observed_at": "2026-04-22T09:00:00+08:00",
+                        }
+                    ]
+                },
+            },
+        },
+        portfolio_context=None,
+    )
+
+    by_id = {item["fact_id"]: item for item in payload["items"]}
+    portfolio = by_id["fund_lookthrough:portfolio"]
+    assert portfolio["as_of_date"] is None
+    assert portfolio["freshness"] == "unknown"
+    assert portfolio["available_at"] == "2026-07-21T01:00:00Z"
+    snapshot = by_id["holdings_snapshot:000001:abcdef123456"]
+    assert snapshot["as_of_date"] == "2026-03-31"
+    assert snapshot["freshness"] == "aging"
+    candidate = by_id["fund_lookthrough:candidate:000002"]
+    assert candidate["as_of_date"] == "2026-06-30"
+    assert candidate["freshness"] == "aging"
+    assert candidate["available_at"] == "2026-07-22T01:00:00Z"
+
+
+def test_missing_lookthrough_evidence_never_improves_decision_readiness() -> None:
+    from app.services.decision_data_evidence import build_analysis_data_evidence
+
+    base_facts = {"session": {"effective_trade_date": "2026-07-14"}}
+    baseline = build_analysis_data_evidence(
+        [_holding(1000)],
+        snapshots=[],
+        facts=base_facts,
+        portfolio_context=None,
+    )
+    missing = build_analysis_data_evidence(
+        [_holding(1000)],
+        snapshots=[],
+        facts={
+            **base_facts,
+            "fund_lookthrough": {
+                "status": "unavailable",
+                "decision_at": "2026-07-14T10:00:00+08:00",
+                "portfolio": None,
+                "existing_funds": [],
+                "candidates": [],
+                "resolution_audit": {"rows": []},
+            },
+        },
+        portfolio_context=None,
+    )
+
+    assert missing["decision_ready"] is baseline["decision_ready"]
+    assert missing["blocking_reasons"] == baseline["blocking_reasons"]
+    by_id = {item["fact_id"]: item for item in missing["items"]}
+    assert by_id["fund_lookthrough:portfolio"]["source"] == "unavailable"
+    assert by_id["fund_lookthrough:portfolio"]["freshness"] == "unavailable"
+    assert by_id["fund_lookthrough:portfolio"]["confidence"] == "none"
+
+
+def test_lookthrough_availability_requires_qualified_research_dependencies() -> None:
+    from app.services.decision_data_evidence import build_analysis_data_evidence
+
+    payload = build_analysis_data_evidence(
+        [_holding(1000)],
+        snapshots=[],
+        facts={
+            "session": {"effective_trade_date": "2026-07-14"},
+            "fund_lookthrough": {
+                "status": "qualified",
+                "portfolio": {
+                    "identity_known_security_mass_lower_bound_percent": 20.0,
+                },
+                "existing_funds": [
+                    {
+                        "status": "unavailable",
+                        "snapshot": {
+                            "as_of_date": "2026-06-30",
+                            "disclosed_overlap_lower_bound_eligible": False,
+                            "first_observed_at": "2026-07-10T09:00:00+08:00",
+                        },
+                        "lookthrough": None,
+                    }
+                ],
+                "candidates": [
+                    {
+                        "fund_code": "000002",
+                        "status": "qualified",
+                        "capabilities": {"research_eligible": False},
+                        "snapshot": {
+                            "as_of_date": "2026-06-30",
+                            "first_observed_at": "2026-07-10T09:00:00+08:00",
+                        },
+                    }
+                ],
+                "resolution_audit": {"rows": []},
+            },
+        },
+        portfolio_context=None,
+    )
+
+    by_id = {item["fact_id"]: item for item in payload["items"]}
+    assert by_id["fund_lookthrough:portfolio"]["source"] == "unavailable"
+    assert by_id["fund_lookthrough:candidate:000002"]["source"] == "unavailable"
+
+
 def test_empty_server_snapshot_cannot_be_overridden_by_stale_client_holdings(monkeypatch):
     from app.services import decision_data_evidence as service
 
@@ -229,7 +514,7 @@ def test_empty_server_snapshot_cannot_be_overridden_by_stale_client_holdings(mon
     monkeypatch.setattr(
         service,
         "build_trading_session",
-        lambda: {"effective_trade_date": "2026-07-10"},
+        lambda *_args: {"effective_trade_date": "2026-07-10"},
     )
 
     result = service.resolve_portfolio_preflight([_holding(1000)])
@@ -293,22 +578,68 @@ def test_stale_root_evidence_is_not_relabelled_fresh_on_derived_holding_fields()
 def test_discovery_llm_payload_keeps_snapshot_and_field_evidence():
     from app.services.discovery_payload import build_user_payload
 
-    evidence = {"schema_version": "1.0", "decision_ready": False, "items": []}
-    snapshot = {"snapshot_id": "snap-1", "stale": True, "authoritative": True}
+    evidence = {
+        "schema_version": "1.0",
+        "decision_ready": False,
+        "items": [],
+        "raw_registry": {"secret": "EVIDENCE_LEAK_SENTINEL"},
+    }
+    snapshot = {
+        "snapshot_id": "snap-1",
+        "stale": True,
+        "authoritative": True,
+        "position_snapshot": {
+            "positions": [{"fund_code": "000001", "secret": "LEDGER_LEAK_SENTINEL"}]
+        },
+    }
     payload = build_user_payload(
         discovery_facts={
-            "candidate_pool": [],
+            "candidate_pool": [
+                {
+                    "fund_code": "000001",
+                    "fund_name": "测试基金",
+                    "custom_payload": {"secret": "CANDIDATE_LEAK_SENTINEL"},
+                }
+            ],
             "portfolio_gap": {},
             "sector_heat": [],
             "portfolio_snapshot": snapshot,
+            "portfolio_position_truth": {
+                "schema_version": "portfolio_position_truth.compact.v1",
+                "position_complete": True,
+                "positions": [
+                    {
+                        "fund_code": "000001",
+                        "settled_shares": "100.00",
+                        "raw_events": ["POSITION_TRUTH_LEAK_SENTINEL"],
+                    }
+                ],
+            },
             "data_evidence": evidence,
         },
         profile=InvestorProfile(),
         focus_sectors=[],
     )
 
-    assert payload["discovery_facts"]["portfolio_snapshot"] == snapshot
-    assert payload["discovery_facts"]["data_evidence"] == evidence
+    projected_snapshot = payload["discovery_facts"]["portfolio_snapshot"]
+    projected_evidence = payload["discovery_facts"]["data_evidence"]
+    assert projected_snapshot["snapshot_id"] == "snap-1"
+    assert projected_snapshot["stale"] is True
+    assert projected_snapshot["authoritative"] is True
+    assert "position_snapshot" not in projected_snapshot
+    assert projected_evidence["schema_version"] == "1.0"
+    assert projected_evidence["decision_ready"] is False
+    assert "raw_registry" not in projected_evidence
+    projected_position = payload["discovery_facts"]["portfolio_position_truth"]
+    assert projected_position["positions"][0]["fund_code"] == "000001"
+    assert projected_position["positions"][0]["settled_shares"] == "100.00"
+    assert "raw_events" not in projected_position["positions"][0]
+    assert "custom_payload" not in payload["discovery_facts"]["candidate_pool"][0]
+    serialized = str(payload)
+    assert "LEDGER_LEAK_SENTINEL" not in serialized
+    assert "EVIDENCE_LEAK_SENTINEL" not in serialized
+    assert "CANDIDATE_LEAK_SENTINEL" not in serialized
+    assert "POSITION_TRUTH_LEAK_SENTINEL" not in serialized
 
 
 def test_degraded_daily_snapshot_guard_removes_add_action_and_amount():
@@ -370,6 +701,7 @@ def test_degraded_discovery_snapshot_guard_removes_buy_action_and_amount():
                 "fund_quality_score": 80,
                 "sector_fit_score": 80,
                 "quality_gate": {"status": "eligible", "eligible": True, "reasons": []},
+                "tradeability": _verified_tradeability(),
             }
         ],
         held_codes=set(),
@@ -393,10 +725,10 @@ def test_degraded_discovery_snapshot_guard_removes_buy_action_and_amount():
     [
         (True, "300", 300),
         (True, "0", None),
-        (False, None, 500),
+        (False, None, None),
     ],
 )
-def test_discovery_guard_caps_amount_by_known_cash_without_treating_unknown_as_zero(
+def test_discovery_guard_caps_by_known_cash_and_blocks_unknown_cash(
     cash_known: bool,
     cash_balance: str | None,
     expected_amount: float | None,
@@ -413,7 +745,9 @@ def test_discovery_guard_caps_amount_by_known_cash_without_treating_unknown_as_z
         "portfolio_position_truth": {
             "position_complete": True,
             "cash": {"known": cash_known, "balance_yuan": cash_balance},
+            "positions": [],
         },
+        "portfolio_gap": {"holdings_slim": []},
         "sector_opportunities": [],
     }
     guarded, caveats, _ = apply_discovery_guards(
@@ -436,6 +770,7 @@ def test_discovery_guard_caps_amount_by_known_cash_without_treating_unknown_as_z
                 "fund_quality_score": 80,
                 "sector_fit_score": 80,
                 "quality_gate": {"status": "eligible", "eligible": True, "reasons": []},
+                "tradeability": _verified_tradeability(),
             }
         ],
         held_codes=set(),
@@ -545,6 +880,7 @@ def test_unknown_candidate_evidence_is_consumed_by_discovery_final_guard():
                 "fund_quality_score": 80,
                 "sector_fit_score": 80,
                 "quality_gate": {"status": "eligible", "eligible": True, "reasons": []},
+                "tradeability": _verified_tradeability(),
             }
         ],
         held_codes=set(),

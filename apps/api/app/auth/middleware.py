@@ -17,6 +17,7 @@ _PUBLIC_EXACT = {
     "/api/auth/login",
     "/api/internal/factor-ic-snapshots",
     "/api/internal/factor-ic-universe-snapshots",
+    "/api/internal/decision-quality/evaluations/latest",
     "/docs",
     "/redoc",
     "/openapi.json",

@@ -6,6 +6,10 @@ import pytest
 
 from app.db_migrations import SCHEMA_VERSION, run_migrations
 from app.mysql_bootstrap import MYSQL_SCHEMA_VERSION, ensure_mysql_schema
+from app.services.decision_contract import build_report_decision_bundle
+from app.services.decision_quality_rollout import (
+    build_decision_quality_rollout_marker,
+)
 from app.services.decision_repository import (
     ImmutableRecordConflict,
     LedgerHeadConflict,
@@ -44,6 +48,36 @@ def _table_names(connection: sqlite3.Connection) -> set[str]:
     }
 
 
+def _formal_event() -> dict:
+    report = {
+        "id": "report-1",
+        "created_at": "2026-07-12T01:02:00+00:00",
+        "provider": "deepseek-chat",
+        "fund_recommendations": [
+            {
+                "fund_code": "000001",
+                "fund_name": "测试基金",
+                "action": "buy",
+            }
+        ],
+        "analysis_facts": {
+            "data_evidence": {
+                "schema_version": "1.0",
+                "generated_at": "2026-07-12T01:02:02+00:00",
+                "items": [
+                    {
+                        "fact_id": "fund.000001.nav",
+                        "source": "official_nav",
+                        "available_at": "2026-07-12T01:01:00+00:00",
+                        "fetched_at": "2026-07-12T01:02:02+00:00",
+                    }
+                ],
+            }
+        },
+    }
+    return build_report_decision_bundle(report, decision_kind="daily")["events"][0]
+
+
 def test_schema_v9_to_v10_and_transaction_truth_columns() -> None:
     connection = sqlite3.connect(":memory:")
     connection.execute(
@@ -54,8 +88,11 @@ def test_schema_v9_to_v10_and_transaction_truth_columns() -> None:
 
     run_migrations(connection)
 
-    assert SCHEMA_VERSION == 11
-    assert connection.execute("SELECT version FROM schema_meta WHERE id = 1").fetchone()[0] == 11
+    assert SCHEMA_VERSION == 16
+    assert (
+        connection.execute("SELECT version FROM schema_meta WHERE id = 1").fetchone()[0]
+        == SCHEMA_VERSION
+    )
     expected = {
         "decision_portfolio_snapshots",
         "decision_events",
@@ -64,6 +101,11 @@ def test_schema_v9_to_v10_and_transaction_truth_columns() -> None:
         "fund_benchmark_mappings",
         "portfolio_ledger_events",
         "portfolio_ledger_heads",
+        "decision_quality_input_artifacts",
+        "decision_quality_evaluation_snapshots",
+        "decision_quality_contract_rollouts",
+        "prompt_shadow_runs",
+        "prompt_shadow_budget_counters",
     }
     assert expected <= _table_names(connection)
     columns = {
@@ -167,36 +209,26 @@ def test_snapshot_and_event_are_immutable_and_isolated_by_user() -> None:
             user_id=1, snapshot=changed_snapshot, connection=connection
         )
 
-    event = {
-        "schema_version": "decision_event.v1",
-        "event_id": "daily:report-1:000001",
-        "event_type": "fund_daily_decision",
-        "report_id": "report-1",
-        "decision_at": "2026-07-12T01:02:00+00:00",
-        "fund_code": "000001",
-        "fund_name": "测试基金",
-        "action": "持有",
-        "action_category": "observation",
-        "eligible": False,
-        "portfolio_snapshot_id": "snap-1",
-    }
+    event = _formal_event()
     put_decision_event(user_id=1, event=event, connection=connection)
     put_decision_event(user_id=2, event=event, connection=connection)
     assert get_decision_event(
         user_id=1, event_id=event["event_id"], connection=connection
-    )["final_action"] == "持有"
+    )["final_action"] == event["final_action"]
     stored_event = get_decision_event(
         user_id=1, event_id=event["event_id"], connection=connection
     )
     assert stored_event["payload"]["source_type"] == "daily"
-    assert stored_event["payload"]["final_action"] == "持有"
+    assert stored_event["payload"]["final_action"] == event["final_action"]
     assert stored_event["payload"]["metric_eligible"] is True
     assert len(list_decision_events(user_id=1, connection=connection)) == 1
     assert len(list_decision_events(user_id=2, connection=connection)) == 1
 
     with pytest.raises(ImmutableRecordConflict):
         put_decision_event(
-            user_id=1, event={**event, "action": "买入"}, connection=connection
+            user_id=1,
+            event={**event, "final_action": "changed"},
+            connection=connection,
         )
 
 
@@ -425,7 +457,7 @@ def test_mysql_bootstrap_has_v10_durable_decision_and_ledger_ddl() -> None:
 
     ensure_mysql_schema(Connection())
     ddl = "\n".join(statements)
-    assert MYSQL_SCHEMA_VERSION == 11
+    assert MYSQL_SCHEMA_VERSION == 16
     for table in (
         "decision_portfolio_snapshots",
         "decision_events",
@@ -434,8 +466,48 @@ def test_mysql_bootstrap_has_v10_durable_decision_and_ledger_ddl() -> None:
         "fund_benchmark_mappings",
         "portfolio_ledger_events",
         "portfolio_ledger_heads",
+        "decision_quality_input_artifacts",
+        "decision_quality_evaluation_snapshots",
+        "decision_quality_artifact_receipts",
+        "decision_quality_provider_receipts",
+        "decision_quality_contract_rollouts",
+        "prompt_shadow_runs",
+        "prompt_shadow_budget_counters",
     ):
         assert f"CREATE TABLE IF NOT EXISTS {table}" in ddl
+    assert "INSERT IGNORE INTO decision_quality_contract_rollouts" in ddl
     assert "ON DUPLICATE KEY UPDATE version" in ddl
     assert "confirmed_shares DOUBLE NULL" in ddl
     assert "ledger_version VARCHAR(128) NULL" in ddl
+
+
+def test_mysql_bootstrap_can_seed_the_exact_migrated_rollout_boundary() -> None:
+    statements: list[str] = []
+    marker = build_decision_quality_rollout_marker(
+        "2026-07-14T03:04:05+00:00"
+    )
+
+    class Cursor:
+        def execute(self, statement: str) -> None:
+            statements.append(statement)
+
+    class Connection:
+        def cursor(self) -> Cursor:
+            return Cursor()
+
+        def commit(self) -> None:
+            return None
+
+    ensure_mysql_schema(
+        Connection(),
+        decision_quality_rollout_marker=marker,
+    )
+    insert = next(
+        statement
+        for statement in statements
+        if "INSERT IGNORE INTO decision_quality_contract_rollouts" in statement
+    )
+
+    assert marker["required_from"] in insert
+    assert marker["created_at"] in insert
+    assert marker["marker_hash"] in insert

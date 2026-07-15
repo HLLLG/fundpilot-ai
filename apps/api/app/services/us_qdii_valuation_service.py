@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from app.services.us_qdii_seeds import get_qdii_seeds
@@ -70,12 +71,26 @@ def compute_holdings_reference(
     *,
     min_quoted_ratio: float = _MIN_QUOTED_WEIGHT_RATIO,
 ) -> float | None:
-    """按重仓占净值比例加权个股涨跌幅；覆盖权重不足时返回 None。"""
+    """Compute the disclosed sleeve's contribution to whole-fund return.
+
+    ``weight`` is a percentage of fund NAV, so the contribution is
+    ``sum(weight_percent * security_change_percent) / 100``.  It must not be
+    divided by quoted weight: doing so turns a small disclosed/quoted sleeve
+    into a fictitious 100%-of-fund nowcast.
+    """
     if not holdings or not quote_map:
         return None
 
-    total_weight = sum(float(h.get("weight", 0) or 0) for h in holdings)
-    if total_weight <= 0:
+    weights = [_finite_positive(row.get("weight")) for row in holdings]
+    total_weight = sum(weight for weight in weights if weight is not None)
+    if total_weight <= 0 or total_weight > 100.01:
+        return None
+    if (
+        isinstance(min_quoted_ratio, bool)
+        or not isinstance(min_quoted_ratio, (int, float))
+        or not math.isfinite(float(min_quoted_ratio))
+        or not 0 <= float(min_quoted_ratio) <= 1
+    ):
         return None
 
     quoted_weight = 0.0
@@ -83,32 +98,37 @@ def compute_holdings_reference(
     for row in holdings:
         market = str(row.get("market", ""))
         code = str(row.get("code", ""))
-        try:
-            weight = float(row.get("weight", 0))
-        except (TypeError, ValueError):
-            continue
-        if weight <= 0:
+        weight = _finite_positive(row.get("weight"))
+        if weight is None:
             continue
         change = quote_map.get(quote_key(market, code))
-        if change is None:
+        change_value = _finite_number(change)
+        if change_value is None:
             continue
         quoted_weight += weight
-        weighted_change += weight * float(change)
+        weighted_change += weight * change_value
 
     if quoted_weight <= 0 or quoted_weight / total_weight < min_quoted_ratio:
         return None
-    return round(weighted_change / quoted_weight, 2)
+    return round(weighted_change / 100.0, 4)
 
 
 def build_holdings_reference_map(
     holdings_by_fund: dict[str, dict[str, Any]],
     quote_map: dict[str, float] | None,
 ) -> dict[str, float]:
-    """fund_code → 穿透估算 reference_change_percent（仅含成功估算的基金）。"""
+    """Build full-fund references only from explicitly eligible snapshots."""
     if not quote_map:
         return {}
     out: dict[str, float] = {}
     for fund_code, payload in holdings_by_fund.items():
+        qualification = payload.get("qualification") if isinstance(payload, dict) else None
+        if (
+            not isinstance(qualification, dict)
+            or qualification.get("nowcast_eligible") is not True
+            or _payload_coverage_percent(payload) is None
+        ):
+            continue
         rows = payload.get("holdings") if isinstance(payload, dict) else None
         if not isinstance(rows, list):
             continue
@@ -116,6 +136,64 @@ def build_holdings_reference_map(
         if ref is not None:
             out[fund_code] = ref
     return out
+
+
+def build_disclosed_holdings_contribution_map(
+    holdings_by_fund: dict[str, dict[str, Any]],
+    quote_map: dict[str, float] | None,
+) -> dict[str, float]:
+    """Return research-only disclosed sleeve contributions.
+
+    This output is intentionally separate from ``build_holdings_reference_map``
+    and must not be passed to ``merge_qdii_references`` as a NAV reference.
+    """
+
+    if not quote_map:
+        return {}
+    out: dict[str, float] = {}
+    for fund_code, payload in holdings_by_fund.items():
+        if not isinstance(payload, dict):
+            continue
+        qualification = payload.get("qualification")
+        if (
+            not isinstance(qualification, dict)
+            or qualification.get("disclosed_contribution_research_eligible") is not True
+            or _payload_coverage_percent(payload) is None
+        ):
+            continue
+        rows = payload.get("holdings")
+        if not isinstance(rows, list):
+            continue
+        contribution = compute_holdings_reference(rows, quote_map)
+        if contribution is not None:
+            out[fund_code] = contribution
+    return out
+
+
+def _finite_number(value: object) -> float | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _finite_positive(value: object) -> float | None:
+    number = _finite_number(value)
+    return number if number is not None and number > 0 else None
+
+
+def _payload_coverage_percent(payload: dict[str, Any]) -> float | None:
+    coverage = payload.get("coverage")
+    if not isinstance(coverage, dict):
+        return None
+    raw = coverage.get("portfolio_weight_coverage_percent")
+    if raw is None:
+        raw = coverage.get("weight_sum_percent")
+    value = _finite_number(raw)
+    return value if value is not None and 0 < value <= 100.01 else None
 
 
 def index_factor_reference(

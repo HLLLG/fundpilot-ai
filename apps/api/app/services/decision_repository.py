@@ -5,9 +5,15 @@ import json
 import sqlite3
 from contextlib import contextmanager
 from dataclasses import asdict, is_dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Any, Iterator, Mapping, Sequence
+from typing import Any, Callable, Iterator, Mapping, Sequence
+
+from app.services.decision_quality_rollout import (
+    DECISION_QUALITY_ROLLOUT_CONTRACT_NAME,
+    normalize_decision_quality_rollout_marker,
+    post_rollout_decision_event_error,
+)
 
 
 class DecisionRepositoryError(RuntimeError):
@@ -24,6 +30,114 @@ class ObservationFinalizedConflict(ImmutableRecordConflict):
 
 class LedgerHeadConflict(DecisionRepositoryError):
     """The append-only ledger head changed before an event could be appended."""
+
+
+class DecisionQualityIntegrityError(DecisionRepositoryError):
+    """Stored decision-quality evidence failed its hash or envelope contract."""
+
+
+class DecisionQualityPrimaryStoreUnavailable(DecisionRepositoryError):
+    """A formal quality snapshot was routed to a configured database fallback."""
+
+
+DECISION_QUALITY_INPUT_ARTIFACT_SCHEMA_VERSION = (
+    "decision_quality_input_artifact.v1"
+)
+DECISION_QUALITY_EVALUATION_SNAPSHOT_SCHEMA_VERSION = (
+    "decision_quality_evaluation_snapshot.v1"
+)
+DECISION_QUALITY_EVALUATION_SCHEMA_VERSION = "decision_quality_evaluation.v1"
+DECISION_QUALITY_ARTIFACT_RECEIPT_SCHEMA_VERSION = (
+    "decision_quality_artifact_receipt.v1"
+)
+DECISION_QUALITY_ARTIFACT_RECEIPT_POLICY = (
+    "decision_quality_post_commit_visibility.v1"
+)
+DECISION_QUALITY_PROVIDER_RECEIPT_SCHEMA_VERSION = (
+    "decision_quality_provider_receipt.v1"
+)
+DECISION_QUALITY_PROVIDER_ADAPTER_OUTPUT_MAX_BYTES = 1_048_576
+DECISION_QUALITY_EVALUATION_STATUSES = frozenset({"available", "unavailable"})
+DECISION_QUALITY_READINESS_STATUSES = frozenset(
+    {
+        "insufficient_data",
+        "shadow_evaluation",
+        "ready_for_manual_review",
+    }
+)
+DECISION_QUALITY_HUMAN_REVIEW_STATUSES = frozenset(
+    {
+        "not_evaluated",
+        "blocked",
+        "eligible_for_human_review",
+    }
+)
+_DECISION_QUALITY_TENANT_SCAN_PAGE_SIZE = 1_000
+_DECISION_QUALITY_ARTIFACT_FIELDS = {
+    "schema_version",
+    "artifact_id",
+    "artifact_type",
+    "artifact_schema_version",
+    "logical_key",
+    "source_type",
+    "source_report_id",
+    "decision_event_id",
+    "decision_at",
+    "available_at",
+    "recorded_at",
+    "store_authority",
+    "audit_eligible",
+    "content_hash",
+    "artifact",
+}
+_DECISION_QUALITY_SNAPSHOT_FIELDS = {
+    "schema_version",
+    "snapshot_id",
+    "evaluation_as_of",
+    "evaluator_schema_version",
+    "evaluator_version",
+    "status",
+    "evaluation_hash",
+    "input_manifest",
+    "input_manifest_hash",
+    "config",
+    "config_hash",
+    "readiness_status",
+    "human_review_status",
+    "automatic_promotion_allowed",
+    "store_authority",
+    "audit_eligible",
+    "evaluation",
+    "content_hash",
+}
+_DECISION_QUALITY_ARTIFACT_RECEIPT_FIELDS = {
+    "schema_version",
+    "receipt_id",
+    "receipt_policy",
+    "user_id",
+    "artifact_id",
+    "artifact_type",
+    "artifact_content_hash",
+    "source_row_created_at",
+    "source_visible_at",
+    "store_authority",
+    "content_hash",
+}
+_DECISION_QUALITY_PROVIDER_RECEIPT_FIELDS = {
+    "schema_version",
+    "receipt_id",
+    "provider",
+    "operation",
+    "capture_mode",
+    "request_hash",
+    "adapter_output",
+    "adapter_output_sha256",
+    "adapter_output_bytes",
+    "normalized_payload_hash",
+    "origin_fetched_at",
+    "completed_at",
+    "content_hash",
+}
 
 
 _NON_TERMINAL_OBSERVATION_STATUSES = {
@@ -68,6 +182,26 @@ def canonical_hash(value: Any) -> str:
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _decision_quality_storage_receipt(recorded_at: str) -> str:
+    """Return an honest write receipt while preserving one-tick Lamport order.
+
+    Event-bound report artifacts use the deterministic one-microsecond successor
+    of the event receipt so the post-generation audit is strictly later even on
+    clocks whose consecutive reads share a tick.  The artifact is physically
+    written after the event, so that single logical tick is admissible; any
+    larger caller-claimed future time remains a contract violation.
+    """
+
+    wall_clock = datetime.fromisoformat(_utc_now().replace("Z", "+00:00"))
+    claimed = datetime.fromisoformat(recorded_at.replace("Z", "+00:00"))
+    future_skew = claimed - wall_clock
+    if future_skew > timedelta(microseconds=1):
+        raise DecisionQualityIntegrityError(
+            "decision-quality recorded_at exceeds its storage receipt clock"
+        )
+    return max(wall_clock, claimed).astimezone(timezone.utc).isoformat()
 
 
 def _required_text(value: Any, name: str) -> str:
@@ -199,6 +333,590 @@ def _decode_row(row: dict[str, Any] | None) -> dict[str, Any] | None:
         if key in result and result[key] is not None:
             result[key] = bool(result[key])
     return result
+
+
+def _required_sha256(value: Any, name: str) -> str:
+    text = _quality_required_text(value, name)
+    if (
+        text != text.lower()
+        or len(text) != 64
+        or any(character not in "0123456789abcdef" for character in text)
+    ):
+        raise ValueError(f"{name} must be a lowercase SHA-256 hex digest")
+    return text
+
+
+def _quality_required_text(value: Any, name: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{name} must be a string")
+    text = value.strip()
+    if not text:
+        raise ValueError(f"{name} is required")
+    return text
+
+
+def _quality_optional_text(value: Any, name: str) -> str | None:
+    if value is None:
+        return None
+    return _quality_required_text(value, name)
+
+
+def _canonical_aware_timestamp(value: Any, name: str) -> str:
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        text = _quality_required_text(value, name)
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError(f"{name} must be an ISO timestamp") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError(f"{name} must include a timezone offset")
+    return parsed.astimezone(timezone.utc).isoformat()
+
+
+def _required_boolean(value: Any, name: str) -> bool:
+    if not isinstance(value, bool):
+        raise ValueError(f"{name} must be a boolean")
+    return value
+
+
+def _quality_material(value: Mapping[str, Any], *ignored: str) -> dict[str, Any]:
+    omitted = set(ignored)
+    return {str(key): item for key, item in value.items() if str(key) not in omitted}
+
+
+def _automatic_promotion_values(value: Any) -> list[Any]:
+    found: list[Any] = []
+    if isinstance(value, Mapping):
+        for key, item in value.items():
+            if str(key) == "automatic_promotion_allowed":
+                found.append(item)
+            found.extend(_automatic_promotion_values(item))
+    elif isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        for item in value:
+            found.extend(_automatic_promotion_values(item))
+    return found
+
+
+def _decision_quality_user_id(value: Any) -> int:
+    if isinstance(value, bool):
+        raise ValueError("user_id must be a positive integer")
+    if isinstance(value, int):
+        normalized = value
+    elif isinstance(value, str) and value.strip().isdigit():
+        normalized = int(value.strip())
+    else:
+        raise ValueError("user_id must be a positive integer")
+    if normalized <= 0:
+        raise ValueError("user_id must be a positive integer")
+    return normalized
+
+
+def _decision_quality_limit(value: Any, *, maximum: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError("limit must be a positive integer")
+    return min(value, maximum)
+
+
+def _decision_quality_content_id(value: Any, *, name: str, prefix: str) -> str:
+    text = _quality_required_text(value, name)
+    if not text.startswith(prefix):
+        raise ValueError(f"{name} must start with {prefix}")
+    _required_sha256(text[len(prefix) :], f"{name} digest")
+    return text
+
+
+def _decision_quality_store_authority(connection: Any) -> str:
+    from app.config import get_settings
+
+    if get_settings().uses_mysql and _dialect(connection) != "mysql":
+        return "fallback_non_audited"
+    return "primary"
+
+
+def _require_primary_decision_quality_store(connection: Any) -> None:
+    if _decision_quality_store_authority(connection) != "primary":
+        raise DecisionQualityPrimaryStoreUnavailable(
+            "formal decision-quality snapshots require the configured primary store"
+        )
+
+
+def normalize_decision_quality_input_artifact(
+    artifact: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Normalize one immutable, content-addressed evaluation input artifact."""
+
+    if not isinstance(artifact, Mapping):
+        raise ValueError("artifact must be an object")
+    if any(not isinstance(key, str) for key in artifact):
+        raise ValueError("decision-quality input artifact field names must be strings")
+    unknown_fields = set(artifact) - _DECISION_QUALITY_ARTIFACT_FIELDS
+    if unknown_fields:
+        raise ValueError(
+            "decision-quality input artifact contains unsupported fields: "
+            + ", ".join(sorted(unknown_fields))
+        )
+    schema_version = _quality_optional_text(
+        artifact.get("schema_version"), "schema_version"
+    ) or DECISION_QUALITY_INPUT_ARTIFACT_SCHEMA_VERSION
+    if schema_version != DECISION_QUALITY_INPUT_ARTIFACT_SCHEMA_VERSION:
+        raise ValueError("decision-quality input artifact schema_version is unsupported")
+    artifact_type = _quality_required_text(
+        artifact.get("artifact_type"), "artifact_type"
+    )
+    artifact_payload = artifact.get("artifact")
+    if not isinstance(artifact_payload, Mapping):
+        raise ValueError("artifact must contain an object-valued artifact payload")
+    frozen_artifact = dict(artifact_payload)
+    declared_artifact_schema = artifact.get("artifact_schema_version")
+    artifact_schema_version = _quality_required_text(
+        declared_artifact_schema
+        if declared_artifact_schema is not None
+        else frozen_artifact.get("schema_version"),
+        "artifact_schema_version",
+    )
+    logical_key = _quality_optional_text(artifact.get("logical_key"), "logical_key")
+    if logical_key is not None and len(logical_key) > 255:
+        raise ValueError("logical_key must not exceed 255 characters")
+    inner_schema_version = _quality_optional_text(
+        frozen_artifact.get("schema_version"), "artifact.schema_version"
+    )
+    if (
+        inner_schema_version is not None
+        and inner_schema_version != artifact_schema_version
+    ):
+        raise ValueError("artifact_schema_version conflicts with artifact payload")
+    source_type = _quality_required_text(
+        artifact.get("source_type"), "source_type"
+    )
+    source_report_id = _quality_optional_text(
+        artifact.get("source_report_id"), "source_report_id"
+    )
+    decision_event_id = _quality_optional_text(
+        artifact.get("decision_event_id"), "decision_event_id"
+    )
+    decision_at = (
+        _canonical_aware_timestamp(artifact.get("decision_at"), "decision_at")
+        if artifact.get("decision_at") is not None
+        else None
+    )
+    available_at = _canonical_aware_timestamp(
+        artifact.get("available_at"), "available_at"
+    )
+    recorded_at = _canonical_aware_timestamp(
+        artifact.get("recorded_at"), "recorded_at"
+    )
+    if datetime.fromisoformat(available_at) > datetime.fromisoformat(recorded_at):
+        raise ValueError("available_at must not be after recorded_at")
+    if (
+        decision_at is not None
+        and datetime.fromisoformat(decision_at)
+        > datetime.fromisoformat(available_at)
+    ):
+        raise ValueError("decision_at must not be after available_at")
+    store_authority = _quality_required_text(
+        artifact.get("store_authority"), "store_authority"
+    )
+    if store_authority not in {"primary", "fallback_non_audited"}:
+        raise ValueError("store_authority is unsupported")
+    audit_eligible = _required_boolean(
+        artifact.get("audit_eligible"), "audit_eligible"
+    )
+    if audit_eligible and store_authority != "primary":
+        raise ValueError("only primary-store artifacts may be audit eligible")
+    promotion_values = _automatic_promotion_values(frozen_artifact)
+    if any(value is not False for value in promotion_values):
+        raise ValueError("automatic_promotion_allowed must never be true in artifacts")
+
+    normalized: dict[str, Any] = {
+        "schema_version": schema_version,
+        "artifact_type": artifact_type,
+        "artifact_schema_version": artifact_schema_version,
+        "source_type": source_type,
+        "source_report_id": source_report_id,
+        "decision_event_id": decision_event_id,
+        "decision_at": decision_at,
+        "available_at": available_at,
+        "recorded_at": recorded_at,
+        "store_authority": store_authority,
+        "audit_eligible": audit_eligible,
+        "artifact": frozen_artifact,
+    }
+    # Keep the pre-D3 canonical representation byte-for-byte stable.  Existing
+    # content-addressed artifacts did not carry this optional field, so adding
+    # a JSON null here would invalidate every historical artifact id/hash.
+    if logical_key is not None:
+        normalized["logical_key"] = logical_key
+    content_hash = canonical_hash(normalized)
+    supplied_hash = artifact.get("content_hash")
+    if supplied_hash is not None and _required_sha256(
+        supplied_hash, "content_hash"
+    ) != content_hash:
+        raise ValueError("decision-quality input artifact content_hash mismatch")
+    artifact_id = f"dqa_{content_hash}"
+    supplied_id = _quality_optional_text(artifact.get("artifact_id"), "artifact_id")
+    if supplied_id is not None and supplied_id != artifact_id:
+        raise ValueError("decision-quality input artifact_id mismatch")
+    normalized["artifact_id"] = artifact_id
+    normalized["content_hash"] = content_hash
+    return normalized
+
+
+def normalize_decision_quality_artifact_receipt(
+    receipt: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Normalize one immutable proof that a source artifact was commit-visible."""
+
+    if not isinstance(receipt, Mapping):
+        raise ValueError("artifact receipt must be an object")
+    if any(not isinstance(key, str) for key in receipt):
+        raise ValueError("artifact receipt field names must be strings")
+    unknown = set(receipt) - _DECISION_QUALITY_ARTIFACT_RECEIPT_FIELDS
+    if unknown:
+        raise ValueError(
+            "artifact receipt contains unsupported fields: "
+            + ", ".join(sorted(unknown))
+        )
+    schema_version = _quality_optional_text(
+        receipt.get("schema_version"), "schema_version"
+    ) or DECISION_QUALITY_ARTIFACT_RECEIPT_SCHEMA_VERSION
+    if schema_version != DECISION_QUALITY_ARTIFACT_RECEIPT_SCHEMA_VERSION:
+        raise ValueError("artifact receipt schema_version is unsupported")
+    receipt_policy = _quality_optional_text(
+        receipt.get("receipt_policy"), "receipt_policy"
+    ) or DECISION_QUALITY_ARTIFACT_RECEIPT_POLICY
+    if receipt_policy != DECISION_QUALITY_ARTIFACT_RECEIPT_POLICY:
+        raise ValueError("artifact receipt policy is unsupported")
+    user_id = _decision_quality_user_id(receipt.get("user_id"))
+    artifact_id = _decision_quality_content_id(
+        receipt.get("artifact_id"),
+        name="artifact_id",
+        prefix="dqa_",
+    )
+    artifact_type = _quality_required_text(
+        receipt.get("artifact_type"), "artifact_type"
+    )
+    artifact_content_hash = _required_sha256(
+        receipt.get("artifact_content_hash"), "artifact_content_hash"
+    )
+    source_row_created_at = _canonical_aware_timestamp(
+        receipt.get("source_row_created_at"), "source_row_created_at"
+    )
+    source_visible_at = _canonical_aware_timestamp(
+        receipt.get("source_visible_at"), "source_visible_at"
+    )
+    if datetime.fromisoformat(source_visible_at) < datetime.fromisoformat(
+        source_row_created_at
+    ):
+        raise ValueError("source_visible_at must not predate the source row")
+    store_authority = _quality_required_text(
+        receipt.get("store_authority"), "store_authority"
+    )
+    if store_authority != "primary":
+        raise ValueError("artifact receipts require the primary evidence store")
+    normalized: dict[str, Any] = {
+        "schema_version": schema_version,
+        "receipt_policy": receipt_policy,
+        "user_id": user_id,
+        "artifact_id": artifact_id,
+        "artifact_type": artifact_type,
+        "artifact_content_hash": artifact_content_hash,
+        "source_row_created_at": source_row_created_at,
+        "source_visible_at": source_visible_at,
+        "store_authority": store_authority,
+    }
+    content_hash = canonical_hash(normalized)
+    supplied_hash = receipt.get("content_hash")
+    if supplied_hash is not None and _required_sha256(
+        supplied_hash, "content_hash"
+    ) != content_hash:
+        raise ValueError("artifact receipt content_hash mismatch")
+    receipt_id = f"dqr_{content_hash}"
+    supplied_id = _quality_optional_text(receipt.get("receipt_id"), "receipt_id")
+    if supplied_id is not None and supplied_id != receipt_id:
+        raise ValueError("artifact receipt_id mismatch")
+    normalized["receipt_id"] = receipt_id
+    normalized["content_hash"] = content_hash
+    return normalized
+
+
+def normalize_decision_quality_provider_receipt(
+    receipt: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Normalize one bounded, inline raw adapter response receipt."""
+
+    if not isinstance(receipt, Mapping):
+        raise ValueError("provider receipt must be an object")
+    if any(not isinstance(key, str) for key in receipt):
+        raise ValueError("provider receipt field names must be strings")
+    unknown = set(receipt) - _DECISION_QUALITY_PROVIDER_RECEIPT_FIELDS
+    if unknown:
+        raise ValueError(
+            "provider receipt contains unsupported fields: "
+            + ", ".join(sorted(unknown))
+        )
+    schema_version = _quality_optional_text(
+        receipt.get("schema_version"), "schema_version"
+    ) or DECISION_QUALITY_PROVIDER_RECEIPT_SCHEMA_VERSION
+    if schema_version != DECISION_QUALITY_PROVIDER_RECEIPT_SCHEMA_VERSION:
+        raise ValueError("provider receipt schema_version is unsupported")
+    provider = _quality_required_text(receipt.get("provider"), "provider")
+    operation = _quality_required_text(receipt.get("operation"), "operation")
+    capture_mode = _quality_required_text(
+        receipt.get("capture_mode"), "capture_mode"
+    )
+    request_hash = _required_sha256(receipt.get("request_hash"), "request_hash")
+    adapter_output = receipt.get("adapter_output")
+    if not isinstance(adapter_output, Mapping):
+        raise ValueError("adapter_output must be a validated object")
+    try:
+        adapter_output_json = canonical_json(adapter_output)
+        frozen_adapter_output = json.loads(adapter_output_json)
+    except (TypeError, ValueError, OverflowError, RecursionError) as exc:
+        raise ValueError("adapter_output is not canonical JSON") from exc
+    adapter_output_bytes = len(adapter_output_json.encode("utf-8"))
+    if adapter_output_bytes > DECISION_QUALITY_PROVIDER_ADAPTER_OUTPUT_MAX_BYTES:
+        raise ValueError("adapter_output exceeds the inline receipt byte limit")
+    adapter_output_sha256 = hashlib.sha256(
+        adapter_output_json.encode("utf-8")
+    ).hexdigest()
+    supplied_output_hash = receipt.get("adapter_output_sha256")
+    if supplied_output_hash is not None and _required_sha256(
+        supplied_output_hash, "adapter_output_sha256"
+    ) != adapter_output_sha256:
+        raise ValueError("adapter_output_sha256 mismatch")
+    supplied_output_bytes = receipt.get("adapter_output_bytes")
+    if supplied_output_bytes is not None and (
+        isinstance(supplied_output_bytes, bool)
+        or not isinstance(supplied_output_bytes, int)
+        or supplied_output_bytes != adapter_output_bytes
+    ):
+        raise ValueError("adapter_output_bytes mismatch")
+    normalized_payload_hash = _required_sha256(
+        receipt.get("normalized_payload_hash"), "normalized_payload_hash"
+    )
+    origin_fetched_at = _canonical_aware_timestamp(
+        receipt.get("origin_fetched_at"), "origin_fetched_at"
+    )
+    completed_at = _canonical_aware_timestamp(
+        receipt.get("completed_at"), "completed_at"
+    )
+    if datetime.fromisoformat(origin_fetched_at) > datetime.fromisoformat(completed_at):
+        raise ValueError("origin_fetched_at must not be after completed_at")
+    normalized: dict[str, Any] = {
+        "schema_version": schema_version,
+        "provider": provider,
+        "operation": operation,
+        "capture_mode": capture_mode,
+        "request_hash": request_hash,
+        "adapter_output": frozen_adapter_output,
+        "adapter_output_sha256": adapter_output_sha256,
+        "adapter_output_bytes": adapter_output_bytes,
+        "normalized_payload_hash": normalized_payload_hash,
+        "origin_fetched_at": origin_fetched_at,
+        "completed_at": completed_at,
+    }
+    content_hash = canonical_hash(normalized)
+    supplied_hash = receipt.get("content_hash")
+    if supplied_hash is not None and _required_sha256(
+        supplied_hash, "content_hash"
+    ) != content_hash:
+        raise ValueError("provider receipt content_hash mismatch")
+    receipt_id = f"dqpr_{content_hash}"
+    supplied_id = _quality_optional_text(receipt.get("receipt_id"), "receipt_id")
+    if supplied_id is not None and supplied_id != receipt_id:
+        raise ValueError("provider receipt_id mismatch")
+    normalized["receipt_id"] = receipt_id
+    normalized["content_hash"] = content_hash
+    return normalized
+
+
+def normalize_decision_quality_evaluation_snapshot(
+    snapshot: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Normalize and verify a persisted output of the pure D1 evaluator."""
+
+    if not isinstance(snapshot, Mapping):
+        raise ValueError("snapshot must be an object")
+    if any(not isinstance(key, str) for key in snapshot):
+        raise ValueError(
+            "decision-quality evaluation snapshot field names must be strings"
+        )
+    unknown_fields = set(snapshot) - _DECISION_QUALITY_SNAPSHOT_FIELDS
+    if unknown_fields:
+        raise ValueError(
+            "decision-quality evaluation snapshot contains unsupported fields: "
+            + ", ".join(sorted(unknown_fields))
+        )
+    schema_version = _quality_optional_text(
+        snapshot.get("schema_version"), "schema_version"
+    ) or DECISION_QUALITY_EVALUATION_SNAPSHOT_SCHEMA_VERSION
+    if schema_version != DECISION_QUALITY_EVALUATION_SNAPSHOT_SCHEMA_VERSION:
+        raise ValueError(
+            "decision-quality evaluation snapshot schema_version is unsupported"
+        )
+    evaluation = snapshot.get("evaluation")
+    if not isinstance(evaluation, Mapping):
+        raise ValueError("snapshot evaluation must be an object")
+    frozen_evaluation = dict(evaluation)
+    evaluator_schema_version = _quality_required_text(
+        frozen_evaluation.get("schema_version"), "evaluator_schema_version"
+    )
+    if evaluator_schema_version != DECISION_QUALITY_EVALUATION_SCHEMA_VERSION:
+        raise ValueError("decision-quality evaluator schema_version is unsupported")
+    supplied_evaluator_schema = _quality_optional_text(
+        snapshot.get("evaluator_schema_version"), "evaluator_schema_version"
+    )
+    if (
+        supplied_evaluator_schema is not None
+        and supplied_evaluator_schema != evaluator_schema_version
+    ):
+        raise ValueError("evaluator_schema_version conflicts with evaluation payload")
+    evaluator_version = _quality_required_text(
+        snapshot.get("evaluator_version"), "evaluator_version"
+    )
+    status = _quality_required_text(frozen_evaluation.get("status"), "status")
+    if status not in DECISION_QUALITY_EVALUATION_STATUSES:
+        raise ValueError("decision-quality evaluation status is unsupported")
+    supplied_status = _quality_optional_text(snapshot.get("status"), "status")
+    if supplied_status is not None and supplied_status != status:
+        raise ValueError("snapshot status conflicts with evaluation payload")
+
+    promotion_values = _automatic_promotion_values(frozen_evaluation)
+    if not promotion_values or any(value is not False for value in promotion_values):
+        raise ValueError("automatic_promotion_allowed must be explicitly false everywhere")
+    if any(
+        value is not False for value in _automatic_promotion_values(snapshot)
+    ):
+        raise ValueError("automatic promotion is forbidden for evaluation snapshots")
+
+    evaluation_hash = _required_sha256(
+        frozen_evaluation.get("evaluation_hash"), "evaluation_hash"
+    )
+    expected_evaluation_hash = canonical_hash(
+        _quality_material(frozen_evaluation, "evaluation_hash")
+    )
+    if evaluation_hash != expected_evaluation_hash:
+        raise ValueError("decision-quality evaluation_hash mismatch")
+    supplied_evaluation_hash = snapshot.get("evaluation_hash")
+    if supplied_evaluation_hash is not None and _required_sha256(
+        supplied_evaluation_hash, "evaluation_hash"
+    ) != evaluation_hash:
+        raise ValueError("snapshot evaluation_hash conflicts with evaluation payload")
+
+    input_audit = frozen_evaluation.get("input_audit")
+    evaluation_cutoff = (
+        input_audit.get("evaluation_as_of")
+        if isinstance(input_audit, Mapping)
+        else None
+    )
+    declared_evaluation_as_of = snapshot.get("evaluation_as_of")
+    evaluation_as_of = _canonical_aware_timestamp(
+        declared_evaluation_as_of
+        if declared_evaluation_as_of is not None
+        else evaluation_cutoff,
+        "evaluation_as_of",
+    )
+    if evaluation_cutoff is None or _canonical_aware_timestamp(
+        evaluation_cutoff, "evaluation.input_audit.evaluation_as_of"
+    ) != evaluation_as_of:
+        raise ValueError("evaluation_as_of conflicts with evaluation input audit")
+
+    input_manifest = snapshot.get("input_manifest")
+    if not isinstance(input_manifest, Mapping):
+        raise ValueError("input_manifest must be an object")
+    frozen_manifest = dict(input_manifest)
+    rollout_marker = frozen_manifest.get("contract_rollout_marker")
+    if not isinstance(rollout_marker, Mapping):
+        raise ValueError("input_manifest contract_rollout_marker is required")
+    try:
+        normalized_rollout_marker = normalize_decision_quality_rollout_marker(
+            rollout_marker
+        )
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(
+            "input_manifest contract_rollout_marker is invalid"
+        ) from exc
+    frozen_manifest["contract_rollout_marker"] = normalized_rollout_marker
+    input_manifest_hash = canonical_hash(frozen_manifest)
+    supplied_manifest_hash = snapshot.get("input_manifest_hash")
+    if supplied_manifest_hash is not None and _required_sha256(
+        supplied_manifest_hash, "input_manifest_hash"
+    ) != input_manifest_hash:
+        raise ValueError("input_manifest_hash mismatch")
+
+    config = snapshot.get("config", {})
+    if not isinstance(config, Mapping):
+        raise ValueError("config must be an object")
+    frozen_config = dict(config)
+    config_hash = canonical_hash(frozen_config)
+    supplied_config_hash = snapshot.get("config_hash")
+    if supplied_config_hash is not None and _required_sha256(
+        supplied_config_hash, "config_hash"
+    ) != config_hash:
+        raise ValueError("config_hash mismatch")
+
+    readiness_status = _quality_required_text(
+        snapshot.get("readiness_status"), "readiness_status"
+    )
+    if readiness_status not in DECISION_QUALITY_READINESS_STATUSES:
+        raise ValueError("readiness_status is unsupported")
+
+    paired_gate = frozen_evaluation.get("paired_gate")
+    human_review_status = (
+        _quality_required_text(paired_gate.get("status"), "paired_gate.status")
+        if isinstance(paired_gate, Mapping)
+        else "not_evaluated"
+    )
+    if human_review_status not in DECISION_QUALITY_HUMAN_REVIEW_STATUSES:
+        raise ValueError("human_review_status is unsupported")
+    supplied_review_status = _quality_optional_text(
+        snapshot.get("human_review_status"), "human_review_status"
+    )
+    if (
+        supplied_review_status is not None
+        and supplied_review_status != human_review_status
+    ):
+        raise ValueError("human_review_status conflicts with evaluation payload")
+    if snapshot.get("store_authority") != "primary":
+        raise ValueError("evaluation snapshots require the primary evidence store")
+    if snapshot.get("audit_eligible") is not True:
+        raise ValueError("evaluation snapshots must be explicitly audit eligible")
+
+    normalized: dict[str, Any] = {
+        "schema_version": schema_version,
+        "evaluation_as_of": evaluation_as_of,
+        "evaluator_schema_version": evaluator_schema_version,
+        "evaluator_version": evaluator_version,
+        "status": status,
+        "evaluation_hash": evaluation_hash,
+        "input_manifest": frozen_manifest,
+        "input_manifest_hash": input_manifest_hash,
+        "config": frozen_config,
+        "config_hash": config_hash,
+        "readiness_status": readiness_status,
+        "human_review_status": human_review_status,
+        "automatic_promotion_allowed": False,
+        "store_authority": "primary",
+        "audit_eligible": True,
+        "evaluation": frozen_evaluation,
+    }
+    content_hash = canonical_hash(normalized)
+    supplied_content_hash = snapshot.get("content_hash")
+    if supplied_content_hash is not None and _required_sha256(
+        supplied_content_hash, "content_hash"
+    ) != content_hash:
+        raise ValueError("decision-quality evaluation snapshot content_hash mismatch")
+    snapshot_id = f"dqs_{content_hash}"
+    supplied_snapshot_id = _quality_optional_text(
+        snapshot.get("snapshot_id"), "snapshot_id"
+    )
+    if supplied_snapshot_id is not None and supplied_snapshot_id != snapshot_id:
+        raise ValueError("decision-quality evaluation snapshot_id mismatch")
+    normalized["snapshot_id"] = snapshot_id
+    normalized["content_hash"] = content_hash
+    return normalized
 
 
 def _insert_immutable(
@@ -465,6 +1183,53 @@ def decision_event_content_hash(event: Mapping[str, Any]) -> str:
     return canonical_hash(_record_material(normalized, omit={"payload_hash"}))
 
 
+def _supplied_decision_event_payload_hash_error(
+    event: Mapping[str, Any],
+) -> str | None:
+    supplied = event.get("payload_hash")
+    if not isinstance(supplied, str):
+        return "decision_event_payload_hash_missing_or_invalid"
+    digest = supplied.strip().lower()
+    if len(digest) != 64 or any(
+        character not in "0123456789abcdef" for character in digest
+    ):
+        return "decision_event_payload_hash_missing_or_invalid"
+    try:
+        expected = canonical_hash(
+            {key: value for key, value in event.items() if key != "payload_hash"}
+        )
+    except (TypeError, ValueError, OverflowError, RecursionError):
+        return "decision_event_payload_hash_uncomputable"
+    if digest != expected:
+        return "decision_event_payload_hash_mismatch"
+    return None
+
+
+def get_decision_quality_contract_rollout(
+    *,
+    connection: Any | None = None,
+) -> dict[str, str]:
+    """Read and verify the storage-owned D2 activation boundary."""
+
+    with _connection_scope(connection) as db:
+        row = _fetchone(
+            db,
+            "SELECT * FROM decision_quality_contract_rollouts "
+            "WHERE contract_name = ?",
+            (DECISION_QUALITY_ROLLOUT_CONTRACT_NAME,),
+        )
+        if row is None:
+            raise DecisionQualityIntegrityError(
+                "decision-quality rollout marker is missing"
+            )
+        try:
+            return normalize_decision_quality_rollout_marker(row)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise DecisionQualityIntegrityError(
+                "decision-quality rollout marker failed its immutable contract"
+            ) from exc
+
+
 def put_decision_event(
     *,
     user_id: int,
@@ -472,6 +1237,7 @@ def put_decision_event(
     connection: Any | None = None,
 ) -> dict[str, Any]:
     """Insert the final, guarded recommendation as immutable evidence."""
+    supplied_payload_hash_error = _supplied_decision_event_payload_hash_error(event)
     normalized = normalize_decision_event(event)
     event_id = str(normalized["event_id"])
     source_type = str(normalized["source_type"])
@@ -483,7 +1249,6 @@ def put_decision_event(
     is_backfilled = bool(normalized["is_backfilled"])
     metric_eligible = bool(normalized["metric_eligible"])
     content_hash = decision_event_content_hash(normalized)
-    created_at = _utc_now()
     fee_model = _optional_text(normalized.get("fee_model_index"))
     source_report_id = _optional_text(normalized.get("source_report_id"))
 
@@ -512,32 +1277,78 @@ def put_decision_event(
         "payload",
         "created_at",
     )
-    values = (
-        int(user_id),
-        event_id,
-        normalized["schema_version"],
-        event_type,
-        source_type,
-        source_report_id,
-        decision_at,
-        decision_date,
-        normalized.get("fund_code"),
-        normalized.get("fund_name"),
-        normalized.get("proposed_action"),
-        final_action,
-        action_category,
-        int(bool(normalized["eligible"])),
-        normalized.get("amount_yuan"),
-        normalized.get("portfolio_snapshot_id"),
-        normalized.get("benchmark_mapping_id"),
-        fee_model,
-        int(is_backfilled),
-        int(metric_eligible),
-        content_hash,
-        canonical_json(normalized),
-        created_at,
-    )
     with _connection_scope(connection) as db:
+        marker = get_decision_quality_contract_rollout(connection=db)
+        # On a fresh database the connection bootstrap creates the marker.  The
+        # storage receipt must therefore be sampled only after that boundary
+        # exists, otherwise the very first valid event can appear pre-rollout.
+        created_at = _utc_now()
+        existing = _fetchone(
+            db,
+            "SELECT content_hash FROM decision_events "
+            "WHERE userId = ? AND event_id = ?",
+            (int(user_id), event_id),
+        )
+        # Identical retries of a genuinely pre-v14 row remain idempotent. Any
+        # new row after activation must be a complete formal D2 event; it can no
+        # longer enter storage as an apparent legacy denominator gap.
+        if existing is None:
+            if supplied_payload_hash_error is not None:
+                raise DecisionQualityIntegrityError(
+                    "post-rollout decision event failed its supplied payload hash: "
+                    f"{supplied_payload_hash_error}"
+                )
+            receipt = datetime.fromisoformat(
+                _canonical_aware_timestamp(created_at, "created_at")
+            )
+            boundary = datetime.fromisoformat(marker["required_from"])
+            if receipt < boundary:
+                raise DecisionQualityIntegrityError(
+                    "decision event receipt predates the active rollout marker"
+                )
+            contract_error = post_rollout_decision_event_error(
+                normalized,
+                expected_store_authority=_decision_quality_store_authority(db),
+            )
+            if contract_error is not None:
+                raise DecisionQualityIntegrityError(
+                    "post-rollout decision event failed the formal replay contract: "
+                    f"{contract_error}"
+                )
+            recorded_at = datetime.fromisoformat(
+                _canonical_aware_timestamp(
+                    normalized.get("recorded_at"), "recorded_at"
+                )
+            )
+            if recorded_at > receipt:
+                raise DecisionQualityIntegrityError(
+                    "decision event replay receipt is after its storage receipt"
+                )
+        values = (
+            int(user_id),
+            event_id,
+            normalized["schema_version"],
+            event_type,
+            source_type,
+            source_report_id,
+            decision_at,
+            decision_date,
+            normalized.get("fund_code"),
+            normalized.get("fund_name"),
+            normalized.get("proposed_action"),
+            final_action,
+            action_category,
+            int(bool(normalized["eligible"])),
+            normalized.get("amount_yuan"),
+            normalized.get("portfolio_snapshot_id"),
+            normalized.get("benchmark_mapping_id"),
+            fee_model,
+            int(is_backfilled),
+            int(metric_eligible),
+            content_hash,
+            canonical_json(normalized),
+            created_at,
+        )
         result, _ = _insert_immutable(
             db,
             table="decision_events",
@@ -934,6 +1745,1205 @@ def list_outcome_observation_revisions(
         return [_decode_row(row) or row for row in rows]
 
 
+_DECISION_QUALITY_ARTIFACT_INDEX_FIELDS = (
+    "artifact_id",
+    "schema_version",
+    "artifact_type",
+    "artifact_schema_version",
+    "logical_key",
+    "source_type",
+    "source_report_id",
+    "decision_event_id",
+    "decision_at",
+    "available_at",
+    "recorded_at",
+    "store_authority",
+    "audit_eligible",
+    "content_hash",
+)
+_DECISION_QUALITY_SNAPSHOT_INDEX_FIELDS = (
+    "snapshot_id",
+    "schema_version",
+    "evaluation_as_of",
+    "evaluator_schema_version",
+    "evaluator_version",
+    "status",
+    "evaluation_hash",
+    "input_manifest_hash",
+    "config_hash",
+    "readiness_status",
+    "human_review_status",
+    "automatic_promotion_allowed",
+    "store_authority",
+    "audit_eligible",
+    "content_hash",
+)
+_DECISION_QUALITY_ARTIFACT_RECEIPT_INDEX_FIELDS = (
+    "receipt_id",
+    "schema_version",
+    "receipt_policy",
+    "artifact_id",
+    "artifact_type",
+    "artifact_content_hash",
+    "source_row_created_at",
+    "source_visible_at",
+    "store_authority",
+    "content_hash",
+)
+_DECISION_QUALITY_PROVIDER_RECEIPT_INDEX_FIELDS = (
+    "receipt_id",
+    "schema_version",
+    "provider",
+    "operation",
+    "capture_mode",
+    "request_hash",
+    "adapter_output_sha256",
+    "adapter_output_bytes",
+    "normalized_payload_hash",
+    "origin_fetched_at",
+    "completed_at",
+    "content_hash",
+)
+
+
+def _quality_index_value(row: Mapping[str, Any], field: str) -> Any:
+    value = row.get(field)
+    if field in {"audit_eligible", "automatic_promotion_allowed"}:
+        if type(value) not in {bool, int} or value not in {0, 1}:
+            raise DecisionQualityIntegrityError(
+                f"stored decision-quality {field} is not a database boolean"
+            )
+        return bool(value)
+    return value
+
+
+def _decode_quality_row(
+    row: Mapping[str, Any],
+    *,
+    normalizer: Any,
+    index_fields: Sequence[str],
+) -> dict[str, Any]:
+    result = dict(row)
+    raw_payload = result.get("payload")
+    if isinstance(raw_payload, Mapping):
+        payload = dict(raw_payload)
+    elif isinstance(raw_payload, str):
+        try:
+            payload = json.loads(raw_payload)
+        except json.JSONDecodeError as exc:
+            raise DecisionQualityIntegrityError(
+                "stored decision-quality payload is invalid JSON"
+            ) from exc
+    else:
+        raise DecisionQualityIntegrityError(
+            "stored decision-quality payload is neither JSON text nor an object"
+        )
+    if not isinstance(payload, Mapping):
+        raise DecisionQualityIntegrityError(
+            "stored decision-quality payload is not an object"
+        )
+    try:
+        normalized = normalizer(payload)
+    except (TypeError, ValueError, OverflowError, RecursionError) as exc:
+        raise DecisionQualityIntegrityError(
+            "stored decision-quality payload failed its immutable contract"
+        ) from exc
+    if canonical_json(payload) != canonical_json(normalized):
+        raise DecisionQualityIntegrityError(
+            "stored decision-quality payload is not canonically normalized"
+        )
+    for field in index_fields:
+        if _quality_index_value(result, field) != normalized.get(field):
+            raise DecisionQualityIntegrityError(
+                f"stored decision-quality index field conflicts with payload: {field}"
+            )
+    result["payload"] = normalized
+    for field in {"audit_eligible", "automatic_promotion_allowed"} & set(result):
+        result[field] = _quality_index_value(result, field)
+    return result
+
+
+def _require_quality_row_tenant(
+    row: Mapping[str, Any],
+    *,
+    expected_user_id: int,
+    record_name: str,
+) -> None:
+    try:
+        actual_user_id = _decision_quality_user_id(row.get("userId"))
+    except ValueError as exc:
+        raise DecisionQualityIntegrityError(
+            f"stored {record_name} tenant is invalid"
+        ) from exc
+    if actual_user_id != expected_user_id:
+        raise DecisionQualityIntegrityError(
+            f"stored {record_name} crossed its tenant boundary"
+        )
+
+
+def _decode_input_artifact_storage_row(
+    row: Mapping[str, Any],
+    *,
+    expected_user_id: int,
+) -> dict[str, Any]:
+    result = _decode_quality_row(
+        row,
+        normalizer=normalize_decision_quality_input_artifact,
+        index_fields=_DECISION_QUALITY_ARTIFACT_INDEX_FIELDS,
+    )
+    _require_quality_row_tenant(
+        result,
+        expected_user_id=expected_user_id,
+        record_name="decision-quality input artifact",
+    )
+    try:
+        created_at = _canonical_aware_timestamp(
+            result.get("created_at"), "created_at"
+        )
+    except ValueError as exc:
+        raise DecisionQualityIntegrityError(
+            "stored decision-quality input artifact created_at is invalid"
+        ) from exc
+    if datetime.fromisoformat(created_at) < datetime.fromisoformat(
+        result["payload"]["recorded_at"]
+    ):
+        raise DecisionQualityIntegrityError(
+            "stored decision-quality input artifact predates recorded_at"
+        )
+    result["created_at"] = created_at
+    return result
+
+
+def _decode_evaluation_snapshot_storage_row(
+    row: Mapping[str, Any],
+    *,
+    expected_user_id: int,
+) -> dict[str, Any]:
+    result = _decode_quality_row(
+        row,
+        normalizer=normalize_decision_quality_evaluation_snapshot,
+        index_fields=_DECISION_QUALITY_SNAPSHOT_INDEX_FIELDS,
+    )
+    _require_quality_row_tenant(
+        result,
+        expected_user_id=expected_user_id,
+        record_name="decision-quality evaluation snapshot",
+    )
+    try:
+        result["created_at"] = _canonical_aware_timestamp(
+            result.get("created_at"), "created_at"
+        )
+    except ValueError as exc:
+        raise DecisionQualityIntegrityError(
+            "stored decision-quality evaluation snapshot created_at is invalid"
+        ) from exc
+    return result
+
+
+def _fetch_decoded_quality_tenant_rows(
+    connection: Any,
+    *,
+    table: str,
+    identity_column: str,
+    user_id: int,
+    decoder: Callable[[Mapping[str, Any]], dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Losslessly verify one tenant ledger before semantic selection.
+
+    The content-addressed primary key is used only as a transport cursor.  No
+    duplicated business index, clock, semantic ordering, or caller limit is
+    trusted until every row in the tenant partition has passed normalization
+    and payload/index binding.
+    """
+
+    count_row = _fetchone(
+        connection,
+        f"SELECT COUNT(*) AS row_count FROM {table} WHERE userId = ?",
+        (user_id,),
+    )
+    try:
+        expected_count = int((count_row or {})["row_count"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise DecisionQualityIntegrityError(
+            f"could not establish a complete tenant scan for {table}"
+        ) from exc
+
+    result: list[dict[str, Any]] = []
+    seen_identities: set[str] = set()
+    last_identity: str | None = None
+    while True:
+        if last_identity is None:
+            where = "userId = ?"
+            params: tuple[Any, ...] = (user_id,)
+        else:
+            where = f"userId = ? AND {identity_column} > ?"
+            params = (user_id, last_identity)
+        page = _fetchall(
+            connection,
+            f"SELECT * FROM {table} WHERE {where} "
+            f"ORDER BY {identity_column} LIMIT "
+            f"{_DECISION_QUALITY_TENANT_SCAN_PAGE_SIZE}",
+            params,
+        )
+        if not page:
+            break
+        for row in page:
+            raw_identity = row.get(identity_column)
+            if not isinstance(raw_identity, str) or not raw_identity:
+                raise DecisionQualityIntegrityError(
+                    f"stored {table} identity is invalid"
+                )
+            if raw_identity in seen_identities:
+                raise DecisionQualityIntegrityError(
+                    f"tenant scan for {table} returned a duplicate identity"
+                )
+            decoded = decoder(row)
+            decoded_identity = decoded.get("payload", {}).get(identity_column)
+            if decoded_identity != raw_identity:
+                raise DecisionQualityIntegrityError(
+                    f"stored {table} identity conflicts with its payload"
+                )
+            seen_identities.add(raw_identity)
+            result.append(decoded)
+        next_identity = page[-1].get(identity_column)
+        if not isinstance(next_identity, str) or (
+            last_identity is not None and next_identity <= last_identity
+        ):
+            raise DecisionQualityIntegrityError(
+                f"tenant scan cursor did not advance for {table}"
+            )
+        last_identity = next_identity
+        if len(page) < _DECISION_QUALITY_TENANT_SCAN_PAGE_SIZE:
+            break
+
+    final_count_row = _fetchone(
+        connection,
+        f"SELECT COUNT(*) AS row_count FROM {table} WHERE userId = ?",
+        (user_id,),
+    )
+    try:
+        final_count = int((final_count_row or {})["row_count"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise DecisionQualityIntegrityError(
+            f"could not verify the completed tenant scan for {table}"
+        ) from exc
+    if expected_count != final_count or len(result) != expected_count:
+        raise DecisionQualityIntegrityError(
+            f"tenant ledger changed or was truncated while reading {table}"
+        )
+    return result
+
+
+def _decode_artifact_receipt_row(row: Mapping[str, Any]) -> dict[str, Any]:
+    result = _decode_quality_row(
+        row,
+        normalizer=normalize_decision_quality_artifact_receipt,
+        index_fields=_DECISION_QUALITY_ARTIFACT_RECEIPT_INDEX_FIELDS,
+    )
+    payload = result["payload"]
+    if int(result.get("userId") or 0) != int(payload["user_id"]):
+        raise DecisionQualityIntegrityError(
+            "stored artifact receipt tenant conflicts with payload"
+        )
+    try:
+        created_at = _canonical_aware_timestamp(
+            result.get("created_at"), "created_at"
+        )
+    except ValueError as exc:
+        raise DecisionQualityIntegrityError(
+            "stored artifact receipt created_at is invalid"
+        ) from exc
+    if created_at != payload["source_visible_at"]:
+        raise DecisionQualityIntegrityError(
+            "stored artifact receipt clock conflicts with payload"
+        )
+    result["created_at"] = created_at
+    return result
+
+
+def _decode_provider_receipt_row(row: Mapping[str, Any]) -> dict[str, Any]:
+    result = _decode_quality_row(
+        row,
+        normalizer=normalize_decision_quality_provider_receipt,
+        index_fields=_DECISION_QUALITY_PROVIDER_RECEIPT_INDEX_FIELDS,
+    )
+    try:
+        created_at = _canonical_aware_timestamp(
+            result.get("created_at"), "created_at"
+        )
+    except ValueError as exc:
+        raise DecisionQualityIntegrityError(
+            "stored provider receipt created_at is invalid"
+        ) from exc
+    if datetime.fromisoformat(created_at) < datetime.fromisoformat(
+        result["payload"]["completed_at"]
+    ):
+        raise DecisionQualityIntegrityError(
+            "stored provider receipt predates adapter completion"
+        )
+    result["created_at"] = created_at
+    return result
+
+
+def put_decision_quality_provider_receipt(
+    *,
+    receipt: Mapping[str, Any],
+    connection: Any | None = None,
+) -> dict[str, Any]:
+    """Append one bounded primary-store provider response receipt."""
+
+    normalized = normalize_decision_quality_provider_receipt(receipt)
+    receipt_id = str(normalized["receipt_id"])
+    content_hash = str(normalized["content_hash"])
+    created_at = _decision_quality_storage_receipt(str(normalized["completed_at"]))
+    columns = (
+        *_DECISION_QUALITY_PROVIDER_RECEIPT_INDEX_FIELDS,
+        "payload",
+        "created_at",
+    )
+    values = (
+        normalized["receipt_id"],
+        normalized["schema_version"],
+        normalized["provider"],
+        normalized["operation"],
+        normalized["capture_mode"],
+        normalized["request_hash"],
+        normalized["adapter_output_sha256"],
+        normalized["adapter_output_bytes"],
+        normalized["normalized_payload_hash"],
+        normalized["origin_fetched_at"],
+        normalized["completed_at"],
+        normalized["content_hash"],
+        canonical_json(normalized),
+        created_at,
+    )
+    with _connection_scope(connection) as db:
+        _require_primary_decision_quality_store(db)
+        row, _ = _insert_immutable(
+            db,
+            table="decision_quality_provider_receipts",
+            identity_where="receipt_id = ?",
+            identity_params=(receipt_id,),
+            columns=columns,
+            values=values,
+            content_hash=content_hash,
+        )
+        return _decode_provider_receipt_row(row)
+
+
+def get_decision_quality_provider_receipt(
+    *,
+    receipt_id: str,
+    connection: Any | None = None,
+) -> dict[str, Any] | None:
+    normalized_id = _decision_quality_content_id(
+        receipt_id,
+        name="receipt_id",
+        prefix="dqpr_",
+    )
+    with _connection_scope(connection) as db:
+        _require_primary_decision_quality_store(db)
+        row = _fetchone(
+            db,
+            "SELECT * FROM decision_quality_provider_receipts WHERE receipt_id = ?",
+            (normalized_id,),
+        )
+        return _decode_provider_receipt_row(row) if row is not None else None
+
+
+def list_decision_quality_provider_receipts(
+    *,
+    provider: str | None = None,
+    operation: str | None = None,
+    completed_at_lte: str | datetime | None = None,
+    limit: int = 500,
+    connection: Any | None = None,
+) -> list[dict[str, Any]]:
+    clauses = ["1 = 1"]
+    params: list[Any] = []
+    for column, value in (("provider", provider), ("operation", operation)):
+        if value is not None:
+            clauses.append(f"{column} = ?")
+            params.append(_quality_required_text(value, column))
+    if completed_at_lte is not None:
+        clauses.append("completed_at <= ?")
+        params.append(
+            _canonical_aware_timestamp(completed_at_lte, "completed_at_lte")
+        )
+    safe_limit = _decision_quality_limit(limit, maximum=10_000)
+    with _connection_scope(connection) as db:
+        _require_primary_decision_quality_store(db)
+        rows = _fetchall(
+            db,
+            "SELECT * FROM decision_quality_provider_receipts WHERE "
+            + " AND ".join(clauses)
+            + " ORDER BY completed_at DESC, receipt_id"
+            + f" LIMIT {safe_limit}",
+            params,
+        )
+        return [_decode_provider_receipt_row(row) for row in rows]
+
+
+def get_decision_quality_artifact_receipt(
+    *,
+    user_id: int,
+    artifact_id: str,
+    connection: Any | None = None,
+) -> dict[str, Any] | None:
+    normalized_user_id = _decision_quality_user_id(user_id)
+    normalized_artifact_id = _decision_quality_content_id(
+        artifact_id,
+        name="artifact_id",
+        prefix="dqa_",
+    )
+    with _connection_scope(connection) as db:
+        _require_primary_decision_quality_store(db)
+        row = _fetchone(
+            db,
+            "SELECT * FROM decision_quality_artifact_receipts "
+            "WHERE userId = ? AND artifact_id = ?",
+            (normalized_user_id, normalized_artifact_id),
+        )
+        return _decode_artifact_receipt_row(row) if row is not None else None
+
+
+def list_decision_quality_artifact_receipts(
+    *,
+    user_id: int,
+    artifact_type: str | None = None,
+    source_visible_at_lte: str | datetime | None = None,
+    limit: int = 500,
+    connection: Any | None = None,
+) -> list[dict[str, Any]]:
+    normalized_user_id = _decision_quality_user_id(user_id)
+    clauses = ["userId = ?"]
+    params: list[Any] = [normalized_user_id]
+    if artifact_type is not None:
+        clauses.append("artifact_type = ?")
+        params.append(_quality_required_text(artifact_type, "artifact_type"))
+    if source_visible_at_lte is not None:
+        clauses.append("source_visible_at <= ?")
+        params.append(
+            _canonical_aware_timestamp(
+                source_visible_at_lte,
+                "source_visible_at_lte",
+            )
+        )
+    safe_limit = _decision_quality_limit(limit, maximum=10_000)
+    with _connection_scope(connection) as db:
+        _require_primary_decision_quality_store(db)
+        rows = _fetchall(
+            db,
+            "SELECT * FROM decision_quality_artifact_receipts WHERE "
+            + " AND ".join(clauses)
+            + " ORDER BY source_visible_at DESC, artifact_id"
+            + f" LIMIT {safe_limit}",
+            params,
+        )
+        return [_decode_artifact_receipt_row(row) for row in rows]
+
+
+def _default_decision_quality_connection_factory() -> Any:
+    from app.config import get_settings
+
+    settings = get_settings()
+    if settings.uses_mysql:
+        import pymysql
+
+        from app.db_connect import DbConnection, _parse_mysql_url
+
+        assert settings.database_url
+        raw = pymysql.connect(
+            **(
+                _parse_mysql_url(settings.database_url)
+                | {
+                    "connect_timeout": 10,
+                    "read_timeout": 30,
+                    "write_timeout": 30,
+                    "autocommit": False,
+                }
+            )
+        )
+        return DbConnection(raw, "mysql")
+
+    from app.database import _connect
+
+    return _connect()
+
+
+@contextmanager
+def _fresh_decision_quality_connection(
+    factory: Callable[[], Any],
+) -> Iterator[Any]:
+    connection = factory()
+    try:
+        yield connection
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
+def _decision_quality_database_utc_now(connection: Any) -> datetime:
+    if _dialect(connection) == "mysql":
+        row = _fetchone(connection, "SELECT UTC_TIMESTAMP(6) AS utc_now")
+    else:
+        row = _fetchone(
+            connection,
+            "SELECT strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now') AS utc_now",
+        )
+    if row is None or row.get("utc_now") is None:
+        raise DecisionQualityIntegrityError(
+            "primary store did not return a receipt clock"
+        )
+    raw = row["utc_now"]
+    if isinstance(raw, datetime) and (raw.tzinfo is None or raw.utcoffset() is None):
+        parsed = raw.replace(tzinfo=timezone.utc)
+    else:
+        try:
+            parsed = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise DecisionQualityIntegrityError(
+                "primary store returned an invalid receipt clock"
+            ) from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise DecisionQualityIntegrityError(
+            "primary store receipt clock has no timezone"
+        )
+    return parsed.astimezone(timezone.utc)
+
+
+def _verify_artifact_receipt_binding(
+    receipt_row: Mapping[str, Any],
+    *,
+    source_row: Mapping[str, Any],
+    user_id: int,
+) -> dict[str, Any]:
+    receipt = _decode_artifact_receipt_row(receipt_row)
+    source = _decode_quality_row(
+        source_row,
+        normalizer=normalize_decision_quality_input_artifact,
+        index_fields=_DECISION_QUALITY_ARTIFACT_INDEX_FIELDS,
+    )
+    source_payload = source["payload"]
+    source_created_at = _canonical_aware_timestamp(
+        source.get("created_at"), "source.created_at"
+    )
+    expected = (
+        int(receipt.get("userId") or 0) == user_id
+        and receipt["payload"]["user_id"] == user_id
+        and receipt["payload"]["artifact_id"] == source_payload["artifact_id"]
+        and receipt["payload"]["artifact_type"] == source_payload["artifact_type"]
+        and receipt["payload"]["artifact_content_hash"]
+        == source_payload["content_hash"]
+        and receipt["payload"]["source_row_created_at"] == source_created_at
+        and source_payload["store_authority"] == "primary"
+    )
+    if not expected:
+        raise DecisionQualityIntegrityError(
+            "artifact receipt conflicts with its immutable source"
+        )
+    visibility_floor = max(
+        datetime.fromisoformat(source_created_at),
+        datetime.fromisoformat(str(source_payload["recorded_at"])),
+        datetime.fromisoformat(str(source_payload["available_at"])),
+    )
+    if datetime.fromisoformat(receipt["payload"]["source_visible_at"]) < visibility_floor:
+        raise DecisionQualityIntegrityError(
+            "artifact receipt visibility predates source evidence"
+        )
+    return receipt
+
+
+def _finalize_decision_quality_artifact_receipt_once(
+    *,
+    user_id: int,
+    artifact_id: str,
+    connection_factory: Callable[[], Any] | None = None,
+) -> dict[str, Any]:
+    """Append a receipt only after a fresh transaction can see the source row."""
+
+    normalized_user_id = _decision_quality_user_id(user_id)
+    normalized_artifact_id = _decision_quality_content_id(
+        artifact_id,
+        name="artifact_id",
+        prefix="dqa_",
+    )
+    factory = connection_factory or _default_decision_quality_connection_factory
+    saved: dict[str, Any]
+    with _fresh_decision_quality_connection(factory) as db:
+        _require_primary_decision_quality_store(db)
+        source = _fetchone(
+            db,
+            "SELECT * FROM decision_quality_input_artifacts "
+            "WHERE userId = ? AND artifact_id = ?",
+            (normalized_user_id, normalized_artifact_id),
+        )
+        if source is None:
+            raise DecisionQualityIntegrityError(
+                "source artifact is not committed or does not exist"
+            )
+        normalized_source = _decode_quality_row(
+            source,
+            normalizer=normalize_decision_quality_input_artifact,
+            index_fields=_DECISION_QUALITY_ARTIFACT_INDEX_FIELDS,
+        )
+        if normalized_source["payload"]["store_authority"] != "primary":
+            raise DecisionQualityPrimaryStoreUnavailable(
+                "artifact receipts require a primary-store source"
+            )
+        if _dialect(db) == "sqlite":
+            # The committed-source SELECT above does not open a Python sqlite3
+            # write transaction.  Reserve the single writer before checking the
+            # unique receipt identity so concurrent finalizers serialize.
+            _execute(db, "BEGIN IMMEDIATE")
+        existing = _fetchone(
+            db,
+            "SELECT * FROM decision_quality_artifact_receipts "
+            "WHERE userId = ? AND artifact_id = ?",
+            (normalized_user_id, normalized_artifact_id),
+        )
+        if existing is not None:
+            saved = _verify_artifact_receipt_binding(
+                existing,
+                source_row=normalized_source,
+                user_id=normalized_user_id,
+            )
+        else:
+            source_created_at = _canonical_aware_timestamp(
+                normalized_source.get("created_at"), "source.created_at"
+            )
+            source_payload = normalized_source["payload"]
+            source_visible_at = max(
+                _decision_quality_database_utc_now(db),
+                datetime.fromisoformat(source_created_at),
+                datetime.fromisoformat(str(source_payload["recorded_at"])),
+                datetime.fromisoformat(str(source_payload["available_at"])),
+            ).isoformat()
+            normalized_receipt = normalize_decision_quality_artifact_receipt(
+                {
+                    "user_id": normalized_user_id,
+                    "artifact_id": normalized_artifact_id,
+                    "artifact_type": source_payload["artifact_type"],
+                    "artifact_content_hash": source_payload["content_hash"],
+                    "source_row_created_at": source_created_at,
+                    "source_visible_at": source_visible_at,
+                    "store_authority": "primary",
+                }
+            )
+            columns = (
+                "userId",
+                *_DECISION_QUALITY_ARTIFACT_RECEIPT_INDEX_FIELDS,
+                "payload",
+                "created_at",
+            )
+            values = (
+                normalized_user_id,
+                normalized_receipt["receipt_id"],
+                normalized_receipt["schema_version"],
+                normalized_receipt["receipt_policy"],
+                normalized_receipt["artifact_id"],
+                normalized_receipt["artifact_type"],
+                normalized_receipt["artifact_content_hash"],
+                normalized_receipt["source_row_created_at"],
+                normalized_receipt["source_visible_at"],
+                normalized_receipt["store_authority"],
+                normalized_receipt["content_hash"],
+                canonical_json(normalized_receipt),
+                source_visible_at,
+            )
+            try:
+                _execute(
+                    db,
+                    "INSERT INTO decision_quality_artifact_receipts "
+                    f"({', '.join(columns)}) VALUES "
+                    f"({', '.join('?' for _ in columns)})",
+                    values,
+                )
+                row = _fetchone(
+                    db,
+                    "SELECT * FROM decision_quality_artifact_receipts "
+                    "WHERE userId = ? AND artifact_id = ?",
+                    (normalized_user_id, normalized_artifact_id),
+                )
+            except Exception:
+                lock_suffix = " FOR UPDATE" if _dialect(db) == "mysql" else ""
+                row = _fetchone(
+                    db,
+                    "SELECT * FROM decision_quality_artifact_receipts "
+                    "WHERE userId = ? AND artifact_id = ?" + lock_suffix,
+                    (normalized_user_id, normalized_artifact_id),
+                )
+                if row is None:
+                    raise
+            assert row is not None
+            saved = _verify_artifact_receipt_binding(
+                row,
+                source_row=normalized_source,
+                user_id=normalized_user_id,
+            )
+    return saved
+
+
+def finalize_decision_quality_artifact_receipt(
+    *,
+    user_id: int,
+    artifact_id: str,
+    connection_factory: Callable[[], Any] | None = None,
+) -> dict[str, Any]:
+    """Finalize once, then resolve a rolled-back unique/lock race afresh."""
+
+    factory = connection_factory or _default_decision_quality_connection_factory
+    try:
+        return _finalize_decision_quality_artifact_receipt_once(
+            user_id=user_id,
+            artifact_id=artifact_id,
+            connection_factory=factory,
+        )
+    except Exception as original:
+        normalized_user_id = _decision_quality_user_id(user_id)
+        normalized_artifact_id = _decision_quality_content_id(
+            artifact_id,
+            name="artifact_id",
+            prefix="dqa_",
+        )
+        # SQLite read snapshots cannot necessarily observe the concurrent winner
+        # after an INSERT lock/unique error.  Re-open after rollback; MySQL also
+        # benefits from resolving a lost response on a clean transaction.
+        with _fresh_decision_quality_connection(factory) as db:
+            _require_primary_decision_quality_store(db)
+            source = _fetchone(
+                db,
+                "SELECT * FROM decision_quality_input_artifacts "
+                "WHERE userId = ? AND artifact_id = ?",
+                (normalized_user_id, normalized_artifact_id),
+            )
+            receipt = _fetchone(
+                db,
+                "SELECT * FROM decision_quality_artifact_receipts "
+                "WHERE userId = ? AND artifact_id = ?",
+                (normalized_user_id, normalized_artifact_id),
+            )
+            if source is None or receipt is None:
+                raise original
+            return _verify_artifact_receipt_binding(
+                receipt,
+                source_row=source,
+                user_id=normalized_user_id,
+            )
+
+
+def reconcile_decision_quality_artifact_receipts(
+    *,
+    user_id: int | None = None,
+    limit: int = 500,
+    connection_factory: Callable[[], Any] | None = None,
+) -> dict[str, Any]:
+    """Finalize primary artifacts missing receipts, isolating per-row failures."""
+
+    normalized_user_id = (
+        _decision_quality_user_id(user_id) if user_id is not None else None
+    )
+    safe_limit = _decision_quality_limit(limit, maximum=10_000)
+    factory = connection_factory or _default_decision_quality_connection_factory
+    clauses = ["a.store_authority = 'primary'", "r.artifact_id IS NULL"]
+    params: list[Any] = []
+    if normalized_user_id is not None:
+        clauses.append("a.userId = ?")
+        params.append(normalized_user_id)
+    with _fresh_decision_quality_connection(factory) as db:
+        _require_primary_decision_quality_store(db)
+        targets = _fetchall(
+            db,
+            "SELECT a.userId, a.artifact_id "
+            "FROM decision_quality_input_artifacts a "
+            "LEFT JOIN decision_quality_artifact_receipts r "
+            "ON r.userId = a.userId AND r.artifact_id = a.artifact_id "
+            "WHERE "
+            + " AND ".join(clauses)
+            + " ORDER BY a.recorded_at, a.userId, a.artifact_id"
+            + f" LIMIT {safe_limit}",
+            params,
+        )
+    finalized: list[str] = []
+    failed: list[dict[str, Any]] = []
+    for target in targets:
+        target_user_id = int(target["userId"])
+        target_artifact_id = str(target["artifact_id"])
+        try:
+            finalize_decision_quality_artifact_receipt(
+                user_id=target_user_id,
+                artifact_id=target_artifact_id,
+                connection_factory=factory,
+            )
+            finalized.append(target_artifact_id)
+        except Exception as exc:  # noqa: BLE001 - isolate corrupt tenants/rows
+            failed.append(
+                {
+                    "user_id": target_user_id,
+                    "artifact_id": target_artifact_id,
+                    "error_type": type(exc).__name__,
+                }
+            )
+    return {
+        "status": "completed" if not failed else "completed_with_failures",
+        "scanned_count": len(targets),
+        "finalized_count": len(finalized),
+        "failed_count": len(failed),
+        "finalized_artifact_ids": finalized,
+        "failures": failed,
+    }
+
+
+def put_decision_quality_input_artifact(
+    *,
+    user_id: int,
+    artifact: Mapping[str, Any],
+    connection: Any | None = None,
+) -> dict[str, Any]:
+    """Append one exact evaluation input, or return its content-identical twin."""
+
+    normalized_user_id = _decision_quality_user_id(user_id)
+    normalized = normalize_decision_quality_input_artifact(artifact)
+    artifact_id = str(normalized["artifact_id"])
+    content_hash = str(normalized["content_hash"])
+    created_at = _decision_quality_storage_receipt(str(normalized["recorded_at"]))
+    columns = (
+        "userId",
+        *_DECISION_QUALITY_ARTIFACT_INDEX_FIELDS,
+        "payload",
+        "created_at",
+    )
+    values = (
+        normalized_user_id,
+        normalized["artifact_id"],
+        normalized["schema_version"],
+        normalized["artifact_type"],
+        normalized["artifact_schema_version"],
+        normalized.get("logical_key"),
+        normalized["source_type"],
+        normalized["source_report_id"],
+        normalized["decision_event_id"],
+        normalized["decision_at"],
+        normalized["available_at"],
+        normalized["recorded_at"],
+        normalized["store_authority"],
+        int(bool(normalized["audit_eligible"])),
+        content_hash,
+        canonical_json(normalized),
+        created_at,
+    )
+    with _connection_scope(connection) as db:
+        actual_authority = _decision_quality_store_authority(db)
+        if normalized["store_authority"] != actual_authority:
+            raise ValueError(
+                "artifact store_authority conflicts with the active evidence store"
+            )
+        logical_key = normalized.get("logical_key")
+        identity_where = "userId = ? AND artifact_id = ?"
+        identity_params: tuple[object, ...] = (normalized_user_id, artifact_id)
+        if logical_key is not None:
+            identity_where = (
+                "userId = ? AND artifact_type = ? AND logical_key = ?"
+            )
+            identity_params = (
+                normalized_user_id,
+                normalized["artifact_type"],
+                logical_key,
+            )
+        row, _ = _insert_immutable(
+            db,
+            table="decision_quality_input_artifacts",
+            identity_where=identity_where,
+            identity_params=identity_params,
+            columns=columns,
+            values=values,
+            content_hash=content_hash,
+        )
+        return _decode_input_artifact_storage_row(
+            row,
+            expected_user_id=normalized_user_id,
+        )
+
+
+def get_decision_quality_input_artifact(
+    *, user_id: int, artifact_id: str, connection: Any | None = None
+) -> dict[str, Any] | None:
+    normalized_user_id = _decision_quality_user_id(user_id)
+    normalized_artifact_id = _decision_quality_content_id(
+        artifact_id,
+        name="artifact_id",
+        prefix="dqa_",
+    )
+    with _connection_scope(connection) as db:
+        row = _fetchone(
+            db,
+            "SELECT * FROM decision_quality_input_artifacts "
+            "WHERE userId = ? AND artifact_id = ?",
+            (normalized_user_id, normalized_artifact_id),
+        )
+        return (
+            _decode_input_artifact_storage_row(
+                row,
+                expected_user_id=normalized_user_id,
+            )
+            if row is not None
+            else None
+        )
+
+
+def list_decision_quality_input_artifacts(
+    *,
+    user_id: int,
+    artifact_type: str | None = None,
+    source_type: str | None = None,
+    source_report_id: str | None = None,
+    decision_event_id: str | None = None,
+    audit_eligible_only: bool = False,
+    recorded_at_lte: str | datetime | None = None,
+    limit: int | None = 500,
+    connection: Any | None = None,
+) -> list[dict[str, Any]]:
+    normalized_user_id = _decision_quality_user_id(user_id)
+    normalized_eligible_only = _required_boolean(
+        audit_eligible_only, "audit_eligible_only"
+    )
+    normalized_filters: dict[str, str] = {}
+    for column, value in (
+        ("artifact_type", artifact_type),
+        ("source_type", source_type),
+        ("source_report_id", source_report_id),
+        ("decision_event_id", decision_event_id),
+    ):
+        if value is not None:
+            normalized_filters[column] = _quality_required_text(value, column)
+    normalized_cutoff = (
+        _canonical_aware_timestamp(recorded_at_lte, "recorded_at_lte")
+        if recorded_at_lte is not None
+        else None
+    )
+    safe_limit = (
+        None
+        if limit is None
+        else _decision_quality_limit(limit, maximum=10_000)
+    )
+    with _connection_scope(connection) as db:
+        if normalized_eligible_only:
+            _require_primary_decision_quality_store(db)
+        rows = _fetch_decoded_quality_tenant_rows(
+            db,
+            table="decision_quality_input_artifacts",
+            identity_column="artifact_id",
+            user_id=normalized_user_id,
+            decoder=lambda row: _decode_input_artifact_storage_row(
+                row,
+                expected_user_id=normalized_user_id,
+            ),
+        )
+        selected = [
+            row
+            for row in rows
+            if all(
+                row["payload"].get(column) == value
+                for column, value in normalized_filters.items()
+            )
+            and (
+                not normalized_eligible_only
+                or row["payload"].get("audit_eligible") is True
+            )
+            and (
+                normalized_cutoff is None
+                or datetime.fromisoformat(row["payload"]["recorded_at"])
+                <= datetime.fromisoformat(normalized_cutoff)
+            )
+        ]
+        selected.sort(key=lambda row: str(row["payload"]["artifact_id"]))
+        selected.sort(
+            key=lambda row: datetime.fromisoformat(
+                row["payload"]["recorded_at"]
+            ),
+            reverse=True,
+        )
+        return selected if safe_limit is None else selected[:safe_limit]
+
+
+def put_decision_quality_evaluation_snapshot(
+    *,
+    user_id: int,
+    snapshot: Mapping[str, Any],
+    connection: Any | None = None,
+) -> dict[str, Any]:
+    """Append a hash-complete D1 result; automatic promotion is never accepted."""
+
+    normalized_user_id = _decision_quality_user_id(user_id)
+    normalized = normalize_decision_quality_evaluation_snapshot(snapshot)
+    snapshot_id = str(normalized["snapshot_id"])
+    content_hash = str(normalized["content_hash"])
+    created_at = _utc_now()
+    columns = (
+        "userId",
+        *_DECISION_QUALITY_SNAPSHOT_INDEX_FIELDS,
+        "payload",
+        "created_at",
+    )
+    values = (
+        normalized_user_id,
+        normalized["snapshot_id"],
+        normalized["schema_version"],
+        normalized["evaluation_as_of"],
+        normalized["evaluator_schema_version"],
+        normalized["evaluator_version"],
+        normalized["status"],
+        normalized["evaluation_hash"],
+        normalized["input_manifest_hash"],
+        normalized["config_hash"],
+        normalized["readiness_status"],
+        normalized["human_review_status"],
+        0,
+        normalized["store_authority"],
+        1,
+        content_hash,
+        canonical_json(normalized),
+        created_at,
+    )
+    with _connection_scope(connection) as db:
+        _require_primary_decision_quality_store(db)
+        current_rollout_marker = get_decision_quality_contract_rollout(
+            connection=db
+        )
+        snapshot_rollout_marker = normalized["input_manifest"].get(
+            "contract_rollout_marker"
+        )
+        if snapshot_rollout_marker != current_rollout_marker:
+            raise DecisionQualityIntegrityError(
+                "evaluation snapshot rollout marker does not match the primary store"
+            )
+        row, _ = _insert_immutable(
+            db,
+            table="decision_quality_evaluation_snapshots",
+            identity_where="userId = ? AND snapshot_id = ?",
+            identity_params=(normalized_user_id, snapshot_id),
+            columns=columns,
+            values=values,
+            content_hash=content_hash,
+        )
+        return _decode_evaluation_snapshot_storage_row(
+            row,
+            expected_user_id=normalized_user_id,
+        )
+
+
+def get_decision_quality_evaluation_snapshot(
+    *, user_id: int, snapshot_id: str, connection: Any | None = None
+) -> dict[str, Any] | None:
+    normalized_user_id = _decision_quality_user_id(user_id)
+    normalized_snapshot_id = _decision_quality_content_id(
+        snapshot_id,
+        name="snapshot_id",
+        prefix="dqs_",
+    )
+    with _connection_scope(connection) as db:
+        _require_primary_decision_quality_store(db)
+        row = _fetchone(
+            db,
+            "SELECT * FROM decision_quality_evaluation_snapshots "
+            "WHERE userId = ? AND snapshot_id = ?",
+            (normalized_user_id, normalized_snapshot_id),
+        )
+        return (
+            _decode_evaluation_snapshot_storage_row(
+                row,
+                expected_user_id=normalized_user_id,
+            )
+            if row is not None
+            else None
+        )
+
+
+def list_decision_quality_evaluation_snapshots(
+    *,
+    user_id: int,
+    status: str | None = None,
+    readiness_status: str | None = None,
+    human_review_status: str | None = None,
+    evaluation_as_of_lte: str | datetime | None = None,
+    limit: int = 100,
+    connection: Any | None = None,
+) -> list[dict[str, Any]]:
+    normalized_user_id = _decision_quality_user_id(user_id)
+    normalized_status: str | None = None
+    normalized_review: str | None = None
+    normalized_readiness: str | None = None
+    if status is not None:
+        normalized_status = _quality_required_text(status, "status")
+        if normalized_status not in DECISION_QUALITY_EVALUATION_STATUSES:
+            raise ValueError("status is unsupported")
+    if human_review_status is not None:
+        normalized_review = _quality_required_text(
+            human_review_status, "human_review_status"
+        )
+        if normalized_review not in DECISION_QUALITY_HUMAN_REVIEW_STATUSES:
+            raise ValueError("human_review_status is unsupported")
+    if readiness_status is not None:
+        normalized_readiness = _quality_required_text(
+            readiness_status, "readiness_status"
+        )
+        if normalized_readiness not in DECISION_QUALITY_READINESS_STATUSES:
+            raise ValueError("readiness_status is unsupported")
+    normalized_cutoff = (
+        _canonical_aware_timestamp(
+            evaluation_as_of_lte, "evaluation_as_of_lte"
+        )
+        if evaluation_as_of_lte is not None
+        else None
+    )
+    safe_limit = _decision_quality_limit(limit, maximum=10_000)
+    with _connection_scope(connection) as db:
+        _require_primary_decision_quality_store(db)
+        rows = _fetch_decoded_quality_tenant_rows(
+            db,
+            table="decision_quality_evaluation_snapshots",
+            identity_column="snapshot_id",
+            user_id=normalized_user_id,
+            decoder=lambda row: _decode_evaluation_snapshot_storage_row(
+                row,
+                expected_user_id=normalized_user_id,
+            ),
+        )
+        selected = [
+            row
+            for row in rows
+            if (normalized_status is None or row["payload"]["status"] == normalized_status)
+            and (
+                normalized_review is None
+                or row["payload"]["human_review_status"] == normalized_review
+            )
+            and (
+                normalized_readiness is None
+                or row["payload"]["readiness_status"] == normalized_readiness
+            )
+            and (
+                normalized_cutoff is None
+                or datetime.fromisoformat(row["payload"]["evaluation_as_of"])
+                <= datetime.fromisoformat(normalized_cutoff)
+            )
+        ]
+        selected.sort(key=lambda row: str(row["payload"]["snapshot_id"]))
+        selected.sort(
+            key=lambda row: datetime.fromisoformat(row["created_at"]),
+            reverse=True,
+        )
+        selected.sort(
+            key=lambda row: datetime.fromisoformat(
+                row["payload"]["evaluation_as_of"]
+            ),
+            reverse=True,
+        )
+        return selected[:safe_limit]
+
+
 def get_portfolio_ledger_head(
     *, user_id: int, account_id: str = "default", connection: Any | None = None
 ) -> dict[str, Any]:
@@ -1251,6 +3261,18 @@ def list_portfolio_ledger_events(
 
 
 __all__ = [
+    "DECISION_QUALITY_ARTIFACT_RECEIPT_POLICY",
+    "DECISION_QUALITY_ARTIFACT_RECEIPT_SCHEMA_VERSION",
+    "DECISION_QUALITY_EVALUATION_SCHEMA_VERSION",
+    "DECISION_QUALITY_EVALUATION_SNAPSHOT_SCHEMA_VERSION",
+    "DECISION_QUALITY_EVALUATION_STATUSES",
+    "DECISION_QUALITY_HUMAN_REVIEW_STATUSES",
+    "DECISION_QUALITY_INPUT_ARTIFACT_SCHEMA_VERSION",
+    "DECISION_QUALITY_PROVIDER_ADAPTER_OUTPUT_MAX_BYTES",
+    "DECISION_QUALITY_PROVIDER_RECEIPT_SCHEMA_VERSION",
+    "DECISION_QUALITY_READINESS_STATUSES",
+    "DecisionQualityIntegrityError",
+    "DecisionQualityPrimaryStoreUnavailable",
     "DecisionRepositoryError",
     "ImmutableRecordConflict",
     "LedgerHeadConflict",
@@ -1263,22 +3285,40 @@ __all__ = [
     "decision_portfolio_snapshot_content_hash",
     "get_decision_event",
     "get_decision_portfolio_snapshot",
+    "get_decision_quality_contract_rollout",
+    "get_decision_quality_artifact_receipt",
+    "get_decision_quality_evaluation_snapshot",
+    "get_decision_quality_input_artifact",
+    "get_decision_quality_provider_receipt",
     "get_effective_fund_benchmark_mapping",
     "get_outcome_observation",
     "get_portfolio_ledger_head",
     "list_decision_events",
+    "list_decision_quality_evaluation_snapshots",
+    "list_decision_quality_artifact_receipts",
+    "list_decision_quality_input_artifacts",
+    "list_decision_quality_provider_receipts",
     "list_effective_fund_benchmark_mappings",
     "list_outcome_observation_revisions",
     "list_outcome_observations",
     "list_portfolio_ledger_events",
     "normalize_decision_event",
     "normalize_decision_portfolio_snapshot",
+    "normalize_decision_quality_evaluation_snapshot",
+    "normalize_decision_quality_artifact_receipt",
+    "normalize_decision_quality_input_artifact",
+    "normalize_decision_quality_provider_receipt",
     "put_decision_event",
     "put_decision_portfolio_snapshot",
+    "put_decision_quality_evaluation_snapshot",
+    "put_decision_quality_input_artifact",
+    "put_decision_quality_provider_receipt",
     "put_fund_benchmark_mapping",
     "save_decision_event",
     "save_decision_portfolio_snapshot",
     "save_fund_benchmark_mapping",
     "save_outcome_observation",
+    "finalize_decision_quality_artifact_receipt",
+    "reconcile_decision_quality_artifact_receipts",
     "upsert_outcome_observation",
 ]

@@ -18,15 +18,24 @@ from app.services.deepseek_client import (
     JOB_STAGES,
     DeepSeekClient,
     _build_final_report,
+    _daily_provider_response_incomplete,
+    _is_usable_interrupted_response,
+    _is_valid_daily_report_payload,
     _offline_report,
     _parse_model_json,
+    build_analysis_prompt_provenance,
     build_analysis_chat_messages,
 )
 from app.services.deepseek_streaming import stream_chat_completion
+from app.services.deepseek_http import ProviderOutputError, classify_deepseek_failure
 from app.services.fund_data import FundDataService
 from app.services.fund_profile import FundProfileService
 from app.services.analysis_payload import prepare_analysis_bundle
-from app.services.news_service import NewsService
+from app.services.news_service import (
+    NewsService,
+    announcement_fetch_facts,
+    merge_market_news_with_announcements,
+)
 from app.services.news_summarizer import (
     build_topic_briefs_offline,
     group_news_by_topic,
@@ -35,13 +44,17 @@ from app.services.news_summarizer import (
 from app.services.pipeline_concurrency import run_with_request_user
 from app.services.risk import evaluate_portfolio_risk
 from app.services.streaming_heartbeat import Heartbeat, iter_with_heartbeat
-from app.services.streaming_json_parser import StreamingReportParser
 from app.services.report_judge import judge_parsed_report
 from app.services.decision_data_evidence import resolve_portfolio_preflight
 from app.services.stream_session_store import (
     create_stream_session,
     delete_stream_session,
     set_stream_session_stage,
+)
+from app.services.decision_clock import capture_decision_clock
+from app.services.decision_time_call import (
+    call_with_optional_time,
+    prefetch_fund_announcements_compat,
 )
 
 NEWS_SUMMARY_TIMEOUT_SECONDS = 8.0
@@ -56,12 +69,15 @@ def stream_analysis(request: AnalysisRequest, *, user_id: int) -> Iterator[dict[
     """把 run_analysis 拆成可流式产出 SSE 事件的版本（fast / deep）。"""
     ctx_token = set_request_user_id(user_id)
     settings = get_settings()
+    decision_clock = capture_decision_clock()
+    decision_at = decision_clock.decision_at
     session = create_stream_session()
     started_at = time.monotonic()
     try:
         preflight = resolve_portfolio_preflight(
             request.holdings,
             allow_stale=request.allow_stale_portfolio_snapshot,
+            now=decision_at,
         )
         request = request.model_copy(
             update={
@@ -79,7 +95,7 @@ def stream_analysis(request: AnalysisRequest, *, user_id: int) -> Iterator[dict[
         runtime = resolve_analysis_runtime(settings, enriched.analysis_mode)
 
         yield _emit_stage(session.session_id, "fund_data", started_at=started_at)
-        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="analysis-prep") as executor:
+        with ThreadPoolExecutor(max_workers=3, thread_name_prefix="analysis-prep") as executor:
             fund_data_future = executor.submit(
                 run_with_request_user,
                 user_id,
@@ -89,13 +105,34 @@ def stream_analysis(request: AnalysisRequest, *, user_id: int) -> Iterator[dict[
             news_future = executor.submit(
                 run_with_request_user,
                 user_id,
-                lambda: NewsService().prefetch_for_holdings(
+                lambda: call_with_optional_time(
+                    NewsService().prefetch_for_holdings,
                     enriched.holdings,
+                    keyword="now",
+                    decision_at=decision_at,
                     max_topics=runtime.news_max_topics,
+                ),
+            )
+            announcement_future = executor.submit(
+                run_with_request_user,
+                user_id,
+                lambda: prefetch_fund_announcements_compat(
+                    NewsService(),
+                    [holding.fund_code for holding in enriched.holdings],
+                    decision_at=decision_at,
                 ),
             )
             snapshots, nav_trends = fund_data_future.result()
             market_news = news_future.result()
+            announcement_result = announcement_future.result()
+            market_news = merge_market_news_with_announcements(
+                market_news,
+                list(announcement_result.get("items") or []),
+                now=decision_at,
+            )
+            announcement_meta = announcement_fetch_facts(
+                announcement_result
+            )
 
         yield _emit_stage(session.session_id, "news_summarize", started_at=started_at)
         topic_briefs, summary_timed_out = yield from _build_topic_briefs_with_progress(
@@ -103,6 +140,7 @@ def stream_analysis(request: AnalysisRequest, *, user_id: int) -> Iterator[dict[
             market_news,
             settings,
             started_at=started_at,
+            decision_at=decision_at,
         )
         if summary_timed_out:
             yield _emit_stage(
@@ -134,7 +172,9 @@ def stream_analysis(request: AnalysisRequest, *, user_id: int) -> Iterator[dict[
             nav_trends,
             runtime,
             started_at=started_at,
+            decision_at=decision_at,
         )
+        bundle.facts["fund_announcements"] = dict(announcement_meta)
 
         if not settings.deepseek_configured:
             report = _offline_report(
@@ -145,6 +185,8 @@ def stream_analysis(request: AnalysisRequest, *, user_id: int) -> Iterator[dict[
                 topic_briefs=topic_briefs,
                 nav_trends_by_code=nav_trends,
                 analysis_bundle=bundle,
+                decision_at=decision_at,
+                announcement_meta=announcement_meta,
             )
             yield _emit_stage(session.session_id, "saving", started_at=started_at)
             report = save_report(report)
@@ -163,11 +205,18 @@ def stream_analysis(request: AnalysisRequest, *, user_id: int) -> Iterator[dict[
             runtime,
             bundle,
             operator_notes=operator_notes or None,
+            decision_at=decision_at,
+        )
+        attempted_prompt_contract = build_analysis_prompt_provenance(
+            request=enriched,
+            messages=messages,
+            runtime=runtime,
+            judge_meta={},
         )
 
-        parser = StreamingReportParser()
         all_chunks: list[str] = []
         parsed: dict | None = None
+        stream_interrupted = False
 
         try:
             for entry in iter_with_heartbeat(
@@ -187,27 +236,102 @@ def stream_analysis(request: AnalysisRequest, *, user_id: int) -> Iterator[dict[
                     continue
                 chunk = entry
                 all_chunks.append(chunk)
-                for partial in parser.feed(chunk):
-                    yield partial
+                # Do not emit raw model partials.  Title, summary, caveats, and
+                # recommendation items can all carry unguarded trade advice;
+                # the complete report is emitted only after judge + guards.
             parsed = _parse_model_json("".join(all_chunks))
         except (httpx.StreamError, httpx.ReadTimeout, httpx.HTTPError) as exc:
             if all_chunks:
-                yield _emit_stage(
-                    session.session_id,
-                    "salvage",
-                    "流式中断，已收集部分内容…",
-                    started_at=started_at,
-                )
-                parsed = _parse_model_json("".join(all_chunks))
-                parsed.setdefault("caveats", [])
-                if isinstance(parsed["caveats"], list):
-                    parsed["caveats"] = list(parsed["caveats"])
-                    parsed["caveats"].append(
-                        f"流式传输中断（{type(exc).__name__}），部分字段可能不完整。"
+                interrupted_content = "".join(all_chunks)
+                candidate = _parse_model_json(interrupted_content)
+                if _is_usable_interrupted_response(
+                    interrupted_content,
+                    candidate,
+                    report_kind="daily",
+                ):
+                    stream_interrupted = True
+                    yield _emit_stage(
+                        session.session_id,
+                        "salvage",
+                        "流式中断，已收集部分内容…",
+                        started_at=started_at,
                     )
+                    parsed = candidate
+                    parsed.setdefault("caveats", [])
+                    if isinstance(parsed["caveats"], list):
+                        parsed["caveats"] = list(parsed["caveats"])
+                        parsed["caveats"].append(
+                            f"流式传输中断（{type(exc).__name__}），部分字段可能不完整。"
+                        )
+                else:
+                    failure = classify_deepseek_failure(exc)
+                    report = _offline_report(
+                        enriched,
+                        risk,
+                        snapshots,
+                        market_news=market_news,
+                        topic_briefs=topic_briefs,
+                        nav_trends_by_code=nav_trends,
+                        analysis_bundle=bundle,
+                        provider_failure=failure,
+                        attempted_model=runtime.model,
+                        prompt_contract=attempted_prompt_contract,
+                        decision_at=decision_at,
+                        announcement_meta=announcement_meta,
+                    )
+                    yield _emit_stage(session.session_id, "saving", started_at=started_at)
+                    report = save_report(report)
+                    yield _done(report)
+                    return
             else:
-                yield {"type": "error", "message": f"{type(exc).__name__}: {exc}"}
+                failure = classify_deepseek_failure(exc)
+                report = _offline_report(
+                    enriched,
+                    risk,
+                    snapshots,
+                    market_news=market_news,
+                    topic_briefs=topic_briefs,
+                    nav_trends_by_code=nav_trends,
+                    analysis_bundle=bundle,
+                    provider_failure=failure,
+                    attempted_model=runtime.model,
+                    prompt_contract=attempted_prompt_contract,
+                    decision_at=decision_at,
+                    announcement_meta=announcement_meta,
+                )
+                yield _emit_stage(session.session_id, "saving", started_at=started_at)
+                report = save_report(report)
+                yield _done(report)
                 return
+
+        if parsed is None or not all_chunks or (
+            not stream_interrupted
+            and (
+                parsed.get("_truncated")
+                or not _is_valid_daily_report_payload(parsed)
+                or _daily_provider_response_incomplete(parsed)
+            )
+        ):
+            category = "empty_content" if not all_chunks else "invalid_json"
+            failure = classify_deepseek_failure(ProviderOutputError(category))
+            report = _offline_report(
+                enriched,
+                risk,
+                snapshots,
+                market_news=market_news,
+                topic_briefs=topic_briefs,
+                nav_trends_by_code=nav_trends,
+                analysis_bundle=bundle,
+                provider_failure=failure,
+                attempted_model=runtime.model,
+                prompt_contract=attempted_prompt_contract,
+                decision_at=decision_at,
+                announcement_meta=announcement_meta,
+            )
+            yield _emit_stage(session.session_id, "saving", started_at=started_at)
+            report = save_report(report)
+            yield _done(report)
+            return
 
         if parsed is None:
             yield {"type": "error", "message": "未收到 LLM 输出"}
@@ -222,6 +346,12 @@ def stream_analysis(request: AnalysisRequest, *, user_id: int) -> Iterator[dict[
             runtime,
             facts=bundle.facts,
         )
+        prompt_contract = build_analysis_prompt_provenance(
+            request=enriched,
+            messages=messages,
+            runtime=runtime,
+            judge_meta=judge_meta,
+        )
         report = _build_final_report(
             parsed,
             request=enriched,
@@ -233,6 +363,9 @@ def stream_analysis(request: AnalysisRequest, *, user_id: int) -> Iterator[dict[
             analysis_bundle=bundle,
             judge_meta=judge_meta,
             runtime=runtime,
+            prompt_contract=prompt_contract,
+            decision_at=decision_at,
+            announcement_meta=announcement_meta,
         )
         yield _emit_stage(session.session_id, "saving", started_at=started_at)
         report = save_report(report)
@@ -255,14 +388,26 @@ def _emit_stage(
     return _stage(stage, label, started_at=started_at)
 
 
-def _build_topic_briefs(market_news: list[Any], settings: Any) -> list[Any]:
-    return summarize_all_topics(market_news, settings, offline_only=True)
+def _build_topic_briefs(
+    market_news: list[Any],
+    settings: Any,
+    decision_at: Any = None,
+) -> list[Any]:
+    return summarize_all_topics(
+        market_news,
+        settings,
+        offline_only=True,
+        now=decision_at,
+    )
 
 
-def _build_topic_briefs_offline(market_news: list[Any]) -> list[Any]:
+def _build_topic_briefs_offline(
+    market_news: list[Any],
+    decision_at: Any = None,
+) -> list[Any]:
     grouped = group_news_by_topic(market_news)
     return [
-        build_topic_briefs_offline(topic, group_items)
+        build_topic_briefs_offline(topic, group_items, now=decision_at)
         for topic, group_items in sorted(grouped.items())
     ]
 
@@ -273,16 +418,24 @@ def _build_topic_briefs_with_progress(
     settings: Any,
     *,
     started_at: float,
+    decision_at: Any = None,
 ) -> Iterator[dict[str, Any]]:
     executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="analysis-news-summary")
-    future = executor.submit(_build_topic_briefs, market_news, settings)
+    future = executor.submit(
+        call_with_optional_time,
+        _build_topic_briefs,
+        market_news,
+        settings,
+        keyword="decision_at",
+        decision_at=decision_at,
+    )
     deadline = time.monotonic() + NEWS_SUMMARY_TIMEOUT_SECONDS
     try:
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 future.cancel()
-                return _build_topic_briefs_offline(market_news), True
+                return _build_topic_briefs_offline(market_news, decision_at), True
             try:
                 return future.result(
                     timeout=min(NEWS_SUMMARY_HEARTBEAT_SECONDS, remaining)
@@ -310,6 +463,7 @@ def _prepare_analysis_bundle_with_progress(
     runtime: Any,
     *,
     started_at: float,
+    decision_at: Any = None,
 ) -> Iterator[dict[str, Any]]:
     executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="analysis-context")
     future = executor.submit(
@@ -324,6 +478,7 @@ def _prepare_analysis_bundle_with_progress(
             nav_trends,
             analysis_mode=runtime.mode,
             budget_enhancements=True,
+            decision_at=decision_at,
         ),
     )
     try:
