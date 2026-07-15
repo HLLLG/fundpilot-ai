@@ -26,10 +26,18 @@ if [[ ! -f "$repo_root/.env.production" ]]; then
     echo ".env.production not found in $repo_root" >&2
     exit 66
 fi
-if [[ ! -f "$release_web/index.html" ]]; then
-    echo "staged frontend is incomplete: $release_web/index.html is missing" >&2
-    exit 66
-fi
+required_web_files=(
+    "index.html"
+    "login/index.html"
+    "register/index.html"
+    "settings/index.html"
+)
+for required_web_file in "${required_web_files[@]}"; do
+    if [[ ! -f "$release_web/$required_web_file" ]]; then
+        echo "staged frontend is incomplete: $release_web/$required_web_file is missing" >&2
+        exit 66
+    fi
+done
 
 exec 9>"$lock_file"
 if ! flock -w 900 9; then
@@ -81,6 +89,9 @@ find "$web_root" -type f -exec chmod 644 {} +
 "${compose[@]}" up -d --no-deps --force-recreate nginx
 "${compose[@]}" exec -T nginx nginx -t
 curl -fsS http://127.0.0.1/ >/dev/null
+curl -fsS http://127.0.0.1/login/ >/dev/null
+curl -fsS http://127.0.0.1/register/ >/dev/null
+curl -fsS http://127.0.0.1/settings/ >/dev/null
 curl -fsS http://127.0.0.1/api/trading-session >/dev/null
 
 printf '%s\n' "$deploy_sha" > /srv/fundpilot/DEPLOYED_SHA
