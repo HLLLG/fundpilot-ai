@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import sys
 from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
 
-from app.config import refresh_settings
+from app.config import PROJECT_ROOT, refresh_settings
 from app.main import app
+
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 PYTEST_VALID_DEEPSEEK_KEY = "fundpilot-pytest-only-not-a-real-api-key-ok"
 PYTEST_PLACEHOLDER_DEEPSEEK_KEY = "replace-me-not-a-real-deepseek-key"

@@ -10,8 +10,8 @@ from app.services.report_pipeline import build_pipeline_metadata
 
 def test_deep_main_report_records_configured_tool_rounds_but_executes_none():
     settings = Settings(
-        FUND_AI_NEWS_ENABLED=True,
-        FUND_AI_NEWS_TOOL_MAX_ROUNDS=3,
+        news_enabled=True,
+        news_tool_max_rounds=3,
     )
 
     runtime = resolve_analysis_runtime(settings, "deep")
@@ -32,8 +32,8 @@ def test_deep_main_report_records_configured_tool_rounds_but_executes_none():
 
 def test_fast_main_report_has_no_configured_or_executed_tool_rounds():
     settings = Settings(
-        FUND_AI_NEWS_ENABLED=True,
-        FUND_AI_NEWS_TOOL_MAX_ROUNDS=3,
+        news_enabled=True,
+        news_tool_max_rounds=3,
     )
 
     runtime = resolve_analysis_runtime(settings, "fast")

@@ -64,6 +64,100 @@ def _risk() -> RiskAssessment:
     )
 
 
+def _patch_analysis_stream_pipeline(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.services.analyze_streaming.FundProfileService",
+        lambda: SimpleNamespace(resolve_holdings=lambda holdings: holdings),
+    )
+    monkeypatch.setattr(
+        "app.services.analyze_streaming.evaluate_portfolio_risk",
+        lambda holdings, profile: _risk(),
+    )
+    monkeypatch.setattr(
+        "app.services.analyze_streaming.FundDataService",
+        lambda: SimpleNamespace(
+            get_snapshots_with_nav_trends=lambda holdings: (
+                [
+                    FundSnapshot(
+                        fund_code="519674",
+                        fund_name="test",
+                        source="test",
+                    )
+                ],
+                {},
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.analyze_streaming.NewsService",
+        lambda: SimpleNamespace(
+            prefetch_for_holdings=lambda holdings, max_topics: []
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.analyze_streaming._build_topic_briefs",
+        lambda market_news, settings=None: [],
+    )
+    monkeypatch.setattr(
+        "app.services.analyze_streaming.prepare_analysis_bundle",
+        lambda *args, **kwargs: SimpleNamespace(
+            facts={"holdings": [], "portfolio": {}}
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.analyze_streaming.judge_parsed_report",
+        lambda parsed, *args, **kwargs: (parsed, {}),
+    )
+    monkeypatch.setattr(
+        "app.services.analyze_streaming.save_report",
+        lambda report: report,
+    )
+
+
+def _stream_discovery_request() -> DiscoveryRequest:
+    return DiscoveryRequest(
+        holdings=_request().holdings,
+        profile=InvestorProfile(expected_investment_amount=20_000),
+        analysis_mode="fast",
+        focus_sectors=["test"],
+    )
+
+
+def _patch_discovery_stream_pipeline(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.services.discovery_streaming.build_sector_heat_ranking",
+        lambda **_kwargs: [{"sector_label": "test", "heat_score": 1.0}],
+    )
+    monkeypatch.setattr(
+        "app.services.discovery_streaming.select_target_sectors",
+        lambda holdings, focus, heat, profile, scan_mode: ["test"],
+    )
+    monkeypatch.setattr(
+        "app.services.discovery_streaming.build_candidate_pool",
+        lambda *args, **kwargs: [],
+    )
+    monkeypatch.setattr(
+        "app.services.discovery_streaming.enrich_candidates",
+        lambda pool, **kwargs: pool,
+    )
+    monkeypatch.setattr(
+        "app.services.discovery_streaming.NewsService",
+        lambda: SimpleNamespace(prefetch_topics=lambda topics: []),
+    )
+    monkeypatch.setattr(
+        "app.services.discovery_streaming.summarize_all_topics",
+        lambda market_news, offline_only=False: [],
+    )
+    monkeypatch.setattr(
+        "app.services.discovery_streaming.build_discovery_facts",
+        lambda **kwargs: {"candidate_pool": kwargs.get("candidate_pool") or []},
+    )
+    monkeypatch.setattr(
+        "app.services.discovery_streaming.save_discovery_report",
+        lambda report: report,
+    )
+
+
 def _boundary_news() -> list[NewsItem]:
     return [
         NewsItem(
@@ -625,7 +719,6 @@ def test_stream_analysis_captures_once_and_reuses_the_clock_for_fallback(
     monkeypatch,
 ) -> None:
     import app.services.analyze_streaming as streaming
-    from tests.test_analyze_streaming import _patch_pipeline, _request as stream_request
 
     clock = capture_decision_clock(BEFORE_MIDNIGHT)
     calls = {"capture": 0}
@@ -635,7 +728,7 @@ def test_stream_analysis_captures_once_and_reuses_the_clock_for_fallback(
         calls["capture"] += 1
         return clock
 
-    _patch_pipeline(monkeypatch)
+    _patch_analysis_stream_pipeline(monkeypatch)
     monkeypatch.setattr(streaming, "capture_decision_clock", fake_capture)
 
     def preflight(holdings, **kwargs):
@@ -667,7 +760,7 @@ def test_stream_analysis_captures_once_and_reuses_the_clock_for_fallback(
 
     monkeypatch.setattr(streaming, "_offline_report", offline_report)
 
-    events = list(streaming.stream_analysis(stream_request(), user_id=1))
+    events = list(streaming.stream_analysis(_request(), user_id=1))
 
     assert calls["capture"] == 1
     assert {
@@ -684,7 +777,6 @@ def test_stream_discovery_captures_once_and_reuses_the_clock_for_fallback(
     monkeypatch,
 ) -> None:
     import app.services.discovery_streaming as streaming
-    from tests.test_discovery_streaming import _patch_pipeline, _request as stream_request
 
     clock = capture_decision_clock(BEFORE_MIDNIGHT)
     calls = {"capture": 0}
@@ -694,7 +786,7 @@ def test_stream_discovery_captures_once_and_reuses_the_clock_for_fallback(
         calls["capture"] += 1
         return clock
 
-    _patch_pipeline(monkeypatch)
+    _patch_discovery_stream_pipeline(monkeypatch)
     monkeypatch.setattr(streaming, "capture_decision_clock", fake_capture)
 
     def preflight(holdings, **kwargs):
@@ -736,7 +828,7 @@ def test_stream_discovery_captures_once_and_reuses_the_clock_for_fallback(
 
     monkeypatch.setattr(streaming, "build_offline_discovery_report", offline_report)
 
-    events = list(streaming.stream_discovery(stream_request(), user_id=1))
+    events = list(streaming.stream_discovery(_stream_discovery_request(), user_id=1))
 
     assert calls["capture"] == 1
     assert {
