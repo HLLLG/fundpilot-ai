@@ -17,6 +17,10 @@ release_root="/srv/fundpilot/releases/$deploy_sha"
 release_web="$release_root/web"
 web_root="/srv/fundpilot/web"
 lock_file="/srv/fundpilot/deploy.lock"
+deployed_sha_file="/srv/fundpilot/DEPLOYED_SHA"
+previous_sha=""
+deployment_error_status=""
+web_was_activated=false
 
 if [[ ! -d "$repo_root/.git" ]]; then
     echo "repository not found at $repo_root" >&2
@@ -59,12 +63,113 @@ if ! git merge-base --is-ancestor "$deploy_sha" refs/remotes/origin/main; then
     echo "refusing to deploy a commit that is not on origin/main: $deploy_sha" >&2
     exit 65
 fi
+
+if [[ -f "$deployed_sha_file" ]]; then
+    previous_sha="$(tr -d '[:space:]' < "$deployed_sha_file")"
+    if [[ ! "$previous_sha" =~ ^[0-9a-f]{40}$ ]] || ! git cat-file -e "$previous_sha^{commit}" 2>/dev/null; then
+        echo "ignoring invalid previous deployed SHA: $previous_sha" >&2
+        previous_sha=""
+    fi
+fi
+
+rollback_release() {
+    if [[ -z "$previous_sha" || "$previous_sha" == "$deploy_sha" ]]; then
+        echo "no previous healthy release is available for rollback" >&2
+        return 1
+    fi
+
+    echo "rolling back to previously healthy release $previous_sha" >&2
+    git checkout --detach "$previous_sha" || return 1
+
+    local rollback_compose=(docker compose --env-file .env.production -f docker-compose.production.yml)
+    "${rollback_compose[@]}" config -q || return 1
+    "${rollback_compose[@]}" up -d --build api || return 1
+
+    local rollback_api_ready=false
+    for attempt in $(seq 1 30); do
+        if curl -fsS http://127.0.0.1:8000/health >/dev/null; then
+            rollback_api_ready=true
+            break
+        fi
+        echo "waiting for rollback API health ($attempt/30)" >&2
+        sleep 5
+    done
+    if [[ "$rollback_api_ready" != "true" ]]; then
+        "${rollback_compose[@]}" logs --tail=150 api >&2 || true
+        return 1
+    fi
+
+    if [[ "$web_was_activated" == "true" ]]; then
+        local previous_web="/srv/fundpilot/releases/$previous_sha/web"
+        if [[ ! -d "$previous_web" ]]; then
+            echo "previous frontend release is unavailable: $previous_web" >&2
+            return 1
+        fi
+        mkdir -p "$web_root" || return 1
+        rsync -a --delete "$previous_web/" "$web_root/" || return 1
+        find "$web_root" -type d -exec chmod 755 {} + || return 1
+        find "$web_root" -type f -exec chmod 644 {} + || return 1
+    fi
+    "${rollback_compose[@]}" up -d --no-deps --force-recreate nginx || return 1
+    "${rollback_compose[@]}" exec -T nginx nginx -t || return 1
+    curl -fsS http://127.0.0.1/ >/dev/null || return 1
+    echo "rollback to $previous_sha succeeded" >&2
+}
+
+on_deployment_error() {
+    local command_status=$?
+    local status="${deployment_error_status:-$command_status}"
+    trap - ERR
+    set +e
+    rollback_release
+    local rollback_status=$?
+    if [[ $rollback_status -ne 0 ]]; then
+        echo "automatic rollback failed; manual recovery is required" >&2
+    fi
+    exit "$status"
+}
+
+trap on_deployment_error ERR
 git checkout --detach "$deploy_sha"
 
 compose=(docker compose --env-file .env.production -f docker-compose.production.yml)
 "${compose[@]}" config -q
 "${compose[@]}" run --rm --no-deps nginx nginx -t
-"${compose[@]}" up -d --build api
+"${compose[@]}" build api
+"${compose[@]}" up -d mysql
+
+mysql_ready=false
+for attempt in $(seq 1 36); do
+    mysql_container_id="$("${compose[@]}" ps -q mysql)"
+    if [[ -n "$mysql_container_id" ]] && [[ "$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}' "$mysql_container_id")" == "healthy" ]]; then
+        mysql_ready=true
+        break
+    fi
+    echo "waiting for MySQL health ($attempt/36)"
+    sleep 5
+done
+if [[ "$mysql_ready" != "true" ]]; then
+    "${compose[@]}" logs --tail=150 mysql >&2 || true
+    echo "MySQL did not become healthy" >&2
+    deployment_error_status=70
+    false
+fi
+
+# Runtime credentials remain least-privilege. This one-shot release process
+# owns additive DDL and immutable trigger creation before the API is replaced.
+api_image="$("${compose[@]}" images -q api)"
+if [[ -z "$api_image" ]]; then
+    echo "built API image could not be resolved" >&2
+    deployment_error_status=70
+    false
+fi
+docker run --rm \
+    --network "container:$mysql_container_id" \
+    --env-file .env.production \
+    -e FUND_AI_MYSQL_ADMIN_HOST=127.0.0.1 \
+    "$api_image" \
+    python -m app.mysql_admin_bootstrap
+"${compose[@]}" up -d --no-deps --force-recreate api
 
 api_ready=false
 for attempt in $(seq 1 30); do
@@ -76,12 +181,14 @@ for attempt in $(seq 1 30); do
     sleep 5
 done
 if [[ "$api_ready" != "true" ]]; then
-    "${compose[@]}" logs --tail=150 api >&2
+    "${compose[@]}" logs --tail=150 api >&2 || true
     echo "API did not become healthy" >&2
-    exit 70
+    deployment_error_status=70
+    false
 fi
 
 mkdir -p "$web_root"
+web_was_activated=true
 rsync -a --delete "$release_web/" "$web_root/"
 find "$web_root" -type d -exec chmod 755 {} +
 find "$web_root" -type f -exec chmod 644 {} +
@@ -94,5 +201,6 @@ curl -fsS http://127.0.0.1/register/ >/dev/null
 curl -fsS http://127.0.0.1/settings/ >/dev/null
 curl -fsS http://127.0.0.1/api/trading-session >/dev/null
 
-printf '%s\n' "$deploy_sha" > /srv/fundpilot/DEPLOYED_SHA
+printf '%s\n' "$deploy_sha" > "$deployed_sha_file"
+trap - ERR
 echo "FundPilot deployment succeeded: $deploy_sha"
