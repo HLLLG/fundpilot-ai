@@ -3,7 +3,6 @@
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
-  AnalysisMode,
   AnalysisPromptConfig,
   FundCodeResolution,
   FundDiscoveryReport,
@@ -49,12 +48,10 @@ import { notifyDesktop, ensureNotificationPermission } from "@/lib/notifications
 import { BRAND } from "@/lib/brand";
 import { formatThinkingNote, stageShortLabel } from "@/lib/streamingStageMeta";
 import {
-  loadAnalysisMode,
   loadAnalysisPrompt,
   loadDashboardTab,
   loadInvestorProfile,
   normalizeInvestorProfile,
-  saveAnalysisMode,
   saveAnalysisPrompt,
   saveDashboardTab,
   saveInvestorProfile,
@@ -252,7 +249,6 @@ export function Dashboard() {
   }, []);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [activeTab, setActiveTabState] = useState<TabId>("holdings");
-  const [analysisMode, setAnalysisMode] = useState<AnalysisMode>("deep");
   const [profileReady, setProfileReady] = useState(false);
   const [promptReady, setPromptReady] = useState(false);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
@@ -599,7 +595,6 @@ export function Dashboard() {
   }, [setActiveTab]);
 
   useEffect(() => {
-    setAnalysisMode(loadAnalysisMode("deep"));
     void (async () => {
       try {
         const remote = await fetchInvestorProfile();
@@ -879,11 +874,6 @@ export function Dashboard() {
     });
   }, [analysisPrompt, promptReady, user?.id]);
 
-  useEffect(() => {
-    if (!profileReady) return;
-    saveAnalysisMode(analysisMode);
-  }, [analysisMode, profileReady]);
-
   const handleCancelStream = useCallback(() => {
     streamAbortRef.current?.abort();
     streamAbortRef.current = null;
@@ -1042,7 +1032,6 @@ export function Dashboard() {
             },
           },
           {
-            analysisMode,
             systemRolePrompt,
             signal: abortController.signal,
           },
@@ -1077,7 +1066,6 @@ export function Dashboard() {
         targetHoldings,
         profile,
         undefined,
-        analysisMode,
         systemRolePrompt,
       );
       setActiveJobId(jobId);
@@ -1124,12 +1112,7 @@ export function Dashboard() {
     }
 
     notifyDesktop(`${BRAND.name}日报已生成`, { body: completedReport.title });
-    setMessage(
-      analysisMode === "fast"
-        ? "快速模式日报已生成（Flash + 较少主题预取）。"
-        : "深度模式日报已生成（Pro + 有界扩展证据 + 可选风控审校）。",
-      "success",
-    );
+    setMessage("深度分析日报已生成（Pro + 有界扩展证据 + 可选风控审校）。", "success");
   };
 
   const handleJobClose = () => {
@@ -1689,10 +1672,8 @@ export function Dashboard() {
               />
               <RiskControls
                 profile={profile}
-                analysisMode={analysisMode}
                 rolePrompt={analysisPrompt.is_custom ? analysisPrompt.role_prompt : ""}
                 isRolePromptCustom={analysisPrompt.is_custom}
-                onAnalysisModeChange={setAnalysisMode}
                 onChange={handleProfileChange}
                 onRolePromptChange={handleRolePromptChange}
                 onRolePromptReset={handleRolePromptReset}
@@ -1741,8 +1722,6 @@ export function Dashboard() {
               userId={user?.id ?? null}
               holdings={holdings}
               profile={profile}
-              analysisMode={analysisMode}
-              onAnalysisModeChange={setAnalysisMode}
               discoveryJobId={discoveryJobId}
               onDiscoveryJobIdChange={setDiscoveryJobId}
               pendingDiscoveryReport={pendingDiscoveryReport}

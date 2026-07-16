@@ -10,14 +10,74 @@ from app.database import (
     save_portfolio_summary,
 )
 from app.models import AdjustHoldingRequest, Holding, PortfolioSummary
+from app.services.fund_nav_service import get_latest_unit_nav
 from app.services.holding_estimates import enrich_holdings_estimates, sum_daily_profit
 from app.services.holding_filters import without_placeholder_holdings, without_test_holdings
+from app.services.portfolio_ledger_service import has_user_confirmed_position_shares
 from app.services.portfolio_holdings_service import build_portfolio_holdings_response
 from app.services.portfolio_snapshot import save_daily_snapshot
+from app.services.trading_session import get_effective_trade_date
+
+
+class ConfirmedSharesAmountConflict(ValueError):
+    """Raised when an amount edit would overwrite confirmed position truth."""
+
+
+def _first_not_none(*values: float | None) -> float | None:
+    return next((value for value in values if value is not None), None)
+
+
+def _resolve_financials(
+    *,
+    amount: float,
+    requested_profit: float | None,
+    requested_return_percent: float | None,
+    current_profit: float | None,
+    current_return_percent: float | None,
+) -> tuple[float | None, float | None, float | None]:
+    """Resolve profit, return and total cost into one internally consistent tuple."""
+
+    if amount <= 0:
+        raise ValueError("持有金额必须大于 0；如已清仓，请使用删除该基金")
+
+    profit = requested_profit
+    return_percent = requested_return_percent
+    if profit is not None:
+        cost_basis = amount - profit
+        if cost_basis <= 0:
+            raise ValueError("持有收益必须小于持有金额，无法得到有效持仓成本")
+        derived_return = round(profit / cost_basis * 100, 4)
+        if return_percent is not None and abs(return_percent - derived_return) > 0.05:
+            raise ValueError("持有收益与持有收益率不一致，请核对后重试")
+        return round(profit, 2), derived_return, round(cost_basis, 2)
+
+    if return_percent is not None:
+        if return_percent <= -100:
+            raise ValueError("持有收益率必须大于 -100%")
+        cost_basis = amount / (1 + return_percent / 100)
+        profit = amount - cost_basis
+        return round(profit, 2), round(return_percent, 4), round(cost_basis, 2)
+
+    profit = current_profit
+    if profit is not None:
+        cost_basis = amount - profit
+        if cost_basis <= 0:
+            raise ValueError("当前持有收益与新金额不一致，请同时修正持有收益")
+        return round(profit, 2), round(profit / cost_basis * 100, 4), round(cost_basis, 2)
+
+    return_percent = current_return_percent
+    if return_percent is not None:
+        if return_percent <= -100:
+            raise ValueError("当前持有收益率无效，请同时修正持有收益")
+        cost_basis = amount / (1 + return_percent / 100)
+        profit = amount - cost_basis
+        return round(profit, 2), round(return_percent, 4), round(cost_basis, 2)
+
+    return None, None, None
 
 
 def adjust_holding_in_portfolio(fund_code: str, payload: AdjustHoldingRequest) -> dict:
-    """手动修改单只基金的结算持有金额/收益，对齐养基宝「修改持仓」。"""
+    """手动修改结算金额/收益，并重建可持续刷新的估算份额基线。"""
     code = (fund_code or "").strip()
     if not code or code == "000000":
         raise ValueError("fund_code 无效")
@@ -41,49 +101,80 @@ def adjust_holding_in_portfolio(fund_code: str, payload: AdjustHoldingRequest) -
     holding = holdings[index]
     profile = get_fund_profile_by_code(code)
 
+    current_amount = _first_not_none(
+        holding.settled_holding_amount,
+        profile.settled_holding_amount if profile else None,
+        holding.holding_amount,
+    )
     amount = payload.settled_holding_amount
     if amount is None:
-        amount = (
-            holding.settled_holding_amount
-            or (profile.settled_holding_amount if profile else None)
-            or holding.holding_amount
+        amount = current_amount
+    if amount is None or amount <= 0:
+        raise ValueError("持有金额必须大于 0；如已清仓，请使用删除该基金")
+
+    amount_changed = current_amount is None or abs(amount - current_amount) > 0.01
+    if amount_changed and has_user_confirmed_position_shares(code):
+        raise ConfirmedSharesAmountConflict(
+            "该基金已有人工确认的实际份额，持有金额由份额和净值计算。"
+            "请使用“同步加仓/同步减仓”或重新确认份额完成对账。"
         )
 
-    profit = payload.holding_profit
-    if profit is None:
-        profit = holding.holding_profit
-        if profit is None and profile is not None:
-            profit = profile.holding_profit
-
-    return_percent = payload.holding_return_percent
-    if return_percent is None:
-        return_percent = holding.holding_return_percent
-        if return_percent is None and profile is not None:
-            return_percent = profile.holding_return_percent
+    current_profit = _first_not_none(
+        holding.holding_profit,
+        profile.holding_profit if profile else None,
+    )
+    current_return = _first_not_none(
+        holding.holding_return_percent,
+        profile.holding_return_percent if profile else None,
+        holding.return_percent,
+    )
+    profit, return_percent, cost_basis = _resolve_financials(
+        amount=amount,
+        requested_profit=payload.holding_profit,
+        requested_return_percent=payload.holding_return_percent,
+        current_profit=current_profit,
+        current_return_percent=current_return,
+    )
 
     patch: dict = {
         "holding_amount": amount,
         "settled_holding_amount": amount,
         "amount_includes_today": False,
     }
-    if profit is not None:
-        patch["holding_profit"] = profit
+    patch["holding_profit"] = profit
+    patch["holding_return_percent"] = return_percent
     if return_percent is not None:
-        patch["holding_return_percent"] = return_percent
         patch["return_percent"] = return_percent
 
     if profile is not None:
         profile_patch: dict = {
             "holding_amount": amount,
             "settled_holding_amount": amount,
+            "holding_profit": profit,
+            "holding_return_percent": return_percent,
         }
-        if profit is not None:
-            profile_patch["holding_profit"] = profit
-        if return_percent is not None:
-            profile_patch["holding_return_percent"] = return_percent
         shares = profile.holding_shares
-        if shares and shares > 0 and amount and profit is not None:
-            profile_patch["holding_cost"] = round((amount - profit) / shares, 4)
+        if amount_changed:
+            trade_date = get_effective_trade_date()
+            latest_nav = get_latest_unit_nav(code)
+            shares = (
+                round(amount / latest_nav, 6)
+                if latest_nav is not None and latest_nav > 0
+                else None
+            )
+            profile_patch.update(
+                {
+                    "holding_shares": shares,
+                    "shares_baseline_date": trade_date,
+                    # The manually entered amount is the settled truth for this
+                    # trade date. A same-day refresh must not roll it a second time.
+                    "profit_settled_trade_date": trade_date,
+                }
+            )
+        if shares and shares > 0 and cost_basis is not None:
+            profile_patch["holding_cost"] = round(cost_basis / shares, 8)
+        elif amount_changed:
+            profile_patch["holding_cost"] = None
         save_fund_profile(profile.model_copy(update=profile_patch))
 
     holdings[index] = holding.model_copy(update=patch)

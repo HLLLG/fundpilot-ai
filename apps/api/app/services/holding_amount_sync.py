@@ -531,7 +531,14 @@ def _sync_one_holding(
                 shares = round(holding.holding_amount / unit_nav, 2)
                 if persist_profile:
                     profile = save_fund_profile(
-                        profile.model_copy(update={"holding_shares": shares})
+                        profile.model_copy(
+                            update={
+                                "holding_shares": shares,
+                                # 份额由当前金额重新推算时，它就是新的绝对基线。
+                                # 若继续保留旧日期，历史交易会在下一次刷新时被重复叠加。
+                                "shares_baseline_date": trade_date,
+                            }
+                        )
                     )
 
     settled = _resolve_settled_amount(holding, profile)

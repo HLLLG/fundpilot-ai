@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { Gauge, Loader2 } from "lucide-react";
 import { fetchMarketBreadth, type MarketBreadthSignal } from "@/lib/api";
 import { StatusPill } from "@/components/StatusPill";
+import { FundReturnDistributionPanel } from "@/components/FundReturnDistributionPanel";
 import { useCachedFetch } from "@/lib/useCachedFetch";
 
 type MarketBreadthGaugeProps = {
@@ -60,6 +61,15 @@ function formatAsOf(value: string | null | undefined, fallback?: string): string
   return normalized.length >= 16 ? normalized.slice(0, 16) : normalized;
 }
 
+function resolveTone(data: MarketBreadthSignal): "blue" | "green" | "amber" | "red" | "dark" {
+  const label = data.breadth_tone ?? "";
+  if (label.includes("冰点")) return "red";
+  if (label.includes("弱") || label.includes("低迷")) return "amber";
+  if (label.includes("强") || label.includes("活跃")) return "green";
+  if (label.includes("亢奋")) return "dark";
+  return SENTIMENT_TONE[data.sentiment_level ?? ""] ?? "blue";
+}
+
 function isExpiredIntradaySnapshot(data: MarketBreadthSignal, nowMs = Date.now()): boolean {
   if (
     data.signal_mode !== "intraday" ||
@@ -77,6 +87,52 @@ function Metric({ label, value }: { label: string; value: string }) {
     <div className="min-w-0 rounded-xl bg-white px-3 py-2 ring-1 ring-slate-100">
       <div className="text-[10px] font-bold text-slate-500">{label}</div>
       <div className="mt-0.5 break-words text-sm font-semibold text-slate-800">{value}</div>
+    </div>
+  );
+}
+
+function MarketBreadthBar({ data }: { data: MarketBreadthSignal }) {
+  const advance = data.advance_count ?? 0;
+  const decline = data.decline_count ?? 0;
+  const flat = data.flat_count ?? 0;
+  const tradedTotal = data.traded_sample_count ?? advance + decline + flat;
+  const advanceRatio =
+    data.advance_ratio_percent ?? (tradedTotal > 0 ? (advance / tradedTotal) * 100 : 0);
+  const declineRatio =
+    data.decline_ratio_percent ?? (tradedTotal > 0 ? (decline / tradedTotal) * 100 : 0);
+  const flatRatio = data.flat_ratio_percent ?? (tradedTotal > 0 ? (flat / tradedTotal) * 100 : 0);
+
+  return (
+    <div className="mt-4 min-w-0 rounded-2xl border border-slate-200 bg-[#fbfaf7] px-4 py-4">
+      <div className="grid grid-cols-[1fr_auto_1fr] items-end gap-3">
+        <div className="text-emerald-700">
+          <p className="text-[11px] font-bold tracking-wide">下跌</p>
+          <p className="mt-0.5 font-serif text-2xl font-bold tabular-nums">{formatCount(decline)}</p>
+          <p className="text-[11px] font-semibold tabular-nums">{declineRatio.toFixed(1)}%</p>
+        </div>
+        <div className="pb-1 text-center text-slate-500">
+          <p className="text-[10px] font-bold uppercase tracking-[0.16em]">沪深个股</p>
+          <p className="mt-1 text-xs font-semibold">{formatCount(tradedTotal)} 只交易样本</p>
+        </div>
+        <div className="text-right text-rose-700">
+          <p className="text-[11px] font-bold tracking-wide">上涨</p>
+          <p className="mt-0.5 font-serif text-2xl font-bold tabular-nums">{formatCount(advance)}</p>
+          <p className="text-[11px] font-semibold tabular-nums">{advanceRatio.toFixed(1)}%</p>
+        </div>
+      </div>
+      <div
+        className="mt-3 flex h-4 overflow-hidden rounded-full bg-slate-100 ring-1 ring-slate-200"
+        aria-label={`下跌${decline}只，平盘${flat}只，上涨${advance}只`}
+      >
+        <span className="bg-emerald-500" style={{ width: `${declineRatio}%` }} />
+        <span className="bg-slate-300" style={{ width: `${flatRatio}%` }} />
+        <span className="bg-rose-500" style={{ width: `${advanceRatio}%` }} />
+      </div>
+      <div className="mt-2 flex items-center justify-between text-[11px] font-semibold text-slate-500">
+        <span>绿：下跌</span>
+        <span>平盘 {formatCount(flat)} · {flatRatio.toFixed(1)}%</span>
+        <span>红：上涨</span>
+      </div>
     </div>
   );
 }
@@ -152,7 +208,7 @@ export function MarketBreadthGauge({ compact = false }: MarketBreadthGaugeProps)
     );
   }
 
-  const tone = SENTIMENT_TONE[data.sentiment_level ?? ""] ?? "blue";
+  const tone = resolveTone(data);
   const isIntraday = data.signal_mode === "intraday";
   const intradayExpired = isExpiredIntradaySnapshot(data);
   const backendStale = data.stale === true || data.freshness_status === "stale";
@@ -163,7 +219,7 @@ export function MarketBreadthGauge({ compact = false }: MarketBreadthGaugeProps)
       ? "盘中准实时"
       : "收盘历史口径";
   const decisionEligible = data.decision_eligible === true && !isStale;
-  const decisionLabel = decisionEligible ? "参与当前决策" : "仅展示，不参与当前决策";
+  const decisionLabel = decisionEligible ? "数据可参与当前决策" : "数据仅展示，不参与当前决策";
   const decisionMessage = intradayExpired
     ? "盘中快照已超过10分钟未更新，客户端已停止将其用于决策。"
     : backendStale
@@ -179,17 +235,26 @@ export function MarketBreadthGauge({ compact = false }: MarketBreadthGaugeProps)
       : null;
 
   return (
-    <section className="glass-panel rounded-[24px] p-5" data-testid="market-breadth-gauge">
+    <section
+      className="glass-panel min-w-0 max-w-full overflow-hidden rounded-[24px] p-5"
+      data-testid="market-breadth-gauge"
+    >
       <div className="flex items-start justify-between gap-3">
-        <div className="flex items-start gap-3">
+        <div className="flex min-w-0 flex-1 items-start gap-3">
           <div className="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-[var(--brand)] text-white">
             <Gauge size={20} aria-hidden />
           </div>
-          <div>
-            <h3 className="text-lg font-black text-slate-950">大盘情绪温度计</h3>
+          <div className="min-w-0">
+            <h3 className="text-lg font-black text-slate-950">沪深市场情绪</h3>
             <p className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-slate-600">
               <span className="font-semibold text-slate-700">{sourceLabel}</span>
               <span aria-hidden>·</span>
+              {data.universe_scope ? (
+                <>
+                  <span>{data.universe_scope}</span>
+                  <span aria-hidden>·</span>
+                </>
+              ) : null}
               <span>更新于 {formatAsOf(data.as_of_datetime, data.trade_date)}</span>
               {revalidating ? (
                 <span className="inline-flex items-center gap-1 text-[var(--brand)]" role="status">
@@ -199,7 +264,7 @@ export function MarketBreadthGauge({ compact = false }: MarketBreadthGaugeProps)
             </p>
           </div>
         </div>
-        <StatusPill tone={tone}>{data.sentiment_level ?? "—"}</StatusPill>
+        <StatusPill tone={tone}>{data.breadth_tone ?? data.sentiment_level ?? "—"}</StatusPill>
       </div>
 
       <div
@@ -237,20 +302,21 @@ export function MarketBreadthGauge({ compact = false }: MarketBreadthGaugeProps)
       ) : null}
 
       {isIntraday ? (
-        <div className={`mt-4 grid gap-2 ${compact ? "grid-cols-2" : "grid-cols-2 sm:grid-cols-3"}`}>
-          <Metric label="上涨家数" value={formatCount(data.advance_count)} />
-          <Metric label="下跌家数" value={formatCount(data.decline_count)} />
-          <Metric label="平盘家数" value={formatCount(data.flat_count)} />
-          <Metric label="市场活跃度" value={formatPercent(data.activity_percent)} />
-          <Metric
-            label="真实涨停"
-            value={formatCount(data.real_limit_up_count ?? data.limit_up_count)}
-          />
-          <Metric
-            label="真实跌停"
-            value={formatCount(data.real_limit_down_count ?? data.limit_down_count)}
-          />
-        </div>
+        <>
+          <MarketBreadthBar data={data} />
+          <div className={`mt-3 grid gap-2 ${compact ? "grid-cols-2" : "grid-cols-2 sm:grid-cols-4"}`}>
+            <Metric label="全样本（含停牌）" value={formatCount(data.market_sample_count)} />
+            <Metric label="停牌" value={formatCount(data.suspended_count)} />
+            <Metric
+              label="真实涨停"
+              value={formatCount(data.real_limit_up_count ?? data.limit_up_count)}
+            />
+            <Metric
+              label="真实跌停"
+              value={formatCount(data.real_limit_down_count ?? data.limit_down_count)}
+            />
+          </div>
+        </>
       ) : (
         <div className={`mt-4 grid gap-2 ${compact ? "grid-cols-2" : "grid-cols-2 sm:grid-cols-4"}`}>
           <Metric label="涨停家数" value={formatCount(data.limit_up_count)} />
@@ -291,8 +357,10 @@ export function MarketBreadthGauge({ compact = false }: MarketBreadthGaugeProps)
       </details>
 
       <p className="mt-3 text-xs leading-5 text-slate-500">
-        盘中数据每5分钟自动更新；收盘历史锚点用于校准背景。过期或回退数据仅展示，不参与强守卫，不构成投资建议。
+        乐咕活跃度包含停牌股分母；比例条仅比较实际交易的上涨、下跌与平盘样本。盘中每5分钟更新；过期或回退数据不参与强守卫。
       </p>
+
+      {!compact ? <FundReturnDistributionPanel /> : null}
     </section>
   );
 }

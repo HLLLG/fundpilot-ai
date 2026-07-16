@@ -75,6 +75,7 @@ describe("streamDiscovery", () => {
       String((fetchMock.mock.calls[0]?.[1] as RequestInit | undefined)?.body),
     );
     expect(requestBody.discovery_strategy).toBe("opportunity_first");
+    expect(requestBody.analysis_mode).toBe("deep");
   });
 
   it("throws when an active discovery stream stops sending progress events", async () => {

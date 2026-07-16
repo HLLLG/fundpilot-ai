@@ -93,6 +93,9 @@ function FundCard({
           </div>
           <div className="factor-fund-score">
             综合 {fund.composite_score != null ? Math.round(fund.composite_score) : "—"}
+            {fund.peer_group_label && fund.peer_count ? (
+              <> · {fund.peer_group_label}同类 {fund.peer_count} 只</>
+            ) : null}
           </div>
         </div>
       </div>
@@ -128,7 +131,7 @@ export function PortfolioFactorScoresPanel({ enabled }: { enabled: boolean }) {
   }, [enabled]);
 
   useEffect(() => {
-    if (!enabled || data || loading) {
+    if (!enabled || data) {
       return;
     }
     let cancelled = false;
@@ -153,7 +156,7 @@ export function PortfolioFactorScoresPanel({ enabled }: { enabled: boolean }) {
     return () => {
       cancelled = true;
     };
-  }, [enabled, data, loading]);
+  }, [enabled, data]);
 
   if (!enabled) {
     return null;
@@ -187,12 +190,15 @@ export function PortfolioFactorScoresPanel({ enabled }: { enabled: boolean }) {
             key={fund.fund_code}
             fund={fund}
             isPro={isPro}
-            reliability={data.factor_reliability}
+            reliability={fund.factor_reliability ?? data.factor_reliability}
           />
         ))}
       </div>
       <div className="factor-foot">
-        基准：排行榜可比池约 {data.universe_size} 只 · 横截面 z-score 百分位
+        {data.model_version
+          ? `基准：分类型研究池 ${data.universe_size} 只 · 每只基金仅与同类比较`
+          : `基准：旧版排行榜可比池约 ${data.universe_size} 只`}
+        {" · "}横截面 z-score 百分位
         {isPro ? "" : " · 免费版仅展示动量，升级查看全部因子"}
       </div>
     </div>

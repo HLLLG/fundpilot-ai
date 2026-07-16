@@ -300,15 +300,19 @@ def build_factor_scores_payload(
             model=research_model,
         )
         applicable = [fund for fund in funds if fund.get("applicable")]
+        peer_distributions = research_model.get("peer_distributions") or {}
+        research_universe_size = sum(
+            int(peer.get("eligible_count") or 0)
+            for peer in peer_distributions.values()
+            if isinstance(peer, dict)
+        )
         return {
             "available": bool(applicable),
-            "universe_size": max(
-                (int(fund.get("peer_count") or 0) for fund in applicable),
-                default=0,
-            ),
+            "universe_size": research_universe_size,
             "message": None if applicable else "没有与同类研究池匹配且特征完整的基金。",
             "funds": funds,
             "model_version": research_model.get("version"),
+            "reliability_scope": "per_fund_peer_group",
         }
 
     filtered_holdings = [

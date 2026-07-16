@@ -109,3 +109,26 @@ it("keeps modified values after a failed save and a same-fund rerender", async (
   await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
   expect(onSubmit).toHaveBeenCalledTimes(2);
 });
+
+it("requires deletion instead of saving a zero holding amount", async () => {
+  const onSubmit = vi.fn();
+
+  render(
+    <HoldingModifyModal
+      open
+      holding={holding}
+      onClose={vi.fn()}
+      onSubmit={onSubmit}
+    />,
+  );
+
+  fireEvent.change(screen.getByRole("textbox", { name: "持有金额" }), {
+    target: { value: "0" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
+
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "持有金额必须大于 0；如已清仓，请使用删除该基金",
+  );
+  expect(onSubmit).not.toHaveBeenCalled();
+});

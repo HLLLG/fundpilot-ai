@@ -2,9 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { ChevronDown, RotateCcw, ShieldCheck, SlidersHorizontal, Sparkles } from "lucide-react";
-import type { AnalysisMode, DecisionStyle, InvestorProfile, SwingMonitorScope } from "@/lib/api";
+import type { DecisionStyle, InvestorProfile, SwingMonitorScope } from "@/lib/api";
 import { takeProfitThresholdPercent } from "@/lib/investmentPresets";
-import { AnalysisModeToggle } from "@/components/AnalysisModeToggle";
 import { InvestmentPresetSelector } from "@/components/InvestmentPresetSelector";
 import { RolePromptEditor } from "@/components/RolePromptEditor";
 import { StatusPill } from "@/components/StatusPill";
@@ -37,10 +36,8 @@ function profileSummary(profile: InvestorProfile): string {
 
 type RiskControlsProps = {
   profile: InvestorProfile;
-  analysisMode: AnalysisMode;
   rolePrompt: string;
   isRolePromptCustom: boolean;
-  onAnalysisModeChange: (mode: AnalysisMode) => void;
   onChange: (profile: InvestorProfile) => void;
   onRolePromptChange: (value: string) => void;
   onRolePromptReset: () => void;
@@ -53,10 +50,8 @@ type RiskControlsProps = {
 
 export function RiskControls({
   profile,
-  analysisMode,
   rolePrompt,
   isRolePromptCustom,
-  onAnalysisModeChange,
   onChange,
   onRolePromptChange,
   onRolePromptReset,
@@ -81,7 +76,7 @@ export function RiskControls({
           <div className="min-w-0">
             <div className="text-sm font-black text-slate-950">本次生成设置</div>
             <p className="mt-1 text-xs text-slate-500">
-              {analysisMode === "deep" ? "深度模式" : "快速模式"} · {profileSummary(profile)}
+              深度分析 · {profileSummary(profile)}
             </p>
             {hasBlockingErrors && blockingMessage ? (
               <p className="mt-1 text-xs font-semibold text-rose-700" role="alert">
@@ -154,9 +149,7 @@ export function RiskControls({
       </div>
 
       <div className="p-4 sm:p-5">
-      <AnalysisModeToggle mode={analysisMode} onChange={onAnalysisModeChange} compact />
-
-      <div className="mt-4">
+      <div>
         <p className="mb-2 text-[11px] font-bold text-slate-500">投资风格预设</p>
         <InvestmentPresetSelector profile={profile} onChange={onChange} compact />
       </div>

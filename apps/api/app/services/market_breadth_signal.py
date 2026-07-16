@@ -42,7 +42,7 @@ from app.services.trading_session import build_trading_session, get_previous_tra
 
 logger = logging.getLogger(__name__)
 
-_CACHE_VERSION = "v2"
+_CACHE_VERSION = "v3"
 _CLOSED_TTL_SECONDS = 3600.0
 # 涨跌停池按日查询遇到空数据（周末/假日/尚未收盘）时，向前回退查找最近有效交易日的最大尝试次数。
 _MAX_LOOKBACK_ATTEMPTS = 6
@@ -274,6 +274,7 @@ try:
             "advance_count": _number("上涨"),
             "decline_count": _number("下跌"),
             "flat_count": _number("平盘"),
+            "suspended_count": _number("停牌"),
             "limit_up_count": _number("涨停"),
             "limit_down_count": _number("跌停"),
             "real_limit_up_count": _number("真实涨停"),
@@ -294,22 +295,38 @@ except Exception as e:
     advance = _as_number(payload.get("advance_count"))
     decline = _as_number(payload.get("decline_count"))
     flat = _as_number(payload.get("flat_count"))
+    suspended = _as_number(payload.get("suspended_count"))
     if advance is None or decline is None:
         return None
-    total = advance + decline + (flat or 0)
+    traded_total = advance + decline + (flat or 0)
+    market_total = traded_total + (suspended or 0)
     activity = _as_number(payload.get("activity_percent"))
-    if total < _MIN_INTRADAY_MARKET_SAMPLE:
+    if market_total < _MIN_INTRADAY_MARKET_SAMPLE:
         return None
-    if activity is None and total > 0:
-        activity = round(advance / total * 100, 2)
+    if activity is None and market_total > 0:
+        activity = round(advance / market_total * 100, 2)
     parsed_as_of = _parse_as_of_datetime(payload.get("as_of_datetime"))
     return {
         "available": True,
+        "source_name": "乐咕赚钱效应",
+        "universe_scope": "沪深两市",
         "advance_count": int(advance),
         "decline_count": int(decline),
         "flat_count": int(flat or 0),
+        "suspended_count": int(suspended or 0),
+        "traded_sample_count": int(traded_total),
+        "market_sample_count": int(market_total),
         "activity_percent": activity,
-        "advance_ratio_percent": round(advance / total * 100, 2) if total > 0 else None,
+        # 涨跌/平盘比例只在实际交易样本内计算；源站活跃度则包含停牌股分母。
+        "advance_ratio_percent": (
+            round(advance / traded_total * 100, 2) if traded_total > 0 else None
+        ),
+        "decline_ratio_percent": (
+            round(decline / traded_total * 100, 2) if traded_total > 0 else None
+        ),
+        "flat_ratio_percent": (
+            round((flat or 0) / traded_total * 100, 2) if traded_total > 0 else None
+        ),
         "limit_up_count": _as_int(payload.get("limit_up_count")),
         "limit_down_count": _as_int(payload.get("limit_down_count")),
         "real_limit_up_count": _as_int(payload.get("real_limit_up_count")),
@@ -329,7 +346,12 @@ def _compose_intraday_signal(
 ) -> dict:
     activity_percent = _as_number(activity.get("activity_percent"))
     live_level = (
-        _sentiment_level_from_percentile(activity_percent)
+        _sentiment_level_from_advance_ratio(activity_percent)
+        if activity_percent is not None
+        else None
+    )
+    breadth_tone = (
+        _breadth_tone_from_advance_ratio(activity_percent)
         if activity_percent is not None
         else None
     )
@@ -347,12 +369,20 @@ def _compose_intraday_signal(
         "breadth_percentile": None,
         "breadth_sample_days": closing.get("breadth_sample_days"),
         "sentiment_level": live_level,
+        "breadth_tone": breadth_tone,
         "sentiment_level_change": level_change,
+        "source_name": activity.get("source_name"),
+        "universe_scope": activity.get("universe_scope"),
         "advance_count": activity.get("advance_count"),
         "decline_count": activity.get("decline_count"),
         "flat_count": activity.get("flat_count"),
+        "suspended_count": activity.get("suspended_count"),
+        "traded_sample_count": activity.get("traded_sample_count"),
+        "market_sample_count": activity.get("market_sample_count"),
         "activity_percent": activity_percent,
         "advance_ratio_percent": activity.get("advance_ratio_percent"),
+        "decline_ratio_percent": activity.get("decline_ratio_percent"),
+        "flat_ratio_percent": activity.get("flat_ratio_percent"),
         "limit_up_count": activity.get("limit_up_count"),
         "limit_down_count": activity.get("limit_down_count"),
         "real_limit_up_count": activity.get("real_limit_up_count"),
@@ -368,9 +398,10 @@ def _compose_intraday_signal(
         "closing_trade_date": closing.get("trade_date"),
         "closing_breadth_percentile": closing.get("breadth_percentile"),
         "closing_sentiment_level": closing_level,
-        "interpretation": _build_intraday_interpretation(activity, live_level),
+        "interpretation": _build_intraday_interpretation(activity, breadth_tone),
         "basis": (
-            "盘中档位基于乐咕当前赚钱效应（上涨/下跌/平盘及涨跌停）准实时计算；"
+            "盘中展示基于乐咕沪深两市赚钱效应（上涨/下跌/平盘/停牌及涨跌停）准实时计算；"
+            "个股广度描述与用于守卫的五档情绪分开表达，避免把原始上涨占比冒充历史百分位；"
             "近2年创新高低百分位仅作为上一完整交易日背景，不冒充盘中历史分位。"
         ),
     }
@@ -541,13 +572,13 @@ def _as_int(value: object) -> int | None:
     return int(number) if number is not None else None
 
 
-def _build_intraday_interpretation(activity: dict, level: str | None) -> str:
+def _build_intraday_interpretation(activity: dict, breadth_tone: str | None) -> str:
     advance = activity.get("advance_count")
     decline = activity.get("decline_count")
     activity_percent = activity.get("activity_percent")
     return (
-        f"盘中市场情绪{level or '待确认'}，上涨{advance}家、下跌{decline}家，"
-        f"赚钱效应约{activity_percent}%。该信号按源站统计时间动态更新。"
+        f"沪深个股广度{breadth_tone or '待确认'}，上涨{advance}家、下跌{decline}家，"
+        f"上涨占全样本约{activity_percent}%。该信号按源站统计时间动态更新。"
     )
 
 
@@ -662,6 +693,44 @@ def _sentiment_level_from_percentile(pct: float) -> str:
     if pct <= 90:
         return "偏热"
     return "亢奋"
+
+
+def _sentiment_level_from_advance_ratio(pct: float) -> str:
+    """把原始上涨占比映射到兼容既有守卫的五档情绪。
+
+    五档字段被确定性守卫消费，现阶段保留原有强度边界，避免未经回测擅自改变动作；
+    面向用户的细粒度语义由 ``_breadth_tone_from_advance_ratio`` 独立提供。
+    """
+
+    if pct <= 10:
+        return "冰点"
+    if pct <= 35:
+        return "低迷"
+    if pct <= 65:
+        return "中性"
+    if pct <= 90:
+        return "偏热"
+    return "亢奋"
+
+
+def _breadth_tone_from_advance_ratio(pct: float) -> str:
+    """原始上涨占比的可读描述；不冒充历史百分位。"""
+
+    if pct <= 20:
+        return "普跌冰点"
+    if pct <= 35:
+        return "普跌低迷"
+    if pct < 45:
+        return "整体偏弱"
+    if pct < 50:
+        return "分化偏弱"
+    if pct <= 55:
+        return "多空均衡"
+    if pct <= 65:
+        return "分化偏强"
+    if pct <= 80:
+        return "多数活跃"
+    return "普涨亢奋"
 
 
 def _breadth_series(rows: list[dict]) -> list[tuple[str, float]]:

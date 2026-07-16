@@ -1,5 +1,5 @@
 import { getAccessToken } from "@/lib/auth";
-import type { AnalysisMode, Holding, InvestorProfile, Report } from "@/lib/api";
+import type { Holding, InvestorProfile, Report } from "@/lib/api";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
 
@@ -117,14 +117,13 @@ function analysisPayload(
   holdings: Holding[],
   profile: InvestorProfile,
   ocrText?: string,
-  analysisMode: AnalysisMode = "fast",
   systemRolePrompt?: string | null,
 ) {
   return {
     holdings,
     profile,
     ocr_text: ocrText,
-    analysis_mode: analysisMode,
+    analysis_mode: "deep",
     system_role_prompt: systemRolePrompt?.trim() || null,
   };
 }
@@ -178,13 +177,11 @@ export async function streamAnalysis(
   events: StreamingReportEvents,
   options?: {
     ocrText?: string;
-    analysisMode?: AnalysisMode;
     systemRolePrompt?: string | null;
     signal?: AbortSignal;
     idleTimeoutMs?: number;
   },
 ): Promise<void> {
-  const analysisMode = options?.analysisMode ?? "fast";
   const response = await apiFetch(`${API_BASE}/api/analyze/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -193,7 +190,6 @@ export async function streamAnalysis(
         holdings,
         profile,
         options?.ocrText,
-        analysisMode,
         options?.systemRolePrompt,
       ),
     ),

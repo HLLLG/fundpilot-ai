@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildSegmentedLinePath,
+  computeProfitAxis,
   formatProfitAxisLabel,
   mapProfitTrendValues,
 } from "@/components/ProfitAnalysisTrendChart";
@@ -43,5 +44,14 @@ describe("ProfitAnalysisTrendChart data mapping", () => {
     expect(formatProfitAxisLabel(1.25)).toBe("+1.25%");
     expect(formatProfitAxisLabel(-0.75)).toBe("-0.75%");
     expect(formatProfitAxisLabel(0)).toBe("0.00%");
+  });
+
+  it("derives a readable nice-number step from small and large return ranges", () => {
+    expect(computeProfitAxis([-3, 0.75])).toEqual({ min: -4, max: 2, step: 1 });
+    expect(computeProfitAxis([-3, 70])).toEqual({ min: -20, max: 80, step: 20 });
+  });
+
+  it("keeps a balanced fallback axis for a flat return series", () => {
+    expect(computeProfitAxis([0, 0])).toEqual({ min: -0.75, max: 0.75, step: 0.25 });
   });
 });

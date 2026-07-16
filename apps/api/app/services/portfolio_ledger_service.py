@@ -40,6 +40,66 @@ class PositionCloseConflict(RuntimeError):
         self.transaction_ids = sorted(set(transaction_ids))
 
 
+def has_user_confirmed_position_shares(fund_code: str) -> bool:
+    """Return whether the active position contains user/platform-confirmed shares.
+
+    A mixed position may be reported as the weakest aggregate quality, so checking
+    only the folded row's ``shares_quality`` would miss a confirmed transaction on
+    top of an estimated legacy baseline. Inspect the active source events as well.
+    """
+
+    code = (fund_code or "").strip().zfill(6)
+    user_id = get_request_user_id()
+    if user_id is None or not code or code == "000000":
+        return False
+
+    now = _utc_now()
+    events = list_portfolio_ledger_events(
+        user_id=user_id,
+        fund_code=code,
+        recorded_at_lte=now.isoformat(),
+        limit=_LEDGER_READ_LIMIT,
+    )
+    if not events:
+        return False
+
+    state = fold_ledger_events(
+        events,
+        position_as_of=now.astimezone(_CN_TZ).date().isoformat(),
+        known_at=now,
+    )
+    position = next(
+        (
+            row
+            for row in state.get("positions") or []
+            if str(row.get("fund_code") or "").strip().zfill(6) == code
+            and (_decimal(row.get("settled_shares")) or Decimal("0")) > 0
+        ),
+        None,
+    )
+    if position is None:
+        return False
+    if str(position.get("shares_quality") or "unknown") in {
+        "user_confirmed",
+        "platform_confirmed",
+    }:
+        return True
+
+    active_source_ids = {
+        str(value) for value in position.get("source_event_ids") or [] if value
+    }
+    for raw in events:
+        event = _event_payload(raw)
+        if str(event.get("event_id") or "") not in active_source_ids:
+            continue
+        if str(event.get("shares_quality") or "unknown") in {
+            "user_confirmed",
+            "platform_confirmed",
+        }:
+            return True
+    return False
+
+
 def ensure_primary_position_store(connection: Any) -> None:
     """Position truth is fail-closed when configured MySQL is unavailable.
 

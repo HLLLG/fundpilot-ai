@@ -146,6 +146,7 @@ from app.services.rebalance_simulator import simulate_rebalance
 from app.services.recommendation_accuracy import build_recommendation_accuracy
 from app.services.sector_signal_backtest import build_sector_signal_backtest
 from app.services.market_breadth_signal import build_market_breadth_signal
+from app.services.fund_return_distribution import build_fund_return_distribution
 from app.services.factor_confidence import clear_ic_summary_cache
 from app.services.factor_ic_snapshot import (
     FactorIcNewerSnapshotExists,
@@ -512,6 +513,15 @@ def market_breadth() -> dict:
     return build_market_breadth_signal()
 
 
+@app.get("/api/diagnostics/fund-return-distribution")
+def fund_return_distribution() -> dict:
+    """最近已公布净值日的开放式基金份额涨跌分布。
+
+    只使用官方净值，不把盘中估值冒充正式收益；A/C/E 等份额代码分别计数。
+    """
+    return build_fund_return_distribution()
+
+
 @app.get("/api/diagnostics/shadow-escalation-digest")
 def shadow_escalation_digest(days: int = 7) -> dict:
     """M6.3：灰度复盘摘要（近 N 天双向 guard 升级判定触发情况，按当前登录用户的历史
@@ -724,10 +734,15 @@ def delete_portfolio_holding(fund_code: str, fund_name: str | None = None) -> di
 
 @app.patch("/api/portfolio/holdings/{fund_code}/adjust")
 def adjust_portfolio_holding(fund_code: str, payload: AdjustHoldingRequest) -> dict:
-    from app.services.holding_adjust_service import adjust_holding_in_portfolio
+    from app.services.holding_adjust_service import (
+        ConfirmedSharesAmountConflict,
+        adjust_holding_in_portfolio,
+    )
 
     try:
         response = adjust_holding_in_portfolio(fund_code, payload)
+    except ConfirmedSharesAmountConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
@@ -920,6 +935,7 @@ def holding_detail(request: HoldingDetailRequest) -> dict:
 
 @app.post("/api/analyze")
 def analyze(request: AnalysisRequest) -> dict:
+    request = request.model_copy(update={"analysis_mode": "deep"})
     try:
         report = run_analysis(request)
     except ValueError as exc:
@@ -929,6 +945,7 @@ def analyze(request: AnalysisRequest) -> dict:
 
 @app.post("/api/analyze/async")
 def analyze_async(request: AnalysisRequest) -> dict:
+    request = request.model_copy(update={"analysis_mode": "deep"})
     try:
         preflight = resolve_portfolio_preflight(
             request.holdings,
@@ -938,8 +955,9 @@ def analyze_async(request: AnalysisRequest) -> dict:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not preflight.holdings:
         raise HTTPException(status_code=400, detail="至少需要一条基金持仓")
-    # Keep the original client body in the queued payload. The worker performs
-    # the authoritative preflight again and must still be able to audit a client
+    # Keep the original client holdings in the queued payload. Only the retired
+    # main-generation mode is normalized above. The worker performs the
+    # authoritative preflight again and must still be able to audit a client
     # versus server mismatch instead of comparing the server snapshot to itself.
     job_id = create_analysis_job(request)
     return {"job_id": job_id, "status": "pending"}
@@ -947,6 +965,7 @@ def analyze_async(request: AnalysisRequest) -> dict:
 
 @app.post("/api/analyze/stream")
 async def analyze_stream_endpoint(request: AnalysisRequest) -> StreamingResponse:
+    request = request.model_copy(update={"analysis_mode": "deep"})
     user_id = get_request_user_id()
 
     async def event_stream():
@@ -1040,6 +1059,7 @@ def market_us_overview(force_refresh: bool = False) -> dict:
 
 @app.post("/api/fund-discovery/async")
 def fund_discovery_async(request: DiscoveryRequest) -> dict:
+    request = request.model_copy(update={"analysis_mode": "deep"})
     if not request.holdings:
         loaded, _, _, _ = load_persisted_holdings()
         request = request.model_copy(update={"holdings": loaded})
@@ -1049,6 +1069,7 @@ def fund_discovery_async(request: DiscoveryRequest) -> dict:
 
 @app.post("/api/fund-discovery/stream")
 async def fund_discovery_stream_endpoint(request: DiscoveryRequest) -> StreamingResponse:
+    request = request.model_copy(update={"analysis_mode": "deep"})
     if not request.holdings:
         loaded, _, _, _ = await asyncio.to_thread(load_persisted_holdings)
         request = request.model_copy(update={"holdings": loaded})
@@ -1646,19 +1667,57 @@ def portfolio_risk_correlation(lookback_days: int = 120) -> dict:
 
 @app.get("/api/portfolio/factor-scores")
 def portfolio_factor_scores() -> dict:
-    """持仓因子体检（懒加载）：排行榜横截面 z-score 多因子打分。
+    """持仓因子体检（懒加载）：优先使用当前 IC 快照的分类型研究模型。
 
-    模块2 第一期；设计见
-    docs/superpowers/specs/2026-06-24-fund-factor-scores-design.md。
+    v2/v3 快照按基金类型同类比较；没有新版研究模型时兼容旧排行榜 300 只横截面。
     """
     holdings, *_ = load_persisted_holdings()
-    payload = build_factor_scores_payload(holdings)
+    ic_context: dict = {}
+    try:
+        from app.services.factor_confidence import load_ic_context
+
+        ic_context = load_ic_context()
+    except Exception:  # noqa: BLE001 — IC 上下文缺失时保留旧横截面兼容路径
+        ic_context = {}
+
+    status = ic_context.get("status") or {}
+    research_model = (
+        ic_context.get("research_model")
+        if ic_context.get("state") == "available"
+        and status.get("stale") is not True
+        and isinstance(ic_context.get("research_model"), dict)
+        else None
+    )
+    payload = build_factor_scores_payload(
+        holdings,
+        research_model=research_model,
+    )
+
     try:
         from app.services.factor_confidence import factor_reliability
 
-        payload["factor_reliability"] = factor_reliability()
+        if research_model is not None:
+            for fund in payload.get("funds") or []:
+                segment = str(fund.get("peer_group") or "")
+                fund["factor_reliability"] = (
+                    factor_reliability(
+                        {},
+                        research_model=research_model,
+                        segment=segment,
+                    )
+                    if segment
+                    else {}
+                )
+            payload["factor_reliability"] = {}
+            payload["reliability_scope"] = "per_fund_peer_group"
+        else:
+            payload["factor_reliability"] = factor_reliability(
+                ic_context.get("factors") or None
+            )
+            payload["reliability_scope"] = "global_legacy"
     except Exception:  # noqa: BLE001 — IC 置信缺失不应影响因子分主体
-        pass
+        payload.setdefault("factor_reliability", {})
+    payload["ic_status"] = status
     return payload
 
 

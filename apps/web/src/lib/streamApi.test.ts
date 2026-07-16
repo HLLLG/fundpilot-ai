@@ -115,7 +115,7 @@ describe("streamAnalysis", () => {
           doneReport = report;
         },
       },
-      { analysisMode: "fast" },
+      {},
     );
 
     expect(stages).toEqual(["fund_data"]);
@@ -127,6 +127,10 @@ describe("streamAnalysis", () => {
       expect.stringContaining("/api/analyze/stream"),
       expect.objectContaining({ method: "POST" }),
     );
+    const requestBody = JSON.parse(
+      String((fetchMock.mock.calls[0]?.[1] as RequestInit | undefined)?.body),
+    );
+    expect(requestBody.analysis_mode).toBe("deep");
   });
 
   it("throws when stream ends without any SSE events", async () => {
@@ -141,7 +145,7 @@ describe("streamAnalysis", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(
-      streamAnalysis([], testProfile(), {}, { analysisMode: "fast" }),
+      streamAnalysis([], testProfile(), {}, {}),
     ).rejects.toThrow();
   });
 
@@ -170,7 +174,7 @@ describe("streamAnalysis", () => {
       [],
       testProfile(),
       {},
-      { analysisMode: "deep", idleTimeoutMs: 50 },
+      { idleTimeoutMs: 50 },
     );
     const expectation = expect(pending).rejects.toThrow(/long time without progress/);
 

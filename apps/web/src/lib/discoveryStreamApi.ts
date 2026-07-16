@@ -1,6 +1,5 @@
 import { getAccessToken } from "@/lib/auth";
 import type {
-  AnalysisMode,
   DiscoveryRecommendation,
   DiscoveryScanMode,
   DiscoveryStrategy,
@@ -99,7 +98,6 @@ function discoveryPayload(
   holdings: Holding[],
   profile: InvestorProfile,
   options?: {
-    analysisMode?: AnalysisMode;
     focusSectors?: string[];
     budgetYuan?: number | null;
     fundTypePreference?: FundTypePreference;
@@ -112,7 +110,7 @@ function discoveryPayload(
   return {
     holdings,
     profile,
-    analysis_mode: options?.analysisMode ?? "fast",
+    analysis_mode: "deep",
     focus_sectors: options?.focusSectors ?? [],
     budget_yuan: options?.budgetYuan ?? null,
     fund_type_preference: options?.fundTypePreference ?? "any",
@@ -170,7 +168,6 @@ export async function streamDiscovery(
   profile: InvestorProfile,
   events: StreamingDiscoveryEvents,
   options?: {
-    analysisMode?: AnalysisMode;
     focusSectors?: string[];
     budgetYuan?: number | null;
     fundTypePreference?: FundTypePreference;

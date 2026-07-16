@@ -6,7 +6,7 @@ import hashlib
 import json
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import date
+from datetime import date, timedelta
 from typing import Literal
 
 from app.database import get_portfolio_intraday_curve_entry, save_portfolio_intraday_curve
@@ -20,14 +20,6 @@ from app.services.trade_calendar_cache import get_trade_date_set
 from app.services.trading_session import build_trading_session, get_effective_trade_date
 
 ProfitRange = Literal["today", "week", "month", "year", "all"]
-
-_RANGE_LIMITS: dict[str, int] = {
-    "today": 1,
-    "week": 7,
-    "month": 31,
-    "year": 366,
-    "all": 800,
-}
 
 _INDEX_INTRADAY_CACHE: tuple[float, list[dict]] | None = None
 _INDEX_INTRADAY_TTL_SECONDS = 60
@@ -302,27 +294,30 @@ def filter_snapshots_by_range(
     if not rows:
         return []
     anchor = anchor_date or date.today()
-    if profit_range == "all":
-        filtered = list(reversed(rows))
-    else:
-        limit = _RANGE_LIMITS.get(profit_range, 30)
-        if profit_range == "month":
-            month_prefix = anchor.strftime("%Y-%m")
-            filtered = [
-                row
-                for row in reversed(rows)
-                if str(row.get("snapshot_date") or "").startswith(month_prefix)
-            ]
-        elif profit_range == "year":
-            year_prefix = anchor.strftime("%Y")
-            filtered = [
-                row
-                for row in reversed(rows)
-                if str(row.get("snapshot_date") or "").startswith(year_prefix)
-            ]
-        else:
-            filtered = list(reversed(rows[-limit:]))
-    return sorted(filtered, key=lambda row: str(row.get("snapshot_date") or ""))
+    range_start: date | None = None
+    if profit_range == "today":
+        range_start = anchor
+    elif profit_range == "week":
+        range_start = anchor - timedelta(days=anchor.weekday())
+    elif profit_range == "month":
+        range_start = anchor.replace(day=1)
+    elif profit_range == "year":
+        range_start = anchor.replace(month=1, day=1)
+
+    dated_rows: list[tuple[date, dict]] = []
+    for row in rows:
+        try:
+            snapshot_date = date.fromisoformat(str(row.get("snapshot_date") or "")[:10])
+        except ValueError:
+            continue
+        if snapshot_date > anchor:
+            continue
+        if range_start is not None and snapshot_date < range_start:
+            continue
+        dated_rows.append((snapshot_date, row))
+
+    dated_rows.sort(key=lambda item: item[0])
+    return [row for _, row in dated_rows]
 
 
 def build_daily_trend_series(
@@ -348,22 +343,22 @@ def build_daily_trend_series(
     index_history = fetch_index_daily_history(index_symbol, trading_days=400)
     index_by_date = _index_daily_change_lookup(index_history)
 
-    cumulative_portfolio = 0.0
-    cumulative_index = 0.0
+    cumulative_portfolio_factor = 1.0
+    cumulative_index_factor = 1.0
     series: list[dict[str, float | str | None]] = []
     for row in snapshots:
         day = str(row.get("snapshot_date") or "")
         daily_return = row.get("daily_return_percent")
         if daily_return is not None:
-            cumulative_portfolio += float(daily_return)
+            cumulative_portfolio_factor *= 1.0 + float(daily_return) / 100.0
         index_change = index_by_date.get(day)
         if index_change is not None:
-            cumulative_index += float(index_change)
+            cumulative_index_factor *= 1.0 + float(index_change) / 100.0
         series.append(
             {
                 "date": day,
-                "portfolio_percent": round(cumulative_portfolio, 4),
-                "index_percent": round(cumulative_index, 4),
+                "portfolio_percent": round((cumulative_portfolio_factor - 1.0) * 100.0, 4),
+                "index_percent": round((cumulative_index_factor - 1.0) * 100.0, 4),
             }
         )
     return series
@@ -422,7 +417,15 @@ def build_profit_trend(
             ],
         }
 
-    filtered = filter_snapshots_by_range(snapshots, profit_range)
+    try:
+        anchor_date = date.fromisoformat(str(trade_date)[:10])
+    except ValueError:
+        anchor_date = date.today()
+    filtered = filter_snapshots_by_range(
+        snapshots,
+        profit_range,
+        anchor_date=anchor_date,
+    )
     series = build_daily_trend_series(filtered)
     return {
         "kind": "daily",
@@ -543,8 +546,12 @@ def build_calendar_month(
         "month": month,
         "days": days,
         "month_cumulative_profit": round(month_profit, 2),
-        "month_index_return_percent": round(sum(index_returns), 2) if index_returns else None,
-        "month_cumulative_return_percent": round(sum(month_returns), 2) if month_returns else None,
+        "month_index_return_percent": (
+            round(_compound_return_percent(index_returns), 2) if index_returns else None
+        ),
+        "month_cumulative_return_percent": (
+            round(_compound_return_percent(month_returns), 2) if month_returns else None
+        ),
     }
 
 
@@ -556,7 +563,9 @@ def summarize_trend_footer(
     points = trend.get("points") or []
     if not points:
         return {
-            "portfolio_return_percent": summary_daily_return,
+            "portfolio_return_percent": (
+                summary_daily_return if trend.get("kind") == "intraday" else None
+            ),
             "index_return_percent": None,
             "alpha_percent": None,
         }

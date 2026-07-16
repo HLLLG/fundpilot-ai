@@ -266,8 +266,8 @@ describe("truthful evidence panel states", () => {
     render(<RecommendationAccuracyPanel />);
 
     expect(await screen.findByText("T+N 决策复盘")).toBeInTheDocument();
+    expect((await screen.findAllByText("66.7%")).length).toBeGreaterThan(0);
     expect(screen.getByText(/不进入自动调参/)).toBeInTheDocument();
-    expect(screen.getAllByText("66.7%").length).toBeGreaterThan(0);
     expect(screen.queryByText(/300%/)).not.toBeInTheDocument();
     expect(screen.getByText(/观察\/复核 1 条/)).toBeInTheDocument();
     expect(screen.getByText("假设费后正收益")).toBeInTheDocument();

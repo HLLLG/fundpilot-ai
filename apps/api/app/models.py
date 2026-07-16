@@ -565,9 +565,10 @@ class UpdateFundProfileRequest(BaseModel):
 
 
 class AdjustHoldingRequest(BaseModel):
-    settled_holding_amount: float | None = Field(default=None, ge=0)
+    # 清仓必须走删除持仓，以便同步关闭交易账本；金额编辑只接受仍在持有的仓位。
+    settled_holding_amount: float | None = Field(default=None, gt=0)
     holding_profit: float | None = None
-    holding_return_percent: float | None = None
+    holding_return_percent: float | None = Field(default=None, gt=-100)
 
 
 class ApplyHoldingsRequest(BaseModel):

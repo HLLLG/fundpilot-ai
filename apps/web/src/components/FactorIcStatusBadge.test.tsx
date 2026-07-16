@@ -54,6 +54,31 @@ describe("FactorIcStatusBadge", () => {
     );
   });
 
+  it("does not present a legacy 300-fund contract as current evidence", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          available: true,
+          schema_version: 1,
+          upgrade_required: true,
+          expected_universe_size: 1500,
+          run_date: "2026-07-10",
+          stale: false,
+          stale_after_days: 30,
+          source: "database",
+          universe_size: 300,
+        }),
+      ),
+    );
+
+    render(<FactorIcStatusBadge />);
+
+    expect(
+      await screen.findByText("IC 旧版：7月10日 · 300只 · 待升级至1500只"),
+    ).toBeInTheDocument();
+  });
+
   it("shows PIT collection honestly before the strict v3 gate matures", async () => {
     vi.stubGlobal(
       "fetch",

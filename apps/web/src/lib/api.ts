@@ -663,6 +663,10 @@ export type FundFactorScore = {
   composite_score: number | null;
   composite_grade: "A" | "B" | "C" | "D" | null;
   factors: Record<FactorKey, FactorDetail>;
+  peer_group?: string | null;
+  peer_group_label?: string | null;
+  peer_count?: number | null;
+  factor_reliability?: Record<string, FactorReliability> | null;
 };
 
 export type FactorReliability = { level: string; basis: string };
@@ -673,12 +677,17 @@ export type PortfolioFactorScores = {
   message?: string | null;
   funds: FundFactorScore[];
   factor_reliability?: Record<string, FactorReliability> | null;
+  model_version?: string | null;
+  reliability_scope?: "per_fund_peer_group" | "global_legacy" | string;
+  ic_status?: FactorIcStatus | null;
 };
 
 export type FactorIcStatus = {
   available: boolean;
   snapshot_id?: string | null;
   schema_version?: number;
+  upgrade_required?: boolean;
+  expected_universe_size?: number;
   run_date?: string;
   generated_at?: string;
   published_at?: string | null;
@@ -2059,14 +2068,13 @@ function analysisPayload(
   holdings: Holding[],
   profile: InvestorProfile,
   ocrText?: string,
-  analysisMode: AnalysisMode = "deep",
   systemRolePrompt?: string | null,
 ) {
   return {
     holdings,
     profile,
     ocr_text: ocrText,
-    analysis_mode: analysisMode,
+    analysis_mode: "deep",
     system_role_prompt: systemRolePrompt?.trim() || null,
   };
 }
@@ -2075,14 +2083,13 @@ export async function startAnalyzeJob(
   holdings: Holding[],
   profile: InvestorProfile,
   ocrText?: string,
-  analysisMode: AnalysisMode = "deep",
   systemRolePrompt?: string | null,
 ): Promise<string> {
   const response = await apiFetch(`${API_BASE}/api/analyze/async`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(
-      analysisPayload(holdings, profile, ocrText, analysisMode, systemRolePrompt),
+      analysisPayload(holdings, profile, ocrText, systemRolePrompt),
     ),
   });
   if (!response.ok) {
@@ -2193,7 +2200,6 @@ export async function startDiscoveryJob(
   holdings: Holding[],
   profile: InvestorProfile,
   options?: {
-    analysisMode?: AnalysisMode;
     focusSectors?: string[];
     budgetYuan?: number | null;
     fundTypePreference?: FundTypePreference;
@@ -2209,7 +2215,7 @@ export async function startDiscoveryJob(
     body: JSON.stringify({
       holdings,
       profile,
-      analysis_mode: options?.analysisMode ?? "deep",
+      analysis_mode: "deep",
       focus_sectors: options?.focusSectors ?? [],
       budget_yuan: options?.budgetYuan ?? null,
       fund_type_preference: options?.fundTypePreference ?? "any",
@@ -2523,8 +2529,16 @@ export type MarketBreadthSignal = {
   advance_count?: number | null;
   decline_count?: number | null;
   flat_count?: number | null;
+  suspended_count?: number | null;
+  traded_sample_count?: number | null;
+  market_sample_count?: number | null;
+  source_name?: string | null;
+  universe_scope?: string | null;
   activity_percent?: number | null;
   advance_ratio_percent?: number | null;
+  decline_ratio_percent?: number | null;
+  flat_ratio_percent?: number | null;
+  breadth_tone?: string | null;
   real_limit_up_count?: number | null;
   real_limit_down_count?: number | null;
   /** 盘中信号所引用的最近完整收盘锚点。 */
@@ -2551,6 +2565,46 @@ export type MarketBreadthSignal = {
 
 export async function fetchMarketBreadth(): Promise<MarketBreadthSignal> {
   const response = await apiFetch(`${API_BASE}/api/diagnostics/market-breadth`, {
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export type FundReturnDistributionBinKey =
+  | "le_neg5"
+  | "neg5_neg3"
+  | "neg3_neg1"
+  | "neg1_zero"
+  | "zero"
+  | "zero_one"
+  | "one_three"
+  | "three_five"
+  | "ge_five";
+
+export type FundReturnDistribution = {
+  available: boolean;
+  stale?: boolean;
+  message?: string | null;
+  source_mode?: "official_nav";
+  source_name?: string | null;
+  universe_scope?: string | null;
+  as_of_date?: string | null;
+  fetched_at?: string | null;
+  source_row_count?: number | null;
+  valid_count?: number | null;
+  missing_count?: number | null;
+  coverage_percent?: number | null;
+  advance_count?: number | null;
+  decline_count?: number | null;
+  flat_count?: number | null;
+  bins?: Partial<Record<FundReturnDistributionBinKey, number>>;
+};
+
+export async function fetchFundReturnDistribution(): Promise<FundReturnDistribution> {
+  const response = await apiFetch(`${API_BASE}/api/diagnostics/fund-return-distribution`, {
     cache: "no-store",
   });
   if (!response.ok) {
@@ -2965,7 +3019,10 @@ export async function adjustHolding(
     },
   );
   if (!response.ok) {
-    throw new Error(await response.text());
+    const errorBody = (await response.json().catch(() => null)) as {
+      detail?: string;
+    } | null;
+    throw new Error(errorBody?.detail || "持仓保存失败");
   }
   return response.json();
 }

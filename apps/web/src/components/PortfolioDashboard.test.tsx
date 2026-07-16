@@ -201,7 +201,7 @@ describe("PortfolioDashboard range UI", () => {
     expect(screen.getAllByText("+2.34%").length).toBeGreaterThan(0);
     expect(screen.queryByText("+9,999.00")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "收益额" })).not.toBeInTheDocument();
-    expect(screen.getByText(/所选范围内每日收益率累计/)).toBeInTheDocument();
+    expect(screen.getByText(/所选区间内每日收益率按复利累计/)).toBeInTheDocument();
     expect(screen.getByText(/数据截至 2026-07-10/)).toBeInTheDocument();
     expect(screen.getByTestId("profit-trend-kind")).toHaveTextContent("daily");
   });

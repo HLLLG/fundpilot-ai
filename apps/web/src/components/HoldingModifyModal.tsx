@@ -77,8 +77,8 @@ export function HoldingModifyModal({
   async function handleSave() {
     const amount = parseMoneyInput(amountInput);
     const profitValue = parseMoneyInput(profitInput);
-    if (amount == null || amount < 0) {
-      setError("请输入有效的持有金额");
+    if (amount == null || amount <= 0) {
+      setError("持有金额必须大于 0；如已清仓，请使用删除该基金");
       return;
     }
 

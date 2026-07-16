@@ -1,22 +1,34 @@
 // @vitest-environment jsdom
 
 import { act, cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { deleteClientCache } from "@/lib/clientCache";
 import { MarketBreadthGauge } from "@/components/MarketBreadthGauge";
 
 const apiMocks = vi.hoisted(() => ({
   fetchMarketBreadth: vi.fn(),
+  fetchFundReturnDistribution: vi.fn(),
 }));
 
 vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
-  return { ...actual, fetchMarketBreadth: apiMocks.fetchMarketBreadth };
+  return {
+    ...actual,
+    fetchMarketBreadth: apiMocks.fetchMarketBreadth,
+    fetchFundReturnDistribution: apiMocks.fetchFundReturnDistribution,
+  };
 });
 
 const CACHE_KEY = "diagnostics:market-breadth";
 
 describe("MarketBreadthGauge", () => {
+  beforeEach(() => {
+    apiMocks.fetchFundReturnDistribution.mockResolvedValue({
+      available: false,
+      message: "暂无官方净值分布",
+    });
+  });
+
   afterEach(() => {
     cleanup();
     deleteClientCache(CACHE_KEY, "memory");
@@ -76,10 +88,10 @@ describe("MarketBreadthGauge", () => {
 
     expect(screen.getByText("盘中准实时")).toBeTruthy();
     expect(screen.getByText("更新于 2026-07-13 09:45")).toBeTruthy();
-    expect(screen.getByText("参与当前决策")).toBeTruthy();
+    expect(screen.getByText("数据可参与当前决策")).toBeTruthy();
     expect(screen.getByText("960")).toBeTruthy();
     expect(screen.getByText("4160")).toBeTruthy();
-    expect(screen.getByText("18.4%")).toBeTruthy();
+    expect(screen.getByText("18.5%")).toBeTruthy();
     expect(screen.getByText(/收盘锚点：2026-07-10/)).toBeTruthy();
   });
 
@@ -99,7 +111,7 @@ describe("MarketBreadthGauge", () => {
     render(<MarketBreadthGauge />);
 
     expect(await screen.findByText("上一交易日收盘回退")).toBeTruthy();
-    expect(screen.getByText("仅展示，不参与当前决策")).toBeTruthy();
+    expect(screen.getByText("数据仅展示，不参与当前决策")).toBeTruthy();
     expect(screen.getByText(/数据已过期，继续展示上次有效快照/)).toBeTruthy();
   });
 
@@ -204,14 +216,14 @@ describe("MarketBreadthGauge", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(screen.getByText("参与当前决策")).toBeTruthy();
+    expect(screen.getByText("数据可参与当前决策")).toBeTruthy();
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5 * 60_000);
     });
 
     expect(apiMocks.fetchMarketBreadth).toHaveBeenCalledTimes(2);
-    expect(screen.getByText("仅展示，不参与当前决策")).toBeTruthy();
+    expect(screen.getByText("数据仅展示，不参与当前决策")).toBeTruthy();
     expect(screen.getByText(/盘中快照已超过10分钟未更新/)).toBeTruthy();
     expect(screen.getByText(/本次更新失败，正在显示上次数据/)).toBeTruthy();
   });

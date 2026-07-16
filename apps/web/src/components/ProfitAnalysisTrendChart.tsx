@@ -84,7 +84,8 @@ function formatPercent(value: number | null | undefined) {
   return `${rounded > 0 ? "+" : ""}${rounded.toFixed(2)}%`;
 }
 
-const Y_AXIS_STEP = 0.75;
+const TARGET_Y_INTERVALS = 6;
+const MIN_Y_AXIS_STEP = 0.01;
 
 export function formatProfitAxisLabel(value: number) {
   const rounded = Math.round(value * 100) / 100;
@@ -94,31 +95,47 @@ export function formatProfitAxisLabel(value: number) {
   return `${rounded > 0 ? "+" : ""}${rounded.toFixed(2)}%`;
 }
 
-/** 按组合收益 + 上证曲线极值非对称定轴，避免指数线被裁切。 */
-function computeAxisBounds(values: number[], step: number = Y_AXIS_STEP) {
-  const safeValues = values.length ? values : [0];
-  const dataMin = Math.min(...safeValues, 0);
-  const dataMax = Math.max(...safeValues, 0);
+function niceAxisStep(rawStep: number) {
+  const safeStep = Math.max(rawStep, MIN_Y_AXIS_STEP);
+  const exponent = Math.floor(Math.log10(safeStep));
+  const scale = 10 ** exponent;
+  const fraction = safeStep / scale;
+  const niceFraction =
+    fraction <= 1 ? 1 : fraction <= 2 ? 2 : fraction <= 2.5 ? 2.5 : fraction <= 5 ? 5 : 10;
+  return Math.max(MIN_Y_AXIS_STEP, niceFraction * scale);
+}
 
-  const downExtent = Math.abs(Math.min(dataMin, 0));
-  const upExtent = Math.max(dataMax, 0);
-  const paddedDown = downExtent > 0 ? downExtent * 1.12 + step * 0.2 : step;
-  const paddedUp = upExtent > 0 ? upExtent * 1.12 + step * 0.2 : step;
+function roundAxisValue(value: number) {
+  return Math.round(value * 1_000_000) / 1_000_000;
+}
 
-  const stepsBelow = Math.max(1, Math.ceil(paddedDown / step));
-  const stepsAbove = Math.max(1, Math.ceil(paddedUp / step));
+/** 按组合收益与上证曲线的实际跨度生成约 6 个“整步长”区间，并始终保留零轴。 */
+export function computeProfitAxis(values: number[]) {
+  const finiteValues = values.filter((value) => Number.isFinite(value));
+  if (finiteValues.length === 0 || finiteValues.every((value) => Math.abs(value) < 0.005)) {
+    return { min: -0.75, max: 0.75, step: 0.25 };
+  }
+
+  const dataMin = Math.min(...finiteValues, 0);
+  const dataMax = Math.max(...finiteValues, 0);
+  const span = dataMax - dataMin;
+  const padding = span * 0.08;
+  const step = niceAxisStep((span + padding * 2) / TARGET_Y_INTERVALS);
+  const min = Math.floor((dataMin - padding) / step) * step;
+  const max = Math.ceil((dataMax + padding) / step) * step;
 
   return {
-    min: -stepsBelow * step,
-    max: stepsAbove * step,
+    min: roundAxisValue(Math.min(min, -step)),
+    max: roundAxisValue(Math.max(max, step)),
+    step: roundAxisValue(step),
   };
 }
 
-function buildYTicks(min: number, max: number, step: number = Y_AXIS_STEP) {
+function buildYTicks(min: number, max: number, step: number) {
   const ticks: number[] = [];
   const count = Math.round((max - min) / step);
   for (let index = 0; index <= count; index += 1) {
-    ticks.push(Math.round((min + index * step) * 100) / 100);
+    ticks.push(roundAxisValue(min + index * step));
   }
   return ticks;
 }
@@ -217,8 +234,8 @@ export function ProfitAnalysisTrendChart({ trend, height = 200 }: ProfitAnalysis
       return null;
     }
     const axisValues = [...portfolioValues, ...indexValues];
-    const { min, max } = computeAxisBounds(axisValues);
-    const yTickValues = buildYTicks(min, max);
+    const { min, max, step } = computeProfitAxis(axisValues);
+    const yTickValues = buildYTicks(min, max, step);
     const leftPad = leftPaddingForLabels(Math.max(Math.abs(min), Math.abs(max)));
     const padding = { top: 12, right: 10, bottom: 14, left: leftPad };
     const width = responsiveWidth;
@@ -271,7 +288,7 @@ export function ProfitAnalysisTrendChart({ trend, height = 200 }: ProfitAnalysis
       value,
       y: toY(value),
       label: formatProfitAxisLabel(value),
-      isZero: Math.abs(value) < Y_AXIS_STEP / 2,
+      isZero: Math.abs(value) < MIN_Y_AXIS_STEP / 2,
     }));
 
     const xLabels =

@@ -758,6 +758,12 @@ def _build_factor_ic_status_from_loaded(
         if isinstance(row, dict) and row.get("factor")
     }
     source_commit = str(metadata.get("source_commit") or "")[:7] or None
+    schema_version = int(raw.get("schema_version") or FACTOR_IC_SCHEMA_VERSION)
+    upgrade_required = bool(
+        schema_version < V2_FACTOR_IC_SCHEMA_VERSION
+        or int((params or {}).get("universe_size") or 0)
+        < V2_EXPECTED_PARAMS["universe_size"]
+    )
     coverage = raw.get("coverage") if isinstance(raw.get("coverage"), dict) else {}
     research_model = (
         raw.get("research_model")
@@ -790,7 +796,9 @@ def _build_factor_ic_status_from_loaded(
     return {
         "available": True,
         "snapshot_id": metadata.get("snapshot_id"),
-        "schema_version": raw.get("schema_version", 1),
+        "schema_version": schema_version,
+        "upgrade_required": upgrade_required,
+        "expected_universe_size": V2_EXPECTED_PARAMS["universe_size"],
         "run_date": str(raw["run_date"]),
         "generated_at": generated.isoformat(),
         "published_at": metadata.get("published_at"),

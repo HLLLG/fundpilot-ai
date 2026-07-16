@@ -78,6 +78,14 @@ export function FactorIcStatusBadge() {
       </StatusLine>
     );
   }
+  if (status.upgrade_required) {
+    return (
+      <StatusLine tone="stale">
+        IC 旧版：{shortDate(status.run_date)} · {status.universe_size ?? "—"}只 ·
+        待升级至{status.expected_universe_size ?? 1500}只
+      </StatusLine>
+    );
+  }
   const scope =
     status.cohort_mode === "point_in_time"
       ? status.point_in_time?.point_in_time_scope === "nav_observation_pit" &&

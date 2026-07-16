@@ -4,7 +4,6 @@ const PROFILE_KEY = "fundpilot-investor-profile";
 const ANALYSIS_PROMPT_KEY = "fundpilot-analysis-prompt";
 const DISCOVERY_PROMPT_KEY = "fundpilot-discovery-prompt";
 const DISCOVERY_SECTORS_KEY = "fundpilot-discovery-sectors";
-const MODE_KEY = "fundpilot-analysis-mode";
 const CHAT_MODE_KEY = "fundpilot-report-chat-mode";
 
 const USER_SCOPED_STORAGE_VERSION = 1;
@@ -202,21 +201,6 @@ export function loadDiscoveryPrompt(
 
 export function saveDiscoveryPrompt(userId: UserStorageId, config: DiscoveryPromptConfig) {
   saveUserScopedValue(DISCOVERY_PROMPT_KEY, userId, config);
-}
-
-export function loadAnalysisMode(fallback: AnalysisMode = "deep"): AnalysisMode {
-  if (typeof window === "undefined") {
-    return fallback;
-  }
-  const raw = window.localStorage.getItem(MODE_KEY);
-  return raw === "fast" || raw === "deep" ? raw : fallback;
-}
-
-export function saveAnalysisMode(mode: AnalysisMode) {
-  if (typeof window === "undefined") {
-    return;
-  }
-  window.localStorage.setItem(MODE_KEY, mode);
 }
 
 export function loadReportChatMode(fallback: ReportChatMode = "fast"): ReportChatMode {

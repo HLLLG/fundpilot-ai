@@ -57,7 +57,7 @@ export function buildPortfolioHeroDisplay({
       valueFormat: "percent",
       secondaryPercent: null,
       showMetricToggle: false,
-      explanation: "口径：所选范围内每日收益率累计；不等同于收益金额。",
+      explanation: "口径：所选区间内每日收益率按复利累计；不等同于收益金额。",
     };
   }
 

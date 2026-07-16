@@ -7,7 +7,6 @@ import type {
 } from "react";
 import { ChevronDown, History, Loader2, RotateCcw, Sparkles, Target } from "lucide-react";
 import type {
-  AnalysisMode,
   DiscoveryPromptConfig,
   DiscoveryRecommendation,
   DiscoverySectorHeat,
@@ -25,7 +24,6 @@ import {
   startDiscoveryJob,
 } from "@/lib/api";
 import { DiscoveryHistoryWorkspace } from "@/components/DiscoveryHistoryWorkspace";
-import { AnalysisModeToggle } from "@/components/AnalysisModeToggle";
 import { InlineNotice, type NoticeTone } from "@/components/InlineNotice";
 import { DiscoveryReportPanel } from "@/components/DiscoveryReportPanel";
 import { DiscoverySkeleton } from "@/components/DiscoverySkeleton";
@@ -81,8 +79,6 @@ type FundDiscoveryPanelProps = {
   userId: number | null;
   holdings: Holding[];
   profile: InvestorProfile;
-  analysisMode: AnalysisMode;
-  onAnalysisModeChange: (mode: AnalysisMode) => void;
   discoveryJobId: string | null;
   onDiscoveryJobIdChange: (jobId: string | null) => void;
   pendingDiscoveryReport: FundDiscoveryReport | null;
@@ -99,8 +95,6 @@ export function FundDiscoveryPanel({
   userId,
   holdings,
   profile,
-  analysisMode,
-  onAnalysisModeChange,
   discoveryJobId,
   onDiscoveryJobIdChange,
   pendingDiscoveryReport,
@@ -271,7 +265,6 @@ export function FundDiscoveryPanel({
     }
     const parsedBudget = budgetYuan.trim() ? Number(budgetYuan) : null;
     const scanOptions = {
-      analysisMode,
       focusSectors,
       budgetYuan: parsedBudget && !Number.isNaN(parsedBudget) ? parsedBudget : null,
       fundTypePreference: "any" as const,
@@ -397,7 +390,6 @@ export function FundDiscoveryPanel({
       setIsSubmitting(false);
     }
   }, [
-    analysisMode,
     budgetYuan,
     discoveryPrompt.is_custom,
     discoveryPrompt.role_prompt,
@@ -444,7 +436,7 @@ export function FundDiscoveryPanel({
       : report
         ? "历史模式"
         : SCAN_MODE_LABELS[scanMode];
-  const summaryAnalysisMode = report?.analysis_mode ?? analysisMode;
+  const summaryAnalysisMode = report?.analysis_mode ?? "deep";
   const reportedDiscoveryStrategy =
     report?.discovery_facts?.effective_configuration?.discovery_strategy;
   const summaryDiscoveryStrategy = report
@@ -720,7 +712,7 @@ export function FundDiscoveryPanel({
             </p>
           </div>
 
-          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <div className="mt-4 max-w-md">
             <label className="block text-xs font-semibold text-slate-700">
               本次可投入预算（元，可选）
               <input
@@ -733,16 +725,6 @@ export function FundDiscoveryPanel({
                 className="mt-1 min-h-11 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-[var(--brand)]"
               />
             </label>
-            <fieldset>
-              <legend className="text-xs font-semibold text-slate-700">分析模式</legend>
-              <div className="mt-1">
-                <AnalysisModeToggle
-                  mode={analysisMode}
-                  onChange={onAnalysisModeChange}
-                  compact
-                />
-              </div>
-            </fieldset>
           </div>
 
           <button

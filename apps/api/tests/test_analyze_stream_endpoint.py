@@ -20,7 +20,10 @@ def _parse_sse_events(body: str) -> list[dict]:
 
 
 def test_analyze_stream_endpoint_emits_sse(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    captured_modes: list[str] = []
+
     def fake_stream_analysis(request, *, user_id: int):
+        captured_modes.append(request.analysis_mode)
         yield {"type": "session", "session_id": "sess-1"}
         yield {"type": "stage", "stage": "fund_data", "label": "拉取净值"}
         yield {"type": "skeleton", "fund_codes": ["519674"], "fund_names": ["银河"]}
@@ -56,3 +59,4 @@ def test_analyze_stream_endpoint_emits_sse(tmp_path, monkeypatch: pytest.MonkeyP
     types = [e["type"] for e in events]
     assert types == ["session", "stage", "skeleton", "done"]
     assert events[-1]["report_id"] == "r1"
+    assert captured_modes == ["deep"]

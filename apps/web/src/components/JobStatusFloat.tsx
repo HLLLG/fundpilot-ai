@@ -25,7 +25,7 @@ export function JobStatusFloat({ jobId, onComplete, onClose, onRetry }: JobStatu
   const [error, setError] = useState<string | null>(null);
   const [report, setReport] = useState<Report | null>(null);
   const [stageLabel, setStageLabel] = useState("正在生成报告…");
-  const [analysisMode, setAnalysisMode] = useState<string>("fast");
+  const [analysisMode, setAnalysisMode] = useState<string>("deep");
 
   useEffect(() => {
     if (!jobId) {

@@ -5,9 +5,6 @@ import { afterEach, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import { RiskControls } from "@/components/RiskControls";
 
-vi.mock("@/components/AnalysisModeToggle", () => ({
-  AnalysisModeToggle: () => <div data-testid="analysis-mode-toggle" />,
-}));
 vi.mock("@/components/InvestmentPresetSelector", () => ({
   InvestmentPresetSelector: () => <div data-testid="investment-preset-selector" />,
 }));
@@ -29,10 +26,8 @@ function props(): ComponentProps<typeof RiskControls> {
       avoid_chasing: true,
       decision_style: "conservative",
     },
-    analysisMode: "deep",
     rolePrompt: "默认角色",
     isRolePromptCustom: false,
-    onAnalysisModeChange: vi.fn(),
     onChange: vi.fn(),
     onRolePromptChange: vi.fn(),
     onRolePromptReset: vi.fn(),
@@ -48,6 +43,7 @@ it("shows full generation controls when there is no completed report", () => {
   const rolePromptTrigger = screen.getByRole("button", { name: /AI 分析偏好附录（高级）/ });
   expect(rolePromptTrigger).toHaveAttribute("aria-expanded", "false");
   expect(screen.queryByTestId("role-prompt-editor")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "快速 · Flash" })).not.toBeInTheDocument();
   fireEvent.click(rolePromptTrigger);
   expect(screen.getByTestId("role-prompt-editor")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "生成今日操作建议" })).toBeInTheDocument();

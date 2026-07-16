@@ -6,7 +6,6 @@ import type { ComponentProps, MutableRefObject } from "react";
 import "@testing-library/jest-dom/vitest";
 
 import type {
-  AnalysisMode,
   FundDiscoveryReport,
   Holding,
   InvestorProfile,
@@ -116,8 +115,6 @@ function renderPanel(overrides: Partial<ComponentProps<typeof FundDiscoveryPanel
     userId: 101,
     holdings: [holding()],
     profile: profile(),
-    analysisMode: "fast",
-    onAnalysisModeChange: vi.fn(),
     discoveryJobId: null,
     onDiscoveryJobIdChange: vi.fn(),
     pendingDiscoveryReport: null,
@@ -144,8 +141,6 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
         userId={101}
         holdings={[holding()]}
         profile={profile()}
-        analysisMode={"fast" as AnalysisMode}
-        onAnalysisModeChange={vi.fn()}
         discoveryJobId={null}
         onDiscoveryJobIdChange={vi.fn()}
         pendingDiscoveryReport={null as FundDiscoveryReport | null}
@@ -169,8 +164,6 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
         userId={101}
         holdings={[holding()]}
         profile={profile()}
-        analysisMode={"fast" as AnalysisMode}
-        onAnalysisModeChange={vi.fn()}
         discoveryJobId={null}
         onDiscoveryJobIdChange={vi.fn()}
         pendingDiscoveryReport={null as FundDiscoveryReport | null}
@@ -230,8 +223,6 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
         userId={101}
         holdings={[holding()]}
         profile={profile()}
-        analysisMode={"fast" as AnalysisMode}
-        onAnalysisModeChange={vi.fn()}
         discoveryJobId={null}
         onDiscoveryJobIdChange={vi.fn()}
         pendingDiscoveryReport={null as FundDiscoveryReport | null}
@@ -267,22 +258,11 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
     expect(screen.getByText("系统自动选基")).toBeInTheDocument();
   });
 
-  it("uses the truthful shared fast and deep mode descriptions", () => {
-    const onAnalysisModeChange = vi.fn();
-    renderPanel({
-      analysisMode: "deep",
-      onAnalysisModeChange,
-    });
+  it("keeps the main discovery entry deep-only", () => {
+    renderPanel();
 
-    expect(screen.getByRole("button", { name: "快速 · Flash" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "深度 · Pro" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
-    expect(screen.getByText("Pro 模型 · 有界扩展证据 · 可选风控审校")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "快速 · Flash" }));
-    expect(onAnalysisModeChange).toHaveBeenCalledWith("fast");
+    expect(screen.queryByRole("button", { name: "快速 · Flash" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "深度 · Pro" })).not.toBeInTheDocument();
   });
 
   it("sends the fixed automatic quality and share-class policies for normal scans", async () => {
