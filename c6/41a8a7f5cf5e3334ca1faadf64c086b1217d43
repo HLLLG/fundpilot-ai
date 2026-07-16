@@ -1,0 +1,218 @@
+apps/api/app/services/discovery_client.py
+  s_45a45f3a807adc::t_b4a077214d8b6b 665
+apps/api/app/services/fund_discovery_data_cache.py
+  s_45a45f3a807adc::t_a38d58515f5429 16,336-339
+  s_45a45f3a807adc::t_eaeffd596b85f7 168-197,378-399
+apps/api/app/services/eastmoney_spot_client.py
+  s_45a45f3a807adc::t_b3b6678743f31d 702,714-717,760-770,780-783
+apps/api/app/services/discovery_candidate_pool.py
+  s_45a45f3a807adc::t_a38d58515f5429 506-509
+  s_45a45f3a807adc::t_d6ff1f46ea342d 790,795-800,824-841,1634-1635
+  s_45a45f3a807adc::t_66ea172727be8a 389-419
+  s_45a45f3a807adc::t_d140b7aa4a59eb 455,1613-1633
+  s_45a45f3a807adc::t_5f4dbc71011343 3
+apps/api/tests/test_fund_tradeability.py
+  s_45a45f3a807adc::t_645f9e40882cb8 4,9,25,206-257,295-296
+  s_45a45f3a807adc::t_22ea019645d3b0 258-294
+apps/api/app/services/sector_constituent_proxy.py
+  s_45a45f3a807adc::t_e198616e6fe21e 12,20-25,30-33,45-50,54,63-76,136-141,174-177,179-180,182-210
+  s_45a45f3a807adc::t_58188d0feb9bb1 1-11,13-19,26-29,34-44,51-53,55-62,77-135,142-173,178,181,211-236
+apps/web/src/components/DiscoveryCandidatePoolPanel.tsx
+  s_45a45f3a807adc::t_fcd583fab15c0b 344-347,723
+  s_45a45f3a807adc::t_8a04a9ef1f3d18 87-91,154,257-263,335-343,348-443
+  s_45a45f3a807adc::t_713d936d221b83 721-722,724-758,760-775,777-813,821-826,828-832
+apps/api/app/services/deepseek_client.py
+  s_45a45f3a807adc::t_b4a077214d8b6b 778,1490
+apps/api/tests/test_fund_lookthrough_claim_validator_paths.py
+  s_45a45f3a807adc::t_38480249fa73fe 6,9-10,16,22-23,26,28-30,33-37,40-41,43-45,48-53,56-58
+apps/api/tests/test_ocr_engine.py
+  s_45a45f3a807adc::t_f31a8f009630ab 1-66
+apps/api/tests/test_fund_discovery_data_cache.py
+  s_45a45f3a807adc::t_ec41e2c1933a10 1-43,48-60,63
+  s_45a45f3a807adc::t_1df7df1490bd29 44-47,61-62
+apps/api/tests/test_discovery_quality_v2.py
+  s_45a45f3a807adc::t_54cc1c6be29c10 20,905-982
+  s_45a45f3a807adc::t_4c571c07ae6766 19,21-22,123-124,849-850,853-904,986-992,1001-1012,1092-1093
+  s_45a45f3a807adc::t_22ea019645d3b0 993-998
+  s_45a45f3a807adc::t_ecf9f4153a28d7 1056-1091
+  s_45a45f3a807adc::t_dee865544fde35 663,667-669,1183
+  s_45a45f3a807adc::t_46fd9d36173776 8-13,80-122
+  s_45a45f3a807adc::t_416d5edd18a583 983
+apps/web/src/components/DiscoveryReportPanel.tsx
+  s_45a45f3a807adc::t_860e1ae1931c55 120,543,704-706
+  s_45a45f3a807adc::t_22a73967348ac3 96-119,221-223,230,308,311,342,356,358
+  s_45a45f3a807adc::t_ee1b4cb90e6006 544-554
+apps/api/app/services/board_fund_flow_history.py
+  s_45a45f3a807adc::t_58188d0feb9bb1 161-170,361
+  s_45a45f3a807adc::t_ba50ce94393f15 38-39,149-155,171-172,186,198-199,203-204,214-221
+apps/api/tests/test_fund_peer_ranking.py
+  s_45a45f3a807adc::t_cbacfb5445d15d 213,451-452
+  s_45a45f3a807adc::t_d6ff1f46ea342d 230-231,493-523
+  s_45a45f3a807adc::t_66ea172727be8a 17-20,216-229
+  s_45a45f3a807adc::t_1df7df1490bd29 21,151-212,214-215
+apps/web/src/lib/api.ts
+  s_45a45f3a807adc::t_3eb2c8f6f213c4 1301-1333,1340-1359,1364,1377
+  s_45a45f3a807adc::t_8be6a874b2115a 740-744
+  s_45a45f3a807adc::t_ea9391bfe6249e 1334-1339
+  s_45a45f3a807adc::t_dd1a1ce283716b 1485,1528-1531,1551-1554
+apps/api/app/services/mainline_snapshot_repository.py
+  s_45a45f3a807adc::t_a9ab6abf67e30c 1-151
+apps/api/app/services/sector_fund_flow_context.py
+  s_45a45f3a807adc::t_5fa7a3ef46d559 248-250,254,258-263,277,279-280,285,289-294,452-464,480-484,488,532
+apps/api/app/services/mainline_regime.py
+  s_45a45f3a807adc::t_29407a2ef4ef95 1-124,150-254,258-262,264-338,341-394,396-415,417-477,480-620,622-624
+  s_45a45f3a807adc::t_ee1b4cb90e6006 125-149,621
+  s_45a45f3a807adc::t_ea9391bfe6249e 255-257,339-340,478-479
+  s_45a45f3a807adc::t_14ec7c46a22909 263,395,416
+apps/api/app/services/us_market_service.py
+  s_45a45f3a807adc::t_f31a8f009630ab 245-251,253-257
+apps/api/tests/test_mainline_regime.py
+  s_45a45f3a807adc::t_b3892b3710a19d 1-6,8-79,83-145,177-227
+  s_45a45f3a807adc::t_ee1b4cb90e6006 7,146-150,152-167,169-176
+  s_45a45f3a807adc::t_14ec7c46a22909 80-82
+apps/api/tests/test_phase_a_path_consistency.py
+  s_45a45f3a807adc::t_ddec2f52adf3c9 693
+apps/api/tests/test_benchmark_mapping_service.py
+  s_45a45f3a807adc::t_f0b796aaaac0cc 1-53
+apps/api/app/services/discovery_streaming.py
+  s_45a45f3a807adc::t_11ab99e5a15909 139-141,157,163-167,180-193,198
+  s_45a45f3a807adc::t_d635d26decb1e3 348
+  s_45a45f3a807adc::t_a765aefb6bd612 57-63,90
+apps/api/Dockerfile
+  s_45a45f3a807adc::t_f31a8f009630ab 42
+apps/web/src/components/ReportDetailsHub.tsx
+  s_45a45f3a807adc::t_c9240fb4d67c5d 16,18
+apps/web/src/components/DiscoveryReportPanel.test.tsx
+  s_45a45f3a807adc::t_22a73967348ac3 510-536,545-551
+  s_45a45f3a807adc::t_019a3fdeeb47c1 105-139
+  s_45a45f3a807adc::t_1868f2dfe92530 287,540-544
+  s_45a45f3a807adc::t_536132c77d53bb 564,592-593
+apps/api/app/services/analysis_payload.py
+  s_45a45f3a807adc::t_172b034777025c 1242
+  s_45a45f3a807adc::t_752bf9db25eb68 644
+apps/api/app/services/ocr_engine.py
+  s_45a45f3a807adc::t_f31a8f009630ab 13,21,76-77
+apps/api/tests/test_candidate_selection_audit_integration.py
+  s_45a45f3a807adc::t_d35e5f898b8cb7 339-340,354
+apps/api/app/services/fund_tradeability.py
+  s_45a45f3a807adc::t_22ea019645d3b0 259-268,282,1281,1303-1322
+  s_45a45f3a807adc::t_da2aa137c73f0c 287-299,399-426,505-509,1332-1393,1493-1502,1665-1672
+  s_45a45f3a807adc::t_0ec5676c3da896 973-977
+  s_45a45f3a807adc::t_5bb9e80917ff85 1043-1044
+apps/api/tests/test_us_forex_client.py
+  s_45a45f3a807adc::t_0dc7e2ee96402c 9,11,39,63
+  s_45a45f3a807adc::t_f31a8f009630ab 1-8,10,12-38,40-62,64-102
+apps/api/app/database.py
+  s_45a45f3a807adc::t_eebfd0b75985f0 457,466-480
+docs/PROJECT_CONTEXT.md
+  s_45a45f3a807adc::t_67d172be4f5ce4 13
+  s_45a45f3a807adc::t_bb293f1e485b65 301
+  s_45a45f3a807adc::t_ead4b412932930 11
+  s_45a45f3a807adc::t_8d2112b757dedf 12
+  s_45a45f3a807adc::t_397346af2b9d73 14
+  s_45a45f3a807adc::t_e796e54e669c3f 16
+  s_45a45f3a807adc::t_9c1cb53995343b 7,10
+  s_45a45f3a807adc::t_5fdef311b22f4c 15
+apps/api/app/services/discovery_guard.py
+  s_45a45f3a807adc::t_ff2db7f0fef769 70,75,106-116,122-129
+  s_45a45f3a807adc::t_22ea019645d3b0 56-58,1110-1121
+  s_45a45f3a807adc::t_49956b3d601ea2 46-55,61-69,71-74,76-102,117-120,130-186
+  s_45a45f3a807adc::t_0e9ab3312a260a 453,547-548,555,559,569-570,575,984-986,993-1002
+  s_45a45f3a807adc::t_68baaed749f9d8 717-722,725-729,731-738,1178,1181,1184-1189,1192,1195,1198
+  s_45a45f3a807adc::t_fae57038b9ab78 1107
+apps/api/scripts/sync_amac_benchmark_index_library.py
+  s_45a45f3a807adc::t_dc53642da1eff1 40
+apps/api/tests/test_sector_constituent_proxy.py
+  s_45a45f3a807adc::t_58188d0feb9bb1 1-34
+apps/api/app/services/us_forex_client.py
+  s_45a45f3a807adc::t_f31a8f009630ab 8-9,29-30,52,231-236,245,249,313-315,321-326,332-337,344
+  s_45a45f3a807adc::t_a84a11e4014ba9 288-290
+apps/api/tests/test_board_flow_price_fallback.py
+  s_45a45f3a807adc::t_ba50ce94393f15 1-22,24-39
+  s_45a45f3a807adc::t_dd3a845cb9f600 23
+  s_45a45f3a807adc::t_6f95b2d21a3498 40-59
+Dockerfile
+  s_45a45f3a807adc::t_f31a8f009630ab 46
+apps/api/app/services/fund_peer_ranking.py
+  s_45a45f3a807adc::t_723d949a8054ca 1229-1260
+  s_45a45f3a807adc::t_4935d37c1b4fac 875,960
+  s_45a45f3a807adc::t_1bff1b2e75ec6a 27,298-303,1261-1262
+apps/api/app/services/discovery_sector_heat.py
+  s_45a45f3a807adc::t_0f89dec56e668a 32-35,126-129
+  s_45a45f3a807adc::t_b3b6678743f31d 108-111
+apps/api/app/services/discovery_sector_position.py
+  s_45a45f3a807adc::t_f34b685277eab9 138-139
+  s_45a45f3a807adc::t_58188d0feb9bb1 205-211,231,239
+  s_45a45f3a807adc::t_ea9391bfe6249e 127,275-282
+  s_45a45f3a807adc::t_ba50ce94393f15 162,165,171,226-230,232,235-238,240-274
+  s_45a45f3a807adc::t_860bc4c9a5a926 4-6,9,11-12,19-26,31-34,41-44,63-85,111-126,135-137,145-158,163-164,166-168,172-175,285-289,356-460
+  s_45a45f3a807adc::t_284fbb902ecb1f 13-17,201-204,213-216,218-225
+apps/api/tests/test_decision_bundle_persistence.py
+  s_45a45f3a807adc::t_23177c49bbb914 45-46,250-278
+apps/web/src/components/FundTradeabilityEvidence.tsx
+  s_45a45f3a807adc::t_1ea6740cdae2d7 83-89,171-183,219,222,254,257-258,326,329,380,383,386-387
+  s_45a45f3a807adc::t_22a73967348ac3 21,118,266-314
+apps/api/app/services/discovery_pipeline.py
+  s_45a45f3a807adc::t_172746550841cc 4,30-36,63
+  s_45a45f3a807adc::t_1f81b47c3e49b5 123-125,128-154,159
+  s_45a45f3a807adc::t_2f377449705d9b 285
+apps/web/src/components/SectorOpportunityCard.tsx
+  s_45a45f3a807adc::t_ea9391bfe6249e 108-114
+  s_45a45f3a807adc::t_39bd50c8ecb502 24-37,57-59,74-82,95-107,115-119
+apps/web/src/components/FundDiscoveryPanel.tsx
+  s_45a45f3a807adc::t_a8b66c0f73a345 65-83,171-179,195-204,313-316,765,771-775,778-780
+apps/api/app/services/sector_opportunity_scoring.py
+  s_45a45f3a807adc::t_4568c8410f6946 50,59,67,75,80,93,233,235-241,252-253,343-352,356-358,381-387
+apps/api/tests/test_theme_board_breadth.py
+  s_45a45f3a807adc::t_c859140be5cdb3 1-22
+apps/api/tests/test_sector_fund_flow_context.py
+  s_45a45f3a807adc::t_f343ca3f7a6684 1-42
+apps/api/app/services/discovery_facts.py
+  s_45a45f3a807adc::t_ee1b4cb90e6006 15,132-135
+  s_45a45f3a807adc::t_54605f6f838c0e 48,136
+apps/web/src/components/ReportDetailsHub.test.tsx
+  s_45a45f3a807adc::t_536132c77d53bb 158
+apps/api/app/services/akshare_subprocess.py
+  s_45a45f3a807adc::t_a38d58515f5429 1256-1258,1271-1280
+  s_45a45f3a807adc::t_c9f99508192e68 809-859
+apps/api/app/services/discovery_offline.py
+  s_45a45f3a807adc::t_b4a077214d8b6b 143
+apps/api/app/services/fund_benchmark_sector.py
+  s_45a45f3a807adc::t_1bff1b2e75ec6a 62-72
+apps/api/tests/test_fund_benchmark_research.py
+  s_45a45f3a807adc::t_dc53642da1eff1 8,20-25
+apps/web/src/components/FundDiscoveryPanel.stream-lifecycle.test.tsx
+  s_45a45f3a807adc::t_8a9b12d29e5582 16-18,117-120,137-140,278-319
+apps/api/app/services/theme_board_snapshot.py
+  s_45a45f3a807adc::t_ab9a37ea2a4771 353-354,376,386,391,396
+  s_45a45f3a807adc::t_b3b6678743f31d 318-321,336-339,368-371,387-390,423-426
+apps/web/src/components/SectorOpportunityCard.test.tsx
+  s_45a45f3a807adc::t_0ec213c4c6304b 103-119,124-135,137
+  s_45a45f3a807adc::t_ea9391bfe6249e 120-123,136
+apps/api/app/services/discovery_payload.py
+  s_45a45f3a807adc::t_1222f991f07d7a 64-65,111,244,254,258-279
+apps/api/app/services/benchmark_mapping_service.py
+  s_45a45f3a807adc::t_f0b796aaaac0cc 199,201-210
+apps/web/src/components/DiscoveryCandidatePoolPanel.test.tsx
+  s_45a45f3a807adc::t_57934f4bcb14cc 196-226,302-338
+  s_45a45f3a807adc::t_fcd583fab15c0b 88
+  s_45a45f3a807adc::t_e3dcf88ecc332b 4,84,89-94,143,183,227,235,289,339,379,430
+apps/api/app/data/amac_benchmark_index_library.json
+  s_45a45f3a807adc::t_dc53642da1eff1 530-532
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.34-trip",
+  "base_commit_sha": "c641a8a7f5cf5e3334ca1faadf64c086b1217d43",
+  "prompts": {},
+  "sessions": {
+    "s_45a45f3a807adc": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f6608-7957-71c0-b3ec-a082f5f806e5",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
