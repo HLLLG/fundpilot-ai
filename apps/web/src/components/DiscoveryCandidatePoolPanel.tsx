@@ -11,10 +11,7 @@ import {
 } from "lucide-react";
 import type { DiscoveryCandidatePoolItem, EliminatedCandidate } from "@/lib/api";
 import { translateEvidenceText } from "@/lib/decisionText";
-import { useMediaQuery } from "@/lib/useMediaQuery";
 import { FundTradeabilityEvidence } from "@/components/FundTradeabilityEvidence";
-
-const DESKTOP_QUERY = "(min-width: 1024px)";
 
 const CORE_FIELD_LABELS: Record<string, string> = {
   return_3m_percent: "近3月收益",
@@ -87,6 +84,11 @@ function formatScore(value: number | null | undefined): string {
   return Number(value).toFixed(2).replace(/\.00$/, "");
 }
 
+function formatMoney(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "待核验";
+  return `¥${Number(value).toLocaleString("zh-CN", { maximumFractionDigits: 2 })}`;
+}
+
 function listText(items: string[] | undefined, fallback = "—"): string {
   return items?.length ? items.join("；") : fallback;
 }
@@ -149,7 +151,7 @@ function ResearchEvidence({ item }: { item: DiscoveryCandidatePoolItem }) {
         metric &&
         metric.applicable !== false &&
         metric.applicability !== "not_applicable" &&
-        (metric.percentile != null || metric.sample_count != null),
+        metric.percentile != null,
     );
   const benchmark = [
     item.benchmark_research,
@@ -252,7 +254,13 @@ function ResearchEvidence({ item }: { item: DiscoveryCandidatePoolItem }) {
                 </div>
               ))}
             </dl>
-          ) : null}
+          ) : (
+            <p className="mt-1.5 rounded-lg bg-white px-2 py-1.5 text-[10px] leading-4 text-slate-500">
+              {peerCount === 0
+                ? "当前未形成独立同类样本；不重复展示空分位。"
+                : "当前可比指标样本不足，分位暂不可用。"}
+            </p>
+          )}
           <p className="mt-1.5 text-[10px] font-semibold leading-4 text-amber-800">
             仅研究描述，不参与金额分配
           </p>
@@ -320,6 +328,115 @@ function ResearchEvidence({ item }: { item: DiscoveryCandidatePoolItem }) {
           </div>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function CandidateTradeSummary({ item }: { item: DiscoveryCandidatePoolItem }) {
+  const tradeability = item.tradeability;
+  const gate = item.tradeability_gate ?? tradeability?.tradeability_gate;
+  const hasSnapshot = Boolean(
+    (tradeability && Object.keys(tradeability).length) ||
+      (gate && Object.keys(gate).length),
+  );
+  if (!hasSnapshot) {
+    return (
+      <div
+        className="rounded-xl bg-slate-50 px-3 py-2 text-[11px] text-slate-500"
+        aria-label="交易条件摘要"
+      >
+        交易条件未记录
+      </div>
+    );
+  }
+
+  const state = tradeability?.purchase_state ?? "unknown";
+  const stateLabel =
+    state === "open"
+      ? "开放"
+      : state === "limited"
+        ? "限大额"
+        : state === "suspended"
+          ? "暂停"
+          : state === "closed"
+            ? "封闭"
+            : "待核验";
+  const statusUsable =
+    ["complete", "partial"].includes(tradeability?.data_status ?? "") &&
+    tradeability?.freshness === "fresh";
+  const initialMinimum =
+    gate?.effective_initial_min_purchase_yuan ??
+    tradeability?.minimum_initial_purchase_yuan ??
+    tradeability?.minimum_purchase_yuan;
+  const unlimited =
+    gate?.max_purchase_unlimited ?? tradeability?.daily_purchase_limit_unlimited;
+  const limit = gate?.max_purchase_yuan ?? tradeability?.daily_purchase_limit_yuan;
+  const gateLabel =
+    gate?.status === "eligible"
+      ? "执行门禁通过"
+      : gate?.status === "excluded"
+        ? "场外申购排除"
+        : "仅研究观察";
+
+  return (
+    <div
+      className="rounded-xl border border-slate-200 bg-slate-50/80 px-3 py-2 text-[11px] leading-5"
+      aria-label="交易条件摘要"
+    >
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+        <span className={statusUsable ? "font-black text-emerald-800" : "font-black text-amber-900"}>
+          {statusUsable ? `申购${stateLabel}` : `申购记录${stateLabel}（证据${tradeability?.freshness === "stale" ? "过期" : "不可用"}）`}
+        </span>
+        <span className="font-semibold text-slate-700">{gateLabel}</span>
+      </div>
+      <p className="text-slate-500">
+        起购 {formatMoney(initialMinimum)} · 单日{unlimited ? "无限额" : `限额 ${formatMoney(limit)}`}
+      </p>
+    </div>
+  );
+}
+
+function CandidateResearchSummary({ item }: { item: DiscoveryCandidatePoolItem }) {
+  const peerRank =
+    item.peer_rank && Object.keys(item.peer_rank).length
+      ? item.peer_rank
+      : item.peer_research;
+  const peerCount =
+    peerRank?.universe?.independent_peer_family_count ??
+    peerRank?.independent_peer_family_count;
+  const metrics = peerRank?.metrics ?? {};
+  const preferredMetric = PEER_METRIC_ORDER
+    .map((key) => metrics[key])
+    .find((metric) => metric?.percentile != null);
+  const benchmark = [
+    item.benchmark_research,
+    item.benchmark_comparison,
+    item.benchmark_metrics,
+  ].find((value) => value && Object.keys(value).length);
+  const benchmarkLabel =
+    benchmark?.comparison_role === "formal_excess" &&
+    benchmark.formal_excess_eligible === true
+      ? "正式基准"
+      : benchmark?.comparison_role === "tracking_reference"
+        ? "跟踪参考"
+        : benchmark
+          ? "基准待核验"
+          : null;
+
+  return (
+    <div
+      className="rounded-xl border border-slate-200 bg-slate-50/80 px-3 py-2 text-[11px] leading-5"
+      aria-label="同类研究摘要"
+    >
+      <p className="font-black text-slate-800">
+        {peerCount != null && peerCount > 0 ? `同类样本 ${peerCount} 家` : "同类样本未形成"}
+      </p>
+      <p className="text-slate-500">
+        {preferredMetric?.percentile != null
+          ? `${preferredMetric.label ?? "代表指标"} ${formatPeerPercentile(preferredMetric.percentile)}`
+          : "可比分位暂不可用"}
+        {benchmarkLabel ? ` · ${benchmarkLabel}` : ""}
+      </p>
     </div>
   );
 }
@@ -500,7 +617,6 @@ export function DiscoveryCandidatePoolPanel({
   eliminatedCandidates = [],
 }: DiscoveryCandidatePoolPanelProps) {
   const [open, setOpen] = useState(false);
-  const isDesktop = useMediaQuery(DESKTOP_QUERY);
   if (!pool.length) {
     return null;
   }
@@ -602,203 +718,118 @@ export function DiscoveryCandidatePoolPanel({
             </details>
           ) : null}
 
-          {!isDesktop ? (
-            <div className="grid gap-3 px-3 pb-4 pt-3">
-              {pool.map((item) => {
-                const picked = selected.has(item.fund_code);
-                const eliminated = eliminatedByCode.has(item.fund_code);
-                const decisionStatus =
-                  decisionStatusByCode[item.fund_code] ?? (picked ? "actionable" : undefined);
-                const decisionMeta = decisionStatus ? DECISION_STATUS_META[decisionStatus] : null;
-                const quality = presentations.get(item.fund_code)!;
-                return (
-                  <article
-                    key={`mobile-${item.fund_code}`}
-                    className={`rounded-2xl border p-3 ${
-                      eliminated
-                        ? "border-rose-200 bg-rose-50/70"
-                        : decisionMeta
-                          ? decisionMeta.rowClass
-                          : "border-slate-200 bg-white"
-                    }`}
-                    aria-label={`${item.fund_name}，${eliminated ? "已剔除" : decisionMeta?.label ?? quality.gateLabel}`}
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <h3 className={`break-words text-sm font-black text-slate-900 ${eliminated ? "line-through" : ""}`}>
-                          {item.fund_name}
-                        </h3>
-                        <p className="mt-1 text-xs text-slate-500">
-                          <span className="font-mono font-bold">{item.fund_code}</span>
-                          {item.sector_label ? ` · ${item.sector_label}` : ""}
-                        </p>
-                      </div>
-                      <div className="flex shrink-0 flex-wrap justify-end gap-1">
-                        {item.is_new_issue ? (
-                          <span className="rounded-full bg-amber-100 px-2 py-1 text-[11px] font-bold text-amber-800">新发</span>
-                        ) : null}
-                        <span className={`rounded-full px-2 py-1 text-[11px] font-bold ${quality.fieldBadgeClass}`}>
-                          {quality.fieldLabel}
-                        </span>
-                        <span className={`rounded-full px-2 py-1 text-[11px] font-bold ${
-                          eliminated
-                            ? "bg-rose-100 text-rose-800"
-                            : decisionMeta?.badgeClass ?? quality.gateBadgeClass
-                        }`}>
-                          {eliminated ? "已剔除" : decisionMeta?.label ?? quality.gateLabel}
-                        </span>
-                      </div>
+          <div
+            className="grid gap-3 px-3 pb-4 pt-3 xl:grid-cols-2"
+            role="region"
+            aria-label="基金候选池重点信息"
+          >
+            {pool.map((item) => {
+              const picked = selected.has(item.fund_code);
+              const eliminated = eliminatedByCode.has(item.fund_code);
+              const decisionStatus =
+                decisionStatusByCode[item.fund_code] ?? (picked ? "actionable" : undefined);
+              const decisionMeta = decisionStatus ? DECISION_STATUS_META[decisionStatus] : null;
+              const quality = presentations.get(item.fund_code)!;
+              const primaryReason =
+                item.quality_gate?.reasons?.[0] ??
+                item.quality_penalties?.[0] ??
+                item.quality_reasons?.[0] ??
+                item.selection_reason;
+              return (
+                <article
+                  key={item.fund_code}
+                  className={`min-w-0 rounded-2xl border p-3.5 ${
+                    eliminated
+                      ? "border-rose-200 bg-rose-50/70"
+                      : decisionMeta
+                        ? decisionMeta.rowClass
+                        : "border-slate-200 bg-white"
+                  }`}
+                  aria-label={`${item.fund_name}，${eliminated ? "已剔除" : decisionMeta?.label ?? quality.gateLabel}`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <h3 className={`break-words text-sm font-black text-slate-900 ${eliminated ? "line-through" : ""}`}>
+                        {item.fund_name}
+                      </h3>
+                      <p className="mt-1 text-xs text-slate-500">
+                        <span className="font-mono font-bold">{item.fund_code}</span>
+                        {item.sector_label ? ` · ${item.sector_label}` : ""}
+                      </p>
                     </div>
+                    <div className="flex shrink-0 flex-wrap justify-end gap-1">
+                      {item.is_new_issue ? (
+                        <span className="rounded-full bg-amber-100 px-2 py-1 text-[11px] font-bold text-amber-800">新发</span>
+                      ) : null}
+                      <span className={`rounded-full px-2 py-1 text-[11px] font-bold ${quality.fieldBadgeClass}`}>
+                        {quality.fieldLabel}
+                      </span>
+                      <span className={`rounded-full px-2 py-1 text-[11px] font-bold ${
+                        eliminated
+                          ? "bg-rose-100 text-rose-800"
+                          : decisionMeta?.badgeClass ?? quality.gateBadgeClass
+                      }`}>
+                        {eliminated ? "已剔除" : decisionMeta?.label ?? quality.gateLabel}
+                      </span>
+                    </div>
+                  </div>
 
-                    <dl className="mt-3 grid grid-cols-2 gap-2 text-xs">
-                      {[
-                        ["质量分", formatScore(item.fund_quality_score)],
-                        ["匹配分", formatScore(item.sector_fit_score)],
-                        ["近3月", formatPercent(item.return_3m_percent)],
-                        ["近1年", formatPercent(item.return_1y_percent)],
-                      ].map(([label, value]) => (
-                        <div key={label} className="rounded-xl bg-white/80 px-3 py-2">
-                          <dt className="text-slate-500">{label}</dt>
-                          <dd className="mt-1 font-black tabular-nums text-slate-900">{value}</dd>
-                        </div>
-                      ))}
-                    </dl>
+                  <dl className="mt-3 grid grid-cols-2 gap-1.5 text-xs sm:grid-cols-5">
+                    {[
+                      ["质量分", formatScore(item.fund_quality_score)],
+                      ["匹配分", formatScore(item.sector_fit_score)],
+                      ["近3月", formatPercent(item.return_3m_percent)],
+                      ["近6月", formatPercent(item.return_6m_percent)],
+                      ["近1年", formatPercent(item.return_1y_percent)],
+                    ].map(([label, value]) => (
+                      <div key={label} className="rounded-xl bg-white/80 px-2.5 py-2">
+                        <dt className="text-[11px] text-slate-500">{label}</dt>
+                        <dd className="mt-0.5 font-black tabular-nums text-slate-900">{value}</dd>
+                      </div>
+                    ))}
+                  </dl>
 
-                    <div className="mt-2">
+                  <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                    <CandidateTradeSummary item={item} />
+                    <CandidateResearchSummary item={item} />
+                  </div>
+
+                  {primaryReason ? (
+                    <p className="mt-2 line-clamp-2 text-[11px] leading-5 text-slate-600">
+                      <span className="font-bold text-slate-800">关键约束：</span>
+                      {translateEvidenceText(primaryReason)}
+                    </p>
+                  ) : null}
+
+                  <details className="group mt-2 rounded-xl border border-slate-200 bg-white/85">
+                    <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 rounded-xl px-3 text-xs font-bold text-slate-700 outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] focus-visible:ring-offset-2 [&::-webkit-details-marker]:hidden">
+                      <span>查看交易条件、同类研究与完整依据</span>
+                      <ChevronDown
+                        size={15}
+                        aria-hidden="true"
+                        className="shrink-0 text-slate-400 transition group-open:rotate-180"
+                      />
+                    </summary>
+                    <div className="grid gap-2 border-t border-slate-100 p-2.5 lg:grid-cols-2">
                       <FundTradeabilityEvidence
                         tradeability={item.tradeability}
                         tradeabilityGate={item.tradeability_gate}
                         costAssessment={item.cost_assessment}
                         compact
                       />
-                    </div>
-
-                    <div className="mt-2">
                       <ResearchEvidence item={item} />
+                      <QualityDetails
+                        item={item}
+                        quality={quality}
+                        eliminated={eliminated}
+                        className="lg:col-span-2"
+                      />
                     </div>
-
-                    <QualityDetails
-                      item={item}
-                      quality={quality}
-                      eliminated={eliminated}
-                      className="mt-2"
-                    />
-                  </article>
-                );
-              })}
-            </div>
-          ) : (
-            <div
-              className="overflow-x-auto px-3 pb-4 pt-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] focus-visible:ring-inset"
-              role="region"
-              aria-label="基金候选池明细表，可左右滚动查看"
-              tabIndex={0}
-            >
-              <table className="w-full min-w-[1480px] text-left text-xs">
-                <caption className="sr-only">本次基金候选池评分、收益、交易条件、同类研究、基准角色、数据完整性和质量门禁状态</caption>
-                <thead>
-                  <tr className="text-slate-500">
-                    <th scope="col" className="px-2 py-2 font-semibold">代码</th>
-                    <th scope="col" className="px-2 py-2 font-semibold">名称</th>
-                    <th scope="col" className="px-2 py-2 font-semibold">板块</th>
-                    <th scope="col" className="px-2 py-2 font-semibold">质量分</th>
-                    <th scope="col" className="px-2 py-2 font-semibold">匹配分</th>
-                    <th scope="col" className="px-2 py-2 font-semibold">近3月</th>
-                    <th scope="col" className="px-2 py-2 font-semibold">近6月</th>
-                    <th scope="col" className="px-2 py-2 font-semibold">近1年</th>
-                    <th scope="col" className="px-2 py-2 font-semibold">交易条件</th>
-                    <th scope="col" className="px-2 py-2 font-semibold">同类研究 / 基准</th>
-                    <th scope="col" className="px-2 py-2 font-semibold">证据状态</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {pool.map((item) => {
-                    const picked = selected.has(item.fund_code);
-                    const eliminated = eliminatedByCode.has(item.fund_code);
-                    const decisionStatus =
-                      decisionStatusByCode[item.fund_code] ?? (picked ? "actionable" : undefined);
-                    const decisionMeta = decisionStatus ? DECISION_STATUS_META[decisionStatus] : null;
-                    const quality = presentations.get(item.fund_code)!;
-                    return (
-                      <tr
-                        key={item.fund_code}
-                        className={
-                          eliminated
-                            ? "bg-rose-50/60 text-rose-700"
-                            : decisionStatus === "actionable"
-                              ? "bg-emerald-50/70"
-                              : decisionStatus === "conditional_wait"
-                                ? "bg-amber-50/60"
-                                : decisionStatus === "watch_only"
-                                  ? "bg-slate-50/80"
-                                  : "border-t border-slate-50"
-                        }
-                      >
-                        <th scope="row" className="px-2 py-2 text-left font-mono font-semibold text-slate-800">
-                          {item.fund_code}
-                        </th>
-                        <td className="max-w-[180px] break-words px-2 py-2 text-slate-700">
-                          <span className={eliminated ? "line-through" : ""}>{item.fund_name}</span>
-                          {item.is_new_issue ? (
-                            <span className="ml-1 rounded bg-amber-100 px-1 py-0.5 text-[10px] font-bold text-amber-800">
-                              新发
-                            </span>
-                          ) : null}
-                        </td>
-                        <td className="px-2 py-2 text-slate-600">{item.sector_label ?? "—"}</td>
-                        <td className="px-2 py-2 font-semibold text-slate-800">
-                          {formatScore(item.fund_quality_score)}
-                        </td>
-                        <td className="px-2 py-2 font-semibold text-slate-700">
-                          {formatScore(item.sector_fit_score)}
-                        </td>
-                        <td className="px-2 py-2 text-slate-600">
-                          {formatPercent(item.return_3m_percent)}
-                        </td>
-                        <td className="px-2 py-2 text-slate-600">
-                          {formatPercent(item.return_6m_percent)}
-                        </td>
-                        <td className="px-2 py-2 text-slate-600">
-                          {formatPercent(item.return_1y_percent)}
-                        </td>
-                        <td className="w-[300px] px-2 py-2 align-top">
-                          <FundTradeabilityEvidence
-                            tradeability={item.tradeability}
-                            tradeabilityGate={item.tradeability_gate}
-                            costAssessment={item.cost_assessment}
-                            compact
-                          />
-                        </td>
-                        <td className="w-[320px] px-2 py-2 align-top">
-                          <ResearchEvidence item={item} />
-                        </td>
-                        <td className="w-[250px] px-2 py-2 align-top">
-                          <div className="flex flex-wrap gap-1">
-                            <span className={`rounded-full px-2 py-1 text-[11px] font-bold ${quality.fieldBadgeClass}`}>
-                              {quality.fieldLabel}
-                            </span>
-                            <span className={`rounded-full px-2 py-1 text-[11px] font-bold ${
-                              eliminated
-                                ? "bg-rose-100 text-rose-800"
-                                : decisionMeta?.badgeClass ?? quality.gateBadgeClass
-                            }`}>
-                              {eliminated ? "已剔除" : decisionMeta?.label ?? quality.gateLabel}
-                            </span>
-                          </div>
-                          <QualityDetails
-                            item={item}
-                            quality={quality}
-                            eliminated={eliminated}
-                            className="mt-1.5"
-                          />
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
+                  </details>
+                </article>
+              );
+            })}
+          </div>
         </div>
       ) : null}
     </section>

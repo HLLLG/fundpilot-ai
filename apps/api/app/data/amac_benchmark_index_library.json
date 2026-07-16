@@ -527,11 +527,11 @@
       "market_type": "主题类",
       "index_full_name": "中证医药卫生指数",
       "update_time": "2026-06-10",
-      "source_code": "483024",
-      "eastmoney_secid": "2.483024",
-      "eastmoney_name": "深港通医药卫生R（港币）",
+      "source_code": "000933",
+      "eastmoney_secid": "1.000933",
+      "eastmoney_name": "800医卫",
       "theme_label": "医药",
-      "resolution": "auto_fuzzy"
+      "resolution": "manual"
     },
     {
       "tier": "oneClass",

@@ -62,6 +62,25 @@ const DEFAULT_DISCOVERY_PROMPT: DiscoveryPromptConfig = {
   is_custom: false,
 };
 
+export function resolveDynamicDiscoveryBudgetYuan(
+  holdings: Holding[],
+  expectedInvestmentAmount: number | null | undefined,
+): number {
+  const totalHoldings = displayableHoldings(holdings).reduce((total, holding) => {
+    const amount = Number(holding.holding_amount);
+    return total + (Number.isFinite(amount) && amount > 0 ? amount : 0);
+  }, 0);
+  const expected = Number(expectedInvestmentAmount);
+  const plannedTotal = Number.isFinite(expected) && expected > 0 ? expected : totalHoldings;
+  return Math.max(Math.round((plannedTotal - totalHoldings) * 100) / 100, 0);
+}
+
+function formatBudgetInput(value: number): string {
+  return Number.isInteger(value)
+    ? String(value)
+    : value.toFixed(2).replace(/\.?0+$/, "");
+}
+
 type DiscoveryFeedback = {
   tone: NoticeTone;
   message: string;
@@ -149,7 +168,15 @@ export function FundDiscoveryPanel({
   const [discoveryStrategy, setDiscoveryStrategy] = useState<DiscoveryStrategy>(
     "opportunity_first",
   );
-  const [budgetYuan, setBudgetYuan] = useState<string>("");
+  const dynamicBudgetYuan = useMemo(
+    () => resolveDynamicDiscoveryBudgetYuan(holdings, profile.expected_investment_amount),
+    [holdings, profile.expected_investment_amount],
+  );
+  const [budgetYuan, setBudgetYuan] = useState<string>(() =>
+    formatBudgetInput(dynamicBudgetYuan),
+  );
+  const budgetChangedByUserRef = useRef(false);
+  const budgetUserRef = useRef(userId);
   const [report, setReport] = useState<FundDiscoveryReport | null>(null);
   const [discoveryPrompt, setDiscoveryPrompt] = useState<DiscoveryPromptConfig>(() =>
     loadDiscoveryPrompt(userId, DEFAULT_DISCOVERY_PROMPT),
@@ -164,6 +191,16 @@ export function FundDiscoveryPanel({
   const promptPersistReady = useRef(false);
   const promptChangedByUserRef = useRef(false);
   const [promptReady, setPromptReady] = useState(false);
+
+  useEffect(() => {
+    if (budgetUserRef.current !== userId) {
+      budgetUserRef.current = userId;
+      budgetChangedByUserRef.current = false;
+    }
+    if (!budgetChangedByUserRef.current) {
+      setBudgetYuan(formatBudgetInput(dynamicBudgetYuan));
+    }
+  }, [dynamicBudgetYuan, userId]);
 
   useEffect(() => {
     if (rawSectors.length > 0) {
@@ -273,7 +310,10 @@ export function FundDiscoveryPanel({
     const scanOptions = {
       analysisMode,
       focusSectors,
-      budgetYuan: parsedBudget && !Number.isNaN(parsedBudget) ? parsedBudget : null,
+      budgetYuan:
+        parsedBudget !== null && Number.isFinite(parsedBudget) && parsedBudget >= 0
+          ? parsedBudget
+          : null,
       fundTypePreference: "any" as const,
       selectionStrategy: "balanced" as const,
       scanMode,
@@ -722,16 +762,22 @@ export function FundDiscoveryPanel({
 
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
             <label className="block text-xs font-semibold text-slate-700">
-              本次可投入预算（元，可选）
+              本次可投入预算（元）
               <input
                 type="number"
                 min={0}
                 step={500}
                 value={budgetYuan}
-                onChange={(event) => setBudgetYuan(event.target.value)}
-                placeholder="默认按期望投入余额"
+                onChange={(event) => {
+                  budgetChangedByUserRef.current = true;
+                  setBudgetYuan(event.target.value);
+                }}
+                placeholder="按计划投入余额自动计算"
                 className="mt-1 min-h-11 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-[var(--brand)]"
               />
+              <span className="mt-1 block text-[11px] font-normal leading-5 text-slate-500">
+                默认按计划投入总额减当前持仓动态计算；手工修改后，本次扫描保留你的输入。
+              </span>
             </label>
             <fieldset>
               <legend className="text-xs font-semibold text-slate-700">分析模式</legend>

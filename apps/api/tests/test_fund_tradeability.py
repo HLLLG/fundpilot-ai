@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from datetime import datetime
+from copy import deepcopy
 from zoneinfo import ZoneInfo
 
 import pytest
 
+from app.services import fund_tradeability as tradeability_module
 from app.models import DiscoveryRecommendation, InvestorProfile
 from app.services.discovery_guard import apply_discovery_guards
 from app.services.fund_tradeability import (
@@ -20,6 +22,7 @@ from app.services.fund_tradeability import (
     resolve_profile_min_holding_days,
     resolve_purchase_fee,
     resolve_redemption_fee_percent,
+    resolve_fund_tradeability_profiles,
 )
 
 CN_TZ = ZoneInfo("Asia/Shanghai")
@@ -198,6 +201,97 @@ def test_fresh_status_does_not_mask_stale_fee_rules() -> None:
     assert long_horizon["estimated_total_cost_upper_bound_percent"] is None
     assert "transaction_cost_incomplete" in long_horizon["block_reasons"]
     assert "short_horizon_cost_unverified" in short_horizon["block_reasons"]
+
+
+def test_status_freshness_uses_status_timestamp_not_newer_fee_only_timestamp() -> None:
+    bulk_snapshot = _bulk_snapshot("2026-07-14T09:40:00+08:00")
+    detail = _detail(**{"交易状态": {}})
+    detail["retrieved_at"] = "2026-07-14T09:59:30+08:00"
+
+    profile = build_tradeability_profile(
+        "000001",
+        bulk=_bulk(),
+        bulk_snapshot=bulk_snapshot,
+        detail=detail,
+        decision_at=DECISION_AT,
+    )
+
+    assert profile["checked_at"] == "2026-07-14T09:59:30+08:00"
+    assert profile["status_checked_at"] == "2026-07-14T09:40:00+08:00"
+    assert profile["freshness"] == "stale"
+    assert profile["fee_freshness"] == "fresh"
+
+
+def test_bulk_timeout_refreshes_stale_fee_page_used_as_status_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stale_detail = _detail()
+    stale_detail["retrieved_at"] = "2026-07-14T09:30:00+08:00"
+    fresh_detail = deepcopy(stale_detail)
+    fresh_detail["retrieved_at"] = "2026-07-14T10:00:05+08:00"
+    fee_fetches: list[list[str]] = []
+
+    def cached_snapshot(cache_key: str, *, ttl_seconds: float):
+        del ttl_seconds
+        return None if "purchase:v1" in cache_key else stale_detail
+
+    def fetch_fees(codes: list[str]):
+        fee_fetches.append(codes)
+        return {"000001": fresh_detail}
+
+    monkeypatch.setattr(tradeability_module, "get_spot_snapshot", cached_snapshot)
+    monkeypatch.setattr(tradeability_module, "save_spot_snapshot", lambda *args: None)
+
+    profile = resolve_fund_tradeability_profiles(
+        ["000001"],
+        decision_at=DECISION_AT,
+        wall_now=DECISION_AT,
+        purchase_fetcher=lambda: None,
+        fee_fetcher=fetch_fees,
+    )["000001"]
+
+    assert fee_fetches == [["000001"]]
+    assert profile["data_status"] in {"complete", "partial"}
+    assert profile["freshness"] == "fresh"
+    assert profile["status_checked_at"] == "2026-07-14T10:00:05+08:00"
+    assert profile["source_ids"] == ["eastmoney.fundf10_purchase_info"]
+
+
+def test_stale_detail_status_refresh_runs_in_parallel_with_bulk_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stale_detail = _detail()
+    stale_detail["retrieved_at"] = "2026-07-14T09:30:00+08:00"
+    fresh_detail = deepcopy(stale_detail)
+    fresh_detail["retrieved_at"] = "2026-07-14T10:00:05+08:00"
+    events: list[str] = []
+
+    def cached_snapshot(cache_key: str, *, ttl_seconds: float):
+        del ttl_seconds
+        return None if "purchase:v1" in cache_key else stale_detail
+
+    def fetch_purchase():
+        events.append("bulk")
+        return None
+
+    def fetch_fees(codes: list[str]):
+        events.append("detail:" + ",".join(codes))
+        return {"000001": fresh_detail}
+
+    monkeypatch.setattr(tradeability_module, "get_spot_snapshot", cached_snapshot)
+    monkeypatch.setattr(tradeability_module, "save_spot_snapshot", lambda *args: None)
+
+    profile = resolve_fund_tradeability_profiles(
+        ["000001"],
+        decision_at=DECISION_AT,
+        wall_now=DECISION_AT,
+        purchase_fetcher=fetch_purchase,
+        fee_fetcher=fetch_fees,
+    )["000001"]
+
+    assert sorted(events) == ["bulk", "detail:000001"]
+    assert profile["freshness"] == "fresh"
+    assert profile["status_checked_at"] == "2026-07-14T10:00:05+08:00"
 
 
 def test_zero_minimum_is_unknown_not_free() -> None:

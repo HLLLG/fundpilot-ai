@@ -256,6 +256,16 @@ def resolve_fund_tradeability_profiles(
 
     purchase_loader = purchase_fetcher or _fetch_purchase_snapshot
     fee_loader = fee_fetcher or _fetch_fee_snapshots
+    status_ttl = max(
+        1,
+        int(get_settings().fund_tradeability_status_cache_ttl_seconds),
+    )
+    purchase_cache_fresh = bool(
+        current_request
+        and _valid_purchase_snapshot(
+            get_spot_snapshot(_PURCHASE_CACHE_KEY, ttl_seconds=status_ttl)
+        )
+    )
     with ThreadPoolExecutor(max_workers=2, thread_name_prefix="fund-tradeability") as executor:
         purchase_future = executor.submit(
             _load_purchase_snapshot,
@@ -269,9 +279,23 @@ def resolve_fund_tradeability_profiles(
             decision,
             current_request=current_request,
             fetcher=fee_loader,
+            refresh_detail_status=current_request and not purchase_cache_fresh,
         )
         purchase_snapshot = purchase_future.result()
         fee_snapshots = fee_future.result()
+
+    # The fee page also carries purchase/redemption state, but its normal
+    # 24-hour cache is intentionally much longer than the 15-minute execution
+    # status window.  When the bulk status endpoint is unavailable, refresh
+    # stale cached fee pages once so a healthy fallback source is not rejected
+    # merely because it was loaded earlier for fee research.
+    if current_request and not _valid_purchase_snapshot(purchase_snapshot):
+        fee_snapshots = _refresh_stale_detail_status_snapshots(
+            codes,
+            fee_snapshots,
+            decision_at=decision,
+            fetcher=fee_loader,
+        )
 
     rows = (
         purchase_snapshot.get("rows")
@@ -372,6 +396,34 @@ def build_tradeability_profile(
     bulk_checked_at = _text((bulk_snapshot or {}).get("retrieved_at"))
     detail_checked_at = _text((detail or {}).get("retrieved_at"))
     checked_at = _latest_iso_datetime(bulk_checked_at, detail_checked_at)
+    purchase_status_checked_at = _latest_iso_datetime(
+        bulk_checked_at if bulk_purchase_state != "unknown" else None,
+        detail_checked_at if detail_purchase_state != "unknown" else None,
+    )
+    redemption_status_checked_at = _latest_iso_datetime(
+        bulk_checked_at
+        if normalize_redemption_state(bulk_redemption_status) != "unknown"
+        else None,
+        detail_checked_at
+        if normalize_redemption_state(detail_redemption_status) != "unknown"
+        else None,
+    )
+    purchase_status_freshness = _profile_freshness(
+        purchase_status_checked_at,
+        decision_at,
+    )
+    redemption_status_freshness = _profile_freshness(
+        redemption_status_checked_at,
+        decision_at,
+    )
+    freshness = _required_status_freshness(
+        purchase_status_freshness,
+        redemption_status_freshness,
+    )
+    status_checked_at = _earliest_iso_datetime(
+        purchase_status_checked_at,
+        redemption_status_checked_at,
+    )
     fee_freshness = _profile_freshness_for_ttl(
         detail_checked_at,
         decision_at,
@@ -414,7 +466,6 @@ def build_tradeability_profile(
         data_status = "partial"
     else:
         data_status = "complete"
-    freshness = _profile_freshness(checked_at, decision_at)
     if freshness != "fresh" and data_status != "unavailable":
         data_status = "stale"
 
@@ -451,6 +502,11 @@ def build_tradeability_profile(
         "fund_code": _normalize_code(fund_code),
         "data_status": data_status,
         "freshness": freshness,
+        "status_checked_at": status_checked_at,
+        "purchase_status_checked_at": purchase_status_checked_at,
+        "purchase_status_freshness": purchase_status_freshness,
+        "redemption_status_checked_at": redemption_status_checked_at,
+        "redemption_status_freshness": redemption_status_freshness,
         "can_purchase": can_purchase,
         "purchase_state": purchase_state,
         "purchase_status": purchase_status,
@@ -914,6 +970,11 @@ def compact_tradeability_for_llm(value: Mapping[str, Any] | None) -> dict[str, A
         "fund_code",
         "data_status",
         "freshness",
+        "status_checked_at",
+        "purchase_status_checked_at",
+        "purchase_status_freshness",
+        "redemption_status_checked_at",
+        "redemption_status_freshness",
         "can_purchase",
         "purchase_state",
         "purchase_status",
@@ -979,6 +1040,8 @@ def normalize_redemption_state(value: object) -> str:
         return "unknown"
     if any(token in text for token in ("暂停", "停止", "不可赎回")):
         return "suspended"
+    if "场内交易" in text:
+        return "exchange_only"
     if "封闭" in text:
         return "closed"
     if "开放" in text and "赎回" in text:
@@ -1215,6 +1278,7 @@ def _load_fee_snapshots(
     *,
     current_request: bool,
     fetcher: Callable[[list[str]], Mapping[str, Any] | None],
+    refresh_detail_status: bool = False,
 ) -> dict[str, dict[str, Any]]:
     settings = get_settings()
     ttl = max(1, int(settings.fund_tradeability_fee_cache_ttl_seconds))
@@ -1236,9 +1300,26 @@ def _load_fee_snapshots(
             resolved[code] = cached
         elif current_request:
             missing.append(code)
-    if missing:
-        fetched = fetcher(missing)
-        for code in missing:
+    refresh_codes = list(missing)
+    if current_request and refresh_detail_status:
+        status_ttl = max(
+            1,
+            int(get_settings().fund_tradeability_status_cache_ttl_seconds),
+        )
+        refresh_codes.extend(
+            code
+            for code in codes
+            if code in resolved
+            and not _detail_status_snapshot_fresh(
+                resolved[code],
+                decision_at=decision_at,
+                ttl_seconds=status_ttl,
+            )
+        )
+    refresh_codes = list(dict.fromkeys(refresh_codes))
+    if refresh_codes:
+        fetched = fetcher(refresh_codes)
+        for code in refresh_codes:
             payload = fetched.get(code) if isinstance(fetched, Mapping) else None
             if not _valid_fee_snapshot(payload):
                 continue
@@ -1246,6 +1327,68 @@ def _load_fee_snapshots(
             save_spot_snapshot(f"{_FEE_CACHE_PREFIX}:{code}", normalized)
             resolved[code] = normalized
     return resolved
+
+
+def _refresh_stale_detail_status_snapshots(
+    codes: list[str],
+    snapshots: Mapping[str, Mapping[str, Any]],
+    *,
+    decision_at: datetime,
+    fetcher: Callable[[list[str]], Mapping[str, Any] | None],
+) -> dict[str, dict[str, Any]]:
+    """Refresh cached F10 pages only when they are the live status fallback."""
+
+    resolved = {
+        code: dict(payload)
+        for code, payload in snapshots.items()
+        if isinstance(payload, Mapping)
+    }
+    ttl = max(1, int(get_settings().fund_tradeability_status_cache_ttl_seconds))
+    stale_codes = [
+        code
+        for code in codes
+        if code in resolved
+        and not _detail_status_snapshot_fresh(
+            resolved[code],
+            decision_at=decision_at,
+            ttl_seconds=ttl,
+        )
+    ]
+    if not stale_codes:
+        return resolved
+
+    fetched = fetcher(stale_codes)
+    for code in stale_codes:
+        payload = fetched.get(code) if isinstance(fetched, Mapping) else None
+        if not _valid_fee_snapshot(payload):
+            continue
+        normalized = dict(payload)
+        save_spot_snapshot(f"{_FEE_CACHE_PREFIX}:{code}", normalized)
+        resolved[code] = normalized
+    return resolved
+
+
+def _detail_status_snapshot_fresh(
+    payload: Mapping[str, Any],
+    *,
+    decision_at: datetime,
+    ttl_seconds: int,
+) -> bool:
+    sections = _mapping(payload.get("sections"))
+    statuses = _mapping(sections.get("交易状态"))
+    if (
+        normalize_purchase_state(statuses.get("申购状态")) == "unknown"
+        or normalize_redemption_state(statuses.get("赎回状态")) == "unknown"
+    ):
+        return False
+    return (
+        _profile_freshness_for_ttl(
+            _text(payload.get("retrieved_at")),
+            decision_at,
+            ttl_seconds=ttl_seconds,
+        )
+        == "fresh"
+    )
 
 
 def _fetch_purchase_snapshot() -> Mapping[str, Any] | None:
@@ -1345,6 +1488,16 @@ def _profile_freshness_for_ttl(
         return "future"
     age = (decision_at - observed).total_seconds()
     return "fresh" if age <= max(1, int(ttl_seconds)) else "stale"
+
+
+def _required_status_freshness(*values: str) -> str:
+    if values and all(value == "fresh" for value in values):
+        return "fresh"
+    if "future" in values:
+        return "future"
+    if "unavailable" in values:
+        return "unavailable"
+    return "stale"
 
 
 def _merge_state(first: str, second: str) -> tuple[str, bool]:
@@ -1507,6 +1660,14 @@ def _latest_iso_datetime(*values: str | None) -> str | None:
     if not valid:
         return None
     return max(valid, key=lambda item: item[0])[1]
+
+
+def _earliest_iso_datetime(*values: str | None) -> str | None:
+    parsed = [(_parse_datetime(value), value) for value in values if value]
+    valid = [(moment, value) for moment, value in parsed if moment is not None]
+    if not valid:
+        return None
+    return min(valid, key=lambda item: item[0])[1]
 
 
 def _join_source_values(first: str | None, second: str | None) -> str | None:

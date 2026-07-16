@@ -54,6 +54,13 @@ from app.services.discovery_sector_opportunity import (
     select_sector_opportunities,
 )
 from app.services.discovery_sector_heat import build_sector_heat_ranking
+from app.services.discovery_sector_position import (
+    build_sector_position_map_for_opportunities,
+)
+from app.services.mainline_regime import (
+    build_mainline_regime_snapshot,
+    mainline_regime_by_label,
+)
 from app.services.discovery_target_sectors import select_target_sectors
 from app.services.news_service import (
     NewsService,
@@ -80,7 +87,7 @@ from app.services.discovery_strategy import discovery_minimum_holding_days
 from app.services.candidate_selection_audit import (
     build_pipeline_candidate_selection_audit_v2,
 )
-from app.services.fund_lookthrough_context import build_fund_lookthrough_context
+from app.services.trading_session import build_trading_session
 
 logger = logging.getLogger(__name__)
 PREP_HEARTBEAT_SECONDS = 1.0
@@ -129,6 +136,9 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
             target_sectors,
             list(request.focus_sectors),
         )
+        effective_trade_date = str(
+            build_trading_session(decision_at).get("effective_trade_date") or ""
+        ).strip() or None
         news_service = NewsService()
         per_sector = 3
         pool_cap = 28
@@ -144,10 +154,16 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
                 build_sector_flow_map_for_opportunities,
                 sector_heat,
                 flow_labels,
+                trade_date=effective_trade_date,
             )
             divergence_future = executor.submit(
                 build_sector_divergence_map_for_opportunities,
                 flow_labels,
+            )
+            position_future = executor.submit(
+                build_sector_position_map_for_opportunities,
+                flow_labels,
+                as_of_trade_date=effective_trade_date,
             )
             sector_flow_by_label = yield from _await_future_with_progress(
                 flow_future,
@@ -161,10 +177,25 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
                 "正在校验板块信号历史表现…",
                 started_at=started_at,
             )
+            sector_position_by_label = yield from _await_future_with_progress(
+                position_future,
+                "sector_heat",
+                "正在计算板块多周期相对强度…",
+                started_at=started_at,
+            )
+            mainline_snapshot = build_mainline_regime_snapshot(
+                sector_heat,
+                sector_flow_by_label=sector_flow_by_label,
+                sector_position_by_label=sector_position_by_label,
+                sector_labels=flow_labels,
+                decision_at=decision_at,
+            )
+            mainline_by_label = mainline_regime_by_label(mainline_snapshot)
             sector_opportunities = select_sector_opportunities(
                 sector_heat,
                 sector_flow_by_label=sector_flow_by_label,
                 sector_divergence_by_label=sector_divergence_by_label,
+                mainline_by_label=mainline_by_label,
                 focus_sectors=list(request.focus_sectors),
                 max_total=8,
                 momentum_slots=4,
@@ -251,30 +282,12 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
                 decision_at=decision_at,
             )
             pool = attach_fund_benchmark_metrics(pool, benchmark_metrics)
-            lookthrough_future = executor.submit(
-                run_with_request_user,
-                user_id,
-                lambda: build_fund_lookthrough_context(
-                    holdings,
-                    pool,
-                    decision_at=decision_at,
-                    analysis_mode=request.analysis_mode,
-                    portfolio_context=request.portfolio_snapshot_context,
-                ),
-            )
             market_news = yield from _await_future_with_progress(
                 news_future,
                 "news",
                 "正在拉取市场要闻…",
                 started_at=started_at,
             )
-            fund_lookthrough = yield from _await_future_with_progress(
-                lookthrough_future,
-                "candidate_pool",
-                "正在核验基金披露持仓与组合重合度…",
-                started_at=started_at,
-            )
-
         announcement_result = prefetch_fund_announcements_compat(
             news_service,
             [str(item.get("fund_code") or "") for item in pool[:12]],
@@ -332,6 +345,7 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
             focus_sectors=list(request.focus_sectors),
             fund_type_preference="any",
             sector_opportunities=sector_opportunities,
+            mainline_snapshot=mainline_snapshot,
             budget_enhancements=True,
             decision_at=decision_at,
         )
@@ -358,7 +372,6 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
         discovery_facts["benchmark_research_contract"] = summarize_benchmark_research(
             benchmark_metrics
         )
-        discovery_facts["fund_lookthrough"] = fund_lookthrough
         discovery_facts = attach_discovery_data_evidence(
             discovery_facts,
             holdings=holdings,

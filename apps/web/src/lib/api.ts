@@ -103,126 +103,6 @@ export type TopicBrief = {
   provider: string;
 };
 
-/**
- * 基金持仓穿透研究只表达“已披露范围内的下限”，不会把未披露质量补成 0。
- * 后端会随数据源逐步补充审计字段，因此这里保留开放索引以兼容历史报告与新快照。
- */
-export type FundLookthroughSnapshot = {
-  schema_version?: string | null;
-  fund_code?: string | null;
-  report_period?: string | null;
-  as_of_date?: string | null;
-  available_at?: string | null;
-  checked_at?: string | null;
-  current_freshness_label?: string | null;
-  current_report_age_days?: number | null;
-  status?: string | null;
-  [key: string]: unknown;
-};
-
-export type FundLookthroughExposure = {
-  security_key?: string | null;
-  security_code?: string | null;
-  security_name?: string | null;
-  industry?: string | null;
-  industry_name?: string | null;
-  listing_market?: string | null;
-  label?: string | null;
-  exposure_lower_bound_percent?: number | null;
-  weight_lower_bound_percent?: number | null;
-  overlap_contribution_lower_bound_percent?: number | null;
-  [key: string]: unknown;
-};
-
-export type FundLookthroughPortfolio = {
-  scope?: string | null;
-  identity_known_security_mass_lower_bound_percent?: number | null;
-  disclosed_security_mass_lower_bound_percent?: number | null;
-  unknown_account_mass_percent?: number | null;
-  unknown_fund_holdings_scope_mass_percent?: number | null;
-  industry_unknown_mass_percent?: number | null;
-  listing_market_unknown_mass_percent?: number | null;
-  security_exposure_lower_bounds?: FundLookthroughExposure[] | null;
-  industry_exposure_lower_bounds?: FundLookthroughExposure[] | null;
-  listing_market_exposure_lower_bounds?: FundLookthroughExposure[] | null;
-  /** Compact LLM snapshots use the `top_` aliases. */
-  top_security_exposure_lower_bounds?: FundLookthroughExposure[] | null;
-  top_industry_exposure_lower_bounds?: FundLookthroughExposure[] | null;
-  top_listing_market_exposure_lower_bounds?: FundLookthroughExposure[] | null;
-  snapshot?: FundLookthroughSnapshot | null;
-  [key: string]: unknown;
-};
-
-export type FundLookthroughCommonSecurity = FundLookthroughExposure & {
-  portfolio_exposure_lower_bound_percent?: number | null;
-  candidate_weight_percent?: number | null;
-  existing_weight_percent?: number | null;
-};
-
-export type FundLookthroughVintageAlignment = {
-  status?: "same_as_of_date" | "cross_vintage" | "mixed" | string | null;
-  as_of_date?: string | null;
-  candidate_as_of_date?: string | null;
-  portfolio_as_of_date?: string | null;
-  [key: string]: unknown;
-};
-
-export type FundLookthroughCandidate = {
-  fund_code?: string | null;
-  fund_name?: string | null;
-  status?: string | null;
-  execution_qualified?: boolean | null;
-  reason_codes?: string[] | null;
-  portfolio_security_overlap_lower_bound_percent?: number | null;
-  portfolio_security_overlap_lower_bound?: number | null;
-  common_disclosed_weight_percent?: number | null;
-  portfolio_overlap_interpretation?: string | null;
-  max_existing_fund_overlap_lower_bound_percent?: number | null;
-  max_existing_fund_overlap_lower_bound?: number | null;
-  max_existing_fund_code?: string | null;
-  max_existing_fund_name?: string | null;
-  top_common_with_portfolio?: FundLookthroughCommonSecurity[] | null;
-  top_common_securities?: FundLookthroughCommonSecurity[] | null;
-  vintage_alignment?: FundLookthroughVintageAlignment | null;
-  vintage_aligned?: boolean | null;
-  snapshot?: FundLookthroughSnapshot | null;
-  [key: string]: unknown;
-};
-
-export type FundLookthroughExistingFund = {
-  fund_code?: string | null;
-  fund_name?: string | null;
-  status?: string | null;
-  snapshot?: FundLookthroughSnapshot | null;
-  [key: string]: unknown;
-};
-
-export type FundLookthroughCapability = {
-  status?: string | null;
-  [key: string]: unknown;
-};
-
-export type FundLookthroughResearch = {
-  schema_version?: string | null;
-  status?: "qualified" | "complete" | "partial" | "unavailable" | "invalid" | string | null;
-  decision_at?: string | null;
-  research_qualified?: boolean | null;
-  execution_qualified?: boolean | null;
-  portfolio_execution_qualified?: boolean | null;
-  reason_codes?: string[] | null;
-  scope?: string | Record<string, unknown> | null;
-  qualification?: Record<string, unknown> | null;
-  capabilities?: Record<string, FundLookthroughCapability | null | undefined> | null;
-  portfolio?: FundLookthroughPortfolio | null;
-  existing_funds?: FundLookthroughExistingFund[] | null;
-  candidates?:
-    | FundLookthroughCandidate[]
-    | Record<string, FundLookthroughCandidate | null | undefined>
-    | null;
-  resolution_audit?: Record<string, unknown> | unknown[] | null;
-  [key: string]: unknown;
-};
-
 export type Report = {
   id: string;
   created_at: string;
@@ -290,7 +170,6 @@ export type Report = {
   caveats: string[];
   provider: string;
   analysis_facts?: {
-    fund_lookthrough?: FundLookthroughResearch | null;
     [key: string]: unknown;
   };
 };
@@ -858,6 +737,11 @@ export type FundTradeability = {
   fund_code?: string;
   data_status?: "complete" | "partial" | "stale" | "unavailable" | string;
   freshness?: "fresh" | "stale" | "unavailable" | string;
+  status_checked_at?: string | null;
+  purchase_status_checked_at?: string | null;
+  purchase_status_freshness?: "fresh" | "stale" | "unavailable" | string;
+  redemption_status_checked_at?: string | null;
+  redemption_status_freshness?: "fresh" | "stale" | "unavailable" | string;
   can_purchase?: boolean | null;
   purchase_state?:
     | "open"
@@ -1414,10 +1298,70 @@ export type DiscoveryCandidatePoolItem = {
   benchmark_metrics?: DiscoveryBenchmarkMetrics;
 };
 
+export type MainlineRegime = {
+  schema_version?: string;
+  policy_version?: string;
+  sector_label?: string;
+  as_of_trade_date?: string | null;
+  status?: "forming" | "confirmed" | "crowded" | "fading" | "neutral" | "insufficient" | string;
+  score?: number | null;
+  confidence?: string | null;
+  feature_coverage?: number | null;
+  research_ranking_only?: boolean;
+  execution_eligible?: boolean;
+  component_scores?: Record<string, number | null>;
+  risk_penalty?: number | null;
+  features?: {
+    change_1d_percent?: number | null;
+    return_5d_percent?: number | null;
+    return_10d_percent?: number | null;
+    return_20d_percent?: number | null;
+    return_60d_percent?: number | null;
+    relative_return_10d_percent?: number | null;
+    relative_return_20d_percent?: number | null;
+    relative_return_60d_percent?: number | null;
+    relative_strength_percentile?: number | null;
+    today_main_force_net_yi?: number | null;
+    cumulative_5d_net_yi?: number | null;
+    cumulative_20d_net_yi?: number | null;
+    advancing_ratio_percent?: number | null;
+    distance_from_ma20_percent?: number | null;
+    distance_from_ma60_percent?: number | null;
+    distance_from_20d_high_percent?: number | null;
+    volume_ratio_5d_vs_20d?: number | null;
+    max_drawdown_20d_percent?: number | null;
+  };
+  source_dates?: {
+    sector_kline_end_date?: string | null;
+    sector_price_source?: string | null;
+    proxy_member_count?: number | null;
+    flow_date?: string | null;
+  };
+  evidence?: string[];
+  risks?: string[];
+};
+
+export type MainlineSnapshot = {
+  schema_version?: string;
+  policy_version?: string;
+  decision_at?: string;
+  captured_at?: string;
+  effective_trade_date?: string | null;
+  session_kind?: string | null;
+  decision_policy?: string;
+  execution_gate_changed?: boolean;
+  snapshot_hash?: string;
+  sector_count?: number;
+  available_count?: number;
+  ranking?: string[];
+  sectors?: MainlineRegime[];
+};
+
 export type SectorOpportunity = {
   sector_label: string;
   track?: string | null;
   score?: number | null;
+  research_score?: number | null;
   confidence?: string | null;
   entry_hint?: string | null;
   evidence?: string[];
@@ -1430,6 +1374,7 @@ export type SectorOpportunity = {
   five_day_available?: boolean;
   history_point_count?: number;
   pattern_label?: string | null;
+  mainline_regime?: MainlineRegime | null;
   /** false = 该方向当前不构成加仓机会，仅作方向参考（日报持仓场景会返回此状态）。 */
   opportunity_available?: boolean;
 };
@@ -1537,6 +1482,7 @@ export type FundDiscoveryReport = {
   allocation_plan?: DiscoveryAllocationPlan;
   discovery_facts?: {
     sector_opportunities?: DiscoverySectorOpportunity[];
+    mainline_snapshot?: MainlineSnapshot;
     market_breadth?: MarketBreadthSignal | null;
     selection_strategy?: SelectionStrategy | string;
     fund_type_preference?: FundTypePreference | string;
@@ -1563,7 +1509,6 @@ export type FundDiscoveryReport = {
     candidate_quality_summary?: DiscoveryCandidateQualitySummary;
     risk_context?: DiscoveryRiskContext;
     allocation_plan?: DiscoveryAllocationPlan;
-    fund_lookthrough?: FundLookthroughResearch | null;
     [key: string]: unknown;
   };
   caveats: string[];
@@ -1580,6 +1525,10 @@ export type DiscoverySectorHeat = {
   change_1d_percent?: number | null;
   change_5d_percent?: number | null;
   heat_score?: number | null;
+  rising_count?: number | null;
+  falling_count?: number | null;
+  flat_count?: number | null;
+  advancing_ratio_percent?: number | null;
 };
 
 export type MarketThemeBoardSort = "change" | "inflow";
@@ -1599,6 +1548,10 @@ export type MarketThemeBoardItem = {
   change_1d_percent?: number | null;
   change_5d_percent?: number | null;
   main_force_net_yi?: number | null;
+  rising_count?: number | null;
+  falling_count?: number | null;
+  flat_count?: number | null;
+  advancing_ratio_percent?: number | null;
   flow_tiers?: MarketThemeBoardFlowTiers | null;
   flow_source_code?: string | null;
   held_fund_count: number;

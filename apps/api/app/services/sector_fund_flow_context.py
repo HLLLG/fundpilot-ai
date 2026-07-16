@@ -245,14 +245,22 @@ def _matching_theme_board_snapshot(trade_date: str) -> dict[str, Any] | None:
 
 def _live_today_flow_from_snapshot(
     snapshot: dict[str, Any] | None,
-    board_code: str,
+    board_code: str | None,
+    *,
+    sector_label: str | None = None,
 ) -> dict[str, Any] | None:
     if snapshot is None:
         return None
+    normalized_label = normalize_sector_label(sector_label)
     for item in snapshot.get("items") or []:
         if not isinstance(item, dict):
             continue
-        if str(item.get("flow_source_code") or "").strip() != board_code:
+        item_code = str(item.get("flow_source_code") or "").strip()
+        item_label = normalize_sector_label(item.get("sector_label"))
+        if not (
+            (board_code and item_code == board_code)
+            or (normalized_label and item_label == normalized_label)
+        ):
             continue
         main_force = _finite_number(item.get("main_force_net_yi"))
         if main_force is None:
@@ -266,16 +274,24 @@ def _live_today_flow_from_snapshot(
 
 def _five_day_rank_from_snapshot(
     snapshot: dict[str, Any] | None,
-    board_code: str,
+    board_code: str | None,
     trade_date: str,
+    *,
+    sector_label: str | None = None,
 ) -> float | None:
     """Use only a rank aggregate whose row-level f124 date exactly matches."""
     if snapshot is None:
         return None
+    normalized_label = normalize_sector_label(sector_label)
     for item in snapshot.get("items") or []:
         if not isinstance(item, dict):
             continue
-        if str(item.get("flow_source_code") or "").strip() != board_code:
+        item_code = str(item.get("flow_source_code") or "").strip()
+        item_label = normalize_sector_label(item.get("sector_label"))
+        if not (
+            (board_code and item_code == board_code)
+            or (normalized_label and item_label == normalized_label)
+        ):
             continue
         if str(item.get("flow_data_date") or "").strip() != trade_date:
             return None
@@ -433,7 +449,19 @@ def build_sector_fund_flow_context(
     target_trade_date = trade_date or get_effective_trade_date()
 
     board_code, resolved_label = resolve_board_flow_code_for_sector(label)
-    if not board_code:
+    matching_snapshot = _matching_theme_board_snapshot(target_trade_date)
+    live = _live_today_flow_from_snapshot(
+        matching_snapshot,
+        board_code,
+        sector_label=label,
+    )
+    rank_five_day = _five_day_rank_from_snapshot(
+        matching_snapshot,
+        board_code,
+        target_trade_date,
+        sector_label=label,
+    )
+    if not board_code and live is None:
         return {
             "available": False,
             "sector_label": label,
@@ -445,22 +473,19 @@ def build_sector_fund_flow_context(
         }
 
     io_started_at = monotonic()
-    matching_snapshot = _matching_theme_board_snapshot(target_trade_date)
-    live = _live_today_flow_from_snapshot(matching_snapshot, board_code)
-    rank_five_day = _five_day_rank_from_snapshot(
-        matching_snapshot,
-        board_code,
-        target_trade_date,
-    )
 
     # Start both independent sources together. History gets only a small
     # request-time budget; a running cold fetch may finish and warm its cache,
     # but its cleanup is never awaited by this response.
-    history_future = _submit_history_load(board_code, target_trade_date)
+    history_future = (
+        _submit_history_load(board_code, target_trade_date)
+        if board_code
+        else None
+    )
     # The bulk snapshot's exact trade date is the authority that this is a
     # current-day fallback. Without it, do not issue a live lookup and risk
     # mixing today's response into an explicitly historical context.
-    may_fetch_current = live is None and matching_snapshot is not None
+    may_fetch_current = board_code is not None and live is None and matching_snapshot is not None
     current_flow_future = (
         _submit_current_flow_load(board_code, target_trade_date)
         if may_fetch_current
@@ -504,7 +529,7 @@ def build_sector_fund_flow_context(
 
     series = _ensure_today_point(
         series,
-        board_code,
+        board_code or label,
         target_trade_date,
         live=live,
     )

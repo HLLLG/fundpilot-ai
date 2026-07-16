@@ -242,8 +242,20 @@ def _result_within(future: Future, deadline: float, *, label: str) -> Any:
     remaining = max(0.0, deadline - time.monotonic())
     try:
         return future.result(timeout=remaining)
+    except TimeoutError:
+        logger.warning(
+            "us market fetch exceeded shared %.1fs budget (%s)",
+            _FETCH_BUDGET_SECONDS,
+            label,
+        )
+        return None
     except Exception as exc:  # noqa: BLE001 — 含 TimeoutError，统一降级为 None
-        logger.warning("us market fetch failed/timeout (%s): %s", label, exc)
+        logger.warning(
+            "us market fetch failed (%s): %s: %s",
+            label,
+            type(exc).__name__,
+            exc,
+        )
         return None
 
 

@@ -5,13 +5,22 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.models import DiscoveryRecommendation, InvestorProfile
+from app.models import (
+    DiscoveryRecommendation,
+    FundNavHistory,
+    FundNavPoint,
+    InvestorProfile,
+)
 from app.services.discovery_candidate_pool import (
     _with_data_quality_gate,
     enrich_candidates,
     finalize_candidate_pool,
 )
-from app.services.discovery_guard import apply_discovery_guards
+from app.services.discovery_guard import (
+    _quant_coverage_explanation,
+    apply_discovery_guards,
+    finalize_discovery_allocation_projection,
+)
 
 
 def _snapshot(*, drawdown: float = -20.0):
@@ -66,6 +75,51 @@ def test_enrichment_recomputes_bounded_score_and_quality_gate(monkeypatch):
     assert item["quality_score_version"] == "fund_quality.v3"
     assert item["quality_gate"]["status"] == "eligible"
     assert item["quality_gate"]["coverage_percent"] == 100.0
+
+
+def test_enrichment_derives_drawdown_from_fetched_nav_when_diagnostics_is_missing(
+    monkeypatch,
+):
+    trend = FundNavHistory(
+        fund_code="020356",
+        fund_name="test",
+        source="akshare",
+        points=[
+            FundNavPoint(date=f"2026-01-{index:03d}", nav=nav)
+            for index, nav in enumerate([100.0] * 251 + [80.0], start=1)
+        ],
+    )
+    monkeypatch.setattr(
+        "app.services.discovery_candidate_pool.FundDataService._snapshot_and_trend_for_holding",
+        lambda *_args, **_kwargs: (_snapshot(drawdown=None), trend),
+    )
+    monkeypatch.setattr(
+        "app.services.discovery_candidate_pool.fetch_fund_research_profiles_cached",
+        lambda _codes: {
+            "020356": {
+                "fund_code": "020356",
+                "fund_scale_yi": 3.55,
+                "fund_manager": "test manager",
+                "established_date": "2024-01-23",
+                "profile_status": "complete",
+            }
+        },
+    )
+
+    item = enrich_candidates(
+        [
+            {
+                "fund_code": "020356",
+                "fund_name": "test fund",
+                "sector_label": "test sector",
+                "return_3m_percent": 18.0,
+                "return_6m_percent": 35.0,
+            }
+        ]
+    )[0]
+
+    assert item["max_drawdown_1y_percent"] == -20.0
+    assert "max_drawdown_1y_percent" not in item["quality_gate"]["missing_fields"]
 
 
 def test_enrichment_converts_xq_shares_with_latest_nav_instead_of_treating_as_aum(
@@ -606,10 +660,13 @@ def test_guard_blocks_buy_when_candidate_is_outside_quant_coverage() -> None:
     assert guarded[0].action == "建议关注"
     assert guarded[0].suggested_amount_yuan is None
     assert guarded[0].confidence == "低"
-    assert "量化证据未覆盖" in guarded[0].points[0]
+    assert "PIT v3 量化模型尚未达到可执行条件" in guarded[0].points[0]
     assert facts["data_evidence_guard"]["quant_evidence_blocked_fund_codes"] == [
         "021627"
     ]
+    assert facts["data_evidence_guard"]["quant_evidence_uncovered_reasons_by_fund"] == {
+        "021627": "pit_v3_not_ready"
+    }
     assert any("量化覆盖集合" in caveat for caveat in caveats)
 
 
@@ -789,9 +846,170 @@ def test_opportunity_first_uses_drawdown_and_quant_coverage_as_soft_risk_inputs(
     assert guarded[0].hold_horizon == "1-3个月"
     assert guarded[0].confidence == "中"
     assert guarded[0].points[0] == "板块资金和净值趋势共同改善。"
+    assert any("量化 IC 快照当前不可用" in item for item in guarded[0].points)
+    assert any("系统级量化证据状态" in item for item in guarded[0].validation_notes)
     assert any("不会单独否决当前机会" in item for item in guarded[0].risks)
     assert all("严重不符" not in item for item in guarded[0].risks)
-    assert any("未把“未覆盖”误判为负面信号" in item for item in caveats)
+    assert any("未把证据不足误判为负面信号" in item for item in caveats)
+
+
+def test_opportunity_first_explains_system_wide_v2_to_v3_gap_without_relaxing_gate():
+    candidate = _eligible_guard_candidate(
+        quality_gate={"status": "eligible", "eligible": True, "reasons": []}
+    )
+    guarded, caveats, _ = _run_guard_for_test(
+        [
+            DiscoveryRecommendation(
+                fund_code="020356",
+                fund_name="守卫测试基金A",
+                sector_name="半导体",
+                action="分批买入",
+                suggested_amount_yuan=1000,
+                confidence="高",
+            )
+        ],
+        candidate,
+        extra_facts={
+            "effective_configuration": {
+                "discovery_strategy": "opportunity_first"
+            },
+            "candidate_factor_scores": {
+                "available": True,
+                "model_version": "factor_ic.v2",
+                "selected_fund_codes": ["020356"],
+                "ic_status": {
+                    "state": "available",
+                    "available": True,
+                    "stale": False,
+                    "cohort_mode": "current_survivors",
+                },
+                "holdings": [
+                    {
+                        "fund_code": "020356",
+                        "descriptive_applicable": True,
+                        "execution_qualified": False,
+                        "execution_qualified_factor_keys": [],
+                    }
+                ],
+            },
+        },
+    )
+
+    assert guarded[0].action == "分批买入"
+    assert guarded[0].suggested_amount_yuan == 1000
+    assert guarded[0].confidence == "中"
+    assert any("PIT v3 量化模型尚未达到可执行条件" in item for item in guarded[0].points)
+    assert any("未用 v2/非 PIT 因子替代" in item for item in guarded[0].validation_notes)
+    assert all("量化模型目前没有给这只基金加分" not in item for item in guarded[0].points)
+    assert any("系统级证据状态" in item for item in caveats)
+
+
+@pytest.mark.parametrize(
+    ("factor_patch", "expected_reason", "expected_text"),
+    [
+        (
+            {"selected_fund_codes": ["999999"], "coverage_limit": 12},
+            "candidate_outside_online_factor_budget",
+            "未进入本次前 12 只线上量化候选",
+        ),
+        (
+            {
+                "selected_fund_codes": ["020356"],
+                "holdings": [
+                    {
+                        "fund_code": "020356",
+                        "execution_qualification": {
+                            "reason": "descriptive_factor_input_not_applicable"
+                        },
+                    }
+                ],
+            },
+            "descriptive_factor_input_not_applicable",
+            "同类分类或净值因子特征不完整",
+        ),
+        (
+            {
+                "selected_fund_codes": ["020356"],
+                "holdings": [
+                    {
+                        "fund_code": "020356",
+                        "execution_qualification": {
+                            "reason": "target_factor_feature_not_fresh"
+                        },
+                    }
+                ],
+            },
+            "target_factor_feature_not_fresh",
+            "目标净值因子特征不够新",
+        ),
+        (
+            {
+                "selected_fund_codes": ["020356"],
+                "holdings": [
+                    {
+                        "fund_code": "020356",
+                        "execution_qualification": {
+                            "reason": "no_statistically_and_economically_qualified_factor"
+                        },
+                    }
+                ],
+            },
+            "no_statistically_and_economically_qualified_factor",
+            "同时通过统计显著性与扣费后经济显著性门槛",
+        ),
+    ],
+)
+def test_quant_coverage_explanation_identifies_the_first_decisive_v3_gate(
+    factor_patch: dict,
+    expected_reason: str,
+    expected_text: str,
+) -> None:
+    factor_scores = {
+        "available": True,
+        "model_version": "factor_ic.v3",
+        "ic_status": {
+            "state": "available",
+            "available": True,
+            "stale": False,
+            "cohort_mode": "point_in_time",
+        },
+        **factor_patch,
+    }
+
+    explanation = _quant_coverage_explanation(factor_scores, "020356")
+
+    assert explanation.reason_code == expected_reason
+    assert expected_text in explanation.point
+    assert "不等于" in explanation.validation_note or "不代表" in explanation.validation_note
+
+
+def test_final_discovery_projection_is_idempotent_and_replaces_stale_projection():
+    recommendation = DiscoveryRecommendation(
+        fund_code="020356",
+        fund_name="守卫测试基金A",
+        sector_name="半导体",
+        action="分批买入",
+        suggested_amount_yuan=1000,
+        points=[
+            "保留的业务依据。",
+            "保留的业务依据。",
+            "系统校验后最终动作调整为建议关注。",
+            "系统校验后的最终动作：建议关注。",
+        ],
+    )
+
+    finalize_discovery_allocation_projection(recommendation)
+    recommendation.action = "等待回调"
+    recommendation.suggested_amount_yuan = None
+    finalize_discovery_allocation_projection(recommendation)
+
+    projections = [
+        point
+        for point in recommendation.points
+        if point.startswith("系统校验后的最终动作：")
+    ]
+    assert projections == ["系统校验后的最终动作：等待回调。"]
+    assert recommendation.points[0] == "保留的业务依据。"
 
 
 def test_opportunity_first_waits_only_when_price_extension_and_flow_weakness_coexist():
@@ -833,6 +1051,44 @@ def test_opportunity_first_waits_only_when_price_extension_and_flow_weakness_coe
 
     assert guarded[0].action == "等待回调"
     assert any("短线涨幅已经偏快" in item for item in guarded[0].points)
+
+
+def test_weak_evidence_downgrade_names_exact_trigger_values():
+    candidate = _eligible_guard_candidate(
+        quality_gate={"status": "eligible", "eligible": True, "reasons": []}
+    )
+    candidate["fund_quality_score"] = 52.3
+    candidate["sector_fit_score"] = 16.0
+    guarded, caveats, _ = _run_guard_for_test(
+        [
+            DiscoveryRecommendation(
+                fund_code="020356",
+                fund_name="守卫测试基金A",
+                sector_name="半导体",
+                action="分批买入",
+                suggested_amount_yuan=1000,
+            )
+        ],
+        candidate,
+        extra_facts={
+            "sector_opportunities": [
+                {
+                    "sector_label": "半导体",
+                    "score": 58.4,
+                    "confidence": "低",
+                    "opportunity_available": True,
+                }
+            ],
+        },
+    )
+
+    assert guarded[0].action == "建议关注"
+    assert "主方向置信度为低" in guarded[0].points[0]
+    assert "板块机会分 58.40，低于 60" in guarded[0].points[0]
+    assert "基金质量分 52.30，低于 55" in guarded[0].points[0]
+    assert "板块匹配分 16.00，低于 18" in guarded[0].points[0]
+    assert any("动作降级触发项" in item for item in guarded[0].validation_notes)
+    assert any("未达到买入证据门槛" in item for item in caveats)
 
 
 @pytest.mark.parametrize("quality_gate", [None, {}, {"status": "future_state"}])
@@ -924,7 +1180,7 @@ def test_guard_never_uses_legacy_descriptive_factor_alias_for_execution():
 
     assert guarded[0].action == "建议关注"
     assert guarded[0].suggested_amount_yuan is None
-    assert "量化证据未覆盖" in guarded[0].points[0]
+    assert "PIT v3 量化模型尚未达到可执行条件" in guarded[0].points[0]
 
 
 @pytest.mark.parametrize("invalid_amount", [-1000.0, float("nan"), float("inf")])

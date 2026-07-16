@@ -47,6 +47,7 @@ def select_sector_opportunities(
     *,
     sector_flow_by_label: dict[str, dict] | None = None,
     sector_divergence_by_label: dict[str, dict] | None = None,
+    mainline_by_label: dict[str, dict] | None = None,
     focus_sectors: list[str] | None = None,
     max_total: int = 8,
     momentum_slots: int = 4,
@@ -55,6 +56,7 @@ def select_sector_opportunities(
 ) -> list[dict[str, Any]]:
     flow_by_label = sector_flow_by_label or {}
     divergence_by_label = sector_divergence_by_label or {}
+    mainline_map = mainline_by_label or {}
     focus = {str(label).strip() for label in (focus_sectors or []) if str(label).strip()}
     scored = [
         _score_row(
@@ -62,6 +64,7 @@ def select_sector_opportunities(
             flow_by_label.get(str(row.get("sector_label") or "").strip()),
             focus,
             divergence_backtest=divergence_by_label.get(str(row.get("sector_label") or "").strip()),
+            mainline=mainline_map.get(str(row.get("sector_label") or "").strip()),
         )
         for row in sector_heat
     ]
@@ -69,12 +72,12 @@ def select_sector_opportunities(
 
     momentum = sorted(
         [row for row in rows if row["track"] == MOMENTUM_TRACK],
-        key=lambda row: row["score"],
+        key=_research_sort_score,
         reverse=True,
     )
     setup = sorted(
         [row for row in rows if row["track"] == SETUP_TRACK],
-        key=lambda row: row["score"],
+        key=_research_sort_score,
         reverse=True,
     )
 
@@ -87,7 +90,7 @@ def select_sector_opportunities(
         selected_labels = {item["sector_label"] for item in selected}
         fallback = sorted(
             [row for row in rows if row["sector_label"] not in selected_labels],
-            key=lambda row: row["score"],
+            key=_research_sort_score,
             reverse=True,
         )
         selected.extend(_take_with_group_limit(fallback, remaining, selected, max_per_group))
@@ -227,8 +230,15 @@ def _score_row(
     focus: set[str],
     *,
     divergence_backtest: dict | None = None,
+    mainline: dict | None = None,
 ) -> dict[str, Any] | None:
-    result = _compute_opportunity_row(row, flow, focus, divergence_backtest)
+    result = _compute_opportunity_row(
+        row,
+        flow,
+        focus,
+        divergence_backtest,
+        mainline=mainline,
+    )
     if result is None or not result["opportunity_available"]:
         return None
     return {key: value for key, value in result.items() if key != "opportunity_available"}
@@ -239,6 +249,8 @@ def _compute_opportunity_row(
     flow: dict | None,
     focus: set[str],
     divergence_backtest: dict | None = None,
+    *,
+    mainline: dict | None = None,
 ) -> dict[str, Any] | None:
     label = str(row.get("sector_label") or "").strip()
     if not label:
@@ -328,10 +340,22 @@ def _compute_opportunity_row(
     ) or max(momentum_score, setup_score) <= 0
 
     track = MOMENTUM_TRACK if momentum_score >= setup_score else SETUP_TRACK
+    base_score = round(max(momentum_score, setup_score), 2)
+    mainline_score = _num((mainline or {}).get("score"))
+    mainline_status = str((mainline or {}).get("status") or "").strip()
+    research_score = base_score
+    if mainline_score is not None and mainline_status != "insufficient":
+        research_score = round(
+            min(max(base_score, 0.0), 100.0) * 0.55
+            + min(max(mainline_score, 0.0), 100.0) * 0.45,
+            2,
+        )
     return {
         "sector_label": label,
         "track": track,
-        "score": round(max(momentum_score, setup_score), 2),
+        "score": base_score,
+        "research_score": research_score,
+        "mainline_regime": dict(mainline) if isinstance(mainline, dict) else None,
         "confidence": (
             "不足"
             if disqualified
@@ -352,6 +376,13 @@ def _compute_opportunity_row(
         "sector_group": _sector_group(label),
         "opportunity_available": not disqualified,
     }
+
+
+def _research_sort_score(row: dict[str, Any]) -> tuple[float, float]:
+    return (
+        _num(row.get("research_score")) or _num(row.get("score")) or 0.0,
+        _num(row.get("score")) or 0.0,
+    )
 
 
 def _take_with_group_limit(

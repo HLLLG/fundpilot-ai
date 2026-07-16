@@ -99,3 +99,40 @@ it("does not show units for independently unavailable flow values", () => {
   expect(screen.queryByText("99.00 亿")).not.toBeInTheDocument();
   expect(screen.queryByText("88.00 亿")).not.toBeInTheDocument();
 });
+
+it("shows mainline status and keeps it explicitly research-only", () => {
+  render(
+    <SectorOpportunityCard
+      item={{
+        sector_label: "CPO",
+        score: 72,
+        mainline_regime: {
+          status: "confirmed",
+          score: 81.5,
+          confidence: "中",
+          research_ranking_only: true,
+          execution_eligible: false,
+          features: {
+            relative_return_20d_percent: 8.2,
+            relative_strength_percentile: 91.4,
+            advancing_ratio_percent: 68.5,
+          },
+          source_dates: {
+            sector_price_source: "sina_current_large_constituents_proxy",
+            proxy_member_count: 8,
+          },
+          evidence: ["近20日相对沪深300超额 +8.20%"],
+          risks: ["接近20日高位"],
+        },
+      }}
+    />,
+  );
+
+  expect(screen.getByTestId("mainline-status")).toHaveTextContent("主线已确认");
+  expect(screen.getByTestId("mainline-evidence")).toHaveTextContent("仅研究排序");
+  expect(screen.getByText("+8.20%")).toBeInTheDocument();
+  expect(screen.getByText("+91.40%")).toBeInTheDocument();
+  expect(screen.getByText("+68.50%")).toBeInTheDocument();
+  expect(screen.getByText(/当前大市值成分股代理（8 只）/)).toBeInTheDocument();
+  expect(screen.getByText(/风险：接近20日高位/)).toBeInTheDocument();
+});

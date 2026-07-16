@@ -101,57 +101,6 @@ def _recall_snapshot(rows: list[dict], *, complete: bool = True) -> dict:
     }
 
 
-def _lookthrough_fact() -> dict:
-    return {
-        "schema_version": "fund_lookthrough_research.v1",
-        "status": "partial",
-        "scope": "portfolio_and_candidates",
-        "research_qualified": False,
-        "execution_qualified": False,
-        "reason_codes": ["pytest_partial_disclosure"],
-        "qualification": {
-            "research_qualified": False,
-            "execution_qualified": False,
-            "reason_codes": ["pytest_partial_disclosure"],
-        },
-        "capabilities": {
-            "portfolio_lookthrough": {"status": "partial"},
-            "candidate_overlap": {"status": "partial"},
-        },
-        "portfolio": {
-            "scope": "fund_holdings_only",
-            "unknown_fund_holdings_scope_mass_percent": 80.0,
-            "security_exposure_lower_bounds": [],
-            "industry_exposure_lower_bounds": [],
-            "listing_market_exposure_lower_bounds": [],
-        },
-        "existing_funds": [
-            {
-                "fund_code": "000001",
-                "snapshot": {
-                    "snapshot_hash": "a" * 64,
-                    "holdings": [{"security_code": "600001", "weight_percent": 20}],
-                },
-            }
-        ],
-        "candidates": [],
-        "resolution_audit": {
-            "rows": [
-                {
-                    "fund_code": "000001",
-                    "role": "existing",
-                    "snapshot_ref": "a" * 12,
-                }
-            ],
-            "raw_snapshots_included": False,
-            "raw_holdings_included": False,
-        },
-        "research_hash": "b" * 64,
-        "raw_snapshots_included": False,
-        "raw_holdings_included": False,
-    }
-
-
 def test_build_candidate_pool_captures_full_scored_recall_without_catalogue(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -337,12 +286,6 @@ def _patch_path(monkeypatch: pytest.MonkeyPatch, module, captured: dict) -> None
     monkeypatch.setattr(module, "attach_fund_benchmark_metrics", lambda pool, *_args, **_kwargs: pool)
     monkeypatch.setattr(module, "summarize_benchmark_research", lambda *_args, **_kwargs: {})
 
-    def build_lookthrough(_holdings, pool, **kwargs):
-        captured["lookthrough_pool_codes"] = [row["fund_code"] for row in pool]
-        captured["lookthrough_decision_at"] = kwargs["decision_at"]
-        return deepcopy(_lookthrough_fact())
-
-    monkeypatch.setattr(module, "build_fund_lookthrough_context", build_lookthrough)
     monkeypatch.setattr(module, "prefetch_fund_announcements_compat", lambda *_args, **_kwargs: {"items": []})
     monkeypatch.setattr(module, "announcement_fetch_facts", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(module, "merge_market_news_with_announcements", lambda news, *_args, **_kwargs: news)
@@ -393,12 +336,8 @@ def test_sync_and_sse_persist_identical_v2_without_sending_it_to_llm(
     assert sync_audit["schema_version"] == "discovery_candidate_selection_audit.v2"
     assert sync_audit["stage_counts"] == {"recall": 3, "gate": 3, "prescreen": 2, "final": 2}
     assert sync["facts"]["candidate_selection_audit_v1"]["schema_version"].endswith(".v1")
-    assert sync["facts"]["fund_lookthrough"] == sse["facts"]["fund_lookthrough"]
-    assert sync["facts"]["fund_lookthrough"] == _lookthrough_fact()
-    assert sync["lookthrough_pool_codes"] == ["100001", "100003"]
-    assert sse["lookthrough_pool_codes"] == ["100001", "100003"]
-    assert sync["lookthrough_decision_at"] == DECISION_AT
-    assert sse["lookthrough_decision_at"] == DECISION_AT
+    assert "fund_lookthrough" not in sync["facts"]
+    assert "fund_lookthrough" not in sse["facts"]
 
     payload = build_user_payload(
         discovery_facts=sync["facts"],
@@ -412,9 +351,4 @@ def test_sync_and_sse_persist_identical_v2_without_sending_it_to_llm(
     assert "candidate_selection_audit_v1" not in payload["discovery_facts"]
     assert sync_audit["snapshot_hash"] not in serialized
     assert sync["facts"]["candidate_selection_audit_v1"]["snapshot_hash"] not in serialized
-    assert payload["discovery_facts"]["fund_lookthrough"]["raw_holdings_included"] is False
-    assert "resolution_audit" not in payload["discovery_facts"]["fund_lookthrough"]
-    assert '"holdings":' not in json.dumps(
-        payload["discovery_facts"]["fund_lookthrough"],
-        ensure_ascii=False,
-    )
+    assert "fund_lookthrough" not in payload["discovery_facts"]

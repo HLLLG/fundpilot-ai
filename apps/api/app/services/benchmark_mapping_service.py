@@ -196,9 +196,18 @@ def freeze_fund_benchmark_spec(
         }
         return spec, mapping
 
-    if not index_code and benchmark_text:
+    if benchmark_text:
         parsed_tracking = parse_benchmark_index(benchmark_text)
-        if parsed_tracking is not None:
+        if parsed_tracking is not None and (
+            not index_code
+            or not index_name
+            or _normalized_name(parsed_tracking.index_name)
+            == _normalized_name(index_name)
+        ):
+            # Cached sector precomputation may contain an older fuzzy code for
+            # the same named index.  Prefer the current exact-name registry
+            # identity, but never replace a deliberately different cached
+            # index just because a composite benchmark mentions another leg.
             index_code = parsed_tracking.index_code
             index_name = parsed_tracking.index_name or index_name
 

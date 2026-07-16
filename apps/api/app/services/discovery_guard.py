@@ -43,6 +43,147 @@ class AmountCapResult:
     reasons: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class QuantCoverageExplanation:
+    """User-facing reason why a candidate has no executable v3 factor evidence."""
+
+    reason_code: str
+    point: str
+    validation_note: str
+
+
+_FINAL_ACTION_PROJECTION_PREFIX = "系统校验后的最终动作："
+_FINAL_ACTION_PROJECTION_RE = re.compile(
+    r"^系统校验后(?:的)?最终动作(?:调整为)?\s*[：:]?"
+)
+
+
+def _quant_coverage_explanation(
+    factor_scores: Mapping[str, object],
+    fund_code: str,
+) -> QuantCoverageExplanation:
+    """Explain the first decisive quant gate without weakening fail-closed rules."""
+
+    status = factor_scores.get("ic_status")
+    ic_status = status if isinstance(status, Mapping) else {}
+    ic_state = str(ic_status.get("state") or "").strip().lower()
+    ic_snapshot_usable = bool(
+        ic_state == "available"
+        and ic_status.get("stale") is not True
+        and ic_status.get("available", True) is not False
+    )
+    if not ic_snapshot_usable:
+        if ic_status.get("stale") is True or ic_state == "stale":
+            point = "量化 IC 快照已过期，量化因子未参与本次动作加分。"
+            reason_code = "factor_ic_snapshot_stale"
+        else:
+            point = "量化 IC 快照当前不可用，量化因子未参与本次动作加分。"
+            reason_code = "factor_ic_snapshot_unavailable"
+        return QuantCoverageExplanation(
+            reason_code=reason_code,
+            point=point,
+            validation_note=(
+                "这是系统级量化证据状态，不是该基金的负面信号；"
+                "系统未用不可用或过期快照替代严格 v3 证据。"
+            ),
+        )
+
+    model_version = str(factor_scores.get("model_version") or "").strip()
+    cohort_mode = str(ic_status.get("cohort_mode") or "").strip()
+    if model_version != "factor_ic.v3" or cohort_mode != "point_in_time":
+        return QuantCoverageExplanation(
+            reason_code="pit_v3_not_ready",
+            point=(
+                "PIT v3 量化模型尚未达到可执行条件，当前 v2/非 PIT 因子仅作描述性参考，"
+                "未参与本次动作加分。"
+            ),
+            validation_note=(
+                "这是系统级量化证据状态，不是该基金的负面信号；"
+                "系统保留严格 v3 门槛，未用 v2/非 PIT 因子替代。"
+            ),
+        )
+
+    if factor_scores.get("available") is not True:
+        return QuantCoverageExplanation(
+            reason_code="candidate_factor_payload_unavailable",
+            point=(
+                "本次候选的同类分类或净值因子输入不可用，未生成可执行 v3 因子分。"
+            ),
+            validation_note=(
+                "候选因子输入不可用只降低置信度，不代表基金本身出现明确负面信号。"
+            ),
+        )
+
+    selected_codes = {
+        str(value or "").strip().zfill(6)
+        for value in (factor_scores.get("selected_fund_codes") or [])
+        if str(value or "").strip()
+    }
+    parsed_coverage_limit = _as_float(factor_scores.get("coverage_limit"))
+    coverage_limit = (
+        int(parsed_coverage_limit)
+        if parsed_coverage_limit is not None
+        and isfinite(parsed_coverage_limit)
+        and parsed_coverage_limit > 0
+        else 12
+    )
+    if selected_codes and fund_code not in selected_codes:
+        return QuantCoverageExplanation(
+            reason_code="candidate_outside_online_factor_budget",
+            point=(
+                f"该基金未进入本次前 {coverage_limit} 只线上量化候选，"
+                "因此没有生成可执行 v3 因子分。"
+            ),
+            validation_note=(
+                "线上量化候选数量受计算预算限制；未入选不等于基金出现负面量化信号。"
+            ),
+        )
+
+    target_row: Mapping[str, object] | None = None
+    for raw_row in factor_scores.get("holdings") or []:
+        if not isinstance(raw_row, Mapping):
+            continue
+        row_code = str(raw_row.get("fund_code") or "").strip().zfill(6)
+        if row_code == fund_code:
+            target_row = raw_row
+            break
+    qualification = (
+        target_row.get("execution_qualification")
+        if isinstance(target_row, Mapping)
+        else None
+    )
+    reason = (
+        str(qualification.get("reason") or "").strip()
+        if isinstance(qualification, Mapping)
+        else ""
+    )
+    reason_text = {
+        "descriptive_factor_input_not_applicable": (
+            "该基金的同类分类或净值因子特征不完整，未形成可执行 v3 因子证据。"
+        ),
+        "target_factor_feature_not_fresh": (
+            "该基金的目标净值因子特征不够新，未形成可执行 v3 因子证据。"
+        ),
+        "no_statistically_and_economically_qualified_factor": (
+            "该基金当前没有因子同时通过统计显著性与扣费后经济显著性门槛，"
+            "因此量化模型未加分。"
+        ),
+        "factor_ic_snapshot_not_current": (
+            "该基金评分所用的量化快照不是当前可执行状态，量化模型未加分。"
+        ),
+    }.get(
+        reason,
+        "该基金本次没有形成通过严格门槛的可执行 v3 因子证据，量化模型未加分。",
+    )
+    return QuantCoverageExplanation(
+        reason_code=reason or "fund_factor_not_execution_qualified",
+        point=reason_text,
+        validation_note=(
+            "缺少可执行量化加分只降低置信度，不代表基金本身出现明确负面信号。"
+        ),
+    )
+
+
 def _normalized_sector_key(value: object) -> str:
     label = normalize_sector_label(str(value or ""))
     canonical = get_intraday_canonical_sector(label) or get_canonical_sector(label)
@@ -309,6 +450,7 @@ def apply_discovery_guards(
         quant_covered_codes = set()
     quant_blocked_codes: set[str] = set()
     quant_uncovered_codes: set[str] = set()
+    quant_uncovered_reasons: dict[str, str] = {}
     profile_min_holding_days = discovery_minimum_holding_days(
         discovery_strategy,
         profile,
@@ -402,17 +544,19 @@ def apply_discovery_guards(
             ]
             caveats.append(f"{code} 未通过可执行质量门禁，已降为研究观察。")
         if quant_gate_active and code not in quant_covered_codes:
+            quant_explanation = _quant_coverage_explanation(factor_scores, code)
+            quant_uncovered_reasons[code] = quant_explanation.reason_code
             if opportunity_first:
                 quant_uncovered_codes.add(code)
                 if copy.confidence == "高":
                     copy.confidence = "中"
                 copy.points = [
                     *copy.points,
-                    "量化模型目前没有给这只基金加分；本次只按板块机会、基金质量、净值趋势和交易条件判断。",
+                    quant_explanation.point,
                 ]
                 copy.validation_notes = [
                     *copy.validation_notes,
-                    "量化因子未覆盖仅降低置信度，不代表基金本身出现明确负面信号。",
+                    quant_explanation.validation_note,
                 ]
             else:
                 quant_blocked_codes.add(code)
@@ -422,12 +566,13 @@ def apply_discovery_guards(
                 copy.amount_note = "该候选未进入当前量化覆盖集合，未生成可执行金额"
                 copy.confidence = "低"
                 copy.points = [
-                    "量化证据未覆盖该候选，系统仅保留观察，不以未验证因子支持买入。",
+                    quant_explanation.point,
+                    "稳健筛选要求可执行 v3 量化证据，系统因此仅保留观察。",
                     *copy.points,
                 ]
                 copy.validation_notes = [
                     *copy.validation_notes,
-                    "候选未进入当前量化最终名单，须待净值时点与同类因子校验完成后再评估。",
+                    quant_explanation.validation_note,
                 ]
         if execution_blocked:
             if copy.action == "分批买入":
@@ -569,12 +714,28 @@ def apply_discovery_guards(
                 f"{code}（{copy.fund_name}）会被系统从候选池剔除：{basis}。",
             ]
 
-        if _should_downgrade_weak_evidence(copy, pool_item, opportunity):
+        weak_evidence_reasons = (
+            _weak_evidence_reasons(pool_item, opportunity)
+            if copy.action == "分批买入"
+            else []
+        )
+        if weak_evidence_reasons:
             previous = copy.action
             copy.action = "建议关注"
-            note = "方向或基金证据不足，系统已将动作从「分批买入」降为「建议关注」。"
+            reason_text = "；".join(weak_evidence_reasons)
+            note = (
+                f"未达到买入证据门槛：{reason_text}。"
+                "系统已将动作从「分批买入」降为「建议关注」。"
+            )
             copy.points = [note, *copy.points]
-            caveats.append(f"{code} 证据不足，已将动作从「{previous}」降为「建议关注」。")
+            copy.validation_notes = [
+                *copy.validation_notes,
+                f"动作降级触发项：{reason_text}。",
+            ]
+            caveats.append(
+                f"{code} 未达到买入证据门槛（{reason_text}），"
+                f"已将动作从「{previous}」降为「建议关注」。"
+            )
 
         if (
             escalation.get("action") == "boost"
@@ -820,13 +981,25 @@ def apply_discovery_guards(
             "reasons_by_fund": evidence_blocked_codes,
             "quant_evidence_blocked_fund_codes": sorted(quant_blocked_codes),
             "quant_evidence_uncovered_fund_codes": sorted(quant_uncovered_codes),
+            "quant_evidence_uncovered_reasons_by_fund": dict(
+                sorted(quant_uncovered_reasons.items())
+            ),
         }
     if evidence_blocked_codes and not degraded_portfolio_snapshot:
         caveats.append("部分候选的字段级证据时点不可用，已降为观察并清除买入金额。")
     if quant_blocked_codes:
         caveats.append("部分候选未进入当前量化覆盖集合，已降为观察并清除买入金额。")
     if quant_uncovered_codes:
-        caveats.append("部分候选暂无量化因子加分；系统已降低置信度，但未把“未覆盖”误判为负面信号。")
+        if "pit_v3_not_ready" in quant_uncovered_reasons.values():
+            caveats.append(
+                "PIT v3 量化模型尚未达到可执行条件，当前因子仅作描述性参考；"
+                "系统已降低置信度，但未把系统级证据状态误判为基金负面信号。"
+            )
+        else:
+            caveats.append(
+                "部分候选暂无可执行 v3 量化因子加分；具体原因已逐只说明，"
+                "系统未把证据不足误判为负面信号。"
+            )
 
     return guarded[:5], caveats, eliminated
 
@@ -931,10 +1104,21 @@ def _enforce_discovery_execution_projection(rec: DiscoveryRecommendation) -> Non
                 "系统依据最终买入动作与确定性规则计算，非模型自由给值"
             )
 
-    projection = f"系统校验后的最终动作：{rec.action}。"
+    projection = f"{_FINAL_ACTION_PROJECTION_PREFIX}{rec.action}。"
     if rec.suggested_amount_yuan is not None:
         projection += f"示意金额约 {float(rec.suggested_amount_yuan):,.0f} 元。"
-    rec.points = [*rec.points, projection]
+    business_points: list[str] = []
+    seen_points: set[str] = set()
+    for point in rec.points:
+        text = str(point).strip()
+        if not text or _FINAL_ACTION_PROJECTION_RE.match(text):
+            continue
+        normalized = re.sub(r"\s+", " ", text)
+        if normalized in seen_points:
+            continue
+        seen_points.add(normalized)
+        business_points.append(text)
+    rec.points = [*business_points, projection]
     if not rec.decision_path:
         rec.decision_path = f"确定性守卫完成候选、证据与预算校验；最终动作：{rec.action}。"
 
@@ -991,22 +1175,27 @@ def _weak_evidence_reasons(pool_item: dict, opportunity: dict | None) -> list[st
     if opportunity:
         confidence = str(opportunity.get("confidence") or "").strip()
         if confidence in {"低", "不足"}:
-            reasons.append("主方向置信低")
+            reasons.append(f"主方向置信度为{confidence}")
         score = _as_float(opportunity.get("score"))
         if score is not None and score < 60:
-            reasons.append("板块机会分偏低")
+            reasons.append(f"板块机会分 {score:.2f}，低于 60")
         pattern = str(opportunity.get("pattern_label") or "")
         if pattern in {"flow_date_mismatch", "distribution", "weak_outflow"}:
-            reasons.append("资金/价格信号偏弱")
+            pattern_labels = {
+                "flow_date_mismatch": "资金与价格时点未对齐",
+                "distribution": "资金流呈高位分化",
+                "weak_outflow": "资金流偏弱",
+            }
+            reasons.append(pattern_labels[pattern])
         five_day_flow = _as_float(opportunity.get("cumulative_5d_net_yi"))
         if five_day_flow is not None and five_day_flow < 0:
-            reasons.append("5日主力净流出")
+            reasons.append(f"近5日主力净流出 {abs(five_day_flow):.2f} 亿元")
     quality = _as_float(pool_item.get("fund_quality_score"))
     if quality is not None and quality < 55:
-        reasons.append("基金质量分偏低")
+        reasons.append(f"基金质量分 {quality:.2f}，低于 55")
     fit = _as_float(pool_item.get("sector_fit_score"))
     if fit is not None and fit < 18:
-        reasons.append("板块匹配分偏低")
+        reasons.append(f"板块匹配分 {fit:.2f}，低于 18")
     penalties = " ".join(str(item) for item in pool_item.get("quality_penalties") or [])
     if "匹配置信偏低" in penalties or "板块匹配" in penalties:
         reasons.append("板块匹配置信偏低")

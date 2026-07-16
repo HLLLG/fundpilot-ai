@@ -14,7 +14,11 @@ from app.services.fund_peer_ranking import (
     fund_family_key,
     resolve_benchmark_comparison,
 )
-from app.services.discovery_candidate_pool import attach_candidate_benchmark_research
+from app.services.discovery_candidate_pool import (
+    _peer_catalogue_bucket,
+    attach_candidate_benchmark_research,
+)
+from app.services.fund_benchmark_sector import parse_benchmark_index
 
 
 DECISION_AT = "2026-07-14T08:00:00+00:00"
@@ -142,6 +146,87 @@ def test_index_without_point_in_time_tracking_identity_fails_closed() -> None:
     assert group["qualified"] is False
     assert group["reason"] == "index_tracking_reference_unavailable"
     assert "reference-unspecified" in group["group_key"]
+
+
+@pytest.mark.parametrize(
+    ("text", "expected_code"),
+    [
+        ("银华中证创新药产业ETF发起式联接C", "931152"),
+        ("天弘创新药精选50ETF联接C", "HSSSHID"),
+        ("泰康香港银行指数A", "930792"),
+        ("易方达绿色电力ETF联接A", "931897"),
+        ("博时中证全指电力ETF联接A", "H30199"),
+    ],
+)
+def test_current_passive_index_aliases_resolve_to_exact_tracking_identity(
+    text: str,
+    expected_code: str,
+) -> None:
+    match = parse_benchmark_index(text)
+
+    assert match is not None
+    assert match.index_code == expected_code
+
+
+def test_passive_fund_name_identity_builds_research_only_peer_group() -> None:
+    row = _row(
+        "012782",
+        "银华中证创新药产业ETF发起式联接C",
+        value=10,
+        fund_type="zs",
+    )
+
+    group = build_fund_peer_group(row, decision_at=DECISION_AT)
+
+    assert group["qualified"] is True
+    assert group["reference_code"] == "931152"
+    assert "reference-931152" in group["group_key"]
+    assert group["benchmark"]["comparison_role"] == "tracking_reference"
+    assert group["benchmark"]["formal_excess_eligible"] is False
+
+
+def test_candidate_universe_timestamp_supports_descriptive_passive_peers() -> None:
+    target = _row(
+        "012782",
+        "银华中证创新药产业ETF发起式联接C",
+        value=10,
+        fund_type="zs",
+    )
+    peer = _row(
+        "012783",
+        "广发创新药ETF联接A",
+        value=8,
+        fund_type="zs",
+    )
+    for row in (target, peer):
+        row.pop("available_at")
+        row["candidate_universe_available_at"] = AVAILABLE_AT
+
+    result = build_peer_rank(
+        target,
+        [peer],
+        decision_at=DECISION_AT,
+        minimum_peer_count=1,
+        minimum_metric_coverage=1.0,
+    )
+
+    assert result["universe"]["independent_peer_family_count"] == 1
+    assert result["metrics"]["return_3m_percent"]["sample_count"] == 1
+    assert result["metrics"]["return_3m_percent"]["percentile"] is not None
+
+
+def test_peer_catalogue_bucket_is_stable_across_profile_and_universe_types() -> None:
+    profiled = {
+        "fund_name": "银华中证创新药产业ETF发起式联接C",
+        "fund_type": "股票型",
+    }
+    universe = {
+        "fund_name": "银华中证创新药产业ETF发起式联接C",
+        "fund_type": "zs",
+    }
+
+    assert _peer_catalogue_bucket(profiled) == "equity_index"
+    assert _peer_catalogue_bucket(profiled) == _peer_catalogue_bucket(universe)
 
 
 def test_bond_subtypes_do_not_share_a_peer_group() -> None:
@@ -363,6 +448,8 @@ def test_benchmark_attachment_rebuilds_rank_in_the_final_reference_group() -> No
     peer = _typed_row("passive_index", "009101", value=4)
     target.pop("benchmark_spec")
     peer.pop("benchmark_spec")
+    target["fund_name"] = "未知标的指数甲A"
+    peer["fund_name"] = "未知标的指数乙A"
     old_rank = build_peer_rank(
         target,
         [peer],
@@ -401,6 +488,37 @@ def test_benchmark_attachment_rebuilds_rank_in_the_final_reference_group() -> No
     )
     assert all("_peer_rank_universe" not in row for row in attached)
     assert rebuilt["execution_tilt_eligible"] is False
+
+
+def test_benchmark_attachment_preserves_full_universe_rank_when_group_is_unchanged() -> None:
+    target = _typed_row("equity", "009102", value=10)
+    peers = [
+        _typed_row("equity", "009103", value=4),
+        _typed_row("equity", "009104", value=7),
+    ]
+    old_rank = build_peer_rank(
+        target,
+        peers,
+        decision_at=DECISION_AT,
+        minimum_peer_count=1,
+        minimum_metric_coverage=1.0,
+    )
+    old_metric = old_rank["metrics"]["return_3m_percent"]
+
+    attached = attach_candidate_benchmark_research(
+        [{**target, "peer_group": old_rank["peer_group"], "peer_rank": old_rank}],
+        {"009102": _formal_benchmark("000300")},
+        decision_at=datetime.fromisoformat(DECISION_AT),
+    )
+
+    preserved = attached[0]["peer_rank"]
+    assert preserved["peer_group"]["group_key"] == old_rank["peer_group"]["group_key"]
+    assert preserved["metrics"]["return_3m_percent"]["sample_count"] == 2
+    assert (
+        preserved["metrics"]["return_3m_percent"]["peer_sample_hash"]
+        == old_metric["peer_sample_hash"]
+    )
+    assert preserved["universe"]["independent_peer_family_count"] == 2
 
 
 def test_active_excess_metric_requires_a_verified_formal_benchmark() -> None:

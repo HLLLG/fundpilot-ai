@@ -43,8 +43,6 @@ from app.services.fund_tradeability import (
     compact_tradeability_for_llm,
     resolve_fund_tradeability_profiles,
 )
-from app.services.fund_lookthrough_context import build_fund_lookthrough_context
-from app.services.fund_lookthrough_research import compact_fund_lookthrough_for_llm
 
 AnalysisPayloadPhase = Literal[1, 2, 3]
 
@@ -146,18 +144,6 @@ OUTPUT_REQUIREMENTS_USER.append(
     "benchmark_specs 仅用于其声明的角色：正式合同基准可评估超额，"
     "跟踪指数仅作参照，unavailable 不得猜测；没有 qualified benchmark_research 时不得声称跑赢或跟踪良好"
 )
-HOLDINGS_LOOKTHROUGH_REQUIREMENT = (
-    "fund_lookthrough contains reported-as-of, disclosed-scope lower bounds only. "
-    "Retain unknown mass; no common disclosed security is not exact zero full-portfolio "
-    "overlap. Missing, stale, cross-vintage, or low-coverage evidence may only reduce "
-    "confidence and must never support a more aggressive action. Periodic disclosures "
-    "never authorize allocation as current complete holdings."
-)
-OUTPUT_REQUIREMENTS_SYSTEM = (
-    OUTPUT_REQUIREMENTS_SYSTEM + "\n" + HOLDINGS_LOOKTHROUGH_REQUIREMENT
-)
-OUTPUT_REQUIREMENTS_USER.append(HOLDINGS_LOOKTHROUGH_REQUIREMENT)
-
 _HOLDING_LLM_DROP_KEYS = frozenset(
     {
         "management_fee",
@@ -653,14 +639,9 @@ def trim_analysis_facts_for_llm(
         trimmed["fund_announcements"] = compact_announcement_fetch_status(
             announcement_facts
         )
-    if "fund_lookthrough" in trimmed:
-        trimmed["fund_lookthrough"] = compact_fund_lookthrough_for_llm(
-            trimmed.get("fund_lookthrough")
-            if isinstance(trimmed.get("fund_lookthrough"), Mapping)
-            else None
-        )
     # Internal report orchestration evidence; never expose it to an LLM/public payload.
     trimmed.pop("sector_flow_by_label", None)
+    trimmed.pop("fund_lookthrough", None)
     trimmed.pop("fund_lookthrough_claim_audit", None)
     holdings = []
     has_management_fee = False
@@ -1258,22 +1239,9 @@ def prepare_analysis_bundle(
     # Tradeability I/O runs alongside the existing context computation, while
     # the latter stays on the request thread so database/request context behavior
     # is unchanged.
-    def resolve_lookthrough() -> dict[str, Any]:
-        def work() -> dict[str, Any]:
-            return build_fund_lookthrough_context(
-                request.holdings,
-                [],
-                decision_at=normalize_news_now(decision_at),
-                analysis_mode=analysis_mode,
-                portfolio_context=request.portfolio_snapshot_context,
-            )
-
-        return work() if user_id is None else run_with_request_user(user_id, work)
-
-    executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="analysis-evidence")
+    executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="analysis-evidence")
     tradeability_future = executor.submit(resolve_tradeability)
     benchmark_future = executor.submit(resolve_benchmark_context)
-    lookthrough_future = executor.submit(resolve_lookthrough)
     try:
         session, factor_scores, risk_metrics, portfolio_trend = _compute_analysis_context(
             request.holdings,
@@ -1284,7 +1252,6 @@ def prepare_analysis_bundle(
         )
         tradeability_profiles = tradeability_future.result()
         benchmark_specs, benchmark_research = benchmark_future.result()
-        fund_lookthrough = lookthrough_future.result()
     finally:
         executor.shutdown(wait=False, cancel_futures=True)
     facts = build_analysis_facts(
@@ -1310,7 +1277,6 @@ def prepare_analysis_bundle(
     facts["benchmark_research_contract"] = summarize_benchmark_research(
         benchmark_research
     )
-    facts["fund_lookthrough"] = fund_lookthrough
     facts = attach_analysis_data_evidence(
         facts,
         holdings=request.holdings,

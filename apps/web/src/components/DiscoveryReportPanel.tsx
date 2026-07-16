@@ -6,7 +6,6 @@ import {
   BookOpenCheck,
   ChevronDown,
   CircleDollarSign,
-  FileSearch,
   MessageCircle,
   ShieldAlert,
   ShieldCheck,
@@ -23,7 +22,6 @@ import {
 } from "@/components/DiscoveryCandidatePoolPanel";
 import { DiscoveryChatDrawer } from "@/components/DiscoveryChatDrawer";
 import { DiscoveryOutcomesPanel } from "@/components/DiscoveryOutcomesPanel";
-import { FundLookthroughEvidence } from "@/components/FundLookthroughEvidence";
 import { FundTradeabilityEvidence } from "@/components/FundTradeabilityEvidence";
 import { SectorOpportunityCard } from "@/components/SectorOpportunityCard";
 
@@ -93,6 +91,31 @@ function isCurrentVerifiedAllocation(recommendation: DiscoveryRecommendation): b
       (item) => item.amount_yuan == null && item.revalidation_required === true,
     )
   );
+}
+
+function visibleDecisionPoints(
+  values: string[] | null | undefined,
+  finalAction: string,
+): string[] {
+  const result: string[] = [];
+  const seen = new Set<string>();
+  let hasFinalProjection = false;
+  for (const raw of values ?? []) {
+    const value = raw.trim();
+    if (!value) continue;
+    if (/^系统校验后(?:的)?最终动作(?:调整为)?\s*[：:]?/.test(value)) {
+      hasFinalProjection = true;
+      continue;
+    }
+    const key = value.replace(/\s+/g, " ");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(value);
+  }
+  if (hasFinalProjection) {
+    result.push(`系统校验后的最终动作：${finalAction}。`);
+  }
+  return result;
 }
 
 function resolveAllocationPlan(report: FundDiscoveryReport) {
@@ -195,13 +218,16 @@ function DiscoveryRecommendationCard({
       : hasTradeabilityEvidence
         ? { label: "交易信息待核验", className: "bg-slate-50 text-slate-700 ring-slate-200" }
         : null;
+  const decisionPoints = visibleDecisionPoints(rec.points, rec.action);
+  const tradeabilityExecutionRelevant =
+    EXECUTABLE_DISCOVERY_ACTIONS.has(rec.action) && tradeabilityGate?.status === "eligible";
   const hasProfessionalDetails = Boolean(
     hasTradeabilityEvidence ||
       rec.decision_path ||
       rec.sector_evidence?.length ||
       rec.fund_evidence?.length ||
       rec.validation_notes?.length ||
-      (rec.points?.length ?? 0) > 1 ||
+      decisionPoints.length > 1 ||
       (rec.risks?.length ?? 0) > 1 ||
       (!verifiedInitialTranche && rec.suggested_amount_yuan != null),
   );
@@ -279,10 +305,10 @@ function DiscoveryRecommendationCard({
           basis={rec.suggested_position_change_basis}
         />
       ) : null}
-      {rec.points?.[0] ? (
+      {decisionPoints[0] ? (
         <p className="mt-3 break-words text-sm leading-6 text-slate-700 [overflow-wrap:anywhere]">
           <span className="font-black text-slate-900">核心理由：</span>
-          {translateEvidenceText(rec.points[0])}
+          {translateEvidenceText(decisionPoints[0])}
         </p>
       ) : null}
       {(rec.risks ?? []).length ? (
@@ -313,6 +339,7 @@ function DiscoveryRecommendationCard({
                 tradeability={rec.tradeability}
                 tradeabilityGate={rec.tradeability_gate}
                 costAssessment={rec.cost_assessment}
+                executionRelevant={tradeabilityExecutionRelevant}
               />
             ) : null}
             {rec.decision_path ? (
@@ -326,9 +353,9 @@ function DiscoveryRecommendationCard({
               fundEvidence={rec.fund_evidence}
               validationNotes={rec.validation_notes}
             />
-            {(rec.points?.length ?? 0) > 1 ? (
+            {decisionPoints.length > 1 ? (
               <ul className="space-y-1 text-sm text-slate-700">
-                {(rec.points ?? []).slice(1).map((point, pointIndex) => (
+                {decisionPoints.slice(1).map((point, pointIndex) => (
                   <li className="break-words [overflow-wrap:anywhere]" key={`${point}-${pointIndex}`}>· {translateEvidenceText(point)}</li>
                 ))}
               </ul>
@@ -513,10 +540,19 @@ function RecommendationGroup({
 }
 
 export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPanelProps) {
-  const sectorOpportunities = report.discovery_facts?.sector_opportunities ?? [];
-  const lookthrough = report.discovery_facts?.fund_lookthrough;
+  const mainlineSnapshot = report.discovery_facts?.mainline_snapshot;
+  const sectorOpportunities = useMemo(() => {
+    const regimesByLabel = new Map(
+      (mainlineSnapshot?.sectors ?? [])
+        .filter((item) => Boolean(item.sector_label))
+        .map((item) => [item.sector_label as string, item]),
+    );
+    return (report.discovery_facts?.sector_opportunities ?? []).map((item) => ({
+      ...item,
+      mainline_regime: regimesByLabel.get(item.sector_label) ?? item.mainline_regime,
+    }));
+  }, [mainlineSnapshot, report.discovery_facts?.sector_opportunities]);
   const [chatOpen, setChatOpen] = useState(false);
-  const [lookthroughOpen, setLookthroughOpen] = useState(false);
   const [outcomesOpen, setOutcomesOpen] = useState(false);
   const chatDrawerId = `discovery-report-chat-${report.id}`;
   const groupedRecommendations = useMemo(() => {
@@ -539,22 +575,6 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
 
     return { actionable, conditionalWait, watchOnly, decisionStatusByCode };
   }, [report]);
-  const candidateNames = useMemo(() => {
-    const names: Record<string, string> = {};
-    for (const candidate of report.candidate_pool ?? []) {
-      const rawCode = candidate.fund_code.trim();
-      const code = /^\d{1,6}$/.test(rawCode) ? rawCode.padStart(6, "0") : rawCode;
-      names[rawCode] = candidate.fund_name;
-      names[code] = candidate.fund_name;
-    }
-    for (const recommendation of report.recommendations) {
-      const rawCode = recommendation.fund_code.trim();
-      const code = /^\d{1,6}$/.test(rawCode) ? rawCode.padStart(6, "0") : rawCode;
-      names[rawCode] = recommendation.fund_name;
-      names[code] = recommendation.fund_name;
-    }
-    return names;
-  }, [report.candidate_pool, report.recommendations]);
   const selectedCodes = groupedRecommendations.actionable.map((item) => item.fund_code);
   const blockedCount = report.discovery_facts?.data_evidence_guard?.blocked_fund_codes?.length ?? 0;
   const discoveryStrategy =
@@ -681,7 +701,9 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 className="text-sm font-black text-slate-950">本次主方向</h3>
             <span className="text-xs font-medium text-slate-500">
-              默认只展示评分最高的 2 个方向
+              {mainlineSnapshot?.schema_version
+                ? "主线雷达仅参与研究排序 · 默认展示前 2 个方向"
+                : "默认只展示评分最高的 2 个方向"}
             </span>
           </div>
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
@@ -722,32 +744,6 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
           </h3>
           <p className="mt-1 text-xs leading-5 text-slate-500">用于复核结论的专业资料，平时无需逐项阅读。</p>
         </div>
-
-        {lookthrough ? (
-          <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-            <button
-              type="button"
-              onClick={() => setLookthroughOpen((value) => !value)}
-              className="flex min-h-14 w-full items-center justify-between gap-3 px-4 text-left"
-              aria-expanded={lookthroughOpen}
-              aria-controls="discovery-lookthrough-content"
-            >
-              <span className="min-w-0">
-                <span className="flex items-center gap-2 text-sm font-black text-slate-900">
-                  <FileSearch size={17} aria-hidden="true" className="text-[var(--brand)]" />
-                  持仓穿透与重合证据
-                </span>
-                <span className="mt-1 block text-xs text-slate-500">查看候选基金与现有持仓是否存在集中或重合风险。</span>
-              </span>
-              <ChevronDown size={17} aria-hidden="true" className={`shrink-0 text-slate-500 transition ${lookthroughOpen ? "rotate-180" : ""}`} />
-            </button>
-            {lookthroughOpen ? (
-              <div id="discovery-lookthrough-content" className="border-t border-slate-100 p-3">
-                <FundLookthroughEvidence research={lookthrough} candidateNames={candidateNames} context="discovery" />
-              </div>
-            ) : null}
-          </section>
-        ) : null}
 
         {report.candidate_pool?.length ? (
           <DiscoveryCandidatePoolPanel
