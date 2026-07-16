@@ -315,6 +315,10 @@ def _flow_fields_from_clist_row(
             "main_force_net_yi": None,
             "flow_tiers": None,
             "cumulative_5d_net_yi": None,
+            "rising_count": None,
+            "falling_count": None,
+            "flat_count": None,
+            "advancing_ratio_percent": None,
             "flow_data_date": None,
         }
     tiers = {
@@ -329,6 +333,10 @@ def _flow_fields_from_clist_row(
         "main_force_net_yi": main_force,
         "flow_tiers": tiers if has_any else None,
         "cumulative_5d_net_yi": _as_float(row.get("cumulative_5d_net_yi")),
+        "rising_count": _as_float(row.get("rising_count")),
+        "falling_count": _as_float(row.get("falling_count")),
+        "flat_count": _as_float(row.get("flat_count")),
+        "advancing_ratio_percent": _as_float(row.get("advancing_ratio_percent")),
         "flow_data_date": str(row.get("flow_data_date") or "").strip() or None,
     }
 
@@ -341,6 +349,8 @@ def _has_live_theme_metric(item: dict[str, Any]) -> bool:
     if item.get("main_force_net_yi") is not None:
         return True
     if item.get("cumulative_5d_net_yi") is not None:
+        return True
+    if item.get("advancing_ratio_percent") is not None:
         return True
     tiers = item.get("flow_tiers")
     return isinstance(tiers, dict) and any(value is not None for value in tiers.values())
@@ -355,10 +365,15 @@ def _lookup_clist_flow(
         "main_force_net_yi": None,
         "flow_tiers": None,
         "cumulative_5d_net_yi": None,
+        "rising_count": None,
+        "falling_count": None,
+        "flat_count": None,
+        "advancing_ratio_percent": None,
         "flow_data_date": None,
     }
     current_found = False
     five_day_found = False
+    breadth_found = False
     for code in _clist_lookup_codes(entry, prefer_flow=True):
         row = by_code.get(code)
         if row is None:
@@ -368,11 +383,17 @@ def _lookup_clist_flow(
             result["main_force_net_yi"] = fields["main_force_net_yi"]
             result["flow_tiers"] = fields.get("flow_tiers")
             current_found = True
+        if not breadth_found and fields.get("advancing_ratio_percent") is not None:
+            result["rising_count"] = fields.get("rising_count")
+            result["falling_count"] = fields.get("falling_count")
+            result["flat_count"] = fields.get("flat_count")
+            result["advancing_ratio_percent"] = fields.get("advancing_ratio_percent")
+            breadth_found = True
         if not five_day_found and fields.get("cumulative_5d_net_yi") is not None:
             result["cumulative_5d_net_yi"] = fields["cumulative_5d_net_yi"]
             result["flow_data_date"] = fields.get("flow_data_date")
             five_day_found = True
-        if current_found and five_day_found:
+        if current_found and five_day_found and breadth_found:
             break
     return result
 
@@ -399,6 +420,10 @@ def _item_from_entry(
             "main_force_net_yi": None,
             "flow_tiers": None,
             "cumulative_5d_net_yi": None,
+            "rising_count": None,
+            "falling_count": None,
+            "flat_count": None,
+            "advancing_ratio_percent": None,
             "flow_data_date": None,
         }
     )

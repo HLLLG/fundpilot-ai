@@ -4,9 +4,6 @@ from datetime import datetime
 
 from app.models import DiscoveryRecommendation, FundDiscoveryReport, InvestorProfile
 from app.services.deepseek_http import ProviderFailure
-from app.services.fund_lookthrough_claim_validator import (
-    validate_fund_lookthrough_claims,
-)
 from app.services.provider_fallback import apply_provider_failure_to_facts
 from app.services.discovery_strategy import discovery_horizon_label, strategy_from_facts
 
@@ -143,25 +140,4 @@ def build_offline_discovery_report(
         provider="offline-fallback" if provider_failed else "offline",
         analysis_mode=analysis_mode,  # type: ignore[arg-type]
     )
-    return _validate_offline_discovery_fund_lookthrough_claims(report)
-
-
-def _validate_offline_discovery_fund_lookthrough_claims(
-    report: FundDiscoveryReport,
-) -> FundDiscoveryReport:
-    """Run the same post-guard claim validator used by online discovery."""
-
-    payload = report.model_dump(mode="python")
-    discovery_facts = payload.get("discovery_facts")
-    full_facts = discovery_facts if isinstance(discovery_facts, dict) else {}
-    fund_lookthrough = full_facts.get("fund_lookthrough")
-    cleaned, audit = validate_fund_lookthrough_claims(
-        payload,
-        fund_lookthrough if isinstance(fund_lookthrough, dict) else None,
-    )
-    cleaned_facts = cleaned.get("discovery_facts")
-    if not isinstance(cleaned_facts, dict):
-        cleaned_facts = {}
-        cleaned["discovery_facts"] = cleaned_facts
-    cleaned_facts["fund_lookthrough_claim_audit"] = audit
-    return FundDiscoveryReport.model_validate(cleaned)
+    return report

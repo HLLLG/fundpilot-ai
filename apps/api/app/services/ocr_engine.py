@@ -10,7 +10,7 @@ from app.config import get_settings
 
 class OcrEngine:
     def extract_text(self, image_path: Path) -> str:
-        os.environ.setdefault("DISABLE_MODEL_SOURCE_CHECK", "True")
+        os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
         prepared = _prepare_image_for_ocr(image_path)
         result = _ocr_instance().predict(str(prepared))
         return _extract_lines(result)
@@ -18,7 +18,7 @@ class OcrEngine:
 
 def preload_ocr_engine() -> None:
     """后台预热 PaddleOCR，避免用户首次上传等待模型加载。"""
-    os.environ.setdefault("DISABLE_MODEL_SOURCE_CHECK", "True")
+    os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
     _ocr_instance()
 
 
@@ -61,7 +61,6 @@ def _ocr_instance():
 
     settings = get_settings()
     kwargs: dict = {
-        "lang": "ch",
         "use_doc_orientation_classify": False,
         "use_doc_unwarping": False,
         "use_textline_orientation": False,
@@ -74,6 +73,8 @@ def _ocr_instance():
                 "text_recognition_model_name": "PP-OCRv4_mobile_rec",
             }
         )
+    else:
+        kwargs["lang"] = "ch"
     return PaddleOCR(**kwargs)
 
 

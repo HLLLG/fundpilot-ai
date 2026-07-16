@@ -61,9 +61,6 @@ from app.services.decision_time_call import (
     prefetch_fund_announcements_compat,
 )
 from app.services.retired_market_evidence import sanitize_retired_market_evidence
-from app.services.fund_lookthrough_claim_validator import (
-    validate_fund_lookthrough_claims,
-)
 from app.services.recommendations import (
     build_offline_fund_recommendation,
     build_offline_fund_recommendations,
@@ -778,26 +775,7 @@ def _build_final_report(
         provider=runtime.model,
         analysis_facts=facts,
     )
-    return _validate_daily_fund_lookthrough_claims(report)
-
-
-def _validate_daily_fund_lookthrough_claims(report: Report) -> Report:
-    """Sanitize prose using full server facts and attach only the redacted audit."""
-
-    payload = report.model_dump(mode="python")
-    analysis_facts = payload.get("analysis_facts")
-    full_facts = analysis_facts if isinstance(analysis_facts, dict) else {}
-    fund_lookthrough = full_facts.get("fund_lookthrough")
-    cleaned, audit = validate_fund_lookthrough_claims(
-        payload,
-        fund_lookthrough if isinstance(fund_lookthrough, dict) else None,
-    )
-    cleaned_facts = cleaned.get("analysis_facts")
-    if not isinstance(cleaned_facts, dict):
-        cleaned_facts = {}
-        cleaned["analysis_facts"] = cleaned_facts
-    cleaned_facts["fund_lookthrough_claim_audit"] = audit
-    return Report.model_validate(cleaned)
+    return report
 
 
 def _append_news_pipeline_caveats(
@@ -1509,7 +1487,7 @@ def _offline_report(
         provider="offline-fallback" if provider_failure is not None else "offline",
         analysis_facts=facts,
     )
-    return _validate_daily_fund_lookthrough_claims(report)
+    return report
 
 
 def _project_provider_failure_daily_recommendations(

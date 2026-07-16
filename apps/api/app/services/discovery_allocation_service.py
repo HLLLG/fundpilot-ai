@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import hashlib
-import json
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 from math import isfinite
@@ -124,14 +122,6 @@ def apply_deterministic_discovery_allocation(
             allocator_rows,
             holdings_for_risk,
             decision_at=decision_at,  # type: ignore[arg-type]
-        )
-        risk_context = apply_reported_holdings_overlap_guard(
-            risk_context,
-            discovery_facts=discovery_facts,
-            candidate_codes=[
-                str(row.get("fund_code") or "").strip().zfill(6)
-                for row in allocator_rows
-            ],
         )
 
     cash = _confirmed_cash(discovery_facts)
@@ -284,140 +274,6 @@ def apply_deterministic_discovery_allocation(
     elif plan.get("status") == "partial":
         caveats.append("统一分配受交易、现金或集中度上限约束，部分首批预算保持未分配。")
     return projected, plan, risk_context, caveats
-
-
-def apply_reported_holdings_overlap_guard(
-    risk_context: Mapping[str, Any],
-    *,
-    discovery_facts: Mapping[str, Any],
-    candidate_codes: Sequence[str],
-) -> dict[str, Any]:
-    """Apply qualified disclosed overlap as a one-way concentration penalty.
-
-    Periodic holdings disclosures are never an allocation authorization.  This
-    overlay therefore only raises an already-qualified NAV risk penalty; absent,
-    zero, cross-vintage, or otherwise ineligible evidence returns an equal risk
-    context and can never make a candidate look safer.
-    """
-
-    base = dict(risk_context)
-    if base.get("status") != "qualified":
-        return base
-    raw_penalties = base.get(
-        "positive_correlation_penalty_to_current_holdings_by_code"
-    )
-    if not isinstance(raw_penalties, Mapping):
-        return base
-    lookthrough = discovery_facts.get("fund_lookthrough")
-    if not isinstance(lookthrough, Mapping):
-        return base
-    raw_candidates = lookthrough.get("candidates")
-    if not isinstance(raw_candidates, Sequence) or isinstance(
-        raw_candidates, (str, bytes)
-    ):
-        return base
-
-    requested_codes = {
-        code
-        for code in (_normalized_fund_code(value) for value in candidate_codes)
-        if code is not None
-    }
-    candidates_by_code: dict[str, Mapping[str, Any]] = {}
-    duplicate_codes: set[str] = set()
-    for raw in raw_candidates:
-        if not isinstance(raw, Mapping):
-            continue
-        code = _normalized_fund_code(raw.get("fund_code"))
-        if code is None or code not in requested_codes:
-            continue
-        if code in candidates_by_code:
-            duplicate_codes.add(code)
-            continue
-        candidates_by_code[code] = raw
-
-    effective_penalties = {
-        str(code): value for code, value in raw_penalties.items()
-    }
-    applied: dict[str, dict[str, Any]] = {}
-    for code in sorted(requested_codes):
-        if code in duplicate_codes:
-            continue
-        candidate = candidates_by_code.get(code)
-        if candidate is None or candidate.get("status") != "qualified":
-            continue
-        decision_use = candidate.get("decision_use")
-        if not isinstance(decision_use, Mapping):
-            continue
-        if (
-            decision_use.get("concentration_risk_guard_eligible") is not True
-            or decision_use.get("allocation_authorization_eligible") is not False
-            or candidate.get("overlap_evidence_state")
-            != "positive_same_vintage_reported_overlap"
-        ):
-            continue
-        overlap_percent = _finite_number(
-            candidate.get("reported_as_of_disclosed_overlap_percent")
-        )
-        base_penalty = _finite_number(effective_penalties.get(code))
-        if (
-            overlap_percent is None
-            or overlap_percent <= 0
-            or overlap_percent > 100
-            or base_penalty is None
-            or base_penalty < 0
-            or base_penalty > 1
-        ):
-            continue
-        disclosed_penalty = round(overlap_percent / 100.0, 8)
-        effective_penalty = max(base_penalty, disclosed_penalty)
-        if effective_penalty <= base_penalty:
-            continue
-        effective_penalties[code] = effective_penalty
-        applied[code] = {
-            "reported_as_of_disclosed_overlap_percent": overlap_percent,
-            "base_nav_correlation_penalty": base_penalty,
-            "effective_concentration_penalty": effective_penalty,
-            "overlap_evidence_state": "positive_same_vintage_reported_overlap",
-            "allocation_authorization_eligible": False,
-        }
-
-    # Exact no-op is intentional: missing or non-positive evidence must not
-    # change either allocation behavior or the persisted risk-context hash.
-    if not applied:
-        return base
-
-    previous_hash = str(base.get("snapshot_hash") or "").strip() or None
-    base[
-        "positive_correlation_penalty_to_current_holdings_by_code"
-    ] = dict(sorted(effective_penalties.items()))
-    base["reported_holdings_overlap_guard"] = {
-        "schema_version": "reported_holdings_overlap_guard.v1",
-        "policy": "qualified_positive_same_vintage_overlap_can_only_raise_penalty",
-        "source_research_hash": lookthrough.get("research_hash"),
-        "base_risk_snapshot_hash": previous_hash,
-        "applied_by_code": applied,
-        "allocation_authorization_eligible": False,
-    }
-    return _rehash_risk_context(base)
-
-
-def _rehash_risk_context(value: Mapping[str, Any]) -> dict[str, Any]:
-    payload = dict(value)
-    payload.pop("snapshot_hash", None)
-    canonical = json.dumps(
-        payload,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-        allow_nan=False,
-    )
-    payload["snapshot_hash"] = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-    return payload
-
-
-def _normalized_fund_code(value: object) -> str | None:
-    text = str(value or "").strip()
-    return text.zfill(6) if text.isdigit() and 1 <= len(text) <= 6 else None
 
 
 def _allocator_candidate(

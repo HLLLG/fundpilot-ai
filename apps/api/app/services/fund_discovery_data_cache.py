@@ -13,7 +13,7 @@ from app.services.sector_quote_cache import (
 )
 
 _UNIVERSE_CACHE_KEY = "fund:discovery_universe:v4:pit:20000"
-_PROFILE_CACHE_KEY = "fund:discovery_profiles:v4:share-safe"
+_PROFILE_CACHE_KEY = "fund:discovery_profiles:v5:tracking-reference"
 _UNIVERSE_TTL_SECONDS = 24 * 60 * 60
 _PROFILE_TTL_SECONDS = 36 * 60 * 60
 _INCOMPLETE_PROFILE_RETRY_SECONDS = 30 * 60
@@ -165,6 +165,38 @@ def _fetch_fund_research_profiles_cached_locked(fund_codes: list[str]) -> dict[s
 
         sina_by_code = _profile_rows_by_code(sina_rows, requested_codes=codes)
         xq_by_code = _profile_rows_by_code(xq_rows, requested_codes=codes)
+        # A cold-start batch occasionally returns only the Sina scale row or no
+        # XQ rows before the subprocess budget expires.  Retry only the codes
+        # whose three decision fields are still incomplete.  This avoids
+        # downgrading the whole candidate pool for a transient partial batch
+        # while keeping a bounded fail-closed path when the provider is down.
+        retry_codes = [
+            code
+            for code in refresh_codes
+            if not _profile_sources_complete(
+                code,
+                sina_by_code=sina_by_code,
+                xq_by_code=xq_by_code,
+            )
+        ]
+        if retry_codes:
+            try:
+                retry_xq_rows = fetch_fund_basic_profiles_xq(
+                    retry_codes,
+                    timeout_seconds=20,
+                ) or []
+            except Exception:  # noqa: BLE001 - bounded provider retry is best-effort
+                retry_xq_rows = []
+            retry_xq_by_code = _profile_rows_by_code(
+                retry_xq_rows,
+                requested_codes=set(retry_codes),
+            )
+            for code, retry_row in retry_xq_by_code.items():
+                xq_by_code[code] = _merge_profile_row(
+                    xq_by_code.get(code),
+                    retry_row,
+                    prefer_incoming=True,
+                )
         had_existing_profile = {code: code in cached_rows for code in refresh_codes}
         fresh_fields_by_code: dict[str, set[str]] = {}
         stale_fields_by_code: dict[str, list[str]] = {}
@@ -301,6 +333,10 @@ def _merge_profile_row(
         "fund_scale_yi",
         "fund_shares_yi",
         "fund_shares_basis",
+        "tracking_reference_text",
+        "benchmark_text",
+        "benchmark_text_kind",
+        "benchmark_text_source_kind",
         "latest_nav",
         "profile_updated_at",
     ):
@@ -337,6 +373,28 @@ def _profile_rows_by_code(rows: list[dict], *, requested_codes: set[str]) -> dic
         if code in requested_codes and code != "000000":
             result[code] = dict(row)
     return result
+
+
+def _profile_sources_complete(
+    code: str,
+    *,
+    sina_by_code: dict[str, dict],
+    xq_by_code: dict[str, dict],
+) -> bool:
+    combined: dict = {"fund_code": code}
+    if code in sina_by_code:
+        combined = _merge_profile_row(
+            combined,
+            sina_by_code[code],
+            prefer_incoming=True,
+        )
+    if code in xq_by_code:
+        combined = _merge_profile_row(
+            combined,
+            xq_by_code[code],
+            prefer_incoming=False,
+        )
+    return len(_available_profile_fields(combined)) == len(_PROFILE_REQUIRED_FIELDS)
 
 
 def _missing_profile_fields(row: dict) -> list[str]:

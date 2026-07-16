@@ -699,7 +699,7 @@ _CLIST_THEME_POOLS: dict[str, dict[str, str]] = {
         "stat": "5",
     },
 }
-_CLIST_THEME_FIELDS = "f12,f14,f3,f109,f62,f66,f72,f78,f84,f124,f164"
+_CLIST_THEME_FIELDS = "f12,f14,f3,f109,f62,f66,f72,f78,f84,f104,f105,f106,f124,f164"
 _CLIST_THEME_PAGE_SIZE = "100"
 _CLIST_THEME_MAX_PAGES = 8
 _CLIST_THEME_METRIC_KEYS = (
@@ -711,6 +711,10 @@ _CLIST_THEME_METRIC_KEYS = (
     "medium_net_yi",
     "small_net_yi",
     "cumulative_5d_net_yi",
+    "rising_count",
+    "falling_count",
+    "flat_count",
+    "advancing_ratio_percent",
     "flow_data_date",
 )
 _ClistThemeMetrics = dict[str, float | str | None]
@@ -753,6 +757,17 @@ def _parse_clist_theme_rows(
             and flow_data_date is not None
             else None
         )
+        rising_count = _as_board_float(row.get("f104"))
+        falling_count = _as_board_float(row.get("f105"))
+        flat_count = _as_board_float(row.get("f106"))
+        breadth_total = sum(
+            value or 0.0 for value in (rising_count, falling_count, flat_count)
+        )
+        advancing_ratio = (
+            round(float(rising_count) / breadth_total * 100.0, 2)
+            if rising_count is not None and breadth_total > 0
+            else None
+        )
         parsed: dict[str, float | str | None] = {
             "change_1d": _as_board_float(row.get("f3")),
             "change_5d": _as_board_float(row.get("f109")),
@@ -762,6 +777,10 @@ def _parse_clist_theme_rows(
             "medium_net_yi": _board_yuan_to_yi(_as_board_float(row.get("f78"))),
             "small_net_yi": _board_yuan_to_yi(_as_board_float(row.get("f84"))),
             "cumulative_5d_net_yi": five_day_flow,
+            "rising_count": rising_count,
+            "falling_count": falling_count,
+            "flat_count": flat_count,
+            "advancing_ratio_percent": advancing_ratio,
             "flow_data_date": flow_data_date,
         }
         if all(parsed[key] is None for key in _CLIST_THEME_METRIC_KEYS):

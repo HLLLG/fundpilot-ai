@@ -5,8 +5,8 @@
 
 GATE 实跑修正（akshare==1.18.64，见 tasks.md 任务 1.1 结论）::
 
-    主选 ``fx_quote_baidu(symbol="美元")`` 在本环境返回上游 HTTP 403（不可达），
-    但在其它可联网环境可用，故保留为**主选尝试**。本环境真实可达的兜底为
+    ``fx_quote_baidu(symbol="美元")`` 在本环境持续返回上游 HTTP 403，已从运行时
+    链路移除，避免每次刷新都产生一次确定失败。本环境真实可达的主选为
     ``currency_boc_safe()``（外管局中间价日频，与竞品「汇率」口径一致），其次
     ``currency_boc_sina(symbol="美元", start_date=..., end_date=...)``；数值单位为「分」（如 ``680.96`` →
     ``6.8096`` CNY/USD，需除以 100）。
@@ -26,7 +26,8 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-_SUBPROCESS_TIMEOUT = 60
+_PRIMARY_SOURCE_TIMEOUT = 11.5
+_FALLBACK_SOURCE_TIMEOUT = 3.0
 
 # 子进程内清代理的统一前导（与 us_futures_client / diagnose_us_market 一致）。
 _CHILD_PREAMBLE = """
@@ -48,18 +49,7 @@ def _emit_frame(frame):
     print(json.dumps({"columns": columns, "records": records}, ensure_ascii=False))
 """
 
-# 主选：百度外汇实时 USD/CNY（本环境 403，但保留以兼容其它环境）。
-_FX_BAIDU_SCRIPT = _CHILD_PREAMBLE + """
-try:
-    import akshare as ak
-    frame = ak.fx_quote_baidu(symbol="美元")
-    _emit_frame(frame)
-except Exception as exc:  # noqa: BLE001
-    print(json.dumps({"error": str(exc)}, ensure_ascii=False))
-    sys.exit(1)
-"""
-
-# 备选 1：外管局中间价（日频，数据更新至近期，对标小倍「汇率」）。
+# 主选：外管局中间价（日频，数据更新至近期，对标小倍「汇率」）。
 _BOC_SAFE_SCRIPT = _CHILD_PREAMBLE + """
 try:
     import akshare as ak
@@ -92,11 +82,6 @@ except Exception as exc:  # noqa: BLE001
 # ---------------------------------------------------------------------------
 # 列名候选
 # ---------------------------------------------------------------------------
-
-# fx_quote_baidu：百度外汇行情列名候选（兼容上游命名差异）。
-_BAIDU_NAME_COLS = ("名称", "产品", "name")
-_BAIDU_LAST_COLS = ("最新价", "现价", "最新", "成交价")
-_BAIDU_CHANGE_COLS = ("涨跌幅", "涨跌幅度", "涨跌百分比")
 
 # currency_boc_sina：中行牌价列名。折算价为我们采用的「中间价」口径。
 _BOC_DATE_COL = "日期"
@@ -156,48 +141,6 @@ def _date_to_iso(value: Any) -> str | None:
 # ---------------------------------------------------------------------------
 # 解析（与子进程解耦，便于离线 fixture 回归）
 # ---------------------------------------------------------------------------
-
-
-def _pick_col(record: dict[str, Any], candidates: tuple[str, ...]) -> Any:
-    for col in candidates:
-        if col in record and record[col] is not None:
-            return record[col]
-    return None
-
-
-def _parse_fx_baidu_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
-    """解析 fx_quote_baidu 返回为 USD/CNY 实时报价。
-
-    返回 ``last_price`` / ``change_percent`` / ``quote_time`` / ``source`` /
-    ``stale`` / ``frequency``；无法取得有效最新价则返回 ``None``。
-    """
-    records: list[dict[str, Any]] = payload.get("records") or []
-    if not records:
-        return None
-
-    # 优先取含「人民币 / 美元兑人民币 / CNY」的行；否则退化取首行。
-    chosen: dict[str, Any] | None = None
-    for record in records:
-        text = " ".join(str(v) for v in record.values() if v is not None)
-        if any(tok in text for tok in ("人民币", "美元兑人民币", "CNY", "USDCNY")):
-            chosen = record
-            break
-    if chosen is None:
-        chosen = records[0]
-
-    last_price = _as_float(_pick_col(chosen, _BAIDU_LAST_COLS))
-    if last_price is None:
-        return None
-    change_percent = _as_float(_pick_col(chosen, _BAIDU_CHANGE_COLS))
-
-    return {
-        "last_price": last_price,
-        "change_percent": change_percent,
-        "quote_time": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "source": "fx_quote_baidu",
-        "stale": False,
-        "frequency": "realtime",
-    }
 
 
 def _parse_boc_safe_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
@@ -285,7 +228,12 @@ def _parse_boc_sina_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
 # ---------------------------------------------------------------------------
 
 
-def _run_akshare(script: str, *, label: str) -> dict[str, Any] | None:
+def _run_akshare(
+    script: str,
+    *,
+    label: str,
+    timeout_seconds: float,
+) -> dict[str, Any] | None:
     """运行子进程并返回 {"columns","records"} payload；任何失败返回 ``None``。"""
     try:
         result = subprocess.run(
@@ -294,11 +242,11 @@ def _run_akshare(script: str, *, label: str) -> dict[str, Any] | None:
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=_SUBPROCESS_TIMEOUT,
+            timeout=timeout_seconds,
             check=False,
         )
     except subprocess.TimeoutExpired:
-        logger.warning("us forex subprocess timeout (%s)", label)
+        logger.info("us forex source timeout (%s, %.1fs)", label, timeout_seconds)
         return None
     except OSError as exc:
         logger.error("us forex subprocess OSError (%s): %s", label, exc)
@@ -337,9 +285,9 @@ def _run_akshare(script: str, *, label: str) -> dict[str, Any] | None:
 def _parse_json_stdout(stdout: str) -> dict[str, Any] | None:
     """解析 AkShare stdout，兼容上游在 JSON 前打印诊断信息。
 
-    ``fx_quote_baidu`` 在 HTTP 403 时会先打印 ``[pn=0] 接口返回异常``，随后才由
-    我们的子进程脚本输出结构化 ``{"error": ...}``。只解析整段文本会把这种可预期
-    的源级失败误报成 JSON 异常；倒序读取最后一个合法 JSON 行即可保留降级语义。
+    部分 AkShare 上游会先向 stdout 打印诊断文本，随后才由我们的子进程脚本输出
+    结构化 ``{"error": ...}``。只解析整段文本会把这种源级失败误报成 JSON 异常；
+    倒序读取最后一个合法 JSON 行即可保留降级语义。
     """
     text = (stdout or "").strip()
     if not text:
@@ -362,35 +310,37 @@ def _parse_json_stdout(stdout: str) -> dict[str, Any] | None:
 def fetch_usd_cny() -> dict[str, Any] | None:
     """子进程拉取 USD/CNY 人民币汇率。
 
-    主选 ``fx_quote_baidu(symbol="美元")``（实时）；不可达时回退
-    ``currency_boc_safe()``（外管局中间价），再回退 ``currency_boc_sina``。
+    主选 ``currency_boc_safe()``（外管局中间价），失败时回退
+    ``currency_boc_sina``。两个源的超时之和严格小于上层 15 秒共享预算，避免
+    上层返回后子进程仍继续运行并重复告警。
 
     返回含 ``last_price`` / ``change_percent`` / ``quote_time`` / ``source`` /
     ``stale`` / ``frequency`` 的字典；全部失败时返回 ``None``（交由上层降级）。
     绝不填占位常量。
     """
-    # 1) 主选：百度实时（其它环境可用；本环境 403 → None）。
-    baidu_payload = _run_akshare(_FX_BAIDU_SCRIPT, label="fx_quote_baidu")
-    if baidu_payload is not None:
-        quote = _parse_fx_baidu_payload(baidu_payload)
-        if quote is not None:
-            return quote
-
-    # 2) 备选：外管局中间价（日频，与竞品汇率口径一致）。
-    safe_payload = _run_akshare(_BOC_SAFE_SCRIPT, label="currency_boc_safe")
+    # 1) 主选：外管局中间价（日频，与竞品汇率口径一致）。
+    safe_payload = _run_akshare(
+        _BOC_SAFE_SCRIPT,
+        label="currency_boc_safe",
+        timeout_seconds=_PRIMARY_SOURCE_TIMEOUT,
+    )
     if safe_payload is not None:
         quote = _parse_boc_safe_payload(safe_payload)
         if quote is not None:
             return quote
 
-    # 3) 最后备选：中行牌价（日频滚动 45 天窗口）。
-    boc_payload = _run_akshare(_BOC_SINA_SCRIPT, label="currency_boc_sina")
+    # 2) 最后备选：中行牌价（日频滚动 45 天窗口）。
+    boc_payload = _run_akshare(
+        _BOC_SINA_SCRIPT,
+        label="currency_boc_sina",
+        timeout_seconds=_FALLBACK_SOURCE_TIMEOUT,
+    )
     if boc_payload is not None:
         quote = _parse_boc_sina_payload(boc_payload)
         if quote is not None:
             return quote
 
     logger.warning(
-        "us forex unavailable: fx_quote_baidu, currency_boc_safe and currency_boc_sina failed"
+        "us forex unavailable: currency_boc_safe and currency_boc_sina failed"
     )
     return None

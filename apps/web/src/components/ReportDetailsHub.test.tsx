@@ -155,7 +155,7 @@ it("only offers data-backed news and rotation entries", () => {
   expect(screen.getByRole("button", { name: "建议复盘与投研诊断" })).toBeInTheDocument();
 });
 
-it("offers daily lookthrough evidence only when the analysis facts contain it", () => {
+it("does not expose retired lookthrough evidence from historical reports", () => {
   const report = sampleReport();
   report.analysis_facts = {
     ...report.analysis_facts,
@@ -173,17 +173,8 @@ it("offers daily lookthrough evidence only when the analysis facts contain it", 
 
   render(<ReportDetailsHub report={report} />);
 
-  const trigger = screen.getByRole("button", { name: "持仓穿透证据" });
-  expect(trigger).toHaveAttribute("aria-expanded", "false");
+  expect(screen.queryByRole("button", { name: "持仓穿透证据" })).not.toBeInTheDocument();
   expect(screen.queryByRole("region", { name: "基金持仓穿透证据" })).not.toBeInTheDocument();
-
-  fireEvent.click(trigger);
-
-  expect(trigger).toHaveAttribute("aria-expanded", "true");
-  const evidence = screen.getByRole("region", { name: "基金持仓穿透证据" });
-  expect(evidence).toHaveTextContent("部分披露");
-  expect(evidence).toHaveTextContent("≥ 35%");
-  expect(evidence).toHaveTextContent("65%");
 });
 
 it("hides the news entry when only raw market news is available", () => {

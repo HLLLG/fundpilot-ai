@@ -690,6 +690,7 @@ def test_discovery_final_projection_matches_service_sse_and_background(
         item["final_projection"] and "系统" in (item["amount_note"] or "")
         for item in projection
     )
+    assert all(len(item["final_projection"]) == 1 for item in projection)
     assert projection == _discovery_projection(events[-1]["report"])
     assert projection == _discovery_projection(background)
 

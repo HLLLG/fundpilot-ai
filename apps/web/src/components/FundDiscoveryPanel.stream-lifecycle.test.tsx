@@ -11,7 +11,10 @@ import type {
   InvestorProfile,
 } from "@/lib/api";
 import type { StreamingDiscoveryState } from "@/lib/discoveryStreamApi";
-import { FundDiscoveryPanel } from "@/components/FundDiscoveryPanel";
+import {
+  FundDiscoveryPanel,
+  resolveDynamicDiscoveryBudgetYuan,
+} from "@/components/FundDiscoveryPanel";
 import {
   fetchDiscoveryPrompt,
   listDiscoveryReports,
@@ -110,8 +113,10 @@ function discoveryReport(): FundDiscoveryReport {
   };
 }
 
-function renderPanel(overrides: Partial<ComponentProps<typeof FundDiscoveryPanel>> = {}) {
-  const props: ComponentProps<typeof FundDiscoveryPanel> = {
+function panelProps(
+  overrides: Partial<ComponentProps<typeof FundDiscoveryPanel>> = {},
+): ComponentProps<typeof FundDiscoveryPanel> {
+  return {
     userId: 101,
     holdings: [holding()],
     profile: profile(),
@@ -126,7 +131,10 @@ function renderPanel(overrides: Partial<ComponentProps<typeof FundDiscoveryPanel
     discoveryStreamAbortRef: { current: null },
     ...overrides,
   };
-  return render(<FundDiscoveryPanel {...props} />);
+}
+
+function renderPanel(overrides: Partial<ComponentProps<typeof FundDiscoveryPanel>> = {}) {
+  return render(<FundDiscoveryPanel {...panelProps(overrides)} />);
 }
 
 describe("FundDiscoveryPanel stream lifecycle", () => {
@@ -263,6 +271,48 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
 
     expect(screen.queryByRole("button", { name: "快速 · Flash" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "深度 · Pro" })).not.toBeInTheDocument();
+  });
+
+  it("prefills the dynamic investment balance and preserves a manual override", async () => {
+    expect(resolveDynamicDiscoveryBudgetYuan([holding()], 30000)).toBe(20000);
+    expect(resolveDynamicDiscoveryBudgetYuan([holding()], null)).toBe(0);
+
+    const view = renderPanel();
+    const input = screen.getByRole("spinbutton", { name: /本次可投入预算/ });
+    expect(input).toHaveValue(20000);
+
+    view.rerender(
+      <FundDiscoveryPanel
+        {...panelProps({ holdings: [{ ...holding(), holding_amount: 15000 }] })}
+      />,
+    );
+    await waitFor(() => expect(input).toHaveValue(15000));
+
+    fireEvent.change(input, { target: { value: "8000" } });
+    view.rerender(
+      <FundDiscoveryPanel
+        {...panelProps({ holdings: [{ ...holding(), holding_amount: 18000 }] })}
+      />,
+    );
+    expect(input).toHaveValue(8000);
+
+    fireEvent.click(screen.getByRole("button", { name: "扫描今日机会" }));
+    await waitFor(() => expect(streamDiscovery).toHaveBeenCalled());
+    expect(vi.mocked(streamDiscovery).mock.calls[0]?.[3]).toMatchObject({
+      budgetYuan: 8000,
+    });
+  });
+
+  it("submits an explicit zero budget instead of falling back to the server default", async () => {
+    renderPanel();
+    const input = screen.getByRole("spinbutton", { name: /本次可投入预算/ });
+    fireEvent.change(input, { target: { value: "0" } });
+    fireEvent.click(screen.getByRole("button", { name: "扫描今日机会" }));
+
+    await waitFor(() => expect(streamDiscovery).toHaveBeenCalled());
+    expect(vi.mocked(streamDiscovery).mock.calls[0]?.[3]).toMatchObject({
+      budgetYuan: 0,
+    });
   });
 
   it("sends the fixed automatic quality and share-class policies for normal scans", async () => {

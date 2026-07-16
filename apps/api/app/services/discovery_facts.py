@@ -12,6 +12,7 @@ from app.services.discovery_prompt import DISCOVERY_FACTS_INSTRUCTION
 from app.services.discovery_strategy import strategy_contract
 from app.services.investment_presets import take_profit_threshold_percent
 from app.services.market_flow_client import build_stock_connect_flow_context
+from app.services.mainline_regime import align_sector_opportunities_with_mainline_snapshot
 from app.services.fund_nav_service import get_cached_official_nav_return
 from app.services.fund_tradeability import build_tradeability_gate
 from app.services.holding_estimates import (
@@ -44,6 +45,7 @@ def build_discovery_facts(
     focus_sectors: list[str] | None = None,
     fund_type_preference: str = "any",
     sector_opportunities: list[dict] | None = None,
+    mainline_snapshot: dict | None = None,
     budget_enhancements: bool = False,
     decision_at: datetime | None = None,
 ) -> dict:
@@ -127,7 +129,11 @@ def build_discovery_facts(
         },
         "fund_type_preference": fund_type_preference,
         "sector_heat": sector_heat,
-        "sector_opportunities": list(sector_opportunities or []),
+        "sector_opportunities": align_sector_opportunities_with_mainline_snapshot(
+            sector_opportunities,
+            mainline_snapshot,
+        ),
+        "mainline_snapshot": dict(mainline_snapshot or {}),
         "target_sector_context": target_sector_context,
         "stock_connect_flow": stock_connect_flow,
         "signal_backtest": signal_backtest,

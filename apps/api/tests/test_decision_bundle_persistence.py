@@ -42,6 +42,8 @@ from app.services.decision_outcome_persistence import (
     persist_discovery_outcome_result,
 )
 from app.services.discovery_outcomes import build_discovery_outcomes
+from app.services.mainline_regime import build_mainline_regime_snapshot
+from app.services.mainline_snapshot_repository import MAINLINE_SNAPSHOT_ARTIFACT_TYPE
 from app.services.recommendation_outcomes import build_recommendation_outcomes
 
 
@@ -243,6 +245,35 @@ def test_save_report_atomically_persists_daily_decision_bundle() -> None:
         (5, "pending"),
         (20, "pending"),
     ]
+
+
+def test_discovery_mainline_snapshot_is_frozen_once_in_append_only_ledger() -> None:
+    report = _discovery_report(report_id="discovery-mainline-snapshot")
+    snapshot = build_mainline_regime_snapshot(
+        [{"sector_label": "CPO", "change_1d_percent": 1.2}],
+        sector_labels=["CPO"],
+        decision_at=_CREATED_AT,
+        captured_at=_CREATED_AT + timedelta(seconds=1),
+    )
+    report.discovery_facts["mainline_snapshot"] = snapshot
+
+    save_discovery_report(report)
+    save_discovery_report(report)
+
+    rows = list_decision_quality_input_artifacts(
+        user_id=1,
+        artifact_type=MAINLINE_SNAPSHOT_ARTIFACT_TYPE,
+        source_type="discovery",
+        source_report_id=report.id,
+        limit=10,
+    )
+    assert len(rows) == 1
+    envelope = rows[0]["payload"]
+    assert envelope["logical_key"] == f"mainline_snapshot:{report.id}"
+    assert envelope["audit_eligible"] is False
+    wrapper = envelope["artifact"]
+    assert wrapper["snapshot_hash"] == snapshot["snapshot_hash"]
+    assert wrapper["snapshot"]["execution_gate_changed"] is False
 
 
 def test_saved_d2_report_is_formally_replayable_and_snapshot_is_idempotent() -> None:

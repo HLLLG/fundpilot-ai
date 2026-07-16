@@ -59,6 +59,17 @@ def _build_benchmark_name_to_code() -> tuple[tuple[str, str], ...]:
             ("半导体材料设备", "931743"),
             ("中证半导体材料设备主题指数", "931743"),
             ("中证半导体产业指数", "931865"),
+            # Exact tracked-index aliases used by current passive candidates.
+            # These identities are research grouping keys only; they do not
+            # turn an aggregator profile into a verified fund contract.
+            ("恒生沪深港创新药精选50指数", "HSSSHID"),
+            ("创新药精选50", "HSSSHID"),
+            ("中证香港银行投资指数", "930792"),
+            ("香港银行指数", "930792"),
+            ("中证绿色电力指数", "931897"),
+            ("绿色电力", "931897"),
+            ("中证全指电力公用事业指数", "H30199"),
+            ("中证全指电力", "H30199"),
         }
     )
     for name, code in amac_name_to_code_pairs():

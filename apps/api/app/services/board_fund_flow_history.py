@@ -35,7 +35,8 @@ _FLOW_HISTORY_HOSTS = (
     "push2his.eastmoney.com",
 )
 _FLOW_FETCH_MAX_RETRIES = 2
-_CACHE_PREFIX = "board-flow-hist:v1:"
+_CACHE_PREFIX = "board-flow-hist:v2:"
+_LEGACY_CACHE_PREFIX = "board-flow-hist:v1:"
 _LIVE_TTL_SECONDS = 900.0
 _CLOSED_TTL_SECONDS = 3600.0
 _INTRADAY_SESSIONS = {
@@ -145,9 +146,28 @@ def get_cached_board_flow_series(
             logger.info("board flow history using stale cache for %s", code)
             return list(stale.get("series") or [])
 
+        # v1 只保存资金流字段。新版源暂时不可用时继续保留旧资金流证据，
+        # 但不会把缺失的收盘价伪装成价格强度证据。
+        legacy = get_spot_snapshot_any_age(f"{_LEGACY_CACHE_PREFIX}{code}")
+        if legacy and legacy.get("series"):
+            logger.info("board flow history using legacy cache for %s", code)
+            return list(legacy.get("series") or [])
+
         return []
 
     return list(cached.get("series") or [])
+
+
+def get_board_flow_series_cache_only(board_code: str) -> list[dict[str, Any]]:
+    """只读板块历史缓存；用于请求链路内的低延迟研究因子。"""
+    code = _normalize_board_code(board_code)
+    if not code:
+        return []
+    for prefix in (_CACHE_PREFIX, _LEGACY_CACHE_PREFIX):
+        snapshot = get_spot_snapshot_any_age(f"{prefix}{code}")
+        if snapshot and snapshot.get("series"):
+            return list(snapshot.get("series") or [])
+    return []
 
 
 def _cache_ttl_seconds() -> float:
@@ -163,7 +183,7 @@ def _cache_key(board_code: str) -> str:
 
 
 def parse_board_flow_kline(raw: str) -> dict[str, Any] | None:
-    """解析东财 daykline 单行：date,主力,小,中,大,超大,..."""
+    """解析东财 daykline 单行：资金流、收盘价与当日涨跌幅。"""
     parts = [part.strip() for part in raw.split(",")]
     if len(parts) < 6:
         return None
@@ -175,9 +195,13 @@ def parse_board_flow_kline(raw: str) -> dict[str, Any] | None:
         super_large_yi = _board_yuan_to_yi(float(parts[5]))
     except (TypeError, ValueError):
         return None
+    close_price = _optional_float(parts[11]) if len(parts) > 11 else None
+    change_percent = _optional_float(parts[12]) if len(parts) > 12 else None
     return {
         "date": parts[0],
         "main_force_net_yi": main_yi,
+        "close_price": close_price,
+        "change_percent": change_percent,
         "flow_tiers": {
             "super_large_net_yi": super_large_yi,
             "large_net_yi": large_yi,
@@ -185,6 +209,14 @@ def parse_board_flow_kline(raw: str) -> dict[str, Any] | None:
             "small_net_yi": small_yi,
         },
     }
+
+
+def _optional_float(value: object) -> float | None:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed
 
 
 def _parse_flow_payload(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -326,7 +358,7 @@ def prefetch_board_flow_histories(
 
     def warm_one(flow_code: str) -> int:
         time.sleep(0.75)
-        series = get_cached_board_flow_series(flow_code)
+        series = get_cached_board_flow_series(flow_code, force_refresh=True)
         return 1 if series else 0
 
     workers = max(1, min(max_workers, len(unique_codes)))

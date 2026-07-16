@@ -454,7 +454,7 @@ def _persist_decision_bundle(
     )
 
     contract = bundle.get("contract") or {}
-    return persist_report_decision_quality_artifacts(
+    artifacts = persist_report_decision_quality_artifacts(
         user_id=user_id,
         report=report_payload,
         saved_events=saved_events,
@@ -463,6 +463,21 @@ def _persist_decision_bundle(
         report_recorded_at=report_recorded_at,
         connection=connection,
     )
+    if str(contract.get("decision_kind") or "") == "discovery":
+        from app.services.mainline_snapshot_repository import (
+            persist_discovery_mainline_snapshot,
+        )
+
+        mainline_artifact = persist_discovery_mainline_snapshot(
+            user_id=user_id,
+            report=report_payload,
+            store_authority=str(contract.get("store_authority") or ""),
+            report_recorded_at=report_recorded_at,
+            connection=connection,
+        )
+        if mainline_artifact is not None:
+            artifacts.append(mainline_artifact)
+    return artifacts
 
 
 def _finalize_committed_decision_quality_artifacts(

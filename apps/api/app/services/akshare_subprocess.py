@@ -806,6 +806,57 @@ def fetch_index_daily_history(index_symbol: str, trading_days: int = 252) -> dic
     )
 
 
+@lru_cache(maxsize=64)
+def _fetch_hk_index_daily_history_cached(
+    index_symbol: str,
+    trading_days: int,
+    _cache_hour: int,
+) -> dict | None:
+    script = f"""
+import akshare as ak
+import json
+
+symbol = {index_symbol!r}
+trading_days = {trading_days}
+try:
+    frame = ak.stock_hk_index_daily_sina(symbol=symbol)
+    rows = []
+    if frame is not None and not frame.empty:
+        for _, row in frame.tail(trading_days).iterrows():
+            day = str(row.get("date") or "")[:10]
+            close = row.get("close")
+            if day and close is not None:
+                rows.append({{"date": day, "close": float(close)}})
+    print(json.dumps({{"data": rows}}, ensure_ascii=False))
+except Exception as exc:
+    print(json.dumps({{"error": str(exc)}}, ensure_ascii=False))
+"""
+    payload = run_akshare_json_script(
+        script,
+        label=f"hk_index_daily:{index_symbol}",
+        timeout=25,
+    )
+    if not isinstance(payload, dict) or payload.get("error"):
+        return None
+    rows = payload.get("data")
+    if not isinstance(rows, list) or len(rows) < 2:
+        return None
+    return {"data": rows, "source": "sina_hk_index_daily"}
+
+
+def fetch_hk_index_daily_history(
+    index_symbol: str,
+    trading_days: int = 252,
+) -> dict | None:
+    """Fetch Hong Kong index closes without importing AkShare in the API process."""
+
+    return _fetch_hk_index_daily_history_cached(
+        str(index_symbol).strip().upper(),
+        max(20, min(int(trading_days), 800)),
+        int(time.time() // 3600),
+    )
+
+
 def fetch_open_fund_rank(*, limit: int = 300) -> list[dict] | None:
     """读取开放式基金近一年排行榜；限量、有界并重试瞬时失败。"""
     cap = max(50, min(limit, 500))
@@ -1202,6 +1253,9 @@ def fetch_one(code):
             if key is None:
                 continue
             mapping[key] = row.get("value") if "value" in row else row.get("值")
+        tracking_reference = clean(mapping.get("跟踪标的")) or clean(mapping.get("标的指数"))
+        performance_benchmark = clean(mapping.get("业绩比较基准"))
+        benchmark_text = tracking_reference or performance_benchmark
         return {{
             "fund_code": code,
             "fund_name": clean(mapping.get("基金名称")) or clean(mapping.get("基金简称")),
@@ -1214,6 +1268,16 @@ def fetch_one(code):
             "fund_shares_basis": "xq_latest_reported_shares",
             "established_date": clean(mapping.get("成立时间")) or clean(mapping.get("成立日期")),
             "fund_manager": clean(mapping.get("基金经理")),
+            "tracking_reference_text": tracking_reference,
+            "benchmark_text": benchmark_text,
+            "benchmark_text_kind": (
+                "tracking_target"
+                if tracking_reference is not None
+                else "performance_benchmark"
+                if performance_benchmark is not None
+                else None
+            ),
+            "benchmark_text_source_kind": "xq_akshare_aggregator" if benchmark_text is not None else None,
             "profile_source": "xq.fund_individual_basic_info_xq",
         }}
     except Exception:

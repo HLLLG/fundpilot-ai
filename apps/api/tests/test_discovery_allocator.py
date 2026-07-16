@@ -14,9 +14,6 @@ from app.services.discovery_allocator import (
     RISK_CONTEXT_SCHEMA_VERSION,
     allocate_discovery_candidates,
 )
-from app.services.discovery_allocation_service import (
-    apply_reported_holdings_overlap_guard,
-)
 from app.services.fund_tradeability import TRADEABILITY_GATE_SCHEMA_VERSION
 
 
@@ -378,112 +375,6 @@ def test_current_portfolio_positive_correlation_penalty_reduces_allocation() -> 
     assert amounts["000001"] > amounts["000002"]
     second = next(row for row in plan["allocations"] if row["fund_code"] == "000002")
     assert second["priority"]["current_portfolio_correlation_penalty"] == 1.0
-
-
-def test_reported_holdings_overlap_guard_only_downweights_qualified_positive_overlap() -> None:
-    candidates = [_candidate("000001", "绉戞妧"), _candidate("000002", "鍖昏嵂")]
-    base_risk = _risk_context(["000001", "000002"])
-    lookthrough = {
-        "fund_lookthrough": {
-            "research_hash": "a" * 64,
-            "candidates": [
-                {
-                    "fund_code": "000002",
-                    "status": "qualified",
-                    "overlap_evidence_state": "positive_same_vintage_reported_overlap",
-                    "reported_as_of_disclosed_overlap_percent": 90.0,
-                    "decision_use": {
-                        "concentration_risk_guard_eligible": True,
-                        "allocation_authorization_eligible": False,
-                    },
-                }
-            ],
-        }
-    }
-
-    guarded_risk = apply_reported_holdings_overlap_guard(
-        base_risk,
-        discovery_facts=lookthrough,
-        candidate_codes=["000001", "000002"],
-    )
-    baseline = _amounts(_allocate(candidates, budget=20_000, risk_context=base_risk))
-    guarded = _amounts(_allocate(candidates, budget=20_000, risk_context=guarded_risk))
-
-    assert guarded_risk[
-        "positive_correlation_penalty_to_current_holdings_by_code"
-    ] == {"000001": 0.0, "000002": 0.9}
-    assert guarded_risk["reported_holdings_overlap_guard"][
-        "allocation_authorization_eligible"
-    ] is False
-    assert len(guarded_risk["snapshot_hash"]) == 64
-    assert guarded["000002"] < baseline["000002"]
-    assert guarded["000001"] > guarded["000002"]
-
-
-@pytest.mark.parametrize(
-    "candidate",
-    [
-        None,
-        {
-            "fund_code": "000002",
-            "status": "qualified",
-            "overlap_evidence_state": "positive_same_vintage_reported_overlap",
-            "reported_as_of_disclosed_overlap_percent": None,
-            "decision_use": {
-                "concentration_risk_guard_eligible": True,
-                "allocation_authorization_eligible": False,
-            },
-        },
-        {
-            "fund_code": "000002",
-            "status": "qualified",
-            "overlap_evidence_state": "no_common_same_vintage_disclosed_scope",
-            "reported_as_of_disclosed_overlap_percent": 0.0,
-            "decision_use": {
-                "concentration_risk_guard_eligible": False,
-                "allocation_authorization_eligible": False,
-            },
-        },
-        {
-            "fund_code": "000002",
-            "status": "qualified",
-            "overlap_evidence_state": "cross_vintage_descriptive_only",
-            "reported_as_of_disclosed_overlap_percent": 90.0,
-            "decision_use": {
-                "concentration_risk_guard_eligible": False,
-                "allocation_authorization_eligible": False,
-            },
-        },
-        {
-            "fund_code": "000002",
-            "status": "qualified",
-            "overlap_evidence_state": "positive_same_vintage_reported_overlap",
-            "reported_as_of_disclosed_overlap_percent": 90.0,
-            "decision_use": {
-                "concentration_risk_guard_eligible": True,
-                "allocation_authorization_eligible": True,
-            },
-        },
-    ],
-)
-def test_missing_or_ineligible_reported_overlap_is_exact_risk_noop(
-    candidate: dict | None,
-) -> None:
-    base_risk = _risk_context(["000001", "000002"])
-    facts = {
-        "fund_lookthrough": {
-            "research_hash": "a" * 64,
-            "candidates": [] if candidate is None else [candidate],
-        }
-    }
-
-    guarded = apply_reported_holdings_overlap_guard(
-        base_risk,
-        discovery_facts=facts,
-        candidate_codes=["000001", "000002"],
-    )
-
-    assert guarded == base_risk
 
 
 @pytest.mark.parametrize(

@@ -41,9 +41,6 @@ from app.services.discovery_prompt import build_discovery_prompt_contract
 from app.services.news_service import NewsService, _dedupe_news
 from app.services.news_freshness import resolve_decision_local_datetime
 from app.services.retired_market_evidence import sanitize_retired_market_evidence
-from app.services.fund_lookthrough_claim_validator import (
-    validate_fund_lookthrough_claims,
-)
 from app.services.prompt_provenance import (
     build_prompt_contract as freeze_prompt_contract,
     content_hash,
@@ -665,28 +662,7 @@ def build_discovery_report_from_parsed(
         provider=provider_model,
         analysis_mode=analysis_mode,  # type: ignore[arg-type]
     )
-    return _validate_discovery_fund_lookthrough_claims(report)
-
-
-def _validate_discovery_fund_lookthrough_claims(
-    report: FundDiscoveryReport,
-) -> FundDiscoveryReport:
-    """Sanitize prose using full server facts and attach only the redacted audit."""
-
-    payload = report.model_dump(mode="python")
-    discovery_facts = payload.get("discovery_facts")
-    full_facts = discovery_facts if isinstance(discovery_facts, dict) else {}
-    fund_lookthrough = full_facts.get("fund_lookthrough")
-    cleaned, audit = validate_fund_lookthrough_claims(
-        payload,
-        fund_lookthrough if isinstance(fund_lookthrough, dict) else None,
-    )
-    cleaned_facts = cleaned.get("discovery_facts")
-    if not isinstance(cleaned_facts, dict):
-        cleaned_facts = {}
-        cleaned["discovery_facts"] = cleaned_facts
-    cleaned_facts["fund_lookthrough_claim_audit"] = audit
-    return FundDiscoveryReport.model_validate(cleaned)
+    return report
 
 
 def _parse_recommendations(raw: object) -> list[DiscoveryRecommendation]:

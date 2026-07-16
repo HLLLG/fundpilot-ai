@@ -15,7 +15,6 @@ from app.services.discovery_candidate_llm import (
 )
 from app.services.news_freshness import normalize_news_now
 from app.services.news_service import compact_announcement_fetch_status
-from app.services.fund_lookthrough_research import compact_fund_lookthrough_for_llm
 
 OUTPUT_DISCOVERY_REQUIREMENTS = """
 你必须只输出一个 JSON 对象（不要 Markdown 代码块），字段：
@@ -62,8 +61,8 @@ recommendations 字段约束：
   费用不可核验、最短持有不足7天或标准费率上限成本过高时只能观察，不得用预期涨幅抵消费用门禁
 - full_market 模式须先判断板块方向，再在方向内选基金；不得只按基金近1年收益排序
 - 南向资金仅使用 stock_connect_flow，并只作港股资金面参考；板块主力使用 target_sector_context.sector_fund_flow
-- sector_opportunities 是系统已用 1d/5d 涨跌 + 今日/5日主力资金 + pattern 生成的主方向，
-  推荐理由须优先引用它，而不是重新发明方向
+- sector_opportunities 是系统已用短期热度、主力资金与 mainline_regime 多周期相对强度生成的研究方向，
+  推荐理由须优先引用它，而不是重新发明方向；mainline_regime 只改变研究排序，不得当作买入门禁或收益保证
 - signal_backtest / candidate_factor_scores 按 confidence.level / factor_reliability 表述
 - candidate_factor_scores.execution_qualified_fund_codes 只可作为量化加分证据；opportunity_first 下未覆盖不得单独否决买入，risk_first 下仍作为买入白名单；任何模式都不得把描述性覆盖写成量化背书
 - profile.account_loss_review_percent 只用于账户/现有持仓亏损复核，不得直接与候选基金近1年最大回撤比较
@@ -81,16 +80,7 @@ recommendations 字段约束：
   news.freshness_label 为 stale/empty/aging 时，新闻只能作背景，不能作为买入或追涨主依据
 """
 
-HOLDINGS_LOOKTHROUGH_REQUIREMENT = (
-    "fund_lookthrough is reported-as-of disclosed-scope research only: retain unknown "
-    "mass; no common disclosed security is not exact zero full-portfolio overlap; "
-    "missing/stale/cross-vintage/low-coverage evidence may only reduce confidence and "
-    "never improve a candidate; periodic disclosures never authorize allocation as "
-    "current complete holdings."
-)
-
 _COMMON_REQUIREMENTS = [
-    HOLDINGS_LOOKTHROUGH_REQUIREMENT,
     "仅从 discovery_facts.candidate_pool 选 0~3 只，不得推荐 holdings_slim 中已有 fund_code；无合格候选时允许空数组",
     "quality_gate=eligible 才可分批买入；watch_only 只能观察/等待，excluded 禁止推荐；不得为凑数降门槛",
     "每只 recommendations 须含 hold_horizon、risks（至少 1 条）、points（引用 candidate_pool 具体字段）",
@@ -118,7 +108,7 @@ _FULL_MARKET_REQUIREMENTS = [
     *_COMMON_REQUIREMENTS,
     "基于 sector_heat 与 target_sector_context 做全市场横向对比",
     "先判断板块方向（sector_opportunities/target_sector_context），再比较方向内基金质量分，最后决定动作",
-    "sector_opportunities 是系统已用 1d/5d 涨跌 + 今日/5日主力资金 + pattern 生成的主方向，推荐理由须优先引用它",
+    "sector_opportunities 是系统结合短期热度、资金流与 mainline_regime 多周期证据生成的研究方向；mainline_regime 只改变研究排序，不得替代交易门禁",
     "portfolio_gap / holdings_slim 仅作背景，不要以「持仓缺口」为主叙事",
     "market_view 须覆盖热度靠前板块与相对冷门但有机会的方向",
     "引用南向须用 stock_connect_flow 且仅作港股资金面参考；板块主力须用 target_sector_context.sector_fund_flow",
@@ -230,11 +220,6 @@ def build_user_payload(
                 if isinstance(discovery_facts.get("data_evidence"), dict)
                 else None
             ),
-            "fund_lookthrough": compact_fund_lookthrough_for_llm(
-                discovery_facts.get("fund_lookthrough")
-                if isinstance(discovery_facts.get("fund_lookthrough"), dict)
-                else None
-            ),
             "candidate_pool": slim_pool,
         },
         "requirements": requirements,
@@ -246,8 +231,6 @@ def append_output_requirements_to_system(system_prompt: str) -> str:
         system_prompt.rstrip()
         + "\n\n"
         + OUTPUT_DISCOVERY_REQUIREMENTS.strip()
-        + "\n- "
-        + HOLDINGS_LOOKTHROUGH_REQUIREMENT
     )
 
 
@@ -258,6 +241,7 @@ def _slim_sector_opportunities(items: list[dict]) -> list[dict]:
             "sector_label": item.get("sector_label"),
             "track": item.get("track"),
             "score": item.get("score"),
+            "research_score": item.get("research_score"),
             "confidence": item.get("confidence"),
             "entry_hint": item.get("entry_hint"),
             "evidence": item.get("evidence") or [],
@@ -267,6 +251,30 @@ def _slim_sector_opportunities(items: list[dict]) -> list[dict]:
             "today_main_force_net_yi": item.get("today_main_force_net_yi"),
             "cumulative_5d_net_yi": item.get("cumulative_5d_net_yi"),
             "pattern_label": item.get("pattern_label"),
+            "mainline_regime": _slim_mainline_regime(item.get("mainline_regime")),
         }
         slimmed.append(row)
     return slimmed
+
+
+def _slim_mainline_regime(value: object) -> dict | None:
+    if not isinstance(value, dict):
+        return None
+    features = value.get("features") if isinstance(value.get("features"), dict) else {}
+    return {
+        "schema_version": value.get("schema_version"),
+        "status": value.get("status"),
+        "score": value.get("score"),
+        "confidence": value.get("confidence"),
+        "feature_coverage": value.get("feature_coverage"),
+        "research_ranking_only": True,
+        "features": {
+            "relative_return_20d_percent": features.get("relative_return_20d_percent"),
+            "relative_strength_percentile": features.get("relative_strength_percentile"),
+            "cumulative_20d_net_yi": features.get("cumulative_20d_net_yi"),
+            "advancing_ratio_percent": features.get("advancing_ratio_percent"),
+            "distance_from_ma20_percent": features.get("distance_from_ma20_percent"),
+        },
+        "evidence": list(value.get("evidence") or [])[:4],
+        "risks": list(value.get("risks") or [])[:4],
+    }

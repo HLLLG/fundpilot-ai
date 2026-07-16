@@ -18,6 +18,7 @@ type FundTradeabilityEvidenceProps = {
   costAssessment?: FundTransactionCostAssessment;
   holdingTransactionExecution?: HoldingTransactionExecution;
   compact?: boolean;
+  executionRelevant?: boolean;
 };
 
 const STATE_LABELS: Record<string, string> = {
@@ -79,6 +80,13 @@ function statusTone(state: string | null | undefined): string {
   return "bg-slate-200 text-slate-700";
 }
 
+function evidenceTone(
+  state: string | null | undefined,
+  usable: boolean,
+): string {
+  return usable ? statusTone(state) : "bg-amber-100 text-amber-900";
+}
+
 function gateMeta(status: string | undefined) {
   if (status === "eligible") {
     return {
@@ -107,6 +115,7 @@ export function FundTradeabilityEvidence({
   costAssessment,
   holdingTransactionExecution,
   compact = false,
+  executionRelevant = true,
 }: FundTradeabilityEvidenceProps) {
   const gate =
     tradeabilityGate ?? tradeability?.tradeability_gate ?? costAssessment?.tradeability_gate;
@@ -159,7 +168,19 @@ export function FundTradeabilityEvidence({
     ...(costAssessment?.source_ids ?? []),
   ];
   const sources = [...new Set(sourceIds.map(sourceLabel))];
-  const checkedAt = formatCheckedAt(tradeability?.checked_at ?? costAssessment?.checked_at);
+  const statusCheckedAt = formatCheckedAt(
+    tradeability?.status_checked_at ??
+      tradeability?.checked_at ??
+      costAssessment?.checked_at,
+  );
+  const statusEvidenceUsable =
+    ["complete", "partial"].includes(tradeability?.data_status ?? "") &&
+    tradeability?.freshness === "fresh";
+  const statusEvidenceLabel = statusEvidenceUsable
+    ? null
+    : tradeability?.freshness === "stale" || tradeability?.data_status === "stale"
+      ? "状态证据已过期"
+      : "状态证据不可用";
   const revalidationRequired =
     gate?.revalidation_required === true || tradeability?.revalidation_required === true;
   const totalCost = costAssessment?.estimated_total_cost_upper_bound_percent;
@@ -195,10 +216,10 @@ export function FundTradeabilityEvidence({
         aria-label="基金交易条件"
       >
         <div className="flex flex-wrap items-center gap-1 text-[10px] font-bold">
-          <span className={`rounded-full px-2 py-0.5 ${statusTone(purchaseState)}`}>
+          <span className={`rounded-full px-2 py-0.5 ${evidenceTone(purchaseState, statusEvidenceUsable)}`}>
             申购{statusLabel(purchaseState, tradeability?.purchase_status)}
           </span>
-          <span className={`rounded-full px-2 py-0.5 ${statusTone(redemptionState)}`}>
+          <span className={`rounded-full px-2 py-0.5 ${evidenceTone(redemptionState, statusEvidenceUsable)}`}>
             赎回{statusLabel(redemptionState, tradeability?.redemption_status)}
           </span>
           <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 ${gatePresentation.className}`}>
@@ -230,14 +251,64 @@ export function FundTradeabilityEvidence({
             </dd>
           </div>
         </dl>
-        {sources.length || checkedAt || revalidationRequired ? (
+        {sources.length || statusCheckedAt || statusEvidenceLabel || revalidationRequired ? (
           <p className="mt-1.5 break-words text-[10px] leading-4 text-slate-500 [overflow-wrap:anywhere]">
             {sources.length ? `来源：${sources.join(" + ")}` : "来源待核验"}
-            {checkedAt ? ` · 核验 ${checkedAt}` : ""}
+            {statusCheckedAt ? ` · 状态核验 ${statusCheckedAt}` : ""}
+            {statusEvidenceLabel ? ` · ${statusEvidenceLabel}` : ""}
             {revalidationRequired ? " · 下单前复核" : ""}
           </p>
         ) : null}
       </div>
+    );
+  }
+
+  if (!executionRelevant) {
+    const researchMessage = statusEvidenceLabel
+      ? statusEvidenceLabel === "状态证据已过期"
+        ? "本次状态超过执行时效，系统已阻断买入；这不等于基金当前已暂停申购。"
+        : "本次没有取得可用的申赎状态，系统已阻断买入。"
+      : "本次未通过交易门禁；以下参数只供下单前复核，不参与基金优劣排序。";
+    return (
+      <section
+        className="mt-3 overflow-hidden rounded-xl border border-slate-200 bg-slate-50/75"
+        aria-label="交易条件与成本核验"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200/80 px-3 py-2.5">
+          <h4 className="flex items-center gap-1.5 text-xs font-black text-slate-900">
+            <ReceiptText size={14} className="text-[var(--brand)]" aria-hidden="true" />
+            交易门禁摘要
+          </h4>
+          <div className="flex flex-wrap items-center gap-1 text-[10px] font-bold">
+            <span className={`rounded-full px-2 py-1 ${evidenceTone(purchaseState, statusEvidenceUsable)}`}>
+              申购{statusLabel(purchaseState, tradeability?.purchase_status)}
+            </span>
+            <span className={`rounded-full px-2 py-1 ${evidenceTone(redemptionState, statusEvidenceUsable)}`}>
+              赎回{statusLabel(redemptionState, tradeability?.redemption_status)}
+            </span>
+            <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 ${gatePresentation.className}`}>
+              <GateIcon size={11} aria-hidden="true" />
+              {gatePresentation.label}
+            </span>
+          </div>
+        </div>
+        <div className="space-y-1.5 px-3 py-2.5 text-[11px] leading-5 text-slate-600">
+          <p className="font-medium text-amber-900">{researchMessage}</p>
+          <p className="break-words text-[10px] text-slate-500 [overflow-wrap:anywhere]">
+            {sources.length ? `来源：${sources.join(" + ")}` : "来源待核验"}
+            {statusCheckedAt ? ` · 状态核验 ${statusCheckedAt}` : ""}
+            {statusEvidenceLabel ? ` · ${statusEvidenceLabel}` : ""}
+          </p>
+          <details className="group">
+            <summary className="min-h-8 cursor-pointer list-none py-1 text-[11px] font-bold text-slate-700 [&::-webkit-details-marker]:hidden">
+              查看历史交易参数 <span aria-hidden="true" className="text-slate-400">⌄</span>
+            </summary>
+            <p className="pb-1 text-[10px] leading-5 text-slate-500">
+              首次起购 {initialText} · 追加起购 {formatMoney(additionalMinimum)} · 单日限额 {limitText} · 成本上限 {costText}
+            </p>
+          </details>
+        </div>
+      </section>
     );
   }
 
@@ -252,10 +323,10 @@ export function FundTradeabilityEvidence({
           交易条件与成本核验
         </h4>
         <div className="flex flex-wrap items-center gap-1 text-[10px] font-bold">
-          <span className={`rounded-full px-2 py-1 ${statusTone(purchaseState)}`}>
+          <span className={`rounded-full px-2 py-1 ${evidenceTone(purchaseState, statusEvidenceUsable)}`}>
             申购{statusLabel(purchaseState, tradeability?.purchase_status)}
           </span>
-          <span className={`rounded-full px-2 py-1 ${statusTone(redemptionState)}`}>
+          <span className={`rounded-full px-2 py-1 ${evidenceTone(redemptionState, statusEvidenceUsable)}`}>
             赎回{statusLabel(redemptionState, tradeability?.redemption_status)}
           </span>
           <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 ${gatePresentation.className}`}>
@@ -306,11 +377,14 @@ export function FundTradeabilityEvidence({
       <div className="space-y-1 px-3 py-2.5 text-[11px] leading-5 text-slate-600">
         <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
           {sources.length ? <span>来源：{sources.join(" + ")}</span> : <span>来源待核验</span>}
-          {checkedAt ? (
+          {statusCheckedAt ? (
             <span className="inline-flex items-center gap-1">
               <Clock3 size={11} aria-hidden="true" />
-              核验 {checkedAt}
+              状态核验 {statusCheckedAt}
             </span>
+          ) : null}
+          {statusEvidenceLabel ? (
+            <span className="font-bold text-amber-800">{statusEvidenceLabel}</span>
           ) : null}
           {revalidationRequired ? (
             <span className="inline-flex items-center gap-1 font-bold text-amber-800">

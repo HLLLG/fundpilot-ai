@@ -1,26 +1,14 @@
 // @vitest-environment jsdom
 
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import "@testing-library/jest-dom/vitest";
 
 import { DiscoveryCandidatePoolPanel } from "@/components/DiscoveryCandidatePoolPanel";
 import type { DiscoveryCandidatePoolItem } from "@/lib/api";
-import {
-  installMatchMedia,
-  type MatchMediaController,
-} from "@/test/matchMedia";
-
-const DESKTOP_QUERY = "(min-width: 1024px)";
-let matchMedia: MatchMediaController;
-
-beforeEach(() => {
-  matchMedia = installMatchMedia({ [DESKTOP_QUERY]: false });
-});
 
 afterEach(() => {
   cleanup();
-  matchMedia.restore();
 });
 
 const candidate: DiscoveryCandidatePoolItem = {
@@ -93,24 +81,20 @@ describe("DiscoveryCandidatePoolPanel", () => {
     expect(screen.getByRole("article", { name: /研究观察/ })).toBeInTheDocument();
   });
 
-  it("keeps a captioned semantic table for larger viewports", () => {
-    matchMedia.setMatches(DESKTOP_QUERY, true);
+  it("uses the compact card grid at every viewport without a wide scrolling table", () => {
     render(<DiscoveryCandidatePoolPanel pool={[candidate]} selectedCodes={[]} />);
     fireEvent.click(screen.getByRole("button", { name: /本次候选池/ }));
 
-    expect(screen.getByRole("table", { name: /候选池评分/ })).toBeInTheDocument();
-    expect(
-      screen.getByRole("region", { name: "基金候选池明细表，可左右滚动查看" }),
-    ).toHaveAttribute("tabindex", "0");
-    expect(screen.getByRole("columnheader", { name: "质量分" })).toBeInTheDocument();
-    expect(screen.getByRole("columnheader", { name: "交易条件" })).toBeInTheDocument();
-    expect(screen.getByRole("columnheader", { name: "同类研究 / 基准" })).toBeInTheDocument();
-    expect(screen.getByRole("rowheader", { name: candidate.fund_code })).toBeInTheDocument();
-    expect(screen.queryByRole("article")).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "基金候选池重点信息" })).toBeInTheDocument();
+    expect(screen.getByRole("article", { name: /海富通电子传媒股票A/ })).toBeInTheDocument();
+    expect(screen.getByLabelText("交易条件摘要")).toBeInTheDocument();
+    expect(screen.getByLabelText("同类研究摘要")).toBeInTheDocument();
+    expect(screen.getByText("查看交易条件、同类研究与完整依据")).toBeInTheDocument();
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+    expect(screen.queryByText("基金候选池明细表，可左右滚动查看")).not.toBeInTheDocument();
   });
 
   it("summarizes field completeness and quality degradation without exposing long text as columns", () => {
-    matchMedia.setMatches(DESKTOP_QUERY, true);
     const completeCandidate: DiscoveryCandidatePoolItem = {
       ...candidate,
       fund_code: "006082",
@@ -156,9 +140,7 @@ describe("DiscoveryCandidatePoolPanel", () => {
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /本次候选池/ }));
 
-    expect(screen.getByRole("columnheader", { name: "证据状态" })).toBeInTheDocument();
-    expect(screen.queryByRole("columnheader", { name: "质量理由" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("columnheader", { name: "短板" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("columnheader")).not.toBeInTheDocument();
     expect(screen.getAllByText("查看数据完整性与质量依据")).toHaveLength(3);
     expect(screen.getAllByText("待补/刷新 1 项")).not.toHaveLength(0);
     expect(screen.getByText("最新规模", { selector: "p" })).toBeInTheDocument();
@@ -198,6 +180,7 @@ describe("DiscoveryCandidatePoolPanel", () => {
 
     render(<DiscoveryCandidatePoolPanel pool={[tradeableCandidate]} />);
     fireEvent.click(screen.getByRole("button", { name: /本次候选池/ }));
+    fireEvent.click(screen.getByText("查看交易条件、同类研究与完整依据"));
 
     const evidence = screen.getByLabelText("基金交易条件");
     expect(evidence).toHaveTextContent("申购开放");
@@ -210,6 +193,38 @@ describe("DiscoveryCandidatePoolPanel", () => {
     expect(evidence).toHaveTextContent("下单前复核");
   });
 
+  it("does not present an expired open-status record as currently executable", () => {
+    const staleCandidate: DiscoveryCandidatePoolItem = {
+      ...candidate,
+      tradeability: {
+        data_status: "stale",
+        freshness: "stale",
+        purchase_state: "open",
+        purchase_status: "开放申购",
+        redemption_state: "open",
+        redemption_status: "开放赎回",
+        minimum_initial_purchase_yuan: 10,
+        daily_purchase_limit_unlimited: true,
+        source_ids: ["eastmoney.fundf10_purchase_info"],
+        status_checked_at: "2026-07-15T19:31:45+08:00",
+        tradeability_gate: {
+          status: "watch_only",
+          effective_initial_min_purchase_yuan: 100,
+          max_purchase_unlimited: true,
+        },
+      },
+    };
+
+    render(<DiscoveryCandidatePoolPanel pool={[staleCandidate]} />);
+    fireEvent.click(screen.getByRole("button", { name: /本次候选池/ }));
+
+    expect(screen.getByLabelText("交易条件摘要")).toHaveTextContent(
+      "申购记录开放（证据过期）",
+    );
+    fireEvent.click(screen.getByText("查看交易条件、同类研究与完整依据"));
+    expect(screen.getByLabelText("基金交易条件")).toHaveTextContent("状态证据已过期");
+  });
+
   it("degrades historical candidates without tradeability fields safely", () => {
     render(
       <DiscoveryCandidatePoolPanel
@@ -217,6 +232,7 @@ describe("DiscoveryCandidatePoolPanel", () => {
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: /本次候选池/ }));
+    fireEvent.click(screen.getByText("查看交易条件、同类研究与完整依据"));
 
     expect(screen.getByLabelText("交易条件未记录")).toHaveTextContent(
       "历史报告未记录交易条件",
@@ -270,6 +286,7 @@ describe("DiscoveryCandidatePoolPanel", () => {
 
     render(<DiscoveryCandidatePoolPanel pool={[researchedCandidate]} />);
     fireEvent.click(screen.getByRole("button", { name: /本次候选池/ }));
+    fireEvent.click(screen.getByText("查看交易条件、同类研究与完整依据"));
 
     const research = screen.getByRole("group", { name: "同类研究与基准" });
     expect(research).toHaveTextContent("境内 / 股票 / 主动 / 高风险");
@@ -280,6 +297,44 @@ describe("DiscoveryCandidatePoolPanel", () => {
     expect(research).toHaveTextContent("近1年最大回撤");
     expect(research).not.toHaveTextContent("近1年跟踪误差");
     expect(research).toHaveTextContent("仅研究描述，不参与金额分配");
+  });
+
+  it("collapses an empty peer cohort to one explanation instead of repeated n=0 rows", () => {
+    const emptyPeerCandidate: DiscoveryCandidatePoolItem = {
+      ...candidate,
+      peer_group: {
+        schema_version: "fund_peer_group.v1",
+        group_key: "domestic/equity/active",
+        group_label: "境内 / 权益 / 主动",
+      },
+      peer_rank: {
+        schema_version: "peer_rank.v2",
+        status: "insufficient",
+        qualified: false,
+        universe: { independent_peer_family_count: 0 },
+        metrics: {
+          return_3m_percent: {
+            label: "近3月收益",
+            applicable: true,
+            sample_count: 0,
+            percentile: null,
+          },
+          return_6m_percent: {
+            label: "近6月收益",
+            applicable: true,
+            sample_count: 0,
+            percentile: null,
+          },
+        },
+      },
+    };
+
+    render(<DiscoveryCandidatePoolPanel pool={[emptyPeerCandidate]} />);
+    fireEvent.click(screen.getByRole("button", { name: /本次候选池/ }));
+    fireEvent.click(screen.getByText("查看交易条件、同类研究与完整依据"));
+
+    expect(screen.queryByText(/分位缺失/)).not.toBeInTheDocument();
+    expect(screen.getByText("当前未形成独立同类样本；不重复展示空分位。")).toBeInTheDocument();
   });
 
   it("keeps a tracking index visibly separate from a formally verified benchmark", () => {
@@ -321,6 +376,7 @@ describe("DiscoveryCandidatePoolPanel", () => {
 
     render(<DiscoveryCandidatePoolPanel pool={[trackingCandidate]} />);
     fireEvent.click(screen.getByRole("button", { name: /本次候选池/ }));
+    fireEvent.click(screen.getByText("查看交易条件、同类研究与完整依据"));
 
     const research = screen.getByRole("group", { name: "同类研究与基准" });
     expect(research).toHaveTextContent("跟踪参考（非正式基准）");
@@ -371,6 +427,7 @@ describe("DiscoveryCandidatePoolPanel", () => {
 
     render(<DiscoveryCandidatePoolPanel pool={[formalCandidate]} />);
     fireEvent.click(screen.getByRole("button", { name: /本次候选池/ }));
+    fireEvent.click(screen.getByText("查看交易条件、同类研究与完整依据"));
 
     const research = screen.getByRole("group", { name: "同类研究与基准" });
     expect(research).toHaveTextContent("正式业绩基准");

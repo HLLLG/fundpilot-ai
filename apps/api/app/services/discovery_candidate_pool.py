@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime
 import hashlib
@@ -385,8 +386,37 @@ def _populate_recall_audit_sink(
 
 
 def _peer_catalogue_bucket(row: dict) -> str:
-    value = str(row.get("fund_type") or row.get("fund_category") or "unknown")
-    return " ".join(value.strip().casefold().split()) or "unknown"
+    """Build a stable coarse bucket across universe and profile providers.
+
+    The universe uses compact labels such as ``zs`` while the research profile
+    may overwrite the same fund with ``股票型``. Exact-string bucketing made
+    those two observations invisible to each other and produced an artificial
+    zero-peer result. The strict peer module still performs the final strategy,
+    region, subtype, and exact tracking-index split inside this coarse bucket.
+    """
+
+    fund_type = str(row.get("fund_type") or row.get("fund_category") or "")
+    name = str(row.get("fund_name") or "")
+    text = f"{fund_type} {name}".strip().casefold()
+    if "qdii" in text:
+        return "qdii"
+    if "fof" in text or "基金中基金" in text:
+        return "fof"
+    if "货币" in text:
+        return "money"
+    if "债" in text or fund_type.casefold() in {"zq", "bond"}:
+        return "bond"
+    if "混合" in text or fund_type.casefold() in {"hh", "mixed"}:
+        return "mixed"
+    if (
+        "指数" in text
+        or "etf" in text
+        or fund_type.casefold() in {"zs", "index", "passive_index", "enhanced_index"}
+    ):
+        return "equity_index"
+    if "股票" in text or fund_type.casefold() in {"gp", "equity", "stock"}:
+        return "equity_active"
+    return "unknown"
 
 
 def enrich_candidates(
@@ -422,6 +452,7 @@ def enrich_candidates(
         row["max_drawdown_1y_percent"] = _first_valid_drawdown(
             row.get("max_drawdown_1y_percent"),
             snapshot.max_drawdown_1y_percent,
+            _max_drawdown_from_nav_history(trend),
         )
         row["fund_scale_yi"] = _first_present(
             row.get("fund_scale_yi"), snapshot.fund_scale_yi
@@ -472,6 +503,10 @@ def enrich_candidates(
             "fund_scale_basis",
             "fund_shares_yi",
             "fund_shares_basis",
+            "tracking_reference_text",
+            "benchmark_text",
+            "benchmark_text_kind",
+            "benchmark_text_source_kind",
         ):
             if profile.get(key) is not None:
                 row[key] = profile[key]
@@ -752,15 +787,17 @@ def attach_candidate_benchmark_research(
     *,
     decision_at: datetime,
 ) -> list[dict]:
-    """Attach frozen benchmark identity, then recompute the descriptive rank.
+    """Attach frozen benchmark identity without shrinking valid peer samples.
 
     Index groups depend on their exact point-in-time tracking reference.  A
     rank calculated before benchmark attachment may belong to the conservative
     ``reference-unspecified`` group, so retaining it after the group changes
-    would compare the target with the wrong cohort.  This function stages every
-    final candidate's benchmark first and only then builds ``peer_rank.v2``
-    against that frozen final-candidate cohort.  No provider or network lookup
-    occurs here, and no private research context leaks into candidate payloads.
+    would compare the target with the wrong cohort.  When the group is unchanged,
+    however, the existing rank was calculated from the full discovery universe
+    and must be retained: rebuilding it from finalists alone collapses otherwise
+    valid peer samples to ``n=0``.  Only a changed/missing group is rebuilt from
+    the frozen final-candidate cohort.  No provider or network lookup occurs
+    here, and no private research context leaks into candidate payloads.
     """
 
     staged: list[dict] = []
@@ -783,13 +820,26 @@ def attach_candidate_benchmark_research(
     enriched: list[dict] = []
     for staged_row in staged:
         row = dict(staged_row)
-        rank = build_peer_rank(
-            row,
-            staged,
-            decision_at=decision_at,
-            benchmark_spec=row["benchmark_spec"],
-        )
         top_group_key = str((row.get("peer_group") or {}).get("group_key") or "")
+        previous_rank = (
+            row.get("peer_rank")
+            if isinstance(row.get("peer_rank"), Mapping)
+            else None
+        )
+        previous_group_key = str(
+            ((previous_rank or {}).get("peer_group") or {}).get("group_key") or ""
+        )
+        if previous_rank is not None and previous_group_key == top_group_key:
+            rank = dict(previous_rank)
+            rank["peer_group"] = dict(row["peer_group"])
+            rank["benchmark"] = dict(row["peer_group"].get("benchmark") or {})
+        else:
+            rank = build_peer_rank(
+                row,
+                staged,
+                decision_at=decision_at,
+                benchmark_spec=row["benchmark_spec"],
+            )
         rank_group_key = str((rank.get("peer_group") or {}).get("group_key") or "")
         if not top_group_key or rank_group_key != top_group_key:
             raise RuntimeError("peer rank group changed after benchmark attachment")
@@ -1558,6 +1608,29 @@ def _first_valid_drawdown(*values: object) -> float | None:
         if parsed is not None:
             return parsed
     return None
+
+
+def _max_drawdown_from_nav_history(history: object | None) -> float | None:
+    """Derive the one-year drawdown from the already-fetched NAV series.
+
+    Candidate enrichment always requests up to 252 trading days.  The separate
+    diagnostics endpoint can fail during a cold-start burst even when that NAV
+    series is complete, so treating the drawdown as missing in that case loses
+    evidence that is already present in the same request.
+    """
+
+    points = list(getattr(history, "points", None) or [])[-252:]
+    if len(points) < 2:
+        return None
+    peak: float | None = None
+    max_drawdown = 0.0
+    for point in points:
+        nav = _num(getattr(point, "nav", None))
+        if nav is None or nav <= 0:
+            return None
+        peak = nav if peak is None else max(peak, nav)
+        max_drawdown = min(max_drawdown, (nav / peak - 1.0) * 100.0)
+    return round(max_drawdown, 2)
 
 
 def _parse_iso_date(value: object) -> date | None:

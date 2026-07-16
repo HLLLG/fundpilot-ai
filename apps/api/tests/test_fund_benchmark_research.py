@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from app.services.amac_benchmark_index_data import amac_name_to_code_pairs
 from app.services.fund_benchmark_research import (
     attach_fund_benchmark_metrics,
     build_fund_benchmark_research,
@@ -14,6 +15,12 @@ from app.services.fund_benchmark_research import (
 
 DECISION_AT = datetime(2026, 7, 14, 16, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
 AVAILABLE_AT = "2026-07-14T15:59:00+08:00"
+
+
+def test_csi_health_care_index_uses_the_official_000933_identity() -> None:
+    mappings = dict(amac_name_to_code_pairs())
+
+    assert mappings["中证医药卫生指数"] == "000933"
 
 
 def _business_days(count: int, *, end: date = date(2026, 7, 14)) -> list[date]:

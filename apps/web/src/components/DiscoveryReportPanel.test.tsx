@@ -102,6 +102,41 @@ function sampleReport(): FundDiscoveryReport {
 }
 
 describe("DiscoveryReportPanel", () => {
+  it("uses the frozen mainline snapshot instead of stale nested direction evidence", () => {
+    const report = sampleReport();
+    report.discovery_facts = {
+      ...report.discovery_facts,
+      sector_opportunities: [
+        {
+          sector_label: "电子",
+          score: 85.1,
+          mainline_regime: {
+            sector_label: "电子",
+            status: "insufficient",
+            features: { relative_return_20d_percent: null },
+          },
+        },
+      ],
+      mainline_snapshot: {
+        schema_version: "mainline_daily_snapshot.v1",
+        sectors: [
+          {
+            sector_label: "电子",
+            status: "confirmed",
+            score: 88.2,
+            features: { relative_return_20d_percent: 23.45 },
+          },
+        ],
+      },
+    };
+
+    render(<DiscoveryReportPanel report={report} />);
+
+    expect(screen.getByTestId("mainline-status")).toHaveTextContent("主线已确认");
+    expect(screen.getByTestId("mainline-evidence")).toHaveTextContent("+23.45%");
+    expect(screen.queryByText("主线证据不足")).not.toBeInTheDocument();
+  });
+
   it("shows the opportunity-first horizon and explains how drawdown is used", () => {
     const report = sampleReport();
     report.discovery_facts = {
@@ -249,6 +284,7 @@ describe("DiscoveryReportPanel", () => {
     const report = sampleReport();
     report.recommendations[0] = {
       ...report.recommendations[0],
+      action: "分批买入",
       tradeability: {
         data_status: "complete",
         freshness: "fresh",
@@ -471,6 +507,48 @@ describe("DiscoveryReportPanel", () => {
     expect(screen.getByLabelText("历史参考金额")).toHaveTextContent("¥999,999");
   });
 
+  it("deduplicates historical final-action projections and compacts non-executable tradeability", () => {
+    const report = sampleReport();
+    report.recommendations = [
+      {
+        ...report.recommendations[0],
+        action: "建议关注",
+        points: [
+          "保留的研究依据。",
+          "系统校验后最终动作调整为等待回调。",
+          "系统校验后的最终动作：建议关注。",
+          "系统校验后的最终动作：建议关注。",
+        ],
+        tradeability: {
+          data_status: "stale",
+          freshness: "stale",
+          purchase_state: "open",
+          redemption_state: "open",
+          minimum_initial_purchase_yuan: 10,
+          minimum_additional_purchase_yuan: 10,
+          daily_purchase_limit_unlimited: true,
+          source_ids: ["eastmoney.fundf10_purchase_info"],
+          status_checked_at: "2026-07-15T14:52:00+08:00",
+          tradeability_gate: {
+            status: "watch_only",
+            revalidation_required: true,
+          },
+        },
+      },
+    ];
+
+    const { container } = render(<DiscoveryReportPanel report={report} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /查看 1 只/ }));
+    fireEvent.click(screen.getByText("查看交易条件与完整依据"));
+    expect(container.textContent?.match(/系统校验后的最终动作：建议关注。/g) ?? []).toHaveLength(1);
+    const evidence = screen.getByRole("region", { name: "交易条件与成本核验" });
+    expect(evidence).toHaveTextContent("交易门禁摘要");
+    expect(evidence).toHaveTextContent("这不等于基金当前已暂停申购");
+    expect(evidence).not.toHaveTextContent("未折扣标准费率成本上限");
+    expect(screen.getByText("查看历史交易参数")).toBeInTheDocument();
+  });
+
   it("keeps historical reports without allocation fields renderable", () => {
     const report = sampleReport();
     expect(report.allocation_plan).toBeUndefined();
@@ -483,7 +561,7 @@ describe("DiscoveryReportPanel", () => {
     expect(screen.queryByRole("region", { name: "基金持仓穿透证据" })).not.toBeInTheDocument();
   });
 
-  it("maps discovery lookthrough candidates to the visible candidate pool names", () => {
+  it("does not expose retired lookthrough evidence from historical discovery reports", () => {
     const report = sampleReport();
     report.discovery_facts = {
       ...report.discovery_facts,
@@ -511,15 +589,8 @@ describe("DiscoveryReportPanel", () => {
 
     render(<DiscoveryReportPanel report={report} />);
 
-    fireEvent.click(screen.getByRole("button", { name: /持仓穿透与重合证据/ }));
-    const evidence = screen.getByRole("region", { name: "基金持仓穿透证据" });
-    expect(evidence).toHaveTextContent("海富通电子传媒股票A");
-    expect(evidence).toHaveTextContent("006081");
-    expect(evidence).toHaveTextContent(
-      "披露范围内未发现共同证券，完整组合重合未知",
-    );
-    expect(evidence).not.toHaveTextContent(/≥\s*0%/);
-    expect(evidence).not.toHaveTextContent("完全分散");
+    expect(screen.queryByRole("button", { name: /持仓穿透与重合证据/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "基金持仓穿透证据" })).not.toBeInTheDocument();
   });
 
   it("loads historical outcomes only after the user opens the research panel", () => {

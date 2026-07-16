@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 import logging
 
 from app.config import get_settings
@@ -26,6 +27,13 @@ from app.services.discovery_sector_opportunity import (
     select_sector_opportunities,
 )
 from app.services.discovery_sector_heat import build_sector_heat_ranking
+from app.services.discovery_sector_position import (
+    build_sector_position_map_for_opportunities,
+)
+from app.services.mainline_regime import (
+    build_mainline_regime_snapshot,
+    mainline_regime_by_label,
+)
 from app.services.discovery_target_sectors import select_target_sectors
 from app.services.analysis_runtime import (
     limit_news_topics_for_runtime,
@@ -52,7 +60,7 @@ from app.services.discovery_strategy import discovery_minimum_holding_days
 from app.services.candidate_selection_audit import (
     build_pipeline_candidate_selection_audit_v2,
 )
-from app.services.fund_lookthrough_context import build_fund_lookthrough_context
+from app.services.trading_session import build_trading_session
 
 logger = logging.getLogger(__name__)
 ProgressCallback = Callable[[str, str], None]
@@ -112,17 +120,43 @@ def run_discovery(
         target_sectors,
         list(request.focus_sectors),
     )
-    sector_flow_by_label = build_sector_flow_map_for_opportunities(
-        sector_heat,
-        flow_labels,
-    )
+    effective_trade_date = str(
+        build_trading_session(decision_at).get("effective_trade_date") or ""
+    ).strip() or None
     # M1.4：量价背离历史回测（confidence 升级判定的证据来源），仅对候选方向拉取，
     # best-effort，任一板块失败/超时不影响其他板块或整体扫描。
-    sector_divergence_by_label = build_sector_divergence_map_for_opportunities(flow_labels)
+    with ThreadPoolExecutor(max_workers=3, thread_name_prefix="discovery-sector") as executor:
+        flow_future = executor.submit(
+            build_sector_flow_map_for_opportunities,
+            sector_heat,
+            flow_labels,
+            trade_date=effective_trade_date,
+        )
+        divergence_future = executor.submit(
+            build_sector_divergence_map_for_opportunities,
+            flow_labels,
+        )
+        position_future = executor.submit(
+            build_sector_position_map_for_opportunities,
+            flow_labels,
+            as_of_trade_date=effective_trade_date,
+        )
+        sector_flow_by_label = flow_future.result()
+        sector_divergence_by_label = divergence_future.result()
+        sector_position_by_label = position_future.result()
+    mainline_snapshot = build_mainline_regime_snapshot(
+        sector_heat,
+        sector_flow_by_label=sector_flow_by_label,
+        sector_position_by_label=sector_position_by_label,
+        sector_labels=flow_labels,
+        decision_at=decision_at,
+    )
+    mainline_by_label = mainline_regime_by_label(mainline_snapshot)
     sector_opportunities = select_sector_opportunities(
         sector_heat,
         sector_flow_by_label=sector_flow_by_label,
         sector_divergence_by_label=sector_divergence_by_label,
+        mainline_by_label=mainline_by_label,
         focus_sectors=list(request.focus_sectors),
         max_total=8,
         momentum_slots=4,
@@ -248,6 +282,7 @@ def run_discovery(
         focus_sectors=list(request.focus_sectors),
         fund_type_preference="any",
         sector_opportunities=sector_opportunities,
+        mainline_snapshot=mainline_snapshot,
         budget_enhancements=True,
         decision_at=decision_at,
     )
@@ -269,13 +304,6 @@ def run_discovery(
     discovery_facts["benchmark_research"] = benchmark_metrics
     discovery_facts["benchmark_research_contract"] = summarize_benchmark_research(
         benchmark_metrics
-    )
-    discovery_facts["fund_lookthrough"] = build_fund_lookthrough_context(
-        holdings,
-        pool,
-        decision_at=decision_at,
-        analysis_mode=request.analysis_mode,
-        portfolio_context=request.portfolio_snapshot_context,
     )
     discovery_facts = attach_discovery_data_evidence(
         discovery_facts,

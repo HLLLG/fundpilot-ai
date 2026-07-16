@@ -29,6 +29,10 @@ def _fallback_theme_sector_heat_rows() -> list[dict]:
             "change_1d_percent": None,
             "change_5d_percent": None,
             "heat_score": None,
+            "rising_count": None,
+            "falling_count": None,
+            "flat_count": None,
+            "advancing_ratio_percent": None,
         }
         for label in list_theme_board_labels()
     ]
@@ -101,6 +105,10 @@ def _rows_from_theme_board_snapshot() -> list[dict]:
             "change_1d_percent": change_1d,
             "change_5d_percent": change_5d,
             "heat_score": _heat_score(change_1d, change_5d),
+            "rising_count": _as_float(item.get("rising_count")),
+            "falling_count": _as_float(item.get("falling_count")),
+            "flat_count": _as_float(item.get("flat_count")),
+            "advancing_ratio_percent": _as_float(item.get("advancing_ratio_percent")),
         }
 
     if not by_label:
@@ -115,6 +123,10 @@ def _rows_from_theme_board_snapshot() -> list[dict]:
                 "change_1d_percent": None,
                 "change_5d_percent": None,
                 "heat_score": None,
+                "rising_count": None,
+                "falling_count": None,
+                "flat_count": None,
+                "advancing_ratio_percent": None,
             }
         )
     return _sort_sector_heat_rows(merged)

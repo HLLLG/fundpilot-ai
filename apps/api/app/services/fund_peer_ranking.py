@@ -24,6 +24,7 @@ from collections.abc import Iterable, Mapping
 from datetime import date, datetime, timezone
 from typing import Any
 
+from app.services.fund_benchmark_sector import parse_benchmark_index
 from app.services.fund_universe_sampler import canonical_portfolio_name
 
 
@@ -294,6 +295,12 @@ def build_fund_peer_group(
     risk_bucket = _risk_bucket(exposure, asset_class, mixed_subtype)
     exposure_bucket = _exposure_bucket(exposure)
     reference_code = _benchmark_reference_code(benchmark)
+    if strategy in {"passive_index", "enhanced_index"} and not reference_code:
+        inferred_reference = _infer_tracking_reference(fund)
+        if inferred_reference is not None:
+            reference_code = inferred_reference["benchmark_code"]
+            benchmark = inferred_reference
+            source_fields.append("fund_tracking_reference_text")
 
     key_parts = [region, asset_class, strategy]
     label_parts = [_region_label(region), _asset_label(asset_class), _strategy_label(strategy)]
@@ -865,6 +872,7 @@ def _metric_evidence(
         available_raw = (
             row.get(f"{field}_available_at")
             or row.get("snapshot_available_at")
+            or row.get("candidate_universe_available_at")
             or row.get("available_at")
         )
         as_of = row.get(f"{field}_as_of")
@@ -949,6 +957,7 @@ def _membership_instant(
         row.get("membership_available_at")
         or row.get("available_at")
         or row.get("snapshot_available_at")
+        or row.get("candidate_universe_available_at")
         or metadata.get("snapshot_available_at")
     )
     instant, reason = _available_instant(raw, decision)
@@ -1215,6 +1224,40 @@ def _benchmark_reference_code(benchmark: Mapping[str, Any]) -> str | None:
     if benchmark.get("comparison_role") == "unavailable":
         return None
     return _text(benchmark.get("benchmark_code"))
+
+
+def _infer_tracking_reference(fund: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Infer a passive fund's exact tracking identity for peer grouping only.
+
+    The source remains explicitly research-only and can never authorize a
+    formal excess-return claim. Longest-name matching keeps similarly named
+    indices separate.
+    """
+
+    for raw in (
+        fund.get("tracking_reference_text"),
+        fund.get("benchmark_text"),
+        fund.get("fund_name"),
+    ):
+        text = str(raw or "").strip()
+        if not text:
+            continue
+        match = parse_benchmark_index(text)
+        if match is None:
+            continue
+        return {
+            "schema_version": "fund_benchmark_mapping.v1",
+            "mapping_id": None,
+            "benchmark_code": match.index_code,
+            "benchmark_name": match.index_name or match.index_code,
+            "available_at": None,
+            "contract_verification_kind": "research_tracking_identity",
+            "comparison_role": "tracking_reference",
+            "formal_excess_eligible": False,
+            "qualified": False,
+            "reason": "research_tracking_identity_only",
+        }
+    return None
 
 
 def _metric_profile(
