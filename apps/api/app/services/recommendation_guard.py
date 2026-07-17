@@ -33,7 +33,10 @@ from app.services.decision_guard_shared import (
 from app.services.market_signal import has_today_market_signal
 from app.services.investment_presets import is_short_term_style
 from app.services.signal_guard_policy import resolve_signal_guard_policy
-from app.services.recommendations import build_offline_fund_recommendation
+from app.services.recommendations import (
+    build_offline_fund_recommendation,
+    suggest_trade_amount,
+)
 from app.services.risk import holding_weight_percent, resolve_weight_denominator
 from app.services.sector_intraday_summary import summarize_sector_intraday_for_holding
 from app.services.sector_momentum import build_sector_momentum_context
@@ -273,7 +276,25 @@ def apply_recommendation_guards(
             trusted_transaction_execution,
         ) = _apply_holding_tradeability_guard(
             normalized,
-            amount_yuan=rec.amount_yuan,
+            amount_yuan=(
+                None
+                if execution_blocked
+                else (
+                    _review_reduction_amount(
+                        normalized,
+                        holding=holding,
+                        weight_denominator=weight_denominator,
+                        request=request,
+                        escalation=(
+                            escalation
+                            if settings.decision_escalation_mode == "enforced"
+                            else {}
+                        ),
+                    )
+                    if _execution_direction(normalized) == "reduce"
+                    else rec.amount_yuan
+                )
+            ),
             holding=holding,
             facts_row=facts_row,
         )
@@ -518,12 +539,27 @@ def _apply_holding_tradeability_guard(
                 dict(raw_tradeability),
                 transaction_execution,
             )
+        if (
+            holding_amount is not None
+            and holding_amount > 0
+            and amount_yuan is not None
+            and isfinite(float(amount_yuan))
+            and float(amount_yuan) > 0
+        ):
+            review_amount = round(min(float(amount_yuan), float(holding_amount)), 2)
+            transaction_execution["review_target_amount_yuan"] = review_amount
+            transaction_execution["review_target_percent"] = round(
+                review_amount / float(holding_amount) * 100,
+                2,
+            )
+            transaction_execution["review_target_basis"] = (
+                "系统按最终减仓档位与当前持仓测算，仅作为核验前的目标市值"
+            )
         return (
             normalized_action,
             None,
             True,
-            "赎回开放已核验，但缺少逐笔申购时间，无法确认锁定期与适用赎回费；"
-            "仅保留减仓评估，不生成金额或仓位比例。",
+            "目标减仓市值已按规则测算；逐笔持有期、锁定期与适用费率待核对。",
             dict(raw_tradeability),
             transaction_execution,
         )
@@ -536,6 +572,57 @@ def _apply_holding_tradeability_guard(
         dict(raw_tradeability),
         transaction_execution,
     )
+
+
+def _review_reduction_amount(
+    normalized_action: str,
+    *,
+    holding: Holding | None,
+    weight_denominator: float,
+    request: AnalysisRequest,
+    escalation: dict,
+) -> float | None:
+    """Return a deterministic, non-executable reduction target for manual review.
+
+    The provider is still forbidden from authoring a sell amount when lot age is
+    unknown.  This target comes from server-owned position rules and is stored
+    under ``transaction_execution``; the executable ``amount_yuan`` field stays
+    empty until the user records the platform-confirmed shares.
+    """
+    if _execution_direction(normalized_action) != "reduce" or holding is None:
+        return None
+    if holding.holding_amount <= 0:
+        return None
+
+    percent = escalation.get("suggested_position_change_percent")
+    if percent is not None:
+        try:
+            numeric_percent = float(percent)
+        except (TypeError, ValueError):
+            numeric_percent = 0.0
+        if isfinite(numeric_percent) and numeric_percent < 0:
+            return round(
+                min(
+                    float(holding.holding_amount),
+                    float(holding.holding_amount) * abs(numeric_percent) / 100,
+                ),
+                2,
+            )
+
+    action_bucket = _action_bucket(normalized_action)
+    if action_bucket == ACTION_BUCKET_CLEAR_ALL:
+        return round(float(holding.holding_amount), 2)
+    if action_bucket == ACTION_BUCKET_DEEP_REDUCE:
+        return round(float(holding.holding_amount) * 0.5, 2)
+
+    amount, _note = suggest_trade_amount(
+        holding,
+        holding_weight_percent(holding, request.holdings, request.profile),
+        weight_denominator,
+        request.profile,
+        normalized_action,
+    )
+    return amount
 
 
 def _strip_untrusted_execution_text(rec: FundRecommendation) -> FundRecommendation:

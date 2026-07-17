@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useId, useState } from "react";
 import { Gauge, Loader2 } from "lucide-react";
 import { fetchMarketBreadth, type MarketBreadthSignal } from "@/lib/api";
 import { StatusPill } from "@/components/StatusPill";
@@ -167,6 +167,8 @@ function MarketBreadthBar({ data }: { data: MarketBreadthSignal }) {
  * 无需各自维护数据获取逻辑。
  */
 export function MarketBreadthGauge({ compact = false }: MarketBreadthGaugeProps) {
+  const detailsId = `${useId().replace(/:/g, "")}-market-details`;
+  const [showMarketDetails, setShowMarketDetails] = useState(false);
   const { data, error, loading, revalidating, refresh } = useCachedFetch<MarketBreadthSignal>({
     cacheKey: MARKET_BREADTH_CACHE_KEY,
     fetcher: fetchMarketBreadth,
@@ -309,12 +311,48 @@ export function MarketBreadthGauge({ compact = false }: MarketBreadthGaugeProps)
       ) : null}
 
       {data.interpretation ? (
-        <p className="mt-3 text-sm leading-6 text-slate-700">
+        <p className="market-status-line mt-3 text-sm leading-6 text-slate-700">
           {data.interpretation}
           {changeText ? `（${changeText}）` : ""}
         </p>
       ) : null}
 
+      <div
+        className={`mt-4 grid grid-cols-3 gap-2 ${compact ? "" : "max-w-2xl"}`}
+        aria-label="市场三个关键数字"
+      >
+        {isIntraday ? (
+          <>
+            <Metric label="上涨" value={formatCount(data.advance_count)} />
+            <Metric label="下跌" value={formatCount(data.decline_count)} />
+            <Metric
+              label="涨停"
+              value={formatCount(data.real_limit_up_count ?? data.limit_up_count)}
+            />
+          </>
+        ) : (
+          <>
+            <Metric label="涨停" value={formatCount(data.limit_up_count)} />
+            <Metric label="跌停" value={formatCount(data.limit_down_count)} />
+            <Metric label="炸板率" value={formatPercent(data.limit_up_broken_ratio_percent)} />
+          </>
+        )}
+      </div>
+
+      {!compact ? (
+        <button
+          type="button"
+          className="market-detail-toggle"
+          aria-expanded={showMarketDetails}
+          aria-controls={detailsId}
+          onClick={() => setShowMarketDetails((value) => !value)}
+        >
+          {showMarketDetails ? "收起全市场详情" : "查看全市场分布与专业口径"}
+        </button>
+      ) : null}
+
+      {compact || showMarketDetails ? (
+      <div id={detailsId} className="market-detail-content">
       {isIntraday ? (
         <>
           <MarketBreadthBar data={data} />
@@ -371,6 +409,8 @@ export function MarketBreadthGauge({ compact = false }: MarketBreadthGaugeProps)
       </details>
 
       {!compact ? <FundReturnDistributionPanel /> : null}
+      </div>
+      ) : null}
     </section>
   );
 }

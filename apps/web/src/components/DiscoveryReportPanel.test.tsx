@@ -153,6 +153,31 @@ describe("DiscoveryReportPanel", () => {
     ).toBeInTheDocument();
   });
 
+  it("labels the v2 quant preview as shadow evidence instead of formal PIT v3", () => {
+    const report = sampleReport();
+    report.recommendations[0].quant_preview = {
+      mode: "shadow",
+      status: "eligible",
+      application_status: "shadow_only",
+      preview_score: 90,
+      proposed_adjustment_percent: 10,
+      applied_adjustment_percent: 0,
+      base_amount_yuan: 1000,
+      projected_amount_yuan: 1100,
+      data_as_of: "2026-07-16",
+      sector_rank: 1,
+      sector_sample_size: 2,
+      survivorship_bias: true,
+    };
+
+    render(<DiscoveryReportPanel report={report} />);
+    fireEvent.click(screen.getByRole("button", { name: /查看 1 只/ }));
+
+    expect(screen.getByText("量化试运行 · 影子")).toBeInTheDocument();
+    expect(screen.getByText(/影子测算 ¥1,000 → ¥1,100/)).toBeInTheDocument();
+    expect(screen.getByText(/非正式 PIT v3/)).toBeInTheDocument();
+  });
+
   it("renders repeated evidence text without duplicate React keys", () => {
     const report = sampleReport();
     const repeatedPoint = report.recommendations[0].points?.[1] ?? "repeated point";
@@ -239,7 +264,28 @@ describe("DiscoveryReportPanel", () => {
     };
     report.recommendations = [
       { ...base, fund_code: "000001", fund_name: "可执行基金", action: "分批买入" },
-      { ...base, fund_code: "000002", fund_name: "等待基金", action: "等待回调" },
+      {
+        ...base,
+        fund_code: "000002",
+        fund_name: "等待基金",
+        action: "等待回调",
+        entry_trigger: {
+          reason_code: "near_recent_high",
+          headline: "等待短线追高风险下降",
+          release_mode: "all",
+          recheck_label: "下次荐基扫描自动复核",
+          conditions: [
+            {
+              metric: "distance_from_high_percent",
+              label: "距近期高点",
+              current_value: -1.2,
+              operator: "lte",
+              target_value: -5,
+              unit: "%",
+            },
+          ],
+        },
+      },
       { ...base, fund_code: "000003", fund_name: "观察基金", action: "建议关注" },
     ];
     report.candidate_pool = report.recommendations.map((item) => ({
@@ -259,6 +305,8 @@ describe("DiscoveryReportPanel", () => {
     expect(screen.getByText("可执行建议")).toBeInTheDocument();
     expect(screen.getByText("等待条件")).toBeInTheDocument();
     expect(screen.getByText("研究观察")).toBeInTheDocument();
+    expect(screen.getByText("等待短线追高风险下降")).toBeInTheDocument();
+    expect(screen.getByText("下次荐基扫描自动复核", { exact: false })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /本次候选池/ }));
     expect(screen.getAllByText("可执行").length).toBeGreaterThan(0);

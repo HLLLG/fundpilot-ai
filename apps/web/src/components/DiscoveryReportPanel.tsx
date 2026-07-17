@@ -12,7 +12,11 @@ import {
   TrendingDown,
   TrendingUp,
 } from "lucide-react";
-import type { DiscoveryRecommendation, FundDiscoveryReport } from "@/lib/api";
+import type {
+  DiscoveryEntryTrigger,
+  DiscoveryRecommendation,
+  FundDiscoveryReport,
+} from "@/lib/api";
 import { actionBadgeClass } from "@/lib/actionStyles";
 import { translateEvidenceText } from "@/lib/decisionText";
 import { DecisionEvidenceGrid } from "@/components/DecisionEvidenceGrid";
@@ -22,6 +26,11 @@ import {
 } from "@/components/DiscoveryCandidatePoolPanel";
 import { DiscoveryChatDrawer } from "@/components/DiscoveryChatDrawer";
 import { DiscoveryOutcomesPanel } from "@/components/DiscoveryOutcomesPanel";
+import { DiscoveryEntryTriggerCard } from "@/components/DiscoveryEntryTriggerCard";
+import {
+  DiscoveryQuantPreviewBadge,
+  DiscoveryQuantPreviewCard,
+} from "@/components/DiscoveryQuantPreviewCard";
 import { FundTradeabilityEvidence } from "@/components/FundTradeabilityEvidence";
 import { SectorOpportunityCard } from "@/components/SectorOpportunityCard";
 
@@ -252,6 +261,7 @@ function DiscoveryRecommendationCard({
           <div className="mt-1 text-[11px] font-medium text-[var(--brand)]">查看基金详情 →</div>
         </button>
         <div className="flex flex-wrap justify-end gap-1.5">
+          <DiscoveryQuantPreviewBadge preview={rec.quant_preview} />
           {tradeabilitySummary ? (
             <span className={`rounded-full px-2 py-1 text-[10px] font-black ring-1 ${tradeabilitySummary.className}`}>
               {tradeabilitySummary.label}
@@ -305,6 +315,10 @@ function DiscoveryRecommendationCard({
           basis={rec.suggested_position_change_basis}
         />
       ) : null}
+      {rec.action === "等待回调" ? (
+        <DiscoveryEntryTriggerCard trigger={rec.entry_trigger} />
+      ) : null}
+      <DiscoveryQuantPreviewCard preview={rec.quant_preview} compact={compact} />
       {decisionPoints[0] ? (
         <p className="mt-3 break-words text-sm leading-6 text-slate-700 [overflow-wrap:anywhere]">
           <span className="font-black text-slate-900">核心理由：</span>
@@ -489,6 +503,7 @@ function RecommendationGroup({
   recommendations,
   onOpenFund,
   collapsible = false,
+  initialLimit,
 }: {
   id: string;
   title: string;
@@ -496,11 +511,16 @@ function RecommendationGroup({
   recommendations: DiscoveryRecommendation[];
   onOpenFund?: (recommendation: DiscoveryRecommendation) => void;
   collapsible?: boolean;
+  initialLimit?: number;
 }) {
   const [open, setOpen] = useState(!collapsible);
+  const [showAll, setShowAll] = useState(false);
   if (!recommendations.length) {
     return null;
   }
+  const visibleRecommendations =
+    initialLimit && !showAll ? recommendations.slice(0, initialLimit) : recommendations;
+  const hiddenCount = recommendations.length - visibleRecommendations.length;
   return (
     <section className="grid gap-3" aria-labelledby={id}>
       <div className="flex items-end justify-between gap-3 px-1">
@@ -519,13 +539,23 @@ function RecommendationGroup({
             {open ? "收起" : `查看 ${recommendations.length} 只`}
             <ChevronDown size={14} aria-hidden="true" className={`transition ${open ? "rotate-180" : ""}`} />
           </button>
+        ) : hiddenCount > 0 ? (
+          <button
+            type="button"
+            onClick={() => setShowAll(true)}
+            aria-expanded={showAll}
+            aria-controls={`${id}-content`}
+            className="inline-flex min-h-10 shrink-0 items-center rounded-full border border-slate-200 bg-white px-3 text-xs font-black text-slate-700 shadow-sm hover:bg-slate-50"
+          >
+            查看其余 {hiddenCount} 只
+          </button>
         ) : (
           <span className="shrink-0 text-xs font-bold text-slate-500">{recommendations.length} 只</span>
         )}
       </div>
       {open ? (
         <div id={`${id}-content`} className="grid gap-3">
-          {recommendations.map((rec, recommendationIndex) => (
+          {visibleRecommendations.map((rec, recommendationIndex) => (
             <DiscoveryRecommendationCard
               key={`${rec.fund_code}-${recommendationIndex}`}
               rec={rec}
@@ -560,10 +590,14 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
     const conditionalWait: DiscoveryRecommendation[] = [];
     const watchOnly: DiscoveryRecommendation[] = [];
     const decisionStatusByCode: Record<string, DiscoveryCandidateDecisionStatus> = {};
+    const entryTriggerByCode: Record<string, DiscoveryEntryTrigger | null | undefined> = {};
+    const quantPreviewByCode: Record<string, DiscoveryRecommendation["quant_preview"]> = {};
 
     for (const recommendation of report.recommendations) {
       const status = recommendationStatus(report, recommendation);
       decisionStatusByCode[recommendation.fund_code] = status;
+      entryTriggerByCode[recommendation.fund_code] = recommendation.entry_trigger;
+      quantPreviewByCode[recommendation.fund_code] = recommendation.quant_preview;
       if (status === "actionable") {
         actionable.push(recommendation);
       } else if (status === "conditional_wait") {
@@ -573,7 +607,14 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
       }
     }
 
-    return { actionable, conditionalWait, watchOnly, decisionStatusByCode };
+    return {
+      actionable,
+      conditionalWait,
+      watchOnly,
+      decisionStatusByCode,
+      entryTriggerByCode,
+      quantPreviewByCode,
+    };
   }, [report]);
   const selectedCodes = groupedRecommendations.actionable.map((item) => item.fund_code);
   const blockedCount = report.discovery_facts?.data_evidence_guard?.blocked_fund_codes?.length ?? 0;
@@ -687,6 +728,7 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
         description="优先看金额、核心理由和主要风险；交易细节按需展开。"
         recommendations={groupedRecommendations.actionable}
         onOpenFund={onOpenFund}
+        initialLimit={3}
       />
       <RecommendationGroup
         id="discovery-conditional-title"
@@ -694,6 +736,7 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
         description="条件未满足前不执行，等待回调或下一次数据验证。"
         recommendations={groupedRecommendations.conditionalWait}
         onOpenFund={onOpenFund}
+        initialLimit={3}
       />
 
       {sectorOpportunities.length ? (
@@ -750,6 +793,8 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
             pool={report.candidate_pool}
             selectedCodes={selectedCodes}
             decisionStatusByCode={groupedRecommendations.decisionStatusByCode}
+            entryTriggerByCode={groupedRecommendations.entryTriggerByCode}
+            quantPreviewByCode={groupedRecommendations.quantPreviewByCode}
             eliminatedCandidates={report.eliminated_candidates}
           />
         ) : null}

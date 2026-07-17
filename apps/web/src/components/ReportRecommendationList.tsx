@@ -1,4 +1,4 @@
-import type { Report } from "@/lib/api";
+import type { Holding, ParsedTransaction, Report } from "@/lib/api";
 import {
   displayFundRecommendations,
   groupFundRecommendations,
@@ -8,8 +8,23 @@ import { FundRecommendationCard } from "@/components/FundRecommendationCard";
 type ReportRecommendationListProps = {
   report: Report;
   recommendations?: Report["fund_recommendations"];
+  currentHoldings?: Holding[];
   onConfirmLedgerBaseline?: () => void;
+  onApplyTransaction?: (transaction: ParsedTransaction) => Promise<unknown>;
 };
+
+function currentHoldingFor(
+  item: Report["fund_recommendations"][number],
+  holdings: Holding[] | undefined,
+): Holding | undefined {
+  if (!holdings?.length) return undefined;
+  const exact = holdings.find(
+    (holding) => holding.fund_code === item.fund_code && holding.fund_name === item.fund_name,
+  );
+  if (exact) return exact;
+  const codeMatches = holdings.filter((holding) => holding.fund_code === item.fund_code);
+  return codeMatches.length === 1 ? codeMatches[0] : undefined;
+}
 
 type EvidenceGuardFacts = {
   data_evidence?: { blocking_reasons?: string[] };
@@ -64,7 +79,9 @@ function DecisionReadinessNotice({
 export function ReportRecommendationList({
   report,
   recommendations,
+  currentHoldings,
   onConfirmLedgerBaseline,
+  onApplyTransaction,
 }: ReportRecommendationListProps) {
   const items = recommendations ?? displayFundRecommendations(report);
   const { needsAction, observing } = groupFundRecommendations(items);
@@ -99,6 +116,8 @@ export function ReportRecommendationList({
                   report={report}
                   recommendationIndex={recommendationIndex}
                   defaultExpanded
+                  currentHolding={currentHoldingFor(item, currentHoldings)}
+                  onApplyTransaction={onApplyTransaction}
                 />
               );
             })}
@@ -121,6 +140,8 @@ export function ReportRecommendationList({
                   report={report}
                   recommendationIndex={recommendationIndex}
                   defaultExpanded={false}
+                  currentHolding={currentHoldingFor(item, currentHoldings)}
+                  onApplyTransaction={onApplyTransaction}
                 />
               );
             })}

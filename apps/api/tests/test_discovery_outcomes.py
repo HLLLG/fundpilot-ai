@@ -132,6 +132,34 @@ def test_watch_conditional_and_unknown_actions_are_skipped_not_hits():
     assert all(item["direction_aligned"] is None for item in result["items"])
 
 
+def test_structured_wait_trigger_is_preserved_as_pending_condition_not_missing_trigger():
+    recommendation = _rec("110012", "等待回调")
+    recommendation["entry_trigger"] = {
+        "reason_code": "near_recent_high",
+        "headline": "等待短线追高风险下降",
+        "conditions": [
+            {
+                "metric": "distance_from_high_percent",
+                "label": "距近期高点",
+                "current_value": -1.0,
+                "operator": "lte",
+                "target_value": -5.0,
+                "unit": "%",
+            }
+        ],
+    }
+
+    result = build_discovery_outcomes(
+        _report(recommendation),
+        days=5,
+        fetch_nav=_fetch({"110012": _nav_rows(10)}),
+    )
+
+    item = result["items"][0]
+    assert item["skip_reason"] == "conditional_action_pending_entry_trigger"
+    assert "已记录可验证" in item["assessment"]
+
+
 def test_mixed_result_reports_eligible_mature_skipped_and_coverage():
     result = build_discovery_outcomes(
         _report(

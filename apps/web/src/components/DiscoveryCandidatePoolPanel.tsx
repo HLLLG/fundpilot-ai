@@ -9,8 +9,15 @@ import {
   Scale,
   ShieldAlert,
 } from "lucide-react";
-import type { DiscoveryCandidatePoolItem, EliminatedCandidate } from "@/lib/api";
+import type {
+  DiscoveryCandidatePoolItem,
+  DiscoveryEntryTrigger,
+  DiscoveryQuantPreview,
+  EliminatedCandidate,
+} from "@/lib/api";
 import { translateEvidenceText } from "@/lib/decisionText";
+import { DiscoveryEntryTriggerCard } from "@/components/DiscoveryEntryTriggerCard";
+import { DiscoveryQuantPreviewCard } from "@/components/DiscoveryQuantPreviewCard";
 import { FundTradeabilityEvidence } from "@/components/FundTradeabilityEvidence";
 
 const CORE_FIELD_LABELS: Record<string, string> = {
@@ -53,6 +60,8 @@ type DiscoveryCandidatePoolPanelProps = {
   pool: DiscoveryCandidatePoolItem[];
   selectedCodes?: string[];
   decisionStatusByCode?: Record<string, DiscoveryCandidateDecisionStatus>;
+  entryTriggerByCode?: Record<string, DiscoveryEntryTrigger | null | undefined>;
+  quantPreviewByCode?: Record<string, DiscoveryQuantPreview | null | undefined>;
   /** M4/M5：被双向 guard 因证据强烈共振剔除的候选（不出现在 recommendations 里）。 */
   eliminatedCandidates?: EliminatedCandidate[];
 };
@@ -614,6 +623,8 @@ export function DiscoveryCandidatePoolPanel({
   pool,
   selectedCodes = [],
   decisionStatusByCode = {},
+  entryTriggerByCode = {},
+  quantPreviewByCode = {},
   eliminatedCandidates = [],
 }: DiscoveryCandidatePoolPanelProps) {
   const [open, setOpen] = useState(false);
@@ -687,9 +698,8 @@ export function DiscoveryCandidatePoolPanel({
           <div className="mx-3 mt-3 flex items-start gap-2 rounded-xl bg-slate-50 px-3 py-2.5 text-xs leading-5 text-slate-600">
             <CircleHelp size={15} aria-hidden="true" className="mt-0.5 shrink-0 text-slate-500" />
             <p>
-              核心字段缺失会触发质量降级，候选仅作研究观察；已剔除项不会进入推荐。
-              “字段完整”也不等于必然买入，仍需通过策略与风险守卫。同类分位只作描述性研究，
-              不参与金额；只有通过合同核验的正式基准才能用于超额收益判断。
+              字段完整不等于买入，仍需通过策略与风险守卫。标注“量化试运行”的候选只会在硬上限内
+              微调已通过守卫的首批金额，不能改变动作；其余同类分位仅作研究。
             </p>
           </div>
 
@@ -788,6 +798,18 @@ export function DiscoveryCandidatePoolPanel({
                       </div>
                     ))}
                   </dl>
+
+                  {decisionStatus === "conditional_wait" ? (
+                    <DiscoveryEntryTriggerCard
+                      trigger={entryTriggerByCode[item.fund_code]}
+                      compact
+                    />
+                  ) : null}
+
+                  <DiscoveryQuantPreviewCard
+                    preview={quantPreviewByCode[item.fund_code]}
+                    compact
+                  />
 
                   <div className="mt-2 grid gap-2 sm:grid-cols-2">
                     <CandidateTradeSummary item={item} />

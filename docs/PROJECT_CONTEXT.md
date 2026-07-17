@@ -4,9 +4,10 @@
 >
 > **维护：** 功能或架构有实质变化时，同步更新「能力清单」「数据流」「API」「目录」「环境变量」。
 
-**文档版本：** 2026-07-17（荐基与日报金融评估 Phase 0+1）
+**文档版本：** 2026-07-17（C 端前端信息层级精简）
 
 **更新记录：**
+- **C 端前端信息层级精简（2026-07-17，已通过用户验收）：** 保留现有五入口与「持仓」默认首页，不恢复已删除的简报 Tab；全站采用“先结论 → 三个关键数字 → 一个主操作 → 专业证据按需展开”。移动端页面标题缩短；持仓移动卡只突出今日与持有收益，板块降为方向标签，排序、批量操作和“校准持仓”按需展开；盈亏分析新增白话结论与三数字，风险/相关性/Factor IC/证据总览统一收进“深度分析”，最大回撤、波动率、Beta/Alpha 等改用白话主标签并保留专业名；市场默认只显示市场判断、上涨/下跌/涨停和持仓相关或领先的五个方向，完整榜单、涨跌分布与九档基金分布按需展开；发现页默认仅保留目标、关注方向、预算和扫描动作，策略/流程/Prompt 进入“自定义扫描方式”；日报生成默认仅保留当前偏好摘要与主按钮，风格、Prompt 和风险参数进入“自定义日报偏好”，报告正文继续保持结论、动作、原因、风险优先。竞品结论、页面契约和验收标准见 [C_FRONTEND_INFORMATION_HIERARCHY.md](design/C_FRONTEND_INFORMATION_HIERARCHY.md)。**验证：** Web 全量单测 **98 files / 437 tests passed**，TypeScript 类型检查、源码 ESLint、production build、`git diff --check` 均通过；浏览器覆盖 1440×900 桌面端与 390×844 手机端五个页面，无页面级横向溢出，默认折叠和主操作可见性符合方案；390px 五页主操作实测高度 **44–46.5px**，主要展开控件具备稳定 `aria-expanded/aria-controls` 关系。
 - **轻量服务器 2-worker 升级 + 持仓跨进程锁（2026-07-17，本地实现待部署验收）：** 生产根镜像与 `docker-compose.production.yml` 从单 Uvicorn worker 升级为 `WEB_CONCURRENCY=2`（4 核主机保守默认；项目每个进程内部另有 OCR、行情和分析线程池，不直接拉满 4 worker）。持仓新增、删除、金额调整、交易同步、旧 OCR 直写、自愈清理、板块/净值最终写回统一进入同账户跨进程临界区：MySQL 使用最长 64 字符、无密钥泄露的 `GET_LOCK/RELEASE_LOCK` 命名锁，并为每次持锁建立独立非池化会话，显式释放失败时由关闭连接兜底，worker 崩溃/连接终止后 MySQL 自动释放；本地 SQLite 使用数据库旁的 OS 文件锁，Windows/Linux 均跨进程且随进程退出释放。同 worker 内保留账户 `RLock` 与线程内重入计数，交易同步的嵌套持久化只拿一次数据库锁；锁等待默认 30 秒，超时返回带 `Retry-After: 2` 的可重试 503。非成员行情刷新把“最终重基、最后成员检查、提交”整体放进锁内，关闭检查后到写入前的 TOCTOU 缝隙。MySQL 模式默认关闭进程私有的持仓响应缓存，避免请求轮询到另一 worker 时读到最多 240 秒的旧组合；每次改从权威快照快路径读取。生产/Cloud Compose、根/API Dockerfile、环境变量示例、README 与轻量服务器迁移文档已同步。**验证：** 新增两个真实独立 Python 进程竞争同账户锁、持锁进程被强制终止后接管、MySQL 独立会话获取/释放/超时、嵌套只获取一次、MySQL 禁用进程缓存及部署文件契约测试；API **1175 passed**，Web typecheck、production build、Python `compileall`、Cloud Compose `config --quiet` 与 `git diff --check` 通过。生产 Compose 本机展开仅因未保存服务器专用 `.env.production` 而跳过，部署时由 CI/CD 既有 `config -q` 门禁复验。
 - **持仓读写竞态根治 + 录入文案精简（2026-07-17，本地实现待用户验收）：** 持仓成员资格改为以后端最新日快照为准，`apply-holdings` 从“客户端整表替换”收敛为显式基金 upsert；手动新增、OCR 确认和基金代码修正只提交本次变更，旧标签页不再有权删除它未见过的新持仓。账户级写锁串行化新增、删除、金额调整与交易入账；板块行情刷新、后台刷新和官方净值结算只允许在提交前重读最新成员名单并覆盖行情/结算字段，不能新增、删除或复活成员。交易同步是唯一可追加新成员的后台路径，且只接纳交易链路创建、金额为正的档案，避免普通历史档案复活；板块刷新接口也改为读取服务端持仓，而非信任请求中的完整列表。空持仓页标题改为“录入第一笔持仓”，说明、隐私提示、录入步骤和占位文案同步压缩。**验证：** 新增陈旧刷新不删新增、不复活已删、显式 upsert 保留并发新增、交易首次买入进入非空组合且不复活历史档案等回归；API **1164 passed**，Web **98 files / 433 passed**，typecheck、production build、变更文件 ESLint、Python `compileall` 与 `git diff --check` 通过。全仓 lint 仍会误扫描开发服务器生成的 `.next-dev`，与本次源码无关。
 - **市场情绪午休时钟与提示产品化（2026-07-17，本地实现待用户验收）：** 修复交易时段只按 `09:30–15:00` 连续计算、未排除 `11:30–13:00` 午间休市的问题。大盘情绪的 10 分钟 freshness 现按有效交易分钟计算：午休保留 11:30 上午收盘快照，13:00 后继续累计；若快照在午休前已经落后超过 10 个交易分钟，仍会正确降级。`trading_session` 保持既有 `session_kind` 兼容性，新增 `market_phase=lunch_break` 与 `is_continuous_trading=false`。市场页正常数据不再展示说明卡；异常状态压缩为“快照更新延迟，仅供参考”或“历史快照，仅供参考”，删除重复过期警告、客户端/守卫实现术语和底部说明书式文案。真实源站复核已从截图中的 11:05 更新至 11:30。**验证：** API 聚焦 **5 passed**；Web 聚焦 **7 passed**，typecheck、production build、变更文件 ESLint、Python `compileall` 与 `git diff --check` 通过；全仓 lint 会误扫描开发服务器生成的 `.next-dev`，本次未修改生成文件。
@@ -183,10 +184,9 @@
 | 当日收益 | 盘中/净值未公布：**板块涨跌估算**；NAV 发布后：**官方日增长率**；**当日新购 defer**（OCR 三列收益≈0 → 次交易日起计，含官方 NAV 公布后仍强制日收益 0）；关联板块列始终东财涨跌 |
 | OCR 校验 | OCR 返回 `holding_warnings`；账户汇总为唯一持仓展示与日报输入源（`displayableHoldings` 过滤占位行） |
 | 持仓元数据 | SQLite `fund_profiles` + `fund_primary_sectors` 由 OCR **自动维护**（份额、成本、板块、购入日）；拒绝 `+`/`-`/Tab 标签误存为板块名；`POST /api/fund-profiles/repair-sectors` 清理历史脏数据；查码走东财名称表 + 档案兜底；详情页铅笔改代码 |
-| 简报首页 | **简报** Tab（默认）：`TodayBriefing` — 组合摘要 KPI、板块脉搏、最新日报决策卡、内联 AI 追问；`todayBriefing.ts` 纯前端汇总逻辑 + vitest |
-| 首页看板 | **持仓** Tab：`YangjibaoHoldingsBoard` 养基宝式卡片（`AddHoldingModal` 上传支付宝/养基宝截图）；**localStorage 缓存优先** instant 展示 → `GET /api/portfolio/holdings`（服务端 120s 内存缓存 + `refreshed_at`）→ 后台 `refresh-sector-quotes`（**stale-while-revalidate**：`mergeHoldingsPreserveQuoteFields` 刷新完成前保留上一屏板块/收益）；OCR 确认后乐观写 localStorage + 服务端 `save_cached_holdings_response`，不再立即 `hydratePortfolio` 覆盖；点击行打开 `YangjibaoFundDetail` |
-| 导航 | `DashboardNav`：桌面 `lg+` 顶栏 6 Tab；手机/平板底栏 5 项 +「更多」 sheet（发现/日报）；历史入口下沉到对应工作区的导航器/抽屉；`dashboard-shell` 底栏安全区留白 |
-| 导航记忆 | Dashboard 主 Tab（简报/持仓/盈亏分析/市场/推荐基金/生成日报）与 **市场** 子 Tab（主题板块/美股）均用 `sessionStorage` 刷新后恢复 |
+| 默认首页 | **持仓** Tab：`YangjibaoHoldingsBoard` 养基宝式卡片（`AddHoldingModal` 上传支付宝/养基宝截图）；**localStorage 缓存优先** instant 展示 → `GET /api/portfolio/holdings`（服务端 120s 内存缓存 + `refreshed_at`）→ 后台 `refresh-sector-quotes`（**stale-while-revalidate**：`mergeHoldingsPreserveQuoteFields` 刷新完成前保留上一屏板块/收益）；OCR 确认后乐观写 localStorage + 服务端 `save_cached_holdings_response`，不再立即 `hydratePortfolio` 覆盖；点击行打开 `YangjibaoFundDetail` |
+| 导航 | `DashboardNav`：桌面 `lg+` 顶栏 5 Tab（持仓/分析/市场/发现/日报）；手机/平板底栏 3 个主入口 +「更多」sheet（发现/日报）；历史入口下沉到对应工作区的导航器/抽屉；`dashboard-shell` 底栏安全区留白 |
+| 导航记忆 | Dashboard 主 Tab（持仓/盈亏分析/市场/发现基金/投研日报）与 **市场** 子 Tab（主题板块/美股）均用 `sessionStorage` 刷新后恢复 |
 | 基金详情 | 关联板块分时图（边框/十字线）；**业绩走势**（区间涨跌 vs 沪深300、历史净值分页）；**我的收益**；持有天数滚轮选购入日；持仓明细默认收起 |
 | 盈亏分析 | **盈亏分析** Tab：`PortfolioDashboard` — 收益走势（当日/周/月/年/全部）、盈亏日历（周末/假日 **0.00**；今日官方净值未出 **未更新**）、当日 TOP5、持仓甜甜圈；`GET /api/portfolio/dashboard` |
 | 组合风险体检 | `PortfolioRiskMetricsPanel`（盈亏分析 Tab）：波动率/最大回撤/夏普/索提诺/Beta/Alpha/HHI；纯函数 `portfolio_risk_metrics.py`；复利累乘净值曲线；挂在 dashboard 响应 `risk_metrics` 字段；Pro 门控（免费 2 项）。相关性矩阵 `PortfolioCorrelationHeatmap` 经独立懒加载接口 `GET /api/portfolio/risk-correlation` |
@@ -331,9 +331,8 @@ fundpilot-ai/
 │   ├── lib/api.ts / reportPresentation.ts / decisionText.ts / holdingDisplay.ts / holdingMetrics.ts / portfolioHoldingsCache.ts / marketThemeBoard.ts
 │   └── components/
 │       ├── AuthProvider.tsx       # JWT 与 /api/auth/me
-│       ├── Dashboard.tsx          # 简报 / 持仓 / 盈亏分析 / 市场 / 推荐基金 / 生成日报（Tab sessionStorage + report URL 恢复）
+│       ├── Dashboard.tsx          # 持仓 / 盈亏分析 / 市场 / 发现基金 / 投研日报（Tab sessionStorage + report URL 恢复）
 │       ├── DashboardNav.tsx       # 桌面顶栏 + 移动端底栏
-│       ├── TodayBriefing / BriefingDecisionCards / BriefingChatPanel
 │       ├── MarketTab / ThemeSectorOverview / UsMarketOverview
 │       ├── FundDiscoveryPanel / DiscoveryReportPanel / DiscoveryChatPanel / DiscoveryJobStatusFloat
 │       ├── DiscoveryHistoryWorkspace / DiscoveryHistoryRail / DiscoveryCandidatePoolPanel / DiscoveryOutcomesPanel
@@ -800,10 +799,10 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 
 ## 前端要点
 
-- **简报 Tab：** `TodayBriefing` 组合 KPI + 板块脉搏 + 决策卡 + 内联追问；可跳转持仓/市场/日报。
-- **持仓 / 生成日报 Tab：** 持有看板 vs 交易日历 + **AI 角色设定** + 风控画像 + `ReportPanel`。
-- **推荐基金 Tab：** `FundDiscoveryPanel`（市场优选/组合补缺、19 板块关注方向、localStorage 热度缓存、荐基角色、自动质量策略）+ `DiscoveryReportPanel`（可执行/等待/观察分层）+ `DiscoveryCandidatePoolPanel`（字段完整性/质量门/来源详情）+ `DiscoveryHistoryWorkspace`（按需抽屉，内含检索/管理/批量删除）+ `DiscoveryChatPanel`；`DiscoveryJobStatusFloat` 轮询失败自动重试；主题板块「加入关注方向」经 `fundpilot-discovery-focus-sectors` 预填 chips。
-- **市场 Tab：** 子 Tab 主题板块 / 美股；`loadMarketSubTab` 记忆当前子页。
+- **统一信息层级：** 面向普通用户的默认阅读顺序固定为“结论 → 三个关键数字 → 一个主操作”；专业口径、完整榜单、回测和证据不能删除，但默认折叠。设计与验收契约见 [C_FRONTEND_INFORMATION_HIERARCHY.md](design/C_FRONTEND_INFORMATION_HIERARCHY.md)。
+- **持仓 / 投研日报 Tab：** 持仓移动卡默认只突出今日与持有收益；板块降为方向标签，排序和批量操作按需展开。日报生成默认展示偏好摘要与主按钮；风格、Prompt、风险参数放入自定义区；`ReportPanel` 正文按今天是否行动、基金动作、金额、原因、风险组织。
+- **发现基金 Tab：** `FundDiscoveryPanel` 默认仅展示市场优选/组合补缺、最多 3 个关注方向、预算与扫描按钮；策略、流程和 Prompt 放入“自定义扫描方式”。`DiscoveryReportPanel` 按可执行/等待/观察分层，卡片默认只展示状态、动作、核心理由与主要风险；候选质量门、同类基准与来源详情按需展开。
+- **市场 Tab：** 子 Tab 主题板块 / 美股；主题页默认展示市场判断、三个数字，以及持仓相关或领先的五个方向；完整板块榜、涨跌比例、九档基金分布与专业口径按需展开；`loadMarketSubTab` 记忆当前子页。
 - **缓存：** `clientCache.ts` / `useCachedFetch.ts` — 盈亏分析 `sessionStorage`、详情/NAV `memory`；`portfolioHoldingsCache.ts` — 持有 **localStorage** 优先展示；`loadDashboardTab` / `saveDashboardTab` — 主 Tab **sessionStorage**；`loadMarketSubTab` — 市场子 Tab；`loadDiscoverySectorHeatCache` 板块热度 30min；板块 `useSectorQuoteRefresh` 后台 `fast`、手动 `accurate`。
 - **认证：** `AuthProvider` 注入 JWT；未登录访问受保护页会跳转 `/login`；`apiFetch` 自动带 `Authorization: Bearer`；CORS 中间件置于最外层（含 401 响应）。
 - **用户菜单：** 仅保留**账号设置**（`/settings`）与退出；历史日报由日报阅读区的 `ReportNavigator` / `ReportHistoryDrawer` 管理，荐基历史由 `DiscoveryHistoryWorkspace` 管理；持仓元数据由 OCR 自动维护，无独立档案页。

@@ -30,6 +30,7 @@ const PRO_FLAG_KEY = "fundpilot-risk-metrics-pro";
 type MetricItem = {
   key: string;
   label: string;
+  technicalLabel?: string;
   value: string;
   hint: string;
   tone: MetricTone;
@@ -40,7 +41,8 @@ function buildItems(metrics: PortfolioRiskMetrics): MetricItem[] {
   return [
     {
       key: "max_drawdown",
-      label: "最大回撤",
+      label: "历史最深下跌",
+      technicalLabel: "最大回撤",
       value: formatSignedPercent(metrics.max_drawdown_percent),
       hint: maxDrawdownHint(metrics.max_drawdown_percent),
       tone: maxDrawdownTone(metrics.max_drawdown_percent),
@@ -48,7 +50,8 @@ function buildItems(metrics: PortfolioRiskMetrics): MetricItem[] {
     },
     {
       key: "effective_holdings",
-      label: "有效持仓数",
+      label: "分散程度",
+      technicalLabel: "有效持仓数",
       value:
         metrics.effective_holdings != null ? `${metrics.effective_holdings.toFixed(1)} 只` : "—",
       hint: concentrationHint(metrics.hhi, metrics.effective_holdings),
@@ -57,7 +60,8 @@ function buildItems(metrics: PortfolioRiskMetrics): MetricItem[] {
     },
     {
       key: "sharpe",
-      label: "夏普比率",
+      label: "风险换来的回报",
+      technicalLabel: "夏普比率",
       value: formatRatio(metrics.sharpe_ratio),
       hint: sharpeHint(metrics.sharpe_ratio),
       tone: sharpeTone(metrics.sharpe_ratio),
@@ -65,7 +69,8 @@ function buildItems(metrics: PortfolioRiskMetrics): MetricItem[] {
     },
     {
       key: "sortino",
-      label: "索提诺比率",
+      label: "只看下跌风险的回报",
+      technicalLabel: "索提诺比率",
       value: formatRatio(metrics.sortino_ratio),
       hint: sortinoHint(metrics.sortino_ratio),
       tone: sharpeTone(metrics.sortino_ratio),
@@ -73,7 +78,8 @@ function buildItems(metrics: PortfolioRiskMetrics): MetricItem[] {
     },
     {
       key: "volatility",
-      label: "年化波动率",
+      label: "涨跌有多剧烈",
+      technicalLabel: "年化波动率",
       value: formatSignedPercent(metrics.annualized_volatility_percent),
       hint: volatilityHint(metrics.annualized_volatility_percent),
       tone: volatilityTone(metrics.annualized_volatility_percent),
@@ -81,7 +87,8 @@ function buildItems(metrics: PortfolioRiskMetrics): MetricItem[] {
     },
     {
       key: "beta",
-      label: "Beta（对沪深300）",
+      label: "跟大盘有多像",
+      technicalLabel: "Beta（对沪深300）",
       value: formatRatio(metrics.beta),
       hint: betaHint(metrics.beta),
       tone: betaTone(metrics.beta),
@@ -89,7 +96,8 @@ function buildItems(metrics: PortfolioRiskMetrics): MetricItem[] {
     },
     {
       key: "alpha",
-      label: "Alpha（超额）",
+      label: "有没有跑赢大盘",
+      technicalLabel: "Alpha（超额收益）",
       value: formatSignedPercent(metrics.alpha_percent),
       hint: alphaHint(metrics.alpha_percent),
       tone: alphaTone(metrics.alpha_percent),
@@ -102,6 +110,9 @@ function MetricCard({ item, locked }: { item: MetricItem; locked: boolean }) {
   return (
     <div className={`risk-card risk-tone-${item.tone}${locked ? " risk-card-locked" : ""}`}>
       <div className="risk-card-label">{item.label}</div>
+      {item.technicalLabel ? (
+        <div className="risk-card-technical">专业名：{item.technicalLabel}</div>
+      ) : null}
       <div className="risk-card-value">{locked ? "•••" : item.value}</div>
       <div className="risk-card-hint">
         {locked ? `升级「${BRAND.name} Pro」解锁` : item.hint}
@@ -166,7 +177,7 @@ export function PortfolioRiskMetricsPanel() {
   return (
     <section className="pl-panel section-card" aria-busy={loading}>
       <div className="pl-panel-head">
-        <h2 className="pl-panel-title">组合风险体检</h2>
+        <h2 className="pl-panel-title">下跌与分散风险</h2>
         <button type="button" className="risk-pro-toggle" onClick={togglePro}>
           {isPro ? "Pro 已解锁" : "升级解锁"}
         </button>

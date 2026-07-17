@@ -1825,10 +1825,26 @@ button:disabled {
 .analysis-hero .pl-hero { text-align: left; padding: 2rem clamp(1.25rem,4vw,3rem); }
 .analysis-hero .pl-hero-value { font-family: var(--font-display); font-size: clamp(3rem,8vw,5.2rem); font-weight: 650; }
 .analysis-hero .pl-hero > p { margin-inline: 0; }
+.analysis-verdict { max-width:44rem; margin-bottom:1.25rem !important; color:var(--brand-deep) !important; font-family:var(--font-display); font-size:clamp(1.15rem,2.4vw,1.55rem) !important; font-weight:650; line-height:1.45 !important; }
+.analysis-key-metrics { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); max-width:38rem; margin-top:1.35rem; border-block:1px solid var(--line); }
+.analysis-key-metrics > div { min-width:0; padding:.8rem 1rem .8rem 0; }
+.analysis-key-metrics > div + div { padding-left:1rem; border-left:1px solid var(--line); }
+.analysis-key-metrics span,.analysis-key-metrics strong { display:block; }
+.analysis-key-metrics span { color:var(--muted); font-size:.625rem; font-weight:700; }
+.analysis-key-metrics strong { margin-top:.25rem; font-size:.875rem; font-variant-numeric:tabular-nums; }
+.analysis-primary-action { display:inline-flex; min-height:2.75rem; align-items:center; justify-content:center; margin-top:1rem; padding:.6rem 1rem; border-radius:var(--radius-control); color:#fff; background:var(--brand-deep); font-size:.75rem; font-weight:800; transition:background var(--motion-fast) var(--ease-out); }
+.analysis-primary-action:hover { background:var(--brand); }
+.analysis-deep-section { margin-top:.75rem; padding:1rem; border-block:1px solid var(--line-strong); background:var(--panel); }
+.analysis-deep-heading { display:flex; align-items:center; justify-content:space-between; gap:1rem; }
+.analysis-deep-toggle { min-height:2.75rem; flex:0 0 auto; padding:.55rem .85rem; border:1px solid var(--line-strong); border-radius:var(--radius-control); color:var(--brand-deep); background:var(--panel); font-size:.75rem; font-weight:800; }
+.risk-card-technical { margin-top:.2rem; color:var(--muted-soft); font-size:.5625rem; }
 .analysis-range { border-bottom: 1px solid var(--line-strong); }
 .pl-panel.section-card { border-radius: var(--radius-control); box-shadow: none; }
 .market-nav { border-bottom: 1px solid var(--line-strong); }
 .market-workspace .section-card { border-radius: var(--radius-control); }
+.market-status-line { max-width:44rem; color:var(--brand-deep); font-family:var(--font-display); font-size:1rem; font-weight:650; }
+.market-detail-toggle { display:flex; min-height:2.75rem; width:100%; align-items:center; justify-content:center; margin-top:1rem; border-top:1px solid var(--line); color:var(--brand-deep); font-size:.75rem; font-weight:800; }
+.market-detail-content { margin-top:.25rem; }
 
 .discovery-composer { border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--panel); }
 .discovery-decision-rail { display:grid; grid-template-columns:repeat(3,1fr); padding:0 1.25rem; border-bottom:1px solid var(--line); background:var(--surface-muted); }
@@ -1907,8 +1923,18 @@ button:disabled {
 }
 
 @media (max-width: 767px) {
+  .app-page-heading { gap:.35rem; margin:.45rem 0 .85rem; padding:.6rem 0 .8rem; }
+  .app-page-heading > div > p { display:none; }
+  .app-page-heading h1 { margin-top:0; font-size:1.55rem; }
+  .app-page-heading > p { font-size:.75rem; line-height:1.55; }
   .analysis-hero .pl-hero { padding:1.5rem 1rem; }
   .analysis-hero .pl-hero-value { font-size:clamp(2.6rem,15vw,4rem); }
+  .analysis-verdict { margin-bottom:1rem !important; font-size:1.1rem !important; }
+  .analysis-key-metrics > div { padding:.7rem .55rem .7rem 0; }
+  .analysis-key-metrics > div + div { padding-left:.55rem; }
+  .analysis-key-metrics strong { font-size:.75rem; }
+  .analysis-deep-heading { align-items:flex-start; flex-direction:column; }
+  .analysis-deep-toggle { width:100%; }
   .discovery-decision-rail { padding:0 .75rem; }
   .discovery-decision-rail li { align-items:flex-start; flex-direction:column; justify-content:center; gap:.1rem; }
   .report-decision-track { grid-template-columns:repeat(3,1fr); }

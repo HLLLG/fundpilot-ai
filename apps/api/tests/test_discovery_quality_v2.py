@@ -799,6 +799,85 @@ def _run_guard_for_test(
     )
 
 
+def _eligible_factor_preview_scores() -> dict:
+    return {
+        "available": True,
+        "model_version": "factor_ic.v2",
+        "selected_fund_codes": ["020356"],
+        "ic_status": {
+            "state": "available",
+            "available": True,
+            "stale": False,
+            "cohort_mode": "current_survivors",
+            "snapshot_id": "factor-2026-07-16",
+            "run_date": "2026-07-16",
+        },
+        "holdings": [
+            {
+                "fund_code": "020356",
+                "descriptive_applicable": True,
+                "execution_qualified": False,
+                "execution_qualified_factor_keys": [],
+                "peer_group": "hh",
+                "peer_count": 120,
+                "feature_count": 3,
+                "feature_completeness": 0.75,
+                "target_feature_freshness": "fresh",
+                "target_return_coverage": 0.98,
+                "factor_percentiles": {"momentum": 92, "risk_adjusted": 88},
+                "factor_reliability": {
+                    "momentum": {"level": "中"},
+                    "risk_adjusted": {"level": "中"},
+                },
+            }
+        ],
+    }
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected_amount", "expected_application"),
+    [("shadow", 1000, "shadow_only"), ("enforced", 1100, "applied")],
+)
+def test_factor_preview_only_modifies_an_already_executable_initial_tranche(
+    monkeypatch,
+    mode: str,
+    expected_amount: float,
+    expected_application: str,
+) -> None:
+    monkeypatch.setattr(
+        "app.services.discovery_guard.get_settings",
+        lambda: SimpleNamespace(
+            decision_escalation_mode="shadow",
+            factor_preview_mode=mode,
+            factor_preview_max_adjustment_percent=10.0,
+        ),
+    )
+    candidate = _eligible_guard_candidate(
+        quality_gate={"status": "eligible", "eligible": True, "reasons": []}
+    )
+    guarded, _, _ = _run_guard_for_test(
+        [
+            DiscoveryRecommendation(
+                fund_code="020356",
+                fund_name="守卫测试基金A",
+                sector_name="半导体",
+                action="分批买入",
+                suggested_amount_yuan=1000,
+            )
+        ],
+        candidate,
+        extra_facts={
+            "effective_configuration": {"discovery_strategy": "opportunity_first"},
+            "candidate_factor_scores": _eligible_factor_preview_scores(),
+        },
+    )
+
+    assert guarded[0].action == "分批买入"
+    assert guarded[0].suggested_amount_yuan == expected_amount
+    assert guarded[0].quant_preview is not None
+    assert guarded[0].quant_preview.application_status == expected_application
+
+
 def test_opportunity_first_uses_drawdown_and_quant_coverage_as_soft_risk_inputs():
     candidate = _eligible_guard_candidate(
         quality_gate={"status": "eligible", "eligible": True, "reasons": []}
@@ -1051,6 +1130,55 @@ def test_opportunity_first_waits_only_when_price_extension_and_flow_weakness_coe
 
     assert guarded[0].action == "等待回调"
     assert any("短线涨幅已经偏快" in item for item in guarded[0].points)
+    assert guarded[0].entry_trigger is not None
+    assert guarded[0].entry_trigger.reason_code == "price_extension_with_weak_flow"
+    assert guarded[0].entry_trigger.recheck_policy == "next_discovery_scan"
+    trigger_by_metric = {
+        item.metric: item for item in guarded[0].entry_trigger.conditions
+    }
+    assert trigger_by_metric["distance_from_high_percent"].current_value == -1.0
+    assert trigger_by_metric["distance_from_high_percent"].target_value == -2.0
+    assert trigger_by_metric["sector_main_force_5d_yi"].current_value == -3.2
+    assert trigger_by_metric["sector_main_force_5d_yi"].target_value == 0.0
+
+
+def test_wait_action_without_server_trigger_is_downgraded_to_research_observation():
+    candidate = _eligible_guard_candidate(
+        quality_gate={"status": "eligible", "eligible": True, "reasons": []}
+    )
+    candidate["nav_trend"] = {
+        "recent_5d_change_percent": 1.0,
+        "return_20d_percent": 3.0,
+        "distance_from_high_percent": -8.0,
+    }
+
+    guarded, _, _ = _run_guard_for_test(
+        [
+            DiscoveryRecommendation(
+                fund_code="020356",
+                fund_name="守卫测试基金A",
+                sector_name="半导体",
+                action="等待回调",
+            )
+        ],
+        candidate,
+        extra_facts={
+            "effective_configuration": {
+                "discovery_strategy": "opportunity_first"
+            },
+            "sector_opportunities": [
+                {
+                    "sector_label": "半导体",
+                    "pattern_label": "accumulation",
+                    "cumulative_5d_net_yi": 2.0,
+                }
+            ],
+        },
+    )
+
+    assert guarded[0].action == "建议关注"
+    assert guarded[0].entry_trigger is None
+    assert "缺少可验证" in guarded[0].points[0]
 
 
 def test_weak_evidence_downgrade_names_exact_trigger_values():

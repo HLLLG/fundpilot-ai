@@ -1,8 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { AlertTriangle, ChevronDown, TrendingDown, TrendingUp } from "lucide-react";
-import type { AnalysisFactsHoldingRow, FactorIcEvidenceStatus, Report } from "@/lib/api";
+import { AlertTriangle, ChevronDown, ReceiptText, TrendingDown, TrendingUp } from "lucide-react";
+import type {
+  AnalysisFactsHoldingRow,
+  FactorIcEvidenceStatus,
+  Holding,
+  ParsedTransaction,
+  Report,
+} from "@/lib/api";
 import { actionBadgeClass, actionTone, isExtremeAction } from "@/lib/actionStyles";
 import { translateEvidenceText } from "@/lib/decisionText";
 import {
@@ -17,6 +23,7 @@ import { DecisionEvidenceGrid } from "@/components/DecisionEvidenceGrid";
 import { QuantEvidenceSummary } from "@/components/QuantEvidenceSummary";
 import { SectorOpportunityCard } from "@/components/SectorOpportunityCard";
 import { FundTradeabilityEvidence } from "@/components/FundTradeabilityEvidence";
+import { SingleFundTransactionModal } from "@/components/SingleFundTransactionModal";
 
 type Snapshot = Report["snapshots"][number];
 
@@ -25,6 +32,8 @@ type FundRecommendationCardProps = {
   report: Report;
   recommendationIndex: number;
   defaultExpanded: boolean;
+  currentHolding?: Holding;
+  onApplyTransaction?: (transaction: ParsedTransaction) => Promise<unknown>;
 };
 
 const actionAccentClasses = {
@@ -263,10 +272,13 @@ export function FundRecommendationCard({
   report,
   recommendationIndex,
   defaultExpanded,
+  currentHolding,
+  onApplyTransaction,
 }: FundRecommendationCardProps) {
   const [summaryOpen, setSummaryOpen] = useState(defaultExpanded);
   const [whyOpen, setWhyOpen] = useState(false);
   const [professionalOpen, setProfessionalOpen] = useState(false);
+  const [transactionOpen, setTransactionOpen] = useState(false);
   const stableIdentity = `${item.fund_code}-${recommendationIndex}`;
   const snapshot = snapshotForRecommendation(recommendationIndex, item, report);
   const holdingFacts = holdingFactsRow(recommendationIndex, item, report);
@@ -281,6 +293,10 @@ export function FundRecommendationCard({
       (transactionExecution && Object.keys(transactionExecution).length > 0),
   );
   const isReductionReview = /减仓|清仓/.test(item.action);
+  const reviewTargetAmount = transactionExecution?.review_target_amount_yuan ?? null;
+  const canRecordReduction = Boolean(
+    isReductionReview && currentHolding && onApplyTransaction,
+  );
   const icStatus = reportIcStatus(report);
 
   const primaryReason = selectPrimaryReason(item);
@@ -363,6 +379,34 @@ export function FundRecommendationCard({
               主要风险：{translateEvidenceText(item.risks[0])}
             </p>
           ) : null}
+          {canRecordReduction ? (
+            <div className="mt-3 flex flex-col gap-3 rounded-xl border border-orange-200 bg-orange-50 px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs font-black text-orange-900">目标减仓市值</span>
+                  <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-bold text-orange-700">
+                    待核对
+                  </span>
+                </div>
+                <div className="mt-1 text-lg font-black tabular-nums text-slate-950">
+                  {reviewTargetAmount != null
+                    ? `¥${reviewTargetAmount.toLocaleString("zh-CN", { maximumFractionDigits: 2 })}`
+                    : "金额待规则测算"}
+                </div>
+                <p className="mt-0.5 text-xs text-orange-900/75">
+                  支付宝操作后，回填实际卖出份额即可更新持仓
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setTransactionOpen(true)}
+                className="inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 text-sm font-black text-white transition hover:bg-slate-800"
+              >
+                <ReceiptText size={16} />
+                核对并记录
+              </button>
+            </div>
+          ) : null}
           <Disclosure
             id={`${stableIdentity}-why`}
             title="为什么这样建议"
@@ -410,7 +454,7 @@ export function FundRecommendationCard({
                 {isReductionReview &&
                 transactionExecution?.reduction_amount_status === "manual_review" ? (
                   <p className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] leading-5 text-amber-900">
-                    逐笔申购时间未核验：减仓前需人工确认锁定期与适用赎回费，系统不自动生成减仓金额。
+                    逐笔持有期未核验，实际操作前请完成赎回条件核对。
                   </p>
                 ) : null}
               </div>
@@ -441,8 +485,30 @@ export function FundRecommendationCard({
     </div>
   );
 
+  const transactionModal = canRecordReduction && currentHolding && onApplyTransaction ? (
+    <SingleFundTransactionModal
+      open={transactionOpen}
+      holding={currentHolding}
+      direction="sell"
+      latestNav={snapshot?.latest_nav}
+      navDateLabel={snapshot?.nav_date}
+      reviewTargetAmountYuan={reviewTargetAmount}
+      tradeability={tradeability}
+      requireRedemptionReview
+      onClose={() => setTransactionOpen(false)}
+      onSubmit={async (transaction) => {
+        await onApplyTransaction(transaction);
+      }}
+    />
+  ) : null;
+
   if (isExtremeAction(item.action)) {
-    return <ExtremeActionGate action={item.action}>{cardBody}</ExtremeActionGate>;
+    return (
+      <>
+        <ExtremeActionGate action={item.action}>{cardBody}</ExtremeActionGate>
+        {transactionModal}
+      </>
+    );
   }
-  return cardBody;
+  return <>{cardBody}{transactionModal}</>;
 }

@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   buildPortfolioHeroDisplay,
+  buildPortfolioStatusLine,
   hasPortfolioDashboardContent,
   isPortfolioDataForRange,
   PortfolioDashboard,
@@ -182,6 +183,13 @@ describe("PortfolioDashboard hero derivation", () => {
     expect(hasPortfolioDashboardContent(emptyDashboard())).toBe(false);
     expect(hasPortfolioDashboardContent(todayDashboard())).toBe(true);
   });
+
+  it("turns raw returns into a short novice-friendly status line", () => {
+    expect(buildPortfolioStatusLine(-1.2, "today")).toBe("今天下跌较明显，先找出主要拖累。");
+    expect(buildPortfolioStatusLine(0.4, "week")).toBe(
+      "这段时间小幅上涨，先看主要贡献来自哪里。",
+    );
+  });
 });
 
 describe("PortfolioDashboard range UI", () => {
@@ -206,7 +214,7 @@ describe("PortfolioDashboard range UI", () => {
     expect(screen.getByTestId("profit-trend-kind")).toHaveTextContent("daily");
   });
 
-  it("orders daily insights before risk and keeps professional evidence collapsed", async () => {
+  it("orders daily insights before deep analysis and keeps professional evidence collapsed", async () => {
     vi.mocked(fetchPortfolioDashboard).mockResolvedValue(todayDashboard());
 
     render(<PortfolioDashboard userId={TEST_USER_ID} />);
@@ -216,16 +224,23 @@ describe("PortfolioDashboard range UI", () => {
     const contributors = screen.getByTestId("daily-profit-contributors");
     const calendar = screen.getByTestId("profit-calendar");
     const allocation = screen.getByTestId("holding-allocation");
-    const risk = screen.getByTestId("portfolio-risk");
-    const professional = screen.getByTestId("professional-quant-evidence");
+    const deepAnalysis = screen.getByTestId("deep-analysis-section");
 
     expectBefore(trend, contributors);
     expectBefore(contributors, calendar);
     expectBefore(calendar, allocation);
-    expectBefore(allocation, risk);
-    expectBefore(risk, professional);
+    expectBefore(allocation, deepAnalysis);
+    expect(screen.queryByTestId("portfolio-risk")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("professional-quant-evidence")).not.toBeInTheDocument();
     expect(screen.queryByTestId("factor-scores")).not.toBeInTheDocument();
     expect(screen.queryByTestId("evidence-overview")).not.toBeInTheDocument();
+
+    const deepButton = screen.getByRole("button", { name: "展开深度分析" });
+    fireEvent.click(deepButton);
+    const risk = screen.getByTestId("portfolio-risk");
+    const professional = screen.getByTestId("professional-quant-evidence");
+    expectBefore(risk, professional);
+    expect(deepButton).toHaveAttribute("aria-expanded", "true");
 
     const factorButton = screen.getByRole("button", { name: "展开因子评分" });
     fireEvent.click(factorButton);

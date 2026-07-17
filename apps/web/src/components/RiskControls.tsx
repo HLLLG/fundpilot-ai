@@ -62,6 +62,7 @@ export function RiskControls({
   readingModeKey = null,
 }: RiskControlsProps) {
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [customizationOpen, setCustomizationOpen] = useState(false);
   const [rolePromptOpen, setRolePromptOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(readingModeKey == null);
 
@@ -149,6 +150,11 @@ export function RiskControls({
       </div>
 
       <div className="p-4 sm:p-5">
+      <p className="text-sm font-semibold leading-6 text-slate-700">
+        当前按 {profileSummary(profile)} 生成；今天只需确认是否有需要执行的动作。
+      </p>
+      {customizationOpen ? (
+      <div id="report-customization-settings" className="mt-4 border-t border-[var(--line)] pt-4">
       <div>
         <p className="mb-2 text-[11px] font-bold text-slate-500">投资风格预设</p>
         <InvestmentPresetSelector profile={profile} onChange={onChange} compact />
@@ -197,6 +203,8 @@ export function RiskControls({
           </p>
         )}
       </div>
+      </div>
+      ) : null}
 
       {hasBlockingErrors && blockingMessage ? (
         <p
@@ -222,6 +230,21 @@ export function RiskControls({
             : "生成今日操作建议"}
       </button>
 
+      <button
+        type="button"
+        className="mt-3 flex min-h-11 w-full items-center justify-between gap-3 rounded-xl border border-slate-200 px-3 text-left"
+        aria-expanded={customizationOpen}
+        aria-controls="report-customization-settings"
+        onClick={() => setCustomizationOpen((value) => !value)}
+      >
+        <span>
+          <span className="block text-xs font-bold text-slate-700">自定义日报偏好</span>
+          <span className="mt-0.5 block text-[11px] text-slate-500">投资风格、AI 表达偏好与风险参数</span>
+        </span>
+        <ChevronDown size={14} className={`shrink-0 transition ${customizationOpen ? "rotate-180" : ""}`} />
+      </button>
+
+      {customizationOpen ? (
       <div className="mt-3 overflow-hidden rounded-xl border border-slate-100">
         <button
           type="button"
@@ -451,6 +474,7 @@ export function RiskControls({
           </div>
         )}
       </div>
+      ) : null}
       </div>
     </section>
   );

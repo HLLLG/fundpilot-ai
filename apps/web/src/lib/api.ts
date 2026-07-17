@@ -855,6 +855,10 @@ export type HoldingTransactionExecution = {
   redemption_fee_at_lot_age_status?: "unverified" | string;
   redemption_fee_rules_status?: "available_for_manual_review" | "unavailable" | string;
   reduction_amount_status?: "manual_review" | string;
+  /** 服务端按最终减仓档位计算的核验前目标市值；不是可直接执行的订单金额。 */
+  review_target_amount_yuan?: number | null;
+  review_target_percent?: number | null;
+  review_target_basis?: string | null;
   revalidation_required?: boolean;
   instruction?: string;
   amount_assessment?: {
@@ -1195,6 +1199,57 @@ export type DiscoveryRiskContext = {
   [key: string]: unknown;
 };
 
+export type DiscoveryEntryTriggerCondition = {
+  metric: string;
+  label: string;
+  current_value?: number | null;
+  operator?: "lt" | "lte" | "gt" | "gte" | "eq" | null;
+  target_value?: number | null;
+  unit?: string;
+  current_text?: string;
+  target_text?: string;
+};
+
+export type DiscoveryEntryTrigger = {
+  schema_version?: string;
+  status?: "waiting" | string;
+  reason_code: string;
+  headline: string;
+  release_mode?: "any" | "all" | string;
+  conditions: DiscoveryEntryTriggerCondition[];
+  recheck_policy?: "next_discovery_scan" | string;
+  recheck_label?: string;
+};
+
+export type DiscoveryQuantPreview = {
+  schema_version?: string;
+  label?: string;
+  mode: "off" | "shadow" | "enforced";
+  status: "eligible" | "ineligible";
+  application_status: "not_applied" | "shadow_only" | "applied";
+  evidence_role?: "bounded_initial_tranche_modifier_only";
+  model_version?: string | null;
+  cohort_mode?: string | null;
+  snapshot_id?: string | null;
+  data_as_of?: string | null;
+  survivorship_bias?: boolean;
+  confidence_cap?: string;
+  peer_group?: string | null;
+  preview_score?: number | null;
+  qualifying_factor_keys?: string[];
+  sector_rank?: number | null;
+  sector_sample_size?: number | null;
+  rank_scope?: string | null;
+  max_adjustment_percent?: number;
+  proposed_adjustment_percent?: number;
+  applied_adjustment_percent?: number;
+  base_amount_yuan?: number | null;
+  projected_amount_yuan?: number | null;
+  adjusted_amount_yuan?: number | null;
+  reasons?: string[];
+  guardrails?: string[];
+};
+
 export type DiscoveryRecommendation = {
   fund_code: string;
   fund_name: string;
@@ -1211,6 +1266,8 @@ export type DiscoveryRecommendation = {
   sector_evidence?: string[];
   fund_evidence?: string[];
   validation_notes?: string[];
+  entry_trigger?: DiscoveryEntryTrigger | null;
+  quant_preview?: DiscoveryQuantPreview | null;
   tradeability?: FundTradeability;
   tradeability_gate?: FundTradeabilityGate;
   cost_assessment?: FundTransactionCostAssessment;

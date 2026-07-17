@@ -40,6 +40,10 @@ function props(): ComponentProps<typeof RiskControls> {
 
 it("shows full generation controls when there is no completed report", () => {
   render(<RiskControls {...props()} readingModeKey={null} />);
+  const customizationTrigger = screen.getByRole("button", { name: /自定义日报偏好/ });
+  expect(customizationTrigger).toHaveAttribute("aria-expanded", "false");
+  expect(screen.queryByRole("button", { name: /AI 分析偏好附录（高级）/ })).not.toBeInTheDocument();
+  fireEvent.click(customizationTrigger);
   const rolePromptTrigger = screen.getByRole("button", { name: /AI 分析偏好附录（高级）/ });
   expect(rolePromptTrigger).toHaveAttribute("aria-expanded", "false");
   expect(screen.queryByTestId("role-prompt-editor")).not.toBeInTheDocument();
@@ -59,7 +63,7 @@ it("collapses to a reading summary when a report exists", () => {
 it("opens settings and collapses again for a new report id", () => {
   const view = render(<RiskControls {...props()} readingModeKey="report-1" />);
   fireEvent.click(screen.getByRole("button", { name: "调整设置" }));
-  expect(screen.getByRole("button", { name: /AI 分析偏好附录（高级）/ })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /自定义日报偏好/ })).toBeInTheDocument();
   view.rerender(<RiskControls {...props()} readingModeKey="report-2" />);
   expect(screen.queryByRole("button", { name: /AI 分析偏好附录（高级）/ })).not.toBeInTheDocument();
 });
@@ -67,7 +71,7 @@ it("opens settings and collapses again for a new report id", () => {
 it("lets readers collapse settings without regenerating the report", () => {
   render(<RiskControls {...props()} readingModeKey="report-1" />);
   fireEvent.click(screen.getByRole("button", { name: "调整设置" }));
-  expect(screen.getByRole("button", { name: /AI 分析偏好附录（高级）/ })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /自定义日报偏好/ })).toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("button", { name: "收起设置" }));
   expect(screen.getByText("本次生成设置")).toBeInTheDocument();
@@ -76,6 +80,7 @@ it("lets readers collapse settings without regenerating the report", () => {
 
 it("shows a clickable label for the DCA preference", () => {
   render(<RiskControls {...props()} readingModeKey={null} />);
+  fireEvent.click(screen.getByRole("button", { name: /自定义日报偏好/ }));
   fireEvent.click(screen.getByRole("button", { name: "高级设置" }));
   expect(screen.getByRole("checkbox", { name: "偏好定投" })).toBeInTheDocument();
 });

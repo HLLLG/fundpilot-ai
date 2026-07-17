@@ -40,6 +40,7 @@ type ThemeSectorOverviewProps = {
 };
 
 const FLOW_HISTORY_LOAD_FAILED = "历史资金流加载失败";
+const DEFAULT_VISIBLE_COUNT = 5;
 const MOBILE_PAGE_SIZE = 10;
 const DESKTOP_QUERY = "(min-width: 640px)";
 
@@ -70,7 +71,7 @@ function FlowTierGrid({ item }: { item: MarketThemeBoardItem }) {
           );
         })}
       </div>
-      <p className="text-[10px] text-slate-500">主力净流入 = 超大单 + 大单；涨幅与资金可能来自不同口径（指数 vs 东财板块）。</p>
+      <p className="text-[10px] text-slate-500">专业口径：主力净流入 = 超大单 + 大单；涨幅与资金可能来自不同来源。</p>
     </div>
   );
 }
@@ -92,7 +93,7 @@ function FlowHistoryPanel({
   return (
     <div className="mt-3 space-y-2 border-t border-slate-100 pt-3">
       <div className="flex items-center justify-between gap-2">
-        <p className="text-xs font-medium text-slate-600">主力净流入走势</p>
+        <p className="text-xs font-medium text-slate-600">大资金流向走势</p>
         <div
           className="inline-flex rounded-lg border border-slate-200 bg-white p-0.5 text-xs"
           role="group"
@@ -320,6 +321,7 @@ export function ThemeSectorOverview({
   focusSectors = [],
 }: ThemeSectorOverviewProps) {
   const detailsIdPrefix = useId().replace(/:/g, "");
+  const listContentId = `${detailsIdPrefix}-board-list`;
   const [expandedItem, setExpandedItem] = useState<{
     label: string;
     boardCode?: string | null;
@@ -330,6 +332,7 @@ export function ThemeSectorOverview({
   const [sortColumn, setSortColumn] = useState<ThemeSortColumn>("change");
   const [sortDirection, setSortDirection] = useState<ThemeSortDirection>("desc");
   const [mobileVisibleCount, setMobileVisibleCount] = useState(MOBILE_PAGE_SIZE);
+  const [showAllBoards, setShowAllBoards] = useState(false);
   const isDesktop = useMediaQuery(DESKTOP_QUERY);
   const showData = isMarketThemeBoardUsable(data);
 
@@ -396,10 +399,20 @@ export function ThemeSectorOverview({
     () => sortThemeBoardItems(data?.items ?? [], sortColumn, sortDirection),
     [data?.items, sortColumn, sortDirection],
   );
-  const mobileItems = sortedItems.slice(0, mobileVisibleCount);
+  const relevantItems = useMemo(() => {
+    const held = sortedItems.filter((item) => item.in_portfolio);
+    const remaining = sortedItems.filter((item) => !item.in_portfolio);
+    return [...held, ...remaining].slice(0, DEFAULT_VISIBLE_COUNT);
+  }, [sortedItems]);
+  const visibleItems = showAllBoards ? sortedItems : relevantItems;
+  const mobileItems = visibleItems.slice(
+    0,
+    showAllBoards ? mobileVisibleCount : DEFAULT_VISIBLE_COUNT,
+  );
 
   useEffect(() => {
     setMobileVisibleCount(MOBILE_PAGE_SIZE);
+    setShowAllBoards(false);
   }, [data?.trade_date, sortColumn, sortDirection]);
 
   const handleSort = (column: ThemeSortColumn) => {
@@ -440,6 +453,7 @@ export function ThemeSectorOverview({
           <div className="min-w-0">
             <h2 className="text-lg font-bold tracking-tight text-slate-900 sm:text-xl">{themeBoardHeading()}</h2>
             <p className="mt-1 text-xs text-slate-500">
+              {showAllBoards ? "完整板块榜单" : "优先展示持仓相关与今日前 5 个方向"} ·{" "}
               {formatThemeBoardUpdatedFromIso(data?.refreshed_at)}
               {data?.stale ? " · 行情暂不可用" : ""}
             </p>
@@ -470,7 +484,7 @@ export function ThemeSectorOverview({
           <p className="py-8 text-center text-sm text-slate-500">{data?.message ?? "暂无主题板块数据"}</p>
         ) : (
           !isDesktop ? (
-            <div className="space-y-3" data-testid="theme-sector-mobile-list">
+            <div id={listContentId} className="space-y-3" data-testid="theme-sector-mobile-list">
               {mobileItems.map((item, index) => {
                 const expandable = hasThemeFlowDetail(item);
                 const expanded = expandedItem?.label === item.sector_label;
@@ -522,7 +536,7 @@ export function ThemeSectorOverview({
                         </dd>
                       </div>
                       <div className="min-w-0 rounded-xl bg-slate-50 px-2 py-2 text-center">
-                        <dt className="text-[11px] font-medium text-slate-500">主力资金</dt>
+                        <dt className="text-[11px] font-medium text-slate-500">大资金流向</dt>
                         <dd
                           className={`mt-1 break-words text-xs font-bold tabular-nums ${profitToneClass(item.main_force_net_yi)}`}
                         >
@@ -568,7 +582,7 @@ export function ThemeSectorOverview({
                   </article>
                 );
               })}
-              {sortedItems.length > MOBILE_PAGE_SIZE ? (
+              {showAllBoards && sortedItems.length > MOBILE_PAGE_SIZE ? (
                 <button
                   type="button"
                   onClick={() =>
@@ -580,6 +594,7 @@ export function ThemeSectorOverview({
                   }
                   className="flex min-h-11 w-full items-center justify-center rounded-xl border border-[var(--line)] bg-white px-4 text-sm font-bold text-[var(--brand-strong)] shadow-sm hover:bg-[var(--brand-soft)]"
                   aria-expanded={mobileVisibleCount >= sortedItems.length}
+                  aria-controls={listContentId}
                 >
                   {mobileVisibleCount >= sortedItems.length
                     ? `收起到前 ${MOBILE_PAGE_SIZE} 个板块`
@@ -589,9 +604,9 @@ export function ThemeSectorOverview({
             </div>
 
           ) : (
-            <div className="overflow-x-auto" data-testid="theme-sector-desktop-table">
+            <div id={listContentId} className="overflow-x-auto" data-testid="theme-sector-desktop-table">
               <table className="w-full min-w-[560px] text-sm">
-                <caption className="sr-only">主题板块行情，可按今日、5日和主力净流入排序</caption>
+                <caption className="sr-only">主题板块行情，可按今日、5日和大资金流向排序</caption>
                 <thead>
                   <tr className="text-xs">
                     <th scope="col" className="w-12 pb-2 text-left font-medium text-slate-500">
@@ -635,7 +650,7 @@ export function ThemeSectorOverview({
                       aria-sort={sortAriaValue("inflow", sortColumn, sortDirection)}
                     >
                       <SortColumnHeader
-                        label="主力净流入"
+                        label="大资金流向"
                         column="inflow"
                         activeColumn={sortColumn}
                         direction={sortDirection}
@@ -648,7 +663,7 @@ export function ThemeSectorOverview({
                   </tr>
                 </thead>
                 <tbody>
-                  {sortedItems.map((item, index) => {
+                  {visibleItems.map((item, index) => {
                     const expandable = hasThemeFlowDetail(item);
                     const expanded = expandedItem?.label === item.sector_label;
                     const cacheId = flowHistoryCacheId(item.sector_label, item.flow_source_code);
@@ -728,6 +743,22 @@ export function ThemeSectorOverview({
             </div>
           )
         )}
+        {showData && sortedItems.length > DEFAULT_VISIBLE_COUNT ? (
+          <button
+            type="button"
+            className="mt-3 flex min-h-11 w-full items-center justify-center rounded-xl border border-[var(--line-strong)] bg-white px-4 text-sm font-bold text-[var(--brand-strong)] hover:bg-[var(--brand-soft)]"
+            aria-expanded={showAllBoards}
+            aria-controls={listContentId}
+            onClick={() => {
+              setShowAllBoards((value) => !value);
+              setMobileVisibleCount(MOBILE_PAGE_SIZE);
+            }}
+          >
+            {showAllBoards
+              ? "收起完整榜单"
+              : `查看完整板块榜单（共 ${sortedItems.length} 个）`}
+          </button>
+        ) : null}
       </div>
     </section>
   );

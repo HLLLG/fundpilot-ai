@@ -148,16 +148,28 @@ def build_discovery_outcomes(
         )
         benchmark_spec = dict((frozen_event or {}).get("benchmark") or {})
         if action_category != "buy":
+            entry_trigger = rec.get("entry_trigger")
+            has_entry_trigger = bool(
+                isinstance(entry_trigger, dict) and entry_trigger.get("conditions")
+            )
             reason_by_category = {
                 "watch_only": "watch_only_action",
-                "conditional_wait": "conditional_action_without_entry_trigger",
+                "conditional_wait": (
+                    "conditional_action_pending_entry_trigger"
+                    if has_entry_trigger
+                    else "conditional_action_without_entry_trigger"
+                ),
                 "unknown": "unknown_action",
             }
             item = _skipped_item(
                     rec,
                     days=horizon_days,
                     skip_reason=reason_by_category[action_category],
-                    assessment=_ineligible_assessment(action_category, action),
+                    assessment=_ineligible_assessment(
+                        action_category,
+                        action,
+                        has_entry_trigger=has_entry_trigger,
+                    ),
                 )
             _attach_item_contract(
                 item,
@@ -1070,10 +1082,17 @@ def _classify_action(action: str) -> str:
     return "unknown"
 
 
-def _ineligible_assessment(action_category: str, action: str) -> str:
+def _ineligible_assessment(
+    action_category: str,
+    action: str,
+    *,
+    has_entry_trigger: bool = False,
+) -> str:
     if action_category == "watch_only":
         return f"动作“{action or '建议关注'}”仅代表观察，不视作买入方向且不计命中。"
     if action_category == "conditional_wait":
+        if has_entry_trigger:
+            return "“等待回调”已记录可验证的入场触发点，条件满足前不计命中。"
         return "“等待回调”缺少可验证的入场触发点，单列为条件动作且不计命中。"
     return f"动作“{action or '空'}”不在可评价动作契约中，已跳过且不计命中。"
 

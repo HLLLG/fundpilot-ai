@@ -453,8 +453,15 @@ export function YangjibaoHoldingsBoard({
           </div>
         ) : null}
 
+        <details className="border-b border-slate-100 bg-slate-50/80 sm:hidden">
+          <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between px-3 text-xs font-bold text-slate-600 marker:hidden">
+            调整持仓排序
+            <span className="text-[10px] font-semibold text-slate-500">
+              {HOLDINGS_SORT_LABELS[sortKey]} · {sortDir === "desc" ? "从高到低" : "从低到高"}
+            </span>
+          </summary>
         <div
-          className="flex items-center gap-2 border-b border-slate-100 bg-slate-50/80 px-3 py-2 sm:hidden"
+          className="flex items-center gap-2 border-t border-slate-100 px-3 py-2"
           data-testid="mobile-holdings-sort"
         >
           <label className="flex min-w-0 flex-1 items-center gap-2">
@@ -484,6 +491,7 @@ export function YangjibaoHoldingsBoard({
             {sortDir === "desc" ? <ArrowDown size={16} /> : <ArrowUp size={16} />}
           </button>
         </div>
+        </details>
 
         <div
           className="hidden grid-cols-[minmax(0,1fr)_4.25rem_minmax(3.5rem,5rem)_4.25rem] items-center gap-1 border-b border-slate-100 bg-slate-50/80 px-4 text-[10px] font-bold text-slate-500 sm:grid"
@@ -555,9 +563,9 @@ export function YangjibaoHoldingsBoard({
                     })
                   }
                   aria-label={rowAriaLabel}
-                  className="holding-ledger-row grid min-h-11 w-full grid-cols-3 gap-x-2 gap-y-3 rounded-[var(--radius-control)] border border-[var(--line)] bg-[var(--panel)] px-3 py-3 text-left transition hover:border-[var(--line-strong)] hover:bg-[var(--brand-soft)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)] active:bg-[var(--surface-muted)] sm:grid-cols-[minmax(0,1fr)_4.25rem_minmax(3.5rem,5rem)_4.25rem] sm:gap-1 sm:rounded-none sm:border-0 sm:bg-transparent sm:px-4 sm:py-2"
+                  className="holding-ledger-row grid min-h-11 w-full grid-cols-2 gap-x-2 gap-y-3 rounded-[var(--radius-control)] border border-[var(--line)] bg-[var(--panel)] px-3 py-3 text-left transition hover:border-[var(--line-strong)] hover:bg-[var(--brand-soft)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)] active:bg-[var(--surface-muted)] sm:grid-cols-[minmax(0,1fr)_4.25rem_minmax(3.5rem,5rem)_4.25rem] sm:gap-1 sm:rounded-none sm:border-0 sm:bg-transparent sm:px-4 sm:py-2"
                 >
-                  <div className="col-span-3 min-w-0 sm:col-span-1">
+                  <div className="col-span-2 min-w-0 sm:col-span-1">
                     <div className="flex items-center gap-1">
                       <div className="line-clamp-2 break-words text-sm font-bold leading-5 text-slate-900 sm:truncate sm:text-[13px] sm:leading-tight">
                         {holding.fund_name}
@@ -567,6 +575,18 @@ export function YangjibaoHoldingsBoard({
                     {!amountsHidden ? (
                       <div className="mt-0.5 text-[10px] text-slate-500 tabular-nums">
                         {formatMoney(getSettledHoldingAmount(holding))}
+                      </div>
+                    ) : null}
+                    {sectorLabel !== "—" ? (
+                      <div className="mt-1 flex min-w-0 items-center gap-1 sm:hidden">
+                        <span className="truncate text-[10px] font-semibold text-slate-500">
+                          相关方向：{sectorLabel}
+                        </span>
+                        {isEstimateFallbackMeta(sectorMeta) ? (
+                          <span className="shrink-0 rounded border border-amber-200 bg-amber-50 px-1 text-[8px] font-bold leading-4 text-amber-600">
+                            估值
+                          </span>
+                        ) : null}
                       </div>
                     ) : null}
                   </div>
@@ -596,7 +616,7 @@ export function YangjibaoHoldingsBoard({
                   </div>
 
                   <div
-                    className="min-w-0 border-l border-slate-100 pl-2 text-left leading-tight sm:border-0 sm:pl-0 sm:text-right"
+                    className="hidden min-w-0 border-l border-slate-100 pl-2 text-left leading-tight sm:block sm:border-0 sm:pl-0 sm:text-right"
                     title={
                       sectorLabel !== "—"
                         ? isEstimateFallbackMeta(sectorMeta)
@@ -640,34 +660,43 @@ export function YangjibaoHoldingsBoard({
         </ul>
 
         {onAddHolding ? (
-          <div className="flex border-t border-slate-100">
+          <div className="grid grid-cols-[minmax(0,1fr)_auto] border-t border-slate-100">
             <button
               type="button"
               onClick={onAddHolding}
-              className="flex min-h-11 flex-1 items-center justify-center gap-1.5 bg-white px-2 py-2.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--brand)]"
+              className="flex min-h-11 items-center justify-center gap-1.5 bg-[var(--brand-deep)] px-3 py-2.5 text-sm font-bold text-white transition hover:bg-[var(--brand)] focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--brand)]"
             >
               <Plus size={16} />
               新增持有
             </button>
-            {onBatchTransaction ? (
-              <button
-                type="button"
-                onClick={onBatchTransaction}
-                className="flex min-h-11 flex-1 items-center justify-center gap-1.5 border-l border-slate-100 bg-white px-2 py-2.5 text-sm font-bold text-[var(--brand)] transition hover:bg-[var(--brand-soft)] focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--brand)]"
-              >
-                <ArrowLeftRight size={16} />
-                批量加减仓
-              </button>
-            ) : null}
-            {onConfirmLedgerBaseline ? (
-              <button
-                type="button"
-                onClick={onConfirmLedgerBaseline}
-                className="flex min-h-11 flex-1 items-center justify-center gap-1.5 border-l border-slate-100 bg-slate-950 px-2 py-2.5 text-sm font-bold text-emerald-200 transition hover:bg-slate-900 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-emerald-400"
-              >
-                <BookCheck size={16} />
-                账本基线
-              </button>
+            {onBatchTransaction || onConfirmLedgerBaseline ? (
+              <details className="relative border-l border-slate-100 bg-white">
+                <summary className="flex min-h-11 cursor-pointer list-none items-center justify-center px-4 text-sm font-bold text-slate-600 marker:hidden">
+                  更多操作
+                </summary>
+                <div className="absolute bottom-full right-0 z-20 mb-2 grid min-w-40 overflow-hidden rounded-xl border border-[var(--line)] bg-white shadow-lg">
+                  {onBatchTransaction ? (
+                    <button
+                      type="button"
+                      onClick={onBatchTransaction}
+                      className="flex min-h-11 items-center gap-2 px-3 text-left text-sm font-bold text-[var(--brand)] hover:bg-[var(--brand-soft)]"
+                    >
+                      <ArrowLeftRight size={16} />
+                      批量加减仓
+                    </button>
+                  ) : null}
+                  {onConfirmLedgerBaseline ? (
+                    <button
+                      type="button"
+                      onClick={onConfirmLedgerBaseline}
+                      className="flex min-h-11 items-center gap-2 border-t border-slate-100 px-3 text-left text-sm font-bold text-slate-700 hover:bg-slate-50"
+                    >
+                      <BookCheck size={16} />
+                      校准持仓
+                    </button>
+                  ) : null}
+                </div>
+              </details>
             ) : null}
           </div>
         ) : null}

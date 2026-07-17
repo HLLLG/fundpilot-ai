@@ -253,7 +253,51 @@ it("shows verified holding tradeability and the lot-level manual-review boundary
   expect(screen.getByText("申购开放")).toBeInTheDocument();
   expect(screen.getByText("赎回开放")).toBeInTheDocument();
   expect(screen.getByText("追加门禁通过")).toBeInTheDocument();
-  expect(screen.getByText(/逐笔申购时间未核验/)).toBeInTheDocument();
+  expect(screen.getByText(/逐笔持有期未核验/)).toBeInTheDocument();
+});
+
+it("shows the review target and a direct transaction shortcut for a current holding", () => {
+  const onApplyTransaction = vi.fn();
+  const report = buildReport(
+    [recommendation({
+      action: "减仓评估",
+      transaction_execution: {
+        redemption_status: "eligible",
+        acquisition_lot_status: "unverified",
+        reduction_amount_status: "manual_review",
+        review_target_amount_yuan: 1_500,
+        review_target_percent: 15,
+      },
+      tradeability: {
+        redemption_state: "open",
+        redemption_fee_tiers: [{ condition: "持有不少于 7 天", fee_percent: 0.5 }],
+      },
+    })],
+    [{
+      fund_code: "000001",
+      fund_name: "测试基金",
+      latest_nav: 1.5,
+      nav_date: "2026-07-17",
+      source: "test",
+    }],
+  );
+
+  render(
+    <ReportRecommendationList
+      report={report}
+      currentHoldings={[{
+        fund_code: "000001",
+        fund_name: "测试基金",
+        holding_amount: 10_000,
+        return_percent: 0,
+      }]}
+      onApplyTransaction={onApplyTransaction}
+    />,
+  );
+
+  expect(screen.getByText("¥1,500")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /核对并记录/ })).toBeInTheDocument();
+  expect(screen.getByText(/回填实际卖出份额即可更新持仓/)).toBeInTheDocument();
 });
 
 it("keeps extreme actions behind the existing confirmation gate", () => {

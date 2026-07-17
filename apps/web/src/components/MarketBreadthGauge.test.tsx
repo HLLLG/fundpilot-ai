@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { deleteClientCache } from "@/lib/clientCache";
 import { MarketBreadthGauge } from "@/components/MarketBreadthGauge";
@@ -91,6 +91,15 @@ describe("MarketBreadthGauge", () => {
     expect(screen.queryByTestId("market-breadth-decision-status")).toBeNull();
     expect(screen.getByText("960")).toBeTruthy();
     expect(screen.getByText("4160")).toBeTruthy();
+    expect(screen.queryByText("18.5%")).toBeNull();
+    const detailsButton = screen.getByRole("button", { name: "查看全市场分布与专业口径" });
+    const detailsId = detailsButton.getAttribute("aria-controls");
+    expect(detailsButton.getAttribute("aria-expanded")).toBe("false");
+    expect(detailsId).toBeTruthy();
+    expect(document.getElementById(detailsId ?? "")).toBeNull();
+    fireEvent.click(detailsButton);
+    expect(detailsButton.getAttribute("aria-expanded")).toBe("true");
+    expect(document.getElementById(detailsId ?? "")).not.toBeNull();
     expect(screen.getByText("18.5%")).toBeTruthy();
     expect(screen.getByText(/收盘锚点：2026-07-10/)).toBeTruthy();
   });

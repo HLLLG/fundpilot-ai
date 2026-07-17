@@ -156,6 +156,29 @@ function profitClass(value: number | null | undefined) {
   return value > 0 ? "profit-up" : "profit-down";
 }
 
+export function buildPortfolioStatusLine(
+  value: number | null | undefined,
+  profitRange: ProfitRange,
+): string {
+  const period = profitRange === "today" ? "今天" : "这段时间";
+  if (value == null) {
+    return `先看${period}的收益变化，再决定是否需要调整。`;
+  }
+  if (value <= -1) {
+    return `${period}下跌较明显，先找出主要拖累。`;
+  }
+  if (value < 0) {
+    return `${period}小幅回落，暂不必急着操作。`;
+  }
+  if (value >= 1) {
+    return `${period}表现较强，继续关注上涨是否过于集中。`;
+  }
+  if (value > 0) {
+    return `${period}小幅上涨，先看主要贡献来自哪里。`;
+  }
+  return `${period}波动不大，持仓整体平稳。`;
+}
+
 export function PortfolioDashboard({
   userId,
   fallbackSummary = null,
@@ -169,6 +192,7 @@ export function PortfolioDashboard({
   const [calendarMonth, setCalendarMonth] = useState(() => new Date().getMonth() + 1);
   const [calendarShowReturn, setCalendarShowReturn] = useState(false);
   const [showReturnHeader, setShowReturnHeader] = useState(false);
+  const [showDeepAnalysis, setShowDeepAnalysis] = useState(false);
   const [showFactorScores, setShowFactorScores] = useState(false);
   const [showEvidenceOverview, setShowEvidenceOverview] = useState(false);
 
@@ -209,6 +233,10 @@ export function PortfolioDashboard({
     summary,
     footer,
   });
+  const statusLine = buildPortfolioStatusLine(
+    profitRange === "today" ? summary?.daily_return_percent : footer?.portfolio_return_percent,
+    profitRange,
+  );
   const dataDate = portfolioDashboardDataDate(currentData);
   const awaitingCurrentRange = loading || (data != null && currentData == null);
   const hasCurrentContent = hasPortfolioDashboardContent(currentData);
@@ -229,6 +257,7 @@ export function PortfolioDashboard({
     <div className="pl-page mx-auto max-w-5xl">
       <div className="analysis-hero briefing-hero overflow-hidden">
         <div className="pl-hero !rounded-none !border-0 !bg-transparent">
+          <p className="analysis-verdict">{statusLine}</p>
           <div className="pl-hero-label">{hero.label}</div>
           <div className={`pl-hero-value ${profitClass(hero.value)}`}>
             {hero.valueFormat === "percent" ? formatPercent(hero.value) : formatMoney(hero.value)}
@@ -265,6 +294,39 @@ export function PortfolioDashboard({
             {awaitingCurrentRange ? "正在读取所选区间数据…" : hero.explanation}
             {dataDate ? ` · 数据截至 ${dataDate}` : ""}
           </p>
+          {showAnalysisContent ? (
+            <div className="analysis-key-metrics" aria-label="本期三个关键数字">
+              <div>
+                <span>我的收益率</span>
+                <strong className={profitClass(footer?.portfolio_return_percent)}>
+                  {formatPercent(footer?.portfolio_return_percent)}
+                </strong>
+              </div>
+              <div>
+                <span>同期大盘</span>
+                <strong className={profitClass(footer?.index_return_percent)}>
+                  {formatPercent(footer?.index_return_percent)}
+                </strong>
+              </div>
+              <div>
+                <span>领先 / 落后</span>
+                <strong className={profitClass(alpha)}>{formatPercent(alpha)}</strong>
+              </div>
+            </div>
+          ) : null}
+          {showAnalysisContent ? (
+            <button
+              type="button"
+              className="analysis-primary-action"
+              onClick={() =>
+                document
+                  .getElementById("portfolio-contributors")
+                  ?.scrollIntoView({ behavior: "smooth", block: "start" })
+              }
+            >
+              查看哪些基金影响最大
+            </button>
+          ) : null}
         </div>
       </div>
 
@@ -353,7 +415,11 @@ export function PortfolioDashboard({
         </div>
       </section>
 
-      <div className="mt-3 grid gap-3" data-testid="portfolio-daily-insights">
+      <div
+        id="portfolio-contributors"
+        className="mt-3 grid scroll-mt-24 gap-3"
+        data-testid="portfolio-daily-insights"
+      >
         <DailyProfitTop5
           gainers={currentData?.daily_top5?.gainers ?? []}
           losers={currentData?.daily_top5?.losers ?? []}
@@ -374,25 +440,42 @@ export function PortfolioDashboard({
         <HoldingDonutChart rows={currentData?.allocation ?? []} />
       </section>
 
-      <PortfolioRiskMetricsPanel />
-
       <section
-        className="pl-panel section-card"
-        data-testid="professional-quant-evidence"
+        className="analysis-deep-section"
+        data-testid="deep-analysis-section"
         aria-labelledby={`${professionalDetailsId}-title`}
       >
-        <div className="pl-panel-head">
+        <div className="analysis-deep-heading">
           <div>
             <h2 id={`${professionalDetailsId}-title`} className="pl-panel-title">
-              专业量化依据
+              深度分析
             </h2>
             <p className="mt-1 text-xs leading-5 text-slate-500">
-              因子评分与证据覆盖用于进一步复核，不影响上方的日常盈亏阅读。
+              历史最深下跌、分散程度与专业研究依据，适合需要进一步复核时查看。
             </p>
           </div>
+          <button
+            type="button"
+            className="analysis-deep-toggle"
+            aria-expanded={showDeepAnalysis}
+            aria-controls={`${professionalDetailsId}-content`}
+            onClick={() => setShowDeepAnalysis((value) => !value)}
+          >
+            {showDeepAnalysis ? "收起深度分析" : "展开深度分析"}
+          </button>
         </div>
 
-        <div className="grid gap-3">
+        {showDeepAnalysis ? (
+        <div id={`${professionalDetailsId}-content`} className="grid gap-3 border-t border-[var(--line)] pt-3">
+          <PortfolioRiskMetricsPanel />
+
+          <section className="pl-panel section-card" data-testid="professional-quant-evidence">
+          <div className="mb-3">
+            <h3 className="text-sm font-bold text-slate-900">专业研究依据</h3>
+            <p className="mt-1 text-xs leading-5 text-slate-500">
+              以下内容用于复核研究结论，不影响上方的日常盈亏判断。
+            </p>
+          </div>
           <div className="rounded-xl border border-[var(--line)] bg-slate-50/60 p-3">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0 space-y-1">
@@ -443,7 +526,9 @@ export function PortfolioDashboard({
               </div>
             ) : null}
           </div>
+          </section>
         </div>
+        ) : null}
       </section>
       </div>
       ) : null}

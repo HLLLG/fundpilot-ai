@@ -72,6 +72,32 @@ describe("DiscoveryCandidatePoolPanel", () => {
           "006082": "conditional_wait",
           "006083": "watch_only",
         }}
+        entryTriggerByCode={{
+          "006082": {
+            reason_code: "price_extension_with_weak_flow",
+            headline: "等待价格降温或资金转强",
+            release_mode: "any",
+            recheck_label: "下次荐基扫描自动复核",
+            conditions: [
+              {
+                metric: "distance_from_high_percent",
+                label: "距近期高点",
+                current_value: -1,
+                operator: "lte",
+                target_value: -2,
+                unit: "%",
+              },
+              {
+                metric: "sector_main_force_5d_yi",
+                label: "板块5日主力",
+                current_value: -3.2,
+                operator: "gte",
+                target_value: 0,
+                unit: "亿元",
+              },
+            ],
+          },
+        }}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: /本次候选池/ }));
@@ -79,6 +105,12 @@ describe("DiscoveryCandidatePoolPanel", () => {
     expect(screen.getByRole("article", { name: /可执行/ })).toBeInTheDocument();
     expect(screen.getByRole("article", { name: /等待条件/ })).toBeInTheDocument();
     expect(screen.getByRole("article", { name: /研究观察/ })).toBeInTheDocument();
+    const waitingCard = screen.getByRole("article", { name: /等待基金.*等待条件/ });
+    expect(waitingCard).toHaveTextContent("等待价格降温或资金转强");
+    expect(waitingCard).toHaveTextContent("距近期高点");
+    expect(waitingCard).toHaveTextContent("-1%→≤-2%");
+    expect(waitingCard).toHaveTextContent("板块5日主力");
+    expect(waitingCard).toHaveTextContent("下次荐基扫描自动复核");
   });
 
   it("uses the compact card grid at every viewport without a wide scrolling table", () => {

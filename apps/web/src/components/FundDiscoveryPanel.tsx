@@ -178,6 +178,7 @@ export function FundDiscoveryPanel({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [feedback, setFeedback] = useState<DiscoveryFeedback | null>(null);
   const [configExpanded, setConfigExpanded] = useState(true);
+  const [showDiscoveryCustomization, setShowDiscoveryCustomization] = useState(false);
   const [rolePromptOpen, setRolePromptOpen] = useState(false);
   const [previewHolding, setPreviewHolding] = useState<Holding | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -575,12 +576,6 @@ export function FundDiscoveryPanel({
             </div>
           </div>
 
-          <ol className="discovery-decision-rail" aria-label="基金扫描流程">
-            <li className={!isRunning && !report ? "is-current" : "is-done"}><span>01</span>方向与约束</li>
-            <li className={isRunning ? "is-current" : report ? "is-done" : ""}><span>02</span>扫描与验证</li>
-            <li className={report ? "is-current" : ""}><span>03</span>候选与依据</li>
-          </ol>
-
           {report && !configExpanded ? (
             <div className="p-4 sm:p-5" data-testid="discovery-config-summary">
               <span id="discovery-scan-settings" hidden />
@@ -607,7 +602,34 @@ export function FundDiscoveryPanel({
               </div>
             </div>
           ) : (
-          <div id="discovery-scan-settings" className="p-4 sm:p-5">
+          <div id="discovery-scan-settings" className="flex flex-col p-4 sm:p-5">
+          <div className="order-5 mt-4 overflow-hidden rounded-xl border border-[var(--line)]">
+            <button
+              type="button"
+              onClick={() => setShowDiscoveryCustomization((value) => !value)}
+              className="flex min-h-11 w-full items-center justify-between gap-3 px-3 text-left"
+              aria-expanded={showDiscoveryCustomization}
+              aria-controls="discovery-custom-settings"
+            >
+              <span>
+                <span className="block text-xs font-bold text-slate-700">自定义扫描方式</span>
+                <span className="mt-0.5 block text-[11px] text-slate-500">
+                  默认使用机会优先策略；有明确偏好时再调整
+                </span>
+              </span>
+              <ChevronDown
+                size={15}
+                className={`shrink-0 text-slate-500 transition ${showDiscoveryCustomization ? "rotate-180" : ""}`}
+                aria-hidden
+              />
+            </button>
+            {showDiscoveryCustomization ? (
+            <div id="discovery-custom-settings" className="border-t border-[var(--line)] p-3">
+            <ol className="discovery-decision-rail !mb-4 !border !border-[var(--line)]" aria-label="基金扫描流程">
+              <li className={!isRunning && !report ? "is-current" : "is-done"}><span>01</span>方向与约束</li>
+              <li className={isRunning ? "is-current" : report ? "is-done" : ""}><span>02</span>扫描与验证</li>
+              <li className={report ? "is-current" : ""}><span>03</span>候选与依据</li>
+            </ol>
           <div>
             <div className="mb-2 flex min-h-11 items-center justify-between gap-3">
               <p className="text-[11px] font-bold text-slate-500">荐基决策策略</p>
@@ -689,8 +711,11 @@ export function FundDiscoveryPanel({
               </p>
             )}
           </div>
+          </div>
+            ) : null}
+          </div>
 
-          <fieldset className="mt-4">
+          <fieldset className="order-1">
             <legend className="mb-2 text-xs font-semibold text-slate-700">推荐目标</legend>
             <div className="flex flex-wrap gap-2">
               {PRIMARY_SCAN_MODE_OPTIONS.map((option) => (
@@ -712,7 +737,7 @@ export function FundDiscoveryPanel({
             </p>
           </fieldset>
 
-          <div className="mt-4">
+          <div className="order-2 mt-4">
             <div className="mb-2 text-xs font-semibold text-slate-700">
               关注方向（可选，最多 3 个）
             </div>
@@ -745,14 +770,16 @@ export function FundDiscoveryPanel({
             ) : null}
           </div>
 
-          <div className="mt-4 rounded-xl border border-slate-100 bg-slate-50/80 px-3 py-2.5">
+          {showDiscoveryCustomization ? (
+          <div className="order-5 mt-3 rounded-xl border border-slate-100 bg-slate-50/80 px-3 py-2.5">
             <p className="text-xs font-black text-slate-800">系统自动选基</p>
             <p className="mt-1 text-[11px] leading-5 text-slate-500">
               自动核验申购状态、首次起购额与单日限额；费用可得时按未折扣标准费率估算上限，下单前仍需复核。
             </p>
           </div>
+          ) : null}
 
-          <div className="mt-4 max-w-md">
+          <div className="order-3 mt-4 max-w-md">
             <label className="block text-xs font-semibold text-slate-700">
               本次可投入预算（元）
               <input
@@ -778,7 +805,7 @@ export function FundDiscoveryPanel({
             data-testid="discovery-scan-button"
             disabled={isRunning}
             onClick={() => void handleScan()}
-            className="btn-primary mt-4 min-h-11 w-full !rounded-xl sm:w-auto"
+            className="btn-primary order-4 mt-4 min-h-11 w-full !rounded-xl sm:w-auto"
           >
             {isRunning ? (
               <Loader2 size={16} className="animate-spin" />

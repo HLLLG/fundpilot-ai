@@ -103,7 +103,7 @@ describe("ThemeSectorOverview responsive presentation", () => {
     expect(within(mobileCard).getByText("半导体")).toBeInTheDocument();
     expect(within(mobileCard).getByText("今日")).toBeInTheDocument();
     expect(within(mobileCard).getByText("5日")).toBeInTheDocument();
-    expect(within(mobileCard).getByText("主力资金")).toBeInTheDocument();
+    expect(within(mobileCard).getByText("大资金流向")).toBeInTheDocument();
     expect(within(mobileCard).getByText("持仓 2 只")).toBeInTheDocument();
     expect(within(mobileCard).getByText("+2.15%")).toBeInTheDocument();
     expect(within(mobileCard).getByText("-1.20%")).toBeInTheDocument();
@@ -184,7 +184,7 @@ describe("ThemeSectorOverview responsive presentation", () => {
     expect(fetchBoardFlowHistory).toHaveBeenCalledTimes(1);
   });
 
-  it("pages long mobile board lists instead of mounting every card at once", () => {
+  it("shows five relevant boards first and pages the full mobile list on demand", () => {
     const base = themeData();
     const data: MarketThemeBoardResponse = {
       ...base,
@@ -205,10 +205,20 @@ describe("ThemeSectorOverview responsive presentation", () => {
     );
 
     const mobileList = screen.getByTestId("theme-sector-mobile-list");
+    expect(within(mobileList).getAllByRole("article")).toHaveLength(5);
+    const fullListToggle = screen.getByRole("button", {
+      name: "查看完整板块榜单（共 23 个）",
+    });
+    const listId = fullListToggle.getAttribute("aria-controls");
+    expect(fullListToggle).toHaveAttribute("aria-expanded", "false");
+    expect(listId).toBeTruthy();
+    expect(mobileList).toHaveAttribute("id", listId);
+    fireEvent.click(fullListToggle);
     expect(within(mobileList).getAllByRole("article")).toHaveLength(10);
     const more = within(mobileList).getByRole("button", {
       name: "显示更多板块（还剩 13 个）",
     });
+    expect(more).toHaveAttribute("aria-controls", listId);
     fireEvent.click(more);
     expect(within(mobileList).getAllByRole("article")).toHaveLength(20);
     fireEvent.click(

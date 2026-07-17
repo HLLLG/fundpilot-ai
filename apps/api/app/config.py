@@ -208,6 +208,19 @@ class Settings(BaseSettings):
     # 升级为 XX"，不真正改变最终 action/剔除候选；enforced——真正生效。观察约 1 个月
     # （20 个交易日）后由用户本人决定是否切换，见设计文档第 10 节。
     decision_escalation_mode: Literal["shadow", "enforced"] = "shadow"
+    # 一个月量化试运行：只修正已通过全部动作守卫的首批金额，绝不升级动作。
+    # shadow 只记录反事实金额；enforced 才在硬上限内应用，最大调整幅度固定不超过 10%。
+    factor_preview_mode: Literal["off", "shadow", "enforced"] = "shadow"
+    factor_preview_max_adjustment_percent: float = 10.0
+
+    @field_validator("factor_preview_max_adjustment_percent", mode="before")
+    @classmethod
+    def normalize_factor_preview_max_adjustment(cls, value: object) -> float:
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            return 10.0
+        return max(0.0, min(10.0, parsed))
 
     @field_validator("risk_free_rate", mode="before")
     @classmethod

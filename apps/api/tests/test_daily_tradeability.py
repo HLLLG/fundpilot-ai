@@ -233,7 +233,35 @@ def test_daily_guard_keeps_reduction_as_review_but_removes_amount_and_percent() 
     assert guarded[0].amount_yuan is None
     assert guarded[0].suggested_position_change_percent is None
     assert guarded[0].transaction_execution["acquisition_lot_status"] == "unverified"
+    assert guarded[0].transaction_execution["review_target_amount_yuan"] == 1_500
+    assert guarded[0].transaction_execution["review_target_percent"] == 15
     assert any("逐笔" in point for point in guarded[0].points)
+
+
+def test_daily_guard_maps_extreme_reduction_labels_to_deterministic_review_targets() -> None:
+    for action, expected_amount in (
+        ("大幅减仓评估", 5_000),
+        ("清仓评估", 10_000),
+    ):
+        recommendation = FundRecommendation(
+            fund_code="000001",
+            fund_name="测试基金",
+            action=action,
+        )
+
+        _, guarded = apply_recommendation_guards(
+            [recommendation],
+            [],
+            _request(),
+            _risk(),
+            facts=_guard_facts(_tradeability()),
+        )
+
+        assert guarded[0].action == action
+        assert (
+            guarded[0].transaction_execution["review_target_amount_yuan"]
+            == expected_amount
+        )
 
 
 def test_daily_guard_downgrades_reduction_when_redemption_is_not_open() -> None:

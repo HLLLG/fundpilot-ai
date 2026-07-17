@@ -6,7 +6,16 @@ from dataclasses import dataclass
 from math import floor, isfinite
 
 from app.config import get_settings
-from app.models import DiscoveryRecommendation, EliminatedCandidate, InvestorProfile, NewsItem, TopicBrief
+from app.models import (
+    DiscoveryEntryTrigger,
+    DiscoveryEntryTriggerCondition,
+    DiscoveryQuantPreview,
+    DiscoveryRecommendation,
+    EliminatedCandidate,
+    InvestorProfile,
+    NewsItem,
+    TopicBrief,
+)
 from app.services.decision_guard_shared import (
     append_unique as _append_unique,
     as_float as _as_float,
@@ -30,6 +39,11 @@ from app.services.fund_tradeability import (
     assess_tradeability_for_amount,
     build_tradeability_gate,
     compact_tradeability_for_llm,
+)
+from app.services.factor_preview import (
+    apply_factor_preview_amount,
+    build_factor_preview,
+    reconcile_factor_preview,
 )
 
 
@@ -356,6 +370,167 @@ def _known_portfolio_cash_yuan(discovery_facts: dict | None) -> float | None:
     return max(value, 0.0)
 
 
+def _numeric_entry_condition(
+    *,
+    metric: str,
+    label: str,
+    current_value: float,
+    operator: str,
+    target_value: float,
+    unit: str,
+) -> DiscoveryEntryTriggerCondition:
+    return DiscoveryEntryTriggerCondition(
+        metric=metric,
+        label=label,
+        current_value=round(float(current_value), 2),
+        operator=operator,
+        target_value=float(target_value),
+        unit=unit,
+    )
+
+
+def _build_opportunity_wait_trigger(
+    *,
+    sector_move: float | None,
+    distance_from_high: float | None,
+    recent_5d: float | None,
+    recent_20d: float | None,
+    pattern: str,
+    five_day_flow: float | None,
+) -> DiscoveryEntryTrigger | None:
+    """Build auditable re-entry targets for an opportunity-first anti-chase wait."""
+
+    price_conditions: list[DiscoveryEntryTriggerCondition] = []
+    if sector_move is not None and sector_move >= 7.0:
+        price_conditions.append(
+            _numeric_entry_condition(
+                metric="sector_change_1d_percent",
+                label="板块当日涨幅",
+                current_value=sector_move,
+                operator="lt",
+                target_value=7.0,
+                unit="%",
+            )
+        )
+    if (
+        distance_from_high is not None
+        and distance_from_high > -2.0
+        and recent_5d is not None
+        and recent_5d >= 6.0
+    ):
+        price_conditions.append(
+            _numeric_entry_condition(
+                metric="distance_from_high_percent",
+                label="距近期高点",
+                current_value=distance_from_high,
+                operator="lte",
+                target_value=-2.0,
+                unit="%",
+            )
+        )
+    if (
+        recent_20d is not None
+        and recent_20d >= 15.0
+        and recent_5d is not None
+        and recent_5d >= 4.0
+    ):
+        price_conditions.append(
+            _numeric_entry_condition(
+                metric="return_20d_percent",
+                label="近20日涨幅",
+                current_value=recent_20d,
+                operator="lt",
+                target_value=15.0,
+                unit="%",
+            )
+        )
+
+    flow_is_weak = pattern in {"distribution", "weak_outflow"} or (
+        five_day_flow is not None and five_day_flow < 0
+    )
+    if not price_conditions or not flow_is_weak:
+        return None
+
+    conditions = list(price_conditions)
+    if five_day_flow is not None and five_day_flow < 0:
+        conditions.append(
+            _numeric_entry_condition(
+                metric="sector_main_force_5d_yi",
+                label="板块5日主力",
+                current_value=five_day_flow,
+                operator="gte",
+                target_value=0.0,
+                unit="亿元",
+            )
+        )
+    else:
+        conditions.append(
+            DiscoveryEntryTriggerCondition(
+                metric="sector_flow_pattern",
+                label="板块资金形态",
+                current_text="派发/弱流出",
+                target_text="转为中性或净流入",
+            )
+        )
+    return DiscoveryEntryTrigger(
+        reason_code="price_extension_with_weak_flow",
+        headline="等待价格降温或资金转强",
+        release_mode="any",
+        conditions=conditions,
+    )
+
+
+def _build_risk_first_wait_trigger(
+    *,
+    sector_move: float | None,
+    return_1y: float | None,
+    distance_from_high: float | None,
+    chase_threshold: float,
+) -> DiscoveryEntryTrigger | None:
+    """Build the first deterministic anti-chase target used by risk-first mode."""
+
+    condition: DiscoveryEntryTriggerCondition | None = None
+    reason_code = ""
+    if sector_move is not None and sector_move >= chase_threshold:
+        reason_code = "sector_overheated"
+        condition = _numeric_entry_condition(
+            metric="sector_change_1d_percent",
+            label="板块当日涨幅",
+            current_value=sector_move,
+            operator="lt",
+            target_value=chase_threshold,
+            unit="%",
+        )
+    elif return_1y is not None and return_1y >= 100.0:
+        reason_code = "annual_return_extended"
+        condition = _numeric_entry_condition(
+            metric="return_1y_percent",
+            label="近1年涨幅",
+            current_value=return_1y,
+            operator="lt",
+            target_value=100.0,
+            unit="%",
+        )
+    elif distance_from_high is not None and distance_from_high > -5.0:
+        reason_code = "near_recent_high"
+        condition = _numeric_entry_condition(
+            metric="distance_from_high_percent",
+            label="距近期高点",
+            current_value=distance_from_high,
+            operator="lte",
+            target_value=-5.0,
+            unit="%",
+        )
+    if condition is None:
+        return None
+    return DiscoveryEntryTrigger(
+        reason_code=reason_code,
+        headline="等待短线追高风险下降",
+        release_mode="all",
+        conditions=[condition],
+    )
+
+
 def apply_discovery_guards(
     recommendations: list[DiscoveryRecommendation],
     *,
@@ -430,6 +605,13 @@ def apply_discovery_guards(
     discovery_strategy = strategy_from_facts(discovery_facts)
     opportunity_first = discovery_strategy == "opportunity_first"
     factor_scores = (discovery_facts or {}).get("candidate_factor_scores")
+    settings = get_settings()
+    factor_preview_mode = getattr(settings, "factor_preview_mode", "shadow")
+    factor_preview_max_adjustment = getattr(
+        settings,
+        "factor_preview_max_adjustment_percent",
+        10.0,
+    )
     quant_gate_active = isinstance(factor_scores, dict)
     quant_covered_codes = set(
         execution_qualified_fund_codes(factor_scores)
@@ -471,6 +653,19 @@ def apply_discovery_guards(
 
         copy = _strip_untrusted_discovery_execution_text(rec)
         pool_item = pool_by_code.get(code, {})
+        preview_contract = build_factor_preview(
+            factor_scores if isinstance(factor_scores, Mapping) else None,
+            code,
+            mode=factor_preview_mode,
+            max_adjustment_percent=factor_preview_max_adjustment,
+            sector_name=copy.sector_name,
+            candidate_pool=candidate_pool,
+        )
+        copy.quant_preview = (
+            DiscoveryQuantPreview.model_validate(preview_contract)
+            if preview_contract
+            else None
+        )
         tradeability = (
             pool_item.get("tradeability")
             if isinstance(pool_item.get("tradeability"), Mapping)
@@ -596,53 +791,49 @@ def apply_discovery_guards(
         dist_high = _as_float(nav_trend.get("distance_from_high_percent"))
         recent_5d = _as_float(nav_trend.get("recent_5d_change_percent"))
         recent_20d = _as_float(nav_trend.get("return_20d_percent"))
-        if profile.avoid_chasing and copy.action == "分批买入":
+        if profile.avoid_chasing and copy.action in {"分批买入", "等待回调"}:
             if opportunity_first:
                 pattern = str((opportunity or {}).get("pattern_label") or "")
                 five_day_flow = _as_float(
                     (opportunity or {}).get("cumulative_5d_net_yi")
                 )
-                flow_is_weak = pattern in {"distribution", "weak_outflow"} or (
-                    five_day_flow is not None and five_day_flow < 0
+                wait_trigger = _build_opportunity_wait_trigger(
+                    sector_move=sector_move,
+                    distance_from_high=dist_high,
+                    recent_5d=recent_5d,
+                    recent_20d=recent_20d,
+                    pattern=pattern,
+                    five_day_flow=five_day_flow,
                 )
-                price_is_extended = bool(
-                    (sector_move is not None and float(sector_move) >= 7.0)
-                    or (
-                        dist_high is not None
-                        and dist_high > -2.0
-                        and recent_5d is not None
-                        and recent_5d >= 6.0
-                    )
-                    or (
-                        recent_20d is not None
-                        and recent_20d >= 15.0
-                        and recent_5d is not None
-                        and recent_5d >= 4.0
-                    )
-                )
-                if price_is_extended and flow_is_weak:
+                if wait_trigger is not None:
                     copy.action = "等待回调"
+                    copy.entry_trigger = wait_trigger
                     copy.points = list(copy.points) + [
                         "短线涨幅已经偏快且5日资金没有继续确认，先等回调或资金重新转强。"
                     ]
             else:
                 chase_threshold = 6.0 if profile.decision_style == "aggressive" else 4.0
-                if sector_move is not None and sector_move >= chase_threshold:
+                r1y = _as_float(pool_item.get("return_1y_percent"))
+                wait_trigger = _build_risk_first_wait_trigger(
+                    sector_move=sector_move,
+                    return_1y=r1y,
+                    distance_from_high=dist_high,
+                    chase_threshold=chase_threshold,
+                )
+                if wait_trigger is not None:
                     copy.action = "等待回调"
-                    copy.points = list(copy.points) + [
-                        f"板块当日 {sector_move:+.2f}% 偏热，拒绝追高模式下建议等待回调。"
-                    ]
-                else:
-                    r1y = pool_item.get("return_1y_percent")
-                    if r1y is not None and float(r1y) >= 100.0:
-                        copy.action = "等待回调"
+                    copy.entry_trigger = wait_trigger
+                    if wait_trigger.reason_code == "sector_overheated":
+                        copy.points = list(copy.points) + [
+                            f"板块当日 {float(sector_move):+.2f}% 偏热，拒绝追高模式下建议等待回调。"
+                        ]
+                    elif wait_trigger.reason_code == "annual_return_extended":
                         copy.points = list(copy.points) + [
                             f"近1年涨幅 {float(r1y):+.1f}% 偏高，拒绝追高模式下建议等待回调。"
                         ]
-                    elif dist_high is not None and dist_high > -5.0:
-                        copy.action = "等待回调"
+                    else:
                         copy.points = list(copy.points) + [
-                            f"净值距区间高点仅 {dist_high:+.1f}%，短线追高风险偏高。"
+                            f"净值距区间高点仅 {float(dist_high):+.1f}%，短线追高风险偏高。"
                         ]
 
         drawdown = _as_float(pool_item.get("max_drawdown_1y_percent"))
@@ -874,6 +1065,32 @@ def apply_discovery_guards(
                         caveats.append(f"{code} 示意金额已按份额单日申购限额压缩。")
 
                 if copy.suggested_amount_yuan is not None:
+                    effective_cap = hard_cap
+                    trade_limit = _as_float(tradeability_gate.get("max_purchase_yuan"))
+                    if trade_limit is not None and isfinite(trade_limit) and trade_limit >= 0:
+                        effective_cap = min(effective_cap, trade_limit)
+                    preview_amount, preview_contract = apply_factor_preview_amount(
+                        copy.quant_preview.model_dump() if copy.quant_preview else None,
+                        amount_yuan=float(copy.suggested_amount_yuan),
+                        hard_cap_yuan=effective_cap,
+                    )
+                    copy.quant_preview = (
+                        DiscoveryQuantPreview.model_validate(preview_contract)
+                        if preview_contract
+                        else None
+                    )
+                    copy.suggested_amount_yuan = preview_amount
+                    if (
+                        preview_contract
+                        and preview_contract.get("application_status") == "applied"
+                        and preview_contract.get("applied_adjustment_percent")
+                    ):
+                        copy.amount_note = _join_amount_note(
+                            copy.amount_note,
+                            "量化试运行仅在硬上限内修正首批金额",
+                        )
+
+                if copy.suggested_amount_yuan is not None:
                     assessment = assess_tradeability_for_amount(
                         tradeability,
                         amount_yuan=copy.suggested_amount_yuan,
@@ -941,6 +1158,22 @@ def apply_discovery_guards(
                     *copy.points,
                 ]
 
+        if copy.action == "等待回调" and not (
+            copy.entry_trigger and copy.entry_trigger.conditions
+        ):
+            copy.action = "建议关注"
+            copy.entry_trigger = None
+            copy.points = [
+                "等待动作缺少可验证的价格或资金触发值，系统已降为研究观察。",
+                *copy.points,
+            ]
+            copy.validation_notes = [
+                *copy.validation_notes,
+                "条件动作必须由服务端确定性规则生成具体触发值；模型自由描述不构成等待条件。",
+            ]
+        elif copy.action != "等待回调":
+            copy.entry_trigger = None
+
         if pool_item:
             _backfill_decision_fields(
                 copy,
@@ -967,7 +1200,19 @@ def apply_discovery_guards(
             copy.validation_notes = [
                 value for value in copy.validation_notes if not contains_executable_decision_text(value)
             ] + ["字段级证据时点校验未通过，买入动作与金额已被确定性阻断。"]
+        if copy.action != "等待回调":
+            copy.entry_trigger = None
         _enforce_discovery_execution_projection(copy)
+        reconciled_preview = reconcile_factor_preview(
+            copy.quant_preview.model_dump() if copy.quant_preview else None,
+            action=copy.action,
+            final_amount_yuan=_as_float(copy.suggested_amount_yuan),
+        )
+        copy.quant_preview = (
+            DiscoveryQuantPreview.model_validate(reconciled_preview)
+            if reconciled_preview
+            else None
+        )
         copy.news_bullish = _filter_news_titles(copy.news_bullish, titles)
         _humanize_recommendation_text(copy)
         guarded.append(copy)
@@ -975,6 +1220,7 @@ def apply_discovery_guards(
     if discovery_facts is not None:
         discovery_facts["escalation_hints"] = escalation_hints
         discovery_facts["decision_escalation_mode"] = get_settings().decision_escalation_mode
+        discovery_facts["factor_preview_mode"] = factor_preview_mode
         discovery_facts["data_evidence_guard"] = {
             "execution_blocked": bool(evidence_blocked_codes),
             "blocked_fund_codes": sorted(evidence_blocked_codes),
@@ -1074,6 +1320,8 @@ def _strip_untrusted_discovery_execution_text(
     if contains_high_risk_trade_instruction_text(copy.decision_path):
         copy.decision_path = ""
     copy.amount_note = None
+    copy.entry_trigger = None
+    copy.quant_preview = None
     copy.suggested_position_change_percent = None
     copy.suggested_position_change_basis = ""
     return copy

@@ -100,17 +100,23 @@ it("uses labeled mobile cards while retaining the sm+ desktop table", () => {
     />,
   );
 
-  expect(screen.getByTestId("mobile-holdings-sort")).toHaveClass("sm:hidden");
+  expect(screen.getByText("调整持仓排序").closest("details")).toHaveClass("sm:hidden");
   expect(screen.getByTestId("desktop-holdings-header")).toHaveClass("hidden", "sm:grid");
 
   const row = screen.getByTestId("holding-row");
   expect(row).toHaveClass(
-    "grid-cols-3",
+    "grid-cols-2",
     "sm:grid-cols-[minmax(0,1fr)_4.25rem_minmax(3.5rem,5rem)_4.25rem]",
     "min-h-11",
   );
   expect(within(row).getByText("估算收益")).toHaveClass("sm:hidden");
-  expect(within(row).getByText("板块涨跌")).toHaveClass("sm:hidden");
+  expect(within(row).getByText("板块涨跌").closest("div[class*='hidden']")).toHaveClass(
+    "hidden",
+    "sm:block",
+  );
+  expect(within(row).getByText(/相关方向：人工智能与高端制造/).parentElement).toHaveClass(
+    "sm:hidden",
+  );
   expect(within(row).getByText("持有收益")).toHaveClass("sm:hidden");
   expect(row).toHaveAccessibleName(/持有金额 20,000\.00/);
   expect(row).toHaveAccessibleName(/板块涨跌 \+1\.25%/);

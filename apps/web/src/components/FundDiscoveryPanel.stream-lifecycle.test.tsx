@@ -185,10 +185,11 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
     );
 
     await waitFor(() => expect(fetchDiscoveryPrompt).toHaveBeenCalled());
-    expect(screen.getByRole("button", { name: /AI 分析偏好附录（高级）/ })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: /自定义扫描方式/ })).toHaveAttribute(
       "aria-expanded",
       "false",
     );
+    expect(screen.queryByRole("button", { name: /AI 分析偏好附录（高级）/ })).not.toBeInTheDocument();
     expect(document.body.textContent).not.toContain("remote prompt");
     await new Promise((resolve) => window.setTimeout(resolve, 0));
     expect(saveDiscoveryPromptRemote).not.toHaveBeenCalled();
@@ -244,6 +245,7 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
     );
 
     await waitFor(() => expect(fetchDiscoveryPrompt).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: /自定义扫描方式/ }));
     fireEvent.click(screen.getByRole("button", { name: /AI 分析偏好附录（高级）/ }));
     await waitFor(() => expect(document.body.textContent).toContain("remote prompt"));
     vi.mocked(saveDiscoveryPromptRemote).mockClear();
@@ -263,6 +265,8 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
     expect(screen.getByRole("button", { name: "组合补缺" })).toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "选基策略" })).not.toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "基金类型偏好" })).not.toBeInTheDocument();
+    expect(screen.queryByText("系统自动选基")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /自定义扫描方式/ }));
     expect(screen.getByText("系统自动选基")).toBeInTheDocument();
   });
 
@@ -334,8 +338,10 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
   it("defaults to opportunity-first and can explicitly request the legacy risk-first guard", async () => {
     renderPanel();
 
+    expect(screen.queryByRole("group", { name: "荐基决策策略" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /自定义扫描方式/ }));
     expect(screen.getByRole("group", { name: "荐基决策策略" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /机会优先/ })).toHaveAttribute(
+    expect(screen.getByTestId("discovery-strategy-opportunity_first")).toHaveAttribute(
       "aria-pressed",
       "true",
     );

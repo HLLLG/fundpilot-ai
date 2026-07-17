@@ -1512,6 +1512,16 @@ export function Dashboard() {
       portfolio_summary: nextSummary,
       refreshed_at: holdingsRefreshedAt,
     });
+    if (result.inserted > 0) {
+      setMessage(
+        result.pending > 0
+          ? "实际交易已记录，将按操作时间在对应交易日自动更新持仓。"
+          : "实际交易已记录，持仓已同步更新。",
+        "success",
+      );
+    } else if (result.skipped > 0) {
+      setMessage("这笔交易已经记录，无需重复提交。", "warning");
+    }
     return { holdings: result.holdings, portfolioSummary: nextSummary };
   };
 
@@ -1549,11 +1559,11 @@ export function Dashboard() {
   };
 
   const activePageMeta = {
-    holdings: ["账户持仓", "看清资产与收益，再决定下一步。", "PORTFOLIO"],
-    dashboard: ["盈亏分析", "围绕关键数字、趋势与异常变化组织个人投研视图。", "PERFORMANCE"],
-    market: ["市场观察", "查看市场温度、板块资金与数据日期。", "MARKET"],
-    discovery: ["发现基金", "从投资方向到候选依据，按决策节奏完成扫描。", "DISCOVERY"],
-    report: ["投研日报", "结论先行，风险、行动与专业证据渐进展开。", "DAILY BRIEF"],
+    holdings: ["账户持仓", "先看今天赚亏，再决定是否需要操作。", "PORTFOLIO"],
+    dashboard: ["盈亏分析", "先看结果和主要影响，再按需查看深度指标。", "PERFORMANCE"],
+    market: ["市场观察", "先判断市场冷暖，再看与你持仓相关的方向。", "MARKET"],
+    discovery: ["发现基金", "选好目标、方向和预算，再开始寻找候选。", "DISCOVERY"],
+    report: ["投研日报", "先回答今天是否要动，再查看原因和风险。", "DAILY BRIEF"],
     history: ["历史日报", "按日期回看判断、证据和后续变化。", "ARCHIVE"],
   }[activeTab];
 
@@ -1698,6 +1708,7 @@ export function Dashboard() {
                       report?.id === todayReport?.id ? displayableHoldings(holdings) : undefined
                     }
                     onConfirmLedgerBaseline={() => setShowLedgerBaselineModal(true)}
+                    onApplyTransaction={handleSingleFundTransaction}
                     diagnostics={() => (
                       <ReportDiagnostics
                         holdings={displayableHoldings(holdings)}

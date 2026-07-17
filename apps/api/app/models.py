@@ -420,6 +420,57 @@ class ReportChatRequest(BaseModel):
     chat_mode: AnalysisMode = "fast"
 
 
+class DiscoveryEntryTriggerCondition(BaseModel):
+    metric: str
+    label: str
+    current_value: float | None = None
+    operator: Literal["lt", "lte", "gt", "gte", "eq"] | None = None
+    target_value: float | None = None
+    unit: str = ""
+    current_text: str = ""
+    target_text: str = ""
+
+
+class DiscoveryEntryTrigger(BaseModel):
+    schema_version: str = "discovery_entry_trigger.v1"
+    status: Literal["waiting"] = "waiting"
+    reason_code: str
+    headline: str
+    release_mode: Literal["any", "all"] = "any"
+    conditions: list[DiscoveryEntryTriggerCondition] = Field(default_factory=list)
+    recheck_policy: Literal["next_discovery_scan"] = "next_discovery_scan"
+    recheck_label: str = "下次荐基扫描自动复核"
+
+
+class DiscoveryQuantPreview(BaseModel):
+    schema_version: str = "factor_preview.v1"
+    label: str = "量化试运行"
+    mode: Literal["off", "shadow", "enforced"]
+    status: Literal["eligible", "ineligible"]
+    application_status: Literal["not_applied", "shadow_only", "applied"]
+    evidence_role: Literal["bounded_initial_tranche_modifier_only"]
+    model_version: str | None = None
+    cohort_mode: str | None = None
+    snapshot_id: str | None = None
+    data_as_of: str | None = None
+    survivorship_bias: bool = True
+    confidence_cap: str = "中"
+    peer_group: str | None = None
+    preview_score: float | None = None
+    qualifying_factor_keys: list[str] = Field(default_factory=list)
+    sector_rank: int | None = None
+    sector_sample_size: int | None = None
+    rank_scope: str | None = None
+    max_adjustment_percent: float = 10.0
+    proposed_adjustment_percent: float = 0.0
+    applied_adjustment_percent: float = 0.0
+    base_amount_yuan: float | None = None
+    projected_amount_yuan: float | None = None
+    adjusted_amount_yuan: float | None = None
+    reasons: list[str] = Field(default_factory=list)
+    guardrails: list[str] = Field(default_factory=list)
+
+
 class DiscoveryRecommendation(BaseModel):
     fund_code: str
     fund_name: str
@@ -436,6 +487,10 @@ class DiscoveryRecommendation(BaseModel):
     sector_evidence: list[str] = Field(default_factory=list)
     fund_evidence: list[str] = Field(default_factory=list)
     validation_notes: list[str] = Field(default_factory=list)
+    # 仅由服务端确定性守卫生成。模型草案中的同名字段会被清空，避免伪造入场阈值。
+    entry_trigger: DiscoveryEntryTrigger | None = None
+    # 仅由服务端依据冻结因子快照生成；模型草案中的同名字段会被清空。
+    quant_preview: DiscoveryQuantPreview | None = None
     # 服务端确定性附加；不信任 LLM 草案里的同名字段，最终由候选事实与金额门禁覆盖。
     tradeability: dict[str, Any] = Field(default_factory=dict)
     cost_assessment: dict[str, Any] = Field(default_factory=dict)

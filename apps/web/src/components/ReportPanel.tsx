@@ -8,7 +8,7 @@ import { ReportRecommendationList } from "@/components/ReportRecommendationList"
 import { ReportSkeleton } from "@/components/ReportSkeleton";
 import { ReportSummaryHero } from "@/components/ReportSummaryHero";
 import { StatusPill } from "@/components/StatusPill";
-import type { Holding, Report } from "@/lib/api";
+import type { Holding, ParsedTransaction, Report } from "@/lib/api";
 import { fetchReportMarkdown } from "@/lib/api";
 import {
   displayFundRecommendations,
@@ -24,6 +24,7 @@ type ReportPanelProps = {
   diagnostics?: () => React.ReactNode;
   currentHoldings?: Holding[];
   onConfirmLedgerBaseline?: () => void;
+  onApplyTransaction?: (transaction: ParsedTransaction) => Promise<unknown>;
 };
 
 export function ReportPanel({
@@ -34,6 +35,7 @@ export function ReportPanel({
   diagnostics,
   currentHoldings,
   onConfirmLedgerBaseline,
+  onApplyTransaction,
 }: ReportPanelProps) {
   const [isExporting, setIsExporting] = useState(false);
 
@@ -119,7 +121,9 @@ export function ReportPanel({
         <ReportRecommendationList
           report={viewReport}
           recommendations={fundRecommendations}
+          currentHoldings={currentHoldings}
           onConfirmLedgerBaseline={onConfirmLedgerBaseline}
+          onApplyTransaction={onApplyTransaction}
         />
         <ReportDetailsHub report={viewReport} diagnostics={diagnostics} />
       </section>
