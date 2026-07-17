@@ -20,7 +20,7 @@ flowchart LR
   E --> F["持久化 DecisionEvent v2"]
   F --> G["等待基金估值日 T+N 成熟"]
   G --> H["修订式 OutcomeObservation v2"]
-  H --> I["四维正式统计 + legacy reference"]
+  H --> I["四维收益 + 路径风险/反事实 + legacy reference"]
 ```
 
 ## 1. 南向资金契约
@@ -83,8 +83,9 @@ flowchart LR
 
 ### 日报
 
-- 默认 T+1、T+5、T+20。
+- 新决策默认 T+5、T+20、T+60；历史已冻结 T+1 observation 继续兼容结算。
 - 执行日由报告时点与交易规则确定；基线取执行日起首个可用基金净值，目标取该基金随后第 N 个估值日。
+- 收益按官方日增长率优先重建总收益指数，缺失日增长率时才回落单位净值比值，避免分红除息被误判为损失。
 - QDII 与非 A 股基金不强套 A 股交易日历；目标净值未成熟或缺失时保持 pending/data unavailable。
 - 加仓/买入为看多，减仓/卖出为看空，观察/复核单列；同日多份日报只保留最后一版进入汇总。
 
@@ -108,6 +109,13 @@ flowchart LR
 - 当前 1.5% 是用户风险画像中的往返费用假设，不是平台实际扣费。基金管理费、托管费等已体现在公布净值中，不重复扣除。
 - legacy 报告继续在 `legacy_reference` 展示，但明确 `excluded_from_formal_v2=true`。
 
+### 路径风险与预登记基线（Phase 1）
+
+- 成熟 T+N 额外记录 MAE、MFE、路径最大回撤；CVaR 95% 至少需要 20 个日收益观测。
+- 有冻结仓位变化与费用假设时，记录相对“不行动”的每单位变更名义本金增量收益；缺字段保持 unavailable。
+- 荐基在 DecisionEvent 冻结同板块质量优先、低费率和确定性随机候选；成熟后比较费后总收益。
+- 所有新增统计为 `shadow_record_only`，不自动改动作、Prompt、Guard 或模型权重。
+
 ## 7. DecisionEvent / OutcomeObservation 持久化
 
 - 报告、PortfolioSnapshot、benchmark mapping、DecisionEvent v2 和初始 observation 在同一事务中保存。
@@ -115,7 +123,7 @@ flowchart LR
 - Observation 使用 revision 表记录每次取数；pending/data unavailable 可重试，成熟终态被锁定。
 - 对相同终态的重试幂等；若后续来源给出与已冻结终态不同的净值，返回证据冲突（HTTP 409），不静默覆盖。
 - 正式统计只纳入 `persistence=persisted`、主存储、`audit_eligible=true`、DecisionEvent v2 且事件可评价的样本。
-- 每日 `Decision Outcome Settlement` 自动处理日报 T+1/5/20 与荐基 T+5/20/60 的 pending 观察；数据源暂缺时保持可重试，成熟终态不可改写。生产配置 MySQL 时拒绝回落 SQLite，避免结算写入错误数据库。
+- 每日 `Decision Outcome Settlement` 自动处理新日报/荐基 T+5/20/60，并继续兼容历史日报 T+1 pending 观察；数据源暂缺时保持可重试，成熟终态不可改写。生产配置 MySQL 时拒绝回落 SQLite，避免结算写入错误数据库。
 - `quant_evidence.v2` 冻结模型快照 ID/生成与发布时间，以及目标基金特征截止日、观察时间、来源、净值交易日年龄和收益覆盖；二者不再共用一个含混的 `data_as_of`。模型尚未发布、时间来自未来、普通基金净值超过 1 个交易日、QDII 超过 2 个交易日或覆盖不足时退出正式量化校准。
 - 线上校准仅做影子报告：按决策日、模型、同类、可靠性、因子家族/键/方向/百分位与 horizon 分组，明确属于条件相关而非因果；永不自动调权或改 Prompt/Guard。
 
@@ -140,7 +148,7 @@ flowchart LR
 - 新决策 facts、Prompt 和报告输出均不存在已退役外资流向的数值、状态或缺失提示。
 - `null/unknown` 不按 0 猜测；pending/conflict/incomplete position 不产生可执行金额。
 - 实际份额不被 legacy 金额/NAV 或重复交易二次累计；删除持仓不留下正份额 ghost。
-- 日报按 T+1/T+5/T+20、荐基按 T+5/T+20/T+60 的基金估值日成熟样本评价。
+- 新日报与荐基均按 T+5/T+20/T+60 的基金估值日成熟总收益样本评价；历史日报 T+1 只作兼容。
 - 只有完整冻结的基金合同基准进入正式超额；代理与跟踪指数只作参考。
 - 四套指标分母独立，覆盖率和命中率均在 0%～100%。
 - 正式报告能追溯 PositionSnapshot、DataEvidence、BenchmarkMapping、DecisionEvent v2 与 OutcomeObservation v2。

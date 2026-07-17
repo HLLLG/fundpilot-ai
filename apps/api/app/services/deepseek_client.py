@@ -17,6 +17,7 @@ from app.services.deepseek_http import (
     deepseek_chat_url,
     deepseek_request_headers,
     deepseek_timeout,
+    get_deepseek_http_client,
 )
 from app.models import (
     AnalysisRequest,
@@ -50,6 +51,7 @@ from app.services.recommendation_guard import apply_recommendation_guards
 from app.services.report_judge import judge_parsed_report
 from app.services.report_pipeline import build_pipeline_metadata
 from app.services.provider_fallback import apply_provider_failure_to_facts
+from app.services.provider_call_trace import normalize_provider_call_trace
 from app.services.prompt_provenance import (
     build_prompt_contract as freeze_prompt_contract,
     content_hash,
@@ -491,7 +493,7 @@ class DeepSeekClient:
             tools=tools,
             response_format=response_format,
         )
-        response = httpx.post(
+        response = get_deepseek_http_client(self.settings).post(
             deepseek_chat_url(self.settings),
             headers=deepseek_request_headers(self.settings),
             json=payload,
@@ -700,6 +702,7 @@ def _build_final_report(
     judge_meta: dict,
     runtime: AnalysisRuntime,
     prompt_contract: dict | None = None,
+    provider_call_trace: dict | None = None,
     decision_at: datetime | None = None,
     announcement_meta: dict | None = None,
 ) -> Report:
@@ -740,6 +743,10 @@ def _build_final_report(
     )
     if prompt_contract is not None:
         pipeline["prompt_contract"] = deepcopy(prompt_contract)
+    if provider_call_trace is not None:
+        pipeline["provider_call_trace"] = normalize_provider_call_trace(
+            provider_call_trace
+        )
     facts = finalize_analysis_facts(
         analysis_bundle.facts,
         market_news=market_news,
@@ -1344,6 +1351,7 @@ def _offline_report(
     provider_failure: ProviderFailure | None = None,
     attempted_model: str | None = None,
     prompt_contract: dict | None = None,
+    provider_call_trace: dict | None = None,
     decision_at: datetime | None = None,
     announcement_meta: dict | None = None,
 ) -> Report:
@@ -1449,6 +1457,10 @@ def _offline_report(
             failure=provider_failure,
             attempted_model=attempted_model or runtime.model,
             prompt_contract=prompt_contract,
+        )
+    if provider_call_trace is not None:
+        facts.setdefault("pipeline", {})["provider_call_trace"] = (
+            normalize_provider_call_trace(provider_call_trace)
         )
     if announcement_meta is not None:
         facts["fund_announcements"] = deepcopy(announcement_meta)

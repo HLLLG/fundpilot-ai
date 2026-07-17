@@ -34,6 +34,7 @@ apps/api/var/factor_ic/*
 debug-*.log
 .tmp-*.html
 apps/web/.next/
+apps/web/.next-dev/
 apps/web/out/
 apps/web/next-env.d.ts
 apps/web/node_modules/

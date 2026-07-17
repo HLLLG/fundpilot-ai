@@ -24,8 +24,9 @@ from app.services.trade_calendar_cache import get_trade_date_set
 
 
 FORWARD_EVALUATION_WARNING = (
-    "当前已改用基金估值日 T+N 成熟样本，并拆分方向、用户假设费后和正式基准超额；"
-    "真实交易费率、正式基准覆盖及样本量达标前，仍只用于人工复盘，不进入自动调参。"
+    "当前已改用基金估值日 T+5/T+20/T+60 总收益率成熟样本，并拆分方向、"
+    "用户假设费后、正式基准超额、路径风险和不行动反事实；真实交易费率、"
+    "正式基准覆盖及样本量达标前，仍只用于人工复盘，不进入自动调参。"
 )
 
 
@@ -325,7 +326,7 @@ def _finalize_bucket(bucket: dict[str, Any], horizons: tuple[int, ...]) -> None:
             stats[name] = stats["metrics"][name]
 
     primary = bucket["by_horizon"][f"T+{horizons[0]}"]
-    # Legacy flat keys remain bounded and now use recommendation-level T+1 data.
+    # Legacy flat keys remain bounded and use the first requested evaluation horizon.
     bucket["hit_count"] = primary["hit_count"]
     bucket["miss_count"] = primary["miss_count"]
     bucket["hit_rate_percent"] = primary["hit_rate_percent"]

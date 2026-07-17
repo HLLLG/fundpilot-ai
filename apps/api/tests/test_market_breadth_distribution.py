@@ -1,6 +1,53 @@
 from __future__ import annotations
 
-from app.services import fund_return_distribution, market_breadth_signal
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+from app.services import fund_return_distribution, market_breadth_signal, trading_session
+
+
+CN_TZ = ZoneInfo("Asia/Shanghai")
+
+
+def test_trading_session_identifies_midday_break_without_changing_trade_date(monkeypatch):
+    monkeypatch.setattr(trading_session, "_is_trading_day", lambda _day: True)
+
+    session = trading_session.build_trading_session(
+        datetime(2026, 7, 17, 12, 15, tzinfo=CN_TZ)
+    )
+
+    assert session["session_kind"] == "trading_day_intraday"
+    assert session["market_phase"] == "lunch_break"
+    assert session["is_continuous_trading"] is False
+    assert session["effective_trade_date"] == "2026-07-17"
+    assert "午间休市" in session["decision_window"]
+
+
+def test_intraday_freshness_uses_trading_clock_during_midday_break(monkeypatch):
+    now = datetime(2026, 7, 17, 12, 30, tzinfo=CN_TZ)
+    monkeypatch.setattr(market_breadth_signal, "_now_cn", lambda: now)
+    session = {
+        "session_kind": "trading_day_intraday",
+        "market_phase": "lunch_break",
+    }
+
+    fresh = market_breadth_signal._refresh_intraday_metadata(
+        {"as_of_datetime": "2026-07-17T11:30:00+08:00"},
+        anchor="2026-07-17",
+        session=session,
+    )
+    old = market_breadth_signal._refresh_intraday_metadata(
+        {"as_of_datetime": "2026-07-17T11:05:00+08:00"},
+        anchor="2026-07-17",
+        session=session,
+    )
+
+    assert fresh["freshness_seconds"] == 0
+    assert fresh["decision_eligible"] is True
+    assert fresh["decision_status"] == "eligible_lunch_break"
+    assert old["freshness_seconds"] == 1500
+    assert old["decision_eligible"] is False
+    assert old["decision_status"] == "ineligible_stale"
 
 
 def test_intraday_breadth_preserves_suspended_denominator_and_display_tone(monkeypatch):

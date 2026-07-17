@@ -236,7 +236,10 @@ def test_discovery_sync_uses_the_shared_main_report_payload(monkeypatch):
             captured["payload"] = json
             return FakeResponse()
 
-    monkeypatch.setattr("app.services.discovery_client.httpx.Client", FakeClient)
+    monkeypatch.setattr(
+        "app.services.discovery_client.get_deepseek_http_client",
+        lambda _settings: FakeClient(),
+    )
     client = DiscoveryClient()
     user_payload = {"today": "2026-07-14", "discovery_facts": {}}
 
@@ -313,7 +316,10 @@ def test_discovery_sync_rejects_malformed_provider_envelopes(
         def post(self, *_args, **_kwargs):
             return FakeResponse()
 
-    monkeypatch.setattr("app.services.discovery_client.httpx.Client", FakeClient)
+    monkeypatch.setattr(
+        "app.services.discovery_client.get_deepseek_http_client",
+        lambda _settings: FakeClient(),
+    )
 
     with pytest.raises(ProviderOutputError) as captured:
         DiscoveryClient()._call_model("system", {"today": "2026-07-14"}, "test")
@@ -347,7 +353,7 @@ def test_discovery_prompt_contract_hashes_the_messages_used_by_provider(
         {"role": "user", "content": '{"actual":true}'},
     ]
 
-    def fake_call_model(_system_prompt, _user_payload, _model):
+    def fake_call_model(_system_prompt, _user_payload, _model, **_kwargs):
         client._last_report_messages = actual_messages
         return {
             "title": "t",

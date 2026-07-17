@@ -28,6 +28,7 @@ from app.services.deepseek_client import (
 )
 from app.services.deepseek_streaming import stream_chat_completion
 from app.services.deepseek_http import ProviderOutputError, classify_deepseek_failure
+from app.services.provider_call_trace import ProviderCallTraceCollector
 from app.services.fund_data import FundDataService
 from app.services.fund_profile import FundProfileService
 from app.services.analysis_payload import prepare_analysis_bundle
@@ -217,6 +218,7 @@ def stream_analysis(request: AnalysisRequest, *, user_id: int) -> Iterator[dict[
         all_chunks: list[str] = []
         parsed: dict | None = None
         stream_interrupted = False
+        provider_trace_collector = ProviderCallTraceCollector(transport="stream")
 
         try:
             for entry in iter_with_heartbeat(
@@ -225,6 +227,7 @@ def stream_analysis(request: AnalysisRequest, *, user_id: int) -> Iterator[dict[
                     model=runtime.model,
                     max_tokens=settings.deepseek_max_tokens_report,
                     response_format={"type": "json_object"},
+                    trace_collector=provider_trace_collector,
                 ),
                 heartbeat_seconds=LLM_HEARTBEAT_SECONDS,
                 heartbeat_factory=lambda: _emit_stage(
@@ -276,6 +279,7 @@ def stream_analysis(request: AnalysisRequest, *, user_id: int) -> Iterator[dict[
                         provider_failure=failure,
                         attempted_model=runtime.model,
                         prompt_contract=attempted_prompt_contract,
+                        provider_call_trace=provider_trace_collector.trace,
                         decision_at=decision_at,
                         announcement_meta=announcement_meta,
                     )
@@ -296,6 +300,7 @@ def stream_analysis(request: AnalysisRequest, *, user_id: int) -> Iterator[dict[
                     provider_failure=failure,
                     attempted_model=runtime.model,
                     prompt_contract=attempted_prompt_contract,
+                    provider_call_trace=provider_trace_collector.trace,
                     decision_at=decision_at,
                     announcement_meta=announcement_meta,
                 )
@@ -303,6 +308,11 @@ def stream_analysis(request: AnalysisRequest, *, user_id: int) -> Iterator[dict[
                 report = save_report(report)
                 yield _done(report)
                 return
+
+        if stream_interrupted:
+            trace = provider_trace_collector.trace
+            if trace is not None and trace["outcome"] == "interrupted":
+                provider_trace_collector.mark_interrupted_salvaged()
 
         if parsed is None or not all_chunks or (
             not stream_interrupted
@@ -325,6 +335,7 @@ def stream_analysis(request: AnalysisRequest, *, user_id: int) -> Iterator[dict[
                 provider_failure=failure,
                 attempted_model=runtime.model,
                 prompt_contract=attempted_prompt_contract,
+                provider_call_trace=provider_trace_collector.trace,
                 decision_at=decision_at,
                 announcement_meta=announcement_meta,
             )
@@ -364,6 +375,7 @@ def stream_analysis(request: AnalysisRequest, *, user_id: int) -> Iterator[dict[
             judge_meta=judge_meta,
             runtime=runtime,
             prompt_contract=prompt_contract,
+            provider_call_trace=provider_trace_collector.trace,
             decision_at=decision_at,
             announcement_meta=announcement_meta,
         )

@@ -504,14 +504,74 @@ def merge_holdings_with_profiles(
     return without_inactive_holdings(merged)
 
 
+def merge_authoritative_holding_upserts(
+    current: list[Holding],
+    incoming: list[Holding],
+) -> list[Holding]:
+    """Apply explicit add/update rows without trusting a client-owned full list."""
+    merged = list(current)
+    for item in incoming:
+        code = (item.fund_code or "").strip()
+        index = next(
+            (
+                idx
+                for idx, existing in enumerate(merged)
+                if (
+                    code
+                    and code != "000000"
+                    and existing.fund_code == code
+                )
+                or existing.fund_name == item.fund_name
+                or is_fund_name_match(existing.fund_name, item.fund_name)
+            ),
+            None,
+        )
+        if index is None:
+            merged.append(item)
+        else:
+            merged[index] = item
+    return without_inactive_holdings(without_test_holdings(merged))
+
+
 def sync_portfolio_from_profiles(*, refresh_sectors: bool = True) -> list[Holding]:
+    from app.services.portfolio_mutation_guard import portfolio_mutation_guard
+
+    with portfolio_mutation_guard():
+        return _sync_portfolio_from_profiles_unlocked(
+            refresh_sectors=refresh_sectors,
+        )
+
+
+def _sync_portfolio_from_profiles_unlocked(
+    *,
+    refresh_sectors: bool = True,
+) -> list[Holding]:
     """详情建档后同步今日看板：合并档案 → 刷新板块 → 持久化。"""
     snapshot = get_most_recent_portfolio_snapshot()
     base: list[Holding] = []
     if snapshot and snapshot.get("holdings"):
         base = [Holding.model_validate(item) for item in snapshot["holdings"]]
 
-    merged = without_test_holdings(merge_holdings_with_profiles(base))
+    profiles = list_fund_profiles()
+    merged = without_test_holdings(
+        merge_holdings_with_profiles(base, profiles=profiles)
+    )
+    # A confirmed buy can create a profile before it has ever appeared in the
+    # daily snapshot. Only transaction-owned profiles may cross that boundary;
+    # arbitrary legacy profiles remain metadata and cannot resurrect holdings.
+    merged_codes = {
+        item.fund_code
+        for item in merged
+        if item.fund_code and item.fund_code != "000000"
+    }
+    for profile in profiles:
+        if (
+            profile.source == "alipay-transaction"
+            and (profile.holding_amount or 0) > 0
+            and profile.fund_code not in merged_codes
+        ):
+            merged.append(profile_to_holding(profile))
+            merged_codes.add(profile.fund_code)
     merged = enrich_holdings_from_profiles(merged)
     overrides = confirm_and_compute_overrides(merged)
     merged = sync_holding_amounts_from_shares(merged, shares_override=overrides)
@@ -520,7 +580,13 @@ def sync_portfolio_from_profiles(*, refresh_sectors: bool = True) -> list[Holdin
         sector_result = refresh_holdings_sector_quotes(merged, force_refresh=False)
         merged = [Holding.model_validate(item) for item in sector_result["holdings"]]
 
-    return persist_holdings_after_sector_refresh(merged)
+    # Profile/ledger sync is an authoritative position operation and may add a
+    # newly purchased fund. Routine quote refreshes keep the safer default and
+    # are forbidden from changing membership.
+    return persist_holdings_after_sector_refresh(
+        merged,
+        allow_membership_additions=True,
+    )
 
 
 def load_persisted_holdings(
@@ -532,7 +598,7 @@ def load_persisted_holdings(
     def _finalize(holdings: list[Holding], source: str, snap_date: str | None, refreshed: datetime | None):
         cleaned = without_inactive_holdings(holdings)
         if cleaned and len(cleaned) < len(holdings):
-            _repair_snapshot_holdings(cleaned)
+            _repair_snapshot_holdings()
         return cleaned, source, snap_date, refreshed
 
     if snapshot and "holdings" in snapshot:
@@ -578,8 +644,26 @@ def load_persisted_holdings(
     return [], "empty", None, None
 
 
-def _repair_snapshot_holdings(holdings: list[Holding]) -> None:
+def _repair_snapshot_holdings() -> None:
     """自愈：快照里残留已删除基金（金额 0 / 档案停用）时写回干净列表。"""
+    from app.services.portfolio_mutation_guard import portfolio_mutation_guard
+
+    # The read that detected stale rows may itself be stale. Re-read and clean
+    # under the same cross-worker write lock as explicit mutations so a repair
+    # can never erase a fund added by another request in the meantime.
+    with portfolio_mutation_guard():
+        snapshot = get_most_recent_portfolio_snapshot()
+        current = [
+            Holding.model_validate(item)
+            for item in ((snapshot or {}).get("holdings") or [])
+        ]
+        holdings = without_inactive_holdings(current)
+        if len(holdings) == len(current):
+            return
+        _repair_snapshot_holdings_unlocked(holdings)
+
+
+def _repair_snapshot_holdings_unlocked(holdings: list[Holding]) -> None:
     if not holdings:
         return
     summary = get_portfolio_summary()
@@ -671,6 +755,20 @@ def _reconcile_fund_profiles_with_snapshot(
 
 
 def remove_holding_from_portfolio(
+    fund_code: str,
+    *,
+    fund_name: str | None = None,
+) -> dict:
+    from app.services.portfolio_mutation_guard import portfolio_mutation_guard
+
+    with portfolio_mutation_guard():
+        return _remove_holding_from_portfolio_unlocked(
+            fund_code,
+            fund_name=fund_name,
+        )
+
+
+def _remove_holding_from_portfolio_unlocked(
     fund_code: str,
     *,
     fund_name: str | None = None,

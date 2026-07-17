@@ -128,8 +128,37 @@ def _persist_settlement_holdings(
     *,
     fetched_at: datetime,
 ) -> tuple[list[Holding], dict | None]:
+    from app.services.portfolio_mutation_guard import portfolio_mutation_guard
+
+    with portfolio_mutation_guard():
+        return _persist_settlement_holdings_unlocked(
+            holdings,
+            fetched_at=fetched_at,
+        )
+
+
+def _persist_settlement_holdings_unlocked(
+    holdings: list[Holding],
+    *,
+    fetched_at: datetime,
+) -> tuple[list[Holding], dict | None]:
     if not holdings:
         return holdings, None
+
+    # NAV retrieval can take seconds. A user may add or delete a fund while it
+    # is running, so apply the calculated daily fields to the latest membership
+    # before committing and then recompute amount-from-shares on that rebased
+    # list.
+    from app.services.holding_amount_sync import sync_holding_amounts_from_shares
+    from app.services.portfolio_persistence import merge_holdings_with_snapshot
+
+    holdings = merge_holdings_with_snapshot(holdings)
+    holdings = sync_holding_amounts_from_shares(
+        holdings,
+        persist_profiles=True,
+        allow_nav_fetch=False,
+        estimate_quotes={},
+    )
 
     total_assets = round(
         sum(

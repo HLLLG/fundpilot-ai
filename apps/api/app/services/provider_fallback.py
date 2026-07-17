@@ -27,10 +27,12 @@ def apply_provider_failure_to_facts(
             "provider_attempted": True,
             "attempted_model": str(attempted_model),
             "provider_failure_category": failure.category,
+            "provider_failure_detail_category": failure.detail_category,
             "provider_failure_status_code": failure.status_code,
             "provider_failure_retryable": failure.retryable,
             "provider_failure": {
                 "category": failure.category,
+                "detail_category": failure.detail_category,
                 "retryable": failure.retryable,
                 "status_code": failure.status_code,
             },

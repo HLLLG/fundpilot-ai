@@ -332,9 +332,15 @@ def test_news_summarizer_uses_the_frozen_date_in_provider_payload(
         captured["request"] = kwargs["json"]
         return FakeResponse()
 
+    class FakeClient:
+        post = staticmethod(fake_post)
+
     settings = get_settings()
     monkeypatch.setattr(settings, "deepseek_api_key", "sk-" + "d" * 32)
-    monkeypatch.setattr("app.services.news_summarizer.httpx.post", fake_post)
+    monkeypatch.setattr(
+        "app.services.news_summarizer.get_deepseek_http_client",
+        lambda _settings: FakeClient(),
+    )
 
     brief = _summarize_topic_with_flash(
         "半导体",

@@ -245,7 +245,7 @@ def test_discovery_sync_sends_compact_announcement_state_in_actual_user_payload(
     client = DiscoveryClient()
     captured: dict = {}
 
-    def call_model(_system_prompt, user_payload, _model):
+    def call_model(_system_prompt, user_payload, _model, **_kwargs):
         captured["user_payload"] = user_payload
         return {"title": "t", "summary": "s", "recommendations": [], "caveats": []}
 

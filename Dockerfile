@@ -44,6 +44,10 @@ ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 ENV FUND_AI_OCR_PRELOAD=false
 ENV PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True
+# Uvicorn reads WEB_CONCURRENCY when --workers is omitted. Two workers are the
+# safe default for the 4-core Lighthouse host because each worker also owns
+# bounded OCR, market-data and analysis thread pools.
+ENV WEB_CONCURRENCY=2
 
 EXPOSE 8000
 

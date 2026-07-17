@@ -72,7 +72,10 @@ def test_daily_bundle_freezes_post_guard_action_fee_and_position(monkeypatch):
         "is_actual_cost": False,
         "recurring_fund_expenses": "already_embedded_in_nav",
     }
-    assert [row["horizon_trading_days"] for row in first["observations"]] == [1, 5, 20]
+    assert [row["horizon_trading_days"] for row in first["observations"]] == [5, 20, 60]
+    assert event["policy_version"] == "decision_policy.2026-07.v5"
+    assert event["strategy_version"] == "decision_strategy.post_guard.v2"
+    assert event["strategy_evaluation_policy"]["mode"] == "shadow_record_only"
     assert all(row["status"] == "pending" for row in first["observations"])
 
 
@@ -186,7 +189,7 @@ def test_prompt_contract_is_frozen_per_event_and_drives_prompt_version(monkeypat
     first_event, second_event = first["events"]
     assert first_event["schema_version"] == "decision_event.v2"
     assert first_event["prompt_version"] == "analysis_prompt.test.v99"
-    assert first_event["policy_version"] == "decision_policy.2026-07.v4"
+    assert first_event["policy_version"] == "decision_policy.2026-07.v5"
     assert first_event["prompt_contract"] == prompt_contract
     assert first_event["prompt_contract"] is not prompt_contract
     assert first_event["prompt_contract"]["runtime"] is not prompt_contract["runtime"]

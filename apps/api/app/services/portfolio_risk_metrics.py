@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 
 TRADING_DAYS_PER_YEAR = 252
 MIN_SAMPLE_DAYS = 20  # 少于此样本不计算
+MIN_ANNUALIZATION_SAMPLE_DAYS = 60  # 年化指标在更短窗口下仅作低置信度参考
 DEFAULT_RISK_FREE_RATE = 0.02  # 年化无风险利率，可被 config 覆盖
 MIN_CORRELATION_SAMPLE_DAYS = 20  # 相关性矩阵：对齐后少于此交易日不计算
 
@@ -30,7 +31,9 @@ def _to_decimal_returns(daily_return_percents: list[float]) -> list[float]:
 
 def _equity_curve(returns: list[float]) -> list[float]:
     """复利累乘成净值曲线，起点 1.0。注意：用相乘，不是相加（见文档 Bug A）。"""
-    equity: list[float] = []
+    # 必须显式保留初始高点。否则样本首日即下跌时，最大回撤会漏掉
+    # 从 1.0 到首个观测点的损失。
+    equity: list[float] = [1.0]
     value = 1.0
     for r in returns:
         value *= 1.0 + r
@@ -68,29 +71,46 @@ def _annualized_volatility(returns: list[float]) -> float:
     return _daily_volatility(returns) * math.sqrt(TRADING_DAYS_PER_YEAR)
 
 
+def _daily_risk_free_rate(annual_rate: float) -> float:
+    """把年化无风险利率按复利转换为日收益率。"""
+    if annual_rate <= -1:
+        return -1.0
+    return (1.0 + annual_rate) ** (1.0 / TRADING_DAYS_PER_YEAR) - 1.0
+
+
 def _downside_volatility(returns: list[float], target: float = 0.0) -> float:
-    """下行波动率：只统计低于 target 的收益，再年化。"""
-    downside = [r for r in returns if r < target]
-    if len(downside) < 2:
+    """年化下行偏差（lower partial moment），分母使用全部观测日。"""
+    if not returns:
         return 0.0
-    return statistics.stdev(downside) * math.sqrt(TRADING_DAYS_PER_YEAR)
+    lower_partial_moment = sum(min(r - target, 0.0) ** 2 for r in returns) / len(
+        returns
+    )
+    return math.sqrt(lower_partial_moment) * math.sqrt(TRADING_DAYS_PER_YEAR)
 
 
 # ---------- 核心指标 ----------
 
 
 def _sharpe(returns: list[float], risk_free_rate: float) -> float | None:
-    vol = _annualized_volatility(returns)
-    if vol == 0:
+    if len(returns) < 2:
         return None
-    return (_annualized_return(returns) - risk_free_rate) / vol
+    daily_rf = _daily_risk_free_rate(risk_free_rate)
+    excess = [value - daily_rf for value in returns]
+    daily_vol = _daily_volatility(excess)
+    if daily_vol == 0:
+        return None
+    return statistics.mean(excess) / daily_vol * math.sqrt(TRADING_DAYS_PER_YEAR)
 
 
 def _sortino(returns: list[float], risk_free_rate: float) -> float | None:
-    dvol = _downside_volatility(returns)
+    if not returns:
+        return None
+    daily_rf = _daily_risk_free_rate(risk_free_rate)
+    dvol = _downside_volatility(returns, target=daily_rf)
     if dvol == 0:
         return None
-    return (_annualized_return(returns) - risk_free_rate) / dvol
+    annualized_excess = (statistics.mean(returns) - daily_rf) * TRADING_DAYS_PER_YEAR
+    return annualized_excess / dvol
 
 
 def _max_drawdown(returns: list[float]) -> float:
@@ -118,7 +138,7 @@ def _beta_alpha(
     要求调用方已按日期对齐（两序列等长、逐日配对）。这里再做一次尾部对齐兜底。
     """
     n = min(len(portfolio_returns), len(index_returns))
-    if n < 2:
+    if n < MIN_SAMPLE_DAYS:
         return None, None
     p = portfolio_returns[-n:]
     m = index_returns[-n:]
@@ -128,9 +148,10 @@ def _beta_alpha(
     mean_p, mean_m = statistics.mean(p), statistics.mean(m)
     cov = sum((p[i] - mean_p) * (m[i] - mean_m) for i in range(n)) / n
     beta = cov / var_m
-    ann_p = _annualized_return(p)
-    ann_m = _annualized_return(m)
-    alpha = ann_p - (risk_free_rate + beta * (ann_m - risk_free_rate))
+    daily_rf = _daily_risk_free_rate(risk_free_rate)
+    # Jensen alpha 由日频 CAPM 残差的算术均值年化。几何年化两条序列后再相减
+    # 会混入波动拖累，尤其在短窗口中造成显著偏差。
+    alpha = (mean_p - daily_rf - beta * (mean_m - daily_rf)) * TRADING_DAYS_PER_YEAR
     return beta, alpha
 
 
@@ -147,6 +168,8 @@ class PortfolioRiskMetrics:
     available: bool
     sample_days: int
     message: str | None = None
+    sample_quality: str = "insufficient"
+    annualization_reliable: bool = False
     annualized_return_percent: float | None = None
     annualized_volatility_percent: float | None = None
     sharpe_ratio: float | None = None
@@ -194,6 +217,18 @@ def compute_portfolio_metrics(
     return PortfolioRiskMetrics(
         available=True,
         sample_days=n,
+        message=(
+            None
+            if n >= MIN_ANNUALIZATION_SAMPLE_DAYS
+            else (
+                f"当前仅 {n} 个交易日；年化收益、夏普、索提诺和 Alpha "
+                f"低于 {MIN_ANNUALIZATION_SAMPLE_DAYS} 日可靠性阈值，仅作低置信度参考。"
+            )
+        ),
+        sample_quality=(
+            "standard" if n >= MIN_ANNUALIZATION_SAMPLE_DAYS else "short_window"
+        ),
+        annualization_reliable=n >= MIN_ANNUALIZATION_SAMPLE_DAYS,
         annualized_return_percent=pct(_annualized_return(returns)),
         annualized_volatility_percent=pct(_annualized_volatility(returns)),
         sharpe_ratio=round(sharpe, 2) if sharpe is not None else None,

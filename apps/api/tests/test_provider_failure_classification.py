@@ -44,19 +44,24 @@ def test_http_failure_categories_are_stable_and_redacted(
 
 
 @pytest.mark.parametrize(
-    ("exc", "category"),
+    ("exc", "category", "detail_category"),
     [
-        (httpx.ReadTimeout("secret"), "timeout"),
-        (httpx.ConnectError("secret"), "connection"),
-        (ProviderOutputError("empty_content"), "empty_content"),
-        (ProviderOutputError("invalid_json"), "invalid_json"),
+        (httpx.ConnectTimeout("secret"), "timeout", "connect_timeout"),
+        (httpx.ReadTimeout("secret"), "timeout", "read_timeout"),
+        (httpx.WriteTimeout("secret"), "timeout", "write_timeout"),
+        (httpx.PoolTimeout("secret"), "timeout", "pool_timeout"),
+        (httpx.ConnectError("secret"), "connection", "connect_error"),
+        (ProviderOutputError("empty_content"), "empty_content", None),
+        (ProviderOutputError("invalid_json"), "invalid_json", None),
     ],
 )
 def test_non_status_failures_are_classified_without_exception_text(
     exc: BaseException,
     category: str,
+    detail_category: str | None,
 ):
     failure = classify_deepseek_failure(exc)
 
     assert failure.category == category
+    assert failure.detail_category == detail_category
     assert "secret" not in failure.message

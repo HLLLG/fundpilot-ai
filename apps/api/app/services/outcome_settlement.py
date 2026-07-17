@@ -28,7 +28,9 @@ from app.services.discovery_outcomes import build_discovery_outcomes
 from app.services.recommendation_outcomes import build_recommendation_outcomes
 from app.services.trade_calendar_cache import get_trade_date_set
 
-DAILY_HORIZONS = frozenset({1, 5, 20})
+# T+1 is retained so already-frozen legacy observations can still settle; new
+# decision contracts are registered on T+5/T+20/T+60.
+DAILY_HORIZONS = frozenset({1, 5, 20, 60})
 DISCOVERY_HORIZONS = frozenset({5, 20, 60})
 
 

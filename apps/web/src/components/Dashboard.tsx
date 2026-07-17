@@ -65,7 +65,6 @@ import {
   displayableHoldings,
   findHoldingIndex,
   mergeHoldingsPreserveQuoteFields,
-  mergeHoldingsAppend,
   withApplyDisplayFields,
   dedupeHoldingsByCode,
   patchHoldingRecord,
@@ -1221,8 +1220,9 @@ export function Dashboard() {
     setAddHoldingError(null);
     setMessage(null);
     try {
-      const merged = [...displayableHoldings(holdings), ...newHoldings];
-      const applied = await enqueuePortfolioMutation(() => applyPortfolioHoldings(merged));
+      // The server owns membership. Submit only the explicit upserts so a
+      // stale browser tab cannot replace newer holdings it has never seen.
+      const applied = await enqueuePortfolioMutation(() => applyPortfolioHoldings(newHoldings));
       if (mutationVersion !== holdingsMutationVersionRef.current) {
         return;
       }
@@ -1261,13 +1261,12 @@ export function Dashboard() {
     invalidatePortfolioHoldingsRequest();
     const toApply = pendingOcrHoldings;
     const previousHoldings = holdings;
-    const mergedToApply = mergeHoldingsAppend(previousHoldings, toApply);
     setIsApplyingOcrHoldings(true);
     setOcrApplyError(null);
     setMessage(null);
 
     try {
-      const applied = await enqueuePortfolioMutation(() => applyPortfolioHoldings(mergedToApply));
+      const applied = await enqueuePortfolioMutation(() => applyPortfolioHoldings(toApply));
       if (mutationVersion !== holdingsMutationVersionRef.current) {
         return;
       }
@@ -1550,7 +1549,7 @@ export function Dashboard() {
   };
 
   const activePageMeta = {
-    holdings: ["账户持仓", "先确认组合状态，再进入单只基金的风险与行动。", "PORTFOLIO"],
+    holdings: ["账户持仓", "看清资产与收益，再决定下一步。", "PORTFOLIO"],
     dashboard: ["盈亏分析", "围绕关键数字、趋势与异常变化组织个人投研视图。", "PERFORMANCE"],
     market: ["市场观察", "查看市场温度、板块资金与数据日期。", "MARKET"],
     discovery: ["发现基金", "从投资方向到候选依据，按决策节奏完成扫描。", "DISCOVERY"],
@@ -1811,10 +1810,11 @@ export function Dashboard() {
             markPortfolioCacheWriteReady();
             setHoldings(next);
             try {
-              const applied = await enqueuePortfolioMutation(() => applyPortfolioHoldings(next));
+              const applied = await enqueuePortfolioMutation(() => applyPortfolioHoldings([updated]));
               if (mutationVersion !== holdingsMutationVersionRef.current) {
                 return;
               }
+              setHoldings(applied.holdings);
               setHoldingWarnings(applied.holding_warnings ?? []);
               setMessage(`基金代码已更新为 ${updated.fund_code}`, "success");
             } catch (error) {

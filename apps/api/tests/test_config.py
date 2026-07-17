@@ -54,3 +54,34 @@ def test_tactical_prompt_tuning_is_disabled_by_default(monkeypatch):
     settings = Settings(_env_file=None)
 
     assert settings.tactical_prompt_tuning_enabled is False
+
+
+def test_deepseek_resilience_defaults_are_bounded(monkeypatch):
+    for name in (
+        "FUND_AI_DEEPSEEK_MAX_TOKENS",
+        "FUND_AI_DEEPSEEK_MAX_TOKENS_REPORT",
+        "FUND_AI_DEEPSEEK_CONNECTION_RETRIES",
+        "FUND_AI_DEEPSEEK_TIMEOUT_SECONDS",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    settings = Settings(_env_file=None)
+
+    assert settings.deepseek_max_tokens == 32_768
+    assert settings.deepseek_max_tokens_report == 32_768
+    assert settings.deepseek_connection_retries == 2
+    assert settings.deepseek_timeout_seconds == 300
+
+
+def test_holdings_cache_defaults_are_safe_for_mysql_multiworker(monkeypatch):
+    monkeypatch.delenv("FUND_AI_HOLDINGS_MEMORY_CACHE_ENABLED", raising=False)
+
+    mysql = Settings(
+        _env_file=None,
+        database_url="mysql://user:pass@db:3306/fundpilot",
+    )
+    sqlite = Settings(_env_file=None, database_url=None)
+
+    assert mysql.resolved_holdings_memory_cache_enabled is False
+    assert sqlite.resolved_holdings_memory_cache_enabled is True
+    assert mysql.portfolio_mutation_lock_timeout_seconds == 30

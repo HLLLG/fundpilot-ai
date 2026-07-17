@@ -326,4 +326,24 @@ describe("Dashboard apply refresh flow", () => {
     expect(source).toContain("enqueuePortfolioMutation(() => applyPortfolioHoldings(");
     expect(source).not.toContain("await applyPortfolioHoldings(");
   });
+
+  it("submits explicit holding upserts instead of replacing membership from stale client state", () => {
+    const source = readFileSync(
+      fileURLToPath(new URL("./Dashboard.tsx", import.meta.url)),
+      "utf8",
+    );
+    const manualAddHandler = source.slice(
+      source.indexOf("const handleManualAddHoldings"),
+      source.indexOf("const handleConfirmOcrHoldings"),
+    );
+    const ocrHandler = source.slice(
+      source.indexOf("const handleConfirmOcrHoldings"),
+      source.indexOf("const handleDeleteHolding"),
+    );
+
+    expect(manualAddHandler).toContain("applyPortfolioHoldings(newHoldings)");
+    expect(manualAddHandler).not.toContain("displayableHoldings(holdings)");
+    expect(ocrHandler).toContain("applyPortfolioHoldings(toApply)");
+    expect(ocrHandler).not.toContain("mergeHoldingsAppend");
+  });
 });

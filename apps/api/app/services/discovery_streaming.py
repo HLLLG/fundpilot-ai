@@ -26,6 +26,10 @@ from app.services.deepseek_client import (
 )
 from app.services.deepseek_streaming import stream_chat_completion
 from app.services.deepseek_http import ProviderOutputError, classify_deepseek_failure
+from app.services.provider_call_trace import (
+    ProviderCallTraceCollector,
+    attach_provider_call_trace,
+)
 from app.services.discovery_candidate_pool import (
     attach_candidate_benchmark_research,
     build_candidate_pool,
@@ -473,6 +477,11 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
         except Exception:  # noqa: BLE001 - champion stream must remain fail-open
             logger.exception("prompt-shadow streaming preregistration skipped")
             shadow_capture = None
+        provider_trace_collector = (
+            shadow_capture.trace_collector
+            if shadow_capture is not None
+            else ProviderCallTraceCollector(transport="stream")
+        )
         attempted_prompt_contract = build_discovery_prompt_provenance(
             role_prompt=request.system_role_prompt,
             messages=messages,
@@ -487,9 +496,8 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
             "model": runtime.model,
             "max_tokens": settings.deepseek_max_tokens_report,
             "response_format": {"type": "json_object"},
+            "trace_collector": provider_trace_collector,
         }
-        if shadow_capture is not None:
-            stream_arguments["trace_collector"] = shadow_capture.trace_collector
 
         try:
             for entry in iter_with_heartbeat(
@@ -521,6 +529,9 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
                     parsed = candidate
                 else:
                     failure = classify_deepseek_failure(exc)
+                    provider_trace = provider_trace_collector.trace
+                    if provider_trace is not None:
+                        attach_provider_call_trace(discovery_facts, provider_trace)
                     report = build_offline_discovery_report(
                         target_sectors=target_sectors,
                         candidate_pool=pool,
@@ -546,6 +557,9 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
                     return
             else:
                 failure = classify_deepseek_failure(exc)
+                provider_trace = provider_trace_collector.trace
+                if provider_trace is not None:
+                    attach_provider_call_trace(discovery_facts, provider_trace)
                 report = build_offline_discovery_report(
                     target_sectors=target_sectors,
                     candidate_pool=pool,
@@ -579,6 +593,9 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
         ):
             category = "empty_content" if not all_chunks else "invalid_json"
             failure = classify_deepseek_failure(ProviderOutputError(category))
+            provider_trace = provider_trace_collector.trace
+            if provider_trace is not None:
+                attach_provider_call_trace(discovery_facts, provider_trace)
             report = build_offline_discovery_report(
                 target_sectors=target_sectors,
                 candidate_pool=pool,
@@ -604,12 +621,10 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
             return
 
         raw_parsed = deepcopy(parsed)
-        if stream_interrupted and shadow_capture is not None:
-            try:
-                shadow_capture.trace_collector.mark_interrupted_salvaged()
-            except Exception:  # noqa: BLE001 - do not disturb champion salvage
-                logger.exception("prompt-shadow interrupted trace could not be salvaged")
-                shadow_capture = None
+        if stream_interrupted:
+            trace = provider_trace_collector.trace
+            if trace is not None and trace["outcome"] == "interrupted":
+                provider_trace_collector.mark_interrupted_salvaged()
         yield _stage("guarding", started_at=started_at)
         # M4：deep 模式风控复核角色（fast 模式内部直接短路返回，零新增 LLM 调用）。
         parsed, judge_meta = judge_parsed_discovery_report(
@@ -639,6 +654,9 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
                 "prompt_contract": prompt_contract,
             }
         )
+        provider_trace = provider_trace_collector.trace
+        if provider_trace is not None:
+            pipeline["provider_call_trace"] = provider_trace
         discovery_facts["pipeline"] = pipeline
         report = build_discovery_report_from_parsed(
             parsed,

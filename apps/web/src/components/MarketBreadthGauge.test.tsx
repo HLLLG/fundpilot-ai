@@ -88,11 +88,40 @@ describe("MarketBreadthGauge", () => {
 
     expect(screen.getByText("盘中准实时")).toBeTruthy();
     expect(screen.getByText("更新于 2026-07-13 09:45")).toBeTruthy();
-    expect(screen.getByText("数据可参与当前决策")).toBeTruthy();
+    expect(screen.queryByTestId("market-breadth-decision-status")).toBeNull();
     expect(screen.getByText("960")).toBeTruthy();
     expect(screen.getByText("4160")).toBeTruthy();
     expect(screen.getByText("18.5%")).toBeTruthy();
     expect(screen.getByText(/收盘锚点：2026-07-10/)).toBeTruthy();
+  });
+
+  it("pauses the freshness clock during the midday market break", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-13T04:30:00Z"));
+    apiMocks.fetchMarketBreadth.mockResolvedValue({
+      available: true,
+      trade_date: "2026-07-13",
+      signal_mode: "intraday",
+      source_mode: "intraday_live",
+      as_of_datetime: "2026-07-13T11:30:00+08:00",
+      freshness_status: "live",
+      decision_eligible: true,
+      decision_status: "eligible_lunch_break",
+      sentiment_level: "低迷",
+      advance_count: 877,
+      decline_count: 4242,
+    });
+
+    render(<MarketBreadthGauge />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("午间快照")).toBeTruthy();
+    expect(screen.getByText("更新于 2026-07-13 11:30")).toBeTruthy();
+    expect(screen.queryByTestId("market-breadth-decision-status")).toBeNull();
+    expect(screen.queryByText(/10分钟/)).toBeNull();
   });
 
   it("keeps stale data visible but excludes it from the current decision", async () => {
@@ -111,8 +140,8 @@ describe("MarketBreadthGauge", () => {
     render(<MarketBreadthGauge />);
 
     expect(await screen.findByText("上一交易日收盘回退")).toBeTruthy();
-    expect(screen.getByText("数据仅展示，不参与当前决策")).toBeTruthy();
-    expect(screen.getByText(/数据已过期，继续展示上次有效快照/)).toBeTruthy();
+    expect(screen.getByText("历史快照，仅供参考")).toBeTruthy();
+    expect(screen.queryByText(/动作升级|客户端|守卫/)).toBeNull();
   });
 
   it("refreshes every five minutes only while the gauge is visible", async () => {
@@ -216,15 +245,15 @@ describe("MarketBreadthGauge", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(screen.getByText("数据可参与当前决策")).toBeTruthy();
+    expect(screen.queryByTestId("market-breadth-decision-status")).toBeNull();
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5 * 60_000);
     });
 
     expect(apiMocks.fetchMarketBreadth).toHaveBeenCalledTimes(2);
-    expect(screen.getByText("数据仅展示，不参与当前决策")).toBeTruthy();
-    expect(screen.getByText(/盘中快照已超过10分钟未更新/)).toBeTruthy();
-    expect(screen.getByText(/本次更新失败，正在显示上次数据/)).toBeTruthy();
+    expect(screen.getByText("快照更新延迟，仅供参考")).toBeTruthy();
+    expect(screen.queryByText("更新延迟")).toBeNull();
+    expect(screen.queryByText(/10分钟|客户端|动作升级/)).toBeNull();
   });
 });

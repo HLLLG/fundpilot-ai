@@ -207,7 +207,7 @@ describe("truthful evidence panel states", () => {
 
   it("renders bounded forward T+N maturity and keeps auto tuning disabled", async () => {
     const forwardAccuracy: RecommendationAccuracy = {
-      metric_status: "forward_nav_v1",
+      metric_status: "forward_total_return_v2",
       is_experimental: true,
       auto_tuning_eligible: false,
       warning: "四口径仅供人工复盘，真实费用与样本量达标前不进入自动调参。",
@@ -215,7 +215,7 @@ describe("truthful evidence panel states", () => {
       report_count: 2,
       selected_report_count: 2,
       formal_v2_report_count: 1,
-      horizons: [1, 5, 20],
+      horizons: [5, 20, 60],
       metrics: decisionMetrics,
       legacy_reference: {
         excluded_from_formal_v2: true,
@@ -226,8 +226,8 @@ describe("truthful evidence panel states", () => {
         hit_rate_percent: 100,
       },
       by_horizon: {
-        "T+1": {
-          horizon_trading_days: 1,
+        "T+5": {
+          horizon_trading_days: 5,
           eligible_count: 3,
           mature_count: 3,
           skipped_count: 0,
@@ -247,8 +247,8 @@ describe("truthful evidence panel states", () => {
           miss_count: 1,
           hit_rate_percent: 66.7,
           by_horizon: {
-            "T+1": {
-              horizon_trading_days: 1,
+            "T+5": {
+              horizon_trading_days: 5,
               eligible_count: 3,
               mature_count: 3,
               skipped_count: 0,
@@ -282,10 +282,10 @@ describe("truthful evidence panel states", () => {
     const current: ReportOutcomes = {
       has_baseline: false,
       has_data: false,
-      message: "T+1 尚未成熟。",
+      message: "T+5 尚未成熟。",
       by_horizon: {
-        "T+1": {
-          horizon_trading_days: 1,
+        "T+5": {
+          horizon_trading_days: 5,
           eligible_count: 1,
           mature_count: 0,
           skipped_count: 1,
@@ -305,7 +305,7 @@ describe("truthful evidence panel states", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("T+N 复盘加载失败");
     fireEvent.click(screen.getByRole("button", { name: "重试" }));
-    expect((await screen.findAllByText("T+1 尚未成熟。")).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText("T+5 尚未成熟。")).length).toBeGreaterThan(0);
     await waitFor(() => expect(apiMocks.fetchReportOutcomes).toHaveBeenCalledTimes(2));
   });
 

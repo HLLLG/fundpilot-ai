@@ -51,36 +51,52 @@ def _overlay_sector_fields(base: Holding, patch: Holding) -> Holding:
     return base.model_copy(update=updates) if updates else base
 
 
-def merge_holdings_with_snapshot(incoming: list[Holding]) -> list[Holding]:
-    """板块刷新写回：以请求持仓为成员名单；从快照补全同码/同名的非板块字段。
+def merge_holdings_with_snapshot(
+    incoming: list[Holding],
+    *,
+    allow_membership_additions: bool = False,
+) -> list[Holding]:
+    """Rebase a non-membership refresh on the latest persisted membership.
 
-    仅当请求里只有测试/占位行、没有有效持仓时，才保留上一版快照（防误覆盖）。
-    删除基金后客户端会发送更短的完整列表，不能把已删基金从快照里捞回来。
+    Quote/NAV refreshes are field patches, never membership commands. An older
+    browser tab or a background task may therefore update only rows that still
+    exist in the latest snapshot; it cannot delete a newly-added fund or revive
+    a removed one. Authoritative profile/transaction sync may opt in to append
+    genuinely new positions with ``allow_membership_additions=True``.
     """
     snapshot = get_most_recent_portfolio_snapshot()
     if not snapshot:
         return incoming
     previous = [Holding.model_validate(item) for item in snapshot.get("holdings", [])]
     if not previous:
-        return []
+        return list(incoming) if allow_membership_additions else []
 
     meaningful_incoming = without_placeholder_holdings(without_test_holdings(incoming))
     meaningful_previous = without_placeholder_holdings(without_test_holdings(previous))
     if not meaningful_incoming and meaningful_previous:
         return previous
 
-    by_code = {
+    incoming_by_code = {
         holding.fund_code: holding
-        for holding in previous
-        if holding.fund_code != "000000"
+        for holding in incoming
+        if holding.fund_code and holding.fund_code != "000000"
     }
-    by_name = {holding.fund_name: holding for holding in previous}
+    incoming_by_name = {holding.fund_name: holding for holding in incoming}
 
     merged: list[Holding] = []
-    for item in incoming:
-        prev = by_code.get(item.fund_code) or by_name.get(item.fund_name)
-        if prev is not None:
-            merged.append(_overlay_sector_fields(prev, item))
+    seen_incoming: set[int] = set()
+    for prev in previous:
+        patch = incoming_by_code.get(prev.fund_code) or incoming_by_name.get(prev.fund_name)
+        if patch is None:
+            merged.append(prev)
+            continue
+        merged.append(_overlay_sector_fields(prev, patch))
+        seen_incoming.add(id(patch))
+
+    if allow_membership_additions:
+        for item in incoming:
+            if id(item) not in seen_incoming:
+                merged.append(item)
     return merged
 
 
@@ -107,7 +123,11 @@ def enrich_loaded_holdings(
     return enrich_holdings_estimates(overlay_official_nav_returns(synced))
 
 
-def _drop_holdings_removed_during_refresh(enriched: list[Holding]) -> list[Holding]:
+def _drop_holdings_removed_during_refresh(
+    enriched: list[Holding],
+    *,
+    allow_membership_additions: bool = False,
+) -> list[Holding]:
     """写回快照前最后一次对账，防止"删除基金"与"慢速板块刷新"互相踩踏。
 
     本函数上面从读取快照到这里，中间经过份额同步、官方净值、天天基金估值等
@@ -117,6 +137,9 @@ def _drop_holdings_removed_during_refresh(enriched: list[Holding]) -> list[Holdi
     出现了"）。这里只做成员资格过滤（是否还在最新快照里），不覆盖任何已经算好的
     金额/收益字段，避免影响本函数原本要更新的净值同步结果。
     """
+    if allow_membership_additions:
+        return enriched
+
     latest_snapshot = get_most_recent_portfolio_snapshot()
     if latest_snapshot is None or latest_snapshot.get("holdings") is None:
         return enriched
@@ -144,6 +167,29 @@ def persist_holdings_after_sector_refresh(
     *,
     fetched_at: datetime | None = None,
     with_official_nav: bool = True,
+    allow_membership_additions: bool = False,
+) -> list[Holding]:
+    from app.services.portfolio_mutation_guard import portfolio_mutation_guard
+
+    # Network fetches finish before this function is called. Hold the account
+    # lock only for the final rebase + read-modify-write transaction boundary,
+    # closing the former gap between the last membership check and snapshot
+    # commit across multiple Uvicorn workers.
+    with portfolio_mutation_guard():
+        return _persist_holdings_after_sector_refresh_unlocked(
+            holdings,
+            fetched_at=fetched_at,
+            with_official_nav=with_official_nav,
+            allow_membership_additions=allow_membership_additions,
+        )
+
+
+def _persist_holdings_after_sector_refresh_unlocked(
+    holdings: list[Holding],
+    *,
+    fetched_at: datetime | None = None,
+    with_official_nav: bool = True,
+    allow_membership_additions: bool = False,
 ) -> list[Holding]:
     """板块刷新成功后写回日快照与账户汇总，重启后保留最新当日收益。
 
@@ -152,7 +198,12 @@ def persist_holdings_after_sector_refresh(
     """
     merged = without_inactive_holdings(
         without_placeholder_holdings(
-            without_test_holdings(merge_holdings_with_snapshot(holdings))
+            without_test_holdings(
+                merge_holdings_with_snapshot(
+                    holdings,
+                    allow_membership_additions=allow_membership_additions,
+                )
+            )
         )
     )
     from app.services.transaction_ledger import confirm_and_compute_overrides
@@ -170,7 +221,10 @@ def persist_holdings_after_sector_refresh(
     if not enriched:
         return enriched
 
-    enriched = _drop_holdings_removed_during_refresh(enriched)
+    enriched = _drop_holdings_removed_during_refresh(
+        enriched,
+        allow_membership_additions=allow_membership_additions,
+    )
     if not enriched:
         return enriched
 

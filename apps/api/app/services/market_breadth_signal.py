@@ -413,15 +413,16 @@ def _compose_intraday_signal(
 def _refresh_intraday_metadata(payload: dict, *, anchor: str, session: dict) -> dict:
     result = dict(payload)
     settings = get_settings()
-    age = _snapshot_age_seconds(result.get("as_of_datetime"))
-    source_date = str(result.get("as_of_datetime") or "")[:10]
     current = _now_cn()
+    age = _intraday_snapshot_age_seconds(result.get("as_of_datetime"), current=current)
+    source_date = str(result.get("as_of_datetime") or "")[:10]
     ready_at = current.replace(hour=9, minute=30, second=0, microsecond=0) + timedelta(
         minutes=max(0, int(settings.market_breadth_live_guard_delay_minutes))
     )
     source_matches = source_date == anchor
     fresh = age is not None and age <= settings.market_breadth_live_freshness_seconds
     in_live_session = str(session.get("session_kind") or "") in _LIVE_SESSION_KINDS
+    is_lunch_break = str(session.get("market_phase") or "") == "lunch_break"
     eligible = bool(source_matches and fresh and in_live_session and current >= ready_at)
     result.update(
         {
@@ -445,6 +446,9 @@ def _refresh_intraday_metadata(payload: dict, *, anchor: str, session: dict) -> 
     elif not in_live_session:
         status = "ineligible_session"
         message = "当前不在交易时段，盘中快照不参与硬守卫。"
+    elif is_lunch_break:
+        status = "eligible_lunch_break"
+        message = "午间休市，上午收盘快照仍在有效交易时钟内。"
     else:
         status = "eligible"
         message = "当前交易日盘中快照新鲜，可参与决策守卫。"
@@ -558,6 +562,30 @@ def _snapshot_age_seconds(value: object) -> float | None:
     if parsed is None:
         return None
     return max(0.0, (_now_cn() - parsed).total_seconds())
+
+
+def _intraday_snapshot_age_seconds(
+    value: object,
+    *,
+    current: datetime | None = None,
+) -> float | None:
+    """按连续交易时间计算盘中快照年龄，午间休市不消耗 freshness。"""
+    parsed = _parse_as_of_datetime(value)
+    if parsed is None:
+        return None
+    now = current or _now_cn()
+    now = now.replace(tzinfo=_CN_TZ) if now.tzinfo is None else now.astimezone(_CN_TZ)
+    elapsed = max(0.0, (now - parsed).total_seconds())
+    if parsed.date() != now.date() or now <= parsed:
+        return elapsed
+
+    lunch_start = parsed.replace(hour=11, minute=30, second=0, microsecond=0)
+    lunch_end = parsed.replace(hour=13, minute=0, second=0, microsecond=0)
+    overlap_start = max(parsed, lunch_start)
+    overlap_end = min(now, lunch_end)
+    if overlap_end > overlap_start:
+        elapsed -= (overlap_end - overlap_start).total_seconds()
+    return max(0.0, elapsed)
 
 
 def _as_number(value: object) -> float | None:

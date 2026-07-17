@@ -184,6 +184,7 @@ from app.services.holding_detail_cache import (
 from app.services.holding_intraday_warmup import schedule_warm_holdings_intraday
 from app.services.news_freshness import build_news_pipeline_context
 from app.services.news_service import NewsService
+from app.services.portfolio_mutation_guard import PortfolioMutationLockError
 from app.services.trading_session import build_trading_session
 
 
@@ -201,6 +202,18 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(PortfolioMutationLockError)
+async def portfolio_mutation_lock_error_handler(
+    request: Request,
+    _exc: PortfolioMutationLockError,
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "持仓正在同步，请稍后重试"},
+        headers={"Retry-After": "2", **_cors_error_response_headers(request)},
+    )
 
 
 @app.exception_handler(Exception)
@@ -816,8 +829,14 @@ def refresh_sector_quotes(request: RefreshSectorQuotesRequest) -> dict:
     if not get_settings().sector_quotes_enabled:
         raise HTTPException(status_code=503, detail="板块实时行情已关闭")
     timeout_seconds = None if request.budget == "accurate" else 8.0
+    # Client holdings are a display snapshot, not portfolio membership truth.
+    # A stale tab must never be able to delete a fund by refreshing quotes.
+    current_holdings, current_source, snapshot_date, _ = load_persisted_holdings(
+        fetch_benchmark=False,
+    )
+    refresh_holdings = current_holdings or request.holdings
     result = refresh_holdings_sector_quotes(
-        request.holdings,
+        refresh_holdings,
         force_refresh=request.force_refresh,
         timeout_seconds=timeout_seconds,
     )
@@ -832,7 +851,14 @@ def refresh_sector_quotes(request: RefreshSectorQuotesRequest) -> dict:
             with_official_nav=request.budget == "accurate",
         )
         result["holdings"] = serialize_holdings_for_client(enriched)
-        save_cached_holdings_response({"holdings": result["holdings"]})
+        cache_payload = build_portfolio_holdings_response(
+            enriched,
+            source=current_source if current_holdings else "snapshot",
+            snapshot_date=snapshot_date,
+            refreshed_at=fetched_at,
+            fetch_benchmark=False,
+        )
+        save_cached_holdings_response(cache_payload)
         user_id = get_request_user_id()
         schedule_warm_holdings_intraday(
             enriched,

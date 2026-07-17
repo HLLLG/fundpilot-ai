@@ -15,6 +15,7 @@ from app.services.discovery_client import DiscoveryClient
 from app.services.provider_call_trace import (
     ProviderCallTraceCollector,
     ProviderCallTraceError,
+    attach_provider_call_trace,
     normalize_provider_call_trace,
     provider_request_hash,
 )
@@ -104,6 +105,20 @@ def test_collector_requires_stream_flag_to_match_actual_body() -> None:
         collector.start_request({"model": "m", "stream": False})
 
 
+def test_validated_trace_can_be_attached_without_provider_bodies() -> None:
+    collector = ProviderCallTraceCollector(transport="sync", clock=_clock)
+    collector.start_request({"model": "m", "stream": False})
+    collector.finish_error(outcome="timeout", error_category="connect_timeout")
+    facts = {"pipeline": {"provider": "offline-fallback"}}
+
+    attach_provider_call_trace(facts, collector.require_trace())
+
+    trace = facts["pipeline"]["provider_call_trace"]
+    assert trace["error_category"] == "connect_timeout"
+    assert trace["outcome"] == "timeout"
+    assert "messages" not in repr(trace)
+
+
 class _SyncResponse:
     def __init__(self, payload: object, *, raw: bytes | None = None) -> None:
         self._payload = payload
@@ -154,7 +169,10 @@ def test_discovery_sync_optional_trace_keeps_return_contract(monkeypatch) -> Non
     raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode()
     _SyncClient.response = _SyncResponse(payload, raw=raw)
     _SyncClient.captured = {}
-    monkeypatch.setattr("app.services.discovery_client.httpx.Client", _SyncClient)
+    monkeypatch.setattr(
+        "app.services.discovery_client.get_deepseek_http_client",
+        lambda _settings: _SyncClient(),
+    )
     collector = ProviderCallTraceCollector(transport="sync", clock=_clock)
 
     result = DiscoveryClient()._call_model(
@@ -196,7 +214,10 @@ def test_discovery_sync_trace_records_provider_output_failures(
     refresh_settings()
     _SyncClient.response = _SyncResponse(payload)
     _SyncClient.captured = {}
-    monkeypatch.setattr("app.services.discovery_client.httpx.Client", _SyncClient)
+    monkeypatch.setattr(
+        "app.services.discovery_client.get_deepseek_http_client",
+        lambda _settings: _SyncClient(),
+    )
     collector = ProviderCallTraceCollector(transport="sync", clock=_clock)
 
     with pytest.raises(ProviderOutputError):
@@ -221,7 +242,10 @@ def test_discovery_sync_trace_records_timeout_without_error_text(monkeypatch) ->
         def post(self, *_args: Any, **_kwargs: Any) -> _SyncResponse:
             raise httpx.ReadTimeout("secret provider response text")
 
-    monkeypatch.setattr("app.services.discovery_client.httpx.Client", TimeoutClient)
+    monkeypatch.setattr(
+        "app.services.discovery_client.get_deepseek_http_client",
+        lambda _settings: TimeoutClient(),
+    )
     collector = ProviderCallTraceCollector(transport="sync", clock=_clock)
 
     with pytest.raises(httpx.ReadTimeout):
@@ -271,9 +295,15 @@ def _patch_stream(monkeypatch, response: _StreamResponse) -> dict[str, Any]:
         captured.update(kwargs)
         return response
 
+    class FakeStreamClient:
+        stream = staticmethod(fake_stream)
+
     monkeypatch.setenv("FUND_AI_DEEPSEEK_API_KEY", _FAKE_KEY)
     refresh_settings()
-    monkeypatch.setattr("app.services.deepseek_streaming.httpx.stream", fake_stream)
+    monkeypatch.setattr(
+        "app.services.deepseek_streaming.get_deepseek_http_client",
+        lambda _settings: FakeStreamClient(),
+    )
     return captured
 
 

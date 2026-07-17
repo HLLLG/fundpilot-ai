@@ -136,8 +136,9 @@ FUND_AI_DEEPSEEK_API_KEY=
 FUND_AI_DEEPSEEK_MODEL=deepseek-v4-pro
 FUND_AI_DEEPSEEK_MODEL_FAST=deepseek-v4-flash
 FUND_AI_DEEPSEEK_TIMEOUT_SECONDS=300
-FUND_AI_DEEPSEEK_MAX_TOKENS=384000
-FUND_AI_DEEPSEEK_MAX_TOKENS_REPORT=384000
+FUND_AI_DEEPSEEK_MAX_TOKENS=32768
+FUND_AI_DEEPSEEK_MAX_TOKENS_REPORT=32768
+FUND_AI_DEEPSEEK_CONNECTION_RETRIES=2
 # 可选的内部 paired Prompt 实验；默认关闭。密钥必须使用独立随机值且不得提交。
 FUND_AI_PROMPT_SHADOW_ENABLED=false
 FUND_AI_PROMPT_SHADOW_ASSIGNMENT_SECRET=
@@ -162,12 +163,17 @@ FUND_AI_JWT_SECRET=change-me-to-a-random-secret-at-least-32-chars
 | `FUND_AI_JWT_ACCESS_EXPIRE_MINUTES` | JWT 有效期（分钟）；默认 43200（30 天） |
 | `FUND_AI_DATABASE_URL` | 设则使用 MySQL；省略则用 `data/app.db` |
 | `FUND_AI_MYSQL_SCHEMA_LOCK_TIMEOUT_SECONDS` | 多进程启动时 MySQL schema 锁等待秒数；默认 60，进程内并发自动合并 |
+| `WEB_CONCURRENCY` | Uvicorn worker 进程数；4 核轻量服务器生产默认 2，本地开发仍为 1 |
+| `FUND_AI_PORTFOLIO_MUTATION_LOCK_TIMEOUT_SECONDS` | 同账户持仓跨 worker 写锁等待秒数；默认 30，超时返回可重试的 503 |
+| `FUND_AI_HOLDINGS_MEMORY_CACHE_ENABLED` | 持仓响应进程内缓存；MySQL 默认关闭，避免不同 worker 返回不同版本 |
 | `FUND_AI_CLOUDBASE_ENV_ID` | CloudBase 环境 ID；用于 Web 静态托管域名 CORS 自动放行 |
 
 `.env` 已被 `.gitignore` 忽略，不会提交到 Git。
 
-如果 DeepSeek 报 `read operation timed out`，通常是 `deepseek-v4-pro` 响应较慢。可以先把
-`FUND_AI_DEEPSEEK_TIMEOUT_SECONDS` 调大，例如 `300`，并检查服务商配额与网络状态。
+DeepSeek 请求会复用进程级连接池；仅在 TCP/TLS 尚未建立时自动重试
+`ConnectError/ConnectTimeout`，不会重放已经开始响应的模型请求。流式读取与同步调用统一
+遵循 `FUND_AI_DEEPSEEK_TIMEOUT_SECONDS`。若仍出现 `read_timeout`，应检查真实报告负载、
+服务商状态与网络链路，不建议把报告输出预算提高到模型的理论上限。
 
 新闻相关（可选）：
 
@@ -226,6 +232,10 @@ bash scripts/dev.sh
 ```powershell
 .\scripts\dev.ps1
 ```
+
+Windows 本地开发默认以单进程启动 API，避免 Uvicorn 热重载进程与行情子进程残留；
+启动脚本会在 8000/3001 端口已占用时拒绝再启动一份。仅在主动修改 API 代码时可先设置
+`FUND_AI_DEV_RELOAD=true` 启用热重载，退出 Git Bash 启动脚本时会清理本次启动的完整子进程树。
 
 也可以分别开两个终端：
 

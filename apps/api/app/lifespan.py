@@ -82,4 +82,9 @@ async def app_lifespan(_app: FastAPI):
             name="prompt-shadow-worker",
             daemon=True,
         ).start()
-    yield
+    try:
+        yield
+    finally:
+        from app.services.deepseek_http import close_deepseek_http_clients
+
+        close_deepseek_http_clients()

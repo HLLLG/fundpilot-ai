@@ -136,14 +136,22 @@ def run_ocr_upload_pipeline(
             if portfolio_summary is not None:
                 save_portfolio_summary(portfolio_summary)
 
+    if holdings and not preview:
+        # Legacy clients may still call OCR without preview/confirm. Route that
+        # write through the same locked upsert command as the current UI rather
+        # than letting a slow OCR request replace a newer complete snapshot.
+        applied = apply_confirmed_holdings(holdings)
+        holdings = [Holding.model_validate(item) for item in applied.get("holdings", [])]
+        if applied.get("portfolio_summary"):
+            portfolio_summary = PortfolioSummary.model_validate(
+                applied["portfolio_summary"]
+            )
+
     holding_review = build_holding_review(
         holdings,
         previous_holdings=previous_holdings,
         portfolio_summary=portfolio_summary,
     )
-
-    if holdings and not preview:
-        save_daily_snapshot(holdings, portfolio_summary)
 
     trading_session = build_trading_session()
     amount_semantics = _ocr_amount_semantics(ocr_source, trading_session)
@@ -262,6 +270,15 @@ def _pin_confirmed_holding_settlements(
 def apply_confirmed_holdings(
     holdings: list,
 ) -> dict:
+    from app.services.portfolio_mutation_guard import portfolio_mutation_guard
+
+    with portfolio_mutation_guard():
+        return _apply_confirmed_holdings_unlocked(holdings)
+
+
+def _apply_confirmed_holdings_unlocked(
+    holdings: list,
+) -> dict:
     """用户确认 OCR 草稿 / 手动新增后：快速写库并立即返回。
 
     1. 跳过网络估值/净值拉取，仅用 OCR 金额写档案与快照；
@@ -279,6 +296,19 @@ def apply_confirmed_holdings(
     typed = [Holding.model_validate(item) if isinstance(item, dict) else item for item in holdings]
     typed = clear_client_daily_estimate_fields_batch(typed)
     typed = _finalize_confirmed_holdings(typed, profile_service)
+    # ``apply-holdings`` is an upsert command, not permission for a browser tab
+    # to replace the account's complete membership list. Re-read the latest
+    # server snapshot under the account mutation guard and merge only the rows
+    # the user explicitly submitted.
+    from app.database import get_most_recent_portfolio_snapshot
+    from app.services.portfolio_holdings_service import merge_authoritative_holding_upserts
+
+    snapshot = get_most_recent_portfolio_snapshot()
+    current = [
+        Holding.model_validate(item)
+        for item in ((snapshot or {}).get("holdings") or [])
+    ]
+    typed = merge_authoritative_holding_upserts(current, typed)
     from app.services.fund_primary_sector_service import apply_primary_sector_to_holdings
 
     typed = apply_primary_sector_to_holdings(typed, fetch_benchmark=False)

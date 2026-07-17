@@ -17,7 +17,7 @@ from app.services.deepseek_http import (
     classify_deepseek_failure,
     deepseek_chat_url,
     deepseek_request_headers,
-    deepseek_timeout,
+    get_deepseek_http_client,
 )
 from app.services.deepseek_client import (
     FETCH_MARKET_NEWS_TOOL,
@@ -48,6 +48,7 @@ from app.services.prompt_provenance import (
 )
 from app.services.provider_call_trace import (
     ProviderCallTraceCollector,
+    attach_provider_call_trace,
     provider_request_id_from_headers,
 )
 from app.services.decision_contract import POLICY_VERSION
@@ -236,19 +237,24 @@ class DiscoveryClient:
         except Exception:  # noqa: BLE001 - champion must remain fail-open
             logger.exception("prompt-shadow champion preregistration skipped")
             self._prompt_shadow_capture = None
+        provider_trace_collector = (
+            self._prompt_shadow_capture.trace_collector
+            if self._prompt_shadow_capture is not None
+            else ProviderCallTraceCollector(transport="sync")
+        )
         try:
-            if self._prompt_shadow_capture is None:
-                parsed = self._call_model(system_prompt, user_payload, runtime.model)
-            else:
-                parsed = self._call_model(
-                    system_prompt,
-                    user_payload,
-                    runtime.model,
-                    trace_collector=self._prompt_shadow_capture.trace_collector,
-                )
+            parsed = self._call_model(
+                system_prompt,
+                user_payload,
+                runtime.model,
+                trace_collector=provider_trace_collector,
+            )
             self._last_report_parsed_payload = deepcopy(parsed)
         except (httpx.HTTPError, ProviderOutputError) as exc:
             failure = classify_deepseek_failure(exc)
+            provider_trace = provider_trace_collector.trace
+            if provider_trace is not None:
+                attach_provider_call_trace(discovery_facts, provider_trace)
             actual_messages = getattr(self, "_last_report_messages", None) or messages
             attempted_prompt_contract = build_discovery_prompt_provenance(
                 role_prompt=system_role_prompt,
@@ -298,6 +304,9 @@ class DiscoveryClient:
                 "prompt_contract": prompt_contract,
             }
         )
+        provider_trace = provider_trace_collector.trace
+        if provider_trace is not None:
+            pipeline["provider_call_trace"] = provider_trace
         discovery_facts["pipeline"] = pipeline
         return build_discovery_report_from_parsed(
             parsed,
@@ -367,44 +376,44 @@ class DiscoveryClient:
         if trace_collector is not None:
             trace_collector.start_request(body)
         try:
-            with httpx.Client(timeout=deepseek_timeout(self.settings)) as client:
-                response = client.post(
-                    deepseek_chat_url(self.settings),
-                    headers=deepseek_request_headers(self.settings),
-                    json=body,
+            client = get_deepseek_http_client(self.settings)
+            response = client.post(
+                deepseek_chat_url(self.settings),
+                headers=deepseek_request_headers(self.settings),
+                json=body,
+            )
+            if trace_collector is not None:
+                trace_collector.mark_response_started(
+                    http_status=getattr(response, "status_code", None),
+                    provider_request_id=provider_request_id_from_headers(
+                        getattr(response, "headers", None)
+                    ),
                 )
+                raw_body = getattr(response, "content", b"")
+                if isinstance(raw_body, str):
+                    raw_body = raw_body.encode("utf-8")
+                trace_collector.observe_sync_envelope(raw_body)
+            response.raise_for_status()
+            try:
+                payload = response.json()
+                if not isinstance(payload, dict):
+                    raise TypeError("provider envelope must be an object")
+                choices = payload.get("choices")
+                if not isinstance(choices, list) or not choices:
+                    raise TypeError("provider choices must be a non-empty list")
+                choice = choices[0]
+                if not isinstance(choice, dict):
+                    raise TypeError("provider choice must be an object")
+                message = choice.get("message")
+                if not isinstance(message, dict):
+                    raise TypeError("provider message must be an object")
+            except (ValueError, TypeError, KeyError, IndexError) as exc:
                 if trace_collector is not None:
-                    trace_collector.mark_response_started(
-                        http_status=getattr(response, "status_code", None),
-                        provider_request_id=provider_request_id_from_headers(
-                            getattr(response, "headers", None)
-                        ),
+                    trace_collector.finish_error(
+                        outcome="provider_error",
+                        error_category="invalid_envelope",
                     )
-                    raw_body = getattr(response, "content", b"")
-                    if isinstance(raw_body, str):
-                        raw_body = raw_body.encode("utf-8")
-                    trace_collector.observe_sync_envelope(raw_body)
-                response.raise_for_status()
-                try:
-                    payload = response.json()
-                    if not isinstance(payload, dict):
-                        raise TypeError("provider envelope must be an object")
-                    choices = payload.get("choices")
-                    if not isinstance(choices, list) or not choices:
-                        raise TypeError("provider choices must be a non-empty list")
-                    choice = choices[0]
-                    if not isinstance(choice, dict):
-                        raise TypeError("provider choice must be an object")
-                    message = choice.get("message")
-                    if not isinstance(message, dict):
-                        raise TypeError("provider message must be an object")
-                except (ValueError, TypeError, KeyError, IndexError) as exc:
-                    if trace_collector is not None:
-                        trace_collector.finish_error(
-                            outcome="provider_error",
-                            error_category="invalid_envelope",
-                        )
-                    raise ProviderOutputError("invalid_json") from exc
+                raise ProviderOutputError("invalid_json") from exc
 
             if trace_collector is not None:
                 trace_collector.observe_metadata(
@@ -467,28 +476,27 @@ class DiscoveryClient:
             tools=tools,
             response_format=response_format,
         )
-        with httpx.Client(timeout=deepseek_timeout(self.settings)) as client:
-            response = client.post(
-                deepseek_chat_url(self.settings),
-                headers=deepseek_request_headers(self.settings),
-                json=body,
-            )
-            response.raise_for_status()
-            try:
-                payload = response.json()
-                if not isinstance(payload, dict):
-                    raise TypeError("provider envelope must be an object")
-                choices = payload.get("choices")
-                if not isinstance(choices, list) or not choices:
-                    raise TypeError("provider choices must be a non-empty list")
-                choice = choices[0]
-                if not isinstance(choice, dict):
-                    raise TypeError("provider choice must be an object")
-                message = choice.get("message")
-                if not isinstance(message, dict):
-                    raise TypeError("provider message must be an object")
-            except (ValueError, TypeError, KeyError, IndexError) as exc:
-                raise ProviderOutputError("invalid_json") from exc
+        response = get_deepseek_http_client(self.settings).post(
+            deepseek_chat_url(self.settings),
+            headers=deepseek_request_headers(self.settings),
+            json=body,
+        )
+        response.raise_for_status()
+        try:
+            payload = response.json()
+            if not isinstance(payload, dict):
+                raise TypeError("provider envelope must be an object")
+            choices = payload.get("choices")
+            if not isinstance(choices, list) or not choices:
+                raise TypeError("provider choices must be a non-empty list")
+            choice = choices[0]
+            if not isinstance(choice, dict):
+                raise TypeError("provider choice must be an object")
+            message = choice.get("message")
+            if not isinstance(message, dict):
+                raise TypeError("provider message must be an object")
+        except (ValueError, TypeError, KeyError, IndexError) as exc:
+            raise ProviderOutputError("invalid_json") from exc
         return message
 
 

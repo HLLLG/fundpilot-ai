@@ -27,8 +27,8 @@ def _resolve_project_root() -> Path:
 
 PROJECT_ROOT = _resolve_project_root()
 
-# DeepSeek V4 系列 API 文档：单次输出上限 384K tokens
-DEEPSEEK_MAX_OUTPUT_TOKENS = 384_000
+# Bounded JSON reports use a latency-safe default far below provider ceilings.
+DEEPSEEK_DEFAULT_OUTPUT_TOKENS = 32_768
 DEEPSEEK_API_KEY_MIN_LENGTH = 24
 PLACEHOLDER_DEEPSEEK_KEY_MARKERS = (
     "your-deepseek-key",
@@ -54,8 +54,13 @@ class Settings(BaseSettings):
     deepseek_model: str = "deepseek-v4-pro"
     deepseek_model_fast: str = "deepseek-v4-flash"
     deepseek_timeout_seconds: float = 300
-    deepseek_max_tokens: int = DEEPSEEK_MAX_OUTPUT_TOKENS
-    deepseek_max_tokens_report: int = DEEPSEEK_MAX_OUTPUT_TOKENS
+    # The provider supports a much larger ceiling, but reserving it for every
+    # bounded JSON report increases scheduling latency without improving output.
+    deepseek_max_tokens: int = DEEPSEEK_DEFAULT_OUTPUT_TOKENS
+    deepseek_max_tokens_report: int = DEEPSEEK_DEFAULT_OUTPUT_TOKENS
+    # HTTPX retries only connection establishment failures, never a response
+    # that may already have started and may already be billable.
+    deepseek_connection_retries: int = 2
     news_enabled: bool = True
     news_max_topics: int = 5
     news_per_topic: int = 5
@@ -142,6 +147,12 @@ class Settings(BaseSettings):
     jwt_secret: str = "fundpilot-dev-jwt-secret-change-me-32chars"
     jwt_access_expire_minutes: int = 43_200  # 30 days
     database_url: str | None = None
+    # Cross-worker account write serialization. A bounded wait fails with 503
+    # instead of allowing two stale read-modify-write operations to overlap.
+    portfolio_mutation_lock_timeout_seconds: float = 30.0
+    # ``None`` selects the safe default: enabled for single-process SQLite
+    # development, disabled for MySQL where requests may hit another worker.
+    holdings_memory_cache_enabled: bool | None = None
     factor_ic_publish_token: str | None = None
     # D2 decision-quality snapshots use a dedicated read-only credential.  It
     # is deliberately not shared with JWT or factor snapshot publication.
@@ -187,7 +198,7 @@ class Settings(BaseSettings):
     # 大盘情绪温度计（M1.1）：新高/新低家数（可回测校准）+ 涨跌停/炸板（当日快照）+ 两融环比
     market_breadth_enabled: bool = True
     market_breadth_timeout_seconds: float = 4.0
-    # 盘中赚钱效应准实时刷新与硬守卫资格：默认 5 分钟刷新、10 分钟过期、开盘 5 分钟后才准入。
+    # 盘中赚钱效应准实时刷新与硬守卫资格：默认 5 分钟刷新、连续交易 10 分钟过期、开盘 5 分钟后才准入。
     market_breadth_live_refresh_interval_seconds: int = 300
     market_breadth_live_freshness_seconds: int = 600
     market_breadth_live_guard_delay_minutes: int = 5
@@ -296,6 +307,12 @@ class Settings(BaseSettings):
     @property
     def uses_mysql(self) -> bool:
         return bool(self.database_url and self.database_url.startswith("mysql"))
+
+    @property
+    def resolved_holdings_memory_cache_enabled(self) -> bool:
+        if self.holdings_memory_cache_enabled is not None:
+            return self.holdings_memory_cache_enabled
+        return not self.uses_mysql
 
 
 @lru_cache

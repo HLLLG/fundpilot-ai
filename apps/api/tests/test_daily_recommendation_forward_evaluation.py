@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date, timedelta
 from typing import Any
 
 import pytest
@@ -66,7 +67,7 @@ def test_forward_outcome_uses_exact_trading_horizons_and_excludes_observation_fr
         trade_dates=_TRADE_DATES,
     )
 
-    assert result["metric_status"] == "forward_nav_v1"
+    assert result["metric_status"] == "forward_total_return_v2"
     assert result["event_contract"]["persistence"] == "dynamic_not_persisted"
     assert result["recommendation_count"] == 3
     assert result["eligible_count"] == 2
@@ -98,6 +99,104 @@ def test_forward_outcome_uses_exact_trading_horizons_and_excludes_observation_fr
     assert observation["schema_version"] == "outcome_observation.v1"
     assert observation["observation_id"] == "daily:r1:2:000003:T+1"
     assert observation["observation_at"] == "2026-01-03"
+
+
+def test_forward_outcome_uses_total_return_path_and_no_action_counterfactual() -> None:
+    report = _report(
+        "total-return",
+        "2026-01-02T14:40:00+08:00",
+        [
+            {
+                "fund_code": "000001",
+                "fund_name": "分红样本",
+                "action": "分批加仓",
+                "suggested_position_change_percent": 20,
+                "suggested_position_change_basis": "相对当前持仓",
+            }
+        ],
+    )
+    report["analysis_facts"]["portfolio"]["round_trip_fee_percent"] = 1.0
+    payload = {
+        "data": [
+            {"date": "2026-01-02", "nav": 1.0},
+            # 单位净值除息 10%，官方日增长率为 0%，不能当成 -10% 损失。
+            {"date": "2026-01-03", "nav": 0.9, "daily_growth": 0.0},
+            {"date": "2026-01-04", "nav": 0.909, "daily_growth": 1.0},
+            {"date": "2026-01-05", "nav": 0.91809, "daily_growth": 1.0},
+            {"date": "2026-01-06", "nav": 0.9272709, "daily_growth": 1.0},
+            {"date": "2026-01-07", "nav": 0.936543609, "daily_growth": 1.0},
+        ]
+    }
+
+    result = build_recommendation_outcomes(
+        report,
+        None,
+        horizons=(5,),
+        fetch_nav=lambda *_args, **_kwargs: payload,
+        trade_dates=_TRADE_DATES,
+    )
+
+    outcome = result["items"][0]["by_horizon"]["T+5"]
+    assert outcome["return_percent"] == pytest.approx(4.0604)
+    assert outcome["path_metrics"]["max_adverse_excursion_percent"] == 0.0
+    assert outcome["no_action_counterfactual"]["available"] is True
+    assert outcome["no_action_counterfactual"]["incremental_value_add_percent"] == pytest.approx(
+        3.0604
+    )
+    observation = outcome["outcome_observation"]
+    assert observation["path_metrics"] == outcome["path_metrics"]
+    assert observation["no_action_counterfactual"] == outcome["no_action_counterfactual"]
+
+
+def test_old_frozen_event_never_gains_an_unregistered_t60_outcome() -> None:
+    report = _report(
+        "legacy-v4",
+        "2026-01-02T14:40:00+08:00",
+        [{"fund_code": "000001", "fund_name": "旧事件", "action": "分批加仓"}],
+    )
+    report["decision_contract"] = {
+        "persistence": "persisted",
+        "audit_eligible": True,
+    }
+    report["decision_events"] = [
+        {
+            "schema_version": "decision_event.v2",
+            "event_id": "daily:legacy-v4:0:000001",
+            "recommendation_index": 0,
+            "fund_code": "000001",
+            "evaluation_class": "bullish",
+            "metric_eligible": True,
+            "horizons": [1, 5, 20],
+            "executable_calendar_date": "2026-01-02",
+            "fee_policy": {},
+            "benchmark": {"tier": "unavailable", "status": "unavailable"},
+        }
+    ]
+    payload = {
+        "data": [
+            {
+                "date": (date(2026, 3, 1) + timedelta(days=index)).isoformat(),
+                "nav": 1.0 + index / 100.0,
+            }
+            for index in range(61)
+        ]
+    }
+    report["decision_events"][0]["executable_calendar_date"] = "2026-03-01"
+
+    result = build_recommendation_outcomes(
+        report,
+        None,
+        horizons=(5, 20, 60),
+        fetch_nav=lambda *_args, **_kwargs: payload,
+        trade_dates=_TRADE_DATES,
+        formal_v2_only=True,
+    )
+
+    item = result["items"][0]
+    assert item["by_horizon"]["T+5"]["status"] == "mature"
+    assert item["by_horizon"]["T+60"]["status"] == "not_registered"
+    assert result["by_horizon"]["T+60"]["eligible_count"] == 0
+    assert result["by_horizon"]["T+60"]["mature_count"] == 0
 
 
 def test_forward_outcome_does_not_substitute_latest_nav_for_immature_horizon():

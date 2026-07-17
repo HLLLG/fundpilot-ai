@@ -65,7 +65,7 @@ it("does not misrepresent a load failure as an empty portfolio", () => {
     />,
   );
   expect(screen.getByRole("alert")).toHaveTextContent("持仓服务暂时不可用");
-  expect(screen.queryByText("上传截图，理清你的基金持仓")).not.toBeInTheDocument();
+  expect(screen.queryByText("录入第一笔持仓")).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "重新加载" }));
   expect(retry).toHaveBeenCalledOnce();
 });
@@ -78,7 +78,7 @@ it("shows onboarding only for a confirmed empty portfolio", () => {
       loadState="ready"
     />,
   );
-  expect(screen.getByText("上传截图，理清你的基金持仓")).toBeInTheDocument();
+  expect(screen.getByText("录入第一笔持仓")).toBeInTheDocument();
   expect(screen.getByText(OCR_PRIVACY_COPY.uploadNotice)).toBeInTheDocument();
   expect(screen.queryByText("数据仅本地识别，不上传原始截图")).not.toBeInTheDocument();
 });

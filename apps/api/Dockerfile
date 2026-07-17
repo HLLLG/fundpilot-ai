@@ -40,8 +40,9 @@ ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 ENV FUND_AI_OCR_PRELOAD=false
 ENV PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True
+ENV WEB_CONCURRENCY=2
 
 EXPOSE 8000
 
-# 2 workers + 流式 SSE 走 async（见 async_sse.py），避免长连接占满 worker 导致 holdings 504
-CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+# 2 workers + 流式 SSE 走 async（见 async_sse.py）；worker 数可由部署环境覆盖。
+CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

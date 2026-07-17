@@ -466,6 +466,13 @@ def _seed_amounts_for_new_positions(
 
 
 def apply_parsed_transactions(parsed: list[ParsedTransaction]) -> dict:
+    from app.services.portfolio_mutation_guard import portfolio_mutation_guard
+
+    with portfolio_mutation_guard():
+        return _apply_parsed_transactions_unlocked(parsed)
+
+
+def _apply_parsed_transactions_unlocked(parsed: list[ParsedTransaction]) -> dict:
     """写入交易 → 确认 → 重算并返回持仓。
 
     返回 {"holdings": [...], "inserted": n, "skipped": m, "pending": <仍 pending 条数>}。

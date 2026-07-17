@@ -12,6 +12,7 @@ from app.services.deepseek_http import (
     deepseek_chat_url,
     deepseek_request_headers,
     deepseek_timeout,
+    get_deepseek_http_client,
     format_deepseek_http_error,
 )
 from app.database import get_report, list_report_chat_messages, save_chat_message
@@ -155,7 +156,7 @@ def _iter_stream_completion(
     )
     payload["stream"] = True
 
-    with httpx.stream(
+    with get_deepseek_http_client(settings).stream(
         "POST",
         deepseek_chat_url(settings),
         headers=deepseek_request_headers(settings),

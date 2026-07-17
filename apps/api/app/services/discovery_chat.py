@@ -9,7 +9,13 @@ import httpx
 from app.config import get_settings
 from app.database import get_discovery_report, list_discovery_chat_messages, save_discovery_chat_message
 from app.models import AnalysisMode, DiscoveryChatMessage
-from app.services.deepseek_http import deepseek_chat_url, deepseek_request_headers, deepseek_timeout, format_deepseek_http_error
+from app.services.deepseek_http import (
+    deepseek_chat_url,
+    deepseek_request_headers,
+    deepseek_timeout,
+    format_deepseek_http_error,
+    get_deepseek_http_client,
+)
 from app.services.discovery_chat_guard import (
     format_candidate_pool_whitelist,
     sanitize_discovery_chat_fund_codes,
@@ -109,8 +115,8 @@ def stream_discovery_chat(
 
     assistant_parts: list[str] = []
     try:
-        with httpx.Client(timeout=deepseek_timeout(settings)) as client:
-            with client.stream(
+        client = get_deepseek_http_client(settings)
+        with client.stream(
                 "POST",
                 deepseek_chat_url(settings),
                 headers=deepseek_request_headers(settings),
@@ -120,23 +126,24 @@ def stream_discovery_chat(
                     "temperature": 0.4,
                     "stream": True,
                 },
-            ) as response:
-                response.raise_for_status()
-                for line in response.iter_lines():
-                    if not line or not line.startswith("data: "):
-                        continue
-                    data = line[6:].strip()
-                    if data == "[DONE]":
-                        break
-                    payload = json.loads(data)
-                    delta = (
-                        payload.get("choices", [{}])[0]
-                        .get("delta", {})
-                        .get("content")
-                    )
-                    if delta:
-                        assistant_parts.append(delta)
-                        yield json.dumps({"type": "token", "content": delta}, ensure_ascii=False)
+                timeout=deepseek_timeout(settings),
+        ) as response:
+            response.raise_for_status()
+            for line in response.iter_lines():
+                if not line or not line.startswith("data: "):
+                    continue
+                data = line[6:].strip()
+                if data == "[DONE]":
+                    break
+                payload = json.loads(data)
+                delta = (
+                    payload.get("choices", [{}])[0]
+                    .get("delta", {})
+                    .get("content")
+                )
+                if delta:
+                    assistant_parts.append(delta)
+                    yield json.dumps({"type": "token", "content": delta}, ensure_ascii=False)
     except httpx.HTTPError as exc:
         error_text = format_deepseek_http_error(exc)
         assistant_parts.append(error_text)

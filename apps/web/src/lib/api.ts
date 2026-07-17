@@ -246,6 +246,32 @@ export type OutcomeMetricStats = {
 export type OutcomeMetricSummary = Partial<Record<OutcomeMetricName, OutcomeMetricStats>>;
 export type OutcomeMetricResults = Partial<Record<OutcomeMetricName, OutcomeMetricResult>>;
 
+export type OutcomePathMetrics = {
+  schema_version?: string;
+  available: boolean;
+  basis?: string;
+  sample_days?: number;
+  max_adverse_excursion_percent?: number | null;
+  max_favorable_excursion_percent?: number | null;
+  max_drawdown_percent?: number | null;
+  daily_cvar_95?: {
+    available: boolean;
+    value_percent?: number | null;
+    confidence_level?: number;
+    unavailable_reason?: string | null;
+  };
+  unavailable_reason?: string | null;
+};
+
+export type NoActionCounterfactual = {
+  schema_version?: string;
+  available: boolean;
+  comparator?: "no_action" | string;
+  incremental_value_add_percent?: number | null;
+  hit?: boolean | null;
+  unavailable_reason?: string | null;
+};
+
 export type FrozenFeePolicy = {
   status?: string;
   fee_source?: "user_assumption" | "unavailable" | string;
@@ -285,6 +311,8 @@ export type ReportOutcomeHorizon = {
   gross_excess_hit?: boolean | null;
   net_excess_return_percent?: number | null;
   net_excess_hit?: boolean | null;
+  path_metrics?: OutcomePathMetrics;
+  no_action_counterfactual?: NoActionCounterfactual;
 };
 
 export type ReportOutcomeItem = {
@@ -497,6 +525,8 @@ export type PortfolioRiskMetrics = {
   available: boolean;
   sample_days: number;
   message?: string | null;
+  sample_quality?: "insufficient" | "short_window" | "standard" | string;
+  annualization_reliable?: boolean;
   annualized_return_percent?: number | null;
   annualized_volatility_percent?: number | null;
   sharpe_ratio?: number | null;
@@ -1422,6 +1452,9 @@ export type DiscoveryOutcomeItem = {
   gross_excess_hit?: boolean | null;
   net_excess_return_percent?: number | null;
   net_excess_hit?: boolean | null;
+  path_metrics?: OutcomePathMetrics;
+  no_action_counterfactual?: NoActionCounterfactual;
+  selection_baseline_results?: Record<string, unknown>;
 };
 
 export type OutcomeLegacyReference = {

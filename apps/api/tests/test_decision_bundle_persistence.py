@@ -241,9 +241,9 @@ def test_save_report_atomically_persists_daily_decision_bundle() -> None:
     assert event["source_report_id"] == saved.id
     assert event["portfolio_snapshot_id"] == "daily-snapshot-1"
     assert [(row["horizon_trading_days"], row["status"]) for row in observations] == [
-        (1, "pending"),
         (5, "pending"),
         (20, "pending"),
+        (60, "pending"),
     ]
 
 
@@ -357,19 +357,41 @@ def test_real_daily_settlement_without_invented_source_time_scores_in_snapshot()
     result = build_recommendation_outcomes(
         report_payload,
         None,
-        horizons=(1,),
+        horizons=(5,),
         fetch_nav=lambda *_args, **_kwargs: {
             "data": [
                 {"date": "2026-07-10", "nav": 1.0},
                 {"date": "2026-07-11", "nav": 1.02},
                 {"date": "2026-07-12", "nav": 1.03},
+                {"date": "2026-07-13", "nav": 1.04},
+                {"date": "2026-07-14", "nav": 1.05},
+                {"date": "2026-07-15", "nav": 1.06},
+                {"date": "2026-07-16", "nav": 1.07},
+                {"date": "2026-07-17", "nav": 1.08},
+                {"date": "2026-07-18", "nav": 1.09},
+                {"date": "2026-07-19", "nav": 1.10},
+                {"date": "2026-07-20", "nav": 1.11},
             ]
         },
-        trade_dates=frozenset({"2026-07-10", "2026-07-11", "2026-07-12"}),
+        trade_dates=frozenset(
+            {
+                "2026-07-10",
+                "2026-07-11",
+                "2026-07-12",
+                "2026-07-13",
+                "2026-07-14",
+                "2026-07-15",
+                "2026-07-16",
+                "2026-07-17",
+                "2026-07-18",
+                "2026-07-19",
+                "2026-07-20",
+            }
+        ),
         fetch_benchmark=None,
         formal_v2_only=True,
     )
-    observation = result["items"][0]["by_horizon"]["T+1"][
+    observation = result["items"][0]["by_horizon"]["T+5"][
         "outcome_observation"
     ]
     assert observation["status"] == "mature"
@@ -392,7 +414,7 @@ def test_real_daily_settlement_without_invented_source_time_scores_in_snapshot()
     match = next(
         row
         for row in audit["event_horizon_matches"]
-        if row["horizon_trading_days"] == 1
+        if row["horizon_trading_days"] == 5
     )
     assert match["match_status"] == "matched_terminal"
     assert match["formal_score_status"] == "included"

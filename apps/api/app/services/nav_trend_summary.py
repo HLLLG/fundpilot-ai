@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.models import FundNavHistory, FundNavPoint
+from app.services.fund_factor_nav import total_return_navs_from_points
 
 
 def summarize_nav_history(
@@ -32,14 +33,19 @@ def summarize_nav_history(
     latest = points[-1]
     start = points[0]
 
-    period_change = None
-    if start.nav > 0:
-        period_change = round((latest.nav / start.nav - 1) * 100, 2)
+    total_return_series = total_return_navs_from_points(all_points)
+    total_return_points = total_return_series.points
+    window_start_date = start.date
+    window_return_points = [
+        point for point in total_return_points if point[0] >= window_start_date
+    ]
+
+    period_change = _series_return_percent(window_return_points)
 
     recent_5d_change = None
-    if len(all_points) >= 6 and all_points[-6].nav > 0:
-        # recent_5d 看真实最后 6 点，不被 window 影响
-        recent_5d_change = round((latest.nav / all_points[-6].nav - 1) * 100, 2)
+    if len(total_return_points) >= 6:
+        # recent_5d 看真实最后 6 个有效总收益点，不被 window 影响。
+        recent_5d_change = _series_return_percent(total_return_points[-6:])
 
     distance_from_high = None
     if high_nav > 0:
@@ -74,6 +80,11 @@ def summarize_nav_history(
         "max_drawdown_20d_percent": horizon_20d.get("max_drawdown_percent"),
         "return_60d_percent": horizon_60d.get("return_percent"),
         "max_drawdown_60d_percent": horizon_60d.get("max_drawdown_percent"),
+        "return_series_basis": "total_return_daily_growth_first",
+        "daily_growth_coverage_percent": round(
+            total_return_series.return_coverage * 100.0, 1
+        ),
+        "unit_nav_distance_basis": "official_unit_nav",
         "source": history.source,
         "recent_nav_series": recent_nav_series,
     }
@@ -88,17 +99,20 @@ def _window_return_and_drawdown(
 
     if trading_days <= 0 or len(points) < trading_days + 1:
         return {}
-    window = points[-(trading_days + 1) :]
-    if window[0].nav <= 0:
+    total_return_points = total_return_navs_from_points(points).points
+    if len(total_return_points) < trading_days + 1:
         return {}
-    period_return = (window[-1].nav / window[0].nav - 1) * 100
-    peak = window[0].nav
+    window = total_return_points[-(trading_days + 1) :]
+    if window[0][1] <= 0:
+        return {}
+    period_return = (window[-1][1] / window[0][1] - 1) * 100
+    peak = window[0][1]
     max_drawdown = 0.0
-    for point in window:
-        if point.nav <= 0:
+    for _day, value in window:
+        if value <= 0:
             return {}
-        peak = max(peak, point.nav)
-        max_drawdown = min(max_drawdown, (point.nav / peak - 1) * 100)
+        peak = max(peak, value)
+        max_drawdown = min(max_drawdown, (value / peak - 1) * 100)
     return {
         "return_percent": round(period_return, 2),
         "max_drawdown_percent": round(max_drawdown, 2),
@@ -139,12 +153,19 @@ def _trend_label(
 
 
 def _recent_daily_nav_changes(points: list[FundNavPoint], *, max_days: int = 5) -> list[float]:
+    total_return_points = total_return_navs_from_points(points).points
     changes: list[float] = []
-    start_index = max(1, len(points) - max_days)
-    for index in range(start_index, len(points)):
-        prev = points[index - 1].nav
-        curr = points[index].nav
+    start_index = max(1, len(total_return_points) - max_days)
+    for index in range(start_index, len(total_return_points)):
+        prev = total_return_points[index - 1][1]
+        curr = total_return_points[index][1]
         if prev <= 0:
             continue
         changes.append(round((curr / prev - 1) * 100, 2))
     return changes
+
+
+def _series_return_percent(points: list[tuple[str, float]]) -> float | None:
+    if len(points) < 2 or points[0][1] <= 0:
+        return None
+    return round((points[-1][1] / points[0][1] - 1.0) * 100.0, 2)

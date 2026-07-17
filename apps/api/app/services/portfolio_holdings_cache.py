@@ -4,6 +4,7 @@ from collections import OrderedDict
 from datetime import datetime, timezone
 from threading import RLock
 
+from app.config import get_settings
 from app.request_context import get_request_user_id
 
 _MEMORY: OrderedDict[str, tuple[int, float, dict]] = OrderedDict()
@@ -11,6 +12,10 @@ _GENERATION = 0
 CACHE_TTL_SECONDS = 240.0
 _MEMORY_MAX_ENTRIES = 256
 _MEMORY_LOCK = RLock()
+
+
+def _memory_cache_enabled() -> bool:
+    return get_settings().resolved_holdings_memory_cache_enabled
 
 
 def bump_holdings_cache_generation() -> None:
@@ -33,6 +38,10 @@ def _cache_key() -> str:
 
 
 def get_cached_holdings_response() -> dict | None:
+    # Process memory cannot be invalidated by another Uvicorn worker. MySQL
+    # deployments therefore default to the authoritative fast snapshot read.
+    if not _memory_cache_enabled():
+        return None
     key = _cache_key()
     now = datetime.now(timezone.utc).timestamp()
     with _MEMORY_LOCK:
@@ -48,6 +57,8 @@ def get_cached_holdings_response() -> dict | None:
 
 
 def save_cached_holdings_response(payload: dict, *, expected_generation: int | None = None) -> bool:
+    if not _memory_cache_enabled():
+        return True
     key = _cache_key()
     now = datetime.now(timezone.utc).timestamp()
     with _MEMORY_LOCK:

@@ -341,6 +341,20 @@ def normalize_provider_call_trace(trace: Mapping[str, Any]) -> dict[str, Any]:
     return normalized
 
 
+def attach_provider_call_trace(
+    facts: dict[str, Any],
+    trace: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Attach a validated, body-free provider trace to report facts."""
+
+    pipeline = deepcopy(facts.get("pipeline")) if isinstance(
+        facts.get("pipeline"), Mapping
+    ) else {}
+    pipeline["provider_call_trace"] = normalize_provider_call_trace(trace)
+    facts["pipeline"] = pipeline
+    return facts
+
+
 class ProviderCallTraceCollector:
     """Incrementally collect one trace without retaining sensitive byte bodies."""
 
@@ -641,6 +655,7 @@ class ProviderCallTraceCollector:
 __all__ = [
     "PROVIDER_CALL_TRACE_SCHEMA_VERSION",
     "PROVIDER_CALL_TRACE_USAGE_FIELDS",
+    "attach_provider_call_trace",
     "ProviderCallTraceCollector",
     "ProviderCallTraceError",
     "normalize_provider_call_trace",

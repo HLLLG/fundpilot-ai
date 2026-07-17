@@ -204,7 +204,12 @@ def post_rollout_decision_event_error(
     final_action = event.get("final_action") or event.get("action")
     if not isinstance(final_action, str) or not final_action.strip():
         return "decision_event_final_action_missing"
-    expected_horizons = [1, 5, 20] if decision_kind == "daily" else [5, 20, 60]
+    expected_horizons = (
+        [5, 20, 60]
+        if decision_kind == "discovery"
+        or event.get("policy_version") == "decision_policy.2026-07.v5"
+        else [1, 5, 20]
+    )
     raw_horizons = event.get("horizons")
     if (
         not isinstance(raw_horizons, list)

@@ -4,10 +4,15 @@
 >
 > **维护：** 功能或架构有实质变化时，同步更新「能力清单」「数据流」「API」「目录」「环境变量」。
 
-**文档版本：** 2026-07-16（市场与组合诊断 + 荐基主线、可靠性与证据一致性）
+**文档版本：** 2026-07-17（荐基与日报金融评估 Phase 0+1）
 
 **更新记录：**
+- **轻量服务器 2-worker 升级 + 持仓跨进程锁（2026-07-17，本地实现待部署验收）：** 生产根镜像与 `docker-compose.production.yml` 从单 Uvicorn worker 升级为 `WEB_CONCURRENCY=2`（4 核主机保守默认；项目每个进程内部另有 OCR、行情和分析线程池，不直接拉满 4 worker）。持仓新增、删除、金额调整、交易同步、旧 OCR 直写、自愈清理、板块/净值最终写回统一进入同账户跨进程临界区：MySQL 使用最长 64 字符、无密钥泄露的 `GET_LOCK/RELEASE_LOCK` 命名锁，并为每次持锁建立独立非池化会话，显式释放失败时由关闭连接兜底，worker 崩溃/连接终止后 MySQL 自动释放；本地 SQLite 使用数据库旁的 OS 文件锁，Windows/Linux 均跨进程且随进程退出释放。同 worker 内保留账户 `RLock` 与线程内重入计数，交易同步的嵌套持久化只拿一次数据库锁；锁等待默认 30 秒，超时返回带 `Retry-After: 2` 的可重试 503。非成员行情刷新把“最终重基、最后成员检查、提交”整体放进锁内，关闭检查后到写入前的 TOCTOU 缝隙。MySQL 模式默认关闭进程私有的持仓响应缓存，避免请求轮询到另一 worker 时读到最多 240 秒的旧组合；每次改从权威快照快路径读取。生产/Cloud Compose、根/API Dockerfile、环境变量示例、README 与轻量服务器迁移文档已同步。**验证：** 新增两个真实独立 Python 进程竞争同账户锁、持锁进程被强制终止后接管、MySQL 独立会话获取/释放/超时、嵌套只获取一次、MySQL 禁用进程缓存及部署文件契约测试；API **1175 passed**，Web typecheck、production build、Python `compileall`、Cloud Compose `config --quiet` 与 `git diff --check` 通过。生产 Compose 本机展开仅因未保存服务器专用 `.env.production` 而跳过，部署时由 CI/CD 既有 `config -q` 门禁复验。
+- **持仓读写竞态根治 + 录入文案精简（2026-07-17，本地实现待用户验收）：** 持仓成员资格改为以后端最新日快照为准，`apply-holdings` 从“客户端整表替换”收敛为显式基金 upsert；手动新增、OCR 确认和基金代码修正只提交本次变更，旧标签页不再有权删除它未见过的新持仓。账户级写锁串行化新增、删除、金额调整与交易入账；板块行情刷新、后台刷新和官方净值结算只允许在提交前重读最新成员名单并覆盖行情/结算字段，不能新增、删除或复活成员。交易同步是唯一可追加新成员的后台路径，且只接纳交易链路创建、金额为正的档案，避免普通历史档案复活；板块刷新接口也改为读取服务端持仓，而非信任请求中的完整列表。空持仓页标题改为“录入第一笔持仓”，说明、隐私提示、录入步骤和占位文案同步压缩。**验证：** 新增陈旧刷新不删新增、不复活已删、显式 upsert 保留并发新增、交易首次买入进入非空组合且不复活历史档案等回归；API **1164 passed**，Web **98 files / 433 passed**，typecheck、production build、变更文件 ESLint、Python `compileall` 与 `git diff --check` 通过。全仓 lint 仍会误扫描开发服务器生成的 `.next-dev`，与本次源码无关。
+- **市场情绪午休时钟与提示产品化（2026-07-17，本地实现待用户验收）：** 修复交易时段只按 `09:30–15:00` 连续计算、未排除 `11:30–13:00` 午间休市的问题。大盘情绪的 10 分钟 freshness 现按有效交易分钟计算：午休保留 11:30 上午收盘快照，13:00 后继续累计；若快照在午休前已经落后超过 10 个交易分钟，仍会正确降级。`trading_session` 保持既有 `session_kind` 兼容性，新增 `market_phase=lunch_break` 与 `is_continuous_trading=false`。市场页正常数据不再展示说明卡；异常状态压缩为“快照更新延迟，仅供参考”或“历史快照，仅供参考”，删除重复过期警告、客户端/守卫实现术语和底部说明书式文案。真实源站复核已从截图中的 11:05 更新至 11:30。**验证：** API 聚焦 **5 passed**；Web 聚焦 **7 passed**，typecheck、production build、变更文件 ESLint、Python `compileall` 与 `git diff --check` 通过；全仓 lint 会误扫描开发服务器生成的 `.next-dev`，本次未修改生成文件。
+- **荐基与日报金融评估 Phase 0+1（2026-07-17，本地实现待用户验收）：** 目标统一为“在适当性、流动性、集中度和回撤约束下，最大化费后、风险调整后的预期总收益”。Phase 0 将基金区间收益、趋势和前瞻结果改为官方日增长率优先的总收益指数，避免分红除息产生虚假亏损；修正首日下跌漏记回撤、夏普/索提诺/Alpha 公式，20～59 日年化指标明确低置信；集中度改用当前实际组合市值，成本基准浮亏与历史峰谷最大回撤拆名。Phase 1 注册 `decision_policy.2026-07.v5`、`decision_strategy.post_guard.v2` 和 `strategy_evaluation.2026-07.v1`，新日报/荐基统一 T+5/20/60，记录费后总收益、合同基准超额、MAE/MFE/路径回撤/CVaR、不行动反事实，以及荐基同板块质量优先、低费率、确定性随机候选基线；全部固定 `shadow_record_only`，不自动改动作、Prompt、Guard 或权重。旧日报 T+1 仍可结算但新事件不再创建，汇总也只评价各事件冻结的 horizon；新增字段复用现有不可变 JSON observation，无数据库 schema 迁移。前端展示总收益、路径最不利/最有利、不行动增益与短窗口警告。完整口径见 [FINANCIAL_EVALUATION_PHASE0_1.md](design/FINANCIAL_EVALUATION_PHASE0_1.md)。**验证：** API **1149 passed**；Web **98 files / 431 passed**，typecheck、lint、production build、Python `compileall` 与 `git diff --check` 全通过。
 - **沪深市场情绪口径修复 + 官方基金涨跌分布（2026-07-16，本地实现待用户验收）：** 乐咕赚钱效应明确标为“沪深两市”而非全部A股，补齐停牌家数、交易样本/全样本总数及上涨/下跌/平盘比例；源站“活跃度”继续使用含停牌股分母，页面比例条只比较实际交易样本。原始上涨占比不再冒充历史百分位，新增独立可读广度描述（如 45.07% 显示“分化偏弱”），既有五档 `sentiment_level` 暂保留给确定性守卫，避免无回测改变动作强度。市场页新增中国行情配色的涨跌比例条，以及 `GET /api/diagnostics/fund-return-distribution`：用 AkShare/东财 `fund_open_fund_daily_em` 已公布官方净值在子进程内聚合九档基金日增长率，A/C/E 等份额代码分别计数，响应附净值日期、有效/缺失数、覆盖率、缓存与 stale 回退；不使用全市场盘中估值冒充官方收益。真实 2026-07-16 验证：股票 2,344 涨/2,695 跌/158 平/4 停牌；基金源 23,642 行、21,396 条有效增长率，九档及涨跌平两套合计均守恒。桌面/390px 移动端浏览器验证通过，移动端柱状图只在卡片内部横向滚动。**验证：** API **1104 passed**；Web **99 files / 438 passed**，typecheck、lint、production build、Python `compileall` 与 `git diff --check` 全通过。
+- **DeepSeek 调用链 P0 加固（2026-07-17，已执行）：** 历史失败落库只显示宽泛 `timeout`，同时主流式调用把读取超时硬编码为 30 秒、每次创建独立连接，并按服务商理论上限为报告预留 384K 输出预算，放大了偶发建连和长响应问题。现统一为进程级 HTTPX 连接池，保留 HTTPS 代理环境，仅对尚未建立连接的 `ConnectError/ConnectTimeout` 安全重试 2 次；流式/同步主调用统一遵循 300 秒配置，默认报告输出预算收敛为 32K。失败新增 `connect/read/write/pool_timeout` 精细分类，日报/荐基主流式调用持久化脱敏 `provider_call_trace.v1`（请求/内容/传输信封只存哈希和字节数，不存正文、密钥或异常文本）。页面仍失败的追加根因是 Windows 本地同时残留 3 组 Uvicorn/Python 进程，实际提供 8000 端口的旧 worker 未加载修复，孤儿 worker 又持续并发拉起 AkShare 子进程，诱发 `python.exe 0xc0000142` 弹窗与前置接口阻塞；已清理为单一无热重载实例，并让 `dev.sh`/`dev.ps1` 默认单进程、端口占用时拒绝重复启动，Git Bash 退出时清理完整进程树。真实完整 `/api/analyze/stream` 已在 94.5 秒完成：`deepseek-v4-pro` HTTP 200、4,395 字节、`finish_reason=stop`、报告 `486dba…` 成功落库；API 全量 **1157 passed**，脚本语法/重复启动保护、Python `compileall` 与 `git diff --check` 全通过。
 - **本地 Factor IC 1500 只升级与证据复核补充（2026-07-16，已执行）：** 本地开发数据库已在旧 v1/300 快照之后追加发布 schema v2 快照（snapshot `f99f9ab7…`），因此下述“本地仍保留旧 v1/300 作为升级提示基线”仅记录发布前状态。新快照目标/有效样本均为 1,500，只使用分层同类池；净值有效率 100%，20 日主周期 163 个再平衡截面，覆盖 5/20/60 日。发布后对当前三只持仓实测：广发电子信息传媒股票C、易方达国防军工混合C分别恢复为主动股票/混合同类组的中等置信正向证据，组合中高正向背书由 0% 恢复为 36.7%；华夏中证电网设备主题ETF联接A只有 152 个净值交易日，未达到模型 250 日最低窗口，继续显示“数据不足”是正确降级，不能靠重复重算补齐。PIT 历史尚未积累，故本地快照诚实保持 v2/current-survivors，不冒充严格 v3。
 - **组合风险 / 持仓因子体检核验与 1500 只重算（2026-07-16，本地实现待用户验收）：** 组合风险体检用于基于组合日收益与沪深300同日收益计算波动率、最大回撤、夏普、索提诺、Beta/Alpha 与集中度；当前账户已有 35 个自然日快照，但扣除周末并与指数交易日对齐后只有 19 个有效交易日，距离 20 日最低门槛差 1 日，页面显示“历史快照不足”是正常的 fail-closed 状态，不是计算停摆。持仓因子接口不再固定走旧排行榜 300 只横截面：当前 schema v2/v3 IC 可用且未过期时直接使用分类型研究模型，每只基金只与自己的 peer group 比较，并挂基金级因子可靠性；旧 schema v1/300 只快照明确标记“待升级至1500只”，不再伪装为当前证据。修复 `PortfolioFactorScoresPanel` 把 `loading` 放入请求 effect 依赖、导致请求刚启动就被 cleanup 取消并永久停在“正在拉取”的竞态。已手动执行生产 `Factor IC Refresh` run **29484578932**：2026-07-16 目标 1,500、实际有效 1,499、163 个再平衡期；生产 PIT 历史目前只有 1 个成员快照，不满足严格 v3，按契约诚实生成 schema v2；质量门禁通过并由内部发布接口返回 **`created`**。本地开发数据库与生产库隔离，仍保留旧 v1/300 作为升级提示基线。**验证：** API **1101 passed**；Web **98 files / 437 passed**，typecheck、lint、production build 与 `git diff --check` 全通过。
 - **认证恢复无闪屏 + 盈亏区间口径修复（2026-07-16，本地实现待用户验收）：** 根路由在 `AuthProvider` 恢复已有登录期间不再把暂态 `user=null` 当成匿名用户渲染公开落地页，而是保持品牌化工作台恢复态，认证完成后再进入工作台或公开首页。盈亏分析「本周」从误取快照列表最老 7 条改为有效交易日锚点下的自然周（周一至锚点），本月/今年分别按自然月/自然年且统一排除锚点后的异常快照；跨日组合与上证累计收益、盈亏日历月累计收益统一使用 `∏(1+r)-1` 复利，不再简单相加，空区间也不再回退成当日收益率。走势图纵轴基于组合与指数实际极值计算 1/2/2.5/5×10ⁿ 的整步长，目标约 6 个区间并保留零轴，替代固定 0.75% 导致月/年标签重叠。**本地验证：** API **1099 passed**；Web **97 files / 435 passed**，typecheck、lint、production build 与 Python `compileall`、`git diff --check` 全通过；浏览器刷新首帧实测为「正在恢复工作台」，未再出现公开落地页。
@@ -565,7 +570,7 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | GET | `/api/portfolio/factor-scores` | 持仓因子体检（懒加载）：排行榜横截面 z-score 多因子打分（动量/风险调整/回撤/规模）；响应 `available`、`universe_size`、`funds[]`（`composite_score`/`composite_grade`/`factors{percentile,z,raw}`）；排行榜池 <30 只返回 `available=false` |
 | GET | `/api/portfolio/evidence-overview` | 组合证据总览（懒加载）：每持仓三路量化置信（因子IC/板块信号/风险样本）聚合 → 市值加权背书分布；响应 `available`、`overview{backed_weight_percent,weight_by_level,count_by_level,covered_holdings,summary}`、`holdings[]{evidence}`；三路 best-effort，异常不 500 |
 | DELETE | `/api/portfolio/snapshots` | 清除 `on_or_before`（含）及更早的日快照（运维/重置盈亏历史） |
-| GET | `/api/reports/{id}/outcomes` | 基金估值日 T+1/T+5/T+20 四指标复盘；V2 observation 持久化，终态冲突 409 |
+| GET | `/api/reports/{id}/outcomes` | 基金估值日 T+5/T+20/T+60 总收益、费后/基准、路径风险与不行动反事实复盘；V2 observation 持久化，历史 T+1 兼容，终态冲突 409 |
 | GET | `/api/reports/{id}/rebalance-simulation` | 按报告动作 + 示意金额模拟调仓（缺 `amount_yuan` 时自动补算；超集中度「观察」也会减） |
 
 前端封装：`apps/web/src/lib/api.ts`。
@@ -819,6 +824,9 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | `FUND_AI_DATABASE_URL` | — | 设则使用 MySQL（`mysql://user:pass@host:3306/db`）；否则 SQLite `data/app.db` |
 | `FUND_AI_DB_FALLBACK_SQLITE` | true | MySQL 连接失败时回落 SQLite（本地开发推荐；云库自动暂停冷启动时避免 API 500） |
 | `FUND_AI_MYSQL_SCHEMA_LOCK_TIMEOUT_SECONDS` | 60 | 多个 API 进程同时启动时等待另一进程完成 MySQL schema bootstrap 的秒数，限制 10～300；进程内并发由 single-flight 合并 |
+| `WEB_CONCURRENCY` | 2（生产镜像） | Uvicorn API worker 数；4 核轻量服务器默认 2，本地开发脚本仍启动 1 个 |
+| `FUND_AI_PORTFOLIO_MUTATION_LOCK_TIMEOUT_SECONDS` | 30 | 同账户持仓跨 worker 命名锁等待秒数；超时返回带 `Retry-After` 的 503 |
+| `FUND_AI_HOLDINGS_MEMORY_CACHE_ENABLED` | SQLite true / MySQL false | 是否启用持仓响应进程内缓存；多 worker MySQL 默认关闭以防跨进程旧读 |
 | `FUND_AI_FACTOR_IC_PUBLISH_TOKEN` | — | 因子 IC 发布专用 Token；CloudBase 与 GitHub Secret `FACTOR_IC_PUBLISH_TOKEN` 使用同一随机值，不得复用 JWT/DeepSeek Secret |
 | `FUND_AI_FACTOR_IC_STALE_AFTER_DAYS` | 30 | 因子 IC 快照过期提示阈值；过期仍可读，等待下次有效快照替换 |
 | `FUND_AI_DECISION_QUALITY_READ_TOKEN` | — | 决策质量最新快照内部只读 Token；供 `X-Decision-Quality-Read-Token` 使用，必须独立随机生成，不得复用 JWT、因子发布或 DeepSeek Secret |
@@ -860,7 +868,10 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | `FUND_AI_DEEPSEEK_API_KEY` | — | 无/占位符则离线；校验见 `config.normalize_deepseek_api_key` |
 | `FUND_AI_DEEPSEEK_MODEL` | deepseek-v4-pro | 深度模式模型 |
 | `FUND_AI_DEEPSEEK_MODEL_FAST` | deepseek-v4-flash | 主题摘要、追加提问快速模式及冻结的兼容/实验路径；主报告不使用 |
-| `FUND_AI_DEEPSEEK_TIMEOUT_SECONDS` | 300 | 读超时 |
+| `FUND_AI_DEEPSEEK_TIMEOUT_SECONDS` | 300 | 模型请求连接、读取、写入与连接池等待超时 |
+| `FUND_AI_DEEPSEEK_MAX_TOKENS` | 32768 | 通用模型调用输出预算；避免按服务商理论上限为每次请求预留容量 |
+| `FUND_AI_DEEPSEEK_MAX_TOKENS_REPORT` | 32768 | 日报/荐基结构化 JSON 输出预算 |
+| `FUND_AI_DEEPSEEK_CONNECTION_RETRIES` | 2 | 仅重试建连阶段的 `ConnectError/ConnectTimeout`；已开始响应的请求绝不自动重放 |
 | `FUND_AI_NEWS_ENABLED` | true | 新闻预取总开关；关闭后主报告不取新闻/定期报告，追问链也不注册 Tool |
 | `FUND_AI_NEWS_TOOL_MAX_ROUNDS` | 3 | 深度报告追问 Tool 轮数上限；主报告仅记录 configured 值，实际 executed 恒为 0 |
 | `FUND_AI_NEWS_SOURCES` | eastmoney,cls,announcement,macro | 新闻源；`announcement` 当前仅代表基金定期报告适配器 |

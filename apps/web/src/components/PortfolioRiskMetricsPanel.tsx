@@ -201,6 +201,9 @@ export function PortfolioRiskMetricsPanel() {
         </div>
       ) : (
         <>
+          {metrics.message ? (
+            <InlineNotice tone="warning" message={metrics.message} className="mb-3" />
+          ) : null}
           <div className="risk-metrics-grid">
             {buildItems(metrics).map((item) => (
               <MetricCard key={item.key} item={item} locked={item.pro && !isPro} />

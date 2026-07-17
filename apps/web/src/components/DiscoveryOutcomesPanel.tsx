@@ -121,7 +121,7 @@ export function DiscoveryOutcomesPanel({ reportId }: DiscoveryOutcomesPanelProps
         <div className="mt-4 space-y-3">
           <InlineNotice
             tone="info"
-            message="只评价明确买入动作；关注、观察、等待回调均单列。费用或正式基金合同基准缺失时，对应指标只降低覆盖率，不会被算成失败。"
+            message="只评价明确买入动作，并按日增长率优先的总收益率复盘；关注、观察、等待回调均单列。费用、正式基金合同基准或候选基线缺失时只降低覆盖率，不会被算成失败。"
           />
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {[
@@ -170,6 +170,16 @@ export function DiscoveryOutcomesPanel({ reportId }: DiscoveryOutcomesPanelProps
                       {item.benchmark?.reference_return_percent !== null && item.benchmark?.reference_return_percent !== undefined ? (
                         <span className="rounded-full border border-slate-200 bg-white px-2 py-1 text-slate-600">
                           代理参考 {signedPercent(item.benchmark.reference_return_percent)} · 不计正式
+                        </span>
+                      ) : null}
+                      {item.path_metrics?.available && item.path_metrics.max_adverse_excursion_percent != null ? (
+                        <span className="rounded-full border border-rose-200 bg-rose-50 px-2 py-1 text-rose-800">
+                          路径最不利 {signedPercent(item.path_metrics.max_adverse_excursion_percent)}
+                        </span>
+                      ) : null}
+                      {item.no_action_counterfactual?.available && item.no_action_counterfactual.incremental_value_add_percent != null ? (
+                        <span className="rounded-full border border-violet-200 bg-violet-50 px-2 py-1 text-violet-800">
+                          相对不行动 {signedPercent(item.no_action_counterfactual.incremental_value_add_percent)}
                         </span>
                       ) : null}
                     </div>

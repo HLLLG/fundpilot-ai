@@ -17,11 +17,20 @@ from app.services.benchmark_fee_evaluation import (
     metric_aliases,
     summarize_metrics,
 )
+from app.services.fund_factor_nav import build_total_return_index
+from app.services.outcome_path_metrics import (
+    build_path_metrics,
+    build_strategy_evaluation_policy,
+    evaluate_no_action_counterfactual,
+    summarize_no_action_counterfactuals,
+    summarize_path_metrics,
+    unavailable_path_metrics,
+)
 
 
-DEFAULT_HORIZONS: tuple[int, ...] = (1, 5, 20)
-METRIC_STATUS = "forward_nav_v1"
-METRIC_VERSION = "daily_forward_nav_v1"
+DEFAULT_HORIZONS: tuple[int, ...] = (5, 20, 60)
+METRIC_STATUS = "forward_total_return_v2"
+METRIC_VERSION = "daily_forward_total_return_v2"
 DECISION_EVENT_SCHEMA_VERSION = "decision_event.v1"
 OUTCOME_OBSERVATION_SCHEMA_VERSION = "outcome_observation.v1"
 
@@ -218,6 +227,11 @@ def evaluate_report_recommendations(
             ),
             "metric_contract_version": METRIC_CONTRACT_VERSION,
         },
+        "strategy_evaluation_policy": build_strategy_evaluation_policy(
+            decision_kind="daily",
+            report=report,
+            facts=report.get("analysis_facts") or {},
+        ),
         "evaluation_basis": "official_fund_nav_valuation_dates",
         "report_id": report.get("id"),
         "report_calendar_date": calendar_date,
@@ -320,6 +334,7 @@ def _evaluate_recommendation(
         reason = "invalid_fund_code" if code is None else "invalid_report_date"
         item["skip_reason"] = reason
         for horizon in horizons:
+            registered = _horizon_registered(frozen_event, horizon)
             metrics = evaluate_decision_metrics(
                 gross_return_percent=None,
                 evaluation_class=evaluation_class,
@@ -329,8 +344,16 @@ def _evaluate_recommendation(
             item["by_horizon"][f"T+{horizon}"] = {
                 "status": "invalid",
                 "horizon_trading_days": horizon,
+                "registered": registered,
                 "direction_hit": None,
                 "metrics": metrics,
+                "path_metrics": unavailable_path_metrics(reason),
+                "no_action_counterfactual": evaluate_no_action_counterfactual(
+                    gross_return_percent=None,
+                    evaluation_class=evaluation_class,
+                    recommendation=rec,
+                    fee_policy=fee_policy,
+                ),
                 **metric_aliases(metrics),
                 "skip_reason": reason,
             }
@@ -344,14 +367,21 @@ def _evaluate_recommendation(
         payload = None
         item["provider_error"] = type(exc).__name__
 
-    rows = parse_nav_rows(payload)
+    unit_nav_rows = parse_nav_rows(payload)
+    unit_nav_by_date = dict(unit_nav_rows)
+    total_return_rows, return_series_metadata = parse_total_return_rows(payload)
     baseline_index = next(
-        (index for index, (day, _nav) in enumerate(rows) if day >= execution_date),
+        (
+            index
+            for index, (day, _value) in enumerate(total_return_rows)
+            if day >= execution_date
+        ),
         None,
     )
     if baseline_index is None:
         item["skip_reason"] = "baseline_nav_unavailable"
         for horizon in horizons:
+            registered = _horizon_registered(frozen_event, horizon)
             status = "observation" if evaluation_class == "observation" else "data_unavailable"
             metrics = evaluate_decision_metrics(
                 gross_return_percent=None,
@@ -363,10 +393,18 @@ def _evaluate_recommendation(
                 "status": status,
                 "maturity_status": "data_unavailable",
                 "horizon_trading_days": horizon,
+                "registered": registered,
                 "target_nav_date": None,
                 "available_forward_trading_days": 0,
                 "direction_hit": None,
                 "metrics": metrics,
+                "path_metrics": unavailable_path_metrics("baseline_total_return_unavailable"),
+                "no_action_counterfactual": evaluate_no_action_counterfactual(
+                    gross_return_percent=None,
+                    evaluation_class=evaluation_class,
+                    recommendation=rec,
+                    fee_policy=fee_policy,
+                ),
                 **metric_aliases(metrics),
                 "skip_reason": "baseline_nav_unavailable",
             }
@@ -374,16 +412,48 @@ def _evaluate_recommendation(
         item["assessment"] = "缺少报告时点之后的可成交净值，暂不评价。"
         return item
 
-    baseline_date, baseline_nav = rows[baseline_index]
-    item["baseline_nav"] = round(baseline_nav, 6)
+    baseline_date, baseline_return_index = total_return_rows[baseline_index]
+    baseline_nav = unit_nav_by_date.get(baseline_date)
+    item["baseline_nav"] = round(baseline_nav, 6) if baseline_nav is not None else None
     item["baseline_nav_date"] = baseline_date
-    available_forward_days = max(len(rows) - baseline_index - 1, 0)
+    item["baseline_total_return_index"] = round(baseline_return_index, 8)
+    item["return_series"] = return_series_metadata
+    available_forward_days = max(len(total_return_rows) - baseline_index - 1, 0)
     item["available_forward_trading_days"] = available_forward_days
 
     for horizon in horizons:
         key = f"T+{horizon}"
+        if not _horizon_registered(frozen_event, horizon):
+            metrics = evaluate_decision_metrics(
+                gross_return_percent=None,
+                evaluation_class="observation",
+                fee_policy=fee_policy,
+                benchmark_result=item["benchmark"],
+            )
+            item["by_horizon"][key] = {
+                "status": "not_registered",
+                "maturity_status": "not_registered",
+                "horizon_trading_days": horizon,
+                "registered": False,
+                "target_nav_date": None,
+                "available_forward_trading_days": available_forward_days,
+                "direction_hit": None,
+                "metrics": metrics,
+                "path_metrics": unavailable_path_metrics(
+                    "horizon_not_registered_in_frozen_event"
+                ),
+                "no_action_counterfactual": evaluate_no_action_counterfactual(
+                    gross_return_percent=None,
+                    evaluation_class=evaluation_class,
+                    recommendation=rec,
+                    fee_policy=fee_policy,
+                ),
+                **metric_aliases(metrics),
+                "skip_reason": "horizon_not_registered_in_frozen_event",
+            }
+            continue
         target_index = baseline_index + horizon
-        if target_index >= len(rows):
+        if target_index >= len(total_return_rows):
             metrics = evaluate_decision_metrics(
                 gross_return_percent=None,
                 evaluation_class=evaluation_class,
@@ -395,16 +465,28 @@ def _evaluate_recommendation(
                 "status": status,
                 "maturity_status": "immature",
                 "horizon_trading_days": horizon,
+                "registered": True,
                 "target_nav_date": None,
                 "available_forward_trading_days": available_forward_days,
                 "direction_hit": None,
                 "metrics": metrics,
+                "path_metrics": unavailable_path_metrics("target_total_return_unavailable"),
+                "no_action_counterfactual": evaluate_no_action_counterfactual(
+                    gross_return_percent=None,
+                    evaluation_class=evaluation_class,
+                    recommendation=rec,
+                    fee_policy=fee_policy,
+                ),
                 **metric_aliases(metrics),
             }
             continue
 
-        target_date, target_nav = rows[target_index]
-        change = round((target_nav / baseline_nav - 1.0) * 100.0, 4)
+        target_date, target_return_index = total_return_rows[target_index]
+        target_nav = unit_nav_by_date.get(target_date)
+        change = round(
+            (target_return_index / baseline_return_index - 1.0) * 100.0,
+            4,
+        )
         benchmark_result = evaluate_frozen_benchmark(
             benchmark_spec,
             baseline_date=baseline_date,
@@ -418,6 +500,17 @@ def _evaluate_recommendation(
             fee_policy=fee_policy,
             benchmark_result=benchmark_result,
         )
+        path_metrics = build_path_metrics(
+            total_return_rows,
+            baseline_index=baseline_index,
+            target_index=target_index,
+        )
+        no_action_counterfactual = evaluate_no_action_counterfactual(
+            gross_return_percent=change,
+            evaluation_class=evaluation_class,
+            recommendation=rec,
+            fee_policy=fee_policy,
+        )
         if evaluation_class == "observation":
             status = "observation"
             direction_hit = None
@@ -428,13 +521,17 @@ def _evaluate_recommendation(
             "status": status,
             "maturity_status": "mature",
             "horizon_trading_days": horizon,
-            "target_nav": round(target_nav, 6),
+            "registered": True,
+            "target_nav": round(target_nav, 6) if target_nav is not None else None,
             "target_nav_date": target_date,
+            "target_total_return_index": round(target_return_index, 8),
             "return_percent": change,
             "direction_hit": direction_hit,
             **metric_aliases(metrics),
             "benchmark": benchmark_result,
             "metrics": metrics,
+            "path_metrics": path_metrics,
+            "no_action_counterfactual": no_action_counterfactual,
         }
 
     mature_benchmarks = [
@@ -468,6 +565,27 @@ def parse_nav_rows(payload: object) -> list[tuple[str, float]]:
     return sorted(by_date.items())
 
 
+def parse_total_return_rows(payload: object) -> tuple[list[tuple[str, float]], dict[str, Any]]:
+    rows: object = None
+    if isinstance(payload, dict):
+        rows = payload.get("data") or payload.get("rows")
+    series = build_total_return_index(rows if isinstance(rows, list) else [])
+    valid_transitions = series.daily_return_points + series.nav_ratio_points
+    transition_attempts = valid_transitions + series.invalid_points
+    return series.points, {
+        "basis": "total_return_daily_growth_first",
+        "point_count": len(series.points),
+        "daily_growth_points": series.daily_return_points,
+        "nav_ratio_fallback_points": series.nav_ratio_points,
+        "invalid_points": series.invalid_points,
+        "valid_transition_coverage_percent": (
+            round(valid_transitions / transition_attempts * 100.0, 1)
+            if transition_attempts
+            else 0.0
+        ),
+    }
+
+
 def classify_action(action: str) -> str:
     text = str(action or "").strip()
     if not text:
@@ -483,7 +601,12 @@ def classify_action(action: str) -> str:
 
 def _summarize_horizon(items: list[dict[str, Any]], horizon: int) -> dict[str, Any]:
     key = f"T+{horizon}"
-    eligible = [item for item in items if item["evaluation_class"] in {"bullish", "bearish"}]
+    eligible = [
+        item
+        for item in items
+        if item["evaluation_class"] in {"bullish", "bearish"}
+        and (item.get("by_horizon") or {}).get(key, {}).get("registered") is not False
+    ]
     mature = [
         item
         for item in eligible
@@ -511,6 +634,15 @@ def _summarize_horizon(items: list[dict[str, Any]], horizon: int) -> dict[str, A
     metric_summary = summarize_metrics(
         (item.get("by_horizon") or {}).get(key, {}).get("metrics")
         for item in items
+        if (item.get("by_horizon") or {}).get(key, {}).get("registered") is not False
+    )
+    path_summary = summarize_path_metrics(
+        (item.get("by_horizon") or {}).get(key, {}).get("path_metrics")
+        for item in eligible
+    )
+    no_action_summary = summarize_no_action_counterfactuals(
+        (item.get("by_horizon") or {}).get(key, {}).get("no_action_counterfactual")
+        for item in eligible
     )
     return {
         "horizon_trading_days": horizon,
@@ -529,6 +661,8 @@ def _summarize_horizon(items: list[dict[str, Any]], horizon: int) -> dict[str, A
         "positive_net_return": metric_summary["positive_net_return"],
         "gross_excess": metric_summary["gross_excess"],
         "net_excess": metric_summary["net_excess"],
+        "path_metrics": path_summary,
+        "no_action_counterfactual": no_action_summary,
     }
 
 
@@ -636,6 +770,8 @@ def _attach_observation_contracts(
                 "nav": result.get("target_nav"),
             },
             "metrics": result.get("metrics") or {},
+            "path_metrics": result.get("path_metrics") or {},
+            "no_action_counterfactual": result.get("no_action_counterfactual") or {},
             "benchmark": result.get("benchmark") or item.get("benchmark"),
             "fee_policy": item.get("fee_policy"),
         }
@@ -645,6 +781,25 @@ def _session_kind(report: dict[str, Any]) -> str | None:
     session = ((report.get("analysis_facts") or {}).get("session") or {})
     value = str(session.get("session_kind") or "").strip()
     return value or None
+
+
+def _horizon_registered(
+    frozen_event: dict[str, Any] | None,
+    horizon: int,
+) -> bool:
+    if frozen_event is None:
+        return True
+    registered: set[int] = set()
+    for value in frozen_event.get("horizons") or []:
+        if isinstance(value, bool):
+            continue
+        try:
+            normalized = int(value)
+        except (TypeError, ValueError):
+            continue
+        if normalized > 0:
+            registered.add(normalized)
+    return horizon in registered
 
 
 def _direction_hit(evaluation_class: str, change_percent: float) -> bool:

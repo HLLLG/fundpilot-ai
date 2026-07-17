@@ -20,6 +20,19 @@ from app.services.benchmark_fee_evaluation import (
     metric_aliases,
     summarize_metrics,
 )
+from app.services.fund_factor_nav import build_total_return_index
+from app.services.outcome_path_metrics import (
+    build_path_metrics,
+    build_strategy_evaluation_policy,
+    evaluate_no_action_counterfactual,
+    summarize_no_action_counterfactuals,
+    summarize_path_metrics,
+    unavailable_path_metrics,
+)
+from app.services.selection_baseline_evaluation import (
+    evaluate_candidate_baselines,
+    summarize_candidate_baselines,
+)
 
 _CN_TZ = ZoneInfo("Asia/Shanghai")
 _MARKET_CLOSE = time(15, 0)
@@ -188,6 +201,10 @@ def build_discovery_outcomes(
             benchmark_spec=benchmark_spec,
             benchmark_is_frozen=frozen_event is not None,
             fetch_benchmark=fetch_benchmark,
+            recommendation=rec,
+            baseline_comparators=dict(
+                (frozen_event or {}).get("baseline_comparators") or {}
+            ),
         )
         _attach_item_contract(
             outcome,
@@ -385,6 +402,8 @@ def _outcome_for_fund(
     benchmark_spec: dict[str, Any] | None = None,
     benchmark_is_frozen: bool = False,
     fetch_benchmark: BenchmarkFetcher | None = default_benchmark_fetcher,
+    recommendation: dict[str, Any] | None = None,
+    baseline_comparators: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     executable_date = _resolve_executable_date(since)
     pull_days = _nav_pull_days(executable_date, days)
@@ -403,7 +422,10 @@ def _outcome_for_fund(
             assessment="净值历史暂不可用，该买入建议不进入命中率。",
         )
 
-    points = _normalize_nav_points(rows)
+    unit_nav_points = _normalize_nav_points(rows)
+    unit_nav_by_date = dict(unit_nav_points)
+    total_return_series = build_total_return_index(rows)
+    points = total_return_series.points
     baseline_index = next(
         (index for index, (day, _nav) in enumerate(points) if day >= executable_date),
         None,
@@ -419,10 +441,16 @@ def _outcome_for_fund(
             assessment="执行日起无可用基线净值，该买入建议不进入命中率。",
         )
 
-    baseline_date, baseline_nav = points[baseline_index]
+    baseline_date, baseline_return_index = points[baseline_index]
+    baseline_nav = unit_nav_by_date.get(baseline_date)
     forward_points = points[baseline_index + 1 :]
     observed_forward = len(forward_points)
-    latest_observed = forward_points[-1] if forward_points else (baseline_date, baseline_nav)
+    latest_observed = (
+        forward_points[-1]
+        if forward_points
+        else (baseline_date, baseline_return_index)
+    )
+    latest_observed_nav = unit_nav_by_date.get(latest_observed[0])
     common = {
         "fund_code": code,
         "fund_name": fund_name,
@@ -433,12 +461,25 @@ def _outcome_for_fund(
         "baseline_policy": "first_valuation_on_or_after_executable_date",
         "executable_date": executable_date,
         "baseline_nav_date": baseline_date,
-        "baseline_nav": round(baseline_nav, 4),
+        "baseline_nav": round(baseline_nav, 4) if baseline_nav is not None else None,
+        "baseline_total_return_index": round(baseline_return_index, 8),
         "observed_forward_trading_days": observed_forward,
-        "latest_observed_nav": round(latest_observed[1], 4),
+        "latest_observed_nav": (
+            round(latest_observed_nav, 4)
+            if latest_observed_nav is not None
+            else None
+        ),
         "latest_observed_nav_date": latest_observed[0],
         "maturity_basis": "fund_nav_valuation_dates",
         "fee_policy": dict(fee_policy or {}),
+        "return_series": {
+            "basis": "total_return_daily_growth_first",
+            "point_count": len(points),
+            "daily_growth_points": total_return_series.daily_return_points,
+            "nav_ratio_fallback_points": total_return_series.nav_ratio_points,
+            "invalid_points": total_return_series.invalid_points,
+        },
+        "baseline_comparators": dict(baseline_comparators or {}),
         "benchmark": {
             "tier": str((benchmark_spec or {}).get("tier") or "unavailable"),
             "available": False,
@@ -454,7 +495,10 @@ def _outcome_for_fund(
     }
 
     if observed_forward < days:
-        partial_change = round((latest_observed[1] / baseline_nav - 1) * 100, 2)
+        partial_change = round(
+            (latest_observed[1] / baseline_return_index - 1) * 100,
+            2,
+        )
         metrics = evaluate_decision_metrics(
             gross_return_percent=None,
             evaluation_class="buy",
@@ -469,12 +513,28 @@ def _outcome_for_fund(
             "status": "pending",
             "target_nav_date": None,
             "target_nav": None,
-            "latest_nav": round(latest_observed[1], 4),
+            "latest_nav": (
+                round(latest_observed_nav, 4)
+                if latest_observed_nav is not None
+                else None
+            ),
             "latest_nav_date": latest_observed[0],
             "period_change_percent": None,
             "partial_change_percent": partial_change,
             "direction_aligned": None,
             "metrics": metrics,
+            "path_metrics": unavailable_path_metrics("target_total_return_unavailable"),
+            "no_action_counterfactual": evaluate_no_action_counterfactual(
+                gross_return_percent=None,
+                evaluation_class="buy",
+                recommendation=recommendation,
+                fee_policy=fee_policy,
+            ),
+            "selection_baseline_results": {
+                "status": "pending",
+                "horizon_trading_days": days,
+                "comparators": dict(baseline_comparators or {}),
+            },
             **metric_aliases(metrics),
             "assessment": (
                 f"尚未达到 T+{days}：当前仅有 {observed_forward} 个后续估值日，"
@@ -488,8 +548,13 @@ def _outcome_for_fund(
             ),
         }
 
-    target_date, target_nav = points[baseline_index + days]
-    change = round((target_nav / baseline_nav - 1) * 100, 2)
+    target_index = baseline_index + days
+    target_date, target_return_index = points[target_index]
+    target_nav = unit_nav_by_date.get(target_date)
+    change = round(
+        (target_return_index / baseline_return_index - 1) * 100,
+        2,
+    )
     benchmark_result = evaluate_frozen_benchmark(
         benchmark_spec,
         baseline_date=baseline_date,
@@ -503,6 +568,26 @@ def _outcome_for_fund(
         fee_policy=fee_policy,
         benchmark_result=benchmark_result,
     )
+    path_metrics = build_path_metrics(
+        points,
+        baseline_index=baseline_index,
+        target_index=target_index,
+    )
+    no_action_counterfactual = evaluate_no_action_counterfactual(
+        gross_return_percent=change,
+        evaluation_class="buy",
+        recommendation=recommendation,
+        fee_policy=fee_policy,
+    )
+    selection_baseline_results = evaluate_candidate_baselines(
+        baseline_comparators,
+        execution_date=executable_date,
+        horizon=days,
+        target_net_return_percent=metrics["positive_net_return"].get("value_percent"),
+        fetch_nav=fetch_nav,
+        trading_days=pull_days,
+        fee_policy=fee_policy,
+    )
     aligned = bool(metrics["gross_direction"]["hit"])
     return {
         **common,
@@ -512,7 +597,8 @@ def _outcome_for_fund(
         "skip_reason": None,
         "status": "hit" if aligned else "miss",
         "target_nav_date": target_date,
-        "target_nav": round(target_nav, 4),
+        "target_nav": round(target_nav, 4) if target_nav is not None else None,
+        "target_total_return_index": round(target_return_index, 8),
         # 兼容旧字段，但语义固定为 T+N 目标点，不再指向数据集最后一条。
         "latest_nav": round(target_nav, 4),
         "latest_nav_date": target_date,
@@ -521,6 +607,9 @@ def _outcome_for_fund(
         "direction_aligned": aligned,
         **metric_aliases(metrics),
         "metrics": metrics,
+        "path_metrics": path_metrics,
+        "no_action_counterfactual": no_action_counterfactual,
+        "selection_baseline_results": selection_baseline_results,
         "assessment": _assessment_label(
             action,
             change,
@@ -593,6 +682,19 @@ def _attach_item_contract(
         ),
     )
     item.update(metric_aliases(item["metrics"]))
+    item.setdefault(
+        "path_metrics",
+        unavailable_path_metrics(str(item.get("skip_reason") or "outcome_not_mature")),
+    )
+    item.setdefault(
+        "no_action_counterfactual",
+        evaluate_no_action_counterfactual(
+            gross_return_percent=item.get("period_change_percent"),
+            evaluation_class=str(item.get("action_category") or ""),
+            recommendation=(frozen_event or {}).get("recommendation") or {},
+            fee_policy=fee_policy,
+        ),
+    )
     item["metric_contract_version"] = METRIC_CONTRACT_VERSION
 
 
@@ -621,6 +723,17 @@ def _build_outcome_response(
     coverage = round(mature / eligible * 100, 1) if eligible else None
     hit_rate = round(hits / mature * 100, 1) if mature else None
     metric_summary = summarize_metrics(item.get("metrics") for item in items)
+    path_summary = summarize_path_metrics(
+        item.get("path_metrics") for item in items if item.get("eligible")
+    )
+    no_action_summary = summarize_no_action_counterfactuals(
+        item.get("no_action_counterfactual") for item in items if item.get("eligible")
+    )
+    selection_baseline_summary = summarize_candidate_baselines(
+        item.get("selection_baseline_results")
+        for item in items
+        if item.get("eligible")
+    )
 
     if message is None:
         if mature:
@@ -677,6 +790,11 @@ def _build_outcome_response(
             ),
             "metric_contract_version": METRIC_CONTRACT_VERSION,
         },
+        "strategy_evaluation_policy": build_strategy_evaluation_policy(
+            decision_kind="discovery",
+            report=report,
+            facts=report.get("discovery_facts") or {},
+        ),
         "has_data": mature > 0,
         "days": days,
         "horizon": f"T+{days}",
@@ -698,6 +816,9 @@ def _build_outcome_response(
         "positive_net_return": metric_summary["positive_net_return"],
         "gross_excess": metric_summary["gross_excess"],
         "net_excess": metric_summary["net_excess"],
+        "path_metrics": path_summary,
+        "no_action_counterfactual": no_action_summary,
+        "selection_baselines": selection_baseline_summary,
         "coverage": {
             "total": len(items),
             "eligible": eligible,
@@ -782,6 +903,9 @@ def _build_dynamic_event_contract(
                     "skipped": bool(item.get("skipped")),
                     "skip_reason": item.get("skip_reason"),
                     "metrics": item.get("metrics") or {},
+                    "path_metrics": item.get("path_metrics") or {},
+                    "no_action_counterfactual": item.get("no_action_counterfactual") or {},
+                    "selection_baseline_results": item.get("selection_baseline_results") or {},
                     "benchmark": item.get("benchmark"),
                     "fee_policy": item.get("fee_policy"),
                 }
@@ -844,6 +968,9 @@ def _build_dynamic_event_contract(
                 "skipped": bool(item.get("skipped")),
                 "skip_reason": item.get("skip_reason"),
                 "metrics": item.get("metrics") or {},
+                "path_metrics": item.get("path_metrics") or {},
+                "no_action_counterfactual": item.get("no_action_counterfactual") or {},
+                "selection_baseline_results": item.get("selection_baseline_results") or {},
                 "benchmark": item.get("benchmark"),
                 "fee_policy": item.get("fee_policy"),
             }

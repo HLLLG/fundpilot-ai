@@ -20,8 +20,6 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 import json
 import logging
 
-import httpx
-
 from app.config import get_settings
 from app.services.discovery_candidate_llm import slim_candidate_pool_for_llm
 from app.services.decision_guard_shared import resolve_discovery_escalation
@@ -29,6 +27,7 @@ from app.services.deepseek_http import (
     deepseek_chat_url,
     deepseek_request_headers,
     deepseek_timeout,
+    get_deepseek_http_client,
 )
 
 logger = logging.getLogger(__name__)
@@ -199,7 +198,7 @@ def _llm_judge(
         "task": task_prompt,
     }
     try:
-        response = httpx.post(
+        response = get_deepseek_http_client(settings).post(
             deepseek_chat_url(settings),
             headers=deepseek_request_headers(settings),
             json={

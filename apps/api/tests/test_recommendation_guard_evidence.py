@@ -36,7 +36,8 @@ def _request(*, sector_name: str = "半导体", decision_style: str = "conservat
     profile = InvestorProfile(
         decision_style=decision_style,
         max_drawdown_percent=15,
-        concentration_limit_percent=30,
+        # 本文件验证证据守卫；默认关闭集中度干扰，专门用例会显式调低上限。
+        concentration_limit_percent=100,
         expected_investment_amount=100000,
         avoid_chasing=False,
     )
@@ -561,8 +562,7 @@ def test_deep_reduce_action_produces_matching_default_risk_text() -> None:
         "stale": False,
     }
     request = _request(decision_style="conservative")
-    # 手工构造一个集中度超限的持仓场景：期望投入设小一点让 weight_percent 超过上限。
-    request.profile.expected_investment_amount = 10000
+    # 手工构造真实组合市值口径下的集中度超限场景。
     request.profile.concentration_limit_percent = 5
     facts["market_breadth"] = market_breadth
     facts["holdings"][0]["over_concentration"] = True

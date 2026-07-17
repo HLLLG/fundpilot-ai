@@ -16,9 +16,11 @@ def resolve_weight_denominator(
     *,
     actual_total: float | None = None,
 ) -> float:
-    """持仓占比分母：优先用期望投入额（减仓后仍按计划规模算集中度）。"""
+    """持仓占比分母：有实际持仓时只使用当前组合市值。"""
     if actual_total is None:
         actual_total = sum(holding.holding_amount for holding in holdings)
+    if actual_total > 0:
+        return actual_total
     expected = profile.expected_investment_amount
     if expected is not None and expected > 0:
         return expected
@@ -72,10 +74,16 @@ def evaluate_portfolio_risk(
     if weighted_return <= -abs(profile.max_drawdown_percent):
         alerts.append(
             RiskAlert(
-                code="MAX_DRAWDOWN",
+                code="PORTFOLIO_COST_BASIS_LOSS",
                 severity="high",
-                message=f"组合浮亏 {weighted_return:.2f}% 已触及 {profile.max_drawdown_percent:.1f}% 风险复核线。",
-                evidence="按持仓金额加权，使用与界面一致的估算持有收益率。",
+                message=(
+                    f"组合相对持仓成本浮亏 {weighted_return:.2f}% 已触及 "
+                    f"{profile.max_drawdown_percent:.1f}% 成本浮亏复核线。"
+                ),
+                evidence=(
+                    "按当前持仓金额加权的估算持有收益率；该指标以持仓成本为基准，"
+                    "不是组合历史峰值到谷值的最大回撤。"
+                ),
             )
         )
 
@@ -84,7 +92,7 @@ def evaluate_portfolio_risk(
         if effective_return <= -drawdown_limit:
             alerts.append(
                 RiskAlert(
-                    code="HOLDING_DRAWDOWN",
+                    code="HOLDING_COST_BASIS_LOSS",
                     severity="medium",
                     message=(
                         f"{holding.fund_name} 估算持有收益 {effective_return:.2f}% 已触及"
@@ -99,12 +107,6 @@ def evaluate_portfolio_risk(
             weight = holding.holding_amount / weight_denominator * 100
             if weight > profile.concentration_limit_percent:
                 evidence = f"{holding.holding_amount:.2f} / {weight_denominator:.2f}"
-                if (
-                    profile.expected_investment_amount
-                    and profile.expected_investment_amount > 0
-                    and abs(weight_denominator - total_amount) > 0.01
-                ):
-                    evidence += f"（期望投入 {profile.expected_investment_amount:.2f}）"
                 alerts.append(
                     RiskAlert(
                         code="CONCENTRATION",

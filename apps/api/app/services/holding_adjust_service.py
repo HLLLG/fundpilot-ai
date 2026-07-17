@@ -77,6 +77,16 @@ def _resolve_financials(
 
 
 def adjust_holding_in_portfolio(fund_code: str, payload: AdjustHoldingRequest) -> dict:
+    from app.services.portfolio_mutation_guard import portfolio_mutation_guard
+
+    with portfolio_mutation_guard():
+        return _adjust_holding_in_portfolio_unlocked(fund_code, payload)
+
+
+def _adjust_holding_in_portfolio_unlocked(
+    fund_code: str,
+    payload: AdjustHoldingRequest,
+) -> dict:
     """手动修改结算金额/收益，并重建可持续刷新的估算份额基线。"""
     code = (fund_code or "").strip()
     if not code or code == "000000":

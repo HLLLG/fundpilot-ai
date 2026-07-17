@@ -10,12 +10,14 @@ from typing import Any, Iterable, Literal
 from zoneinfo import ZoneInfo
 
 from app.services.trading_session import resolve_confirm_date
+from app.services.outcome_path_metrics import build_strategy_evaluation_policy
+from app.services.selection_baseline_evaluation import freeze_candidate_baselines
 
 
 DECISION_CONTRACT_SCHEMA_VERSION = "decision_contract.v1"
 DECISION_EVENT_SCHEMA_VERSION = "decision_event.v2"
 OUTCOME_OBSERVATION_SCHEMA_VERSION = "outcome_observation.v2"
-POLICY_VERSION = "decision_policy.2026-07.v4"
+POLICY_VERSION = "decision_policy.2026-07.v5"
 FEE_MODEL_VERSION = "fee_assumption.initial_principal_haircut.v1"
 ANALYSIS_PROMPT_VERSION = "analysis_prompt.2026-07.v4"
 DISCOVERY_PROMPT_VERSION = "discovery_prompt.2026-07.v4"
@@ -24,11 +26,11 @@ DECISION_REPLAY_BUNDLE_SCHEMA_VERSION = "decision_replay_bundle.v1"
 DECISION_VARIANT_MANIFEST_SCHEMA_VERSION = "decision_variant_manifest.v1"
 DECISION_REPLAY_INPUT_SCHEMA_VERSION = "decision_replay_input.v1"
 DECISION_QUALITY_CONTRACT_VERSION = "decision_quality_contract.v1"
-STRATEGY_VERSION = "decision_strategy.post_guard.v1"
+STRATEGY_VERSION = "decision_strategy.post_guard.v2"
 DATA_VERSION = "decision_input_snapshot.v1"
 
 _CN_TZ = ZoneInfo("Asia/Shanghai")
-_DAILY_HORIZONS = (1, 5, 20)
+_DAILY_HORIZONS = (5, 20, 60)
 _DISCOVERY_HORIZONS = (5, 20, 60)
 
 
@@ -422,6 +424,11 @@ def build_report_decision_bundle(
             else None
         ),
         "frozen_at": decision_at,
+        "strategy_evaluation_policy": build_strategy_evaluation_policy(
+            decision_kind=decision_kind,
+            report=report,
+            facts=facts,
+        ),
     }
     return {
         "contract": contract,
@@ -501,6 +508,11 @@ def _build_events(
     )
     variant_manifest = dict(replay_bundle["variant_manifest"])
     benchmark_by_code = _benchmark_specs(facts)
+    strategy_evaluation_policy = build_strategy_evaluation_policy(
+        decision_kind=decision_kind,
+        report=report,
+        facts=facts,
+    )
     events: list[dict[str, Any]] = []
     for index, recommendation in enumerate(recommendations):
         code = _fund_code(recommendation.get("fund_code"))
@@ -508,6 +520,19 @@ def _build_events(
         evaluation_class = _evaluation_class(action, decision_kind)
         event_id = f"{decision_kind}:{report_id}:{index}:{code or 'invalid'}"
         benchmark = dict(benchmark_by_code.get(code or "") or _benchmark_unavailable())
+        baseline_comparators = (
+            freeze_candidate_baselines(
+                report=report,
+                facts=facts,
+                recommendation=recommendation,
+            )
+            if decision_kind == "discovery"
+            else {
+                "schema_version": "selection_baselines.v1",
+                "status": "not_applicable",
+                "reason": "candidate_selection_baselines_apply_to_discovery_only",
+            }
+        )
         quant_evidence = _freeze_quant_evidence(
             facts,
             decision_kind=decision_kind,
@@ -568,6 +593,8 @@ def _build_events(
             ),
             "benchmark": benchmark,
             "fee_policy": fee_policy,
+            "strategy_evaluation_policy": deepcopy(strategy_evaluation_policy),
+            "baseline_comparators": baseline_comparators,
             # Point-in-time factor evidence is part of the immutable event.  It
             # must never be reconstructed from a newer IC snapshot during
             # outcome evaluation or calibration.

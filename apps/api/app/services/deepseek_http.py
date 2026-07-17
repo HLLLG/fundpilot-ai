@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from threading import Lock
+from urllib.parse import urlsplit
+from urllib.request import getproxies_environment, proxy_bypass_environment
 
 import httpx
 
@@ -33,6 +36,59 @@ def deepseek_timeout(settings: Settings | None = None) -> httpx.Timeout:
     )
 
 
+_CLIENTS_LOCK = Lock()
+_SHARED_CLIENTS: dict[tuple[float, int, str | None], httpx.Client] = {}
+
+
+def _environment_proxy_for(url: str) -> str | None:
+    parsed = urlsplit(url)
+    host = parsed.hostname
+    proxies = getproxies_environment()
+    if not host or proxy_bypass_environment(host, proxies):
+        return None
+    return proxies.get(parsed.scheme.lower()) or proxies.get("all")
+
+
+def get_deepseek_http_client(settings: Settings | None = None) -> httpx.Client:
+    """Return a process-wide client with connection-only retries.
+
+    Authorization remains request-scoped, so rotating a key never leaves the
+    previous credential in a pooled client. HTTPX documents ``Client`` as
+    shareable between threads and ``HTTPTransport(retries=...)`` as retrying
+    only ConnectError/ConnectTimeout.
+    """
+
+    resolved = settings or get_settings()
+    signature = (
+        float(resolved.deepseek_timeout_seconds),
+        max(0, int(resolved.deepseek_connection_retries)),
+        _environment_proxy_for(resolved.deepseek_base_url),
+    )
+    with _CLIENTS_LOCK:
+        existing = _SHARED_CLIENTS.get(signature)
+        if existing is not None and not existing.is_closed:
+            return existing
+        client = httpx.Client(
+            timeout=deepseek_timeout(resolved),
+            transport=httpx.HTTPTransport(
+                retries=signature[1],
+                proxy=signature[2],
+            ),
+        )
+        _SHARED_CLIENTS[signature] = client
+        return client
+
+
+def close_deepseek_http_clients() -> None:
+    """Close pooled provider connections during application shutdown/tests."""
+
+    with _CLIENTS_LOCK:
+        clients = list(_SHARED_CLIENTS.values())
+        _SHARED_CLIENTS.clear()
+    for client in clients:
+        client.close()
+
+
 @dataclass(frozen=True)
 class ProviderFailure:
     """Sanitized failure metadata safe to persist and return to clients."""
@@ -41,6 +97,7 @@ class ProviderFailure:
     message: str
     retryable: bool
     status_code: int | None = None
+    detail_category: str | None = None
 
     def model_dump(self) -> dict[str, object]:
         return asdict(self)
@@ -76,10 +133,20 @@ def classify_deepseek_failure(exc: BaseException) -> ProviderFailure:
             retryable=True,
         )
     if isinstance(exc, httpx.TimeoutException):
+        detail_category = "timeout"
+        if isinstance(exc, httpx.ConnectTimeout):
+            detail_category = "connect_timeout"
+        elif isinstance(exc, httpx.ReadTimeout):
+            detail_category = "read_timeout"
+        elif isinstance(exc, httpx.WriteTimeout):
+            detail_category = "write_timeout"
+        elif isinstance(exc, httpx.PoolTimeout):
+            detail_category = "pool_timeout"
         return ProviderFailure(
             category="timeout",
             message="模型调用超时，已切换为不可执行的离线观察报告。",
             retryable=True,
+            detail_category=detail_category,
         )
     if isinstance(exc, httpx.HTTPStatusError):
         status = exc.response.status_code
@@ -122,6 +189,7 @@ def classify_deepseek_failure(exc: BaseException) -> ProviderFailure:
             category="connection",
             message="无法连接模型服务，已切换为不可执行的离线观察报告。",
             retryable=True,
+            detail_category="connect_error",
         )
     if isinstance(exc, httpx.StreamError):
         return ProviderFailure(

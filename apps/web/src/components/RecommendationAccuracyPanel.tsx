@@ -85,7 +85,7 @@ export function RecommendationAccuracyPanel() {
 
   const horizonEntries = Object.entries(data?.by_horizon ?? {});
   const styles = Object.values(data?.by_style ?? {});
-  const primaryKey = horizonEntries[0]?.[0] ?? "T+1";
+  const primaryKey = horizonEntries[0]?.[0] ?? "T+5";
   const primaryMetrics = data?.metrics ?? data?.by_horizon?.[primaryKey]?.metrics;
 
   return (
@@ -100,7 +100,7 @@ export function RecommendationAccuracyPanel() {
             <StatusPill tone="amber">仅人工复盘</StatusPill>
           </div>
           <p className="mt-1 text-xs leading-5 text-slate-600">
-            按基金自身估值日成熟度评价；同日多份日报只保留最后一版。
+            按基金自身估值日的 T+5/T+20/T+60 总收益率评价；同日多份日报只保留最后一版。
             {data ? ` 当前正式 V2 报告 ${data.formal_v2_report_count ?? 0} 份，选取 ${data.selected_report_count ?? data.report_count ?? 0} 个报告日。` : ""}
           </p>
         </div>

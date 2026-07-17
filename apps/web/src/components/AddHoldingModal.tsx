@@ -171,14 +171,14 @@ export function AddHoldingModal({
             <ChevronLeft size={22} strokeWidth={2.25} />
           </button>
           <h2 id="add-holding-modal-title" className="text-base font-bold text-slate-900">
-            {mode === "manual" ? "新增到持有" : channelCopy.title}
+            {mode === "manual" ? "手动新增" : channelCopy.title}
           </h2>
         </header>
 
         <ol className="workflow-rail" aria-label="持仓导入进度">
-          <li aria-current="step"><span>01</span><strong>截图进入</strong></li>
-          <li><span>02</span><strong>校对数据</strong></li>
-          <li><span>03</span><strong>确认写入</strong></li>
+          <li aria-current="step"><span>01</span><strong>录入基金</strong></li>
+          <li><span>02</span><strong>核对数据</strong></li>
+          <li><span>03</span><strong>保存持仓</strong></li>
         </ol>
 
         {mode === "chooser" ? (
@@ -294,7 +294,7 @@ export function AddHoldingModal({
                     : "bg-[#d9e8ff] text-[#8eb3ef]"
                 } disabled:cursor-not-allowed`}
               >
-                {isSubmitting ? "保存中..." : `完成（${validCount}）`}
+                {isSubmitting ? "保存中..." : `保存（${validCount}）`}
               </button>
             </div>
           </div>
@@ -347,20 +347,20 @@ function ManualEntryCard({
           <ManualRow
             label="基金名称"
             value={entry.fund_name}
-            placeholder="请选择基金代码或名称"
+            placeholder="输入代码或名称"
             onChange={(value) => onChange({ fund_name: value })}
           />
           <ManualRow
             label="持有金额"
             value={entry.holding_amount}
-            placeholder="请输入该基金的持有金额"
+            placeholder="输入金额"
             inputMode="decimal"
             onChange={(value) => onChange({ holding_amount: value })}
           />
           <ManualRow
             label="持有收益"
             value={entry.holding_profit}
-            placeholder="请输入该基金的持有收益"
+            placeholder="选填"
             inputMode="decimal"
             onChange={(value) => onChange({ holding_profit: value })}
           />

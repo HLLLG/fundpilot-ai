@@ -26,15 +26,19 @@ def test_forward_accuracy_is_experimental_and_ineligible_for_tuning(monkeypatch)
     result = recommendation_accuracy.build_recommendation_accuracy(
         limit_reports=30,
         fetch_nav=lambda *_args, **_kwargs: {
-            "data": [
-                {"date": "2026-01-02", "nav": 1.0},
-                {"date": "2026-01-03", "nav": 1.1},
-            ]
-        },
+                "data": [
+                    {"date": "2026-01-02", "nav": 1.0},
+                    {"date": "2026-01-03", "nav": 1.1},
+                    {"date": "2026-01-04", "nav": 1.1},
+                    {"date": "2026-01-05", "nav": 1.1},
+                    {"date": "2026-01-06", "nav": 1.1},
+                    {"date": "2026-01-07", "nav": 1.1},
+                ]
+            },
         trade_dates=frozenset({"2026-01-02", "2026-01-03"}),
     )
 
-    assert result["metric_status"] == "forward_nav_v1"
+    assert result["metric_status"] == "forward_total_return_v2"
     assert result["is_experimental"] is True
     assert result["auto_tuning_eligible"] is False
     assert "不进入自动调参" in result["warning"]
@@ -44,7 +48,7 @@ def test_forward_accuracy_is_experimental_and_ineligible_for_tuning(monkeypatch)
     assert result["legacy_reference"]["eligible_count"] == 1
     assert result["legacy_reference"]["mature_count"] == 1
     assert (
-        result["legacy_reference"]["by_horizon"]["T+1"]["hit_rate_percent"]
+        result["legacy_reference"]["by_horizon"]["T+5"]["hit_rate_percent"]
         == 100.0
     )
 
@@ -64,8 +68,9 @@ def test_only_audited_persisted_v2_events_enter_formal_accuracy(monkeypatch):
                 "event_id": "daily:formal-report:0:000001",
                 "recommendation_index": 0,
                 "fund_code": "000001",
-                "evaluation_class": "bullish",
-                "metric_eligible": True,
+                    "evaluation_class": "bullish",
+                    "metric_eligible": True,
+                    "horizons": [1, 5, 20],
                 "executable_calendar_date": "2026-01-02",
                 "fee_policy": {
                     "status": "available",

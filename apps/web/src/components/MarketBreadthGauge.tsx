@@ -73,13 +73,36 @@ function resolveTone(data: MarketBreadthSignal): "blue" | "green" | "amber" | "r
 function isExpiredIntradaySnapshot(data: MarketBreadthSignal, nowMs = Date.now()): boolean {
   if (
     data.signal_mode !== "intraday" ||
-    data.source_mode === "intraday_final" ||
+    (data.source_mode != null && data.source_mode !== "intraday_live") ||
     !data.as_of_datetime
   ) {
     return false;
   }
   const asOfMs = Date.parse(data.as_of_datetime);
-  return Number.isFinite(asOfMs) && nowMs - asOfMs >= MARKET_BREADTH_INTRADAY_MAX_AGE_MS;
+  if (!Number.isFinite(asOfMs)) {
+    return false;
+  }
+  const sourceDate = data.as_of_datetime.slice(0, 10);
+  const lunchStartMs = Date.parse(`${sourceDate}T11:30:00+08:00`);
+  const lunchEndMs = Date.parse(`${sourceDate}T13:00:00+08:00`);
+  const lunchOverlapMs = Math.max(
+    0,
+    Math.min(nowMs, lunchEndMs) - Math.max(asOfMs, lunchStartMs),
+  );
+  return nowMs - asOfMs - lunchOverlapMs >= MARKET_BREADTH_INTRADAY_MAX_AGE_MS;
+}
+
+function isLunchBreakSnapshot(data: MarketBreadthSignal, nowMs = Date.now()): boolean {
+  if (data.decision_status === "eligible_lunch_break") {
+    return true;
+  }
+  if (data.signal_mode !== "intraday" || !data.as_of_datetime) {
+    return false;
+  }
+  const sourceDate = data.as_of_datetime.slice(0, 10);
+  const lunchStartMs = Date.parse(`${sourceDate}T11:30:00+08:00`);
+  const lunchEndMs = Date.parse(`${sourceDate}T13:00:00+08:00`);
+  return nowMs >= lunchStartMs && nowMs < lunchEndMs;
 }
 
 function Metric({ label, value }: { label: string; value: string }) {
@@ -213,20 +236,24 @@ export function MarketBreadthGauge({ compact = false }: MarketBreadthGaugeProps)
   const intradayExpired = isExpiredIntradaySnapshot(data);
   const backendStale = data.stale === true || data.freshness_status === "stale";
   const isStale = backendStale || intradayExpired;
-  const sourceLabel = data.source_mode
-    ? SOURCE_LABEL[data.source_mode]
-    : isIntraday
-      ? "盘中准实时"
-      : "收盘历史口径";
+  const lunchBreakSnapshot = isLunchBreakSnapshot(data);
+  const sourceLabel = lunchBreakSnapshot
+    ? "午间快照"
+    : data.source_mode
+      ? SOURCE_LABEL[data.source_mode]
+      : isIntraday
+        ? "盘中准实时"
+        : "收盘历史口径";
   const decisionEligible = data.decision_eligible === true && !isStale;
-  const decisionLabel = decisionEligible ? "数据可参与当前决策" : "数据仅展示，不参与当前决策";
-  const decisionMessage = intradayExpired
-    ? "盘中快照已超过10分钟未更新，客户端已停止将其用于决策。"
+  const decisionNotice = intradayExpired
+    ? "快照更新延迟，仅供参考"
     : backendStale
-      ? "数据已过有效期，守卫不会据此升级动作。"
-      : data.decision_message ??
-        data.decision_status ??
-        "当前口径未被标记为可参与决策。";
+      ? data.source_mode === "previous_close_fallback"
+        ? "历史快照，仅供参考"
+        : "快照已过期，仅供参考"
+      : data.decision_status === "opening_observation"
+        ? "开盘观察期"
+        : "当前快照仅供参考";
   const changeText =
     data.sentiment_level_change != null && data.sentiment_level_change !== 0
       ? data.sentiment_level_change < 0
@@ -260,6 +287,10 @@ export function MarketBreadthGauge({ compact = false }: MarketBreadthGaugeProps)
                 <span className="inline-flex items-center gap-1 text-[var(--brand)]" role="status">
                   <Loader2 className="h-3 w-3 animate-spin" aria-hidden />更新中
                 </span>
+              ) : error && decisionEligible ? (
+                <span className="font-semibold text-amber-700" role="status">
+                  更新延迟
+                </span>
               ) : null}
             </p>
           </div>
@@ -267,30 +298,13 @@ export function MarketBreadthGauge({ compact = false }: MarketBreadthGaugeProps)
         <StatusPill tone={tone}>{data.breadth_tone ?? data.sentiment_level ?? "—"}</StatusPill>
       </div>
 
-      <div
-        className={`mt-3 rounded-xl border px-3 py-2 ${
-          decisionEligible
-            ? "border-emerald-200 bg-emerald-50/80"
-            : "border-amber-200 bg-amber-50/80"
-        }`}
-        data-testid="market-breadth-decision-status"
-      >
-        <div
-          className={`text-xs font-bold ${decisionEligible ? "text-emerald-800" : "text-amber-800"}`}
+      {!decisionEligible ? (
+        <p
+          className="mt-3 inline-flex rounded-full bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800 ring-1 ring-amber-200"
+          data-testid="market-breadth-decision-status"
+          role="status"
         >
-          {decisionLabel}
-        </div>
-        <p className="mt-0.5 text-xs leading-5 text-slate-600">{decisionMessage}</p>
-      </div>
-
-      {isStale ? (
-        <p className="mt-2 text-xs font-semibold text-amber-700" role="status">
-          数据已过期，继续展示上次有效快照，但不会用于动作升级。
-        </p>
-      ) : null}
-      {error ? (
-        <p className="mt-2 text-xs text-amber-700" role="status">
-          本次更新失败，正在显示上次数据。
+          {decisionNotice}
         </p>
       ) : null}
 
@@ -355,10 +369,6 @@ export function MarketBreadthGauge({ compact = false }: MarketBreadthGaugeProps)
           ) : null}
         </div>
       </details>
-
-      <p className="mt-3 text-xs leading-5 text-slate-500">
-        乐咕活跃度包含停牌股分母；比例条仅比较实际交易的上涨、下跌与平盘样本。盘中每5分钟更新；过期或回退数据不参与强守卫。
-      </p>
 
       {!compact ? <FundReturnDistributionPanel /> : null}
     </section>

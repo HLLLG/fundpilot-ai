@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 import sqlite3
 import threading
@@ -246,6 +247,48 @@ def _open_mysql() -> DbConnection:
     _thread_local.mysql_conn = conn
     _thread_local.mysql_connection_key = connection_key
     return DbConnection(conn, "mysql", pooled=True)
+
+
+@contextmanager
+def open_dedicated_mysql_session(
+    *,
+    read_timeout_seconds: float = 35.0,
+) -> Iterator[DbConnection]:
+    """Open a short-lived, non-pooled MySQL session for session-scoped state.
+
+    MySQL named locks belong to a server session rather than a transaction.
+    The normal thread-local connection pool must therefore not be used: a
+    failed release could otherwise leak a lock into an unrelated later
+    request. Closing this dedicated connection is the final release guarantee.
+
+    This deliberately does not fall back to SQLite. A deployment configured
+    for MySQL must fail closed instead of acquiring a lock in a different
+    store from the one that will receive the protected writes.
+    """
+    settings = get_settings()
+    if not settings.uses_mysql or not settings.database_url:
+        raise RuntimeError("MySQL dedicated session requested without MySQL configured")
+
+    import pymysql
+
+    raw = pymysql.connect(
+        **(
+            _parse_mysql_url(settings.database_url)
+            | {
+                "connect_timeout": 10,
+                "read_timeout": max(5, int(math.ceil(read_timeout_seconds))),
+                "write_timeout": 10,
+                "autocommit": True,
+            }
+        ),
+    )
+    connection = DbConnection(raw, "mysql", pooled=False)
+    try:
+        yield connection
+    finally:
+        # Closing the server session releases every GET_LOCK() it owns, even
+        # when RELEASE_LOCK() failed because the connection became unhealthy.
+        connection.close()
 
 
 def initialize_database_connection() -> None:

@@ -12,16 +12,14 @@ from app.services.deepseek_client import _build_chat_payload
 from app.services.deepseek_http import (
     deepseek_chat_url,
     deepseek_request_headers,
+    deepseek_timeout,
+    get_deepseek_http_client,
 )
 from app.services.provider_call_trace import (
     ProviderCallTraceCollector,
     provider_request_id_from_headers,
 )
 from app.services.report_chat import _parse_stream_line
-
-# 流式路径：chunk 间最大空闲 30s（总耗时不受此限）
-_STREAM_READ_TIMEOUT_SECONDS = 30.0
-
 
 def stream_chat_completion(
     *,
@@ -55,20 +53,14 @@ def stream_chat_completion(
     if trace_collector is not None:
         trace_collector.start_request(payload)
 
-    timeout = httpx.Timeout(
-        connect=10.0,
-        read=_STREAM_READ_TIMEOUT_SECONDS,
-        write=10.0,
-        pool=10.0,
-    )
-
     try:
-        with httpx.stream(
+        client = get_deepseek_http_client(settings)
+        with client.stream(
             "POST",
             deepseek_chat_url(settings),
             headers=deepseek_request_headers(settings),
             json=payload,
-            timeout=timeout,
+            timeout=deepseek_timeout(settings),
         ) as response:
             if trace_collector is not None:
                 trace_collector.mark_response_started(

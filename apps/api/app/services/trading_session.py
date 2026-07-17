@@ -7,6 +7,8 @@ from app.services.trade_calendar_cache import get_trade_date_set
 
 CN_TZ = ZoneInfo("Asia/Shanghai")
 MARKET_OPEN = time(9, 30)
+MORNING_CLOSE = time(11, 30)
+AFTERNOON_OPEN = time(13, 0)
 MARKET_CLOSE = time(15, 0)
 PRE_CLOSE_FOCUS = time(14, 30)
 
@@ -22,29 +24,45 @@ def build_trading_session(when: datetime | None = None) -> dict:
     is_trading_day = _is_trading_day(today)
     close_dt = datetime.combine(today, MARKET_CLOSE, tzinfo=CN_TZ)
     market_open = datetime.combine(today, MARKET_OPEN, tzinfo=CN_TZ)
+    is_lunch_break = bool(
+        is_trading_day
+        and MORNING_CLOSE <= moment.time() < AFTERNOON_OPEN
+    )
     in_session = (
         is_trading_day
         and moment.time() >= MARKET_OPEN
         and moment.time() < MARKET_CLOSE
+        and not is_lunch_break
     )
     minutes_to_close = int((close_dt - moment).total_seconds() // 60) if in_session else None
 
     if not is_trading_day:
         session_kind = "non_trading_day"
+        market_phase = "closed"
         decision_window = "非交易日：结论供复盘与下一交易日预案，勿当作收盘前即时指令。"
     elif moment.time() < MARKET_OPEN:
         session_kind = "trading_day_pre_open"
+        market_phase = "pre_open"
         decision_window = (
             "开盘前：展示上一交易日结算数据；当日板块涨跌与分时将于 9:30 开盘后更新。"
         )
     elif moment.time() >= MARKET_CLOSE:
         session_kind = "trading_day_after_close"
+        market_phase = "after_close"
         decision_window = "已收盘：可复盘当日表现，加仓/减仓指令默认顺延至下一交易日开盘前后再评估。"
     elif moment.time() >= PRE_CLOSE_FOCUS:
         session_kind = "trading_day_pre_close"
+        market_phase = "continuous"
         decision_window = "收盘前决策窗口（约 14:30–15:00）：须结合当日板块涨跌与要闻，优先保守动作。"
+    elif is_lunch_break:
+        # 保留既有 session_kind，避免把同一交易日午间误降为上一交易日口径；
+        # market_phase / is_continuous_trading 为需要精确交易时钟的调用方提供判断。
+        session_kind = "trading_day_intraday"
+        market_phase = "lunch_break"
+        decision_window = "午间休市：使用上午收盘快照，13:00 开市后恢复盘中更新。"
     else:
         session_kind = "trading_day_intraday"
+        market_phase = "continuous"
         decision_window = "盘中：板块涨跌为实时值，持有收益多为昨日结算；收盘前需再次确认当日收益列。"
 
     effective_trade_date = get_effective_trade_date(session_kind=session_kind, today=today)
@@ -57,10 +75,14 @@ def build_trading_session(when: datetime | None = None) -> dict:
         "effective_trade_date": effective_trade_date,
         "is_trading_day": is_trading_day,
         "session_kind": session_kind,
+        "market_phase": market_phase,
+        "is_continuous_trading": in_session,
         "minutes_to_close": minutes_to_close,
         "decision_window": decision_window,
         "market_close_time": "15:00",
         "market_open_time": "09:30",
+        "morning_close_time": "11:30",
+        "afternoon_open_time": "13:00",
     }
 
 

@@ -5,8 +5,6 @@ from collections import Counter
 import json
 import logging
 
-import httpx
-
 from app.config import get_settings
 from app.services.analysis_facts import build_analysis_facts  # noqa: F401  # 测试 patch 此符号
 from app.services.analysis_runtime import AnalysisRuntime
@@ -14,6 +12,7 @@ from app.services.deepseek_http import (
     deepseek_chat_url,
     deepseek_request_headers,
     deepseek_timeout,
+    get_deepseek_http_client,
 )
 from app.models import AnalysisRequest, FundRecommendation, FundSnapshot, RiskAssessment
 from app.services.decision_guard_shared import (
@@ -286,7 +285,7 @@ def _llm_judge(
         "task": task_prompt,
     }
     try:
-        response = httpx.post(
+        response = get_deepseek_http_client(settings).post(
             deepseek_chat_url(settings),
             headers=deepseek_request_headers(settings),
             json={

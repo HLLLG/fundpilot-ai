@@ -52,5 +52,5 @@ it("uses associated labels and keeps an incomplete manual draft un-submittable",
 
   expect(screen.getByRole("textbox", { name: "基金名称" })).toBeInTheDocument();
   expect(screen.getByRole("textbox", { name: "持有金额" })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "完成（0）" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "保存（0）" })).toBeDisabled();
 });
