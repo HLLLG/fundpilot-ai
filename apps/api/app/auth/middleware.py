@@ -9,12 +9,14 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.responses import Response
 
 from app.auth.jwt import decode_access_token
+from app.database import get_auth_principal
 from app.request_context import reset_request_user_id, set_request_user_id
 
 _PUBLIC_EXACT = {
     "/health",
     "/api/auth/register",
     "/api/auth/login",
+    "/api/auth/password-reset/complete",
     "/api/internal/factor-ic-snapshots",
     "/api/internal/factor-ic-universe-snapshots",
     "/api/internal/factor-ic-nav-observations",
@@ -58,9 +60,19 @@ class AuthMiddleware(BaseHTTPMiddleware):
         try:
             payload = decode_access_token(token)
             user_id = int(payload["sub"])
+            token_auth_version = int(payload.get("ver", 1))
         except (jwt.InvalidTokenError, KeyError, ValueError, TypeError):
             return JSONResponse(status_code=401, content={"detail": "登录已失效"})
 
+        principal = get_auth_principal(user_id)
+        if (
+            principal is None
+            or int(principal.get("isDeleted") or 0) == 1
+            or int(principal.get("authVersion") or 1) != token_auth_version
+        ):
+            return JSONResponse(status_code=401, content={"detail": "登录已失效"})
+
+        request.state.auth_principal = principal
         ctx_token = set_request_user_id(user_id)
         try:
             return await call_next(request)

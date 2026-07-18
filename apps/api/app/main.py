@@ -155,6 +155,7 @@ from app.routes.decision_quality import router as decision_quality_router
 from app.routes.factor_evidence import router as factor_evidence_router
 from app.routes.market_diagnostics import router as market_diagnostics_router
 from app.routes.portfolio_risk import router as portfolio_risk_router
+from app.routes.admin_users import router as admin_users_router
 
 
 settings = get_settings()
@@ -175,6 +176,7 @@ app.include_router(factor_evidence_router)
 app.include_router(market_diagnostics_router)
 app.include_router(decision_quality_router)
 app.include_router(portfolio_risk_router)
+app.include_router(admin_users_router)
 
 
 @app.exception_handler(PortfolioMutationLockError)

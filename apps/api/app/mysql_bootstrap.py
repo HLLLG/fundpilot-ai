@@ -12,10 +12,10 @@ from app.services.decision_quality_rollout import (
 )
 
 
-MYSQL_SCHEMA_VERSION = 17
+MYSQL_SCHEMA_VERSION = 18
 
 MYSQL_MIGRATION_GUARD_NAME = "sqlite_to_mysql"
-MYSQL_SCHEMA_LOCK_NAME = "fundpilot.mysql_schema.v17"
+MYSQL_SCHEMA_LOCK_NAME = "fundpilot.mysql_schema.v18"
 MYSQL_MIGRATION_GUARD_TABLE = "decision_quality_migration_guard"
 _MIGRATION_GUARD_STATUSES = frozenset({"in_progress", "complete"})
 _MYSQL_MIGRATION_GUARD_DDL = f"""
@@ -60,6 +60,7 @@ _APPEND_ONLY_TABLES = (
     ("decision_quality_evaluation_snapshots", "decision_quality_snapshots"),
     ("decision_quality_artifact_receipts", "decision_quality_artifact_receipts"),
     ("decision_quality_provider_receipts", "decision_quality_provider_receipts"),
+    ("admin_audit_events", "admin_audit_events"),
 )
 _DECISION_QUALITY_TRANSACTIONAL_TABLES = (
     "decision_quality_input_artifacts",
@@ -797,6 +798,10 @@ def _ensure_mysql_schema_locked(
             updatedAt VARCHAR(64) NOT NULL,
             isDeleted TINYINT NOT NULL DEFAULT 0,
             deletedAt VARCHAR(64) NULL,
+            authVersion INT NOT NULL DEFAULT 1,
+            lastLoginAt VARCHAR(64) NULL,
+            lastActiveAt VARCHAR(64) NULL,
+            passwordUpdatedAt VARCHAR(64) NULL,
             INDEX idx_users_cloudbase (cloudbaseUid)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """,
@@ -1079,6 +1084,35 @@ def _ensure_mysql_schema_locked(
             INDEX idx_factor_ic_universe_member_code (fund_code, snapshot_id),
             INDEX idx_factor_ic_universe_member_type (snapshot_id, fund_type),
             INDEX idx_factor_ic_universe_member_portfolio (canonical_portfolio_key, snapshot_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS password_reset_tokens (
+            id VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
+            userId BIGINT NOT NULL,
+            tokenHash CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            expiresAt VARCHAR(64) NOT NULL,
+            createdAt VARCHAR(64) NOT NULL,
+            usedAt VARCHAR(64) NULL,
+            revokedAt VARCHAR(64) NULL,
+            createdByAdminId BIGINT NOT NULL,
+            UNIQUE KEY uq_password_reset_token_hash (tokenHash),
+            INDEX idx_password_reset_user_active
+                (userId, usedAt, revokedAt, expiresAt)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS admin_audit_events (
+            eventId VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
+            actorUserId BIGINT NULL,
+            targetUserId BIGINT NOT NULL,
+            action VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            reason VARCHAR(500) NOT NULL,
+            beforeJson LONGTEXT NOT NULL,
+            afterJson LONGTEXT NOT NULL,
+            createdAt VARCHAR(64) NOT NULL,
+            INDEX idx_admin_audit_created (createdAt, eventId),
+            INDEX idx_admin_audit_target (targetUserId, createdAt)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """,
         """
@@ -1527,6 +1561,29 @@ def _ensure_mysql_schema_locked(
             f"(v{MYSQL_SCHEMA_VERSION})"
         )
     if callable(fetchone):
+        user_columns = {
+            "authVersion": "INT NOT NULL DEFAULT 1",
+            "lastLoginAt": "VARCHAR(64) NULL",
+            "lastActiveAt": "VARCHAR(64) NULL",
+            "passwordUpdatedAt": "VARCHAR(64) NULL",
+        }
+        for column, definition in user_columns.items():
+            cursor.execute(
+                f"""
+                SELECT 1 FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE()
+                  AND TABLE_NAME = 'users'
+                  AND COLUMN_NAME = '{column}'
+                """
+            )
+            if fetchone() is None:
+                cursor.execute(
+                    f"ALTER TABLE users ADD COLUMN {column} {definition}"
+                )
+        cursor.execute(
+            "UPDATE users SET passwordUpdatedAt = createdAt "
+            "WHERE passwordUpdatedAt IS NULL"
+        )
         transaction_columns = {
             "confirmed_shares": "DOUBLE NULL",
             "fee_yuan": "DOUBLE NULL",

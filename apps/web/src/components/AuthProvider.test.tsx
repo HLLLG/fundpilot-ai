@@ -106,3 +106,26 @@ it("keeps root URL state intact for an authenticated dashboard session", async (
   expect(screen.getByText("工作台")).toBeInTheDocument();
   expect(mocks.replace).not.toHaveBeenCalled();
 });
+
+it("keeps the public password-reset page open for an authenticated session", async () => {
+  mocks.pathname = "/reset-password";
+  mocks.fetchCurrentUser.mockResolvedValue({
+    id: 1,
+    username: "Account User",
+    userAccount: "account@example.com",
+    userRole: "user",
+    bio: "",
+    avatarUrl: "",
+  });
+  render(
+    <AuthProvider>
+      <main>Password reset form</main>
+    </AuthProvider>,
+  );
+
+  await act(async () => {
+    await vi.runAllTimersAsync();
+  });
+  expect(screen.getByText("Password reset form")).toBeInTheDocument();
+  expect(mocks.replace).not.toHaveBeenCalled();
+});

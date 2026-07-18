@@ -7,7 +7,7 @@ import re
 import sqlite3
 from collections import OrderedDict
 from contextlib import contextmanager
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from threading import RLock
 from typing import Any, Iterator, Mapping
@@ -298,10 +298,11 @@ def create_user(
             """
             INSERT INTO users (
                 userRole, username, userAccount, passwordHash,
-                bio, avatarUrl, cloudbaseUid, createdAt, updatedAt, isDeleted, deletedAt
-            ) VALUES (?, ?, ?, ?, '', '', NULL, ?, ?, 0, NULL)
+                bio, avatarUrl, cloudbaseUid, createdAt, updatedAt, isDeleted, deletedAt,
+                authVersion, lastLoginAt, lastActiveAt, passwordUpdatedAt
+            ) VALUES (?, ?, ?, ?, '', '', NULL, ?, ?, 0, NULL, 1, NULL, NULL, ?)
             """,
-            (user_role, username, user_account, password_hash, now, now),
+            (user_role, username, user_account, password_hash, now, now, now),
         )
         connection.commit()
         user_id = int(cursor.lastrowid)
@@ -316,7 +317,8 @@ def get_user_by_id(user_id: int) -> dict[str, object] | None:
         row = connection.execute(
             """
             SELECT id, userRole, username, userAccount, passwordHash,
-                   bio, avatarUrl, cloudbaseUid, createdAt, updatedAt, isDeleted, deletedAt
+                   bio, avatarUrl, cloudbaseUid, createdAt, updatedAt, isDeleted, deletedAt,
+                   authVersion, lastLoginAt, lastActiveAt, passwordUpdatedAt
             FROM users WHERE id = ? AND isDeleted = 0
             """,
             (user_id,),
@@ -331,7 +333,8 @@ def get_user_by_account(user_account: str) -> dict[str, object] | None:
         row = connection.execute(
             """
             SELECT id, userRole, username, userAccount, passwordHash,
-                   bio, avatarUrl, cloudbaseUid, createdAt, updatedAt, isDeleted, deletedAt
+                   bio, avatarUrl, cloudbaseUid, createdAt, updatedAt, isDeleted, deletedAt,
+                   authVersion, lastLoginAt, lastActiveAt, passwordUpdatedAt
             FROM users WHERE userAccount = ?
             """,
             (user_account,),
@@ -339,6 +342,59 @@ def get_user_by_account(user_account: str) -> dict[str, object] | None:
     if row is None:
         return None
     return _row_to_dict(row)
+
+
+def record_successful_login(user_id: int) -> dict[str, object] | None:
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as connection:
+        connection.execute(
+            """
+            UPDATE users
+            SET lastLoginAt = ?, lastActiveAt = ?, updatedAt = updatedAt
+            WHERE id = ? AND isDeleted = 0
+            """,
+            (now, now, user_id),
+        )
+    return get_user_by_id(user_id)
+
+
+def get_auth_principal(
+    user_id: int,
+    *,
+    touch_activity: bool = True,
+) -> dict[str, object] | None:
+    """Load account authority from the database, never from JWT claims."""
+
+    now = datetime.now(timezone.utc)
+    stale_before = (now - timedelta(minutes=15)).isoformat()
+    with _connect() as connection:
+        row = connection.execute(
+            """
+            SELECT id, userRole, username, userAccount, isDeleted,
+                   authVersion, lastLoginAt, lastActiveAt, updatedAt
+            FROM users
+            WHERE id = ?
+            """,
+            (user_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        principal = _row_to_dict(row)
+        if touch_activity and int(principal.get("isDeleted") or 0) == 0:
+            last_active = str(principal.get("lastActiveAt") or "")
+            if not last_active or last_active < stale_before:
+                touched_at = now.isoformat()
+                connection.execute(
+                    """
+                    UPDATE users
+                    SET lastActiveAt = ?
+                    WHERE id = ? AND isDeleted = 0
+                      AND (lastActiveAt IS NULL OR lastActiveAt < ?)
+                    """,
+                    (touched_at, user_id, stale_before),
+                )
+                principal["lastActiveAt"] = touched_at
+    return principal
 
 
 def save_report(report: Report) -> Report:

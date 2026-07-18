@@ -11,7 +11,7 @@ from app.services.decision_quality_rollout import (
 )
 
 
-SCHEMA_VERSION = 17
+SCHEMA_VERSION = 18
 
 # 迁移在应用/后台线程首次建立连接时触发（例如板块快照刷新会 daemon 线程预取资金流历史，
 # 与主线程几乎同时首次打开 sqlite 连接）。同进程内多个线程各自用独立 connection 对同一
@@ -1434,6 +1434,114 @@ def _migrate_prompt_shadow_operations(connection: sqlite3.Connection) -> None:
         )
 
 
+def _migrate_admin_user_management(connection: sqlite3.Connection) -> None:
+    """Add authoritative account state, reset tokens, and immutable admin audit."""
+
+    if not _table_exists(connection, "users"):
+        connection.execute(
+            """
+            CREATE TABLE users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                userRole TEXT NOT NULL DEFAULT 'user',
+                username TEXT NOT NULL,
+                userAccount TEXT NOT NULL UNIQUE,
+                passwordHash TEXT NOT NULL,
+                bio TEXT NOT NULL DEFAULT '',
+                avatarUrl TEXT NOT NULL DEFAULT '',
+                cloudbaseUid TEXT,
+                createdAt TEXT NOT NULL,
+                updatedAt TEXT NOT NULL,
+                isDeleted INTEGER NOT NULL DEFAULT 0,
+                deletedAt TEXT,
+                authVersion INTEGER NOT NULL DEFAULT 1,
+                lastLoginAt TEXT,
+                lastActiveAt TEXT,
+                passwordUpdatedAt TEXT
+            )
+            """
+        )
+    user_columns = (
+        ("authVersion", "INTEGER NOT NULL DEFAULT 1"),
+        ("lastLoginAt", "TEXT"),
+        ("lastActiveAt", "TEXT"),
+        ("passwordUpdatedAt", "TEXT"),
+    )
+    for column, definition in user_columns:
+        if not _column_exists(connection, "users", column):
+            connection.execute(
+                f"ALTER TABLE users ADD COLUMN {column} {definition}"
+            )
+    connection.execute(
+        """
+        UPDATE users
+        SET passwordUpdatedAt = createdAt
+        WHERE passwordUpdatedAt IS NULL
+        """
+    )
+
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS password_reset_tokens (
+            id TEXT PRIMARY KEY,
+            userId INTEGER NOT NULL,
+            tokenHash TEXT NOT NULL UNIQUE,
+            expiresAt TEXT NOT NULL,
+            createdAt TEXT NOT NULL,
+            usedAt TEXT,
+            revokedAt TEXT,
+            createdByAdminId INTEGER NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_password_reset_user_active
+        ON password_reset_tokens (userId, usedAt, revokedAt, expiresAt)
+        """
+    )
+
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS admin_audit_events (
+            eventId TEXT PRIMARY KEY,
+            actorUserId INTEGER,
+            targetUserId INTEGER NOT NULL,
+            action TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            beforeJson TEXT NOT NULL,
+            afterJson TEXT NOT NULL,
+            createdAt TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_admin_audit_created
+        ON admin_audit_events (createdAt, eventId)
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_admin_audit_target
+        ON admin_audit_events (targetUserId, createdAt)
+        """
+    )
+    for event in ("UPDATE", "DELETE"):
+        event_lower = event.lower()
+        _ensure_sqlite_trigger_contract(
+            connection,
+            name=f"admin_audit_events_no_{event_lower}",
+            table="admin_audit_events",
+            stored_sql=f"""
+            CREATE TRIGGER admin_audit_events_no_{event_lower}
+            BEFORE {event} ON admin_audit_events
+            BEGIN
+                SELECT RAISE(ABORT, 'admin_audit_events is append-only');
+            END
+            """,
+        )
+
+
 def run_migrations(connection: sqlite3.Connection) -> None:
     with _MIGRATION_LOCK:
         _run_migrations_locked(connection)
@@ -1452,6 +1560,7 @@ def _run_migrations_locked(connection: sqlite3.Connection) -> None:
         _migrate_decision_quality_receipts(connection)
         _migrate_decision_quality_rollout(connection, initialize=False)
         _migrate_prompt_shadow_operations(connection)
+        _migrate_admin_user_management(connection)
         return
 
     connection.execute(
@@ -1468,7 +1577,11 @@ def _run_migrations_locked(connection: sqlite3.Connection) -> None:
             createdAt TEXT NOT NULL,
             updatedAt TEXT NOT NULL,
             isDeleted INTEGER NOT NULL DEFAULT 0,
-            deletedAt TEXT
+            deletedAt TEXT,
+            authVersion INTEGER NOT NULL DEFAULT 1,
+            lastLoginAt TEXT,
+            lastActiveAt TEXT,
+            passwordUpdatedAt TEXT
         )
         """
     )
@@ -1519,4 +1632,5 @@ def _run_migrations_locked(connection: sqlite3.Connection) -> None:
     _migrate_prompt_shadow_operations(connection)
 
     _ensure_migration_user(connection)
+    _migrate_admin_user_management(connection)
     _set_schema_version(connection, SCHEMA_VERSION)

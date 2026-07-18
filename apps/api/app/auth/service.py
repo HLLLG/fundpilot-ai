@@ -13,6 +13,7 @@ from app.database import (
     create_user,
     get_user_by_account,
     get_user_by_id,
+    record_successful_login,
 )
 
 def _to_public(user: dict) -> UserPublic:
@@ -37,7 +38,9 @@ def register_user(body: RegisterRequest) -> TokenResponse:
         password_hash=hash_password(body.password),
         username=username,
     )
-    access_token, expires_in = create_access_token(int(user["id"]))
+    access_token, expires_in = create_access_token(
+        int(user["id"]), int(user.get("authVersion") or 1)
+    )
     return TokenResponse(
         accessToken=access_token,
         expiresIn=expires_in,
@@ -52,7 +55,12 @@ def login_user(body: LoginRequest) -> TokenResponse:
         raise ValueError("邮箱或密码错误")
     if int(user.get("isDeleted") or 0) == 1:
         raise ValueError("账号已停用")
-    access_token, expires_in = create_access_token(int(user["id"]))
+    user = record_successful_login(int(user["id"]))
+    if user is None:
+        raise ValueError("账号不可用")
+    access_token, expires_in = create_access_token(
+        int(user["id"]), int(user.get("authVersion") or 1)
+    )
     return TokenResponse(
         accessToken=access_token,
         expiresIn=expires_in,

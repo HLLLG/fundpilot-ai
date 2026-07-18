@@ -19,7 +19,15 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "apps" / "api"))
 
 TABLES = [
-    ("users", ["id", "userRole", "username", "userAccount", "passwordHash", "bio", "avatarUrl", "cloudbaseUid", "createdAt", "updatedAt", "isDeleted", "deletedAt"]),
+    (
+        "users",
+        [
+            "id", "userRole", "username", "userAccount", "passwordHash",
+            "bio", "avatarUrl", "cloudbaseUid", "createdAt", "updatedAt",
+            "isDeleted", "deletedAt", "authVersion", "lastLoginAt",
+            "lastActiveAt", "passwordUpdatedAt",
+        ],
+    ),
     ("reports", ["id", "created_at", "payload", "userId"]),
     ("fund_discovery_reports", ["id", "created_at", "payload", "userId"]),
     ("fund_profiles", ["userId", "fund_code", "fund_name", "payload", "updated_at"]),
@@ -51,6 +59,20 @@ TABLES = [
     ("discovery_chat_messages", ["id", "discovery_report_id", "role", "content", "created_at"]),
     ("swing_alert_fired", ["userId", "trade_date", "alert_key", "payload", "fired_at"]),
     ("refresh_tokens", ["id", "userId", "tokenHash", "expiresAt", "createdAt", "revokedAt"]),
+    (
+        "password_reset_tokens",
+        [
+            "id", "userId", "tokenHash", "expiresAt", "createdAt", "usedAt",
+            "revokedAt", "createdByAdminId",
+        ],
+    ),
+    (
+        "admin_audit_events",
+        [
+            "eventId", "actorUserId", "targetUserId", "action", "reason",
+            "beforeJson", "afterJson", "createdAt",
+        ],
+    ),
     ("news_cache", ["cache_key", "payload", "updated_at"]),
     ("sector_spot_cache", ["cache_key", "payload", "updated_at"]),
     (
@@ -240,6 +262,12 @@ class ImmutableMigrationConflict(MigrationError):
 # source row has no confirmed execution truth for them, so migration preserves
 # that uncertainty instead of skipping the entire table.
 SOURCE_COLUMN_DEFAULTS: dict[str, dict[str, str]] = {
+    "users": {
+        "authVersion": "1",
+        "lastLoginAt": "NULL",
+        "lastActiveAt": "NULL",
+        "passwordUpdatedAt": "NULL",
+    },
     "fund_transactions": {
         "confirmed_shares": "NULL",
         "fee_yuan": "NULL",
@@ -305,6 +333,17 @@ IMMUTABLE_TABLES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
         ("userId", "account_id"),
         ("revision", "chain_hash"),
     ),
+    "admin_audit_events": (
+        ("eventId",),
+        (
+            "actorUserId",
+            "targetUserId",
+            "action",
+            "reason",
+            "beforeJson",
+            "afterJson",
+        ),
+    ),
 }
 
 # An immutable identity may be replayed only when the complete migration
@@ -332,6 +371,10 @@ _PROMPT_SHADOW_REQUIRED_TABLES_V16 = (
     "prompt_shadow_budget_counters",
 )
 _NAV_OBSERVATION_REQUIRED_TABLE_V17 = "factor_ic_nav_observations"
+_ADMIN_REQUIRED_TABLES_V18 = (
+    "password_reset_tokens",
+    "admin_audit_events",
+)
 
 
 def parse_mysql_url(url: str) -> dict:
@@ -543,6 +586,15 @@ def _validate_source_decision_quality_contract(
         raise MigrationError(
             "pre-v17 source contains post-v17 NAV observation ledger"
         )
+    observed_admin_tables = {
+        table
+        for table in _ADMIN_REQUIRED_TABLES_V18
+        if _source_table_columns(connection, table) is not None
+    }
+    if source_version < 18 and observed_admin_tables:
+        raise MigrationError(
+            "pre-v18 source contains post-v18 admin-management tables"
+        )
     from app.db_migrations import run_migrations
 
     expected = sqlite3.connect(":memory:")
@@ -618,6 +670,20 @@ def _validate_source_decision_quality_contract(
                     f"schema v{source_version} source NAV observation contract "
                     f"mismatch: {table}"
                 )
+        if source_version >= 18:
+            for table in _ADMIN_REQUIRED_TABLES_V18:
+                actual_contract = _source_sqlite_table_contract(connection, table)
+                expected_contract = _source_sqlite_table_contract(expected, table)
+                if actual_contract is None:
+                    raise MigrationError(
+                        f"schema v{source_version} source is missing required "
+                        f"admin-management table {table}"
+                    )
+                if actual_contract != expected_contract:
+                    raise MigrationError(
+                        f"schema v{source_version} source admin-management "
+                        f"contract mismatch: {table}"
+                    )
     finally:
         expected.close()
     return source_version

@@ -225,7 +225,18 @@ SSH 隧道继续提供最小公网暴露面。
 - 本地验证只可发布到任务隔离的 SQLite 和 loopback endpoint；它只能证明生成、鉴权、POST 与落库代码链路，不代表生产迁移完成。
 - 当前已知诊断（不记录任何 secret/token 值）：旧的成功 run 指向原 CloudBase endpoint，当前 Lighthouse 中没有对应 snapshot。
 
-## 10. 故障定位
+## 10. 初始化管理员账户
+
+管理员必须先通过正常注册创建账户。部署包含 schema v18 的版本后，在服务器显式提升一次：
+
+    cd /srv/fundpilot/repo
+    docker compose --env-file .env.production -f docker-compose.production.yml exec -T \
+      -e FUND_AI_BOOTSTRAP_ADMIN_ACCOUNT='admin@example.com' \
+      api python -m app.admin_bootstrap
+
+命令只接受精确匹配且处于启用状态的现有账户；不会创建用户，也不存在后续按邮箱自动提权。重复执行是幂等的。首次提升会增加 `authVersion`，该账户需要重新登录。不要直接修改 MySQL，也不要把真实管理员邮箱提交到仓库。
+
+## 11. 故障定位
 
 Actions 构建失败时，生产服务器不会执行部署。SSH/rsync 失败时检查四个 Environment secrets。服务器脚本失败时检查：
 

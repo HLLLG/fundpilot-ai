@@ -177,7 +177,7 @@ def test_v14_database_missing_marker_is_not_reinitialized() -> None:
     ).fetchone()[0] == 0
     assert connection.execute(
         "SELECT version FROM schema_meta WHERE id = 1"
-    ).fetchone()[0] == 17
+    ).fetchone()[0] == 18
     with pytest.raises(DecisionQualityIntegrityError, match="marker is missing"):
         get_decision_quality_contract_rollout(connection=connection)
 
@@ -335,6 +335,8 @@ def test_mysql_trigger_duplicate_ddl_is_idempotent_after_exact_recheck() -> None
         "trg_decision_quality_artifact_receipts_no_delete",
         "trg_decision_quality_provider_receipts_no_update",
         "trg_decision_quality_provider_receipts_no_delete",
+        "trg_admin_audit_events_no_update",
+        "trg_admin_audit_events_no_delete",
         "trg_factor_ic_nav_observation_no_update",
         "trg_factor_ic_nav_observation_no_delete",
     }

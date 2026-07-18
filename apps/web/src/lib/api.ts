@@ -8,6 +8,27 @@ import type {
 import type { PortfolioRiskMetrics } from "@/lib/api/portfolioRisk";
 
 export {
+  completePasswordReset,
+  createAdminPasswordResetLink,
+  fetchAdminAuditEvents,
+  fetchAdminUser,
+  fetchAdminUsers,
+  fetchAdminUserSummary,
+  revokeAdminUserSessions,
+  setAdminUserEnabled,
+  updateAdminUser,
+} from "@/lib/api/adminUsers";
+export type {
+  AdminAuditEvent,
+  AdminPage,
+  AdminUserDetail,
+  AdminUserListItem,
+  AdminUserRole,
+  AdminUserStatus,
+  AdminUserSummary,
+} from "@/lib/api/adminUsers";
+
+export {
   fetchEvidenceMaturityStatus,
   fetchFactorIcStatus,
 } from "@/lib/api/factorEvidence";

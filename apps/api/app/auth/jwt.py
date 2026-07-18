@@ -8,7 +8,7 @@ import jwt
 from app.config import get_settings
 
 
-def create_access_token(user_id: int) -> tuple[str, int]:
+def create_access_token(user_id: int, auth_version: int = 1) -> tuple[str, int]:
     settings = get_settings()
     expires_minutes = settings.jwt_access_expire_minutes
     expires_delta = timedelta(minutes=expires_minutes)
@@ -18,6 +18,7 @@ def create_access_token(user_id: int) -> tuple[str, int]:
         "iat": now,
         "exp": now + expires_delta,
         "type": "access",
+        "ver": int(auth_version),
     }
     token = jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
     return token, int(expires_delta.total_seconds())

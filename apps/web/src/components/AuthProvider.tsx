@@ -30,7 +30,8 @@ type AuthContextValue = {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-const PUBLIC_PATHS = new Set(["/", "/login", "/register"]);
+const PUBLIC_PATHS = new Set(["/", "/login", "/register", "/reset-password"]);
+const AUTH_ENTRY_PATHS = new Set(["/login", "/register"]);
 const AUTH_BOOTSTRAP_RETRIES = 5;
 const AUTH_BOOTSTRAP_RETRY_MS = 800;
 
@@ -108,7 +109,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     // 已登录用户在根路径本身就会渲染 Dashboard；不要再次 replace("/")，否则会
     // 清掉日报导航使用的 ?report=... 可恢复状态。登录/注册页仍回到工作台。
-    if (user && isPublic && pathname !== "/") {
+    if (user && AUTH_ENTRY_PATHS.has(pathname)) {
       router.replace("/");
     }
   }, [loading, user, pathname, router]);
