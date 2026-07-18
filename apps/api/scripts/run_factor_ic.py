@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -71,6 +72,10 @@ _V3_CAVEATS = [
     "股票/混合、债券、指数、QDII、FOF 使用同源 NAV 类型因子；指数 tracking 缺精确时点基准时明确标记不足。",
     "当前 PIT 仅冻结历史基金池 membership；NAV 修订时点不可得，普通基金因子统一滞后 1 个交易日、QDII 滞后 2 日，并以下一交易日首个可执行 NAV 计收益，因此置信最高仍为中。",
 ]
+_V3_NAV_OBSERVATION_CAVEATS = [
+    *_V3_CAVEATS[:-1],
+    "NAV features use only values whose immutable collector first_observed_at was no later than each historical anchor; corrections remain append-only and the earliest observed value wins.",
+]
 
 
 class FactorIcRankUnavailable(RuntimeError):
@@ -108,6 +113,108 @@ def _load_pit_snapshot_file(path: str | None) -> list[dict]:
     except (OSError, json.JSONDecodeError, TypeError, ValueError):
         return []
     return _coerce_snapshot_rows(payload)
+
+
+def _canonical_hash(value) -> str:
+    encoded = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _load_nav_observation_file(
+    path: str,
+) -> tuple[dict[str, list[NavPoint]], dict]:
+    from app.services.fund_factor_nav import build_total_return_index
+
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    rows = payload.get("observations")
+    if (
+        payload.get("schema_version") != "factor_ic_nav_observation_history.v1"
+        or payload.get("point_in_time_scope") != "nav_observation_pit"
+        or payload.get("nav_revision_pit") is not True
+        or payload.get("availability_basis") != "collector_first_observed_at"
+        or payload.get("revision_policy") != "first_observed_value"
+        or not isinstance(rows, list)
+        or payload.get("content_hash") != _canonical_hash(rows)
+    ):
+        raise ValueError("NAV first-observation artifact contract is invalid")
+    try:
+        artifact_as_of = datetime.fromisoformat(
+            str(payload.get("as_of") or "").replace("Z", "+00:00")
+        )
+    except ValueError as exc:
+        raise ValueError("NAV first-observation artifact as_of is invalid") from exc
+    if artifact_as_of.tzinfo is None:
+        raise ValueError("NAV first-observation artifact as_of lacks timezone")
+    artifact_as_of = artifact_as_of.astimezone(timezone.utc)
+
+    grouped: dict[str, list[dict]] = {}
+    observed_by_code_day: dict[tuple[str, str], str] = {}
+    seen: set[tuple[str, str]] = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            raise ValueError("NAV first-observation row is not an object")
+        code = str(row.get("fund_code") or "")
+        nav_date = str(row.get("nav_date") or "")[:10]
+        observed_at = str(row.get("first_observed_at") or "")
+        available_at = str(row.get("available_at") or "")
+        if len(code) != 6 or not code.isdigit() or len(nav_date) != 10:
+            raise ValueError("NAV first-observation row identity is invalid")
+        if available_at != observed_at:
+            raise ValueError("NAV availability must equal first_observed_at")
+        try:
+            observed = datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("NAV first_observed_at is invalid") from exc
+        if observed.tzinfo is None or observed.astimezone(timezone.utc) > artifact_as_of:
+            raise ValueError("NAV first_observed_at exceeds artifact as_of")
+        key = (code, nav_date)
+        if key in seen:
+            raise ValueError("NAV first-observation artifact contains a revision duplicate")
+        seen.add(key)
+        grouped.setdefault(code, []).append(
+            {
+                "date": nav_date,
+                "nav": row.get("unit_nav"),
+                "daily_growth": row.get("daily_growth_percent"),
+            }
+        )
+        observed_by_code_day[key] = observed.astimezone(timezone.utc).isoformat()
+
+    panel: dict[str, list[NavPoint]] = {}
+    for code, raw_points in grouped.items():
+        series = build_total_return_index(raw_points)
+        if series.return_coverage >= 0.95:
+            return_source = "first_observed_daily_growth"
+        elif series.return_coverage >= 0.80:
+            return_source = "first_observed_mixed_total_return"
+        else:
+            return_source = "first_observed_nav_ratio"
+        points = [
+            NavPoint(
+                day,
+                value,
+                return_source,
+                observed_by_code_day[(code, day)],
+            )
+            for day, value in series.points
+        ]
+        if points:
+            panel[code] = points
+    metadata = {
+        "fund_code_count": int(payload.get("fund_code_count") or 0),
+        "observation_count": int(payload.get("observation_count") or 0),
+        "loaded_fund_count": len(panel),
+        "as_of": artifact_as_of.isoformat(),
+        "availability_basis": payload["availability_basis"],
+        "revision_policy": payload["revision_policy"],
+    }
+    return panel, metadata
 
 
 def _coerce_snapshot_rows(payload) -> list[dict]:
@@ -184,6 +291,8 @@ def build_ic_report(
     pit_embargo_trading_days: int = 20,
     universe_snapshots: list[dict] | None = None,
     pit_snapshot_file: str | None = None,
+    nav_observation_history_file: str | None = None,
+    nav_observation_panel: dict[str, list[NavPoint]] | None = None,
 ) -> dict:
     """取数 → 组面板 → 跑引擎 → 落盘 report.txt + summary.json，返回结果 dict。
 
@@ -231,6 +340,22 @@ def build_ic_report(
             )
         )
         snapshots = _coerce_snapshot_rows(snapshot_payload)
+    observation_panel = nav_observation_panel or {}
+    observation_metadata: dict = {
+        "loaded_fund_count": len(observation_panel),
+        "observation_count": sum(len(points) for points in observation_panel.values()),
+        "availability_basis": "collector_first_observed_at",
+        "revision_policy": "first_observed_value",
+    }
+    observation_failure_reason = None
+    if nav_observation_panel is None and nav_observation_history_file:
+        try:
+            observation_panel, observation_metadata = _load_nav_observation_file(
+                nav_observation_history_file
+            )
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            observation_panel = {}
+            observation_failure_reason = "nav_observation_history_invalid"
     fetch_items: dict[str, tuple[str, str]] = {
         str(code): (str(code), str(name or "")) for code, name in base_codes
     }
@@ -283,11 +408,12 @@ def build_ic_report(
         forward_days=forward_days,
         factor_lookback=factor_lookback,
     )
-    v3_candidate = None
+    membership_v3_candidate = None
+    observation_v3_candidate = None
     pit_failure_reason = None
     if snapshots:
         try:
-            v3_candidate = build_v3_research_model(
+            membership_v3_candidate = build_v3_research_model(
                 nav_panel=fetched_nav_panel,
                 universe_snapshots=snapshots,
                 current_all_rows=all_rank_rows,
@@ -300,7 +426,37 @@ def build_ic_report(
             )
         except Exception:
             pit_failure_reason = "pit_research_failed"
-    use_v3 = bool(v3_candidate and is_v3_research_model_publishable(v3_candidate))
+        if observation_panel:
+            try:
+                observation_v3_candidate = build_v3_research_model(
+                    nav_panel=observation_panel,
+                    universe_snapshots=snapshots,
+                    current_all_rows=all_rank_rows,
+                    factor_lookback=factor_lookback,
+                    rebalance_step=rebalance_step,
+                    forward_horizons=forward_horizons,
+                    max_snapshot_age_days=pit_max_snapshot_age_days,
+                    walk_forward_folds=pit_walk_forward_folds,
+                    embargo_trading_days=pit_embargo_trading_days,
+                    nav_observation_pit=True,
+                )
+            except Exception:
+                observation_failure_reason = "nav_observation_research_failed"
+    observation_publishable = bool(
+        observation_v3_candidate
+        and is_v3_research_model_publishable(observation_v3_candidate)
+    )
+    membership_publishable = bool(
+        membership_v3_candidate
+        and is_v3_research_model_publishable(membership_v3_candidate)
+    )
+    v3_candidate = (
+        observation_v3_candidate
+        if observation_publishable
+        else membership_v3_candidate
+    )
+    use_v3 = observation_publishable or membership_publishable
+    use_nav_observation_v3 = observation_publishable
     research_model = (
         v3_candidate
         if use_v3
@@ -316,20 +472,29 @@ def build_ic_report(
     from app.services.fund_universe_sampler import universe_coverage
 
     coverage = universe_coverage(all_rank_rows, rank_rows)
-    coverage["effective_nav_portfolios"] = len(nav_panel)
-    coverage["effective_nav_rate"] = round(len(nav_panel) / len(rank_rows), 4) if rank_rows else 0.0
+    coverage_panel = observation_panel if use_nav_observation_v3 else nav_panel
+    coverage["effective_nav_portfolios"] = len(coverage_panel)
+    coverage["effective_nav_rate"] = (
+        round(len(coverage_panel) / len(rank_rows), 4) if rank_rows else 0.0
+    )
     nav_source_counts: dict[str, int] = {}
-    for points in nav_panel.values():
+    for points in coverage_panel.values():
         source = str(points[0].return_source or "injected_or_unknown") if points else "empty"
         nav_source_counts[source] = nav_source_counts.get(source, 0) + 1
     coverage["nav_return_source_counts"] = nav_source_counts
     preferred_count = sum(
         nav_source_counts.get(key, 0)
-        for key in ("daily_growth", "mixed_total_return", "injected_or_unknown")
+        for key in (
+            "daily_growth",
+            "mixed_total_return",
+            "injected_or_unknown",
+            "first_observed_daily_growth",
+            "first_observed_mixed_total_return",
+        )
     )
     coverage["total_return_preferred_portfolios"] = preferred_count
     coverage["total_return_preferred_rate"] = (
-        round(preferred_count / len(nav_panel), 4) if nav_panel else 0.0
+        round(preferred_count / len(coverage_panel), 4) if coverage_panel else 0.0
     )
 
     generated_at = datetime.now(timezone.utc)
@@ -338,7 +503,9 @@ def build_ic_report(
     out_path.mkdir(parents=True, exist_ok=True)
 
     caveats = (
-        _V3_CAVEATS
+        _V3_NAV_OBSERVATION_CAVEATS
+        if use_nav_observation_v3
+        else _V3_CAVEATS
         if use_v3
         else _V2_CAVEATS if universe_mode == "stratified" else _CAVEATS
     )
@@ -369,6 +536,11 @@ def build_ic_report(
                 "pit_max_snapshot_age_days": pit_max_snapshot_age_days,
                 "pit_walk_forward_folds": pit_walk_forward_folds,
                 "pit_embargo_trading_days": pit_embargo_trading_days,
+                "point_in_time_scope": (
+                    "nav_observation_pit"
+                    if use_nav_observation_v3
+                    else "membership_only"
+                ),
             }
         )
 
@@ -397,7 +569,7 @@ def build_ic_report(
         "research_model": research_model,
     }
     if universe_mode == "stratified" and not use_v3:
-        pit = (v3_candidate or {}).get("point_in_time") or {}
+        pit = (membership_v3_candidate or {}).get("point_in_time") or {}
         summary["pit_upgrade"] = {
             "state": "collecting" if snapshots else "unavailable",
             "snapshot_count": len(snapshots),
@@ -410,6 +582,46 @@ def build_ic_report(
                 if snapshots
                 else "pit_snapshot_history_unavailable"
             ),
+        }
+    if universe_mode == "stratified":
+        observation_pit = (
+            (observation_v3_candidate or {}).get("point_in_time") or {}
+        )
+        if use_nav_observation_v3:
+            observation_state = "active"
+            observation_reason = "nav_observation_pit_publishable"
+        elif observation_failure_reason:
+            observation_state = "unavailable"
+            observation_reason = observation_failure_reason
+        elif observation_panel:
+            observation_state = "collecting"
+            observation_reason = "nav_observation_quality_gate_not_met"
+        else:
+            observation_state = "not_started"
+            observation_reason = "nav_observation_history_empty"
+        summary["nav_observation_upgrade"] = {
+            "state": observation_state,
+            "reason": observation_reason,
+            "publishable": use_nav_observation_v3,
+            "loaded_fund_count": int(
+                observation_metadata.get("loaded_fund_count") or 0
+            ),
+            "observation_count": int(
+                observation_metadata.get("observation_count") or 0
+            ),
+            "as_of": observation_metadata.get("as_of"),
+            "availability_basis": "collector_first_observed_at",
+            "revision_policy": "first_observed_value",
+            "effective_anchor_count": int(
+                observation_pit.get("effective_anchor_count") or 0
+            ),
+            "cohort_nav_coverage_rate": float(
+                observation_pit.get("cohort_nav_coverage_rate") or 0
+            ),
+            "observation_timestamp_coverage_rate": float(
+                observation_pit.get("observation_timestamp_coverage_rate") or 0
+            ),
+            "automatic_promotion_allowed": False,
         }
     (out_path / "summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -448,6 +660,13 @@ def main() -> int:
         default=None,
         help="可选的PIT基金池快照JSON；缺失或不足时自动降级v2",
     )
+    parser.add_argument(
+        "--nav-observation-history",
+        dest="nav_observation_history_file",
+        type=str,
+        default=None,
+        help="optional append-only NAV first-observation history JSON",
+    )
     parser.add_argument("--max-workers", type=int, default=8)
     parser.add_argument("--limit-funds", type=int, default=None, help="调试用，限制只数")
     parser.add_argument("--out-dir", type=str, default=_DEFAULT_OUT_DIR)
@@ -473,6 +692,7 @@ def main() -> int:
             pit_walk_forward_folds=args.pit_walk_forward_folds,
             pit_embargo_trading_days=args.pit_embargo_trading_days,
             pit_snapshot_file=args.pit_snapshot_file,
+            nav_observation_history_file=args.nav_observation_history_file,
             max_workers=args.max_workers,
             limit_funds=args.limit_funds,
         )

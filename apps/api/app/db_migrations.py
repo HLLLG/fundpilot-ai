@@ -11,7 +11,7 @@ from app.services.decision_quality_rollout import (
 )
 
 
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17
 
 # 迁移在应用/后台线程首次建立连接时触发（例如板块快照刷新会 daemon 线程预取资金流历史，
 # 与主线程几乎同时首次打开 sqlite 连接）。同进程内多个线程各自用独立 connection 对同一
@@ -580,6 +580,109 @@ def _migrate_factor_ic_universe_snapshots(connection: sqlite3.Connection) -> Non
         ON factor_ic_universe_members (canonical_portfolio_key, snapshot_id)
         """
     )
+
+
+def _migrate_factor_ic_nav_observations(connection: sqlite3.Connection) -> None:
+    """Create the physically append-only NAV first-observation ledger."""
+
+    table_sql = """
+        CREATE TABLE factor_ic_nav_observations (
+            observation_id TEXT PRIMARY KEY,
+            schema_version TEXT NOT NULL,
+            fund_code TEXT NOT NULL,
+            nav_date TEXT NOT NULL,
+            source TEXT NOT NULL,
+            first_observed_at TEXT NOT NULL,
+            available_at TEXT NOT NULL,
+            availability_basis TEXT NOT NULL,
+            unit_nav REAL NOT NULL,
+            cumulative_nav REAL,
+            daily_growth_percent REAL,
+            content_hash TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            source_commit TEXT NOT NULL,
+            source_run_id TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+    """
+    connection.execute(table_sql.replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ", 1))
+    _ensure_sqlite_table_contract(
+        connection,
+        name="factor_ic_nav_observations",
+        stored_sql=table_sql,
+    )
+    index_contracts = (
+        (
+            "uq_factor_ic_nav_observation_content",
+            ("content_hash",),
+            True,
+            """
+                CREATE UNIQUE INDEX uq_factor_ic_nav_observation_content
+                ON factor_ic_nav_observations (content_hash)
+            """,
+        ),
+        (
+            "idx_factor_ic_nav_observation_code_pit",
+            ("fund_code", "nav_date", "first_observed_at"),
+            False,
+            """
+                CREATE INDEX idx_factor_ic_nav_observation_code_pit
+                ON factor_ic_nav_observations
+                    (fund_code, nav_date, first_observed_at)
+            """,
+        ),
+        (
+            "idx_factor_ic_nav_observation_observed",
+            ("first_observed_at", "nav_date"),
+            False,
+            """
+                CREATE INDEX idx_factor_ic_nav_observation_observed
+                ON factor_ic_nav_observations (first_observed_at, nav_date)
+            """,
+        ),
+        (
+            "idx_factor_ic_nav_observation_run",
+            ("source_run_id", "fund_code"),
+            False,
+            """
+                CREATE INDEX idx_factor_ic_nav_observation_run
+                ON factor_ic_nav_observations (source_run_id, fund_code)
+            """,
+        ),
+    )
+    for name, columns, unique, stored_sql in index_contracts:
+        connection.execute(
+            stored_sql.replace(
+                " INDEX ",
+                " INDEX IF NOT EXISTS ",
+                1,
+            )
+        )
+        _ensure_sqlite_index_contract(
+            connection,
+            table="factor_ic_nav_observations",
+            name=name,
+            columns=columns,
+            unique=unique,
+            stored_sql=stored_sql,
+        )
+    for name, event in (
+        ("trg_factor_ic_nav_observation_no_update", "UPDATE"),
+        ("trg_factor_ic_nav_observation_no_delete", "DELETE"),
+    ):
+        trigger_sql = f"""
+            CREATE TRIGGER {name}
+            BEFORE {event} ON factor_ic_nav_observations
+            BEGIN
+                SELECT RAISE(ABORT, 'factor IC NAV observations are append-only');
+            END
+        """
+        _ensure_sqlite_trigger_contract(
+            connection,
+            name=name,
+            table="factor_ic_nav_observations",
+            stored_sql=trigger_sql,
+        )
 
 
 def _migrate_fund_holdings_snapshots(connection: sqlite3.Connection) -> None:
@@ -1342,6 +1445,7 @@ def _run_migrations_locked(connection: sqlite3.Connection) -> None:
         _migrate_fund_primary_sectors_global(connection)
         _migrate_factor_ic_snapshots(connection)
         _migrate_factor_ic_universe_snapshots(connection)
+        _migrate_factor_ic_nav_observations(connection)
         _migrate_fund_holdings_snapshots(connection)
         _migrate_decision_accuracy_v2(connection)
         _migrate_decision_quality_snapshots(connection)
@@ -1406,6 +1510,7 @@ def _run_migrations_locked(connection: sqlite3.Connection) -> None:
     _migrate_fund_primary_sectors_global(connection)
     _migrate_factor_ic_snapshots(connection)
     _migrate_factor_ic_universe_snapshots(connection)
+    _migrate_factor_ic_nav_observations(connection)
     _migrate_fund_holdings_snapshots(connection)
     _migrate_decision_accuracy_v2(connection)
     _migrate_decision_quality_snapshots(connection)

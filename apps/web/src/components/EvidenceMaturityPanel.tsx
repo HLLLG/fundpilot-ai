@@ -27,6 +27,7 @@ const STATUS_CLASS: Record<string, string> = {
   attention: "border-amber-200 bg-amber-50 text-amber-700",
   stale: "border-rose-200 bg-rose-50 text-rose-700",
   unavailable: "border-slate-200 bg-slate-100 text-slate-600",
+  not_started: "border-slate-200 bg-slate-100 text-slate-600",
   degraded: "border-rose-200 bg-rose-50 text-rose-700",
 };
 
@@ -40,6 +41,7 @@ const STATUS_LABEL: Record<string, string> = {
   attention: "需检查",
   stale: "已过期",
   unavailable: "尚不可用",
+  not_started: "尚未开始",
   degraded: "异常",
 };
 
@@ -142,6 +144,7 @@ function AlertRow({ alert }: { alert: EvidenceMaturityAlert }) {
 function MaturityContent({ data }: { data: EvidenceMaturityStatus }) {
   const universe = data.universe;
   const factor = data.factor_ic;
+  const navObservation = data.nav_observation;
   const score = data.decision_score_shadow;
   const quality = data.decision_quality;
   const heartbeatJobs = data.worker.jobs.filter((job) => job.persistent);
@@ -191,6 +194,43 @@ function MaturityContent({ data }: { data: EvidenceMaturityStatus }) {
               {heartbeatJobs.map((job) => job.name).join(" · ")}
             </p>
           ) : null}
+        </article>
+
+        <article className="rounded-xl border border-[var(--line)] bg-white p-3">
+          <div className="flex items-center justify-between gap-2">
+            <h4 className="text-sm font-bold text-slate-900">NAV 首次观测账本</h4>
+            <StatusTag status={navObservation.status} />
+          </div>
+          <dl className="mt-3 grid grid-cols-2 gap-2 text-xs">
+            <div>
+              <dt className="text-slate-500">追加式观测记录</dt>
+              <dd className="mt-0.5 font-bold text-slate-800">
+                <EvidenceValue value={navObservation.observation_count} suffix=" 条" />
+              </dd>
+            </div>
+            <div>
+              <dt className="text-slate-500">覆盖基金</dt>
+              <dd className="mt-0.5 font-bold text-slate-800">
+                <EvidenceValue value={navObservation.fund_count} suffix=" 只" />
+              </dd>
+            </div>
+            <div>
+              <dt className="text-slate-500">真实采集批次</dt>
+              <dd className="mt-0.5 font-bold text-slate-800">
+                <EvidenceValue value={navObservation.capture_run_count} suffix=" 次" />
+              </dd>
+            </div>
+            <div>
+              <dt className="text-slate-500">最近批次基金</dt>
+              <dd className="mt-0.5 font-bold text-slate-800">
+                <EvidenceValue value={navObservation.latest_capture_fund_count} suffix=" 只" />
+              </dd>
+            </div>
+          </dl>
+          <p className="mt-3 text-[11px] leading-5 text-slate-500">
+            这里只记录采集器真实首次看到某个净值的时间；不会把今天抓到的历史净值伪装成当时已知。至少累计
+            {navObservation.minimum_feature_history_points ?? 250} 个真实观测点后，仍须通过全部统计与经济门槛才能人工复核。
+          </p>
         </article>
 
         <article className="rounded-xl border border-[var(--line)] bg-white p-3">

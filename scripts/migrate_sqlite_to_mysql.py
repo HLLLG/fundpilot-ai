@@ -79,6 +79,16 @@ TABLES = [
         ],
     ),
     (
+        "factor_ic_nav_observations",
+        [
+            "observation_id", "schema_version", "fund_code", "nav_date",
+            "source", "first_observed_at", "available_at",
+            "availability_basis", "unit_nav", "cumulative_nav",
+            "daily_growth_percent", "content_hash", "payload",
+            "source_commit", "source_run_id", "created_at",
+        ],
+    ),
+    (
         "fund_transactions",
         [
             "id", "userId", "fund_code", "fund_name", "direction", "amount_yuan",
@@ -250,6 +260,7 @@ IMMUTABLE_TABLES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
         ("snapshot_id", "fund_code"),
         ("content_hash",),
     ),
+    "factor_ic_nav_observations": (("observation_id",), ("content_hash",)),
     "decision_portfolio_snapshots": (("userId", "snapshot_id"), ("content_hash",)),
     "decision_events": (("userId", "event_id"), ("content_hash",)),
     "outcome_observations": (
@@ -320,6 +331,7 @@ _PROMPT_SHADOW_REQUIRED_TABLES_V16 = (
     "prompt_shadow_runs",
     "prompt_shadow_budget_counters",
 )
+_NAV_OBSERVATION_REQUIRED_TABLE_V17 = "factor_ic_nav_observations"
 
 
 def parse_mysql_url(url: str) -> dict:
@@ -520,6 +532,17 @@ def _validate_source_decision_quality_contract(
         raise MigrationError(
             "pre-v16 source contains post-v16 prompt-shadow operational tables"
         )
+    observed_nav_observation_table = (
+        _source_table_columns(
+            connection,
+            _NAV_OBSERVATION_REQUIRED_TABLE_V17,
+        )
+        is not None
+    )
+    if source_version < 17 and observed_nav_observation_table:
+        raise MigrationError(
+            "pre-v17 source contains post-v17 NAV observation ledger"
+        )
     from app.db_migrations import run_migrations
 
     expected = sqlite3.connect(":memory:")
@@ -581,6 +604,20 @@ def _validate_source_decision_quality_contract(
                         f"schema v{source_version} source prompt-shadow contract "
                         f"mismatch: {table}"
                     )
+        if source_version >= 17:
+            table = _NAV_OBSERVATION_REQUIRED_TABLE_V17
+            actual_contract = _source_sqlite_table_contract(connection, table)
+            expected_contract = _source_sqlite_table_contract(expected, table)
+            if actual_contract is None:
+                raise MigrationError(
+                    f"schema v{source_version} source is missing required "
+                    f"NAV observation ledger {table}"
+                )
+            if actual_contract != expected_contract:
+                raise MigrationError(
+                    f"schema v{source_version} source NAV observation contract "
+                    f"mismatch: {table}"
+                )
     finally:
         expected.close()
     return source_version
@@ -1361,6 +1398,17 @@ def _validate_source_decision_quality_row(
     apply reject self-declared evidence rather than faithfully copying it.
     """
 
+    if table == _NAV_OBSERVATION_REQUIRED_TABLE_V17:
+        raw = _source_row_mapping(row, columns=columns)
+        try:
+            from app.services.factor_ic_nav_observation import _validate_stored_row
+
+            _validate_stored_row(raw)
+        except Exception as exc:  # noqa: BLE001 - immutable migration boundary
+            raise MigrationError(
+                "source NAV observation row failed canonical validation"
+            ) from exc
+        return
     if table not in _DECISION_QUALITY_TABLES:
         return
     raw = _source_row_mapping(row, columns=columns)
@@ -1652,7 +1700,10 @@ def plan_sqlite_source(
             connection.execute(
                 f"SELECT {select_list} FROM {table} LIMIT 0"
             ).fetchall()
-            if table in _DECISION_QUALITY_TABLES:
+            if (
+                table in _DECISION_QUALITY_TABLES
+                or table == _NAV_OBSERVATION_REQUIRED_TABLE_V17
+            ):
                 row_count = 0
                 for rows in _iter_source_batches(
                     connection,

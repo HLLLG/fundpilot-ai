@@ -23,6 +23,10 @@ from app.services.decision_quality_snapshot import (
 )
 from app.services.decision_score_shadow import build_decision_score_shadow_digest
 from app.services.factor_ic_snapshot import build_factor_ic_status
+from app.services.factor_ic_nav_observation import (
+    FactorIcNavObservationStorageUnavailable,
+    read_nav_observation_status,
+)
 from app.services.factor_ic_universe_snapshot import (
     FactorIcUniverseStorageUnavailable,
     read_factor_ic_universe_history,
@@ -390,6 +394,81 @@ def _decision_score_projection() -> tuple[dict[str, Any], list[dict[str, str]]]:
     return projection, alerts
 
 
+def _nav_observation_projection(
+    current: datetime,
+) -> tuple[dict[str, Any], list[dict[str, str]]]:
+    try:
+        status = read_nav_observation_status()
+    except FactorIcNavObservationStorageUnavailable:
+        return (
+            {
+                "status": "unavailable",
+                "observation_count": None,
+                "fund_count": None,
+                "capture_run_count": None,
+                "latest_observed_at": None,
+                "latest_capture_age_days": None,
+                "full_model_ready": False,
+                "automatic_promotion_allowed": False,
+            },
+            [
+                _alert(
+                    "nav_observation_read_failed",
+                    "warning",
+                    "NAV observation 状态读取失败",
+                    "不能确认追加式净值观察链，本次不会声称完整 NAV-PIT。",
+                    "检查 schema v17 观察账、不可变触发器和每日发布回执。",
+                )
+            ],
+        )
+    count = _nonnegative_int(status.get("observation_count")) or 0
+    projection = {
+        "status": "collecting" if count else "not_started",
+        "observation_count": count,
+        "fund_count": _nonnegative_int(status.get("fund_count")),
+        "capture_run_count": _nonnegative_int(status.get("capture_run_count")),
+        "revision_count": _nonnegative_int(status.get("revision_count")),
+        "first_observed_at": status.get("first_observed_at"),
+        "latest_observed_at": status.get("latest_observed_at"),
+        "latest_capture_age_days": _age_days(status.get("latest_observed_at"), current),
+        "latest_nav_date": status.get("latest_nav_date"),
+        "latest_capture_fund_count": _nonnegative_int(
+            status.get("latest_capture_fund_count")
+        ),
+        "availability_basis": status.get("availability_basis"),
+        "revision_policy": status.get("revision_policy"),
+        "minimum_feature_history_points": _nonnegative_int(
+            status.get("minimum_feature_history_points")
+        ),
+        "full_model_ready": status.get("full_model_ready") is True,
+        "automatic_promotion_allowed": False,
+    }
+    alerts: list[dict[str, str]] = []
+    if count == 0:
+        alerts.append(
+            _alert(
+                "nav_observation_not_started",
+                "info",
+                "NAV observation 尚未开始积累",
+                "当前历史净值不能证明当时看到的是修订前数值。",
+                "运行一次 Factor IC Universe Capture；之后按工作日增量追加。",
+            )
+        )
+    elif projection["latest_capture_age_days"] is not None and int(
+        projection["latest_capture_age_days"]
+    ) > 4:
+        alerts.append(
+            _alert(
+                "nav_observation_stale",
+                "warning",
+                "NAV observation 采集已滞后",
+                f"最近观察批次距今 {projection['latest_capture_age_days']} 个自然日。",
+                "检查工作日 universe capture 的 NAV 发布步骤。",
+            )
+        )
+    return projection, alerts
+
+
 def _decision_quality_projection(
     user_id: int,
     current: datetime,
@@ -509,6 +588,7 @@ def build_evidence_maturity_status(
     current = _utc_now(now)
     worker, worker_alerts = _worker_projection()
     universe, factor_ic, factor_alerts = _factor_projection(current)
+    nav_observation, nav_alerts = _nav_observation_projection(current)
     try:
         decision_score, score_alerts = _decision_score_projection()
     except Exception:
@@ -528,7 +608,13 @@ def build_evidence_maturity_status(
             )
         ]
     decision_quality, quality_alerts = _decision_quality_projection(user_id, current)
-    alerts = worker_alerts + factor_alerts + score_alerts + quality_alerts
+    alerts = (
+        worker_alerts
+        + factor_alerts
+        + nav_alerts
+        + score_alerts
+        + quality_alerts
+    )
     order = {"critical": 0, "warning": 1, "info": 2}
     alerts.sort(key=lambda item: (order.get(item["severity"], 9), item["code"]))
     severities = {item["severity"] for item in alerts}
@@ -538,7 +624,13 @@ def build_evidence_maturity_status(
         overall = "attention"
     elif any(
         component.get("status") in {"collecting", "unavailable"}
-        for component in (universe, factor_ic, decision_score, decision_quality)
+        for component in (
+            universe,
+            factor_ic,
+            nav_observation,
+            decision_score,
+            decision_quality,
+        )
     ):
         overall = "collecting"
     else:
@@ -553,6 +645,7 @@ def build_evidence_maturity_status(
         "worker": worker,
         "universe": universe,
         "factor_ic": factor_ic,
+        "nav_observation": nav_observation,
         "decision_score_shadow": decision_score,
         "decision_quality": decision_quality,
         "milestones": [

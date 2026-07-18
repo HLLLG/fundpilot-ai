@@ -11,6 +11,7 @@ from app.mysql_bootstrap import (
     MySqlBootstrapContractError,
     _ensure_decision_quality_append_only_mysql_triggers,
     _ensure_decision_quality_rollout_mysql_triggers,
+    _ensure_factor_ic_nav_observation_mysql_triggers,
     _valid_rollout_immutable_trigger_row,
     ensure_mysql_schema,
 )
@@ -176,7 +177,7 @@ def test_v14_database_missing_marker_is_not_reinitialized() -> None:
     ).fetchone()[0] == 0
     assert connection.execute(
         "SELECT version FROM schema_meta WHERE id = 1"
-    ).fetchone()[0] == 16
+    ).fetchone()[0] == 17
     with pytest.raises(DecisionQualityIntegrityError, match="marker is missing"):
         get_decision_quality_contract_rollout(connection=connection)
 
@@ -321,6 +322,7 @@ def test_mysql_trigger_duplicate_ddl_is_idempotent_after_exact_recheck() -> None
 
     _ensure_decision_quality_rollout_mysql_triggers(cursor)
     _ensure_decision_quality_append_only_mysql_triggers(cursor)
+    _ensure_factor_ic_nav_observation_mysql_triggers(cursor)
 
     assert set(cursor.rows) == {
         "trg_decision_quality_rollout_no_update",
@@ -333,6 +335,8 @@ def test_mysql_trigger_duplicate_ddl_is_idempotent_after_exact_recheck() -> None
         "trg_decision_quality_artifact_receipts_no_delete",
         "trg_decision_quality_provider_receipts_no_update",
         "trg_decision_quality_provider_receipts_no_delete",
+        "trg_factor_ic_nav_observation_no_update",
+        "trg_factor_ic_nav_observation_no_delete",
     }
 
 
@@ -346,6 +350,10 @@ def test_mysql_trigger_duplicate_ddl_is_idempotent_after_exact_recheck() -> None
         (
             _ensure_decision_quality_append_only_mysql_triggers,
             "append-only trigger",
+        ),
+        (
+            _ensure_factor_ic_nav_observation_mysql_triggers,
+            "factor NAV trigger",
         ),
     ],
 )

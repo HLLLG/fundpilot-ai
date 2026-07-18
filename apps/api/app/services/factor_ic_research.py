@@ -247,6 +247,7 @@ def build_v3_research_model(
     max_snapshot_age_days: int = 7,
     walk_forward_folds: int = 5,
     embargo_trading_days: int = 20,
+    nav_observation_pit: bool = False,
 ) -> dict[str, Any]:
     """Build the publishable v3 model from historical point-in-time cohorts.
 
@@ -269,6 +270,7 @@ def build_v3_research_model(
         max_snapshot_age_days=max_snapshot_age_days,
         walk_forward_folds=walk_forward_folds,
         embargo_days=embargo_trading_days,
+        nav_observation_pit=nav_observation_pit,
     )
     calendar = sorted(
         {point.date for points in nav_panel.values() for point in points}
@@ -336,8 +338,12 @@ def build_v3_research_model(
             "schema_version": "factor_economic_significance.v1",
             "label_type": "peer_group_relative_total_return",
             "benchmark": "same_segment_cross_section_median",
-            "point_in_time_scope": "membership_only",
-            "nav_revision_pit": False,
+            "point_in_time_scope": (
+                "nav_observation_pit"
+                if nav_observation_pit
+                else "membership_only"
+            ),
+            "nav_revision_pit": nav_observation_pit,
             "entry_rule": "next_trading_day_first_available_nav",
             "entry_offset_trading_days": 1,
             "quantiles": 5,
@@ -346,6 +352,14 @@ def build_v3_research_model(
             "minimum_periods": 36,
             "minimum_coverage_rate": 0.80,
             "minimum_top_net_positive_ratio": 0.55,
+            **(
+                {
+                    "availability_basis": "collector_first_observed_at",
+                    "revision_policy": "first_observed_value",
+                }
+                if nav_observation_pit
+                else {}
+            ),
         },
         "segments": segments,
         "peer_distributions": peers,
@@ -366,14 +380,30 @@ def is_v3_research_model_publishable(model: dict[str, Any]) -> bool:
         return False
     if str(point_in_time.get("multiple_testing")) != "benjamini_hochberg":
         return False
-    if point_in_time.get("point_in_time_scope") != "membership_only":
-        return False
-    if point_in_time.get("nav_revision_pit") is not False:
-        return False
-    if point_in_time.get("nav_publication_lag_trading_days") != {
-        "default": 1,
-        "qdii": 2,
-    }:
+    scope = point_in_time.get("point_in_time_scope")
+    if scope == "membership_only":
+        if point_in_time.get("nav_revision_pit") is not False:
+            return False
+        if point_in_time.get("nav_publication_lag_trading_days") != {
+            "default": 1,
+            "qdii": 2,
+        }:
+            return False
+    elif scope == "nav_observation_pit":
+        if point_in_time.get("nav_revision_pit") is not True:
+            return False
+        if point_in_time.get("nav_publication_lag_trading_days") != {
+            "default": 0,
+            "qdii": 0,
+        }:
+            return False
+        if point_in_time.get("availability_basis") != "collector_first_observed_at":
+            return False
+        if point_in_time.get("revision_policy") != "first_observed_value":
+            return False
+        if float(point_in_time.get("observation_timestamp_coverage_rate") or 0) != 1.0:
+            return False
+    else:
         return False
     if int(point_in_time.get("execution_entry_offset_trading_days") or 0) != 1:
         return False

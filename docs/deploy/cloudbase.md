@@ -36,8 +36,9 @@ SQLite 备份。schema v14+ 源库的 `decision_quality_contract_rollouts` marke
 bootstrap 时原样注入并复核；源库缺失或篡改 marker、目标库已有不同边界时迁移失败关闭，
 不得用迁移时当前时间重新生成边界。质量输入、artifact commit receipt、provider receipt、
 evaluation snapshot 和 rollout marker 五类追加式账本均采用 insert-only + content hash 冲突检查。
-当前 schema v16 另含 `prompt_shadow_runs` / `prompt_shadow_budget_counters` 两张可变运营表；
-它们随迁移复制并验真精确列、索引与 InnoDB，但不伪装成追加式质量账。
+schema v16 另含 `prompt_shadow_runs` / `prompt_shadow_budget_counters` 两张可变运营表；
+schema v17 新增不可变 `factor_ic_nav_observations` 首次观测账本。迁移会复制并验真其精确列、
+索引、InnoDB、内容哈希与 UPDATE/DELETE 触发器；Prompt shadow 两表仍可更新，不伪装成追加式质量账。
 
 ## 3. 构建并部署 API
 
@@ -76,7 +77,8 @@ FUND_AI_NEWS_ENABLED=true
   `decision_quality_provider_receipts` 的 10 个 `BEFORE UPDATE/DELETE` 触发器，以及
   `(userId, artifact_type, logical_key)` 非前缀唯一索引和 `logical_key VARCHAR(255) NULL`。
   schema v16 还会校验 `prompt_shadow_runs` / `prompt_shadow_budget_counters` 的列、唯一键、
-  worker 索引与 InnoDB；这两张表必须可更新，不能套用不可变触发器。
+  worker 索引与 InnoDB；这两张表必须可更新，不能套用不可变触发器。schema v17 还会精确校验
+  `factor_ic_nav_observations` 的列、唯一内容哈希、查询索引、InnoDB 与两枚无条件不可变触发器。
   权限缺失、同名 no-op/条件触发器、错误/前缀索引、列契约不符或 DDL 后无法验真都会直接阻断
   MySQL bootstrap，且不会伪装成网络故障回落 SQLite；多副本并发首次启动只有在异常后重读
   metadata 确认精确契约已由另一 worker 建成时才视为幂等成功。

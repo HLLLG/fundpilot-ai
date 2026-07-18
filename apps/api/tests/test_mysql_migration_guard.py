@@ -11,9 +11,13 @@ from app.mysql_bootstrap import (
     MySqlBootstrapContractError,
     _MYSQL_DQ_COLUMN_CONTRACTS,
     _MYSQL_DQ_INDEX_CONTRACTS,
+    _MYSQL_FACTOR_NAV_COLUMN_CONTRACT,
+    _MYSQL_FACTOR_NAV_INDEX_CONTRACT,
     _MYSQL_MIGRATION_GUARD_COLUMN_CONTRACT,
     _ROLLOUT_COLUMNS,
     _ensure_decision_quality_mysql_contracts,
+    _ensure_factor_ic_nav_observation_mysql_contracts,
+    _ensure_factor_ic_nav_observation_storage_engine,
     _ensure_mysql_migration_guard_contract,
     _normalize_mysql_migration_guard,
     _read_mysql_migration_guard,
@@ -345,6 +349,90 @@ def test_five_ledger_metadata_contract_rejects_attacks(mutation: str) -> None:
     cursor = _QualityMetadataCursor(mutation=mutation)
     with pytest.raises(MySqlBootstrapContractError, match="quality contract"):
         _ensure_decision_quality_mysql_contracts(cursor, cursor.fetchall)
+
+
+class _FactorNavMetadataCursor:
+    def __init__(self, *, mutation: str | None = None) -> None:
+        self.last_statement = ""
+        self.mutation = mutation
+
+    def execute(self, statement: str) -> None:
+        self.last_statement = " ".join(statement.split())
+
+    def fetchall(self):
+        if "information_schema.TABLES" in self.last_statement:
+            engine = "MyISAM" if self.mutation == "engine" else "InnoDB"
+            return [("factor_ic_nav_observations", engine)]
+        if "information_schema.COLUMNS" in self.last_statement:
+            rows = [
+                (
+                    name,
+                    data_type,
+                    length,
+                    nullable,
+                    position,
+                    (
+                        "utf8mb4_bin"
+                        if name == "payload"
+                        else "ascii_bin"
+                        if collation_rule == "binary"
+                        else None
+                    ),
+                )
+                for position, (
+                    name,
+                    data_type,
+                    length,
+                    nullable,
+                    collation_rule,
+                ) in enumerate(_MYSQL_FACTOR_NAV_COLUMN_CONTRACT, start=1)
+            ]
+            if self.mutation == "identity_collation":
+                row = rows[2]
+                rows[2] = (*row[:5], "utf8mb4_general_ci")
+            return rows
+        rows = [
+            (name, non_unique, position, column, None)
+            for name, (
+                non_unique,
+                columns,
+            ) in _MYSQL_FACTOR_NAV_INDEX_CONTRACT.items()
+            for position, column in enumerate(columns, start=1)
+        ]
+        if self.mutation == "missing_unique_hash":
+            rows = [
+                row
+                for row in rows
+                if row[0] != "uq_factor_ic_nav_observation_content"
+            ]
+        if self.mutation == "prefix_pit":
+            rows = [
+                (*row[:4], 8)
+                if row[0] == "idx_factor_ic_nav_observation_code_pit"
+                and row[2] == 1
+                else row
+                for row in rows
+            ]
+        return sorted(rows, key=lambda row: (row[0], row[2]))
+
+
+def test_factor_nav_mysql_contract_accepts_exact_metadata() -> None:
+    cursor = _FactorNavMetadataCursor()
+
+    _ensure_factor_ic_nav_observation_storage_engine(cursor, cursor.fetchall)
+    _ensure_factor_ic_nav_observation_mysql_contracts(cursor, cursor.fetchall)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["engine", "identity_collation", "missing_unique_hash", "prefix_pit"],
+)
+def test_factor_nav_mysql_contract_rejects_drift(mutation: str) -> None:
+    cursor = _FactorNavMetadataCursor(mutation=mutation)
+
+    with pytest.raises(MySqlBootstrapContractError, match="factor NAV"):
+        _ensure_factor_ic_nav_observation_storage_engine(cursor, cursor.fetchall)
+        _ensure_factor_ic_nav_observation_mysql_contracts(cursor, cursor.fetchall)
 
 
 def test_rollout_singleton_rejects_missing_duplicate_and_source_mismatch() -> None:

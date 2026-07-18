@@ -486,6 +486,7 @@ def test_v14_source_requires_v14_ledgers_but_not_v15_receipts(tmp_path) -> None:
     connection.execute("DROP TABLE decision_quality_provider_receipts")
     connection.execute("DROP TABLE prompt_shadow_runs")
     connection.execute("DROP TABLE prompt_shadow_budget_counters")
+    connection.execute("DROP TABLE factor_ic_nav_observations")
     connection.commit()
     connection.close()
 
@@ -549,6 +550,7 @@ def test_true_v14_input_table_without_logical_key_remains_compatible(
     connection.execute("DROP TABLE decision_quality_provider_receipts")
     connection.execute("DROP TABLE prompt_shadow_runs")
     connection.execute("DROP TABLE prompt_shadow_budget_counters")
+    connection.execute("DROP TABLE factor_ic_nav_observations")
     connection.commit()
     connection.close()
 
@@ -586,6 +588,7 @@ def test_v14_additive_logical_key_column_order_remains_compatible(
     connection.execute("DROP TABLE decision_quality_provider_receipts")
     connection.execute("DROP TABLE prompt_shadow_runs")
     connection.execute("DROP TABLE prompt_shadow_budget_counters")
+    connection.execute("DROP TABLE factor_ic_nav_observations")
     connection.commit()
     connection.close()
 
@@ -621,6 +624,7 @@ def test_v14_snapshot_with_compact_v2_manifest_remains_compatible(tmp_path) -> N
     connection.execute("DROP TABLE decision_quality_provider_receipts")
     connection.execute("DROP TABLE prompt_shadow_runs")
     connection.execute("DROP TABLE prompt_shadow_budget_counters")
+    connection.execute("DROP TABLE factor_ic_nav_observations")
     connection.commit()
     connection.close()
 
@@ -809,7 +813,7 @@ def test_future_and_mixed_source_schema_versions_fail_closed(tmp_path) -> None:
     future_path = tmp_path / "source-v16.db"
     _current_source(future_path)
     future = sqlite3.connect(future_path)
-    future.execute("UPDATE schema_meta SET version = 17 WHERE id = 1")
+    future.execute("UPDATE schema_meta SET version = 18 WHERE id = 1")
     future.commit()
     future.close()
     with pytest.raises(migration.MigrationError, match="newer than this migrator"):
@@ -1153,7 +1157,7 @@ def test_main_apply_freezes_marker_bootstrap_and_copy_in_one_snapshot(
         source_fingerprint: str,
         source_rollout_marker,
     ) -> dict[str, Any]:
-        assert source_schema_version == 16
+        assert source_schema_version == 17
         assert len(source_fingerprint) == 64
         assert source_rollout_marker == marker
         guard.update(
@@ -1189,7 +1193,7 @@ def test_main_apply_freezes_marker_bootstrap_and_copy_in_one_snapshot(
     ) -> dict[str, Any]:
         assert source.in_transaction is True
         assert batch_size == 1
-        assert source_version == 16
+        assert source_version == 17
         assert rollout_marker == marker
         assert rollout_marker == observed["bootstrap_marker"]
         assert source.execute(

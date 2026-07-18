@@ -44,7 +44,7 @@ def test_run_migrations_backfills_global_primary_sector_table_at_current_version
 
 
 def test_current_schema_still_ensures_factor_ic_snapshot_table() -> None:
-    assert SCHEMA_VERSION == 16
+    assert SCHEMA_VERSION == 17
     connection = sqlite3.connect(":memory:")
     connection.execute(
         "CREATE TABLE schema_meta (id INTEGER PRIMARY KEY, version INTEGER NOT NULL)"
@@ -61,6 +61,77 @@ def test_current_schema_still_ensures_factor_ic_snapshot_table() -> None:
         "WHERE type='table' AND name='factor_ic_snapshots'"
     ).fetchone()
     assert table is not None
+
+
+def test_current_schema_ensures_append_only_factor_ic_nav_observations() -> None:
+    connection = _current_schema_connection()
+
+    columns = tuple(
+        row[1]
+        for row in connection.execute(
+            "PRAGMA table_info(factor_ic_nav_observations)"
+        ).fetchall()
+    )
+    assert columns == (
+        "observation_id",
+        "schema_version",
+        "fund_code",
+        "nav_date",
+        "source",
+        "first_observed_at",
+        "available_at",
+        "availability_basis",
+        "unit_nav",
+        "cumulative_nav",
+        "daily_growth_percent",
+        "content_hash",
+        "payload",
+        "source_commit",
+        "source_run_id",
+        "created_at",
+    )
+
+    indexes = {
+        row[1]
+        for row in connection.execute(
+            "PRAGMA index_list(factor_ic_nav_observations)"
+        ).fetchall()
+    }
+    assert {
+        "uq_factor_ic_nav_observation_content",
+        "idx_factor_ic_nav_observation_code_pit",
+        "idx_factor_ic_nav_observation_observed",
+        "idx_factor_ic_nav_observation_run",
+    } <= indexes
+
+    triggers = {
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE type = 'trigger' AND tbl_name = 'factor_ic_nav_observations'"
+        ).fetchall()
+    }
+    assert triggers == {
+        "trg_factor_ic_nav_observation_no_update",
+        "trg_factor_ic_nav_observation_no_delete",
+    }
+
+
+def test_current_schema_rejects_factor_ic_nav_observation_trigger_tampering() -> None:
+    connection = _current_schema_connection()
+    connection.execute("DROP TRIGGER trg_factor_ic_nav_observation_no_update")
+    connection.execute(
+        """
+        CREATE TRIGGER trg_factor_ic_nav_observation_no_update
+        BEFORE UPDATE ON factor_ic_nav_observations
+        BEGIN
+            SELECT 1;
+        END
+        """
+    )
+
+    with pytest.raises(RuntimeError, match="trigger .* conflicts"):
+        run_migrations(connection)
 
 
 def test_current_schema_ensures_prompt_shadow_operational_tables() -> None:

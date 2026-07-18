@@ -267,15 +267,30 @@ class FactorIcSummary(BaseModel):
             raise ValueError("v3 必须使用 Benjamini-Hochberg 多重检验校正")
         if float(point_in_time.get("fdr_q_threshold") or 99) != 0.10:
             raise ValueError("v3 FDR q 阈值必须为 0.10")
-        if point_in_time.get("point_in_time_scope") != "membership_only":
-            raise ValueError("v3 当前 PIT 范围必须明确为 membership_only")
-        if point_in_time.get("nav_revision_pit") is not False:
-            raise ValueError("v3 当前不得声称 NAV 修订时点已 PIT 化")
-        if point_in_time.get("nav_publication_lag_trading_days") != {
-            "default": 1,
-            "qdii": 2,
-        }:
-            raise ValueError("v3 NAV 发布滞后口径非法")
+        point_in_time_scope = point_in_time.get("point_in_time_scope")
+        nav_observation_pit = point_in_time_scope == "nav_observation_pit"
+        if point_in_time_scope == "membership_only":
+            if point_in_time.get("nav_revision_pit") is not False:
+                raise ValueError("v3 membership-only scope cannot claim NAV revision PIT")
+            expected_nav_lag = {"default": 1, "qdii": 2}
+        elif nav_observation_pit:
+            if point_in_time.get("nav_revision_pit") is not True:
+                raise ValueError("v3 NAV observation scope must bind revision PIT")
+            if (
+                point_in_time.get("availability_basis")
+                != "collector_first_observed_at"
+                or point_in_time.get("revision_policy") != "first_observed_value"
+            ):
+                raise ValueError("v3 NAV observation provenance contract is invalid")
+            if float(
+                point_in_time.get("observation_timestamp_coverage_rate") or 0
+            ) != 1.0:
+                raise ValueError("v3 NAV observation timestamp coverage must be 100%")
+            expected_nav_lag = {"default": 0, "qdii": 0}
+        else:
+            raise ValueError("v3 point-in-time scope is invalid")
+        if point_in_time.get("nav_publication_lag_trading_days") != expected_nav_lag:
+            raise ValueError("v3 NAV publication lag contract is invalid")
         if int(point_in_time.get("execution_entry_offset_trading_days") or 0) != 1:
             raise ValueError("v3 必须使用下一交易日可执行 NAV 入场")
 
@@ -337,6 +352,16 @@ class FactorIcSummary(BaseModel):
         ):
             if pit_coverage.get(key) != point_in_time.get(key):
                 raise ValueError(f"v3 pit_coverage.{key} 与 point_in_time 不一致")
+        if nav_observation_pit:
+            for key in (
+                "availability_basis",
+                "revision_policy",
+                "observation_timestamp_coverage_rate",
+            ):
+                if pit_coverage.get(key) != point_in_time.get(key):
+                    raise ValueError(
+                        f"v3 pit_coverage.{key} 与 point_in_time 不一致"
+                    )
         if not isinstance(validation, dict) or validation != {
             "method": "expanding_walk_forward",
             "folds": 5,
@@ -345,12 +370,12 @@ class FactorIcSummary(BaseModel):
             "fdr_q_threshold": 0.10,
         }:
             raise ValueError("v3 validation 口径非法")
-        if not isinstance(economic_contract, dict) or economic_contract != {
+        expected_economic_contract = {
             "schema_version": "factor_economic_significance.v1",
             "label_type": "peer_group_relative_total_return",
             "benchmark": "same_segment_cross_section_median",
-            "point_in_time_scope": "membership_only",
-            "nav_revision_pit": False,
+            "point_in_time_scope": point_in_time_scope,
+            "nav_revision_pit": nav_observation_pit,
             "entry_rule": "next_trading_day_first_available_nav",
             "entry_offset_trading_days": 1,
             "quantiles": 5,
@@ -359,7 +384,19 @@ class FactorIcSummary(BaseModel):
             "minimum_periods": 36,
             "minimum_coverage_rate": 0.80,
             "minimum_top_net_positive_ratio": 0.55,
-        }:
+            **(
+                {
+                    "availability_basis": "collector_first_observed_at",
+                    "revision_policy": "first_observed_value",
+                }
+                if nav_observation_pit
+                else {}
+            ),
+        }
+        if (
+            not isinstance(economic_contract, dict)
+            or economic_contract != expected_economic_contract
+        ):
             raise ValueError("v3 经济显著性口径非法")
 
         qualified_segments = 0
@@ -386,11 +423,18 @@ class FactorIcSummary(BaseModel):
                 raise ValueError(f"v3 {key} 类型因子方向口径非法")
             if type_factor_model.get("size_role") != "capacity_risk_guard_only":
                 raise ValueError(f"v3 {key} 规模不得作为收益因子")
-            expected_lag = 2 if key == "qdii" else 1
-            if int(type_factor_model.get("nav_information_lag_trading_days") or 0) != expected_lag:
+            expected_lag = 0 if nav_observation_pit else (2 if key == "qdii" else 1)
+            if type_factor_model.get("nav_information_lag_trading_days") != expected_lag:
                 raise ValueError(f"v3 {key} NAV 信息滞后口径非法")
-            if type_factor_model.get("nav_revision_pit") is not False:
-                raise ValueError(f"v3 {key} 不得声称 NAV 修订已 PIT 化")
+            if type_factor_model.get("nav_revision_pit") is not nav_observation_pit:
+                raise ValueError(f"v3 {key} NAV revision PIT contract is invalid")
+            if nav_observation_pit and (
+                type_factor_model.get("availability_basis")
+                != "collector_first_observed_at"
+                or type_factor_model.get("revision_policy")
+                != "first_observed_value"
+            ):
+                raise ValueError(f"v3 {key} NAV observation provenance is invalid")
             if key == "zs" and (
                 (type_factor_model.get("tracking_evidence") or {}).get("status")
                 != "insufficient"
@@ -441,8 +485,17 @@ class FactorIcSummary(BaseModel):
                     == "peer_group_relative_total_return"
                     and economic.get("benchmark")
                     == "same_segment_cross_section_median"
-                    and economic.get("point_in_time_scope") == "membership_only"
-                    and economic.get("nav_revision_pit") is False
+                    and economic.get("point_in_time_scope") == point_in_time_scope
+                    and economic.get("nav_revision_pit") is nav_observation_pit
+                    and (
+                        not nav_observation_pit
+                        or (
+                            economic.get("availability_basis")
+                            == "collector_first_observed_at"
+                            and economic.get("revision_policy")
+                            == "first_observed_value"
+                        )
+                    )
                     and economic.get("entry_rule")
                     == "next_trading_day_first_available_nav"
                     and int(economic.get("entry_offset_trading_days") or 0) == 1
@@ -855,6 +908,9 @@ def _build_factor_ic_status_from_loaded(
                 "point_in_time_scope",
                 "nav_revision_pit",
                 "nav_publication_lag_trading_days",
+                "availability_basis",
+                "revision_policy",
+                "observation_timestamp_coverage_rate",
                 "execution_entry_offset_trading_days",
                 "mature_anchor_count_by_horizon",
                 "mature_anchor_coverage_rate_by_horizon",
@@ -866,6 +922,11 @@ def _build_factor_ic_status_from_loaded(
         "pit_upgrade": (
             raw.get("pit_upgrade")
             if isinstance(raw.get("pit_upgrade"), dict)
+            else None
+        ),
+        "nav_observation_upgrade": (
+            raw.get("nav_observation_upgrade")
+            if isinstance(raw.get("nav_observation_upgrade"), dict)
             else None
         ),
         "pit_coverage": (

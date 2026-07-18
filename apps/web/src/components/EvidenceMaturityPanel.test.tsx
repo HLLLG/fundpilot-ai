@@ -53,6 +53,20 @@ function payload(): EvidenceMaturityStatus {
       economic_progress_percent_60d: 0,
       confidence_block_reasons: [],
     },
+    nav_observation: {
+      status: "collecting",
+      observation_count: 1498,
+      fund_count: 1498,
+      capture_run_count: 1,
+      revision_count: 0,
+      latest_capture_age_days: 0,
+      latest_capture_fund_count: 1498,
+      availability_basis: "collector_first_observed_at",
+      revision_policy: "first_observed_value",
+      minimum_feature_history_points: 250,
+      full_model_ready: false,
+      automatic_promotion_allowed: false,
+    },
     decision_score_shadow: {
       status: "collecting",
       artifact_count: 0,
@@ -106,6 +120,9 @@ describe("EvidenceMaturityPanel", () => {
     expect(screen.getByText("0 / 36")).toBeInTheDocument();
     expect(screen.getAllByText("尚无证据").length).toBeGreaterThan(0);
     expect(screen.getByText("NAV 时点证据尚未完整")).toBeInTheDocument();
+    expect(screen.getByText("NAV 首次观测账本")).toBeInTheDocument();
+    expect(screen.getByText("1,498 条")).toBeInTheDocument();
+    expect(screen.getByText(/不会把今天抓到的历史净值伪装成当时已知/)).toBeInTheDocument();
     expect(screen.getByText(/automatic promotion 始终关闭/)).toBeInTheDocument();
   });
 

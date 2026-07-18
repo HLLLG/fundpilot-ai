@@ -82,6 +82,25 @@ def _quality_snapshot(*, user_id: int) -> dict:
     }
 
 
+def _nav_observation_status() -> dict:
+    return {
+        "status": "collecting",
+        "observation_count": 1498,
+        "fund_count": 1498,
+        "capture_run_count": 1,
+        "revision_count": 0,
+        "first_observed_at": "2026-07-18T07:30:00+00:00",
+        "latest_observed_at": "2026-07-18T07:30:00+00:00",
+        "latest_nav_date": "2026-07-17",
+        "latest_capture_fund_count": 1498,
+        "availability_basis": "collector_first_observed_at",
+        "revision_policy": "first_observed_value",
+        "minimum_feature_history_points": 250,
+        "full_model_ready": False,
+        "automatic_promotion_allowed": False,
+    }
+
+
 def _patch_sources(monkeypatch) -> None:
     monkeypatch.setattr(evidence_maturity, "inspect_worker_health", _healthy_worker)
     monkeypatch.setattr(evidence_maturity, "build_factor_ic_status", _factor_status)
@@ -95,6 +114,11 @@ def _patch_sources(monkeypatch) -> None:
         evidence_maturity,
         "read_latest_decision_quality_snapshot",
         _quality_snapshot,
+    )
+    monkeypatch.setattr(
+        evidence_maturity,
+        "read_nav_observation_status",
+        _nav_observation_status,
     )
 
 
@@ -113,6 +137,8 @@ def test_maturity_projection_distinguishes_missing_from_zero(monkeypatch) -> Non
     assert result["universe"]["anchor_progress_percent"] == 16.67
     assert result["factor_ic"]["mature_period_count_20d"] == 0
     assert result["factor_ic"]["economic_progress_percent_20d"] == 0.0
+    assert result["nav_observation"]["observation_count"] == 1498
+    assert result["nav_observation"]["full_model_ready"] is False
     assert result["decision_score_shadow"]["artifact_count"] == 0
     assert result["decision_score_shadow"]["scored_coverage_percent"] is None
     assert result["decision_quality"]["mature_decision_day_count"] == 0

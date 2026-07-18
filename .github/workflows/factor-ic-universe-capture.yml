@@ -40,7 +40,8 @@ jobs:
       - name: Capture today's immutable research cohort
         run: |
           python scripts/capture_factor_ic_universe.py \
-            --out "$RUNNER_TEMP/factor-ic-universe.json"
+            --out "$RUNNER_TEMP/factor-ic-universe.json" \
+            --nav-observations-out "$RUNNER_TEMP/factor-ic-nav-observations.json"
       - name: Configure Lighthouse SSH identity
         env:
           LIGHTHOUSE_HOST: ${{ secrets.LIGHTHOUSE_HOST }}
@@ -67,6 +68,7 @@ jobs:
           LIGHTHOUSE_USER: ${{ secrets.LIGHTHOUSE_USER }}
           FACTOR_IC_PUBLISH_TOKEN: ${{ secrets.FACTOR_IC_PUBLISH_TOKEN }}
           FACTOR_IC_UNIVERSE_PUBLISH_URL: http://127.0.0.1:18000/api/internal/factor-ic-universe-snapshots
+          FACTOR_IC_NAV_OBSERVATION_PUBLISH_URL: http://127.0.0.1:18000/api/internal/factor-ic-nav-observations
         run: |
           set -euo pipefail
           [[ -n "$FACTOR_IC_PUBLISH_TOKEN" ]] || { echo "::error::FACTOR_IC_PUBLISH_TOKEN is empty"; exit 1; }
@@ -103,6 +105,8 @@ jobs:
           [[ "$tunnel_ready" == true ]] || { echo "::error::Lighthouse API is unavailable through the SSH tunnel"; exit 1; }
           python scripts/publish_factor_ic_universe.py \
             "$RUNNER_TEMP/factor-ic-universe.json"
+          python scripts/publish_factor_ic_nav_observations.py \
+            "$RUNNER_TEMP/factor-ic-nav-observations.json"
       - name: Record capture contract
         run: |
-          echo "Captured a point-in-time 1,500-portfolio research cohort without running NAV backtests." >> "$GITHUB_STEP_SUMMARY"
+          echo "Captured a point-in-time 1,500-portfolio research cohort and appended the NAV values first observed in the same directory response; no NAV history was backdated and no backtest was run." >> "$GITHUB_STEP_SUMMARY"

@@ -15,6 +15,9 @@ if str(API_ROOT) not in sys.path:
     sys.path.insert(0, str(API_ROOT))
 
 from app.services.akshare_subprocess import fetch_open_fund_universe  # noqa: E402
+from app.services.factor_ic_nav_observation import (  # noqa: E402
+    build_nav_observation_batch_from_universe,
+)
 from app.services.factor_ic_universe_snapshot import (  # noqa: E402
     build_factor_ic_universe_payload,
     validate_factor_ic_universe_publish_request,
@@ -54,6 +57,7 @@ def _required(value: str | None, name: str) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description="捕获当日 factor IC PIT 基金池")
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--nav-observations-out", type=Path)
     parser.add_argument("--source-commit", default=os.getenv("GITHUB_SHA"))
     parser.add_argument("--source-run-id", default=os.getenv("GITHUB_RUN_ID"))
     args = parser.parse_args()
@@ -66,11 +70,25 @@ def main() -> int:
         json.dumps(payload, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    nav_payload = None
+    if args.nav_observations_out is not None:
+        nav_payload = build_nav_observation_batch_from_universe(payload)
+        args.nav_observations_out.parent.mkdir(parents=True, exist_ok=True)
+        args.nav_observations_out.write_text(
+            json.dumps(nav_payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
     print(
         "captured PIT universe: "
         f"source={payload['snapshot']['source_share_count']} "
         f"sampled={payload['snapshot']['sampled_fund_count']}"
     )
+    if nav_payload is not None:
+        print(
+            "captured first-observation NAV batch: "
+            f"observations={len(nav_payload['observations'])} "
+            f"missing={nav_payload['missing_observation_count']}"
+        )
     return 0
 
 

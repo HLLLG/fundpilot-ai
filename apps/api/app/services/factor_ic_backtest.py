@@ -29,6 +29,9 @@ class NavPoint:
     date: str
     nav: float
     return_source: str | None = None
+    # Populated only by the append-only first-observation ledger. Historical
+    # provider rows intentionally leave this unset and remain membership-only.
+    observed_at: str | None = None
 
 
 @dataclass

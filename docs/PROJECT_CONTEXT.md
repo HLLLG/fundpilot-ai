@@ -4,9 +4,10 @@
 >
 > **维护：** 功能或架构有实质变化时，同步更新「能力清单」「数据流」「API」「目录」「环境变量」。
 
-**文档版本：** 2026-07-18（证据成熟度控制台 + 专职采集 Worker + DecisionScore v1）
+**文档版本：** 2026-07-18（NAV 首次观测账本 + 证据成熟度控制台 + 专职采集 Worker）
 
 **更新记录：**
+- **不可变 NAV 首次观测账本与增量 Factor IC（2026-07-18，已实现）：** schema v17 新增 `factor_ic_nav_observations`，每日 `Factor IC Universe Capture` 从同一份公开基金目录响应同时生成成员快照与净值首次观测批次，再经 Lighthouse 隧道和独立发布 Token 原子校验入库；同基金/净值日/值的重复发布幂等并保留最初 `first_observed_at`，源修订只追加新行，SQLite/MySQL 均用精确列、索引、InnoDB 与 UPDATE/DELETE 触发器 fail-closed。周度任务按显式 `as_of` 分块读取成员并集的最早可见版本，内容寻址产物绑定观测时间、来源、批次和修订策略；回测新增 observation-PIT 双轨，但只有真实时间戳覆盖 100%、既有统计门槛全部通过且至少积累 250 个可用因子点才可进入人工复核，在此之前继续发布既有 membership-PIT v3/v2，绝不回填历史观测或自动晋级。证据成熟度控制台新增账本行数、基金数、采集批次、最新观测和明确的 not-started/stale 告警。内部发布/查询端点均不进入 OpenAPI，发布批次要求同目录至少 80% 覆盖并拒绝未来时间、超过 24 小时的伪回填、哈希篡改和 MySQL 到 SQLite 回落。
 - **证据成熟度控制面与采集告警（2026-07-18，已实现）：** 新增只读 `GET /api/diagnostics/evidence-maturity`，在 `evidence_maturity.v1` 中汇总专职 Worker 共享心跳/常驻任务、真实 PIT 成员快照与有效锚点、Factor IC 的 20/60 日成熟经济期、当前用户 DecisionScore shadow 覆盖和预计算决策质量快照。生产/Cloud Compose 将 Worker 原子心跳写入 API/Worker 共享的 `/app/data/background-worker-heartbeat.json`；Worker 容器内健康检查继续验证 PID，API 跨容器只验证契约、新鲜度和常驻任务存活，避免无意义的跨 PID namespace 判断。聚合 GET 不触发即时评估，任一子链失败只返回脱敏告警并保持 fail-closed；空值明确表示“尚无证据”，不补 0。盈亏分析页新增独立可展开控制台，即使无持仓收益也可查看 24 个 PIT 有效锚点、36 个成熟经济期、60 个成熟决策日/80% 标签覆盖等预注册门槛；17.5/19.5 个月只显示为理论最短样本窗口，所有模型仍禁止自动晋级。**验证：** API **1203 passed**；Web **99 files / 435 passed**，typecheck、lint、production build、Python `compileall`、Compose YAML 解析与 `git diff --check` 通过。
 - **专职后台任务 Worker + 生产采集烟测（2026-07-18，已实现）：** 新增 `FUND_AI_RUNTIME_ROLE=all|api|worker`：本地直启默认 `all` 保留一键开发体验，生产 Compose 的两个 Uvicorn 进程固定为 request-only `api`，另起单进程 `worker` 承载市场共享刷新、持仓板块刷新、基金主板块预计算/存量补跑及启用时的 Prompt shadow。Worker 用现有 MySQL 会话级命名锁选主（SQLite 为数据库旁 OS 文件锁），锁句柄每轮执行 `SELECT 1` 保活；关键常驻线程退出、协调会话丢失或心跳过期均 fail closed，使容器退出/不健康，避免多 worker 重复拉源与静默停采。容器内原子心跳绑定 leader PID、任务存活状态和新鲜度；生产部署与回滚均同时重建 API/Worker、等待 Worker `healthy`，并在切换静态站点前运行与每日任务同口径的决策质量 `--dry-run`，不再只凭 `/health` 判断采集链可用。**验证：** API 全量 **1198 passed**，Worker/锁/部署契约聚焦 **27 passed**，真实 SQLite 选主与心跳演练、Python `compileall`、Compose YAML 解析、部署脚本 Bash 语法及 `git diff --check` 通过；本机无 Docker CLI，生产 Compose 完整展开由 CI/CD 和 Lighthouse 发布门禁继续验证。
 - **DecisionScore v1 影子量化决策 + 因子置信 P0（2026-07-18，已实现）：** 修复近期旧版、小样本或契约损坏的 Factor IC 快照仅因日期新就进入高置信链路的问题：原始快照仍可诊断展示，但只有通过当前版本化契约完整校验、未过期且无需升级时才设置 `confidence_eligible=true`；否则消费上下文统一降为 unavailable，因子与 research model 不进入置信度或执行白名单。荐基报告新增独立 `decision_score.v1` artifact，在当前生产决策和确定性分配完成后，按因子同类 30% + 正式基准/跟踪一致性 25% + 下行控制 20% + 组合板块容量 15% + 持有期费用 10% 计算最终候选池影子顺序；五项缺一不评分，不填 0、不重分权重，质量/交易/持有期成本硬门优先。Artifact 带候选审计引用、逐行及整包哈希、Top-K 差异和覆盖率，落库但不进入 LLM payload，固定 `shadow_record_only`、不改候选/动作/金额/分配且禁止自动晋级。新增 `GET /api/diagnostics/decision-score-shadow` 当前用户摘要；预注册公式、局限与至少 60 个成熟独立决策日的人工晋级门槛见 [DECISION_SCORE_V1.md](design/DECISION_SCORE_V1.md)。本地旧 v1/25 只快照真实探针现正确显示 `confidence_eligible=false` 且不满足影子因子分项。生产采集回归同时修复每日质量快照把正常未到期 observation 误判为契约损坏的问题：仅 `outcome_observation_not_terminal_mature` 被视为预期 pending，哈希不一致、结构异常及 shadow 标签排除仍 fail closed。**验证：** API 全量 **1188 passed**，该修复聚焦回归 **123 passed**，Python `compileall`、相关路径 30 项聚焦回归与此前 281 项扩大回归通过；另修复 4 个依赖系统日期的既有测试，只冻结测试决策时点，未放宽生产 7 日净值新鲜度门禁。
@@ -205,6 +206,7 @@
 | 推荐基金 | 「推荐基金」Tab：`FundDiscoveryPanel` — 默认独立 **机会优先**（未来 20～60 个交易日，近 1 年回撤用于调整首批金额而非一票否决），可切换旧式 **稳健筛选**；只保留 **市场优选**（`full_market`）/ **组合补缺**（`portfolio_gap`）、19 个关注方向、预算与高级 Prompt 附录，主扫描固定深度分析。候选公开并全链保留 `sector_match_kind`、`opportunity_score_20_60d`，报告按可执行/等待/观察分层，并展示质量门、候选池、历史与复盘 |
 | 荐基量化影子评分 | `decision_score.v1` 在当前报告决策与分配完成后，对最终候选池计算固定五因子研究顺序；严格硬门与缺失值 fail-closed，artifact 落库但不进入 LLM、不改候选/动作/金额/分配。`GET /api/diagnostics/decision-score-shadow` 只读汇总覆盖与 Top-K 差异，达到预注册样本门槛也只能进入人工评审 |
 | 证据成熟度控制台 | `GET /api/diagnostics/evidence-maturity` 汇总 Worker 心跳、PIT 成员/锚点、Factor IC 经济期、DecisionScore shadow 与当前用户决策质量快照；前端 `EvidenceMaturityPanel` 在无持仓收益时仍可打开，缺失显示“尚无证据”，异常给出下一步但不触发评估或自动晋级 |
+| NAV 首次观测账本 | schema v17 `factor_ic_nav_observations` 按采集器真实首次可见时间追加保存净值；同值幂等、修订追加、历史查询按 `as_of` 取最早已观测版本。每日目录采集和周度 Factor IC 增量读取共用内部 Token；observation-PIT 未满足 100% 时间戳覆盖、250 个因子点及完整统计门槛前继续使用 membership-PIT v3/v2，永不自动晋级 |
 | AI 角色 Prompt（日报） | `analysis_prompt.py` `DEFAULT_ROLE_PROMPT`；用户自定义 `role_prompt`（≤4000 字）持久化 `analysis_prompt_state`；`GET/PUT /api/analysis-prompt`；生成时 `system_role_prompt` 传入 `POST /api/analyze/async` |
 | AI 角色 Prompt（荐基） | `discovery_prompt.py` `DEFAULT_DISCOVERY_ROLE_PROMPT`；持久化 `discovery_prompt_state`（schema v6）；`GET/PUT /api/discovery-prompt`；扫描时 `DiscoveryRequest.system_role_prompt` 传入 `discovery_client` |
 | 复盘/模拟 | outcomes / outcomes-weekly / rebalance-simulation / recommendation-accuracy |
@@ -526,6 +528,9 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | GET | `/api/diagnostics/factor-ic-status` | 因子 IC 快照新鲜度（需 JWT）：来源、生成/发布时间、有效基金数、回测期数、四因子有效期、30 天过期状态 |
 | GET | `/api/diagnostics/decision-score-shadow?limit=30` | 当前用户最近 1～100 份荐基报告的 DecisionScore v1 影子覆盖、缺失分项、校验状态与 Top-K 差异摘要；不返回候选明细、不自动晋级 |
 | GET | `/api/diagnostics/evidence-maturity` | 当前用户证据成熟度与采集健康控制面；只读/no-store，汇总 Worker、PIT/IC、DecisionScore 和决策质量，子链失败按组件告警且不即时重算 |
+| GET | `/api/diagnostics/factor-ic-nav-observations` | NAV 首次观测账本的行数、基金数、批次、修订数、首末观测和 readiness；只读/no-store，不返回净值明细、不自动晋级 |
+| POST | `/api/internal/factor-ic-nav-observations` | Token-only、OpenAPI 隐藏；发布同一目录响应生成的内容寻址观测批次，拒绝伪回填、篡改与持久层回落 |
+| POST | `/api/internal/factor-ic-nav-observations/query` | Token-only、OpenAPI 隐藏；按基金分块、净值日期和显式 `as_of` 读取最早已观测版本，供周度 Factor IC 工作流生成不可变输入产物 |
 | GET | `/api/database/export` | 下载 SQLite |
 | POST | `/api/database/import` | 上传替换 DB（自动备份 `.db.bak`） |
 | GET | `/api/jobs/{id}` | 任务状态（日报或推荐基金）；`job_status_service` 单连接先查 `discovery_jobs`；含 `job_kind`、`stage`/`stage_label`；完成时含 `report` 或 `discovery_report`；DB 不可用 503 |
@@ -599,6 +604,7 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | **DecisionEvent v2 / OutcomeObservation v2** | 固化动作、固定 horizons、费用假设与审计版本；D2 正式事件必须绑定 replay bundle/variant manifest；结果 pending 可修订、成熟终态锁定，标签有效可见时点取来源/终态/存储 receipt 的最大值，正式统计拆成四项指标 |
 | **DecisionReplayBundle / VariantManifest** | `decision_replay_bundle.v1` 冻结 facts、DataEvidence、确定性 refs、Prompt contract 与费用策略；`decision_variant_manifest.v1` 绑定模型/Prompt/策略/policy/数据/证据/费用版本及 hash。逻辑 `decision_at` 与 bundle receipt `recorded_at` 分离，完整链按 cutoff 防前视 |
 | **FundHoldingsSnapshot v1** | 追加式 PIT 季报/中报/年报持仓快照；冻结披露期、截止日、可得/首次观察时点、来源、修订和 hash；历史回放 store-only，不能用当前实时数据补历史 |
+| **FactorIcNavObservation v1** | schema v17 的追加式 NAV 首次观测账本；绑定基金、净值日、数值、公开目录来源、`first_observed_at`、`available_at`、批次、来源提交与内容哈希。SQLite/MySQL 均禁止 UPDATE/DELETE，修订追加且历史 `as_of` 固定取最早已观测版本 |
 | **Fund look-through evidence** | 底层证券/行业/组合暴露与重合下限；同时保留披露覆盖和未知质量；数值重合只允许同披露期，跨期只表达状态 |
 | **DecisionQualityEvaluation** | 无 DB/网络副作用的 PIT 评估；成熟标签、claim wrapper、配对案例和版本均 hash 绑定；只生成 `human-review-only` 晋级建议 |
 | **DecisionQualityInputArtifact / Receipts / EvaluationSnapshot** | schema v16 的 input artifact、artifact post-commit receipt、全局 provider origin receipt、evaluation snapshot 与 rollout marker 是五本内容寻址追加式质量账，SQLite/MySQL 共 10 个不可变触发器；Prompt shadow 的 run/budget 是另两张受精确 schema/index/事务约束的可变运营表。marker、五账摘要和不含原文的 prompt refs 进入 input manifest v4。候选 case v2 从 adapter stdout 重解析并绑定 exact provider closure；paired Prompt case 再绑定双方预登记/output 与候选 T+20 receipt。缺 receipt 保留 coverage 分母但无标签，篡改 fail closed，所有快照显式禁止自动推广 |

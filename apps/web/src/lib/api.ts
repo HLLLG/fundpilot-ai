@@ -702,6 +702,23 @@ export type EvidenceMaturityStatus = {
     economic_progress_percent_60d?: number | null;
     confidence_block_reasons: string[];
   };
+  nav_observation: {
+    status: "not_started" | "collecting" | "unavailable" | string;
+    observation_count?: number | null;
+    fund_count?: number | null;
+    capture_run_count?: number | null;
+    revision_count?: number | null;
+    first_observed_at?: string | null;
+    latest_observed_at?: string | null;
+    latest_capture_age_days?: number | null;
+    latest_nav_date?: string | null;
+    latest_capture_fund_count?: number | null;
+    availability_basis?: string | null;
+    revision_policy?: string | null;
+    minimum_feature_history_points?: number | null;
+    full_model_ready: boolean;
+    automatic_promotion_allowed: false;
+  };
   decision_score_shadow: {
     status: string;
     mode?: string | null;

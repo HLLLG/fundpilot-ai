@@ -81,9 +81,10 @@ def nav_information_window(
     *,
     fund_type: object,
     horizon: int,
+    nav_observation_pit: bool = False,
 ) -> dict[str, Any] | None:
     """给出信号可见 NAV 截止日与下一可执行 NAV 的目标日期。"""
-    lag = nav_publication_lag_trading_days(fund_type)
+    lag = 0 if nav_observation_pit else nav_publication_lag_trading_days(fund_type)
     factor_index = anchor_index - lag
     entry_index = anchor_index + EXECUTION_ENTRY_OFFSET_TRADING_DAYS
     exit_index = entry_index + horizon
@@ -120,6 +121,59 @@ def _nav_on_or_after(
         return None
     nav = navs[index]
     return nav if nav > 0 else None
+
+
+def _observation_date(value: str | None, *, nav_date: str) -> str | None:
+    """Return the real collector date; a missing timestamp stays unavailable."""
+
+    if not value:
+        return None
+    fallback = _parse_date(nav_date, field="nav date")
+    return _parse_datetime(
+        value,
+        fallback=fallback,
+        field="NAV observed_at",
+    ).date().isoformat()
+
+
+def _observed_navs_upto(
+    dates: list[str],
+    navs: list[float],
+    observed_dates: list[str | None],
+    target_date: str,
+    lookback: int,
+) -> list[float]:
+    eligible = [
+        nav
+        for day, nav, observed in zip(dates, navs, observed_dates)
+        if day <= target_date and observed is not None and observed <= target_date
+    ]
+    return eligible[-lookback:]
+
+
+def _observed_nav_asof(
+    dates: list[str],
+    navs: list[float],
+    observed_dates: list[str | None],
+    target_date: str,
+    *,
+    max_stale_days: int,
+) -> float | None:
+    eligible = [
+        (day, nav)
+        for day, nav, observed in zip(dates, navs, observed_dates)
+        if day <= target_date and observed is not None and observed <= target_date
+    ]
+    if not eligible:
+        return None
+    filtered_dates = [day for day, _ in eligible]
+    filtered_navs = [nav for _, nav in eligible]
+    return _nav_asof(
+        filtered_dates,
+        filtered_navs,
+        target_date,
+        max_stale_days=max_stale_days,
+    )
 
 
 @dataclass(frozen=True)
@@ -462,6 +516,10 @@ def aggregate_economic_significance(
     walk_forward_folds: int,
     embargo_days: int,
     trading_calendar: list[str],
+    point_in_time_scope: str = "membership_only",
+    nav_revision_pit: bool = False,
+    availability_basis: str | None = None,
+    revision_policy: str | None = None,
 ) -> dict[str, Any]:
     """聚合同类相对收益的经济显著性；输入为空时严格 fail closed。"""
     ordered = sorted(observations, key=lambda row: str(row.get("anchor") or ""))
@@ -545,8 +603,8 @@ def aggregate_economic_significance(
         "schema_version": "factor_economic_significance.v1",
         "label_type": "peer_group_relative_total_return",
         "benchmark": "same_segment_cross_section_median",
-        "point_in_time_scope": "membership_only",
-        "nav_revision_pit": False,
+        "point_in_time_scope": point_in_time_scope,
+        "nav_revision_pit": nav_revision_pit,
         "entry_rule": "next_trading_day_first_available_nav",
         "entry_offset_trading_days": EXECUTION_ENTRY_OFFSET_TRADING_DAYS,
         "quantile_count": 5,
@@ -577,6 +635,9 @@ def aggregate_economic_significance(
         "downside_distribution_unit": "anchor_top_quantile_mean",
         "walk_forward": walk,
     }
+    if nav_revision_pit:
+        result["availability_basis"] = availability_basis
+        result["revision_policy"] = revision_policy
     result["qualified"] = economic_significance_qualified(result)
     return result
 
@@ -744,6 +805,7 @@ def compute_point_in_time_segmented_ic(
     max_snapshot_age_days: int = DEFAULT_MAX_SNAPSHOT_AGE_DAYS,
     walk_forward_folds: int = DEFAULT_WALK_FORWARD_FOLDS,
     embargo_days: int = DEFAULT_EMBARGO_DAYS,
+    nav_observation_pit: bool = False,
 ) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
     """Compute segmented IC using membership frozen independently at each anchor."""
     calendar = sorted({point.date for points in nav_panel.values() for point in points})
@@ -759,7 +821,12 @@ def compute_point_in_time_segmented_ic(
     anchor_indexes = [
         index
         for index in range(
-            max(0, factor_lookback - 1 + QDII_NAV_PUBLICATION_LAG_TRADING_DAYS),
+            max(
+                0,
+                factor_lookback
+                - 1
+                + (0 if nav_observation_pit else QDII_NAV_PUBLICATION_LAG_TRADING_DAYS),
+            ),
             len(calendar),
             rebalance_step,
         )
@@ -772,10 +839,22 @@ def compute_point_in_time_segmented_ic(
         snapshots=normalized_snapshots,
         max_age_days=max_snapshot_age_days,
     )
-    indexed: dict[str, tuple[list[str], list[float]]] = {}
+    indexed: dict[str, tuple[list[str], list[float], list[str | None]]] = {}
+    observation_point_count = 0
+    timestamped_observation_point_count = 0
     for code, points in nav_panel.items():
         ordered = sorted(points, key=lambda point: point.date)
-        indexed[code] = ([point.date for point in ordered], [point.nav for point in ordered])
+        dates = [point.date for point in ordered]
+        navs = [point.nav for point in ordered]
+        observed_dates = [
+            _observation_date(point.observed_at, nav_date=point.date)
+            for point in ordered
+        ]
+        indexed[code] = (dates, navs, observed_dates)
+        observation_point_count += len(ordered)
+        timestamped_observation_point_count += sum(
+            value is not None for value in observed_dates
+        )
 
     series: dict[tuple[str, int, str], list[tuple[str, float]]] = {}
     economic_series: dict[tuple[str, int, str], list[dict[str, Any]]] = {}
@@ -798,21 +877,42 @@ def compute_point_in_time_segmented_ic(
                 anchor_index,
                 fund_type=segment,
                 horizon=0,
+                nav_observation_pit=nav_observation_pit,
             )
             if window is None:
                 continue
-            dates, navs = indexed[member.fund_code]
-            history = _navs_upto(
-                dates,
-                navs,
-                str(window["factor_as_of"]),
-                factor_lookback,
+            dates, navs, observed_dates = indexed[member.fund_code]
+            history = (
+                _observed_navs_upto(
+                    dates,
+                    navs,
+                    observed_dates,
+                    str(window["factor_as_of"]),
+                    factor_lookback,
+                )
+                if nav_observation_pit
+                else _navs_upto(
+                    dates,
+                    navs,
+                    str(window["factor_as_of"]),
+                    factor_lookback,
+                )
             )
-            nav_factor_asof = _nav_asof(
-                dates,
-                navs,
-                str(window["factor_as_of"]),
-                max_stale_days=stale_days,
+            nav_factor_asof = (
+                _observed_nav_asof(
+                    dates,
+                    navs,
+                    observed_dates,
+                    str(window["factor_as_of"]),
+                    max_stale_days=stale_days,
+                )
+                if nav_observation_pit
+                else _nav_asof(
+                    dates,
+                    navs,
+                    str(window["factor_as_of"]),
+                    max_stale_days=stale_days,
+                )
             )
             nav_entry = _nav_on_or_after(
                 dates,
@@ -836,6 +936,7 @@ def compute_point_in_time_segmented_ic(
                 anchor_index,
                 fund_type=segment,
                 horizon=0,
+                nav_observation_pit=nav_observation_pit,
             )
             if maximum_window is None:
                 continue
@@ -845,12 +946,22 @@ def compute_point_in_time_segmented_ic(
                 factor: {} for factor in (*SINGLE_FACTORS, *typed_keys)
             }
             for code in codes:
-                dates, navs = indexed[code]
-                history = _navs_upto(
-                    dates,
-                    navs,
-                    str(maximum_window["factor_as_of"]),
-                    factor_lookback,
+                dates, navs, observed_dates = indexed[code]
+                history = (
+                    _observed_navs_upto(
+                        dates,
+                        navs,
+                        observed_dates,
+                        str(maximum_window["factor_as_of"]),
+                        factor_lookback,
+                    )
+                    if nav_observation_pit
+                    else _navs_upto(
+                        dates,
+                        navs,
+                        str(maximum_window["factor_as_of"]),
+                        factor_lookback,
+                    )
                 )
                 if len(history) >= factor_lookback:
                     raws = {
@@ -882,12 +993,13 @@ def compute_point_in_time_segmented_ic(
                     anchor_index,
                     fund_type=segment,
                     horizon=horizon,
+                    nav_observation_pit=nav_observation_pit,
                 )
                 if window is None:
                     continue
                 forward_returns: dict[str, float | None] = {}
                 for code in codes:
-                    dates, navs = indexed[code]
+                    dates, navs, _observed_dates = indexed[code]
                     nav_t = _nav_on_or_after(
                         dates,
                         navs,
@@ -930,12 +1042,23 @@ def compute_point_in_time_segmented_ic(
     coverage["cohort_nav_coverage_rate"] = (
         round(nav_memberships / cohort_memberships, 4) if cohort_memberships else 0.0
     )
-    coverage["point_in_time_scope"] = "membership_only"
-    coverage["nav_revision_pit"] = False
+    point_in_time_scope = (
+        "nav_observation_pit" if nav_observation_pit else "membership_only"
+    )
+    coverage["point_in_time_scope"] = point_in_time_scope
+    coverage["nav_revision_pit"] = nav_observation_pit
     coverage["nav_publication_lag_trading_days"] = {
-        "default": DEFAULT_NAV_PUBLICATION_LAG_TRADING_DAYS,
-        "qdii": QDII_NAV_PUBLICATION_LAG_TRADING_DAYS,
+        "default": 0 if nav_observation_pit else DEFAULT_NAV_PUBLICATION_LAG_TRADING_DAYS,
+        "qdii": 0 if nav_observation_pit else QDII_NAV_PUBLICATION_LAG_TRADING_DAYS,
     }
+    coverage["observation_timestamp_coverage_rate"] = (
+        round(timestamped_observation_point_count / observation_point_count, 4)
+        if observation_point_count
+        else 0.0
+    )
+    if nav_observation_pit:
+        coverage["availability_basis"] = "collector_first_observed_at"
+        coverage["revision_policy"] = "first_observed_value"
     coverage["execution_entry_offset_trading_days"] = (
         EXECUTION_ENTRY_OFFSET_TRADING_DAYS
     )
@@ -948,6 +1071,7 @@ def compute_point_in_time_segmented_ic(
                     anchor_index,
                     fund_type=segment,
                     horizon=horizon,
+                    nav_observation_pit=nav_observation_pit,
                 )
                 is not None
                 for anchor_index, anchor in zip(anchor_indexes, anchors)
@@ -989,6 +1113,10 @@ def compute_point_in_time_segmented_ic(
         and coverage["anchor_coverage_rate"] >= MIN_POINT_IN_TIME_COVERAGE
         and coverage["cohort_nav_coverage_rate"] >= MIN_POINT_IN_TIME_COVERAGE
         and coverage["horizon_ready"].get(primary_maturity_horizon) is True
+        and (
+            not nav_observation_pit
+            or coverage["observation_timestamp_coverage_rate"] == 1.0
+        )
     )
 
     output: dict[str, dict[str, Any]] = {}
@@ -1028,6 +1156,16 @@ def compute_point_in_time_segmented_ic(
                     walk_forward_folds=walk_forward_folds,
                     embargo_days=max(embargo_days, horizon),
                     trading_calendar=calendar,
+                    point_in_time_scope=point_in_time_scope,
+                    nav_revision_pit=nav_observation_pit,
+                    availability_basis=(
+                        "collector_first_observed_at"
+                        if nav_observation_pit
+                        else None
+                    ),
+                    revision_policy=(
+                        "first_observed_value" if nav_observation_pit else None
+                    ),
                 )
                 row["factor_family"] = (
                     "fund_type_specific" if factor in typed_keys else "common"
@@ -1070,9 +1208,19 @@ def compute_point_in_time_segmented_ic(
                 },
                 "size_role": "capacity_risk_guard_only",
                 "nav_information_lag_trading_days": (
-                    nav_publication_lag_trading_days(segment)
+                    0
+                    if nav_observation_pit
+                    else nav_publication_lag_trading_days(segment)
                 ),
-                "nav_revision_pit": False,
+                "nav_revision_pit": nav_observation_pit,
+                **(
+                    {
+                        "availability_basis": "collector_first_observed_at",
+                        "revision_policy": "first_observed_value",
+                    }
+                    if nav_observation_pit
+                    else {}
+                ),
             },
             "horizons": horizon_rows,
         }

@@ -12,10 +12,10 @@ from app.services.decision_quality_rollout import (
 )
 
 
-MYSQL_SCHEMA_VERSION = 16
+MYSQL_SCHEMA_VERSION = 17
 
 MYSQL_MIGRATION_GUARD_NAME = "sqlite_to_mysql"
-MYSQL_SCHEMA_LOCK_NAME = "fundpilot.mysql_schema.v16"
+MYSQL_SCHEMA_LOCK_NAME = "fundpilot.mysql_schema.v17"
 MYSQL_MIGRATION_GUARD_TABLE = "decision_quality_migration_guard"
 _MIGRATION_GUARD_STATUSES = frozenset({"in_progress", "complete"})
 _MYSQL_MIGRATION_GUARD_DDL = f"""
@@ -70,6 +70,41 @@ _DECISION_QUALITY_TRANSACTIONAL_TABLES = (
     "prompt_shadow_runs",
     "prompt_shadow_budget_counters",
 )
+_FACTOR_IC_NAV_OBSERVATION_TABLE = "factor_ic_nav_observations"
+_FACTOR_IC_NAV_OBSERVATION_TRIGGER_MESSAGE = (
+    "factor IC NAV observations are append-only"
+)
+_MYSQL_FACTOR_NAV_COLUMN_CONTRACT = (
+    ("observation_id", "varchar", 96, "NO", "binary"),
+    ("schema_version", "varchar", 64, "NO", "binary"),
+    ("fund_code", "varchar", 16, "NO", "binary"),
+    ("nav_date", "varchar", 16, "NO", "binary"),
+    ("source", "varchar", 96, "NO", "binary"),
+    ("first_observed_at", "varchar", 64, "NO", "binary"),
+    ("available_at", "varchar", 64, "NO", "binary"),
+    ("availability_basis", "varchar", 64, "NO", "binary"),
+    ("unit_nav", "double", None, "NO", None),
+    ("cumulative_nav", "double", None, "YES", None),
+    ("daily_growth_percent", "double", None, "YES", None),
+    ("content_hash", "char", 64, "NO", "binary"),
+    ("payload", "longtext", None, "NO", "binary"),
+    ("source_commit", "varchar", 64, "NO", "binary"),
+    ("source_run_id", "varchar", 64, "NO", "binary"),
+    ("created_at", "varchar", 64, "NO", "binary"),
+)
+_MYSQL_FACTOR_NAV_INDEX_CONTRACT = {
+    "PRIMARY": (0, ("observation_id",)),
+    "uq_factor_ic_nav_observation_content": (0, ("content_hash",)),
+    "idx_factor_ic_nav_observation_code_pit": (
+        1,
+        ("fund_code", "nav_date", "first_observed_at"),
+    ),
+    "idx_factor_ic_nav_observation_observed": (
+        1,
+        ("first_observed_at", "nav_date"),
+    ),
+    "idx_factor_ic_nav_observation_run": (1, ("source_run_id", "fund_code")),
+}
 
 
 class MySqlBootstrapContractError(RuntimeError):
@@ -1047,6 +1082,34 @@ def _ensure_mysql_schema_locked(
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """,
         """
+        CREATE TABLE IF NOT EXISTS factor_ic_nav_observations (
+            observation_id VARCHAR(96) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            schema_version VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            fund_code VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            nav_date VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            source VARCHAR(96) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            first_observed_at VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            available_at VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            availability_basis VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            unit_nav DOUBLE NOT NULL,
+            cumulative_nav DOUBLE NULL,
+            daily_growth_percent DOUBLE NULL,
+            content_hash CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            payload LONGTEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+            source_commit VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            source_run_id VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            created_at VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            PRIMARY KEY (observation_id),
+            UNIQUE KEY uq_factor_ic_nav_observation_content (content_hash),
+            INDEX idx_factor_ic_nav_observation_code_pit
+                (fund_code, nav_date, first_observed_at),
+            INDEX idx_factor_ic_nav_observation_observed
+                (first_observed_at, nav_date),
+            INDEX idx_factor_ic_nav_observation_run
+                (source_run_id, fund_code)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """,
+        """
         CREATE TABLE IF NOT EXISTS fund_holdings_snapshots (
             id VARCHAR(128) PRIMARY KEY,
             fund_master_key VARCHAR(128) NOT NULL,
@@ -1421,6 +1484,7 @@ def _ensure_mysql_schema_locked(
             cursor,
             fetchall,
         )
+        _ensure_factor_ic_nav_observation_storage_engine(cursor, fetchall)
 
     try:
         _ensure_decision_quality_rollout_mysql_triggers(cursor)
@@ -1430,6 +1494,16 @@ def _ensure_mysql_schema_locked(
     except Exception as exc:  # noqa: BLE001 - convert privilege/DDL errors
         raise MySqlBootstrapContractError(
             "MySQL cannot enforce the immutable decision-quality ledger; "
+            "grant TRIGGER on the application schema and retry bootstrap"
+        ) from exc
+
+    try:
+        _ensure_factor_ic_nav_observation_mysql_triggers(cursor)
+    except MySqlBootstrapContractError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - convert privilege/DDL errors
+        raise MySqlBootstrapContractError(
+            "MySQL cannot enforce the append-only factor NAV observation ledger; "
             "grant TRIGGER on the application schema and retry bootstrap"
         ) from exc
 
@@ -1500,6 +1574,7 @@ def _ensure_mysql_schema_locked(
         _repair_legacy_decision_quality_mysql_contracts(cursor, fetchall)
         _ensure_decision_quality_mysql_contracts(cursor, fetchall)
         _ensure_prompt_shadow_mysql_contracts(cursor, fetchall)
+        _ensure_factor_ic_nav_observation_mysql_contracts(cursor, fetchall)
 
     expected_marker = (
         normalize_decision_quality_rollout_marker(
@@ -1618,6 +1693,107 @@ def _ensure_decision_quality_storage_engine_mysql_contract(
         ) from exc
 
 
+def _ensure_factor_ic_nav_observation_storage_engine(
+    cursor: Any,
+    fetchall: Any,
+) -> None:
+    try:
+        cursor.execute(
+            f"""
+            SELECT TABLE_NAME, ENGINE
+            FROM information_schema.TABLES
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = '{_FACTOR_IC_NAV_OBSERVATION_TABLE}'
+            """
+        )
+        rows = fetchall()
+        if len(rows) != 1:
+            raise MySqlBootstrapContractError(
+                "MySQL factor NAV observation table metadata is missing"
+            )
+        row = rows[0]
+        if isinstance(row, dict):
+            table = str(row.get("TABLE_NAME") or row.get("table_name") or "")
+            engine = str(row.get("ENGINE") or row.get("engine") or "")
+        else:
+            table, engine = str(row[0]), str(row[1])
+        if table != _FACTOR_IC_NAV_OBSERVATION_TABLE or engine.lower() != "innodb":
+            raise MySqlBootstrapContractError(
+                "MySQL factor NAV observation ledger must use InnoDB"
+            )
+    except MySqlBootstrapContractError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - metadata is a release contract
+        raise MySqlBootstrapContractError(
+            "MySQL factor NAV observation storage engine cannot be verified"
+        ) from exc
+
+
+def _ensure_factor_ic_nav_observation_mysql_contracts(
+    cursor: Any,
+    fetchall: Any,
+) -> None:
+    table = _FACTOR_IC_NAV_OBSERVATION_TABLE
+    try:
+        cursor.execute(
+            "SELECT COLUMN_NAME, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH, "
+            "IS_NULLABLE, ORDINAL_POSITION, COLLATION_NAME "
+            "FROM information_schema.COLUMNS "
+            f"WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '{table}' "
+            "ORDER BY ORDINAL_POSITION"
+        )
+        observed_columns = tuple(
+            _mysql_dq_column_contract(row) for row in fetchall()
+        )
+        if len(observed_columns) != len(_MYSQL_FACTOR_NAV_COLUMN_CONTRACT) or any(
+            not _valid_mysql_dq_column(
+                observed_columns[position - 1],
+                expected=expected,
+                position=position,
+            )
+            for position, expected in enumerate(
+                _MYSQL_FACTOR_NAV_COLUMN_CONTRACT,
+                start=1,
+            )
+        ):
+            raise MySqlBootstrapContractError(
+                "MySQL factor NAV observation columns conflict with contract"
+            )
+        cursor.execute(
+            "SELECT INDEX_NAME, NON_UNIQUE, SEQ_IN_INDEX, COLUMN_NAME, SUB_PART "
+            "FROM information_schema.STATISTICS "
+            f"WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '{table}' "
+            "ORDER BY INDEX_NAME, SEQ_IN_INDEX"
+        )
+        observed_indexes: dict[str, list[tuple[int, int, str, Any]]] = {}
+        for row in fetchall():
+            name, non_unique, sequence, column, sub_part = (
+                _mysql_receipt_index_part(row)
+            )
+            observed_indexes.setdefault(name, []).append(
+                (non_unique, sequence, column, sub_part)
+            )
+        if set(observed_indexes) != set(_MYSQL_FACTOR_NAV_INDEX_CONTRACT):
+            raise MySqlBootstrapContractError(
+                "MySQL factor NAV observation indexes conflict with contract"
+            )
+        for name, (non_unique, columns) in _MYSQL_FACTOR_NAV_INDEX_CONTRACT.items():
+            expected_parts = [
+                (non_unique, position, column, None)
+                for position, column in enumerate(columns, start=1)
+            ]
+            if observed_indexes.get(name) != expected_parts:
+                raise MySqlBootstrapContractError(
+                    f"MySQL factor NAV observation index {name} conflicts with contract"
+                )
+    except MySqlBootstrapContractError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - metadata is a release contract
+        raise MySqlBootstrapContractError(
+            "MySQL factor NAV observation metadata cannot be verified"
+        ) from exc
+
+
 def _ensure_decision_quality_rollout_mysql_triggers(cursor: Any) -> None:
     """Create and verify the database-owned immutable rollout boundary.
 
@@ -1712,6 +1888,49 @@ def _ensure_decision_quality_append_only_mysql_triggers(cursor: Any) -> None:
                 )
 
 
+def _ensure_factor_ic_nav_observation_mysql_triggers(cursor: Any) -> None:
+    fetchone = getattr(cursor, "fetchone", None)
+    table = _FACTOR_IC_NAV_OBSERVATION_TABLE
+    message = _FACTOR_IC_NAV_OBSERVATION_TRIGGER_MESSAGE
+    for event in ("UPDATE", "DELETE"):
+        trigger_name = f"trg_factor_ic_nav_observation_no_{event.lower()}"
+        create_statement = f"""
+            CREATE TRIGGER {trigger_name}
+            BEFORE {event} ON {table}
+            FOR EACH ROW
+            SIGNAL SQLSTATE '45000'
+                SET MESSAGE_TEXT = '{message}'
+        """
+        if not callable(fetchone):
+            cursor.execute(create_statement)
+            continue
+        row = _read_mysql_trigger_row(cursor, fetchone, trigger_name)
+        if row is None:
+            try:
+                cursor.execute(create_statement)
+            except Exception as exc:  # noqa: BLE001 - concurrent DDL
+                row = _read_mysql_trigger_row(cursor, fetchone, trigger_name)
+                if not _valid_immutable_trigger_row(
+                    row,
+                    event=event,
+                    table=table,
+                    message=message,
+                ):
+                    raise MySqlBootstrapContractError(
+                        f"MySQL factor NAV trigger {trigger_name} cannot be enforced"
+                    ) from exc
+            continue
+        if not _valid_immutable_trigger_row(
+            row,
+            event=event,
+            table=table,
+            message=message,
+        ):
+            raise MySqlBootstrapContractError(
+                f"MySQL factor NAV trigger {trigger_name} conflicts with the contract"
+            )
+
+
 def _valid_rollout_immutable_trigger_row(row: Any, *, event: str) -> bool:
     return _valid_immutable_trigger_row(
         row,
@@ -1761,9 +1980,9 @@ def _valid_immutable_trigger_row(
     ).strip()
     expected_actions = {
         "signal sqlstate '45000' set message_text = "
-        f"'{message}'",
+        f"'{message.lower()}'",
         "signal sqlstate value '45000' set message_text = "
-        f"'{message}'",
+        f"'{message.lower()}'",
     }
     return (
         str(timing or "").upper() == "BEFORE"

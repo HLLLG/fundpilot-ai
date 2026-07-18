@@ -166,6 +166,15 @@ from app.services.factor_ic_universe_snapshot import (
     read_factor_ic_universe_history,
     validate_factor_ic_universe_publish_request,
 )
+from app.services.factor_ic_nav_observation import (
+    FactorIcNavObservationConflict,
+    FactorIcNavObservationHistoryQuery,
+    FactorIcNavObservationStorageUnavailable,
+    publish_nav_observation_batch,
+    read_nav_observation_history,
+    read_nav_observation_status,
+    validate_nav_observation_publish_request,
+)
 from app.services.shadow_escalation_digest import build_shadow_escalation_digest
 from app.services.decision_score_shadow import build_decision_score_shadow_digest
 from app.services.evidence_maturity import build_evidence_maturity_status
@@ -475,9 +484,65 @@ def get_factor_ic_universe_history(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
+@app.post("/api/internal/factor-ic-nav-observations", include_in_schema=False)
+def publish_factor_ic_nav_observations(
+    body: dict,
+    _authorized: None = Depends(_require_factor_ic_publish_token),
+) -> dict:
+    try:
+        request = validate_nav_observation_publish_request(body)
+        return publish_nav_observation_batch(request)
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=exc.errors(include_context=False, include_url=False),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except FactorIcNavObservationConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except FactorIcNavObservationStorageUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.post(
+    "/api/internal/factor-ic-nav-observations/query",
+    include_in_schema=False,
+)
+def query_factor_ic_nav_observations(
+    body: dict,
+    _authorized: None = Depends(_require_factor_ic_publish_token),
+) -> dict:
+    try:
+        query = FactorIcNavObservationHistoryQuery.model_validate(body)
+        return read_nav_observation_history(
+            fund_codes=query.fund_codes,
+            start_date=query.start_date,
+            end_date=query.end_date,
+            as_of=query.as_of,
+        )
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=exc.errors(include_context=False, include_url=False),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except FactorIcNavObservationStorageUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
 @app.get("/api/diagnostics/factor-ic-status")
 def factor_ic_status() -> dict:
     return build_factor_ic_status()
+
+
+@app.get("/api/diagnostics/factor-ic-nav-observations")
+def factor_ic_nav_observation_status() -> dict:
+    try:
+        return read_nav_observation_status()
+    except FactorIcNavObservationStorageUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @app.get("/api/diagnostics/factor-live-calibration")

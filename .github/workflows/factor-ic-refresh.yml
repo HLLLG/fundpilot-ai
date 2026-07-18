@@ -63,6 +63,7 @@ jobs:
           LIGHTHOUSE_USER: ${{ secrets.LIGHTHOUSE_USER }}
           FACTOR_IC_PUBLISH_TOKEN: ${{ secrets.FACTOR_IC_PUBLISH_TOKEN }}
           FACTOR_IC_UNIVERSE_FETCH_URL: http://127.0.0.1:18000/api/internal/factor-ic-universe-snapshots
+          FACTOR_IC_NAV_OBSERVATION_FETCH_URL: http://127.0.0.1:18000/api/internal/factor-ic-nav-observations/query
         run: |
           set -euo pipefail
           [[ -n "$FACTOR_IC_PUBLISH_TOKEN" ]] || { echo "::error::FACTOR_IC_PUBLISH_TOKEN is empty"; exit 1; }
@@ -102,6 +103,10 @@ jobs:
             --days 1600 \
             --max-snapshots 180 \
             --stride-days 7
+          python scripts/fetch_factor_ic_nav_observations.py \
+            --pit-history "$RUNNER_TEMP/factor-ic-pit.json" \
+            --out "$RUNNER_TEMP/factor-ic-nav-observations.json" \
+            --days 1600
       - name: Generate factor IC summary
         run: |
           python scripts/run_factor_ic.py \
@@ -114,6 +119,7 @@ jobs:
             --forward-horizons 5,20,60 \
             --factor-lookback 250 \
             --pit-history "$RUNNER_TEMP/factor-ic-pit.json" \
+            --nav-observation-history "$RUNNER_TEMP/factor-ic-nav-observations.json" \
             --pit-history-days 1600 \
             --pit-max-snapshot-age-days 7 \
             --pit-walk-forward-folds 5 \
