@@ -1,0 +1,57 @@
+docs/design/DECISION_SCORE_V1.md
+  s_12ddd06c0f7251::t_b296b5c99c1168 1-90,92-137
+  s_12ddd06c0f7251::t_b003ee760bdbba 91
+apps/api/app/services/discovery_client.py
+  s_12ddd06c0f7251::t_b90e8ddf7a0bc1 36,58-61,645-652
+apps/api/tests/test_discovery_quality_v2.py
+  s_12ddd06c0f7251::t_48c85a0b9462af 3,26-29,73-74,123-124,274
+  s_12ddd06c0f7251::t_93c031014f4b79 162-163
+apps/api/tests/test_discovery_sector_match_provenance.py
+  s_12ddd06c0f7251::t_48c85a0b9462af 3,21-23,109,147
+apps/api/app/services/decision_score_shadow.py
+  s_12ddd06c0f7251::t_7749ce87810433 809-822
+  s_12ddd06c0f7251::t_c52f73a132cbb4 621,724-726,738-742,748-753
+  s_12ddd06c0f7251::t_8eb005d71e3d6b 312-314,325-330,335-338,367,385-393,397-401,436-437,441,467-475,934-943
+  s_12ddd06c0f7251::t_b296b5c99c1168 323-324,331,442,458
+  s_12ddd06c0f7251::t_b9c8c9d5defce9 97-101,115,233-235
+  s_12ddd06c0f7251::t_9b230e0def222b 1-96,102-114,116-232,236-311,315-322,332-334,339-360,365-366,368-380,382-384,394-396,402-410,503-524,526-596,603-620,622-640,643-723,727-737,743-747,754-808,823-928,944-968,970-972
+  s_12ddd06c0f7251::t_b13ccdf1384d60 361-364,381,525,597-602,641-642,929-933
+  s_12ddd06c0f7251::t_8c5e70494adbb8 411-435,438-440,443-457,459-466,476-502,969
+apps/api/tests/test_decision_score_shadow.py
+  s_12ddd06c0f7251::t_824619cf559610 1-6,8-12,14-30,32-146,148-257,343-396,425-426,428-445,452-473,480-481
+  s_12ddd06c0f7251::t_b13ccdf1384d60 31,147,313-339
+  s_12ddd06c0f7251::t_8eb005d71e3d6b 258-312,340-342,397-424,427
+  s_12ddd06c0f7251::t_e3ce87b0545e2d 7,13,446-451,474-479,482-528
+docs/PROJECT_CONTEXT.md
+  s_12ddd06c0f7251::t_b296b5c99c1168 7,204,523,976
+  s_12ddd06c0f7251::t_5dfc755d633b6f 10
+apps/api/app/services/factor_confidence.py
+  s_12ddd06c0f7251::t_4148b99efd9826 71-73
+apps/api/app/services/factor_ic_snapshot.py
+  s_12ddd06c0f7251::t_cc55ea89bc8a46 717-718,769-778,813-814,913-917
+apps/api/app/main.py
+  s_12ddd06c0f7251::t_772a9720f9504f 170,491-500
+apps/api/tests/test_portfolio_factor_scores.py
+  s_12ddd06c0f7251::t_cc55ea89bc8a46 4,29-33,37-82,116-117
+  s_12ddd06c0f7251::t_4148b99efd9826 83-115
+apps/api/tests/test_phase_b_cross_path_contracts.py
+  s_12ddd06c0f7251::t_b296b5c99c1168 216-220
+apps/api/app/services/discovery_offline.py
+  s_12ddd06c0f7251::t_b90e8ddf7a0bc1 8-13,121-127
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.34-trip",
+  "base_commit_sha": "02d078bfbd3be3cb5bc3e474fc0058a4d84ea8cd",
+  "prompts": {},
+  "sessions": {
+    "s_12ddd06c0f7251": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f7369-4d59-7af3-9189-e98b0faa9b7e",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
