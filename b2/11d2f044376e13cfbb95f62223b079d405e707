@@ -1,0 +1,56 @@
+docs/deploy/tencent-lighthouse-migration.md
+  s_12ddd06c0f7251::t_19ec45f79a77a7 216,228-248
+  s_12ddd06c0f7251::t_f563d29f921126 151-154
+apps/api/tests/test_multiworker_deployment_contract.py
+  s_12ddd06c0f7251::t_908474c7771c48 46-47
+  s_12ddd06c0f7251::t_b3f6551a8aaa92 13,17-25,35-45
+apps/api/tests/conftest.py
+  s_12ddd06c0f7251::t_b3b182e5e9b7e1 499
+apps/api/tests/test_cross_process_lock.py
+  s_12ddd06c0f7251::t_45c64da58c096f 94-113
+apps/api/app/config.py
+  s_12ddd06c0f7251::t_63c07ef474faab 150-157
+docs/PROJECT_CONTEXT.md
+  s_12ddd06c0f7251::t_79d996bf1a4673 7,10
+  s_12ddd06c0f7251::t_0a4611b556f4ab 222,251,268-269,833-837,970
+apps/api/tests/test_background_worker.py
+  s_12ddd06c0f7251::t_f58dc0d022d5a9 5,12,141-181
+  s_12ddd06c0f7251::t_0f2fc191ba79b2 107
+  s_12ddd06c0f7251::t_b8c7c7ccfe6dbd 1-4,6-11,13-106,108-140
+apps/api/app/lifespan.py
+  s_12ddd06c0f7251::t_f66d91a2854a50 8,30,34-42
+apps/api/tests/test_config.py
+  s_12ddd06c0f7251::t_a0f5822a2e8799 90-99
+.env.example
+  s_12ddd06c0f7251::t_b1894b0374f69b 31-37
+deploy/lighthouse/deploy.sh
+  s_12ddd06c0f7251::t_acf8f34790c7e6 87-88,90-94,110-124
+  s_12ddd06c0f7251::t_7de032193bb947 127,203,221-248
+docker-compose.production.yml
+  s_12ddd06c0f7251::t_0c345df22e52e5 32,44-64
+docker-compose.cloud.yml
+  s_12ddd06c0f7251::t_6e6b94b35b15f5 21,35,41,44-68
+apps/api/app/services/cross_process_lock.py
+  s_12ddd06c0f7251::t_bebc7bbd4cd651 9,32-59,95-99,120-123,125-129,200-204,230,253,261-262,264-265
+README.md
+  s_12ddd06c0f7251::t_98cbcd61099433 29,168-169
+apps/api/app/background_worker.py
+  s_12ddd06c0f7251::t_eabf9d451c68eb 199-225,281
+  s_12ddd06c0f7251::t_13bac6138bbe3d 1-198,226-280,282-415
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.34-trip",
+  "base_commit_sha": "b211d2f044376e13cfbb95f62223b079d405e707",
+  "prompts": {},
+  "sessions": {
+    "s_12ddd06c0f7251": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f7369-4d59-7af3-9189-e98b0faa9b7e",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
