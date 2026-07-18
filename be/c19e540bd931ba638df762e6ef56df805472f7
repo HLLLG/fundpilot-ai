@@ -1,0 +1,117 @@
+apps/api/app/services/factor_ic_snapshot.py
+  s_12ddd06c0f7251::t_348765ae1f4940 426-427,429-437,488-498
+  s_12ddd06c0f7251::t_184d23e9aa9449 355-364,373,377-378,387-399
+  s_12ddd06c0f7251::t_0d714dd51c930b 270-293
+  s_12ddd06c0f7251::t_44008f0e5463e9 911-913,927-931
+apps/api/tests/test_migrate_sqlite_to_mysql.py
+  s_12ddd06c0f7251::t_0c953854be506e 489,553,591,627,816,1160,1196
+apps/web/src/components/EvidenceMaturityPanel.test.tsx
+  s_12ddd06c0f7251::t_04dc191265aedc 56-69,123-125
+apps/api/tests/test_factor_ic_nav_observation_pit.py
+  s_12ddd06c0f7251::t_f7deaebd0c3106 1-211
+.github/workflows/factor-ic-refresh.yml
+  s_12ddd06c0f7251::t_e1e58ff61fe151 66,106-109,122
+apps/api/tests/test_factor_ic_nav_observation.py
+  s_12ddd06c0f7251::t_0bd91a131e7c9a 1-2,4-29,31-142,145-212,222,228-234,236-298
+  s_12ddd06c0f7251::t_c5c1db5a60014e 3,143-144,213-221,223-227,235
+  s_12ddd06c0f7251::t_d1f4afdb6998f6 30
+apps/api/tests/test_fund_holdings_snapshot_store.py
+  s_12ddd06c0f7251::t_0bd91a131e7c9a 96,144
+apps/api/tests/test_decision_quality_rollout.py
+  s_12ddd06c0f7251::t_69b6ea97d39c64 180
+  s_12ddd06c0f7251::t_3d9e03c9ec4456 14,325,338-339,354-357
+apps/api/app/services/factor_ic_backtest.py
+  s_12ddd06c0f7251::t_1a04ce5102d60b 32-34
+docs/PROJECT_CONTEXT.md
+  s_12ddd06c0f7251::t_f3339ccbdd1753 209,531-533,607
+  s_12ddd06c0f7251::t_c305746bc8e153 7,10
+scripts/migrate_sqlite_to_mysql.py
+  s_12ddd06c0f7251::t_80694963caa962 82-90,263,334
+  s_12ddd06c0f7251::t_bd6f53bf66caff 1401-1411
+  s_12ddd06c0f7251::t_efb44b92d4c032 535-545,607-620
+  s_12ddd06c0f7251::t_550620352b72d3 1703-1706
+apps/api/scripts/capture_factor_ic_universe.py
+  s_12ddd06c0f7251::t_8eaf2d59cdf9e9 18-20,60,73-80,86-91
+.github/workflows/factor-ic-universe-capture.yml
+  s_12ddd06c0f7251::t_b5561f4c515878 43-44,71,108-109,112
+README.md
+  s_12ddd06c0f7251::t_c305746bc8e153 31
+docs/design/QUANT_EVIDENCE_V3.md
+  s_12ddd06c0f7251::t_c305746bc8e153 179-180,185-192
+docs/deploy/tencent-lighthouse-migration.md
+  s_12ddd06c0f7251::t_f3339ccbdd1753 464,469-471
+  s_12ddd06c0f7251::t_c305746bc8e153 179-180
+apps/api/app/services/factor_ic_research.py
+  s_12ddd06c0f7251::t_351122a769a389 250,273,341-346,355-362,383-406
+apps/api/app/services/factor_ic_pit.py
+  s_12ddd06c0f7251::t_00b82b883e163c 521-522,638-640,1161-1168
+  s_12ddd06c0f7251::t_ccf02cc7ce015c 880,884-899,901-915,939,949-964,996,1002
+  s_12ddd06c0f7251::t_8fb9ef2a59185e 519-520,606-607
+  s_12ddd06c0f7251::t_794d46a849c1f7 84,87,177-178
+  s_12ddd06c0f7251::t_67a25df1496de0 126-176
+  s_12ddd06c0f7251::t_fb21ce106d2119 808,824-829,842-844,847-857
+  s_12ddd06c0f7251::t_d84baf0026f7c9 1045-1049,1051-1052,1054-1061,1074,1116-1119,1159-1160,1211-1222
+apps/api/app/auth/middleware.py
+  s_12ddd06c0f7251::t_38291e8905e799 20-21
+apps/api/app/mysql_bootstrap.py
+  s_12ddd06c0f7251::t_d60e67246abc46 1983,1985
+  s_12ddd06c0f7251::t_fb4e2c5ef41748 1730-1794
+  s_12ddd06c0f7251::t_8e8512e04fec1a 77-107
+  s_12ddd06c0f7251::t_afe2acc91e9bbd 1696-1729,1891-1931
+  s_12ddd06c0f7251::t_d18f90f45ca862 1577
+  s_12ddd06c0f7251::t_d3af9c7b8e6599 15,18,73-75,1085-1112,1487,1500-1509,1795-1796,1932-1933
+apps/api/tests/test_decision_quality_repository.py
+  s_12ddd06c0f7251::t_0bd91a131e7c9a 136
+apps/api/app/db_migrations.py
+  s_12ddd06c0f7251::t_1d13854cbf7c97 14,585-687,1448,1513
+apps/api/app/main.py
+  s_12ddd06c0f7251::t_38291e8905e799 169-177,487-534,540-547
+apps/api/scripts/publish_factor_ic_nav_observations.py
+  s_12ddd06c0f7251::t_fd660814b5ceb4 1-98
+apps/api/scripts/run_factor_ic.py
+  s_12ddd06c0f7251::t_2e036854775f85 411-412,416,429-459,506-508
+  s_12ddd06c0f7251::t_48d393ffa2c801 13,75-78,118-219
+  s_12ddd06c0f7251::t_d6911dbbcdf305 294-295,343-358
+  s_12ddd06c0f7251::t_e3d1618207b316 475-479,481,497
+  s_12ddd06c0f7251::t_f60635cf6b4ac8 539-543,572,586-625
+  s_12ddd06c0f7251::t_00cc2989282f70 663-669,695
+  s_12ddd06c0f7251::t_b4a682a179108e 487-493
+apps/api/app/services/evidence_maturity.py
+  s_12ddd06c0f7251::t_9f40b01f1fba63 26-29,397-471,591,611-617,627-633,648
+apps/api/tests/test_db_migrations.py
+  s_12ddd06c0f7251::t_0bd91a131e7c9a 47,66-136
+apps/api/scripts/fetch_factor_ic_nav_observations.py
+  s_12ddd06c0f7251::t_e73caf0b83babd 1-189
+apps/web/src/components/EvidenceMaturityPanel.tsx
+  s_12ddd06c0f7251::t_04dc191265aedc 30,44,147,201-233
+apps/api/tests/test_evidence_maturity.py
+  s_12ddd06c0f7251::t_fa936999a6c386 85-103,118-122,140-141
+docs/deploy/cloudbase.md
+  s_12ddd06c0f7251::t_c305746bc8e153 39-41,80-81
+apps/web/src/lib/api.ts
+  s_12ddd06c0f7251::t_04dc191265aedc 705-721
+apps/api/tests/test_mysql_migration_guard.py
+  s_12ddd06c0f7251::t_778085a4a8d55b 14-15,19-20,354-437
+apps/api/app/services/factor_ic_nav_observation.py
+  s_12ddd06c0f7251::t_e5a9f8e9f4c212 457-458,464-466,468-471
+  s_12ddd06c0f7251::t_48dc64a26b5095 257-258,269-270,289-316,336-337,370-375,399-400,462-463,528-529,576-577
+  s_12ddd06c0f7251::t_a03e275e40a0cb 329,343-354,396-398,459-461,525-527
+  s_12ddd06c0f7251::t_be94d3ac0b1fe6 141-165,696
+  s_12ddd06c0f7251::t_c48bf5d2c61141 1-140,166-256,259-268,271-288,317-328,330-335,338-342,355-369,376-395,401-456,467,472-524,530-575,578-695,697-704
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.34-trip",
+  "base_commit_sha": "bec19e540bd931ba638df762e6ef56df805472f7",
+  "prompts": {},
+  "sessions": {
+    "s_12ddd06c0f7251": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f7369-4d59-7af3-9189-e98b0faa9b7e",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
