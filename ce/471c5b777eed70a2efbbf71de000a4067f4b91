@@ -1,0 +1,23 @@
+apps/api/tests/test_multiworker_deployment_contract.py
+  s_12ddd06c0f7251::t_4e3d7cb6e3dcf2 59-73
+deploy/nginx/fundpilot.conf
+  s_12ddd06c0f7251::t_4e3d7cb6e3dcf2 42-47
+deploy/lighthouse/deploy.sh
+  s_12ddd06c0f7251::t_4e3d7cb6e3dcf2 39-40,264-265
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.34-trip",
+  "base_commit_sha": "ce471c5b777eed70a2efbbf71de000a4067f4b91",
+  "prompts": {},
+  "sessions": {
+    "s_12ddd06c0f7251": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f7369-4d59-7af3-9189-e98b0faa9b7e",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
