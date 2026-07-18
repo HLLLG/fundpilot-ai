@@ -4,8 +4,8 @@ from copy import deepcopy
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from app import main
 from app.models import InvestorProfile
+from app.routes import factor_evidence
 from app.services.decision_score_shadow import (
     COMPONENT_WEIGHTS,
     attach_decision_score_shadow,
@@ -524,5 +524,9 @@ def test_shadow_digest_exposes_coverage_without_candidate_details(monkeypatch) -
     assert digest["latest"]["report_id"] == "report-1"
     assert "rows" not in digest["latest"]
 
-    monkeypatch.setattr(main, "list_discovery_reports", lambda *, limit: reports[:limit])
-    assert main.decision_score_shadow_digest(limit=999) == digest
+    monkeypatch.setattr(
+        factor_evidence,
+        "list_discovery_reports",
+        lambda *, limit: reports[:limit],
+    )
+    assert factor_evidence.decision_score_shadow_digest(limit=999) == digest

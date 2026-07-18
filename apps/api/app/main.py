@@ -5,25 +5,19 @@ import hashlib
 import json
 import logging
 import re
-import secrets
 from datetime import date, datetime
 from pathlib import Path
-from typing import Annotated
 
 from fastapi import (
-    Depends,
     FastAPI,
     File,
     Form,
-    Header,
     HTTPException,
     Request,
     UploadFile,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
-from pydantic import ValidationError
-
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from app.auth.middleware import AuthMiddleware
 from app.auth.models import LoginRequest, RegisterRequest
 from app.auth.service import (
@@ -86,11 +80,6 @@ from app.models import (
 from app.services.analyze_pipeline import run_analysis
 from app.services.analyze_streaming import stream_analysis
 from app.services.decision_data_evidence import resolve_portfolio_preflight
-from app.services.decision_quality_snapshot import (
-    DecisionQualitySnapshotContractError,
-    DecisionQualitySnapshotStorageError,
-    read_latest_decision_quality_snapshot,
-)
 from app.services.async_sse import sse_from_sync_iterator
 from app.services.discovery_streaming import stream_discovery
 from app.services.stream_session_store import append_stream_followup
@@ -120,7 +109,6 @@ from app.services.portfolio_snapshot import (
     build_factor_scores_payload,
     build_risk_correlation_payload,
     build_risk_metrics_payload,
-    clear_factor_facts_cache,
 )
 from app.services.job_status_service import resolve_job_status_single_connection
 from app.services.job_store import create_analysis_job
@@ -144,40 +132,6 @@ from app.services.chat_aggregate import aggregate_chat_stream
 from app.services.report_chat_export import report_chat_to_markdown
 from app.services.rebalance_simulator import simulate_rebalance
 from app.services.recommendation_accuracy import build_recommendation_accuracy
-from app.services.sector_signal_backtest import build_sector_signal_backtest
-from app.services.market_breadth_signal import build_market_breadth_signal
-from app.services.fund_return_distribution import build_fund_return_distribution
-from app.services.factor_confidence import clear_ic_summary_cache
-from app.services.factor_ic_snapshot import (
-    FactorIcNewerSnapshotExists,
-    FactorIcStorageUnavailable,
-    build_factor_ic_status,
-    publish_factor_ic_snapshot,
-    validate_publish_request,
-)
-from app.services.factor_live_calibration import (
-    FactorLiveCalibrationStorageUnavailable,
-    build_factor_live_calibration_status,
-)
-from app.services.factor_ic_universe_snapshot import (
-    FactorIcUniverseConflict,
-    FactorIcUniverseStorageUnavailable,
-    publish_factor_ic_universe_snapshot,
-    read_factor_ic_universe_history,
-    validate_factor_ic_universe_publish_request,
-)
-from app.services.factor_ic_nav_observation import (
-    FactorIcNavObservationConflict,
-    FactorIcNavObservationHistoryQuery,
-    FactorIcNavObservationStorageUnavailable,
-    publish_nav_observation_batch,
-    read_nav_observation_history,
-    read_nav_observation_status,
-    validate_nav_observation_publish_request,
-)
-from app.services.shadow_escalation_digest import build_shadow_escalation_digest
-from app.services.decision_score_shadow import build_decision_score_shadow_digest
-from app.services.evidence_maturity import build_evidence_maturity_status
 from app.services.recommendation_outcomes import (
     build_recommendation_outcomes,
     build_weekly_recommendation_outcomes,
@@ -197,6 +151,9 @@ from app.services.news_freshness import build_news_pipeline_context
 from app.services.news_service import NewsService
 from app.services.portfolio_mutation_guard import PortfolioMutationLockError
 from app.services.trading_session import build_trading_session
+from app.routes.decision_quality import router as decision_quality_router
+from app.routes.factor_evidence import router as factor_evidence_router
+from app.routes.market_diagnostics import router as market_diagnostics_router
 
 
 settings = get_settings()
@@ -213,6 +170,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.include_router(factor_evidence_router)
+app.include_router(market_diagnostics_router)
+app.include_router(decision_quality_router)
 
 
 @app.exception_handler(PortfolioMutationLockError)
@@ -307,277 +267,6 @@ def auth_me() -> dict:
     return user.model_dump()
 
 
-def _require_factor_ic_publish_token(
-    supplied: Annotated[
-        str | None,
-        Header(alias="X-Factor-IC-Publish-Token"),
-    ] = None,
-) -> None:
-    expected = (get_settings().factor_ic_publish_token or "").strip()
-    if not expected:
-        raise HTTPException(status_code=503, detail="因子 IC 发布未配置")
-    if not supplied or not secrets.compare_digest(supplied, expected):
-        raise HTTPException(status_code=401, detail="因子 IC 发布凭证无效")
-
-
-def _require_decision_quality_read_token(
-    supplied: Annotated[
-        str | None,
-        Header(alias="X-Decision-Quality-Read-Token"),
-    ] = None,
-) -> None:
-    """Authorize the isolated read-only D2 operations surface."""
-
-    no_store = {"Cache-Control": "private, no-store, max-age=0"}
-    expected = (get_settings().decision_quality_read_token or "").strip()
-    if not expected:
-        raise HTTPException(
-            status_code=503,
-            detail="决策质量快照只读接口未配置",
-            headers=no_store,
-        )
-    if not supplied or not secrets.compare_digest(supplied, expected):
-        raise HTTPException(
-            status_code=401,
-            detail="决策质量快照只读凭证无效",
-            headers=no_store,
-        )
-
-
-def _etag_matches(if_none_match: str | None, etag: str) -> bool:
-    if not if_none_match:
-        return False
-    for candidate in if_none_match.split(","):
-        normalized = candidate.strip()
-        if normalized == "*":
-            return True
-        if normalized.startswith("W/"):
-            normalized = normalized[2:].strip()
-        if normalized == etag:
-            return True
-    return False
-
-
-@app.get(
-    "/api/internal/decision-quality/evaluations/latest",
-    include_in_schema=False,
-)
-def get_latest_decision_quality_evaluation(
-    user_id: str | None = None,
-    if_none_match: Annotated[str | None, Header(alias="If-None-Match")] = None,
-    _authorized: None = Depends(_require_decision_quality_read_token),
-) -> Response:
-    """Return one precomputed, redacted snapshot without running evaluation."""
-
-    response_headers = {
-        "Cache-Control": "private, no-store, max-age=0",
-        "Pragma": "no-cache",
-        "X-Content-Type-Options": "nosniff",
-    }
-    if user_id is None or not user_id.strip().isdigit() or int(user_id) <= 0:
-        raise HTTPException(
-            status_code=422,
-            detail="user_id 必须为正整数",
-            headers=response_headers,
-        )
-    normalized_user_id = int(user_id)
-    try:
-        payload = read_latest_decision_quality_snapshot(user_id=normalized_user_id)
-    except (
-        DecisionQualitySnapshotContractError,
-        DecisionQualitySnapshotStorageError,
-    ) as exc:
-        raise HTTPException(
-            status_code=503,
-            detail="决策质量快照暂不可用",
-            headers=response_headers,
-        ) from exc
-    if payload is None:
-        raise HTTPException(
-            status_code=404,
-            detail="尚无预计算的决策质量快照",
-            headers=response_headers,
-        )
-    content_hash = str(payload.get("content_hash") or "").strip().lower()
-    if len(content_hash) != 64 or any(
-        character not in "0123456789abcdef" for character in content_hash
-    ):
-        raise HTTPException(
-            status_code=503,
-            detail="决策质量快照暂不可用",
-            headers=response_headers,
-        )
-    etag = f'"{content_hash}"'
-    response_headers["ETag"] = etag
-    if _etag_matches(if_none_match, etag):
-        return Response(status_code=304, headers=response_headers)
-    return JSONResponse(content=payload, headers=response_headers)
-
-
-@app.post("/api/internal/factor-ic-snapshots", include_in_schema=False)
-def publish_factor_ic(
-    body: dict,
-    _authorized: None = Depends(_require_factor_ic_publish_token),
-) -> dict:
-    try:
-        request = validate_publish_request(body)
-        result = publish_factor_ic_snapshot(request)
-    except ValidationError as exc:
-        raise HTTPException(
-            status_code=422,
-            detail=exc.errors(include_context=False, include_url=False),
-        ) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except FactorIcNewerSnapshotExists as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except FactorIcStorageUnavailable as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    clear_ic_summary_cache()
-    clear_factor_facts_cache()
-    return result
-
-
-@app.post("/api/internal/factor-ic-universe-snapshots", include_in_schema=False)
-def publish_factor_ic_universe(
-    body: dict,
-    _authorized: None = Depends(_require_factor_ic_publish_token),
-) -> dict:
-    try:
-        request = validate_factor_ic_universe_publish_request(body)
-        return publish_factor_ic_universe_snapshot(request)
-    except ValidationError as exc:
-        raise HTTPException(
-            status_code=422,
-            detail=exc.errors(include_context=False, include_url=False),
-        ) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except FactorIcUniverseConflict as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except FactorIcUniverseStorageUnavailable as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-
-@app.get("/api/internal/factor-ic-universe-snapshots", include_in_schema=False)
-def get_factor_ic_universe_history(
-    start_date: date | None = None,
-    end_date: date | None = None,
-    days: int = 365,
-    max_snapshots: int = 60,
-    stride_days: int = 7,
-    include_members: bool = True,
-    _authorized: None = Depends(_require_factor_ic_publish_token),
-) -> dict:
-    try:
-        return read_factor_ic_universe_history(
-            start_date=start_date,
-            end_date=end_date,
-            days=days,
-            max_snapshots=max_snapshots,
-            stride_days=stride_days,
-            include_members=include_members,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except FactorIcUniverseStorageUnavailable as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-
-@app.post("/api/internal/factor-ic-nav-observations", include_in_schema=False)
-def publish_factor_ic_nav_observations(
-    body: dict,
-    _authorized: None = Depends(_require_factor_ic_publish_token),
-) -> dict:
-    try:
-        request = validate_nav_observation_publish_request(body)
-        return publish_nav_observation_batch(request)
-    except ValidationError as exc:
-        raise HTTPException(
-            status_code=422,
-            detail=exc.errors(include_context=False, include_url=False),
-        ) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except FactorIcNavObservationConflict as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except FactorIcNavObservationStorageUnavailable as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-
-@app.post(
-    "/api/internal/factor-ic-nav-observations/query",
-    include_in_schema=False,
-)
-def query_factor_ic_nav_observations(
-    body: dict,
-    _authorized: None = Depends(_require_factor_ic_publish_token),
-) -> dict:
-    try:
-        query = FactorIcNavObservationHistoryQuery.model_validate(body)
-        return read_nav_observation_history(
-            fund_codes=query.fund_codes,
-            start_date=query.start_date,
-            end_date=query.end_date,
-            as_of=query.as_of,
-        )
-    except ValidationError as exc:
-        raise HTTPException(
-            status_code=422,
-            detail=exc.errors(include_context=False, include_url=False),
-        ) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except FactorIcNavObservationStorageUnavailable as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-
-@app.get("/api/diagnostics/factor-ic-status")
-def factor_ic_status() -> dict:
-    return build_factor_ic_status()
-
-
-@app.get("/api/diagnostics/factor-ic-nav-observations")
-def factor_ic_nav_observation_status() -> dict:
-    try:
-        return read_nav_observation_status()
-    except FactorIcNavObservationStorageUnavailable as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-
-@app.get("/api/diagnostics/factor-live-calibration")
-def factor_live_calibration() -> dict:
-    """当前用户的只读量化影子校准；达到门槛也只进入人工复核。"""
-    try:
-        return build_factor_live_calibration_status(user_id=get_request_user_id())
-    except FactorLiveCalibrationStorageUnavailable as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-
-@app.get("/api/diagnostics/decision-score-shadow")
-def decision_score_shadow_digest(limit: int = 30) -> dict:
-    """当前用户最近荐基报告中的 DecisionScore v1 影子覆盖与差异摘要。"""
-
-    bounded_limit = max(1, min(limit, 100))
-    return build_decision_score_shadow_digest(
-        list_discovery_reports(limit=bounded_limit)
-    )
-
-
-@app.get("/api/diagnostics/evidence-maturity")
-def evidence_maturity_status() -> Response:
-    """当前用户的采集健康与证据成熟度；只读且绝不触发即时评估。"""
-
-    payload = build_evidence_maturity_status(user_id=get_request_user_id())
-    return JSONResponse(
-        content=payload,
-        headers={
-            "Cache-Control": "private, no-store, max-age=0",
-            "Pragma": "no-cache",
-        },
-    )
-
-
 @app.get("/api/reports/recommendation-accuracy")
 def recommendation_accuracy(days: int = 30) -> dict:
     from app.services.decision_outcome_persistence import (
@@ -595,46 +284,6 @@ def recommendation_accuracy(days: int = 30) -> dict:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except OutcomeEvidencePersistenceError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-
-@app.get("/api/diagnostics/sector-signal-backtest")
-def sector_signal_backtest(
-    days: int = 120,
-    sectors: str | None = None,
-) -> dict:
-    """板块短线信号 T→T+1 回测（canonical 板块日线；不传 sectors 时用全部硬编码映射）。"""
-    labels = [part.strip() for part in (sectors or "").split(",") if part.strip()]
-    return build_sector_signal_backtest(
-        labels or None,
-        lookback_days=days,
-    )
-
-
-@app.get("/api/diagnostics/market-breadth")
-def market_breadth() -> dict:
-    """大盘情绪温度计（M1.1）：全用户共享（与全市场相关、非按用户区分），供市场 Tab 与
-    生成日报诊断区的 `MarketBreadthGauge` 复用同一份数据，不因认证中间件拦截而额外区分用户。"""
-    return build_market_breadth_signal()
-
-
-@app.get("/api/diagnostics/fund-return-distribution")
-def fund_return_distribution() -> dict:
-    """最近已公布净值日的开放式基金份额涨跌分布。
-
-    只使用官方净值，不把盘中估值冒充正式收益；A/C/E 等份额代码分别计数。
-    """
-    return build_fund_return_distribution()
-
-
-@app.get("/api/diagnostics/shadow-escalation-digest")
-def shadow_escalation_digest(days: int = 7) -> dict:
-    """M6.3：灰度复盘摘要（近 N 天双向 guard 升级判定触发情况，按当前登录用户的历史
-    日报/荐基报告聚合）。路径沿用 `/api/diagnostics/*` 既有命名（设计文档原文建议
-    `/api/admin/shadow-digest`，改为与同批新增的 `/api/diagnostics/market-breadth`、
-    已有的 `/api/diagnostics/sector-signal-backtest` 一致的前缀，避免引入 `/api/admin/`
-    这个本项目此前完全没有使用过的新前缀）。"""
-    lookback = max(1, min(days, 30))
-    return build_shadow_escalation_digest(lookback_days=lookback)
 
 
 @app.post("/api/news/preview")

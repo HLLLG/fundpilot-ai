@@ -1,8 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-
 import { fetchFactorIcStatus, type FactorIcStatus } from "@/lib/api";
+import { useLazyAsyncResource } from "@/lib/useLazyAsyncResource";
 
 
 function shortDate(value?: string) {
@@ -41,22 +40,11 @@ function StatusLine({
 
 
 export function FactorIcStatusBadge() {
-  const [status, setStatus] = useState<FactorIcStatus | null>(null);
-  const [error, setError] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    fetchFactorIcStatus()
-      .then((result) => {
-        if (!cancelled) setStatus(result);
-      })
-      .catch(() => {
-        if (!cancelled) setError(true);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const { data: status, error } = useLazyAsyncResource<FactorIcStatus>({
+    enabled: true,
+    load: fetchFactorIcStatus,
+    errorMessage: "IC 状态暂不可用",
+  });
 
   if (error) {
     return <StatusLine tone="error">IC 状态暂不可用</StatusLine>;

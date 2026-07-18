@@ -48,7 +48,7 @@ def test_endpoint_uses_only_independent_token_and_returns_no_store_etag(
     _configure(monkeypatch)
     calls: list[int] = []
     monkeypatch.setattr(
-        "app.main.read_latest_decision_quality_snapshot",
+        "app.routes.decision_quality.read_latest_decision_quality_snapshot",
         lambda *, user_id: calls.append(user_id) or _payload(),
     )
 
@@ -71,7 +71,7 @@ def test_endpoint_supports_conditional_read_without_recomputation(monkeypatch) -
     _configure(monkeypatch)
     calls: list[int] = []
     monkeypatch.setattr(
-        "app.main.read_latest_decision_quality_snapshot",
+        "app.routes.decision_quality.read_latest_decision_quality_snapshot",
         lambda *, user_id: calls.append(user_id) or _payload(),
     )
 
@@ -95,7 +95,7 @@ def test_endpoint_rejects_unconfigured_or_wrong_token_without_reading(
 ) -> None:
     calls: list[int] = []
     monkeypatch.setattr(
-        "app.main.read_latest_decision_quality_snapshot",
+        "app.routes.decision_quality.read_latest_decision_quality_snapshot",
         lambda *, user_id: calls.append(user_id) or _payload(),
     )
     _configure(monkeypatch, token=None)
@@ -120,7 +120,7 @@ def test_endpoint_maps_missing_and_storage_unavailable_without_cache(
     _configure(monkeypatch)
     headers = {"X-Decision-Quality-Read-Token": TOKEN}
     monkeypatch.setattr(
-        "app.main.read_latest_decision_quality_snapshot",
+        "app.routes.decision_quality.read_latest_decision_quality_snapshot",
         lambda **_kwargs: None,
     )
     missing = TestClient(app).get(PATH, params={"user_id": 1}, headers=headers)
@@ -131,7 +131,7 @@ def test_endpoint_maps_missing_and_storage_unavailable_without_cache(
         raise DecisionQualitySnapshotStorageError("database unavailable")
 
     monkeypatch.setattr(
-        "app.main.read_latest_decision_quality_snapshot",
+        "app.routes.decision_quality.read_latest_decision_quality_snapshot",
         unavailable,
     )
     failed = TestClient(app).get(PATH, params={"user_id": 1}, headers=headers)

@@ -4,9 +4,10 @@
 >
 > **维护：** 功能或架构有实质变化时，同步更新「能力清单」「数据流」「API」「目录」「环境变量」。
 
-**文档版本：** 2026-07-18（NAV 首次观测账本 + 证据成熟度控制台 + 专职采集 Worker）
+**文档版本：** 2026-07-18（领域路由/API 模块化 + NAV 首次观测账本 + 证据控制面）
 
 **更新记录：**
+- **前后端领域边界与异步状态收口（2026-07-18，已实现）：** FastAPI composition root 不再直接承载 Factor 证据、市场诊断和决策质量只读运维逻辑，三组稳定 HTTP 契约分别迁入 `app/routes/factor_evidence.py`、`market_diagnostics.py`、`decision_quality.py`；内部端点继续隐藏 OpenAPI，独立 Token、no-store、ETag、错误映射和服务层 fail-closed 语义不变。`main.py` 从 2017 行降至 1666 行，并由架构测试守卫“主入口只组装 Router、不反向导入对应领域服务”。前端 `api.ts` 从 3536 行降至 3155 行：鉴权请求核心、Factor 证据、市场诊断进入 `lib/api/`，原 `@/lib/api` 保留同一函数/类型导出以兼容现有调用方；证据成熟度和 Factor 状态组件共用 `useLazyAsyncResource`，统一按需启动、卸载取消、错误与显式重试，避免 effect 竞态。**验证：** API **1230 passed**；Web **101 files / 439 passed**，typecheck、lint、production build、Python `compileall` 与 `git diff --check` 通过。
 - **不可变 NAV 首次观测账本与增量 Factor IC（2026-07-18，已实现）：** schema v17 新增 `factor_ic_nav_observations`，每日 `Factor IC Universe Capture` 从同一份公开基金目录响应同时生成成员快照与净值首次观测批次，再经 Lighthouse 隧道和独立发布 Token 原子校验入库；同基金/净值日/值的重复发布幂等并保留最初 `first_observed_at`，源修订只追加新行，SQLite/MySQL 均用精确列、索引、InnoDB 与 UPDATE/DELETE 触发器 fail-closed。周度任务按显式 `as_of` 分块读取成员并集的最早可见版本，内容寻址产物绑定观测时间、来源、批次和修订策略；回测新增 observation-PIT 双轨，但只有真实时间戳覆盖 100%、既有统计门槛全部通过且至少积累 250 个可用因子点才可进入人工复核，在此之前继续发布既有 membership-PIT v3/v2，绝不回填历史观测或自动晋级。证据成熟度控制台新增账本行数、基金数、采集批次、最新观测和明确的 not-started/stale 告警。内部发布/查询端点均不进入 OpenAPI，发布批次要求同目录至少 80% 覆盖并拒绝未来时间、超过 24 小时的伪回填、哈希篡改和 MySQL 到 SQLite 回落。
 - **证据成熟度控制面与采集告警（2026-07-18，已实现）：** 新增只读 `GET /api/diagnostics/evidence-maturity`，在 `evidence_maturity.v1` 中汇总专职 Worker 共享心跳/常驻任务、真实 PIT 成员快照与有效锚点、Factor IC 的 20/60 日成熟经济期、当前用户 DecisionScore shadow 覆盖和预计算决策质量快照。生产/Cloud Compose 将 Worker 原子心跳写入 API/Worker 共享的 `/app/data/background-worker-heartbeat.json`；Worker 容器内健康检查继续验证 PID，API 跨容器只验证契约、新鲜度和常驻任务存活，避免无意义的跨 PID namespace 判断。聚合 GET 不触发即时评估，任一子链失败只返回脱敏告警并保持 fail-closed；空值明确表示“尚无证据”，不补 0。盈亏分析页新增独立可展开控制台，即使无持仓收益也可查看 24 个 PIT 有效锚点、36 个成熟经济期、60 个成熟决策日/80% 标签覆盖等预注册门槛；17.5/19.5 个月只显示为理论最短样本窗口，所有模型仍禁止自动晋级。**验证：** API **1203 passed**；Web **99 files / 435 passed**，typecheck、lint、production build、Python `compileall`、Compose YAML 解析与 `git diff --check` 通过。
 - **专职后台任务 Worker + 生产采集烟测（2026-07-18，已实现）：** 新增 `FUND_AI_RUNTIME_ROLE=all|api|worker`：本地直启默认 `all` 保留一键开发体验，生产 Compose 的两个 Uvicorn 进程固定为 request-only `api`，另起单进程 `worker` 承载市场共享刷新、持仓板块刷新、基金主板块预计算/存量补跑及启用时的 Prompt shadow。Worker 用现有 MySQL 会话级命名锁选主（SQLite 为数据库旁 OS 文件锁），锁句柄每轮执行 `SELECT 1` 保活；关键常驻线程退出、协调会话丢失或心跳过期均 fail closed，使容器退出/不健康，避免多 worker 重复拉源与静默停采。容器内原子心跳绑定 leader PID、任务存活状态和新鲜度；生产部署与回滚均同时重建 API/Worker、等待 Worker `healthy`，并在切换静态站点前运行与每日任务同口径的决策质量 `--dry-run`，不再只凭 `/health` 判断采集链可用。**验证：** API 全量 **1198 passed**，Worker/锁/部署契约聚焦 **27 passed**，真实 SQLite 选主与心跳演练、Python `compileall`、Compose YAML 解析、部署脚本 Bash 语法及 `git diff --check` 通过；本机无 Docker CLI，生产 Compose 完整展开由 CI/CD 和 Lighthouse 发布门禁继续验证。
@@ -268,7 +269,8 @@
 ```text
 fundpilot-ai/
 ├── apps/api/app/
-│   ├── main.py              # 路由
+│   ├── main.py              # Composition root 与尚未迁移的通用业务路由
+│   ├── routes/              # 领域 HTTP 边界：factor_evidence / market_diagnostics / decision_quality
 │   ├── lifespan.py          # API 启动/关闭；本地 all 角色可内嵌后台 supervisor
 │   ├── background_worker.py # 生产专职后台任务、leader lease、线程监督与容器心跳
 │   ├── config.py / models.py / database.py / db_connect.py（MySQL→SQLite 回落）/ db_migrations.py
@@ -336,7 +338,9 @@ fundpilot-ai/
 ├── apps/api/scripts/evaluate_decision_quality.py  # 默认追加质量快照；必须显式传带时区 evaluation cutoff
 ├── apps/web/src/
 │   ├── app/login/ register/ settings/   # 认证与账号设置
-│   ├── lib/api.ts / reportPresentation.ts / decisionText.ts / holdingDisplay.ts / holdingMetrics.ts / portfolioHoldingsCache.ts / marketThemeBoard.ts
+│   ├── lib/api.ts            # 旧导入兼容门面
+│   ├── lib/api/              # core + factorEvidence + marketDiagnostics 领域 API
+│   ├── lib/useLazyAsyncResource.ts / reportPresentation.ts / decisionText.ts / holdingDisplay.ts / holdingMetrics.ts / portfolioHoldingsCache.ts / marketThemeBoard.ts
 │   └── components/
 │       ├── AuthProvider.tsx       # JWT 与 /api/auth/me
 │       ├── Dashboard.tsx          # 简报 / 持仓 / 盈亏分析 / 市场 / 推荐基金 / 生成日报（Tab sessionStorage + report URL 恢复）
@@ -586,7 +590,7 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | GET | `/api/reports/{id}/outcomes` | 基金估值日 T+5/T+20/T+60 总收益、费后/基准、路径风险与不行动反事实复盘；V2 observation 持久化，历史 T+1 兼容，终态冲突 409 |
 | GET | `/api/reports/{id}/rebalance-simulation` | 按报告动作 + 示意金额模拟调仓（缺 `amount_yuan` 时自动补算；超集中度「观察」也会减） |
 
-前端封装：`apps/web/src/lib/api.ts`。
+前端封装：新代码优先从 `apps/web/src/lib/api/` 的领域模块导入；`apps/web/src/lib/api.ts` 保留为现有调用方的兼容门面。
 
 ---
 

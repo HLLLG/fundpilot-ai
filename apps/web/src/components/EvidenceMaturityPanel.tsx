@@ -1,13 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
-
 import { InlineNotice } from "@/components/InlineNotice";
 import {
   fetchEvidenceMaturityStatus,
   type EvidenceMaturityAlert,
   type EvidenceMaturityStatus,
 } from "@/lib/api";
+import { useLazyAsyncResource } from "@/lib/useLazyAsyncResource";
 
 
 const OVERALL_LABEL: Record<string, string> = {
@@ -350,32 +349,11 @@ function MaturityContent({ data }: { data: EvidenceMaturityStatus }) {
 
 
 export function EvidenceMaturityPanel({ enabled }: { enabled: boolean }) {
-  const [data, setData] = useState<EvidenceMaturityStatus | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [retrySequence, setRetrySequence] = useState(0);
-
-  useEffect(() => {
-    if (!enabled || data) return;
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    fetchEvidenceMaturityStatus()
-      .then((result) => {
-        if (!cancelled) setData(result);
-      })
-      .catch((reason) => {
-        if (!cancelled) {
-          setError(reason instanceof Error ? reason.message : "加载证据成熟度失败");
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [enabled, data, retrySequence]);
+  const { data, loading, error, retry } = useLazyAsyncResource({
+    enabled,
+    load: fetchEvidenceMaturityStatus,
+    errorMessage: "加载证据成熟度失败",
+  });
 
   if (!enabled) return null;
   if (loading) return <InlineNotice tone="info" message="正在读取采集链与证据成熟度…" />;
@@ -386,7 +364,7 @@ export function EvidenceMaturityPanel({ enabled }: { enabled: boolean }) {
         message={`证据成熟度加载失败：${error}`}
         action={{
           label: "重试",
-          onClick: () => setRetrySequence((value) => value + 1),
+          onClick: retry,
         }}
       />
     );

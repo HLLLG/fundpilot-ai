@@ -1,3 +1,38 @@
+import type {
+  FactorIcStatus,
+} from "@/lib/api/factorEvidence";
+import type {
+  MarketBreadthSignal,
+  SectorSignalBacktestSector,
+} from "@/lib/api/marketDiagnostics";
+
+export {
+  fetchEvidenceMaturityStatus,
+  fetchFactorIcStatus,
+} from "@/lib/api/factorEvidence";
+export type {
+  EvidenceMaturityAlert,
+  EvidenceMaturityMilestone,
+  EvidenceMaturityStatus,
+  FactorIcStatus,
+} from "@/lib/api/factorEvidence";
+export {
+  fetchFundReturnDistribution,
+  fetchMarketBreadth,
+  fetchSectorSignalBacktest,
+  fetchShadowEscalationDigest,
+} from "@/lib/api/marketDiagnostics";
+export type {
+  FundReturnDistribution,
+  FundReturnDistributionBinKey,
+  MarketBreadthSignal,
+  SectorSignalBacktest,
+  SectorSignalBacktestRule,
+  SectorSignalBacktestSector,
+  ShadowEscalationDigest,
+  ShadowEscalationOutcomeItem,
+} from "@/lib/api/marketDiagnostics";
+
 export type Holding = {
   fund_code: string;
   fund_name: string;
@@ -589,166 +624,6 @@ export type PortfolioFactorScores = {
   model_version?: string | null;
   reliability_scope?: "per_fund_peer_group" | "global_legacy" | string;
   ic_status?: FactorIcStatus | null;
-};
-
-export type FactorIcStatus = {
-  available: boolean;
-  snapshot_id?: string | null;
-  schema_version?: number;
-  upgrade_required?: boolean;
-  expected_universe_size?: number;
-  run_date?: string;
-  generated_at?: string;
-  published_at?: string | null;
-  age_days?: number;
-  stale?: boolean;
-  stale_after_days: number;
-  source: "database" | "local_file" | "unavailable";
-  target_universe_size?: number | null;
-  universe_size?: number | null;
-  universe_mode?: string | null;
-  rebalance_count?: number | null;
-  factor_periods?: Record<string, number | null>;
-  cohort_mode?: "current_survivors" | "point_in_time" | string | null;
-  point_in_time?: {
-    snapshot_id?: string | null;
-    snapshot_date?: string | null;
-    effective_anchor_count?: number;
-    anchor_coverage_rate?: number;
-    cohort_nav_coverage_rate?: number;
-    publishable?: boolean;
-    point_in_time_scope?: "membership_only" | "nav_observation_pit" | string;
-    nav_revision_pit?: boolean;
-    nav_publication_lag_trading_days?: Record<string, number>;
-    execution_entry_offset_trading_days?: number;
-    mature_anchor_count_by_horizon?: Record<string, number>;
-  } | null;
-  pit_upgrade?: {
-    state?: "collecting" | "unavailable" | "active" | string;
-    snapshot_count?: number;
-    effective_anchor_count?: number;
-    anchor_coverage_rate?: number;
-    cohort_nav_coverage_rate?: number;
-    reason?: string;
-  } | null;
-  pit_coverage?: Record<string, unknown> | null;
-  source_commit?: string | null;
-};
-
-export type EvidenceMaturityAlert = {
-  code: string;
-  severity: "critical" | "warning" | "info" | string;
-  title: string;
-  message: string;
-  action: string;
-};
-
-export type EvidenceMaturityMilestone = {
-  code: string;
-  label: string;
-  observed: number | null;
-  required: number | null;
-  unit: string;
-  progress_percent: number | null;
-  theoretical_minimum_trading_days?: number;
-  theoretical_minimum_months?: number;
-};
-
-export type EvidenceMaturityStatus = {
-  schema_version: "evidence_maturity.v1" | string;
-  generated_at: string;
-  overall_status: "healthy" | "collecting" | "attention" | "degraded" | string;
-  mode: string;
-  automatic_promotion_allowed: false;
-  worker: {
-    status: string;
-    healthy: boolean;
-    reason: string;
-    heartbeat_at?: string | null;
-    heartbeat_age_seconds?: number | null;
-    started_at?: string | null;
-    jobs: Array<{ name: string; persistent: boolean; alive: boolean }>;
-  };
-  universe: {
-    status: string;
-    snapshot_count: number;
-    first_snapshot_date?: string | null;
-    latest_snapshot_date?: string | null;
-    latest_snapshot_age_days?: number | null;
-    latest_sampled_fund_count?: number | null;
-    latest_fund_type_count?: number | null;
-    effective_anchor_count?: number | null;
-    minimum_effective_anchor_count: number;
-    anchor_progress_percent?: number | null;
-    publishable: boolean;
-  };
-  factor_ic: {
-    status: string;
-    available: boolean;
-    stale: boolean;
-    confidence_eligible: boolean;
-    run_date?: string | null;
-    age_days?: number | null;
-    schema_version?: number | null;
-    source?: string | null;
-    universe_size?: number | null;
-    cohort_mode?: string | null;
-    point_in_time_scope?: string | null;
-    nav_revision_pit: boolean;
-    mature_period_count_20d?: number | null;
-    mature_period_count_60d?: number | null;
-    economic_minimum_period_count: number;
-    economic_progress_percent_20d?: number | null;
-    economic_progress_percent_60d?: number | null;
-    confidence_block_reasons: string[];
-  };
-  nav_observation: {
-    status: "not_started" | "collecting" | "unavailable" | string;
-    observation_count?: number | null;
-    fund_count?: number | null;
-    capture_run_count?: number | null;
-    revision_count?: number | null;
-    first_observed_at?: string | null;
-    latest_observed_at?: string | null;
-    latest_capture_age_days?: number | null;
-    latest_nav_date?: string | null;
-    latest_capture_fund_count?: number | null;
-    availability_basis?: string | null;
-    revision_policy?: string | null;
-    minimum_feature_history_points?: number | null;
-    full_model_ready: boolean;
-    automatic_promotion_allowed: false;
-  };
-  decision_score_shadow: {
-    status: string;
-    mode?: string | null;
-    report_count?: number | null;
-    artifact_count?: number | null;
-    valid_artifact_count?: number | null;
-    shadow_evaluable_report_count?: number | null;
-    top_k_changed_report_count?: number | null;
-    candidate_count?: number | null;
-    scored_count?: number | null;
-    scored_coverage_percent?: number | null;
-    automatic_promotion_allowed: false;
-  };
-  decision_quality: {
-    status: string;
-    snapshot_available: boolean;
-    evaluation_as_of?: string | null;
-    snapshot_age_days?: number | null;
-    readiness_status: string;
-    mature_decision_day_count?: number | null;
-    minimum_shadow_mature_decision_days: number;
-    minimum_manual_review_mature_decision_days: number;
-    formal_label_coverage_percent?: number | null;
-    minimum_manual_review_label_coverage_percent: number;
-    maturity_progress_percent?: number | null;
-    automatic_promotion_allowed: false;
-  };
-  milestones: EvidenceMaturityMilestone[];
-  alerts: EvidenceMaturityAlert[];
-  notices: string[];
 };
 
 export type FactorIcEvidenceStatus = {
@@ -1830,9 +1705,8 @@ type ReportChatStreamEvent =
   | { type: "done"; message: ReportChatMessage; chat_mode?: ReportChatMode; model?: string }
   | { type: "error"; message: string };
 
-import { clearAccessToken, getAccessToken, type AuthSession, type AuthUser } from "@/lib/auth";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+import { getAccessToken, type AuthSession, type AuthUser } from "@/lib/auth";
+import { API_BASE, ApiError, apiFetch } from "@/lib/api/core";
 
 /** Merge concurrent GETs within one ownership scope, avoiding Strict Mode duplicates. */
 function dedupeConcurrentGet<T>(
@@ -1872,52 +1746,7 @@ export function invalidatePortfolioHoldingsRequest(): void {
 }
 
 export type { AuthSession, AuthUser };
-
-export class ApiError extends Error {
-  status: number;
-
-  constructor(message: string, status: number) {
-    super(message);
-    this.name = "ApiError";
-    this.status = status;
-  }
-}
-
-function isAuthEntrypoint(url: string): boolean {
-  return url.includes("/api/auth/login") || url.includes("/api/auth/register");
-}
-
-function redirectToLogin(): void {
-  if (typeof window === "undefined") {
-    return;
-  }
-  const path = window.location.pathname;
-  if (path === "/login" || path === "/register") {
-    return;
-  }
-  const redirect = encodeURIComponent(path + window.location.search);
-  window.location.href = `/login?redirect=${redirect}`;
-}
-
-async function apiFetch(input: string, init?: RequestInit): Promise<Response> {
-  const headers = new Headers(init?.headers);
-  const token = getAccessToken();
-  if (token) {
-    headers.set("Authorization", `Bearer ${token}`);
-  }
-  const response = await fetch(input, { ...init, headers });
-  if (
-    response.status === 401 &&
-    typeof window !== "undefined" &&
-    token &&
-    getAccessToken() === token &&
-    !isAuthEntrypoint(input)
-  ) {
-    clearAccessToken();
-    redirectToLogin();
-  }
-  return response;
-}
+export { ApiError };
 
 export async function registerUser(payload: {
   userAccount: string;
@@ -2574,205 +2403,6 @@ export async function fetchRecommendationAccuracy(
   return response.json();
 }
 
-export type SectorSignalBacktestRule = {
-  rule_id: string;
-  label: string;
-  trigger_count: number;
-  hit_count: number;
-  hit_rate_percent: number | null;
-  baseline_rate_percent?: number | null;
-  edge_percent?: number | null;
-  significant?: boolean | null;
-  beats_baseline?: boolean | null;
-  beats_random?: boolean | null;
-  confidence?: { level: string; score: number; basis: string } | null;
-};
-
-export type SectorSignalBacktestSector = {
-  sector_label: string;
-  sample_days?: number;
-  by_rule?: Record<string, SectorSignalBacktestRule>;
-  resolved?: boolean;
-  message?: string;
-};
-
-export type SectorSignalBacktest = {
-  enabled?: boolean;
-  has_data: boolean;
-  lookback_days?: number;
-  sector_count?: number;
-  by_rule?: Record<string, SectorSignalBacktestRule>;
-  sectors?: SectorSignalBacktestSector[];
-  summary_lines?: string[];
-  message?: string;
-};
-
-/** M1.1：大盘情绪温度计（`GET /api/diagnostics/market-breadth`，全用户共享）。 */
-export type MarketBreadthSignal = {
-  available: boolean;
-  reason?: string | null;
-  message?: string | null;
-  stale?: boolean;
-  trade_date?: string;
-  /** 当前温度计口径：盘中准实时或收盘口径。 */
-  signal_mode?: "intraday" | "closing";
-  /** 更细的数据来源，用于区分盘中、收盘和上一收盘回退。 */
-  source_mode?:
-    | "intraday_live"
-    | "intraday_final"
-    | "closing"
-    | "previous_close_fallback";
-  as_of_datetime?: string | null;
-  freshness_seconds?: number | null;
-  freshness_status?: "live" | "fresh" | "stale";
-  decision_eligible?: boolean;
-  decision_status?: string | null;
-  decision_message?: string | null;
-  advance_count?: number | null;
-  decline_count?: number | null;
-  flat_count?: number | null;
-  suspended_count?: number | null;
-  traded_sample_count?: number | null;
-  market_sample_count?: number | null;
-  source_name?: string | null;
-  universe_scope?: string | null;
-  activity_percent?: number | null;
-  advance_ratio_percent?: number | null;
-  decline_ratio_percent?: number | null;
-  flat_ratio_percent?: number | null;
-  breadth_tone?: string | null;
-  real_limit_up_count?: number | null;
-  real_limit_down_count?: number | null;
-  /** 盘中信号所引用的最近完整收盘锚点。 */
-  closing_trade_date?: string | null;
-  closing_breadth_percentile?: number | null;
-  closing_sentiment_level?: "冰点" | "低迷" | "中性" | "偏热" | "亢奋" | null;
-  breadth_percentile?: number;
-  breadth_sample_days?: number;
-  sentiment_level?: "冰点" | "低迷" | "中性" | "偏热" | "亢奋";
-  sentiment_level_change?: number | null;
-  limit_up_count?: number | null;
-  limit_down_count?: number | null;
-  limit_up_broken_ratio_percent?: number | null;
-  max_consecutive_boards?: number | null;
-  limit_pool_as_of_date?: string | null;
-  limit_pool_available?: boolean;
-  margin_balance_change_yi?: number | null;
-  margin_scope?: string | null;
-  margin_as_of_date?: string | null;
-  margin_available?: boolean;
-  interpretation?: string;
-  basis?: string;
-};
-
-export async function fetchMarketBreadth(): Promise<MarketBreadthSignal> {
-  const response = await apiFetch(`${API_BASE}/api/diagnostics/market-breadth`, {
-    cache: "no-store",
-  });
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  return response.json();
-}
-
-export type FundReturnDistributionBinKey =
-  | "le_neg5"
-  | "neg5_neg3"
-  | "neg3_neg1"
-  | "neg1_zero"
-  | "zero"
-  | "zero_one"
-  | "one_three"
-  | "three_five"
-  | "ge_five";
-
-export type FundReturnDistribution = {
-  available: boolean;
-  stale?: boolean;
-  message?: string | null;
-  source_mode?: "official_nav";
-  source_name?: string | null;
-  universe_scope?: string | null;
-  as_of_date?: string | null;
-  fetched_at?: string | null;
-  source_row_count?: number | null;
-  valid_count?: number | null;
-  missing_count?: number | null;
-  coverage_percent?: number | null;
-  advance_count?: number | null;
-  decline_count?: number | null;
-  flat_count?: number | null;
-  bins?: Partial<Record<FundReturnDistributionBinKey, number>>;
-};
-
-export async function fetchFundReturnDistribution(): Promise<FundReturnDistribution> {
-  const response = await apiFetch(`${API_BASE}/api/diagnostics/fund-return-distribution`, {
-    cache: "no-store",
-  });
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  return response.json();
-}
-
-/** M6.3：灰度复盘摘要（`GET /api/diagnostics/shadow-escalation-digest`）。 */
-export type ShadowEscalationOutcomeItem = {
-  fund_code?: string;
-  sector_label?: string | null;
-  would_be_action?: string;
-  actual_daily_return_percent?: number | null;
-  aligned?: boolean;
-};
-
-export type ShadowEscalationDigest = {
-  available: boolean;
-  /** 当前 FUND_AI_DECISION_ESCALATION_MODE 取值；仅 "shadow" 时该卡片才有意义展示。 */
-  escalation_mode?: "shadow" | "enforced";
-  lookback_days?: number;
-  report_count?: number;
-  discovery_report_count?: number;
-  trigger_count: number;
-  by_sector?: Record<string, number>;
-  by_would_be_action?: Record<string, number>;
-  outcomes?: {
-    verified_count: number;
-    aligned_count: number;
-    items: ShadowEscalationOutcomeItem[];
-  };
-  summary?: string;
-};
-
-export async function fetchShadowEscalationDigest(
-  days = 7,
-): Promise<ShadowEscalationDigest> {
-  const response = await apiFetch(
-    `${API_BASE}/api/diagnostics/shadow-escalation-digest?days=${days}`,
-    { cache: "no-store" },
-  );
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  return response.json();
-}
-
-export async function fetchSectorSignalBacktest(
-  days = 120,
-  sectors?: string[],
-): Promise<SectorSignalBacktest> {
-  const params = new URLSearchParams({ days: String(days) });
-  if (sectors?.length) {
-    params.set("sectors", sectors.join(","));
-  }
-  const response = await apiFetch(
-    `${API_BASE}/api/diagnostics/sector-signal-backtest?${params.toString()}`,
-    { cache: "no-store" },
-  );
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  return response.json();
-}
-
 export async function previewNewsForHoldings(
   holdings: Holding[],
   profile: InvestorProfile,
@@ -3372,26 +3002,6 @@ export async function fetchPortfolioRiskCorrelation(
 
 export async function fetchPortfolioFactorScores(): Promise<PortfolioFactorScores> {
   const response = await apiFetch(`${API_BASE}/api/portfolio/factor-scores`, {
-    cache: "no-store",
-  });
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  return response.json();
-}
-
-export async function fetchFactorIcStatus(): Promise<FactorIcStatus> {
-  const response = await apiFetch(`${API_BASE}/api/diagnostics/factor-ic-status`, {
-    cache: "no-store",
-  });
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  return response.json();
-}
-
-export async function fetchEvidenceMaturityStatus(): Promise<EvidenceMaturityStatus> {
-  const response = await apiFetch(`${API_BASE}/api/diagnostics/evidence-maturity`, {
     cache: "no-store",
   });
   if (!response.ok) {

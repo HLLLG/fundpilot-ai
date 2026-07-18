@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from app import main
+from app.routes import factor_evidence
 from app.services import evidence_maturity
 
 
@@ -199,7 +199,7 @@ def test_authenticated_endpoint_is_no_store_and_uses_request_user(
         "automatic_promotion_allowed": False,
     }
     monkeypatch.setattr(
-        main,
+        factor_evidence,
         "build_evidence_maturity_status",
         lambda *, user_id: captured.append(user_id) or payload,
     )
