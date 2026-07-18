@@ -1,0 +1,57 @@
+apps/api/app/background_worker.py
+  s_12ddd06c0f7251::t_7d874542357192 244,246-253,284,290-312,318-319,321
+apps/web/src/lib/api.ts
+  s_12ddd06c0f7251::t_9d3d5a368662ad 638-736,3376-3385
+apps/api/tests/test_evidence_maturity.py
+  s_12ddd06c0f7251::t_292740554d0dde 143-164
+  s_12ddd06c0f7251::t_f0a7719d4a22a0 1-142,165-186
+docs/deploy/tencent-lighthouse-migration.md
+  s_12ddd06c0f7251::t_e497c44542683c 159
+apps/api/app/services/evidence_maturity.py
+  s_12ddd06c0f7251::t_070d6fb8016222 187-190,192-195,272-273,279
+  s_12ddd06c0f7251::t_5a31201fe3a1df 274-278
+  s_12ddd06c0f7251::t_cc4dbd144ffe80 1-186,191,196-271,280-609
+apps/web/src/components/PortfolioDashboard.test.tsx
+  s_12ddd06c0f7251::t_ea2b41559fb2db 44-47,316-318
+docs/PROJECT_CONTEXT.md
+  s_12ddd06c0f7251::t_cc0b40120e171c 7
+  s_12ddd06c0f7251::t_b06fdbb1de7f9c 10
+  s_12ddd06c0f7251::t_c854dc7de8f9db 207,528,841
+.env.example
+  s_12ddd06c0f7251::t_104ff4bbb8e034 38-39
+apps/web/src/components/EvidenceMaturityPanel.tsx
+  s_12ddd06c0f7251::t_ec18d48ed82663 1-147,154-229,231-356
+  s_12ddd06c0f7251::t_070d6fb8016222 148-153,230
+README.md
+  s_12ddd06c0f7251::t_c854dc7de8f9db 30,171
+apps/web/src/components/EvidenceMaturityPanel.test.tsx
+  s_12ddd06c0f7251::t_ea2b41559fb2db 1-124
+docker-compose.cloud.yml
+  s_12ddd06c0f7251::t_4b52f712d62179 36,57
+docker-compose.production.yml
+  s_12ddd06c0f7251::t_4b52f712d62179 33,52
+apps/api/app/main.py
+  s_12ddd06c0f7251::t_11c47e92ceb66c 171,502-515
+apps/api/tests/test_multiworker_deployment_contract.py
+  s_12ddd06c0f7251::t_a4a041c2967c5e 24-34
+apps/api/tests/test_background_worker.py
+  s_12ddd06c0f7251::t_f0a7719d4a22a0 105,114-163
+apps/web/src/components/PortfolioDashboard.tsx
+  s_12ddd06c0f7251::t_2ff50dcb43cdc3 16,175,452-481
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.34-trip",
+  "base_commit_sha": "ee5bf16b26c0e7ec29b4bc34d754350ac61b589f",
+  "prompts": {},
+  "sessions": {
+    "s_12ddd06c0f7251": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f7369-4d59-7af3-9189-e98b0faa9b7e",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
