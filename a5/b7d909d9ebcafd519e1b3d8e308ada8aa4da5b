@@ -1,0 +1,86 @@
+apps/web/src/app/reset-password/page.tsx
+  s_12ddd06c0f7251::t_2cc0925615d0f1 1-3,5-10,12-17,28-73,82-115,117-123,125-134
+  s_12ddd06c0f7251::t_f5a72df00e843a 4,11,18-27,116,124
+  s_12ddd06c0f7251::t_5f0acae16443ff 74-81
+scripts/migrate_sqlite_to_mysql.py
+  s_12ddd06c0f7251::t_5e10f9e0abc27e 23-30,62-75,265-270,336-346,374-377,589-597,673-686
+docs/PROJECT_CONTEXT.md
+  s_12ddd06c0f7251::t_00e7597ce216f9 10
+  s_12ddd06c0f7251::t_99f750141903f0 7
+apps/api/tests/test_fund_holdings_snapshot_store.py
+  s_12ddd06c0f7251::t_567f331160ca87 96,144
+apps/api/tests/test_admin_users.py
+  s_12ddd06c0f7251::t_246bd076559dbd 57-58
+  s_12ddd06c0f7251::t_24c263d96699e9 1-2,5-6,8-56,59-71,79-178
+  s_12ddd06c0f7251::t_51fb7e075136f1 3-4,7,72-78,179-226
+apps/api/app/admin_bootstrap.py
+  s_12ddd06c0f7251::t_a08927628af5b9 1-31
+apps/web/src/lib/api.adminUsers.test.ts
+  s_12ddd06c0f7251::t_15f286d4f8f8f4 1-35
+apps/api/tests/test_migrate_sqlite_to_mysql.py
+  s_12ddd06c0f7251::t_567f331160ca87 1168
+  s_12ddd06c0f7251::t_c9feea536437cf 490-491,556-557,596-597,634-635,824,1204
+apps/api/app/mysql_bootstrap.py
+  s_12ddd06c0f7251::t_5fc9d635ec61eb 15,18,63,801-804,1090-1118,1564-1585
+apps/api/tests/test_decision_quality_rollout.py
+  s_12ddd06c0f7251::t_546604151e0ef4 180,338-339
+docs/SECURITY.md
+  s_12ddd06c0f7251::t_99f750141903f0 14-23
+apps/web/src/lib/api.ts
+  s_12ddd06c0f7251::t_8c05eea00982a5 11-30
+apps/web/src/lib/api/adminUsers.ts
+  s_12ddd06c0f7251::t_e35f05169aba7b 93-102
+  s_12ddd06c0f7251::t_8c05eea00982a5 1-92,103-197
+apps/api/tests/test_decision_quality_repository.py
+  s_12ddd06c0f7251::t_567f331160ca87 136
+apps/api/app/auth/middleware.py
+  s_12ddd06c0f7251::t_abb405ff2ea50e 12,19,63,67-75
+apps/api/app/database.py
+  s_12ddd06c0f7251::t_ad91068fe5dba4 10,301-303,305,320-321,336-337,347-399
+apps/api/app/routes/admin_users.py
+  s_12ddd06c0f7251::t_a08927628af5b9 1-49,58-101,103-106,125-259
+  s_12ddd06c0f7251::t_e35f05169aba7b 50-57,102,107-124
+apps/api/app/auth/service.py
+  s_12ddd06c0f7251::t_42c68ce913bd9f 16,41-43,58-62
+apps/api/app/services/admin_user_management.py
+  s_12ddd06c0f7251::t_83d660b923f07f 1-13,17-66,69-72,108-201,203,205-224,227-276,282-333,339-407,413-461,467-507,513-557,570-587,590-697,700-729
+  s_12ddd06c0f7251::t_246bd076559dbd 14-16,67-68,202,204,225-226,277-281,698-699
+  s_12ddd06c0f7251::t_8672b7cf8af79e 73-107,334-338,408-412,462-466,508-512,558-569,588-589
+apps/api/tests/test_db_migrations.py
+  s_12ddd06c0f7251::t_567f331160ca87 47
+apps/web/src/components/UserMenu.tsx
+  s_12ddd06c0f7251::t_b5f6ceed593608 5,121-134
+apps/web/src/components/AuthProvider.tsx
+  s_12ddd06c0f7251::t_4b2f1f918589be 33-34,112
+apps/api/app/auth/jwt.py
+  s_12ddd06c0f7251::t_42c68ce913bd9f 11,21
+apps/web/src/app/admin/users/page.tsx
+  s_12ddd06c0f7251::t_0c93d8a8f3d120 165-168,170-172,175-177
+  s_12ddd06c0f7251::t_f5a72df00e843a 469
+  s_12ddd06c0f7251::t_d1d55b19e24855 1-164,169,173-174,178-468,470-478
+docs/deploy/lighthouse-cicd.md
+  s_12ddd06c0f7251::t_5270e06cf3cab2 228-239
+apps/api/app/main.py
+  s_12ddd06c0f7251::t_241e663e1112c7 158,179
+apps/api/app/db_migrations.py
+  s_12ddd06c0f7251::t_0a932cc556ff37 1440-1462
+  s_12ddd06c0f7251::t_4709c977ddafc9 14,1437-1438,1463-1544,1563,1580-1584,1635
+apps/web/src/components/AuthProvider.test.tsx
+  s_12ddd06c0f7251::t_e0f75001bd3087 110-129
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.34-trip",
+  "base_commit_sha": "a5b7d909d9ebcafd519e1b3d8e308ada8aa4da5b",
+  "prompts": {},
+  "sessions": {
+    "s_12ddd06c0f7251": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f7369-4d59-7af3-9189-e98b0faa9b7e",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
