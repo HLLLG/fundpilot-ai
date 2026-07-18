@@ -5,7 +5,12 @@ from datetime import datetime
 from app.models import DiscoveryRecommendation, FundDiscoveryReport, InvestorProfile
 from app.services.deepseek_http import ProviderFailure
 from app.services.provider_fallback import apply_provider_failure_to_facts
-from app.services.discovery_strategy import discovery_horizon_label, strategy_from_facts
+from app.services.decision_score_shadow import attach_decision_score_shadow
+from app.services.discovery_strategy import (
+    discovery_horizon_label,
+    discovery_minimum_holding_days,
+    strategy_from_facts,
+)
 
 _DISCLAIMER = "仅供参考，不构成投资建议；基金有风险，决策需结合自身承受能力。"
 
@@ -113,6 +118,15 @@ def build_offline_discovery_report(
     from app.services.decision_data_evidence import report_execution_blocked
 
     blocked = report_execution_blocked(discovery_facts)
+    attach_decision_score_shadow(
+        discovery_facts,
+        candidate_pool,
+        decision_at=decision_at,
+        minimum_holding_days=discovery_minimum_holding_days(
+            discovery_strategy,
+            profile,
+        ),
+    )
     report = FundDiscoveryReport(
         **({"created_at": decision_at} if decision_at is not None else {}),
         title="今日基金机会扫描（离线）",

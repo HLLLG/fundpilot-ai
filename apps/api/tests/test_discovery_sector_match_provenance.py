@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -15,6 +16,9 @@ from app.services.discovery_candidate_pool import (
     rank_candidates_balanced_fallback,
 )
 from app.services.discovery_guard import apply_discovery_guards
+
+
+_DECISION_AT = datetime(2026, 7, 14, tzinfo=timezone.utc)
 
 
 @pytest.mark.parametrize(
@@ -102,6 +106,7 @@ def test_primary_match_survives_build_enrich_finalize_llm_and_guard(
         pool_cap=1,
         fetch_rank=lambda limit: [rank_row],
         fetch_new_funds=lambda limit: [],
+        decision_at=_DECISION_AT,
     )
 
     # The same fund is discovered through both primary mapping and name matching;
@@ -139,7 +144,7 @@ def test_primary_match_survives_build_enrich_finalize_llm_and_guard(
         },
     )
 
-    enriched = enrich_candidates(built)
+    enriched = enrich_candidates(built, decision_at=_DECISION_AT)
     assert enriched[0]["sector_match_kind"] == "primary"
     assert enriched[0]["sector_fit_score"] == 36.8
     assert "板块匹配置信偏低" not in enriched[0]["quality_penalties"]

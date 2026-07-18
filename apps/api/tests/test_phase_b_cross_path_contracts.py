@@ -213,6 +213,11 @@ def test_central_report_ignores_hostile_llm_amount_and_candidate_order() -> None
 
     assert _decision_projection(tiny) == _decision_projection(hostile)
     assert tiny.allocation_plan == hostile.allocation_plan
+    shadow = tiny.discovery_facts["decision_score_shadow"]
+    assert shadow["mode"] == "shadow_record_only"
+    assert shadow["selection_effect"] == "none_shadow_only"
+    assert shadow["actual_decision_unchanged"] is True
+    assert shadow["allocation_tilt_eligible"] is False
     assert tiny.allocation_plan["policy"] == {
         **tiny.allocation_plan["policy"],
         "candidate_order_ignored": True,

@@ -68,7 +68,9 @@ def load_ic_context() -> dict[str, Any]:
 
         research_model = (
             summary.get("research_model")
-            if isinstance(summary, dict) and isinstance(summary.get("research_model"), dict)
+            if state == "available"
+            and isinstance(summary, dict)
+            and isinstance(summary.get("research_model"), dict)
             else None
         )
         context = {

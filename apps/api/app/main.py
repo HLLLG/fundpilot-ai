@@ -167,6 +167,7 @@ from app.services.factor_ic_universe_snapshot import (
     validate_factor_ic_universe_publish_request,
 )
 from app.services.shadow_escalation_digest import build_shadow_escalation_digest
+from app.services.decision_score_shadow import build_decision_score_shadow_digest
 from app.services.recommendation_outcomes import (
     build_recommendation_outcomes,
     build_weekly_recommendation_outcomes,
@@ -485,6 +486,16 @@ def factor_live_calibration() -> dict:
         return build_factor_live_calibration_status(user_id=get_request_user_id())
     except FactorLiveCalibrationStorageUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.get("/api/diagnostics/decision-score-shadow")
+def decision_score_shadow_digest(limit: int = 30) -> dict:
+    """当前用户最近荐基报告中的 DecisionScore v1 影子覆盖与差异摘要。"""
+
+    bounded_limit = max(1, min(limit, 100))
+    return build_decision_score_shadow_digest(
+        list_discovery_reports(limit=bounded_limit)
+    )
 
 
 @app.get("/api/reports/recommendation-accuracy")

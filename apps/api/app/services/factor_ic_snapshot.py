@@ -714,6 +714,8 @@ def _unavailable_status(threshold: int) -> dict[str, Any]:
         "available": False,
         "stale_after_days": threshold,
         "source": "unavailable",
+        "confidence_eligible": False,
+        "confidence_block_reasons": ["factor_ic_snapshot_unavailable"],
     }
 
 
@@ -764,6 +766,16 @@ def _build_factor_ic_status_from_loaded(
         or int((params or {}).get("universe_size") or 0)
         < V2_EXPECTED_PARAMS["universe_size"]
     )
+    confidence_block_reasons: list[str] = []
+    if age_days >= threshold:
+        confidence_block_reasons.append("factor_ic_snapshot_stale")
+    if upgrade_required:
+        confidence_block_reasons.append("factor_ic_contract_upgrade_required")
+    try:
+        FactorIcSummary.model_validate(raw)
+    except (TypeError, ValueError):
+        confidence_block_reasons.append("factor_ic_contract_invalid")
+    confidence_block_reasons = list(dict.fromkeys(confidence_block_reasons))
     coverage = raw.get("coverage") if isinstance(raw.get("coverage"), dict) else {}
     research_model = (
         raw.get("research_model")
@@ -798,6 +810,8 @@ def _build_factor_ic_status_from_loaded(
         "snapshot_id": metadata.get("snapshot_id"),
         "schema_version": schema_version,
         "upgrade_required": upgrade_required,
+        "confidence_eligible": not confidence_block_reasons,
+        "confidence_block_reasons": confidence_block_reasons,
         "expected_universe_size": V2_EXPECTED_PARAMS["universe_size"],
         "run_date": str(raw["run_date"]),
         "generated_at": generated.isoformat(),
@@ -896,6 +910,11 @@ def load_factor_ic_context(
         state = "unavailable"
     elif status.get("stale"):
         state = "stale"
+    elif status.get("confidence_eligible") is not True:
+        # The raw snapshot remains visible for diagnostics, but an obsolete or
+        # malformed research contract must never feed factor confidence or an
+        # execution whitelist merely because its file date is recent.
+        state = "unavailable"
     else:
         state = "available"
     return {"state": state, "status": status, "summary": raw}

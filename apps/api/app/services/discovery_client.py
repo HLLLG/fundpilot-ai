@@ -33,6 +33,7 @@ from app.services.discovery_allocation_service import (
     apply_deterministic_discovery_allocation,
     prepare_recommendations_for_deterministic_allocation,
 )
+from app.services.decision_score_shadow import attach_decision_score_shadow
 from app.services.discovery_judge import judge_parsed_discovery_report
 from app.services.discovery_offline import build_offline_discovery_report
 from app.services.discovery_payload import append_output_requirements_to_system, build_user_payload
@@ -54,6 +55,10 @@ from app.services.provider_call_trace import (
 from app.services.decision_contract import POLICY_VERSION
 from app.services.decision_repository import canonical_json
 from app.services.report_pipeline import build_pipeline_metadata
+from app.services.discovery_strategy import (
+    discovery_minimum_holding_days,
+    strategy_from_facts,
+)
 
 ProgressCallback = Callable[[str, str], None]
 logger = logging.getLogger(__name__)
@@ -637,6 +642,15 @@ def build_discovery_report_from_parsed(
     )
     discovery_facts["risk_context"] = risk_context
     discovery_facts["allocation_plan"] = allocation_plan
+    attach_decision_score_shadow(
+        discovery_facts,
+        candidate_pool,
+        decision_at=decision_at,
+        minimum_holding_days=discovery_minimum_holding_days(
+            strategy_from_facts(discovery_facts),
+            profile,
+        ),
+    )
     caveats = _as_str_list(parsed.get("caveats"))
     caveats.extend(guard_caveats)
     caveats.extend(allocation_caveats)

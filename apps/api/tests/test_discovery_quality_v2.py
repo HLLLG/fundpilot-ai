@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -21,6 +21,10 @@ from app.services.discovery_guard import (
     apply_discovery_guards,
     finalize_discovery_allocation_projection,
 )
+
+
+_DECISION_AT = datetime(2026, 7, 14, tzinfo=timezone.utc)
+_DECISION_DATE = _DECISION_AT.date()
 
 
 def _snapshot(*, drawdown: float = -20.0):
@@ -66,7 +70,8 @@ def test_enrichment_recomputes_bounded_score_and_quality_gate(monkeypatch):
                 "max_drawdown_1y_percent": -158.0,
                 "fund_quality_score": 134.0,
             }
-        ]
+        ],
+        decision_at=_DECISION_AT,
     )
 
     item = result[0]
@@ -115,7 +120,8 @@ def test_enrichment_derives_drawdown_from_fetched_nav_when_diagnostics_is_missin
                 "return_3m_percent": 18.0,
                 "return_6m_percent": 35.0,
             }
-        ]
+        ],
+        decision_at=_DECISION_AT,
     )[0]
 
     assert item["max_drawdown_1y_percent"] == -20.0
@@ -153,7 +159,8 @@ def test_enrichment_converts_xq_shares_with_latest_nav_instead_of_treating_as_au
                 "return_6m_percent": 35.0,
                 "max_drawdown_1y_percent": -20.0,
             }
-        ]
+        ],
+        decision_at=_DECISION_AT,
     )[0]
 
     assert item["fund_scale_yi"] == 2.4
@@ -263,7 +270,8 @@ def test_zero_returns_and_drawdown_are_valid_core_values_but_non_finite_values_a
             "established_date": "2020-01-01",
             "fund_manager": "测试经理",
             "nav_date": "2026-07-10",
-        }
+        },
+        as_of_date=_DECISION_DATE,
     )
     invalid = _with_data_quality_gate(
         {
