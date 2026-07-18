@@ -1,0 +1,23 @@
+apps/api/tests/test_market_diagnostics_router.py
+  s_12ddd06c0f7251::t_175bdf4902ff03 16-23,29
+apps/api/tests/test_factor_evidence_router.py
+  s_12ddd06c0f7251::t_175bdf4902ff03 21-28,33
+apps/api/tests/test_decision_quality_router.py
+  s_12ddd06c0f7251::t_175bdf4902ff03 11-18,20-24
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.34-trip",
+  "base_commit_sha": "4f6f6481ed29d15af2d67071a88b2bca6a8d37ab",
+  "prompts": {},
+  "sessions": {
+    "s_12ddd06c0f7251": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f7369-4d59-7af3-9189-e98b0faa9b7e",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
