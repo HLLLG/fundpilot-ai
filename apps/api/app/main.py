@@ -168,6 +168,7 @@ from app.services.factor_ic_universe_snapshot import (
 )
 from app.services.shadow_escalation_digest import build_shadow_escalation_digest
 from app.services.decision_score_shadow import build_decision_score_shadow_digest
+from app.services.evidence_maturity import build_evidence_maturity_status
 from app.services.recommendation_outcomes import (
     build_recommendation_outcomes,
     build_weekly_recommendation_outcomes,
@@ -495,6 +496,20 @@ def decision_score_shadow_digest(limit: int = 30) -> dict:
     bounded_limit = max(1, min(limit, 100))
     return build_decision_score_shadow_digest(
         list_discovery_reports(limit=bounded_limit)
+    )
+
+
+@app.get("/api/diagnostics/evidence-maturity")
+def evidence_maturity_status() -> Response:
+    """当前用户的采集健康与证据成熟度；只读且绝不触发即时评估。"""
+
+    payload = build_evidence_maturity_status(user_id=get_request_user_id())
+    return JSONResponse(
+        content=payload,
+        headers={
+            "Cache-Control": "private, no-store, max-age=0",
+            "Pragma": "no-cache",
+        },
     )
 
 

@@ -21,6 +21,17 @@ def test_production_compose_has_one_supervised_background_worker() -> None:
     assert "FUND_AI_RUNTIME_ROLE: worker" in compose
     assert '["python", "-m", "app.background_worker"]' in compose
     assert '["CMD", "python", "-m", "app.background_worker", "--healthcheck"]' in compose
+    assert compose.count(
+        "FUND_AI_BACKGROUND_WORKER_HEARTBEAT_PATH: /app/data/background-worker-heartbeat.json"
+    ) == 2
+
+
+def test_cloud_compose_shares_worker_heartbeat_with_request_api() -> None:
+    compose = (REPO_ROOT / "docker-compose.cloud.yml").read_text(encoding="utf-8")
+
+    assert compose.count(
+        "FUND_AI_BACKGROUND_WORKER_HEARTBEAT_PATH: /app/data/background-worker-heartbeat.json"
+    ) == 2
 
 
 def test_both_api_images_default_to_two_workers_without_hardcoding_cli_flag() -> None:

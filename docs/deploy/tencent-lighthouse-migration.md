@@ -156,6 +156,8 @@
 
 不填写 `FUND_AI_CLOUDBASE_ENV_ID`。新站不应复用本机 `.env`，以免带入本地数据库路径或旧 Key。
 
+Worker 心跳路径也不需要写进 `.env.production`：生产 Compose 已把 API 与 Worker 都固定到共享数据卷中的 `/app/data/background-worker-heartbeat.json`。Worker 自身健康检查额外核验 PID；API 的证据成熟度接口跨容器只核验心跳契约、新鲜度与常驻任务状态。
+
 `FUND_AI_DECISION_QUALITY_READ_TOKEN` 是可选的内部只读 Token。需要读取最新预计算质量快照时，
 用独立随机值填写，并只通过 `X-Decision-Quality-Read-Token` 请求头传递；不得复用 JWT、因子 IC
 发布 Token 或模型 Key。不开放该运维读面时保持为空。

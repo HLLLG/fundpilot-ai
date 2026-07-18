@@ -33,6 +33,7 @@ services:
       FUND_AI_CORS_ORIGINS: ${FUND_AI_CORS_ORIGINS:-http://127.0.0.1:3001}
       FUND_AI_CLOUDBASE_AUTH_DEV_MODE: ${FUND_AI_CLOUDBASE_AUTH_DEV_MODE:-true}
       FUND_AI_RUNTIME_ROLE: api
+      FUND_AI_BACKGROUND_WORKER_HEARTBEAT_PATH: /app/data/background-worker-heartbeat.json
       WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
     depends_on:
       mysql:
@@ -53,6 +54,7 @@ services:
       FUND_AI_JWT_SECRET: ${FUND_AI_JWT_SECRET:-fundpilot-dev-jwt-secret-change-me-32chars}
       FUND_AI_DEEPSEEK_API_KEY: ${FUND_AI_DEEPSEEK_API_KEY:-}
       FUND_AI_RUNTIME_ROLE: worker
+      FUND_AI_BACKGROUND_WORKER_HEARTBEAT_PATH: /app/data/background-worker-heartbeat.json
     command: ["python", "-m", "app.background_worker"]
     depends_on:
       mysql:

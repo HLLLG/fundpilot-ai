@@ -102,6 +102,7 @@ def test_worker_health_fails_closed_for_stale_or_dead_heartbeat(
         "healthy": False,
         "reason": "heartbeat_stale",
         "age_seconds": 46.0,
+        "heartbeat_at": now.isoformat(),
     }
 
     monkeypatch.setattr(background_worker, "_process_exists", lambda _pid: False)
@@ -110,7 +111,56 @@ def test_worker_health_fails_closed_for_stale_or_dead_heartbeat(
         stale_after_seconds=45,
         now=now,
     )
-    assert dead == {"healthy": False, "reason": "worker_process_missing"}
+    assert dead == {
+        "healthy": False,
+        "reason": "worker_process_missing",
+        "heartbeat_at": now.isoformat(),
+    }
+
+
+def test_cross_container_health_skips_pid_lookup_but_checks_persistent_jobs(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    path = tmp_path / "worker-heartbeat.json"
+    now = datetime.now(timezone.utc)
+    payload = {
+        "schema_version": background_worker.HEARTBEAT_SCHEMA_VERSION,
+        "status": "leader",
+        "worker_id": "worker-test",
+        "pid": 987654,
+        "started_at": now.isoformat(),
+        "heartbeat_at": now.isoformat(),
+        "jobs": [
+            {"name": "market-refresh", "persistent": True, "alive": True},
+        ],
+    }
+    background_worker.write_worker_heartbeat(path, payload)
+    monkeypatch.setattr(
+        background_worker,
+        "_process_exists",
+        lambda _pid: (_ for _ in ()).throw(AssertionError("must not inspect PID")),
+    )
+
+    healthy = background_worker.inspect_worker_health(
+        path,
+        stale_after_seconds=45,
+        now=now,
+        verify_process=False,
+    )
+    assert healthy["healthy"] is True
+
+    payload["jobs"][0]["alive"] = False
+    background_worker.write_worker_heartbeat(path, payload)
+    unhealthy = background_worker.inspect_worker_health(
+        path,
+        stale_after_seconds=45,
+        now=now,
+        verify_process=False,
+    )
+    assert unhealthy["healthy"] is False
+    assert unhealthy["reason"] == "persistent_job_missing"
+    assert unhealthy["dead_jobs"] == ["market-refresh"]
 
 
 def test_supervisor_fails_when_a_persistent_job_exits(tmp_path, monkeypatch) -> None:

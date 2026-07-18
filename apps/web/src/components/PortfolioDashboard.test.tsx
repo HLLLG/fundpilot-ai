@@ -41,6 +41,10 @@ vi.mock("@/components/PortfolioEvidenceOverviewPanel", () => ({
     enabled ? <div data-testid="evidence-overview" /> : null,
 }));
 vi.mock("@/components/FactorIcStatusBadge", () => ({ FactorIcStatusBadge: () => null }));
+vi.mock("@/components/EvidenceMaturityPanel", () => ({
+  EvidenceMaturityPanel: ({ enabled }: { enabled: boolean }) =>
+    enabled ? <div data-testid="evidence-maturity-panel" /> : null,
+}));
 vi.mock("@/components/ProfitAnalysisTrendChart", () => ({
   ProfitAnalysisTrendChart: ({ trend }: { trend?: { kind?: string } | null }) => (
     <div data-testid="profit-trend-kind">{trend?.kind ?? "none"}</div>
@@ -309,6 +313,9 @@ describe("PortfolioDashboard range UI", () => {
     expect(await screen.findByText(/暂无可分析的持仓收益数据/)).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.queryByTestId("portfolio-analysis-content")).not.toBeInTheDocument();
+    expect(screen.getByTestId("evidence-maturity-console")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "查看成熟度" }));
+    expect(screen.getByTestId("evidence-maturity-panel")).toBeInTheDocument();
   });
 
   it("does not reuse a previous account's session cache", async () => {

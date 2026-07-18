@@ -4,9 +4,10 @@
 >
 > **维护：** 功能或架构有实质变化时，同步更新「能力清单」「数据流」「API」「目录」「环境变量」。
 
-**文档版本：** 2026-07-18（专职采集 Worker + DecisionScore v1）
+**文档版本：** 2026-07-18（证据成熟度控制台 + 专职采集 Worker + DecisionScore v1）
 
 **更新记录：**
+- **证据成熟度控制面与采集告警（2026-07-18，已实现）：** 新增只读 `GET /api/diagnostics/evidence-maturity`，在 `evidence_maturity.v1` 中汇总专职 Worker 共享心跳/常驻任务、真实 PIT 成员快照与有效锚点、Factor IC 的 20/60 日成熟经济期、当前用户 DecisionScore shadow 覆盖和预计算决策质量快照。生产/Cloud Compose 将 Worker 原子心跳写入 API/Worker 共享的 `/app/data/background-worker-heartbeat.json`；Worker 容器内健康检查继续验证 PID，API 跨容器只验证契约、新鲜度和常驻任务存活，避免无意义的跨 PID namespace 判断。聚合 GET 不触发即时评估，任一子链失败只返回脱敏告警并保持 fail-closed；空值明确表示“尚无证据”，不补 0。盈亏分析页新增独立可展开控制台，即使无持仓收益也可查看 24 个 PIT 有效锚点、36 个成熟经济期、60 个成熟决策日/80% 标签覆盖等预注册门槛；17.5/19.5 个月只显示为理论最短样本窗口，所有模型仍禁止自动晋级。**验证：** API **1203 passed**；Web **99 files / 435 passed**，typecheck、lint、production build、Python `compileall`、Compose YAML 解析与 `git diff --check` 通过。
 - **专职后台任务 Worker + 生产采集烟测（2026-07-18，已实现）：** 新增 `FUND_AI_RUNTIME_ROLE=all|api|worker`：本地直启默认 `all` 保留一键开发体验，生产 Compose 的两个 Uvicorn 进程固定为 request-only `api`，另起单进程 `worker` 承载市场共享刷新、持仓板块刷新、基金主板块预计算/存量补跑及启用时的 Prompt shadow。Worker 用现有 MySQL 会话级命名锁选主（SQLite 为数据库旁 OS 文件锁），锁句柄每轮执行 `SELECT 1` 保活；关键常驻线程退出、协调会话丢失或心跳过期均 fail closed，使容器退出/不健康，避免多 worker 重复拉源与静默停采。容器内原子心跳绑定 leader PID、任务存活状态和新鲜度；生产部署与回滚均同时重建 API/Worker、等待 Worker `healthy`，并在切换静态站点前运行与每日任务同口径的决策质量 `--dry-run`，不再只凭 `/health` 判断采集链可用。**验证：** API 全量 **1198 passed**，Worker/锁/部署契约聚焦 **27 passed**，真实 SQLite 选主与心跳演练、Python `compileall`、Compose YAML 解析、部署脚本 Bash 语法及 `git diff --check` 通过；本机无 Docker CLI，生产 Compose 完整展开由 CI/CD 和 Lighthouse 发布门禁继续验证。
 - **DecisionScore v1 影子量化决策 + 因子置信 P0（2026-07-18，已实现）：** 修复近期旧版、小样本或契约损坏的 Factor IC 快照仅因日期新就进入高置信链路的问题：原始快照仍可诊断展示，但只有通过当前版本化契约完整校验、未过期且无需升级时才设置 `confidence_eligible=true`；否则消费上下文统一降为 unavailable，因子与 research model 不进入置信度或执行白名单。荐基报告新增独立 `decision_score.v1` artifact，在当前生产决策和确定性分配完成后，按因子同类 30% + 正式基准/跟踪一致性 25% + 下行控制 20% + 组合板块容量 15% + 持有期费用 10% 计算最终候选池影子顺序；五项缺一不评分，不填 0、不重分权重，质量/交易/持有期成本硬门优先。Artifact 带候选审计引用、逐行及整包哈希、Top-K 差异和覆盖率，落库但不进入 LLM payload，固定 `shadow_record_only`、不改候选/动作/金额/分配且禁止自动晋级。新增 `GET /api/diagnostics/decision-score-shadow` 当前用户摘要；预注册公式、局限与至少 60 个成熟独立决策日的人工晋级门槛见 [DECISION_SCORE_V1.md](design/DECISION_SCORE_V1.md)。本地旧 v1/25 只快照真实探针现正确显示 `confidence_eligible=false` 且不满足影子因子分项。生产采集回归同时修复每日质量快照把正常未到期 observation 误判为契约损坏的问题：仅 `outcome_observation_not_terminal_mature` 被视为预期 pending，哈希不一致、结构异常及 shadow 标签排除仍 fail closed。**验证：** API 全量 **1188 passed**，该修复聚焦回归 **123 passed**，Python `compileall`、相关路径 30 项聚焦回归与此前 281 项扩大回归通过；另修复 4 个依赖系统日期的既有测试，只冻结测试决策时点，未放宽生产 7 日净值新鲜度门禁。
 - **轻量服务器 2-worker 升级 + 持仓跨进程锁（2026-07-17，本地实现待部署验收）：** 生产根镜像与 `docker-compose.production.yml` 从单 Uvicorn worker 升级为 `WEB_CONCURRENCY=2`（4 核主机保守默认；项目每个进程内部另有 OCR、行情和分析线程池，不直接拉满 4 worker）。持仓新增、删除、金额调整、交易同步、旧 OCR 直写、自愈清理、板块/净值最终写回统一进入同账户跨进程临界区：MySQL 使用最长 64 字符、无密钥泄露的 `GET_LOCK/RELEASE_LOCK` 命名锁，并为每次持锁建立独立非池化会话，显式释放失败时由关闭连接兜底，worker 崩溃/连接终止后 MySQL 自动释放；本地 SQLite 使用数据库旁的 OS 文件锁，Windows/Linux 均跨进程且随进程退出释放。同 worker 内保留账户 `RLock` 与线程内重入计数，交易同步的嵌套持久化只拿一次数据库锁；锁等待默认 30 秒，超时返回带 `Retry-After: 2` 的可重试 503。非成员行情刷新把“最终重基、最后成员检查、提交”整体放进锁内，关闭检查后到写入前的 TOCTOU 缝隙。MySQL 模式默认关闭进程私有的持仓响应缓存，避免请求轮询到另一 worker 时读到最多 240 秒的旧组合；每次改从权威快照快路径读取。生产/Cloud Compose、根/API Dockerfile、环境变量示例、README 与轻量服务器迁移文档已同步。**验证：** 新增两个真实独立 Python 进程竞争同账户锁、持锁进程被强制终止后接管、MySQL 独立会话获取/释放/超时、嵌套只获取一次、MySQL 禁用进程缓存及部署文件契约测试；API **1175 passed**，Web typecheck、production build、Python `compileall`、Cloud Compose `config --quiet` 与 `git diff --check` 通过。生产 Compose 本机展开仅因未保存服务器专用 `.env.production` 而跳过，部署时由 CI/CD 既有 `config -q` 门禁复验。
@@ -203,6 +204,7 @@
 | 生成日报 | 「生成日报」Tab：`RiskControls`（**AI 角色设定**可编辑 + 高级设置折叠风控）+ `NewsPreviewPanel` / `SectorSignalBacktestPanel` / `RecommendationAccuracyPanel`；诊断项收进 `DiagnosticsAccordion`；日报 **仅分析已有持仓**，荐新基见独立 Tab |
 | 推荐基金 | 「推荐基金」Tab：`FundDiscoveryPanel` — 默认独立 **机会优先**（未来 20～60 个交易日，近 1 年回撤用于调整首批金额而非一票否决），可切换旧式 **稳健筛选**；只保留 **市场优选**（`full_market`）/ **组合补缺**（`portfolio_gap`）、19 个关注方向、预算与高级 Prompt 附录，主扫描固定深度分析。候选公开并全链保留 `sector_match_kind`、`opportunity_score_20_60d`，报告按可执行/等待/观察分层，并展示质量门、候选池、历史与复盘 |
 | 荐基量化影子评分 | `decision_score.v1` 在当前报告决策与分配完成后，对最终候选池计算固定五因子研究顺序；严格硬门与缺失值 fail-closed，artifact 落库但不进入 LLM、不改候选/动作/金额/分配。`GET /api/diagnostics/decision-score-shadow` 只读汇总覆盖与 Top-K 差异，达到预注册样本门槛也只能进入人工评审 |
+| 证据成熟度控制台 | `GET /api/diagnostics/evidence-maturity` 汇总 Worker 心跳、PIT 成员/锚点、Factor IC 经济期、DecisionScore shadow 与当前用户决策质量快照；前端 `EvidenceMaturityPanel` 在无持仓收益时仍可打开，缺失显示“尚无证据”，异常给出下一步但不触发评估或自动晋级 |
 | AI 角色 Prompt（日报） | `analysis_prompt.py` `DEFAULT_ROLE_PROMPT`；用户自定义 `role_prompt`（≤4000 字）持久化 `analysis_prompt_state`；`GET/PUT /api/analysis-prompt`；生成时 `system_role_prompt` 传入 `POST /api/analyze/async` |
 | AI 角色 Prompt（荐基） | `discovery_prompt.py` `DEFAULT_DISCOVERY_ROLE_PROMPT`；持久化 `discovery_prompt_state`（schema v6）；`GET/PUT /api/discovery-prompt`；扫描时 `DiscoveryRequest.system_role_prompt` 传入 `discovery_client` |
 | 复盘/模拟 | outcomes / outcomes-weekly / rebalance-simulation / recommendation-accuracy |
@@ -523,6 +525,7 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | GET | `/api/diagnostics/shadow-escalation-digest?days=7` | 灰度复盘摘要（M6.3，近 N 天双向 guard 升级触发聚合，`days` 夹在 1~30） |
 | GET | `/api/diagnostics/factor-ic-status` | 因子 IC 快照新鲜度（需 JWT）：来源、生成/发布时间、有效基金数、回测期数、四因子有效期、30 天过期状态 |
 | GET | `/api/diagnostics/decision-score-shadow?limit=30` | 当前用户最近 1～100 份荐基报告的 DecisionScore v1 影子覆盖、缺失分项、校验状态与 Top-K 差异摘要；不返回候选明细、不自动晋级 |
+| GET | `/api/diagnostics/evidence-maturity` | 当前用户证据成熟度与采集健康控制面；只读/no-store，汇总 Worker、PIT/IC、DecisionScore 和决策质量，子链失败按组件告警且不即时重算 |
 | GET | `/api/database/export` | 下载 SQLite |
 | POST | `/api/database/import` | 上传替换 DB（自动备份 `.db.bak`） |
 | GET | `/api/jobs/{id}` | 任务状态（日报或推荐基金）；`job_status_service` 单连接先查 `discovery_jobs`；含 `job_kind`、`stage`/`stage_label`；完成时含 `report` 或 `discovery_report`；DB 不可用 503 |
@@ -835,6 +838,7 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | `FUND_AI_BACKGROUND_WORKER_RETRY_SECONDS` | 5 | standby 重试取得 leader 的间隔 |
 | `FUND_AI_BACKGROUND_WORKER_HEARTBEAT_INTERVAL_SECONDS` | 10 | leader 协调会话保活与容器心跳写入间隔 |
 | `FUND_AI_BACKGROUND_WORKER_HEARTBEAT_STALE_SECONDS` | 45 | Docker 健康检查允许的最大心跳年龄；超时、PID 消失或契约损坏均 unhealthy |
+| `FUND_AI_BACKGROUND_WORKER_HEARTBEAT_PATH` | 系统临时目录 | Worker 原子心跳文件；生产/Cloud Compose 固定为共享数据卷 `/app/data/background-worker-heartbeat.json`，供 API 证据控制面只读验证 |
 | `FUND_AI_PORTFOLIO_MUTATION_LOCK_TIMEOUT_SECONDS` | 30 | 同账户持仓跨 worker 命名锁等待秒数；超时返回带 `Retry-After` 的 503 |
 | `FUND_AI_HOLDINGS_MEMORY_CACHE_ENABLED` | SQLite true / MySQL false | 是否启用持仓响应进程内缓存；多 worker MySQL 默认关闭以防跨进程旧读 |
 | `FUND_AI_FACTOR_IC_PUBLISH_TOKEN` | — | 因子 IC 发布专用 Token；CloudBase 与 GitHub Secret `FACTOR_IC_PUBLISH_TOKEN` 使用同一随机值，不得复用 JWT/DeepSeek Secret |

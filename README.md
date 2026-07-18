@@ -27,6 +27,7 @@
 - 报告含**逐基金操作建议**、**主题要闻摘要**与**新闻原文列表**；利好/利空标题须能对应原文（`news_citation` 守卫）。
 - **后台异步分析**：点击「生成报告」后后台执行，右下角悬浮面板查看进度；完成后桌面通知（需开启通知权限）。
 - **生产专职后台 Worker**：市场/板块刷新、基金板块预计算与启用时的 Prompt shadow 不再随每个 Uvicorn 进程重复启动；独立容器通过 MySQL/OS 全局 leader lease、会话保活和 PID 心跳 fail-closed 监督，部署必须等 Worker 健康并通过决策质量 dry-run。
+- **证据成熟度控制台**：盈亏分析页可查看 Worker、PIT 基金池/Factor IC、DecisionScore shadow 和决策质量前向标签的真实积累进度；缺失数据明确显示“尚无证据”，17.5/19.5 个月仅为理论最短研究窗口，任何状态都不会自动启用新模型。
 - 日报与推荐基金主生成统一使用**深度分析**；旧快速报告仍可查看。
 - 报告支持与上一份日报**对比差异**；可**导出 Markdown**；报告内 **调仓示意模拟**（按动作与集中度自动补算示意金额）。
 - **报告追问**：日报阅读区提供按需对话抽屉（桌面右侧、移动端底部），支持 Markdown、快速/深度追问和深度模式按需补拉新闻；对话按报告存 SQLite，可**导出对话 Markdown**。
@@ -167,6 +168,7 @@ FUND_AI_JWT_SECRET=change-me-to-a-random-secret-at-least-32-chars
 | `WEB_CONCURRENCY` | Uvicorn worker 进程数；4 核轻量服务器生产默认 2，本地开发仍为 1 |
 | `FUND_AI_RUNTIME_ROLE` | `all`（本地默认）/`api`/`worker`；生产 Compose 已将请求与长期后台任务分离 |
 | `FUND_AI_BACKGROUND_WORKER_*` | leader 锁等待/重试、心跳间隔及过期门槛；默认 `5/5/10/45` 秒 |
+| `FUND_AI_BACKGROUND_WORKER_HEARTBEAT_PATH` | 可选心跳文件路径；生产/Cloud Compose 已固定到 API/Worker 共享的数据卷 |
 | `FUND_AI_PORTFOLIO_MUTATION_LOCK_TIMEOUT_SECONDS` | 同账户持仓跨 worker 写锁等待秒数；默认 30，超时返回可重试的 503 |
 | `FUND_AI_HOLDINGS_MEMORY_CACHE_ENABLED` | 持仓响应进程内缓存；MySQL 默认关闭，避免不同 worker 返回不同版本 |
 | `FUND_AI_CLOUDBASE_ENV_ID` | CloudBase 环境 ID；用于 Web 静态托管域名 CORS 自动放行 |

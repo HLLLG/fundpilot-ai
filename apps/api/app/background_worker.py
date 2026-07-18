@@ -241,7 +241,16 @@ def inspect_worker_health(
     *,
     stale_after_seconds: float | None = None,
     now: datetime | None = None,
+    verify_process: bool = True,
 ) -> dict[str, object]:
+    """Inspect the latest leader heartbeat.
+
+    ``verify_process`` stays enabled for the worker container's own Docker
+    healthcheck.  The request-only API container shares the heartbeat file but
+    not the worker PID namespace, so its evidence console deliberately verifies
+    the signed-by-contract heartbeat freshness and job state without pretending
+    that a cross-container PID lookup is meaningful.
+    """
     resolved_path = path or heartbeat_path()
     stale_limit = float(
         stale_after_seconds
@@ -272,20 +281,44 @@ def inspect_worker_health(
         pid = int(payload["pid"])
     except (KeyError, TypeError, ValueError):
         return {"healthy": False, "reason": "heartbeat_contract_invalid"}
+    heartbeat_at_iso = heartbeat_at.astimezone(timezone.utc).isoformat()
     if age_seconds < -5.0 or age_seconds > stale_limit:
         return {
             "healthy": False,
             "reason": "heartbeat_stale",
             "age_seconds": round(age_seconds, 3),
+            "heartbeat_at": heartbeat_at_iso,
         }
-    if not _process_exists(pid):
-        return {"healthy": False, "reason": "worker_process_missing"}
+    jobs = payload.get("jobs")
+    if not isinstance(jobs, list) or any(not isinstance(job, dict) for job in jobs):
+        return {"healthy": False, "reason": "heartbeat_contract_invalid"}
+    dead_persistent = sorted(
+        str(job.get("name") or "unknown")
+        for job in jobs
+        if job.get("persistent") is True and job.get("alive") is not True
+    )
+    if dead_persistent:
+        return {
+            "healthy": False,
+            "reason": "persistent_job_missing",
+            "age_seconds": round(age_seconds, 3),
+            "heartbeat_at": heartbeat_at_iso,
+            "dead_jobs": dead_persistent,
+        }
+    if verify_process and not _process_exists(pid):
+        return {
+            "healthy": False,
+            "reason": "worker_process_missing",
+            "heartbeat_at": heartbeat_at_iso,
+        }
     return {
         "healthy": True,
         "reason": "ok",
         "age_seconds": round(age_seconds, 3),
+        "started_at": payload.get("started_at"),
+        "heartbeat_at": heartbeat_at_iso,
         "worker_id": payload.get("worker_id"),
-        "jobs": payload.get("jobs") or [],
+        "jobs": jobs,
     }
 
 

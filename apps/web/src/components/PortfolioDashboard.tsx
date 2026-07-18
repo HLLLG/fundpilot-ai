@@ -13,6 +13,7 @@ import { PortfolioRiskMetricsPanel } from "@/components/PortfolioRiskMetricsPane
 import { PortfolioFactorScoresPanel } from "@/components/PortfolioFactorScoresPanel";
 import { PortfolioEvidenceOverviewPanel } from "@/components/PortfolioEvidenceOverviewPanel";
 import { FactorIcStatusBadge } from "@/components/FactorIcStatusBadge";
+import { EvidenceMaturityPanel } from "@/components/EvidenceMaturityPanel";
 import { InlineNotice } from "@/components/InlineNotice";
 
 const RANGE_TABS: Array<{ id: ProfitRange; label: string }> = [
@@ -171,6 +172,7 @@ export function PortfolioDashboard({
   const [showReturnHeader, setShowReturnHeader] = useState(false);
   const [showFactorScores, setShowFactorScores] = useState(false);
   const [showEvidenceOverview, setShowEvidenceOverview] = useState(false);
+  const [showEvidenceMaturity, setShowEvidenceMaturity] = useState(false);
 
   const cacheKey = buildClientCacheKey(
     "portfolio-dashboard",
@@ -447,6 +449,37 @@ export function PortfolioDashboard({
       </section>
       </div>
       ) : null}
+
+      <section
+        className="pl-panel section-card"
+        data-testid="evidence-maturity-console"
+        aria-labelledby={`${professionalDetailsId}-maturity-title`}
+      >
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h2 id={`${professionalDetailsId}-maturity-title`} className="pl-panel-title">
+              证据成熟度与采集健康
+            </h2>
+            <p className="mt-1 max-w-2xl text-xs leading-5 text-slate-500">
+              查看后台采集、PIT 基金池、DecisionScore 与前向标签的真实进度；缺证据不会显示成 0 分。
+            </p>
+          </div>
+          <button
+            type="button"
+            className="inline-flex min-h-11 items-center justify-center rounded-lg border border-[var(--line)] bg-white px-3 text-xs font-bold text-slate-700 transition hover:border-[var(--brand)] hover:text-[var(--brand-strong)]"
+            aria-expanded={showEvidenceMaturity}
+            aria-controls={`${professionalDetailsId}-maturity`}
+            onClick={() => setShowEvidenceMaturity((value) => !value)}
+          >
+            {showEvidenceMaturity ? "收起成熟度" : "查看成熟度"}
+          </button>
+        </div>
+        {showEvidenceMaturity ? (
+          <div id={`${professionalDetailsId}-maturity`} className="mt-4">
+            <EvidenceMaturityPanel enabled />
+          </div>
+        ) : null}
+      </section>
     </div>
   );
 }
