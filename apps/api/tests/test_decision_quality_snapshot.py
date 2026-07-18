@@ -2020,6 +2020,32 @@ def test_other_source_verified_unavailable_reason_remains_fail_closed() -> None:
         )
 
 
+def test_expected_pending_outcomes_do_not_fail_the_daily_quality_snapshot() -> None:
+    evaluation = {
+        "input_audit": {
+            "outcome_exclusions": [
+                {
+                    "reason": "outcome_observation_not_terminal_mature",
+                    "count": 24,
+                }
+            ],
+            "shadow_label_exclusions": [],
+        }
+    }
+
+    _raise_for_evaluation_contract_failures(evaluation, events=[])
+
+    tampered = deepcopy(evaluation)
+    tampered["input_audit"]["outcome_exclusions"][0]["reason"] = (
+        "outcome_observation_payload_hash_mismatch"
+    )
+    with pytest.raises(
+        DecisionQualitySnapshotContractError,
+        match="outcome_exclusions",
+    ):
+        _raise_for_evaluation_contract_failures(tampered, events=[])
+
+
 def test_decision_time_candidate_audit_is_manifested_but_not_used_as_a_label(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

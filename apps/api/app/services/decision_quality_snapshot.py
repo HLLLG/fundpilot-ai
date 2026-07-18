@@ -154,6 +154,9 @@ _D2_REPLAY_DECLARATION_FIELDS = {
     "replay_bundle_hash",
     "variant_manifest",
 }
+_EXPECTED_PENDING_OUTCOME_EXCLUSION_REASONS = {
+    "outcome_observation_not_terminal_mature",
+}
 
 
 class DecisionQualitySnapshotError(RuntimeError):
@@ -2939,12 +2942,30 @@ def _raise_for_evaluation_contract_failures(
                     raise DecisionQualitySnapshotContractError(
                         "formal decision event is not replay eligible"
                     )
-        for key in ("outcome_exclusions", "shadow_label_exclusions"):
-            rows = input_audit.get(key)
-            if isinstance(rows, Sequence) and not isinstance(rows, (str, bytes)) and rows:
+        outcome_exclusions = input_audit.get("outcome_exclusions")
+        if isinstance(outcome_exclusions, Sequence) and not isinstance(
+            outcome_exclusions, (str, bytes)
+        ):
+            unexpected_outcome_exclusions = [
+                row
+                for row in outcome_exclusions
+                if not isinstance(row, Mapping)
+                or row.get("reason")
+                not in _EXPECTED_PENDING_OUTCOME_EXCLUSION_REASONS
+            ]
+            if unexpected_outcome_exclusions:
                 raise DecisionQualitySnapshotContractError(
-                    f"evaluator rejected stored evidence: {key}"
+                    "evaluator rejected stored evidence: outcome_exclusions"
                 )
+        shadow_label_exclusions = input_audit.get("shadow_label_exclusions")
+        if (
+            isinstance(shadow_label_exclusions, Sequence)
+            and not isinstance(shadow_label_exclusions, (str, bytes))
+            and shadow_label_exclusions
+        ):
+            raise DecisionQualitySnapshotContractError(
+                "evaluator rejected stored evidence: shadow_label_exclusions"
+            )
     claims = evaluation.get("claim_audits")
     if isinstance(claims, Mapping):
         exclusions = claims.get("exclusion_reasons")
