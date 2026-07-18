@@ -1,0 +1,107 @@
+apps/web/src/lib/api.ts
+  s_12ddd06c0f7251::t_e74ef165261d65 8
+  s_12ddd06c0f7251::t_9f73a831866058 26-39
+apps/api/tests/test_portfolio_stress_test.py
+  s_12ddd06c0f7251::t_9a735199296574 5,214-224
+  s_12ddd06c0f7251::t_a69528fd9b160b 96-118
+  s_12ddd06c0f7251::t_13807785a44a13 119-133
+  s_12ddd06c0f7251::t_5625f0d02faf32 210,213
+  s_12ddd06c0f7251::t_e4d91bdf6ef9f5 1-4,6-95,134-209,211-212
+apps/web/src/lib/api/factorEvidence.ts
+  s_12ddd06c0f7251::t_2fc5eec8d3d599 138,141-142
+docs/design/DECISION_SCORE_V1.md
+  s_12ddd06c0f7251::t_4cbc7ada6ddbed 3-4
+apps/web/src/lib/api/portfolioRisk.ts
+  s_12ddd06c0f7251::t_9f73a831866058 1-129
+apps/web/src/components/ImportConfirmModals.test.tsx
+  s_12ddd06c0f7251::t_b7fb901e720e14 117-122,131-142,146-150
+  s_12ddd06c0f7251::t_11ae12fd10c9a0 129,145
+  s_12ddd06c0f7251::t_2a892e8865bd53 130
+  s_12ddd06c0f7251::t_3471bc39d6da14 152-179
+docs/PROJECT_CONTEXT.md
+  s_12ddd06c0f7251::t_4cbc7ada6ddbed 7,198,209,534-536,1001
+  s_12ddd06c0f7251::t_fd26838c26bc4f 10
+apps/api/app/services/portfolio_stress_test.py
+  s_12ddd06c0f7251::t_1afad25640ccce 68,80-85,90,108-116,123,131-144,146,152,160,168,195-197,330,347,353,374-375
+  s_12ddd06c0f7251::t_562546b34c0f34 1-11,13-16,18-37,41-64,70-79,86-89,91-107,117-122,124-130,145,147-151,153-159,161-167,169-194,198-329,331-337,343-346,348-352,354-373,376-483
+  s_12ddd06c0f7251::t_13807785a44a13 12,17,38-40,65-67,69,338-342
+apps/web/src/components/BatchTransactionConfirmModal.tsx
+  s_12ddd06c0f7251::t_2404e6150e57e0 25-31,33-39,154-158,180-192,194,207-209,262-264,372,375,377-388,392-397,432-436,439
+  s_12ddd06c0f7251::t_3ff9ae411d7b2d 32,41,234,356,369-370,374,376,389-390
+apps/api/app/services/evidence_maturity.py
+  s_12ddd06c0f7251::t_2fc5eec8d3d599 357,360-361,383
+apps/api/tests/test_decision_score_shadow.py
+  s_12ddd06c0f7251::t_9e51968faa30f1 729-778
+  s_12ddd06c0f7251::t_7f5b56d0a0044a 74-87,89,122-140,409-453,455-479
+  s_12ddd06c0f7251::t_4631fe69e4504c 143-164,599-625
+  s_12ddd06c0f7251::t_7d7196adab1c21 255-256,262-263
+  s_12ddd06c0f7251::t_22e5c16d40fc13 94-95,101,115-119
+  s_12ddd06c0f7251::t_3a3f3be7d6a094 5-6,88,90-93,96-100,102-114,120-121,141-142,180,352,380,404-408
+  s_12ddd06c0f7251::t_72432652beefbb 454
+apps/web/src/components/PortfolioStressTestPanel.test.tsx
+  s_12ddd06c0f7251::t_4f68d76167eccd 93
+  s_12ddd06c0f7251::t_b7fb901e720e14 1-92,94-142
+README.md
+  s_12ddd06c0f7251::t_4cbc7ada6ddbed 33-34
+apps/web/src/lib/api.factorEvidence.test.ts
+  s_12ddd06c0f7251::t_677a74fe8f5e69 23-32,47-52
+apps/web/src/components/TruthfulEvidenceStates.test.tsx
+  s_12ddd06c0f7251::t_3a513b2e886320 105
+apps/api/tests/test_evidence_maturity.py
+  s_12ddd06c0f7251::t_8db4ed61778839 143
+apps/api/app/main.py
+  s_12ddd06c0f7251::t_562546b34c0f34 157,177
+apps/web/src/components/PortfolioRiskMetricsPanel.tsx
+  s_12ddd06c0f7251::t_5c7c16b39066ea 220-224,264
+  s_12ddd06c0f7251::t_3ff9ae411d7b2d 9,121,247-259
+apps/web/src/components/EvidenceMaturityPanel.tsx
+  s_12ddd06c0f7251::t_2fc5eec8d3d599 293-294
+docs/design/DECISION_SCORE_V2.md
+  s_12ddd06c0f7251::t_4cbc7ada6ddbed 1-40,42-55,57-76
+  s_12ddd06c0f7251::t_72432652beefbb 41
+  s_12ddd06c0f7251::t_fd26838c26bc4f 56
+apps/api/app/services/portfolio_fee_evidence.py
+  s_12ddd06c0f7251::t_562546b34c0f34 1-127
+apps/api/app/routes/portfolio_risk.py
+  s_12ddd06c0f7251::t_562546b34c0f34 1-4,6-16,19-24,27-30
+  s_12ddd06c0f7251::t_5625f0d02faf32 5,17-18,25-26
+apps/web/src/components/SingleFundTransactionModal.tsx
+  s_12ddd06c0f7251::t_3ff9ae411d7b2d 43,68,80,102-105,113
+  s_12ddd06c0f7251::t_d9290abe9dd961 78-79,81-83
+  s_12ddd06c0f7251::t_790cc939cfca7b 228-241
+apps/web/src/components/PortfolioStressTestPanel.tsx
+  s_12ddd06c0f7251::t_4f68d76167eccd 138-145
+  s_12ddd06c0f7251::t_3ff9ae411d7b2d 1-137,146-154
+apps/api/tests/test_fund_lookthrough_context.py
+  s_12ddd06c0f7251::t_9eb1fe219f9655 579,594,607-618
+apps/api/app/services/decision_score_shadow.py
+  s_12ddd06c0f7251::t_90ac683d966396 846-851
+  s_12ddd06c0f7251::t_72432652beefbb 813,835,845,853
+  s_12ddd06c0f7251::t_22e5c16d40fc13 667-678,685,729-733
+  s_12ddd06c0f7251::t_844eb0815b87c3 381-408
+  s_12ddd06c0f7251::t_db785184a9fdbf 990,1015,1024-1027
+  s_12ddd06c0f7251::t_3f04e153a1f29d 473,482-493,550,552,556-558
+  s_12ddd06c0f7251::t_16abfa36846007 149,152,204,247-250,256-257,261-263
+  s_12ddd06c0f7251::t_90061bc6528db9 26-29,31-32,43-49,51
+  s_12ddd06c0f7251::t_ad1d0f69d25691 646-666,679-684,686-728,734-812,814-834,836-844,852,854-873
+  s_12ddd06c0f7251::t_e846361333084f 294-306,323-332
+apps/web/src/components/HoldingMutationModals.test.tsx
+  s_12ddd06c0f7251::t_d1e32179dbfb0f 72-99
+  s_12ddd06c0f7251::t_b7fb901e720e14 46-48,61
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.34-trip",
+  "base_commit_sha": "86fd1dcec597c89ca959f4b87bb7220dd016b8fb",
+  "prompts": {},
+  "sessions": {
+    "s_12ddd06c0f7251": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f7369-4d59-7af3-9189-e98b0faa9b7e",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
