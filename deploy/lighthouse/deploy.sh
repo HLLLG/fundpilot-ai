@@ -36,6 +36,8 @@ required_web_files=(
     "login.html"
     "register.html"
     "settings.html"
+    "admin/users.html"
+    "reset-password.html"
 )
 for required_web_file in "${required_web_files[@]}"; do
     if [[ ! -f "$release_web/$required_web_file" ]]; then
@@ -259,6 +261,8 @@ curl -fsS http://127.0.0.1/ >/dev/null
 curl -fsS http://127.0.0.1/login/ >/dev/null
 curl -fsS http://127.0.0.1/register/ >/dev/null
 curl -fsS http://127.0.0.1/settings/ >/dev/null
+curl -fsS http://127.0.0.1/admin/users/ >/dev/null
+curl -fsS http://127.0.0.1/reset-password/ >/dev/null
 curl -fsS http://127.0.0.1/api/trading-session >/dev/null
 
 printf '%s\n' "$deploy_sha" > "$deployed_sha_file"

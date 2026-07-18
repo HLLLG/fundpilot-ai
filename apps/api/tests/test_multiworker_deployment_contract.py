@@ -56,3 +56,18 @@ def test_lighthouse_deploy_waits_for_worker_and_runs_quality_smoke() -> None:
     assert "--dry-run" in deploy
     assert "rollback_has_worker" in deploy
     assert "--remove-orphans" in deploy
+
+
+def test_admin_static_routes_are_required_and_support_trailing_slashes() -> None:
+    deploy = (REPO_ROOT / "deploy" / "lighthouse" / "deploy.sh").read_text(
+        encoding="utf-8"
+    )
+    nginx = (REPO_ROOT / "deploy" / "nginx" / "fundpilot.conf").read_text(
+        encoding="utf-8"
+    )
+
+    for route in ("admin/users", "reset-password"):
+        assert f'"{route}.html"' in deploy
+        assert f"curl -fsS http://127.0.0.1/{route}/" in deploy
+        assert f"location = /{route}/" in nginx
+        assert f"try_files /{route}.html =404;" in nginx
