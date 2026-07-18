@@ -13,12 +13,20 @@ MARKET_DIAGNOSTIC_PATHS = {
 }
 
 
+def _registered_routes():
+    try:
+        from fastapi.routing import iter_route_contexts
+    except ImportError:
+        return app.routes
+    return iter_route_contexts(app.routes)
+
+
 def test_market_diagnostic_routes_are_registered_once_and_documented() -> None:
     openapi_paths = app.openapi()["paths"]
     for path in MARKET_DIAGNOSTIC_PATHS:
         matching = [
             route
-            for route in app.routes
+            for route in _registered_routes()
             if getattr(route, "path", None) == path
         ]
         assert sum("GET" in (route.methods or set()) for route in matching) == 1

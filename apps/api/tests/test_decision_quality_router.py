@@ -8,8 +8,20 @@ from app.main import app
 PATH = "/api/internal/decision-quality/evaluations/latest"
 
 
+def _registered_routes():
+    try:
+        from fastapi.routing import iter_route_contexts
+    except ImportError:
+        return app.routes
+    return iter_route_contexts(app.routes)
+
+
 def test_decision_quality_router_is_registered_once_and_hidden_from_openapi() -> None:
-    matching = [route for route in app.routes if getattr(route, "path", None) == PATH]
+    matching = [
+        route
+        for route in _registered_routes()
+        if getattr(route, "path", None) == PATH
+    ]
 
     assert sum("GET" in (route.methods or set()) for route in matching) == 1
     assert PATH not in app.openapi()["paths"]

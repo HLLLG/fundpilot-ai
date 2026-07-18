@@ -18,11 +18,19 @@ FACTOR_EVIDENCE_METHODS = {
 }
 
 
+def _registered_routes():
+    try:
+        from fastapi.routing import iter_route_contexts
+    except ImportError:
+        return app.routes
+    return iter_route_contexts(app.routes)
+
+
 def test_factor_evidence_router_is_registered_once_without_public_internal_docs() -> None:
     for path, methods in FACTOR_EVIDENCE_METHODS.items():
         matching = [
             route
-            for route in app.routes
+            for route in _registered_routes()
             if getattr(route, "path", None) == path
         ]
         for method in methods:
