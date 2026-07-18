@@ -9,7 +9,7 @@ PATH = "/api/internal/decision-quality/evaluations/latest"
 
 
 def test_decision_quality_router_is_registered_once_and_hidden_from_openapi() -> None:
-    matching = [route for route in app.routes if route.path == PATH]
+    matching = [route for route in app.routes if getattr(route, "path", None) == PATH]
 
     assert sum("GET" in (route.methods or set()) for route in matching) == 1
     assert PATH not in app.openapi()["paths"]

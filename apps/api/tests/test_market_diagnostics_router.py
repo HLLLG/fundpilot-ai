@@ -16,7 +16,11 @@ MARKET_DIAGNOSTIC_PATHS = {
 def test_market_diagnostic_routes_are_registered_once_and_documented() -> None:
     openapi_paths = app.openapi()["paths"]
     for path in MARKET_DIAGNOSTIC_PATHS:
-        matching = [route for route in app.routes if route.path == path]
+        matching = [
+            route
+            for route in app.routes
+            if getattr(route, "path", None) == path
+        ]
         assert sum("GET" in (route.methods or set()) for route in matching) == 1
         assert path in openapi_paths
 

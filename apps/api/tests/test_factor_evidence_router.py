@@ -20,7 +20,11 @@ FACTOR_EVIDENCE_METHODS = {
 
 def test_factor_evidence_router_is_registered_once_without_public_internal_docs() -> None:
     for path, methods in FACTOR_EVIDENCE_METHODS.items():
-        matching = [route for route in app.routes if route.path == path]
+        matching = [
+            route
+            for route in app.routes
+            if getattr(route, "path", None) == path
+        ]
         for method in methods:
             assert sum(method in (route.methods or set()) for route in matching) == 1
 
