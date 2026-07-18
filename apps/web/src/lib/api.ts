@@ -5,6 +5,7 @@ import type {
   MarketBreadthSignal,
   SectorSignalBacktestSector,
 } from "@/lib/api/marketDiagnostics";
+import type { PortfolioRiskMetrics } from "@/lib/api/portfolioRisk";
 
 export {
   fetchEvidenceMaturityStatus,
@@ -22,6 +23,20 @@ export {
   fetchSectorSignalBacktest,
   fetchShadowEscalationDigest,
 } from "@/lib/api/marketDiagnostics";
+export {
+  fetchPortfolioFeeEvidence,
+  fetchPortfolioRiskCorrelation,
+  fetchPortfolioRiskMetrics,
+  fetchPortfolioStressTest,
+} from "@/lib/api/portfolioRisk";
+export type {
+  PortfolioFeeEvidence,
+  PortfolioRiskCorrelation,
+  PortfolioRiskMetrics,
+  PortfolioStressScenario,
+  PortfolioStressTest,
+  RiskCorrelationPair,
+} from "@/lib/api/portfolioRisk";
 export type {
   FundReturnDistribution,
   FundReturnDistributionBinKey,
@@ -554,41 +569,6 @@ export type DailyProfitTop5Row = {
   fund_code: string;
   fund_name: string;
   daily_profit: number;
-};
-
-export type PortfolioRiskMetrics = {
-  available: boolean;
-  sample_days: number;
-  message?: string | null;
-  sample_quality?: "insufficient" | "short_window" | "standard" | string;
-  annualization_reliable?: boolean;
-  annualized_return_percent?: number | null;
-  annualized_volatility_percent?: number | null;
-  sharpe_ratio?: number | null;
-  sortino_ratio?: number | null;
-  max_drawdown_percent?: number | null;
-  beta?: number | null;
-  alpha_percent?: number | null;
-  hhi?: number | null;
-  effective_holdings?: number | null;
-};
-
-export type RiskCorrelationPair = {
-  code_a: string;
-  code_b: string;
-  name_a: string;
-  name_b: string;
-  corr: number;
-};
-
-export type PortfolioRiskCorrelation = {
-  available: boolean;
-  message?: string | null;
-  sample_days: number;
-  codes: string[];
-  names: string[];
-  matrix: Array<Array<number | null>>;
-  max_pair?: RiskCorrelationPair | null;
 };
 
 export type FactorDetail = {
@@ -2971,29 +2951,6 @@ export async function fetchPortfolioDashboard(options?: {
     `${API_BASE}/api/portfolio/dashboard${query ? `?${query}` : ""}`,
     { cache: "no-store" },
   );
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  return response.json();
-}
-
-export async function fetchPortfolioRiskMetrics(): Promise<PortfolioRiskMetrics> {
-  const response = await apiFetch(`${API_BASE}/api/portfolio/risk-metrics`, {
-    cache: "no-store",
-  });
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  return response.json();
-}
-
-export async function fetchPortfolioRiskCorrelation(
-  lookbackDays?: number,
-): Promise<PortfolioRiskCorrelation> {
-  const query = lookbackDays ? `?lookback_days=${lookbackDays}` : "";
-  const response = await apiFetch(`${API_BASE}/api/portfolio/risk-correlation${query}`, {
-    cache: "no-store",
-  });
   if (!response.ok) {
     throw new Error(await response.text());
   }

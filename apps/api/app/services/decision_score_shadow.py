@@ -23,9 +23,13 @@ from app.services.fund_tradeability import (
 )
 
 
-DECISION_SCORE_SHADOW_SCHEMA_VERSION = "decision_score_shadow.v1"
-DECISION_SCORE_MODEL_VERSION = "decision_score.v1"
+LEGACY_DECISION_SCORE_SHADOW_SCHEMA_VERSION = "decision_score_shadow.v1"
+LEGACY_DECISION_SCORE_MODEL_VERSION = "decision_score.v1"
+DECISION_SCORE_SHADOW_SCHEMA_VERSION = "decision_score_shadow.v2"
+DECISION_SCORE_MODEL_VERSION = "decision_score.v2"
 DECISION_SCORE_MODE = "shadow_record_only"
+BENCHMARK_POLICY_VERSION = "fund_type_benchmark_policy.2026-07.v2"
+FEE_EVIDENCE_POLICY_VERSION = "candidate_fee_evidence.2026-07.v2"
 
 COMPONENT_WEIGHTS: dict[str, float] = {
     "factor_peer": 0.30,
@@ -36,19 +40,15 @@ COMPONENT_WEIGHTS: dict[str, float] = {
 }
 REQUIRED_COMPONENTS = tuple(COMPONENT_WEIGHTS)
 
-_BENCHMARK_METRICS_BY_PROFILE: dict[str, tuple[str, ...]] = {
-    "equity": ("benchmark_excess_return_1y_percent",),
-    "mixed": ("benchmark_excess_return_1y_percent",),
-    "passive_index": (
-        "tracking_error_1y_percent",
-        "tracking_difference_1y_percent",
-    ),
-    "enhanced_index": (
-        "benchmark_excess_return_1y_percent",
-        "tracking_error_1y_percent",
-        "tracking_difference_1y_percent",
-    ),
+_FORMAL_EXCESS_PROFILES = {
+    "equity",
+    "mixed",
+    "bond",
+    "enhanced_index",
+    "qdii",
+    "fof",
 }
+_TRACKING_PROFILES = {"passive_index", "enhanced_index"}
 
 _DOWNSIDE_METRICS_BY_PROFILE: dict[str, tuple[str, ...]] = {
     "equity": ("max_drawdown_1y_percent", "downside_capture_1y_percent"),
@@ -146,11 +146,10 @@ def build_decision_score_shadow(
             factor_rows.get(code or ""),
             factors,
         )
-        benchmark_component = _peer_percentile_component(
+        benchmark_component = _benchmark_component_v2(
             raw,
             peer_profile=peer_profile,
-            metric_keys=_BENCHMARK_METRICS_BY_PROFILE.get(peer_profile),
-            component="benchmark_consistency",
+            decision_at=decision_text,
         )
         downside_component = _peer_percentile_component(
             raw,
@@ -202,6 +201,7 @@ def build_decision_score_shadow(
             }
         )
 
+    _assign_benchmark_percentiles(rows)
     _assign_cost_percentiles(rows)
     _calculate_scores(rows)
     scored_rows = sorted(
@@ -244,15 +244,23 @@ def build_decision_score_shadow(
             "factor": (
                 "pit_v3_execution_qualified_and_type_factor_complete_only"
             ),
-            "benchmark": "type_specific_peer_universe_percentiles_only",
+            "benchmark": (
+                "verified_fund_contract_excess_or_exact_tracking_reference_"
+                "within_type_cross_section_only"
+            ),
             "downside": "type_specific_peer_universe_percentiles_only",
             "diversification": (
                 "pre_decision_sector_capacity_proxy_not_correlation_or_risk_contribution"
             ),
             "cost": (
-                "standard_fee_upper_bound_at_effective_initial_minimum_and_strategy_horizon"
+                "public_standard_fee_upper_bound_not_actual_channel_fee_at_"
+                "effective_initial_minimum_and_strategy_horizon"
             ),
             "ranking": "score_desc_then_fund_code",
+        },
+        "policy_versions": {
+            "benchmark": BENCHMARK_POLICY_VERSION,
+            "fee_evidence": FEE_EVIDENCE_POLICY_VERSION,
         },
         "top_k": normalized_top_k,
         "source_top_k_fund_codes": [
@@ -283,9 +291,20 @@ def build_decision_score_shadow(
 
 def validate_decision_score_shadow(artifact: Mapping[str, Any]) -> dict[str, Any]:
     errors: list[str] = []
-    if artifact.get("schema_version") != DECISION_SCORE_SHADOW_SCHEMA_VERSION:
+    version_pair = (
+        artifact.get("schema_version"),
+        artifact.get("model_version"),
+    )
+    current_pair = (
+        DECISION_SCORE_SHADOW_SCHEMA_VERSION,
+        DECISION_SCORE_MODEL_VERSION,
+    )
+    legacy_pair = (
+        LEGACY_DECISION_SCORE_SHADOW_SCHEMA_VERSION,
+        LEGACY_DECISION_SCORE_MODEL_VERSION,
+    )
+    if version_pair not in {current_pair, legacy_pair}:
         errors.append("schema_version_invalid")
-    if artifact.get("model_version") != DECISION_SCORE_MODEL_VERSION:
         errors.append("model_version_invalid")
     if artifact.get("mode") != DECISION_SCORE_MODE:
         errors.append("mode_invalid")
@@ -301,6 +320,16 @@ def validate_decision_score_shadow(artifact: Mapping[str, Any]) -> dict[str, Any
         errors.append("weights_invalid")
     if artifact.get("required_components") != list(REQUIRED_COMPONENTS):
         errors.append("required_components_invalid")
+    if version_pair == current_pair:
+        policy_versions = (
+            artifact.get("policy_versions")
+            if isinstance(artifact.get("policy_versions"), Mapping)
+            else {}
+        )
+        if policy_versions.get("benchmark") != BENCHMARK_POLICY_VERSION:
+            errors.append("benchmark_policy_version_invalid")
+        if policy_versions.get("fee_evidence") != FEE_EVIDENCE_POLICY_VERSION:
+            errors.append("fee_evidence_policy_version_invalid")
     if _decision_text(artifact.get("decision_at")) is None:
         errors.append("decision_at_invalid")
 
@@ -349,6 +378,34 @@ def validate_decision_score_shadow(artifact: Mapping[str, Any]) -> dict[str, Any
         ):
             errors.append("scored_component_unavailable")
             continue
+        if version_pair == current_pair:
+            benchmark = components["benchmark_consistency"]
+            benchmark_evidence = (
+                benchmark.get("evidence")
+                if isinstance(benchmark.get("evidence"), Mapping)
+                else {}
+            )
+            if (
+                benchmark.get("basis")
+                != "verified_contract_type_cross_section_percentile_mean"
+                or benchmark_evidence.get("policy_version")
+                != BENCHMARK_POLICY_VERSION
+            ):
+                errors.append("benchmark_component_policy_invalid")
+            cost = components["cost_efficiency"]
+            cost_evidence = (
+                cost.get("evidence")
+                if isinstance(cost.get("evidence"), Mapping)
+                else {}
+            )
+            if (
+                cost_evidence.get("fee_evidence_policy_version")
+                != FEE_EVIDENCE_POLICY_VERSION
+                or cost_evidence.get("fee_evidence_basis")
+                != "public_standard_fee_upper_bound"
+                or cost_evidence.get("actual_channel_fee_available") is not False
+            ):
+                errors.append("cost_component_evidence_policy_invalid")
         base = sum(
             COMPONENT_WEIGHTS[key] * float(components[key]["score"])
             for key in REQUIRED_COMPONENTS
@@ -413,7 +470,7 @@ def build_decision_score_shadow_digest(
 ) -> dict[str, Any]:
     """Aggregate persisted shadow coverage without exposing candidate details."""
 
-    artifacts: list[tuple[Mapping[str, Any], Mapping[str, Any]]] = []
+    all_artifacts: list[tuple[Mapping[str, Any], Mapping[str, Any]]] = []
     for report in reports:
         if not isinstance(report, Mapping):
             continue
@@ -422,7 +479,18 @@ def build_decision_score_shadow_digest(
             continue
         artifact = facts.get("decision_score_shadow")
         if isinstance(artifact, Mapping):
-            artifacts.append((report, artifact))
+            all_artifacts.append((report, artifact))
+
+    model_version_counts: dict[str, int] = {}
+    for _report, artifact in all_artifacts:
+        version = str(artifact.get("model_version") or "unknown")
+        model_version_counts[version] = model_version_counts.get(version, 0) + 1
+    artifacts = [
+        item
+        for item in all_artifacts
+        if item[1].get("schema_version") == DECISION_SCORE_SHADOW_SCHEMA_VERSION
+        and item[1].get("model_version") == DECISION_SCORE_MODEL_VERSION
+    ]
 
     candidate_count = 0
     scored_count = 0
@@ -479,11 +547,15 @@ def build_decision_score_shadow_digest(
         }
 
     return {
-        "schema_version": "decision_score_shadow_digest.v1",
+        "schema_version": "decision_score_shadow_digest.v2",
         "mode": DECISION_SCORE_MODE,
+        "current_model_version": DECISION_SCORE_MODEL_VERSION,
         "automatic_promotion_allowed": False,
         "report_count": len(reports),
         "artifact_count": len(artifacts),
+        "total_artifact_count": len(all_artifacts),
+        "legacy_artifact_count": len(all_artifacts) - len(artifacts),
+        "model_version_counts": dict(sorted(model_version_counts.items())),
         "valid_artifact_count": valid_count,
         "shadow_evaluable_report_count": evaluable_count,
         "top_k_changed_report_count": top_k_changed_count,
@@ -569,6 +641,234 @@ def _factor_component(
             "target_feature_source": row.get("target_feature_source"),
         },
     )
+
+
+def _benchmark_component_v2(
+    candidate: Mapping[str, Any],
+    *,
+    peer_profile: str,
+    decision_at: str | None,
+) -> dict[str, Any]:
+    if peer_profile not in _FORMAL_EXCESS_PROFILES | _TRACKING_PROFILES:
+        return _missing_component("benchmark_consistency_unsupported_for_peer_profile")
+    research = (
+        candidate.get("benchmark_metrics")
+        if isinstance(candidate.get("benchmark_metrics"), Mapping)
+        else {}
+    )
+    if research.get("schema_version") != "fund_benchmark_research.v1":
+        return _missing_component("benchmark_research_schema_invalid")
+    if not _benchmark_snapshot_hash_valid(research):
+        return _missing_component("benchmark_research_snapshot_hash_invalid")
+    if decision_at is None or _decision_text(research.get("decision_at")) != decision_at:
+        return _missing_component("benchmark_research_decision_at_mismatch")
+    if research.get("status") != "qualified" or research.get("qualified") is not True:
+        return _missing_component("benchmark_research_not_qualified")
+    comparison_policy = (
+        research.get("comparison_policy")
+        if isinstance(research.get("comparison_policy"), Mapping)
+        else {}
+    )
+    if (
+        research.get("descriptive_only") is not True
+        or research.get("execution_tilt_eligible") is not False
+        or comparison_policy.get("formal_excess_requires_verified_contract") is not True
+        or comparison_policy.get("tracking_reference_never_formal_excess") is not True
+    ):
+        return _missing_component("benchmark_research_policy_contract_invalid")
+
+    ranking_metrics: list[dict[str, Any]] = []
+    if peer_profile in _FORMAL_EXCESS_PROFILES:
+        if (
+            research.get("comparison_role") != "formal_excess"
+            or research.get("formal_excess_eligible") is not True
+            or research.get("contract_verification_kind") != "verified_fund_contract"
+        ):
+            return _missing_component("formal_contract_benchmark_unavailable")
+        horizons = (
+            research.get("horizons")
+            if isinstance(research.get("horizons"), Mapping)
+            else {}
+        )
+        one_year = (
+            horizons.get("1y")
+            if isinstance(horizons.get("1y"), Mapping)
+            else {}
+        )
+        excess = _finite_number(one_year.get("formal_excess_return_percent"))
+        if one_year.get("status") != "available" or excess is None:
+            return _missing_component("formal_contract_excess_1y_unavailable")
+        rolling = (
+            research.get("rolling_comparison")
+            if isinstance(research.get("rolling_comparison"), Mapping)
+            else {}
+        )
+        win_rate = _bounded_number(
+            rolling.get("formal_excess_win_rate_percent"),
+            0.0,
+            100.0,
+        )
+        if rolling.get("status") != "available" or win_rate is None:
+            return _missing_component("formal_contract_rolling_win_rate_unavailable")
+        ranking_metrics.extend(
+            (
+                {
+                    "key": "formal_excess_return_1y_percent",
+                    "value": round(excess, 6),
+                    "higher_is_better": True,
+                },
+                {
+                    "key": "formal_excess_win_rate_percent",
+                    "value": round(win_rate, 6),
+                    "higher_is_better": True,
+                },
+            )
+        )
+
+    if peer_profile in _TRACKING_PROFILES:
+        expected_role = (
+            "tracking_reference" if peer_profile == "passive_index" else "formal_excess"
+        )
+        if research.get("comparison_role") != expected_role:
+            return _missing_component("type_specific_tracking_role_invalid")
+        tracking = (
+            research.get("tracking_metrics")
+            if isinstance(research.get("tracking_metrics"), Mapping)
+            else {}
+        )
+        tracking_error = _nonnegative_number(
+            tracking.get("tracking_error_annualized_percent")
+        )
+        tracking_difference = _finite_number(
+            tracking.get("tracking_difference_percent")
+        )
+        if (
+            tracking.get("applicable") is not True
+            or tracking.get("available") is not True
+            or tracking_error is None
+            or tracking_difference is None
+        ):
+            return _missing_component("exact_tracking_metrics_unavailable")
+        ranking_metrics.extend(
+            (
+                {
+                    "key": "tracking_error_annualized_percent",
+                    "value": round(tracking_error, 6),
+                    "higher_is_better": False,
+                },
+                {
+                    "key": "absolute_tracking_difference_percent",
+                    "value": round(abs(tracking_difference), 6),
+                    "higher_is_better": False,
+                },
+            )
+        )
+
+    if not ranking_metrics:
+        return _missing_component("type_specific_benchmark_metrics_unavailable")
+    return {
+        "status": "available",
+        "score": None,
+        "raw_value": ranking_metrics[0]["value"],
+        "confidence": 0.95,
+        "basis": "verified_contract_type_cross_section_percentile_mean",
+        "reason_codes": [],
+        "evidence": {
+            "policy_version": BENCHMARK_POLICY_VERSION,
+            "peer_profile": peer_profile,
+            "mapping_id": research.get("mapping_id"),
+            "benchmark_code": research.get("benchmark_code"),
+            "benchmark_name": research.get("benchmark_name"),
+            "comparison_role": research.get("comparison_role"),
+            "contract_verification_kind": research.get("contract_verification_kind"),
+            "benchmark_snapshot_hash": research.get("snapshot_hash"),
+            "ranking_metrics": ranking_metrics,
+        },
+    }
+
+
+def _assign_benchmark_percentiles(rows: Sequence[dict[str, Any]]) -> None:
+    populations: dict[tuple[str, str], list[float]] = {}
+    for row in rows:
+        component = row["components"]["benchmark_consistency"]
+        evidence = component.get("evidence") if isinstance(component.get("evidence"), Mapping) else {}
+        metrics = evidence.get("ranking_metrics") if isinstance(evidence.get("ranking_metrics"), list) else []
+        if row.get("hard_gate", {}).get("eligible") is not True or component.get("status") != "available":
+            continue
+        for metric in metrics:
+            if not isinstance(metric, Mapping):
+                continue
+            key = str(metric.get("key") or "")
+            value = _finite_number(metric.get("value"))
+            if key and value is not None:
+                populations.setdefault((str(row.get("peer_profile") or "unknown"), key), []).append(value)
+
+    for row in rows:
+        component = row["components"]["benchmark_consistency"]
+        evidence = component.get("evidence") if isinstance(component.get("evidence"), dict) else {}
+        metrics = evidence.get("ranking_metrics") if isinstance(evidence.get("ranking_metrics"), list) else []
+        if row.get("hard_gate", {}).get("eligible") is not True or component.get("status") != "available":
+            continue
+        scores: list[float] = []
+        sample_counts: list[int] = []
+        ranked_metrics: list[dict[str, Any]] = []
+        for metric in metrics:
+            if not isinstance(metric, Mapping):
+                continue
+            key = str(metric.get("key") or "")
+            value = _finite_number(metric.get("value"))
+            population = populations.get((str(row.get("peer_profile") or "unknown"), key), [])
+            if not key or value is None or not population:
+                scores = []
+                break
+            higher_is_better = metric.get("higher_is_better") is True
+            favorable = sum(
+                item < value if higher_is_better else item > value
+                for item in population
+            )
+            tied = sum(
+                math.isclose(item, value, rel_tol=0.0, abs_tol=1e-12)
+                for item in population
+            )
+            percentile = round((favorable + 0.5 * tied) / len(population) * 100.0, 4)
+            scores.append(percentile)
+            sample_counts.append(len(population))
+            ranked_metrics.append(
+                {
+                    **dict(metric),
+                    "percentile": percentile,
+                    "sample_count": len(population),
+                }
+            )
+        if scores:
+            component["score"] = round(sum(scores) / len(scores), 4)
+            cross_section_sample_count = min(sample_counts)
+            if cross_section_sample_count >= 5:
+                component["confidence"] = 0.95
+            elif cross_section_sample_count >= 2:
+                component["confidence"] = 0.75
+            else:
+                component["confidence"] = 0.5
+            evidence["ranking_metrics"] = ranked_metrics
+            evidence["cross_section_sample_count"] = cross_section_sample_count
+
+
+def _benchmark_snapshot_hash_valid(value: Mapping[str, Any]) -> bool:
+    supplied = value.get("snapshot_hash")
+    if not isinstance(supplied, str) or len(supplied) != 64:
+        return False
+    material = dict(value)
+    material.pop("snapshot_hash", None)
+    expected = hashlib.sha256(
+        json.dumps(
+            material,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        ).encode("utf-8")
+    ).hexdigest()
+    return supplied == expected
 
 
 def _peer_percentile_component(
@@ -687,7 +987,7 @@ def _cost_component(
     assessment = assess_tradeability_for_amount(
         tradeability,
         amount_yuan=amount,
-        hold_horizon=f"DecisionScore v1 最短持有期 {minimum_holding_days} 天",
+        hold_horizon=f"DecisionScore v2 最短持有期 {minimum_holding_days} 天",
         minimum_holding_days=minimum_holding_days,
     )
     if assessment.get("executable") is not True:
@@ -712,7 +1012,7 @@ def _cost_component(
             "status": "available",
             "score": None,
             "raw_value": round(raw_cost, 6),
-            "confidence": 0.9,
+            "confidence": 0.75,
             "basis": "cross_sectional_lower_cost_percentile",
             "reason_codes": [],
             "evidence": {
@@ -721,6 +1021,10 @@ def _cost_component(
                 "fee_status": assessment.get("fee_status"),
                 "fee_components_complete": assessment.get("fee_components_complete"),
                 "estimated_total_cost_upper_bound_percent": round(raw_cost, 6),
+                "fee_evidence_policy_version": FEE_EVIDENCE_POLICY_VERSION,
+                "fee_evidence_basis": "public_standard_fee_upper_bound",
+                "actual_channel_fee_available": False,
+                "actual_channel_fee_reason": "candidate_channel_transaction_not_observed",
                 "source_ids": list((tradeability or {}).get("source_ids") or []),
                 "checked_at": (tradeability or {}).get("checked_at"),
                 "fee_checked_at": (tradeability or {}).get("fee_checked_at"),

@@ -101,6 +101,9 @@ describe("truthful evidence panel states", () => {
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("风险指标加载失败：风险服务超时");
     expect(alert).not.toHaveTextContent("满 20 个交易日");
+    expect(
+      screen.getByRole("button", { name: "🔒 历史压力测试与实际费用证据（Pro）" }),
+    ).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "重试" }));
     expect(await screen.findByText("当前只有 4 个交易日样本。")).toBeInTheDocument();

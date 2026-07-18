@@ -6,6 +6,7 @@ import { fetchPortfolioRiskMetrics } from "@/lib/api";
 import { BRAND } from "@/lib/brand";
 import { InlineNotice } from "@/components/InlineNotice";
 import { PortfolioCorrelationHeatmap } from "@/components/PortfolioCorrelationHeatmap";
+import { PortfolioStressTestPanel } from "@/components/PortfolioStressTestPanel";
 import {
   alphaHint,
   alphaTone,
@@ -117,6 +118,7 @@ export function PortfolioRiskMetricsPanel() {
   const [retrySequence, setRetrySequence] = useState(0);
   const [isPro, setIsPro] = useState(false);
   const [showCorrelation, setShowCorrelation] = useState(false);
+  const [showStressTest, setShowStressTest] = useState(false);
 
   useEffect(() => {
     try {
@@ -215,6 +217,11 @@ export function PortfolioRiskMetricsPanel() {
             {isPro ? "" : " · 免费版仅展示回撤与分散度，升级查看全部"}
           </div>
 
+        </>
+      )}
+
+      {!loading || metrics ? (
+        <>
           <div className="risk-corr-section">
             {!isPro ? (
               <button type="button" className="risk-corr-toggle" onClick={togglePro}>
@@ -234,8 +241,27 @@ export function PortfolioRiskMetricsPanel() {
               </>
             )}
           </div>
+          <div className="risk-corr-section">
+            {!isPro ? (
+              <button type="button" className="risk-corr-toggle" onClick={togglePro}>
+                🔒 历史压力测试与实际费用证据（Pro）
+              </button>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  className="risk-corr-toggle"
+                  aria-expanded={showStressTest}
+                  onClick={() => setShowStressTest((value) => !value)}
+                >
+                  {showStressTest ? "收起压力测试与费用证据" : "展开压力测试与费用证据"}
+                </button>
+                <PortfolioStressTestPanel enabled={showStressTest} />
+              </>
+            )}
+          </div>
         </>
-      )}
+      ) : null}
     </section>
   );
 }

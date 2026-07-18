@@ -140,6 +140,7 @@ def test_maturity_projection_distinguishes_missing_from_zero(monkeypatch) -> Non
     assert result["nav_observation"]["observation_count"] == 1498
     assert result["nav_observation"]["full_model_ready"] is False
     assert result["decision_score_shadow"]["artifact_count"] == 0
+    assert result["decision_score_shadow"]["model_version"] == "decision_score.v2"
     assert result["decision_score_shadow"]["scored_coverage_percent"] is None
     assert result["decision_quality"]["mature_decision_day_count"] == 0
     assert result["decision_quality"]["formal_label_coverage_percent"] is None

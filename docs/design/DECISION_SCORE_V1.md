@@ -1,5 +1,7 @@
 # DecisionScore v1 影子量化决策预注册
 
+> 历史版本。新报告自 `decision_score.v2` 起按 [DECISION_SCORE_V2.md](DECISION_SCORE_V2.md) 独立累计；v1 制品继续可校验，但不会混入 v2 覆盖率或成熟度。
+
 ## 目的与边界
 
 DecisionScore v1 用于回答一个受限问题：在荐基流程已经形成的最终候选池内，若只使用决策时点已经冻结、可审计的量化证据，候选基金的研究顺序会不会与当前生产顺序不同。

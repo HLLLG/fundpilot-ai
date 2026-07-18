@@ -135,8 +135,11 @@ export type EvidenceMaturityStatus = {
   decision_score_shadow: {
     status: string;
     mode?: string | null;
+    model_version?: string | null;
     report_count?: number | null;
     artifact_count?: number | null;
+    total_artifact_count?: number | null;
+    legacy_artifact_count?: number | null;
     valid_artifact_count?: number | null;
     shadow_evaluable_report_count?: number | null;
     top_k_changed_report_count?: number | null;

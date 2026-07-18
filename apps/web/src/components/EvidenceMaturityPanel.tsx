@@ -290,7 +290,8 @@ function MaturityContent({ data }: { data: EvidenceMaturityStatus }) {
             </div>
           </dl>
           <p className="mt-3 text-[11px] leading-5 text-slate-500">
-            只比较新旧排序差异；不参与线上推荐，也不会自动调权。
+            当前 {score.model_version ?? "影子版本"} 独立累计；旧版本不混算。只比较排序差异，
+            不参与线上推荐，也不会自动调权。
           </p>
         </article>
 

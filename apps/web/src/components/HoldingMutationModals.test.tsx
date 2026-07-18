@@ -43,6 +43,9 @@ it("keeps a single-fund transaction draft visible when the parent mutation fails
 
   const sharesInput = screen.getByRole("textbox", { name: "同步买入份额" });
   fireEvent.change(sharesInput, { target: { value: "12.5" } });
+  fireEvent.change(screen.getByRole("textbox", { name: "原平台实际手续费" }), {
+    target: { value: "1.25" },
+  });
   fireEvent.click(screen.getByRole("button", { name: "确认" }));
 
   expect(await screen.findByRole("alert")).toHaveTextContent("交易写入失败");
@@ -55,7 +58,7 @@ it("keeps a single-fund transaction draft visible when the parent mutation fails
       fund_code: "008586",
       amount_yuan: 25,
       confirmed_shares: 12.5,
-      fee_yuan: null,
+      fee_yuan: 1.25,
       confirm_date: null,
       in_progress: false,
     }),
@@ -64,6 +67,34 @@ it("keeps a single-fund transaction draft visible when the parent mutation fails
   fireEvent.click(screen.getByRole("button", { name: "确认" }));
   await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
   expect(onSubmit).toHaveBeenCalledTimes(2);
+});
+
+it("rejects malformed actual fees instead of partially parsing them", async () => {
+  const onSubmit = vi.fn();
+  render(
+    <SingleFundTransactionModal
+      open
+      holding={holding}
+      direction="buy"
+      latestNav={2}
+      navDateLabel="07-11"
+      onClose={vi.fn()}
+      onSubmit={onSubmit}
+    />,
+  );
+
+  fireEvent.change(screen.getByRole("textbox", { name: "同步买入份额" }), {
+    target: { value: "12.5" },
+  });
+  fireEvent.change(screen.getByRole("textbox", { name: "原平台实际手续费" }), {
+    target: { value: "1.25元" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "确认" }));
+
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "实际手续费必须大于等于 0；未知请留空",
+  );
+  expect(onSubmit).not.toHaveBeenCalled();
 });
 
 it("keeps modified values after a failed save and a same-fund rerender", async () => {

@@ -22,6 +22,23 @@ function parseAmountInput(value: string): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function parseOptionalFeeInput(value: string): {
+  valid: boolean;
+  value: number | null;
+} {
+  const normalized = value.replace(/,/g, "").trim();
+  if (!normalized) {
+    return { valid: true, value: null };
+  }
+  if (!/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(normalized)) {
+    return { valid: false, value: null };
+  }
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) && parsed >= 0
+    ? { valid: true, value: parsed }
+    : { valid: false, value: null };
+}
+
 function FundCodeSearchPanel({
   initialQuery,
   onSelect,
@@ -134,6 +151,11 @@ export function BatchTransactionConfirmModal({
   onClose,
 }: BatchTransactionConfirmModalProps) {
   const [searchIndex, setSearchIndex] = useState<number | null>(null);
+  const [feeInputs, setFeeInputs] = useState<string[]>(() =>
+    transactions.map((transaction) =>
+      transaction.fee_yuan == null ? "" : String(transaction.fee_yuan),
+    ),
+  );
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const searchTriggerRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const requestClose = () => {
@@ -155,7 +177,21 @@ export function BatchTransactionConfirmModal({
     }
   };
 
+  useEffect(() => {
+    setFeeInputs((current) =>
+      transactions.map((transaction, index) => {
+        const draft = current[index];
+        const parsed = draft == null ? null : parseOptionalFeeInput(draft);
+        if (parsed?.valid && parsed.value === transaction.fee_yuan) {
+          return draft;
+        }
+        return transaction.fee_yuan == null ? "" : String(transaction.fee_yuan);
+      }),
+    );
+  }, [transactions]);
+
   const removeAt = (index: number) => {
+    setFeeInputs((current) => current.filter((_, itemIndex) => itemIndex !== index));
     onChange(transactions.filter((_, itemIndex) => itemIndex !== index));
   };
 
@@ -168,6 +204,9 @@ export function BatchTransactionConfirmModal({
   };
 
   const validCount = transactions.filter((tx) => Boolean(tx.fund_code)).length;
+  const hasInvalidFee = feeInputs.some(
+    (value) => !parseOptionalFeeInput(value).valid,
+  );
 
   return (
     <div
@@ -192,7 +231,7 @@ export function BatchTransactionConfirmModal({
           <div>
             <h2 id="batch-confirm-modal-title" className="text-lg font-black text-slate-950">新增交易记录-支付宝</h2>
             <p className="mt-1 text-xs leading-5 text-slate-500">
-              加仓（红）/减仓（绿）；代码未匹配时点「选择基金」从东财选取；可改方向/金额/时间。
+              加仓（红）/减仓（绿）；代码未匹配时点「选择基金」从东财选取；可改方向、金额、时间和实际手续费。
             </p>
           </div>
           <button
@@ -220,6 +259,9 @@ export function BatchTransactionConfirmModal({
           {transactions.map((tx, index) => {
             const isBuy = tx.direction === "buy";
             const unresolved = !tx.fund_code;
+            const feeInput = feeInputs[index]
+              ?? (tx.fee_yuan == null ? "" : String(tx.fee_yuan));
+            const feeInputValid = parseOptionalFeeInput(feeInput).valid;
             return (
               <div
                 key={`${tx.fund_name}-${tx.trade_time}-${index}`}
@@ -311,7 +353,7 @@ export function BatchTransactionConfirmModal({
                     ) : null}
                   </div>
 
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid gap-3 sm:grid-cols-3">
                     <div>
                       <div className="text-[11px] font-semibold text-slate-500">金额（元）</div>
                       <input
@@ -323,6 +365,35 @@ export function BatchTransactionConfirmModal({
                         }
                         className="mt-0.5 min-h-11 w-full rounded-lg border border-slate-200 bg-white px-2 py-2 font-black tabular-nums text-slate-950 outline-none focus:border-blue-400"
                       />
+                    </div>
+                    <div>
+                      <div className="text-[11px] font-semibold text-slate-500">实际手续费（元）</div>
+                      <input
+                        value={feeInput}
+                        inputMode="decimal"
+                        min="0"
+                        aria-invalid={!feeInputValid}
+                        aria-label={`实际手续费：${tx.fund_name || `第 ${index + 1} 条交易`}`}
+                        onChange={(event) => {
+                          const next = event.target.value;
+                          setFeeInputs((current) => {
+                            const updated = [...current];
+                            updated[index] = next;
+                            return updated;
+                          });
+                          const parsed = parseOptionalFeeInput(next);
+                          if (parsed.valid) {
+                            updateAt(index, { fee_yuan: parsed.value });
+                          }
+                        }}
+                        placeholder="未知留空"
+                        className="mt-0.5 min-h-11 w-full rounded-lg border border-slate-200 bg-white px-2 py-2 tabular-nums text-slate-800 outline-none focus:border-blue-400"
+                      />
+                      {!feeInputValid ? (
+                        <p role="alert" className="mt-1 text-[10px] text-rose-600">
+                          手续费须为大于等于 0 的数字；未知请留空
+                        </p>
+                      ) : null}
                     </div>
                     <div>
                       <div className="text-[11px] font-semibold text-slate-500">成交时间</div>
@@ -358,9 +429,14 @@ export function BatchTransactionConfirmModal({
               有未匹配代码的交易，确认时将自动跳过。
             </p>
           ) : null}
+          {hasInvalidFee ? (
+            <p className="mb-2 text-center text-[11px] text-rose-600">
+              请修正手续费后再确认。
+            </p>
+          ) : null}
           <button
             type="button"
-            disabled={isBusy || validCount === 0}
+            disabled={isBusy || validCount === 0 || hasInvalidFee}
             onClick={onConfirm}
             className="w-full rounded-2xl bg-blue-600 px-4 py-3 text-sm font-black text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
           >

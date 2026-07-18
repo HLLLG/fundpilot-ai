@@ -114,6 +114,69 @@ describe("import confirmation dialogs", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "选择基金" })).toHaveFocus());
   });
 
+  it("keeps unknown fees null and records an explicitly entered actual fee", () => {
+    const onChange = vi.fn();
+    const { rerender } = render(
+      <BatchTransactionConfirmModal
+        transactions={[transaction]}
+        onChange={onChange}
+        onConfirm={vi.fn()}
+        onContinueUpload={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+
+    const feeInput = screen.getByRole("textbox", { name: "实际手续费：示例基金" });
+    expect(feeInput).toHaveValue("");
+    fireEvent.change(feeInput, { target: { value: "1.25" } });
+    expect(onChange).toHaveBeenLastCalledWith([
+      expect.objectContaining({ fee_yuan: 1.25 }),
+    ]);
+
+    rerender(
+      <BatchTransactionConfirmModal
+        transactions={[{ ...transaction, fee_yuan: 1.25 }]}
+        onChange={onChange}
+        onConfirm={vi.fn()}
+        onContinueUpload={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    fireEvent.change(screen.getByRole("textbox", { name: "实际手续费：示例基金" }), {
+      target: { value: "" },
+    });
+    expect(onChange).toHaveBeenLastCalledWith([
+      expect.objectContaining({ fee_yuan: null }),
+    ]);
+  });
+
+  it("preserves a decimal fee draft and blocks malformed fee input", () => {
+    const onChange = vi.fn();
+    render(
+      <BatchTransactionConfirmModal
+        transactions={[transaction]}
+        onChange={onChange}
+        onConfirm={vi.fn()}
+        onContinueUpload={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+
+    const feeInput = screen.getByRole("textbox", { name: "实际手续费：示例基金" });
+    fireEvent.change(feeInput, { target: { value: "1" } });
+    fireEvent.change(feeInput, { target: { value: "1." } });
+    expect(feeInput).toHaveValue("1.");
+    fireEvent.change(feeInput, { target: { value: "1.25" } });
+    expect(onChange).toHaveBeenLastCalledWith([
+      expect.objectContaining({ fee_yuan: 1.25 }),
+    ]);
+
+    fireEvent.change(feeInput, { target: { value: "-1" } });
+    expect(feeInput).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByRole("button", { name: "完成（1）" })).toBeDisabled();
+    expect(screen.getByRole("alert")).toHaveTextContent("手续费须为大于等于 0 的数字");
+  });
+
   it("keeps an OCR persistence error inside the active dialog", () => {
     render(
       <AlipayOcrConfirmModal

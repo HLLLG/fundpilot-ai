@@ -20,6 +20,16 @@ import {
   fetchSectorSignalBacktest as domainBacktestFetch,
   fetchShadowEscalationDigest as domainShadowFetch,
 } from "@/lib/api/marketDiagnostics";
+import {
+  fetchPortfolioFeeEvidence as facadeFeeEvidenceFetch,
+  fetchPortfolioRiskMetrics as facadeRiskMetricsFetch,
+  fetchPortfolioStressTest as facadeStressFetch,
+} from "@/lib/api";
+import {
+  fetchPortfolioFeeEvidence as domainFeeEvidenceFetch,
+  fetchPortfolioRiskMetrics as domainRiskMetricsFetch,
+  fetchPortfolioStressTest as domainStressFetch,
+} from "@/lib/api/portfolioRisk";
 
 
 it("keeps the legacy API facade bound to the factor evidence domain module", () => {
@@ -33,4 +43,11 @@ it("keeps the legacy API facade bound to the market diagnostics module", () => {
   expect(facadeBreadthFetch).toBe(domainBreadthFetch);
   expect(facadeBacktestFetch).toBe(domainBacktestFetch);
   expect(facadeShadowFetch).toBe(domainShadowFetch);
+});
+
+
+it("keeps the legacy API facade bound to the portfolio risk module", () => {
+  expect(facadeRiskMetricsFetch).toBe(domainRiskMetricsFetch);
+  expect(facadeStressFetch).toBe(domainStressFetch);
+  expect(facadeFeeEvidenceFetch).toBe(domainFeeEvidenceFetch);
 });

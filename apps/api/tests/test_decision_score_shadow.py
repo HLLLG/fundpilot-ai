@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime
+import hashlib
+import json
 from zoneinfo import ZoneInfo
 
 from app.models import InvestorProfile
@@ -69,6 +71,97 @@ def _tradeability(*, purchase_fee_percent: float) -> dict:
     }
 
 
+def _seal_benchmark(payload: dict) -> dict:
+    payload.pop("snapshot_hash", None)
+    payload["snapshot_hash"] = hashlib.sha256(
+        json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        ).encode("utf-8")
+    ).hexdigest()
+    return payload
+
+
+def _benchmark_research(score: float) -> dict:
+    return _seal_benchmark({
+        "schema_version": "fund_benchmark_research.v1",
+        "decision_at": DECISION_AT.isoformat(),
+        "status": "qualified",
+        "qualified": True,
+        "descriptive_only": True,
+        "execution_tilt_eligible": False,
+        "comparison_role": "formal_excess",
+        "formal_excess_eligible": True,
+        "mapping_id": "pytest.formal-contract",
+        "benchmark_code": "000300",
+        "benchmark_name": "沪深300指数",
+        "contract_verification_kind": "verified_fund_contract",
+        "horizons": {
+            "1y": {
+                "status": "available",
+                "formal_excess_return_percent": score,
+            }
+        },
+        "rolling_comparison": {
+            "status": "available",
+            "formal_excess_win_rate_percent": score,
+        },
+        "tracking_metrics": {
+            "applicable": False,
+            "available": False,
+        },
+        "comparison_policy": {
+            "formal_excess_requires_verified_contract": True,
+            "tracking_reference_never_formal_excess": True,
+            "execution_semantics": "descriptive_only_not_amount_signal",
+        },
+        "reason_codes": [],
+    })
+
+
+def _tracking_research(*, tracking_error: float, tracking_difference: float) -> dict:
+    payload = _benchmark_research(50)
+    payload.update(
+        {
+            "comparison_role": "tracking_reference",
+            "formal_excess_eligible": False,
+            "contract_verification_kind": "third_party_profile",
+            "tracking_metrics": {
+                "applicable": True,
+                "available": True,
+                "tracking_error_annualized_percent": tracking_error,
+                "tracking_difference_percent": tracking_difference,
+            },
+        }
+    )
+    return _seal_benchmark(payload)
+
+
+def _canonical_hash(value: object) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _reseal_decision_artifact(artifact: dict) -> dict:
+    for row in artifact.get("rows") or []:
+        row.pop("row_hash", None)
+        row["row_hash"] = _canonical_hash(row)
+    artifact.pop("snapshot_hash", None)
+    artifact.pop("validation", None)
+    artifact["snapshot_hash"] = _canonical_hash(artifact)
+    return artifact
+
+
 def _candidate(
     code: str,
     *,
@@ -84,6 +177,7 @@ def _candidate(
         "sector_label": sector,
         "quality_gate": {"status": quality_status},
         "tradeability": _tradeability(purchase_fee_percent=purchase_fee_percent),
+        "benchmark_metrics": _benchmark_research(benchmark),
         "peer_rank": {
             "schema_version": "peer_rank.v2",
             "status": "qualified",
@@ -158,15 +252,15 @@ def test_shadow_score_is_deterministic_strict_and_non_executing() -> None:
         _candidate(
             "000001",
             sector="科技",
-            benchmark=85,
-            downside=80,
+            benchmark=65,
+            downside=60,
             purchase_fee_percent=1.5,
         ),
         _candidate(
             "000002",
             sector="医药",
-            benchmark=75,
-            downside=70,
+            benchmark=85,
+            downside=80,
             purchase_fee_percent=0.5,
         ),
     ]
@@ -255,7 +349,7 @@ def test_missing_factor_does_not_fill_zero_or_renormalize_weights() -> None:
     )
 
 
-def test_valid_v2_factor_context_is_not_enough_for_v1_shadow_score() -> None:
+def test_valid_v2_factor_context_is_not_enough_for_current_shadow_score() -> None:
     factors = _factor_payload({"000001": 90})
     factors["ic_status"]["schema_version"] = 2
     candidate = _candidate(
@@ -283,7 +377,7 @@ def test_valid_v2_factor_context_is_not_enough_for_v1_shadow_score() -> None:
     ]
 
 
-def test_unregistered_bond_benchmark_component_fails_closed() -> None:
+def test_verified_contract_bond_benchmark_is_supported_by_v2() -> None:
     candidate = _candidate(
         "000001",
         sector="债券",
@@ -307,9 +401,82 @@ def test_unregistered_bond_benchmark_component_fails_closed() -> None:
     )
 
     row = artifact["rows"][0]
-    assert row["status"] == "insufficient_evidence"
-    assert row["components"]["benchmark_consistency"]["reason_codes"] == [
-        "benchmark_consistency_unsupported_for_peer_profile"
+    assert row["status"] == "scored"
+    assert row["components"]["benchmark_consistency"]["basis"] == (
+        "verified_contract_type_cross_section_percentile_mean"
+    )
+    assert row["components"]["benchmark_consistency"]["score"] == 50.0
+
+
+def test_passive_index_uses_exact_tracking_quality_with_lower_is_better() -> None:
+    candidates = [
+        _candidate(
+            "000001",
+            sector="宽基指数",
+            benchmark=50,
+            downside=80,
+            purchase_fee_percent=0.5,
+        ),
+        _candidate(
+            "000002",
+            sector="宽基指数",
+            benchmark=50,
+            downside=70,
+            purchase_fee_percent=0.5,
+        ),
+    ]
+    for candidate in candidates:
+        candidate["peer_rank"]["metric_profile"] = "passive_index"
+        candidate["peer_rank"]["metrics"] = {
+            "max_drawdown_1y_percent": _metric(80),
+        }
+    candidates[0]["benchmark_metrics"] = _tracking_research(
+        tracking_error=0.5,
+        tracking_difference=0.1,
+    )
+    candidates[1]["benchmark_metrics"] = _tracking_research(
+        tracking_error=1.5,
+        tracking_difference=-0.8,
+    )
+
+    artifact = build_decision_score_shadow(
+        candidates,
+        candidate_factor_scores=_factor_payload({"000001": 80, "000002": 80}),
+        portfolio_gap=_gap(),
+        profile=_profile(),
+        decision_at=DECISION_AT,
+        minimum_holding_days=30,
+    )
+
+    rows = {row["fund_code"]: row for row in artifact["rows"]}
+    assert rows["000001"]["components"]["benchmark_consistency"]["score"] == 75.0
+    assert rows["000002"]["components"]["benchmark_consistency"]["score"] == 25.0
+    assert rows["000001"]["components"]["benchmark_consistency"]["confidence"] == 0.75
+    assert artifact["validation"]["status"] == "valid"
+
+
+def test_friendly_formal_flag_without_verified_contract_fails_closed() -> None:
+    candidate = _candidate(
+        "000001",
+        sector="科技",
+        benchmark=85,
+        downside=80,
+        purchase_fee_percent=0.5,
+    )
+    candidate["benchmark_metrics"]["contract_verification_kind"] = "third_party_profile"
+    candidate["benchmark_metrics"] = _seal_benchmark(candidate["benchmark_metrics"])
+
+    artifact = build_decision_score_shadow(
+        [candidate],
+        candidate_factor_scores=_factor_payload({"000001": 90}),
+        portfolio_gap=_gap(),
+        profile=_profile(),
+        decision_at=DECISION_AT,
+        minimum_holding_days=30,
+    )
+
+    assert artifact["rows"][0]["components"]["benchmark_consistency"]["reason_codes"] == [
+        "formal_contract_benchmark_unavailable"
     ]
 
 
@@ -429,6 +596,35 @@ def test_shadow_validation_fails_closed_for_malformed_stored_row() -> None:
     assert "snapshot_hash_invalid" in validation["error_codes"]
 
 
+def test_rehashed_v2_artifact_cannot_claim_actual_channel_fee_evidence() -> None:
+    artifact = build_decision_score_shadow(
+        [
+            _candidate(
+                "000001",
+                sector="科技",
+                benchmark=85,
+                downside=80,
+                purchase_fee_percent=1.5,
+            )
+        ],
+        candidate_factor_scores=_factor_payload({"000001": 90}),
+        portfolio_gap=_gap(),
+        profile=_profile(),
+        decision_at=DECISION_AT,
+        minimum_holding_days=30,
+    )
+    forged = deepcopy(artifact)
+    forged["rows"][0]["components"]["cost_efficiency"]["evidence"][
+        "actual_channel_fee_available"
+    ] = True
+    _reseal_decision_artifact(forged)
+
+    validation = validate_decision_score_shadow(forged)
+
+    assert validation["status"] == "invalid"
+    assert "cost_component_evidence_policy_invalid" in validation["error_codes"]
+
+
 def test_attached_shadow_artifact_is_persisted_but_not_sent_to_llm() -> None:
     candidate = _candidate(
         "000001",
@@ -530,3 +726,53 @@ def test_shadow_digest_exposes_coverage_without_candidate_details(monkeypatch) -
         lambda *, limit: reports[:limit],
     )
     assert factor_evidence.decision_score_shadow_digest(limit=999) == digest
+
+
+def test_legacy_v1_artifact_remains_valid_but_does_not_mix_into_v2_digest() -> None:
+    artifact = build_decision_score_shadow(
+        [
+            _candidate(
+                "000001",
+                sector="科技",
+                benchmark=85,
+                downside=80,
+                purchase_fee_percent=1.5,
+            )
+        ],
+        candidate_factor_scores=_factor_payload({"000001": 90}),
+        portfolio_gap=_gap(),
+        profile=_profile(),
+        decision_at=DECISION_AT,
+        minimum_holding_days=30,
+    )
+    legacy = deepcopy(artifact)
+    legacy["schema_version"] = "decision_score_shadow.v1"
+    legacy["model_version"] = "decision_score.v1"
+    legacy.pop("policy_versions", None)
+    legacy.pop("snapshot_hash", None)
+    legacy.pop("validation", None)
+    legacy["snapshot_hash"] = hashlib.sha256(
+        json.dumps(
+            legacy,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+
+    assert validate_decision_score_shadow(legacy)["status"] == "valid"
+    digest = build_decision_score_shadow_digest(
+        [
+            {
+                "id": "legacy-report",
+                "created_at": DECISION_AT.isoformat(),
+                "discovery_facts": {"decision_score_shadow": legacy},
+            }
+        ]
+    )
+    assert digest["artifact_count"] == 0
+    assert digest["total_artifact_count"] == 1
+    assert digest["legacy_artifact_count"] == 1
+    assert digest["model_version_counts"] == {"decision_score.v1": 1}
+    assert digest["latest"] is None

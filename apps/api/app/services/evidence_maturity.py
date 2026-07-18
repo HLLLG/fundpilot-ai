@@ -354,8 +354,11 @@ def _decision_score_projection() -> tuple[dict[str, Any], list[dict[str, str]]]:
     projection = {
         "status": status,
         "mode": digest.get("mode"),
+        "model_version": digest.get("current_model_version"),
         "report_count": _nonnegative_int(digest.get("report_count")),
         "artifact_count": artifacts,
+        "total_artifact_count": _nonnegative_int(digest.get("total_artifact_count")),
+        "legacy_artifact_count": _nonnegative_int(digest.get("legacy_artifact_count")),
         "valid_artifact_count": valid,
         "shadow_evaluable_report_count": evaluable,
         "top_k_changed_report_count": _nonnegative_int(
@@ -377,7 +380,7 @@ def _decision_score_projection() -> tuple[dict[str, Any], list[dict[str, str]]]:
                 "decision_score_shadow_empty",
                 "info",
                 "DecisionScore 尚无真实样本",
-                "尚未生成包含 v1 shadow 制品的新荐基报告；这里显示缺证据而不是 0 分。",
+                "尚未生成包含当前版本 shadow 制品的新荐基报告；旧版本样本不会混入，这里显示缺证据而不是 0 分。",
                 "下次登录后正常生成荐基报告即可开始积累，不需要绕过认证补样本。",
             )
         )

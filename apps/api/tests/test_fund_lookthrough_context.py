@@ -576,6 +576,7 @@ def test_repository_materialization_error_is_explicit_and_non_blocking(monkeypat
 def test_store_scan_keeps_later_stored_candidate_when_live_refresh_times_out() -> None:
     existing = _snapshot("000001")
     later_stored = _snapshot("000003", security="600003")
+    release_live_refresh = threading.Event()
 
     def resolver(code: str, *, allow_live: bool, **_kwargs) -> dict:
         if not allow_live:
@@ -590,7 +591,7 @@ def test_store_scan_keeps_later_stored_candidate_when_live_refresh_times_out() -
                 "source": "append_only_store",
                 "snapshot": None,
             }
-        time.sleep(0.2)
+        release_live_refresh.wait()
         return {
             "status": "unavailable",
             "qualified": False,
@@ -603,15 +604,18 @@ def test_store_scan_keeps_later_stored_candidate_when_live_refresh_times_out() -
     settings.fund_holdings_context_fast_timeout_seconds = 0.03
     settings.fund_holdings_context_workers = 1
     settings.fund_holdings_context_live_max_funds = 1
-    result = build_fund_lookthrough_context(
-        [SimpleNamespace(fund_code="000001", holding_amount=1000)],
-        [{"fund_code": "000002"}, {"fund_code": "000003"}],
-        decision_at=DECISION,
-        analysis_mode="deep",
-        portfolio_context=_portfolio_context(),
-        resolver=resolver,
-        settings=settings,
-    )
+    try:
+        result = build_fund_lookthrough_context(
+            [SimpleNamespace(fund_code="000001", holding_amount=1000)],
+            [{"fund_code": "000002"}, {"fund_code": "000003"}],
+            decision_at=DECISION,
+            analysis_mode="deep",
+            portfolio_context=_portfolio_context(),
+            resolver=resolver,
+            settings=settings,
+        )
+    finally:
+        release_live_refresh.set()
 
     rows = {
         row["fund_code"]: row for row in result["resolution_audit"]["rows"]
