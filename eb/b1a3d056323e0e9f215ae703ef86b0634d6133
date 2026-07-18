@@ -1,0 +1,23 @@
+apps/api/tests/test_decision_quality_snapshot.py
+  s_12ddd06c0f7251::t_c59fbca3178dfb 2023-2048
+apps/api/app/services/decision_quality_snapshot.py
+  s_12ddd06c0f7251::t_c59fbca3178dfb 157-159,2945-2956,2958,2960-2968
+docs/PROJECT_CONTEXT.md
+  s_12ddd06c0f7251::t_c8e3b67c563512 10
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.34-trip",
+  "base_commit_sha": "ebb1a3d056323e0e9f215ae703ef86b0634d6133",
+  "prompts": {},
+  "sessions": {
+    "s_12ddd06c0f7251": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f7369-4d59-7af3-9189-e98b0faa9b7e",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
