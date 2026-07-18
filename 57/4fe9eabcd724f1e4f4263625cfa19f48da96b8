@@ -1,0 +1,68 @@
+apps/web/src/components/EvidenceMaturityPanel.tsx
+  s_12ddd06c0f7251::t_d2a9d142eb5627 9,352-356,367
+README.md
+  s_12ddd06c0f7251::t_d406a920baa78a 30,118-119
+apps/web/src/lib/api/factorEvidence.ts
+  s_12ddd06c0f7251::t_1f2c2d054cd686 1-187
+apps/api/app/routes/factor_evidence.py
+  s_12ddd06c0f7251::t_f349f68c5759dd 1-248
+apps/api/app/main.py
+  s_12ddd06c0f7251::t_0d7f5724aebe48 156,174
+  s_12ddd06c0f7251::t_ac0008f5a6b6cb 155
+  s_12ddd06c0f7251::t_cd2c7772cb1a2e 20,154,175
+  s_12ddd06c0f7251::t_6889a06b278fb7 173
+apps/web/src/components/FactorIcStatusBadge.tsx
+  s_12ddd06c0f7251::t_d2a9d142eb5627 4,43-47
+apps/api/tests/test_decision_score_shadow.py
+  s_12ddd06c0f7251::t_b45686e8dcbd9a 8,527-532
+apps/api/app/routes/market_diagnostics.py
+  s_12ddd06c0f7251::t_0d7f5724aebe48 1-50
+apps/web/src/lib/api/marketDiagnostics.ts
+  s_12ddd06c0f7251::t_fc58f64874b264 1-206
+apps/api/app/routes/decision_quality.py
+  s_12ddd06c0f7251::t_cd2c7772cb1a2e 1-113
+apps/api/tests/test_decision_quality_snapshot_endpoint.py
+  s_12ddd06c0f7251::t_cd2c7772cb1a2e 51,74,98,123,134
+apps/web/src/lib/useLazyAsyncResource.test.tsx
+  s_12ddd06c0f7251::t_6c2f141434380a 1-76
+apps/api/tests/test_decision_quality_router.py
+  s_12ddd06c0f7251::t_cd2c7772cb1a2e 1-24
+apps/web/src/lib/api.ts
+  s_12ddd06c0f7251::t_1f2c2d054cd686 1-3,8-18,35
+  s_12ddd06c0f7251::t_fc58f64874b264 4-7,19-34
+  s_12ddd06c0f7251::t_c85967429b0a22 1708-1709,1749
+apps/api/tests/test_market_diagnostics_router.py
+  s_12ddd06c0f7251::t_4f516ada723f8d 1-30
+apps/web/src/lib/api/core.ts
+  s_12ddd06c0f7251::t_c85967429b0a22 1-55
+docs/PROJECT_CONTEXT.md
+  s_12ddd06c0f7251::t_d406a920baa78a 7,10,272-273,341-343,593
+apps/api/tests/test_evidence_maturity.py
+  s_12ddd06c0f7251::t_b45686e8dcbd9a 5,202
+apps/web/src/lib/api.factorEvidence.test.ts
+  s_12ddd06c0f7251::t_6c2f141434380a 1-10,23-27,36
+  s_12ddd06c0f7251::t_4f516ada723f8d 11-22,28-35
+apps/api/tests/test_factor_evidence_router.py
+  s_12ddd06c0f7251::t_6c2f141434380a 1-7,18-21,26-27,29-42
+  s_12ddd06c0f7251::t_b45686e8dcbd9a 8-17,22-25,28
+apps/web/src/lib/useLazyAsyncResource.ts
+  s_12ddd06c0f7251::t_d2a9d142eb5627 1-62
+apps/api/app/routes/__init__.py
+  s_12ddd06c0f7251::t_f349f68c5759dd 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.34-trip",
+  "base_commit_sha": "574fe9eabcd724f1e4f4263625cfa19f48da96b8",
+  "prompts": {},
+  "sessions": {
+    "s_12ddd06c0f7251": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f7369-4d59-7af3-9189-e98b0faa9b7e",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
