@@ -18,6 +18,7 @@ services:
       retries: 20
 
   api:
+    image: fundpilot-api:cloud-local
     build:
       context: apps/api
       dockerfile: Dockerfile
@@ -31,12 +32,40 @@ services:
       FUND_AI_DEEPSEEK_API_KEY: ${FUND_AI_DEEPSEEK_API_KEY:-}
       FUND_AI_CORS_ORIGINS: ${FUND_AI_CORS_ORIGINS:-http://127.0.0.1:3001}
       FUND_AI_CLOUDBASE_AUTH_DEV_MODE: ${FUND_AI_CLOUDBASE_AUTH_DEV_MODE:-true}
+      FUND_AI_RUNTIME_ROLE: api
       WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
     depends_on:
       mysql:
         condition: service_healthy
     volumes:
+      - ./data:/app/data
       - ./uploads:/app/uploads
+
+  worker:
+    image: fundpilot-api:cloud-local
+    build:
+      context: apps/api
+      dockerfile: Dockerfile
+      args:
+        INSTALL_LOCAL_OCR: ${INSTALL_LOCAL_OCR:-true}
+    environment:
+      FUND_AI_DATABASE_URL: mysql://fundpilot:fundpilot_pass@mysql:3306/fundpilot
+      FUND_AI_JWT_SECRET: ${FUND_AI_JWT_SECRET:-fundpilot-dev-jwt-secret-change-me-32chars}
+      FUND_AI_DEEPSEEK_API_KEY: ${FUND_AI_DEEPSEEK_API_KEY:-}
+      FUND_AI_RUNTIME_ROLE: worker
+    command: ["python", "-m", "app.background_worker"]
+    depends_on:
+      mysql:
+        condition: service_healthy
+    volumes:
+      - ./data:/app/data
+      - ./uploads:/app/uploads
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.background_worker", "--healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
 
 volumes:
   fundpilot_mysql:

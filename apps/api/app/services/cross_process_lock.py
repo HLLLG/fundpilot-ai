@@ -6,7 +6,7 @@ import os
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
+from typing import Callable, Iterator
 from urllib.parse import urlparse
 
 from app.config import get_settings
@@ -27,6 +27,34 @@ class CrossProcessLockTimeout(CrossProcessLockError):
 
 class CrossProcessLockUnavailable(CrossProcessLockError):
     """The configured coordination store could not provide the lock."""
+
+
+class CrossProcessLockHandle:
+    """A held lock that can prove its coordination session is still alive."""
+
+    def __init__(
+        self,
+        *,
+        resource: str,
+        backend: str,
+        heartbeat_callback: Callable[[], None] | None = None,
+    ) -> None:
+        self.resource = resource
+        self.backend = backend
+        self._heartbeat_callback = heartbeat_callback
+
+    def heartbeat(self) -> None:
+        """Fail closed when the session that owns a long-lived lock is lost."""
+        if self._heartbeat_callback is None:
+            return
+        try:
+            self._heartbeat_callback()
+        except CrossProcessLockError:
+            raise
+        except Exception as exc:
+            raise CrossProcessLockUnavailable(
+                f"lost coordination session for {self.resource}"
+            ) from exc
 
 
 def _mysql_database_identity() -> str:
@@ -64,7 +92,11 @@ def _lock_result(row: object, key: str) -> int | None:
 
 
 @contextmanager
-def _mysql_lock(resource: str, *, timeout_seconds: float) -> Iterator[None]:
+def _mysql_lock(
+    resource: str,
+    *,
+    timeout_seconds: float,
+) -> Iterator[CrossProcessLockHandle]:
     lock_name = mysql_lock_name(resource)
     body_started = False
     try:
@@ -85,8 +117,16 @@ def _mysql_lock(resource: str, *, timeout_seconds: float) -> Iterator[None]:
                     f"database lock unavailable for {resource}"
                 )
             body_started = True
+
+            def _heartbeat() -> None:
+                connection.execute("SELECT 1 AS heartbeat").fetchone()
+
             try:
-                yield
+                yield CrossProcessLockHandle(
+                    resource=resource,
+                    backend="mysql",
+                    heartbeat_callback=_heartbeat,
+                )
             finally:
                 try:
                     released_row = connection.execute(
@@ -157,7 +197,11 @@ def _unlock_file(descriptor: int) -> None:
 
 
 @contextmanager
-def _sqlite_file_lock(resource: str, *, timeout_seconds: float) -> Iterator[None]:
+def _sqlite_file_lock(
+    resource: str,
+    *,
+    timeout_seconds: float,
+) -> Iterator[CrossProcessLockHandle]:
     try:
         lock_path = _sqlite_lock_path(resource)
         lock_path.parent.mkdir(parents=True, exist_ok=True)
@@ -183,7 +227,7 @@ def _sqlite_file_lock(resource: str, *, timeout_seconds: float) -> Iterator[None
             remaining = max(0.0, deadline - time.monotonic())
             time.sleep(min(_FILE_LOCK_POLL_SECONDS, remaining))
         body_started = True
-        yield
+        yield CrossProcessLockHandle(resource=resource, backend="sqlite")
     except CrossProcessLockError:
         raise
     except Exception as exc:
@@ -206,7 +250,7 @@ def cross_process_lock(
     resource: str,
     *,
     timeout_seconds: float,
-) -> Iterator[None]:
+) -> Iterator[CrossProcessLockHandle]:
     """Serialize a named operation across Uvicorn workers.
 
     Production MySQL uses connection-scoped advisory locks. Local SQLite uses
@@ -214,8 +258,8 @@ def cross_process_lock(
     processes and is automatically released when a process exits.
     """
     if get_settings().uses_mysql:
-        with _mysql_lock(resource, timeout_seconds=timeout_seconds):
-            yield
+        with _mysql_lock(resource, timeout_seconds=timeout_seconds) as handle:
+            yield handle
         return
-    with _sqlite_file_lock(resource, timeout_seconds=timeout_seconds):
-        yield
+    with _sqlite_file_lock(resource, timeout_seconds=timeout_seconds) as handle:
+        yield handle

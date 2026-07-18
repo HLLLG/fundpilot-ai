@@ -10,7 +10,17 @@ def test_production_compose_runs_two_configurable_workers() -> None:
     compose = (REPO_ROOT / "docker-compose.production.yml").read_text(encoding="utf-8")
 
     assert "WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}" in compose
+    assert "FUND_AI_RUNTIME_ROLE: api" in compose
     assert '"--workers", "1"' not in compose
+
+
+def test_production_compose_has_one_supervised_background_worker() -> None:
+    compose = (REPO_ROOT / "docker-compose.production.yml").read_text(encoding="utf-8")
+
+    assert "  worker:" in compose
+    assert "FUND_AI_RUNTIME_ROLE: worker" in compose
+    assert '["python", "-m", "app.background_worker"]' in compose
+    assert '["CMD", "python", "-m", "app.background_worker", "--healthcheck"]' in compose
 
 
 def test_both_api_images_default_to_two_workers_without_hardcoding_cli_flag() -> None:
@@ -22,3 +32,16 @@ def test_both_api_images_default_to_two_workers_without_hardcoding_cli_flag() ->
     for dockerfile in dockerfiles:
         assert "ENV WEB_CONCURRENCY=2" in dockerfile
         assert '"--workers"' not in dockerfile
+
+
+def test_lighthouse_deploy_waits_for_worker_and_runs_quality_smoke() -> None:
+    deploy = (REPO_ROOT / "deploy" / "lighthouse" / "deploy.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "--force-recreate api worker" in deploy
+    assert "waiting for background worker health" in deploy
+    assert "evaluate_decision_quality.py" in deploy
+    assert "--dry-run" in deploy
+    assert "rollback_has_worker" in deploy
+    assert "--remove-orphans" in deploy

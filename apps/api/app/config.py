@@ -147,6 +147,14 @@ class Settings(BaseSettings):
     jwt_secret: str = "fundpilot-dev-jwt-secret-change-me-32chars"
     jwt_access_expire_minutes: int = 43_200  # 30 days
     database_url: str | None = None
+    # ``all`` keeps the one-command local developer experience. Production
+    # runs API request workers with ``api`` and one dedicated container with
+    # ``worker`` so long-lived jobs are not duplicated by Uvicorn processes.
+    runtime_role: Literal["all", "api", "worker"] = "all"
+    background_worker_lock_timeout_seconds: float = 5.0
+    background_worker_retry_seconds: float = 5.0
+    background_worker_heartbeat_interval_seconds: float = 10.0
+    background_worker_heartbeat_stale_seconds: float = 45.0
     # Cross-worker account write serialization. A bounded wait fails with 503
     # instead of allowing two stale read-modify-write operations to overlap.
     portfolio_mutation_lock_timeout_seconds: float = 30.0

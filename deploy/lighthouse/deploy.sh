@@ -84,8 +84,14 @@ rollback_release() {
     export FUND_AI_API_IMAGE="fundpilot-api:$previous_sha"
 
     local rollback_compose=(docker compose --env-file .env.production -f docker-compose.production.yml)
+    local rollback_services=(api)
+    local rollback_has_worker=false
     "${rollback_compose[@]}" config -q || return 1
-    "${rollback_compose[@]}" up -d --build api || return 1
+    if "${rollback_compose[@]}" config --services | grep -qx 'worker'; then
+        rollback_services+=(worker)
+        rollback_has_worker=true
+    fi
+    "${rollback_compose[@]}" up -d --build --remove-orphans "${rollback_services[@]}" || return 1
 
     local rollback_api_ready=false
     for attempt in $(seq 1 30); do
@@ -99,6 +105,24 @@ rollback_release() {
     if [[ "$rollback_api_ready" != "true" ]]; then
         "${rollback_compose[@]}" logs --tail=150 api >&2 || true
         return 1
+    fi
+
+    if [[ "$rollback_has_worker" == "true" ]]; then
+        local rollback_worker_ready=false
+        for attempt in $(seq 1 30); do
+            local rollback_worker_id
+            rollback_worker_id="$("${rollback_compose[@]}" ps -q worker)"
+            if [[ -n "$rollback_worker_id" ]] && [[ "$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}' "$rollback_worker_id")" == "healthy" ]]; then
+                rollback_worker_ready=true
+                break
+            fi
+            echo "waiting for rollback worker health ($attempt/30)" >&2
+            sleep 5
+        done
+        if [[ "$rollback_worker_ready" != "true" ]]; then
+            "${rollback_compose[@]}" logs --tail=150 worker >&2 || true
+            return 1
+        fi
     fi
 
     if [[ "$web_was_activated" == "true" ]]; then
@@ -176,7 +200,7 @@ docker run --rm \
     -e FUND_AI_MYSQL_ADMIN_HOST=127.0.0.1 \
     "$api_image" \
     python -m app.mysql_admin_bootstrap
-"${compose[@]}" up -d --no-deps --force-recreate api
+"${compose[@]}" up -d --no-deps --force-recreate api worker
 
 api_ready=false
 for attempt in $(seq 1 30); do
@@ -193,6 +217,35 @@ if [[ "$api_ready" != "true" ]]; then
     deployment_error_status=70
     false
 fi
+
+worker_ready=false
+for attempt in $(seq 1 30); do
+    worker_container_id="$("${compose[@]}" ps -q worker)"
+    if [[ -n "$worker_container_id" ]] && [[ "$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}' "$worker_container_id")" == "healthy" ]]; then
+        worker_ready=true
+        break
+    fi
+    echo "waiting for background worker health ($attempt/30)"
+    sleep 5
+done
+if [[ "$worker_ready" != "true" ]]; then
+    "${compose[@]}" logs --tail=150 worker >&2 || true
+    echo "Background worker did not become healthy" >&2
+    deployment_error_status=70
+    false
+fi
+
+# A process-level health endpoint cannot detect a broken evaluation contract.
+# Exercise the exact scheduled snapshot command without writing a snapshot
+# before making the new release visible.
+evaluation_as_of="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+"${compose[@]}" exec -T api \
+    python scripts/evaluate_decision_quality.py \
+    --all-users \
+    --evaluation-as-of "$evaluation_as_of" \
+    --window-days 365 \
+    --dry-run \
+    --format summary
 
 mkdir -p "$web_root"
 web_was_activated=true

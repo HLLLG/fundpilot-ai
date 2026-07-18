@@ -29,6 +29,7 @@ services:
     env_file: .env.production
     environment:
       FUND_AI_PROJECT_ROOT: /app
+      FUND_AI_RUNTIME_ROLE: api
       WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
     command: ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
     volumes:
@@ -39,6 +40,28 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
+
+  worker:
+    image: ${FUND_AI_API_IMAGE:-fundpilot-api:latest}
+    restart: unless-stopped
+    env_file: .env.production
+    environment:
+      FUND_AI_PROJECT_ROOT: /app
+      FUND_AI_RUNTIME_ROLE: worker
+    command: ["python", "-m", "app.background_worker"]
+    volumes:
+      - /srv/fundpilot/data:/app/data
+      - /srv/fundpilot/uploads:/app/uploads
+    depends_on:
+      mysql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.background_worker", "--healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    stop_grace_period: 20s
 
   nginx:
     image: nginx:1.27-alpine

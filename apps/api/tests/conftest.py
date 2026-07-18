@@ -496,6 +496,7 @@ def _auth_env(monkeypatch, tmp_path):
     monkeypatch.setenv("FUND_AI_DB_PATH", str(tmp_path / "pytest.db"))
     monkeypatch.setenv("FUND_AI_JWT_SECRET", PYTEST_JWT_SECRET)
     monkeypatch.setenv("FUND_AI_OCR_PRELOAD", "false")
+    monkeypatch.setenv("FUND_AI_RUNTIME_ROLE", "api")
     monkeypatch.setenv("FUND_AI_SECTOR_SIGNAL_BACKTEST_ENABLED", "false")
     monkeypatch.setenv("FUND_AI_TACTICAL_PROMPT_TUNING_ENABLED", "false")
     monkeypatch.setenv("FUND_AI_THEME_BOARD_REFRESH_ENABLED", "false")

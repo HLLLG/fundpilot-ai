@@ -91,6 +91,26 @@ def test_mysql_named_lock_uses_dedicated_session_and_releases(monkeypatch) -> No
     assert "RELEASE_LOCK" in connection.statements[1][0]
 
 
+def test_long_lived_mysql_lock_can_heartbeat_its_owner_session(monkeypatch) -> None:
+    connection = _FakeMySqlConnection()
+
+    @contextmanager
+    def session(**_kwargs):
+        yield connection
+
+    monkeypatch.setattr(lock_service, "open_dedicated_mysql_session", session)
+    monkeypatch.setattr(lock_service, "mysql_lock_name", lambda _resource: "fp:test")
+
+    with lock_service._mysql_lock("background-worker", timeout_seconds=1) as lease:
+        assert lease.backend == "mysql"
+        lease.heartbeat()
+
+    statements = [sql for sql, _params in connection.statements]
+    assert "GET_LOCK" in statements[0]
+    assert "SELECT 1 AS heartbeat" == statements[1]
+    assert "RELEASE_LOCK" in statements[2]
+
+
 def test_mysql_named_lock_timeout_is_distinct(monkeypatch) -> None:
     connection = _FakeMySqlConnection(acquire_result=0)
 

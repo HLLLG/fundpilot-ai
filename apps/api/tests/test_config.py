@@ -85,3 +85,15 @@ def test_holdings_cache_defaults_are_safe_for_mysql_multiworker(monkeypatch):
     assert mysql.resolved_holdings_memory_cache_enabled is False
     assert sqlite.resolved_holdings_memory_cache_enabled is True
     assert mysql.portfolio_mutation_lock_timeout_seconds == 30
+
+
+def test_runtime_role_and_background_worker_health_defaults(monkeypatch):
+    monkeypatch.delenv("FUND_AI_RUNTIME_ROLE", raising=False)
+
+    settings = Settings(_env_file=None)
+
+    assert settings.runtime_role == "all"
+    assert settings.background_worker_lock_timeout_seconds == 5
+    assert settings.background_worker_retry_seconds == 5
+    assert settings.background_worker_heartbeat_interval_seconds == 10
+    assert settings.background_worker_heartbeat_stale_seconds == 45
