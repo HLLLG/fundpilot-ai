@@ -77,11 +77,27 @@ def sqlite_fallback_enabled() -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+def sqlite_fallback_active() -> bool:
+    """Whether this process is currently routing database work to SQLite.
+
+    A configured MySQL URL alone is not enough to choose a coordination
+    backend: local development may have already entered the bounded SQLite
+    fallback after a connectivity failure. Cross-process locks must follow
+    that effective store or the worker will retry an unreachable MySQL lock
+    forever while ordinary reads and writes are using SQLite.
+    """
+    return bool(
+        uses_mysql()
+        and sqlite_fallback_enabled()
+        and time.time() < _mysql_unreachable_until
+    )
+
+
 def connect_with_fallback() -> DbConnection:
     global _mysql_unreachable_until
     if not uses_mysql():
         return _open_sqlite()
-    if sqlite_fallback_enabled() and time.time() < _mysql_unreachable_until:
+    if sqlite_fallback_active():
         return _open_sqlite()
     try:
         conn = _open_mysql()

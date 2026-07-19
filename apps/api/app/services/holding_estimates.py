@@ -495,6 +495,8 @@ def holding_daily_return_is_estimated(
 ) -> bool:
     if holding.daily_return_percent_source in {"official_nav", "pending_accrual"}:
         return False
+    if holding.daily_return_percent_source == "sector_estimate":
+        return True
     from app.services.profit_accrual_defer import is_profit_accrual_deferred
 
     if is_profit_accrual_deferred(_profile_for_holding(holding, profile)):

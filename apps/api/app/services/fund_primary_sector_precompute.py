@@ -177,6 +177,7 @@ def precompute_fund_sector(
         if mode in ("benchmark", "auto"):
             record = _resolve_from_benchmark_index(
                 code,
+                fund_name=_lookup_fund_name(code),
                 fetch=True,
                 persist_user=False,
                 promote_global=False,

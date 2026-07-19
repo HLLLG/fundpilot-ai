@@ -48,7 +48,9 @@ _SOURCE_PRIORITY = {
     "ocr_detail": 100,
     "manual": 85,
     "holdings_infer": 70,
+    "precompute_holdings": 70,
     "benchmark_index": 65,
+    "precompute_benchmark": 65,
     "benchmark_freeform": 55,
     "alipay_overview": 50,
     "semantic_name": 40,
@@ -156,6 +158,38 @@ def _is_cross_market_theme_fund(fund_name: str | None) -> bool:
         return False
     normalized = fund_name.upper()
     return "QDII" in normalized or "全球" in fund_name or "海外" in fund_name
+
+
+def _is_passive_index_fund_name(fund_name: str | None) -> bool:
+    """名称层面的保守识别，仅用于判断指数基准能否充当行情参考。
+
+    这里不靠主题词猜板块；只有明确写出指数/ETF/联接/LOF 的产品，才允许把
+    第三方抓取到的精确指数身份用于行情参考。主动基金的业绩比较基准只保留为
+    对比基准，不会升级成“关联板块”。
+    """
+    if not fund_name:
+        return False
+    normalized = fund_name.upper()
+    return any(marker in normalized for marker in ("指数", "ETF", "联接", "LOF"))
+
+
+def _benchmark_row_is_price_proxy_eligible(
+    row: Mapping[str, Any], fund_name: str | None
+) -> bool:
+    detail = row.get("detail")
+    if isinstance(detail, str):
+        try:
+            parsed_detail = json.loads(detail)
+        except json.JSONDecodeError:
+            parsed_detail = None
+        detail = parsed_detail if isinstance(parsed_detail, Mapping) else None
+    if isinstance(detail, Mapping):
+        explicit = detail.get("price_proxy_eligible")
+        if isinstance(explicit, bool):
+            return explicit
+        if str(detail.get("benchmark_text_kind") or "") == "tracking_target":
+            return True
+    return _is_passive_index_fund_name(fund_name)
 
 
 def _is_fund_name_residue_label(fund_name: str | None, sector_name: str | None) -> bool:
@@ -458,13 +492,22 @@ def resolve_primary_sector(
     if _should_prefer_semantic_before_market_sources(fund_name, semantic_candidate):
         return _semantic_record_from_candidate(code, fund_name or "", semantic_candidate)
 
-    benchmark_record = _resolve_from_benchmark_index(
-        code,
-        fetch=fetch_benchmark,
-        batch_context=batch_context,
+    # 已有/新拉取的持仓穿透证据优先于第三方业绩基准。基准文本对主动基金只是
+    # 业绩比较参考，不应抢占“主要关联板块”。
+    if row and str(row.get("source") or "") in {"holdings_infer", "precompute_holdings"}:
+        if _is_trustworthy_sector_label(fund_name, row.get("sector_name")):
+            return _record_from_row(row)
+
+    global_row = (
+        batch_context.fresh_global_row(code)
+        if batch_context is not None
+        else load_fresh_global_sector(code)
     )
-    if benchmark_record is not None:
-        return benchmark_record
+    if global_row and str(global_row.get("source") or "") in {
+        "holdings_infer",
+        "precompute_holdings",
+    }:
+        return _record_from_row({**global_row, "fund_code": code})
 
     if fetch_holdings_infer:
         holdings_record = _resolve_from_holdings_infer(
@@ -475,16 +518,28 @@ def resolve_primary_sector(
         if holdings_record is not None:
             return holdings_record
 
-    global_row = (
-        batch_context.fresh_global_row(code)
-        if batch_context is not None
-        else load_fresh_global_sector(code)
+    benchmark_record = _resolve_from_benchmark_index(
+        code,
+        fund_name=fund_name,
+        fetch=fetch_benchmark,
+        batch_context=batch_context,
     )
+    if benchmark_record is not None:
+        return benchmark_record
+
     if global_row:
-        return _record_from_row({**global_row, "fund_code": code})
+        global_source = str(global_row.get("source") or "")
+        if global_source not in {"benchmark_index", "precompute_benchmark"} or (
+            _benchmark_row_is_price_proxy_eligible(global_row, fund_name)
+        ):
+            return _record_from_row({**global_row, "fund_code": code})
 
     if row and _is_trustworthy_sector_label(fund_name, row.get("sector_name")):
-        return _record_from_row(row)
+        row_source = str(row.get("source") or "")
+        if row_source not in {"benchmark_index", "precompute_benchmark"} or (
+            _benchmark_row_is_price_proxy_eligible(row, fund_name)
+        ):
+            return _record_from_row(row)
 
     # 存量行是名称残留（如"中航机遇领航"），且规则/持仓穿透都推不出更好结果时，
     # 再给 LLM 兜底一次机会——否则残留标签会在没有 fetch_holdings_infer 的
@@ -702,7 +757,11 @@ def refresh_benchmark_sectors_for_holdings(
         if row and str(row.get("source") or "") in _HIGH_TRUST_SECTOR_SOURCES:
             refreshed.append(holding)
             continue
-        if row and str(row.get("source") or "") == "benchmark_index":
+        if (
+            row
+            and str(row.get("source") or "") == "benchmark_index"
+            and not fetch_holdings_infer
+        ):
             refreshed.append(
                 apply_primary_sector_to_holding(
                     holding,
@@ -728,10 +787,7 @@ def refresh_benchmark_sectors_for_holdings(
         )
         stocks_for_code = None
         holdings_evidence_for_code = None
-        if (
-            fetch_holdings_infer
-            and not _is_trustworthy_sector_label(updated.fund_name, updated.sector_name)
-        ):
+        if fetch_holdings_infer:
             from app.services.fund_holdings_sector_infer import (
                 fetch_portfolio_stocks_with_industry_evidence,
             )
@@ -840,25 +896,22 @@ def _resolve_from_holdings_infer(
             if batch_context is not None
             else get_fund_primary_sector(code)
         )
-        existing_source = str((existing or {}).get("source") or "")
-        if existing_source != "benchmark_index":
-            if try_get_request_user_id() is not None and (
-                not existing
-                or _SOURCE_PRIORITY.get(existing_source, 0) <= _SOURCE_PRIORITY["holdings_infer"]
-            ):
-                saved = save_fund_primary_sector(
-                    fund_code=code,
-                    sector_name=sector_name,
-                    intraday_index_name=index_name,
-                    source="holdings_infer",
-                    confidence=confidence,
-                    detail=record.detail,
-                )
-                if batch_context is not None:
-                    batch_context.remember_user_row(saved)
-            global_row = promote_record_to_global(record)
+        if try_get_request_user_id() is not None and _can_upsert_primary_sector(
+            existing, "holdings_infer"
+        ):
+            saved = save_fund_primary_sector(
+                fund_code=code,
+                sector_name=sector_name,
+                intraday_index_name=index_name,
+                source="holdings_infer",
+                confidence=confidence,
+                detail=record.detail,
+            )
             if batch_context is not None:
-                batch_context.remember_global_row(global_row)
+                batch_context.remember_user_row(saved)
+        global_row = promote_record_to_global(record)
+        if batch_context is not None:
+            batch_context.remember_global_row(global_row)
     return record
 
 
@@ -932,11 +985,22 @@ def refresh_primary_sector_for_fund(fund_code: str, *, fund_name: str | None = N
     code = fund_code.strip().zfill(6)
     current = resolve_primary_sector(code, fund_name=fund_name)
     recommendation = recommend_sector_from_holdings(code)
+    resolved_after = resolve_primary_sector(
+        code,
+        fund_name=fund_name,
+        fetch_benchmark=False,
+    )
+    applied = bool(
+        recommendation
+        and resolved_after
+        and resolved_after.source in {"holdings_infer", "precompute_holdings"}
+        and resolved_after.sector_name == recommendation.sector_name
+    )
     return {
         "fund_code": code,
         "current": _record_to_dict(current),
         "recommendation": _record_to_dict(recommendation),
-        "applied": recommendation is not None,
+        "applied": applied,
     }
 
 
@@ -952,6 +1016,7 @@ def sync_primary_sectors_from_profiles(profiles: list[FundProfile]) -> int:
 def _resolve_from_benchmark_index(
     fund_code: str,
     *,
+    fund_name: str | None = None,
     fetch: bool = True,
     persist_user: bool = True,
     promote_global: bool = True,
@@ -959,7 +1024,6 @@ def _resolve_from_benchmark_index(
     batch_context: PrimarySectorBatchContext | None = None,
 ) -> PrimarySectorRecord | None:
     from app.services.fund_benchmark_sector import (
-        extract_freeform_theme_from_benchmark,
         fetch_fund_benchmark_text,
         get_fund_benchmark_fetch_metadata,
         resolve_sector_from_benchmark,
@@ -971,7 +1035,11 @@ def _resolve_from_benchmark_index(
             if batch_context is not None
             else get_fund_primary_sector(fund_code)
         )
-        if existing and str(existing.get("source") or "") == "benchmark_index":
+        if (
+            existing
+            and str(existing.get("source") or "") == "benchmark_index"
+            and _benchmark_row_is_price_proxy_eligible(existing, fund_name)
+        ):
             return _record_from_row(existing)
 
     global_row = (
@@ -985,7 +1053,10 @@ def _resolve_from_benchmark_index(
     )
     if global_row:
         global_source = str(global_row.get("source") or "")
-        if not fetch or global_source in {"benchmark_index", "precompute_benchmark"}:
+        if (
+            (not fetch or global_source in {"benchmark_index", "precompute_benchmark"})
+            and _benchmark_row_is_price_proxy_eligible(global_row, fund_name)
+        ):
             return _record_from_row({**global_row, "fund_code": fund_code.strip().zfill(6)})
 
     if not fetch:
@@ -999,30 +1070,33 @@ def _resolve_from_benchmark_index(
         return None
     resolved = resolve_sector_from_benchmark(benchmark_text)
     benchmark_metadata = get_fund_benchmark_fetch_metadata(fund_code, benchmark_text)
+    price_proxy_eligible = (
+        str(benchmark_metadata.get("benchmark_text_kind") or "") == "tracking_target"
+        or _is_passive_index_fund_name(fund_name)
+    )
+    if not price_proxy_eligible:
+        # 主动基金的业绩比较基准只用于走势对比；没有持仓穿透证据时宁可不展示
+        # 单一关联板块，也不把基准涨幅伪装成基金当日涨幅。
+        return None
     code = fund_code.strip().zfill(6)
     source = "benchmark_index"
     detail: dict
-    confidence = 0.82
+    confidence = 0.68
     if resolved is not None:
         sector_name, intraday_index_name, match = resolved
         detail = {
             "index_code": match.index_code,
             "index_name": match.index_name,
             "benchmark_text": match.benchmark_text,
+            "relation_kind": "tracking_reference",
+            "price_proxy_eligible": True,
             **benchmark_metadata,
         }
     else:
-        # 指数代码/名称不在白名单里也不整条丢弃：从业绩基准原文抠出主题短语兜底展示，
-        # 只是没有实时行情（后续 sector_quote_service 会优雅地展示"无涨跌%"）。
-        freeform = extract_freeform_theme_from_benchmark(benchmark_text)
-        if freeform is None:
-            _remember_benchmark_miss(fund_code)
-            return None
-        sector_name = freeform
-        intraday_index_name = None
-        source = "benchmark_freeform"
-        confidence = 0.6
-        detail = {"benchmark_text": benchmark_text, **benchmark_metadata}
+        # 未能精确解析指数身份时，不再从基准文案截取一个短语冒充关联板块。
+        # 原始基准仍可由只读详情接口展示，但没有可靠代码就不能接行情涨幅。
+        _remember_benchmark_miss(fund_code)
+        return None
 
     intraday_index_name = _usable_intraday_index_name(intraday_index_name, sector_name)
 

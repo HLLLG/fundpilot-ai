@@ -2643,18 +2643,129 @@ export async function deletePortfolioHolding(
 export type FundSearchItem = {
   fund_code: string;
   fund_name: string;
+  fund_type?: string | null;
+  popularity_rank?: number | null;
+  match_kind?:
+    | "code_exact"
+    | "code_prefix"
+    | "code_contains"
+    | "name_exact"
+    | "name_prefix"
+    | "name_contains"
+    | "name_fuzzy";
 };
 
-export async function searchFunds(query: string, limit = 12): Promise<FundSearchItem[]> {
-  const params = new URLSearchParams({ q: query, limit: String(limit) });
+export type FundSearchPage = {
+  items: FundSearchItem[];
+  total: number;
+  offset: number;
+  limit: number;
+  has_more: boolean;
+};
+
+export async function searchFundsPage(
+  query: string,
+  limit = 12,
+  offset = 0,
+): Promise<FundSearchPage> {
+  const params = new URLSearchParams({
+    q: query,
+    limit: String(limit),
+    offset: String(offset),
+  });
   const response = await apiFetch(`${API_BASE}/api/funds/search?${params.toString()}`, {
     cache: "no-store",
   });
   if (!response.ok) {
     throw new Error(await response.text());
   }
-  const body = (await response.json()) as { items: FundSearchItem[] };
-  return body.items ?? [];
+  const body = (await response.json()) as Partial<FundSearchPage>;
+  const items = body.items ?? [];
+  return {
+    items,
+    total: body.total ?? items.length,
+    offset: body.offset ?? offset,
+    limit: body.limit ?? limit,
+    has_more: body.has_more ?? false,
+  };
+}
+
+export async function searchFunds(query: string, limit = 12): Promise<FundSearchItem[]> {
+  return (await searchFundsPage(query, limit, 0)).items;
+}
+
+export type FundRelation = {
+  status: "available" | "unavailable";
+  kind: "tracking_reference" | "holdings_exposure" | "user_confirmed" | "unavailable";
+  label?: string | null;
+  source_type?: "index" | "concept" | "industry" | null;
+  source_code?: string | null;
+  source_name?: string | null;
+  confidence?: number | null;
+  evidence_tier: "third_party_reference" | "holdings_disclosure" | "user_supplied" | "insufficient";
+  evidence_source?: string | null;
+  as_of?: string | null;
+  price_proxy_eligible: boolean;
+  note: string;
+};
+
+export type FundPerformanceBenchmark = {
+  symbol?: string | null;
+  name: string;
+  kind: "tracking_reference" | "benchmark_reference" | "type_reference";
+  source: string;
+  benchmark_text?: string | null;
+};
+
+export type FundHoldingSummary = {
+  fund_code: string;
+  fund_name: string;
+  holding_amount?: number | null;
+  holding_profit?: number | null;
+  holding_return_percent?: number | null;
+  daily_profit?: number | null;
+  daily_return_percent?: number | null;
+  daily_return_percent_source?: string | null;
+  daily_return_is_estimated?: boolean | null;
+};
+
+export type FundPublicOverview = {
+  fund_code: string;
+  fund_name: string;
+  fund_type?: string | null;
+  latest_nav?: number | null;
+  nav_date?: string | null;
+  official_daily_return_percent?: number | null;
+  official_return_status: "available" | "pending";
+  returns: {
+    one_month_percent?: number | null;
+    three_month_percent?: number | null;
+    six_month_percent?: number | null;
+    one_year_percent?: number | null;
+  };
+  management_fee?: string | null;
+  fund_scale_yi?: number | null;
+  fund_scale_source?: string | null;
+  fund_scale_as_of?: string | null;
+  max_drawdown_1y_percent?: number | null;
+  relation: FundRelation;
+  performance_benchmark?: FundPerformanceBenchmark | null;
+  nav_history: FundNavHistory;
+  is_held: boolean;
+  holding?: FundHoldingSummary | null;
+  data_note: string;
+};
+
+export async function fetchFundPublicOverview(fundCode: string): Promise<FundPublicOverview> {
+  const response = await apiFetch(
+    `${API_BASE}/api/funds/${encodeURIComponent(fundCode)}/overview`,
+    { cache: "no-store" },
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { detail?: string } | null;
+    throw new Error(body?.detail ?? "基金详情加载失败");
+  }
+  return response.json();
 }
 
 // --- 批量加减仓（交易记录）-------------------------------------------------

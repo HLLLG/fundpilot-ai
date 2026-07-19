@@ -54,6 +54,8 @@ import {
   getEstimatedHoldingProfit,
   getEstimatedHoldingReturnPercent,
   getSettledHoldingAmount,
+  isDailyProfitEstimated,
+  isDailyReturnEstimated,
 } from "@/lib/holdingDisplay";
 import { HoldingModifyModal } from "@/components/HoldingModifyModal";
 import { SingleFundTransactionModal } from "@/components/SingleFundTransactionModal";
@@ -294,6 +296,9 @@ export function YangjibaoFundDetail({
       : "数据源";
   const displayDailyReturn =
     activeHolding.daily_return_percent ?? getEstimatedDailyReturnPercent(activeHolding);
+  const dailyReturnEstimated = isDailyReturnEstimated(activeHolding);
+  const dailyProfitEstimated = isDailyProfitEstimated(activeHolding);
+  const dailyReturnPending = activeHolding.daily_return_percent_source === "pending_accrual";
 
   const intradayQuery = useMemo(
     () => resolveIntradayQuery(activeHolding, sectorMeta),
@@ -747,8 +752,18 @@ export function YangjibaoFundDetail({
           <div className="border-b border-slate-100 bg-white">
             <div className="grid grid-cols-3 divide-x divide-slate-100">
               <HeaderStat
-                label={`当日涨幅 ${tradeDateLabel}`}
-                value={formatSignedPercent(displayDailyReturn)}
+                label={
+                  dailyReturnPending
+                    ? `当日暂不计 ${tradeDateLabel}`
+                    : dailyReturnEstimated
+                      ? `板块参考 ${tradeDateLabel}`
+                      : `官方净值 ${tradeDateLabel}`
+                }
+                value={
+                  dailyReturnPending
+                    ? "暂不计"
+                    : `${dailyReturnEstimated && displayDailyReturn != null ? "≈" : ""}${formatSignedPercent(displayDailyReturn)}`
+                }
                 valueClass={cnProfitClass(displayDailyReturn)}
               />
               <HeaderStat
@@ -804,8 +819,8 @@ export function YangjibaoFundDetail({
               </div>
               <div className="grid grid-cols-3 divide-x divide-slate-100">
                 <GridStat
-                  label="当日收益"
-                  value={formatSignedMoney(dailyProfit)}
+                  label={dailyProfitEstimated ? "估算当日收益" : "当日收益"}
+                  value={`${dailyProfitEstimated && dailyProfit != null ? "≈" : ""}${formatSignedMoney(dailyProfit)}`}
                   valueClass={cnProfitClass(dailyProfit)}
                 />
                 <GridStat
@@ -907,6 +922,9 @@ export function YangjibaoFundDetail({
                   </button>
                 </span>
               </div>
+              <p className="mb-2 rounded-lg bg-amber-50 px-2.5 py-2 text-center text-[11px] leading-4 text-amber-800">
+                板块/指数涨幅仅作行情参考，不等同基金官方净值涨幅
+              </p>
               {intradayLoading ? (
                 <div className="flex h-[200px] items-center justify-center text-sm text-slate-500">
                   <Loader2 size={18} className="mr-2 animate-spin" />

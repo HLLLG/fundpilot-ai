@@ -89,7 +89,7 @@ from app.services.fund_profile import FundProfileService, migrate_fund_profile_c
 from app.services.holding_validation import validate_holdings
 from app.services.penetration_daily_allocator import allocate_penetration_daily_profit
 from app.services.holding_client import serialize_holdings_for_client
-from app.services.fund_code_resolver import reconcile_holding_fund_codes, search_funds_by_keyword
+from app.services.fund_code_resolver import reconcile_holding_fund_codes, search_funds_page_by_keyword
 from app.services.portfolio_holdings_service import (
     apply_server_sector_cache_to_holdings,
     build_fast_snapshot_holdings_response,
@@ -517,9 +517,26 @@ def settle_portfolio_official_nav() -> dict:
 
 
 @app.get("/api/funds/search")
-def search_funds(q: str = "", limit: int = 12) -> dict:
-    items = search_funds_by_keyword(q, limit=min(max(limit, 1), 30))
-    return {"query": q, "items": items}
+def search_funds(q: str = "", limit: int = 12, offset: int = 0) -> dict:
+    page = search_funds_page_by_keyword(
+        q,
+        limit=min(max(limit, 1), 100),
+        offset=min(max(offset, 0), 20_000),
+        include_popularity=True,
+    )
+    return {"query": q, **page}
+
+
+@app.get("/api/funds/{fund_code}/overview")
+def get_fund_public_overview(fund_code: str) -> dict:
+    from app.services.fund_public_overview import build_fund_public_overview
+
+    try:
+        return build_fund_public_overview(fund_code)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/api/funds/{fund_code}/primary-sector")

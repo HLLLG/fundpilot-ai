@@ -2,10 +2,12 @@
 
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Search } from "lucide-react";
 import type {
   AnalysisPromptConfig,
   FundCodeResolution,
   FundDiscoveryReport,
+  FundSearchItem,
   Holding,
   HoldingAdjustmentPatch,
   HoldingFieldWarning,
@@ -158,6 +160,14 @@ const YangjibaoFundDetail = dynamic(
     ),
   { loading: () => <DeferredInteractionLoading label="基金详情" /> },
 );
+const FundSearchDialog = dynamic(
+  () => import("@/components/FundSearchDialog").then((module) => module.FundSearchDialog),
+  { loading: () => <DeferredInteractionLoading label="基金搜索" /> },
+);
+const FundResearchDetail = dynamic(
+  () => import("@/components/FundResearchDetail").then((module) => module.FundResearchDetail),
+  { loading: () => <DeferredInteractionLoading label="基金研究详情" /> },
+);
 const AddHoldingModal = dynamic(
   () => import("@/components/AddHoldingModal").then((module) => module.AddHoldingModal),
   { loading: () => <DeferredInteractionLoading label="添加持仓" /> },
@@ -271,6 +281,8 @@ export function Dashboard() {
   );
   const discoveryScanRetryRef = useRef<(() => void) | null>(null);
   const [selectedHoldingKey, setSelectedHoldingKey] = useState<HoldingIdentity | null>(null);
+  const [fundSearchOpen, setFundSearchOpen] = useState(false);
+  const [researchFund, setResearchFund] = useState<FundSearchItem | null>(null);
   const selectedHoldingIndex = useMemo(() => {
     if (!selectedHoldingKey) {
       return null;
@@ -278,6 +290,13 @@ export function Dashboard() {
     const index = findHoldingIndex(holdings, selectedHoldingKey);
     return index >= 0 ? index : null;
   }, [holdings, selectedHoldingKey]);
+  const researchHolding = useMemo(
+    () =>
+      researchFund
+        ? holdings.find((item) => item.fund_code === researchFund.fund_code) ?? null
+        : null,
+    [holdings, researchFund],
+  );
   const reportSectionRef = useRef<HTMLDivElement>(null);
   const refreshAfterApplyRef = useRef<"sector" | null>(null);
   const initialSectorRefreshDoneRef = useRef(false);
@@ -1573,7 +1592,18 @@ export function Dashboard() {
               onSelect={setActiveTab}
             />
           </div>
-          <UserMenu />
+          <div className="flex shrink-0 items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setFundSearchOpen(true)}
+              className="touch-target inline-flex items-center justify-center rounded-full text-slate-600 transition hover:bg-white hover:text-[var(--brand-strong)]"
+              aria-label="搜索基金"
+              title="搜索基金"
+            >
+              <Search size={20} />
+            </button>
+            <UserMenu />
+          </div>
         </header>
 
         {notice ? (
@@ -1787,6 +1817,23 @@ export function Dashboard() {
           />
         ) : null}
       </BackgroundJobsStack>
+
+      <FundSearchDialog
+        open={fundSearchOpen}
+        onClose={() => setFundSearchOpen(false)}
+        onSelect={(selected) => {
+          setFundSearchOpen(false);
+          setResearchFund(selected);
+        }}
+      />
+
+      {researchFund ? (
+        <FundResearchDetail
+          fund={researchFund}
+          holding={researchHolding}
+          onClose={() => setResearchFund(null)}
+        />
+      ) : null}
 
       {selectedHoldingIndex !== null && holdings[selectedHoldingIndex] ? (
         <YangjibaoFundDetail

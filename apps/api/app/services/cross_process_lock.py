@@ -10,7 +10,7 @@ from typing import Callable, Iterator
 from urllib.parse import urlparse
 
 from app.config import get_settings
-from app.db_connect import open_dedicated_mysql_session
+from app.db_connect import open_dedicated_mysql_session, sqlite_fallback_active
 
 
 logger = logging.getLogger(__name__)
@@ -255,9 +255,12 @@ def cross_process_lock(
 
     Production MySQL uses connection-scoped advisory locks. Local SQLite uses
     an OS file lock beside the database, which also works across local worker
-    processes and is automatically released when a process exits.
+    processes and is automatically released when a process exits. When the
+    normal connection layer has activated the explicitly enabled local SQLite
+    fallback, coordination follows that effective store. Production keeps
+    ``FUND_AI_DB_FALLBACK_SQLITE=false`` and therefore remains fail-closed.
     """
-    if get_settings().uses_mysql:
+    if get_settings().uses_mysql and not sqlite_fallback_active():
         with _mysql_lock(resource, timeout_seconds=timeout_seconds) as handle:
             yield handle
         return

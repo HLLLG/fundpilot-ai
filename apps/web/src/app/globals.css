@@ -107,6 +107,11 @@ button:disabled {
   outline-offset: 3px;
 }
 
+/* 搜索框由外层容器提供完整焦点反馈，避免再叠一层深色输入框轮廓。 */
+.fund-search-input:focus-visible {
+  outline: none;
+}
+
 .touch-target {
   min-width: 2.75rem;
   min-height: 2.75rem;

@@ -31,7 +31,9 @@ def _cache_ttl_seconds() -> int:
         return 86400
 
 
-def load_cached_fund_name_table() -> list[tuple[str, str]] | None:
+def load_cached_fund_name_table(
+    *, allow_stale: bool = False
+) -> list[tuple[str, str]] | None:
     path = _cache_path()
     if not path.is_file():
         return None
@@ -47,7 +49,7 @@ def load_cached_fund_name_table() -> list[tuple[str, str]] | None:
         if fetched.tzinfo is None:
             fetched = fetched.replace(tzinfo=timezone.utc)
         age = (datetime.now(timezone.utc) - fetched).total_seconds()
-        if age > _cache_ttl_seconds():
+        if age > _cache_ttl_seconds() and not allow_stale:
             return None
         table = [(str(code), str(name)) for code, name in rows if code and name]
         return table or None

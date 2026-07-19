@@ -27,7 +27,9 @@ vi.mock("@/lib/api", async () => {
 });
 
 vi.mock("@/components/PerformanceReturnChart", () => ({
-  PerformanceReturnChart: () => <div data-testid="performance-return-chart" />,
+  PerformanceReturnChart: (props: { height?: number }) => (
+    <div data-testid="performance-return-chart" data-height={props.height} />
+  ),
 }));
 
 const FUND_CODE = "110022";
@@ -56,6 +58,17 @@ function indexHistory(): IndexDailyHistory {
     points: Array.from({ length: 25 }, (_, index) => ({
       date: `2026-06-${String(index + 1).padStart(2, "0")}`,
       close: 4000 + index,
+    })),
+  };
+}
+
+function overviewFundHistory(): FundNavHistory {
+  return {
+    ...fundHistory(),
+    points: Array.from({ length: 260 }, (_, index) => ({
+      date: new Date(Date.UTC(2025, 0, index + 1)).toISOString(),
+      nav: 1 + index / 1000,
+      daily_return_percent: index === 0 ? null : 0.1,
     })),
   };
 }
@@ -161,5 +174,52 @@ describe("PerformanceTrendPanel NAV preview", () => {
 
     expect(await screen.findByText("new fund unavailable")).toBeInTheDocument();
     expect(screen.queryByText("2026-06-25")).not.toBeInTheDocument();
+  });
+
+  it("supports fund-only public research without loading trades or a benchmark", async () => {
+    render(
+      <PerformanceTrendPanel
+        fundCode={FUND_CODE}
+        fundName="测试基金"
+        benchmarkSymbol={null}
+        showTransactions={false}
+      />,
+    );
+
+    expect(await screen.findByTestId("performance-return-chart")).toBeInTheDocument();
+    expect(fetchFundNavHistory).toHaveBeenCalledWith(FUND_CODE, DEFAULT_DAYS);
+    expect(fetchIndexDailyHistory).not.toHaveBeenCalled();
+    expect(getFundTransactions).not.toHaveBeenCalled();
+    expect(screen.queryByText("沪深300")).not.toBeInTheDocument();
+  });
+
+  it("renders overview NAV immediately while the benchmark is still loading", async () => {
+    let resolveBenchmark: ((value: IndexDailyHistory) => void) | undefined;
+    vi.mocked(fetchIndexDailyHistory).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveBenchmark = resolve;
+      }),
+    );
+
+    render(
+      <PerformanceTrendPanel
+        fundCode={FUND_CODE}
+        fundName="测试基金"
+        initialFundHistory={overviewFundHistory()}
+        initialFundHistoryCoverageDays={260}
+        chartHeight={170}
+      />,
+    );
+
+    const chart = await screen.findByTestId("performance-return-chart");
+    expect(chart).toHaveAttribute("data-height", "170");
+    expect(screen.getByText("加载中")).toBeInTheDocument();
+    expect(fetchFundNavHistory).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "近1年" }));
+    await waitFor(() => expect(fetchIndexDailyHistory).toHaveBeenLastCalledWith("000300", 252));
+    expect(fetchFundNavHistory).not.toHaveBeenCalled();
+
+    resolveBenchmark?.(indexHistory());
   });
 });

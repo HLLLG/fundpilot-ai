@@ -33,11 +33,47 @@ function buildPreviewSeries(points: FundNavHistory["points"]) {
   }));
 }
 
+function fundHistoryForPeriod(
+  history: FundNavHistory | null | undefined,
+  fundCode: string,
+  days: number,
+  coverageDays: number,
+): FundNavHistory | null {
+  if (
+    !history ||
+    history.fund_code !== fundCode ||
+    history.points.length === 0 ||
+    coverageDays < days
+  ) {
+    return null;
+  }
+  const points = history.points.slice(-days);
+  const first = points[0];
+  const latest = points.at(-1);
+  const periodChange =
+    first && latest && first.nav > 0
+      ? Math.round((latest.nav / first.nav - 1) * 10000) / 100
+      : null;
+  return {
+    ...history,
+    points,
+    latest_nav: latest?.nav ?? history.latest_nav,
+    latest_date: latest?.date ?? history.latest_date,
+    period_change_percent: periodChange,
+  };
+}
+
 type PerformanceTrendPanelProps = {
   fundCode: string;
   fundName: string;
   costPrice?: number | null;
   enabled?: boolean;
+  benchmarkSymbol?: string | null;
+  benchmarkName?: string | null;
+  showTransactions?: boolean;
+  initialFundHistory?: FundNavHistory | null;
+  initialFundHistoryCoverageDays?: number;
+  chartHeight?: number;
 };
 
 export function PerformanceTrendPanel({
@@ -45,17 +81,25 @@ export function PerformanceTrendPanel({
   fundName,
   costPrice,
   enabled = true,
+  benchmarkSymbol = "000300",
+  benchmarkName,
+  showTransactions = true,
+  initialFundHistory,
+  initialFundHistoryCoverageDays = 0,
+  chartHeight = 220,
 }: PerformanceTrendPanelProps) {
   const [days, setDays] = useState(63);
   const [fundHistory, setFundHistory] = useState<FundNavHistory | null>(null);
   const [benchHistory, setBenchHistory] = useState<IndexDailyHistory | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [fundLoading, setFundLoading] = useState(false);
+  const [benchmarkLoading, setBenchmarkLoading] = useState(false);
+  const [fundError, setFundError] = useState<string | null>(null);
+  const [benchmarkError, setBenchmarkError] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [transactions, setTransactions] = useState<FundTransaction[]>([]);
 
   useEffect(() => {
-    if (!enabled || fundCode === "000000") {
+    if (!enabled || !showTransactions || fundCode === "000000") {
       setTransactions([]);
       return;
     }
@@ -74,7 +118,7 @@ export function PerformanceTrendPanel({
     return () => {
       cancelled = true;
     };
-  }, [enabled, fundCode]);
+  }, [enabled, fundCode, showTransactions]);
 
   const tradeMarkers = useMemo<TradeMarker[]>(() => {
     const byDate = new Map<string, FundTransaction[]>();
@@ -121,70 +165,86 @@ export function PerformanceTrendPanel({
     }
     let cancelled = false;
     const fundCacheKey = buildClientCacheKey("fund-nav-history", fundCode, days);
-    const benchCacheKey = buildClientCacheKey("index-daily", "000300", days);
+    const benchCacheKey = buildClientCacheKey("index-daily", benchmarkSymbol ?? "none", days);
     const cachedFund = readClientCache<FundNavHistory>(fundCacheKey, NAV_HISTORY_TTL_MS);
-    const cachedBench = readClientCache<IndexDailyHistory>(benchCacheKey, INDEX_DAILY_TTL_MS);
+    const cachedBench = benchmarkSymbol
+      ? readClientCache<IndexDailyHistory>(benchCacheKey, INDEX_DAILY_TTL_MS)
+      : null;
+    const initialFund = fundHistoryForPeriod(
+      initialFundHistory,
+      fundCode,
+      days,
+      initialFundHistoryCoverageDays,
+    );
+    const availableFund = cachedFund ?? initialFund;
 
-    setFundHistory(cachedFund ?? null);
+    if (initialFund && !cachedFund) {
+      writeClientCache(fundCacheKey, initialFund);
+    }
+    setFundHistory(availableFund);
     setBenchHistory(cachedBench ?? null);
-    setLoading(!cachedFund || !cachedBench);
-    setError(null);
+    setFundLoading(!availableFund);
+    setBenchmarkLoading(Boolean(benchmarkSymbol) && !cachedBench);
+    setFundError(null);
+    setBenchmarkError(null);
 
-    const fundRequest = cachedFund
-      ? Promise.resolve(cachedFund)
-      : fetchFundNavHistory(fundCode, days);
-    const benchRequest = cachedBench
-      ? Promise.resolve(cachedBench)
-      : fetchIndexDailyHistory("000300", days);
+    if (!availableFund) {
+      void fetchFundNavHistory(fundCode, days)
+        .then((result) => {
+          if (cancelled) return;
+          writeClientCache(fundCacheKey, result);
+          setFundHistory(result);
+        })
+        .catch((reason: unknown) => {
+          if (cancelled) return;
+          setFundError(reason instanceof Error ? reason.message : "加载基金走势失败");
+        })
+        .finally(() => {
+          if (!cancelled) setFundLoading(false);
+        });
+    }
 
-    void Promise.allSettled([fundRequest, benchRequest])
-      .then(([fundResult, benchResult]) => {
-        if (cancelled) {
-          return;
-        }
-
-        if (fundResult.status === "fulfilled") {
-          writeClientCache(fundCacheKey, fundResult.value);
-          setFundHistory(fundResult.value);
-        }
-        if (benchResult.status === "fulfilled") {
-          writeClientCache(benchCacheKey, benchResult.value);
-          setBenchHistory(benchResult.value);
-        }
-
-        const loadError =
-          fundResult.status === "rejected"
-            ? fundResult.reason
-            : benchResult.status === "rejected" && !cachedFund && !cachedBench
-              ? benchResult.reason
-              : null;
-        if (loadError) {
-          setError(loadError instanceof Error ? loadError.message : "加载业绩走势失败");
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      });
+    if (benchmarkSymbol && !cachedBench) {
+      void fetchIndexDailyHistory(benchmarkSymbol, days)
+        .then((result) => {
+          if (cancelled) return;
+          writeClientCache(benchCacheKey, result);
+          setBenchHistory(result);
+        })
+        .catch((reason: unknown) => {
+          if (cancelled) return;
+          setBenchmarkError(reason instanceof Error ? reason.message : "参考基准暂不可用");
+        })
+        .finally(() => {
+          if (!cancelled) setBenchmarkLoading(false);
+        });
+    }
     return () => {
       cancelled = true;
     };
-  }, [days, enabled, fundCode]);
+  }, [
+    benchmarkSymbol,
+    days,
+    enabled,
+    fundCode,
+    initialFundHistory,
+    initialFundHistoryCoverageDays,
+  ]);
 
+  const activeFundHistory = fundHistory?.fund_code === fundCode ? fundHistory : null;
   const series = useMemo(
-    () => buildPerformanceSeries(fundHistory?.points ?? [], benchHistory?.points ?? []),
-    [benchHistory?.points, fundHistory?.points],
+    () => buildPerformanceSeries(activeFundHistory?.points ?? [], benchHistory?.points ?? []),
+    [activeFundHistory?.points, benchHistory?.points],
   );
   const previewSeries = useMemo(
-    () => (fundHistory?.fund_code === fundCode ? buildPreviewSeries(fundHistory.points) : []),
-    [fundCode, fundHistory],
+    () => buildPreviewSeries(activeFundHistory?.points ?? []),
+    [activeFundHistory?.points],
   );
-  const previewLoading = loading && fundHistory?.fund_code !== fundCode;
+  const previewLoading = fundLoading && fundHistory?.fund_code !== fundCode;
 
-  const fundPeriodChange = fundHistory?.period_change_percent ?? series.at(-1)?.fundPercent ?? null;
+  const fundPeriodChange = activeFundHistory?.period_change_percent ?? series.at(-1)?.fundPercent ?? null;
   const benchPeriodChange = series.at(-1)?.benchPercent ?? benchHistory?.period_change_percent ?? null;
-  const hasBenchmark = series.some((point) => point.benchPercent != null);
+  const hasBenchmark = Boolean(benchmarkSymbol) && series.some((point) => point.benchPercent != null);
 
   if (!enabled) {
     return (
@@ -204,16 +264,28 @@ export function PerformanceTrendPanel({
             {formatSignedPercent(fundPeriodChange)}
           </span>
         </div>
-        <div className="inline-flex items-center gap-1.5 text-slate-500">
-          <span className="h-0.5 w-4 rounded-full bg-[#f59e0b]" />
-          <span className="inline-flex items-center gap-0.5">
-            {benchHistory?.name ?? "沪深300"}
-            <ChevronDown size={12} className="text-slate-500" />
-          </span>
-          <span className={`font-semibold tabular-nums ${cnSignedPercent(benchPeriodChange)}`}>
-            {formatSignedPercent(benchPeriodChange)}
-          </span>
-        </div>
+        {benchmarkSymbol ? (
+          <div className="inline-flex items-center gap-1.5 text-slate-500">
+            <span className="h-0.5 w-4 rounded-full bg-[#f59e0b]" />
+            <span className="inline-flex items-center gap-0.5">
+              {benchHistory?.name ?? benchmarkName ?? benchmarkSymbol}
+              <ChevronDown size={12} className="text-slate-500" />
+            </span>
+            {benchmarkLoading ? (
+              <span className="inline-flex items-center gap-1 text-[11px] text-slate-400">
+                <Loader2 size={11} className="animate-spin" />加载中
+              </span>
+            ) : benchmarkError ? (
+              <span className="max-w-40 truncate text-[11px] text-slate-400" title={benchmarkError}>
+                {benchmarkError}
+              </span>
+            ) : (
+              <span className={`font-semibold tabular-nums ${cnSignedPercent(benchPeriodChange)}`}>
+                {formatSignedPercent(benchPeriodChange)}
+              </span>
+            )}
+          </div>
+        ) : null}
         {costPrice != null ? (
           <div className="inline-flex items-center gap-1.5 text-slate-500">
             <span className="h-0.5 w-4 rounded-full bg-slate-300" />
@@ -223,25 +295,25 @@ export function PerformanceTrendPanel({
         ) : null}
       </div>
 
-      {loading ? (
-        <div className="flex h-[220px] items-center justify-center text-sm text-slate-500">
+      {fundLoading && fundHistory?.fund_code !== fundCode ? (
+        <div style={{ height: chartHeight }} className="flex items-center justify-center text-sm text-slate-500">
           <Loader2 size={18} className="mr-2 animate-spin" />
           加载业绩走势…
         </div>
-      ) : error ? (
+      ) : fundError ? (
         <div className="rounded-xl border border-rose-100 bg-rose-50 px-4 py-6 text-center text-sm text-rose-700">
-          {error}
+          {fundError}
         </div>
       ) : series.length >= 2 ? (
         <PerformanceReturnChart
           points={series}
-          height={220}
+          height={chartHeight}
           showBenchmark={hasBenchmark}
           markers={tradeMarkers}
         />
       ) : (
         <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
-          {fundHistory?.note ?? "暂无净值历史数据"}
+          {activeFundHistory?.note ?? "暂无净值历史数据"}
         </div>
       )}
 

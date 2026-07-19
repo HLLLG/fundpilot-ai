@@ -141,6 +141,76 @@ def test_lock_does_not_wrap_exceptions_from_protected_body(monkeypatch) -> None:
             raise ValueError("business failure")
 
 
+def test_active_sqlite_fallback_uses_file_lock_in_mysql_config(monkeypatch) -> None:
+    selected: list[str] = []
+
+    @contextmanager
+    def sqlite_lock(resource: str, *, timeout_seconds: float):
+        del timeout_seconds
+        selected.append(resource)
+        yield lock_service.CrossProcessLockHandle(
+            resource=resource,
+            backend="sqlite",
+        )
+
+    @contextmanager
+    def unexpected_mysql_lock(*_args, **_kwargs):
+        raise AssertionError("active SQLite fallback must not retry MySQL")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(
+        lock_service,
+        "get_settings",
+        lambda: SimpleNamespace(uses_mysql=True),
+    )
+    monkeypatch.setattr(lock_service, "sqlite_fallback_active", lambda: True)
+    monkeypatch.setattr(lock_service, "_sqlite_file_lock", sqlite_lock)
+    monkeypatch.setattr(lock_service, "_mysql_lock", unexpected_mysql_lock)
+
+    with lock_service.cross_process_lock(
+        "background-worker:leader:v1",
+        timeout_seconds=1,
+    ) as lease:
+        assert lease.backend == "sqlite"
+
+    assert selected == ["background-worker:leader:v1"]
+
+
+def test_mysql_coordination_stays_fail_closed_without_active_fallback(monkeypatch) -> None:
+    selected: list[str] = []
+
+    @contextmanager
+    def mysql_lock(resource: str, *, timeout_seconds: float):
+        del timeout_seconds
+        selected.append(resource)
+        yield lock_service.CrossProcessLockHandle(
+            resource=resource,
+            backend="mysql",
+        )
+
+    @contextmanager
+    def unexpected_sqlite_lock(*_args, **_kwargs):
+        raise AssertionError("production MySQL must not use a local file lock")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(
+        lock_service,
+        "get_settings",
+        lambda: SimpleNamespace(uses_mysql=True),
+    )
+    monkeypatch.setattr(lock_service, "sqlite_fallback_active", lambda: False)
+    monkeypatch.setattr(lock_service, "_mysql_lock", mysql_lock)
+    monkeypatch.setattr(lock_service, "_sqlite_file_lock", unexpected_sqlite_lock)
+
+    with lock_service.cross_process_lock(
+        "background-worker:leader:v1",
+        timeout_seconds=1,
+    ) as lease:
+        assert lease.backend == "mysql"
+
+    assert selected == ["background-worker:leader:v1"]
+
+
 def test_portfolio_guard_is_reentrant_without_reacquiring_database_lock(monkeypatch) -> None:
     calls = 0
 

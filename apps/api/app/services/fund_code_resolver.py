@@ -6,6 +6,7 @@ import subprocess
 import sys
 from collections import defaultdict
 from dataclasses import dataclass
+from threading import RLock, Thread
 
 from app.services.fund_name_fuzzy import (
     FUZZY_SEARCH_MIN_SCORE,
@@ -18,6 +19,7 @@ from app.services.fund_name_table_store import (
     load_cached_fund_name_table,
     save_fund_name_table_cache,
 )
+from app.services.fund_search_suggestions import fetch_ranked_fund_suggestions
 from app.services.fund_name_utils import (
     extract_share_class_letter,
     is_fund_name_match,
@@ -68,6 +70,8 @@ def _fund_name_table_looks_valid(table: list[tuple[str, str]]) -> bool:
 
 _fund_name_table_cache: list[tuple[str, str]] | None = None
 _fund_name_index_cache: _FundNameIndex | None = None
+_fund_name_cache_lock = RLock()
+_fund_name_refresh_thread: Thread | None = None
 
 
 @dataclass(frozen=True)
@@ -155,6 +159,35 @@ def clear_fund_name_table_cache() -> None:
     _fund_name_index_cache = None
 
 
+def _refresh_fund_name_table_in_background() -> None:
+    global _fund_name_table_cache, _fund_name_index_cache, _fund_name_refresh_thread
+    try:
+        for _ in range(2):
+            candidate = _fetch_fund_name_table_subprocess()
+            if candidate and _fund_name_table_looks_valid(candidate):
+                save_fund_name_table_cache(candidate)
+                with _fund_name_cache_lock:
+                    _fund_name_table_cache = candidate
+                    _fund_name_index_cache = None
+                return
+    finally:
+        with _fund_name_cache_lock:
+            _fund_name_refresh_thread = None
+
+
+def _schedule_fund_name_table_refresh() -> None:
+    global _fund_name_refresh_thread
+    with _fund_name_cache_lock:
+        if _fund_name_refresh_thread is not None and _fund_name_refresh_thread.is_alive():
+            return
+        _fund_name_refresh_thread = Thread(
+            target=_refresh_fund_name_table_in_background,
+            name="fund-name-table-refresh",
+            daemon=True,
+        )
+        _fund_name_refresh_thread.start()
+
+
 def clear_all_fund_name_table_caches() -> None:
     clear_fund_name_table_cache()
     clear_persisted_fund_name_table_cache()
@@ -221,6 +254,14 @@ def _fund_name_table() -> list[tuple[str, str]]:
     if cached and _fund_name_table_looks_valid(cached):
         _fund_name_table_cache = cached
         return cached
+
+    # 搜索入口优先可用性：缓存过期不等于数据失效。先返回通过完整性校验的旧表，
+    # 再由单一后台线程刷新，避免用户第一次搜索被两个 120 秒子进程阻塞。
+    stale = load_cached_fund_name_table(allow_stale=True)
+    if stale and _fund_name_table_looks_valid(stale):
+        _fund_name_table_cache = stale
+        _schedule_fund_name_table_refresh()
+        return stale
 
     fetched: list[tuple[str, str]] | None = None
     for _ in range(2):
@@ -336,88 +377,185 @@ def lookup_fund_name_by_code(fund_code: str) -> str | None:
     return None
 
 
-def search_funds_by_keyword(keyword: str, *, limit: int = 12) -> list[dict[str, str]]:
-    """东财基金表模糊搜索，供确认页手动选码（养基宝式核对）。"""
+_SEARCH_MATCH_PRIORITY = {
+    "code_exact": 7,
+    "code_prefix": 6,
+    "code_contains": 5,
+    "name_exact": 4,
+    "name_prefix": 3,
+    "name_contains": 2,
+    "name_fuzzy": 1,
+}
+
+
+def _ranked_search_payload(
+    keyword: str,
+    *,
+    include_popularity: bool,
+) -> list[dict[str, object]]:
     query = keyword.strip()
     if not query:
         return []
 
     index = _fund_name_index()
     table_snapshot = index.table
-    results: list[tuple[int, str, str]] = []
+    results: list[tuple[int, str, str, str]] = []
 
     if query.isdigit() and len(query) <= 6:
-        code_query = query.zfill(6)
-        name = index.by_code.get(code_query)
-        if name and _fund_name_looks_valid(name):
-            return [{"fund_code": code_query, "fund_name": name}]
-        for table_code, table_name in _reload_fund_name_table():
-            if table_code == code_query and _fund_name_looks_valid(table_name):
-                return [{"fund_code": code_query, "fund_name": table_name}]
-        # reload 失败时会清空内存表；前缀匹配仍用 reload 前的快照（与原实现一致）
-        prefix_source = table_snapshot
-        index = _fund_name_index()
-        if index.table:
-            prefix_source = index.table
-        for code, table_name in prefix_source:
-            if code.startswith(query) and _fund_name_looks_valid(table_name):
-                results.append((900_000 + len(query), code, table_name))
+        # 只有完整六位代码才是“精确代码”；短数字不得 zfill 后劫持结果。
+        # 例如 0085 应匹配 008585/008586，856 应命中包含该片段的代码。
+        if len(query) == 6:
+            name = index.by_code.get(query)
+            if name and _fund_name_looks_valid(name):
+                return [
+                    {
+                        "fund_code": query,
+                        "fund_name": name,
+                        "match_kind": "code_exact",
+                    }
+                ]
+        for code, table_name in table_snapshot:
+            if not _fund_name_looks_valid(table_name):
+                continue
+            if code.startswith(query):
+                results.append((1_800_000 + len(query), code, table_name, "code_prefix"))
+            elif query in code:
+                results.append((1_600_000 + len(query), code, table_name, "code_contains"))
 
-    index = _fund_name_index()
-    query_norm = normalize_fund_name_for_lookup(query)
-    candidate_codes = set()
-    if len(query) >= 2:
-        candidate_codes |= _candidate_codes_by_bigrams(
-            index.postings_by_name_bigram,
-            _text_bigrams(query),
-        )
-    if query_norm and len(query_norm) >= 2:
-        candidate_codes |= _candidate_codes_by_bigrams(
-            index.postings_by_norm_bigram,
-            _text_bigrams(query_norm),
-        )
-
-    if candidate_codes:
-        iterable = (
-            (code, index.by_code[code])
-            for code in candidate_codes
-            if code in index.by_code
-        )
     else:
-        iterable = index.table if index.table else table_snapshot
+        query_norm = normalize_fund_name_for_lookup(query)
+        candidate_codes = set()
+        if len(query) >= 2:
+            candidate_codes |= _candidate_codes_by_bigrams(
+                index.postings_by_name_bigram,
+                _text_bigrams(query),
+            )
+        if query_norm and len(query_norm) >= 2:
+            candidate_codes |= _candidate_codes_by_bigrams(
+                index.postings_by_norm_bigram,
+                _text_bigrams(query_norm),
+            )
 
-    for code, name in iterable:
-        if query in name:
-            score = 500_000 + len(query)
-        elif query_norm:
-            score = lookup_match_score(query_norm, normalize_fund_name_for_lookup(name))
+        if candidate_codes:
+            iterable = (
+                (code, index.by_code[code])
+                for code in candidate_codes
+                if code in index.by_code
+            )
         else:
-            score = 0
-        if score > 0:
-            results.append((score, code, name))
+            iterable = index.table if index.table else table_snapshot
 
-    if not results and query_norm and len(query_norm) >= 4:
-        fuzzy_table = list(index.table) if index.table else list(table_snapshot)
-        for score, code, name in fuzzy_search_funds(
-            query,
-            fuzzy_table,
-            limit=limit,
-            min_score=FUZZY_SEARCH_MIN_SCORE,
-        ):
-            fuzzy_boost = int(fuzzy_name_match_score(query, name) * 400_000)
-            results.append((fuzzy_boost, code, name))
+        for code, name in iterable:
+            normalized_name = normalize_fund_name_for_lookup(name)
+            match_kind = "name_fuzzy"
+            if query_norm and query_norm == normalized_name:
+                score = 1_500_000 - len(name)
+                match_kind = "name_exact"
+            elif query in name or (query_norm and normalized_name.startswith(query_norm)):
+                is_prefix = name.startswith(query) or normalized_name.startswith(query_norm)
+                score = (
+                    (1_400_000 if is_prefix else 1_200_000)
+                    + len(query_norm or query) * 100
+                    - max(0, len(normalized_name) - len(query_norm or query))
+                )
+                match_kind = "name_prefix" if is_prefix else "name_contains"
+            elif query_norm:
+                score = lookup_match_score(query_norm, normalized_name)
+            else:
+                score = 0
+            if score > 0:
+                results.append((score, code, name, match_kind))
 
-    results.sort(key=lambda item: item[0], reverse=True)
+        if not results and query_norm and len(query_norm) >= 4:
+            fuzzy_table = list(index.table) if index.table else list(table_snapshot)
+            for score, code, name in fuzzy_search_funds(
+                query,
+                fuzzy_table,
+                limit=200,
+                min_score=FUZZY_SEARCH_MIN_SCORE,
+            ):
+                fuzzy_boost = int(fuzzy_name_match_score(query, name) * 400_000)
+                results.append((fuzzy_boost, code, name, "name_fuzzy"))
+
+    suggestions = (
+        fetch_ranked_fund_suggestions(query)
+        if include_popularity and len(query) >= 2 and results
+        else []
+    )
+    suggestion_by_code = {
+        str(item.get("fund_code") or ""): item
+        for item in suggestions
+        if isinstance(item, dict)
+    }
+    results.sort(
+        key=lambda item: (
+            -_SEARCH_MATCH_PRIORITY.get(item[3], 0),
+            int(suggestion_by_code.get(item[1], {}).get("provider_rank") or 10_000),
+            -item[0],
+            item[1],
+            len(item[2]),
+        )
+    )
     seen: set[str] = set()
-    payload: list[dict[str, str]] = []
-    for _, code, name in results:
+    payload: list[dict[str, object]] = []
+    for _, code, name, match_kind in results:
         if code in seen:
             continue
         seen.add(code)
-        payload.append({"fund_code": code, "fund_name": name})
-        if len(payload) >= limit:
-            break
+        item: dict[str, object] = {
+            "fund_code": code,
+            "fund_name": name,
+            "match_kind": match_kind,
+        }
+        suggestion = suggestion_by_code.get(code)
+        if suggestion is not None:
+            item["popularity_rank"] = suggestion.get("provider_rank")
+            if suggestion.get("fund_type"):
+                item["fund_type"] = suggestion["fund_type"]
+        payload.append(item)
     return payload
+
+
+def search_funds_page_by_keyword(
+    keyword: str,
+    *,
+    limit: int = 12,
+    offset: int = 0,
+    include_popularity: bool = False,
+) -> dict[str, object]:
+    """Search the local full catalogue and return a stable, pageable result."""
+
+    cap = min(max(int(limit), 1), 100)
+    start = min(max(int(offset), 0), 20_000)
+    payload = _ranked_search_payload(
+        keyword,
+        include_popularity=include_popularity,
+    )
+    items = payload[start : start + cap]
+    return {
+        "items": items,
+        "total": len(payload),
+        "offset": start,
+        "limit": cap,
+        "has_more": start + len(items) < len(payload),
+    }
+
+
+def search_funds_by_keyword(
+    keyword: str,
+    *,
+    limit: int = 12,
+    offset: int = 0,
+    include_popularity: bool = False,
+) -> list[dict[str, object]]:
+    """东财基金表模糊搜索，供确认页手动选码（养基宝式核对）。"""
+
+    return search_funds_page_by_keyword(
+        keyword,
+        limit=limit,
+        offset=offset,
+        include_popularity=include_popularity,
+    )["items"]  # type: ignore[return-value]
 
 
 def is_provisional_fund_code(fund_code: str | None) -> bool:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 from app.config import refresh_settings
@@ -18,6 +19,21 @@ def test_sqlite_fallback_uses_sqlite_placeholders(monkeypatch):
     row = connection.execute("SELECT id FROM smoke WHERE id = ?", ("ok",)).fetchone()
 
     assert row[0] == "ok"
+
+
+def test_sqlite_fallback_active_reports_the_effective_store(monkeypatch) -> None:
+    monkeypatch.setattr(db_connect, "uses_mysql", lambda: True)
+    monkeypatch.setattr(db_connect, "sqlite_fallback_enabled", lambda: True)
+    monkeypatch.setattr(
+        db_connect,
+        "_mysql_unreachable_until",
+        time.time() + 60,
+    )
+
+    assert db_connect.sqlite_fallback_active() is True
+
+    monkeypatch.setattr(db_connect, "_mysql_unreachable_until", time.time() - 1)
+    assert db_connect.sqlite_fallback_active() is False
 
 
 class _FakeMySqlConnection:

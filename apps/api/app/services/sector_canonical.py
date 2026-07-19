@@ -86,6 +86,27 @@ _CANONICAL_BY_LABEL: dict[str, CanonicalSector] = {
         eastmoney_secid="2.930713",
         source_code="930713",
     ),
+    "中证人工智能主题指数": CanonicalSector(
+        label="中证人工智能主题指数",
+        source_type="index",
+        source_name="中证人工智能",
+        eastmoney_secid="2.930713",
+        source_code="930713",
+    ),
+    "中证人工智能产业指数": CanonicalSector(
+        label="中证人工智能产业指数",
+        source_type="index",
+        source_name="人工智能",
+        eastmoney_secid="2.931071",
+        source_code="931071",
+    ),
+    "人工智能产业": CanonicalSector(
+        label="人工智能产业",
+        source_type="index",
+        source_name="人工智能",
+        eastmoney_secid="2.931071",
+        source_code="931071",
+    ),
     "中证半导体": CanonicalSector(
         label="中证半导体",
         source_type="index",

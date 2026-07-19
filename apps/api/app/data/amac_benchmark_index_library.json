@@ -395,11 +395,11 @@
       "market_type": "主题类",
       "index_full_name": "中证人工智能主题指数",
       "update_time": "2026-06-10",
-      "source_code": "931071",
-      "eastmoney_secid": "2.931071",
-      "eastmoney_name": "人工智能",
+      "source_code": "930713",
+      "eastmoney_secid": "2.930713",
+      "eastmoney_name": "中证人工智能",
       "theme_label": "人工智能",
-      "resolution": "auto_fuzzy"
+      "resolution": "manual"
     },
     {
       "tier": "oneClass",
