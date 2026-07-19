@@ -38,7 +38,7 @@ def fetch_discovery_fund_universe_cached(*, limit: int = 20_000) -> list[dict]:
         snapshot = {
             "schema_version": "fund_universe_snapshot.v1",
             "snapshot_available_at": datetime.now(timezone.utc).isoformat(),
-            "source": "eastmoney_open_fund_universe",
+            "source": "eastmoney_fund_catalogue_with_optional_rank_enrichment",
             "rows": rows,
         }
         save_spot_snapshot(_UNIVERSE_CACHE_KEY, snapshot)

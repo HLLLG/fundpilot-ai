@@ -293,6 +293,8 @@ def _safe_metadata(
     row: dict[str, Any], *, snapshot_available_at: datetime
 ) -> dict[str, Any]:
     keys = (
+        "source_fund_type",
+        "rank_enriched",
         "nav_date",
         "latest_nav",
         "daily_growth_percent",
@@ -316,7 +318,7 @@ def build_factor_ic_universe_payload(
     source_commit: str,
     source_run_id: str,
     captured_at: datetime | None = None,
-    source: str = "eastmoney_open_fund_universe",
+    source: str = "eastmoney_fund_catalogue_with_optional_rank_enrichment",
     sample_target: int = FACTOR_IC_UNIVERSE_SAMPLE_TARGET,
 ) -> dict[str, Any]:
     """Build a production payload from one current, fully fetched catalogue."""

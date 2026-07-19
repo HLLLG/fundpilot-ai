@@ -72,12 +72,21 @@ def main() -> int:
     )
     nav_payload = None
     if args.nav_observations_out is not None:
-        nav_payload = build_nav_observation_batch_from_universe(payload)
-        args.nav_observations_out.parent.mkdir(parents=True, exist_ok=True)
-        args.nav_observations_out.write_text(
-            json.dumps(nav_payload, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        args.nav_observations_out.unlink(missing_ok=True)
+        try:
+            nav_payload = build_nav_observation_batch_from_universe(payload)
+        except ValueError as exc:
+            print(
+                "optional NAV observation batch skipped because rank enrichment "
+                f"did not meet its quality gate: {exc}",
+                file=sys.stderr,
+            )
+        if nav_payload is not None:
+            args.nav_observations_out.parent.mkdir(parents=True, exist_ok=True)
+            args.nav_observations_out.write_text(
+                json.dumps(nav_payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
     print(
         "captured PIT universe: "
         f"source={payload['snapshot']['source_share_count']} "

@@ -105,8 +105,12 @@ jobs:
           [[ "$tunnel_ready" == true ]] || { echo "::error::Lighthouse API is unavailable through the SSH tunnel"; exit 1; }
           python scripts/publish_factor_ic_universe.py \
             "$RUNNER_TEMP/factor-ic-universe.json"
-          python scripts/publish_factor_ic_nav_observations.py \
-            "$RUNNER_TEMP/factor-ic-nav-observations.json"
+          if [[ -s "$RUNNER_TEMP/factor-ic-nav-observations.json" ]]; then
+            python scripts/publish_factor_ic_nav_observations.py \
+              "$RUNNER_TEMP/factor-ic-nav-observations.json"
+          else
+            echo "::warning::Current fund catalogue was published without an optional NAV observation batch because rank enrichment was unavailable or incomplete."
+          fi
       - name: Record capture contract
         run: |
-          echo "Captured a point-in-time 1,500-portfolio research cohort and appended the NAV values first observed in the same directory response; no NAV history was backdated and no backtest was run." >> "$GITHUB_STEP_SUMMARY"
+          echo "Captured a point-in-time 1,500-portfolio research cohort. NAV values from optional rank enrichment are appended only when the batch passes the existing 80% quality gate; no NAV history was backdated and no backtest was run." >> "$GITHUB_STEP_SUMMARY"

@@ -79,7 +79,7 @@ _V3_NAV_OBSERVATION_CAVEATS = [
 
 
 class FactorIcRankUnavailable(RuntimeError):
-    """The external fund ranking source produced no usable universe."""
+    """The external fund catalogue produced no usable universe."""
 
 
 def _default_fetch_rank(limit: int) -> list[dict]:
@@ -309,7 +309,7 @@ def build_ic_report(
     rank_candidates = fetch_rank(rank_limit) or []
     if not rank_candidates:
         raise FactorIcRankUnavailable(
-            f"开放式基金排行榜获取失败（请求前 {rank_limit} 条）"
+            f"开放式基金全量目录获取失败（请求 {rank_limit} 条）"
         )
     all_rank_rows = rank_candidates
     if universe_mode == "stratified":

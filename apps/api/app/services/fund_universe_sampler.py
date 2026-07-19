@@ -7,6 +7,8 @@
 """
 from __future__ import annotations
 
+import hashlib
+import math
 import re
 from collections import defaultdict
 
@@ -21,13 +23,36 @@ def canonical_portfolio_name(name: str) -> str:
     return _SHARE_CLASS_SUFFIX.sub("", normalized)
 
 
-def _share_class_priority(row: dict) -> tuple[int, str, str]:
+def _share_class_priority(row: dict) -> tuple[int, int, str, str]:
     name = re.sub(r"\s+", "", str(row.get("fund_name") or ""))
     suffix = name[-1:].upper()
     # A 份额通常历史最长，优先用于长窗口研究；其余保持确定性。
     priority = 0 if suffix == "A" else 1
+    rank_priority = 0 if row.get("rank_enriched") is True else 1
     established = str(row.get("established_date") or "9999-12-31")
-    return priority, established, str(row.get("fund_code") or "")
+    return rank_priority, priority, established, str(row.get("fund_code") or "")
+
+
+def _stable_row_token(row: dict) -> str:
+    material = "\n".join(
+        (
+            str(row.get("fund_type") or "unknown").lower(),
+            canonical_portfolio_name(str(row.get("fund_name") or "")),
+            str(row.get("fund_code") or ""),
+        )
+    )
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
+def _performance_order(row: dict) -> tuple[int, float, str]:
+    raw_value = row.get("return_1y_percent")
+    try:
+        value = float(raw_value) if raw_value is not None else None
+    except (TypeError, ValueError):
+        value = None
+    if value is None or not math.isfinite(value):
+        return 1, 0.0, _stable_row_token(row)
+    return 0, -value, _stable_row_token(row)
 
 
 def dedupe_share_classes(rank_rows: list[dict]) -> list[dict]:
@@ -91,14 +116,15 @@ def stratified_sample_universe(rank_rows: list[dict], sample_size: int) -> list[
     ordered_types = [key for key in FUND_TYPE_ORDER if key in by_type]
     ordered_types.extend(sorted(set(by_type) - set(ordered_types)))
     for fund_type in ordered_types:
-        rows = sorted(
-            by_type[fund_type],
-            key=lambda row: (
-                -(float(row["return_1y_percent"]) if row.get("return_1y_percent") is not None else -10**9),
-                str(row.get("fund_code") or ""),
-            ),
-        )
-        sampled.extend(sample_universe(rows, allocation.get(fund_type, 0)))
+        target = allocation.get(fund_type, 0)
+        current_rows = [
+            row for row in by_type[fund_type] if row.get("rank_enriched") is True
+        ]
+        # A complete single-request rank snapshot identifies current funds.  If
+        # it is absent, hash ordering gives a stable, input-order-independent
+        # fallback instead of silently biasing the sample toward low codes.
+        candidates = current_rows if len(current_rows) >= target else by_type[fund_type]
+        sampled.extend(sample_universe(sorted(candidates, key=_performance_order), target))
     return sampled[:sample_size]
 
 
@@ -107,8 +133,11 @@ def universe_coverage(rank_rows: list[dict], sampled_rows: list[dict]) -> dict:
     source_by_type: dict[str, int] = defaultdict(int)
     unique_by_type: dict[str, int] = defaultdict(int)
     sampled_by_type: dict[str, int] = defaultdict(int)
+    rank_enriched_count = 0
     for row in rank_rows:
         source_by_type[str(row.get("fund_type") or "unknown").lower()] += 1
+        if row.get("rank_enriched") is True:
+            rank_enriched_count += 1
     for row in deduped:
         unique_by_type[str(row.get("fund_type") or "unknown").lower()] += 1
     for row in sampled_rows:
@@ -120,6 +149,10 @@ def universe_coverage(rank_rows: list[dict], sampled_rows: list[dict]) -> dict:
         "source_by_type": dict(source_by_type),
         "unique_by_type": dict(unique_by_type),
         "sampled_by_type": dict(sampled_by_type),
+        "rank_enriched_share_classes": rank_enriched_count,
+        "rank_enrichment_rate": (
+            round(rank_enriched_count / len(rank_rows), 4) if rank_rows else 0.0
+        ),
     }
 
 

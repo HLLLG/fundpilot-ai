@@ -94,7 +94,12 @@ def run_akshare_json_script(
             )
             return None
         if isinstance(payload, dict) and payload.get("error"):
-            logger.debug(
+            log = (
+                logger.warning
+                if warn_on_failure and payload.get("stage")
+                else logger.debug
+            )
+            log(
                 "akshare subprocess returned error for %s: %s",
                 label,
                 payload.get("error"),
@@ -949,18 +954,23 @@ def fetch_open_fund_universe(
     limit: int = 20_000,
     timeout_seconds: int | float | None = None,
 ) -> list[dict] | None:
-    """分页读取开放式基金全目录，并保留东财基金类别供分层研究使用。"""
+    """Fetch the full fund catalogue and optionally enrich it with rank data.
+
+    The static catalogue is the availability boundary: a transient ranking
+    failure must not discard 25,000 otherwise usable code/name/type rows.
+    Ranking is fetched in one bounded request and only adds current NAV and
+    trailing-return fields when it succeeds.
+    """
     cap = max(300, min(int(limit), 25_000))
     script = f"""
-from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 import json
 import math
 import requests
+import time
 from akshare.utils import demjson
 
 cap = {cap}
-fund_types = ("gp", "hh", "zq", "zs", "qdii", "fof")
 end = date.today()
 try:
     start = end.replace(year=end.year - 1)
@@ -970,6 +980,41 @@ headers = {{
     "User-Agent": "Mozilla/5.0",
     "Referer": "https://fund.eastmoney.com/fundguzhi.html",
 }}
+
+def request_with_retry(url, *, params=None, timeout=(5, 25), attempts=3):
+    last_error = None
+    for attempt in range(attempts):
+        try:
+            response = requests.get(
+                url,
+                params=params,
+                headers=headers,
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            return response
+        except Exception as exc:
+            last_error = exc
+            if attempt + 1 < attempts:
+                time.sleep(1 + attempt * 2)
+    raise last_error
+
+def normalize_fund_type(value):
+    raw = str(value or "").strip()
+    upper = raw.upper()
+    if "QDII" in upper:
+        return "qdii"
+    if "FOF" in upper:
+        return "fof"
+    if raw.startswith("\u6307\u6570"):
+        return "zs"
+    if raw.startswith("\u80a1\u7968"):
+        return "gp"
+    if raw.startswith("\u6df7\u5408"):
+        return "hh"
+    if raw.startswith("\u503a\u5238"):
+        return "zq"
+    return None
 
 def number(parts, index):
     if index >= len(parts) or parts[index] in ("", "--"):
@@ -996,29 +1041,89 @@ def text(parts, index):
     value = parts[index].strip()
     return None if value in ("", "--") else value
 
-def fetch_page(fund_type, page):
+def fetch_catalogue():
+    response = request_with_retry(
+        "https://fund.eastmoney.com/js/fundcode_search.js",
+        timeout=(5, 30),
+        attempts=3,
+    )
+    text_value = response.content.decode("utf-8-sig")
+    start_index = text_value.find("[[")
+    end_index = text_value.rfind("]]")
+    if start_index < 0 or end_index < start_index:
+        raise ValueError("catalogue payload missing array")
+    raw_rows = json.loads(text_value[start_index : end_index + 2])
+    rows = []
+    seen = set()
+    for parts in raw_rows:
+        if not isinstance(parts, list) or len(parts) < 4:
+            continue
+        code = str(parts[0] or "").strip().zfill(6)
+        name = str(parts[2] or "").strip()
+        source_type = str(parts[3] or "").strip()
+        fund_type = normalize_fund_type(source_type)
+        if (
+            not code.isdigit()
+            or len(code) != 6
+            or not name
+            or fund_type is None
+            or code in seen
+        ):
+            continue
+        seen.add(code)
+        rows.append({{
+            "fund_code": code,
+            "fund_name": name,
+            "fund_type": fund_type,
+            "source_fund_type": source_type,
+            "rank_enriched": False,
+            "nav_date": None,
+            "latest_nav": None,
+            "daily_growth_percent": None,
+            "established_date": None,
+            "return_1y_percent": None,
+            "return_6m_percent": None,
+            "return_3m_percent": None,
+            "max_drawdown_1y_percent": None,
+            "fund_scale_yi": None,
+        }})
+    minimum_rows = 20_000 if cap >= 20_000 else cap
+    if len(rows) < minimum_rows:
+        raise ValueError(
+            f"catalogue has {{len(rows)}} eligible rows; expected at least {{minimum_rows}}"
+        )
+    return rows
+
+def fetch_rank_enrichment():
     params = {{
-        "op": "ph", "dt": "kf", "ft": fund_type, "rs": "", "gs": "0",
+        "op": "ph", "dt": "kf", "ft": "all", "rs": "", "gs": "0",
         "sc": "1nzf", "st": "desc", "sd": start.isoformat(),
         "ed": end.isoformat(), "qdii": "", "tabSubtype": ",,,,,",
-        "pi": str(page), "pn": "500", "dx": "1", "v": "0.1591891419018292",
+        "pi": "1", "pn": "25000", "dx": "1", "v": "0.1591891419018292",
     }}
-    response = requests.get(
+    response = request_with_retry(
         "https://fund.eastmoney.com/data/rankhandler.aspx",
         params=params,
-        headers=headers,
         timeout=(5, 25),
+        attempts=2,
     )
-    response.raise_for_status()
     start_index = response.text.find("{{")
     end_index = response.text.rfind("}}")
     if start_index < 0 or end_index < start_index:
         raise ValueError("rank payload missing object")
     return demjson.decode(response.text[start_index : end_index + 1])
 
-def parse_rows(payload, fund_type):
-    rows = []
-    for raw in payload.get("datas") or []:
+def parse_rank_rows(payload):
+    raw_rows = payload.get("datas") or []
+    total_records = int(payload.get("allRecords") or 0)
+    all_pages = int(payload.get("allPages") or 1)
+    if total_records <= 0 or len(raw_rows) != total_records or all_pages != 1:
+        raise ValueError(
+            f"rank payload incomplete: rows={{len(raw_rows)}} "
+            f"total={{total_records}} pages={{all_pages}}"
+        )
+    rows = {{}}
+    for raw in raw_rows:
         parts = str(raw).split(",")
         code = parts[0].strip().zfill(6) if parts else ""
         if not code.isdigit() or len(code) != 6:
@@ -1026,10 +1131,8 @@ def parse_rows(payload, fund_type):
         latest_nav = observed_number(parts, 4, "latest_nav")
         if latest_nav is not None and latest_nav <= 0:
             raise ValueError("latest_nav must be positive")
-        rows.append({{
-            "fund_code": code,
-            "fund_name": parts[1].strip() if len(parts) > 1 else "",
-            "fund_type": fund_type,
+        rows[code] = {{
+            "rank_enriched": True,
             "nav_date": text(parts, 3),
             "latest_nav": latest_nav,
             "daily_growth_percent": observed_number(parts, 6, "daily_growth_percent"),
@@ -1037,38 +1140,48 @@ def parse_rows(payload, fund_type):
             "return_1y_percent": number(parts, 11),
             "return_6m_percent": number(parts, 10),
             "return_3m_percent": number(parts, 9),
-            "max_drawdown_1y_percent": None,
-            "fund_scale_yi": None,
-        }})
+        }}
     return rows
 
 try:
-    first_pages = {{fund_type: fetch_page(fund_type, 1) for fund_type in fund_types}}
-    jobs = []
-    for fund_type, payload in first_pages.items():
-        pages = int(payload.get("allPages") or 1)
-        jobs.extend((fund_type, page) for page in range(2, pages + 1))
-    page_payloads = []
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        for job, payload in zip(jobs, pool.map(lambda job: fetch_page(*job), jobs)):
-            page_payloads.append((job[0], payload))
-    rows = []
-    for fund_type in fund_types:
-        rows.extend(parse_rows(first_pages[fund_type], fund_type))
-    for fund_type, payload in page_payloads:
-        rows.extend(parse_rows(payload, fund_type))
-    seen = set()
-    unique = []
-    for row in rows:
-        if row["fund_code"] in seen:
+    catalogue = fetch_catalogue()
+    rank_error = None
+    rank_payload = None
+    rank_rows = {{}}
+    try:
+        rank_payload = fetch_rank_enrichment()
+        rank_rows = parse_rank_rows(rank_payload)
+    except Exception as exc:
+        rank_error = f"{{type(exc).__name__}}: {{exc}}"
+    selected = catalogue[:cap]
+    enriched_count = 0
+    for row in selected:
+        enrichment = rank_rows.get(row["fund_code"])
+        if enrichment is None:
             continue
-        seen.add(row["fund_code"])
-        unique.append(row)
-        if len(unique) >= cap:
-            break
-    print(json.dumps({{"data": unique}}, ensure_ascii=False))
+        row.update(enrichment)
+        enriched_count += 1
+    print(json.dumps({{
+        "data": selected,
+        "metadata": {{
+            "catalogue_source": "eastmoney.fundcode_search",
+            "catalogue_eligible_rows": len(catalogue),
+            "selected_rows": len(selected),
+            "rank_source": "eastmoney.open_fund_rankhandler",
+            "rank_total_records": (
+                int(rank_payload.get("allRecords") or 0)
+                if isinstance(rank_payload, dict)
+                else 0
+            ),
+            "rank_enriched_rows": enriched_count,
+            "rank_error": rank_error,
+        }},
+    }}, ensure_ascii=False))
 except Exception as exc:
-    print(json.dumps({{"error": str(exc)}}, ensure_ascii=False))
+    print(json.dumps({{
+        "error": f"catalogue fetch failed: {{type(exc).__name__}}: {{exc}}",
+        "stage": "catalogue",
+    }}, ensure_ascii=False))
 """
     payload = run_akshare_json_script(
         script,
@@ -1078,6 +1191,21 @@ except Exception as exc:
     if isinstance(payload, dict):
         rows = payload.get("data")
         if isinstance(rows, list) and rows:
+            metadata = payload.get("metadata")
+            if isinstance(metadata, dict):
+                rank_error = metadata.get("rank_error")
+                if rank_error:
+                    logger.warning(
+                        "fund catalogue fetched (%s rows) without optional rank enrichment: %s",
+                        len(rows),
+                        rank_error,
+                    )
+                else:
+                    logger.info(
+                        "fund catalogue fetched: rows=%s rank_enriched=%s",
+                        len(rows),
+                        metadata.get("rank_enriched_rows"),
+                    )
             return rows
     return None
 
