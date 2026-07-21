@@ -409,6 +409,12 @@ def build_analysis_facts(
         profile,
         actual_total=total_amount,
     )
+    weight_denominator_basis = (
+        "expected_investment_amount"
+        if profile.expected_investment_amount is not None
+        and profile.expected_investment_amount > 0
+        else "actual_portfolio_value"
+    )
     snapshot_by_code = {item.fund_code: item for item in snapshots}
     sector_labels = sector_labels_from_holdings(holdings)
     stock_connect_flow = None
@@ -652,6 +658,7 @@ def build_analysis_facts(
         "portfolio": {
             "total_amount": round(total_amount, 2),
             "weight_denominator": round(weight_denominator, 2),
+            "weight_denominator_basis": weight_denominator_basis,
             "expected_investment_amount": profile.expected_investment_amount,
             "decision_style": profile.decision_style,
             "holding_count": len(holdings),
@@ -731,11 +738,12 @@ def build_analysis_facts(
             "schema_version": "holding_transaction_execution_semantics.v1",
             "add": (
                 "日报对象是现有持仓；只使用明确的追加申购门槛，不得以首次起购额替代。"
-                "add_status 非 eligible 或金额未通过 amount assessment 时不得输出加仓动作。"
+                "add_status 非 eligible 时不得输出加仓动作；服务端会用建议比例对应的内部金额"
+                "核验追加起购额和单日限额，模型不得自行给固定金额。"
             ),
             "reduce": (
                 "赎回开放不等于某个持仓批次已过锁定期。当前无逐笔 acquisition lot，"
-                "减仓只能人工复核，不得输出金额或仓位比例。"
+                "可保留减仓比例用于风险规划，但不得输出固定金额；实际赎回前须核对持有期与费用。"
             ),
         }
     return facts

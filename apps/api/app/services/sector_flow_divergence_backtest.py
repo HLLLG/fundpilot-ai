@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """量价背离信号回测（M1.3）。
 
-设计文档：docs/superpowers/specs/2026-07-02-ai-decision-sharpening-design.md 第 M1.3 节。
+现行契约：docs/PROJECT_CONTEXT.md「现行权威契约 / 决策事实、仓位与 DataEvidence」。
 
 把"当日资金流方向 vs 涨跌方向背离"（`sector_fund_flow_context._classify_flow_pattern`
 判定出的 distribution/accumulation 模式）纳入 T→T+1 历史回测，复用

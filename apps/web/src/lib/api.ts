@@ -235,6 +235,8 @@ export type Report = {
     /** M2.3：系统计算的仓位调整建议（正=建议加仓、负=建议减仓，相对当前持仓金额）。 */
     suggested_position_change_percent?: number | null;
     suggested_position_change_basis?: string;
+    /** 按报告生成时的持仓估值与最终比例折算，仅用于展示，不代表精确成交金额。 */
+    estimated_position_change_amount_yuan?: number | null;
   }>;
   summary: string;
   recommendations: string[];
@@ -1361,6 +1363,10 @@ export type MainlineRegime = {
     distance_from_20d_high_percent?: number | null;
     volume_ratio_5d_vs_20d?: number | null;
     max_drawdown_20d_percent?: number | null;
+    position_label?: string | null;
+    breakout_over_prior_20d_high_percent?: number | null;
+    up_days_5d?: number | null;
+    down_days_5d?: number | null;
   };
   source_dates?: {
     sector_kline_end_date?: string | null;
@@ -1380,6 +1386,7 @@ export type MainlineSnapshot = {
   effective_trade_date?: string | null;
   session_kind?: string | null;
   decision_policy?: string;
+  entry_policy_version?: string;
   execution_gate_changed?: boolean;
   snapshot_hash?: string;
   sector_count?: number;
@@ -1393,6 +1400,19 @@ export type SectorOpportunity = {
   track?: string | null;
   score?: number | null;
   research_score?: number | null;
+  score_policy_version?: string | null;
+  legacy_score?: number | null;
+  direction_score?: number | null;
+  setup_maturity_score?: number | null;
+  entry_readiness_score?: number | null;
+  data_coverage?: number | null;
+  evidence_quality?: "complete" | "partial" | "insufficient" | string | null;
+  entry_state?: "ready_to_start" | "ready_on_pullback" | "forming" | "invalid" | string | null;
+  entry_reason?: string | null;
+  entry_triggers?: string[];
+  invalidation_signals?: string[];
+  execution_eligible?: boolean;
+  automatic_promotion_allowed?: boolean;
   confidence?: string | null;
   entry_hint?: string | null;
   evidence?: string[];
@@ -1951,6 +1971,45 @@ export type HoldingDetail = {
   provenance: Record<string, string>;
 };
 
+export type FundDisclosureHolding = {
+  rank: number;
+  security_code: string;
+  security_name: string;
+  security_market?: "CN" | "HK" | null;
+  quote_change_percent?: number | null;
+  nav_weight_percent: number;
+  display_weight_percent: number;
+  display_weight_basis: "stock_position" | "fund_nav";
+  previous_nav_weight_percent?: number | null;
+  previous_display_weight_percent?: number | null;
+  change_percent_points?: number | null;
+  change_direction: "new" | "increased" | "decreased" | "unchanged";
+  comparison_basis: "stock_position" | "fund_nav";
+};
+
+export type FundHoldingsDistribution = {
+  fund_code: string;
+  status: "available" | "unavailable";
+  report_period?: string | null;
+  as_of_date?: string | null;
+  disclosed_at?: string | null;
+  freshness: "fresh" | "aging" | "stale" | "unknown";
+  previous_report_period?: string | null;
+  previous_as_of_date?: string | null;
+  display_weight_basis: "stock_position" | "fund_nav";
+  stock_allocation_percent?: number | null;
+  disclosed_weight_percent?: number | null;
+  holdings: FundDisclosureHolding[];
+  source: string;
+  allocation_source?: string | null;
+  quote_session_date?: string | null;
+  quote_updated_at?: string | null;
+  quote_source?: string | null;
+  data_note: string;
+  generated_at: string;
+  reason_codes: string[];
+};
+
 export async function fetchHoldingDetail(payload: {
   holdings: Holding[];
   index: number;
@@ -1969,6 +2028,20 @@ export async function fetchHoldingDetail(payload: {
   });
   if (!response.ok) {
     throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export async function fetchFundHoldingsDistribution(
+  fundCode: string,
+): Promise<FundHoldingsDistribution> {
+  const response = await apiFetch(
+    `${API_BASE}/api/funds/${encodeURIComponent(fundCode)}/holdings-distribution`,
+    { cache: "no-store" },
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { detail?: string } | null;
+    throw new Error(body?.detail ?? "基金持仓加载失败");
   }
   return response.json();
 }
@@ -2878,74 +2951,6 @@ export async function getFundTransactions(
     `${API_BASE}/api/funds/${encodeURIComponent(code)}/transactions`,
     { cache: "no-store" },
   );
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  return response.json();
-}
-
-export type LedgerSharesQuality =
-  | "user_confirmed"
-  | "estimated_baseline"
-  | "estimated_legacy"
-  | "derived_transaction"
-  | "unknown"
-  | string;
-
-export type PortfolioLedgerPosition = {
-  fund_code: string;
-  fund_name?: string | null;
-  settled_shares: string | number | null;
-  cost_basis_total_cny?: string | number | null;
-  average_unit_cost?: string | number | null;
-  market_value_cny?: string | number | null;
-  shares_quality: LedgerSharesQuality;
-  cost_quality?: LedgerSharesQuality;
-};
-
-export type PortfolioLedgerBaselineStatus = {
-  schema_version?: string;
-  status: "confirmed" | "estimated" | "missing" | "partial" | string;
-  ledger_version?: string | null;
-  position_as_of?: string | null;
-  captured_at?: string | null;
-  position_complete?: boolean;
-  cash?: {
-    balance_cny: string | number | null;
-    status: "known" | "unknown" | "estimated" | string;
-  };
-  positions: PortfolioLedgerPosition[];
-  message?: string;
-};
-
-export type ConfirmPortfolioLedgerBaselineRequest = {
-  as_of_date: string;
-  cash_balance_yuan?: number | null;
-  positions: Array<{
-    fund_code: string;
-    confirmed_shares: number;
-    cost_basis_total_yuan?: number | null;
-  }>;
-};
-
-export async function fetchPortfolioLedgerBaseline(): Promise<PortfolioLedgerBaselineStatus> {
-  const response = await apiFetch(`${API_BASE}/api/portfolio/ledger-baseline`, {
-    cache: "no-store",
-  });
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  return response.json();
-}
-
-export async function confirmPortfolioLedgerBaseline(
-  payload: ConfirmPortfolioLedgerBaselineRequest,
-): Promise<PortfolioLedgerBaselineStatus> {
-  const response = await apiFetch(`${API_BASE}/api/portfolio/ledger-baseline`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
   if (!response.ok) {
     throw new Error(await response.text());
   }

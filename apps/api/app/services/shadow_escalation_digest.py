@@ -2,8 +2,7 @@ from __future__ import annotations
 
 """M6.3：灰度复盘摘要（shadow escalation digest）。
 
-设计文档：docs/superpowers/specs/2026-07-02-ai-decision-sharpening-design.md
-第 M6 节第 4 条 + 第 10 节「关于第 5 项」。
+现行契约：docs/PROJECT_CONTEXT.md「现行权威契约 / 决策事实、仓位与 DataEvidence」。
 
 扫描近 7 天的日报/荐基报告记录，聚合出"本周 shadow 触发了几次、涉及哪些板块/规则、
 系统建议升级成什么动作、（如果次日数据已出）实际走势是否验证了升级判断"，供用户

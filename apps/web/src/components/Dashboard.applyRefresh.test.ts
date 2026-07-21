@@ -139,7 +139,6 @@ describe("Dashboard apply refresh flow", () => {
     for (const componentName of [
       "YangjibaoFundDetail",
       "AddHoldingModal",
-      "LedgerBaselineModal",
       "BatchTransactionModal",
       "BatchTransactionConfirmModal",
       "AlipayOcrConfirmModal",
@@ -155,7 +154,6 @@ describe("Dashboard apply refresh flow", () => {
     expect(source).not.toContain('import { YangjibaoFundDetail');
     for (const moduleName of [
       "AddHoldingModal",
-      "LedgerBaselineModal",
       "BatchTransactionModal",
       "BatchTransactionConfirmModal",
       "AlipayOcrConfirmModal",
@@ -176,7 +174,6 @@ describe("Dashboard apply refresh flow", () => {
 
     expect(source).toContain("{selectedHoldingIndex !== null && holdings[selectedHoldingIndex] ? (");
     expect(source).toContain("{showAddHoldingModal ? (");
-    expect(source).toContain("{showLedgerBaselineModal ? (");
     expect(source).toContain("{showBatchModal ? (");
     expect(source).toContain("{pendingTransactions && !showBatchModal ? (");
     expect(source).toContain("{pendingOcrHoldings ? (");

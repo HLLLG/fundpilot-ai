@@ -134,6 +134,50 @@ async function installStableApiStubs(
       });
       return;
     }
+    if (
+      options.enableCoreFlow &&
+      pathname === "/api/funds/110022/holdings-distribution"
+    ) {
+      await fulfillJson(route, 200, {
+        fund_code: "110022",
+        status: "available",
+        report_period: "2026-Q1",
+        as_of_date: "2026-03-31",
+        disclosed_at: "2026-04-23T00:00:00+08:00",
+        freshness: "fresh",
+        previous_report_period: "2025-Q4",
+        previous_as_of_date: "2025-12-31",
+        display_weight_basis: "fund_nav",
+        stock_allocation_percent: 82.5,
+        disclosed_weight_percent: 6.8,
+        holdings: [
+          {
+            rank: 1,
+            security_code: "600519",
+            security_name: "Fixture Stock",
+            security_market: "CN",
+            quote_change_percent: 1.25,
+            nav_weight_percent: 6.8,
+            display_weight_percent: 6.8,
+            display_weight_basis: "fund_nav",
+            previous_nav_weight_percent: 6.3,
+            previous_display_weight_percent: 6.3,
+            change_percent_points: 0.5,
+            change_direction: "increased",
+            comparison_basis: "fund_nav",
+          },
+        ],
+        source: "e2e_fixture",
+        allocation_source: "e2e_fixture",
+        quote_session_date: "2026-07-10",
+        quote_updated_at: "2026-07-10T15:00:00+08:00",
+        quote_source: "e2e_fixture",
+        data_note: "Stable quarterly disclosure fixture.",
+        generated_at: "2026-07-11T10:00:00+08:00",
+        reason_codes: [],
+      });
+      return;
+    }
     if (options.enableCoreFlow && pathname === "/api/holdings/refresh-sector-quotes") {
       const payload = request.postDataJSON() as { holdings?: Array<Record<string, unknown>> };
       currentHoldings = payload.holdings ?? currentHoldings;
@@ -322,6 +366,7 @@ test("截图识别可校对写入并打开基金详情", async ({ page }, testIn
   const detailDialog = page.getByRole("dialog", { name: "易方达消费行业股票" });
   await expect(detailDialog).toBeVisible();
   await expect(detailDialog.getByRole("button", { name: "修改持仓" })).toBeVisible();
+  await expect(detailDialog.getByText("Fixture Stock")).toBeVisible();
   expect(await page.evaluate(() => document.body.style.overflow)).toBe("hidden");
   await page.keyboard.press("Escape");
   await expect(detailDialog).toBeHidden();
@@ -335,6 +380,7 @@ test("截图识别可校对写入并打开基金详情", async ({ page }, testIn
       "POST /api/ocr",
       "POST /api/portfolio/apply-holdings",
       "POST /api/holdings/detail",
+      "GET /api/funds/110022/holdings-distribution",
     ]),
   );
 });

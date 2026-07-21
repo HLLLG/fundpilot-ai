@@ -8,7 +8,6 @@ import { FundRecommendationCard } from "@/components/FundRecommendationCard";
 type ReportRecommendationListProps = {
   report: Report;
   recommendations?: Report["fund_recommendations"];
-  onConfirmLedgerBaseline?: () => void;
 };
 
 type EvidenceGuardFacts = {
@@ -28,35 +27,26 @@ function evidenceBlockingReasons(report: Report): Set<string> {
   return reasons;
 }
 
-function DecisionReadinessNotice({
-  report,
-  onConfirmLedgerBaseline,
-}: {
-  report: Report;
-  onConfirmLedgerBaseline?: () => void;
-}) {
+function DecisionReadinessNotice({ report }: { report: Report }) {
   const facts = report.analysis_facts as EvidenceGuardFacts | undefined;
-  if (!facts?.data_evidence_guard?.execution_blocked) return null;
+  const executionBlocked = Boolean(facts?.data_evidence_guard?.execution_blocked);
+  if (!executionBlocked) return null;
 
   const reasons = evidenceBlockingReasons(report);
   const ledgerIncomplete = reasons.has("incomplete_or_unsettled_position_ledger");
+  const ledgerOnlyExecutionBlock = ledgerIncomplete && [...reasons].every(
+    (reason) => reason === "incomplete_or_unsettled_position_ledger",
+  );
   return (
     <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-950">
-      <h3 className="text-sm font-black">为什么现在只有“观察”？</h3>
+      <h3 className="text-sm font-black">
+        {ledgerOnlyExecutionBlock ? "这份报告生成时为什么只有“观察”？" : "为什么现在只有“观察”？"}
+      </h3>
       <p className="mt-1 text-xs leading-5 text-amber-900">
-        {ledgerIncomplete
-          ? "系统还不能确认每只基金的实际份额和成本，所以先不提供加减仓或买卖金额。到“持仓”里核对一次账本基线后，后续日报就能继续判断是否可操作。"
+        {ledgerOnlyExecutionBlock
+          ? "这份报告使用了旧版份额规则。现在系统会直接使用截图中的持仓估值；重新生成日报即可获得相对当前持仓的百分比建议。"
           : "部分持仓或行情信息还不够完整、或更新时间不够新。为避免用旧数据误导操作，本次只展示观察和风险提示。"}
       </p>
-      {ledgerIncomplete && onConfirmLedgerBaseline ? (
-        <button
-          type="button"
-          onClick={onConfirmLedgerBaseline}
-          className="mt-3 min-h-10 rounded-xl border border-amber-300 bg-white px-3 text-xs font-black text-amber-950 transition hover:bg-amber-100"
-        >
-          去确认账本基线
-        </button>
-      ) : null}
     </div>
   );
 }
@@ -64,7 +54,6 @@ function DecisionReadinessNotice({
 export function ReportRecommendationList({
   report,
   recommendations,
-  onConfirmLedgerBaseline,
 }: ReportRecommendationListProps) {
   const items = recommendations ?? displayFundRecommendations(report);
   const { needsAction, observing } = groupFundRecommendations(items);
@@ -79,10 +68,7 @@ export function ReportRecommendationList({
 
   return (
     <section className="report-panel min-w-0 p-4 sm:p-5">
-      <DecisionReadinessNotice
-        report={report}
-        onConfirmLedgerBaseline={onConfirmLedgerBaseline}
-      />
+      <DecisionReadinessNotice report={report} />
       {needsAction.length ? (
         <div className="min-w-0">
           <h3 className="text-base font-black text-slate-950">需要处理</h3>

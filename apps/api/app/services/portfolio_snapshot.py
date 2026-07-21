@@ -236,7 +236,7 @@ def build_factor_scores_payload(
 
     `fetch_rank() -> list[dict]` 与 `fetch_nav(code, name, trading_days) -> points`
     可注入便于离线测试；默认分别走 fetch_open_fund_rank / FundDataService。
-    设计文档：docs/superpowers/specs/2026-06-24-fund-factor-scores-design.md 第 6 章。
+    现行契约：docs/PROJECT_CONTEXT.md「现行权威契约 / Factor IC、PIT 与量化证据」。
     """
     from dataclasses import asdict
 

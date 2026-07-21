@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 _PRIMARY_SOURCE_TIMEOUT = 11.5
 _FALLBACK_SOURCE_TIMEOUT = 3.0
 
-# 子进程内清代理的统一前导（与 us_futures_client / diagnose_us_market 一致）。
+# 子进程内清代理的统一前导（与 us_futures_client 一致）。
 _CHILD_PREAMBLE = """
 import json, os, sys
 for key in list(os.environ):

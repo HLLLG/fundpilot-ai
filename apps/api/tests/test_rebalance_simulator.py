@@ -139,3 +139,21 @@ def test_simulator_matches_a_unique_real_code_after_a_historical_name_change() -
 
     assert result["rows"][0]["action"] == "减仓评估"
     assert result["rows"][0]["delta_yuan"] == -200
+
+
+def test_simulator_uses_server_percentage_estimate_before_legacy_fallback() -> None:
+    holdings = [_holding("000001", "测试基金", 10_000)]
+    recommendations = [
+        FundRecommendation(
+            fund_code="000001",
+            fund_name="测试基金",
+            action="减仓评估",
+            suggested_position_change_percent=-(100 / 3),
+            estimated_position_change_amount_yuan=3333.33,
+        )
+    ]
+
+    result = simulate_rebalance(_request(holdings), recommendations)
+
+    assert result["rows"][0]["delta_yuan"] == -3333.33
+    assert result["rows"][0]["amount_note"] == "按日报仓位比例和报告持仓估值折算"

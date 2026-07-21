@@ -86,6 +86,13 @@ def _guard_facts(tradeability: dict) -> dict:
         "holdings": [
             {
                 "fund_code": holding.fund_code,
+                "sector_opportunity": {
+                    "score": 85,
+                    "confidence": "高",
+                    "opportunity_available": True,
+                    "pattern_label": "price_flow_aligned_up",
+                },
+                "evidence": {"composite": {"level": "高", "score": 3.0}},
                 "tradeability": tradeability,
                 "transaction_execution": build_holding_transaction_execution(
                     tradeability,
@@ -185,7 +192,10 @@ def test_daily_guard_caps_add_and_attaches_server_tradeability() -> None:
     )
 
     assert guarded[0].action == "分批加仓"
-    assert guarded[0].amount_yuan == 500
+    assert guarded[0].amount_yuan is None
+    assert guarded[0].suggested_position_change_percent == 5
+    assert guarded[0].estimated_position_change_amount_yuan == 500
+    assert "单日申购限额" in guarded[0].suggested_position_change_basis
     assert guarded[0].tradeability["purchase_state"] == "open"
     assert guarded[0].transaction_execution["amount_assessment"]["executable"] is True
     assert "单日申购限额" in guarded[0].points[0]
@@ -212,7 +222,7 @@ def test_daily_guard_blocks_add_when_additional_minimum_is_unknown() -> None:
     assert guarded[0].confidence == "低"
 
 
-def test_daily_guard_keeps_reduction_as_review_but_removes_amount_and_percent() -> None:
+def test_daily_guard_keeps_reduction_percentage_while_requiring_fee_review() -> None:
     recommendation = FundRecommendation(
         fund_code="000001",
         fund_name="测试基金",
@@ -231,7 +241,9 @@ def test_daily_guard_keeps_reduction_as_review_but_removes_amount_and_percent() 
 
     assert guarded[0].action == "减仓评估"
     assert guarded[0].amount_yuan is None
-    assert guarded[0].suggested_position_change_percent is None
+    assert guarded[0].suggested_position_change_percent == -25
+    assert guarded[0].estimated_position_change_amount_yuan == 2500
+    assert "相对当前估算持仓" in guarded[0].suggested_position_change_basis
     assert guarded[0].transaction_execution["acquisition_lot_status"] == "unverified"
     assert any("逐笔" in point for point in guarded[0].points)
 

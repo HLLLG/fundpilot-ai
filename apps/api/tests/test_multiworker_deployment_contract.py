@@ -26,8 +26,8 @@ def test_production_compose_has_one_supervised_background_worker() -> None:
     ) == 2
 
 
-def test_cloud_compose_shares_worker_heartbeat_with_request_api() -> None:
-    compose = (REPO_ROOT / "docker-compose.cloud.yml").read_text(encoding="utf-8")
+def test_local_compose_shares_worker_heartbeat_with_request_api() -> None:
+    compose = (REPO_ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
 
     assert compose.count(
         "FUND_AI_BACKGROUND_WORKER_HEARTBEAT_PATH: /app/data/background-worker-heartbeat.json"

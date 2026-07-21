@@ -765,7 +765,7 @@ def _build_final_report(
 
     summary = parsed.get("summary") or fallback.summary
     if report_execution_blocked(facts):
-        summary = "持仓份额、成本或关键行情还未确认完整且为最新，本次只做观察和风险提示；请更新数据后重新生成。"
+        summary = "关键持仓或行情数据未达到时点可用条件，本次只做观察和风险提示；请更新数据后重新生成。"
     report = Report(
         **({"created_at": decision_at} if decision_at is not None else {}),
         title=parsed.get("title", "每日基金操作日报"),
@@ -1291,7 +1291,7 @@ def _append_pipeline_caveats(caveats: list[str], facts: dict) -> list[str]:
         if caveat not in result:
             result.append(caveat)
     if report_execution_blocked(facts):
-        note = "关键信息完整性与更新时间校验未通过，系统已暂时隐藏仓位动作和买卖金额。"
+        note = "关键信息完整性与更新时间校验未通过，系统已暂时隐藏仓位动作和调整比例。"
         if note not in result:
             result.append(note)
     pipeline = facts.get("pipeline") or {}
@@ -1478,7 +1478,7 @@ def _offline_report(
         )
     )
     if report_execution_blocked(facts):
-        summary = "持仓份额、成本或关键行情还未确认完整且为最新，本次只做观察和风险提示；请更新数据后重新生成。"
+        summary = "关键持仓或行情数据未达到时点可用条件，本次只做观察和风险提示；请更新数据后重新生成。"
     if provider_failure is not None:
         summary = f"{summary}\n\n{provider_failure.message}"
         if provider_failure.message not in caveats:
@@ -1524,6 +1524,7 @@ def _project_provider_failure_daily_recommendations(
         recommendation.confidence = "低"
         recommendation.suggested_position_change_percent = None
         recommendation.suggested_position_change_basis = ""
+        recommendation.estimated_position_change_amount_yuan = None
         recommendation.points = safe_blocked_points(
             recommendation.points,
             fallback="模型服务不可用，本条仅保留低置信观察与风险复核。",

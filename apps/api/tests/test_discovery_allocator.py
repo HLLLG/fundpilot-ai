@@ -95,6 +95,7 @@ def _allocate(
     decision_style: str = "conservative",
     risk_context: dict | None = None,
     priority_inputs: dict | None = None,
+    tranche_ratio_cap: float | None = None,
     step: float = 100,
 ) -> dict:
     codes = [row["fund_code"] for row in candidates]
@@ -111,6 +112,7 @@ def _allocate(
         decision_style=decision_style,
         risk_context=risk_context,
         priority_inputs=priority_inputs,
+        current_tranche_ratio_cap=tranche_ratio_cap,
         amount_step_yuan=step,
     )
 
@@ -169,6 +171,20 @@ def test_current_tranche_ratio_uses_profile_policy() -> None:
     assert conservative["budget"]["current_tranche_cap_yuan"] == 2_500
     assert aggressive["policy"]["applied_current_tranche_ratio"] == 0.5
     assert aggressive["budget"]["current_tranche_cap_yuan"] == 5_000
+
+
+def test_entry_maturity_can_cap_initial_tranche_without_changing_profile_policy() -> None:
+    plan = _allocate(
+        [_candidate("000001", "科技")],
+        decision_style="aggressive",
+        prefer_dca=False,
+        tranche_ratio_cap=0.20,
+    )
+
+    assert plan["policy"]["nominal_current_tranche_ratio"] == 0.50
+    assert plan["policy"]["current_tranche_ratio_cap"] == 0.20
+    assert plan["policy"]["applied_current_tranche_ratio"] == 0.20
+    assert plan["budget"]["current_tranche_cap_yuan"] == 2_000
 
 
 def test_confirmed_cash_caps_current_tranche() -> None:

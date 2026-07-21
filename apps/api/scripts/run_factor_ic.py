@@ -4,7 +4,7 @@
 用法（在 apps/api 下）：
     ./.venv/Scripts/python.exe scripts/run_factor_ic.py --universe-size 300 --nav-days 750
 
-设计文档：docs/superpowers/specs/2026-06-24-factor-ic-backtest-design.md
+现行契约：docs/PROJECT_CONTEXT.md「现行权威契约 / Factor IC、PIT 与量化证据」。
 """
 
 from __future__ import annotations

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime, timezone
-from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -464,7 +463,7 @@ def test_sector_history_does_not_attach_current_industry(monkeypatch) -> None:
     assert result["reason_codes"] == ["historical_industry_enrichment_disallowed"]
 
 
-def test_sector_current_path_uses_only_eight_disclosed_stocks_and_keeps_lineage(
+def test_sector_current_path_uses_all_ten_disclosed_stocks_and_keeps_lineage(
     monkeypatch,
 ) -> None:
     from app.services import fund_holdings_sector_infer as service
@@ -486,7 +485,7 @@ def test_sector_current_path_uses_only_eight_disclosed_stocks_and_keeps_lineage(
     monkeypatch.setattr(
         service,
         "_fetch_current_industries",
-        lambda rows: {
+        lambda rows, **_kwargs: {
             str(row["security_code"]): "半导体" for row in rows
         },
     )
@@ -494,8 +493,8 @@ def test_sector_current_path_uses_only_eight_disclosed_stocks_and_keeps_lineage(
     detailed = fetch_portfolio_stocks_with_industry_evidence("000001")
     legacy = fetch_portfolio_stocks_with_industry("000001")
     assert detailed["status"] == "qualified"
-    assert len(detailed["stocks"]) == 8
-    assert len(legacy) == 8
+    assert len(detailed["stocks"]) == 10
+    assert len(legacy) == 10
     inferred = infer_sector_from_portfolio_stocks("000001", detailed["stocks"])
     assert inferred is not None
     _sector, _scores, evidence = inferred
@@ -512,28 +511,103 @@ def test_sector_current_path_uses_only_eight_disclosed_stocks_and_keeps_lineage(
     ]
 
 
-def test_sector_industry_subprocess_forces_utf8_on_windows(monkeypatch) -> None:
+def test_sector_current_first_observed_industry_can_drive_primary_sector(
+    monkeypatch,
+) -> None:
     from app.services import fund_holdings_sector_infer as service
 
-    captured: dict[str, object] = {}
-
-    def fake_run(*_args, **kwargs):
-        captured.update(kwargs)
-        return SimpleNamespace(
-            returncode=0,
-            stdout='{"600001": "银行"}',
-        )
-
-    monkeypatch.setattr(service.subprocess, "run", fake_run)
-    result = service._fetch_current_industries(
-        [{"security_code": "600001", "security_name": "浦发银行"}]
+    now = datetime.now(CN)
+    snapshot = _client_snapshot()
+    monkeypatch.setattr(
+        service,
+        "resolve_fund_holdings_snapshot_at_decision",
+        lambda *_args, **_kwargs: {
+            "status": "qualified",
+            "reason_codes": [],
+            "decision_at": now.isoformat(),
+            "source": "append_only_store",
+            "snapshot": snapshot,
+        },
+    )
+    observed_at = now.isoformat()
+    monkeypatch.setattr(
+        service,
+        "_fetch_current_industries",
+        lambda rows, **_kwargs: {
+            str(row["security_code"]): {
+                "value": "半导体",
+                "available_at": observed_at,
+                "source": "eastmoney_push2_stock_get_f127",
+                "ref_id": f"ref-{row['security_code']}",
+                "pit_qualified": True,
+            }
+            for row in rows
+        },
     )
 
-    assert result == {"600001": "银行"}
-    env = captured["env"]
-    assert isinstance(env, dict)
-    assert env["PYTHONUTF8"] == "1"
-    assert env["PYTHONIOENCODING"] == "utf-8"
+    result = fetch_portfolio_stocks_with_industry_evidence("000001")
+    assert result["status"] == "qualified"
+    assert result["sector_clue"]["sector_name"] == "半导体"
+    assert result["qualification"]["sector_inference_eligible"] is True
+    assert result["qualification"]["classification_pit_qualified"] is True
+    assert result["qualification"]["research_only"] is False
+    assert result["association_evaluated_at"] is not None
+
+
+def test_sector_refines_semiconductor_equipment_portfolio_to_materials_equipment(
+    monkeypatch,
+) -> None:
+    from app.services import fund_holdings_sector_infer as service
+
+    observed_at = datetime.now(CN).isoformat()
+    rows = [
+        {"security_code": "688409", "security_name": "富创精密", "weight_percent": 9.34},
+        {"security_code": "688120", "security_name": "华海清科", "weight_percent": 9.22},
+        {"security_code": "688012", "security_name": "中微公司", "weight_percent": 9.06},
+        {"security_code": "002371", "security_name": "北方华创", "weight_percent": 9.03},
+    ]
+    broad = {
+        row["security_code"]: {
+            "value": "半导体",
+            "available_at": observed_at,
+            "source": "eastmoney_push2_stock_get_f127",
+            "ref_id": f"industry-{row['security_code']}",
+            "pit_qualified": True,
+        }
+        for row in rows
+    }
+    board_rows = {
+        "BK1325": {
+            "codes": ["300666"],
+            "available_at": observed_at,
+            "source": "eastmoney_push2_clist_board_members",
+            "ref_id": "material-members",
+            "pit_qualified": True,
+        },
+        "BK1326": {
+            "codes": [row["security_code"] for row in rows],
+            "available_at": observed_at,
+            "source": "eastmoney_push2_clist_board_members",
+            "ref_id": "equipment-members",
+            "pit_qualified": True,
+        },
+    }
+    monkeypatch.setattr(
+        service,
+        "fetch_current_board_constituent_evidence",
+        lambda _codes, **_kwargs: board_rows,
+    )
+
+    refined = service._refine_current_portfolio_themes(
+        rows,
+        broad,
+        force_refresh=False,
+    )
+    assert {row["theme"] for row in refined.values()} == {"半导体材料"}
+    detail = refined["688409"]["theme_detail"]
+    assert detail["matched_stock_count"] == 4
+    assert detail["matched_weight_ratio"] == 1.0
+    assert refined["688409"]["theme_pit_qualified"] is True
 
 
 def test_qdii_adapter_marks_stale_snapshot_unqualified_and_fetched_at_aware(

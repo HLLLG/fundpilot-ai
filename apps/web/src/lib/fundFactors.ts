@@ -1,5 +1,5 @@
 // 持仓因子体检的展示/解读 helper（把设计文档第 3、4 章的因子语义写成纯函数）。
-// 设计文档：docs/superpowers/specs/2026-06-24-fund-factor-scores-design.md
+// 现行契约：docs/PROJECT_CONTEXT.md「现行权威契约 / Factor IC、PIT 与量化证据」。
 
 import type { FactorKey, FundFactorScore } from "@/lib/api";
 

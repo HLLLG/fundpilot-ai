@@ -609,7 +609,9 @@ def test_daily_guard_reprojects_amount_position_and_free_text_from_final_action(
     assert item.action != "分批加仓"
     assert item.amount_yuan is None
     assert item.amount_note is None
-    assert item.suggested_position_change_percent is None
+    assert item.suggested_position_change_percent == -25
+    assert item.estimated_position_change_amount_yuan == 2500
+    assert "相对当前估算持仓" in item.suggested_position_change_basis
     visible = " ".join(
         [
             *item.points,

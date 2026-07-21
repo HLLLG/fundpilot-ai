@@ -49,6 +49,17 @@ vi.mock("@/lib/api", async () => {
       points: [],
       close_change_percent: null,
     })),
+    fetchFundHoldingsDistribution: vi.fn(async () => ({
+      fund_code: "008586",
+      status: "unavailable",
+      freshness: "unknown",
+      display_weight_basis: "fund_nav",
+      holdings: [],
+      source: "test",
+      data_note: "暂无",
+      generated_at: "2026-07-21T12:00:00+08:00",
+      reason_codes: [],
+    })),
     updateFundProfile: vi.fn(),
     updateFundProfilePurchaseDate: vi.fn(),
   };

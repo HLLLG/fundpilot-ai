@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import re
-from math import isfinite
+from math import floor, isfinite
 
 from app.config import get_settings
 from app.models import (
     AnalysisRequest,
     FundRecommendation,
     Holding,
+    InvestorProfile,
     NewsItem,
     RiskAssessment,
     TopicBrief,
@@ -104,15 +105,12 @@ def apply_recommendation_guards(
     today_signal = has_today_market_signal(market_news, topic_briefs)
     ic_status = _factor_ic_status_from_facts(facts)
     portfolio_snapshot = (facts or {}).get("portfolio_snapshot")
-    degraded_portfolio_snapshot = bool(
-        isinstance(portfolio_snapshot, dict)
-        and (
-            portfolio_snapshot.get("stale")
-            or not portfolio_snapshot.get("authoritative")
-            or portfolio_snapshot.get("position_complete") is False
-            or int(portfolio_snapshot.get("pending_transaction_count") or 0) > 0
-        )
-    )
+    portfolio_execution_reasons: list[str] = []
+    if isinstance(portfolio_snapshot, dict):
+        if portfolio_snapshot.get("stale"):
+            portfolio_execution_reasons.append("stale_portfolio_snapshot")
+        if not portfolio_snapshot.get("authoritative"):
+            portfolio_execution_reasons.append("non_authoritative_portfolio")
     from app.services.decision_data_evidence import (
         contains_executable_decision_text,
         decision_evidence_allows_action,
@@ -137,15 +135,21 @@ def apply_recommendation_guards(
             scope="analysis",
             fund_code=(holding.fund_code if holding is not None else rec.fund_code),
             direction=_execution_direction(normalized),
+            allow_incomplete_position_for_direction=True,
         )
-        execution_blocked = degraded_portfolio_snapshot or not evidence_allowed
+        execution_reasons = list(
+            dict.fromkeys([*portfolio_execution_reasons, *evidence_reasons])
+        )
+        execution_blocked = bool(portfolio_execution_reasons) or not evidence_allowed
         if execution_blocked:
-            evidence_blocked_codes[rec.fund_code] = evidence_reasons
+            evidence_blocked_codes[rec.fund_code] = (
+                execution_reasons or ["decision_evidence_not_ready"]
+            )
 
         snapshot_note = None
         if execution_blocked and _action_bucket(normalized) >= ACTION_BUCKET_ADD:
             normalized = "观察"
-            snapshot_note = "持仓份额、成本或关键行情还未确认完整且为最新，因此暂不提供加减仓操作。"
+            snapshot_note = "关键持仓或行情数据未达到时点可用条件，因此暂不提供加减仓操作。"
 
         nav_trend = None
         if holding is not None and nav_trends_by_code:
@@ -239,10 +243,9 @@ def apply_recommendation_guards(
                     f"（{basis}）。" if basis else f"【灰度提示，未生效】若启用新版守卫（enforced 模式），本条建议会被系统升级为「{would_be_action}」。"
                 )
 
-        # A degraded portfolio cannot support any executable position change,
-        # including a reduction inferred from stale weights. Keep only a neutral
-        # observation, or a generic risk review when the independent portfolio
-        # risk gate is already high.
+        # Stale/non-authoritative holdings or unusable market evidence cannot
+        # support a directional decision. An incomplete share ledger does not
+        # enter this branch because percentage advice only needs holding value.
         if execution_blocked:
             normalized = (
                 "风控复核"
@@ -265,6 +268,27 @@ def apply_recommendation_guards(
             note_forbidden_action = None
 
         (
+            proposed_position_percent,
+            proposed_position_basis,
+            position_note,
+        ) = _resolve_deterministic_position_change(
+            normalized,
+            holding=holding,
+            profile=request.profile,
+            weight_denominator=weight_denominator,
+            sector_opportunity=sector_opportunity,
+        )
+        if (
+            _execution_direction(normalized) == "add"
+            and proposed_position_percent is None
+        ):
+            normalized = "观察"
+        proposed_amount_yuan = _position_change_amount_yuan(
+            holding,
+            proposed_position_percent,
+        )
+
+        (
             normalized,
             approved_amount_yuan,
             tradeability_review_required,
@@ -273,15 +297,39 @@ def apply_recommendation_guards(
             trusted_transaction_execution,
         ) = _apply_holding_tradeability_guard(
             normalized,
-            amount_yuan=rec.amount_yuan,
+            amount_yuan=proposed_amount_yuan,
             holding=holding,
             facts_row=facts_row,
         )
+
+        final_direction = _execution_direction(normalized)
+        if final_direction == "add" and holding is not None and holding.holding_amount > 0:
+            if approved_amount_yuan is not None and approved_amount_yuan > 0:
+                approved_percent = floor(
+                    approved_amount_yuan / holding.holding_amount * 1000
+                ) / 10
+                if approved_percent > 0:
+                    if (
+                        proposed_position_percent is not None
+                        and approved_percent < proposed_position_percent
+                    ):
+                        proposed_position_basis = (
+                            f"{proposed_position_basis.rstrip('；')}；"
+                            "已按单日申购限额收紧"
+                        )
+                    proposed_position_percent = approved_percent
+                else:
+                    proposed_position_percent = None
+                    proposed_position_basis = ""
+        elif final_direction == "none":
+            proposed_position_percent = None
+            proposed_position_basis = ""
 
         note = (
             note_forbidden_action
             or tradeability_note
             or escalation_note
+            or position_note
             or snapshot_note
             or reversal_note
             or weak_note
@@ -307,20 +355,23 @@ def apply_recommendation_guards(
         copy = rec.model_copy(
             update={
                 "action": normalized,
-                "amount_yuan": approved_amount_yuan,
+                "amount_yuan": None,
+                "amount_note": None,
                 "tradeability": trusted_tradeability,
                 "transaction_execution": trusted_transaction_execution,
+                "suggested_position_change_percent": proposed_position_percent,
+                "suggested_position_change_basis": proposed_position_basis,
             }
         )
         if execution_blocked:
             copy.amount_yuan = None
-            copy.amount_note = "关键信息还不够完整或不够新，因此暂不提供买卖金额。"
+            copy.amount_note = "关键持仓或行情数据未达到时点可用条件，因此暂不提供买卖金额。"
             copy.suggested_position_change_percent = None
             copy.suggested_position_change_basis = "决策证据未达到时点可用条件，禁止据此计算仓位变化"
             copy.confidence = "低"
             copy.validation_notes = [
                 *copy.validation_notes,
-                "持仓份额、成本或关键行情尚未确认完整且为最新；本次不提供金额、权重和仓位动作。",
+                "关键持仓或行情数据未确认完整且为最新；本次不提供金额、权重和仓位动作。",
             ]
         if note:
             copy.points = [note, *copy.points]
@@ -329,16 +380,21 @@ def apply_recommendation_guards(
             # M2.3：LLM 负责解释、系统负责算数——仓位调整比例由规则表回填，覆盖 LLM 自行
             # 给出的任何数字（LLM 未给出该字段本就是默认 None，这里统一以系统计算为准）。
             copy.suggested_position_change_percent = escalation.get("suggested_position_change_percent")
-            copy.suggested_position_change_basis = str(escalation.get("basis") or "")
+            escalation_basis = str(escalation.get("basis") or "").strip()
+            copy.suggested_position_change_basis = (
+                "相对当前估算持仓计算"
+                + (f"；{escalation_basis}" if escalation_basis else "")
+            )
         if tradeability_review_required:
             copy.amount_yuan = None
             copy.amount_note = None
-            copy.suggested_position_change_percent = None
-            copy.suggested_position_change_basis = ""
+            if _execution_direction(copy.action) == "none":
+                copy.suggested_position_change_percent = None
+                copy.suggested_position_change_basis = ""
             copy.confidence = "低"
             copy.validation_notes = [
                 *copy.validation_notes,
-                "交易条件或逐笔持有期未达到自动执行条件；本条仅供人工复核。",
+                "交易条件或逐笔持有期仍需在实际操作前核对；建议比例仅用于风险规划。",
             ]
         _backfill_decision_fields(copy, holding, sector_opportunity, evidence, ic_status)
         _enforce_public_ic_evidence(copy, evidence, ic_status)
@@ -362,7 +418,11 @@ def apply_recommendation_guards(
             copy.validation_notes = [
                 value for value in copy.validation_notes if not contains_executable_decision_text(value)
             ] + ["关键信息完整性与更新时间校验未通过，系统已暂时关闭仓位操作。"]
-        _enforce_final_execution_projection(copy, original_action=original_action)
+        _enforce_final_execution_projection(
+            copy,
+            original_action=original_action,
+            holding=holding,
+        )
         _humanize_recommendation_text(copy)
         guarded.append(copy)
 
@@ -373,7 +433,7 @@ def apply_recommendation_guards(
     if not portfolio:
         portfolio = ["组合级执行动作以逐基金卡片中的系统校验结果为准。"]
     if evidence_blocked_codes:
-        hint = "部分持仓的份额、成本或关键行情还未确认完整且为最新：本次只做观察和风险提示，暂不显示仓位动作与金额。"
+        hint = "部分关键持仓或行情数据未达到时点可用条件：本次只做观察和风险提示，暂不显示仓位动作与金额。"
         safe_portfolio = [line for line in portfolio if not contains_executable_decision_text(line)]
         portfolio = [hint, *safe_portfolio[:1]]
     elif not short_term and settings.news_require_today_for_add and not today_signal:
@@ -441,6 +501,168 @@ def _execution_direction(action: str) -> str:
     return "none"
 
 
+_ADD_POSITION_PERCENT_TIERS = (
+    (85.0, 20.0, "强机会档"),
+    (70.0, 15.0, "较强机会档"),
+    (50.0, 10.0, "中等机会档"),
+    (float("-inf"), 5.0, "小机会试探档"),
+)
+
+
+def _resolve_deterministic_position_change(
+    action: str,
+    *,
+    holding: Holding | None,
+    profile: InvestorProfile,
+    weight_denominator: float,
+    sector_opportunity: dict | None,
+) -> tuple[float | None, str, str | None]:
+    """Return a server-owned percentage relative to the estimated holding value.
+
+    Daily reports intentionally avoid exact share or yuan sizing. The percentage
+    remains useful when an OCR import only provides current market value, while
+    concentration and transaction gates still have deterministic control.
+    """
+
+    direction = _execution_direction(action)
+    if direction == "none" or holding is None or holding.holding_amount <= 0:
+        note = None
+        if direction == "add":
+            note = "当前持仓估值不可用，系统无法计算可靠的相对调整比例，已改为观察。"
+        return None, "", note
+
+    current_amount = float(holding.holding_amount)
+    if direction == "reduce":
+        bucket = _action_bucket(action)
+        if bucket <= ACTION_BUCKET_CLEAR_ALL:
+            percent = -100.0
+            tier = "减仓 1/1 风险档位"
+        elif bucket <= ACTION_BUCKET_DEEP_REDUCE:
+            percent = -50.0
+            tier = "减仓 1/2 风险档位"
+        else:
+            percent = -25.0
+            tier = "减仓 1/4 风险档位"
+        return (
+            percent,
+            f"相对当前估算持仓计算；{tier}",
+            None,
+        )
+
+    opportunity_score = _opportunity_score(sector_opportunity)
+    base_percent, opportunity_tier = _add_position_percent_for_score(
+        opportunity_score
+    )
+    limit_ratio = max(min(float(profile.concentration_limit_percent), 100.0), 0.0) / 100
+    max_add_amount: float | None
+    if profile.expected_investment_amount is not None and profile.expected_investment_amount > 0:
+        max_add_amount = max(
+            float(profile.expected_investment_amount) * limit_ratio - current_amount,
+            0.0,
+        )
+    elif limit_ratio >= 1:
+        max_add_amount = None
+    elif limit_ratio <= 0:
+        max_add_amount = 0.0
+    else:
+        # Without a fixed target total, the post-purchase denominator also grows:
+        # (current + x) / (portfolio + x) <= concentration_limit.
+        max_add_amount = max(
+            (limit_ratio * float(weight_denominator) - current_amount)
+            / (1 - limit_ratio),
+            0.0,
+        )
+
+    resolved_percent = base_percent
+    capped = False
+    if max_add_amount is not None:
+        concentration_percent = max_add_amount / current_amount * 100
+        if concentration_percent < resolved_percent:
+            resolved_percent = concentration_percent
+            capped = True
+    resolved_percent = floor(max(resolved_percent, 0.0) * 10) / 10
+    if resolved_percent < 0.1:
+        return (
+            None,
+            "",
+            "当前持仓已接近或达到单只集中度上限，本次不再增加仓位。",
+        )
+
+    if opportunity_score is None:
+        basis = (
+            f"相对当前估算持仓计算；板块机会分暂缺，采用{opportunity_tier} "
+            f"{base_percent:g}%"
+        )
+    else:
+        basis = (
+            f"相对当前估算持仓计算；板块机会分 {opportunity_score:g}，"
+            f"对应{opportunity_tier} {base_percent:g}%"
+        )
+    if capped:
+        basis += "；已按单只集中度上限收紧"
+    return resolved_percent, basis, None
+
+
+def _opportunity_score(sector_opportunity: dict | None) -> float | None:
+    if not isinstance(sector_opportunity, dict):
+        return None
+    for key in ("research_score", "score"):
+        raw = sector_opportunity.get(key)
+        if raw is None or isinstance(raw, bool):
+            continue
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if isfinite(value):
+            return round(min(max(value, 0.0), 100.0), 2)
+    return None
+
+
+def _add_position_percent_for_score(
+    opportunity_score: float | None,
+) -> tuple[float, str]:
+    score = opportunity_score if opportunity_score is not None else float("-inf")
+    for threshold, percent, label in _ADD_POSITION_PERCENT_TIERS:
+        if score >= threshold:
+            return percent, label
+    return 5.0, "小机会试探档"
+
+
+def _position_change_amount_yuan(
+    holding: Holding | None,
+    percent: float | None,
+) -> float | None:
+    """Translate a percentage to an internal tradeability probe, never UI output."""
+
+    if holding is None or percent is None or percent <= 0:
+        return None
+    amount = float(holding.holding_amount) * percent / 100
+    return amount if isfinite(amount) and amount > 0 else None
+
+
+def _estimated_position_change_amount_yuan(
+    holding: Holding | None,
+    percent: float | None,
+) -> float | None:
+    """Return the display-only notional implied by the final guarded ratio."""
+
+    if holding is None or percent is None or percent == 0:
+        return None
+    holding_amount = float(holding.holding_amount)
+    amount = holding_amount * abs(float(percent)) / 100
+    if not isfinite(amount) or amount <= 0:
+        return None
+    return round(amount, 2)
+
+
+def _format_position_percent(percent: float) -> str:
+    value = abs(float(percent))
+    if abs(value - round(value)) < 1e-9:
+        return f"{value:.0f}"
+    return f"{value:.1f}"
+
+
 def _apply_holding_tradeability_guard(
     normalized_action: str,
     *,
@@ -496,8 +718,8 @@ def _apply_holding_tradeability_guard(
         note = None
         if amount_assessment.get("amount_capped_by_daily_limit"):
             note = (
-                f"建议金额已按已核验的单日申购限额下调为 {approved_amount:,.0f} 元；"
-                "下单前仍需复核渠道剩余额度。"
+                "建议比例已按已核验的单日申购限额收紧；"
+                "实际操作前仍需复核渠道剩余额度。"
             )
         return (
             normalized_action,
@@ -523,7 +745,7 @@ def _apply_holding_tradeability_guard(
             None,
             True,
             "赎回开放已核验，但缺少逐笔申购时间，无法确认锁定期与适用赎回费；"
-            "仅保留减仓评估，不生成金额或仓位比例。",
+            "保留减仓比例用于风险规划，实际赎回前请核对持有期与费用。",
             dict(raw_tradeability),
             transaction_execution,
         )
@@ -572,6 +794,7 @@ def _strip_untrusted_execution_text(rec: FundRecommendation) -> FundRecommendati
     copy.amount_note = None
     copy.suggested_position_change_percent = None
     copy.suggested_position_change_basis = ""
+    copy.estimated_position_change_amount_yuan = None
     return copy
 
 
@@ -579,27 +802,19 @@ def _enforce_final_execution_projection(
     rec: FundRecommendation,
     *,
     original_action: str,
+    holding: Holding | None,
 ) -> None:
     """Project every user-visible execution field from the final guarded action."""
     final_direction = _execution_direction(rec.action)
-    original_direction = _execution_direction(original_action)
-    if final_direction == "none" or final_direction != original_direction:
-        rec.amount_yuan = None
-        rec.amount_note = None
+    _ = original_action  # Kept in the signature for historical callers/audit parity.
+    # Daily recommendations are percentage-first. Exact yuan/share sizing is
+    # intentionally never exposed because imported holdings are market-value
+    # estimates and do not need a platform share confirmation to be useful.
+    rec.amount_yuan = None
+    rec.amount_note = None
     if final_direction == "none":
         rec.suggested_position_change_percent = None
         rec.suggested_position_change_basis = ""
-
-    amount = rec.amount_yuan
-    if amount is not None and (not isfinite(float(amount)) or float(amount) <= 0):
-        rec.amount_yuan = None
-        rec.amount_note = None
-    if rec.amount_yuan is not None:
-        verb = "加仓" if final_direction == "add" else "减仓"
-        rec.amount_note = (
-            f"系统校验后的示意{verb}金额约 {float(rec.amount_yuan):,.0f} 元；"
-            "实际操作前请核对净值、费用与可用资金。"
-        )
 
     position = rec.suggested_position_change_percent
     if position is not None:
@@ -609,16 +824,27 @@ def _enforce_final_execution_projection(
         if not valid_sign or not isfinite(float(position)):
             rec.suggested_position_change_percent = None
             rec.suggested_position_change_basis = ""
-        else:
+        elif not rec.suggested_position_change_basis:
             rec.suggested_position_change_basis = (
-                f"系统依据最终动作「{rec.action}」及确定性规则计算，非模型自由给值"
+                f"相对当前估算持仓计算；系统依据最终动作「{rec.action}」确定档位"
             )
+
+    rec.estimated_position_change_amount_yuan = (
+        _estimated_position_change_amount_yuan(
+            holding,
+            rec.suggested_position_change_percent,
+        )
+    )
 
     rec.risks = rec.risks or _build_default_risks(rec, None)
 
     projection = f"系统校验后的最终动作：{rec.action}。"
-    if rec.amount_yuan is not None:
-        projection += f"示意金额约 {float(rec.amount_yuan):,.0f} 元。"
+    if rec.suggested_position_change_percent is not None:
+        verb = "增加" if rec.suggested_position_change_percent > 0 else "减少"
+        projection += (
+            f"建议相对当前持仓{verb} "
+            f"{_format_position_percent(rec.suggested_position_change_percent)}%。"
+        )
     rec.points = [*rec.points, projection]
     if rec.decision_path:
         rec.decision_path = (
@@ -626,7 +852,9 @@ def _enforce_final_execution_projection(
         )
     else:
         rec.decision_path = f"确定性守卫完成身份、证据与风险校验；最终动作：{rec.action}。"
-    rec.validation_notes.append("执行字段已按最终动作重新投影，原始模型指令不直接作为执行依据。")
+    rec.validation_notes.append(
+        "调整比例已由系统按最终动作重新计算，原始模型金额或比例不直接作为依据。"
+    )
 
 
 def conservative_action_text(llm_action: str, offline_action: str) -> str:

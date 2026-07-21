@@ -11,6 +11,7 @@ from app.models import (
     RiskAssessment,
 )
 from app.services.recommendation_guard import (
+    _resolve_deterministic_position_change,
     _weak_evidence_reasons,
     apply_recommendation_guards,
 )
@@ -381,6 +382,169 @@ def test_strong_evidence_keeps_add_action_and_backfills_fields() -> None:
     assert rec.risks
 
 
+@pytest.mark.parametrize(
+    ("score", "decision_style", "expected_percent"),
+    [
+        (49.99, "aggressive", 5.0),
+        (50.0, "tactical", 10.0),
+        (70.0, "tactical", 15.0),
+        (85.0, "aggressive", 20.0),
+        (999.0, "tactical", 20.0),
+    ],
+)
+def test_add_percentage_tracks_opportunity_score_without_style_cap(
+    score: float,
+    decision_style: str,
+    expected_percent: float,
+) -> None:
+    facts = _facts_with_holding(
+        sector_opportunity={
+            "score": score,
+            "track": "momentum",
+            "confidence": "高",
+            "opportunity_available": True,
+            "pattern_label": "price_flow_aligned_up",
+        },
+        evidence={
+            "composite": {"level": "高", "score": 3.0},
+            "components": [
+                {"source": "factor", "level": "高", "basis": "主因子动量"}
+            ],
+        },
+    )
+
+    _, guarded = apply_recommendation_guards(
+        [_rec()],
+        [],
+        _request(decision_style=decision_style),
+        _risk(),
+        _TODAY_NEWS,
+        [],
+        facts=facts,
+    )
+
+    rec = guarded[0]
+    assert rec.action == "分批加仓"
+    assert rec.suggested_position_change_percent == expected_percent
+    assert rec.estimated_position_change_amount_yuan == pytest.approx(
+        10_000 * expected_percent / 100
+    )
+    assert "板块机会分" in rec.suggested_position_change_basis
+
+
+def test_conservative_profile_does_not_cap_opportunity_percentage() -> None:
+    request = _request(decision_style="conservative")
+
+    percent, basis, note = _resolve_deterministic_position_change(
+        "分批加仓",
+        holding=request.holdings[0],
+        profile=request.profile,
+        weight_denominator=100_000,
+        sector_opportunity={"score": 85},
+    )
+
+    assert percent == 20
+    assert "强机会档 20%" in basis
+    assert note is None
+
+
+@pytest.mark.parametrize(
+    ("sector_opportunity", "expected_percent"),
+    [
+        (None, 5.0),
+        ({}, 5.0),
+        ({"score": 85.0, "research_score": 49.99}, 5.0),
+        ({"score": 85.0, "research_score": 70.0}, 15.0),
+    ],
+)
+def test_add_percentage_prefers_research_score_and_falls_back_safely(
+    sector_opportunity: dict | None,
+    expected_percent: float,
+) -> None:
+    request = _request(decision_style="conservative")
+
+    percent, _, note = _resolve_deterministic_position_change(
+        "分批加仓",
+        holding=request.holdings[0],
+        profile=request.profile,
+        weight_denominator=100_000,
+        sector_opportunity=sector_opportunity,
+    )
+
+    assert percent == expected_percent
+    assert note is None
+
+
+def test_unconfirmed_share_ledger_keeps_direction_and_uses_estimated_percentage() -> None:
+    facts = _facts_with_holding(
+        sector_opportunity={
+            "score": 80,
+            "track": "momentum",
+            "confidence": "高",
+            "opportunity_available": True,
+            "pattern_label": "price_flow_aligned_up",
+            "today_main_force_net_yi": 6.0,
+            "cumulative_5d_net_yi": 12.0,
+        },
+        evidence={
+            "composite": {"level": "高", "score": 3.0},
+            "components": [
+                {"source": "factor", "level": "高", "basis": "主因子动量(百分位80)"}
+            ],
+        },
+    )
+    facts["portfolio_snapshot"] = {
+        "stale": False,
+        "authoritative": True,
+        "position_complete": False,
+        "pending_transaction_count": 0,
+    }
+    facts["data_evidence"] = {
+        "decision_ready": False,
+        "blocking_reasons": ["incomplete_or_unsettled_position_ledger"],
+        "items": [
+            {
+                "fact_id": "holdings.519674.holding_amount",
+                "freshness": "fresh",
+                "confidence": "high",
+            },
+            {
+                "fact_id": "holdings.519674.sector_opportunity",
+                "freshness": "fresh",
+                "confidence": "high",
+            },
+        ],
+    }
+
+    _, guarded = apply_recommendation_guards(
+        [
+            _rec(
+                amount_yuan=1000,
+                suggested_position_change_percent=10,
+                confidence="高",
+            )
+        ],
+        [],
+        _request(decision_style="tactical"),
+        _risk(),
+        _TODAY_NEWS,
+        [],
+        facts=facts,
+    )
+
+    rec = guarded[0]
+    assert rec.action == "分批加仓"
+    assert rec.amount_yuan is None
+    assert rec.amount_note is None
+    assert rec.suggested_position_change_percent == 15
+    assert rec.estimated_position_change_amount_yuan == 1500
+    assert "相对当前估算持仓" in rec.suggested_position_change_basis
+    assert rec.confidence == "高"
+    assert facts["data_evidence_guard"]["execution_blocked"] is False
+    assert "sizing_blocked" not in facts["data_evidence_guard"]
+    assert all("等数据更新后再判断" not in point for point in rec.points)
+
+
 def test_missing_facts_row_does_not_crash_and_still_backfills_generic_fields() -> None:
     _, guarded = apply_recommendation_guards(
         [_rec(action="观察")],
@@ -484,6 +648,29 @@ def test_llm_watch_gets_upgraded_to_reduce_when_fund_evidence_also_weak() -> Non
     assert rec.action == "减仓评估"
     assert rec.suggested_position_change_percent == -25.0
     assert rec.suggested_position_change_basis
+
+
+def test_risk_enhanced_reduction_uses_one_third_and_matching_estimate() -> None:
+    facts = _facts_with_holding(
+        sector_opportunity=_strong_divergence_opportunity(),
+        evidence={"composite": {"level": "不足", "score": 0.5}},
+    )
+    facts["holdings"][0]["estimated_holding_return_percent"] = 8.0
+
+    _, guarded = apply_recommendation_guards(
+        [_rec(action="观察")],
+        [],
+        _request(decision_style="conservative"),
+        _risk(),
+        _TODAY_NEWS,
+        [],
+        facts=facts,
+    )
+
+    rec = guarded[0]
+    assert rec.action == "减仓评估"
+    assert rec.suggested_position_change_percent == pytest.approx(-(100 / 3))
+    assert rec.estimated_position_change_amount_yuan == 3333.33
 
 
 def test_llm_add_action_gets_upgraded_past_the_normal_downgrade_to_reduce() -> None:

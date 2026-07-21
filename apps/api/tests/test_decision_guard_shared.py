@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from app.services.decision_guard_shared import (
     ACTION_BUCKET_ADD,
     ACTION_BUCKET_CLEAR_ALL,
@@ -220,7 +222,7 @@ def test_row3_reduce_with_higher_percent_when_unrealized_gain() -> None:
         decision_style="conservative",
     )
     assert result["min_bucket"] == ACTION_BUCKET_REDUCE
-    assert result["suggested_position_change_percent"] == -35.0
+    assert result["suggested_position_change_percent"] == pytest.approx(-(100 / 3))
     assert result["suggested_position_change_percent"] < -25.0  # 比 row2 更激进
 
 

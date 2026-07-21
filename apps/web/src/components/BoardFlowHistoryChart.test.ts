@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildBoardFlowAxisDomain,
   formatBoardFlowAxisYi,
   mapBoardFlowHistoryValues,
 } from "@/components/BoardFlowHistoryChart";
@@ -21,5 +22,26 @@ describe("BoardFlowHistoryChart data mapping", () => {
     expect(formatBoardFlowAxisYi(12.34)).toBe("+12.3");
     expect(formatBoardFlowAxisYi(-12.34)).toBe("-12.3");
     expect(formatBoardFlowAxisYi(0)).toBe("0");
+  });
+
+  it("uses the full compact plot for one-sided outflows instead of reserving an empty upper half", () => {
+    expect(buildBoardFlowAxisDomain([-0.3, -31.8, -12.4, -72.1, -24.6])).toEqual({
+      min: -100,
+      max: 0,
+      ticks: [-100, -50, 0],
+    });
+  });
+
+  it("keeps zero as the reference line when inflows and outflows are mixed", () => {
+    expect(buildBoardFlowAxisDomain([-25, 42])).toEqual({
+      min: -50,
+      max: 50,
+      ticks: [-50, 0, 50],
+    });
+  });
+
+  it("compacts very large axis values", () => {
+    expect(formatBoardFlowAxisYi(1250)).toBe("+1.3k");
+    expect(formatBoardFlowAxisYi(-12000)).toBe("-12k");
   });
 });

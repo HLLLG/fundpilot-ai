@@ -5,7 +5,6 @@ import {
   ArrowDown,
   ArrowLeftRight,
   ArrowUp,
-  BookCheck,
   Eye,
   EyeOff,
   Plus,
@@ -71,7 +70,6 @@ type YangjibaoHoldingsBoardProps = {
   className?: string;
   onAddHolding?: () => void;
   onBatchTransaction?: () => void;
-  onConfirmLedgerBaseline?: () => void;
   onSelectHolding?: (holding: HoldingIdentity) => void;
 };
 
@@ -224,7 +222,6 @@ export function YangjibaoHoldingsBoard({
   className,
   onAddHolding,
   onBatchTransaction,
-  onConfirmLedgerBaseline,
   onSelectHolding,
 }: YangjibaoHoldingsBoardProps) {
   const [quoteTradeDate, setQuoteTradeDate] = useState<string | null>(() => {
@@ -657,16 +654,6 @@ export function YangjibaoHoldingsBoard({
               >
                 <ArrowLeftRight size={16} />
                 批量加减仓
-              </button>
-            ) : null}
-            {onConfirmLedgerBaseline ? (
-              <button
-                type="button"
-                onClick={onConfirmLedgerBaseline}
-                className="flex min-h-11 flex-1 items-center justify-center gap-1.5 border-l border-slate-100 bg-slate-950 px-2 py-2.5 text-sm font-bold text-emerald-200 transition hover:bg-slate-900 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-emerald-400"
-              >
-                <BookCheck size={16} />
-                账本基线
               </button>
             ) : null}
           </div>

@@ -26,6 +26,13 @@ from app.services.discovery_strategy import (
     discovery_minimum_holding_days,
     strategy_from_facts,
 )
+from app.services.sector_opportunity_scoring import (
+    ENTRY_FORMING,
+    ENTRY_INVALID,
+    ENTRY_POLICY_VERSION,
+    ENTRY_READY_ON_PULLBACK,
+    ENTRY_READY_TO_START,
+)
 from app.services.fund_tradeability import (
     assess_tradeability_for_amount,
     build_tradeability_gate,
@@ -212,10 +219,10 @@ def resolve_discovery_amount_cap(
 ) -> AmountCapResult:
     """Resolve the hard amount cap without trusting an LLM-proposed amount.
 
-    The cap is the minimum remaining allowance across request budget, confirmed
-    cash, the request-level concentration budget, and the portfolio's existing
-    plus newly allocated exposure to the same sector. Unknown cash or sector
-    exposure is never interpreted as zero.
+    The cap is the minimum remaining allowance across the user's explicit scan
+    budget, known cash when supplied, concentration budget, and the portfolio's
+    estimated existing exposure. An omitted cash field falls back to the explicit
+    scan budget; it is never interpreted as zero.
     """
 
     reasons: list[str] = []
@@ -238,22 +245,15 @@ def resolve_discovery_amount_cap(
     truth = portfolio_truth if isinstance(portfolio_truth, Mapping) else None
     cash_balance: float | None = None
     if truth is None:
-        reasons.append("cash_unknown")
+        reasons.append("portfolio_truth_missing")
     else:
         cash = truth.get("cash")
         if not isinstance(cash, Mapping) or cash.get("known") is not True:
-            reasons.append("cash_unknown")
+            cash_balance = request_budget
         else:
             cash_balance = _finite_nonnegative(cash.get("balance_yuan"))
             if cash_balance is None:
                 reasons.append("invalid_cash_balance")
-        if (
-            truth.get("position_complete") is not True
-            or truth.get("ledger_truncated") is True
-            or int(_finite_nonnegative(truth.get("pending_transaction_count")) or 0) > 0
-            or int(_finite_nonnegative(truth.get("conflict_count")) or 0) > 0
-        ):
-            reasons.append("position_truth_incomplete")
 
     rows = holdings_slim if isinstance(holdings_slim, list) else None
     if rows is None:
@@ -403,6 +403,8 @@ def apply_discovery_guards(
         caveats.append(
             f"示意买入总额已按已确认可用现金 {known_cash_yuan:.2f} 元封顶。"
         )
+    elif known_cash_yuan is None:
+        caveats.append("可用现金未单独录入，本次按你填写的预算规划；实际申购前请确认账户余额。")
     # M6：与日报 analysis_facts.holdings[].escalation 同一思路——把每只候选"是否触发了
     # M4 双向升级判定"的结构化结果记录下来（无论 shadow/enforced 都记录，且不管最终
     # 是否真的生效），供 shadow_escalation_digest.py 聚合复盘读取，避免正则解析 caveats
@@ -415,8 +417,6 @@ def apply_discovery_guards(
         and (
             portfolio_snapshot.get("stale")
             or not portfolio_snapshot.get("authoritative")
-            or portfolio_snapshot.get("position_complete") is False
-            or int(portfolio_snapshot.get("pending_transaction_count") or 0) > 0
         )
     )
     from app.services.decision_data_evidence import (
@@ -508,6 +508,7 @@ def apply_discovery_guards(
             discovery_facts,
             scope="discovery",
             fund_code=code,
+            allow_incomplete_position_for_direction=True,
         )
         execution_blocked = degraded_portfolio_snapshot or not evidence_allowed
         if execution_blocked:
@@ -596,35 +597,87 @@ def apply_discovery_guards(
         dist_high = _as_float(nav_trend.get("distance_from_high_percent"))
         recent_5d = _as_float(nav_trend.get("recent_5d_change_percent"))
         recent_20d = _as_float(nav_trend.get("return_20d_percent"))
+        entry_state = _entry_state_v2(opportunity)
+        fund_price_extended = bool(
+            (
+                dist_high is not None
+                and dist_high > -2.0
+                and recent_5d is not None
+                and recent_5d >= 6.0
+            )
+            or (
+                recent_20d is not None
+                and recent_20d >= 15.0
+                and recent_5d is not None
+                and recent_5d >= 4.0
+            )
+        )
+        if (
+            opportunity_first
+            and entry_state == ENTRY_READY_TO_START
+            and quality_status == "eligible"
+            and not execution_blocked
+            and not fund_price_extended
+            and copy.action in {"建议关注", "等待回调"}
+        ):
+            previous = copy.action
+            copy.action = "分批买入"
+            if copy.confidence == "低":
+                copy.confidence = "中"
+            copy.points = [
+                (
+                    "方向成熟度 V2 已同时通过方向、资金与入场位置校验；"
+                    f"系统将「{previous}」校正为首批分批买入候选，最终金额仍由组合硬约束统一计算。"
+                ),
+                *copy.points,
+            ]
+            copy.validation_notes = [
+                *copy.validation_notes,
+                "入场状态为 ready_to_start；该状态只开放首批额度，不承诺后续加仓或收益。",
+            ]
+        elif (
+            opportunity_first
+            and entry_state == ENTRY_READY_ON_PULLBACK
+            and copy.action == "分批买入"
+        ):
+            copy.action = "等待回调"
+            triggers = [
+                str(value)
+                for value in (opportunity or {}).get("entry_triggers") or []
+                if str(value).strip()
+            ]
+            copy.points = [
+                "方向仍有优势，但入场成熟度尚未通过；等待条件："
+                + "；".join(triggers[:3] or ["短线过热缓解并保持资金确认"])
+                + "。",
+                *copy.points,
+            ]
         if profile.avoid_chasing and copy.action == "分批买入":
             if opportunity_first:
-                pattern = str((opportunity or {}).get("pattern_label") or "")
-                five_day_flow = _as_float(
-                    (opportunity or {}).get("cumulative_5d_net_yi")
-                )
-                flow_is_weak = pattern in {"distribution", "weak_outflow"} or (
-                    five_day_flow is not None and five_day_flow < 0
-                )
-                price_is_extended = bool(
-                    (sector_move is not None and float(sector_move) >= 7.0)
-                    or (
-                        dist_high is not None
-                        and dist_high > -2.0
-                        and recent_5d is not None
-                        and recent_5d >= 6.0
+                if entry_state == ENTRY_READY_TO_START:
+                    # V2 已把趋势、资金和价格位置合成同一个入场状态；这里
+                    # 不再用旧的热点阈值重复否决同一份证据。
+                    pass
+                elif entry_state in {ENTRY_FORMING, ENTRY_INVALID, ENTRY_READY_ON_PULLBACK}:
+                    # 由下方统一弱证据门禁给出精确状态原因。
+                    pass
+                else:
+                    pattern = str((opportunity or {}).get("pattern_label") or "")
+                    five_day_flow = _as_float(
+                        (opportunity or {}).get("cumulative_5d_net_yi")
                     )
-                    or (
-                        recent_20d is not None
-                        and recent_20d >= 15.0
-                        and recent_5d is not None
-                        and recent_5d >= 4.0
+                    flow_is_weak = pattern in {"distribution", "weak_outflow"} or (
+                        five_day_flow is not None and five_day_flow < 0
                     )
-                )
-                if price_is_extended and flow_is_weak:
-                    copy.action = "等待回调"
-                    copy.points = list(copy.points) + [
-                        "短线涨幅已经偏快且5日资金没有继续确认，先等回调或资金重新转强。"
-                    ]
+                    price_is_extended = bool(
+                        (sector_move is not None and float(sector_move) >= 7.0)
+                        or fund_price_extended
+                    )
+                    if price_is_extended and flow_is_weak:
+                        copy.action = "等待回调"
+                        copy.points = list(copy.points) + [
+                            "短线涨幅已经偏快且5日资金没有继续确认，先等回调或资金重新转强。"
+                        ]
             else:
                 chase_threshold = 6.0 if profile.decision_style == "aggressive" else 4.0
                 if sector_move is not None and sector_move >= chase_threshold:
@@ -1173,12 +1226,31 @@ def _should_downgrade_weak_evidence(
 def _weak_evidence_reasons(pool_item: dict, opportunity: dict | None) -> list[str]:
     reasons: list[str] = []
     if opportunity:
-        confidence = str(opportunity.get("confidence") or "").strip()
-        if confidence in {"低", "不足"}:
-            reasons.append(f"主方向置信度为{confidence}")
-        score = _as_float(opportunity.get("score"))
-        if score is not None and score < 60:
-            reasons.append(f"板块机会分 {score:.2f}，低于 60")
+        entry_state = _entry_state_v2(opportunity)
+        if entry_state is not None:
+            state_labels = {
+                ENTRY_READY_ON_PULLBACK: "等待过热缓解",
+                ENTRY_FORMING: "条件形成中",
+                ENTRY_INVALID: "趋势或资金未通过",
+            }
+            if entry_state != ENTRY_READY_TO_START:
+                reasons.append(
+                    "方向入场状态为"
+                    + state_labels.get(entry_state, entry_state)
+                )
+            evidence_quality = str(opportunity.get("evidence_quality") or "").strip()
+            if evidence_quality == "insufficient":
+                reasons.append("方向多周期证据不足")
+            entry_score = _as_float(opportunity.get("entry_readiness_score"))
+            if entry_score is not None and entry_score < 60:
+                reasons.append(f"入场成熟度 {entry_score:.2f}，低于 60")
+        else:
+            confidence = str(opportunity.get("confidence") or "").strip()
+            if confidence in {"低", "不足"}:
+                reasons.append(f"主方向置信度为{confidence}")
+            score = _as_float(opportunity.get("score"))
+            if score is not None and score < 60:
+                reasons.append(f"板块机会分 {score:.2f}，低于 60")
         pattern = str(opportunity.get("pattern_label") or "")
         if pattern in {"flow_date_mismatch", "distribution", "weak_outflow"}:
             pattern_labels = {
@@ -1200,6 +1272,22 @@ def _weak_evidence_reasons(pool_item: dict, opportunity: dict | None) -> list[st
     if "匹配置信偏低" in penalties or "板块匹配" in penalties:
         reasons.append("板块匹配置信偏低")
     return _append_unique([], reasons, limit=6)
+
+
+def _entry_state_v2(opportunity: Mapping[str, object] | None) -> str | None:
+    if not isinstance(opportunity, Mapping):
+        return None
+    if str(opportunity.get("score_policy_version") or "") != ENTRY_POLICY_VERSION:
+        return None
+    state = str(opportunity.get("entry_state") or "").strip()
+    if state in {
+        ENTRY_READY_TO_START,
+        ENTRY_READY_ON_PULLBACK,
+        ENTRY_FORMING,
+        ENTRY_INVALID,
+    }:
+        return state
+    return ENTRY_FORMING
 
 
 def _sync_decision_path_with_final_action(rec: DiscoveryRecommendation) -> None:

@@ -45,6 +45,7 @@ def build_discovery_facts(
     focus_sectors: list[str] | None = None,
     fund_type_preference: str = "any",
     sector_opportunities: list[dict] | None = None,
+    sector_flow_by_label: dict[str, dict] | None = None,
     mainline_snapshot: dict | None = None,
     budget_enhancements: bool = False,
     decision_at: datetime | None = None,
@@ -69,6 +70,7 @@ def build_discovery_facts(
             sector_heat,
             signal_backtest,
             trade_date=session.get("effective_trade_date"),
+            sector_flow_by_label=sector_flow_by_label,
         )
         if budget_enhancements
         else build_target_sector_context(
@@ -76,6 +78,7 @@ def build_discovery_facts(
             sector_heat,
             signal_backtest,
             trade_date=session.get("effective_trade_date"),
+            sector_flow_by_label=sector_flow_by_label,
         )
     )
     stock_connect_flow = (
@@ -313,6 +316,7 @@ def _budgeted_target_sector_context(
     signal_backtest: dict,
     *,
     trade_date: str | None,
+    sector_flow_by_label: dict[str, dict] | None,
 ) -> list[dict]:
     executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="discovery-context-budget")
     future = executor.submit(
@@ -321,6 +325,7 @@ def _budgeted_target_sector_context(
             sector_heat,
             signal_backtest,
             trade_date=trade_date,
+            sector_flow_by_label=sector_flow_by_label,
         )
     )
     try:

@@ -61,8 +61,10 @@ recommendations 字段约束：
   费用不可核验、最短持有不足7天或标准费率上限成本过高时只能观察，不得用预期涨幅抵消费用门禁
 - full_market 模式须先判断板块方向，再在方向内选基金；不得只按基金近1年收益排序
 - 南向资金仅使用 stock_connect_flow，并只作港股资金面参考；板块主力使用 target_sector_context.sector_fund_flow
-- sector_opportunities 是系统已用短期热度、主力资金与 mainline_regime 多周期相对强度生成的研究方向，
-  推荐理由须优先引用它，而不是重新发明方向；mainline_regime 只改变研究排序，不得当作买入门禁或收益保证
+- sector_opportunities 若含 score_policy_version=sector_entry_maturity.2026-07.v2，须以 entry_state 为方向动作边界：
+  ready_to_start 表示方向、资金与价格位置已同时通过，可在基金硬门禁通过时使用分批买入；
+  ready_on_pullback 只能等待回调；forming 只能建议关注。不得用当日热度覆盖该状态
+- mainline_regime 单独仍只参与研究排序；只有方向成熟度 V2 的完整组合状态可以开放首批入场，不构成收益保证
 - signal_backtest / candidate_factor_scores 按 confidence.level / factor_reliability 表述
 - candidate_factor_scores.execution_qualified_fund_codes 只可作为量化加分证据；opportunity_first 下未覆盖不得单独否决买入，risk_first 下仍作为买入白名单；任何模式都不得把描述性覆盖写成量化背书
 - profile.account_loss_review_percent 只用于账户/现有持仓亏损复核，不得直接与候选基金近1年最大回撤比较
@@ -74,8 +76,8 @@ recommendations 字段约束：
 - summary 或 caveats 须体现 news.freshness_label 对置信度的影响
 - data_evidence 是字段级时点证据；stale/unavailable/none 不得支撑买入动作，is_estimate=true 必须降置信度
 - discovery_facts.portfolio_position_truth 是持仓份额、成本和现金的唯一真值摘要；unknown/null 不得按 0 猜测；
-  position_complete=false、ledger_truncated=true 或存在 pending/conflict 时，suggested_amount_yuan 必须为 null，
-  不得生成任何可执行买入金额
+  模型的 suggested_amount_yuan 始终为 null；份额未确认不阻断方向判断，服务端可使用 holdings_slim 的估算市值、
+  用户明确填写的本次预算与集中度规则计算首批金额；未知现金按本次预算封顶，不得按 0 猜测
 - 新闻由系统预取并已做时效筛选；不得引用 news_titles/topic_briefs 之外的新闻，
   news.freshness_label 为 stale/empty/aging 时，新闻只能作背景，不能作为买入或追涨主依据
 """
@@ -86,6 +88,7 @@ _COMMON_REQUIREMENTS = [
     "每只 recommendations 须含 hold_horizon、risks（至少 1 条）、points（引用 candidate_pool 具体字段）",
     "每只 recommendations 须含 decision_path、sector_evidence、fund_evidence、validation_notes",
     "先判断板块方向，再比较方向内基金质量分，最后决定动作",
+    "方向成熟度 V2 存在时严格按 entry_state：ready_to_start + 基金硬门禁通过应给分批买入；ready_on_pullback 给等待回调；forming 给建议关注",
     "展示文本使用中文标签，不要原样输出 fund_quality_score/sector_fit_score/quality_penalties 等内部字段名",
     "estimated_daily_return_percent 且 daily_return_source=sector_estimate 时，points 须注明「估算」",
     "判断追高风险须参考 nav_trend.distance_from_high_percent / trend_label，不得只看 sector_heat",
@@ -95,7 +98,7 @@ _COMMON_REQUIREMENTS = [
     "引用数字须来自 discovery_facts，禁止编造",
     "量化执行资格只可增加置信度；opportunity_first 下未覆盖本身不否决买入，risk_first 下仍要求量化执行资格；描述性覆盖永远不等于量化背书",
     "须按 data_evidence 校验数据时点、置信度与是否估算；过期或不可用字段不得支撑动作",
-    "portfolio_position_truth 中 unknown/null 不得按 0；position_complete=false、ledger_truncated=true 或存在 pending/conflict 时 suggested_amount_yuan 必须为空",
+    "portfolio_position_truth 中 unknown/null 不得按 0；suggested_amount_yuan 始终为空交由服务端计算，份额未确认不阻断方向判断",
     "share_class_fee_status=unverified 时须提示真实申购/赎回费用待核验，不得宣称份额成本最优",
     "tradeability 必须 fresh 且可申购；金额不得低于购买起点或突破单日限额，未知/冲突一律只观察",
     "标准费率仅是未折扣上限；短周期须通过持有期赎回费与销售服务费门禁，不得用收益预期绕过",
@@ -108,7 +111,7 @@ _FULL_MARKET_REQUIREMENTS = [
     *_COMMON_REQUIREMENTS,
     "基于 sector_heat 与 target_sector_context 做全市场横向对比",
     "先判断板块方向（sector_opportunities/target_sector_context），再比较方向内基金质量分，最后决定动作",
-    "sector_opportunities 是系统结合短期热度、资金流与 mainline_regime 多周期证据生成的研究方向；mainline_regime 只改变研究排序，不得替代交易门禁",
+    "sector_opportunities 的 entry_state 是方向动作边界，不得把 forming/ready_on_pullback 写成立即买入，也不得仅因主线分高覆盖入场状态",
     "portfolio_gap / holdings_slim 仅作背景，不要以「持仓缺口」为主叙事",
     "market_view 须覆盖热度靠前板块与相对冷门但有机会的方向",
     "引用南向须用 stock_connect_flow 且仅作港股资金面参考；板块主力须用 target_sector_context.sector_fund_flow",
@@ -242,6 +245,17 @@ def _slim_sector_opportunities(items: list[dict]) -> list[dict]:
             "track": item.get("track"),
             "score": item.get("score"),
             "research_score": item.get("research_score"),
+            "score_policy_version": item.get("score_policy_version"),
+            "direction_score": item.get("direction_score"),
+            "setup_maturity_score": item.get("setup_maturity_score"),
+            "entry_readiness_score": item.get("entry_readiness_score"),
+            "data_coverage": item.get("data_coverage"),
+            "evidence_quality": item.get("evidence_quality"),
+            "entry_state": item.get("entry_state"),
+            "entry_reason": item.get("entry_reason"),
+            "entry_triggers": item.get("entry_triggers") or [],
+            "invalidation_signals": item.get("invalidation_signals") or [],
+            "execution_eligible": item.get("execution_eligible"),
             "confidence": item.get("confidence"),
             "entry_hint": item.get("entry_hint"),
             "evidence": item.get("evidence") or [],

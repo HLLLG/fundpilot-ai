@@ -1,5 +1,5 @@
 // 组合风险指标的解读话术 helper（把设计文档第 3 章的"参考刻度"写成函数）。
-// 设计文档：docs/superpowers/specs/2026-06-24-portfolio-risk-metrics-design.md
+// 现行契约：docs/PROJECT_CONTEXT.md「现行权威契约 / 金融评估与路径风险」。
 
 export type MetricTone = "good" | "warn" | "danger" | "neutral";
 

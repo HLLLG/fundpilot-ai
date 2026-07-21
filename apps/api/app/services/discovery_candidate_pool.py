@@ -61,6 +61,13 @@ _CORE_QUALITY_FIELDS = (
     "fund_manager",
     "nav_date",
 )
+_PEER_CATALOGUE_CLASSIFICATION_FIELDS = (
+    "fund_name",
+    "fund_type",
+    "fund_category",
+    "investment_style",
+    "risk_exposure",
+)
 
 
 def build_candidate_pool(
@@ -72,6 +79,7 @@ def build_candidate_pool(
     per_sector: int = _PER_SECTOR,
     pool_cap: int = _POOL_CAP,
     fetch_rank=None,
+    prepared_universe_rows: list[dict] | None = None,
     fetch_new_funds=None,
     sector_opportunities: list[dict] | None = None,
     decision_at: datetime | None = None,
@@ -84,7 +92,14 @@ def build_candidate_pool(
     # 默认使用全量、分类型的开放式基金横截面，避免“近1年涨幅前300名”造成
     # 赢家偏差；冷启动失败时再降级到前500名排行。注入 fetch_rank 仍保留给测试。
     universe_mode = "injected"
-    if fetch_rank is None:
+    if prepared_universe_rows is not None:
+        rank_rows = [
+            dict(row) for row in prepared_universe_rows if isinstance(row, dict)
+        ]
+        universe_mode = "full" if rank_rows else "top_500_fallback"
+        if not rank_rows:
+            rank_rows = fetch_open_fund_rank_cached(limit=500) or []
+    elif fetch_rank is None:
         rank_rows = fetch_discovery_fund_universe_cached(limit=20_000) or []
         universe_mode = "full" if rank_rows else "top_500_fallback"
         if not rank_rows:
@@ -252,7 +267,10 @@ def _attach_descriptive_peer_research(
             ),
             None,
         )
-        target = {**dict(source_target or {}), **candidate}
+        target = _catalogue_aligned_peer_target(
+            candidate,
+            source_target=source_target,
+        )
         target_universe = buckets.get(_peer_catalogue_bucket(target), [])
         try:
             peer_rank = build_peer_rank(
@@ -417,6 +435,33 @@ def _peer_catalogue_bucket(row: dict) -> str:
     if "股票" in text or fund_type.casefold() in {"gp", "equity", "stock"}:
         return "equity_active"
     return "unknown"
+
+
+def _catalogue_aligned_peer_target(
+    candidate: dict,
+    *,
+    source_target: dict | None,
+) -> dict:
+    """Use one classification vocabulary for the target and its universe.
+
+    Research-profile enrichment can replace the catalogue's compact ``hh``
+    type with a detailed label such as ``混合型-偏股``. Applying that detail to
+    the target alone creates an artificial subgroup because the other ~20k
+    catalogue rows were never enriched to the same taxonomy. Metrics and
+    benchmark evidence still come from the enriched candidate; only fields
+    that determine peer membership are aligned to the frozen catalogue row.
+    """
+
+    if not source_target:
+        return dict(candidate)
+    target = {**dict(source_target), **candidate}
+    for field in _PEER_CATALOGUE_CLASSIFICATION_FIELDS:
+        source_value = source_target.get(field)
+        if source_value not in (None, "", [], {}):
+            target[field] = source_value
+        elif field != "fund_name":
+            target.pop(field, None)
+    return target
 
 
 def enrich_candidates(
@@ -810,10 +855,19 @@ def attach_candidate_benchmark_research(
             spec,
             decision_at=decision_at,
         )
-        row["peer_group"] = build_fund_peer_group(
+        resolved_group = build_fund_peer_group(
             row,
             decision_at=decision_at,
             benchmark_spec=spec,
+        )
+        previous_rank = (
+            row.get("peer_rank")
+            if isinstance(row.get("peer_rank"), Mapping)
+            else None
+        )
+        row["peer_group"] = _preserve_catalogue_peer_group_for_benchmark_attachment(
+            previous_rank=previous_rank,
+            resolved_group=resolved_group,
         )
         staged.append(row)
 
@@ -846,6 +900,43 @@ def attach_candidate_benchmark_research(
         row["peer_rank"] = rank
         enriched.append(row)
     return enriched
+
+
+def _preserve_catalogue_peer_group_for_benchmark_attachment(
+    *,
+    previous_rank: Mapping | None,
+    resolved_group: dict,
+) -> dict:
+    """Prevent profile-only detail from shrinking a full-universe cohort.
+
+    Benchmark attachment happens after research-profile enrichment. For active
+    funds, a detailed profile subtype can change the target group even though
+    the frozen catalogue peers still use a coarse taxonomy. A benchmark cannot
+    change an active fund's membership, so preserve the catalogue-derived group
+    whenever the broad asset class and strategy agree. Passive/enhanced index
+    funds are excluded because their exact tracking reference legitimately is
+    part of group identity.
+    """
+
+    previous_group = (
+        dict(previous_rank.get("peer_group") or {})
+        if isinstance(previous_rank, Mapping)
+        else {}
+    )
+    previous_strategy = str(previous_group.get("management_style") or "")
+    same_broad_group = (
+        previous_group
+        and previous_group.get("asset_class") == resolved_group.get("asset_class")
+        and previous_strategy == str(resolved_group.get("management_style") or "")
+    )
+    if not same_broad_group or previous_strategy in {
+        "passive_index",
+        "enhanced_index",
+    }:
+        return resolved_group
+    previous_group["decision_at"] = resolved_group.get("decision_at")
+    previous_group["benchmark"] = dict(resolved_group.get("benchmark") or {})
+    return previous_group
 
 
 def _expand_share_family_alternatives(pool: list[dict]) -> list[dict]:

@@ -119,6 +119,28 @@ function snapshotForRecommendation(
   return codeMatches.length === 1 ? codeMatches[0] : undefined;
 }
 
+function holdingForRecommendation(
+  recommendationIndex: number,
+  item: Report["fund_recommendations"][number],
+  report: Report,
+) {
+  const aligned = report.holdings[recommendationIndex];
+  if (aligned?.fund_code === item.fund_code) {
+    return aligned;
+  }
+  const exactMatches = report.holdings.filter(
+    (holding) =>
+      holding.fund_code === item.fund_code && holding.fund_name === item.fund_name,
+  );
+  if (exactMatches.length === 1) {
+    return exactMatches[0];
+  }
+  const codeMatches = report.holdings.filter(
+    (holding) => holding.fund_code === item.fund_code,
+  );
+  return codeMatches.length === 1 ? codeMatches[0] : undefined;
+}
+
 function reportIcStatus(report: Report): FactorIcEvidenceStatus | null {
   const facts = report.analysis_facts as {
     factor_scores?: { ic_status?: FactorIcEvidenceStatus };
@@ -148,22 +170,37 @@ function FactorIcNotice({ status }: { status: FactorIcEvidenceStatus | null }) {
 function PositionChangeBadge({
   percent,
   basis,
+  estimatedAmountYuan,
 }: {
   percent: number;
   basis?: string;
+  estimatedAmountYuan?: number | null;
 }) {
   const isAdd = percent > 0;
   const Icon = isAdd ? TrendingUp : TrendingDown;
   const toneClass = isAdd
     ? "border-emerald-200 bg-emerald-50 text-emerald-900"
     : "border-rose-200 bg-rose-50 text-rose-900";
+  const displayPercent = formatAdjustmentPercent(percent);
   return (
     <div className={`mt-2 flex items-start gap-2 rounded-xl border px-3 py-2 ${toneClass}`}>
       <Icon size={18} className="mt-0.5 flex-shrink-0" />
-      <div className="min-w-0">
-        <div className="text-sm font-black">
-          建议{isAdd ? "加仓" : "减仓"} {Math.abs(percent).toFixed(0)}%
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+          <div className="text-sm font-black">
+            建议{isAdd ? "加仓" : "减仓"}当前持仓的 {displayPercent}%
+          </div>
+          {estimatedAmountYuan != null && estimatedAmountYuan > 0 ? (
+            <div className="whitespace-nowrap text-base font-black tabular-nums">
+              约 ¥{Math.round(estimatedAmountYuan).toLocaleString("zh-CN")}
+            </div>
+          ) : null}
         </div>
+        {estimatedAmountYuan != null && estimatedAmountYuan > 0 ? (
+          <p className="mt-0.5 text-[11px] leading-4 opacity-70">
+            按报告生成时持仓估值折算
+          </p>
+        ) : null}
         {basis ? (
           <p className="mt-0.5 break-words text-xs leading-5 opacity-80 [overflow-wrap:anywhere]">
             {translateEvidenceText(basis)}
@@ -172,6 +209,11 @@ function PositionChangeBadge({
       </div>
     </div>
   );
+}
+
+function formatAdjustmentPercent(percent: number) {
+  const value = Math.abs(percent);
+  return Number.isInteger(value) ? value.toFixed(0) : value.toFixed(1);
 }
 
 function ExtremeActionGate({
@@ -269,6 +311,7 @@ export function FundRecommendationCard({
   const [professionalOpen, setProfessionalOpen] = useState(false);
   const stableIdentity = `${item.fund_code}-${recommendationIndex}`;
   const snapshot = snapshotForRecommendation(recommendationIndex, item, report);
+  const reportHolding = holdingForRecommendation(recommendationIndex, item, report);
   const holdingFacts = holdingFactsRow(recommendationIndex, item, report);
   const evidence = holdingFacts?.evidence ?? null;
   const sectorOpportunity = holdingFacts?.sector_opportunity ?? null;
@@ -289,6 +332,24 @@ export function FundRecommendationCard({
     exactEvidenceKey(item.suggested_position_change_basis) === primaryReasonKey
       ? undefined
       : item.suggested_position_change_basis;
+  const derivedAdjustmentAmount =
+    item.suggested_position_change_percent != null &&
+    reportHolding != null &&
+    Number.isFinite(reportHolding.holding_amount) &&
+    reportHolding.holding_amount > 0
+      ? Math.round(
+          reportHolding.holding_amount *
+            Math.abs(item.suggested_position_change_percent),
+        ) / 100
+      : null;
+  const serverEstimatedAdjustmentAmount =
+    item.estimated_position_change_amount_yuan != null &&
+    Number.isFinite(item.estimated_position_change_amount_yuan) &&
+    item.estimated_position_change_amount_yuan > 0
+      ? item.estimated_position_change_amount_yuan
+      : null;
+  const estimatedAdjustmentAmount =
+    serverEstimatedAdjustmentAmount ?? derivedAdjustmentAmount;
   const amountDetail = item.amount_note?.trim()
     ? item.amount_note
     : item.amount_yuan != null
@@ -335,6 +396,13 @@ export function FundRecommendationCard({
           {referenceLabel ? <span className="text-xs text-slate-500">{referenceLabel}</span> : null}
           <span className={`ml-auto max-w-full rounded-full border px-2 py-0.5 text-xs font-bold ${actionBadgeClass(item.action)}`}>
             {item.action}
+            {item.suggested_position_change_percent != null ? (
+              <span>
+                {" · "}
+                {item.suggested_position_change_percent > 0 ? "+" : "−"}
+                {formatAdjustmentPercent(item.suggested_position_change_percent)}%
+              </span>
+            ) : null}
           </span>
         </span>
         <span className="w-full break-words text-xs leading-5 text-slate-600 [overflow-wrap:anywhere]">
@@ -347,6 +415,7 @@ export function FundRecommendationCard({
             <PositionChangeBadge
               percent={item.suggested_position_change_percent}
               basis={positionChangeBasis}
+              estimatedAmountYuan={estimatedAdjustmentAmount}
             />
           ) : visibleAmountDetail ? (
             <p className="mt-3 break-words rounded-xl bg-blue-50 px-3 py-2 text-sm font-bold text-blue-800 [overflow-wrap:anywhere]">

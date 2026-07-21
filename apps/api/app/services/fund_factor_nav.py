@@ -1,7 +1,7 @@
 """从一段 NAV 切片算因子原始值（动量/Calmar/回撤）。
 
 模块2（持仓不在榜的净值兜底）与模块3（因子 IC 回测）共用，避免重复。
-设计文档：docs/superpowers/specs/2026-06-24-factor-ic-backtest-design.md 第 5 章。
+现行契约：docs/PROJECT_CONTEXT.md「现行权威契约 / Factor IC、PIT 与量化证据」。
 
 窗口口径与排行榜一致：3 月≈60、6 月≈120、1 年≈250 交易日；
 最大回撤复用模块1 `portfolio_risk_metrics._max_drawdown` 保口径一致。

@@ -633,6 +633,7 @@ def _patch_discovery_clock_prep(monkeypatch, module, captured: dict) -> None:
     monkeypatch.setattr(module, "select_sector_opportunities", lambda *_args, **_kwargs: [])
     def build_pool(*_args, **kwargs):
         captured["candidate_pool_decision_at"] = kwargs.get("decision_at")
+        captured["prepared_universe_rows"] = kwargs.get("prepared_universe_rows")
         return []
 
     def enrich_pool(pool, **kwargs):
@@ -681,11 +682,19 @@ def test_run_discovery_captures_once_and_passes_one_clock_to_all_consumers(
     clock = capture_decision_clock(BEFORE_MIDNIGHT)
     calls = {"capture": 0}
     captured: dict = {}
+    order: list[str] = []
+    prepared_universe = [{"fund_code": "000001"}]
 
     def fake_capture():
+        order.append("decision_clock")
         calls["capture"] += 1
         return clock
 
+    monkeypatch.setattr(
+        pipeline,
+        "fetch_discovery_fund_universe_cached",
+        lambda **_kwargs: order.append("fund_universe") or prepared_universe,
+    )
     monkeypatch.setattr(pipeline, "capture_decision_clock", fake_capture)
     _patch_discovery_clock_prep(monkeypatch, pipeline, captured)
 
@@ -707,6 +716,8 @@ def test_run_discovery_captures_once_and_passes_one_clock_to_all_consumers(
     result = pipeline.run_discovery(request)
 
     assert calls["capture"] == 1
+    assert order[:2] == ["fund_universe", "decision_clock"]
+    assert captured["prepared_universe_rows"] == prepared_universe
     assert result.created_at == BEFORE_MIDNIGHT
     assert {
         captured["sector_heat_decision_at"],
@@ -789,10 +800,18 @@ def test_stream_discovery_captures_once_and_reuses_the_clock_for_fallback(
     captured: dict = {}
 
     def fake_capture():
+        order.append("decision_clock")
         calls["capture"] += 1
         return clock
 
     _patch_discovery_stream_pipeline(monkeypatch)
+    order: list[str] = []
+    prepared_universe = [{"fund_code": "000001"}]
+    monkeypatch.setattr(
+        streaming,
+        "fetch_discovery_fund_universe_cached",
+        lambda **_kwargs: order.append("fund_universe") or prepared_universe,
+    )
     monkeypatch.setattr(streaming, "capture_decision_clock", fake_capture)
 
     def preflight(holdings, **kwargs):
@@ -803,6 +822,7 @@ def test_stream_discovery_captures_once_and_reuses_the_clock_for_fallback(
 
     def build_pool(*_args, **kwargs):
         captured["candidate_pool_decision_at"] = kwargs.get("decision_at")
+        captured["prepared_universe_rows"] = kwargs.get("prepared_universe_rows")
         return []
 
     def enrich_pool(pool, **kwargs):
@@ -837,6 +857,8 @@ def test_stream_discovery_captures_once_and_reuses_the_clock_for_fallback(
     events = list(streaming.stream_discovery(_stream_discovery_request(), user_id=1))
 
     assert calls["capture"] == 1
+    assert order[:2] == ["fund_universe", "decision_clock"]
+    assert captured["prepared_universe_rows"] == prepared_universe
     assert {
         captured["decision_at"],
         captured["preflight_decision_at"],

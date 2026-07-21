@@ -4,7 +4,7 @@
 区别于信号(跑赢基线)/因子(IC 显著)。纯函数，消费模块1 PortfolioRiskMetrics 的
 asdict（含 available + sample_days）。
 
-设计文档：docs/superpowers/specs/2026-06-24-risk-confidence-llm-design.md。
+现行契约：docs/PROJECT_CONTEXT.md「现行权威契约 / 金融评估与路径风险」。
 """
 from __future__ import annotations
 

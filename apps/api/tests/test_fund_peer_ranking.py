@@ -15,6 +15,7 @@ from app.services.fund_peer_ranking import (
     resolve_benchmark_comparison,
 )
 from app.services.discovery_candidate_pool import (
+    _attach_descriptive_peer_research,
     _peer_catalogue_bucket,
     attach_candidate_benchmark_research,
 )
@@ -227,6 +228,44 @@ def test_peer_catalogue_bucket_is_stable_across_profile_and_universe_types() -> 
 
     assert _peer_catalogue_bucket(profiled) == "equity_index"
     assert _peer_catalogue_bucket(profiled) == _peer_catalogue_bucket(universe)
+
+
+def test_peer_target_uses_the_same_catalogue_taxonomy_as_the_universe() -> None:
+    source_target = _row(
+        "000522",
+        "华润元大信息传媒科技混合A",
+        value=10,
+        fund_type="hh",
+    )
+    peer = _row(
+        "000523",
+        "普通成长混合A",
+        value=5,
+        fund_type="hh",
+    )
+    candidate = {
+        **source_target,
+        # The profile provider is more detailed than the full catalogue. It
+        # must not move only the target into an artificial zero-member group.
+        "fund_type": "混合型-偏股",
+    }
+
+    _attach_descriptive_peer_research(
+        [candidate],
+        universe=[source_target, peer],
+        decision_at=datetime.fromisoformat(DECISION_AT),
+    )
+    attached = attach_candidate_benchmark_research(
+        [candidate],
+        {},
+        decision_at=datetime.fromisoformat(DECISION_AT),
+    )
+
+    rank = attached[0]["peer_rank"]
+    assert rank["peer_group"]["mixed_subtype"] == "unspecified"
+    assert rank["universe"]["independent_peer_family_count"] == 1
+    assert rank["metrics"]["return_6m_percent"]["sample_count"] == 1
+    assert rank["metrics"]["return_6m_percent"]["percentile"] is not None
 
 
 def test_bond_subtypes_do_not_share_a_peer_group() -> None:

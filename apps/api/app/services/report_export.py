@@ -62,7 +62,19 @@ def report_to_markdown(report: dict[str, Any]) -> str:
                 lines.append(f"- **置信度**：{item['confidence']}")
             if item.get("hold_horizon"):
                 lines.append(f"- **持有/观察窗口**：{item['hold_horizon']}")
-            if item.get("amount_note"):
+            position_percent = item.get("suggested_position_change_percent")
+            if isinstance(position_percent, (int, float)) and position_percent != 0:
+                verb = "加仓" if position_percent > 0 else "减仓"
+                lines.append(
+                    f"- **建议调整**：相对当前持仓{verb} {_format_percent(position_percent)}%"
+                )
+                estimated_amount = item.get("estimated_position_change_amount_yuan")
+                if isinstance(estimated_amount, (int, float)) and estimated_amount > 0:
+                    lines.append(
+                        f"- **估算调整金额**：约 {float(estimated_amount):,.0f} 元"
+                        "（按报告生成时持仓估值折算）"
+                    )
+            elif item.get("amount_note"):
                 lines.append(f"- **金额**：{item['amount_note']}")
             elif item.get("amount_yuan") is not None:
                 lines.append(f"- **金额**：约 {item['amount_yuan']} 元")
@@ -127,6 +139,13 @@ def report_to_markdown(report: dict[str, Any]) -> str:
     lines.append("---")
     lines.append("*仅供个人投研辅助，不构成投资建议。*")
     return "\n".join(lines)
+
+
+def _format_percent(value: int | float) -> str:
+    percent = abs(float(value))
+    if abs(percent - round(percent)) < 1e-9:
+        return f"{percent:.0f}"
+    return f"{percent:.1f}"
 
 
 def _append_named_list(lines: list[str], title: str, items: object) -> None:

@@ -1,6 +1,6 @@
 """美股概览 snapshot 聚合 + 时段感知缓存 + 优雅降级（需求 4 / 1.5 / 2.2 / 2.5 / 7）。
 
-设计依据：``.kiro/specs/us-market-overview/design.md`` §3 / §6.2 / §10。
+现行契约见 ``docs/PROJECT_CONTEXT.md`` 的「美股概览」与数据源降级说明。
 
 主线沿用 ``sector_board_snapshot.py`` 的 ``detect_session → TTL → cache_key →
 get_spot_snapshot / any_age → fetch → save`` 模式，复用 ``sector_quote_cache``。

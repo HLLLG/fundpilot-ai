@@ -1,6 +1,6 @@
 """板块信号可信度打分器（模块4-4A）。
 
-设计文档：docs/superpowers/specs/2026-06-24-signal-confidence-design.md。
+现行契约：docs/PROJECT_CONTEXT.md「现行权威契约 / 决策事实、仓位与 DataEvidence」。
 
 纯函数：把模块3-3B 的信号回测桶（命中率/自然基线/edge/显著性）映射成一个
 可回测的置信结论 {level, score, basis}，供 facts/prompt 与前端按置信分级表述。

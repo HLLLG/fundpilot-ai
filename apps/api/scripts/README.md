@@ -32,7 +32,7 @@ python scripts/run_factor_ic.py \
 
 生产 v2 按同类基金读取 `mean_ic`、HAC 区间、`oos_mean_ic` 与
 `direction_stable`；不能只看普通 t 值。完整口径见
-[`docs/design/FACTOR_IC_V2.md`](../../../docs/design/FACTOR_IC_V2.md)。
+[`docs/PROJECT_CONTEXT.md`](../../../docs/PROJECT_CONTEXT.md#5-factor-icpit-与量化证据)。
 
 ### 发布已校验快照
 

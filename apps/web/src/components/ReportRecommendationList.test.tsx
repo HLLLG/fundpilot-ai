@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it } from "vitest";
 import type { Report } from "@/lib/api";
 import { ReportRecommendationList } from "@/components/ReportRecommendationList";
 
@@ -127,8 +127,7 @@ it("renders actionable cards before collapsed observation rows", () => {
   expect(screen.queryByText("完整量化证据")).not.toBeInTheDocument();
 });
 
-it("explains an incomplete ledger and links directly to baseline confirmation", () => {
-  const onConfirm = vi.fn();
+it("explains a historical report that was blocked by the old ledger rule", () => {
   const report = buildReport(
     [recommendation({ points: ["字段级证据未达到可执行条件，本条仅保留观察/风险复核。"] })],
     [],
@@ -142,18 +141,67 @@ it("explains an incomplete ledger and links directly to baseline confirmation", 
     },
   );
 
-  render(
-    <ReportRecommendationList
-      report={report}
-      onConfirmLedgerBaseline={onConfirm}
-    />,
+  render(<ReportRecommendationList report={report} />);
+
+  expect(screen.getByText("这份报告生成时为什么只有“观察”？")).toBeInTheDocument();
+  expect(screen.getByText(/重新生成日报即可获得.*百分比建议/)).toBeInTheDocument();
+  expect(screen.queryByText(/字段级证据/)).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /核对实际份额/ })).not.toBeInTheDocument();
+});
+
+it("shows a percentage suggestion without requiring a share-ledger notice", () => {
+  const report = buildReport(
+    [
+      recommendation({
+        action: "分批加仓",
+        amount_yuan: null,
+        suggested_position_change_percent: 15,
+        suggested_position_change_basis: "相对当前估算持仓计算；板块机会分 80，对应较强机会档 15%",
+        estimated_position_change_amount_yuan: 1019.3,
+      }),
+    ],
+    [],
+    {
+      data_evidence_guard: {
+        execution_blocked: false,
+        reasons_by_fund: {},
+      },
+    },
   );
 
-  expect(screen.getByText("为什么现在只有“观察”？")).toBeInTheDocument();
-  expect(screen.getByText(/系统还不能确认每只基金的实际份额和成本/)).toBeInTheDocument();
-  expect(screen.queryByText(/字段级证据/)).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "去确认账本基线" }));
-  expect(onConfirm).toHaveBeenCalledOnce();
+  render(<ReportRecommendationList report={report} />);
+
+  expect(screen.queryByText("方向建议已就绪")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "收起 测试基金" })).toHaveTextContent(
+    /分批加仓\s*·\s*\+15%/,
+  );
+  expect(screen.getByText("建议加仓当前持仓的 15%")).toBeInTheDocument();
+  expect(screen.getByText("约 ¥1,019")).toBeInTheDocument();
+  expect(screen.getByText("按报告生成时持仓估值折算")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /核对实际份额/ })).not.toBeInTheDocument();
+});
+
+it("derives a display estimate from the frozen report holding when needed", () => {
+  const report = buildReport([
+    recommendation({
+      action: "减仓评估",
+      suggested_position_change_percent: -(100 / 3),
+      suggested_position_change_basis: "减仓 1/3 风险档位",
+    }),
+  ]);
+  report.holdings = [
+    {
+      fund_code: "000001",
+      fund_name: "测试基金",
+      holding_amount: 6795.33,
+      return_percent: 0,
+    },
+  ];
+
+  render(<ReportRecommendationList report={report} />);
+
+  expect(screen.getByText("建议减仓当前持仓的 33.3%")).toBeInTheDocument();
+  expect(screen.getByText("约 ¥2,265")).toBeInTheDocument();
 });
 
 it("keeps observation detail collapsed until the row is opened", () => {
@@ -294,14 +342,14 @@ it("keeps the position percentage but omits a translated basis already used in t
         recommendation({
           action: "减仓评估",
           points: ["其他依据"],
-          suggested_position_change_percent: -20,
+          suggested_position_change_percent: -25,
           suggested_position_change_basis: "  return_1y_percent 12.5%  ",
         }),
       ])}
     />,
   );
 
-  expect(screen.getByText("建议减仓 20%")).toBeInTheDocument();
+  expect(screen.getByText("建议减仓当前持仓的 25%")).toBeInTheDocument();
   expect(screen.getAllByText("近1年收益 12.5%")).toHaveLength(1);
 });
 

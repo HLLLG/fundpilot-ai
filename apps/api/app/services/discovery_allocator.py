@@ -63,6 +63,7 @@ def allocate_discovery_candidates(
     decision_style: str,
     risk_context: Mapping[str, Any] | None = None,
     priority_inputs: Mapping[str, Mapping[str, Any]] | None = None,
+    current_tranche_ratio_cap: float | int | None = None,
     amount_step_yuan: float | int = 100,
 ) -> dict[str, Any]:
     """Allocate one verified initial tranche across all candidates at once.
@@ -88,6 +89,11 @@ def allocate_discovery_candidates(
     denominator = _finite_positive(concentration_denominator_yuan)
     concentration = _finite_positive(concentration_limit_percent)
     step = _finite_positive(amount_step_yuan)
+    tranche_ratio_cap = (
+        _finite_positive(current_tranche_ratio_cap)
+        if current_tranche_ratio_cap is not None
+        else None
+    )
     exposures, exposure_errors = _normalize_exposures(existing_sector_exposure_yuan)
 
     input_errors: list[str] = list(exposure_errors)
@@ -105,6 +111,10 @@ def allocate_discovery_candidates(
         input_errors.append("decision_style_invalid")
     if step is None:
         input_errors.append("amount_step_invalid")
+    if current_tranche_ratio_cap is not None and (
+        tranche_ratio_cap is None or tranche_ratio_cap > 1.0
+    ):
+        input_errors.append("current_tranche_ratio_cap_invalid")
     if isinstance(candidates, (str, bytes)) or not isinstance(candidates, Sequence):
         input_errors.append("candidates_invalid")
 
@@ -180,7 +190,11 @@ def allocate_discovery_candidates(
         RISK_AWARE_MODE if qualified_tilt_available else QUALIFIED_RISK_ONLY_MODE
     )
     nominal_ratio = _STYLE_TRANCHE_RATIOS[decision_style][0 if prefer_dca else 1]
-    tranche_ratio = nominal_ratio
+    tranche_ratio = (
+        min(nominal_ratio, tranche_ratio_cap)
+        if tranche_ratio_cap is not None
+        else nominal_ratio
+    )
     spendable_total = min(budget, cash)
     current_tranche_cap = _floor_step(spendable_total * tranche_ratio, step)
 
@@ -335,6 +349,7 @@ def allocate_discovery_candidates(
             "prefer_dca": prefer_dca,
             "nominal_current_tranche_ratio": nominal_ratio,
             "applied_current_tranche_ratio": tranche_ratio,
+            "current_tranche_ratio_cap": tranche_ratio_cap,
             "amount_step_yuan": _money(step),
             "concentration_denominator_yuan": _money(denominator),
             "concentration_limit_percent": concentration,

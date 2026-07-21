@@ -3,7 +3,7 @@
 把模块3A 离线 IC 回测产物（var/factor_ic/summary.json）映射成「每个因子可不可信」，
 给模块2 的因子分挂可回测背书。纯映射 + best-effort 文件读，不改模块2/3A 算法。
 
-设计文档：docs/superpowers/specs/2026-06-24-factor-confidence-llm-design.md。
+现行契约：docs/PROJECT_CONTEXT.md「现行权威契约 / Factor IC、PIT 与量化证据」。
 """
 from __future__ import annotations
 

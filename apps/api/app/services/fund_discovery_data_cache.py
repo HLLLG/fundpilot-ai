@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
-from threading import RLock
+from threading import RLock, Thread
 
 from app.services.sector_quote_cache import (
     get_spot_snapshot,
@@ -19,35 +20,150 @@ _PROFILE_TTL_SECONDS = 36 * 60 * 60
 _INCOMPLETE_PROFILE_RETRY_SECONDS = 30 * 60
 _PROFILE_REQUIRED_FIELDS = ("fund_scale_yi", "established_date", "fund_manager")
 _PROFILE_REFRESH_LOCK = RLock()
+_UNIVERSE_FETCH_LOCK = RLock()
+_UNIVERSE_REFRESH_STATE_LOCK = RLock()
+_UNIVERSE_REFRESH_IN_FLIGHT = False
+
+logger = logging.getLogger(__name__)
 
 
 def fetch_discovery_fund_universe_cached(*, limit: int = 20_000) -> list[dict]:
-    """优先使用全量基金横截面；失败时由调用方回退到小排行榜。"""
+    """Return one request-pinnable full-universe snapshot.
+
+    A fresh snapshot is preferred. Once it expires, keep serving the last
+    frozen snapshot and refresh it in the background. Discovery freezes its
+    decision clock after this function returns, so one request must not swap
+    to a snapshot captured later while it is already being evaluated.
+
+    On a true cold start there is no older snapshot to pin. The first caller
+    therefore performs one bounded synchronous fetch; concurrent callers share
+    the fetch lock and reuse the saved result.
+    """
 
     cached = get_spot_snapshot(
         _UNIVERSE_CACHE_KEY,
         ttl_seconds=_UNIVERSE_TTL_SECONDS,
     )
-    if isinstance(cached, dict) and isinstance(cached.get("rows"), list):
+    if _universe_snapshot_is_fresh(cached):
         return _universe_rows_with_snapshot_contract(cached)
 
-    from app.services.akshare_subprocess import fetch_open_fund_universe
-
-    rows = fetch_open_fund_universe(limit=limit, timeout_seconds=55) or []
-    if rows:
-        snapshot = {
-            "schema_version": "fund_universe_snapshot.v1",
-            "snapshot_available_at": datetime.now(timezone.utc).isoformat(),
-            "source": "eastmoney_fund_catalogue_with_optional_rank_enrichment",
-            "rows": rows,
-        }
-        save_spot_snapshot(_UNIVERSE_CACHE_KEY, snapshot)
-        return _universe_rows_with_snapshot_contract(snapshot)
-
-    stale = get_spot_snapshot_any_age(_UNIVERSE_CACHE_KEY)
-    if isinstance(stale, dict) and isinstance(stale.get("rows"), list):
+    # ``get_spot_snapshot_any_age`` promotes a DB row into process memory with
+    # a new read timestamp. Prefer the payload already returned above and judge
+    # freshness from its immutable capture time, not that cache-read timestamp.
+    stale = cached if _valid_universe_snapshot(cached) else get_spot_snapshot_any_age(
+        _UNIVERSE_CACHE_KEY
+    )
+    if _valid_universe_snapshot(stale):
+        _schedule_discovery_universe_refresh(limit=limit)
         return _universe_rows_with_snapshot_contract(stale)
-    return []
+
+    return _refresh_discovery_universe_blocking(limit=limit, force=False)
+
+
+def _valid_universe_snapshot(payload: object) -> bool:
+    return (
+        isinstance(payload, dict)
+        and isinstance(payload.get("rows"), list)
+        and bool(payload.get("rows"))
+    )
+
+
+def _universe_snapshot_is_fresh(
+    payload: object,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    if not _valid_universe_snapshot(payload):
+        return False
+    try:
+        captured_at = datetime.fromisoformat(
+            str(payload.get("snapshot_available_at") or "").replace("Z", "+00:00")
+        )
+    except (TypeError, ValueError):
+        return False
+    if captured_at.tzinfo is None:
+        return False
+    current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    age_seconds = (current - captured_at.astimezone(timezone.utc)).total_seconds()
+    return 0 <= age_seconds <= _UNIVERSE_TTL_SECONDS
+
+
+def _build_universe_snapshot(rows: list[dict]) -> dict:
+    return {
+        "schema_version": "fund_universe_snapshot.v1",
+        "snapshot_available_at": datetime.now(timezone.utc).isoformat(),
+        "source": "eastmoney_fund_catalogue_with_optional_rank_enrichment",
+        "rows": rows,
+    }
+
+
+def _refresh_discovery_universe_blocking(
+    *,
+    limit: int,
+    force: bool,
+) -> list[dict]:
+    """Refresh the catalogue once and return the frozen row contract."""
+
+    with _UNIVERSE_FETCH_LOCK:
+        if not force:
+            cached = get_spot_snapshot(
+                _UNIVERSE_CACHE_KEY,
+                ttl_seconds=_UNIVERSE_TTL_SECONDS,
+            )
+            if _valid_universe_snapshot(cached):
+                return _universe_rows_with_snapshot_contract(cached)
+
+        from app.services.akshare_subprocess import fetch_open_fund_universe
+
+        try:
+            rows = fetch_open_fund_universe(limit=limit, timeout_seconds=55) or []
+        except Exception:  # noqa: BLE001 - stale fallback is intentional here.
+            logger.exception("discovery fund universe refresh failed")
+            rows = []
+        if rows:
+            snapshot = _build_universe_snapshot(rows)
+            save_spot_snapshot(_UNIVERSE_CACHE_KEY, snapshot)
+            return _universe_rows_with_snapshot_contract(snapshot)
+
+        stale = get_spot_snapshot_any_age(_UNIVERSE_CACHE_KEY)
+        if _valid_universe_snapshot(stale):
+            return _universe_rows_with_snapshot_contract(stale)
+        return []
+
+
+def _schedule_discovery_universe_refresh(*, limit: int) -> None:
+    """Refresh an expired snapshot without replacing the current request's rows."""
+
+    global _UNIVERSE_REFRESH_IN_FLIGHT
+    with _UNIVERSE_REFRESH_STATE_LOCK:
+        if _UNIVERSE_REFRESH_IN_FLIGHT:
+            return
+        _UNIVERSE_REFRESH_IN_FLIGHT = True
+    try:
+        Thread(
+            target=_run_scheduled_discovery_universe_refresh,
+            kwargs={"limit": limit},
+            name="discovery-fund-universe-refresh",
+            daemon=True,
+        ).start()
+    except Exception:  # noqa: BLE001 - leave the next request free to retry.
+        with _UNIVERSE_REFRESH_STATE_LOCK:
+            _UNIVERSE_REFRESH_IN_FLIGHT = False
+        logger.exception("failed to start discovery universe refresh thread")
+
+
+def _run_scheduled_discovery_universe_refresh(*, limit: int) -> None:
+    global _UNIVERSE_REFRESH_IN_FLIGHT
+    try:
+        # ``get_spot_snapshot_any_age`` promotes the stale value into the
+        # process cache. ``force=True`` prevents that promoted value from
+        # short-circuiting the actual refresh.
+        _refresh_discovery_universe_blocking(limit=limit, force=True)
+    except Exception:  # noqa: BLE001 - the pinned stale snapshot stays usable.
+        logger.exception("scheduled discovery universe refresh failed")
+    finally:
+        with _UNIVERSE_REFRESH_STATE_LOCK:
+            _UNIVERSE_REFRESH_IN_FLIGHT = False
 
 
 def _universe_rows_with_snapshot_contract(payload: dict) -> list[dict]:
@@ -61,8 +177,11 @@ def _universe_rows_with_snapshot_contract(payload: dict) -> list[dict]:
             continue
         row = dict(raw)
         if available_at:
-            row.setdefault("membership_available_at", available_at)
-            row.setdefault("snapshot_available_at", available_at)
+            # The catalogue is one atomic snapshot. Provider-row timestamps
+            # cannot supersede the conservative instant at which the complete
+            # payload became available to this process.
+            row["membership_available_at"] = available_at
+            row["snapshot_available_at"] = available_at
             for field in (
                 "return_3m_percent",
                 "return_6m_percent",
@@ -71,7 +190,7 @@ def _universe_rows_with_snapshot_contract(payload: dict) -> list[dict]:
                 "fund_scale_yi",
             ):
                 if row.get(field) is not None:
-                    row.setdefault(f"{field}_available_at", available_at)
+                    row[f"{field}_available_at"] = available_at
                     row.setdefault(f"{field}_source", source)
         row.setdefault("source", source)
         result.append(row)

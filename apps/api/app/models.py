@@ -382,6 +382,10 @@ class FundRecommendation(BaseModel):
     transaction_execution: dict[str, Any] = Field(default_factory=dict)
     suggested_position_change_percent: float | None = None
     suggested_position_change_basis: str = ""
+    # Server-owned display estimate derived from the frozen report holding value
+    # and the final guarded percentage.  This is deliberately separate from
+    # ``amount_yuan`` whose historical meaning is an executable fixed amount.
+    estimated_position_change_amount_yuan: float | None = None
 
 
 class Report(BaseModel):
