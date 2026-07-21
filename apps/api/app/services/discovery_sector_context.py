@@ -60,6 +60,7 @@ def build_target_sector_context(
     signal_backtest: dict[str, Any] | None,
     *,
     trade_date: str | None = None,
+    sector_flow_by_label: dict[str, dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """为 scan 目标板块补充热度 + 资金流 + 分时 + 信号回测（与日报同源）。"""
     effective_date = trade_date or get_effective_trade_date()
@@ -70,6 +71,7 @@ def build_target_sector_context(
     }
     seen: set[str] = set()
     result: list[dict[str, Any]] = []
+    preloaded_flows = sector_flow_by_label or {}
     for raw_label in sector_labels:
         label = (raw_label or "").strip()
         if not label or label in seen:
@@ -83,11 +85,14 @@ def build_target_sector_context(
             "change_1d_percent": change_1d,
             "change_5d_percent": heat.get("change_5d_percent"),
         }
-        flow = build_sector_fund_flow_context(
-            label,
-            sector_return_percent=change_1d if isinstance(change_1d, (int, float)) else None,
-            trade_date=effective_date,
-        )
+        if label in preloaded_flows:
+            flow = preloaded_flows[label]
+        else:
+            flow = build_sector_fund_flow_context(
+                label,
+                sector_return_percent=change_1d if isinstance(change_1d, (int, float)) else None,
+                trade_date=effective_date,
+            )
         if flow:
             entry["sector_fund_flow"] = _slim_sector_fund_flow(flow)
         intraday = summarize_sector_intraday_for_label(label)

@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import math
 import time
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Any
@@ -265,6 +266,110 @@ def fetch_eastmoney_quote_by_secid(
         if last_error:
             logger.info("eastmoney secid quote %s failed: %s", cleaned, last_error)
     return None, None
+
+
+def fetch_eastmoney_quotes_by_secid(
+    secids: Sequence[str],
+    *,
+    timeout: float = 5.0,
+    max_retries: int = 1,
+    max_hosts: int = 3,
+) -> dict[str, dict[str, Any]]:
+    """Batch-fetch latest price changes for exact Eastmoney security ids.
+
+    ``ulist.np`` returns the market id (``f13``) alongside the security code,
+    so the response can be joined back to the requested ``secid`` without
+    guessing across Shanghai, Shenzhen/Beijing, or Hong Kong namespaces.
+    """
+
+    requested = tuple(
+        dict.fromkeys(
+            cleaned
+            for raw in secids
+            if (cleaned := str(raw or "").strip())
+        )
+    )
+    if not requested:
+        return {}
+
+    requested_set = set(requested)
+    params = {
+        "secids": ",".join(requested),
+        "fields": "f12,f13,f14,f2,f3,f124",
+        "ut": _COMMON_PARAMS["ut"],
+        "fltt": "2",
+        "invt": "2",
+    }
+    with httpx.Client(
+        headers=_EASTMONEY_HEADERS,
+        timeout=timeout,
+        trust_env=False,
+        follow_redirects=True,
+        http2=False,
+    ) as client:
+        last_error: Exception | None = None
+        host_pool = _STOCK_HOSTS[:max_hosts]
+        for attempt in range(max_retries):
+            for host in host_pool:
+                url = f"https://{host}/api/qt/ulist.np/get"
+                try:
+                    response = client.get(url, params=params)
+                    response.raise_for_status()
+                    data = response.json().get("data") or {}
+                    parsed = _parse_eastmoney_quote_rows(
+                        data.get("diff") or [],
+                        requested=requested_set,
+                    )
+                    if parsed:
+                        return parsed
+                except Exception as exc:
+                    last_error = exc
+                    logger.debug(
+                        "eastmoney quote batch host=%s attempt=%s failed: %s",
+                        host,
+                        attempt + 1,
+                        exc,
+                    )
+            if attempt + 1 < max_retries:
+                time.sleep(0.35 * (attempt + 1))
+        if last_error:
+            logger.info("eastmoney quote batch failed: %s", last_error)
+    return {}
+
+
+def _parse_eastmoney_quote_rows(
+    rows: object,
+    *,
+    requested: set[str],
+) -> dict[str, dict[str, Any]]:
+    if not isinstance(rows, list):
+        return {}
+    parsed: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        code = str(row.get("f12") or "").strip()
+        market_raw = row.get("f13")
+        market = str(market_raw).strip() if market_raw is not None else ""
+        secid = f"{market}.{code}" if market and code else ""
+        if not secid or secid not in requested:
+            continue
+        timestamp: int | None = None
+        try:
+            candidate = int(row.get("f124"))
+            if candidate > 0:
+                timestamp = candidate
+        except (TypeError, ValueError, OverflowError):
+            pass
+        parsed[secid] = {
+            "secid": secid,
+            "security_code": code,
+            "security_name": str(row.get("f14") or "").strip() or None,
+            "latest_price": _as_board_float(row.get("f2")),
+            "change_percent": _as_board_float(row.get("f3")),
+            "quote_timestamp": timestamp,
+        }
+    return parsed
 
 
 def _parse_current_board_flow_kline(

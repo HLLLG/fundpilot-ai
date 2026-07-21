@@ -52,8 +52,11 @@ RISK_METRICS_TIMEOUT_SECONDS = 3.0
 # 迁入 system 的完整输出约束（不再每条请求在 user JSON 重复）
 OUTPUT_REQUIREMENTS_SYSTEM = (
     "analysis_facts.portfolio_position_truth 是持仓份额、成本和现金的唯一真值摘要；"
-    "unknown/null 不得按 0 猜测；position_complete=false、ledger_truncated=true 或存在 "
-    "pending/conflict 时，amount_yuan 必须为 null，且不得生成任何可执行仓位金额。"
+    "unknown/null 不得按 0 猜测。日报统一采用相对当前估算持仓的百分比建议，amount_yuan 必须始终为 null，"
+    "不得自行计算份额或固定金额；suggested_position_change_percent 由服务端确定性规则生成，模型须省略或输出 null。"
+    "estimated_position_change_amount_yuan 同样由服务端按最终比例和报告生成时持仓估值折算，模型不得输出。"
+    "position_complete=false、ledger_truncated=true 或存在 pending/conflict 不阻断百分比方向建议；"
+    "只要持仓金额与市场方向证据新鲜可用，仍须从 allowed_actions 中给出加仓、减仓或观察。"
     "输出必须是完整 JSON（不要 Markdown），包含 title、summary、fund_recommendations、caveats。"
     "fund_recommendations 每只持仓基金恰好 1 条；字段含 fund_code、fund_name、action、"
     "amount_yuan（可选）、amount_note（可选）、news_bullish、news_bearish、points（1-3 条，每条≤60字）、"
@@ -73,11 +76,10 @@ OUTPUT_REQUIREMENTS_SYSTEM = (
     "action 的唯一合法集合是 analysis_facts.allowed_actions；必须逐字从该数组选择，不得依赖固定数量或另造动作。"
     "若 analysis_facts.portfolio.suggested_action 为 risk_review 或 risk_level 为 high，禁止加仓类 action。"
     "analysis_facts.holdings[].transaction_execution 是交易执行硬门禁："
-    "分批加仓仅在 add_status=eligible 且 amount_yuan 通过追加起购额与单日限额核验时才可输出；"
-    "减仓类动作即使 redemption_status=eligible，也不得猜测逐笔持有期、锁定期或赎回费，"
-    "acquisition_lot_status=unverified 时只能给人工复核建议，不得输出金额或仓位比例。"
-    "仅当加仓通过 transaction_execution 门禁时才可给 amount_yuan；"
-    "减仓因逐笔批次未知时只写人工复核说明，不得给 amount_yuan 或仓位比例。"
+    "分批加仓仅在 add_status=eligible 时才可输出，具体比例由服务端按板块机会分分档，并结合追加起购额、单日限额与集中度收紧；"
+    "减仓类动作即使 redemption_status=eligible，也不得猜测逐笔持有期、锁定期或赎回费；"
+    "acquisition_lot_status=unverified 时仍可给减仓方向，但须提示实际赎回前核对持有期与费用。"
+    "任何场景都不得给 amount_yuan 或份额数。"
     "recommendations 可省略或仅 1 条组合级说明，禁止长新闻摘要堆砌。"
     "判断当日涨跌优先 daily_return_percent，否则用 sector_return_percent 估算；"
     "判断累计持有收益/浮亏须用 estimated_holding_return_percent（与界面「持有」列一致），"
@@ -117,7 +119,7 @@ OUTPUT_REQUIREMENTS_SYSTEM = (
 )
 
 OUTPUT_REQUIREMENTS_USER = [
-    "portfolio_position_truth 中 unknown/null 不得按 0；position_complete=false、ledger_truncated=true 或存在 pending/conflict 时 amount_yuan 必须为空",
+    "portfolio_position_truth 中 unknown/null 不得按 0；amount_yuan 始终为空，比例与估算调整金额均留空交由服务端计算；份额未确认不阻断百分比方向判断",
     "analysis_facts 为系统计算的只读事实，不得改写其中任何数字",
     "输出 title、summary、fund_recommendations、caveats；每只基金恰好 1 条 recommendation",
     "action 仅限 analysis_facts.allowed_actions；risk_review 或 high 禁止加仓类",

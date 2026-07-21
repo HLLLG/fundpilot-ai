@@ -4,7 +4,7 @@
 用法（在 apps/api 下）：
     ./.venv/Scripts/python.exe scripts/run_style_factor.py --universe-size 200 --nav-days 250
 
-设计文档：docs/superpowers/specs/2026-06-24-factor-style-and-universe-design.md（3C）。
+现行契约：docs/PROJECT_CONTEXT.md「现行权威契约 / Factor IC、PIT 与量化证据」。
 """
 
 from __future__ import annotations

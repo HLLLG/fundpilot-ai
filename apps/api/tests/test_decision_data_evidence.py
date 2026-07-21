@@ -131,6 +131,41 @@ def test_future_candidate_nav_is_unavailable_and_cannot_authorize_action() -> No
     ) == (False, ["candidate_metrics_not_point_in_time_usable"])
 
 
+def test_incomplete_share_ledger_blocks_sizing_but_not_fresh_direction_evidence() -> None:
+    from app.services.decision_data_evidence import decision_evidence_allows_action
+
+    facts = {
+        "data_evidence": {
+            "decision_ready": False,
+            "blocking_reasons": ["incomplete_or_unsettled_position_ledger"],
+            "items": [
+                {
+                    "fact_id": "holdings.000001.holding_amount",
+                    "freshness": "fresh",
+                    "confidence": "high",
+                },
+                {
+                    "fact_id": "holdings.000001.sector_return_percent",
+                    "freshness": "fresh",
+                    "confidence": "high",
+                },
+            ],
+        }
+    }
+
+    assert decision_evidence_allows_action(
+        facts,
+        scope="analysis",
+        fund_code="000001",
+    ) == (False, ["incomplete_or_unsettled_position_ledger"])
+    assert decision_evidence_allows_action(
+        facts,
+        scope="analysis",
+        fund_code="000001",
+        allow_incomplete_position_for_direction=True,
+    ) == (True, [])
+
+
 def _holding(
     amount: float,
     *,
@@ -305,6 +340,27 @@ def test_analysis_evidence_is_field_level_and_estimates_are_explicit():
     assert daily["is_estimate"] is True
     assert daily["confidence"] == "low"
     assert payload["schema_version"] == "1.0"
+
+
+def test_incomplete_position_ledger_is_quality_note_not_decision_blocker():
+    from app.services.decision_data_evidence import build_analysis_data_evidence
+
+    payload = build_analysis_data_evidence(
+        [_holding(1000)],
+        snapshots=[],
+        facts={"session": {"effective_trade_date": "2026-07-10"}},
+        portfolio_context={
+            "stale": False,
+            "authoritative": True,
+            "position_complete": False,
+        },
+    )
+
+    assert payload["decision_ready"] is True
+    assert payload["blocking_reasons"] == []
+    assert payload["position_quality_reasons"] == [
+        "incomplete_or_unsettled_position_ledger"
+    ]
 
 
 def test_market_breadth_explicit_stale_status_overrides_same_trade_date():
@@ -725,10 +781,10 @@ def test_degraded_discovery_snapshot_guard_removes_buy_action_and_amount():
     [
         (True, "300", 300),
         (True, "0", None),
-        (False, None, None),
+        (False, None, 500),
     ],
 )
-def test_discovery_guard_caps_by_known_cash_and_blocks_unknown_cash(
+def test_discovery_guard_caps_by_known_cash_and_uses_budget_when_cash_unknown(
     cash_known: bool,
     cash_balance: str | None,
     expected_amount: float | None,
@@ -905,6 +961,7 @@ def test_blocked_report_chat_prompts_forbid_recreating_executable_advice():
         news_tool_enabled=False,
         execution_blocked=True,
     )
+    percentage_prompt = _report_chat_system_prompt("日报", news_tool_enabled=False)
     discovery_prompt = _discovery_chat_system_prompt(
         "荐基报告",
         {
@@ -914,6 +971,8 @@ def test_blocked_report_chat_prompts_forbid_recreating_executable_advice():
     )
 
     assert "不得给出买入、加仓" in report_prompt
+    assert "相对当前估算持仓的百分比" in percentage_prompt
+    assert "不得自行换算或补写固定金额、真实份额" in percentage_prompt
     assert "不得给出买入、加仓" in discovery_prompt
 
 

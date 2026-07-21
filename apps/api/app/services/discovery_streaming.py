@@ -61,11 +61,15 @@ from app.services.discovery_sector_heat import build_sector_heat_ranking
 from app.services.discovery_sector_position import (
     build_sector_position_map_for_opportunities,
 )
+from app.services.discovery_sector_prefilter import select_opportunity_evidence_labels
 from app.services.mainline_regime import (
     build_mainline_regime_snapshot,
     mainline_regime_by_label,
 )
 from app.services.discovery_target_sectors import select_target_sectors
+from app.services.fund_discovery_data_cache import (
+    fetch_discovery_fund_universe_cached,
+)
 from app.services.news_service import (
     NewsService,
     announcement_fetch_facts,
@@ -104,11 +108,26 @@ LLM_HEARTBEAT_SECONDS = 12.0
 def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dict[str, Any]]:
     ctx_token = set_request_user_id(user_id)
     settings = get_settings()
-    decision_clock = capture_decision_clock()
-    decision_at = decision_clock.decision_at
     runtime = resolve_analysis_runtime(settings, request.analysis_mode)
     started_at = time.monotonic()
     try:
+        yield _stage("connected", started_at=started_at)
+        with ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix="discovery-universe",
+        ) as executor:
+            universe_future = executor.submit(
+                fetch_discovery_fund_universe_cached,
+                limit=20_000,
+            )
+            prepared_universe_rows = yield from _await_future_with_progress(
+                universe_future,
+                "connected",
+                "正在准备全市场基金样本…",
+                started_at=started_at,
+            )
+        decision_clock = capture_decision_clock()
+        decision_at = decision_clock.decision_at
         preflight = resolve_portfolio_preflight(
             request.holdings,
             allow_stale=request.allow_stale_portfolio_snapshot,
@@ -121,7 +140,6 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
             }
         )
         holdings = list(request.holdings)
-        yield _stage("connected", started_at=started_at)
         yield _stage("sector_heat", started_at=started_at)
         sector_heat = call_with_optional_time(
             build_sector_heat_ranking,
@@ -239,6 +257,7 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
                             exclude_codes=held_codes,
                             fund_type_preference="any",
                             selection_strategy=selection_strategy,
+                            prepared_universe_rows=prepared_universe_rows,
                             per_sector=prescreen_per_sector,
                             pool_cap=prescreen_pool_cap,
                             sector_opportunities=sector_opportunities,
@@ -349,6 +368,7 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
             focus_sectors=list(request.focus_sectors),
             fund_type_preference="any",
             sector_opportunities=sector_opportunities,
+            sector_flow_by_label=sector_flow_by_label,
             mainline_snapshot=mainline_snapshot,
             budget_enhancements=True,
             decision_at=decision_at,
@@ -758,13 +778,8 @@ def _opportunity_flow_labels(
     target_sectors: list[str],
     focus_sectors: list[str],
 ) -> list[str]:
-    labels = list(dict.fromkeys([*target_sectors, *focus_sectors]))
-    for row in sorted(
+    return select_opportunity_evidence_labels(
         sector_heat,
-        key=lambda item: float(item.get("heat_score") or -999),
-        reverse=True,
-    )[:12]:
-        label = str(row.get("sector_label") or "").strip()
-        if label and label not in labels:
-            labels.append(label)
-    return labels[:16]
+        target_sectors,
+        focus_sectors,
+    )

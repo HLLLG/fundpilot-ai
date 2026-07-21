@@ -130,7 +130,7 @@ def test_amount_cap_uses_confirmed_cash_as_independent_ceiling() -> None:
     assert result.cap_yuan == 8_000
 
 
-def test_amount_cap_fails_closed_when_cash_is_unknown() -> None:
+def test_amount_cap_uses_explicit_scan_budget_when_cash_is_unknown() -> None:
     result = resolve_discovery_amount_cap(
         portfolio_truth={
             "position_complete": True,
@@ -146,9 +146,9 @@ def test_amount_cap_fails_closed_when_cash_is_unknown() -> None:
         weight_denominator_yuan=100_000,
     )
 
-    assert result.available is False
-    assert result.cap_yuan is None
-    assert "cash_unknown" in result.reasons
+    assert result.available is True
+    assert result.cap_yuan == 15_000
+    assert result.reasons == ()
 
 
 def test_amount_cap_fails_closed_when_existing_sector_is_unknown() -> None:

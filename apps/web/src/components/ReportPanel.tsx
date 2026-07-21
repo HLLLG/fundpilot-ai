@@ -23,7 +23,6 @@ type ReportPanelProps = {
   onStreamFollowup?: (message: string) => Promise<void>;
   diagnostics?: () => React.ReactNode;
   currentHoldings?: Holding[];
-  onConfirmLedgerBaseline?: () => void;
 };
 
 export function ReportPanel({
@@ -33,7 +32,6 @@ export function ReportPanel({
   onStreamFollowup,
   diagnostics,
   currentHoldings,
-  onConfirmLedgerBaseline,
 }: ReportPanelProps) {
   const [isExporting, setIsExporting] = useState(false);
 
@@ -80,7 +78,7 @@ export function ReportPanel({
             </p>
           </div>
           <div className="grid gap-3 sm:grid-cols-3">
-            {["规则先行", "模型辅助", "人工确认"].map((item) => (
+            {["规则先行", "模型辅助", "百分比建议"].map((item) => (
               <div
                 key={item}
                 className="rounded-2xl border border-slate-100 bg-white px-4 py-3 text-sm font-bold text-slate-700"
@@ -119,7 +117,6 @@ export function ReportPanel({
         <ReportRecommendationList
           report={viewReport}
           recommendations={fundRecommendations}
-          onConfirmLedgerBaseline={onConfirmLedgerBaseline}
         />
         <ReportDetailsHub report={viewReport} diagnostics={diagnostics} />
       </section>

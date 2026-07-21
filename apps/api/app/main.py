@@ -539,6 +539,24 @@ def get_fund_public_overview(fund_code: str) -> dict:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.get("/api/funds/{fund_code}/holdings-distribution")
+def get_fund_holdings_distribution(
+    fund_code: str,
+    force_refresh: bool = False,
+) -> dict:
+    from app.services.fund_holdings_distribution import (
+        build_fund_holdings_distribution,
+    )
+
+    try:
+        return build_fund_holdings_distribution(
+            fund_code,
+            force_refresh=force_refresh,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.get("/api/funds/{fund_code}/primary-sector")
 def get_fund_primary_sector_mapping(fund_code: str, fund_name: str | None = None) -> dict:
     from app.services.fund_primary_sector_service import primary_sector_row_for_api
@@ -1512,8 +1530,8 @@ def portfolio_factor_scores() -> dict:
 def portfolio_evidence_overview() -> dict:
     """组合层证据总览（懒加载）：每只持仓三路量化置信聚合 → 组合级背书分布。
 
-    模块4 证据卡延伸；设计见
-    docs/superpowers/specs/2026-06-24-evidence-overview-design.md。
+    模块4 证据卡延伸；现行契约见
+    docs/PROJECT_CONTEXT.md「现行权威契约」。
     """
     from app.services.portfolio_snapshot import build_evidence_overview_payload
 

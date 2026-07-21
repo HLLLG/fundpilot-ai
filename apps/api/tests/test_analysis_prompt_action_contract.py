@@ -52,6 +52,9 @@ def test_prompt_contract_uses_session_and_allowed_actions_without_fixed_clock_or
     assert "analysis_facts.session" in DEFAULT_ROLE_PROMPT
     assert "allowed_actions" in DEFAULT_ROLE_PROMPT
     assert "唯一合法" in OUTPUT_REQUIREMENTS_SYSTEM
+    assert "amount_yuan 必须始终为 null" in OUTPUT_REQUIREMENTS_SYSTEM
+    assert "suggested_position_change_percent 由服务端确定性规则生成" in OUTPUT_REQUIREMENTS_SYSTEM
+    assert "不阻断百分比方向建议" in OUTPUT_REQUIREMENTS_SYSTEM
 
 
 def test_daily_and_discovery_system_prompts_share_the_session_clock() -> None:

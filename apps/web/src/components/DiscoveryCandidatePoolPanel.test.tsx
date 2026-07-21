@@ -88,7 +88,7 @@ describe("DiscoveryCandidatePoolPanel", () => {
     expect(screen.getByRole("region", { name: "基金候选池重点信息" })).toBeInTheDocument();
     expect(screen.getByRole("article", { name: /海富通电子传媒股票A/ })).toBeInTheDocument();
     expect(screen.getByLabelText("交易条件摘要")).toBeInTheDocument();
-    expect(screen.getByLabelText("同类研究摘要")).toBeInTheDocument();
+    expect(screen.queryByLabelText("同类研究摘要")).not.toBeInTheDocument();
     expect(screen.getByText("查看交易条件、同类研究与完整依据")).toBeInTheDocument();
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
     expect(screen.queryByText("基金候选池明细表，可左右滚动查看")).not.toBeInTheDocument();
@@ -299,6 +299,47 @@ describe("DiscoveryCandidatePoolPanel", () => {
     expect(research).toHaveTextContent("仅研究描述，不参与金额分配");
   });
 
+  it("shows one useful medium-horizon percentile and labels a small cohort", () => {
+    const smallPeerCandidate: DiscoveryCandidatePoolItem = {
+      ...candidate,
+      peer_group: {
+        schema_version: "fund_peer_group.v1",
+        group_key: "domestic/equity/passive/reference-931897",
+        group_label: "境内 / 股票 / 被动指数 / 绿色电力",
+        qualified: true,
+      },
+      peer_rank: {
+        schema_version: "peer_rank.v2",
+        status: "descriptive_only",
+        qualified: false,
+        execution_tilt_eligible: false,
+        qualification_policy: { minimum_independent_peer_families: 20 },
+        universe: { independent_peer_family_count: 6 },
+        metrics: {
+          return_3m_percent: {
+            label: "近3月收益",
+            percentile: 90,
+            sample_count: 6,
+          },
+          return_6m_percent: {
+            label: "近6月收益",
+            percentile: 71,
+            sample_count: 6,
+          },
+        },
+      },
+    };
+
+    render(<DiscoveryCandidatePoolPanel pool={[smallPeerCandidate]} />);
+    fireEvent.click(screen.getByRole("button", { name: /本次候选池/ }));
+
+    const summary = screen.getByLabelText("同类研究摘要");
+    expect(summary).toHaveTextContent("同类研究 · 6 家");
+    expect(summary).toHaveTextContent("小样本");
+    expect(summary).toHaveTextContent("近6月收益 71.0 分位");
+    expect(summary).not.toHaveTextContent("近3月收益 90.0 分位");
+  });
+
   it("collapses an empty peer cohort to one explanation instead of repeated n=0 rows", () => {
     const emptyPeerCandidate: DiscoveryCandidatePoolItem = {
       ...candidate,
@@ -331,10 +372,42 @@ describe("DiscoveryCandidatePoolPanel", () => {
 
     render(<DiscoveryCandidatePoolPanel pool={[emptyPeerCandidate]} />);
     fireEvent.click(screen.getByRole("button", { name: /本次候选池/ }));
+    expect(screen.queryByLabelText("同类研究摘要")).not.toBeInTheDocument();
     fireEvent.click(screen.getByText("查看交易条件、同类研究与完整依据"));
 
     expect(screen.queryByText(/分位缺失/)).not.toBeInTheDocument();
     expect(screen.getByText("当前未形成独立同类样本；不重复展示空分位。")).toBeInTheDocument();
+  });
+
+  it("explains historical peer snapshots rejected by the decision-time gate", () => {
+    const lateSnapshotCandidate: DiscoveryCandidatePoolItem = {
+      ...candidate,
+      peer_group: {
+        schema_version: "fund_peer_group.v1",
+        group_key: "domestic/equity/active",
+        group_label: "境内 / 股票 / 主动",
+      },
+      peer_rank: {
+        schema_version: "peer_rank.v2",
+        status: "insufficient",
+        qualified: false,
+        reason: "target_membership_available_after_decision_at",
+        reasons: [
+          "target_membership_available_after_decision_at",
+          "one_or_more_peer_metrics_not_qualified",
+        ],
+        universe: { independent_peer_family_count: 0 },
+        metrics: {},
+      },
+    };
+
+    render(<DiscoveryCandidatePoolPanel pool={[lateSnapshotCandidate]} />);
+    fireEvent.click(screen.getByRole("button", { name: /本次候选池/ }));
+    fireEvent.click(screen.getByText("查看交易条件、同类研究与完整依据"));
+
+    expect(
+      screen.getByText("本次同类快照未通过时点校验，已隐藏空分位。"),
+    ).toBeInTheDocument();
   });
 
   it("keeps a tracking index visibly separate from a formally verified benchmark", () => {

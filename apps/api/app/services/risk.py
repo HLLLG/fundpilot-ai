@@ -16,11 +16,9 @@ def resolve_weight_denominator(
     *,
     actual_total: float | None = None,
 ) -> float:
-    """持仓占比分母：有实际持仓时只使用当前组合市值。"""
+    """持仓占比分母：优先使用用户的期望投入总额，缺失时回退当前市值。"""
     if actual_total is None:
         actual_total = sum(holding.holding_amount for holding in holdings)
-    if actual_total > 0:
-        return actual_total
     expected = profile.expected_investment_amount
     if expected is not None and expected > 0:
         return expected
@@ -107,6 +105,11 @@ def evaluate_portfolio_risk(
             weight = holding.holding_amount / weight_denominator * 100
             if weight > profile.concentration_limit_percent:
                 evidence = f"{holding.holding_amount:.2f} / {weight_denominator:.2f}"
+                if (
+                    profile.expected_investment_amount is not None
+                    and profile.expected_investment_amount > 0
+                ):
+                    evidence += "（期望投入总额）"
                 alerts.append(
                     RiskAlert(
                         code="CONCENTRATION",

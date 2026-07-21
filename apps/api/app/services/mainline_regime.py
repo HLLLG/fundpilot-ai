@@ -99,6 +99,7 @@ def build_mainline_regime_snapshot(
         "effective_trade_date": trade_date,
         "session_kind": session.get("session_kind"),
         "decision_policy": "research_ranking_only",
+        "entry_policy_version": "sector_entry_maturity.2026-07.v2",
         "execution_gate_changed": False,
         "automatic_promotion_allowed": False,
         "benchmark": _benchmark_summary(regimes),
@@ -327,6 +328,12 @@ def _build_regime(
             "distance_from_20d_high_percent": distance_high,
             "volume_ratio_5d_vs_20d": volume_ratio,
             "max_drawdown_20d_percent": drawdown_20d,
+            "position_label": position.get("position_label"),
+            "breakout_over_prior_20d_high_percent": _number(
+                position.get("breakout_over_prior_20d_high_percent")
+            ),
+            "up_days_5d": position.get("up_days_5d"),
+            "down_days_5d": position.get("down_days_5d"),
         },
         "benchmark": {
             "code": position.get("benchmark_code"),

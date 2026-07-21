@@ -66,6 +66,7 @@ def build_offline_discovery_report(
             discovery_facts,
             scope="discovery",
             fund_code=code,
+            allow_incomplete_position_for_direction=True,
         )
         execution_blocked = provider_failed or degraded_portfolio or not evidence_allowed
         if execution_blocked:

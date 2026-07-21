@@ -891,24 +891,26 @@ def _resolve_from_holdings_infer(
     )
 
     if persist:
-        existing = (
-            batch_context.user_row(code)
-            if batch_context is not None
-            else get_fund_primary_sector(code)
-        )
-        if try_get_request_user_id() is not None and _can_upsert_primary_sector(
-            existing, "holdings_infer"
-        ):
-            saved = save_fund_primary_sector(
-                fund_code=code,
-                sector_name=sector_name,
-                intraday_index_name=index_name,
-                source="holdings_infer",
-                confidence=confidence,
-                detail=record.detail,
+        # Background/manual precompute can promote a reusable global result
+        # without a request user.  Do not touch the per-user table until a
+        # user context actually exists.
+        if try_get_request_user_id() is not None:
+            existing = (
+                batch_context.user_row(code)
+                if batch_context is not None
+                else get_fund_primary_sector(code)
             )
-            if batch_context is not None:
-                batch_context.remember_user_row(saved)
+            if _can_upsert_primary_sector(existing, "holdings_infer"):
+                saved = save_fund_primary_sector(
+                    fund_code=code,
+                    sector_name=sector_name,
+                    intraday_index_name=index_name,
+                    source="holdings_infer",
+                    confidence=confidence,
+                    detail=record.detail,
+                )
+                if batch_context is not None:
+                    batch_context.remember_user_row(saved)
         global_row = promote_record_to_global(record)
         if batch_context is not None:
             batch_context.remember_global_row(global_row)

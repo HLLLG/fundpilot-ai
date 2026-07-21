@@ -172,13 +172,6 @@ const AddHoldingModal = dynamic(
   () => import("@/components/AddHoldingModal").then((module) => module.AddHoldingModal),
   { loading: () => <DeferredInteractionLoading label="添加持仓" /> },
 );
-const LedgerBaselineModal = dynamic(
-  () =>
-    import("@/components/LedgerBaselineModal").then(
-      (module) => module.LedgerBaselineModal,
-    ),
-  { loading: () => <DeferredInteractionLoading label="决策账本" /> },
-);
 const BatchTransactionModal = dynamic(
   () =>
     import("@/components/BatchTransactionModal").then(
@@ -335,7 +328,6 @@ export function Dashboard() {
   const [ocrApplyError, setOcrApplyError] = useState<string | null>(null);
   const [ocrCompletionCount, setOcrCompletionCount] = useState<number | null>(null);
   const [showBatchModal, setShowBatchModal] = useState(false);
-  const [showLedgerBaselineModal, setShowLedgerBaselineModal] = useState(false);
   const [isBatchUploading, setIsBatchUploading] = useState(false);
   const [batchUploadError, setBatchUploadError] = useState<string | null>(null);
   const [pendingTransactions, setPendingTransactions] = useState<ParsedTransaction[] | null>(null);
@@ -1659,7 +1651,6 @@ export function Dashboard() {
                   setBatchUploadError(null);
                   setShowBatchModal(true);
                 }}
-                onConfirmLedgerBaseline={() => setShowLedgerBaselineModal(true)}
                 onSelectHolding={setSelectedHoldingKey}
               />
             </div>
@@ -1727,7 +1718,6 @@ export function Dashboard() {
                     currentHoldings={
                       report?.id === todayReport?.id ? displayableHoldings(holdings) : undefined
                     }
-                    onConfirmLedgerBaseline={() => setShowLedgerBaselineModal(true)}
                     diagnostics={() => (
                       <ReportDiagnostics
                         holdings={displayableHoldings(holdings)}
@@ -1898,18 +1888,6 @@ export function Dashboard() {
           isUploading={isOcrUploading}
           isSubmitting={isManualAdding}
           errorMessage={addHoldingError}
-        />
-      ) : null}
-
-      {showLedgerBaselineModal ? (
-        <LedgerBaselineModal
-          open={showLedgerBaselineModal}
-          holdings={displayableHoldings(holdings)}
-          onClose={() => setShowLedgerBaselineModal(false)}
-          onConfirmed={async () => {
-            setMessage("决策账本基线已确认，后续日报与荐基将引用新的账本版本。", "success");
-            await hydratePortfolio();
-          }}
         />
       ) : null}
 

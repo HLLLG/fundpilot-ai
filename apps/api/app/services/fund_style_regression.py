@@ -1,6 +1,6 @@
 """收益型风格分析：把基金日收益对价值/成长指数日收益做二元回归。
 
-设计文档：docs/superpowers/specs/2026-06-24-factor-style-and-universe-design.md（3C）。
+现行契约：docs/PROJECT_CONTEXT.md「现行权威契约 / Factor IC、PIT 与量化证据」。
 
 纯函数引擎，无 I/O。回归系数 = 基金对两种风格的暴露：
 - beta_value 高 → 偏价值；beta_growth 高 → 偏成长；

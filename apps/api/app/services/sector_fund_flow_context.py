@@ -41,6 +41,7 @@ _CURRENT_FLOW_FUTURES: dict[tuple[str, str], Future[Any]] = {}
 _HISTORY_FUTURES_LOCK = Lock()
 _CURRENT_FLOW_FUTURES_LOCK = Lock()
 _LIVE_FLOW_UNSET = object()
+_THEME_SNAPSHOT_UNSET = object()
 
 
 def _finite_number(value: object) -> float | None:
@@ -238,6 +239,20 @@ def _matching_theme_board_snapshot(trade_date: str) -> dict[str, Any] | None:
         snapshot = get_theme_board_snapshot_cache_only()
     except Exception:  # noqa: BLE001 - cache-only evidence is best-effort
         return None
+    if not isinstance(snapshot, dict) or snapshot.get("trade_date") != trade_date:
+        return None
+    return snapshot
+
+
+def get_matching_theme_board_flow_snapshot(trade_date: str) -> dict[str, Any] | None:
+    """Capture one same-day theme snapshot for all flow rows in a decision run."""
+    return _matching_theme_board_snapshot(trade_date)
+
+
+def _validated_theme_board_snapshot(
+    snapshot: dict[str, Any] | None,
+    trade_date: str,
+) -> dict[str, Any] | None:
     if not isinstance(snapshot, dict) or snapshot.get("trade_date") != trade_date:
         return None
     return snapshot
@@ -441,6 +456,7 @@ def build_sector_fund_flow_context(
     *,
     sector_return_percent: float | None = None,
     trade_date: str | None = None,
+    theme_snapshot: dict[str, Any] | None | object = _THEME_SNAPSHOT_UNSET,
 ) -> dict[str, Any] | None:
     label = normalize_sector_label(sector_name)
     if not label:
@@ -449,7 +465,11 @@ def build_sector_fund_flow_context(
     target_trade_date = trade_date or get_effective_trade_date()
 
     board_code, resolved_label = resolve_board_flow_code_for_sector(label)
-    matching_snapshot = _matching_theme_board_snapshot(target_trade_date)
+    matching_snapshot = (
+        _matching_theme_board_snapshot(target_trade_date)
+        if theme_snapshot is _THEME_SNAPSHOT_UNSET
+        else _validated_theme_board_snapshot(theme_snapshot, target_trade_date)
+    )
     live = _live_today_flow_from_snapshot(
         matching_snapshot,
         board_code,
@@ -482,10 +502,20 @@ def build_sector_fund_flow_context(
         if board_code
         else None
     )
-    # The bulk snapshot's exact trade date is the authority that this is a
-    # current-day fallback. Without it, do not issue a live lookup and risk
-    # mixing today's response into an explicitly historical context.
-    may_fetch_current = board_code is not None and live is None and matching_snapshot is not None
+    # A matching bulk snapshot remains the preferred same-day authority. On a
+    # cold cache, however, a report for the *current* effective trading day may
+    # use the bounded targeted endpoint: both its parser and the merge below
+    # still require the returned date to equal ``target_trade_date``. Explicitly
+    # historical decisions never take this fallback, so today's live response
+    # cannot leak into a past report.
+    may_fetch_current = (
+        board_code is not None
+        and live is None
+        and (
+            matching_snapshot is not None
+            or target_trade_date == get_effective_trade_date()
+        )
+    )
     current_flow_future = (
         _submit_current_flow_load(board_code, target_trade_date)
         if may_fetch_current

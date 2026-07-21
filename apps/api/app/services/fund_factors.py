@@ -1,7 +1,7 @@
 """基金横截面因子打分：动量、风险调整(Calmar)、回撤控制、规模。
 
 数据来源：开放式基金排行榜横截面（fetch_open_fund_rank）+ 持仓净值（不在榜时）。
-设计文档：docs/superpowers/specs/2026-06-24-fund-factor-scores-design.md
+现行契约：docs/PROJECT_CONTEXT.md「现行权威契约 / Factor IC、PIT 与量化证据」。
 
 设计要点：
 - 只接收纯数据（横截面行 + 目标行），不碰 DB/网络，便于单元测试。

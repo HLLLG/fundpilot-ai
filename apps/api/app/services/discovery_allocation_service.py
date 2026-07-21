@@ -18,6 +18,10 @@ from app.services.fund_tradeability import (
     assess_tradeability_for_amount,
     build_tradeability_gate,
 )
+from app.services.sector_opportunity_scoring import (
+    ENTRY_POLICY_VERSION,
+    ENTRY_READY_TO_START,
+)
 
 
 def prepare_recommendations_for_deterministic_allocation(
@@ -145,6 +149,10 @@ def apply_deterministic_discovery_allocation(
             decision_style=profile.decision_style,
             risk_context=risk_context,
             priority_inputs=None,
+            current_tranche_ratio_cap=_entry_maturity_tranche_ratio_cap(
+                discovery_facts,
+                proposed_buys,
+            ),
             amount_step_yuan=100,
         )
         invalid_cost_codes: set[str] = set()
@@ -274,6 +282,29 @@ def apply_deterministic_discovery_allocation(
     elif plan.get("status") == "partial":
         caveats.append("统一分配受交易、现金或集中度上限约束，部分首批预算保持未分配。")
     return projected, plan, risk_context, caveats
+
+
+def _entry_maturity_tranche_ratio_cap(
+    discovery_facts: Mapping[str, Any],
+    recommendations: Sequence[DiscoveryRecommendation],
+) -> float | None:
+    opportunities = discovery_facts.get("sector_opportunities")
+    if not isinstance(opportunities, list):
+        return None
+    ready_sectors = {
+        str(item.get("sector_label") or "").strip()
+        for item in opportunities
+        if isinstance(item, Mapping)
+        and str(item.get("score_policy_version") or "") == ENTRY_POLICY_VERSION
+        and str(item.get("entry_state") or "") == ENTRY_READY_TO_START
+    }
+    if not ready_sectors or not recommendations:
+        return None
+    if all(str(item.sector_name or "").strip() in ready_sectors for item in recommendations):
+        # A newly matured direction starts with at most one fifth of the verified
+        # spendable budget.  Later tranches still require a fresh scan.
+        return 0.20
+    return None
 
 
 def _allocator_candidate(

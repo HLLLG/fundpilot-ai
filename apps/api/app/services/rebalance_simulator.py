@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from math import isfinite
 
 from app.models import AnalysisRequest, FundRecommendation, Holding, InvestorProfile
 from app.services.recommendations import suggest_trade_amount
@@ -25,6 +26,23 @@ def simulate_rebalance(
         action = rec.action if rec else "观察"
         amount_yuan = rec.amount_yuan if rec else None
         amount_note = rec.amount_note if rec else None
+
+        if amount_yuan is None and rec is not None:
+            estimated_amount = rec.estimated_position_change_amount_yuan
+            if estimated_amount is None and rec.suggested_position_change_percent is not None:
+                estimated_amount = round(
+                    holding.holding_amount
+                    * abs(float(rec.suggested_position_change_percent))
+                    / 100,
+                    2,
+                )
+            if (
+                estimated_amount is not None
+                and isfinite(float(estimated_amount))
+                and estimated_amount > 0
+            ):
+                amount_yuan = float(estimated_amount)
+                amount_note = amount_note or "按日报仓位比例和报告持仓估值折算"
 
         if amount_yuan is None:
             suggested_yuan, suggested_note = suggest_trade_amount(

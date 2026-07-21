@@ -106,6 +106,13 @@ const PEER_METRIC_ORDER = [
   "max_drawdown_1y_percent",
   "fund_scale_yi",
 ] as const;
+const PEER_SUMMARY_METRIC_ORDER = [
+  "return_6m_percent",
+  "return_1y_percent",
+  "return_3m_percent",
+  "max_drawdown_1y_percent",
+  "fund_scale_yi",
+] as const;
 
 function peerStatusLabel(status: string | undefined): string {
   if (status === "qualified") return "描述数据完整";
@@ -208,6 +215,10 @@ function ResearchEvidence({ item }: { item: DiscoveryCandidatePoolItem }) {
   const hasBenchmark = Boolean(
     benchmarkName || benchmark?.comparison_role || benchmarkMetrics?.status,
   );
+  const peerSnapshotAfterDecision = Boolean(
+    peerRank?.reasons?.includes("target_membership_available_after_decision_at") ||
+      peerRank?.reason === "target_membership_available_after_decision_at",
+  );
 
   if (!hasPeer && !hasBenchmark) {
     return (
@@ -257,7 +268,9 @@ function ResearchEvidence({ item }: { item: DiscoveryCandidatePoolItem }) {
           ) : (
             <p className="mt-1.5 rounded-lg bg-white px-2 py-1.5 text-[10px] leading-4 text-slate-500">
               {peerCount === 0
-                ? "当前未形成独立同类样本；不重复展示空分位。"
+                ? peerSnapshotAfterDecision
+                  ? "本次同类快照未通过时点校验，已隐藏空分位。"
+                  : "当前未形成独立同类样本；不重复展示空分位。"
                 : "当前可比指标样本不足，分位暂不可用。"}
             </p>
           )}
@@ -396,18 +409,30 @@ function CandidateTradeSummary({ item }: { item: DiscoveryCandidatePoolItem }) {
   );
 }
 
-function CandidateResearchSummary({ item }: { item: DiscoveryCandidatePoolItem }) {
+function buildCandidateResearchSummary(item: DiscoveryCandidatePoolItem) {
   const peerRank =
     item.peer_rank && Object.keys(item.peer_rank).length
       ? item.peer_rank
       : item.peer_research;
+  const peerGroup =
+    item.peer_group && Object.keys(item.peer_group).length
+      ? item.peer_group
+      : peerRank?.peer_group;
   const peerCount =
     peerRank?.universe?.independent_peer_family_count ??
     peerRank?.independent_peer_family_count;
   const metrics = peerRank?.metrics ?? {};
-  const preferredMetric = PEER_METRIC_ORDER
+  const preferredMetric = PEER_SUMMARY_METRIC_ORDER
     .map((key) => metrics[key])
     .find((metric) => metric?.percentile != null);
+  if (
+    peerCount == null ||
+    peerCount <= 0 ||
+    preferredMetric?.percentile == null ||
+    peerGroup?.qualified === false
+  ) {
+    return null;
+  }
   const benchmark = [
     item.benchmark_research,
     item.benchmark_comparison,
@@ -423,18 +448,49 @@ function CandidateResearchSummary({ item }: { item: DiscoveryCandidatePoolItem }
           ? "基准待核验"
           : null;
 
+  const configuredMinimum = Number(
+    peerRank?.qualification_policy?.minimum_independent_peer_families,
+  );
+  const minimumPeerCount =
+    Number.isFinite(configuredMinimum) && configuredMinimum > 0
+      ? configuredMinimum
+      : 20;
+  return {
+    peerCount,
+    metricLabel: preferredMetric.label ?? "代表指标",
+    percentile: preferredMetric.percentile,
+    benchmarkLabel,
+    smallSample: peerCount < minimumPeerCount,
+  };
+}
+
+type CandidateResearchSummaryData = NonNullable<
+  ReturnType<typeof buildCandidateResearchSummary>
+>;
+
+function CandidateResearchSummary({
+  summary,
+}: {
+  summary: CandidateResearchSummaryData;
+}) {
+  const { peerCount, metricLabel, percentile, benchmarkLabel, smallSample } =
+    summary;
+
   return (
     <div
-      className="rounded-xl border border-slate-200 bg-slate-50/80 px-3 py-2 text-[11px] leading-5"
+      className="rounded-xl border border-sky-100 bg-[linear-gradient(135deg,rgba(240,249,255,0.92),rgba(248,250,252,0.86))] px-3 py-2 text-[11px] leading-5"
       aria-label="同类研究摘要"
     >
-      <p className="font-black text-slate-800">
-        {peerCount != null && peerCount > 0 ? `同类样本 ${peerCount} 家` : "同类样本未形成"}
+      <p className="flex flex-wrap items-center gap-1.5 font-black text-slate-800">
+        <span>同类研究 · {peerCount} 家</span>
+        {smallSample ? (
+          <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] leading-4 text-amber-800">
+            小样本
+          </span>
+        ) : null}
       </p>
       <p className="text-slate-500">
-        {preferredMetric?.percentile != null
-          ? `${preferredMetric.label ?? "代表指标"} ${formatPeerPercentile(preferredMetric.percentile)}`
-          : "可比分位暂不可用"}
+        {metricLabel} {formatPeerPercentile(percentile)}
         {benchmarkLabel ? ` · ${benchmarkLabel}` : ""}
       </p>
     </div>
@@ -735,6 +791,7 @@ export function DiscoveryCandidatePoolPanel({
                 item.quality_penalties?.[0] ??
                 item.quality_reasons?.[0] ??
                 item.selection_reason;
+              const researchSummary = buildCandidateResearchSummary(item);
               return (
                 <article
                   key={item.fund_code}
@@ -789,9 +846,13 @@ export function DiscoveryCandidatePoolPanel({
                     ))}
                   </dl>
 
-                  <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                  <div
+                    className={`mt-2 grid gap-2 ${researchSummary ? "sm:grid-cols-2" : "grid-cols-1"}`}
+                  >
                     <CandidateTradeSummary item={item} />
-                    <CandidateResearchSummary item={item} />
+                    {researchSummary ? (
+                      <CandidateResearchSummary summary={researchSummary} />
+                    ) : null}
                   </div>
 
                   {primaryReason ? (

@@ -4,7 +4,7 @@
 攒成 IC 时序后求均值 / ICIR / t 统计量 / 显著性，检验模块2 的因子有没有预测力。
 
 纯函数 + 依赖注入：只接收已对齐的 NAV 面板，不碰 DB/网络，便于单测。
-设计文档：docs/superpowers/specs/2026-06-24-factor-ic-backtest-design.md
+现行契约：docs/PROJECT_CONTEXT.md「现行权威契约 / Factor IC、PIT 与量化证据」。
 """
 from __future__ import annotations
 

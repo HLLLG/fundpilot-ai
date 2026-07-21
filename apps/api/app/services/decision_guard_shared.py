@@ -325,7 +325,7 @@ def resolve_escalation_floor(
 ) -> dict[str, object]:
     """双向 guard 的"升级下限"判定（M2.1）。
 
-    设计文档：docs/superpowers/specs/2026-07-02-ai-decision-sharpening-design.md 第 M2.1 节。
+    现行契约：docs/PROJECT_CONTEXT.md「现行权威契约 / 决策事实、仓位与 DataEvidence」。
 
     返回 `{min_bucket, reasons, suggested_position_change_percent, basis}`：
 
@@ -338,8 +338,8 @@ def resolve_escalation_floor(
     - `min_bucket=None` 表示本次未触发任何升级，调用方保持现有单向 guard 逻辑不变。
     - `suggested_position_change_percent` 为负数（建议减仓比例，相对当前持仓金额）；
       触发但设计未给出具体比例的档位（仅第一档，暂停追涨）返回 `None`。
-    - 具体数值区间（20~30% / 30~40% / 40~60%）是设计稿给出的**初始建议值，未做
-      历史回测校准**（M6 待办）；当前实现取各区间中值，校准后再替换为真实数值。
+    - 减仓比例统一采用用户可理解、可复算的四档：1/4、1/3、1/2、全部；风险升级只
+      决定落入哪一档，不让模型自行生成任意比例。
 
     **两处信号可用性限制（诚实记录，非掩盖，均只影响触发门槛最高的第 5 档）：**
 
@@ -383,7 +383,7 @@ def resolve_escalation_floor(
         reasons.append("该基金自身量化证据（因子/风险/信号综合置信）不足以支撑继续观望")
 
         if has_unrealized_gain:
-            percent = -35.0
+            percent = -(100.0 / 3.0)
             reasons.append("当前持仓浮盈，落袋压力更小，建议提高减仓比例")
 
         breadth = market_breadth or {}
@@ -456,7 +456,7 @@ def resolve_discovery_escalation(
 ) -> dict[str, object]:
     """荐基双向 guard 升级判定（M4）。
 
-    设计文档：docs/superpowers/specs/2026-07-02-ai-decision-sharpening-design.md 第 M4 节。
+    现行契约：docs/PROJECT_CONTEXT.md「现行权威契约 / 荐基质量门与方向成熟度」。
 
     与日报 `resolve_escalation_floor` 思路一致（用 `sector_opportunity.confidence=="高"`
     作为"量价背离证据是否足够强"的判定入口），但**荐基语义不同**——荐基推荐的是"要不要

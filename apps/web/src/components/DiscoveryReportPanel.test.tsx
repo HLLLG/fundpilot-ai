@@ -102,6 +102,90 @@ function sampleReport(): FundDiscoveryReport {
 }
 
 describe("DiscoveryReportPanel", () => {
+  it("separates entry-ready directions from pullback and forming research", () => {
+    const report = sampleReport();
+    report.discovery_facts = {
+      ...report.discovery_facts,
+      mainline_snapshot: {
+        schema_version: "mainline_daily_snapshot.v1",
+        entry_policy_version: "sector_entry_maturity.2026-07.v2",
+        sectors: [],
+      },
+      sector_opportunities: [
+        {
+          sector_label: "锂电池",
+          score_policy_version: "sector_entry_maturity.2026-07.v2",
+          entry_state: "ready_to_start",
+          direction_score: 76,
+          setup_maturity_score: 72,
+          entry_readiness_score: 68,
+          entry_reason: "中期方向、资金确认和价格位置已同时通过入场线。",
+          entry_triggers: ["首批后继续确认5日资金与20日相对强度"],
+          change_1d_percent: 1.05,
+          change_5d_percent: 2.06,
+          cumulative_5d_net_yi: 210.45,
+          five_day_available: true,
+        },
+        {
+          sector_label: "机器人",
+          score_policy_version: "sector_entry_maturity.2026-07.v2",
+          entry_state: "ready_on_pullback",
+          direction_score: 74,
+          setup_maturity_score: 65,
+          entry_readiness_score: 52,
+          entry_triggers: ["单日涨幅回落至3%以内"],
+          change_1d_percent: 5.2,
+          change_5d_percent: 9,
+        },
+        {
+          sector_label: "半导体材料",
+          score_policy_version: "sector_entry_maturity.2026-07.v2",
+          entry_state: "forming",
+          direction_score: 20,
+          setup_maturity_score: 45,
+          entry_readiness_score: 28,
+          entry_triggers: ["补齐20日价格结构与多维证据"],
+          change_1d_percent: 11.42,
+          change_5d_percent: -14.42,
+        },
+      ],
+    };
+
+    render(<DiscoveryReportPanel report={report} />);
+
+    expect(screen.getByText("今日可布局方向")).toBeInTheDocument();
+    expect(screen.getByText("1 个通过入场线")).toBeInTheDocument();
+    expect(screen.getByText("锂电池")).toBeInTheDocument();
+    expect(screen.getByText("可以开始布局")).toBeInTheDocument();
+    expect(screen.getByText("等待合适位置 · 1 个方向")).toBeInTheDocument();
+    expect(screen.getByText("方向观察池 · 1 个尚在形成")).toBeInTheDocument();
+    expect(screen.queryByText("本次主方向")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("等待合适位置 · 1 个方向"));
+    expect(screen.getByText("机器人")).toBeVisible();
+    expect(screen.getByText(/单日涨幅回落至3%以内/)).toBeVisible();
+  });
+
+  it("shows an honest zero state instead of forcing hot directions into the main area", () => {
+    const report = sampleReport();
+    report.discovery_facts = {
+      ...report.discovery_facts,
+      mainline_snapshot: {
+        schema_version: "mainline_daily_snapshot.v1",
+        entry_policy_version: "sector_entry_maturity.2026-07.v2",
+        sectors: [],
+      },
+      sector_opportunities: [],
+    };
+
+    render(<DiscoveryReportPanel report={report} />);
+
+    expect(screen.getByText("今日可布局方向")).toBeInTheDocument();
+    expect(screen.getByText("0 个通过入场线")).toBeInTheDocument();
+    expect(screen.getByText("今天没有方向同时通过三道校验")).toBeInTheDocument();
+    expect(screen.getByText(/不会拿当日热门板块凑数/)).toBeInTheDocument();
+  });
+
   it("uses the frozen mainline snapshot instead of stale nested direction evidence", () => {
     const report = sampleReport();
     report.discovery_facts = {

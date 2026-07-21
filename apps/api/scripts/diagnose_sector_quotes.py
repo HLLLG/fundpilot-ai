@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Probe sector quote provider paths (Eastmoney / relay / browser / AkShare)."""
+"""Probe sector spot and intraday paths (Eastmoney / relay / browser / AkShare)."""
 
 from __future__ import annotations
 
@@ -16,12 +16,14 @@ from app.services.sector_quote_diagnostic import run_sector_quote_diagnostic  # 
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Diagnose sector quote provider paths")
+    parser = argparse.ArgumentParser(
+        description="Diagnose sector spot and intraday provider paths"
+    )
     parser.add_argument(
         "--timeout",
         type=float,
         default=8.0,
-        help="Overall probe budget in seconds (default: 8)",
+        help="Per-request timeout hint in seconds (default: 8)",
     )
     parser.add_argument(
         "--pretty",

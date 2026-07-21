@@ -1,7 +1,7 @@
 """组合风险度量：波动率、夏普、索提诺、最大回撤、Beta/Alpha、HHI。
 
 数据来源：portfolio_daily_snapshots（组合日收益）+ 沪深300日线（基准）。
-设计文档：docs/superpowers/specs/2026-06-24-portfolio-risk-metrics-design.md
+现行契约：docs/PROJECT_CONTEXT.md「现行权威契约 / 金融评估与路径风险」。
 
 设计要点：
 - 本模块只接收**纯数据**（收益数组、金额数组），不碰数据库，便于单元测试。

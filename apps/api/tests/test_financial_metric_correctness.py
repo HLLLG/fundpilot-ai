@@ -5,7 +5,7 @@ import statistics
 
 import pytest
 
-from app.models import FundNavHistory, FundNavPoint, Holding, InvestorProfile
+from app.models import AnalysisRequest, FundNavHistory, FundNavPoint, Holding, InvestorProfile
 from app.services.nav_trend_summary import summarize_nav_history
 from app.services.outcome_path_metrics import (
     build_path_metrics,
@@ -19,7 +19,12 @@ from app.services.portfolio_risk_metrics import (
     _sortino,
     compute_portfolio_metrics,
 )
-from app.services.risk import evaluate_portfolio_risk, resolve_weight_denominator
+from app.services.recommendations import build_offline_fund_recommendations
+from app.services.risk import (
+    evaluate_portfolio_risk,
+    holding_weight_percent,
+    resolve_weight_denominator,
+)
 from app.services.selection_baseline_evaluation import (
     evaluate_candidate_baselines,
     freeze_candidate_baselines,
@@ -97,32 +102,55 @@ def test_short_window_risk_metrics_are_explicitly_low_confidence() -> None:
     assert str(MIN_ANNUALIZATION_SAMPLE_DAYS) in (metrics.message or "")
 
 
-def test_concentration_uses_actual_portfolio_value_not_future_plan() -> None:
+def test_concentration_uses_expected_investment_plan_for_guard_decisions() -> None:
     holdings = [
         Holding(
-            fund_code="000001",
-            fund_name="基金A",
-            holding_amount=60,
-            return_percent=-10,
+            fund_code="008586",
+            fund_name="华夏人工智能ETF联接C",
+            holding_amount=6_795.33,
+            return_percent=3.92,
         ),
         Holding(
             fund_code="000002",
             fund_name="基金B",
-            holding_amount=40,
+            holding_amount=2_340.78,
             return_percent=0,
         ),
     ]
     profile = InvestorProfile(
-        expected_investment_amount=1_000,
-        concentration_limit_percent=35,
+        expected_investment_amount=40_000,
+        concentration_limit_percent=40,
         max_drawdown_percent=8,
     )
 
-    assert resolve_weight_denominator(holdings, profile) == 100
+    assert resolve_weight_denominator(holdings, profile) == 40_000
+    assert holding_weight_percent(holdings[0], holdings, profile) == pytest.approx(16.988325)
     result = evaluate_portfolio_risk(holdings, profile)
     codes = [alert.code for alert in result.alerts]
-    assert "CONCENTRATION" in codes
+    assert "CONCENTRATION" not in codes
     assert "PORTFOLIO_COST_BASIS_LOSS" not in codes
+
+    recommendations = build_offline_fund_recommendations(
+        AnalysisRequest(holdings=holdings, profile=profile)
+    )
+    assert recommendations[0].action != "减仓评估"
+    assert all("超过集中度上限" not in point for point in recommendations[0].points)
+
+
+def test_concentration_falls_back_to_actual_value_without_an_investment_plan() -> None:
+    holdings = [
+        Holding(fund_code="000001", fund_name="基金A", holding_amount=60),
+        Holding(fund_code="000002", fund_name="基金B", holding_amount=40),
+    ]
+    profile = InvestorProfile(
+        expected_investment_amount=None,
+        concentration_limit_percent=35,
+    )
+
+    assert resolve_weight_denominator(holdings, profile) == 100
+    assert "CONCENTRATION" in {
+        alert.code for alert in evaluate_portfolio_risk(holdings, profile).alerts
+    }
 
 
 def test_cost_basis_loss_alert_is_not_labeled_as_max_drawdown() -> None:

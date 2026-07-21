@@ -552,6 +552,18 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
       mainline_regime: regimesByLabel.get(item.sector_label) ?? item.mainline_regime,
     }));
   }, [mainlineSnapshot, report.discovery_facts?.sector_opportunities]);
+  const hasEntryMaturityV2 =
+    mainlineSnapshot?.entry_policy_version === "sector_entry_maturity.2026-07.v2"
+    || sectorOpportunities.some(
+      (item) => item.score_policy_version === "sector_entry_maturity.2026-07.v2",
+    );
+  const directionGroups = useMemo(() => ({
+    ready: sectorOpportunities.filter((item) => item.entry_state === "ready_to_start"),
+    pullback: sectorOpportunities.filter((item) => item.entry_state === "ready_on_pullback"),
+    research: sectorOpportunities.filter(
+      (item) => !["ready_to_start", "ready_on_pullback"].includes(item.entry_state ?? "forming"),
+    ),
+  }), [sectorOpportunities]);
   const [chatOpen, setChatOpen] = useState(false);
   const [outcomesOpen, setOutcomesOpen] = useState(false);
   const chatDrawerId = `discovery-report-chat-${report.id}`;
@@ -696,7 +708,68 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
         onOpenFund={onOpenFund}
       />
 
-      {sectorOpportunities.length ? (
+      {hasEntryMaturityV2 ? (
+        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-200 px-4 py-3.5">
+            <div className="flex flex-wrap items-end justify-between gap-2">
+              <div>
+                <h3 className="text-sm font-black text-slate-950">今日可布局方向</h3>
+                <p className="mt-1 text-xs leading-5 text-slate-500">
+                  只展示方向、资金与价格位置同时成熟的板块；没有合格方向时允许留空。
+                </p>
+              </div>
+              <span className="rounded-full bg-slate-950 px-2.5 py-1 text-[11px] font-black text-white">
+                {directionGroups.ready.length} 个通过入场线
+              </span>
+            </div>
+          </div>
+
+          <div className="p-4">
+            {directionGroups.ready.length ? (
+              <div className="grid gap-2 sm:grid-cols-2">
+                {directionGroups.ready.map((item, index) => (
+                  <SectorOpportunityCard key={`${item.sector_label}-ready-${index}`} item={item} />
+                ))}
+              </div>
+            ) : (
+              <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-4">
+                <div className="text-sm font-black text-slate-800">今天没有方向同时通过三道校验</div>
+                <p className="mt-1 text-xs leading-5 text-slate-500">
+                  系统不会拿当日热门板块凑数。可以继续查看等待条件，但在触发前不生成首批买入动作。
+                </p>
+              </div>
+            )}
+
+            {directionGroups.pullback.length ? (
+              <details className="group mt-3 rounded-xl border border-amber-200 bg-amber-50/25">
+                <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 px-3 text-xs font-black text-amber-900 [&::-webkit-details-marker]:hidden">
+                  等待合适位置 · {directionGroups.pullback.length} 个方向
+                  <ChevronDown size={15} aria-hidden="true" className="transition group-open:rotate-180" />
+                </summary>
+                <div className="grid gap-2 border-t border-amber-200 p-3 sm:grid-cols-2">
+                  {directionGroups.pullback.map((item, index) => (
+                    <SectorOpportunityCard key={`${item.sector_label}-pullback-${index}`} item={item} />
+                  ))}
+                </div>
+              </details>
+            ) : null}
+
+            {directionGroups.research.length ? (
+              <details className="group mt-3 rounded-xl border border-slate-200 bg-slate-50/60">
+                <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 px-3 text-xs font-black text-slate-700 [&::-webkit-details-marker]:hidden">
+                  方向观察池 · {directionGroups.research.length} 个尚在形成
+                  <ChevronDown size={15} aria-hidden="true" className="transition group-open:rotate-180" />
+                </summary>
+                <div className="grid gap-2 border-t border-slate-200 p-3 sm:grid-cols-2">
+                  {directionGroups.research.map((item, index) => (
+                    <SectorOpportunityCard key={`${item.sector_label}-research-${index}`} item={item} />
+                  ))}
+                </div>
+              </details>
+            ) : null}
+          </div>
+        </section>
+      ) : sectorOpportunities.length ? (
         <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 className="text-sm font-black text-slate-950">本次主方向</h3>

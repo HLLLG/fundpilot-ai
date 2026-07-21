@@ -1,6 +1,6 @@
 """基金研究池去重与分层抽样。
 
-设计文档：docs/superpowers/specs/2026-06-24-factor-style-and-universe-design.md（3D）。
+现行契约：docs/PROJECT_CONTEXT.md「现行权威契约 / Factor IC、PIT 与量化证据」。
 
 纯函数。把「取前 N 名」（偏强样本）换成「跨业绩段等距抽样」，让横截面更中性。
 诚实边界：榜单本身仍有幸存者偏差（清盘基金不在榜），彻底去偏需 point-in-time 库。

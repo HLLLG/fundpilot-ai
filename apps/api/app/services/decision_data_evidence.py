@@ -123,7 +123,7 @@ def compact_portfolio_position_truth(
         "instruction": (
             "份额、现金和成本只可使用本对象；null/unknown 不得按 0 猜测。"
             "position_complete=false、ledger_truncated=true 或存在 pending/conflict 时"
-            "不得生成可执行仓位金额。"
+            "不得生成固定金额或份额，但可基于持仓市值给出相对百分比方向。"
         ),
     }
 
@@ -998,17 +998,19 @@ def build_analysis_data_evidence(
     items.extend(_analysis_context_evidence(facts, effective_trade_date, fetched_at))
 
     blocking_reasons: list[str] = []
+    position_quality_reasons: list[str] = []
     if portfolio_context and portfolio_context.get("stale"):
         blocking_reasons.append("stale_portfolio_snapshot")
     if portfolio_context and not portfolio_context.get("authoritative"):
         blocking_reasons.append("non_authoritative_portfolio")
     if portfolio_context and portfolio_context.get("position_complete") is False:
-        blocking_reasons.append("incomplete_or_unsettled_position_ledger")
+        position_quality_reasons.append("incomplete_or_unsettled_position_ledger")
     return {
         "schema_version": "1.0",
         "generated_at": fetched_at.isoformat(),
         "decision_ready": not blocking_reasons,
         "blocking_reasons": blocking_reasons,
+        "position_quality_reasons": position_quality_reasons,
         "items": items,
     }
 
@@ -1236,17 +1238,19 @@ def attach_discovery_data_evidence(
             )
     items.extend(_analysis_context_evidence(facts, effective_trade_date, fetched_at))
     blocking_reasons: list[str] = []
+    position_quality_reasons: list[str] = []
     if portfolio_context and portfolio_context.get("stale"):
         blocking_reasons.append("stale_portfolio_snapshot")
     if portfolio_context and not portfolio_context.get("authoritative"):
         blocking_reasons.append("non_authoritative_portfolio")
     if portfolio_context and portfolio_context.get("position_complete") is False:
-        blocking_reasons.append("incomplete_or_unsettled_position_ledger")
+        position_quality_reasons.append("incomplete_or_unsettled_position_ledger")
     enriched["data_evidence"] = {
         "schema_version": "1.0",
         "generated_at": fetched_at.isoformat(),
         "decision_ready": not blocking_reasons,
         "blocking_reasons": blocking_reasons,
+        "position_quality_reasons": position_quality_reasons,
         "items": items,
     }
     return enriched
@@ -1307,6 +1311,7 @@ def decision_evidence_allows_action(
     scope: str,
     fund_code: str,
     direction: str | None = None,
+    allow_incomplete_position_for_direction: bool = False,
 ) -> tuple[bool, list[str]]:
     """Deterministic final gate for evidence required by an executable action.
 
@@ -1318,8 +1323,18 @@ def decision_evidence_allows_action(
     registry = (facts or {}).get("data_evidence")
     if not isinstance(registry, dict):
         return True, []
-    reasons = [str(item) for item in registry.get("blocking_reasons") or []]
-    if registry.get("decision_ready") is False:
+    raw_reasons = [str(item) for item in registry.get("blocking_reasons") or []]
+    reasons = list(raw_reasons)
+    if allow_incomplete_position_for_direction:
+        # An unconfirmed share ledger does not invalidate fresh market direction
+        # evidence or a percentage relative to the current estimated market
+        # value. Exact shares/yuan remain outside the daily recommendation.
+        reasons = [
+            reason
+            for reason in reasons
+            if reason != "incomplete_or_unsettled_position_ledger"
+        ]
+    if registry.get("decision_ready") is False and (reasons or not raw_reasons):
         return False, reasons or ["decision_evidence_not_ready"]
     items = {
         str(item.get("fact_id")): item

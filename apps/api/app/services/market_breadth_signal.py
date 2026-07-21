@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """大盘情绪温度计（M1.1）。
 
-设计文档：docs/superpowers/specs/2026-07-02-ai-decision-sharpening-design.md 第 M1.1 节。
+现行契约：docs/PROJECT_CONTEXT.md「现行权威契约 / 决策事实、仓位与 DataEvidence」。
 
 **口径确认（与设计原稿的偏离及原因）：** 设计原稿假设 `stock_zt_pool_em` /
 `stock_zt_pool_dtgc_em` / `stock_zt_pool_zbgc_em`（涨停/跌停/炸板股池）可用于

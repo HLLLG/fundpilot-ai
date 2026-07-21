@@ -63,6 +63,8 @@ def _report_chat_system_prompt(
         "「决策路径」「板块依据」「基金依据」「校验备注」为该建议的可追溯理由链："
         "决策路径体现「先判断板块方向、再看基金自身证据、最后给出动作」的顺序；"
         "校验备注写明证据不足/样本有限等情况，引用时须如实说明置信不足，不得夸大把握。"
+        "日报仓位建议统一表示为相对当前估算持仓的百分比；可以解释报告已有比例及服务端已经"
+        "折算的估算调整金额，但不得自行换算或补写固定金额、真实份额，也不得把估算值说成精确成交值。"
     )
     if news_tool_enabled:
         base += (
@@ -275,7 +277,8 @@ def stream_report_chat(
     report_markdown = report_to_markdown(report)
     from app.services.decision_data_evidence import report_execution_blocked
 
-    execution_blocked = report_execution_blocked(report.get("analysis_facts") or {})
+    analysis_facts = report.get("analysis_facts") or {}
+    execution_blocked = report_execution_blocked(analysis_facts)
     assistant_parts: list[str] = []
     try:
         for chunk in iter_report_chat_completion(

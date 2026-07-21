@@ -58,6 +58,7 @@ import {
   isDailyReturnEstimated,
 } from "@/lib/holdingDisplay";
 import { HoldingModifyModal } from "@/components/HoldingModifyModal";
+import { FundHoldingsDisclosure } from "@/components/FundHoldingsDisclosure";
 import { SingleFundTransactionModal } from "@/components/SingleFundTransactionModal";
 import {
   holdingDisplaySectorLabel,
@@ -922,9 +923,6 @@ export function YangjibaoFundDetail({
                   </button>
                 </span>
               </div>
-              <p className="mb-2 rounded-lg bg-amber-50 px-2.5 py-2 text-center text-[11px] leading-4 text-amber-800">
-                板块/指数涨幅仅作行情参考，不等同基金官方净值涨幅
-              </p>
               {intradayLoading ? (
                 <div className="flex h-[200px] items-center justify-center text-sm text-slate-500">
                   <Loader2 size={18} className="mr-2 animate-spin" />
@@ -961,6 +959,10 @@ export function YangjibaoFundDetail({
               {intradayNote && intradayPoints.length >= 2 ? (
                 <p className="pb-1 text-center text-[11px] text-slate-500">{intradayNote}</p>
               ) : null}
+              <FundHoldingsDisclosure
+                fundCode={activeHolding.fund_code}
+                enabled={detail?.fund_code_resolved === true}
+              />
             </div>
           ) : null}
 

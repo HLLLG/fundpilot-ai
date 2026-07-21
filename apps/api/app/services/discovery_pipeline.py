@@ -30,11 +30,15 @@ from app.services.discovery_sector_heat import build_sector_heat_ranking
 from app.services.discovery_sector_position import (
     build_sector_position_map_for_opportunities,
 )
+from app.services.discovery_sector_prefilter import select_opportunity_evidence_labels
 from app.services.mainline_regime import (
     build_mainline_regime_snapshot,
     mainline_regime_by_label,
 )
 from app.services.discovery_target_sectors import select_target_sectors
+from app.services.fund_discovery_data_cache import (
+    fetch_discovery_fund_universe_cached,
+)
 from app.services.analysis_runtime import (
     limit_news_topics_for_runtime,
     resolve_analysis_runtime,
@@ -83,12 +87,19 @@ def run_discovery(
     request: DiscoveryRequest,
     on_progress: ProgressCallback | None = None,
 ) -> FundDiscoveryReport:
-    decision_clock = capture_decision_clock()
-    decision_at = decision_clock.decision_at
     runtime = resolve_analysis_runtime(get_settings(), request.analysis_mode)
+
     def progress(stage: str) -> None:
         if on_progress is not None:
             on_progress(stage, DISCOVERY_JOB_STAGES.get(stage, stage))
+
+    # Prepare and pin the catalogue before freezing the one logical decision
+    # clock. A cold fetch completed after decision_at would otherwise be
+    # correctly rejected by the PIT peer gate and collapse every cohort to 0.
+    progress("connected")
+    prepared_universe_rows = fetch_discovery_fund_universe_cached(limit=20_000)
+    decision_clock = capture_decision_clock()
+    decision_at = decision_clock.decision_at
 
     preflight = resolve_portfolio_preflight(
         request.holdings,
@@ -181,6 +192,7 @@ def run_discovery(
         exclude_codes=held_codes,
         fund_type_preference="any",
         selection_strategy=selection_strategy,
+        prepared_universe_rows=prepared_universe_rows,
         per_sector=prescreen_per_sector,
         pool_cap=prescreen_pool_cap,
         sector_opportunities=sector_opportunities,
@@ -282,6 +294,7 @@ def run_discovery(
         focus_sectors=list(request.focus_sectors),
         fund_type_preference="any",
         sector_opportunities=sector_opportunities,
+        sector_flow_by_label=sector_flow_by_label,
         mainline_snapshot=mainline_snapshot,
         budget_enhancements=True,
         decision_at=decision_at,
@@ -376,13 +389,8 @@ def _opportunity_flow_labels(
     target_sectors: list[str],
     focus_sectors: list[str],
 ) -> list[str]:
-    labels = list(dict.fromkeys([*target_sectors, *focus_sectors]))
-    for row in sorted(
+    return select_opportunity_evidence_labels(
         sector_heat,
-        key=lambda item: float(item.get("heat_score") or -999),
-        reverse=True,
-    )[:12]:
-        label = str(row.get("sector_label") or "").strip()
-        if label and label not in labels:
-            labels.append(label)
-    return labels[:16]
+        target_sectors,
+        focus_sectors,
+    )

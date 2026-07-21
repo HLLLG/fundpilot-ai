@@ -1,4 +1,4 @@
-# CloudBase 自动部署从仓库根目录读取 Dockerfile（monorepo 入口）
+# Lighthouse 生产部署从仓库根目录读取 Dockerfile（monorepo 入口）
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -29,15 +29,9 @@ COPY apps/api/app /app/app
 COPY apps/api/scripts/settle_pending_outcomes.py /app/scripts/settle_pending_outcomes.py
 COPY apps/api/scripts/evaluate_decision_quality.py /app/scripts/evaluate_decision_quality.py
 
-# 2026-07-04（方案 B，见 apps/api/var/factor_ic/.gitkeep 注释）：因子 IC 离线回测
-# 产物（scripts/run_factor_ic.py 生成，供 factor_confidence.py::load_ic_summary 读取，
-# 给因子分挂可回测置信）此前从未打进镜像——容器里 var/factor_ic/summary.json 永远
-# 不存在，导致「量化证据」的因子分量在线上恒为「不足」。`.gitkeep` 占位文件保证
-# var/factor_ic/ 这一层目录在任何 checkout 里都存在，因此对该目录做 COPY 永远不会
-# 因目录缺失而失败；summary.json 是否真的在场则决定这一路是否可用，缺失时诚实
-# 降级为「不足」，不会让整个部署构建失败。CloudBase 从本仓库拉代码构建时同样只
-# 会拿到已入库的 .gitkeep（summary.json 被 .gitignore 排除），故该路径长期需要
-# 方案 C（定期重新生成并同步这份数据）才能在生产环境真正可用，见该 .gitkeep 文件。
+# 因子 IC 离线回测产物由 scripts/run_factor_ic.py 生成，供
+# factor_confidence.py::load_ic_summary 读取。`.gitkeep` 保证干净 checkout 中目录存在；
+# summary.json 缺失时服务会诚实降级为「证据不足」，不会阻断镜像构建。
 COPY apps/api/var/factor_ic /app/var/factor_ic
 
 ENV PYTHONPATH=/app

@@ -1099,6 +1099,87 @@ def test_weak_evidence_downgrade_names_exact_trigger_values():
     assert any("未达到买入证据门槛" in item for item in caveats)
 
 
+def test_entry_maturity_v2_promotes_verified_ready_direction_to_initial_buy():
+    candidate = _eligible_guard_candidate(
+        quality_gate={"status": "eligible", "eligible": True, "reasons": []}
+    )
+    candidate["nav_trend"] = {
+        "recent_5d_change_percent": 2.0,
+        "return_20d_percent": 8.0,
+        "distance_from_high_percent": -5.0,
+    }
+    guarded, _caveats, _ = _run_guard_for_test(
+        [
+            DiscoveryRecommendation(
+                fund_code="020356",
+                fund_name="守卫测试基金A",
+                sector_name="半导体",
+                action="建议关注",
+                suggested_amount_yuan=1000,
+                confidence="中",
+            )
+        ],
+        candidate,
+        extra_facts={
+            "effective_configuration": {"discovery_strategy": "opportunity_first"},
+            "sector_opportunities": [
+                {
+                    "sector_label": "半导体",
+                    "score_policy_version": "sector_entry_maturity.2026-07.v2",
+                    "entry_state": "ready_to_start",
+                    "entry_readiness_score": 72.0,
+                    "evidence_quality": "complete",
+                    "confidence": "高",
+                    "cumulative_5d_net_yi": 18.0,
+                }
+            ],
+        },
+    )
+
+    assert guarded[0].action == "分批买入"
+    assert guarded[0].suggested_amount_yuan == 1000
+    assert any("方向成熟度 V2" in item for item in guarded[0].points)
+    assert any("ready_to_start" in item for item in guarded[0].validation_notes)
+
+
+def test_entry_maturity_v2_keeps_extended_direction_in_conditional_wait():
+    candidate = _eligible_guard_candidate(
+        quality_gate={"status": "eligible", "eligible": True, "reasons": []}
+    )
+    guarded, _caveats, _ = _run_guard_for_test(
+        [
+            DiscoveryRecommendation(
+                fund_code="020356",
+                fund_name="守卫测试基金A",
+                sector_name="半导体",
+                action="分批买入",
+                suggested_amount_yuan=1000,
+                confidence="中",
+            )
+        ],
+        candidate,
+        extra_facts={
+            "effective_configuration": {"discovery_strategy": "opportunity_first"},
+            "sector_opportunities": [
+                {
+                    "sector_label": "半导体",
+                    "score_policy_version": "sector_entry_maturity.2026-07.v2",
+                    "entry_state": "ready_on_pullback",
+                    "entry_readiness_score": 58.0,
+                    "evidence_quality": "complete",
+                    "confidence": "中",
+                    "cumulative_5d_net_yi": 18.0,
+                    "entry_triggers": ["单日涨幅回落至3%以内"],
+                }
+            ],
+        },
+    )
+
+    assert guarded[0].action == "等待回调"
+    assert guarded[0].suggested_amount_yuan is None
+    assert any("单日涨幅回落至3%以内" in item for item in guarded[0].points)
+
+
 @pytest.mark.parametrize("quality_gate", [None, {}, {"status": "future_state"}])
 def test_guard_fails_closed_when_quality_gate_is_missing_or_unknown(quality_gate):
     candidate = _eligible_guard_candidate(quality_gate=quality_gate)
