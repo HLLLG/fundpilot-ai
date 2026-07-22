@@ -79,7 +79,7 @@ export function SectorMappingModal({
               key={`${candidate.source_type}-${candidate.source_name}`}
               type="button"
               onClick={() => onSelect(candidate)}
-              className="mb-2 flex min-h-11 w-full items-center justify-between rounded-2xl border border-slate-200 px-4 py-3 text-left transition hover:border-blue-300 hover:bg-blue-50"
+              className="mb-2 flex min-h-11 w-full items-center justify-between rounded-2xl border border-slate-200 px-4 py-3 text-left transition hover:border-blue-300 hover:bg-[var(--info-bg)]"
             >
               <div>
                 <div className="text-sm font-bold text-slate-950">{candidate.source_name}</div>
@@ -88,7 +88,7 @@ export function SectorMappingModal({
                   {candidate.change_percent}%
                 </div>
               </div>
-              <span className="text-xs font-bold text-blue-700">选用</span>
+              <span className="text-xs font-bold text-[var(--info-fg)]">选用</span>
             </button>
           ))}
         </div>

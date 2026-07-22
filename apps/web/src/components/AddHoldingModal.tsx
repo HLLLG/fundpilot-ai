@@ -200,11 +200,11 @@ export function AddHoldingModal({
                   </li>
                 ))}
               </ol>
-              <p className="mt-4 rounded-xl border border-blue-100 bg-blue-50/70 px-3 py-2 text-xs leading-5 text-slate-600">
+              <p className="mt-4 rounded-xl border border-[var(--info-border)] bg-[var(--info-bg)]/80 px-3 py-2 text-xs leading-5 text-slate-600">
                 {OCR_PRIVACY_COPY.uploadNotice}
               </p>
               {errorMessage ? (
-                <p role="alert" className="mt-3 w-full rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm leading-5 text-rose-800">
+                <p role="alert" className="mt-3 w-full rounded-xl border border-[var(--danger-border)] bg-[var(--danger-bg)] px-3 py-2 text-sm leading-5 text-[var(--danger-fg)]">
                   {errorMessage}
                 </p>
               ) : null}
@@ -277,7 +277,7 @@ export function AddHoldingModal({
               </button>
 
               {formError || errorMessage ? (
-                <p role="alert" className="mt-3 rounded-xl border border-rose-100 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                <p role="alert" className="mt-3 rounded-xl border border-[var(--danger-border)] bg-[var(--danger-bg)] px-3 py-2 text-xs text-[var(--danger-fg)]">
                   {formError ?? errorMessage}
                 </p>
               ) : null}

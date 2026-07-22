@@ -82,7 +82,7 @@ export function DiscoveryOutcomesPanel({ reportId }: DiscoveryOutcomesPanelProps
     <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm" aria-busy={pending}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h3 className="flex items-center gap-2 text-sm font-bold text-slate-900">
-          <BarChart3 size={16} className="text-emerald-700" />
+          <BarChart3 size={16} className="text-[var(--success-icon)]" />
           荐基 T+N 复盘
         </h3>
         <div className="inline-flex rounded-xl bg-slate-100 p-1" aria-label="选择复盘周期">
@@ -153,17 +153,17 @@ export function DiscoveryOutcomesPanel({ reportId }: DiscoveryOutcomesPanelProps
                     <div className="mt-1 leading-5">{item.assessment}</div>
                     <div className="mt-2 flex flex-wrap gap-1.5 text-[10px] font-bold tabular-nums">
                       {item.positive_net_return_percent !== null && item.positive_net_return_percent !== undefined ? (
-                        <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-amber-800">
+                        <span className="rounded-full border border-[var(--warn-border)] bg-[var(--warn-bg)] px-2 py-1 text-[var(--warn-fg)]">
                           假设费后 {signedPercent(item.positive_net_return_percent)}
                         </span>
                       ) : null}
                       {item.gross_excess_return_percent !== null && item.gross_excess_return_percent !== undefined ? (
-                        <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-1 text-blue-800">
+                        <span className="rounded-full border border-[var(--info-border)] bg-[var(--info-bg)] px-2 py-1 text-[var(--info-fg)]">
                           合同基准超额 {signedPercent(item.gross_excess_return_percent)}
                         </span>
                       ) : null}
                       {item.net_excess_return_percent !== null && item.net_excess_return_percent !== undefined ? (
-                        <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-emerald-800">
+                        <span className="rounded-full border border-[var(--success-border)] bg-[var(--success-bg)] px-2 py-1 text-[var(--success-fg)]">
                           费后合同超额 {signedPercent(item.net_excess_return_percent)}
                         </span>
                       ) : null}
@@ -173,12 +173,12 @@ export function DiscoveryOutcomesPanel({ reportId }: DiscoveryOutcomesPanelProps
                         </span>
                       ) : null}
                       {item.path_metrics?.available && item.path_metrics.max_adverse_excursion_percent != null ? (
-                        <span className="rounded-full border border-rose-200 bg-rose-50 px-2 py-1 text-rose-800">
+                        <span className="rounded-full border border-[var(--danger-border)] bg-[var(--danger-bg)] px-2 py-1 text-[var(--danger-fg)]">
                           路径最不利 {signedPercent(item.path_metrics.max_adverse_excursion_percent)}
                         </span>
                       ) : null}
                       {item.no_action_counterfactual?.available && item.no_action_counterfactual.incremental_value_add_percent != null ? (
-                        <span className="rounded-full border border-violet-200 bg-violet-50 px-2 py-1 text-violet-800">
+                        <span className="rounded-full border border-[var(--info-border)] bg-[var(--info-bg)] px-2 py-1 text-[var(--info-fg)]">
                           相对不行动 {signedPercent(item.no_action_counterfactual.incremental_value_add_percent)}
                         </span>
                       ) : null}

@@ -61,7 +61,7 @@ function tileTone(value: number | null | undefined, status: UsDataSourceStatus) 
   if (status === "unavailable" || value == null || value === 0) {
     return "bg-slate-100";
   }
-  return value > 0 ? "bg-rose-50" : "bg-emerald-50";
+  return value > 0 ? "bg-[var(--danger-bg)]" : "bg-[var(--success-bg)]";
 }
 
 function formatClock(value: string | null | undefined) {
@@ -111,7 +111,7 @@ function MetricCard({
             </span>
           ) : null}
           {stale && quoteTime ? (
-            <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-700">
+            <span className="rounded bg-[var(--warn-bg)] px-1.5 py-0.5 text-[10px] text-[var(--warn-icon)]">
               上次 {formatClock(quoteTime)}
             </span>
           ) : null}

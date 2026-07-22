@@ -25,7 +25,7 @@ const components: Components = {
     <h5 className="mb-1.5 mt-1 text-sm font-bold text-slate-900">{children}</h5>
   ),
   blockquote: ({ children }) => (
-    <blockquote className="mb-3 border-l-4 border-blue-200 pl-3 text-slate-600 last:mb-0">
+    <blockquote className="mb-3 border-l-4 border-[var(--info-border)] pl-3 text-slate-600 last:mb-0">
       {children}
     </blockquote>
   ),
@@ -35,7 +35,7 @@ const components: Components = {
       href={href}
       target="_blank"
       rel="noopener noreferrer"
-      className="font-medium text-blue-600 underline decoration-blue-300 underline-offset-2 hover:text-blue-800"
+      className="font-medium text-blue-600 underline decoration-blue-300 underline-offset-2 hover:text-[var(--info-fg)]"
     >
       {children}
     </a>

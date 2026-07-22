@@ -19,13 +19,13 @@ function StatusLine({
   children: React.ReactNode;
 }) {
   const tones = {
-    loading: "text-slate-500 [&>i]:bg-slate-300",
+    loading: "text-[var(--muted)] [&>i]:bg-[var(--muted-soft)]",
     fresh:
-      "text-slate-500 [&>i]:bg-emerald-500 [&>i]:shadow-[0_0_0_3px_rgba(16,185,129,0.10)]",
+      "text-[var(--muted)] [&>i]:bg-[var(--success-icon)] [&>i]:shadow-[0_0_0_3px_var(--success-bg)]",
     stale:
-      "text-amber-700 [&>i]:bg-amber-500 [&>i]:shadow-[0_0_0_3px_rgba(245,158,11,0.10)]",
-    muted: "text-slate-500 [&>i]:bg-slate-300",
-    error: "text-rose-600 [&>i]:bg-rose-500",
+      "text-[var(--warn-fg)] [&>i]:bg-[var(--warn-icon)] [&>i]:shadow-[0_0_0_3px_var(--warn-bg)]",
+    muted: "text-[var(--muted)] [&>i]:bg-[var(--muted-soft)]",
+    error: "text-[var(--danger-fg)] [&>i]:bg-[var(--danger-icon)]",
   } as const;
   return (
     <span

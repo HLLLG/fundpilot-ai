@@ -92,7 +92,7 @@ export function ReportChatDrawer({ reportId, reportTitle }: ReportChatDrawerProp
         aria-expanded={open}
         aria-controls={drawerId}
         tabIndex={open ? -1 : undefined}
-        className={`fixed bottom-[calc(5rem+env(safe-area-inset-bottom))] right-4 z-30 inline-flex min-h-11 items-center gap-2 rounded-full bg-[var(--brand-strong)] px-4 text-sm font-black text-white shadow-lg shadow-blue-950/15 transition hover:-translate-y-0.5 hover:shadow-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-2 motion-reduce:transform-none lg:bottom-6 ${
+        className={`fixed bottom-[calc(5rem+env(safe-area-inset-bottom))] right-4 z-30 inline-flex min-h-11 items-center gap-2 rounded-full bg-[var(--brand-strong)] px-4 text-sm font-black text-white shadow-lg transition hover:-translate-y-0.5 hover:shadow-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] focus-visible:ring-offset-2 motion-reduce:transform-none lg:bottom-6 ${
           open ? "invisible pointer-events-none" : ""
         }`}
       >
@@ -109,7 +109,7 @@ export function ReportChatDrawer({ reportId, reportTitle }: ReportChatDrawerProp
             <div
               key="backdrop"
               data-testid="report-chat-backdrop"
-              className="report-chat-backdrop pointer-events-auto fixed inset-0 bg-slate-950/35 backdrop-blur-[2px]"
+              className="report-chat-backdrop pointer-events-auto fixed inset-0 bg-[var(--brand-ink)]/35 backdrop-blur-[2px]"
               onMouseDown={() => setOpen(false)}
               onClick={() => setOpen(false)}
             />
@@ -122,10 +122,10 @@ export function ReportChatDrawer({ reportId, reportTitle }: ReportChatDrawerProp
             aria-modal={isDesktop ? undefined : true}
             aria-labelledby={titleId}
             tabIndex={-1}
-            className="report-chat-drawer pointer-events-auto relative z-[1] flex h-[min(82dvh,720px)] w-full flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl shadow-slate-950/20 outline-none sm:h-[100dvh] sm:w-[420px] sm:rounded-none"
+            className="report-chat-drawer pointer-events-auto relative z-[1] flex h-[min(82dvh,720px)] w-full flex-col overflow-hidden rounded-t-3xl bg-[var(--panel-strong)] shadow-2xl outline-none sm:h-[100dvh] sm:w-[420px] sm:rounded-none"
           >
-            <header className="flex min-h-14 shrink-0 items-center justify-between border-b border-slate-200 bg-white px-4">
-              <h2 id={titleId} className="text-base font-black text-slate-950">
+            <header className="flex min-h-14 shrink-0 items-center justify-between border-b border-[var(--line)] bg-[var(--panel-strong)] px-4">
+              <h2 id={titleId} className="text-base font-black text-[var(--brand-deep)]">
                 追问这份日报
               </h2>
               <button
@@ -133,7 +133,7 @@ export function ReportChatDrawer({ reportId, reportTitle }: ReportChatDrawerProp
                 type="button"
                 onClick={() => setOpen(false)}
                 aria-label="关闭追问助手"
-                className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-full text-slate-500 transition hover:bg-blue-50 hover:text-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+                className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-full text-[var(--muted)] transition hover:bg-[var(--brand-soft)] hover:text-[var(--brand-strong)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
               >
                 <X aria-hidden="true" size={20} />
               </button>

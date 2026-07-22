@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Check, LockKeyhole, ScanLine } from "lucide-react";
 import { BrandMark } from "@/components/BrandMark";
 import { OCR_PRIVACY_COPY } from "@/lib/ocrPrivacy";
+import { BRAND, SITE_REGISTRATION } from "@/lib/brand";
 
 export function AuthShell({
   mode,
@@ -30,6 +31,22 @@ export function AuthShell({
         <div className="auth-mobile-brand"><Link href="/"><BrandMark size="md" showEnglish /></Link></div>
         <div className={`auth-form-wrap auth-form-${mode}`}>{children}</div>
         <Link href="/" className="auth-back-link">← 返回首页</Link>
+        <footer className="auth-legal-footer" aria-label="合规与风险提示">
+          <p className="auth-legal-risk">
+            投资有风险，入市需谨慎。本工具内容仅供参考，不构成投资建议。
+          </p>
+          <p className="auth-legal-registration">
+            <span>{SITE_REGISTRATION.registeredSiteName}</span>
+            <a
+              href={SITE_REGISTRATION.icpQueryUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              {SITE_REGISTRATION.icpRecordNumber}
+            </a>
+          </p>
+          <small>© {new Date().getFullYear()} {BRAND.name} · {BRAND.englishName}</small>
+        </footer>
       </section>
     </main>
   );

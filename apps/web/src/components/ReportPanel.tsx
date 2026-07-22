@@ -110,7 +110,7 @@ export function ReportPanel({
           onExport={() => void handleExportMarkdown()}
         />
         {scoped.hiddenRecommendationCount > 0 ? (
-          <p className="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+          <p className="rounded-2xl border border-[var(--info-border)] bg-[var(--info-bg)] px-4 py-3 text-sm text-[var(--info-fg)]">
             持仓已更新，已自动隐藏 {scoped.hiddenRecommendationCount} 条不属于当前持仓的旧建议。
           </p>
         ) : null}

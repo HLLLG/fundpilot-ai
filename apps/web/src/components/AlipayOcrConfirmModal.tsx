@@ -128,7 +128,7 @@ function FundCodeSearchPanel({
       </div>
       {loading ? <div className="px-3 py-3 text-xs text-slate-500">搜索中...</div> : null}
       {error ? (
-        <div role="alert" className="px-3 py-3 text-xs text-rose-700">
+        <div role="alert" className="px-3 py-3 text-xs text-[var(--danger-fg)]">
           {error}
         </div>
       ) : null}
@@ -141,9 +141,9 @@ function FundCodeSearchPanel({
           type="button"
           onClick={() => onSelect(item)}
           aria-label={`选择 ${item.fund_name}（${item.fund_code}）`}
-          className="flex min-h-11 w-full flex-col items-start justify-center gap-0.5 border-b border-slate-50 px-3 py-2.5 text-left transition hover:bg-blue-50"
+          className="flex min-h-11 w-full flex-col items-start justify-center gap-0.5 border-b border-slate-50 px-3 py-2.5 text-left transition hover:bg-[var(--info-bg)]"
         >
-          <span className="text-xs font-bold tabular-nums text-blue-700">{item.fund_code}</span>
+          <span className="text-xs font-bold tabular-nums text-[var(--info-fg)]">{item.fund_code}</span>
           <span className="text-xs text-slate-700">{item.fund_name}</span>
         </button>
       ))}
@@ -276,13 +276,13 @@ export function AlipayOcrConfirmModal({
         ) : null}
 
         {amountSemanticsNote ? (
-          <div className="border-b border-blue-100 bg-blue-50 px-5 py-3 text-xs leading-5 text-blue-800">
+          <div className="border-b border-[var(--info-border)] bg-[var(--info-bg)] px-5 py-3 text-xs leading-5 text-[var(--info-fg)]">
             {amountSemanticsNote}
           </div>
         ) : null}
 
         {unresolvedCount > 0 ? (
-          <div className="border-b border-amber-200 bg-amber-50 px-5 py-3 text-xs leading-5 text-amber-900">
+          <div className="border-b border-[var(--warn-border)] bg-[var(--warn-bg)] px-5 py-3 text-xs leading-5 text-[var(--warn-fg)]">
             有 {unresolvedCount} 只基金未自动匹配到代码，请逐一点「搜索」从东财基金库选取后再确认入库。
           </div>
         ) : null}
@@ -298,7 +298,7 @@ export function AlipayOcrConfirmModal({
                 key={`${holding.fund_name}-${index}`}
                 className={`ocr-review-row border-b px-1 py-4 sm:px-2 ${
                   unresolved
-                    ? "border-amber-300 bg-amber-50/50"
+                    ? "border-[var(--warn-border)] bg-[var(--warn-bg)]/80"
                     : "border-[var(--line)] bg-transparent"
                 }`}
               >
@@ -317,7 +317,7 @@ export function AlipayOcrConfirmModal({
                           placeholder="待匹配"
                           className={`min-h-11 w-24 rounded-lg border px-2 py-2 text-xs font-bold tabular-nums outline-none focus:border-blue-400 ${
                             unresolved
-                              ? "border-amber-300 bg-amber-50 text-amber-800"
+                              ? "border-[var(--warn-border)] bg-[var(--warn-bg)] text-[var(--warn-fg)]"
                               : "border-slate-200 bg-white text-slate-800"
                           }`}
                         />
@@ -329,8 +329,8 @@ export function AlipayOcrConfirmModal({
                           onClick={() => openSearch(index)}
                           className={`inline-flex min-h-11 items-center gap-1 rounded-lg border px-2 py-2 text-[11px] font-semibold transition ${
                             unresolved
-                              ? "border-amber-400 bg-amber-100 text-amber-900 hover:border-amber-500"
-                              : "border-slate-200 bg-white text-slate-600 hover:border-blue-300 hover:text-blue-700"
+                              ? "border-[var(--warn-border)] bg-[var(--warn-bg)] text-[var(--warn-fg)] hover:border-[var(--warn-border)]"
+                              : "border-slate-200 bg-white text-slate-600 hover:border-blue-300 hover:text-[var(--info-fg)]"
                           }`}
                         >
                           <Search size={12} />
@@ -343,7 +343,7 @@ export function AlipayOcrConfirmModal({
                         ) : null}
                       </div>
                       {unresolved && resolution?.message ? (
-                        <p className="mt-1 text-[11px] leading-4 text-amber-700">{resolution.message}</p>
+                        <p className="mt-1 text-[11px] leading-4 text-[var(--warn-icon)]">{resolution.message}</p>
                       ) : null}
                       {searchIndex === index ? (
                         <FundCodeSearchPanel
@@ -369,7 +369,7 @@ export function AlipayOcrConfirmModal({
                   <button
                     type="button"
                     onClick={() => removeAt(index)}
-                    className="touch-target inline-flex shrink-0 items-center justify-center rounded-full text-slate-500 transition hover:bg-white hover:text-rose-600"
+                    className="touch-target inline-flex shrink-0 items-center justify-center rounded-full text-slate-500 transition hover:bg-white hover:text-[var(--danger-icon)]"
                     aria-label="移除"
                   >
                     <X size={16} />

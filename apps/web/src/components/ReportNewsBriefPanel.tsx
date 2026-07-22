@@ -17,8 +17,8 @@ const sentimentLabel = {
 } as const;
 
 const sentimentClass = {
-  bullish: "bg-rose-50 text-rose-800 border-rose-100",
-  bearish: "bg-emerald-50 text-emerald-800 border-emerald-100",
+  bullish: "bg-[var(--danger-bg)] text-[var(--danger-fg)] border-[var(--danger-border)]",
+  bearish: "bg-[var(--success-bg)] text-[var(--success-fg)] border-[var(--success-border)]",
   neutral: "bg-slate-50 text-slate-700 border-slate-100",
 } as const;
 

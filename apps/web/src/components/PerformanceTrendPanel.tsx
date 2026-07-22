@@ -301,7 +301,7 @@ export function PerformanceTrendPanel({
           加载业绩走势…
         </div>
       ) : fundError ? (
-        <div className="rounded-xl border border-rose-100 bg-rose-50 px-4 py-6 text-center text-sm text-rose-700">
+        <div className="rounded-xl border border-[var(--danger-border)] bg-[var(--danger-bg)] px-4 py-6 text-center text-sm text-[var(--danger-fg)]">
           {fundError}
         </div>
       ) : series.length >= 2 ? (

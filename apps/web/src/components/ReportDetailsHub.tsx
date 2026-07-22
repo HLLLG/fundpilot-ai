@@ -114,8 +114,8 @@ export function ReportDetailsHub({ report, diagnostics }: ReportDetailsHubProps)
               }
               className={`flex min-h-11 min-w-0 items-center gap-3 rounded-xl border px-3 py-3 text-left transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)] ${
                 isOpen
-                  ? "border-blue-200 bg-blue-50/70"
-                  : "border-slate-200 bg-white hover:border-blue-200 hover:bg-blue-50/40"
+                  ? "border-[var(--info-border)] bg-[var(--info-bg)]/80"
+                  : "border-slate-200 bg-white hover:border-[var(--info-border)] hover:bg-[var(--info-bg)]/80"
               }`}
             >
               <span

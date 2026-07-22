@@ -392,7 +392,7 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
     const fallbackMessage = await screen.findByText(
       "流式连接波动，已切换到后台扫描；完成后会自动更新结果。",
     );
-    expect(fallbackMessage.closest('[role="status"]')).toHaveClass("bg-amber-50/90");
+    expect(fallbackMessage.closest('[role="status"]')).toHaveClass("inline-notice-warning");
     expect(screen.getByTestId("discovery-report-stub")).toHaveTextContent("上一份机会报告");
 
     fireEvent.click(screen.getByRole("button", { name: "调整条件" }));
@@ -418,7 +418,7 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
     fireEvent.click(cancel);
 
     const message = screen.getByText("已停止扫描，当前条件与页面中的已有结果均已保留。");
-    expect(message.closest('[role="status"]')).toHaveClass("bg-blue-50/90");
+    expect(message.closest('[role="status"]')).toHaveClass("inline-notice-info");
     expect(message.closest('[role="alert"]')).toBeNull();
   });
 });

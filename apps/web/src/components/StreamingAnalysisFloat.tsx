@@ -20,7 +20,7 @@ export function StreamingAnalysisFloat({
 
   return (
     <div
-      className="w-full rounded-2xl border border-blue-100 bg-white p-4 shadow-[0_8px_32px_rgba(37,99,235,0.12)]"
+      className="w-full rounded-2xl border border-[var(--info-border)] bg-white p-4 shadow-[0_8px_32px_rgba(37,99,235,0.12)]"
       data-testid="streaming-analysis-float"
     >
       <div className="flex items-start gap-3">

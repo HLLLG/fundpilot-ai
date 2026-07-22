@@ -22,34 +22,34 @@ function flowMetric(
 }
 
 const MAINLINE_STATUS: Record<string, { label: string; className: string }> = {
-  forming: { label: "主线形成中", className: "bg-blue-50 text-blue-800 ring-blue-100" },
-  confirmed: { label: "主线已确认", className: "bg-emerald-50 text-emerald-800 ring-emerald-100" },
-  crowded: { label: "主线拥挤过热", className: "bg-amber-50 text-amber-800 ring-amber-100" },
-  fading: { label: "主线退潮", className: "bg-rose-50 text-rose-800 ring-rose-100" },
-  neutral: { label: "尚未形成主线", className: "bg-slate-100 text-slate-600 ring-slate-200" },
-  insufficient: { label: "主线证据不足", className: "bg-slate-100 text-slate-500 ring-slate-200" },
+  forming: { label: "主线形成中", className: "status-info ring-1 ring-[var(--info-border)]" },
+  confirmed: { label: "主线已确认", className: "status-good ring-1 ring-[var(--success-border)]" },
+  crowded: { label: "主线拥挤过热", className: "status-warn ring-1 ring-[var(--warn-border)]" },
+  fading: { label: "主线退潮", className: "status-bad ring-1 ring-[var(--danger-border)]" },
+  neutral: { label: "尚未形成主线", className: "status-neutral ring-1 ring-[var(--line)]" },
+  insufficient: { label: "主线证据不足", className: "status-neutral ring-1 ring-[var(--line)]" },
 };
 
 const ENTRY_STATE: Record<string, { label: string; className: string; cardClassName: string }> = {
   ready_to_start: {
     label: "可以开始布局",
-    className: "bg-emerald-100 text-emerald-900 ring-emerald-200",
-    cardClassName: "border-emerald-200 bg-emerald-50/35 shadow-[inset_3px_0_0_#10b981]",
+    className: "status-good ring-1 ring-[var(--success-border)]",
+    cardClassName: "border-[var(--success-border)] bg-[var(--success-bg)]/50 shadow-[inset_3px_0_0_var(--success-icon)]",
   },
   ready_on_pullback: {
     label: "等待合适位置",
-    className: "bg-amber-100 text-amber-900 ring-amber-200",
-    cardClassName: "border-amber-200 bg-amber-50/30 shadow-[inset_3px_0_0_#f59e0b]",
+    className: "status-warn ring-1 ring-[var(--warn-border)]",
+    cardClassName: "border-[var(--warn-border)] bg-[var(--warn-bg)]/50 shadow-[inset_3px_0_0_var(--warn-icon)]",
   },
   forming: {
     label: "条件形成中",
-    className: "bg-blue-50 text-blue-800 ring-blue-100",
-    cardClassName: "border-slate-200 bg-slate-50/70 shadow-[inset_3px_0_0_#94a3b8]",
+    className: "status-info ring-1 ring-[var(--info-border)]",
+    cardClassName: "border-[var(--line)] bg-[var(--surface-muted)]/70 shadow-[inset_3px_0_0_var(--muted-soft)]",
   },
   invalid: {
     label: "暂不参与",
-    className: "bg-rose-50 text-rose-800 ring-rose-100",
-    cardClassName: "border-rose-100 bg-rose-50/25 shadow-[inset_3px_0_0_#fda4af]",
+    className: "status-bad ring-1 ring-[var(--danger-border)]",
+    cardClassName: "border-[var(--danger-border)] bg-[var(--danger-bg)]/40 shadow-[inset_3px_0_0_var(--danger-icon)]",
   },
 };
 
@@ -115,7 +115,7 @@ export function SectorOpportunityCard({
             </span>
           ) : null}
           {item.confidence ? (
-            <span className="rounded-full bg-blue-50 px-2 py-0.5 text-blue-800 ring-1 ring-blue-100">
+            <span className="rounded-full bg-[var(--info-bg)] px-2 py-0.5 text-[var(--info-fg)] ring-1 ring-blue-100">
               {item.confidence}
             </span>
           ) : null}
@@ -127,10 +127,10 @@ export function SectorOpportunityCard({
         </div>
       </div>
       {mainline && !isEntryV2 ? (
-        <div data-testid="mainline-evidence" className="mt-2 rounded-lg border border-indigo-100 bg-indigo-50/55 px-2.5 py-2">
+        <div data-testid="mainline-evidence" className="mt-2 rounded-lg border border-[var(--info-border)] bg-[var(--info-bg)]/60 px-2.5 py-2">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="text-[10px] font-bold text-indigo-700">主线雷达 · 仅研究排序</div>
-            <div className="text-[11px] font-bold text-indigo-900">
+            <div className="text-[10px] font-bold text-[var(--info-icon)]">主线雷达 · 仅研究排序</div>
+            <div className="text-[11px] font-bold text-[var(--info-fg)]">
               {mainline.score == null ? "评分待补" : `主线分 ${formatMetric(mainline.score)}`}
             </div>
           </div>
@@ -147,10 +147,10 @@ export function SectorOpportunityCard({
             </p>
           ) : null}
           {(mainline.evidence ?? []).slice(0, 2).map((line) => (
-            <p key={line} className="mt-1 break-words text-[11px] leading-4 text-indigo-950">· {line}</p>
+            <p key={line} className="mt-1 break-words text-[11px] leading-4 text-[var(--info-fg)]">· {line}</p>
           ))}
           {(mainline.risks ?? []).slice(0, 1).map((line) => (
-            <p key={line} className="mt-1 break-words text-[11px] leading-4 text-amber-800">风险：{line}</p>
+            <p key={line} className="mt-1 break-words text-[11px] leading-4 text-[var(--warn-fg)]">风险：{line}</p>
           ))}
         </div>
       ) : null}
@@ -204,10 +204,10 @@ export function SectorOpportunityCard({
         </p>
       ) : null}
       {divergenceLines.length ? (
-        <div className="mt-2 rounded-lg border border-blue-100 bg-blue-50/60 px-2.5 py-2">
-          <div className="text-[10px] font-bold text-blue-700">历史回测证据</div>
+        <div className="mt-2 rounded-lg border border-[var(--info-border)] bg-[var(--info-bg)]/80 px-2.5 py-2">
+          <div className="text-[10px] font-bold text-[var(--info-fg)]">历史回测证据</div>
           {divergenceLines.map((line) => (
-            <p key={line} className="mt-1 break-words text-xs leading-5 text-blue-900">
+            <p key={line} className="mt-1 break-words text-xs leading-5 text-[var(--info-fg)]">
               {line}
             </p>
           ))}

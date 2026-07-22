@@ -61,7 +61,7 @@ export function ReportSkeleton({ streaming, onCancel, onFollowup }: ReportSkelet
             ) : null}
           </div>
 
-          <div className="flex items-start gap-2 rounded-xl border border-blue-100 bg-blue-50/70 px-3 py-2.5 text-xs leading-5 text-blue-900">
+          <div className="flex items-start gap-2 rounded-xl border border-[var(--info-border)] bg-[var(--info-bg)]/80 px-3 py-2.5 text-xs leading-5 text-[var(--info-fg)]">
             <Bell size={14} className="mt-0.5 shrink-0" />
             <span>可切换至其他页面继续操作；完成后将发送浏览器通知，日报 Tab 显示红点提醒。</span>
           </div>
@@ -82,13 +82,13 @@ export function ReportSkeleton({ streaming, onCancel, onFollowup }: ReportSkelet
                   return (
                     <div
                       key={code}
-                      className="rounded-xl border border-blue-100 bg-blue-50/50 px-4 py-3.5"
+                      className="rounded-xl border border-[var(--info-border)] bg-[var(--info-bg)]/80 px-4 py-3.5"
                       data-testid={`report-partial-${code}`}
                     >
                       <div className="text-sm font-black text-slate-950">
                         {code} · {partial.fund_name ?? fundNames[index] ?? code}
                       </div>
-                      <div className="mt-1 text-xs font-bold text-blue-800">{partial.action}</div>
+                      <div className="mt-1 text-xs font-bold text-[var(--info-fg)]">{partial.action}</div>
                       {partial.points?.length ? (
                         <ul className="mt-2 space-y-1 text-sm text-slate-700">
                           {partial.points.map((point, pointIndex) => (
@@ -113,7 +113,7 @@ export function ReportSkeleton({ streaming, onCancel, onFollowup }: ReportSkelet
           ) : null}
 
           {caveats?.length ? (
-            <div className="rounded-xl border border-amber-100 bg-amber-50/80 px-4 py-3 text-sm text-amber-900">
+            <div className="rounded-xl border border-[var(--warn-border)] bg-[var(--warn-bg)]/80 px-4 py-3 text-sm text-[var(--warn-fg)]">
               {caveats.map((line, index) => (
                 <p key={index}>{line}</p>
               ))}
@@ -127,7 +127,7 @@ export function ReportSkeleton({ streaming, onCancel, onFollowup }: ReportSkelet
             >
               <div className="flex items-center gap-2">
                 <div className="h-4 w-28 rounded bg-slate-200" />
-                <div className="h-5 w-20 rounded-full bg-blue-100" />
+                <div className="h-5 w-20 rounded-full bg-[var(--info-bg)]" />
               </div>
               <p className="mt-2 text-xs text-slate-500">
                 后台任务正在继续生成日报，完成后会自动展示报告。

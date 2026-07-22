@@ -146,7 +146,7 @@ export function NavHistoryListModal({ fundCode, fundName, onClose }: NavHistoryL
               加载中…
             </div>
           ) : error && rows.length === 0 ? (
-            <div className="px-4 py-12 text-center text-sm text-rose-600" role="alert">
+            <div className="px-4 py-12 text-center text-sm text-[var(--danger-icon)]" role="alert">
               {error}
             </div>
           ) : rows.length === 0 ? (

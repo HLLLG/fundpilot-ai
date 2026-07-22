@@ -50,7 +50,7 @@ function FundDiagnosticHint({ snapshot }: { snapshot: Snapshot }) {
     return null;
   }
   return (
-    <p className="mt-2 break-words text-xs leading-5 text-blue-800 [overflow-wrap:anywhere]">
+    <p className="mt-2 break-words text-xs leading-5 text-[var(--info-fg)] [overflow-wrap:anywhere]">
       {hints.join(" · ")}
     </p>
   );
@@ -154,7 +154,7 @@ function FactorIcNotice({ status }: { status: FactorIcEvidenceStatus | null }) {
   }
   if (status.state === "stale") {
     return (
-      <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900">
+      <div className="mt-3 rounded-xl border border-[var(--warn-border)] bg-[var(--warn-bg)] px-3 py-2 text-xs leading-5 text-[var(--warn-fg)]">
         IC 回测已过期{status.run_date ? `（${status.run_date}）` : ""}，本次已降级为不参与
       </div>
     );
@@ -418,17 +418,17 @@ export function FundRecommendationCard({
               estimatedAmountYuan={estimatedAdjustmentAmount}
             />
           ) : visibleAmountDetail ? (
-            <p className="mt-3 break-words rounded-xl bg-blue-50 px-3 py-2 text-sm font-bold text-blue-800 [overflow-wrap:anywhere]">
+            <p className="mt-3 break-words rounded-xl bg-[var(--info-bg)] px-3 py-2 text-sm font-bold text-[var(--info-fg)] [overflow-wrap:anywhere]">
               {visibleAmountDetail}
             </p>
           ) : null}
           {nextPlan ? (
-            <p className="mt-3 break-words text-sm leading-6 text-amber-900 [overflow-wrap:anywhere]">
+            <p className="mt-3 break-words text-sm leading-6 text-[var(--warn-fg)] [overflow-wrap:anywhere]">
               {nextPlan}
             </p>
           ) : null}
           {item.risks?.[0] ? (
-            <p className="mt-3 break-words text-xs leading-5 text-rose-700 [overflow-wrap:anywhere]">
+            <p className="mt-3 break-words text-xs leading-5 text-[var(--danger-fg)] [overflow-wrap:anywhere]">
               主要风险：{translateEvidenceText(item.risks[0])}
             </p>
           ) : null}
@@ -446,7 +446,7 @@ export function FundRecommendationCard({
             {bullish.length ? <NewsBlock title="有效利好" tone="positive" items={bullish} /> : null}
             {bearish.length ? <NewsBlock title="有效利空 / 风险" tone="negative" items={bearish} /> : null}
             {item.risks && item.risks.length > 1 ? (
-              <ul className="mt-3 space-y-1 text-xs text-rose-700">
+              <ul className="mt-3 space-y-1 text-xs text-[var(--danger-fg)]">
                 {item.risks.slice(1).map((risk) => (
                   <li key={risk} className="break-words [overflow-wrap:anywhere]">
                     {translateEvidenceText(risk)}
@@ -466,7 +466,7 @@ export function FundRecommendationCard({
             ) : null}
             {snapshot ? <FundDiagnosticHint snapshot={snapshot} /> : null}
             {diagnostic.invalid ? (
-              <p className="mt-2 text-xs text-amber-800">指标数据异常，已隐藏</p>
+              <p className="mt-2 text-xs text-[var(--warn-fg)]">指标数据异常，已隐藏</p>
             ) : null}
             <FactorIcNotice status={icStatus} />
             {hasTradeability ? (
@@ -478,7 +478,7 @@ export function FundRecommendationCard({
                 />
                 {isReductionReview &&
                 transactionExecution?.reduction_amount_status === "manual_review" ? (
-                  <p className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] leading-5 text-amber-900">
+                  <p className="rounded-lg border border-[var(--warn-border)] bg-[var(--warn-bg)] px-2.5 py-2 text-[11px] leading-5 text-[var(--warn-fg)]">
                     逐笔申购时间未核验：减仓前需人工确认锁定期与适用赎回费，系统不自动生成减仓金额。
                   </p>
                 ) : null}
@@ -494,7 +494,7 @@ export function FundRecommendationCard({
               </div>
             ) : null}
             {item.decision_path ? (
-              <p className="mt-3 break-words text-sm leading-6 text-blue-950 [overflow-wrap:anywhere]">
+              <p className="mt-3 break-words text-sm leading-6 text-[var(--info-fg)] [overflow-wrap:anywhere]">
                 {translateEvidenceText(item.decision_path)}
               </p>
             ) : null}

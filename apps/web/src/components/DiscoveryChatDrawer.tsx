@@ -55,7 +55,7 @@ export function DiscoveryChatDrawer({
         data-testid="discovery-chat-drawer"
       >
         <header className="flex min-h-[72px] shrink-0 items-center gap-3 border-b border-slate-200 px-4 pb-3 pt-[max(0.75rem,env(safe-area-inset-top))] sm:px-5">
-          <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-[var(--brand-strong)]">
+          <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--info-bg)] text-[var(--brand-strong)]">
             <MessageCircle size={19} aria-hidden />
           </span>
           <div className="min-w-0 flex-1">

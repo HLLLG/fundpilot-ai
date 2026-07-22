@@ -3,12 +3,14 @@ type StatusPillProps = {
   children: React.ReactNode;
 };
 
+// 语义色统一走 :root token（--info/success/warn/danger）；
+// "dark" 保留用于品牌深底徽标（如 "已确认" 权威徽标）。
 const tones = {
-  blue: "border-blue-200 bg-blue-50 text-blue-700",
-  green: "border-emerald-200 bg-emerald-50 text-emerald-700",
-  amber: "border-amber-200 bg-amber-50 text-amber-700",
-  red: "border-rose-200 bg-rose-50 text-rose-700",
-  dark: "border-slate-200 bg-slate-950 text-white",
+  blue: "status-info",
+  green: "status-good",
+  amber: "status-warn",
+  red: "status-bad",
+  dark: "border-[var(--brand-deep)] bg-[var(--brand-deep)] text-white",
 };
 
 export function StatusPill({ tone = "blue", children }: StatusPillProps) {

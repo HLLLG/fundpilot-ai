@@ -55,7 +55,7 @@ export default function RegisterPage() {
               注册后即可上传持仓截图，校对后建立你的第一份研究摘要。
             </p>
           </div>
-          <form className="space-y-4" onSubmit={onSubmit}>
+          <form className="space-y-4" onSubmit={onSubmit} aria-describedby={error ? "register-error" : undefined}>
             <label className="block text-sm font-semibold text-slate-700">
               昵称（可选）
               <input
@@ -115,8 +115,14 @@ export default function RegisterPage() {
               />
             </label>
             <p className="-mt-2 text-xs leading-5 text-[var(--muted)]">密码至少 8 位；建议同时包含字母与数字。</p>
-            {error ? <p id="register-error" role="alert" className="auth-error">{error}</p> : null}
-            {error ? <p className="auth-recovery">请修正后再次提交，其他输入会保留。</p> : null}
+            {error ? (
+              <>
+                <div id="register-error" role="alert" className="inline-notice inline-notice-error">
+                  <span className="inline-notice-message">{error}</span>
+                </div>
+                <p className="-mt-2 text-xs leading-5 text-[var(--muted)]">请修正后再次提交，其他输入会保留。</p>
+              </>
+            ) : null}
             <button type="submit" disabled={submitting} aria-busy={submitting} className="btn-primary w-full">
               {submitting ? "注册中…" : "免费注册，开始使用"}
             </button>

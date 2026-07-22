@@ -78,11 +78,11 @@ export function BatchTransactionModal({
             <span className="font-bold text-[var(--brand-strong)]">「交易记录」</span>
             截图即可加减仓、同步买卖点
           </p>
-          <p className="mt-4 rounded-xl border border-blue-100 bg-blue-50/70 px-3 py-2 text-xs leading-5 text-slate-600">
+          <p className="mt-4 rounded-xl border border-[var(--info-border)] bg-[var(--info-bg)]/80 px-3 py-2 text-xs leading-5 text-slate-600">
             {OCR_PRIVACY_COPY.uploadNotice}
           </p>
           {errorMessage ? (
-            <p role="alert" className="mt-3 w-full rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm leading-5 text-rose-800">
+            <p role="alert" className="mt-3 w-full rounded-xl border border-[var(--danger-border)] bg-[var(--danger-bg)] px-3 py-2 text-sm leading-5 text-[var(--danger-fg)]">
               {errorMessage}
             </p>
           ) : null}

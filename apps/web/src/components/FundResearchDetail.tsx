@@ -44,10 +44,10 @@ function percentTone(value: number | null | undefined) {
     return "text-slate-500";
   }
   if (value > 0) {
-    return "text-rose-600";
+    return "text-[var(--danger-icon)]";
   }
   if (value < 0) {
-    return "text-emerald-600";
+    return "text-[var(--success-icon)]";
   }
   return "text-slate-700";
 }
@@ -248,8 +248,8 @@ export function FundResearchDetail({ fund, holding, onClose }: FundResearchDetai
             </div>
           ) : error ? (
             <div className="mx-auto flex min-h-72 max-w-md flex-col items-center justify-center text-center">
-              <AlertCircle size={30} className="mb-3 text-rose-500" />
-              <p className="text-sm text-rose-700">{error}</p>
+              <AlertCircle size={30} className="mb-3 text-[var(--danger-icon)]" />
+              <p className="text-sm text-[var(--danger-fg)]">{error}</p>
               <button type="button" onClick={loadOverview} className="btn-secondary mt-5 min-h-11 px-5">
                 <RefreshCw size={16} />
                 重新加载
@@ -357,7 +357,7 @@ export function FundResearchDetail({ fund, holding, onClose }: FundResearchDetai
                   <section className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5">
                     <div className="flex items-center justify-between gap-3">
                       <div><p className="text-xs text-slate-500">当前持有金额</p><strong className="mt-1 block text-2xl tabular-nums text-slate-950">{currency(held.holding_amount)}</strong></div>
-                      <span className="rounded-full bg-blue-50 px-3 py-1.5 text-xs font-bold text-[var(--brand-strong)]">已在持仓</span>
+                      <span className="rounded-full bg-[var(--info-bg)] px-3 py-1.5 text-xs font-bold text-[var(--brand-strong)]">已在持仓</span>
                     </div>
                     <div className="mt-5 grid grid-cols-3 divide-x divide-slate-100 rounded-xl bg-slate-50 py-3 text-center">
                       <div className="px-2"><p className="text-[11px] text-slate-500">持有收益</p><strong className={`mt-1 block text-sm tabular-nums ${percentTone(held.holding_profit)}`}>{currency(held.holding_profit)}</strong></div>
@@ -365,7 +365,7 @@ export function FundResearchDetail({ fund, holding, onClose }: FundResearchDetai
                       <div className="px-2"><p className="text-[11px] text-slate-500">{holdingDailyEstimated ? "估算当日收益" : "当日收益"}</p><strong className={`mt-1 block text-sm tabular-nums ${percentTone(held.daily_profit)}`}>{holdingDailyEstimated && held.daily_profit != null ? "≈" : ""}{currency(held.daily_profit)}</strong></div>
                     </div>
                     {holdingDailyEstimated ? (
-                      <p className="mt-3 rounded-xl bg-amber-50 px-3 py-2.5 text-xs leading-5 text-amber-800">
+                      <p className="mt-3 rounded-xl bg-[var(--warn-bg)] px-3 py-2.5 text-xs leading-5 text-[var(--warn-fg)]">
                         ≈板块参考估算，等待官方净值后会切换为正式当日收益。
                       </p>
                     ) : null}

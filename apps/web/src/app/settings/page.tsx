@@ -1,12 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowLeft, Database, Fingerprint, Mail, ShieldCheck, UserRound } from "lucide-react";
+import { ArrowLeft, Database, Fingerprint, LogOut, Mail, ShieldCheck, UserRound } from "lucide-react";
 import { BrandMark } from "@/components/BrandMark";
 import { useAuth } from "@/components/AuthProvider";
 
 export default function SettingsPage() {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
 
   return (
     <main className="settings-shell">
@@ -24,6 +24,7 @@ export default function SettingsPage() {
           <p>查看身份、隐私边界与当前数据状态。账号信息暂为只读。</p>
           <nav aria-label="设置分组">
             <a href="#account">账号身份</a>
+            <a href="#session">登录会话</a>
             <a href="#privacy">隐私与数据</a>
             <a href="#danger">危险操作</a>
           </nav>
@@ -41,8 +42,29 @@ export default function SettingsPage() {
             </div>
           </section>
 
+          <section id="session" className="settings-section" aria-labelledby="session-title">
+            <div className="settings-section-head">
+              <div><p>02 / SESSION</p><h2 id="session-title">登录会话</h2></div>
+            </div>
+            <div className="settings-danger-row">
+              <div>
+                <h3>退出当前登录</h3>
+                <p>清除本设备的登录令牌，返回登录页。其他设备的登录不受影响。</p>
+              </div>
+              <button
+                type="button"
+                className="btn-secondary min-h-11"
+                onClick={() => {
+                  if (window.confirm("确定退出当前登录吗？")) logout();
+                }}
+              >
+                <LogOut size={16} />退出登录
+              </button>
+            </div>
+          </section>
+
           <section id="privacy" className="settings-section" aria-labelledby="privacy-title">
-            <div className="settings-section-head"><div><p>02 / DATA</p><h2 id="privacy-title">隐私与数据</h2></div></div>
+            <div className="settings-section-head"><div><p>03 / DATA</p><h2 id="privacy-title">隐私与数据</h2></div></div>
             <div className="settings-note-grid">
               <article><Fingerprint size={20} /><h3>账号隔离</h3><p>持仓与报告按登录账号隔离，不与其他用户混用。</p></article>
               <article><Database size={20} /><h3>数据口径</h3><p>页面持续标注数据日期、实时或估算状态，缺失信息不会伪造补齐。</p></article>
@@ -51,7 +73,7 @@ export default function SettingsPage() {
           </section>
 
           <section id="danger" className="settings-section settings-danger" aria-labelledby="danger-title">
-            <div className="settings-section-head"><div><p>03 / CAREFUL</p><h2 id="danger-title">危险操作</h2></div></div>
+            <div className="settings-section-head"><div><p>04 / CAREFUL</p><h2 id="danger-title">危险操作</h2></div></div>
             <div className="settings-danger-row">
               <div><h3>清除账户数据</h3><p>当前版本暂未开放自助清除入口，避免误操作。需要处理时请联系服务维护者。</p></div>
               <button type="button" disabled className="btn-secondary min-h-11">暂不可用</button>

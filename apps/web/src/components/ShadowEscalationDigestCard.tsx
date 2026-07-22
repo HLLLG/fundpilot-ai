@@ -168,11 +168,11 @@ export function ShadowEscalationDigestCard() {
       ) : null}
 
       {outcomes && outcomes.verified_count > 0 ? (
-        <div className="mt-3 rounded-2xl border border-blue-100 bg-blue-50/60 px-3 py-2.5">
-          <div className="text-xs font-bold text-blue-800">
+        <div className="mt-3 rounded-2xl border border-[var(--info-border)] bg-[var(--info-bg)]/80 px-3 py-2.5">
+          <div className="text-xs font-bold text-[var(--info-fg)]">
             次日走势对照（当日层面近似，非严格复盘）
           </div>
-          <p className="mt-1 text-sm text-blue-900">
+          <p className="mt-1 text-sm text-[var(--info-fg)]">
             {outcomes.aligned_count}/{outcomes.verified_count} 次触发当日走势偏弱，与升级判断方向一致
           </p>
         </div>

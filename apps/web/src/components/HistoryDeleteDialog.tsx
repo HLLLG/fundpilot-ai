@@ -59,7 +59,7 @@ export function HistoryDeleteDialog<T extends HistoryRailItem>({
       >
         <div className="flex items-start gap-3">
           <span
-            className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-rose-50 text-rose-600"
+            className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[var(--danger-bg)] text-[var(--danger-icon)]"
             aria-hidden="true"
           >
             <AlertTriangle size={20} />
@@ -99,7 +99,7 @@ export function HistoryDeleteDialog<T extends HistoryRailItem>({
           <button
             type="button"
             onClick={() => void onConfirm()}
-            className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-rose-700"
+            className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-[var(--danger-icon)] px-4 py-2.5 text-sm font-bold text-white transition hover:bg-[var(--danger-fg)]"
           >
             确认删除
           </button>

@@ -177,7 +177,7 @@ export function HoldingModifyModal({
               type="button"
               onClick={onSyncBuy}
               disabled={saving}
-              className="min-h-11 rounded-2xl bg-white py-4 text-center text-base font-bold text-rose-600 shadow-sm hover:bg-rose-50 disabled:cursor-wait disabled:opacity-60"
+              className="min-h-11 rounded-2xl bg-white py-4 text-center text-base font-bold text-[var(--danger-icon)] shadow-sm hover:bg-[var(--danger-bg)] disabled:cursor-wait disabled:opacity-60"
             >
               同步加仓
             </button>
@@ -185,14 +185,14 @@ export function HoldingModifyModal({
               type="button"
               onClick={onSyncSell}
               disabled={saving}
-              className="min-h-11 rounded-2xl bg-white py-4 text-center text-base font-bold text-emerald-700 shadow-sm hover:bg-emerald-50 disabled:cursor-wait disabled:opacity-60"
+              className="min-h-11 rounded-2xl bg-white py-4 text-center text-base font-bold text-[var(--success-icon)] shadow-sm hover:bg-[var(--success-bg)] disabled:cursor-wait disabled:opacity-60"
             >
               同步减仓
             </button>
           </div>
 
           {error ? (
-            <p className="text-sm font-medium text-rose-600" role="alert">
+            <p className="text-sm font-medium text-[var(--danger-icon)]" role="alert">
               {error}
             </p>
           ) : null}

@@ -170,7 +170,7 @@ export function SingleFundTransactionModal({
         </header>
 
         <div className="space-y-4 overflow-y-auto px-4 py-4">
-          <div className="rounded-2xl bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">
+          <div className="rounded-2xl bg-[var(--warn-bg)] px-3 py-2 text-xs font-medium text-[var(--warn-fg)]">
             请确保已在原平台完成{isSell ? "卖出" : "买入"}操作
           </div>
 
@@ -254,7 +254,7 @@ export function SingleFundTransactionModal({
           </div>
 
           {error ? (
-            <p className="text-sm font-medium text-rose-600" role="alert">
+            <p className="text-sm font-medium text-[var(--danger-icon)]" role="alert">
               {error}
             </p>
           ) : null}

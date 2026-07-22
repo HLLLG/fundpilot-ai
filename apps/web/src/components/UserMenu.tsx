@@ -70,7 +70,7 @@ export function UserMenu() {
         ref={triggerRef}
         type="button"
         onClick={() => setOpen((value) => !value)}
-        className="flex items-center gap-2 rounded-full border border-slate-200 bg-white py-1 pl-1 pr-2.5 shadow-sm transition hover:border-blue-200 hover:bg-blue-50/40"
+        className="flex items-center gap-2 rounded-full border border-slate-200 bg-white py-1 pl-1 pr-2.5 shadow-sm transition hover:border-[var(--info-border)] hover:bg-[var(--info-bg)]/80"
         aria-expanded={open}
         aria-haspopup="menu"
         aria-controls="user-menu-popover"
@@ -128,7 +128,7 @@ export function UserMenu() {
                 router.push("/admin/users");
               }}
             >
-              <ShieldCheck size={16} className="text-indigo-600" />
+              <ShieldCheck size={16} className="text-[var(--info-icon)]" />
               用户管理中心
             </button>
           ) : null}

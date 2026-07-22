@@ -71,7 +71,7 @@ export function HistoryRail({
                 type="button"
                 onClick={history.toggleSelectAll}
                 disabled={history.batchDeleting || reports.length === 0}
-                className="min-h-11 min-w-11 rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 transition hover:border-blue-300 hover:text-blue-700 disabled:opacity-50"
+                className="min-h-11 min-w-11 rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 transition hover:border-blue-300 hover:text-[var(--info-fg)] disabled:opacity-50"
               >
                 {history.allSelected ? "取消全选" : "全选"}
               </button>
@@ -79,7 +79,7 @@ export function HistoryRail({
                 type="button"
                 onClick={history.requestBatchDelete}
                 disabled={history.batchDeleting || history.selectedCount === 0}
-                className="inline-flex min-h-11 min-w-11 items-center justify-center gap-1 rounded-full bg-rose-600 px-3 py-2 text-xs font-bold text-white transition hover:bg-rose-700 disabled:opacity-50"
+                className="inline-flex min-h-11 min-w-11 items-center justify-center gap-1 rounded-full bg-[var(--danger-icon)] px-3 py-2 text-xs font-bold text-white transition hover:bg-[var(--danger-fg)] disabled:opacity-50"
               >
                 <Trash2 size={12} />
                 {history.batchDeleting ? "删除中…" : `删除(${history.selectedCount})`}
@@ -100,7 +100,7 @@ export function HistoryRail({
                 <button
                   type="button"
                   onClick={history.enterBatchMode}
-                  className="min-h-11 min-w-11 rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 transition hover:border-rose-300 hover:text-rose-700"
+                  className="min-h-11 min-w-11 rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 transition hover:border-[var(--danger-border)] hover:text-[var(--danger-fg)]"
                 >
                   管理
                 </button>
@@ -169,7 +169,7 @@ export function HistoryRail({
                     checked={selected}
                     disabled={history.batchDeleting}
                     onChange={() => history.toggleSelected(report.id)}
-                    className="h-5 w-5 rounded border-slate-300 text-rose-600 focus:ring-rose-300"
+                    className="h-5 w-5 rounded border-slate-300 text-[var(--danger-icon)] focus:ring-rose-300"
                     aria-label={`选择日报 ${report.title}`}
                   />
                 </label>
@@ -207,7 +207,7 @@ export function HistoryRail({
                     event.stopPropagation();
                     history.requestSingleDelete(report);
                   }}
-                  className="inline-flex min-h-11 w-11 shrink-0 items-center justify-center rounded-xl text-slate-500 transition hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50"
+                  className="inline-flex min-h-11 w-11 shrink-0 items-center justify-center rounded-xl text-slate-500 transition hover:bg-[var(--danger-bg)] hover:text-[var(--danger-icon)] disabled:opacity-50"
                 >
                   <Trash2 size={16} />
                 </button>

@@ -118,7 +118,7 @@ function FundCodeSearchPanel({
       </div>
       {loading ? <div className="px-3 py-3 text-xs text-slate-500">搜索中...</div> : null}
       {error ? (
-        <div role="alert" className="px-3 py-3 text-xs text-rose-700">
+        <div role="alert" className="px-3 py-3 text-xs text-[var(--danger-fg)]">
           {error}
         </div>
       ) : null}
@@ -131,9 +131,9 @@ function FundCodeSearchPanel({
           type="button"
           onClick={() => onSelect(item)}
           aria-label={`选择 ${item.fund_name}（${item.fund_code}）`}
-          className="flex min-h-11 w-full flex-col items-start justify-center gap-0.5 border-b border-slate-50 px-3 py-2.5 text-left transition hover:bg-blue-50"
+          className="flex min-h-11 w-full flex-col items-start justify-center gap-0.5 border-b border-slate-50 px-3 py-2.5 text-left transition hover:bg-[var(--info-bg)]"
         >
-          <span className="text-xs font-bold tabular-nums text-blue-700">{item.fund_code}</span>
+          <span className="text-xs font-bold tabular-nums text-[var(--info-fg)]">{item.fund_code}</span>
           <span className="text-xs text-slate-700">{item.fund_name}</span>
         </button>
       ))}
@@ -270,7 +270,7 @@ export function BatchTransactionConfirmModal({
                 <button
                   type="button"
                   onClick={() => removeAt(index)}
-                  className="touch-target absolute right-1 top-1 inline-flex items-center justify-center rounded-full text-slate-500 transition hover:bg-white hover:text-rose-600"
+                  className="touch-target absolute right-1 top-1 inline-flex items-center justify-center rounded-full text-slate-500 transition hover:bg-white hover:text-[var(--danger-icon)]"
                   aria-label="移除此条"
                 >
                   <X size={15} />
@@ -284,15 +284,15 @@ export function BatchTransactionConfirmModal({
                     }
                     className={`inline-flex min-h-11 min-w-11 items-center justify-center rounded-md px-2 py-2 text-xs font-black transition ${
                       isBuy
-                        ? "bg-rose-100 text-rose-600 hover:bg-rose-200"
-                        : "bg-emerald-100 text-emerald-700 hover:bg-emerald-200"
+                        ? "bg-[var(--danger-bg)] text-[var(--danger-icon)] hover:bg-[color-mix(in_srgb,var(--danger-bg)_80%,var(--danger-icon)_20%)]"
+                        : "bg-[var(--success-bg)] text-[var(--success-icon)] hover:bg-[var(--success-bg)]"
                     }`}
                     title="点击切换加仓/减仓"
                   >
                     {isBuy ? "加仓" : "减仓"}
                   </button>
                   {tx.in_progress ? (
-                    <span className="rounded-md bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-700">
+                    <span className="rounded-md bg-[var(--warn-bg)] px-2 py-0.5 text-[11px] font-bold text-[var(--warn-icon)]">
                       交易进行中
                     </span>
                   ) : null}
@@ -322,7 +322,7 @@ export function BatchTransactionConfirmModal({
                         placeholder="待匹配代码"
                         className={`min-h-11 w-28 rounded-lg border px-2 py-2 text-xs font-bold tabular-nums outline-none focus:border-blue-400 ${
                           unresolved
-                            ? "border-amber-300 bg-amber-50 text-amber-800"
+                            ? "border-[var(--warn-border)] bg-[var(--warn-bg)] text-[var(--warn-fg)]"
                             : "border-slate-200 bg-white text-slate-800"
                         }`}
                       />
@@ -332,7 +332,7 @@ export function BatchTransactionConfirmModal({
                         }}
                         type="button"
                         onClick={() => setSearchIndex(index)}
-                        className="inline-flex min-h-11 items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-2 text-[11px] font-semibold text-slate-600 transition hover:border-blue-300 hover:text-blue-700"
+                        className="inline-flex min-h-11 items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-2 text-[11px] font-semibold text-slate-600 transition hover:border-blue-300 hover:text-[var(--info-fg)]"
                       >
                         <Search size={12} />
                         选择基金
@@ -390,7 +390,7 @@ export function BatchTransactionConfirmModal({
                         className="mt-0.5 min-h-11 w-full rounded-lg border border-slate-200 bg-white px-2 py-2 tabular-nums text-slate-800 outline-none focus:border-blue-400"
                       />
                       {!feeInputValid ? (
-                        <p role="alert" className="mt-1 text-[10px] text-rose-600">
+                        <p role="alert" className="mt-1 text-[10px] text-[var(--danger-icon)]">
                           手续费须为大于等于 0 的数字；未知请留空
                         </p>
                       ) : null}
@@ -416,7 +416,7 @@ export function BatchTransactionConfirmModal({
             type="button"
             onClick={onContinueUpload}
             disabled={isBusy}
-            className="flex min-h-11 w-full items-center justify-center gap-1.5 rounded-2xl border border-dashed border-blue-200 bg-blue-50/60 py-3 text-sm font-bold text-blue-600 transition hover:bg-blue-50 disabled:opacity-50"
+            className="flex min-h-11 w-full items-center justify-center gap-1.5 rounded-2xl border border-dashed border-[var(--info-border)] bg-[var(--info-bg)]/80 py-3 text-sm font-bold text-blue-600 transition hover:bg-[var(--info-bg)] disabled:opacity-50"
           >
             <Plus size={15} />
             继续上传
@@ -425,12 +425,12 @@ export function BatchTransactionConfirmModal({
 
         <div className="border-t border-slate-100 px-4 py-4">
           {transactions.some((tx) => !tx.fund_code) ? (
-            <p className="mb-2 text-center text-[11px] text-amber-600">
+            <p className="mb-2 text-center text-[11px] text-[var(--warn-icon)]">
               有未匹配代码的交易，确认时将自动跳过。
             </p>
           ) : null}
           {hasInvalidFee ? (
-            <p className="mb-2 text-center text-[11px] text-rose-600">
+            <p className="mb-2 text-center text-[11px] text-[var(--danger-icon)]">
               请修正手续费后再确认。
             </p>
           ) : null}

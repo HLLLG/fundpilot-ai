@@ -202,7 +202,7 @@ export function ReportChatPanel({
             type="button"
             onClick={() => void handleExportMarkdown()}
             disabled={isExporting || isLoadingHistory}
-            className="inline-flex min-h-11 min-w-11 items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-bold text-slate-600 transition hover:border-blue-300 hover:text-blue-700 disabled:opacity-50"
+            className="inline-flex min-h-11 min-w-11 items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-bold text-slate-600 transition hover:border-blue-300 hover:text-[var(--info-fg)] disabled:opacity-50"
           >
             <Download size={12} />
             {isExporting ? "导出中" : "导出对话"}
@@ -216,15 +216,15 @@ export function ReportChatPanel({
             onClick={() => handleModeChange("fast")}
             className={`flex min-h-11 min-w-11 items-center gap-1.5 rounded-xl px-2 py-1.5 text-left text-[11px] font-bold transition ${
               chatMode === "fast"
-                ? "bg-amber-700 text-white"
-                : "bg-white text-slate-600 hover:bg-amber-50"
+                ? "bg-[var(--warn-icon)] text-white"
+                : "bg-white text-slate-600 hover:bg-[var(--warn-bg)]"
             }`}
           >
             <Zap size={12} />
             <span>
               快速
               <span
-                className={`block text-[9px] font-semibold ${chatMode === "fast" ? "text-amber-100" : "text-slate-500"}`}
+                className={`block text-[9px] font-semibold ${chatMode === "fast" ? "text-[var(--warn-bg)]" : "text-slate-500"}`}
               >
                 Flash
               </span>
@@ -238,7 +238,7 @@ export function ReportChatPanel({
             className={`flex min-h-11 min-w-11 items-center gap-1.5 rounded-xl px-2 py-1.5 text-left text-[11px] font-bold transition ${
               chatMode === "deep"
                 ? "bg-blue-600 text-white"
-                : "bg-white text-slate-600 hover:bg-blue-50"
+                : "bg-white text-slate-600 hover:bg-[var(--info-bg)]"
             }`}
           >
             <Gauge size={12} />
@@ -304,7 +304,7 @@ export function ReportChatPanel({
           <button
             type="button"
             onClick={() => scrollToBottom("smooth")}
-            className="absolute bottom-2 right-2 z-10 inline-flex h-11 w-11 items-center justify-center rounded-full border border-slate-200/80 bg-white/90 text-slate-600 shadow-sm backdrop-blur transition hover:border-blue-300 hover:text-blue-700"
+            className="absolute bottom-2 right-2 z-10 inline-flex h-11 w-11 items-center justify-center rounded-full border border-slate-200/80 bg-white/90 text-slate-600 shadow-sm backdrop-blur transition hover:border-blue-300 hover:text-[var(--info-fg)]"
             aria-label="回到底部"
           >
             <ArrowDown size={14} />
@@ -321,7 +321,7 @@ export function ReportChatPanel({
                 type="button"
                 disabled={isStreaming}
                 onClick={() => void sendMessage(prompt)}
-                className="min-h-11 min-w-11 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600 transition hover:border-blue-300 hover:text-blue-700 disabled:opacity-50"
+                className="min-h-11 min-w-11 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600 transition hover:border-blue-300 hover:text-[var(--info-fg)] disabled:opacity-50"
               >
                 {prompt}
               </button>
@@ -330,7 +330,7 @@ export function ReportChatPanel({
         ) : null}
 
         {error ? (
-          <p role="alert" className="px-3 pb-1 text-xs text-rose-600">
+          <p role="alert" className="px-3 pb-1 text-xs text-[var(--danger-icon)]">
             {error}
           </p>
         ) : null}

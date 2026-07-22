@@ -70,41 +70,41 @@ function statusLabel(state: string | null | undefined, raw: string | null | unde
 }
 
 function statusTone(state: string | null | undefined): string {
-  if (state === "open") return "bg-emerald-100 text-emerald-900";
+  if (state === "open") return "status-good";
   if (state === "limited" || state === "subscription_period") {
-    return "bg-amber-100 text-amber-900";
+    return "status-warn";
   }
   if (state === "suspended" || state === "closed" || state === "exchange_only") {
-    return "bg-rose-100 text-rose-900";
+    return "status-bad";
   }
-  return "bg-slate-200 text-slate-700";
+  return "status-neutral";
 }
 
 function evidenceTone(
   state: string | null | undefined,
   usable: boolean,
 ): string {
-  return usable ? statusTone(state) : "bg-amber-100 text-amber-900";
+  return usable ? statusTone(state) : "status-warn";
 }
 
 function gateMeta(status: string | undefined) {
   if (status === "eligible") {
     return {
       label: "执行门禁通过",
-      className: "bg-emerald-100 text-emerald-900",
+      className: "status-good",
       Icon: BadgeCheck,
     };
   }
   if (status === "excluded") {
     return {
       label: "场外申购排除",
-      className: "bg-rose-100 text-rose-900",
+      className: "status-bad",
       Icon: CircleAlert,
     };
   }
   return {
     label: "仅研究观察",
-    className: "bg-amber-100 text-amber-900",
+    className: "status-warn",
     Icon: CircleAlert,
   };
 }
@@ -293,7 +293,7 @@ export function FundTradeabilityEvidence({
           </div>
         </div>
         <div className="space-y-1.5 px-3 py-2.5 text-[11px] leading-5 text-slate-600">
-          <p className="font-medium text-amber-900">{researchMessage}</p>
+          <p className="font-medium text-[var(--warn-fg)]">{researchMessage}</p>
           <p className="break-words text-[10px] text-slate-500 [overflow-wrap:anywhere]">
             {sources.length ? `来源：${sources.join(" + ")}` : "来源待核验"}
             {statusCheckedAt ? ` · 状态核验 ${statusCheckedAt}` : ""}
@@ -384,16 +384,16 @@ export function FundTradeabilityEvidence({
             </span>
           ) : null}
           {statusEvidenceLabel ? (
-            <span className="font-bold text-amber-800">{statusEvidenceLabel}</span>
+            <span className="font-bold text-[var(--warn-fg)]">{statusEvidenceLabel}</span>
           ) : null}
           {revalidationRequired ? (
-            <span className="inline-flex items-center gap-1 font-bold text-amber-800">
+            <span className="inline-flex items-center gap-1 font-bold text-[var(--warn-fg)]">
               <RefreshCw size={11} aria-hidden="true" />
               下单前复核
             </span>
           ) : null}
         </p>
-        <p className="font-medium text-amber-900">
+        <p className="font-medium text-[var(--warn-fg)]">
           费用按未折扣标准费率保守估算，不代表销售平台最终成交费；状态、剩余额度与到账规则以实际下单页为准。
         </p>
       </div>

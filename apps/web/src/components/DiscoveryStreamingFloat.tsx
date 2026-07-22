@@ -20,11 +20,11 @@ export function DiscoveryStreamingFloat({
 
   return (
     <div
-      className="w-full rounded-2xl border border-emerald-100 bg-white p-4 shadow-[0_8px_32px_rgba(16,185,129,0.12)]"
+      className="w-full rounded-2xl border border-[var(--success-border)] bg-white p-4 shadow-[0_8px_32px_rgba(16,185,129,0.12)]"
       data-testid="discovery-streaming-float"
     >
       <div className="flex items-start gap-3">
-        <Loader2 size={20} className="mt-0.5 shrink-0 animate-spin text-emerald-700" />
+        <Loader2 size={20} className="mt-0.5 shrink-0 animate-spin text-[var(--success-icon)]" />
         <div className="min-w-0 flex-1">
           <div className="text-sm font-bold text-slate-900">{streaming.stageLabel}</div>
           <div className="mt-0.5 text-xs text-slate-500">

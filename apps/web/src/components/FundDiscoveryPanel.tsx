@@ -732,7 +732,7 @@ export function FundDiscoveryPanel({
               </p>
             ) : null}
             {sectorsError && rawSectors.length === 0 ? (
-              <p className="mt-2 text-[11px] text-amber-700">
+              <p className="mt-2 text-[11px] text-[var(--warn-icon)]">
                 板块热度暂不可用，仍可搜索选择关注方向。
                 <button
                   type="button"

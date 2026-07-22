@@ -71,7 +71,7 @@ export function ReportThinkingSidebar({ streaming, onFollowup }: ReportThinkingS
               data-status={status}
             >
               {status === "done" ? (
-                <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-emerald-700" />
+                <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-[var(--success-icon)]" />
               ) : status === "active" ? (
                 <Loader2 size={16} className="mt-0.5 shrink-0 animate-spin text-[var(--brand-strong)]" />
               ) : (
@@ -132,7 +132,7 @@ export function ReportThinkingSidebar({ streaming, onFollowup }: ReportThinkingS
             className="mt-2 w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-[var(--brand)]"
           />
           {followupError ? (
-            <p role="alert" className="mt-1 text-[11px] text-red-600">
+            <p role="alert" className="mt-1 text-[11px] text-[var(--danger-fg)]">
               {followupError}
             </p>
           ) : null}

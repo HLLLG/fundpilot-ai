@@ -35,8 +35,8 @@ export function InvestmentPresetSelector({
             className={`rounded-xl border px-3 py-2.5 text-left transition ${
               preset === option.id
                 ? option.id === "aggressive_swing"
-                  ? "border-rose-300 bg-rose-50 text-rose-950"
-                  : "border-emerald-300 bg-emerald-50 text-emerald-950"
+                  ? "border-[var(--danger-border)] bg-[var(--danger-bg)] text-[var(--danger-fg)]"
+                  : "border-[var(--success-border)] bg-[var(--success-bg)] text-[var(--success-fg)]"
                 : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
             }`}
           >
@@ -48,7 +48,7 @@ export function InvestmentPresetSelector({
         ))}
       </div>
       {threshold != null ? (
-        <p className="rounded-lg border border-rose-100 bg-rose-50/80 px-2.5 py-2 text-[11px] font-semibold leading-5 text-rose-900">
+        <p className="rounded-lg border border-[var(--danger-border)] bg-[var(--danger-bg)]/80 px-2.5 py-2 text-[11px] font-semibold leading-5 text-[var(--danger-fg)]">
           扣费止盈线约 <span className="font-black">{threshold}%</span>
           （手续费 {profile.round_trip_fee_percent ?? 1.5}% + 净赚{" "}
           {profile.min_net_profit_percent ?? 1}%）；目标持有{" "}

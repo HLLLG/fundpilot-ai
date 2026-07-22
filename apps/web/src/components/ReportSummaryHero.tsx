@@ -163,10 +163,10 @@ export function ReportSummaryHero({
         <ul
           id={portfolioId}
           data-testid="report-summary-portfolio"
-          className="mt-3 space-y-1.5 rounded-2xl border border-blue-100 bg-blue-50/50 px-4 py-3 text-sm leading-6 text-slate-700"
+          className="mt-3 space-y-1.5 rounded-2xl border border-[var(--info-border)] bg-[var(--info-bg)]/80 px-4 py-3 text-sm leading-6 text-slate-700"
         >
           {portfolioLines.map((line, index) => (
-            <li key={`${index}-${line}`} className="pl-3 before:-ml-3 before:mr-2 before:text-blue-400 before:content-['•']">
+            <li key={`${index}-${line}`} className="pl-3 before:-ml-3 before:mr-2 before:text-[var(--brand)] before:content-['•']">
               {line}
             </li>
           ))}

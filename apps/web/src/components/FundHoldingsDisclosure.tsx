@@ -58,7 +58,7 @@ function shortTime(value: string | null | undefined) {
 function changePresentation(row: FundDisclosureHolding) {
   const magnitude = Math.abs(row.change_percent_points ?? 0).toFixed(2);
   if (row.change_direction === "new") {
-    return { label: "新增", className: "text-amber-700" };
+    return { label: "新增", className: "text-[var(--warn-icon)]" };
   }
   if (row.change_direction === "increased") {
     return { label: `↑ ${magnitude}`, className: "text-rose-600" };

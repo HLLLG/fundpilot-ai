@@ -61,7 +61,7 @@ export default function ResetPasswordPage() {
       </div>
 
       {completed ? (
-        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5 text-emerald-950">
+        <div className="rounded-2xl border p-5" role="status" style={{ borderColor: "var(--success-border)", background: "var(--success-bg)", color: "var(--success-fg)" }}>
           <CheckCircle2 size={28} aria-hidden />
           <h2 className="mt-3 text-lg font-black">密码已更新</h2>
           <p className="mt-2 text-sm leading-6">请使用新密码重新登录。</p>
@@ -114,11 +114,17 @@ export default function ResetPasswordPage() {
             />
           </label>
           {token === "" ? (
-            <p className="auth-error" role="alert">
-              重置链接缺少安全令牌，请联系管理员重新生成。
-            </p>
+            <div className="inline-notice inline-notice-error" role="alert">
+              <span className="inline-notice-message">
+                重置链接缺少安全令牌，请联系管理员重新生成。
+              </span>
+            </div>
           ) : null}
-          {error ? <p className="auth-error" role="alert">{error}</p> : null}
+          {error ? (
+            <div className="inline-notice inline-notice-error" role="alert">
+              <span className="inline-notice-message">{error}</span>
+            </div>
+          ) : null}
           <button
             type="submit"
             disabled={submitting || token === null || token === ""}

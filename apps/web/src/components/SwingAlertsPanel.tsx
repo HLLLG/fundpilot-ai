@@ -33,7 +33,7 @@ export function SwingAlertsPanel({
     <section className="mb-4 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
       <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
         <div className="flex items-center gap-2">
-          <Bell size={16} className="text-rose-600" />
+          <Bell size={16} className="text-[var(--danger-icon)]" />
           <h3 className="text-sm font-black text-slate-950">今日波段信号</h3>
           {isEvaluating ? <Loader2 size={14} className="animate-spin text-slate-500" /> : null}
         </div>
@@ -47,7 +47,7 @@ export function SwingAlertsPanel({
         </button>
       </div>
       {error ? (
-        <p role="alert" className="px-4 py-3 text-xs font-semibold text-red-700">
+        <p role="alert" className="px-4 py-3 text-xs font-semibold text-[var(--danger-fg)]">
           {error}
         </p>
       ) : items.length === 0 ? (
@@ -66,8 +66,8 @@ export function SwingAlertsPanel({
                 <span
                   className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-black ${
                     item.priority === "high"
-                      ? "bg-rose-100 text-rose-800"
-                      : "bg-amber-100 text-amber-900"
+                      ? "bg-[var(--danger-bg)] text-[var(--danger-fg)]"
+                      : "bg-[var(--warn-bg)] text-[var(--warn-fg)]"
                   }`}
                 >
                   {TYPE_LABEL[item.alert_type]}

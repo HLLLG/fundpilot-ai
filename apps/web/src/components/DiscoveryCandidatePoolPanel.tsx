@@ -34,13 +34,13 @@ const DECISION_STATUS_META: Record<
 > = {
   actionable: {
     label: "可执行",
-    badgeClass: "bg-emerald-100 text-emerald-900",
-    rowClass: "border-emerald-200 bg-emerald-50/70",
+    badgeClass: "bg-[var(--success-bg)] text-[var(--success-fg)]",
+    rowClass: "border-[var(--success-border)] bg-[var(--success-bg)]/70",
   },
   conditional_wait: {
     label: "等待条件",
-    badgeClass: "bg-amber-100 text-amber-900",
-    rowClass: "border-amber-200 bg-amber-50/70",
+    badgeClass: "bg-[var(--warn-bg)] text-[var(--warn-fg)]",
+    rowClass: "border-[var(--warn-border)] bg-[var(--warn-bg)]/70",
   },
   watch_only: {
     label: "研究观察",
@@ -274,7 +274,7 @@ function ResearchEvidence({ item }: { item: DiscoveryCandidatePoolItem }) {
                 : "当前可比指标样本不足，分位暂不可用。"}
             </p>
           )}
-          <p className="mt-1.5 text-[10px] font-semibold leading-4 text-amber-800">
+          <p className="mt-1.5 text-[10px] font-semibold leading-4 text-[var(--warn-fg)]">
             仅研究描述，不参与金额分配
           </p>
         </div>
@@ -336,7 +336,7 @@ function ResearchEvidence({ item }: { item: DiscoveryCandidatePoolItem }) {
               {!verifiedFormalBenchmark ? (
                 <p className="mt-0.5 text-slate-500">不得用于正式超额收益判断</p>
               ) : null}
-              <p className="mt-1 font-semibold text-amber-800">对齐指标仅研究描述，不参与金额分配</p>
+              <p className="mt-1 font-semibold text-[var(--warn-fg)]">对齐指标仅研究描述，不参与金额分配</p>
             </div>
           </div>
         </div>
@@ -397,7 +397,7 @@ function CandidateTradeSummary({ item }: { item: DiscoveryCandidatePoolItem }) {
       aria-label="交易条件摘要"
     >
       <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-        <span className={statusUsable ? "font-black text-emerald-800" : "font-black text-amber-900"}>
+        <span className={statusUsable ? "font-black text-[var(--success-fg)]" : "font-black text-[var(--warn-fg)]"}>
           {statusUsable ? `申购${stateLabel}` : `申购记录${stateLabel}（证据${tradeability?.freshness === "stale" ? "过期" : "不可用"}）`}
         </span>
         <span className="font-semibold text-slate-700">{gateLabel}</span>
@@ -478,13 +478,13 @@ function CandidateResearchSummary({
 
   return (
     <div
-      className="rounded-xl border border-sky-100 bg-[linear-gradient(135deg,rgba(240,249,255,0.92),rgba(248,250,252,0.86))] px-3 py-2 text-[11px] leading-5"
+      className="rounded-xl border border-[var(--info-border)] bg-[linear-gradient(135deg,rgba(240,249,255,0.92),rgba(248,250,252,0.86))] px-3 py-2 text-[11px] leading-5"
       aria-label="同类研究摘要"
     >
       <p className="flex flex-wrap items-center gap-1.5 font-black text-slate-800">
         <span>同类研究 · {peerCount} 家</span>
         {smallSample ? (
-          <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] leading-4 text-amber-800">
+          <span className="rounded-full bg-[var(--warn-bg)] px-1.5 py-0.5 text-[9px] leading-4 text-[var(--warn-fg)]">
             小样本
           </span>
         ) : null}
@@ -508,7 +508,7 @@ function qualityPresentation(
       fieldBadgeClass: "bg-slate-100 text-slate-700",
       gateLabel: eliminated ? "已剔除" : "门禁状态未知",
       gateBadgeClass: eliminated
-        ? "bg-rose-100 text-rose-800"
+        ? "bg-[var(--danger-bg)] text-[var(--danger-fg)]"
         : "bg-slate-100 text-slate-700",
       missingLabels: [],
       staleLabels: [],
@@ -539,14 +539,14 @@ function qualityPresentation(
       ? `待补/刷新 ${new Set([...missingLabels, ...staleLabels]).size} 项`
       : "核心字段完整",
     fieldBadgeClass: pending
-      ? "bg-amber-100 text-amber-900"
-      : "bg-emerald-100 text-emerald-900",
+      ? "bg-[var(--warn-bg)] text-[var(--warn-fg)]"
+      : "bg-[var(--success-bg)] text-[var(--success-fg)]",
     gateLabel: excluded ? "已剔除" : degraded ? "质量降级" : "质量门禁通过",
     gateBadgeClass: excluded
-      ? "bg-rose-100 text-rose-800"
+      ? "bg-[var(--danger-bg)] text-[var(--danger-fg)]"
       : degraded
         ? "bg-slate-200 text-slate-800"
-        : "bg-emerald-100 text-emerald-900",
+        : "bg-[var(--success-bg)] text-[var(--success-fg)]",
     missingLabels,
     staleLabels,
     pending,
@@ -608,7 +608,7 @@ function QualityDetails({
         ) : null}
         {quality.missingLabels.length ? (
           <p>
-            <span className="font-bold text-amber-900">待补字段：</span>
+            <span className="font-bold text-[var(--warn-fg)]">待补字段：</span>
             {quality.missingLabels.join("、")}
           </p>
         ) : null}
@@ -636,7 +636,7 @@ function QualityDetails({
           </p>
         ) : null}
         {staleFieldLabels.length ? (
-          <p className="font-semibold text-amber-900">
+          <p className="font-semibold text-[var(--warn-fg)]">
             <span className="font-bold">待刷新字段：</span>
             {staleFieldLabels.join("、")}
           </p>
@@ -653,11 +653,11 @@ function QualityDetails({
         ) : null}
         {item.quality_penalties?.length ? (
           <p>
-            <span className="font-bold text-amber-900">风险短板：</span>
+            <span className="font-bold text-[var(--warn-fg)]">风险短板：</span>
             {listText(item.quality_penalties)}
           </p>
         ) : null}
-        <p className={quality.degraded ? "font-semibold text-amber-900" : "text-slate-500"}>
+        <p className={quality.degraded ? "font-semibold text-[var(--warn-fg)]" : "text-slate-500"}>
           <span className="font-bold">决策影响：</span>
           {quality.impact}
         </p>
@@ -716,10 +716,10 @@ export function DiscoveryCandidatePoolPanel({
             className="mt-2 flex flex-wrap gap-1.5 text-[11px] font-bold"
             aria-label={`核心字段完整 ${completeCount} 只，待补全或刷新 ${pendingCount} 只，质量降级 ${degradedCount} 只，状态未记录 ${unknownCount} 只`}
           >
-            <span className="rounded-full bg-emerald-100 px-2 py-1 text-emerald-900">
+            <span className="rounded-full bg-[var(--success-bg)] px-2 py-1 text-[var(--success-fg)]">
               字段完整 {completeCount}
             </span>
-            <span className="rounded-full bg-amber-100 px-2 py-1 text-amber-900">
+            <span className="rounded-full bg-[var(--warn-bg)] px-2 py-1 text-[var(--warn-fg)]">
               待补/刷新 {pendingCount}
             </span>
             <span className="rounded-full bg-slate-200 px-2 py-1 text-slate-800">
@@ -750,8 +750,8 @@ export function DiscoveryCandidatePoolPanel({
           </div>
 
           {eliminatedCandidates.length ? (
-            <details className="group mx-3 mt-3 rounded-xl border border-rose-200 bg-rose-50/80">
-              <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 px-3 text-xs font-black text-rose-900 [&::-webkit-details-marker]:hidden">
+            <details className="group mx-3 mt-3 rounded-xl border border-[var(--danger-border)] bg-[var(--danger-bg)]/80">
+              <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 px-3 text-xs font-black text-[var(--danger-fg)] [&::-webkit-details-marker]:hidden">
                 <span className="flex items-center gap-1.5">
                   <ShieldAlert size={14} aria-hidden="true" />
                   系统已剔除 {eliminatedCandidates.length} 只候选
@@ -762,7 +762,7 @@ export function DiscoveryCandidatePoolPanel({
                   className="transition group-open:rotate-180"
                 />
               </summary>
-              <ul className="space-y-1 border-t border-rose-200 px-3 py-2.5 text-xs leading-5 text-rose-900">
+              <ul className="space-y-1 border-t border-[var(--danger-border)] px-3 py-2.5 text-xs leading-5 text-[var(--danger-fg)]">
                 {eliminatedCandidates.map((item) => (
                   <li key={item.fund_code} className="break-words [overflow-wrap:anywhere]">
                     <span className="font-mono font-semibold">{item.fund_code}</span> {item.fund_name}
@@ -797,7 +797,7 @@ export function DiscoveryCandidatePoolPanel({
                   key={item.fund_code}
                   className={`min-w-0 rounded-2xl border p-3.5 ${
                     eliminated
-                      ? "border-rose-200 bg-rose-50/70"
+                      ? "border-[var(--danger-border)] bg-[var(--danger-bg)]/80"
                       : decisionMeta
                         ? decisionMeta.rowClass
                         : "border-slate-200 bg-white"
@@ -816,14 +816,14 @@ export function DiscoveryCandidatePoolPanel({
                     </div>
                     <div className="flex shrink-0 flex-wrap justify-end gap-1">
                       {item.is_new_issue ? (
-                        <span className="rounded-full bg-amber-100 px-2 py-1 text-[11px] font-bold text-amber-800">新发</span>
+                        <span className="rounded-full bg-[var(--warn-bg)] px-2 py-1 text-[11px] font-bold text-[var(--warn-fg)]">新发</span>
                       ) : null}
                       <span className={`rounded-full px-2 py-1 text-[11px] font-bold ${quality.fieldBadgeClass}`}>
                         {quality.fieldLabel}
                       </span>
                       <span className={`rounded-full px-2 py-1 text-[11px] font-bold ${
                         eliminated
-                          ? "bg-rose-100 text-rose-800"
+                          ? "bg-[var(--danger-bg)] text-[var(--danger-fg)]"
                           : decisionMeta?.badgeClass ?? quality.gateBadgeClass
                       }`}>
                         {eliminated ? "已剔除" : decisionMeta?.label ?? quality.gateLabel}

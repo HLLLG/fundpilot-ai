@@ -207,7 +207,7 @@ function ThemeItemBadges({
         {formatBoardKindLabel(item.board_kind)}
       </span>
       {item.in_portfolio ? (
-        <span className="rounded bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700">
+        <span className="rounded bg-[var(--info-bg)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--info-fg)]">
           持仓{item.held_fund_count > 0 ? ` ${item.held_fund_count} 只` : ""}
         </span>
       ) : showUnheld ? (
@@ -444,7 +444,7 @@ export function ThemeSectorOverview({
               {data?.stale ? " · 行情暂不可用" : ""}
             </p>
             {data?.message ? (
-              <p className="mt-1 text-xs text-amber-700">{data.message}</p>
+              <p className="mt-1 text-xs text-[var(--warn-icon)]">{data.message}</p>
             ) : null}
           </div>
           <button
@@ -483,7 +483,7 @@ export function ThemeSectorOverview({
                     data-testid={`theme-sector-mobile-card-${item.sector_label}`}
                     className={`rounded-2xl border p-3 shadow-sm ${
                       item.in_portfolio
-                        ? "border-sky-100 bg-sky-50/50"
+                        ? "border-[var(--info-border)] bg-[var(--info-bg)]/80"
                         : "border-[var(--line)] bg-white"
                     }`}
                   >
@@ -658,7 +658,7 @@ export function ThemeSectorOverview({
                       <Fragment key={item.sector_label}>
                         <tr
                           className={`border-t border-[var(--line)] first:border-t-0 ${
-                            item.in_portfolio ? "bg-sky-50/50" : ""
+                            item.in_portfolio ? "bg-[var(--info-bg)]/80" : ""
                           }`}
                         >
                           <td className="py-2 pr-1 text-slate-500">

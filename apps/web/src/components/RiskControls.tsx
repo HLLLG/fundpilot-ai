@@ -79,7 +79,7 @@ export function RiskControls({
               深度分析 · {profileSummary(profile)}
             </p>
             {hasBlockingErrors && blockingMessage ? (
-              <p className="mt-1 text-xs font-semibold text-rose-700" role="alert">
+              <p className="mt-1 text-xs font-semibold text-[var(--danger-fg)]" role="alert">
                 {blockingMessage}
               </p>
             ) : null}
@@ -200,7 +200,7 @@ export function RiskControls({
 
       {hasBlockingErrors && blockingMessage ? (
         <p
-          className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold leading-5 text-rose-800"
+          className="mt-3 rounded-xl border border-[var(--danger-border)] bg-[var(--danger-bg)] px-3 py-2 text-xs font-semibold leading-5 text-[var(--danger-fg)]"
           role="alert"
         >
           {blockingMessage}
@@ -331,10 +331,10 @@ export function RiskControls({
                     className={`min-h-11 rounded-lg border px-2 py-2 text-xs font-bold transition ${
                       (profile.decision_style ?? "conservative") === value
                         ? value === "aggressive"
-                          ? "border-rose-300 bg-rose-50 text-rose-900"
+                          ? "border-[var(--danger-border)] bg-[var(--danger-bg)] text-[var(--danger-fg)]"
                           : value === "tactical"
-                            ? "border-amber-300 bg-amber-50 text-amber-900"
-                            : "border-emerald-300 bg-emerald-50 text-emerald-900"
+                            ? "border-[var(--warn-border)] bg-[var(--warn-bg)] text-[var(--warn-fg)]"
+                            : "border-[var(--success-border)] bg-[var(--success-bg)] text-[var(--success-fg)]"
                         : "border-slate-200 bg-white text-slate-600"
                     }`}
                   >
@@ -419,7 +419,7 @@ export function RiskControls({
                         onClick={() => onChange({ ...profile, swing_monitor_scope: value })}
                         className={`min-h-11 rounded-lg border px-2 py-2 text-xs font-bold transition ${
                           (profile.swing_monitor_scope ?? "both") === value
-                            ? "border-rose-300 bg-rose-50 text-rose-900"
+                            ? "border-[var(--danger-border)] bg-[var(--danger-bg)] text-[var(--danger-fg)]"
                             : "border-slate-200 bg-white text-slate-600"
                         }`}
                       >

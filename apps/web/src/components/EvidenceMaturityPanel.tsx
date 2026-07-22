@@ -17,17 +17,17 @@ const OVERALL_LABEL: Record<string, string> = {
 };
 
 const STATUS_CLASS: Record<string, string> = {
-  healthy: "border-emerald-200 bg-emerald-50 text-emerald-700",
-  active: "border-emerald-200 bg-emerald-50 text-emerald-700",
-  shadow_ready: "border-sky-200 bg-sky-50 text-sky-700",
-  manual_review_ready: "border-sky-200 bg-sky-50 text-sky-700",
-  collecting: "border-amber-200 bg-amber-50 text-amber-700",
-  shadow: "border-amber-200 bg-amber-50 text-amber-700",
-  attention: "border-amber-200 bg-amber-50 text-amber-700",
-  stale: "border-rose-200 bg-rose-50 text-rose-700",
-  unavailable: "border-slate-200 bg-slate-100 text-slate-600",
-  not_started: "border-slate-200 bg-slate-100 text-slate-600",
-  degraded: "border-rose-200 bg-rose-50 text-rose-700",
+  healthy: "border-[var(--success-border)] bg-[var(--success-bg)] text-[var(--success-fg)]",
+  active: "border-[var(--success-border)] bg-[var(--success-bg)] text-[var(--success-fg)]",
+  shadow_ready: "border-[var(--info-border)] bg-[var(--info-bg)] text-[var(--info-fg)]",
+  manual_review_ready: "border-[var(--info-border)] bg-[var(--info-bg)] text-[var(--info-fg)]",
+  collecting: "border-[var(--warn-border)] bg-[var(--warn-bg)] text-[var(--warn-fg)]",
+  shadow: "border-[var(--warn-border)] bg-[var(--warn-bg)] text-[var(--warn-fg)]",
+  attention: "border-[var(--warn-border)] bg-[var(--warn-bg)] text-[var(--warn-fg)]",
+  stale: "border-[var(--danger-border)] bg-[var(--danger-bg)] text-[var(--danger-fg)]",
+  unavailable: "border-[var(--line)] bg-[var(--surface-muted)] text-[var(--muted)]",
+  not_started: "border-[var(--line)] bg-[var(--surface-muted)] text-[var(--muted)]",
+  degraded: "border-[var(--danger-border)] bg-[var(--danger-bg)] text-[var(--danger-fg)]",
 };
 
 const STATUS_LABEL: Record<string, string> = {
@@ -122,9 +122,9 @@ function ProgressLine({
 
 function AlertRow({ alert }: { alert: EvidenceMaturityAlert }) {
   const styles = {
-    critical: "border-rose-200 bg-rose-50/80 text-rose-900",
-    warning: "border-amber-200 bg-amber-50/80 text-amber-900",
-    info: "border-sky-200 bg-sky-50/70 text-sky-900",
+    critical: "border-[var(--danger-border)] bg-[var(--danger-bg)]/80 text-[var(--danger-fg)]",
+    warning: "border-[var(--warn-border)] bg-[var(--warn-bg)]/80 text-[var(--warn-fg)]",
+    info: "border-[var(--info-border)] bg-[var(--info-bg)]/70 text-[var(--info-fg)]",
   } as const;
   return (
     <li

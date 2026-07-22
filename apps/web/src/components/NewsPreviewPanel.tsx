@@ -62,7 +62,7 @@ export function NewsPreviewPanel({ holdings, profile }: NewsPreviewPanelProps) {
     <section className="glass-panel rounded-[24px] p-5">
       <div className="mb-4 flex items-start justify-between gap-3">
         <div>
-          <div className="mb-2 inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-sky-700 text-white">
+          <div className="mb-2 inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-[var(--brand)] text-white">
             <Newspaper size={20} />
           </div>
           <h3 className="text-lg font-black text-slate-950">要闻时效自检</h3>
@@ -82,7 +82,7 @@ export function NewsPreviewPanel({ holdings, profile }: NewsPreviewPanelProps) {
       </div>
 
       {error ? (
-        <p role="alert" className="rounded-2xl border border-rose-100 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+        <p role="alert" className="rounded-2xl border border-[var(--danger-border)] bg-[var(--danger-bg)] px-4 py-3 text-sm text-[var(--danger-fg)]">
           {error}
         </p>
       ) : null}

@@ -85,7 +85,7 @@ export function DiscoveryHistoryRail({
                 type="button"
                 onClick={history.requestBatchDelete}
                 disabled={history.batchDeleting || history.selectedCount === 0}
-                className="inline-flex min-h-11 items-center gap-1 rounded-full bg-rose-600 px-3 text-xs font-bold text-white transition hover:bg-rose-700 disabled:opacity-50"
+                className="inline-flex min-h-11 items-center gap-1 rounded-full bg-[var(--danger-icon)] px-3 text-xs font-bold text-white transition hover:bg-[var(--danger-fg)] disabled:opacity-50"
               >
                 <Trash2 size={12} />
                 {history.batchDeleting ? "删除中…" : `删除(${history.selectedCount})`}
@@ -106,7 +106,7 @@ export function DiscoveryHistoryRail({
                 <button
                   type="button"
                   onClick={history.enterBatchMode}
-                  className="min-h-11 rounded-full border border-slate-200 bg-white px-3 text-xs font-bold text-slate-600 transition hover:border-rose-300 hover:text-rose-700"
+                  className="min-h-11 rounded-full border border-slate-200 bg-white px-3 text-xs font-bold text-slate-600 transition hover:border-[var(--danger-border)] hover:text-[var(--danger-fg)]"
                 >
                   管理
                 </button>
@@ -180,7 +180,7 @@ export function DiscoveryHistoryRail({
                     checked={selected}
                     disabled={history.batchDeleting}
                     onChange={() => history.toggleSelected(item.id)}
-                    className="h-4 w-4 rounded border-slate-300 text-rose-600 focus:ring-rose-300"
+                    className="h-4 w-4 rounded border-slate-300 text-[var(--danger-icon)] focus:ring-rose-300"
                     aria-label={`选择推荐报告 ${item.title}`}
                   />
                 </label>
@@ -218,7 +218,7 @@ export function DiscoveryHistoryRail({
                     event.stopPropagation();
                     history.requestSingleDelete(item);
                   }}
-                  className="inline-flex min-h-11 w-11 shrink-0 items-center justify-center rounded-xl text-slate-500 transition hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50"
+                  className="inline-flex min-h-11 w-11 shrink-0 items-center justify-center rounded-xl text-slate-500 transition hover:bg-[var(--danger-bg)] hover:text-[var(--danger-icon)] disabled:opacity-50"
                 >
                   <Trash2 size={16} />
                 </button>

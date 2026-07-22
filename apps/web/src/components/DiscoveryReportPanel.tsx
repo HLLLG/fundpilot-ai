@@ -228,11 +228,11 @@ function DiscoveryRecommendationCard({
       (rec.cost_assessment && Object.keys(rec.cost_assessment).length),
   );
   const tradeabilitySummary = tradeabilityGate?.status === "eligible"
-    ? { label: "申赎与额度已核验", className: "bg-emerald-50 text-emerald-800 ring-emerald-200" }
+    ? { label: "申赎与额度已核验", className: "status-good ring-1 ring-[var(--success-border)]" }
     : tradeabilityGate?.status
-      ? { label: "申赎与额度需复核", className: "bg-amber-50 text-amber-900 ring-amber-200" }
+      ? { label: "申赎与额度需复核", className: "status-warn ring-1 ring-[var(--warn-border)]" }
       : hasTradeabilityEvidence
-        ? { label: "申赎信息待核验", className: "bg-slate-50 text-slate-700 ring-slate-200" }
+        ? { label: "申赎信息待核验", className: "status-neutral ring-1 ring-[var(--line)]" }
         : null;
   const fundEvidenceComplete = Boolean(
     candidate?.quality_gate?.eligible
@@ -256,10 +256,10 @@ function DiscoveryRecommendationCard({
   const fundEvidenceSummary = !candidate
     ? null
     : fundEvidenceComplete
-      ? { label: "基金证据通过", className: "bg-blue-50 text-blue-800 ring-blue-200" }
+      ? { label: "基金证据通过", className: "status-info ring-1 ring-[var(--info-border)]" }
       : fundEvidenceFailed
-        ? { label: "基金证据待加强", className: "bg-amber-50 text-amber-900 ring-amber-200" }
-        : { label: "基金资料待复核", className: "bg-slate-50 text-slate-700 ring-slate-200" };
+        ? { label: "基金证据待加强", className: "status-warn ring-1 ring-[var(--warn-border)]" }
+        : { label: "基金资料待复核", className: "status-neutral ring-1 ring-[var(--line)]" };
   const decisionPoints = visibleDecisionPoints(rec.points, rec.action);
   const tradeabilityExecutionRelevant =
     EXECUTABLE_DISCOVERY_ACTIONS.has(rec.action) && tradeabilityGate?.status === "eligible";
@@ -312,18 +312,18 @@ function DiscoveryRecommendationCard({
           aria-label={verifiedInitialTranche ? "当前已验证首批金额" : "历史参考金额"}
           className={`mt-2 rounded-xl border px-3 py-2.5 ${
             verifiedInitialTranche
-              ? "border-emerald-200 bg-emerald-50/80"
-              : "border-slate-200 bg-slate-50"
+              ? "border-[var(--success-border)] bg-[var(--success-bg)]/80"
+              : "border-[var(--line)] bg-[var(--surface-muted)]"
           }`}
         >
           <div className="flex flex-wrap items-baseline justify-between gap-2">
             <span className={`text-[11px] font-black tracking-wide ${
-              verifiedInitialTranche ? "text-emerald-800" : "text-slate-600"
+              verifiedInitialTranche ? "text-[var(--success-fg)]" : "text-slate-600"
             }`}>
               {verifiedInitialTranche ? "当前已验证首批" : "历史参考金额"}
             </span>
             <strong className={`font-mono text-lg tabular-nums ${
-              verifiedInitialTranche ? "text-emerald-950" : "text-slate-900"
+              verifiedInitialTranche ? "text-[var(--success-fg)]" : "text-slate-900"
             }`}>
               {formatYuan(rec.suggested_amount_yuan)}
             </strong>
@@ -336,11 +336,11 @@ function DiscoveryRecommendationCard({
         </div>
       ) : null}
       {verifiedInitialTranche && futureTranche ? (
-        <div className="mt-2 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-5 text-amber-900">
+        <div className="mt-2 flex items-start gap-2 rounded-xl border border-[var(--warn-border)] bg-[var(--warn-bg)] px-3 py-2 text-[11px] leading-5 text-[var(--warn-fg)]">
           <ShieldAlert size={14} aria-hidden="true" className="mt-0.5 shrink-0" />
           <p>
             <span className="font-black">后续批次待重新核验 · 金额留空</span>
-            <span className="block text-amber-800">
+            <span className="block text-[var(--warn-fg)]">
               交易条件、可用现金、板块敞口与组合风险需在执行前重新计算。
             </span>
           </p>
@@ -359,7 +359,7 @@ function DiscoveryRecommendationCard({
         </p>
       ) : null}
       {(rec.risks ?? []).length ? (
-        <div className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-900">
+        <div className="mt-3 rounded-xl bg-[var(--warn-bg)] px-3 py-2 text-xs text-[var(--warn-fg)]">
           <div className="break-words [overflow-wrap:anywhere]">⚠ {translateEvidenceText(rec.risks?.[0] ?? "")}</div>
         </div>
       ) : null}
@@ -390,8 +390,8 @@ function DiscoveryRecommendationCard({
               />
             ) : null}
             {rec.decision_path ? (
-              <div className="rounded-xl border border-blue-100 bg-blue-50/70 px-3 py-2.5 text-sm leading-6 text-blue-950">
-                <div className="text-xs font-black text-blue-900">决策路径</div>
+              <div className="rounded-xl border border-[var(--info-border)] bg-[var(--info-bg)]/70 px-3 py-2.5 text-sm leading-6 text-[var(--info-fg)]">
+                <div className="text-xs font-black text-[var(--info-fg)]">决策路径</div>
                 <p className="mt-1 break-words [overflow-wrap:anywhere]">{translateEvidenceText(rec.decision_path)}</p>
               </div>
             ) : null}
@@ -408,7 +408,7 @@ function DiscoveryRecommendationCard({
               </ul>
             ) : null}
             {(rec.risks?.length ?? 0) > 1 ? (
-              <div className="rounded-xl bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900">
+              <div className="rounded-xl bg-[var(--warn-bg)] px-3 py-2 text-xs leading-5 text-[var(--warn-fg)]">
                 <p className="font-black">其他风险</p>
                 {(rec.risks ?? []).slice(1).map((risk, riskIndex) => (
                   <p className="mt-1 break-words [overflow-wrap:anywhere]" key={`${risk}-${riskIndex}`}>· {translateEvidenceText(risk)}</p>
@@ -471,10 +471,10 @@ function DiscoveryAllocationPlanPanel({ report }: { report: FundDiscoveryReport 
           <div className="flex shrink-0 items-center gap-2">
             <span className={`rounded-full border px-2 py-1 text-[11px] font-black ${
               plan.status === "allocated"
-                ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                ? "status-good"
                 : plan.status === "partial"
-                  ? "border-amber-200 bg-amber-50 text-amber-900"
-                  : "border-slate-200 bg-slate-100 text-slate-700"
+                  ? "status-warn"
+                  : "status-neutral"
             }`}>
               {plan.status === "allocated"
                 ? "首批已分配"
@@ -496,12 +496,12 @@ function DiscoveryAllocationPlanPanel({ report }: { report: FundDiscoveryReport 
       </dl>
 
       <div className={`flex items-start gap-2 px-4 py-3 text-xs leading-5 ${
-        riskQualified ? "bg-emerald-50/70 text-emerald-950" : "bg-amber-50 text-amber-950"
+        riskQualified ? "bg-[var(--success-bg)]/70 text-[var(--success-fg)]" : "bg-[var(--warn-bg)] text-[var(--warn-fg)]"
       }`}>
         {riskQualified ? (
-          <ShieldCheck size={16} aria-hidden="true" className="mt-0.5 shrink-0 text-emerald-700" />
+          <ShieldCheck size={16} aria-hidden="true" className="mt-0.5 shrink-0 text-[var(--success-icon)]" />
         ) : (
-          <ShieldAlert size={16} aria-hidden="true" className="mt-0.5 shrink-0 text-amber-700" />
+          <ShieldAlert size={16} aria-hidden="true" className="mt-0.5 shrink-0 text-[var(--warn-icon)]" />
         )}
         <div className="min-w-0">
           <p className="font-black">
@@ -670,11 +670,11 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
         <div className="bg-[linear-gradient(135deg,#071f29_0%,#123847_65%,#176b70_145%)] px-5 py-5 text-white sm:px-6">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="min-w-0 max-w-3xl">
-              <p className="text-[10px] font-black tracking-[0.2em] text-cyan-100/75">DISCOVERY BRIEF · 荐基决策简报</p>
+              <p className="text-[10px] font-black tracking-[0.2em] text-[var(--accent-soft)]/75">DISCOVERY BRIEF · 荐基决策简报</p>
               <h2 className="font-display mt-2 text-xl font-extrabold leading-tight text-white sm:text-2xl">{report.title}</h2>
               <p className="mt-2 line-clamp-3 text-sm leading-6 text-slate-200">{report.summary}</p>
               {strategySummary ? (
-                <p className="mt-3 inline-flex rounded-full border border-cyan-100/20 bg-white/10 px-3 py-1 text-[11px] font-black text-cyan-50">
+                <p className="mt-3 inline-flex rounded-full border border-white/20 bg-white/10 px-3 py-1 text-[11px] font-black text-[var(--accent-soft)]">
                   {strategySummary}
                 </p>
               ) : null}
@@ -698,8 +698,8 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
             <div className="flex items-start gap-3">
               <span className={`mt-0.5 inline-flex size-9 shrink-0 items-center justify-center rounded-full ${
                 groupedRecommendations.actionable.length
-                  ? "bg-emerald-100 text-emerald-800"
-                  : "bg-amber-100 text-amber-900"
+                  ? "bg-[var(--success-bg)] text-[var(--success-icon)]"
+                  : "bg-[var(--warn-bg)] text-[var(--warn-icon)]"
               }`}>
                 {groupedRecommendations.actionable.length ? <ShieldCheck size={19} /> : <ShieldAlert size={19} />}
               </span>
@@ -721,8 +721,8 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
 
           <dl className="grid grid-cols-3 gap-px overflow-hidden rounded-xl bg-slate-200 ring-1 ring-slate-200 lg:min-w-[280px]">
             {[
-              ["可执行", groupedRecommendations.actionable.length, "text-emerald-800"],
-              ["等条件", groupedRecommendations.conditionalWait.length, "text-amber-800"],
+              ["可执行", groupedRecommendations.actionable.length, "text-[var(--success-fg)]"],
+              ["等条件", groupedRecommendations.conditionalWait.length, "text-[var(--warn-fg)]"],
               ["仅观察", groupedRecommendations.watchOnly.length, "text-slate-700"],
             ].map(([label, value, className]) => (
               <div key={String(label)} className="bg-white px-3 py-2.5 text-center">
@@ -799,12 +799,12 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
             )}
 
             {directionGroups.pullback.length ? (
-              <details className="group mt-3 rounded-xl border border-amber-200 bg-amber-50/25">
-                <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 px-3 text-xs font-black text-amber-900 [&::-webkit-details-marker]:hidden">
+              <details className="group mt-3 rounded-xl border border-[var(--warn-border)] bg-[var(--warn-bg)]/40">
+                <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 px-3 text-xs font-black text-[var(--warn-fg)] [&::-webkit-details-marker]:hidden">
                   等待合适位置 · {directionGroups.pullback.length} 个方向
                   <ChevronDown size={15} aria-hidden="true" className="transition group-open:rotate-180" />
                 </summary>
-                <div className="grid gap-2 border-t border-amber-200 p-3 sm:grid-cols-2">
+                <div className="grid gap-2 border-t border-[var(--warn-border)] p-3 sm:grid-cols-2">
                   {directionGroups.pullback.map((item, index) => (
                     <SectorOpportunityCard key={`${item.sector_label}-pullback-${index}`} item={item} />
                   ))}
@@ -911,12 +911,12 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
         </section>
 
         {report.caveats?.length ? (
-          <details className="group rounded-2xl border border-amber-200/80 bg-amber-50/70 shadow-sm">
-            <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-2 px-4 text-xs font-black text-amber-950 [&::-webkit-details-marker]:hidden">
+          <details className="group rounded-2xl border border-[var(--warn-border)] bg-[var(--warn-bg)]/70">
+            <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-2 px-4 text-xs font-black text-[var(--warn-fg)] [&::-webkit-details-marker]:hidden">
               使用边界与免责声明（{report.caveats.length} 条）
               <ChevronDown size={15} aria-hidden="true" className="transition group-open:rotate-180" />
             </summary>
-            <div className="space-y-1 border-t border-amber-200 px-4 py-3 text-xs leading-5 text-amber-900">
+            <div className="space-y-1 border-t border-[var(--warn-border)] px-4 py-3 text-xs leading-5 text-[var(--warn-fg)]">
               {report.caveats.map((line, lineIndex) => (
                 <p className="break-words [overflow-wrap:anywhere]" key={`${line}-${lineIndex}`}>{translateEvidenceText(line)}</p>
               ))}

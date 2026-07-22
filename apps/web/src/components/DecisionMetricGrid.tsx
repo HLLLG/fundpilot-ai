@@ -37,8 +37,8 @@ const METRIC_CARDS: Array<{
     badge: "用户假设",
     description: "按冻结的买卖合计费用假设扣减，不是实际账单。",
     icon: ReceiptText,
-    accent: "bg-amber-500",
-    iconClass: "bg-amber-50 text-amber-700",
+    accent: "bg-[var(--warn-icon)]",
+    iconClass: "bg-[var(--warn-bg)] text-[var(--warn-icon)]",
   },
   {
     key: "gross_excess",
@@ -47,7 +47,7 @@ const METRIC_CARDS: Array<{
     description: "仅完整、已冻结的基金合同基准进入统计。",
     icon: Scale,
     accent: "bg-blue-500",
-    iconClass: "bg-blue-50 text-blue-700",
+    iconClass: "bg-[var(--info-bg)] text-[var(--info-fg)]",
   },
   {
     key: "net_excess",
@@ -55,8 +55,8 @@ const METRIC_CARDS: Array<{
     badge: "正式 + 假设",
     description: "用户费用假设扣减后，再与正式合同基准比较。",
     icon: BadgeCheck,
-    accent: "bg-emerald-500",
-    iconClass: "bg-emerald-50 text-emerald-700",
+    accent: "bg-[var(--success-icon)]",
+    iconClass: "bg-[var(--success-bg)] text-[var(--success-icon)]",
   },
 ];
 
@@ -136,13 +136,13 @@ export function FeeBenchmarkMethodNote({ feePercent }: { feePercent?: number | n
     ? "默认 1.5%（若未修改）"
     : `${feePercent}%`;
   return (
-    <div className="rounded-2xl border border-amber-200/80 bg-[linear-gradient(135deg,#fffbeb_0%,#ffffff_58%,#eff6ff_100%)] px-4 py-3 text-[11px] leading-5 text-slate-600">
+    <div className="rounded-2xl border border-[var(--warn-border)] bg-[linear-gradient(135deg,#fffbeb_0%,#ffffff_58%,#eff6ff_100%)] px-4 py-3 text-[11px] leading-5 text-slate-600">
       <div className="flex items-start gap-2">
-        <ReceiptText size={15} className="mt-0.5 shrink-0 text-amber-700" aria-hidden="true" />
+        <ReceiptText size={15} className="mt-0.5 shrink-0 text-[var(--warn-icon)]" aria-hidden="true" />
         <p>
           <strong className="text-slate-900">费用口径：</strong>{feeText} 是你设置的买卖合计费用假设，
-          <strong className="text-amber-800">不是平台实际扣费</strong>；管理费、托管费等已反映在基金净值中，不会重复扣除。
-          只有决策时冻结且组成完整的<strong className="text-blue-800">基金合同基准</strong>进入正式超额，跟踪指数和类别代理只作参考。
+          <strong className="text-[var(--warn-fg)]">不是平台实际扣费</strong>；管理费、托管费等已反映在基金净值中，不会重复扣除。
+          只有决策时冻结且组成完整的<strong className="text-[var(--info-fg)]">基金合同基准</strong>进入正式超额，跟踪指数和类别代理只作参考。
         </p>
       </div>
     </div>

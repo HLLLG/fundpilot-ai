@@ -136,14 +136,14 @@ export function DashboardNav({
               {tab.label}
               {tab.id === "report" && reportTabUnread ? (
                 <span
-                  className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-red-500"
+                  className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-[var(--danger-icon)]"
                   aria-label="有新日报"
                   data-testid="report-tab-badge"
                 />
               ) : null}
               {tab.id === "discovery" && discoveryTabUnread ? (
                 <span
-                  className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-red-500"
+                  className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-[var(--danger-icon)]"
                   aria-label="有新推荐报告"
                   data-testid="discovery-tab-badge"
                 />
@@ -185,7 +185,7 @@ export function DashboardNav({
           >
             {moreMenuUnread ? (
               <span
-                className="absolute right-5 top-1 h-2 w-2 rounded-full bg-red-500"
+                className="absolute right-5 top-1 h-2 w-2 rounded-full bg-[var(--danger-icon)]"
                 data-testid="more-tab-badge-mobile"
                 aria-hidden
               />

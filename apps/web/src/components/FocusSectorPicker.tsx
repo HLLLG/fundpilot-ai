@@ -108,13 +108,13 @@ export function FocusSectorPicker({
 
   if (error && allLabels.length === 0) {
     return (
-      <div className="rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-xs text-red-700">
+      <div className="rounded-xl border border-[var(--danger-border)] bg-[var(--danger-bg)] px-3 py-2 text-xs text-[var(--danger-fg)]">
         <p>{error}</p>
         {onRetry ? (
           <button
             type="button"
             onClick={onRetry}
-            className="mt-2 inline-flex min-h-11 items-center rounded-lg px-2 font-semibold text-red-800 underline"
+            className="mt-2 inline-flex min-h-11 items-center rounded-lg px-2 font-semibold text-[var(--danger-fg)] underline"
           >
             重试
           </button>
@@ -133,7 +133,7 @@ export function FocusSectorPicker({
               type="button"
               aria-label={`取消关注 ${label}`}
               onClick={() => removeLabel(label)}
-              className="inline-flex min-h-11 items-center gap-1 rounded-full border border-[var(--brand)] bg-[var(--brand-soft)] px-3 text-xs font-medium text-[var(--brand-strong)] hover:bg-blue-100"
+              className="inline-flex min-h-11 items-center gap-1 rounded-full border border-[var(--brand)] bg-[var(--brand-soft)] px-3 text-xs font-medium text-[var(--brand-strong)] hover:bg-[var(--info-bg)]"
             >
               {label}
               <X className="h-3 w-3" aria-hidden="true" />

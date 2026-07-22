@@ -34,14 +34,14 @@ export function DecisionEvidenceGrid({
             key={title}
             className={
               title === "校验备注"
-                ? "min-w-0 rounded-xl border border-amber-100 bg-amber-50/70 px-3 py-2.5"
+                ? "min-w-0 rounded-xl border border-[var(--warn-border)] bg-[var(--warn-bg)]/80 px-3 py-2.5"
                 : "min-w-0 rounded-xl border border-slate-100 bg-slate-50/80 px-3 py-2.5"
             }
           >
-            <div className={title === "校验备注" ? "text-xs font-black text-amber-900" : "text-xs font-black text-slate-800"}>
+            <div className={title === "校验备注" ? "text-xs font-black text-[var(--warn-fg)]" : "text-xs font-black text-slate-800"}>
               {title}
             </div>
-            <ul className={title === "校验备注" ? "mt-1.5 space-y-1 text-xs leading-5 text-amber-900" : "mt-1.5 space-y-1 text-xs leading-5 text-slate-600"}>
+            <ul className={title === "校验备注" ? "mt-1.5 space-y-1 text-xs leading-5 text-[var(--warn-fg)]" : "mt-1.5 space-y-1 text-xs leading-5 text-slate-600"}>
               {items.slice(0, 3).map((item) => (
                 <li className="break-words [overflow-wrap:anywhere]" key={item}>· {translateEvidenceText(item)}</li>
               ))}

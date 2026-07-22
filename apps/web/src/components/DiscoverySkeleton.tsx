@@ -59,7 +59,7 @@ export function DiscoverySkeleton({ streaming, onCancel }: DiscoverySkeletonProp
       </div>
 
       <div className="space-y-4 p-4 sm:p-5">
-        <div className="flex items-start gap-2 rounded-xl border border-emerald-100 bg-emerald-50/70 px-3 py-2.5 text-xs leading-5 text-emerald-900">
+        <div className="flex items-start gap-2 rounded-xl border border-[var(--success-border)] bg-[var(--success-bg)]/80 px-3 py-2.5 text-xs leading-5 text-[var(--success-fg)]">
           <Bell size={14} className="mt-0.5 shrink-0" />
           <span>可切换至其他页面继续操作；完成后将发送浏览器通知，发现 Tab 显示红点提醒。</span>
         </div>
@@ -80,13 +80,13 @@ export function DiscoverySkeleton({ streaming, onCancel }: DiscoverySkeletonProp
                 return (
                   <div
                     key={code}
-                    className="rounded-xl border border-emerald-100 bg-emerald-50/50 px-4 py-3.5"
+                    className="rounded-xl border border-[var(--success-border)] bg-[var(--success-bg)]/80 px-4 py-3.5"
                     data-testid={`discovery-partial-${code}`}
                   >
                     <div className="text-sm font-black text-slate-950">
                       {code} · {partial.fund_name ?? fundNames[index] ?? code}
                     </div>
-                    <div className="mt-1 text-xs font-bold text-emerald-800">{partial.action}</div>
+                    <div className="mt-1 text-xs font-bold text-[var(--success-fg)]">{partial.action}</div>
                     {partial.points?.length ? (
                       <ul className="mt-2 space-y-1 text-sm text-slate-700">
                         {partial.points.map((point, pointIndex) => (
@@ -111,7 +111,7 @@ export function DiscoverySkeleton({ streaming, onCancel }: DiscoverySkeletonProp
         ) : null}
 
         {caveats?.length ? (
-          <div className="rounded-xl border border-amber-100 bg-amber-50/80 px-4 py-3 text-sm text-amber-900">
+          <div className="rounded-xl border border-[var(--warn-border)] bg-[var(--warn-bg)]/80 px-4 py-3 text-sm text-[var(--warn-fg)]">
             {caveats.map((line, index) => (
               <p key={index}>{line}</p>
             ))}

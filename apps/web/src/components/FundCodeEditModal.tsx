@@ -87,7 +87,7 @@ function FundCodeSearchPanel({ initialQuery, onSelect, onClose }: FundCodeSearch
       </div>
       {loading ? <div className="px-3 py-3 text-xs text-slate-500">搜索中...</div> : null}
       {error ? (
-        <div role="alert" className="px-3 py-3 text-xs text-rose-700">
+        <div role="alert" className="px-3 py-3 text-xs text-[var(--danger-fg)]">
           {error}
         </div>
       ) : null}
@@ -100,9 +100,9 @@ function FundCodeSearchPanel({ initialQuery, onSelect, onClose }: FundCodeSearch
           type="button"
           onClick={() => onSelect(item)}
           aria-label={`选择 ${item.fund_name}（${item.fund_code}）`}
-          className="flex min-h-11 w-full flex-col items-start justify-center gap-0.5 border-b border-slate-50 px-3 py-2.5 text-left transition hover:bg-blue-50"
+          className="flex min-h-11 w-full flex-col items-start justify-center gap-0.5 border-b border-slate-50 px-3 py-2.5 text-left transition hover:bg-[var(--info-bg)]"
         >
-          <span className="text-xs font-bold tabular-nums text-blue-700">{item.fund_code}</span>
+          <span className="text-xs font-bold tabular-nums text-[var(--info-fg)]">{item.fund_code}</span>
           <span className="text-xs text-slate-700">{item.fund_name}</span>
         </button>
       ))}
@@ -230,7 +230,7 @@ export function FundCodeEditModal({
                 onClick={() => setSearchOpen((current) => !current)}
                 aria-expanded={searchOpen}
                 aria-controls="fund-code-search-panel"
-                className="inline-flex min-h-11 items-center gap-1 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:border-blue-300 hover:text-blue-700"
+                className="inline-flex min-h-11 items-center gap-1 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:border-blue-300 hover:text-[var(--info-fg)]"
               >
                 <Search size={14} />
                 搜索选码
@@ -263,7 +263,7 @@ export function FundCodeEditModal({
         </div>
 
         {error ? (
-          <div className="mt-3 rounded-xl bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700" role="alert">
+          <div className="mt-3 rounded-xl bg-[var(--danger-bg)] px-3 py-2 text-xs font-semibold text-[var(--danger-fg)]" role="alert">
             {error}
           </div>
         ) : null}

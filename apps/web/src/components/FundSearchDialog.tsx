@@ -234,7 +234,7 @@ export function FundSearchDialog({ open, onClose, onSelect }: FundSearchDialogPr
               <button
                 type="button"
                 onClick={() => setQuery("")}
-                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-200"
+                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
                 aria-label="清空搜索内容"
               >
                 <X size={16} />
@@ -245,7 +245,7 @@ export function FundSearchDialog({ open, onClose, onSelect }: FundSearchDialogPr
 
         <div className="min-h-0 flex-1 overflow-y-auto border-t border-slate-100" aria-live="polite">
           {error && items.length === 0 ? (
-            <div className="m-4 rounded-xl bg-rose-50 px-4 py-6 text-center text-sm text-rose-700">{error}</div>
+            <div className="m-4 rounded-xl bg-[var(--danger-bg)] px-4 py-6 text-center text-sm text-[var(--danger-fg)]">{error}</div>
           ) : !keyword ? (
             history.length ? (
               <section className="px-4 pb-4 pt-3 sm:px-6" aria-labelledby="fund-search-history-title">
@@ -272,10 +272,10 @@ export function FundSearchDialog({ open, onClose, onSelect }: FundSearchDialogPr
                       <button
                         type="button"
                         onClick={() => selectFund(item)}
-                        className="group flex min-h-14 w-full items-center gap-3 py-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-100"
+                        className="group flex min-h-14 w-full items-center gap-3 py-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--brand)]"
                         aria-label={`${item.fund_name} ${item.fund_code}`}
                       >
-                        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-xs font-bold text-[var(--brand)]">基</span>
+                        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--info-bg)] text-xs font-bold text-[var(--brand)]">基</span>
                         <span className="min-w-0 flex-1">
                           <strong className="block truncate text-sm font-semibold text-slate-900">{item.fund_name}</strong>
                           <span className="mt-0.5 block text-xs tabular-nums text-slate-400">{item.fund_code}</span>
@@ -310,10 +310,10 @@ export function FundSearchDialog({ open, onClose, onSelect }: FundSearchDialogPr
                     <button
                       type="button"
                       onClick={() => selectFund(item)}
-                      className="group flex min-h-[66px] w-full items-center gap-3 py-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-100"
+                      className="group flex min-h-[66px] w-full items-center gap-3 py-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--brand)]"
                       aria-label={`${item.fund_name} ${item.fund_code}`}
                     >
-                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-xs font-bold text-[var(--brand)] group-hover:bg-blue-100">基</span>
+                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--info-bg)] text-xs font-bold text-[var(--brand)] group-hover:bg-[var(--info-bg)]">基</span>
                       <span className="min-w-0 flex-1">
                         <strong className="block truncate text-sm font-semibold text-slate-900">
                           <HighlightedName name={item.fund_name} keyword={keyword} />
@@ -334,14 +334,14 @@ export function FundSearchDialog({ open, onClose, onSelect }: FundSearchDialogPr
                     type="button"
                     onClick={loadMore}
                     disabled={loadingMore}
-                    className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl text-sm font-semibold text-[var(--brand)] transition hover:bg-blue-50 disabled:opacity-60"
+                    className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl text-sm font-semibold text-[var(--brand)] transition hover:bg-[var(--info-bg)] disabled:opacity-60"
                   >
                     {loadingMore ? <Loader2 size={16} className="animate-spin" /> : null}
                     {expanded ? `继续加载（剩余 ${remaining} 只）` : `更多匹配（${remaining} 只）`}
                   </button>
                 </div>
               ) : null}
-              {error ? <p className="px-4 pb-3 text-center text-xs text-rose-600">{error}</p> : null}
+              {error ? <p className="px-4 pb-3 text-center text-xs text-[var(--danger-icon)]">{error}</p> : null}
             </section>
           )}
         </div>

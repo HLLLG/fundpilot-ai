@@ -20,7 +20,7 @@ function Metric({ label, value, warning = false }: { label: string; value: strin
     <span
       className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] leading-none ${
         warning
-          ? "border-amber-200 bg-amber-50 text-amber-800"
+          ? "border-[var(--warn-border)] bg-[var(--warn-bg)] text-[var(--warn-fg)]"
           : "border-slate-200 bg-white text-slate-600"
       }`}
     >

@@ -96,7 +96,7 @@ export function JobStatusFloat({ jobId, onComplete, onClose, onRetry }: JobStatu
       {state === "completed" && (
         <div>
           <div className="flex items-start gap-3">
-            <CheckCircle size={20} className="mt-0.5 shrink-0 text-emerald-700" />
+            <CheckCircle size={20} className="mt-0.5 shrink-0 text-[var(--success-icon)]" />
             <div className="text-sm font-bold text-slate-900">报告已生成</div>
           </div>
           <div className="mt-3 flex gap-2">
@@ -123,7 +123,7 @@ export function JobStatusFloat({ jobId, onComplete, onClose, onRetry }: JobStatu
       {state === "failed" && (
         <div>
           <div className="flex items-start gap-3">
-            <XCircle size={20} className="mt-0.5 shrink-0 text-red-700" />
+            <XCircle size={20} className="mt-0.5 shrink-0 text-[var(--danger-fg)]" />
             <div>
               <div className="text-sm font-bold text-slate-900">分析失败</div>
               {error && (

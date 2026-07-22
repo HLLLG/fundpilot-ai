@@ -66,17 +66,17 @@ function OutcomeItems({ outcomes, horizon }: { outcomes: ReportOutcomes; horizon
             {result ? (
               <div className="mt-2 flex flex-wrap gap-1.5 text-[10px] font-bold tabular-nums">
                 {result.positive_net_return_percent !== null && result.positive_net_return_percent !== undefined ? (
-                  <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-amber-800">
+                  <span className="rounded-full border border-[var(--warn-border)] bg-[var(--warn-bg)] px-2 py-1 text-[var(--warn-fg)]">
                     假设费后 {signedPercent(result.positive_net_return_percent)}
                   </span>
                 ) : null}
                 {result.gross_excess_return_percent !== null && result.gross_excess_return_percent !== undefined ? (
-                  <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-1 text-blue-800">
+                  <span className="rounded-full border border-[var(--info-border)] bg-[var(--info-bg)] px-2 py-1 text-[var(--info-fg)]">
                     合同基准超额 {signedPercent(result.gross_excess_return_percent)}
                   </span>
                 ) : null}
                 {result.net_excess_return_percent !== null && result.net_excess_return_percent !== undefined ? (
-                  <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-emerald-800">
+                  <span className="rounded-full border border-[var(--success-border)] bg-[var(--success-bg)] px-2 py-1 text-[var(--success-fg)]">
                     费后合同超额 {signedPercent(result.net_excess_return_percent)}
                   </span>
                 ) : null}
@@ -86,17 +86,17 @@ function OutcomeItems({ outcomes, horizon }: { outcomes: ReportOutcomes; horizon
                   </span>
                 ) : null}
                 {result.path_metrics?.available && result.path_metrics.max_adverse_excursion_percent != null ? (
-                  <span className="rounded-full border border-rose-200 bg-rose-50 px-2 py-1 text-rose-800">
+                  <span className="rounded-full border border-[var(--danger-border)] bg-[var(--danger-bg)] px-2 py-1 text-[var(--danger-fg)]">
                     路径最不利 {signedPercent(result.path_metrics.max_adverse_excursion_percent)}
                   </span>
                 ) : null}
                 {result.path_metrics?.available && result.path_metrics.max_favorable_excursion_percent != null ? (
-                  <span className="rounded-full border border-cyan-200 bg-cyan-50 px-2 py-1 text-cyan-800">
+                  <span className="rounded-full border border-[var(--info-border)] bg-[var(--info-bg)] px-2 py-1 text-[var(--info-fg)]">
                     路径最有利 {signedPercent(result.path_metrics.max_favorable_excursion_percent)}
                   </span>
                 ) : null}
                 {result.no_action_counterfactual?.available && result.no_action_counterfactual.incremental_value_add_percent != null ? (
-                  <span className="rounded-full border border-violet-200 bg-violet-50 px-2 py-1 text-violet-800">
+                  <span className="rounded-full border border-[var(--info-border)] bg-[var(--info-bg)] px-2 py-1 text-[var(--info-fg)]">
                     相对不行动 {signedPercent(result.no_action_counterfactual.incremental_value_add_percent)}
                   </span>
                 ) : null}
@@ -215,7 +215,7 @@ export function ReportOutcomesPanel({ reportId, embedded = false }: ReportOutcom
   return (
     <div className="mb-5 rounded-[24px] border border-slate-200 bg-slate-50/80 p-5">
       <div className="mb-3 flex items-center gap-2 text-sm font-black text-slate-950">
-        <History size={18} className="text-emerald-700" />
+        <History size={18} className="text-[var(--success-icon)]" />
         建议 T+N 复盘
         <TimerReset size={14} className="text-slate-400" />
       </div>

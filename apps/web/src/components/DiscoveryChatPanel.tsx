@@ -210,7 +210,7 @@ export function DiscoveryChatPanel({
       </div>
 
       {error ? (
-        <p role="alert" className="mb-2 text-xs text-red-600">
+        <p role="alert" className="mb-2 text-xs text-[var(--danger-fg)]">
           {error}
         </p>
       ) : null}
