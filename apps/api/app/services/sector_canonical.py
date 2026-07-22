@@ -16,6 +16,10 @@ from app.services.sector_labels import normalize_sector_label
 from app.services.sector_registry import (
     list_discovery_sector_labels as _registry_discovery_labels,
 )
+from app.services.sector_quote_identity import (
+    provider_identity_matches,
+    requires_provider_identity_check,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -382,6 +386,27 @@ def fetch_canonical_sector_quote(
     if canon is None:
         return None
 
+    verified_spot_change: float | None = None
+    if requires_provider_identity_check(canon.label):
+        provider_name, verified_spot_change = fetch_eastmoney_quote_by_secid(
+            canon.eastmoney_secid,
+            timeout=5.0,
+            max_retries=1,
+        )
+        if not provider_identity_matches(
+            canon.label,
+            expected_source_code=canon.source_code,
+            actual_security_name=provider_name,
+            actual_security_code=canon.source_code,
+        ):
+            logger.error(
+                "canonical sector identity mismatch label=%s secid=%s provider_name=%s",
+                canon.label,
+                canon.eastmoney_secid,
+                provider_name,
+            )
+            return None
+
     trade_date = build_trading_session().get("effective_trade_date")
     kline_change = fetch_eastmoney_kline_close_percent(
         canon.eastmoney_secid,
@@ -416,7 +441,9 @@ def fetch_canonical_sector_quote(
             message=f"东财K线缓存 {canon.source_name}",
         )
 
-    _name, change = fetch_eastmoney_quote_by_secid(canon.eastmoney_secid)
+    change = verified_spot_change
+    if change is None:
+        _name, change = fetch_eastmoney_quote_by_secid(canon.eastmoney_secid)
     if change is not None:
         boards.setdefault(canon.source_type, {})[canon.source_name] = change
         return CanonicalQuoteResult(
@@ -458,6 +485,25 @@ def prefetch_canonical_kline_quotes(
         canon = get_quote_canonical_sector(label)
         if canon is None:
             return 0
+        if requires_provider_identity_check(canon.label):
+            provider_name, _spot_change = fetch_eastmoney_quote_by_secid(
+                canon.eastmoney_secid,
+                timeout=min(per_call_timeout, 5.0),
+                max_retries=1,
+            )
+            if not provider_identity_matches(
+                canon.label,
+                expected_source_code=canon.source_code,
+                actual_security_name=provider_name,
+                actual_security_code=canon.source_code,
+            ):
+                logger.error(
+                    "canonical prefetch identity mismatch label=%s secid=%s provider_name=%s",
+                    canon.label,
+                    canon.eastmoney_secid,
+                    provider_name,
+                )
+                return 0
         change = fetch_eastmoney_kline_close_percent(
             canon.eastmoney_secid,
             source_code=canon.source_code,

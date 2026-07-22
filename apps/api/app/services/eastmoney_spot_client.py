@@ -229,7 +229,7 @@ def fetch_eastmoney_quote_by_secid(
 
     params = {
         "secid": cleaned,
-        "fields": "f14,f3",
+        "fields": "f12,f13,f14,f3",
         "ut": _COMMON_PARAMS["ut"],
         "fltt": "2",
         "invt": "2",
@@ -250,6 +250,40 @@ def fetch_eastmoney_quote_by_secid(
                     response = client.get(url, params=params)
                     response.raise_for_status()
                     data = response.json().get("data") or {}
+                    if not isinstance(data, dict) or not data:
+                        continue
+                    returned_code_raw = data.get("f12")
+                    returned_market_raw = data.get("f13")
+                    returned_code = (
+                        "" if returned_code_raw is None else str(returned_code_raw).strip()
+                    )
+                    # Shenzhen's Eastmoney market id is numeric zero.  Do not
+                    # use ``value or ""`` here or a correct ``0.xxxxxx``
+                    # identity would be erased and rejected.
+                    returned_market = (
+                        ""
+                        if returned_market_raw is None
+                        else str(returned_market_raw).strip()
+                    )
+                    requested_market, _, requested_code = cleaned.partition(".")
+                    if not returned_code or returned_market == "":
+                        logger.debug(
+                            "eastmoney secid identity fields unavailable requested=%s",
+                            cleaned,
+                        )
+                        continue
+                    if (
+                        not requested_code
+                        or returned_code != requested_code
+                        or returned_market != requested_market
+                    ):
+                        logger.error(
+                            "eastmoney secid identity mismatch requested=%s returned=%s.%s",
+                            cleaned,
+                            returned_market,
+                            returned_code,
+                        )
+                        return None, None
                     name = data.get("f14")
                     change = data.get("f3")
                     if change in (None, "-"):
@@ -265,6 +299,21 @@ def fetch_eastmoney_quote_by_secid(
                 time.sleep(0.35 * (attempt + 1))
         if last_error:
             logger.info("eastmoney secid quote %s failed: %s", cleaned, last_error)
+    # Some Eastmoney stock/get hosts return an empty data object while the
+    # exact-market ulist endpoint remains available.  The batch parser joins on
+    # f13+f12, so this fallback preserves the same fail-closed identity rule.
+    batch_row = fetch_eastmoney_quotes_by_secid(
+        [cleaned],
+        timeout=timeout,
+        max_retries=max_retries,
+    ).get(cleaned)
+    if batch_row:
+        name = batch_row.get("security_name")
+        change = batch_row.get("change_percent")
+        return (
+            str(name).strip() if name else None,
+            round(float(change), 4) if change is not None else None,
+        )
     return None, None
 
 
@@ -822,6 +871,7 @@ _CLIST_THEME_METRIC_KEYS = (
     "advancing_ratio_percent",
     "flow_data_date",
 )
+_CLIST_THEME_METADATA_KEYS = ("security_code", "security_name")
 _ClistThemeMetrics = dict[str, float | str | None]
 _ClistThemeMap = dict[str, _ClistThemeMetrics]
 
@@ -874,6 +924,8 @@ def _parse_clist_theme_rows(
             else None
         )
         parsed: dict[str, float | str | None] = {
+            "security_code": key,
+            "security_name": str(row.get("f14") or "").strip() or None,
             "change_1d": _as_board_float(row.get("f3")),
             "change_5d": _as_board_float(row.get("f109")),
             "main_force_net_yi": _board_yuan_to_yi(_as_board_float(row.get("f62"))),
@@ -897,6 +949,9 @@ def _parse_clist_theme_rows(
         for metric in _CLIST_THEME_METRIC_KEYS:
             if existing.get(metric) is None and parsed.get(metric) is not None:
                 existing[metric] = parsed[metric]
+        for metadata_key in _CLIST_THEME_METADATA_KEYS:
+            if existing.get(metadata_key) is None and parsed.get(metadata_key) is not None:
+                existing[metadata_key] = parsed[metadata_key]
     return by_code
 
 
@@ -908,9 +963,9 @@ def _merge_clist_theme_chunks(
         if code not in merged:
             merged[code] = values
             continue
-        for metric in _CLIST_THEME_METRIC_KEYS:
-            if merged[code].get(metric) is None and values.get(metric) is not None:
-                merged[code][metric] = values[metric]
+        for key in (*_CLIST_THEME_METRIC_KEYS, *_CLIST_THEME_METADATA_KEYS):
+            if merged[code].get(key) is None and values.get(key) is not None:
+                merged[code][key] = values[key]
 
 
 def _fetch_clist_theme_pool(

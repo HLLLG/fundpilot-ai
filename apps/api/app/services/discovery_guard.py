@@ -616,6 +616,7 @@ def apply_discovery_guards(
             opportunity_first
             and entry_state == ENTRY_READY_TO_START
             and quality_status == "eligible"
+            and not _candidate_fund_evidence_reasons(pool_item)
             and not execution_blocked
             and not fund_price_extended
             and copy.action in {"建议关注", "等待回调"}
@@ -1262,16 +1263,40 @@ def _weak_evidence_reasons(pool_item: dict, opportunity: dict | None) -> list[st
         five_day_flow = _as_float(opportunity.get("cumulative_5d_net_yi"))
         if five_day_flow is not None and five_day_flow < 0:
             reasons.append(f"近5日主力净流出 {abs(five_day_flow):.2f} 亿元")
-    quality = _as_float(pool_item.get("fund_quality_score"))
-    if quality is not None and quality < 55:
-        reasons.append(f"基金质量分 {quality:.2f}，低于 55")
+    reasons.extend(_candidate_fund_evidence_reasons(pool_item))
+    return _append_unique([], reasons, limit=6)
+
+
+def _candidate_fund_evidence_reasons(pool_item: Mapping[str, object]) -> list[str]:
+    reasons: list[str] = []
+    vehicle_quality = _as_float(pool_item.get("vehicle_quality_score"))
+    vehicle_threshold = _as_float(pool_item.get("vehicle_quality_threshold"))
+    vehicle_method = str(pool_item.get("vehicle_quality_method") or "").strip()
+    vehicle_status = str(pool_item.get("vehicle_quality_status") or "").strip()
+    if vehicle_quality is not None:
+        threshold = vehicle_threshold if vehicle_threshold is not None else 55.0
+        label = "基金载体质量分" if vehicle_method == "passive_index_vehicle" else "基金质量分"
+        if vehicle_quality < threshold:
+            reasons.append(f"{label} {vehicle_quality:.2f}，低于 {threshold:g}")
+        if (
+            vehicle_method == "passive_index_vehicle"
+            and vehicle_status != "eligible"
+            and str(pool_item.get("sector_match_kind") or "")
+            not in {"tracking_exact", "primary"}
+        ):
+            reasons.append("被动基金精确跟踪标的未核验")
+    else:
+        quality = _as_float(pool_item.get("fund_quality_score"))
+        if quality is not None and quality < 55:
+            reasons.append(f"基金质量分 {quality:.2f}，低于 55")
+
     fit = _as_float(pool_item.get("sector_fit_score"))
     if fit is not None and fit < 18:
         reasons.append(f"板块匹配分 {fit:.2f}，低于 18")
     penalties = " ".join(str(item) for item in pool_item.get("quality_penalties") or [])
     if "匹配置信偏低" in penalties or "板块匹配" in penalties:
         reasons.append("板块匹配置信偏低")
-    return _append_unique([], reasons, limit=6)
+    return _append_unique([], reasons, limit=4)
 
 
 def _entry_state_v2(opportunity: Mapping[str, object] | None) -> str | None:

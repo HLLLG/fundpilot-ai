@@ -12,7 +12,11 @@ import {
   TrendingDown,
   TrendingUp,
 } from "lucide-react";
-import type { DiscoveryRecommendation, FundDiscoveryReport } from "@/lib/api";
+import type {
+  DiscoveryCandidatePoolItem,
+  DiscoveryRecommendation,
+  FundDiscoveryReport,
+} from "@/lib/api";
 import { actionBadgeClass } from "@/lib/actionStyles";
 import { translateEvidenceText } from "@/lib/decisionText";
 import { DecisionEvidenceGrid } from "@/components/DecisionEvidenceGrid";
@@ -141,8 +145,18 @@ function recommendationStatus(
     return "watch_only";
   }
 
-  const qualityGate = report.candidate_pool?.find((item) => item.fund_code === code)?.quality_gate;
+  const candidate = report.candidate_pool?.find((item) => item.fund_code === code);
+  const qualityGate = candidate?.quality_gate;
   if (qualityGate && (!qualityGate.eligible || qualityGate.status !== "eligible")) {
+    return "watch_only";
+  }
+  if (candidate?.vehicle_quality_status && candidate.vehicle_quality_status !== "eligible") {
+    return "watch_only";
+  }
+  if (
+    typeof candidate?.sector_fit_score === "number"
+    && candidate.sector_fit_score < 18
+  ) {
     return "watch_only";
   }
 
@@ -191,10 +205,12 @@ function recommendationStatus(
 
 function DiscoveryRecommendationCard({
   rec,
+  candidate,
   onOpenFund,
   compact = false,
 }: {
   rec: DiscoveryRecommendation;
+  candidate?: DiscoveryCandidatePoolItem;
   onOpenFund?: (recommendation: DiscoveryRecommendation) => void;
   compact?: boolean;
 }) {
@@ -212,12 +228,38 @@ function DiscoveryRecommendationCard({
       (rec.cost_assessment && Object.keys(rec.cost_assessment).length),
   );
   const tradeabilitySummary = tradeabilityGate?.status === "eligible"
-    ? { label: "交易条件通过", className: "bg-emerald-50 text-emerald-800 ring-emerald-200" }
+    ? { label: "申赎与额度已核验", className: "bg-emerald-50 text-emerald-800 ring-emerald-200" }
     : tradeabilityGate?.status
-      ? { label: "交易条件需复核", className: "bg-amber-50 text-amber-900 ring-amber-200" }
+      ? { label: "申赎与额度需复核", className: "bg-amber-50 text-amber-900 ring-amber-200" }
       : hasTradeabilityEvidence
-        ? { label: "交易信息待核验", className: "bg-slate-50 text-slate-700 ring-slate-200" }
+        ? { label: "申赎信息待核验", className: "bg-slate-50 text-slate-700 ring-slate-200" }
         : null;
+  const fundEvidenceComplete = Boolean(
+    candidate?.quality_gate?.eligible
+    && candidate.quality_gate.status === "eligible"
+    && candidate.vehicle_quality_status === "eligible"
+    && typeof candidate.sector_fit_score === "number"
+    && candidate.sector_fit_score >= 18,
+  );
+  const fundEvidenceFailed = Boolean(
+    candidate
+    && (
+      candidate.quality_gate?.status === "watch_only"
+      || candidate.quality_gate?.status === "excluded"
+      || (candidate.vehicle_quality_status && candidate.vehicle_quality_status !== "eligible")
+      || (
+        typeof candidate.sector_fit_score === "number"
+        && candidate.sector_fit_score < 18
+      )
+    ),
+  );
+  const fundEvidenceSummary = !candidate
+    ? null
+    : fundEvidenceComplete
+      ? { label: "基金证据通过", className: "bg-blue-50 text-blue-800 ring-blue-200" }
+      : fundEvidenceFailed
+        ? { label: "基金证据待加强", className: "bg-amber-50 text-amber-900 ring-amber-200" }
+        : { label: "基金资料待复核", className: "bg-slate-50 text-slate-700 ring-slate-200" };
   const decisionPoints = visibleDecisionPoints(rec.points, rec.action);
   const tradeabilityExecutionRelevant =
     EXECUTABLE_DISCOVERY_ACTIONS.has(rec.action) && tradeabilityGate?.status === "eligible";
@@ -255,6 +297,11 @@ function DiscoveryRecommendationCard({
           {tradeabilitySummary ? (
             <span className={`rounded-full px-2 py-1 text-[10px] font-black ring-1 ${tradeabilitySummary.className}`}>
               {tradeabilitySummary.label}
+            </span>
+          ) : null}
+          {fundEvidenceSummary ? (
+            <span className={`rounded-full px-2 py-1 text-[10px] font-black ring-1 ${fundEvidenceSummary.className}`}>
+              {fundEvidenceSummary.label}
             </span>
           ) : null}
           <span className={actionBadgeClass(rec.action)}>{rec.action}</span>
@@ -487,6 +534,7 @@ function RecommendationGroup({
   title,
   description,
   recommendations,
+  candidateByCode,
   onOpenFund,
   collapsible = false,
 }: {
@@ -494,6 +542,7 @@ function RecommendationGroup({
   title: string;
   description: string;
   recommendations: DiscoveryRecommendation[];
+  candidateByCode: Map<string, DiscoveryCandidatePoolItem>;
   onOpenFund?: (recommendation: DiscoveryRecommendation) => void;
   collapsible?: boolean;
 }) {
@@ -529,6 +578,7 @@ function RecommendationGroup({
             <DiscoveryRecommendationCard
               key={`${rec.fund_code}-${recommendationIndex}`}
               rec={rec}
+              candidate={candidateByCode.get(rec.fund_code)}
               onOpenFund={onOpenFund}
               compact={collapsible}
             />
@@ -540,6 +590,12 @@ function RecommendationGroup({
 }
 
 export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPanelProps) {
+  const candidateByCode = useMemo(
+    () => new Map(
+      (report.candidate_pool ?? []).map((item) => [item.fund_code, item]),
+    ),
+    [report.candidate_pool],
+  );
   const mainlineSnapshot = report.discovery_facts?.mainline_snapshot;
   const sectorOpportunities = useMemo(() => {
     const regimesByLabel = new Map(
@@ -698,6 +754,7 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
         title="可执行建议"
         description="优先看金额、核心理由和主要风险；交易细节按需展开。"
         recommendations={groupedRecommendations.actionable}
+        candidateByCode={candidateByCode}
         onOpenFund={onOpenFund}
       />
       <RecommendationGroup
@@ -705,6 +762,7 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
         title="等待条件"
         description="条件未满足前不执行，等待回调或下一次数据验证。"
         recommendations={groupedRecommendations.conditionalWait}
+        candidateByCode={candidateByCode}
         onOpenFund={onOpenFund}
       />
 
@@ -805,6 +863,7 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
         title="研究观察"
         description="仅保留研究线索，不构成买入建议；默认收起以减少干扰。"
         recommendations={groupedRecommendations.watchOnly}
+        candidateByCode={candidateByCode}
         onOpenFund={onOpenFund}
         collapsible
       />

@@ -91,7 +91,7 @@ THEME_BOARD_INDEX: dict[str, tuple[str, str, str]] = {
     "证券": ("2.931412", "931412", "index"),
     "煤炭": ("90.BK0437", "BK0437", "industry"),
     "电力": ("2.H30199", "H30199", "index"),
-    "保险": ("2.399809", "399809", "index"),
+    "保险": ("0.399809", "399809", "index"),
     "军工": ("2.930749", "930749", "index"),
     "国企改革": ("2.931088", "931088", "index"),
     "中药": ("2.930641", "930641", "index"),
@@ -110,7 +110,7 @@ THEME_BOARD_INDEX: dict[str, tuple[str, str, str]] = {
     "证券保险": ("90.BK0473", "BK0473", "industry"),
     "算力租赁": ("90.BK1134", "BK1134", "concept"),
     "港股": ("2.H11100", "H11100", "index"),
-    "恒生科技": ("2.CESHKB", "CESHKB", "index"),
+    "恒生科技": ("124.HSTECH", "HSTECH", "index"),
     "港股通": ("2.H50069", "H50069", "index"),
     "港股医药": ("2.931787", "931787", "index"),
     "港股银行": ("2.930792", "930792", "index"),
@@ -120,6 +120,22 @@ THEME_BOARD_INDEX: dict[str, tuple[str, str, str]] = {
 from app.services.amac_benchmark_index_data import merge_amac_into_theme_board_index  # noqa: E402
 
 THEME_BOARD_INDEX = merge_amac_into_theme_board_index(THEME_BOARD_INDEX)
+
+# Provider identities for mappings where a wrong market namespace can still
+# return a valid but unrelated security.  These rows are checked at runtime
+# before any spot, daily or intraday value is accepted.  The policy is kept
+# intentionally small and explicit: a failed identity check must make the quote
+# unavailable instead of silently falling back to a similarly named proxy.
+THEME_BOARD_PROVIDER_IDENTITIES: dict[str, dict[str, tuple[str, ...]]] = {
+    "保险": {
+        "source_codes": ("399809",),
+        "security_names": ("保险主题", "保险主题指数"),
+    },
+    "恒生科技": {
+        "source_codes": ("HSTECH",),
+        "security_names": ("恒生科技", "恒生科技指数"),
+    },
+}
 
 # 同码双名：光伏 / 新能源 共用 931151，榜单展示保留两个名字，热度按 source_code 自然一致。
 THEME_BOARD_SHARED_SOURCE_CODE: dict[str, str] = {

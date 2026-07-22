@@ -10,7 +10,12 @@ from zoneinfo import ZoneInfo
 from app.config import get_settings
 from app.services.akshare_subprocess import run_akshare_json_script
 from app.services.eastmoney_trends_client import fetch_eastmoney_intraday_trends
+from app.services.eastmoney_spot_client import fetch_eastmoney_quote_by_secid
 from app.services.sector_intraday_browser_provider import fetch_intraday_via_browser_command
+from app.services.sector_quote_identity import (
+    provider_identity_matches,
+    requires_provider_identity_check,
+)
 
 logger = logging.getLogger(__name__)
 from app.services.sector_canonical import get_canonical_sector, get_intraday_canonical_sector
@@ -66,7 +71,7 @@ def fetch_sector_intraday(
     }
 
     # v3：概念/行业板块优先东财 trends2（昨收基准）；v2 曾误用 AkShare 概念分钟优先
-    cache_key = f"intraday:v3:{source_type}:{label}:{trade_date}"
+    cache_key = f"intraday:v4:{source_type}:{label}:{trade_date}"
     cache_ttl = _INTRADAY_CLOSED_TTL_SECONDS if closed_session else _INTRADAY_LIVE_TTL_SECONDS
 
     if not force_refresh:
@@ -270,6 +275,8 @@ def _eastmoney_secid_for_index_symbol(symbol: str | None) -> str:
 
 def _fetch_index_intraday(source_name: str, *, trade_date: str | None = None) -> list[IntradayPoint]:
     canon = get_intraday_canonical_sector(source_name) or get_canonical_sector(source_name)
+    if canon is not None and not _canonical_provider_identity_verified(canon):
+        return []
     symbol = (
         (canon.source_code if canon is not None else None)
         or _index_symbol_for_name(source_name)
@@ -371,6 +378,8 @@ def _fetch_board_intraday(
 ) -> list[IntradayPoint]:
     index_canon = get_intraday_canonical_sector(source_name)
     if index_canon is not None and index_canon.source_type == "index":
+        if not _canonical_provider_identity_verified(index_canon):
+            return []
         points = _fetch_intraday_minute_chain(
             index_canon.eastmoney_secid,
             source_code=index_canon.source_code,
@@ -383,6 +392,8 @@ def _fetch_board_intraday(
 
     # 东财 trends2/分钟 K（昨收 preKPrice，养基宝同款）优先于 AkShare 概念/行业分钟
     if canon is not None:
+        if not _canonical_provider_identity_verified(canon):
+            return []
         points = _fetch_intraday_minute_chain(
             canon.eastmoney_secid,
             source_code=canon.source_code,
@@ -414,6 +425,30 @@ def _fetch_board_intraday(
                 exc,
             )
     return []
+
+
+def _canonical_provider_identity_verified(canon) -> bool:
+    if not requires_provider_identity_check(canon.label):
+        return True
+    provider_name, _change = fetch_eastmoney_quote_by_secid(
+        canon.eastmoney_secid,
+        timeout=5.0,
+        max_retries=1,
+    )
+    valid = provider_identity_matches(
+        canon.label,
+        expected_source_code=canon.source_code,
+        actual_security_name=provider_name,
+        actual_security_code=canon.source_code,
+    )
+    if not valid:
+        logger.error(
+            "intraday identity mismatch label=%s secid=%s provider_name=%s",
+            canon.label,
+            canon.eastmoney_secid,
+            provider_name,
+        )
+    return valid
 
 
 def _call_akshare_index_min(symbol: str):

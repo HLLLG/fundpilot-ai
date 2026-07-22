@@ -36,6 +36,8 @@ from app.services.fund_peer_ranking import (
     build_peer_rank,
     resolve_benchmark_comparison,
 )
+from app.services.fund_benchmark_sector import resolve_sector_from_benchmark
+from app.services.fund_vehicle_quality import assess_candidate_vehicle_quality
 from app.services.news_freshness import normalize_news_now
 
 _POOL_CAP = 28
@@ -50,7 +52,8 @@ _SECTOR_MATCH_STRENGTH = {
     "fallback": 0,
     "name": 1,
     "new_issue": 2,
-    "primary": 3,
+    "tracking_exact": 3,
+    "primary": 4,
 }
 _CORE_QUALITY_FIELDS = (
     "return_3m_percent",
@@ -567,6 +570,7 @@ def enrich_candidates(
         row["fund_type"] = _first_present(
             profile.get("fund_category"), row.get("fund_type")
         )
+        row = _with_exact_passive_tracking_match(row)
         tradeability = tradeability_profiles.get(code)
         if isinstance(tradeability, dict):
             row["tradeability"] = tradeability
@@ -576,6 +580,7 @@ def enrich_candidates(
         row = _with_data_quality_gate(row, as_of_date=decision_date)
         row = apply_tradeability_to_quality_gate(row)
         row = _with_quality_score(row, fund_type_preference="any")
+        row = assess_candidate_vehicle_quality(row)
         rescored.append(row)
 
     rescored.sort(
@@ -627,6 +632,7 @@ def finalize_candidate_pool(
                 if discovery_strategy == "opportunity_first"
                 else ()
             ),
+            _num(item.get("vehicle_quality_score")) or -999.0,
             _num(item.get("fund_quality_score")) or -999.0,
             _num(item.get("sector_fit_score")) or -999.0,
         ),
@@ -668,6 +674,7 @@ def finalize_candidate_pool(
                 if discovery_strategy == "opportunity_first"
                 else ()
             ),
+            _num(item.get("vehicle_quality_score")) or -999.0,
             _num(item.get("fund_quality_score")) or -999.0,
         ),
         reverse=True,
@@ -1765,7 +1772,59 @@ def _sector_fit_score(row: dict) -> float:
         return 24.0 + min(16.0, max(0.0, confidence) * 16.0)
     if kind == "new_issue":
         return 18.0
+    if kind == "tracking_exact":
+        return 34.0
     return 16.0
+
+
+def _with_exact_passive_tracking_match(row: dict) -> dict:
+    """Upgrade name recall only when a passive fund tracks this exact index.
+
+    Aggregator benchmark text remains a research-only tracking reference.  It
+    can prove candidate-to-sector identity for a passive fund, but it never
+    becomes a verified contract or formal excess-return benchmark.
+    """
+
+    result = dict(row)
+    name = str(result.get("fund_name") or "").upper()
+    fund_type = str(result.get("fund_type") or "").upper()
+    if "ETF" not in name and "指数" not in name and "指数" not in fund_type:
+        return result
+
+    target = get_canonical_sector(str(result.get("sector_label") or ""))
+    target_code = str(getattr(target, "source_code", None) or "").strip().upper()
+    if not target_code:
+        return result
+
+    references = [
+        str(result.get("tracking_reference_text") or "").strip(),
+        str(result.get("benchmark_text") or "").strip(),
+    ]
+    for reference in dict.fromkeys(value for value in references if value):
+        resolved = resolve_sector_from_benchmark(reference)
+        if resolved is None:
+            continue
+        resolved_sector, _intraday_name, match = resolved
+        if str(match.index_code or "").strip().upper() != target_code:
+            continue
+        result["sector_match_kind"] = "tracking_exact"
+        result["sector_confidence"] = max(
+            _num(result.get("sector_confidence")) or 0.0,
+            0.95,
+        )
+        result["tracking_reference_match"] = {
+            "relation_kind": "tracking_reference",
+            "sector_label": resolved_sector,
+            "index_code": match.index_code,
+            "index_name": match.index_name,
+            "benchmark_text_source_kind": result.get("benchmark_text_source_kind"),
+            "exact": True,
+            "formal_excess_eligible": False,
+        }
+        if str(result.get("selection_reason") or "") == "排行筛选":
+            result["selection_reason"] = "精确跟踪标的匹配"
+        break
+    return result
 
 
 def _resolve_sector_match_kind(row: dict) -> str:

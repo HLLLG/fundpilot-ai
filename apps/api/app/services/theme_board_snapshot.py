@@ -11,6 +11,7 @@ from app.services.akshare_spot_client import fetch_akshare_board_records, fetch_
 from app.services.eastmoney_spot_client import (
     fetch_eastmoney_board_records,
     fetch_eastmoney_clist_theme_metrics_by_code,
+    fetch_eastmoney_quote_by_secid,
 )
 from app.services.eastmoney_trends_client import fetch_eastmoney_kline_close_percent
 from app.services.sector_canonical import (
@@ -23,6 +24,10 @@ from app.services.sector_registry_data import (
     THEME_BOARD_ALIAS,
     THEME_BOARD_FLOW,
     THEME_BOARD_INDEX,
+)
+from app.services.sector_quote_identity import (
+    provider_identity_matches,
+    requires_provider_identity_check,
 )
 from app.services.sector_quote_cache import (
     get_spot_snapshot,
@@ -37,7 +42,7 @@ logger = logging.getLogger(__name__)
 SortMode = Literal["change", "inflow"]
 BoardKind = Literal["industry", "concept", "index"]
 
-_CACHE_VERSION = "v6"
+_CACHE_VERSION = "v7"
 _REFRESH_BUDGET_SECONDS = 30.0
 _KLINE_FALLBACK_BUDGET_SECONDS = 15.0
 _SERIES_TIMEOUT = 8.0
@@ -294,9 +299,26 @@ def _lookup_clist_changes(
     """按 source_code / flow_source_code / secid 在东财 clist 批量结果中查 1d+5d。"""
     change_1d: float | None = None
     change_5d: float | None = None
+    strict_identity = requires_provider_identity_check(entry.get("sector_label"))
+    exact_source_code = str(entry.get("source_code") or "").strip()
     for code in _clist_lookup_codes(entry, prefer_flow=False):
+        if strict_identity and code != exact_source_code:
+            continue
         row = by_code.get(code)
         if not row:
+            continue
+        if strict_identity and not provider_identity_matches(
+            entry.get("sector_label"),
+            expected_source_code=exact_source_code,
+            actual_security_name=str(row.get("security_name") or "") or None,
+            actual_security_code=str(row.get("security_code") or code),
+        ):
+            logger.error(
+                "theme board identity mismatch label=%s code=%s provider_name=%s",
+                entry.get("sector_label"),
+                code,
+                row.get("security_name"),
+            )
             continue
         if change_1d is None and row.get("change_1d") is not None:
             change_1d = row["change_1d"]
@@ -442,7 +464,27 @@ def _enrich_missing_1d_via_kline(
     executor = ThreadPoolExecutor(max_workers=min(_MAX_WORKERS, len(pending)))
 
     def fetch_change(entry: dict[str, Any]) -> float | None:
-        return _as_float(
+        verified_spot_change: float | None = None
+        if requires_provider_identity_check(entry.get("sector_label")):
+            provider_name, verified_spot_change = fetch_eastmoney_quote_by_secid(
+                entry["secid"],
+                timeout=min(_SERIES_TIMEOUT, 5.0),
+                max_retries=1,
+            )
+            if not provider_identity_matches(
+                entry.get("sector_label"),
+                expected_source_code=entry.get("source_code"),
+                actual_security_name=provider_name,
+                actual_security_code=entry.get("source_code"),
+            ):
+                logger.error(
+                    "theme kline identity mismatch label=%s secid=%s provider_name=%s",
+                    entry.get("sector_label"),
+                    entry.get("secid"),
+                    provider_name,
+                )
+                return None
+        kline_change = _as_float(
             fetch_eastmoney_kline_close_percent(
                 entry["secid"],
                 source_code=entry.get("source_code"),
@@ -450,6 +492,7 @@ def _enrich_missing_1d_via_kline(
                 timeout=_SERIES_TIMEOUT,
             )
         )
+        return kline_change if kline_change is not None else _as_float(verified_spot_change)
 
     futures = {executor.submit(fetch_change, entry): (item, entry) for item, entry in pending}
     try:

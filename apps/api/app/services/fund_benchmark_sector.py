@@ -75,6 +75,8 @@ def _build_benchmark_name_to_code() -> tuple[tuple[str, str], ...]:
             ("绿色电力", "931897"),
             ("中证全指电力公用事业指数", "H30199"),
             ("中证全指电力", "H30199"),
+            ("恒生科技指数", "HSTECH"),
+            ("恒生科技", "HSTECH"),
         }
     )
     for name, code in amac_name_to_code_pairs():

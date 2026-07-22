@@ -42,6 +42,7 @@ from app.services.fund_benchmark_research import (
     build_fund_benchmark_research_batch,
     summarize_benchmark_research,
 )
+from app.services.fund_vehicle_quality import assess_candidate_vehicle_quality_batch
 from app.services.discovery_client import (
     DiscoveryClient,
     build_discovery_chat_messages,
@@ -305,6 +306,7 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
                 decision_at=decision_at,
             )
             pool = attach_fund_benchmark_metrics(pool, benchmark_metrics)
+            pool = assess_candidate_vehicle_quality_batch(pool)
             market_news = yield from _await_future_with_progress(
                 news_future,
                 "news",

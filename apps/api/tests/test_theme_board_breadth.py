@@ -6,6 +6,7 @@ def test_clist_theme_metrics_include_advancing_breadth() -> None:
         [
             {
                 "f12": "BK1128",
+                "f14": "CPO概念",
                 "f3": 2.5,
                 "f109": 8.2,
                 "f104": 30,
@@ -16,6 +17,8 @@ def test_clist_theme_metrics_include_advancing_breadth() -> None:
     )
 
     row = parsed["BK1128"]
+    assert row["security_code"] == "BK1128"
+    assert row["security_name"] == "CPO概念"
     assert row["rising_count"] == 30
     assert row["falling_count"] == 10
     assert row["flat_count"] == 0

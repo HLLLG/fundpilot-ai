@@ -135,6 +135,11 @@ def slim_candidate_for_llm(
         "share_class",
         "share_class_fee_status",
         "fund_quality_score",
+        "vehicle_quality_score",
+        "vehicle_quality_status",
+        "vehicle_quality_threshold",
+        "vehicle_quality_method",
+        "vehicle_quality_version",
         "opportunity_score_20_60d",
         "opportunity_score_version",
         "sector_fit_score",
@@ -159,6 +164,9 @@ def slim_candidate_for_llm(
         "quality_gate": _compact_quality_gate(item.get("quality_gate")),
         "quality_reasons": _text_list(item.get("quality_reasons")),
         "quality_penalties": _text_list(item.get("quality_penalties")),
+        "vehicle_quality_assessment": _compact_vehicle_quality_assessment(
+            item.get("vehicle_quality_assessment")
+        ),
         "peer_research": _compact_peer_research(item),
         "benchmark_research": _compact_benchmark_research(item),
         "benchmark_metrics": _compact_benchmark_metrics(item),
@@ -170,6 +178,24 @@ def slim_candidate_for_llm(
         row["estimated_daily_return_percent"] = daily
         row["daily_return_source"] = source
     return row
+
+
+def _compact_vehicle_quality_assessment(value: object) -> dict:
+    if not isinstance(value, dict):
+        return {}
+    components = value.get("components") if isinstance(value.get("components"), dict) else {}
+    return {
+        "schema_version": _scalar(value.get("schema_version")),
+        "method": _scalar(value.get("method")),
+        "status": _scalar(value.get("status")),
+        "score": _scalar(value.get("score")),
+        "threshold": _scalar(value.get("threshold")),
+        "sector_fit_separate_gate": value.get("sector_fit_separate_gate") is True,
+        "absolute_sector_return_excluded": value.get("absolute_sector_return_excluded") is True,
+        "components": {key: _scalar(component) for key, component in components.items()},
+        "reasons": _text_list(value.get("reasons")),
+        "penalties": _text_list(value.get("penalties")),
+    }
 
 
 def slim_candidate_pool_for_llm(

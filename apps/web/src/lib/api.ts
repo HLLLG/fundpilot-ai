@@ -1314,9 +1314,32 @@ export type DiscoveryCandidatePoolItem = {
   opportunity_score_20_60d?: number | null;
   opportunity_score_version?: string | null;
   sector_fit_score?: number | null;
+  sector_match_kind?: string | null;
   quality_reasons?: string[];
   quality_penalties?: string[];
   quality_gate?: DiscoveryCandidateQualityGate;
+  vehicle_quality_score?: number | null;
+  vehicle_quality_status?: DiscoveryQualityGateStatus | string | null;
+  vehicle_quality_threshold?: number | null;
+  vehicle_quality_method?: string | null;
+  vehicle_quality_version?: string | null;
+  vehicle_quality_assessment?: {
+    schema_version?: string | null;
+    method?: string | null;
+    status?: DiscoveryQualityGateStatus | string | null;
+    score?: number | null;
+    threshold?: number | null;
+    sector_fit_separate_gate?: boolean;
+    absolute_sector_return_excluded?: boolean;
+    components?: Record<string, number | null>;
+    reasons?: string[];
+    penalties?: string[];
+    peer_context?: {
+      group_key?: string | null;
+      sample_size?: number | null;
+      descriptive_only?: boolean;
+    };
+  };
   tradeability?: FundTradeability;
   tradeability_gate?: FundTradeabilityGate;
   cost_assessment?: FundTransactionCostAssessment;

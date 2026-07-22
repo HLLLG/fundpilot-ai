@@ -19,6 +19,7 @@ from app.services.fund_benchmark_research import (
     build_fund_benchmark_research_batch,
     summarize_benchmark_research,
 )
+from app.services.fund_vehicle_quality import assess_candidate_vehicle_quality_batch
 from app.services.discovery_client import DiscoveryClient
 from app.services.discovery_facts import build_discovery_facts
 from app.services.discovery_sector_opportunity import (
@@ -240,6 +241,7 @@ def run_discovery(
         decision_at=decision_at,
     )
     pool = attach_fund_benchmark_metrics(pool, benchmark_metrics)
+    pool = assess_candidate_vehicle_quality_batch(pool)
 
     progress("news")
     news_service = NewsService()

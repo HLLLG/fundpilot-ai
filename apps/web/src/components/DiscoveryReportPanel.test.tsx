@@ -366,6 +366,29 @@ describe("DiscoveryReportPanel", () => {
 
   it("shows the conservative cost upper bound with execution evidence", () => {
     const report = sampleReport();
+    report.candidate_pool = [{
+      ...report.candidate_pool?.[0],
+      fund_code: "006081",
+      fund_name: "海富通电子传媒股票A",
+      sector_label: "电子",
+      sector_fit_score: 34,
+      sector_match_kind: "tracking_exact",
+      vehicle_quality_score: 82,
+      vehicle_quality_threshold: 60,
+      vehicle_quality_status: "eligible",
+      vehicle_quality_method: "passive_index_vehicle",
+      quality_gate: {
+        eligible: true,
+        status: "eligible",
+        reasons: [],
+        missing_fields: [],
+        coverage_percent: 100,
+        data_as_of: "2026-07-14",
+        profile_checked_at: "2026-07-14T09:59:30+08:00",
+        profile_status: "complete",
+        profile_stale_fields: [],
+      },
+    }];
     report.recommendations[0] = {
       ...report.recommendations[0],
       action: "分批买入",
@@ -407,6 +430,9 @@ describe("DiscoveryReportPanel", () => {
     render(<DiscoveryReportPanel report={report} />);
 
     fireEvent.click(screen.getByRole("button", { name: /查看 1 只/ }));
+    expect(screen.getByText("申赎与额度已核验")).toBeInTheDocument();
+    expect(screen.getByText("基金证据通过")).toBeInTheDocument();
+    expect(screen.queryByText("交易条件通过")).not.toBeInTheDocument();
     fireEvent.click(screen.getByText("查看交易条件与完整依据"));
     const evidence = screen.getByRole("region", { name: "交易条件与成本核验" });
     expect(evidence).toHaveTextContent("申购限大额");

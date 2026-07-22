@@ -1142,6 +1142,101 @@ def test_entry_maturity_v2_promotes_verified_ready_direction_to_initial_buy():
     assert any("ready_to_start" in item for item in guarded[0].validation_notes)
 
 
+def test_ready_direction_uses_passive_vehicle_quality_instead_of_sector_returns():
+    candidate = _eligible_guard_candidate(
+        quality_gate={"status": "eligible", "eligible": True, "reasons": []}
+    )
+    candidate.update(
+        {
+            "fund_quality_score": 41.33,
+            "sector_fit_score": 34.0,
+            "sector_match_kind": "tracking_exact",
+            "vehicle_quality_score": 93.0,
+            "vehicle_quality_threshold": 60.0,
+            "vehicle_quality_status": "eligible",
+            "vehicle_quality_method": "passive_index_vehicle",
+            "nav_trend": {
+                "recent_5d_change_percent": 2.0,
+                "return_20d_percent": 8.0,
+                "distance_from_high_percent": -5.0,
+            },
+        }
+    )
+    guarded, _caveats, _ = _run_guard_for_test(
+        [
+            DiscoveryRecommendation(
+                fund_code="020356",
+                fund_name="守卫测试基金A",
+                sector_name="半导体",
+                action="建议关注",
+                suggested_amount_yuan=1000,
+                confidence="中",
+            )
+        ],
+        candidate,
+        extra_facts={
+            "effective_configuration": {"discovery_strategy": "opportunity_first"},
+            "sector_opportunities": [
+                {
+                    "sector_label": "半导体",
+                    "score_policy_version": "sector_entry_maturity.2026-07.v2",
+                    "entry_state": "ready_to_start",
+                    "entry_readiness_score": 72.0,
+                    "evidence_quality": "complete",
+                    "confidence": "高",
+                    "cumulative_5d_net_yi": 18.0,
+                }
+            ],
+        },
+    )
+
+    assert guarded[0].action == "分批买入"
+    assert all("基金质量分 41.33" not in point for point in guarded[0].points)
+
+
+def test_ready_direction_does_not_promote_fund_below_vehicle_quality_gate():
+    candidate = _eligible_guard_candidate(
+        quality_gate={"status": "eligible", "eligible": True, "reasons": []}
+    )
+    candidate.update(
+        {
+            "sector_fit_score": 34.0,
+            "sector_match_kind": "tracking_exact",
+            "vehicle_quality_score": 45.0,
+            "vehicle_quality_threshold": 60.0,
+            "vehicle_quality_status": "watch_only",
+            "vehicle_quality_method": "passive_index_vehicle",
+        }
+    )
+    guarded, _caveats, _ = _run_guard_for_test(
+        [
+            DiscoveryRecommendation(
+                fund_code="020356",
+                fund_name="守卫测试基金A",
+                sector_name="半导体",
+                action="建议关注",
+                suggested_amount_yuan=1000,
+            )
+        ],
+        candidate,
+        extra_facts={
+            "effective_configuration": {"discovery_strategy": "opportunity_first"},
+            "sector_opportunities": [
+                {
+                    "sector_label": "半导体",
+                    "score_policy_version": "sector_entry_maturity.2026-07.v2",
+                    "entry_state": "ready_to_start",
+                    "entry_readiness_score": 72.0,
+                    "evidence_quality": "complete",
+                }
+            ],
+        },
+    )
+
+    assert guarded[0].action == "建议关注"
+    assert guarded[0].suggested_amount_yuan is None
+
+
 def test_entry_maturity_v2_keeps_extended_direction_in_conditional_wait():
     candidate = _eligible_guard_candidate(
         quality_gate={"status": "eligible", "eligible": True, "reasons": []}
