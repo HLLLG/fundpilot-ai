@@ -13,12 +13,12 @@ function pngDimensions(relativePath: string): { width: number; height: number } 
 
 
 describe("SITE_METADATA", () => {
-  it("publishes Lingxi metadata on hllingxi.cn", () => {
-    expect(SITE_METADATA.title).toBe("灵析 | AI 基金研究台");
-    expect(SITE_METADATA.metadataBase?.toString()).toBe("https://hllingxi.cn/");
+  it("publishes the registered website identity on www.hllingxi.cn", () => {
+    expect(SITE_METADATA.title).toBe("数据分析学习笔记");
+    expect(SITE_METADATA.metadataBase?.toString()).toBe("https://www.hllingxi.cn/");
     expect(SITE_METADATA.alternates?.canonical).toBe("/");
     expect(SITE_METADATA.openGraph).toMatchObject({
-      siteName: "灵析 AI 基金研究台",
+      siteName: "数据分析学习笔记",
       url: "/",
       images: [
         {

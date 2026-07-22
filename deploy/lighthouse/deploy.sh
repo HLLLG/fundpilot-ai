@@ -19,6 +19,8 @@ web_root="/srv/fundpilot/web"
 lock_file="/srv/fundpilot/deploy.lock"
 deployed_sha_file="/srv/fundpilot/DEPLOYED_SHA"
 rollback_marker="/tmp/fundpilot-rollback-$deploy_sha"
+tls_certificate_dir="/etc/letsencrypt/live/hllingxi.cn"
+renewal_hook_target="/etc/letsencrypt/renewal-hooks/deploy/fundpilot-nginx-reload"
 previous_sha=""
 deployment_error_status=""
 web_was_activated=false
@@ -164,6 +166,18 @@ on_deployment_error() {
 rm -f "$rollback_marker"
 trap on_deployment_error ERR
 git checkout --detach "$deploy_sha"
+for tls_file in fullchain.pem privkey.pem; do
+    if ! sudo -n test -s "$tls_certificate_dir/$tls_file"; then
+        echo "TLS certificate file is unavailable: $tls_certificate_dir/$tls_file" >&2
+        deployment_error_status=66
+        false
+    fi
+done
+if ! command -v certbot >/dev/null; then
+    echo "certbot is required for managed TLS renewal" >&2
+    deployment_error_status=66
+    false
+fi
 export FUND_AI_API_IMAGE="fundpilot-api:$deploy_sha"
 
 compose=(docker compose --env-file .env.production -f docker-compose.production.yml)
@@ -254,16 +268,54 @@ web_was_activated=true
 rsync -a --delete "$release_web/" "$web_root/"
 find "$web_root" -type d -exec chmod 755 {} +
 find "$web_root" -type f -exec chmod 644 {} +
+if ! grep -Fq '<title>数据分析学习笔记</title>' "$web_root/index.html"; then
+    echo "staged frontend does not expose the registered website title" >&2
+    deployment_error_status=70
+    false
+fi
+if ! grep -RqsF '粤ICP备2026100543号-1' "$web_root"; then
+    echo "staged frontend does not contain the required ICP record number" >&2
+    deployment_error_status=70
+    false
+fi
 
 "${compose[@]}" up -d --no-deps --force-recreate nginx
 "${compose[@]}" exec -T nginx nginx -t
-curl -fsS http://127.0.0.1/ >/dev/null
-curl -fsS http://127.0.0.1/login/ >/dev/null
-curl -fsS http://127.0.0.1/register/ >/dev/null
-curl -fsS http://127.0.0.1/settings/ >/dev/null
-curl -fsS http://127.0.0.1/admin/users/ >/dev/null
-curl -fsS http://127.0.0.1/reset-password/ >/dev/null
-curl -fsS http://127.0.0.1/api/trading-session >/dev/null
+https_curl=(curl -fsS --resolve "www.hllingxi.cn:443:127.0.0.1")
+"${https_curl[@]}" https://www.hllingxi.cn/ >/dev/null
+"${https_curl[@]}" https://www.hllingxi.cn/login/ >/dev/null
+"${https_curl[@]}" https://www.hllingxi.cn/register/ >/dev/null
+"${https_curl[@]}" https://www.hllingxi.cn/settings/ >/dev/null
+"${https_curl[@]}" https://www.hllingxi.cn/admin/users/ >/dev/null
+"${https_curl[@]}" https://www.hllingxi.cn/reset-password/ >/dev/null
+"${https_curl[@]}" https://www.hllingxi.cn/api/trading-session >/dev/null
+
+http_redirect="$(curl -sS -o /dev/null -w '%{http_code} %{redirect_url}' \
+    --resolve "www.hllingxi.cn:80:127.0.0.1" http://www.hllingxi.cn/)"
+if [[ "$http_redirect" != "308 https://www.hllingxi.cn/" ]]; then
+    echo "unexpected HTTP redirect: $http_redirect" >&2
+    deployment_error_status=70
+    false
+fi
+apex_redirect="$(curl -sS -o /dev/null -w '%{http_code} %{redirect_url}' \
+    --resolve "hllingxi.cn:443:127.0.0.1" https://hllingxi.cn/)"
+if [[ "$apex_redirect" != "308 https://www.hllingxi.cn/" ]]; then
+    echo "unexpected apex HTTPS redirect: $apex_redirect" >&2
+    deployment_error_status=70
+    false
+fi
+if ! curl -fsSI --resolve "www.hllingxi.cn:443:127.0.0.1" \
+    https://www.hllingxi.cn/ | tr -d '\r' | grep -qi '^strict-transport-security:'; then
+    echo "HTTPS response is missing Strict-Transport-Security" >&2
+    deployment_error_status=70
+    false
+fi
+
+sudo -n install -m 755 \
+    "$repo_root/deploy/lighthouse/reload-nginx-after-certificate-renewal.sh" \
+    "$renewal_hook_target"
+sudo -n systemctl enable --now certbot.timer
+sudo -n systemctl is-active --quiet certbot.timer
 
 printf '%s\n' "$deploy_sha" > "$deployed_sha_file"
 rm -f "$rollback_marker"

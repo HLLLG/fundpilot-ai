@@ -5,6 +5,7 @@ import { afterEach, expect, it } from "vitest";
 import "@testing-library/jest-dom/vitest";
 
 import { LandingPage } from "@/components/LandingPage";
+import { SITE_REGISTRATION } from "@/lib/brand";
 import { OCR_PRIVACY_COPY } from "@/lib/ocrPrivacy";
 
 afterEach(cleanup);
@@ -56,4 +57,13 @@ it("uses truthful proof points and editorial section separators", () => {
     expect(section).toHaveAttribute("data-layout", "editorial");
     expect(section).not.toHaveClass("section-card");
   }
+});
+
+it("shows the registered website name and linked ICP record in the public footer", () => {
+  render(<LandingPage />);
+
+  const registration = screen.getByLabelText("网站备案信息");
+  expect(within(registration).getByText(SITE_REGISTRATION.registeredSiteName)).toBeInTheDocument();
+  expect(within(registration).getByRole("link", { name: SITE_REGISTRATION.icpRecordNumber }))
+    .toHaveAttribute("href", SITE_REGISTRATION.icpQueryUrl);
 });

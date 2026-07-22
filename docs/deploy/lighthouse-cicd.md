@@ -154,6 +154,30 @@
 
 该命令无输出且退出码为 0 即通过。若 `git status --short` 仍有 tracked 文件改动，先核对，不要启用流水线。
 
+### 7.1 首次签发与续期 HTTPS 证书
+
+生产 Nginx 只接受 `hllingxi.cn` 和 `www.hllingxi.cn` 的 Let’s Encrypt 证书，HTTP
+仅保留 ACME challenge，并将其他请求永久跳转到 `https://www.hllingxi.cn`。首次部署
+TLS 配置前，先在服务器安装 Certbot，并用真实运维联系邮箱签发双域名证书：
+
+    sudo apt-get update
+    sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y certbot
+    sudo certbot certonly --webroot \
+      --webroot-path /var/www/certbot \
+      --cert-name hllingxi.cn \
+      --domains hllingxi.cn,www.hllingxi.cn \
+      --email "$LETSENCRYPT_EMAIL" \
+      --agree-tos --no-eff-email --non-interactive
+
+不要把联系邮箱、证书私钥或 `/etc/letsencrypt` 内容提交到仓库。发布脚本会验证证书文件、
+安装 Certbot deploy hook，并确保 `certbot.timer` 启用；续期成功后 hook 会先执行
+`nginx -t`，再热重载 Nginx 并通过 loopback TLS 烟测。部署完成后验证：
+
+    curl -I http://www.hllingxi.cn/
+    curl -I https://hllingxi.cn/
+    curl -I https://www.hllingxi.cn/
+    sudo certbot renew --dry-run --run-deploy-hooks
+
 ## 8. 首次启用部署
 
 在 GitHub Repository variables 将：
@@ -166,7 +190,7 @@
     cd /srv/fundpilot/repo
     docker compose --env-file .env.production -f docker-compose.production.yml ps
     curl -fsS http://127.0.0.1:8000/health
-    curl -I http://127.0.0.1/
+    curl -I https://www.hllingxi.cn/
 
 之后每次 `main` 的 CI 成功都会自动发布；CI 失败不会连接生产服务器。
 

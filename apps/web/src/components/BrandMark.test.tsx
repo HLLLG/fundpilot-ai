@@ -11,11 +11,11 @@ afterEach(cleanup);
 
 
 describe("BrandMark", () => {
-  it("renders the Lingxi Chinese and English names", () => {
+  it("renders the registered Chinese and English names", () => {
     render(<BrandMark showEnglish />);
 
-    expect(screen.getByText("灵析")).toBeInTheDocument();
-    expect(screen.getByText("LINGXI")).toBeInTheDocument();
+    expect(screen.getByText("数据分析学习笔记")).toBeInTheDocument();
+    expect(screen.getByText("DATA ANALYSIS NOTES")).toBeInTheDocument();
     expect(screen.queryByText("好基灵")).not.toBeInTheDocument();
     expect(screen.queryByText("FundPilot")).not.toBeInTheDocument();
   });

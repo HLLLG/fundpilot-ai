@@ -12,7 +12,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { BrandMark } from "@/components/BrandMark";
-import { BRAND } from "@/lib/brand";
+import { BRAND, SITE_REGISTRATION } from "@/lib/brand";
 import { OCR_PRIVACY_COPY } from "@/lib/ocrPrivacy";
 
 const STEPS = [
@@ -65,7 +65,7 @@ export function LandingPage() {
           data-testid="landing-hero"
         >
           <div className="landing-hero-copy">
-            <p className="research-kicker">LINGXI · PERSONAL RESEARCH DESK</p>
+            <p className="research-kicker">{BRAND.englishName} · PERSONAL RESEARCH DESK</p>
             <h1 id="landing-title" className="font-display landing-title">
               截个图，<span>就懂你的基金</span>
             </h1>
@@ -167,7 +167,19 @@ export function LandingPage() {
 
         <footer className="landing-footer">
           <BrandMark size="sm" showEnglish />
-          <p>投资有风险，入市需谨慎。本工具内容仅供参考，不构成投资建议。</p>
+          <p>
+            投资有风险，入市需谨慎。本工具内容仅供参考，不构成投资建议。
+            <span className="landing-registration" aria-label="网站备案信息">
+              <span>{SITE_REGISTRATION.registeredSiteName}</span>
+              <a
+                href={SITE_REGISTRATION.icpQueryUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                {SITE_REGISTRATION.icpRecordNumber}
+              </a>
+            </span>
+          </p>
           <small>© {new Date().getFullYear()} {BRAND.name} {BRAND.englishName}</small>
         </footer>
       </div>

@@ -6,9 +6,9 @@ import { metadata as settingsMetadata } from "@/app/settings/layout";
 
 describe("account route metadata", () => {
   it.each([
-    ["login", loginMetadata, "登录 | 灵析", "/login"],
-    ["register", registerMetadata, "免费注册 | 灵析", "/register"],
-    ["settings", settingsMetadata, "账号设置 | 灵析", "/settings"],
+    ["login", loginMetadata, "登录 | 数据分析学习笔记", "/login"],
+    ["register", registerMetadata, "免费注册 | 数据分析学习笔记", "/register"],
+    ["settings", settingsMetadata, "账号设置 | 数据分析学习笔记", "/settings"],
   ])("publishes descriptive, non-indexable metadata for %s", (_route, metadata, title, canonical) => {
     expect(metadata.title).toBe(title);
     expect(metadata.description).toBeTruthy();

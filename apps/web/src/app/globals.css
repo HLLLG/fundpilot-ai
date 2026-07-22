@@ -1668,6 +1668,9 @@ button:disabled {
 .auth-atmosphere .research-kicker { color:#e7c987; }
 .landing-footer { display:grid; grid-template-columns:auto 1fr auto; gap:2rem; align-items:center; padding:2rem 0 6rem; border-top:1px solid var(--line-strong); color:var(--muted); font-size:.75rem; }
 .landing-footer p { text-align:center; }
+.landing-registration { display:flex; flex-wrap:wrap; justify-content:center; gap:.3rem .8rem; margin-top:.5rem; color:var(--brand-deep); font-weight:650; }
+.landing-registration a { color:var(--accent-strong); text-decoration:underline; text-decoration-thickness:1px; text-underline-offset:.2em; }
+.landing-registration a:hover { color:var(--brand-deep); }
 
 .auth-shell { display:grid; min-height:100dvh; grid-template-columns:minmax(28rem,1.05fr) minmax(28rem,.95fr); background:var(--panel); }
 .auth-atmosphere { position:relative; display:flex; flex-direction:column; overflow:hidden; min-height:100dvh; padding:2.25rem clamp(2rem,5vw,5rem); color:#e9eeee; background:var(--brand-ink); }

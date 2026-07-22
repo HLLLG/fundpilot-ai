@@ -4,10 +4,10 @@ import { BRAND } from "@/lib/brand";
 
 
 describe("BRAND", () => {
-  it("defines the Lingxi public identity and production domain", () => {
-    expect(BRAND.name).toBe("灵析");
-    expect(BRAND.englishName).toBe("LINGXI");
-    expect(BRAND.productName).toBe("灵析 AI 基金研究台");
-    expect(BRAND.siteUrl).toBe("https://hllingxi.cn");
+  it("defines the registered public identity and production domain", () => {
+    expect(BRAND.name).toBe("数据分析学习笔记");
+    expect(BRAND.englishName).toBe("DATA ANALYSIS NOTES");
+    expect(BRAND.productName).toBe("数据分析学习笔记");
+    expect(BRAND.siteUrl).toBe("https://www.hllingxi.cn");
   });
 });

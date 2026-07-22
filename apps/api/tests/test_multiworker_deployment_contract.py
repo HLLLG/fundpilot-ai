@@ -68,6 +68,40 @@ def test_admin_static_routes_are_required_and_support_trailing_slashes() -> None
 
     for route in ("admin/users", "reset-password"):
         assert f'"{route}.html"' in deploy
-        assert f"curl -fsS http://127.0.0.1/{route}/" in deploy
+        assert f"https://www.hllingxi.cn/{route}/" in deploy
         assert f"location = /{route}/" in nginx
         assert f"try_files /{route}.html =404;" in nginx
+
+
+def test_production_nginx_enforces_canonical_https_and_managed_tls() -> None:
+    nginx = (REPO_ROOT / "deploy" / "nginx" / "fundpilot.conf").read_text(
+        encoding="utf-8"
+    )
+    deploy = (REPO_ROOT / "deploy" / "lighthouse" / "deploy.sh").read_text(
+        encoding="utf-8"
+    )
+    renewal_hook = (
+        REPO_ROOT
+        / "deploy"
+        / "lighthouse"
+        / "reload-nginx-after-certificate-renewal.sh"
+    ).read_text(encoding="utf-8")
+
+    assert "listen 80 default_server;" in nginx
+    assert "listen 443 ssl default_server;" in nginx
+    assert "server_name hllingxi.cn;" in nginx
+    assert "server_name www.hllingxi.cn;" in nginx
+    assert "return 308 https://www.hllingxi.cn$request_uri;" in nginx
+    assert "/etc/letsencrypt/live/hllingxi.cn/fullchain.pem" in nginx
+    assert "/etc/letsencrypt/live/hllingxi.cn/privkey.pem" in nginx
+    assert 'Strict-Transport-Security "max-age=31536000"' in nginx
+
+    assert "certbot.timer" in deploy
+    assert "fundpilot-nginx-reload" in deploy
+    assert "unexpected HTTP redirect" in deploy
+    assert "unexpected apex HTTPS redirect" in deploy
+    assert "粤ICP备2026100543号-1" in deploy
+
+    assert "nginx -t" in renewal_hook
+    assert "nginx -s reload" in renewal_hook
+    assert 'www.hllingxi.cn:443:127.0.0.1' in renewal_hook
