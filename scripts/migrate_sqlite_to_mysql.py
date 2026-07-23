@@ -28,8 +28,22 @@ TABLES = [
             "lastActiveAt", "passwordUpdatedAt",
         ],
     ),
-    ("reports", ["id", "created_at", "payload", "userId"]),
-    ("fund_discovery_reports", ["id", "created_at", "payload", "userId"]),
+    (
+        "reports",
+        ["id", "created_at", "payload", "summary_payload", "userId"],
+    ),
+    (
+        "report_summaries",
+        ["userId", "report_id", "created_at", "summary_payload"],
+    ),
+    (
+        "fund_discovery_reports",
+        ["id", "created_at", "payload", "summary_payload", "userId"],
+    ),
+    (
+        "fund_discovery_report_summaries",
+        ["userId", "report_id", "created_at", "summary_payload"],
+    ),
     ("fund_profiles", ["userId", "fund_code", "fund_name", "payload", "updated_at"]),
     ("portfolio_state", ["userId", "payload", "updated_at"]),
     ("portfolio_daily_snapshots", ["userId", "snapshot_date", "payload", "updated_at"]),
@@ -54,8 +68,31 @@ TABLES = [
     ),
     ("ocr_text_cache", ["userId", "cache_key", "raw_text", "updated_at"]),
     ("report_chat_messages", ["id", "report_id", "role", "content", "created_at"]),
-    ("analysis_jobs", ["id", "status", "request_payload", "report_id", "error", "stage", "stage_label", "userId", "created_at", "updated_at"]),
-    ("discovery_jobs", ["id", "status", "request_payload", "discovery_report_id", "error", "stage", "stage_label", "userId", "created_at", "updated_at"]),
+    (
+        "analysis_jobs",
+        [
+            "id", "status", "request_payload", "dedup_key",
+            "active_dedup_key", "report_id", "error", "stage",
+            "stage_label", "userId", "created_at", "updated_at",
+            "heartbeat_at",
+        ],
+    ),
+    (
+        "discovery_jobs",
+        [
+            "id", "status", "request_payload", "dedup_key",
+            "active_dedup_key", "discovery_report_id", "error", "stage",
+            "stage_label", "userId", "created_at", "updated_at",
+            "heartbeat_at",
+        ],
+    ),
+    (
+        "stream_sessions",
+        [
+            "session_id", "userId", "stage", "operator_notes",
+            "created_at", "updated_at", "expires_at",
+        ],
+    ),
     ("discovery_chat_messages", ["id", "discovery_report_id", "role", "content", "created_at"]),
     ("swing_alert_fired", ["userId", "trade_date", "alert_key", "payload", "fired_at"]),
     ("refresh_tokens", ["id", "userId", "tokenHash", "expiresAt", "createdAt", "revokedAt"]),
@@ -275,6 +312,18 @@ SOURCE_COLUMN_DEFAULTS: dict[str, dict[str, str]] = {
         "in_progress": "0",
         "confirmed_at": "NULL",
     },
+    "reports": {"summary_payload": "NULL"},
+    "fund_discovery_reports": {"summary_payload": "NULL"},
+    "analysis_jobs": {
+        "dedup_key": "NULL",
+        "active_dedup_key": "NULL",
+        "heartbeat_at": "updated_at",
+    },
+    "discovery_jobs": {
+        "dedup_key": "NULL",
+        "active_dedup_key": "NULL",
+        "heartbeat_at": "updated_at",
+    },
     "decision_quality_input_artifacts": {"logical_key": "NULL"},
 }
 
@@ -375,6 +424,21 @@ _ADMIN_REQUIRED_TABLES_V18 = (
     "password_reset_tokens",
     "admin_audit_events",
 )
+_PERFORMANCE_REQUIRED_TABLES_V19 = (
+    "report_summaries",
+    "fund_discovery_report_summaries",
+    "stream_sessions",
+)
+_PERFORMANCE_REQUIRED_COLUMNS_V19 = {
+    "reports": frozenset({"summary_payload"}),
+    "fund_discovery_reports": frozenset({"summary_payload"}),
+    "analysis_jobs": frozenset(
+        {"dedup_key", "active_dedup_key", "heartbeat_at"}
+    ),
+    "discovery_jobs": frozenset(
+        {"dedup_key", "active_dedup_key", "heartbeat_at"}
+    ),
+}
 
 
 def parse_mysql_url(url: str) -> dict:
@@ -682,6 +746,40 @@ def _validate_source_decision_quality_contract(
                 if actual_contract != expected_contract:
                     raise MigrationError(
                         f"schema v{source_version} source admin-management "
+                        f"contract mismatch: {table}"
+                    )
+        if source_version >= 19:
+            for table, required in _PERFORMANCE_REQUIRED_COLUMNS_V19.items():
+                available = _source_table_columns(connection, table)
+                # Synthetic migration fixtures may contain only the immutable
+                # ledgers. Operational tables remain optional in the existing
+                # migration contract and are skipped when absent.
+                if available is None:
+                    continue
+                missing = required - available
+                if missing:
+                    raise MigrationError(
+                        f"schema v{source_version} source performance "
+                        f"columns missing from {table}: "
+                        + ", ".join(sorted(missing))
+                    )
+            for table in _PERFORMANCE_REQUIRED_TABLES_V19:
+                actual_contract = _source_sqlite_table_contract(
+                    connection,
+                    table,
+                )
+                expected_contract = _source_sqlite_table_contract(
+                    expected,
+                    table,
+                )
+                if actual_contract is None:
+                    raise MigrationError(
+                        f"schema v{source_version} source is missing required "
+                        f"performance table {table}"
+                    )
+                if actual_contract != expected_contract:
+                    raise MigrationError(
+                        f"schema v{source_version} source performance "
                         f"contract mismatch: {table}"
                     )
     finally:

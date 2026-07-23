@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from threading import Lock
+import time
 from urllib.parse import urlsplit
 from urllib.request import getproxies_environment, proxy_bypass_environment
 
@@ -26,13 +29,51 @@ def deepseek_request_headers(settings: Settings | None = None) -> dict[str, str]
     }
 
 
-def deepseek_timeout(settings: Settings | None = None) -> httpx.Timeout:
+class DeepSeekBudgetExceeded(httpx.TimeoutException):
+    """The bounded provider wall-clock budget was exhausted."""
+
+
+def deepseek_request_deadline(settings: Settings | None = None) -> float | None:
     resolved = settings or get_settings()
+    seconds = max(0.0, float(resolved.deepseek_request_budget_seconds))
+    return None if seconds == 0 else time.monotonic() + seconds
+
+
+def deepseek_budget_remaining(deadline_monotonic: float | None) -> float | None:
+    if deadline_monotonic is None:
+        return None
+    remaining = deadline_monotonic - time.monotonic()
+    if remaining <= 0:
+        raise DeepSeekBudgetExceeded("DeepSeek request budget exhausted")
+    return remaining
+
+
+def deepseek_timeout(
+    settings: Settings | None = None,
+    *,
+    deadline_monotonic: float | None = None,
+    first_byte_watchdog: bool = False,
+) -> httpx.Timeout:
+    resolved = settings or get_settings()
+    remaining = deepseek_budget_remaining(deadline_monotonic)
+    read_seconds = float(resolved.deepseek_timeout_seconds)
+    if first_byte_watchdog:
+        watchdog = max(0.0, float(resolved.deepseek_first_byte_timeout_seconds))
+        if watchdog > 0:
+            read_seconds = min(read_seconds, watchdog)
+    if remaining is not None:
+        read_seconds = min(read_seconds, remaining)
+
+    def bounded(value: float) -> float:
+        if remaining is None:
+            return value
+        return max(0.001, min(value, remaining))
+
     return httpx.Timeout(
-        connect=10,
-        read=resolved.deepseek_timeout_seconds,
-        write=30,
-        pool=10,
+        connect=bounded(10),
+        read=max(0.001, read_seconds),
+        write=bounded(30),
+        pool=bounded(10),
     )
 
 
@@ -79,6 +120,27 @@ def get_deepseek_http_client(settings: Settings | None = None) -> httpx.Client:
         return client
 
 
+def create_interruptible_deepseek_http_client(
+    settings: Settings | None = None,
+) -> httpx.Client:
+    """Create a request-owned client that can be closed on SSE disconnect.
+
+    A shared client cannot be closed to interrupt one request without
+    disrupting unrelated reports.  Streaming calls therefore own this small
+    client while non-streaming provider calls continue to use the pooled
+    process-wide client above.
+    """
+
+    resolved = settings or get_settings()
+    return httpx.Client(
+        timeout=deepseek_timeout(resolved),
+        transport=httpx.HTTPTransport(
+            retries=max(0, int(resolved.deepseek_connection_retries)),
+            proxy=_environment_proxy_for(resolved.deepseek_base_url),
+        ),
+    )
+
+
 def close_deepseek_http_clients() -> None:
     """Close pooled provider connections during application shutdown/tests."""
 
@@ -98,9 +160,35 @@ class ProviderFailure:
     retryable: bool
     status_code: int | None = None
     detail_category: str | None = None
+    retry_after_seconds: int | None = None
 
     def model_dump(self) -> dict[str, object]:
         return asdict(self)
+
+
+def _retry_after_seconds(response: httpx.Response) -> int | None:
+    raw = str(response.headers.get("Retry-After") or "").strip()
+    if not raw:
+        return None
+    try:
+        seconds = max(0, int(float(raw)))
+    except ValueError:
+        try:
+            retry_at = parsedate_to_datetime(raw)
+            if retry_at.tzinfo is None:
+                retry_at = retry_at.replace(tzinfo=timezone.utc)
+            seconds = max(
+                0,
+                int(
+                    (
+                        retry_at.astimezone(timezone.utc)
+                        - datetime.now(timezone.utc)
+                    ).total_seconds()
+                ),
+            )
+        except (TypeError, ValueError, OverflowError):
+            return None
+    return min(seconds, 300)
 
 
 class ProviderOutputError(RuntimeError):
@@ -134,7 +222,9 @@ def classify_deepseek_failure(exc: BaseException) -> ProviderFailure:
         )
     if isinstance(exc, httpx.TimeoutException):
         detail_category = "timeout"
-        if isinstance(exc, httpx.ConnectTimeout):
+        if isinstance(exc, DeepSeekBudgetExceeded):
+            detail_category = "request_budget"
+        elif isinstance(exc, httpx.ConnectTimeout):
             detail_category = "connect_timeout"
         elif isinstance(exc, httpx.ReadTimeout):
             detail_category = "read_timeout"
@@ -170,6 +260,7 @@ def classify_deepseek_failure(exc: BaseException) -> ProviderFailure:
                 message="模型服务触发限流，已切换为不可执行的离线观察报告。",
                 retryable=True,
                 status_code=status,
+                retry_after_seconds=_retry_after_seconds(exc.response),
             )
         if 500 <= status <= 599:
             return ProviderFailure(

@@ -3,23 +3,20 @@ from __future__ import annotations
 import json
 from collections.abc import Iterator
 from datetime import datetime
+import threading
 from typing import Any
 
 import httpx
 
 from app.config import get_settings
 from app.services.deepseek_http import (
-    deepseek_chat_url,
-    deepseek_request_headers,
-    deepseek_timeout,
-    get_deepseek_http_client,
+    deepseek_request_deadline,
     format_deepseek_http_error,
 )
 from app.database import get_report, list_report_chat_messages, save_chat_message
 from app.models import AnalysisMode, ChatMessage
 from app.services.deepseek_client import (
     FETCH_MARKET_NEWS_TOOL,
-    _build_chat_payload,
     _execute_fetch_market_news,
 )
 from app.services.deepseek_client import DeepSeekClient
@@ -28,6 +25,7 @@ from app.services.report_chat_runtime import resolve_report_chat_runtime
 from app.services.holding_metrics import HOLDING_RETURN_SEMANTICS
 from app.services.report_export import report_to_markdown
 from app.services.retired_market_evidence import sanitize_retired_market_evidence
+from app.services.streaming_heartbeat import raise_if_stream_cancelled
 
 REPORT_CHAT_MAX_TOKENS = 4096
 
@@ -147,31 +145,21 @@ def _iter_stream_completion(
     messages: list[dict],
     *,
     model: str,
+    stop_event: threading.Event | None = None,
+    deadline_monotonic: float | None = None,
 ) -> Iterator[str]:
-    settings = get_settings()
-    payload = _build_chat_payload(
+    # Local import avoids a module cycle: deepseek_streaming reuses this
+    # module's SSE line parser.
+    from app.services.deepseek_streaming import stream_chat_completion
+
+    yield from stream_chat_completion(
         messages=messages,
         model=model,
         max_tokens=REPORT_CHAT_MAX_TOKENS,
-        tools=None,
         response_format=None,
+        stop_event=stop_event,
+        deadline_monotonic=deadline_monotonic,
     )
-    payload["stream"] = True
-
-    with get_deepseek_http_client(settings).stream(
-        "POST",
-        deepseek_chat_url(settings),
-        headers=deepseek_request_headers(settings),
-        json=payload,
-        timeout=deepseek_timeout(settings),
-    ) as response:
-        response.raise_for_status()
-        for line in response.iter_lines():
-            if not line:
-                continue
-            chunk = _parse_stream_line(line)
-            if chunk:
-                yield chunk
 
 
 def _yield_text_chunks(text: str) -> Iterator[str]:
@@ -187,8 +175,15 @@ def iter_report_chat_completion(
     chat_mode: AnalysisMode = "fast",
     *,
     execution_blocked: bool = False,
+    stop_event: threading.Event | None = None,
+    deadline_monotonic: float | None = None,
 ) -> Iterator[str]:
     settings = get_settings()
+    deadline = (
+        deadline_monotonic
+        if deadline_monotonic is not None
+        else deepseek_request_deadline(settings)
+    )
     if not settings.deepseek_configured:
         yield OFFLINE_REPLY
         return
@@ -204,18 +199,30 @@ def iter_report_chat_completion(
     )
 
     if not news_tool_enabled:
-        yield from _iter_stream_completion(messages, model=runtime.model)
+        yield from _iter_stream_completion(
+            messages,
+            model=runtime.model,
+            stop_event=stop_event,
+            deadline_monotonic=deadline,
+        )
         return
 
     client = DeepSeekClient()
+    client._provider_deadline = deadline
     news_service = NewsService()
     tools = [FETCH_MARKET_NEWS_TOOL]
     max_tool_rounds = min(runtime.news_tool_max_rounds, 3)
 
     for round_index in range(max_tool_rounds + 1):
+        raise_if_stream_cancelled(stop_event)
         allow_tools = round_index < max_tool_rounds
         if not allow_tools:
-            yield from _iter_stream_completion(messages, model=runtime.model)
+            yield from _iter_stream_completion(
+                messages,
+                model=runtime.model,
+                stop_event=stop_event,
+                deadline_monotonic=deadline,
+            )
             return
 
         message = client._chat_completion(
@@ -231,7 +238,12 @@ def iter_report_chat_completion(
             if content:
                 yield from _yield_text_chunks(content)
             else:
-                yield from _iter_stream_completion(messages, model=runtime.model)
+                yield from _iter_stream_completion(
+                    messages,
+                    model=runtime.model,
+                    stop_event=stop_event,
+                    deadline_monotonic=deadline,
+                )
             return
 
         messages.append(message)
@@ -251,6 +263,8 @@ def stream_report_chat(
     report_id: str,
     user_message: str,
     chat_mode: AnalysisMode = "fast",
+    *,
+    stop_event: threading.Event | None = None,
 ) -> Iterator[str]:
     report = get_report(report_id)
     if report is None:
@@ -268,6 +282,7 @@ def stream_report_chat(
     )
 
     runtime = resolve_report_chat_runtime(get_settings(), chat_mode)
+    deadline = deepseek_request_deadline(get_settings())
     if runtime.news_tool_max_rounds > 0:
         yield json.dumps(
             {"type": "status", "content": "深度模式：可按需检索最新新闻…"},
@@ -287,6 +302,8 @@ def stream_report_chat(
             user_message,
             chat_mode=chat_mode,
             execution_blocked=execution_blocked,
+            stop_event=stop_event,
+            deadline_monotonic=deadline,
         ):
             assistant_parts.append(chunk)
             yield json.dumps({"type": "token", "content": chunk}, ensure_ascii=False)

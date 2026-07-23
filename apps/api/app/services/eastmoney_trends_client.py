@@ -3,11 +3,16 @@ from __future__ import annotations
 import json
 import logging
 import re
-import time
 from datetime import date, timedelta
 from typing import Any
 
 import requests
+
+from app.services.eastmoney_http import (
+    eastmoney_backoff,
+    eastmoney_budgeted,
+    eastmoney_requests_client,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +23,6 @@ _HEADERS = {
     ),
     "Referer": "https://quote.eastmoney.com/",
     "Accept": "*/*",
-    "Connection": "close",
 }
 
 _EM_COMMON_PARAMS = {"invt": "2", "fltt": "2"}
@@ -49,6 +53,7 @@ _MAX_PLAUSIBLE_DAILY_CHANGE = 15.0
 IntradayPoint = dict[str, str | float]
 
 
+@eastmoney_budgeted
 def fetch_eastmoney_kline_close_percent(
     secid: str,
     *,
@@ -63,8 +68,7 @@ def fetch_eastmoney_kline_close_percent(
         return None
 
     proxies = {"http": None, "https": None}
-    session = requests.Session()
-    session.headers.update(_HEADERS)
+    session = eastmoney_requests_client(_HEADERS)
     _apply_referer(session, cleaned, source_code)
 
     for candidate in _secid_candidates(cleaned, source_code):
@@ -97,6 +101,7 @@ def fetch_eastmoney_kline_close_percent(
 DailyKlineBar = dict[str, str | float | None]
 
 
+@eastmoney_budgeted
 def fetch_eastmoney_daily_kline_series(
     secid: str,
     *,
@@ -112,8 +117,7 @@ def fetch_eastmoney_daily_kline_series(
 
     days = max(20, min(max_days, 800))
     proxies = {"http": None, "https": None}
-    session = requests.Session()
-    session.headers.update(_HEADERS)
+    session = eastmoney_requests_client(_HEADERS)
 
     for candidate in _secid_candidates(cleaned, source_code):
         _apply_referer(session, candidate, source_code)
@@ -196,7 +200,7 @@ def _fetch_daily_kline_series(
                             exc,
                         )
         if attempt + 1 < max_retries:
-            time.sleep(0.4 * (attempt + 1))
+            eastmoney_backoff(attempt, base_seconds=0.4)
     if last_error:
         logger.debug("eastmoney daily kline %s exhausted: %s", secid, last_error)
     return []
@@ -262,6 +266,7 @@ def _parse_daily_kline_series(
     return rows
 
 
+@eastmoney_budgeted
 def fetch_eastmoney_intraday_trends(
     secid: str,
     *,
@@ -276,8 +281,7 @@ def fetch_eastmoney_intraday_trends(
         return []
 
     proxies = {"http": None, "https": None}
-    session = requests.Session()
-    session.headers.update(_HEADERS)
+    session = eastmoney_requests_client(_HEADERS)
     _apply_referer(session, cleaned, source_code)
 
     best_sparse: list[IntradayPoint] = []
@@ -460,7 +464,7 @@ def _fetch_kline_close_percent(
                     if _is_connection_drop(exc):
                         break
         if attempt + 1 < max_retries:
-            time.sleep(0.4 * (attempt + 1))
+            eastmoney_backoff(attempt, base_seconds=0.4)
     if last_error:
         logger.debug("eastmoney kline close %s exhausted: %s", secid, last_error)
     return None
@@ -515,7 +519,7 @@ def _fetch_kline_intraday(
                         if _is_connection_drop(exc):
                             break
             if attempt + 1 < max_retries:
-                time.sleep(0.4 * (attempt + 1))
+                eastmoney_backoff(attempt, base_seconds=0.4)
     if last_error:
         logger.debug("eastmoney kline %s exhausted: %s", secid, last_error)
     return []
@@ -558,7 +562,7 @@ def _fetch_trends2_intraday(
                 if _is_connection_drop(exc):
                     break
         if attempt + 1 < max_retries:
-            time.sleep(0.35 * (attempt + 1))
+            eastmoney_backoff(attempt, base_seconds=0.35)
     if last_error:
         logger.debug("eastmoney trends2 %s exhausted: %s", secid, last_error)
     return []

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import math
-import time
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
@@ -10,6 +9,13 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 import httpx
+
+from app.services.eastmoney_http import (
+    eastmoney_backoff,
+    eastmoney_budgeted,
+    eastmoney_httpx_client,
+    eastmoney_requests_client,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +28,6 @@ _EASTMONEY_HEADERS = {
     ),
     "Referer": "https://quote.eastmoney.com/",
     "Accept": "*/*",
-    "Connection": "close",
 }
 
 _COMMON_PARAMS = {
@@ -44,6 +49,7 @@ _STOCK_HOSTS = ("push2delay.eastmoney.com",) + _PUSH2_HOSTS
 _CURRENT_FLOW_HOSTS = ("push2delay.eastmoney.com", "push2.eastmoney.com")
 
 
+@eastmoney_budgeted
 def fetch_eastmoney_boards(
     *,
     timeout: float = 25.0,
@@ -109,7 +115,7 @@ def fetch_eastmoney_boards(
 
     failed_specs: list[str] = []
 
-    with httpx.Client(
+    with eastmoney_httpx_client(
         headers=_EASTMONEY_HEADERS,
         timeout=timeout,
         trust_env=False,
@@ -179,7 +185,7 @@ def _fetch_paginated_board(
                 exc,
             )
             break
-        time.sleep(0.15)
+        eastmoney_backoff(0, base_seconds=0.15)
     if not result:
         raise RuntimeError("eastmoney board returned no rows")
     return result
@@ -210,12 +216,13 @@ def _request_board_page(
                 last_error = exc
                 logger.debug("eastmoney request failed host=%s attempt=%s: %s", host, attempt + 1, exc)
         if attempt + 1 < max_retries:
-            time.sleep(0.4 * (attempt + 1))
+            eastmoney_backoff(attempt, base_seconds=0.4)
     if last_error is not None:
         raise last_error
     return {"diff": [], "total": 0}
 
 
+@eastmoney_budgeted
 def fetch_eastmoney_quote_by_secid(
     secid: str,
     *,
@@ -235,7 +242,7 @@ def fetch_eastmoney_quote_by_secid(
         "invt": "2",
     }
 
-    with httpx.Client(
+    with eastmoney_httpx_client(
         headers=_EASTMONEY_HEADERS,
         timeout=timeout,
         trust_env=False,
@@ -296,7 +303,7 @@ def fetch_eastmoney_quote_by_secid(
                     last_error = exc
                     logger.debug("eastmoney secid %s host=%s failed: %s", cleaned, host, exc)
             if attempt + 1 < max_retries:
-                time.sleep(0.35 * (attempt + 1))
+                eastmoney_backoff(attempt, base_seconds=0.35)
         if last_error:
             logger.info("eastmoney secid quote %s failed: %s", cleaned, last_error)
     # Some Eastmoney stock/get hosts return an empty data object while the
@@ -317,6 +324,7 @@ def fetch_eastmoney_quote_by_secid(
     return None, None
 
 
+@eastmoney_budgeted
 def fetch_eastmoney_quotes_by_secid(
     secids: Sequence[str],
     *,
@@ -349,7 +357,7 @@ def fetch_eastmoney_quotes_by_secid(
         "fltt": "2",
         "invt": "2",
     }
-    with httpx.Client(
+    with eastmoney_httpx_client(
         headers=_EASTMONEY_HEADERS,
         timeout=timeout,
         trust_env=False,
@@ -380,7 +388,7 @@ def fetch_eastmoney_quotes_by_secid(
                         exc,
                     )
             if attempt + 1 < max_retries:
-                time.sleep(0.35 * (attempt + 1))
+                eastmoney_backoff(attempt, base_seconds=0.35)
         if last_error:
             logger.info("eastmoney quote batch failed: %s", last_error)
     return {}
@@ -455,6 +463,7 @@ def _parse_current_board_flow_kline(
     }
 
 
+@eastmoney_budgeted
 def fetch_eastmoney_current_board_flow(
     secid: str,
     *,
@@ -485,7 +494,7 @@ def fetch_eastmoney_current_board_flow(
     host_pool = _CURRENT_FLOW_HOSTS[: max(0, max_hosts)]
     last_error: Exception | None = None
 
-    with httpx.Client(
+    with eastmoney_httpx_client(
         headers=_EASTMONEY_HEADERS,
         timeout=timeout,
         trust_env=False,
@@ -520,7 +529,7 @@ def fetch_eastmoney_current_board_flow(
                         exc,
                     )
             if attempt + 1 < max_retries:
-                time.sleep(0.1 * (attempt + 1))
+                eastmoney_backoff(attempt, base_seconds=0.1)
     if last_error is not None:
         logger.info(
             "eastmoney current board flow %s failed: %s",
@@ -530,6 +539,7 @@ def fetch_eastmoney_current_board_flow(
     return None
 
 
+@eastmoney_budgeted
 def fetch_eastmoney_sector_quote(
     sector_name: str,
     *,
@@ -559,7 +569,7 @@ def fetch_eastmoney_sector_quote(
             "fields": "f3,f14",
         }
 
-    with httpx.Client(
+    with eastmoney_httpx_client(
         headers=_EASTMONEY_HEADERS,
         timeout=timeout,
         trust_env=False,
@@ -594,7 +604,7 @@ def fetch_eastmoney_sector_quote(
                     return hit
             except Exception:
                 break
-            time.sleep(0.08)
+            eastmoney_backoff(0, base_seconds=0.08)
     return None
 
 
@@ -635,6 +645,7 @@ _BOARD_TYPE_PARAMS: dict[str, tuple[str, str]] = {
 }
 
 
+@eastmoney_budgeted
 def fetch_eastmoney_board_records(
     board_type: str,
     *,
@@ -659,7 +670,7 @@ def fetch_eastmoney_board_records(
 
     errors: list[str] = []
     try:
-        with httpx.Client(
+        with eastmoney_httpx_client(
             headers=_EASTMONEY_HEADERS,
             timeout=timeout,
             trust_env=False,
@@ -697,10 +708,7 @@ def _fetch_board_records_via_requests(
     max_pages: int,
 ) -> list[dict[str, Any]]:
     """与 AkShare 相同：requests + push2delay 优先（httpx 偶发 reset 时更稳）。"""
-    import requests
-
-    session = requests.Session()
-    session.trust_env = False
+    session = eastmoney_requests_client(_EASTMONEY_HEADERS)
     last_error: Exception | None = None
 
     for host in _CLIST_HOSTS:
@@ -721,7 +729,7 @@ def _fetch_board_records_via_requests(
                 page_size = max(len(rows), 1)
                 if page >= math.ceil(total / page_size):
                     break
-                time.sleep(0.1)
+                eastmoney_backoff(0, base_seconds=0.1)
             if result:
                 return _dedupe_board_records(result)
         except Exception as exc:
@@ -768,7 +776,7 @@ def _fetch_paginated_board_records(
                 exc,
             )
             break
-        time.sleep(0.15)
+        eastmoney_backoff(0, base_seconds=0.15)
     if not result:
         raise RuntimeError("eastmoney board records returned no rows")
     return _dedupe_board_records(result)
@@ -987,7 +995,7 @@ def _fetch_clist_theme_pool(
     }
     errors: list[str] = []
     try:
-        with httpx.Client(
+        with eastmoney_httpx_client(
             headers=_EASTMONEY_HEADERS,
             timeout=timeout,
             trust_env=False,
@@ -1043,7 +1051,7 @@ def _fetch_paginated_clist_theme(
         except Exception as exc:
             logger.debug("clist theme pagination stopped at page %s: %s", page, exc)
             break
-        time.sleep(0.1)
+        eastmoney_backoff(0, base_seconds=0.1)
     if not merged:
         raise RuntimeError("clist theme pool returned no rows")
     return merged
@@ -1055,10 +1063,7 @@ def _fetch_clist_theme_via_requests(
     timeout: float,
     max_pages: int,
 ) -> _ClistThemeMap:
-    import requests
-
-    session = requests.Session()
-    session.trust_env = False
+    session = eastmoney_requests_client(_EASTMONEY_HEADERS)
     last_error: Exception | None = None
     for host in _CLIST_HOSTS:
         url = f"https://{host}/api/qt/clist/get"
@@ -1083,7 +1088,7 @@ def _fetch_clist_theme_via_requests(
                 page_size = max(len(rows), 1)
                 if page >= math.ceil(total / page_size):
                     break
-                time.sleep(0.1)
+                eastmoney_backoff(0, base_seconds=0.1)
             if merged:
                 return merged
         except Exception as exc:
@@ -1095,6 +1100,7 @@ def _fetch_clist_theme_via_requests(
     raise RuntimeError("requests clist theme returned no rows")
 
 
+@eastmoney_budgeted
 def fetch_eastmoney_clist_theme_metrics_by_code(
     *,
     timeout: float = 15.0,
@@ -1130,6 +1136,7 @@ def fetch_eastmoney_clist_theme_metrics_by_code(
     return merged
 
 
+@eastmoney_budgeted
 def fetch_eastmoney_clist_change_by_code(
     *,
     timeout: float = 15.0,

@@ -71,6 +71,16 @@ def test_deepseek_resilience_defaults_are_bounded(monkeypatch):
     assert settings.deepseek_max_tokens_report == 32_768
     assert settings.deepseek_connection_retries == 2
     assert settings.deepseek_timeout_seconds == 300
+    assert settings.deepseek_request_budget_seconds == 180
+    assert settings.deepseek_first_byte_timeout_seconds == 60
+    assert settings.sse_max_concurrent_per_process == 4
+    assert settings.sse_retry_after_seconds == 5
+    assert settings.stream_session_ttl_seconds == 7_200
+    assert settings.eastmoney_call_deadline_seconds == 30
+    assert settings.eastmoney_max_concurrency == 8
+    assert settings.eastmoney_acquire_timeout_seconds == 5
+    assert settings.eastmoney_circuit_failure_threshold == 3
+    assert settings.eastmoney_circuit_cooldown_seconds == 15
 
 
 def test_holdings_cache_defaults_are_safe_for_mysql_multiworker(monkeypatch):
@@ -97,3 +107,8 @@ def test_runtime_role_and_background_worker_health_defaults(monkeypatch):
     assert settings.background_worker_retry_seconds == 5
     assert settings.background_worker_heartbeat_interval_seconds == 10
     assert settings.background_worker_heartbeat_stale_seconds == 45
+    assert settings.async_job_max_workers == 2
+    assert settings.async_job_queue_capacity == 8
+    assert settings.async_job_heartbeat_interval_seconds == 15
+    assert settings.async_job_stale_seconds == 900
+    assert settings.async_job_retry_after_seconds == 5

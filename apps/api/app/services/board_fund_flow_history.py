@@ -7,6 +7,12 @@ from typing import Any, Literal
 
 import httpx
 
+from app.services.eastmoney_http import (
+    eastmoney_backoff,
+    eastmoney_budgeted,
+    eastmoney_httpx_client,
+    eastmoney_requests_client,
+)
 from app.services.eastmoney_spot_client import (
     _COMMON_PARAMS,
     _EASTMONEY_HEADERS,
@@ -268,12 +274,13 @@ def _fetch_flow_history_via_httpx(
                     exc,
                 )
         if attempt + 1 < max_retries:
-            time.sleep(0.6 * (attempt + 1))
+            eastmoney_backoff(attempt, base_seconds=0.6)
     if last_error is not None:
         raise last_error
     return []
 
 
+@eastmoney_budgeted
 def fetch_board_flow_series(board_code: str, *, timeout: float = 8.0) -> list[dict[str, Any]]:
     code = _normalize_board_code(board_code)
     if not code:
@@ -284,7 +291,7 @@ def fetch_board_flow_series(board_code: str, *, timeout: float = 8.0) -> list[di
     errors: list[str] = []
 
     try:
-        with httpx.Client(
+        with eastmoney_httpx_client(
             headers=headers,
             timeout=timeout,
             trust_env=False,
@@ -303,13 +310,13 @@ def fetch_board_flow_series(board_code: str, *, timeout: float = 8.0) -> list[di
         logger.debug("board flow history httpx failed (%s): %s", code, exc)
 
     try:
-        import requests
+        requests_client = eastmoney_requests_client(headers)
 
         for attempt in range(_FLOW_FETCH_MAX_RETRIES):
             for host in _FLOW_HISTORY_HOSTS:
                 url = f"https://{host}{_FLOW_HISTORY_PATH}"
                 try:
-                    response = requests.get(
+                    response = requests_client.get(
                         url,
                         params=params,
                         headers=headers,
@@ -323,7 +330,7 @@ def fetch_board_flow_series(board_code: str, *, timeout: float = 8.0) -> list[di
                 except Exception as exc:
                     errors.append(f"requests@{host}: {exc}")
             if attempt + 1 < _FLOW_FETCH_MAX_RETRIES:
-                time.sleep(0.4 * (attempt + 1))
+                eastmoney_backoff(attempt, base_seconds=0.4)
     except Exception as exc:
         errors.append(f"requests: {exc}")
 

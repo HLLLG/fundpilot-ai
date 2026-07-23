@@ -231,9 +231,10 @@ def test_discovery_sync_uses_the_shared_main_report_payload(monkeypatch):
         def __exit__(self, *_args):
             return False
 
-        def post(self, _url, *, headers, json):
+        def post(self, _url, *, headers, json, timeout=None):
             captured["headers"] = headers
             captured["payload"] = json
+            captured["timeout"] = timeout
             return FakeResponse()
 
     monkeypatch.setattr(

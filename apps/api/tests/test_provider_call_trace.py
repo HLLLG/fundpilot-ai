@@ -146,9 +146,17 @@ class _SyncClient:
     def __exit__(self, *_args: Any) -> bool:
         return False
 
-    def post(self, _url: str, *, headers: dict, json: dict) -> _SyncResponse:
+    def post(
+        self,
+        _url: str,
+        *,
+        headers: dict,
+        json: dict,
+        timeout=None,
+    ) -> _SyncResponse:
         self.captured["headers"] = headers
         self.captured["body"] = json
+        self.captured["timeout"] = timeout
         return self.response
 
 
@@ -298,10 +306,14 @@ def _patch_stream(monkeypatch, response: _StreamResponse) -> dict[str, Any]:
     class FakeStreamClient:
         stream = staticmethod(fake_stream)
 
+        @staticmethod
+        def close() -> None:
+            return None
+
     monkeypatch.setenv("FUND_AI_DEEPSEEK_API_KEY", _FAKE_KEY)
     refresh_settings()
     monkeypatch.setattr(
-        "app.services.deepseek_streaming.get_deepseek_http_client",
+        "app.services.deepseek_streaming.create_interruptible_deepseek_http_client",
         lambda _settings: FakeStreamClient(),
     )
     return captured

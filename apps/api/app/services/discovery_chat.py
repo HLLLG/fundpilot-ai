@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterator
 from datetime import datetime
+import threading
 
 import httpx
 
@@ -10,11 +11,8 @@ from app.config import get_settings
 from app.database import get_discovery_report, list_discovery_chat_messages, save_discovery_chat_message
 from app.models import AnalysisMode, DiscoveryChatMessage
 from app.services.deepseek_http import (
-    deepseek_chat_url,
-    deepseek_request_headers,
-    deepseek_timeout,
+    deepseek_request_deadline,
     format_deepseek_http_error,
-    get_deepseek_http_client,
 )
 from app.services.discovery_chat_guard import (
     format_candidate_pool_whitelist,
@@ -23,6 +21,8 @@ from app.services.discovery_chat_guard import (
 from app.services.discovery_export import discovery_report_to_markdown
 from app.services.report_chat_runtime import resolve_report_chat_runtime
 from app.services.retired_market_evidence import sanitize_retired_market_evidence
+
+DISCOVERY_CHAT_MAX_TOKENS = 4096
 
 OFFLINE_REPLY = (
     "当前未配置有效的 DeepSeek API Key，无法在线追问。"
@@ -61,6 +61,8 @@ def stream_discovery_chat(
     discovery_report_id: str,
     user_message: str,
     chat_mode: AnalysisMode = "fast",
+    *,
+    stop_event: threading.Event | None = None,
 ) -> Iterator[str]:
     report = get_discovery_report(discovery_report_id)
     if report is None:
@@ -115,35 +117,29 @@ def stream_discovery_chat(
 
     assistant_parts: list[str] = []
     try:
-        client = get_deepseek_http_client(settings)
-        with client.stream(
-                "POST",
-                deepseek_chat_url(settings),
-                headers=deepseek_request_headers(settings),
-                json={
-                    "model": runtime.model,
-                    "messages": messages,
-                    "temperature": 0.4,
-                    "stream": True,
-                },
-                timeout=deepseek_timeout(settings),
-        ) as response:
-            response.raise_for_status()
-            for line in response.iter_lines():
-                if not line or not line.startswith("data: "):
-                    continue
-                data = line[6:].strip()
-                if data == "[DONE]":
-                    break
-                payload = json.loads(data)
-                delta = (
-                    payload.get("choices", [{}])[0]
-                    .get("delta", {})
-                    .get("content")
-                )
-                if delta:
-                    assistant_parts.append(delta)
-                    yield json.dumps({"type": "token", "content": delta}, ensure_ascii=False)
+        from app.services.deepseek_streaming import stream_chat_completion
+
+        deadline = deepseek_request_deadline(settings)
+        provider_payload = {
+            "model": runtime.model,
+            "messages": messages,
+            "temperature": 0.4,
+            "max_tokens": DISCOVERY_CHAT_MAX_TOKENS,
+            "stream": True,
+        }
+        for delta in stream_chat_completion(
+            messages=messages,
+            model=runtime.model,
+            max_tokens=DISCOVERY_CHAT_MAX_TOKENS,
+            exact_provider_payload=provider_payload,
+            stop_event=stop_event,
+            deadline_monotonic=deadline,
+        ):
+            assistant_parts.append(delta)
+            yield json.dumps(
+                {"type": "token", "content": delta},
+                ensure_ascii=False,
+            )
     except httpx.HTTPError as exc:
         error_text = format_deepseek_http_error(exc)
         assistant_parts.append(error_text)

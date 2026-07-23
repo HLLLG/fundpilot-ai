@@ -16,7 +16,9 @@ from app.services.deepseek_http import (
     ProviderOutputError,
     classify_deepseek_failure,
     deepseek_chat_url,
+    deepseek_request_deadline,
     deepseek_request_headers,
+    deepseek_timeout,
     get_deepseek_http_client,
 )
 from app.services.deepseek_client import (
@@ -73,6 +75,7 @@ class DiscoveryClient:
         self._prompt_shadow_capture = None
         self._last_report_raw_content: str | None = None
         self._last_report_parsed_payload: dict | None = None
+        self._provider_deadline: float | None = None
 
     def run_discovery_news_tool_rounds(
         self,
@@ -151,6 +154,7 @@ class DiscoveryClient:
         decision_at: datetime | None = None,
         announcement_meta: dict | None = None,
     ) -> FundDiscoveryReport:
+        self._provider_deadline = None
         if announcement_meta is not None:
             discovery_facts["fund_announcements"] = deepcopy(announcement_meta)
         runtime = resolve_analysis_runtime(self.settings, analysis_mode)  # type: ignore[arg-type]
@@ -357,6 +361,8 @@ class DiscoveryClient:
         trace_collector: ProviderCallTraceCollector | None = None,
         exact_provider_payload: Mapping[str, object] | None = None,
     ) -> dict:
+        if self._provider_deadline is None:
+            self._provider_deadline = deepseek_request_deadline(self.settings)
         messages = build_discovery_chat_messages(system_prompt, user_payload)
         if exact_provider_payload is not None:
             exact = deepcopy(dict(exact_provider_payload))
@@ -386,6 +392,11 @@ class DiscoveryClient:
                 deepseek_chat_url(self.settings),
                 headers=deepseek_request_headers(self.settings),
                 json=body,
+                timeout=deepseek_timeout(
+                    self.settings,
+                    deadline_monotonic=self._provider_deadline,
+                    first_byte_watchdog=True,
+                ),
             )
             if trace_collector is not None:
                 trace_collector.mark_response_started(
@@ -474,6 +485,8 @@ class DiscoveryClient:
         max_tokens: int | None = None,
         model: str | None = None,
     ) -> dict:
+        if self._provider_deadline is None:
+            self._provider_deadline = deepseek_request_deadline(self.settings)
         body = _build_chat_payload(
             messages=messages,
             model=model or self.settings.deepseek_model,
@@ -485,6 +498,11 @@ class DiscoveryClient:
             deepseek_chat_url(self.settings),
             headers=deepseek_request_headers(self.settings),
             json=body,
+            timeout=deepseek_timeout(
+                self.settings,
+                deadline_monotonic=self._provider_deadline,
+                first_byte_watchdog=True,
+            ),
         )
         response.raise_for_status()
         try:

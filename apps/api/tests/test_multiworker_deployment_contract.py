@@ -105,3 +105,33 @@ def test_production_nginx_enforces_canonical_https_and_managed_tls() -> None:
     assert "nginx -t" in renewal_hook
     assert "nginx -s reload" in renewal_hook
     assert 'www.hllingxi.cn:443:127.0.0.1' in renewal_hook
+
+
+def test_production_nginx_separates_streaming_and_buffered_api_policies() -> None:
+    nginx = (REPO_ROOT / "deploy" / "nginx" / "fundpilot.conf").read_text(
+        encoding="utf-8"
+    )
+
+    assert "upstream fundpilot_api {" in nginx
+    assert "keepalive 32;" in nginx
+    assert "location = /api/analyze/stream {" in nginx
+    assert "location = /api/fund-discovery/stream {" in nginx
+    assert r"location ~ ^/api/(?:fund-discovery/)?reports/[^/]+/chat$ {" in nginx
+    assert "location /api/ {" in nginx
+    assert nginx.count("proxy_buffering off;") == 3
+    assert "proxy_buffering on;" in nginx
+    assert "proxy_read_timeout 120s;" in nginx
+    assert "proxy_set_header Connection \"\";" in nginx
+
+
+def test_production_nginx_compresses_json_and_immutably_caches_hashed_assets() -> None:
+    nginx = (REPO_ROOT / "deploy" / "nginx" / "fundpilot.conf").read_text(
+        encoding="utf-8"
+    )
+
+    assert "gzip on;" in nginx
+    assert "application/json" in nginx
+    assert "text/event-stream" not in nginx
+    assert "location ^~ /_next/static/ {" in nginx
+    assert 'Cache-Control "public, max-age=31536000, immutable"' in nginx
+    assert "expires -1;" in nginx

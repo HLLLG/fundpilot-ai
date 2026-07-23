@@ -44,7 +44,7 @@ def test_run_migrations_backfills_global_primary_sector_table_at_current_version
 
 
 def test_current_schema_still_ensures_factor_ic_snapshot_table() -> None:
-    assert SCHEMA_VERSION == 18
+    assert SCHEMA_VERSION == 19
     connection = sqlite3.connect(":memory:")
     connection.execute(
         "CREATE TABLE schema_meta (id INTEGER PRIMARY KEY, version INTEGER NOT NULL)"
@@ -61,6 +61,59 @@ def test_current_schema_still_ensures_factor_ic_snapshot_table() -> None:
         "WHERE type='table' AND name='factor_ic_snapshots'"
     ).fetchone()
     assert table is not None
+
+
+def test_v19_adds_only_performance_metadata_to_operational_tables() -> None:
+    connection = sqlite3.connect(":memory:")
+    connection.execute(
+        "CREATE TABLE schema_meta (id INTEGER PRIMARY KEY, version INTEGER NOT NULL)"
+    )
+    connection.execute("INSERT INTO schema_meta VALUES (1, 18)")
+    connection.execute(
+        """
+        CREATE TABLE reports (
+            id TEXT PRIMARY KEY, created_at TEXT NOT NULL,
+            payload TEXT NOT NULL, userId INTEGER NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE analysis_jobs (
+            id TEXT PRIMARY KEY, status TEXT NOT NULL,
+            request_payload TEXT NOT NULL, userId INTEGER NOT NULL,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        )
+        """
+    )
+
+    run_migrations(connection)
+
+    assert connection.execute(
+        "SELECT version FROM schema_meta WHERE id = 1"
+    ).fetchone()[0] == 19
+    report_columns = {
+        row[1] for row in connection.execute("PRAGMA table_info(reports)")
+    }
+    job_columns = {
+        row[1] for row in connection.execute("PRAGMA table_info(analysis_jobs)")
+    }
+    assert "summary_payload" in report_columns
+    assert {"dedup_key", "active_dedup_key", "heartbeat_at"} <= job_columns
+    assert connection.execute(
+        "SELECT 1 FROM sqlite_master "
+        "WHERE type = 'table' AND name = 'stream_sessions'"
+    ).fetchone() is not None
+    tables = {
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        )
+    }
+    assert {
+        "report_summaries",
+        "fund_discovery_report_summaries",
+    } <= tables
 
 
 def test_current_schema_ensures_append_only_factor_ic_nav_observations() -> None:

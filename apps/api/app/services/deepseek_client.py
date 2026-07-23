@@ -15,6 +15,7 @@ from app.services.deepseek_http import (
     ProviderOutputError,
     classify_deepseek_failure,
     deepseek_chat_url,
+    deepseek_request_deadline,
     deepseek_request_headers,
     deepseek_timeout,
     get_deepseek_http_client,
@@ -124,6 +125,7 @@ class DeepSeekClient:
     def __init__(self) -> None:
         self.settings = get_settings()
         self.news_service = NewsService()
+        self._provider_deadline: float | None = None
 
     def generate_report(
         self,
@@ -134,6 +136,8 @@ class DeepSeekClient:
         on_progress: ProgressCallback | None = None,
         decision_at: datetime | None = None,
     ) -> Report:
+        self._provider_deadline = None
+
         def progress(stage: str) -> None:
             if on_progress is not None:
                 on_progress(stage, JOB_STAGES.get(stage, stage))
@@ -485,6 +489,8 @@ class DeepSeekClient:
         max_tokens: int | None = None,
         model: str | None = None,
     ) -> dict:
+        if self._provider_deadline is None:
+            self._provider_deadline = deepseek_request_deadline(self.settings)
         self._last_chat_messages = deepcopy(messages)
         payload = _build_chat_payload(
             messages=messages,
@@ -497,7 +503,11 @@ class DeepSeekClient:
             deepseek_chat_url(self.settings),
             headers=deepseek_request_headers(self.settings),
             json=payload,
-            timeout=deepseek_timeout(self.settings),
+            timeout=deepseek_timeout(
+                self.settings,
+                deadline_monotonic=self._provider_deadline,
+                first_byte_watchdog=True,
+            ),
         )
         response.raise_for_status()
         try:

@@ -4,6 +4,7 @@ import httpx
 import pytest
 
 from app.services.deepseek_http import (
+    DeepSeekBudgetExceeded,
     ProviderOutputError,
     classify_deepseek_failure,
     format_deepseek_http_error,
@@ -43,6 +44,20 @@ def test_http_failure_categories_are_stable_and_redacted(
     assert "user-private-prompt" not in format_deepseek_http_error(exc)
 
 
+def test_rate_limit_retry_after_is_parsed_and_bounded() -> None:
+    request = httpx.Request("POST", "https://api.invalid/chat")
+    response = httpx.Response(
+        429,
+        request=request,
+        headers={"Retry-After": "900"},
+    )
+    failure = classify_deepseek_failure(
+        httpx.HTTPStatusError("rate limited", request=request, response=response)
+    )
+
+    assert failure.retry_after_seconds == 300
+
+
 @pytest.mark.parametrize(
     ("exc", "category", "detail_category"),
     [
@@ -50,6 +65,7 @@ def test_http_failure_categories_are_stable_and_redacted(
         (httpx.ReadTimeout("secret"), "timeout", "read_timeout"),
         (httpx.WriteTimeout("secret"), "timeout", "write_timeout"),
         (httpx.PoolTimeout("secret"), "timeout", "pool_timeout"),
+        (DeepSeekBudgetExceeded("secret"), "timeout", "request_budget"),
         (httpx.ConnectError("secret"), "connection", "connect_error"),
         (ProviderOutputError("empty_content"), "empty_content", None),
         (ProviderOutputError("invalid_json"), "invalid_json", None),

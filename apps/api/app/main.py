@@ -5,6 +5,7 @@ import hashlib
 import json
 import logging
 import re
+import threading
 from datetime import date, datetime
 from pathlib import Path
 
@@ -83,6 +84,7 @@ from app.services.decision_data_evidence import resolve_portfolio_preflight
 from app.services.async_sse import sse_from_sync_iterator
 from app.services.discovery_streaming import stream_discovery
 from app.services.stream_session_store import append_stream_followup
+from app.services.stream_admission import try_acquire_stream_slot
 from app.database import get_portfolio_summary
 from app.services.fund_data import FundDataService
 from app.services.fund_profile import FundProfileService, migrate_fund_profile_code
@@ -113,6 +115,7 @@ from app.services.portfolio_snapshot import (
 from app.services.job_status_service import resolve_job_status_single_connection
 from app.services.job_store import create_analysis_job
 from app.services.discovery_job_store import create_discovery_job
+from app.services.job_limits import JobQueueFull
 from app.services.discovery_chat import stream_discovery_chat
 from app.services.discovery_export import discovery_report_to_markdown
 from app.services.discovery_diff import diff_discovery_reports
@@ -764,18 +767,52 @@ def analyze_async(request: AnalysisRequest) -> dict:
     # main-generation mode is normalized above. The worker performs the
     # authoritative preflight again and must still be able to audit a client
     # versus server mismatch instead of comparing the server snapshot to itself.
-    job_id = create_analysis_job(request)
+    try:
+        job_id = create_analysis_job(request)
+    except JobQueueFull as exc:
+        settings = get_settings()
+        raise HTTPException(
+            status_code=429,
+            detail="当前异步分析队列已满，请稍后重试",
+            headers={
+                "Retry-After": str(settings.async_job_retry_after_seconds)
+            },
+        ) from exc
     return {"job_id": job_id, "status": "pending"}
 
 
 @app.post("/api/analyze/stream")
-async def analyze_stream_endpoint(request: AnalysisRequest) -> StreamingResponse:
+async def analyze_stream_endpoint(
+    request: AnalysisRequest,
+    http_request: Request,
+) -> StreamingResponse:
     request = request.model_copy(update={"analysis_mode": "deep"})
     user_id = get_request_user_id()
+    settings = get_settings()
+    stream_slot = try_acquire_stream_slot(settings.sse_max_concurrent_per_process)
+    if stream_slot is None:
+        raise HTTPException(
+            status_code=429,
+            detail="当前深度分析任务较多，请稍后重试",
+            headers={"Retry-After": str(settings.sse_retry_after_seconds)},
+        )
+    stop_event = threading.Event()
 
     async def event_stream():
-        async for chunk in sse_from_sync_iterator(stream_analysis(request, user_id=user_id)):
-            yield chunk
+        try:
+            items = stream_analysis(
+                request,
+                user_id=user_id,
+                stop_event=stop_event,
+            )
+            async for chunk in sse_from_sync_iterator(
+                items,
+                stop_event=stop_event,
+                is_disconnected=http_request.is_disconnected,
+            ):
+                yield chunk
+        finally:
+            stream_slot.release()
 
     return StreamingResponse(
         event_stream(),
@@ -868,21 +905,55 @@ def fund_discovery_async(request: DiscoveryRequest) -> dict:
     if not request.holdings:
         loaded, _, _, _ = load_persisted_holdings()
         request = request.model_copy(update={"holdings": loaded})
-    job_id = create_discovery_job(request)
+    try:
+        job_id = create_discovery_job(request)
+    except JobQueueFull as exc:
+        settings = get_settings()
+        raise HTTPException(
+            status_code=429,
+            detail="当前异步荐基队列已满，请稍后重试",
+            headers={
+                "Retry-After": str(settings.async_job_retry_after_seconds)
+            },
+        ) from exc
     return {"job_id": job_id, "status": "pending"}
 
 
 @app.post("/api/fund-discovery/stream")
-async def fund_discovery_stream_endpoint(request: DiscoveryRequest) -> StreamingResponse:
+async def fund_discovery_stream_endpoint(
+    request: DiscoveryRequest,
+    http_request: Request,
+) -> StreamingResponse:
     request = request.model_copy(update={"analysis_mode": "deep"})
     if not request.holdings:
         loaded, _, _, _ = await asyncio.to_thread(load_persisted_holdings)
         request = request.model_copy(update={"holdings": loaded})
     user_id = get_request_user_id()
+    settings = get_settings()
+    stream_slot = try_acquire_stream_slot(settings.sse_max_concurrent_per_process)
+    if stream_slot is None:
+        raise HTTPException(
+            status_code=429,
+            detail="当前深度分析任务较多，请稍后重试",
+            headers={"Retry-After": str(settings.sse_retry_after_seconds)},
+        )
+    stop_event = threading.Event()
 
     async def event_stream():
-        async for chunk in sse_from_sync_iterator(stream_discovery(request, user_id=user_id)):
-            yield chunk
+        try:
+            items = stream_discovery(
+                request,
+                user_id=user_id,
+                stop_event=stop_event,
+            )
+            async for chunk in sse_from_sync_iterator(
+                items,
+                stop_event=stop_event,
+                is_disconnected=http_request.is_disconnected,
+            ):
+                yield chunk
+        finally:
+            stream_slot.release()
 
     return StreamingResponse(
         event_stream(),
@@ -999,21 +1070,48 @@ def fund_discovery_chat_history(report_id: str) -> dict:
 
 
 @app.post("/api/fund-discovery/reports/{report_id}/chat")
-def fund_discovery_chat(report_id: str, body: DiscoveryChatRequest) -> StreamingResponse:
+async def fund_discovery_chat(
+    report_id: str,
+    body: DiscoveryChatRequest,
+    http_request: Request,
+) -> StreamingResponse:
     report = get_discovery_report(report_id)
     if report is None:
         raise HTTPException(status_code=404, detail="报告不存在")
+    settings = get_settings()
+    stream_slot = try_acquire_stream_slot(settings.sse_max_concurrent_per_process)
+    if stream_slot is None:
+        raise HTTPException(
+            status_code=429,
+            detail="当前对话任务较多，请稍后重试",
+            headers={"Retry-After": str(settings.sse_retry_after_seconds)},
+        )
+    stop_event = threading.Event()
 
-    def event_stream():
+    def chat_events():
         try:
             for payload in stream_discovery_chat(
                 report_id,
                 body.message.strip(),
                 chat_mode=body.chat_mode,
+                stop_event=stop_event,
             ):
-                yield f"data: {payload}\n\n"
+                parsed = json.loads(payload)
+                if isinstance(parsed, dict):
+                    yield parsed
         except ValueError as exc:
-            yield f"data: {{\"type\":\"error\",\"message\":{json.dumps(str(exc), ensure_ascii=False)}}}\n\n"
+            yield {"type": "error", "message": str(exc)}
+
+    async def event_stream():
+        try:
+            async for chunk in sse_from_sync_iterator(
+                chat_events(),
+                stop_event=stop_event,
+                is_disconnected=http_request.is_disconnected,
+            ):
+                yield chunk
+        finally:
+            stream_slot.release()
 
     return StreamingResponse(
         event_stream(),
@@ -1211,21 +1309,48 @@ def report_chat_history(report_id: str) -> dict:
 
 
 @app.post("/api/reports/{report_id}/chat")
-def report_chat(report_id: str, body: ReportChatRequest) -> StreamingResponse:
+async def report_chat(
+    report_id: str,
+    body: ReportChatRequest,
+    http_request: Request,
+) -> StreamingResponse:
     report = get_report(report_id)
     if report is None:
         raise HTTPException(status_code=404, detail="报告不存在")
+    settings = get_settings()
+    stream_slot = try_acquire_stream_slot(settings.sse_max_concurrent_per_process)
+    if stream_slot is None:
+        raise HTTPException(
+            status_code=429,
+            detail="当前对话任务较多，请稍后重试",
+            headers={"Retry-After": str(settings.sse_retry_after_seconds)},
+        )
+    stop_event = threading.Event()
 
-    def event_stream():
+    def chat_events():
         try:
             for payload in stream_report_chat(
                 report_id,
                 body.message.strip(),
                 chat_mode=body.chat_mode,
+                stop_event=stop_event,
             ):
-                yield f"data: {payload}\n\n"
+                parsed = json.loads(payload)
+                if isinstance(parsed, dict):
+                    yield parsed
         except ValueError as exc:
-            yield f"data: {{\"type\":\"error\",\"message\":{json.dumps(str(exc), ensure_ascii=False)}}}\n\n"
+            yield {"type": "error", "message": str(exc)}
+
+    async def event_stream():
+        try:
+            async for chunk in sse_from_sync_iterator(
+                chat_events(),
+                stop_event=stop_event,
+                is_disconnected=http_request.is_disconnected,
+            ):
+                yield chunk
+        finally:
+            stream_slot.release()
 
     return StreamingResponse(
         event_stream(),

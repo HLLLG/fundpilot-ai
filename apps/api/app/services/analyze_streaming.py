@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from collections.abc import Iterator
+import threading
 import time
 from typing import Any
 
@@ -44,12 +45,18 @@ from app.services.news_summarizer import (
 )
 from app.services.pipeline_concurrency import run_with_request_user
 from app.services.risk import evaluate_portfolio_risk
-from app.services.streaming_heartbeat import Heartbeat, iter_with_heartbeat
+from app.services.streaming_heartbeat import (
+    Heartbeat,
+    StreamCancelled,
+    iter_with_heartbeat,
+    raise_if_stream_cancelled,
+)
 from app.services.report_judge import judge_parsed_report
 from app.services.decision_data_evidence import resolve_portfolio_preflight
 from app.services.stream_session_store import (
     create_stream_session,
     delete_stream_session,
+    get_stream_session,
     set_stream_session_stage,
 )
 from app.services.decision_clock import capture_decision_clock
@@ -66,8 +73,14 @@ CONTEXT_HEARTBEAT_SECONDS = 1.0
 LLM_HEARTBEAT_SECONDS = 12.0
 
 
-def stream_analysis(request: AnalysisRequest, *, user_id: int) -> Iterator[dict[str, Any]]:
+def stream_analysis(
+    request: AnalysisRequest,
+    *,
+    user_id: int,
+    stop_event: threading.Event | None = None,
+) -> Iterator[dict[str, Any]]:
     """把 run_analysis 拆成可流式产出 SSE 事件的版本（fast / deep）。"""
+    stop = stop_event or threading.Event()
     ctx_token = set_request_user_id(user_id)
     settings = get_settings()
     decision_clock = capture_decision_clock()
@@ -75,6 +88,7 @@ def stream_analysis(request: AnalysisRequest, *, user_id: int) -> Iterator[dict[
     session = create_stream_session()
     started_at = time.monotonic()
     try:
+        raise_if_stream_cancelled(stop)
         preflight = resolve_portfolio_preflight(
             request.holdings,
             allow_stale=request.allow_stale_portfolio_snapshot,
@@ -89,6 +103,7 @@ def stream_analysis(request: AnalysisRequest, *, user_id: int) -> Iterator[dict[
         if not request.holdings:
             yield {"type": "error", "message": "至少需要一条基金持仓"}
             return
+        raise_if_stream_cancelled(stop)
         yield {"type": "session", "session_id": session.session_id}
         resolved = FundProfileService().resolve_holdings(request.holdings)
         enriched = request.model_copy(update={"holdings": resolved})
@@ -96,7 +111,8 @@ def stream_analysis(request: AnalysisRequest, *, user_id: int) -> Iterator[dict[
         runtime = resolve_analysis_runtime(settings, enriched.analysis_mode)
 
         yield _emit_stage(session.session_id, "fund_data", started_at=started_at)
-        with ThreadPoolExecutor(max_workers=3, thread_name_prefix="analysis-prep") as executor:
+        executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="analysis-prep")
+        try:
             fund_data_future = executor.submit(
                 run_with_request_user,
                 user_id,
@@ -123,9 +139,9 @@ def stream_analysis(request: AnalysisRequest, *, user_id: int) -> Iterator[dict[
                     decision_at=decision_at,
                 ),
             )
-            snapshots, nav_trends = fund_data_future.result()
-            market_news = news_future.result()
-            announcement_result = announcement_future.result()
+            snapshots, nav_trends = _await_future_or_cancel(fund_data_future, stop)
+            market_news = _await_future_or_cancel(news_future, stop)
+            announcement_result = _await_future_or_cancel(announcement_future, stop)
             market_news = merge_market_news_with_announcements(
                 market_news,
                 list(announcement_result.get("items") or []),
@@ -134,7 +150,10 @@ def stream_analysis(request: AnalysisRequest, *, user_id: int) -> Iterator[dict[
             announcement_meta = announcement_fetch_facts(
                 announcement_result
             )
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
 
+        raise_if_stream_cancelled(stop)
         yield _emit_stage(session.session_id, "news_summarize", started_at=started_at)
         topic_briefs, summary_timed_out = yield from _build_topic_briefs_with_progress(
             session.session_id,
@@ -142,6 +161,7 @@ def stream_analysis(request: AnalysisRequest, *, user_id: int) -> Iterator[dict[
             settings,
             started_at=started_at,
             decision_at=decision_at,
+            stop_event=stop,
         )
         if summary_timed_out:
             yield _emit_stage(
@@ -174,6 +194,7 @@ def stream_analysis(request: AnalysisRequest, *, user_id: int) -> Iterator[dict[
             runtime,
             started_at=started_at,
             decision_at=decision_at,
+            stop_event=stop,
         )
         bundle.facts["fund_announcements"] = dict(announcement_meta)
 
@@ -195,7 +216,14 @@ def stream_analysis(request: AnalysisRequest, *, user_id: int) -> Iterator[dict[
             return
 
         yield _emit_stage(session.session_id, "generating", started_at=started_at)
-        operator_notes = list(session.operator_notes)
+        # The follow-up may have landed on another Uvicorn worker; reload the
+        # database-backed session immediately before building the LLM prompt.
+        latest_session = get_stream_session(session.session_id)
+        operator_notes = (
+            list(latest_session.operator_notes)
+            if latest_session is not None
+            else []
+        )
         messages = build_analysis_chat_messages(
             enriched,
             risk,
@@ -228,11 +256,13 @@ def stream_analysis(request: AnalysisRequest, *, user_id: int) -> Iterator[dict[
                     max_tokens=settings.deepseek_max_tokens_report,
                     response_format={"type": "json_object"},
                     trace_collector=provider_trace_collector,
+                    stop_event=stop,
                 ),
                 heartbeat_seconds=LLM_HEARTBEAT_SECONDS,
                 heartbeat_factory=lambda: _emit_stage(
                     session.session_id, "generating", "AI 分析中…", started_at=started_at
                 ),
+                stop_event=stop,
             ):
                 if isinstance(entry, Heartbeat):
                     yield entry.value
@@ -382,6 +412,8 @@ def stream_analysis(request: AnalysisRequest, *, user_id: int) -> Iterator[dict[
         yield _emit_stage(session.session_id, "saving", started_at=started_at)
         report = save_report(report)
         yield _done(report)
+    except StreamCancelled:
+        return
     except Exception as exc:  # noqa: BLE001
         yield {"type": "error", "message": f"{type(exc).__name__}: {exc}"}
     finally:
@@ -431,6 +463,7 @@ def _build_topic_briefs_with_progress(
     *,
     started_at: float,
     decision_at: Any = None,
+    stop_event: threading.Event | None = None,
 ) -> Iterator[dict[str, Any]]:
     executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="analysis-news-summary")
     future = executor.submit(
@@ -444,6 +477,7 @@ def _build_topic_briefs_with_progress(
     deadline = time.monotonic() + NEWS_SUMMARY_TIMEOUT_SECONDS
     try:
         while True:
+            raise_if_stream_cancelled(stop_event)
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 future.cancel()
@@ -476,6 +510,7 @@ def _prepare_analysis_bundle_with_progress(
     *,
     started_at: float,
     decision_at: Any = None,
+    stop_event: threading.Event | None = None,
 ) -> Iterator[dict[str, Any]]:
     executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="analysis-context")
     future = executor.submit(
@@ -495,6 +530,7 @@ def _prepare_analysis_bundle_with_progress(
     )
     try:
         while True:
+            raise_if_stream_cancelled(stop_event)
             try:
                 return future.result(timeout=CONTEXT_HEARTBEAT_SECONDS)
             except FutureTimeoutError:
@@ -506,6 +542,15 @@ def _prepare_analysis_bundle_with_progress(
                 )
     finally:
         executor.shutdown(wait=False, cancel_futures=True)
+
+
+def _await_future_or_cancel(future: Any, stop_event: threading.Event) -> Any:
+    while True:
+        raise_if_stream_cancelled(stop_event)
+        try:
+            return future.result(timeout=0.25)
+        except FutureTimeoutError:
+            continue
 
 
 def _stage(

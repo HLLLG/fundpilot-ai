@@ -65,7 +65,11 @@ def test_single_quote_identity_preserves_numeric_zero_market_id(monkeypatch) -> 
         def get(self, *_args, **_kwargs) -> FakeResponse:
             return FakeResponse()
 
-    monkeypatch.setattr(eastmoney_spot_client.httpx, "Client", FakeClient)
+    monkeypatch.setattr(
+        eastmoney_spot_client,
+        "eastmoney_httpx_client",
+        lambda **kwargs: FakeClient(**kwargs),
+    )
 
     assert eastmoney_spot_client.fetch_eastmoney_quote_by_secid(
         "0.399809",
@@ -112,7 +116,11 @@ def test_single_quote_falls_back_to_identity_joined_batch_payload(monkeypatch) -
                 )
             return FakeResponse({"data": {}})
 
-    monkeypatch.setattr(eastmoney_spot_client.httpx, "Client", FakeClient)
+    monkeypatch.setattr(
+        eastmoney_spot_client,
+        "eastmoney_httpx_client",
+        lambda **kwargs: FakeClient(**kwargs),
+    )
 
     assert eastmoney_spot_client.fetch_eastmoney_quote_by_secid(
         "124.HSTECH",

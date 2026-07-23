@@ -4,11 +4,12 @@
 >
 > **维护：** 功能或架构有实质变化时，同步更新「能力清单」「数据流」「API」「目录」「环境变量」。
 
-**文档版本：** 2026-07-22（发现板块身份、被动基金载体质量与前端门禁语义修复）
+**文档版本：** 2026-07-24（性能 P0、Schema v19、SSE/外部服务/Job 韧性与报告摘要窄表）
 
-**本轮验证：** 功能回归基线为 API 全量 **1335 passed**、Web 全量 **104 files / 463 passed**；发现/板块扩大回归 **179 passed**，板块身份与行情诊断聚焦 **13 passed**。TypeScript typecheck、变更源码 ESLint、production build、Python `compileall` 与 `git diff --check` 均通过。2026-07-22 真实只读 spot 探针按市场号+代码精确联结返回 `0.399809 = 保险主题 +2.09%`、`124.HSTECH = 恒生科技指数 -3.04%`。Web 全量测试使用单工作进程，规避 Windows 上 Vitest IPC 工作进程的非业务性偶发关闭。
+**本轮验证：** API 全量 **1366 passed, 1 warning**、Web 全量 **104 files / 463 passed**；TypeScript typecheck、ESLint、production build、Python `compileall` 与 `git diff --check` 均通过。本地隔离基准中，荐基报告列表 50 并发 P95 从 **2595.64 ms** 降到 **619.66 ms**，吞吐从 **29.61** 提升到 **115.13 req/s**。基准为单 Uvicorn worker + 临时 SQLite、禁用外部源，不代表生产容量；真实 Nginx `nginx -t`、生产 MySQL migration、外部 provider 与双 worker soak 仍是上线门禁。Web 全量测试使用单工作进程，规避 Windows 上 Vitest IPC 工作进程的非业务性偶发关闭。
 
 **更新记录：**
+- **性能 P0 与 Schema v19（2026-07-24，本地实现待部署验收）：** 修复 sector quote cache stale 时间戳被重置为 fresh；SSE 全链路接入断连检测、stop event、bounded queue、协作取消和每进程 4 条准入；DeepSeek 增加 180 秒总预算、60 秒首字节 watchdog 与 429 `Retry-After`；东方财富共享连接池、每进程 8 并发、30 秒 deadline、host circuit 与 jitter；两类异步 Job 增加 SHA-256 去重、活动唯一约束、15 秒 heartbeat、900 秒 stale recovery、2 worker + 8 queue；StreamSession 落 SQLite/MySQL，按 user 隔离并设 2 小时 TTL；Nginx 拆分 SSE/JSON，普通响应启用 buffering/gzip/upstream keepalive，静态资源 immutable。Schema 从 v18 增量升级到 v19，只增加摘要列/窄表、Job 字段/索引与 `stream_sessions`，不 DROP。基准进一步发现同一行大 payload 会拖慢摘要列表，因此日报/荐基列表改读窄摘要表，旧数据按需回填，详情继续懒加载。Auth 保留每请求权威 DB 校验并用 `asyncio.to_thread` 移出事件循环，没有采用会造成跨 worker 安全失效窗口的短 TTL principal cache。审计、基准、实施/回滚与上线门禁见 `docs/perf/`。
 - **发现板块身份与被动基金决策修复（2026-07-22，已实现）：** 修正保险主题指数与恒生科技指数的东方财富 canonical 身份：保险主题为 `0.399809`，恒生科技为 `124.HSTECH`；这两条高风险映射在 spot、K 线、主题榜与分时链路中都必须核对返回证券代码和名称，身份缺失或不一致时 fail-closed，不再把其他证券的涨跌写入板块。单证券接口空响应时可回退到仍按 `f13+f12` 精确联结的批量接口，不退回近似名称。主题榜缓存升级为 `theme:boards:v7`，分时缓存升级为 `intraday:v4`，隔离历史错误映射。发现候选对被动/指数基金新增 `fund_vehicle_quality.2026-07.v1`：精确跟踪或独立核验的主板块身份、申赎、规模、费率、跟踪质量共同决定载体质量，板块自身绝对收益和回撤不再重复充当基金质量；板块匹配仍保留为独立硬门。合同基准能精确解析目标指数时只升级为研究用 `tracking_exact`，不会取得正式超额资格：`020989` 可精确核验为恒生科技，`007882` 的沪深300非银基准不能冒充纯保险指数，仍应观察并继续寻找精确保险标的。前端把“申赎与额度已核验”和“基金证据通过/待加强”分开显示，前者不再暗示整条买入决策已通过。**验证：** API 全量 **1335 passed**，Web 全量 **104 files / 463 passed**；真实只读 spot 探针分别返回“保险主题”和“恒生科技指数”，场景复演确认相同 `ready_to_start` 下 `020989` 保留分批买入、`007882` 保持建议关注；typecheck、变更源码 ESLint、production build、Python `compileall` 与 `git diff --check` 通过。
 - **全仓库陈旧资产清理（2026-07-21）：** 对 tracked 源码、脚本、测试样本、部署配置、编辑器/代理元数据及 ignored 构建物逐项做引用与运行边界审计。本轮删除 29 个确认无调用方的文件：已落地的 `.kiro` 规格与重复技能副本、空 `.vscode` 配置、退役 CloudBase 静态托管配置、3 个一次性 GATE/探针/性能脚本、守卫收敛后不再接入主链路的旧增量 JSON partial 解析器，以及 16 个没有任何测试读取方的 OCR/美股 spike fixture。仍有用途的 MySQL + API/Worker 编排从旧 CloudBase 命名收敛为 `docker-compose.local.yml`，并同步 README、契约测试和目录文档；生产 Lighthouse 编排不变。另清理约 **1.7 GB** 可再生成的 `.tmp`、Next build/export、pytest/Hypothesis/ruff、`__pycache__`、测试数据库和报告对比缓存；用户 `.env`、`data/app.db`、数据库备份、上传截图、Factor IC 快照、依赖目录及历史兼容模块均保留。
 - **文档归一化（2026-07-21）：** `docs/` 收敛为一个权威上下文与两份仍需独立执行的 Lighthouse / 安全运维手册。持仓展示、决策准确性、金融评估、Factor IC / PIT 量化证据、DecisionScore、荐基质量、方向成熟度、决策质量 shadow 与东财分时排障的现行规则全部归并到本文「现行权威契约」；分时换机自测下沉为 `scripts/diagnose-sector-quotes.sh` 的只读 spot / intraday 双能力探针。已落地设计稿、一次性实施计划、迁移记录、旧 CloudBase 指南和已完成 TODO 删除。生产环境描述统一为 Lighthouse；仓库内 README、脚本说明与源码注释不再引用已删除文档。
@@ -1023,6 +1024,24 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | `FUND_AI_CORS_ORIGINS` | `http://localhost:3001,http://127.0.0.1:3001` | 允许的前端 Origin（逗号分隔）；生产设为 Web 静态托管域名 |
 | （同上表 `FUND_AI_CLOUDBASE_ENV_ID`） | — | 设后会额外放行 `https://*.webapps.tcloudbase.com`（`config.resolved_cors_origin_regex`） |
 
+### 性能、SSE 与异步 Job
+
+| 变量 | 默认 | 含义 |
+|------|------|------|
+| `FUND_AI_ASYNC_JOB_MAX_WORKERS` | 2 | 日报与荐基各自的异步 Job worker 数 |
+| `FUND_AI_ASYNC_JOB_QUEUE_CAPACITY` | 8 | 每类 Job 的本地等待队列上限；满载返回 429 |
+| `FUND_AI_ASYNC_JOB_HEARTBEAT_INTERVAL_SECONDS` | 15 | running Job 心跳间隔 |
+| `FUND_AI_ASYNC_JOB_STALE_SECONDS` | 900 | 启动恢复时判定 stale Job 的最小年龄 |
+| `FUND_AI_ASYNC_JOB_RETRY_AFTER_SECONDS` | 5 | Job 队列满时的 `Retry-After` |
+| `FUND_AI_SSE_MAX_CONCURRENT_PER_PROCESS` | 4 | 每个 API 进程共享的 analysis/discovery/chat SSE 上限 |
+| `FUND_AI_SSE_RETRY_AFTER_SECONDS` | 5 | SSE 准入被拒时的 `Retry-After` |
+| `FUND_AI_STREAM_SESSION_TTL_SECONDS` | 7200 | DB-backed StreamSession 生命周期 |
+| `FUND_AI_EASTMONEY_CALL_DEADLINE_SECONDS` | 30 | 东方财富一次顶层调用及其 fallback 共用的墙钟预算 |
+| `FUND_AI_EASTMONEY_MAX_CONCURRENCY` | 8 | 每进程东方财富供应商并发上限 |
+| `FUND_AI_EASTMONEY_ACQUIRE_TIMEOUT_SECONDS` | 5 | 等待供应商并发 permit 的上限 |
+| `FUND_AI_EASTMONEY_CIRCUIT_FAILURE_THRESHOLD` | 3 | 同 host 打开 circuit 前的连续失败阈值 |
+| `FUND_AI_EASTMONEY_CIRCUIT_COOLDOWN_SECONDS` | 15 | host circuit 冷却秒数 |
+
 ### 板块实时
 
 | 变量 | 默认 | 含义 |
@@ -1058,6 +1077,8 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | `FUND_AI_DEEPSEEK_MODEL` | deepseek-v4-pro | 深度模式模型 |
 | `FUND_AI_DEEPSEEK_MODEL_FAST` | deepseek-v4-flash | 主题摘要、追加提问快速模式及冻结的兼容/实验路径；主报告不使用 |
 | `FUND_AI_DEEPSEEK_TIMEOUT_SECONDS` | 300 | 模型请求连接、读取、写入与连接池等待超时 |
+| `FUND_AI_DEEPSEEK_REQUEST_BUDGET_SECONDS` | 180 | 单次业务请求跨 tool rounds/judge/chat 共用的总墙钟预算 |
+| `FUND_AI_DEEPSEEK_FIRST_BYTE_TIMEOUT_SECONDS` | 60 | 流式请求等待首字节的独立上限，但不得越过总预算 |
 | `FUND_AI_DEEPSEEK_MAX_TOKENS` | 32768 | 通用模型调用输出预算；避免按服务商理论上限为每次请求预留容量 |
 | `FUND_AI_DEEPSEEK_MAX_TOKENS_REPORT` | 32768 | 日报/荐基结构化 JSON 输出预算 |
 | `FUND_AI_DEEPSEEK_CONNECTION_RETRIES` | 2 | 仅重试建连阶段的 `ConnectError/ConnectTimeout`；已开始响应的请求绝不自动重放 |

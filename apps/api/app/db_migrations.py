@@ -11,7 +11,7 @@ from app.services.decision_quality_rollout import (
 )
 
 
-SCHEMA_VERSION = 18
+SCHEMA_VERSION = 19
 
 # 迁移在应用/后台线程首次建立连接时触发（例如板块快照刷新会 daemon 线程预取资金流历史，
 # 与主线程几乎同时首次打开 sqlite 连接）。同进程内多个线程各自用独立 connection 对同一
@@ -1542,6 +1542,119 @@ def _migrate_admin_user_management(connection: sqlite3.Connection) -> None:
         )
 
 
+def _migrate_performance_schema_v19(connection: sqlite3.Connection) -> None:
+    """Add only rollback-safe performance metadata.
+
+    Large report payloads remain the source of truth.  ``summary_payload`` is
+    a derived projection that can be lazily rebuilt.  Active job deduplication
+    uses a nullable key because SQLite and MySQL both allow multiple NULLs in a
+    unique index, while terminal rows retain their audit ``dedup_key``.
+    """
+
+    for table in ("reports", "fund_discovery_reports"):
+        if _table_exists(connection, table) and not _column_exists(
+            connection,
+            table,
+            "summary_payload",
+        ):
+            connection.execute(
+                f"ALTER TABLE {table} ADD COLUMN summary_payload TEXT"
+            )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS report_summaries (
+            userId INTEGER NOT NULL,
+            report_id TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            summary_payload TEXT NOT NULL,
+            PRIMARY KEY (userId, report_id)
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_report_summaries_user_created
+        ON report_summaries (userId, created_at DESC)
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS fund_discovery_report_summaries (
+            userId INTEGER NOT NULL,
+            report_id TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            summary_payload TEXT NOT NULL,
+            PRIMARY KEY (userId, report_id)
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_discovery_summaries_user_created
+        ON fund_discovery_report_summaries (userId, created_at DESC)
+        """
+    )
+
+    for table in ("analysis_jobs", "discovery_jobs"):
+        if not _table_exists(connection, table):
+            continue
+        additions = {
+            "dedup_key": "TEXT",
+            "active_dedup_key": "TEXT",
+            "heartbeat_at": "TEXT",
+        }
+        for column, definition in additions.items():
+            if not _column_exists(connection, table, column):
+                connection.execute(
+                    f"ALTER TABLE {table} ADD COLUMN {column} {definition}"
+                )
+        connection.execute(
+            f"""
+            UPDATE {table}
+            SET heartbeat_at = updated_at
+            WHERE heartbeat_at IS NULL
+            """
+        )
+        connection.execute(
+            f"""
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_{table}_active_dedup
+            ON {table} (userId, active_dedup_key)
+            """
+        )
+        connection.execute(
+            f"""
+            CREATE INDEX IF NOT EXISTS idx_{table}_heartbeat
+            ON {table} (status, heartbeat_at)
+            """
+        )
+
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS stream_sessions (
+            session_id TEXT PRIMARY KEY,
+            userId INTEGER NOT NULL,
+            stage TEXT NOT NULL,
+            operator_notes TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_stream_sessions_user_expiry
+        ON stream_sessions (userId, expires_at)
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_stream_sessions_expiry
+        ON stream_sessions (expires_at)
+        """
+    )
+
+
 def run_migrations(connection: sqlite3.Connection) -> None:
     with _MIGRATION_LOCK:
         _run_migrations_locked(connection)
@@ -1550,6 +1663,7 @@ def run_migrations(connection: sqlite3.Connection) -> None:
 def _run_migrations_locked(connection: sqlite3.Connection) -> None:
     version = _get_schema_version(connection)
     if version >= SCHEMA_VERSION:
+        _migrate_performance_schema_v19(connection)
         _migrate_fund_primary_sectors_global(connection)
         _migrate_factor_ic_snapshots(connection)
         _migrate_factor_ic_universe_snapshots(connection)
@@ -1630,6 +1744,7 @@ def _run_migrations_locked(connection: sqlite3.Connection) -> None:
     _migrate_decision_quality_receipts(connection)
     _migrate_decision_quality_rollout(connection, initialize=version < 14)
     _migrate_prompt_shadow_operations(connection)
+    _migrate_performance_schema_v19(connection)
 
     _ensure_migration_user(connection)
     _migrate_admin_user_management(connection)

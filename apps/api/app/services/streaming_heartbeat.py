@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import queue
 import threading
+import time
 from collections.abc import Callable, Iterator
 from typing import Any, Generic, TypeVar
 
@@ -32,11 +33,21 @@ class Heartbeat(Generic[_T]):
         self.value = value
 
 
+class StreamCancelled(RuntimeError):
+    """Internal cooperative-cancellation signal; never exposed as an SSE error."""
+
+
+def raise_if_stream_cancelled(stop_event: threading.Event | None) -> None:
+    if stop_event is not None and stop_event.is_set():
+        raise StreamCancelled
+
+
 def iter_with_heartbeat(
     iterator: Iterator[_T],
     *,
     heartbeat_seconds: float,
     heartbeat_factory: Callable[[], _T],
+    stop_event: threading.Event | None = None,
 ) -> Iterator[_T | Heartbeat[_T]]:
     """驱动 ``iterator``；若超过 ``heartbeat_seconds`` 未产出新元素，先
     yield 一个 ``Heartbeat(heartbeat_factory())``，再继续等待。
@@ -45,28 +56,59 @@ def iter_with_heartbeat(
     （如已运行在后台线程中的 SSE 生成器）中调用。
     """
 
-    q: "queue.Queue[tuple[str, Any]]" = queue.Queue()
+    q: "queue.Queue[tuple[str, Any]]" = queue.Queue(maxsize=32)
+
+    def _put(kind: str, payload: Any) -> bool:
+        while stop_event is None or not stop_event.is_set():
+            try:
+                q.put((kind, payload), timeout=0.1)
+                return True
+            except queue.Full:
+                continue
+        return False
 
     def _drain() -> None:
         try:
             for item in iterator:
-                q.put(("item", item))
+                if stop_event is not None and stop_event.is_set():
+                    return
+                if not _put("item", item):
+                    return
         except BaseException as exc:  # noqa: BLE001 — 转发给消费方重新抛出
-            q.put(("error", exc))
+            if stop_event is None or not stop_event.is_set():
+                _put("error", exc)
             return
-        q.put(("done", _SENTINEL))
+        finally:
+            close = getattr(iterator, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except (RuntimeError, ValueError):
+                    pass
+        _put("done", _SENTINEL)
 
     thread = threading.Thread(target=_drain, name="iter-with-heartbeat", daemon=True)
     thread.start()
 
-    while True:
-        try:
-            kind, payload = q.get(timeout=heartbeat_seconds)
-        except queue.Empty:
-            yield Heartbeat(heartbeat_factory())
-            continue
-        if kind == "done":
-            return
-        if kind == "error":
-            raise payload
-        yield payload
+    next_heartbeat = time.monotonic() + heartbeat_seconds
+    completed = False
+    try:
+        while True:
+            raise_if_stream_cancelled(stop_event)
+            remaining = max(0.0, next_heartbeat - time.monotonic())
+            try:
+                kind, payload = q.get(timeout=min(0.25, remaining))
+            except queue.Empty:
+                if time.monotonic() >= next_heartbeat:
+                    yield Heartbeat(heartbeat_factory())
+                    next_heartbeat = time.monotonic() + heartbeat_seconds
+                continue
+            if kind == "done":
+                completed = True
+                return
+            if kind == "error":
+                raise payload
+            yield payload
+    finally:
+        if not completed and stop_event is not None:
+            stop_event.set()

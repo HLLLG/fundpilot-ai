@@ -20,6 +20,7 @@ import {
   fetchInvestorProfile,
   fetchPortfolioHoldings,
   fetchPortfolioSummary,
+  fetchReportDetail,
   fetchSectorQuotesStatus,
   invalidatePortfolioHoldingsRequest,
   listReports,
@@ -240,6 +241,10 @@ export function Dashboard() {
   );
   const [report, setReport] = useState<Report | null>(null);
   const [reports, setReports] = useState<Report[]>([]);
+  // 列表接口只返回摘要，切换到某份历史日报时按 id 拉一次完整正文。
+  // 递增 requestId 保证快速连点时只应用最后一次的详情。
+  const reportDetailRequestId = useRef(0);
+  const [reportDetailError, setReportDetailError] = useState<string | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [reportHistoryOpen, setReportHistoryOpen] = useState(false);
@@ -674,22 +679,64 @@ export function Dashboard() {
     }, 0);
   }, []);
 
+  // 先用列表摘要占位切换 UI，同时按 id 异步拉完整正文。
+  // 完整正文里的 analysis_facts / topic_briefs / market_news / holdings / snapshots /
+  // fund_recommendations 等在 ReportPanel / ReportDetailsHub 里都用可选链读取，
+  // 所以摘要占位期间只是"证据/新闻区暂空"，不会崩溃。
+  //
+  // hydrateReport 内部记录 lastHydratedId，避免"详情合并 setReports → orderedReports
+  // 变化 → useEffect 重跑 → 又 hydrateReport(todayReport)"这条链形成无限循环。
+  const lastHydratedIdRef = useRef<string | null>(null);
+  const hydrateReport = useCallback((summary: Report | null) => {
+    if (summary == null) {
+      reportDetailRequestId.current += 1;
+      lastHydratedIdRef.current = null;
+      setReport(null);
+      setReportDetailError(null);
+      return;
+    }
+    if (lastHydratedIdRef.current === summary.id) {
+      // 同一份已在展示（或正在懒加载中），不重复请求；只保证 UI 切到它。
+      setReport((current) => (current?.id === summary.id ? current : summary));
+      return;
+    }
+    lastHydratedIdRef.current = summary.id;
+    setReport(summary);
+    setReportDetailError(null);
+    const requestId = ++reportDetailRequestId.current;
+    void (async () => {
+      try {
+        const detail = await fetchReportDetail(summary.id);
+        if (requestId !== reportDetailRequestId.current) return;
+        setReport(detail);
+        setReports((current) =>
+          current.map((item) => (item.id === detail.id ? { ...item, ...detail } : item)),
+        );
+      } catch (error) {
+        if (requestId !== reportDetailRequestId.current) return;
+        setReportDetailError(
+          error instanceof Error ? error.message : "日报正文加载失败，请稍后重试。",
+        );
+      }
+    })();
+  }, []);
+
   const selectReportInContext = useCallback(
     (selected: Report, mode: "push" | "replace" = "push") => {
-      setReport(selected);
+      hydrateReport(selected);
       setActiveTab("report");
       updateReportUrl(selected.id, mode);
       focusReportRegion();
     },
-    [focusReportRegion, setActiveTab, updateReportUrl],
+    [focusReportRegion, hydrateReport, setActiveTab, updateReportUrl],
   );
 
   const returnToToday = useCallback(() => {
-    setReport(todayReport);
+    hydrateReport(todayReport);
     setActiveTab("report");
     updateReportUrl(null, "push");
     focusReportRegion();
-  }, [focusReportRegion, setActiveTab, todayReport, updateReportUrl]);
+  }, [focusReportRegion, hydrateReport, setActiveTab, todayReport, updateReportUrl]);
 
   const handleReportDeleted = useCallback(
     (deletedId: string) => {
@@ -698,10 +745,10 @@ export function Dashboard() {
       setReports(remaining);
       if (report?.id !== deletedId) return;
       const adjacent = remaining[Math.min(Math.max(deletedIndex, 0), remaining.length - 1)] ?? null;
-      setReport(adjacent);
+      hydrateReport(adjacent);
       updateReportUrl(adjacent?.id ?? null, "replace");
     },
-    [orderedReports, report?.id, updateReportUrl],
+    [hydrateReport, orderedReports, report?.id, updateReportUrl],
   );
 
   useEffect(() => {
@@ -710,17 +757,17 @@ export function Dashboard() {
       if (reportId) {
         const restored = orderedReports.find((item) => item.id === reportId);
         if (restored) {
-          setReport(restored);
+          hydrateReport(restored);
           setActiveTab("report");
         }
         return;
       }
-      if (activeTab === "report") setReport(todayReport);
+      if (activeTab === "report") hydrateReport(todayReport);
     };
     restoreReportFromUrl();
     window.addEventListener("popstate", restoreReportFromUrl);
     return () => window.removeEventListener("popstate", restoreReportFromUrl);
-  }, [activeTab, orderedReports, setActiveTab, todayReport]);
+  }, [activeTab, hydrateReport, orderedReports, setActiveTab, todayReport]);
 
   useEffect(() => {
     backgroundJobActiveRef.current = Boolean(
@@ -1106,7 +1153,12 @@ export function Dashboard() {
     setStreamingReport(null);
     streamAbortRef.current = null;
     lastAnalysisStageRef.current = null;
+    // 生成完成的 completedReport 已含完整正文，无需再走 hydrateReport 拉一次；
+    // 但仍要更新 lastHydratedId，避免随后 URL 恢复触发重复请求。
+    lastHydratedIdRef.current = completedReport.id;
+    reportDetailRequestId.current += 1;
     setReport(completedReport);
+    setReportDetailError(null);
     await loadHistory();
     setActiveJobId(null);
 
@@ -1710,6 +1762,24 @@ export function Dashboard() {
                   aria-label="日报阅读区"
                   className="min-w-0 scroll-mt-24 outline-none"
                 >
+                  {reportDetailError ? (
+                    <InlineNotice
+                      tone="warning"
+                      message={reportDetailError}
+                      className="mb-3"
+                      action={
+                        report
+                          ? {
+                              label: "重试",
+                              onClick: () => {
+                                lastHydratedIdRef.current = null;
+                                hydrateReport(report);
+                              },
+                            }
+                          : undefined
+                      }
+                    />
+                  ) : null}
                   <ReportPanel
                     report={report}
                     streaming={streamingReport}

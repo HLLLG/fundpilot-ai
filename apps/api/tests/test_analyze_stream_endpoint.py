@@ -22,7 +22,7 @@ def _parse_sse_events(body: str) -> list[dict]:
 def test_analyze_stream_endpoint_emits_sse(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     captured_modes: list[str] = []
 
-    def fake_stream_analysis(request, *, user_id: int):
+    def fake_stream_analysis(request, *, user_id: int, stop_event=None):
         captured_modes.append(request.analysis_mode)
         yield {"type": "session", "session_id": "sess-1"}
         yield {"type": "stage", "stage": "fund_data", "label": "拉取净值"}

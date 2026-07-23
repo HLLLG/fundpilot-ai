@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from collections import Counter
 import json
 import logging
+import time
 
 from app.config import get_settings
 from app.services.analysis_facts import build_analysis_facts  # noqa: F401  # 测试 patch 此符号
@@ -298,7 +299,11 @@ def _llm_judge(
                 "max_tokens": min(settings.deepseek_max_tokens_report, 8000),
                 "response_format": {"type": "json_object"},
             },
-            timeout=deepseek_timeout(settings),
+            timeout=deepseek_timeout(
+                settings,
+                deadline_monotonic=time.monotonic() + LLM_JUDGE_TIMEOUT_SECONDS,
+                first_byte_watchdog=True,
+            ),
         )
         response.raise_for_status()
         content = response.json()["choices"][0]["message"].get("content") or ""

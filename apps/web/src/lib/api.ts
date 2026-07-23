@@ -2283,6 +2283,20 @@ export async function deleteDiscoveryReport(reportId: string): Promise<void> {
   }
 }
 
+// 列表接口 (listDiscoveryReports) 只返回摘要字段（title / summary / target_sectors 等），
+// 不含 decision_events / discovery_facts / candidate_pool 这类"每份 5–9 MB"的正文。
+// 打开某份历史报告时通过这个接口按需拉完整正文。
+export async function fetchDiscoveryReportDetail(reportId: string): Promise<FundDiscoveryReport> {
+  const response = await apiFetch(
+    `${API_BASE}/api/fund-discovery/reports/${encodeURIComponent(reportId)}`,
+    { cache: "no-store" },
+  );
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
 export async function fetchDiscoveryOutcomes(
   reportId: string,
   days = 7,
@@ -2392,6 +2406,20 @@ export async function deleteReport(reportId: string): Promise<void> {
   if (!response.ok) {
     throw new Error(await response.text());
   }
+}
+
+// 列表接口 (listReports) 只返回摘要字段（title / summary / risk / target_sectors 等），
+// 打开某份历史日报时通过这个接口按 id 拉完整正文（含 analysis_facts / topic_briefs /
+// market_news / holdings / snapshots / fund_recommendations 等）。
+export async function fetchReportDetail(reportId: string): Promise<Report> {
+  const response = await apiFetch(
+    `${API_BASE}/api/reports/${encodeURIComponent(reportId)}`,
+    { cache: "no-store" },
+  );
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
 }
 
 export async function fetchReportOutcomes(reportId: string): Promise<ReportOutcomes> {

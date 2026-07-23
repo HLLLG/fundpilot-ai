@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import re
 
 import jwt
@@ -64,7 +65,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
         except (jwt.InvalidTokenError, KeyError, ValueError, TypeError):
             return JSONResponse(status_code=401, content={"detail": "登录已失效"})
 
-        principal = get_auth_principal(user_id)
+        # PyMySQL/SQLite are synchronous. Keep the authoritative per-request
+        # read (security changes must remain immediate across Uvicorn workers),
+        # but do not block the event loop while the database is responding.
+        principal = await asyncio.to_thread(get_auth_principal, user_id)
         if (
             principal is None
             or int(principal.get("isDeleted") or 0) == 1

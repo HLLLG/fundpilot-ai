@@ -12,7 +12,7 @@ from app.services.decision_quality_rollout import (
 )
 
 
-MYSQL_SCHEMA_VERSION = 18
+MYSQL_SCHEMA_VERSION = 19
 
 MYSQL_MIGRATION_GUARD_NAME = "sqlite_to_mysql"
 MYSQL_SCHEMA_LOCK_NAME = "fundpilot.mysql_schema.v18"
@@ -810,8 +810,19 @@ def _ensure_mysql_schema_locked(
             id VARCHAR(64) PRIMARY KEY,
             created_at VARCHAR(64) NOT NULL,
             payload LONGTEXT NOT NULL,
+            summary_payload LONGTEXT NULL,
             userId BIGINT NOT NULL,
             INDEX idx_reports_user (userId, created_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS report_summaries (
+            userId BIGINT NOT NULL,
+            report_id VARCHAR(64) NOT NULL,
+            created_at VARCHAR(64) NOT NULL,
+            summary_payload LONGTEXT NOT NULL,
+            PRIMARY KEY (userId, report_id),
+            INDEX idx_report_summaries_user_created (userId, created_at)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """,
         """
@@ -955,13 +966,18 @@ def _ensure_mysql_schema_locked(
             id VARCHAR(64) PRIMARY KEY,
             status VARCHAR(32) NOT NULL,
             request_payload LONGTEXT NOT NULL,
+            dedup_key VARCHAR(64) NULL,
+            active_dedup_key VARCHAR(64) NULL,
             report_id VARCHAR(64) NULL,
             error LONGTEXT NULL,
             stage VARCHAR(64) NULL,
             stage_label VARCHAR(255) NULL,
             userId BIGINT NOT NULL DEFAULT 1,
             created_at VARCHAR(64) NOT NULL,
-            updated_at VARCHAR(64) NOT NULL
+            updated_at VARCHAR(64) NOT NULL,
+            heartbeat_at VARCHAR(64) NULL,
+            UNIQUE KEY uq_analysis_jobs_active_dedup (userId, active_dedup_key),
+            INDEX idx_analysis_jobs_heartbeat (status, heartbeat_at)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """,
         """
@@ -969,8 +985,19 @@ def _ensure_mysql_schema_locked(
             id VARCHAR(64) PRIMARY KEY,
             created_at VARCHAR(64) NOT NULL,
             payload LONGTEXT NOT NULL,
+            summary_payload LONGTEXT NULL,
             userId BIGINT NOT NULL DEFAULT 1,
             INDEX idx_discovery_user_created (userId, created_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS fund_discovery_report_summaries (
+            userId BIGINT NOT NULL,
+            report_id VARCHAR(64) NOT NULL,
+            created_at VARCHAR(64) NOT NULL,
+            summary_payload LONGTEXT NOT NULL,
+            PRIMARY KEY (userId, report_id),
+            INDEX idx_discovery_summaries_user_created (userId, created_at)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """,
         """
@@ -978,13 +1005,31 @@ def _ensure_mysql_schema_locked(
             id VARCHAR(64) PRIMARY KEY,
             status VARCHAR(32) NOT NULL,
             request_payload LONGTEXT NOT NULL,
+            dedup_key VARCHAR(64) NULL,
+            active_dedup_key VARCHAR(64) NULL,
             discovery_report_id VARCHAR(64) NULL,
             error LONGTEXT NULL,
             stage VARCHAR(64) NULL,
             stage_label VARCHAR(255) NULL,
             userId BIGINT NOT NULL DEFAULT 1,
             created_at VARCHAR(64) NOT NULL,
-            updated_at VARCHAR(64) NOT NULL
+            updated_at VARCHAR(64) NOT NULL,
+            heartbeat_at VARCHAR(64) NULL,
+            UNIQUE KEY uq_discovery_jobs_active_dedup (userId, active_dedup_key),
+            INDEX idx_discovery_jobs_heartbeat (status, heartbeat_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS stream_sessions (
+            session_id VARCHAR(64) PRIMARY KEY,
+            userId BIGINT NOT NULL,
+            stage VARCHAR(64) NOT NULL,
+            operator_notes LONGTEXT NOT NULL,
+            created_at VARCHAR(64) NOT NULL,
+            updated_at VARCHAR(64) NOT NULL,
+            expires_at VARCHAR(64) NOT NULL,
+            INDEX idx_stream_sessions_user_expiry (userId, expires_at),
+            INDEX idx_stream_sessions_expiry (expires_at)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """,
         """
@@ -1604,6 +1649,95 @@ def _ensure_mysql_schema_locked(
                 cursor.execute(
                     f"ALTER TABLE fund_transactions ADD COLUMN {column} {definition}"
                 )
+        performance_columns = {
+            "reports": {
+                "summary_payload": "LONGTEXT NULL",
+            },
+            "fund_discovery_reports": {
+                "summary_payload": "LONGTEXT NULL",
+            },
+            "analysis_jobs": {
+                "dedup_key": "VARCHAR(64) NULL",
+                "active_dedup_key": "VARCHAR(64) NULL",
+                "heartbeat_at": "VARCHAR(64) NULL",
+            },
+            "discovery_jobs": {
+                "dedup_key": "VARCHAR(64) NULL",
+                "active_dedup_key": "VARCHAR(64) NULL",
+                "heartbeat_at": "VARCHAR(64) NULL",
+            },
+        }
+        for table, columns in performance_columns.items():
+            for column, definition in columns.items():
+                cursor.execute(
+                    f"""
+                    SELECT 1 FROM information_schema.COLUMNS
+                    WHERE TABLE_SCHEMA = DATABASE()
+                      AND TABLE_NAME = '{table}'
+                      AND COLUMN_NAME = '{column}'
+                    """
+                )
+                if fetchone() is None:
+                    cursor.execute(
+                        f"ALTER TABLE {table} ADD COLUMN {column} {definition}"
+                    )
+        for table in ("analysis_jobs", "discovery_jobs"):
+            cursor.execute(
+                f"""
+                UPDATE {table}
+                SET heartbeat_at = updated_at
+                WHERE heartbeat_at IS NULL
+                """
+            )
+        performance_indexes = (
+            (
+                "analysis_jobs",
+                "uq_analysis_jobs_active_dedup",
+                "CREATE UNIQUE INDEX uq_analysis_jobs_active_dedup "
+                "ON analysis_jobs (userId, active_dedup_key)",
+            ),
+            (
+                "analysis_jobs",
+                "idx_analysis_jobs_heartbeat",
+                "CREATE INDEX idx_analysis_jobs_heartbeat "
+                "ON analysis_jobs (status, heartbeat_at)",
+            ),
+            (
+                "discovery_jobs",
+                "uq_discovery_jobs_active_dedup",
+                "CREATE UNIQUE INDEX uq_discovery_jobs_active_dedup "
+                "ON discovery_jobs (userId, active_dedup_key)",
+            ),
+            (
+                "discovery_jobs",
+                "idx_discovery_jobs_heartbeat",
+                "CREATE INDEX idx_discovery_jobs_heartbeat "
+                "ON discovery_jobs (status, heartbeat_at)",
+            ),
+            (
+                "stream_sessions",
+                "idx_stream_sessions_user_expiry",
+                "CREATE INDEX idx_stream_sessions_user_expiry "
+                "ON stream_sessions (userId, expires_at)",
+            ),
+            (
+                "stream_sessions",
+                "idx_stream_sessions_expiry",
+                "CREATE INDEX idx_stream_sessions_expiry "
+                "ON stream_sessions (expires_at)",
+            ),
+        )
+        for table, index, ddl in performance_indexes:
+            cursor.execute(
+                f"""
+                SELECT 1 FROM information_schema.STATISTICS
+                WHERE TABLE_SCHEMA = DATABASE()
+                  AND TABLE_NAME = '{table}'
+                  AND INDEX_NAME = '{index}'
+                """
+            )
+            if fetchone() is None:
+                cursor.execute(ddl)
         _ensure_decision_quality_logical_key_mysql_contract(cursor, fetchone)
         # Ledger versions are content-addressed strings (for example
         # ``pl1:4:abc123``), not counters.  Early v10 DDL declared BIGINT and

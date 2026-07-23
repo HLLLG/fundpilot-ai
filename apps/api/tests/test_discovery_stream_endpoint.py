@@ -22,7 +22,7 @@ def _parse_sse_events(body: str) -> list[dict]:
 def test_discovery_stream_endpoint_emits_sse(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     captured_modes: list[str] = []
 
-    def fake_stream_discovery(request, *, user_id: int):
+    def fake_stream_discovery(request, *, user_id: int, stop_event=None):
         captured_modes.append(request.analysis_mode)
         yield {"type": "stage", "stage": "sector_heat", "label": "计算板块热度"}
         yield {"type": "skeleton", "fund_codes": ["161725"], "fund_names": ["白酒"]}

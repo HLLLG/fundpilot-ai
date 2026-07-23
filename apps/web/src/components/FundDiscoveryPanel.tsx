@@ -18,6 +18,7 @@ import type {
 } from "@/lib/api";
 import {
   fetchDiscoveryPrompt,
+  fetchDiscoveryReportDetail,
   fetchDiscoverySectors,
   listDiscoveryReports,
   saveDiscoveryPromptRemote,
@@ -172,6 +173,10 @@ export function FundDiscoveryPanel({
   const budgetChangedByUserRef = useRef(false);
   const budgetUserRef = useRef(userId);
   const [report, setReport] = useState<FundDiscoveryReport | null>(null);
+  // 历史列表接口只返回摘要字段，点击某份报告时按 id 拉一次完整详情。
+  // 通过递增的 request id 保证快速连点时只应用最后一次的详情。
+  const historyDetailRequestId = useRef(0);
+  const [historyDetailError, setHistoryDetailError] = useState<string | null>(null);
   const [discoveryPrompt, setDiscoveryPrompt] = useState<DiscoveryPromptConfig>(() =>
     loadDiscoveryPrompt(userId, DEFAULT_DISCOVERY_PROMPT),
   );
@@ -524,8 +529,26 @@ export function FundDiscoveryPanel({
     .join(" · ");
 
   const selectHistoryReport = useCallback((selected: FundDiscoveryReport) => {
+    // 先用摘要占位切换视图，让用户马上看到标题/时间/方向而不是空白。
+    // 关键正文（decision_events / discovery_facts / candidate_pool）稍后从
+    // /reports/{id} 拉回后再合并；这段时间 DiscoveryReportPanel 里那些字段读到
+    // undefined 会走空态分支，不会崩。
     setReport(selected);
     setConfigExpanded(false);
+    setHistoryDetailError(null);
+    const requestId = ++historyDetailRequestId.current;
+    void (async () => {
+      try {
+        const detail = await fetchDiscoveryReportDetail(selected.id);
+        if (requestId !== historyDetailRequestId.current) return;
+        setReport(detail);
+      } catch (error) {
+        if (requestId !== historyDetailRequestId.current) return;
+        setHistoryDetailError(
+          error instanceof Error ? error.message : "推荐正文加载失败，请稍后重试。",
+        );
+      }
+    })();
     window.setTimeout(() => {
       reportRegionRef.current?.focus();
       reportRegionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -538,9 +561,15 @@ export function FundDiscoveryPanel({
       const remaining = historyReports.filter((item) => item.id !== deletedId);
       const deletedIndex = historyReports.findIndex((item) => item.id === deletedId);
       const adjacent = remaining[Math.min(Math.max(deletedIndex, 0), remaining.length - 1)] ?? null;
-      setReport(adjacent);
+      if (adjacent) {
+        // 列表接口只返回摘要，切到相邻一份也要按 id 拉完整详情，避免正文空白。
+        selectHistoryReport(adjacent);
+      } else {
+        setReport(null);
+        setHistoryDetailError(null);
+      }
     },
-    [historyReports, report?.id],
+    [historyReports, report?.id, selectHistoryReport],
   );
 
   return (
@@ -814,6 +843,17 @@ export function FundDiscoveryPanel({
             aria-label="推荐报告阅读区"
             className="scroll-mt-24 outline-none"
           >
+            {historyDetailError ? (
+              <InlineNotice
+                tone="warning"
+                message={historyDetailError}
+                className="mb-3"
+                action={{
+                  label: "重试",
+                  onClick: () => selectHistoryReport(report),
+                }}
+              />
+            ) : null}
             <DiscoveryReportPanel report={report} onOpenFund={handleOpenFund} />
           </div>
         ) : null}

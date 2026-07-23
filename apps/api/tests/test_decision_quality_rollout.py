@@ -177,7 +177,7 @@ def test_v14_database_missing_marker_is_not_reinitialized() -> None:
     ).fetchone()[0] == 0
     assert connection.execute(
         "SELECT version FROM schema_meta WHERE id = 1"
-    ).fetchone()[0] == 18
+    ).fetchone()[0] == 19
     with pytest.raises(DecisionQualityIntegrityError, match="marker is missing"):
         get_decision_quality_contract_rollout(connection=connection)
 

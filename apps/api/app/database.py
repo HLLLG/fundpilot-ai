@@ -424,16 +424,35 @@ def save_report(report: Report) -> Report:
         bundle["benchmark_mappings"] = benchmark_mappings
         payload = attach_decision_bundle(frozen_payload, bundle)
         saved_report = Report.model_validate(payload)
+        summary_payload = _project_report_summary(payload)
+        serialized_summary = json.dumps(summary_payload, ensure_ascii=False)
         connection.execute(
             """
-            INSERT OR REPLACE INTO reports (id, created_at, payload, userId)
-            VALUES (?, ?, ?, ?)
+            INSERT OR REPLACE INTO reports (
+                id, created_at, payload, summary_payload, userId
+            )
+            VALUES (?, ?, ?, ?, ?)
             """,
             (
                 saved_report.id,
                 saved_report.created_at.isoformat(),
                 json.dumps(payload, ensure_ascii=False),
+                serialized_summary,
                 user_id,
+            ),
+        )
+        connection.execute(
+            """
+            INSERT OR REPLACE INTO report_summaries (
+                userId, report_id, created_at, summary_payload
+            )
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                user_id,
+                saved_report.id,
+                saved_report.created_at.isoformat(),
+                serialized_summary,
             ),
         )
         report_recorded_at = datetime.now(timezone.utc).isoformat()
@@ -578,16 +597,119 @@ def _finalize_committed_decision_quality_artifacts(
 
 def list_reports() -> list[dict[str, Any]]:
     user_id = _uid()
+    summaries: list[dict[str, Any]] = []
     with _connect() as connection:
-        rows = connection.execute(
+        report_rows = connection.execute(
             """
-            SELECT payload FROM reports
+            SELECT id, created_at FROM reports
             WHERE userId = ?
             ORDER BY created_at DESC LIMIT 50
             """,
             (user_id,),
         ).fetchall()
-    return [json.loads(row["payload"]) for row in rows]
+        report_ids = [str(row["id"]) for row in report_rows]
+        created_by_id = {
+            str(row["id"]): str(row["created_at"]) for row in report_rows
+        }
+        if not report_ids:
+            return []
+        placeholders = ", ".join("?" for _ in report_ids)
+        stored_rows = connection.execute(
+            f"""
+            SELECT report_id, summary_payload FROM report_summaries
+            WHERE userId = ? AND report_id IN ({placeholders})
+            """,
+            (user_id, *report_ids),
+        ).fetchall()
+        stored_by_id = {
+            str(row["report_id"]): row["summary_payload"]
+            for row in stored_rows
+        }
+        missing: list[tuple[int, str]] = []
+        for row in report_rows:
+            report_id = str(row["id"])
+            summary = _parse_stored_summary(stored_by_id.get(report_id))
+            if summary is None:
+                missing.append((len(summaries), report_id))
+                summaries.append({})
+            else:
+                summaries.append(summary)
+        if missing:
+            missing_placeholders = ", ".join("?" for _ in missing)
+            payload_rows = connection.execute(
+                f"""
+                SELECT id, payload FROM reports
+                WHERE userId = ? AND id IN ({missing_placeholders})
+                """,
+                (user_id, *(report_id for _, report_id in missing)),
+            ).fetchall()
+            payload_by_id = {
+                str(row["id"]): row["payload"] for row in payload_rows
+            }
+            for position, report_id in missing:
+                summary = _project_report_summary(
+                    json.loads(payload_by_id[report_id])
+                )
+                summaries[position] = summary
+                serialized = json.dumps(summary, ensure_ascii=False)
+                connection.execute(
+                    """
+                    UPDATE reports SET summary_payload = ?
+                    WHERE id = ? AND userId = ?
+                    """,
+                    (serialized, report_id, user_id),
+                )
+                connection.execute(
+                    """
+                    INSERT OR REPLACE INTO report_summaries (
+                        userId, report_id, created_at, summary_payload
+                    )
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (
+                        user_id,
+                        report_id,
+                        created_by_id[report_id],
+                        serialized,
+                    ),
+                )
+    return summaries
+
+
+# 列表接口只投影"历史列表 + 首屏 hero + 导航"必需的少量字段：
+# - HistoryRail 使用 id / created_at / title / risk.level
+# - ReportSummaryHero 使用 title / summary / risk.{level,suggested_action,weighted_return_percent}
+# - ReportNavigator / Dashboard 需要 id / created_at / title / risk.level
+# - Markdown 导出与详情正文（analysis_facts / topic_briefs / market_news / holdings /
+#   snapshots / fund_recommendations / recommendations 等）只在打开具体一份日报时
+#   通过 GET /api/reports/{id} 拉。避免 /api/reports 一次性下发数十份 27 KB payload。
+_REPORT_SUMMARY_FIELDS: tuple[str, ...] = (
+    "id",
+    "created_at",
+    "title",
+    "summary",
+    "provider",
+    "analysis_mode",
+    "risk",
+    "caveats",
+    "target_sectors",
+    "focus_sectors",
+    "market_context",
+)
+
+
+def _project_report_summary(payload: dict[str, Any]) -> dict[str, Any]:
+    return {key: payload[key] for key in _REPORT_SUMMARY_FIELDS if key in payload}
+
+
+def _parse_stored_summary(raw: Any) -> dict[str, Any] | None:
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    try:
+        payload = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
 def get_report(report_id: str) -> dict[str, Any] | None:
@@ -686,6 +808,13 @@ def import_database_file(source: Path, *, backup_current: bool = True) -> dict[s
 def delete_report(report_id: str) -> bool:
     user_id = _uid()
     with _connect() as connection:
+        connection.execute(
+            """
+            DELETE FROM report_summaries
+            WHERE report_id = ? AND userId = ?
+            """,
+            (report_id, user_id),
+        )
         cursor = connection.execute(
             "DELETE FROM reports WHERE id = ? AND userId = ?",
             (report_id, user_id),
@@ -1724,16 +1853,35 @@ def save_discovery_report(report: FundDiscoveryReport) -> FundDiscoveryReport:
         bundle["benchmark_mappings"] = benchmark_mappings
         payload = attach_decision_bundle(frozen_payload, bundle)
         saved_report = FundDiscoveryReport.model_validate(payload)
+        summary_payload = _project_discovery_report_summary(payload)
+        serialized_summary = json.dumps(summary_payload, ensure_ascii=False)
         connection.execute(
             """
-            INSERT OR REPLACE INTO fund_discovery_reports (id, created_at, payload, userId)
-            VALUES (?, ?, ?, ?)
+            INSERT OR REPLACE INTO fund_discovery_reports (
+                id, created_at, payload, summary_payload, userId
+            )
+            VALUES (?, ?, ?, ?, ?)
             """,
             (
                 saved_report.id,
                 saved_report.created_at.isoformat(),
                 json.dumps(payload, ensure_ascii=False),
+                serialized_summary,
                 user_id,
+            ),
+        )
+        connection.execute(
+            """
+            INSERT OR REPLACE INTO fund_discovery_report_summaries (
+                userId, report_id, created_at, summary_payload
+            )
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                user_id,
+                saved_report.id,
+                saved_report.created_at.isoformat(),
+                serialized_summary,
             ),
         )
         report_recorded_at = datetime.now(timezone.utc).isoformat()
@@ -1753,16 +1901,107 @@ def save_discovery_report(report: FundDiscoveryReport) -> FundDiscoveryReport:
 
 def list_discovery_reports(*, limit: int = 30) -> list[dict[str, Any]]:
     user_id = _uid()
+    summaries: list[dict[str, Any]] = []
     with _connect() as connection:
-        rows = connection.execute(
+        report_rows = connection.execute(
             """
-            SELECT payload FROM fund_discovery_reports
+            SELECT id, created_at FROM fund_discovery_reports
             WHERE userId = ?
             ORDER BY created_at DESC LIMIT ?
             """,
             (user_id, limit),
         ).fetchall()
-    return [json.loads(row["payload"]) for row in rows]
+        report_ids = [str(row["id"]) for row in report_rows]
+        created_by_id = {
+            str(row["id"]): str(row["created_at"]) for row in report_rows
+        }
+        if not report_ids:
+            return []
+        placeholders = ", ".join("?" for _ in report_ids)
+        stored_rows = connection.execute(
+            f"""
+            SELECT report_id, summary_payload
+            FROM fund_discovery_report_summaries
+            WHERE userId = ? AND report_id IN ({placeholders})
+            """,
+            (user_id, *report_ids),
+        ).fetchall()
+        stored_by_id = {
+            str(row["report_id"]): row["summary_payload"]
+            for row in stored_rows
+        }
+        missing: list[tuple[int, str]] = []
+        for row in report_rows:
+            report_id = str(row["id"])
+            summary = _parse_stored_summary(stored_by_id.get(report_id))
+            if summary is None:
+                missing.append((len(summaries), report_id))
+                summaries.append({})
+            else:
+                summaries.append(summary)
+        if missing:
+            missing_placeholders = ", ".join("?" for _ in missing)
+            payload_rows = connection.execute(
+                f"""
+                SELECT id, payload FROM fund_discovery_reports
+                WHERE userId = ? AND id IN ({missing_placeholders})
+                """,
+                (user_id, *(report_id for _, report_id in missing)),
+            ).fetchall()
+            payload_by_id = {
+                str(row["id"]): row["payload"] for row in payload_rows
+            }
+            for position, report_id in missing:
+                summary = _project_discovery_report_summary(
+                    json.loads(payload_by_id[report_id])
+                )
+                summaries[position] = summary
+                serialized = json.dumps(summary, ensure_ascii=False)
+                connection.execute(
+                    """
+                    UPDATE fund_discovery_reports SET summary_payload = ?
+                    WHERE id = ? AND userId = ?
+                    """,
+                    (serialized, report_id, user_id),
+                )
+                connection.execute(
+                    """
+                    INSERT OR REPLACE INTO fund_discovery_report_summaries (
+                        userId, report_id, created_at, summary_payload
+                    )
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (
+                        user_id,
+                        report_id,
+                        created_by_id[report_id],
+                        serialized,
+                    ),
+                )
+    return summaries
+
+
+# 荐基历史列表只用 id / title / created_at / target_sectors，但为了保持与
+# 现有前端的兼容并支持标题图标、摘要 hover 预览，我们额外保留 summary、
+# market_view、focus_sectors、analysis_mode、provider。真正撑爆响应的是
+# decision_events（~5.7 MB）、discovery_facts（~2.7 MB）、candidate_pool
+# （~0.7 MB）——这三者只在打开某份报告时才通过 /reports/{id} 拉。
+_DISCOVERY_SUMMARY_FIELDS: tuple[str, ...] = (
+    "id",
+    "created_at",
+    "title",
+    "summary",
+    "market_view",
+    "target_sectors",
+    "focus_sectors",
+    "analysis_mode",
+    "provider",
+    "caveats",
+)
+
+
+def _project_discovery_report_summary(payload: dict[str, Any]) -> dict[str, Any]:
+    return {key: payload[key] for key in _DISCOVERY_SUMMARY_FIELDS if key in payload}
 
 
 def get_discovery_report(report_id: str) -> dict[str, Any] | None:
@@ -1783,6 +2022,13 @@ def get_discovery_report(report_id: str) -> dict[str, Any] | None:
 def delete_discovery_report(report_id: str) -> bool:
     user_id = _uid()
     with _connect() as connection:
+        connection.execute(
+            """
+            DELETE FROM fund_discovery_report_summaries
+            WHERE report_id = ? AND userId = ?
+            """,
+            (report_id, user_id),
+        )
         cursor = connection.execute(
             "DELETE FROM fund_discovery_reports WHERE id = ? AND userId = ?",
             (report_id, user_id),

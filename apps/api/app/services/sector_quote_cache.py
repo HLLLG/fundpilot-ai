@@ -40,6 +40,13 @@ def _save_memory_snapshot(cache_key: str, cached_at: float, payload: dict) -> No
             _MEMORY.popitem(last=False)
 
 
+def _updated_at_timestamp(value: object) -> float:
+    updated_at = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    if updated_at.tzinfo is None:
+        updated_at = updated_at.replace(tzinfo=timezone.utc)
+    return updated_at.astimezone(timezone.utc).timestamp()
+
+
 def mark_process_boot() -> datetime:
     """记录进程启动时刻；早于该时刻写入的快照视为跨进程遗留缓存。"""
     global _PROCESS_BOOT_AT
@@ -96,13 +103,13 @@ def get_spot_snapshot(cache_key: str, *, ttl_seconds: float) -> dict | None:
     if row is None:
         return None
 
-    updated_at = datetime.fromisoformat(str(row["updated_at"]).replace("Z", "+00:00"))
-    age = now - updated_at.timestamp()
+    updated_at = _updated_at_timestamp(row["updated_at"])
+    age = now - updated_at
     if age > ttl_seconds:
         return None
 
     payload = json.loads(row["payload"])
-    _save_memory_snapshot(cache_key, now, payload)
+    _save_memory_snapshot(cache_key, updated_at, payload)
     return payload
 
 
@@ -123,7 +130,14 @@ def get_spot_snapshot_any_age(cache_key: str) -> dict | None:
         return None
 
     payload = json.loads(row["payload"])
-    _save_memory_snapshot(cache_key, now, payload)
+    # ``any_age`` is a delivery policy, not a refresh. Preserve the durable
+    # capture time when promoting a stale row into process memory so a later
+    # TTL-aware read cannot mistake the promotion for a fresh provider fetch.
+    _save_memory_snapshot(
+        cache_key,
+        _updated_at_timestamp(row["updated_at"]),
+        payload,
+    )
     return payload
 
 

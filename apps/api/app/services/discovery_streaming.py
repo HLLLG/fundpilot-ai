@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from collections.abc import Iterator
 from copy import deepcopy
 import logging
+import threading
 import time
 from typing import Any
 
@@ -79,7 +80,12 @@ from app.services.news_service import (
 from app.services.news_summarizer import summarize_all_topics
 from app.services.pipeline_concurrency import run_with_request_user
 from app.services.risk import resolve_weight_denominator
-from app.services.streaming_heartbeat import Heartbeat, iter_with_heartbeat
+from app.services.streaming_heartbeat import (
+    Heartbeat,
+    StreamCancelled,
+    iter_with_heartbeat,
+    raise_if_stream_cancelled,
+)
 from app.services.discovery_payload import append_output_requirements_to_system, build_user_payload
 from app.services.decision_data_evidence import (
     attach_discovery_data_evidence,
@@ -106,18 +112,26 @@ PREP_HEARTBEAT_SECONDS = 1.0
 LLM_HEARTBEAT_SECONDS = 12.0
 
 
-def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dict[str, Any]]:
+def stream_discovery(
+    request: DiscoveryRequest,
+    *,
+    user_id: int,
+    stop_event: threading.Event | None = None,
+) -> Iterator[dict[str, Any]]:
+    stop = stop_event or threading.Event()
     ctx_token = set_request_user_id(user_id)
     settings = get_settings()
     runtime = resolve_analysis_runtime(settings, request.analysis_mode)
     started_at = time.monotonic()
     try:
+        raise_if_stream_cancelled(stop)
         yield _stage("connected", started_at=started_at)
-        with ThreadPoolExecutor(
+        universe_executor = ThreadPoolExecutor(
             max_workers=1,
             thread_name_prefix="discovery-universe",
-        ) as executor:
-            universe_future = executor.submit(
+        )
+        try:
+            universe_future = universe_executor.submit(
                 fetch_discovery_fund_universe_cached,
                 limit=20_000,
             )
@@ -126,7 +140,11 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
                 "connected",
                 "正在准备全市场基金样本…",
                 started_at=started_at,
+                stop_event=stop,
             )
+        finally:
+            universe_executor.shutdown(wait=False, cancel_futures=True)
+        raise_if_stream_cancelled(stop)
         decision_clock = capture_decision_clock()
         decision_at = decision_clock.decision_at
         preflight = resolve_portfolio_preflight(
@@ -172,7 +190,8 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
         candidate_selection_audit_v1: dict = {}
         candidate_selection_stages: dict = {}
 
-        with ThreadPoolExecutor(max_workers=3, thread_name_prefix="discovery-prep") as executor:
+        executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="discovery-prep")
+        try:
             flow_future = executor.submit(
                 build_sector_flow_map_for_opportunities,
                 sector_heat,
@@ -193,18 +212,21 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
                 "sector_heat",
                 "正在补充板块资金流…",
                 started_at=started_at,
+                stop_event=stop,
             )
             sector_divergence_by_label = yield from _await_future_with_progress(
                 divergence_future,
                 "sector_heat",
                 "正在校验板块信号历史表现…",
                 started_at=started_at,
+                stop_event=stop,
             )
             sector_position_by_label = yield from _await_future_with_progress(
                 position_future,
                 "sector_heat",
                 "正在计算板块多周期相对强度…",
                 started_at=started_at,
+                stop_event=stop,
             )
             mainline_snapshot = build_mainline_regime_snapshot(
                 sector_heat,
@@ -284,6 +306,7 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
                 "candidate_pool",
                 "正在优选候选基金…",
                 started_at=started_at,
+                stop_event=stop,
             )
             candidate_selection_audit = build_pipeline_candidate_selection_audit_v2(
                 decision_at=decision_at,
@@ -312,7 +335,11 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
                 "news",
                 "正在拉取市场要闻…",
                 started_at=started_at,
+                stop_event=stop,
             )
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
+        raise_if_stream_cancelled(stop)
         announcement_result = prefetch_fund_announcements_compat(
             news_service,
             [str(item.get("fund_code") or "") for item in pool[:12]],
@@ -523,11 +550,12 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
 
         try:
             for entry in iter_with_heartbeat(
-                stream_chat_completion(**stream_arguments),
+                stream_chat_completion(**stream_arguments, stop_event=stop),
                 heartbeat_seconds=LLM_HEARTBEAT_SECONDS,
                 heartbeat_factory=lambda: _stage(
                     "generating", "AI 分析中…", started_at=started_at
                 ),
+                stop_event=stop,
             ):
                 if isinstance(entry, Heartbeat):
                     yield entry.value
@@ -707,6 +735,8 @@ def stream_discovery(request: DiscoveryRequest, *, user_id: int) -> Iterator[dic
             parsed_payload=raw_parsed,
         )
         yield _done(report)
+    except StreamCancelled:
+        return
     except Exception as exc:  # noqa: BLE001
         yield {"type": "error", "message": f"{type(exc).__name__}: {exc}"}
     finally:
@@ -759,12 +789,17 @@ def _await_future_with_progress(
     label: str,
     *,
     started_at: float,
+    stop_event: threading.Event | None = None,
 ) -> Iterator[dict[str, Any]]:
+    next_heartbeat = time.monotonic() + PREP_HEARTBEAT_SECONDS
     while True:
+        raise_if_stream_cancelled(stop_event)
         try:
-            return future.result(timeout=PREP_HEARTBEAT_SECONDS)
+            return future.result(timeout=min(PREP_HEARTBEAT_SECONDS, 0.25))
         except FutureTimeoutError:
-            yield _stage(stage, label, started_at=started_at)
+            if time.monotonic() >= next_heartbeat:
+                yield _stage(stage, label, started_at=started_at)
+                next_heartbeat = time.monotonic() + PREP_HEARTBEAT_SECONDS
 
 
 def _done(report: FundDiscoveryReport) -> dict[str, Any]:

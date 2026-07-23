@@ -17,8 +17,11 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
-import httpx
-
+from app.services.eastmoney_http import (
+    eastmoney_backoff,
+    eastmoney_budgeted,
+    eastmoney_httpx_client,
+)
 from app.services.eastmoney_spot_client import (
     _COMMON_PARAMS,
     _EASTMONEY_HEADERS,
@@ -142,6 +145,7 @@ def _parse_eastmoney_change(data: dict[str, Any]) -> float | None:
     return None
 
 
+@eastmoney_budgeted
 def _fetch_change_via_eastmoney(market: str, code: str) -> float | None:
     params_base = {
         "fields": "f14,f3,f170",
@@ -150,7 +154,7 @@ def _fetch_change_via_eastmoney(market: str, code: str) -> float | None:
         "invt": "2",
     }
     last_error: Exception | None = None
-    with httpx.Client(
+    with eastmoney_httpx_client(
         headers=_EASTMONEY_HEADERS,
         timeout=_PER_SYMBOL_TIMEOUT,
         trust_env=False,
@@ -170,7 +174,7 @@ def _fetch_change_via_eastmoney(market: str, code: str) -> float | None:
                     except Exception as exc:  # noqa: BLE001
                         last_error = exc
             if attempt == 0:
-                time.sleep(0.25)
+                eastmoney_backoff(attempt, base_seconds=0.25)
     if last_error:
         logger.debug("eastmoney stock %s:%s failed: %s", market, code, last_error)
     return None

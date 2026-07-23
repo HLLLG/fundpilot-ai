@@ -93,7 +93,7 @@ def _snapshot(
 
 
 def test_sqlite_migration_creates_append_only_holdings_schema() -> None:
-    assert SCHEMA_VERSION == 18
+    assert SCHEMA_VERSION == 19
     connection = sqlite3.connect(":memory:")
     run_migrations(connection)
 
@@ -141,7 +141,7 @@ def test_mysql_bootstrap_has_equivalent_holdings_schema() -> None:
 
     ensure_mysql_schema(Connection())
 
-    assert MYSQL_SCHEMA_VERSION == 18
+    assert MYSQL_SCHEMA_VERSION == 19
     ddl = next(
         statement
         for statement in statements
@@ -151,6 +151,35 @@ def test_mysql_bootstrap_has_equivalent_holdings_schema() -> None:
     assert "UNIQUE KEY uq_fund_holdings_snapshot_hash (snapshot_hash)" in ddl
     assert "idx_fund_holdings_snapshots_code_pit" in ddl
     assert "idx_fund_holdings_snapshots_master_pit" in ddl
+
+
+def test_mysql_v19_bootstrap_contains_performance_tables_and_indexes() -> None:
+    statements: list[str] = []
+
+    class Cursor:
+        def execute(self, statement: str) -> None:
+            statements.append(statement)
+
+    class Connection:
+        def cursor(self) -> Cursor:
+            return Cursor()
+
+        def commit(self) -> None:
+            pass
+
+    ensure_mysql_schema(Connection())
+    joined = "\n".join(statements)
+
+    assert "summary_payload LONGTEXT NULL" in joined
+    assert "active_dedup_key VARCHAR(64) NULL" in joined
+    assert "uq_analysis_jobs_active_dedup" in joined
+    assert "uq_discovery_jobs_active_dedup" in joined
+    assert "CREATE TABLE IF NOT EXISTS stream_sessions" in joined
+    assert "CREATE TABLE IF NOT EXISTS report_summaries" in joined
+    assert (
+        "CREATE TABLE IF NOT EXISTS fund_discovery_report_summaries"
+        in joined
+    )
 
 
 def test_save_is_idempotent_and_new_hash_appends_revision() -> None:

@@ -54,6 +54,10 @@ class Settings(BaseSettings):
     deepseek_model: str = "deepseek-v4-pro"
     deepseek_model_fast: str = "deepseek-v4-flash"
     deepseek_timeout_seconds: float = 300
+    # End-to-end provider wall-clock budget and first-response watchdog. Set
+    # either to ``0`` only as an explicit rollback.
+    deepseek_request_budget_seconds: float = 180
+    deepseek_first_byte_timeout_seconds: float = 60
     # The provider supports a much larger ceiling, but reserving it for every
     # bounded JSON report increases scheduling latency without improving output.
     deepseek_max_tokens: int = DEEPSEEK_DEFAULT_OUTPUT_TOKENS
@@ -155,6 +159,22 @@ class Settings(BaseSettings):
     background_worker_retry_seconds: float = 5.0
     background_worker_heartbeat_interval_seconds: float = 10.0
     background_worker_heartbeat_stale_seconds: float = 45.0
+    async_job_max_workers: int = 2
+    async_job_queue_capacity: int = 8
+    async_job_heartbeat_interval_seconds: float = 15.0
+    async_job_stale_seconds: float = 900.0
+    async_job_retry_after_seconds: int = 5
+    # Long-running SSE work is admitted before the response starts. ``0``
+    # disables the gate for emergency rollback; production defaults to four
+    # concurrent analysis/chat streams per Uvicorn process.
+    sse_max_concurrent_per_process: int = 4
+    sse_retry_after_seconds: int = 5
+    stream_session_ttl_seconds: int = 7_200
+    eastmoney_call_deadline_seconds: float = 30
+    eastmoney_max_concurrency: int = 8
+    eastmoney_acquire_timeout_seconds: float = 5
+    eastmoney_circuit_failure_threshold: int = 3
+    eastmoney_circuit_cooldown_seconds: float = 15
     # Cross-worker account write serialization. A bounded wait fails with 503
     # instead of allowing two stale read-modify-write operations to overlap.
     portfolio_mutation_lock_timeout_seconds: float = 30.0
