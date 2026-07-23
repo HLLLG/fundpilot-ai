@@ -129,3 +129,22 @@ it("keeps the public password-reset page open for an authenticated session", asy
   expect(screen.getByText("Password reset form")).toBeInTheDocument();
   expect(mocks.replace).not.toHaveBeenCalled();
 });
+
+it.each(["/login/", "/register/", "/reset-password/"])(
+  "keeps trailing-slash public auth path %s open without a session",
+  async (pathname) => {
+    mocks.pathname = pathname;
+    mocks.token = null;
+    render(
+      <AuthProvider>
+        <main>Public auth page</main>
+      </AuthProvider>,
+    );
+
+    await act(async () => {
+      await vi.runAllTimersAsync();
+    });
+    expect(screen.getByText("Public auth page")).toBeInTheDocument();
+    expect(mocks.replace).not.toHaveBeenCalled();
+  },
+);

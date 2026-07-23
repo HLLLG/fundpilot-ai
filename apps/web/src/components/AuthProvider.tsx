@@ -35,6 +35,10 @@ const AUTH_ENTRY_PATHS = new Set(["/login", "/register"]);
 const AUTH_BOOTSTRAP_RETRIES = 5;
 const AUTH_BOOTSTRAP_RETRY_MS = 800;
 
+function normalizeAuthPath(pathname: string): string {
+  return pathname === "/" ? pathname : pathname.replace(/\/+$/, "");
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     window.setTimeout(resolve, ms);
@@ -46,6 +50,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [bootstrapError, setBootstrapError] = useState<string | null>(null);
   const pathname = usePathname();
+  const authPathname = normalizeAuthPath(pathname);
   const router = useRouter();
 
   const refreshUser = useCallback(async () => {
@@ -98,8 +103,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (loading) {
       return;
     }
-    const isPublic = PUBLIC_PATHS.has(pathname);
-    const isLanding = pathname === "/";
+    const isPublic = PUBLIC_PATHS.has(authPathname);
+    const isLanding = authPathname === "/";
     const hasToken = Boolean(getAccessToken());
 
     if (!user && !isPublic && !isLanding && !hasToken) {
@@ -109,10 +114,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     // 已登录用户在根路径本身就会渲染 Dashboard；不要再次 replace("/")，否则会
     // 清掉日报导航使用的 ?report=... 可恢复状态。登录/注册页仍回到工作台。
-    if (user && AUTH_ENTRY_PATHS.has(pathname)) {
+    if (user && AUTH_ENTRY_PATHS.has(authPathname)) {
       router.replace("/");
     }
-  }, [loading, user, pathname, router]);
+  }, [authPathname, loading, pathname, router, user]);
 
   const setSession = useCallback((accessToken: string, nextUser: AuthUser) => {
     saveAccessToken(accessToken);
@@ -144,7 +149,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     router.replace("/");
   };
 
-  if (loading && !PUBLIC_PATHS.has(pathname)) {
+  if (loading && !PUBLIC_PATHS.has(authPathname)) {
     return (
       <main className="premium-bg flex min-h-screen items-center justify-center px-4">
         <div className="section-card flex items-center gap-3 px-5 py-4 text-sm text-[var(--muted)]" role="status">
@@ -156,7 +161,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   if (!user && getAccessToken() && bootstrapError) {
-    if (PUBLIC_PATHS.has(pathname)) {
+    if (PUBLIC_PATHS.has(authPathname)) {
       return (
         <AuthContext.Provider value={value}>
           <div
@@ -196,7 +201,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     );
   }
 
-  if (!user && !PUBLIC_PATHS.has(pathname) && !getAccessToken()) {
+  if (!user && !PUBLIC_PATHS.has(authPathname) && !getAccessToken()) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[var(--background)] text-sm text-[var(--muted)]">
         跳转登录…
