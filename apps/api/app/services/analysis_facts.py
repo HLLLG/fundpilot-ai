@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from concurrent.futures import Executor, TimeoutError as FutureTimeoutError
 from collections.abc import Mapping
 from datetime import datetime
+import threading
+import time
 from typing import Any
 
 from app.models import (
@@ -40,6 +42,8 @@ from app.services.analysis_prompt import (
     COMPOSITE_EVIDENCE_INSTRUCTION,
     IC_EVIDENCE_INSTRUCTION,
 )
+from app.services.shared_executors import get_shared_io_executor
+from app.services.streaming_heartbeat import raise_if_stream_cancelled
 from app.services.report_sector_opportunity import build_holding_sector_opportunity_context
 from app.services.sector_signal_context import (
     build_signal_backtest_context,
@@ -155,7 +159,7 @@ def _run_budgeted_enhancement(
             return func()
         return run_with_request_user(user_id, func)
 
-    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="analysis-facts-budget")
+    executor = get_shared_io_executor()
     future = executor.submit(run)
     try:
         return future.result(timeout=timeout_seconds)
@@ -165,10 +169,10 @@ def _run_budgeted_enhancement(
     except Exception:  # noqa: BLE001 - enhancement facts are best-effort
         return fallback
     finally:
-        executor.shutdown(wait=False, cancel_futures=True)
+        future.cancel()
 
 
-def _submit_enhancement(executor: ThreadPoolExecutor, func):
+def _submit_enhancement(executor: Executor, func):
     user_id = try_get_request_user_id()
 
     def run():
@@ -179,13 +183,27 @@ def _submit_enhancement(executor: ThreadPoolExecutor, func):
     return executor.submit(run)
 
 
-def _enhancement_result(future, *, timeout_seconds: float, fallback: Any) -> Any:
+def _enhancement_result(
+    future,
+    *,
+    timeout_seconds: float,
+    fallback: Any,
+    stop_event: threading.Event | None = None,
+) -> Any:
+    deadline = time.monotonic() + timeout_seconds
     try:
-        return future.result(timeout=timeout_seconds)
-    except FutureTimeoutError:
-        future.cancel()
-        return fallback
+        while True:
+            raise_if_stream_cancelled(stop_event)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                future.cancel()
+                return fallback
+            try:
+                return future.result(timeout=min(0.25, remaining))
+            except FutureTimeoutError:
+                continue
     except Exception:  # noqa: BLE001 - enhancement facts are best-effort
+        raise_if_stream_cancelled(stop_event)
         return fallback
 
 
@@ -378,7 +396,9 @@ def build_analysis_facts(
     tradeability_profiles: Mapping[str, Mapping[str, Any]] | None = None,
     profiles_snapshot: ProfilesSnapshotArg = PROFILES_NOT_PROVIDED,
     matched_profiles: MatchedProfilesArg = PROFILES_NOT_PROVIDED,
+    stop_event: threading.Event | None = None,
 ) -> dict:
+    raise_if_stream_cancelled(stop_event)
     resolved_profiles = resolve_matched_profiles(
         holdings,
         profiles_snapshot=profiles_snapshot,
@@ -420,24 +440,29 @@ def build_analysis_facts(
     stock_connect_flow = None
     market_breadth = None
     if budget_enhancements:
-        executor = ThreadPoolExecutor(max_workers=6, thread_name_prefix="analysis-facts-budget")
+        executor = get_shared_io_executor()
+        enhancement_futures = []
         try:
             signal_future = _submit_enhancement(
                 executor,
                 lambda: build_signal_backtest_context(sector_labels),
             )
+            enhancement_futures.append(signal_future)
             guard_future = _submit_enhancement(
                 executor,
                 lambda: resolve_signal_guard_policy(holdings),
             )
+            enhancement_futures.append(guard_future)
             intraday_future = _submit_enhancement(
                 executor,
                 lambda: _build_sector_intraday_map(quote_labels),
             )
+            enhancement_futures.append(intraday_future)
             stock_connect_flow_future = _submit_enhancement(
                 executor,
                 lambda: build_stock_connect_flow_context(trade_date=effective_trade_date),
             )
+            enhancement_futures.append(stock_connect_flow_future)
             sector_opportunity_future = _submit_enhancement(
                 executor,
                 lambda: build_holding_sector_opportunity_context(
@@ -445,42 +470,51 @@ def build_analysis_facts(
                     trade_date=effective_trade_date,
                 ),
             )
+            enhancement_futures.append(sector_opportunity_future)
             market_breadth_future = _submit_enhancement(
                 executor,
                 lambda: build_market_breadth_signal(effective_trade_date),
             )
+            enhancement_futures.append(market_breadth_future)
             signal_backtest = _enhancement_result(
                 signal_future,
                 timeout_seconds=SIGNAL_BACKTEST_TIMEOUT_SECONDS,
                 fallback=_signal_backtest_unavailable("timeout"),
+                stop_event=stop_event,
             )
             guard_policy = _enhancement_result(
                 guard_future,
                 timeout_seconds=GUARD_POLICY_TIMEOUT_SECONDS,
                 fallback=_guard_policy_unavailable(),
+                stop_event=stop_event,
             )
             intraday_map = _enhancement_result(
                 intraday_future,
                 timeout_seconds=SECTOR_INTRADAY_TIMEOUT_SECONDS,
                 fallback={},
+                stop_event=stop_event,
             )
             stock_connect_flow = _enhancement_result(
                 stock_connect_flow_future,
                 timeout_seconds=STOCK_CONNECT_FLOW_TIMEOUT_SECONDS,
                 fallback=_stock_connect_flow_unavailable("timeout"),
+                stop_event=stop_event,
             )
             sector_opportunity = _enhancement_result(
                 sector_opportunity_future,
                 timeout_seconds=SECTOR_OPPORTUNITY_TIMEOUT_SECONDS,
                 fallback=_sector_opportunity_unavailable("timeout", holdings),
+                stop_event=stop_event,
             )
             market_breadth = _enhancement_result(
                 market_breadth_future,
                 timeout_seconds=MARKET_BREADTH_TIMEOUT_SECONDS,
                 fallback=_market_breadth_unavailable("timeout"),
+                stop_event=stop_event,
             )
         finally:
-            executor.shutdown(wait=False, cancel_futures=True)
+            for future in enhancement_futures:
+                future.cancel()
     else:
         signal_backtest = build_signal_backtest_context(sector_labels)
         guard_policy = resolve_signal_guard_policy(holdings)

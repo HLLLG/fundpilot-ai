@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import logging
 import time
+from concurrent.futures import FIRST_COMPLETED, wait
 from dataclasses import dataclass
 from datetime import date
+from typing import Callable
 
 from app.config import get_settings
 from app.services.akshare_spot_client import fetch_boards_via_akshare
@@ -11,6 +13,12 @@ from app.services.eastmoney_spot_client import fetch_eastmoney_boards
 from app.services.sector_quote_browser_provider import fetch_boards_via_browser_command
 from app.services.sector_quote_cache import get_spot_snapshot, get_spot_snapshot_any_age, save_spot_snapshot
 from app.services.sector_quote_relay_provider import fetch_boards_via_relay
+from app.services.shared_executors import get_shared_io_executor
+from app.services.cache_policy import jittered_ttl
+from app.services.cross_process_lock import (
+    CrossProcessLockError,
+    cross_process_lock,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -101,8 +109,11 @@ def fetch_spot_boards_result(
     if stale_day is not None and not _boards_cacheable(stale_day):
         stale_day = None
 
+    cached = get_spot_snapshot(
+        cache_key,
+        ttl_seconds=_jittered_ttl(cache_key, ttl),
+    )
     if not force_refresh:
-        cached = get_spot_snapshot(cache_key, ttl_seconds=ttl)
         if cached is not None and not _boards_cacheable(cached):
             cached = None
         if cached is not None:
@@ -112,9 +123,48 @@ def fetch_spot_boards_result(
                 elapsed_seconds=_elapsed(start_time),
             )
 
-    live = _fetch_live_boards(timeout_seconds=timeout_seconds)
+    try:
+        with cross_process_lock(
+            f"sector-spot-refresh:{today}",
+            timeout_seconds=max(
+                0.5,
+                min(5.0, float(timeout_seconds or 5.0)),
+            ),
+        ):
+            # On a cold miss another process may have populated the snapshot
+            # while this process waited for the advisory lock.
+            if cached is None:
+                filled = get_spot_snapshot(
+                    cache_key,
+                    ttl_seconds=_jittered_ttl(cache_key, ttl),
+                )
+                if filled is not None and _boards_cacheable(filled):
+                    return SpotBoardFetchResult(
+                        boards=filled,
+                        provider_path="singleflight_cache",
+                        live_attempted=False,
+                        elapsed_seconds=_elapsed(start_time),
+                    )
+            live = _fetch_live_boards(timeout_seconds=timeout_seconds)
+            if any(live.boards.values()) and _boards_cacheable(live.boards):
+                save_spot_snapshot(cache_key, live.boards)
+    except CrossProcessLockError as exc:
+        logger.info("sector spot refresh single-flight unavailable: %s", exc)
+        if stale_day is not None:
+            return SpotBoardFetchResult(
+                boards=stale_day,
+                provider_path="stale_cache_lock_busy",
+                from_stale_cache=True,
+                live_attempted=False,
+                elapsed_seconds=_elapsed(start_time),
+            )
+        live = SpotBoardFetchResult(
+            boards=_empty_boards(),
+            provider_path="refresh_lock_busy",
+            live_attempted=False,
+            elapsed_seconds=_elapsed(start_time),
+        )
     if any(live.boards.values()) and _boards_cacheable(live.boards):
-        save_spot_snapshot(cache_key, live.boards)
         return SpotBoardFetchResult(
             boards=live.boards,
             provider_path=live.provider_path,
@@ -144,56 +194,24 @@ def _fetch_live_boards(*, timeout_seconds: float | None = None) -> SpotBoardFetc
     """Fetch real board data with a pluggable provider chain."""
     boards = _empty_boards()
     start_time = time.time()
-
-    try:
-        if _budget_exhausted(start_time, timeout_seconds):
-            logger.warning("_fetch_live_boards timeout before eastmoney attempt")
-            return SpotBoardFetchResult(
-                boards=boards,
-                provider_path="empty",
-                live_attempted=True,
-                elapsed_seconds=_elapsed(start_time),
-            )
-
-        boards = fetch_eastmoney_boards(**_eastmoney_call_kwargs(timeout_seconds))
-        if any(boards.values()):
-            logger.info("eastmoney succeeded")
+    provider_path, fast_boards = _race_fast_board_providers(
+        start_time=start_time,
+        timeout_seconds=timeout_seconds,
+    )
+    if fast_boards is not None:
+        boards = fast_boards
+        if provider_path == "eastmoney_live":
             boards = _fill_missing_boards_from_akshare(
                 boards,
                 timeout_seconds=timeout_seconds,
                 start_time=start_time,
             )
-            return SpotBoardFetchResult(
-                boards=boards,
-                provider_path="eastmoney_live",
-                live_attempted=True,
-                elapsed_seconds=_elapsed(start_time),
-            )
-    except Exception as exc:
-        logger.warning("fetch_eastmoney_boards failed: %s", exc)
-
-    relay_boards = fetch_boards_via_relay(timeout_seconds=_remaining_budget(start_time, timeout_seconds))
-    if relay_boards and any(relay_boards.values()):
-        logger.info("relay sector provider succeeded")
         return SpotBoardFetchResult(
-            boards=relay_boards,
-            provider_path="relay_live",
+            boards=boards,
+            provider_path=provider_path,
             live_attempted=True,
             elapsed_seconds=_elapsed(start_time),
         )
-
-    if _has_browser_budget(start_time, timeout_seconds):
-        browser_boards = fetch_boards_via_browser_command(
-            timeout_seconds=_remaining_budget(start_time, timeout_seconds),
-        )
-        if browser_boards and any(browser_boards.values()):
-            logger.info("browser sector command succeeded")
-            return SpotBoardFetchResult(
-                boards=browser_boards,
-                provider_path="browser_live",
-                live_attempted=True,
-                elapsed_seconds=_elapsed(start_time),
-            )
 
     if not _has_akshare_budget(timeout_seconds):
         logger.info("all fast providers failed and refresh budget exhausted; skip AkShare fallback")
@@ -229,6 +247,92 @@ def _fetch_live_boards(*, timeout_seconds: float | None = None) -> SpotBoardFetc
         live_attempted=True,
         elapsed_seconds=_elapsed(start_time),
     )
+
+
+def _race_fast_board_providers(
+    *,
+    start_time: float,
+    timeout_seconds: float | None,
+) -> tuple[str, dict[str, SpotBoard] | None]:
+    """Race configured fast paths and accept the first cacheable snapshot."""
+
+    if _budget_exhausted(start_time, timeout_seconds):
+        return "empty", None
+    settings = get_settings()
+    calls: list[tuple[str, Callable[[], object]]] = [
+        (
+            "eastmoney_live",
+            lambda: fetch_eastmoney_boards(
+                **_eastmoney_call_kwargs(timeout_seconds)
+            ),
+        )
+    ]
+    if settings.sector_quotes_relay_url:
+        calls.append(
+            (
+                "relay_live",
+                lambda: fetch_boards_via_relay(
+                    timeout_seconds=_remaining_budget(
+                        start_time,
+                        timeout_seconds,
+                    )
+                ),
+            )
+        )
+    if (
+        settings.sector_quotes_browser_enabled
+        and settings.sector_quotes_browser_command
+        and _has_browser_budget(start_time, timeout_seconds)
+    ):
+        calls.append(
+            (
+                "browser_live",
+                lambda: fetch_boards_via_browser_command(
+                    timeout_seconds=_remaining_budget(
+                        start_time,
+                        timeout_seconds,
+                    ),
+                ),
+            )
+        )
+
+    executor = get_shared_io_executor()
+    pending = {
+        executor.submit(call): provider_path
+        for provider_path, call in calls
+    }
+    try:
+        while pending:
+            remaining = _remaining_budget(start_time, timeout_seconds)
+            if timeout_seconds is not None and (
+                remaining is None or remaining <= 0.5
+            ):
+                break
+            done, _ = wait(
+                pending,
+                timeout=remaining,
+                return_when=FIRST_COMPLETED,
+            )
+            if not done:
+                break
+            for future in done:
+                provider_path = pending.pop(future)
+                try:
+                    candidate = future.result()
+                except Exception as exc:
+                    logger.info("%s sector provider failed: %s", provider_path, exc)
+                    continue
+                if (
+                    isinstance(candidate, dict)
+                    and any(candidate.values())
+                    and _boards_cacheable(candidate)
+                ):
+                    logger.info("%s sector provider won fast race", provider_path)
+                    return provider_path, candidate
+        return "empty", None
+    finally:
+        for future in pending:
+            future.cancel()
 
 
 def _fill_missing_boards_from_akshare(
@@ -274,6 +378,10 @@ def _boards_cacheable(boards: dict[str, SpotBoard]) -> bool:
 
 def _board_entry_count(boards: dict[str, SpotBoard]) -> int:
     return sum(len(board or {}) for board in boards.values())
+
+
+def _jittered_ttl(cache_key: str, ttl_seconds: float) -> float:
+    return max(1.0, jittered_ttl(cache_key, ttl_seconds))
 
 
 def _eastmoney_call_kwargs(timeout_seconds: float | None) -> dict[str, float | int]:

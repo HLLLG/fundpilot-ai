@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from collections.abc import Iterator
 from copy import deepcopy
 import logging
@@ -94,6 +94,7 @@ from app.services.decision_data_evidence import (
 from app.services.report_pipeline import build_pipeline_metadata
 from app.services.decision_clock import capture_decision_clock
 from app.services.decision_time_call import (
+    call_with_optional_stop_event,
     call_with_optional_time,
     prefetch_fund_announcements_compat,
 )
@@ -103,6 +104,7 @@ from app.services.candidate_selection_audit import (
     build_pipeline_candidate_selection_audit_v2,
 )
 from app.services.trading_session import build_trading_session
+from app.services.shared_executors import get_shared_io_executor
 
 logger = logging.getLogger(__name__)
 PREP_HEARTBEAT_SECONDS = 1.0
@@ -126,10 +128,7 @@ def stream_discovery(
     try:
         raise_if_stream_cancelled(stop)
         yield _stage("connected", started_at=started_at)
-        universe_executor = ThreadPoolExecutor(
-            max_workers=1,
-            thread_name_prefix="discovery-universe",
-        )
+        universe_executor = get_shared_io_executor()
         try:
             universe_future = universe_executor.submit(
                 fetch_discovery_fund_universe_cached,
@@ -143,7 +142,7 @@ def stream_discovery(
                 stop_event=stop,
             )
         finally:
-            universe_executor.shutdown(wait=False, cancel_futures=True)
+            universe_future.cancel()
         raise_if_stream_cancelled(stop)
         decision_clock = capture_decision_clock()
         decision_at = decision_clock.decision_at
@@ -190,7 +189,8 @@ def stream_discovery(
         candidate_selection_audit_v1: dict = {}
         candidate_selection_stages: dict = {}
 
-        executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="discovery-prep")
+        executor = get_shared_io_executor()
+        prep_futures: list[Any] = []
         try:
             flow_future = executor.submit(
                 build_sector_flow_map_for_opportunities,
@@ -198,15 +198,18 @@ def stream_discovery(
                 flow_labels,
                 trade_date=effective_trade_date,
             )
+            prep_futures.append(flow_future)
             divergence_future = executor.submit(
                 build_sector_divergence_map_for_opportunities,
                 flow_labels,
             )
+            prep_futures.append(divergence_future)
             position_future = executor.submit(
                 build_sector_position_map_for_opportunities,
                 flow_labels,
                 as_of_trade_date=effective_trade_date,
             )
+            prep_futures.append(position_future)
             sector_flow_by_label = yield from _await_future_with_progress(
                 flow_future,
                 "sector_heat",
@@ -264,17 +267,21 @@ def stream_discovery(
                     decision_at=decision_at,
                 ),
             )
+            prep_futures.append(news_future)
             yield _stage("news", started_at=started_at)
             yield _stage("candidate_pool", started_at=started_at)
             pool_future = executor.submit(
                 run_with_request_user,
                 user_id,
                 lambda: finalize_candidate_pool(
-                    call_with_optional_time(
+                    call_with_optional_stop_event(
+                        call_with_optional_time,
                         enrich_candidates,
-                        call_with_optional_time(
+                        call_with_optional_stop_event(
+                            call_with_optional_time,
                             build_candidate_pool,
                             target_sectors,
+                            stop_event=stop,
                             keyword="decision_at",
                             decision_at=decision_at,
                             exclude_codes=held_codes,
@@ -286,6 +293,7 @@ def stream_discovery(
                             sector_opportunities=sector_opportunities,
                             recall_audit_sink=recall_audit,
                         ),
+                        stop_event=stop,
                         keyword="decision_at",
                         decision_at=decision_at,
                     ),
@@ -301,6 +309,7 @@ def stream_discovery(
                     stage_audit_sink=candidate_selection_stages,
                 ),
             )
+            prep_futures.append(pool_future)
             pool = yield from _await_future_with_progress(
                 pool_future,
                 "candidate_pool",
@@ -338,7 +347,8 @@ def stream_discovery(
                 stop_event=stop,
             )
         finally:
-            executor.shutdown(wait=False, cancel_futures=True)
+            for future in prep_futures:
+                future.cancel()
         raise_if_stream_cancelled(stop)
         announcement_result = prefetch_fund_announcements_compat(
             news_service,
@@ -401,6 +411,7 @@ def stream_discovery(
             mainline_snapshot=mainline_snapshot,
             budget_enhancements=True,
             decision_at=decision_at,
+            stop_event=stop,
         )
         discovery_facts["fund_announcements"] = announcement_meta
         discovery_facts["candidate_selection_audit"] = candidate_selection_audit
@@ -682,6 +693,7 @@ def stream_discovery(
             candidate_pool=pool,
             discovery_facts=discovery_facts,
             analysis_mode=request.analysis_mode,
+            stop_event=stop,
         )
         prompt_contract = build_discovery_prompt_provenance(
             role_prompt=request.system_role_prompt,

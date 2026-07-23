@@ -1,4 +1,3 @@
-import { getAccessToken } from "@/lib/auth";
 import type {
   DiscoveryRecommendation,
   DiscoveryScanMode,
@@ -9,20 +8,12 @@ import type {
   InvestorProfile,
   SelectionStrategy,
 } from "@/lib/api";
+import { apiFetch } from "@/lib/api/core";
 import { appendStreamTokenBuffer } from "@/lib/streamApi";
 
 export { streamTimestamp } from "@/lib/streamApi";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
-
-async function apiFetch(input: string, init?: RequestInit): Promise<Response> {
-  const headers = new Headers(init?.headers);
-  const token = getAccessToken();
-  if (token) {
-    headers.set("Authorization", `Bearer ${token}`);
-  }
-  return fetch(input, { ...init, headers });
-}
 
 export type DiscoveryPartialField =
   | "title"
@@ -187,6 +178,7 @@ export async function streamDiscovery(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(discoveryPayload(holdings, profile, options)),
       signal: mergeAbortSignals(options?.signal, connectAbort.signal),
+      timeoutMs: 0,
     });
   } catch (error) {
     if (connectAbort.signal.aborted && !options?.signal?.aborted) {

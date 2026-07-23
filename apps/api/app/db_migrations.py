@@ -11,7 +11,7 @@ from app.services.decision_quality_rollout import (
 )
 
 
-SCHEMA_VERSION = 19
+SCHEMA_VERSION = 20
 
 # 迁移在应用/后台线程首次建立连接时触发（例如板块快照刷新会 daemon 线程预取资金流历史，
 # 与主线程几乎同时首次打开 sqlite 连接）。同进程内多个线程各自用独立 connection 对同一
@@ -1655,6 +1655,20 @@ def _migrate_performance_schema_v19(connection: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_performance_schema_v20(connection: sqlite3.Connection) -> None:
+    """Cover the pending transaction filter and deterministic sort."""
+
+    if _table_exists(connection, "fund_transactions"):
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_fund_tx_pending_confirm
+            ON fund_transactions (
+                userId, status, confirm_date, trade_time
+            )
+            """
+        )
+
+
 def run_migrations(connection: sqlite3.Connection) -> None:
     with _MIGRATION_LOCK:
         _run_migrations_locked(connection)
@@ -1664,6 +1678,7 @@ def _run_migrations_locked(connection: sqlite3.Connection) -> None:
     version = _get_schema_version(connection)
     if version >= SCHEMA_VERSION:
         _migrate_performance_schema_v19(connection)
+        _migrate_performance_schema_v20(connection)
         _migrate_fund_primary_sectors_global(connection)
         _migrate_factor_ic_snapshots(connection)
         _migrate_factor_ic_universe_snapshots(connection)
@@ -1745,6 +1760,7 @@ def _run_migrations_locked(connection: sqlite3.Connection) -> None:
     _migrate_decision_quality_rollout(connection, initialize=version < 14)
     _migrate_prompt_shadow_operations(connection)
     _migrate_performance_schema_v19(connection)
+    _migrate_performance_schema_v20(connection)
 
     _ensure_migration_user(connection)
     _migrate_admin_user_management(connection)

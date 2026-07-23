@@ -47,7 +47,13 @@ export function RolePromptEditor({ value, onChange }: RolePromptEditorProps) {
           className="role-prompt-markdown max-h-72 overflow-y-auto rounded-lg border border-slate-100 bg-gradient-to-b from-slate-50/90 to-white px-3 py-2.5 [&_.chat-markdown]:text-xs [&_.chat-markdown_h4]:text-xs [&_.chat-markdown_h5]:text-[11px] [&_.chat-markdown_li]:leading-6 [&_.chat-markdown_p]:mb-2 [&_.chat-markdown_p]:leading-6 [&_.chat-markdown_table]:text-[11px] [&_.chat-markdown_ul]:mb-2"
           data-testid="analysis-role-prompt-preview"
         >
-          <ChatMarkdown content={value || "_未添加分析偏好；系统将使用内置安全契约。_"} />
+          {value ? (
+            <ChatMarkdown content={value} />
+          ) : (
+            <p className="text-xs italic text-slate-500">
+              未添加分析偏好；系统将使用内置安全契约。
+            </p>
+          )}
         </div>
       ) : (
         <label className="block">

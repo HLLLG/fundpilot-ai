@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import logging
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from threading import RLock, Thread
 
+from app.services.cache_policy import jittered_ttl
+from app.services.cross_process_lock import CrossProcessLockError, cross_process_lock
 from app.services.sector_quote_cache import (
     get_spot_snapshot,
     get_spot_snapshot_any_age,
     save_spot_snapshot,
 )
+from app.services.shared_executors import get_shared_io_executor
 
 _UNIVERSE_CACHE_KEY = "fund:discovery_universe:v4:pit:20000"
 _PROFILE_CACHE_KEY = "fund:discovery_profiles:v5:tracking-reference"
@@ -42,7 +44,10 @@ def fetch_discovery_fund_universe_cached(*, limit: int = 20_000) -> list[dict]:
 
     cached = get_spot_snapshot(
         _UNIVERSE_CACHE_KEY,
-        ttl_seconds=_UNIVERSE_TTL_SECONDS,
+        ttl_seconds=jittered_ttl(
+            _UNIVERSE_CACHE_KEY,
+            _UNIVERSE_TTL_SECONDS,
+        ),
     )
     if _universe_snapshot_is_fresh(cached):
         return _universe_rows_with_snapshot_contract(cached)
@@ -85,6 +90,8 @@ def _universe_snapshot_is_fresh(
         return False
     current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     age_seconds = (current - captured_at.astimezone(timezone.utc)).total_seconds()
+    # Snapshot freshness is part of the point-in-time evidence contract and
+    # must stay deterministic. Jitter only controls cache refresh timing.
     return 0 <= age_seconds <= _UNIVERSE_TTL_SECONDS
 
 
@@ -105,30 +112,55 @@ def _refresh_discovery_universe_blocking(
     """Refresh the catalogue once and return the frozen row contract."""
 
     with _UNIVERSE_FETCH_LOCK:
-        if not force:
-            cached = get_spot_snapshot(
-                _UNIVERSE_CACHE_KEY,
-                ttl_seconds=_UNIVERSE_TTL_SECONDS,
-            )
-            if _valid_universe_snapshot(cached):
-                return _universe_rows_with_snapshot_contract(cached)
-
-        from app.services.akshare_subprocess import fetch_open_fund_universe
-
         try:
-            rows = fetch_open_fund_universe(limit=limit, timeout_seconds=55) or []
-        except Exception:  # noqa: BLE001 - stale fallback is intentional here.
-            logger.exception("discovery fund universe refresh failed")
-            rows = []
-        if rows:
-            snapshot = _build_universe_snapshot(rows)
-            save_spot_snapshot(_UNIVERSE_CACHE_KEY, snapshot)
-            return _universe_rows_with_snapshot_contract(snapshot)
+            with cross_process_lock(
+                f"discovery-universe-refresh:{_UNIVERSE_CACHE_KEY}",
+                timeout_seconds=3.0,
+            ):
+                return _refresh_discovery_universe_under_lock(
+                    limit=limit,
+                    force=force,
+                )
+        except CrossProcessLockError:
+            stale = get_spot_snapshot_any_age(_UNIVERSE_CACHE_KEY)
+            if _valid_universe_snapshot(stale):
+                return _universe_rows_with_snapshot_contract(stale)
+            return []
 
-        stale = get_spot_snapshot_any_age(_UNIVERSE_CACHE_KEY)
-        if _valid_universe_snapshot(stale):
-            return _universe_rows_with_snapshot_contract(stale)
-        return []
+
+def _refresh_discovery_universe_under_lock(
+    *,
+    limit: int,
+    force: bool,
+) -> list[dict]:
+    # A different worker may have refreshed while this worker waited. Capture
+    # time, rather than the in-memory promotion time, is the authority.
+    cached = get_spot_snapshot(
+        _UNIVERSE_CACHE_KEY,
+        ttl_seconds=jittered_ttl(
+            _UNIVERSE_CACHE_KEY,
+            _UNIVERSE_TTL_SECONDS,
+        ),
+    )
+    if not force and _universe_snapshot_is_fresh(cached):
+        return _universe_rows_with_snapshot_contract(cached)
+
+    from app.services.akshare_subprocess import fetch_open_fund_universe
+
+    try:
+        rows = fetch_open_fund_universe(limit=limit, timeout_seconds=55) or []
+    except Exception:  # noqa: BLE001 - stale fallback is intentional here.
+        logger.exception("discovery fund universe refresh failed")
+        rows = []
+    if rows:
+        snapshot = _build_universe_snapshot(rows)
+        save_spot_snapshot(_UNIVERSE_CACHE_KEY, snapshot)
+        return _universe_rows_with_snapshot_contract(snapshot)
+
+    stale = get_spot_snapshot_any_age(_UNIVERSE_CACHE_KEY)
+    if _valid_universe_snapshot(stale):
+        return _universe_rows_with_snapshot_contract(stale)
+    return []
 
 
 def _schedule_discovery_universe_refresh(*, limit: int) -> None:
@@ -207,7 +239,29 @@ def fetch_fund_research_profiles_cached(fund_codes: list[str]) -> dict[str, dict
     # 生产 Lighthouse 为单 worker；该锁同时防止同进程并发扫描重复拉源或以旧整包
     # 覆盖新整包。缓存仍保存在共享数据库中，重启后继续可用。
     with _PROFILE_REFRESH_LOCK:
-        return _fetch_fund_research_profiles_cached_locked(fund_codes)
+        try:
+            with cross_process_lock(
+                f"discovery-profile-refresh:{_PROFILE_CACHE_KEY}",
+                timeout_seconds=3.0,
+            ):
+                return _fetch_fund_research_profiles_cached_locked(fund_codes)
+        except CrossProcessLockError:
+            return _cached_profile_rows(fund_codes)
+
+
+def _cached_profile_rows(fund_codes: list[str]) -> dict[str, dict]:
+    requested = {
+        str(code).strip().zfill(6)
+        for code in fund_codes
+        if str(code).strip().isdigit()
+    }
+    payload = get_spot_snapshot_any_age(_PROFILE_CACHE_KEY)
+    return {
+        code: dict(row)
+        for row in ((payload or {}).get("rows") or [])
+        if isinstance(row, dict)
+        and (code := str(row.get("fund_code") or "").zfill(6)) in requested
+    }
 
 
 def _fetch_fund_research_profiles_cached_locked(fund_codes: list[str]) -> dict[str, dict]:
@@ -222,7 +276,10 @@ def _fetch_fund_research_profiles_cached_locked(fund_codes: list[str]) -> dict[s
 
     fresh = get_spot_snapshot(
         _PROFILE_CACHE_KEY,
-        ttl_seconds=_PROFILE_TTL_SECONDS,
+        ttl_seconds=jittered_ttl(
+            _PROFILE_CACHE_KEY,
+            _PROFILE_TTL_SECONDS,
+        ),
     )
     stale = get_spot_snapshot_any_age(_PROFILE_CACHE_KEY)
     cache_is_fresh = isinstance(fresh, dict)
@@ -262,25 +319,28 @@ def _fetch_fund_research_profiles_cached_locked(fund_codes: list[str]) -> dict[s
 
         # 两个源相互独立。并行拉取把冷缓存延迟限制在较慢的一方，同时避免
         # Sina 全表请求暂时失败时，整批候选都丢失规模和经理字段。
-        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="fund-profile-source") as executor:
-            sina_future = executor.submit(
-                fetch_open_fund_research_profiles,
-                refresh_codes,
-                timeout_seconds=35,
-            )
-            xq_future = executor.submit(
-                fetch_fund_basic_profiles_xq,
-                refresh_codes,
-                timeout_seconds=35,
-            )
-            try:
-                sina_rows = sina_future.result() or []
-            except Exception:  # noqa: BLE001 - provider fallback is intentional
-                sina_rows = []
-            try:
-                xq_rows = xq_future.result() or []
-            except Exception:  # noqa: BLE001 - provider fallback is intentional
-                xq_rows = []
+        executor = get_shared_io_executor()
+        sina_future = executor.submit(
+            fetch_open_fund_research_profiles,
+            refresh_codes,
+            timeout_seconds=35,
+        )
+        xq_future = executor.submit(
+            fetch_fund_basic_profiles_xq,
+            refresh_codes,
+            timeout_seconds=35,
+        )
+        try:
+            sina_rows = sina_future.result() or []
+        except Exception:  # noqa: BLE001 - provider fallback is intentional
+            sina_rows = []
+        try:
+            xq_rows = xq_future.result() or []
+        except Exception:  # noqa: BLE001 - provider fallback is intentional
+            xq_rows = []
+        finally:
+            sina_future.cancel()
+            xq_future.cancel()
 
         sina_by_code = _profile_rows_by_code(sina_rows, requested_codes=codes)
         xq_by_code = _profile_rows_by_code(xq_rows, requested_codes=codes)

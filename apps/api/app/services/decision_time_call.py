@@ -30,6 +30,23 @@ def call_with_optional_time(
         return function(*args, **kwargs)
 
 
+def call_with_optional_stop_event(
+    function: Callable[..., Any],
+    *args: Any,
+    stop_event: object,
+    **kwargs: Any,
+) -> Any:
+    """Pass cancellation while tolerating legacy adapters without the kwarg."""
+
+    try:
+        return function(*args, **kwargs, stop_event=stop_event)
+    except TypeError as exc:
+        message = str(exc)
+        if "unexpected keyword argument" not in message or "stop_event" not in message:
+            raise
+        return function(*args, **kwargs)
+
+
 def empty_announcement_result(decision_at: datetime) -> dict[str, Any]:
     return {
         "items": [],

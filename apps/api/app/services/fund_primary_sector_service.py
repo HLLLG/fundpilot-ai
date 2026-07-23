@@ -10,9 +10,9 @@ from typing import Any, Iterable, Mapping
 
 from app.database import (
     get_fund_primary_sector,
+    get_fund_primary_sectors_by_codes,
     get_fund_primary_sectors_global_by_codes,
     get_fund_profile_by_code,
-    list_fund_primary_sectors,
     save_fund_primary_sector,
 )
 from app.models import FundProfile, Holding
@@ -95,15 +95,16 @@ class PrimarySectorBatchContext:
             if str(raw or "").strip()
         }
         normalized_codes.discard("000000")
-        normalized_codes = {code for code in normalized_codes if len(code) == 6}
+        normalized_codes = {
+            code for code in normalized_codes if len(code) == 6 and code.isdigit()
+        }
 
         user_rows_by_code: dict[str, dict] = {}
         if normalized_codes:
             try:
-                for row in list_fund_primary_sectors():
-                    code = str(row.get("fund_code") or "").strip().zfill(6)
-                    if code in normalized_codes:
-                        user_rows_by_code[code] = row
+                user_rows_by_code = get_fund_primary_sectors_by_codes(
+                    normalized_codes
+                )
             except RuntimeError:
                 # Background jobs may not have a request-scoped user database.
                 pass

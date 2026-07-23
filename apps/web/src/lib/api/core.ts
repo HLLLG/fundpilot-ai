@@ -15,6 +15,13 @@ export class ApiError extends Error {
   }
 }
 
+export type ApiFetchInit = RequestInit & {
+  /** Set to 0 only for an explicitly long-lived transport such as SSE. */
+  timeoutMs?: number;
+};
+
+const DEFAULT_API_TIMEOUT_MS = 60_000;
+
 
 function isAuthEntrypoint(url: string): boolean {
   return url.includes("/api/auth/login") || url.includes("/api/auth/register");
@@ -34,13 +41,51 @@ function redirectToLogin(): void {
 }
 
 
-export async function apiFetch(input: string, init?: RequestInit): Promise<Response> {
+export async function apiFetch(input: string, init?: ApiFetchInit): Promise<Response> {
   const headers = new Headers(init?.headers);
   const token = getAccessToken();
   if (token) {
     headers.set("Authorization", `Bearer ${token}`);
   }
-  const response = await fetch(input, { ...init, headers });
+  const { timeoutMs = DEFAULT_API_TIMEOUT_MS, signal: upstreamSignal, ...requestInit } =
+    init ?? {};
+  const controller = timeoutMs > 0 ? new AbortController() : null;
+  let timedOut = false;
+  const forwardAbort = () => controller?.abort(upstreamSignal?.reason);
+  if (controller) {
+    if (upstreamSignal?.aborted) {
+      forwardAbort();
+    } else {
+      upstreamSignal?.addEventListener("abort", forwardAbort, { once: true });
+    }
+  }
+  const timeoutId =
+    timeoutMs > 0
+      ? globalThis.setTimeout(() => {
+          timedOut = true;
+          controller?.abort(new DOMException("API request timed out", "TimeoutError"));
+        }, timeoutMs)
+      : null;
+  let response: Response;
+  try {
+    response = await fetch(input, {
+      ...requestInit,
+      headers,
+      signal: controller?.signal ?? upstreamSignal,
+    });
+  } catch (error) {
+    if (timedOut) {
+      throw new ApiError(`请求超时（${Math.round(timeoutMs / 1000)} 秒）`, 408);
+    }
+    throw error;
+  } finally {
+    if (timeoutId !== null) {
+      globalThis.clearTimeout(timeoutId);
+    }
+    if (controller) {
+      upstreamSignal?.removeEventListener("abort", forwardAbort);
+    }
+  }
   if (
     response.status === 401 &&
     typeof window !== "undefined" &&

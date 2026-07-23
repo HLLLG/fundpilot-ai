@@ -15,6 +15,7 @@ from app.request_context import reset_request_user_id, set_request_user_id
 
 _PUBLIC_EXACT = {
     "/health",
+    "/ready",
     "/api/auth/register",
     "/api/auth/login",
     "/api/auth/password-reset/complete",

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from collections import Counter
 import json
 import logging
+import threading
 import time
 
 from app.config import get_settings
@@ -26,6 +27,8 @@ from app.services.recommendations import (
     canonicalize_fund_recommendations,
     parse_fund_recommendations_raw,
 )
+from app.services.shared_executors import get_analysis_context_executor
+from app.services.streaming_heartbeat import raise_if_stream_cancelled
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +44,7 @@ def judge_parsed_report(
     *,
     facts: dict,
     fallback_recommendations: list[FundRecommendation] | None = None,
+    stop_event: threading.Event | None = None,
 ) -> tuple[dict, dict]:
     """对 LLM 生成的 draft 报告做规则 + 可选 LLM 审校。
 
@@ -79,7 +83,12 @@ def judge_parsed_report(
         return judged, meta
     meta["llm_judge_attempted"] = True
     escalation_floors = _escalation_floor_by_fund_code(judged, facts)
-    reviewed, timed_out = _llm_judge_with_budget(judged, facts, escalation_floors)
+    reviewed, timed_out = _llm_judge_with_budget(
+        judged,
+        facts,
+        escalation_floors,
+        stop_event=stop_event,
+    )
     meta["llm_judge_timeout"] = timed_out
     if reviewed is not judged and reviewed.get("fund_recommendations"):
         meta["llm_judge_applied"] = True
@@ -145,18 +154,32 @@ def _escalation_floor_by_fund_code(parsed: dict, facts: dict) -> dict[str, dict]
 
 
 def _llm_judge_with_budget(
-    parsed: dict, facts: dict, escalation_floors: dict[str, dict]
+    parsed: dict,
+    facts: dict,
+    escalation_floors: dict[str, dict],
+    *,
+    stop_event: threading.Event | None = None,
 ) -> tuple[dict, bool]:
-    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="analysis-judge")
+    executor = get_analysis_context_executor()
     future = executor.submit(_llm_judge, parsed, facts, escalation_floors)
+    deadline = time.monotonic() + LLM_JUDGE_TIMEOUT_SECONDS
     try:
-        return future.result(timeout=LLM_JUDGE_TIMEOUT_SECONDS), False
-    except FutureTimeoutError:
-        future.cancel()
-        logger.warning("llm judge timed out after %.1fs, using rule-judged report", LLM_JUDGE_TIMEOUT_SECONDS)
-        return parsed, True
+        while True:
+            raise_if_stream_cancelled(stop_event)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                future.cancel()
+                logger.warning(
+                    "llm judge timed out after %.1fs, using rule-judged report",
+                    LLM_JUDGE_TIMEOUT_SECONDS,
+                )
+                return parsed, True
+            try:
+                return future.result(timeout=min(0.25, remaining)), False
+            except FutureTimeoutError:
+                continue
     finally:
-        executor.shutdown(wait=False, cancel_futures=True)
+        future.cancel()
 
 
 def _rule_judge(

@@ -6,12 +6,16 @@ from collections import OrderedDict
 from datetime import datetime, timezone
 from threading import RLock
 
+from app.config import get_settings
 from app.database import _connect
+from app.services.performance_metrics import record_cache_event
 
 _MEMORY: OrderedDict[str, tuple[float, dict]] = OrderedDict()
 _MEMORY_MAX_ENTRIES = 512
 _MEMORY_LOCK = RLock()
 _PROCESS_BOOT_AT: datetime | None = None
+_SCHEMA_LOCK = RLock()
+_SCHEMA_READY_KEY: tuple[str, str] | None = None
 
 
 def _get_memory_snapshot(
@@ -73,15 +77,31 @@ def snapshot_refreshed_before_process_boot(refreshed_at: str | None) -> bool:
 
 
 def _ensure_cache_table(connection: sqlite3.Connection) -> None:
-    connection.execute(
-        """
-        CREATE TABLE IF NOT EXISTS sector_spot_cache (
-            cache_key TEXT PRIMARY KEY,
-            payload TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-        """
+    global _SCHEMA_READY_KEY
+    dialect = str(getattr(connection, "dialect", "sqlite"))
+    settings = get_settings()
+    key = (
+        dialect,
+        settings.database_url or str(settings.db_path.resolve()),
     )
+    if _SCHEMA_READY_KEY == key:
+        return
+    with _SCHEMA_LOCK:
+        if _SCHEMA_READY_KEY == key:
+            return
+        # Production MySQL schema ownership belongs to the one-shot deployment
+        # bootstrap. Request paths must never take metadata locks.
+        if dialect != "mysql":
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS sector_spot_cache (
+                    cache_key TEXT PRIMARY KEY,
+                    payload TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+        _SCHEMA_READY_KEY = key
 
 
 def get_spot_snapshot(cache_key: str, *, ttl_seconds: float) -> dict | None:
@@ -92,7 +112,9 @@ def get_spot_snapshot(cache_key: str, *, ttl_seconds: float) -> dict | None:
         ttl_seconds=ttl_seconds,
     )
     if found:
+        record_cache_event(cache_key, "hit_memory")
         return payload
+    record_cache_event(cache_key, "miss_memory")
 
     with _connect() as connection:
         _ensure_cache_table(connection)
@@ -101,15 +123,18 @@ def get_spot_snapshot(cache_key: str, *, ttl_seconds: float) -> dict | None:
             (cache_key,),
         ).fetchone()
     if row is None:
+        record_cache_event(cache_key, "miss")
         return None
 
     updated_at = _updated_at_timestamp(row["updated_at"])
     age = now - updated_at
     if age > ttl_seconds:
+        record_cache_event(cache_key, "stale")
         return None
 
     payload = json.loads(row["payload"])
     _save_memory_snapshot(cache_key, updated_at, payload)
+    record_cache_event(cache_key, "hit_durable")
     return payload
 
 
@@ -118,6 +143,7 @@ def get_spot_snapshot_any_age(cache_key: str) -> dict | None:
     now = datetime.now(timezone.utc).timestamp()
     found, payload = _get_memory_snapshot(cache_key, now, ttl_seconds=None)
     if found:
+        record_cache_event(cache_key, "stale_hit_memory")
         return payload
 
     with _connect() as connection:
@@ -127,6 +153,7 @@ def get_spot_snapshot_any_age(cache_key: str) -> dict | None:
             (cache_key,),
         ).fetchone()
     if row is None:
+        record_cache_event(cache_key, "miss")
         return None
 
     payload = json.loads(row["payload"])
@@ -138,6 +165,7 @@ def get_spot_snapshot_any_age(cache_key: str) -> dict | None:
         _updated_at_timestamp(row["updated_at"]),
         payload,
     )
+    record_cache_event(cache_key, "stale_hit_durable")
     return payload
 
 
@@ -155,3 +183,4 @@ def save_spot_snapshot(cache_key: str, payload: dict) -> None:
             (cache_key, encoded, now.isoformat()),
         )
         connection.commit()
+    record_cache_event(cache_key, "refresh")

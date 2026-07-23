@@ -1,5 +1,6 @@
 import { Sora } from "next/font/google";
 import { AuthProvider } from "@/components/AuthProvider";
+import { WebVitalsReporter } from "@/components/WebVitalsReporter";
 import { SITE_METADATA } from "@/lib/siteMetadata";
 import "./globals.css";
 
@@ -22,7 +23,10 @@ export default function RootLayout({
   return (
     <html lang="zh-CN">
       <body className={`${sora.variable} antialiased`}>
-        <AuthProvider>{children}</AuthProvider>
+        <AuthProvider>
+          <WebVitalsReporter />
+          {children}
+        </AuthProvider>
       </body>
     </html>
   );

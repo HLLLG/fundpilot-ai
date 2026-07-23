@@ -12,7 +12,7 @@ from app.services.decision_quality_rollout import (
 )
 
 
-MYSQL_SCHEMA_VERSION = 19
+MYSQL_SCHEMA_VERSION = 20
 
 MYSQL_MIGRATION_GUARD_NAME = "sqlite_to_mysql"
 MYSQL_SCHEMA_LOCK_NAME = "fundpilot.mysql_schema.v18"
@@ -902,7 +902,10 @@ def _ensure_mysql_schema_locked(
             dedup_key VARCHAR(255) NOT NULL,
             created_at VARCHAR(64) NOT NULL,
             UNIQUE KEY uq_fund_tx_dedup (userId, dedup_key),
-            INDEX idx_fund_tx_fund (userId, fund_code)
+            INDEX idx_fund_tx_fund (userId, fund_code),
+            INDEX idx_fund_tx_pending_confirm (
+                userId, status, confirm_date, trade_time
+            )
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """,
         """
@@ -1725,6 +1728,13 @@ def _ensure_mysql_schema_locked(
                 "idx_stream_sessions_expiry",
                 "CREATE INDEX idx_stream_sessions_expiry "
                 "ON stream_sessions (expires_at)",
+            ),
+            (
+                "fund_transactions",
+                "idx_fund_tx_pending_confirm",
+                "CREATE INDEX idx_fund_tx_pending_confirm "
+                "ON fund_transactions "
+                "(userId, status, confirm_date, trade_time)",
             ),
         )
         for table, index, ddl in performance_indexes:

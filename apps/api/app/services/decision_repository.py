@@ -253,17 +253,15 @@ def _execute(connection: Any, sql: str, params: Sequence[Any] = ()) -> Any:
             # generic wrapper: the same process may currently be serving the
             # SQLite fallback, and repository calls must follow the connection's
             # actual dialect.
-            import pymysql
+            from app.db_connect import execute_mysql_statement
 
-            cursor = raw.cursor(pymysql.cursors.DictCursor)
-            cursor.execute(statement, tuple(params))
-            return cursor
+            return execute_mysql_statement(raw, statement, tuple(params))
         execute = getattr(connection, "execute", None)
         if callable(execute):
             return execute(statement, tuple(params))
-        cursor = connection.cursor()
-        cursor.execute(statement, tuple(params))
-        return cursor
+        from app.db_connect import execute_mysql_statement
+
+        return execute_mysql_statement(connection, statement, tuple(params))
 
     execute = getattr(connection, "execute", None)
     if callable(execute):
@@ -289,12 +287,22 @@ def _row_dict(cursor: Any, row: Any) -> dict[str, Any] | None:
 
 def _fetchone(connection: Any, sql: str, params: Sequence[Any] = ()) -> dict[str, Any] | None:
     cursor = _execute(connection, sql, params)
-    return _row_dict(cursor, cursor.fetchone())
+    try:
+        return _row_dict(cursor, cursor.fetchone())
+    finally:
+        cursor.close()
 
 
 def _fetchall(connection: Any, sql: str, params: Sequence[Any] = ()) -> list[dict[str, Any]]:
     cursor = _execute(connection, sql, params)
-    return [row for raw in cursor.fetchall() if (row := _row_dict(cursor, raw)) is not None]
+    try:
+        return [
+            row
+            for raw in cursor.fetchall()
+            if (row := _row_dict(cursor, raw)) is not None
+        ]
+    finally:
+        cursor.close()
 
 
 @contextmanager
@@ -929,10 +937,25 @@ def _insert_immutable(
     values: Sequence[Any],
     content_hash: str,
 ) -> tuple[dict[str, Any], bool]:
+    value_by_column = dict(zip(columns, values, strict=True))
+    if "payload" not in value_by_column or "content_hash" not in value_by_column:
+        raise ValueError("immutable inserts require payload and content_hash columns")
+    # The supplied content hash binds the canonical payload.  Lock and compare
+    # only the compact indexed/metadata columns, then rehydrate the identical
+    # payload from the caller instead of transporting LONGTEXT under the lock.
+    compact_columns = tuple(column for column in columns if column != "payload")
+    compact_select = ", ".join(compact_columns)
+
+    def materialize(row: Mapping[str, Any]) -> dict[str, Any]:
+        result = dict(row)
+        result["payload"] = value_by_column["payload"]
+        return _decode_row(result) or result
+
     lock_suffix = " FOR UPDATE" if _dialect(connection) == "mysql" else ""
     existing = _fetchone(
         connection,
-        f"SELECT * FROM {table} WHERE {identity_where}{lock_suffix}",
+        f"SELECT {compact_select} FROM {table} "
+        f"WHERE {identity_where}{lock_suffix}",
         identity_params,
     )
     if existing is not None:
@@ -940,7 +963,7 @@ def _insert_immutable(
             raise ImmutableRecordConflict(
                 f"{table} identity already exists with different immutable content"
             )
-        return _decode_row(existing) or existing, False
+        return materialize(existing), False
 
     placeholders = ", ".join("?" for _ in columns)
     try:
@@ -954,7 +977,8 @@ def _insert_immutable(
         # original exception when it was not an identity race.
         raced = _fetchone(
             connection,
-            f"SELECT * FROM {table} WHERE {identity_where}{lock_suffix}",
+            f"SELECT {compact_select} FROM {table} "
+            f"WHERE {identity_where}{lock_suffix}",
             identity_params,
         )
         if raced is None:
@@ -963,15 +987,9 @@ def _insert_immutable(
             raise ImmutableRecordConflict(
                 f"{table} identity was concurrently written with different content"
             )
-        return _decode_row(raced) or raced, False
+        return materialize(raced), False
 
-    inserted = _fetchone(
-        connection,
-        f"SELECT * FROM {table} WHERE {identity_where}",
-        identity_params,
-    )
-    assert inserted is not None
-    return _decode_row(inserted) or inserted, True
+    return materialize(value_by_column), True
 
 
 def put_decision_portfolio_snapshot(

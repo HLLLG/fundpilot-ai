@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from datetime import datetime
 from collections.abc import Callable, Mapping
+import threading
+import time
 from typing import Any, Literal
 
 from app.request_context import try_get_request_user_id
@@ -22,6 +24,8 @@ from app.services.analysis_runtime import AnalysisMode
 from app.services.news_freshness import build_news_pipeline_context, normalize_news_now
 from app.services.news_service import compact_announcement_fetch_status
 from app.services.pipeline_concurrency import run_with_request_user
+from app.services.shared_executors import get_shared_io_executor
+from app.services.streaming_heartbeat import raise_if_stream_cancelled
 from app.services.portfolio_snapshot import (
     build_factor_scores_for_facts,
     build_portfolio_trend_context,
@@ -1107,6 +1111,7 @@ def _run_budgeted_enhancement(
     *,
     timeout_seconds: float,
     fallback: dict[str, Any],
+    stop_event: threading.Event | None = None,
 ) -> dict[str, Any]:
     user_id = try_get_request_user_id()
 
@@ -1115,17 +1120,25 @@ def _run_budgeted_enhancement(
             return func()
         return run_with_request_user(user_id, func)
 
-    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="analysis-context-budget")
+    executor = get_shared_io_executor()
     future = executor.submit(run)
+    deadline = time.monotonic() + timeout_seconds
     try:
-        return future.result(timeout=timeout_seconds)
-    except FutureTimeoutError:
-        future.cancel()
-        return fallback
+        while True:
+            raise_if_stream_cancelled(stop_event)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                future.cancel()
+                return fallback
+            try:
+                return future.result(timeout=min(0.25, remaining))
+            except FutureTimeoutError:
+                continue
     except Exception:  # noqa: BLE001 - enhancement facts are best-effort
+        raise_if_stream_cancelled(stop_event)
         return _enhancement_unavailable("error")
     finally:
-        executor.shutdown(wait=False, cancel_futures=True)
+        future.cancel()
 
 
 def _compute_analysis_context(
@@ -1135,7 +1148,9 @@ def _compute_analysis_context(
     phase: AnalysisPayloadPhase = 3,
     budget_enhancements: bool = False,
     decision_at: datetime | None = None,
+    stop_event: threading.Event | None = None,
 ) -> tuple[dict, dict | None, dict | None, dict | None]:
+    raise_if_stream_cancelled(stop_event)
     session = build_trading_session(decision_at)
     include_portfolio_trend = not (phase >= 2 and analysis_mode == "fast")
     try:
@@ -1144,6 +1159,7 @@ def _compute_analysis_context(
                 lambda: build_factor_scores_for_facts(holdings),
                 timeout_seconds=FACTOR_SCORE_TIMEOUT_SECONDS,
                 fallback=_enhancement_unavailable("timeout"),
+                stop_event=stop_event,
             )
         else:
             factor_scores = build_factor_scores_for_facts(holdings)
@@ -1154,6 +1170,7 @@ def _compute_analysis_context(
     portfolio_trend = None
     risk_metrics = None
     try:
+        raise_if_stream_cancelled(stop_event)
         from app.database import list_portfolio_daily_snapshots
 
         history_rows = list_portfolio_daily_snapshots(limit=400)
@@ -1164,6 +1181,7 @@ def _compute_analysis_context(
                 lambda: build_risk_metrics_for_facts(history_rows, holdings),
                 timeout_seconds=RISK_METRICS_TIMEOUT_SECONDS,
                 fallback=_enhancement_unavailable("timeout"),
+                stop_event=stop_event,
             )
         else:
             risk_metrics = build_risk_metrics_for_facts(history_rows, holdings)
@@ -1189,6 +1207,7 @@ def prepare_analysis_bundle(
     tradeability_resolver: TradeabilityResolver | None = None,
     benchmark_resolver: BenchmarkResolver | None = None,
     benchmark_research_resolver: BenchmarkResearchResolver | None = None,
+    stop_event: threading.Event | None = None,
 ) -> AnalysisFactsBundle:
     """构建完整 analysis_facts（未 trim），供 LLM prompt 与最终存档各用一次。"""
     briefs = topic_briefs or []
@@ -1199,9 +1218,11 @@ def prepare_analysis_bundle(
         benchmark_research_resolver or build_fund_benchmark_research_batch
     )
     user_id = try_get_request_user_id()
+    raise_if_stream_cancelled(stop_event)
 
     def resolve_tradeability() -> dict[str, dict[str, Any]]:
         def work() -> dict[str, dict[str, Any]]:
+            raise_if_stream_cancelled(stop_event)
             return _resolve_holding_tradeability_profiles(
                 request.holdings,
                 decision_at=decision_at,
@@ -1218,6 +1239,7 @@ def prepare_analysis_bundle(
             dict[str, dict[str, Any]],
             dict[str, dict[str, Any]],
         ]:
+            raise_if_stream_cancelled(stop_event)
             specs = _resolve_holding_benchmark_specs(
                 request.holdings,
                 decision_at=decision_at,
@@ -1241,21 +1263,39 @@ def prepare_analysis_bundle(
     # Tradeability I/O runs alongside the existing context computation, while
     # the latter stays on the request thread so database/request context behavior
     # is unchanged.
-    executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="analysis-evidence")
+    executor = get_shared_io_executor()
     tradeability_future = executor.submit(resolve_tradeability)
     benchmark_future = executor.submit(resolve_benchmark_context)
     try:
+        raise_if_stream_cancelled(stop_event)
         session, factor_scores, risk_metrics, portfolio_trend = _compute_analysis_context(
             request.holdings,
             analysis_mode=analysis_mode,
             phase=phase,
             budget_enhancements=budget_enhancements,
             decision_at=decision_at,
+            stop_event=stop_event,
         )
-        tradeability_profiles = tradeability_future.result()
-        benchmark_specs, benchmark_research = benchmark_future.result()
+        while True:
+            raise_if_stream_cancelled(stop_event)
+            try:
+                tradeability_profiles = tradeability_future.result(timeout=0.25)
+                break
+            except FutureTimeoutError:
+                continue
+        while True:
+            raise_if_stream_cancelled(stop_event)
+            try:
+                benchmark_specs, benchmark_research = benchmark_future.result(
+                    timeout=0.25
+                )
+                break
+            except FutureTimeoutError:
+                continue
     finally:
-        executor.shutdown(wait=False, cancel_futures=True)
+        tradeability_future.cancel()
+        benchmark_future.cancel()
+    raise_if_stream_cancelled(stop_event)
     facts = build_analysis_facts(
         request.holdings,
         risk,
@@ -1272,6 +1312,7 @@ def prepare_analysis_bundle(
         budget_enhancements=budget_enhancements,
         decision_at=decision_at,
         tradeability_profiles=tradeability_profiles,
+        stop_event=stop_event,
     )
     facts["benchmark_specs"] = benchmark_specs
     facts["benchmark_contract"] = _benchmark_contract(benchmark_specs)

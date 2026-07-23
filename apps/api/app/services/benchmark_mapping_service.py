@@ -20,6 +20,7 @@ _CASH_TOKENS = ("存款", "活期", "货币市场工具")
 # `live_fund_disclosure` label was historically also written for Xueqiu data
 # fetched through AkShare, so it is intentionally no longer trusted here.
 _FORMAL_SOURCE_KINDS = {"verified_fund_contract"}
+_EVIDENCE_NOT_PRELOADED = object()
 
 
 def load_decision_benchmark_specs(
@@ -59,12 +60,19 @@ def load_decision_benchmark_specs(
     frozen_at = _canonical_datetime(decision_at)
     specs: dict[str, dict[str, Any]] = {}
     with _connect() as connection:
+        evidence_by_code = _cached_benchmark_evidence_by_code(
+            connection,
+            user_id=user_id,
+            fund_codes=codes,
+            decision_at=frozen_at,
+        )
         for code in codes:
-            spec, _mapping_row = freeze_fund_benchmark_spec(
+            spec, _mapping_row = _freeze_with_preloaded_evidence(
                 fund_code=code,
                 decision_at=frozen_at,
                 user_id=user_id,
                 connection=connection,
+                preloaded_evidence=evidence_by_code.get(code),
             )
             specs[code] = spec
     return specs
@@ -93,12 +101,20 @@ def freeze_report_benchmark_specs(
     decision_at = _canonical_datetime(enriched.get("created_at"))
     specs: dict[str, dict[str, Any]] = {}
     mappings: list[dict[str, Any]] = []
-    for code in _recommendation_codes(enriched.get(recommendation_key)):
-        spec, mapping = freeze_fund_benchmark_spec(
+    codes = _recommendation_codes(enriched.get(recommendation_key))
+    evidence_by_code = _cached_benchmark_evidence_by_code(
+        connection,
+        user_id=user_id,
+        fund_codes=codes,
+        decision_at=decision_at,
+    )
+    for code in codes:
+        spec, mapping = _freeze_with_preloaded_evidence(
             fund_code=code,
             decision_at=decision_at,
             user_id=user_id,
             connection=connection,
+            preloaded_evidence=evidence_by_code.get(code),
         )
         specs[code] = spec
         if mapping is not None:
@@ -118,24 +134,62 @@ def freeze_report_benchmark_specs(
     return enriched, mappings
 
 
+def _freeze_with_preloaded_evidence(
+    *,
+    fund_code: str,
+    decision_at: str,
+    user_id: int,
+    connection: Any,
+    preloaded_evidence: object,
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Use the batched row while preserving injected legacy freeze adapters."""
+
+    kwargs = {
+        "fund_code": fund_code,
+        "decision_at": decision_at,
+        "user_id": user_id,
+        "connection": connection,
+    }
+    try:
+        return freeze_fund_benchmark_spec(
+            **kwargs,
+            _preloaded_evidence=preloaded_evidence,
+        )
+    except TypeError as exc:
+        message = str(exc)
+        if (
+            "unexpected keyword argument" not in message
+            or "_preloaded_evidence" not in message
+        ):
+            raise
+        return freeze_fund_benchmark_spec(**kwargs)
+
+
 def freeze_fund_benchmark_spec(
     *,
     fund_code: str,
     decision_at: str,
     user_id: int,
     connection: Any,
+    _preloaded_evidence: object = _EVIDENCE_NOT_PRELOADED,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     code = _fund_code(fund_code)
     if code is None:
         return _unavailable("invalid_fund_code"), None
-    evidence = _cached_benchmark_evidence(
-        connection,
-        user_id=user_id,
-        fund_code=code,
-        decision_at=decision_at,
+    evidence = (
+        _cached_benchmark_evidence(
+            connection,
+            user_id=user_id,
+            fund_code=code,
+            decision_at=decision_at,
+        )
+        if _preloaded_evidence is _EVIDENCE_NOT_PRELOADED
+        else _preloaded_evidence
     )
     if evidence is None:
         return _unavailable("point_in_time_benchmark_mapping_unavailable"), None
+    if not isinstance(evidence, Mapping):
+        raise TypeError("preloaded benchmark evidence must be a mapping or None")
 
     detail = _detail(evidence.get("detail"))
     benchmark_text = str(detail.get("benchmark_text") or "").strip()
@@ -377,50 +431,87 @@ def _cached_benchmark_evidence(
     fund_code: str,
     decision_at: str,
 ) -> dict[str, Any] | None:
-    candidates: list[dict[str, Any]] = []
-    local = connection.execute(
-        "SELECT fund_code, sector_name, intraday_index_name, source, confidence, "
-        "detail, updated_at FROM fund_primary_sectors "
-        "WHERE userId = ? AND fund_code = ?",
-        (user_id, fund_code),
-    ).fetchone()
-    if local is not None:
-        row = _row(local)
-        row["available_at"] = row.get("updated_at")
-        row["source_ref"] = (
-            f"fund_primary_sectors:{user_id}:{fund_code}:{row.get('updated_at') or ''}"
-        )
-        candidates.append(row)
-    global_row = connection.execute(
-        "SELECT fund_code, sector_name, intraday_index_name, source, confidence, "
-        "detail, resolved_at FROM fund_primary_sectors_global WHERE fund_code = ?",
-        (fund_code,),
-    ).fetchone()
-    if global_row is not None:
-        row = _row(global_row)
-        row["available_at"] = row.get("resolved_at")
-        row["source_ref"] = (
-            f"fund_primary_sectors_global:{fund_code}:{row.get('resolved_at') or ''}"
-        )
-        candidates.append(row)
+    return _cached_benchmark_evidence_by_code(
+        connection,
+        user_id=user_id,
+        fund_codes=(fund_code,),
+        decision_at=decision_at,
+    ).get(fund_code)
+
+
+def _cached_benchmark_evidence_by_code(
+    connection: Any,
+    *,
+    user_id: int,
+    fund_codes: Iterable[str],
+    decision_at: str,
+) -> dict[str, dict[str, Any] | None]:
+    codes = list(dict.fromkeys(str(code) for code in fund_codes))
+    if not hasattr(connection, "execute"):
+        # Dependency-injected contract tests and offline callers may provide a
+        # sentinel connection while replacing the authoritative freezer. Batch
+        # preloading is an optimization, not a prerequisite for correctness.
+        return {code: None for code in codes}
+    candidates_by_code: dict[str, list[dict[str, Any]]] = {
+        code: [] for code in codes
+    }
+    for start in range(0, len(codes), 500):
+        batch = codes[start : start + 500]
+        if not batch:
+            continue
+        placeholders = ", ".join("?" for _ in batch)
+        local_rows = connection.execute(
+            "SELECT fund_code, sector_name, intraday_index_name, source, "
+            "confidence, detail, updated_at FROM fund_primary_sectors "
+            f"WHERE userId = ? AND fund_code IN ({placeholders})",
+            (user_id, *batch),
+        ).fetchall()
+        for value in local_rows:
+            row = _row(value)
+            code = str(row.get("fund_code") or "")
+            row["available_at"] = row.get("updated_at")
+            row["source_ref"] = (
+                f"fund_primary_sectors:{user_id}:{code}:"
+                f"{row.get('updated_at') or ''}"
+            )
+            candidates_by_code.setdefault(code, []).append(row)
+
+        global_rows = connection.execute(
+            "SELECT fund_code, sector_name, intraday_index_name, source, "
+            "confidence, detail, resolved_at FROM fund_primary_sectors_global "
+            f"WHERE fund_code IN ({placeholders})",
+            tuple(batch),
+        ).fetchall()
+        for value in global_rows:
+            row = _row(value)
+            code = str(row.get("fund_code") or "")
+            row["available_at"] = row.get("resolved_at")
+            row["source_ref"] = (
+                f"fund_primary_sectors_global:{code}:"
+                f"{row.get('resolved_at') or ''}"
+            )
+            candidates_by_code.setdefault(code, []).append(row)
 
     decision = _parse_datetime(decision_at)
-    eligible: list[dict[str, Any]] = []
-    for row in candidates:
-        if str(row.get("source") or "") not in _BENCHMARK_SOURCES:
-            continue
-        available = _parse_datetime(row.get("available_at"))
-        if available is None or available > decision:
-            continue
-        eligible.append(row)
-    eligible.sort(
-        key=lambda row: (
-            1 if str(row.get("source")) == "benchmark_index" else 0,
-            str(row.get("available_at") or ""),
-        ),
-        reverse=True,
-    )
-    return eligible[0] if eligible else None
+    result: dict[str, dict[str, Any] | None] = {}
+    for code in codes:
+        eligible: list[dict[str, Any]] = []
+        for row in candidates_by_code.get(code, ()):
+            if str(row.get("source") or "") not in _BENCHMARK_SOURCES:
+                continue
+            available = _parse_datetime(row.get("available_at"))
+            if available is None or decision is None or available > decision:
+                continue
+            eligible.append(row)
+        eligible.sort(
+            key=lambda row: (
+                1 if str(row.get("source")) == "benchmark_index" else 0,
+                str(row.get("available_at") or ""),
+            ),
+            reverse=True,
+        )
+        result[code] = eligible[0] if eligible else None
+    return result
 
 
 def _index_component(

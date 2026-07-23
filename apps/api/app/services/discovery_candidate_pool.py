@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from datetime import date, datetime
 import hashlib
 import json
 from math import isfinite
+import threading
 
 from app.database import (
     get_fund_profile_by_code,
@@ -36,6 +37,8 @@ from app.services.fund_peer_ranking import (
     build_peer_rank,
     resolve_benchmark_comparison,
 )
+from app.services.shared_executors import get_discovery_context_executor
+from app.services.streaming_heartbeat import raise_if_stream_cancelled
 from app.services.fund_benchmark_sector import resolve_sector_from_benchmark
 from app.services.fund_vehicle_quality import assess_candidate_vehicle_quality
 from app.services.news_freshness import normalize_news_now
@@ -88,7 +91,9 @@ def build_candidate_pool(
     decision_at: datetime | None = None,
     recall_audit_sink: dict | None = None,
     recall_audit_limit: int = _MAX_RECALL_AUDIT_CANDIDATES,
+    stop_event: threading.Event | None = None,
 ) -> list[dict]:
+    raise_if_stream_cancelled(stop_event)
     if recall_audit_sink is not None and recall_audit_limit <= 0:
         raise ValueError("recall_audit_limit must be positive")
     decision_date = normalize_news_now(decision_at).date()
@@ -109,6 +114,7 @@ def build_candidate_pool(
             rank_rows = fetch_open_fund_rank_cached(limit=500) or []
     else:
         rank_rows = fetch_rank(limit=300) or []
+    raise_if_stream_cancelled(stop_event)
     if fetch_new_funds is None:
         fetch_new_funds = fetch_new_fund_offerings
     excluded = {code.strip().zfill(6) for code in (exclude_codes or set())}
@@ -129,6 +135,7 @@ def build_candidate_pool(
     new_issue_rows: list[dict] = []
     if selection_strategy == "with_new_issue":
         new_issue_rows = fetch_new_funds(limit=300) or []
+    raise_if_stream_cancelled(stop_event)
 
     collected: list[dict] = []
     seen_codes: set[str] = set()
@@ -145,6 +152,7 @@ def build_candidate_pool(
     )
 
     for index, sector_label in enumerate(target_sectors):
+        raise_if_stream_cancelled(stop_event)
         sector_limit = _sector_candidate_limit(
             sector_label,
             index=index,
@@ -178,6 +186,7 @@ def build_candidate_pool(
             break
 
     if len(collected) < 3 and len(collected) < pool_cap:
+        raise_if_stream_cancelled(stop_event)
         fallback_ranked = rank_candidates_balanced_fallback(
             rank_rows,
             excluded,
@@ -471,16 +480,15 @@ def enrich_candidates(
     pool: list[dict],
     *,
     decision_at: datetime | None = None,
+    stop_event: threading.Event | None = None,
 ) -> list[dict]:
+    raise_if_stream_cancelled(stop_event)
     decision_date = normalize_news_now(decision_at).date()
     service = FundDataService()
     expanded_pool = _expand_share_family_alternatives(pool)
     codes = [str(item.get("fund_code") or "").zfill(6) for item in expanded_pool]
 
-    support_executor = ThreadPoolExecutor(
-        max_workers=2,
-        thread_name_prefix="discovery-fund-support",
-    )
+    support_executor = get_discovery_context_executor()
     profile_future = support_executor.submit(fetch_fund_research_profiles_cached, codes)
     tradeability_future = support_executor.submit(
         resolve_fund_tradeability_profiles,
@@ -489,6 +497,7 @@ def enrich_candidates(
     )
 
     def _enrich_one(item: dict) -> dict:
+        raise_if_stream_cancelled(stop_event)
         code = str(item.get("fund_code", "")).zfill(6)
         name = str(item.get("fund_name", ""))
         holding = Holding(fund_code=code, fund_name=name, holding_amount=0)
@@ -520,20 +529,42 @@ def enrich_candidates(
     # 候选池最多 28 只，逐只 AkShare 拉取是冷缓存下荐基管线最大耗时来源；
     # 并发执行（IO 密集，_snapshot_and_trend_for_holding 内部已兜底异常）保序返回。
     try:
-        enriched = _map_holdings_concurrently(expanded_pool, _enrich_one)
+        enriched = _map_holdings_concurrently(
+            expanded_pool,
+            _enrich_one,
+            stop_event=stop_event,
+        )
         try:
-            profiles = profile_future.result()
+            while True:
+                raise_if_stream_cancelled(stop_event)
+                try:
+                    profiles = profile_future.result(timeout=0.25)
+                    break
+                except FutureTimeoutError:
+                    continue
         except Exception:  # noqa: BLE001 - research profile is best-effort
+            raise_if_stream_cancelled(stop_event)
             profiles = {}
         try:
-            tradeability_profiles = tradeability_future.result()
+            while True:
+                raise_if_stream_cancelled(stop_event)
+                try:
+                    tradeability_profiles = tradeability_future.result(
+                        timeout=0.25
+                    )
+                    break
+                except FutureTimeoutError:
+                    continue
         except Exception:  # noqa: BLE001 - fail closed in the quality gate below
+            raise_if_stream_cancelled(stop_event)
             tradeability_profiles = {}
     finally:
-        support_executor.shutdown(wait=False, cancel_futures=True)
+        profile_future.cancel()
+        tradeability_future.cancel()
 
     rescored: list[dict] = []
     for raw in enriched:
+        raise_if_stream_cancelled(stop_event)
         row = dict(raw)
         code = str(row.get("fund_code") or "").zfill(6)
         profile = profiles.get(code) or {}

@@ -133,7 +133,7 @@ def _snapshot(
 
 
 def test_schema_v16_creates_and_self_heals_decision_quality_tables() -> None:
-    assert SCHEMA_VERSION == 19
+    assert SCHEMA_VERSION == 20
     connection = _connection()
     names = {
         str(row[0])

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from datetime import datetime
+import threading
+import time
 
 from app.models import Holding, InvestorProfile, NewsItem, TopicBrief
 from app.services.discovery_sector_context import (
@@ -23,6 +25,8 @@ from app.services.news_freshness import build_news_pipeline_context
 from app.services.risk import holding_weight_percent, resolve_weight_denominator
 from app.services.sector_signal_context import build_signal_backtest_context
 from app.services.trading_session import build_trading_session
+from app.services.shared_executors import get_discovery_context_executor
+from app.services.streaming_heartbeat import raise_if_stream_cancelled
 
 SIGNAL_BACKTEST_TIMEOUT_SECONDS = 5.0
 TARGET_SECTOR_CONTEXT_TIMEOUT_SECONDS = 5.0
@@ -49,7 +53,9 @@ def build_discovery_facts(
     mainline_snapshot: dict | None = None,
     budget_enhancements: bool = False,
     decision_at: datetime | None = None,
+    stop_event: threading.Event | None = None,
 ) -> dict:
+    raise_if_stream_cancelled(stop_event)
     total_amount = sum(item.holding_amount for item in holdings) or 0.0
     denominator = resolve_weight_denominator(holdings, profile)
     available_budget = budget_yuan
@@ -58,10 +64,11 @@ def build_discovery_facts(
         available_budget = max(expected - total_amount, 0.0)
 
     signal_backtest = (
-        _budgeted_signal_backtest(target_sectors)
+        _budgeted_signal_backtest(target_sectors, stop_event=stop_event)
         if budget_enhancements
         else build_signal_backtest_context(target_sectors)
     )
+    raise_if_stream_cancelled(stop_event)
     session = build_trading_session(decision_at)
     target_context_labels = list(dict.fromkeys(list(target_sectors) + list(focus_sectors or [])))
     target_sector_context = (
@@ -71,6 +78,7 @@ def build_discovery_facts(
             signal_backtest,
             trade_date=session.get("effective_trade_date"),
             sector_flow_by_label=sector_flow_by_label,
+            stop_event=stop_event,
         )
         if budget_enhancements
         else build_target_sector_context(
@@ -81,11 +89,16 @@ def build_discovery_facts(
             sector_flow_by_label=sector_flow_by_label,
         )
     )
+    raise_if_stream_cancelled(stop_event)
     stock_connect_flow = (
-        _budgeted_stock_connect_flow(session.get("effective_trade_date"))
+        _budgeted_stock_connect_flow(
+            session.get("effective_trade_date"),
+            stop_event=stop_event,
+        )
         if budget_enhancements
         else build_stock_connect_flow_context(session.get("effective_trade_date"))
     )
+    raise_if_stream_cancelled(stop_event)
 
     facts: dict = {
         "readonly": True,
@@ -296,18 +309,46 @@ def _signal_backtest_unavailable(reason: str) -> dict:
     }
 
 
-def _budgeted_signal_backtest(target_sectors: list[str]) -> dict:
-    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="discovery-facts-budget")
+def _await_budgeted_future(
+    future,
+    *,
+    timeout_seconds: float,
+    stop_event: threading.Event | None,
+):
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        raise_if_stream_cancelled(stop_event)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise FutureTimeoutError()
+        try:
+            return future.result(timeout=min(0.25, remaining))
+        except FutureTimeoutError:
+            if time.monotonic() >= deadline:
+                raise
+
+
+def _budgeted_signal_backtest(
+    target_sectors: list[str],
+    *,
+    stop_event: threading.Event | None = None,
+) -> dict:
+    executor = get_discovery_context_executor()
     future = executor.submit(lambda: build_signal_backtest_context(target_sectors))
     try:
-        return future.result(timeout=SIGNAL_BACKTEST_TIMEOUT_SECONDS)
+        return _await_budgeted_future(
+            future,
+            timeout_seconds=SIGNAL_BACKTEST_TIMEOUT_SECONDS,
+            stop_event=stop_event,
+        )
     except FutureTimeoutError:
         future.cancel()
         return _signal_backtest_unavailable("timeout")
     except Exception:  # noqa: BLE001 - discovery signal context is best-effort
+        raise_if_stream_cancelled(stop_event)
         return _signal_backtest_unavailable("error")
     finally:
-        executor.shutdown(wait=False, cancel_futures=True)
+        future.cancel()
 
 
 def _budgeted_target_sector_context(
@@ -317,8 +358,9 @@ def _budgeted_target_sector_context(
     *,
     trade_date: str | None,
     sector_flow_by_label: dict[str, dict] | None,
+    stop_event: threading.Event | None = None,
 ) -> list[dict]:
-    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="discovery-context-budget")
+    executor = get_discovery_context_executor()
     future = executor.submit(
         lambda: build_target_sector_context(
             sector_labels,
@@ -329,31 +371,42 @@ def _budgeted_target_sector_context(
         )
     )
     try:
-        return future.result(timeout=TARGET_SECTOR_CONTEXT_TIMEOUT_SECONDS)
+        return _await_budgeted_future(
+            future,
+            timeout_seconds=TARGET_SECTOR_CONTEXT_TIMEOUT_SECONDS,
+            stop_event=stop_event,
+        )
     except FutureTimeoutError:
         future.cancel()
         return _basic_target_sector_context(sector_labels, sector_heat, "timeout")
     except Exception:  # noqa: BLE001 - context enhancement is best-effort
+        raise_if_stream_cancelled(stop_event)
         return _basic_target_sector_context(sector_labels, sector_heat, "error")
     finally:
-        executor.shutdown(wait=False, cancel_futures=True)
+        future.cancel()
 
 
-def _budgeted_stock_connect_flow(trade_date: str | None) -> dict:
-    executor = ThreadPoolExecutor(
-        max_workers=1,
-        thread_name_prefix="discovery-stock-connect-flow-budget",
-    )
+def _budgeted_stock_connect_flow(
+    trade_date: str | None,
+    *,
+    stop_event: threading.Event | None = None,
+) -> dict:
+    executor = get_discovery_context_executor()
     future = executor.submit(lambda: build_stock_connect_flow_context(trade_date))
     try:
-        return future.result(timeout=STOCK_CONNECT_FLOW_TIMEOUT_SECONDS)
+        return _await_budgeted_future(
+            future,
+            timeout_seconds=STOCK_CONNECT_FLOW_TIMEOUT_SECONDS,
+            stop_event=stop_event,
+        )
     except FutureTimeoutError:
         future.cancel()
         return _stock_connect_flow_unavailable("timeout")
     except Exception:  # noqa: BLE001 - market flow is best-effort
+        raise_if_stream_cancelled(stop_event)
         return _stock_connect_flow_unavailable("error")
     finally:
-        executor.shutdown(wait=False, cancel_futures=True)
+        future.cancel()
 
 
 def _basic_target_sector_context(

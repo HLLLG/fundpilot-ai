@@ -15,6 +15,7 @@ import httpx
 import requests
 
 from app.config import get_settings
+from app.services.performance_metrics import record_provider_call
 
 
 _T = TypeVar("_T")
@@ -209,6 +210,9 @@ class EastmoneyHttpxClient:
         request_headers = dict(self.headers)
         request_headers.update(_clean_headers(kwargs.pop("headers", None)))
         timeout = _bounded_timeout(kwargs.pop("timeout", self.timeout))
+        started_at = time.perf_counter()
+        response: httpx.Response | None = None
+        metric_error: BaseException | None = None
         try:
             with _request_slot(url):
                 response = _shared_httpx_client().get(
@@ -217,13 +221,24 @@ class EastmoneyHttpxClient:
                     timeout=timeout,
                     **kwargs,
                 )
-        except (EastmoneyCircuitOpen, httpx.PoolTimeout):
+        except (EastmoneyCircuitOpen, httpx.PoolTimeout) as exc:
             # Local shedding is not a fresh provider failure and must not keep
             # extending an already-open circuit under sustained traffic.
+            metric_error = exc
             raise
-        except Exception:
+        except Exception as exc:
+            metric_error = exc
             _record_result(url, failed=True)
             raise
+        finally:
+            record_provider_call(
+                "eastmoney",
+                _host(url),
+                time.perf_counter() - started_at,
+                error=metric_error,
+                status_code=(response.status_code if response is not None else None),
+            )
+        assert response is not None
         _record_result(url, status_code=response.status_code)
         return response
 
@@ -302,6 +317,9 @@ class EastmoneyRequestsClient:
         request_headers.update(_clean_headers(kwargs.pop("headers", None)))
         kwargs["timeout"] = _bounded_timeout(kwargs.get("timeout"))
         session = _borrow_requests_session()
+        started_at = time.perf_counter()
+        response: requests.Response | None = None
+        metric_error: BaseException | None = None
         try:
             with _request_slot(url):
                 response = session.get(
@@ -309,13 +327,23 @@ class EastmoneyRequestsClient:
                     headers=request_headers,
                     **kwargs,
                 )
-        except (EastmoneyCircuitOpen, httpx.PoolTimeout):
+        except (EastmoneyCircuitOpen, httpx.PoolTimeout) as exc:
+            metric_error = exc
             raise
-        except Exception:
+        except Exception as exc:
+            metric_error = exc
             _record_result(url, failed=True)
             raise
         finally:
             _requests_pool.put(session)
+            record_provider_call(
+                "eastmoney",
+                _host(url),
+                time.perf_counter() - started_at,
+                error=metric_error,
+                status_code=(response.status_code if response is not None else None),
+            )
+        assert response is not None
         _record_result(url, status_code=response.status_code)
         return response
 

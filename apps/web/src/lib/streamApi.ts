@@ -1,20 +1,11 @@
-import { getAccessToken } from "@/lib/auth";
 import type { Holding, InvestorProfile, Report } from "@/lib/api";
+import { apiFetch } from "@/lib/api/core";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
 
 /** Wall-clock ms for stream session timing (event handlers only). */
 export function streamTimestamp(): number {
   return Date.now();
-}
-
-async function apiFetch(input: string, init?: RequestInit): Promise<Response> {
-  const headers = new Headers(init?.headers);
-  const token = getAccessToken();
-  if (token) {
-    headers.set("Authorization", `Bearer ${token}`);
-  }
-  return fetch(input, { ...init, headers });
 }
 
 export type StreamingPartialField =
@@ -194,6 +185,7 @@ export async function streamAnalysis(
       ),
     ),
     signal: options?.signal,
+    timeoutMs: 0,
   });
   if (!response.ok || !response.body) {
     throw new Error(await response.text());

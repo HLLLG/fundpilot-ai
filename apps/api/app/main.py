@@ -18,7 +18,7 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from app.auth.middleware import AuthMiddleware
 from app.auth.models import LoginRequest, RegisterRequest
 from app.auth.service import (
@@ -159,6 +159,9 @@ from app.routes.factor_evidence import router as factor_evidence_router
 from app.routes.market_diagnostics import router as market_diagnostics_router
 from app.routes.portfolio_risk import router as portfolio_risk_router
 from app.routes.admin_users import router as admin_users_router
+from app.routes.performance import router as performance_router
+from app.services.performance_metrics import PerformanceMetricsMiddleware
+from app.startup_readiness import ReadinessGateMiddleware, readiness_snapshot
 
 
 settings = get_settings()
@@ -167,6 +170,8 @@ logger = logging.getLogger(__name__)
 HOLDINGS_READ_TIMEOUT_SECONDS = 25.0
 
 app.add_middleware(AuthMiddleware)
+app.add_middleware(ReadinessGateMiddleware)
+app.add_middleware(PerformanceMetricsMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,
@@ -174,12 +179,14 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Request-ID", "Server-Timing"],
 )
 app.include_router(factor_evidence_router)
 app.include_router(market_diagnostics_router)
 app.include_router(decision_quality_router)
 app.include_router(portfolio_risk_router)
 app.include_router(admin_users_router)
+app.include_router(performance_router)
 
 
 @app.exception_handler(PortfolioMutationLockError)
@@ -235,16 +242,32 @@ def _cors_error_response_headers(request: Request) -> dict[str, str]:
 
 
 @app.get("/health")
-def health() -> dict[str, str | bool]:
+def health(response: Response) -> dict:
+    readiness = readiness_snapshot()
+    if not readiness["ready"]:
+        response.status_code = 503
+        response.headers["Retry-After"] = "2"
+        response.headers["Cache-Control"] = "no-store"
     return {
-        "status": "ok",
+        "status": "ok" if readiness["ready"] else "initializing",
         "deepseek_configured": settings.deepseek_configured,
+        "readiness": readiness,
     }
 
 
+@app.get("/ready")
+def ready(response: Response) -> dict:
+    return health(response)
+
+
 @app.get("/api/trading-session")
-def trading_session() -> dict:
-    return build_trading_session()
+def trading_session() -> JSONResponse:
+    return JSONResponse(
+        content=build_trading_session(),
+        headers={
+            "Cache-Control": "public, max-age=30, stale-while-revalidate=30",
+        },
+    )
 
 
 @app.post("/api/auth/register")
@@ -685,6 +708,7 @@ def sector_quotes_status() -> dict:
         "enabled": settings.sector_quotes_enabled,
         "ttl_seconds": settings.sector_quotes_ttl_seconds,
         "auto_interval_seconds": settings.sector_quotes_auto_interval_seconds,
+        "idle_interval_seconds": settings.market_shared_idle_interval_seconds,
         "auto_refresh_allowed": auto_allowed,
         "session": session,
     }
@@ -974,12 +998,41 @@ def fund_discovery_reports() -> list[dict]:
     ]
 
 
+def _immutable_json_response(
+    request: Request,
+    payload: dict,
+) -> Response:
+    serialized = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    ).encode("utf-8")
+    etag = f'"{hashlib.sha256(serialized).hexdigest()}"'
+    headers = {
+        "Cache-Control": "private, max-age=0, must-revalidate",
+        "ETag": etag,
+        "Vary": "Authorization",
+    }
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers=headers)
+    return Response(
+        content=serialized,
+        media_type="application/json",
+        headers=headers,
+    )
+
+
 @app.get("/api/fund-discovery/reports/{report_id}")
-def fund_discovery_report_detail(report_id: str) -> dict:
+def fund_discovery_report_detail(report_id: str, request: Request) -> Response:
     report = get_discovery_report(report_id)
     if report is None:
         raise HTTPException(status_code=404, detail="报告不存在")
-    return sanitize_retired_market_evidence(report)
+    return _immutable_json_response(
+        request,
+        sanitize_retired_market_evidence(report),
+    )
 
 
 @app.delete("/api/fund-discovery/reports/{report_id}")
@@ -1155,11 +1208,14 @@ def reports() -> list[dict]:
 
 
 @app.get("/api/reports/{report_id}")
-def report_detail(report_id: str) -> dict:
+def report_detail(report_id: str, request: Request) -> Response:
     report = get_report(report_id)
     if report is None:
         raise HTTPException(status_code=404, detail="报告不存在")
-    return sanitize_retired_market_evidence(report)
+    return _immutable_json_response(
+        request,
+        sanitize_retired_market_evidence(report),
+    )
 
 
 @app.get("/api/reports/{report_id}/outcomes")
@@ -1743,6 +1799,37 @@ async def portfolio_holdings() -> dict:
         )
     except TimeoutError as exc:
         raise HTTPException(status_code=503, detail="持仓加载超时，请稍后重试") from exc
+
+
+def _dashboard_bootstrap_sync() -> dict:
+    from app.services.analysis_prompt import build_prompt_config
+
+    profile = get_investor_profile() or InvestorProfile()
+    return {
+        "portfolio": _portfolio_holdings_sync(),
+        "investor_profile": profile.model_dump(mode="json"),
+        "analysis_prompt": build_prompt_config(
+            get_analysis_role_prompt()
+        ).model_dump(mode="json"),
+        "sector_quotes_status": sector_quotes_status(),
+    }
+
+
+@app.get("/api/dashboard/bootstrap")
+@app.get("/api/portfolio/refresh-and-hydrate")
+async def dashboard_bootstrap() -> dict:
+    """Return the dashboard's independent initial reads in one round trip."""
+
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(_dashboard_bootstrap_sync),
+            timeout=HOLDINGS_READ_TIMEOUT_SECONDS,
+        )
+    except TimeoutError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="首页数据加载超时，请稍后重试",
+        ) from exc
 
 
 @app.get("/api/investor-profile")

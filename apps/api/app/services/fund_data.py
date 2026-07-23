@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import math
 import re
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
+import threading
 from typing import Callable, TypeVar
 
 from app.config import get_settings
 from app.models import FundNavHistory, FundNavPoint, FundSnapshot, Holding
 from app.services.nav_trend_summary import summarize_nav_history
+from app.services.shared_executors import get_shared_io_executor
+from app.services.streaming_heartbeat import raise_if_stream_cancelled
 
 _T = TypeVar("_T")
 _R = TypeVar("_R")
@@ -20,15 +23,35 @@ _MAX_FETCH_WORKERS = 8
 def _map_holdings_concurrently(
     items: list[_T],
     worker: Callable[[_T], _R],
+    *,
+    stop_event: threading.Event | None = None,
 ) -> list[_R]:
     """按原序并发执行 worker；worker 须自行捕获异常返回兜底值。"""
     if not items:
         return []
     if len(items) == 1:
         return [worker(items[0])]
-    max_workers = min(_MAX_FETCH_WORKERS, len(items))
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        return list(executor.map(worker, items))
+    # Submit at most the historical per-call cap, but reuse the bounded
+    # process-wide pool so concurrent SSE requests cannot each create eight
+    # fresh threads. Results retain input order.
+    executor = get_shared_io_executor()
+    results: list[_R] = []
+    for start in range(0, len(items), _MAX_FETCH_WORKERS):
+        batch = items[start : start + _MAX_FETCH_WORKERS]
+        futures = [executor.submit(worker, item) for item in batch]
+        try:
+            for future in futures:
+                while True:
+                    raise_if_stream_cancelled(stop_event)
+                    try:
+                        results.append(future.result(timeout=0.25))
+                        break
+                    except FutureTimeoutError:
+                        continue
+        finally:
+            for future in futures:
+                future.cancel()
+    return results
 
 
 class FundDataService:
@@ -37,6 +60,7 @@ class FundDataService:
         holdings: list[Holding],
         *,
         trading_days: int | None = None,
+        stop_event: threading.Event | None = None,
     ) -> tuple[list[FundSnapshot], dict[str, dict]]:
         settings = get_settings()
         days = trading_days if trading_days is not None else settings.nav_cache_pull_days
@@ -50,6 +74,7 @@ class FundDataService:
             lambda holding: self._snapshot_and_trend_for_holding(
                 holding, trading_days=days
             ),
+            stop_event=stop_event,
         )
 
         snapshots: list[FundSnapshot] = []

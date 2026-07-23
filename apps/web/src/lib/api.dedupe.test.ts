@@ -73,6 +73,40 @@ describe("bootstrap API dedupe", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("deduplicates report detail, portfolio summary, and dashboard bootstrap", async () => {
+    const fetchMock = vi.fn().mockImplementation((input: string | URL | Request) => {
+      const url = String(input);
+      const payload = url.includes("/refresh-and-hydrate")
+        ? { portfolio: { holdings: [] } }
+        : url.includes("/portfolio/summary")
+          ? { total_assets: 100 }
+          : { id: "report-1", title: "日报" };
+      return Promise.resolve(
+        new Response(JSON.stringify(payload), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const api = await import("@/lib/api");
+
+    await Promise.all([
+      api.fetchReportDetail("report-1"),
+      api.fetchReportDetail("report-1"),
+    ]);
+    await Promise.all([
+      api.fetchPortfolioSummary(),
+      api.fetchPortfolioSummary(),
+    ]);
+    await Promise.all([
+      api.fetchDashboardBootstrap(),
+      api.fetchDashboardBootstrap(),
+    ]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
   it("never shares authenticated GET promises across access tokens during a switch race", async () => {
     type PendingRequest = {
       url: string;

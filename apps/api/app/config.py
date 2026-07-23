@@ -48,6 +48,37 @@ class Settings(BaseSettings):
     # 可选：正则匹配额外 Origin（CloudBase 静态托管默认 *.webapps.tcloudbase.com）
     cors_origin_regex: str | None = None
     db_path: Path = PROJECT_ROOT / "data" / "app.db"
+    # Thread-local MySQL sockets are bounded by both age and reuse count so a
+    # worker cannot retain one server session indefinitely across deploys or
+    # network changes.  The server-side idle timeout stays above the client
+    # lifetime to make retirement deterministic on the application side.
+    mysql_connection_max_lifetime_seconds: int = 1800
+    mysql_connection_max_reuse_count: int = 500
+    mysql_session_wait_timeout_seconds: int = 2100
+    # Named locks require dedicated server sessions.  Keep their pool separate
+    # from request connections and deliberately tiny per process.
+    mysql_dedicated_session_pool_size: int = 2
+    mysql_dedicated_session_acquire_timeout_seconds: float = 30.0
+    # Shared process cache for the comparatively large profile payload set.
+    # Cross-worker staleness is bounded to this short window; every write also
+    # invalidates the current process immediately.
+    fund_profile_cache_ttl_seconds: float = 5.0
+    # Process-wide pools replace per-SSE-request fan-out pools. Analysis and
+    # discovery context assembly are isolated so one pipeline cannot starve
+    # the other, while the wider I/O pool absorbs bounded nested fan-out.
+    sse_shared_io_workers: int = 32
+    sse_analysis_context_workers: int = 2
+    sse_discovery_context_workers: int = 2
+    # Bounded in-process telemetry avoids a new Prometheus/OTel deployment on
+    # the current single-host topology. Only aggregate samples and sanitized
+    # route/query fingerprints are retained.
+    performance_metrics_enabled: bool = True
+    performance_sample_size: int = 2048
+    performance_slow_request_ms: float = 1000.0
+    performance_log_sample_rate: float = 0.01
+    # Production MySQL bootstrap runs behind a readiness gate so the ASGI
+    # process can answer probes while schema verification is in progress.
+    startup_bootstrap_background: bool = True
     upload_dir: Path = PROJECT_ROOT / "uploads"
     deepseek_api_key: str | None = None
     deepseek_base_url: str = "https://api.deepseek.com"
@@ -114,6 +145,13 @@ class Settings(BaseSettings):
     # 替代逐只各起子进程各 import 的开销。失败自动回退逐只路径。
     akshare_nav_batch_enabled: bool = True
     akshare_nav_batch_workers: int = 6
+    # Generic AkShare scripts reuse isolated long-lived child processes so the
+    # API never imports AkShare/py_mini_racer while avoiding repeated imports.
+    # Set size=0 for the one-shot rollback path.
+    akshare_worker_pool_size: int = 2
+    akshare_worker_max_tasks: int = 50
+    akshare_worker_max_lifetime_seconds: int = 1800
+    akshare_worker_acquire_timeout_seconds: float = 10.0
     news_require_today_for_add: bool = True
     db_auto_import_path: Path | None = None
     sector_quotes_enabled: bool = True

@@ -2314,6 +2314,8 @@ def test_read_only_factory_does_not_create_or_migrate_a_missing_database(
 def test_window_query_paginates_beyond_the_legacy_ten_thousand_cap() -> None:
     connection = sqlite3.connect(":memory:")
     connection.row_factory = sqlite3.Row
+    statements: list[str] = []
+    connection.set_trace_callback(statements.append)
     connection.execute("CREATE TABLE evidence_rows (row_id INTEGER PRIMARY KEY)")
     connection.executemany(
         "INSERT INTO evidence_rows (row_id) VALUES (?)",
@@ -2331,6 +2333,11 @@ def test_window_query_paginates_beyond_the_legacy_ten_thousand_cap() -> None:
     assert len(rows) == 10_001
     assert rows[0]["row_id"] == 0
     assert rows[-1]["row_id"] == 10_000
+    assert not any(" OFFSET " in statement.upper() for statement in statements)
+    assert any(
+        "COALESCE(ROW_ID" in statement.upper() and " > " in statement
+        for statement in statements
+    )
 
 
 def test_all_users_attempts_other_tenants_after_one_contract_failure(

@@ -17,7 +17,11 @@ import time
 from pathlib import Path
 
 from app.config import get_settings
-from app.database import get_fund_primary_sector, list_distinct_portfolio_user_ids
+from app.database import (
+    get_fund_primary_sector,
+    get_fund_primary_sectors_by_codes,
+    list_distinct_portfolio_user_ids,
+)
 from app.models import Holding
 from app.request_context import reset_request_user_id, set_request_user_id
 from app.services.fund_profile import _is_valid_sector_label
@@ -63,7 +67,14 @@ def _is_missing_sector(holding: Holding) -> bool:
     return not _is_valid_sector_label(holding.sector_name)
 
 
-def _needs_backfill(holding: Holding) -> bool:
+_ROW_NOT_PRELOADED = object()
+
+
+def _needs_backfill(
+    holding: Holding,
+    *,
+    preloaded_row: object = _ROW_NOT_PRELOADED,
+) -> bool:
     """是否值得重新解析：板块缺失，或已有标签但来源不是人工/OCR详情这类可信来源。
 
     像"alipay_overview"总览推断、"semantic_name_freeform"自由主题猜测这类来源即使
@@ -78,7 +89,13 @@ def _needs_backfill(holding: Holding) -> bool:
         return True
     from app.services.fund_primary_sector_service import _HIGH_TRUST_SECTOR_SOURCES
 
-    row = get_fund_primary_sector(code)
+    row = (
+        get_fund_primary_sector(code)
+        if preloaded_row is _ROW_NOT_PRELOADED
+        else preloaded_row
+    )
+    if row is not None and not isinstance(row, dict):
+        raise TypeError("preloaded primary-sector row must be a dict or None")
     existing_source = str((row or {}).get("source") or "")
     return existing_source not in _HIGH_TRUST_SECTOR_SOURCES
 
@@ -109,11 +126,21 @@ def backfill_primary_sectors_for_existing_holdings(*, force: bool = False) -> di
             if not holdings:
                 continue
             per_user_holdings[user_id] = holdings
+            user_rows_by_code = get_fund_primary_sectors_by_codes(
+                {
+                    holding.fund_code
+                    for holding in holdings
+                    if holding.fund_code and holding.fund_code != "000000"
+                }
+            )
             # _needs_backfill 内部会查询 fund_primary_sectors（按当前用户），必须在
             # set_request_user_id 生效期间调用，否则会抛"未设置当前用户上下文"。
             for holding in holdings:
                 code_first_holder.setdefault(holding.fund_code, user_id)
-                if _needs_backfill(holding) and holding.fund_name:
+                if _needs_backfill(
+                    holding,
+                    preloaded_row=user_rows_by_code.get(holding.fund_code),
+                ) and holding.fund_name:
                     pending_codes.setdefault(holding.fund_code, holding.fund_name)
         except Exception as exc:
             logger.info("backfill scan holdings failed for user=%s: %s", user_id, exc)

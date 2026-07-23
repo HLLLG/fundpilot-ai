@@ -17,6 +17,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import sqlite3
 from typing import Any, Iterator
 from zoneinfo import ZoneInfo
@@ -3558,7 +3559,7 @@ def _fetch_decision_event_rows(
         table="decision_events",
         where=where,
         params=params,
-        order_by="decision_at, event_id",
+        order_columns=("decision_at", "event_id"),
     )
     return [_decode_evidence_row(row) for row in rows]
 
@@ -3596,7 +3597,7 @@ def _fetch_outcome_observation_rows(
             table="outcome_observations",
             where=where,
             params=params,
-            order_by="observed_at, observation_id",
+            order_columns=("observed_at", "observation_id"),
         )
         result.extend(_decode_evidence_row(row) for row in rows)
     return result
@@ -3677,7 +3678,7 @@ def _fetch_decision_quality_artifact_receipt_rows(
         table="decision_quality_artifact_receipts",
         where="userId = ? AND source_visible_at <= ? AND created_at <= ?",
         params=(user_id, cutoff.isoformat(), cutoff.isoformat()),
-        order_by="source_visible_at, artifact_id",
+        order_columns=("source_visible_at", "artifact_id"),
     )
     result: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -3775,7 +3776,7 @@ def _fetch_decision_quality_provider_receipt_rows(
                 "AND created_at <= ?"
             ),
             params=(*batch, cutoff.isoformat(), cutoff.isoformat()),
-            order_by="provider, operation, receipt_id",
+            order_columns=("provider", "operation", "receipt_id"),
         )
         for row in rows:
             try:
@@ -3870,8 +3871,19 @@ def _fetch_paginated_rows(
     table: str,
     where: str,
     params: Sequence[Any],
-    order_by: str,
+    order_columns: Sequence[str] | None = None,
+    order_by: str | None = None,
 ) -> list[dict[str, Any]]:
+    if order_columns is None:
+        order_columns = tuple(
+            part.strip() for part in (order_by or "").split(",") if part.strip()
+        )
+    identifier = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+    if not identifier.fullmatch(table) or not order_columns or any(
+        not identifier.fullmatch(column) for column in order_columns
+    ):
+        raise ValueError("keyset pagination requires simple SQL identifiers")
+
     count_rows = _fetchall(
         connection,
         f"SELECT COUNT(*) AS row_count FROM {table} WHERE {where}",
@@ -3887,19 +3899,56 @@ def _fetch_paginated_rows(
         raise DecisionQualitySnapshotStorageError(
             f"invalid point-in-time count returned for {table}"
         ) from exc
+    # MySQL and SQLite both sort NULL before text in ascending order.  Model
+    # each key as (is_not_null, coalesced_value) so keyset traversal preserves
+    # that ordering without OFFSET rescans or skipping malformed nullable rows.
+    components = [
+        component
+        for column in order_columns
+        for component in (
+            f"CASE WHEN {column} IS NULL THEN 0 ELSE 1 END",
+            f"COALESCE({column}, '')",
+        )
+    ]
+    order_by = ", ".join(components)
     result: list[dict[str, Any]] = []
-    for offset in range(0, expected_count, _PAGE_SIZE):
+    last_key: tuple[Any, ...] | None = None
+    while len(result) < expected_count:
+        page_where = where
+        page_params: list[Any] = list(params)
+        if last_key is not None:
+            terms: list[str] = []
+            for index, expression in enumerate(components):
+                equal_prefix = " AND ".join(
+                    f"{components[prefix]} = ?" for prefix in range(index)
+                )
+                term = f"{expression} > ?"
+                if equal_prefix:
+                    term = f"({equal_prefix} AND {term})"
+                terms.append(term)
+                page_params.extend(last_key[:index])
+                page_params.append(last_key[index])
+            page_where = f"({where}) AND ({' OR '.join(terms)})"
         page = _fetchall(
             connection,
-            f"SELECT * FROM {table} WHERE {where} ORDER BY {order_by} "
-            f"LIMIT {_PAGE_SIZE} OFFSET {offset}",
-            params,
+            f"SELECT * FROM {table} WHERE {page_where} ORDER BY {order_by} "
+            f"LIMIT {_PAGE_SIZE}",
+            tuple(page_params),
         )
         if not page:
             raise DecisionQualitySnapshotStorageError(
                 f"point-in-time pagination changed while reading {table}"
             )
         result.extend(page)
+        last_row = page[-1]
+        last_key = tuple(
+            component
+            for column in order_columns
+            for component in (
+                0 if last_row.get(column) is None else 1,
+                "" if last_row.get(column) is None else last_row.get(column),
+            )
+        )
     if len(result) != expected_count:
         raise DecisionQualitySnapshotStorageError(
             f"point-in-time pagination count mismatch for {table}"

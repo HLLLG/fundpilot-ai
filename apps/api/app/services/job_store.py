@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
@@ -10,7 +11,6 @@ from uuid import uuid4
 
 from app.config import get_settings
 from app.database import _connect
-from app.db_connect import uses_mysql
 from app.models import AnalysisRequest
 from app.request_context import (
     get_request_user_id,
@@ -36,58 +36,79 @@ _capacity = JobCapacity(
     queued=_settings.async_job_queue_capacity,
 )
 _lock = threading.Lock()
+_schema_lock = threading.Lock()
+_schema_ready_key: tuple[str, str] | None = None
+
+
+def analysis_job_capacity_snapshot() -> dict[str, int]:
+    return _capacity.snapshot()
 
 
 def _ensure_jobs_table(connection: sqlite3.Connection) -> None:
-    connection.execute(
-        """
-        CREATE TABLE IF NOT EXISTS analysis_jobs (
-            id TEXT PRIMARY KEY,
-            status TEXT NOT NULL,
-            request_payload TEXT NOT NULL,
-            dedup_key TEXT,
-            active_dedup_key TEXT,
-            report_id TEXT,
-            error TEXT,
-            stage TEXT,
-            stage_label TEXT,
-            userId INTEGER NOT NULL DEFAULT 1,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            heartbeat_at TEXT
-        )
-        """
+    global _schema_ready_key
+    dialect = str(getattr(connection, "dialect", "sqlite"))
+    settings = get_settings()
+    key = (
+        dialect,
+        settings.database_url or str(settings.db_path.resolve()),
     )
-    # MySQL schema is created and repaired by mysql_bootstrap.
-    if uses_mysql():
+    if _schema_ready_key == key:
         return
-    additions = {
-        "stage": "TEXT",
-        "stage_label": "TEXT",
-        "userId": "INTEGER NOT NULL DEFAULT 1",
-        "dedup_key": "TEXT",
-        "active_dedup_key": "TEXT",
-        "heartbeat_at": "TEXT",
-    }
-    for column, definition in additions.items():
-        try:
-            connection.execute(
-                f"ALTER TABLE analysis_jobs ADD COLUMN {column} {definition}"
+    with _schema_lock:
+        if _schema_ready_key == key:
+            return
+        # MySQL DDL is owned by the one-shot administrative bootstrap.  Never
+        # acquire metadata locks again on a request or heartbeat path.
+        if dialect == "mysql":
+            _schema_ready_key = key
+            return
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS analysis_jobs (
+                id TEXT PRIMARY KEY,
+                status TEXT NOT NULL,
+                request_payload TEXT NOT NULL,
+                dedup_key TEXT,
+                active_dedup_key TEXT,
+                report_id TEXT,
+                error TEXT,
+                stage TEXT,
+                stage_label TEXT,
+                userId INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                heartbeat_at TEXT
             )
-        except sqlite3.OperationalError:
-            pass
-    connection.execute(
-        """
-        CREATE UNIQUE INDEX IF NOT EXISTS uq_analysis_jobs_active_dedup
-        ON analysis_jobs (userId, active_dedup_key)
-        """
-    )
-    connection.execute(
-        """
-        CREATE INDEX IF NOT EXISTS idx_analysis_jobs_heartbeat
-        ON analysis_jobs (status, heartbeat_at)
-        """
-    )
+            """
+        )
+        additions = {
+            "stage": "TEXT",
+            "stage_label": "TEXT",
+            "userId": "INTEGER NOT NULL DEFAULT 1",
+            "dedup_key": "TEXT",
+            "active_dedup_key": "TEXT",
+            "heartbeat_at": "TEXT",
+        }
+        for column, definition in additions.items():
+            try:
+                connection.execute(
+                    f"ALTER TABLE analysis_jobs ADD COLUMN {column} {definition}"
+                )
+            except sqlite3.OperationalError:
+                pass
+        connection.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_analysis_jobs_active_dedup
+            ON analysis_jobs (userId, active_dedup_key)
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_analysis_jobs_heartbeat
+            ON analysis_jobs (status, heartbeat_at)
+            """
+        )
+        _schema_ready_key = key
 
 
 def _active_job_id(user_id: int, dedup_key: str) -> str | None:
@@ -188,6 +209,8 @@ def _run_job(
     user_id: int,
     release_capacity: bool = False,
 ) -> None:
+    started_at = time.perf_counter()
+    outcome = "failed"
     ctx_token = set_request_user_id(user_id)
     heartbeat_stop = threading.Event()
     heartbeat_thread = threading.Thread(
@@ -223,6 +246,7 @@ def _run_job(
                 stage="completed",
                 stage_label="报告已生成",
             )
+            outcome = "completed"
         except Exception as exc:
             _update_job(
                 job_id,
@@ -232,6 +256,13 @@ def _run_job(
                 stage_label="分析失败",
             )
     finally:
+        from app.services.performance_metrics import record_background_job
+
+        record_background_job(
+            "analysis",
+            time.perf_counter() - started_at,
+            outcome=outcome,
+        )
         heartbeat_stop.set()
         heartbeat_thread.join(timeout=1.0)
         reset_request_user_id(ctx_token)

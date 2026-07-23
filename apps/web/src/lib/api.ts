@@ -1784,6 +1784,13 @@ const listReportsRequests = new Map<string, Promise<Report[]>>();
 const listDiscoveryReportsRequests = new Map<string, Promise<FundDiscoveryReport[]>>();
 const portfolioHoldingsRequests = new Map<string, Promise<PortfolioHoldingsPayload>>();
 const sectorQuotesStatusRequests = new Map<string, Promise<SectorQuotesStatus>>();
+const reportDetailRequests = new Map<string, Promise<Report>>();
+const discoveryReportDetailRequests = new Map<
+  string,
+  Promise<FundDiscoveryReport>
+>();
+const portfolioSummaryRequests = new Map<string, Promise<PortfolioSummary>>();
+const dashboardBootstrapRequests = new Map<string, Promise<DashboardBootstrapPayload>>();
 
 export function invalidatePortfolioHoldingsRequest(): void {
   portfolioHoldingsRequests.clear();
@@ -1904,6 +1911,7 @@ export type SectorQuotesStatus = {
   enabled: boolean;
   ttl_seconds: number;
   auto_interval_seconds: number;
+  idle_interval_seconds: number;
   auto_refresh_allowed: boolean;
   session: TradingSession;
 };
@@ -2287,14 +2295,16 @@ export async function deleteDiscoveryReport(reportId: string): Promise<void> {
 // 不含 decision_events / discovery_facts / candidate_pool 这类"每份 5–9 MB"的正文。
 // 打开某份历史报告时通过这个接口按需拉完整正文。
 export async function fetchDiscoveryReportDetail(reportId: string): Promise<FundDiscoveryReport> {
-  const response = await apiFetch(
-    `${API_BASE}/api/fund-discovery/reports/${encodeURIComponent(reportId)}`,
-    { cache: "no-store" },
-  );
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  return response.json();
+  const key = `${authenticatedRequestScope()}:${reportId}`;
+  return dedupeConcurrentGet(discoveryReportDetailRequests, key, async () => {
+    const response = await apiFetch(
+      `${API_BASE}/api/fund-discovery/reports/${encodeURIComponent(reportId)}`,
+    );
+    if (!response.ok) {
+      throw new Error(await response.text());
+    }
+    return response.json();
+  });
 }
 
 export async function fetchDiscoveryOutcomes(
@@ -2365,6 +2375,7 @@ export async function streamDiscoveryChat(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ message, chat_mode: chatMode }),
+    timeoutMs: 0,
   });
   if (!response.ok || !response.body) {
     throw new Error(await response.text());
@@ -2412,14 +2423,16 @@ export async function deleteReport(reportId: string): Promise<void> {
 // 打开某份历史日报时通过这个接口按 id 拉完整正文（含 analysis_facts / topic_briefs /
 // market_news / holdings / snapshots / fund_recommendations 等）。
 export async function fetchReportDetail(reportId: string): Promise<Report> {
-  const response = await apiFetch(
-    `${API_BASE}/api/reports/${encodeURIComponent(reportId)}`,
-    { cache: "no-store" },
-  );
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  return response.json();
+  const key = `${authenticatedRequestScope()}:${reportId}`;
+  return dedupeConcurrentGet(reportDetailRequests, key, async () => {
+    const response = await apiFetch(
+      `${API_BASE}/api/reports/${encodeURIComponent(reportId)}`,
+    );
+    if (!response.ok) {
+      throw new Error(await response.text());
+    }
+    return response.json();
+  });
 }
 
 export async function fetchReportOutcomes(reportId: string): Promise<ReportOutcomes> {
@@ -2433,7 +2446,7 @@ export async function fetchReportOutcomes(reportId: string): Promise<ReportOutco
 }
 
 export async function fetchTradingSession(): Promise<TradingSession> {
-  const response = await apiFetch(`${API_BASE}/api/trading-session`, { cache: "no-store" });
+  const response = await apiFetch(`${API_BASE}/api/trading-session`);
   if (!response.ok) {
     throw new Error(await response.text());
   }
@@ -2594,6 +2607,7 @@ export async function streamReportChat(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ message, chat_mode: chatMode }),
     signal,
+    timeoutMs: 0,
   });
   if (!response.ok) {
     throw new Error(await response.text());
@@ -3017,6 +3031,13 @@ export type PortfolioHoldingsPayload = {
   profile_count?: number;
 };
 
+export type DashboardBootstrapPayload = {
+  portfolio: PortfolioHoldingsPayload;
+  investor_profile: InvestorProfile;
+  analysis_prompt: AnalysisPromptConfig;
+  sector_quotes_status: SectorQuotesStatus;
+};
+
 export type OfficialNavSettlementPayload = PortfolioHoldingsPayload & {
   ok: boolean;
   skipped: boolean;
@@ -3036,6 +3057,22 @@ export async function fetchPortfolioHoldings(): Promise<PortfolioHoldingsPayload
   });
 }
 
+export async function fetchDashboardBootstrap(): Promise<DashboardBootstrapPayload> {
+  return dedupeConcurrentGet(
+    dashboardBootstrapRequests,
+    authenticatedRequestScope(),
+    async () => {
+      const response = await apiFetch(
+        `${API_BASE}/api/portfolio/refresh-and-hydrate`,
+      );
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+      return response.json();
+    },
+  );
+}
+
 export async function settleOfficialNav(): Promise<OfficialNavSettlementPayload> {
   const response = await apiFetch(`${API_BASE}/api/portfolio/settle-official-nav`, {
     method: "POST",
@@ -3047,11 +3084,19 @@ export async function settleOfficialNav(): Promise<OfficialNavSettlementPayload>
 }
 
 export async function fetchPortfolioSummary(): Promise<PortfolioSummary> {
-  const response = await apiFetch(`${API_BASE}/api/portfolio/summary`, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  return response.json();
+  return dedupeConcurrentGet(
+    portfolioSummaryRequests,
+    authenticatedRequestScope(),
+    async () => {
+      const response = await apiFetch(`${API_BASE}/api/portfolio/summary`, {
+        cache: "no-store",
+      });
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+      return response.json();
+    },
+  );
 }
 
 export async function fetchInvestorProfile(): Promise<InvestorProfile> {

@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
-from app.services.sector_quote_cache import get_spot_snapshot, save_spot_snapshot
+from app.services.cache_policy import jittered_ttl
+from app.services.cross_process_lock import CrossProcessLockError, cross_process_lock
+from app.services.sector_quote_cache import (
+    get_spot_snapshot,
+    get_spot_snapshot_any_age,
+    save_spot_snapshot,
+)
 from app.services.trading_session import build_trading_session
 
 _CACHE_VERSION = "v1"
@@ -28,7 +34,11 @@ def rank_cache_key(limit: int) -> str:
 
 
 def get_cached_open_fund_rank(*, limit: int = 300) -> list[dict] | None:
-    payload = get_spot_snapshot(rank_cache_key(limit), ttl_seconds=_cache_ttl_seconds())
+    key = rank_cache_key(limit)
+    payload = get_spot_snapshot(
+        key,
+        ttl_seconds=jittered_ttl(key, _cache_ttl_seconds()),
+    )
     if isinstance(payload, dict):
         rows = payload.get("rows")
         if isinstance(rows, list):
@@ -46,9 +56,23 @@ def fetch_open_fund_rank_cached(*, limit: int = 300) -> list[dict] | None:
     cached = get_cached_open_fund_rank(limit=limit)
     if cached is not None:
         return cached
-    from app.services.akshare_subprocess import fetch_open_fund_rank
+    key = rank_cache_key(limit)
+    try:
+        with cross_process_lock(
+            f"fund-rank-refresh:{key}",
+            timeout_seconds=3.0,
+        ):
+            cached = get_cached_open_fund_rank(limit=limit)
+            if cached is not None:
+                return cached
+            from app.services.akshare_subprocess import fetch_open_fund_rank
 
-    rows = fetch_open_fund_rank(limit=limit)
-    if rows:
-        save_cached_open_fund_rank(limit=limit, rows=rows)
-    return rows
+            rows = fetch_open_fund_rank(limit=limit)
+            if rows:
+                save_cached_open_fund_rank(limit=limit, rows=rows)
+            return rows
+    except CrossProcessLockError:
+        payload = get_spot_snapshot_any_age(key)
+        if isinstance(payload, dict) and isinstance(payload.get("rows"), list):
+            return payload["rows"]
+        return None

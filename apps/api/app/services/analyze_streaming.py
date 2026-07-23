@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from collections.abc import Iterator
 import threading
 import time
@@ -64,6 +64,10 @@ from app.services.decision_time_call import (
     call_with_optional_time,
     prefetch_fund_announcements_compat,
 )
+from app.services.shared_executors import (
+    get_analysis_context_executor,
+    get_shared_io_executor,
+)
 
 NEWS_SUMMARY_TIMEOUT_SECONDS = 8.0
 NEWS_SUMMARY_HEARTBEAT_SECONDS = 1.0
@@ -111,13 +115,19 @@ def stream_analysis(
         runtime = resolve_analysis_runtime(settings, enriched.analysis_mode)
 
         yield _emit_stage(session.session_id, "fund_data", started_at=started_at)
-        executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="analysis-prep")
+        executor = get_shared_io_executor()
+        prep_futures: list[Any] = []
         try:
             fund_data_future = executor.submit(
                 run_with_request_user,
                 user_id,
-                lambda: FundDataService().get_snapshots_with_nav_trends(enriched.holdings),
+                lambda: _get_snapshots_with_cancel(
+                    FundDataService(),
+                    enriched.holdings,
+                    stop,
+                ),
             )
+            prep_futures.append(fund_data_future)
             yield _emit_stage(session.session_id, "news_prefetch", started_at=started_at)
             news_future = executor.submit(
                 run_with_request_user,
@@ -130,6 +140,7 @@ def stream_analysis(
                     max_topics=runtime.news_max_topics,
                 ),
             )
+            prep_futures.append(news_future)
             announcement_future = executor.submit(
                 run_with_request_user,
                 user_id,
@@ -139,6 +150,7 @@ def stream_analysis(
                     decision_at=decision_at,
                 ),
             )
+            prep_futures.append(announcement_future)
             snapshots, nav_trends = _await_future_or_cancel(fund_data_future, stop)
             market_news = _await_future_or_cancel(news_future, stop)
             announcement_result = _await_future_or_cancel(announcement_future, stop)
@@ -151,7 +163,8 @@ def stream_analysis(
                 announcement_result
             )
         finally:
-            executor.shutdown(wait=False, cancel_futures=True)
+            for future in prep_futures:
+                future.cancel()
 
         raise_if_stream_cancelled(stop)
         yield _emit_stage(session.session_id, "news_summarize", started_at=started_at)
@@ -386,6 +399,7 @@ def stream_analysis(
             snapshots,
             runtime,
             facts=bundle.facts,
+            stop_event=stop,
         )
         prompt_contract = build_analysis_prompt_provenance(
             request=enriched,
@@ -465,7 +479,7 @@ def _build_topic_briefs_with_progress(
     decision_at: Any = None,
     stop_event: threading.Event | None = None,
 ) -> Iterator[dict[str, Any]]:
-    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="analysis-news-summary")
+    executor = get_analysis_context_executor()
     future = executor.submit(
         call_with_optional_time,
         _build_topic_briefs,
@@ -494,7 +508,7 @@ def _build_topic_briefs_with_progress(
                     started_at=started_at,
                 )
     finally:
-        executor.shutdown(wait=False, cancel_futures=True)
+        future.cancel()
 
 
 def _prepare_analysis_bundle_with_progress(
@@ -512,7 +526,7 @@ def _prepare_analysis_bundle_with_progress(
     decision_at: Any = None,
     stop_event: threading.Event | None = None,
 ) -> Iterator[dict[str, Any]]:
-    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="analysis-context")
+    executor = get_analysis_context_executor()
     future = executor.submit(
         run_with_request_user,
         user_id,
@@ -526,6 +540,7 @@ def _prepare_analysis_bundle_with_progress(
             analysis_mode=runtime.mode,
             budget_enhancements=True,
             decision_at=decision_at,
+            stop_event=stop_event,
         ),
     )
     try:
@@ -541,7 +556,7 @@ def _prepare_analysis_bundle_with_progress(
                     started_at=started_at,
                 )
     finally:
-        executor.shutdown(wait=False, cancel_futures=True)
+        future.cancel()
 
 
 def _await_future_or_cancel(future: Any, stop_event: threading.Event) -> Any:
@@ -551,6 +566,28 @@ def _await_future_or_cancel(future: Any, stop_event: threading.Event) -> Any:
             return future.result(timeout=0.25)
         except FutureTimeoutError:
             continue
+
+
+def _get_snapshots_with_cancel(
+    service: FundDataService,
+    holdings: list[Holding],
+    stop_event: threading.Event,
+):
+    """Pass cancellation while preserving injected legacy test/provider shims."""
+
+    try:
+        return service.get_snapshots_with_nav_trends(
+            holdings,
+            stop_event=stop_event,
+        )
+    except TypeError as exc:
+        message = str(exc)
+        if (
+            "unexpected keyword argument" not in message
+            or "stop_event" not in message
+        ):
+            raise
+        return service.get_snapshots_with_nav_trends(holdings)
 
 
 def _stage(

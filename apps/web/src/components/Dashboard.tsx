@@ -17,6 +17,7 @@ import type {
 } from "@/lib/api";
 import {
   fetchAnalysisPrompt,
+  fetchDashboardBootstrap,
   fetchInvestorProfile,
   fetchPortfolioHoldings,
   fetchPortfolioSummary,
@@ -610,32 +611,84 @@ export function Dashboard() {
   }, [setActiveTab]);
 
   useEffect(() => {
-    void (async () => {
-      try {
-        const remote = await fetchInvestorProfile();
-        const normalized = normalizeInvestorProfile(remote, defaultProfile);
+    const loadIndividually = () => {
+      void (async () => {
+        try {
+          const remote = await fetchInvestorProfile();
+          const normalized = normalizeInvestorProfile(remote, defaultProfile);
+          setProfile(normalized);
+          saveInvestorProfile(user?.id, normalized);
+        } catch {
+          setProfile((current) => loadInvestorProfile(user?.id, current));
+        } finally {
+          profilePersistReady.current = true;
+          setProfileReady(true);
+        }
+      })();
+      void (async () => {
+        try {
+          const remote = await fetchAnalysisPrompt();
+          setAnalysisPrompt(remote);
+          saveAnalysisPrompt(user?.id, remote);
+        } catch {
+          setAnalysisPrompt((current) => loadAnalysisPrompt(user?.id, current));
+        } finally {
+          promptPersistReady.current = true;
+          setPromptReady(true);
+        }
+      })();
+      void hydratePortfolio();
+      void fetchSectorQuotesStatus()
+        .then((status) =>
+          setHoldingsPollIntervalMs(
+            (status.auto_refresh_allowed
+              ? status.auto_interval_seconds
+              : status.idle_interval_seconds) * 1000,
+          ),
+        )
+        .catch(() => undefined);
+    };
+
+    void fetchDashboardBootstrap()
+      .then((bootstrap) => {
+        const normalized = normalizeInvestorProfile(
+          bootstrap.investor_profile,
+          defaultProfile,
+        );
         setProfile(normalized);
         saveInvestorProfile(user?.id, normalized);
-      } catch {
-        setProfile((current) => loadInvestorProfile(user?.id, current));
-      } finally {
         profilePersistReady.current = true;
         setProfileReady(true);
-      }
-    })();
-    void (async () => {
-      try {
-        const remote = await fetchAnalysisPrompt();
-        setAnalysisPrompt(remote);
-        saveAnalysisPrompt(user?.id, remote);
-      } catch {
-        setAnalysisPrompt((current) => loadAnalysisPrompt(user?.id, current));
-      } finally {
+
+        setAnalysisPrompt(bootstrap.analysis_prompt);
+        saveAnalysisPrompt(user?.id, bootstrap.analysis_prompt);
         promptPersistReady.current = true;
         setPromptReady(true);
-      }
-    })();
-    void hydratePortfolio();
+
+        const payload = bootstrap.portfolio;
+        setHoldings(payload.holdings);
+        setHoldingsRefreshedAt(payload.refreshed_at ?? null);
+        setPortfolioSummary(payload.portfolio_summary ?? null);
+        setPortfolioLoadState("ready");
+        setPortfolioLoadError(null);
+        setIsHydratingHoldings(false);
+        markPortfolioCacheWriteReady();
+        saveCachedPortfolioHoldings(user?.id, {
+          holdings: payload.holdings,
+          portfolio_summary: payload.portfolio_summary ?? null,
+          refreshed_at: payload.refreshed_at ?? null,
+        });
+        const status = bootstrap.sector_quotes_status;
+        setHoldingsPollIntervalMs(
+          (status.auto_refresh_allowed
+            ? status.auto_interval_seconds
+            : status.idle_interval_seconds) * 1000,
+        );
+        if (payload.holdings.length > 0) {
+          settleOfficialNavInBackground(payload.holdings);
+        }
+      })
+      .catch(loadIndividually);
     // Mount-only bootstrap; avoid re-fetching on callback identity changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -776,12 +829,6 @@ export function Dashboard() {
   }, [streamingReport, streamingDiscovery, discoveryJobId, activeJobId]);
 
   useEffect(() => {
-    void fetchSectorQuotesStatus()
-      .then((status) => setHoldingsPollIntervalMs(status.auto_interval_seconds * 1000))
-      .catch(() => undefined);
-  }, []);
-
-  useEffect(() => {
     if (holdings.length === 0) {
       return;
     }
@@ -803,6 +850,11 @@ export function Dashboard() {
       tickInFlight = true;
       try {
         const status = await fetchSectorQuotesStatus();
+        setHoldingsPollIntervalMs(
+          (status.auto_refresh_allowed
+            ? status.auto_interval_seconds
+            : status.idle_interval_seconds) * 1000,
+        );
         if (
           cancelled ||
           document.visibilityState !== "visible" ||

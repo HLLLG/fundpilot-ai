@@ -821,7 +821,7 @@ def test_future_and_mixed_source_schema_versions_fail_closed(tmp_path) -> None:
     future_path = tmp_path / "source-v16.db"
     _current_source(future_path)
     future = sqlite3.connect(future_path)
-    future.execute("UPDATE schema_meta SET version = 20 WHERE id = 1")
+    future.execute("UPDATE schema_meta SET version = 21 WHERE id = 1")
     future.commit()
     future.close()
     with pytest.raises(migration.MigrationError, match="newer than this migrator"):
@@ -1165,7 +1165,7 @@ def test_main_apply_freezes_marker_bootstrap_and_copy_in_one_snapshot(
         source_fingerprint: str,
         source_rollout_marker,
     ) -> dict[str, Any]:
-        assert source_schema_version == 19
+        assert source_schema_version == 20
         assert len(source_fingerprint) == 64
         assert source_rollout_marker == marker
         guard.update(
@@ -1201,7 +1201,7 @@ def test_main_apply_freezes_marker_bootstrap_and_copy_in_one_snapshot(
     ) -> dict[str, Any]:
         assert source.in_transaction is True
         assert batch_size == 1
-        assert source_version == 19
+        assert source_version == 20
         assert rollout_marker == marker
         assert rollout_marker == observed["bootstrap_marker"]
         assert source.execute(

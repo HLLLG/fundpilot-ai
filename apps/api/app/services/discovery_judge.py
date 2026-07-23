@@ -16,9 +16,10 @@ from __future__ import annotations
 `report_judge.py` 的架构定位完全一致。
 """
 
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from concurrent.futures import TimeoutError as FutureTimeoutError
 import json
 import logging
+import threading
 import time
 
 from app.config import get_settings
@@ -30,6 +31,8 @@ from app.services.deepseek_http import (
     deepseek_timeout,
     get_deepseek_http_client,
 )
+from app.services.shared_executors import get_discovery_context_executor
+from app.services.streaming_heartbeat import raise_if_stream_cancelled
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +92,7 @@ def judge_parsed_discovery_report(
     candidate_pool: list[dict],
     discovery_facts: dict,
     analysis_mode: str,
+    stop_event: threading.Event | None = None,
 ) -> tuple[dict, dict]:
     """对 LLM 生成的荐基 draft 报告做可选 LLM 风控复核（仅 deep 模式）。
 
@@ -115,7 +119,11 @@ def judge_parsed_discovery_report(
     escalation_hints = _escalation_hints_by_fund_code(candidate_pool, discovery_facts)
     meta["llm_judge_attempted"] = True
     reviewed, timed_out = _llm_judge_with_budget(
-        parsed, candidate_pool, discovery_facts, escalation_hints
+        parsed,
+        candidate_pool,
+        discovery_facts,
+        escalation_hints,
+        stop_event=stop_event,
     )
     meta["llm_judge_timeout"] = timed_out
     if reviewed is not parsed and isinstance(reviewed.get("recommendations"), list):
@@ -155,20 +163,29 @@ def _llm_judge_with_budget(
     candidate_pool: list[dict],
     discovery_facts: dict,
     escalation_hints: dict[str, dict],
+    *,
+    stop_event: threading.Event | None = None,
 ) -> tuple[dict, bool]:
-    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="discovery-judge")
+    executor = get_discovery_context_executor()
     future = executor.submit(_llm_judge, parsed, candidate_pool, discovery_facts, escalation_hints)
+    deadline = time.monotonic() + LLM_JUDGE_TIMEOUT_SECONDS
     try:
-        return future.result(timeout=LLM_JUDGE_TIMEOUT_SECONDS), False
-    except FutureTimeoutError:
-        future.cancel()
-        logger.warning(
-            "discovery llm judge timed out after %.1fs, using draft report",
-            LLM_JUDGE_TIMEOUT_SECONDS,
-        )
-        return parsed, True
+        while True:
+            raise_if_stream_cancelled(stop_event)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                future.cancel()
+                logger.warning(
+                    "discovery llm judge timed out after %.1fs, using draft report",
+                    LLM_JUDGE_TIMEOUT_SECONDS,
+                )
+                return parsed, True
+            try:
+                return future.result(timeout=min(0.25, remaining)), False
+            except FutureTimeoutError:
+                continue
     finally:
-        executor.shutdown(wait=False, cancel_futures=True)
+        future.cancel()
 
 
 def _llm_judge(

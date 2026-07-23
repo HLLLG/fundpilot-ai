@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import platform
+import queue
 import subprocess
 import sys
 import threading
@@ -21,6 +22,9 @@ from app.services.decision_quality_provider_receipts import (
     build_provider_origin_receipt,
     build_provider_read,
 )
+from app.config import get_settings
+from app.services.cache_policy import jittered_time_bucket
+from app.services.performance_metrics import record_provider_call
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +50,308 @@ _FUND_NAV_QUALITY_CACHE: OrderedDict[
     tuple[str, int, str, str, int], tuple[dict[str, Any], object]
 ] = OrderedDict()
 _FUND_NAV_QUALITY_CACHE_LOCK = threading.RLock()
+_AKSHARE_WORKER_CODE = r"""
+import contextlib
+import io
+import json
+import os
+import sys
+import traceback
+
+startup_stdout = io.StringIO()
+startup_stderr = io.StringIO()
+with contextlib.redirect_stdout(startup_stdout), contextlib.redirect_stderr(startup_stderr):
+    import akshare  # noqa: F401
+
+for raw in sys.stdin:
+    try:
+        request = json.loads(raw)
+        request_id = str(request["id"])
+        script = str(request["script"])
+    except Exception:
+        continue
+    captured_stdout = io.StringIO()
+    captured_stderr = io.StringIO()
+    returncode = 0
+    task_cwd = os.getcwd()
+    task_environ = os.environ.copy()
+    try:
+        namespace = {"__name__": "__fundpilot_akshare_worker__"}
+        with contextlib.redirect_stdout(captured_stdout), contextlib.redirect_stderr(captured_stderr):
+            exec(compile(script, "<fundpilot-akshare-task>", "exec"), namespace, namespace)
+    except BaseException:
+        returncode = 1
+        traceback.print_exc(file=captured_stderr)
+    finally:
+        # Each request gets a fresh globals namespace. Restore the two pieces
+        # of process-global state that provider scripts can most easily mutate
+        # so one tenant/request cannot affect the next pooled task.
+        try:
+            os.chdir(task_cwd)
+        except Exception:
+            pass
+        os.environ.clear()
+        os.environ.update(task_environ)
+    response = {
+        "_fundpilot_worker_response": True,
+        "id": request_id,
+        "returncode": returncode,
+        "stdout": captured_stdout.getvalue(),
+        "stderr": captured_stderr.getvalue(),
+    }
+    sys.__stdout__.write(json.dumps(response, ensure_ascii=False) + "\n")
+    sys.__stdout__.flush()
+"""
+_akshare_pool_lock = threading.Lock()
+_akshare_pool: _AkshareWorkerPool | None = None
+_akshare_pool_key: tuple[int, int, int] | None = None
+
+
+class _AkshareWorker:
+    def __init__(self, *, max_tasks: int, max_lifetime_seconds: int) -> None:
+        self._max_tasks = max(1, int(max_tasks))
+        self._max_lifetime_seconds = max(1, int(max_lifetime_seconds))
+        self._process: subprocess.Popen[str] | None = None
+        self._responses: queue.Queue[dict[str, Any] | None] = queue.Queue()
+        self._reader: threading.Thread | None = None
+        self._started_at = 0.0
+        self._tasks = 0
+        self._sequence = 0
+
+    def _start(self) -> None:
+        creationflags = (
+            int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            if os.name == "nt"
+            else 0
+        )
+        process = subprocess.Popen(
+            [sys.executable, "-u", "-c", _AKSHARE_WORKER_CODE],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+            env=_utf8_subprocess_env(),
+            creationflags=creationflags,
+        )
+        # Use a generation-specific queue. A retiring reader can enqueue its
+        # terminal sentinel after a replacement starts; sharing one queue
+        # would make the new request observe the old process' EOF.
+        responses: queue.Queue[dict[str, Any] | None] = queue.Queue()
+        self._process = process
+        self._responses = responses
+        self._started_at = time.monotonic()
+        self._tasks = 0
+        self._reader = threading.Thread(
+            target=self._read_responses,
+            args=(process, responses),
+            name=f"akshare-worker-reader-{process.pid}",
+            daemon=True,
+        )
+        self._reader.start()
+
+    @staticmethod
+    def _read_responses(
+        process: subprocess.Popen[str],
+        responses: queue.Queue[dict[str, Any] | None],
+    ) -> None:
+        if process.stdout is None:
+            responses.put(None)
+            return
+        try:
+            for raw in process.stdout:
+                try:
+                    payload = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                if (
+                    isinstance(payload, dict)
+                    and payload.get("_fundpilot_worker_response") is True
+                ):
+                    responses.put(payload)
+        finally:
+            responses.put(None)
+
+    def execute(self, script: str, timeout: float) -> subprocess.CompletedProcess[str]:
+        if self._process is None or self._process.poll() is not None:
+            self.close()
+            self._start()
+        assert self._process is not None and self._process.stdin is not None
+        self._sequence += 1
+        request_id = f"{self._process.pid}:{self._sequence}"
+        request = json.dumps(
+            {"id": request_id, "script": script},
+            ensure_ascii=False,
+        )
+        try:
+            self._process.stdin.write(request + "\n")
+            self._process.stdin.flush()
+            response = self._responses.get(timeout=max(0.1, timeout))
+        except (BrokenPipeError, OSError, queue.Empty) as exc:
+            self.close()
+            if isinstance(exc, queue.Empty):
+                raise subprocess.TimeoutExpired(
+                    cmd="fundpilot-akshare-worker",
+                    timeout=timeout,
+                ) from exc
+            raise
+        if response is None or response.get("id") != request_id:
+            self.close()
+            raise OSError("AkShare worker exited without a matching response")
+        self._tasks += 1
+        return subprocess.CompletedProcess(
+            args=["fundpilot-akshare-worker"],
+            returncode=int(response.get("returncode") or 0),
+            stdout=str(response.get("stdout") or ""),
+            stderr=str(response.get("stderr") or ""),
+        )
+
+    @property
+    def should_retire(self) -> bool:
+        return (
+            self._process is None
+            or self._process.poll() is not None
+            or self._tasks >= self._max_tasks
+            or time.monotonic() - self._started_at >= self._max_lifetime_seconds
+        )
+
+    def close(self) -> None:
+        process, self._process = self._process, None
+        if process is None:
+            return
+        try:
+            if process.stdin is not None:
+                process.stdin.close()
+            process.terminate()
+            process.wait(timeout=2)
+        except Exception:
+            try:
+                process.kill()
+            except Exception:
+                pass
+
+
+class _AkshareWorkerPool:
+    def __init__(
+        self,
+        *,
+        size: int,
+        max_tasks: int,
+        max_lifetime_seconds: int,
+    ) -> None:
+        self._workers: queue.Queue[_AkshareWorker] = queue.Queue(maxsize=size)
+        self._closed = False
+        self._settings = (max_tasks, max_lifetime_seconds)
+        for _ in range(size):
+            self._workers.put(self._new_worker())
+
+    def _new_worker(self) -> _AkshareWorker:
+        return _AkshareWorker(
+            max_tasks=self._settings[0],
+            max_lifetime_seconds=self._settings[1],
+        )
+
+    def execute(
+        self,
+        script: str,
+        *,
+        timeout: float,
+        acquire_timeout: float,
+    ) -> subprocess.CompletedProcess[str]:
+        started_at = time.monotonic()
+        try:
+            worker = self._workers.get(
+                timeout=max(0.1, min(timeout, acquire_timeout))
+            )
+        except queue.Empty as exc:
+            raise subprocess.TimeoutExpired(
+                cmd="fundpilot-akshare-worker-pool",
+                timeout=acquire_timeout,
+            ) from exc
+        try:
+            remaining = max(0.1, timeout - (time.monotonic() - started_at))
+            return worker.execute(script, remaining)
+        finally:
+            if worker.should_retire:
+                worker.close()
+                worker = self._new_worker()
+            if not self._closed:
+                self._workers.put(worker)
+            else:
+                worker.close()
+
+    def close(self) -> None:
+        self._closed = True
+        while True:
+            try:
+                worker = self._workers.get_nowait()
+            except queue.Empty:
+                return
+            worker.close()
+
+    def snapshot(self) -> dict[str, int | bool]:
+        available = self._workers.qsize()
+        size = self._workers.maxsize
+        return {
+            "size": size,
+            "available": available,
+            "busy": max(0, size - available),
+            "closed": self._closed,
+        }
+
+
+def _get_akshare_worker_pool() -> _AkshareWorkerPool | None:
+    global _akshare_pool, _akshare_pool_key
+
+    settings = get_settings()
+    size = max(0, int(settings.akshare_worker_pool_size))
+    if size == 0:
+        return None
+    key = (
+        size,
+        max(1, int(settings.akshare_worker_max_tasks)),
+        max(1, int(settings.akshare_worker_max_lifetime_seconds)),
+    )
+    with _akshare_pool_lock:
+        if _akshare_pool is not None and _akshare_pool_key == key:
+            return _akshare_pool
+        previous = _akshare_pool
+        _akshare_pool = _AkshareWorkerPool(
+            size=key[0],
+            max_tasks=key[1],
+            max_lifetime_seconds=key[2],
+        )
+        _akshare_pool_key = key
+    if previous is not None:
+        previous.close()
+    return _akshare_pool
+
+
+def close_akshare_worker_pool() -> None:
+    global _akshare_pool, _akshare_pool_key
+
+    with _akshare_pool_lock:
+        pool, _akshare_pool = _akshare_pool, None
+        _akshare_pool_key = None
+    if pool is not None:
+        pool.close()
+
+
+def akshare_worker_pool_snapshot() -> dict[str, int | bool]:
+    """Return worker occupancy without importing AkShare or spawning workers."""
+
+    with _akshare_pool_lock:
+        pool = _akshare_pool
+    if pool is not None:
+        return pool.snapshot()
+    return {
+        "size": max(0, int(get_settings().akshare_worker_pool_size)),
+        "available": 0,
+        "busy": 0,
+        "closed": False,
+    }
 
 
 def _utf8_subprocess_env() -> dict[str, str]:
@@ -63,19 +369,35 @@ def run_akshare_json_script(
     warn_on_failure: bool = True,
 ) -> object | None:
     """Run an AkShare script in a child process and parse its JSON stdout."""
+    started_at = time.perf_counter()
+    metric_error: object | None = None
     try:
-        result = subprocess.run(
-            [sys.executable, "-c", script],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=timeout,
-            check=False,
-            env=_utf8_subprocess_env(),
-        )
+        pool = _get_akshare_worker_pool()
+        if pool is None:
+            result = subprocess.run(
+                [sys.executable, "-c", script],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=timeout,
+                check=False,
+                env=_utf8_subprocess_env(),
+            )
+        else:
+            result = pool.execute(
+                script,
+                timeout=max(0.1, float(timeout)),
+                acquire_timeout=max(
+                    0.1,
+                    float(
+                        get_settings().akshare_worker_acquire_timeout_seconds
+                    ),
+                ),
+            )
         stdout = result.stdout or ""
         if not stdout.strip():
+            metric_error = "empty_output"
             log = logger.warning if warn_on_failure else logger.debug
             log(
                 "akshare subprocess failed for %s: %s",
@@ -86,6 +408,7 @@ def run_akshare_json_script(
 
         payload = _parse_json_stdout(stdout)
         if payload is None:
+            metric_error = "invalid_json"
             log = logger.warning if warn_on_failure else logger.debug
             log(
                 "akshare subprocess returned invalid JSON for %s: %r",
@@ -94,6 +417,7 @@ def run_akshare_json_script(
             )
             return None
         if isinstance(payload, dict) and payload.get("error"):
+            metric_error = "provider_payload_error"
             log = (
                 logger.warning
                 if warn_on_failure and payload.get("stage")
@@ -106,16 +430,29 @@ def run_akshare_json_script(
             )
             return None
         if result.returncode != 0:
+            metric_error = f"exit_{result.returncode}"
             log = logger.warning if warn_on_failure else logger.debug
             log("akshare subprocess exited rc=%s for %s", result.returncode, label)
             return None
         return payload
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as exc:
+        metric_error = exc
         logger.warning("akshare subprocess timeout for %s", label)
         return None
     except (json.JSONDecodeError, OSError) as exc:
+        metric_error = exc
         logger.warning("akshare subprocess exception for %s: %s", label, exc)
         return None
+    except Exception as exc:
+        metric_error = exc
+        raise
+    finally:
+        record_provider_call(
+            "akshare",
+            str(label).split(":", 1)[0],
+            time.perf_counter() - started_at,
+            error=metric_error,
+        )
 
 
 def _parse_json_stdout(stdout: str) -> object | None:
@@ -141,68 +478,17 @@ def _fetch_fund_nav_history_cached(
     _cache_hour: int,
 ) -> dict | None:
     """在子进程中获取基金净值走势，避免 py_mini_racer crash 主进程."""
-    script = f"""
-import akshare as ak
-import json
-try:
-    frame = ak.fund_open_fund_info_em(symbol="{fund_code}", indicator="单位净值走势")
-    if frame is None or frame.empty:
-        print(json.dumps({{"error": "empty"}}))
-    else:
-        # 保留最后 {trading_days} 条记录
-        if len(frame) > {trading_days}:
-            frame = frame.iloc[-{trading_days}:]
-        data = []
-        for _, row in frame.iterrows():
-            growth_raw = row.get("日增长率")
-            daily_growth = None
-            if growth_raw is not None and str(growth_raw).strip().lower() not in ("", "nan"):
-                try:
-                    daily_growth = float(growth_raw)
-                except (TypeError, ValueError):
-                    daily_growth = None
-            nav_raw = row.get("单位净值")
-            nav_value = None
-            if nav_raw is not None and str(nav_raw).strip().lower() not in ("", "nan"):
-                try:
-                    nav_value = float(nav_raw)
-                except (TypeError, ValueError):
-                    nav_value = None
-            data.append({{
-                "date": str(row.get("净值日期", "")),
-                "nav": nav_value,
-                "daily_growth": daily_growth,
-            }})
-        print(json.dumps({{"data": data}}))
-except Exception as e:
-    print(json.dumps({{"error": str(e)}}))
-"""
-    try:
-        result = subprocess.run(
-            [sys.executable, "-c", script],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=_SUBPROCESS_TIMEOUT,
-            check=False,
-        )
-        if result.returncode != 0 or not result.stdout.strip():
-            logger.warning(f"akshare subprocess failed for {{fund_code}}: stderr={{result.stderr}}")
-            return None
-
-        output = json.loads(result.stdout.strip())
-        if "error" in output:
-            logger.debug(f"akshare returned error for {{fund_code}}: {{output['error']}}")
-            return None
-
-        return output
-    except subprocess.TimeoutExpired:
-        logger.warning(f"akshare subprocess timeout for {{fund_code}}")
-        return None
-    except Exception as e:
-        logger.error(f"akshare subprocess exception for {{fund_code}}: {{e}}")
-        return None
+    script = _fund_nav_history_script(
+        str(fund_code).strip(),
+        max(1, int(trading_days)),
+        _FUND_NAV_INDICATOR,
+    )
+    payload = run_akshare_json_script(
+        script,
+        label=f"fund_nav_history:{fund_code}",
+        timeout=_SUBPROCESS_TIMEOUT,
+    )
+    return payload if isinstance(payload, dict) else None
 
 
 def _utc_now() -> str:
@@ -637,7 +923,10 @@ def fetch_fund_nav_history(fund_code: str, trading_days: int = 90) -> dict | Non
     return _fetch_fund_nav_history_cached(
         fund_code,
         max(1, int(trading_days)),
-        int(time.time() // 3600),
+        jittered_time_bucket(
+            f"fund-nav:{fund_code}:{max(1, int(trading_days))}",
+            3600,
+        ),
     )
 
 
@@ -770,35 +1059,12 @@ try:
 except Exception as e:
     print(json.dumps({{"error": str(e)}}))
 """
-    try:
-        result = subprocess.run(
-            [sys.executable, "-c", script],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=_SUBPROCESS_TIMEOUT,
-            check=False,
-        )
-        if result.returncode != 0 or not result.stdout.strip():
-            logger.warning(
-                "akshare index subprocess failed for %s: stderr=%s",
-                index_symbol,
-                result.stderr,
-            )
-            return None
-
-        output = json.loads(result.stdout.strip())
-        if "error" in output:
-            logger.debug("akshare index returned error for %s: %s", index_symbol, output["error"])
-            return None
-        return output
-    except subprocess.TimeoutExpired:
-        logger.warning("akshare index subprocess timeout for %s", index_symbol)
-        return None
-    except Exception as exc:
-        logger.error("akshare index subprocess exception for %s: %s", index_symbol, exc)
-        return None
+    payload = run_akshare_json_script(
+        script,
+        label=f"index_daily_history:{index_symbol}",
+        timeout=_SUBPROCESS_TIMEOUT,
+    )
+    return payload if isinstance(payload, dict) else None
 
 
 def fetch_index_daily_history(index_symbol: str, trading_days: int = 252) -> dict | None:
@@ -807,7 +1073,10 @@ def fetch_index_daily_history(index_symbol: str, trading_days: int = 252) -> dic
     return _fetch_index_daily_history_cached(
         index_symbol,
         max(1, int(trading_days)),
-        int(time.time() // 3600),
+        jittered_time_bucket(
+            f"index-daily:{index_symbol}:{max(1, int(trading_days))}",
+            3600,
+        ),
     )
 
 
@@ -858,7 +1127,13 @@ def fetch_hk_index_daily_history(
     return _fetch_hk_index_daily_history_cached(
         str(index_symbol).strip().upper(),
         max(20, min(int(trading_days), 800)),
-        int(time.time() // 3600),
+        jittered_time_bucket(
+            (
+                f"hk-index-daily:{str(index_symbol).strip().upper()}:"
+                f"{max(20, min(int(trading_days), 800))}"
+            ),
+            3600,
+        ),
     )
 
 
@@ -1477,24 +1752,15 @@ try:
 except Exception as e:
     print(json.dumps({{"error": str(e)}}))
 """
-    try:
-        result = subprocess.run(
-            [sys.executable, "-c", script],
-            capture_output=True,
-            text=True,
-            timeout=_SUBPROCESS_TIMEOUT,
-            check=False,
-        )
-        if result.returncode != 0 or not result.stdout.strip():
-            logger.warning("akshare new fund subprocess failed: %s", result.stderr)
-            return None
-        output = json.loads(result.stdout.strip())
-        if output.get("error"):
-            return None
-        return output.get("data") or []
-    except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError) as exc:
-        logger.warning("akshare new fund exception: %s", exc)
+    payload = run_akshare_json_script(
+        script,
+        label=f"new_fund_offerings:{cap}",
+        timeout=_SUBPROCESS_TIMEOUT,
+    )
+    if not isinstance(payload, dict):
         return None
+    rows = payload.get("data")
+    return rows if isinstance(rows, list) else None
 
 
 def fetch_board_daily_kline_series(
@@ -1566,35 +1832,18 @@ try:
 except Exception as e:
     print(json.dumps({{"error": str(e)}}))
 """
-    try:
-        result = subprocess.run(
-            [sys.executable, "-c", script],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=_SUBPROCESS_TIMEOUT,
-            check=False,
-        )
-        if result.returncode != 0 or not result.stdout.strip():
-            logger.debug(
-                "akshare board daily subprocess failed for %s: %s",
-                symbol,
-                result.stderr[:200] if result.stderr else "no output",
-            )
-            return None
-        output = json.loads(result.stdout.strip())
-        if output.get("error"):
-            logger.debug(
-                "akshare board daily returned error for %s: %s",
-                symbol,
-                output["error"],
-            )
-            return None
-        return _akshare_board_rows_to_daily_bars(output.get("data") or [], max_days=days)
-    except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError) as exc:
-        logger.warning("akshare board daily exception for %s: %s", symbol, exc)
+    payload = run_akshare_json_script(
+        script,
+        label=f"board_daily_kline:{board_type}:{symbol}",
+        timeout=_SUBPROCESS_TIMEOUT,
+        warn_on_failure=False,
+    )
+    if not isinstance(payload, dict):
         return None
+    rows = payload.get("data")
+    if not isinstance(rows, list):
+        return None
+    return _akshare_board_rows_to_daily_bars(rows, max_days=days)
 
 
 def _akshare_board_rows_to_daily_bars(

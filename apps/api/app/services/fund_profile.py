@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import re
+import threading
+import time
 from collections.abc import Iterable
 from datetime import date, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
+from app.config import get_settings
 from app.database import (
     delete_fund_profile,
     get_fund_profile_by_code,
@@ -13,9 +16,12 @@ from app.database import (
     save_fund_profile,
 )
 from app.models import FundProfile, Holding, ProfileSyncResult
+from app.request_context import get_request_user_id
 
 
 from app.services.fund_name_utils import is_fund_name_match, normalize_fund_name
+from app.services.cache_policy import jittered_ttl
+from app.services.performance_metrics import record_cache_event
 
 if TYPE_CHECKING:
     from app.services.fund_primary_sector_service import PrimarySectorBatchContext
@@ -26,11 +32,20 @@ _DETAIL_TAB_LABELS = frozenset({"关联板块", "业绩走势", "我的收益"})
 
 
 class FundProfileService:
+    _shared_cache: ClassVar[
+        dict[tuple[str, int], tuple[float, tuple[FundProfile, ...]]]
+    ] = {}
+    _shared_cache_lock: ClassVar[threading.Lock] = threading.Lock()
+    _user_load_locks: ClassVar[dict[tuple[str, int], threading.Lock]] = {}
+
     def __init__(self) -> None:
+        # Batch workflows may pin an explicit snapshot on one service instance.
+        # Ordinary short-lived instances share the per-user process cache.
         self._profiles_cache: list[FundProfile] | None = None
 
     def _invalidate_profiles_cache(self) -> None:
         self._profiles_cache = None
+        invalidate_fund_profile_cache()
 
     def save_profile(
         self,
@@ -107,9 +122,50 @@ class FundProfileService:
         return saved
 
     def list_profiles(self) -> list[FundProfile]:
-        if self._profiles_cache is None:
-            self._profiles_cache = list_fund_profiles()
-        return self._profiles_cache
+        if self._profiles_cache is not None:
+            record_cache_event("fund-profile", "hit_instance")
+            return list(self._profiles_cache)
+        user_id = int(get_request_user_id())
+        settings = get_settings()
+        cache_key = (
+            settings.database_url or str(settings.db_path.resolve()),
+            user_id,
+        )
+        now = time.monotonic()
+        with self._shared_cache_lock:
+            cached = self._shared_cache.get(cache_key)
+            if cached is not None and cached[0] > now:
+                record_cache_event("fund-profile", "hit_memory")
+                return list(cached[1])
+            load_lock = self._user_load_locks.setdefault(
+                cache_key,
+                threading.Lock(),
+            )
+        # Single-flight misses per tenant without serializing unrelated users.
+        with load_lock:
+            now = time.monotonic()
+            with self._shared_cache_lock:
+                cached = self._shared_cache.get(cache_key)
+                if cached is not None and cached[0] > now:
+                    record_cache_event("fund-profile", "hit_singleflight")
+                    return list(cached[1])
+            record_cache_event("fund-profile", "miss")
+            profiles = tuple(list_fund_profiles())
+            ttl = max(
+                0.0,
+                float(get_settings().fund_profile_cache_ttl_seconds),
+            )
+            with self._shared_cache_lock:
+                self._shared_cache[cache_key] = (
+                    time.monotonic()
+                    + jittered_ttl(
+                        f"fund-profile:{cache_key[0]}:{user_id}",
+                        ttl,
+                    ),
+                    profiles,
+                )
+            record_cache_event("fund-profile", "refresh")
+            return list(profiles)
 
     def resolve_holding(
         self,
@@ -446,6 +502,21 @@ class FundProfileService:
 
         self._invalidate_profiles_cache()
         return ProfileSyncResult(updated=updated, created=created)
+
+
+def invalidate_fund_profile_cache(user_id: int | None = None) -> None:
+    """Invalidate one tenant (default: request tenant) after profile writes."""
+
+    resolved_user_id = (
+        int(get_request_user_id()) if user_id is None else int(user_id)
+    )
+    settings = get_settings()
+    cache_key = (
+        settings.database_url or str(settings.db_path.resolve()),
+        resolved_user_id,
+    )
+    with FundProfileService._shared_cache_lock:
+        FundProfileService._shared_cache.pop(cache_key, None)
 
 
 def match_profiles_to_holdings(

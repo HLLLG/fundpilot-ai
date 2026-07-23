@@ -44,7 +44,7 @@ def test_run_migrations_backfills_global_primary_sector_table_at_current_version
 
 
 def test_current_schema_still_ensures_factor_ic_snapshot_table() -> None:
-    assert SCHEMA_VERSION == 19
+    assert SCHEMA_VERSION == 20
     connection = sqlite3.connect(":memory:")
     connection.execute(
         "CREATE TABLE schema_meta (id INTEGER PRIMARY KEY, version INTEGER NOT NULL)"
@@ -63,7 +63,7 @@ def test_current_schema_still_ensures_factor_ic_snapshot_table() -> None:
     assert table is not None
 
 
-def test_v19_adds_only_performance_metadata_to_operational_tables() -> None:
+def test_v19_and_v20_add_only_performance_metadata_to_operational_tables() -> None:
     connection = sqlite3.connect(":memory:")
     connection.execute(
         "CREATE TABLE schema_meta (id INTEGER PRIMARY KEY, version INTEGER NOT NULL)"
@@ -91,7 +91,7 @@ def test_v19_adds_only_performance_metadata_to_operational_tables() -> None:
 
     assert connection.execute(
         "SELECT version FROM schema_meta WHERE id = 1"
-    ).fetchone()[0] == 19
+    ).fetchone()[0] == 20
     report_columns = {
         row[1] for row in connection.execute("PRAGMA table_info(reports)")
     }
@@ -114,6 +114,35 @@ def test_v19_adds_only_performance_metadata_to_operational_tables() -> None:
         "report_summaries",
         "fund_discovery_report_summaries",
     } <= tables
+
+
+def test_v20_adds_pending_transaction_covering_index() -> None:
+    connection = sqlite3.connect(":memory:")
+    connection.execute(
+        "CREATE TABLE schema_meta (id INTEGER PRIMARY KEY, version INTEGER NOT NULL)"
+    )
+    connection.execute("INSERT INTO schema_meta VALUES (1, 19)")
+    connection.execute(
+        """
+        CREATE TABLE fund_transactions (
+            id TEXT PRIMARY KEY,
+            userId INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            confirm_date TEXT NOT NULL,
+            trade_time TEXT NOT NULL
+        )
+        """
+    )
+
+    run_migrations(connection)
+
+    columns = [
+        row[2]
+        for row in connection.execute(
+            "PRAGMA index_info(idx_fund_tx_pending_confirm)"
+        )
+    ]
+    assert columns == ["userId", "status", "confirm_date", "trade_time"]
 
 
 def test_current_schema_ensures_append_only_factor_ic_nav_observations() -> None:

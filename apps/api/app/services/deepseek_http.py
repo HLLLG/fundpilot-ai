@@ -11,6 +11,27 @@ from urllib.request import getproxies_environment, proxy_bypass_environment
 import httpx
 
 from app.config import Settings, get_settings
+from app.services.performance_metrics import record_provider_call
+
+
+def _observe_deepseek_request(request: httpx.Request) -> None:
+    request.extensions["fundpilot_started_at"] = time.perf_counter()
+
+
+def _observe_deepseek_response(response: httpx.Response) -> None:
+    started_at = response.request.extensions.get("fundpilot_started_at")
+    duration = (
+        max(0.0, time.perf_counter() - float(started_at))
+        if isinstance(started_at, (int, float))
+        else 0.0
+    )
+    record_provider_call(
+        "deepseek",
+        "chat_completions",
+        duration,
+        error=("http_status" if response.status_code >= 400 else None),
+        status_code=response.status_code,
+    )
 
 
 def deepseek_chat_url(settings: Settings | None = None) -> str:
@@ -115,6 +136,10 @@ def get_deepseek_http_client(settings: Settings | None = None) -> httpx.Client:
                 retries=signature[1],
                 proxy=signature[2],
             ),
+            event_hooks={
+                "request": [_observe_deepseek_request],
+                "response": [_observe_deepseek_response],
+            },
         )
         _SHARED_CLIENTS[signature] = client
         return client
@@ -138,6 +163,10 @@ def create_interruptible_deepseek_http_client(
             retries=max(0, int(resolved.deepseek_connection_retries)),
             proxy=_environment_proxy_for(resolved.deepseek_base_url),
         ),
+        event_hooks={
+            "request": [_observe_deepseek_request],
+            "response": [_observe_deepseek_response],
+        },
     )
 
 

@@ -226,6 +226,12 @@ def _bootstrap_sqlite_schema(connection: sqlite3.Connection) -> None:
         ON fund_transactions (userId, fund_code)
         """
     )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_fund_tx_pending_confirm
+        ON fund_transactions (userId, status, confirm_date, trade_time)
+        """
+    )
     run_migrations(connection)
 
 
@@ -843,6 +849,9 @@ def save_fund_profile(profile: FundProfile) -> FundProfile:
             ),
         )
         connection.commit()
+    from app.services.fund_profile import invalidate_fund_profile_cache
+
+    invalidate_fund_profile_cache(user_id)
     return profile
 
 
@@ -886,7 +895,12 @@ def delete_fund_profile(fund_code: str) -> bool:
             (user_id, fund_code),
         )
         connection.commit()
-    return cursor.rowcount > 0
+    deleted = cursor.rowcount > 0
+    if deleted:
+        from app.services.fund_profile import invalidate_fund_profile_cache
+
+        invalidate_fund_profile_cache(user_id)
+    return deleted
 
 
 def get_fund_profile_by_code(fund_code: str) -> FundProfile | None:
@@ -1585,20 +1599,47 @@ def save_sector_mapping(record: dict[str, Any]) -> dict[str, Any]:
 
 
 def get_fund_primary_sector(fund_code: str) -> dict[str, Any] | None:
-    user_id = _uid()
     code = fund_code.strip().zfill(6)
+    return get_fund_primary_sectors_by_codes([code]).get(code)
+
+
+def get_fund_primary_sectors_by_codes(
+    fund_codes: set[str] | list[str],
+) -> dict[str, dict[str, Any]]:
+    """Batch-read one tenant's sector rows without loading its whole table."""
+
+    user_id = _uid()
+    normalized = list(
+        dict.fromkeys(
+            code
+            for raw in fund_codes
+            if (
+                len(code := str(raw or "").strip().zfill(6)) == 6
+                and code.isdigit()
+                and code != "000000"
+            )
+        )
+    )
+    if not normalized:
+        return {}
+
+    result: dict[str, dict[str, Any]] = {}
     with _connect() as connection:
-        row = connection.execute(
-            """
-            SELECT fund_code, sector_name, intraday_index_name, source, confidence, detail, updated_at
-            FROM fund_primary_sectors
-            WHERE userId = ? AND fund_code = ?
-            """,
-            (user_id, code),
-        ).fetchone()
-    if row is None:
-        return None
-    return _row_to_dict(row)
+        for start in range(0, len(normalized), 500):
+            batch = normalized[start : start + 500]
+            placeholders = ",".join("?" for _ in batch)
+            rows = connection.execute(
+                "SELECT fund_code, sector_name, intraday_index_name, source, "
+                "confidence, detail, updated_at FROM fund_primary_sectors "
+                f"WHERE userId = ? AND fund_code IN ({placeholders})",
+                (user_id, *batch),
+            ).fetchall()
+            for row in rows:
+                payload = _row_to_dict(row)
+                code = str(payload.get("fund_code") or "").zfill(6)
+                if code:
+                    result[code] = payload
+    return result
 
 
 def save_fund_primary_sector(
