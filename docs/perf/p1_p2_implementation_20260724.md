@@ -112,7 +112,7 @@ ORDER BY confirm_date, trade_time;
 
 - 故障矩阵：43 passed，覆盖 SSE 断连、DeepSeek 预算/429、东方财富 pool/circuit、Job 去重/heartbeat、Worker leader、跨进程锁、provider race、共享 executor 取消、指标隐私。
 - API 全量：1387 passed，1 个 Starlette TestClient/httpx 弃用 warning。
-- Web 全量：105 files / 470 passed。
+- Web 全量：105 files / 471 passed；Playwright UI smoke：30 passed / 6 skipped。
 - TypeScript typecheck、ESLint、Next.js production build、Python `compileall`、`git diff --check`：通过。
 - 本轮新增聚焦回归覆盖：MySQL 连接寿命/复用/cursor/dedicated pool、keyset pagination、Schema v20、FundProfile user isolation、批量主板块读取、HTTP revalidation、provider singleflight/race、共享 executor cancellation、performance endpoint。
 

@@ -74,6 +74,10 @@ async function installStableApiStubs(
       return;
     }
 
+    if (request.method() === "POST" && pathname === "/api/telemetry/web-vitals") {
+      await fulfillJson(route, 202, { accepted: true });
+      return;
+    }
     if (pathname === "/api/auth/me") {
       await fulfillJson(route, 200, {
         id: 9001,
@@ -82,6 +86,31 @@ async function installStableApiStubs(
         userAccount: "ui-check@example.com",
         bio: "",
         avatarUrl: "",
+      });
+      return;
+    }
+    if (pathname === "/api/portfolio/refresh-and-hydrate") {
+      await fulfillJson(route, 200, {
+        portfolio: {
+          holdings: currentHoldings,
+          source: currentHoldings.length > 0 ? "database" : "empty",
+          refreshed_at: null,
+          portfolio_summary: null,
+        },
+        investor_profile: {},
+        analysis_prompt: {
+          role_prompt: "",
+          is_custom: false,
+          default_role_prompt: "",
+        },
+        sector_quotes_status: {
+          enabled: false,
+          ttl_seconds: 60,
+          auto_interval_seconds: 180,
+          idle_interval_seconds: 10_800,
+          auto_refresh_allowed: false,
+          session: TRADING_SESSION,
+        },
       });
       return;
     }
@@ -237,6 +266,7 @@ async function installStableApiStubs(
         enabled: false,
         ttl_seconds: 60,
         auto_interval_seconds: 180,
+        idle_interval_seconds: 10_800,
         auto_refresh_allowed: false,
         session: TRADING_SESSION,
       });
@@ -315,9 +345,8 @@ test("模拟登录态可进入响应式应用壳层", async ({ page }) => {
   expect([...apiAudit.seen]).toEqual(
     expect.arrayContaining([
       "GET /api/auth/me",
-      "GET /api/portfolio/holdings",
-      "GET /api/investor-profile",
-      "GET /api/analysis-prompt",
+      "GET /api/portfolio/refresh-and-hydrate",
+      "POST /api/telemetry/web-vitals",
     ]),
   );
   await expectNoHorizontalOverflow(page);

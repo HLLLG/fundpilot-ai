@@ -6,7 +6,7 @@
 
 **文档版本：** 2026-07-24（性能 P0-P2、Schema v20、共享并发预算与轻量可观测性）
 
-**本轮验证：** API 全量 **1387 passed, 1 warning**、Web 全量 **105 files / 470 passed**；TypeScript typecheck、ESLint、production build、Python `compileall` 与 `git diff --check` 均通过。P1/P2 本地隔离容量样本在 1/10/25/50 并发下共 **2,560 请求、100% 成功**；50 并发 Auth P95 从 P0 后样本 **565.74 ms** 降至 **330.15 ms**，其余端点有升有降，必须以生产长期指标继续观察。基准为单 Uvicorn worker + 临时 SQLite、禁用外部源，不代表生产容量。完整实现、测量边界和上线门禁见 `docs/perf/p1_p2_implementation_20260724.md`。
+**本轮验证：** API 全量 **1387 passed, 1 warning**、Web 全量 **105 files / 471 passed**、Playwright UI smoke **30 passed / 6 skipped**；TypeScript typecheck、ESLint、production build、Python `compileall` 与 `git diff --check` 均通过。P1/P2 本地隔离容量样本在 1/10/25/50 并发下共 **2,560 请求、100% 成功**；50 并发 Auth P95 从 P0 后样本 **565.74 ms** 降至 **330.15 ms**，其余端点有升有降，必须以生产长期指标继续观察。基准为单 Uvicorn worker + 临时 SQLite、禁用外部源，不代表生产容量。完整实现、测量边界和上线门禁见 `docs/perf/p1_p2_implementation_20260724.md`。
 
 **更新记录：**
 - **性能 P1/P2、Schema v20 与轻量可观测性（2026-07-24）：** MySQL thread-local 连接增加最大寿命/复用次数/session wait-timeout，named lock 使用独立 2-session 小池，所有 PyMySQL cursor 显式关闭；immutable decision 锁查询裁掉 payload，决策质量改 keyset pagination，FundProfile 采用按 user 隔离的 5 秒进程共享缓存，主板块/benchmark evidence 批量查询消除 N+1；Schema v20 只新增 pending transaction 组合索引。SSE fan-out 收敛为共享 IO/Analysis/Discovery 三类有界 executor 并向深层传播 stop event；AkShare 使用 2 个长驻、按任务数/寿命回收的隔离子进程；板块快照快速 provider 并行竞速，公共 cache 使用 jitter + 数据库 advisory singleflight。首页初始读取合并为 `/api/portfolio/refresh-and-hydrate`，非交易时段降低轮询；Markdown 动态加载、GET 并发去重、普通 API 默认 60 秒超时、报告详情 ETag/private revalidation。新增管理员只读 `/api/admin/performance` 与已登录 Web Vitals 上报，聚合 request/TTFB/DB/provider/cache/executor/Job/CPU/RSS/网络指标且不记录敏感数据。生产 MySQL bootstrap 后台运行时由 readiness gate 阻断业务请求。没有引入 Redis、队列或更多 worker。

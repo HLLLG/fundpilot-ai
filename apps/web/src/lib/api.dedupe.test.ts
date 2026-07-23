@@ -77,7 +77,20 @@ describe("bootstrap API dedupe", () => {
     const fetchMock = vi.fn().mockImplementation((input: string | URL | Request) => {
       const url = String(input);
       const payload = url.includes("/refresh-and-hydrate")
-        ? { portfolio: { holdings: [] } }
+        ? {
+            portfolio: { holdings: [] },
+            investor_profile: {},
+            analysis_prompt: {
+              role_prompt: "",
+              default_role_prompt: "",
+              is_custom: false,
+            },
+            sector_quotes_status: {
+              auto_refresh_allowed: false,
+              auto_interval_seconds: 180,
+              idle_interval_seconds: 10_800,
+            },
+          }
         : url.includes("/portfolio/summary")
           ? { total_assets: 100 }
           : { id: "report-1", title: "日报" };
@@ -105,6 +118,23 @@ describe("bootstrap API dedupe", () => {
     ]);
 
     expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("rejects an incomplete dashboard bootstrap so the UI can use its fallback reads", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({}), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+    const { fetchDashboardBootstrap } = await import("@/lib/api");
+
+    await expect(fetchDashboardBootstrap()).rejects.toThrow(
+      "Dashboard bootstrap response is incomplete",
+    );
   });
 
   it("never shares authenticated GET promises across access tokens during a switch race", async () => {

@@ -80,8 +80,37 @@ async function installHistoryStubs(
       await route.fulfill({ status: 204, headers: { "access-control-allow-origin": "*" } });
       return;
     }
+    if (request.method() === "POST" && pathname === "/api/telemetry/web-vitals") {
+      await json(route, 202, { accepted: true });
+      return;
+    }
     if (pathname === "/api/auth/me") {
       await json(route, 200, { id: 9002, username: "历史验收用户", userAccount: "history@example.com" });
+      return;
+    }
+    if (pathname === "/api/portfolio/refresh-and-hydrate") {
+      await json(route, 200, {
+        portfolio: {
+          holdings: [],
+          source: "empty",
+          refreshed_at: null,
+          portfolio_summary: null,
+        },
+        investor_profile: {},
+        analysis_prompt: {
+          role_prompt: "",
+          is_custom: false,
+          default_role_prompt: "",
+        },
+        sector_quotes_status: {
+          enabled: false,
+          ttl_seconds: 60,
+          auto_interval_seconds: 180,
+          idle_interval_seconds: 10_800,
+          auto_refresh_allowed: false,
+          session: TRADING_SESSION,
+        },
+      });
       return;
     }
     if (pathname === "/api/portfolio/holdings") {
@@ -115,7 +144,7 @@ async function installHistoryStubs(
       return;
     }
     if (pathname === "/api/sector-quotes/status") {
-      await json(route, 200, { enabled: false, ttl_seconds: 60, auto_interval_seconds: 180, auto_refresh_allowed: false, session: TRADING_SESSION });
+      await json(route, 200, { enabled: false, ttl_seconds: 60, auto_interval_seconds: 180, idle_interval_seconds: 10_800, auto_refresh_allowed: false, session: TRADING_SESSION });
       return;
     }
     if (pathname === "/api/trading-session") {

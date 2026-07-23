@@ -3038,6 +3038,30 @@ export type DashboardBootstrapPayload = {
   sector_quotes_status: SectorQuotesStatus;
 };
 
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isDashboardBootstrapPayload(value: unknown): value is DashboardBootstrapPayload {
+  if (!isObjectRecord(value)) return false;
+  const portfolio = value.portfolio;
+  const analysisPrompt = value.analysis_prompt;
+  const sectorStatus = value.sector_quotes_status;
+  return (
+    isObjectRecord(portfolio) &&
+    Array.isArray(portfolio.holdings) &&
+    isObjectRecord(value.investor_profile) &&
+    isObjectRecord(analysisPrompt) &&
+    typeof analysisPrompt.role_prompt === "string" &&
+    typeof analysisPrompt.default_role_prompt === "string" &&
+    typeof analysisPrompt.is_custom === "boolean" &&
+    isObjectRecord(sectorStatus) &&
+    typeof sectorStatus.auto_refresh_allowed === "boolean" &&
+    typeof sectorStatus.auto_interval_seconds === "number" &&
+    typeof sectorStatus.idle_interval_seconds === "number"
+  );
+}
+
 export type OfficialNavSettlementPayload = PortfolioHoldingsPayload & {
   ok: boolean;
   skipped: boolean;
@@ -3068,7 +3092,11 @@ export async function fetchDashboardBootstrap(): Promise<DashboardBootstrapPaylo
       if (!response.ok) {
         throw new Error(await response.text());
       }
-      return response.json();
+      const payload: unknown = await response.json();
+      if (!isDashboardBootstrapPayload(payload)) {
+        throw new Error("Dashboard bootstrap response is incomplete");
+      }
+      return payload;
     },
   );
 }
