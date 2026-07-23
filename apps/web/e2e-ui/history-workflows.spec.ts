@@ -130,6 +130,15 @@ async function installHistoryStubs(
       await json(route, 200, discoveries);
       return;
     }
+    if (
+      request.method() === "GET" &&
+      /^\/api\/fund-discovery\/reports\/[^/]+$/.test(pathname)
+    ) {
+      const id = decodeURIComponent(pathname.split("/").at(-1) ?? "");
+      const detail = discoveries.find((item) => item.id === id);
+      await json(route, detail ? 200 : 404, detail ?? { detail: "report not found" });
+      return;
+    }
     if (pathname.includes("/api/fund-discovery/reports/") && pathname.endsWith("/outcomes")) {
       await json(route, 200, { has_data: false, message: "暂无可配对复盘", items: [] });
       return;
@@ -143,6 +152,12 @@ async function installHistoryStubs(
       } else {
         await json(route, 200, reports);
       }
+      return;
+    }
+    if (request.method() === "GET" && /^\/api\/reports\/[^/]+$/.test(pathname)) {
+      const id = decodeURIComponent(pathname.split("/").at(-1) ?? "");
+      const detail = reports.find((item) => item.id === id);
+      await json(route, detail ? 200 : 404, detail ?? { detail: "report not found" });
       return;
     }
     if (request.method() === "DELETE" && pathname.startsWith("/api/reports/")) {
