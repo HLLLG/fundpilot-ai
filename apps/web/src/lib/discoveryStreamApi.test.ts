@@ -116,7 +116,7 @@ describe("streamDiscovery", () => {
       {},
       { idleTimeoutMs: 50 },
     );
-    const expectation = expect(pending).rejects.toThrow(/long time without progress/);
+    const expectation = expect(pending).rejects.toThrow(/长时间没有收到进度更新/);
 
     await vi.advanceTimersByTimeAsync(60);
 

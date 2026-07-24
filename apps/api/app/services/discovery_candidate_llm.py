@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import Any
+
 from app.services.fund_nav_service import get_cached_official_nav_return
-from app.services.fund_tradeability import compact_tradeability_for_llm
 from app.services.sector_labels import normalize_sector_label
 
 _NAV_TREND_LLM_KEYS = (
@@ -45,11 +47,13 @@ def _text_list(value: object) -> list[str]:
 def _compact_quality_gate(value: object) -> dict:
     if not isinstance(value, dict):
         return {}
-    result = {
-        key: _scalar(value.get(key))
-        for key in _QUALITY_GATE_SCALAR_LLM_KEYS
-        if key in value
-    }
+    result = {}
+    for key in _QUALITY_GATE_SCALAR_LLM_KEYS:
+        if key not in value:
+            continue
+        scalar = _scalar(value.get(key))
+        if scalar is not None:
+            result[key] = scalar
     for key in ("reasons", "missing_fields", "profile_sources", "profile_stale_fields"):
         if key in value:
             result[key] = _text_list(value.get(key))
@@ -148,29 +152,34 @@ def slim_candidate_for_llm(
         "candidate_universe_mode",
         "candidate_universe_size",
     )
-    row: dict = {
-        key: _scalar(item.get(key))
-        for key in scalar_fields
-    }
-    row.update({
-        "profile_sources": _text_list(item.get("profile_sources")),
-        "tradeability": compact_tradeability_for_llm(item.get("tradeability")),
-        "quality_score_components": {
-            key: _scalar((item.get("quality_score_components") or {}).get(key))
-            for key in _QUALITY_SCORE_COMPONENT_LLM_KEYS
-            if isinstance(item.get("quality_score_components"), dict)
-            and key in item["quality_score_components"]
-        },
-        "quality_gate": _compact_quality_gate(item.get("quality_gate")),
-        "quality_reasons": _text_list(item.get("quality_reasons")),
-        "quality_penalties": _text_list(item.get("quality_penalties")),
-        "vehicle_quality_assessment": _compact_vehicle_quality_assessment(
-            item.get("vehicle_quality_assessment")
-        ),
-        "peer_research": _compact_peer_research(item),
-        "benchmark_research": _compact_benchmark_research(item),
-        "benchmark_metrics": _compact_benchmark_metrics(item),
-    })
+    row: dict = {}
+    for key in scalar_fields:
+        scalar = _scalar(item.get(key))
+        if scalar is not None:
+            row[key] = scalar
+    quality_components: dict[str, object] = {}
+    raw_quality_components = item.get("quality_score_components")
+    if isinstance(raw_quality_components, dict):
+        for key in _QUALITY_SCORE_COMPONENT_LLM_KEYS:
+            scalar = _scalar(raw_quality_components.get(key))
+            if scalar is not None:
+                quality_components[key] = scalar
+    row.update(
+        {
+            "profile_sources": _text_list(item.get("profile_sources")),
+            "tradeability": _compact_tradeability(item.get("tradeability")),
+            "quality_score_components": quality_components,
+            "quality_gate": _compact_quality_gate(item.get("quality_gate")),
+            "quality_reasons": _text_list(item.get("quality_reasons")),
+            "quality_penalties": _text_list(item.get("quality_penalties")),
+            "vehicle_quality_assessment": _compact_vehicle_quality_assessment(
+                item.get("vehicle_quality_assessment")
+            ),
+            "peer_research": _compact_peer_research(item),
+            "benchmark_research": _compact_benchmark_research(item),
+            "benchmark_metrics": _compact_benchmark_metrics(item),
+        }
+    )
     nav = slim_nav_trend_for_llm(item.get("nav_trend"))
     if nav:
         row["nav_trend"] = nav
@@ -222,7 +231,49 @@ def _compact_peer_research(item: dict) -> dict:
     peer_rank = item.get("peer_rank") if isinstance(item.get("peer_rank"), dict) else {}
     peer_group = item.get("peer_group") if isinstance(item.get("peer_group"), dict) else {}
     metrics = peer_rank.get("metrics") if isinstance(peer_rank.get("metrics"), dict) else {}
-    return {
+    applicable_metrics: dict[str, dict[str, Any]] = {}
+    not_applicable_metrics: dict[str, dict[str, Any]] = {}
+    for key, value in metrics.items():
+        if not isinstance(value, dict):
+            continue
+        applicable = value.get("applicable") is True
+        available = value.get("available") is True
+        metric = {
+            "applicable": applicable,
+            "available": available,
+        }
+        for field in (
+            "label",
+            "orientation",
+            "role",
+            "applicability",
+            "availability",
+            "value",
+            "percentile",
+            "sample_count",
+            "coverage_rate",
+            "qualified",
+            "qualification_required",
+            "reason",
+        ):
+            scalar = _scalar(value.get(field))
+            if scalar is not None:
+                metric[field] = scalar
+        if applicable:
+            applicable_metrics[key] = metric
+        else:
+            # Keep the explicit absence semantics so a removed null-heavy
+            # metric can never be mistaken for a valid comparison dimension.
+            not_applicable = {
+                "applicable": False,
+                "available": False,
+            }
+            for field in ("applicability", "availability", "reason"):
+                scalar = _scalar(value.get(field))
+                if scalar is not None:
+                    not_applicable[field] = scalar
+            not_applicable_metrics[key] = not_applicable
+    result = {
         "schema_version": peer_rank.get("schema_version"),
         "status": peer_rank.get("status"),
         "execution_tilt_eligible": peer_rank.get("execution_tilt_eligible") is True,
@@ -237,30 +288,10 @@ def _compact_peer_research(item: dict) -> dict:
         "independent_peer_family_count": (
             peer_rank.get("universe") or {}
         ).get("independent_peer_family_count"),
-        "metrics": {
-            key: {
-                "label": value.get("label"),
-                "orientation": value.get("orientation"),
-                "role": value.get("role"),
-                "applicable": value.get("applicable") is True,
-                "applicability": value.get("applicability"),
-                "available": value.get("available") is True,
-                "availability": value.get("availability"),
-                "value": value.get("value"),
-                "percentile": value.get("percentile"),
-                "sample_count": value.get("sample_count"),
-                "coverage_rate": value.get("coverage_rate"),
-                "qualified": value.get("qualified") is True,
-                "qualification_required": value.get("qualification_required") is True,
-                "reason": value.get("reason"),
-            }
-            for key, value in metrics.items()
-            if isinstance(value, dict)
-        },
-        "instruction": (
-            "同类分位只用于同组研究解释；execution_tilt_eligible=false 时不得据此提高金额。"
-        ),
+        "metrics": applicable_metrics,
+        "not_applicable_metrics": not_applicable_metrics,
     }
+    return {key: value for key, value in result.items() if value is not None}
 
 
 def _compact_benchmark_research(item: dict) -> dict:
@@ -270,7 +301,7 @@ def _compact_benchmark_research(item: dict) -> dict:
         else {}
     )
     spec = item.get("benchmark_spec") if isinstance(item.get("benchmark_spec"), dict) else {}
-    return {
+    result = {
         "schema_version": comparison.get("schema_version"),
         "comparison_role": comparison.get("comparison_role"),
         "formal_excess_eligible": comparison.get("formal_excess_eligible") is True,
@@ -278,10 +309,8 @@ def _compact_benchmark_research(item: dict) -> dict:
         "benchmark_name": comparison.get("benchmark_name") or spec.get("benchmark_name"),
         "mapping_id": comparison.get("mapping_id"),
         "reason": comparison.get("reason") or spec.get("reason"),
-        "instruction": (
-            "仅 formal_excess_eligible=true 可称正式超额；tracking_reference 只能称跟踪参考。"
-        ),
     }
+    return {key: value for key, value in result.items() if value is not None}
 
 
 def _compact_benchmark_metrics(item: dict) -> dict:
@@ -302,7 +331,7 @@ def _compact_benchmark_metrics(item: dict) -> dict:
         else {}
     )
     alignment = metrics.get("alignment") if isinstance(metrics.get("alignment"), dict) else {}
-    return {
+    result = {
         "schema_version": metrics.get("schema_version"),
         "status": metrics.get("status"),
         "qualified": metrics.get("qualified") is True,
@@ -314,65 +343,178 @@ def _compact_benchmark_metrics(item: dict) -> dict:
         "benchmark_name": metrics.get("benchmark_name"),
         "effective_trade_date": metrics.get("effective_trade_date"),
         "reason_codes": list(metrics.get("reason_codes") or []),
-        "alignment": {
-            "common_return_sample_days": alignment.get("common_return_sample_days"),
-            "first_common_date": alignment.get("first_common_date"),
-            "last_common_date": alignment.get("last_common_date"),
-        },
+        "alignment": _present_scalars(
+            alignment,
+            (
+                "common_return_sample_days",
+                "first_common_date",
+                "last_common_date",
+            ),
+        ),
         "horizons": {
-            key: {
-                "status": value.get("status"),
-                "start_date": value.get("start_date"),
-                "end_date": value.get("end_date"),
-                "fund_return_percent": value.get("fund_return_percent"),
-                "benchmark_return_percent": value.get("benchmark_return_percent"),
-                "formal_excess_return_percent": value.get(
-                    "formal_excess_return_percent"
+            key: _present_scalars(
+                value,
+                (
+                    "status",
+                    "start_date",
+                    "end_date",
+                    "fund_return_percent",
+                    "benchmark_return_percent",
+                    "formal_excess_return_percent",
+                    "reference_difference_percent",
+                    "fund_max_drawdown_percent",
+                    "benchmark_max_drawdown_percent",
+                    "drawdown_advantage_percent",
                 ),
-                "reference_difference_percent": value.get(
-                    "reference_difference_percent"
-                ),
-                "fund_max_drawdown_percent": value.get(
-                    "fund_max_drawdown_percent"
-                ),
-                "benchmark_max_drawdown_percent": value.get(
-                    "benchmark_max_drawdown_percent"
-                ),
-                "drawdown_advantage_percent": value.get(
-                    "drawdown_advantage_percent"
-                ),
-            }
+            )
             for key, value in horizons.items()
             if key in {"3m", "6m", "1y"} and isinstance(value, dict)
         },
-        "rolling_comparison": {
-            "window_days": rolling.get("window_days"),
-            "window_count": rolling.get("window_count"),
-            "formal_excess_win_rate_percent": rolling.get(
-                "formal_excess_win_rate_percent"
+        "rolling_comparison": _present_scalars(
+            rolling,
+            (
+                "window_days",
+                "window_count",
+                "formal_excess_win_rate_percent",
+                "reference_outperformance_rate_percent",
+                "difference_stability_percent",
             ),
-            "reference_outperformance_rate_percent": rolling.get(
-                "reference_outperformance_rate_percent"
-            ),
-            "difference_stability_percent": rolling.get(
-                "difference_stability_percent"
-            ),
-        },
+        ),
         "tracking_metrics": {
             "applicable": tracking.get("applicable") is True,
             "available": tracking.get("available") is True,
-            "tracking_difference_percent": tracking.get(
-                "tracking_difference_percent"
-            ),
-            "annualized_tracking_error_percent": tracking.get(
-                "annualized_tracking_error_percent"
+            **_present_scalars(
+                tracking,
+                (
+                    "tracking_difference_percent",
+                    "tracking_error_annualized_percent",
+                    "annualized_tracking_error_percent",
+                ),
             ),
         },
-        "instruction": (
-            "只有 status=qualified 的数值可引用；formal_excess_eligible=true 才能称正式超额，"
-            "tracking_reference 只能称跟踪参考；全部仅作描述，不得用于金额倾斜。"
-        ),
     }
+    return {key: value for key, value in result.items() if value is not None}
+
+
+def _present_scalars(
+    value: Mapping[str, Any],
+    keys: tuple[str, ...],
+) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key in keys:
+        scalar = _scalar(value.get(key))
+        if scalar is not None:
+            result[key] = scalar
+    return result
+
+
+def _compact_tradeability(value: object) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        return {
+            "data_status": "unavailable",
+            "purchase_state": "unknown",
+        }
+
+    result = _present_scalars(
+        value,
+        (
+            "schema_version",
+            "data_status",
+            "freshness",
+            "can_purchase",
+            "purchase_state",
+            "purchase_status",
+            "purchase_status_freshness",
+            "redemption_state",
+            "redemption_status",
+            "redemption_status_freshness",
+            "currency",
+            "minimum_purchase_yuan",
+            "minimum_initial_purchase_yuan",
+            "minimum_additional_purchase_yuan",
+            "daily_purchase_limit_yuan",
+            "daily_purchase_limit_unlimited",
+            "daily_purchase_limit_scope",
+            "explicit_minimum_holding_days",
+            "minimum_holding_period_status",
+            "revalidation_required",
+            "next_open_date",
+            "share_class_fee_status",
+            "fee_freshness",
+            "sales_service_fee_annual_percent",
+            "sales_service_fee_status",
+            "source_conflict",
+            "effective_at",
+        ),
+    )
+    status_checked_at = value.get("status_checked_at") or value.get("checked_at")
+    if _scalar(status_checked_at) is not None:
+        result["status_checked_at"] = status_checked_at
+    if _scalar(value.get("fee_checked_at")) is not None:
+        result["fee_checked_at"] = value.get("fee_checked_at")
+    for key in ("purchase_status_checked_at", "redemption_status_checked_at"):
+        checked_at = _scalar(value.get(key))
+        if checked_at is not None and checked_at != status_checked_at:
+            result[key] = checked_at
+
+    missing_fields = _text_list(value.get("missing_fields"))
+    if missing_fields:
+        result["missing_fields"] = missing_fields
+    source_ids = _text_list(value.get("source_ids"))
+    if source_ids:
+        result["source_ids"] = source_ids
+
+    gate = value.get("tradeability_gate")
+    if isinstance(gate, Mapping):
+        compact_gate = _present_scalars(
+            gate,
+            (
+                "schema_version",
+                "status",
+                "effective_initial_min_purchase_yuan",
+                "effective_additional_min_purchase_yuan",
+                "effective_min_purchase_yuan",
+                "max_purchase_yuan",
+                "max_purchase_unlimited",
+                "max_period",
+                "max_scope",
+                "revalidation_required",
+            ),
+        )
+        compact_gate["reason_codes"] = _text_list(gate.get("reason_codes"))
+        result["tradeability_gate"] = compact_gate
+
+    result["standard_purchase_fee_tiers"] = [
+        _present_scalars(
+            tier,
+            (
+                "condition",
+                "min_amount_yuan",
+                "max_amount_yuan",
+                "min_inclusive",
+                "max_inclusive",
+                "fee_type",
+                "fee_percent",
+                "flat_fee_yuan",
+            ),
+        )
+        for tier in list(value.get("standard_purchase_fee_tiers") or [])[:5]
+        if isinstance(tier, Mapping)
+    ]
+    result["redemption_fee_tiers"] = [
+        _present_scalars(
+            tier,
+            (
+                "condition",
+                "min_days",
+                "max_days",
+                "fee_percent",
+            ),
+        )
+        for tier in list(value.get("redemption_fee_tiers") or [])[:6]
+        if isinstance(tier, Mapping)
+    ]
+    return result
 
 
 def trim_sector_heat_for_llm(

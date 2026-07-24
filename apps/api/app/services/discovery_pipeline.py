@@ -3,10 +3,12 @@ from __future__ import annotations
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 import logging
+from typing import Any
 
 from app.config import get_settings
 from app.database import save_discovery_report
 from app.models import DiscoveryRequest, FundDiscoveryReport
+from app.request_context import try_get_request_user_id
 from app.services.discovery_candidate_pool import (
     attach_candidate_benchmark_research,
     build_candidate_pool,
@@ -50,6 +52,7 @@ from app.services.news_service import (
     merge_market_news_with_announcements,
 )
 from app.services.news_summarizer import summarize_all_topics
+from app.services.pipeline_concurrency import run_with_request_user
 from app.services.risk import resolve_weight_denominator
 from app.services.decision_data_evidence import (
     attach_discovery_data_evidence,
@@ -227,39 +230,50 @@ def run_discovery(
         prescreen_candidates=candidate_selection_stages.get("prescreen_candidates") or [],
         final_candidates=candidate_selection_stages.get("final_candidates") or pool,
     )
-    benchmark_specs = load_decision_benchmark_specs(
-        [item.get("fund_code") for item in pool],
-        decision_at=decision_at,
-    )
-    pool = attach_candidate_benchmark_research(
-        pool,
-        benchmark_specs,
-        decision_at=decision_at,
-    )
-    benchmark_metrics = build_fund_benchmark_research_batch(
-        pool,
-        decision_at=decision_at,
-    )
-    pool = attach_fund_benchmark_metrics(pool, benchmark_metrics)
-    pool = assess_candidate_vehicle_quality_batch(pool)
-
     progress("news")
     news_service = NewsService()
     topics = list(dict.fromkeys(target_sectors + request.focus_sectors))
     if not topics:
         topics = ["上证指数"]
     topics = limit_news_topics_for_runtime(topics, runtime)
-    market_news = call_with_optional_time(
-        news_service.prefetch_topics,
-        topics,
-        keyword="now",
-        decision_at=decision_at,
-    )
-    announcement_result = prefetch_fund_announcements_compat(
-        news_service,
-        [str(item.get("fund_code") or "") for item in pool[:12]],
-        decision_at=decision_at,
-    )
+    announcement_codes = [
+        str(item.get("fund_code") or "") for item in pool[:12]
+    ]
+    request_user_id = try_get_request_user_id()
+    with ThreadPoolExecutor(
+        max_workers=3,
+        thread_name_prefix="discovery-evidence",
+    ) as executor:
+        benchmark_future = _submit_with_optional_request_user(
+            executor,
+            request_user_id,
+            lambda candidate_pool=pool: _prepare_candidate_benchmark_context(
+                candidate_pool,
+                decision_at=decision_at,
+            ),
+        )
+        news_future = _submit_with_optional_request_user(
+            executor,
+            request_user_id,
+            lambda: call_with_optional_time(
+                news_service.prefetch_topics,
+                topics,
+                keyword="now",
+                decision_at=decision_at,
+            ),
+        )
+        announcement_future = _submit_with_optional_request_user(
+            executor,
+            request_user_id,
+            lambda codes=announcement_codes: prefetch_fund_announcements_compat(
+                NewsService(),
+                codes,
+                decision_at=decision_at,
+            ),
+        )
+        pool, benchmark_specs, benchmark_metrics = benchmark_future.result()
+        market_news = news_future.result()
+        announcement_result = announcement_future.result()
     market_news = merge_market_news_with_announcements(
         market_news,
         list(announcement_result.get("items") or []),
@@ -384,6 +398,42 @@ def run_discovery(
         except Exception:  # noqa: BLE001 - saved champion is authoritative
             logger.exception("prompt-shadow champion evidence finalization deferred")
     return saved
+
+
+def _submit_with_optional_request_user(
+    executor: ThreadPoolExecutor,
+    user_id: int | None,
+    fn: Callable[[], Any],
+):
+    if user_id is None:
+        return executor.submit(fn)
+    return executor.submit(run_with_request_user, user_id, fn)
+
+
+def _prepare_candidate_benchmark_context(
+    pool: list[dict[str, Any]],
+    *,
+    decision_at: Any,
+) -> tuple[list[dict[str, Any]], dict[str, dict], dict[str, dict]]:
+    benchmark_specs = load_decision_benchmark_specs(
+        [item.get("fund_code") for item in pool],
+        decision_at=decision_at,
+    )
+    enriched_pool = attach_candidate_benchmark_research(
+        pool,
+        benchmark_specs,
+        decision_at=decision_at,
+    )
+    benchmark_metrics = build_fund_benchmark_research_batch(
+        enriched_pool,
+        decision_at=decision_at,
+    )
+    enriched_pool = attach_fund_benchmark_metrics(
+        enriched_pool,
+        benchmark_metrics,
+    )
+    enriched_pool = assess_candidate_vehicle_quality_batch(enriched_pool)
+    return enriched_pool, benchmark_specs, benchmark_metrics
 
 
 def _opportunity_flow_labels(

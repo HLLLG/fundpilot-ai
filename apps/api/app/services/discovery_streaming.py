@@ -112,6 +112,11 @@ PREP_HEARTBEAT_SECONDS = 1.0
 # 连接空闲约 60s 后主动断开（ERR_ABORT_HANDLER）。深度模式下模型思考耗时可能
 # 逼近甚至超过该阈值，因此需要更短的心跳间隔持续产出字节，防止连接被判定空闲。
 LLM_HEARTBEAT_SECONDS = 12.0
+# Cover the whole discovery generator, not only the explicitly asynchronous
+# preparation and model-streaming sections.  Benchmark research, announcement
+# loading, prompt construction, judge and persistence can all block long enough
+# to look idle to a browser or gateway.
+PIPELINE_HEARTBEAT_SECONDS = 12.0
 
 
 def stream_discovery(
@@ -121,10 +126,46 @@ def stream_discovery(
     stop_event: threading.Event | None = None,
 ) -> Iterator[dict[str, Any]]:
     stop = stop_event or threading.Event()
+    started_at = time.monotonic()
+    active_stage = {
+        "stage": "connected",
+        "label": DISCOVERY_JOB_STAGES.get("connected", "connected"),
+    }
+    for entry in iter_with_heartbeat(
+        _stream_discovery(
+            request,
+            user_id=user_id,
+            started_at=started_at,
+            stop_event=stop,
+        ),
+        heartbeat_seconds=PIPELINE_HEARTBEAT_SECONDS,
+        heartbeat_factory=lambda: _stage(
+            active_stage["stage"],
+            active_stage["label"],
+            started_at=started_at,
+        ),
+        stop_event=stop,
+    ):
+        if isinstance(entry, Heartbeat):
+            yield entry.value
+            continue
+        if entry.get("type") == "stage":
+            active_stage["stage"] = str(entry.get("stage") or active_stage["stage"])
+            active_stage["label"] = str(entry.get("label") or active_stage["label"])
+        yield entry
+
+
+def _stream_discovery(
+    request: DiscoveryRequest,
+    *,
+    user_id: int,
+    started_at: float,
+    stop_event: threading.Event,
+) -> Iterator[dict[str, Any]]:
+    stop = stop_event
     ctx_token = set_request_user_id(user_id)
     settings = get_settings()
     runtime = resolve_analysis_runtime(settings, request.analysis_mode)
-    started_at = time.monotonic()
     try:
         raise_if_stream_cancelled(stop)
         yield _stage("connected", started_at=started_at)
@@ -324,21 +365,35 @@ def stream_discovery(
                 prescreen_candidates=candidate_selection_stages.get("prescreen_candidates") or [],
                 final_candidates=candidate_selection_stages.get("final_candidates") or pool,
             )
-            benchmark_specs = load_decision_benchmark_specs(
-                [item.get("fund_code") for item in pool],
-                decision_at=decision_at,
+            benchmark_future = executor.submit(
+                run_with_request_user,
+                user_id,
+                lambda candidate_pool=pool: _prepare_candidate_benchmark_context(
+                    candidate_pool,
+                    decision_at=decision_at,
+                ),
             )
-            pool = attach_candidate_benchmark_research(
-                pool,
-                benchmark_specs,
-                decision_at=decision_at,
+            prep_futures.append(benchmark_future)
+            announcement_codes = [
+                str(item.get("fund_code") or "") for item in pool[:12]
+            ]
+            announcement_future = executor.submit(
+                run_with_request_user,
+                user_id,
+                lambda codes=announcement_codes: prefetch_fund_announcements_compat(
+                    NewsService(),
+                    codes,
+                    decision_at=decision_at,
+                ),
             )
-            benchmark_metrics = build_fund_benchmark_research_batch(
-                pool,
-                decision_at=decision_at,
+            prep_futures.append(announcement_future)
+            pool, benchmark_specs, benchmark_metrics = yield from _await_future_with_progress(
+                benchmark_future,
+                "candidate_pool",
+                "正在核验候选基金的基准表现…",
+                started_at=started_at,
+                stop_event=stop,
             )
-            pool = attach_fund_benchmark_metrics(pool, benchmark_metrics)
-            pool = assess_candidate_vehicle_quality_batch(pool)
             market_news = yield from _await_future_with_progress(
                 news_future,
                 "news",
@@ -346,15 +401,17 @@ def stream_discovery(
                 started_at=started_at,
                 stop_event=stop,
             )
+            announcement_result = yield from _await_future_with_progress(
+                announcement_future,
+                "news",
+                "正在核验候选基金公告…",
+                started_at=started_at,
+                stop_event=stop,
+            )
         finally:
             for future in prep_futures:
                 future.cancel()
         raise_if_stream_cancelled(stop)
-        announcement_result = prefetch_fund_announcements_compat(
-            news_service,
-            [str(item.get("fund_code") or "") for item in pool[:12]],
-            decision_at=decision_at,
-        )
         market_news = merge_market_news_with_announcements(
             market_news,
             list(announcement_result.get("items") or []),
@@ -812,6 +869,32 @@ def _await_future_with_progress(
             if time.monotonic() >= next_heartbeat:
                 yield _stage(stage, label, started_at=started_at)
                 next_heartbeat = time.monotonic() + PREP_HEARTBEAT_SECONDS
+
+
+def _prepare_candidate_benchmark_context(
+    pool: list[dict[str, Any]],
+    *,
+    decision_at: Any,
+) -> tuple[list[dict[str, Any]], dict[str, dict], dict[str, dict]]:
+    benchmark_specs = load_decision_benchmark_specs(
+        [item.get("fund_code") for item in pool],
+        decision_at=decision_at,
+    )
+    enriched_pool = attach_candidate_benchmark_research(
+        pool,
+        benchmark_specs,
+        decision_at=decision_at,
+    )
+    benchmark_metrics = build_fund_benchmark_research_batch(
+        enriched_pool,
+        decision_at=decision_at,
+    )
+    enriched_pool = attach_fund_benchmark_metrics(
+        enriched_pool,
+        benchmark_metrics,
+    )
+    enriched_pool = assess_candidate_vehicle_quality_batch(enriched_pool)
+    return enriched_pool, benchmark_specs, benchmark_metrics
 
 
 def _done(report: FundDiscoveryReport) -> dict[str, Any]:

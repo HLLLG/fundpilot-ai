@@ -66,7 +66,10 @@ type StreamEvent =
 
 const CONNECT_TIMEOUT_MS = 30_000;
 const FIRST_EVENT_TIMEOUT_MS = 90_000;
-const STREAM_IDLE_TIMEOUT_MS = 120_000;
+// The API's model request timeout is 300s. A healthy discovery stream emits a
+// stage heartbeat every 12s, so this is only a broken-stream safety net and
+// must leave enough room for the backend to surface its own timeout/fallback.
+const STREAM_IDLE_TIMEOUT_MS = 360_000;
 
 function mergeAbortSignals(...signals: Array<AbortSignal | undefined>): AbortSignal {
   const controller = new AbortController();
@@ -241,14 +244,14 @@ export async function streamDiscovery(
         throw new DOMException("The operation was aborted.", "AbortError");
       }
       if (idleTimedOut) {
-        throw new Error("荐基流长时间没有进展 (long time without progress)，已切换到后台任务。");
+        throw new Error("荐基流长时间没有收到进度更新");
       }
       if (timeoutAbort.signal.aborted && !sawEvent) {
         throw new Error("等待流式首包超时，将回退到后台扫描");
       }
       const { done, value } = await reader.read();
       if (idleTimedOut) {
-        throw new Error("荐基流长时间没有进展 (long time without progress)，已切换到后台任务。");
+        throw new Error("荐基流长时间没有收到进度更新");
       }
       if (done) {
         break;
