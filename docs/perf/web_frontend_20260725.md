@@ -613,4 +613,4 @@ nginx: [emerg] unknown directive "brotli_static" in /etc/nginx/precompressed/pre
 - `c2efa99` → `eb4df7a` → `9411531` 三个提交之间**只改了 `deploy/nginx/Dockerfile` 与 `docs/`**，都不参与前端构建，Dockerfile 更是只在 `FUND_AI_NGINX_IMAGE` 指向自建镜像时才被用到 —— 因此**生产上跑的前端产物与当前 HEAD 逐字节相同**；
 - 重新探针复测生产：`GET /` 与全部首屏 JS/CSS 均 200、预压缩直发照旧（`Content-Length` 精确）、资源 hash 与上一次完全一致。
 
-唯一实际影响是服务器上的 `DEPLOYED_SHA` 停在 `c2efa99`（只影响回滚记账）。处理方式：在 Actions 页面对失败的 run 点一次 "Re-run all jobs"，或等下一次推 main 时自然覆盖。**不需要改任何配置或脚本。**
+唯一实际影响是当时服务器上的 `DEPLOYED_SHA` 落后一个提交（只影响回滚记账）。处理方式：在 Actions 页面对失败的 run 点一次 "Re-run all jobs"，或等下一次推 main 时自然覆盖 —— 实际就是后者：**`Deploy to Lighthouse` run 56（`2ab05c2`）success，`DEPLOYED_SHA` 已与 `origin/main` 对齐**，同一提交上 `CI` 与 `Frontend Perf` 也都是全绿。**没有改动任何配置或脚本，也证明了 54/55 确实只是平台侧瞬时故障。**
