@@ -591,16 +591,26 @@ nginx: [emerg] unknown directive "brotli_static" in /etc/nginx/precompressed/pre
 
 至此本轮唯一"未在本机验证"的那一项（11.2 结尾标注的 brotli 镜像）**已经在 CI 里被真实请求验证**，不再是纸面设计。同时也说明这个 job 是有价值的门禁：它在第一次运行就拦下了三个真问题，其中②那种"断言写错导致的假报警"如果没有它，只会在生产启用 brotli 那天才暴露。
 
-### 11.12 一处需要记录的流水线噪声：Deploy run 54 排队冲突
+### 11.12 Deploy run 54 / 55 失败：GitHub 侧 internal server error，与本仓库无关
 
-45 分钟内连推 5 次 main，触发了 5 轮 `CI` + `Deploy to Lighthouse`。其中 **Deploy run 54（`eb4df7a`）conclusion 是 failure，但它的 job 数为 0、check run 数为 0，也没有创建 production deployment 记录** —— 也就是它**根本没起 job、没连上服务器**，不存在半截部署。
+`Deploy to Lighthouse` 的 run 54（`eb4df7a`）与 run 55（`9411531`）都是 `conclusion: failure`，但两者的特征完全一样：
 
-原因是 `deploy-lighthouse.yml` 的 `concurrency: fundpilot-lighthouse-production` + `cancel-in-progress: false`：run 53（`c2efa99`）还在跑时 run 54 就被创建，只能排队，然后在队列里失败。这是"短时间内密集推 main"的副作用，不是部署脚本或配置的问题。
+| 观测点 | run 54 | run 55 |
+| --- | --- | --- |
+| 持续时间 | 60 s | 63 s |
+| job 数 | **0** | **0** |
+| check run 数 | **0** | **0** |
+| production deployment 记录 | **未创建** | **未创建** |
+| 运行页错误横幅 | `Internal server error. Correlation ID: 47488d7f-…` | `Internal server error. Correlation ID: 45f3fa7c-…` |
 
-核对生产状态：
+也就是说：**GitHub 自己在创建 job 之前就内部报错了**，run 根本没起 job、没连服务器、没执行 `deploy.sh` 的任何一行，不存在半截部署，也不需要回滚。两次的 correlation ID 不同，属于平台侧瞬时故障。
 
-- 最新的 production deployment 是 `c2efa99`（run 53，success）；
-- `eb4df7a` 与 `c2efa99` 之间**只差 `deploy/nginx/Dockerfile`**，那个文件不参与前端构建、也只在 `FUND_AI_NGINX_IMAGE` 指向自建镜像时才被用到，因此**生产上跑的前端产物与 `eb4df7a` 逐字节相同**；
-- 重新探针复测生产：`GET /` 与首屏 JS/CSS 全部 200、预压缩直发照旧（`Content-Length` 精确）、资源 hash 与上一次一致。
+（先前我一度怀疑是 `concurrency: fundpilot-lighthouse-production` + `cancel-in-progress: false` 的排队冲突 —— run 55 证伪了这个猜测：它启动时 run 54 早已结束、队列里没有竞争者，却报了同样的错。结论以上表的错误横幅为准。）
 
-唯一实际影响是服务器上的 `DEPLOYED_SHA` 停在 `c2efa99` 而不是 `eb4df7a`（只影响回滚记账）。在 GitHub Actions 页面对 run 54 点一次 "Re-run all jobs" 即可对齐，也可以等下一次推 main 时自然覆盖。
+核对生产状态（这是真正要关心的）：
+
+- 最新成功的 production deployment 是 `c2efa99`（run 53，success，耗时约 3.5 分钟）；
+- `c2efa99` → `eb4df7a` → `9411531` 三个提交之间**只改了 `deploy/nginx/Dockerfile` 与 `docs/`**，都不参与前端构建，Dockerfile 更是只在 `FUND_AI_NGINX_IMAGE` 指向自建镜像时才被用到 —— 因此**生产上跑的前端产物与当前 HEAD 逐字节相同**；
+- 重新探针复测生产：`GET /` 与全部首屏 JS/CSS 均 200、预压缩直发照旧（`Content-Length` 精确）、资源 hash 与上一次完全一致。
+
+唯一实际影响是服务器上的 `DEPLOYED_SHA` 停在 `c2efa99`（只影响回滚记账）。处理方式：在 Actions 页面对失败的 run 点一次 "Re-run all jobs"，或等下一次推 main 时自然覆盖。**不需要改任何配置或脚本。**
