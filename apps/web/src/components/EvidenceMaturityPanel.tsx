@@ -8,6 +8,9 @@ import {
 } from "@/lib/api";
 import { useLazyAsyncResource } from "@/lib/useLazyAsyncResource";
 
+// formatter 提到模块作用域：证据成熟度面板按指标逐项渲染计数。无选项的
+// `Intl.NumberFormat(locale)` 与 `n.toLocaleString(locale)` 输出一致。
+const COUNT_FORMATTER = new Intl.NumberFormat("zh-CN");
 
 const OVERALL_LABEL: Record<string, string> = {
   healthy: "采集与证据链正常",
@@ -70,7 +73,7 @@ function EvidenceValue({
   }
   return (
     <span>
-      {value.toLocaleString("zh-CN")}
+      {COUNT_FORMATTER.format(value)}
       {suffix}
     </span>
   );

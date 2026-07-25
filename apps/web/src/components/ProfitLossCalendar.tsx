@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import { ChevronLeft, ChevronRight, ArrowLeftRight } from "lucide-react";
 import type { ProfitCalendar, ProfitCalendarDay } from "@/lib/api";
 
@@ -63,7 +64,7 @@ export function profitCalendarCellLabel(
   }`;
 }
 
-export function ProfitLossCalendar({
+function ProfitLossCalendarView({
   calendar,
   showReturnPercent,
   onToggleMode,
@@ -204,3 +205,7 @@ export function ProfitLossCalendar({
     </section>
   );
 }
+
+// 手写 SVG 图表的路径计算与 hover 状态都不便宜，父面板任何无关状态变化都会
+// 触发重算。props 已在父级稳定为同一引用，这里用 memo 把它们挡在重渲染之外。
+export const ProfitLossCalendar = memo(ProfitLossCalendarView);

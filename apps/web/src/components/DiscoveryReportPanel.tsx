@@ -69,9 +69,13 @@ function finiteAmount(value: number | null | undefined): number | null {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
 }
 
+// formatter 提到模块作用域：荐基报告按推荐条数逐条渲染金额。无选项的
+// `Intl.NumberFormat(locale)` 与 `n.toLocaleString(locale)` 输出一致。
+const YUAN_FORMATTER = new Intl.NumberFormat("zh-CN");
+
 function formatYuan(value: number | null | undefined, fallback = "未确认"): string {
   const amount = finiteAmount(value);
-  return amount == null ? fallback : `¥${amount.toLocaleString("zh-CN")}`;
+  return amount == null ? fallback : `¥${YUAN_FORMATTER.format(amount)}`;
 }
 
 function isCurrentVerifiedAllocation(recommendation: DiscoveryRecommendation): boolean {

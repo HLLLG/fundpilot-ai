@@ -1,0 +1,38 @@
+{
+  "_comment": [
+    "首屏体积预算（单位：字节）。数值来自 2026-07-25 本轮优化后的实测产物再留约 3% 余量。",
+    "注意：`/` 的 JS 里有 412.6 KiB 是 react-dom（195.2）+ Next App Router 客户端运行时（217.4），",
+    "属于框架地板，应用代码只占约 56 KiB。所以 JS 预算的作用是拦住应用代码回胖，",
+    "不是要求总量继续下降。CSS 预算用来防止 globals.css 重新长回单体。",
+    "调整预算时必须同时更新 docs/perf/ 下的前后对比文档，说明为什么放宽。"
+  ],
+  "routes": {
+    "/": {
+      "cssBytes": 135168,
+      "totalBytes": 645120
+    },
+    "/login": {
+      "cssBytes": 135168,
+      "totalBytes": 638976
+    },
+    "/register": {
+      "cssBytes": 135168,
+      "totalBytes": 638976
+    },
+    "/reset-password": {
+      "cssBytes": 135168,
+      "totalBytes": 634880
+    },
+    "/settings": {
+      "cssBytes": 135168,
+      "totalBytes": 638976
+    },
+    "/admin/users": {
+      "cssBytes": 135168,
+      "totalBytes": 657408
+    }
+  },
+  "output": {
+    "jsBytes": 1900544
+  }
+}

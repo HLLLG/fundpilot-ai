@@ -1,7 +1,7 @@
 "use client";
 
-import { useId, useState } from "react";
-import type { PortfolioDashboardData, ProfitRange } from "@/lib/api";
+import { useCallback, useId, useState } from "react";
+import type { PortfolioAllocationRow, PortfolioDashboardData, ProfitRange } from "@/lib/api";
 import { fetchPortfolioDashboard } from "@/lib/api";
 import { buildClientCacheKey } from "@/lib/clientCache";
 import { useCachedFetch } from "@/lib/useCachedFetch";
@@ -15,6 +15,9 @@ import { PortfolioEvidenceOverviewPanel } from "@/components/PortfolioEvidenceOv
 import { FactorIcStatusBadge } from "@/components/FactorIcStatusBadge";
 import { EvidenceMaturityPanel } from "@/components/EvidenceMaturityPanel";
 import { InlineNotice } from "@/components/InlineNotice";
+
+// 空数组提到模块作用域：原来的 `?? []` 每次渲染都造新引用，会让 memo 永远失效。
+const EMPTY_ALLOCATION_ROWS: PortfolioAllocationRow[] = [];
 
 const RANGE_TABS: Array<{ id: ProfitRange; label: string }> = [
   { id: "today", label: "当日" },
@@ -131,15 +134,18 @@ export function hasPortfolioDashboardContent(data: PortfolioDashboardData | null
   );
 }
 
+// formatter 提到模块作用域：盈亏分析页的多个卡片与日历格都会调用它。输出格式不变。
+const MONEY_FORMATTER = new Intl.NumberFormat("zh-CN", {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
 function formatMoney(value: number | null | undefined) {
   if (value === null || value === undefined) {
     return "—";
   }
   const rounded = Math.round(value * 100) / 100;
-  return `${rounded > 0 ? "+" : ""}${rounded.toLocaleString("zh-CN", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
+  return `${rounded > 0 ? "+" : ""}${MONEY_FORMATTER.format(rounded)}`;
 }
 
 function formatPercent(value: number | null | undefined) {
@@ -169,6 +175,15 @@ export function PortfolioDashboard({
   const [calendarYear, setCalendarYear] = useState(() => new Date().getFullYear());
   const [calendarMonth, setCalendarMonth] = useState(() => new Date().getMonth() + 1);
   const [calendarShowReturn, setCalendarShowReturn] = useState(false);
+  // 回调保持同一引用，日历组件的 memo 才能真正挡住无关重渲染。行为与原来的
+  // 内联箭头函数完全一致。
+  const toggleCalendarMode = useCallback(() => {
+    setCalendarShowReturn((value) => !value);
+  }, []);
+  const handleCalendarMonthChange = useCallback((year: number, month: number) => {
+    setCalendarYear(year);
+    setCalendarMonth(month);
+  }, []);
   const [showReturnHeader, setShowReturnHeader] = useState(false);
   const [showFactorScores, setShowFactorScores] = useState(false);
   const [showEvidenceOverview, setShowEvidenceOverview] = useState(false);
@@ -363,17 +378,14 @@ export function PortfolioDashboard({
         <ProfitLossCalendar
           calendar={currentData?.profit_calendar}
           showReturnPercent={calendarShowReturn}
-          onToggleMode={() => setCalendarShowReturn((value) => !value)}
-          onMonthChange={(year, month) => {
-            setCalendarYear(year);
-            setCalendarMonth(month);
-          }}
+          onToggleMode={toggleCalendarMode}
+          onMonthChange={handleCalendarMonthChange}
         />
       </div>
 
       <section className="pl-panel section-card" data-testid="portfolio-allocation-section">
         <h2 className="pl-panel-title mb-3">持仓分布</h2>
-        <HoldingDonutChart rows={currentData?.allocation ?? []} />
+        <HoldingDonutChart rows={currentData?.allocation ?? EMPTY_ALLOCATION_ROWS} />
       </section>
 
       <PortfolioRiskMetricsPanel />

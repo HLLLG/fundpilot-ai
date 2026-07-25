@@ -1,0 +1,79 @@
+name: Frontend Perf
+
+# 独立于 deploy-lighthouse.yml（那条是腾讯云轻量服务器部署，与性能工具无关）。
+# 这条只做前端性能防回归：
+#   1) 首屏体积预算 —— 硬门禁，超预算直接失败；
+#   2) Web Vitals 采集 —— 先记录、给宽松上限，攒够方差数据再收紧，
+#      避免无头环境的 LCP/INP 抖动变成随机红叉。
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    paths:
+      - "apps/web/**"
+      - "deploy/nginx/**"
+      - ".github/workflows/frontend-perf.yml"
+
+jobs:
+  bundle-budget:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - name: Install frontend dependencies
+        run: npm ci
+        env:
+          NPM_CONFIG_REGISTRY: https://registry.npmjs.org/
+      - name: Production static export
+        run: npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+      - name: First-load budget gate
+        run: npm run perf:bundle:check -- --json first-load-report.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: first-load-report
+          path: apps/web/first-load-report.json
+          if-no-files-found: warn
+
+  web-vitals:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - name: Install frontend dependencies
+        run: npm ci
+        env:
+          NPM_CONFIG_REGISTRY: https://registry.npmjs.org/
+      - name: Install Playwright chromium
+        run: npx playwright install --with-deps chromium
+      - name: Production static export
+        run: npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+      - name: Measure interaction and Web Vitals
+        run: npm run perf:interaction -- --json interaction-report.json
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: interaction-report
+          path: apps/web/interaction-report.json
+          if-no-files-found: warn

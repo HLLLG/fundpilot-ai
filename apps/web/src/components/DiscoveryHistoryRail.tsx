@@ -21,11 +21,24 @@ type DiscoveryHistoryRailProps = {
   initialLimit?: number;
 };
 
+// formatter 提到模块作用域：搜索索引与列表渲染会按历史条数逐条调用。
+// 字段组合与 `toLocaleDateString(locale)` / `toLocaleString(locale)` 的规范默认一致，
+// 输出逐字相同。
+const DATE_FORMATTER = new Intl.DateTimeFormat("zh-CN");
+const DATE_TIME_FORMATTER = new Intl.DateTimeFormat("zh-CN", {
+  year: "numeric",
+  month: "numeric",
+  day: "numeric",
+  hour: "numeric",
+  minute: "numeric",
+  second: "numeric",
+});
+
 function discoveryReportSearchText(report: FundDiscoveryReport): string {
   return [
     report.title,
     ...(report.target_sectors ?? []),
-    new Date(report.created_at).toLocaleDateString("zh-CN"),
+    DATE_FORMATTER.format(new Date(report.created_at)),
   ].join(" ");
 }
 
@@ -201,7 +214,7 @@ export function DiscoveryHistoryRail({
               >
                 <div className="line-clamp-2 text-sm font-black text-slate-950">{item.title}</div>
                 <div className="mt-1 text-xs text-slate-500">
-                  {new Date(item.created_at).toLocaleString("zh-CN")}
+                  {DATE_TIME_FORMATTER.format(new Date(item.created_at))}
                 </div>
                 {item.target_sectors?.length ? (
                   <div className="mt-1 line-clamp-1 text-[11px] text-slate-500">

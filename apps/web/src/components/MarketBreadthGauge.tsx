@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { memo, useEffect } from "react";
 import { Gauge, Loader2 } from "lucide-react";
 import { fetchMarketBreadth, type MarketBreadthSignal } from "@/lib/api";
 import { StatusPill } from "@/components/StatusPill";
@@ -166,7 +166,7 @@ function MarketBreadthBar({ data }: { data: MarketBreadthSignal }) {
  * 自行请求数据（对齐 SectorSignalBacktestPanel 的自包含模式），两处挂载点
  * 无需各自维护数据获取逻辑。
  */
-export function MarketBreadthGauge({ compact = false }: MarketBreadthGaugeProps) {
+function MarketBreadthGaugeView({ compact = false }: MarketBreadthGaugeProps) {
   const { data, error, loading, revalidating, refresh } = useCachedFetch<MarketBreadthSignal>({
     cacheKey: MARKET_BREADTH_CACHE_KEY,
     fetcher: fetchMarketBreadth,
@@ -374,3 +374,7 @@ export function MarketBreadthGauge({ compact = false }: MarketBreadthGaugeProps)
     </section>
   );
 }
+
+// 手写 SVG 图表的路径计算与 hover 状态都不便宜，父面板任何无关状态变化都会
+// 触发重算。props 已在父级稳定为同一引用，这里用 memo 把它们挡在重渲染之外。
+export const MarketBreadthGauge = memo(MarketBreadthGaugeView);

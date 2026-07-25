@@ -20,9 +20,21 @@ type HistoryRailProps = {
   initialLimit?: number;
 };
 
+// formatter 提到模块作用域：搜索索引与列表渲染会按历史条数逐条调用。输出格式不变。
+const DATE_FORMATTER = new Intl.DateTimeFormat("zh-CN");
+// 与 `Date.prototype.toLocaleString(locale)` 的规范默认字段组合一致，输出逐字相同。
+const DATE_TIME_FORMATTER = new Intl.DateTimeFormat("zh-CN", {
+  year: "numeric",
+  month: "numeric",
+  day: "numeric",
+  hour: "numeric",
+  minute: "numeric",
+  second: "numeric",
+});
+
 function reportDateText(value: string): string {
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString("zh-CN");
+  return Number.isNaN(date.getTime()) ? value : DATE_FORMATTER.format(date);
 }
 
 function reportSearchText(report: Report): string {
@@ -195,7 +207,7 @@ export function HistoryRail({
                   </StatusPill>
                 </div>
                 <div className="text-xs leading-5 text-slate-500">
-                  {new Date(report.created_at).toLocaleString("zh-CN")}
+                  {DATE_TIME_FORMATTER.format(new Date(report.created_at))}
                 </div>
               </button>
               {!history.batchMode ? (

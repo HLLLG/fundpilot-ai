@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { ProfitTrend } from "@/lib/api";
 import { clockToSessionRatio } from "@/lib/intradayChartTime";
 
@@ -167,7 +167,7 @@ function portfolioColors(latest: number) {
   };
 }
 
-export function ProfitAnalysisTrendChart({ trend, height = 200 }: ProfitAnalysisTrendChartProps) {
+function ProfitAnalysisTrendChartView({ trend, height = 200 }: ProfitAnalysisTrendChartProps) {
   const gradientId = useId().replace(/:/g, "");
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -598,3 +598,7 @@ export function ProfitAnalysisTrendChart({ trend, height = 200 }: ProfitAnalysis
     </div>
   );
 }
+
+// 手写 SVG 图表的路径计算与 hover 状态都不便宜，父面板任何无关状态变化都会
+// 触发重算。props 已在父级稳定为同一引用，这里用 memo 把它们挡在重渲染之外。
+export const ProfitAnalysisTrendChart = memo(ProfitAnalysisTrendChartView);

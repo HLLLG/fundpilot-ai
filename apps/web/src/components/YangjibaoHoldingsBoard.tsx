@@ -80,14 +80,17 @@ function UpdatedBadge({ className = "" }: { className?: string }) {
   return <span className={`${updatedBadgeClassName} ${className}`.trim()}>已更新</span>;
 }
 
+// formatter 提到模块作用域：持仓看板每行都会调用它。输出格式不变。
+const MONEY_FORMATTER = new Intl.NumberFormat("zh-CN", {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
 function formatMoney(value: number | null | undefined) {
   if (value === null || value === undefined) {
     return "—";
   }
-  return value.toLocaleString("zh-CN", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
+  return MONEY_FORMATTER.format(value);
 }
 
 function formatBalance(value: number | null | undefined, hidden: boolean) {

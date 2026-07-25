@@ -629,14 +629,19 @@ export function computeHoldingWeight(
   return round2((holding.holding_amount / totalAssets) * 100);
 }
 
+// 共享 formatter：这两个函数在持仓看板、详情与日报里按行调用，原实现每次调用都会
+// 让引擎重新构造一个数字格式器。`Intl.NumberFormat(locale, opts).format(n)` 与
+// `n.toLocaleString(locale, opts)` 按规范输出一致，展示结果不变。
+const PLAIN_MONEY_FORMATTER = new Intl.NumberFormat("zh-CN", {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
 export function formatPlainMoney(value: number | null | undefined) {
   if (value === null || value === undefined) {
     return "—";
   }
-  return value.toLocaleString("zh-CN", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
+  return PLAIN_MONEY_FORMATTER.format(value);
 }
 
 export function formatPlainPercent(value: number | null | undefined) {
@@ -651,10 +656,7 @@ export function formatSignedMoney(value: number | null | undefined, options?: { 
     return "—";
   }
   const prefix = options?.plus !== false && value > 0 ? "+" : "";
-  return `${prefix}${value.toLocaleString("zh-CN", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
+  return `${prefix}${PLAIN_MONEY_FORMATTER.format(value)}`;
 }
 
 export function formatSignedPercent(value: number | null | undefined) {

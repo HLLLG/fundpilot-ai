@@ -43,11 +43,20 @@ function formatPercent(value: number | null | undefined) {
   return `${rounded > 0 ? "+" : ""}${rounded.toFixed(2)}%`;
 }
 
+// formatter 提到模块作用域：美股概览按指数/个股逐格调用。输出格式不变。
+const PRICE_FORMATTER = new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 4 });
+const CLOCK_FORMATTER = new Intl.DateTimeFormat("zh-CN", {
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+});
+
 function formatPrice(value: number | null | undefined) {
   if (value == null) {
     return "—";
   }
-  return value.toLocaleString("zh-CN", { maximumFractionDigits: 4 });
+  return PRICE_FORMATTER.format(value);
 }
 
 function profitClass(value: number | null | undefined) {
@@ -72,12 +81,7 @@ function formatClock(value: string | null | undefined) {
   if (Number.isNaN(parsed.getTime())) {
     return value;
   }
-  return parsed.toLocaleString("zh-CN", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return CLOCK_FORMATTER.format(parsed);
 }
 
 type MetricCardProps = {

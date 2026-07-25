@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { InlineNotice } from "@/components/InlineNotice";
 import type { PortfolioRiskCorrelation } from "@/lib/api";
 import { fetchPortfolioRiskCorrelation } from "@/lib/api";
@@ -22,7 +22,7 @@ function shortName(name: string): string {
   return name.length > 6 ? `${name.slice(0, 6)}…` : name;
 }
 
-export function PortfolioCorrelationHeatmap({ enabled }: { enabled: boolean }) {
+function PortfolioCorrelationHeatmapView({ enabled }: { enabled: boolean }) {
   const [data, setData] = useState<PortfolioRiskCorrelation | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -146,3 +146,7 @@ export function PortfolioCorrelationHeatmap({ enabled }: { enabled: boolean }) {
     </div>
   );
 }
+
+// 手写 SVG 图表的路径计算与 hover 状态都不便宜，父面板任何无关状态变化都会
+// 触发重算。props 已在父级稳定为同一引用，这里用 memo 把它们挡在重渲染之外。
+export const PortfolioCorrelationHeatmap = memo(PortfolioCorrelationHeatmapView);

@@ -47,3 +47,7 @@ COMMIT_EDITMSG_TMP
 
 # 截图验收输出（构建产物，不入库）
 apps/web/verify-shots/
+
+# 前端性能基准输出（CI artifact / 本机测量结果，不入库）
+apps/web/first-load-report.json
+apps/web/interaction-report.json

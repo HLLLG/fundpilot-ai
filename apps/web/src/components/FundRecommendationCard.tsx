@@ -18,6 +18,10 @@ import { QuantEvidenceSummary } from "@/components/QuantEvidenceSummary";
 import { SectorOpportunityCard } from "@/components/SectorOpportunityCard";
 import { FundTradeabilityEvidence } from "@/components/FundTradeabilityEvidence";
 
+// formatter 提到模块作用域：日报按推荐条数逐条渲染金额。无选项的
+// `Intl.NumberFormat(locale)` 与 `n.toLocaleString(locale)` 输出一致。
+const YUAN_FORMATTER = new Intl.NumberFormat("zh-CN");
+
 type Snapshot = Report["snapshots"][number];
 
 type FundRecommendationCardProps = {
@@ -192,7 +196,7 @@ function PositionChangeBadge({
           </div>
           {estimatedAmountYuan != null && estimatedAmountYuan > 0 ? (
             <div className="whitespace-nowrap text-base font-black tabular-nums">
-              约 ¥{Math.round(estimatedAmountYuan).toLocaleString("zh-CN")}
+              约 ¥{YUAN_FORMATTER.format(Math.round(estimatedAmountYuan))}
             </div>
           ) : null}
         </div>
@@ -353,7 +357,7 @@ export function FundRecommendationCard({
   const amountDetail = item.amount_note?.trim()
     ? item.amount_note
     : item.amount_yuan != null
-      ? `参考金额：约 ${item.amount_yuan.toLocaleString("zh-CN")} 元`
+      ? `参考金额：约 ${YUAN_FORMATTER.format(item.amount_yuan)} 元`
       : null;
   const visibleAmountDetail = exactEvidenceKey(amountDetail) === primaryReasonKey
     ? null

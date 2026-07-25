@@ -1,12 +1,16 @@
 "use client";
 
-import { useId, useMemo, useRef, useState } from "react";
+import { memo, useId, useMemo, useRef, useState } from "react";
 import type { PerformanceSeriesPoint } from "@/lib/performanceTrend";
 import { formatSignedPercent } from "@/lib/performanceTrend";
 
 const Y_AXIS_HEADROOM_RATIO = 0.12;
 const FUND_COLOR = "#3d7eff";
 const BENCH_COLOR = "#f59e0b";
+// formatter 提到模块作用域：交易标记浮层按成交笔数逐条渲染金额。输出格式不变。
+const TRADE_AMOUNT_FORMATTER = new Intl.NumberFormat("zh-CN", {
+  minimumFractionDigits: 2,
+});
 
 export type TradeMarker = {
   date: string; // confirm_date "YYYY-MM-DD"
@@ -21,7 +25,7 @@ type PerformanceReturnChartProps = {
   markers?: TradeMarker[];
 };
 
-export function PerformanceReturnChart({
+function PerformanceReturnChartView({
   points,
   height = 220,
   showBenchmark = true,
@@ -421,7 +425,7 @@ export function PerformanceReturnChart({
                     {item.status === "pending" ? "·待确认" : ""}
                   </span>
                   <span className="font-bold tabular-nums text-slate-800">
-                    {item.amount_yuan.toLocaleString("zh-CN", { minimumFractionDigits: 2 })}
+                    {TRADE_AMOUNT_FORMATTER.format(item.amount_yuan)}
                   </span>
                   <span className="shrink-0 text-[10px] tabular-nums text-slate-500">
                     {item.trade_time.slice(5, 16)}
@@ -435,3 +439,7 @@ export function PerformanceReturnChart({
     </div>
   );
 }
+
+// 手写 SVG 图表的路径计算与 hover 状态都不便宜，父面板任何无关状态变化都会
+// 触发重算。props 已在父级稳定为同一引用，这里用 memo 把它们挡在重渲染之外。
+export const PerformanceReturnChart = memo(PerformanceReturnChartView);

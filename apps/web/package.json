@@ -5,6 +5,11 @@
   "scripts": {
     "dev": "next dev --webpack --hostname 127.0.0.1 --port 3001",
     "build": "next build --webpack",
+    "postbuild": "node scripts/perf/precompress.mjs",
+    "build:analyze": "node scripts/perf/build-analyze.mjs",
+    "perf:bundle": "node scripts/perf/bundle-budget.mjs",
+    "perf:bundle:check": "node scripts/perf/bundle-budget.mjs --budget",
+    "perf:interaction": "node scripts/perf/ui-interaction-benchmark.mjs",
     "lint": "eslint . --max-warnings=0",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -25,6 +30,7 @@
     "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
+    "@next/bundle-analyzer": "16.2.2",
     "@playwright/test": "^1.60.0",
     "@tailwindcss/postcss": "^4.1.18",
     "@testing-library/jest-dom": "^6.9.1",

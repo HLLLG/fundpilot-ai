@@ -60,17 +60,21 @@ const ACTION_LABELS: Record<string, string> = {
   password_reset_completed: "完成密码重置",
 };
 
+// formatter 提到模块作用域：原实现每次调用都新建一个 Intl.DateTimeFormat，
+// 而它在用户列表与审计日志里按行调用。输出格式逐字不变。
+const DATE_TIME_FORMATTER = new Intl.DateTimeFormat("zh-CN", {
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+});
+
 function formatDate(value: string | null | undefined): string {
   if (!value) return "暂无";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat("zh-CN", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(date);
+  return DATE_TIME_FORMATTER.format(date);
 }
 
 function errorMessage(error: unknown): string {

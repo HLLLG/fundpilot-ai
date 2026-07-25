@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { memo, useMemo } from "react";
 import type { PortfolioAllocationRow } from "@/lib/api";
 
 const SLICE_COLORS = [
@@ -39,7 +39,7 @@ function describeArc(
   return `M ${start.x} ${start.y} A ${radius} ${radius} 0 ${largeArc} 0 ${end.x} ${end.y}`;
 }
 
-export function HoldingDonutChart({ rows }: HoldingDonutChartProps) {
+function HoldingDonutChartView({ rows }: HoldingDonutChartProps) {
   const displayRows = useMemo(() => {
     const sorted = [...rows].sort((left, right) => right.weight_percent - left.weight_percent);
     if (sorted.length <= MAX_VISIBLE_SLICES) {
@@ -151,3 +151,7 @@ export function HoldingDonutChart({ rows }: HoldingDonutChartProps) {
     </div>
   );
 }
+
+// 手写 SVG 图表的路径计算与 hover 状态都不便宜，父面板任何无关状态变化都会
+// 触发重算。props 已在父级稳定为同一引用，这里用 memo 把它们挡在重渲染之外。
+export const HoldingDonutChart = memo(HoldingDonutChartView);

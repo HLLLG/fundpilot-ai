@@ -33,8 +33,11 @@ const BAR_TONE = {
   up: "bg-rose-500",
 } as const;
 
+// formatter 提到模块作用域：这个函数会按九档分布逐格调用。输出格式不变。
+const COUNT_FORMATTER = new Intl.NumberFormat("zh-CN");
+
 function formatCount(value: number | null | undefined): string {
-  return new Intl.NumberFormat("zh-CN").format(value ?? 0);
+  return COUNT_FORMATTER.format(value ?? 0);
 }
 
 function ratio(value: number | null | undefined, total: number): number {

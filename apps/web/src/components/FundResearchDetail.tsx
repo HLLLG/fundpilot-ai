@@ -11,7 +11,7 @@ import {
   WalletCards,
   X,
 } from "lucide-react";
-import { IntradayPercentChart } from "@/components/IntradayPercentChart";
+import { IntradayPercentChart, type IntradayPoint } from "@/components/IntradayPercentChart";
 import { PerformanceTrendPanel } from "@/components/PerformanceTrendPanel";
 import {
   fetchFundPublicOverview,
@@ -52,15 +52,21 @@ function percentTone(value: number | null | undefined) {
   return "text-slate-700";
 }
 
+// 空数组提到模块作用域：原来的 `?? []` 每次渲染都造新引用，会让分时图的 memo 失效。
+const EMPTY_INTRADAY_POINTS: IntradayPoint[] = [];
+
+// formatter 提到模块作用域：原实现每次调用都新建一个 Intl.NumberFormat。输出格式不变。
+const CURRENCY_FORMATTER = new Intl.NumberFormat("zh-CN", {
+  style: "currency",
+  currency: "CNY",
+  maximumFractionDigits: 2,
+});
+
 function currency(value: number | null | undefined) {
   if (value == null || !Number.isFinite(value)) {
     return "--";
   }
-  return new Intl.NumberFormat("zh-CN", {
-    style: "currency",
-    currency: "CNY",
-    maximumFractionDigits: 2,
-  }).format(value);
+  return CURRENCY_FORMATTER.format(value);
 }
 
 function holdingSummary(
@@ -320,7 +326,7 @@ export function FundResearchDetail({ fund, holding, onClose }: FundResearchDetai
                       </div>
                     ) : (
                       <div className="pt-2">
-                        <IntradayPercentChart points={intraday?.points ?? []} height={145} />
+                        <IntradayPercentChart points={intraday?.points ?? EMPTY_INTRADAY_POINTS} height={145} />
                       </div>
                     )}
                   </section>

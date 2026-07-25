@@ -12,6 +12,9 @@ const EXPECTED_INVESTMENT_MIN = 10_000;
 const EXPECTED_INVESTMENT_MAX = 100_000;
 const EXPECTED_INVESTMENT_STEP = 5_000;
 const EXPECTED_INVESTMENT_DEFAULT = 30_000;
+// formatter 提到模块作用域：滑杆拖动时这一行会随每一帧重渲染。无选项的
+// `Intl.NumberFormat(locale)` 与 `n.toLocaleString(locale)` 输出一致。
+const YUAN_FORMATTER = new Intl.NumberFormat("zh-CN");
 
 function resolveExpectedInvestmentAmount(profile: InvestorProfile): number {
   const value = profile.expected_investment_amount ?? EXPECTED_INVESTMENT_DEFAULT;
@@ -309,7 +312,7 @@ export function RiskControls({
                   className="w-full accent-[var(--brand)]"
                 />
                 <span className="w-20 shrink-0 text-right text-xs font-black tabular-nums">
-                  {resolveExpectedInvestmentAmount(profile).toLocaleString("zh-CN")} 元
+                  {YUAN_FORMATTER.format(resolveExpectedInvestmentAmount(profile))} 元
                 </span>
               </div>
             </label>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { memo, useMemo } from "react";
 import type { BoardFlowHistoryPoint } from "@/lib/api";
 import { formatThemeFlowYi, profitToneClass } from "@/lib/marketThemeBoard";
 
@@ -108,7 +108,7 @@ function barWidthForCount(count: number): number {
   return 7;
 }
 
-export function BoardFlowHistoryChart({
+function BoardFlowHistoryChartView({
   points,
   cumulativeNetYi,
   height = 124,
@@ -274,3 +274,7 @@ export function BoardFlowHistoryChart({
     </div>
   );
 }
+
+// 手写 SVG 图表的路径计算与 hover 状态都不便宜，父面板任何无关状态变化都会
+// 触发重算。props 已在父级稳定为同一引用，这里用 memo 把它们挡在重渲染之外。
+export const BoardFlowHistoryChart = memo(BoardFlowHistoryChartView);

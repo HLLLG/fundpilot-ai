@@ -1,7 +1,15 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Search } from "lucide-react";
 import type {
   AnalysisPromptConfig,
@@ -101,6 +109,9 @@ import { BrandMark } from "@/components/BrandMark";
 import { DashboardNav } from "@/components/DashboardNav";
 import { InlineNotice, type NoticeTone } from "@/components/InlineNotice";
 import { activeAnalysisRolePrompt } from "@/lib/analysisPrompt";
+// 工作台专属样式：Dashboard 本身是 next/dynamic 懒加载的，样式随它一起按需到达，
+// 不会进入匿名首屏与登录/注册/设置/管理员路由的阻塞 CSS。
+import "@/app/dashboard.css";
 
 function DashboardTabLoading({ label }: { label: string }) {
   return (
@@ -219,16 +230,20 @@ const defaultAnalysisPrompt: AnalysisPromptConfig = {
   default_role_prompt: "",
 };
 
+// formatter 提到模块作用域：原实现每次调用都新建一个 Intl.DateTimeFormat，
+// 而它会在 orderedReports.find() 里按报告条数逐条调用。输出格式逐字不变。
+const REPORT_DATE_KEY_FORMATTER = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Asia/Shanghai",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
 function reportDateKey(value: string | undefined): string | null {
   if (!value) return null;
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return null;
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Shanghai",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(date);
+  return REPORT_DATE_KEY_FORMATTER.format(date);
 }
 
 export function Dashboard() {
@@ -566,6 +581,11 @@ export function Dashboard() {
     setIsHydratingHoldings(false);
   }, [user?.id, markPortfolioCacheWriteReady]);
 
+  // tab 切换的开销全在"挂载另一个重面板"上（13 个 dynamic() 之一 + 它的首屏计算）。
+  // 导航高亮、页头文案与后台任务浮层继续读 activeTab，保持点击即时反馈；只有 <main>
+  // 里的面板区读这个延后值，让 React 先把交互帧让给用户。可见内容与最终状态不变。
+  const deferredActiveTab = useDeferredValue(activeTab);
+
   const setActiveTab = useCallback((tab: TabId | ((prev: TabId) => TabId)) => {
     setActiveTabState((prev) => {
       const requested = typeof tab === "function" ? tab(prev) : tab;
@@ -706,14 +726,28 @@ export function Dashboard() {
     [reports],
   );
   const todayKey = reportDateKey(new Date().toISOString());
-  const todayReport = orderedReports.find((item) => reportDateKey(item.created_at) === todayKey) ?? null;
-  const currentReportIndex = report
-    ? orderedReports.findIndex((item) => item.id === report.id)
-    : -1;
-  const previousReport = report
-    ? orderedReports[currentReportIndex + 1] ?? null
-    : orderedReports[0] ?? null;
-  const nextReport = currentReportIndex > 0 ? orderedReports[currentReportIndex - 1] : null;
+  const selectedReportId = report?.id ?? null;
+  // 这些派生值原来每次渲染都重算，其中 todayReport 还会按报告条数逐条格式化日期。
+  // todayKey 仍逐次求值并留在依赖里，因此跨日后依然会重新判定"今日"，语义不变。
+  const todayReport = useMemo(
+    () => orderedReports.find((item) => reportDateKey(item.created_at) === todayKey) ?? null,
+    [orderedReports, todayKey],
+  );
+  const currentReportIndex = useMemo(
+    () => (selectedReportId ? orderedReports.findIndex((item) => item.id === selectedReportId) : -1),
+    [orderedReports, selectedReportId],
+  );
+  const previousReport = useMemo(
+    () =>
+      selectedReportId
+        ? orderedReports[currentReportIndex + 1] ?? null
+        : orderedReports[0] ?? null,
+    [currentReportIndex, orderedReports, selectedReportId],
+  );
+  const nextReport = useMemo(
+    () => (currentReportIndex > 0 ? orderedReports[currentReportIndex - 1] : null),
+    [currentReportIndex, orderedReports],
+  );
   const viewingToday = !report || report.id === todayReport?.id;
 
   const updateReportUrl = useCallback((reportId: string | null, mode: "push" | "replace") => {
@@ -804,23 +838,32 @@ export function Dashboard() {
     [hydrateReport, orderedReports, report?.id, updateReportUrl],
   );
 
-  useEffect(() => {
-    const restoreReportFromUrl = () => {
-      const reportId = new URLSearchParams(window.location.search).get("report");
-      if (reportId) {
-        const restored = orderedReports.find((item) => item.id === reportId);
-        if (restored) {
-          hydrateReport(restored);
-          setActiveTab("report");
-        }
-        return;
+  // 拆成两个 effect：恢复逻辑仍按原来的依赖逐次补跑，但 popstate 监听器只在
+  // 挂载/卸载时绑一次，不再因为 reports / todayReport 变化而反复解绑重绑。
+  const restoreReportFromUrl = useCallback(() => {
+    const urlReportId = new URLSearchParams(window.location.search).get("report");
+    if (urlReportId) {
+      const restored = orderedReports.find((item) => item.id === urlReportId);
+      if (restored) {
+        hydrateReport(restored);
+        setActiveTab("report");
       }
-      if (activeTab === "report") hydrateReport(todayReport);
-    };
-    restoreReportFromUrl();
-    window.addEventListener("popstate", restoreReportFromUrl);
-    return () => window.removeEventListener("popstate", restoreReportFromUrl);
+      return;
+    }
+    if (activeTab === "report") hydrateReport(todayReport);
   }, [activeTab, hydrateReport, orderedReports, setActiveTab, todayReport]);
+  const restoreReportFromUrlRef = useRef(restoreReportFromUrl);
+
+  useEffect(() => {
+    restoreReportFromUrlRef.current = restoreReportFromUrl;
+    restoreReportFromUrl();
+  }, [restoreReportFromUrl]);
+
+  useEffect(() => {
+    const onPopState = () => restoreReportFromUrlRef.current();
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
 
   useEffect(() => {
     backgroundJobActiveRef.current = Boolean(
@@ -1727,7 +1770,7 @@ export function Dashboard() {
         ) : null}
 
         <main id="main-content" tabIndex={-1} className="min-w-0 flex-1 pb-6">
-          {activeTab === "holdings" ? (
+          {deferredActiveTab === "holdings" ? (
             <div className="w-full">
               {swingAlerts.alertsActive ? (
                 <SwingAlertsPanel
@@ -1760,7 +1803,7 @@ export function Dashboard() {
             </div>
           ) : null}
 
-          {activeTab === "report" ? (
+          {deferredActiveTab === "report" ? (
             <div className="grid min-w-0 gap-4">
               <TradingSessionBar />
               <ReportNavigator
@@ -1852,13 +1895,13 @@ export function Dashboard() {
             </div>
           ) : null}
 
-          {activeTab === "dashboard" ? (
+          {deferredActiveTab === "dashboard" ? (
             <PortfolioDashboard userId={user?.id ?? null} fallbackSummary={portfolioSummary} />
           ) : null}
 
-          {activeTab === "market" ? <MarketTab /> : null}
+          {deferredActiveTab === "market" ? <MarketTab /> : null}
 
-          {activeTab === "discovery" ? (
+          {deferredActiveTab === "discovery" ? (
             <FundDiscoveryPanel
               userId={user?.id ?? null}
               holdings={holdings}
@@ -1930,14 +1973,19 @@ export function Dashboard() {
         ) : null}
       </BackgroundJobsStack>
 
-      <FundSearchDialog
-        open={fundSearchOpen}
-        onClose={() => setFundSearchOpen(false)}
-        onSelect={(selected) => {
-          setFundSearchOpen(false);
-          setResearchFund(selected);
-        }}
-      />
+      {/* 之前无条件挂载，导致这个 dynamic() 组件的 chunk 在工作台挂载时必然下载。
+          组件在 !open 时本来就 return null，改成条件挂载后行为一致（焦点捕获与恢复
+          都发生在 open 生效的 effect 里），但代码分割重新生效。 */}
+      {fundSearchOpen ? (
+        <FundSearchDialog
+          open={fundSearchOpen}
+          onClose={() => setFundSearchOpen(false)}
+          onSelect={(selected) => {
+            setFundSearchOpen(false);
+            setResearchFund(selected);
+          }}
+        />
+      ) : null}
 
       {researchFund ? (
         <FundResearchDetail

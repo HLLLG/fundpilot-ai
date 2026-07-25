@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   BarChart3,
   ChevronDown,
@@ -84,9 +84,12 @@ function formatScore(value: number | null | undefined): string {
   return Number(value).toFixed(2).replace(/\.00$/, "");
 }
 
+// formatter 提到模块作用域：候选池每张卡片的多处金额都会调用它。输出格式不变。
+const MONEY_FORMATTER = new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 2 });
+
 function formatMoney(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return "待核验";
-  return `¥${Number(value).toLocaleString("zh-CN", { maximumFractionDigits: 2 })}`;
+  return `¥${MONEY_FORMATTER.format(Number(value))}`;
 }
 
 function listText(items: string[] | undefined, fallback = "—"): string {
@@ -673,30 +676,40 @@ export function DiscoveryCandidatePoolPanel({
   eliminatedCandidates = [],
 }: DiscoveryCandidatePoolPanelProps) {
   const [open, setOpen] = useState(false);
+  // 这些派生值原来每次渲染都全量重算：两个 Map、四次 filter，外加对每个候选调用
+  // qualityPresentation。而这个面板默认是收起的，父级（荐基报告）任何状态变化都会
+  // 让它白算一遍。缓存后计数与展开内容完全不变。
+  const { eliminatedByCode, presentations, completeCount, pendingCount, degradedCount, unknownCount } =
+    useMemo(() => {
+      const byCode = new Map(eliminatedCandidates.map((item) => [item.fund_code, item]));
+      const presentationByCode = new Map(
+        pool.map((item) => [item.fund_code, qualityPresentation(item, byCode.has(item.fund_code))]),
+      );
+      return {
+        eliminatedByCode: byCode,
+        presentations: presentationByCode,
+        completeCount: pool.filter(
+          (item) =>
+            !presentationByCode.get(item.fund_code)?.unknown &&
+            !presentationByCode.get(item.fund_code)?.pending,
+        ).length,
+        pendingCount: pool.filter(
+          (item) => Boolean(presentationByCode.get(item.fund_code)?.pending),
+        ).length,
+        degradedCount: pool.filter(
+          (item) => presentationByCode.get(item.fund_code)?.degraded,
+        ).length,
+        unknownCount: pool.filter(
+          (item) => presentationByCode.get(item.fund_code)?.unknown,
+        ).length,
+      };
+    }, [eliminatedCandidates, pool]);
+  const selected = useMemo(() => new Set(selectedCodes), [selectedCodes]);
+
+  // hooks 必须无条件调用，因此空池的提前返回放在派生之后；返回值与原来一致。
   if (!pool.length) {
     return null;
   }
-
-  const selected = new Set(selectedCodes);
-  const eliminatedByCode = new Map(eliminatedCandidates.map((item) => [item.fund_code, item]));
-  const presentations = new Map(
-    pool.map((item) => [
-      item.fund_code,
-      qualityPresentation(item, eliminatedByCode.has(item.fund_code)),
-    ]),
-  );
-  const completeCount = pool.filter(
-    (item) => !presentations.get(item.fund_code)?.unknown && !presentations.get(item.fund_code)?.pending,
-  ).length;
-  const pendingCount = pool.filter(
-    (item) => Boolean(presentations.get(item.fund_code)?.pending),
-  ).length;
-  const degradedCount = pool.filter(
-    (item) => presentations.get(item.fund_code)?.degraded,
-  ).length;
-  const unknownCount = pool.filter(
-    (item) => presentations.get(item.fund_code)?.unknown,
-  ).length;
 
   return (
     <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">

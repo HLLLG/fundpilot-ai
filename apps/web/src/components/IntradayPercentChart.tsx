@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useMemo, useRef, useState } from "react";
+import { memo, useId, useMemo, useRef, useState } from "react";
 import { clockToSessionRatio } from "@/lib/intradayChartTime";
 
 export type IntradayPoint = {
@@ -56,7 +56,7 @@ const CROSSHAIR = {
   horizontal: "#0ea5e9",
 };
 
-export function IntradayPercentChart({ points, height = 200, flat = false }: IntradayPercentChartProps) {
+function IntradayPercentChartView({ points, height = 200, flat = false }: IntradayPercentChartProps) {
   const gradientId = useId().replace(/:/g, "");
   const containerRef = useRef<HTMLDivElement>(null);
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
@@ -357,3 +357,7 @@ export function IntradayPercentChart({ points, height = 200, flat = false }: Int
     </div>
   );
 }
+
+// 手写 SVG 图表的路径计算与 hover 状态都不便宜，父面板任何无关状态变化都会
+// 触发重算。props 已在父级稳定为同一引用，这里用 memo 把它们挡在重渲染之外。
+export const IntradayPercentChart = memo(IntradayPercentChartView);

@@ -35,25 +35,31 @@ function isFiniteNumber(value: number | null | undefined): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
+// formatter 全部提到模块作用域：这两个函数在候选/证据列表里按行调用。
+// `Intl.NumberFormat(locale, opts).format(n)` 与 `n.toLocaleString(locale, opts)`
+// 按规范输出一致，展示结果不变。
+const MONEY_FORMATTER = new Intl.NumberFormat("zh-CN", {
+  maximumFractionDigits: 2,
+});
+const CHECKED_AT_FORMATTER = new Intl.DateTimeFormat("zh-CN", {
+  timeZone: "Asia/Shanghai",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
+
 function formatMoney(value: number | null | undefined): string {
   if (!isFiniteNumber(value)) return "待核验";
-  return `¥${value.toLocaleString("zh-CN", {
-    maximumFractionDigits: 2,
-  })}`;
+  return `¥${MONEY_FORMATTER.format(value)}`;
 }
 
 function formatCheckedAt(value: string | null | undefined): string | null {
   if (!value) return null;
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return value;
-  return new Intl.DateTimeFormat("zh-CN", {
-    timeZone: "Asia/Shanghai",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(parsed);
+  return CHECKED_AT_FORMATTER.format(parsed);
 }
 
 function sourceLabel(source: string): string {

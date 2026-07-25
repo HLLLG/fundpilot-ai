@@ -3,6 +3,20 @@ import { readFile, stat } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
 import { gzipSync } from "node:zlib";
 
+/**
+ * 生产 nginx 开了 `gzip_static on`，会优先直接发送构建期生成的同名 `.gz`。
+ * 本地预览服务器保持同一行为，避免"本地走现压、线上走预压缩"两套口径。
+ */
+async function readPrecompressed(file) {
+  try {
+    const info = await stat(`${file}.gz`);
+    if (!info.isFile()) return null;
+    return await readFile(`${file}.gz`);
+  } catch {
+    return null;
+  }
+}
+
 const root = join(process.cwd(), "out");
 const port = Number(process.env.PORT || 3001);
 const contentTypes = {
@@ -48,7 +62,8 @@ const server = createServer(async (request, response) => {
       compressible.has(extname(file)) &&
       request.headers["accept-encoding"]?.includes("gzip"),
     );
-    const body = shouldGzip && rawBody ? gzipSync(rawBody) : rawBody;
+    const precompressed = shouldGzip ? await readPrecompressed(file) : null;
+    const body = shouldGzip && rawBody ? (precompressed ?? gzipSync(rawBody)) : rawBody;
     response.writeHead(200, {
       "content-type": contentTypes[extname(file)] || "application/octet-stream",
       "cache-control": "no-store",

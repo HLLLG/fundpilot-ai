@@ -7,6 +7,9 @@ import { fetchRebalanceSimulation, type RebalanceSimulation } from "@/lib/api";
 import { useMediaQuery } from "@/lib/useMediaQuery";
 
 const DESKTOP_QUERY = "(min-width: 640px)";
+// formatter 提到模块作用域：调仓模拟按持仓行逐条渲染金额。无选项的
+// `Intl.NumberFormat(locale)` 与 `n.toLocaleString(locale)` 输出一致。
+const YUAN_FORMATTER = new Intl.NumberFormat("zh-CN");
 
 type RebalanceSimulationPanelProps = {
   reportId: string;
@@ -84,8 +87,8 @@ export function RebalanceSimulationPanel({
         <>
           <p className="text-xs leading-5 text-slate-600">{simulation.assumption}</p>
           <div className="flex flex-wrap gap-4 text-sm font-semibold text-slate-700">
-            <span>当前总额 ¥{simulation.current_total.toLocaleString("zh-CN")}</span>
-            <span>模拟后 ¥{simulation.simulated_total.toLocaleString("zh-CN")}</span>
+            <span>当前总额 ¥{YUAN_FORMATTER.format(simulation.current_total)}</span>
+            <span>模拟后 ¥{YUAN_FORMATTER.format(simulation.simulated_total)}</span>
           </div>
           {simulation.warnings.length > 0 ? (
             <ul className="space-y-1 text-xs font-semibold text-amber-800">
@@ -122,7 +125,7 @@ export function RebalanceSimulationPanel({
                           <td className="px-3 py-2">
                             <div>
                               {row.delta_yuan > 0 ? "+" : ""}
-                              {row.delta_yuan.toLocaleString("zh-CN")}
+                              {YUAN_FORMATTER.format(row.delta_yuan)}
                             </div>
                             {row.amount_note ? (
                               <div className="mt-0.5 max-w-[12rem] text-[10px] leading-4 text-slate-500">
@@ -170,7 +173,7 @@ export function RebalanceSimulationPanel({
                         <dt className="text-slate-500">金额变动</dt>
                         <dd className="mt-0.5 font-bold text-slate-800">
                           {row.delta_yuan > 0 ? "+" : ""}
-                          {row.delta_yuan.toLocaleString("zh-CN")} 元
+                          {YUAN_FORMATTER.format(row.delta_yuan)} 元
                         </dd>
                       </div>
                       <div>
