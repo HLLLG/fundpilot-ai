@@ -109,6 +109,7 @@ import { BrandMark } from "@/components/BrandMark";
 import { DashboardNav } from "@/components/DashboardNav";
 import { InlineNotice, type NoticeTone } from "@/components/InlineNotice";
 import { activeAnalysisRolePrompt } from "@/lib/analysisPrompt";
+import { userFacingErrorMessage } from "@/lib/userFacingError";
 // 工作台专属样式：Dashboard 本身是 next/dynamic 懒加载的，样式随它一起按需到达，
 // 不会进入匿名首屏与登录/注册/设置/管理员路由的阻塞 CSS。
 import "@/app/dashboard.css";
@@ -802,7 +803,7 @@ export function Dashboard() {
       } catch (error) {
         if (requestId !== reportDetailRequestId.current) return;
         setReportDetailError(
-          error instanceof Error ? error.message : "日报正文加载失败，请稍后重试。",
+          userFacingErrorMessage(error, "日报正文加载失败，请稍后重试。"),
         );
       }
     })();
@@ -1231,7 +1232,7 @@ export function Dashboard() {
         ),
       );
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "提交分析任务失败。", "error");
+      setMessage(userFacingErrorMessage(error, "提交分析任务失败。"), "error");
     } finally {
       setIsSubmitting(false);
     }
@@ -1359,7 +1360,7 @@ export function Dashboard() {
       setShowAddHoldingModal(false);
       setActiveTab("holdings");
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "截图识别失败。";
+      const errorMessage = userFacingErrorMessage(error, "截图识别失败。");
       setAddHoldingError(errorMessage);
       setMessage(errorMessage, "error");
     } finally {
@@ -1402,7 +1403,7 @@ export function Dashboard() {
       if (mutationVersion !== holdingsMutationVersionRef.current) {
         return;
       }
-      const errorMessage = error instanceof Error ? error.message : "手动添加失败。";
+      const errorMessage = userFacingErrorMessage(error, "手动添加失败。");
       setAddHoldingError(errorMessage);
       setMessage(errorMessage, "error");
     } finally {
@@ -1466,7 +1467,7 @@ export function Dashboard() {
       if (mutationVersion !== holdingsMutationVersionRef.current) {
         return;
       }
-      const errorMessage = error instanceof Error ? error.message : "确认更新失败。";
+      const errorMessage = userFacingErrorMessage(error, "确认更新失败。");
       setOcrApplyError(errorMessage);
       setMessage(errorMessage, "error");
     } finally {
@@ -1547,7 +1548,7 @@ export function Dashboard() {
             portfolio_summary: rollbackSummary,
             refreshed_at: holdingsRefreshedAt,
           });
-          setMessage(error instanceof Error ? error.message : "删除失败，已恢复列表", "error");
+          setMessage(userFacingErrorMessage(error, "删除失败，已恢复列表"), "error");
         });
     },
     [
@@ -1592,7 +1593,7 @@ export function Dashboard() {
       setShowBatchModal(false);
       setPendingTransactions((prev) => mergeTransactions(prev ?? [], result.transactions));
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "交易记录识别失败。";
+      const errorMessage = userFacingErrorMessage(error, "交易记录识别失败。");
       setBatchUploadError(errorMessage);
       setMessage(errorMessage, "error");
     } finally {
@@ -1632,7 +1633,7 @@ export function Dashboard() {
       if (mutationVersion !== holdingsMutationVersionRef.current) {
         return;
       }
-      const errorMessage = error instanceof Error ? error.message : "应用交易失败。";
+      const errorMessage = userFacingErrorMessage(error, "应用交易失败。");
       setTransactionApplyError(errorMessage);
       setMessage(errorMessage, "error");
     } finally {
@@ -1745,13 +1746,25 @@ export function Dashboard() {
           </div>
         </header>
 
+        {/* 提示条改为吸附在顶栏下方的固定条，不再插在顶栏与页头之间。
+            原来它在挂载后才出现时会把 .app-page-heading 连同整个 <main> 向下推
+            66px（实测 CLS 0.033，位移源已由 scripts/perf/ui-interaction-benchmark.mjs
+            的 layout-shift sources 捕获确认）。固定定位后完全不参与文档流，
+            位移归零；顺带得到一个更合适的行为 —— 金融告警在滚动时不会划走。
+            top 与 .app-masthead 的 min-height（4.25rem）对齐，宽度与外层
+            max-w-[1240px] 容器一致，所以视觉上仍然贴着内容列。 */}
         {notice ? (
-          <InlineNotice
-            tone={notice.tone}
-            message={notice.message}
-            onDismiss={() => setMessage(null)}
-            className="mb-3"
-          />
+          <div
+            className="pointer-events-none fixed inset-x-0 top-[4.25rem] z-30 flex justify-center px-4 sm:px-6"
+          >
+            <div className="pointer-events-auto w-full max-w-[1240px]">
+              <InlineNotice
+                tone={notice.tone}
+                message={notice.message}
+                onDismiss={() => setMessage(null)}
+              />
+            </div>
+          </div>
         ) : null}
 
         <section className="app-page-heading" aria-labelledby="app-page-title">
@@ -2028,7 +2041,7 @@ export function Dashboard() {
               if (mutationVersion !== holdingsMutationVersionRef.current) {
                 return;
               }
-              setMessage(error instanceof Error ? error.message : "持仓持久化失败，请刷新后重试", "error");
+              setMessage(userFacingErrorMessage(error, "持仓持久化失败，请刷新后重试"), "error");
             }
           }}
           onHoldingResolved={(_index, resolved) => {

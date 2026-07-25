@@ -5,6 +5,7 @@ import { ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 import type { Holding, HoldingAdjustmentPatch } from "@/lib/api";
 import { getSettledHoldingAmount, getEstimatedHoldingProfit } from "@/lib/holdingDisplay";
 import { useDialogA11y } from "@/lib/useDialogA11y";
+import { userFacingErrorMessage } from "@/lib/userFacingError";
 
 type HoldingModifyModalProps = {
   open: boolean;
@@ -91,7 +92,7 @@ export function HoldingModifyModal({
       });
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "保存失败");
+      setError(userFacingErrorMessage(err, "保存失败"));
     } finally {
       setSaving(false);
     }

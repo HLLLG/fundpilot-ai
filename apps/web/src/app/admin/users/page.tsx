@@ -40,6 +40,7 @@ import {
   type AdminUserStatus,
   type AdminUserSummary,
 } from "@/lib/api";
+import { userFacingErrorMessage } from "@/lib/userFacingError";
 
 const EMPTY_PAGE: AdminPage<AdminUserListItem> = {
   items: [],
@@ -78,7 +79,7 @@ function formatDate(value: string | null | undefined): string {
 }
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "操作失败，请稍后重试";
+  return userFacingErrorMessage(error, "操作失败，请稍后重试");
 }
 
 export default function AdminUsersPage() {

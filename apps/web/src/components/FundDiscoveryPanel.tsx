@@ -50,6 +50,7 @@ import {
   loadDiscoveryFocusSectors,
   setDiscoveryFocusSectors,
 } from "@/lib/discoveryFocusSectors";
+import { userFacingErrorMessage } from "@/lib/userFacingError";
 
 const DISCOVERY_SECTORS_CACHE_KEY = "discovery-panel:sectors";
 const DISCOVERY_REPORTS_CACHE_KEY = "discovery-panel:reports";
@@ -429,7 +430,7 @@ export function FundDiscoveryPanel({
     } catch (scanError) {
       setFeedback({
         tone: "error",
-        message: scanError instanceof Error ? scanError.message : "提交失败",
+        message: userFacingErrorMessage(scanError, "提交失败"),
       });
     } finally {
       setIsSubmitting(false);
@@ -545,7 +546,7 @@ export function FundDiscoveryPanel({
       } catch (error) {
         if (requestId !== historyDetailRequestId.current) return;
         setHistoryDetailError(
-          error instanceof Error ? error.message : "推荐正文加载失败，请稍后重试。",
+          userFacingErrorMessage(error, "推荐正文加载失败，请稍后重试。"),
         );
       }
     })();

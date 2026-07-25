@@ -9,6 +9,7 @@ import {
   DecisionMetricGrid,
   FeeBenchmarkMethodNote,
 } from "@/components/DecisionMetricGrid";
+import { userFacingErrorMessage } from "@/lib/userFacingError";
 
 type ReportOutcomesPanelProps = {
   reportId: string;
@@ -134,7 +135,7 @@ export function ReportOutcomesPanel({ reportId, embedded = false }: ReportOutcom
         if (!cancelled) {
           setErrorResult({
             reportId,
-            message: loadError instanceof Error ? loadError.message : "T+N 复盘加载失败",
+            message: userFacingErrorMessage(loadError, "T+N 复盘加载失败"),
           });
         }
       })

@@ -11,6 +11,7 @@ import {
   FeeBenchmarkMethodNote,
   LegacyReferenceStrip,
 } from "@/components/DecisionMetricGrid";
+import { userFacingErrorMessage } from "@/lib/userFacingError";
 
 const STYLE_LABELS: Record<string, string> = {
   tactical: "战术短线",
@@ -72,7 +73,7 @@ export function RecommendationAccuracyPanel() {
       })
       .catch((loadError) => {
         if (!cancelled) {
-          setError(loadError instanceof Error ? loadError.message : "T+N 复盘加载失败");
+          setError(userFacingErrorMessage(loadError, "T+N 复盘加载失败"));
         }
       })
       .finally(() => {

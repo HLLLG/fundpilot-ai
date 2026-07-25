@@ -14,6 +14,7 @@ import {
   type RefreshSectorQuotesResult,
 } from "@/lib/api";
 import { isRoutineSectorRefreshMessage } from "@/lib/sectorQuoteStatus";
+import { userFacingErrorMessage } from "@/lib/userFacingError";
 
 type MappingQueueItem = {
   index: number;
@@ -117,7 +118,7 @@ export function useSectorQuoteRefresh({
         return applyRefreshResult(result, generation);
       } catch (error) {
         if (generation === refreshGenerationRef.current) {
-          const message = error instanceof Error ? error.message : "刷新板块涨跌失败。";
+          const message = userFacingErrorMessage(error, "刷新板块涨跌失败。");
           setRefreshError(message);
           onMessage?.(message);
         }
@@ -151,7 +152,7 @@ export function useSectorQuoteRefresh({
           setMappingQueue((queue) => queue.slice(1));
         }
       } catch (error) {
-        onMessage?.(error instanceof Error ? error.message : "保存板块映射失败。");
+        onMessage?.(userFacingErrorMessage(error, "保存板块映射失败。"));
       } finally {
         if (generation === refreshGenerationRef.current) {
           setIsRefreshing(false);

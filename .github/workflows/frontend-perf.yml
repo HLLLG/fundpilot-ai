@@ -3,7 +3,8 @@ name: Frontend Perf
 # 独立于 deploy-lighthouse.yml（那条是腾讯云轻量服务器部署，与性能工具无关）。
 # 这条只做前端性能防回归：
 #   1) 首屏体积预算 —— 硬门禁，超预算直接失败；
-#   2) Web Vitals 采集 —— 先记录、给宽松上限，攒够方差数据再收紧，
+#   2) nginx 静态层 —— 硬门禁，验证预压缩产物真的被直发、编码协商符合预期；
+#   3) Web Vitals 采集 —— 先记录、给宽松上限，攒够方差数据再收紧，
 #      避免无头环境的 LCP/INP 抖动变成随机红叉。
 
 on:
@@ -44,6 +45,29 @@ jobs:
           name: first-load-report
           path: apps/web/first-load-report.json
           if-no-files-found: warn
+
+  # nginx 静态层是本地无法验证的部分（开发机没有 docker）：自建 brotli 镜像要现编
+  # ngx_brotli，站点配置要在「官方镜像」和「自建镜像」两种形态下都能加载，而且
+  # `nginx -t` 只能证明语法对，证明不了到底发的是 .br 还是 .gz、是不是预压缩产物。
+  # 所以这里用真实请求把三件事钉死：
+  #   1) 官方镜像下站点配置照样能加载（glob include 是空操作，不会因为没装 brotli 就宕机）；
+  #   2) 官方镜像给 gzip 客户端发的是构建期 .gz（带精确 Content-Length，不是运行时 chunked）；
+  #   3) 自建镜像给同时支持 gzip+br 的客户端发的是 .br —— 这一条最容易静默失效，
+  #      因为 gzip_static 是静态模块、brotli_static 是动态模块，两者同时 on 时
+  #      gzip 会抢先命中（google/ngx_brotli#123）。
+  nginx-static-layer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # 一律用 `bash <script>` 调用：仓库在 Windows 上开发，不依赖文件的可执行位。
+      - name: Shell syntax
+        run: bash -n deploy/nginx/verify-precompressed.sh
+      - name: Official image keeps serving the site config
+        run: bash deploy/nginx/verify-precompressed.sh nginx:1.27-alpine gzip
+      - name: Build custom nginx image with brotli
+        run: docker build -f deploy/nginx/Dockerfile -t fundpilot-nginx:ci deploy/nginx
+      - name: Custom image prefers precompressed brotli
+        run: bash deploy/nginx/verify-precompressed.sh fundpilot-nginx:ci br
 
   web-vitals:
     runs-on: ubuntu-latest

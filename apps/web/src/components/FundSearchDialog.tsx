@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { ArrowRight, Clock3, Loader2, Search, Trash2, X } from "lucide-react";
 import { searchFundsPage, type FundSearchItem } from "@/lib/api";
 import { useDialogA11y } from "@/lib/useDialogA11y";
+import { userFacingErrorMessage } from "@/lib/userFacingError";
 
 type FundSearchDialogProps = {
   open: boolean;
@@ -133,7 +134,7 @@ export function FundSearchDialog({ open, onClose, onSelect }: FundSearchDialogPr
           if (requestId === requestIdRef.current) {
             setItems([]);
             setTotal(0);
-            setError(reason instanceof Error ? reason.message : "搜索失败，请稍后重试");
+            setError(userFacingErrorMessage(reason, "搜索失败，请稍后重试"));
           }
         })
         .finally(() => {
@@ -172,7 +173,7 @@ export function FundSearchDialog({ open, onClose, onSelect }: FundSearchDialogPr
       })
       .catch((reason) => {
         if (queryRef.current.trim() === keyword) {
-          setError(reason instanceof Error ? reason.message : "更多结果加载失败");
+          setError(userFacingErrorMessage(reason, "更多结果加载失败"));
         }
       })
       .finally(() => {

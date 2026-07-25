@@ -7,6 +7,7 @@ import { ChatMarkdown } from "@/components/ChatMarkdown";
 import { fetchDiscoveryChatHistory, streamDiscoveryChat } from "@/lib/api";
 import { loadReportChatMode, saveReportChatMode } from "@/lib/storage";
 import { useChatAutoScroll } from "@/lib/useChatAutoScroll";
+import { userFacingErrorMessage } from "@/lib/userFacingError";
 
 type DiscoveryChatPanelProps = {
   reportId: string;
@@ -62,7 +63,7 @@ export function DiscoveryChatPanel({
       })
       .catch((loadError) => {
         if (!cancelled) {
-          setError(loadError instanceof Error ? loadError.message : "加载对话失败");
+          setError(userFacingErrorMessage(loadError, "加载对话失败"));
         }
       })
       .finally(() => {
@@ -125,7 +126,7 @@ export function DiscoveryChatPanel({
         }
       });
     } catch (sendError) {
-      setError(sendError instanceof Error ? sendError.message : "发送失败");
+      setError(userFacingErrorMessage(sendError, "发送失败"));
       setMessages((prev) => prev.filter((item) => item.id !== draftId));
     } finally {
       setIsStreaming(false);

@@ -15,7 +15,7 @@
  */
 
 import { createRequire } from "node:module";
-import { gzipSync } from "node:zlib";
+import { brotliCompressSync, constants, gzipSync } from "node:zlib";
 import { readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -106,20 +106,35 @@ function collectEntryAssets(html) {
   return assets;
 }
 
+/**
+ * 同时给出 gzip -9 与 brotli q11 两个传输口径。
+ * 生产在启用自建 brotli nginx 镜像后发送的是 brotli；gzip 是所有客户端都能拿到的
+ * 保底口径，因此预算按 gzip 卡（brotli 只会更小），但报告里两个都要看得见。
+ */
 function measureAsset(asset) {
   const filePath = join(outDir, asset.url.replace(/^\//, ""));
   let raw = null;
   try {
     raw = readFileSync(filePath);
   } catch {
-    return { ...asset, missing: true, bytes: 0, gzipBytes: 0 };
+    return { ...asset, missing: true, bytes: 0, gzipBytes: 0, brotliBytes: 0 };
   }
   return {
     ...asset,
     missing: false,
     bytes: raw.byteLength,
     gzipBytes: gzipSync(raw, { level: 9 }).byteLength,
+    brotliBytes: brotli(raw),
   };
+}
+
+function brotli(buffer) {
+  return brotliCompressSync(buffer, {
+    params: {
+      [constants.BROTLI_PARAM_QUALITY]: constants.BROTLI_MAX_QUALITY,
+      [constants.BROTLI_PARAM_SIZE_HINT]: buffer.byteLength,
+    },
+  }).byteLength;
 }
 
 function summarizeRoute(htmlFile) {
@@ -136,22 +151,30 @@ function summarizeRoute(htmlFile) {
 
   // HTML 必须一起统计。否则「把 CSS 内联进 HTML」这类改动会让 cssBytes 归零、
   // totalBytes 大幅"改善"，而浏览器实际下载的字节反而变多 —— 指标必须挡住这种假收益。
-  const htmlBytes = Buffer.byteLength(html);
-  const htmlGzipBytes = gzipSync(Buffer.from(html), { level: 9 }).byteLength;
+  const htmlBuffer = Buffer.from(html);
+  const htmlBytes = htmlBuffer.byteLength;
+  const htmlGzipBytes = gzipSync(htmlBuffer, { level: 9 }).byteLength;
+  const htmlBrotliBytes = brotli(htmlBuffer);
 
   return {
     html: htmlFile.split("\\").join("/"),
     htmlBytes,
     htmlGzipBytes,
+    htmlBrotliBytes,
     jsBytes: sum("js", "bytes"),
     jsGzipBytes: sum("js", "gzipBytes"),
+    jsBrotliBytes: sum("js", "brotliBytes"),
     cssBytes: sum("css", "bytes"),
     cssGzipBytes: sum("css", "gzipBytes"),
+    cssBrotliBytes: sum("css", "brotliBytes"),
     totalBytes: sum("js", "bytes") + sum("css", "bytes"),
     totalGzipBytes: sum("js", "gzipBytes") + sum("css", "gzipBytes"),
+    totalBrotliBytes: sum("js", "brotliBytes") + sum("css", "brotliBytes"),
     // 首屏真实下载量 = 文档 + 首屏 JS + 首屏 CSS
     firstScreenBytes: htmlBytes + sum("js", "bytes") + sum("css", "bytes"),
     firstScreenGzipBytes: htmlGzipBytes + sum("js", "gzipBytes") + sum("css", "gzipBytes"),
+    firstScreenBrotliBytes:
+      htmlBrotliBytes + sum("js", "brotliBytes") + sum("css", "brotliBytes"),
     assetCount: assets.length,
     assets: assets
       .slice()
@@ -161,6 +184,7 @@ function summarizeRoute(htmlFile) {
         kind: asset.kind,
         bytes: asset.bytes,
         gzipBytes: asset.gzipBytes,
+        brotliBytes: asset.brotliBytes,
         ...(asset.missing ? { missing: true } : {}),
       })),
   };
@@ -234,9 +258,9 @@ function main() {
   lines.push("首屏关键资源（不含 noModule legacy polyfill）");
   lines.push("");
   lines.push(
-    "| 路由 | HTML | JS 原始 | CSS 原始 | 首屏合计原始 | 首屏合计 gzip -9 | 请求数 |",
+    "| 路由 | HTML | JS 原始 | CSS 原始 | 首屏合计原始 | 首屏 gzip -9 | 首屏 brotli q11 | 请求数 |",
   );
-  lines.push("| --- | ---: | ---: | ---: | ---: | ---: | ---: |");
+  lines.push("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
   for (const [route, summary] of Object.entries(routes)) {
     const base = baseline?.routes?.[route];
     lines.push(
@@ -245,6 +269,7 @@ function main() {
         `${kib(summary.cssBytes)}${delta(summary.cssBytes, base?.cssBytes)} | ` +
         `${kib(summary.firstScreenBytes)}${delta(summary.firstScreenBytes, base?.firstScreenBytes)} | ` +
         `${kib(summary.firstScreenGzipBytes)}${delta(summary.firstScreenGzipBytes, base?.firstScreenGzipBytes)} | ` +
+        `${kib(summary.firstScreenBrotliBytes)}${delta(summary.firstScreenBrotliBytes, base?.firstScreenBrotliBytes)} | ` +
         `${summary.assetCount} |`,
     );
   }
@@ -259,7 +284,8 @@ function main() {
   lines.push("`/` 首屏资源明细：");
   for (const asset of routes["/"]?.assets ?? []) {
     lines.push(
-      `  ${kib(asset.bytes).padStart(11)}  gzip ${kib(asset.gzipBytes).padStart(10)}  ${asset.kind}  ${asset.url}` +
+      `  ${kib(asset.bytes).padStart(11)}  gzip ${kib(asset.gzipBytes).padStart(10)}` +
+        `  br ${kib(asset.brotliBytes).padStart(10)}  ${asset.kind}  ${asset.url}` +
         (asset.missing ? "  [缺失]" : ""),
     );
   }

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { CheckCircle, Loader2, XCircle } from "lucide-react";
 import type { Report } from "@/lib/api";
 import { fetchAnalysisJob } from "@/lib/api";
+import { userFacingErrorMessage } from "@/lib/userFacingError";
 
 type JobState = "running" | "completed" | "failed";
 
@@ -62,7 +63,7 @@ export function JobStatusFloat({ jobId, onComplete, onClose, onRetry }: JobStatu
           }
         } catch (err: unknown) {
           if (cancelled) return;
-          setError(err instanceof Error ? err.message : "分析失败，请重试。");
+          setError(userFacingErrorMessage(err, "分析失败，请重试。"));
           setState("failed");
           return;
         }

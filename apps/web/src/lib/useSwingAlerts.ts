@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Holding, InvestorProfile, SwingAlertItem } from "@/lib/api";
 import { evaluateSwingAlerts } from "@/lib/api";
 import { ensureNotificationPermission, notifyDesktop } from "@/lib/notifications";
+import { userFacingErrorMessage } from "@/lib/userFacingError";
 
 /** 盘中波段信号自动评估间隔（与板块 UI 刷新解耦） */
 const SWING_ALERT_EVALUATE_INTERVAL_MS = 15 * 60 * 1000;
@@ -74,7 +75,7 @@ export function useSwingAlerts({
         }
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "波段信号评估失败");
+      setError(userFacingErrorMessage(err, "波段信号评估失败"));
     } finally {
       setIsEvaluating(false);
     }

@@ -18,6 +18,7 @@ import {
   formatSignedPercent,
   PERFORMANCE_PERIODS,
 } from "@/lib/performanceTrend";
+import { userFacingErrorMessage } from "@/lib/userFacingError";
 
 const PREVIEW_LIMIT = 22;
 const NAV_HISTORY_TTL_MS = 24 * 60 * 60 * 1000;
@@ -197,7 +198,7 @@ export function PerformanceTrendPanel({
         })
         .catch((reason: unknown) => {
           if (cancelled) return;
-          setFundError(reason instanceof Error ? reason.message : "加载基金走势失败");
+          setFundError(userFacingErrorMessage(reason, "加载基金走势失败"));
         })
         .finally(() => {
           if (!cancelled) setFundLoading(false);
@@ -213,7 +214,7 @@ export function PerformanceTrendPanel({
         })
         .catch((reason: unknown) => {
           if (cancelled) return;
-          setBenchmarkError(reason instanceof Error ? reason.message : "参考基准暂不可用");
+          setBenchmarkError(userFacingErrorMessage(reason, "参考基准暂不可用"));
         })
         .finally(() => {
           if (!cancelled) setBenchmarkLoading(false);

@@ -66,7 +66,12 @@ services:
     stop_grace_period: 20s
 
   nginx:
-    image: nginx:1.27-alpine
+    # 默认沿用官方镜像：站点配置的 `gzip_static on` 已经直发构建期的 .gz。
+    # 把 .env.production 的 FUND_AI_NGINX_IMAGE 指向自建 brotli 镜像即可再升级为
+    # 直发 .br，站点配置无需改动（fundpilot.conf 用 glob include，两种镜像都能加载）。
+    # 镜像由 deploy/lighthouse/deploy.sh 用 deploy/nginx/Dockerfile 构建，
+    # 构建期会断言 brotli 与 gzip_static 均可用。
+    image: ${FUND_AI_NGINX_IMAGE:-nginx:1.27-alpine}
     restart: unless-stopped
     ports:
       - "80:80"

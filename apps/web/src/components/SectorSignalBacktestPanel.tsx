@@ -9,6 +9,7 @@ import {
 } from "@/lib/api";
 import { InlineNotice } from "@/components/InlineNotice";
 import { StatusPill } from "@/components/StatusPill";
+import { userFacingErrorMessage } from "@/lib/userFacingError";
 
 type SectorSignalBacktestPanelProps = {
   sectorLabels?: string[];
@@ -105,7 +106,7 @@ export function SectorSignalBacktestPanel({
         if (!cancelled) {
           setErrorResult({
             requestKey,
-            message: loadError instanceof Error ? loadError.message : "板块信号回测加载失败",
+            message: userFacingErrorMessage(loadError, "板块信号回测加载失败"),
           });
         }
       })

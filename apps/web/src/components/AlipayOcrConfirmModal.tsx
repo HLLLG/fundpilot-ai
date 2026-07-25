@@ -7,6 +7,7 @@ import type { FundSearchItem, Holding } from "@/lib/api";
 import { searchFunds } from "@/lib/api";
 import { cnProfitClass } from "@/lib/holdingMetrics";
 import { useDialogA11y } from "@/lib/useDialogA11y";
+import { userFacingErrorMessage } from "@/lib/userFacingError";
 
 type FundCodeResolution = {
   fund_name: string;
@@ -79,7 +80,7 @@ function FundCodeSearchPanel({
         }
       } catch (err) {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : "搜索失败");
+          setError(userFacingErrorMessage(err, "搜索失败"));
           setItems([]);
         }
       } finally {

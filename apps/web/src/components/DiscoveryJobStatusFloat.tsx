@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { CheckCircle, Loader2, XCircle } from "lucide-react";
 import type { FundDiscoveryReport } from "@/lib/api";
 import { fetchDiscoveryJob } from "@/lib/api";
+import { userFacingErrorMessage } from "@/lib/userFacingError";
 
 type JobState = "running" | "completed" | "failed";
 
@@ -70,7 +71,7 @@ export function DiscoveryJobStatusFloat({
             await new Promise((resolve) => setTimeout(resolve, 2000));
             continue;
           }
-          setError(err instanceof Error ? err.message : "扫描失败，请重试。");
+          setError(userFacingErrorMessage(err, "扫描失败，请重试。"));
           setState("failed");
           return;
         }

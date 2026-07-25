@@ -4,17 +4,24 @@ import { extname, join, normalize } from "node:path";
 import { gzipSync } from "node:zlib";
 
 /**
- * 生产 nginx 开了 `gzip_static on`，会优先直接发送构建期生成的同名 `.gz`。
- * 本地预览服务器保持同一行为，避免"本地走现压、线上走预压缩"两套口径。
+ * 生产 nginx 会优先直接发送构建期生成的同名预压缩产物：官方镜像用 `gzip_static`
+ * 发 `.gz`，自建 brotli 镜像在静态 location 里用 `brotli_static` 发 `.br`
+ * （见 deploy/nginx/Dockerfile）。本地预览服务器保持同样的 `Content-Encoding`
+ * 协商优先级（br 优于 gzip），避免"本地走现压、线上走预压缩"两套口径。
  */
-async function readPrecompressed(file) {
-  try {
-    const info = await stat(`${file}.gz`);
-    if (!info.isFile()) return null;
-    return await readFile(`${file}.gz`);
-  } catch {
-    return null;
+async function readPrecompressed(file, acceptEncoding) {
+  const candidates = [];
+  if (acceptEncoding.includes("br")) candidates.push(["br", `${file}.br`]);
+  if (acceptEncoding.includes("gzip")) candidates.push(["gzip", `${file}.gz`]);
+  for (const [encoding, path] of candidates) {
+    try {
+      const info = await stat(path);
+      if (info.isFile()) return { encoding, body: await readFile(path) };
+    } catch {
+      // 缺预压缩产物时继续尝试下一种编码，最后回落到实时 gzip。
+    }
   }
+  return null;
 }
 
 const root = join(process.cwd(), "out");
@@ -57,17 +64,22 @@ const server = createServer(async (request, response) => {
     if (!info.isFile()) throw new Error("not a file");
     const rawBody = request.method === "HEAD" ? null : await readFile(file);
     const compressible = new Set([".css", ".html", ".js", ".json", ".svg", ".txt"]);
-    const shouldGzip = Boolean(
-      rawBody &&
-      compressible.has(extname(file)) &&
-      request.headers["accept-encoding"]?.includes("gzip"),
-    );
-    const precompressed = shouldGzip ? await readPrecompressed(file) : null;
-    const body = shouldGzip && rawBody ? (precompressed ?? gzipSync(rawBody)) : rawBody;
+    const acceptEncoding = request.headers["accept-encoding"] ?? "";
+    const canCompress = Boolean(rawBody && compressible.has(extname(file)));
+    const precompressed = canCompress ? await readPrecompressed(file, acceptEncoding) : null;
+    let encoding = null;
+    let body = rawBody;
+    if (precompressed) {
+      encoding = precompressed.encoding;
+      body = precompressed.body;
+    } else if (canCompress && acceptEncoding.includes("gzip") && rawBody) {
+      encoding = "gzip";
+      body = gzipSync(rawBody);
+    }
     response.writeHead(200, {
       "content-type": contentTypes[extname(file)] || "application/octet-stream",
       "cache-control": "no-store",
-      ...(shouldGzip ? { "content-encoding": "gzip", vary: "Accept-Encoding" } : {}),
+      ...(encoding ? { "content-encoding": encoding, vary: "Accept-Encoding" } : {}),
     });
     response.end(body);
   } catch {

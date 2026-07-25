@@ -6,6 +6,7 @@ import { FormEvent, useState } from "react";
 import { registerUser } from "@/lib/api";
 import { useAuth } from "@/components/AuthProvider";
 import { AuthShell } from "@/components/AuthShell";
+import { userFacingErrorMessage } from "@/lib/userFacingError";
 
 export default function RegisterPage() {
   const { setSession } = useAuth();
@@ -40,7 +41,7 @@ export default function RegisterPage() {
       setSession(session.accessToken, session.user);
       router.replace("/");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "注册失败");
+      setError(userFacingErrorMessage(err, "注册失败"));
     } finally {
       setSubmitting(false);
     }

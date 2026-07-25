@@ -6,6 +6,7 @@ import type { FundNavPoint } from "@/lib/api";
 import { fetchFundNavHistoryPage } from "@/lib/api";
 import { cnSignedPercent, formatSignedPercent } from "@/lib/performanceTrend";
 import { useDialogA11y } from "@/lib/useDialogA11y";
+import { userFacingErrorMessage } from "@/lib/userFacingError";
 
 type NavHistoryListModalProps = {
   fundCode: string;
@@ -60,7 +61,7 @@ export function NavHistoryListModal({ fundCode, fundName, onClose }: NavHistoryL
         setHasMore(result.has_more);
         nextBeforeRef.current = result.next_before ?? null;
       } catch (loadError) {
-        setError(loadError instanceof Error ? loadError.message : "加载历史净值失败");
+        setError(userFacingErrorMessage(loadError, "加载历史净值失败"));
         if (!append) {
           setRows([]);
           setHasMore(false);

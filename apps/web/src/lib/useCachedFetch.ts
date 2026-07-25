@@ -7,6 +7,7 @@ import {
   readClientCache,
   writeClientCache,
 } from "@/lib/clientCache";
+import { userFacingErrorMessage } from "@/lib/userFacingError";
 
 export type UseCachedFetchOptions<T> = {
   cacheKey: string;
@@ -100,7 +101,7 @@ export function useCachedFetch<T>({
             setError(null);
           }
         } catch (loadError) {
-          setError(loadError instanceof Error ? loadError.message : "加载失败");
+          setError(userFacingErrorMessage(loadError, "加载失败"));
         } finally {
           setLoading(false);
           setRevalidating(false);

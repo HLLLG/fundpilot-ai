@@ -18,6 +18,7 @@ import {
   gradeTone,
   percentileTone,
 } from "@/lib/fundFactors";
+import { userFacingErrorMessage } from "@/lib/userFacingError";
 
 const PRO_FLAG_KEY = "fundpilot-risk-metrics-pro";
 
@@ -149,7 +150,7 @@ export function PortfolioFactorScoresPanel({ enabled }: { enabled: boolean }) {
       })
       .catch((err) => {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : "加载因子评分失败");
+          setError(userFacingErrorMessage(err, "加载因子评分失败"));
         }
       })
       .finally(() => {

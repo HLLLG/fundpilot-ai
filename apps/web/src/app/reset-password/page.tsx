@@ -6,6 +6,7 @@ import { CheckCircle2, KeyRound } from "lucide-react";
 import { AuthShell } from "@/components/AuthShell";
 import { completePasswordReset } from "@/lib/api";
 import { clearAccessToken } from "@/lib/auth";
+import { userFacingErrorMessage } from "@/lib/userFacingError";
 
 export default function ResetPasswordPage() {
   const [token, setToken] = useState<string | null>(null);
@@ -42,7 +43,7 @@ export default function ResetPasswordPage() {
       clearAccessToken();
       setCompleted(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "密码重置失败");
+      setError(userFacingErrorMessage(err, "密码重置失败"));
     } finally {
       setSubmitting(false);
     }

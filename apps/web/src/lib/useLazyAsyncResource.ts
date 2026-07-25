@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+import { userFacingErrorMessage } from "@/lib/userFacingError";
+
 
 export type LazyAsyncResource<T> = {
   data: T | null;
@@ -40,7 +42,7 @@ export function useLazyAsyncResource<T>({
       })
       .catch((reason) => {
         if (!cancelled) {
-          setError(reason instanceof Error ? reason.message : errorMessage);
+          setError(userFacingErrorMessage(reason, errorMessage));
         }
       })
       .finally(() => {

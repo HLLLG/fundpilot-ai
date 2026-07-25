@@ -4,6 +4,7 @@ import { memo, useEffect, useState } from "react";
 import { InlineNotice } from "@/components/InlineNotice";
 import type { PortfolioRiskCorrelation } from "@/lib/api";
 import { fetchPortfolioRiskCorrelation } from "@/lib/api";
+import { userFacingErrorMessage } from "@/lib/userFacingError";
 
 function corrCellStyle(value: number | null): React.CSSProperties {
   if (value == null) {
@@ -43,7 +44,7 @@ function PortfolioCorrelationHeatmapView({ enabled }: { enabled: boolean }) {
       })
       .catch((err) => {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : "加载相关性失败");
+          setError(userFacingErrorMessage(err, "加载相关性失败"));
         }
       })
       .finally(() => {

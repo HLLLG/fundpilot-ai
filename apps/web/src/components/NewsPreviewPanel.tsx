@@ -5,6 +5,7 @@ import { Newspaper, RefreshCw } from "lucide-react";
 import type { Holding, InvestorProfile, NewsPreviewResponse } from "@/lib/api";
 import { previewNewsForHoldings } from "@/lib/api";
 import { StatusPill } from "@/components/StatusPill";
+import { userFacingErrorMessage } from "@/lib/userFacingError";
 
 const freshnessTone = {
   fresh: "green",
@@ -36,7 +37,7 @@ export function NewsPreviewPanel({ holdings, profile }: NewsPreviewPanelProps) {
       const data = await previewNewsForHoldings(holdings, profile);
       setPreview(data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "新闻预取失败");
+      setError(userFacingErrorMessage(err, "新闻预取失败"));
       setPreview(null);
     } finally {
       setLoading(false);

@@ -5,6 +5,7 @@ import { History, Loader2 } from "lucide-react";
 import { fetchShadowEscalationDigest, type ShadowEscalationDigest } from "@/lib/api";
 import { InlineNotice } from "@/components/InlineNotice";
 import { StatusPill } from "@/components/StatusPill";
+import { userFacingErrorMessage } from "@/lib/userFacingError";
 
 /**
  * M6.3/M5：灰度期间的"本周复盘摘要"卡片。设计文档要求"仅
@@ -30,7 +31,7 @@ export function ShadowEscalationDigestCard() {
       })
       .catch((loadError) => {
         if (!cancelled) {
-          setError(loadError instanceof Error ? loadError.message : "灰度复盘加载失败");
+          setError(userFacingErrorMessage(loadError, "灰度复盘加载失败"));
         }
       })
       .finally(() => {

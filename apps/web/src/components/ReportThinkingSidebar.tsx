@@ -9,6 +9,7 @@ import {
   stageCardStatus,
   stageShortLabel,
 } from "@/lib/streamingStageMeta";
+import { userFacingErrorMessage } from "@/lib/userFacingError";
 
 type ReportThinkingSidebarProps = {
   streaming: StreamingReportState;
@@ -41,7 +42,7 @@ export function ReportThinkingSidebar({ streaming, onFollowup }: ReportThinkingS
       await onFollowup(text);
       setFollowupDraft("");
     } catch (error) {
-      setFollowupError(error instanceof Error ? error.message : "发送失败");
+      setFollowupError(userFacingErrorMessage(error, "发送失败"));
     } finally {
       setFollowupSending(false);
     }

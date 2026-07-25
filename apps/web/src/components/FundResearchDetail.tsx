@@ -23,6 +23,7 @@ import {
   type SectorIntradayResult,
 } from "@/lib/api";
 import { useDialogA11y } from "@/lib/useDialogA11y";
+import { userFacingErrorMessage } from "@/lib/userFacingError";
 
 type DetailTab = "overview" | "relation" | "performance" | "holding";
 
@@ -100,7 +101,7 @@ export function FundResearchDetail({ fund, holding, onClose }: FundResearchDetai
     void fetchFundPublicOverview(fund.fund_code)
       .then(setOverview)
       .catch((reason) => {
-        setError(reason instanceof Error ? reason.message : "基金详情加载失败");
+        setError(userFacingErrorMessage(reason, "基金详情加载失败"));
       })
       .finally(() => setLoading(false));
   };

@@ -25,6 +25,7 @@ import {
   volatilityHint,
   volatilityTone,
 } from "@/lib/riskMetrics";
+import { userFacingErrorMessage } from "@/lib/userFacingError";
 
 const PRO_FLAG_KEY = "fundpilot-risk-metrics-pro";
 
@@ -140,7 +141,7 @@ export function PortfolioRiskMetricsPanel() {
       })
       .catch((loadError) => {
         if (!cancelled) {
-          setError(loadError instanceof Error ? loadError.message : "风险指标加载失败");
+          setError(userFacingErrorMessage(loadError, "风险指标加载失败"));
         }
       })
       .finally(() => {

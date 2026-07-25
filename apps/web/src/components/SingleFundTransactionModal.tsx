@@ -5,6 +5,7 @@ import { ChevronLeft, Loader2 } from "lucide-react";
 import type { Holding, ParsedTransaction } from "@/lib/api";
 import { formatPlainMoney } from "@/lib/holdingMetrics";
 import { useDialogA11y } from "@/lib/useDialogA11y";
+import { userFacingErrorMessage } from "@/lib/userFacingError";
 
 type TradeTiming = "before_close" | "after_close";
 
@@ -122,7 +123,7 @@ export function SingleFundTransactionModal({
       await onSubmit(tx);
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "提交失败");
+      setError(userFacingErrorMessage(err, "提交失败"));
     } finally {
       setSaving(false);
     }

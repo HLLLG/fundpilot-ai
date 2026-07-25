@@ -7,6 +7,7 @@ import { InlineNotice } from "@/components/InlineNotice";
 import { QuantEvidenceSummary } from "@/components/QuantEvidenceSummary";
 import { StatusPill } from "@/components/StatusPill";
 import { confidenceTone } from "@/components/SectorSignalBacktestPanel";
+import { userFacingErrorMessage } from "@/lib/userFacingError";
 
 const LEVEL_ORDER = ["高", "中", "低", "不足"] as const;
 
@@ -55,7 +56,7 @@ export function PortfolioEvidenceOverviewPanel({ enabled }: { enabled: boolean }
         if (!cancelled) setData(result);
       })
       .catch((err) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : "加载证据总览失败");
+        if (!cancelled) setError(userFacingErrorMessage(err, "加载证据总览失败"));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);

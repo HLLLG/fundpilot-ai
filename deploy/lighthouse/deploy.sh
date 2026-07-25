@@ -182,6 +182,27 @@ export FUND_AI_API_IMAGE="fundpilot-api:$deploy_sha"
 
 compose=(docker compose --env-file .env.production -f docker-compose.production.yml)
 "${compose[@]}" config -q
+
+# 自建 brotli nginx 镜像（可选）。只有 .env.production 显式设置
+# FUND_AI_NGINX_IMAGE 指向 fundpilot-nginx:* 时才构建，否则继续用官方镜像。
+# Dockerfile 内含构建期断言：brotli / gzip_static 任一不可用即构建失败，
+# 因此这一步失败时前端根目录还没被替换，站点不受影响。
+nginx_image="$(grep -E '^FUND_AI_NGINX_IMAGE=' .env.production | tail -n 1 | cut -d= -f2- | tr -d '"'"'"' ' || true)"
+if [[ "$nginx_image" == fundpilot-nginx:* ]]; then
+    echo "building custom nginx image with brotli: $nginx_image"
+    docker build -f deploy/nginx/Dockerfile -t "$nginx_image" deploy/nginx
+    # 预检：用真实站点配置在一次性容器里跑 nginx -t。任何配置/模块问题在这里就停，
+    # 而不是等到 force-recreate nginx 时导致短暂中断再触发回滚。
+    # `--add-host api:127.0.0.1`：nginx 在解析配置阶段就会解析 upstream 里的主机名，
+    # 一次性容器不在 compose 网络里，没有这一行会以 "host not found in upstream" 失败。
+    # nginx -t 只做配置校验，不会真的连上去，指向本机是安全的。
+    docker run --rm \
+        --add-host api:127.0.0.1 \
+        -v "$repo_root/deploy/nginx/fundpilot.conf:/etc/nginx/conf.d/default.conf:ro" \
+        -v /etc/letsencrypt:/etc/letsencrypt:ro \
+        "$nginx_image" nginx -t
+fi
+
 "${compose[@]}" build api
 "${compose[@]}" up -d mysql
 

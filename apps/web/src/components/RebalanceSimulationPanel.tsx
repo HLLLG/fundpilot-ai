@@ -5,6 +5,7 @@ import { SlidersHorizontal } from "lucide-react";
 import { InlineNotice } from "@/components/InlineNotice";
 import { fetchRebalanceSimulation, type RebalanceSimulation } from "@/lib/api";
 import { useMediaQuery } from "@/lib/useMediaQuery";
+import { userFacingErrorMessage } from "@/lib/userFacingError";
 
 const DESKTOP_QUERY = "(min-width: 640px)";
 // formatter 提到模块作用域：调仓模拟按持仓行逐条渲染金额。无选项的
@@ -49,7 +50,7 @@ export function RebalanceSimulationPanel({
         if (!cancelled) {
           setErrorResult({
             reportId,
-            message: loadError instanceof Error ? loadError.message : "模拟调仓加载失败",
+            message: userFacingErrorMessage(loadError, "模拟调仓加载失败"),
           });
         }
       })

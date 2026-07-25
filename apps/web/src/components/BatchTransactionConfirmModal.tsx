@@ -6,6 +6,7 @@ import { InlineNotice } from "@/components/InlineNotice";
 import type { FundSearchItem, ParsedTransaction } from "@/lib/api";
 import { searchFunds } from "@/lib/api";
 import { useDialogA11y } from "@/lib/useDialogA11y";
+import { userFacingErrorMessage } from "@/lib/userFacingError";
 
 type BatchTransactionConfirmModalProps = {
   transactions: ParsedTransaction[];
@@ -69,7 +70,7 @@ function FundCodeSearchPanel({
         }
       } catch (err) {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : "搜索失败");
+          setError(userFacingErrorMessage(err, "搜索失败"));
           setItems([]);
         }
       } finally {

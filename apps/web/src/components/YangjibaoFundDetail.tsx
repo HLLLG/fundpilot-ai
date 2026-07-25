@@ -75,6 +75,7 @@ import { useAuth } from "@/components/AuthProvider";
 import { isEstimateFallbackMeta } from "@/lib/sectorQuoteStatus";
 import { formatTradeDateShort } from "@/lib/tradeDateLabel";
 import { useDialogA11y } from "@/lib/useDialogA11y";
+import { userFacingErrorMessage } from "@/lib/userFacingError";
 
 type DetailTab = "sector" | "performance" | "profit";
 
@@ -385,7 +386,7 @@ export function YangjibaoFundDetail({
       setDetail(result);
       setPurchaseDatePickerOpen(false);
     } catch (error) {
-      setPurchaseDateError(error instanceof Error ? error.message : "保存购入日期失败");
+      setPurchaseDateError(userFacingErrorMessage(error, "保存购入日期失败"));
     } finally {
       setPurchaseDateSaving(false);
     }
@@ -411,7 +412,7 @@ export function YangjibaoFundDetail({
             fund_name: nextName !== activeHolding.fund_name ? nextName : undefined,
           });
         } catch (error) {
-          const message = error instanceof Error ? error.message : "更新档案失败";
+          const message = userFacingErrorMessage(error, "更新档案失败");
           if (!message.includes("404") && !message.includes("不存在")) {
             throw error;
           }
@@ -436,7 +437,7 @@ export function YangjibaoFundDetail({
       setDetail(result);
       setFundCodeEditOpen(false);
     } catch (error) {
-      setFundCodeError(error instanceof Error ? error.message : "保存基金代码失败");
+      setFundCodeError(userFacingErrorMessage(error, "保存基金代码失败"));
     } finally {
       setFundCodeSaving(false);
     }
@@ -477,7 +478,7 @@ export function YangjibaoFundDetail({
       writeHoldingDetailCache(userId, result.holding.fund_code, result);
       setDetail(result);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "详情刷新失败";
+      const message = userFacingErrorMessage(error, "详情刷新失败");
       setDetailError(`持仓已更新，但最新详情暂时无法刷新：${message}`);
     }
   }
@@ -527,7 +528,7 @@ export function YangjibaoFundDetail({
       .catch((error) => {
         if (!cancelled && !cachedDetail) {
           setDetail(null);
-          setDetailError(error instanceof Error ? error.message : "基金详情加载失败");
+          setDetailError(userFacingErrorMessage(error, "基金详情加载失败"));
         }
       })
       .finally(() => {

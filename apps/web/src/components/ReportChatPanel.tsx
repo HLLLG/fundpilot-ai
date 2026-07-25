@@ -7,6 +7,7 @@ import { ChatMarkdown } from "@/components/ChatMarkdown";
 import { fetchReportChatHistory, fetchReportChatMarkdown, streamReportChat } from "@/lib/api";
 import { loadReportChatMode, saveReportChatMode } from "@/lib/storage";
 import { useChatAutoScroll } from "@/lib/useChatAutoScroll";
+import { userFacingErrorMessage } from "@/lib/userFacingError";
 
 type ReportChatPanelProps = {
   reportId: string;
@@ -66,7 +67,7 @@ export function ReportChatPanel({
       })
       .catch((loadError) => {
         if (!cancelled) {
-          setError(loadError instanceof Error ? loadError.message : "加载对话失败");
+          setError(userFacingErrorMessage(loadError, "加载对话失败"));
         }
       })
       .finally(() => {
@@ -153,7 +154,7 @@ export function ReportChatPanel({
       }, controller.signal);
     } catch (sendError) {
       if (!controller.signal.aborted) {
-        setError(sendError instanceof Error ? sendError.message : "发送失败");
+        setError(userFacingErrorMessage(sendError, "发送失败"));
       }
       draftAssistantId.current = null;
     } finally {
@@ -178,7 +179,7 @@ export function ReportChatPanel({
       anchor.click();
       URL.revokeObjectURL(url);
     } catch (exportError) {
-      setError(exportError instanceof Error ? exportError.message : "导出对话失败");
+      setError(userFacingErrorMessage(exportError, "导出对话失败"));
     } finally {
       setIsExporting(false);
     }

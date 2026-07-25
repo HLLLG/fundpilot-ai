@@ -11,6 +11,7 @@ import {
 } from "@/components/DecisionMetricGrid";
 import type { DiscoveryOutcomeItem, DiscoveryOutcomesPayload } from "@/lib/api";
 import { fetchDiscoveryOutcomes } from "@/lib/api";
+import { userFacingErrorMessage } from "@/lib/userFacingError";
 
 type DiscoveryOutcomesPanelProps = { reportId: string };
 const HORIZONS = [5, 20, 60] as const;
@@ -66,7 +67,7 @@ export function DiscoveryOutcomesPanel({ reportId }: DiscoveryOutcomesPanelProps
           setErrorResult({
             reportId,
             horizon,
-            message: fetchError instanceof Error ? fetchError.message : "荐基 T+N 复盘加载失败",
+            message: userFacingErrorMessage(fetchError, "荐基 T+N 复盘加载失败"),
           });
         }
       })

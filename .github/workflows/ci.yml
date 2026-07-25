@@ -14,7 +14,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Validate deployment shell
-        run: bash -n ../../deploy/lighthouse/deploy.sh
+        run: |
+          bash -n ../../deploy/lighthouse/deploy.sh
+          bash -n ../../deploy/nginx/verify-precompressed.sh
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"

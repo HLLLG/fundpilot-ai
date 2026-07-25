@@ -1,38 +1,53 @@
 {
   "_comment": [
     "首屏体积预算（单位：字节）。数值来自 2026-07-25 本轮优化后的实测产物再留约 3% 余量。",
-    "口径：firstScreenBytes = HTML 文档 + 首屏 JS + 首屏 CSS。HTML 必须计入，",
-    "否则「把 CSS 内联进 HTML」这类改动会让 cssBytes 归零、看起来大幅改善，",
-    "而浏览器实际下载量反而变多（实测 inlineCss 会让 HTML 从 9.9 KiB 涨到 262 KiB）。",
+    "",
+    "三个口径，各有分工：",
+    "- firstScreenBytes（原始）= HTML 文档 + 首屏 JS + 首屏 CSS。挡住解析/执行成本回胖。",
+    "  HTML 必须计入，否则「把 CSS 内联进 HTML」这类改动会让 cssBytes 归零、看起来大幅改善，",
+    "  而浏览器实际下载量反而变多（实测 inlineCss 会让 HTML 从 9.9 KiB 涨到 262 KiB）。",
+    "- firstScreenGzipBytes = 同一组资源的 gzip -9 传输量。这是**保底传输口径**：",
+    "  所有浏览器都拿得到 gzip，生产 nginx 未启用自建 brotli 镜像时发送的也是 gzip。",
+    "  所以预算按 gzip 卡；brotli 只会让实际传输更小（实测 `/` 171.1 → 143.2 KiB），",
+    "  报告里另有 firstScreenBrotliBytes 一列供观察，但不作为门禁，避免生产没开 brotli 时",
+    "  预算却按 brotli 放宽，出现「指标好看、用户没受益」。",
+    "- cssBytes 用来防止 globals.css 重新长回单体（曾经 148.9 KiB 单文件阻塞渲染）。",
+    "",
     "注意：`/` 的 JS 里有 412.6 KiB 是 react-dom（195.2）+ Next App Router 客户端运行时（217.4），",
     "属于框架地板，应用代码只占约 56 KiB。所以 JS 预算的作用是拦住应用代码回胖，",
-    "不是要求总量继续下降。CSS 预算用来防止 globals.css 重新长回单体。",
+    "不是要求总量继续下降。",
     "调整预算时必须同时更新 docs/perf/ 下的前后对比文档，说明为什么放宽。"
   ],
   "routes": {
     "/": {
       "cssBytes": 135168,
-      "firstScreenBytes": 655360
+      "firstScreenBytes": 655360,
+      "firstScreenGzipBytes": 181248
     },
     "/login": {
       "cssBytes": 135168,
-      "firstScreenBytes": 649216
+      "firstScreenBytes": 649216,
+      "firstScreenGzipBytes": 178176
     },
     "/register": {
       "cssBytes": 135168,
-      "firstScreenBytes": 649216
+      "firstScreenBytes": 649216,
+      "firstScreenGzipBytes": 179200
     },
     "/reset-password": {
       "cssBytes": 135168,
-      "firstScreenBytes": 645120
+      "firstScreenBytes": 645120,
+      "firstScreenGzipBytes": 178176
     },
     "/settings": {
       "cssBytes": 135168,
-      "firstScreenBytes": 649216
+      "firstScreenBytes": 649216,
+      "firstScreenGzipBytes": 177152
     },
     "/admin/users": {
       "cssBytes": 135168,
-      "firstScreenBytes": 667648
+      "firstScreenBytes": 667648,
+      "firstScreenGzipBytes": 182272
     }
   },
   "output": {

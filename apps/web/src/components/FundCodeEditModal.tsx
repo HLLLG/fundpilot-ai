@@ -5,6 +5,7 @@ import { Search, X } from "lucide-react";
 import type { FundSearchItem } from "@/lib/api";
 import { searchFunds } from "@/lib/api";
 import { useDialogA11y } from "@/lib/useDialogA11y";
+import { userFacingErrorMessage } from "@/lib/userFacingError";
 
 type FundCodeSearchPanelProps = {
   initialQuery: string;
@@ -34,7 +35,7 @@ function FundCodeSearchPanel({ initialQuery, onSelect, onClose }: FundCodeSearch
         }
       } catch (err) {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : "搜索失败");
+          setError(userFacingErrorMessage(err, "搜索失败"));
           setItems([]);
         }
       } finally {

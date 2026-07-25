@@ -7,6 +7,7 @@ import { loginUser } from "@/lib/api";
 import { useAuth } from "@/components/AuthProvider";
 import { AuthShell } from "@/components/AuthShell";
 import { safeLoginRedirect } from "@/lib/authRedirect";
+import { userFacingErrorMessage } from "@/lib/userFacingError";
 
 export default function LoginPage() {
   const { setSession } = useAuth();
@@ -27,7 +28,7 @@ export default function LoginPage() {
       const redirect = searchParams.get("redirect");
       router.replace(safeLoginRedirect(redirect));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "登录失败");
+      setError(userFacingErrorMessage(err, "登录失败"));
     } finally {
       setSubmitting(false);
     }
