@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import type { PortfolioEvidenceOverview } from "@/lib/api";
 import { fetchPortfolioEvidenceOverview } from "@/lib/api";
 import { InlineNotice } from "@/components/InlineNotice";
@@ -27,7 +27,11 @@ function LevelBar({ level, percent }: { level: string; percent: number }) {
         <span className="factor-bar-value">{percent.toFixed(0)}%</span>
       </div>
       <div className="factor-bar-track">
-        <div className="factor-bar-fill" style={{ width: `${width}%` }} />
+        {/* 填充比例走 CSS 自定义属性，由 clip-path 揭示；不再动画 width，避免逐帧重排。 */}
+        <div
+          className="factor-bar-fill"
+          style={{ "--factor-bar-fill": `${width}%` } as CSSProperties}
+        />
       </div>
     </div>
   );

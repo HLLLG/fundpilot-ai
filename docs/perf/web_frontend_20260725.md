@@ -198,6 +198,11 @@ before 基线的取法：`git stash` 掉本轮全部改动 → 在**同一份 `n
 
 结论：这批快照基线相对本机的 Chromium/字体渲染已经陈旧（快照名带 `-win32`，平台一致，差异来自浏览器版本）。仓库记录的 `30 passed / 6 skipped` 在本机连 HEAD 都复现不了。**本轮没有更新这些基线图** —— 更新快照会掩盖"基线到底该以哪台机器为准"这个问题，应该由你决定是在 CI 里统一生成基线，还是在本机 `--update-snapshots` 后入库。
 
+## 8.1 环境与工程卫生
+
+- **`.gitattributes`（新增）**：仓库 `core.autocrlf=true` 且此前没有 `.gitattributes`，`git add` 会提示「LF will be replaced by CRLF」。`deploy/lighthouse/deploy.sh`、`scripts/dev.sh` 等 5 个 shell 脚本、nginx `.conf`、Dockerfile、CI YAML、`.mjs`、`.py` 都会被 Linux 侧解释器直接读取，多出的 `\r` 会产出 `$'\r': command not found` 这类难定位的错误，或让 shell 变量末尾带上不可见回车（本轮就被这个坑了两次）。现在对这些扩展名强制 `eol=lf`，Playwright 视觉基线 PNG 显式标 `binary` 防止被改写。`git add --renormalize .` 验证：**零改动**，纯安全网、无 diff 噪音。
+- PowerShell 侧 `npm.ps1` 被执行策略拦的问题已不复现（`CurrentUser` 已是 `RemoteSigned`，`npm --version` 正常）。本轮采用的稳定通道是「用 `node` 直接驱动 `next` / `tsc` / `eslint` / `vitest` / `playwright` 的 bin，输出写日志文件再读」，不依赖 shell 的交互输出。
+
 ## 9. 回滚方式
 
 每一类改动都可以独立回退：
@@ -208,3 +213,87 @@ before 基线的取法：`git stash` 掉本轮全部改动 → 在**同一份 `n
 - formatter 上提：纯局部替换，不影响调用方。
 - nginx 预压缩：删掉两处 `gzip_static on;` 即回落运行时 gzip；`.gz` 是附加文件，删除不影响服务。
 - 度量脚本与 workflow：纯新增文件。
+
+---
+
+## 10. 第二轮：允许框架重构与视觉改动后的补充（同日）
+
+前提变化：第一轮受「不改框架、不改视觉」约束。之后放开这两条，于是把第一轮标记为「需你决策」和「未做」的项逐条重新实测。**结论是三个框架级方案全部被数据否掉**，落地的是一项工具改进、一项动画改写和一项加载态重做。
+
+### 10.1 Next App Router 运行时（217.4 KiB）—— 无配置出口
+
+在 `next@16.2.10` 的 `config-shared.d.ts` 里逐项检索：**没有 `clientSegmentCache` 开关**。该特性在 16 已转为常开、不提供 opt-out。也就是说 257.4 KiB statSize 的 segment-cache 无法用配置裁掉。
+
+现存的相关开关只有 `prefetchInlining` / `staleTimes` / `dynamicOnHover` / `optimisticRouting`，它们改的是预取行为，不改变运行时代码是否进包。
+
+**结论：这 217.4 KiB 的唯一移除路径是离开 App Router（换 Pages Router 或换掉 Next）。** 那会重写 159 个组件的路由/布局假设并作废整套 e2e，属于独立立项，不适合夹在性能轮里做。
+
+### 10.2 `experimental.inlineCss: true` —— 实测更差，不采纳
+
+| 口径 | 当前 | inlineCss |
+| --- | ---: | ---: |
+| `/` HTML | 9.9 KiB | **262.2 KiB** |
+| `/` 首屏 CSS 请求 | 121.6 + 3.5 KiB | 0（内联进 HTML） |
+| `/` 首屏请求数 | 10 | 8 |
+| `/` 首屏真实下载量（HTML + JS + CSS） | ~617 KiB | **~744 KiB** |
+
+HTML 从 9.9 涨到 262.2 KiB，比 CSS 本身（125.0 KiB）还多一倍 —— CSS 被内联了约两份（`<style>` 一份、RSC flight payload 里再一份）。叠加第二个问题：CSS 原本走 `/_next/static/` 的 `immutable` 一年缓存，内联后跟着 `expires -1` 的 HTML 每次重新下载，回访用户净亏。
+
+**这一轮顺手修了度量工具的一个真问题**：原来的 `bundle-budget.mjs` 只统计 JS + CSS 资源，不算 HTML。inlineCss 在旧口径下会显示成「CSS −125 KiB、总量 −125 KiB」的巨大改善，而浏览器实际多下载了 127 KiB。现在报告新增 `htmlBytes` 列与 `firstScreenBytes = HTML + JS + CSS`，预算也改按 `firstScreenBytes` 卡，这类假收益再也藏不住。
+
+### 10.3 React Compiler（`reactCompiler: true`）—— 有成本无收益，不采纳
+
+Next 16 已把它从 `experimental` 提到顶层（`experimental.reactCompiler` 会直接报 invalid key）。实测：
+
+| 口径 | 当前 | reactCompiler |
+| --- | ---: | ---: |
+| `/` 首屏 JS | 482.2 KiB | **488.9 KiB（+6.7）** |
+| 全量产物 JS | 1764.7 KiB / 51 个 | **1920.8 KiB / 53 个（+156.1）** |
+| 最大交互 duration | 16 ms | 16 ms（无变化） |
+| tab 切换墙钟 | 47～55 ms | 49～55 ms（无变化） |
+| Vitest | 105 files / 471 passed | **105 files / 471 passed** |
+
+构建通过、测试全绿、行为无变化 —— 但**交互指标一动不动**，因为热点已经手工 memo 过、指标本身停在 16 ms 单帧下限。为一个测不出收益的改动付 +156 KiB 产物不合理；它还会引入 `babel-plugin-react-compiler` 及其依赖树里 4 条 high 级公告。已卸载。
+
+**保留作为选项**：如果目标是「以后新写的组件不用再手工 memo」这种长期工程保障，而不是本轮的指标，它是可用的，代价就是上表这些字节。
+
+### 10.4 已落地：`.factor-bar-fill` 改 clip-path（去掉 layout 动画，圆头不变）
+
+第一轮把它记成取舍保留，因为改 `transform: scaleX()` 会让部分填充时右端圆头变直角。第二轮找到了没有视觉代价的写法：
+
+```css
+/* 之前：transition: width 0.3s ease;  —— 每帧重排 */
+width: 100%;
+clip-path: inset(0 calc(100% - var(--factor-bar-fill, 0%)) 0 0 round 999px);
+transition: clip-path 0.3s ease;
+```
+
+`inset(... round 999px)` 会把裁剪矩形本身圆角化，所以右端圆头与原来一致；同时彻底不再触发 layout（最差只重绘）。填充比例由组件通过 CSS 自定义属性传入（`PortfolioFactorScoresPanel`、`PortfolioEvidenceOverviewPanel`）。一张基金卡最多 5 条、多只基金同时进场时，原实现是每帧对所有条目重排。
+
+### 10.5 已落地：工作台壳层骨架屏取代居中转圈
+
+原来登录态恢复与 Dashboard chunk 加载两段等待，都显示屏幕正中一张几十像素高的小卡片（「正在恢复工作台…」/「正在加载工作台…」）。问题是首屏最大可见元素是这张小卡，真正的工作台挂载后整页结构突然出现。
+
+改成 `WorkspaceSkeleton`：按真实壳层尺寸给出顶栏（4.25rem）+ 页头标题区 + 主内容卡片骨架，文案降为 `sr-only` 只给辅助技术。**关键约束**：骨架只用首屏 CSS 里已有的 Tailwind utilities，不用 `app-masthead` / `app-page-heading` / `dashboard-shell` —— 那些规则住在按需加载的 `dashboard.css` 里，骨架若依赖它们就会把工作台样式拉回首屏，让 CSS 拆分白做。
+
+代价（实测）：`/` HTML +3.3 KiB、page chunk +1.9 KiB、CSS +0.7 KiB，首屏合计 617 → 622.8 KiB。本机 FCP 从 32～36 ms 变为 44～52 ms（多出的 DOM 解析），LCP 420～480 ms 与之前的 448～484 ms 无可测差异。**本机是 localhost 零延迟，测不出骨架屏真正的价值（真实网络下用户在等待期看到的是结构而不是一个点）；这一项的收益标记为"未在本机测得"，只有体积代价是确定的。**
+
+### 10.6 CLS 0.033 定位清楚了：是测量环境造成的，不是产品缺陷
+
+第一轮只知道「CLS 在 0 与 0.033 之间抖动，HEAD 也一样」。这一轮给基准脚本加了位移来源捕获（`layout-shift` entry 的 `sources` + 前后 rect），直接定位到：
+
+```
+位移 0.033 @456ms  section.app-page-heading      124,116 1192x153 -> 124,182 1192x153
+位移 0.033 @456ms  main#main-content             124,301 1192x599 -> 124,367 1192x533
+```
+
+页头在挂载后约 450ms 被向下推 **66px**，把 `main` 一起带下去。66px 正是一条 `InlineNotice` 的高度 —— 它渲染在顶栏与页头之间。
+
+再用一个健康 bootstrap 的探针复核：shell 只有 3 个子元素（`header` 68px / `app-page-heading` 153px / `main` 575px），**没有 notice、CLS = 0**。所以基准里的 0.033 来自我的 stub 不完整触发的错误提示条，是**测量污染**。基准脚本现在会显式披露 `noticePresent` 与提示文案，这个数字不会再被误读。
+
+**但产品侧有一条真实的条件性 CLS**：任何在挂载后才出现的提示条（持仓字段告警、刷新失败、写入阻断等）都会把整页下推约 66px。两个候选修法，都涉及"重要告警放在哪"这个信息层级决策，因此**交给你定**：
+
+1. 把提示条移到页头之后、`main` 内容之上 —— 页头（LCP 候选）不再位移，但 `main` 仍会下移，实测收益有限（估算 0.033 → 0.049，反而可能更差，因为 `main` 高度会被视口裁掉的部分变了）。
+2. 把提示条改成吸附在 sticky 顶栏下方的固定条 —— 彻底零位移，而且告警滚动时不会消失（对金融告警是更好的行为）；代价是它会常驻遮住内容顶部约 66px。
+
+我倾向 2，但它改变了重要告警的呈现方式，不适合我单方面定。

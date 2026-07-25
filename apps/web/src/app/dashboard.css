@@ -451,10 +451,16 @@
 }
 
 .factor-bar-fill {
+  /* 填充条始终铺满整条轨道，靠 clip-path 从左侧揭示到 --factor-bar-fill 处。
+     原实现动画 width：每一帧都要重排（一张卡片最多 5 条、多只基金同时进场时更明显）。
+     clip-path 不触发 layout，且 `inset(... round 999px)` 会把裁剪矩形本身圆角化，
+     所以右端的圆头与原来完全一致 —— 这是纯改进，没有视觉代价。 */
+  width: 100%;
   height: 100%;
   border-radius: 999px;
   background: #94a3b8;
-  transition: width 0.3s ease;
+  clip-path: inset(0 calc(100% - var(--factor-bar-fill, 0%)) 0 0 round 999px);
+  transition: clip-path 0.3s ease;
 }
 
 .factor-tone-good .factor-bar-fill {

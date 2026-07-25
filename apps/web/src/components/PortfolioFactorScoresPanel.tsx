@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import type {
   FactorKey,
   FactorReliability,
@@ -61,7 +61,11 @@ function FactorBar({
         </span>
       </div>
       <div className="factor-bar-track">
-        <div className="factor-bar-fill" style={{ width: `${locked ? 0 : width}%` }} />
+        {/* 填充比例走 CSS 自定义属性，由 clip-path 揭示；不再动画 width，避免逐帧重排。 */}
+        <div
+          className="factor-bar-fill"
+          style={{ "--factor-bar-fill": `${locked ? 0 : width}%` } as CSSProperties}
+        />
       </div>
       <div className="factor-bar-hint">
         {locked ? `升级「${BRAND.name} Pro」解锁` : factorPercentileHint(factorKey, percentile)}

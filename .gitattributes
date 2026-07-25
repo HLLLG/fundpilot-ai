@@ -1,0 +1,42 @@
+# 行尾规范化。
+#
+# 本仓库在 Windows 上开发、在 Linux 容器里运行。`core.autocrlf=true` 会把 checkout
+# 出来的文本文件写成 CRLF，而下面这些文件是要交给 bash / nginx / docker / CI 直接
+# 执行或解析的：多出来的 `\r` 会让 `bash script.sh` 报出 `$'\r': command not found`
+# 这类难定位的错误，或者让 shell 变量末尾带上不可见的回车。
+#
+# 因此对"跨平台执行"的文件强制 LF，其余文本文件仍按 Git 默认行为处理。
+
+# 默认：让 Git 识别文本/二进制，避免二进制被当文本改写
+* text=auto
+
+# 必须是 LF：这些文件会被 Linux 侧的解释器直接读取
+*.sh            text eol=lf
+*.bash          text eol=lf
+*.conf          text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf
+Dockerfile      text eol=lf
+Dockerfile.*    text eol=lf
+.dockerignore   text eol=lf
+*.mjs           text eol=lf
+*.cjs           text eol=lf
+*.py            text eol=lf
+
+# 二进制：不做任何行尾/文本转换，也不参与 diff
+*.png           binary
+*.jpg           binary
+*.jpeg          binary
+*.gif           binary
+*.webp          binary
+*.ico           binary
+*.woff          binary
+*.woff2         binary
+*.pdf           binary
+*.db            binary
+*.zip           binary
+*.gz            binary
+*.br            binary
+
+# Playwright 视觉基线：二进制且逐字节比较，禁止任何改写
+apps/web/e2e-ui/**/*.png binary

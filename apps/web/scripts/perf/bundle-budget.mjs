@@ -134,15 +134,24 @@ function summarizeRoute(htmlFile) {
   const sum = (kind, field) =>
     assets.filter((a) => a.kind === kind).reduce((total, a) => total + a[field], 0);
 
+  // HTML 必须一起统计。否则「把 CSS 内联进 HTML」这类改动会让 cssBytes 归零、
+  // totalBytes 大幅"改善"，而浏览器实际下载的字节反而变多 —— 指标必须挡住这种假收益。
+  const htmlBytes = Buffer.byteLength(html);
+  const htmlGzipBytes = gzipSync(Buffer.from(html), { level: 9 }).byteLength;
+
   return {
     html: htmlFile.split("\\").join("/"),
-    htmlBytes: Buffer.byteLength(html),
+    htmlBytes,
+    htmlGzipBytes,
     jsBytes: sum("js", "bytes"),
     jsGzipBytes: sum("js", "gzipBytes"),
     cssBytes: sum("css", "bytes"),
     cssGzipBytes: sum("css", "gzipBytes"),
     totalBytes: sum("js", "bytes") + sum("css", "bytes"),
     totalGzipBytes: sum("js", "gzipBytes") + sum("css", "gzipBytes"),
+    // 首屏真实下载量 = 文档 + 首屏 JS + 首屏 CSS
+    firstScreenBytes: htmlBytes + sum("js", "bytes") + sum("css", "bytes"),
+    firstScreenGzipBytes: htmlGzipBytes + sum("js", "gzipBytes") + sum("css", "gzipBytes"),
     assetCount: assets.length,
     assets: assets
       .slice()
@@ -225,16 +234,17 @@ function main() {
   lines.push("首屏关键资源（不含 noModule legacy polyfill）");
   lines.push("");
   lines.push(
-    "| 路由 | JS 原始 | CSS 原始 | 合计原始 | 合计 gzip -9 | 请求数 |",
+    "| 路由 | HTML | JS 原始 | CSS 原始 | 首屏合计原始 | 首屏合计 gzip -9 | 请求数 |",
   );
-  lines.push("| --- | ---: | ---: | ---: | ---: | ---: |");
+  lines.push("| --- | ---: | ---: | ---: | ---: | ---: | ---: |");
   for (const [route, summary] of Object.entries(routes)) {
     const base = baseline?.routes?.[route];
     lines.push(
-      `| \`${route}\` | ${kib(summary.jsBytes)}${delta(summary.jsBytes, base?.jsBytes)} | ` +
+      `| \`${route}\` | ${kib(summary.htmlBytes)}${delta(summary.htmlBytes, base?.htmlBytes)} | ` +
+        `${kib(summary.jsBytes)}${delta(summary.jsBytes, base?.jsBytes)} | ` +
         `${kib(summary.cssBytes)}${delta(summary.cssBytes, base?.cssBytes)} | ` +
-        `${kib(summary.totalBytes)}${delta(summary.totalBytes, base?.totalBytes)} | ` +
-        `${kib(summary.totalGzipBytes)}${delta(summary.totalGzipBytes, base?.totalGzipBytes)} | ` +
+        `${kib(summary.firstScreenBytes)}${delta(summary.firstScreenBytes, base?.firstScreenBytes)} | ` +
+        `${kib(summary.firstScreenGzipBytes)}${delta(summary.firstScreenGzipBytes, base?.firstScreenGzipBytes)} | ` +
         `${summary.assetCount} |`,
     );
   }

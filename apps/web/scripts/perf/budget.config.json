@@ -1,6 +1,9 @@
 {
   "_comment": [
     "首屏体积预算（单位：字节）。数值来自 2026-07-25 本轮优化后的实测产物再留约 3% 余量。",
+    "口径：firstScreenBytes = HTML 文档 + 首屏 JS + 首屏 CSS。HTML 必须计入，",
+    "否则「把 CSS 内联进 HTML」这类改动会让 cssBytes 归零、看起来大幅改善，",
+    "而浏览器实际下载量反而变多（实测 inlineCss 会让 HTML 从 9.9 KiB 涨到 262 KiB）。",
     "注意：`/` 的 JS 里有 412.6 KiB 是 react-dom（195.2）+ Next App Router 客户端运行时（217.4），",
     "属于框架地板，应用代码只占约 56 KiB。所以 JS 预算的作用是拦住应用代码回胖，",
     "不是要求总量继续下降。CSS 预算用来防止 globals.css 重新长回单体。",
@@ -9,27 +12,27 @@
   "routes": {
     "/": {
       "cssBytes": 135168,
-      "totalBytes": 645120
+      "firstScreenBytes": 655360
     },
     "/login": {
       "cssBytes": 135168,
-      "totalBytes": 638976
+      "firstScreenBytes": 649216
     },
     "/register": {
       "cssBytes": 135168,
-      "totalBytes": 638976
+      "firstScreenBytes": 649216
     },
     "/reset-password": {
       "cssBytes": 135168,
-      "totalBytes": 634880
+      "firstScreenBytes": 645120
     },
     "/settings": {
       "cssBytes": 135168,
-      "totalBytes": 638976
+      "firstScreenBytes": 649216
     },
     "/admin/users": {
       "cssBytes": 135168,
-      "totalBytes": 657408
+      "firstScreenBytes": 667648
     }
   },
   "output": {

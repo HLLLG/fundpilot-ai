@@ -126,7 +126,7 @@ async function installApiStubs(page) {
 }
 
 const COLLECTOR = `
-  window.__perf = { longTasks: [], interactions: [], cls: 0, lcp: null, fcp: null, ttfb: null };
+  window.__perf = { longTasks: [], interactions: [], shifts: [], cls: 0, lcp: null, fcp: null, ttfb: null };
   try {
     new PerformanceObserver((list) => {
       for (const entry of list.getEntries()) window.__perf.longTasks.push({ start: entry.startTime, duration: entry.duration });
@@ -141,7 +141,31 @@ const COLLECTOR = `
   } catch {}
   try {
     new PerformanceObserver((list) => {
-      for (const entry of list.getEntries()) if (!entry.hadRecentInput) window.__perf.cls += entry.value;
+      for (const entry of list.getEntries()) {
+        if (entry.hadRecentInput) continue;
+        window.__perf.cls += entry.value;
+        // 同时记录位移来源。只有指标没有来源，CLS 是没法定位的。
+        for (const source of entry.sources ?? []) {
+          const node = source.node;
+          window.__perf.shifts.push({
+            value: Number(entry.value.toFixed(4)),
+            startTime: Math.round(entry.startTime),
+            node: node
+              ? \`\${node.nodeName.toLowerCase()}\${node.id ? "#" + node.id : ""}\${
+                  node.className && typeof node.className === "string"
+                    ? "." + node.className.trim().split(/\\s+/).slice(0, 4).join(".")
+                    : ""
+                }\`
+              : "(detached)",
+            from: source.previousRect
+              ? \`\${Math.round(source.previousRect.x)},\${Math.round(source.previousRect.y)} \${Math.round(source.previousRect.width)}x\${Math.round(source.previousRect.height)}\`
+              : null,
+            to: source.currentRect
+              ? \`\${Math.round(source.currentRect.x)},\${Math.round(source.currentRect.y)} \${Math.round(source.currentRect.width)}x\${Math.round(source.currentRect.height)}\`
+              : null,
+          });
+        }
+      }
     }).observe({ type: "layout-shift", buffered: true });
   } catch {}
   try {
@@ -210,10 +234,15 @@ async function main() {
     await page.waitForTimeout(1200);
 
     report.load = await page.evaluate(() => ({
+      // stub 不完整会让工作台弹出一条 InlineNotice，它插在顶栏与页头之间、高约 66px，
+      // 会把整页下推并污染 CLS。这里显式披露，避免把"测量环境造出来的位移"当成产品缺陷。
+      noticePresent: Boolean(document.querySelector(".inline-notice")),
+      noticeText: document.querySelector(".inline-notice")?.textContent?.trim().slice(0, 120) ?? null,
       ttfbMs: window.__perf.ttfb,
       fcpMs: window.__perf.fcp,
       lcpMs: window.__perf.lcp,
       cls: Number(window.__perf.cls.toFixed(4)),
+      shifts: window.__perf.shifts,
       longTaskCount: window.__perf.longTasks.length,
       longTaskTotalMs: Number(
         window.__perf.longTasks.reduce((sum, t) => sum + t.duration, 0).toFixed(1),
@@ -273,6 +302,16 @@ async function main() {
     console.log(`  FCP  ${report.load.fcpMs?.toFixed(1)} ms`);
     console.log(`  LCP  ${report.load.lcpMs?.toFixed(1)} ms`);
     console.log(`  CLS  ${report.load.cls}`);
+    if (report.load.noticePresent) {
+      console.log(
+        `  [注意] 工作台出现了提示条，CLS 含它插入造成的位移：${report.load.noticeText}`,
+      );
+    }
+    for (const shift of report.load.shifts) {
+      console.log(
+        `    位移 ${shift.value} @${shift.startTime}ms  ${shift.node}  ${shift.from} -> ${shift.to}`,
+      );
+    }
     console.log(`  长任务 ${report.load.longTaskCount} 个 / ${report.load.longTaskTotalMs} ms`);
     console.log("\ntab 切换（每项取中位数）");
     console.log("| tab | 墙钟 ms | 最大交互 ms | 长任务 ms |");
