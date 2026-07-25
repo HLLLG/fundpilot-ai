@@ -550,4 +550,57 @@ HTML 那一栏没做同编解码器对比，因为 HEAD 基线是用第二轮之
 - ngx_brotli 从浮动 `master` 改为固定 commit（`a71f9312…`），用 `git init` + `git fetch --depth 1 <ref>` 单一代码路径，同时支持 sha 与分支名，并断言 `deps/brotli` 子模块确实拉全；
 - 关键步骤前加 `echo` 分段标记，`wget` 去掉 `-q`，让日志能定位到具体阶段。
 
-**顺带解决"看不到日志"这个更麻烦的问题。** 仓库只读权限拿不到 Actions 日志（`/actions/jobs/{id}/logs` 需要 admin），只能看到 `Process completed with exit code 1`，排查一个只在 CI 里能跑的镜像构建等于盲猜。现在构建步骤把输出 `tee` 到文件，失败时把尾部 40 行以 `::error::` workflow command 回吐成 annotation（annotation 走 check-runs API，只读权限可见），同时把完整日志上传成 `nginx-build-log` artifact。下一次失败可以直接读到真实原因。
+**顺带解决"看不到日志"这个更麻烦的问题。** 仓库只读权限拿不到 Actions 日志（`/actions/jobs/{id}/logs` 需要 admin），只能看到 `Process completed with exit code 1`，排查一个只在 CI 里能跑的镜像构建等于盲猜。现在构建步骤把输出 `tee` 到文件，失败时以 `::error::` workflow command 回吐成 annotation（annotation 走 check-runs API，只读权限可见），同时把完整日志上传成 `nginx-build-log` artifact。
+
+第一版只回吐尾部 40 行，结果被 BuildKit 失败时回显的整段 Dockerfile（`  44 | >>> …`）占满，真正的报错被挤出窗口 —— 等于没有诊断能力。改成独立的 `if: failure()` 步骤：先滤掉 Dockerfile 回显行，取最后 200 行，**按 25 行切块发多条 annotation**（单条约 4 KB 上限）。这一版立刻拿到了真实报错，见下。
+
+### 11.11 靠 annotation 拿到真实报错，三轮修完，`nginx-static-layer` 转绿
+
+拿到日志后暴露出三个**串在一起**的独立问题，每个都只能在真跑一次镜像构建时才会出现：
+
+**① `ld: cannot find -lbrotlienc` / `-lbrotlicommon`（链接阶段）**
+
+ngx_brotli 的 `filter/config` 把链接参数写死为 `-L<deps/brotli>/../out -lbrotlienc -lbrotlicommon -lm`，也就是它**不会**自己编译 bundled brotli，而是要求调用方先把静态库产出到 `deps/brotli/out`。我前两版都缺这一步，所以一路编译到链接才失败。
+
+修法：`git submodule` 拉齐后，用 cmake 把 `deps/brotli` 编成静态库放进 `deps/brotli/out`，再 configure + `make modules`。两个关键取舍：
+
+- **必须 `-DCMAKE_POSITION_INDEPENDENT_CODE=ON`。** 这些静态库最终要链进一个 `.so`，不开 PIC 会变成 `relocation R_X86_64_32S … can not be used when making a shared object`。
+- **刻意不用官方 README 的 `-march=native`。** 镜像可能在与构建机不同的 CPU 上运行，用 `-O2` 换可移植性。
+- 加断言：`libbrotlienc.a` / `libbrotlicommon.a` 必须存在才继续。
+
+**② 构建期断言自己写错了（假报警）**
+
+①修好后，brotli 静态库编出来、两个 `.so` 也链接成功（filter 945,400 B、static 14,552 B），失败点前移到最后一层的构建期断言：
+
+```
+nginx: [emerg] unknown directive "brotli_static" in /etc/nginx/precompressed/precompressed.conf:6
+```
+
+看起来像"模块没装上"，其实是断言写错：它用 `nginx -t -c <临时主配置>`，而两行 `load_module` 是插在**镜像自己的** `/etc/nginx/nginx.conf` 顶部的，临时主配置里没有，模块压根没加载。这种写法会把"模块不可用"和"断言写错"混为一谈。
+
+修法：往 `conf.d/` 放一个临时 drop-in，用与 `fundpilot.conf` 完全相同的 `include /etc/nginx/precompressed/*.conf;` 形式，再跑普通的 `nginx -t`（走镜像自己的主配置，`load_module` 生效）。动态模块二进制不兼容的情况同样会被它挡住。
+
+**③ 结果：整条链路真跑通了**
+
+`eb4df7a` 上 `Frontend Perf` 三个 job 全绿，其中 `nginx-static-layer` 的每一步都 PASS，包括最关键的那一步 **`Custom image prefers precompressed brotli`** —— 也就是用真实请求确认了：
+
+- 声明 `gzip, deflate, br` 的客户端拿到 `br` + `.br` 的精确 `Content-Length`（**证明 `gzip_static off` 那个修正是对的，brotli 没有被 gzip 抢走**）；
+- 只声明 `gzip` 的老客户端回落到运行时 gzip（chunked，无 `Content-Length`）；
+- `identity` 原样返回源文件长度；
+- 官方镜像下同一份 `fundpilot.conf` 依然正常加载并直发 `.gz`。
+
+至此本轮唯一"未在本机验证"的那一项（11.2 结尾标注的 brotli 镜像）**已经在 CI 里被真实请求验证**，不再是纸面设计。同时也说明这个 job 是有价值的门禁：它在第一次运行就拦下了三个真问题，其中②那种"断言写错导致的假报警"如果没有它，只会在生产启用 brotli 那天才暴露。
+
+### 11.12 一处需要记录的流水线噪声：Deploy run 54 排队冲突
+
+45 分钟内连推 5 次 main，触发了 5 轮 `CI` + `Deploy to Lighthouse`。其中 **Deploy run 54（`eb4df7a`）conclusion 是 failure，但它的 job 数为 0、check run 数为 0，也没有创建 production deployment 记录** —— 也就是它**根本没起 job、没连上服务器**，不存在半截部署。
+
+原因是 `deploy-lighthouse.yml` 的 `concurrency: fundpilot-lighthouse-production` + `cancel-in-progress: false`：run 53（`c2efa99`）还在跑时 run 54 就被创建，只能排队，然后在队列里失败。这是"短时间内密集推 main"的副作用，不是部署脚本或配置的问题。
+
+核对生产状态：
+
+- 最新的 production deployment 是 `c2efa99`（run 53，success）；
+- `eb4df7a` 与 `c2efa99` 之间**只差 `deploy/nginx/Dockerfile`**，那个文件不参与前端构建、也只在 `FUND_AI_NGINX_IMAGE` 指向自建镜像时才被用到，因此**生产上跑的前端产物与 `eb4df7a` 逐字节相同**；
+- 重新探针复测生产：`GET /` 与首屏 JS/CSS 全部 200、预压缩直发照旧（`Content-Length` 精确）、资源 hash 与上一次一致。
+
+唯一实际影响是服务器上的 `DEPLOYED_SHA` 停在 `c2efa99` 而不是 `eb4df7a`（只影响回滚记账）。在 GitHub Actions 页面对 run 54 点一次 "Re-run all jobs" 即可对齐，也可以等下一次推 main 时自然覆盖。
