@@ -9,6 +9,14 @@
 # - 因此唯一可靠做法是用**与运行镜像完全相同的 tag 和 nginx 版本**编译模块。
 #   两个 stage 共用同一个 `NGINX_BASE`，版本由 `nginx -v` 现场读取。
 #
+# 为什么要单独跑一遍 cmake：ngx_brotli 的 `filter/config` 把链接参数写死成
+# `-L<deps/brotli>/../out -lbrotlienc -lbrotlicommon`，也就是它**不会**自己编译
+# bundled brotli，而是要求先把静态库产出到 `deps/brotli/out`。缺这一步，
+# `make modules` 会在链接阶段以 `ld: cannot find -lbrotlienc` 失败（本仓库 CI 上
+# 实际踩过）。而且这些静态库最终要链进一个 `.so`，必须开 PIC，否则会变成
+# `relocation R_X86_64_32S ... can not be used when making a shared object`。
+# 官方 README 用的 `-march=native` 这里刻意不用：镜像可能在与构建机不同的 CPU 上跑。
+#
 # 签名对齐靠 `--with-compat`：官方镜像本身是 `--with-compat` 构建的，该选项会把
 # `NGX_MODULE_SIGNATURE` 里与"启用了哪些可选模块"相关的位固定成常量，所以第三方
 # 动态模块只要用同版本源码 + `--with-compat` 编译即可加载。这是 nginx 官方文档给
@@ -29,6 +37,7 @@ ARG NGX_BROTLI_REF=a71f9312c2deb28875acc7bacfdd5695a111aa53
 
 # 只装真正需要的开发包：
 # - build-base / linux-headers：gcc、make、musl 头文件
+# - cmake：ngx_brotli 要求先用 cmake 把 bundled brotli 编成静态库（见下）
 # - git：拉 ngx_brotli 及其 deps/brotli 子模块
 # - ca-certificates：busybox wget 走 HTTPS 需要根证书
 # - pcre2-dev / zlib-dev：nginx configure 的硬依赖（http rewrite 与 gzip）
@@ -36,7 +45,7 @@ ARG NGX_BROTLI_REF=a71f9312c2deb28875acc7bacfdd5695a111aa53
 # 那些只是为了复刻官方 configure 参数，现在改用 --with-compat 就不需要了。
 RUN set -eux; \
     apk add --no-cache --virtual .brotli-build-deps \
-        build-base git linux-headers ca-certificates \
+        build-base cmake git linux-headers ca-certificates \
         pcre2-dev zlib-dev; \
     echo "=== base image nginx -V ==="; \
     nginx -V; \
@@ -69,6 +78,18 @@ RUN set -eux; \
         echo "FATAL: ngx_brotli 的 deps/brotli 子模块没拉全" >&2; \
         exit 1; \
     fi; \
+    echo "=== 用 cmake 把 deps/brotli 编成 PIC 静态库到 deps/brotli/out ==="; \
+    mkdir -p /usr/src/ngx_brotli/deps/brotli/out; \
+    cd /usr/src/ngx_brotli/deps/brotli/out; \
+    cmake -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_SHARED_LIBS=OFF \
+        -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+        -DCMAKE_C_FLAGS="-O2" \
+        ..; \
+    cmake --build . --config Release; \
+    ls -l /usr/src/ngx_brotli/deps/brotli/out; \
+    test -f /usr/src/ngx_brotli/deps/brotli/out/libbrotlienc.a; \
+    test -f /usr/src/ngx_brotli/deps/brotli/out/libbrotlicommon.a; \
     echo "=== configure --with-compat 并只编译动态模块 ==="; \
     cd "/usr/src/nginx-${nginx_version}"; \
     ./configure --with-compat --add-dynamic-module=/usr/src/ngx_brotli; \
