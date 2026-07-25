@@ -64,21 +64,32 @@ jobs:
         run: bash -n deploy/nginx/verify-precompressed.sh
       - name: Official image keeps serving the site config
         run: bash deploy/nginx/verify-precompressed.sh nginx:1.27-alpine gzip
-      # 构建日志既落 artifact，也在失败时以 annotation 形式回吐尾部若干行：
-      # 仓库只读权限拿不到 Actions 日志，没有这一层就只能看到"exit code 1"，
-      # 排查一个只在 CI 里能跑的镜像构建会变成盲猜。
       - name: Build custom nginx image with brotli
         run: |
           set -o pipefail
-          if ! docker build --progress=plain \
-              -f deploy/nginx/Dockerfile -t fundpilot-nginx:ci deploy/nginx \
-              2>&1 | tee /tmp/nginx-build.log; then
-            printf '::error title=nginx brotli image build failed::%s\n' \
-              "$(tail -n 40 /tmp/nginx-build.log \
-                 | sed -e 's/%/%25/g' -e 's/\r/%0D/g' \
+          docker build --progress=plain \
+            -f deploy/nginx/Dockerfile -t fundpilot-nginx:ci deploy/nginx \
+            2>&1 | tee /tmp/nginx-build.log
+      # 构建日志既落 artifact，也在失败时切成多条 annotation 回吐。
+      # 仓库只读权限拿不到 Actions 日志（jobs/{id}/logs 需要 admin），没有这一层就
+      # 只能看到 "exit code 1"，排查一个只能在 CI 里跑的镜像构建等于盲猜。
+      # annotation 走 check-runs API，只读权限可见；单条有约 4KB 上限，所以按 25 行切块。
+      - name: Surface nginx build log
+        if: failure()
+        run: |
+          test -f /tmp/nginx-build.log || exit 0
+          # BuildKit 失败时会把整段 Dockerfile 回显（形如 "  44 | >>> ..."），
+          # 那部分对定位没用，还会把真正的报错挤出尾部，先滤掉。
+          grep -av -E '^[[:space:]]*[0-9]+[[:space:]]*\|' /tmp/nginx-build.log \
+            | tail -n 200 > /tmp/nginx-build.tail
+          split -l 25 -d /tmp/nginx-build.tail /tmp/nginx-build-chunk-
+          part=0
+          for chunk in /tmp/nginx-build-chunk-*; do
+            part=$((part + 1))
+            printf '::error title=nginx build log part %d::%s\n' "$part" \
+              "$(sed -e 's/%/%25/g' -e 's/\r/%0D/g' "$chunk" \
                  | awk '{ printf "%s%%0A", $0 }')"
-            exit 1
-          fi
+          done
       - uses: actions/upload-artifact@v4
         if: always()
         with:
