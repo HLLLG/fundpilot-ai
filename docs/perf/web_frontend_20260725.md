@@ -491,3 +491,63 @@ HTML 那一栏没做同编解码器对比，因为 HEAD 基线是用第二轮之
 
 - 连续跑了四轮 Playwright 之后，第一次全量 smoke 在 `mobile-320` 上失败一条（`history-workflows.spec.ts:221`），原因是浏览器加载 chunk 时报 `net::ERR_NO_BUFFER_SPACE` —— Windows 本地临时端口/套接字耗尽，不是产品问题。等 TCP `TIME_WAIT` 排空后重跑即 **30 passed / 6 skipped**，上表记的是这次干净结果。
 - `git diff --check` 的 stderr 会打出若干条 `LF will be replaced by CRLF`。那是 `core.autocrlf=true` 对 `.ts` / `.tsx` / `.json`（`.gitattributes` 只对交给 Linux 解释器的文件强制 `eol=lf`）的正常提示；`git diff --stat` 逐一核对过，改动都是定向的几行，没有任何文件被整体重写。
+
+### 11.9 推送、上线与生产实测（`ef22d71`）
+
+四个提交推到 `origin/main` 后的流水线结果：
+
+| workflow | 结果 |
+| --- | --- |
+| `CI`（run 181） | `api` / `web` / `e2e-smoke` 三个 job 全部 success |
+| `Deploy to Lighthouse`（run 50） | **success**，生产已切到 `ef22d71` |
+| `Frontend Perf`（run 1） | `bundle-budget` success、`web-vitals` success、`nginx-static-layer` **failure**（见 11.10） |
+
+部署完成后用同一套只读探针复测生产，**预压缩直发已经生效**：
+
+| 探针 | 上线前 | 上线后 |
+| --- | --- | --- |
+| `GET /`（`gzip, deflate, br`） | `gzip`、chunked、**无 Content-Length**（运行时现压） | `gzip`、**Content-Length: 3409**（预压缩直发） |
+| `GET /_next/static/chunks/app/layout-*.js` | `gzip`、chunked、5,186 B | `gzip`、**Content-Length: 5197**（预压缩直发；文件本身变了，不同构建） |
+| `GET /_next/static/css/1810758657f1e979.css` | `gzip`、chunked、496 B | `gzip`、**Content-Length: 497**（预压缩直发） |
+| `Accept-Encoding: br` 单独 | identity | identity（brotli 仍未启用，符合预期：自建镜像默认关闭） |
+
+判定依据仍是 `Content-Length`：静态模块直发预压缩文件带精确长度，运行时压缩是 chunked。
+
+生产首屏实测（逐路由抓 HTML + 全部首屏 JS/CSS，`Accept-Encoding: gzip, deflate, br`）：
+
+| 路由 | HTML | JS 原始 | CSS 原始 | 首屏原始 | 首屏实际传输 | 首屏请求数 | 其中预压缩直发 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `/` | 13.3 KiB | 483.9 | 125.8 | 623.0 | **171.4 KiB** | 11 | 10 |
+| `/login` | 12.3 | 474.2 | 125.8 | 612.3 | 168.5 | 11 | 10 |
+| `/register` | 15.6 | 475.1 | 125.8 | 616.4 | 169.9 | 11 | 10 |
+| `/reset-password` | 15.3 | 471.0 | 125.8 | 612.1 | 168.7 | 11 | 10 |
+| `/settings` | 10.4 | 473.9 | 125.8 | 610.1 | 167.7 | 11 | 10 |
+| `/admin/users` | 10.9 | 492.5 | 125.8 | 629.2 | 172.4 | 11 | 10 |
+
+与本机预算报告逐路由对得上（`/` 623.0 vs 622.8 KiB 原始、171.4 vs 171.1 KiB gzip），差值来自生产构建注入的环境变量。唯一一个不走预压缩直发的是 0.5 KiB 的 `main-app-*.js` —— 它同时低于预压缩脚本的 1 KiB 阈值和 nginx 的 `gzip_min_length 1024`，本来就不该压。
+
+### 11.10 CI 抓到的第一个真问题：brotli 镜像构建失败
+
+`nginx-static-layer` job 的前两步通过、第三步失败：
+
+| 步骤 | 结果 |
+| --- | --- |
+| `Shell syntax`（`bash -n`） | PASS |
+| `Official image keeps serving the site config` | **PASS** —— 官方镜像下 `fundpilot.conf` 正常加载，且真实请求断言到"gzip 客户端拿到的是带精确 Content-Length 的 `.gz`"。这一条正是生产实际走的路径 |
+| `Build custom nginx image with brotli` | **FAIL**（16 秒即失败） |
+| `Custom image prefers precompressed brotli` | skipped |
+
+**影响面：只影响默认关闭的自建 brotli 镜像，不影响生产。** 生产用的是官方镜像，而官方镜像那条路径在同一个 job 里已被真实请求验证通过；`FUND_AI_NGINX_IMAGE` 留空时 `deploy.sh` 根本不会碰这个镜像。
+
+修法（本轮已改）：**放弃"复刻官方 configure 参数"，改用 `--with-compat`**。
+
+原来的做法是 `nginx -V` 取出官方镜像的完整 configure 参数原样 `eval`，为此 builder 必须装齐 `libxml2-dev` / `libxslt-dev` / `gd-dev` / `geoip-dev` / `pcre-dev` 等一堆只为满足 `--with-http_xslt_module` `--with-http_image_filter_module` 这类可选模块的开发包。这条路依赖面太大，任一包在新 Alpine 里改名或下架就会失败。
+
+`--with-compat` 才是 nginx 官方给第三方动态模块的推荐做法：它会把 `NGX_MODULE_SIGNATURE` 里"启用了哪些可选模块"相关的位固定成常量，所以只要**同版本源码 + `--with-compat`** 编译出来的 `.so`，就能装进同样以 `--with-compat` 构建的 nginx（官方镜像正是如此）。于是：
+
+- 依赖收敛为 `build-base git linux-headers ca-certificates pcre2-dev zlib-dev`（configure 的硬依赖只有 PCRE 与 zlib）；
+- 新增构建期断言：基础镜像若不是 `--with-compat` 构建的，直接以明确文案失败，而不是产出一个装不上的 `.so`；
+- ngx_brotli 从浮动 `master` 改为固定 commit（`a71f9312…`），用 `git init` + `git fetch --depth 1 <ref>` 单一代码路径，同时支持 sha 与分支名，并断言 `deps/brotli` 子模块确实拉全；
+- 关键步骤前加 `echo` 分段标记，`wget` 去掉 `-q`，让日志能定位到具体阶段。
+
+**顺带解决"看不到日志"这个更麻烦的问题。** 仓库只读权限拿不到 Actions 日志（`/actions/jobs/{id}/logs` 需要 admin），只能看到 `Process completed with exit code 1`，排查一个只在 CI 里能跑的镜像构建等于盲猜。现在构建步骤把输出 `tee` 到文件，失败时把尾部 40 行以 `::error::` workflow command 回吐成 annotation（annotation 走 check-runs API，只读权限可见），同时把完整日志上传成 `nginx-build-log` artifact。下一次失败可以直接读到真实原因。

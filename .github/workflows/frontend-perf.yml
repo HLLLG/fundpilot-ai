@@ -64,8 +64,27 @@ jobs:
         run: bash -n deploy/nginx/verify-precompressed.sh
       - name: Official image keeps serving the site config
         run: bash deploy/nginx/verify-precompressed.sh nginx:1.27-alpine gzip
+      # 构建日志既落 artifact，也在失败时以 annotation 形式回吐尾部若干行：
+      # 仓库只读权限拿不到 Actions 日志，没有这一层就只能看到"exit code 1"，
+      # 排查一个只在 CI 里能跑的镜像构建会变成盲猜。
       - name: Build custom nginx image with brotli
-        run: docker build -f deploy/nginx/Dockerfile -t fundpilot-nginx:ci deploy/nginx
+        run: |
+          set -o pipefail
+          if ! docker build --progress=plain \
+              -f deploy/nginx/Dockerfile -t fundpilot-nginx:ci deploy/nginx \
+              2>&1 | tee /tmp/nginx-build.log; then
+            printf '::error title=nginx brotli image build failed::%s\n' \
+              "$(tail -n 40 /tmp/nginx-build.log \
+                 | sed -e 's/%/%25/g' -e 's/\r/%0D/g' \
+                 | awk '{ printf "%s%%0A", $0 }')"
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: nginx-build-log
+          path: /tmp/nginx-build.log
+          if-no-files-found: warn
       - name: Custom image prefers precompressed brotli
         run: bash deploy/nginx/verify-precompressed.sh fundpilot-nginx:ci br
 

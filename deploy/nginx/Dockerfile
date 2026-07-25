@@ -6,8 +6,15 @@
 # - Alpine 仓库的 `nginx-mod-http-brotli` 是针对 Alpine 自己编译的 nginx 构建的，
 #   与官方镜像（nginx.org 源码构建）的动态模块签名不一致，`load_module` 会因
 #   "not binary compatible" 失败。
-# - 因此唯一可靠做法是用**与运行镜像完全相同的 tag 和 configure 参数**编译模块。
-#   两个 stage 共用同一个 `NGINX_BASE`，签名由构造保证一致。
+# - 因此唯一可靠做法是用**与运行镜像完全相同的 tag 和 nginx 版本**编译模块。
+#   两个 stage 共用同一个 `NGINX_BASE`，版本由 `nginx -v` 现场读取。
+#
+# 签名对齐靠 `--with-compat`：官方镜像本身是 `--with-compat` 构建的，该选项会把
+# `NGX_MODULE_SIGNATURE` 里与"启用了哪些可选模块"相关的位固定成常量，所以第三方
+# 动态模块只要用同版本源码 + `--with-compat` 编译即可加载。这是 nginx 官方文档给
+# 第三方动态模块的推荐做法，也让 builder 不必安装 libxslt / gd / geoip 这些仅为
+# 复刻官方 configure 参数才需要的开发包。下面有构建期断言核验基础镜像确实带
+# `--with-compat`，不带就直接让构建失败，而不是产出一个装不上的 .so。
 #
 # 安全性：本文件末尾有构建期断言，`brotli` / `brotli_static` / `gzip_static`
 # 任意一个不可用都会让**镜像构建失败**，而不是等到生产 nginx 启动时才炸。
@@ -17,35 +24,59 @@ ARG NGINX_BASE=nginx:1.27-alpine
 # ─────────────────────────── 编译 ngx_brotli ───────────────────────────
 FROM ${NGINX_BASE} AS module-builder
 
-# ngx_brotli 固定到具体 commit，不用浮动分支。升级时同时更新这里和下面的校验。
-ARG NGX_BROTLI_REF=master
+# 固定到具体 commit，不用浮动分支。升级时只改这一行。
+ARG NGX_BROTLI_REF=a71f9312c2deb28875acc7bacfdd5695a111aa53
 
+# 只装真正需要的开发包：
+# - build-base / linux-headers：gcc、make、musl 头文件
+# - git：拉 ngx_brotli 及其 deps/brotli 子模块
+# - ca-certificates：busybox wget 走 HTTPS 需要根证书
+# - pcre2-dev / zlib-dev：nginx configure 的硬依赖（http rewrite 与 gzip）
+# 不再需要 libxml2-dev / libxslt-dev / gd-dev / geoip-dev / pcre-dev（PCRE1），
+# 那些只是为了复刻官方 configure 参数，现在改用 --with-compat 就不需要了。
 RUN set -eux; \
     apk add --no-cache --virtual .brotli-build-deps \
-        build-base cmake git linux-headers \
-        pcre-dev pcre2-dev zlib-dev openssl-dev libxml2-dev libxslt-dev gd-dev geoip-dev; \
-    nginx_version="$(nginx -v 2>&1 | sed -n 's|.*nginx/||p')"; \
-    echo "building modules for nginx ${nginx_version}"; \
-    # 直接复用运行镜像自己的 configure 参数，保证动态模块签名一致。
-    configure_args="$(nginx -V 2>&1 | sed -n 's|^configure arguments: ||p')"; \
-    mkdir -p /usr/src; cd /usr/src; \
-    wget -qO nginx.tar.gz "https://nginx.org/download/nginx-${nginx_version}.tar.gz"; \
-    tar -xzf nginx.tar.gz; \
-    git clone --depth 1 --recurse-submodules --shallow-submodules \
-        https://github.com/google/ngx_brotli.git /usr/src/ngx_brotli; \
-    if [ "${NGX_BROTLI_REF}" != "master" ]; then \
-        cd /usr/src/ngx_brotli; \
-        git fetch --depth 1 origin "${NGX_BROTLI_REF}"; \
-        git checkout --recurse-submodules FETCH_HEAD; \
-        git submodule update --init --recursive --depth 1; \
+        build-base git linux-headers ca-certificates \
+        pcre2-dev zlib-dev; \
+    echo "=== base image nginx -V ==="; \
+    nginx -V; \
+    echo "=== 断言基础镜像使用 --with-compat 构建 ==="; \
+    if ! nginx -V 2>&1 | tr ' ' '\n' | grep -qx -- '--with-compat'; then \
+        echo "FATAL: 基础镜像不是 --with-compat 构建的，动态模块签名无法对齐" >&2; \
+        exit 1; \
     fi; \
+    nginx_version="$(nginx -v 2>&1 | sed -n 's|.*nginx/||p')"; \
+    if [ -z "$nginx_version" ]; then \
+        echo "FATAL: 无法从 nginx -v 解析版本号" >&2; \
+        exit 1; \
+    fi; \
+    echo "=== 下载 nginx-${nginx_version} 源码 ==="; \
+    mkdir -p /usr/src; \
+    cd /usr/src; \
+    wget -O nginx.tar.gz "https://nginx.org/download/nginx-${nginx_version}.tar.gz"; \
+    test -s nginx.tar.gz; \
+    tar -xzf nginx.tar.gz; \
+    test -f "/usr/src/nginx-${nginx_version}/configure"; \
+    echo "=== 取 ngx_brotli @ ${NGX_BROTLI_REF} ==="; \
+    mkdir -p /usr/src/ngx_brotli; \
+    cd /usr/src/ngx_brotli; \
+    git init -q .; \
+    git remote add origin https://github.com/google/ngx_brotli.git; \
+    git fetch --depth 1 origin "${NGX_BROTLI_REF}"; \
+    git checkout -q FETCH_HEAD; \
+    git submodule update --init --recursive --depth 1; \
+    if [ ! -f /usr/src/ngx_brotli/deps/brotli/c/include/brotli/encode.h ]; then \
+        echo "FATAL: ngx_brotli 的 deps/brotli 子模块没拉全" >&2; \
+        exit 1; \
+    fi; \
+    echo "=== configure --with-compat 并只编译动态模块 ==="; \
     cd "/usr/src/nginx-${nginx_version}"; \
-    # shellcheck disable=SC2086
-    eval ./configure ${configure_args} --add-dynamic-module=/usr/src/ngx_brotli; \
+    ./configure --with-compat --add-dynamic-module=/usr/src/ngx_brotli; \
     make -j"$(nproc)" modules; \
     mkdir -p /build-modules; \
     cp objs/ngx_http_brotli_filter_module.so objs/ngx_http_brotli_static_module.so /build-modules/; \
     strip /build-modules/*.so; \
+    ls -l /build-modules; \
     apk del .brotli-build-deps
 
 # ─────────────────────────── 运行镜像 ───────────────────────────
