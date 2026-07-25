@@ -152,16 +152,25 @@ RUN set -eux; \
 
 # ─────────────────────── 构建期断言：模块真的可用 ───────────────────────
 # 任一模块缺失或二进制不兼容，都在这里让构建失败，而不是让生产 nginx 起不来。
+#
+# 断言必须走**镜像自己的** /etc/nginx/nginx.conf（上一层已经往它顶部插了两条
+# load_module），不能用 `nginx -t -c <临时主配置>`：那样的主配置里没有 load_module，
+# 模块根本没加载，`brotli_static` 会以 "unknown directive" 失败 —— 这是一个会把
+# "模块不可用"和"断言写错"混为一谈的假报警（本仓库 CI 上实际踩过）。
+# 所以改成往 conf.d/ 放一个临时 drop-in，用与 fundpilot.conf 完全相同的
+# `include /etc/nginx/precompressed/*.conf;` 形式，再跑普通的 `nginx -t`。
+# 顺带也覆盖了"动态模块二进制不兼容"这种情况 —— 那种情况 nginx -t 同样会失败。
 RUN set -eux; \
     nginx -V 2>&1 | tr ' ' '\n' | grep -q -- '--with-http_gzip_static_module'; \
-    mkdir -p /tmp/nginx-assert; \
     printf '%s\n' \
-        'events {}' \
-        'http {' \
-        '  include /etc/nginx/precompressed/*.conf;' \
-        '  server { listen 8081; location / { return 204; } }' \
-        '}' > /tmp/nginx-assert/nginx.conf; \
-    nginx -t -c /tmp/nginx-assert/nginx.conf; \
-    rm -rf /tmp/nginx-assert
+        'server {' \
+        '    listen 8081;' \
+        '    location / {' \
+        '        include /etc/nginx/precompressed/*.conf;' \
+        '        return 204;' \
+        '    }' \
+        '}' > /etc/nginx/conf.d/zz-brotli-build-assert.conf; \
+    nginx -t; \
+    rm -f /etc/nginx/conf.d/zz-brotli-build-assert.conf
 
 STOPSIGNAL SIGQUIT
