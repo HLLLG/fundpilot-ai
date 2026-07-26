@@ -713,4 +713,27 @@ describe("DiscoveryReportPanel", () => {
     expect(trigger).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByTestId("outcomes-panel")).toBeInTheDocument();
   });
+
+  it("renders a summary-shape report without crashing before detail loads", () => {
+    // listDiscoveryReports 只返回摘要字段（id/title/summary/target_sectors/caveats 等），
+    // 不含 recommendations / candidate_pool / discovery_facts。点击历史报告时先用摘要占位
+    // 切换视图，完整正文按 id 异步拉回。这段空窗里面板必须能渲染，不能抛错跳错误页。
+    const summary = {
+      id: "disc-summary",
+      created_at: "2026-07-26T09:00:00Z",
+      title: "电子方向扫描",
+      summary: "电子相对更稳，半导体材料等待回调。",
+      focus_sectors: [],
+      target_sectors: ["电子"],
+      caveats: ["仅供参考"],
+      provider: "deepseek",
+      analysis_mode: "fast",
+    } as unknown as FundDiscoveryReport;
+
+    render(<DiscoveryReportPanel report={summary} />);
+
+    expect(screen.getByText("电子方向扫描")).toBeInTheDocument();
+    // 摘要阶段没有 recommendations，应走可执行校验的空态，不能抛错。
+    expect(screen.getByText("本次暂无可执行建议")).toBeInTheDocument();
+  });
 });

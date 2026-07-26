@@ -633,7 +633,7 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
     const watchOnly: DiscoveryRecommendation[] = [];
     const decisionStatusByCode: Record<string, DiscoveryCandidateDecisionStatus> = {};
 
-    for (const recommendation of report.recommendations) {
+    for (const recommendation of report.recommendations ?? []) {
       const status = recommendationStatus(report, recommendation);
       decisionStatusByCode[recommendation.fund_code] = status;
       if (status === "actionable") {
