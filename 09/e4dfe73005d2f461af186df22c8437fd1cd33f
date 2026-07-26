@@ -1,0 +1,19 @@
+apps/api/app/services/fund_return_distribution.py
+  s_b6f9993ce855d4::t_ea123f8311c2ca 216
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.34-trip",
+  "base_commit_sha": "09e4dfe73005d2f461af186df22c8437fd1cd33f",
+  "prompts": {},
+  "sessions": {
+    "s_b6f9993ce855d4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5cd7cf65-9c7f-4e81-afaf-79716c6dc712",
+        "model": "glm-5.2"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
