@@ -1,4 +1,4 @@
-import type { AnalysisPromptConfig, DiscoveryPromptConfig, DiscoverySectorHeat, InvestorProfile } from "@/lib/api";
+import type { AnalysisPromptConfig, DiscoveryPromptConfig, DiscoverySectorHeat, FundReturnDistribution, InvestorProfile } from "@/lib/api";
 
 const PROFILE_KEY = "fundpilot-investor-profile";
 const ANALYSIS_PROMPT_KEY = "fundpilot-analysis-prompt";
@@ -310,4 +310,44 @@ export function saveDashboardTab(tab: DashboardTabId): void {
     return;
   }
   window.sessionStorage.setItem(DASHBOARD_TAB_KEY, tab);
+}
+
+const FUND_RETURN_DISTRIBUTION_KEY = "fundpilot-fund-return-distribution";
+
+type FundReturnDistributionCache = {
+  fetchedAt: number;
+  data: FundReturnDistribution;
+};
+
+/** 基金涨跌分布：localStorage 冷启动缓存，进入市场页时先展示再后台续期。 */
+export function loadFundReturnDistributionCache(
+  maxAgeMs = 30 * 60 * 1000,
+): FundReturnDistribution | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  try {
+    const raw = window.localStorage.getItem(FUND_RETURN_DISTRIBUTION_KEY);
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw) as FundReturnDistributionCache;
+    if (!parsed || typeof parsed !== "object" || parsed.data == null) {
+      return null;
+    }
+    if (Date.now() - parsed.fetchedAt > maxAgeMs) {
+      return null;
+    }
+    return parsed.data;
+  } catch {
+    return null;
+  }
+}
+
+export function saveFundReturnDistributionCache(data: FundReturnDistribution) {
+  if (typeof window === "undefined" || data == null) {
+    return;
+  }
+  const payload: FundReturnDistributionCache = { fetchedAt: Date.now(), data };
+  window.localStorage.setItem(FUND_RETURN_DISTRIBUTION_KEY, JSON.stringify(payload));
 }
