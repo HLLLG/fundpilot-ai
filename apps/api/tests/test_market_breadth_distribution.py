@@ -93,6 +93,11 @@ def test_intraday_breadth_preserves_suspended_denominator_and_display_tone(monke
 
 
 def test_official_fund_distribution_requires_conservation_and_records_scope(monkeypatch):
+    monkeypatch.setattr(
+        fund_return_distribution,
+        "build_trading_session",
+        lambda: {"is_continuous_trading": False},
+    )
     saved: dict = {}
     monkeypatch.setattr(fund_return_distribution, "get_spot_snapshot", lambda *a, **k: None)
     monkeypatch.setattr(
@@ -142,6 +147,11 @@ def test_official_fund_distribution_requires_conservation_and_records_scope(monk
 
 
 def test_official_fund_distribution_rejects_non_conserving_payload(monkeypatch):
+    monkeypatch.setattr(
+        fund_return_distribution,
+        "build_trading_session",
+        lambda: {"is_continuous_trading": False},
+    )
     monkeypatch.setattr(fund_return_distribution, "get_spot_snapshot_any_age", lambda *a, **k: None)
     monkeypatch.setattr(
         fund_return_distribution,
@@ -212,3 +222,99 @@ def test_intraday_estimate_fetcher_rejects_non_conserving_payload(monkeypatch):
     result = fund_return_distribution._fetch_intraday_estimate_distribution(timeout=1.0)
 
     assert result is None
+
+
+def test_intraday_session_routes_to_estimate_distribution(monkeypatch):
+    monkeypatch.setattr(
+        fund_return_distribution,
+        "build_trading_session",
+        lambda: {"is_continuous_trading": True},
+    )
+    monkeypatch.setattr(fund_return_distribution, "get_spot_snapshot", lambda *a, **k: None)
+    monkeypatch.setattr(fund_return_distribution, "get_spot_snapshot_any_age", lambda *a, **k: None)
+    saved: dict = {}
+    monkeypatch.setattr(
+        fund_return_distribution,
+        "save_spot_snapshot",
+        lambda key, payload: saved.update({"key": key, "payload": payload}),
+    )
+    monkeypatch.setattr(
+        fund_return_distribution,
+        "run_akshare_json_script",
+        lambda *a, **k: {
+            "as_of_date": "2026-07-26",
+            "source_row_count": 12,
+            "valid_count": 9,
+            "missing_count": 3,
+            "coverage_percent": 75.0,
+            "advance_count": 4,
+            "decline_count": 4,
+            "flat_count": 1,
+            "bins": {
+                "le_neg5": 1,
+                "neg5_neg3": 0,
+                "neg3_neg1": 1,
+                "neg1_zero": 2,
+                "zero": 1,
+                "zero_one": 2,
+                "one_three": 1,
+                "three_five": 0,
+                "ge_five": 1,
+            },
+        },
+    )
+    result = fund_return_distribution.build_fund_return_distribution(force_refresh=True)
+    assert result["source_mode"] == "intraday_estimate"
+    assert result["available"] is True
+    assert saved["key"] == "fund:return-distribution:intraday:v1"
+    assert "实时估值" in result["source_name"]
+
+
+def test_intraday_fetch_failure_falls_back_to_stale_snapshot(monkeypatch):
+    monkeypatch.setattr(
+        fund_return_distribution,
+        "build_trading_session",
+        lambda: {"is_continuous_trading": True},
+    )
+    monkeypatch.setattr(fund_return_distribution, "get_spot_snapshot", lambda *a, **k: None)
+    monkeypatch.setattr(
+        fund_return_distribution,
+        "get_spot_snapshot_any_age",
+        lambda *a, **k: {
+            "available": True,
+            "source_mode": "intraday_estimate",
+            "valid_count": 9,
+            "bins": {"zero": 9},
+            "advance_count": 0,
+            "decline_count": 0,
+            "flat_count": 9,
+            "as_of_date": "2026-07-25",
+        },
+    )
+    monkeypatch.setattr(
+        fund_return_distribution,
+        "run_akshare_json_script",
+        lambda *a, **k: {"error": "boom"},
+    )
+    result = fund_return_distribution.build_fund_return_distribution(force_refresh=True)
+    assert result["stale"] is True
+    assert result["available"] is True
+    assert "上次成功统计" in result["message"]
+
+
+def test_intraday_fetch_failure_without_stale_returns_unavailable(monkeypatch):
+    monkeypatch.setattr(
+        fund_return_distribution,
+        "build_trading_session",
+        lambda: {"is_continuous_trading": True},
+    )
+    monkeypatch.setattr(fund_return_distribution, "get_spot_snapshot", lambda *a, **k: None)
+    monkeypatch.setattr(fund_return_distribution, "get_spot_snapshot_any_age", lambda *a, **k: None)
+    monkeypatch.setattr(
+        fund_return_distribution,
+        "run_akshare_json_script",
+        lambda *a, **k: {"error": "boom"},
+    )
+    result = fund_return_distribution.build_fund_return_distribution(force_refresh=True)
+    assert result["available"] is False
+    assert result["source_mode"] == "intraday_estimate"

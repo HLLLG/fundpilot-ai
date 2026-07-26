@@ -16,11 +16,24 @@ from app.services.sector_quote_cache import (
     get_spot_snapshot_any_age,
     save_spot_snapshot,
 )
+from app.services.trading_session import build_trading_session
 
 _CACHE_KEY = "fund:return-distribution:v1"
 _CACHE_TTL_SECONDS = 30 * 60.0
 _FETCH_TIMEOUT_SECONDS = 30.0
 _CN_TZ = ZoneInfo("Asia/Shanghai")
+
+_INTRADAY_CACHE_KEY = "fund:return-distribution:intraday:v1"
+_INTRADAY_CACHE_TTL_SECONDS = 10 * 60.0
+_INTRADAY_SOURCE_NAME = "东方财富实时估值"
+_INTRADAY_UNIVERSE_SCOPE = "开放式基金份额代码（A/C/E 等分别计数，盘中估算口径）"
+_INTRADAY_STALE_MESSAGE = "实时估值源本次更新失败，正在展示上次成功统计。"
+_INTRADAY_UNAVAILABLE_MESSAGE = "暂未取得可核验的盘中实时估值分布。"
+
+_OFFICIAL_SOURCE_NAME = "东方财富开放式基金净值"
+_OFFICIAL_UNIVERSE_SCOPE = "开放式基金份额代码（A/C/E 等分别计数）"
+_OFFICIAL_STALE_MESSAGE = "官方净值源本次更新失败，正在展示上次成功统计。"
+_OFFICIAL_UNAVAILABLE_MESSAGE = "暂未取得可核验的开放式基金官方净值分布。"
 
 _DISTRIBUTION_BIN_KEYS = (
     "le_neg5",
@@ -74,45 +87,85 @@ def _normalize_distribution_counts(payload: dict) -> dict | None:
     }
 
 
-def build_fund_return_distribution(*, force_refresh: bool = False) -> dict:
-    """返回最近一个已公布净值日的全量开放式基金涨跌分布。"""
-
+def _build_distribution(
+    *,
+    cache_key: str,
+    cache_ttl_seconds: float,
+    fetch_fn,
+    source_mode: str,
+    source_name: str,
+    universe_scope: str,
+    stale_message: str,
+    unavailable_message: str,
+    force_refresh: bool,
+) -> dict:
+    """两条数据源（官方净值 / 盘中估值）共用的三级回退：
+    服务端缓存命中 → 返回；拉取成功 → 写缓存返回；拉取失败 → 上一份 stale → 再失败 unavailable。
+    """
     if not force_refresh:
-        cached = get_spot_snapshot(_CACHE_KEY, ttl_seconds=_CACHE_TTL_SECONDS)
+        cached = get_spot_snapshot(cache_key, ttl_seconds=cache_ttl_seconds)
         if cached is not None:
             return dict(cached)
 
-    result = _fetch_official_distribution(timeout=_FETCH_TIMEOUT_SECONDS)
+    result = fetch_fn(timeout=_FETCH_TIMEOUT_SECONDS)
     if result is not None:
         payload = {
             "available": True,
             "stale": False,
-            "source_mode": "official_nav",
-            "source_name": "东方财富开放式基金净值",
-            "universe_scope": "开放式基金份额代码（A/C/E 等分别计数）",
+            "source_mode": source_mode,
+            "source_name": source_name,
+            "universe_scope": universe_scope,
             "fetched_at": datetime.now(_CN_TZ).isoformat(),
+            "as_of_datetime": result.get("as_of_date"),
             **result,
         }
-        save_spot_snapshot(_CACHE_KEY, payload)
+        save_spot_snapshot(cache_key, payload)
         return payload
 
-    stale = get_spot_snapshot_any_age(_CACHE_KEY)
+    stale = get_spot_snapshot_any_age(cache_key)
     if stale is not None:
         payload = dict(stale)
-        payload.update(
-            {
-                "stale": True,
-                "message": "官方净值源本次更新失败，正在展示上次成功统计。",
-            }
-        )
+        payload.update({"stale": True, "message": stale_message})
         return payload
 
     return {
         "available": False,
         "stale": True,
-        "source_mode": "official_nav",
-        "message": "暂未取得可核验的开放式基金官方净值分布。",
+        "source_mode": source_mode,
+        "message": unavailable_message,
     }
+
+
+def build_fund_return_distribution(*, force_refresh: bool = False) -> dict:
+    """返回当前时段口径下的全量开放式基金涨跌分布。
+
+    交易日连续交易时段（盘中、收盘前，排除午休）走东方财富实时估值按估算
+    增长率分桶；其余时段（非交易日、盘前、午休、收盘后）走官方已结算净值。
+    """
+    session = build_trading_session()
+    if session.get("is_continuous_trading"):
+        return _build_distribution(
+            cache_key=_INTRADAY_CACHE_KEY,
+            cache_ttl_seconds=_INTRADAY_CACHE_TTL_SECONDS,
+            fetch_fn=_fetch_intraday_estimate_distribution,
+            source_mode="intraday_estimate",
+            source_name=_INTRADAY_SOURCE_NAME,
+            universe_scope=_INTRADAY_UNIVERSE_SCOPE,
+            stale_message=_INTRADAY_STALE_MESSAGE,
+            unavailable_message=_INTRADAY_UNAVAILABLE_MESSAGE,
+            force_refresh=force_refresh,
+        )
+    return _build_distribution(
+        cache_key=_CACHE_KEY,
+        cache_ttl_seconds=_CACHE_TTL_SECONDS,
+        fetch_fn=_fetch_official_distribution,
+        source_mode="official_nav",
+        source_name=_OFFICIAL_SOURCE_NAME,
+        universe_scope=_OFFICIAL_UNIVERSE_SCOPE,
+        stale_message=_OFFICIAL_STALE_MESSAGE,
+        unavailable_message=_OFFICIAL_UNAVAILABLE_MESSAGE,
+        force_refresh=force_refresh,
+    )
 
 
 def _fetch_official_distribution(*, timeout: float) -> dict | None:
