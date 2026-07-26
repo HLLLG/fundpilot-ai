@@ -24,6 +24,10 @@ jobs:
         working-directory: apps/api
     env:
       PYTHONUTF8: "1"
+      # The offline refresh fans out 16 NAV fetches. Match the reusable
+      # AkShare worker pool to that concurrency so callers do not expire in
+      # the API-oriented default two-worker queue.
+      FUND_AI_AKSHARE_WORKER_POOL_SIZE: "16"
     steps:
       - name: Checkout
         uses: actions/checkout@v7
