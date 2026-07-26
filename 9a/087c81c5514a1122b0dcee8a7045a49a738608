@@ -1,0 +1,26 @@
+apps/web/src/components/FundReturnDistributionPanel.test.tsx
+  s_b6f9993ce855d4::t_fd45b37721ba9b 5-8,77-78,99,104-117,119-120
+  s_b6f9993ce855d4::t_fe6a432a1eb86d 79-98,100-103,118
+  s_b6f9993ce855d4::t_b8cc2668d19087 4,13,18-22,29-32,36-40
+apps/web/src/components/FundReturnDistributionPanel.tsx
+  s_b6f9993ce855d4::t_43ef7ccd377b2e 21-30
+  s_b6f9993ce855d4::t_51e6c1674b42e2 3,7,12-15,18-20
+  s_b6f9993ce855d4::t_760014da71a1dc 167
+  s_b6f9993ce855d4::t_8b8d2c09ff2b21 139,143-144,147-166,168-209,220
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.34-trip",
+  "base_commit_sha": "9a087c81c5514a1122b0dcee8a7045a49a738608",
+  "prompts": {},
+  "sessions": {
+    "s_b6f9993ce855d4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5cd7cf65-9c7f-4e81-afaf-79716c6dc712",
+        "model": "glm-5.2"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
