@@ -1,0 +1,23 @@
+apps/web/src/lib/api/marketDiagnostics.ts
+  s_b6f9993ce855d4::t_dcf3783b31e269 111,115
+apps/web/src/lib/api.ts
+  s_b6f9993ce855d4::t_e8d30e76ed7fa4 459,466
+apps/web/src/lib/tradingSessionClient.test.ts
+  s_b6f9993ce855d4::t_a909446634cfbb 20,22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.34-trip",
+  "base_commit_sha": "580c2a46932b280852574bd9cf6e30e1a54a6f78",
+  "prompts": {},
+  "sessions": {
+    "s_b6f9993ce855d4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5cd7cf65-9c7f-4e81-afaf-79716c6dc712",
+        "model": "glm-5.2"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
