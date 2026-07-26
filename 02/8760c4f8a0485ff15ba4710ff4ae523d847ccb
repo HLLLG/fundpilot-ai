@@ -1,0 +1,21 @@
+apps/web/src/components/DiscoveryReportPanel.tsx
+  s_b6f9993ce855d4::t_8183f468e940e5 636
+apps/web/src/components/DiscoveryReportPanel.test.tsx
+  s_b6f9993ce855d4::t_0a3313d4fd3935 716-738
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.34-trip",
+  "base_commit_sha": "028760c4f8a0485ff15ba4710ff4ae523d847ccb",
+  "prompts": {},
+  "sessions": {
+    "s_b6f9993ce855d4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5cd7cf65-9c7f-4e81-afaf-79716c6dc712",
+        "model": "glm-5.2"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
