@@ -160,3 +160,55 @@ def test_official_fund_distribution_rejects_non_conserving_payload(monkeypatch):
 
     assert result["available"] is False
     assert "暂未取得" in result["message"]
+
+
+def test_intraday_estimate_fetcher_bins_estimated_growth(monkeypatch):
+    monkeypatch.setattr(
+        fund_return_distribution,
+        "run_akshare_json_script",
+        lambda *a, **k: {
+            "as_of_date": "2026-07-26",
+            "source_row_count": 12,
+            "valid_count": 9,
+            "missing_count": 3,
+            "coverage_percent": 75.0,
+            "advance_count": 4,
+            "decline_count": 4,
+            "flat_count": 1,
+            "bins": {
+                "le_neg5": 1,
+                "neg5_neg3": 0,
+                "neg3_neg1": 1,
+                "neg1_zero": 2,
+                "zero": 1,
+                "zero_one": 2,
+                "one_three": 1,
+                "three_five": 0,
+                "ge_five": 1,
+            },
+        },
+    )
+    result = fund_return_distribution._fetch_intraday_estimate_distribution(timeout=1.0)
+
+    assert result is not None
+    assert result["as_of_date"] == "2026-07-26"
+    assert result["valid_count"] == 9
+    assert sum(result["bins"].values()) == 9
+
+
+def test_intraday_estimate_fetcher_rejects_non_conserving_payload(monkeypatch):
+    monkeypatch.setattr(
+        fund_return_distribution,
+        "run_akshare_json_script",
+        lambda *a, **k: {
+            "as_of_date": "2026-07-26",
+            "valid_count": 9,
+            "advance_count": 4,
+            "decline_count": 4,
+            "flat_count": 1,
+            "bins": {"zero": 1},  # 合计 != valid_count
+        },
+    )
+    result = fund_return_distribution._fetch_intraday_estimate_distribution(timeout=1.0)
+
+    assert result is None

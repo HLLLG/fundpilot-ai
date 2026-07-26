@@ -216,6 +216,118 @@ except Exception as exc:
     return _normalize_distribution_counts(payload)
 
 
+def _fetch_intraday_estimate_distribution(*, timeout: float) -> dict | None:
+    # 盘中实时估值：ak.fund_value_estimation_em 返回的估算增长率列名形如
+    # "YYYY-MM-DD-估算数据-估算增长率"（日期动态），子进程内按列名后缀定位。
+    # 在子进程内聚合 2 万行，只回传小 JSON，主进程不接大表（对齐官方净值分支）。
+    script = r'''
+import json
+import akshare as ak
+
+try:
+    frame = ak.fund_value_estimation_em(symbol="全部")
+    if frame is None or frame.empty:
+        print(json.dumps({"error": "empty"}))
+    else:
+        growth_col = None
+        for col in frame.columns:
+            if str(col).endswith("-估算数据-估算增长率"):
+                growth_col = col
+                break
+        estimate_date = None
+        for col in frame.columns:
+            if str(col) == "估算日期":
+                estimate_date = col
+                break
+        as_of_date = None
+        if estimate_date is not None:
+            for value in frame[estimate_date]:
+                if value is not None and str(value).strip():
+                    as_of_date = str(value)[:10]
+                    break
+
+        bins = {
+            "le_neg5": 0,
+            "neg5_neg3": 0,
+            "neg3_neg1": 0,
+            "neg1_zero": 0,
+            "zero": 0,
+            "zero_one": 0,
+            "one_three": 0,
+            "three_five": 0,
+            "ge_five": 0,
+        }
+        valid_count = 0
+        missing_count = 0
+        advance_count = 0
+        decline_count = 0
+        flat_count = 0
+
+        if growth_col is None:
+            print(json.dumps({"error": "no estimate growth column"}))
+        else:
+            for raw in frame[growth_col]:
+                if raw is None or str(raw).strip().lower() in ("", "nan", "--"):
+                    missing_count += 1
+                    continue
+                try:
+                    value = float(raw)
+                except (TypeError, ValueError):
+                    missing_count += 1
+                    continue
+                valid_count += 1
+                if value < 0:
+                    decline_count += 1
+                elif value > 0:
+                    advance_count += 1
+                else:
+                    flat_count += 1
+                if value <= -5:
+                    bins["le_neg5"] += 1
+                elif value <= -3:
+                    bins["neg5_neg3"] += 1
+                elif value <= -1:
+                    bins["neg3_neg1"] += 1
+                elif value < 0:
+                    bins["neg1_zero"] += 1
+                elif value == 0:
+                    bins["zero"] += 1
+                elif value < 1:
+                    bins["zero_one"] += 1
+                elif value < 3:
+                    bins["one_three"] += 1
+                elif value < 5:
+                    bins["three_five"] += 1
+                else:
+                    bins["ge_five"] += 1
+            source_row_count = int(len(frame))
+            coverage_percent = (
+                round(valid_count / source_row_count * 100, 2) if source_row_count else 0.0
+            )
+            print(json.dumps({
+                "as_of_date": as_of_date,
+                "source_row_count": source_row_count,
+                "valid_count": valid_count,
+                "missing_count": missing_count,
+                "coverage_percent": coverage_percent,
+                "advance_count": advance_count,
+                "decline_count": decline_count,
+                "flat_count": flat_count,
+                "bins": bins,
+            }, ensure_ascii=True))
+except Exception as exc:
+    print(json.dumps({"error": str(exc)}, ensure_ascii=True))
+'''
+    payload = run_akshare_json_script(
+        script,
+        label="fund_return_distribution_intraday_estimate",
+        timeout=timeout,
+    )
+    if not isinstance(payload, dict) or payload.get("error"):
+        return None
+    return _normalize_distribution_counts(payload)
+
+
 def _as_non_negative_int(value: object) -> int | None:
     try:
         parsed = int(value)  # type: ignore[arg-type]
