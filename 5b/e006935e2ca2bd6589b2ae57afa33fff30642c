@@ -1,0 +1,21 @@
+apps/api/app/services/fund_return_distribution.py
+  s_b6f9993ce855d4::t_7e9944c19893b3 219-330
+apps/api/tests/test_market_breadth_distribution.py
+  s_b6f9993ce855d4::t_6d92ad50d94998 163-214
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.34-trip",
+  "base_commit_sha": "5be006935e2ca2bd6589b2ae57afa33fff30642c",
+  "prompts": {},
+  "sessions": {
+    "s_b6f9993ce855d4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5cd7cf65-9c7f-4e81-afaf-79716c6dc712",
+        "model": "glm-5.2"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
