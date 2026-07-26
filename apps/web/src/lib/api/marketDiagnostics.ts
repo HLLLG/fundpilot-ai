@@ -108,10 +108,11 @@ export type FundReturnDistribution = {
   available: boolean;
   stale?: boolean;
   message?: string | null;
-  source_mode?: "official_nav";
+  source_mode?: "official_nav" | "intraday_estimate";
   source_name?: string | null;
   universe_scope?: string | null;
   as_of_date?: string | null;
+  as_of_datetime?: string | null;
   fetched_at?: string | null;
   source_row_count?: number | null;
   valid_count?: number | null;

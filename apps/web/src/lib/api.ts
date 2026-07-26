@@ -456,12 +456,14 @@ export type TradingSession = {
   calendar_date: string;
   effective_trade_date: string;
   is_trading_day: boolean;
+  is_continuous_trading: boolean;
   session_kind:
     | "non_trading_day"
     | "trading_day_pre_open"
     | "trading_day_intraday"
     | "trading_day_pre_close"
     | "trading_day_after_close";
+  market_phase?: string;
   market_open_time: string;
   minutes_to_close?: number | null;
   decision_window: string;
