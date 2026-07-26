@@ -22,6 +22,57 @@ _CACHE_TTL_SECONDS = 30 * 60.0
 _FETCH_TIMEOUT_SECONDS = 30.0
 _CN_TZ = ZoneInfo("Asia/Shanghai")
 
+_DISTRIBUTION_BIN_KEYS = (
+    "le_neg5",
+    "neg5_neg3",
+    "neg3_neg1",
+    "neg1_zero",
+    "zero",
+    "zero_one",
+    "one_three",
+    "three_five",
+    "ge_five",
+)
+
+
+def _normalize_distribution_counts(payload: dict) -> dict | None:
+    """校验 akshare 子进程回传的分布计数，失败返回 None。
+
+    官方净值与盘中估值两条 fetcher 共用：bins 合计必须等于 valid_count，
+    advance+decline+flat 也必须等于 valid_count，任一不符即视为本次拉取失败。
+    """
+    bins = payload.get("bins")
+    valid_count = _as_non_negative_int(payload.get("valid_count"))
+    if not isinstance(bins, dict) or valid_count is None or valid_count <= 0:
+        return None
+
+    normalized_bins = {
+        key: _as_non_negative_int(bins.get(key)) or 0 for key in _DISTRIBUTION_BIN_KEYS
+    }
+    if sum(normalized_bins.values()) != valid_count:
+        return None
+
+    advance_count = _as_non_negative_int(payload.get("advance_count")) or 0
+    decline_count = _as_non_negative_int(payload.get("decline_count")) or 0
+    flat_count = _as_non_negative_int(payload.get("flat_count")) or 0
+    if advance_count + decline_count + flat_count != valid_count:
+        return None
+
+    source_row_count = _as_non_negative_int(payload.get("source_row_count")) or valid_count
+    missing_count = _as_non_negative_int(payload.get("missing_count")) or 0
+    coverage_percent = _as_float(payload.get("coverage_percent"))
+    return {
+        "as_of_date": str(payload.get("as_of_date") or "")[:10] or None,
+        "source_row_count": source_row_count,
+        "valid_count": valid_count,
+        "missing_count": missing_count,
+        "coverage_percent": coverage_percent,
+        "advance_count": advance_count,
+        "decline_count": decline_count,
+        "flat_count": flat_count,
+        "bins": normalized_bins,
+    }
+
 
 def build_fund_return_distribution(*, force_refresh: bool = False) -> dict:
     """返回最近一个已公布净值日的全量开放式基金涨跌分布。"""
@@ -162,48 +213,7 @@ except Exception as exc:
     if not isinstance(payload, dict) or payload.get("error"):
         return None
 
-    bins = payload.get("bins")
-    valid_count = _as_non_negative_int(payload.get("valid_count"))
-    if not isinstance(bins, dict) or valid_count is None or valid_count <= 0:
-        return None
-
-    normalized_bins = {
-        key: _as_non_negative_int(bins.get(key)) or 0
-        for key in (
-            "le_neg5",
-            "neg5_neg3",
-            "neg3_neg1",
-            "neg1_zero",
-            "zero",
-            "zero_one",
-            "one_three",
-            "three_five",
-            "ge_five",
-        )
-    }
-    if sum(normalized_bins.values()) != valid_count:
-        return None
-
-    advance_count = _as_non_negative_int(payload.get("advance_count")) or 0
-    decline_count = _as_non_negative_int(payload.get("decline_count")) or 0
-    flat_count = _as_non_negative_int(payload.get("flat_count")) or 0
-    if advance_count + decline_count + flat_count != valid_count:
-        return None
-
-    source_row_count = _as_non_negative_int(payload.get("source_row_count")) or valid_count
-    missing_count = _as_non_negative_int(payload.get("missing_count")) or 0
-    coverage_percent = _as_float(payload.get("coverage_percent"))
-    return {
-        "as_of_date": str(payload.get("as_of_date") or "")[:10] or None,
-        "source_row_count": source_row_count,
-        "valid_count": valid_count,
-        "missing_count": missing_count,
-        "coverage_percent": coverage_percent,
-        "advance_count": advance_count,
-        "decline_count": decline_count,
-        "flat_count": flat_count,
-        "bins": normalized_bins,
-    }
+    return _normalize_distribution_counts(payload)
 
 
 def _as_non_negative_int(value: object) -> int | None:
