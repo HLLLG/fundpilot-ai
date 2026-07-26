@@ -1,15 +1,33 @@
 "use client";
 
+import { useEffect } from "react";
 import { BarChart3, Loader2 } from "lucide-react";
 import {
   fetchFundReturnDistribution,
+  fetchTradingSession,
   type FundReturnDistribution,
   type FundReturnDistributionBinKey,
 } from "@/lib/api";
 import { useCachedFetch } from "@/lib/useCachedFetch";
+import {
+  loadFundReturnDistributionCache,
+  saveFundReturnDistributionCache,
+} from "@/lib/storage";
 
 const CACHE_KEY = "diagnostics:fund-return-distribution";
-const STALE_MS = 30 * 60_000;
+const STALE_MS = 15 * 60_000;
+const REFRESH_INTERVAL_MS = 15 * 60_000;
+
+/**
+ * 15 分钟定时刷新的闸门：只在交易日连续交易时段（盘中、收盘前，排除午休）
+ * 真正发请求，其余时段（非交易日、盘前、午休、收盘后）跳过，避免空跑。
+ * 提到模块作用域并导出，便于直接对"空跑保护"逻辑做单元测试，不依赖定时器。
+ */
+export function shouldRefreshIntradayDistribution(
+  session: { is_continuous_trading?: boolean } | null | undefined,
+): boolean {
+  return Boolean(session?.is_continuous_trading);
+}
 
 const BINS: Array<{
   key: FundReturnDistributionBinKey;
@@ -118,11 +136,76 @@ function DistributionContent({ data }: { data: FundReturnDistribution }) {
 }
 
 export function FundReturnDistributionPanel() {
-  const { data, error, loading, revalidating } = useCachedFetch<FundReturnDistribution>({
+  const { data, error, loading, revalidating, refresh } = useCachedFetch<FundReturnDistribution>({
     cacheKey: CACHE_KEY,
     fetcher: fetchFundReturnDistribution,
     staleTimeMs: STALE_MS,
+    storage: "session",
+    bootstrap: () => loadFundReturnDistributionCache(),
   });
+
+  // 拉到的最新数据回写 localStorage，供下次冷启动秒开。
+  useEffect(() => {
+    if (data?.available) {
+      saveFundReturnDistributionCache(data);
+    }
+  }, [data]);
+
+  // 15 分钟定时 + visibility：只在交易日连续交易时段真正发请求，其余时段跳过
+  // （空跑保护）。完全照抄 MarketBreadthGauge 的 effect 骨架。
+  useEffect(() => {
+    let timer: number | null = null;
+    const stop = () => {
+      if (timer != null) {
+        window.clearInterval(timer);
+        timer = null;
+      }
+    };
+    const tick = async () => {
+      try {
+        const session = await fetchTradingSession();
+        if (shouldRefreshIntradayDistribution(session)) {
+          await refresh();
+        }
+        // 非连续交易时段：空跑保护，跳过本次分布请求，保留缓存展示。
+      } catch {
+        // trading-session 拉取失败：保守发一次，宁可多请求也不空跑掉实时性。
+        await refresh();
+      }
+    };
+    const start = () => {
+      if (timer == null) {
+        timer = window.setInterval(() => {
+          void tick();
+        }, REFRESH_INTERVAL_MS);
+      }
+    };
+    const handleVisibility = () => {
+      if (document.hidden) {
+        stop();
+        return;
+      }
+      void tick();
+      start();
+    };
+    if (!document.hidden) {
+      start();
+    }
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => {
+      stop();
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, [refresh]);
+
+  const isIntraday = data?.source_mode === "intraday_estimate";
+  const asOfLabel = isIntraday
+    ? data?.as_of_datetime
+      ? `实时估值 · 截至 ${data.as_of_datetime}`
+      : "实时估值"
+    : data?.as_of_date
+      ? `官方净值 · 截至 ${data.as_of_date}`
+      : "正在确认净值日期";
 
   return (
     <section className="mt-4 min-w-0 max-w-full overflow-hidden rounded-2xl border border-slate-200/90 bg-[#fbfaf7] px-4 py-4 sm:px-5">
@@ -134,7 +217,7 @@ export function FundReturnDistributionPanel() {
           <div>
             <h4 className="text-base font-black text-slate-950">基金涨跌分布</h4>
             <p className="mt-1 text-xs leading-5 text-slate-500">
-              官方净值 · {data?.as_of_date ? `截至 ${data.as_of_date}` : "正在确认净值日期"}
+              {asOfLabel}
               {data?.stale ? " · 上次成功统计" : ""}
             </p>
           </div>
