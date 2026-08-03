@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { beforeEach, describe, expect, it } from "vitest";
+import type { FundReturnDistribution } from "@/lib/api";
 import {
   loadFundReturnDistributionCache,
   saveFundReturnDistributionCache,
@@ -12,13 +13,17 @@ beforeEach(() => {
 
 describe("FundReturnDistribution cache", () => {
   it("round-trips a distribution payload through localStorage", () => {
-    const payload = {
+    const payload: FundReturnDistribution = {
       available: true,
       source_mode: "intraday_estimate",
       valid_count: 9,
-    } as never;
+    };
     saveFundReturnDistributionCache(payload);
-    expect(loadFundReturnDistributionCache()).toEqual(payload);
+    expect(loadFundReturnDistributionCache()).toEqual({
+      ...payload,
+      stale: true,
+      client_cached: true,
+    });
   });
 
   it("returns null for missing or malformed entries", () => {

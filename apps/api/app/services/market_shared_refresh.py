@@ -1,7 +1,8 @@
-"""全用户共享市场快照的后台刷新（A 股主题 + 美股概览）。
+"""全用户共享市场快照的后台刷新。
 
 A 股与美股交易时段独立判定：
 - A 股活跃（9:30–15:00 intraday/pre_close）：每 20min 刷新
+- 基金涨跌分布：交易日开盘后每 15min，其他时段每 30min 刷新/检查
 - 美股活跃（盘前/盘中/盘后）：每 20min 刷新
 - 各自非活跃时段：每 3h 静默刷新一次（沿用 stale 缓存，避免用户请求打源）
 """
@@ -25,15 +26,22 @@ _US_LIVE_SESSIONS = frozenset({"pre_market", "regular", "after_hours"})
 
 # 轮询粒度须小于活跃刷新间隔，否则 20min 配置会被 30min 睡眠拖慢
 _POLL_CAP_SECONDS = 60.0
+_FUND_DISTRIBUTION_LIVE_INTERVAL_SECONDS = 15 * 60.0
+_FUND_DISTRIBUTION_IDLE_INTERVAL_SECONDS = 30 * 60.0
 _last_a_share_refresh_at = 0.0
 _last_market_breadth_refresh_at = 0.0
+_last_fund_return_distribution_refresh_at = 0.0
 _last_us_refresh_at = 0.0
 _MARKET_BREADTH_LEASE_PATH = Path(tempfile.gettempdir()) / "fundpilot-market-breadth-v2.lease"
 
 
 def _refresh_enabled() -> bool:
     settings = get_settings()
-    return bool(settings.theme_board_refresh_enabled or settings.market_breadth_enabled)
+    return bool(
+        settings.theme_board_refresh_enabled
+        or settings.market_breadth_enabled
+        or settings.fund_return_distribution_refresh_enabled
+    )
 
 
 def _live_interval_seconds() -> float:
@@ -109,6 +117,15 @@ def refresh_market_breadth_snapshot() -> None:
     refresh_market_breadth_closing_background()
 
 
+def refresh_fund_return_distribution_snapshot() -> None:
+    """预热全用户共享基金分布；请求路径只读这里写入的持久缓存。"""
+    from app.services.fund_return_distribution import (
+        refresh_fund_return_distribution_snapshot as refresh_snapshot,
+    )
+
+    refresh_snapshot()
+
+
 def refresh_us_market_snapshot() -> None:
     from app.services.us_market_service import get_us_market_snapshot
 
@@ -117,9 +134,16 @@ def refresh_us_market_snapshot() -> None:
 
 def run_startup_market_refresh() -> None:
     """进程启动时同步刷新共享快照，覆盖 SQLite / 内存中的跨进程遗留缓存。"""
-    global _last_a_share_refresh_at, _last_market_breadth_refresh_at, _last_us_refresh_at
+    global _last_a_share_refresh_at
+    global _last_fund_return_distribution_refresh_at
+    global _last_market_breadth_refresh_at
+    global _last_us_refresh_at
 
     now = time.monotonic()
+    # 先预热用户可见的基金分布；其余市场任务较慢时也不让首位访问者承担聚合等待。
+    if get_settings().fund_return_distribution_refresh_enabled:
+        refresh_fund_return_distribution_snapshot()
+        _last_fund_return_distribution_refresh_at = now
     if get_settings().theme_board_refresh_enabled:
         refresh_a_share_market_snapshots()
         _last_a_share_refresh_at = now
@@ -174,6 +198,33 @@ def _maybe_refresh_market_breadth(now: float) -> None:
     )
 
 
+def _maybe_refresh_fund_return_distribution(now: float) -> None:
+    global _last_fund_return_distribution_refresh_at
+    if not get_settings().fund_return_distribution_refresh_enabled:
+        return
+    session = build_trading_session()
+    phase = str(session.get("market_phase") or "")
+    current_trade_day_after_open = bool(
+        session.get("is_trading_day")
+        and session.get("effective_trade_date") == session.get("calendar_date")
+        and str(session.get("session_kind") or "") != "trading_day_pre_open"
+    )
+    interval = (
+        _FUND_DISTRIBUTION_LIVE_INTERVAL_SECONDS
+        if current_trade_day_after_open and phase in {"continuous", "lunch_break"}
+        else _FUND_DISTRIBUTION_IDLE_INTERVAL_SECONDS
+    )
+    if now - _last_fund_return_distribution_refresh_at < interval:
+        return
+    refresh_fund_return_distribution_snapshot()
+    _last_fund_return_distribution_refresh_at = now
+    logger.debug(
+        "market shared fund distribution refresh done phase=%s interval=%ss",
+        phase,
+        int(interval),
+    )
+
+
 def _maybe_refresh_us(now: float) -> None:
     global _last_us_refresh_at
     if not get_settings().theme_board_refresh_enabled:
@@ -208,6 +259,10 @@ def market_shared_refresh_loop() -> None:
             _maybe_refresh_market_breadth(now)
         except Exception as exc:
             logger.info("market shared breadth refresh failed: %s", exc)
+        try:
+            _maybe_refresh_fund_return_distribution(now)
+        except Exception as exc:
+            logger.info("market shared fund distribution refresh failed: %s", exc)
         try:
             _maybe_refresh_us(now)
         except Exception as exc:

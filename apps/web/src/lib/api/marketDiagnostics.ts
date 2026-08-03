@@ -114,6 +114,8 @@ export type FundReturnDistribution = {
   as_of_date?: string | null;
   as_of_datetime?: string | null;
   fetched_at?: string | null;
+  /** 仅前端冷启动标记：当前先展示本地旧快照，同时在后台续期。 */
+  client_cached?: boolean;
   source_row_count?: number | null;
   valid_count?: number | null;
   missing_count?: number | null;

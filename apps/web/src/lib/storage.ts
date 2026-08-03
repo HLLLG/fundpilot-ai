@@ -332,13 +332,18 @@ export function loadFundReturnDistributionCache(
       return null;
     }
     const parsed = JSON.parse(raw) as FundReturnDistributionCache;
-    if (!parsed || typeof parsed !== "object" || parsed.data == null) {
+    if (
+      !parsed ||
+      typeof parsed !== "object" ||
+      parsed.data == null ||
+      typeof parsed.data !== "object"
+    ) {
       return null;
     }
     if (Date.now() - parsed.fetchedAt > maxAgeMs) {
       return null;
     }
-    return parsed.data;
+    return { ...parsed.data, stale: true, client_cached: true };
   } catch {
     return null;
   }
@@ -348,6 +353,11 @@ export function saveFundReturnDistributionCache(data: FundReturnDistribution) {
   if (typeof window === "undefined" || data == null) {
     return;
   }
-  const payload: FundReturnDistributionCache = { fetchedAt: Date.now(), data };
+  const persistedData = { ...data };
+  delete persistedData.client_cached;
+  const payload: FundReturnDistributionCache = {
+    fetchedAt: Date.now(),
+    data: persistedData,
+  };
   window.localStorage.setItem(FUND_RETURN_DISTRIBUTION_KEY, JSON.stringify(payload));
 }

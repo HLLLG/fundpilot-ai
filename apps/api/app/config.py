@@ -243,6 +243,8 @@ class Settings(BaseSettings):
     theme_board_refresh_interval_seconds: int = 1200  # 盘中/美股活跃时段每 20min
     theme_board_refresh_idle_interval_seconds: int = 10800  # 非活跃时段每 3h（兼容旧 env）
     market_shared_idle_interval_seconds: int = 10800  # 非 A 股/美股活跃时段后台刷新间隔
+    # 基金涨跌分布后台预热；关闭后诊断接口只读已有缓存，不在请求内同步打源
+    fund_return_distribution_refresh_enabled: bool = True
     # 持仓详情：按用户内存缓存 + 后台预热（分时/净值/详情）
     holding_detail_cache_ttl_seconds: int = 300
     holding_intraday_warmup_enabled: bool = True

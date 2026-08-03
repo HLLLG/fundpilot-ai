@@ -34,7 +34,7 @@ def market_breadth() -> dict:
 
 @router.get("/fund-return-distribution")
 def fund_return_distribution() -> dict:
-    """Aggregate the latest published official open-fund NAV returns."""
+    """Return the prewarmed current-session open-fund return distribution."""
 
     return build_fund_return_distribution()
 

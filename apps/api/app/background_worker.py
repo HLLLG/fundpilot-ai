@@ -57,7 +57,11 @@ def configured_background_jobs() -> tuple[BackgroundJobSpec, ...]:
     settings = get_settings()
     jobs: list[BackgroundJobSpec] = []
 
-    if settings.theme_board_refresh_enabled or settings.market_breadth_enabled:
+    if (
+        settings.theme_board_refresh_enabled
+        or settings.market_breadth_enabled
+        or settings.fund_return_distribution_refresh_enabled
+    ):
         from app.services.market_shared_refresh import (
             market_shared_refresh_loop,
             run_startup_market_refresh,

@@ -17,6 +17,7 @@ def _disabled_settings(**overrides):
         "runtime_role": "api",
         "theme_board_refresh_enabled": False,
         "market_breadth_enabled": False,
+        "fund_return_distribution_refresh_enabled": False,
         "sector_quotes_enabled": False,
         "fund_primary_sector_global_enabled": False,
         "fund_primary_sector_precompute_enabled": False,
@@ -49,6 +50,26 @@ def test_disabled_background_features_produce_no_worker_threads(monkeypatch) -> 
     )
 
     assert background_worker.configured_background_jobs() == ()
+
+
+def test_fund_distribution_prewarmer_independently_enables_market_worker(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        background_worker,
+        "get_settings",
+        lambda: _disabled_settings(
+            runtime_role="worker",
+            fund_return_distribution_refresh_enabled=True,
+        ),
+    )
+
+    jobs = background_worker.configured_background_jobs()
+
+    assert [job.name for job in jobs] == [
+        "market-startup-refresh",
+        "market-shared-refresh",
+    ]
 
 
 def test_worker_heartbeat_is_atomic_current_and_process_bound(tmp_path) -> None:
@@ -200,6 +221,7 @@ def test_sqlite_worker_acquires_leadership_and_serves_healthcheck(
     monkeypatch.setenv("FUND_AI_BACKGROUND_WORKER_HEARTBEAT_INTERVAL_SECONDS", "1")
     monkeypatch.setenv("FUND_AI_THEME_BOARD_REFRESH_ENABLED", "false")
     monkeypatch.setenv("FUND_AI_MARKET_BREADTH_ENABLED", "false")
+    monkeypatch.setenv("FUND_AI_FUND_RETURN_DISTRIBUTION_REFRESH_ENABLED", "false")
     monkeypatch.setenv("FUND_AI_SECTOR_QUOTES_ENABLED", "false")
     monkeypatch.setenv("FUND_AI_FUND_PRIMARY_SECTOR_GLOBAL_ENABLED", "false")
     monkeypatch.setenv("FUND_AI_FUND_PRIMARY_SECTOR_BACKFILL_ENABLED", "false")
