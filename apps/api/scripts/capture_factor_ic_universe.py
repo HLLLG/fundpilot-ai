@@ -7,6 +7,7 @@ import argparse
 import json
 import os
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -23,6 +24,33 @@ from app.services.factor_ic_universe_snapshot import (  # noqa: E402
     validate_factor_ic_universe_publish_request,
 )
 
+_UNIVERSE_FETCH_ATTEMPTS = 2
+_UNIVERSE_FETCH_RETRY_DELAY_SECONDS = 5
+_UNIVERSE_FETCH_TIMEOUT_SECONDS = 150
+
+
+def _fetch_universe_with_retry(
+    fetch_universe,
+    *,
+    sleep=time.sleep,
+) -> list[dict] | None:
+    for attempt in range(1, _UNIVERSE_FETCH_ATTEMPTS + 1):
+        rows = fetch_universe(
+            limit=25_000,
+            timeout_seconds=_UNIVERSE_FETCH_TIMEOUT_SECONDS,
+        )
+        if rows:
+            return rows
+        if attempt < _UNIVERSE_FETCH_ATTEMPTS:
+            print(
+                "fund catalogue fetch returned no rows; "
+                f"retrying in {_UNIVERSE_FETCH_RETRY_DELAY_SECONDS}s "
+                f"({attempt}/{_UNIVERSE_FETCH_ATTEMPTS})",
+                file=sys.stderr,
+            )
+            sleep(_UNIVERSE_FETCH_RETRY_DELAY_SECONDS)
+    return None
+
 
 def capture_universe(
     *,
@@ -32,7 +60,7 @@ def capture_universe(
     now: datetime | None = None,
 ) -> dict:
     captured_at = now or datetime.now(timezone.utc)
-    rows = fetch_universe(limit=25_000, timeout_seconds=90)
+    rows = _fetch_universe_with_retry(fetch_universe)
     if not rows:
         raise RuntimeError("开放式基金全目录获取失败")
     payload = build_factor_ic_universe_payload(

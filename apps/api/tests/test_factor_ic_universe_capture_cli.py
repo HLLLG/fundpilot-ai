@@ -6,6 +6,26 @@ import sys
 from scripts import capture_factor_ic_universe as capture_module
 
 
+def test_universe_fetch_retries_once_with_full_timeout(capsys) -> None:
+    expected = [{"fund_code": "000001"}]
+    calls: list[tuple[int, int]] = []
+    sleeps: list[int] = []
+
+    def fetch_universe(*, limit: int, timeout_seconds: int):
+        calls.append((limit, timeout_seconds))
+        return None if len(calls) == 1 else expected
+
+    result = capture_module._fetch_universe_with_retry(
+        fetch_universe,
+        sleep=sleeps.append,
+    )
+
+    assert result == expected
+    assert calls == [(25_000, 150), (25_000, 150)]
+    assert sleeps == [5]
+    assert "retrying in 5s (1/2)" in capsys.readouterr().err
+
+
 def test_capture_keeps_universe_when_optional_nav_batch_fails_quality_gate(
     monkeypatch,
     tmp_path,
