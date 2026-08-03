@@ -63,6 +63,25 @@ def test_current_schema_still_ensures_factor_ic_snapshot_table() -> None:
     assert table is not None
 
 
+def test_current_schema_still_ensures_sector_direction_state_table() -> None:
+    connection = _current_schema_connection()
+
+    columns = {
+        row[1]
+        for row in connection.execute(
+            "PRAGMA table_info(sector_direction_states)"
+        ).fetchall()
+    }
+    assert {
+        "trade_date",
+        "sector_label",
+        "policy_version",
+        "entry_state",
+        "raw_entry_state",
+        "consecutive_qualifying_days",
+    } <= columns
+
+
 def test_v19_and_v20_add_only_performance_metadata_to_operational_tables() -> None:
     connection = sqlite3.connect(":memory:")
     connection.execute(

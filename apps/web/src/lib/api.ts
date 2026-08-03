@@ -1398,6 +1398,10 @@ export type MainlineRegime = {
     sector_price_source?: string | null;
     proxy_member_count?: number | null;
     flow_date?: string | null;
+    flow_board_code?: string | null;
+    flow_universe?: string | null;
+    flow_scale_yi?: number | null;
+    price_flow_identity_matched?: boolean | null;
   };
   evidence?: string[];
   risks?: string[];
@@ -1415,6 +1419,8 @@ export type MainlineSnapshot = {
   execution_gate_changed?: boolean;
   snapshot_hash?: string;
   sector_count?: number;
+  percentile_universe_size?: number;
+  percentile_universe_expanded?: boolean;
   available_count?: number;
   ranking?: string[];
   sectors?: MainlineRegime[];
@@ -1428,8 +1434,19 @@ export type SectorOpportunity = {
   score_policy_version?: string | null;
   legacy_score?: number | null;
   direction_score?: number | null;
+  /** v3（sector_entry_maturity.2026-08.v3）的三个正交分块。 */
+  trend_strength_score?: number | null;
+  participation_score?: number | null;
+  position_risk_score?: number | null;
+  block_weights?: Record<string, number> | null;
+  /** 短期加速/拥挤的风险披露。v3 不再用它否决布局，只缩小首批。 */
+  overheat_flags?: string[];
+  first_tranche_scale?: number | null;
+  component_coverage?: Record<string, number> | null;
+  /** v2（sector_entry_maturity.2026-07.v2）遗留分数，历史报告仍在用。 */
   setup_maturity_score?: number | null;
   entry_readiness_score?: number | null;
+  price_structure_score?: number | null;
   data_coverage?: number | null;
   evidence_quality?: "complete" | "partial" | "insufficient" | string | null;
   entry_state?: "ready_to_start" | "ready_on_pullback" | "forming" | "invalid" | string | null;

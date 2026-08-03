@@ -27,7 +27,10 @@ import {
 import { DiscoveryChatDrawer } from "@/components/DiscoveryChatDrawer";
 import { DiscoveryOutcomesPanel } from "@/components/DiscoveryOutcomesPanel";
 import { FundTradeabilityEvidence } from "@/components/FundTradeabilityEvidence";
-import { SectorOpportunityCard } from "@/components/SectorOpportunityCard";
+import {
+  SectorOpportunityCard,
+  isEntryMaturityPolicy,
+} from "@/components/SectorOpportunityCard";
 
 function DiscoveryPositionChangeBadge({
   percent,
@@ -612,11 +615,9 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
       mainline_regime: regimesByLabel.get(item.sector_label) ?? item.mainline_regime,
     }));
   }, [mainlineSnapshot, report.discovery_facts?.sector_opportunities]);
-  const hasEntryMaturityV2 =
-    mainlineSnapshot?.entry_policy_version === "sector_entry_maturity.2026-07.v2"
-    || sectorOpportunities.some(
-      (item) => item.score_policy_version === "sector_entry_maturity.2026-07.v2",
-    );
+  const hasEntryMaturity =
+    isEntryMaturityPolicy(mainlineSnapshot?.entry_policy_version)
+    || sectorOpportunities.some((item) => isEntryMaturityPolicy(item.score_policy_version));
   const directionGroups = useMemo(() => ({
     ready: sectorOpportunities.filter((item) => item.entry_state === "ready_to_start"),
     pullback: sectorOpportunities.filter((item) => item.entry_state === "ready_on_pullback"),
@@ -770,7 +771,7 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
         onOpenFund={onOpenFund}
       />
 
-      {hasEntryMaturityV2 ? (
+      {hasEntryMaturity ? (
         <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="border-b border-slate-200 px-4 py-3.5">
             <div className="flex flex-wrap items-end justify-between gap-2">
@@ -795,7 +796,7 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
               </div>
             ) : (
               <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-4">
-                <div className="text-sm font-black text-slate-800">今天没有方向同时通过三道校验</div>
+                <div className="text-sm font-black text-slate-800">今天没有方向通过当前入场线</div>
                 <p className="mt-1 text-xs leading-5 text-slate-500">
                   系统不会拿当日热门板块凑数。可以继续查看等待条件，但在触发前不生成首批买入动作。
                 </p>

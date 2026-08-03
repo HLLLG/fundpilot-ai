@@ -17,6 +17,7 @@ V2 只在完整 ``mainline_regime.v1`` 快照存在时启用。旧报告、日�
 测试适配器仍保留旧字段语义，避免历史报告被新规则重新解释。
 """
 
+from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, wait
 from math import isfinite
 from typing import Any
@@ -29,6 +30,96 @@ ENTRY_READY_TO_START = "ready_to_start"
 ENTRY_READY_ON_PULLBACK = "ready_on_pullback"
 ENTRY_FORMING = "forming"
 ENTRY_INVALID = "invalid"
+
+# 入场线阈值。抽成常量 + `classify_entry_state` 纯函数，是为了让离线方向回测
+# （`sector_direction_backtest.py`）能用**完全同一份判定实现**做阈值敏感性扫描：
+# 否则回测里必然出现一份 gate 的复制品，两边一旦漂移，回测结论就不再描述线上行为。
+# 这些数值仍是 2026-07 的初始确定性策略，不是已证明的收益最优参数。
+ENTRY_GATE_THRESHOLDS: dict[str, float] = {
+    "direction": 55.0,
+    "setup": 55.0,
+    "entry": 60.0,
+    "structure": 50.0,
+}
+PULLBACK_GATE_THRESHOLDS: dict[str, float] = {
+    "direction": 55.0,
+    "setup": 45.0,
+}
+_USABLE_EVIDENCE_QUALITIES = frozenset({"complete", "partial"})
+_DIRECTIONAL_MAINLINE_STATUSES = frozenset({"forming", "confirmed"})
+_DIRECTIONAL_MAINLINE_STATUSES_V3 = frozenset({"forming", "confirmed", "crowded"})
+
+#: 两个方向的近 20 日日收益相关系数超过这个值时，视为同一笔风险暴露，只保留更强的一个。
+MAX_DIRECTION_CORRELATION = 0.85
+#: 少于这么多个共同交易日不做相关性判断（宁可不去重，也不用噪声去重）。
+MIN_CORRELATION_SAMPLES = 15
+
+# ---------------------------------------------------------------------------
+# sector_entry_maturity.2026-08.v3
+# ---------------------------------------------------------------------------
+#
+# v2 用三个"分数"（方向潜力 / 形态成熟 / 入场成熟）呈现给用户，但展开后它们高度共线：
+# 趋势出现 2 次、市场结构出现 3 次，排序分实际只有约 1.5 个自由度，UI 上却像三重确认。
+# 更严重的是 v2 的价格结构体系与 mainline 自己的 market_structure 方向相反（前者奖励
+# "离 20 日高点 2~8%"，后者奖励"越贴近高点越好"），两者同时进入入场成熟度互相抵消。
+#
+# v3 做三件事，全部有离线实测依据（`sector_direction_backtest`，68 个 A 股板块 /
+# 40 个决策日 / 2026-01~07）：
+#
+# 1. **三块正交**：每个原始分量只进入一次。
+# 2. **按实测 Rank IC 比例定权**，不再手写：相对强度 .338 / 趋势持续 .328 /
+#    资金 .064 / 市场结构 .066（T+5）。价格结构分实测 IC 为 -0.011 / +0.003 / -0.053，
+#    ICIR -0.33 —— 它是无效甚至有害的，因此**整块删除**，不再有独立的价格结构评分。
+# 3. **过热不再是硬排除**：实测 `overheated=True` 的方向前瞻超额为 +2.75%(t=+5.23,T+5)
+#    / +5.31%(t=+3.99,T+20)，而 False 为 -0.49% / -0.95%。v2 把最强的正向信号当成了
+#    淘汰条件。v3 把它降级为风险披露 + 首批仓位缩减。
+#
+# **刻意不做的事**：不把高涨幅、贴高点、远离 MA20 反转成加分项。上述观测来自单一
+# 6 个月动量区间的 40 个决策日，在均值回归区间里符号会翻转。v3 只做"移除实测有害的
+# 先验"，不做"押注相反的先验"——前者把未经验证的主观判断拿掉，后者只是换一个方向下注。
+ENTRY_POLICY_VERSION_V3 = "sector_entry_maturity.2026-08.v3"
+MATURITY_POLICY_VERSIONS = frozenset({ENTRY_POLICY_VERSION, ENTRY_POLICY_VERSION_V3})
+
+#: 三个正交分块内部的权重。
+V3_TREND_WEIGHTS: dict[str, float] = {
+    "relative_strength": 0.55,
+    "trend_persistence": 0.45,
+}
+V3_PARTICIPATION_WEIGHTS: dict[str, float] = {
+    "fund_flow": 0.60,
+    "breadth": 0.40,
+}
+#: 综合排序分的分块权重，按 T+5 实测 Rank IC 比例取整（0.338 : 0.064 : 0.066）。
+V3_BLOCK_WEIGHTS: dict[str, float] = {
+    "trend_strength": 0.70,
+    "participation": 0.15,
+    "position_risk": 0.15,
+}
+#: v3 入场线阈值。经 `scan_entry_gate_thresholds` 在 v3 分数上实测网格选取。
+#:
+#: 网格显示趋势阈值越高、去均值超额越高（trend=70 时 T+20 达 +10.19%），但那只是"最强的
+#: 方向表现最好"这一 IC 事实的重述，且 n 会掉到 31（平均每天不到 1 个方向）。这里**刻意
+#: 不取网格最大值**：取中段的 60，样本约每天 2 个方向，既保留区分度又不把参数钉在 40 个
+#: 决策日的极值上。participation 在 35 与 55 之间实测几乎无差（+3.72 vs +3.78），取中间的
+#: 45 表示"要求高于中性"。position 在网格里完全不起约束作用（最优行全部落在最低档），
+#: 因此只作防止结构彻底破坏的下限，不假装它有区分力。
+V3_GATE_THRESHOLDS: dict[str, float] = {
+    "trend": 60.0,
+    "participation": 45.0,
+    "position": 25.0,
+}
+#: `invalid` 的判定阈值：趋势与参与度**同时**处于低位才算"不具备参与条件"。
+#:
+#: v2 用"5日与20日主力资金同时为负"作硬否决，实测把 91% 的观测打成 invalid，而该桶的
+#: 前瞻超额与全市场平均完全相同（-0.06% vs 0）——它没有筛掉任何输家，只是拒绝了一切。
+#: 根因是东财「主力净流入」对多数概念板块在多数交易日本身就是负的（大单净额在散户主导
+#: 的板块里长期为负），拿它的绝对符号当门槛等于拿一个恒真条件当门槛。v3 改成横截面相对
+#: 判断：资金分位已经内含在 participation 里。
+V3_INVALID_TREND_CEILING = 40.0
+V3_INVALID_PARTICIPATION_CEILING = 35.0
+#: 过热标记数量 → 首批仓位缩放。过热方向不再被拒绝，但首批更小且不预先承诺后续。
+V3_FIRST_TRANCHE_SCALE: dict[int, float] = {0: 1.0, 1: 0.6}
+V3_FIRST_TRANCHE_SCALE_CROWDED = 0.4
 
 _ENTRY_STATE_PRIORITY = {
     ENTRY_READY_TO_START: 4,
@@ -81,12 +172,77 @@ def select_sector_opportunities(
     sector_flow_by_label: dict[str, dict] | None = None,
     sector_divergence_by_label: dict[str, dict] | None = None,
     mainline_by_label: dict[str, dict] | None = None,
+    sector_position_by_label: Mapping[str, Mapping[str, Any]] | None = None,
     focus_sectors: list[str] | None = None,
     max_total: int = 8,
     momentum_slots: int = 4,
     setup_slots: int = 4,
     max_per_group: int = 2,
+    entry_policy_version: str = ENTRY_POLICY_VERSION_V3,
 ) -> list[dict[str, Any]]:
+    rows = score_sector_opportunity_rows(
+        sector_heat,
+        sector_flow_by_label=sector_flow_by_label,
+        sector_divergence_by_label=sector_divergence_by_label,
+        mainline_by_label=mainline_by_label,
+        focus_sectors=focus_sectors,
+        entry_policy_version=entry_policy_version,
+    )
+    return select_scored_sector_opportunities(
+        rows,
+        max_total=max_total,
+        momentum_slots=momentum_slots,
+        setup_slots=setup_slots,
+        max_per_group=max_per_group,
+        return_series_by_label=_return_series_from_positions(sector_position_by_label),
+    )
+
+
+def _return_series_from_positions(
+    positions: Mapping[str, Mapping[str, Any]] | None,
+) -> dict[str, Sequence[float] | Mapping[str, float]]:
+    result: dict[str, Sequence[float] | Mapping[str, float]] = {}
+    for label, row in (positions or {}).items():
+        if not isinstance(row, Mapping):
+            continue
+        dated = row.get("daily_returns_20d_by_date")
+        if isinstance(dated, Mapping) and dated:
+            values_by_date = {
+                str(day): value
+                for day, raw in dated.items()
+                if (value := _num(raw)) is not None
+            }
+            if values_by_date:
+                result[str(label)] = values_by_date
+                continue
+        series = row.get("daily_returns_20d")
+        if isinstance(series, (list, tuple)) and series:
+            values = [value for raw in series if (value := _num(raw)) is not None]
+            if values:
+                result[str(label)] = values
+    return result
+
+
+def score_sector_opportunity_rows(
+    sector_heat: list[dict],
+    *,
+    sector_flow_by_label: dict[str, dict] | None = None,
+    sector_divergence_by_label: dict[str, dict] | None = None,
+    mainline_by_label: dict[str, dict] | None = None,
+    focus_sectors: list[str] | None = None,
+    drop_unavailable: bool = True,
+    entry_policy_version: str = ENTRY_POLICY_VERSION_V3,
+) -> list[dict[str, Any]]:
+    """对每个板块行打分，但**不做** slot / group / 去重选择。
+
+    ``drop_unavailable=True``（默认，等于 `select_sector_opportunities` 的既有行为）
+    丢弃 `entry_state == invalid` 或资金派发的行。离线方向回测传 ``False``：要验证
+    「invalid 桶是否真的跑输」，就必须把被淘汰的方向也留在样本里，否则统计只覆盖
+    模型自己认可的那部分，等于给结论开后门。
+
+    ``entry_policy_version`` 允许显式回放旧口径（``sector_entry_maturity.2026-07.v2``），
+    离线对比 v2/v3 时需要；线上默认 v3。
+    """
     flow_by_label = sector_flow_by_label or {}
     divergence_by_label = sector_divergence_by_label or {}
     mainline_map = mainline_by_label or {}
@@ -94,24 +250,55 @@ def select_sector_opportunities(
         _supports_entry_maturity_v2(item) for item in mainline_map.values()
     )
     focus = {str(label).strip() for label in (focus_sectors or []) if str(label).strip()}
+    scorer = _score_row if drop_unavailable else _describe_row
     scored = [
-        _score_row(
+        scorer(
             row,
             flow_by_label.get(str(row.get("sector_label") or "").strip()),
             focus,
             divergence_backtest=divergence_by_label.get(str(row.get("sector_label") or "").strip()),
             mainline=mainline_map.get(str(row.get("sector_label") or "").strip()),
             entry_policy_enabled=entry_policy_enabled,
+            entry_policy_version=entry_policy_version,
         )
         for row in sector_heat
     ]
-    rows = [row for row in scored if row is not None]
+    return [row for row in scored if row is not None]
+
+
+def select_scored_sector_opportunities(
+    rows: list[dict[str, Any]],
+    *,
+    max_total: int = 8,
+    momentum_slots: int = 4,
+    setup_slots: int = 4,
+    max_per_group: int = 2,
+    return_series_by_label: Mapping[
+        str, Sequence[float] | Mapping[str, float]
+    ] | None = None,
+    max_correlation: float = MAX_DIRECTION_CORRELATION,
+) -> list[dict[str, Any]]:
+    """在已打分的行上执行排序、双轨名额与相关性去重（v2/v3 通用）。
+
+    ``return_series_by_label`` 提供各板块近 20 日的日收益序列时，去重按**实测相关性**
+    进行，而不是只靠手写的 `_SECTOR_GROUPS`。手写映射只覆盖 76 个白名单标签里的约 21 个，
+    储能 / 锂电池 / 固态电池 / 锂矿 各自成组，完全可以同时输出 4 个高度相关的新能源方向，
+    "分散"只是名义上的。手写映射保留为序列不可得时的兜底。
+    """
+    entry_policy_enabled = any(
+        str(row.get("score_policy_version") or "") in MATURITY_POLICY_VERSIONS for row in rows
+    )
+    limiter = _CorrelationAwareLimiter(
+        max_per_group=max_per_group,
+        return_series_by_label=return_series_by_label or {},
+        max_correlation=max_correlation,
+    )
 
     if entry_policy_enabled:
         # 入场状态优先于分数：证据完整且可布局的方向必须排在热门但不可执行的
         # 方向之前；缺少 mainline 证据的方向不能再因为跳过混合评分而占便宜。
         ordered = sorted(rows, key=_entry_sort_score, reverse=True)
-        return _take_with_group_limit(ordered, max_total, [], max_per_group)[:max_total]
+        return limiter.take(ordered, max_total, [])[:max_total]
 
     momentum = sorted(
         [row for row in rows if row["track"] == MOMENTUM_TRACK],
@@ -125,8 +312,8 @@ def select_sector_opportunities(
     )
 
     selected: list[dict[str, Any]] = []
-    selected.extend(_take_with_group_limit(momentum, momentum_slots, selected, max_per_group))
-    selected.extend(_take_with_group_limit(setup, setup_slots, selected, max_per_group))
+    selected.extend(limiter.take(momentum, momentum_slots, selected))
+    selected.extend(limiter.take(setup, setup_slots, selected))
 
     remaining = max_total - len(selected)
     if remaining > 0:
@@ -136,7 +323,7 @@ def select_sector_opportunities(
             key=_research_sort_score,
             reverse=True,
         )
-        selected.extend(_take_with_group_limit(fallback, remaining, selected, max_per_group))
+        selected.extend(limiter.take(fallback, remaining, selected))
     return selected[:max_total]
 
 
@@ -289,6 +476,7 @@ def _score_row(
     divergence_backtest: dict | None = None,
     mainline: dict | None = None,
     entry_policy_enabled: bool = False,
+    entry_policy_version: str = ENTRY_POLICY_VERSION_V3,
 ) -> dict[str, Any] | None:
     result = _compute_opportunity_row(
         row,
@@ -297,10 +485,33 @@ def _score_row(
         divergence_backtest,
         mainline=mainline,
         entry_policy_enabled=entry_policy_enabled,
+        entry_policy_version=entry_policy_version,
     )
     if result is None or not result["opportunity_available"]:
         return None
     return {key: value for key, value in result.items() if key != "opportunity_available"}
+
+
+def _describe_row(
+    row: dict,
+    flow: dict | None,
+    focus: set[str],
+    *,
+    divergence_backtest: dict | None = None,
+    mainline: dict | None = None,
+    entry_policy_enabled: bool = False,
+    entry_policy_version: str = ENTRY_POLICY_VERSION_V3,
+) -> dict[str, Any] | None:
+    """与 `_score_row` 同一份打分，但保留 `opportunity_available=False` 的行。"""
+    return _compute_opportunity_row(
+        row,
+        flow,
+        focus,
+        divergence_backtest,
+        mainline=mainline,
+        entry_policy_enabled=entry_policy_enabled,
+        entry_policy_version=entry_policy_version,
+    )
 
 
 def _compute_opportunity_row(
@@ -311,6 +522,7 @@ def _compute_opportunity_row(
     *,
     mainline: dict | None = None,
     entry_policy_enabled: bool = False,
+    entry_policy_version: str = ENTRY_POLICY_VERSION_V3,
 ) -> dict[str, Any] | None:
     label = str(row.get("sector_label") or "").strip()
     if not label:
@@ -437,7 +649,12 @@ def _compute_opportunity_row(
         "opportunity_available": not disqualified,
     }
     if entry_policy_enabled:
-        maturity = _entry_maturity_v2(
+        scorer = (
+            _entry_maturity_v3
+            if entry_policy_version == ENTRY_POLICY_VERSION_V3
+            else _entry_maturity_v2
+        )
+        maturity = scorer(
             label=label,
             track=track,
             legacy_score=legacy_score,
@@ -471,6 +688,108 @@ def _supports_entry_maturity_v2(mainline: object) -> bool:
         or mainline.get("feature_coverage") is not None
         or isinstance(mainline.get("component_scores"), dict)
     )
+
+
+def classify_entry_state_v3(
+    *,
+    evidence_quality: str,
+    mainline_status: str,
+    trend_strength: float,
+    participation: float,
+    position_risk: float,
+    structure_broken: bool,
+    thresholds: Mapping[str, float] | None = None,
+) -> str:
+    """v3 状态机：过热不再阻止布局，`invalid` 改为横截面双弱判定。
+
+    与 v2 的三处实质差异：
+
+    * **过热不进入门禁**。它在 `_entry_maturity_v3` 里只影响 `first_tranche_scale`
+      与风险提示。实测过热方向的前瞻超额显著为正，把它当淘汰条件是把最强信号丢掉。
+    * **`invalid` 不再用资金绝对符号判定**。v2 只要命中单日 distribution/weak_outflow，
+      或 5/20 日资金同时为负，就判无效；实测 91% 的观测被打成 `invalid`，而该桶的表现
+      与全市场平均完全一致——等于拒绝一切却没筛掉任何输家。v3 要求趋势与参与度**同时**
+      处于横截面低位。
+    * `ready_on_pullback` 的含义改为"趋势仍强，但资金参与度或价格位置尚不支持立即入场"，
+      不再由"过热"触发。
+    """
+    gate = {**V3_GATE_THRESHOLDS, **(thresholds or {})}
+    doubly_weak = bool(
+        trend_strength < V3_INVALID_TREND_CEILING
+        and participation < V3_INVALID_PARTICIPATION_CEILING
+    )
+    if doubly_weak or mainline_status == "fading" or structure_broken:
+        return ENTRY_INVALID
+    if evidence_quality not in _USABLE_EVIDENCE_QUALITIES:
+        return ENTRY_FORMING
+    if trend_strength < gate["trend"]:
+        return ENTRY_FORMING
+    if (
+        mainline_status in _DIRECTIONAL_MAINLINE_STATUSES_V3
+        and participation >= gate["participation"]
+        and position_risk >= gate["position"]
+    ):
+        return ENTRY_READY_TO_START
+    return ENTRY_READY_ON_PULLBACK
+
+
+def classify_entry_state(
+    *,
+    evidence_quality: str,
+    mainline_status: str,
+    direction_score: float,
+    setup_score: float,
+    entry_score: float,
+    structure_score: float,
+    flow_confirmed: bool,
+    flow_broadly_weak: bool,
+    overheated: bool,
+    flow_five_day_negative: bool = False,
+    position_label: str = "",
+    entry_thresholds: Mapping[str, float] | None = None,
+    pullback_thresholds: Mapping[str, float] | None = None,
+) -> str:
+    """把已算好的分数与布尔证据映射成唯一入场状态。
+
+    纯函数、无 IO，阈值可覆盖。生产链路用默认阈值调用它；离线方向回测用同一函数配
+    不同 ``entry_thresholds`` 做敏感性扫描，从而保证「回测里评估的门禁」和「线上执行
+    的门禁」是同一段代码，而不是两份会各自漂移的实现。
+    """
+    entry_gate = {**ENTRY_GATE_THRESHOLDS, **(entry_thresholds or {})}
+    pullback_gate = {**PULLBACK_GATE_THRESHOLDS, **(pullback_thresholds or {})}
+
+    hard_invalid = bool(
+        flow_broadly_weak
+        or mainline_status == "fading"
+        or position_label == "weak_breakdown"
+    )
+    if hard_invalid:
+        return ENTRY_INVALID
+    usable_evidence = evidence_quality in _USABLE_EVIDENCE_QUALITIES
+    if (
+        usable_evidence
+        and mainline_status in _DIRECTIONAL_MAINLINE_STATUSES
+        and direction_score >= entry_gate["direction"]
+        and setup_score >= entry_gate["setup"]
+        and entry_score >= entry_gate["entry"]
+        and structure_score >= entry_gate["structure"]
+        and flow_confirmed
+        and not overheated
+    ):
+        return ENTRY_READY_TO_START
+    if (
+        usable_evidence
+        and direction_score >= pullback_gate["direction"]
+        and setup_score >= pullback_gate["setup"]
+        and not flow_broadly_weak
+        # 此前只要求 not flow_broadly_weak（需要 5 日与 20 日**同时**转负）。于是
+        # "近5日主力净流出、20日还没转负"的板块可以挂着「等待合适位置」进 UI，而这个
+        # 标签对用户宣称的是「方向较强，等待过热缓解」——钱正在走的时候这句话是假的。
+        and not flow_five_day_negative
+        and overheated
+    ):
+        return ENTRY_READY_ON_PULLBACK
+    return ENTRY_FORMING
 
 
 def _entry_maturity_v2(
@@ -529,7 +848,7 @@ def _entry_maturity_v2(
     flow_component = _num(components.get("fund_flow"))
     breadth_score = _num(components.get("breadth"))
 
-    direction_score = _weighted_available_score(
+    direction_score, direction_component_coverage = _weighted_neutral_fill_score(
         (
             (relative_score, 0.45),
             (trend_score, 0.40),
@@ -552,7 +871,7 @@ def _entry_maturity_v2(
         }.get(status, 0.0)
         direction_score = _clamp(direction_score, 0.0, 100.0)
 
-    setup_score = _weighted_available_score(
+    setup_score, setup_component_coverage = _weighted_neutral_fill_score(
         (
             (flow_component, 0.50),
             (breadth_score, 0.25),
@@ -609,6 +928,7 @@ def _entry_maturity_v2(
         pattern in _DISTRIBUTION_PATTERNS
         or (flow_5d is not None and flow_5d < 0 and flow_20d is not None and flow_20d < 0)
     )
+    flow_five_day_negative = bool(flow_5d is not None and flow_5d < 0)
     overheated = bool(
         (change_1d is not None and change_1d >= 4.0)
         or (return_5d is not None and return_5d >= 12.0)
@@ -621,35 +941,19 @@ def _entry_maturity_v2(
             )
         )
     )
-    hard_invalid = bool(
-        flow_broadly_weak
-        or status == "fading"
-        or position_label == "weak_breakdown"
+    entry_state = classify_entry_state(
+        evidence_quality=evidence_quality,
+        mainline_status=status,
+        direction_score=direction_score,
+        setup_score=setup_score,
+        entry_score=entry_score,
+        structure_score=structure_score,
+        flow_confirmed=flow_confirmed,
+        flow_broadly_weak=flow_broadly_weak,
+        flow_five_day_negative=flow_five_day_negative,
+        overheated=overheated,
+        position_label=position_label,
     )
-
-    if hard_invalid:
-        entry_state = ENTRY_INVALID
-    elif (
-        evidence_quality in {"complete", "partial"}
-        and status in {"forming", "confirmed"}
-        and direction_score >= 55.0
-        and setup_score >= 55.0
-        and entry_score >= 60.0
-        and structure_score >= 50.0
-        and flow_confirmed
-        and not overheated
-    ):
-        entry_state = ENTRY_READY_TO_START
-    elif (
-        evidence_quality in {"complete", "partial"}
-        and direction_score >= 55.0
-        and setup_score >= 45.0
-        and not flow_broadly_weak
-        and overheated
-    ):
-        entry_state = ENTRY_READY_ON_PULLBACK
-    else:
-        entry_state = ENTRY_FORMING
 
     opportunity_score = _clamp(
         direction_score * 0.45 + setup_score * 0.35 + entry_score * 0.20,
@@ -726,6 +1030,23 @@ def _entry_maturity_v2(
         "direction_score": round(direction_score, 2),
         "setup_maturity_score": round(setup_score, 2),
         "entry_readiness_score": round(entry_score, 2),
+        # 价格结构分占入场成熟度 25%，此前完全不出现在返回值里：入场成熟 = 87 分时
+        # 无法判断它是被方向撑起来的还是被价格位置撑起来的。离线回测的阈值重扫也需要它。
+        "price_structure_score": round(structure_score, 2),
+        # 两个合成分数各自的实际可得权重占比。此前"哪个分量缺了"完全不可观测，
+        # 而缺失又会被重归一化悄悄放大剩余分量的话语权。
+        "component_coverage": {
+            "direction": round(direction_component_coverage, 2),
+            "setup": round(setup_component_coverage, 2),
+        },
+        "entry_gate_inputs": {
+            "flow_confirmed": flow_confirmed,
+            "flow_broadly_weak": flow_broadly_weak,
+            "flow_five_day_negative": flow_five_day_negative,
+            "overheated": overheated,
+            "mainline_status": status,
+            "position_label": position_label or None,
+        },
         "data_coverage": round(coverage, 2),
         "evidence_quality": evidence_quality,
         "entry_state": entry_state,
@@ -741,6 +1062,286 @@ def _entry_maturity_v2(
         "sector_label": label,
         "track": track,
     }
+
+
+def _entry_maturity_v3(
+    *,
+    label: str,
+    track: str,
+    legacy_score: float,
+    change_1d: float | None,
+    change_5d: float | None,
+    today_flow: float | None,
+    flow_5d: float | None,
+    pattern: str,
+    date_aligned: bool,
+    mainline: dict | None,
+) -> dict[str, Any]:
+    """三块正交、按实测 IC 定权、过热只披露不拦截。"""
+    mainline_map = mainline if isinstance(mainline, dict) else {}
+    components = (
+        mainline_map.get("component_scores")
+        if isinstance(mainline_map.get("component_scores"), dict)
+        else {}
+    )
+    features = (
+        mainline_map.get("features") if isinstance(mainline_map.get("features"), dict) else {}
+    )
+    status = str(mainline_map.get("status") or "insufficient").strip() or "insufficient"
+    coverage = _clamp(_num(mainline_map.get("feature_coverage")) or 0.0, 0.0, 1.0)
+    flow_20d = _num(features.get("cumulative_20d_net_yi"))
+    distance_high = _num(features.get("distance_from_20d_high_percent"))
+    distance_ma20 = _num(features.get("distance_from_ma20_percent"))
+    return_5d = _num(features.get("return_5d_percent"))
+    if return_5d is None:
+        return_5d = change_5d
+    position_label = str(features.get("position_label") or "").strip()
+
+    evidence_quality = (
+        "complete"
+        if status != "insufficient" and coverage >= 0.80 and date_aligned
+        else "partial"
+        if status != "insufficient" and coverage >= 0.65 and date_aligned
+        else "insufficient"
+    )
+
+    trend_strength, trend_coverage = _weighted_neutral_fill_score(
+        (
+            (_num(components.get("relative_strength")), V3_TREND_WEIGHTS["relative_strength"]),
+            (_num(components.get("trend_persistence")), V3_TREND_WEIGHTS["trend_persistence"]),
+        )
+    )
+    participation, participation_coverage = _weighted_neutral_fill_score(
+        (
+            (_num(components.get("fund_flow")), V3_PARTICIPATION_WEIGHTS["fund_flow"]),
+            (_num(components.get("breadth")), V3_PARTICIPATION_WEIGHTS["breadth"]),
+        )
+    )
+    position_component = _num(components.get("market_structure"))
+    # 位置风险直接用 mainline 的 market_structure，不再叠加任何 pullback / base_building /
+    # 贴高点惩罚。v2 那一套与 market_structure 本身方向相反，且实测 IC 为负。
+    position_risk = position_component
+    position_coverage = 1.0 if position_component is not None else 0.0
+
+    if trend_strength is None or evidence_quality == "insufficient":
+        # 证据不足时只保留一个受限的研究分，永远无法通过入场线。
+        c5 = _clamp(change_5d or 0.0, -8.0, 8.0)
+        trend_strength = _clamp(35.0 + c5 * 1.5, 0.0, 45.0)
+        trend_coverage = 0.0
+    if participation is None:
+        participation = NEUTRAL_COMPONENT_SCORE
+        participation_coverage = 0.0
+    if position_risk is None:
+        position_risk = NEUTRAL_COMPONENT_SCORE
+        position_coverage = 0.0
+
+    trend_strength = _clamp(trend_strength, 0.0, 100.0)
+    participation = _clamp(participation, 0.0, 100.0)
+    position_risk = _clamp(position_risk, 0.0, 100.0)
+    direction_score = _clamp(
+        trend_strength * V3_BLOCK_WEIGHTS["trend_strength"]
+        + participation * V3_BLOCK_WEIGHTS["participation"]
+        + position_risk * V3_BLOCK_WEIGHTS["position_risk"],
+        0.0,
+        100.0,
+    )
+
+    flow_persistently_weak = bool(
+        flow_5d is not None and flow_5d < 0 and flow_20d is not None and flow_20d < 0
+    )
+    structure_broken = bool(
+        position_label == "weak_breakdown"
+        and distance_ma20 is not None
+        and distance_ma20 < -4.0
+    )
+    overheat_flags = _overheat_flags(
+        change_1d=change_1d,
+        return_5d=return_5d,
+        status=status,
+        distance_high=distance_high,
+    )
+    entry_state = classify_entry_state_v3(
+        evidence_quality=evidence_quality,
+        mainline_status=status,
+        trend_strength=trend_strength,
+        participation=participation,
+        position_risk=position_risk,
+        structure_broken=structure_broken,
+    )
+    first_tranche_scale = (
+        V3_FIRST_TRANCHE_SCALE_CROWDED
+        if status == "crowded" or len(overheat_flags) >= 2
+        else V3_FIRST_TRANCHE_SCALE.get(len(overheat_flags), V3_FIRST_TRANCHE_SCALE_CROWDED)
+    )
+
+    research_score = _clamp(
+        direction_score
+        + {ENTRY_READY_TO_START: 6.0, ENTRY_READY_ON_PULLBACK: 2.0}.get(entry_state, 0.0),
+        0.0,
+        100.0,
+    )
+    confidence = (
+        "高"
+        if entry_state == ENTRY_READY_TO_START
+        and evidence_quality == "complete"
+        and coverage >= 0.85
+        and status == "confirmed"
+        and not overheat_flags
+        else "中"
+        if evidence_quality in {"complete", "partial"}
+        else "低"
+    )
+    entry_hint = {
+        ENTRY_READY_TO_START: (
+            "条件成熟，可小额首批布局" if not overheat_flags else "条件成熟但短期加速，首批更小"
+        ),
+        ENTRY_READY_ON_PULLBACK: "方向仍强，资金或结构尚不支持立即入场",
+        ENTRY_FORMING: "条件形成中，暂不下单",
+        ENTRY_INVALID: "资金持续转弱或趋势退潮，暂不参与",
+    }[entry_state]
+    entry_reason = {
+        ENTRY_READY_TO_START: "中期趋势、市场参与度与价格位置已同时通过入场线。",
+        ENTRY_READY_ON_PULLBACK: "中期趋势仍有优势，但资金参与度或价格位置尚未同时达标。",
+        ENTRY_FORMING: "趋势强度或多周期证据尚未成熟。",
+        ENTRY_INVALID: "趋势强度与资金参与度同时处于横截面低位，或主线退潮、价格结构破坏。",
+    }[entry_state]
+
+    penalties: list[str] = []
+    if evidence_quality == "insufficient":
+        penalties.append("20日价格结构或多维证据不足")
+    if flow_5d is not None and flow_5d < 0:
+        penalties.append("近5日主力资金净流出")
+    if flow_20d is not None and flow_20d < 0:
+        penalties.append("近20日主力资金净流出")
+    penalties.extend(overheat_flags)
+    if pattern in _DISTRIBUTION_PATTERNS:
+        # 单日量价背离降级为风险提示：实测它在 5~20 日尺度上几乎没有预测力，
+        # 但按 v2 的做法它会让 91% 的方向被判 invalid。
+        penalties.append("当日量价背离，仅作风险提示")
+
+    return {
+        "score_policy_version": ENTRY_POLICY_VERSION_V3,
+        "legacy_score": legacy_score,
+        "score": round(direction_score, 2),
+        "research_score": round(research_score, 2),
+        "direction_score": round(direction_score, 2),
+        "trend_strength_score": round(trend_strength, 2),
+        "participation_score": round(participation, 2),
+        "position_risk_score": round(position_risk, 2),
+        "block_weights": dict(V3_BLOCK_WEIGHTS),
+        "component_coverage": {
+            "trend": round(trend_coverage, 2),
+            "participation": round(participation_coverage, 2),
+            "position": round(position_coverage, 2),
+        },
+        "overheat_flags": overheat_flags,
+        "first_tranche_scale": first_tranche_scale,
+        "entry_gate_inputs": {
+            "policy_version": ENTRY_POLICY_VERSION_V3,
+            # 保留为可观测的风险事实；它不再参与 invalid 判定（见 classify_entry_state_v3）。
+            "flow_persistently_weak": flow_persistently_weak,
+            "structure_broken": structure_broken,
+            "overheated": bool(overheat_flags),
+            "mainline_status": status,
+            "position_label": position_label or None,
+        },
+        "data_coverage": round(coverage, 2),
+        "evidence_quality": evidence_quality,
+        "entry_state": entry_state,
+        "entry_reason": entry_reason,
+        "entry_triggers": _entry_triggers_v3(
+            entry_state=entry_state,
+            status=status,
+            evidence_quality=evidence_quality,
+            trend_strength=trend_strength,
+            participation=participation,
+            position_risk=position_risk,
+            overheat_flags=overheat_flags,
+        ),
+        "invalidation_signals": _invalidation_signals_v3(entry_state=entry_state),
+        "execution_eligible": entry_state == ENTRY_READY_TO_START,
+        "automatic_promotion_allowed": entry_state == ENTRY_READY_TO_START,
+        "confidence": confidence,
+        "entry_hint": entry_hint,
+        "evidence": [
+            f"趋势强度 {trend_strength:.1f} 分（权重 {V3_BLOCK_WEIGHTS['trend_strength']:.0%}）",
+            f"资金参与度 {participation:.1f} 分（权重 {V3_BLOCK_WEIGHTS['participation']:.0%}）",
+            f"价格位置 {position_risk:.1f} 分（权重 {V3_BLOCK_WEIGHTS['position_risk']:.0%}）",
+        ],
+        "penalties": penalties,
+        "sector_label": label,
+        "track": track,
+    }
+
+
+def _overheat_flags(
+    *,
+    change_1d: float | None,
+    return_5d: float | None,
+    status: str,
+    distance_high: float | None,
+) -> list[str]:
+    """短期加速/拥挤的**风险披露**，不参与打分也不参与门禁。
+
+    阈值沿用 v2，刻意不按实测结果调整：实测显示这些条件在样本区间里是正向信号，但那
+    来自单一动量区间，反过来押注同样是未经验证的下注。这里只是把"拦截"改成"说明 +
+    首批更小"。
+    """
+    flags: list[str] = []
+    if change_1d is not None and change_1d >= 4.0:
+        flags.append("单日涨幅超过4%，短期加速")
+    if return_5d is not None and return_5d >= 12.0:
+        flags.append("近5日涨幅超过12%，短期加速")
+    if status == "crowded":
+        flags.append("主线处于拥挤阶段")
+    if (
+        distance_high is not None
+        and distance_high >= -1.5
+        and return_5d is not None
+        and return_5d >= 6.0
+    ):
+        flags.append("贴近20日高位且短期涨幅较大")
+    return flags
+
+
+def _entry_triggers_v3(
+    *,
+    entry_state: str,
+    status: str,
+    evidence_quality: str,
+    trend_strength: float,
+    participation: float,
+    position_risk: float,
+    overheat_flags: list[str],
+) -> list[str]:
+    if entry_state == ENTRY_READY_TO_START:
+        triggers = ["首批后继续确认趋势强度与资金参与度，不预先承诺后续加仓"]
+        if overheat_flags:
+            triggers.append("当前处于短期加速，首批按更低比例执行")
+        return triggers
+    triggers: list[str] = []
+    if evidence_quality == "insufficient":
+        triggers.append("补齐20日价格结构与多维证据")
+    if trend_strength < V3_GATE_THRESHOLDS["trend"]:
+        triggers.append("20日相对强度与趋势持续性继续改善")
+    if status not in _DIRECTIONAL_MAINLINE_STATUSES_V3:
+        triggers.append("主线状态升至形成中、已确认或拥挤")
+    if participation < V3_GATE_THRESHOLDS["participation"]:
+        triggers.append("主力资金与上涨广度转为改善")
+    if position_risk < V3_GATE_THRESHOLDS["position"]:
+        triggers.append("价格结构修复（回撤收敛、重新靠近阶段高点）")
+    return _unique_evidence(triggers)[:4]
+
+
+def _invalidation_signals_v3(*, entry_state: str) -> list[str]:
+    values = [
+        "趋势强度与资金参与度同时跌入横截面低位",
+        "主线状态转为退潮",
+        "价格跌破20日均线且相对强度同步转弱",
+    ]
+    if entry_state == ENTRY_READY_ON_PULLBACK:
+        values.append("等待过程中趋势强度跌破入场线")
+    return values[:3]
 
 
 def _entry_structure_score(
@@ -836,14 +1437,40 @@ def _invalidation_signals(
     return values[:3]
 
 
-def _weighted_available_score(
+#: 缺失分量按"中性"计入，既不加分也不减分。
+NEUTRAL_COMPONENT_SCORE = 50.0
+
+
+def _weighted_neutral_fill_score(
     values: tuple[tuple[float | None, float], ...],
-) -> float | None:
-    available = [(value, weight) for value, weight in values if value is not None]
-    total_weight = sum(weight for _, weight in available)
+    *,
+    neutral: float = NEUTRAL_COMPONENT_SCORE,
+) -> tuple[float | None, float]:
+    """跨分量加权，**缺失分量按中性值计入其原有权重**，返回 (分数, 可得权重占比)。
+
+    这修掉了一处代码与自身注释、与 `docs/PROJECT_CONTEXT.md`「缺失证据不重分权重」
+    同时相矛盾的行为：原实现 `_weighted_available_score` 做的正是可得权重重归一化，
+    于是只有一个强分量的方向能拿到很高的分数。真实后果很具体——指数型板块拿不到
+    上涨广度时，形态成熟度里资金的权重被从 0.50 放大到 0.50/0.75≈0.667，而覆盖率上
+    完全看不出来（mainline 覆盖率仍是 0.90，证据等级仍是 complete）。
+
+    中性填充同时自带一个正确的上限：可得权重占比 c 时，分数最高只能到
+    ``neutral + (100 - neutral) * c``，不需要再额外写封顶规则。
+    """
+    total_weight = sum(weight for _, weight in values)
     if total_weight <= 0:
-        return None
-    return sum(float(value) * weight for value, weight in available) / total_weight
+        return None, 0.0
+    available_weight = sum(weight for value, weight in values if value is not None)
+    if available_weight <= 0:
+        return None, 0.0
+    score = (
+        sum(
+            (float(value) if value is not None else neutral) * weight
+            for value, weight in values
+        )
+        / total_weight
+    )
+    return score, available_weight / total_weight
 
 
 def _entry_sort_score(row: dict[str, Any]) -> tuple[float, float, float, float]:
@@ -866,37 +1493,117 @@ def _research_sort_score(row: dict[str, Any]) -> tuple[float, float]:
     )
 
 
-def _take_with_group_limit(
-    rows: list[dict[str, Any]],
-    limit: int,
-    already_selected: list[dict[str, Any]],
-    max_per_group: int,
-) -> list[dict[str, Any]]:
-    picked: list[dict[str, Any]] = []
-    counts: dict[str, int] = {}
-    selected_labels: set[str] = set()
-    selected_identities: set[str] = set()
-    for item in already_selected:
-        group = str(item.get("sector_group") or item.get("sector_label"))
-        counts[group] = counts.get(group, 0) + 1
-        selected_label = str(item["sector_label"])
-        selected_labels.add(selected_label)
-        selected_identities.add(_direction_identity(selected_label))
-    for row in rows:
-        if len(picked) >= limit:
-            break
-        label = str(row["sector_label"])
-        identity = _direction_identity(label)
-        if label in selected_labels or identity in selected_identities:
-            continue
-        group = str(row.get("sector_group") or label)
-        if counts.get(group, 0) >= max_per_group:
-            continue
-        picked.append(row)
-        selected_labels.add(label)
-        selected_identities.add(identity)
-        counts[group] = counts.get(group, 0) + 1
-    return picked
+class _CorrelationAwareLimiter:
+    """名额分配：标签去重 → 手写分组上限 → 实测相关性上限。"""
+
+    def __init__(
+        self,
+        *,
+        max_per_group: int,
+        return_series_by_label: Mapping[
+            str, Sequence[float] | Mapping[str, float]
+        ],
+        max_correlation: float,
+    ) -> None:
+        self._max_per_group = max_per_group
+        self._series: dict[
+            str, Sequence[float] | Mapping[str, float]
+        ] = {}
+        for label, series in return_series_by_label.items():
+            if series is None:
+                continue
+            if isinstance(series, Mapping):
+                normalized: Sequence[float] | Mapping[str, float] = {
+                    str(day): float(value) for day, value in series.items()
+                }
+            else:
+                normalized = [float(value) for value in series]
+            if len(normalized) >= MIN_CORRELATION_SAMPLES:
+                self._series[str(label)] = normalized
+        self._max_correlation = max_correlation
+
+    def take(
+        self,
+        rows: list[dict[str, Any]],
+        limit: int,
+        already_selected: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        picked: list[dict[str, Any]] = []
+        counts: dict[str, int] = {}
+        selected_labels: set[str] = set()
+        selected_identities: set[str] = set()
+        for item in already_selected:
+            group = str(item.get("sector_group") or item.get("sector_label"))
+            counts[group] = counts.get(group, 0) + 1
+            selected_label = str(item["sector_label"])
+            selected_labels.add(selected_label)
+            selected_identities.add(_direction_identity(selected_label))
+        for row in rows:
+            if len(picked) >= limit:
+                break
+            label = str(row["sector_label"])
+            identity = _direction_identity(label)
+            if label in selected_labels or identity in selected_identities:
+                continue
+            group = str(row.get("sector_group") or label)
+            if counts.get(group, 0) >= self._max_per_group:
+                continue
+            if self._too_correlated(label, selected_labels):
+                continue
+            picked.append(row)
+            selected_labels.add(label)
+            selected_identities.add(identity)
+            counts[group] = counts.get(group, 0) + 1
+        return picked
+
+    def _too_correlated(self, label: str, selected_labels: set[str]) -> bool:
+        series = self._series.get(label)
+        if series is None:
+            return False
+        for other in selected_labels:
+            other_series = self._series.get(other)
+            if other_series is None:
+                continue
+            correlation = _pearson_correlation(series, other_series)
+            if correlation is not None and correlation >= self._max_correlation:
+                return True
+        return False
+
+
+def _pearson_correlation(
+    left: Sequence[float] | Mapping[str, float],
+    right: Sequence[float] | Mapping[str, float],
+) -> float | None:
+    """有日期时只用共同交易日；旧数组输入保持尾部对齐兼容。"""
+    if isinstance(left, Mapping) and isinstance(right, Mapping):
+        common_days = sorted(set(left) & set(right))
+        if len(common_days) < MIN_CORRELATION_SAMPLES:
+            return None
+        xs = [float(left[day]) for day in common_days]
+        ys = [float(right[day]) for day in common_days]
+    elif isinstance(left, Mapping) or isinstance(right, Mapping):
+        # 一条有日期、一条没有时无法证明点位一一对应，宁可不去重。
+        return None
+    else:
+        size = min(len(left), len(right))
+        if size < MIN_CORRELATION_SAMPLES:
+            return None
+        xs = list(left)[-size:]
+        ys = list(right)[-size:]
+    size = len(xs)
+    if size < MIN_CORRELATION_SAMPLES:
+        return None
+    mean_x = sum(xs) / size
+    mean_y = sum(ys) / size
+    dx = [value - mean_x for value in xs]
+    dy = [value - mean_y for value in ys]
+    denominator = (
+        sum(value * value for value in dx) ** 0.5
+        * sum(value * value for value in dy) ** 0.5
+    )
+    if denominator <= 0:
+        return None
+    return sum(a * b for a, b in zip(dx, dy)) / denominator
 
 
 def _direction_identity(label: str) -> str:

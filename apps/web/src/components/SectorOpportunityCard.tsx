@@ -30,6 +30,13 @@ const MAINLINE_STATUS: Record<string, { label: string; className: string }> = {
   insufficient: { label: "主线证据不足", className: "status-neutral ring-1 ring-[var(--line)]" },
 };
 
+export const ENTRY_MATURITY_V2 = "sector_entry_maturity.2026-07.v2";
+export const ENTRY_MATURITY_V3 = "sector_entry_maturity.2026-08.v3";
+
+export function isEntryMaturityPolicy(version: string | null | undefined): boolean {
+  return version === ENTRY_MATURITY_V2 || version === ENTRY_MATURITY_V3;
+}
+
 const ENTRY_STATE: Record<string, { label: string; className: string; cardClassName: string }> = {
   ready_to_start: {
     label: "可以开始布局",
@@ -58,6 +65,16 @@ function mainlineMetric(value: number | null | undefined, suffix = "%"): string 
   return `${value > 0 ? "+" : ""}${formatMetric(value)}${suffix}`;
 }
 
+function weightLabel(weight: number | null | undefined): string {
+  if (weight == null || !Number.isFinite(weight)) return "";
+  return `(${Math.round(weight * 100)}%)`;
+}
+
+function formatPercent(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "较低比例";
+  return `${Math.round(value * 100)}%`;
+}
+
 type SectorOpportunityCardProps = {
   item: SectorOpportunity;
   /** Shown when the sector currently doesn't constitute an actionable opportunity (日报持仓场景). */
@@ -80,12 +97,14 @@ export function SectorOpportunityCard({
   const mainline = item.mainline_regime;
   const mainlineMeta = MAINLINE_STATUS[mainline?.status ?? ""] ?? MAINLINE_STATUS.insufficient;
   const mainlineFeatures = mainline?.features;
-  const isEntryV2 = item.score_policy_version === "sector_entry_maturity.2026-07.v2";
+  const isEntryV3 = item.score_policy_version === ENTRY_MATURITY_V3;
+  const hasEntryMaturity = isEntryMaturityPolicy(item.score_policy_version);
   const entryMeta = ENTRY_STATE[item.entry_state ?? ""] ?? ENTRY_STATE.forming;
+  const blockWeights = item.block_weights ?? {};
   return (
     <div
       className={`rounded-xl border px-3 py-3 ${
-        isEntryV2
+        hasEntryMaturity
           ? entryMeta.cardClassName
           : isUnavailable
             ? "border-slate-100 bg-slate-50/40"
@@ -95,7 +114,7 @@ export function SectorOpportunityCard({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="text-sm font-bold text-slate-900">{item.sector_label}</div>
         <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-bold">
-          {isEntryV2 ? (
+          {hasEntryMaturity ? (
             <span className={`rounded-full px-2 py-0.5 ring-1 ${entryMeta.className}`}>
               {entryMeta.label}
             </span>
@@ -126,7 +145,7 @@ export function SectorOpportunityCard({
           ) : null}
         </div>
       </div>
-      {mainline && !isEntryV2 ? (
+      {mainline && !hasEntryMaturity ? (
         <div data-testid="mainline-evidence" className="mt-2 rounded-lg border border-[var(--info-border)] bg-[var(--info-bg)]/60 px-2.5 py-2">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="text-[10px] font-bold text-[var(--info-icon)]">主线雷达 · 仅研究排序</div>
@@ -154,15 +173,56 @@ export function SectorOpportunityCard({
           ))}
         </div>
       ) : null}
-      {isEntryV2 ? (
+      {hasEntryMaturity ? (
         <>
-          <div className="mt-2 grid grid-cols-3 gap-1.5 text-xs text-slate-600">
-            <Metric label="方向潜力" value={`${formatMetric(item.direction_score)} 分`} />
-            <Metric label="形态成熟" value={`${formatMetric(item.setup_maturity_score)} 分`} />
-            <Metric label="入场成熟" value={`${formatMetric(item.entry_readiness_score)} 分`} />
-          </div>
+          {isEntryV3 ? (
+            <>
+              <div className="mt-2 grid grid-cols-3 gap-1.5 text-xs text-slate-600">
+                <Metric
+                  label={`趋势强度 ${weightLabel(blockWeights.trend_strength)}`}
+                  value={`${formatMetric(item.trend_strength_score)} 分`}
+                />
+                <Metric
+                  label={`资金参与 ${weightLabel(blockWeights.participation)}`}
+                  value={`${formatMetric(item.participation_score)} 分`}
+                />
+                <Metric
+                  label={`价格位置 ${weightLabel(blockWeights.position_risk)}`}
+                  value={`${formatMetric(item.position_risk_score)} 分`}
+                />
+              </div>
+              <p className="mt-1.5 text-[10px] leading-4 text-slate-500">
+                三项是互不重叠的独立维度，按括号内权重合成为方向分 {formatMetric(item.direction_score)}；
+                它们不是三重确认。
+              </p>
+            </>
+          ) : (
+            <div className="mt-2 grid grid-cols-3 gap-1.5 text-xs text-slate-600">
+              <Metric label="方向潜力" value={`${formatMetric(item.direction_score)} 分`} />
+              <Metric label="形态成熟" value={`${formatMetric(item.setup_maturity_score)} 分`} />
+              <Metric label="入场成熟" value={`${formatMetric(item.entry_readiness_score)} 分`} />
+            </div>
+          )}
           {item.entry_reason ? (
             <p className="mt-2 text-xs font-medium leading-5 text-slate-700">{item.entry_reason}</p>
+          ) : null}
+          {isEntryV3 && (item.overheat_flags ?? []).length ? (
+            <div
+              data-testid="overheat-disclosure"
+              className="mt-2 rounded-lg border border-[var(--warn-border)] bg-[var(--warn-bg)]/60 px-2.5 py-2"
+            >
+              <div className="text-[10px] font-bold text-[var(--warn-fg)]">
+                短期加速 · 首批按 {formatPercent(item.first_tranche_scale)} 执行
+              </div>
+              {(item.overheat_flags ?? []).slice(0, 2).map((line) => (
+                <p key={line} className="mt-1 break-words text-[11px] leading-4 text-[var(--warn-fg)]">
+                  · {line}
+                </p>
+              ))}
+              <p className="mt-1 text-[10px] leading-4 text-slate-500">
+                过热不再否决方向，但首批更小，且不预先承诺后续加仓。
+              </p>
+            </div>
           ) : null}
           <div className="mt-2 grid grid-cols-2 gap-1.5 text-[11px] text-slate-600">
             <Metric label="近1日 / 近5日" value={`${formatMetric(item.change_1d_percent)} / ${formatMetric(item.change_5d_percent)}%`} />
@@ -196,7 +256,7 @@ export function SectorOpportunityCard({
           />
         </div>
       )}
-      {!isEntryV2 && (item.pattern_label || item.entry_hint) ? (
+      {!hasEntryMaturity && (item.pattern_label || item.entry_hint) ? (
         <p className="mt-2 break-words text-xs leading-5 text-slate-500">
           {item.pattern_label ? patternLabel(item.pattern_label) : ""}
           {item.pattern_label && item.entry_hint ? " · " : ""}

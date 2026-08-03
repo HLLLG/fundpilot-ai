@@ -57,7 +57,7 @@ DEFAULT_DISCOVERY_ROLE_PROMPT = """## 角色定位
 
 ## 决策流程
 
-1. 先判断板块方向：若 `sector_opportunities` 含方向成熟度 V2，优先读取 `entry_state`、`direction_score`、`setup_maturity_score`、`entry_readiness_score` 与触发条件；没有 V2 时才使用旧 `score`、`track`、资金与热度
+1. 先判断板块方向：若 `sector_opportunities` 含方向成熟度 V2/V3，优先读取 `entry_state` 与触发条件；V3 再读取 `trend_strength_score`、`participation_score`、`position_risk_score`，V2 才读取 `direction_score`、`setup_maturity_score`、`entry_readiness_score`；没有成熟度策略时才使用旧 `score`、`track`、资金与热度
 2. 再比较方向内候选基金：优先 `quality_gate`、`fund_quality_score`、`sector_fit_score`、`quality_reasons`，机会优先时重点看 20/60 日趋势与回撤，同时检查规模、`tradeability` 与费用
 3. 最后决定动作：`ready_to_start` 且基金硬门禁通过时应给 `分批买入`；`ready_on_pullback` 给 `等待回调`；`forming` 给 `建议关注`。不得重新用当日大涨把状态升级
 4. 每只推荐必须输出 `decision_path`、`sector_evidence`、`fund_evidence`、`validation_notes`，让用户能看懂“为什么是这个方向、为什么是这只基金、还有哪些短板”
@@ -77,7 +77,7 @@ DEFAULT_DISCOVERY_ROLE_PROMPT = """## 角色定位
 - 每只推荐的 `risks` 须至少 1 条，含追高风险或信息不足时须明确写出
 """
 
-DISCOVERY_PROMPT_TEMPLATE_VERSION = "discovery_prompt.2026-07.v7"
+DISCOVERY_PROMPT_TEMPLATE_VERSION = "discovery_prompt.2026-08.v8"
 
 DISCOVERY_FACTS_INSTRUCTION = (
     "以下数字由系统计算，分析时不得改写；推荐 fund_code 必须来自 candidate_pool，禁止池外编造。"
@@ -85,9 +85,11 @@ DISCOVERY_FACTS_INSTRUCTION = (
     "缺口/补全模式须对照 sector_name 与 weight_percent，避免突破 profile.concentration_limit_percent。"
     "candidate_pool 每只含 fund_quality_score/sector_fit_score、quality_reasons/quality_penalties、阶段收益、回撤、规模、nav_trend、estimated_daily_return_percent。"
     "full_market 模式须先用 sector_opportunities 判断板块方向，再在方向内比较基金质量，最后决定动作；不得只按近1年收益排序。"
-    "sector_opportunities 含 score_policy_version=sector_entry_maturity.2026-07.v2 时，entry_state 是方向动作边界："
+    "sector_opportunities 含 score_policy_version=sector_entry_maturity.2026-07.v2 或 sector_entry_maturity.2026-08.v3 时，entry_state 是方向动作边界："
     "ready_to_start 且基金质量、申购、费用、预算等硬门禁通过时应输出分批买入；"
     "ready_on_pullback 只能等待回调；forming 只能建议关注；不得仅凭当日大涨或主线分改写。"
+    "V3 的 overheat_flags 只缩小 first_tranche_scale，不得把 ready_to_start 改写成不可买入；"
+    "V3 不存在独立入场成熟度分，须分别解释趋势强度、资金参与度与价格位置。"
     "每只推荐须给出 decision_path、sector_evidence、fund_evidence、validation_notes。"
     "优先从 fund_quality_score 较高且 quality_penalties 可接受的候选中挑选；账户亏损复核线不得直接用于候选历史回撤准入。"
     "任何买入还须通过 tradeability：fresh、可申购、金额达到购买起点且不突破日限额；未知/冲突只能观察。"

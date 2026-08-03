@@ -61,10 +61,14 @@ recommendations 字段约束：
   费用不可核验、最短持有不足7天或标准费率上限成本过高时只能观察，不得用预期涨幅抵消费用门禁
 - full_market 模式须先判断板块方向，再在方向内选基金；不得只按基金近1年收益排序
 - 南向资金仅使用 stock_connect_flow，并只作港股资金面参考；板块主力使用 target_sector_context.sector_fund_flow
-- sector_opportunities 若含 score_policy_version=sector_entry_maturity.2026-07.v2，须以 entry_state 为方向动作边界：
-  ready_to_start 表示方向、资金与价格位置已同时通过，可在基金硬门禁通过时使用分批买入；
-  ready_on_pullback 只能等待回调；forming 只能建议关注。不得用当日热度覆盖该状态
-- mainline_regime 单独仍只参与研究排序；只有方向成熟度 V2 的完整组合状态可以开放首批入场，不构成收益保证
+- sector_opportunities 含 score_policy_version（sector_entry_maturity.2026-07.v2 或 2026-08.v3）时，须以 entry_state 为方向动作边界：
+  ready_to_start 表示趋势、资金参与度与价格位置已同时通过，可在基金硬门禁通过时使用分批买入；
+  ready_on_pullback 只能等待；forming 只能建议关注。不得用当日热度覆盖该状态
+- v3 的 overheat_flags 是风险披露而非否决理由：命中时按 first_tranche_scale 缩小首批，
+  文案须说明"短期加速、首批更小、不预先承诺后续"，不得因此改写为不可买入
+- v3 没有"入场成熟度"这个分数；三个分块（趋势强度/资金参与度/价格位置）各自独立，
+  权重见 block_weights，不得把它们描述为三重确认
+- mainline_regime 单独仍只参与研究排序；只有方向成熟度 V2/V3 的完整组合状态可以开放首批入场，不构成收益保证
 - signal_backtest / candidate_factor_scores 按 confidence.level / factor_reliability 表述
 - candidate_factor_scores.execution_qualified_fund_codes 只可作为量化加分证据；opportunity_first 下未覆盖不得单独否决买入，risk_first 下仍作为买入白名单；任何模式都不得把描述性覆盖写成量化背书
 - profile.account_loss_review_percent 只用于账户/现有持仓亏损复核，不得直接与候选基金近1年最大回撤比较
@@ -88,7 +92,7 @@ _COMMON_REQUIREMENTS = [
     "每只 recommendations 须含 hold_horizon、risks（至少 1 条）、points（引用 candidate_pool 具体字段）",
     "每只 recommendations 须含 decision_path、sector_evidence、fund_evidence、validation_notes",
     "先判断板块方向，再比较方向内基金质量分，最后决定动作",
-    "方向成熟度 V2 存在时严格按 entry_state：ready_to_start + 基金硬门禁通过应给分批买入；ready_on_pullback 给等待回调；forming 给建议关注",
+    "方向成熟度 V2/V3 存在时严格按 entry_state：ready_to_start + 基金硬门禁通过应给分批买入；ready_on_pullback 给等待回调；forming 给建议关注；V3 过热仅缩小首批",
     "展示文本使用中文标签，不要原样输出 fund_quality_score/sector_fit_score/quality_penalties 等内部字段名",
     "estimated_daily_return_percent 且 daily_return_source=sector_estimate 时，points 须注明「估算」",
     "判断追高风险须参考 nav_trend.distance_from_high_percent / trend_label，不得只看 sector_heat",
@@ -247,8 +251,18 @@ def _slim_sector_opportunities(items: list[dict]) -> list[dict]:
             "research_score": item.get("research_score"),
             "score_policy_version": item.get("score_policy_version"),
             "direction_score": item.get("direction_score"),
+            # v3 的三个正交分块；v2 报告里为 None，反之亦然。
+            "trend_strength_score": item.get("trend_strength_score"),
+            "participation_score": item.get("participation_score"),
+            "position_risk_score": item.get("position_risk_score"),
+            "block_weights": item.get("block_weights"),
+            "overheat_flags": item.get("overheat_flags") or [],
+            "first_tranche_scale": item.get("first_tranche_scale"),
+            "component_coverage": item.get("component_coverage"),
+            # v2 遗留字段（历史报告仍在用）
             "setup_maturity_score": item.get("setup_maturity_score"),
             "entry_readiness_score": item.get("entry_readiness_score"),
+            "price_structure_score": item.get("price_structure_score"),
             "data_coverage": item.get("data_coverage"),
             "evidence_quality": item.get("evidence_quality"),
             "entry_state": item.get("entry_state"),

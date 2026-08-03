@@ -10,6 +10,16 @@ from app.services.sector_opportunity_scoring import (
 )
 
 
+def _select_v2(*args, **kwargs):
+    """显式回放 v2 口径。
+
+    线上默认已切到 `sector_entry_maturity.2026-08.v3`，但 v2 仍然必须保留并被测试覆盖：
+    历史报告是按 v2 冻结的，重新用 v3 的规则解读它们会改写既有结论。
+    """
+    kwargs.setdefault("entry_policy_version", ENTRY_POLICY_VERSION)
+    return select_sector_opportunities(*args, **kwargs)
+
+
 def _flow(today: float, five_day: float, *, pattern: str = "price_flow_aligned_up") -> dict:
     return {
         "available": True,
@@ -103,7 +113,7 @@ def test_screenshot_replay_prefers_mature_lithium_over_hot_incomplete_rebound() 
             position_label="high_extended",
         ),
     }
-    rows = select_sector_opportunities(
+    rows = _select_v2(
         heat,
         sector_flow_by_label={
             "锂电池": _flow(76.92, 210.45),
@@ -125,7 +135,7 @@ def test_screenshot_replay_prefers_mature_lithium_over_hot_incomplete_rebound() 
 
 
 def test_strong_but_extended_direction_waits_for_pullback() -> None:
-    rows = select_sector_opportunities(
+    rows = _select_v2(
         [
             {
                 "sector_label": "机器人",
@@ -152,7 +162,7 @@ def test_strong_but_extended_direction_waits_for_pullback() -> None:
 
 
 def test_near_high_with_calm_price_and_confirmed_flow_can_start_small() -> None:
-    rows = select_sector_opportunities(
+    rows = _select_v2(
         [
             {
                 "sector_label": "保险",
@@ -197,7 +207,7 @@ def test_equivalent_broad_market_labels_only_take_one_recommendation_slot() -> N
             "heat_score": 1.28,
         },
     ]
-    rows = select_sector_opportunities(
+    rows = _select_v2(
         heat,
         sector_flow_by_label={
             "港股通": _flow(10.0, 40.0),
@@ -248,7 +258,7 @@ def test_missing_mainline_evidence_cannot_outrank_complete_forming_direction() -
         {"sector_label": "数据完整", "change_1d_percent": 0.8, "change_5d_percent": 2.0, "heat_score": 1.28},
         {"sector_label": "数据缺失", "change_1d_percent": 9.0, "change_5d_percent": -6.0, "heat_score": 3.0},
     ]
-    rows = select_sector_opportunities(
+    rows = _select_v2(
         heat,
         sector_flow_by_label={"数据完整": _flow(5.0, 8.0)},
         mainline_by_label={"数据完整": _mainline("数据完整", status="forming")},

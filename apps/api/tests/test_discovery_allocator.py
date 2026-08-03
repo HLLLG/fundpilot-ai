@@ -14,7 +14,16 @@ from app.services.discovery_allocator import (
     RISK_CONTEXT_SCHEMA_VERSION,
     allocate_discovery_candidates,
 )
+from app.services.discovery_allocation_service import (
+    _entry_maturity_tranche_ratio_cap,
+)
 from app.services.fund_tradeability import TRADEABILITY_GATE_SCHEMA_VERSION
+from app.models import DiscoveryRecommendation
+from app.services.sector_opportunity_scoring import (
+    ENTRY_POLICY_VERSION,
+    ENTRY_POLICY_VERSION_V3,
+    ENTRY_READY_TO_START,
+)
 
 
 def _gate(*, minimum: float = 100, maximum: float | None = None) -> dict:
@@ -122,6 +131,50 @@ def _amounts(plan: dict) -> dict[str, float]:
         row["fund_code"]: row["suggested_amount_yuan"]
         for row in plan["allocations"]
     }
+
+
+def _recommendation(sector: str) -> DiscoveryRecommendation:
+    return DiscoveryRecommendation(
+        fund_code="000001",
+        fund_name="测试基金",
+        sector_name=sector,
+        action="分批买入",
+        confidence="中",
+        points=["测试"],
+    )
+
+
+def test_entry_maturity_v3_scales_the_deterministic_first_tranche() -> None:
+    facts = {
+        "sector_opportunities": [
+            {
+                "sector_label": "半导体",
+                "score_policy_version": ENTRY_POLICY_VERSION_V3,
+                "entry_state": ENTRY_READY_TO_START,
+                "first_tranche_scale": 0.6,
+            }
+        ]
+    }
+
+    assert _entry_maturity_tranche_ratio_cap(
+        facts, [_recommendation("半导体")]
+    ) == 0.12
+
+
+def test_entry_maturity_v2_keeps_the_twenty_percent_cap() -> None:
+    facts = {
+        "sector_opportunities": [
+            {
+                "sector_label": "半导体",
+                "score_policy_version": ENTRY_POLICY_VERSION,
+                "entry_state": ENTRY_READY_TO_START,
+            }
+        ]
+    }
+
+    assert _entry_maturity_tranche_ratio_cap(
+        facts, [_recommendation("半导体")]
+    ) == 0.20
 
 
 def test_missing_risk_context_blocks_all_executable_amounts() -> None:

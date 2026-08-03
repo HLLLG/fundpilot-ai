@@ -124,6 +124,45 @@ def _series_has_date(series: list[dict[str, Any]], trade_date: str) -> bool:
     return any(point.get("date") == trade_date for point in series)
 
 
+#: 计算板块自身资金体量基准所用的回看长度与最少点数。
+_FLOW_SCALE_LOOKBACK_DAYS = 20
+_FLOW_SCALE_MIN_POINTS = 10
+
+
+def _flow_scale_yi(points: list[dict[str, Any]]) -> float | None:
+    """板块自身的"典型单日资金体量"= 近 20 日 |主力净流入| 的均值（亿元）。
+
+    用于把净流入换算成无量纲强度。**这是修掉一个真实的横截面偏差**：此前
+    `mainline_regime` 直接拿绝对亿元做全市场分位排名，银行/证券/有色这类自由流通市值
+    大一个量级的板块会机械性地占据资金分位榜首，而分位高低本该反映"这个板块的资金比
+    它自己平时强多少"，不是"这个板块比别的板块大多少"。离线回测实测该分量的
+    Rank IC 显著为负（-0.105 / -0.082 / -0.057，T+5/10/20），规模偏差是候选原因之一。
+    """
+    values = [
+        abs(number)
+        for point in points[-_FLOW_SCALE_LOOKBACK_DAYS:]
+        if (number := _finite_number(point.get("main_force_net_yi"))) is not None
+    ]
+    if len(values) < _FLOW_SCALE_MIN_POINTS:
+        return None
+    scale = sum(values) / len(values)
+    return round(scale, 4) if scale > 0 else None
+
+
+def _normalized_flow(
+    cumulative: float | None,
+    scale: float | None,
+    days: int,
+) -> float | None:
+    """累计净流入 ÷（典型单日体量 × 天数）：日均净流入相当于平时多少倍毛流量。
+
+    量纲无关，取值通常落在 [-1, 1]（净流入不可能持续超过毛流量）。
+    """
+    if cumulative is None or scale is None or scale <= 0 or days <= 0:
+        return None
+    return round(cumulative / (scale * days), 4)
+
+
 def _main_force_direction(value: float | None) -> str | None:
     if value is None:
         return None
@@ -615,6 +654,11 @@ def build_sector_fund_flow_context(
         cumulative_5d = None
         five_day_source = None
     cumulative_20d = _sum_main_force(recent_20d)
+    flow_scale = _flow_scale_yi(series)
+    # 资金口径身份：解析到 BK 码走的是东财板块资金流；没有 BK 码而仍拿到数字，说明走的是
+    # 主题指数 m:2 的 f62 回退（成分与构造都不同）。两种口径不能混进同一个横截面分位池，
+    # 否则"资金分位"是在比较两把不同的尺子。
+    flow_universe = "eastmoney_board" if board_code else "index_constituent_aggregate"
 
     if date_aligned:
         pattern = _classify_flow_pattern(
@@ -649,6 +693,13 @@ def build_sector_fund_flow_context(
         ),
         "cumulative_5d_net_yi": cumulative_5d,
         "cumulative_20d_net_yi": cumulative_20d,
+        "flow_scale_yi": flow_scale,
+        "flow_universe": flow_universe,
+        "normalized_today_net": _normalized_flow(
+            _finite_number(today_flow), flow_scale, 1
+        ),
+        "normalized_5d_net": _normalized_flow(cumulative_5d, flow_scale, 5),
+        "normalized_20d_net": _normalized_flow(cumulative_20d, flow_scale, 20),
         # 仅保留「今日」的机构/大单/中单/散户四档结构（flow_tiers），5d/20d 只给主力
         #净流入的汇总数字——不把每日逐档明细序列喂给 LLM（体积大且当前判断逻辑
         # 用不上逐日结构，只在最新一天做「机构 vs 散户」背离解读）。

@@ -182,7 +182,7 @@ describe("DiscoveryReportPanel", () => {
 
     expect(screen.getByText("今日可布局方向")).toBeInTheDocument();
     expect(screen.getByText("0 个通过入场线")).toBeInTheDocument();
-    expect(screen.getByText("今天没有方向同时通过三道校验")).toBeInTheDocument();
+    expect(screen.getByText("今天没有方向通过当前入场线")).toBeInTheDocument();
     expect(screen.getByText(/不会拿当日热门板块凑数/)).toBeInTheDocument();
   });
 

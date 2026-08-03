@@ -136,3 +136,33 @@ it("shows mainline status and keeps it explicitly research-only", () => {
   expect(screen.getByText(/当前大市值成分股代理（8 只）/)).toBeInTheDocument();
   expect(screen.getByText(/风险：接近20日高位/)).toBeInTheDocument();
 });
+
+it("renders v3 orthogonal blocks and overheat as a smaller first tranche", () => {
+  render(
+    <SectorOpportunityCard
+      item={{
+        sector_label: "半导体",
+        score_policy_version: "sector_entry_maturity.2026-08.v3",
+        entry_state: "ready_to_start",
+        direction_score: 74.2,
+        trend_strength_score: 82,
+        participation_score: 58,
+        position_risk_score: 61,
+        block_weights: {
+          trend_strength: 0.7,
+          participation: 0.15,
+          position_risk: 0.15,
+        },
+        overheat_flags: ["近5日涨幅超过12%，短期加速"],
+        first_tranche_scale: 0.4,
+      }}
+    />,
+  );
+
+  expect(screen.getByText(/趋势强度 \(70%\)/)).toBeInTheDocument();
+  expect(screen.getByText(/资金参与 \(15%\)/)).toBeInTheDocument();
+  expect(screen.getByText(/价格位置 \(15%\)/)).toBeInTheDocument();
+  expect(screen.getByText(/它们不是三重确认/)).toBeInTheDocument();
+  expect(screen.getByTestId("overheat-disclosure")).toHaveTextContent("首批按 40% 执行");
+  expect(screen.queryByText("入场成熟")).not.toBeInTheDocument();
+});

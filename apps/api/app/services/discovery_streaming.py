@@ -61,6 +61,7 @@ from app.services.discovery_sector_opportunity import (
 )
 from app.services.discovery_sector_heat import build_sector_heat_ranking
 from app.services.discovery_sector_position import (
+    build_sector_percentile_universe_positions,
     build_sector_position_map_for_opportunities,
 )
 from app.services.discovery_sector_prefilter import select_opportunity_evidence_labels
@@ -272,23 +273,38 @@ def _stream_discovery(
                 started_at=started_at,
                 stop_event=stop,
             )
+            universe_position_future = executor.submit(
+                build_sector_percentile_universe_positions,
+                [row["sector_label"] for row in sector_heat if row.get("sector_label")],
+                exclude_labels=flow_labels,
+                reference_positions=sector_position_by_label,
+                as_of_trade_date=effective_trade_date,
+            )
+            prep_futures.append(universe_position_future)
+            percentile_position_by_label = yield from _await_future_with_progress(
+                universe_position_future,
+                "sector_heat",
+                "正在扩展板块相对强度分位…",
+                started_at=started_at,
+                stop_event=stop,
+            )
             mainline_snapshot = build_mainline_regime_snapshot(
                 sector_heat,
                 sector_flow_by_label=sector_flow_by_label,
                 sector_position_by_label=sector_position_by_label,
                 sector_labels=flow_labels,
+                percentile_position_by_label=percentile_position_by_label,
                 decision_at=decision_at,
             )
             mainline_by_label = mainline_regime_by_label(mainline_snapshot)
-            sector_opportunities = select_sector_opportunities(
+            sector_opportunities = _score_select_and_persist_directions(
                 sector_heat,
                 sector_flow_by_label=sector_flow_by_label,
                 sector_divergence_by_label=sector_divergence_by_label,
                 mainline_by_label=mainline_by_label,
+                sector_position_by_label=sector_position_by_label,
                 focus_sectors=list(request.focus_sectors),
-                max_total=8,
-                momentum_slots=4,
-                setup_slots=4,
+                effective_trade_date=effective_trade_date,
             )
             if request.scan_mode == "full_market" and sector_opportunities:
                 target_sectors = [str(item["sector_label"]) for item in sector_opportunities]
@@ -903,6 +919,15 @@ def _done(report: FundDiscoveryReport) -> dict[str, Any]:
         "report_id": report.id,
         "report": report.model_dump(mode="json"),
     }
+
+
+def _score_select_and_persist_directions(*args: Any, **kwargs: Any) -> list[dict]:
+    """与同步 pipeline 共用同一份"打分 → 滞回 → 选择 → 落盘"实现，避免两条链路漂移。"""
+    from app.services.discovery_pipeline import (
+        _score_select_and_persist_directions as _impl,
+    )
+
+    return _impl(*args, **kwargs)
 
 
 def _opportunity_flow_labels(

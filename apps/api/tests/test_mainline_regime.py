@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
 
-from app.services.discovery_sector_position import summarize_sector_position
+from app.services.discovery_sector_position import (
+    build_sector_percentile_universe_positions,
+    summarize_sector_position,
+)
 from app.services.mainline_regime import (
     align_sector_opportunities_with_mainline_snapshot,
     build_mainline_regime_snapshot,
@@ -225,3 +228,53 @@ def test_sector_position_excludes_future_rows_and_aligns_benchmark() -> None:
     assert result["return_20d_percent"] < 100
     assert result["relative_return_20d_percent"] is not None
     assert result["relative_return_20d_percent"] > 0
+
+
+def test_percentile_universe_is_zero_network_and_preserves_hk_benchmark_identity(
+    monkeypatch,
+) -> None:
+    days = [
+        (date(2026, 1, 1) + timedelta(days=index)).isoformat()
+        for index in range(90)
+    ]
+    rows = [
+        {"date": day, "close": 100.0 + index * 0.8}
+        for index, day in enumerate(days)
+    ]
+
+    monkeypatch.setattr(
+        "app.services.discovery_sector_position._cache_only_fetch_series_for_label",
+        lambda _label: rows,
+    )
+    monkeypatch.setattr(
+        "app.services.discovery_sector_position._default_fetch_benchmark",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("percentile expansion must stay cache-only")
+        ),
+    )
+    reference = {
+        "港股": {
+            "available": True,
+            "benchmark_code": "HSI",
+            "return_10d_percent": 12.0,
+            "relative_return_10d_percent": 2.0,
+            "return_20d_percent": 24.0,
+            "relative_return_20d_percent": 4.0,
+            "return_60d_percent": 66.0,
+            "relative_return_60d_percent": 6.0,
+        }
+    }
+
+    result = build_sector_percentile_universe_positions(
+        ["港股", "港股医药"],
+        exclude_labels=["港股"],
+        reference_positions=reference,
+    )
+    row = result["港股医药"]
+
+    assert row["benchmark_code"] == "HSI"
+    assert row["benchmark_name"] == "恒生指数"
+    assert row["benchmark_source"] == "derived_from_reference_positions"
+    assert row["relative_return_20d_percent"] == round(
+        row["return_20d_percent"] - 20.0, 2
+    )

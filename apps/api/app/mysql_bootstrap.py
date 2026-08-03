@@ -1057,6 +1057,25 @@ def _ensure_mysql_schema_locked(
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """,
         """
+        CREATE TABLE IF NOT EXISTS sector_direction_states (
+            trade_date VARCHAR(16) NOT NULL,
+            sector_label VARCHAR(255) NOT NULL,
+            schema_version VARCHAR(64) NOT NULL,
+            policy_version VARCHAR(64) NOT NULL,
+            entry_state VARCHAR(32) NOT NULL,
+            raw_entry_state VARCHAR(32) NOT NULL,
+            qualifies_for_ready TINYINT NOT NULL,
+            consecutive_qualifying_days INT NOT NULL,
+            trend_strength_score DOUBLE NULL,
+            participation_score DOUBLE NULL,
+            position_risk_score DOUBLE NULL,
+            direction_score DOUBLE NULL,
+            recorded_at VARCHAR(64) NOT NULL,
+            PRIMARY KEY (trade_date, sector_label),
+            INDEX idx_sector_direction_state_label_date (sector_label, trade_date)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """,
+        """
         CREATE TABLE IF NOT EXISTS refresh_tokens (
             id VARCHAR(64) PRIMARY KEY,
             userId BIGINT NOT NULL,

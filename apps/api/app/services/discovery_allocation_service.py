@@ -20,7 +20,10 @@ from app.services.fund_tradeability import (
 )
 from app.services.sector_opportunity_scoring import (
     ENTRY_POLICY_VERSION,
+    ENTRY_POLICY_VERSION_V3,
     ENTRY_READY_TO_START,
+    MATURITY_POLICY_VERSIONS,
+    V3_FIRST_TRANCHE_SCALE_CROWDED,
 )
 
 
@@ -291,20 +294,38 @@ def _entry_maturity_tranche_ratio_cap(
     opportunities = discovery_facts.get("sector_opportunities")
     if not isinstance(opportunities, list):
         return None
-    ready_sectors = {
-        str(item.get("sector_label") or "").strip()
+    ready_by_sector = {
+        str(item.get("sector_label") or "").strip(): item
         for item in opportunities
         if isinstance(item, Mapping)
-        and str(item.get("score_policy_version") or "") == ENTRY_POLICY_VERSION
+        and str(item.get("score_policy_version") or "") in MATURITY_POLICY_VERSIONS
         and str(item.get("entry_state") or "") == ENTRY_READY_TO_START
+        and str(item.get("sector_label") or "").strip()
     }
-    if not ready_sectors or not recommendations:
+    if not ready_by_sector or not recommendations:
         return None
-    if all(str(item.sector_name or "").strip() in ready_sectors for item in recommendations):
-        # A newly matured direction starts with at most one fifth of the verified
-        # spendable budget.  Later tranches still require a fresh scan.
-        return 0.20
-    return None
+    recommendation_sectors = [
+        str(item.sector_name or "").strip() for item in recommendations
+    ]
+    if not all(sector in ready_by_sector for sector in recommendation_sectors):
+        return None
+
+    # A newly matured direction starts with at most one fifth of the verified
+    # spendable budget. V3 then applies its observed overheat scale to that first
+    # tranche. The allocator currently has one portfolio-level cap, so multiple
+    # ready directions use the smallest scale rather than letting a hot direction
+    # borrow another direction's unscaled budget.
+    scales: list[float] = []
+    for sector in recommendation_sectors:
+        opportunity = ready_by_sector[sector]
+        if str(opportunity.get("score_policy_version") or "") != ENTRY_POLICY_VERSION_V3:
+            scales.append(1.0)
+            continue
+        scale = _finite_number(opportunity.get("first_tranche_scale"))
+        if scale is None or not 0 < scale <= 1:
+            scale = V3_FIRST_TRANCHE_SCALE_CROWDED
+        scales.append(scale)
+    return round(0.20 * min(scales), 4)
 
 
 def _allocator_candidate(

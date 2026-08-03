@@ -1142,6 +1142,49 @@ def test_entry_maturity_v2_promotes_verified_ready_direction_to_initial_buy():
     assert any("ready_to_start" in item for item in guarded[0].validation_notes)
 
 
+def test_entry_maturity_v3_ready_state_owns_the_action_boundary():
+    candidate = _eligible_guard_candidate(
+        quality_gate={"status": "eligible", "eligible": True, "reasons": []}
+    )
+    candidate["nav_trend"] = {
+        "recent_5d_change_percent": 2.0,
+        "return_20d_percent": 8.0,
+        "distance_from_high_percent": -5.0,
+    }
+    guarded, _caveats, _ = _run_guard_for_test(
+        [
+            DiscoveryRecommendation(
+                fund_code="020356",
+                fund_name="守卫测试基金A",
+                sector_name="半导体",
+                action="建议关注",
+                suggested_amount_yuan=1000,
+                confidence="中",
+            )
+        ],
+        candidate,
+        extra_facts={
+            "effective_configuration": {"discovery_strategy": "opportunity_first"},
+            "sector_opportunities": [
+                {
+                    "sector_label": "半导体",
+                    "score_policy_version": "sector_entry_maturity.2026-08.v3",
+                    "entry_state": "ready_to_start",
+                    "trend_strength_score": 78.0,
+                    "evidence_quality": "complete",
+                    "confidence": "中",
+                    "pattern_label": "distribution",
+                    "cumulative_5d_net_yi": -3.0,
+                }
+            ],
+        },
+    )
+
+    assert guarded[0].action == "分批买入"
+    assert any("方向成熟度 V3" in item for item in guarded[0].points)
+    assert all("近5日主力净流出" not in item for item in guarded[0].points)
+
+
 def test_ready_direction_uses_passive_vehicle_quality_instead_of_sector_returns():
     candidate = _eligible_guard_candidate(
         quality_gate={"status": "eligible", "eligible": True, "reasons": []}

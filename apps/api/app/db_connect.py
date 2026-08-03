@@ -404,6 +404,52 @@ class DbConnection:
                 error=error,
             )
 
+    def executemany(
+        self,
+        sql: str,
+        params: list[tuple[Any, ...]] | tuple[tuple[Any, ...], ...],
+    ) -> Any:
+        """Execute one statement for multiple parameter rows on either dialect."""
+        if self.dialect == "mysql":
+            import pymysql
+            from app.services.performance_metrics import record_db_query
+
+            statement = adapt_sql(sql)
+            cursor = self._raw.cursor(pymysql.cursors.DictCursor)
+            started_at = time.perf_counter()
+            error: BaseException | None = None
+            try:
+                cursor.executemany(statement, params)
+            except Exception as exc:
+                error = exc
+                cursor.close()
+                raise
+            finally:
+                record_db_query(
+                    "mysql",
+                    statement,
+                    time.perf_counter() - started_at,
+                    error=error,
+                )
+            return ManagedMySqlCursor(cursor)
+
+        from app.services.performance_metrics import record_db_query
+
+        started_at = time.perf_counter()
+        error: BaseException | None = None
+        try:
+            return self._raw.executemany(sql, params)
+        except Exception as exc:
+            error = exc
+            raise
+        finally:
+            record_db_query(
+                "sqlite",
+                sql,
+                time.perf_counter() - started_at,
+                error=error,
+            )
+
     def commit(self) -> None:
         self._raw.commit()
 

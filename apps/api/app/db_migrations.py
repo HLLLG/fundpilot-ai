@@ -485,6 +485,41 @@ def _migrate_swing_alert_fired(connection: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_sector_direction_states(connection: sqlite3.Connection) -> None:
+    """每交易日每板块一行方向状态，供 v3 的跨日滞回使用。
+
+    没有这张表时，方向状态只有"今天"这一个观测：今天 ready、明天掉回 forming、后天又
+    上来，用户看到的方向天天变，而 `invalidation_signals` 只是文案、没有任何机制真的在
+    跟踪它们。有了它才能要求"连续 N 日达标才进入可布局"，并如实显示"已满足 X 天"。
+    """
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS sector_direction_states (
+            trade_date TEXT NOT NULL,
+            sector_label TEXT NOT NULL,
+            schema_version TEXT NOT NULL,
+            policy_version TEXT NOT NULL,
+            entry_state TEXT NOT NULL,
+            raw_entry_state TEXT NOT NULL,
+            qualifies_for_ready INTEGER NOT NULL,
+            consecutive_qualifying_days INTEGER NOT NULL,
+            trend_strength_score REAL,
+            participation_score REAL,
+            position_risk_score REAL,
+            direction_score REAL,
+            recorded_at TEXT NOT NULL,
+            PRIMARY KEY (trade_date, sector_label)
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_sector_direction_state_label_date
+        ON sector_direction_states (sector_label, trade_date DESC)
+        """
+    )
+
+
 def _migrate_factor_ic_snapshots(connection: sqlite3.Connection) -> None:
     connection.execute(
         """
@@ -1679,6 +1714,7 @@ def _run_migrations_locked(connection: sqlite3.Connection) -> None:
     if version >= SCHEMA_VERSION:
         _migrate_performance_schema_v19(connection)
         _migrate_performance_schema_v20(connection)
+        _migrate_sector_direction_states(connection)
         _migrate_fund_primary_sectors_global(connection)
         _migrate_factor_ic_snapshots(connection)
         _migrate_factor_ic_universe_snapshots(connection)
@@ -1749,6 +1785,7 @@ def _run_migrations_locked(connection: sqlite3.Connection) -> None:
     _migrate_discovery_tables(connection)
     _migrate_discovery_prompt_state(connection)
     _migrate_swing_alert_fired(connection)
+    _migrate_sector_direction_states(connection)
     _migrate_fund_primary_sectors_global(connection)
     _migrate_factor_ic_snapshots(connection)
     _migrate_factor_ic_universe_snapshots(connection)

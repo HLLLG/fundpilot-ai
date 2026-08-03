@@ -31,6 +31,7 @@ from app.services.discovery_sector_opportunity import (
 )
 from app.services.discovery_sector_heat import build_sector_heat_ranking
 from app.services.discovery_sector_position import (
+    build_sector_percentile_universe_positions,
     build_sector_position_map_for_opportunities,
 )
 from app.services.discovery_sector_prefilter import select_opportunity_evidence_labels
@@ -159,23 +160,29 @@ def run_discovery(
         sector_flow_by_label = flow_future.result()
         sector_divergence_by_label = divergence_future.result()
         sector_position_by_label = position_future.result()
+    percentile_position_by_label = build_sector_percentile_universe_positions(
+        [row["sector_label"] for row in sector_heat if row.get("sector_label")],
+        exclude_labels=flow_labels,
+        reference_positions=sector_position_by_label,
+        as_of_trade_date=effective_trade_date,
+    )
     mainline_snapshot = build_mainline_regime_snapshot(
         sector_heat,
         sector_flow_by_label=sector_flow_by_label,
         sector_position_by_label=sector_position_by_label,
         sector_labels=flow_labels,
+        percentile_position_by_label=percentile_position_by_label,
         decision_at=decision_at,
     )
     mainline_by_label = mainline_regime_by_label(mainline_snapshot)
-    sector_opportunities = select_sector_opportunities(
+    sector_opportunities = _score_select_and_persist_directions(
         sector_heat,
         sector_flow_by_label=sector_flow_by_label,
         sector_divergence_by_label=sector_divergence_by_label,
         mainline_by_label=mainline_by_label,
+        sector_position_by_label=sector_position_by_label,
         focus_sectors=list(request.focus_sectors),
-        max_total=8,
-        momentum_slots=4,
-        setup_slots=4,
+        effective_trade_date=effective_trade_date,
     )
     if request.scan_mode == "full_market" and sector_opportunities:
         target_sectors = [str(item["sector_label"]) for item in sector_opportunities]
@@ -446,3 +453,68 @@ def _opportunity_flow_labels(
         target_sectors,
         focus_sectors,
     )
+
+
+def _score_select_and_persist_directions(
+    sector_heat: list[dict],
+    *,
+    sector_flow_by_label: dict,
+    sector_divergence_by_label: dict,
+    mainline_by_label: dict,
+    sector_position_by_label: dict,
+    focus_sectors: list[str],
+    effective_trade_date: str | None,
+) -> list[dict]:
+    """打分 → 跨日滞回 → 选择 → 落盘当日状态。
+
+    滞回必须在**选择之前**生效：`entry_state` 是排序的第一优先级，如果先选 8 个再改状态，
+    展示出来的状态和入选依据就是两套东西。
+    """
+    from app.services.sector_direction_state import (
+        apply_direction_state_hysteresis,
+        load_previous_direction_states,
+        record_direction_states,
+    )
+    from app.services.sector_opportunity_scoring import (
+        score_sector_opportunity_rows,
+        select_scored_sector_opportunities,
+    )
+    from app.services.trading_session import get_previous_trade_date
+
+    rows = score_sector_opportunity_rows(
+        sector_heat,
+        sector_flow_by_label=sector_flow_by_label,
+        sector_divergence_by_label=sector_divergence_by_label,
+        mainline_by_label=mainline_by_label,
+        focus_sectors=focus_sectors,
+        # 状态表需要看到完整横截面（包括当日 invalid），否则一个已确认方向真正失效时
+        # 只会从表里消失，无法留下退出证据。选择阶段再按 opportunity_available 过滤，
+        # 与此前线上展示范围保持一致。
+        drop_unavailable=False,
+    )
+    previous_trade_date = (
+        get_previous_trade_date(effective_trade_date) if effective_trade_date else None
+    )
+    rows = apply_direction_state_hysteresis(
+        rows,
+        trade_date=effective_trade_date,
+        previous_trade_date=previous_trade_date,
+        previous_states=load_previous_direction_states(previous_trade_date),
+    )
+    record_direction_states(rows, trade_date=effective_trade_date)
+    return select_scored_sector_opportunities(
+        [row for row in rows if row.get("opportunity_available")],
+        max_total=8,
+        momentum_slots=4,
+        setup_slots=4,
+        return_series_by_label=_return_series_from_positions(sector_position_by_label),
+    )
+
+
+def _return_series_from_positions(positions: dict) -> dict[str, list[float]]:
+    result: dict[str, list[float]] = {}
+    for label, row in (positions or {}).items():
+        series = (row or {}).get("daily_returns_20d")
+        if isinstance(series, (list, tuple)) and series:
+            result[str(label)] = [float(value) for value in series]
+    return result

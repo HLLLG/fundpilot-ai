@@ -29,9 +29,11 @@ from app.services.discovery_strategy import (
 from app.services.sector_opportunity_scoring import (
     ENTRY_FORMING,
     ENTRY_INVALID,
-    ENTRY_POLICY_VERSION,
+    ENTRY_POLICY_VERSION_V3,
     ENTRY_READY_ON_PULLBACK,
     ENTRY_READY_TO_START,
+    MATURITY_POLICY_VERSIONS,
+    V3_GATE_THRESHOLDS,
 )
 from app.services.fund_tradeability import (
     assess_tradeability_for_amount,
@@ -598,6 +600,14 @@ def apply_discovery_guards(
         recent_5d = _as_float(nav_trend.get("recent_5d_change_percent"))
         recent_20d = _as_float(nav_trend.get("return_20d_percent"))
         entry_state = _entry_state_v2(opportunity)
+        entry_policy_version = str(
+            (opportunity or {}).get("score_policy_version") or ""
+        )
+        maturity_label = (
+            "方向成熟度 V3"
+            if entry_policy_version == ENTRY_POLICY_VERSION_V3
+            else "方向成熟度 V2"
+        )
         fund_price_extended = bool(
             (
                 dist_high is not None
@@ -627,7 +637,7 @@ def apply_discovery_guards(
                 copy.confidence = "中"
             copy.points = [
                 (
-                    "方向成熟度 V2 已同时通过方向、资金与入场位置校验；"
+                    f"{maturity_label} 已通过当前方向入场线；"
                     f"系统将「{previous}」校正为首批分批买入候选，最终金额仍由组合硬约束统一计算。"
                 ),
                 *copy.points,
@@ -647,8 +657,13 @@ def apply_discovery_guards(
                 for value in (opportunity or {}).get("entry_triggers") or []
                 if str(value).strip()
             ]
+            waiting_reason = (
+                "方向仍有优势，但资金参与度或价格位置尚未通过当前入场线；等待条件："
+                if entry_policy_version == ENTRY_POLICY_VERSION_V3
+                else "方向仍有优势，但入场成熟度尚未通过；等待条件："
+            )
             copy.points = [
-                "方向仍有优势，但入场成熟度尚未通过；等待条件："
+                waiting_reason
                 + "；".join(triggers[:3] or ["短线过热缓解并保持资金确认"])
                 + "。",
                 *copy.points,
@@ -656,7 +671,7 @@ def apply_discovery_guards(
         if profile.avoid_chasing and copy.action == "分批买入":
             if opportunity_first:
                 if entry_state == ENTRY_READY_TO_START:
-                    # V2 已把趋势、资金和价格位置合成同一个入场状态；这里
+                    # 方向成熟度策略已把趋势、资金和价格位置合成同一个入场状态；这里
                     # 不再用旧的热点阈值重复否决同一份证据。
                     pass
                 elif entry_state in {ENTRY_FORMING, ENTRY_INVALID, ENTRY_READY_ON_PULLBACK}:
@@ -1228,9 +1243,18 @@ def _weak_evidence_reasons(pool_item: dict, opportunity: dict | None) -> list[st
     reasons: list[str] = []
     if opportunity:
         entry_state = _entry_state_v2(opportunity)
+        has_maturity_policy = entry_state is not None
         if entry_state is not None:
+            is_v3 = (
+                str(opportunity.get("score_policy_version") or "")
+                == ENTRY_POLICY_VERSION_V3
+            )
             state_labels = {
-                ENTRY_READY_ON_PULLBACK: "等待过热缓解",
+                ENTRY_READY_ON_PULLBACK: (
+                    "等待资金参与度或价格位置改善"
+                    if is_v3
+                    else "等待过热缓解"
+                ),
                 ENTRY_FORMING: "条件形成中",
                 ENTRY_INVALID: "趋势或资金未通过",
             }
@@ -1242,9 +1266,18 @@ def _weak_evidence_reasons(pool_item: dict, opportunity: dict | None) -> list[st
             evidence_quality = str(opportunity.get("evidence_quality") or "").strip()
             if evidence_quality == "insufficient":
                 reasons.append("方向多周期证据不足")
-            entry_score = _as_float(opportunity.get("entry_readiness_score"))
-            if entry_score is not None and entry_score < 60:
-                reasons.append(f"入场成熟度 {entry_score:.2f}，低于 60")
+            # v3 没有独立的"入场成熟度"（那一块实测 IC 为负，已整块删除），改用趋势强度：
+            # 它是唯一实测显著有效的轴，权重 70%。
+            trend_score = _as_float(opportunity.get("trend_strength_score"))
+            if trend_score is not None:
+                if trend_score < V3_GATE_THRESHOLDS["trend"]:
+                    reasons.append(
+                        f"方向趋势强度 {trend_score:.2f}，低于 {V3_GATE_THRESHOLDS['trend']:g}"
+                    )
+            else:
+                entry_score = _as_float(opportunity.get("entry_readiness_score"))
+                if entry_score is not None and entry_score < 60:
+                    reasons.append(f"入场成熟度 {entry_score:.2f}，低于 60")
         else:
             confidence = str(opportunity.get("confidence") or "").strip()
             if confidence in {"低", "不足"}:
@@ -1252,17 +1285,18 @@ def _weak_evidence_reasons(pool_item: dict, opportunity: dict | None) -> list[st
             score = _as_float(opportunity.get("score"))
             if score is not None and score < 60:
                 reasons.append(f"板块机会分 {score:.2f}，低于 60")
-        pattern = str(opportunity.get("pattern_label") or "")
-        if pattern in {"flow_date_mismatch", "distribution", "weak_outflow"}:
-            pattern_labels = {
-                "flow_date_mismatch": "资金与价格时点未对齐",
-                "distribution": "资金流呈高位分化",
-                "weak_outflow": "资金流偏弱",
-            }
-            reasons.append(pattern_labels[pattern])
-        five_day_flow = _as_float(opportunity.get("cumulative_5d_net_yi"))
-        if five_day_flow is not None and five_day_flow < 0:
-            reasons.append(f"近5日主力净流出 {abs(five_day_flow):.2f} 亿元")
+        if not has_maturity_policy:
+            pattern = str(opportunity.get("pattern_label") or "")
+            if pattern in {"flow_date_mismatch", "distribution", "weak_outflow"}:
+                pattern_labels = {
+                    "flow_date_mismatch": "资金与价格时点未对齐",
+                    "distribution": "资金流呈高位分化",
+                    "weak_outflow": "资金流偏弱",
+                }
+                reasons.append(pattern_labels[pattern])
+            five_day_flow = _as_float(opportunity.get("cumulative_5d_net_yi"))
+            if five_day_flow is not None and five_day_flow < 0:
+                reasons.append(f"近5日主力净流出 {abs(five_day_flow):.2f} 亿元")
     reasons.extend(_candidate_fund_evidence_reasons(pool_item))
     return _append_unique([], reasons, limit=6)
 
@@ -1300,9 +1334,10 @@ def _candidate_fund_evidence_reasons(pool_item: Mapping[str, object]) -> list[st
 
 
 def _entry_state_v2(opportunity: Mapping[str, object] | None) -> str | None:
+    """方向成熟度状态（v2 与 v3 通用；旧报告没有该字段时返回 None 走 legacy 分支）。"""
     if not isinstance(opportunity, Mapping):
         return None
-    if str(opportunity.get("score_policy_version") or "") != ENTRY_POLICY_VERSION:
+    if str(opportunity.get("score_policy_version") or "") not in MATURITY_POLICY_VERSIONS:
         return None
     state = str(opportunity.get("entry_state") or "").strip()
     if state in {
