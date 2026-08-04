@@ -26,7 +26,6 @@ import {
 } from "@/components/DiscoveryCandidatePoolPanel";
 import { DiscoveryChatDrawer } from "@/components/DiscoveryChatDrawer";
 import { DiscoveryOutcomesPanel } from "@/components/DiscoveryOutcomesPanel";
-import { FundTradeabilityEvidence } from "@/components/FundTradeabilityEvidence";
 import {
   SectorOpportunityCard,
   isEntryMaturityPolicy,
@@ -103,17 +102,20 @@ export function discoveryActionDisplayLabel(
   }
 }
 
-function isCurrentVerifiedAllocation(recommendation: DiscoveryRecommendation): boolean {
+function isCurrentInitialTrancheAllocation(recommendation: DiscoveryRecommendation): boolean {
+  const allocation = recommendation.allocation;
   const recommendationAmount = finiteAmount(recommendation.suggested_amount_yuan);
   const allocationAmount = finiteAmount(
-    recommendation.allocation?.suggested_amount_yuan,
+    allocation?.suggested_amount_yuan,
   );
-  const allocationCode = recommendation.allocation?.fund_code?.trim().padStart(6, "0");
+  const allocationCode = allocation?.fund_code?.trim().padStart(6, "0");
   const recommendationCode = recommendation.fund_code.trim().padStart(6, "0");
-  const futureTranches = recommendation.allocation?.future_tranches ?? [];
+  const futureTranches = allocation?.future_tranches ?? [];
   return (
-    recommendation.allocation?.amount_semantics === "current_verified_initial_tranche" &&
-    recommendation.allocation.revalidation_required === true &&
+    ["current_verified_initial_tranche", "advisory_initial_tranche"].includes(
+      allocation?.amount_semantics ?? "",
+    ) &&
+    allocation?.revalidation_required === true &&
     recommendationAmount != null &&
     recommendationAmount > 0 &&
     allocationAmount != null &&
@@ -189,24 +191,16 @@ function recommendationStatus(
     return "watch_only";
   }
 
-  const tradeabilityGate =
-    recommendation.tradeability_gate ??
-    recommendation.tradeability?.tradeability_gate ??
-    recommendation.cost_assessment?.tradeability_gate;
-  if (tradeabilityGate?.status && tradeabilityGate.status !== "eligible") {
-    return "watch_only";
-  }
-  if (recommendation.cost_assessment?.executable === false) {
-    return "watch_only";
-  }
-
   const allocationPlan = resolveAllocationPlan(report);
   const hasDeterministicAllocationPlan = Boolean(allocationPlan);
   if (
     hasDeterministicAllocationPlan &&
     EXECUTABLE_DISCOVERY_ACTIONS.has(recommendation.action) &&
-    (allocationPlan?.amount_semantics !== "current_verified_initial_tranche" ||
-      !isCurrentVerifiedAllocation(recommendation))
+    (![
+      "current_verified_initial_tranche",
+      "advisory_initial_tranche",
+    ].includes(allocationPlan?.amount_semantics ?? "") ||
+      !isCurrentInitialTrancheAllocation(recommendation))
   ) {
     return "watch_only";
   }
@@ -244,26 +238,12 @@ function DiscoveryRecommendationCard({
   compact?: boolean;
 }) {
   const actionDisplayLabel = discoveryActionDisplayLabel(rec);
-  const verifiedInitialTranche = isCurrentVerifiedAllocation(rec);
+  const currentInitialTranche = isCurrentInitialTrancheAllocation(rec);
+  const advisoryInitialTranche =
+    rec.allocation?.amount_semantics === "advisory_initial_tranche";
   const futureTranche = rec.allocation?.future_tranches?.find(
     (item) => item.revalidation_required !== false,
   );
-  const tradeabilityGate =
-    rec.tradeability_gate ??
-    rec.tradeability?.tradeability_gate ??
-    rec.cost_assessment?.tradeability_gate;
-  const hasTradeabilityEvidence = Boolean(
-    (rec.tradeability && Object.keys(rec.tradeability).length) ||
-      (tradeabilityGate && Object.keys(tradeabilityGate).length) ||
-      (rec.cost_assessment && Object.keys(rec.cost_assessment).length),
-  );
-  const tradeabilitySummary = tradeabilityGate?.status === "eligible"
-    ? { label: "申赎与额度已核验", className: "status-good ring-1 ring-[var(--success-border)]" }
-    : tradeabilityGate?.status
-      ? { label: "申赎与额度需复核", className: "status-warn ring-1 ring-[var(--warn-border)]" }
-      : hasTradeabilityEvidence
-        ? { label: "申赎信息待核验", className: "status-neutral ring-1 ring-[var(--line)]" }
-        : null;
   const fundEvidenceComplete = Boolean(
     candidate?.quality_gate?.eligible
     && candidate.quality_gate.status === "eligible"
@@ -291,17 +271,14 @@ function DiscoveryRecommendationCard({
         ? { label: "基金证据待加强", className: "status-warn ring-1 ring-[var(--warn-border)]" }
         : { label: "基金资料待复核", className: "status-neutral ring-1 ring-[var(--line)]" };
   const decisionPoints = visibleDecisionPoints(rec.points, actionDisplayLabel);
-  const tradeabilityExecutionRelevant =
-    EXECUTABLE_DISCOVERY_ACTIONS.has(rec.action) && tradeabilityGate?.status === "eligible";
   const hasProfessionalDetails = Boolean(
-    hasTradeabilityEvidence ||
-      rec.decision_path ||
+    rec.decision_path ||
       rec.sector_evidence?.length ||
       rec.fund_evidence?.length ||
       rec.validation_notes?.length ||
       decisionPoints.length > 1 ||
       (rec.risks?.length ?? 0) > 1 ||
-      (!verifiedInitialTranche && rec.suggested_amount_yuan != null),
+      (!currentInitialTranche && rec.suggested_amount_yuan != null),
   );
   return (
     <article className={`rounded-2xl border bg-white shadow-sm ${
@@ -324,11 +301,6 @@ function DiscoveryRecommendationCard({
           <div className="mt-1 text-[11px] font-medium text-[var(--brand)]">查看基金详情 →</div>
         </button>
         <div className="flex flex-wrap justify-end gap-1.5">
-          {tradeabilitySummary ? (
-            <span className={`rounded-full px-2 py-1 text-[10px] font-black ring-1 ${tradeabilitySummary.className}`}>
-              {tradeabilitySummary.label}
-            </span>
-          ) : null}
           {fundEvidenceSummary ? (
             <span className={`rounded-full px-2 py-1 text-[10px] font-black ring-1 ${fundEvidenceSummary.className}`}>
               {fundEvidenceSummary.label}
@@ -337,23 +309,27 @@ function DiscoveryRecommendationCard({
           <span className={actionBadgeClass(rec.action)}>{actionDisplayLabel}</span>
         </div>
       </div>
-      {rec.suggested_amount_yuan != null && (verifiedInitialTranche || !compact) ? (
+      {rec.suggested_amount_yuan != null && (currentInitialTranche || !compact) ? (
         <div
-          aria-label={verifiedInitialTranche ? "当前已验证首批金额" : "历史参考金额"}
+          aria-label={currentInitialTranche ? "首批参考金额" : "历史参考金额"}
           className={`mt-2 rounded-xl border px-3 py-2.5 ${
-            verifiedInitialTranche
+            currentInitialTranche
               ? "border-[var(--success-border)] bg-[var(--success-bg)]/80"
               : "border-[var(--line)] bg-[var(--surface-muted)]"
           }`}
         >
           <div className="flex flex-wrap items-baseline justify-between gap-2">
             <span className={`text-[11px] font-black tracking-wide ${
-              verifiedInitialTranche ? "text-[var(--success-fg)]" : "text-slate-600"
+              currentInitialTranche ? "text-[var(--success-fg)]" : "text-slate-600"
             }`}>
-              {verifiedInitialTranche ? "当前已验证首批" : "历史参考金额"}
+              {advisoryInitialTranche
+                ? "首批参考金额"
+                : currentInitialTranche
+                  ? "当前首批"
+                  : "历史参考金额"}
             </span>
             <strong className={`font-mono text-lg tabular-nums ${
-              verifiedInitialTranche ? "text-[var(--success-fg)]" : "text-slate-900"
+              currentInitialTranche ? "text-[var(--success-fg)]" : "text-slate-900"
             }`}>
               {formatYuan(rec.suggested_amount_yuan)}
             </strong>
@@ -365,13 +341,13 @@ function DiscoveryRecommendationCard({
           ) : null}
         </div>
       ) : null}
-      {verifiedInitialTranche && futureTranche ? (
+      {currentInitialTranche && futureTranche ? (
         <div className="mt-2 flex items-start gap-2 rounded-xl border border-[var(--warn-border)] bg-[var(--warn-bg)] px-3 py-2 text-[11px] leading-5 text-[var(--warn-fg)]">
           <ShieldAlert size={14} aria-hidden="true" className="mt-0.5 shrink-0" />
           <p>
             <span className="font-black">后续批次待重新核验 · 金额留空</span>
             <span className="block text-[var(--warn-fg)]">
-              交易条件、可用现金、板块敞口与组合风险需在执行前重新计算。
+              可用现金、板块敞口与组合风险需在执行前重新计算。
             </span>
           </p>
         </div>
@@ -396,11 +372,11 @@ function DiscoveryRecommendationCard({
       {hasProfessionalDetails ? (
         <details className="group mt-3 overflow-hidden rounded-xl border border-slate-200 bg-slate-50/60">
           <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 px-3 text-xs font-black text-slate-700 hover:bg-slate-100 [&::-webkit-details-marker]:hidden">
-            查看交易条件与完整依据
+            查看完整依据
             <ChevronDown size={16} className="text-slate-500 transition group-open:rotate-180" aria-hidden />
           </summary>
           <div className="space-y-3 border-t border-slate-200 p-3">
-            {!verifiedInitialTranche && rec.suggested_amount_yuan != null ? (
+            {!currentInitialTranche && rec.suggested_amount_yuan != null ? (
               <div aria-label="历史参考金额" className="rounded-xl border border-slate-200 bg-white px-3 py-2.5">
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
                   <span className="text-[11px] font-black tracking-wide text-slate-600">历史参考金额</span>
@@ -408,16 +384,8 @@ function DiscoveryRecommendationCard({
                     {formatYuan(rec.suggested_amount_yuan)}
                   </strong>
                 </div>
-                <p className="mt-1 text-[11px] leading-5 text-slate-500">不作为本次可执行金额。</p>
+                <p className="mt-1 text-[11px] leading-5 text-slate-500">不作为本次首批参考金额。</p>
               </div>
-            ) : null}
-            {hasTradeabilityEvidence ? (
-              <FundTradeabilityEvidence
-                tradeability={rec.tradeability}
-                tradeabilityGate={rec.tradeability_gate}
-                costAssessment={rec.cost_assessment}
-                executionRelevant={tradeabilityExecutionRelevant}
-              />
             ) : null}
             {rec.decision_path ? (
               <div className="rounded-xl border border-[var(--info-border)] bg-[var(--info-bg)]/70 px-3 py-2.5 text-sm leading-6 text-[var(--info-fg)]">
@@ -494,8 +462,8 @@ function DiscoveryAllocationPlanPanel({ report }: { report: FundDiscoveryReport 
             </h3>
             <p className="mt-1 text-[11px] leading-5 text-slate-500">
               {plan.status === "allocated" || plan.status === "partial"
-                ? `本次已分配 ${formatYuan(budget.allocated_current_tranche_yuan, "¥0")}，展开查看预算与风控明细。`
-                : "本次未形成可执行金额，展开查看被拦截的原因。"}
+                ? `本次首批参考 ${formatYuan(budget.allocated_current_tranche_yuan, "¥0")}，展开查看预算与风控明细。`
+                : "本次未形成首批参考金额，展开查看原因。"}
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-2">
@@ -543,7 +511,7 @@ function DiscoveryAllocationPlanPanel({ report }: { report: FundDiscoveryReport 
                   riskSampleDays != null ? `候选共同收益样本 ${riskSampleDays} 日` : null,
                   holdingCoverage != null ? `当前持仓净值金额覆盖 ${holdingCoverage}%` : null,
                 ].filter(Boolean).join(" · ") || "已完成风险协方差与持仓相关性核验"
-              : "风险证据不合格时按关闭执行处理，不生成可执行金额。"}
+              : "风险证据不合格时不生成首批参考金额。"}
           </p>
           {cashUnavailable != null && cashUnavailable > 0 ? (
             <p className="mt-0.5">因现金不足或未确认不可用：{formatYuan(cashUnavailable)}</p>
@@ -552,7 +520,7 @@ function DiscoveryAllocationPlanPanel({ report }: { report: FundDiscoveryReport 
       </div>
 
       <p className="border-t border-slate-100 px-4 py-2.5 text-[11px] font-semibold leading-5 text-slate-600">
-        后续批次不预设金额；执行前必须重新核验交易状态、现金、敞口与风险。
+        后续批次不预设金额；执行前必须重新核验现金、敞口与风险。
       </p>
       </details>
     </section>
@@ -681,10 +649,10 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
       ? "稳健筛选 · 历史波动与量化覆盖执行严格门槛"
       : null;
   const decisionHeadline = groupedRecommendations.actionable.length
-    ? `${groupedRecommendations.actionable.length} 只通过可执行校验`
-    : "本次暂无可执行建议";
+    ? `${groupedRecommendations.actionable.length} 只形成买入建议`
+    : "本次暂无买入建议";
   const nextStep = groupedRecommendations.actionable.length
-    ? "先查看可执行候选和首批金额；真正下单前再核对交易状态。"
+    ? "先查看推荐基金和首批参考金额；是否能买请在支付宝确认。"
     : groupedRecommendations.conditionalWait.length
       ? "先等待设定条件出现，下一次扫描会重新判断；现在无需买入。"
       : "把这些基金加入观察即可；关键资料补齐前，不需要采取买入动作。";
@@ -737,8 +705,8 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
                   {blockedCount > 0
                     ? `有 ${blockedCount} 只候选的关键资料不完整或不够新，系统已保守列为“观察”；资料补齐前不会建议买入。`
                     : groupedRecommendations.actionable.length
-                      ? "以下候选已通过动作、数据时点、基金质量和交易条件校验，仍需由你最终确认。"
-                      : "候选尚未同时通过数据、质量和交易条件校验，因此不建议直接买入。"}
+                      ? "以下候选已通过方向、入场时机、数据时点、基金质量与组合风险校验。"
+                      : "候选尚未同时通过方向、入场时机、数据质量和组合风险校验，因此不建议直接买入。"}
                 </p>
               </div>
             </div>
@@ -749,7 +717,7 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
 
           <dl className="grid grid-cols-3 gap-px overflow-hidden rounded-xl bg-slate-200 ring-1 ring-slate-200 lg:min-w-[280px]">
             {[
-              ["可执行", groupedRecommendations.actionable.length, "text-[var(--success-fg)]"],
+              ["建议买入", groupedRecommendations.actionable.length, "text-[var(--success-fg)]"],
               ["等条件", groupedRecommendations.conditionalWait.length, "text-[var(--warn-fg)]"],
               ["仅观察", groupedRecommendations.watchOnly.length, "text-slate-700"],
             ].map(([label, value, className]) => (
@@ -779,8 +747,8 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
 
       <RecommendationGroup
         id="discovery-actionable-title"
-        title="可执行建议"
-        description="优先看金额、核心理由和主要风险；交易细节按需展开。"
+        title="推荐基金"
+        description="优先看首批参考金额、核心理由和主要风险；完整依据按需展开。"
         recommendations={groupedRecommendations.actionable}
         candidateByCode={candidateByCode}
         onOpenFund={onOpenFund}

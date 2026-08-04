@@ -5,10 +5,7 @@ import math
 import re
 from typing import Any
 
-from app.services.fund_tradeability import build_tradeability_gate
-
-
-VEHICLE_QUALITY_VERSION = "fund_vehicle_quality.2026-07.v1"
+VEHICLE_QUALITY_VERSION = "fund_vehicle_quality.2026-08.v2"
 ACTIVE_QUALITY_THRESHOLD = 55.0
 PASSIVE_QUALITY_THRESHOLD = 60.0
 
@@ -17,8 +14,9 @@ def assess_candidate_vehicle_quality(raw: Mapping[str, Any]) -> dict[str, Any]:
     """Attach an action-quality score that is independent from sector fit.
 
     Passive funds are evaluated as investment vehicles: an exact tracked-index
-    or independently verified primary-sector identity, tradeability, scale, fee
-    and tracking quality.  Their absolute sector returns and sector drawdown are
+    or independently verified primary-sector identity, scale, recurring fee and
+    tracking quality.  Sales-platform availability is deliberately excluded.
+    Their absolute sector returns and sector drawdown are
     deliberately excluded.  Active funds retain manager-performance evidence,
     but sector fit remains a separate hard gate instead of being counted twice
     inside the quality threshold.
@@ -98,36 +96,25 @@ def _passive_vehicle_score(
 
     sector_match_kind = str(row.get("sector_match_kind") or "")
     verified_sector_identity = sector_match_kind in {"tracking_exact", "primary"}
-    identity_score = 30.0 if verified_sector_identity else 0.0
+    identity_score = 37.5 if verified_sector_identity else 0.0
     if sector_match_kind == "tracking_exact":
         reasons.append("已核验精确跟踪标的")
     elif sector_match_kind == "primary":
         reasons.append("已核验高置信主关联板块")
-
-    tradeability = row.get("tradeability") if isinstance(row.get("tradeability"), Mapping) else None
-    trade_status = str(build_tradeability_gate(tradeability).get("status") or "watch_only")
-    trade_score = {"eligible": 20.0, "watch_only": 6.0, "excluded": 0.0}.get(
-        trade_status,
-        6.0,
-    )
-    if trade_status == "eligible":
-        reasons.append("申赎、币种、起点与额度已核验")
-    else:
-        penalties.append("申赎与额度条件尚未完整通过")
 
     scale = _finite_number(row.get("fund_scale_yi"))
     if scale is None:
         scale_score = 0.0
         penalties.append("基金规模未核验")
     elif 3.0 <= scale <= 120.0:
-        scale_score = 20.0
+        scale_score = 25.0
         reasons.append("基金规模处于稳健区间")
     elif scale > 120.0:
-        scale_score = 17.0
+        scale_score = 21.25
     elif scale >= 1.0:
-        scale_score = 14.0
+        scale_score = 17.5
     elif scale >= 0.5:
-        scale_score = 6.0
+        scale_score = 7.5
         penalties.append("基金规模偏小")
     else:
         scale_score = 0.0
@@ -135,17 +122,17 @@ def _passive_vehicle_score(
 
     fee = _percent_number(row.get("management_fee"))
     if fee is None:
-        fee_score = 7.0
+        fee_score = 8.75
         penalties.append("管理费率暂未核验，按中性分处理")
     elif fee <= 0.5:
-        fee_score = 15.0
+        fee_score = 18.75
         reasons.append("管理费率较低")
     elif fee <= 0.8:
-        fee_score = 12.0
+        fee_score = 15.0
     elif fee <= 1.2:
-        fee_score = 8.0
+        fee_score = 10.0
     else:
-        fee_score = 4.0
+        fee_score = 5.0
         penalties.append("管理费率偏高")
 
     benchmark = row.get("benchmark_metrics") if isinstance(row.get("benchmark_metrics"), Mapping) else {}
@@ -155,25 +142,24 @@ def _passive_vehicle_score(
     tracking_difference = _finite_number(tracking.get("tracking_difference_percent"))
     if tracking_available and tracking_error is not None:
         if tracking_error <= 1.0:
-            tracking_score = 15.0
+            tracking_score = 18.75
             reasons.append("跟踪误差较低")
         elif tracking_error <= 2.0:
-            tracking_score = 12.0
+            tracking_score = 15.0
         elif tracking_error <= 4.0:
-            tracking_score = 8.0
+            tracking_score = 10.0
         else:
-            tracking_score = 4.0
+            tracking_score = 5.0
             penalties.append("跟踪误差偏高")
         if tracking_difference is not None and tracking_difference < -5.0:
-            tracking_score = max(0.0, tracking_score - 3.0)
+            tracking_score = max(0.0, tracking_score - 3.75)
             penalties.append("相对跟踪标的差异偏弱")
     else:
-        tracking_score = 8.0
+        tracking_score = 10.0
         penalties.append("跟踪误差尚未形成可用样本，按中性分处理")
 
     components = {
         "exact_tracking_identity": identity_score,
-        "tradeability": trade_score,
         "scale": scale_score,
         "fee": fee_score,
         "tracking_quality": tracking_score,

@@ -261,27 +261,29 @@ def test_central_report_fails_closed_without_qualified_risk(
     assert all(row.allocation == {} for row in report.recommendations)
 
 
-def test_central_report_exposes_only_executable_current_tranche() -> None:
+def test_central_report_exposes_advisory_current_tranche_without_platform_gate() -> None:
     report = _report(amount=999_999)
 
-    assert report.allocation_plan["amount_semantics"] == "current_verified_initial_tranche"
+    assert report.allocation_plan["amount_semantics"] == "advisory_initial_tranche"
+    assert report.allocation_plan["policy"]["platform_tradeability_checked"] is False
     assert report.allocation_plan["revalidation_required"] is True
     assert report.recommendations
     for recommendation in report.recommendations:
         assert recommendation.action == "分批买入"
         assert recommendation.suggested_amount_yuan is not None
         assert recommendation.suggested_amount_yuan > 0
-        assert recommendation.cost_assessment["executable"] is True
+        assert recommendation.tradeability == {}
+        assert recommendation.cost_assessment == {}
         assert recommendation.allocation["suggested_amount_yuan"] == (
             recommendation.suggested_amount_yuan
         )
         assert recommendation.allocation["amount_semantics"] == (
-            "current_verified_initial_tranche"
+            "advisory_initial_tranche"
         )
         future = recommendation.allocation["future_tranches"][0]
         assert future["amount_yuan"] is None
         assert future["revalidation_required"] is True
-        assert "tradeability_gate_recheck" in future["preconditions"]
+        assert "tradeability_gate_recheck" not in future["preconditions"]
         assert "risk_context_recheck" in future["preconditions"]
 
 
@@ -357,7 +359,7 @@ def test_candidate_selection_audit_covers_selected_unselected_and_share_family()
     assert rows["100001"]["selected"] is True
     assert rows["100001"]["final_rank"] == 1
     assert rows["100002"]["selected"] is False
-    assert "share_class_not_selected_after_tradeability_and_cost" in rows["100002"][
+    assert "share_class_not_selected_after_quality_dedup" in rows["100002"][
         "reason_codes"
     ]
     assert rows["100003"]["selected"] is False

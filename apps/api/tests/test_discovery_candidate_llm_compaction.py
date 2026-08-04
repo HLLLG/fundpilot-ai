@@ -96,7 +96,7 @@ def test_peer_projection_preserves_every_metric_and_explicit_state() -> None:
     }
 
 
-def test_tradeability_projection_preserves_execution_and_fee_contract() -> None:
+def test_tradeability_is_excluded_from_discovery_generation_payload() -> None:
     candidate = {
         "fund_code": "000001",
         "tradeability": {
@@ -147,21 +147,9 @@ def test_tradeability_projection_preserves_execution_and_fee_contract() -> None:
         candidate,
         sector_change_index={},
         trade_date=None,
-    )["tradeability"]
+    )
 
-    assert projected["freshness"] == "fresh"
-    assert projected["purchase_state"] == "limited"
-    assert projected["daily_purchase_limit_yuan"] == 5_000.0
-    assert projected["tradeability_gate"]["effective_min_purchase_yuan"] == 100.0
-    assert projected["tradeability_gate"]["max_purchase_yuan"] == 5_000.0
-    assert projected["standard_purchase_fee_tiers"][0]["fee_percent"] == 1.5
-    assert projected["standard_purchase_fee_tiers"][0]["max_amount_yuan"] == 1_000_000.0
-    assert projected["redemption_fee_tiers"][0]["max_days"] == 7
-    assert projected["redemption_fee_tiers"][0]["fee_percent"] == 1.5
-    assert "minimums" not in projected
-    assert "purchase_limit" not in projected
-    assert "fund_name" not in projected
-    assert "instruction" not in projected
+    assert "tradeability" not in projected
 
 
 def test_vehicle_quality_and_current_tracking_error_survive_projection() -> None:

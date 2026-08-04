@@ -663,7 +663,7 @@ def test_short_horizon_requires_minimum_holding_period_evidence_even_with_zero_f
     assert verified_assessment["executable"] is True
 
 
-def test_final_guard_overwrites_llm_tradeability_and_uses_profile_horizon() -> None:
+def test_final_guard_strips_legacy_discovery_tradeability() -> None:
     tradeability = _profile()
     candidate = {
         "fund_code": "000001",
@@ -716,9 +716,8 @@ def test_final_guard_overwrites_llm_tradeability_and_uses_profile_horizon() -> N
     )
 
     assert guarded[0].action == "分批买入"
-    assert guarded[0].tradeability["minimum_purchase_yuan"] == 10.0
-    assert guarded[0].cost_assessment["minimum_holding_days"] == 180
-    assert guarded[0].cost_assessment["executable"] is True
+    assert guarded[0].tradeability == {}
+    assert guarded[0].cost_assessment == {}
 
 
 def test_unlimited_sentinel_and_zero_limit_are_not_confused() -> None:

@@ -26,12 +26,6 @@ from app.services.fund_discovery_data_cache import (
     fetch_fund_research_profiles_cached,
 )
 from app.services.fund_rank_cache import fetch_open_fund_rank_cached
-from app.services.fund_tradeability import (
-    apply_tradeability_to_quality_gate,
-    assess_tradeability_for_amount,
-    build_tradeability_gate,
-    resolve_fund_tradeability_profiles,
-)
 from app.services.fund_peer_ranking import (
     build_fund_peer_group,
     build_peer_rank,
@@ -45,7 +39,6 @@ from app.services.news_freshness import normalize_news_now
 
 _POOL_CAP = 28
 _PER_SECTOR = 5
-_MAX_SHARE_FAMILY_ALTERNATIVES = 12
 _MAX_RECALL_AUDIT_CANDIDATES = 512
 _MIN_SCALE_YI = 1.0
 _HARD_MIN_SCALE_YI = 0.5
@@ -493,17 +486,18 @@ def enrich_candidates(
     raise_if_stream_cancelled(stop_event)
     decision_date = normalize_news_now(decision_at).date()
     service = FundDataService()
-    expanded_pool = _expand_share_family_alternatives(pool)
-    codes = [str(item.get("fund_code") or "").zfill(6) for item in expanded_pool]
+    # “发现基金”只负责研究与推荐，销售平台是否可申购由用户在下单端确认。
+    # 不再扩展 A/C 份额并逐份额抓取交易状态，既避免平台可买性误伤机会，
+    # 也把最重的一组网络请求从报告生成链路中移除。
+    research_pool = []
+    for item in pool:
+        row = dict(item)
+        row.pop("_share_family_alternatives", None)
+        research_pool.append(row)
+    codes = [str(item.get("fund_code") or "").zfill(6) for item in research_pool]
 
     support_executor = get_discovery_context_executor()
     profile_future = support_executor.submit(fetch_fund_research_profiles_cached, codes)
-    tradeability_future = support_executor.submit(
-        resolve_fund_tradeability_profiles,
-        codes,
-        decision_at=decision_at,
-    )
-
     def _enrich_one(item: dict) -> dict:
         raise_if_stream_cancelled(stop_event)
         code = str(item.get("fund_code", "")).zfill(6)
@@ -538,7 +532,7 @@ def enrich_candidates(
     # 并发执行（IO 密集，_snapshot_and_trend_for_holding 内部已兜底异常）保序返回。
     try:
         enriched = _map_holdings_concurrently(
-            expanded_pool,
+            research_pool,
             _enrich_one,
             stop_event=stop_event,
         )
@@ -553,22 +547,8 @@ def enrich_candidates(
         except Exception:  # noqa: BLE001 - research profile is best-effort
             raise_if_stream_cancelled(stop_event)
             profiles = {}
-        try:
-            while True:
-                raise_if_stream_cancelled(stop_event)
-                try:
-                    tradeability_profiles = tradeability_future.result(
-                        timeout=0.25
-                    )
-                    break
-                except FutureTimeoutError:
-                    continue
-        except Exception:  # noqa: BLE001 - fail closed in the quality gate below
-            raise_if_stream_cancelled(stop_event)
-            tradeability_profiles = {}
     finally:
         profile_future.cancel()
-        tradeability_future.cancel()
 
     rescored: list[dict] = []
     for raw in enriched:
@@ -610,18 +590,11 @@ def enrich_candidates(
             profile.get("fund_category"), row.get("fund_type")
         )
         row = _with_exact_passive_tracking_match(row)
-        tradeability = tradeability_profiles.get(code)
-        if isinstance(tradeability, dict):
-            row["tradeability"] = tradeability
-            row["share_class_fee_status"] = tradeability.get(
-                "share_class_fee_status"
-            ) or "unverified"
         row = _with_data_quality_gate(
             row,
             as_of_date=decision_date,
             discovery_strategy=discovery_strategy,
         )
-        row = apply_tradeability_to_quality_gate(row)
         row = _with_quality_score(
             row,
             fund_type_preference="any",
@@ -661,9 +634,9 @@ def finalize_candidate_pool(
     if pool_cap <= 0 or per_sector <= 0:
         return []
     original_pool = [dict(item) for item in pool]
-    pool = _select_tradeable_share_classes(
+    pool = _select_representative_share_classes(
         original_pool,
-        minimum_holding_days=minimum_holding_days,
+        discovery_strategy=discovery_strategy,
     )
     acceptable = [
         dict(item)
@@ -772,9 +745,9 @@ def _populate_candidate_selection_stage_trace(
         row = dict(raw)
         code = str(row.get("fund_code") or "").zfill(6)
         if code not in family_codes:
-            reasons = ["share_class_not_selected_after_tradeability_and_cost"]
+            reasons = ["share_class_not_selected_after_quality_dedup"]
         elif code not in acceptable_codes:
-            reasons = ["quality_or_tradeability_gate_excluded"]
+            reasons = ["quality_gate_excluded"]
         else:
             reasons = ["promoted_to_prescreen"]
         row["candidate_selection_transition_reasons"] = reasons
@@ -822,16 +795,10 @@ def _populate_candidate_selection_audit(
     for raw in original_pool:
         code = str(raw.get("fund_code") or "").zfill(6)
         quality_gate = raw.get("quality_gate") if isinstance(raw.get("quality_gate"), dict) else {}
-        tradeability = raw.get("tradeability") if isinstance(raw.get("tradeability"), dict) else {}
-        trade_gate = (
-            tradeability.get("tradeability_gate")
-            if isinstance(tradeability.get("tradeability_gate"), dict)
-            else build_tradeability_gate(tradeability)
-        )
         peer_rank = raw.get("peer_rank") if isinstance(raw.get("peer_rank"), dict) else {}
         reasons: list[str] = []
         if code not in family_selected_codes:
-            reasons.append("share_class_not_selected_after_tradeability_and_cost")
+            reasons.append("share_class_not_selected_after_quality_dedup")
         quality_status = str(quality_gate.get("status") or "watch_only")
         if quality_status == "excluded":
             reasons.extend(str(value) for value in quality_gate.get("reasons") or [])
@@ -846,7 +813,6 @@ def _populate_candidate_selection_audit(
                 if isinstance(raw.get("share_family"), dict)
                 else None,
                 "quality_gate_status": quality_status,
-                "tradeability_gate_status": trade_gate.get("status"),
                 "fund_quality_score": raw.get("fund_quality_score"),
                 "sector_fit_score": raw.get("sector_fit_score"),
                 "peer_group_key": (
@@ -993,43 +959,12 @@ def _preserve_catalogue_peer_group_for_benchmark_attachment(
     return previous_group
 
 
-def _expand_share_family_alternatives(pool: list[dict]) -> list[dict]:
-    """Expose a bounded number of A/C siblings only for post-evidence selection."""
-
-    expanded: list[dict] = []
-    seen_codes: set[str] = set()
-    remaining_alternatives = _MAX_SHARE_FAMILY_ALTERNATIVES
-    for item in pool:
-        primary = dict(item)
-        alternatives = primary.pop("_share_family_alternatives", [])
-        code = str(primary.get("fund_code") or "").zfill(6)
-        if code not in seen_codes:
-            expanded.append(primary)
-            seen_codes.add(code)
-        if remaining_alternatives <= 0 or not isinstance(alternatives, list):
-            continue
-        for raw_alternative in alternatives:
-            if remaining_alternatives <= 0 or not isinstance(raw_alternative, dict):
-                break
-            alternative = dict(raw_alternative)
-            alternative_code = str(alternative.get("fund_code") or "").zfill(6)
-            if alternative_code in seen_codes:
-                continue
-            for key in ("candidate_universe_mode", "candidate_universe_size"):
-                if alternative.get(key) is None and primary.get(key) is not None:
-                    alternative[key] = primary[key]
-            expanded.append(alternative)
-            seen_codes.add(alternative_code)
-            remaining_alternatives -= 1
-    return expanded
-
-
-def _select_tradeable_share_classes(
+def _select_representative_share_classes(
     pool: list[dict],
     *,
-    minimum_holding_days: int | None = None,
+    discovery_strategy: str,
 ) -> list[dict]:
-    """Choose one family member only after each sibling has transaction evidence."""
+    """Choose one research representative per share family without platform data."""
 
     groups: dict[str, list[dict]] = {}
     group_order: list[str] = []
@@ -1043,27 +978,17 @@ def _select_tradeable_share_classes(
     selected: list[dict] = []
     for key in group_order:
         members = groups[key]
-        comparison = _share_family_cost_comparison(
-            members,
-            minimum_holding_days=minimum_holding_days,
-        )
-        costs = comparison["costs_by_code"]
-        execution = comparison["execution_by_code"]
         members.sort(
             key=lambda item: (
-                -_tradeability_gate_rank(item),
-                -int(
-                    execution.get(str(item.get("fund_code") or "").zfill(6), False)
-                    if minimum_holding_days is not None
-                    else True
-                ),
                 -_quality_gate_rank(item),
-                (
-                    costs.get(str(item.get("fund_code") or "").zfill(6), 0.0)
-                    if comparison["all_costs_comparable"]
-                    else 0.0
+                -(
+                    _opportunity_rank_value(item)
+                    if discovery_strategy == "opportunity_first"
+                    else -999.0
                 ),
+                -(_num(item.get("vehicle_quality_score")) or -999.0),
                 -(_num(item.get("fund_quality_score")) or -999.0),
+                -(_num(item.get("sector_fit_score")) or -999.0),
                 -_share_class_rank(str(item.get("fund_name") or "")),
                 str(item.get("fund_code") or "").zfill(6),
             )
@@ -1072,121 +997,16 @@ def _select_tradeable_share_classes(
         member_codes = [
             str(item.get("fund_code") or "").zfill(6) for item in members
         ]
-        gate_statuses = {
-            code: str(
-                build_tradeability_gate(
-                    item.get("tradeability")
-                    if isinstance(item.get("tradeability"), dict)
-                    else None
-                ).get("status")
-                or "watch_only"
-            )
-            for code, item in zip(member_codes, members, strict=False)
-        }
-        all_standard_fee_inputs = all(
-            bool(
-                (item.get("tradeability") or {}).get("standard_purchase_fee_tiers")
-                and (item.get("tradeability") or {}).get("redemption_fee_tiers")
-            )
-            for item in members
-            if isinstance(item.get("tradeability"), dict)
-        ) and all(isinstance(item.get("tradeability"), dict) for item in members)
         chosen["share_family"] = {
             "family_key": key,
             "key_source": "normalized_name+fund_type",
             "confidence": "high" if len(members) > 1 else "medium",
             "member_codes": member_codes,
             "selected_code": str(chosen.get("fund_code") or "").zfill(6),
-            "selected_basis": (
-                "tradeability_gate_then_legacy_share_class_priority"
-                if len(set(gate_statuses.values())) > 1
-                else "holding_period_gate_then_standard_cost_upper_bound"
-                if len(set(execution.values())) > 1
-                else "standard_cost_upper_bound_at_profile_horizon"
-                if comparison["all_costs_comparable"]
-                else "legacy_share_class_priority_after_tradeability_tie"
-            ),
-            "fee_comparison_status": (
-                "compared_standard_upper_bound_at_profile_horizon"
-                if comparison["all_costs_comparable"]
-                else "standard_inputs_available_horizon_not_applied"
-                if len(members) > 1 and all_standard_fee_inputs
-                else "not_compared"
-            ),
-            "comparison_amount_yuan": comparison["comparison_amount_yuan"],
-            "comparison_minimum_holding_days": minimum_holding_days,
-            "member_cost_upper_bound_percent": costs,
-            "member_holding_period_executable": execution,
-            "member_tradeability_statuses": gate_statuses,
+            "selected_basis": "quality_and_opportunity_then_share_class_priority",
         }
         selected.append(chosen)
     return selected
-
-
-def _share_family_cost_comparison(
-    members: list[dict],
-    *,
-    minimum_holding_days: int | None,
-) -> dict:
-    if len(members) < 2 or minimum_holding_days is None:
-        return {
-            "comparison_amount_yuan": None,
-            "costs_by_code": {},
-            "execution_by_code": {},
-            "all_costs_comparable": False,
-        }
-    gates = [
-        build_tradeability_gate(
-            item.get("tradeability")
-            if isinstance(item.get("tradeability"), dict)
-            else None
-        )
-        for item in members
-    ]
-    minimums = [
-        _num(gate.get("effective_initial_min_purchase_yuan")) for gate in gates
-    ]
-    if any(value is None or value <= 0 for value in minimums):
-        comparison_amount = None
-    else:
-        comparison_amount = max(float(value) for value in minimums if value is not None)
-    if comparison_amount is not None and any(
-        (_num(gate.get("max_purchase_yuan")) is not None)
-        and float(_num(gate.get("max_purchase_yuan")) or 0.0) < comparison_amount
-        for gate in gates
-    ):
-        comparison_amount = None
-
-    costs_by_code: dict[str, float] = {}
-    execution_by_code: dict[str, bool] = {}
-    if comparison_amount is not None:
-        for item in members:
-            code = str(item.get("fund_code") or "").zfill(6)
-            tradeability = (
-                item.get("tradeability")
-                if isinstance(item.get("tradeability"), dict)
-                else None
-            )
-            assessment = assess_tradeability_for_amount(
-                tradeability,
-                amount_yuan=comparison_amount,
-                hold_horizon=f"用户预设最短持有期 {minimum_holding_days} 天",
-                minimum_holding_days=minimum_holding_days,
-            )
-            execution_by_code[code] = assessment.get("executable") is True
-            cost = _num(assessment.get("estimated_total_cost_upper_bound_percent"))
-            if cost is not None:
-                costs_by_code[code] = cost
-    return {
-        "comparison_amount_yuan": comparison_amount,
-        "costs_by_code": costs_by_code,
-        "execution_by_code": execution_by_code,
-        "all_costs_comparable": bool(
-            comparison_amount is not None
-            and len(costs_by_code) == len(members)
-            and all(execution_by_code.values())
-        ),
-    }
 
 
 def _candidate_share_family_key(item: dict) -> str:
@@ -1197,16 +1017,6 @@ def _candidate_share_family_key(item: dict) -> str:
     family = _family_key(name).casefold()
     fund_type = str(item.get("fund_type") or item.get("fund_category") or "unknown")
     return f"{family}|{fund_type.strip().casefold()}"
-
-
-def _tradeability_gate_rank(item: dict) -> int:
-    tradeability = (
-        item.get("tradeability")
-        if isinstance(item.get("tradeability"), dict)
-        else None
-    )
-    status = str(build_tradeability_gate(tradeability).get("status") or "watch_only")
-    return {"eligible": 2, "watch_only": 1, "excluded": 0}.get(status, 1)
 
 
 def _candidates_for_sector(

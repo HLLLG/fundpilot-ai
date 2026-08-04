@@ -80,7 +80,7 @@ export function DiscoveryStrategySelector({
         })}
       </div>
       <p className="mt-2 text-[11px] leading-5 text-slate-500">
-        机会分不扣历史回撤；买入仍须通过趋势、资金、修复、申赎和明确退出条件。
+        机会分不扣历史回撤；买入仍须通过趋势、资金、修复、组合风险和明确退出条件。
       </p>
     </fieldset>
   );

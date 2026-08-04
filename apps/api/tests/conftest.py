@@ -272,10 +272,6 @@ def _stub_market_data_fetches(monkeypatch):
         lambda *_args, **_kwargs: None,
     )
     monkeypatch.setattr(
-        "app.services.discovery_candidate_pool.resolve_fund_tradeability_profiles",
-        _verified_tradeability,
-    )
-    monkeypatch.setattr(
         "app.services.discovery_allocation_service.build_discovery_risk_context",
         _qualified_discovery_risk,
     )

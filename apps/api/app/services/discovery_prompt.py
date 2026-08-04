@@ -33,14 +33,13 @@ DEFAULT_DISCOVERY_ROLE_PROMPT = """## 角色定位
 | `candidate_pool[].return_3m/6m/1y_percent` | 阶段收益；`balanced` 策略优先 3~6 月走强、1 年涨幅适中（非年度冠军） |
 | `candidate_pool[].fund_quality_score` / `sector_fit_score` | 系统预筛质量分；优先参考高分候选，同时结合 `quality_reasons` / `quality_penalties` 解释入池原因和短板 |
 | `candidate_pool[].quality_gate` | 确定性质量准入；仅 `status=eligible` 可产生买入动作，`watch_only` 只能观察，`excluded` 禁止进入 recommendations |
-| `candidate_pool[].tradeability` | 份额可交易性：申购状态、购买起点、日限额、标准申购费率上限、持有期赎回费、销售服务费、来源和核验时点；未知或冲突不得执行 |
 | `candidate_pool[].peer_research` | 同类型/策略/地域/风险组的多维分位；只解释 `applicable=true` 且 `available=true` 的维度，不适用与缺失不得补值；`execution_tilt_eligible=false` 时不得据此提额或把描述分位称为预测信号 |
 | `candidate_pool[].benchmark_research` | 冻结基准角色；仅 `formal_excess_eligible=true` 可称正式超额，`tracking_reference` 只能称跟踪参考 |
 | `candidate_pool[].benchmark_metrics` | 决策时点前严格对齐的 3月/6月/1年收益、回撤、滚动胜率与跟踪指标；仅 `status=qualified` 可引用，身份存在不等于跑赢，且只作描述不得提额 |
 | `candidate_pool[].max_drawdown_1y_percent` | 近 1 年历史波动背景；机会优先时只作风险披露与金额约束，不参与机会分、不得把高波动候选降出质量门 |
 | `candidate_pool[].nav_trend.return_20d_percent/return_60d_percent`、`annualized_volatility_20d_percent` | 20～60 个交易日收益与真实波动弹性；机会优先时正向数值不封顶，优先区分高弹性候选 |
 | `candidate_pool[].nav_trend.drawdown_recovery_20d_percent/rebound_from_20d_low_percent` | 20 日区间修复率与离低点反弹幅度；修复率 0=仍在低点、100=已回到区间高点，须结合近5日方向判断是否完成入场修复 |
-| `candidate_pool[].fund_entry_signal` | 基金自身入场判断；`entry_path=benign_pullback` 表示趋势未破下的温和回调承接，`entry_ready=true` 可替代 V3 未通过的板块价格位置项，或配合 `flow_improving_probe_eligible=true` 开放缩小首批；不能替代趋势、质量、申赎和数据门禁 |
+| `candidate_pool[].fund_entry_signal` | 基金自身入场判断；`entry_path=benign_pullback` 表示趋势未破下的温和回调承接，`entry_ready=true` 可替代 V3 未通过的板块价格位置项，或配合 `flow_improving_probe_eligible=true` 开放缩小首批；不能替代趋势、质量和数据门禁 |
 | `candidate_pool[].opportunity_score_20_60d` | 服务端基于未封顶的5/20/60日强度、年化波动和回撤修复生成的排序分；可高于100，不是收益率或概率 |
 | `candidate_pool[].nav_trend` | 净值趋势摘要；判断启动、修复和短期加速须优先参考，不得只看 `sector_heat` |
 | `candidate_pool[].estimated_daily_return_percent` | 候选当日涨跌；须看 `daily_return_source`：`official_nav`=官方净值可作主论据；`sector_estimate`=板块估算，**points 须注明「估算」** |
@@ -50,7 +49,7 @@ DEFAULT_DISCOVERY_ROLE_PROMPT = """## 角色定位
 | `stock_connect_flow` | 南向资金公开摘要，仅作港股资金面的独立参考 |
 | `signal_backtest` / `candidate_factor_scores` | `execution_qualified_fund_codes` 才能作为量化加分证据；未覆盖表示“不加分”，不是强负面证据。`opportunity_first` 不得仅因未覆盖而否决；`risk_first` 仍按量化白名单执行。再检查 `peer_group` / `feature_completeness` / `factor_reliability`，且不得把反向因子解释为正面证据 |
 | `news.freshness_label` | `stale`/`empty` 时降置信度，不得用旧闻主导追涨 |
-| `fund_type_preference` | 历史兼容字段；常规荐基固定为 `any`，同基金份额已自动去重，真实申赎费用仍须执行前核验 |
+| `fund_type_preference` | 历史兼容字段；常规荐基固定为 `any`，同基金份额已自动去重 |
 
 ## 分析依据
 
@@ -61,27 +60,28 @@ DEFAULT_DISCOVERY_ROLE_PROMPT = """## 角色定位
 ## 决策流程
 
 1. 先判断板块方向：若 `sector_opportunities` 含方向成熟度 V2/V3，优先读取 `entry_state` 与触发条件；V3 再读取 `selection_path`、`trend_strength_score`、`participation_score`、`position_risk_score`。`selection_priority_score` 只解释为什么同状态下该方向排得更前，不能越过动作边界；没有成熟度策略时才使用旧 `score`、`track`、资金与热度
-2. 再比较方向内候选基金：先要求 `quality_gate=eligible`、板块身份与交易条件通过；门内按 `opportunity_score_20_60d`、20日波动弹性和 `fund_entry_signal` 排序，不得再用低回撤或较高质量分覆盖明显更强的机会分
-3. 最后决定动作：`ready_to_start` 且基金硬门禁通过时应给 `分批买入`；V3 为 `ready_on_pullback` 时有两条确定性例外：一是仅 `position_risk_score` 未通过且 `fund_entry_signal.entry_ready=true`；二是 `flow_improving_probe_eligible=true` 且基金自身入场信号通过，此时只开放缩小首批。没有同日资金改善证据的低参与度仍须等待
+2. 再比较方向内候选基金：先要求 `quality_gate=eligible`、板块身份与数据时点通过；门内按 `opportunity_score_20_60d`、20日波动弹性和 `fund_entry_signal` 排序，不得再用低回撤或较高质量分覆盖明显更强的机会分
+3. 最后决定动作：`ready_to_start` 且基金质量、数据与组合约束通过时应给 `分批买入`；V3 为 `ready_on_pullback` 时有两条确定性例外：一是仅 `position_risk_score` 未通过且 `fund_entry_signal.entry_ready=true`；二是 `flow_improving_probe_eligible=true` 且基金自身入场信号通过，此时只开放缩小首批。没有同日资金改善证据的低参与度仍须等待
 4. 每只买入候选必须在 `risks` 写出可核验的修复失效/退出条件；不得用“严格止损”暗示一定能按指定价格成交
 5. 每只推荐必须输出 `decision_path`、`sector_evidence`、`fund_evidence`、`validation_notes`，让用户能看懂“为什么是这个方向、为什么是这只基金、还有哪些短板”
 
 ## 输出动作
 
 - `建议关注`：值得纳入观察池，暂不必下单
-- `分批买入`：条件成熟可进入系统分配（金额由服务端按风险、现金、集中度和交易门槛统一计算）
+- `分批买入`：条件成熟可进入系统分配（金额由服务端按风险、现金和集中度统一计算）
 - `等待回调`：沿用现有动作枚举；须根据 `waiting_reason_code` 准确写成等待资金确认、等待基金信号或等待结构修复。单纯高波动、贴近高点或高历史回撤不再自动触发等待
 
 ## 约束
 
 - `discovery_facts` 中数字为只读事实，不得改写或臆造未提供的估值分位
+- 本功能不判断基金在具体销售平台能否购买，不得臆造申购状态、起购额、限额或交易费率，也不得用这些缺失信息否决推荐
 - `with_new_issue` 策略：新发观察基金须单独说明建仓期与业绩空白风险
 - `full_market` 模式不得只按基金近 1 年收益排序；必须先从 `sector_opportunities` / `target_sector_context` 判断方向，再在方向内比较候选基金质量
 - 每只推荐的 `points` 须引用 **candidate_pool 内具体字段**（如 fund_quality_score、quality_reasons、nav_trend、return_3m/6m、sector_fund_flow），不得空泛罗列
 - 每只推荐的 `risks` 须至少 1 条；只有 `sector_opportunities.overheat_flags` 或 `fund_entry_signal.overheat_flags` 非空时才能写追高/短期加速风险，否则必须写结构化失效或信息不足风险
 """
 
-DISCOVERY_PROMPT_TEMPLATE_VERSION = "discovery_prompt.2026-08.v10"
+DISCOVERY_PROMPT_TEMPLATE_VERSION = "discovery_prompt.2026-08.v11"
 
 DISCOVERY_FACTS_INSTRUCTION = (
     "以下数字由系统计算，分析时不得改写；推荐 fund_code 必须来自 candidate_pool，禁止池外编造。"
@@ -90,7 +90,7 @@ DISCOVERY_FACTS_INSTRUCTION = (
     "candidate_pool 每只含 fund_quality_score/sector_fit_score、quality_reasons/quality_penalties、阶段收益、回撤、规模、nav_trend、estimated_daily_return_percent。"
     "full_market 模式须先用 sector_opportunities 判断板块方向，再在方向内比较基金质量，最后决定动作；不得只按近1年收益排序。"
     "sector_opportunities 含 score_policy_version=sector_entry_maturity.2026-07.v2 或 sector_entry_maturity.2026-08.v3 时，entry_state 是方向动作边界："
-    "ready_to_start 且基金质量、申购、费用、预算等硬门禁通过时应输出分批买入；"
+    "ready_to_start 且基金质量、数据、预算和组合风险等门禁通过时应输出分批买入；"
     "ready_on_pullback 通常等待；若唯一未通过项是板块价格位置，且 fund_entry_signal.entry_ready=true，"
     "可用基金自身20日修复信号替代该位置项；若 flow_improving_probe_eligible=true 且基金自身入场信号通过，"
     "可开放缩小首批；没有同日回流证据的低参与度不得走该通道。forming 仍只能建议关注。"
@@ -98,8 +98,7 @@ DISCOVERY_FACTS_INSTRUCTION = (
     "V3 不存在独立入场成熟度分，须分别解释趋势强度、资金参与度与价格位置。"
     "每只推荐须给出 decision_path、sector_evidence、fund_evidence、validation_notes。"
     "质量门内优先 opportunity_score_20_60d、波动弹性和修复信号，不得再把低回撤或较高 fund_quality_score 当作机会优势；账户亏损复核线不得直接用于候选历史回撤准入。"
-    "任何买入还须通过 tradeability：fresh、可申购、金额达到购买起点且不突破日限额；未知/冲突只能观察。"
-    "standard_purchase_fee_tiers 是未折扣标准费率上限，不是用户平台成交费；短周期必须核对赎回费和销售服务费。"
+    "本功能不获取销售平台申购状态、起购额、限额或交易费率；这些字段不得成为候选、动作或金额的否决项。"
     "判断入场位置须优先用 fund_entry_signal 与 nav_trend 的20日修复率、离低点反弹、近5日方向和波动率，"
     "不得仅凭 sector_heat 热度或贴近高点下结论；只有结构化 overheat_flags 非空时才能写追高风险。"
     "estimated_daily_return_percent 须结合 daily_return_source："
@@ -120,7 +119,7 @@ DISCOVERY_FACTS_INSTRUCTION = (
     "候选会被直接从最终报告剔除——因此对 confidence=高 且 opportunity_available=false 的方向，应主动避免"
     "推荐基金质量分同样偏低的候选，减少被剔除后报告数量不足的情况。"
     "news.freshness_label 须在 summary 或 caveats 体现对决策置信度的影响。"
-    "fund_type_preference 仅为历史兼容字段；常规荐基已自动去重份额，真实申赎费用仍须执行前核验。"
+    "fund_type_preference 仅为历史兼容字段；常规荐基已自动去重份额。"
 )
 
 

@@ -266,16 +266,16 @@ describe("DiscoveryReportPanel", () => {
     expect(screen.getAllByText(/顺势观察/).length).toBeGreaterThan(0);
     expect(screen.queryByText(/track=momentum/)).not.toBeInTheDocument();
     expect(screen.queryByText(/pattern=/)).not.toBeInTheDocument();
-    expect(screen.getByText("本次暂无可执行建议")).toBeInTheDocument();
+    expect(screen.getByText("本次暂无买入建议")).toBeInTheDocument();
     expect(screen.getByText("研究观察")).toBeInTheDocument();
     expect(screen.getByText(/有 1 只候选的关键资料不完整或不够新/)).toBeInTheDocument();
     expect(screen.queryByText(/字段级证据守卫/)).not.toBeInTheDocument();
     expect(screen.queryByText("优先行动")).not.toBeInTheDocument();
-    expect(screen.queryByText("可执行建议")).not.toBeInTheDocument();
+    expect(screen.queryByText("推荐基金")).not.toBeInTheDocument();
     expect(screen.queryByText(/核心理由/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /查看 1 只/ }));
     expect(screen.getByText(/核心理由/)).toBeInTheDocument();
-    const evidenceDisclosure = screen.getByText("查看交易条件与完整依据");
+    const evidenceDisclosure = screen.getByText("查看完整依据");
     expect(screen.getByText("决策路径")).not.toBeVisible();
     fireEvent.click(evidenceDisclosure);
     expect(screen.getByText("决策路径")).toBeVisible();
@@ -311,7 +311,7 @@ describe("DiscoveryReportPanel", () => {
     expect(screen.getAllByText(/缺少基金规模/).length).toBeGreaterThan(0);
   });
 
-  it("separates executable, conditional and observation decisions by structured events", () => {
+  it("separates buy, conditional and observation decisions by structured events", () => {
     const report = sampleReport();
     const base = report.recommendations[0];
     report.discovery_facts = {
@@ -345,14 +345,14 @@ describe("DiscoveryReportPanel", () => {
 
     render(<DiscoveryReportPanel report={report} />);
 
-    expect(screen.getByText("1 只通过可执行校验")).toBeInTheDocument();
-    expect(screen.getByText("可执行建议")).toBeInTheDocument();
+    expect(screen.getByText("1 只形成买入建议")).toBeInTheDocument();
+    expect(screen.getByText("推荐基金")).toBeInTheDocument();
     expect(screen.getByText("等待条件")).toBeInTheDocument();
     expect(screen.getByText("等待资金确认")).toBeInTheDocument();
     expect(screen.getByText("研究观察")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /本次候选池/ }));
-    expect(screen.getAllByText("可执行").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("建议买入").length).toBeGreaterThan(0);
     expect(screen.getAllByText("等待条件").length).toBeGreaterThan(0);
     expect(screen.getAllByText("研究观察").length).toBeGreaterThan(0);
     expect(screen.queryByText("已推荐")).not.toBeInTheDocument();
@@ -371,7 +371,7 @@ describe("DiscoveryReportPanel", () => {
     expect(screen.getByTestId("chat-drawer")).toBeInTheDocument();
   });
 
-  it("shows the conservative cost upper bound with execution evidence", () => {
+  it("hides historical sales-platform evidence while retaining fund evidence", () => {
     const report = sampleReport();
     report.candidate_pool = [{
       ...report.candidate_pool?.[0],
@@ -437,29 +437,14 @@ describe("DiscoveryReportPanel", () => {
     render(<DiscoveryReportPanel report={report} />);
 
     fireEvent.click(screen.getByRole("button", { name: /查看 1 只/ }));
-    expect(screen.getByText("申赎与额度已核验")).toBeInTheDocument();
     expect(screen.getByText("基金证据通过")).toBeInTheDocument();
-    expect(screen.queryByText("交易条件通过")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByText("查看交易条件与完整依据"));
-    const evidence = screen.getByRole("region", { name: "交易条件与成本核验" });
-    expect(evidence).toHaveTextContent("申购限大额");
-    expect(evidence).toHaveTextContent("赎回开放");
-    expect(evidence).toHaveTextContent("首次起购");
-    expect(evidence).toHaveTextContent("¥10");
-    expect(evidence).toHaveTextContent("本台执行门槛 ¥100");
-    expect(evidence).toHaveTextContent("追加起购");
-    expect(evidence).toHaveTextContent("¥1");
-    expect(evidence).toHaveTextContent("单日申购限额");
-    expect(evidence).toHaveTextContent("¥1,000");
-    expect(evidence).toHaveTextContent("最低持有期 14 天");
-    expect(evidence).toHaveTextContent("未折扣标准费率成本上限");
-    expect(evidence).toHaveTextContent("约 1.23%");
-    expect(evidence).toHaveTextContent("按最短 14 天");
-    expect(evidence).toHaveTextContent("下单前复核");
-    expect(evidence).toHaveTextContent("不代表销售平台最终成交费");
+    expect(screen.queryByText("申赎与额度已核验")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText("查看完整依据"));
+    expect(screen.queryByRole("region", { name: "交易条件与成本核验" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/申购限大额|赎回开放|首次起购|单日申购限额/)).not.toBeInTheDocument();
   });
 
-  it("does not present a buy event as executable when the tradeability gate fails", () => {
+  it("does not let a historical tradeability gate block a buy recommendation", () => {
     const report = sampleReport();
     const recommendation = {
       ...report.recommendations[0],
@@ -487,12 +472,12 @@ describe("DiscoveryReportPanel", () => {
 
     render(<DiscoveryReportPanel report={report} />);
 
-    expect(screen.getByText("本次暂无可执行建议")).toBeInTheDocument();
-    expect(screen.getByText("研究观察")).toBeInTheDocument();
-    expect(screen.queryByText("可执行建议")).not.toBeInTheDocument();
+    expect(screen.getByText("1 只形成买入建议")).toBeInTheDocument();
+    expect(screen.getByText("推荐基金")).toBeInTheDocument();
+    expect(screen.queryByText("申赎与额度需复核")).not.toBeInTheDocument();
   });
 
-  it("shows the verified current tranche separately from an amount-free future tranche", () => {
+  it("shows the advisory current tranche separately from an amount-free future tranche", () => {
     const report = sampleReport();
     const recommendation = {
       ...report.recommendations[0],
@@ -503,14 +488,13 @@ describe("DiscoveryReportPanel", () => {
         fund_code: "006081",
         sector_name: "电子",
         suggested_amount_yuan: 6300,
-        amount_semantics: "current_verified_initial_tranche" as const,
+        amount_semantics: "advisory_initial_tranche" as const,
         future_tranches: [
           {
             sequence: 2,
             amount_yuan: null,
             revalidation_required: true,
             preconditions: [
-              "tradeability_gate_recheck",
               "confirmed_cash_recheck",
               "risk_context_recheck",
             ],
@@ -540,7 +524,7 @@ describe("DiscoveryReportPanel", () => {
     report.allocation_plan = {
       schema_version: "discovery_allocation_plan.v1",
       status: "partial",
-      amount_semantics: "current_verified_initial_tranche",
+      amount_semantics: "advisory_initial_tranche",
       risk_context: {
         schema_version: "discovery_risk_context.v1",
         status: "qualified",
@@ -566,7 +550,7 @@ describe("DiscoveryReportPanel", () => {
 
     render(<DiscoveryReportPanel report={report} />);
 
-    expect(screen.getByText("1 只通过可执行校验")).toBeInTheDocument();
+    expect(screen.getByText("1 只形成买入建议")).toBeInTheDocument();
     const plan = screen.getByRole("region", { name: "确定性首批分配" });
     expect(plan).toHaveTextContent("总预算");
     expect(plan).toHaveTextContent("¥50,000");
@@ -581,11 +565,11 @@ describe("DiscoveryReportPanel", () => {
     expect(plan).toHaveTextContent("当前持仓净值金额覆盖 92.5%");
     expect(plan).toHaveTextContent("因现金不足或未确认不可用：¥10,000");
 
-    const currentTranche = screen.getByLabelText("当前已验证首批金额");
-    expect(currentTranche).toHaveTextContent("当前已验证首批");
+    const currentTranche = screen.getByLabelText("首批参考金额");
+    expect(currentTranche).toHaveTextContent("首批参考金额");
     expect(currentTranche).toHaveTextContent("¥6,300");
     expect(screen.getByText("后续批次待重新核验 · 金额留空")).toBeInTheDocument();
-    expect(screen.getByText(/交易条件、可用现金、板块敞口与组合风险需在执行前重新计算/)).toBeInTheDocument();
+    expect(screen.getByText(/可用现金、板块敞口与组合风险需在执行前重新计算/)).toBeInTheDocument();
   });
 
   it("fails closed when a modern allocation plan has no verified allocation row", () => {
@@ -603,7 +587,7 @@ describe("DiscoveryReportPanel", () => {
     report.allocation_plan = {
       schema_version: "discovery_allocation_plan.v1",
       status: "blocked",
-      amount_semantics: "current_verified_initial_tranche",
+      amount_semantics: "advisory_initial_tranche",
       allocations: [],
       risk_context: {
         schema_version: "discovery_risk_context.v1",
@@ -615,16 +599,16 @@ describe("DiscoveryReportPanel", () => {
 
     render(<DiscoveryReportPanel report={report} />);
 
-    expect(screen.getByText("本次暂无可执行建议")).toBeInTheDocument();
+    expect(screen.getByText("本次暂无买入建议")).toBeInTheDocument();
     expect(screen.getByText("研究观察")).toBeInTheDocument();
-    expect(screen.queryByText("可执行建议")).not.toBeInTheDocument();
+    expect(screen.queryByText("推荐基金")).not.toBeInTheDocument();
     expect(screen.getByText("组合风险上下文未通过或未记录")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /查看 1 只/ }));
-    fireEvent.click(screen.getByText("查看交易条件与完整依据"));
+    fireEvent.click(screen.getByText("查看完整依据"));
     expect(screen.getByLabelText("历史参考金额")).toHaveTextContent("¥999,999");
   });
 
-  it("deduplicates historical final-action projections and compacts non-executable tradeability", () => {
+  it("deduplicates historical final-action projections and hides legacy tradeability", () => {
     const report = sampleReport();
     report.recommendations = [
       {
@@ -657,13 +641,10 @@ describe("DiscoveryReportPanel", () => {
     const { container } = render(<DiscoveryReportPanel report={report} />);
 
     fireEvent.click(screen.getByRole("button", { name: /查看 1 只/ }));
-    fireEvent.click(screen.getByText("查看交易条件与完整依据"));
+    fireEvent.click(screen.getByText("查看完整依据"));
     expect(container.textContent?.match(/系统校验后的最终动作：建议关注。/g) ?? []).toHaveLength(1);
-    const evidence = screen.getByRole("region", { name: "交易条件与成本核验" });
-    expect(evidence).toHaveTextContent("交易门禁摘要");
-    expect(evidence).toHaveTextContent("这不等于基金当前已暂停申购");
-    expect(evidence).not.toHaveTextContent("未折扣标准费率成本上限");
-    expect(screen.getByText("查看历史交易参数")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "交易条件与成本核验" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/交易门禁|暂停申购|历史交易参数/)).not.toBeInTheDocument();
   });
 
   it("keeps historical reports without allocation fields renderable", () => {
@@ -740,7 +721,7 @@ describe("DiscoveryReportPanel", () => {
     render(<DiscoveryReportPanel report={summary} />);
 
     expect(screen.getByText("电子方向扫描")).toBeInTheDocument();
-    // 摘要阶段没有 recommendations，应走可执行校验的空态，不能抛错。
-    expect(screen.getByText("本次暂无可执行建议")).toBeInTheDocument();
+    // 摘要阶段没有 recommendations，应走买入建议空态，不能抛错。
+    expect(screen.getByText("本次暂无买入建议")).toBeInTheDocument();
   });
 });

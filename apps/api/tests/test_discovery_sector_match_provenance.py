@@ -265,44 +265,6 @@ def test_exact_passive_tracking_reference_upgrades_name_match_without_upgrading_
         },
     )
 
-    tradeability = {
-        "data_status": "partial",
-        "freshness": "fresh",
-        "purchase_state": "open",
-        "redemption_state": "open",
-        "currency": "CNY",
-        "minimum_purchase_yuan": 10.0,
-        "daily_purchase_limit_unlimited": True,
-        "standard_purchase_fee_tiers": [
-            {
-                "condition": "全部",
-                "fee_type": "percent",
-                "fee_percent": 0.0,
-                "flat_fee_yuan": None,
-                "min_amount_yuan": None,
-                "max_amount_yuan": None,
-                "source_rate": "standard_undiscounted",
-            }
-        ],
-        "redemption_fee_tiers": [
-            {
-                "condition": "大于等于0天",
-                "min_days": 0,
-                "max_days": None,
-                "fee_percent": 0.0,
-            }
-        ],
-        "sales_service_fee_annual_percent": 0.0,
-        "sales_service_fee_status": "known_zero",
-        "fee_freshness": "fresh",
-        "source_conflict": False,
-        "source_ids": ["pytest.tradeability"],
-    }
-    monkeypatch.setattr(
-        "app.services.discovery_candidate_pool.resolve_fund_tradeability_profiles",
-        lambda codes, **_kwargs: {code: dict(tradeability) for code in codes},
-    )
-
     rows = enrich_candidates(
         [
             {

@@ -11,7 +11,6 @@ import {
 } from "lucide-react";
 import type { DiscoveryCandidatePoolItem, EliminatedCandidate } from "@/lib/api";
 import { translateEvidenceText } from "@/lib/decisionText";
-import { FundTradeabilityEvidence } from "@/components/FundTradeabilityEvidence";
 
 const CORE_FIELD_LABELS: Record<string, string> = {
   return_3m_percent: "近3月收益",
@@ -33,7 +32,7 @@ const DECISION_STATUS_META: Record<
   { label: string; badgeClass: string; rowClass: string }
 > = {
   actionable: {
-    label: "可执行",
+    label: "建议买入",
     badgeClass: "bg-[var(--success-bg)] text-[var(--success-fg)]",
     rowClass: "border-[var(--success-border)] bg-[var(--success-bg)]/70",
   },
@@ -82,14 +81,6 @@ function formatScore(value: number | null | undefined): string {
     return "—";
   }
   return Number(value).toFixed(2).replace(/\.00$/, "");
-}
-
-// formatter 提到模块作用域：候选池每张卡片的多处金额都会调用它。输出格式不变。
-const MONEY_FORMATTER = new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 2 });
-
-function formatMoney(value: number | null | undefined): string {
-  if (value == null || !Number.isFinite(value)) return "待核验";
-  return `¥${MONEY_FORMATTER.format(Number(value))}`;
 }
 
 function listText(items: string[] | undefined, fallback = "—"): string {
@@ -348,70 +339,6 @@ function ResearchEvidence({ item }: { item: DiscoveryCandidatePoolItem }) {
   );
 }
 
-function CandidateTradeSummary({ item }: { item: DiscoveryCandidatePoolItem }) {
-  const tradeability = item.tradeability;
-  const gate = item.tradeability_gate ?? tradeability?.tradeability_gate;
-  const hasSnapshot = Boolean(
-    (tradeability && Object.keys(tradeability).length) ||
-      (gate && Object.keys(gate).length),
-  );
-  if (!hasSnapshot) {
-    return (
-      <div
-        className="rounded-xl bg-slate-50 px-3 py-2 text-[11px] text-slate-500"
-        aria-label="交易条件摘要"
-      >
-        交易条件未记录
-      </div>
-    );
-  }
-
-  const state = tradeability?.purchase_state ?? "unknown";
-  const stateLabel =
-    state === "open"
-      ? "开放"
-      : state === "limited"
-        ? "限大额"
-        : state === "suspended"
-          ? "暂停"
-          : state === "closed"
-            ? "封闭"
-            : "待核验";
-  const statusUsable =
-    ["complete", "partial"].includes(tradeability?.data_status ?? "") &&
-    tradeability?.freshness === "fresh";
-  const initialMinimum =
-    gate?.effective_initial_min_purchase_yuan ??
-    tradeability?.minimum_initial_purchase_yuan ??
-    tradeability?.minimum_purchase_yuan;
-  const unlimited =
-    gate?.max_purchase_unlimited ?? tradeability?.daily_purchase_limit_unlimited;
-  const limit = gate?.max_purchase_yuan ?? tradeability?.daily_purchase_limit_yuan;
-  const gateLabel =
-    gate?.status === "eligible"
-      ? "执行门禁通过"
-      : gate?.status === "excluded"
-        ? "场外申购排除"
-        : "仅研究观察";
-
-  return (
-    <div
-      className="rounded-xl border border-slate-200 bg-slate-50/80 px-3 py-2 text-[11px] leading-5"
-      aria-label="交易条件摘要"
-    >
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-        <span className={statusUsable ? "font-black text-[var(--success-fg)]" : "font-black text-[var(--warn-fg)]"}>
-          {statusUsable ? `申购${stateLabel}` : `申购记录${stateLabel}（证据${tradeability?.freshness === "stale" ? "过期" : "不可用"}）`}
-        </span>
-        <span className="font-semibold text-slate-700">{gateLabel}</span>
-      </div>
-      <p className="text-slate-500">
-        起购 {formatMoney(initialMinimum)} · 单日{unlimited ? "无限额" : `限额 ${formatMoney(limit)}`}
-      </p>
-    </div>
-  );
-}
-
 function buildCandidateResearchSummary(item: DiscoveryCandidatePoolItem) {
   const peerRank =
     item.peer_rank && Object.keys(item.peer_rank).length
@@ -556,7 +483,7 @@ function qualityPresentation(
     impact: excluded
       ? "该候选已被系统剔除，不会进入推荐。"
       : degraded
-        ? "该候选仅作研究观察，不会形成可执行买入动作。"
+        ? "该候选仅作研究观察，不会形成买入建议。"
         : "核心字段质量门禁已通过；最终动作仍需结合策略与风险守卫。",
     degraded,
     unknown: false,
@@ -888,14 +815,11 @@ export function DiscoveryCandidatePoolPanel({
                     ))}
                   </dl>
 
-                  <div
-                    className={`mt-2 grid gap-2 ${researchSummary ? "sm:grid-cols-2" : "grid-cols-1"}`}
-                  >
-                    <CandidateTradeSummary item={item} />
-                    {researchSummary ? (
+                  {researchSummary ? (
+                    <div className="mt-2">
                       <CandidateResearchSummary summary={researchSummary} />
-                    ) : null}
-                  </div>
+                    </div>
+                  ) : null}
 
                   {primaryReason ? (
                     <p className="mt-2 line-clamp-2 text-[11px] leading-5 text-slate-600">
@@ -906,7 +830,7 @@ export function DiscoveryCandidatePoolPanel({
 
                   <details className="group mt-2 rounded-xl border border-slate-200 bg-white/85">
                     <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 rounded-xl px-3 text-xs font-bold text-slate-700 outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] focus-visible:ring-offset-2 [&::-webkit-details-marker]:hidden">
-                      <span>查看交易条件、同类研究与完整依据</span>
+                      <span>查看同类研究与完整依据</span>
                       <ChevronDown
                         size={15}
                         aria-hidden="true"
@@ -914,12 +838,6 @@ export function DiscoveryCandidatePoolPanel({
                       />
                     </summary>
                     <div className="grid gap-2 border-t border-slate-100 p-2.5 lg:grid-cols-2">
-                      <FundTradeabilityEvidence
-                        tradeability={item.tradeability}
-                        tradeabilityGate={item.tradeability_gate}
-                        costAssessment={item.cost_assessment}
-                        compact
-                      />
                       <ResearchEvidence item={item} />
                       <QualityDetails
                         item={item}

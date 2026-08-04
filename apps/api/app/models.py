@@ -444,7 +444,7 @@ class DiscoveryRecommendation(BaseModel):
     waiting_reason_code: str | None = None
     entry_path: str | None = None
     entry_tranche_scale: float | None = None
-    # 服务端确定性附加；不信任 LLM 草案里的同名字段，最终由候选事实与金额门禁覆盖。
+    # 历史报告兼容字段；发现基金已不再抓取、展示或按销售平台交易状态拦截。
     tradeability: dict[str, Any] = Field(default_factory=dict)
     cost_assessment: dict[str, Any] = Field(default_factory=dict)
     allocation: dict[str, Any] = Field(default_factory=dict)

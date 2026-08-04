@@ -229,11 +229,11 @@ def test_finalize_v1_remains_and_pipeline_v2_is_full_funnel_fail_closed() -> Non
     assert [row["fund_code"] for row in final] == ["100001", "100003"]
     by_code = {row["fund_code"]: row for row in audit["rows"]}
     assert by_code["100002"]["stage_records"]["gate"]["reason_codes"] == [
-        "share_class_not_selected_after_tradeability_and_cost"
+        "share_class_not_selected_after_quality_dedup"
     ]
     assert by_code["100002"]["stage_records"]["prescreen"]["present"] is False
     assert by_code["100004"]["stage_records"]["gate"]["reason_codes"] == [
-        "quality_or_tradeability_gate_excluded"
+        "quality_gate_excluded"
     ]
     assert by_code["100004"]["stage_records"]["prescreen"]["present"] is False
 

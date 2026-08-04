@@ -407,9 +407,9 @@ def build_pipeline_candidate_selection_audit_v2(
     """Build the live discovery-path v2 audit from captured stage snapshots.
 
     The adapter never substitutes ``decision_at`` for a missing provider
-    availability timestamp.  Missing catalogue/tradeability lineage is copied
-    into ``audit_evidence_issues`` and therefore leaves the resulting audit
-    invalid while retaining the observable funnel for diagnosis.
+    availability timestamp. Missing catalogue or quality lineage is copied into
+    ``audit_evidence_issues`` and therefore leaves the resulting audit invalid
+    while retaining the observable funnel for diagnosis.
     """
 
     recall_payload = dict(recall_snapshot or {})
@@ -463,7 +463,7 @@ def build_pipeline_candidate_selection_audit_v2(
         "gate": {
             "version": PIPELINE_STAGE_VERSIONS["gate"],
             "scope": {
-                "definition": "enriched candidates with quality and tradeability gates",
+                "definition": "enriched candidates with research-quality gates",
                 "complete": True,
             },
         },
@@ -471,7 +471,7 @@ def build_pipeline_candidate_selection_audit_v2(
             "version": PIPELINE_STAGE_VERSIONS["prescreen"],
             "scope": {
                 "definition": (
-                    "quality/tradeability-acceptable share-family winners before "
+                    "quality-acceptable share-family representatives before "
                     "sector quota and global pool cap"
                 ),
                 "complete": True,
@@ -545,10 +545,10 @@ def _pipeline_stage_reasons(
             return transition_reasons
         quality_status = str((candidate.get("quality_gate") or {}).get("status") or "")
         if quality_status == "excluded":
-            return ["quality_or_tradeability_gate_excluded"]
+            return ["quality_gate_excluded"]
         if quality_status == "eligible":
-            return ["quality_and_tradeability_gate_eligible"]
-        return ["quality_or_tradeability_gate_watch_only"]
+            return ["quality_gate_eligible"]
+        return ["quality_gate_watch_only"]
     if stage == "prescreen":
         transition_reasons = _text_list(
             candidate.get("candidate_selection_transition_reasons")
@@ -626,45 +626,6 @@ def _pipeline_candidate_refs(
         quality_gate = candidate.get("quality_gate")
         if not isinstance(quality_gate, Mapping):
             issues.append("quality_gate_missing")
-        tradeability = candidate.get("tradeability")
-        if not isinstance(tradeability, Mapping):
-            issues.append("tradeability_evidence_missing")
-        else:
-            checked_at = tradeability.get("checked_at")
-            source_ids = [str(value) for value in tradeability.get("source_ids") or [] if str(value)]
-            if not checked_at or not source_ids:
-                issues.append("tradeability_point_in_time_provenance_missing")
-            else:
-                trade_material = {
-                    "fund_code": code,
-                    "schema_version": tradeability.get("schema_version"),
-                    "source_ids": source_ids,
-                    "checked_at": _datetime_text(checked_at),
-                    "data_status": tradeability.get("data_status"),
-                    "purchase_state": tradeability.get("purchase_state"),
-                }
-                digest = _hash_or_none(trade_material)
-                if digest is not None:
-                    ref_id = f"{stage}:{code}:tradeability"
-                    refs.append(
-                        {
-                            "ref_id": ref_id,
-                            "source": "|".join(source_ids),
-                            "version": str(
-                                tradeability.get("schema_version")
-                                or "fund_tradeability.v1"
-                            ),
-                            "snapshot_hash": digest,
-                        }
-                    )
-                    pits.append(
-                        {
-                            "fact_id": f"{ref_id}:fact",
-                            "source_ref_id": ref_id,
-                            "available_at": _datetime_text(checked_at),
-                            "snapshot_hash": digest,
-                        }
-                    )
     return _merge_refs(refs), _merge_refs(pits), list(dict.fromkeys(issues))
 
 

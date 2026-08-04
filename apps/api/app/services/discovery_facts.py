@@ -16,7 +16,6 @@ from app.services.investment_presets import take_profit_threshold_percent
 from app.services.market_flow_client import build_stock_connect_flow_context
 from app.services.mainline_regime import align_sector_opportunities_with_mainline_snapshot
 from app.services.fund_nav_service import get_cached_official_nav_return
-from app.services.fund_tradeability import build_tradeability_gate
 from app.services.holding_estimates import (
     compute_estimated_daily_return_percent,
     resolve_holding_return_percent,
@@ -170,9 +169,7 @@ def build_discovery_facts(
             "discovery_strategy": discovery_strategy,
             "discovery_strategy_contract": strategy_contract(discovery_strategy),
             "selection_policy": "auto_quality",
-            "share_class_policy": (
-                "tradeability_first_family_selection_standard_fee_upper_bound"
-            ),
+            "share_class_policy": "quality_and_opportunity_family_representative",
             "legacy_fund_type_preference": fund_type_preference,
         },
     }
@@ -233,10 +230,6 @@ def _candidate_quality_summary(candidate_pool: list[dict]) -> dict:
     missing_field_counts = {field: 0 for field in required_fields}
     profile_status_counts: dict[str, int] = {}
     profile_source_counts: dict[str, int] = {}
-    tradeability_gate_counts = {"eligible": 0, "watch_only": 0, "excluded": 0}
-    purchase_state_counts: dict[str, int] = {}
-    fee_status_counts: dict[str, int] = {}
-    revalidation_required_count = 0
     coverage_values: list[float] = []
     for item in candidate_pool:
         gate = item.get("quality_gate") if isinstance(item.get("quality_gate"), dict) else {}
@@ -259,24 +252,6 @@ def _candidate_quality_summary(candidate_pool: list[dict]) -> dict:
                 coverage_values.append(float(value))
         except (TypeError, ValueError):
             pass
-        tradeability = (
-            item.get("tradeability")
-            if isinstance(item.get("tradeability"), dict)
-            else None
-        )
-        execution_gate = build_tradeability_gate(tradeability)
-        gate_status = str(execution_gate.get("status") or "watch_only")
-        if gate_status not in tradeability_gate_counts:
-            gate_status = "watch_only"
-        tradeability_gate_counts[gate_status] += 1
-        purchase_state = str((tradeability or {}).get("purchase_state") or "unknown")
-        purchase_state_counts[purchase_state] = purchase_state_counts.get(purchase_state, 0) + 1
-        fee_status = str(
-            (tradeability or {}).get("share_class_fee_status") or "unverified"
-        )
-        fee_status_counts[fee_status] = fee_status_counts.get(fee_status, 0) + 1
-        if execution_gate.get("revalidation_required") is True:
-            revalidation_required_count += 1
     return {
         "total_count": len(candidate_pool),
         "eligible_count": statuses["eligible"],
@@ -286,10 +261,6 @@ def _candidate_quality_summary(candidate_pool: list[dict]) -> dict:
         "missing_field_counts": missing_field_counts,
         "profile_status_counts": profile_status_counts,
         "profile_source_counts": profile_source_counts,
-        "tradeability_gate_counts": tradeability_gate_counts,
-        "purchase_state_counts": purchase_state_counts,
-        "fee_status_counts": fee_status_counts,
-        "revalidation_required_count": revalidation_required_count,
         "coverage_percent": (
             round(sum(coverage_values) / len(coverage_values), 1)
             if coverage_values

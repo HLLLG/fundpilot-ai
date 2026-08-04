@@ -9,18 +9,9 @@ from app.models import DiscoveryRecommendation, InvestorProfile
 from app.services.discovery_allocation_risk import build_discovery_risk_context
 from app.services.discovery_allocator import allocate_discovery_candidates
 from app.services.discovery_guard import finalize_discovery_allocation_projection
-from app.services.discovery_strategy import (
-    discovery_horizon_label,
-    discovery_minimum_holding_days,
-    strategy_from_facts,
-)
 from app.services.discovery_selection_strategy import (
     fund_entry_opens_v3_improving_flow_probe,
     fund_recovery_overrides_sector_position,
-)
-from app.services.fund_tradeability import (
-    assess_tradeability_for_amount,
-    build_tradeability_gate,
 )
 from app.services.sector_opportunity_scoring import (
     ENTRY_POLICY_VERSION,
@@ -36,38 +27,20 @@ def prepare_recommendations_for_deterministic_allocation(
     *,
     candidate_pool: Sequence[Mapping[str, Any]],
 ) -> list[DiscoveryRecommendation]:
-    """Erase every model amount and provide only a guard-validation probe.
+    """Erase every model amount and provide only a neutral guard probe.
 
     The legacy guard still expects a positive amount to retain a proposed buy.
-    We therefore probe each candidate at its deterministic initial minimum and
-    later replace that probe with the multi-candidate allocation. Sorting by
+    We therefore use one neutral 100-yuan probe and later replace it with the
+    multi-candidate advisory allocation. Sorting by
     fund code also prevents model list order from influencing legacy sequential
     checks while the migration remains in place.
     """
 
-    by_code = {
-        str(item.get("fund_code") or "").zfill(6): item
-        for item in candidate_pool
-        if isinstance(item, Mapping)
-    }
+    _ = candidate_pool
     prepared: list[DiscoveryRecommendation] = []
     for recommendation in recommendations:
         copy = recommendation.model_copy(deep=True)
-        code = copy.fund_code.strip().zfill(6)
-        pool_item = by_code.get(code) or {}
-        tradeability = (
-            pool_item.get("tradeability")
-            if isinstance(pool_item.get("tradeability"), Mapping)
-            else None
-        )
-        gate = build_tradeability_gate(tradeability)
-        probe = _positive_number(
-            gate.get("effective_initial_min_purchase_yuan")
-        )
-        # Invalid/missing transaction evidence is rejected by the guard. The
-        # neutral fallback exists only so a model's null/hostile amount cannot
-        # decide whether a semantically valid buy proposal survives to it.
-        copy.suggested_amount_yuan = probe or 100.0
+        copy.suggested_amount_yuan = 100.0
         copy.amount_note = None
         prepared.append(copy)
     return sorted(prepared, key=lambda item: item.fund_code.strip().zfill(6))
@@ -82,19 +55,13 @@ def apply_deterministic_discovery_allocation(
     budget_yuan: float,
     decision_at: datetime | None,
 ) -> tuple[list[DiscoveryRecommendation], dict[str, Any], dict[str, Any], list[str]]:
-    """Allocate one verified tranche and project it back onto recommendations."""
+    """Allocate one advisory tranche and project it back onto recommendations."""
 
     pool_by_code = {
         str(item.get("fund_code") or "").zfill(6): dict(item)
         for item in candidate_pool
         if isinstance(item, Mapping)
     }
-    discovery_strategy = strategy_from_facts(discovery_facts)
-    strategy_horizon = discovery_horizon_label(discovery_strategy, profile)
-    minimum_holding_days = discovery_minimum_holding_days(
-        discovery_strategy,
-        profile,
-    )
     proposed_buys = [
         item
         for item in recommendations
@@ -140,73 +107,24 @@ def apply_deterministic_discovery_allocation(
     denominator = _positive_number(portfolio_gap.get("weight_denominator_yuan"))
     if denominator is None:
         denominator = _positive_number(profile.expected_investment_amount)
-    active_rows = list(allocator_rows)
-    rejected_cost_rows: list[dict[str, Any]] = []
-    cost_by_code: dict[str, dict[str, Any]] = {}
-    plan: dict[str, Any] = {}
-    for _attempt in range(len(active_rows) + 1):
-        plan = allocate_discovery_candidates(
-            active_rows,
-            requested_budget_yuan=budget_yuan,
-            confirmed_cash_yuan=cash,
-            existing_sector_exposure_yuan=exposures,
-            concentration_denominator_yuan=denominator,
-            concentration_limit_percent=profile.concentration_limit_percent,
-            prefer_dca=profile.prefer_dca,
-            decision_style=profile.decision_style,
-            risk_context=risk_context,
-            priority_inputs=None,
-            current_tranche_ratio_cap=_entry_maturity_tranche_ratio_cap(
-                discovery_facts,
-                proposed_buys,
-            ),
-            amount_step_yuan=100,
-        )
-        invalid_cost_codes: set[str] = set()
-        for allocation in plan.get("allocations") or []:
-            code = str(allocation.get("fund_code") or "").zfill(6)
-            amount = _positive_number(allocation.get("suggested_amount_yuan"))
-            source = pool_by_code.get(code) or {}
-            tradeability = (
-                source.get("tradeability")
-                if isinstance(source.get("tradeability"), Mapping)
-                else None
-            )
-            assessment = assess_tradeability_for_amount(
-                tradeability,
-                amount_yuan=amount,
-                hold_horizon=(
-                    f"荐基策略最短持有期 {minimum_holding_days} 天"
-                    if minimum_holding_days is not None
-                    else strategy_horizon
-                ),
-                minimum_holding_days=minimum_holding_days,
-            )
-            cost_by_code[code] = assessment
-            if assessment.get("executable") is not True:
-                invalid_cost_codes.add(code)
-                rejected_cost_rows.append(
-                    {
-                        "fund_code": code,
-                        "sector_name": allocation.get("sector_name"),
-                        "reason_codes": ["final_amount_cost_gate_not_executable"],
-                    }
-                )
-        if not invalid_cost_codes:
-            break
-        active_rows = [
-            row
-            for row in active_rows
-            if str(row.get("fund_code") or "").zfill(6) not in invalid_cost_codes
-        ]
-
-    if rejected_cost_rows:
-        existing = list(plan.get("excluded_candidates") or [])
-        existing.extend(rejected_cost_rows)
-        plan["excluded_candidates"] = sorted(
-            existing,
-            key=lambda item: str(item.get("fund_code") or ""),
-        )
+    plan = allocate_discovery_candidates(
+        allocator_rows,
+        requested_budget_yuan=budget_yuan,
+        confirmed_cash_yuan=cash,
+        existing_sector_exposure_yuan=exposures,
+        concentration_denominator_yuan=denominator,
+        concentration_limit_percent=profile.concentration_limit_percent,
+        prefer_dca=profile.prefer_dca,
+        decision_style=profile.decision_style,
+        risk_context=risk_context,
+        priority_inputs=None,
+        current_tranche_ratio_cap=_entry_maturity_tranche_ratio_cap(
+            discovery_facts,
+            proposed_buys,
+        ),
+        amount_step_yuan=100,
+        require_tradeability_gate=False,
+    )
 
     allocation_rows = {
         str(item.get("fund_code") or "").zfill(6): dict(item)
@@ -257,17 +175,12 @@ def apply_deterministic_discovery_allocation(
             continue
         copy.suggested_amount_yuan = amount
         copy.allocation = allocation
-        copy.cost_assessment = cost_by_code.get(code) or {}
+        copy.cost_assessment = {}
         copy.amount_note = (
-            "当前首批金额由系统按已确认现金、总预算、已有板块敞口、"
-            "集中度、候选历史回撤、波动、相关性、购买起点和单日限额统一计算；"
-            "风险越高首批权重越低，后续批次不预先承诺金额。"
+            "首批参考金额由系统按已确认现金、总预算、已有板块敞口、"
+            "集中度、候选历史回撤、波动和相关性统一计算；风险越高首批"
+            "权重越低，后续批次不预先承诺金额。"
         )
-        total_cost = _finite_number(
-            copy.cost_assessment.get("estimated_total_cost_upper_bound_percent")
-        )
-        if total_cost is not None:
-            copy.amount_note += f" 按未折扣标准费率估算成本上限约 {total_cost:.2f}%。"
         projected.append(finalize_discovery_allocation_projection(copy))
 
     order = {
@@ -287,7 +200,7 @@ def apply_deterministic_discovery_allocation(
             "候选未形成合格的组合风险上下文或统一首批额度，系统已清除全部买入金额。"
         )
     elif plan.get("status") == "partial":
-        caveats.append("统一分配受交易、现金或集中度上限约束，部分首批预算保持未分配。")
+        caveats.append("统一分配受现金、风险或集中度上限约束，部分首批预算保持未分配。")
     return projected, plan, risk_context, caveats
 
 
@@ -371,10 +284,6 @@ def _allocator_candidate(
     quality_gate = row.get("quality_gate")
     row["quality_action"] = (
         quality_gate.get("status") if isinstance(quality_gate, Mapping) else None
-    )
-    tradeability = row.get("tradeability")
-    row["tradeability_gate"] = build_tradeability_gate(
-        tradeability if isinstance(tradeability, Mapping) else None
     )
     return row
 

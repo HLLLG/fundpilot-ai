@@ -13,7 +13,6 @@ from app.models import DataEvidence, FundSnapshot, Holding
 from app.request_context import try_get_request_user_id
 from app.services.portfolio_holdings_service import load_persisted_holdings
 from app.services.trading_session import build_trading_session
-from app.services.fund_tradeability import build_tradeability_gate
 from app.services.daily_tradeability import build_holding_transaction_execution
 
 
@@ -1126,43 +1125,6 @@ def attach_discovery_data_evidence(
                 freshness=candidate_freshness,
             )
         )
-        tradeability = candidate.get("tradeability")
-        tradeability_gate = (
-            build_tradeability_gate(tradeability)
-            if isinstance(tradeability, dict)
-            else build_tradeability_gate(None)
-        )
-        tradeability_available = bool(
-            isinstance(tradeability, dict)
-            and tradeability_gate.get("status") == "eligible"
-        )
-        tradeability_source = (
-            "+".join(str(item) for item in tradeability.get("source_ids") or [])
-            if isinstance(tradeability, dict)
-            else ""
-        )
-        items.append(
-            _field_evidence(
-                fact_id=f"candidates.{code}.tradeability",
-                source=tradeability_source or "fund_tradeability_pipeline",
-                source_type="third_party",
-                as_of_date=effective_trade_date,
-                available_at=(
-                    _coerce_datetime(tradeability.get("checked_at"))
-                    if isinstance(tradeability, dict)
-                    else None
-                ),
-                fetched_at=fetched_at,
-                confidence="high" if tradeability_available else "none",
-                is_estimate=False,
-                available=tradeability_available,
-                freshness=(
-                    str(tradeability.get("freshness") or "unavailable")
-                    if isinstance(tradeability, dict)
-                    else "unavailable"
-                ),
-            )
-        )
         benchmark_metrics = (
             candidate.get("benchmark_metrics")
             if isinstance(candidate.get("benchmark_metrics"), dict)
@@ -1363,9 +1325,6 @@ def decision_evidence_allows_action(
         required = f"candidates.{code}.candidate_metrics"
         if not _usable_evidence(items.get(required)):
             return False, ["candidate_metrics_not_point_in_time_usable"]
-        tradeability_required = f"candidates.{code}.tradeability"
-        if not _usable_evidence(items.get(tradeability_required)):
-            return False, ["candidate_tradeability_not_point_in_time_usable"]
         return True, []
 
     amount_id = f"holdings.{code}.holding_amount"

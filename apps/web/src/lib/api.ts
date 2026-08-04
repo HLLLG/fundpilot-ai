@@ -1078,7 +1078,7 @@ export type DiscoveryAllocation = {
   fund_code?: string;
   sector_name?: string;
   suggested_amount_yuan?: number | null;
-  amount_semantics?: "current_verified_initial_tranche" | string;
+  amount_semantics?: "current_verified_initial_tranche" | "advisory_initial_tranche" | string;
   constraint_snapshot?: {
     effective_initial_min_purchase_yuan?: number | null;
     candidate_purchase_cap_yuan?: number | null;
@@ -1111,7 +1111,7 @@ export type DiscoveryAllocationPlan = {
   schema_version?: string;
   status?: "allocated" | "partial" | "blocked" | string;
   allocation_mode?: string;
-  amount_semantics?: "current_verified_initial_tranche" | string;
+  amount_semantics?: "current_verified_initial_tranche" | "advisory_initial_tranche" | string;
   policy?: {
     decision_style?: string;
     prefer_dca?: boolean;

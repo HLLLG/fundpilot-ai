@@ -122,9 +122,9 @@ def recall_upside_score(row: Mapping[str, object]) -> float:
 
     Full 20/60-day NAV volatility is not available yet at this stage.  Recent
     3/6-month momentum is therefore combined with the observed one-year range
-    amplitude (maximum drawdown) as a recall proxy.  Hard maturity, scale and
-    tradeability checks still run later; this score only decides which funds
-    receive the more expensive NAV enrichment.
+    amplitude (maximum drawdown) as a recall proxy. Hard maturity, scale and
+    research-quality checks still run later; this score only decides which
+    funds receive the more expensive NAV enrichment.
     """
 
     current = current_opportunity_score(dict(row))

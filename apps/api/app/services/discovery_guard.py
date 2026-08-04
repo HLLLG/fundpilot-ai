@@ -23,7 +23,6 @@ from app.services.sector_labels import normalize_sector_label
 from app.services.discovery_sector_context import execution_qualified_fund_codes
 from app.services.discovery_strategy import (
     discovery_horizon_label,
-    discovery_minimum_holding_days,
     strategy_from_facts,
 )
 from app.services.discovery_selection_strategy import (
@@ -38,11 +37,6 @@ from app.services.sector_opportunity_scoring import (
     ENTRY_READY_TO_START,
     MATURITY_POLICY_VERSIONS,
     V3_GATE_THRESHOLDS,
-)
-from app.services.fund_tradeability import (
-    assess_tradeability_for_amount,
-    build_tradeability_gate,
-    compact_tradeability_for_llm,
 )
 
 
@@ -410,7 +404,7 @@ def apply_discovery_guards(
             f"示意买入总额已按已确认可用现金 {known_cash_yuan:.2f} 元封顶。"
         )
     elif known_cash_yuan is None:
-        caveats.append("可用现金未单独录入，本次按你填写的预算规划；实际申购前请确认账户余额。")
+        caveats.append("可用现金未单独录入，本次按你填写的预算规划；实际投入前请确认账户余额。")
     # M6：与日报 analysis_facts.holdings[].escalation 同一思路——把每只候选"是否触发了
     # M4 双向升级判定"的结构化结果记录下来（无论 shadow/enforced 都记录，且不管最终
     # 是否真的生效），供 shadow_escalation_digest.py 聚合复盘读取，避免正则解析 caveats
@@ -457,11 +451,6 @@ def apply_discovery_guards(
     quant_blocked_codes: set[str] = set()
     quant_uncovered_codes: set[str] = set()
     quant_uncovered_reasons: dict[str, str] = {}
-    profile_min_holding_days = discovery_minimum_holding_days(
-        discovery_strategy,
-        profile,
-    )
-
     for rec in recommendations:
         code = rec.fund_code.strip().zfill(6)
         if code in seen_recommendation_codes:
@@ -480,14 +469,8 @@ def apply_discovery_guards(
         copy.entry_path = None
         copy.entry_tranche_scale = None
         pool_item = pool_by_code.get(code, {})
-        tradeability = (
-            pool_item.get("tradeability")
-            if isinstance(pool_item.get("tradeability"), Mapping)
-            else None
-        )
-        tradeability_gate = build_tradeability_gate(tradeability)
-        # LLM 输出中的同名字段不可信；始终以候选事实快照覆盖。
-        copy.tradeability = compact_tradeability_for_llm(tradeability)
+        # 历史模型/报告可能仍带旧交易字段；发现基金不再抓取、展示或用其拦截。
+        copy.tradeability = {}
         copy.cost_assessment = {}
         quality_gate = (
             pool_item.get("quality_gate")
@@ -1054,70 +1037,6 @@ def apply_discovery_guards(
                     caveats.append(
                         f"{code} 示意金额已按现金、总预算或同板块集中度硬上限压缩。"
                     )
-                if copy.suggested_amount_yuan is not None:
-                    trade_limit = _as_float(
-                        tradeability_gate.get("max_purchase_yuan")
-                    )
-                    if (
-                        trade_limit is not None
-                        and isfinite(trade_limit)
-                        and trade_limit >= 0
-                        and copy.suggested_amount_yuan > trade_limit
-                    ):
-                        adjusted = float(floor(trade_limit))
-                        copy.suggested_amount_yuan = adjusted if adjusted > 0 else None
-                        copy.amount_note = _join_amount_note(
-                            copy.amount_note,
-                            f"示意金额已按该份额单日申购限额压缩至约 {adjusted:.0f} 元",
-                        )
-                        caveats.append(f"{code} 示意金额已按份额单日申购限额压缩。")
-
-                if copy.suggested_amount_yuan is not None:
-                    assessment = assess_tradeability_for_amount(
-                        tradeability,
-                        amount_yuan=copy.suggested_amount_yuan,
-                        hold_horizon=(
-                            f"荐基策略最短持有期 {profile_min_holding_days} 天"
-                            if profile_min_holding_days is not None
-                            else discovery_horizon_label(discovery_strategy, profile)
-                        ),
-                        minimum_holding_days=profile_min_holding_days,
-                    )
-                    copy.cost_assessment = assessment
-                    if assessment.get("executable") is not True:
-                        notes = [
-                            str(item)
-                            for item in assessment.get("notes") or []
-                            if str(item).strip()
-                        ]
-                        copy.action = "建议关注"
-                        copy.suggested_amount_yuan = None
-                        copy.amount_note = _join_amount_note(
-                            copy.amount_note,
-                            "份额可交易性或持有期费用门禁未通过，已清除可执行金额",
-                        )
-                        copy.validation_notes = [
-                            *copy.validation_notes,
-                            *(notes[:3] or ["份额可交易性门禁未通过"]),
-                        ]
-                        caveats.append(
-                            f"{code} 未通过申购状态、限额、购买起点或持有期费用门禁，已降为研究观察。"
-                        )
-                    else:
-                        total_cost = _as_float(
-                            assessment.get("estimated_total_cost_upper_bound_percent")
-                        )
-                        if total_cost is not None:
-                            copy.amount_note = _join_amount_note(
-                                copy.amount_note,
-                                f"按未折扣标准费率估算的最低持有期成本上限约 {total_cost:.2f}%",
-                            )
-                        if assessment.get("fee_status") == "execution_verification_required":
-                            copy.validation_notes = [
-                                *copy.validation_notes,
-                                "销售平台实际申购/赎回费仍须下单前核验，当前未宣称成本最优。",
-                            ]
-
                 if copy.suggested_amount_yuan is not None:
                     final_allocated = float(copy.suggested_amount_yuan)
                     allocated_amount += final_allocated

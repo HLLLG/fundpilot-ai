@@ -468,7 +468,7 @@ def test_final_candidate_pool_drops_excluded_and_backfills_by_sector():
     assert [item["candidate_final_rank"] for item in result] == [1, 2, 3]
 
 
-def test_final_candidate_pool_selects_open_share_after_family_evidence() -> None:
+def test_final_candidate_pool_ignores_platform_state_when_deduplicating_family() -> None:
     base_tradeability = {
         "data_status": "complete",
         "freshness": "fresh",
@@ -501,15 +501,15 @@ def test_final_candidate_pool_selects_open_share_after_family_evidence() -> None
 
     result = finalize_candidate_pool(pool, ["半导体"], per_sector=1, pool_cap=1)
 
-    assert [item["fund_code"] for item in result] == ["020640"]
-    assert result[0]["share_family"]["member_codes"] == ["020640", "020639"]
+    assert [item["fund_code"] for item in result] == ["020639"]
+    assert result[0]["share_family"]["member_codes"] == ["020639", "020640"]
     assert result[0]["share_family"]["selected_basis"] == (
-        "tradeability_gate_then_legacy_share_class_priority"
+        "quality_and_opportunity_then_share_class_priority"
     )
-    assert result[0]["share_family"]["fee_comparison_status"] == "not_compared"
+    assert "fee_comparison_status" not in result[0]["share_family"]
 
 
-def test_final_candidate_pool_compares_share_cost_at_profile_horizon() -> None:
+def test_final_candidate_pool_does_not_compare_sales_platform_costs() -> None:
     def tradeability(*, purchase_fee: float, sales_service_fee: float) -> dict:
         return {
             "data_status": "complete",
@@ -571,16 +571,13 @@ def test_final_candidate_pool_compares_share_cost_at_profile_horizon() -> None:
         minimum_holding_days=180,
     )
 
-    assert [item["fund_code"] for item in result] == ["020640"]
+    assert [item["fund_code"] for item in result] == ["020639"]
     family = result[0]["share_family"]
-    assert family["selected_basis"] == "standard_cost_upper_bound_at_profile_horizon"
-    assert family["fee_comparison_status"] == (
-        "compared_standard_upper_bound_at_profile_horizon"
+    assert family["selected_basis"] == (
+        "quality_and_opportunity_then_share_class_priority"
     )
-    assert family["comparison_amount_yuan"] == 100.0
-    assert family["member_cost_upper_bound_percent"]["020640"] < family[
-        "member_cost_upper_bound_percent"
-    ]["020639"]
+    assert "comparison_amount_yuan" not in family
+    assert "member_cost_upper_bound_percent" not in family
 
 
 def test_guard_removes_excluded_candidate_and_clears_non_buy_amounts():

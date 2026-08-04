@@ -36,14 +36,14 @@ recommendations 字段约束：
 - sector_evidence: 字符串数组，引用 sector_opportunities 中的 score、track、confidence、资金流、pattern；
   若没有对应 sector_opportunities，须说明使用 sector_heat / target_sector_context 降级判断
 - fund_evidence: 字符串数组，引用 candidate_pool 中的 fund_quality_score、sector_fit_score、
-  quality_reasons、return_3m_percent/return_6m_percent、max_drawdown_1y_percent、fund_scale_yi、tradeability
+  quality_reasons、return_3m_percent/return_6m_percent、max_drawdown_1y_percent、fund_scale_yi
 - validation_notes: 字符串数组，写清 quality_penalties、信息缺失、新闻 stale/empty 等校验备注；仅结构化 overheat_flags 非空时可写追高/短期加速风险；无明显问题则 []
 - points: 字符串数组，每条须引用 candidate_pool 内具体字段（如 nav_trend、return_3m_percent、
   estimated_daily_return_percent、sector_fund_flow）；daily_return_source=sector_estimate 时须写「估算」
 - risks: 字符串数组，每只至少 1 条
 - news_bullish: 字符串数组，仅引用 news_titles 或 topic_briefs.points.source_titles 中已有标题；无则 []
 - suggested_amount_yuan: 始终输出 null。模型只判断候选与动作；服务端会忽略模型金额，并在最终守卫后按
-  可用现金、预算、已有板块敞口、集中度、候选相关性、购买起点与日限额统一计算可核验首批金额
+  可用现金、预算、已有板块敞口、集中度与候选风险相关性统一计算首批参考金额
 - 面向用户展示时必须使用中文标签，不要原样输出 fund_quality_score、sector_fit_score、quality_penalties、
   sector_opportunities、nav_trend、max_drawdown_1y_percent、estimated_daily_return_percent 等内部字段名；
   可写成“基金质量分”“板块匹配分”“系统校验提示”“系统筛出的主方向”“净值走势”“近1年最大回撤”“今日涨跌估算”等。
@@ -51,18 +51,13 @@ recommendations 字段约束：
 全局约束：
 - 不得推荐 portfolio_gap.holdings_slim 中已持有的 fund_code
 - 仅 quality_gate.status=eligible 的候选可用 action=分批买入；watch_only 只可建议关注/等待回调；
-  excluded 不得进入 recommendations。没有 eligible 候选时须明确“本次暂无可执行买入建议”，不得凑满数量
+  excluded 不得进入 recommendations。没有 eligible 候选时须明确“本次暂无买入建议”，不得凑满数量
 - 不得承诺收益；不得编造 candidate_pool 外的代码或未提供的估值分位
-- 仅 tradeability.freshness=fresh、purchase_state=open/limited、购买起点与日限额可核验的候选可提出分批买入；
-  suspended/closed/unknown、双源冲突或限额未知时只能观察。服务端最终金额必须不低于购买起点且不超过日限额
-- share_class_fee_status=standard_upper_bound_available 表示未折扣标准费率上限可复算，不代表用户销售平台最终费率；
-  unverified 时须在 validation_notes 明确“真实申购/赎回费用待执行前核验”，不得宣称已选出最低成本份额
-- 短周期持有必须结合 tradeability.standard_purchase_fee_tiers、redemption_fee_tiers 和销售服务费；
-  费用不可核验、最短持有不足7天或标准费率上限成本过高时只能观察，不得用预期涨幅抵消费用门禁
+- 本功能不获取或判断具体销售平台的申购状态、起购额、限额和交易费率；不得臆造这些信息，也不得因其缺失把候选降为观察
 - full_market 模式须先判断板块方向，再在方向内选基金；不得只按基金近1年收益排序
 - 南向资金仅使用 stock_connect_flow，并只作港股资金面参考；板块主力使用 target_sector_context.sector_fund_flow
 - sector_opportunities 含 score_policy_version（sector_entry_maturity.2026-07.v2 或 2026-08.v3）时，须以 entry_state 为方向动作边界：
-  ready_to_start 表示趋势、资金参与度与价格位置已同时通过，可在基金硬门禁通过时使用分批买入；
+  ready_to_start 表示趋势、资金参与度与价格位置已同时通过，可在基金质量、数据与组合约束通过时使用分批买入；
   ready_on_pullback 通常等待；但 V3 若趋势与参与度已通过、唯一失败项是板块价格位置，且
   fund_entry_signal.entry_ready=true，可用基金自身20日修复替代价格位置项；或
   flow_improving_probe_eligible=true 且基金自身入场信号通过时开放缩小首批；forming 只能建议关注
@@ -115,9 +110,7 @@ _COMMON_REQUIREMENTS = [
     "量化执行资格只可增加置信度；opportunity_first 下未覆盖本身不否决买入，risk_first 下仍要求量化执行资格；描述性覆盖永远不等于量化背书",
     "须按 data_evidence 校验数据时点、置信度与是否估算；过期或不可用字段不得支撑动作",
     "portfolio_position_truth 中 unknown/null 不得按 0；suggested_amount_yuan 始终为空交由服务端计算，份额未确认不阻断方向判断",
-    "share_class_fee_status=unverified 时须提示真实申购/赎回费用待核验，不得宣称份额成本最优",
-    "tradeability 必须 fresh 且可申购；金额不得低于购买起点或突破单日限额，未知/冲突一律只观察",
-    "标准费率仅是未折扣上限；短周期须通过持有期赎回费与销售服务费门禁，不得用收益预期绕过",
+    "本功能不提供销售平台可买性、起购额、限额和交易费率；不得臆造或用这些缺失字段否决推荐",
     "peer_research 仅作同组逐维研究；只解释 applicable=true 且 available=true 的指标，不适用与缺失不得补值；execution_tilt_eligible=false 时不得作为执行倾斜",
     "benchmark_research 仅 formal_excess_eligible=true 可称正式超额；tracking_reference 只能称跟踪参考",
     "benchmark_metrics 仅 status=qualified 可引用，且只作描述；基准身份本身不能证明跑赢，任何指标不得用于金额倾斜",

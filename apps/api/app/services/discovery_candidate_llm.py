@@ -143,7 +143,6 @@ def slim_candidate_for_llm(
         "profile_updated_at",
         "profile_status",
         "share_class",
-        "share_class_fee_status",
         "fund_quality_score",
         "recall_upside_score",
         "vehicle_quality_score",
@@ -174,7 +173,6 @@ def slim_candidate_for_llm(
     row.update(
         {
             "profile_sources": _text_list(item.get("profile_sources")),
-            "tradeability": _compact_tradeability(item.get("tradeability")),
             "quality_score_components": quality_components,
             "quality_gate": _compact_quality_gate(item.get("quality_gate")),
             "quality_reasons": _text_list(item.get("quality_reasons")),
@@ -443,115 +441,6 @@ def _present_scalars(
         scalar = _scalar(value.get(key))
         if scalar is not None:
             result[key] = scalar
-    return result
-
-
-def _compact_tradeability(value: object) -> dict[str, Any]:
-    if not isinstance(value, Mapping):
-        return {
-            "data_status": "unavailable",
-            "purchase_state": "unknown",
-        }
-
-    result = _present_scalars(
-        value,
-        (
-            "schema_version",
-            "data_status",
-            "freshness",
-            "can_purchase",
-            "purchase_state",
-            "purchase_status",
-            "purchase_status_freshness",
-            "redemption_state",
-            "redemption_status",
-            "redemption_status_freshness",
-            "currency",
-            "minimum_purchase_yuan",
-            "minimum_initial_purchase_yuan",
-            "minimum_additional_purchase_yuan",
-            "daily_purchase_limit_yuan",
-            "daily_purchase_limit_unlimited",
-            "daily_purchase_limit_scope",
-            "explicit_minimum_holding_days",
-            "minimum_holding_period_status",
-            "revalidation_required",
-            "next_open_date",
-            "share_class_fee_status",
-            "fee_freshness",
-            "sales_service_fee_annual_percent",
-            "sales_service_fee_status",
-            "source_conflict",
-            "effective_at",
-        ),
-    )
-    status_checked_at = value.get("status_checked_at") or value.get("checked_at")
-    if _scalar(status_checked_at) is not None:
-        result["status_checked_at"] = status_checked_at
-    if _scalar(value.get("fee_checked_at")) is not None:
-        result["fee_checked_at"] = value.get("fee_checked_at")
-    for key in ("purchase_status_checked_at", "redemption_status_checked_at"):
-        checked_at = _scalar(value.get(key))
-        if checked_at is not None and checked_at != status_checked_at:
-            result[key] = checked_at
-
-    missing_fields = _text_list(value.get("missing_fields"))
-    if missing_fields:
-        result["missing_fields"] = missing_fields
-    source_ids = _text_list(value.get("source_ids"))
-    if source_ids:
-        result["source_ids"] = source_ids
-
-    gate = value.get("tradeability_gate")
-    if isinstance(gate, Mapping):
-        compact_gate = _present_scalars(
-            gate,
-            (
-                "schema_version",
-                "status",
-                "effective_initial_min_purchase_yuan",
-                "effective_additional_min_purchase_yuan",
-                "effective_min_purchase_yuan",
-                "max_purchase_yuan",
-                "max_purchase_unlimited",
-                "max_period",
-                "max_scope",
-                "revalidation_required",
-            ),
-        )
-        compact_gate["reason_codes"] = _text_list(gate.get("reason_codes"))
-        result["tradeability_gate"] = compact_gate
-
-    result["standard_purchase_fee_tiers"] = [
-        _present_scalars(
-            tier,
-            (
-                "condition",
-                "min_amount_yuan",
-                "max_amount_yuan",
-                "min_inclusive",
-                "max_inclusive",
-                "fee_type",
-                "fee_percent",
-                "flat_fee_yuan",
-            ),
-        )
-        for tier in list(value.get("standard_purchase_fee_tiers") or [])[:5]
-        if isinstance(tier, Mapping)
-    ]
-    result["redemption_fee_tiers"] = [
-        _present_scalars(
-            tier,
-            (
-                "condition",
-                "min_days",
-                "max_days",
-                "fee_percent",
-            ),
-        )
-        for tier in list(value.get("redemption_fee_tiers") or [])[:6]
-        if isinstance(tier, Mapping)
-    ]
     return result
 
 

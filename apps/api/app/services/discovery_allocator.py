@@ -15,6 +15,7 @@ PRIORITY_INPUT_SCHEMA_VERSION = "discovery_priority.v1"
 PEER_RANK_SCHEMA_VERSION = "peer_rank.v1"
 
 CURRENT_AMOUNT_SEMANTICS = "current_verified_initial_tranche"
+ADVISORY_AMOUNT_SEMANTICS = "advisory_initial_tranche"
 RISK_AWARE_MODE = "qualified_risk_context"
 QUALIFIED_RISK_ONLY_MODE = "qualified_equal_risk_only"
 BLOCKED_MODE = "blocked_fail_closed"
@@ -65,14 +66,16 @@ def allocate_discovery_candidates(
     priority_inputs: Mapping[str, Mapping[str, Any]] | None = None,
     current_tranche_ratio_cap: float | int | None = None,
     amount_step_yuan: float | int = 100,
+    require_tradeability_gate: bool = True,
 ) -> dict[str, Any]:
     """Allocate one verified initial tranche across all candidates at once.
 
     This boundary intentionally consumes only deterministic facts. In
     particular, candidate ``suggested_amount_yuan``, prose, LLM action, and
-    input order are ignored. Each executable candidate must carry an eligible
-    ``fund_tradeability_gate.v1`` either at ``tradeability_gate`` or under
-    ``tradeability.tradeability_gate``.
+    input order are ignored. Callers that execute on-platform may require an
+    eligible ``fund_tradeability_gate.v1``. Discovery recommendations pass
+    ``require_tradeability_gate=False`` and receive advisory amounts because
+    platform availability is checked by the user at the actual sales channel.
 
     ``risk_context`` is optional and injectable. It is usable only when it is
     a qualified ``discovery_risk_context.v1`` containing complete per-code
@@ -95,6 +98,11 @@ def allocate_discovery_candidates(
         else None
     )
     exposures, exposure_errors = _normalize_exposures(existing_sector_exposure_yuan)
+    amount_semantics = (
+        CURRENT_AMOUNT_SEMANTICS
+        if require_tradeability_gate
+        else ADVISORY_AMOUNT_SEMANTICS
+    )
 
     input_errors: list[str] = list(exposure_errors)
     if budget is None or budget <= 0:
@@ -123,6 +131,7 @@ def allocate_discovery_candidates(
             requested_budget_yuan=budget,
             confirmed_cash_yuan=cash,
             reason_codes=input_errors,
+            amount_semantics=amount_semantics,
         )
 
     assert budget is not None
@@ -148,6 +157,7 @@ def allocate_discovery_candidates(
             current_budget_ceiling_yuan=min(budget, cash),
             amount_step_yuan=step,
             priority_inputs=priority_inputs,
+            require_tradeability_gate=require_tradeability_gate,
         )
         if normalized is None:
             excluded.append(_excluded_candidate(row, reasons))
@@ -169,7 +179,12 @@ def allocate_discovery_candidates(
             confirmed_cash_yuan=cash,
             excluded_candidates=excluded,
             risk_status="not_evaluated_no_eligible_candidates",
-            reason_codes=["no_gate_eligible_candidates"],
+            reason_codes=[
+                "no_gate_eligible_candidates"
+                if require_tradeability_gate
+                else "no_quality_eligible_candidates"
+            ],
+            amount_semantics=amount_semantics,
         )
 
     risk = _resolve_risk_context(risk_context, [row["code"] for row in preliminary])
@@ -180,6 +195,7 @@ def allocate_discovery_candidates(
             excluded_candidates=excluded,
             risk_status=risk.status,
             reason_codes=list(risk.reason_codes),
+            amount_semantics=amount_semantics,
         )
 
     qualified_tilt_available = any(
@@ -318,7 +334,13 @@ def allocate_discovery_candidates(
             allocations.update(sector_result)
 
     allocation_rows = [
-        _allocation_row(candidate, allocations[candidate.code], step)
+        _allocation_row(
+            candidate,
+            allocations[candidate.code],
+            step,
+            amount_semantics=amount_semantics,
+            platform_tradeability_checked=require_tradeability_gate,
+        )
         for candidate in sorted(selected, key=lambda row: (-row.weight, row.code))
         if allocations.get(candidate.code, 0.0) > 0
     ]
@@ -332,7 +354,11 @@ def allocate_discovery_candidates(
     if cash <= 0:
         current_unallocated_reasons.append("confirmed_cash_insufficient")
     if not preliminary:
-        current_unallocated_reasons.append("no_gate_eligible_candidates")
+        current_unallocated_reasons.append(
+            "no_gate_eligible_candidates"
+            if require_tradeability_gate
+            else "no_quality_eligible_candidates"
+        )
     if preliminary and not selected:
         current_unallocated_reasons.append("all_candidates_below_hard_constraints")
     if selected and current_unallocated > 0:
@@ -343,7 +369,7 @@ def allocate_discovery_candidates(
         "schema_version": ALLOCATION_PLAN_SCHEMA_VERSION,
         "status": status,
         "allocation_mode": allocation_mode,
-        "amount_semantics": CURRENT_AMOUNT_SEMANTICS,
+        "amount_semantics": amount_semantics,
         "policy": {
             "decision_style": decision_style,
             "prefer_dca": prefer_dca,
@@ -359,6 +385,11 @@ def allocate_discovery_candidates(
             "risk_weight_method": (
                 "inverse_volatility_adjusted_by_drawdown_candidate_correlation_"
                 "and_current_portfolio_correlation"
+            ),
+            **(
+                {"platform_tradeability_checked": False}
+                if not require_tradeability_gate
+                else {}
             ),
         },
         "risk_context": {
@@ -409,6 +440,7 @@ def _normalize_candidate(
     current_budget_ceiling_yuan: float,
     amount_step_yuan: float,
     priority_inputs: Mapping[str, Mapping[str, Any]] | None,
+    require_tradeability_gate: bool,
 ) -> tuple[dict[str, Any] | None, list[str]]:
     code = _candidate_code(row)
     sector = _sector_key(row.get("sector_name") or row.get("sector"))
@@ -429,36 +461,40 @@ def _normalize_candidate(
     if isinstance(quality_gate, Mapping) and quality_gate.get("eligible") is False:
         reasons.append("quality_gate_not_eligible")
 
-    tradeability_gate = row.get("tradeability_gate")
-    tradeability = row.get("tradeability")
-    if not isinstance(tradeability_gate, Mapping) and isinstance(tradeability, Mapping):
-        tradeability_gate = tradeability.get("tradeability_gate")
-    if not isinstance(tradeability_gate, Mapping):
-        reasons.append("tradeability_gate_missing")
-        return None, _unique(reasons)
-    if tradeability_gate.get("schema_version") != TRADEABILITY_GATE_SCHEMA_VERSION:
-        reasons.append("tradeability_gate_schema_invalid")
-    if tradeability_gate.get("status") != "eligible":
-        reasons.append("tradeability_gate_not_eligible")
-    if list(tradeability_gate.get("reason_codes") or []):
-        reasons.append("tradeability_gate_eligible_with_reasons")
-    if tradeability_gate.get("max_period") != "day":
-        reasons.append("tradeability_gate_period_invalid")
-    if tradeability_gate.get("revalidation_required") is not True:
-        reasons.append("tradeability_revalidation_contract_missing")
+    if require_tradeability_gate:
+        tradeability_gate = row.get("tradeability_gate")
+        tradeability = row.get("tradeability")
+        if not isinstance(tradeability_gate, Mapping) and isinstance(tradeability, Mapping):
+            tradeability_gate = tradeability.get("tradeability_gate")
+        if not isinstance(tradeability_gate, Mapping):
+            reasons.append("tradeability_gate_missing")
+            return None, _unique(reasons)
+        if tradeability_gate.get("schema_version") != TRADEABILITY_GATE_SCHEMA_VERSION:
+            reasons.append("tradeability_gate_schema_invalid")
+        if tradeability_gate.get("status") != "eligible":
+            reasons.append("tradeability_gate_not_eligible")
+        if list(tradeability_gate.get("reason_codes") or []):
+            reasons.append("tradeability_gate_eligible_with_reasons")
+        if tradeability_gate.get("max_period") != "day":
+            reasons.append("tradeability_gate_period_invalid")
+        if tradeability_gate.get("revalidation_required") is not True:
+            reasons.append("tradeability_revalidation_contract_missing")
 
-    minimum = _finite_positive(
-        tradeability_gate.get("effective_initial_min_purchase_yuan")
-    )
-    if minimum is None:
-        reasons.append("effective_initial_minimum_invalid")
+        minimum = _finite_positive(
+            tradeability_gate.get("effective_initial_min_purchase_yuan")
+        )
+        if minimum is None:
+            reasons.append("effective_initial_minimum_invalid")
 
-    unlimited = tradeability_gate.get("max_purchase_unlimited") is True
-    maximum = _finite_positive(tradeability_gate.get("max_purchase_yuan"))
-    if maximum is None and not unlimited:
-        reasons.append("maximum_purchase_unknown")
-    if maximum is not None and minimum is not None and maximum < minimum:
-        reasons.append("maximum_purchase_below_initial_minimum")
+        unlimited = tradeability_gate.get("max_purchase_unlimited") is True
+        maximum = _finite_positive(tradeability_gate.get("max_purchase_yuan"))
+        if maximum is None and not unlimited:
+            reasons.append("maximum_purchase_unknown")
+        if maximum is not None and minimum is not None and maximum < minimum:
+            reasons.append("maximum_purchase_below_initial_minimum")
+    else:
+        minimum = amount_step_yuan
+        maximum = current_budget_ceiling_yuan
 
     if reasons:
         return None, _unique(reasons)
@@ -783,17 +819,29 @@ def _allocation_row(
     candidate: _Candidate,
     amount_yuan: float,
     amount_step_yuan: float,
+    *,
+    amount_semantics: str,
+    platform_tradeability_checked: bool,
 ) -> dict[str, Any]:
+    constraint_snapshot = (
+        {
+            "effective_initial_min_purchase_yuan": _money(candidate.minimum_yuan),
+            "candidate_purchase_cap_yuan": _money(candidate.cap_yuan),
+            "amount_step_yuan": _money(amount_step_yuan),
+        }
+        if platform_tradeability_checked
+        else {
+            "advisory_minimum_step_yuan": _money(candidate.minimum_yuan),
+            "candidate_budget_cap_yuan": _money(candidate.cap_yuan),
+            "amount_step_yuan": _money(amount_step_yuan),
+        }
+    )
     return {
         "fund_code": candidate.code,
         "sector_name": candidate.sector,
         "suggested_amount_yuan": _money(amount_yuan),
-        "amount_semantics": CURRENT_AMOUNT_SEMANTICS,
-        "constraint_snapshot": {
-            "effective_initial_min_purchase_yuan": _money(candidate.minimum_yuan),
-            "candidate_purchase_cap_yuan": _money(candidate.cap_yuan),
-            "amount_step_yuan": _money(amount_step_yuan),
-        },
+        "amount_semantics": amount_semantics,
+        "constraint_snapshot": constraint_snapshot,
         "priority": {
             "qualified_priority_score": candidate.priority_score,
             "qualified_peer_score_percentile": candidate.peer_score,
@@ -810,7 +858,11 @@ def _allocation_row(
                 "amount_yuan": None,
                 "revalidation_required": True,
                 "preconditions": [
-                    "tradeability_gate_recheck",
+                    *(
+                        ["tradeability_gate_recheck"]
+                        if platform_tradeability_checked
+                        else []
+                    ),
                     "confirmed_cash_recheck",
                     "sector_exposure_recheck",
                     "risk_context_recheck",
@@ -826,13 +878,14 @@ def _blocked_plan(
     requested_budget_yuan: float | None,
     confirmed_cash_yuan: float | None,
     reason_codes: list[str],
+    amount_semantics: str,
 ) -> dict[str, Any]:
     budget = requested_budget_yuan or 0.0
     return {
         "schema_version": ALLOCATION_PLAN_SCHEMA_VERSION,
         "status": "blocked",
         "allocation_mode": BLOCKED_MODE,
-        "amount_semantics": CURRENT_AMOUNT_SEMANTICS,
+        "amount_semantics": amount_semantics,
         "policy": {
             "candidate_order_ignored": True,
             "llm_amount_and_prose_ignored": True,
@@ -870,6 +923,7 @@ def _preallocation_blocked_plan(
     excluded_candidates: list[dict[str, Any]],
     risk_status: str,
     reason_codes: list[str],
+    amount_semantics: str,
 ) -> dict[str, Any]:
     """Return a complete zero-amount plan after input and gate validation."""
 
@@ -877,7 +931,7 @@ def _preallocation_blocked_plan(
         "schema_version": ALLOCATION_PLAN_SCHEMA_VERSION,
         "status": "blocked",
         "allocation_mode": BLOCKED_MODE,
-        "amount_semantics": CURRENT_AMOUNT_SEMANTICS,
+        "amount_semantics": amount_semantics,
         "policy": {
             "candidate_order_ignored": True,
             "llm_amount_and_prose_ignored": True,
