@@ -30,13 +30,19 @@ def build_offline_discovery_report(
 ) -> FundDiscoveryReport:
     from app.services.decision_data_evidence import portfolio_snapshot_caveats
 
+    discovery_strategy = strategy_from_facts(discovery_facts)
     ranked = sorted(
         [
             item
             for item in candidate_pool
             if (item.get("quality_gate") or {}).get("status") != "excluded"
         ],
-        key=lambda item: item.get("fund_quality_score") or -999,
+        key=lambda item: (
+            item.get("opportunity_score_20_60d")
+            if discovery_strategy == "opportunity_first"
+            and item.get("opportunity_score_20_60d") is not None
+            else item.get("fund_quality_score") or -999
+        ),
         reverse=True,
     )[:3]
     recommendations: list[DiscoveryRecommendation] = []
@@ -58,8 +64,6 @@ def build_offline_discovery_report(
         )
     budget = discovery_facts.get("portfolio_gap", {}).get("available_budget_yuan") or 0.0
     _ = budget
-    discovery_strategy = strategy_from_facts(discovery_facts)
-
     for item in ranked:
         code = str(item.get("fund_code", "")).zfill(6)
         evidence_allowed, evidence_reasons = decision_evidence_allows_action(
@@ -83,6 +87,7 @@ def build_offline_discovery_report(
                 confidence="低" if execution_blocked else "中",
                 points=[
                     f"板块 {item.get('sector_label')} 纳入今日扫描",
+                    f"高弹性机会分约 {item.get('opportunity_score_20_60d')}（若有）",
                     f"基金质量分约 {item.get('fund_quality_score')}（若有）",
                     "当前为离线兜底，接入 DeepSeek 后可获更完整解读",
                 ],

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import date, timedelta
 from typing import Literal
 
@@ -8,7 +9,7 @@ SelectionStrategy = Literal["balanced", "with_new_issue"]
 _NEW_ISSUE_MAX_AGE_DAYS = 180
 _NEW_ISSUE_SLOTS = 2
 _PER_SECTOR = 5
-OPPORTUNITY_SCORE_VERSION = "opportunity_20_60d.v1"
+OPPORTUNITY_SCORE_VERSION = "opportunity_20_60d.v2"
 
 
 def balanced_score(row: dict) -> float:
@@ -42,12 +43,17 @@ def rank_candidates_balanced(candidates: list[dict]) -> list[dict]:
 
 
 def current_opportunity_score(row: dict) -> float | None:
-    """Bounded 20/60-day setup score used only after hard quality admission.
+    """Uncapped upside/elasticity ranking score for the 20--60 day horizon.
 
-    This is a ranking aid, not an expected-return forecast. It rewards either
-    a confirmed multi-window trend or a controlled pullback whose last five
-    days have turned up, while penalizing an extended move with deteriorating
-    horizon drawdown.
+    The previous policy capped positive 20/60-day returns, rewarded shallow
+    drawdowns and penalized funds near their highs.  That collapsed genuinely
+    high-elasticity funds into the same score band as stable funds.  V2 keeps
+    raw positive momentum, explicitly rewards realised volatility and a
+    repaired pullback, and leaves drawdown to disclosure/allocation instead of
+    subtracting it from the opportunity rank.
+
+    The score is intentionally *not* capped at 100: it is a cross-candidate
+    ordering value, not a probability or a promised return.
     """
 
     nav_trend = row.get("nav_trend")
@@ -56,38 +62,222 @@ def current_opportunity_score(row: dict) -> float | None:
     r5 = _num(nav_trend.get("recent_5d_change_percent"))
     r20 = _num(nav_trend.get("return_20d_percent"))
     r60 = _num(nav_trend.get("return_60d_percent"))
-    dd20 = _num(nav_trend.get("max_drawdown_20d_percent"))
-    dd60 = _num(nav_trend.get("max_drawdown_60d_percent"))
-    distance_high = _num(nav_trend.get("distance_from_high_percent"))
-    if all(value is None for value in (r5, r20, r60, dd20, dd60)):
+    volatility_20d = _num(nav_trend.get("annualized_volatility_20d_percent"))
+    volatility_60d = _num(nav_trend.get("annualized_volatility_60d_percent"))
+    recovery_20d = _num(nav_trend.get("drawdown_recovery_20d_percent"))
+    rebound_20d = _num(nav_trend.get("rebound_from_20d_low_percent"))
+    if all(
+        value is None
+        for value in (
+            r5,
+            r20,
+            r60,
+            volatility_20d,
+            volatility_60d,
+            recovery_20d,
+            rebound_20d,
+        )
+    ):
         return None
 
-    score = 50.0
+    score = 20.0
     if r20 is not None:
-        score += _clamp(r20, -12.0, 18.0) * 1.1
+        score += r20 * 1.4
     if r60 is not None:
-        score += _clamp(r60, -18.0, 30.0) * 0.45
+        score += r60 * 0.65
     if r5 is not None:
-        score += _clamp(r5, -6.0, 6.0) * 1.8
-    # Pullback layout: the medium window is still below its start, but the
-    # latest week has turned upward rather than continuing to fall.
-    if r20 is not None and r20 < 0 and r5 is not None and r5 > 0:
-        score += 7.0
-    # Trend entry: both decision windows agree and the last week has not rolled over.
-    if r20 is not None and r60 is not None and r20 > 0 and r60 > 0 and (r5 or 0) >= 0:
-        score += 6.0
-    if dd20 is not None:
-        score -= max(0.0, abs(dd20) - 8.0) * 0.7
-    if dd60 is not None:
-        score -= max(0.0, abs(dd60) - 15.0) * 0.35
+        score += r5 * 2.2
+    if volatility_20d is not None:
+        score += max(0.0, volatility_20d) * 0.45
+    if volatility_60d is not None:
+        score += max(0.0, volatility_60d) * 0.15
+    if recovery_20d is not None:
+        score += max(0.0, recovery_20d - 40.0) * 0.25
+    if rebound_20d is not None:
+        score += max(0.0, rebound_20d) * 0.8
+
+    # A rebound is useful only after price has actually left the trough and
+    # the latest week has turned upward.  Negative medium-window return is not
+    # a veto: it is precisely where a repaired high-elasticity setup can start.
     if (
-        distance_high is not None
-        and distance_high > -2.0
-        and r5 is not None
-        and r5 >= 5.0
+        r5 is not None
+        and r5 > 0
+        and recovery_20d is not None
+        and recovery_20d >= 50.0
+        and rebound_20d is not None
+        and rebound_20d >= 3.0
     ):
-        score -= 10.0
-    return round(_clamp(score, 0.0, 100.0), 2)
+        score += 12.0
+        if r20 is not None and r20 < 0:
+            score += 8.0
+    if r20 is not None and r60 is not None and r20 > 0 and r60 > 0 and (r5 or 0) >= 0:
+        score += 8.0
+    return round(max(0.0, score), 2)
+
+
+def recall_upside_score(row: Mapping[str, object]) -> float:
+    """Pre-enrichment score that prevents stable funds monopolising recall.
+
+    Full 20/60-day NAV volatility is not available yet at this stage.  Recent
+    3/6-month momentum is therefore combined with the observed one-year range
+    amplitude (maximum drawdown) as a recall proxy.  Hard maturity, scale and
+    tradeability checks still run later; this score only decides which funds
+    receive the more expensive NAV enrichment.
+    """
+
+    current = current_opportunity_score(dict(row))
+    if current is not None:
+        return current
+    r3 = _num(row.get("return_3m_percent"))
+    r6 = _num(row.get("return_6m_percent"))
+    r1 = _num(row.get("return_1y_percent"))
+    drawdown = _num(row.get("max_drawdown_1y_percent"))
+    score = 0.0
+    if r3 is not None:
+        score += r3 * 1.2
+    if r6 is not None:
+        score += r6 * 0.55
+    if r1 is not None:
+        score += r1 * 0.12
+    recent_has_turned_up = (r3 is not None and r3 > 0) or (
+        r3 is None and r6 is not None and r6 > 0
+    )
+    if recent_has_turned_up and drawdown is not None:
+        score += abs(drawdown) * 0.30
+    if r3 is not None and r3 > 0 and r6 is not None and r6 < 0:
+        score += 10.0
+    return round(score, 2)
+
+
+def assess_fund_entry_position(row: Mapping[str, object]) -> dict[str, object]:
+    """Classify whether a fund's own NAV has repaired enough for entry.
+
+    This is deliberately separate from the sector position.  A sector can be
+    below its entry line while a particular fund has already repaired more
+    than half of its 20-day range with broad positive days.  That fund-level
+    fact may override *only* the sector position block; it cannot override a
+    weak trend, weak participation, bad data or transaction gates.
+    """
+
+    nav = row.get("nav_trend")
+    if not isinstance(nav, Mapping):
+        return {
+            "policy_version": "fund_entry_position.2026-08.v1",
+            "status": "insufficient",
+            "entry_ready": False,
+            "reason": "缺少20日净值修复数据",
+        }
+    r5 = _num(nav.get("recent_5d_change_percent"))
+    r20 = _num(nav.get("return_20d_percent"))
+    r60 = _num(nav.get("return_60d_percent"))
+    recovery = _num(nav.get("drawdown_recovery_20d_percent"))
+    rebound = _num(nav.get("rebound_from_20d_low_percent"))
+    volatility = _num(nav.get("annualized_volatility_20d_percent"))
+    daily = nav.get("recent_5d_daily_change_percent")
+    daily_values = [
+        value
+        for raw in daily
+        if (value := _num(raw)) is not None
+    ] if isinstance(daily, list) else []
+    positive_days = sum(value > 0 for value in daily_values)
+    breadth_confirmed = len(daily_values) < 3 or positive_days >= 3
+
+    recovery_ready = bool(
+        r5 is not None
+        and r5 >= 1.0
+        and recovery is not None
+        and recovery >= 55.0
+        and rebound is not None
+        and rebound >= 3.0
+        and (r20 is None or r20 >= -12.0)
+        and breadth_confirmed
+    )
+    momentum_ready = bool(
+        r5 is not None
+        and r5 >= 0.5
+        and r20 is not None
+        and r20 > 0
+        and r60 is not None
+        and r60 > 0
+        and recovery is not None
+        and recovery >= 60.0
+        and breadth_confirmed
+    )
+    entry_ready = recovery_ready or momentum_ready
+    if recovery_ready and not momentum_ready:
+        status = "recovery_ready"
+        reason = "20日回撤已修复过半，近5日转强且上涨日占优"
+    elif momentum_ready:
+        status = "momentum_ready"
+        reason = "5/20/60日趋势同向，20日价格修复已通过"
+    elif r5 is not None and r5 <= 0 and (recovery or 0.0) < 45.0:
+        status = "falling"
+        reason = "仍靠近20日低位且近5日尚未转强"
+    else:
+        status = "forming"
+        reason = "价格正在修复，但尚未同时通过修复幅度和近5日确认"
+
+    return {
+        "policy_version": "fund_entry_position.2026-08.v1",
+        "status": status,
+        "entry_ready": entry_ready,
+        "high_elasticity": volatility is not None and volatility >= 24.0,
+        "reason": reason,
+        "components": {
+            "recent_5d_change_percent": r5,
+            "return_20d_percent": r20,
+            "return_60d_percent": r60,
+            "drawdown_recovery_20d_percent": recovery,
+            "rebound_from_20d_low_percent": rebound,
+            "annualized_volatility_20d_percent": volatility,
+            "positive_days_5d": positive_days if daily_values else None,
+        },
+        "thresholds": {
+            "minimum_recovery_percent": 55.0,
+            "minimum_rebound_from_low_percent": 3.0,
+            "minimum_recent_5d_change_percent": 1.0,
+            "minimum_positive_days_5d": 3,
+        },
+        "invalidation_signals": [
+            "近5日收益重新转负且20日修复率跌回40%以下",
+            "净值重新跌回本轮20日低位区域",
+        ],
+    }
+
+
+def fund_recovery_overrides_sector_position(
+    candidate: Mapping[str, object],
+    opportunity: Mapping[str, object] | None,
+) -> bool:
+    """Whether fund repair may replace only a failed V3 sector-position gate."""
+
+    if not isinstance(opportunity, Mapping):
+        return False
+    if str(opportunity.get("score_policy_version") or "") != "sector_entry_maturity.2026-08.v3":
+        return False
+    if str(opportunity.get("entry_state") or "") != "ready_on_pullback":
+        return False
+    signal = candidate.get("fund_entry_signal")
+    if not isinstance(signal, Mapping) or signal.get("entry_ready") is not True:
+        return False
+    trend = _num(opportunity.get("trend_strength_score"))
+    participation = _num(opportunity.get("participation_score"))
+    position = _num(opportunity.get("position_risk_score"))
+    gate_inputs = opportunity.get("entry_gate_inputs")
+    mainline_status = (
+        str(gate_inputs.get("mainline_status") or "")
+        if isinstance(gate_inputs, Mapping)
+        else ""
+    )
+    return bool(
+        trend is not None
+        and trend >= 60.0
+        and participation is not None
+        and participation >= 35.0
+        and position is not None
+        and position < 25.0
+        and mainline_status in {"forming", "confirmed", "crowded"}
+    )
 
 
 def _clamp(value: float, lower: float, upper: float) -> float:

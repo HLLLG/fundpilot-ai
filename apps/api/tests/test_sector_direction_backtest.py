@@ -1239,11 +1239,15 @@ def test_v3_invalidates_only_on_multi_window_flow_weakness() -> None:
         classify_entry_state_v3(**{**base, "trend_strength": 30.0, "participation": 20.0})
         == ENTRY_INVALID
     )
-    # 单弱不构成否决：趋势不够 → 只观察；趋势够但参与度不够 → 等待。
+    # 单弱不构成否决：趋势不够 → 只观察；参与度低于高弹性门槛 35 → 等待。
     assert classify_entry_state_v3(**{**base, "trend_strength": 45.0}) == ENTRY_FORMING
     assert (
-        classify_entry_state_v3(**{**base, "participation": 40.0})
+        classify_entry_state_v3(**{**base, "participation": 34.0})
         == "ready_on_pullback"
+    )
+    assert (
+        classify_entry_state_v3(**{**base, "participation": 40.0})
+        == ENTRY_READY_TO_START
     )
     assert (
         classify_entry_state_v3(**{**base, "mainline_status": "neutral"})
@@ -1286,8 +1290,8 @@ def _v3_row(label: str, *, entry_state: str, trend: float) -> dict:
     }
 
 
-def test_first_qualifying_day_only_observes() -> None:
-    """首次通过入场线当天不直接给买入动作，避免边界抖动带来的天天换人。"""
+def test_first_qualifying_day_opens_initial_tranche() -> None:
+    """高弹性策略在当日通过入场线后即可开放首批，不再人为延迟一天。"""
     from app.services.sector_direction_state import (
         DirectionStateRecord,
         apply_direction_state_hysteresis,
@@ -1297,11 +1301,11 @@ def test_first_qualifying_day_only_observes() -> None:
     day_one = apply_direction_state_hysteresis(
         rows, trade_date="2026-06-10", previous_trade_date="2026-06-09", previous_states={}
     )[0]
-    assert day_one["entry_state"] == ENTRY_FORMING
+    assert day_one["entry_state"] == ENTRY_READY_TO_START
     assert day_one["raw_entry_state"] == ENTRY_READY_TO_START
     assert day_one["consecutive_qualifying_days"] == 1
-    assert day_one["execution_eligible"] is False
-    assert "已满足 1 天" in day_one["entry_reason"]
+    assert day_one["execution_eligible"] is True
+    assert day_one["ready_confirmation_days"] == 1
 
     day_two = apply_direction_state_hysteresis(
         rows,
@@ -1311,7 +1315,7 @@ def test_first_qualifying_day_only_observes() -> None:
             "半导体": DirectionStateRecord(
                 trade_date="2026-06-10",
                 sector_label="半导体",
-                entry_state=ENTRY_FORMING,
+                entry_state=ENTRY_READY_TO_START,
                 raw_entry_state=ENTRY_READY_TO_START,
                 qualifies_for_ready=True,
                 consecutive_qualifying_days=1,
@@ -1462,7 +1466,7 @@ def test_direction_states_round_trip_through_the_store(tmp_path, monkeypatch) ->
     record = loaded["半导体"]
     assert record.qualifies_for_ready is True
     assert record.consecutive_qualifying_days == 1
-    assert record.entry_state == ENTRY_FORMING
+    assert record.entry_state == ENTRY_READY_TO_START
 
     promoted = store.apply_direction_state_hysteresis(
         [_v3_row("半导体", entry_state=ENTRY_READY_TO_START, trend=72.0)],

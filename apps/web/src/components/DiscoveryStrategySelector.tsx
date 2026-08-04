@@ -18,8 +18,8 @@ const OPTIONS: Array<{
   {
     id: "opportunity_first",
     label: "机会优先",
-    badge: "推荐",
-    description: "看未来 20～60 个交易日；历史回撤影响首批仓位，不单独否决机会。",
+    badge: "高弹性",
+    description: "优先高波动、高动量与回撤修复机会；质量只作准入，不奖励低波动。",
     icon: Crosshair,
   },
   {
@@ -80,7 +80,7 @@ export function DiscoveryStrategySelector({
         })}
       </div>
       <p className="mt-2 text-[11px] leading-5 text-slate-500">
-        账户亏损复核线仍用于日报；荐基只用候选历史波动调整首批金额与风险提示。
+        机会分不扣历史回撤；买入仍须通过趋势、资金、修复、申赎和明确退出条件。
       </p>
     </fieldset>
   );

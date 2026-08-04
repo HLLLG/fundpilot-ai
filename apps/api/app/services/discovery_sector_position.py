@@ -102,6 +102,7 @@ def summarize_sector_position(
     )
     drawdown_20d = _max_drawdown_percent(valid_rows[-20:])
     drawdown_60d = _max_drawdown_percent(valid_rows[-60:]) if len(valid_rows) >= 60 else None
+    recovery_20d = _range_recovery_percent(closes)
     volatility_20d = _annualized_volatility_percent(valid_rows[-21:])
     positive_ratio_20d = _positive_day_ratio_percent(valid_rows[-21:])
     label = _position_label(
@@ -111,6 +112,7 @@ def summarize_sector_position(
         volume_ratio=volume_ratio,
         up_days=up_days,
         down_days=down_days,
+        recovery=recovery_20d,
         high_20d=high_20d,
         low_20d=low_20d,
     )
@@ -143,6 +145,7 @@ def summarize_sector_position(
         "distance_from_ma60_percent": _distance_percent(latest_close, ma60),
         "max_drawdown_20d_percent": drawdown_20d,
         "max_drawdown_60d_percent": drawdown_60d,
+        "drawdown_recovery_20d_percent": recovery_20d,
         "annualized_volatility_20d_percent": volatility_20d,
         "positive_day_ratio_20d_percent": positive_ratio_20d,
         # 近 20 个交易日的日收益序列，供方向去重按真实相关性判断两个方向是否其实
@@ -428,12 +431,21 @@ def _position_label(
     volume_ratio: float | None,
     up_days: int,
     down_days: int,
+    recovery: float | None,
     high_20d: float,
     low_20d: float,
 ) -> str:
     ratio = volume_ratio or 0.0
     if breakout is not None and breakout > 0 and ratio >= 1.25 and up_days >= 3:
         return "early_breakout"
+    if (
+        drawdown is not None
+        and drawdown >= 3.0
+        and recovery is not None
+        and recovery >= 55.0
+        and up_days >= 3
+    ):
+        return "recovery_ready"
     if drawdown is not None and drawdown >= 10.0 and down_days >= 3:
         return "weak_breakdown"
     if drawdown is not None and drawdown <= 2.0:
@@ -554,6 +566,19 @@ def _max_drawdown_percent(rows: list[dict]) -> float | None:
         if peak > 0:
             drawdown = max(drawdown, (peak - value) / peak * 100.0)
     return _pct(drawdown)
+
+
+def _range_recovery_percent(closes: list[float]) -> float | None:
+    """Latest close's repaired share of the 20-day low/high range."""
+
+    values = [value for value in closes if value > 0]
+    if len(values) < 2:
+        return None
+    high = max(values)
+    low = min(values)
+    if high <= low:
+        return 100.0
+    return _pct(max(0.0, min(100.0, (values[-1] - low) / (high - low) * 100.0)))
 
 
 def _annualized_volatility_percent(rows: list[dict]) -> float | None:

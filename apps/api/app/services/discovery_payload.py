@@ -63,7 +63,8 @@ recommendations 字段约束：
 - 南向资金仅使用 stock_connect_flow，并只作港股资金面参考；板块主力使用 target_sector_context.sector_fund_flow
 - sector_opportunities 含 score_policy_version（sector_entry_maturity.2026-07.v2 或 2026-08.v3）时，须以 entry_state 为方向动作边界：
   ready_to_start 表示趋势、资金参与度与价格位置已同时通过，可在基金硬门禁通过时使用分批买入；
-  ready_on_pullback 只能等待；forming 只能建议关注。不得用当日热度覆盖该状态
+  ready_on_pullback 通常等待；但 V3 若趋势与参与度已通过、唯一失败项是板块价格位置，且
+  fund_entry_signal.entry_ready=true，可用基金自身20日修复替代价格位置项；forming 只能建议关注
 - v3 的 overheat_flags 是风险披露而非否决理由：命中时按 first_tranche_scale 缩小首批，
   文案须说明"短期加速、首批更小、不预先承诺后续"，不得因此改写为不可买入
 - v3 没有"入场成熟度"这个分数；三个分块（趋势强度/资金参与度/价格位置）各自独立，
@@ -72,7 +73,10 @@ recommendations 字段约束：
 - signal_backtest / candidate_factor_scores 按 confidence.level / factor_reliability 表述
 - candidate_factor_scores.execution_qualified_fund_codes 只可作为量化加分证据；opportunity_first 下未覆盖不得单独否决买入，risk_first 下仍作为买入白名单；任何模式都不得把描述性覆盖写成量化背书
 - profile.account_loss_review_percent 只用于账户/现有持仓亏损复核，不得直接与候选基金近1年最大回撤比较
-- discovery_strategy=opportunity_first 时，持有目标按 20～60 个交易日理解；优先使用 nav_trend 的 20/60 日收益与最大回撤，一年回撤只影响风险提示与服务端仓位
+- discovery_strategy=opportunity_first 时，持有目标按 20～60 个交易日理解；质量门内优先未封顶的
+  20/60 日收益、年化波动与回撤修复；一年回撤不参与机会排序，只影响风险提示与服务端仓位
+- 高弹性买入候选的 risks 必须写出 fund_entry_signal.invalidation_signals 对应的退出复核条件；
+  不得把止损描述成保证按指定价格成交
 - peer_research 只允许同组逐维比较；仅 applicable=true 且 available=true 的指标可解释，不适用与缺失不得补值；execution_tilt_eligible=false 时不得把分位用于执行提额
 - benchmark_research.comparison_role=tracking_reference 时只能称“跟踪参考”，不得称正式超额
 - benchmark_metrics 只有 status=qualified 才可引用；正式超额须同时满足 formal_excess_eligible=true，
@@ -91,11 +95,12 @@ _COMMON_REQUIREMENTS = [
     "quality_gate=eligible 才可分批买入；watch_only 只能观察/等待，excluded 禁止推荐；不得为凑数降门槛",
     "每只 recommendations 须含 hold_horizon、risks（至少 1 条）、points（引用 candidate_pool 具体字段）",
     "每只 recommendations 须含 decision_path、sector_evidence、fund_evidence、validation_notes",
-    "先判断板块方向，再比较方向内基金质量分，最后决定动作",
-    "方向成熟度 V2/V3 存在时严格按 entry_state：ready_to_start + 基金硬门禁通过应给分批买入；ready_on_pullback 给等待回调；forming 给建议关注；V3 过热仅缩小首批",
+    "先判断板块方向；基金质量只作硬准入，门内按机会分、波动弹性与修复信号排序，最后决定动作",
+    "方向成熟度 V2/V3 存在时按 entry_state；V3 ready_on_pullback 仅在趋势/参与度已通过且基金修复信号可替代价格位置时开放首批，forming 仍只关注；V3 过热仅缩小首批",
     "展示文本使用中文标签，不要原样输出 fund_quality_score/sector_fit_score/quality_penalties 等内部字段名",
     "estimated_daily_return_percent 且 daily_return_source=sector_estimate 时，points 须注明「估算」",
-    "判断追高风险须参考 nav_trend.distance_from_high_percent / trend_label，不得只看 sector_heat",
+    "判断入场位置须参考 fund_entry_signal 与20日修复率、离低点反弹、近5日方向，不得只看 sector_heat 或距高点",
+    "买入候选必须给出可核验的修复失效/退出条件，不得暗示止损成交价有保证",
     "news_bullish 仅引用 news_titles 或 topic_briefs.points.source_titles；无匹配则 []",
     "新闻仅使用系统预取的 news_titles/topic_briefs；过旧或为空的新闻不能作为买入主依据",
     "suggested_amount_yuan 始终为 null；最终金额由服务端确定性 allocator 统一计算，模型不得分配金额",
@@ -114,8 +119,8 @@ _COMMON_REQUIREMENTS = [
 _FULL_MARKET_REQUIREMENTS = [
     *_COMMON_REQUIREMENTS,
     "基于 sector_heat 与 target_sector_context 做全市场横向对比",
-    "先判断板块方向（sector_opportunities/target_sector_context），再比较方向内基金质量分，最后决定动作",
-    "sector_opportunities 的 entry_state 是方向动作边界，不得把 forming/ready_on_pullback 写成立即买入，也不得仅因主线分高覆盖入场状态",
+    "先判断板块方向（sector_opportunities/target_sector_context），再在质量门内按机会弹性与修复信号比较基金，最后决定动作",
+    "sector_opportunities 的 entry_state 是方向动作边界；不得把 forming 写成立即买入，ready_on_pullback 只有基金级修复替代价格位置这一条受限例外",
     "portfolio_gap / holdings_slim 仅作背景，不要以「持仓缺口」为主叙事",
     "market_view 须覆盖热度靠前板块与相对冷门但有机会的方向",
     "引用南向须用 stock_connect_flow 且仅作港股资金面参考；板块主力须用 target_sector_context.sector_fund_flow",

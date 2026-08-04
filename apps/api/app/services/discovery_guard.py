@@ -26,6 +26,9 @@ from app.services.discovery_strategy import (
     discovery_minimum_holding_days,
     strategy_from_facts,
 )
+from app.services.discovery_selection_strategy import (
+    fund_recovery_overrides_sector_position,
+)
 from app.services.sector_opportunity_scoring import (
     ENTRY_FORMING,
     ENTRY_INVALID,
@@ -600,6 +603,18 @@ def apply_discovery_guards(
         recent_5d = _as_float(nav_trend.get("recent_5d_change_percent"))
         recent_20d = _as_float(nav_trend.get("return_20d_percent"))
         entry_state = _entry_state_v2(opportunity)
+        fund_position_override = fund_recovery_overrides_sector_position(
+            pool_item,
+            opportunity,
+        )
+        effective_opportunity = opportunity
+        if fund_position_override:
+            entry_state = ENTRY_READY_TO_START
+            effective_opportunity = {
+                **dict(opportunity or {}),
+                "entry_state": ENTRY_READY_TO_START,
+                "fund_position_override": True,
+            }
         entry_policy_version = str(
             (opportunity or {}).get("score_policy_version") or ""
         )
@@ -628,23 +643,32 @@ def apply_discovery_guards(
             and quality_status == "eligible"
             and not _candidate_fund_evidence_reasons(pool_item)
             and not execution_blocked
-            and not fund_price_extended
             and copy.action in {"建议关注", "等待回调"}
         ):
             previous = copy.action
             copy.action = "分批买入"
             if copy.confidence == "低":
                 copy.confidence = "中"
+            promotion_reason = (
+                "板块趋势与参与度已通过，且该基金自身20日回撤修复已过半；"
+                "基金级修复信号仅替代未通过的板块价格位置项"
+                if fund_position_override
+                else f"{maturity_label} 已通过当前方向入场线"
+            )
             copy.points = [
                 (
-                    f"{maturity_label} 已通过当前方向入场线；"
-                    f"系统将「{previous}」校正为首批分批买入候选，最终金额仍由组合硬约束统一计算。"
+                    f"{promotion_reason}；系统将「{previous}」校正为首批分批买入候选，"
+                    "最终金额仍由组合硬约束统一计算。"
                 ),
                 *copy.points,
             ]
             copy.validation_notes = [
                 *copy.validation_notes,
-                "入场状态为 ready_to_start；该状态只开放首批额度，不承诺后续加仓或收益。",
+                (
+                    "基金级修复已替代板块价格位置门槛；趋势、参与度、基金质量和交易门仍全部保留。"
+                    if fund_position_override
+                    else "入场状态为 ready_to_start；该状态只开放首批额度，不承诺后续加仓或收益。"
+                ),
             ]
         elif (
             opportunity_first
@@ -784,7 +808,7 @@ def apply_discovery_guards(
             ]
 
         weak_evidence_reasons = (
-            _weak_evidence_reasons(pool_item, opportunity)
+            _weak_evidence_reasons(pool_item, effective_opportunity)
             if copy.action == "分批买入"
             else []
         )
@@ -1010,11 +1034,31 @@ def apply_discovery_guards(
                     *copy.points,
                 ]
 
+        if copy.action == "分批买入":
+            fund_signal = pool_item.get("fund_entry_signal")
+            invalidation_signals = (
+                [
+                    str(value)
+                    for value in fund_signal.get("invalidation_signals") or []
+                    if str(value).strip()
+                ]
+                if isinstance(fund_signal, Mapping)
+                else []
+            )
+            if invalidation_signals:
+                exit_text = "严格退出复核：" + "；".join(invalidation_signals[:2]) + "。"
+                copy.risks = _append_unique(copy.risks, [exit_text], limit=6)
+                copy.validation_notes = _append_unique(
+                    copy.validation_notes,
+                    ["高弹性候选必须按基金净值修复失效信号复核退出；信号不保证成交价格或避免跳空损失。"],
+                    limit=8,
+                )
+
         if pool_item:
             _backfill_decision_fields(
                 copy,
                 pool_item,
-                opportunity,
+                effective_opportunity,
             )
         _sync_decision_path_with_final_action(copy)
         if execution_blocked:

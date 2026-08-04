@@ -177,6 +177,33 @@ def test_entry_maturity_v2_keeps_the_twenty_percent_cap() -> None:
     ) == 0.20
 
 
+def test_fund_recovery_position_override_keeps_v3_tranche_cap() -> None:
+    facts = {
+        "candidate_pool": [
+            {
+                "fund_code": "000001",
+                "fund_entry_signal": {"entry_ready": True},
+            }
+        ],
+        "sector_opportunities": [
+            {
+                "sector_label": "半导体",
+                "score_policy_version": ENTRY_POLICY_VERSION_V3,
+                "entry_state": "ready_on_pullback",
+                "trend_strength_score": 75.0,
+                "participation_score": 42.0,
+                "position_risk_score": 20.0,
+                "entry_gate_inputs": {"mainline_status": "confirmed"},
+                "first_tranche_scale": 0.6,
+            }
+        ],
+    }
+
+    assert _entry_maturity_tranche_ratio_cap(
+        facts, [_recommendation("半导体")]
+    ) == 0.12
+
+
 def test_missing_risk_context_blocks_all_executable_amounts() -> None:
     candidate = _candidate("000001", "科技")
     plan = allocate_discovery_candidates(

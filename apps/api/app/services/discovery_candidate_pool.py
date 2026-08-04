@@ -50,7 +50,7 @@ _MAX_RECALL_AUDIT_CANDIDATES = 512
 _MIN_SCALE_YI = 1.0
 _HARD_MIN_SCALE_YI = 0.5
 _MIN_HISTORY_DAYS = 365
-_QUALITY_SCORE_VERSION = "fund_quality.v3"
+_QUALITY_SCORE_VERSION = "fund_quality.v4"
 _SECTOR_MATCH_STRENGTH = {
     "fallback": 0,
     "name": 1,
@@ -82,6 +82,7 @@ def build_candidate_pool(
     exclude_codes: set[str] | None = None,
     fund_type_preference: str = "any",
     selection_strategy: SelectionStrategy = "balanced",
+    discovery_strategy: str = "risk_first",
     per_sector: int = _PER_SECTOR,
     pool_cap: int = _POOL_CAP,
     fetch_rank=None,
@@ -171,6 +172,7 @@ def build_candidate_pool(
             seen_codes=seen_codes,
             fund_type_preference=fund_type_preference,
             selection_strategy=selection_strategy,
+            discovery_strategy=discovery_strategy,
             opportunity=opportunity_by_sector.get(sector_label),
             family_seen=family_seen,
             limit=sector_limit,
@@ -193,6 +195,7 @@ def build_candidate_pool(
             seen_codes,
             fund_type_preference,
             selection_strategy,
+            discovery_strategy=discovery_strategy,
             family_seen=family_seen,
             as_of_date=decision_date,
         )
@@ -350,6 +353,10 @@ def _compact_recall_audit_candidate(candidate: dict) -> dict:
         "sector_match_kind",
         "fund_quality_score",
         "sector_fit_score",
+        "recall_upside_score",
+        "opportunity_score_20_60d",
+        "opportunity_score_version",
+        "fund_entry_signal",
         "quality_score_version",
         "quality_score_components",
         "quality_reasons",
@@ -479,6 +486,7 @@ def _catalogue_aligned_peer_target(
 def enrich_candidates(
     pool: list[dict],
     *,
+    discovery_strategy: str = "risk_first",
     decision_at: datetime | None = None,
     stop_event: threading.Event | None = None,
 ) -> list[dict]:
@@ -608,9 +616,17 @@ def enrich_candidates(
             row["share_class_fee_status"] = tradeability.get(
                 "share_class_fee_status"
             ) or "unverified"
-        row = _with_data_quality_gate(row, as_of_date=decision_date)
+        row = _with_data_quality_gate(
+            row,
+            as_of_date=decision_date,
+            discovery_strategy=discovery_strategy,
+        )
         row = apply_tradeability_to_quality_gate(row)
-        row = _with_quality_score(row, fund_type_preference="any")
+        row = _with_quality_score(
+            row,
+            fund_type_preference="any",
+            discovery_strategy=discovery_strategy,
+        )
         row = assess_candidate_vehicle_quality(row)
         rescored.append(row)
 
@@ -1204,6 +1220,7 @@ def _candidates_for_sector(
     seen_codes: set[str],
     fund_type_preference: str = "any",
     selection_strategy: SelectionStrategy = "balanced",
+    discovery_strategy: str = "risk_first",
     opportunity: dict | None = None,
     family_seen: set[str] | None = None,
     limit: int = _PER_SECTOR,
@@ -1277,7 +1294,11 @@ def _candidates_for_sector(
             entries_by_code.setdefault(code, _with_opportunity(entry, opportunity))
 
     scored = [
-        _with_quality_score(entry, fund_type_preference=fund_type_preference)
+        _with_quality_score(
+            entry,
+            fund_type_preference=fund_type_preference,
+            discovery_strategy=discovery_strategy,
+        )
         for entry in entries_by_code.values()
         if selection_strategy == "with_new_issue"
         or entry.get("is_new_issue")
@@ -1285,7 +1306,13 @@ def _candidates_for_sector(
     ]
     scored.sort(
         key=lambda item: (
-            float(item.get("fund_quality_score") or -999),
+            *(
+                (_sortable_score(item.get("recall_upside_score")),)
+                if discovery_strategy == "opportunity_first"
+                else ()
+            ),
+            _sortable_score(item.get("fund_quality_score")),
+            _sortable_score(item.get("sector_fit_score")),
             _share_class_rank(str(item.get("fund_name") or "")),
         ),
         reverse=True,
@@ -1439,35 +1466,55 @@ def rank_candidates_balanced_fallback(
     seen_codes: set[str],
     fund_type_preference: str,
     selection_strategy: SelectionStrategy = "balanced",
+    discovery_strategy: str = "risk_first",
     family_seen: set[str] | None = None,
     as_of_date: date | None = None,
 ) -> list[dict]:
-    from app.services.discovery_selection_strategy import rank_candidates_balanced
+    from app.services.discovery_selection_strategy import (
+        rank_candidates_balanced,
+        recall_upside_score,
+    )
 
     candidates: list[dict] = []
-    family_seen = family_seen if family_seen is not None else set()
+    already_selected_families = set(family_seen or set())
     for row in rank_rows:
         code = str(row.get("fund_code", "")).zfill(6)
         if code in excluded or code in seen_codes:
             continue
         family = _family_key(str(row.get("fund_name", "")))
-        if family and family in family_seen:
+        if family and family in already_selected_families:
             continue
         if not _passes_quality(row, as_of_date=as_of_date):
             continue
         if not _matches_fund_type_preference(str(row.get("fund_name", "")), fund_type_preference):
             continue
-        candidates.append(
-            _entry_from_rank(
-                row,
-                sector_label="综合",
-                selection_reason="排行补位",
-                sector_match_kind="fallback",
-            )
+        entry = _entry_from_rank(
+            row,
+            sector_label="综合",
+            selection_reason="排行补位",
+            sector_match_kind="fallback",
         )
+        if discovery_strategy == "opportunity_first":
+            entry["recall_upside_score"] = recall_upside_score(entry)
+        candidates.append(entry)
+    if discovery_strategy == "opportunity_first":
+        ranked = sorted(candidates, key=recall_upside_score, reverse=True)
+    else:
+        ranked = rank_candidates_balanced(candidates)
+
+    # Rank first, then collapse A/C and other share classes.  Deduplicating in
+    # upstream row order could keep a stable but weaker share class and discard
+    # the family's strongest high-elasticity candidate before the NAV stage.
+    result: list[dict] = []
+    ranked_families = set(already_selected_families)
+    for entry in ranked:
+        family = _family_key(str(entry.get("fund_name") or ""))
+        if family and family in ranked_families:
+            continue
+        result.append(entry)
         if family:
-            family_seen.add(family)
-    return rank_candidates_balanced(candidates)
+            ranked_families.add(family)
+    return result
 
 
 def _entry_from_rank(
@@ -1505,7 +1552,12 @@ def _entry_from_rank(
     }
 
 
-def _with_quality_score(entry: dict, *, fund_type_preference: str) -> dict:
+def _with_quality_score(
+    entry: dict,
+    *,
+    fund_type_preference: str,
+    discovery_strategy: str = "risk_first",
+) -> dict:
     row = dict(entry)
     row["sector_match_kind"] = _resolve_sector_match_kind(row)
     row.pop("_sector_match_kind", None)
@@ -1531,7 +1583,12 @@ def _with_quality_score(entry: dict, *, fund_type_preference: str) -> dict:
     elif (r3m or 0.0) > 5 or (r6m or 0.0) > 10:
         reasons.append("近3/6月表现占优")
 
-    risk_score = _risk_score(row, penalties, reasons)
+    risk_score = _risk_score(
+        row,
+        penalties,
+        reasons,
+        discovery_strategy=discovery_strategy,
+    )
     scale_score = _scale_score(row, penalties, reasons)
     type_score = _type_preference_score(row, fund_type_preference, reasons)
     if not _has_value(row.get("management_fee")):
@@ -1561,11 +1618,15 @@ def _with_quality_score(entry: dict, *, fund_type_preference: str) -> dict:
     row["quality_penalties"] = _unique_text(penalties)[:4]
     from app.services.discovery_selection_strategy import (
         OPPORTUNITY_SCORE_VERSION,
+        assess_fund_entry_position,
         current_opportunity_score,
+        recall_upside_score,
     )
 
     row["opportunity_score_20_60d"] = current_opportunity_score(row)
     row["opportunity_score_version"] = OPPORTUNITY_SCORE_VERSION
+    row["recall_upside_score"] = recall_upside_score(row)
+    row["fund_entry_signal"] = assess_fund_entry_position(row)
     return row
 
 
@@ -1602,6 +1663,7 @@ def _with_data_quality_gate(
     entry: dict,
     *,
     as_of_date: date | None = None,
+    discovery_strategy: str = "risk_first",
 ) -> dict:
     row = dict(entry)
     missing = [field for field in _CORE_QUALITY_FIELDS if not _has_value(row.get(field))]
@@ -1649,8 +1711,11 @@ def _with_data_quality_gate(
 
     drawdown = _num(row.get("max_drawdown_1y_percent"))
     if status != "excluded" and drawdown is not None and abs(drawdown) > 50.0:
-        status = "watch_only"
-        reasons.append("近1年最大回撤超过50%，仅保留研究观察")
+        if discovery_strategy == "opportunity_first":
+            reasons.append("近1年历史波动很高；保留用于高弹性机会排序，不作为质量否决")
+        else:
+            status = "watch_only"
+            reasons.append("近1年最大回撤超过50%，仅保留研究观察")
 
     nav_date = _parse_iso_date(row.get("nav_date"))
     decision_date = as_of_date or date.today()
@@ -1874,12 +1939,26 @@ def _resolve_sector_match_kind(row: dict) -> str:
     )
 
 
-def _risk_score(row: dict, penalties: list[str], reasons: list[str]) -> float:
+def _risk_score(
+    row: dict,
+    penalties: list[str],
+    reasons: list[str],
+    *,
+    discovery_strategy: str = "risk_first",
+) -> float:
     drawdown = _num(row.get("max_drawdown_1y_percent"))
     if drawdown is None:
         penalties.append("缺少近1年回撤")
         return 0.0
     depth = abs(drawdown)
+    if discovery_strategy == "opportunity_first":
+        if depth >= 40:
+            reasons.append("历史波动较高，纳入高弹性机会评估")
+        else:
+            reasons.append("历史回撤仅作风险背景，不奖励低波动")
+        # Keep a neutral evidence-completeness value.  Opportunity-first quality
+        # should validate the vehicle, not make stability an ordering advantage.
+        return 7.5
     if depth <= 20:
         reasons.append("近1年回撤可控")
         return 15.0
@@ -2073,6 +2152,11 @@ def _num(value: object) -> float | None:
     except (TypeError, ValueError):
         return None
     return parsed if isfinite(parsed) else None
+
+
+def _sortable_score(value: object) -> float:
+    parsed = _num(value)
+    return parsed if parsed is not None else -999.0
 
 
 def _unique_text(items: list[str]) -> list[str]:

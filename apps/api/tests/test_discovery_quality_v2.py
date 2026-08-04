@@ -13,6 +13,7 @@ from app.models import (
 )
 from app.services.discovery_candidate_pool import (
     _with_data_quality_gate,
+    _with_quality_score,
     enrich_candidates,
     finalize_candidate_pool,
 )
@@ -77,9 +78,65 @@ def test_enrichment_recomputes_bounded_score_and_quality_gate(monkeypatch):
     item = result[0]
     assert item["max_drawdown_1y_percent"] == -20.0
     assert 0 <= item["fund_quality_score"] <= 100
-    assert item["quality_score_version"] == "fund_quality.v3"
+    assert item["quality_score_version"] == "fund_quality.v4"
     assert item["quality_gate"]["status"] == "eligible"
     assert item["quality_gate"]["coverage_percent"] == 100.0
+
+
+def test_opportunity_first_keeps_high_drawdown_candidate_eligible():
+    row = {
+        "return_3m_percent": 18.0,
+        "return_6m_percent": 32.0,
+        "max_drawdown_1y_percent": -63.0,
+        "fund_scale_yi": 6.0,
+        "established_date": "2023-01-01",
+        "fund_manager": "测试经理",
+        "nav_date": "2026-07-10",
+    }
+
+    opportunity = _with_data_quality_gate(
+        row,
+        as_of_date=_DECISION_DATE,
+        discovery_strategy="opportunity_first",
+    )
+    risk_first = _with_data_quality_gate(
+        row,
+        as_of_date=_DECISION_DATE,
+        discovery_strategy="risk_first",
+    )
+
+    assert opportunity["quality_gate"]["status"] == "eligible"
+    assert any("高弹性机会排序" in reason for reason in opportunity["quality_gate"]["reasons"])
+    assert risk_first["quality_gate"]["status"] == "watch_only"
+
+
+def test_opportunity_quality_score_does_not_reward_shallow_drawdown():
+    base = {
+        "fund_code": "020356",
+        "fund_name": "高弹性基金A",
+        "sector_label": "半导体",
+        "sector_match_kind": "primary",
+        "sector_confidence": 0.9,
+        "return_3m_percent": 20.0,
+        "return_6m_percent": 35.0,
+        "return_1y_percent": 45.0,
+        "fund_scale_yi": 8.0,
+        "quality_gate": {"status": "eligible", "coverage_percent": 100.0},
+    }
+    shallow = _with_quality_score(
+        {**base, "max_drawdown_1y_percent": -12.0},
+        fund_type_preference="any",
+        discovery_strategy="opportunity_first",
+    )
+    deep = _with_quality_score(
+        {**base, "max_drawdown_1y_percent": -58.0},
+        fund_type_preference="any",
+        discovery_strategy="opportunity_first",
+    )
+
+    assert shallow["fund_quality_score"] == deep["fund_quality_score"]
+    assert shallow["quality_score_components"]["drawdown_control"] == 7.5
+    assert deep["quality_score_components"]["drawdown_control"] == 7.5
 
 
 def test_enrichment_derives_drawdown_from_fetched_nav_when_diagnostics_is_missing(
@@ -1183,6 +1240,91 @@ def test_entry_maturity_v3_ready_state_owns_the_action_boundary():
     assert guarded[0].action == "分批买入"
     assert any("方向成熟度 V3" in item for item in guarded[0].points)
     assert all("近5日主力净流出" not in item for item in guarded[0].points)
+
+
+def test_fund_recovery_can_replace_only_the_v3_sector_position_gate():
+    candidate = _eligible_guard_candidate(
+        quality_gate={"status": "eligible", "eligible": True, "reasons": []}
+    )
+    candidate["fund_entry_signal"] = {
+        "policy_version": "fund_entry_position.2026-08.v1",
+        "status": "recovery_ready",
+        "entry_ready": True,
+        "invalidation_signals": ["近5日收益重新转负且20日修复率跌回40%以下"],
+    }
+    guarded, _caveats, _ = _run_guard_for_test(
+        [
+            DiscoveryRecommendation(
+                fund_code="020356",
+                fund_name="守卫测试基金A",
+                sector_name="半导体",
+                action="等待回调",
+                suggested_amount_yuan=1000,
+                confidence="中",
+            )
+        ],
+        candidate,
+        extra_facts={
+            "effective_configuration": {"discovery_strategy": "opportunity_first"},
+            "sector_opportunities": [
+                {
+                    "sector_label": "半导体",
+                    "score_policy_version": "sector_entry_maturity.2026-08.v3",
+                    "entry_state": "ready_on_pullback",
+                    "trend_strength_score": 78.0,
+                    "participation_score": 42.0,
+                    "position_risk_score": 20.0,
+                    "evidence_quality": "complete",
+                    "confidence": "中",
+                    "entry_gate_inputs": {"mainline_status": "confirmed"},
+                }
+            ],
+        },
+    )
+
+    assert guarded[0].action == "分批买入"
+    assert any("基金自身20日回撤修复已过半" in point for point in guarded[0].points)
+    assert any("严格退出复核" in risk for risk in guarded[0].risks)
+
+
+def test_fund_recovery_cannot_replace_weak_v3_participation():
+    candidate = _eligible_guard_candidate(
+        quality_gate={"status": "eligible", "eligible": True, "reasons": []}
+    )
+    candidate["fund_entry_signal"] = {
+        "policy_version": "fund_entry_position.2026-08.v1",
+        "status": "recovery_ready",
+        "entry_ready": True,
+    }
+    guarded, _caveats, _ = _run_guard_for_test(
+        [
+            DiscoveryRecommendation(
+                fund_code="020356",
+                fund_name="守卫测试基金A",
+                sector_name="半导体",
+                action="分批买入",
+                suggested_amount_yuan=1000,
+            )
+        ],
+        candidate,
+        extra_facts={
+            "effective_configuration": {"discovery_strategy": "opportunity_first"},
+            "sector_opportunities": [
+                {
+                    "sector_label": "半导体",
+                    "score_policy_version": "sector_entry_maturity.2026-08.v3",
+                    "entry_state": "ready_on_pullback",
+                    "trend_strength_score": 78.0,
+                    "participation_score": 30.0,
+                    "position_risk_score": 20.0,
+                    "evidence_quality": "complete",
+                    "entry_gate_inputs": {"mainline_status": "confirmed"},
+                }
+            ],
+        },
+    )
+
+    assert guarded[0].action == "等待回调"
 
 
 def test_ready_direction_uses_passive_vehicle_quality_instead_of_sector_returns():

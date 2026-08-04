@@ -73,7 +73,7 @@ def _candidates() -> list[dict]:
                 "sector_label": "科技",
                 "fund_quality_score": score,
                 "sector_fit_score": 35.0,
-                "quality_score_version": "fund_quality.v3",
+                "quality_score_version": "fund_quality.v4",
                 "quality_score_components": {"sector_fit": 35.0, "quality": score - 35.0},
                 "quality_gate": {"status": "eligible", "eligible": True, "reasons": []},
                 "tradeability": _tradeability(code),

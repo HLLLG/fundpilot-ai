@@ -249,17 +249,24 @@ def _build_regime(
     breadth_score = _clamp(breadth, 0.0, 100.0) if breadth is not None else None
     structure_values: list[tuple[float, float]] = []
     drawdown_20d = _number(position.get("max_drawdown_20d_percent"))
-    if drawdown_20d is not None:
-        structure_values.append((_clamp(100.0 - drawdown_20d * 5.0, 0.0, 100.0), 0.35))
+    recovery_20d = _number(position.get("drawdown_recovery_20d_percent"))
+    if recovery_20d is not None:
+        # Price position is about how much of a decline has been repaired, not
+        # about rewarding shallow drawdowns.  A volatile direction can now earn
+        # a strong structure score after it has recovered through the range.
+        structure_values.append((_clamp(recovery_20d, 0.0, 100.0), 0.40))
     distance_high = _number(position.get("distance_from_20d_high_percent"))
-    if distance_high is not None:
-        structure_values.append((_clamp(100.0 + distance_high * 5.0, 0.0, 100.0), 0.30))
+    distance_low = _number(position.get("distance_from_20d_low_percent"))
+    if distance_low is not None:
+        structure_values.append((_clamp(20.0 + distance_low * 8.0, 0.0, 100.0), 0.20))
+    if return_5d is not None:
+        structure_values.append((_signed_score(return_5d, negative=-6.0, positive=10.0), 0.20))
     volume_ratio = _number(position.get("volume_ratio_5d_vs_20d"))
     if volume_ratio is not None:
-        structure_values.append((_clamp(50.0 + (volume_ratio - 1.0) * 50.0, 0.0, 100.0), 0.20))
+        structure_values.append((_clamp(50.0 + (volume_ratio - 1.0) * 50.0, 0.0, 100.0), 0.10))
     volatility_20d = _number(position.get("annualized_volatility_20d_percent"))
-    if volatility_20d is not None:
-        structure_values.append((_clamp(100.0 - max(0.0, volatility_20d - 20.0) * 1.6, 0.0, 100.0), 0.15))
+    if positive_days is not None:
+        structure_values.append((_clamp(positive_days, 0.0, 100.0), 0.10))
     structure_score = _weighted_available(structure_values)
 
     component_scores = {
@@ -386,8 +393,11 @@ def _build_regime(
             "distance_from_ma20_percent": distance_ma20,
             "distance_from_ma60_percent": distance_ma60,
             "distance_from_20d_high_percent": distance_high,
+            "distance_from_20d_low_percent": distance_low,
             "volume_ratio_5d_vs_20d": volume_ratio,
             "max_drawdown_20d_percent": drawdown_20d,
+            "drawdown_recovery_20d_percent": recovery_20d,
+            "annualized_volatility_20d_percent": volatility_20d,
             "position_label": position.get("position_label"),
             "breakout_over_prior_20d_high_percent": _number(
                 position.get("breakout_over_prior_20d_high_percent")
