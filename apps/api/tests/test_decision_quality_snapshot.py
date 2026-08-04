@@ -2419,9 +2419,12 @@ def test_all_users_uses_safe_source_site_for_value_bearing_contract_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def evaluate_one(**kwargs):
-        raise DecisionQualitySnapshotContractError(
-            "report 123 has invalid immutable evidence: secret-value"
-        )
+        try:
+            raise ValueError("secret-inner-value")
+        except ValueError as exc:
+            raise DecisionQualitySnapshotContractError(
+                "report 123 has invalid immutable evidence: secret-value"
+            ) from exc
 
     monkeypatch.setattr(
         "app.services.decision_quality_snapshot._evaluate_one_user_snapshot",
@@ -2439,5 +2442,8 @@ def test_all_users_uses_safe_source_site_for_value_bearing_contract_error(
     assert "secret-value" not in message
     assert message.startswith(
         "decision-quality evaluation failed closed for isolated user ids: 2; "
-        "contract_sites=2[test_decision_quality_snapshot.py:evaluate_one:"
+        "contract_sites=2[DecisionQualitySnapshotContractError@"
+        "test_decision_quality_snapshot.py:evaluate_one:"
     )
+    assert "|ValueError@test_decision_quality_snapshot.py:evaluate_one:" in message
+    assert "secret-inner-value" not in message

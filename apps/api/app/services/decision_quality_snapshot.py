@@ -297,22 +297,42 @@ def evaluate_and_persist_decision_quality_snapshots(
             # function and line are release metadata and contain no tenant
             # evidence, while still making an otherwise opaque deployment
             # failure actionable.
-            traceback_cursor = error.__traceback__
-            while traceback_cursor is not None and traceback_cursor.tb_next is not None:
-                traceback_cursor = traceback_cursor.tb_next
-            if traceback_cursor is not None:
-                frame = traceback_cursor.tb_frame
-                filename = Path(frame.f_code.co_filename).name
-                function = frame.f_code.co_name
-                line = traceback_cursor.tb_lineno
-                if (
-                    re.fullmatch(r"[A-Za-z0-9_.-]+", filename)
-                    and re.fullmatch(r"[A-Za-z0-9_.-]+", function)
-                    and line > 0
+            exception_cursor: BaseException | None = error
+            exception_sites: list[str] = []
+            seen_exceptions: set[int] = set()
+            while (
+                exception_cursor is not None
+                and id(exception_cursor) not in seen_exceptions
+            ):
+                seen_exceptions.add(id(exception_cursor))
+                traceback_cursor = exception_cursor.__traceback__
+                while (
+                    traceback_cursor is not None
+                    and traceback_cursor.tb_next is not None
                 ):
-                    safe_contract_sites.append(
-                        f"{user_id}[{filename}:{function}:{line}]"
-                    )
+                    traceback_cursor = traceback_cursor.tb_next
+                if traceback_cursor is not None:
+                    frame = traceback_cursor.tb_frame
+                    exception_name = type(exception_cursor).__name__
+                    filename = Path(frame.f_code.co_filename).name
+                    function = frame.f_code.co_name
+                    line = traceback_cursor.tb_lineno
+                    if (
+                        re.fullmatch(r"[A-Za-z0-9_.-]+", exception_name)
+                        and re.fullmatch(r"[A-Za-z0-9_.-]+", filename)
+                        and re.fullmatch(r"[A-Za-z0-9_.-]+", function)
+                        and line > 0
+                    ):
+                        exception_sites.append(
+                            f"{exception_name}@{filename}:{function}:{line}"
+                        )
+                exception_cursor = (
+                    exception_cursor.__cause__ or exception_cursor.__context__
+                )
+            if exception_sites:
+                safe_contract_sites.append(
+                    f"{user_id}[{'|'.join(exception_sites)}]"
+                )
         detail_suffix = (
             "; contract_fields=" + ";".join(safe_contract_details)
             if safe_contract_details
