@@ -121,7 +121,7 @@ def _context(stage: str) -> dict[str, Any]:
     return result
 
 
-def _audit() -> dict[str, Any]:
+def _audit(*, decision_at: datetime = _DECISION_AT) -> dict[str, Any]:
     stages = {
         stage: [
             _candidate("100001", stage, 1, 90.0),
@@ -131,7 +131,7 @@ def _audit() -> dict[str, Any]:
         for stage in ("recall", "gate", "prescreen", "final")
     }
     return build_candidate_selection_audit_v2(
-        decision_at=_DECISION_AT,
+        decision_at=decision_at,
         recall_candidates=stages["recall"],
         gate_candidates=stages["gate"],
         prescreen_candidates=stages["prescreen"],
@@ -293,8 +293,9 @@ def _audit_row(
     user_id: int = 1,
     receipt_delay_seconds: float = 59.0,
     schema_version: str = CANDIDATE_AUDIT_ARTIFACT_SCHEMA_VERSION,
+    audit_decision_at: datetime = _DECISION_AT,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    audit = _audit()
+    audit = _audit(decision_at=audit_decision_at)
     plan = build_candidate_label_plan(
         decision_at=_DECISION_AT,
         registered_at=_AUDIT_RECORDED_AT,
@@ -473,6 +474,21 @@ def test_preregistration_parser_keeps_missing_receipt_in_denominator() -> None:
     assert base["universe_codes"] == ["100001", "100002", "100003"]
     with pytest.raises(CandidateSelectionSettlementError, match="receipt is required"):
         candidate_target_from_artifact(row)
+
+
+def test_preregistration_parser_binds_equivalent_timezone_offsets_by_instant() -> None:
+    report_timezone = timezone(timedelta(hours=8))
+    row, _ = _audit_row(
+        audit_decision_at=_DECISION_AT.astimezone(report_timezone),
+    )
+
+    envelope = row["payload"]
+    audit = envelope["artifact"]["audit"]
+    assert audit["decision_at"] != envelope["decision_at"]
+    base = candidate_preregistered_target_from_artifact(row)
+
+    assert base is not None
+    assert base["decision_at"] == _DECISION_AT.isoformat()
 
 
 def test_audit_receipt_binding_cross_tenant_tamper_and_300_second_boundary() -> None:

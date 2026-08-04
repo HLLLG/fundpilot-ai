@@ -1238,6 +1238,8 @@ def candidate_preregistered_target_from_artifact(
             "candidate audit snapshot hash conflicts with wrapper"
         )
     source_report_id = envelope.get("source_report_id")
+    envelope_decision_at = _aware_datetime(envelope.get("decision_at"))
+    audit_decision_at = _aware_datetime(audit.get("decision_at"))
     if (
         not isinstance(source_report_id, str)
         or not source_report_id.strip()
@@ -1254,7 +1256,11 @@ def candidate_preregistered_target_from_artifact(
         or artifact.get("source_report_id") != envelope.get("source_report_id")
         or artifact.get("decision_at") != envelope.get("decision_at")
         or artifact.get("recorded_at") != envelope.get("recorded_at")
-        or audit.get("decision_at") != envelope.get("decision_at")
+        # The embedded audit is independently content-addressed and may retain
+        # the report's original timezone offset.  Bind clocks by instant rather
+        # than requiring the audit's ISO spelling to equal the UTC envelope.
+        or envelope_decision_at is None
+        or audit_decision_at != envelope_decision_at
         or artifact.get("capture_validation") != validation
         or artifact.get("registration_phase") != "phase1_preregistered"
         or artifact.get("provider_receipt_required") is not True
@@ -1278,7 +1284,7 @@ def candidate_preregistered_target_from_artifact(
         raise CandidateSelectionSettlementError(
             "candidate audit content address is missing"
         )
-    decision_at = _aware_datetime(envelope.get("decision_at"))
+    decision_at = envelope_decision_at
     available_at = _aware_datetime(envelope.get("available_at"))
     recorded_at = _aware_datetime(envelope.get("recorded_at"))
     storage_created_at = _aware_datetime(row.get("created_at"))
