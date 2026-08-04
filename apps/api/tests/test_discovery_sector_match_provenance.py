@@ -12,6 +12,9 @@ from app.services.discovery_allocation_service import (
 )
 from app.services.discovery_candidate_llm import slim_candidate_for_llm
 from app.services.discovery_candidate_pool import (
+    _is_execution_verified_primary_mapping,
+    _name_matches_sector,
+    _sector_keywords,
     _sector_fit_score,
     build_candidate_pool,
     enrich_candidates,
@@ -73,6 +76,75 @@ def test_fallback_candidates_have_explicit_public_provenance() -> None:
     assert not any(key.startswith("_") for key in rows[0])
 
 
+def test_llm_primary_mapping_is_recall_only_until_independently_verified(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.services.discovery_candidate_pool.list_fund_primary_sectors",
+        lambda: [],
+    )
+    monkeypatch.setattr(
+        "app.services.discovery_candidate_pool.list_fund_primary_sectors_by_sector_names",
+        lambda _labels, limit_per_sector=20: [
+            {
+                "fund_code": "005576",
+                "fund_name": "华泰柏瑞新金融地产混合A",
+                "sector_name": "金融科技",
+                "source": "precompute_llm",
+                "confidence": 0.92,
+            }
+        ],
+    )
+    rank_row = {
+        "fund_code": "005576",
+        "fund_name": "华泰柏瑞新金融地产混合A",
+        "fund_scale_yi": 20,
+        "return_3m_percent": 6,
+        "return_6m_percent": 8,
+        "return_1y_percent": 10,
+        "max_drawdown_1y_percent": -20,
+        "established_date": "2016-01-01",
+    }
+
+    built = build_candidate_pool(
+        ["金融科技"],
+        per_sector=1,
+        pool_cap=1,
+        fetch_rank=lambda limit: [rank_row],
+        fetch_new_funds=lambda limit: [],
+        decision_at=_DECISION_AT,
+    )
+
+    assert built[0]["sector_match_kind"] == "fallback"
+    assert built[0]["sector_mapping_verified"] is False
+    assert built[0]["sector_fit_score"] == 16.0
+    assert built[0]["selection_reason"] == "推断板块映射待核验"
+
+
+def test_stale_broad_financial_benchmark_cannot_verify_fintech_mapping() -> None:
+    assert not _is_execution_verified_primary_mapping(
+        {
+            "source": "precompute_benchmark",
+            "detail": (
+                '{"index_code":"000992","benchmark_text":'
+                '"中证全指金融地产指数收益率×95%+银行活期存款利率×5%"}'
+            ),
+        },
+        expected_sector="金融科技",
+    )
+
+
+def test_discovery_keywords_cover_target_directions_without_single_cloud_false_positive() -> None:
+    media_keywords = _sector_keywords("传媒", None)
+    gold_keywords = _sector_keywords("贵金属", None)
+    cloud_keywords = _sector_keywords("云计算", None)
+
+    assert _name_matches_sector("某某游戏传媒ETF联接A", media_keywords)
+    assert _name_matches_sector("某某黄金产业股票A", gold_keywords)
+    assert _name_matches_sector("某某云计算ETF联接A", cloud_keywords)
+    assert not _name_matches_sector("彩云成长混合A", cloud_keywords)
+
+
 def test_primary_match_survives_build_enrich_finalize_llm_and_guard(
     monkeypatch,
 ) -> None:
@@ -100,6 +172,12 @@ def test_primary_match_survives_build_enrich_finalize_llm_and_guard(
                 "sector_name": "半导体",
                 "source": "precompute_benchmark",
                 "confidence": 0.8,
+                "detail": {
+                    "benchmark_text": (
+                        "中证全指半导体产品与设备指数收益率×95%+"
+                        "银行活期存款利率（税后）×5%"
+                    )
+                },
             }
         ],
     )

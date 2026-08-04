@@ -11,6 +11,10 @@ from app.services.discovery_strategy import (
     discovery_minimum_holding_days,
     strategy_from_facts,
 )
+from app.services.discovery_recommendation_scope import (
+    candidates_in_recommendation_scope,
+    ensure_recommendation_candidate_scope,
+)
 
 _DISCLAIMER = "仅供参考，不构成投资建议；基金有风险，决策需结合自身承受能力。"
 
@@ -31,10 +35,18 @@ def build_offline_discovery_report(
     from app.services.decision_data_evidence import portfolio_snapshot_caveats
 
     discovery_strategy = strategy_from_facts(discovery_facts)
+    recommendation_scope = ensure_recommendation_candidate_scope(
+        discovery_facts,
+        candidate_pool,
+    )
+    scoped_pool = candidates_in_recommendation_scope(
+        candidate_pool,
+        recommendation_scope,
+    )
     ranked = sorted(
         [
             item
-            for item in candidate_pool
+            for item in scoped_pool
             if (item.get("quality_gate") or {}).get("status") != "excluded"
         ],
         key=lambda item: (

@@ -15,6 +15,10 @@ from app.services.discovery_candidate_llm import (
 )
 from app.services.news_freshness import normalize_news_now
 from app.services.news_service import compact_announcement_fetch_status
+from app.services.discovery_recommendation_scope import (
+    candidates_in_recommendation_scope,
+    ensure_recommendation_candidate_scope,
+)
 
 OUTPUT_DISCOVERY_REQUIREMENTS = """
 你必须只输出一个 JSON 对象（不要 Markdown 代码块），字段：
@@ -28,6 +32,8 @@ OUTPUT_DISCOVERY_REQUIREMENTS = """
 
 recommendations 字段约束：
 - fund_code / fund_name 必须与 discovery_facts.candidate_pool 对应条目完全一致
+- discovery_facts.candidate_pool 已是服务端按方向动作边界筛出的推荐白名单；不得从等待/研究方向补位，
+  也不得自行恢复 recommendation_candidate_scope 未列出的基金
 - sector_name 须与 candidate_pool 中该基金的 sector_label 一致
 - action 仅用：建议关注、分批买入、等待回调
 - confidence 仅用：高、中、低
@@ -94,7 +100,8 @@ recommendations 字段约束：
 """
 
 _COMMON_REQUIREMENTS = [
-    "仅从 discovery_facts.candidate_pool 选 0~3 只，不得推荐 holdings_slim 中已有 fund_code；无合格候选时允许空数组",
+    "仅从 discovery_facts.candidate_pool 推荐白名单选 0~3 只，不得推荐 holdings_slim 中已有 fund_code；无合格候选时允许空数组",
+    "等待/研究方向不得占用推荐名额；不得跨方向凑数，也不得恢复 recommendation_candidate_scope 未列出的基金",
     "quality_gate=eligible 才可分批买入；watch_only 只能观察/等待，excluded 禁止推荐；不得为凑数降门槛",
     "每只 recommendations 须含 hold_horizon、risks（至少 1 条）、points（引用 candidate_pool 具体字段）",
     "每只 recommendations 须含 decision_path、sector_evidence、fund_evidence、validation_notes",
@@ -155,13 +162,21 @@ def build_user_payload(
     fund_type_preference: str | None = None,
 ) -> dict:
     pool = discovery_facts.get("candidate_pool") or []
+    recommendation_scope = ensure_recommendation_candidate_scope(
+        discovery_facts,
+        pool,
+    )
+    recommendation_pool = candidates_in_recommendation_scope(
+        pool,
+        recommendation_scope,
+    )
     session = discovery_facts.get("session") or {}
     trade_date = session.get("effective_trade_date")
     sector_heat_full = discovery_facts.get("sector_heat") or []
     portfolio_gap = discovery_facts.get("portfolio_gap") or {}
     target_sectors = list(portfolio_gap.get("target_sectors") or [])
     slim_pool = slim_candidate_pool_for_llm(
-        pool,
+        recommendation_pool,
         sector_heat=sector_heat_full,
         trade_date=trade_date,
     )
@@ -205,6 +220,7 @@ def build_user_payload(
             "sector_opportunities": _slim_sector_opportunities(
                 discovery_facts.get("sector_opportunities") or []
             ),
+            "recommendation_candidate_scope": recommendation_scope,
             "news": discovery_facts.get("news"),
             "fund_announcements": compact_announcement_fetch_status(
                 discovery_facts.get("fund_announcements") or {}

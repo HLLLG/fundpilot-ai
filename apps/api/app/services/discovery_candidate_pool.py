@@ -51,6 +51,19 @@ _SECTOR_MATCH_STRENGTH = {
     "tracking_exact": 3,
     "primary": 4,
 }
+# Only independently observed mappings may satisfy the executable sector-fit
+# gate.  LLM/name/free-form inference remains useful for broad recall, but it
+# must not turn an active financial-real-estate fund into a verified fintech
+# vehicle (or create an equivalent cross-theme false positive).
+_DIRECTLY_VERIFIED_PRIMARY_SOURCES = frozenset(
+    {
+        "ocr_detail",
+        "manual",
+        "holdings_infer",
+        "precompute_holdings",
+    }
+)
+_BENCHMARK_PRIMARY_SOURCES = frozenset({"benchmark_index", "precompute_benchmark"})
 _CORE_QUALITY_FIELDS = (
     "return_3m_percent",
     "return_6m_percent",
@@ -1019,6 +1032,42 @@ def _candidate_share_family_key(item: dict) -> str:
     return f"{family}|{fund_type.strip().casefold()}"
 
 
+def _is_execution_verified_primary_mapping(
+    row: Mapping[str, object],
+    *,
+    expected_sector: str,
+) -> bool:
+    """Require benchmark-backed mappings to reproduce their exact sector.
+
+    Persisted benchmark mappings predate the current candidate scan and can
+    outlive a corrected index taxonomy.  Checking only ``source`` would keep a
+    stale mapping such as "全指金融/金融地产 -> 金融科技" executable.  Direct
+    holdings/manual evidence stays trusted; benchmark evidence must resolve
+    again from its frozen original text and agree with today's target label.
+    """
+
+    source = str(row.get("source") or "").strip()
+    if source in _DIRECTLY_VERIFIED_PRIMARY_SOURCES:
+        return True
+    if source not in _BENCHMARK_PRIMARY_SOURCES:
+        return False
+
+    detail = row.get("detail")
+    if isinstance(detail, str):
+        try:
+            decoded = json.loads(detail)
+        except (TypeError, ValueError):
+            decoded = None
+        detail = decoded
+    if not isinstance(detail, Mapping):
+        return False
+    benchmark_text = str(detail.get("benchmark_text") or "").strip()
+    if not benchmark_text:
+        return False
+    resolved = resolve_sector_from_benchmark(benchmark_text)
+    return bool(resolved is not None and resolved[0] == expected_sector)
+
+
 def _candidates_for_sector(
     sector_label: str,
     *,
@@ -1052,15 +1101,32 @@ def _candidates_for_sector(
         name = str(row.get("fund_name") or _resolve_fund_name(code))
         if not _matches_fund_type_preference(name, fund_type_preference):
             continue
+        source = str(row.get("source") or "").strip()
+        verified_primary = _is_execution_verified_primary_mapping(
+            row,
+            expected_sector=sector_label,
+        )
+        inferred_match_kind = (
+            "primary"
+            if verified_primary
+            else "name"
+            if _name_matches_sector(name, keywords)
+            else "fallback"
+        )
         entry = _merge_rank_metrics(
             {
                 "fund_code": code,
                 "fund_name": name,
                 "sector_label": sector_label,
-                "selection_reason": "板块机会映射" if opportunity else "主关联板块映射",
-                "sector_source": row.get("source"),
+                "selection_reason": (
+                    "板块机会映射" if opportunity else "主关联板块映射"
+                )
+                if verified_primary
+                else "推断板块映射待核验",
+                "sector_source": source or None,
                 "sector_confidence": row.get("confidence"),
-                "sector_match_kind": "primary",
+                "sector_match_kind": inferred_match_kind,
+                "sector_mapping_verified": verified_primary,
             },
             rank_by_code.get(code),
         )
@@ -1902,7 +1968,9 @@ def _sector_keywords(sector_label: str, canon) -> tuple[str, ...]:
         "电网设备": ("电网", "电力设备"),
         "人工智能": ("人工智能", "AI", "智能"),
         "互联网": ("互联网", "网络", "游戏", "传媒"),
+        "传媒": ("传媒", "游戏", "影视", "动漫", "出版", "文化传媒"),
         "有色金属": ("有色", "金属", "铜", "铝", "锂矿"),
+        "贵金属": ("贵金属", "黄金", "白银", "金银", "黄金产业"),
         "新能源车": ("新能源", "汽车", "电动车", "锂电"),
         "医药": ("医药", "生物", "制药", "医疗"),
         "证券": ("证券", "券商"),
@@ -1912,7 +1980,8 @@ def _sector_keywords(sector_label: str, canon) -> tuple[str, ...]:
         "锂电池": ("锂电池", "电池"),
         "消费电子": ("消费电子", "电子", "消费"),
         "机器人": ("机器人", "自动化"),
-        "云计算": ("云计算", "云"),
+        "云计算": ("云计算", "云服务", "云产业", "云基础设施"),
+        "金融科技": ("金融科技", "FinTech", "互联网金融", "数字金融"),
         "5G": ("5G", "通信"),
         "医疗器械": ("医疗器械", "器械"),
         "CPO": ("CPO", "光模块", "共封装", "光电"),

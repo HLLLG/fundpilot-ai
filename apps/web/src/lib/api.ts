@@ -1268,6 +1268,29 @@ export type DiscoveryCandidateQualitySummary = {
   profile_source_counts?: Record<string, number>;
 };
 
+export type DiscoveryRecommendationSectorFunnel = {
+  sector_label: string;
+  entry_state?: string | null;
+  direction_path?: string;
+  recalled_count: number;
+  eligible_count: number;
+  rejected_count: number;
+  rejected_reason_counts?: Record<string, number>;
+};
+
+export type DiscoveryRecommendationCandidateScope = {
+  schema_version?: string;
+  policy_enforced: boolean;
+  max_recommendations?: number;
+  ordered_eligible_fund_codes: string[];
+  actionable_sector_labels: string[];
+  eligible_sector_labels: string[];
+  unmatched_actionable_sector_labels: string[];
+  research_sector_labels: string[];
+  sector_funnel: DiscoveryRecommendationSectorFunnel[];
+  instruction?: string;
+};
+
 export type DiscoveryDataEvidenceGuard = {
   execution_blocked: boolean;
   blocked_fund_codes: string[];
@@ -1669,6 +1692,7 @@ export type FundDiscoveryReport = {
     };
     data_evidence_guard?: DiscoveryDataEvidenceGuard;
     candidate_quality_summary?: DiscoveryCandidateQualitySummary;
+    recommendation_candidate_scope?: DiscoveryRecommendationCandidateScope;
     risk_context?: DiscoveryRiskContext;
     allocation_plan?: DiscoveryAllocationPlan;
     [key: string]: unknown;

@@ -199,6 +199,50 @@ describe("DiscoveryReportPanel", () => {
     expect(screen.queryByText(/方向观察池/)).not.toBeInTheDocument();
   });
 
+  it("explains when an actionable direction has no eligible fund instead of cross-filling", () => {
+    const report = sampleReport();
+    report.discovery_facts = {
+      ...report.discovery_facts,
+      mainline_snapshot: {
+        schema_version: "mainline_daily_snapshot.v1",
+        entry_policy_version: "sector_entry_maturity.2026-08.v3",
+        sectors: [],
+      },
+      sector_opportunities: [
+        {
+          sector_label: "贵金属",
+          score_policy_version: "sector_entry_maturity.2026-08.v3",
+          entry_state: "ready_to_start",
+        },
+      ],
+      recommendation_candidate_scope: {
+        schema_version: "discovery_recommendation_scope.2026-08.v1",
+        policy_enforced: true,
+        ordered_eligible_fund_codes: [],
+        actionable_sector_labels: ["贵金属"],
+        eligible_sector_labels: [],
+        unmatched_actionable_sector_labels: ["贵金属"],
+        research_sector_labels: [],
+        sector_funnel: [
+          {
+            sector_label: "贵金属",
+            entry_state: "ready_to_start",
+            direction_path: "confirmed_entry",
+            recalled_count: 1,
+            eligible_count: 0,
+            rejected_count: 1,
+          },
+        ],
+      },
+    };
+
+    render(<DiscoveryReportPanel report={report} />);
+
+    expect(screen.getByText("方向与基金已联动筛选")).toBeInTheDocument();
+    expect(screen.getByText(/暂无合格基金载体：贵金属/)).toBeInTheDocument();
+    expect(screen.getByText(/不会拿其他等待方向的基金凑数/)).toBeInTheDocument();
+  });
+
   it("shows an honest zero state instead of forcing hot directions into the main area", () => {
     const report = sampleReport();
     report.discovery_facts = {

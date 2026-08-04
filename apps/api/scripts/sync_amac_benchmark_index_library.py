@@ -121,6 +121,7 @@ _THEME_OVERRIDES: dict[str, str] = {
 }
 
 _THEME_KEYWORDS: tuple[tuple[str, str], ...] = (
+    ("金融科技", "金融科技"),
     ("人工智能", "人工智能"),
     ("半导体材料设备", "半导体材料"),
     ("半导体", "半导体"),
@@ -158,7 +159,9 @@ _THEME_KEYWORDS: tuple[tuple[str, str], ...] = (
     ("信息技术", "计算机"),
     ("软件", "软件"),
     ("通信", "通信技术"),
-    ("金融", "金融科技"),
+    # Broad financial-sector and financial-real-estate indices are not
+    # financial-technology indices.  Only the explicit theme may map here;
+    # otherwise funds tracking 全指金融/金融地产 would leak into fintech scans.
     ("工业", "机械设备"),
     ("可选消费", "汽车"),
     ("主要消费", "食品饮料"),

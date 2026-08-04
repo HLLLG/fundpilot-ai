@@ -632,6 +632,15 @@ def build_discovery_report_from_parsed(
 ) -> FundDiscoveryReport:
     parsed = sanitize_retired_market_evidence(parsed)
     recommendations = _parse_recommendations(parsed.get("recommendations"))
+    from app.services.discovery_recommendation_scope import (
+        reconcile_recommendations_with_scope,
+    )
+
+    recommendations, scope_caveats = reconcile_recommendations_with_scope(
+        recommendations,
+        candidate_pool=candidate_pool,
+        discovery_facts=discovery_facts,
+    )
     recommendations = prepare_recommendations_for_deterministic_allocation(
         recommendations,
         candidate_pool=candidate_pool,
@@ -670,6 +679,7 @@ def build_discovery_report_from_parsed(
         ),
     )
     caveats = _as_str_list(parsed.get("caveats"))
+    caveats.extend(scope_caveats)
     caveats.extend(guard_caveats)
     caveats.extend(allocation_caveats)
     from app.services.decision_data_evidence import (

@@ -362,7 +362,7 @@
       "source_code": "000992",
       "eastmoney_secid": "1.000992",
       "eastmoney_name": "全指金融",
-      "theme_label": "金融科技",
+      "theme_label": null,
       "resolution": "auto"
     },
     {
@@ -1610,7 +1610,7 @@
       "source_code": "399914",
       "eastmoney_secid": "0.399914",
       "eastmoney_name": "300 金融",
-      "theme_label": "金融科技",
+      "theme_label": null,
       "resolution": "auto_fuzzy"
     },
     {
@@ -1622,7 +1622,7 @@
       "source_code": "000974",
       "eastmoney_secid": "1.000974",
       "eastmoney_name": "800金融",
-      "theme_label": "金融科技",
+      "theme_label": null,
       "resolution": "auto"
     },
     {
@@ -1634,7 +1634,7 @@
       "source_code": "H50007",
       "eastmoney_secid": "2.H50007",
       "eastmoney_name": "180金融地产",
-      "theme_label": "金融科技",
+      "theme_label": null,
       "resolution": "auto_fuzzy"
     },
     {

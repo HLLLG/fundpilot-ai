@@ -618,6 +618,9 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
         && !["ready_to_start", "ready_on_pullback"].includes(item.entry_state ?? "forming"),
     ),
   }), [sectorOpportunities]);
+  const recommendationScope = report.discovery_facts?.recommendation_candidate_scope;
+  const unmatchedActionableSectors =
+    recommendationScope?.unmatched_actionable_sector_labels ?? [];
   const [chatOpen, setChatOpen] = useState(false);
   const [outcomesOpen, setOutcomesOpen] = useState(false);
   const chatDrawerId = `discovery-report-chat-${report.id}`;
@@ -814,6 +817,28 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
                   {directionGroups.early.map((item, index) => (
                     <SectorOpportunityCard key={`${item.sector_label}-early-${index}`} item={item} />
                   ))}
+                </div>
+              </div>
+            ) : null}
+
+            {recommendationScope?.policy_enforced ? (
+              <div
+                data-testid="discovery-direction-fund-scope"
+                className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5"
+              >
+                <div className="flex items-start gap-2">
+                  <ShieldCheck size={16} aria-hidden="true" className="mt-0.5 shrink-0 text-[var(--success-icon)]" />
+                  <div className="min-w-0 text-xs leading-5 text-slate-600">
+                    <p className="font-black text-slate-800">方向与基金已联动筛选</p>
+                    <p>
+                      推荐基金只从可布局或满足提前试仓条件的方向中产生，并继续校验基金质量、载体质量和板块身份；等待方向不会用于补位。
+                    </p>
+                    {unmatchedActionableSectors.length ? (
+                      <p className="mt-1 font-bold text-[var(--warn-fg)]">
+                        暂无合格基金载体：{unmatchedActionableSectors.join("、")}。系统保留方向机会，但不会拿其他等待方向的基金凑数。
+                      </p>
+                    ) : null}
+                  </div>
                 </div>
               </div>
             ) : null}
