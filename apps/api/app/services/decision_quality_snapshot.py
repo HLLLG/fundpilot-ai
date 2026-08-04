@@ -273,23 +273,38 @@ def evaluate_and_persist_decision_quality_snapshots(
     if failed_user_errors:
         joined = ",".join(str(value) for value, _ in failed_user_errors)
         safe_contract_details: list[str] = []
+        safe_contract_codes: list[str] = []
         diagnostic_prefix = "native candidate audit capture contract is invalid: "
         for user_id, error in failed_user_errors:
             message = str(error)
-            if not message.startswith(diagnostic_prefix):
-                continue
-            fields = message.removeprefix(diagnostic_prefix)
-            if re.fullmatch(r"[a-z_.]+(?:,[a-z_.]+)*", fields):
-                safe_contract_details.append(f"{user_id}[{fields}]")
+            if message.startswith(diagnostic_prefix):
+                fields = message.removeprefix(diagnostic_prefix)
+                if re.fullmatch(r"[a-z_.]+(?:,[a-z_.]+)*", fields):
+                    safe_contract_details.append(f"{user_id}[{fields}]")
+                    continue
+            # Operations logs may expose only a static, value-free error code.
+            # Drop any suffix after a colon and reject punctuation/digits so
+            # report ids, artifact ids, fund codes and upstream values can
+            # never leak through this batch boundary.
+            static_message = message.split(":", 1)[0].strip()
+            if re.fullmatch(r"[a-z][a-z -]{0,119}", static_message):
+                code = re.sub(r"[ -]+", "_", static_message)
+                safe_contract_codes.append(f"{user_id}[{code}]")
         detail_suffix = (
             "; contract_fields=" + ";".join(safe_contract_details)
             if safe_contract_details
+            else ""
+        )
+        code_suffix = (
+            "; contract_codes=" + ";".join(safe_contract_codes)
+            if safe_contract_codes
             else ""
         )
         raise DecisionQualitySnapshotContractError(
             "decision-quality evaluation failed closed for isolated user ids: "
             + joined
             + detail_suffix
+            + code_suffix
         ) from failed_user_errors[0][1]
 
     return {

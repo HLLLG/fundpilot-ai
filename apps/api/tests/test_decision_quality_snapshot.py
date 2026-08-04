@@ -2377,12 +2377,16 @@ def test_all_users_attempts_other_tenants_after_one_contract_failure(
         evaluate_one,
     )
 
-    with pytest.raises(DecisionQualitySnapshotContractError, match="isolated user ids: 2"):
+    with pytest.raises(DecisionQualitySnapshotContractError) as captured:
         evaluate_and_persist_decision_quality_snapshots(
             evaluation_as_of="2026-07-14T00:00:00Z",
             user_ids=[1, 2, 3],
         )
     assert calls == [1, 2, 3]
+    assert str(captured.value) == (
+        "decision-quality evaluation failed closed for isolated user ids: 2; "
+        "contract_codes=2[tenant_evidence_invalid]"
+    )
 
 
 def test_all_users_surfaces_only_safe_candidate_contract_field_names(
