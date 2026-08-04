@@ -586,7 +586,7 @@ export function FundDiscoveryPanel({
                 <div className="min-w-0">
                   <h2 className="font-display text-lg font-extrabold text-slate-950">发现基金机会</h2>
                   <p className="mt-1 text-sm leading-6 text-slate-600">
-                    先找当前机会，再用历史回撤、波动与持仓相关性控制首批金额；没有合格基金时不会凑数。仅供参考，不构成投资建议。
+                    优先寻找高波动、高动量与回撤修复机会，再用交易条件、持仓相关性和退出信号控制风险；没有合格基金时不会凑数。仅供参考，不构成投资建议。
                   </p>
                 </div>
               </div>

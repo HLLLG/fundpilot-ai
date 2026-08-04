@@ -188,8 +188,17 @@ def run_discovery(
         target_sectors = [str(item["sector_label"]) for item in sector_opportunities]
     per_sector = 3
     pool_cap = 28
-    prescreen_per_sector = per_sector + 1
-    prescreen_pool_cap = pool_cap + max(4, min(len(target_sectors), 8))
+    # Opportunity-first needs enough candidates to measure real 20/60-day
+    # volatility before pruning.  The former 4-per-sector quality prescreen
+    # could discard high-elasticity funds before NAV enrichment.
+    prescreen_per_sector = per_sector + (
+        3 if request.discovery_strategy == "opportunity_first" else 1
+    )
+    prescreen_pool_cap = pool_cap + (
+        max(12, min(len(target_sectors) * 2, 20))
+        if request.discovery_strategy == "opportunity_first"
+        else max(4, min(len(target_sectors), 8))
+    )
     held_codes = {h.fund_code.strip().zfill(6) for h in holdings if h.fund_code}
 
     selection_strategy = "balanced"
@@ -203,6 +212,7 @@ def run_discovery(
         exclude_codes=held_codes,
         fund_type_preference="any",
         selection_strategy=selection_strategy,
+        discovery_strategy=request.discovery_strategy,
         prepared_universe_rows=prepared_universe_rows,
         per_sector=prescreen_per_sector,
         pool_cap=prescreen_pool_cap,
@@ -214,6 +224,7 @@ def run_discovery(
         pool,
         keyword="decision_at",
         decision_at=decision_at,
+        discovery_strategy=request.discovery_strategy,
     )
     candidate_selection_audit_v1: dict = {}
     candidate_selection_stages: dict = {}

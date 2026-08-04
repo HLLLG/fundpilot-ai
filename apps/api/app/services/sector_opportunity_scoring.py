@@ -100,12 +100,12 @@ V3_BLOCK_WEIGHTS: dict[str, float] = {
 #: 网格显示趋势阈值越高、去均值超额越高（trend=70 时 T+20 达 +10.19%），但那只是"最强的
 #: 方向表现最好"这一 IC 事实的重述，且 n 会掉到 31（平均每天不到 1 个方向）。这里**刻意
 #: 不取网格最大值**：取中段的 60，样本约每天 2 个方向，既保留区分度又不把参数钉在 40 个
-#: 决策日的极值上。participation 在 35 与 55 之间实测几乎无差（+3.72 vs +3.78），取中间的
-#: 45 表示"要求高于中性"。position 在网格里完全不起约束作用（最优行全部落在最低档），
-#: 因此只作防止结构彻底破坏的下限，不假装它有区分力。
+#: 决策日的极值上。participation 在 35 与 55 之间实测几乎无差，因此当前机会策略采用 35，
+#: 避免把高弹性启动段因资金指标略低于中性而挡掉。position 只防止结构彻底破坏；具体基金若已
+#: 完成回撤修复，可由基金级修复信号替代这一项，但不能替代趋势与参与度。
 V3_GATE_THRESHOLDS: dict[str, float] = {
     "trend": 60.0,
-    "participation": 45.0,
+    "participation": 35.0,
     "position": 25.0,
 }
 #: `invalid` 的判定阈值：趋势与参与度**同时**处于低位才算"不具备参与条件"。
@@ -1329,7 +1329,7 @@ def _entry_triggers_v3(
     if participation < V3_GATE_THRESHOLDS["participation"]:
         triggers.append("主力资金与上涨广度转为改善")
     if position_risk < V3_GATE_THRESHOLDS["position"]:
-        triggers.append("价格结构修复（回撤收敛、重新靠近阶段高点）")
+        triggers.append("价格结构修复（20日修复率回升、离低点反弹并保持近5日转强）")
     return _unique_evidence(triggers)[:4]
 
 
@@ -1358,6 +1358,7 @@ def _entry_structure_score(
         "pullback_acceptance": 12.0,
         "base_building": 10.0,
         "early_breakout": 8.0,
+        "recovery_ready": 14.0,
         # 距离 20 日高点不足 2% 只代表“接近高位”，并不等于价格已经过热。
         # 是否需要等待回调应由短期涨速、拥挤度共同决定，否则稳定沿趋势
         # 运行的方向会被永久挡在入场线外。

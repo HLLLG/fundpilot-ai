@@ -14,8 +14,8 @@ from __future__ import annotations
 
 ## 滞回规则
 
-* **进入** `ready_to_start` 需要连续 ``READY_CONFIRMATION_DAYS`` 个交易日通过入场线。
-  首次达标当天显示为「条件形成中（已满足 1 天）」，不直接给买入动作。
+* **进入** `ready_to_start` 在当日通过入场线后即可开放首批。退出仍使用更低趋势线，
+  避免在阈值边界反复进出；高弹性策略不再人为延迟一个交易日。
 * **退出**用一条更低的趋势线（``EXIT_TREND_THRESHOLD`` < 入场线），避免在阈值边界上
   反复进出。已经处于 ready 的方向只有跌破退出线才降级。
 * 连续天数按**交易日相邻**判断：昨天没有记录（新板块、系统停机、非交易日）时从 1 重新起算，
@@ -39,8 +39,8 @@ from app.services.sector_opportunity_scoring import (
 
 SECTOR_DIRECTION_STATE_SCHEMA_VERSION = "sector_direction_state.v1"
 
-#: 进入「可以开始布局」所需的连续达标交易日数。
-READY_CONFIRMATION_DAYS = 2
+#: 进入「可以开始布局」所需的连续达标交易日数。高弹性机会按当日确认执行。
+READY_CONFIRMATION_DAYS = 1
 #: 退出用的趋势线，低于入场线，形成滞回带。
 EXIT_TREND_THRESHOLD = V3_GATE_THRESHOLDS["trend"] - 8.0
 

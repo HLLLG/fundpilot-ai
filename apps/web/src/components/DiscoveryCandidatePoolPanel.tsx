@@ -805,6 +805,29 @@ export function DiscoveryCandidatePoolPanel({
                 item.quality_reasons?.[0] ??
                 item.selection_reason;
               const researchSummary = buildCandidateResearchSummary(item);
+              const usesElasticityScore =
+                item.opportunity_score_version === "opportunity_20_60d.v2";
+              const entrySignal = item.fund_entry_signal;
+              const entrySignalLabel = entrySignal?.entry_ready
+                ? entrySignal.status === "recovery_ready"
+                  ? "修复已确认"
+                  : "趋势已确认"
+                : null;
+              const headlineMetrics: Array<[string, string]> = usesElasticityScore
+                ? [
+                    ["机会分", formatScore(item.opportunity_score_20_60d)],
+                    ["20日波动", formatPercent(item.nav_trend?.annualized_volatility_20d_percent)],
+                    ["20日修复", formatPercent(item.nav_trend?.drawdown_recovery_20d_percent)],
+                    ["近20日", formatPercent(item.nav_trend?.return_20d_percent)],
+                    ["质量分", formatScore(item.fund_quality_score)],
+                  ]
+                : [
+                    ["质量分", formatScore(item.fund_quality_score)],
+                    ["匹配分", formatScore(item.sector_fit_score)],
+                    ["近3月", formatPercent(item.return_3m_percent)],
+                    ["近6月", formatPercent(item.return_6m_percent)],
+                    ["近1年", formatPercent(item.return_1y_percent)],
+                  ];
               return (
                 <article
                   key={item.fund_code}
@@ -828,6 +851,16 @@ export function DiscoveryCandidatePoolPanel({
                       </p>
                     </div>
                     <div className="flex shrink-0 flex-wrap justify-end gap-1">
+                      {entrySignal?.high_elasticity ? (
+                        <span className="rounded-full bg-[var(--danger-bg)] px-2 py-1 text-[11px] font-bold text-[var(--danger-fg)]">
+                          高弹性
+                        </span>
+                      ) : null}
+                      {entrySignalLabel ? (
+                        <span className="rounded-full bg-[var(--success-bg)] px-2 py-1 text-[11px] font-bold text-[var(--success-fg)]">
+                          {entrySignalLabel}
+                        </span>
+                      ) : null}
                       {item.is_new_issue ? (
                         <span className="rounded-full bg-[var(--warn-bg)] px-2 py-1 text-[11px] font-bold text-[var(--warn-fg)]">新发</span>
                       ) : null}
@@ -845,13 +878,7 @@ export function DiscoveryCandidatePoolPanel({
                   </div>
 
                   <dl className="mt-3 grid grid-cols-2 gap-1.5 text-xs sm:grid-cols-5">
-                    {[
-                      ["质量分", formatScore(item.fund_quality_score)],
-                      ["匹配分", formatScore(item.sector_fit_score)],
-                      ["近3月", formatPercent(item.return_3m_percent)],
-                      ["近6月", formatPercent(item.return_6m_percent)],
-                      ["近1年", formatPercent(item.return_1y_percent)],
-                    ].map(([label, value]) => (
+                    {headlineMetrics.map(([label, value]) => (
                       <div key={label} className="rounded-xl bg-white/80 px-2.5 py-2">
                         <dt className="text-[11px] text-slate-500">{label}</dt>
                         <dd className="mt-0.5 font-black tabular-nums text-slate-900">{value}</dd>

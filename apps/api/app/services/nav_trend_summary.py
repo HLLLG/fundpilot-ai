@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from math import sqrt
+from statistics import pstdev
+
 from app.models import FundNavHistory, FundNavPoint
 from app.services.fund_factor_nav import total_return_navs_from_points
 
@@ -78,8 +81,32 @@ def summarize_nav_history(
         "trend_label": _trend_label(period_change, recent_5d_change),
         "return_20d_percent": horizon_20d.get("return_percent"),
         "max_drawdown_20d_percent": horizon_20d.get("max_drawdown_percent"),
+        "annualized_volatility_20d_percent": horizon_20d.get(
+            "annualized_volatility_percent"
+        ),
+        "distance_from_20d_high_percent": horizon_20d.get(
+            "distance_from_high_percent"
+        ),
+        "rebound_from_20d_low_percent": horizon_20d.get(
+            "rebound_from_low_percent"
+        ),
+        "drawdown_recovery_20d_percent": horizon_20d.get(
+            "drawdown_recovery_percent"
+        ),
         "return_60d_percent": horizon_60d.get("return_percent"),
         "max_drawdown_60d_percent": horizon_60d.get("max_drawdown_percent"),
+        "annualized_volatility_60d_percent": horizon_60d.get(
+            "annualized_volatility_percent"
+        ),
+        "distance_from_60d_high_percent": horizon_60d.get(
+            "distance_from_high_percent"
+        ),
+        "rebound_from_60d_low_percent": horizon_60d.get(
+            "rebound_from_low_percent"
+        ),
+        "drawdown_recovery_60d_percent": horizon_60d.get(
+            "drawdown_recovery_percent"
+        ),
         "return_series_basis": "total_return_daily_growth_first",
         "daily_growth_coverage_percent": round(
             total_return_series.return_coverage * 100.0, 1
@@ -94,8 +121,15 @@ def _window_return_and_drawdown(
     points: list[FundNavPoint],
     *,
     trading_days: int,
-) -> dict[str, float]:
-    """Return horizon-matched metrics only when the full window is available."""
+) -> dict[str, float | None]:
+    """Return horizon-matched momentum, volatility and recovery metrics.
+
+    ``drawdown_recovery_percent`` is the latest total-return NAV's position
+    inside the horizon's low/high range: 0 means it is still at the range low,
+    100 means the drawdown has been fully repaired.  Combined with the recent
+    five-day direction this distinguishes a rebound that is actually repairing
+    from a fund that is merely volatile while still falling.
+    """
 
     if trading_days <= 0 or len(points) < trading_days + 1:
         return {}
@@ -105,17 +139,48 @@ def _window_return_and_drawdown(
     window = total_return_points[-(trading_days + 1) :]
     if window[0][1] <= 0:
         return {}
-    period_return = (window[-1][1] / window[0][1] - 1) * 100
-    peak = window[0][1]
+    values = [value for _day, value in window]
+    period_return = (values[-1] / values[0] - 1) * 100
+    peak = values[0]
     max_drawdown = 0.0
-    for _day, value in window:
+    for value in values:
         if value <= 0:
             return {}
         peak = max(peak, value)
         max_drawdown = min(max_drawdown, (value / peak - 1) * 100)
+    daily_returns = [
+        current / previous - 1.0
+        for previous, current in zip(values, values[1:])
+        if previous > 0
+    ]
+    volatility = (
+        pstdev(daily_returns) * sqrt(252.0) * 100.0
+        if len(daily_returns) >= 2
+        else None
+    )
+    high = max(values)
+    low = min(values)
+    latest = values[-1]
+    distance_high = (latest / high - 1.0) * 100.0 if high > 0 else None
+    rebound_low = (latest / low - 1.0) * 100.0 if low > 0 else None
+    recovery = (
+        (latest - low) / (high - low) * 100.0
+        if high > low
+        else 100.0
+    )
     return {
         "return_percent": round(period_return, 2),
         "max_drawdown_percent": round(max_drawdown, 2),
+        "annualized_volatility_percent": (
+            round(volatility, 2) if volatility is not None else None
+        ),
+        "distance_from_high_percent": (
+            round(distance_high, 2) if distance_high is not None else None
+        ),
+        "rebound_from_low_percent": (
+            round(rebound_low, 2) if rebound_low is not None else None
+        ),
+        "drawdown_recovery_percent": round(max(0.0, min(100.0, recovery)), 2),
     }
 
 

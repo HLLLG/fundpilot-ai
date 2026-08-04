@@ -455,7 +455,7 @@ def _patch_discovery_prep(
         "build_candidate_pool",
         lambda *_args, **_kwargs: report.candidate_pool,
     )
-    monkeypatch.setattr(module, "enrich_candidates", lambda pool: pool)
+    monkeypatch.setattr(module, "enrich_candidates", lambda pool, **_kwargs: pool)
     monkeypatch.setattr(module, "finalize_candidate_pool", lambda pool, *_args, **_kwargs: pool)
     monkeypatch.setattr(
         module,

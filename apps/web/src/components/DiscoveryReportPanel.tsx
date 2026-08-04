@@ -653,7 +653,7 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
   const discoveryStrategy =
     report.discovery_facts?.effective_configuration?.discovery_strategy;
   const strategySummary = discoveryStrategy === "opportunity_first"
-    ? "机会优先 · 20～60交易日 · 历史回撤用于调整首批仓位"
+    ? "机会优先 · 高弹性20～60交易日 · 回撤不参与机会排序"
     : discoveryStrategy === "risk_first"
       ? "稳健筛选 · 历史波动与量化覆盖执行严格门槛"
       : null;

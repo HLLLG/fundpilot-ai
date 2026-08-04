@@ -221,7 +221,7 @@ describe("DiscoveryReportPanel", () => {
     expect(screen.queryByText("主线证据不足")).not.toBeInTheDocument();
   });
 
-  it("shows the opportunity-first horizon and explains how drawdown is used", () => {
+  it("shows the high-elasticity opportunity horizon and excludes drawdown from ranking", () => {
     const report = sampleReport();
     report.discovery_facts = {
       ...report.discovery_facts,
@@ -233,7 +233,7 @@ describe("DiscoveryReportPanel", () => {
     render(<DiscoveryReportPanel report={report} />);
 
     expect(
-      screen.getByText("机会优先 · 20～60交易日 · 历史回撤用于调整首批仓位"),
+      screen.getByText("机会优先 · 高弹性20～60交易日 · 回撤不参与机会排序"),
     ).toBeInTheDocument();
   });
 

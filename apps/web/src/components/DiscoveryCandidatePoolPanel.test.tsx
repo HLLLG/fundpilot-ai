@@ -58,6 +58,34 @@ describe("DiscoveryCandidatePoolPanel", () => {
     expect(screen.queryByText("已推荐")).not.toBeInTheDocument();
   });
 
+  it("surfaces high-elasticity score, volatility and repaired entry position", () => {
+    const elastic: DiscoveryCandidatePoolItem = {
+      ...candidate,
+      opportunity_score_version: "opportunity_20_60d.v2",
+      opportunity_score_20_60d: 126.4,
+      nav_trend: {
+        annualized_volatility_20d_percent: 42.8,
+        drawdown_recovery_20d_percent: 68.0,
+        return_20d_percent: 18.6,
+      },
+      fund_entry_signal: {
+        status: "recovery_ready",
+        entry_ready: true,
+        high_elasticity: true,
+      },
+    };
+    render(<DiscoveryCandidatePoolPanel pool={[elastic]} selectedCodes={[]} />);
+    fireEvent.click(screen.getByRole("button", { name: /本次候选池/ }));
+
+    const card = screen.getByRole("article", { name: /海富通电子传媒股票A/ });
+    expect(card).toHaveTextContent("高弹性");
+    expect(card).toHaveTextContent("修复已确认");
+    expect(card).toHaveTextContent("机会分126.4");
+    expect(card).toHaveTextContent("20日波动42.8%");
+    expect(card).toHaveTextContent("20日修复68%");
+    expect(card).toHaveTextContent("近20日18.6%");
+  });
+
   it("distinguishes executable, conditional and observation candidate statuses", () => {
     const candidates = [
       candidate,

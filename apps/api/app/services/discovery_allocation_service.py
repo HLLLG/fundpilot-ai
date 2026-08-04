@@ -14,6 +14,9 @@ from app.services.discovery_strategy import (
     discovery_minimum_holding_days,
     strategy_from_facts,
 )
+from app.services.discovery_selection_strategy import (
+    fund_recovery_overrides_sector_position,
+)
 from app.services.fund_tradeability import (
     assess_tradeability_for_amount,
     build_tradeability_gate,
@@ -294,21 +297,36 @@ def _entry_maturity_tranche_ratio_cap(
     opportunities = discovery_facts.get("sector_opportunities")
     if not isinstance(opportunities, list):
         return None
-    ready_by_sector = {
+    maturity_by_sector = {
         str(item.get("sector_label") or "").strip(): item
         for item in opportunities
         if isinstance(item, Mapping)
         and str(item.get("score_policy_version") or "") in MATURITY_POLICY_VERSIONS
-        and str(item.get("entry_state") or "") == ENTRY_READY_TO_START
         and str(item.get("sector_label") or "").strip()
     }
-    if not ready_by_sector or not recommendations:
+    if not maturity_by_sector or not recommendations:
         return None
-    recommendation_sectors = [
-        str(item.sector_name or "").strip() for item in recommendations
-    ]
-    if not all(sector in ready_by_sector for sector in recommendation_sectors):
-        return None
+    candidate_pool = discovery_facts.get("candidate_pool")
+    pool_by_code = {
+        str(item.get("fund_code") or "").zfill(6): item
+        for item in candidate_pool
+        if isinstance(item, Mapping)
+    } if isinstance(candidate_pool, list) else {}
+
+    qualified_rows: list[Mapping[str, Any]] = []
+    for recommendation in recommendations:
+        sector = str(recommendation.sector_name or "").strip()
+        opportunity = maturity_by_sector.get(sector)
+        if not isinstance(opportunity, Mapping):
+            return None
+        raw_ready = str(opportunity.get("entry_state") or "") == ENTRY_READY_TO_START
+        candidate = pool_by_code.get(recommendation.fund_code.strip().zfill(6)) or {}
+        if not raw_ready and not fund_recovery_overrides_sector_position(
+            candidate,
+            opportunity,
+        ):
+            return None
+        qualified_rows.append(opportunity)
 
     # A newly matured direction starts with at most one fifth of the verified
     # spendable budget. V3 then applies its observed overheat scale to that first
@@ -316,8 +334,7 @@ def _entry_maturity_tranche_ratio_cap(
     # ready directions use the smallest scale rather than letting a hot direction
     # borrow another direction's unscaled budget.
     scales: list[float] = []
-    for sector in recommendation_sectors:
-        opportunity = ready_by_sector[sector]
+    for opportunity in qualified_rows:
         if str(opportunity.get("score_policy_version") or "") != ENTRY_POLICY_VERSION_V3:
             scales.append(1.0)
             continue

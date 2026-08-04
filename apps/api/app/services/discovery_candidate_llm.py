@@ -12,8 +12,14 @@ _NAV_TREND_LLM_KEYS = (
     "recent_5d_daily_change_percent",
     "return_20d_percent",
     "max_drawdown_20d_percent",
+    "annualized_volatility_20d_percent",
+    "distance_from_20d_high_percent",
+    "rebound_from_20d_low_percent",
+    "drawdown_recovery_20d_percent",
     "return_60d_percent",
     "max_drawdown_60d_percent",
+    "annualized_volatility_60d_percent",
+    "drawdown_recovery_60d_percent",
     "distance_from_high_percent",
     "period_change_percent",
 )
@@ -139,6 +145,7 @@ def slim_candidate_for_llm(
         "share_class",
         "share_class_fee_status",
         "fund_quality_score",
+        "recall_upside_score",
         "vehicle_quality_score",
         "vehicle_quality_status",
         "vehicle_quality_threshold",
@@ -178,6 +185,9 @@ def slim_candidate_for_llm(
             "peer_research": _compact_peer_research(item),
             "benchmark_research": _compact_benchmark_research(item),
             "benchmark_metrics": _compact_benchmark_metrics(item),
+            "fund_entry_signal": _compact_fund_entry_signal(
+                item.get("fund_entry_signal")
+            ),
         }
     )
     nav = slim_nav_trend_for_llm(item.get("nav_trend"))
@@ -187,6 +197,31 @@ def slim_candidate_for_llm(
         row["estimated_daily_return_percent"] = daily
         row["daily_return_source"] = source
     return row
+
+
+def _compact_fund_entry_signal(value: object) -> dict:
+    if not isinstance(value, Mapping):
+        return {}
+    components = value.get("components") if isinstance(value.get("components"), Mapping) else {}
+    thresholds = value.get("thresholds") if isinstance(value.get("thresholds"), Mapping) else {}
+    return {
+        "policy_version": _scalar(value.get("policy_version")),
+        "status": _scalar(value.get("status")),
+        "entry_ready": value.get("entry_ready") is True,
+        "high_elasticity": value.get("high_elasticity") is True,
+        "reason": _scalar(value.get("reason")),
+        "components": {
+            key: scalar
+            for key, raw in components.items()
+            if (scalar := _scalar(raw)) is not None
+        },
+        "thresholds": {
+            key: scalar
+            for key, raw in thresholds.items()
+            if (scalar := _scalar(raw)) is not None
+        },
+        "invalidation_signals": _text_list(value.get("invalidation_signals")),
+    }
 
 
 def _compact_vehicle_quality_assessment(value: object) -> dict:

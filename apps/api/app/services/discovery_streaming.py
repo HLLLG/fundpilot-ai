@@ -308,8 +308,14 @@ def _stream_discovery(
             )
             if request.scan_mode == "full_market" and sector_opportunities:
                 target_sectors = [str(item["sector_label"]) for item in sector_opportunities]
-            prescreen_per_sector = per_sector + 1
-            prescreen_pool_cap = pool_cap + max(4, min(len(target_sectors), 8))
+            prescreen_per_sector = per_sector + (
+                3 if request.discovery_strategy == "opportunity_first" else 1
+            )
+            prescreen_pool_cap = pool_cap + (
+                max(12, min(len(target_sectors) * 2, 20))
+                if request.discovery_strategy == "opportunity_first"
+                else max(4, min(len(target_sectors), 8))
+            )
             topics = list(dict.fromkeys(target_sectors + list(request.focus_sectors)))
             if not topics:
                 topics = ["上证指数"]
@@ -344,6 +350,7 @@ def _stream_discovery(
                             exclude_codes=held_codes,
                             fund_type_preference="any",
                             selection_strategy=selection_strategy,
+                            discovery_strategy=request.discovery_strategy,
                             prepared_universe_rows=prepared_universe_rows,
                             per_sector=prescreen_per_sector,
                             pool_cap=prescreen_pool_cap,
@@ -353,6 +360,7 @@ def _stream_discovery(
                         stop_event=stop,
                         keyword="decision_at",
                         decision_at=decision_at,
+                        discovery_strategy=request.discovery_strategy,
                     ),
                     target_sectors,
                     per_sector=per_sector,

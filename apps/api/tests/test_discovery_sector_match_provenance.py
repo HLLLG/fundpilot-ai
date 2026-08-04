@@ -117,7 +117,7 @@ def test_primary_match_survives_build_enrich_finalize_llm_and_guard(
     # the stronger primary provenance must win and must already be persistable.
     assert built[0]["sector_match_kind"] == "primary"
     assert built[0]["sector_fit_score"] == 36.8
-    assert built[0]["quality_score_version"] == "fund_quality.v3"
+    assert built[0]["quality_score_version"] == "fund_quality.v4"
     assert not any(key.startswith("_") for key in built[0])
 
     snapshot = SimpleNamespace(
@@ -152,7 +152,7 @@ def test_primary_match_survives_build_enrich_finalize_llm_and_guard(
     assert enriched[0]["sector_match_kind"] == "primary"
     assert enriched[0]["sector_fit_score"] == 36.8
     assert "板块匹配置信偏低" not in enriched[0]["quality_penalties"]
-    assert enriched[0]["quality_score_version"] == "fund_quality.v3"
+    assert enriched[0]["quality_score_version"] == "fund_quality.v4"
 
     finalized = finalize_candidate_pool(enriched, ["半导体"], per_sector=1, pool_cap=1)
     assert finalized[0]["sector_match_kind"] == "primary"

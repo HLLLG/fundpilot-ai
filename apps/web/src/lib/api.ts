@@ -1313,6 +1313,7 @@ export type DiscoveryCandidatePoolItem = {
   is_new_issue?: boolean;
   max_drawdown_1y_percent?: number | null;
   fund_quality_score?: number | null;
+  recall_upside_score?: number | null;
   opportunity_score_20_60d?: number | null;
   opportunity_score_version?: string | null;
   sector_fit_score?: number | null;
@@ -1320,6 +1321,31 @@ export type DiscoveryCandidatePoolItem = {
   quality_reasons?: string[];
   quality_penalties?: string[];
   quality_gate?: DiscoveryCandidateQualityGate;
+  nav_trend?: {
+    trend_label?: string | null;
+    recent_5d_change_percent?: number | null;
+    recent_5d_daily_change_percent?: number[];
+    return_20d_percent?: number | null;
+    return_60d_percent?: number | null;
+    max_drawdown_20d_percent?: number | null;
+    max_drawdown_60d_percent?: number | null;
+    annualized_volatility_20d_percent?: number | null;
+    annualized_volatility_60d_percent?: number | null;
+    distance_from_high_percent?: number | null;
+    distance_from_20d_high_percent?: number | null;
+    rebound_from_20d_low_percent?: number | null;
+    drawdown_recovery_20d_percent?: number | null;
+  };
+  fund_entry_signal?: {
+    policy_version?: string | null;
+    status?: "recovery_ready" | "momentum_ready" | "forming" | "falling" | "insufficient" | string;
+    entry_ready?: boolean;
+    high_elasticity?: boolean;
+    reason?: string | null;
+    components?: Record<string, number | null>;
+    thresholds?: Record<string, number | null>;
+    invalidation_signals?: string[];
+  };
   vehicle_quality_score?: number | null;
   vehicle_quality_status?: DiscoveryQualityGateStatus | string | null;
   vehicle_quality_threshold?: number | null;
@@ -1386,8 +1412,11 @@ export type MainlineRegime = {
     distance_from_ma20_percent?: number | null;
     distance_from_ma60_percent?: number | null;
     distance_from_20d_high_percent?: number | null;
+    distance_from_20d_low_percent?: number | null;
     volume_ratio_5d_vs_20d?: number | null;
     max_drawdown_20d_percent?: number | null;
+    drawdown_recovery_20d_percent?: number | null;
+    annualized_volatility_20d_percent?: number | null;
     position_label?: string | null;
     breakout_over_prior_20d_high_percent?: number | null;
     up_days_5d?: number | null;
