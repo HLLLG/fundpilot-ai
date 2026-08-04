@@ -1415,6 +1415,63 @@ def test_improving_flow_and_fund_pullback_open_reduced_probe_and_remove_false_ch
     assert any("今日资金出现同日回流" in item for item in guarded[0].points)
 
 
+def test_probability_direction_and_fund_early_repair_open_reduced_probe():
+    candidate = _eligible_guard_candidate(
+        quality_gate={"status": "eligible", "eligible": True, "reasons": []}
+    )
+    candidate["sector_label"] = "云计算"
+    candidate["fund_entry_signal"] = {
+        "policy_version": "fund_entry_position.2026-08.v2",
+        "status": "forming",
+        "entry_ready": False,
+        "early_probe_ready": True,
+        "first_tranche_scale": 0.4,
+        "invalidation_signals": ["20日修复率跌回40%以下"],
+    }
+    guarded, _caveats, _ = _run_guard_for_test(
+        [
+            DiscoveryRecommendation(
+                fund_code="020356",
+                fund_name="守卫测试基金A",
+                sector_name="云计算",
+                action="建议关注",
+                suggested_amount_yuan=1000,
+                confidence="中",
+            )
+        ],
+        candidate,
+        extra_facts={
+            "effective_configuration": {"discovery_strategy": "opportunity_first"},
+            "sector_opportunities": [
+                {
+                    "sector_label": "云计算",
+                    "score_policy_version": "sector_entry_maturity.2026-08.v3",
+                    "entry_state": "forming",
+                    "trend_strength_score": 55.0,
+                    "participation_score": 68.0,
+                    "position_risk_score": 58.0,
+                    "evidence_quality": "complete",
+                    "trend_formation_probability": 68.0,
+                    "probability_early_probe_eligible": True,
+                    "waiting_reason_code": "probability_fund_confirmation",
+                    "first_tranche_scale": 0.4,
+                    "overheat_flags": [],
+                    "entry_gate_inputs": {
+                        "mainline_status": "forming",
+                        "leading_flow_confirmed": True,
+                    },
+                }
+            ],
+        },
+    )
+
+    assert guarded[0].action == "分批买入"
+    assert guarded[0].entry_path == "probability_early_probe"
+    assert guarded[0].entry_tranche_scale == 0.4
+    assert any("形成概率已达到提前试仓线" in item for item in guarded[0].points)
+    assert any("概率试仓只开放" in item for item in guarded[0].validation_notes)
+
+
 def test_existing_wait_action_explains_flow_confirmation_instead_of_price_pullback():
     candidate = _eligible_guard_candidate(
         quality_gate={"status": "eligible", "eligible": True, "reasons": []}

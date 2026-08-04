@@ -80,6 +80,9 @@ def apply_direction_state_hysteresis(
 
         raw_state = str(item.get("entry_state") or ENTRY_FORMING)
         raw_flow_probe = item.get("flow_improving_probe_eligible") is True
+        raw_probability_probe = (
+            item.get("probability_early_probe_eligible") is True
+        )
         qualifies = raw_state == ENTRY_READY_TO_START
         label = str(item.get("sector_label") or "")
         previous = history.get(label)
@@ -119,17 +122,28 @@ def apply_direction_state_hysteresis(
         flow_probe_active = bool(
             raw_flow_probe and entry_state == ENTRY_READY_ON_PULLBACK
         )
+        probability_probe_active = bool(
+            raw_probability_probe
+            and entry_state in {ENTRY_FORMING, ENTRY_READY_ON_PULLBACK}
+        )
         item["flow_improving_probe_active"] = flow_probe_active
+        item["probability_early_probe_active"] = probability_probe_active
         item["execution_eligible"] = (
-            entry_state == ENTRY_READY_TO_START or flow_probe_active
+            entry_state == ENTRY_READY_TO_START
+            or flow_probe_active
+            or probability_probe_active
         )
         item["automatic_promotion_allowed"] = (
-            entry_state == ENTRY_READY_TO_START or flow_probe_active
+            entry_state == ENTRY_READY_TO_START
+            or flow_probe_active
+            or probability_probe_active
         )
         if entry_state == ENTRY_READY_TO_START:
             item["waiting_reason_code"] = None
         elif flow_probe_active:
             item["waiting_reason_code"] = "fund_entry_confirmation"
+        elif probability_probe_active:
+            item["waiting_reason_code"] = "probability_fund_confirmation"
         if entry_state == ENTRY_FORMING and qualifies:
             item["entry_reason"] = (
                 f"今日首次通过入场线（已满足 {consecutive} 天）；"

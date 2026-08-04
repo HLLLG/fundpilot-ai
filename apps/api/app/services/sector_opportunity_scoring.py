@@ -79,7 +79,10 @@ MIN_CORRELATION_SAMPLES = 15
 # 先验"，不做"押注相反的先验"——前者把未经验证的主观判断拿掉，后者只是换一个方向下注。
 ENTRY_POLICY_VERSION_V3 = "sector_entry_maturity.2026-08.v3"
 MATURITY_POLICY_VERSIONS = frozenset({ENTRY_POLICY_VERSION, ENTRY_POLICY_VERSION_V3})
-SECTOR_SELECTION_PRIORITY_VERSION = "sector_selection_priority.2026-08.v1"
+SECTOR_SELECTION_PRIORITY_VERSION = "sector_selection_priority.2026-08.v2"
+FORMATION_PROBABILITY_POLICY_VERSION = (
+    "sector_trend_formation_probability.2026-08.v1"
+)
 
 #: 三个正交分块内部的权重。
 V3_TREND_WEIGHTS: dict[str, float] = {
@@ -129,8 +132,25 @@ V3_FIRST_TRANCHE_SCALE_CROWDED = 0.4
 V3_IMPROVING_FLOW_PARTICIPATION_FLOOR = 20.0
 V3_IMPROVING_FLOW_FIRST_TRANCHE_SCALE = 0.4
 V3_FLOW_INFLECTION_SELECTION_BONUS = 4.0
+V3_PROBABILITY_PROBE_SELECTION_BONUS = 6.0
 V3_ELASTICITY_SELECTION_BONUS_MAX = 8.0
 V3_HIGH_ELASTICITY_PERCENTILE = 70.0
+
+# 趋势不再只用 60 分做二元切割。52~60 分之间若领先资金、上涨广度与短周期强度
+# 已经形成共振，可以由具体基金自身信号再确认后开放小额试仓。这里的“概率”是对
+# 未来 3~5 个交易日进入成熟趋势状态的可解释信号估计，不是收益率或收益承诺。
+V3_EARLY_PROBE_MIN_TREND = 52.0
+V3_EARLY_PROBE_MIN_PROBABILITY = 55.0
+V3_EARLY_PROBE_MIN_POSITION = 25.0
+V3_EARLY_PROBE_MIN_SHORT_MOMENTUM = 50.0
+V3_EARLY_PROBE_FLOW_PERCENTILE = 85.0
+V3_EARLY_PROBE_FIRST_TRANCHE_CAP = 0.4
+V3_PROBABILITY_TRANCHE_SCALES: tuple[tuple[float, float], ...] = (
+    (85.0, 1.0),
+    (75.0, 0.65),
+    (65.0, 0.4),
+    (55.0, 0.25),
+)
 
 _ENTRY_STATE_PRIORITY = {
     ENTRY_READY_TO_START: 4,
@@ -313,8 +333,11 @@ def _attach_v3_selection_priority(rows: list[dict[str, Any]]) -> list[dict[str, 
             if elasticity_percentile is not None
             else 0.0
         )
+        probability_probe = item.get("probability_early_probe_eligible") is True
         flow_bonus = (
-            V3_FLOW_INFLECTION_SELECTION_BONUS
+            V3_PROBABILITY_PROBE_SELECTION_BONUS
+            if probability_probe
+            else V3_FLOW_INFLECTION_SELECTION_BONUS
             if item.get("flow_improving_probe_eligible") is True
             else 0.0
         )
@@ -325,14 +348,22 @@ def _attach_v3_selection_priority(rows: list[dict[str, Any]]) -> list[dict[str, 
             and elasticity_percentile >= V3_HIGH_ELASTICITY_PERCENTILE
         )
         selection_path = (
-            "flow_inflection_probe"
+            "probability_early_probe"
+            if probability_probe
+            else "flow_inflection_probe"
             if flow_bonus > 0
             else "high_elasticity"
             if high_elasticity
             else "standard"
         )
         reasons: list[str] = []
-        if flow_bonus > 0:
+        if probability_probe:
+            probability = _num(item.get("trend_formation_probability"))
+            reasons.append(
+                "趋势尚未完全确认，但领先资金与短周期强度已达到概率试仓线"
+                + (f"（估计 {probability:.0f}%）" if probability is not None else "")
+            )
+        elif flow_bonus > 0:
             reasons.append("今日资金转强且满足缩小首批通道")
         if high_elasticity and volatility is not None:
             reasons.append(
@@ -1199,6 +1230,177 @@ def _entry_maturity_v2(
     }
 
 
+def _linear_signal_score(value: float | None, *, lower: float, upper: float) -> float:
+    if value is None or upper <= lower:
+        return NEUTRAL_COMPONENT_SCORE
+    return _clamp((value - lower) / (upper - lower) * 100.0, 0.0, 100.0)
+
+
+def _probability_band(probability: float) -> str:
+    if probability >= 85.0:
+        return "strong"
+    if probability >= 75.0:
+        return "confirmed"
+    if probability >= 65.0:
+        return "building"
+    if probability >= 55.0:
+        return "early_probe"
+    if probability >= 45.0:
+        return "watch"
+    return "low"
+
+
+def _probability_tranche_scale(probability: float) -> float:
+    for threshold, scale in V3_PROBABILITY_TRANCHE_SCALES:
+        if probability >= threshold:
+            return scale
+    return 0.0
+
+
+def _trend_formation_probability_v3(
+    *,
+    trend_strength: float,
+    participation: float,
+    position_risk: float,
+    features: Mapping[str, Any],
+    status: str,
+    evidence_quality: str,
+    date_aligned: bool,
+    change_1d: float | None,
+    today_flow: float | None,
+    pattern: str,
+    flow_improving: bool,
+    structure_broken: bool,
+) -> dict[str, Any]:
+    """Estimate the 3--5 day transition chance from current leading evidence.
+
+    This deliberately remains an explainable, bounded signal estimate.  It is
+    not labelled as a return probability and does not bypass fund-level entry
+    evidence.  The mapping can later be recalibrated by walk-forward replay
+    without changing the public payload contract.
+    """
+
+    relative_10d = _num(features.get("relative_return_10d_percent"))
+    return_5d = _num(features.get("return_5d_percent"))
+    breadth = _num(features.get("advancing_ratio_percent"))
+    normalized_today = _num(features.get("normalized_today_net"))
+    today_flow_percentile = _num(features.get("today_flow_percentile"))
+
+    short_momentum, _ = _weighted_neutral_fill_score(
+        (
+            (_linear_signal_score(relative_10d, lower=-4.0, upper=6.0), 0.45),
+            (_linear_signal_score(return_5d, lower=-3.0, upper=8.0), 0.35),
+            (_linear_signal_score(change_1d, lower=-2.0, upper=4.0), 0.20),
+        )
+    )
+    short_momentum = short_momentum or NEUTRAL_COMPONENT_SCORE
+
+    if today_flow_percentile is not None:
+        flow_acceleration = _clamp(today_flow_percentile, 0.0, 100.0)
+    elif normalized_today is not None:
+        flow_acceleration = _linear_signal_score(
+            normalized_today,
+            lower=-0.5,
+            upper=0.5,
+        )
+    elif today_flow is not None:
+        flow_acceleration = 65.0 if today_flow > 0 else 35.0 if today_flow < 0 else 50.0
+    else:
+        flow_acceleration = NEUTRAL_COMPONENT_SCORE
+
+    if pattern == "multi_day_outflow_then_inflow":
+        flow_acceleration = max(flow_acceleration, 88.0)
+    elif pattern == "flow_turning_positive":
+        flow_acceleration = max(flow_acceleration, 84.0)
+    elif pattern == "accumulation":
+        flow_acceleration = max(flow_acceleration, 80.0)
+    elif pattern in _MOMENTUM_PATTERNS:
+        flow_acceleration = max(flow_acceleration, 75.0)
+    elif pattern in _DISTRIBUTION_PATTERNS:
+        flow_acceleration = min(flow_acceleration, 25.0)
+
+    signal_score = _clamp(
+        trend_strength * 0.35
+        + participation * 0.15
+        + position_risk * 0.10
+        + short_momentum * 0.20
+        + flow_acceleration * 0.20,
+        0.0,
+        100.0,
+    )
+    status_adjustment = {
+        "confirmed": 7.0,
+        "crowded": 5.0,
+        "forming": 3.0,
+        "neutral": 0.0,
+        "fading": -15.0,
+        "insufficient": -10.0,
+    }.get(status, 0.0)
+    probability = 15.0 + signal_score * 0.82 + status_adjustment
+    if evidence_quality == "partial":
+        probability -= 4.0
+    elif evidence_quality == "insufficient":
+        probability = min(probability, 35.0)
+    if not date_aligned:
+        probability = min(probability, 49.0)
+    if structure_broken or status == "fading":
+        probability = min(probability, 25.0)
+    probability = _clamp(probability, 5.0, 95.0)
+
+    leading_flow_confirmed = bool(
+        date_aligned
+        and today_flow is not None
+        and today_flow > 0
+        and (
+            (today_flow_percentile or 0.0) >= V3_EARLY_PROBE_FLOW_PERCENTILE
+            or (
+                flow_improving
+                and (
+                    (breadth is not None and breadth >= 55.0)
+                    or participation >= 45.0
+                )
+            )
+        )
+    )
+
+    reasons: list[str] = []
+    if trend_strength >= V3_EARLY_PROBE_MIN_TREND:
+        reasons.append("趋势强度已进入早期形成区间")
+    if today_flow_percentile is not None and today_flow_percentile >= V3_EARLY_PROBE_FLOW_PERCENTILE:
+        reasons.append(f"今日资金强度位于横截面 {today_flow_percentile:.0f} 分位")
+    elif flow_improving:
+        reasons.append("今日资金由弱转强，领先于多日资金分量")
+    if breadth is not None and breadth >= 60.0:
+        reasons.append(f"上涨广度达到 {breadth:.0f}%")
+    if short_momentum >= 60.0:
+        reasons.append("近5日与短期相对强度同步改善")
+    if position_risk >= 50.0:
+        reasons.append("价格结构修复保持在中位以上")
+
+    return {
+        "probability": round(probability, 2),
+        "band": _probability_band(probability),
+        "tranche_scale": _probability_tranche_scale(probability),
+        "leading_flow_confirmed": leading_flow_confirmed,
+        "short_momentum_score": round(short_momentum, 2),
+        "reasons": reasons[:4],
+        "components": {
+            "signal_score": round(signal_score, 2),
+            "trend_strength": round(trend_strength, 2),
+            "participation": round(participation, 2),
+            "structure_repair": round(position_risk, 2),
+            "short_momentum": round(short_momentum, 2),
+            "flow_acceleration": round(flow_acceleration, 2),
+            "today_flow_percentile": (
+                round(today_flow_percentile, 2)
+                if today_flow_percentile is not None
+                else None
+            ),
+            "breadth": round(breadth, 2) if breadth is not None else None,
+        },
+    }
+
+
 def _entry_maturity_v3(
     *,
     label: str,
@@ -1309,6 +1511,37 @@ def _entry_maturity_v3(
         and today_flow > 0
         and pattern in _IMPROVING_FLOW_PATTERNS
     )
+    formation = _trend_formation_probability_v3(
+        trend_strength=trend_strength,
+        participation=participation,
+        position_risk=position_risk,
+        features=features,
+        status=status,
+        evidence_quality=evidence_quality,
+        date_aligned=date_aligned,
+        change_1d=change_1d,
+        today_flow=today_flow,
+        pattern=pattern,
+        flow_improving=flow_improving,
+        structure_broken=structure_broken,
+    )
+    formation_probability = float(formation["probability"])
+    probability_early_probe_eligible = bool(
+        entry_state == ENTRY_FORMING
+        and evidence_quality in _USABLE_EVIDENCE_QUALITIES
+        and status in _DIRECTIONAL_MAINLINE_STATUSES_V3
+        and trend_strength >= V3_EARLY_PROBE_MIN_TREND
+        and formation_probability >= V3_EARLY_PROBE_MIN_PROBABILITY
+        and position_risk >= V3_EARLY_PROBE_MIN_POSITION
+        and float(formation["short_momentum_score"])
+        >= V3_EARLY_PROBE_MIN_SHORT_MOMENTUM
+        and formation["leading_flow_confirmed"] is True
+        and not structure_broken
+        and (
+            not flow_persistently_weak
+            or pattern in {"multi_day_outflow_then_inflow", "flow_turning_positive"}
+        )
+    )
     # 资金绝对/历史分位存在明显滞后：今日仅占资金分量 20%，再乘 participation 的
     # 60% 后，对最终参与度只有 12% 的影响。趋势已经通过且今日出现可核验回流时，允许
     # 候选基金以自身入场信号申请一个缩小首批；这里仍不直接把方向改成 ready_to_start。
@@ -1328,10 +1561,23 @@ def _entry_maturity_v3(
         if status == "crowded" or len(overheat_flags) >= 2
         else V3_FIRST_TRANCHE_SCALE.get(len(overheat_flags), V3_FIRST_TRANCHE_SCALE_CROWDED)
     )
+    probability_scale = float(formation["tranche_scale"])
+    if entry_state == ENTRY_READY_TO_START:
+        # 已成熟方向也按概率分段，不再把“通过门槛”误解为一次性完成建仓。
+        first_tranche_scale = min(
+            first_tranche_scale,
+            probability_scale if probability_scale > 0 else 0.25,
+        )
     if flow_improving_probe_eligible:
         first_tranche_scale = min(
             first_tranche_scale,
             V3_IMPROVING_FLOW_FIRST_TRANCHE_SCALE,
+        )
+    if probability_early_probe_eligible:
+        first_tranche_scale = min(
+            first_tranche_scale,
+            probability_scale if probability_scale > 0 else 0.25,
+            V3_EARLY_PROBE_FIRST_TRANCHE_CAP,
         )
 
     waiting_reason_code = _waiting_reason_code_v3(
@@ -1342,11 +1588,13 @@ def _entry_maturity_v3(
         participation=participation,
         position_risk=position_risk,
         flow_improving_probe_eligible=flow_improving_probe_eligible,
+        probability_early_probe_eligible=probability_early_probe_eligible,
     )
 
     research_score = _clamp(
         direction_score
-        + {ENTRY_READY_TO_START: 6.0, ENTRY_READY_ON_PULLBACK: 2.0}.get(entry_state, 0.0),
+        + {ENTRY_READY_TO_START: 6.0, ENTRY_READY_ON_PULLBACK: 2.0}.get(entry_state, 0.0)
+        + (3.0 if probability_early_probe_eligible else 0.0),
         0.0,
         100.0,
     )
@@ -1371,6 +1619,11 @@ def _entry_maturity_v3(
     }[entry_state]
     if flow_improving_probe_eligible:
         entry_hint = "资金刚转强；基金自身入场信号通过时可缩小首批试仓"
+    if probability_early_probe_eligible:
+        entry_hint = (
+            f"趋势形成概率估计 {formation_probability:.0f}%；"
+            f"基金早期信号通过时可按计划仓位的 {first_tranche_scale:.0%} 试仓"
+        )
     entry_reason = {
         ENTRY_READY_TO_START: "中期趋势、市场参与度与价格位置已同时通过入场线。",
         ENTRY_READY_ON_PULLBACK: "中期趋势仍有优势，但资金参与度或价格位置尚未同时达标。",
@@ -1381,6 +1634,12 @@ def _entry_maturity_v3(
         entry_reason = (
             "中期趋势已通过，今日资金出现同日回流；历史参与度尚未完全达标，"
             "仅允许基金自身入场信号通过后缩小首批。"
+        )
+    if probability_early_probe_eligible:
+        entry_reason = (
+            f"中期趋势尚未完全确认，但未来3～5个交易日形成趋势的信号概率估计为"
+            f" {formation_probability:.0f}%；领先资金、短期强度与结构未破坏已形成共振，"
+            "仅在具体基金自身早期修复信号通过后开放试仓。"
         )
 
     penalties: list[str] = []
@@ -1413,6 +1672,13 @@ def _entry_maturity_v3(
         },
         "overheat_flags": overheat_flags,
         "first_tranche_scale": first_tranche_scale,
+        "formation_probability_policy": FORMATION_PROBABILITY_POLICY_VERSION,
+        "trend_formation_probability": formation_probability,
+        "formation_probability_band": formation["band"],
+        "formation_probability_components": formation["components"],
+        "formation_probability_reasons": formation["reasons"],
+        "probability_tranche_scale": probability_scale,
+        "probability_early_probe_eligible": probability_early_probe_eligible,
         "flow_signal_state": "improving" if flow_improving else "unconfirmed",
         "flow_improving_probe_eligible": flow_improving_probe_eligible,
         "waiting_reason_code": waiting_reason_code,
@@ -1423,6 +1689,7 @@ def _entry_maturity_v3(
             "structure_broken": structure_broken,
             "overheated": bool(overheat_flags),
             "flow_improving": flow_improving,
+            "leading_flow_confirmed": formation["leading_flow_confirmed"],
             "mainline_status": status,
             "position_label": position_label or None,
         },
@@ -1440,22 +1707,32 @@ def _entry_maturity_v3(
             overheat_flags=overheat_flags,
             flow_improving=flow_improving,
             flow_improving_probe_eligible=flow_improving_probe_eligible,
+            probability_early_probe_eligible=probability_early_probe_eligible,
+            formation_probability=formation_probability,
         ),
-        "invalidation_signals": _invalidation_signals_v3(entry_state=entry_state),
+        "invalidation_signals": _invalidation_signals_v3(
+            entry_state=entry_state,
+            probability_early_probe_eligible=probability_early_probe_eligible,
+        ),
         "execution_eligible": (
-            entry_state == ENTRY_READY_TO_START or flow_improving_probe_eligible
+            entry_state == ENTRY_READY_TO_START
+            or flow_improving_probe_eligible
+            or probability_early_probe_eligible
         ),
         "automatic_promotion_allowed": (
-            entry_state == ENTRY_READY_TO_START or flow_improving_probe_eligible
+            entry_state == ENTRY_READY_TO_START
+            or flow_improving_probe_eligible
+            or probability_early_probe_eligible
         ),
         "confidence": confidence,
         "entry_hint": entry_hint,
         "evidence": [
             f"趋势强度 {trend_strength:.1f} 分（权重 {V3_BLOCK_WEIGHTS['trend_strength']:.0%}）",
             f"资金参与度 {participation:.1f} 分（权重 {V3_BLOCK_WEIGHTS['participation']:.0%}）",
-            f"价格位置 {position_risk:.1f} 分（权重 {V3_BLOCK_WEIGHTS['position_risk']:.0%}）",
+            f"结构修复度 {position_risk:.1f} 分（权重 {V3_BLOCK_WEIGHTS['position_risk']:.0%}）",
         ]
-        + (["今日资金已转正，处于回流改善阶段"] if flow_improving else []),
+        + (["今日资金已转正，处于回流改善阶段"] if flow_improving else [])
+        + list(formation["reasons"]),
         "penalties": penalties,
         "sector_label": label,
         "track": track,
@@ -1503,6 +1780,8 @@ def _entry_triggers_v3(
     overheat_flags: list[str],
     flow_improving: bool = False,
     flow_improving_probe_eligible: bool = False,
+    probability_early_probe_eligible: bool = False,
+    formation_probability: float | None = None,
 ) -> list[str]:
     if entry_state == ENTRY_READY_TO_START:
         triggers = ["首批后继续确认趋势强度与资金参与度，不预先承诺后续加仓"]
@@ -1510,6 +1789,20 @@ def _entry_triggers_v3(
             triggers.append("当前处于短期加速，首批按更低比例执行")
         return triggers
     triggers: list[str] = []
+    if probability_early_probe_eligible:
+        return [
+            (
+                f"当前趋势形成概率估计 {formation_probability:.0f}%；"
+                if formation_probability is not None
+                else "当前趋势形成概率已通过提前试仓线；"
+            )
+            + "具体基金的早期修复或温和回调信号通过后，仅执行概率对应的试仓比例",
+            (
+                f"趋势形成概率保持在 {V3_EARLY_PROBE_MIN_PROBABILITY:g}% 以上，"
+                "且今日资金与上涨广度不转弱"
+            ),
+            "趋势强度升至60分后再进入成熟方向的后续加仓评估",
+        ]
     if evidence_quality == "insufficient":
         triggers.append("补齐20日价格结构与多维证据")
     if trend_strength < V3_GATE_THRESHOLDS["trend"]:
@@ -1538,6 +1831,7 @@ def _waiting_reason_code_v3(
     participation: float,
     position_risk: float,
     flow_improving_probe_eligible: bool,
+    probability_early_probe_eligible: bool,
 ) -> str | None:
     if entry_state == ENTRY_READY_TO_START:
         return None
@@ -1545,6 +1839,8 @@ def _waiting_reason_code_v3(
         return "trend_or_structure_invalid"
     if evidence_quality == "insufficient":
         return "data_quality"
+    if probability_early_probe_eligible:
+        return "probability_fund_confirmation"
     if (
         trend_strength < V3_GATE_THRESHOLDS["trend"]
         or status not in _DIRECTIONAL_MAINLINE_STATUSES_V3
@@ -1559,12 +1855,22 @@ def _waiting_reason_code_v3(
     return "condition_confirmation"
 
 
-def _invalidation_signals_v3(*, entry_state: str) -> list[str]:
+def _invalidation_signals_v3(
+    *,
+    entry_state: str,
+    probability_early_probe_eligible: bool = False,
+) -> list[str]:
     values = [
         "趋势强度与资金参与度同时跌入横截面低位",
         "主线状态转为退潮",
         "价格跌破20日均线且相对强度同步转弱",
     ]
+    if probability_early_probe_eligible:
+        values = [
+            f"趋势形成概率跌破 {V3_EARLY_PROBE_MIN_PROBABILITY:g}% 或今日资金转为明显流出",
+            "趋势强度跌破早期形成区间且上涨广度同步收缩",
+            "价格结构跌破20日均线并失去本轮修复低点",
+        ]
     if entry_state == ENTRY_READY_ON_PULLBACK:
         values.append("等待过程中趋势强度跌破入场线")
     return values[:3]
@@ -1703,7 +2009,11 @@ def _weighted_neutral_fill_score(
 def _entry_sort_score(row: dict[str, Any]) -> tuple[float, float, float, float, float]:
     entry_state = str(row.get("entry_state") or "")
     state_priority = float(_ENTRY_STATE_PRIORITY.get(entry_state, 0))
-    if (
+    if row.get("probability_early_probe_eligible") is True:
+        # 概率试仓已经有领先资金、短周期强度和结构共振，并且仍需基金自身信号复核；
+        # 它排在普通等待/资金拐点之前、成熟方向之后。
+        state_priority = 3.7
+    elif (
         entry_state == ENTRY_READY_ON_PULLBACK
         and row.get("flow_improving_probe_eligible") is True
     ):

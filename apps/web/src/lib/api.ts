@@ -1353,6 +1353,8 @@ export type DiscoveryCandidatePoolItem = {
     status?: "recovery_ready" | "momentum_ready" | "pullback_ready" | "forming" | "falling" | "insufficient" | string;
     entry_path?: string | null;
     entry_ready?: boolean;
+    early_probe_ready?: boolean;
+    early_probe_reason?: string | null;
     first_tranche_scale?: number | null;
     high_elasticity?: boolean;
     overheat_flags?: string[];
@@ -1421,6 +1423,8 @@ export type MainlineRegime = {
     relative_return_60d_percent?: number | null;
     relative_strength_percentile?: number | null;
     today_main_force_net_yi?: number | null;
+    normalized_today_net?: number | null;
+    today_flow_percentile?: number | null;
     cumulative_5d_net_yi?: number | null;
     cumulative_20d_net_yi?: number | null;
     advancing_ratio_percent?: number | null;
@@ -1478,7 +1482,7 @@ export type SectorOpportunity = {
   research_score?: number | null;
   selection_priority_policy?: string | null;
   selection_priority_score?: number | null;
-  selection_path?: "flow_inflection_probe" | "high_elasticity" | "standard" | string | null;
+  selection_path?: "probability_early_probe" | "flow_inflection_probe" | "high_elasticity" | "standard" | string | null;
   selection_priority_reasons?: string[];
   sector_annualized_volatility_20d_percent?: number | null;
   sector_elasticity_percentile?: number | null;
@@ -1493,6 +1497,14 @@ export type SectorOpportunity = {
   /** 短期加速/拥挤的风险披露。v3 不再用它否决布局，只缩小首批。 */
   overheat_flags?: string[];
   first_tranche_scale?: number | null;
+  formation_probability_policy?: string | null;
+  /** 未来 3～5 个交易日进入成熟趋势状态的信号估计，不是收益概率。 */
+  trend_formation_probability?: number | null;
+  formation_probability_band?: "low" | "watch" | "early_probe" | "building" | "confirmed" | "strong" | string | null;
+  formation_probability_components?: Record<string, number | null> | null;
+  formation_probability_reasons?: string[];
+  probability_tranche_scale?: number | null;
+  probability_early_probe_eligible?: boolean;
   flow_signal_state?: "improving" | "unconfirmed" | string | null;
   flow_improving_probe_eligible?: boolean;
   waiting_reason_code?: string | null;

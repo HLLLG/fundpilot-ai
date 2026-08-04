@@ -161,7 +161,7 @@ it("renders v3 orthogonal blocks and overheat as a smaller first tranche", () =>
 
   expect(screen.getByText(/趋势强度 \(70%\)/)).toBeInTheDocument();
   expect(screen.getByText(/资金参与 \(15%\)/)).toBeInTheDocument();
-  expect(screen.getByText(/价格位置 \(15%\)/)).toBeInTheDocument();
+  expect(screen.getByText(/结构修复 \(15%\)/)).toBeInTheDocument();
   expect(screen.getByText(/它们不是三重确认/)).toBeInTheDocument();
   expect(screen.getByTestId("overheat-disclosure")).toHaveTextContent("首批按 40% 执行");
   expect(screen.queryByText("入场成熟")).not.toBeInTheDocument();
@@ -196,4 +196,36 @@ it("explains flow-inflection and high-elasticity direction priority", () => {
   expect(screen.getByTestId("sector-selection-priority")).toHaveTextContent(
     "20日年化波动 31.20%",
   );
+});
+
+it("shows probability-sized early entry before full trend confirmation", () => {
+  render(
+    <SectorOpportunityCard
+      item={{
+        sector_label: "云计算",
+        score_policy_version: "sector_entry_maturity.2026-08.v3",
+        entry_state: "forming",
+        direction_score: 58.4,
+        trend_strength_score: 55,
+        participation_score: 68,
+        position_risk_score: 58,
+        trend_formation_probability: 68,
+        formation_probability_band: "building",
+        probability_early_probe_eligible: true,
+        selection_path: "probability_early_probe",
+        first_tranche_scale: 0.4,
+        today_available: true,
+        today_main_force_net_yi: 18,
+        five_day_available: true,
+        cumulative_5d_net_yi: -2,
+      }}
+    />,
+  );
+
+  expect(screen.getByText("可提前试仓")).toBeInTheDocument();
+  expect(screen.getByText("概率试仓")).toBeInTheDocument();
+  expect(screen.getByTestId("formation-probability")).toHaveTextContent("68%");
+  expect(screen.getByTestId("formation-probability")).toHaveTextContent("大概率形成");
+  expect(screen.getByTestId("formation-probability")).toHaveTextContent("计划仓位的 40%");
+  expect(screen.getByText("18 亿")).toBeInTheDocument();
 });

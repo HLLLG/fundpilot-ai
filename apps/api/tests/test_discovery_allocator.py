@@ -232,6 +232,35 @@ def test_improving_flow_probe_uses_reduced_sector_and_fund_scale() -> None:
     ) == 0.08
 
 
+def test_probability_early_probe_uses_probability_sized_tranche() -> None:
+    facts = {
+        "candidate_pool": [
+            {
+                "fund_code": "000001",
+                "fund_entry_signal": {
+                    "entry_ready": False,
+                    "early_probe_ready": True,
+                    "first_tranche_scale": 0.4,
+                },
+            }
+        ],
+        "sector_opportunities": [
+            {
+                "sector_label": "云计算",
+                "score_policy_version": ENTRY_POLICY_VERSION_V3,
+                "entry_state": "forming",
+                "trend_formation_probability": 61.0,
+                "probability_early_probe_eligible": True,
+                "first_tranche_scale": 0.25,
+            }
+        ],
+    }
+
+    assert _entry_maturity_tranche_ratio_cap(
+        facts, [_recommendation("云计算")]
+    ) == 0.05
+
+
 def test_missing_risk_context_blocks_all_executable_amounts() -> None:
     candidate = _candidate("000001", "科技")
     plan = allocate_discovery_candidates(

@@ -37,6 +37,7 @@ from app.services.sector_opportunity_scoring import (
     ENTRY_POLICY_VERSION_V3,
     ENTRY_READY_ON_PULLBACK,
     ENTRY_READY_TO_START,
+    V3_EARLY_PROBE_MIN_TREND,
     V3_GATE_THRESHOLDS,
     classify_entry_state,
     score_sector_opportunity_rows,
@@ -812,16 +813,19 @@ def test_flow_percentiles_use_scale_normalised_values_not_absolute_yi() -> None:
             "flow_universe": "eastmoney_board",
             "cumulative_5d_net_yi": 50.0,
             "normalized_5d_net": 0.10,
+            "normalized_today_net": 0.08,
         },
         "小板块": {
             "date_aligned": True,
             "flow_universe": "eastmoney_board",
             "cumulative_5d_net_yi": 0.5,
             "normalized_5d_net": 0.50,
+            "normalized_today_net": 0.45,
         },
     }
     percentiles = _build_percentile_inputs(["大板块", "小板块"], {}, flows)
     assert percentiles["flow_5d"]["小板块"] > percentiles["flow_5d"]["大板块"]
+    assert percentiles["flow_today"]["小板块"] > percentiles["flow_today"]["大板块"]
 
 
 def test_flow_percentiles_are_partitioned_by_flow_universe() -> None:
@@ -1219,6 +1223,79 @@ def test_v3_current_flow_improvement_opens_only_a_reduced_probe_channel() -> Non
     assert row["first_tranche_scale"] == 0.4
 
 
+def test_v3_probability_path_opens_before_the_sixty_point_trend_gate() -> None:
+    mainline = _mainline_row("云计算", status="forming")
+    mainline["component_scores"].update(
+        {
+            "relative_strength": 56.0,
+            "trend_persistence": 52.0,
+            "fund_flow": 68.0,
+            "breadth": 72.0,
+            "market_structure": 58.0,
+        }
+    )
+    mainline["features"].update(
+        {
+            "relative_return_10d_percent": 2.5,
+            "return_5d_percent": 2.4,
+            "normalized_today_net": 0.45,
+            "today_flow_percentile": 92.0,
+            "advancing_ratio_percent": 72.0,
+        }
+    )
+
+    row = score_sector_opportunity_rows(
+        [_heat_row("云计算", 1.4, 2.4)],
+        sector_flow_by_label={
+            "云计算": _aligned_flow(18.0, -2.0, pattern="flow_turning_positive")
+        },
+        mainline_by_label={"云计算": mainline},
+    )[0]
+
+    assert V3_EARLY_PROBE_MIN_TREND <= row["trend_strength_score"] < 60.0
+    assert row["entry_state"] == ENTRY_FORMING
+    assert row["trend_formation_probability"] >= 65.0
+    assert row["probability_early_probe_eligible"] is True
+    assert row["selection_path"] == "probability_early_probe"
+    assert row["execution_eligible"] is True
+    assert row["first_tranche_scale"] == 0.4
+    assert row["waiting_reason_code"] == "probability_fund_confirmation"
+
+
+def test_v3_probability_path_does_not_open_without_positive_leading_flow() -> None:
+    mainline = _mainline_row("云计算", status="forming")
+    mainline["component_scores"].update(
+        {
+            "relative_strength": 56.0,
+            "trend_persistence": 52.0,
+            "fund_flow": 68.0,
+            "breadth": 72.0,
+            "market_structure": 58.0,
+        }
+    )
+    mainline["features"].update(
+        {
+            "relative_return_10d_percent": 2.5,
+            "return_5d_percent": 2.4,
+            "normalized_today_net": -0.20,
+            "today_flow_percentile": 20.0,
+            "advancing_ratio_percent": 72.0,
+        }
+    )
+
+    row = score_sector_opportunity_rows(
+        [_heat_row("云计算", -0.5, 2.4)],
+        sector_flow_by_label={
+            "云计算": _aligned_flow(-8.0, -2.0, pattern="weak_outflow")
+        },
+        mainline_by_label={"云计算": mainline},
+    )[0]
+
+    assert row["entry_state"] == ENTRY_FORMING
+    assert row["probability_early_probe_eligible"] is False
+    assert row["execution_eligible"] is False
+
+
 def test_v3_low_participation_still_waits_when_funds_are_flowing_out() -> None:
     mainline = _mainline_row("中药", status="forming")
     mainline["component_scores"]["fund_flow"] = 20.0
@@ -1476,6 +1553,31 @@ def test_hysteresis_preserves_flow_inflection_probe_execution_channel() -> None:
     assert result["execution_eligible"] is True
     assert result["automatic_promotion_allowed"] is True
     assert result["waiting_reason_code"] == "fund_entry_confirmation"
+
+
+def test_hysteresis_preserves_probability_probe_execution_channel() -> None:
+    from app.services.sector_direction_state import apply_direction_state_hysteresis
+
+    row = {
+        **_v3_row("云计算", entry_state=ENTRY_FORMING, trend=55.0),
+        "probability_early_probe_eligible": True,
+        "trend_formation_probability": 68.0,
+        "waiting_reason_code": "probability_fund_confirmation",
+        "execution_eligible": True,
+        "automatic_promotion_allowed": True,
+    }
+
+    result = apply_direction_state_hysteresis(
+        [row],
+        trade_date="2026-06-10",
+        previous_trade_date="2026-06-09",
+        previous_states={},
+    )[0]
+
+    assert result["entry_state"] == ENTRY_FORMING
+    assert result["probability_early_probe_active"] is True
+    assert result["execution_eligible"] is True
+    assert result["waiting_reason_code"] == "probability_fund_confirmation"
 
 
 def test_hysteresis_band_prevents_same_day_downgrade() -> None:

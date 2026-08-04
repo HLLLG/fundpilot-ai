@@ -257,6 +257,28 @@ def assess_fund_entry_position(row: Mapping[str, object]) -> dict[str, object]:
         and (distance_high_20d is None or distance_high_20d >= -10.0)
         and (len(daily_values) < 3 or positive_days >= 2)
     )
+    early_daily_ok = bool(
+        latest_daily is None
+        or (
+            latest_daily_sigma is not None
+            and latest_daily_sigma >= -1.2
+        )
+        or (
+            latest_daily_sigma is None
+            and latest_daily >= -2.0
+        )
+    )
+    early_probe_ready = bool(
+        r5 is not None
+        and r5 >= 0.0
+        and recovery is not None
+        and recovery >= 45.0
+        and rebound is not None
+        and rebound >= 2.0
+        and (r20 is None or r20 >= -10.0)
+        and early_daily_ok
+        and (len(daily_values) < 3 or positive_days >= 2)
+    )
     entry_ready = recovery_ready or momentum_ready or benign_pullback_ready
     if benign_pullback_ready:
         status = "pullback_ready"
@@ -285,6 +307,7 @@ def assess_fund_entry_position(row: Mapping[str, object]) -> dict[str, object]:
     first_tranche_scale = min(
         overheat_scale,
         0.5 if benign_pullback_ready else 1.0,
+        0.4 if early_probe_ready and not entry_ready else 1.0,
     )
 
     return {
@@ -292,6 +315,12 @@ def assess_fund_entry_position(row: Mapping[str, object]) -> dict[str, object]:
         "status": status,
         "entry_path": entry_path,
         "entry_ready": entry_ready,
+        "early_probe_ready": early_probe_ready,
+        "early_probe_reason": (
+            "20日修复已达到45%，近5日未转弱且最近单日下跌仍在正常承接范围"
+            if early_probe_ready
+            else "基金自身尚未达到概率试仓所需的早期修复条件"
+        ),
         "first_tranche_scale": first_tranche_scale,
         "high_elasticity": volatility is not None and volatility >= 24.0,
         "overheat_flags": overheat_flags,
@@ -319,6 +348,9 @@ def assess_fund_entry_position(row: Mapping[str, object]) -> dict[str, object]:
             "pullback_minimum_recent_5d_change_percent": -3.0,
             "pullback_maximum_daily_sigma": 1.5,
             "pullback_minimum_recovery_percent": 55.0,
+            "early_probe_minimum_recovery_percent": 45.0,
+            "early_probe_minimum_rebound_percent": 2.0,
+            "early_probe_minimum_recent_5d_change_percent": 0.0,
         },
         "invalidation_signals": [
             "近5日收益重新转负且20日修复率跌回40%以下",
@@ -341,6 +373,28 @@ def fund_entry_opens_v3_improving_flow_probe(
         return False
     signal = candidate.get("fund_entry_signal")
     return bool(isinstance(signal, Mapping) and signal.get("entry_ready") is True)
+
+
+def fund_entry_opens_v3_probability_probe(
+    candidate: Mapping[str, object],
+    opportunity: Mapping[str, object] | None,
+) -> bool:
+    """Open a probability-sized probe only after the fund confirms early repair."""
+
+    if not isinstance(opportunity, Mapping):
+        return False
+    if str(opportunity.get("score_policy_version") or "") != "sector_entry_maturity.2026-08.v3":
+        return False
+    if opportunity.get("probability_early_probe_eligible") is not True:
+        return False
+    signal = candidate.get("fund_entry_signal")
+    return bool(
+        isinstance(signal, Mapping)
+        and (
+            signal.get("entry_ready") is True
+            or signal.get("early_probe_ready") is True
+        )
+    )
 
 
 def fund_recovery_overrides_sector_position(

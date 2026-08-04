@@ -60,7 +60,19 @@ const ENTRY_STATE: Record<string, { label: string; className: string; cardClassN
   },
 };
 
+const PROBABILITY_BAND: Record<string, string> = {
+  low: "信号偏弱",
+  watch: "接近试仓线",
+  early_probe: "早期形成",
+  building: "大概率形成",
+  confirmed: "趋势较明确",
+  strong: "强趋势",
+};
+
 function entryStateDisplayLabel(item: SectorOpportunity): string {
+  if (item.probability_early_probe_eligible) {
+    return "可提前试仓";
+  }
   if (item.entry_state !== "ready_on_pullback") {
     return ENTRY_STATE[item.entry_state ?? ""]?.label ?? ENTRY_STATE.forming.label;
   }
@@ -117,12 +129,21 @@ export function SectorOpportunityCard({
   const mainlineFeatures = mainline?.features;
   const isEntryV3 = item.score_policy_version === ENTRY_MATURITY_V3;
   const hasEntryMaturity = isEntryMaturityPolicy(item.score_policy_version);
-  const entryMeta = ENTRY_STATE[item.entry_state ?? ""] ?? ENTRY_STATE.forming;
+  const entryMeta = item.probability_early_probe_eligible
+    ? {
+        label: "可提前试仓",
+        className: "status-good ring-1 ring-[var(--success-border)]",
+        cardClassName: "border-[var(--info-border)] bg-[var(--info-bg)]/35 shadow-[inset_3px_0_0_var(--info-icon)]",
+      }
+    : ENTRY_STATE[item.entry_state ?? ""] ?? ENTRY_STATE.forming;
   const entryLabel = entryStateDisplayLabel(item);
   const blockWeights = item.block_weights ?? {};
   const highElasticity =
     item.sector_elasticity_percentile != null && item.sector_elasticity_percentile >= 70;
   const flowInflectionPath = item.selection_path === "flow_inflection_probe";
+  const probabilityEarlyPath = item.selection_path === "probability_early_probe";
+  const formationProbability = item.trend_formation_probability;
+  const probabilityBand = PROBABILITY_BAND[item.formation_probability_band ?? ""] ?? "概率评估";
   return (
     <div
       className={`rounded-xl border px-3 py-3 ${
@@ -151,6 +172,11 @@ export function SectorOpportunityCard({
               资金拐点
             </span>
           ) : null}
+          {isEntryV3 && probabilityEarlyPath ? (
+            <span className="rounded-full bg-[var(--success-bg)] px-2 py-0.5 text-[var(--success-fg)] ring-1 ring-[var(--success-border)]">
+              概率试仓
+            </span>
+          ) : null}
           {isEntryV3 && highElasticity ? (
             <span
               data-testid="sector-high-elasticity"
@@ -163,7 +189,7 @@ export function SectorOpportunityCard({
             <span
               data-testid="mainline-status"
               className={`rounded-full px-2 py-0.5 ring-1 ${mainlineMeta.className}`}
-              title="主线模型只参与研究排序，不替代交易门禁"
+              title="主线状态用于判断当前趋势阶段"
             >
               {mainlineMeta.label}
             </span>
@@ -212,6 +238,41 @@ export function SectorOpportunityCard({
         <>
           {isEntryV3 ? (
             <>
+              {formationProbability != null ? (
+                <div
+                  data-testid="formation-probability"
+                  className="mt-2 overflow-hidden rounded-xl border border-[var(--info-border)] bg-white/85"
+                >
+                  <div className="flex items-end justify-between gap-3 px-3 py-2.5">
+                    <div>
+                      <div className="text-[10px] font-black tracking-[0.08em] text-slate-500">
+                        未来3～5日趋势形成概率
+                      </div>
+                      <div className="mt-0.5 flex items-baseline gap-2">
+                        <span className="font-mono text-2xl font-black tabular-nums text-slate-950">
+                          {Math.round(formationProbability)}%
+                        </span>
+                        <span className="text-[11px] font-bold text-[var(--info-fg)]">{probabilityBand}</span>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-[10px] font-bold text-slate-500">建议首批</div>
+                      <div className="mt-0.5 text-sm font-black text-slate-900">
+                        计划仓位的 {formatPercent(item.first_tranche_scale)}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="h-1.5 bg-slate-100" aria-hidden="true">
+                    <div
+                      className="h-full bg-[linear-gradient(90deg,var(--info-icon),var(--success-icon))] transition-[width]"
+                      style={{ width: `${Math.max(5, Math.min(95, formationProbability))}%` }}
+                    />
+                  </div>
+                  <p className="px-3 py-2 text-[10px] leading-4 text-slate-500">
+                    这是当前多维信号对趋势形成的估计，不是收益概率；概率越高才逐步增加仓位。
+                  </p>
+                </div>
+              ) : null}
               <div className="mt-2 grid grid-cols-3 gap-1.5 text-xs text-slate-600">
                 <Metric
                   label={`趋势强度 ${weightLabel(blockWeights.trend_strength)}`}
@@ -222,7 +283,7 @@ export function SectorOpportunityCard({
                   value={`${formatMetric(item.participation_score)} 分`}
                 />
                 <Metric
-                  label={`价格位置 ${weightLabel(blockWeights.position_risk)}`}
+                  label={`结构修复 ${weightLabel(blockWeights.position_risk)}`}
                   value={`${formatMetric(item.position_risk_score)} 分`}
                 />
               </div>
@@ -230,7 +291,7 @@ export function SectorOpportunityCard({
                 三项是互不重叠的独立维度，按括号内权重合成为方向分 {formatMetric(item.direction_score)}；
                 它们不是三重确认。
               </p>
-              {flowInflectionPath || highElasticity ? (
+              {probabilityEarlyPath || flowInflectionPath || highElasticity ? (
                 <div
                   data-testid="sector-selection-priority"
                   className="mt-2 rounded-lg border border-[var(--info-border)] bg-[var(--info-bg)]/60 px-2.5 py-2 text-[11px] leading-4 text-[var(--info-fg)]"
@@ -241,14 +302,18 @@ export function SectorOpportunityCard({
                       ? ` · ${formatMetric(item.selection_priority_score)} 分`
                       : ""}
                   </div>
-                  {flowInflectionPath ? <p className="mt-1">今日资金转强，优先于普通等待方向。</p> : null}
+                  {probabilityEarlyPath ? (
+                    <p className="mt-1">领先资金、短期强度与结构共振，优先进入提前试仓复核。</p>
+                  ) : flowInflectionPath ? (
+                    <p className="mt-1">今日资金转强，优先于普通等待方向。</p>
+                  ) : null}
                   {highElasticity ? (
                     <p className="mt-1">
                       20日年化波动 {formatMetric(item.sector_annualized_volatility_20d_percent)}%，
                       横截面 {formatMetric(item.sector_elasticity_percentile)} 分位。
                     </p>
                   ) : null}
-                  <p className="mt-1 text-slate-500">排序加分不替代趋势、资金、结构和数据门槛。</p>
+                  <p className="mt-1 text-slate-500">提前试仓仍须具体基金信号通过，不会因为排序靠前自动买入。</p>
                 </div>
               ) : null}
             </>
@@ -280,8 +345,12 @@ export function SectorOpportunityCard({
               </p>
             </div>
           ) : null}
-          <div className="mt-2 grid grid-cols-2 gap-1.5 text-[11px] text-slate-600">
+          <div className="mt-2 grid grid-cols-3 gap-1.5 text-[11px] text-slate-600">
             <Metric label="近1日 / 近5日" value={`${formatMetric(item.change_1d_percent)} / ${formatMetric(item.change_5d_percent)}%`} />
+            <Metric
+              label="今日主力"
+              value={flowMetric(item.today_main_force_net_yi, item.today_available, "今日待补")}
+            />
             <Metric
               label="5日主力"
               value={flowMetric(item.cumulative_5d_net_yi, item.five_day_available, "历史待补")}

@@ -207,6 +207,8 @@ def _compact_fund_entry_signal(value: object) -> dict:
         "status": _scalar(value.get("status")),
         "entry_path": _scalar(value.get("entry_path")),
         "entry_ready": value.get("entry_ready") is True,
+        "early_probe_ready": value.get("early_probe_ready") is True,
+        "early_probe_reason": _scalar(value.get("early_probe_reason")),
         "first_tranche_scale": _scalar(value.get("first_tranche_scale")),
         "high_elasticity": value.get("high_elasticity") is True,
         "overheat_flags": _text_list(value.get("overheat_flags")),

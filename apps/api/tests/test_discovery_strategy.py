@@ -264,6 +264,28 @@ def test_fund_entry_position_recognizes_benign_pullback_without_waiting_for_rebo
     assert signal["components"]["latest_daily_move_sigma"] == pytest.approx(-0.5495, abs=0.001)
 
 
+def test_fund_entry_position_exposes_early_probe_before_full_repair() -> None:
+    signal = assess_fund_entry_position(
+        {
+            "nav_trend": {
+                "recent_5d_change_percent": 0.4,
+                "recent_5d_daily_change_percent": [0.3, -0.2, 0.1, -0.1, 0.3],
+                "return_20d_percent": -5.0,
+                "return_60d_percent": 6.0,
+                "annualized_volatility_20d_percent": 32.0,
+                "distance_from_20d_high_percent": -6.0,
+                "drawdown_recovery_20d_percent": 48.0,
+                "rebound_from_20d_low_percent": 2.8,
+            }
+        }
+    )
+
+    assert signal["entry_ready"] is False
+    assert signal["early_probe_ready"] is True
+    assert signal["first_tranche_scale"] == 0.4
+    assert "20日修复" in signal["early_probe_reason"]
+
+
 def test_near_twenty_day_high_with_mild_gain_is_not_chasing():
     signal = assess_fund_entry_position(
         {

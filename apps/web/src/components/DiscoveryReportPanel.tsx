@@ -611,9 +611,11 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
     || sectorOpportunities.some((item) => isEntryMaturityPolicy(item.score_policy_version));
   const directionGroups = useMemo(() => ({
     ready: sectorOpportunities.filter((item) => item.entry_state === "ready_to_start"),
+    early: sectorOpportunities.filter((item) => item.probability_early_probe_eligible === true),
     pullback: sectorOpportunities.filter((item) => item.entry_state === "ready_on_pullback"),
     research: sectorOpportunities.filter(
-      (item) => !["ready_to_start", "ready_on_pullback"].includes(item.entry_state ?? "forming"),
+      (item) => item.probability_early_probe_eligible !== true
+        && !["ready_to_start", "ready_on_pullback"].includes(item.entry_state ?? "forming"),
     ),
   }), [sectorOpportunities]);
   const [chatOpen, setChatOpen] = useState(false);
@@ -769,11 +771,13 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
               <div>
                 <h3 className="text-sm font-black text-slate-950">今日可布局方向</h3>
                 <p className="mt-1 text-xs leading-5 text-slate-500">
-                  只展示方向、资金与价格位置同时成熟的板块；没有合格方向时允许留空。
+                  同时展示成熟方向与概率提前试仓方向；后者只开放更小首批，并须基金自身信号通过。
                 </p>
               </div>
               <span className="rounded-full bg-slate-950 px-2.5 py-1 text-[11px] font-black text-white">
-                {directionGroups.ready.length} 个通过入场线
+                {directionGroups.early.length
+                  ? `${directionGroups.ready.length} 个成熟 · ${directionGroups.early.length} 个提前试仓`
+                  : `${directionGroups.ready.length} 个通过入场线`}
               </span>
             </div>
           </div>
@@ -785,14 +789,34 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
                   <SectorOpportunityCard key={`${item.sector_label}-ready-${index}`} item={item} />
                 ))}
               </div>
-            ) : (
+            ) : directionGroups.early.length === 0 ? (
               <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-4">
                 <div className="text-sm font-black text-slate-800">今天没有方向通过当前入场线</div>
                 <p className="mt-1 text-xs leading-5 text-slate-500">
                   系统不会拿当日热门板块凑数。可以继续查看等待条件，但在触发前不生成首批买入动作。
                 </p>
               </div>
-            )}
+            ) : null}
+
+            {directionGroups.early.length ? (
+              <div className="mt-3 rounded-xl border border-[var(--info-border)] bg-[var(--info-bg)]/35 p-3">
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <div className="text-xs font-black text-[var(--info-fg)]">
+                      提前试仓方向 · {directionGroups.early.length} 个
+                    </div>
+                    <p className="mt-0.5 text-[11px] leading-4 text-slate-500">
+                      趋势尚未完全确认，按形成概率配置计划仓位的25%～40%，失效即停止新增。
+                    </p>
+                  </div>
+                </div>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {directionGroups.early.map((item, index) => (
+                    <SectorOpportunityCard key={`${item.sector_label}-early-${index}`} item={item} />
+                  ))}
+                </div>
+              </div>
+            ) : null}
 
             {directionGroups.pullback.length ? (
               <details className="group mt-3 rounded-xl border border-[var(--warn-border)] bg-[var(--warn-bg)]/40">

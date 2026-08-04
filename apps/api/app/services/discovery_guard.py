@@ -27,6 +27,7 @@ from app.services.discovery_strategy import (
 )
 from app.services.discovery_selection_strategy import (
     fund_entry_opens_v3_improving_flow_probe,
+    fund_entry_opens_v3_probability_probe,
     fund_recovery_overrides_sector_position,
 )
 from app.services.sector_opportunity_scoring import (
@@ -602,8 +603,12 @@ def apply_discovery_guards(
             pool_item,
             opportunity,
         )
+        fund_probability_probe = fund_entry_opens_v3_probability_probe(
+            pool_item,
+            opportunity,
+        )
         effective_opportunity = opportunity
-        if fund_position_override or fund_flow_probe:
+        if fund_position_override or fund_flow_probe or fund_probability_probe:
             entry_state = ENTRY_READY_TO_START
             opportunity_scale = _as_float((opportunity or {}).get("first_tranche_scale"))
             fund_signal = pool_item.get("fund_entry_signal")
@@ -622,6 +627,7 @@ def apply_discovery_guards(
                 "entry_state": ENTRY_READY_TO_START,
                 "fund_position_override": fund_position_override,
                 "flow_improving_probe": fund_flow_probe,
+                "probability_early_probe": fund_probability_probe,
                 "first_tranche_scale": (
                     min(applicable_scales) if applicable_scales else 0.4
                 ),
@@ -661,19 +667,28 @@ def apply_discovery_guards(
             if copy.confidence == "低":
                 copy.confidence = "中"
             promotion_reason = (
-                "板块趋势与参与度已通过，且该基金自身20日回撤修复已过半；"
-                "基金级修复信号仅替代未通过的板块价格位置项"
-                if fund_position_override
+                (
+                    "板块趋势尚未完全确认，但形成概率已达到提前试仓线；"
+                    "该基金自身早期修复信号同步通过"
+                )
+                if fund_probability_probe
                 else (
-                    "板块趋势已通过且今日资金出现同日回流，"
-                    "该基金自身入场信号也已通过"
-                    if fund_flow_probe
-                    else f"{maturity_label} 已通过当前方向入场线"
+                    "板块趋势与参与度已通过，且该基金自身20日回撤修复已过半；"
+                    "基金级修复信号仅替代未通过的板块结构修复项"
+                    if fund_position_override
+                    else (
+                        "板块趋势已通过且今日资金出现同日回流，"
+                        "该基金自身入场信号也已通过"
+                        if fund_flow_probe
+                        else f"{maturity_label} 已通过当前方向入场线"
+                    )
                 )
             )
             copy.waiting_reason_code = None
             copy.entry_path = (
-                "flow_improving_probe"
+                "probability_early_probe"
+                if fund_probability_probe
+                else "flow_improving_probe"
                 if fund_flow_probe
                 else "fund_position_recovery"
                 if fund_position_override
@@ -692,12 +707,16 @@ def apply_discovery_guards(
             copy.validation_notes = [
                 *copy.validation_notes,
                 (
-                    "基金级修复已替代板块价格位置门槛；趋势、参与度、基金质量和交易门仍全部保留。"
-                    if fund_position_override
+                    "概率试仓只开放当前计划仓位的一小部分；形成概率跌破早期线、资金转弱或基金修复失效时停止新增。"
+                    if fund_probability_probe
                     else (
-                        "资金改善通道只开放缩小首批；若今日回流中断或基金修复失效，不得继续加仓。"
-                        if fund_flow_probe
-                        else "入场状态为 ready_to_start；该状态只开放首批额度，不承诺后续加仓或收益。"
+                        "基金级修复已替代板块结构修复门槛；趋势、参与度、基金质量和数据门仍全部保留。"
+                        if fund_position_override
+                        else (
+                            "资金改善通道只开放缩小首批；若今日回流中断或基金修复失效，不得继续加仓。"
+                            if fund_flow_probe
+                            else "入场状态为 ready_to_start；该状态只开放首批额度，不承诺后续加仓或收益。"
+                        )
                     )
                 ),
             ]
@@ -731,7 +750,7 @@ def apply_discovery_guards(
             opportunity_first
             and raw_entry_state == ENTRY_READY_ON_PULLBACK
             and copy.action == "等待回调"
-            and not (fund_position_override or fund_flow_probe)
+            and not (fund_position_override or fund_flow_probe or fund_probability_probe)
         ):
             copy.waiting_reason_code = str(
                 (opportunity or {}).get("waiting_reason_code")
@@ -1344,6 +1363,7 @@ def _weak_evidence_reasons(pool_item: dict, opportunity: dict | None) -> list[st
                 str(opportunity.get("score_policy_version") or "")
                 == ENTRY_POLICY_VERSION_V3
             )
+            probability_probe = opportunity.get("probability_early_probe") is True
             state_labels = {
                 ENTRY_READY_ON_PULLBACK: (
                     "等待资金参与度或价格位置改善"
@@ -1365,7 +1385,10 @@ def _weak_evidence_reasons(pool_item: dict, opportunity: dict | None) -> list[st
             # 它是唯一实测显著有效的轴，权重 70%。
             trend_score = _as_float(opportunity.get("trend_strength_score"))
             if trend_score is not None:
-                if trend_score < V3_GATE_THRESHOLDS["trend"]:
+                if (
+                    trend_score < V3_GATE_THRESHOLDS["trend"]
+                    and not probability_probe
+                ):
                     reasons.append(
                         f"方向趋势强度 {trend_score:.2f}，低于 {V3_GATE_THRESHOLDS['trend']:g}"
                     )
@@ -1463,6 +1486,16 @@ def _waiting_reason_intro(
         )
     if code == "fund_entry_confirmation":
         return "今日资金已经转强，但候选基金自身入场信号尚未通过；等待基金条件："
+    if code == "probability_fund_confirmation":
+        probability = _as_float(
+            (opportunity or {}).get("trend_formation_probability")
+        )
+        prefix = (
+            f"趋势形成概率估计 {probability:.0f}%，已达到提前试仓线，"
+            if probability is not None
+            else "趋势形成概率已达到提前试仓线，"
+        )
+        return prefix + "但候选基金自身早期修复信号尚未通过；等待基金条件："
     if code == "structure_repair":
         return "趋势与资金参与度已通过，但价格结构尚未修复；等待结构条件："
     if code == "trend_confirmation":

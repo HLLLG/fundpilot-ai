@@ -11,6 +11,7 @@ from app.services.discovery_allocator import allocate_discovery_candidates
 from app.services.discovery_guard import finalize_discovery_allocation_projection
 from app.services.discovery_selection_strategy import (
     fund_entry_opens_v3_improving_flow_probe,
+    fund_entry_opens_v3_probability_probe,
     fund_recovery_overrides_sector_position,
 )
 from app.services.sector_opportunity_scoring import (
@@ -239,6 +240,7 @@ def _entry_maturity_tranche_ratio_cap(
             not raw_ready
             and not fund_recovery_overrides_sector_position(candidate, opportunity)
             and not fund_entry_opens_v3_improving_flow_probe(candidate, opportunity)
+            and not fund_entry_opens_v3_probability_probe(candidate, opportunity)
         ):
             return None
         qualified_rows.append({**dict(opportunity), "candidate": candidate})

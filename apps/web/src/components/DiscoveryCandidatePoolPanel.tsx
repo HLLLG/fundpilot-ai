@@ -741,7 +741,9 @@ export function DiscoveryCandidatePoolPanel({
                   : entrySignal.status === "recovery_ready"
                   ? "修复已确认"
                   : "趋势已确认"
-                : null;
+                : entrySignal?.early_probe_ready
+                  ? "早期修复已出现"
+                  : null;
               const headlineMetrics: Array<[string, string]> = usesElasticityScore
                 ? [
                     ["机会分", formatScore(item.opportunity_score_20_60d)],
@@ -786,7 +788,11 @@ export function DiscoveryCandidatePoolPanel({
                         </span>
                       ) : null}
                       {entrySignalLabel ? (
-                        <span className="rounded-full bg-[var(--success-bg)] px-2 py-1 text-[11px] font-bold text-[var(--success-fg)]">
+                        <span className={`rounded-full px-2 py-1 text-[11px] font-bold ${
+                          entrySignal?.entry_ready
+                            ? "bg-[var(--success-bg)] text-[var(--success-fg)]"
+                            : "bg-[var(--info-bg)] text-[var(--info-fg)]"
+                        }`}>
                           {entrySignalLabel}
                         </span>
                       ) : null}

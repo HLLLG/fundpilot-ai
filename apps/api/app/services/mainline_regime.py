@@ -229,6 +229,7 @@ def _build_regime(
 
     flow_values: list[tuple[float, float]] = []
     normalized_today = _number(flow.get("normalized_today_net"))
+    today_flow_percentile = (percentiles.get("flow_today") or {}).get(label)
     if normalized_today is not None:
         # 归一化后"1 倍典型单日毛流量"已经是很强的净流入，用 ±0.5 作打分区间。
         flow_values.append(
@@ -390,6 +391,12 @@ def _build_regime(
             "relative_return_60d_percent": relative_60d,
             "relative_strength_percentile": round(relative_score, 2) if relative_score is not None else None,
             "today_main_force_net_yi": flow_today,
+            "normalized_today_net": normalized_today,
+            "today_flow_percentile": (
+                round(today_flow_percentile, 2)
+                if today_flow_percentile is not None
+                else None
+            ),
             "cumulative_5d_net_yi": flow_5d,
             "cumulative_20d_net_yi": flow_20d,
             "advancing_ratio_percent": breadth,
@@ -503,6 +510,7 @@ def _build_percentile_inputs(
     # 尺子量同一个分位。没有 normalized 值的板块此处留空，由 coverage 诚实反映，
     # 不再回落到绝对值（回落等于把偏差偷偷放回来）。
     for key, field in (
+        ("flow_today", "normalized_today_net"),
         ("flow_5d", "normalized_5d_net"),
         ("flow_20d", "normalized_20d_net"),
     ):

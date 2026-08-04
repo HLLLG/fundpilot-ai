@@ -166,6 +166,39 @@ describe("DiscoveryReportPanel", () => {
     expect(screen.getByText(/单日涨幅回落至3%以内/)).toBeVisible();
   });
 
+  it("surfaces probability probes beside mature directions instead of burying them in research", () => {
+    const report = sampleReport();
+    report.discovery_facts = {
+      ...report.discovery_facts,
+      mainline_snapshot: {
+        schema_version: "mainline_daily_snapshot.v1",
+        entry_policy_version: "sector_entry_maturity.2026-08.v3",
+        sectors: [],
+      },
+      sector_opportunities: [
+        {
+          sector_label: "云计算",
+          score_policy_version: "sector_entry_maturity.2026-08.v3",
+          entry_state: "forming",
+          probability_early_probe_eligible: true,
+          trend_formation_probability: 68,
+          formation_probability_band: "building",
+          first_tranche_scale: 0.4,
+          trend_strength_score: 55,
+          participation_score: 68,
+          position_risk_score: 58,
+        },
+      ],
+    };
+
+    render(<DiscoveryReportPanel report={report} />);
+
+    expect(screen.getByText("0 个成熟 · 1 个提前试仓")).toBeInTheDocument();
+    expect(screen.getByText("提前试仓方向 · 1 个")).toBeInTheDocument();
+    expect(screen.getByText("云计算")).toBeVisible();
+    expect(screen.queryByText(/方向观察池/)).not.toBeInTheDocument();
+  });
+
   it("shows an honest zero state instead of forcing hot directions into the main area", () => {
     const report = sampleReport();
     report.discovery_facts = {
