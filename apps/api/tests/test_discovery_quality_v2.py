@@ -139,6 +139,34 @@ def test_opportunity_quality_score_does_not_reward_shallow_drawdown():
     assert deep["quality_score_components"]["drawdown_control"] == 7.5
 
 
+def test_opportunity_quality_does_not_penalize_high_one_year_return():
+    base = {
+        "fund_code": "020356",
+        "fund_name": "高弹性基金A",
+        "sector_label": "半导体",
+        "sector_match_kind": "primary",
+        "sector_confidence": 0.9,
+        "return_3m_percent": 20.0,
+        "return_6m_percent": 35.0,
+        "max_drawdown_1y_percent": -42.0,
+        "fund_scale_yi": 8.0,
+        "quality_gate": {"status": "eligible", "coverage_percent": 100.0},
+    }
+    ordinary = _with_quality_score(
+        {**base, "return_1y_percent": 45.0},
+        fund_type_preference="any",
+        discovery_strategy="opportunity_first",
+    )
+    high_return = _with_quality_score(
+        {**base, "return_1y_percent": 125.0},
+        fund_type_preference="any",
+        discovery_strategy="opportunity_first",
+    )
+
+    assert high_return["fund_quality_score"] == ordinary["fund_quality_score"]
+    assert not any("追高偏差" in item for item in high_return["quality_penalties"])
+
+
 def test_enrichment_derives_drawdown_from_fetched_nav_when_diagnostics_is_missing(
     monkeypatch,
 ):
@@ -1325,6 +1353,110 @@ def test_fund_recovery_cannot_replace_weak_v3_participation():
     )
 
     assert guarded[0].action == "等待回调"
+
+
+def test_improving_flow_and_fund_pullback_open_reduced_probe_and_remove_false_chase():
+    candidate = _eligible_guard_candidate(
+        quality_gate={"status": "eligible", "eligible": True, "reasons": []}
+    )
+    candidate["nav_trend"] = {
+        "recent_5d_change_percent": 1.6,
+        "return_20d_percent": 8.0,
+        "distance_from_20d_high_percent": -1.06,
+    }
+    candidate["fund_entry_signal"] = {
+        "policy_version": "fund_entry_position.2026-08.v2",
+        "status": "pullback_ready",
+        "entry_path": "benign_pullback",
+        "entry_ready": True,
+        "first_tranche_scale": 0.5,
+        "overheat_flags": [],
+        "invalidation_signals": ["近5日收益重新转负且20日修复率跌回40%以下"],
+    }
+    guarded, _caveats, _ = _run_guard_for_test(
+        [
+            DiscoveryRecommendation(
+                fund_code="020356",
+                fund_name="守卫测试基金A",
+                sector_name="半导体",
+                action="等待回调",
+                suggested_amount_yuan=1000,
+                confidence="中",
+                risks=["当前距20日高点仅-1.06%，短期追高风险"],
+            )
+        ],
+        candidate,
+        extra_facts={
+            "effective_configuration": {"discovery_strategy": "opportunity_first"},
+            "sector_opportunities": [
+                {
+                    "sector_label": "半导体",
+                    "score_policy_version": "sector_entry_maturity.2026-08.v3",
+                    "entry_state": "ready_on_pullback",
+                    "trend_strength_score": 68.0,
+                    "participation_score": 25.0,
+                    "position_risk_score": 58.0,
+                    "evidence_quality": "complete",
+                    "flow_improving_probe_eligible": True,
+                    "waiting_reason_code": "fund_entry_confirmation",
+                    "first_tranche_scale": 0.4,
+                    "overheat_flags": [],
+                    "entry_gate_inputs": {
+                        "mainline_status": "forming",
+                        "flow_improving": True,
+                    },
+                }
+            ],
+        },
+    )
+
+    assert guarded[0].action == "分批买入"
+    assert guarded[0].entry_path == "flow_improving_probe"
+    assert guarded[0].entry_tranche_scale == 0.4
+    assert all("追高" not in item for item in guarded[0].risks)
+    assert any("接近20日高点未被单独视为追高" in item for item in guarded[0].validation_notes)
+    assert any("今日资金出现同日回流" in item for item in guarded[0].points)
+
+
+def test_existing_wait_action_explains_flow_confirmation_instead_of_price_pullback():
+    candidate = _eligible_guard_candidate(
+        quality_gate={"status": "eligible", "eligible": True, "reasons": []}
+    )
+    guarded, _caveats, _ = _run_guard_for_test(
+        [
+            DiscoveryRecommendation(
+                fund_code="020356",
+                fund_name="守卫测试基金A",
+                sector_name="半导体",
+                action="等待回调",
+                suggested_amount_yuan=1000,
+            )
+        ],
+        candidate,
+        extra_facts={
+            "effective_configuration": {"discovery_strategy": "opportunity_first"},
+            "sector_opportunities": [
+                {
+                    "sector_label": "半导体",
+                    "score_policy_version": "sector_entry_maturity.2026-08.v3",
+                    "entry_state": "ready_on_pullback",
+                    "trend_strength_score": 62.4,
+                    "participation_score": 21.4,
+                    "position_risk_score": 58.1,
+                    "evidence_quality": "complete",
+                    "waiting_reason_code": "flow_confirmation",
+                    "overheat_flags": [],
+                    "entry_triggers": ["主力资金与上涨广度转为改善"],
+                    "entry_gate_inputs": {"mainline_status": "forming"},
+                }
+            ],
+        },
+    )
+
+    assert guarded[0].action == "等待回调"
+    assert guarded[0].waiting_reason_code == "flow_confirmation"
+    assert any("等待资金条件" in item for item in guarded[0].points)
+    assert all("价格需要回调" not in item for item in guarded[0].points)
 
 
 def test_ready_direction_uses_passive_vehicle_quality_instead_of_sector_returns():

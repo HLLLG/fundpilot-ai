@@ -1,11 +1,17 @@
 from __future__ import annotations
 
-from app.services.discovery_sector_prefilter import select_opportunity_evidence_labels
+from app.services.discovery_sector_prefilter import (
+    select_cached_high_elasticity_labels,
+    select_opportunity_evidence_labels,
+    select_snapshot_flow_inflection_labels,
+)
 from app.services.sector_opportunity_scoring import (
     ENTRY_FORMING,
     ENTRY_POLICY_VERSION,
+    ENTRY_POLICY_VERSION_V3,
     ENTRY_READY_ON_PULLBACK,
     ENTRY_READY_TO_START,
+    score_sector_opportunity_rows,
     select_sector_opportunities,
 )
 
@@ -44,6 +50,7 @@ def _mainline(
     structure: float = 70.0,
     flow_20d: float = 30.0,
     return_5d: float = 4.0,
+    volatility_20d: float = 26.0,
     distance_high: float = -4.0,
     position_label: str = "pullback_acceptance",
 ) -> dict:
@@ -64,6 +71,7 @@ def _mainline(
         "features": {
             "cumulative_20d_net_yi": flow_20d,
             "return_5d_percent": return_5d,
+            "annualized_volatility_20d_percent": volatility_20d,
             "distance_from_20d_high_percent": distance_high,
             "distance_from_ma20_percent": 2.0,
             "position_label": position_label,
@@ -250,7 +258,207 @@ def test_full_market_prefilter_reserves_evidence_for_quiet_setup() -> None:
     )
 
     assert "早期蓄势" in labels
-    assert len(labels) <= 24
+    assert len(labels) <= 32
+
+
+def test_full_market_prefilter_recalls_same_day_flow_inflection_before_heat() -> None:
+    hot_rows = [
+        {
+            "sector_label": f"热门{i}",
+            "change_1d_percent": 5.0 - i * 0.05,
+            "change_5d_percent": 12.0 - i * 0.05,
+            "heat_score": 7.8 - i * 0.05,
+        }
+        for i in range(36)
+    ]
+    turning = {
+        "sector_label": "资金拐点",
+        "change_1d_percent": 0.3,
+        "change_5d_percent": -1.0,
+        "heat_score": -0.22,
+        "advancing_ratio_percent": 58.0,
+    }
+    snapshot = {
+        "items": [
+            {
+                "sector_label": "资金拐点",
+                "main_force_net_yi": 3.2,
+                "cumulative_5d_net_yi": -18.0,
+            }
+        ]
+    }
+
+    inflections = select_snapshot_flow_inflection_labels(
+        [*hot_rows, turning],
+        snapshot,
+    )
+    labels = select_opportunity_evidence_labels(
+        [*hot_rows, turning],
+        [row["sector_label"] for row in hot_rows[:8]],
+        [],
+        flow_inflection_labels=inflections,
+    )
+
+    assert inflections == ["资金拐点"]
+    assert "资金拐点" in labels
+    assert labels.index("资金拐点") < 10
+
+
+def test_flow_inflection_keeps_live_today_flow_when_five_day_rank_is_stale() -> None:
+    heat = [
+        {
+            "sector_label": "盘中回流",
+            "change_1d_percent": -0.4,
+            "change_5d_percent": 1.2,
+            "advancing_ratio_percent": 52.0,
+        }
+    ]
+    snapshot = {
+        "trade_date": "2026-08-04",
+        "items": [
+            {
+                "sector_label": "盘中回流",
+                "main_force_net_yi": 2.6,
+                "cumulative_5d_net_yi": -30.0,
+                "flow_data_date": "2026-08-03",
+            }
+        ],
+    }
+
+    assert select_snapshot_flow_inflection_labels(heat, snapshot) == ["盘中回流"]
+
+
+def test_full_market_prefilter_reserves_high_price_elasticity_evidence() -> None:
+    steady_hot = [
+        {
+            "sector_label": f"稳步热门{i}",
+            "change_1d_percent": 3.0,
+            "change_5d_percent": 10.0 - i * 0.05,
+            "heat_score": 5.8 - i * 0.02,
+        }
+        for i in range(30)
+    ]
+    elastic = {
+        "sector_label": "高弹性转折",
+        "change_1d_percent": 5.5,
+        "change_5d_percent": -4.0,
+        "heat_score": 1.7,
+    }
+
+    labels = select_opportunity_evidence_labels(
+        [*steady_hot, elastic],
+        [row["sector_label"] for row in steady_hot[:8]],
+        [],
+    )
+
+    assert "高弹性转折" in labels
+
+
+def test_cached_true_volatility_expands_recall_but_rejects_broken_structure() -> None:
+    positions = {
+        "稳定方向": {
+            "available": True,
+            "data_end_date": "2026-08-04",
+            "annualized_volatility_20d_percent": 12.0,
+            "return_20d_percent": 4.0,
+            "position_label": "pullback_acceptance",
+        },
+        "高弹性方向": {
+            "available": True,
+            "data_end_date": "2026-08-04",
+            "annualized_volatility_20d_percent": 38.0,
+            "return_20d_percent": 8.0,
+            "return_60d_percent": 18.0,
+            "drawdown_recovery_20d_percent": 72.0,
+            "distance_from_ma20_percent": 1.0,
+            "position_label": "pullback_acceptance",
+        },
+        "高波动破位": {
+            "available": True,
+            "data_end_date": "2026-08-04",
+            "annualized_volatility_20d_percent": 55.0,
+            "return_20d_percent": 9.0,
+            "distance_from_ma20_percent": -8.0,
+            "position_label": "weak_breakdown",
+        },
+        "高波动但过期": {
+            "available": True,
+            "data_end_date": "2026-08-03",
+            "annualized_volatility_20d_percent": 60.0,
+            "return_20d_percent": 12.0,
+            "position_label": "pullback_acceptance",
+        },
+    }
+
+    labels = select_cached_high_elasticity_labels(
+        positions,
+        as_of_trade_date="2026-08-04",
+    )
+
+    assert labels == ["高弹性方向"]
+
+
+def test_cached_elasticity_expansion_merges_price_flow_and_backtest_evidence() -> None:
+    from app.services.discovery_pipeline import _expand_high_elasticity_evidence
+
+    flow_map: dict = {}
+    divergence_map: dict = {}
+    position_map: dict = {}
+    cached_positions = {
+        "高弹性方向": {
+            "available": True,
+            "data_end_date": "2026-08-04",
+            "annualized_volatility_20d_percent": 36.0,
+            "return_20d_percent": 7.0,
+            "drawdown_recovery_20d_percent": 75.0,
+            "distance_from_ma20_percent": 1.2,
+            "position_label": "pullback_acceptance",
+        }
+    }
+
+    labels = _expand_high_elasticity_evidence(
+        [{"sector_label": "高弹性方向"}],
+        flow_labels=[],
+        sector_flow_by_label=flow_map,
+        sector_divergence_by_label=divergence_map,
+        sector_position_by_label=position_map,
+        percentile_position_by_label=cached_positions,
+        effective_trade_date="2026-08-04",
+        flow_builder=lambda _heat, extra, **_kwargs: {
+            extra[0]: {"available": True, "today_main_force_net_yi": 2.0}
+        },
+        divergence_builder=lambda extra: {extra[0]: {"by_rule": {"x": {}}}},
+    )
+
+    assert labels == ["高弹性方向"]
+    assert flow_map["高弹性方向"]["today_main_force_net_yi"] == 2.0
+    assert "高弹性方向" in divergence_map
+    assert position_map["高弹性方向"]["annualized_volatility_20d_percent"] == 36.0
+
+
+def test_v3_selection_priority_rewards_true_sector_elasticity_without_changing_gate() -> None:
+    heat = [
+        {"sector_label": "低弹性", "change_1d_percent": 0.8, "change_5d_percent": 2.0, "heat_score": 1.28},
+        {"sector_label": "高弹性", "change_1d_percent": 0.8, "change_5d_percent": 2.0, "heat_score": 1.28},
+    ]
+    flows = {label: _flow(4.0, 10.0) for label in ("低弹性", "高弹性")}
+    mainlines = {
+        "低弹性": _mainline("低弹性", volatility_20d=14.0),
+        "高弹性": _mainline("高弹性", volatility_20d=38.0),
+    }
+
+    rows = score_sector_opportunity_rows(
+        heat,
+        sector_flow_by_label=flows,
+        mainline_by_label=mainlines,
+        entry_policy_version=ENTRY_POLICY_VERSION_V3,
+    )
+    by_label = {row["sector_label"]: row for row in rows}
+
+    assert by_label["高弹性"]["entry_state"] == by_label["低弹性"]["entry_state"]
+    assert by_label["高弹性"]["sector_elasticity_percentile"] > 70.0
+    assert by_label["高弹性"]["selection_priority_score"] > by_label["高弹性"]["research_score"]
+    assert by_label["高弹性"]["selection_path"] == "high_elasticity"
 
 
 def test_missing_mainline_evidence_cannot_outrank_complete_forming_direction() -> None:

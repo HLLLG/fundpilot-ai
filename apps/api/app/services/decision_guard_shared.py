@@ -54,6 +54,9 @@ _BASE_REGEX_REPLACEMENTS: tuple[tuple[str, str], ...] = (
 _BASE_TEXT_REPLACEMENTS: tuple[tuple[str, str], ...] = (
     ("sector_opportunities 得分", "系统方向得分"),
     ("sector_opportunities", "系统筛出的主方向"),
+    ("selection_priority_score", "方向排序分"),
+    ("selection_path", "方向优先路径"),
+    ("sector_elasticity_percentile", "板块弹性分位"),
     ("quality_reasons", "加分原因"),
     ("quality_penalties提示", "系统校验提示"),
     ("quality_penalties", "系统校验提示"),

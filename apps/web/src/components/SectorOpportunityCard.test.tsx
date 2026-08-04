@@ -166,3 +166,34 @@ it("renders v3 orthogonal blocks and overheat as a smaller first tranche", () =>
   expect(screen.getByTestId("overheat-disclosure")).toHaveTextContent("首批按 40% 执行");
   expect(screen.queryByText("入场成熟")).not.toBeInTheDocument();
 });
+
+it("explains flow-inflection and high-elasticity direction priority", () => {
+  render(
+    <SectorOpportunityCard
+      item={{
+        sector_label: "中药",
+        score_policy_version: "sector_entry_maturity.2026-08.v3",
+        entry_state: "ready_on_pullback",
+        waiting_reason_code: "fund_entry_confirmation",
+        direction_score: 62.4,
+        trend_strength_score: 68,
+        participation_score: 25,
+        position_risk_score: 58,
+        selection_path: "flow_inflection_probe",
+        selection_priority_score: 72.8,
+        sector_annualized_volatility_20d_percent: 31.2,
+        sector_elasticity_percentile: 84,
+      }}
+    />,
+  );
+
+  expect(screen.getByText("等待基金信号")).toBeInTheDocument();
+  expect(screen.getByText("资金拐点")).toBeInTheDocument();
+  expect(screen.getByTestId("sector-high-elasticity")).toHaveTextContent("高弹性");
+  expect(screen.getByTestId("sector-selection-priority")).toHaveTextContent(
+    "今日资金转强，优先于普通等待方向",
+  );
+  expect(screen.getByTestId("sector-selection-priority")).toHaveTextContent(
+    "20日年化波动 31.20%",
+  );
+});

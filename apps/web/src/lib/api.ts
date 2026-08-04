@@ -1207,6 +1207,18 @@ export type DiscoveryRecommendation = {
   sector_evidence?: string[];
   fund_evidence?: string[];
   validation_notes?: string[];
+  waiting_reason_code?:
+    | "flow_confirmation"
+    | "fund_entry_confirmation"
+    | "structure_repair"
+    | "trend_confirmation"
+    | "data_quality"
+    | "trend_or_structure_invalid"
+    | "condition_confirmation"
+    | string
+    | null;
+  entry_path?: string | null;
+  entry_tranche_scale?: number | null;
   tradeability?: FundTradeability;
   tradeability_gate?: FundTradeabilityGate;
   cost_assessment?: FundTransactionCostAssessment;
@@ -1338,9 +1350,12 @@ export type DiscoveryCandidatePoolItem = {
   };
   fund_entry_signal?: {
     policy_version?: string | null;
-    status?: "recovery_ready" | "momentum_ready" | "forming" | "falling" | "insufficient" | string;
+    status?: "recovery_ready" | "momentum_ready" | "pullback_ready" | "forming" | "falling" | "insufficient" | string;
+    entry_path?: string | null;
     entry_ready?: boolean;
+    first_tranche_scale?: number | null;
     high_elasticity?: boolean;
+    overheat_flags?: string[];
     reason?: string | null;
     components?: Record<string, number | null>;
     thresholds?: Record<string, number | null>;
@@ -1417,6 +1432,7 @@ export type MainlineRegime = {
     max_drawdown_20d_percent?: number | null;
     drawdown_recovery_20d_percent?: number | null;
     annualized_volatility_20d_percent?: number | null;
+    annualized_volatility_20d_percentile?: number | null;
     position_label?: string | null;
     breakout_over_prior_20d_high_percent?: number | null;
     up_days_5d?: number | null;
@@ -1460,6 +1476,12 @@ export type SectorOpportunity = {
   track?: string | null;
   score?: number | null;
   research_score?: number | null;
+  selection_priority_policy?: string | null;
+  selection_priority_score?: number | null;
+  selection_path?: "flow_inflection_probe" | "high_elasticity" | "standard" | string | null;
+  selection_priority_reasons?: string[];
+  sector_annualized_volatility_20d_percent?: number | null;
+  sector_elasticity_percentile?: number | null;
   score_policy_version?: string | null;
   legacy_score?: number | null;
   direction_score?: number | null;
@@ -1471,6 +1493,9 @@ export type SectorOpportunity = {
   /** 短期加速/拥挤的风险披露。v3 不再用它否决布局，只缩小首批。 */
   overheat_flags?: string[];
   first_tranche_scale?: number | null;
+  flow_signal_state?: "improving" | "unconfirmed" | string | null;
+  flow_improving_probe_eligible?: boolean;
+  waiting_reason_code?: string | null;
   component_coverage?: Record<string, number> | null;
   /** v2（sector_entry_maturity.2026-07.v2）遗留分数，历史报告仍在用。 */
   setup_maturity_score?: number | null;

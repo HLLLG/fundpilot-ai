@@ -207,8 +207,11 @@ def _compact_fund_entry_signal(value: object) -> dict:
     return {
         "policy_version": _scalar(value.get("policy_version")),
         "status": _scalar(value.get("status")),
+        "entry_path": _scalar(value.get("entry_path")),
         "entry_ready": value.get("entry_ready") is True,
+        "first_tranche_scale": _scalar(value.get("first_tranche_scale")),
         "high_elasticity": value.get("high_elasticity") is True,
+        "overheat_flags": _text_list(value.get("overheat_flags")),
         "reason": _scalar(value.get("reason")),
         "components": {
             key: scalar

@@ -79,6 +79,7 @@ MIN_CORRELATION_SAMPLES = 15
 # 先验"，不做"押注相反的先验"——前者把未经验证的主观判断拿掉，后者只是换一个方向下注。
 ENTRY_POLICY_VERSION_V3 = "sector_entry_maturity.2026-08.v3"
 MATURITY_POLICY_VERSIONS = frozenset({ENTRY_POLICY_VERSION, ENTRY_POLICY_VERSION_V3})
+SECTOR_SELECTION_PRIORITY_VERSION = "sector_selection_priority.2026-08.v1"
 
 #: 三个正交分块内部的权重。
 V3_TREND_WEIGHTS: dict[str, float] = {
@@ -120,6 +121,16 @@ V3_INVALID_PARTICIPATION_CEILING = 35.0
 #: 过热标记数量 → 首批仓位缩放。过热方向不再被拒绝，但首批更小且不预先承诺后续。
 V3_FIRST_TRANCHE_SCALE: dict[int, float] = {0: 1.0, 1: 0.6}
 V3_FIRST_TRANCHE_SCALE_CROWDED = 0.4
+#: 资金刚转强但参与度尚未完全越过 35 分时，只开放缩小首批。
+#:
+#: 20 分是拐点通道的最低横截面底线；它不替代趋势、数据时点或基金自身入场信号。
+#: 该通道要求今日资金已经转正且量价模式明确改善，因此不会让“参与度低且仍在流出”
+#: 的方向仅因分数接近底线就获得执行资格。
+V3_IMPROVING_FLOW_PARTICIPATION_FLOOR = 20.0
+V3_IMPROVING_FLOW_FIRST_TRANCHE_SCALE = 0.4
+V3_FLOW_INFLECTION_SELECTION_BONUS = 4.0
+V3_ELASTICITY_SELECTION_BONUS_MAX = 8.0
+V3_HIGH_ELASTICITY_PERCENTILE = 70.0
 
 _ENTRY_STATE_PRIORITY = {
     ENTRY_READY_TO_START: 4,
@@ -132,6 +143,7 @@ _EVIDENCE_QUALITY_PRIORITY = {"complete": 2, "partial": 1, "insufficient": 0}
 _DISTRIBUTION_PATTERNS = {"distribution", "weak_outflow"}
 _SETUP_PATTERNS = {"accumulation", "multi_day_outflow_then_inflow", "flow_turning_positive"}
 _MOMENTUM_PATTERNS = {"price_flow_aligned_up", "aligned_up"}
+_IMPROVING_FLOW_PATTERNS = _SETUP_PATTERNS | _MOMENTUM_PATTERNS
 
 _SECTOR_GROUPS = {
     "半导体": "tmt",
@@ -263,7 +275,130 @@ def score_sector_opportunity_rows(
         )
         for row in sector_heat
     ]
-    return [row for row in scored if row is not None]
+    return _attach_v3_selection_priority(
+        [row for row in scored if row is not None]
+    )
+
+
+def _attach_v3_selection_priority(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """补充召回/排序信号，不改写经过回测的 V3 三块分数或入场门槛。"""
+
+    volatility_values = [
+        value
+        for row in rows
+        if str(row.get("score_policy_version") or "") == ENTRY_POLICY_VERSION_V3
+        and (value := _sector_volatility_20d(row)) is not None
+    ]
+    result: list[dict[str, Any]] = []
+    for raw in rows:
+        item = dict(raw)
+        if str(item.get("score_policy_version") or "") != ENTRY_POLICY_VERSION_V3:
+            result.append(item)
+            continue
+
+        volatility = _sector_volatility_20d(item)
+        elasticity_percentile = _sector_volatility_percentile_20d(item)
+        if elasticity_percentile is None and volatility is not None:
+            elasticity_percentile = _cross_section_percentile(
+                volatility_values,
+                volatility,
+            )
+        elasticity_bonus = (
+            min(
+                V3_ELASTICITY_SELECTION_BONUS_MAX,
+                max(0.0, elasticity_percentile - 50.0)
+                / 50.0
+                * V3_ELASTICITY_SELECTION_BONUS_MAX,
+            )
+            if elasticity_percentile is not None
+            else 0.0
+        )
+        flow_bonus = (
+            V3_FLOW_INFLECTION_SELECTION_BONUS
+            if item.get("flow_improving_probe_eligible") is True
+            else 0.0
+        )
+        research_score = _num(item.get("research_score")) or 0.0
+        selection_priority_score = research_score + elasticity_bonus + flow_bonus
+        high_elasticity = bool(
+            elasticity_percentile is not None
+            and elasticity_percentile >= V3_HIGH_ELASTICITY_PERCENTILE
+        )
+        selection_path = (
+            "flow_inflection_probe"
+            if flow_bonus > 0
+            else "high_elasticity"
+            if high_elasticity
+            else "standard"
+        )
+        reasons: list[str] = []
+        if flow_bonus > 0:
+            reasons.append("今日资金转强且满足缩小首批通道")
+        if high_elasticity and volatility is not None:
+            reasons.append(
+                f"20日年化波动 {volatility:.1f}%，位于可用板块横截面"
+                f" {elasticity_percentile:.0f} 分位"
+            )
+
+        item.update(
+            {
+                "selection_priority_policy": SECTOR_SELECTION_PRIORITY_VERSION,
+                "selection_priority_score": round(selection_priority_score, 2),
+                "selection_path": selection_path,
+                "selection_priority_reasons": reasons,
+                "sector_annualized_volatility_20d_percent": volatility,
+                "sector_elasticity_percentile": (
+                    round(elasticity_percentile, 2)
+                    if elasticity_percentile is not None
+                    else None
+                ),
+                "selection_priority_components": {
+                    "research_score": round(research_score, 2),
+                    "flow_inflection_bonus": round(flow_bonus, 2),
+                    "elasticity_bonus": round(elasticity_bonus, 2),
+                },
+            }
+        )
+        if reasons:
+            item["evidence"] = _unique_evidence(
+                [*(item.get("evidence") or []), *reasons]
+            )[:8]
+        result.append(item)
+    return result
+
+
+def _sector_volatility_20d(row: Mapping[str, Any]) -> float | None:
+    mainline = row.get("mainline_regime")
+    features = (
+        mainline.get("features")
+        if isinstance(mainline, Mapping)
+        and isinstance(mainline.get("features"), Mapping)
+        else None
+    )
+    return _num(features.get("annualized_volatility_20d_percent")) if features else None
+
+
+def _sector_volatility_percentile_20d(row: Mapping[str, Any]) -> float | None:
+    mainline = row.get("mainline_regime")
+    features = (
+        mainline.get("features")
+        if isinstance(mainline, Mapping)
+        and isinstance(mainline.get("features"), Mapping)
+        else None
+    )
+    return (
+        _num(features.get("annualized_volatility_20d_percentile"))
+        if features
+        else None
+    )
+
+
+def _cross_section_percentile(values: list[float], value: float) -> float:
+    if not values:
+        return 50.0
+    less = sum(item < value for item in values)
+    equal = sum(item == value for item in values)
+    return (less + equal * 0.5) / len(values) * 100.0
 
 
 def select_scored_sector_opportunities(
@@ -1168,10 +1303,45 @@ def _entry_maturity_v3(
         position_risk=position_risk,
         structure_broken=structure_broken,
     )
+    flow_improving = bool(
+        date_aligned
+        and today_flow is not None
+        and today_flow > 0
+        and pattern in _IMPROVING_FLOW_PATTERNS
+    )
+    # 资金绝对/历史分位存在明显滞后：今日仅占资金分量 20%，再乘 participation 的
+    # 60% 后，对最终参与度只有 12% 的影响。趋势已经通过且今日出现可核验回流时，允许
+    # 候选基金以自身入场信号申请一个缩小首批；这里仍不直接把方向改成 ready_to_start。
+    flow_improving_probe_eligible = bool(
+        entry_state == ENTRY_READY_ON_PULLBACK
+        and evidence_quality in _USABLE_EVIDENCE_QUALITIES
+        and status in _DIRECTIONAL_MAINLINE_STATUSES_V3
+        and trend_strength >= V3_GATE_THRESHOLDS["trend"]
+        and V3_IMPROVING_FLOW_PARTICIPATION_FLOOR
+        <= participation
+        < V3_GATE_THRESHOLDS["participation"]
+        and flow_improving
+        and not structure_broken
+    )
     first_tranche_scale = (
         V3_FIRST_TRANCHE_SCALE_CROWDED
         if status == "crowded" or len(overheat_flags) >= 2
         else V3_FIRST_TRANCHE_SCALE.get(len(overheat_flags), V3_FIRST_TRANCHE_SCALE_CROWDED)
+    )
+    if flow_improving_probe_eligible:
+        first_tranche_scale = min(
+            first_tranche_scale,
+            V3_IMPROVING_FLOW_FIRST_TRANCHE_SCALE,
+        )
+
+    waiting_reason_code = _waiting_reason_code_v3(
+        entry_state=entry_state,
+        evidence_quality=evidence_quality,
+        status=status,
+        trend_strength=trend_strength,
+        participation=participation,
+        position_risk=position_risk,
+        flow_improving_probe_eligible=flow_improving_probe_eligible,
     )
 
     research_score = _clamp(
@@ -1199,12 +1369,19 @@ def _entry_maturity_v3(
         ENTRY_FORMING: "条件形成中，暂不下单",
         ENTRY_INVALID: "资金持续转弱或趋势退潮，暂不参与",
     }[entry_state]
+    if flow_improving_probe_eligible:
+        entry_hint = "资金刚转强；基金自身入场信号通过时可缩小首批试仓"
     entry_reason = {
         ENTRY_READY_TO_START: "中期趋势、市场参与度与价格位置已同时通过入场线。",
         ENTRY_READY_ON_PULLBACK: "中期趋势仍有优势，但资金参与度或价格位置尚未同时达标。",
         ENTRY_FORMING: "趋势强度或多周期证据尚未成熟。",
         ENTRY_INVALID: "趋势强度与资金参与度同时处于横截面低位，或主线退潮、价格结构破坏。",
     }[entry_state]
+    if flow_improving_probe_eligible:
+        entry_reason = (
+            "中期趋势已通过，今日资金出现同日回流；历史参与度尚未完全达标，"
+            "仅允许基金自身入场信号通过后缩小首批。"
+        )
 
     penalties: list[str] = []
     if evidence_quality == "insufficient":
@@ -1236,12 +1413,16 @@ def _entry_maturity_v3(
         },
         "overheat_flags": overheat_flags,
         "first_tranche_scale": first_tranche_scale,
+        "flow_signal_state": "improving" if flow_improving else "unconfirmed",
+        "flow_improving_probe_eligible": flow_improving_probe_eligible,
+        "waiting_reason_code": waiting_reason_code,
         "entry_gate_inputs": {
             "policy_version": ENTRY_POLICY_VERSION_V3,
             # 保留为可观测的风险事实；它不再参与 invalid 判定（见 classify_entry_state_v3）。
             "flow_persistently_weak": flow_persistently_weak,
             "structure_broken": structure_broken,
             "overheated": bool(overheat_flags),
+            "flow_improving": flow_improving,
             "mainline_status": status,
             "position_label": position_label or None,
         },
@@ -1257,17 +1438,24 @@ def _entry_maturity_v3(
             participation=participation,
             position_risk=position_risk,
             overheat_flags=overheat_flags,
+            flow_improving=flow_improving,
+            flow_improving_probe_eligible=flow_improving_probe_eligible,
         ),
         "invalidation_signals": _invalidation_signals_v3(entry_state=entry_state),
-        "execution_eligible": entry_state == ENTRY_READY_TO_START,
-        "automatic_promotion_allowed": entry_state == ENTRY_READY_TO_START,
+        "execution_eligible": (
+            entry_state == ENTRY_READY_TO_START or flow_improving_probe_eligible
+        ),
+        "automatic_promotion_allowed": (
+            entry_state == ENTRY_READY_TO_START or flow_improving_probe_eligible
+        ),
         "confidence": confidence,
         "entry_hint": entry_hint,
         "evidence": [
             f"趋势强度 {trend_strength:.1f} 分（权重 {V3_BLOCK_WEIGHTS['trend_strength']:.0%}）",
             f"资金参与度 {participation:.1f} 分（权重 {V3_BLOCK_WEIGHTS['participation']:.0%}）",
             f"价格位置 {position_risk:.1f} 分（权重 {V3_BLOCK_WEIGHTS['position_risk']:.0%}）",
-        ],
+        ]
+        + (["今日资金已转正，处于回流改善阶段"] if flow_improving else []),
         "penalties": penalties,
         "sector_label": label,
         "track": track,
@@ -1313,6 +1501,8 @@ def _entry_triggers_v3(
     participation: float,
     position_risk: float,
     overheat_flags: list[str],
+    flow_improving: bool = False,
+    flow_improving_probe_eligible: bool = False,
 ) -> list[str]:
     if entry_state == ENTRY_READY_TO_START:
         triggers = ["首批后继续确认趋势强度与资金参与度，不预先承诺后续加仓"]
@@ -1327,10 +1517,46 @@ def _entry_triggers_v3(
     if status not in _DIRECTIONAL_MAINLINE_STATUSES_V3:
         triggers.append("主线状态升至形成中、已确认或拥挤")
     if participation < V3_GATE_THRESHOLDS["participation"]:
-        triggers.append("主力资金与上涨广度转为改善")
+        triggers.append(
+            "资金回流继续维持并带动上涨广度改善"
+            if flow_improving
+            else "主力资金与上涨广度转为改善"
+        )
     if position_risk < V3_GATE_THRESHOLDS["position"]:
         triggers.append("价格结构修复（20日修复率回升、离低点反弹并保持近5日转强）")
+    if flow_improving_probe_eligible:
+        triggers.append("候选基金自身修复或良性回调信号通过后，仅开放缩小首批")
     return _unique_evidence(triggers)[:4]
+
+
+def _waiting_reason_code_v3(
+    *,
+    entry_state: str,
+    evidence_quality: str,
+    status: str,
+    trend_strength: float,
+    participation: float,
+    position_risk: float,
+    flow_improving_probe_eligible: bool,
+) -> str | None:
+    if entry_state == ENTRY_READY_TO_START:
+        return None
+    if entry_state == ENTRY_INVALID:
+        return "trend_or_structure_invalid"
+    if evidence_quality == "insufficient":
+        return "data_quality"
+    if (
+        trend_strength < V3_GATE_THRESHOLDS["trend"]
+        or status not in _DIRECTIONAL_MAINLINE_STATUSES_V3
+    ):
+        return "trend_confirmation"
+    if flow_improving_probe_eligible:
+        return "fund_entry_confirmation"
+    if participation < V3_GATE_THRESHOLDS["participation"]:
+        return "flow_confirmation"
+    if position_risk < V3_GATE_THRESHOLDS["position"]:
+        return "structure_repair"
+    return "condition_confirmation"
 
 
 def _invalidation_signals_v3(*, entry_state: str) -> list[str]:
@@ -1474,10 +1700,22 @@ def _weighted_neutral_fill_score(
     return score, available_weight / total_weight
 
 
-def _entry_sort_score(row: dict[str, Any]) -> tuple[float, float, float, float]:
+def _entry_sort_score(row: dict[str, Any]) -> tuple[float, float, float, float, float]:
+    entry_state = str(row.get("entry_state") or "")
+    state_priority = float(_ENTRY_STATE_PRIORITY.get(entry_state, 0))
+    if (
+        entry_state == ENTRY_READY_ON_PULLBACK
+        and row.get("flow_improving_probe_eligible") is True
+    ):
+        # 可由基金自身信号完成的资金拐点，排在普通等待方向之前，但仍低于三项均
+        # 已通过的 ready_to_start，避免把受限试仓等同于完全确认。
+        state_priority = 3.5
     return (
-        float(_ENTRY_STATE_PRIORITY.get(str(row.get("entry_state") or ""), 0)),
+        state_priority,
         float(_EVIDENCE_QUALITY_PRIORITY.get(str(row.get("evidence_quality") or ""), 0)),
+        _num(row.get("selection_priority_score"))
+        or _num(row.get("research_score"))
+        or 0.0,
         _num(row.get("research_score")) or 0.0,
         _num(row.get("entry_readiness_score")) or 0.0,
     )

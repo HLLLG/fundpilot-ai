@@ -265,6 +265,9 @@ def _build_regime(
     if volume_ratio is not None:
         structure_values.append((_clamp(50.0 + (volume_ratio - 1.0) * 50.0, 0.0, 100.0), 0.10))
     volatility_20d = _number(position.get("annualized_volatility_20d_percent"))
+    volatility_percentile_20d = (percentiles.get("volatility_20d") or {}).get(
+        label
+    )
     if positive_days is not None:
         structure_values.append((_clamp(positive_days, 0.0, 100.0), 0.10))
     structure_score = _weighted_available(structure_values)
@@ -398,6 +401,11 @@ def _build_regime(
             "max_drawdown_20d_percent": drawdown_20d,
             "drawdown_recovery_20d_percent": recovery_20d,
             "annualized_volatility_20d_percent": volatility_20d,
+            "annualized_volatility_20d_percentile": (
+                round(volatility_percentile_20d, 2)
+                if volatility_percentile_20d is not None
+                else None
+            ),
             "position_label": position.get("position_label"),
             "breakout_over_prior_20d_high_percent": _number(
                 position.get("breakout_over_prior_20d_high_percent")
@@ -475,6 +483,20 @@ def _build_percentile_inputs(
         }
         result[f"relative_{horizon}"] = _percentiles(relative)
         result[f"absolute_{horizon}"] = _percentiles(absolute)
+    result["volatility_20d"] = _percentiles(
+        {
+            label: value
+            for label in labels
+            if (
+                value := _number(
+                    (positions.get(label) or {}).get(
+                        "annualized_volatility_20d_percent"
+                    )
+                )
+            )
+            is not None
+        }
+    )
     # 资金分位：用无量纲的 normalized_* 而不是绝对亿元，并按资金口径（东财 BK 板块 vs
     # 主题指数 f62 聚合）**分池**排名。两处修正都针对同一类错误——把不可比的数字放进
     # 同一个排序里：绝对亿元把"板块有多大"混进了"资金有多强"，混口径则是拿两把不同的

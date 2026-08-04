@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+import pytest
+
 from app.models import DiscoveryRequest, FundNavHistory, FundNavPoint, InvestorProfile
 from app.services.discovery_strategy import (
     discovery_horizon_label,
     discovery_minimum_holding_days,
     strategy_from_facts,
 )
-from app.services.discovery_candidate_pool import build_candidate_pool, finalize_candidate_pool
+from app.services.discovery_candidate_pool import (
+    _sector_candidate_limit,
+    build_candidate_pool,
+    finalize_candidate_pool,
+)
 from app.services.discovery_selection_strategy import (
     assess_fund_entry_position,
     current_opportunity_score,
@@ -32,6 +38,28 @@ def test_new_discovery_requests_default_to_opportunity_first_without_changing_pr
 
 def test_reports_without_strategy_keep_legacy_risk_first_semantics():
     assert strategy_from_facts({"candidate_pool": []}) == "risk_first"
+
+
+def test_priority_sector_gets_an_extra_fund_recall_slot() -> None:
+    opportunities = {
+        "资金拐点": {
+            "score": 55.0,
+            "selection_priority_score": 63.0,
+            "flow_improving_probe_eligible": True,
+        },
+        "普通一": {"score": 80.0, "selection_priority_score": 80.0},
+        "普通二": {"score": 78.0, "selection_priority_score": 78.0},
+        "普通三": {"score": 76.0, "selection_priority_score": 76.0},
+    }
+
+    assert _sector_candidate_limit(
+        "资金拐点",
+        index=0,
+        base_limit=3,
+        pool_cap=13,
+        total_sectors=4,
+        opportunity_by_sector=opportunities,
+    ) == 4
 
 
 def test_nav_summary_exposes_full_20_and_60_day_opportunity_windows():
@@ -210,6 +238,51 @@ def test_fund_entry_position_recognizes_repaired_pullback():
     assert signal["entry_ready"] is True
     assert signal["high_elasticity"] is True
     assert signal["invalidation_signals"]
+
+
+def test_fund_entry_position_recognizes_benign_pullback_without_waiting_for_rebound():
+    signal = assess_fund_entry_position(
+        {
+            "nav_trend": {
+                "recent_5d_change_percent": 1.6,
+                "recent_5d_daily_change_percent": [0.8, 0.7, 0.6, 0.5, -0.9],
+                "return_20d_percent": 8.0,
+                "return_60d_percent": 16.0,
+                "annualized_volatility_20d_percent": 26.0,
+                "distance_from_20d_high_percent": -2.1,
+                "drawdown_recovery_20d_percent": 82.0,
+                "rebound_from_20d_low_percent": 9.0,
+            }
+        }
+    )
+
+    assert signal["status"] == "pullback_ready"
+    assert signal["entry_path"] == "benign_pullback"
+    assert signal["entry_ready"] is True
+    assert signal["first_tranche_scale"] == 0.5
+    assert signal["overheat_flags"] == []
+    assert signal["components"]["latest_daily_move_sigma"] == pytest.approx(-0.5495, abs=0.001)
+
+
+def test_near_twenty_day_high_with_mild_gain_is_not_chasing():
+    signal = assess_fund_entry_position(
+        {
+            "nav_trend": {
+                "recent_5d_change_percent": 2.3,
+                "recent_5d_daily_change_percent": [0.2, 0.4, 0.3, 0.7, 0.6],
+                "return_20d_percent": 7.23,
+                "return_60d_percent": 10.0,
+                "annualized_volatility_20d_percent": 26.0,
+                "distance_from_20d_high_percent": -1.06,
+                "drawdown_recovery_20d_percent": 89.6,
+                "rebound_from_20d_low_percent": 8.0,
+            }
+        }
+    )
+
+    assert signal["entry_ready"] is True
+    assert signal["overheat_flags"] == []
+    assert signal["first_tranche_scale"] == 1.0
 
 
 def test_opportunity_first_final_pool_prefers_current_setup_over_higher_long_term_quality():

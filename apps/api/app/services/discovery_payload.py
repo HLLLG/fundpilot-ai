@@ -37,7 +37,7 @@ recommendations 字段约束：
   若没有对应 sector_opportunities，须说明使用 sector_heat / target_sector_context 降级判断
 - fund_evidence: 字符串数组，引用 candidate_pool 中的 fund_quality_score、sector_fit_score、
   quality_reasons、return_3m_percent/return_6m_percent、max_drawdown_1y_percent、fund_scale_yi、tradeability
-- validation_notes: 字符串数组，写清 quality_penalties、信息缺失、追高风险、新闻 stale/empty 等校验备注；无明显问题则 []
+- validation_notes: 字符串数组，写清 quality_penalties、信息缺失、新闻 stale/empty 等校验备注；仅结构化 overheat_flags 非空时可写追高/短期加速风险；无明显问题则 []
 - points: 字符串数组，每条须引用 candidate_pool 内具体字段（如 nav_trend、return_3m_percent、
   estimated_daily_return_percent、sector_fund_flow）；daily_return_source=sector_estimate 时须写「估算」
 - risks: 字符串数组，每只至少 1 条
@@ -64,7 +64,10 @@ recommendations 字段约束：
 - sector_opportunities 含 score_policy_version（sector_entry_maturity.2026-07.v2 或 2026-08.v3）时，须以 entry_state 为方向动作边界：
   ready_to_start 表示趋势、资金参与度与价格位置已同时通过，可在基金硬门禁通过时使用分批买入；
   ready_on_pullback 通常等待；但 V3 若趋势与参与度已通过、唯一失败项是板块价格位置，且
-  fund_entry_signal.entry_ready=true，可用基金自身20日修复替代价格位置项；forming 只能建议关注
+  fund_entry_signal.entry_ready=true，可用基金自身20日修复替代价格位置项；或
+  flow_improving_probe_eligible=true 且基金自身入场信号通过时开放缩小首批；forming 只能建议关注
+- V3 的 waiting_reason_code 用于解释等待：flow_confirmation=等待资金确认，fund_entry_confirmation=等待基金自身信号，
+  structure_repair=等待结构修复；不得把所有等待都描述成价格需要回调
 - v3 的 overheat_flags 是风险披露而非否决理由：命中时按 first_tranche_scale 缩小首批，
   文案须说明"短期加速、首批更小、不预先承诺后续"，不得因此改写为不可买入
 - v3 没有"入场成熟度"这个分数；三个分块（趋势强度/资金参与度/价格位置）各自独立，
@@ -77,6 +80,8 @@ recommendations 字段约束：
   20/60 日收益、年化波动与回撤修复；一年回撤不参与机会排序，只影响风险提示与服务端仓位
 - 高弹性买入候选的 risks 必须写出 fund_entry_signal.invalidation_signals 对应的退出复核条件；
   不得把止损描述成保证按指定价格成交
+- 只有 sector_opportunities.overheat_flags 或 fund_entry_signal.overheat_flags 非空时可写追高/短期加速风险；
+  单独接近20日高点不是追高证据
 - peer_research 只允许同组逐维比较；仅 applicable=true 且 available=true 的指标可解释，不适用与缺失不得补值；execution_tilt_eligible=false 时不得把分位用于执行提额
 - benchmark_research.comparison_role=tracking_reference 时只能称“跟踪参考”，不得称正式超额
 - benchmark_metrics 只有 status=qualified 才可引用；正式超额须同时满足 formal_excess_eligible=true，
@@ -96,10 +101,12 @@ _COMMON_REQUIREMENTS = [
     "每只 recommendations 须含 hold_horizon、risks（至少 1 条）、points（引用 candidate_pool 具体字段）",
     "每只 recommendations 须含 decision_path、sector_evidence、fund_evidence、validation_notes",
     "先判断板块方向；基金质量只作硬准入，门内按机会分、波动弹性与修复信号排序，最后决定动作",
-    "方向成熟度 V2/V3 存在时按 entry_state；V3 ready_on_pullback 仅在趋势/参与度已通过且基金修复信号可替代价格位置时开放首批，forming 仍只关注；V3 过热仅缩小首批",
+    "方向成熟度 V2/V3 存在时按 entry_state；V3 ready_on_pullback 可在基金修复替代价格位置，或资金同日改善且基金信号通过时开放缩小首批；forming 仍只关注；V3 过热仅缩小首批",
     "展示文本使用中文标签，不要原样输出 fund_quality_score/sector_fit_score/quality_penalties 等内部字段名",
     "estimated_daily_return_percent 且 daily_return_source=sector_estimate 时，points 须注明「估算」",
     "判断入场位置须参考 fund_entry_signal 与20日修复率、离低点反弹、近5日方向，不得只看 sector_heat 或距高点",
+    "板块 selection_priority_score 仅用于同一入场状态内排序；资金拐点优先于普通等待，高弹性只加排序分，不替代趋势、资金、结构和数据门槛",
+    "仅结构化 overheat_flags 非空时可写追高/短期加速风险；接近20日高点本身不是否决理由",
     "买入候选必须给出可核验的修复失效/退出条件，不得暗示止损成交价有保证",
     "news_bullish 仅引用 news_titles 或 topic_briefs.points.source_titles；无匹配则 []",
     "新闻仅使用系统预取的 news_titles/topic_briefs；过旧或为空的新闻不能作为买入主依据",
@@ -120,7 +127,7 @@ _FULL_MARKET_REQUIREMENTS = [
     *_COMMON_REQUIREMENTS,
     "基于 sector_heat 与 target_sector_context 做全市场横向对比",
     "先判断板块方向（sector_opportunities/target_sector_context），再在质量门内按机会弹性与修复信号比较基金，最后决定动作",
-    "sector_opportunities 的 entry_state 是方向动作边界；不得把 forming 写成立即买入，ready_on_pullback 只有基金级修复替代价格位置这一条受限例外",
+    "sector_opportunities 的 entry_state 是方向动作边界；不得把 forming 写成立即买入；ready_on_pullback 可走基金级位置修复替代，或 flow_improving_probe_eligible=true 的资金拐点缩小首批通道",
     "portfolio_gap / holdings_slim 仅作背景，不要以「持仓缺口」为主叙事",
     "market_view 须覆盖热度靠前板块与相对冷门但有机会的方向",
     "引用南向须用 stock_connect_flow 且仅作港股资金面参考；板块主力须用 target_sector_context.sector_fund_flow",
@@ -254,6 +261,16 @@ def _slim_sector_opportunities(items: list[dict]) -> list[dict]:
             "track": item.get("track"),
             "score": item.get("score"),
             "research_score": item.get("research_score"),
+            "selection_priority_policy": item.get("selection_priority_policy"),
+            "selection_priority_score": item.get("selection_priority_score"),
+            "selection_path": item.get("selection_path"),
+            "selection_priority_reasons": item.get("selection_priority_reasons") or [],
+            "sector_annualized_volatility_20d_percent": item.get(
+                "sector_annualized_volatility_20d_percent"
+            ),
+            "sector_elasticity_percentile": item.get(
+                "sector_elasticity_percentile"
+            ),
             "score_policy_version": item.get("score_policy_version"),
             "direction_score": item.get("direction_score"),
             # v3 的三个正交分块；v2 报告里为 None，反之亦然。
@@ -263,6 +280,11 @@ def _slim_sector_opportunities(items: list[dict]) -> list[dict]:
             "block_weights": item.get("block_weights"),
             "overheat_flags": item.get("overheat_flags") or [],
             "first_tranche_scale": item.get("first_tranche_scale"),
+            "flow_signal_state": item.get("flow_signal_state"),
+            "flow_improving_probe_eligible": item.get(
+                "flow_improving_probe_eligible"
+            ),
+            "waiting_reason_code": item.get("waiting_reason_code"),
             "component_coverage": item.get("component_coverage"),
             # v2 遗留字段（历史报告仍在用）
             "setup_maturity_score": item.get("setup_maturity_score"),

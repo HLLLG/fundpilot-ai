@@ -81,6 +81,28 @@ function formatYuan(value: number | null | undefined, fallback = "未确认"): s
   return amount == null ? fallback : `¥${YUAN_FORMATTER.format(amount)}`;
 }
 
+export function discoveryActionDisplayLabel(
+  recommendation: DiscoveryRecommendation,
+): string {
+  if (recommendation.action !== "等待回调") return recommendation.action;
+  switch (recommendation.waiting_reason_code) {
+    case "flow_confirmation":
+      return "等待资金确认";
+    case "fund_entry_confirmation":
+      return "等待基金信号";
+    case "structure_repair":
+      return "等待结构修复";
+    case "trend_confirmation":
+      return "等待趋势确认";
+    case "data_quality":
+      return "等待数据确认";
+    case "trend_or_structure_invalid":
+      return "等待重新转强";
+    default:
+      return recommendation.action;
+  }
+}
+
 function isCurrentVerifiedAllocation(recommendation: DiscoveryRecommendation): boolean {
   const recommendationAmount = finiteAmount(recommendation.suggested_amount_yuan);
   const allocationAmount = finiteAmount(
@@ -221,6 +243,7 @@ function DiscoveryRecommendationCard({
   onOpenFund?: (recommendation: DiscoveryRecommendation) => void;
   compact?: boolean;
 }) {
+  const actionDisplayLabel = discoveryActionDisplayLabel(rec);
   const verifiedInitialTranche = isCurrentVerifiedAllocation(rec);
   const futureTranche = rec.allocation?.future_tranches?.find(
     (item) => item.revalidation_required !== false,
@@ -267,7 +290,7 @@ function DiscoveryRecommendationCard({
       : fundEvidenceFailed
         ? { label: "基金证据待加强", className: "status-warn ring-1 ring-[var(--warn-border)]" }
         : { label: "基金资料待复核", className: "status-neutral ring-1 ring-[var(--line)]" };
-  const decisionPoints = visibleDecisionPoints(rec.points, rec.action);
+  const decisionPoints = visibleDecisionPoints(rec.points, actionDisplayLabel);
   const tradeabilityExecutionRelevant =
     EXECUTABLE_DISCOVERY_ACTIONS.has(rec.action) && tradeabilityGate?.status === "eligible";
   const hasProfessionalDetails = Boolean(
@@ -311,7 +334,7 @@ function DiscoveryRecommendationCard({
               {fundEvidenceSummary.label}
             </span>
           ) : null}
-          <span className={actionBadgeClass(rec.action)}>{rec.action}</span>
+          <span className={actionBadgeClass(rec.action)}>{actionDisplayLabel}</span>
         </div>
       </div>
       {rec.suggested_amount_yuan != null && (verifiedInitialTranche || !compact) ? (
@@ -806,7 +829,7 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
             {directionGroups.pullback.length ? (
               <details className="group mt-3 rounded-xl border border-[var(--warn-border)] bg-[var(--warn-bg)]/40">
                 <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 px-3 text-xs font-black text-[var(--warn-fg)] [&::-webkit-details-marker]:hidden">
-                  等待合适位置 · {directionGroups.pullback.length} 个方向
+                  等待入场条件 · {directionGroups.pullback.length} 个方向
                   <ChevronDown size={15} aria-hidden="true" className="transition group-open:rotate-180" />
                 </summary>
                 <div className="grid gap-2 border-t border-[var(--warn-border)] p-3 sm:grid-cols-2">

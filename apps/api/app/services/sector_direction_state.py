@@ -79,6 +79,7 @@ def apply_direction_state_hysteresis(
             continue
 
         raw_state = str(item.get("entry_state") or ENTRY_FORMING)
+        raw_flow_probe = item.get("flow_improving_probe_eligible") is True
         qualifies = raw_state == ENTRY_READY_TO_START
         label = str(item.get("sector_label") or "")
         previous = history.get(label)
@@ -115,8 +116,20 @@ def apply_direction_state_hysteresis(
         item["state_trade_date"] = trade_date
         item["state_previous_trade_date"] = previous_trade_date
         item["ready_confirmation_days"] = ready_confirmation_days
-        item["execution_eligible"] = entry_state == ENTRY_READY_TO_START
-        item["automatic_promotion_allowed"] = entry_state == ENTRY_READY_TO_START
+        flow_probe_active = bool(
+            raw_flow_probe and entry_state == ENTRY_READY_ON_PULLBACK
+        )
+        item["flow_improving_probe_active"] = flow_probe_active
+        item["execution_eligible"] = (
+            entry_state == ENTRY_READY_TO_START or flow_probe_active
+        )
+        item["automatic_promotion_allowed"] = (
+            entry_state == ENTRY_READY_TO_START or flow_probe_active
+        )
+        if entry_state == ENTRY_READY_TO_START:
+            item["waiting_reason_code"] = None
+        elif flow_probe_active:
+            item["waiting_reason_code"] = "fund_entry_confirmation"
         if entry_state == ENTRY_FORMING and qualifies:
             item["entry_reason"] = (
                 f"今日首次通过入场线（已满足 {consecutive} 天）；"

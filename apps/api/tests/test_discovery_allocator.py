@@ -204,6 +204,34 @@ def test_fund_recovery_position_override_keeps_v3_tranche_cap() -> None:
     ) == 0.12
 
 
+def test_improving_flow_probe_uses_reduced_sector_and_fund_scale() -> None:
+    facts = {
+        "candidate_pool": [
+            {
+                "fund_code": "000001",
+                "fund_entry_signal": {
+                    "entry_ready": True,
+                    "entry_path": "benign_pullback",
+                    "first_tranche_scale": 0.5,
+                },
+            }
+        ],
+        "sector_opportunities": [
+            {
+                "sector_label": "中药",
+                "score_policy_version": ENTRY_POLICY_VERSION_V3,
+                "entry_state": "ready_on_pullback",
+                "flow_improving_probe_eligible": True,
+                "first_tranche_scale": 0.4,
+            }
+        ],
+    }
+
+    assert _entry_maturity_tranche_ratio_cap(
+        facts, [_recommendation("中药")]
+    ) == 0.08
+
+
 def test_missing_risk_context_blocks_all_executable_amounts() -> None:
     candidate = _candidate("000001", "科技")
     plan = allocate_discovery_candidates(

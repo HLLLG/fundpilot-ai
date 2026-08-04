@@ -34,7 +34,11 @@ from app.services.discovery_sector_position import (
     build_sector_percentile_universe_positions,
     build_sector_position_map_for_opportunities,
 )
-from app.services.discovery_sector_prefilter import select_opportunity_evidence_labels
+from app.services.discovery_sector_prefilter import (
+    select_cached_high_elasticity_labels,
+    select_opportunity_evidence_labels,
+    select_snapshot_flow_inflection_labels,
+)
 from app.services.mainline_regime import (
     build_mainline_regime_snapshot,
     mainline_regime_by_label,
@@ -131,14 +135,15 @@ def run_discovery(
         request.profile,
         scan_mode=request.scan_mode,
     )
+    effective_trade_date = str(
+        build_trading_session(decision_at).get("effective_trade_date") or ""
+    ).strip() or None
     flow_labels = _opportunity_flow_labels(
         sector_heat,
         target_sectors,
         list(request.focus_sectors),
+        effective_trade_date=effective_trade_date,
     )
-    effective_trade_date = str(
-        build_trading_session(decision_at).get("effective_trade_date") or ""
-    ).strip() or None
     # M1.4：量价背离历史回测（confidence 升级判定的证据来源），仅对候选方向拉取，
     # best-effort，任一板块失败/超时不影响其他板块或整体扫描。
     with ThreadPoolExecutor(max_workers=3, thread_name_prefix="discovery-sector") as executor:
@@ -165,6 +170,17 @@ def run_discovery(
         exclude_labels=flow_labels,
         reference_positions=sector_position_by_label,
         as_of_trade_date=effective_trade_date,
+    )
+    flow_labels = _expand_high_elasticity_evidence(
+        sector_heat,
+        flow_labels=flow_labels,
+        sector_flow_by_label=sector_flow_by_label,
+        sector_divergence_by_label=sector_divergence_by_label,
+        sector_position_by_label=sector_position_by_label,
+        percentile_position_by_label=percentile_position_by_label,
+        effective_trade_date=effective_trade_date,
+        flow_builder=build_sector_flow_map_for_opportunities,
+        divergence_builder=build_sector_divergence_map_for_opportunities,
     )
     mainline_snapshot = build_mainline_regime_snapshot(
         sector_heat,
@@ -458,12 +474,82 @@ def _opportunity_flow_labels(
     sector_heat: list[dict],
     target_sectors: list[str],
     focus_sectors: list[str],
+    *,
+    effective_trade_date: str | None = None,
 ) -> list[str]:
+    from app.services.sector_fund_flow_context import (
+        get_matching_theme_board_flow_snapshot,
+    )
+
+    snapshot = (
+        get_matching_theme_board_flow_snapshot(effective_trade_date)
+        if effective_trade_date
+        else None
+    )
+    flow_inflections = select_snapshot_flow_inflection_labels(
+        sector_heat,
+        snapshot,
+    )
     return select_opportunity_evidence_labels(
         sector_heat,
         target_sectors,
         focus_sectors,
+        flow_inflection_labels=flow_inflections,
     )
+
+
+def _expand_high_elasticity_evidence(
+    sector_heat: list[dict],
+    *,
+    flow_labels: list[str],
+    sector_flow_by_label: dict,
+    sector_divergence_by_label: dict,
+    sector_position_by_label: dict,
+    percentile_position_by_label: dict,
+    effective_trade_date: str | None,
+    flow_builder: Callable[..., dict],
+    divergence_builder: Callable[..., dict],
+) -> list[str]:
+    """二阶段补召回：用缓存真实波动选方向，再补齐资金与背离证据。"""
+
+    extra_labels = select_cached_high_elasticity_labels(
+        percentile_position_by_label,
+        exclude_labels=flow_labels,
+        as_of_trade_date=effective_trade_date,
+    )
+    if not extra_labels:
+        return list(flow_labels)
+
+    with ThreadPoolExecutor(
+        max_workers=2,
+        thread_name_prefix="discovery-elasticity-expand",
+    ) as executor:
+        flow_future = executor.submit(
+            flow_builder,
+            sector_heat,
+            extra_labels,
+            trade_date=effective_trade_date,
+        )
+        divergence_future = executor.submit(divergence_builder, extra_labels)
+        try:
+            extra_flow = flow_future.result()
+        except Exception:  # noqa: BLE001 - 扩展召回为 best-effort
+            extra_flow = {}
+        try:
+            extra_divergence = divergence_future.result()
+        except Exception:  # noqa: BLE001 - 扩展召回为 best-effort
+            extra_divergence = {}
+
+    sector_flow_by_label.update(extra_flow or {})
+    sector_divergence_by_label.update(extra_divergence or {})
+    sector_position_by_label.update(
+        {
+            label: dict(percentile_position_by_label[label])
+            for label in extra_labels
+            if isinstance(percentile_position_by_label.get(label), dict)
+        }
+    )
+    return list(dict.fromkeys([*flow_labels, *extra_labels]))
 
 
 def _score_select_and_persist_directions(

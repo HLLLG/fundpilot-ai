@@ -809,7 +809,9 @@ export function DiscoveryCandidatePoolPanel({
                 item.opportunity_score_version === "opportunity_20_60d.v2";
               const entrySignal = item.fund_entry_signal;
               const entrySignalLabel = entrySignal?.entry_ready
-                ? entrySignal.status === "recovery_ready"
+                ? entrySignal.status === "pullback_ready"
+                  ? "良性回调已确认"
+                  : entrySignal.status === "recovery_ready"
                   ? "修复已确认"
                   : "趋势已确认"
                 : null;

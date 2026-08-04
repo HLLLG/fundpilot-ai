@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import date, timedelta
+from math import sqrt
 from typing import Literal
 
 SelectionStrategy = Literal["balanced", "with_new_issue"]
@@ -10,6 +11,7 @@ _NEW_ISSUE_MAX_AGE_DAYS = 180
 _NEW_ISSUE_SLOTS = 2
 _PER_SECTOR = 5
 OPPORTUNITY_SCORE_VERSION = "opportunity_20_60d.v2"
+FUND_ENTRY_POLICY_VERSION = "fund_entry_position.2026-08.v2"
 
 
 def balanced_score(row: dict) -> float:
@@ -162,7 +164,7 @@ def assess_fund_entry_position(row: Mapping[str, object]) -> dict[str, object]:
     nav = row.get("nav_trend")
     if not isinstance(nav, Mapping):
         return {
-            "policy_version": "fund_entry_position.2026-08.v1",
+            "policy_version": FUND_ENTRY_POLICY_VERSION,
             "status": "insufficient",
             "entry_ready": False,
             "reason": "缺少20日净值修复数据",
@@ -173,6 +175,7 @@ def assess_fund_entry_position(row: Mapping[str, object]) -> dict[str, object]:
     recovery = _num(nav.get("drawdown_recovery_20d_percent"))
     rebound = _num(nav.get("rebound_from_20d_low_percent"))
     volatility = _num(nav.get("annualized_volatility_20d_percent"))
+    distance_high_20d = _num(nav.get("distance_from_20d_high_percent"))
     daily = nav.get("recent_5d_daily_change_percent")
     daily_values = [
         value
@@ -181,6 +184,28 @@ def assess_fund_entry_position(row: Mapping[str, object]) -> dict[str, object]:
     ] if isinstance(daily, list) else []
     positive_days = sum(value > 0 for value in daily_values)
     breadth_confirmed = len(daily_values) < 3 or positive_days >= 3
+    latest_daily = daily_values[-1] if daily_values else None
+    daily_sigma = volatility / sqrt(252.0) if volatility is not None and volatility > 0 else None
+    latest_daily_sigma = (
+        latest_daily / daily_sigma
+        if latest_daily is not None and daily_sigma is not None and daily_sigma > 0
+        else None
+    )
+
+    overheat_flags: list[str] = []
+    if latest_daily is not None and latest_daily >= 4.0:
+        overheat_flags.append("单日净值涨幅超过4%，短期加速")
+    if latest_daily_sigma is not None and latest_daily_sigma >= 2.0:
+        overheat_flags.append("单日净值涨幅超过20日波动的2个标准差")
+    if r5 is not None and r5 >= 12.0:
+        overheat_flags.append("近5日净值涨幅超过12%，短期加速")
+    if (
+        distance_high_20d is not None
+        and distance_high_20d >= -1.5
+        and r5 is not None
+        and r5 >= 6.0
+    ):
+        overheat_flags.append("贴近20日高点且近5日涨幅达到6%")
 
     recovery_ready = bool(
         r5 is not None
@@ -203,25 +228,73 @@ def assess_fund_entry_position(row: Mapping[str, object]) -> dict[str, object]:
         and recovery >= 60.0
         and breadth_confirmed
     )
-    entry_ready = recovery_ready or momentum_ready
-    if recovery_ready and not momentum_ready:
+    pullback_magnitude_ok = bool(
+        latest_daily is not None
+        and latest_daily < 0
+        and (
+            (
+                latest_daily_sigma is not None
+                and latest_daily_sigma >= -1.5
+            )
+            or (
+                latest_daily_sigma is None
+                and latest_daily >= -2.5
+            )
+        )
+    )
+    benign_pullback_ready = bool(
+        pullback_magnitude_ok
+        and r5 is not None
+        and r5 >= -3.0
+        and r20 is not None
+        and r20 > 0
+        and r60 is not None
+        and r60 > 0
+        and recovery is not None
+        and recovery >= 55.0
+        and rebound is not None
+        and rebound >= 3.0
+        and (distance_high_20d is None or distance_high_20d >= -10.0)
+        and (len(daily_values) < 3 or positive_days >= 2)
+    )
+    entry_ready = recovery_ready or momentum_ready or benign_pullback_ready
+    if benign_pullback_ready:
+        status = "pullback_ready"
+        entry_path = "benign_pullback"
+        reason = "20/60日趋势未破，温和回调处于正常波动内且20日修复保持过半"
+    elif recovery_ready and not momentum_ready:
         status = "recovery_ready"
+        entry_path = "recovery_confirmation"
         reason = "20日回撤已修复过半，近5日转强且上涨日占优"
     elif momentum_ready:
         status = "momentum_ready"
+        entry_path = "momentum_confirmation"
         reason = "5/20/60日趋势同向，20日价格修复已通过"
     elif r5 is not None and r5 <= 0 and (recovery or 0.0) < 45.0:
         status = "falling"
+        entry_path = "forming"
         reason = "仍靠近20日低位且近5日尚未转强"
     else:
         status = "forming"
+        entry_path = "forming"
         reason = "价格正在修复，但尚未同时通过修复幅度和近5日确认"
 
+    overheat_scale = (
+        0.4 if len(overheat_flags) >= 2 else 0.6 if overheat_flags else 1.0
+    )
+    first_tranche_scale = min(
+        overheat_scale,
+        0.5 if benign_pullback_ready else 1.0,
+    )
+
     return {
-        "policy_version": "fund_entry_position.2026-08.v1",
+        "policy_version": FUND_ENTRY_POLICY_VERSION,
         "status": status,
+        "entry_path": entry_path,
         "entry_ready": entry_ready,
+        "first_tranche_scale": first_tranche_scale,
         "high_elasticity": volatility is not None and volatility >= 24.0,
+        "overheat_flags": overheat_flags,
         "reason": reason,
         "components": {
             "recent_5d_change_percent": r5,
@@ -230,19 +303,44 @@ def assess_fund_entry_position(row: Mapping[str, object]) -> dict[str, object]:
             "drawdown_recovery_20d_percent": recovery,
             "rebound_from_20d_low_percent": rebound,
             "annualized_volatility_20d_percent": volatility,
+            "distance_from_20d_high_percent": distance_high_20d,
             "positive_days_5d": positive_days if daily_values else None,
+            "latest_daily_change_percent": latest_daily,
+            "daily_sigma_percent": round(daily_sigma, 4) if daily_sigma is not None else None,
+            "latest_daily_move_sigma": (
+                round(latest_daily_sigma, 4) if latest_daily_sigma is not None else None
+            ),
         },
         "thresholds": {
             "minimum_recovery_percent": 55.0,
             "minimum_rebound_from_low_percent": 3.0,
             "minimum_recent_5d_change_percent": 1.0,
             "minimum_positive_days_5d": 3,
+            "pullback_minimum_recent_5d_change_percent": -3.0,
+            "pullback_maximum_daily_sigma": 1.5,
+            "pullback_minimum_recovery_percent": 55.0,
         },
         "invalidation_signals": [
             "近5日收益重新转负且20日修复率跌回40%以下",
             "净值重新跌回本轮20日低位区域",
         ],
     }
+
+
+def fund_entry_opens_v3_improving_flow_probe(
+    candidate: Mapping[str, object],
+    opportunity: Mapping[str, object] | None,
+) -> bool:
+    """Allow a reduced first tranche when current flow turns before history catches up."""
+
+    if not isinstance(opportunity, Mapping):
+        return False
+    if str(opportunity.get("score_policy_version") or "") != "sector_entry_maturity.2026-08.v3":
+        return False
+    if opportunity.get("flow_improving_probe_eligible") is not True:
+        return False
+    signal = candidate.get("fund_entry_signal")
+    return bool(isinstance(signal, Mapping) and signal.get("entry_ready") is True)
 
 
 def fund_recovery_overrides_sector_position(

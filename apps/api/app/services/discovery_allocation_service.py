@@ -15,6 +15,7 @@ from app.services.discovery_strategy import (
     strategy_from_facts,
 )
 from app.services.discovery_selection_strategy import (
+    fund_entry_opens_v3_improving_flow_probe,
     fund_recovery_overrides_sector_position,
 )
 from app.services.fund_tradeability import (
@@ -321,12 +322,13 @@ def _entry_maturity_tranche_ratio_cap(
             return None
         raw_ready = str(opportunity.get("entry_state") or "") == ENTRY_READY_TO_START
         candidate = pool_by_code.get(recommendation.fund_code.strip().zfill(6)) or {}
-        if not raw_ready and not fund_recovery_overrides_sector_position(
-            candidate,
-            opportunity,
+        if (
+            not raw_ready
+            and not fund_recovery_overrides_sector_position(candidate, opportunity)
+            and not fund_entry_opens_v3_improving_flow_probe(candidate, opportunity)
         ):
             return None
-        qualified_rows.append(opportunity)
+        qualified_rows.append({**dict(opportunity), "candidate": candidate})
 
     # A newly matured direction starts with at most one fifth of the verified
     # spendable budget. V3 then applies its observed overheat scale to that first
@@ -341,6 +343,19 @@ def _entry_maturity_tranche_ratio_cap(
         scale = _finite_number(opportunity.get("first_tranche_scale"))
         if scale is None or not 0 < scale <= 1:
             scale = V3_FIRST_TRANCHE_SCALE_CROWDED
+        candidate = opportunity.get("candidate")
+        fund_signal = (
+            candidate.get("fund_entry_signal")
+            if isinstance(candidate, Mapping)
+            else None
+        )
+        fund_scale = (
+            _finite_number(fund_signal.get("first_tranche_scale"))
+            if isinstance(fund_signal, Mapping)
+            else None
+        )
+        if fund_scale is not None and 0 < fund_scale <= 1:
+            scale = min(scale, fund_scale)
         scales.append(scale)
     return round(0.20 * min(scales), 4)
 

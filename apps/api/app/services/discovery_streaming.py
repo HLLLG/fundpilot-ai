@@ -64,7 +64,6 @@ from app.services.discovery_sector_position import (
     build_sector_percentile_universe_positions,
     build_sector_position_map_for_opportunities,
 )
-from app.services.discovery_sector_prefilter import select_opportunity_evidence_labels
 from app.services.mainline_regime import (
     build_mainline_regime_snapshot,
     mainline_regime_by_label,
@@ -213,14 +212,15 @@ def _stream_discovery(
             request.profile,
             scan_mode=request.scan_mode,
         )
+        effective_trade_date = str(
+            build_trading_session(decision_at).get("effective_trade_date") or ""
+        ).strip() or None
         flow_labels = _opportunity_flow_labels(
             sector_heat,
             target_sectors,
             list(request.focus_sectors),
+            effective_trade_date=effective_trade_date,
         )
-        effective_trade_date = str(
-            build_trading_session(decision_at).get("effective_trade_date") or ""
-        ).strip() or None
         news_service = NewsService()
         per_sector = 3
         pool_cap = 28
@@ -287,6 +287,21 @@ def _stream_discovery(
                 "正在扩展板块相对强度分位…",
                 started_at=started_at,
                 stop_event=stop,
+            )
+            from app.services.discovery_pipeline import (
+                _expand_high_elasticity_evidence,
+            )
+
+            flow_labels = _expand_high_elasticity_evidence(
+                sector_heat,
+                flow_labels=flow_labels,
+                sector_flow_by_label=sector_flow_by_label,
+                sector_divergence_by_label=sector_divergence_by_label,
+                sector_position_by_label=sector_position_by_label,
+                percentile_position_by_label=percentile_position_by_label,
+                effective_trade_date=effective_trade_date,
+                flow_builder=build_sector_flow_map_for_opportunities,
+                divergence_builder=build_sector_divergence_map_for_opportunities,
             )
             mainline_snapshot = build_mainline_regime_snapshot(
                 sector_heat,
@@ -942,9 +957,16 @@ def _opportunity_flow_labels(
     sector_heat: list[dict],
     target_sectors: list[str],
     focus_sectors: list[str],
+    *,
+    effective_trade_date: str | None = None,
 ) -> list[str]:
-    return select_opportunity_evidence_labels(
+    from app.services.discovery_pipeline import (
+        _opportunity_flow_labels as _impl,
+    )
+
+    return _impl(
         sector_heat,
         target_sectors,
         focus_sectors,
+        effective_trade_date=effective_trade_date,
     )

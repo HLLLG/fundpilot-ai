@@ -1373,14 +1373,33 @@ def _sector_candidate_limit(
     opportunity = opportunity_by_sector.get(sector_label)
     if not opportunity:
         return base_limit
-    score = _num(opportunity.get("score")) or 0.0
+    score = (
+        _num(opportunity.get("selection_priority_score"))
+        or _num(opportunity.get("research_score"))
+        or _num(opportunity.get("score"))
+        or 0.0
+    )
     top_scores = sorted(
-        [_num(item.get("score")) or 0.0 for item in opportunity_by_sector.values()],
+        [
+            _num(item.get("selection_priority_score"))
+            or _num(item.get("research_score"))
+            or _num(item.get("score"))
+            or 0.0
+            for item in opportunity_by_sector.values()
+        ],
         reverse=True,
     )
     top_cutoff = top_scores[min(3, len(top_scores) - 1)] if top_scores else 0.0
     can_expand = pool_cap >= total_sectors * base_limit + 1
-    if can_expand and index < 4 and score >= max(70.0, top_cutoff):
+    priority_path = bool(
+        opportunity.get("flow_improving_probe_eligible") is True
+        or (_num(opportunity.get("sector_elasticity_percentile")) or 0.0) >= 70.0
+    )
+    if (
+        can_expand
+        and index < 4
+        and (score >= max(70.0, top_cutoff) or priority_path)
+    ):
         return base_limit + 1
     return base_limit
 
@@ -1575,7 +1594,12 @@ def _with_quality_score(
     else:
         penalties.append("板块匹配置信偏低")
 
-    performance = _bounded_performance_score(row, penalties, reasons)
+    performance = _bounded_performance_score(
+        row,
+        penalties,
+        reasons,
+        discovery_strategy=discovery_strategy,
+    )
     r3m = _num(row.get("return_3m_percent"))
     r6m = _num(row.get("return_6m_percent"))
     if r3m is None and r6m is None:
@@ -1634,6 +1658,8 @@ def _bounded_performance_score(
     row: dict,
     penalties: list[str],
     reasons: list[str],
+    *,
+    discovery_strategy: str = "risk_first",
 ) -> float:
     """把阶段收益压到 0~25，防止单只暴涨基金把总分推过100。"""
 
@@ -1649,7 +1675,11 @@ def _bounded_performance_score(
         score += _clamp((r3m + 10.0) / 40.0, 0.0, 1.0) * 11.0
     if r6m is not None:
         score += _clamp((r6m + 15.0) / 65.0, 0.0, 1.0) * 11.0
-    if r1y is not None and -10.0 <= r1y <= 70.0:
+    if discovery_strategy == "opportunity_first" and r1y is not None:
+        # 质量层只验证载体，不用一年涨幅把高弹性基金重新压回去。当前机会强弱
+        # 已由 uncapped 20/60 日机会分、真实波动率和入场信号单独排序。
+        reasons.append("近1年涨幅仅作波动背景，不参与载体质量奖惩")
+    elif r1y is not None and -10.0 <= r1y <= 70.0:
         score += 3.0
     elif r1y is not None and r1y > 100.0:
         penalties.append("近1年涨幅过高，存在追高偏差")

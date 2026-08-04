@@ -27,7 +27,7 @@ def discovery_report_to_markdown(report: dict[str, Any]) -> str:
         lines.append(f"### {index}. [{rec.get('fund_code')}] {rec.get('fund_name')}")
         lines.append("")
         lines.append(f"- **板块：** {rec.get('sector_name', '')}")
-        lines.append(f"- **动作：** {rec.get('action', '')}")
+        lines.append(f"- **动作：** {_display_action(rec)}")
         lines.append(f"- **持有期：** {rec.get('hold_horizon', '')}")
         lines.append(f"- **置信度：** {rec.get('confidence', '')}")
         if rec.get("suggested_amount_yuan") is not None:
@@ -56,6 +56,20 @@ def discovery_report_to_markdown(report: dict[str, Any]) -> str:
             lines.append(f"- {caveat}")
 
     return "\n".join(lines).strip() + "\n"
+
+
+def _display_action(rec: dict[str, Any]) -> str:
+    action = str(rec.get("action") or "")
+    if action != "等待回调":
+        return action
+    return {
+        "flow_confirmation": "等待资金确认",
+        "fund_entry_confirmation": "等待基金信号",
+        "structure_repair": "等待结构修复",
+        "trend_confirmation": "等待趋势确认",
+        "data_quality": "等待数据确认",
+        "trend_or_structure_invalid": "等待重新转强",
+    }.get(str(rec.get("waiting_reason_code") or ""), action)
 
 
 def _append_named_list(lines: list[str], title: str, items: object) -> None:

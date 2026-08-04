@@ -27,6 +27,7 @@ from app.services.discovery_strategy import (
     strategy_from_facts,
 )
 from app.services.discovery_selection_strategy import (
+    fund_entry_opens_v3_improving_flow_probe,
     fund_recovery_overrides_sector_position,
 )
 from app.services.sector_opportunity_scoring import (
@@ -475,6 +476,9 @@ def apply_discovery_guards(
             continue
 
         copy = _strip_untrusted_discovery_execution_text(rec)
+        copy.waiting_reason_code = None
+        copy.entry_path = None
+        copy.entry_tranche_scale = None
         pool_item = pool_by_code.get(code, {})
         tradeability = (
             pool_item.get("tradeability")
@@ -599,21 +603,45 @@ def apply_discovery_guards(
         nav_trend = pool_item.get("nav_trend") or {}
         if not isinstance(nav_trend, Mapping):
             nav_trend = {}
-        dist_high = _as_float(nav_trend.get("distance_from_high_percent"))
+        dist_high = _as_float(nav_trend.get("distance_from_20d_high_percent"))
+        if dist_high is None:
+            # 仅为历史报告兼容；新报告的追高/加速口径统一使用明确的 20 日字段。
+            dist_high = _as_float(nav_trend.get("distance_from_high_percent"))
         recent_5d = _as_float(nav_trend.get("recent_5d_change_percent"))
         recent_20d = _as_float(nav_trend.get("return_20d_percent"))
-        entry_state = _entry_state_v2(opportunity)
+        raw_entry_state = _entry_state_v2(opportunity)
+        entry_state = raw_entry_state
         fund_position_override = fund_recovery_overrides_sector_position(
             pool_item,
             opportunity,
         )
+        fund_flow_probe = fund_entry_opens_v3_improving_flow_probe(
+            pool_item,
+            opportunity,
+        )
         effective_opportunity = opportunity
-        if fund_position_override:
+        if fund_position_override or fund_flow_probe:
             entry_state = ENTRY_READY_TO_START
+            opportunity_scale = _as_float((opportunity or {}).get("first_tranche_scale"))
+            fund_signal = pool_item.get("fund_entry_signal")
+            fund_scale = (
+                _as_float(fund_signal.get("first_tranche_scale"))
+                if isinstance(fund_signal, Mapping)
+                else None
+            )
+            applicable_scales = [
+                value
+                for value in (opportunity_scale, fund_scale)
+                if value is not None and 0 < value <= 1
+            ]
             effective_opportunity = {
                 **dict(opportunity or {}),
                 "entry_state": ENTRY_READY_TO_START,
-                "fund_position_override": True,
+                "fund_position_override": fund_position_override,
+                "flow_improving_probe": fund_flow_probe,
+                "first_tranche_scale": (
+                    min(applicable_scales) if applicable_scales else 0.4
+                ),
             }
         entry_policy_version = str(
             (opportunity or {}).get("score_policy_version") or ""
@@ -653,7 +681,23 @@ def apply_discovery_guards(
                 "板块趋势与参与度已通过，且该基金自身20日回撤修复已过半；"
                 "基金级修复信号仅替代未通过的板块价格位置项"
                 if fund_position_override
-                else f"{maturity_label} 已通过当前方向入场线"
+                else (
+                    "板块趋势已通过且今日资金出现同日回流，"
+                    "该基金自身入场信号也已通过"
+                    if fund_flow_probe
+                    else f"{maturity_label} 已通过当前方向入场线"
+                )
+            )
+            copy.waiting_reason_code = None
+            copy.entry_path = (
+                "flow_improving_probe"
+                if fund_flow_probe
+                else "fund_position_recovery"
+                if fund_position_override
+                else "confirmed_entry"
+            )
+            copy.entry_tranche_scale = _as_float(
+                (effective_opportunity or {}).get("first_tranche_scale")
             )
             copy.points = [
                 (
@@ -667,7 +711,11 @@ def apply_discovery_guards(
                 (
                     "基金级修复已替代板块价格位置门槛；趋势、参与度、基金质量和交易门仍全部保留。"
                     if fund_position_override
-                    else "入场状态为 ready_to_start；该状态只开放首批额度，不承诺后续加仓或收益。"
+                    else (
+                        "资金改善通道只开放缩小首批；若今日回流中断或基金修复失效，不得继续加仓。"
+                        if fund_flow_probe
+                        else "入场状态为 ready_to_start；该状态只开放首批额度，不承诺后续加仓或收益。"
+                    )
                 ),
             ]
         elif (
@@ -676,15 +724,19 @@ def apply_discovery_guards(
             and copy.action == "分批买入"
         ):
             copy.action = "等待回调"
+            copy.waiting_reason_code = str(
+                (opportunity or {}).get("waiting_reason_code")
+                or "condition_confirmation"
+            )
             triggers = [
                 str(value)
                 for value in (opportunity or {}).get("entry_triggers") or []
                 if str(value).strip()
             ]
-            waiting_reason = (
-                "方向仍有优势，但资金参与度或价格位置尚未通过当前入场线；等待条件："
-                if entry_policy_version == ENTRY_POLICY_VERSION_V3
-                else "方向仍有优势，但入场成熟度尚未通过；等待条件："
+            waiting_reason = _waiting_reason_intro(
+                copy.waiting_reason_code,
+                opportunity,
+                is_v3=entry_policy_version == ENTRY_POLICY_VERSION_V3,
             )
             copy.points = [
                 waiting_reason
@@ -692,6 +744,60 @@ def apply_discovery_guards(
                 + "。",
                 *copy.points,
             ]
+        if (
+            opportunity_first
+            and raw_entry_state == ENTRY_READY_ON_PULLBACK
+            and copy.action == "等待回调"
+            and not (fund_position_override or fund_flow_probe)
+        ):
+            copy.waiting_reason_code = str(
+                (opportunity or {}).get("waiting_reason_code")
+                or "condition_confirmation"
+            )
+            triggers = [
+                str(value)
+                for value in (opportunity or {}).get("entry_triggers") or []
+                if str(value).strip()
+            ]
+            wait_line = (
+                _waiting_reason_intro(
+                    copy.waiting_reason_code,
+                    opportunity,
+                    is_v3=entry_policy_version == ENTRY_POLICY_VERSION_V3,
+                )
+                + "；".join(triggers[:3] or ["相关条件继续改善"])
+                + "。"
+            )
+            if wait_line not in copy.points:
+                copy.points = [wait_line, *copy.points]
+
+        if (
+            opportunity_first
+            and entry_state == ENTRY_READY_TO_START
+            and copy.action == "分批买入"
+        ):
+            fund_signal = pool_item.get("fund_entry_signal")
+            fund_entry_path = (
+                str(fund_signal.get("entry_path") or "").strip()
+                if isinstance(fund_signal, Mapping)
+                else ""
+            )
+            copy.entry_path = copy.entry_path or fund_entry_path or "confirmed_entry"
+            opportunity_scale = _as_float(
+                (effective_opportunity or {}).get("first_tranche_scale")
+            )
+            fund_scale = (
+                _as_float(fund_signal.get("first_tranche_scale"))
+                if isinstance(fund_signal, Mapping)
+                else None
+            )
+            entry_scales = [
+                value
+                for value in (opportunity_scale, fund_scale)
+                if value is not None and 0 < value <= 1
+            ]
+            copy.entry_tranche_scale = min(entry_scales) if entry_scales else 1.0
+            copy.waiting_reason_code = None
         if profile.avoid_chasing and copy.action == "分批买入":
             if opportunity_first:
                 if entry_state == ENTRY_READY_TO_START:
@@ -1054,6 +1160,32 @@ def apply_discovery_guards(
                     limit=8,
                 )
 
+        if (
+            opportunity_first
+            and entry_policy_version == ENTRY_POLICY_VERSION_V3
+            and not _has_structured_overheat(opportunity, pool_item)
+        ):
+            chase_claim_removed = _remove_unfounded_chase_claims(copy)
+            if chase_claim_removed:
+                copy.validation_notes = _append_unique(
+                    copy.validation_notes,
+                    ["未命中结构化短期加速信号；接近20日高点未被单独视为追高。"],
+                    limit=8,
+                )
+            if not copy.risks:
+                invalidation_signals = _entry_invalidation_signals(
+                    pool_item,
+                    opportunity,
+                )
+                copy.risks = [
+                    "失效条件："
+                    + "；".join(
+                        invalidation_signals[:2]
+                        or ["趋势与资金参与度同步转弱时停止新增仓位"]
+                    )
+                    + "。"
+                ]
+
         if pool_item:
             _backfill_decision_fields(
                 copy,
@@ -1392,6 +1524,130 @@ def _entry_state_v2(opportunity: Mapping[str, object] | None) -> str | None:
     }:
         return state
     return ENTRY_FORMING
+
+
+def _waiting_reason_intro(
+    waiting_reason_code: str | None,
+    opportunity: Mapping[str, object] | None,
+    *,
+    is_v3: bool,
+) -> str:
+    if not is_v3:
+        return "方向仍有优势，但入场成熟度尚未通过；等待条件："
+    code = str(waiting_reason_code or "condition_confirmation")
+    if code == "flow_confirmation":
+        position = _as_float((opportunity or {}).get("position_risk_score"))
+        return (
+            "趋势与价格位置已通过，但板块资金参与度尚未确认；等待资金条件："
+            if position is not None and position >= V3_GATE_THRESHOLDS["position"]
+            else "趋势仍有优势，但板块资金参与度尚未确认；等待资金条件："
+        )
+    if code == "fund_entry_confirmation":
+        return "今日资金已经转强，但候选基金自身入场信号尚未通过；等待基金条件："
+    if code == "structure_repair":
+        return "趋势与资金参与度已通过，但价格结构尚未修复；等待结构条件："
+    if code == "trend_confirmation":
+        return "趋势或主线状态尚未通过；等待趋势条件："
+    if code == "data_quality":
+        return "多周期数据尚未达到可执行标准；等待数据条件："
+    if code == "trend_or_structure_invalid":
+        return "趋势退潮或价格结构已经破坏；重新观察条件："
+    return "方向仍有优势，但当前入场条件尚未全部通过；等待条件："
+
+
+def _has_structured_overheat(
+    opportunity: Mapping[str, object] | None,
+    pool_item: Mapping[str, object],
+) -> bool:
+    sector_flags = (
+        opportunity.get("overheat_flags")
+        if isinstance(opportunity, Mapping)
+        else None
+    )
+    fund_signal = pool_item.get("fund_entry_signal")
+    fund_flags = (
+        fund_signal.get("overheat_flags")
+        if isinstance(fund_signal, Mapping)
+        else None
+    )
+    return bool(
+        (
+            isinstance(sector_flags, list)
+            and any(str(item).strip() for item in sector_flags)
+        )
+        or (
+            isinstance(fund_flags, list)
+            and any(str(item).strip() for item in fund_flags)
+        )
+    )
+
+
+def _is_unfounded_chase_claim(value: str) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return False
+    if "追高" in text or "追涨" in text:
+        return True
+    near_high_tokens = (
+        "20日高点",
+        "距高点",
+        "接近高点",
+        "贴近高点",
+        "近期高点",
+        "短期高点",
+    )
+    return bool(
+        any(token in text for token in near_high_tokens)
+        and any(token in text for token in ("风险", "等待", "不宜", "偏高"))
+    )
+
+
+def _remove_unfounded_chase_claims(rec: DiscoveryRecommendation) -> bool:
+    removed = False
+    if _is_unfounded_chase_claim(rec.decision_path):
+        rec.decision_path = f"最终动作：{rec.action}；价格位置按结构化加速信号复核。"
+        removed = True
+    for field in (
+        "points",
+        "risks",
+        "sector_evidence",
+        "fund_evidence",
+        "validation_notes",
+    ):
+        values = list(getattr(rec, field) or [])
+        kept = [value for value in values if not _is_unfounded_chase_claim(value)]
+        if len(kept) != len(values):
+            setattr(rec, field, kept)
+            removed = True
+    return removed
+
+
+def _entry_invalidation_signals(
+    pool_item: Mapping[str, object],
+    opportunity: Mapping[str, object] | None,
+) -> list[str]:
+    fund_signal = pool_item.get("fund_entry_signal")
+    fund_values = (
+        fund_signal.get("invalidation_signals")
+        if isinstance(fund_signal, Mapping)
+        else None
+    )
+    sector_values = (
+        opportunity.get("invalidation_signals")
+        if isinstance(opportunity, Mapping)
+        else None
+    )
+    fund_items = fund_values if isinstance(fund_values, list) else []
+    sector_items = sector_values if isinstance(sector_values, list) else []
+    return _append_unique(
+        [],
+        [
+            str(value)
+            for value in [*fund_items, *sector_items]
+            if str(value).strip()
+        ],
+        limit=4,
+    )
 
 
 def _sync_decision_path_with_final_action(rec: DiscoveryRecommendation) -> None:

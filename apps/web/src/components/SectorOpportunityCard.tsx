@@ -60,6 +60,24 @@ const ENTRY_STATE: Record<string, { label: string; className: string; cardClassN
   },
 };
 
+function entryStateDisplayLabel(item: SectorOpportunity): string {
+  if (item.entry_state !== "ready_on_pullback") {
+    return ENTRY_STATE[item.entry_state ?? ""]?.label ?? ENTRY_STATE.forming.label;
+  }
+  switch (item.waiting_reason_code) {
+    case "flow_confirmation":
+      return "等待资金确认";
+    case "fund_entry_confirmation":
+      return "等待基金信号";
+    case "structure_repair":
+      return "等待结构修复";
+    case "trend_confirmation":
+      return "等待趋势确认";
+    default:
+      return ENTRY_STATE.ready_on_pullback.label;
+  }
+}
+
 function mainlineMetric(value: number | null | undefined, suffix = "%"): string {
   if (value == null || !Number.isFinite(value)) return "待补";
   return `${value > 0 ? "+" : ""}${formatMetric(value)}${suffix}`;
@@ -100,7 +118,11 @@ export function SectorOpportunityCard({
   const isEntryV3 = item.score_policy_version === ENTRY_MATURITY_V3;
   const hasEntryMaturity = isEntryMaturityPolicy(item.score_policy_version);
   const entryMeta = ENTRY_STATE[item.entry_state ?? ""] ?? ENTRY_STATE.forming;
+  const entryLabel = entryStateDisplayLabel(item);
   const blockWeights = item.block_weights ?? {};
+  const highElasticity =
+    item.sector_elasticity_percentile != null && item.sector_elasticity_percentile >= 70;
+  const flowInflectionPath = item.selection_path === "flow_inflection_probe";
   return (
     <div
       className={`rounded-xl border px-3 py-3 ${
@@ -116,12 +138,25 @@ export function SectorOpportunityCard({
         <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-bold">
           {hasEntryMaturity ? (
             <span className={`rounded-full px-2 py-0.5 ring-1 ${entryMeta.className}`}>
-              {entryMeta.label}
+              {entryLabel}
             </span>
           ) : null}
           {item.track ? (
             <span className="rounded-full bg-white px-2 py-0.5 text-slate-600 ring-1 ring-slate-200">
               {trackLabel(item.track)}
+            </span>
+          ) : null}
+          {isEntryV3 && flowInflectionPath ? (
+            <span className="rounded-full bg-[var(--success-bg)] px-2 py-0.5 text-[var(--success-fg)] ring-1 ring-[var(--success-border)]">
+              资金拐点
+            </span>
+          ) : null}
+          {isEntryV3 && highElasticity ? (
+            <span
+              data-testid="sector-high-elasticity"
+              className="rounded-full bg-[var(--info-bg)] px-2 py-0.5 text-[var(--info-fg)] ring-1 ring-[var(--info-border)]"
+            >
+              高弹性
             </span>
           ) : null}
           {mainline ? (
@@ -195,6 +230,27 @@ export function SectorOpportunityCard({
                 三项是互不重叠的独立维度，按括号内权重合成为方向分 {formatMetric(item.direction_score)}；
                 它们不是三重确认。
               </p>
+              {flowInflectionPath || highElasticity ? (
+                <div
+                  data-testid="sector-selection-priority"
+                  className="mt-2 rounded-lg border border-[var(--info-border)] bg-[var(--info-bg)]/60 px-2.5 py-2 text-[11px] leading-4 text-[var(--info-fg)]"
+                >
+                  <div className="font-bold">
+                    方向排序优先
+                    {item.selection_priority_score != null
+                      ? ` · ${formatMetric(item.selection_priority_score)} 分`
+                      : ""}
+                  </div>
+                  {flowInflectionPath ? <p className="mt-1">今日资金转强，优先于普通等待方向。</p> : null}
+                  {highElasticity ? (
+                    <p className="mt-1">
+                      20日年化波动 {formatMetric(item.sector_annualized_volatility_20d_percent)}%，
+                      横截面 {formatMetric(item.sector_elasticity_percentile)} 分位。
+                    </p>
+                  ) : null}
+                  <p className="mt-1 text-slate-500">排序加分不替代趋势、资金、结构和数据门槛。</p>
+                </div>
+              ) : null}
             </>
           ) : (
             <div className="mt-2 grid grid-cols-3 gap-1.5 text-xs text-slate-600">

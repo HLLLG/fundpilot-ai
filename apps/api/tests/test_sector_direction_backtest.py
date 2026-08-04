@@ -35,6 +35,7 @@ from app.services.sector_opportunity_scoring import (
     ENTRY_INVALID,
     ENTRY_POLICY_VERSION,
     ENTRY_POLICY_VERSION_V3,
+    ENTRY_READY_ON_PULLBACK,
     ENTRY_READY_TO_START,
     V3_GATE_THRESHOLDS,
     classify_entry_state,
@@ -867,18 +868,22 @@ def test_percentile_universe_expands_denominator_without_emitting_regimes() -> N
     """额外板块只补分位分母，不产出 regime 行、不进入方向观察池。"""
     from app.services.mainline_regime import build_mainline_regime_snapshot
 
-    def position(return_20d: float) -> dict:
+    def position(return_20d: float, volatility_20d: float) -> dict:
         return {
             "available": True,
             "return_20d_percent": return_20d,
             "relative_return_20d_percent": return_20d,
+            "annualized_volatility_20d_percent": volatility_20d,
             "distance_from_ma20_percent": 1.0,
             "sample_days": 80,
         }
 
     # 5.5 刻意避开分母板块的取值，否则并列会让分位数恰好等于 50 而掩盖问题。
-    evidence = {"半导体": position(5.5)}
-    universe = {f"陪跑{index}": position(float(index)) for index in range(1, 10)}
+    evidence = {"半导体": position(5.5, 35.0)}
+    universe = {
+        f"陪跑{index}": position(float(index), 10.0 + index)
+        for index in range(1, 10)
+    }
 
     narrow = build_mainline_regime_snapshot(
         [{"sector_label": "半导体", "change_1d_percent": 1.0}],
@@ -903,6 +908,14 @@ def test_percentile_universe_expands_denominator_without_emitting_regimes() -> N
     wide_pct = wide["sectors"][0]["features"]["relative_strength_percentile"]
     assert narrow_pct == pytest.approx(50.0)
     assert wide_pct == pytest.approx(55.0)
+    narrow_vol_pct = narrow["sectors"][0]["features"][
+        "annualized_volatility_20d_percentile"
+    ]
+    wide_vol_pct = wide["sectors"][0]["features"][
+        "annualized_volatility_20d_percentile"
+    ]
+    assert narrow_vol_pct == pytest.approx(50.0)
+    assert wide_vol_pct == pytest.approx(95.0)
 
 
 def test_relative_percentile_never_mixes_absolute_pool_per_label() -> None:
@@ -1180,6 +1193,115 @@ def test_v3_overheat_discloses_risk_instead_of_blocking_entry() -> None:
     assert v2_row["entry_state"] == "ready_on_pullback"
 
 
+def test_v3_current_flow_improvement_opens_only_a_reduced_probe_channel() -> None:
+    mainline = _mainline_row("中药", status="forming")
+    mainline["component_scores"]["fund_flow"] = 20.0
+    mainline["component_scores"]["breadth"] = 25.0
+
+    row = score_sector_opportunity_rows(
+        [_heat_row("中药", 0.8, 2.0)],
+        sector_flow_by_label={
+            "中药": _aligned_flow(
+                3.0,
+                -18.0,
+                pattern="multi_day_outflow_then_inflow",
+            )
+        },
+        mainline_by_label={"中药": mainline},
+    )[0]
+
+    assert row["entry_state"] == ENTRY_READY_ON_PULLBACK
+    assert 20.0 <= row["participation_score"] < 35.0
+    assert row["flow_signal_state"] == "improving"
+    assert row["flow_improving_probe_eligible"] is True
+    assert row["waiting_reason_code"] == "fund_entry_confirmation"
+    assert row["execution_eligible"] is True
+    assert row["first_tranche_scale"] == 0.4
+
+
+def test_v3_low_participation_still_waits_when_funds_are_flowing_out() -> None:
+    mainline = _mainline_row("中药", status="forming")
+    mainline["component_scores"]["fund_flow"] = 20.0
+    mainline["component_scores"]["breadth"] = 25.0
+
+    row = score_sector_opportunity_rows(
+        [_heat_row("中药", -0.8, 1.0)],
+        sector_flow_by_label={
+            "中药": _aligned_flow(-3.35, -18.23, pattern="weak_outflow")
+        },
+        mainline_by_label={"中药": mainline},
+    )[0]
+
+    assert row["entry_state"] == ENTRY_READY_ON_PULLBACK
+    assert row["flow_improving_probe_eligible"] is False
+    assert row["waiting_reason_code"] == "flow_confirmation"
+    assert row["execution_eligible"] is False
+
+
+def test_v3_flow_inflection_probe_outranks_an_ordinary_wait_direction() -> None:
+    from app.services.sector_opportunity_scoring import (
+        select_scored_sector_opportunities,
+    )
+
+    rows = [
+        {
+            "sector_label": "普通等待",
+            "score_policy_version": ENTRY_POLICY_VERSION_V3,
+            "entry_state": ENTRY_READY_ON_PULLBACK,
+            "evidence_quality": "complete",
+            "research_score": 95.0,
+            "selection_priority_score": 95.0,
+            "flow_improving_probe_eligible": False,
+            "sector_group": "普通等待",
+        },
+        {
+            "sector_label": "资金拐点",
+            "score_policy_version": ENTRY_POLICY_VERSION_V3,
+            "entry_state": ENTRY_READY_ON_PULLBACK,
+            "evidence_quality": "complete",
+            "research_score": 70.0,
+            "selection_priority_score": 74.0,
+            "flow_improving_probe_eligible": True,
+            "sector_group": "资金拐点",
+        },
+    ]
+
+    selected = select_scored_sector_opportunities(rows, max_total=1)
+
+    assert [row["sector_label"] for row in selected] == ["资金拐点"]
+
+
+def test_v3_high_elasticity_bonus_cannot_bypass_entry_state_boundary() -> None:
+    from app.services.sector_opportunity_scoring import (
+        select_scored_sector_opportunities,
+    )
+
+    rows = [
+        {
+            "sector_label": "趋势已通过",
+            "score_policy_version": ENTRY_POLICY_VERSION_V3,
+            "entry_state": ENTRY_READY_ON_PULLBACK,
+            "evidence_quality": "complete",
+            "research_score": 62.0,
+            "selection_priority_score": 62.0,
+            "sector_group": "趋势已通过",
+        },
+        {
+            "sector_label": "高弹性但未成形",
+            "score_policy_version": ENTRY_POLICY_VERSION_V3,
+            "entry_state": ENTRY_FORMING,
+            "evidence_quality": "complete",
+            "research_score": 95.0,
+            "selection_priority_score": 103.0,
+            "sector_group": "高弹性但未成形",
+        },
+    ]
+
+    selected = select_scored_sector_opportunities(rows, max_total=1)
+
+    assert [row["sector_label"] for row in selected] == ["趋势已通过"]
+
+
 def test_v3_single_day_divergence_no_longer_invalidates_a_direction() -> None:
     """v2 只要命中单日 distribution 就判 invalid，实测导致 91% 的观测被否决。"""
     mainline = _mainline_row("半导体")
@@ -1325,6 +1447,35 @@ def test_first_qualifying_day_opens_initial_tranche() -> None:
     assert day_two["entry_state"] == ENTRY_READY_TO_START
     assert day_two["consecutive_qualifying_days"] == 2
     assert day_two["execution_eligible"] is True
+
+
+def test_hysteresis_preserves_flow_inflection_probe_execution_channel() -> None:
+    from app.services.sector_direction_state import apply_direction_state_hysteresis
+
+    row = {
+        **_v3_row(
+            "中药",
+            entry_state=ENTRY_READY_ON_PULLBACK,
+            trend=68.0,
+        ),
+        "flow_improving_probe_eligible": True,
+        "waiting_reason_code": "fund_entry_confirmation",
+        "execution_eligible": True,
+        "automatic_promotion_allowed": True,
+    }
+
+    result = apply_direction_state_hysteresis(
+        [row],
+        trade_date="2026-06-10",
+        previous_trade_date="2026-06-09",
+        previous_states={},
+    )[0]
+
+    assert result["entry_state"] == ENTRY_READY_ON_PULLBACK
+    assert result["flow_improving_probe_active"] is True
+    assert result["execution_eligible"] is True
+    assert result["automatic_promotion_allowed"] is True
+    assert result["waiting_reason_code"] == "fund_entry_confirmation"
 
 
 def test_hysteresis_band_prevents_same_day_downgrade() -> None:

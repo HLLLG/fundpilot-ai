@@ -157,11 +157,11 @@ describe("DiscoveryReportPanel", () => {
     expect(screen.getByText("1 个通过入场线")).toBeInTheDocument();
     expect(screen.getByText("锂电池")).toBeInTheDocument();
     expect(screen.getByText("可以开始布局")).toBeInTheDocument();
-    expect(screen.getByText("等待合适位置 · 1 个方向")).toBeInTheDocument();
+    expect(screen.getByText("等待入场条件 · 1 个方向")).toBeInTheDocument();
     expect(screen.getByText("方向观察池 · 1 个尚在形成")).toBeInTheDocument();
     expect(screen.queryByText("本次主方向")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByText("等待合适位置 · 1 个方向"));
+    fireEvent.click(screen.getByText("等待入场条件 · 1 个方向"));
     expect(screen.getByText("机器人")).toBeVisible();
     expect(screen.getByText(/单日涨幅回落至3%以内/)).toBeVisible();
   });
@@ -323,7 +323,13 @@ describe("DiscoveryReportPanel", () => {
     };
     report.recommendations = [
       { ...base, fund_code: "000001", fund_name: "可执行基金", action: "分批买入" },
-      { ...base, fund_code: "000002", fund_name: "等待基金", action: "等待回调" },
+      {
+        ...base,
+        fund_code: "000002",
+        fund_name: "等待基金",
+        action: "等待回调",
+        waiting_reason_code: "flow_confirmation",
+      },
       { ...base, fund_code: "000003", fund_name: "观察基金", action: "建议关注" },
     ];
     report.candidate_pool = report.recommendations.map((item) => ({
@@ -342,6 +348,7 @@ describe("DiscoveryReportPanel", () => {
     expect(screen.getByText("1 只通过可执行校验")).toBeInTheDocument();
     expect(screen.getByText("可执行建议")).toBeInTheDocument();
     expect(screen.getByText("等待条件")).toBeInTheDocument();
+    expect(screen.getByText("等待资金确认")).toBeInTheDocument();
     expect(screen.getByText("研究观察")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /本次候选池/ }));
