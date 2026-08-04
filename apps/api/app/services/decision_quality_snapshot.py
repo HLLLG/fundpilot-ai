@@ -274,6 +274,7 @@ def evaluate_and_persist_decision_quality_snapshots(
         joined = ",".join(str(value) for value, _ in failed_user_errors)
         safe_contract_details: list[str] = []
         safe_contract_codes: list[str] = []
+        safe_contract_sites: list[str] = []
         diagnostic_prefix = "native candidate audit capture contract is invalid: "
         for user_id, error in failed_user_errors:
             message = str(error)
@@ -290,6 +291,28 @@ def evaluate_and_persist_decision_quality_snapshots(
             if re.fullmatch(r"[a-z][a-z -]{0,119}", static_message):
                 code = re.sub(r"[ -]+", "_", static_message)
                 safe_contract_codes.append(f"{user_id}[{code}]")
+                continue
+            # If the message itself cannot be exposed safely, report only the
+            # source-code site that raised the typed contract error.  File,
+            # function and line are release metadata and contain no tenant
+            # evidence, while still making an otherwise opaque deployment
+            # failure actionable.
+            traceback_cursor = error.__traceback__
+            while traceback_cursor is not None and traceback_cursor.tb_next is not None:
+                traceback_cursor = traceback_cursor.tb_next
+            if traceback_cursor is not None:
+                frame = traceback_cursor.tb_frame
+                filename = Path(frame.f_code.co_filename).name
+                function = frame.f_code.co_name
+                line = traceback_cursor.tb_lineno
+                if (
+                    re.fullmatch(r"[A-Za-z0-9_.-]+", filename)
+                    and re.fullmatch(r"[A-Za-z0-9_.-]+", function)
+                    and line > 0
+                ):
+                    safe_contract_sites.append(
+                        f"{user_id}[{filename}:{function}:{line}]"
+                    )
         detail_suffix = (
             "; contract_fields=" + ";".join(safe_contract_details)
             if safe_contract_details
@@ -300,11 +323,17 @@ def evaluate_and_persist_decision_quality_snapshots(
             if safe_contract_codes
             else ""
         )
+        site_suffix = (
+            "; contract_sites=" + ";".join(safe_contract_sites)
+            if safe_contract_sites
+            else ""
+        )
         raise DecisionQualitySnapshotContractError(
             "decision-quality evaluation failed closed for isolated user ids: "
             + joined
             + detail_suffix
             + code_suffix
+            + site_suffix
         ) from failed_user_errors[0][1]
 
     return {

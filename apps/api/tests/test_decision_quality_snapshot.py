@@ -2413,3 +2413,31 @@ def test_all_users_surfaces_only_safe_candidate_contract_field_names(
         "decision-quality evaluation failed closed for isolated user ids: 2; "
         "contract_fields=2[artifact.capture_validation,artifact.label_plan]"
     )
+
+
+def test_all_users_uses_safe_source_site_for_value_bearing_contract_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def evaluate_one(**kwargs):
+        raise DecisionQualitySnapshotContractError(
+            "report 123 has invalid immutable evidence: secret-value"
+        )
+
+    monkeypatch.setattr(
+        "app.services.decision_quality_snapshot._evaluate_one_user_snapshot",
+        evaluate_one,
+    )
+
+    with pytest.raises(DecisionQualitySnapshotContractError) as captured:
+        evaluate_and_persist_decision_quality_snapshots(
+            evaluation_as_of="2026-07-14T00:00:00Z",
+            user_ids=[2],
+        )
+
+    message = str(captured.value)
+    assert "report 123" not in message
+    assert "secret-value" not in message
+    assert message.startswith(
+        "decision-quality evaluation failed closed for isolated user ids: 2; "
+        "contract_sites=2[test_decision_quality_snapshot.py:evaluate_one:"
+    )
