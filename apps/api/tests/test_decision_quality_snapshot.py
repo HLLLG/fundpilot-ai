@@ -2383,3 +2383,29 @@ def test_all_users_attempts_other_tenants_after_one_contract_failure(
             user_ids=[1, 2, 3],
         )
     assert calls == [1, 2, 3]
+
+
+def test_all_users_surfaces_only_safe_candidate_contract_field_names(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def evaluate_one(**kwargs):
+        raise DecisionQualitySnapshotContractError(
+            "native candidate audit capture contract is invalid: "
+            "artifact.capture_validation,artifact.label_plan"
+        )
+
+    monkeypatch.setattr(
+        "app.services.decision_quality_snapshot._evaluate_one_user_snapshot",
+        evaluate_one,
+    )
+
+    with pytest.raises(DecisionQualitySnapshotContractError) as captured:
+        evaluate_and_persist_decision_quality_snapshots(
+            evaluation_as_of="2026-07-14T00:00:00Z",
+            user_ids=[2],
+        )
+
+    assert str(captured.value) == (
+        "decision-quality evaluation failed closed for isolated user ids: 2; "
+        "contract_fields=2[artifact.capture_validation,artifact.label_plan]"
+    )

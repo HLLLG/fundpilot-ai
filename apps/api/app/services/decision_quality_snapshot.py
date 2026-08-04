@@ -272,9 +272,24 @@ def evaluate_and_persist_decision_quality_snapshots(
             raise
     if failed_user_errors:
         joined = ",".join(str(value) for value, _ in failed_user_errors)
+        safe_contract_details: list[str] = []
+        diagnostic_prefix = "native candidate audit capture contract is invalid: "
+        for user_id, error in failed_user_errors:
+            message = str(error)
+            if not message.startswith(diagnostic_prefix):
+                continue
+            fields = message.removeprefix(diagnostic_prefix)
+            if re.fullmatch(r"[a-z_.]+(?:,[a-z_.]+)*", fields):
+                safe_contract_details.append(f"{user_id}[{fields}]")
+        detail_suffix = (
+            "; contract_fields=" + ";".join(safe_contract_details)
+            if safe_contract_details
+            else ""
+        )
         raise DecisionQualitySnapshotContractError(
             "decision-quality evaluation failed closed for isolated user ids: "
             + joined
+            + detail_suffix
         ) from failed_user_errors[0][1]
 
     return {
