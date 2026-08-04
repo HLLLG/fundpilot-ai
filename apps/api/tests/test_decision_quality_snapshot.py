@@ -55,6 +55,7 @@ from app.services.decision_quality_snapshot import (
     _fetch_decision_quality_provider_receipt_rows,
     _validate_provider_receipt_ref_binding,
     _fetch_paginated_rows,
+    _classify_native_candidate_audit_capture,
     _legacy_event_exclusion_allowed,
     _redacted_candidate_selection,
     _raise_for_evaluation_contract_failures,
@@ -691,6 +692,25 @@ def test_invalid_native_audit_and_missing_capture_sentinel_are_denominators(
         "candidate_selection_audit_missing": 1,
     }
     assert snapshot["input_manifest"]["consumed_input_artifact_count"] == 2
+
+
+def test_native_candidate_audit_contract_error_names_only_failed_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection = _snapshot_connection()
+    monkeypatch.setattr(
+        "app.services.decision_repository._utc_now",
+        lambda: "2026-07-15T08:00:01+00:00",
+    )
+    row = _persist_formal_candidate_audit(connection, user_id=63)
+    poisoned = deepcopy(row)
+    poisoned["payload"]["artifact"]["capture_status"] = "capture_late"
+
+    with pytest.raises(
+        DecisionQualitySnapshotContractError,
+        match=r"invalid: artifact\.capture_status$",
+    ):
+        _classify_native_candidate_audit_capture(poisoned)
 
 
 @pytest.mark.parametrize(

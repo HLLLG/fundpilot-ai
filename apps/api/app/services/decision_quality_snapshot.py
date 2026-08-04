@@ -1912,35 +1912,72 @@ def _classify_native_candidate_audit_capture(
             "native candidate label plan clocks are invalid"
         ) from exc
     source_report_id = str(envelope.get("source_report_id") or "")
-    if (
-        envelope.get("artifact_type") != CANDIDATE_AUDIT_ARTIFACT_TYPE
-        or envelope.get("artifact_schema_version")
-        != CANDIDATE_AUDIT_ARTIFACT_SCHEMA_VERSION
-        or envelope.get("logical_key") != f"candidate_audit:{source_report_id}"
-        or envelope.get("source_type") != "discovery"
-        or envelope.get("decision_event_id") is not None
-        or envelope.get("store_authority") != "primary"
-        or artifact.get("schema_version")
-        != CANDIDATE_AUDIT_ARTIFACT_SCHEMA_VERSION
-        or artifact.get("source_report_id") != source_report_id
-        or artifact.get("decision_at") != decision_at.isoformat()
-        or artifact.get("recorded_at") != recorded_at.isoformat()
-        or artifact.get("audit_snapshot_hash") != audit.get("snapshot_hash")
-        or artifact.get("capture_validation") != validation
-        or artifact.get("capture_mode") != CANDIDATE_CAPTURE_MODE
-        or artifact.get("post_commit_receipt_required") is not True
-        or artifact.get("formal_receipt_max_delay_seconds")
-        != CANDIDATE_FORMAL_RECEIPT_MAX_DELAY_SECONDS
-        or artifact.get("formal_source_capture_max_delay_seconds")
-        != CANDIDATE_FORMAL_SOURCE_CAPTURE_MAX_DELAY_SECONDS
-        or artifact.get("formal_source_capture_delay_basis")
-        != "candidate_audit_source_row_created_at_minus_decision_at"
-        or artifact.get("capture_status") != expected_capture_status
-        or artifact.get("capture_reason") != expected_capture_reason
-        or dict(plan) != expected_plan
-    ):
+    contract_checks = {
+        "envelope.artifact_type": (
+            envelope.get("artifact_type") == CANDIDATE_AUDIT_ARTIFACT_TYPE
+        ),
+        "envelope.artifact_schema_version": (
+            envelope.get("artifact_schema_version")
+            == CANDIDATE_AUDIT_ARTIFACT_SCHEMA_VERSION
+        ),
+        "envelope.logical_key": (
+            envelope.get("logical_key") == f"candidate_audit:{source_report_id}"
+        ),
+        "envelope.source_type": envelope.get("source_type") == "discovery",
+        "envelope.decision_event_id": envelope.get("decision_event_id") is None,
+        "envelope.store_authority": envelope.get("store_authority") == "primary",
+        "artifact.schema_version": (
+            artifact.get("schema_version")
+            == CANDIDATE_AUDIT_ARTIFACT_SCHEMA_VERSION
+        ),
+        "artifact.source_report_id": (
+            artifact.get("source_report_id") == source_report_id
+        ),
+        "artifact.decision_at": (
+            artifact.get("decision_at") == decision_at.isoformat()
+        ),
+        "artifact.recorded_at": (
+            artifact.get("recorded_at") == recorded_at.isoformat()
+        ),
+        "artifact.audit_snapshot_hash": (
+            artifact.get("audit_snapshot_hash") == audit.get("snapshot_hash")
+        ),
+        "artifact.capture_validation": (
+            artifact.get("capture_validation") == validation
+        ),
+        "artifact.capture_mode": (
+            artifact.get("capture_mode") == CANDIDATE_CAPTURE_MODE
+        ),
+        "artifact.post_commit_receipt_required": (
+            artifact.get("post_commit_receipt_required") is True
+        ),
+        "artifact.formal_receipt_max_delay_seconds": (
+            artifact.get("formal_receipt_max_delay_seconds")
+            == CANDIDATE_FORMAL_RECEIPT_MAX_DELAY_SECONDS
+        ),
+        "artifact.formal_source_capture_max_delay_seconds": (
+            artifact.get("formal_source_capture_max_delay_seconds")
+            == CANDIDATE_FORMAL_SOURCE_CAPTURE_MAX_DELAY_SECONDS
+        ),
+        "artifact.formal_source_capture_delay_basis": (
+            artifact.get("formal_source_capture_delay_basis")
+            == "candidate_audit_source_row_created_at_minus_decision_at"
+        ),
+        "artifact.capture_status": (
+            artifact.get("capture_status") == expected_capture_status
+        ),
+        "artifact.capture_reason": (
+            artifact.get("capture_reason") == expected_capture_reason
+        ),
+        "artifact.label_plan": dict(plan) == expected_plan,
+    }
+    failed_contract_fields = [
+        field for field, valid in contract_checks.items() if not valid
+    ]
+    if failed_contract_fields:
         raise DecisionQualitySnapshotContractError(
-            "native candidate audit capture contract is invalid"
+            "native candidate audit capture contract is invalid: "
+            + ",".join(failed_contract_fields)
         )
     actual_delay = (source_created_at - decision_at).total_seconds()
     if actual_delay > CANDIDATE_FORMAL_SOURCE_CAPTURE_MAX_DELAY_SECONDS:
