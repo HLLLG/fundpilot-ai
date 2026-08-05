@@ -7,7 +7,7 @@ import time
 
 from app.config import get_settings
 from app.services.fund_primary_sector_precompute import (
-    initial_resolution_backfill_pending,
+    bulk_profile_resolution_backlog_pending,
     migrate_legacy_pending_profile_resolutions,
     run_precompute_batch,
     run_priority_precompute_batch,
@@ -49,6 +49,24 @@ def _holdings_backfill_pause_seconds() -> float:
             ),
         )
     )
+
+
+def _wake_holdings_after_benchmark_queue(
+    scheduled_at: float,
+    result: object | None,
+    *,
+    now: float | None = None,
+) -> float:
+    """Make newly queued profile rows eligible for the next worker tick."""
+
+    try:
+        queued = int(getattr(result, "queued", 0) or 0)
+    except (TypeError, ValueError):
+        queued = 0
+    if queued <= 0:
+        return scheduled_at
+    ready_at = time.monotonic() if now is None else now
+    return min(scheduled_at, ready_at)
 
 
 def fund_primary_sector_precompute_loop() -> None:
@@ -106,15 +124,25 @@ def fund_primary_sector_precompute_loop() -> None:
             if (
                 result is not None
                 and result.processed > 0
-                and initial_resolution_backfill_pending()
+                and bulk_profile_resolution_backlog_pending()
             ):
-                # The first all-market pass is checkpointed after every provider
-                # chunk, so keep draining with a short bounded pause. Once every
-                # code has an explicit outcome, return to the normal incremental
-                # refresh cadence.
+                # The all-market pass is checkpointed after every provider
+                # chunk. Keep draining missing rows and due retry backlogs with
+                # a short bounded pause; each processed row advances its own
+                # retry checkpoint, so provider failures cannot hot-loop.
                 next_regular_batch_at = time.monotonic() + _backfill_pause_seconds()
             else:
                 next_regular_batch_at = time.monotonic() + _interval_seconds()
+            previous_holdings_batch_at = next_holdings_batch_at
+            next_holdings_batch_at = _wake_holdings_after_benchmark_queue(
+                next_holdings_batch_at,
+                result,
+            )
+            if next_holdings_batch_at < previous_holdings_batch_at:
+                logger.info(
+                    "fund primary sector holdings batch woken for %s newly queued profiles",
+                    result.queued,
+                )
 
         seconds_until_regular = max(1.0, next_regular_batch_at - time.monotonic())
         seconds_until_holdings = max(1.0, next_holdings_batch_at - time.monotonic())

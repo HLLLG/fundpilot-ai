@@ -443,6 +443,20 @@ def _bulk_resolution_candidates(
     return candidates[:limit]
 
 
+def bulk_profile_resolution_backlog_pending() -> bool:
+    """Return whether another benchmark/profile batch is immediately due."""
+
+    statuses = list_fund_sector_resolution_statuses()
+    return bool(
+        _bulk_resolution_candidates(
+            limit=1,
+            force=False,
+            fund_codes=None,
+            statuses=statuses,
+        )
+    )
+
+
 def _holdings_worker_count(settings: object) -> int:
     configured = max(
         1,
@@ -995,6 +1009,35 @@ def run_bulk_profile_precompute_batch(
             for row in profile_rows
             if isinstance(row, Mapping) and row.get("fund_code")
         }
+        missing_codes = [code for code in chunk if code not in by_code]
+        retried_codes = set(missing_codes)
+        retry_provider_failed = False
+        retry_recovered_codes: set[str] = set()
+        if missing_codes:
+            try:
+                retry_rows = fetch_fund_basic_profiles_xq(
+                    missing_codes,
+                    timeout_seconds=20,
+                )
+                if retry_rows is None:
+                    retry_provider_failed = True
+                    retry_rows = []
+            except Exception as exc:  # noqa: BLE001 - one bounded retry is fail-closed
+                retry_provider_failed = True
+                retry_rows = []
+                if len(result.errors) < 20:
+                    result.errors.append(f"profile_retry_batch:{type(exc).__name__}")
+            missing_set = set(missing_codes)
+            retry_by_code = {
+                str(row.get("fund_code") or "").strip().zfill(6): row
+                for row in retry_rows
+                if isinstance(row, Mapping)
+                and row.get("fund_code")
+                and str(row.get("fund_code") or "").strip().zfill(6)
+                in missing_set
+            }
+            retry_recovered_codes = set(retry_by_code)
+            by_code.update(retry_by_code)
         checkpoint_rows: list[dict[str, object]] = []
         checked_at = datetime.now(timezone.utc)
         for code in chunk:
@@ -1014,7 +1057,11 @@ def run_bulk_profile_precompute_batch(
                             if provider_failed
                             else "profile_row_unavailable"
                         ),
-                        detail={"provider_failed": provider_failed},
+                        detail={
+                            "provider_failed": provider_failed,
+                            "profile_retry_attempted": code in retried_codes,
+                            "profile_retry_provider_failed": retry_provider_failed,
+                        },
                         previous=statuses.get(code),
                         checked_at=checked_at,
                     )
@@ -1025,6 +1072,8 @@ def run_bulk_profile_precompute_batch(
                 fallback_name=name,
                 profile=profile,
             )
+            if code in retry_recovered_codes:
+                detail = {**detail, "profile_retry_recovered": True}
             if record is not None:
                 _promote_and_remember(
                     record,
