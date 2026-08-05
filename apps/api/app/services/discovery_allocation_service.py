@@ -89,9 +89,9 @@ def apply_deterministic_discovery_allocation(
     if not allocator_rows:
         risk_context = {
             "schema_version": "discovery_risk_context.v1",
-            "status": "unqualified",
+            "status": "not_evaluated_no_actionable_candidates",
             "qualified": False,
-            "reason_codes": ["no_buy_candidates"],
+            "reason_codes": ["no_actionable_recommendation_candidates"],
             "max_drawdown_percent_by_code": {},
             "covariance_by_code": {},
             "positive_correlation_penalty_to_current_holdings_by_code": {},
@@ -103,7 +103,6 @@ def apply_deterministic_discovery_allocation(
             decision_at=decision_at,  # type: ignore[arg-type]
         )
 
-    cash = _confirmed_cash(discovery_facts)
     exposures = _sector_exposures(holdings_slim)
     denominator = _positive_number(portfolio_gap.get("weight_denominator_yuan"))
     if denominator is None:
@@ -111,7 +110,10 @@ def apply_deterministic_discovery_allocation(
     plan = allocate_discovery_candidates(
         allocator_rows,
         requested_budget_yuan=budget_yuan,
-        confirmed_cash_yuan=cash,
+        # The generic allocator still names this input "confirmed cash" for
+        # historical callers. Discovery has one funding input: the explicit
+        # per-scan budget configured by the user.
+        confirmed_cash_yuan=budget_yuan,
         existing_sector_exposure_yuan=exposures,
         concentration_denominator_yuan=denominator,
         concentration_limit_percent=profile.concentration_limit_percent,
@@ -126,6 +128,39 @@ def apply_deterministic_discovery_allocation(
         amount_step_yuan=100,
         require_tradeability_gate=False,
     )
+    if not allocator_rows:
+        unallocated_reasons = (
+            (plan.get("unallocated_budget") or {}).get("reason_codes")
+            if isinstance(plan.get("unallocated_budget"), Mapping)
+            else None
+        )
+        if isinstance(unallocated_reasons, list):
+            plan["unallocated_budget"]["reason_codes"] = [
+                "no_actionable_recommendation_candidates"
+                if reason in {"no_quality_eligible_candidates", "no_gate_eligible_candidates"}
+                else reason
+                for reason in unallocated_reasons
+            ]
+    plan_budget = plan.get("budget")
+    if isinstance(plan_budget, dict):
+        plan_budget.pop("confirmed_cash_yuan", None)
+    unallocated_budget = plan.get("unallocated_budget")
+    if isinstance(unallocated_budget, dict):
+        unallocated_budget.pop("unavailable_due_to_cash_yuan", None)
+    for allocation in plan.get("allocations") or []:
+        if not isinstance(allocation, dict):
+            continue
+        for future_batch in allocation.get("future_tranches") or []:
+            if not isinstance(future_batch, dict):
+                continue
+            preconditions = future_batch.get("preconditions")
+            if isinstance(preconditions, list):
+                future_batch["preconditions"] = [
+                    "request_budget_recheck"
+                    if value == "confirmed_cash_recheck"
+                    else value
+                    for value in preconditions
+                ]
 
     allocation_rows = {
         str(item.get("fund_code") or "").zfill(6): dict(item)
@@ -178,7 +213,7 @@ def apply_deterministic_discovery_allocation(
         copy.allocation = allocation
         copy.cost_assessment = {}
         copy.amount_note = (
-            "首批参考金额由系统按已确认现金、总预算、已有板块敞口、"
+            "首批参考金额由系统按本次可投入预算、已有板块敞口、"
             "集中度、候选历史回撤、波动和相关性统一计算；风险越高首批"
             "权重越低，后续批次不预先承诺金额。"
         )
@@ -201,7 +236,7 @@ def apply_deterministic_discovery_allocation(
             "候选未形成合格的组合风险上下文或统一首批额度，系统已清除全部买入金额。"
         )
     elif plan.get("status") == "partial":
-        caveats.append("统一分配受现金、风险或集中度上限约束，部分首批预算保持未分配。")
+        caveats.append("统一分配受预算、风险或集中度上限约束，部分首批预算保持未分配。")
     return projected, plan, risk_context, caveats
 
 
@@ -288,16 +323,6 @@ def _allocator_candidate(
         quality_gate.get("status") if isinstance(quality_gate, Mapping) else None
     )
     return row
-
-
-def _confirmed_cash(facts: Mapping[str, Any]) -> float | None:
-    truth = facts.get("portfolio_position_truth")
-    if not isinstance(truth, Mapping):
-        return None
-    cash = truth.get("cash")
-    if not isinstance(cash, Mapping) or cash.get("known") is not True:
-        return None
-    return _nonnegative_number(cash.get("balance_yuan"))
 
 
 def _sector_exposures(value: Any) -> dict[str, float] | None:

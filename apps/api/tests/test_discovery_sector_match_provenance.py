@@ -22,6 +22,11 @@ from app.services.discovery_candidate_pool import (
     rank_candidates_balanced_fallback,
 )
 from app.services.discovery_guard import apply_discovery_guards
+from app.services.discovery_sector_identity import (
+    SECTOR_IDENTITY_PENDING,
+    SECTOR_IDENTITY_VERIFIED,
+    candidate_sector_identity_is_executable,
+)
 
 
 _DECISION_AT = datetime(2026, 7, 14, tzinfo=timezone.utc)
@@ -51,6 +56,51 @@ def test_sector_fit_score_prefers_public_provenance_and_supports_legacy_rows(
     expected: float,
 ) -> None:
     assert _sector_fit_score(row) == expected
+
+
+@pytest.mark.parametrize(
+    ("row", "expected"),
+    [
+        ({"sector_match_kind": "primary", "sector_fit_score": 1}, True),
+        ({"sector_match_kind": "tracking_exact", "sector_fit_score": 1}, True),
+        ({"sector_match_kind": "name", "sector_fit_score": 99}, False),
+        ({"sector_match_kind": "new_issue", "sector_fit_score": 18}, False),
+        ({"sector_match_kind": "fallback", "sector_fit_score": 99}, False),
+        (
+            {
+                "sector_match_kind": "primary",
+                "sector_identity_status": SECTOR_IDENTITY_PENDING,
+                "sector_fit_score": 99,
+            },
+            False,
+        ),
+        (
+            {
+                "sector_match_kind": "name",
+                "sector_identity_status": SECTOR_IDENTITY_VERIFIED,
+                "sector_identity_eligible": True,
+                "sector_mapping_verified": True,
+                "sector_fit_score": 99,
+            },
+            False,
+        ),
+        (
+            {
+                "sector_match_kind": "primary",
+                "sector_identity_status": SECTOR_IDENTITY_VERIFIED,
+                "sector_identity_eligible": False,
+                "sector_fit_score": 99,
+            },
+            False,
+        ),
+        ({"sector_fit_score": 36}, True),  # pre-provenance report compatibility
+    ],
+)
+def test_sector_identity_gate_uses_provenance_not_fit_score(
+    row: dict,
+    expected: bool,
+) -> None:
+    assert candidate_sector_identity_is_executable(row) is expected
 
 
 def test_fallback_candidates_have_explicit_public_provenance() -> None:
@@ -117,6 +167,8 @@ def test_llm_primary_mapping_is_recall_only_until_independently_verified(
 
     assert built[0]["sector_match_kind"] == "fallback"
     assert built[0]["sector_mapping_verified"] is False
+    assert built[0]["sector_identity_status"] == SECTOR_IDENTITY_PENDING
+    assert built[0]["sector_identity_eligible"] is False
     assert built[0]["sector_fit_score"] == 16.0
     assert built[0]["selection_reason"] == "推断板块映射待核验"
 
@@ -194,6 +246,8 @@ def test_primary_match_survives_build_enrich_finalize_llm_and_guard(
     # The same fund is discovered through both primary mapping and name matching;
     # the stronger primary provenance must win and must already be persistable.
     assert built[0]["sector_match_kind"] == "primary"
+    assert built[0]["sector_identity_status"] == SECTOR_IDENTITY_VERIFIED
+    assert built[0]["sector_identity_eligible"] is True
     assert built[0]["sector_fit_score"] == 36.8
     assert built[0]["quality_score_version"] == "fund_quality.v4"
     assert not any(key.startswith("_") for key in built[0])
@@ -372,6 +426,8 @@ def test_exact_passive_tracking_reference_upgrades_name_match_without_upgrading_
 
     exact = by_code["020989"]
     assert exact["sector_match_kind"] == "tracking_exact"
+    assert exact["sector_identity_status"] == SECTOR_IDENTITY_VERIFIED
+    assert exact["sector_identity_eligible"] is True
     assert exact["sector_fit_score"] == 34.0
     assert exact["tracking_reference_match"]["index_code"] == "HSTECH"
     assert exact["tracking_reference_match"]["formal_excess_eligible"] is False
@@ -381,6 +437,8 @@ def test_exact_passive_tracking_reference_upgrades_name_match_without_upgrading_
 
     proxy = by_code["007882"]
     assert proxy["sector_match_kind"] == "name"
+    assert proxy["sector_identity_status"] == SECTOR_IDENTITY_PENDING
+    assert proxy["sector_identity_eligible"] is False
     assert proxy["sector_fit_score"] == 16.0
     assert proxy["vehicle_quality_status"] == "watch_only"
 

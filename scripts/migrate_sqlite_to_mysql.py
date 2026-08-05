@@ -78,6 +78,32 @@ TABLES = [
         ],
     ),
     (
+        "fund_sector_exposure_snapshots",
+        [
+            "snapshot_id", "fund_code", "sector_name", "exposure_percent",
+            "is_primary", "identity_status", "source", "confidence",
+            "source_ref", "report_period", "as_of_date", "available_at",
+            "evaluated_at", "mapping_version", "detail",
+        ],
+    ),
+    (
+        "fund_sector_current",
+        [
+            "fund_code", "sector_name", "exposure_percent", "is_primary",
+            "identity_status", "source", "confidence", "evidence_snapshot_id",
+            "source_ref", "report_period", "as_of_date", "available_at",
+            "resolved_at", "expires_at", "mapping_version", "detail",
+        ],
+    ),
+    (
+        "fund_sector_resolution_status",
+        [
+            "fund_code", "resolution_status", "stage", "reason_code",
+            "fund_name", "checked_at", "next_retry_at", "attempt_count",
+            "mapping_version", "detail",
+        ],
+    ),
+    (
         "discovery_jobs",
         [
             "id", "status", "request_payload", "dedup_key",
@@ -457,6 +483,11 @@ _PERFORMANCE_REQUIRED_COLUMNS_V19 = {
         {"dedup_key", "active_dedup_key", "heartbeat_at"}
     ),
 }
+_SECTOR_IDENTITY_REQUIRED_TABLES_V21 = (
+    "fund_sector_exposure_snapshots",
+    "fund_sector_current",
+)
+_SECTOR_RESOLUTION_REQUIRED_TABLE_V22 = "fund_sector_resolution_status"
 
 
 def parse_mysql_url(url: str) -> dict:
@@ -800,6 +831,34 @@ def _validate_source_decision_quality_contract(
                         f"schema v{source_version} source performance "
                         f"contract mismatch: {table}"
                     )
+        if source_version >= 21:
+            for table in _SECTOR_IDENTITY_REQUIRED_TABLES_V21:
+                actual_contract = _source_sqlite_table_contract(connection, table)
+                expected_contract = _source_sqlite_table_contract(expected, table)
+                if actual_contract is None:
+                    raise MigrationError(
+                        f"schema v{source_version} source is missing required "
+                        f"fund-sector identity table {table}"
+                    )
+                if actual_contract != expected_contract:
+                    raise MigrationError(
+                        f"schema v{source_version} source fund-sector identity "
+                        f"contract mismatch: {table}"
+                    )
+        if source_version >= 22:
+            table = _SECTOR_RESOLUTION_REQUIRED_TABLE_V22
+            actual_contract = _source_sqlite_table_contract(connection, table)
+            expected_contract = _source_sqlite_table_contract(expected, table)
+            if actual_contract is None:
+                raise MigrationError(
+                    f"schema v{source_version} source is missing required "
+                    f"fund-sector resolution table {table}"
+                )
+            if actual_contract != expected_contract:
+                raise MigrationError(
+                    f"schema v{source_version} source fund-sector resolution "
+                    f"contract mismatch: {table}"
+                )
     finally:
         expected.close()
     return source_version

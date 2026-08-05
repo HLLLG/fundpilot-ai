@@ -31,7 +31,7 @@ def test_humanize_evidence_text_replaces_internal_field_names() -> None:
     assert "距离近期高点约 -3.2%" in result
     assert "近1年最大回撤约 25.6%" in result
     assert "基金质量分 61.5" in result
-    assert "板块匹配分 24" in result
+    assert "板块关联排序分 24" in result
     assert "置信度高" in result
     assert "顺势观察" in result
     assert "涨幅较快但资金流出" in result

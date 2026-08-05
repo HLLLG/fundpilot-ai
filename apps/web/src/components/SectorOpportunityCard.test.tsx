@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { afterEach, expect, it } from "vitest";
 
@@ -228,4 +228,49 @@ it("shows probability-sized early entry before full trend confirmation", () => {
   expect(screen.getByTestId("formation-probability")).toHaveTextContent("大概率形成");
   expect(screen.getByTestId("formation-probability")).toHaveTextContent("计划仓位的 40%");
   expect(screen.getByText("18 亿")).toBeInTheDocument();
+});
+
+it("keeps key direction facts visible while supporting details start collapsed", () => {
+  render(
+    <SectorOpportunityCard
+      collapsibleDetails
+      item={{
+        sector_label: "云计算",
+        score_policy_version: "sector_entry_maturity.2026-08.v3",
+        entry_state: "ready_to_start",
+        direction_score: 77,
+        trend_strength_score: 76,
+        participation_score: 93,
+        position_risk_score: 69,
+        trend_formation_probability: 90,
+        formation_probability_band: "strong",
+        first_tranche_scale: 1,
+        today_available: true,
+        today_main_force_net_yi: 28.7,
+        five_day_available: true,
+        cumulative_5d_net_yi: 22.83,
+        entry_triggers: ["首批后继续确认趋势强度与资金参与度"],
+      }}
+    />,
+  );
+
+  expect(screen.getByText("云计算")).toBeVisible();
+  expect(screen.getByText("可以开始布局")).toBeVisible();
+  expect(screen.getByTestId("formation-probability")).toHaveTextContent("90%");
+  expect(screen.getByTestId("formation-probability")).toHaveTextContent("计划仓位的 100%");
+  expect(screen.queryByTestId("sector-opportunity-details")).not.toBeInTheDocument();
+  expect(screen.queryByText("28.70 亿")).not.toBeInTheDocument();
+
+  const expandDetails = screen.getByRole("button", { name: "展开云计算方向详情" });
+  expect(expandDetails).toHaveAttribute("aria-expanded", "false");
+  expect(expandDetails).not.toHaveTextContent(/展开|收起/);
+  fireEvent.click(expandDetails);
+
+  expect(screen.getByRole("button", { name: "收起云计算方向详情" })).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
+  expect(screen.getByTestId("sector-opportunity-details")).toBeVisible();
+  expect(screen.getByText("28.70 亿")).toBeVisible();
+  expect(screen.getByText(/首批后继续确认趋势强度与资金参与度/)).toBeVisible();
 });

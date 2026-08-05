@@ -112,3 +112,42 @@ def test_runtime_role_and_background_worker_health_defaults(monkeypatch):
     assert settings.async_job_heartbeat_interval_seconds == 15
     assert settings.async_job_stale_seconds == 900
     assert settings.async_job_retry_after_seconds == 5
+
+
+def test_fund_primary_sector_precompute_defaults_finish_initial_coverage_quickly(
+    monkeypatch,
+):
+    names = (
+        "FUND_AI_FUND_PRIMARY_SECTOR_PRECOMPUTE_BATCH_SIZE",
+        "FUND_AI_FUND_PRIMARY_SECTOR_PRECOMPUTE_PROFILE_CHUNK_SIZE",
+        "FUND_AI_FUND_PRIMARY_SECTOR_PRECOMPUTE_HOLDINGS_BATCH_SIZE",
+        "FUND_AI_FUND_PRIMARY_SECTOR_PRECOMPUTE_HOLDINGS_WORKERS",
+        "FUND_AI_FUND_PRIMARY_SECTOR_PRECOMPUTE_HOLDINGS_BACKFILL_PAUSE_SECONDS",
+        "FUND_AI_FUND_PRIMARY_SECTOR_PRECOMPUTE_INTERVAL_HOURS",
+        "FUND_AI_FUND_PRIMARY_SECTOR_PRECOMPUTE_STARTUP_DELAY_SECONDS",
+        "FUND_AI_FUND_PRIMARY_SECTOR_PRECOMPUTE_BACKFILL_PAUSE_SECONDS",
+        "FUND_AI_FUND_PRIMARY_SECTOR_PRECOMPUTE_UNAVAILABLE_RETRY_HOURS",
+        "FUND_AI_FUND_PRIMARY_SECTOR_PRECOMPUTE_PENDING_RETRY_DAYS",
+        "FUND_AI_FUND_PRIMARY_SECTOR_PRECOMPUTE_RESEARCH_RETRY_DAYS",
+        "FUND_AI_FUND_PRIMARY_SECTOR_PRECOMPUTE_UNMAPPED_RETRY_DAYS",
+    )
+    for name in names:
+        monkeypatch.delenv(name, raising=False)
+
+    settings = Settings(_env_file=None)
+
+    assert settings.fund_primary_sector_precompute_batch_size == 800
+    assert settings.fund_primary_sector_precompute_profile_chunk_size == 80
+    assert settings.fund_primary_sector_precompute_holdings_batch_size == 32
+    assert settings.fund_primary_sector_precompute_holdings_workers == 4
+    assert (
+        settings.fund_primary_sector_precompute_holdings_backfill_pause_seconds
+        == 30
+    )
+    assert settings.fund_primary_sector_precompute_interval_hours == 6
+    assert settings.fund_primary_sector_precompute_startup_delay_seconds == 60
+    assert settings.fund_primary_sector_precompute_backfill_pause_seconds == 5
+    assert settings.fund_primary_sector_precompute_unavailable_retry_hours == 6
+    assert settings.fund_primary_sector_precompute_pending_retry_days == 14
+    assert settings.fund_primary_sector_precompute_research_retry_days == 30
+    assert settings.fund_primary_sector_precompute_unmapped_retry_days == 30

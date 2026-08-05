@@ -253,9 +253,22 @@ class Settings(BaseSettings):
     fund_primary_sector_global_benchmark_ttl_days: int = 30
     fund_primary_sector_global_holdings_ttl_days: int = 90
     fund_primary_sector_precompute_enabled: bool = True
-    fund_primary_sector_precompute_batch_size: int = 150
-    fund_primary_sector_precompute_interval_hours: int = 12
-    fund_primary_sector_precompute_startup_delay_seconds: int = 300
+    # 首次覆盖未完成时连续跑批；完成后只处理到期增量。单批内部按 80 只拆分，
+    # 由一个隔离子进程做有限并发，避免旧的逐只子进程链路拖慢到数月。
+    fund_primary_sector_precompute_batch_size: int = 800
+    fund_primary_sector_precompute_profile_chunk_size: int = 80
+    # 持仓核验比 profile 拉取昂贵，使用小批量 + 有界并发持续排空，候选池优先队列
+    # 仍会在每轮之前处理。未通过 PIT/覆盖率/集中度门槛的结果只记 research_only。
+    fund_primary_sector_precompute_holdings_batch_size: int = 32
+    fund_primary_sector_precompute_holdings_workers: int = 4
+    fund_primary_sector_precompute_holdings_backfill_pause_seconds: int = 30
+    fund_primary_sector_precompute_interval_hours: int = 6
+    fund_primary_sector_precompute_startup_delay_seconds: int = 60
+    fund_primary_sector_precompute_backfill_pause_seconds: int = 5
+    fund_primary_sector_precompute_unavailable_retry_hours: int = 6
+    fund_primary_sector_precompute_pending_retry_days: int = 14
+    fund_primary_sector_precompute_research_retry_days: int = 30
+    fund_primary_sector_precompute_unmapped_retry_days: int = 30
     # 规则（业绩基准/持仓穿透）都推不出主题时，用 DeepSeek 兜底分类（按基金代码全局缓存，只调用一次）
     fund_primary_sector_llm_infer_enabled: bool = True
     # 应用启动后延迟一次性扫描存量持仓，把历史遗留的空板块用最新规则链（含 LLM）补全

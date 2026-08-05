@@ -123,6 +123,9 @@ from app.services.discovery_outcomes import (
     build_discovery_outcomes,
     build_discovery_recommendation_accuracy,
 )
+from app.services.discovery_recommendation_scope import (
+    project_candidate_decisions_for_report,
+)
 from app.services.discovery_sector_heat import build_sector_heat_ranking, build_sector_heat_ranking_for_ui
 from app.services.board_fund_flow_history import get_board_flow_history
 from app.services.theme_board_snapshot import get_theme_board_snapshot
@@ -1031,7 +1034,9 @@ def fund_discovery_report_detail(report_id: str, request: Request) -> Response:
         raise HTTPException(status_code=404, detail="报告不存在")
     return _immutable_json_response(
         request,
-        sanitize_retired_market_evidence(report),
+        sanitize_retired_market_evidence(
+            project_candidate_decisions_for_report(report)
+        ),
     )
 
 

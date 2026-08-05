@@ -21,6 +21,7 @@ from app.services.news_citation import _collect_citable_titles, _matches_known_t
 from app.services.sector_canonical import get_canonical_sector, get_intraday_canonical_sector
 from app.services.sector_labels import normalize_sector_label
 from app.services.discovery_sector_context import execution_qualified_fund_codes
+from app.services.discovery_sector_identity import candidate_sector_identity_is_executable
 from app.services.discovery_strategy import (
     discovery_horizon_label,
     strategy_from_facts,
@@ -221,9 +222,9 @@ def resolve_discovery_amount_cap(
     """Resolve the hard amount cap without trusting an LLM-proposed amount.
 
     The cap is the minimum remaining allowance across the user's explicit scan
-    budget, known cash when supplied, concentration budget, and the portfolio's
-    estimated existing exposure. An omitted cash field falls back to the explicit
-    scan budget; it is never interpreted as zero.
+    budget, concentration budget, and the portfolio's estimated existing
+    exposure. Discovery deliberately has no separate cash input: the configured
+    per-scan budget is its only funding ceiling.
     """
 
     reasons: list[str] = []
@@ -243,18 +244,8 @@ def resolve_discovery_amount_cap(
     ):
         reasons.append("invalid_amount_input")
 
-    truth = portfolio_truth if isinstance(portfolio_truth, Mapping) else None
-    cash_balance: float | None = None
-    if truth is None:
+    if not isinstance(portfolio_truth, Mapping):
         reasons.append("portfolio_truth_missing")
-    else:
-        cash = truth.get("cash")
-        if not isinstance(cash, Mapping) or cash.get("known") is not True:
-            cash_balance = request_budget
-        else:
-            cash_balance = _finite_nonnegative(cash.get("balance_yuan"))
-            if cash_balance is None:
-                reasons.append("invalid_cash_balance")
 
     rows = holdings_slim if isinstance(holdings_slim, list) else None
     if rows is None:
@@ -314,10 +305,8 @@ def resolve_discovery_amount_cap(
     assert request_budget is not None
     assert concentration_limit is not None
     assert denominator is not None
-    assert cash_balance is not None
     limit_ratio = concentration_limit / 100
     remaining_request_budget = max(request_budget - allocated_total, 0.0)
-    remaining_cash = max(cash_balance - allocated_total, 0.0)
     remaining_request_sector = max(
         request_budget * limit_ratio - allocated_sector,
         0.0,
@@ -328,7 +317,6 @@ def resolve_discovery_amount_cap(
     )
     cap = min(
         remaining_request_budget,
-        remaining_cash,
         remaining_request_sector,
         remaining_portfolio_sector,
     )
@@ -337,24 +325,6 @@ def resolve_discovery_amount_cap(
         cap_yuan=floor(max(cap, 0.0) * 100) / 100,
         existing_sector_amount_yuan=round(existing_sector_amount, 2),
     )
-
-
-def _known_portfolio_cash_yuan(discovery_facts: dict | None) -> float | None:
-    truth = (discovery_facts or {}).get("portfolio_position_truth")
-    if not isinstance(truth, dict):
-        return None
-    cash = truth.get("cash")
-    if not isinstance(cash, dict) or cash.get("known") is not True:
-        # Unknown cash is not zero. The amount-cap resolver distinguishes this
-        # state and fails closed instead of silently treating the request budget
-        # as confirmed cash.
-        return None
-    value = _as_float(cash.get("balance_yuan"))
-    if value is None or not isfinite(value):
-        # A row claiming to be known but lacking a usable value is internally
-        # inconsistent; fail closed for executable amounts.
-        return 0.0
-    return max(value, 0.0)
 
 
 def apply_discovery_guards(
@@ -392,20 +362,7 @@ def apply_discovery_guards(
         if parsed_budget is not None and isfinite(parsed_budget)
         else 0.0
     )
-    known_cash_yuan = _known_portfolio_cash_yuan(discovery_facts)
-    spendable_budget_yuan = (
-        min(requested_budget_yuan, known_cash_yuan)
-        if known_cash_yuan is not None
-        else requested_budget_yuan
-    )
-    if known_cash_yuan == 0:
-        caveats.append("已确认可用现金为 0，本次仅保留观察候选，不生成可执行买入金额。")
-    elif known_cash_yuan is not None and known_cash_yuan < requested_budget_yuan:
-        caveats.append(
-            f"示意买入总额已按已确认可用现金 {known_cash_yuan:.2f} 元封顶。"
-        )
-    elif known_cash_yuan is None:
-        caveats.append("可用现金未单独录入，本次按你填写的预算规划；实际投入前请确认账户余额。")
+    spendable_budget_yuan = requested_budget_yuan
     # M6：与日报 analysis_facts.holdings[].escalation 同一思路——把每只候选"是否触发了
     # M4 双向升级判定"的结构化结果记录下来（无论 shadow/enforced 都记录，且不管最终
     # 是否真的生效），供 shadow_escalation_digest.py 聚合复盘读取，避免正则解析 caveats
@@ -947,7 +904,7 @@ def apply_discovery_guards(
             if enforced:
                 copy.points = [
                     f"量价背离与基金质量共振积极，仅形成软建议提额信号，"
-                    f"但仍受现金、预算和集中度硬上限约束（{basis}）。",
+                    f"但仍受本次预算和集中度硬上限约束（{basis}）。",
                     *copy.points,
                 ]
                 caveats.append(
@@ -984,7 +941,7 @@ def apply_discovery_guards(
         if copy.suggested_amount_yuan is not None and spendable_budget_yuan <= 0:
             copy.suggested_amount_yuan = None
             copy.amount_note = (
-                "已确认可执行预算或可用现金为 0，本次未生成买入金额。"
+                "本次可投入预算为 0，本次未生成买入金额。"
             )
         if copy.suggested_amount_yuan is not None and spendable_budget_yuan > 0:
             portfolio_gap = (discovery_facts or {}).get("portfolio_gap")
@@ -1022,11 +979,11 @@ def apply_discovery_guards(
                 copy.suggested_amount_yuan = None
                 copy.amount_note = _join_amount_note(
                     copy.amount_note,
-                    "现金或同板块敞口无法完整核验，系统已清除可执行金额",
+                    "持仓或同板块敞口无法完整核验，系统已清除可执行金额",
                 )
                 copy.validation_notes = [
                     *copy.validation_notes,
-                    "金额硬上限缺少可核验的现金、仓位或板块敞口；未知值未按 0 处理。",
+                    "金额硬上限缺少可核验的仓位或板块敞口；未知值未按 0 处理。",
                 ]
                 caveats.append(f"{code} 金额硬上限无法完整核验，已阻断可执行金额。")
             else:
@@ -1036,7 +993,7 @@ def apply_discovery_guards(
                     copy.amount_note = _join_amount_note(
                         copy.amount_note,
                         (
-                            "现金、总预算或同板块集中度剩余额度低于 100 元，"
+                            "本次预算或同板块集中度剩余额度低于 100 元，"
                             "未达到最小示意执行额"
                         ),
                     )
@@ -1049,12 +1006,12 @@ def apply_discovery_guards(
                     copy.amount_note = _join_amount_note(
                         copy.amount_note,
                         (
-                            "示意金额已按现金、总预算及已有/本轮同板块"
+                            "示意金额已按本次预算及已有/本轮同板块"
                             f"集中度硬上限压缩至约 {adjusted:.0f} 元"
                         ),
                     )
                     caveats.append(
-                        f"{code} 示意金额已按现金、总预算或同板块集中度硬上限压缩。"
+                        f"{code} 示意金额已按本次预算或同板块集中度硬上限压缩。"
                     )
                 if copy.suggested_amount_yuan is not None:
                     final_allocated = float(copy.suggested_amount_yuan)
@@ -1274,7 +1231,7 @@ def _enforce_discovery_execution_projection(rec: DiscoveryRecommendation) -> Non
         rec.suggested_amount_yuan = float(amount)
         rec.amount_note = (
             f"系统校验后的示意买入金额约 {float(amount):,.0f} 元；"
-            "不得突破已确认现金、请求预算与同板块集中度硬上限。"
+            "不得突破本次可投入预算与同板块集中度硬上限。"
         )
         position = rec.suggested_position_change_percent
         if position is not None and (
@@ -1442,9 +1399,8 @@ def _candidate_fund_evidence_reasons(pool_item: Mapping[str, object]) -> list[st
         if quality is not None and quality < 55:
             reasons.append(f"基金质量分 {quality:.2f}，低于 55")
 
-    fit = _as_float(pool_item.get("sector_fit_score"))
-    if fit is not None and fit < 18:
-        reasons.append(f"板块匹配分 {fit:.2f}，低于 18")
+    if not candidate_sector_identity_is_executable(pool_item):
+        reasons.append("基金代码对应的板块身份尚未通过独立核验")
     penalties = " ".join(str(item) for item in pool_item.get("quality_penalties") or [])
     if "匹配置信偏低" in penalties or "板块匹配" in penalties:
         reasons.append("板块匹配置信偏低")
@@ -1712,7 +1668,7 @@ def _build_decision_path(
             return (
                 f"先判断板块方向：{sector}（{_track_label(track)}，机会分 {_fmt_num(score)}），"
                 f"再在该方向内选择基金质量分 {_fmt_num(quality)}、"
-                f"板块匹配分 {_fmt_num(fit)} 的候选基金，动作定为{rec.action}。"
+                f"板块关联排序分 {_fmt_num(fit)} 的候选基金，动作定为{rec.action}。"
             )
         return (
             f"先判断板块方向：{sector}（{_track_label(track)}，机会分 {_fmt_num(score)}），"
@@ -1721,7 +1677,7 @@ def _build_decision_path(
     if quality is not None and fit is not None:
         return (
             f"先判断板块方向：{sector}，再选择基金质量分 {_fmt_num(quality)}、"
-            f"板块匹配分 {_fmt_num(fit)} 的候选基金，动作定为{rec.action}。"
+            f"板块关联排序分 {_fmt_num(fit)} 的候选基金，动作定为{rec.action}。"
         )
     return f"先判断板块方向：{sector}，再从候选池内选择匹配基金，动作定为{rec.action}。"
 
@@ -1765,7 +1721,7 @@ def _build_fund_evidence(pool_item: dict) -> list[str]:
         if quality is not None:
             parts.append(f"基金质量分 {_fmt_num(quality)}")
         if fit is not None:
-            parts.append(f"板块匹配分 {_fmt_num(fit)}")
+            parts.append(f"板块关联排序分 {_fmt_num(fit)}")
         evidence.append("，".join(parts))
     reasons = pool_item.get("quality_reasons") or []
     if reasons:

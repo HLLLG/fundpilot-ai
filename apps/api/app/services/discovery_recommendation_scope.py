@@ -15,6 +15,7 @@ from math import isfinite
 from typing import Any
 
 from app.models import DiscoveryRecommendation
+from app.services.discovery_sector_identity import candidate_sector_identity_is_executable
 from app.services.discovery_selection_strategy import (
     fund_entry_opens_v3_improving_flow_probe,
     fund_entry_opens_v3_probability_probe,
@@ -25,7 +26,7 @@ from app.services.sector_opportunity_scoring import (
     MATURITY_POLICY_VERSIONS,
 )
 
-RECOMMENDATION_SCOPE_VERSION = "discovery_recommendation_scope.2026-08.v1"
+RECOMMENDATION_SCOPE_VERSION = "discovery_recommendation_scope.2026-08.v2"
 MAX_DISCOVERY_RECOMMENDATIONS = 3
 
 _ENTRY_PATH_PRIORITY = {
@@ -67,6 +68,9 @@ def build_recommendation_candidate_scope(
             "unmatched_actionable_sector_labels": [],
             "research_sector_labels": [],
             "sector_funnel": [],
+            "candidate_decisions": [],
+            "conditional_wait_fund_codes": [],
+            "watch_only_fund_codes": [],
             "instruction": "历史报告未启用方向成熟度策略，沿用原候选选择逻辑。",
         }
 
@@ -79,19 +83,32 @@ def build_recommendation_candidate_scope(
             candidates_by_sector[sector].append(raw)
 
     eligible_by_sector: dict[str, list[tuple[Mapping[str, Any], str]]] = defaultdict(list)
+    candidate_decisions: list[dict[str, Any]] = []
+    decisions_by_sector: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    evaluated_codes: set[str] = set()
     funnel: list[dict[str, Any]] = []
     for sector, opportunity in opportunity_by_sector.items():
         rows = candidates_by_sector.get(sector, [])
         reason_counts: Counter[str] = Counter()
         for candidate in rows:
+            code = _fund_code(candidate)
             reasons = _fund_gate_reasons(candidate)
             entry_path = _candidate_entry_path(candidate, opportunity)
             if entry_path is None:
                 reasons.append("direction_entry_not_open")
-            if reasons:
+            decision = _candidate_decision(
+                candidate,
+                entry_path=entry_path,
+                reason_codes=reasons,
+            )
+            candidate_decisions.append(decision)
+            decisions_by_sector[sector].append(decision)
+            if code:
+                evaluated_codes.add(code)
+            if decision["status"] == "actionable":
+                eligible_by_sector[sector].append((candidate, entry_path or "confirmed_entry"))
+            else:
                 reason_counts.update(set(reasons))
-                continue
-            eligible_by_sector[sector].append((candidate, entry_path))
 
         eligible_by_sector[sector].sort(
             key=lambda pair: _candidate_rank_key(pair[0], pair[1], opportunity),
@@ -105,8 +122,34 @@ def build_recommendation_candidate_scope(
                 "recalled_count": len(rows),
                 "eligible_count": len(eligible_by_sector[sector]),
                 "rejected_count": max(0, len(rows) - len(eligible_by_sector[sector])),
+                "conditional_wait_count": sum(
+                    1
+                    for item in decisions_by_sector[sector]
+                    if item["status"] == "conditional_wait"
+                ),
+                "watch_only_count": sum(
+                    1
+                    for item in decisions_by_sector[sector]
+                    if item["status"] == "watch_only"
+                ),
                 "rejected_reason_counts": dict(sorted(reason_counts.items())),
             }
+        )
+
+    # A report can retain a broad research candidate even when its direction
+    # evidence is absent from a historical/partial opportunity snapshot. Keep
+    # that row visible and fail closed instead of silently dropping it from all
+    # three user-facing decision buckets.
+    for raw in candidate_pool:
+        if not isinstance(raw, Mapping):
+            continue
+        code = _fund_code(raw)
+        if code and code in evaluated_codes:
+            continue
+        reasons = _fund_gate_reasons(raw)
+        reasons.append("direction_evidence_unavailable")
+        candidate_decisions.append(
+            _candidate_decision(raw, entry_path=None, reason_codes=reasons)
         )
 
     ranked_sectors = sorted(
@@ -147,6 +190,16 @@ def build_recommendation_candidate_scope(
     research_labels = [
         sector for sector in opportunity_by_sector if sector not in set(eligible_labels)
     ]
+    conditional_wait_codes = [
+        item["fund_code"]
+        for item in candidate_decisions
+        if item["status"] == "conditional_wait" and item["fund_code"]
+    ]
+    watch_only_codes = [
+        item["fund_code"]
+        for item in candidate_decisions
+        if item["status"] == "watch_only" and item["fund_code"]
+    ]
     return {
         "schema_version": RECOMMENDATION_SCOPE_VERSION,
         "policy_enforced": True,
@@ -157,10 +210,48 @@ def build_recommendation_candidate_scope(
         "unmatched_actionable_sector_labels": unmatched_labels,
         "research_sector_labels": research_labels,
         "sector_funnel": funnel,
+        "candidate_decisions": candidate_decisions,
+        "conditional_wait_fund_codes": conditional_wait_codes,
+        "watch_only_fund_codes": watch_only_codes,
         "instruction": (
             "candidate_pool 仅保留通过方向动作边界、基金质量、载体质量与板块身份门槛的推荐白名单；"
             "等待/研究方向不得占用推荐名额，也不得跨方向补位。"
         ),
+    }
+
+
+def _candidate_decision(
+    candidate: Mapping[str, Any],
+    *,
+    entry_path: str | None,
+    reason_codes: Sequence[str],
+) -> dict[str, Any]:
+    fund_reasons = [
+        reason
+        for reason in reason_codes
+        if reason not in {"direction_entry_not_open", "direction_evidence_unavailable"}
+    ]
+    direction_reasons = [
+        reason
+        for reason in reason_codes
+        if reason in {"direction_entry_not_open", "direction_evidence_unavailable"}
+    ]
+    status = (
+        "watch_only"
+        if fund_reasons
+        else "conditional_wait"
+        if direction_reasons or entry_path is None
+        else "actionable"
+    )
+    return {
+        "fund_code": _fund_code(candidate),
+        "fund_name": str(candidate.get("fund_name") or ""),
+        "sector_label": str(candidate.get("sector_label") or "").strip(),
+        "status": status,
+        "entry_path": entry_path,
+        "fund_gates_passed": not fund_reasons,
+        "direction_gate_passed": entry_path is not None,
+        "reason_codes": list(dict.fromkeys(reason_codes)),
     }
 
 
@@ -187,6 +278,50 @@ def ensure_recommendation_candidate_scope(
     )
     discovery_facts["recommendation_candidate_scope"] = scope
     return scope
+
+
+def project_candidate_decisions_for_report(report: dict[str, Any]) -> dict[str, Any]:
+    """Add v2 display decisions to immutable v1 reports without rewriting them.
+
+    The persisted whitelist and historical decision events remain untouched.
+    This projection only fills the three candidate-pool display buckets, so a
+    report created before v2 no longer renders the misleading 0 / 0 / 0 state.
+    """
+
+    facts = report.get("discovery_facts")
+    if not isinstance(facts, dict):
+        return report
+    existing = facts.get("recommendation_candidate_scope")
+    if not isinstance(existing, Mapping) or existing.get("policy_enforced") is not True:
+        return report
+    if isinstance(existing.get("candidate_decisions"), list):
+        return report
+    pool = report.get("candidate_pool")
+    opportunities = facts.get("sector_opportunities")
+    if not isinstance(pool, list) or not isinstance(opportunities, list):
+        return report
+    mainline = facts.get("mainline_snapshot")
+    rebuilt = build_recommendation_candidate_scope(
+        [item for item in pool if isinstance(item, Mapping)],
+        [item for item in opportunities if isinstance(item, Mapping)],
+        entry_policy_version=(
+            str(mainline.get("entry_policy_version") or "") or None
+            if isinstance(mainline, Mapping)
+            else None
+        ),
+    )
+    if rebuilt.get("policy_enforced") is not True:
+        return report
+    projected = dict(existing)
+    for key in (
+        "candidate_decisions",
+        "conditional_wait_fund_codes",
+        "watch_only_fund_codes",
+    ):
+        projected[key] = rebuilt.get(key) or []
+    projected["candidate_decision_projection"] = "read_time_compatibility_v1"
+    facts["recommendation_candidate_scope"] = projected
+    return report
 
 
 def candidates_in_recommendation_scope(
@@ -328,8 +463,7 @@ def _fund_gate_reasons(candidate: Mapping[str, Any]) -> list[str]:
         reasons.append("quality_gate_not_eligible")
     if str(candidate.get("vehicle_quality_status") or "") != "eligible":
         reasons.append("vehicle_quality_not_eligible")
-    sector_fit = _num(candidate.get("sector_fit_score"))
-    if sector_fit is None or sector_fit < 18.0:
+    if not candidate_sector_identity_is_executable(candidate):
         reasons.append("sector_identity_not_verified")
     return reasons
 

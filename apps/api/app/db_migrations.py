@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app.services.decision_quality_rollout import (
     DECISION_QUALITY_ROLLOUT_CONTRACT_NAME,
@@ -11,7 +12,7 @@ from app.services.decision_quality_rollout import (
 )
 
 
-SCHEMA_VERSION = 20
+SCHEMA_VERSION = 22
 
 # 迁移在应用/后台线程首次建立连接时触发（例如板块快照刷新会 daemon 线程预取资金流历史，
 # 与主线程几乎同时首次打开 sqlite 连接）。同进程内多个线程各自用独立 connection 对同一
@@ -375,6 +376,280 @@ def _migrate_fund_primary_sectors_global(connection: sqlite3.Connection) -> None
         """
         CREATE INDEX IF NOT EXISTS idx_fund_primary_sectors_global_sector
         ON fund_primary_sectors_global (sector_name, confidence DESC, resolved_at DESC)
+        """
+    )
+
+
+def _migrate_fund_sector_identity_v21(connection: sqlite3.Connection) -> None:
+    """Create PIT exposure history plus the materialized current identity view.
+
+    ``fund_primary_sectors_global`` remains as a compatibility projection for
+    older code.  Discovery reads the new current table, while every materialized
+    row keeps a link to an append-style evidence snapshot.
+    """
+
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS fund_sector_exposure_snapshots (
+            snapshot_id TEXT NOT NULL,
+            fund_code TEXT NOT NULL,
+            sector_name TEXT NOT NULL,
+            exposure_percent REAL,
+            is_primary INTEGER NOT NULL DEFAULT 0,
+            identity_status TEXT NOT NULL,
+            source TEXT NOT NULL,
+            confidence REAL,
+            source_ref TEXT,
+            report_period TEXT,
+            as_of_date TEXT,
+            available_at TEXT,
+            evaluated_at TEXT NOT NULL,
+            mapping_version TEXT NOT NULL,
+            detail TEXT,
+            PRIMARY KEY (snapshot_id, sector_name)
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_fund_sector_exposure_fund_time
+        ON fund_sector_exposure_snapshots (fund_code, evaluated_at DESC)
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_fund_sector_exposure_sector_time
+        ON fund_sector_exposure_snapshots (sector_name, as_of_date DESC)
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS fund_sector_current (
+            fund_code TEXT NOT NULL,
+            sector_name TEXT NOT NULL,
+            exposure_percent REAL,
+            is_primary INTEGER NOT NULL DEFAULT 0,
+            identity_status TEXT NOT NULL,
+            source TEXT NOT NULL,
+            confidence REAL,
+            evidence_snapshot_id TEXT NOT NULL,
+            source_ref TEXT,
+            report_period TEXT,
+            as_of_date TEXT,
+            available_at TEXT,
+            resolved_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            mapping_version TEXT NOT NULL,
+            detail TEXT,
+            PRIMARY KEY (fund_code, sector_name)
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_fund_sector_current_lookup
+        ON fund_sector_current (
+            sector_name, identity_status, is_primary, expires_at, confidence DESC
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_fund_sector_current_fund
+        ON fund_sector_current (fund_code, is_primary DESC, confidence DESC)
+        """
+    )
+
+    # Safely project legacy rows once.  Weak name/LLM mappings remain pending;
+    # holdings and exact-benchmark sources still pass the existing discovery
+    # revalidation before they can become executable.
+    verified_sources = {
+        "ocr_detail",
+        "manual",
+        "holdings_infer",
+        "precompute_holdings",
+        "benchmark_index",
+        "precompute_benchmark",
+    }
+    holdings_sources = {"holdings_infer", "precompute_holdings"}
+    durable_sources = {"ocr_detail", "manual"}
+    legacy_rows = connection.execute(
+        """
+        SELECT fund_code, sector_name, intraday_index_name, source,
+               confidence, detail, resolved_at
+        FROM fund_primary_sectors_global
+        """
+    ).fetchall()
+    for legacy in legacy_rows:
+        (
+            fund_code,
+            sector_name,
+            _intraday_index_name,
+            source,
+            confidence,
+            detail_raw,
+            resolved_at_raw,
+        ) = legacy
+        detail: dict = {}
+        if detail_raw:
+            try:
+                decoded = json.loads(str(detail_raw))
+                if isinstance(decoded, dict):
+                    detail = decoded
+            except (TypeError, ValueError):
+                detail = {}
+        resolved_at = str(resolved_at_raw or _now())
+        try:
+            resolved_dt = datetime.fromisoformat(resolved_at.replace("Z", "+00:00"))
+        except ValueError:
+            resolved_dt = datetime.now(timezone.utc)
+        if resolved_dt.tzinfo is None:
+            resolved_dt = resolved_dt.replace(tzinfo=timezone.utc)
+        ttl_days = 90 if source in holdings_sources else (365 if source in durable_sources else 30)
+        expires_at = (resolved_dt.astimezone(timezone.utc) + timedelta(days=ttl_days)).isoformat()
+        status = "verified" if source in verified_sources else "pending"
+        scores = detail.get("scores") if isinstance(detail.get("scores"), dict) else {}
+        try:
+            exposure = float(scores.get(sector_name)) if sector_name in scores else None
+        except (TypeError, ValueError):
+            exposure = None
+        evidence = detail.get("evidence") if isinstance(detail.get("evidence"), list) else []
+        first_evidence = evidence[0] if evidence and isinstance(evidence[0], dict) else {}
+        source_ref = str(
+            detail.get("snapshot_hash")
+            or first_evidence.get("snapshot_hash")
+            or detail.get("index_code")
+            or ""
+        ) or None
+        report_period = str(
+            detail.get("report_period") or first_evidence.get("report_period") or ""
+        ) or None
+        as_of_date = str(
+            detail.get("as_of_date")
+            or detail.get("as_of")
+            or first_evidence.get("as_of")
+            or ""
+        ) or None
+        available_at = str(
+            detail.get("available_at")
+            or first_evidence.get("available_at")
+            or resolved_at
+        )
+        snapshot_payload = {
+            "fund_code": str(fund_code),
+            "sector_name": str(sector_name),
+            "source": str(source),
+            "source_ref": source_ref,
+            "resolved_at": resolved_at,
+            "mapping_version": "fund_sector_identity.2026-08.v1",
+        }
+        snapshot_id = hashlib.sha256(
+            json.dumps(
+                snapshot_payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO fund_sector_exposure_snapshots (
+                snapshot_id, fund_code, sector_name, exposure_percent,
+                is_primary, identity_status, source, confidence, source_ref,
+                report_period, as_of_date, available_at, evaluated_at,
+                mapping_version, detail
+            ) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                snapshot_id,
+                str(fund_code),
+                str(sector_name),
+                exposure,
+                status,
+                str(source),
+                confidence,
+                source_ref,
+                report_period,
+                as_of_date,
+                available_at,
+                resolved_at,
+                "fund_sector_identity.2026-08.v1",
+                detail_raw,
+            ),
+        )
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO fund_sector_current (
+                fund_code, sector_name, exposure_percent, is_primary,
+                identity_status, source, confidence, evidence_snapshot_id,
+                source_ref, report_period, as_of_date, available_at,
+                resolved_at, expires_at, mapping_version, detail
+            ) VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(fund_code),
+                str(sector_name),
+                exposure,
+                status,
+                str(source),
+                confidence,
+                snapshot_id,
+                source_ref,
+                report_period,
+                as_of_date,
+                available_at,
+                resolved_at,
+                expires_at,
+                "fund_sector_identity.2026-08.v1",
+                detail_raw,
+            ),
+        )
+
+
+def _migrate_fund_sector_resolution_v22(connection: sqlite3.Connection) -> None:
+    """Track one auditable resolution outcome for every fund code.
+
+    A missing row in ``fund_sector_current`` is ambiguous: the fund may never
+    have been checked, the provider may have failed, or the fund may genuinely
+    have no defensible single-sector identity.  This table separates those
+    states so the initial all-market pass can be completed without fabricating
+    a sector mapping for broad, bond, money-market, or evidence-poor funds.
+    """
+
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS fund_sector_resolution_status (
+            fund_code TEXT NOT NULL PRIMARY KEY,
+            resolution_status TEXT NOT NULL,
+            stage TEXT NOT NULL,
+            reason_code TEXT,
+            fund_name TEXT,
+            checked_at TEXT NOT NULL,
+            next_retry_at TEXT NOT NULL,
+            attempt_count INTEGER NOT NULL DEFAULT 1,
+            mapping_version TEXT NOT NULL,
+            detail TEXT
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_fund_sector_resolution_due
+        ON fund_sector_resolution_status (
+            resolution_status, next_retry_at, checked_at
+        )
+        """
+    )
+    connection.execute(
+        """
+        INSERT OR IGNORE INTO fund_sector_resolution_status (
+            fund_code, resolution_status, stage, reason_code, fund_name,
+            checked_at, next_retry_at, attempt_count, mapping_version, detail
+        )
+        SELECT fund_code, 'verified', source, 'existing_verified_identity', NULL,
+               resolved_at, expires_at, 1, mapping_version, detail
+        FROM fund_sector_current
+        WHERE is_primary = 1 AND identity_status = 'verified'
         """
     )
 
@@ -1716,6 +1991,8 @@ def _run_migrations_locked(connection: sqlite3.Connection) -> None:
         _migrate_performance_schema_v20(connection)
         _migrate_sector_direction_states(connection)
         _migrate_fund_primary_sectors_global(connection)
+        _migrate_fund_sector_identity_v21(connection)
+        _migrate_fund_sector_resolution_v22(connection)
         _migrate_factor_ic_snapshots(connection)
         _migrate_factor_ic_universe_snapshots(connection)
         _migrate_factor_ic_nav_observations(connection)
@@ -1787,6 +2064,8 @@ def _run_migrations_locked(connection: sqlite3.Connection) -> None:
     _migrate_swing_alert_fired(connection)
     _migrate_sector_direction_states(connection)
     _migrate_fund_primary_sectors_global(connection)
+    _migrate_fund_sector_identity_v21(connection)
+    _migrate_fund_sector_resolution_v22(connection)
     _migrate_factor_ic_snapshots(connection)
     _migrate_factor_ic_universe_snapshots(connection)
     _migrate_factor_ic_nav_observations(connection)

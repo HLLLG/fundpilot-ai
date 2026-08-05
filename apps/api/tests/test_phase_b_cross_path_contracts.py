@@ -121,7 +121,11 @@ def _candidate_pool(*, descriptive_peer: bool = False) -> list[dict]:
     return rows
 
 
-def _facts() -> dict:
+def _facts(
+    *,
+    cash_known: bool = True,
+    cash_balance_yuan: float | None = 50_000,
+) -> dict:
     return {
         "portfolio_snapshot": {
             "stale": False,
@@ -131,7 +135,10 @@ def _facts() -> dict:
         },
         "portfolio_position_truth": {
             "position_complete": True,
-            "cash": {"known": True, "balance_yuan": 50_000},
+            "cash": {
+                "known": cash_known,
+                "balance_yuan": cash_balance_yuan,
+            },
             "positions": [],
         },
         "portfolio_gap": {
@@ -180,7 +187,13 @@ def _parsed(*, amount: float, reverse: bool = False) -> dict:
     }
 
 
-def _report(*, amount: float, reverse: bool = False, pool: list[dict] | None = None):
+def _report(
+    *,
+    amount: float,
+    reverse: bool = False,
+    pool: list[dict] | None = None,
+    facts: dict | None = None,
+):
     candidate_pool = deepcopy(pool if pool is not None else _candidate_pool())
     if reverse:
         candidate_pool.reverse()
@@ -190,7 +203,7 @@ def _report(*, amount: float, reverse: bool = False, pool: list[dict] | None = N
         focus_sectors=[],
         scan_mode="full_market",
         candidate_pool=candidate_pool,
-        discovery_facts=_facts(),
+        discovery_facts=deepcopy(facts if facts is not None else _facts()),
         profile=_profile(),
         held_codes=set(),
         budget_yuan=50_000,
@@ -226,6 +239,48 @@ def test_central_report_ignores_hostile_llm_amount_and_candidate_order() -> None
     assert sum(
         amount or 0 for _action, amount in _decision_projection(tiny).values()
     ) == 12_500
+
+
+def test_central_report_uses_explicit_scan_budget_as_only_funding_cap() -> None:
+    report = _report(
+        amount=999_999,
+        facts=_facts(cash_known=False, cash_balance_yuan=None),
+    )
+
+    budget = report.allocation_plan["budget"]
+    assert report.allocation_plan["status"] in {"allocated", "partial"}
+    assert budget["requested_yuan"] == 50_000
+    assert "confirmed_cash_yuan" not in budget
+    assert "effective_cash_yuan" not in budget
+    assert "cash_source" not in budget
+    assert budget["spendable_yuan"] == 50_000
+    assert "unavailable_due_to_cash_yuan" not in report.allocation_plan["unallocated_budget"]
+    assert all(row.action == "分批买入" for row in report.recommendations)
+    assert all(
+        (row.suggested_amount_yuan or 0) > 0 for row in report.recommendations
+    )
+    future_preconditions = report.allocation_plan["allocations"][0]["future_tranches"][0][
+        "preconditions"
+    ]
+    assert "request_budget_recheck" in future_preconditions
+    assert "confirmed_cash_recheck" not in future_preconditions
+    assert not any("现金" in caveat for caveat in report.caveats)
+
+
+def test_central_report_ignores_legacy_portfolio_cash_for_scan_budget() -> None:
+    report = _report(
+        amount=999_999,
+        facts=_facts(cash_balance_yuan=8_000),
+    )
+
+    budget = report.allocation_plan["budget"]
+    assert budget["requested_yuan"] == 50_000
+    assert budget["spendable_yuan"] == 50_000
+    assert "confirmed_cash_yuan" not in budget
+    assert sum(
+        row.suggested_amount_yuan or 0 for row in report.recommendations
+    ) == 12_500
+    assert not any("现金" in caveat for caveat in report.caveats)
 
 
 @pytest.mark.parametrize(

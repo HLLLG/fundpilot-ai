@@ -1,3 +1,7 @@
+"use client";
+
+import { useId, useState } from "react";
+import { ChevronDown } from "lucide-react";
 import type { SectorOpportunity, SectorSignalBacktestSector } from "@/lib/api";
 import { divergenceBacktestLines, formatMetric, patternLabel, trackLabel } from "@/lib/decisionText";
 
@@ -107,6 +111,8 @@ function formatPercent(value: number | null | undefined): string {
 
 type SectorOpportunityCardProps = {
   item: SectorOpportunity;
+  /** Keep the direction summary visible while supporting evidence starts collapsed. */
+  collapsibleDetails?: boolean;
   /** Shown when the sector currently doesn't constitute an actionable opportunity (日报持仓场景). */
   unavailableHint?: string;
   /** M1.3：该板块「量价背离」信号的历史回测（仅日报持仓场景按板块反查传入，market_top 场景通常没有）。 */
@@ -119,9 +125,12 @@ type SectorOpportunityCardProps = {
  */
 export function SectorOpportunityCard({
   item,
+  collapsibleDetails = false,
   unavailableHint,
   divergenceBacktest,
 }: SectorOpportunityCardProps) {
+  const generatedId = useId();
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const isUnavailable = item.opportunity_available === false;
   const divergenceLines = divergenceBacktestLines(divergenceBacktest);
   const mainline = item.mainline_regime;
@@ -144,6 +153,9 @@ export function SectorOpportunityCard({
   const probabilityEarlyPath = item.selection_path === "probability_early_probe";
   const formationProbability = item.trend_formation_probability;
   const probabilityBand = PROBABILITY_BAND[item.formation_probability_band ?? ""] ?? "概率评估";
+  const canCollapseDetails = collapsibleDetails && hasEntryMaturity;
+  const showDetails = !canCollapseDetails || detailsOpen;
+  const detailsContentId = `sector-opportunity-details-${generatedId.replace(/:/g, "")}`;
   return (
     <div
       className={`rounded-xl border px-3 py-3 ${
@@ -156,53 +168,71 @@ export function SectorOpportunityCard({
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="text-sm font-bold text-slate-900">{item.sector_label}</div>
-        <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-bold">
-          {hasEntryMaturity ? (
-            <span className={`rounded-full px-2 py-0.5 ring-1 ${entryMeta.className}`}>
-              {entryLabel}
-            </span>
-          ) : null}
-          {item.track ? (
-            <span className="rounded-full bg-white px-2 py-0.5 text-slate-600 ring-1 ring-slate-200">
-              {trackLabel(item.track)}
-            </span>
-          ) : null}
-          {isEntryV3 && flowInflectionPath ? (
-            <span className="rounded-full bg-[var(--success-bg)] px-2 py-0.5 text-[var(--success-fg)] ring-1 ring-[var(--success-border)]">
-              资金拐点
-            </span>
-          ) : null}
-          {isEntryV3 && probabilityEarlyPath ? (
-            <span className="rounded-full bg-[var(--success-bg)] px-2 py-0.5 text-[var(--success-fg)] ring-1 ring-[var(--success-border)]">
-              概率试仓
-            </span>
-          ) : null}
-          {isEntryV3 && highElasticity ? (
-            <span
-              data-testid="sector-high-elasticity"
-              className="rounded-full bg-[var(--info-bg)] px-2 py-0.5 text-[var(--info-fg)] ring-1 ring-[var(--info-border)]"
+        <div className="flex min-w-0 items-center gap-1.5">
+          <div className="flex flex-wrap items-center justify-end gap-1.5 text-[11px] font-bold">
+            {hasEntryMaturity ? (
+              <span className={`rounded-full px-2 py-0.5 ring-1 ${entryMeta.className}`}>
+                {entryLabel}
+              </span>
+            ) : null}
+            {item.track ? (
+              <span className="rounded-full bg-white px-2 py-0.5 text-slate-600 ring-1 ring-slate-200">
+                {trackLabel(item.track)}
+              </span>
+            ) : null}
+            {isEntryV3 && flowInflectionPath ? (
+              <span className="rounded-full bg-[var(--success-bg)] px-2 py-0.5 text-[var(--success-fg)] ring-1 ring-[var(--success-border)]">
+                资金拐点
+              </span>
+            ) : null}
+            {isEntryV3 && probabilityEarlyPath ? (
+              <span className="rounded-full bg-[var(--success-bg)] px-2 py-0.5 text-[var(--success-fg)] ring-1 ring-[var(--success-border)]">
+                概率试仓
+              </span>
+            ) : null}
+            {isEntryV3 && highElasticity ? (
+              <span
+                data-testid="sector-high-elasticity"
+                className="rounded-full bg-[var(--info-bg)] px-2 py-0.5 text-[var(--info-fg)] ring-1 ring-[var(--info-border)]"
+              >
+                高弹性
+              </span>
+            ) : null}
+            {mainline ? (
+              <span
+                data-testid="mainline-status"
+                className={`rounded-full px-2 py-0.5 ring-1 ${mainlineMeta.className}`}
+                title="主线状态用于判断当前趋势阶段"
+              >
+                {mainlineMeta.label}
+              </span>
+            ) : null}
+            {item.confidence ? (
+              <span className="rounded-full bg-[var(--info-bg)] px-2 py-0.5 text-[var(--info-fg)] ring-1 ring-blue-100">
+                {item.confidence}
+              </span>
+            ) : null}
+            {isUnavailable ? (
+              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-slate-500 ring-1 ring-slate-200">
+                暂非机会
+              </span>
+            ) : null}
+          </div>
+          {canCollapseDetails ? (
+            <button
+              type="button"
+              onClick={() => setDetailsOpen((value) => !value)}
+              aria-expanded={detailsOpen}
+              aria-controls={detailsContentId}
+              aria-label={`${detailsOpen ? "收起" : "展开"}${item.sector_label}方向详情`}
+              className="inline-flex size-8 shrink-0 items-center justify-center rounded-full text-slate-500 transition hover:bg-white/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
             >
-              高弹性
-            </span>
-          ) : null}
-          {mainline ? (
-            <span
-              data-testid="mainline-status"
-              className={`rounded-full px-2 py-0.5 ring-1 ${mainlineMeta.className}`}
-              title="主线状态用于判断当前趋势阶段"
-            >
-              {mainlineMeta.label}
-            </span>
-          ) : null}
-          {item.confidence ? (
-            <span className="rounded-full bg-[var(--info-bg)] px-2 py-0.5 text-[var(--info-fg)] ring-1 ring-blue-100">
-              {item.confidence}
-            </span>
-          ) : null}
-          {isUnavailable ? (
-            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-slate-500 ring-1 ring-slate-200">
-              暂非机会
-            </span>
+              <ChevronDown
+                size={16}
+                aria-hidden="true"
+                className={`transition ${detailsOpen ? "rotate-180" : ""}`}
+              />
+            </button>
           ) : null}
         </div>
       </div>
@@ -236,134 +266,156 @@ export function SectorOpportunityCard({
       ) : null}
       {hasEntryMaturity ? (
         <>
-          {isEntryV3 ? (
-            <>
-              {formationProbability != null ? (
-                <div
-                  data-testid="formation-probability"
-                  className="mt-2 overflow-hidden rounded-xl border border-[var(--info-border)] bg-white/85"
-                >
-                  <div className="flex items-end justify-between gap-3 px-3 py-2.5">
-                    <div>
-                      <div className="text-[10px] font-black tracking-[0.08em] text-slate-500">
-                        未来3～5日趋势形成概率
-                      </div>
-                      <div className="mt-0.5 flex items-baseline gap-2">
-                        <span className="font-mono text-2xl font-black tabular-nums text-slate-950">
-                          {Math.round(formationProbability)}%
-                        </span>
-                        <span className="text-[11px] font-bold text-[var(--info-fg)]">{probabilityBand}</span>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-[10px] font-bold text-slate-500">建议首批</div>
-                      <div className="mt-0.5 text-sm font-black text-slate-900">
-                        计划仓位的 {formatPercent(item.first_tranche_scale)}
-                      </div>
-                    </div>
+          {isEntryV3 && formationProbability != null ? (
+            <div
+              data-testid="formation-probability"
+              className="mt-2 overflow-hidden rounded-xl border border-[var(--info-border)] bg-white/85"
+            >
+              <div className="flex items-end justify-between gap-3 px-3 py-2.5">
+                <div>
+                  <div className="text-[10px] font-black tracking-[0.08em] text-slate-500">
+                    未来3～5日趋势形成概率
                   </div>
-                  <div className="h-1.5 bg-slate-100" aria-hidden="true">
-                    <div
-                      className="h-full bg-[linear-gradient(90deg,var(--info-icon),var(--success-icon))] transition-[width]"
-                      style={{ width: `${Math.max(5, Math.min(95, formationProbability))}%` }}
+                  <div className="mt-0.5 flex items-baseline gap-2">
+                    <span className="font-mono text-2xl font-black tabular-nums text-slate-950">
+                      {Math.round(formationProbability)}%
+                    </span>
+                    <span className="text-[11px] font-bold text-[var(--info-fg)]">{probabilityBand}</span>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="text-[10px] font-bold text-slate-500">建议首批</div>
+                  <div className="mt-0.5 text-sm font-black text-slate-900">
+                    计划仓位的 {formatPercent(item.first_tranche_scale)}
+                  </div>
+                </div>
+              </div>
+              <div className="h-1.5 bg-slate-100" aria-hidden="true">
+                <div
+                  className="h-full bg-[linear-gradient(90deg,var(--info-icon),var(--success-icon))] transition-[width]"
+                  style={{ width: `${Math.max(5, Math.min(95, formationProbability))}%` }}
+                />
+              </div>
+            </div>
+          ) : null}
+          {isEntryV3 && formationProbability == null && canCollapseDetails ? (
+            <div className="mt-2 grid grid-cols-2 gap-1.5 text-xs text-slate-600">
+              <Metric label="方向评分" value={`${formatMetric(item.direction_score)} 分`} />
+              <Metric label="建议首批" value={`计划仓位的 ${formatPercent(item.first_tranche_scale)}`} />
+            </div>
+          ) : null}
+          {!isEntryV3 && canCollapseDetails ? (
+            <div className="mt-2 grid grid-cols-2 gap-1.5 text-xs text-slate-600">
+              <Metric label="方向潜力" value={`${formatMetric(item.direction_score)} 分`} />
+              <Metric label="入场成熟" value={`${formatMetric(item.entry_readiness_score)} 分`} />
+            </div>
+          ) : null}
+          {showDetails ? (
+            <div
+              id={detailsContentId}
+              data-testid={canCollapseDetails ? "sector-opportunity-details" : undefined}
+              className={canCollapseDetails ? "mt-2 border-t border-slate-200/80 pt-2" : undefined}
+            >
+              {isEntryV3 ? (
+                <>
+                  {formationProbability != null ? (
+                    <p className="text-[10px] leading-4 text-slate-500">
+                      这是当前多维信号对趋势形成的估计，不是收益概率；概率越高才逐步增加仓位。
+                    </p>
+                  ) : null}
+                  <div className="mt-2 grid grid-cols-3 gap-1.5 text-xs text-slate-600">
+                    <Metric
+                      label={`趋势强度 ${weightLabel(blockWeights.trend_strength)}`}
+                      value={`${formatMetric(item.trend_strength_score)} 分`}
+                    />
+                    <Metric
+                      label={`资金参与 ${weightLabel(blockWeights.participation)}`}
+                      value={`${formatMetric(item.participation_score)} 分`}
+                    />
+                    <Metric
+                      label={`结构修复 ${weightLabel(blockWeights.position_risk)}`}
+                      value={`${formatMetric(item.position_risk_score)} 分`}
                     />
                   </div>
-                  <p className="px-3 py-2 text-[10px] leading-4 text-slate-500">
-                    这是当前多维信号对趋势形成的估计，不是收益概率；概率越高才逐步增加仓位。
+                  <p className="mt-1.5 text-[10px] leading-4 text-slate-500">
+                    三项是互不重叠的独立维度，按括号内权重合成为方向分 {formatMetric(item.direction_score)}；
+                    它们不是三重确认。
+                  </p>
+                  {probabilityEarlyPath || flowInflectionPath || highElasticity ? (
+                    <div
+                      data-testid="sector-selection-priority"
+                      className="mt-2 rounded-lg border border-[var(--info-border)] bg-[var(--info-bg)]/60 px-2.5 py-2 text-[11px] leading-4 text-[var(--info-fg)]"
+                    >
+                      <div className="font-bold">
+                        方向排序优先
+                        {item.selection_priority_score != null
+                          ? ` · ${formatMetric(item.selection_priority_score)} 分`
+                          : ""}
+                      </div>
+                      {probabilityEarlyPath ? (
+                        <p className="mt-1">领先资金、短期强度与结构共振，优先进入提前试仓复核。</p>
+                      ) : flowInflectionPath ? (
+                        <p className="mt-1">今日资金转强，优先于普通等待方向。</p>
+                      ) : null}
+                      {highElasticity ? (
+                        <p className="mt-1">
+                          20日年化波动 {formatMetric(item.sector_annualized_volatility_20d_percent)}%，
+                          横截面 {formatMetric(item.sector_elasticity_percentile)} 分位。
+                        </p>
+                      ) : null}
+                      <p className="mt-1 text-slate-500">提前试仓仍须具体基金信号通过，不会因为排序靠前自动买入。</p>
+                    </div>
+                  ) : null}
+                </>
+              ) : (
+                <div className="grid grid-cols-3 gap-1.5 text-xs text-slate-600">
+                  <Metric label="方向潜力" value={`${formatMetric(item.direction_score)} 分`} />
+                  <Metric label="形态成熟" value={`${formatMetric(item.setup_maturity_score)} 分`} />
+                  <Metric label="入场成熟" value={`${formatMetric(item.entry_readiness_score)} 分`} />
+                </div>
+              )}
+              {item.entry_reason ? (
+                <p className="mt-2 text-xs font-medium leading-5 text-slate-700">{item.entry_reason}</p>
+              ) : null}
+              {isEntryV3 && (item.overheat_flags ?? []).length ? (
+                <div
+                  data-testid="overheat-disclosure"
+                  className="mt-2 rounded-lg border border-[var(--warn-border)] bg-[var(--warn-bg)]/60 px-2.5 py-2"
+                >
+                  <div className="text-[10px] font-bold text-[var(--warn-fg)]">
+                    短期加速 · 首批按 {formatPercent(item.first_tranche_scale)} 执行
+                  </div>
+                  {(item.overheat_flags ?? []).slice(0, 2).map((line) => (
+                    <p key={line} className="mt-1 break-words text-[11px] leading-4 text-[var(--warn-fg)]">
+                      · {line}
+                    </p>
+                  ))}
+                  <p className="mt-1 text-[10px] leading-4 text-slate-500">
+                    过热不再否决方向，但首批更小，且不预先承诺后续加仓。
                   </p>
                 </div>
               ) : null}
-              <div className="mt-2 grid grid-cols-3 gap-1.5 text-xs text-slate-600">
+              <div className="mt-2 grid grid-cols-3 gap-1.5 text-[11px] text-slate-600">
+                <Metric label="近1日 / 近5日" value={`${formatMetric(item.change_1d_percent)} / ${formatMetric(item.change_5d_percent)}%`} />
                 <Metric
-                  label={`趋势强度 ${weightLabel(blockWeights.trend_strength)}`}
-                  value={`${formatMetric(item.trend_strength_score)} 分`}
+                  label="今日主力"
+                  value={flowMetric(item.today_main_force_net_yi, item.today_available, "今日待补")}
                 />
                 <Metric
-                  label={`资金参与 ${weightLabel(blockWeights.participation)}`}
-                  value={`${formatMetric(item.participation_score)} 分`}
-                />
-                <Metric
-                  label={`结构修复 ${weightLabel(blockWeights.position_risk)}`}
-                  value={`${formatMetric(item.position_risk_score)} 分`}
+                  label="5日主力"
+                  value={flowMetric(item.cumulative_5d_net_yi, item.five_day_available, "历史待补")}
                 />
               </div>
-              <p className="mt-1.5 text-[10px] leading-4 text-slate-500">
-                三项是互不重叠的独立维度，按括号内权重合成为方向分 {formatMetric(item.direction_score)}；
-                它们不是三重确认。
-              </p>
-              {probabilityEarlyPath || flowInflectionPath || highElasticity ? (
-                <div
-                  data-testid="sector-selection-priority"
-                  className="mt-2 rounded-lg border border-[var(--info-border)] bg-[var(--info-bg)]/60 px-2.5 py-2 text-[11px] leading-4 text-[var(--info-fg)]"
-                >
-                  <div className="font-bold">
-                    方向排序优先
-                    {item.selection_priority_score != null
-                      ? ` · ${formatMetric(item.selection_priority_score)} 分`
-                      : ""}
+              {(item.entry_triggers ?? []).length ? (
+                <div className="mt-2 border-t border-slate-200/80 pt-2">
+                  <div className="text-[10px] font-black tracking-wide text-slate-500">
+                    {item.entry_state === "ready_to_start" ? "后续复核" : "等待条件"}
                   </div>
-                  {probabilityEarlyPath ? (
-                    <p className="mt-1">领先资金、短期强度与结构共振，优先进入提前试仓复核。</p>
-                  ) : flowInflectionPath ? (
-                    <p className="mt-1">今日资金转强，优先于普通等待方向。</p>
-                  ) : null}
-                  {highElasticity ? (
-                    <p className="mt-1">
-                      20日年化波动 {formatMetric(item.sector_annualized_volatility_20d_percent)}%，
-                      横截面 {formatMetric(item.sector_elasticity_percentile)} 分位。
-                    </p>
-                  ) : null}
-                  <p className="mt-1 text-slate-500">提前试仓仍须具体基金信号通过，不会因为排序靠前自动买入。</p>
+                  {(item.entry_triggers ?? []).slice(0, 2).map((line, index) => (
+                    <p key={`${line}-${index}`} className="mt-1 text-[11px] leading-4 text-slate-700">· {line}</p>
+                  ))}
                 </div>
               ) : null}
-            </>
-          ) : (
-            <div className="mt-2 grid grid-cols-3 gap-1.5 text-xs text-slate-600">
-              <Metric label="方向潜力" value={`${formatMetric(item.direction_score)} 分`} />
-              <Metric label="形态成熟" value={`${formatMetric(item.setup_maturity_score)} 分`} />
-              <Metric label="入场成熟" value={`${formatMetric(item.entry_readiness_score)} 分`} />
-            </div>
-          )}
-          {item.entry_reason ? (
-            <p className="mt-2 text-xs font-medium leading-5 text-slate-700">{item.entry_reason}</p>
-          ) : null}
-          {isEntryV3 && (item.overheat_flags ?? []).length ? (
-            <div
-              data-testid="overheat-disclosure"
-              className="mt-2 rounded-lg border border-[var(--warn-border)] bg-[var(--warn-bg)]/60 px-2.5 py-2"
-            >
-              <div className="text-[10px] font-bold text-[var(--warn-fg)]">
-                短期加速 · 首批按 {formatPercent(item.first_tranche_scale)} 执行
-              </div>
-              {(item.overheat_flags ?? []).slice(0, 2).map((line) => (
-                <p key={line} className="mt-1 break-words text-[11px] leading-4 text-[var(--warn-fg)]">
-                  · {line}
-                </p>
-              ))}
-              <p className="mt-1 text-[10px] leading-4 text-slate-500">
-                过热不再否决方向，但首批更小，且不预先承诺后续加仓。
-              </p>
-            </div>
-          ) : null}
-          <div className="mt-2 grid grid-cols-3 gap-1.5 text-[11px] text-slate-600">
-            <Metric label="近1日 / 近5日" value={`${formatMetric(item.change_1d_percent)} / ${formatMetric(item.change_5d_percent)}%`} />
-            <Metric
-              label="今日主力"
-              value={flowMetric(item.today_main_force_net_yi, item.today_available, "今日待补")}
-            />
-            <Metric
-              label="5日主力"
-              value={flowMetric(item.cumulative_5d_net_yi, item.five_day_available, "历史待补")}
-            />
-          </div>
-          {(item.entry_triggers ?? []).length ? (
-            <div className="mt-2 border-t border-slate-200/80 pt-2">
-              <div className="text-[10px] font-black tracking-wide text-slate-500">
-                {item.entry_state === "ready_to_start" ? "后续复核" : "等待条件"}
-              </div>
-              {(item.entry_triggers ?? []).slice(0, 2).map((line, index) => (
-                <p key={`${line}-${index}`} className="mt-1 text-[11px] leading-4 text-slate-700">· {line}</p>
-              ))}
             </div>
           ) : null}
         </>
@@ -388,7 +440,7 @@ export function SectorOpportunityCard({
           {item.entry_hint ?? ""}
         </p>
       ) : null}
-      {divergenceLines.length ? (
+      {showDetails && divergenceLines.length ? (
         <div className="mt-2 rounded-lg border border-[var(--info-border)] bg-[var(--info-bg)]/80 px-2.5 py-2">
           <div className="text-[10px] font-bold text-[var(--info-fg)]">历史回测证据</div>
           {divergenceLines.map((line) => (
@@ -398,7 +450,7 @@ export function SectorOpportunityCard({
           ))}
         </div>
       ) : null}
-      {isUnavailable && unavailableHint ? (
+      {showDetails && isUnavailable && unavailableHint ? (
         <p className="mt-1.5 break-words text-xs leading-5 text-slate-500">{unavailableHint}</p>
       ) : null}
     </div>

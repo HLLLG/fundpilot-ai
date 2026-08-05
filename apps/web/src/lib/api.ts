@@ -1129,7 +1129,6 @@ export type DiscoveryAllocationPlan = {
   risk_context?: DiscoveryAllocationRiskSummary;
   budget?: {
     requested_yuan?: number | null;
-    confirmed_cash_yuan?: number | null;
     spendable_yuan?: number | null;
     current_tranche_cap_yuan?: number | null;
     allocated_current_tranche_yuan?: number | null;
@@ -1147,7 +1146,6 @@ export type DiscoveryAllocationPlan = {
     amount_yuan?: number | null;
     current_tranche_unallocated_yuan?: number | null;
     deferred_future_tranches_yuan?: number | null;
-    unavailable_due_to_cash_yuan?: number | null;
     reason_codes?: string[];
     [key: string]: unknown;
   };
@@ -1275,7 +1273,20 @@ export type DiscoveryRecommendationSectorFunnel = {
   recalled_count: number;
   eligible_count: number;
   rejected_count: number;
+  conditional_wait_count?: number;
+  watch_only_count?: number;
   rejected_reason_counts?: Record<string, number>;
+};
+
+export type DiscoveryRecommendationCandidateDecision = {
+  fund_code: string;
+  fund_name?: string;
+  sector_label?: string;
+  status: "actionable" | "conditional_wait" | "watch_only";
+  entry_path?: string | null;
+  fund_gates_passed?: boolean;
+  direction_gate_passed?: boolean;
+  reason_codes: string[];
 };
 
 export type DiscoveryRecommendationCandidateScope = {
@@ -1288,6 +1299,9 @@ export type DiscoveryRecommendationCandidateScope = {
   unmatched_actionable_sector_labels: string[];
   research_sector_labels: string[];
   sector_funnel: DiscoveryRecommendationSectorFunnel[];
+  candidate_decisions?: DiscoveryRecommendationCandidateDecision[];
+  conditional_wait_fund_codes?: string[];
+  watch_only_fund_codes?: string[];
   instruction?: string;
 };
 
@@ -1353,6 +1367,9 @@ export type DiscoveryCandidatePoolItem = {
   opportunity_score_version?: string | null;
   sector_fit_score?: number | null;
   sector_match_kind?: string | null;
+  sector_identity_status?: "verified" | "pending" | "stale" | string | null;
+  sector_identity_eligible?: boolean;
+  sector_mapping_verified?: boolean;
   quality_reasons?: string[];
   quality_penalties?: string[];
   quality_gate?: DiscoveryCandidateQualityGate;

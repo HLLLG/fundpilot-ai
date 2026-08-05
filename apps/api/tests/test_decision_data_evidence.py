@@ -777,17 +777,16 @@ def test_degraded_discovery_snapshot_guard_removes_buy_action_and_amount():
 
 
 @pytest.mark.parametrize(
-    ("cash_known", "cash_balance", "expected_amount"),
+    ("cash_known", "cash_balance"),
     [
-        (True, "300", 300),
-        (True, "0", None),
-        (False, None, 500),
+        (True, "300"),
+        (True, "0"),
+        (False, None),
     ],
 )
-def test_discovery_guard_caps_by_known_cash_and_uses_budget_when_cash_unknown(
+def test_discovery_guard_uses_scan_budget_independent_of_legacy_cash(
     cash_known: bool,
     cash_balance: str | None,
-    expected_amount: float | None,
 ):
     from app.services.discovery_guard import apply_discovery_guards
 
@@ -839,10 +838,8 @@ def test_discovery_guard_caps_by_known_cash_and_uses_budget_when_cash_unknown(
         discovery_facts=facts,
     )
 
-    assert guarded[0].suggested_amount_yuan == expected_amount
-    if cash_known and cash_balance == "0":
-        assert caveats
-        assert guarded[0].amount_note
+    assert guarded[0].suggested_amount_yuan == 500
+    assert not any("现金" in caveat for caveat in caveats)
 
 
 def test_unknown_directional_evidence_is_consumed_by_daily_final_guard():

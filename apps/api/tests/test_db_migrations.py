@@ -43,8 +43,98 @@ def test_run_migrations_backfills_global_primary_sector_table_at_current_version
     assert row is not None
 
 
+def test_v21_creates_sector_identity_tables_and_backfills_legacy_rows() -> None:
+    connection = _current_schema_connection()
+    connection.execute(
+        """
+        INSERT INTO fund_primary_sectors_global (
+            fund_code, sector_name, intraday_index_name, source,
+            confidence, detail, resolved_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "000711",
+            "医药",
+            "中证医药卫生指数",
+            "precompute_holdings",
+            0.92,
+            '{"scores":{"医药":38.5},"report_period":"2026Q2"}',
+            "2026-07-31T08:00:00+00:00",
+        ),
+    )
+    connection.execute(
+        """
+        INSERT INTO fund_primary_sectors_global (
+            fund_code, sector_name, intraday_index_name, source,
+            confidence, detail, resolved_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "000712",
+            "医药",
+            None,
+            "precompute_llm",
+            0.85,
+            None,
+            "2026-07-31T08:00:00+00:00",
+        ),
+    )
+    connection.commit()
+
+    run_migrations(connection)
+
+    tables = {
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    }
+    assert "fund_sector_exposure_snapshots" in tables
+    assert "fund_sector_current" in tables
+    assert "fund_sector_resolution_status" in tables
+    current = connection.execute(
+        """
+        SELECT fund_code, sector_name, exposure_percent, identity_status,
+               source, evidence_snapshot_id, report_period, expires_at
+        FROM fund_sector_current
+        ORDER BY fund_code
+        """
+    ).fetchall()
+    assert current[0][0:7] == (
+        "000711",
+        "医药",
+        38.5,
+        "verified",
+        "precompute_holdings",
+        current[0][5],
+        "2026Q2",
+    )
+    assert len(current[0][5]) == 64
+    assert current[0][7] > "2026-07-31T08:00:00+00:00"
+    assert current[1][3] == "pending"
+    snapshot_count = connection.execute(
+        "SELECT COUNT(*) FROM fund_sector_exposure_snapshots"
+    ).fetchone()[0]
+    assert snapshot_count == 2
+    resolution = connection.execute(
+        """
+        SELECT fund_code, resolution_status, stage, reason_code
+        FROM fund_sector_resolution_status
+        ORDER BY fund_code
+        """
+    ).fetchall()
+    assert resolution == [
+        (
+            "000711",
+            "verified",
+            "precompute_holdings",
+            "existing_verified_identity",
+        )
+    ]
+
+
 def test_current_schema_still_ensures_factor_ic_snapshot_table() -> None:
-    assert SCHEMA_VERSION == 20
+    assert SCHEMA_VERSION == 22
     connection = sqlite3.connect(":memory:")
     connection.execute(
         "CREATE TABLE schema_meta (id INTEGER PRIMARY KEY, version INTEGER NOT NULL)"
@@ -110,7 +200,7 @@ def test_v19_and_v20_add_only_performance_metadata_to_operational_tables() -> No
 
     assert connection.execute(
         "SELECT version FROM schema_meta WHERE id = 1"
-    ).fetchone()[0] == 20
+    ).fetchone()[0] == 22
     report_columns = {
         row[1] for row in connection.execute("PRAGMA table_info(reports)")
     }

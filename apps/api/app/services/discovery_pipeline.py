@@ -21,6 +21,9 @@ from app.services.fund_benchmark_research import (
     build_fund_benchmark_research_batch,
     summarize_benchmark_research,
 )
+from app.services.fund_primary_sector_precompute import (
+    enqueue_candidate_sector_precompute,
+)
 from app.services.fund_vehicle_quality import assess_candidate_vehicle_quality_batch
 from app.services.discovery_client import DiscoveryClient
 from app.services.discovery_facts import build_discovery_facts
@@ -308,6 +311,7 @@ def run_discovery(
         pool, benchmark_specs, benchmark_metrics = benchmark_future.result()
         market_news = news_future.result()
         announcement_result = announcement_future.result()
+    enqueue_candidate_sector_precompute(pool)
     market_news = merge_market_news_with_announcements(
         market_news,
         list(announcement_result.get("items") or []),

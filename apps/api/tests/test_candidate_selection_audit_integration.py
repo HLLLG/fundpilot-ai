@@ -161,7 +161,7 @@ def test_build_candidate_pool_captures_full_scored_recall_without_catalogue(
     assert recall["scope"]["candidate_count_total"] == 3
     assert recall["scope"]["candidate_count_retained"] == 3
     assert recall["scope"]["complete"] is True
-    assert recall["scope"]["retention_limit"] == 512
+    assert recall["scope"]["retention_limit"] == 1024
     assert recall["scope"]["source_universe_size"] == 3
     assert recall["scope"]["catalogue_rows_embedded"] is False
     assert {row["fund_code"] for row in recall["candidates"]} == {

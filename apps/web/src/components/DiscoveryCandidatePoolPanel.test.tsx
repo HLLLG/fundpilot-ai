@@ -48,7 +48,7 @@ describe("DiscoveryCandidatePoolPanel", () => {
 
     const card = screen.getByRole("article", { name: /研究观察/ });
     expect(card).toHaveTextContent("质量分");
-    expect(card).toHaveTextContent("匹配分");
+    expect(card).toHaveTextContent("关联排序分");
     expect(card).toHaveTextContent("近3月");
     expect(card).toHaveTextContent("近1年");
     expect(screen.queryByRole("table")).not.toBeInTheDocument();

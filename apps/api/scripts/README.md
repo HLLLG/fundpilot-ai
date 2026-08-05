@@ -95,15 +95,38 @@ python scripts/run_factor_ic.py --universe-mode sampled --sample-pool-size 500 -
 
 ## 关联板块 · 中基协指数库 · 全市场预计算
 
-维护业绩比较基准要素库与全市场基金→板块映射（无 API，部署/运维时运行）：
+维护业绩比较基准要素库与全市场基金→板块映射。基金名称、新发标签与 LLM
+只负责召回，只有精确跟踪指数或合格 PIT 持仓证据可以写入 `verified` 身份：
 
 ```bash
 # 从中基协 API 同步 155 指数要素库 → app/data/amac_benchmark_index_library.json
 python scripts/sync_amac_benchmark_index_library.py
 
-# 批量预计算全市场基金关联板块 → fund_primary_sectors_global
-python scripts/precompute_fund_primary_sectors.py --limit 200 --mode benchmark
-python scripts/precompute_fund_primary_sectors.py --mode auto --limit 150
+# 连续完成全市场首轮档案解析；每只基金都会落为
+# verified / queued / research_only / unmapped / unavailable 之一，可中断后续跑
+python scripts/precompute_fund_primary_sectors.py --mode benchmark --limit 800 --until-covered
+
+# 运维时也可只跑一个到期增量批次
+python scripts/precompute_fund_primary_sectors.py --mode benchmark --limit 800
+
+# 对首轮上游未返回资料的代码立即限次重试一轮
+python scripts/precompute_fund_primary_sectors.py --mode benchmark --limit 800 --retry-status unavailable
+
+# 指数目录规则修订后只重算受影响的原因码
+python scripts/precompute_fund_primary_sectors.py --mode benchmark --reclassify-reason tracking_index_sector_catalog_pending,broad_or_non_sector_tracking_index
+
+# 对少量代码补做严格持仓穿透（不会覆盖已有的新鲜 verified 身份）
+python scripts/precompute_fund_primary_sectors.py --mode auto --limit 80
+
+# 持续处理已排队的严格持仓核验；默认后台为 32 只/批，并发受 AkShare worker 池上限约束
+python scripts/precompute_fund_primary_sectors.py --mode holdings --limit 32
 ```
 
-环境变量（见 `.env.example`）：`FUND_AI_FUND_PRIMARY_SECTOR_GLOBAL_ENABLED`、`FUND_AI_FUND_PRIMARY_SECTOR_PRECOMPUTE_*`、TTL 天数等。
+schema v22 的 `fund_sector_resolution_status` 保存每只基金的解析状态、失败原因与
+下次重试时间；旧 `pending` 会在后台启动时迁移为明确状态。`queued` 表示等待持仓核验，
+`research_only` 表示线索不具备执行资格，两者都不能进入金额分配；`fund_sector_current`
+只保存可供决策使用的已核验投影。后台在首次档案覆盖完成前按 800 只连续跑批（内部
+80 只一组、有限并发），完成后每 6 小时仅处理到期记录；持仓队列按 32 只/批持续排空，
+配置并发仍受 AkShare worker 池容量约束。环境变量见 `.env.example`：
+`FUND_AI_FUND_PRIMARY_SECTOR_GLOBAL_ENABLED`、`FUND_AI_FUND_PRIMARY_SECTOR_PRECOMPUTE_*`、
+TTL 天数等。

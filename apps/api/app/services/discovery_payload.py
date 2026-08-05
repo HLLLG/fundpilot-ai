@@ -42,6 +42,7 @@ recommendations 字段约束：
 - sector_evidence: 字符串数组，引用 sector_opportunities 中的 score、track、confidence、资金流、pattern；
   若没有对应 sector_opportunities，须说明使用 sector_heat / target_sector_context 降级判断
 - fund_evidence: 字符串数组，引用 candidate_pool 中的 fund_quality_score、sector_fit_score、
+  sector_identity_status、sector_identity_eligible、
   quality_reasons、return_3m_percent/return_6m_percent、max_drawdown_1y_percent、fund_scale_yi
 - validation_notes: 字符串数组，写清 quality_penalties、信息缺失、新闻 stale/empty 等校验备注；仅结构化 overheat_flags 非空时可写追高/短期加速风险；无明显问题则 []
 - points: 字符串数组，每条须引用 candidate_pool 内具体字段（如 nav_trend、return_3m_percent、
@@ -49,15 +50,16 @@ recommendations 字段约束：
 - risks: 字符串数组，每只至少 1 条
 - news_bullish: 字符串数组，仅引用 news_titles 或 topic_briefs.points.source_titles 中已有标题；无则 []
 - suggested_amount_yuan: 始终输出 null。模型只判断候选与动作；服务端会忽略模型金额，并在最终守卫后按
-  可用现金、预算、已有板块敞口、集中度与候选风险相关性统一计算首批参考金额
+  本次可投入预算、已有板块敞口、集中度与候选风险相关性统一计算首批参考金额
 - 面向用户展示时必须使用中文标签，不要原样输出 fund_quality_score、sector_fit_score、quality_penalties、
   sector_opportunities、nav_trend、max_drawdown_1y_percent、estimated_daily_return_percent 等内部字段名；
-  可写成“基金质量分”“板块匹配分”“系统校验提示”“系统筛出的主方向”“净值走势”“近1年最大回撤”“今日涨跌估算”等。
+  可写成“基金质量分”“板块关联排序分”“板块身份状态”“系统校验提示”“系统筛出的主方向”“净值走势”“近1年最大回撤”“今日涨跌估算”等。
 
 全局约束：
 - 不得推荐 portfolio_gap.holdings_slim 中已持有的 fund_code
 - 仅 quality_gate.status=eligible 的候选可用 action=分批买入；watch_only 只可建议关注/等待回调；
-  excluded 不得进入 recommendations。没有 eligible 候选时须明确“本次暂无买入建议”，不得凑满数量
+  excluded 不得进入 recommendations。没有候选同时通过方向、基金质量、载体质量与板块身份门槛时，
+  须明确“本次暂无买入建议”并按 recommendation_candidate_scope.candidate_decisions 说明等待/观察原因，不得凑满数量
 - 不得承诺收益；不得编造 candidate_pool 外的代码或未提供的估值分位
 - 本功能不获取或判断具体销售平台的申购状态、起购额、限额和交易费率；不得臆造这些信息，也不得因其缺失把候选降为观察
 - full_market 模式须先判断板块方向，再在方向内选基金；不得只按基金近1年收益排序
@@ -92,9 +94,9 @@ recommendations 字段约束：
   tracking_reference 的差值只能称“相对跟踪参考差异”；所有基准指标仅作描述，不得用于金额倾斜
 - summary 或 caveats 须体现 news.freshness_label 对置信度的影响
 - data_evidence 是字段级时点证据；stale/unavailable/none 不得支撑买入动作，is_estimate=true 必须降置信度
-- discovery_facts.portfolio_position_truth 是持仓份额、成本和现金的唯一真值摘要；unknown/null 不得按 0 猜测；
+- discovery_facts.portfolio_position_truth 是持仓份额和成本的唯一真值摘要；unknown/null 不得按 0 猜测；
   模型的 suggested_amount_yuan 始终为 null；份额未确认不阻断方向判断，服务端可使用 holdings_slim 的估算市值、
-  用户明确填写的本次预算与集中度规则计算首批金额；未知现金按本次预算封顶，不得按 0 猜测
+  用户明确填写的本次可投入预算与集中度规则计算首批金额；账户现金字段不参与本次扫描金额
 - 新闻由系统预取并已做时效筛选；不得引用 news_titles/topic_briefs 之外的新闻，
   news.freshness_label 为 stale/empty/aging 时，新闻只能作背景，不能作为买入或追涨主依据
 """
@@ -108,6 +110,7 @@ _COMMON_REQUIREMENTS = [
     "先判断板块方向；基金质量只作硬准入，门内按机会分、波动弹性与修复信号排序，最后决定动作",
     "方向成熟度 V2/V3 存在时按 entry_state；V3 ready_on_pullback 可在基金修复替代结构项，或资金同日改善且基金信号通过时开放缩小首批；forming 仅在 probability_early_probe_eligible=true 且基金早期信号通过时概率试仓；V3 过热仅缩小首批",
     "展示文本使用中文标签，不要原样输出 fund_quality_score/sector_fit_score/quality_penalties 等内部字段名",
+    "sector_fit_score 仅是关联排序分，不得替代 sector_identity_status=verified 与 sector_identity_eligible=true 的代码级身份门槛",
     "estimated_daily_return_percent 且 daily_return_source=sector_estimate 时，points 须注明「估算」",
     "判断入场位置须参考 fund_entry_signal 与20日修复率、离低点反弹、近5日方向，不得只看 sector_heat 或距高点",
     "板块 selection_priority_score 仅用于同一入场状态内排序；资金拐点优先于普通等待，高弹性只加排序分，不替代趋势、资金、结构和数据门槛",

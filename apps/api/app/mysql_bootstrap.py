@@ -12,7 +12,7 @@ from app.services.decision_quality_rollout import (
 )
 
 
-MYSQL_SCHEMA_VERSION = 20
+MYSQL_SCHEMA_VERSION = 22
 
 MYSQL_MIGRATION_GUARD_NAME = "sqlite_to_mysql"
 MYSQL_SCHEMA_LOCK_NAME = "fundpilot.mysql_schema.v18"
@@ -944,6 +944,155 @@ def _ensure_mysql_schema_locked(
             resolved_at VARCHAR(64) NOT NULL,
             INDEX idx_fund_primary_sectors_global_resolved (resolved_at)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS fund_sector_exposure_snapshots (
+            snapshot_id CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            fund_code VARCHAR(16) NOT NULL,
+            sector_name VARCHAR(255) NOT NULL,
+            exposure_percent DOUBLE NULL,
+            is_primary TINYINT NOT NULL DEFAULT 0,
+            identity_status VARCHAR(16) NOT NULL,
+            source VARCHAR(64) NOT NULL,
+            confidence DOUBLE NULL,
+            source_ref VARCHAR(255) NULL,
+            report_period VARCHAR(32) NULL,
+            as_of_date VARCHAR(32) NULL,
+            available_at VARCHAR(64) NULL,
+            evaluated_at VARCHAR(64) NOT NULL,
+            mapping_version VARCHAR(64) NOT NULL,
+            detail LONGTEXT NULL,
+            PRIMARY KEY (snapshot_id, sector_name),
+            INDEX idx_fund_sector_exposure_fund_time (fund_code, evaluated_at),
+            INDEX idx_fund_sector_exposure_sector_time (sector_name, as_of_date)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS fund_sector_current (
+            fund_code VARCHAR(16) NOT NULL,
+            sector_name VARCHAR(255) NOT NULL,
+            exposure_percent DOUBLE NULL,
+            is_primary TINYINT NOT NULL DEFAULT 0,
+            identity_status VARCHAR(16) NOT NULL,
+            source VARCHAR(64) NOT NULL,
+            confidence DOUBLE NULL,
+            evidence_snapshot_id CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            source_ref VARCHAR(255) NULL,
+            report_period VARCHAR(32) NULL,
+            as_of_date VARCHAR(32) NULL,
+            available_at VARCHAR(64) NULL,
+            resolved_at VARCHAR(64) NOT NULL,
+            expires_at VARCHAR(64) NOT NULL,
+            mapping_version VARCHAR(64) NOT NULL,
+            detail LONGTEXT NULL,
+            PRIMARY KEY (fund_code, sector_name),
+            INDEX idx_fund_sector_current_lookup (
+                sector_name, identity_status, is_primary, expires_at, confidence
+            ),
+            INDEX idx_fund_sector_current_fund (
+                fund_code, is_primary, confidence
+            )
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS fund_sector_resolution_status (
+            fund_code VARCHAR(16) NOT NULL PRIMARY KEY,
+            resolution_status VARCHAR(24) NOT NULL,
+            stage VARCHAR(64) NOT NULL,
+            reason_code VARCHAR(128) NULL,
+            fund_name VARCHAR(255) NULL,
+            checked_at VARCHAR(64) NOT NULL,
+            next_retry_at VARCHAR(64) NOT NULL,
+            attempt_count INT NOT NULL DEFAULT 1,
+            mapping_version VARCHAR(64) NOT NULL,
+            detail LONGTEXT NULL,
+            INDEX idx_fund_sector_resolution_due (
+                resolution_status, next_retry_at, checked_at
+            )
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """,
+        """
+        INSERT IGNORE INTO fund_sector_exposure_snapshots (
+            snapshot_id, fund_code, sector_name, exposure_percent, is_primary,
+            identity_status, source, confidence, source_ref, report_period,
+            as_of_date, available_at, evaluated_at, mapping_version, detail
+        )
+        SELECT
+            SHA2(CONCAT('legacy|', fund_code, '|', source, '|', resolved_at), 256),
+            fund_code,
+            sector_name,
+            NULL,
+            1,
+            CASE WHEN source IN (
+                'ocr_detail', 'manual', 'holdings_infer', 'precompute_holdings',
+                'benchmark_index', 'precompute_benchmark'
+            ) THEN 'verified' ELSE 'pending' END,
+            source,
+            confidence,
+            NULL,
+            NULL,
+            NULL,
+            resolved_at,
+            resolved_at,
+            'fund_sector_identity.2026-08.v1',
+            detail
+        FROM fund_primary_sectors_global
+        """,
+        """
+        INSERT IGNORE INTO fund_sector_current (
+            fund_code, sector_name, exposure_percent, is_primary,
+            identity_status, source, confidence, evidence_snapshot_id,
+            source_ref, report_period, as_of_date, available_at, resolved_at,
+            expires_at, mapping_version, detail
+        )
+        SELECT
+            fund_code,
+            sector_name,
+            NULL,
+            1,
+            CASE WHEN source IN (
+                'ocr_detail', 'manual', 'holdings_infer', 'precompute_holdings',
+                'benchmark_index', 'precompute_benchmark'
+            ) THEN 'verified' ELSE 'pending' END,
+            source,
+            confidence,
+            SHA2(CONCAT('legacy|', fund_code, '|', source, '|', resolved_at), 256),
+            NULL,
+            NULL,
+            NULL,
+            resolved_at,
+            resolved_at,
+            DATE_FORMAT(
+                TIMESTAMPADD(
+                    DAY,
+                    CASE
+                        WHEN source IN ('holdings_infer', 'precompute_holdings') THEN 90
+                        WHEN source IN ('ocr_detail', 'manual') THEN 365
+                        ELSE 30
+                    END,
+                    COALESCE(
+                        STR_TO_DATE(
+                            LEFT(REPLACE(resolved_at, 'T', ' '), 19),
+                            '%Y-%m-%d %H:%i:%s'
+                        ),
+                        UTC_TIMESTAMP(6)
+                    )
+                ),
+                '%Y-%m-%dT%H:%i:%s.%f+00:00'
+            ),
+            'fund_sector_identity.2026-08.v1',
+            detail
+        FROM fund_primary_sectors_global
+        """,
+        """
+        INSERT IGNORE INTO fund_sector_resolution_status (
+            fund_code, resolution_status, stage, reason_code, fund_name,
+            checked_at, next_retry_at, attempt_count, mapping_version, detail
+        )
+        SELECT fund_code, 'verified', source, 'existing_verified_identity', NULL,
+               resolved_at, expires_at, 1, mapping_version, detail
+        FROM fund_sector_current
+        WHERE is_primary = 1 AND identity_status = 'verified'
         """,
         """
         CREATE TABLE IF NOT EXISTS ocr_text_cache (

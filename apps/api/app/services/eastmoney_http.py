@@ -51,6 +51,10 @@ def _remaining_seconds() -> float | None:
     if deadline is None:
         return None
     remaining = deadline - time.monotonic()
+    # Windows' monotonic clock can reproduce a requested 50 ms interval as
+    # 0.0500000000029. Always round the budget down so a nested timeout never
+    # exceeds its parent deadline because of floating-point representation.
+    remaining = int(remaining * 1_000_000) / 1_000_000
     if remaining <= 0:
         raise EastmoneyDeadlineExceeded("Eastmoney call deadline exhausted")
     return remaining
@@ -173,10 +177,10 @@ def _bounded_timeout(value: Any) -> Any:
     if value is None:
         return remaining
     if isinstance(value, (int, float)):
-        return max(0.001, min(float(value), remaining))
+        return min(remaining, max(0.001, min(float(value), remaining)))
     if isinstance(value, tuple):
         return tuple(
-            max(0.001, min(float(item), remaining))
+            min(remaining, max(0.001, min(float(item), remaining)))
             for item in value
         )
     return value

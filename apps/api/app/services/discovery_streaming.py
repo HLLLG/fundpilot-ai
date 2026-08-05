@@ -43,6 +43,9 @@ from app.services.fund_benchmark_research import (
     build_fund_benchmark_research_batch,
     summarize_benchmark_research,
 )
+from app.services.fund_primary_sector_precompute import (
+    enqueue_candidate_sector_precompute,
+)
 from app.services.fund_vehicle_quality import assess_candidate_vehicle_quality_batch
 from app.services.discovery_client import (
     DiscoveryClient,
@@ -433,6 +436,7 @@ def _stream_discovery(
                 started_at=started_at,
                 stop_event=stop,
             )
+            enqueue_candidate_sector_precompute(pool)
             market_news = yield from _await_future_with_progress(
                 news_future,
                 "news",

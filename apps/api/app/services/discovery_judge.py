@@ -43,6 +43,7 @@ _RISK_REVIEW_SYSTEM_PROMPT = "你是严谨的基金荐基风控经理，正在�
 _RISK_REVIEW_TASK_PROMPT_ENFORCED = (
     "你是风控经理，正在复核荐基分析师草拟的推荐（draft_report.recommendations）。\n"
     "输入：draft_report（草案）+ candidate_pool（候选池，含 fund_quality_score/sector_fit_score/"
+    "sector_identity_status/sector_identity_eligible/"
     "fund_entry_signal）+ sector_opportunities（板块方向，含 entry_state/selection_path/"
     "flow_improving_probe_eligible/probability_early_probe_eligible/"
     "trend_formation_probability/confidence/opportunity_available）"
@@ -73,6 +74,7 @@ _RISK_REVIEW_TASK_PROMPT_ENFORCED = (
 _RISK_REVIEW_TASK_PROMPT_SHADOW = (
     "你是风控经理，正在复核荐基分析师草拟的推荐（draft_report.recommendations）。\n"
     "输入：draft_report（草案）+ candidate_pool（候选池，含 fund_quality_score/sector_fit_score/"
+    "sector_identity_status/sector_identity_eligible/"
     "fund_entry_signal）+ sector_opportunities（板块方向，含 entry_state/selection_path/"
     "flow_improving_probe_eligible/probability_early_probe_eligible/"
     "trend_formation_probability/confidence/opportunity_available）"

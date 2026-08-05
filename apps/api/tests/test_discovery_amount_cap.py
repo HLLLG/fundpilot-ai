@@ -7,10 +7,12 @@ from app.services.discovery_guard import (
 )
 
 
-def _known_cash(amount: float = 50_000) -> dict:
+def _position_truth(legacy_cash_yuan: float = 50_000) -> dict:
     return {
         "position_complete": True,
-        "cash": {"known": True, "balance_yuan": amount},
+        # Kept to prove that the legacy snapshot field no longer changes a
+        # discovery scan whose sole funding ceiling is request_budget_yuan.
+        "cash": {"known": True, "balance_yuan": legacy_cash_yuan},
         "positions": [],
     }
 
@@ -54,7 +56,7 @@ def _verified_tradeability() -> dict:
 
 def test_amount_cap_keeps_boost_below_request_concentration_limit() -> None:
     result = resolve_discovery_amount_cap(
-        portfolio_truth=_known_cash(),
+        portfolio_truth=_position_truth(),
         holdings_slim=[],
         candidate_sector="半导体",
         allocated_by_sector={},
@@ -70,7 +72,7 @@ def test_amount_cap_keeps_boost_below_request_concentration_limit() -> None:
 
 def test_amount_cap_subtracts_existing_and_current_sector_exposure() -> None:
     result = resolve_discovery_amount_cap(
-        portfolio_truth=_known_cash(),
+        portfolio_truth=_position_truth(),
         holdings_slim=[
             {
                 "fund_code": "000001",
@@ -93,7 +95,7 @@ def test_amount_cap_subtracts_existing_and_current_sector_exposure() -> None:
 
 def test_amount_cap_uses_canonical_sector_aliases_for_existing_exposure() -> None:
     result = resolve_discovery_amount_cap(
-        portfolio_truth=_known_cash(),
+        portfolio_truth=_position_truth(),
         holdings_slim=[
             {
                 "fund_code": "000001",
@@ -114,9 +116,9 @@ def test_amount_cap_uses_canonical_sector_aliases_for_existing_exposure() -> Non
     assert result.cap_yuan == 2_000
 
 
-def test_amount_cap_uses_confirmed_cash_as_independent_ceiling() -> None:
+def test_amount_cap_uses_scan_budget_instead_of_legacy_cash_field() -> None:
     result = resolve_discovery_amount_cap(
-        portfolio_truth=_known_cash(8_000),
+        portfolio_truth=_position_truth(8_000),
         holdings_slim=[],
         candidate_sector="电子",
         allocated_by_sector={},
@@ -127,10 +129,10 @@ def test_amount_cap_uses_confirmed_cash_as_independent_ceiling() -> None:
     )
 
     assert result.available is True
-    assert result.cap_yuan == 8_000
+    assert result.cap_yuan == 15_000
 
 
-def test_amount_cap_uses_explicit_scan_budget_when_cash_is_unknown() -> None:
+def test_amount_cap_uses_scan_budget_when_legacy_cash_is_unknown() -> None:
     result = resolve_discovery_amount_cap(
         portfolio_truth={
             "position_complete": True,
@@ -153,7 +155,7 @@ def test_amount_cap_uses_explicit_scan_budget_when_cash_is_unknown() -> None:
 
 def test_amount_cap_fails_closed_when_existing_sector_is_unknown() -> None:
     result = resolve_discovery_amount_cap(
-        portfolio_truth=_known_cash(),
+        portfolio_truth=_position_truth(),
         holdings_slim=[
             {
                 "fund_code": "000001",
@@ -176,7 +178,7 @@ def test_amount_cap_fails_closed_when_existing_sector_is_unknown() -> None:
 
 def test_amount_cap_rejects_non_finite_inputs() -> None:
     result = resolve_discovery_amount_cap(
-        portfolio_truth=_known_cash(),
+        portfolio_truth=_position_truth(),
         holdings_slim=[],
         candidate_sector="电子",
         allocated_by_sector={},
@@ -222,7 +224,7 @@ def test_guard_tracks_multiple_recommendations_in_the_same_sector() -> None:
             "position_complete": True,
             "pending_transaction_count": 0,
         },
-        "portfolio_position_truth": _known_cash(),
+        "portfolio_position_truth": _position_truth(),
         "portfolio_gap": {
             "weight_denominator_yuan": 100_000,
             "holdings_slim": [],
@@ -308,7 +310,7 @@ def test_guard_reprojects_free_text_and_amount_note_from_capped_amount() -> None
                 "position_complete": True,
                 "pending_transaction_count": 0,
             },
-            "portfolio_position_truth": _known_cash(),
+            "portfolio_position_truth": _position_truth(),
             "portfolio_gap": {
                 "weight_denominator_yuan": 100_000,
                 "holdings_slim": [],
@@ -331,7 +333,7 @@ def test_guard_reprojects_free_text_and_amount_note_from_capped_amount() -> None
     assert rec.suggested_position_change_percent != 100
 
 
-def test_guard_empty_portfolio_does_not_apply_concentration_twice_to_cash() -> None:
+def test_guard_ignores_legacy_cash_and_uses_scan_budget_for_empty_portfolio() -> None:
     rec = _apply_single_guard(
         facts={
             "portfolio_snapshot": {
@@ -340,21 +342,22 @@ def test_guard_empty_portfolio_does_not_apply_concentration_twice_to_cash() -> N
                 "position_complete": True,
                 "pending_transaction_count": 0,
             },
-            "portfolio_position_truth": _known_cash(8_000),
+            "portfolio_position_truth": _position_truth(8_000),
             "portfolio_gap": {
                 "total_amount": 0,
                 "weight_denominator_yuan": 0,
                 "holdings_slim": [],
             },
             "sector_opportunities": [],
-        }
+        },
+        amount=100_000,
     )
 
     assert rec.action == "分批买入"
-    assert rec.suggested_amount_yuan == 8_000
+    assert rec.suggested_amount_yuan == 15_000
 
 
-def test_guard_without_position_truth_fails_closed_instead_of_forging_cash() -> None:
+def test_guard_without_position_truth_still_fails_closed() -> None:
     rec = _apply_single_guard(
         facts={
             "portfolio_gap": {

@@ -114,7 +114,7 @@ export function translateEvidenceText(text: string): string {
     .replace(/track=setup/gi, "蓄势观察")
     .replace(/pattern=([a-z_]+)/gi, (_match, value: string) => patternLabel(value))
     .replace(/fund_quality_score\s*(?:=|为)?\s*([-+]?\d+(?:\.\d+)?)/gi, "基金质量分 $1")
-    .replace(/sector_fit_score\s*(?:=|为)?\s*([-+]?\d+(?:\.\d+)?)/gi, "板块匹配分 $1")
+    .replace(/sector_fit_score\s*(?:=|为)?\s*([-+]?\d+(?:\.\d+)?)/gi, "板块关联排序分 $1")
     .replace(/sector_opportunities\s*得分/gi, "系统方向得分")
     .replace(/sector_opportunities/gi, "系统筛出的主方向")
     .replace(/quality_reasons/gi, "加分原因")

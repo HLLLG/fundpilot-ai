@@ -16,7 +16,8 @@ DEFAULT_DISCOVERY_ROLE_PROMPT = """## 角色定位
 ## 任务边界
 
 - 本任务从 `discovery_facts.candidate_pool` 推荐白名单中精选 **0~3 只**用户尚未持有的新基金机会；
-  没有通过质量准入的基金时必须明确输出 0 只，不得为了凑数降低门槛
+  没有候选同时通过方向动作边界、基金质量、载体质量与板块身份门槛时必须明确输出 0 只，
+  不得笼统表述为“没有通过质量准入”，也不得为了凑数降低门槛
 - `fund_code`、`fund_name` **必须**与 `candidate_pool` 条目一致，**禁止编造**池外代码
 - 白名单已联立校验方向动作边界、基金质量、载体质量与板块身份；等待/研究方向不得占用推荐名额，
   不得用其他方向凑数，也不得恢复 `recommendation_candidate_scope` 未列出的基金
@@ -33,9 +34,10 @@ DEFAULT_DISCOVERY_ROLE_PROMPT = """## 角色定位
 |------|------------|
 | `portfolio_gap.holdings_slim` | 当前持仓精简表：`fund_code`、`sector_name`、`weight_percent`、`holding_return_percent`、`estimated_daily_return_percent`；用于去重、看集中度、缺口补全 |
 | `candidate_pool[].return_3m/6m/1y_percent` | 阶段收益；`balanced` 策略优先 3~6 月走强、1 年涨幅适中（非年度冠军） |
-| `candidate_pool[].fund_quality_score` / `sector_fit_score` | 系统预筛质量分；优先参考高分候选，同时结合 `quality_reasons` / `quality_penalties` 解释入池原因和短板 |
+| `candidate_pool[].fund_quality_score` / `sector_fit_score` | 系统预筛质量分与板块关联排序分；只用于门内排序和解释，`sector_fit_score` 不是板块身份门槛 |
+| `candidate_pool[].sector_identity_status` / `sector_identity_eligible` | 基金代码对应的板块身份状态；只有 `verified` / `true` 才可执行，名称与新发召回即使排序分高也不能升级 |
 | `candidate_pool[].quality_gate` | 确定性质量准入；仅 `status=eligible` 可产生买入动作，`watch_only` 只能观察，`excluded` 禁止进入 recommendations |
-| `recommendation_candidate_scope` | 服务端方向—基金候选漏斗与最终白名单；`unmatched_actionable_sector_labels` 表示方向可布局但暂无通过基金门槛的载体，此时保留方向、不得拿等待方向补位 |
+| `recommendation_candidate_scope` | 服务端方向—基金候选漏斗与最终白名单；`candidate_decisions` 逐只记录 `actionable` / `conditional_wait` / `watch_only` 及真实 `reason_codes`；`unmatched_actionable_sector_labels` 表示方向可布局但暂无通过基金门槛的载体，此时保留方向、不得拿等待方向补位 |
 | `candidate_pool[].peer_research` | 同类型/策略/地域/风险组的多维分位；只解释 `applicable=true` 且 `available=true` 的维度，不适用与缺失不得补值；`execution_tilt_eligible=false` 时不得据此提额或把描述分位称为预测信号 |
 | `candidate_pool[].benchmark_research` | 冻结基准角色；仅 `formal_excess_eligible=true` 可称正式超额，`tracking_reference` 只能称跟踪参考 |
 | `candidate_pool[].benchmark_metrics` | 决策时点前严格对齐的 3月/6月/1年收益、回撤、滚动胜率与跟踪指标；仅 `status=qualified` 可引用，身份存在不等于跑赢，且只作描述不得提额 |
@@ -72,7 +74,7 @@ DEFAULT_DISCOVERY_ROLE_PROMPT = """## 角色定位
 ## 输出动作
 
 - `建议关注`：值得纳入观察池，暂不必下单
-- `分批买入`：条件成熟可进入系统分配（金额由服务端按风险、现金和集中度统一计算）
+- `分批买入`：条件成熟可进入系统分配（金额由服务端按本次可投入预算、风险和集中度统一计算）
 - `等待回调`：沿用现有动作枚举；须根据 `waiting_reason_code` 准确写成等待资金确认、等待基金信号或等待结构修复。单纯高波动、贴近高点或高历史回撤不再自动触发等待
 
 ## 约束
@@ -85,7 +87,7 @@ DEFAULT_DISCOVERY_ROLE_PROMPT = """## 角色定位
 - 每只推荐的 `risks` 须至少 1 条；只有 `sector_opportunities.overheat_flags` 或 `fund_entry_signal.overheat_flags` 非空时才能写追高/短期加速风险，否则必须写结构化失效或信息不足风险
 """
 
-DISCOVERY_PROMPT_TEMPLATE_VERSION = "discovery_prompt.2026-08.v12"
+DISCOVERY_PROMPT_TEMPLATE_VERSION = "discovery_prompt.2026-08.v13"
 
 DISCOVERY_FACTS_INSTRUCTION = (
     "以下数字由系统计算，分析时不得改写；推荐 fund_code 必须来自 candidate_pool 推荐白名单，禁止池外编造。"
@@ -93,7 +95,7 @@ DISCOVERY_FACTS_INSTRUCTION = (
     "不得跨方向凑数，也不得恢复 recommendation_candidate_scope 未列出的基金。"
     "portfolio_gap.holdings_slim 为用户当前持仓精简表：不得推荐其中 fund_code；"
     "缺口/补全模式须对照 sector_name 与 weight_percent，避免突破 profile.concentration_limit_percent。"
-    "candidate_pool 每只含 fund_quality_score/sector_fit_score、quality_reasons/quality_penalties、阶段收益、回撤、规模、nav_trend、estimated_daily_return_percent。"
+    "candidate_pool 每只含 fund_quality_score/sector_fit_score、sector_identity_status/sector_identity_eligible、quality_reasons/quality_penalties、阶段收益、回撤、规模、nav_trend、estimated_daily_return_percent；sector_fit_score 只作关联排序，不能替代已验证的代码级板块身份。"
     "full_market 模式须先用 sector_opportunities 判断板块方向，再在方向内比较基金质量，最后决定动作；不得只按近1年收益排序。"
     "sector_opportunities 含 score_policy_version=sector_entry_maturity.2026-07.v2 或 sector_entry_maturity.2026-08.v3 时，entry_state 是方向动作边界："
     "ready_to_start 且基金质量、数据、预算和组合风险等门禁通过时应输出分批买入；"

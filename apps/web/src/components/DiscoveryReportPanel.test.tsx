@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 
@@ -161,8 +161,32 @@ describe("DiscoveryReportPanel", () => {
     expect(screen.getByText("方向观察池 · 1 个尚在形成")).toBeInTheDocument();
     expect(screen.queryByText("本次主方向")).not.toBeInTheDocument();
 
+    const collapseDirections = screen.getByRole("button", { name: "收起今日可布局方向" });
+    expect(collapseDirections).toHaveAttribute("aria-expanded", "true");
+    expect(collapseDirections).not.toHaveTextContent(/收起|展开/);
+    expect(collapseDirections).toHaveAttribute(
+      "aria-controls",
+      "discovery-direction-content-disc-1",
+    );
+    expect(screen.getByTestId("discovery-direction-content")).toBeVisible();
+    fireEvent.click(collapseDirections);
+    expect(screen.queryByTestId("discovery-direction-content")).not.toBeInTheDocument();
+
+    const expandDirections = screen.getByRole("button", { name: "展开今日可布局方向" });
+    expect(expandDirections).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(expandDirections);
+    expect(screen.getByTestId("discovery-direction-content")).toBeVisible();
+
     fireEvent.click(screen.getByText("等待入场条件 · 1 个方向"));
     expect(screen.getByText("机器人")).toBeVisible();
+    expect(screen.queryByText(/单日涨幅回落至3%以内/)).not.toBeInTheDocument();
+    const expandRobotDetails = screen.getByRole("button", { name: "展开机器人方向详情" });
+    expect(expandRobotDetails).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(expandRobotDetails);
+    expect(screen.getByRole("button", { name: "收起机器人方向详情" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
     expect(screen.getByText(/单日涨幅回落至3%以内/)).toBeVisible();
   });
 
@@ -381,7 +405,7 @@ describe("DiscoveryReportPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: /本次候选池/ }));
 
     expect(screen.getAllByText("质量分").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("匹配分").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("关联排序分").length).toBeGreaterThan(0);
     expect(screen.getAllByText("53.37").length).toBeGreaterThan(0);
     expect(screen.getAllByText("37.12").length).toBeGreaterThan(0);
     expect(screen.getAllByText(/板块高置信匹配/).length).toBeGreaterThan(0);
@@ -433,6 +457,125 @@ describe("DiscoveryReportPanel", () => {
     expect(screen.getAllByText("等待条件").length).toBeGreaterThan(0);
     expect(screen.getAllByText("研究观察").length).toBeGreaterThan(0);
     expect(screen.queryByText("已推荐")).not.toBeInTheDocument();
+  });
+
+  it("does not let a high recall score override a pending sector identity", () => {
+    const report = sampleReport();
+    report.discovery_facts = {
+      ...report.discovery_facts,
+      data_evidence_guard: {
+        execution_blocked: false,
+        blocked_fund_codes: [],
+      },
+    };
+    report.candidate_pool = [{
+      ...report.candidate_pool?.[0],
+      fund_code: "006081",
+      fund_name: "名称召回基金",
+      sector_fit_score: 99,
+      sector_match_kind: "name",
+      sector_identity_status: "pending",
+      sector_identity_eligible: false,
+      sector_mapping_verified: false,
+      vehicle_quality_status: "eligible",
+      quality_gate: {
+        eligible: true,
+        status: "eligible",
+        reasons: [],
+        missing_fields: [],
+        coverage_percent: 100,
+      },
+    }];
+    report.recommendations = [{
+      ...report.recommendations[0],
+      fund_name: "名称召回基金",
+      action: "分批买入",
+    }];
+    report.decision_events = [{
+      fund_code: "006081",
+      final_action: "分批买入",
+      action_category: "buy",
+      eligible: true,
+    }];
+
+    render(<DiscoveryReportPanel report={report} />);
+
+    expect(screen.getByText("本次暂无买入建议")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /查看 1 只/ }));
+    expect(screen.getByText("基金证据待加强")).toBeInTheDocument();
+  });
+
+  it("classifies the broad candidate pool with deterministic wait and watch reasons", () => {
+    const report = sampleReport();
+    report.recommendations = [];
+    report.decision_events = [];
+    report.discovery_facts = {
+      ...report.discovery_facts,
+      data_evidence_guard: {
+        execution_blocked: false,
+        blocked_fund_codes: [],
+      },
+      recommendation_candidate_scope: {
+        schema_version: "discovery_recommendation_scope.2026-08.v2",
+        policy_enforced: true,
+        ordered_eligible_fund_codes: [],
+        actionable_sector_labels: [],
+        eligible_sector_labels: [],
+        unmatched_actionable_sector_labels: [],
+        research_sector_labels: ["电子", "医药"],
+        sector_funnel: [],
+        conditional_wait_fund_codes: ["000001", "000002"],
+        watch_only_fund_codes: ["000003"],
+        candidate_decisions: [
+          {
+            fund_code: "000001",
+            fund_name: "等待基金一",
+            sector_label: "电子",
+            status: "conditional_wait",
+            reason_codes: ["direction_entry_not_open"],
+          },
+          {
+            fund_code: "000002",
+            fund_name: "等待基金二",
+            sector_label: "电子",
+            status: "conditional_wait",
+            reason_codes: ["direction_entry_not_open"],
+          },
+          {
+            fund_code: "000003",
+            fund_name: "观察基金",
+            sector_label: "医药",
+            status: "watch_only",
+            reason_codes: ["sector_identity_not_verified"],
+          },
+        ],
+      },
+    };
+    report.candidate_pool = [
+      { fund_code: "000001", fund_name: "等待基金一", sector_label: "电子" },
+      { fund_code: "000002", fund_name: "等待基金二", sector_label: "电子" },
+      {
+        fund_code: "000003",
+        fund_name: "观察基金",
+        sector_label: "医药",
+        quality_penalties: ["历史波动偏高"],
+      },
+    ];
+
+    render(<DiscoveryReportPanel report={report} />);
+
+    const summary = within(screen.getByTestId("discovery-decision-summary"));
+    expect(summary.getByText("建议买入").nextElementSibling).toHaveTextContent("0");
+    expect(summary.getByText("等条件").nextElementSibling).toHaveTextContent("2");
+    expect(summary.getByText("仅观察").nextElementSibling).toHaveTextContent("1");
+    expect(summary.getByText(/先等待设定条件出现/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /本次候选池/ }));
+    expect(screen.getAllByRole("article", { name: /等待条件/ })).toHaveLength(2);
+    expect(screen.getByRole("article", { name: /研究观察/ })).toHaveTextContent(
+      "板块身份尚未通过可靠映射核验",
+    );
+    expect(screen.queryByText("关键约束：历史波动偏高")).not.toBeInTheDocument();
   });
 
   it("does not mount the long follow-up chat until requested", () => {
@@ -572,7 +715,7 @@ describe("DiscoveryReportPanel", () => {
             amount_yuan: null,
             revalidation_required: true,
             preconditions: [
-              "confirmed_cash_recheck",
+              "request_budget_recheck",
               "risk_context_recheck",
             ],
           },
@@ -609,8 +752,7 @@ describe("DiscoveryReportPanel", () => {
       },
       budget: {
         requested_yuan: 50000,
-        confirmed_cash_yuan: 40000,
-        spendable_yuan: 40000,
+        spendable_yuan: 50000,
         current_tranche_cap_yuan: 12500,
         allocated_current_tranche_yuan: 6300,
       },
@@ -619,7 +761,6 @@ describe("DiscoveryReportPanel", () => {
         amount_yuan: 43700,
         current_tranche_unallocated_yuan: 6200,
         deferred_future_tranches_yuan: 37500,
-        unavailable_due_to_cash_yuan: 10000,
         reason_codes: ["candidate_capacity_exhausted"],
       },
       revalidation_required: true,
@@ -629,24 +770,90 @@ describe("DiscoveryReportPanel", () => {
 
     expect(screen.getByText("1 只形成买入建议")).toBeInTheDocument();
     const plan = screen.getByRole("region", { name: "确定性首批分配" });
-    expect(plan).toHaveTextContent("总预算");
+    expect(plan).toHaveTextContent("本次可投入预算");
     expect(plan).toHaveTextContent("¥50,000");
     expect(plan).toHaveTextContent("当前首批上限");
     expect(plan).toHaveTextContent("¥12,500");
     expect(plan).toHaveTextContent("延期至后续批次");
     expect(plan).toHaveTextContent("¥37,500");
-    expect(plan).toHaveTextContent("已确认现金");
-    expect(plan).toHaveTextContent("¥40,000");
     expect(plan).toHaveTextContent("组合风险上下文已通过");
     expect(plan).toHaveTextContent("候选共同收益样本 118 日");
     expect(plan).toHaveTextContent("当前持仓净值金额覆盖 92.5%");
-    expect(plan).toHaveTextContent("因现金不足或未确认不可用：¥10,000");
+    expect(plan).not.toHaveTextContent("现金");
 
     const currentTranche = screen.getByLabelText("首批参考金额");
     expect(currentTranche).toHaveTextContent("首批参考金额");
     expect(currentTranche).toHaveTextContent("¥6,300");
     expect(screen.getByText("后续批次待重新核验 · 金额留空")).toBeInTheDocument();
-    expect(screen.getByText(/可用现金、板块敞口与组合风险需在执行前重新计算/)).toBeInTheDocument();
+    expect(screen.getByText(/本次预算、板块敞口与组合风险需在执行前重新计算/)).toBeInTheDocument();
+  });
+
+  it("uses the configured scan budget without a separate cash concept", () => {
+    const report = sampleReport();
+    report.allocation_plan = {
+      schema_version: "discovery_allocation_plan.v1",
+      status: "blocked",
+      amount_semantics: "advisory_initial_tranche",
+      budget: {
+        requested_yuan: 31280.7,
+        spendable_yuan: 31280.7,
+        current_tranche_cap_yuan: 0,
+        allocated_current_tranche_yuan: 0,
+      },
+      allocations: [],
+      unallocated_budget: { amount_yuan: 31280.7 },
+    };
+    report.caveats = [
+      "现金未单独录入，本次预算已作为本次扫描可用现金。",
+      "仍需核验板块敞口。",
+    ];
+
+    render(<DiscoveryReportPanel report={report} />);
+
+    const plan = screen.getByRole("region", { name: "确定性首批分配" });
+    expect(plan).toHaveTextContent("本次可投入预算");
+    expect(plan).toHaveTextContent("¥31,280.7");
+    expect(plan).not.toHaveTextContent("现金");
+    expect(screen.queryByText(/现金未单独录入/)).not.toBeInTheDocument();
+    expect(screen.getByText("使用边界与免责声明（1 条）")).toBeInTheDocument();
+    expect(screen.getByText("仍需核验板块敞口。")).toBeInTheDocument();
+  });
+
+  it("distinguishes an empty actionable set from a failed risk check", () => {
+    const report = sampleReport();
+    report.recommendations = [];
+    report.decision_events = [];
+    report.discovery_facts = {
+      ...report.discovery_facts,
+      risk_context: undefined,
+    };
+    report.allocation_plan = {
+      schema_version: "discovery_allocation_plan.v1",
+      status: "blocked",
+      amount_semantics: "advisory_initial_tranche",
+      risk_context: {
+        schema_version: "discovery_risk_context.v1",
+        status: "not_evaluated_no_actionable_candidates",
+        reason_codes: ["no_actionable_recommendation_candidates"],
+      },
+      budget: {
+        requested_yuan: 31280.7,
+        spendable_yuan: 31280.7,
+        current_tranche_cap_yuan: 0,
+        allocated_current_tranche_yuan: 0,
+      },
+      allocations: [],
+      unallocated_budget: { amount_yuan: 31280.7 },
+    };
+
+    render(<DiscoveryReportPanel report={report} />);
+
+    const plan = screen.getByRole("region", { name: "确定性首批分配" });
+    expect(plan).toHaveTextContent("暂无进入金额分配的买入候选");
+    expect(plan).toHaveTextContent(
+      "候选筛选阶段已止步，组合风险分配未运行；这不表示风险校验失败。",
+    );
+    expect(plan).not.toHaveTextContent("组合风险上下文未通过或未记录");
   });
 
   it("fails closed when a modern allocation plan has no verified allocation row", () => {

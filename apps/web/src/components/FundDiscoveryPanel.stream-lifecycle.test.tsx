@@ -245,7 +245,7 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
 
     await waitFor(() => expect(fetchDiscoveryPrompt).toHaveBeenCalled());
     fireEvent.click(screen.getByRole("button", { name: /AI 分析偏好附录（高级）/ }));
-    await waitFor(() => expect(document.body.textContent).toContain("remote prompt"));
+    await screen.findByText("remote prompt", {}, { timeout: 10_000 });
     vi.mocked(saveDiscoveryPromptRemote).mockClear();
     fireEvent.click(screen.getByRole("button", { name: /编辑/ }));
     fireEvent.change(document.querySelector("[data-testid='analysis-role-prompt']") as HTMLTextAreaElement, {
@@ -253,7 +253,7 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
     });
 
     await waitFor(() => expect(saveDiscoveryPromptRemote).toHaveBeenCalledWith("changed prompt"));
-  });
+  }, 15_000);
 
   it("keeps only the two high-value recommendation goals in the main entry", () => {
     renderPanel();

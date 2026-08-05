@@ -14,13 +14,14 @@ from app.database import (
     list_fund_primary_sectors_by_sector_names,
 )
 from app.models import Holding
+from app.services.akshare_subprocess import fetch_new_fund_offerings
 from app.services.discovery_selection_strategy import (
     SelectionStrategy,
 )
+from app.services.discovery_sector_identity import annotate_candidate_sector_identity
+from app.services.fund_benchmark_sector import resolve_sector_from_benchmark
 from app.services.fund_code_resolver import lookup_fund_name_by_code
 from app.services.fund_data import FundDataService, _map_holdings_concurrently
-from app.services.sector_canonical import get_canonical_sector
-from app.services.akshare_subprocess import fetch_new_fund_offerings
 from app.services.fund_discovery_data_cache import (
     fetch_discovery_fund_universe_cached,
     fetch_fund_research_profiles_cached,
@@ -31,15 +32,20 @@ from app.services.fund_peer_ranking import (
     build_peer_rank,
     resolve_benchmark_comparison,
 )
-from app.services.shared_executors import get_discovery_context_executor
-from app.services.streaming_heartbeat import raise_if_stream_cancelled
-from app.services.fund_benchmark_sector import resolve_sector_from_benchmark
+from app.services.fund_sector_identity import is_current_identity_row_fresh
 from app.services.fund_vehicle_quality import assess_candidate_vehicle_quality
 from app.services.news_freshness import normalize_news_now
+from app.services.sector_canonical import get_canonical_sector
+from app.services.shared_executors import get_discovery_context_executor
+from app.services.streaming_heartbeat import raise_if_stream_cancelled
 
 _POOL_CAP = 28
 _PER_SECTOR = 5
-_MAX_RECALL_AUDIT_CANDIDATES = 512
+# A full 14-direction opportunity scan currently scores roughly 550--600
+# unique rows. 512 made the audit invalid even though the actual 28-candidate
+# decision pool was complete. Keep the evidence bounded, but retain one full
+# normal scan so recall validation describes the real funnel.
+_MAX_RECALL_AUDIT_CANDIDATES = 1024
 _MIN_SCALE_YI = 1.0
 _HARD_MIN_SCALE_YI = 0.5
 _MIN_HISTORY_DAYS = 365
@@ -135,7 +141,15 @@ def build_candidate_pool(
         for item in (sector_opportunities or [])
         if str(item.get("sector_label") or "").strip()
     }
-    primary_rows = list_fund_primary_sectors() + list_fund_primary_sectors_by_sector_names(
+    # Tenant rows are accepted only when the user/OCR supplied the identity
+    # directly.  Shared holdings/index identities come from the fresh verified
+    # materialized view; name and LLM rows remain recall-only.
+    tenant_primary_rows = [
+        row
+        for row in list_fund_primary_sectors()
+        if str(row.get("source") or "") in {"manual", "ocr_detail"}
+    ]
+    primary_rows = tenant_primary_rows + list_fund_primary_sectors_by_sector_names(
         target_sectors,
         limit_per_sector=20,
     )
@@ -357,6 +371,9 @@ def _compact_recall_audit_candidate(candidate: dict) -> dict:
         "sector_label",
         "selection_reason",
         "sector_match_kind",
+        "sector_identity_status",
+        "sector_identity_eligible",
+        "sector_mapping_verified",
         "fund_quality_score",
         "sector_fit_score",
         "recall_upside_score",
@@ -828,6 +845,8 @@ def _populate_candidate_selection_audit(
                 "quality_gate_status": quality_status,
                 "fund_quality_score": raw.get("fund_quality_score"),
                 "sector_fit_score": raw.get("sector_fit_score"),
+                "sector_identity_status": raw.get("sector_identity_status"),
+                "sector_identity_eligible": raw.get("sector_identity_eligible"),
                 "peer_group_key": (
                     (raw.get("peer_group") or {}).get("group_key")
                     if isinstance(raw.get("peer_group"), dict)
@@ -1046,6 +1065,11 @@ def _is_execution_verified_primary_mapping(
     again from its frozen original text and agree with today's target label.
     """
 
+    identity_status = str(row.get("identity_status") or "").strip()
+    if identity_status and identity_status != "verified":
+        return False
+    if row.get("expires_at") and not is_current_identity_row_fresh(row):
+        return False
     source = str(row.get("source") or "").strip()
     if source in _DIRECTLY_VERIFIED_PRIMARY_SOURCES:
         return True
@@ -1456,6 +1480,7 @@ def _with_quality_score(
     row = dict(entry)
     row["sector_match_kind"] = _resolve_sector_match_kind(row)
     row.pop("_sector_match_kind", None)
+    row = annotate_candidate_sector_identity(row)
     reasons: list[str] = []
     gate = row.get("quality_gate") if isinstance(row.get("quality_gate"), dict) else {}
     penalties: list[str] = [
@@ -1810,6 +1835,7 @@ def _with_exact_passive_tracking_match(row: dict) -> dict:
         if str(match.index_code or "").strip().upper() != target_code:
             continue
         result["sector_match_kind"] = "tracking_exact"
+        result = annotate_candidate_sector_identity(result)
         result["sector_confidence"] = max(
             _num(result.get("sector_confidence")) or 0.0,
             0.95,

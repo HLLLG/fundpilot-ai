@@ -80,6 +80,12 @@ function formatYuan(value: number | null | undefined, fallback = "未确认"): s
   return amount == null ? fallback : `¥${YUAN_FORMATTER.format(amount)}`;
 }
 
+function isObsoleteDiscoveryCashCaveat(value: string): boolean {
+  return value.includes("现金未单独录入")
+    || value.includes("现金未单录")
+    || value.includes("本次扫描可用现金");
+}
+
 export function discoveryActionDisplayLabel(
   recommendation: DiscoveryRecommendation,
 ): string {
@@ -166,6 +172,39 @@ function resolveAllocationPlan(report: FundDiscoveryReport) {
   return undefined;
 }
 
+function candidateSectorIdentityEligible(
+  candidate?: DiscoveryCandidatePoolItem,
+): boolean | undefined {
+  if (!candidate) return undefined;
+  const status = candidate.sector_identity_status;
+  const eligible = candidate.sector_identity_eligible;
+  const kind = candidate.sector_match_kind;
+  const mappingVerified = candidate.sector_mapping_verified;
+
+  // Any explicit contradiction fails closed. New reports emit these fields
+  // consistently; this also keeps malformed or partially migrated rows from
+  // becoming executable through one optimistic flag.
+  if (status && status !== "verified") return false;
+  if (eligible === false) return false;
+  if (kind && ["name", "new_issue", "fallback"].includes(kind)) return false;
+  if (mappingVerified === false) return false;
+
+  if (
+    status === "verified" ||
+    eligible === true ||
+    (kind && ["primary", "tracking_exact"].includes(kind)) ||
+    mappingVerified === true
+  ) {
+    return true;
+  }
+  // Historical reports predate identity provenance and encoded the old result
+  // only in sector_fit_score. New reports always take one of the branches above.
+  if (typeof candidate.sector_fit_score === "number") {
+    return candidate.sector_fit_score >= 18;
+  }
+  return undefined;
+}
+
 function recommendationStatus(
   report: FundDiscoveryReport,
   recommendation: DiscoveryRecommendation,
@@ -177,6 +216,7 @@ function recommendationStatus(
   }
 
   const candidate = report.candidate_pool?.find((item) => item.fund_code === code);
+  const sectorIdentityEligible = candidateSectorIdentityEligible(candidate);
   const qualityGate = candidate?.quality_gate;
   if (qualityGate && (!qualityGate.eligible || qualityGate.status !== "eligible")) {
     return "watch_only";
@@ -184,10 +224,7 @@ function recommendationStatus(
   if (candidate?.vehicle_quality_status && candidate.vehicle_quality_status !== "eligible") {
     return "watch_only";
   }
-  if (
-    typeof candidate?.sector_fit_score === "number"
-    && candidate.sector_fit_score < 18
-  ) {
+  if (sectorIdentityEligible === false) {
     return "watch_only";
   }
 
@@ -244,12 +281,12 @@ function DiscoveryRecommendationCard({
   const futureTranche = rec.allocation?.future_tranches?.find(
     (item) => item.revalidation_required !== false,
   );
+  const sectorIdentityEligible = candidateSectorIdentityEligible(candidate);
   const fundEvidenceComplete = Boolean(
     candidate?.quality_gate?.eligible
     && candidate.quality_gate.status === "eligible"
     && candidate.vehicle_quality_status === "eligible"
-    && typeof candidate.sector_fit_score === "number"
-    && candidate.sector_fit_score >= 18,
+    && sectorIdentityEligible === true,
   );
   const fundEvidenceFailed = Boolean(
     candidate
@@ -257,10 +294,7 @@ function DiscoveryRecommendationCard({
       candidate.quality_gate?.status === "watch_only"
       || candidate.quality_gate?.status === "excluded"
       || (candidate.vehicle_quality_status && candidate.vehicle_quality_status !== "eligible")
-      || (
-        typeof candidate.sector_fit_score === "number"
-        && candidate.sector_fit_score < 18
-      )
+      || sectorIdentityEligible === false
     ),
   );
   const fundEvidenceSummary = !candidate
@@ -347,7 +381,7 @@ function DiscoveryRecommendationCard({
           <p>
             <span className="font-black">后续批次待重新核验 · 金额留空</span>
             <span className="block text-[var(--warn-fg)]">
-              可用现金、板块敞口与组合风险需在执行前重新计算。
+              本次预算、板块敞口与组合风险需在执行前重新计算。
             </span>
           </p>
         </div>
@@ -431,18 +465,20 @@ function DiscoveryAllocationPlanPanel({ report }: { report: FundDiscoveryReport 
   const risk = report.discovery_facts?.risk_context;
   const riskSummary = plan.risk_context;
   const riskStatus = risk?.status ?? riskSummary?.status ?? "unavailable";
+  const riskReasonCodes = risk?.reason_codes ?? riskSummary?.reason_codes ?? [];
+  const allocationNotEvaluated = riskReasonCodes.includes(
+    "no_actionable_recommendation_candidates",
+  );
   const riskQualified = risk
     ? risk.qualified === true && risk.status === "qualified"
     : riskStatus === "qualified";
   const metrics = [
-    ["总预算", formatYuan(budget.requested_yuan)],
-    ["已确认现金", formatYuan(budget.confirmed_cash_yuan)],
+    ["本次可投入预算", formatYuan(budget.requested_yuan)],
     ["当前首批上限", formatYuan(budget.current_tranche_cap_yuan)],
     ["首批已分配", formatYuan(budget.allocated_current_tranche_yuan, "¥0")],
     ["延期至后续批次", formatYuan(unallocated.deferred_future_tranches_yuan, "¥0")],
     ["当前未分配", formatYuan(unallocated.current_tranche_unallocated_yuan, "¥0")],
   ] as const;
-  const cashUnavailable = finiteAmount(unallocated.unavailable_due_to_cash_yuan);
   const riskSampleDays = risk?.candidate_common_return_sample_days;
   const holdingCoverage = finiteAmount(
     risk?.current_holdings_nav_amount_coverage_percent,
@@ -503,7 +539,11 @@ function DiscoveryAllocationPlanPanel({ report }: { report: FundDiscoveryReport 
         )}
         <div className="min-w-0">
           <p className="font-black">
-            {riskQualified ? "组合风险上下文已通过" : "组合风险上下文未通过或未记录"}
+            {riskQualified
+              ? "组合风险上下文已通过"
+              : allocationNotEvaluated
+                ? "暂无进入金额分配的买入候选"
+                : "组合风险上下文未通过或未记录"}
           </p>
           <p className="mt-0.5 opacity-80">
             {riskQualified
@@ -511,16 +551,15 @@ function DiscoveryAllocationPlanPanel({ report }: { report: FundDiscoveryReport 
                   riskSampleDays != null ? `候选共同收益样本 ${riskSampleDays} 日` : null,
                   holdingCoverage != null ? `当前持仓净值金额覆盖 ${holdingCoverage}%` : null,
                 ].filter(Boolean).join(" · ") || "已完成风险协方差与持仓相关性核验"
-              : "风险证据不合格时不生成首批参考金额。"}
+              : allocationNotEvaluated
+                ? "候选筛选阶段已止步，组合风险分配未运行；这不表示风险校验失败。"
+                : "风险证据不合格时不生成首批参考金额。"}
           </p>
-          {cashUnavailable != null && cashUnavailable > 0 ? (
-            <p className="mt-0.5">因现金不足或未确认不可用：{formatYuan(cashUnavailable)}</p>
-          ) : null}
         </div>
       </div>
 
       <p className="border-t border-slate-100 px-4 py-2.5 text-[11px] font-semibold leading-5 text-slate-600">
-        后续批次不预设金额；执行前必须重新核验现金、敞口与风险。
+        后续批次不预设金额；执行前必须重新核验预算、敞口与风险。
       </p>
       </details>
     </section>
@@ -623,12 +662,41 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
     recommendationScope?.unmatched_actionable_sector_labels ?? [];
   const [chatOpen, setChatOpen] = useState(false);
   const [outcomesOpen, setOutcomesOpen] = useState(false);
+  const [directionsOpen, setDirectionsOpen] = useState(true);
   const chatDrawerId = `discovery-report-chat-${report.id}`;
+  const directionsContentId = `discovery-direction-content-${report.id}`;
   const groupedRecommendations = useMemo(() => {
     const actionable: DiscoveryRecommendation[] = [];
     const conditionalWait: DiscoveryRecommendation[] = [];
     const watchOnly: DiscoveryRecommendation[] = [];
     const decisionStatusByCode: Record<string, DiscoveryCandidateDecisionStatus> = {};
+    const decisionReasonsByCode: Record<string, string[]> = {};
+    const recommendationCodes = new Set(
+      (report.recommendations ?? []).map((item) => item.fund_code),
+    );
+    const poolCodes = new Set(
+      (report.candidate_pool ?? []).map((item) => item.fund_code),
+    );
+
+    for (const decision of recommendationScope?.candidate_decisions ?? []) {
+      if (!decision.fund_code || (poolCodes.size && !poolCodes.has(decision.fund_code))) {
+        continue;
+      }
+      // Scope "actionable" means the candidate may enter the final guard. It
+      // is not itself a buy decision: only a post-guard recommendation/event
+      // can make the user-facing status actionable.
+      decisionStatusByCode[decision.fund_code] =
+        decision.status === "actionable" && !recommendationCodes.has(decision.fund_code)
+          ? "watch_only"
+          : decision.status;
+      decisionReasonsByCode[decision.fund_code] = decision.reason_codes ?? [];
+      if (decision.status === "actionable" && !recommendationCodes.has(decision.fund_code)) {
+        decisionReasonsByCode[decision.fund_code] = [
+          "final_recommendation_not_available",
+          ...decisionReasonsByCode[decision.fund_code],
+        ];
+      }
+    }
 
     for (const recommendation of report.recommendations ?? []) {
       const status = recommendationStatus(report, recommendation);
@@ -642,10 +710,29 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
       }
     }
 
-    return { actionable, conditionalWait, watchOnly, decisionStatusByCode };
-  }, [report]);
+    const decisionCounts = Object.values(decisionStatusByCode).reduce(
+      (counts, status) => {
+        counts[status] += 1;
+        return counts;
+      },
+      { actionable: 0, conditional_wait: 0, watch_only: 0 },
+    );
+
+    return {
+      actionable,
+      conditionalWait,
+      watchOnly,
+      decisionStatusByCode,
+      decisionReasonsByCode,
+      decisionCounts,
+    };
+  }, [recommendationScope?.candidate_decisions, report]);
   const selectedCodes = groupedRecommendations.actionable.map((item) => item.fund_code);
   const blockedCount = report.discovery_facts?.data_evidence_guard?.blocked_fund_codes?.length ?? 0;
+  const visibleCaveats = useMemo(
+    () => (report.caveats ?? []).filter((line) => !isObsoleteDiscoveryCashCaveat(line)),
+    [report.caveats],
+  );
   const discoveryStrategy =
     report.discovery_facts?.effective_configuration?.discovery_strategy;
   const strategySummary = discoveryStrategy === "opportunity_first"
@@ -658,7 +745,7 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
     : "本次暂无买入建议";
   const nextStep = groupedRecommendations.actionable.length
     ? "先查看推荐基金和首批参考金额；是否能买请在支付宝确认。"
-    : groupedRecommendations.conditionalWait.length
+    : groupedRecommendations.decisionCounts.conditional_wait
       ? "先等待设定条件出现，下一次扫描会重新判断；现在无需买入。"
       : "把这些基金加入观察即可；关键资料补齐前，不需要采取买入动作。";
 
@@ -722,9 +809,9 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
 
           <dl className="grid grid-cols-3 gap-px overflow-hidden rounded-xl bg-slate-200 ring-1 ring-slate-200 lg:min-w-[280px]">
             {[
-              ["建议买入", groupedRecommendations.actionable.length, "text-[var(--success-fg)]"],
-              ["等条件", groupedRecommendations.conditionalWait.length, "text-[var(--warn-fg)]"],
-              ["仅观察", groupedRecommendations.watchOnly.length, "text-slate-700"],
+              ["建议买入", groupedRecommendations.decisionCounts.actionable, "text-[var(--success-fg)]"],
+              ["等条件", groupedRecommendations.decisionCounts.conditional_wait, "text-[var(--warn-fg)]"],
+              ["仅观察", groupedRecommendations.decisionCounts.watch_only, "text-slate-700"],
             ].map(([label, value, className]) => (
               <div key={String(label)} className="bg-white px-3 py-2.5 text-center">
                 <dt className="text-[10px] font-bold text-slate-500">{label}</dt>
@@ -777,19 +864,44 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
                   同时展示成熟方向与概率提前试仓方向；后者只开放更小首批，并须基金自身信号通过。
                 </p>
               </div>
-              <span className="rounded-full bg-slate-950 px-2.5 py-1 text-[11px] font-black text-white">
-                {directionGroups.early.length
-                  ? `${directionGroups.ready.length} 个成熟 · ${directionGroups.early.length} 个提前试仓`
-                  : `${directionGroups.ready.length} 个通过入场线`}
-              </span>
+              <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                <span className="rounded-full bg-slate-950 px-2.5 py-1 text-[11px] font-black text-white">
+                  {directionGroups.early.length
+                    ? `${directionGroups.ready.length} 个成熟 · ${directionGroups.early.length} 个提前试仓`
+                    : `${directionGroups.ready.length} 个通过入场线`}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setDirectionsOpen((value) => !value)}
+                  aria-expanded={directionsOpen}
+                  aria-controls={directionsContentId}
+                  aria-label={directionsOpen ? "收起今日可布局方向" : "展开今日可布局方向"}
+                  className="inline-flex size-9 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
+                >
+                  <ChevronDown
+                    size={18}
+                    aria-hidden="true"
+                    className={`transition ${directionsOpen ? "rotate-180" : ""}`}
+                  />
+                </button>
+              </div>
             </div>
           </div>
 
-          <div className="p-4">
+          {directionsOpen ? (
+            <div
+              id={directionsContentId}
+              data-testid="discovery-direction-content"
+              className="p-4"
+            >
             {directionGroups.ready.length ? (
               <div className="grid gap-2 sm:grid-cols-2">
                 {directionGroups.ready.map((item, index) => (
-                  <SectorOpportunityCard key={`${item.sector_label}-ready-${index}`} item={item} />
+                  <SectorOpportunityCard
+                    key={`${item.sector_label}-ready-${index}`}
+                    item={item}
+                    collapsibleDetails
+                  />
                 ))}
               </div>
             ) : directionGroups.early.length === 0 ? (
@@ -815,7 +927,11 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
                 </div>
                 <div className="grid gap-2 sm:grid-cols-2">
                   {directionGroups.early.map((item, index) => (
-                    <SectorOpportunityCard key={`${item.sector_label}-early-${index}`} item={item} />
+                    <SectorOpportunityCard
+                      key={`${item.sector_label}-early-${index}`}
+                      item={item}
+                      collapsibleDetails
+                    />
                   ))}
                 </div>
               </div>
@@ -851,7 +967,11 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
                 </summary>
                 <div className="grid gap-2 border-t border-[var(--warn-border)] p-3 sm:grid-cols-2">
                   {directionGroups.pullback.map((item, index) => (
-                    <SectorOpportunityCard key={`${item.sector_label}-pullback-${index}`} item={item} />
+                    <SectorOpportunityCard
+                      key={`${item.sector_label}-pullback-${index}`}
+                      item={item}
+                      collapsibleDetails
+                    />
                   ))}
                 </div>
               </details>
@@ -865,12 +985,17 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
                 </summary>
                 <div className="grid gap-2 border-t border-slate-200 p-3 sm:grid-cols-2">
                   {directionGroups.research.map((item, index) => (
-                    <SectorOpportunityCard key={`${item.sector_label}-research-${index}`} item={item} />
+                    <SectorOpportunityCard
+                      key={`${item.sector_label}-research-${index}`}
+                      item={item}
+                      collapsibleDetails
+                    />
                   ))}
                 </div>
               </details>
             ) : null}
-          </div>
+            </div>
+          ) : null}
         </section>
       ) : sectorOpportunities.length ? (
         <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -927,6 +1052,7 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
             pool={report.candidate_pool}
             selectedCodes={selectedCodes}
             decisionStatusByCode={groupedRecommendations.decisionStatusByCode}
+            decisionReasonsByCode={groupedRecommendations.decisionReasonsByCode}
             eliminatedCandidates={report.eliminated_candidates}
           />
         ) : null}
@@ -955,14 +1081,14 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
           ) : null}
         </section>
 
-        {report.caveats?.length ? (
+        {visibleCaveats.length ? (
           <details className="group rounded-2xl border border-[var(--warn-border)] bg-[var(--warn-bg)]/70">
             <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-2 px-4 text-xs font-black text-[var(--warn-fg)] [&::-webkit-details-marker]:hidden">
-              使用边界与免责声明（{report.caveats.length} 条）
+              使用边界与免责声明（{visibleCaveats.length} 条）
               <ChevronDown size={15} aria-hidden="true" className="transition group-open:rotate-180" />
             </summary>
             <div className="space-y-1 border-t border-[var(--warn-border)] px-4 py-3 text-xs leading-5 text-[var(--warn-fg)]">
-              {report.caveats.map((line, lineIndex) => (
+              {visibleCaveats.map((line, lineIndex) => (
                 <p className="break-words [overflow-wrap:anywhere]" key={`${line}-${lineIndex}`}>{translateEvidenceText(line)}</p>
               ))}
             </div>

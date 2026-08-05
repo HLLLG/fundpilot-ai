@@ -39,13 +39,33 @@ _XQ_AKSHARE_SOURCE_KIND = "xq_akshare_aggregator"
 
 _INDEX_CODE_RE = re.compile(r"(?<!\d)(\d{6})(?!\d)")
 
+# 精确别名使用真实跟踪指数代码；部分代码不是当前行情板块注册表的主代理代码，
+# 仍需保留其真实身份并映射到同一规范板块。这里不接受基金名称自由推断。
+_EXACT_INDEX_CODE_TO_SECTOR_LABEL: dict[str, str] = {
+    "000813": "化工",
+    "399998": "煤炭",
+    "399990": "煤炭",
+    "930697": "家电",
+    "931238": "黄金股",
+    "930917": "红利",
+    "000841": "医药",
+    "CN5075": "信创",
+    "HSSSHID": "创新药",
+    "931897": "电力",
+    "AU9999": "黄金",
+}
+
 def _build_benchmark_name_to_code() -> tuple[tuple[str, str], ...]:
     """从 THEME_BOARD_INDEX 生成指数名 → 代码表（长匹配优先）。"""
     pairs: set[tuple[str, str]] = set()
     for label, (_secid, source_code, _kind) in THEME_BOARD_INDEX.items():
-        if not source_code or not source_code.isdigit():
+        if not source_code:
             continue
-        code = source_code
+        # 中证行业指数既有纯数字代码，也有 H30022/H30184 等字母前缀代码。
+        # BK 板块代码不是基金跟踪指数身份，不能在此冒充 index_code。
+        code = source_code.strip().upper()
+        if re.fullmatch(r"(?:\d{6}|H[A-Z0-9]+)", code) is None:
+            continue
         pairs.add((label, code))
         if not label.startswith("中证"):
             pairs.add((f"中证{label}", code))
@@ -77,6 +97,24 @@ def _build_benchmark_name_to_code() -> tuple[tuple[str, str], ...]:
             ("中证全指电力", "H30199"),
             ("恒生科技指数", "HSTECH"),
             ("恒生科技", "HSTECH"),
+            # Exact provider index/contract identities observed in passive
+            # fund benchmark text.  The code is retained as source_ref while
+            # the label is normalized only by _EXACT_INDEX_CODE_TO_SECTOR_LABEL.
+            ("中证细分化工产业主题指数", "000813"),
+            ("细分化工产业主题指数", "000813"),
+            ("中证煤炭等权指数", "399990"),
+            ("煤炭等权指数", "399990"),
+            ("中证煤炭指数", "399998"),
+            ("中证全指家用电器指数", "930697"),
+            ("中证沪深港黄金产业股票指数", "931238"),
+            ("中证沪港深高股息指数", "930917"),
+            ("中证800制药与生物科技指数", "000841"),
+            ("国证信息技术创新主题指数", "CN5075"),
+            ("上海黄金交易所挂盘交易的Au99.99合约", "AU9999"),
+            ("上海黄金交易所Au99.99现货实盘合约", "AU9999"),
+            ("上海黄金交易所AU99.99", "AU9999"),
+            ("黄金现货实盘合约AU99.99", "AU9999"),
+            ("黄金现货实盘合约Au9999", "AU9999"),
         }
     )
     for name, code in amac_name_to_code_pairs():
@@ -96,6 +134,9 @@ class BenchmarkIndexMatch:
 
 def _index_code_to_sector_label(index_code: str) -> str | None:
     code = index_code.strip().upper()
+    exact = _EXACT_INDEX_CODE_TO_SECTOR_LABEL.get(code)
+    if exact:
+        return exact
     for label, (_secid, source_code, _kind) in THEME_BOARD_INDEX.items():
         if source_code and source_code.upper() == code:
             return label
@@ -126,16 +167,27 @@ def parse_benchmark_index(benchmark_text: str) -> BenchmarkIndexMatch | None:
             code = candidate
             break
 
+    # 业绩基准常写成“行业指数×95% + 银行活期存款×5%”。裸标签“银行”
+    # 只能在指数成分里匹配，不能误命中现金残余项；复合指数成分则都保留。
+    name_search_text = "+".join(
+        part
+        for part in re.split(r"[+＋]", text)
+        if "存款" not in part and "活期" not in part
+    ) or text
+
     index_name: str | None = None
     if code is None:
         for name, mapped_code in _BENCHMARK_NAME_TO_CODE:
-            if name in text:
+            # AMAC 库也包含“中证全指”之类宽基前缀。若该代码没有明确板块
+            # 归属，不能因为它更长就截断搜索；继续寻找同一完整基准文本里的
+            # 银行/房地产/食品饮料等可核验行业指数项。
+            if name in name_search_text and _index_code_to_sector_label(mapped_code):
                 code = mapped_code
                 index_name = name
                 break
     else:
         for name, mapped_code in _BENCHMARK_NAME_TO_CODE:
-            if mapped_code == code and name in text:
+            if mapped_code == code and name in name_search_text:
                 index_name = name
                 break
 

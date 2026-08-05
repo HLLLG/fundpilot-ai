@@ -13,6 +13,7 @@ from app.database import (
     get_fund_primary_sectors_by_codes,
     get_fund_primary_sectors_global_by_codes,
     get_fund_profile_by_code,
+    get_fund_sector_current,
     save_fund_primary_sector,
 )
 from app.models import FundProfile, Holding
@@ -838,6 +839,8 @@ def _resolve_from_holdings_infer(
     stocks: list | None = None,
     evidence_payload: Mapping[str, Any] | None = None,
     batch_context: PrimarySectorBatchContext | None = None,
+    materialize_research: bool = False,
+    materialization_source: str = "holdings_infer",
 ) -> PrimarySectorRecord | None:
     from app.services.fund_holdings_sector_infer import (
         assess_sector_from_portfolio_stocks,
@@ -865,6 +868,17 @@ def _resolve_from_holdings_infer(
         or qualification.get("sector_inference_eligible") is not True
         or qualification.get("research_only") is not False
     ):
+        if persist or materialize_research:
+            from app.services.fund_sector_identity import (
+                materialize_holdings_sector_assessment,
+            )
+
+            materialize_holdings_sector_assessment(
+                fund_code=code,
+                sector_clue=sector_clue,
+                evidence_payload=evidence_payload,
+                source=materialization_source,
+            )
         return None
 
     sector_name = str(sector_clue.get("sector_name") or "").strip()
@@ -888,6 +902,31 @@ def _resolve_from_holdings_infer(
             "evidence": evidence[:8],
             "coverage": sector_clue.get("coverage"),
             "qualification": dict(qualification),
+            "snapshot_hash": (
+                evidence_payload.get("snapshot_hash")
+                if isinstance(evidence_payload, Mapping)
+                else None
+            ),
+            "report_period": (
+                evidence_payload.get("report_period")
+                if isinstance(evidence_payload, Mapping)
+                else None
+            ),
+            "as_of_date": (
+                evidence_payload.get("as_of")
+                if isinstance(evidence_payload, Mapping)
+                else None
+            ),
+            "available_at": (
+                evidence_payload.get("available_at")
+                if isinstance(evidence_payload, Mapping)
+                else None
+            ),
+            "association_evaluated_at": (
+                evidence_payload.get("association_evaluated_at")
+                if isinstance(evidence_payload, Mapping)
+                else None
+            ),
         },
     )
 
@@ -1004,6 +1043,7 @@ def refresh_primary_sector_for_fund(fund_code: str, *, fund_name: str | None = N
         "current": _record_to_dict(current),
         "recommendation": _record_to_dict(recommendation),
         "applied": applied,
+        "current_exposures": _current_exposures_for_api(code),
     }
 
 
@@ -1200,8 +1240,16 @@ def _record_to_dict(record: PrimarySectorRecord | None) -> dict | None:
 
 def primary_sector_row_for_api(fund_code: str, *, fund_name: str | None = None) -> dict:
     record = resolve_primary_sector(fund_code, fund_name=fund_name, fetch_benchmark=True)
+    code = fund_code.strip().zfill(6)
     return {
-        "fund_code": fund_code.strip().zfill(6),
+        "fund_code": code,
         "mapping": _record_to_dict(record),
+        "current_exposures": _current_exposures_for_api(code),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
+
+
+def _current_exposures_for_api(fund_code: str) -> list[dict[str, Any]]:
+    from app.services.fund_sector_identity import current_identity_rows_for_api
+
+    return current_identity_rows_for_api(get_fund_sector_current(fund_code))

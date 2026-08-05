@@ -1719,6 +1719,13 @@ def list_fund_primary_sectors_by_sector_names(
     *,
     limit_per_sector: int = 20,
 ) -> list[dict[str, Any]]:
+    """Return fresh, verified primary identities from the materialized view.
+
+    The historical function name is retained for callers and monkeypatched
+    tests.  Weak name/LLM mappings are stored for audit but are intentionally
+    absent from this executable discovery lookup.
+    """
+
     normalized: list[str] = []
     seen: set[str] = set()
     for raw in sector_names:
@@ -1730,15 +1737,28 @@ def list_fund_primary_sectors_by_sector_names(
         return []
 
     placeholders = ",".join("?" * len(normalized))
+    now = datetime.now(timezone.utc).isoformat()
     with _connect() as connection:
         rows = connection.execute(
             f"""
-            SELECT fund_code, sector_name, intraday_index_name, source, confidence, detail, resolved_at
-            FROM fund_primary_sectors_global
-            WHERE sector_name IN ({placeholders})
-            ORDER BY confidence DESC, resolved_at DESC
+            SELECT current.fund_code, current.sector_name,
+                   legacy.intraday_index_name,
+                   current.source, current.confidence, current.detail,
+                   current.resolved_at, current.expires_at,
+                   current.identity_status, current.exposure_percent,
+                   current.evidence_snapshot_id, current.source_ref,
+                   current.report_period, current.as_of_date,
+                   current.available_at, current.mapping_version
+            FROM fund_sector_current AS current
+            LEFT JOIN fund_primary_sectors_global AS legacy
+              ON legacy.fund_code = current.fund_code
+            WHERE current.sector_name IN ({placeholders})
+              AND current.is_primary = 1
+              AND current.identity_status = 'verified'
+              AND current.expires_at > ?
+            ORDER BY current.confidence DESC, current.resolved_at DESC
             """,
-            tuple(normalized),
+            (*normalized, now),
         ).fetchall()
     counts: dict[str, int] = {}
     result: list[dict[str, Any]] = []
@@ -1750,6 +1770,288 @@ def list_fund_primary_sectors_by_sector_names(
         payload["updated_at"] = payload.get("resolved_at")
         result.append(payload)
         counts[label] = counts.get(label, 0) + 1
+    return result
+
+
+def save_fund_sector_exposure_snapshot(
+    *,
+    snapshot_id: str,
+    rows: list[dict[str, Any]],
+) -> int:
+    """Append one multi-sector evidence snapshot, idempotently."""
+
+    if not rows:
+        return 0
+    inserted = 0
+    with _connect() as connection:
+        for row in rows:
+            detail = row.get("detail")
+            detail_json = (
+                json.dumps(detail, ensure_ascii=False)
+                if isinstance(detail, (dict, list))
+                else detail
+            )
+            cursor = connection.execute(
+                """
+                INSERT OR IGNORE INTO fund_sector_exposure_snapshots (
+                    snapshot_id, fund_code, sector_name, exposure_percent,
+                    is_primary, identity_status, source, confidence, source_ref,
+                    report_period, as_of_date, available_at, evaluated_at,
+                    mapping_version, detail
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    snapshot_id,
+                    str(row["fund_code"]).strip().zfill(6),
+                    row["sector_name"],
+                    row.get("exposure_percent"),
+                    1 if row.get("is_primary") else 0,
+                    row["identity_status"],
+                    row["source"],
+                    row.get("confidence"),
+                    row.get("source_ref"),
+                    row.get("report_period"),
+                    row.get("as_of_date"),
+                    row.get("available_at"),
+                    row["evaluated_at"],
+                    row["mapping_version"],
+                    detail_json,
+                ),
+            )
+            inserted += max(0, int(cursor.rowcount or 0))
+        connection.commit()
+    return inserted
+
+
+def replace_fund_sector_current(
+    *,
+    fund_code: str,
+    rows: list[dict[str, Any]],
+) -> None:
+    """Atomically replace one fund's materialized multi-sector identity."""
+
+    code = fund_code.strip().zfill(6)
+    with _connect() as connection:
+        connection.execute(
+            "DELETE FROM fund_sector_current WHERE fund_code = ?",
+            (code,),
+        )
+        for row in rows:
+            detail = row.get("detail")
+            detail_json = (
+                json.dumps(detail, ensure_ascii=False)
+                if isinstance(detail, (dict, list))
+                else detail
+            )
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO fund_sector_current (
+                    fund_code, sector_name, exposure_percent, is_primary,
+                    identity_status, source, confidence, evidence_snapshot_id,
+                    source_ref, report_period, as_of_date, available_at,
+                    resolved_at, expires_at, mapping_version, detail
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    code,
+                    row["sector_name"],
+                    row.get("exposure_percent"),
+                    1 if row.get("is_primary") else 0,
+                    row["identity_status"],
+                    row["source"],
+                    row.get("confidence"),
+                    row["evidence_snapshot_id"],
+                    row.get("source_ref"),
+                    row.get("report_period"),
+                    row.get("as_of_date"),
+                    row.get("available_at"),
+                    row["resolved_at"],
+                    row["expires_at"],
+                    row["mapping_version"],
+                    detail_json,
+                ),
+            )
+        connection.commit()
+
+
+def get_fund_sector_current_by_codes(
+    fund_codes: set[str] | list[str],
+) -> dict[str, list[dict[str, Any]]]:
+    normalized = list(
+        dict.fromkeys(
+            code
+            for raw in fund_codes
+            if (
+                len(code := str(raw or "").strip().zfill(6)) == 6
+                and code.isdigit()
+                and code != "000000"
+            )
+        )
+    )
+    if not normalized:
+        return {}
+    result: dict[str, list[dict[str, Any]]] = {}
+    with _connect() as connection:
+        for start in range(0, len(normalized), 500):
+            batch = normalized[start : start + 500]
+            placeholders = ",".join("?" for _ in batch)
+            rows = connection.execute(
+                "SELECT fund_code, sector_name, exposure_percent, is_primary, "
+                "identity_status, source, confidence, evidence_snapshot_id, "
+                "source_ref, report_period, as_of_date, available_at, "
+                "resolved_at, expires_at, mapping_version, detail "
+                "FROM fund_sector_current "
+                f"WHERE fund_code IN ({placeholders}) "
+                "ORDER BY fund_code, is_primary DESC, confidence DESC",
+                tuple(batch),
+            ).fetchall()
+            for row in rows:
+                payload = _row_to_dict(row)
+                code = str(payload.get("fund_code") or "").zfill(6)
+                result.setdefault(code, []).append(payload)
+    return result
+
+
+def get_fund_sector_current(fund_code: str) -> list[dict[str, Any]]:
+    code = fund_code.strip().zfill(6)
+    return get_fund_sector_current_by_codes([code]).get(code, [])
+
+
+def get_fund_sector_current_primary_by_codes(
+    fund_codes: set[str] | list[str],
+) -> dict[str, dict[str, Any]]:
+    grouped = get_fund_sector_current_by_codes(fund_codes)
+    result: dict[str, dict[str, Any]] = {}
+    for code, rows in grouped.items():
+        primary = next((row for row in rows if bool(row.get("is_primary"))), None)
+        if primary is not None:
+            result[code] = primary
+    return result
+
+
+def list_fund_sector_exposure_snapshots(
+    fund_code: str,
+    *,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
+    code = fund_code.strip().zfill(6)
+    with _connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT snapshot_id, fund_code, sector_name, exposure_percent,
+                   is_primary, identity_status, source, confidence, source_ref,
+                   report_period, as_of_date, available_at, evaluated_at,
+                   mapping_version, detail
+            FROM fund_sector_exposure_snapshots
+            WHERE fund_code = ?
+            ORDER BY evaluated_at DESC, snapshot_id DESC, exposure_percent DESC
+            LIMIT ?
+            """,
+            (code, max(1, limit)),
+        ).fetchall()
+    return [_row_to_dict(row) for row in rows]
+
+
+def count_fresh_verified_fund_sector_current() -> int:
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as connection:
+        row = connection.execute(
+            """
+            SELECT COUNT(DISTINCT fund_code) AS cnt
+            FROM fund_sector_current
+            WHERE is_primary = 1
+              AND identity_status = 'verified'
+              AND expires_at > ?
+            """,
+            (now,),
+        ).fetchone()
+    return int(_row_to_dict(row).get("cnt") or 0)
+
+
+def list_fund_sector_resolution_statuses() -> dict[str, dict[str, Any]]:
+    """Return the latest all-market resolution outcome keyed by fund code."""
+
+    with _connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT fund_code, resolution_status, stage, reason_code, fund_name,
+                   checked_at, next_retry_at, attempt_count, mapping_version,
+                   detail
+            FROM fund_sector_resolution_status
+            ORDER BY fund_code
+            """
+        ).fetchall()
+    result: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        payload = _row_to_dict(row)
+        code = str(payload.get("fund_code") or "").strip().zfill(6)
+        if code:
+            result[code] = payload
+    return result
+
+
+def save_fund_sector_resolution_statuses(rows: list[dict[str, Any]]) -> int:
+    """Checkpoint a batch of per-fund resolution outcomes atomically."""
+
+    params: list[tuple[Any, ...]] = []
+    for row in rows:
+        code = str(row.get("fund_code") or "").strip().zfill(6)
+        if len(code) != 6 or not code.isdigit() or code == "000000":
+            continue
+        detail = row.get("detail")
+        detail_json = (
+            json.dumps(detail, ensure_ascii=False)
+            if isinstance(detail, (dict, list))
+            else detail
+        )
+        params.append(
+            (
+                code,
+                str(row.get("resolution_status") or "unavailable"),
+                str(row.get("stage") or "unknown"),
+                str(row.get("reason_code") or "") or None,
+                str(row.get("fund_name") or "") or None,
+                str(row["checked_at"]),
+                str(row["next_retry_at"]),
+                max(1, int(row.get("attempt_count") or 1)),
+                str(row.get("mapping_version") or "fund_sector_identity.2026-08.v1"),
+                detail_json,
+            )
+        )
+    if not params:
+        return 0
+    with _connect() as connection:
+        connection.executemany(
+            """
+            INSERT OR REPLACE INTO fund_sector_resolution_status (
+                fund_code, resolution_status, stage, reason_code, fund_name,
+                checked_at, next_retry_at, attempt_count, mapping_version,
+                detail
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            params,
+        )
+        connection.commit()
+    return len(params)
+
+
+def get_fund_sector_resolution_stats() -> dict[str, int]:
+    with _connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT resolution_status, COUNT(*) AS cnt
+            FROM fund_sector_resolution_status
+            GROUP BY resolution_status
+            """
+        ).fetchall()
+    result = {
+        str(payload.get("resolution_status") or "unknown"): int(
+            payload.get("cnt") or 0
+        )
+        for row in rows
+        if (payload := _row_to_dict(row))
+    }
+    result["total"] = sum(result.values())
     return result
 
 

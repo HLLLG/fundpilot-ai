@@ -1176,7 +1176,7 @@ def test_weak_evidence_downgrade_names_exact_trigger_values():
     assert "主方向置信度为低" in guarded[0].points[0]
     assert "板块机会分 58.40，低于 60" in guarded[0].points[0]
     assert "基金质量分 52.30，低于 55" in guarded[0].points[0]
-    assert "板块匹配分 16.00，低于 18" in guarded[0].points[0]
+    assert "基金代码对应的板块身份尚未通过独立核验" in guarded[0].points[0]
     assert any("动作降级触发项" in item for item in guarded[0].validation_notes)
     assert any("未达到买入证据门槛" in item for item in caveats)
 

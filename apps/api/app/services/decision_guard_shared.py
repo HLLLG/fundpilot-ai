@@ -111,7 +111,7 @@ def humanize_evidence_text(
     )
     result = re.sub(
         r"sector_fit_score\s*(?:=|为)?\s*([-+]?\d+(?:\.\d+)?)",
-        lambda match: f"板块匹配分 {fmt_num(match.group(1))}",
+        lambda match: f"板块关联排序分 {fmt_num(match.group(1))}",
         result,
         flags=re.IGNORECASE,
     )

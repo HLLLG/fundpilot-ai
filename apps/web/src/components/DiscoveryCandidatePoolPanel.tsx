@@ -22,6 +22,16 @@ const CORE_FIELD_LABELS: Record<string, string> = {
   nav_date: "净值日期",
 };
 
+const DECISION_REASON_LABELS: Record<string, string> = {
+  invalid_fund_code: "基金代码无效",
+  quality_gate_not_eligible: "基金核心质量门槛未通过",
+  vehicle_quality_not_eligible: "基金载体质量门槛未通过",
+  sector_identity_not_verified: "板块身份尚未通过可靠映射核验",
+  direction_entry_not_open: "方向入场条件尚未打开",
+  direction_evidence_unavailable: "方向成熟度证据未记录",
+  final_recommendation_not_available: "最终交易校验未形成可执行建议",
+};
+
 export type DiscoveryCandidateDecisionStatus =
   | "actionable"
   | "conditional_wait"
@@ -52,6 +62,7 @@ type DiscoveryCandidatePoolPanelProps = {
   pool: DiscoveryCandidatePoolItem[];
   selectedCodes?: string[];
   decisionStatusByCode?: Record<string, DiscoveryCandidateDecisionStatus>;
+  decisionReasonsByCode?: Record<string, string[]>;
   /** M4/M5：被双向 guard 因证据强烈共振剔除的候选（不出现在 recommendations 里）。 */
   eliminatedCandidates?: EliminatedCandidate[];
 };
@@ -600,6 +611,7 @@ export function DiscoveryCandidatePoolPanel({
   pool,
   selectedCodes = [],
   decisionStatusByCode = {},
+  decisionReasonsByCode = {},
   eliminatedCandidates = [],
 }: DiscoveryCandidatePoolPanelProps) {
   const [open, setOpen] = useState(false);
@@ -726,11 +738,18 @@ export function DiscoveryCandidatePoolPanel({
                 decisionStatusByCode[item.fund_code] ?? (picked ? "actionable" : undefined);
               const decisionMeta = decisionStatus ? DECISION_STATUS_META[decisionStatus] : null;
               const quality = presentations.get(item.fund_code)!;
+              const decisionReasons = decisionReasonsByCode[item.fund_code] ?? [];
               const primaryReason =
-                item.quality_gate?.reasons?.[0] ??
-                item.quality_penalties?.[0] ??
-                item.quality_reasons?.[0] ??
-                item.selection_reason;
+                (decisionReasons.length
+                  ? decisionReasons
+                    .slice(0, 2)
+                    .map((reason) => DECISION_REASON_LABELS[reason] ?? translateEvidenceText(reason))
+                    .join("；")
+                  : null) ??
+                  item.quality_gate?.reasons?.[0] ??
+                  item.quality_penalties?.[0] ??
+                  item.quality_reasons?.[0] ??
+                  item.selection_reason;
               const researchSummary = buildCandidateResearchSummary(item);
               const usesElasticityScore =
                 item.opportunity_score_version === "opportunity_20_60d.v2";
@@ -754,7 +773,7 @@ export function DiscoveryCandidatePoolPanel({
                   ]
                 : [
                     ["质量分", formatScore(item.fund_quality_score)],
-                    ["匹配分", formatScore(item.sector_fit_score)],
+                    ["关联排序分", formatScore(item.sector_fit_score)],
                     ["近3月", formatPercent(item.return_3m_percent)],
                     ["近6月", formatPercent(item.return_6m_percent)],
                     ["近1年", formatPercent(item.return_1y_percent)],
