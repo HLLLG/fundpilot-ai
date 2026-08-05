@@ -163,7 +163,9 @@ it("renders v3 orthogonal blocks and overheat as a smaller first tranche", () =>
   expect(screen.getByText(/资金参与 \(15%\)/)).toBeInTheDocument();
   expect(screen.getByText(/结构修复 \(15%\)/)).toBeInTheDocument();
   expect(screen.getByText(/它们不是三重确认/)).toBeInTheDocument();
-  expect(screen.getByTestId("overheat-disclosure")).toHaveTextContent("首批按 40% 执行");
+  expect(screen.getByTestId("overheat-disclosure")).toHaveTextContent(
+    "本次金额按 40% 计算",
+  );
   expect(screen.queryByText("入场成熟")).not.toBeInTheDocument();
 });
 
@@ -249,7 +251,7 @@ it("keeps key direction facts visible while supporting details start collapsed",
         today_main_force_net_yi: 28.7,
         five_day_available: true,
         cumulative_5d_net_yi: 22.83,
-        entry_triggers: ["首批后继续确认趋势强度与资金参与度"],
+        entry_triggers: ["买入并录入持仓后，由日报继续确认趋势强度与资金参与度"],
       }}
     />,
   );
@@ -272,5 +274,7 @@ it("keeps key direction facts visible while supporting details start collapsed",
   );
   expect(screen.getByTestId("sector-opportunity-details")).toBeVisible();
   expect(screen.getByText("28.70 亿")).toBeVisible();
-  expect(screen.getByText(/首批后继续确认趋势强度与资金参与度/)).toBeVisible();
+  expect(
+    screen.getByText(/买入并录入持仓后，由日报继续确认趋势强度与资金参与度/),
+  ).toBeVisible();
 });

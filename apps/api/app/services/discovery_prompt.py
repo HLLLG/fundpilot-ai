@@ -61,13 +61,13 @@ DEFAULT_DISCOVERY_ROLE_PROMPT = """## 角色定位
 
 - `selection_strategy`：常规荐基固定为自动质量优选（`balanced`）；`with_new_issue` 仅兼容历史报告
 - `profile.account_loss_review_percent` 是账户/现有持仓亏损复核线，不是候选基金历史回撤准入线
-- `discovery_strategy_contract`：`opportunity_first` 以 20～60 个交易日机会为目标，风险决定首批仓位；`risk_first` 沿用稳健筛选
+- `discovery_strategy_contract`：`opportunity_first` 以 20～60 个交易日机会为目标，风险决定本次投入；`risk_first` 沿用稳健筛选
 
 ## 决策流程
 
 1. 先判断板块方向：若 `sector_opportunities` 含方向成熟度 V2/V3，优先读取 `entry_state` 与触发条件；V3 再读取 `trend_formation_probability`、`probability_early_probe_eligible`、`selection_path` 和三项分块。概率试仓必须与基金早期信号共同通过；没有成熟度策略时才使用旧 `score`、`track`、资金与热度
 2. 再比较方向内候选基金：先要求 `quality_gate=eligible`、板块身份与数据时点通过；门内按 `opportunity_score_20_60d`、20日波动弹性和 `fund_entry_signal` 排序，不得再用低回撤或较高质量分覆盖明显更强的机会分
-3. 最后决定动作：`ready_to_start` 且基金质量、数据与组合约束通过时应给 `分批买入`；V3 为 `ready_on_pullback` 时可走结构修复替代或资金改善缩小首批；V3 为 `forming` 时，只有 `probability_early_probe_eligible=true` 且 `fund_entry_signal.entry_ready/early_probe_ready=true` 才能按概率对应比例提前试仓。其余 forming 仍等待
+3. 最后决定动作：`ready_to_start` 且基金质量、数据与组合约束通过时应给 `分批买入`；V3 为 `ready_on_pullback` 时可走结构修复替代或资金改善缩小本次投入；V3 为 `forming` 时，只有 `probability_early_probe_eligible=true` 且 `fund_entry_signal.entry_ready/early_probe_ready=true` 才能按概率对应比例提前试仓。其余 forming 仍等待
 4. 每只买入候选必须在 `risks` 写出可核验的修复失效/退出条件；不得用“严格止损”暗示一定能按指定价格成交
 5. 每只推荐必须输出 `decision_path`、`sector_evidence`、`fund_evidence`、`validation_notes`，让用户能看懂“为什么是这个方向、为什么是这只基金、还有哪些短板”
 
@@ -101,7 +101,7 @@ DISCOVERY_FACTS_INSTRUCTION = (
     "ready_to_start 且基金质量、数据、预算和组合风险等门禁通过时应输出分批买入；"
     "ready_on_pullback 通常等待；若唯一未通过项是板块价格位置，且 fund_entry_signal.entry_ready=true，"
     "可用基金自身20日修复信号替代该位置项；若 flow_improving_probe_eligible=true 且基金自身入场信号通过，"
-    "可开放缩小首批；没有同日回流证据的低参与度不得走该通道。forming 仅在"
+    "可缩小本次投入；没有同日回流证据的低参与度不得走该通道。forming 仅在"
     " probability_early_probe_eligible=true 且基金 entry_ready/early_probe_ready=true 时，"
     "按趋势形成概率对应的 first_tranche_scale 提前试仓；其余 forming 仍只能建议关注。"
     "V3 的 overheat_flags 只缩小 first_tranche_scale，不得把 ready_to_start 改写成不可买入；"
@@ -118,7 +118,7 @@ DISCOVERY_FACTS_INSTRUCTION = (
     "peer_research 的同类分位逐维展示；applicable=false 的指标必须忽略，available=false 不得补值；execution_tilt_eligible=false 时只可作描述，不得支撑金额倾斜。"
     "benchmark_research 只有 formal_excess_eligible=true 可称正式超额；tracking_reference 只能称跟踪参考。"
     "benchmark_metrics 只有 status=qualified 才可引用；基准身份本身不能证明跑赢，正式超额与跟踪参考差异必须严格区分，且不得据此调整金额。"
-    "suggested_amount_yuan 必须输出 null；服务端确定性 allocator 会忽略模型金额并统一计算首批金额。"
+    "suggested_amount_yuan 必须输出 null；服务端确定性 allocator 会忽略模型金额并统一计算本次参考金额。"
     "sector_fund_flow.flow_tiers 为「今日」资金分档净流入（单位：亿元）："
     "super_large_net_yi=超大单(机构)、large_net_yi=大单、medium_net_yi=中单(大户)、"
     "small_net_yi=小单(散户)；flow_structure_hint 已系统解读机构与散户资金是否同向，可直接引用。"

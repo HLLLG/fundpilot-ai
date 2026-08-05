@@ -14,7 +14,7 @@ from __future__ import annotations
 
 ## 滞回规则
 
-* **进入** `ready_to_start` 在当日通过入场线后即可开放首批。退出仍使用更低趋势线，
+* **进入** `ready_to_start` 在当日通过入场线后即可生成本次参考金额。退出仍使用更低趋势线，
   避免在阈值边界反复进出；高弹性策略不再人为延迟一个交易日。
 * **退出**用一条更低的趋势线（``EXIT_TREND_THRESHOLD`` < 入场线），避免在阈值边界上
   反复进出。已经处于 ready 的方向只有跌破退出线才降级。
@@ -159,10 +159,10 @@ def apply_direction_state_hysteresis(
             item["entry_reason"] = (
                 "趋势强度仍在退出线之上，维持可布局状态；跌破退出线才会降级。"
             )
-            item["entry_hint"] = "已确认方向仍在滞回带内，首批保持小额"
+            item["entry_hint"] = "已确认方向仍在滞回带内，本次投入保持小额"
             item["entry_triggers"] = [
                 f"趋势强度保持在退出线 {exit_trend_threshold:g} 以上",
-                "资金参与度与价格位置重新通过入场线后再考虑后续批次",
+                "买入并录入持仓后，由日报根据资金参与度与价格位置决定是否加仓",
             ]
         result.append(item)
     return result

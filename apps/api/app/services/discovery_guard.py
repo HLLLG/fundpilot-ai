@@ -656,7 +656,7 @@ def apply_discovery_guards(
             )
             copy.points = [
                 (
-                    f"{promotion_reason}；系统将「{previous}」校正为首批分批买入候选，"
+                    f"{promotion_reason}；系统将「{previous}」校正为本次买入候选，"
                     "最终金额仍由组合硬约束统一计算。"
                 ),
                 *copy.points,
@@ -670,9 +670,9 @@ def apply_discovery_guards(
                         "基金级修复已替代板块结构修复门槛；趋势、参与度、基金质量和数据门仍全部保留。"
                         if fund_position_override
                         else (
-                            "资金改善通道只开放缩小首批；若今日回流中断或基金修复失效，不得继续加仓。"
+                            "资金改善通道只缩小本次参考金额；若今日回流中断或基金修复失效，不得买入。"
                             if fund_flow_probe
-                            else "入场状态为 ready_to_start；该状态只开放首批额度，不承诺后续加仓或收益。"
+                            else "入场状态为 ready_to_start；当前只生成本次参考金额，买入后的加减仓由日报重新分析。"
                         )
                     )
                 ),
@@ -819,7 +819,7 @@ def apply_discovery_guards(
                 copy.risks = [
                     (
                         f"历史波动偏高：近1年最大回撤 {drawdown:.2f}%"
-                        f"{horizon_context}；这不会单独否决当前机会，但会压低首批仓位。"
+                        f"{horizon_context}；这不会单独否决当前机会，但会压低本次投入。"
                     ),
                     *copy.risks,
                 ]
@@ -1230,8 +1230,9 @@ def _enforce_discovery_execution_projection(rec: DiscoveryRecommendation) -> Non
     else:
         rec.suggested_amount_yuan = float(amount)
         rec.amount_note = (
-            f"系统校验后的示意买入金额约 {float(amount):,.0f} 元；"
+            f"系统校验后的本次参考金额约 {float(amount):,.0f} 元；"
             "不得突破本次可投入预算与同板块集中度硬上限。"
+            "买入并录入持仓后，后续加减仓由日报重新分析。"
         )
         position = rec.suggested_position_change_percent
         if position is not None and (

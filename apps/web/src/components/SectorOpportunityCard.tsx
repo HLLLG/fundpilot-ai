@@ -284,7 +284,7 @@ export function SectorOpportunityCard({
                   </div>
                 </div>
                 <div className="text-right">
-                  <div className="text-[10px] font-bold text-slate-500">建议首批</div>
+                  <div className="text-[10px] font-bold text-slate-500">本次比例</div>
                   <div className="mt-0.5 text-sm font-black text-slate-900">
                     计划仓位的 {formatPercent(item.first_tranche_scale)}
                   </div>
@@ -301,7 +301,7 @@ export function SectorOpportunityCard({
           {isEntryV3 && formationProbability == null && canCollapseDetails ? (
             <div className="mt-2 grid grid-cols-2 gap-1.5 text-xs text-slate-600">
               <Metric label="方向评分" value={`${formatMetric(item.direction_score)} 分`} />
-              <Metric label="建议首批" value={`计划仓位的 ${formatPercent(item.first_tranche_scale)}`} />
+              <Metric label="本次比例" value={`计划仓位的 ${formatPercent(item.first_tranche_scale)}`} />
             </div>
           ) : null}
           {!isEntryV3 && canCollapseDetails ? (
@@ -383,7 +383,7 @@ export function SectorOpportunityCard({
                   className="mt-2 rounded-lg border border-[var(--warn-border)] bg-[var(--warn-bg)]/60 px-2.5 py-2"
                 >
                   <div className="text-[10px] font-bold text-[var(--warn-fg)]">
-                    短期加速 · 首批按 {formatPercent(item.first_tranche_scale)} 执行
+                    短期加速 · 本次金额按 {formatPercent(item.first_tranche_scale)} 计算
                   </div>
                   {(item.overheat_flags ?? []).slice(0, 2).map((line) => (
                     <p key={line} className="mt-1 break-words text-[11px] leading-4 text-[var(--warn-fg)]">
@@ -391,7 +391,7 @@ export function SectorOpportunityCard({
                     </p>
                   ))}
                   <p className="mt-1 text-[10px] leading-4 text-slate-500">
-                    过热不再否决方向，但首批更小，且不预先承诺后续加仓。
+                    过热不否决当前机会，但会缩小本次参考金额；买入后由日报继续跟踪。
                   </p>
                 </div>
               ) : null}

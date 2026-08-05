@@ -259,11 +259,14 @@ def test_central_report_uses_explicit_scan_budget_as_only_funding_cap() -> None:
     assert all(
         (row.suggested_amount_yuan or 0) > 0 for row in report.recommendations
     )
-    future_preconditions = report.allocation_plan["allocations"][0]["future_tranches"][0][
-        "preconditions"
-    ]
-    assert "request_budget_recheck" in future_preconditions
-    assert "confirmed_cash_recheck" not in future_preconditions
+    assert all(
+        "future_tranches" not in allocation
+        for allocation in report.allocation_plan["allocations"]
+    )
+    assert (
+        "deferred_future_tranches_yuan"
+        not in report.allocation_plan["unallocated_budget"]
+    )
     assert not any("现金" in caveat for caveat in report.caveats)
 
 
@@ -316,10 +319,13 @@ def test_central_report_fails_closed_without_qualified_risk(
     assert all(row.allocation == {} for row in report.recommendations)
 
 
-def test_central_report_exposes_advisory_current_tranche_without_platform_gate() -> None:
+def test_central_report_exposes_only_current_opportunity_amount() -> None:
     report = _report(amount=999_999)
 
-    assert report.allocation_plan["amount_semantics"] == "advisory_initial_tranche"
+    assert (
+        report.allocation_plan["amount_semantics"]
+        == "advisory_current_opportunity_amount"
+    )
     assert report.allocation_plan["policy"]["platform_tradeability_checked"] is False
     assert report.allocation_plan["revalidation_required"] is True
     assert report.recommendations
@@ -333,13 +339,10 @@ def test_central_report_exposes_advisory_current_tranche_without_platform_gate()
             recommendation.suggested_amount_yuan
         )
         assert recommendation.allocation["amount_semantics"] == (
-            "advisory_initial_tranche"
+            "advisory_current_opportunity_amount"
         )
-        future = recommendation.allocation["future_tranches"][0]
-        assert future["amount_yuan"] is None
-        assert future["revalidation_required"] is True
-        assert "tradeability_gate_recheck" not in future["preconditions"]
-        assert "risk_context_recheck" in future["preconditions"]
+        assert "future_tranches" not in recommendation.allocation
+        assert "后续加减仓由日报" in (recommendation.amount_note or "")
 
 
 def test_descriptive_peer_rank_cannot_tilt_central_allocator() -> None:

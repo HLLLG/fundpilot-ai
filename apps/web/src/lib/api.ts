@@ -1078,7 +1078,12 @@ export type DiscoveryAllocation = {
   fund_code?: string;
   sector_name?: string;
   suggested_amount_yuan?: number | null;
-  amount_semantics?: "current_verified_initial_tranche" | "advisory_initial_tranche" | string;
+  amount_semantics?:
+    | "current_verified_opportunity_amount"
+    | "advisory_current_opportunity_amount"
+    | "current_verified_initial_tranche"
+    | "advisory_initial_tranche"
+    | string;
   constraint_snapshot?: {
     effective_initial_min_purchase_yuan?: number | null;
     candidate_purchase_cap_yuan?: number | null;
@@ -1094,6 +1099,7 @@ export type DiscoveryAllocation = {
     combined_weight?: number | null;
     [key: string]: unknown;
   };
+  /** Legacy reports only; current discovery reports do not schedule later orders. */
   future_tranches?: DiscoveryFutureTranche[];
   revalidation_required?: boolean;
   [key: string]: unknown;
@@ -1111,7 +1117,12 @@ export type DiscoveryAllocationPlan = {
   schema_version?: string;
   status?: "allocated" | "partial" | "blocked" | string;
   allocation_mode?: string;
-  amount_semantics?: "current_verified_initial_tranche" | "advisory_initial_tranche" | string;
+  amount_semantics?:
+    | "current_verified_opportunity_amount"
+    | "advisory_current_opportunity_amount"
+    | "current_verified_initial_tranche"
+    | "advisory_initial_tranche"
+    | string;
   policy?: {
     decision_style?: string;
     prefer_dca?: boolean;
@@ -1145,6 +1156,7 @@ export type DiscoveryAllocationPlan = {
   unallocated_budget?: {
     amount_yuan?: number | null;
     current_tranche_unallocated_yuan?: number | null;
+    /** Legacy reports only; retained so persisted v1 payloads remain readable. */
     deferred_future_tranches_yuan?: number | null;
     reason_codes?: string[];
     [key: string]: unknown;
@@ -1534,7 +1546,7 @@ export type SectorOpportunity = {
   participation_score?: number | null;
   position_risk_score?: number | null;
   block_weights?: Record<string, number> | null;
-  /** 短期加速/拥挤的风险披露。v3 不再用它否决布局，只缩小首批。 */
+  /** 短期加速/拥挤的风险披露。v3 不再用它否决布局，只缩小本次投入。 */
   overheat_flags?: string[];
   first_tranche_scale?: number | null;
   formation_probability_policy?: string | null;

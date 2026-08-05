@@ -120,7 +120,7 @@ describe("DiscoveryReportPanel", () => {
           setup_maturity_score: 72,
           entry_readiness_score: 68,
           entry_reason: "中期方向、资金确认和价格位置已同时通过入场线。",
-          entry_triggers: ["首批后继续确认5日资金与20日相对强度"],
+          entry_triggers: ["买入并录入持仓后，由日报继续确认5日资金与20日相对强度"],
           change_1d_percent: 1.05,
           change_5d_percent: 2.06,
           cumulative_5d_net_yi: 210.45,
@@ -697,29 +697,18 @@ describe("DiscoveryReportPanel", () => {
     expect(screen.queryByText("申赎与额度需复核")).not.toBeInTheDocument();
   });
 
-  it("shows the advisory current tranche separately from an amount-free future tranche", () => {
+  it("shows only the current opportunity amount and hands later decisions to daily reports", () => {
     const report = sampleReport();
     const recommendation = {
       ...report.recommendations[0],
       action: "分批买入",
       suggested_amount_yuan: 6300,
-      amount_note: "当前首批由确定性分配器统一计算。",
+      amount_note: "本次参考金额由确定性分配器统一计算。",
       allocation: {
         fund_code: "006081",
         sector_name: "电子",
         suggested_amount_yuan: 6300,
-        amount_semantics: "advisory_initial_tranche" as const,
-        future_tranches: [
-          {
-            sequence: 2,
-            amount_yuan: null,
-            revalidation_required: true,
-            preconditions: [
-              "request_budget_recheck",
-              "risk_context_recheck",
-            ],
-          },
-        ],
+        amount_semantics: "advisory_current_opportunity_amount" as const,
         revalidation_required: true,
       },
     };
@@ -744,7 +733,7 @@ describe("DiscoveryReportPanel", () => {
     report.allocation_plan = {
       schema_version: "discovery_allocation_plan.v1",
       status: "partial",
-      amount_semantics: "advisory_initial_tranche",
+      amount_semantics: "advisory_current_opportunity_amount",
       risk_context: {
         schema_version: "discovery_risk_context.v1",
         status: "qualified",
@@ -760,7 +749,6 @@ describe("DiscoveryReportPanel", () => {
       unallocated_budget: {
         amount_yuan: 43700,
         current_tranche_unallocated_yuan: 6200,
-        deferred_future_tranches_yuan: 37500,
         reason_codes: ["candidate_capacity_exhausted"],
       },
       revalidation_required: true,
@@ -769,23 +757,75 @@ describe("DiscoveryReportPanel", () => {
     render(<DiscoveryReportPanel report={report} />);
 
     expect(screen.getByText("1 只形成买入建议")).toBeInTheDocument();
-    const plan = screen.getByRole("region", { name: "确定性首批分配" });
+    const plan = screen.getByRole("region", { name: "本次资金安排" });
     expect(plan).toHaveTextContent("本次可投入预算");
     expect(plan).toHaveTextContent("¥50,000");
-    expect(plan).toHaveTextContent("当前首批上限");
+    expect(plan).toHaveTextContent("本次投入上限");
     expect(plan).toHaveTextContent("¥12,500");
-    expect(plan).toHaveTextContent("延期至后续批次");
-    expect(plan).toHaveTextContent("¥37,500");
+    expect(plan).toHaveTextContent("本次未使用预算");
+    expect(plan).toHaveTextContent("¥43,700");
     expect(plan).toHaveTextContent("组合风险上下文已通过");
     expect(plan).toHaveTextContent("候选共同收益样本 118 日");
     expect(plan).toHaveTextContent("当前持仓净值金额覆盖 92.5%");
     expect(plan).not.toHaveTextContent("现金");
 
-    const currentTranche = screen.getByLabelText("首批参考金额");
-    expect(currentTranche).toHaveTextContent("首批参考金额");
-    expect(currentTranche).toHaveTextContent("¥6,300");
-    expect(screen.getByText("后续批次待重新核验 · 金额留空")).toBeInTheDocument();
-    expect(screen.getByText(/本次预算、板块敞口与组合风险需在执行前重新计算/)).toBeInTheDocument();
+    const currentAmount = screen.getByLabelText("本次参考金额");
+    expect(currentAmount).toHaveTextContent("本次参考金额");
+    expect(currentAmount).toHaveTextContent("¥6,300");
+    expect(screen.queryByText(/后续批次|金额留空/)).not.toBeInTheDocument();
+    expect(screen.getByText(/后续加减仓由日报基于最新持仓与风险重新分析/)).toBeInTheDocument();
+  });
+
+  it("renders persisted future-tranche reports with the current-only interface", () => {
+    const report = sampleReport();
+    const allocation = {
+      fund_code: "006081",
+      sector_name: "电子",
+      suggested_amount_yuan: 6300,
+      amount_semantics: "advisory_initial_tranche" as const,
+      future_tranches: [{
+        sequence: 2,
+        amount_yuan: null,
+        revalidation_required: true,
+        preconditions: ["risk_context_recheck"],
+      }],
+      revalidation_required: true,
+    };
+    report.discovery_facts = {
+      ...report.discovery_facts,
+      data_evidence_guard: { execution_blocked: false, blocked_fund_codes: [] },
+    };
+    report.recommendations = [{
+      ...report.recommendations[0],
+      action: "分批买入",
+      suggested_amount_yuan: 6300,
+      allocation,
+    }];
+    report.decision_events = [
+      { fund_code: "006081", action_category: "buy", eligible: true },
+    ];
+    report.allocation_plan = {
+      schema_version: "discovery_allocation_plan.v1",
+      status: "allocated",
+      amount_semantics: "advisory_initial_tranche",
+      allocations: [allocation],
+      budget: {
+        requested_yuan: 25000,
+        current_tranche_cap_yuan: 6300,
+        allocated_current_tranche_yuan: 6300,
+      },
+      unallocated_budget: {
+        amount_yuan: 18700,
+        deferred_future_tranches_yuan: 18700,
+      },
+      revalidation_required: true,
+    };
+
+    render(<DiscoveryReportPanel report={report} />);
+
+    expect(screen.getByLabelText("本次参考金额")).toHaveTextContent("¥6,300");
+    expect(screen.queryByText(/后续批次|金额留空|延期至后续/)).not.toBeInTheDocument();
+    expect(screen.getByText(/后续加减仓由日报基于最新持仓与风险重新分析/)).toBeInTheDocument();
   });
 
   it("uses the configured scan budget without a separate cash concept", () => {
@@ -793,7 +833,7 @@ describe("DiscoveryReportPanel", () => {
     report.allocation_plan = {
       schema_version: "discovery_allocation_plan.v1",
       status: "blocked",
-      amount_semantics: "advisory_initial_tranche",
+      amount_semantics: "advisory_current_opportunity_amount",
       budget: {
         requested_yuan: 31280.7,
         spendable_yuan: 31280.7,
@@ -810,7 +850,7 @@ describe("DiscoveryReportPanel", () => {
 
     render(<DiscoveryReportPanel report={report} />);
 
-    const plan = screen.getByRole("region", { name: "确定性首批分配" });
+    const plan = screen.getByRole("region", { name: "本次资金安排" });
     expect(plan).toHaveTextContent("本次可投入预算");
     expect(plan).toHaveTextContent("¥31,280.7");
     expect(plan).not.toHaveTextContent("现金");
@@ -830,7 +870,7 @@ describe("DiscoveryReportPanel", () => {
     report.allocation_plan = {
       schema_version: "discovery_allocation_plan.v1",
       status: "blocked",
-      amount_semantics: "advisory_initial_tranche",
+      amount_semantics: "advisory_current_opportunity_amount",
       risk_context: {
         schema_version: "discovery_risk_context.v1",
         status: "not_evaluated_no_actionable_candidates",
@@ -848,7 +888,7 @@ describe("DiscoveryReportPanel", () => {
 
     render(<DiscoveryReportPanel report={report} />);
 
-    const plan = screen.getByRole("region", { name: "确定性首批分配" });
+    const plan = screen.getByRole("region", { name: "本次资金安排" });
     expect(plan).toHaveTextContent("暂无进入金额分配的买入候选");
     expect(plan).toHaveTextContent(
       "候选筛选阶段已止步，组合风险分配未运行；这不表示风险校验失败。",
@@ -871,7 +911,7 @@ describe("DiscoveryReportPanel", () => {
     report.allocation_plan = {
       schema_version: "discovery_allocation_plan.v1",
       status: "blocked",
-      amount_semantics: "advisory_initial_tranche",
+      amount_semantics: "advisory_current_opportunity_amount",
       allocations: [],
       risk_context: {
         schema_version: "discovery_risk_context.v1",
@@ -938,7 +978,7 @@ describe("DiscoveryReportPanel", () => {
     render(<DiscoveryReportPanel report={report} />);
 
     expect(screen.getByText(report.title)).toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "确定性首批分配" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "本次资金安排" })).not.toBeInTheDocument();
     expect(screen.queryByText("当前已验证首批")).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "基金持仓穿透证据" })).not.toBeInTheDocument();
   });

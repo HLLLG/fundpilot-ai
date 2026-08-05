@@ -14,8 +14,8 @@ RISK_CONTEXT_SCHEMA_VERSION = "discovery_risk_context.v1"
 PRIORITY_INPUT_SCHEMA_VERSION = "discovery_priority.v1"
 PEER_RANK_SCHEMA_VERSION = "peer_rank.v1"
 
-CURRENT_AMOUNT_SEMANTICS = "current_verified_initial_tranche"
-ADVISORY_AMOUNT_SEMANTICS = "advisory_initial_tranche"
+CURRENT_AMOUNT_SEMANTICS = "current_verified_opportunity_amount"
+ADVISORY_AMOUNT_SEMANTICS = "advisory_current_opportunity_amount"
 RISK_AWARE_MODE = "qualified_risk_context"
 QUALIFIED_RISK_ONLY_MODE = "qualified_equal_risk_only"
 BLOCKED_MODE = "blocked_fail_closed"
@@ -346,7 +346,6 @@ def allocate_discovery_candidates(
     ]
     allocated = round(sum(row["suggested_amount_yuan"] for row in allocation_rows), 2)
     current_unallocated = round(max(current_tranche_cap - allocated, 0.0), 2)
-    deferred = round(max(spendable_total - current_tranche_cap, 0.0), 2)
     unavailable_cash = round(max(budget - spendable_total, 0.0), 2)
     total_unallocated = round(max(budget - allocated, 0.0), 2)
 
@@ -425,7 +424,6 @@ def allocate_discovery_candidates(
         "unallocated_budget": {
             "amount_yuan": _money(total_unallocated),
             "current_tranche_unallocated_yuan": _money(current_unallocated),
-            "deferred_future_tranches_yuan": _money(deferred),
             "unavailable_due_to_cash_yuan": _money(unavailable_cash),
             "reason_codes": current_unallocated_reasons,
         },
@@ -852,23 +850,6 @@ def _allocation_row(
             ),
             "combined_weight": round(candidate.weight, 8),
         },
-        "future_tranches": [
-            {
-                "sequence": 2,
-                "amount_yuan": None,
-                "revalidation_required": True,
-                "preconditions": [
-                    *(
-                        ["tradeability_gate_recheck"]
-                        if platform_tradeability_checked
-                        else []
-                    ),
-                    "confirmed_cash_recheck",
-                    "sector_exposure_recheck",
-                    "risk_context_recheck",
-                ],
-            }
-        ],
         "revalidation_required": True,
     }
 
@@ -908,7 +889,6 @@ def _blocked_plan(
         "unallocated_budget": {
             "amount_yuan": _money(budget),
             "current_tranche_unallocated_yuan": 0.0,
-            "deferred_future_tranches_yuan": 0.0,
             "unavailable_due_to_cash_yuan": None,
             "reason_codes": _unique(reason_codes),
         },
@@ -963,7 +943,6 @@ def _preallocation_blocked_plan(
         "unallocated_budget": {
             "amount_yuan": _money(requested_budget_yuan),
             "current_tranche_unallocated_yuan": 0.0,
-            "deferred_future_tranches_yuan": 0.0,
             "unavailable_due_to_cash_yuan": _money(
                 max(requested_budget_yuan - confirmed_cash_yuan, 0.0)
             ),

@@ -1167,7 +1167,7 @@ def test_v3_blocks_are_orthogonal_and_composite_is_reproducible() -> None:
 
 
 def test_v3_overheat_discloses_risk_instead_of_blocking_entry() -> None:
-    """实测过热方向的前瞻超额显著为正；v3 不再用它否决布局，只缩小首批。"""
+    """实测过热方向的前瞻超额显著为正；v3 不再用它否决布局，只缩小本次投入。"""
     mainline = _mainline_row("机器人")
     mainline["features"]["return_5d_percent"] = 14.0
     mainline["features"]["distance_from_20d_high_percent"] = -0.5
@@ -1184,7 +1184,7 @@ def test_v3_overheat_discloses_risk_instead_of_blocking_entry() -> None:
     assert row["entry_state"] == ENTRY_READY_TO_START
     assert row["overheat_flags"], "过热必须被记录为风险，而不是消失"
     assert row["first_tranche_scale"] < 1.0
-    assert "首批" in row["entry_hint"]
+    assert "本次投入" in row["entry_hint"]
     # 同一份证据在 v2 下只会得到"等待过热缓解"。
     v2_row = score_sector_opportunity_rows(
         [_heat_row("机器人", 5.2, 14.0)],

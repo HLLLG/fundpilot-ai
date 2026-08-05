@@ -440,7 +440,7 @@ class DiscoveryRecommendation(BaseModel):
     sector_evidence: list[str] = Field(default_factory=list)
     fund_evidence: list[str] = Field(default_factory=list)
     validation_notes: list[str] = Field(default_factory=list)
-    # 服务端确定性的入场语义；不新增用户模式，仅让等待原因与首批路径可被 UI 准确展示。
+    # 服务端确定性的入场语义；不新增用户模式，仅让等待原因与本次投入路径可被 UI 准确展示。
     waiting_reason_code: str | None = None
     entry_path: str | None = None
     entry_tranche_scale: float | None = None

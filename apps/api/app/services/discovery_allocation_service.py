@@ -56,7 +56,7 @@ def apply_deterministic_discovery_allocation(
     budget_yuan: float,
     decision_at: datetime | None,
 ) -> tuple[list[DiscoveryRecommendation], dict[str, Any], dict[str, Any], list[str]]:
-    """Allocate one advisory tranche and project it back onto recommendations."""
+    """Allocate the current opportunity amount and project it onto recommendations."""
 
     pool_by_code = {
         str(item.get("fund_code") or "").zfill(6): dict(item)
@@ -147,20 +147,6 @@ def apply_deterministic_discovery_allocation(
     unallocated_budget = plan.get("unallocated_budget")
     if isinstance(unallocated_budget, dict):
         unallocated_budget.pop("unavailable_due_to_cash_yuan", None)
-    for allocation in plan.get("allocations") or []:
-        if not isinstance(allocation, dict):
-            continue
-        for future_batch in allocation.get("future_tranches") or []:
-            if not isinstance(future_batch, dict):
-                continue
-            preconditions = future_batch.get("preconditions")
-            if isinstance(preconditions, list):
-                future_batch["preconditions"] = [
-                    "request_budget_recheck"
-                    if value == "confirmed_cash_recheck"
-                    else value
-                    for value in preconditions
-                ]
 
     allocation_rows = {
         str(item.get("fund_code") or "").zfill(6): dict(item)
@@ -192,7 +178,7 @@ def apply_deterministic_discovery_allocation(
             copy.allocation = {}
             copy.cost_assessment = {}
             copy.amount_note = "未通过组合风险与统一金额分配，本次仅保留研究观察。"
-            reasons = risk_reasons or plan_reasons or ["未获得满足全部硬约束的首批额度"]
+            reasons = risk_reasons or plan_reasons or ["未获得满足全部硬约束的本次额度"]
             copy.validation_notes = [
                 *copy.validation_notes,
                 "确定性分配阻断：" + "、".join(reasons[:3]),
@@ -213,9 +199,10 @@ def apply_deterministic_discovery_allocation(
         copy.allocation = allocation
         copy.cost_assessment = {}
         copy.amount_note = (
-            "首批参考金额由系统按本次可投入预算、已有板块敞口、"
-            "集中度、候选历史回撤、波动和相关性统一计算；风险越高首批"
-            "权重越低，后续批次不预先承诺金额。"
+            "本次参考金额由系统按本次可投入预算、已有板块敞口、"
+            "集中度、候选历史回撤、波动和相关性统一计算；风险越高，"
+            "本次投入权重越低。买入并录入持仓后，后续加减仓由日报"
+            "基于最新持仓与风险重新分析。"
         )
         projected.append(finalize_discovery_allocation_projection(copy))
 
@@ -233,10 +220,10 @@ def apply_deterministic_discovery_allocation(
     )
     if proposed_buys and not allocation_rows:
         caveats.append(
-            "候选未形成合格的组合风险上下文或统一首批额度，系统已清除全部买入金额。"
+            "候选未形成合格的组合风险上下文或本次统一额度，系统已清除全部买入金额。"
         )
     elif plan.get("status") == "partial":
-        caveats.append("统一分配受预算、风险或集中度上限约束，部分首批预算保持未分配。")
+        caveats.append("本次分配受预算、风险或集中度上限约束，部分预算保持未使用。")
     return projected, plan, risk_context, caveats
 
 

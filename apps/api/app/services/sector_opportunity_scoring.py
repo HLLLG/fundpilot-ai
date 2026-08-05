@@ -11,7 +11,7 @@ from __future__ import annotations
 
 * 方向潜力：20～60 个交易日的相对强度和趋势持续性；
 * 形态成熟度：5/20 日资金、上涨广度和趋势是否共同改善；
-* 入场成熟度：价格位置是否允许现在开始首批布局。
+* 入场成熟度：价格位置是否允许现在开始投入。
 
 V2 只在完整 ``mainline_regime.v1`` 快照存在时启用。旧报告、日报单板块描述和
 测试适配器仍保留旧字段语义，避免历史报告被新规则重新解释。
@@ -72,7 +72,7 @@ MIN_CORRELATION_SAMPLES = 15
 #    ICIR -0.33 —— 它是无效甚至有害的，因此**整块删除**，不再有独立的价格结构评分。
 # 3. **过热不再是硬排除**：实测 `overheated=True` 的方向前瞻超额为 +2.75%(t=+5.23,T+5)
 #    / +5.31%(t=+3.99,T+20)，而 False 为 -0.49% / -0.95%。v2 把最强的正向信号当成了
-#    淘汰条件。v3 把它降级为风险披露 + 首批仓位缩减。
+#    淘汰条件。v3 把它降级为风险披露 + 本次投入缩减。
 #
 # **刻意不做的事**：不把高涨幅、贴高点、远离 MA20 反转成加分项。上述观测来自单一
 # 6 个月动量区间的 40 个决策日，在均值回归区间里符号会翻转。v3 只做"移除实测有害的
@@ -121,10 +121,10 @@ V3_GATE_THRESHOLDS: dict[str, float] = {
 #: 判断：资金分位已经内含在 participation 里。
 V3_INVALID_TREND_CEILING = 40.0
 V3_INVALID_PARTICIPATION_CEILING = 35.0
-#: 过热标记数量 → 首批仓位缩放。过热方向不再被拒绝，但首批更小且不预先承诺后续。
+#: 过热标记数量 → 本次机会金额缩放。过热方向不被拒绝，买入后的动作交由日报。
 V3_FIRST_TRANCHE_SCALE: dict[int, float] = {0: 1.0, 1: 0.6}
 V3_FIRST_TRANCHE_SCALE_CROWDED = 0.4
-#: 资金刚转强但参与度尚未完全越过 35 分时，只开放缩小首批。
+#: 资金刚转强但参与度尚未完全越过 35 分时，只允许缩小本次投入。
 #:
 #: 20 分是拐点通道的最低横截面底线；它不替代趋势、数据时点或基金自身入场信号。
 #: 该通道要求今日资金已经转正且量价模式明确改善，因此不会让“参与度低且仍在流出”
@@ -364,7 +364,7 @@ def _attach_v3_selection_priority(rows: list[dict[str, Any]]) -> list[dict[str, 
                 + (f"（估计 {probability:.0f}%）" if probability is not None else "")
             )
         elif flow_bonus > 0:
-            reasons.append("今日资金转强且满足缩小首批通道")
+            reasons.append("今日资金转强且满足缩小本次投入条件")
         if high_elasticity and volatility is not None:
             reasons.append(
                 f"20日年化波动 {volatility:.1f}%，位于可用板块横截面"
@@ -1147,7 +1147,7 @@ def _entry_maturity_v2(
         else "低"
     )
     entry_hint = {
-        ENTRY_READY_TO_START: "条件成熟，可小额首批布局",
+        ENTRY_READY_TO_START: "条件成熟，可按本次参考金额布局",
         ENTRY_READY_ON_PULLBACK: "方向较强，等待过热缓解",
         ENTRY_FORMING: "条件形成中，暂不下单",
         ENTRY_INVALID: "趋势或资金未通过，暂不参与",
@@ -1544,7 +1544,7 @@ def _entry_maturity_v3(
     )
     # 资金绝对/历史分位存在明显滞后：今日仅占资金分量 20%，再乘 participation 的
     # 60% 后，对最终参与度只有 12% 的影响。趋势已经通过且今日出现可核验回流时，允许
-    # 候选基金以自身入场信号申请一个缩小首批；这里仍不直接把方向改成 ready_to_start。
+    # 候选基金以自身入场信号申请缩小本次投入；这里仍不直接把方向改成 ready_to_start。
     flow_improving_probe_eligible = bool(
         entry_state == ENTRY_READY_ON_PULLBACK
         and evidence_quality in _USABLE_EVIDENCE_QUALITIES
@@ -1611,14 +1611,14 @@ def _entry_maturity_v3(
     )
     entry_hint = {
         ENTRY_READY_TO_START: (
-            "条件成熟，可小额首批布局" if not overheat_flags else "条件成熟但短期加速，首批更小"
+            "条件成熟，可按本次参考金额布局" if not overheat_flags else "条件成熟但短期加速，本次投入更小"
         ),
         ENTRY_READY_ON_PULLBACK: "方向仍强，资金或结构尚不支持立即入场",
         ENTRY_FORMING: "条件形成中，暂不下单",
         ENTRY_INVALID: "资金持续转弱或趋势退潮，暂不参与",
     }[entry_state]
     if flow_improving_probe_eligible:
-        entry_hint = "资金刚转强；基金自身入场信号通过时可缩小首批试仓"
+        entry_hint = "资金刚转强；基金自身入场信号通过时可缩小本次试仓金额"
     if probability_early_probe_eligible:
         entry_hint = (
             f"趋势形成概率估计 {formation_probability:.0f}%；"
@@ -1633,7 +1633,7 @@ def _entry_maturity_v3(
     if flow_improving_probe_eligible:
         entry_reason = (
             "中期趋势已通过，今日资金出现同日回流；历史参与度尚未完全达标，"
-            "仅允许基金自身入场信号通过后缩小首批。"
+            "仅允许基金自身入场信号通过后缩小本次投入。"
         )
     if probability_early_probe_eligible:
         entry_reason = (
@@ -1750,7 +1750,7 @@ def _overheat_flags(
 
     阈值沿用 v2，刻意不按实测结果调整：实测显示这些条件在样本区间里是正向信号，但那
     来自单一动量区间，反过来押注同样是未经验证的下注。这里只是把"拦截"改成"说明 +
-    首批更小"。
+    本次投入更小"。
     """
     flags: list[str] = []
     if change_1d is not None and change_1d >= 4.0:
@@ -1784,9 +1784,9 @@ def _entry_triggers_v3(
     formation_probability: float | None = None,
 ) -> list[str]:
     if entry_state == ENTRY_READY_TO_START:
-        triggers = ["首批后继续确认趋势强度与资金参与度，不预先承诺后续加仓"]
+        triggers = ["买入并录入持仓后，由日报继续确认趋势强度与资金参与度"]
         if overheat_flags:
-            triggers.append("当前处于短期加速，首批按更低比例执行")
+            triggers.append("当前处于短期加速，本次参考金额按更低比例计算")
         return triggers
     triggers: list[str] = []
     if probability_early_probe_eligible:
@@ -1818,7 +1818,7 @@ def _entry_triggers_v3(
     if position_risk < V3_GATE_THRESHOLDS["position"]:
         triggers.append("价格结构修复（20日修复率回升、离低点反弹并保持近5日转强）")
     if flow_improving_probe_eligible:
-        triggers.append("候选基金自身修复或良性回调信号通过后，仅开放缩小首批")
+        triggers.append("候选基金自身修复或良性回调信号通过后，仅缩小本次投入")
     return _unique_evidence(triggers)[:4]
 
 
@@ -1938,7 +1938,7 @@ def _entry_triggers(
 ) -> list[str]:
     triggers: list[str] = []
     if entry_state == ENTRY_READY_TO_START:
-        return ["首批后继续确认5日资金与20日相对强度，不预先承诺后续加仓"]
+        return ["买入并录入持仓后，由日报继续确认5日资金与20日相对强度"]
     if evidence_quality == "insufficient":
         triggers.append("补齐20日价格结构与多维证据")
     if status not in {"forming", "confirmed"}:

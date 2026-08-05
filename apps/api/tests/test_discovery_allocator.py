@@ -561,13 +561,14 @@ def test_unqualified_or_incomplete_risk_context_blocks(risk_mutation: dict) -> N
     assert plan["budget"]["allocated_current_tranche_yuan"] == 0
 
 
-def test_future_tranche_has_no_precommitted_amount_and_requires_revalidation() -> None:
+def test_current_allocation_does_not_precommit_followup_orders() -> None:
     plan = _allocate([_candidate("000001", "科技")])
 
-    future = plan["allocations"][0]["future_tranches"][0]
-    assert future["amount_yuan"] is None
-    assert future["revalidation_required"] is True
-    assert "tradeability_gate_recheck" in future["preconditions"]
+    allocation = plan["allocations"][0]
+    assert allocation["suggested_amount_yuan"] > 0
+    assert allocation["revalidation_required"] is True
+    assert "future_tranches" not in allocation
+    assert "deferred_future_tranches_yuan" not in plan["unallocated_budget"]
 
 
 def test_duplicate_fund_code_fails_closed_independent_of_payload_difference() -> None:
