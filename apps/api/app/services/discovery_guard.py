@@ -20,6 +20,7 @@ from app.services.decision_guard_shared import (
 from app.services.news_citation import _collect_citable_titles, _matches_known_title
 from app.services.sector_canonical import get_canonical_sector, get_intraday_canonical_sector
 from app.services.sector_labels import normalize_sector_label
+from app.services.sector_registry import resolve_theme_sector_label
 from app.services.discovery_sector_context import execution_qualified_fund_codes
 from app.services.discovery_sector_identity import candidate_sector_identity_is_executable
 from app.services.discovery_strategy import (
@@ -195,6 +196,9 @@ def _quant_coverage_explanation(
 
 def _normalized_sector_key(value: object) -> str:
     label = normalize_sector_label(str(value or ""))
+    theme_label = resolve_theme_sector_label(label)
+    if theme_label:
+        return normalize_sector_label(theme_label).casefold()
     canonical = get_intraday_canonical_sector(label) or get_canonical_sector(label)
     if canonical is not None:
         label = normalize_sector_label(canonical.label)

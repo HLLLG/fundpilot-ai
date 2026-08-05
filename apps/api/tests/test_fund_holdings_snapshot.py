@@ -186,6 +186,35 @@ def test_contract_accepts_timezone_aware_decision_clock() -> None:
     }
 
 
+@pytest.mark.parametrize(
+    "title",
+    [
+        "富国互联科技股票型证券投资基金二0二六年第2季度报告",
+        "测试基金二〇二六年第二季度报告",
+        "测试基金二零二六年２季度报告",
+        "测试基金贰零贰陆年第2季度报告",
+        "测试基金２０２６年第２季度报告",
+    ],
+)
+def test_announcement_period_normalizes_common_financial_year_formats(
+    title: str,
+) -> None:
+    result = _build(_top10_rows(), [_announcement(title)])
+
+    assert result["status"] == "qualified"
+    assert result["report_period"] == "2026-Q2"
+
+
+def test_portfolio_row_period_normalizes_chinese_year_digits() -> None:
+    result = _build(
+        _top10_rows(period="二〇二六年2季度股票投资明细"),
+        [_announcement()],
+    )
+
+    assert result["status"] == "qualified"
+    assert result["report_period"] == "2026-Q2"
+
+
 def test_naive_decision_time_and_clock_mismatch_fail_closed() -> None:
     naive = _build(
         _top10_rows(),

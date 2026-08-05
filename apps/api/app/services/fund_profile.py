@@ -823,16 +823,15 @@ def _looks_like_index_name(name: str) -> bool:
 
 
 def infer_intraday_index_from_sector(sector_name: str | None) -> str | None:
-    """关联板块短名 → 东财 zz 指数（如 半导体→中证半导体 931865）。"""
+    """关联板块短名 → registry 中可用于分时查询的指数标签。"""
     if not sector_name or not _is_valid_sector_label(sector_name):
         return None
-    from app.services.sector_canonical import _BOARD_TO_INTRADAY_INDEX
-    from app.services.sector_labels import normalize_sector_label
+    from app.services.sector_canonical import get_intraday_canonical_sector
 
-    label = normalize_sector_label(sector_name)
-    if not label:
+    canonical = get_intraday_canonical_sector(sector_name)
+    if canonical is None or canonical.source_type != "index":
         return None
-    return _BOARD_TO_INTRADAY_INDEX.get(label)
+    return canonical.label
 
 
 def infer_intraday_index_from_fund_name(fund_name: str | None) -> str | None:

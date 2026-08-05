@@ -50,6 +50,18 @@ def _is_complete_closed_intraday(points: list[IntradayPoint]) -> bool:
     return last_time >= "15:00"
 
 
+def resolve_intraday_source(
+    source_type: str,
+    source_name: str,
+) -> tuple[str, str]:
+    """把客户端查询提示收敛为 registry 中唯一的行情身份。"""
+    label = (source_name or "").strip()
+    canonical = get_intraday_canonical_sector(label)
+    if canonical is None:
+        return source_type, label
+    return canonical.source_type, canonical.label
+
+
 def fetch_sector_intraday(
     source_type: str,
     source_name: str,
@@ -60,6 +72,7 @@ def fetch_sector_intraday(
     label = (source_name or "").strip()
     if not label or source_type not in {"index", "concept", "industry"}:
         return [], "缺少板块映射信息", None, None
+    source_type, label = resolve_intraday_source(source_type, label)
 
     session = build_trading_session()
     session_kind = session["session_kind"]
@@ -71,7 +84,7 @@ def fetch_sector_intraday(
     }
 
     # v3：概念/行业板块优先东财 trends2（昨收基准）；v2 曾误用 AkShare 概念分钟优先
-    cache_key = f"intraday:v4:{source_type}:{label}:{trade_date}"
+    cache_key = f"intraday:v5:{source_type}:{label}:{trade_date}"
     cache_ttl = _INTRADAY_CLOSED_TTL_SECONDS if closed_session else _INTRADAY_LIVE_TTL_SECONDS
 
     if not force_refresh:

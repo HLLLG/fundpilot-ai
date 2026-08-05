@@ -11,17 +11,29 @@ from app.services.eastmoney_spot_client import (
     fetch_eastmoney_quotes_by_secid,
 )
 from app.services.eastmoney_trends_client import fetch_eastmoney_intraday_trends
-from app.services.sector_canonical import _CANONICAL_BY_LABEL
+from app.services.sector_canonical import (
+    get_canonical_sector,
+    list_canonical_sector_labels,
+)
 from app.services.sector_intraday_browser_provider import (
     fetch_intraday_via_browser_command,
 )
 from app.services.sector_quote_browser_provider import fetch_boards_via_browser_command
 from app.services.sector_quote_relay_provider import fetch_boards_via_relay
 
-_PROBE_SECIDS: list[tuple[str, str]] = [
-    (label, sector.eastmoney_secid)
-    for label, sector in _CANONICAL_BY_LABEL.items()
-]
+def _build_probe_secids() -> list[tuple[str, str]]:
+    probes: list[tuple[str, str]] = []
+    seen_secids: set[str] = set()
+    for label in list_canonical_sector_labels():
+        sector = get_canonical_sector(label)
+        if sector is None or sector.eastmoney_secid in seen_secids:
+            continue
+        seen_secids.add(sector.eastmoney_secid)
+        probes.append((label, sector.eastmoney_secid))
+    return probes
+
+
+_PROBE_SECIDS = _build_probe_secids()
 
 # One representative CSI index is enough to verify the shared push2delay minute
 # path. Fund/sector-specific mappings can then be checked through the public

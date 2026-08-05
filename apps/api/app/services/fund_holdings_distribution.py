@@ -622,6 +622,7 @@ def _unavailable_payload(
     *,
     reason_codes: list[str],
 ) -> dict[str, Any]:
+    normalized_reasons = list(dict.fromkeys(reason_codes))
     return {
         "fund_code": fund_code,
         "status": "unavailable",
@@ -640,10 +641,23 @@ def _unavailable_payload(
         "quote_session_date": None,
         "quote_updated_at": None,
         "quote_source": None,
-        "data_note": "暂未取得可核验的季度股票持仓。",
+        "data_note": _unavailable_data_note(normalized_reasons),
         "generated_at": datetime.now(CN_TZ).isoformat(),
-        "reason_codes": list(dict.fromkeys(reason_codes)),
+        "reason_codes": normalized_reasons,
     }
+
+
+def _unavailable_data_note(reason_codes: list[str]) -> str:
+    reasons = set(reason_codes)
+    if "matching_report_announcement_missing" in reasons:
+        return "已获取季度持仓明细，但尚未匹配到同季度的可核验公告。"
+    if "announcement_records_missing" in reasons:
+        return "尚未获取到可核验的季度报告公告。"
+    if "supporting_report_announcement_ambiguous" in reasons:
+        return "同季度报告公告存在歧义，暂不展示未经确认的持仓。"
+    if "disclosed_holdings_missing" in reasons:
+        return "季度报告中未取得可展示的股票持仓明细。"
+    return "暂未取得可核验的季度股票持仓。"
 
 
 def _valid_cached_payload(value: object, fund_code: str) -> bool:

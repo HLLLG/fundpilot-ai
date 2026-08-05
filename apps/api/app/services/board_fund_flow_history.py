@@ -18,8 +18,8 @@ from app.services.eastmoney_spot_client import (
     _EASTMONEY_HEADERS,
     _board_yuan_to_yi,
 )
-from app.services.sector_canonical import get_canonical_sector
 from app.services.sector_labels import normalize_sector_label
+from app.services.sector_registry import resolve_discovery_quote
 from app.services.sector_quote_cache import (
     get_spot_snapshot,
     get_spot_snapshot_any_age,
@@ -109,13 +109,13 @@ def resolve_board_flow_code_for_sector(sector_name: str | None) -> tuple[str | N
     if flow_code:
         return flow_code, label
 
-    canon = get_canonical_sector(label)
-    if canon is not None and str(canon.eastmoney_secid).startswith("90."):
-        resolved_code = str(canon.source_code or "").strip()
-        if not resolved_code and "." in canon.eastmoney_secid:
-            resolved_code = canon.eastmoney_secid.split(".", 1)[1]
+    flow_quote = resolve_discovery_quote(label)
+    if flow_quote is not None and str(flow_quote.eastmoney_secid).startswith("90."):
+        resolved_code = str(flow_quote.source_code or "").strip()
+        if not resolved_code and "." in flow_quote.eastmoney_secid:
+            resolved_code = flow_quote.eastmoney_secid.split(".", 1)[1]
         if resolved_code:
-            return resolved_code, canon.label
+            return resolved_code, label
 
     return None, label
 

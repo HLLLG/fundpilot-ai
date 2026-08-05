@@ -198,23 +198,10 @@ export type IntradayQuery = {
   source_name: string;
 };
 
-/** 关联板块短名 → 东财 zz 指数分时（与 apps/api sector_canonical 一致） */
-const BOARD_TO_INTRADAY_INDEX: Record<string, string> = {
-  半导体: "中证半导体",
-  电网设备: "中证电网设备",
-  人工智能: "中证人工智能",
-  传媒: "传媒",
-};
-
-function intradayIndexForBoard(boardName: string | null | undefined): string | null {
-  const trimmed = boardName?.trim();
-  if (!trimmed || isInvalidSectorLabel(trimmed)) {
-    return null;
-  }
-  return BOARD_TO_INTRADAY_INDEX[trimmed] ?? null;
-}
-
-/** 详情弹窗分时图：有场内指数则走指数 K 线（008586→中证人工智能），概念板块名无分钟线 */
+/**
+ * 详情弹窗只提交基金档案里的指数名或关联板块标签；具体 secid 与指数/概念类型
+ * 由 API 的 sector registry 统一解析，前端不再维护一份容易漂移的板块映射。
+ */
 export function resolveIntradayQuery(
   holding: Pick<Holding, "fund_code" | "fund_name" | "sector_name" | "intraday_index_name">,
   sectorMeta?: SectorQuoteMeta | null,
@@ -231,11 +218,6 @@ export function resolveIntradayQuery(
   const indexName = effectiveHolding.intraday_index_name?.trim();
   if (indexName && !isInvalidSectorLabel(indexName)) {
     return { source_type: "index", source_name: indexName };
-  }
-
-  const boardIndex = intradayIndexForBoard(effectiveHolding.sector_name);
-  if (boardIndex) {
-    return { source_type: "index", source_name: boardIndex };
   }
 
   const metaName = sectorMeta?.matched_name?.trim();
@@ -257,10 +239,6 @@ export function resolveIntradayQuery(
     !metaLooksLikeFund &&
     metaType !== "concept"
   ) {
-    const mappedIndex = intradayIndexForBoard(metaName);
-    if (mappedIndex) {
-      return { source_type: "index", source_name: mappedIndex };
-    }
     return { source_type: metaType, source_name: metaName };
   }
 
@@ -271,10 +249,8 @@ export function resolveIntradayQuery(
 
   const boardName = effectiveHolding.sector_name?.trim();
   if (boardName && !isInvalidSectorLabel(boardName)) {
-    const mappedIndex = intradayIndexForBoard(boardName);
-    if (mappedIndex) {
-      return { source_type: "index", source_name: mappedIndex };
-    }
+    // source_type 是兼容旧 API 的查询提示；后端会按 registry 解析成真实指数/
+    // 概念/行业身份，因此这里无需知道“互联网→930604”等具体映射。
     return { source_type: "concept", source_name: boardName };
   }
 
@@ -296,10 +272,7 @@ export function resolveIntradayFallbackQuery(
   if (!boardName || isInvalidSectorLabel(boardName)) {
     return null;
   }
-  const mappedIndex = intradayIndexForBoard(boardName);
-  const fallback: IntradayQuery = mappedIndex
-    ? { source_type: "index", source_name: mappedIndex }
-    : { source_type: "concept", source_name: boardName };
+  const fallback: IntradayQuery = { source_type: "concept", source_name: boardName };
   if (
     primaryQuery &&
     primaryQuery.source_type === fallback.source_type &&

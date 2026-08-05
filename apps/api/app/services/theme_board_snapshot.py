@@ -19,7 +19,11 @@ from app.services.sector_canonical import (
     get_canonical_sector,
     get_quote_canonical_sector,
 )
-from app.services.sector_registry import list_theme_board_labels, resolve_market_quote
+from app.services.sector_registry import (
+    list_theme_board_labels,
+    resolve_discovery_quote,
+    resolve_market_quote,
+)
 from app.services.sector_registry_data import (
     THEME_BOARD_ALIAS,
     THEME_BOARD_FLOW,
@@ -190,9 +194,9 @@ def _resolve_flow_source_code(
     if name in THEME_BOARD_ALIAS:
         return THEME_BOARD_ALIAS[name][1]
 
-    canon = get_canonical_sector(name)
-    if canon is not None and str(canon.eastmoney_secid).startswith("90."):
-        code = str(canon.source_code or "").strip()
+    flow_quote = resolve_discovery_quote(name)
+    if flow_quote is not None and str(flow_quote.eastmoney_secid).startswith("90."):
+        code = str(flow_quote.source_code or "").strip()
         if code:
             return code
 

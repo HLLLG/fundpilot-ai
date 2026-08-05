@@ -145,7 +145,10 @@ from app.services.recommendation_outcomes import (
 from app.services.report_export import report_to_markdown
 from app.services.sector_quote_diagnostic import run_sector_quote_diagnostic
 from app.services.sector_quote_service import apply_sector_mapping_choice, refresh_holdings_sector_quotes
-from app.services.sector_intraday_provider import fetch_sector_intraday
+from app.services.sector_intraday_provider import (
+    fetch_sector_intraday,
+    resolve_intraday_source,
+)
 from app.services.holding_detail_service import build_holding_detail
 from app.services.holding_detail_cache import (
     get_cached_holding_detail,
@@ -725,6 +728,7 @@ def sector_quotes_intraday(
 ) -> dict:
     if not get_settings().sector_quotes_enabled:
         raise HTTPException(status_code=503, detail="板块实时行情已关闭")
+    source_type, source_name = resolve_intraday_source(source_type, source_name)
     points, note, session_date, close_change_percent = fetch_sector_intraday(
         source_type,
         source_name,
@@ -1918,5 +1922,4 @@ def portfolio_summary() -> dict:
     payload["holding_count"] = len(profiles)
     payload["profiles"] = [profile.model_dump(mode="json") for profile in profiles]
     return payload
-
 

@@ -150,6 +150,22 @@ def resolve_market_quote(label: str | None) -> SectorQuoteRef | None:
     return entry.market_quote
 
 
+def resolve_theme_sector_label(label: str | None) -> str | None:
+    """把指数长名/别名归并到已登记的用户向主题短名。"""
+    normalized = normalize_sector_label(label)
+    if not normalized:
+        return None
+    if normalized in THEME_BOARD_INDEX:
+        return normalized
+    for candidate in build_sector_candidates(label):
+        if candidate in THEME_BOARD_INDEX:
+            return candidate
+    entry = get_sector_entry(label)
+    if entry is not None and entry.theme_board_eligible:
+        return entry.label
+    return None
+
+
 def resolve_discovery_quote(label: str | None) -> SectorQuoteRef | None:
     entry = get_sector_entry(label)
     if entry is None:

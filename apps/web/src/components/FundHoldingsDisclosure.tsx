@@ -157,7 +157,9 @@ export function FundHoldingsDisclosure({
         </div>
       ) : error || (distribution && !available) ? (
         <div className="mt-3 rounded-xl border border-dashed border-slate-200 bg-slate-50/60 px-3 py-3 text-center text-xs text-slate-500">
-          暂未取得可核验的季度股票持仓
+          {error
+            ? "季度持仓加载失败，请稍后重试"
+            : distribution?.data_note ?? "暂未取得可核验的季度股票持仓。"}
         </div>
       ) : available && distribution ? (
         <>

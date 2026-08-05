@@ -53,7 +53,21 @@ describe("profileSector", () => {
       intraday_index_name: null,
     };
     const primary = resolveIntradayQuery(holding);
-    expect(primary).toEqual({ source_type: "index", source_name: "中证电网设备" });
+    expect(primary).toEqual({ source_type: "concept", source_name: "电网设备" });
     expect(resolveIntradayFallbackQuery(holding, primary)).toBeNull();
+  });
+
+  it("delegates registered board identity resolution to the API registry", () => {
+    const holding = {
+      fund_code: "006751",
+      fund_name: "富国互联科技股票A",
+      sector_name: "互联网",
+      intraday_index_name: null,
+    };
+
+    expect(resolveIntradayQuery(holding)).toEqual({
+      source_type: "concept",
+      source_name: "互联网",
+    });
   });
 });

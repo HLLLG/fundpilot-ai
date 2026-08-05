@@ -14,6 +14,7 @@ from app.services.eastmoney_trends_client import (
 from app.services.trading_session import build_trading_session
 from app.services.sector_labels import normalize_sector_label
 from app.services.sector_registry import (
+    get_sector_entry,
     list_discovery_sector_labels as _registry_discovery_labels,
 )
 from app.services.sector_quote_identity import (
@@ -40,264 +41,14 @@ class CanonicalSector:
     source_code: str | None = None
 
 
-_CANONICAL_BY_LABEL: dict[str, CanonicalSector] = {
-    "商业航天": CanonicalSector(
-        label="商业航天",
-        source_type="concept",
-        source_name="商业航天",
-        eastmoney_secid="90.BK0963",
-        source_code="BK0963",
-    ),
-    "半导体": CanonicalSector(
-        label="半导体",
-        source_type="concept",
-        source_name="半导体",
-        eastmoney_secid="90.BK1036",
-        source_code="BK1036",
-    ),
-    "半导体材料": CanonicalSector(
-        label="半导体材料",
-        source_type="index",
-        source_name="半导体材料设备",
-        eastmoney_secid="2.931743",
-        source_code="931743",
-    ),
-    "半导体材料设备": CanonicalSector(
-        label="半导体材料设备",
-        source_type="index",
-        source_name="半导体材料设备",
-        eastmoney_secid="2.931743",
-        source_code="931743",
-    ),
-    "国防军工": CanonicalSector(
-        label="国防军工",
-        source_type="concept",
-        source_name="国防军工",
-        eastmoney_secid="90.BK0490",
-        source_code="BK0490",
-    ),
-    "中证电网设备": CanonicalSector(
-        label="中证电网设备",
-        source_type="index",
-        source_name="中证电网设备",
-        eastmoney_secid="2.931994",
-        source_code="931994",
-    ),
-    "中证人工智能": CanonicalSector(
-        label="中证人工智能",
-        source_type="index",
-        source_name="中证人工智能",
-        eastmoney_secid="2.930713",
-        source_code="930713",
-    ),
-    "中证人工智能主题指数": CanonicalSector(
-        label="中证人工智能主题指数",
-        source_type="index",
-        source_name="中证人工智能",
-        eastmoney_secid="2.930713",
-        source_code="930713",
-    ),
-    "中证人工智能产业指数": CanonicalSector(
-        label="中证人工智能产业指数",
-        source_type="index",
-        source_name="人工智能",
-        eastmoney_secid="2.931071",
-        source_code="931071",
-    ),
-    "人工智能产业": CanonicalSector(
-        label="人工智能产业",
-        source_type="index",
-        source_name="人工智能",
-        eastmoney_secid="2.931071",
-        source_code="931071",
-    ),
-    "中证半导体": CanonicalSector(
-        label="中证半导体",
-        source_type="index",
-        source_name="中证半导体",
-        eastmoney_secid="2.931865",
-        source_code="931865",
-    ),
-    "中证半导": CanonicalSector(
-        label="中证半导",
-        source_type="index",
-        source_name="中证半导体",
-        eastmoney_secid="2.931865",
-        source_code="931865",
-    ),
-    "电网设备": CanonicalSector(
-        label="电网设备",
-        source_type="index",
-        source_name="中证电网设备",
-        eastmoney_secid="2.931994",
-        source_code="931994",
-    ),
-    "人工智能": CanonicalSector(
-        label="人工智能",
-        source_type="index",
-        source_name="中证人工智能",
-        eastmoney_secid="2.930713",
-        source_code="930713",
-    ),
-    "互联网": CanonicalSector(
-        label="互联网",
-        source_type="concept",
-        source_name="互联网服务",
-        eastmoney_secid="90.BK0962",
-        source_code="BK0962",
-    ),
-    "有色金属": CanonicalSector(
-        label="有色金属",
-        source_type="industry",
-        source_name="有色金属",
-        eastmoney_secid="90.BK0478",
-        source_code="BK0478",
-    ),
-    "新能源车": CanonicalSector(
-        label="新能源车",
-        source_type="concept",
-        source_name="新能源车",
-        eastmoney_secid="90.BK0900",
-        source_code="BK0900",
-    ),
-    "医药": CanonicalSector(
-        label="医药",
-        source_type="industry",
-        source_name="医药制造",
-        eastmoney_secid="90.BK0465",
-        source_code="BK0465",
-    ),
-    "证券": CanonicalSector(
-        label="证券",
-        source_type="industry",
-        source_name="证券",
-        eastmoney_secid="90.BK0473",
-        source_code="BK0473",
-    ),
-    "银行": CanonicalSector(
-        label="银行",
-        source_type="industry",
-        source_name="银行",
-        eastmoney_secid="90.BK0475",
-        source_code="BK0475",
-    ),
-    "白酒": CanonicalSector(
-        label="白酒",
-        source_type="concept",
-        source_name="白酒",
-        eastmoney_secid="90.BK0896",
-        source_code="BK0896",
-    ),
-    "光伏": CanonicalSector(
-        label="光伏",
-        source_type="concept",
-        source_name="光伏设备",
-        eastmoney_secid="90.BK0588",
-        source_code="BK0588",
-    ),
-    "锂电池": CanonicalSector(
-        label="锂电池",
-        source_type="concept",
-        source_name="锂电池",
-        eastmoney_secid="90.BK0576",
-        source_code="BK0576",
-    ),
-    "消费电子": CanonicalSector(
-        label="消费电子",
-        source_type="concept",
-        source_name="消费电子",
-        eastmoney_secid="90.BK1037",
-        source_code="BK1037",
-    ),
-    "机器人": CanonicalSector(
-        label="机器人",
-        source_type="concept",
-        source_name="机器人概念",
-        eastmoney_secid="90.BK1090",
-        source_code="BK1090",
-    ),
-    "云计算": CanonicalSector(
-        label="云计算",
-        source_type="concept",
-        source_name="云计算",
-        eastmoney_secid="90.BK0579",
-        source_code="BK0579",
-    ),
-    "5G": CanonicalSector(
-        label="5G",
-        source_type="concept",
-        source_name="5G概念",
-        eastmoney_secid="90.BK0448",
-        source_code="BK0448",
-    ),
-    "医疗器械": CanonicalSector(
-        label="医疗器械",
-        source_type="concept",
-        source_name="医疗器械",
-        eastmoney_secid="90.BK1041",
-        source_code="BK1041",
-    ),
-    "CPO": CanonicalSector(
-        label="CPO",
-        source_type="concept",
-        source_name="CPO概念",
-        eastmoney_secid="90.BK1128",
-        source_code="BK1128",
-    ),
-    "传媒": CanonicalSector(
-        label="传媒",
-        source_type="index",
-        source_name="传媒",
-        eastmoney_secid="2.H30365",
-        source_code="H30365",
-    ),
-    "PCB": CanonicalSector(
-        label="PCB",
-        source_type="concept",
-        source_name="PCB",
-        eastmoney_secid="90.BK0877",
-        source_code="BK0877",
-    ),
-}
-
-
 def list_canonical_sector_labels() -> list[str]:
-    """返回已硬编码映射的板块/指数标签（去重、稳定排序）。"""
-    seen: set[str] = set()
-    labels: list[str] = []
-    for label in sorted(_CANONICAL_BY_LABEL):
-        if label in seen:
-            continue
-        seen.add(label)
-        labels.append(label)
-    return labels
+    """返回 registry 与兼容别名覆盖的板块/指数标签。"""
+    from app.services.sector_registry_data import (
+        CANONICAL_SECTORS,
+        THEME_BOARD_INDEX,
+    )
 
-
-# 推荐基金「关注方向」chips：用户面向短名，按 secid 去重（不展示中证*别名）
-_DISCOVERY_CHIP_LABELS: tuple[str, ...] = (
-    "商业航天",
-    "半导体",
-    "国防军工",
-    "人工智能",
-    "电网设备",
-    "互联网",
-    "有色金属",
-    "新能源车",
-    "医药",
-    "证券",
-    "银行",
-    "白酒",
-    "光伏",
-    "锂电池",
-    "消费电子",
-    "机器人",
-    "云计算",
-    "5G",
-    "医疗器械",
-    "CPO",
-    "PCB",
-    "传媒",
-)
+    return sorted(set(CANONICAL_SECTORS) | set(THEME_BOARD_INDEX))
 
 
 def list_discovery_sector_labels() -> list[str]:
@@ -308,50 +59,29 @@ def get_canonical_sector(sector_name: str | None) -> CanonicalSector | None:
     label = normalize_sector_label(sector_name)
     if not label:
         return None
-    if label in _CANONICAL_BY_LABEL:
-        return _CANONICAL_BY_LABEL[label]
-    registry = _canonical_from_theme_registry(label)
-    if registry is not None:
-        return registry
-    for key in sorted(_CANONICAL_BY_LABEL.keys(), key=len, reverse=True):
-        if key in label:
-            return _CANONICAL_BY_LABEL[key]
-    return None
+
+    # 行情身份只认 sector_registry：它会让 THEME_BOARD_INDEX（主题指数）优先于
+    # CANONICAL_SECTORS（概念/行业兜底），避免同一标签存在多套冲突 secid。
+    return _canonical_from_registry(label)
 
 
-def _canonical_from_theme_registry(label: str) -> CanonicalSector | None:
-    from app.services.sector_registry_data import THEME_BOARD_INDEX
-
-    row = THEME_BOARD_INDEX.get(label)
-    if row is None:
+def _canonical_from_registry(label: str) -> CanonicalSector | None:
+    entry = get_sector_entry(label)
+    if entry is None or entry.market_quote is None:
         return None
-    secid, source_code, source_type = row
+    quote = entry.market_quote
     return CanonicalSector(
-        label=label,
-        source_type=source_type,
-        source_name=label,
-        eastmoney_secid=secid,
-        source_code=source_code,
+        label=entry.label,
+        source_type=quote.source_type,
+        source_name=quote.source_name,
+        eastmoney_secid=quote.eastmoney_secid,
+        source_code=quote.source_code,
     )
 
 
-# 关联板块短名 → 东财 zz 指数分时（概念板块 90.BK 无稳定分钟线）
-_BOARD_TO_INTRADAY_INDEX: dict[str, str] = {
-    "半导体": "中证半导体",
-    "电网设备": "中证电网设备",
-    "人工智能": "中证人工智能",
-}
-
-
 def get_intraday_canonical_sector(sector_name: str | None) -> CanonicalSector | None:
-    """分时图优先走场内指数 K 线；无映射时回落概念/行业 canonical。"""
-    label = normalize_sector_label(sector_name)
-    if not label:
-        return None
-    index_label = _BOARD_TO_INTRADAY_INDEX.get(label)
-    if index_label:
-        return get_canonical_sector(index_label)
-    return get_canonical_sector(label)
+    """按统一 registry 解析分时标的；主题指数优先，概念/行业作兜底。"""
+    return get_canonical_sector(sector_name)
 
 
 def labels_need_spot_boards(labels: list[str | None]) -> bool:
@@ -373,7 +103,7 @@ class CanonicalQuoteResult:
 
 
 def get_quote_canonical_sector(sector_name: str | None) -> CanonicalSector | None:
-    """板块涨跌与分时图同一标的（如 半导体→中证半导体），避免列表与曲线数字不一致。"""
+    """板块涨跌与分时图使用 registry 中的同一行情标的。"""
     return get_intraday_canonical_sector(sector_name) or get_canonical_sector(sector_name)
 
 

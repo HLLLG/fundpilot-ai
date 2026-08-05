@@ -2,12 +2,66 @@ from __future__ import annotations
 
 from app.services import eastmoney_spot_client, sector_canonical, sector_intraday_provider
 from app.services.sector_quote_identity import provider_identity_matches
+from app.services.sector_registry import (
+    resolve_discovery_quote,
+    resolve_market_quote,
+    resolve_theme_sector_label,
+)
 from app.services.sector_registry_data import THEME_BOARD_INDEX
 
 
 def test_high_risk_sector_registry_uses_exact_market_namespaces() -> None:
     assert THEME_BOARD_INDEX["恒生科技"] == ("124.HSTECH", "HSTECH", "index")
     assert THEME_BOARD_INDEX["保险"] == ("0.399809", "399809", "index")
+
+
+def test_all_registered_theme_quotes_are_the_canonical_market_source() -> None:
+    for label, expected in THEME_BOARD_INDEX.items():
+        registry = resolve_market_quote(label)
+        canonical = sector_canonical.get_canonical_sector(label)
+        intraday = sector_canonical.get_intraday_canonical_sector(label)
+
+        assert registry is not None, label
+        assert canonical is not None, label
+        assert intraday is not None, label
+        expected_identity = (expected[0], expected[1], expected[2])
+        assert (
+            registry.eastmoney_secid,
+            registry.source_code,
+            registry.source_type,
+        ) == expected_identity, label
+        assert (
+            canonical.eastmoney_secid,
+            canonical.source_code,
+            canonical.source_type,
+        ) == expected_identity, label
+        assert (
+            intraday.eastmoney_secid,
+            intraday.source_code,
+            intraday.source_type,
+        ) == expected_identity, label
+
+
+def test_intraday_request_hint_is_resolved_by_the_registry() -> None:
+    assert sector_intraday_provider.resolve_intraday_source(
+        "concept",
+        "互联网",
+    ) == ("index", "互联网")
+
+
+def test_market_identity_and_fund_flow_identity_are_explicitly_separate() -> None:
+    market = resolve_market_quote("半导体")
+    flow = resolve_discovery_quote("半导体")
+
+    assert market is not None
+    assert flow is not None
+    assert (market.eastmoney_secid, market.source_code) == ("2.H30184", "H30184")
+    assert (flow.eastmoney_secid, flow.source_code) == ("90.BK1036", "BK1036")
+    assert resolve_theme_sector_label("中证半导体指数") == "半导体"
+
+
+def test_unregistered_label_does_not_substring_match_an_unrelated_sector() -> None:
+    assert sector_canonical.get_canonical_sector("非银行金融") is None
 
 
 def test_provider_identity_policy_rejects_unrelated_valid_index() -> None:

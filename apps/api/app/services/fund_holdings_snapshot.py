@@ -23,6 +23,7 @@ import hashlib
 import json
 import math
 import re
+import unicodedata
 from copy import deepcopy
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -162,6 +163,30 @@ _Q_PREFIX_RE = re.compile(
     re.IGNORECASE,
 )
 _ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+# 基金公告标题中的年份并不总是阿拉伯数字。常见来源会混用
+# “二0二六 / 二〇二六 / 二零二六 / 贰零贰陆”以及全角数字；先把年份
+# 标准化，再交给同一套季度/中期/年报规则，避免为每家基金写特例。
+_DISCLOSURE_YEAR_DIGITS = "0123456789零〇○ＯOo一二三四五六七八九壹贰叁肆伍陆柒捌玖"
+_DISCLOSURE_YEAR_RE = re.compile(
+    rf"(?<![{_DISCLOSURE_YEAR_DIGITS}])"
+    rf"(?P<year>[2二贰][0零〇○ＯOo][{_DISCLOSURE_YEAR_DIGITS}]{{2}})"
+    rf"(?![{_DISCLOSURE_YEAR_DIGITS}])"
+)
+_DISCLOSURE_YEAR_TRANSLATION = str.maketrans(
+    {
+        "零": "0", "〇": "0", "○": "0", "Ｏ": "0", "O": "0", "o": "0",
+        "一": "1", "壹": "1",
+        "二": "2", "贰": "2",
+        "三": "3", "叁": "3",
+        "四": "4", "肆": "4",
+        "五": "5", "伍": "5",
+        "六": "6", "陆": "6",
+        "七": "7", "柒": "7",
+        "八": "8", "捌": "8",
+        "九": "9", "玖": "9",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -1569,7 +1594,7 @@ def _period_from_text(value: object) -> _Period | None:
         return _period_from_date(value.date())
     if isinstance(value, date):
         return _period_from_date(value)
-    text = str(value or "").strip()
+    text = _normalize_disclosure_period_text(value)
     if not text:
         return None
     match = _Q_PREFIX_RE.search(text) or _QUARTER_RE.search(text)
@@ -1593,6 +1618,19 @@ def _period_from_text(value: object) -> _Period | None:
     except ValueError:
         return None
     return _period_from_date(parsed)
+
+
+def _normalize_disclosure_period_text(value: object) -> str:
+    text = unicodedata.normalize("NFKC", str(value or "").strip())
+    if not text:
+        return ""
+
+    def replace_year(match: re.Match[str]) -> str:
+        raw = match.group("year")
+        normalized = raw.translate(_DISCLOSURE_YEAR_TRANSLATION)
+        return normalized if re.fullmatch(r"20\d{2}", normalized) else raw
+
+    return _DISCLOSURE_YEAR_RE.sub(replace_year, text)
 
 
 def _period_from_date(value: date) -> _Period | None:
@@ -1630,7 +1668,11 @@ def _announcement_scope(*, title: str, period: _Period, explicit: object) -> str
     hinted = _scope_hint(explicit)
     if hinted != "unknown":
         return hinted
-    compact = re.sub(r"\s+", "", title).casefold()
+    compact = re.sub(
+        r"\s+",
+        "",
+        _normalize_disclosure_period_text(title),
+    ).casefold()
     if re.search(r"中期报告|半年度报告|半年报", compact):
         return "full_portfolio" if period.quarter == 2 else "unknown"
     if re.search(r"年度报告|(?<!半)年报", compact):
