@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { reportClientError } from "@/lib/clientErrorReporter";
+import { API_BASE, RELEASE_TAG } from "@/lib/api/base";
 
 /**
  * 根级错误边界：root layout 自身渲染失败时的最后一道防线。
@@ -9,6 +9,10 @@ import { reportClientError } from "@/lib/clientErrorReporter";
  * 这一层已经没有 layout 可用，必须自带 <html>/<body>，也不能依赖任何 Provider
  * 或全局样式（globals.css 可能正是加载失败的那个文件），所以样式全部内联。
  * ClientErrorReporter 此时也没能挂载，因此这里必须自己完成上报。
+ *
+ * 上报刻意不复用 clientErrorReporter：Next 会把 global-error 打成独立入口，
+ * 静态引入那个模块会把它整份复制进本 chunk（实测 +3 KiB gzip × 全部路由）。
+ * 这里只需要一次性的 POST，自己写反而更贴合「零依赖兜底」的定位。
  */
 export default function GlobalError({
   error,
@@ -21,20 +25,32 @@ export default function GlobalError({
 
   useEffect(() => {
     let active = true;
-    void reportClientError({
-      kind: "react_render",
-      level: "fatal",
-      errorType: error.name || "Error",
-      message: error.message || "应用根布局渲染失败",
-      stack:
-        [error.digest ? `Next.js digest: ${error.digest}` : null, error.stack]
-          .filter(Boolean)
-          .join("\n") || null,
-    }).then((result) => {
-      if (active && result?.fingerprint) {
-        setReference(result.fingerprint);
-      }
-    });
+    const stack =
+      [error.digest ? `Next.js digest: ${error.digest}` : null, error.stack]
+        .filter(Boolean)
+        .join("\n") || null;
+    void fetch(`${API_BASE}/api/telemetry/client-errors`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: (error.message || "应用根布局渲染失败").slice(0, 2000),
+        errorType: (error.name || "Error").slice(0, 180),
+        stack: stack ? stack.slice(0, 20_000) : null,
+        level: "fatal",
+        kind: "react_render",
+        path: window.location.pathname || "/",
+        release: RELEASE_TAG,
+      }),
+      keepalive: true,
+    })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((result: { fingerprint?: string } | null) => {
+        if (active && result?.fingerprint) {
+          setReference(result.fingerprint);
+        }
+      })
+      // 兜底页面自身绝不能再抛错。
+      .catch(() => undefined);
     return () => {
       active = false;
     };

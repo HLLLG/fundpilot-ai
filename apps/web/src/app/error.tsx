@@ -2,8 +2,6 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { AlertTriangle, Copy, Home, RotateCcw } from "lucide-react";
-import { reportClientError } from "@/lib/clientErrorReporter";
 
 /**
  * 路由级错误边界。
@@ -11,6 +9,11 @@ import { reportClientError } from "@/lib/clientErrorReporter";
  * 除了不把白屏丢给用户，它还做一件对排查更重要的事：把渲染错误连同堆栈上报，
  * 并把服务端返回的分组指纹作为「报障编号」显示出来。用户只要报这串编号，
  * 就能在 /admin/ops 里直接定位到对应堆栈，不必再靠口头描述复现。
+ *
+ * 体积敏感：Next 会把 error.tsx 打进**每个路由的首屏**包，因为边界必须随时待命。
+ * 所以这里刻意不引入 lucide 图标（4 个图标实测让本 chunk 从 2.5 KiB 涨到 7.2 KiB，
+ * 而且要乘以全部路由）。next/link 保留 —— 它本就在共享框架 chunk 里，额外成本约为零，
+ * 而导航语义上必须是链接（可访问性）。上报模块用动态 import，只在真的崩溃时才加载。
  */
 export default function RouteError({
   error,
@@ -24,22 +27,24 @@ export default function RouteError({
 
   useEffect(() => {
     let active = true;
-    void reportClientError({
-      kind: "react_render",
-      level: "fatal",
-      errorType: error.name || "Error",
-      message: error.message || "页面渲染失败",
-      // 生产构建下 Server Component 的真实报错只以 digest 形式回传，
-      // 存进堆栈首行才能在面板里跟服务端日志对上。
-      stack:
-        [error.digest ? `Next.js digest: ${error.digest}` : null, error.stack]
-          .filter(Boolean)
-          .join("\n") || null,
-    }).then((result) => {
+    void (async () => {
+      const { reportClientError } = await import("@/lib/clientErrorReporter");
+      const result = await reportClientError({
+        kind: "react_render",
+        level: "fatal",
+        errorType: error.name || "Error",
+        message: error.message || "页面渲染失败",
+        // 生产构建下 Server Component 的真实报错只以 digest 形式回传，
+        // 存进堆栈首行才能在面板里跟服务端日志对上。
+        stack:
+          [error.digest ? `Next.js digest: ${error.digest}` : null, error.stack]
+            .filter(Boolean)
+            .join("\n") || null,
+      });
       if (active && result?.fingerprint) {
         setReference(result.fingerprint);
       }
-    });
+    })();
     return () => {
       active = false;
     };
@@ -61,20 +66,10 @@ export default function RouteError({
   return (
     <main className="flex min-h-screen items-center justify-center bg-slate-50 px-4 py-12">
       <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-[0_16px_40px_rgba(15,23,42,0.08)]">
-        <div className="flex items-start gap-3">
-          <span
-            aria-hidden="true"
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-50 text-amber-600"
-          >
-            <AlertTriangle size={20} />
-          </span>
-          <div className="min-w-0">
-            <h1 className="text-lg font-bold text-slate-900">这个页面出错了</h1>
-            <p className="mt-1 text-sm text-slate-600">
-              错误详情已自动上报，无需截图。可以先重试，或返回首页继续操作。
-            </p>
-          </div>
-        </div>
+        <h1 className="text-lg font-bold text-slate-900">这个页面出错了</h1>
+        <p className="mt-1 text-sm text-slate-600">
+          错误详情已自动上报，无需截图。可以先重试，或返回首页继续操作。
+        </p>
 
         {reference ? (
           <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-3">
@@ -86,9 +81,8 @@ export default function RouteError({
               <button
                 type="button"
                 onClick={copyReference}
-                className="flex min-h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-700 transition hover:bg-slate-50"
+                className="min-h-9 shrink-0 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-700 transition hover:bg-slate-50"
               >
-                <Copy size={14} aria-hidden="true" />
                 {copied ? "已复制" : "复制"}
               </button>
             </div>
@@ -102,16 +96,14 @@ export default function RouteError({
           <button
             type="button"
             onClick={reset}
-            className="flex min-h-11 items-center gap-2 rounded-xl bg-[var(--brand)] px-4 py-2.5 text-sm font-bold text-white transition hover:bg-[var(--brand-strong)]"
+            className="min-h-11 rounded-xl bg-[var(--brand)] px-4 py-2.5 text-sm font-bold text-white transition hover:bg-[var(--brand-strong)]"
           >
-            <RotateCcw size={16} aria-hidden="true" />
             重试
           </button>
           <Link
             href="/"
-            className="flex min-h-11 items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50"
+            className="min-h-11 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50"
           >
-            <Home size={16} aria-hidden="true" />
             返回首页
           </Link>
         </div>
