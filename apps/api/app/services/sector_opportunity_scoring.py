@@ -197,6 +197,14 @@ _EQUIVALENT_DIRECTION_LABELS = {
     "港股通": "港股",
 }
 
+# 现货黄金和黄金产业股票受不同的定价因素驱动，属于两个可独立配置的资产方向。
+# 即便短窗口收益碰巧高度相关，也不能因此把二者改写成同一个板块身份。
+_CORRELATION_DEDUP_EXEMPT_PAIRS = frozenset(
+    {
+        frozenset(("黄金", "黄金股")),
+    }
+)
+
 
 def select_sector_opportunities(
     sector_heat: list[dict],
@@ -2110,6 +2118,8 @@ class _CorrelationAwareLimiter:
         if series is None:
             return False
         for other in selected_labels:
+            if frozenset((label, other)) in _CORRELATION_DEDUP_EXEMPT_PAIRS:
+                continue
             other_series = self._series.get(other)
             if other_series is None:
                 continue

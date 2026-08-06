@@ -258,6 +258,36 @@ def test_actionable_direction_without_verified_vehicle_is_reported_not_cross_fil
     assert scope["watch_only_fund_codes"] == ["000021"]
 
 
+def test_scope_reports_exact_sector_mismatch_instead_of_generic_pending() -> None:
+    mismatch = _candidate(
+        "021874",
+        "黄金",
+        vehicle_status="watch_only",
+        sector_fit=16,
+        sector_match_kind="name",
+    )
+    mismatch["sector_identity_mismatch"] = {
+        "target_sector_label": "黄金",
+        "verified_sector_label": "黄金股",
+        "index_code": "931238",
+        "exact": True,
+    }
+
+    scope = build_recommendation_candidate_scope(
+        [mismatch],
+        [_opportunity("黄金", "ready_to_start", priority=90)],
+    )
+
+    assert scope["candidate_decisions"][0]["reason_codes"] == [
+        "vehicle_quality_not_eligible",
+        "sector_identity_mismatch",
+    ]
+    assert scope["sector_funnel"][0]["rejected_reason_counts"] == {
+        "vehicle_quality_not_eligible": 1,
+        "sector_identity_mismatch": 1,
+    }
+
+
 def test_name_and_new_issue_recall_never_open_execution_by_score() -> None:
     name_match = _candidate(
         "000024",

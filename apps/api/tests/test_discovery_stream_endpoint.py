@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 
 import pytest
 from fastapi.testclient import TestClient
@@ -60,3 +61,42 @@ def test_discovery_stream_endpoint_emits_sse(tmp_path, monkeypatch: pytest.Monke
     assert types == ["stage", "skeleton", "done"]
     assert events[-1]["report_id"] == "d1"
     assert captured_modes == ["deep"]
+
+
+def test_discovery_stream_endpoint_logs_missing_terminal_event(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    def fake_stream_discovery(request, *, user_id: int, stop_event=None):
+        assert request.analysis_mode == "deep"
+        assert user_id > 0
+        yield {"type": "stage", "stage": "generating", "label": "AI 分析中…"}
+
+    monkeypatch.setattr("app.main.stream_discovery", fake_stream_discovery)
+    client = auth_client_for_db(monkeypatch, tmp_path / "disc_stream_cancelled.db")
+    payload = {
+        "holdings": [
+            {
+                "fund_code": "519674",
+                "fund_name": "银河创新成长",
+                "holding_amount": 10000,
+            }
+        ],
+        "profile": {
+            "decision_style": "conservative",
+            "max_drawdown_percent": 15,
+            "concentration_limit_percent": 30,
+            "expected_investment_amount": 100000,
+        },
+    }
+
+    with caplog.at_level(logging.WARNING, logger="app.main"):
+        with client.stream("POST", "/api/fund-discovery/stream", json=payload) as response:
+            assert response.status_code == 200
+            assert _parse_sse_events("".join(response.iter_text())) == [
+                {"type": "stage", "stage": "generating", "label": "AI 分析中…"}
+            ]
+
+    assert "fund_discovery_stream_ended_without_terminal" in caplog.text
+    assert "stage=generating" in caplog.text

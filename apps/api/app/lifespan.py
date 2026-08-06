@@ -12,6 +12,11 @@ from app.db_connect import initialize_database_connection, uses_mysql
 from app.services.db_backup import maybe_auto_import_database
 from app.services.fund_code_resolver import preload_fund_name_table
 from app.services.ocr_engine import schedule_ocr_preload
+from app.services.ops_error_logging import (
+    install_ops_error_log_handler,
+    uninstall_ops_error_log_handler,
+)
+from app.services.ops_observability import flush_ops_writes
 from app.services.sector_quote_cache import mark_process_boot
 from app.startup_readiness import mark_failed, mark_ready, mark_starting
 
@@ -46,6 +51,10 @@ def _initialize_runtime(app: FastAPI, shutdown_event: threading.Event) -> None:
 async def app_lifespan(_app: FastAPI):
     mark_process_boot()
     mark_starting()
+    # Installed before bootstrap on purpose: a schema or connectivity failure
+    # during startup is exactly the kind of error that is otherwise invisible
+    # once the container is replaced.
+    install_ops_error_log_handler()
     shutdown_event = threading.Event()
     _app.state.inline_background_worker = None
     bootstrap_thread: threading.Thread | None = None
@@ -101,3 +110,11 @@ async def app_lifespan(_app: FastAPI):
         close_eastmoney_http_clients()
         close_akshare_worker_pool()
         close_shared_executors()
+
+        # Last: drain the queued error events and the final partial traffic
+        # minute while the database is still reachable, then stop capturing.
+        try:
+            flush_ops_writes()
+        except Exception:  # noqa: BLE001 - shutdown must not fail on telemetry.
+            logger.warning("ops telemetry flush failed during shutdown")
+        uninstall_ops_error_log_handler()

@@ -237,12 +237,36 @@ export async function streamDiscovery(
     }, idleTimeoutMs);
   };
 
+  const throwIfCallerAborted = () => {
+    if (linkedSignal?.aborted) {
+      void reader.cancel().catch(() => undefined);
+      throw new DOMException("The operation was aborted.", "AbortError");
+    }
+  };
+
+  const dispatchFrame = (frame: string): "continue" | "done" => {
+    for (const line of frame.split("\n")) {
+      const event = parseSseLine(line.trim());
+      if (!event) {
+        continue;
+      }
+      sawEvent = true;
+      window.clearTimeout(timeoutId);
+      resetIdleTimeout();
+      const outcome = dispatchEvent(event, events);
+      if (outcome === "done") {
+        return "done";
+      }
+      if (outcome === "error") {
+        throw new Error(event.type === "error" ? event.message : "stream error");
+      }
+    }
+    return "continue";
+  };
+
   try {
     while (true) {
-      if (linkedSignal?.aborted) {
-        await reader.cancel().catch(() => undefined);
-        throw new DOMException("The operation was aborted.", "AbortError");
-      }
+      throwIfCallerAborted();
       if (idleTimedOut) {
         throw new Error("荐基流长时间没有收到进度更新");
       }
@@ -254,27 +278,19 @@ export async function streamDiscovery(
         throw new Error("荐基流长时间没有收到进度更新");
       }
       if (done) {
+        throwIfCallerAborted();
+        buffer += decoder.decode();
+        if (buffer.trim() && dispatchFrame(buffer) === "done") {
+          return;
+        }
         break;
       }
       buffer += decoder.decode(value, { stream: true });
       const parts = buffer.split("\n\n");
       buffer = parts.pop() ?? "";
       for (const part of parts) {
-        for (const line of part.split("\n")) {
-          const event = parseSseLine(line.trim());
-          if (!event) {
-            continue;
-          }
-          sawEvent = true;
-          window.clearTimeout(timeoutId);
-          resetIdleTimeout();
-          const outcome = dispatchEvent(event, events);
-          if (outcome === "done") {
-            return;
-          }
-          if (outcome === "error") {
-            throw new Error("stream error");
-          }
+        if (dispatchFrame(part) === "done") {
+          return;
         }
       }
     }
@@ -286,4 +302,6 @@ export async function streamDiscovery(
   if (!sawEvent) {
     throw new Error("流式连接未收到事件");
   }
+  throwIfCallerAborted();
+  throw new Error("流式扫描异常结束，未收到完成状态。");
 }

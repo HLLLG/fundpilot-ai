@@ -496,6 +496,12 @@ def _auth_env(monkeypatch, tmp_path):
     monkeypatch.setenv("FUND_AI_SECTOR_SIGNAL_BACKTEST_ENABLED", "false")
     monkeypatch.setenv("FUND_AI_TACTICAL_PROMPT_TUNING_ENABLED", "false")
     monkeypatch.setenv("FUND_AI_THEME_BOARD_REFRESH_ENABLED", "false")
+    # 运维观测默认在测试中关闭：多数用例会故意触发 500 或跑满请求，开启后每个
+    # 用例都会多出错误/流量落库与一个写线程，既拖慢套件又让断言依赖线程调度。
+    # 专门验证 ops 的用例自行 monkeypatch 打开，并显式调用 flush_ops_writes()。
+    monkeypatch.setenv("FUND_AI_OPS_ERROR_CAPTURE_ENABLED", "false")
+    monkeypatch.setenv("FUND_AI_OPS_TRAFFIC_CAPTURE_ENABLED", "false")
+    monkeypatch.setenv("FUND_AI_OPS_WRITER_THREAD_ENABLED", "false")
     # M6：绝大多数既有测试（M2~M4 阶段编写）验证的是双向 guard 升级机制本身的正确性
     # （触发条件对不对、升级到哪一档对不对），这些断言隐含假设"升级判定会真正生效"。
     # 生产默认值是更保守的 shadow（见 config.py），但测试套件默认切到 enforced，

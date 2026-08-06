@@ -134,7 +134,7 @@ def test_v21_creates_sector_identity_tables_and_backfills_legacy_rows() -> None:
 
 
 def test_current_schema_still_ensures_factor_ic_snapshot_table() -> None:
-    assert SCHEMA_VERSION == 22
+    assert SCHEMA_VERSION == 23
     connection = sqlite3.connect(":memory:")
     connection.execute(
         "CREATE TABLE schema_meta (id INTEGER PRIMARY KEY, version INTEGER NOT NULL)"
@@ -200,7 +200,7 @@ def test_v19_and_v20_add_only_performance_metadata_to_operational_tables() -> No
 
     assert connection.execute(
         "SELECT version FROM schema_meta WHERE id = 1"
-    ).fetchone()[0] == 22
+    ).fetchone()[0] == 23
     report_columns = {
         row[1] for row in connection.execute("PRAGMA table_info(reports)")
     }

@@ -80,6 +80,12 @@ class RequestObservation:
     db_seconds: float = 0.0
     provider_call_count: int = 0
     provider_seconds: float = 0.0
+    # Request identity, so an error captured deep inside a handler can be tied
+    # back to the failing call without threading Request through every layer.
+    request_id: str | None = None
+    method: str | None = None
+    path: str | None = None
+    status_code: int | None = None
 
 
 _request_observation: contextvars.ContextVar[RequestObservation | None] = (
@@ -168,6 +174,29 @@ def _request_id(scope: Scope) -> str:
         if _REQUEST_ID_RE.fullmatch(candidate):
             return candidate
     return uuid4().hex
+
+
+def current_request_context() -> dict[str, Any]:
+    """Identity of the in-flight request, or ``{}`` outside a request.
+
+    Lets error telemetry attach method/path/request-id without every layer
+    having to pass ``Request`` down the call stack. A background worker simply
+    gets an empty mapping.
+
+    Only valid *inside* the app: this middleware resets the contextvar as the
+    exception unwinds, so ``ServerErrorMiddleware``'s 500 handler — which sits
+    further out — sees nothing here and must read the ASGI scope state instead.
+    """
+
+    observation = _request_observation.get()
+    if observation is None:
+        return {}
+    return {
+        "request_id": observation.request_id,
+        "method": observation.method,
+        "path": observation.path,
+        "status_code": observation.status_code,
+    }
 
 
 def _percentile(values: list[float], percentile: float) -> float | None:
@@ -349,10 +378,16 @@ class PerformanceMetricsMiddleware:
         receive: Receive,
         send: Send,
     ) -> None:
-        if (
-            scope["type"] != "http"
-            or not get_settings().performance_metrics_enabled
-        ):
+        settings = get_settings()
+        metrics_enabled = bool(settings.performance_metrics_enabled)
+        # Request identity and the durable traffic rollups are separate
+        # consumers of the same measurement, so this middleware stays active
+        # whenever either one is switched on.
+        ops_enabled = bool(
+            settings.ops_traffic_capture_enabled
+            or settings.ops_error_capture_enabled
+        )
+        if scope["type"] != "http" or not (metrics_enabled or ops_enabled):
             await self.app(scope, receive, send)
             return
 
@@ -362,7 +397,11 @@ class PerformanceMetricsMiddleware:
         status_code = 500
         response_bytes = 0
         first_byte_seconds: float | None = None
-        observation = RequestObservation()
+        observation = RequestObservation(
+            request_id=request_id,
+            method=method,
+            path=str(scope.get("path") or "/"),
+        )
         token = _request_observation.set(observation)
         state = scope.setdefault("state", {})
         if isinstance(state, dict):
@@ -372,6 +411,7 @@ class PerformanceMetricsMiddleware:
             nonlocal first_byte_seconds, response_bytes, status_code
             if message["type"] == "http.response.start":
                 status_code = int(message.get("status") or 500)
+                observation.status_code = status_code
                 first_byte_seconds = max(0.0, time.perf_counter() - started)
                 headers = list(message.get("headers") or [])
                 headers.append((b"x-request-id", request_id.encode("ascii")))
@@ -397,41 +437,77 @@ class PerformanceMetricsMiddleware:
             duration_seconds = max(0.0, time.perf_counter() - started)
             route = _route_from_scope(scope)
             is_error = raised is not None or status_code >= 500
-            with _registry_lock:
-                key = (method, route)
-                latency = _bounded_series(
-                    _request_latency,
-                    key,
-                    limit=_MAX_ROUTE_SERIES,
-                )
-                metric_key = (
-                    key
-                    if _request_latency.get(key) is latency
-                    else ("other", "other")
-                )
-                latency.observe(
-                    duration_seconds,
-                    error=is_error,
-                    status_code=status_code,
-                )
-                if first_byte_seconds is not None:
-                    ttfb = _bounded_series(
-                        _request_ttfb,
-                        metric_key,
+            if metrics_enabled:
+                with _registry_lock:
+                    key = (method, route)
+                    latency = _bounded_series(
+                        _request_latency,
+                        key,
                         limit=_MAX_ROUTE_SERIES,
                     )
-                    ttfb.observe(first_byte_seconds, error=is_error)
-                _request_response_bytes[metric_key] += response_bytes
-            _log_request_summary(
-                request_id=request_id,
+                    metric_key = (
+                        key
+                        if _request_latency.get(key) is latency
+                        else ("other", "other")
+                    )
+                    latency.observe(
+                        duration_seconds,
+                        error=is_error,
+                        status_code=status_code,
+                    )
+                    if first_byte_seconds is not None:
+                        ttfb = _bounded_series(
+                            _request_ttfb,
+                            metric_key,
+                            limit=_MAX_ROUTE_SERIES,
+                        )
+                        ttfb.observe(first_byte_seconds, error=is_error)
+                    _request_response_bytes[metric_key] += response_bytes
+                _log_request_summary(
+                    request_id=request_id,
+                    method=method,
+                    route=route,
+                    status_code=status_code,
+                    duration_seconds=duration_seconds,
+                    first_byte_seconds=first_byte_seconds,
+                    response_bytes=response_bytes,
+                    observation=observation,
+                )
+            _record_ops_traffic(
                 method=method,
                 route=route,
                 status_code=status_code,
                 duration_seconds=duration_seconds,
-                first_byte_seconds=first_byte_seconds,
                 response_bytes=response_bytes,
-                observation=observation,
             )
+
+
+def _record_ops_traffic(
+    *,
+    method: str,
+    route: str,
+    status_code: int,
+    duration_seconds: float,
+    response_bytes: int,
+) -> None:
+    """Hand the finished request to the durable rollup store.
+
+    Imported lazily: ``ops_observability`` depends on this module for
+    percentile and path helpers, so a module-level import would be circular.
+    """
+
+    try:
+        from app.services.ops_observability import record_request_traffic
+
+        record_request_traffic(
+            method=method,
+            route=route,
+            status_code=status_code,
+            duration_ms=duration_seconds * 1000.0,
+            response_bytes=response_bytes,
+        )
+    except Exception:  # noqa: BLE001 - telemetry must not fail a request.
+        pass
 
 
 def _log_request_summary(
@@ -682,6 +758,7 @@ def reset_performance_metrics_for_tests() -> None:
 __all__ = [
     "PerformanceMetricsMiddleware",
     "cache_family",
+    "current_request_context",
     "normalize_request_path",
     "performance_snapshot",
     "record_cache_event",

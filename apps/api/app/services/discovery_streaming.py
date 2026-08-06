@@ -134,28 +134,46 @@ def stream_discovery(
         "stage": "connected",
         "label": DISCOVERY_JOB_STAGES.get("connected", "connected"),
     }
-    for entry in iter_with_heartbeat(
-        _stream_discovery(
-            request,
-            user_id=user_id,
-            started_at=started_at,
+    try:
+        for entry in iter_with_heartbeat(
+            _stream_discovery(
+                request,
+                user_id=user_id,
+                started_at=started_at,
+                stop_event=stop,
+            ),
+            heartbeat_seconds=PIPELINE_HEARTBEAT_SECONDS,
+            heartbeat_factory=lambda: _stage(
+                active_stage["stage"],
+                active_stage["label"],
+                started_at=started_at,
+            ),
             stop_event=stop,
-        ),
-        heartbeat_seconds=PIPELINE_HEARTBEAT_SECONDS,
-        heartbeat_factory=lambda: _stage(
+        ):
+            if isinstance(entry, Heartbeat):
+                yield entry.value
+                continue
+            if entry.get("type") == "stage":
+                active_stage["stage"] = str(entry.get("stage") or active_stage["stage"])
+                active_stage["label"] = str(entry.get("label") or active_stage["label"])
+            elif entry.get("type") == "error":
+                error_type = str(entry.get("message") or "unknown").split(":", 1)[0]
+                logger.warning(
+                    "discovery_stream_terminal_error user_id=%s stage=%s error_type=%s",
+                    user_id,
+                    active_stage["stage"],
+                    error_type[:80],
+                )
+            yield entry
+    except StreamCancelled:
+        logger.warning(
+            "discovery_stream_cancelled user_id=%s stage=%s elapsed_ms=%s stop_event_set=%s",
+            user_id,
             active_stage["stage"],
-            active_stage["label"],
-            started_at=started_at,
-        ),
-        stop_event=stop,
-    ):
-        if isinstance(entry, Heartbeat):
-            yield entry.value
-            continue
-        if entry.get("type") == "stage":
-            active_stage["stage"] = str(entry.get("stage") or active_stage["stage"])
-            active_stage["label"] = str(entry.get("label") or active_stage["label"])
-        yield entry
+            max(0, int((time.monotonic() - started_at) * 1000)),
+            stop.is_set(),
+        )
+        return
 
 
 def _stream_discovery(

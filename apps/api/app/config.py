@@ -76,6 +76,25 @@ class Settings(BaseSettings):
     performance_sample_size: int = 2048
     performance_slow_request_ms: float = 1000.0
     performance_log_sample_rate: float = 0.01
+    # 运维观测（ops panel）：performance_metrics 的进程内计数器一重启就归零，
+    # 也不保留任何单次报错的堆栈，所以用户反馈"出错了"时没有可查的证据。
+    # 这里补一条有界的持久化通道：错误按指纹归并落库（含 traceback / JS stack），
+    # 流量与响应时间按分钟落库供趋势图使用。仍然不记录请求体、查询参数、
+    # Authorization 或数据库绑定参数。
+    ops_error_capture_enabled: bool = True
+    # 浏览器端上报入口。关掉后端点仍返回 202 但直接丢弃，便于遭遇滥用时止血。
+    ops_client_error_ingest_enabled: bool = True
+    ops_traffic_capture_enabled: bool = True
+    ops_error_retention_days: int = 14
+    ops_traffic_retention_days: int = 14
+    # 单个指纹在同一分钟内的最大落库条数，避免一个高频异常刷爆磁盘。
+    ops_error_events_per_fingerprint_per_minute: int = 20
+    # 上报端点无需登录（登录页自身崩溃时也要能上报），因此必须限流。
+    ops_client_error_rate_limit_per_minute: int = 60
+    ops_client_error_global_rate_limit_per_minute: int = 1200
+    # 落库走后台单线程，绝不占用请求线程。测试关掉它并显式调用
+    # flush_ops_writes()，让断言不依赖线程调度。
+    ops_writer_thread_enabled: bool = True
     # Production MySQL bootstrap runs behind a readiness gate so the ASGI
     # process can answer probes while schema verification is in progress.
     startup_bootstrap_background: bool = True

@@ -1405,7 +1405,18 @@ def _candidate_fund_evidence_reasons(pool_item: Mapping[str, object]) -> list[st
             reasons.append(f"基金质量分 {quality:.2f}，低于 55")
 
     if not candidate_sector_identity_is_executable(pool_item):
-        reasons.append("基金代码对应的板块身份尚未通过独立核验")
+        mismatch = pool_item.get("sector_identity_mismatch")
+        if isinstance(mismatch, Mapping):
+            target = str(mismatch.get("target_sector_label") or "").strip()
+            verified = str(mismatch.get("verified_sector_label") or "").strip()
+            if target and verified:
+                reasons.append(
+                    f"基金实际关联{verified}，与本次目标板块{target}不一致"
+                )
+            else:
+                reasons.append("基金精确关联板块与本次目标板块不一致")
+        else:
+            reasons.append("基金代码对应的板块身份尚未通过独立核验")
     penalties = " ".join(str(item) for item in pool_item.get("quality_penalties") or [])
     if "匹配置信偏低" in penalties or "板块匹配" in penalties:
         reasons.append("板块匹配置信偏低")

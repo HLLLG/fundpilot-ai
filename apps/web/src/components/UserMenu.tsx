@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronDown, LogOut, Settings, ShieldCheck } from "lucide-react";
+import { Activity, ChevronDown, LogOut, Settings, ShieldCheck } from "lucide-react";
 import { useAuth } from "@/components/AuthProvider";
 
 export function UserMenu() {
@@ -130,6 +130,20 @@ export function UserMenu() {
             >
               <ShieldCheck size={16} className="text-[var(--info-icon)]" />
               用户管理中心
+            </button>
+          ) : null}
+          {user?.userRole === "admin" ? (
+            <button
+              type="button"
+              role="menuitem"
+              className="flex min-h-11 w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-bold text-slate-700 transition hover:bg-slate-50"
+              onClick={() => {
+                setOpen(false);
+                router.push("/admin/ops");
+              }}
+            >
+              <Activity size={16} className="text-[var(--info-icon)]" />
+              运维监控
             </button>
           ) : null}
           <button

@@ -12,7 +12,7 @@ from app.services.decision_quality_rollout import (
 )
 
 
-MYSQL_SCHEMA_VERSION = 22
+MYSQL_SCHEMA_VERSION = 23
 
 MYSQL_MIGRATION_GUARD_NAME = "sqlite_to_mysql"
 MYSQL_SCHEMA_LOCK_NAME = "fundpilot.mysql_schema.v18"
@@ -1716,6 +1716,87 @@ def _ensure_mysql_schema_locked(
             PRIMARY KEY (scope_key, budget_date_local),
             INDEX idx_prompt_shadow_budget_policy
                 (policy_hash, budget_date_local)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """,
+        # Ops observability (v23): durable error evidence plus traffic rollups
+        # behind /admin/ops.  See _migrate_ops_observability_v23 for the SQLite
+        # contract these four tables must stay aligned with.
+        """
+        CREATE TABLE IF NOT EXISTS ops_error_groups (
+            fingerprint VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            source VARCHAR(16) NOT NULL,
+            level VARCHAR(16) NOT NULL,
+            error_type VARCHAR(191) NOT NULL,
+            message TEXT NOT NULL,
+            route VARCHAR(255) NULL,
+            first_seen_at VARCHAR(64) NOT NULL,
+            last_seen_at VARCHAR(64) NOT NULL,
+            event_count BIGINT NOT NULL DEFAULT 0,
+            status VARCHAR(16) NOT NULL DEFAULT 'open',
+            resolved_at VARCHAR(64) NULL,
+            resolved_by BIGINT NULL,
+            note VARCHAR(500) NULL,
+            PRIMARY KEY (fingerprint),
+            INDEX idx_ops_error_groups_status_seen (status, last_seen_at),
+            INDEX idx_ops_error_groups_seen (last_seen_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS ops_error_events (
+            event_id VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            fingerprint VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            occurred_at VARCHAR(64) NOT NULL,
+            source VARCHAR(16) NOT NULL,
+            level VARCHAR(16) NOT NULL,
+            error_type VARCHAR(191) NOT NULL,
+            message TEXT NOT NULL,
+            stack LONGTEXT NULL,
+            route VARCHAR(255) NULL,
+            method VARCHAR(16) NULL,
+            status_code INT NULL,
+            request_id VARCHAR(128) NULL,
+            userId BIGINT NULL,
+            -- ``release`` is a reserved word in MySQL; keep the suffix so the
+            -- column never needs quoting in application SQL.
+            release_tag VARCHAR(128) NULL,
+            user_agent VARCHAR(512) NULL,
+            context LONGTEXT NULL,
+            PRIMARY KEY (event_id),
+            INDEX idx_ops_error_events_fingerprint (fingerprint, occurred_at),
+            INDEX idx_ops_error_events_occurred (occurred_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS ops_traffic_minutes (
+            bucket_start VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            instance_id VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            request_count BIGINT NOT NULL DEFAULT 0,
+            server_error_count BIGINT NOT NULL DEFAULT 0,
+            client_error_count BIGINT NOT NULL DEFAULT 0,
+            duration_sum_ms DOUBLE NOT NULL DEFAULT 0,
+            duration_max_ms DOUBLE NOT NULL DEFAULT 0,
+            p50_ms DOUBLE NULL,
+            p95_ms DOUBLE NULL,
+            p99_ms DOUBLE NULL,
+            response_bytes BIGINT NOT NULL DEFAULT 0,
+            PRIMARY KEY (bucket_start, instance_id),
+            INDEX idx_ops_traffic_minutes_bucket (bucket_start)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS ops_route_hours (
+            bucket_start VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            instance_id VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            method VARCHAR(16) NOT NULL,
+            route VARCHAR(191) NOT NULL,
+            request_count BIGINT NOT NULL DEFAULT 0,
+            server_error_count BIGINT NOT NULL DEFAULT 0,
+            client_error_count BIGINT NOT NULL DEFAULT 0,
+            duration_sum_ms DOUBLE NOT NULL DEFAULT 0,
+            duration_max_ms DOUBLE NOT NULL DEFAULT 0,
+            p95_ms DOUBLE NULL,
+            PRIMARY KEY (bucket_start, instance_id, method, route),
+            INDEX idx_ops_route_hours_bucket (bucket_start)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """,
     ]

@@ -1162,6 +1162,19 @@ def _candidates_for_sector(
     keywords = _sector_keywords(sector_label, canon)
     entries_by_code: dict[str, dict] = {}
     family_seen = family_seen if family_seen is not None else set()
+    verified_primary_sectors_by_code: dict[str, set[str]] = {}
+    for primary_row in primary_rows:
+        primary_sector = str(primary_row.get("sector_name") or "").strip()
+        primary_code = str(primary_row.get("fund_code") or "").zfill(6)
+        if not primary_sector or not primary_code:
+            continue
+        if _is_execution_verified_primary_mapping(
+            primary_row,
+            expected_sector=primary_sector,
+        ):
+            verified_primary_sectors_by_code.setdefault(primary_code, set()).add(
+                primary_sector
+            )
 
     for row in primary_rows:
         if row.get("sector_name") != sector_label:
@@ -1206,6 +1219,12 @@ def _candidates_for_sector(
     for row in rank_rows:
         code = str(row.get("fund_code", "")).zfill(6)
         if code in excluded or (code in seen_codes and recall_audit_state is None):
+            continue
+        verified_sectors = verified_primary_sectors_by_code.get(code, set())
+        if verified_sectors and sector_label not in verified_sectors:
+            # A substring recall must not consume the code before its verified
+            # target is processed. This is especially important when both
+            # 黄金 and 黄金股 are selected in the same scan.
             continue
         name = str(row.get("fund_name", ""))
         family = _family_key(name)
@@ -1953,9 +1972,21 @@ def _with_exact_passive_tracking_match(row: dict) -> dict:
         # exact index and mapped it to a canonical sector, so compare that
         # canonical identity while still keeping 黄金 and 黄金股 distinct.
         if resolved_sector != target_label:
+            result["sector_identity_mismatch"] = {
+                "relation_kind": "tracking_reference",
+                "target_sector_label": target_label,
+                "verified_sector_label": resolved_sector,
+                "index_code": match.index_code,
+                "index_name": match.index_name,
+                "benchmark_text_source_kind": result.get(
+                    "benchmark_text_source_kind"
+                ),
+                "exact": True,
+            }
             continue
         result["sector_match_kind"] = "tracking_exact"
         result = annotate_candidate_sector_identity(result)
+        result.pop("sector_identity_mismatch", None)
         result["sector_confidence"] = max(
             _num(result.get("sector_confidence")) or 0.0,
             0.95,

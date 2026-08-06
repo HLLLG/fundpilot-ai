@@ -475,7 +475,12 @@ def _fund_gate_reasons(candidate: Mapping[str, Any]) -> list[str]:
     if str(candidate.get("vehicle_quality_status") or "") != "eligible":
         reasons.append("vehicle_quality_not_eligible")
     if not candidate_sector_identity_is_executable(candidate):
-        reasons.append("sector_identity_not_verified")
+        mismatch = candidate.get("sector_identity_mismatch")
+        reasons.append(
+            "sector_identity_mismatch"
+            if isinstance(mismatch, Mapping)
+            else "sector_identity_not_verified"
+        )
     return reasons
 
 

@@ -1,5 +1,6 @@
 import { Sora } from "next/font/google";
 import { AuthProvider } from "@/components/AuthProvider";
+import { ClientErrorReporter } from "@/components/ClientErrorReporter";
 import { WebVitalsReporter } from "@/components/WebVitalsReporter";
 import { SITE_METADATA } from "@/lib/siteMetadata";
 import "./globals.css";
@@ -23,6 +24,9 @@ export default function RootLayout({
   return (
     <html lang="zh-CN">
       <body className={`${sora.variable} antialiased`}>
+        {/* 放在 AuthProvider 之外：即使鉴权初始化本身出错，全局监听也已就位；
+            它只读 localStorage 里的 token，不依赖 Provider。 */}
+        <ClientErrorReporter />
         <AuthProvider>
           <WebVitalsReporter />
           {children}

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import threading
 import time
 from types import SimpleNamespace
 
@@ -42,3 +44,42 @@ def test_whole_discovery_pipeline_emits_heartbeat_during_unwrapped_work(
     assert len(heat_events) >= 2
     assert all(event["label"] == "计算板块热度…" for event in heat_events)
     assert events[-1]["type"] == "done"
+
+
+def test_discovery_stream_logs_cancellation_with_last_stage(
+    monkeypatch,
+    caplog,
+) -> None:
+    def waiting_pipeline(
+        _request,
+        *,
+        user_id: int,
+        started_at: float,
+        stop_event,
+    ):
+        assert user_id == 7
+        assert started_at > 0
+        yield {
+            "type": "stage",
+            "stage": "generating",
+            "label": "AI 分析中…",
+        }
+        while not stop_event.wait(0.01):
+            pass
+
+    monkeypatch.setattr(discovery_streaming, "_stream_discovery", waiting_pipeline)
+    stop_event = threading.Event()
+    events = discovery_streaming.stream_discovery(
+        SimpleNamespace(),
+        user_id=7,
+        stop_event=stop_event,
+    )
+
+    with caplog.at_level(logging.WARNING, logger=discovery_streaming.__name__):
+        assert next(events)["stage"] == "generating"
+        stop_event.set()
+        assert list(events) == []
+
+    assert "discovery_stream_cancelled" in caplog.text
+    assert "stage=generating" in caplog.text
+    assert "stop_event_set=True" in caplog.text

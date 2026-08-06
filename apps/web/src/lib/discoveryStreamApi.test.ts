@@ -122,4 +122,37 @@ describe("streamDiscovery", () => {
 
     await expectation;
   });
+
+  it("rejects a clean EOF that arrives after progress but before a done event", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        sseBody([
+          {
+            type: "stage",
+            stage: "generating",
+            label: "AI 分析中…",
+          },
+        ]),
+        { status: 200, headers: { "Content-Type": "text/event-stream" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      streamDiscovery(
+        [{ fund_code: "519674", fund_name: "test", holding_amount: 1000, return_percent: 1 }],
+        {
+          style: "steady",
+          horizon: "half-year",
+          max_drawdown_percent: 8,
+          concentration_limit_percent: 35,
+          expected_investment_amount: 10000,
+          prefer_dca: true,
+          avoid_chasing: true,
+          decision_style: "conservative",
+        },
+        {},
+      ),
+    ).rejects.toThrow("流式扫描异常结束，未收到完成状态。");
+  });
 });

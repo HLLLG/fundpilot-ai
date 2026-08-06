@@ -29,6 +29,31 @@ export type {
 } from "@/lib/api/adminUsers";
 
 export {
+  fetchOpsCaptureState,
+  fetchOpsErrorGroup,
+  fetchOpsErrorGroups,
+  fetchOpsOverview,
+  updateOpsErrorStatus,
+} from "@/lib/api/ops";
+export type {
+  OpsCaptureState,
+  OpsErrorEvent,
+  OpsErrorEventContext,
+  OpsErrorGroup,
+  OpsErrorGroupDetail,
+  OpsErrorGroupPage,
+  OpsErrorKind,
+  OpsErrorLevel,
+  OpsErrorSource,
+  OpsErrorStatus,
+  OpsOverview,
+  OpsRouteRow,
+  OpsSourceFilter,
+  OpsStatusFilter,
+  OpsTrafficPoint,
+} from "@/lib/api/ops";
+
+export {
   fetchEvidenceMaturityStatus,
   fetchFactorIcStatus,
 } from "@/lib/api/factorEvidence";
@@ -1382,6 +1407,15 @@ export type DiscoveryCandidatePoolItem = {
   sector_identity_status?: "verified" | "pending" | "stale" | string | null;
   sector_identity_eligible?: boolean;
   sector_mapping_verified?: boolean;
+  sector_identity_mismatch?: {
+    relation_kind?: string | null;
+    target_sector_label?: string | null;
+    verified_sector_label?: string | null;
+    index_code?: string | null;
+    index_name?: string | null;
+    benchmark_text_source_kind?: string | null;
+    exact?: boolean;
+  };
   quality_reasons?: string[];
   quality_penalties?: string[];
   quality_gate?: DiscoveryCandidateQualityGate;

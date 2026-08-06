@@ -47,12 +47,18 @@ def test_candidate_priority_queue_keeps_only_identity_near_misses(
                 "vehicle_quality_status": "eligible",
                 "sector_fit_score": 34,
             },
+            {
+                "fund_code": "4",
+                "quality_gate": {"status": "eligible"},
+                "vehicle_quality_status": "watch_only",
+                "sector_match_kind": "name",
+            },
         ]
     )
 
-    assert queued == 1
+    assert queued == 2
     payload = json.loads(service._priority_queue_path().read_text(encoding="utf-8"))
-    assert payload["fund_codes"] == ["000001"]
+    assert payload["fund_codes"] == ["000001", "000004"]
 
 
 def test_priority_batch_only_fills_missing_rows_and_dequeues_processed_codes(
@@ -73,10 +79,19 @@ def test_priority_batch_only_fills_missing_rows_and_dequeues_processed_codes(
         "get_fund_sector_current_primary_by_codes",
         lambda _codes: {
             "000001": {
+                "fund_code": "000001",
+                "sector_name": "黄金股",
                 "source": "precompute_benchmark",
                 "identity_status": "verified",
                 "is_primary": 1,
                 "expires_at": "2099-01-01T00:00:00+00:00",
+                "detail": {
+                    "price_proxy_eligible": True,
+                    "index_code": "931238",
+                    "benchmark_text": (
+                        "中证沪深港黄金产业股票指数收益率×95%+存款×5%"
+                    ),
+                },
             }
         },
     )

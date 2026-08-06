@@ -1044,6 +1044,42 @@ def test_correlated_directions_are_deduplicated_by_measured_correlation() -> Non
     assert [item["sector_label"] for item in with_series] == ["储能", "银行"]
 
 
+def test_spot_gold_and_gold_equities_remain_independent_directions() -> None:
+    """现货黄金与黄金产业股票可以同时布局，不能被短期相关性改写为同一板块。"""
+    from app.services.sector_opportunity_scoring import (
+        select_scored_sector_opportunities,
+    )
+
+    base = [
+        0.4, -0.9, 1.3, 0.2, -0.6, 1.1, -0.3, 0.8, -1.2, 0.5,
+        0.7, -0.4, 0.9, -1.1, 0.3, 0.6, -0.8, 1.0, -0.2, 0.1,
+    ]
+    rows = [
+        {
+            "sector_label": label,
+            "score_policy_version": ENTRY_POLICY_VERSION,
+            "entry_state": ENTRY_READY_TO_START,
+            "evidence_quality": "complete",
+            "research_score": score,
+            "entry_readiness_score": score,
+            "track": "momentum",
+            "sector_group": label,
+        }
+        for label, score in (("黄金", 90.0), ("黄金股", 88.0))
+    ]
+
+    selected = select_scored_sector_opportunities(
+        rows,
+        max_total=2,
+        return_series_by_label={
+            "黄金": base,
+            "黄金股": [value * 1.02 + 0.01 for value in base],
+        },
+    )
+
+    assert [item["sector_label"] for item in selected] == ["黄金", "黄金股"]
+
+
 def test_correlation_dedup_is_skipped_when_series_are_too_short() -> None:
     """样本不足时宁可不去重，也不用噪声相关系数误杀方向。"""
     from app.services.sector_opportunity_scoring import (

@@ -191,6 +191,11 @@ def slim_candidate_for_llm(
             ),
         }
     )
+    identity_mismatch = _compact_sector_identity_mismatch(
+        item.get("sector_identity_mismatch")
+    )
+    if identity_mismatch:
+        row["sector_identity_mismatch"] = identity_mismatch
     nav = slim_nav_trend_for_llm(item.get("nav_trend"))
     if nav:
         row["nav_trend"] = nav
@@ -198,6 +203,24 @@ def slim_candidate_for_llm(
         row["estimated_daily_return_percent"] = daily
         row["daily_return_source"] = source
     return row
+
+
+def _compact_sector_identity_mismatch(value: object) -> dict:
+    if not isinstance(value, Mapping):
+        return {}
+    return {
+        key: scalar
+        for key in (
+            "relation_kind",
+            "target_sector_label",
+            "verified_sector_label",
+            "index_code",
+            "index_name",
+            "benchmark_text_source_kind",
+            "exact",
+        )
+        if (scalar := _scalar(value.get(key))) is not None
+    }
 
 
 def _compact_fund_entry_signal(value: object) -> dict:

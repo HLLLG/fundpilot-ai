@@ -174,6 +174,54 @@ def test_llm_primary_mapping_is_recall_only_until_independently_verified(
     assert built[0]["selection_reason"] == "推断板块映射待核验"
 
 
+def test_verified_gold_stock_mapping_is_not_consumed_by_gold_name_recall(
+    monkeypatch,
+) -> None:
+    rank_row = {
+        "fund_code": "021874",
+        "fund_name": "中欧黄金股指数C",
+        "fund_scale_yi": 2.0,
+        "return_3m_percent": 3.0,
+        "return_6m_percent": 8.0,
+        "return_1y_percent": 20.0,
+        "max_drawdown_1y_percent": -18.0,
+        "established_date": "2024-01-01",
+    }
+    monkeypatch.setattr(
+        "app.services.discovery_candidate_pool.list_fund_primary_sectors",
+        lambda: [],
+    )
+    monkeypatch.setattr(
+        "app.services.discovery_candidate_pool.list_fund_primary_sectors_by_sector_names",
+        lambda _labels, limit_per_sector=20: [
+            {
+                "fund_code": "021874",
+                "fund_name": "中欧黄金股指数C",
+                "sector_name": "黄金股",
+                "source": "precompute_benchmark",
+                "confidence": 0.95,
+                "detail": {
+                    "benchmark_text": "中证沪深港黄金产业股票指数收益率×95%+存款×5%",
+                },
+            }
+        ],
+    )
+
+    built = build_candidate_pool(
+        ["黄金", "黄金股"],
+        per_sector=1,
+        pool_cap=2,
+        fetch_rank=lambda limit: [rank_row],
+        fetch_new_funds=lambda limit: [],
+        decision_at=_DECISION_AT,
+    )
+
+    assert len(built) == 1
+    assert built[0]["fund_code"] == "021874"
+    assert built[0]["sector_label"] == "黄金股"
+    assert built[0]["sector_match_kind"] == "primary"
+
+
 def test_stale_broad_financial_benchmark_cannot_verify_fintech_mapping() -> None:
     assert not _is_execution_verified_primary_mapping(
         {
@@ -557,3 +605,12 @@ def test_exact_tracking_uses_canonical_sector_not_market_quote_proxy_code() -> N
 
     assert distinct_theme["sector_match_kind"] == "name"
     assert "tracking_reference_match" not in distinct_theme
+    assert distinct_theme["sector_identity_mismatch"] == {
+        "relation_kind": "tracking_reference",
+        "target_sector_label": "黄金",
+        "verified_sector_label": "黄金股",
+        "index_code": "931238",
+        "index_name": "中证沪深港黄金产业股票指数",
+        "benchmark_text_source_kind": None,
+        "exact": True,
+    }

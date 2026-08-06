@@ -86,6 +86,59 @@ describe("DiscoveryCandidatePoolPanel", () => {
     expect(card).toHaveTextContent("近20日18.6%");
   });
 
+  it("shows the actual vehicle threshold and an exact sector mismatch", () => {
+    const mismatched: DiscoveryCandidatePoolItem = {
+      ...candidate,
+      fund_code: "021874",
+      fund_name: "中欧黄金股指数C",
+      sector_label: "黄金",
+      opportunity_score_version: "opportunity_20_60d.v2",
+      opportunity_score_20_60d: 129.73,
+      fund_quality_score: 39.63,
+      vehicle_quality_score: 46.25,
+      vehicle_quality_threshold: 60,
+      vehicle_quality_status: "watch_only",
+      vehicle_quality_assessment: {
+        score: 46.25,
+        threshold: 60,
+        status: "watch_only",
+        components: {
+          exact_tracking_identity: 0,
+          scale: 17.5,
+          fee: 18.75,
+          tracking_quality: 10,
+        },
+      },
+      sector_identity_mismatch: {
+        target_sector_label: "黄金",
+        verified_sector_label: "黄金股",
+        index_code: "931238",
+        exact: true,
+      },
+    };
+    render(
+      <DiscoveryCandidatePoolPanel
+        pool={[mismatched]}
+        decisionStatusByCode={{ "021874": "watch_only" }}
+        decisionReasonsByCode={{
+          "021874": ["vehicle_quality_not_eligible", "sector_identity_mismatch"],
+        }}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /本次候选池/ }));
+
+    const card = screen.getByRole("article", { name: /中欧黄金股指数C/ });
+    expect(card).toHaveTextContent("载体分46.25");
+    expect(card).toHaveTextContent("基金载体质量 46.25 / 60 未通过");
+    expect(card).toHaveTextContent("实际关联“黄金股”，与目标“黄金”不一致");
+
+    fireEvent.click(screen.getByText("查看同类研究与完整依据"));
+    fireEvent.click(screen.getByText("查看数据完整性与质量依据"));
+    expect(card).toHaveTextContent("核心质量分：39.63");
+    expect(card).toHaveTextContent("载体质量门槛：46.25 / 60，未通过");
+    expect(card).toHaveTextContent("精确跟踪身份 0");
+  });
+
   it("distinguishes buy, conditional and observation candidate statuses", () => {
     const candidates = [
       candidate,

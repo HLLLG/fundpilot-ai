@@ -13,6 +13,8 @@ from app.database import (
 from app.services.fund_primary_sector_types import PrimarySectorRecord
 from app.services.fund_sector_identity import (
     current_identity_rows_for_api,
+    is_current_identity_row_executable,
+    is_current_identity_row_reproducibly_verified,
     materialize_holdings_sector_assessment,
     materialize_primary_sector_record,
 )
@@ -160,6 +162,36 @@ def test_api_projection_marks_expired_rows_stale() -> None:
     assert projected[0]["fresh"] is False
     assert projected[0]["effective_identity_status"] == "stale"
     assert projected[0]["detail"]["coverage"]["classified_mass_percent"] == 35
+
+
+def test_repair_gate_rechecks_legacy_active_benchmark_verification() -> None:
+    base = {
+        "fund_code": "001195",
+        "sector_name": "农业",
+        "source": "precompute_benchmark",
+        "identity_status": "verified",
+        "is_primary": 1,
+        "expires_at": "2099-01-01T00:00:00+00:00",
+    }
+    legacy_active = {
+        **base,
+        "detail": {
+            "benchmark_text": "中信农林牧渔一级行业指数收益率×80%+债券指数×20%",
+        },
+    }
+    exact_passive = {
+        **base,
+        "sector_name": "黄金股",
+        "detail": {
+            "price_proxy_eligible": True,
+            "index_code": "931238",
+            "benchmark_text": "中证沪深港黄金产业股票指数收益率×95%+存款×5%",
+        },
+    }
+
+    assert is_current_identity_row_executable(legacy_active) is True
+    assert is_current_identity_row_reproducibly_verified(legacy_active) is False
+    assert is_current_identity_row_reproducibly_verified(exact_passive) is True
 
 
 def test_resolution_status_batch_distinguishes_unmapped_from_unavailable() -> None:

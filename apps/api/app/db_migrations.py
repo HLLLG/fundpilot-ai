@@ -12,7 +12,7 @@ from app.services.decision_quality_rollout import (
 )
 
 
-SCHEMA_VERSION = 22
+SCHEMA_VERSION = 23
 
 # 迁移在应用/后台线程首次建立连接时触发（例如板块快照刷新会 daemon 线程预取资金流历史，
 # 与主线程几乎同时首次打开 sqlite 连接）。同进程内多个线程各自用独立 connection 对同一
@@ -1979,6 +1979,137 @@ def _migrate_performance_schema_v20(connection: sqlite3.Connection) -> None:
         )
 
 
+def _migrate_ops_observability_v23(connection: sqlite3.Connection) -> None:
+    """Persist error evidence plus minute/hour traffic rollups for the ops panel.
+
+    ``performance_metrics`` keeps only in-process aggregates, so a restart
+    erases every counter and no single failure ever retains its stack trace.
+    Support cannot reconstruct a user-reported crash from that.  These tables
+    are the durable, bounded evidence store behind ``/admin/ops``:
+
+    * ``ops_error_groups`` is one row per fingerprint (the triage list).
+    * ``ops_error_events`` is bounded occurrence history carrying the stack.
+    * ``ops_traffic_minutes`` is one row per minute per process (trend charts).
+    * ``ops_route_hours`` is one row per route per hour (slow/failing routes).
+
+    Rows are pruned by ``ops_*_retention_days``.  No request body, query
+    string, Authorization header, or database bind parameter is stored.
+    """
+
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS ops_error_groups (
+            fingerprint TEXT NOT NULL PRIMARY KEY,
+            source TEXT NOT NULL,
+            level TEXT NOT NULL,
+            error_type TEXT NOT NULL,
+            message TEXT NOT NULL,
+            route TEXT,
+            first_seen_at TEXT NOT NULL,
+            last_seen_at TEXT NOT NULL,
+            event_count INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'open',
+            resolved_at TEXT,
+            resolved_by INTEGER,
+            note TEXT
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_ops_error_groups_status_seen
+        ON ops_error_groups (status, last_seen_at DESC)
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_ops_error_groups_seen
+        ON ops_error_groups (last_seen_at DESC)
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS ops_error_events (
+            event_id TEXT NOT NULL PRIMARY KEY,
+            fingerprint TEXT NOT NULL,
+            occurred_at TEXT NOT NULL,
+            source TEXT NOT NULL,
+            level TEXT NOT NULL,
+            error_type TEXT NOT NULL,
+            message TEXT NOT NULL,
+            stack TEXT,
+            route TEXT,
+            method TEXT,
+            status_code INTEGER,
+            request_id TEXT,
+            userId INTEGER,
+            release_tag TEXT,
+            user_agent TEXT,
+            context TEXT
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_ops_error_events_fingerprint
+        ON ops_error_events (fingerprint, occurred_at DESC)
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_ops_error_events_occurred
+        ON ops_error_events (occurred_at DESC)
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS ops_traffic_minutes (
+            bucket_start TEXT NOT NULL,
+            instance_id TEXT NOT NULL,
+            request_count INTEGER NOT NULL DEFAULT 0,
+            server_error_count INTEGER NOT NULL DEFAULT 0,
+            client_error_count INTEGER NOT NULL DEFAULT 0,
+            duration_sum_ms REAL NOT NULL DEFAULT 0,
+            duration_max_ms REAL NOT NULL DEFAULT 0,
+            p50_ms REAL,
+            p95_ms REAL,
+            p99_ms REAL,
+            response_bytes INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (bucket_start, instance_id)
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_ops_traffic_minutes_bucket
+        ON ops_traffic_minutes (bucket_start)
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS ops_route_hours (
+            bucket_start TEXT NOT NULL,
+            instance_id TEXT NOT NULL,
+            method TEXT NOT NULL,
+            route TEXT NOT NULL,
+            request_count INTEGER NOT NULL DEFAULT 0,
+            server_error_count INTEGER NOT NULL DEFAULT 0,
+            client_error_count INTEGER NOT NULL DEFAULT 0,
+            duration_sum_ms REAL NOT NULL DEFAULT 0,
+            duration_max_ms REAL NOT NULL DEFAULT 0,
+            p95_ms REAL,
+            PRIMARY KEY (bucket_start, instance_id, method, route)
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_ops_route_hours_bucket
+        ON ops_route_hours (bucket_start)
+        """
+    )
+
+
 def run_migrations(connection: sqlite3.Connection) -> None:
     with _MIGRATION_LOCK:
         _run_migrations_locked(connection)
@@ -2003,6 +2134,7 @@ def _run_migrations_locked(connection: sqlite3.Connection) -> None:
         _migrate_decision_quality_rollout(connection, initialize=False)
         _migrate_prompt_shadow_operations(connection)
         _migrate_admin_user_management(connection)
+        _migrate_ops_observability_v23(connection)
         return
 
     connection.execute(
@@ -2080,4 +2212,5 @@ def _run_migrations_locked(connection: sqlite3.Connection) -> None:
 
     _ensure_migration_user(connection)
     _migrate_admin_user_management(connection)
+    _migrate_ops_observability_v23(connection)
     _set_schema_version(connection, SCHEMA_VERSION)

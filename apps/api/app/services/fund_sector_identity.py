@@ -72,6 +72,61 @@ def is_current_identity_row_executable(
     )
 
 
+def is_current_identity_row_reproducibly_verified(
+    row: Mapping[str, Any] | None,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    """Return whether a fresh verified row still satisfies today's evidence contract.
+
+    Older migrations could mark an active fund's broad performance benchmark as
+    verified sector identity.  The public execution gate remains backward
+    compatible, while repair queues use this stricter check so those rows are
+    revisited with holdings evidence instead of being skipped forever.
+    """
+
+    if not is_current_identity_row_executable(row, now=now) or row is None:
+        return False
+    source = str(row.get("source") or "").strip()
+    if source in _DIRECT_SOURCES:
+        return True
+
+    raw_detail = row.get("detail")
+    if isinstance(raw_detail, str):
+        try:
+            decoded = json.loads(raw_detail)
+        except (TypeError, ValueError):
+            decoded = None
+        detail = decoded if isinstance(decoded, Mapping) else {}
+    else:
+        detail = raw_detail if isinstance(raw_detail, Mapping) else {}
+
+    if source in _HOLDINGS_SOURCES:
+        qualification = detail.get("qualification")
+        return bool(
+            isinstance(qualification, Mapping)
+            and qualification.get("sector_inference_eligible") is True
+            and qualification.get("research_only") is False
+        )
+    if source in _BENCHMARK_SOURCES:
+        fund_code = str(row.get("fund_code") or "").strip().zfill(6)
+        sector_name = str(row.get("sector_name") or "").strip()
+        if not fund_code or not sector_name:
+            return False
+        return _benchmark_identity_matches(
+            PrimarySectorRecord(
+                fund_code=fund_code,
+                sector_name=sector_name,
+                intraday_index_name=None,
+                source=source,
+                confidence=_float_or_none(row.get("confidence")),
+                detail=dict(detail),
+            ),
+            detail,
+        )
+    return False
+
+
 def materialize_primary_sector_record(
     record: PrimarySectorRecord,
     *,
@@ -479,6 +534,7 @@ __all__ = [
     "current_identity_rows_for_api",
     "is_current_identity_row_executable",
     "is_current_identity_row_fresh",
+    "is_current_identity_row_reproducibly_verified",
     "materialize_holdings_sector_assessment",
     "materialize_primary_sector_record",
 ]

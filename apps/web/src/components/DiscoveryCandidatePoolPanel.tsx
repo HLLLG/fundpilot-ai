@@ -32,6 +32,17 @@ const DECISION_REASON_LABELS: Record<string, string> = {
   final_recommendation_not_available: "最终交易校验未形成可执行建议",
 };
 
+const VEHICLE_COMPONENT_LABELS: Record<string, string> = {
+  exact_tracking_identity: "精确跟踪身份",
+  scale: "规模",
+  fee: "费率",
+  tracking_quality: "跟踪质量",
+  manager_performance: "经理业绩",
+  drawdown_control: "回撤控制",
+  data_completeness: "数据完整度",
+  type_preference: "类型偏好",
+};
+
 export type DiscoveryCandidateDecisionStatus =
   | "actionable"
   | "conditional_wait"
@@ -92,6 +103,29 @@ function formatScore(value: number | null | undefined): string {
     return "—";
   }
   return Number(value).toFixed(2).replace(/\.00$/, "");
+}
+
+function decisionReasonLabel(
+  reason: string,
+  item: DiscoveryCandidatePoolItem,
+): string {
+  if (reason === "vehicle_quality_not_eligible") {
+    const score = item.vehicle_quality_score;
+    const threshold = item.vehicle_quality_threshold;
+    if (score != null && threshold != null) {
+      return `基金载体质量 ${formatScore(score)} / ${formatScore(threshold)} 未通过`;
+    }
+  }
+  if (reason === "sector_identity_mismatch") {
+    const mismatch = item.sector_identity_mismatch;
+    const target = mismatch?.target_sector_label ?? item.sector_label;
+    const verified = mismatch?.verified_sector_label;
+    if (target && verified) {
+      return `实际关联“${verified}”，与目标“${target}”不一致`;
+    }
+    return "基金精确关联板块与本次目标板块不一致";
+  }
+  return DECISION_REASON_LABELS[reason] ?? translateEvidenceText(reason);
 }
 
 function listText(items: string[] | undefined, fallback = "—"): string {
@@ -526,6 +560,14 @@ function QualityDetails({
   const profileStatus = item.profile_status ?? item.quality_gate?.profile_status;
   const profileSources = item.profile_sources ?? item.quality_gate?.profile_sources ?? [];
   const staleFieldLabels = quality.staleLabels;
+  const vehicleComponents = Object.entries(
+    item.vehicle_quality_assessment?.components ?? {},
+  )
+    .filter(([, value]) => value != null && Number.isFinite(value))
+    .map(
+      ([key, value]) =>
+        `${VEHICLE_COMPONENT_LABELS[key] ?? key} ${formatScore(value)}`,
+    );
   const reason = eliminated
     ? "已被证据强度规则剔除"
     : listText(item.quality_reasons, item.selection_reason ?? "暂无补充理由");
@@ -586,6 +628,26 @@ function QualityDetails({
           <span className="font-bold text-slate-800">质量依据：</span>
           {reason}
         </p>
+        {item.fund_quality_score != null ? (
+          <p>
+            <span className="font-bold text-slate-800">核心质量分：</span>
+            {formatScore(item.fund_quality_score)}（字段与历史表现口径）
+          </p>
+        ) : null}
+        {item.vehicle_quality_score != null ? (
+          <p>
+            <span className="font-bold text-slate-800">载体质量门槛：</span>
+            {formatScore(item.vehicle_quality_score)} / {formatScore(item.vehicle_quality_threshold)}
+            {item.vehicle_quality_status === "eligible" ? "，已通过" : "，未通过"}
+            {vehicleComponents.length
+              ? ` · ${
+                  item.vehicle_quality_method === "active_manager_evidence"
+                    ? "归一化前分项"
+                    : "分项"
+                }：${vehicleComponents.join("、")}`
+              : ""}
+          </p>
+        ) : null}
         {item.quality_gate?.reasons.length ? (
           <p>
             <span className="font-bold text-slate-800">门禁原因：</span>
@@ -742,8 +804,8 @@ export function DiscoveryCandidatePoolPanel({
               const primaryReason =
                 (decisionReasons.length
                   ? decisionReasons
-                    .slice(0, 2)
-                    .map((reason) => DECISION_REASON_LABELS[reason] ?? translateEvidenceText(reason))
+                  .slice(0, 2)
+                    .map((reason) => decisionReasonLabel(reason, item))
                     .join("；")
                   : null) ??
                   item.quality_gate?.reasons?.[0] ??
@@ -769,7 +831,7 @@ export function DiscoveryCandidatePoolPanel({
                     ["20日波动", formatPercent(item.nav_trend?.annualized_volatility_20d_percent)],
                     ["20日修复", formatPercent(item.nav_trend?.drawdown_recovery_20d_percent)],
                     ["近20日", formatPercent(item.nav_trend?.return_20d_percent)],
-                    ["质量分", formatScore(item.fund_quality_score)],
+                    ["载体分", formatScore(item.vehicle_quality_score)],
                   ]
                 : [
                     ["质量分", formatScore(item.fund_quality_score)],

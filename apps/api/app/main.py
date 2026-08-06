@@ -165,7 +165,12 @@ from app.routes.factor_evidence import router as factor_evidence_router
 from app.routes.market_diagnostics import router as market_diagnostics_router
 from app.routes.portfolio_risk import router as portfolio_risk_router
 from app.routes.admin_users import router as admin_users_router
+from app.routes.ops import router as ops_router
 from app.routes.performance import router as performance_router
+from app.services.ops_error_logging import (
+    SKIP_CAPTURE_FLAG,
+    capture_request_failure,
+)
 from app.services.performance_metrics import PerformanceMetricsMiddleware
 from app.startup_readiness import ReadinessGateMiddleware, readiness_snapshot
 
@@ -193,6 +198,7 @@ app.include_router(decision_quality_router)
 app.include_router(portfolio_risk_router)
 app.include_router(admin_users_router)
 app.include_router(performance_router)
+app.include_router(ops_router)
 
 
 @app.exception_handler(PortfolioMutationLockError)
@@ -211,11 +217,26 @@ async def portfolio_mutation_lock_error_handler(
 async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     if isinstance(exc, HTTPException):
         raise exc
-    logger.exception("Unhandled error on %s %s", request.method, request.url.path)
+    # Record before logging, then tell the log handler to skip this record:
+    # this path knows the route, status, principal, and user agent, which a
+    # generic log capture cannot recover once the request context is gone.
+    request_id = capture_request_failure(request, exc)
+    logger.exception(
+        "Unhandled error on %s %s",
+        request.method,
+        request.url.path,
+        extra={SKIP_CAPTURE_FLAG: True},
+    )
+    headers = _cors_error_response_headers(request)
+    if request_id:
+        # This response never passes through PerformanceMetricsMiddleware's
+        # send hook, so echo the id here; support can then map a user's
+        # screenshot straight onto one stored traceback.
+        headers["X-Request-ID"] = request_id
     return JSONResponse(
         status_code=500,
         content={"detail": "服务器内部错误，请稍后重试"},
-        headers=_cors_error_response_headers(request),
+        headers=headers,
     )
 
 
@@ -969,21 +990,38 @@ async def fund_discovery_stream_endpoint(
             headers={"Retry-After": str(settings.sse_retry_after_seconds)},
         )
     stop_event = threading.Event()
+    stream_state = {"stage": "connected", "terminal": False}
+
+    def tracked_items():
+        for item in stream_discovery(
+            request,
+            user_id=user_id,
+            stop_event=stop_event,
+        ):
+            if item.get("type") == "stage":
+                stream_state["stage"] = str(
+                    item.get("stage") or stream_state["stage"]
+                )
+            elif item.get("type") in {"done", "error"}:
+                stream_state["terminal"] = True
+            yield item
 
     async def event_stream():
         try:
-            items = stream_discovery(
-                request,
-                user_id=user_id,
-                stop_event=stop_event,
-            )
             async for chunk in sse_from_sync_iterator(
-                items,
+                tracked_items(),
                 stop_event=stop_event,
                 is_disconnected=http_request.is_disconnected,
             ):
                 yield chunk
         finally:
+            if not stream_state["terminal"]:
+                logger.warning(
+                    "fund_discovery_stream_ended_without_terminal "
+                    "user_id=%s stage=%s reason=missing_terminal_event",
+                    user_id,
+                    stream_state["stage"],
+                )
             stream_slot.release()
 
     return StreamingResponse(
@@ -1922,4 +1960,3 @@ def portfolio_summary() -> dict:
     payload["holding_count"] = len(profiles)
     payload["profiles"] = [profile.model_dump(mode="json") for profile in profiles]
     return payload
-

@@ -39,6 +39,7 @@ from app.services.fund_primary_sector_types import PrimarySectorRecord
 from app.services.fund_sector_identity import (
     FUND_SECTOR_IDENTITY_VERSION,
     is_current_identity_row_executable,
+    is_current_identity_row_reproducibly_verified,
 )
 from app.services.fund_type_classification import has_positive_qdii_marker
 
@@ -184,9 +185,10 @@ def enqueue_priority_precompute_codes(fund_codes: Sequence[object]) -> int:
 def enqueue_candidate_sector_precompute(
     candidate_pool: Sequence[Mapping[str, object]],
 ) -> int:
-    """Queue only candidates whose otherwise-eligible path lacks identity."""
+    """Queue identity gaps, keeping executable near-misses ahead of research rows."""
 
-    codes: list[object] = []
+    executable_near_misses: list[object] = []
+    research_near_misses: list[object] = []
     for item in candidate_pool:
         quality_gate = (
             item.get("quality_gate")
@@ -195,12 +197,17 @@ def enqueue_candidate_sector_precompute(
         )
         if str(quality_gate.get("status") or "") != "eligible":
             continue
-        if str(item.get("vehicle_quality_status") or "") != "eligible":
-            continue
         if candidate_sector_identity_is_executable(item):
             continue
-        codes.append(item.get("fund_code"))
-    return enqueue_priority_precompute_codes(codes)
+        target = (
+            executable_near_misses
+            if str(item.get("vehicle_quality_status") or "") == "eligible"
+            else research_near_misses
+        )
+        target.append(item.get("fund_code"))
+    return enqueue_priority_precompute_codes(
+        [*executable_near_misses, *research_near_misses]
+    )
 
 
 def run_priority_precompute_batch(
@@ -227,7 +234,7 @@ def run_priority_precompute_batch(
     already_resolved = [
         code
         for code in codes
-        if is_current_identity_row_executable(current_rows.get(code))
+        if is_current_identity_row_reproducibly_verified(current_rows.get(code))
     ]
     already_resolved_set = set(already_resolved)
     retry_deferred: list[str] = []
@@ -1323,7 +1330,9 @@ def run_holdings_precompute_batch(
     fetch_codes = [
         code
         for code in candidates
-        if not is_current_identity_row_executable(current_rows.get(code))
+        if not is_current_identity_row_reproducibly_verified(
+            current_rows.get(code)
+        )
     ]
     holdings_workers = _holdings_worker_count(settings)
     evidence_by_code = _fetch_holdings_evidence_batch(
@@ -1341,7 +1350,7 @@ def run_holdings_precompute_batch(
         result.processed += 1
         checked_at = datetime.now(timezone.utc)
         current = current_rows.get(code)
-        if is_current_identity_row_executable(current):
+        if is_current_identity_row_reproducibly_verified(current):
             result.skipped += 1
             checkpoints.append(
                 _resolution_status_row(
