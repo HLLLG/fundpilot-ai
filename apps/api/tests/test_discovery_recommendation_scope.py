@@ -123,12 +123,13 @@ def test_reconciliation_drops_waiting_pick_and_backfills_actionable_direction() 
     assert [item.fund_code for item in reconciled] == ["000001"]
     assert reconciled[0].sector_name == "传媒"
     assert facts["recommendation_scope_reconciliation"] == {
-        "schema_version": "discovery_recommendation_scope_reconciliation.v1",
+        "schema_version": "discovery_recommendation_scope_reconciliation.v3",
         "model_fund_codes": ["000002"],
         "dropped_fund_codes": ["000002"],
         "backfilled_fund_codes": ["000001"],
         "final_fund_codes": ["000001"],
         "cross_direction_fallback_allowed": False,
+        "maximum_recommendations_per_sector": 2,
     }
     assert caveats
 
@@ -152,6 +153,70 @@ def test_probability_direction_requires_the_fund_early_repair_signal() -> None:
     funnel = scope["sector_funnel"][0]
     assert funnel["eligible_count"] == 1
     assert funnel["rejected_reason_counts"]["direction_entry_not_open"] == 1
+
+
+def test_scope_keeps_two_best_quality_vehicles_per_sector() -> None:
+    preferred = _candidate("000013", "煤炭", opportunity_score=40)
+    second = _candidate("000014", "煤炭", opportunity_score=60)
+    hotter_but_lower_quality = _candidate("000015", "煤炭", opportunity_score=200)
+    preferred.update(fund_quality_score=90.0, vehicle_quality_score=92.0)
+    second.update(fund_quality_score=82.0, vehicle_quality_score=84.0)
+    hotter_but_lower_quality.update(
+        fund_quality_score=65.0,
+        vehicle_quality_score=68.0,
+    )
+
+    scope = build_recommendation_candidate_scope(
+        [hotter_but_lower_quality, second, preferred],
+        [_opportunity("煤炭", "ready_to_start", priority=90)],
+    )
+
+    assert scope["ordered_eligible_fund_codes"] == ["000013", "000014"]
+    assert scope["alternate_eligible_fund_codes"] == ["000015"]
+    assert scope["maximum_recommendations_per_sector"] == 2
+    assert {
+        item["fund_code"]: item["status"] for item in scope["candidate_decisions"]
+    } == {
+        "000015": "actionable",
+        "000014": "actionable",
+        "000013": "actionable",
+    }
+
+
+def test_scope_caps_global_recommendation_whitelist_at_six() -> None:
+    sectors = ["sector-a", "sector-b", "sector-c", "sector-d"]
+    candidates = []
+    opportunities = []
+    for sector_index, sector in enumerate(sectors):
+        opportunities.append(
+            _opportunity(
+                sector,
+                "ready_to_start",
+                priority=100 - sector_index * 10,
+            )
+        )
+        for rank in range(2):
+            code = str(100 + sector_index * 10 + rank).zfill(6)
+            candidate = _candidate(code, sector)
+            candidate.update(
+                fund_quality_score=90.0 - rank,
+                vehicle_quality_score=90.0 - rank,
+            )
+            candidates.append(candidate)
+
+    scope = build_recommendation_candidate_scope(candidates, opportunities)
+
+    assert scope["max_recommendations"] == 6
+    assert scope["maximum_recommendations_per_sector"] == 2
+    assert scope["ordered_eligible_fund_codes"] == [
+        "000100",
+        "000110",
+        "000120",
+        "000130",
+        "000101",
+        "000111",
+    ]
+    assert scope["alternate_eligible_fund_codes"] == ["000121", "000131"]
 
 
 def test_actionable_direction_without_verified_vehicle_is_reported_not_cross_filled() -> None:
@@ -319,3 +384,76 @@ def test_llm_payload_contains_only_the_direction_fund_whitelist() -> None:
     assert llm_facts["recommendation_candidate_scope"][
         "ordered_eligible_fund_codes"
     ] == ["000041"]
+
+
+def test_llm_payload_compacts_factor_scope_and_candidate_evidence() -> None:
+    media = _candidate("000051", "传媒", opportunity_score=70)
+    medicine = _candidate("000052", "中药", opportunity_score=190)
+    facts = {
+        "candidate_pool": [medicine, media],
+        "sector_opportunities": [
+            _opportunity("传媒", "ready_to_start", priority=91),
+            _opportunity("中药", "forming", priority=64),
+        ],
+        "session": {"calendar_date": "2026-08-04"},
+        "portfolio_gap": {"target_sectors": ["传媒", "中药"], "holdings_slim": []},
+        "sector_heat": [],
+        "candidate_factor_scores": {
+            "available": True,
+            "ic_status": {
+                "state": "available",
+                "available": True,
+                "segments": {"large_internal_payload": "must_not_reach_model"},
+            },
+            "selected_fund_codes": ["000051", "000052"],
+            "execution_qualified_fund_codes": ["000051", "000052"],
+            "holdings": [
+                {"fund_code": "000051", "composite_score": 60},
+                {
+                    "fund_code": "000052",
+                    "composite_score": 99,
+                    "private_payload": "must_not_reach_model",
+                },
+            ],
+        },
+        "data_evidence": {
+            "schema_version": "1.0",
+            "decision_ready": True,
+            "blocking_reasons": [],
+            "items": [
+                {"fact_id": "portfolio.holdings", "freshness": "fresh"},
+                {
+                    "fact_id": "candidates.000051.candidate_metrics",
+                    "freshness": "fresh",
+                },
+                {
+                    "fact_id": "candidates.000052.candidate_metrics",
+                    "freshness": "fresh",
+                },
+            ],
+        },
+    }
+
+    payload = build_user_payload(
+        discovery_facts=facts,
+        profile=InvestorProfile(),
+        focus_sectors=[],
+    )
+    llm_facts = payload["discovery_facts"]
+
+    assert [row["fund_code"] for row in llm_facts["candidate_factor_scores"]["holdings"]] == [
+        "000051"
+    ]
+    assert llm_facts["candidate_factor_scores"][
+        "execution_qualified_fund_codes"
+    ] == ["000051"]
+    assert "segments" not in llm_facts["candidate_factor_scores"]["ic_status"]
+    fact_ids = {row["fact_id"] for row in llm_facts["data_evidence"]["items"]}
+    assert fact_ids == {
+        "portfolio.holdings",
+        "candidates.000051.candidate_metrics",
+    }
+    assert {
+        row["fund_code"]
+        for row in llm_facts["recommendation_candidate_scope"]["candidate_decisions"]
+    } == {"000051"}

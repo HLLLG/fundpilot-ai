@@ -349,11 +349,28 @@ def compact_portfolio_snapshot_for_llm(
 
 def compact_data_evidence_for_llm(
     value: Mapping[str, Any] | None,
+    *,
+    fund_codes: set[str] | None = None,
 ) -> dict[str, Any] | None:
     """Project the evidence registry through a scalar-only field allow-list."""
 
     if not isinstance(value, Mapping):
         return None
+    normalized_codes = (
+        {str(code).strip().zfill(6) for code in fund_codes if str(code).strip()}
+        if fund_codes is not None
+        else None
+    )
+
+    def include(item: Mapping[str, Any]) -> bool:
+        if normalized_codes is None:
+            return True
+        fact_id = str(item.get("fact_id") or "")
+        if not fact_id.startswith("candidates."):
+            return True
+        parts = fact_id.split(".", 2)
+        return len(parts) >= 2 and parts[1].zfill(6) in normalized_codes
+
     return {
         "schema_version": _llm_scalar(value.get("schema_version")),
         "decision_ready": _llm_scalar(value.get("decision_ready")),
@@ -368,7 +385,7 @@ def compact_data_evidence_for_llm(
                 for key in _DATA_EVIDENCE_ITEM_LLM_KEYS
             }
             for item in value.get("items") or []
-            if isinstance(item, Mapping)
+            if isinstance(item, Mapping) and include(item)
         ],
     }
 

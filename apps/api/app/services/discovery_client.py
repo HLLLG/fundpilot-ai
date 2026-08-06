@@ -38,6 +38,9 @@ from app.services.discovery_allocation_service import (
 from app.services.decision_score_shadow import attach_decision_score_shadow
 from app.services.discovery_judge import judge_parsed_discovery_report
 from app.services.discovery_offline import build_offline_discovery_report
+from app.services.discovery_recommendation_scope import (
+    ensure_recommendation_candidate_scope,
+)
 from app.services.discovery_payload import append_output_requirements_to_system, build_user_payload
 from app.services.discovery_prompt import DEFAULT_DISCOVERY_ROLE_PROMPT, resolve_discovery_role_prompt
 from app.services.discovery_prompt import build_discovery_prompt_contract
@@ -172,6 +175,35 @@ class DiscoveryClient:
             }
         )
         discovery_facts["pipeline"] = base_pipeline
+        recommendation_scope = ensure_recommendation_candidate_scope(
+            discovery_facts,
+            candidate_pool,
+        )
+        if (
+            recommendation_scope.get("policy_enforced") is True
+            and not recommendation_scope.get("ordered_eligible_fund_codes")
+        ):
+            # No model can turn a direction/fund that failed the deterministic
+            # whitelist into a valid recommendation. Skip a large, expensive
+            # prompt and persist the exact gate reasons through the rule report.
+            base_pipeline.update(
+                {
+                    "provider": "deterministic",
+                    "provider_status": "skipped_no_actionable_candidates",
+                    "attempted_model": None,
+                    "provider_attempted": False,
+                }
+            )
+            discovery_facts["pipeline"] = base_pipeline
+            return build_offline_discovery_report(
+                target_sectors=target_sectors,
+                candidate_pool=candidate_pool,
+                discovery_facts=discovery_facts,
+                profile=profile,
+                focus_sectors=focus_sectors,
+                analysis_mode=analysis_mode,
+                decision_at=decision_at,
+            )
         if not self.settings.deepseek_api_key:
             return build_offline_discovery_report(
                 target_sectors=target_sectors,

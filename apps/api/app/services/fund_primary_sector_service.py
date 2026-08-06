@@ -27,6 +27,7 @@ from app.services.fund_profile import (
     _is_valid_sector_label,
     infer_intraday_index_from_fund_name,
 )
+from app.services.fund_type_classification import has_positive_qdii_marker
 from app.services.sector_canonical import get_canonical_sector
 from app.services.sector_labels import (
     infer_sector_label_from_fund_name,
@@ -158,8 +159,11 @@ class PrimarySectorBatchContext:
 def _is_cross_market_theme_fund(fund_name: str | None) -> bool:
     if not fund_name:
         return False
-    normalized = fund_name.upper()
-    return "QDII" in normalized or "全球" in fund_name or "海外" in fund_name
+    return (
+        has_positive_qdii_marker(fund_name)
+        or "全球" in fund_name
+        or "海外" in fund_name
+    )
 
 
 def _is_passive_index_fund_name(fund_name: str | None) -> bool:

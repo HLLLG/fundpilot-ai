@@ -33,18 +33,16 @@ def assess_candidate_vehicle_quality(raw: Mapping[str, Any]) -> dict[str, Any]:
         method = "active_manager_evidence"
         threshold = ACTIVE_QUALITY_THRESHOLD
 
-    gate = row.get("quality_gate") if isinstance(row.get("quality_gate"), Mapping) else {}
-    gate_status = str(gate.get("status") or "watch_only")
     verified_sector_identity = str(row.get("sector_match_kind") or "") in {
         "tracking_exact",
         "primary",
     }
     status = "eligible"
-    if gate_status == "excluded":
-        status = "excluded"
-    elif gate_status != "eligible":
-        status = "watch_only"
-    elif passive and not verified_sector_identity:
+    # Core profile quality and vehicle quality are independent gates. Cascading
+    # a missing profile field into this status made the UI claim that both
+    # gates failed even when the vehicle scored above its own threshold. The
+    # recommendation scope already evaluates both gates separately.
+    if passive and not verified_sector_identity:
         status = "watch_only"
         penalties.append("被动基金尚未核验为目标板块的精确跟踪标的")
     elif score < threshold:

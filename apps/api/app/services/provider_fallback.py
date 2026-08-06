@@ -12,11 +12,15 @@ def apply_provider_failure_to_facts(
     failure: ProviderFailure,
     attempted_model: str,
     prompt_contract: Mapping[str, Any] | None = None,
+    execution_blocking: bool = True,
 ) -> dict[str, Any]:
-    """Mark a report as a persisted, fail-closed provider fallback.
+    """Persist sanitized provider-failure metadata.
 
-    The function mutates ``facts`` deliberately because both deterministic guard
-    layers consume that exact object before the report is persisted.
+    Daily analysis remains fail-closed by default. Discovery can opt into a
+    non-blocking provider fallback because its recommendation whitelist,
+    execution guards and amount allocation are deterministic server-side; the
+    model contributes narrative only. The function mutates ``facts`` because
+    guard layers consume that exact object before persistence.
     """
 
     pipeline = deepcopy(facts.get("pipeline")) if isinstance(facts.get("pipeline"), dict) else {}
@@ -36,23 +40,25 @@ def apply_provider_failure_to_facts(
                 "retryable": failure.retryable,
                 "status_code": failure.status_code,
             },
-            "execution_blocked": True,
+            "execution_blocked": execution_blocking,
+            "deterministic_fallback_eligible": not execution_blocking,
         }
     )
     if prompt_contract is not None:
         pipeline["prompt_contract"] = deepcopy(dict(prompt_contract))
     facts["pipeline"] = pipeline
 
-    guard = deepcopy(facts.get("data_evidence_guard")) if isinstance(
-        facts.get("data_evidence_guard"), dict
-    ) else {}
-    guard["execution_blocked"] = True
-    reasons = [str(item) for item in guard.get("global_reasons") or [] if str(item)]
-    reason = f"provider_failure:{failure.category}"
-    if reason not in reasons:
-        reasons.append(reason)
-    guard["global_reasons"] = reasons
-    facts["data_evidence_guard"] = guard
+    if execution_blocking:
+        guard = deepcopy(facts.get("data_evidence_guard")) if isinstance(
+            facts.get("data_evidence_guard"), dict
+        ) else {}
+        guard["execution_blocked"] = True
+        reasons = [str(item) for item in guard.get("global_reasons") or [] if str(item)]
+        reason = f"provider_failure:{failure.category}"
+        if reason not in reasons:
+            reasons.append(reason)
+        guard["global_reasons"] = reasons
+        facts["data_evidence_guard"] = guard
     return facts
 
 

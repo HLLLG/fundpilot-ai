@@ -12,6 +12,8 @@ from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
+from app.services.fund_type_classification import has_positive_qdii_marker
+
 
 @dataclass(frozen=True)
 class TotalReturnSeries:
@@ -253,7 +255,7 @@ def factor_input_from_points(
         valid_transitions / transition_attempts if transition_attempts else 0.0
     )
     normalized_type = str(fund_type or "").strip().lower()
-    if not normalized_type and "qdii" in str(name or "").lower():
+    if not normalized_type and has_positive_qdii_marker(name):
         normalized_type = "qdii"
     max_age = 2 if normalized_type == "qdii" else 1
     nav_age = (

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -81,6 +81,74 @@ def test_enrichment_recomputes_bounded_score_and_quality_gate(monkeypatch):
     assert item["quality_score_version"] == "fund_quality.v4"
     assert item["quality_gate"]["status"] == "eligible"
     assert item["quality_gate"]["coverage_percent"] == 100.0
+    assert "nav_quality_return_coverage" not in item
+
+
+def test_share_family_alternative_is_enriched_before_final_selection(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.discovery_candidate_pool.FundDataService._snapshot_and_trend_for_holding",
+        lambda *_args, **_kwargs: (_snapshot(), None),
+    )
+    monkeypatch.setattr(
+        "app.services.discovery_candidate_pool.fetch_fund_research_profiles_cached",
+        lambda _codes: {
+            "013596": {
+                "fund_code": "013596",
+                "fund_scale_yi": 3.5,
+                "fund_category": "股票型",
+                "fund_manager": "测试经理",
+                "established_date": "2021-09-13",
+                "profile_status": "complete",
+                "benchmark_text": "中证煤炭等权指数收益率×95%+银行活期存款利率×5%",
+                "benchmark_text_kind": "performance_benchmark",
+            },
+            "016347": {
+                "fund_code": "016347",
+                "fund_scale_yi": 2.0,
+                "fund_category": "股票型",
+                "fund_manager": "测试经理",
+                "established_date": "2022-10-27",
+                "profile_status": "complete",
+            },
+        },
+    )
+    base = {
+        "sector_label": "煤炭",
+        "return_3m_percent": -7.0,
+        "return_6m_percent": 4.0,
+        "return_1y_percent": 15.0,
+        "max_drawdown_1y_percent": -25.0,
+        "fund_scale_yi": 2.0,
+    }
+    pool = [
+        {
+            **base,
+            "fund_code": "016347",
+            "fund_name": "招商中证煤炭等权指数(LOF)E",
+            "opportunity_score_20_60d": 100.0,
+            "_share_family_alternatives": [
+                {
+                    **base,
+                    "fund_code": "013596",
+                    "fund_name": "招商中证煤炭等权指数(LOF)C",
+                    "opportunity_score_20_60d": 1.0,
+                }
+            ],
+        }
+    ]
+
+    enriched = enrich_candidates(pool, decision_at=_DECISION_AT)
+    result = finalize_candidate_pool(
+        enriched,
+        ["煤炭"],
+        per_sector=3,
+        pool_cap=3,
+        discovery_strategy="opportunity_first",
+    )
+
+    assert {item["fund_code"] for item in enriched} == {"013596", "016347"}
+    assert [item["fund_code"] for item in result] == ["013596"]
+    assert result[0]["share_family"]["member_codes"] == ["013596", "016347"]
 
 
 def test_opportunity_first_keeps_high_drawdown_candidate_eligible():
@@ -170,13 +238,17 @@ def test_opportunity_quality_does_not_penalize_high_one_year_return():
 def test_enrichment_derives_drawdown_from_fetched_nav_when_diagnostics_is_missing(
     monkeypatch,
 ):
+    first_day = date(2025, 11, 4)
     trend = FundNavHistory(
         fund_code="020356",
         fund_name="test",
         source="akshare",
         points=[
-            FundNavPoint(date=f"2026-01-{index:03d}", nav=nav)
-            for index, nav in enumerate([100.0] * 251 + [80.0], start=1)
+            FundNavPoint(
+                date=(first_day + timedelta(days=index)).isoformat(),
+                nav=nav,
+            )
+            for index, nav in enumerate([100.0] * 251 + [80.0])
         ],
     )
     monkeypatch.setattr(
@@ -211,6 +283,88 @@ def test_enrichment_derives_drawdown_from_fetched_nav_when_diagnostics_is_missin
 
     assert item["max_drawdown_1y_percent"] == -20.0
     assert "max_drawdown_1y_percent" not in item["quality_gate"]["missing_fields"]
+
+
+def test_enrichment_backfills_all_quality_windows_from_complete_nav_history(
+    monkeypatch,
+):
+    first_day = date(2025, 11, 4)
+    points = []
+    nav = 1.0
+    for index in range(252):
+        if index:
+            nav *= 1.001
+        points.append(
+            FundNavPoint(
+                date=(first_day + timedelta(days=index)).isoformat(),
+                nav=nav,
+                daily_return_percent=0.1,
+            )
+        )
+    trend = FundNavHistory(
+        fund_code="000930",
+        fund_name="test",
+        source="akshare",
+        points=points,
+    )
+    snapshot = SimpleNamespace(
+        return_1y_percent=999.0,
+        max_drawdown_1y_percent=-99.0,
+        fund_scale_yi=None,
+        management_fee="0.50%",
+        fund_type="商品型-非QDII",
+        latest_nav=nav,
+        nav_date="2026-07-13",
+    )
+    monkeypatch.setattr(
+        "app.services.discovery_candidate_pool.FundDataService._snapshot_and_trend_for_holding",
+        lambda *_args, **_kwargs: (snapshot, trend),
+    )
+    monkeypatch.setattr(
+        "app.services.discovery_candidate_pool.fetch_fund_research_profiles_cached",
+        lambda _codes: {
+            "000930": {
+                "fund_code": "000930",
+                "fund_scale_yi": 5.07,
+                "fund_manager": "测试经理",
+                "established_date": "2014-12-18",
+                "profile_status": "complete",
+            }
+        },
+    )
+
+    item = enrich_candidates(
+        [
+            {
+                "fund_code": "000930",
+                "fund_name": "测试黄金I",
+                "sector_label": "黄金",
+                "sector_match_kind": "primary",
+            }
+        ],
+        decision_at=_DECISION_AT,
+        discovery_strategy="opportunity_first",
+    )[0]
+
+    assert item["return_3m_percent"] == pytest.approx(
+        ((1.001**60) - 1) * 100,
+        abs=1e-4,
+    )
+    assert item["return_6m_percent"] == pytest.approx(
+        ((1.001**120) - 1) * 100,
+        abs=1e-4,
+    )
+    assert item["return_1y_percent"] == pytest.approx(
+        ((1.001**250) - 1) * 100,
+        abs=1e-4,
+    )
+    assert item["return_1y_percent"] != 999.0
+    assert item["max_drawdown_1y_percent"] == 0.0
+    assert item["quality_gate"]["status"] == "eligible"
+    assert item["quality_gate"]["coverage_percent"] == 100.0
+    assert item["return_3m_percent_source"] == "akshare_total_return"
+    assert item["return_3m_percent_as_of"] == "2026-07-13"
+    assert item["nav_quality_return_coverage"] == 1.0
 
 
 def test_enrichment_converts_xq_shares_with_latest_nav_instead_of_treating_as_aum(
@@ -578,6 +732,32 @@ def test_final_candidate_pool_does_not_compare_sales_platform_costs() -> None:
     )
     assert "comparison_amount_yuan" not in family
     assert "member_cost_upper_bound_percent" not in family
+
+
+def test_final_candidate_pool_collapses_e_share_class_with_a_family() -> None:
+    pool = [
+        {
+            "fund_code": "008279",
+            "fund_name": "国泰中证煤炭ETF联接A",
+            "fund_type": "股票型",
+            "sector_label": "煤炭",
+            "fund_quality_score": 90,
+            "quality_gate": {"status": "eligible"},
+        },
+        {
+            "fund_code": "022501",
+            "fund_name": "国泰中证煤炭ETF联接E",
+            "fund_type": "股票型",
+            "sector_label": "煤炭",
+            "fund_quality_score": 88,
+            "quality_gate": {"status": "eligible"},
+        },
+    ]
+
+    result = finalize_candidate_pool(pool, ["煤炭"], per_sector=3, pool_cap=3)
+
+    assert [item["fund_code"] for item in result] == ["008279"]
+    assert result[0]["share_family"]["member_codes"] == ["008279", "022501"]
 
 
 def test_guard_removes_excluded_candidate_and_clears_non_buy_amounts():

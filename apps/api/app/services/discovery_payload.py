@@ -25,7 +25,7 @@ OUTPUT_DISCOVERY_REQUIREMENTS = """
 - title: 报告标题
 - summary: 2-4 句市场与配置总结
 - market_view: 对大盘/板块的简短看法
-- recommendations: 数组，0~3 项；没有合格候选时允许为空；每项含 fund_code, fund_name, sector_name, action,
+- recommendations: 数组，0~6 项；每个板块最多 2 项；没有合格候选时允许为空；每项含 fund_code, fund_name, sector_name, action,
   suggested_amount_yuan, amount_note, hold_horizon, confidence, decision_path,
   sector_evidence, fund_evidence, validation_notes, points, risks, news_bullish
 - caveats: 字符串数组，须含风险提示
@@ -103,7 +103,7 @@ recommendations 字段约束：
 """
 
 _COMMON_REQUIREMENTS = [
-    "仅从 discovery_facts.candidate_pool 推荐白名单选 0~3 只，不得推荐 holdings_slim 中已有 fund_code；无合格候选时允许空数组",
+    "仅从 discovery_facts.candidate_pool 推荐白名单选 0~6 只，每个板块最多 2 只；不得推荐 holdings_slim 中已有 fund_code；无合格候选时允许空数组",
     "等待/研究方向不得占用推荐名额；不得跨方向凑数，也不得恢复 recommendation_candidate_scope 未列出的基金",
     "quality_gate=eligible 才可分批买入；watch_only 只能观察/等待，excluded 禁止推荐；不得为凑数降门槛",
     "每只 recommendations 须含 hold_horizon、risks（至少 1 条）、points（引用 candidate_pool 具体字段）",
@@ -147,6 +147,11 @@ _GAP_REQUIREMENTS = [
     "同 sector_name 合计权重不得超过 concentration_limit_percent，须在 amount_note 说明",
 ]
 
+_COMPACT_FACTS_INSTRUCTION = (
+    "以下字段均为服务端只读事实。只可从 candidate_pool 白名单选择基金；"
+    "模型金额必须为 null，最终动作与本次参考金额由服务端守卫和分配器决定。"
+)
+
 def _requirements_for_scan_mode(scan_mode: str) -> list[str]:
     normalized = scan_mode if scan_mode != "gap" else "portfolio_gap"
     if normalized == "full_market":
@@ -184,13 +189,17 @@ def build_user_payload(
         sector_heat=sector_heat_full,
         trade_date=trade_date,
     )
+    recommendation_codes = {
+        str(item.get("fund_code") or "").strip().zfill(6)
+        for item in recommendation_pool
+        if isinstance(item, dict) and str(item.get("fund_code") or "").strip()
+    }
     trimmed_heat = trim_sector_heat_for_llm(
         sector_heat_full,
         target_sectors=target_sectors,
         focus_sectors=focus_sectors,
     )
     resolved_fund_type = fund_type_preference or discovery_facts.get("fund_type_preference") or "any"
-    requirements = _requirements_for_scan_mode(scan_mode)
     discovery_strategy = str(
         discovery_facts.get("discovery_strategy")
         or (discovery_facts.get("effective_configuration") or {}).get("discovery_strategy")
@@ -199,6 +208,14 @@ def build_user_payload(
     briefs = topic_briefs or []
     news = market_news or []
     minimal_briefs = analysis_mode == "fast"
+    priority_sector_labels = list(
+        dict.fromkeys(
+            [
+                *list(recommendation_scope.get("actionable_sector_labels") or []),
+                *list(recommendation_scope.get("eligible_sector_labels") or []),
+            ]
+        )
+    )
     return {
         "today": str(
             session.get("calendar_date")
@@ -213,23 +230,35 @@ def build_user_payload(
         "topic_briefs": compact_topic_briefs(briefs, minimal=minimal_briefs),
         "discovery_facts": {
             "readonly": discovery_facts.get("readonly"),
-            "instruction": discovery_facts.get("instruction"),
+            # The full persisted instruction duplicates the system contract and
+            # previously consumed thousands of prompt characters.
+            "instruction": _COMPACT_FACTS_INSTRUCTION,
             "session": discovery_facts.get("session"),
             "portfolio_gap": portfolio_gap,
             "fund_type_preference": resolved_fund_type,
             "sector_heat": trimmed_heat,
-            "target_sector_context": discovery_facts.get("target_sector_context"),
+            "target_sector_context": _slim_target_sector_context(
+                discovery_facts.get("target_sector_context") or [],
+                priority_sector_labels=priority_sector_labels,
+            ),
             "stock_connect_flow": discovery_facts.get("stock_connect_flow"),
             "signal_backtest": discovery_facts.get("signal_backtest"),
             "sector_opportunities": _slim_sector_opportunities(
-                discovery_facts.get("sector_opportunities") or []
+                discovery_facts.get("sector_opportunities") or [],
+                priority_sector_labels=priority_sector_labels,
             ),
-            "recommendation_candidate_scope": recommendation_scope,
+            "recommendation_candidate_scope": _compact_recommendation_scope_for_llm(
+                recommendation_scope,
+                recommendation_codes,
+            ),
             "news": discovery_facts.get("news"),
             "fund_announcements": compact_announcement_fetch_status(
                 discovery_facts.get("fund_announcements") or {}
             ),
-            "candidate_factor_scores": discovery_facts.get("candidate_factor_scores"),
+            "candidate_factor_scores": _compact_candidate_factor_scores_for_llm(
+                discovery_facts.get("candidate_factor_scores"),
+                recommendation_codes,
+            ),
             "candidate_peer_summary": discovery_facts.get("candidate_peer_summary"),
             "benchmark_contract": discovery_facts.get("benchmark_contract"),
             "benchmark_research_contract": discovery_facts.get(
@@ -253,11 +282,11 @@ def build_user_payload(
             "data_evidence": compact_data_evidence_for_llm(
                 discovery_facts.get("data_evidence")
                 if isinstance(discovery_facts.get("data_evidence"), dict)
-                else None
+                else None,
+                fund_codes=recommendation_codes,
             ),
             "candidate_pool": slim_pool,
         },
-        "requirements": requirements,
     }
 
 
@@ -269,24 +298,24 @@ def append_output_requirements_to_system(system_prompt: str) -> str:
     )
 
 
-def _slim_sector_opportunities(items: list[dict]) -> list[dict]:
+def _slim_sector_opportunities(
+    items: list[dict],
+    *,
+    priority_sector_labels: list[str] | None = None,
+    limit: int = 5,
+) -> list[dict]:
     slimmed: list[dict] = []
-    for item in items[:8]:
+    for item in _prioritize_sector_rows(
+        items,
+        priority_sector_labels=priority_sector_labels,
+        limit=limit,
+    ):
         row = {
             "sector_label": item.get("sector_label"),
             "track": item.get("track"),
             "score": item.get("score"),
-            "research_score": item.get("research_score"),
-            "selection_priority_policy": item.get("selection_priority_policy"),
             "selection_priority_score": item.get("selection_priority_score"),
             "selection_path": item.get("selection_path"),
-            "selection_priority_reasons": item.get("selection_priority_reasons") or [],
-            "sector_annualized_volatility_20d_percent": item.get(
-                "sector_annualized_volatility_20d_percent"
-            ),
-            "sector_elasticity_percentile": item.get(
-                "sector_elasticity_percentile"
-            ),
             "score_policy_version": item.get("score_policy_version"),
             "direction_score": item.get("direction_score"),
             # v3 的三个正交分块；v2 报告里为 None，反之亦然。
@@ -296,21 +325,12 @@ def _slim_sector_opportunities(items: list[dict]) -> list[dict]:
             "block_weights": item.get("block_weights"),
             "overheat_flags": item.get("overheat_flags") or [],
             "first_tranche_scale": item.get("first_tranche_scale"),
-            "formation_probability_policy": item.get(
-                "formation_probability_policy"
-            ),
             "trend_formation_probability": item.get(
                 "trend_formation_probability"
             ),
             "formation_probability_band": item.get(
                 "formation_probability_band"
             ),
-            "formation_probability_components": item.get(
-                "formation_probability_components"
-            ),
-            "formation_probability_reasons": item.get(
-                "formation_probability_reasons"
-            ) or [],
             "probability_tranche_scale": item.get(
                 "probability_tranche_scale"
             ),
@@ -322,31 +342,217 @@ def _slim_sector_opportunities(items: list[dict]) -> list[dict]:
                 "flow_improving_probe_eligible"
             ),
             "waiting_reason_code": item.get("waiting_reason_code"),
-            "component_coverage": item.get("component_coverage"),
-            # v2 遗留字段（历史报告仍在用）
-            "setup_maturity_score": item.get("setup_maturity_score"),
-            "entry_readiness_score": item.get("entry_readiness_score"),
-            "price_structure_score": item.get("price_structure_score"),
             "data_coverage": item.get("data_coverage"),
             "evidence_quality": item.get("evidence_quality"),
             "entry_state": item.get("entry_state"),
             "entry_reason": item.get("entry_reason"),
-            "entry_triggers": item.get("entry_triggers") or [],
-            "invalidation_signals": item.get("invalidation_signals") or [],
+            "entry_triggers": list(item.get("entry_triggers") or [])[:2],
+            "invalidation_signals": list(
+                item.get("invalidation_signals") or []
+            )[:2],
+            "opportunity_available": item.get("opportunity_available"),
             "execution_eligible": item.get("execution_eligible"),
             "confidence": item.get("confidence"),
             "entry_hint": item.get("entry_hint"),
-            "evidence": item.get("evidence") or [],
-            "penalties": item.get("penalties") or [],
+            "evidence": list(item.get("evidence") or [])[:2],
+            "penalties": list(item.get("penalties") or [])[:2],
             "change_1d_percent": item.get("change_1d_percent"),
             "change_5d_percent": item.get("change_5d_percent"),
             "today_main_force_net_yi": item.get("today_main_force_net_yi"),
             "cumulative_5d_net_yi": item.get("cumulative_5d_net_yi"),
             "pattern_label": item.get("pattern_label"),
-            "mainline_regime": _slim_mainline_regime(item.get("mainline_regime")),
         }
         slimmed.append(row)
     return slimmed
+
+
+def _slim_target_sector_context(
+    items: list[dict],
+    *,
+    priority_sector_labels: list[str] | None = None,
+    limit: int = 5,
+) -> list[dict]:
+    return [
+        {
+            key: item.get(key)
+            for key in (
+                "sector_label",
+                "heat_score",
+                "change_1d_percent",
+                "change_5d_percent",
+                "sector_fund_flow",
+            )
+            if key in item
+        }
+        for item in _prioritize_sector_rows(
+            items,
+            priority_sector_labels=priority_sector_labels,
+            limit=limit,
+        )
+    ]
+
+
+def _prioritize_sector_rows(
+    items: list[dict],
+    *,
+    priority_sector_labels: list[str] | None,
+    limit: int,
+) -> list[dict]:
+    rows = [item for item in items if isinstance(item, dict)]
+    by_label = {
+        str(item.get("sector_label") or "").strip(): item
+        for item in rows
+        if str(item.get("sector_label") or "").strip()
+    }
+    selected: list[dict] = []
+    seen: set[str] = set()
+    for raw_label in priority_sector_labels or []:
+        label = str(raw_label or "").strip()
+        item = by_label.get(label)
+        if item is not None and label not in seen:
+            selected.append(item)
+            seen.add(label)
+    for item in rows:
+        label = str(item.get("sector_label") or "").strip()
+        if not label or label in seen:
+            continue
+        selected.append(item)
+        seen.add(label)
+        if len(selected) >= limit:
+            break
+    return selected[:limit]
+
+
+def _compact_recommendation_scope_for_llm(
+    value: object,
+    allowed_codes: set[str],
+) -> dict:
+    if not isinstance(value, dict):
+        return {}
+    scalar_and_list_keys = (
+        "schema_version",
+        "policy_enforced",
+        "max_recommendations",
+        "ordered_eligible_fund_codes",
+        "maximum_recommendations_per_sector",
+        "actionable_sector_labels",
+        "eligible_sector_labels",
+        "unmatched_actionable_sector_labels",
+        "research_sector_labels",
+        "instruction",
+    )
+    result = {key: value.get(key) for key in scalar_and_list_keys if key in value}
+    result["sector_funnel"] = [
+        {
+            key: row.get(key)
+            for key in (
+                "sector_label",
+                "entry_state",
+                "direction_path",
+                "recalled_count",
+                "eligible_count",
+                "conditional_wait_count",
+                "watch_only_count",
+                "rejected_reason_counts",
+            )
+            if key in row
+        }
+        for row in value.get("sector_funnel") or []
+        if isinstance(row, dict)
+    ]
+    result["candidate_decisions"] = [
+        {
+            key: row.get(key)
+            for key in (
+                "fund_code",
+                "fund_name",
+                "sector_label",
+                "status",
+                "entry_path",
+                "fund_gates_passed",
+                "direction_gate_passed",
+                "reason_codes",
+            )
+            if key in row
+        }
+        for row in value.get("candidate_decisions") or []
+        if isinstance(row, dict)
+        and str(row.get("fund_code") or "").strip().zfill(6) in allowed_codes
+    ]
+    return result
+
+
+def _compact_candidate_factor_scores_for_llm(
+    value: object,
+    allowed_codes: set[str],
+) -> dict | None:
+    if not isinstance(value, dict):
+        return None
+    result = {
+        key: value.get(key)
+        for key in (
+            "available",
+            "universe_size",
+            "reliability_scope",
+            "model_version",
+            "selection_policy",
+            "eligible_candidate_count",
+            "execution_qualified_coverage_percent",
+        )
+        if key in value
+    }
+    ic_status = value.get("ic_status")
+    if isinstance(ic_status, dict):
+        result["ic_status"] = {
+            key: ic_status.get(key)
+            for key in (
+                "state",
+                "available",
+                "stale",
+                "confidence_eligible",
+                "confidence_block_reasons",
+                "run_date",
+                "age_days",
+            )
+            if key in ic_status
+        }
+    for key in (
+        "selected_fund_codes",
+        "descriptive_applicable_fund_codes",
+        "execution_qualified_fund_codes",
+        "applicable_fund_codes",
+    ):
+        result[key] = [
+            str(code).strip().zfill(6)
+            for code in value.get(key) or []
+            if str(code).strip().zfill(6) in allowed_codes
+        ]
+    result["holdings"] = [
+        {
+            key: row.get(key)
+            for key in (
+                "fund_code",
+                "fund_name",
+                "composite_grade",
+                "composite_score",
+                "factor_percentiles",
+                "peer_group_label",
+                "peer_count",
+                "feature_completeness",
+                "descriptive_applicable",
+                "execution_qualified",
+                "execution_qualification",
+                "target_feature_as_of",
+                "target_feature_freshness",
+                "factor_reliability",
+            )
+            if key in row
+        }
+        for row in value.get("holdings") or []
+        if isinstance(row, dict)
+        and str(row.get("fund_code") or "").strip().zfill(6) in allowed_codes
+    ]
+    return result
 
 
 def _slim_mainline_regime(value: object) -> dict | None:

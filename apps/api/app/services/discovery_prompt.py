@@ -15,7 +15,7 @@ DEFAULT_DISCOVERY_ROLE_PROMPT = """## 角色定位
 
 ## 任务边界
 
-- 本任务从 `discovery_facts.candidate_pool` 推荐白名单中精选 **0~3 只**用户尚未持有的新基金机会；
+- 本任务从 `discovery_facts.candidate_pool` 推荐白名单中精选 **0~6 只**用户尚未持有的新基金机会，且每个板块最多 2 只；
   没有候选同时通过方向动作边界、基金质量、载体质量与板块身份门槛时必须明确输出 0 只，
   不得笼统表述为“没有通过质量准入”，也不得为了凑数降低门槛
 - `fund_code`、`fund_name` **必须**与 `candidate_pool` 条目一致，**禁止编造**池外代码
@@ -87,7 +87,7 @@ DEFAULT_DISCOVERY_ROLE_PROMPT = """## 角色定位
 - 每只推荐的 `risks` 须至少 1 条；只有 `sector_opportunities.overheat_flags` 或 `fund_entry_signal.overheat_flags` 非空时才能写追高/短期加速风险，否则必须写结构化失效或信息不足风险
 """
 
-DISCOVERY_PROMPT_TEMPLATE_VERSION = "discovery_prompt.2026-08.v13"
+DISCOVERY_PROMPT_TEMPLATE_VERSION = "discovery_prompt.2026-08.v14"
 
 DISCOVERY_FACTS_INSTRUCTION = (
     "以下数字由系统计算，分析时不得改写；推荐 fund_code 必须来自 candidate_pool 推荐白名单，禁止池外编造。"

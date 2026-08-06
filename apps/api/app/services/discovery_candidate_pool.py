@@ -26,6 +26,7 @@ from app.services.fund_discovery_data_cache import (
     fetch_discovery_fund_universe_cached,
     fetch_fund_research_profiles_cached,
 )
+from app.services.fund_name_utils import extract_share_class_letter
 from app.services.fund_rank_cache import fetch_open_fund_rank_cached
 from app.services.fund_peer_ranking import (
     build_fund_peer_group,
@@ -33,6 +34,7 @@ from app.services.fund_peer_ranking import (
     resolve_benchmark_comparison,
 )
 from app.services.fund_sector_identity import is_current_identity_row_fresh
+from app.services.fund_type_classification import has_positive_qdii_marker
 from app.services.fund_vehicle_quality import assess_candidate_vehicle_quality
 from app.services.news_freshness import normalize_news_now
 from app.services.sector_canonical import get_canonical_sector
@@ -262,8 +264,15 @@ def build_candidate_pool(
             source_universe_size=len(rank_rows),
             source_universe_mode=universe_mode,
         )
+    peer_research_rows = list(selected)
+    for candidate in selected:
+        alternatives = candidate.get("_share_family_alternatives")
+        if isinstance(alternatives, list):
+            peer_research_rows.extend(
+                item for item in alternatives if isinstance(item, dict)
+            )
     _attach_descriptive_peer_research(
-        selected,
+        peer_research_rows,
         universe=rank_rows,
         decision_at=decision_at,
     )
@@ -458,7 +467,7 @@ def _peer_catalogue_bucket(row: dict) -> str:
     fund_type = str(row.get("fund_type") or row.get("fund_category") or "")
     name = str(row.get("fund_name") or "")
     text = f"{fund_type} {name}".strip().casefold()
-    if "qdii" in text:
+    if has_positive_qdii_marker(text):
         return "qdii"
     if "fof" in text or "基金中基金" in text:
         return "fof"
@@ -514,16 +523,43 @@ def enrich_candidates(
     stop_event: threading.Event | None = None,
 ) -> list[dict]:
     raise_if_stream_cancelled(stop_event)
-    decision_date = normalize_news_now(decision_at).date()
+    decision_moment = normalize_news_now(decision_at)
+    decision_date = decision_moment.date()
     service = FundDataService()
     # “发现基金”只负责研究与推荐，销售平台是否可申购由用户在下单端确认。
     # 不再扩展 A/C 份额并逐份额抓取交易状态，既避免平台可买性误伤机会，
     # 也把最重的一组网络请求从报告生成链路中移除。
-    research_pool = []
+    research_pool: list[dict] = []
+    research_codes: set[str] = set()
     for item in pool:
-        row = dict(item)
-        row.pop("_share_family_alternatives", None)
-        research_pool.append(row)
+        alternatives = item.get("_share_family_alternatives")
+        family_rows = [item]
+        if isinstance(alternatives, list):
+            family_rows.extend(
+                alternative
+                for alternative in alternatives
+                if isinstance(alternative, dict)
+            )
+        for family_row in family_rows:
+            row = dict(family_row)
+            row.pop("_share_family_alternatives", None)
+            for key in (
+                "sector_label",
+                "candidate_universe_mode",
+                "candidate_universe_size",
+                "candidate_universe_source",
+                "candidate_universe_available_at",
+                "opportunity_track",
+                "opportunity_score",
+                "entry_hint",
+            ):
+                if row.get(key) is None and item.get(key) is not None:
+                    row[key] = item[key]
+            code = str(row.get("fund_code") or "").zfill(6)
+            if code in research_codes:
+                continue
+            research_pool.append(row)
+            research_codes.add(code)
     codes = [str(item.get("fund_code") or "").zfill(6) for item in research_pool]
 
     support_executor = get_discovery_context_executor()
@@ -535,19 +571,28 @@ def enrich_candidates(
         holding = Holding(fund_code=code, fund_name=name, holding_amount=0)
         snapshot, trend = service._snapshot_and_trend_for_holding(holding, trading_days=252)
         row = dict(item)
+        row["fund_type"] = _first_present(snapshot.fund_type, row.get("fund_type"))
+        nav_metrics = _quality_metrics_from_nav_history(
+            trend,
+            fund_code=code,
+            fund_name=name,
+            fund_type=row.get("fund_type"),
+            effective_trade_date=decision_date.isoformat(),
+            observed_at=decision_moment.isoformat(),
+        )
+        _apply_nav_quality_metric_fallbacks(row, nav_metrics)
         row["return_1y_percent"] = _first_present(
-            row.get("return_1y_percent"), snapshot.return_1y_percent
+            row.get("return_1y_percent"),
+            snapshot.return_1y_percent,
         )
         row["max_drawdown_1y_percent"] = _first_valid_drawdown(
             row.get("max_drawdown_1y_percent"),
             snapshot.max_drawdown_1y_percent,
-            _max_drawdown_from_nav_history(trend),
         )
         row["fund_scale_yi"] = _first_present(
             row.get("fund_scale_yi"), snapshot.fund_scale_yi
         )
         row["management_fee"] = snapshot.management_fee
-        row["fund_type"] = _first_present(snapshot.fund_type, row.get("fund_type"))
         row["latest_nav"] = _first_present(snapshot.latest_nav, row.get("latest_nav"))
         row["nav_date"] = _first_present(snapshot.nav_date, row.get("nav_date"))
         if trend is not None and getattr(trend, "points", None):
@@ -558,8 +603,8 @@ def enrich_candidates(
             )
         return row
 
-    # 候选池最多 28 只，逐只 AkShare 拉取是冷缓存下荐基管线最大耗时来源；
-    # 并发执行（IO 密集，_snapshot_and_trend_for_holding 内部已兜底异常）保序返回。
+    # 主候选最多 28 只，并额外保留少量同基金份额备选；全部补齐净值、基准身份和载体质量后，
+    # 再选择最终家族代表，避免粗排先留下资料不足的份额。并发执行保持输入顺序。
     try:
         enriched = _map_holdings_concurrently(
             research_pool,
@@ -677,6 +722,7 @@ def finalize_candidate_pool(
     acceptable.sort(
         key=lambda item: (
             _quality_gate_rank(item),
+            _vehicle_quality_gate_rank(item),
             *(
                 (_opportunity_rank_value(item),)
                 if discovery_strategy == "opportunity_first"
@@ -1013,6 +1059,7 @@ def _select_representative_share_classes(
         members.sort(
             key=lambda item: (
                 -_quality_gate_rank(item),
+                -_vehicle_quality_gate_rank(item),
                 -(
                     _opportunity_rank_value(item)
                     if discovery_strategy == "opportunity_first"
@@ -1242,7 +1289,7 @@ def _candidates_for_sector(
                 if str(other.get("fund_code") or "").zfill(6) != code
                 and _family_key(str(other.get("fund_name") or "")) == family
                 and str(other.get("fund_code") or "").zfill(6) not in seen_codes
-            ][:1]
+            ][:2]
             if alternatives:
                 selected_entry["_share_family_alternatives"] = alternatives
                 for alternative in alternatives:
@@ -1713,6 +1760,13 @@ def _quality_gate_rank(item: dict) -> int:
     )
 
 
+def _vehicle_quality_gate_rank(item: dict) -> int:
+    return {"eligible": 2, "watch_only": 1, "excluded": 0}.get(
+        str(item.get("vehicle_quality_status") or "watch_only"),
+        1,
+    )
+
+
 def _first_present(*values: object) -> object | None:
     for value in values:
         if value is not None:
@@ -1735,27 +1789,88 @@ def _first_valid_drawdown(*values: object) -> float | None:
     return None
 
 
-def _max_drawdown_from_nav_history(history: object | None) -> float | None:
-    """Derive the one-year drawdown from the already-fetched NAV series.
+def _quality_metrics_from_nav_history(
+    history: object | None,
+    *,
+    fund_code: str,
+    fund_name: str,
+    fund_type: object,
+    effective_trade_date: str,
+    observed_at: str,
+) -> dict[str, object]:
+    """Derive one internally consistent quality snapshot from fetched NAV.
 
-    Candidate enrichment always requests up to 252 trading days.  The separate
-    diagnostics endpoint can fail during a cold-start burst even when that NAV
-    series is complete, so treating the drawdown as missing in that case loses
-    evidence that is already present in the same request.
+    The Eastmoney rank snapshot does not cover every catalogue member (for
+    example, some I share classes). Candidate enrichment already fetches 252
+    NAV observations for every shortlisted fund, so use that same evidence as
+    a fail-closed fallback for all return windows and drawdown. Daily return is
+    preferred over raw NAV ratios by ``factor_input_from_points`` to survive
+    splits/distributions without mixing incompatible provider metrics.
     """
 
-    points = list(getattr(history, "points", None) or [])[-252:]
-    if len(points) < 2:
-        return None
-    peak: float | None = None
-    max_drawdown = 0.0
-    for point in points:
-        nav = _num(getattr(point, "nav", None))
-        if nav is None or nav <= 0:
-            return None
-        peak = nav if peak is None else max(peak, nav)
-        max_drawdown = min(max_drawdown, (nav / peak - 1.0) * 100.0)
-    return round(max_drawdown, 2)
+    points = list(getattr(history, "points", None) or [])
+    if len(points) < 252:
+        return {}
+
+    from app.services.fund_factor_nav import factor_input_from_points
+
+    source = str(getattr(history, "source", None) or "fund_nav_history")
+    factor = factor_input_from_points(
+        fund_code,
+        fund_name,
+        points,
+        require_complete=True,
+        minimum_points=252,
+        effective_trade_date=effective_trade_date,
+        fund_type=str(fund_type or ""),
+        observed_at=observed_at,
+        source=f"{source}_total_return",
+    )
+    if factor.feature_freshness != "fresh":
+        return {}
+
+    return {
+        "return_3m_percent": factor.return_3m_percent,
+        "return_6m_percent": factor.return_6m_percent,
+        "return_1y_percent": factor.return_1y_percent,
+        "max_drawdown_1y_percent": factor.max_drawdown_1y_percent,
+        "feature_as_of": factor.feature_as_of,
+        "feature_observed_at": factor.feature_observed_at,
+        "feature_source": factor.feature_source,
+        "return_coverage": factor.return_coverage,
+    }
+
+
+def _apply_nav_quality_metric_fallbacks(
+    row: dict,
+    metrics: Mapping[str, object],
+) -> None:
+    applied = False
+    for field in (
+        "return_3m_percent",
+        "return_6m_percent",
+        "return_1y_percent",
+        "max_drawdown_1y_percent",
+    ):
+        current = (
+            _valid_drawdown(row.get(field))
+            if field == "max_drawdown_1y_percent"
+            else _num(row.get(field))
+        )
+        fallback = (
+            _valid_drawdown(metrics.get(field))
+            if field == "max_drawdown_1y_percent"
+            else _num(metrics.get(field))
+        )
+        if current is not None or fallback is None:
+            continue
+        row[field] = round(fallback, 4)
+        row[f"{field}_source"] = metrics.get("feature_source")
+        row[f"{field}_available_at"] = metrics.get("feature_observed_at")
+        row[f"{field}_as_of"] = metrics.get("feature_as_of")
+        applied = True
+    if applied:
+        row["nav_quality_return_coverage"] = metrics.get("return_coverage")
 
 
 def _parse_iso_date(value: object) -> date | None:
@@ -1819,8 +1934,8 @@ def _with_exact_passive_tracking_match(row: dict) -> dict:
         return result
 
     target = get_canonical_sector(str(result.get("sector_label") or ""))
-    target_code = str(getattr(target, "source_code", None) or "").strip().upper()
-    if not target_code:
+    target_label = str(getattr(target, "label", None) or "").strip()
+    if not target_label:
         return result
 
     references = [
@@ -1832,7 +1947,12 @@ def _with_exact_passive_tracking_match(row: dict) -> dict:
         if resolved is None:
             continue
         resolved_sector, _intraday_name, match = resolved
-        if str(match.index_code or "").strip().upper() != target_code:
+        # The market quote proxy and the fund's tracked index need not share a
+        # code. Coal, for example, is quoted with BK0437 while valid products
+        # track 399998 or 399990. The resolver has already allow-listed the
+        # exact index and mapped it to a canonical sector, so compare that
+        # canonical identity while still keeping 黄金 and 黄金股 distinct.
+        if resolved_sector != target_label:
             continue
         result["sector_match_kind"] = "tracking_exact"
         result = annotate_candidate_sector_identity(result)
@@ -1954,6 +2074,7 @@ def _with_opportunity(entry: dict, opportunity: dict | None) -> dict:
 
 def _family_key(name: str) -> str:
     text = name.strip()
+    share_class = extract_share_class_letter(text)
     replacements = (
         ("ETF联接", ""),
         ("ETF链接", ""),
@@ -1963,6 +2084,8 @@ def _family_key(name: str) -> str:
     )
     for old, new in replacements:
         text = text.replace(old, new)
+    if share_class and text.upper().endswith(share_class):
+        text = text[:-1]
     for suffix in ("A类", "C类", "A", "C"):
         if text.endswith(suffix):
             text = text[: -len(suffix)]

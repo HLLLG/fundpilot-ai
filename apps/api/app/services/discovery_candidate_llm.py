@@ -318,6 +318,7 @@ def _compact_peer_research(item: dict) -> dict:
         "schema_version": peer_rank.get("schema_version"),
         "status": peer_rank.get("status"),
         "execution_tilt_eligible": peer_rank.get("execution_tilt_eligible") is True,
+        "reason": peer_rank.get("reason"),
         "group_key": peer_group.get("group_key"),
         "group_label": peer_group.get("group_label"),
         "classification_confidence": peer_group.get("classification_confidence"),

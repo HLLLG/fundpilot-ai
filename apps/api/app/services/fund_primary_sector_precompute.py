@@ -40,6 +40,7 @@ from app.services.fund_sector_identity import (
     FUND_SECTOR_IDENTITY_VERSION,
     is_current_identity_row_executable,
 )
+from app.services.fund_type_classification import has_positive_qdii_marker
 
 logger = logging.getLogger(__name__)
 
@@ -724,7 +725,7 @@ def _profile_sector_resolution(
     ).strip()
     semantic = infer_semantic_sector_from_fund_name(fund_name) if fund_name else None
     semantic_hint = bool(semantic is not None and semantic.source == "semantic_name")
-    qdii_category = "QDII" in category.upper()
+    qdii_category = has_positive_qdii_marker(category)
     passive_category = any(
         marker in category for marker in ("标准指数", "被动指数")
     )

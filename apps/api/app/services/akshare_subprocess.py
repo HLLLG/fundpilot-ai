@@ -1277,7 +1277,8 @@ def request_with_retry(url, *, params=None, timeout=(5, 25), attempts=3):
 def normalize_fund_type(value):
     raw = str(value or "").strip()
     upper = raw.upper()
-    if "QDII" in upper:
+    positive_qdii = "QDII" in upper.replace("非QDII", "").replace("NON-QDII", "").replace("NON_QDII", "")
+    if positive_qdii:
         return "qdii"
     if "FOF" in upper:
         return "fof"

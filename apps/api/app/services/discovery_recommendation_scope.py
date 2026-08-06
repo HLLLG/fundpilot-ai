@@ -26,8 +26,9 @@ from app.services.sector_opportunity_scoring import (
     MATURITY_POLICY_VERSIONS,
 )
 
-RECOMMENDATION_SCOPE_VERSION = "discovery_recommendation_scope.2026-08.v2"
-MAX_DISCOVERY_RECOMMENDATIONS = 3
+RECOMMENDATION_SCOPE_VERSION = "discovery_recommendation_scope.2026-08.v4"
+MAX_DISCOVERY_RECOMMENDATIONS = 6
+MAX_RECOMMENDATIONS_PER_SECTOR = 2
 
 _ENTRY_PATH_PRIORITY = {
     "confirmed_entry": 4,
@@ -161,22 +162,29 @@ def build_recommendation_candidate_scope(
         ),
         reverse=True,
     )
-    # Round-robin by direction: the first three slots should normally expose
-    # three independent opportunities instead of three share-class siblings or
-    # three funds from the same theme. Remaining rows stay available to the LLM
-    # and deterministic backfill in their within-direction order.
-    ordered_codes: list[str] = []
-    seen_codes: set[str] = set()
-    max_depth = max((len(eligible_by_sector[sector]) for sector in ranked_sectors), default=0)
-    for depth in range(max_depth):
+    # Keep at most two independently selected fund families per direction. The
+    # first pass exposes the best-quality vehicle from each open sector before
+    # a second vehicle is added, preserving cross-sector diversity under the
+    # global six-recommendation cap.
+    ranked_codes: list[str] = []
+    for depth in range(MAX_RECOMMENDATIONS_PER_SECTOR):
         for sector in ranked_sectors:
             rows = eligible_by_sector[sector]
             if depth >= len(rows):
                 continue
             code = _fund_code(rows[depth][0])
-            if code and code not in seen_codes:
-                ordered_codes.append(code)
-                seen_codes.add(code)
+            if code:
+                ranked_codes.append(code)
+    ordered_codes = ranked_codes[:MAX_DISCOVERY_RECOMMENDATIONS]
+    alternate_codes = ranked_codes[MAX_DISCOVERY_RECOMMENDATIONS:]
+    for sector in ranked_sectors:
+        alternate_codes.extend(
+            code
+            for candidate, _entry_path in eligible_by_sector[sector][
+                MAX_RECOMMENDATIONS_PER_SECTOR:
+            ]
+            if (code := _fund_code(candidate))
+        )
 
     actionable_labels = [
         sector
@@ -205,6 +213,8 @@ def build_recommendation_candidate_scope(
         "policy_enforced": True,
         "max_recommendations": MAX_DISCOVERY_RECOMMENDATIONS,
         "ordered_eligible_fund_codes": ordered_codes,
+        "alternate_eligible_fund_codes": alternate_codes,
+        "maximum_recommendations_per_sector": MAX_RECOMMENDATIONS_PER_SECTOR,
         "actionable_sector_labels": actionable_labels,
         "eligible_sector_labels": eligible_labels,
         "unmatched_actionable_sector_labels": unmatched_labels,
@@ -215,7 +225,7 @@ def build_recommendation_candidate_scope(
         "watch_only_fund_codes": watch_only_codes,
         "instruction": (
             "candidate_pool 仅保留通过方向动作边界、基金质量、载体质量与板块身份门槛的推荐白名单；"
-            "等待/研究方向不得占用推荐名额，也不得跨方向补位。"
+            "每个方向最多推荐两个综合质量最优的独立基金家族；等待/研究方向不得占用推荐名额，也不得跨方向补位。"
         ),
     }
 
@@ -415,12 +425,13 @@ def reconcile_recommendations_with_scope(
             backfilled_codes.append(code)
 
     audit = {
-        "schema_version": "discovery_recommendation_scope_reconciliation.v1",
+        "schema_version": "discovery_recommendation_scope_reconciliation.v3",
         "model_fund_codes": model_codes,
         "dropped_fund_codes": list(dict.fromkeys(dropped_codes)),
         "backfilled_fund_codes": list(dict.fromkeys(backfilled_codes)),
         "final_fund_codes": [item.fund_code for item in selected],
         "cross_direction_fallback_allowed": False,
+        "maximum_recommendations_per_sector": MAX_RECOMMENDATIONS_PER_SECTOR,
     }
     discovery_facts["recommendation_scope_reconciliation"] = audit
     caveats: list[str] = []
@@ -481,14 +492,27 @@ def _candidate_rank_key(
     )
     return (
         float(_ENTRY_PATH_PRIORITY.get(entry_path, 0)),
+        _combined_fund_quality_score(candidate),
+        _num(candidate.get("fund_quality_score")) or -999.0,
+        _num(candidate.get("vehicle_quality_score")) or -999.0,
         _num(candidate.get("opportunity_score_20_60d")) or -999.0,
         1.0 if signal.get("entry_ready") is True else 0.0,
         1.0 if signal.get("early_probe_ready") is True else 0.0,
         _num(nav.get("annualized_volatility_20d_percent")) or -999.0,
-        _num(candidate.get("vehicle_quality_score")) or -999.0,
-        _num(candidate.get("fund_quality_score")) or -999.0,
         _num(opportunity.get("selection_priority_score")) or -999.0,
     )
+
+
+def _combined_fund_quality_score(candidate: Mapping[str, Any]) -> float:
+    scores = [
+        score
+        for raw in (
+            candidate.get("fund_quality_score"),
+            candidate.get("vehicle_quality_score"),
+        )
+        if (score := _num(raw)) is not None
+    ]
+    return sum(scores) / len(scores) if scores else -999.0
 
 
 def _sector_rank_key(

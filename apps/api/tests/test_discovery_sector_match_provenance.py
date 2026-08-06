@@ -16,6 +16,7 @@ from app.services.discovery_candidate_pool import (
     _name_matches_sector,
     _sector_keywords,
     _sector_fit_score,
+    _with_exact_passive_tracking_match,
     build_candidate_pool,
     enrich_candidates,
     finalize_candidate_pool,
@@ -525,3 +526,34 @@ def test_exact_passive_tracking_reference_upgrades_name_match_without_upgrading_
     assert (guarded_by_code["020989"].suggested_amount_yuan or 0) > 0
     assert guarded_by_code["007882"].action == "建议关注"
     assert guarded_by_code["007882"].suggested_amount_yuan is None
+
+
+def test_exact_tracking_uses_canonical_sector_not_market_quote_proxy_code() -> None:
+    coal = _with_exact_passive_tracking_match(
+        {
+            "fund_code": "008279",
+            "fund_name": "国泰中证煤炭ETF联接A",
+            "fund_type": "股票型",
+            "sector_label": "煤炭",
+            "sector_match_kind": "name",
+            "tracking_reference_text": "中证煤炭指数（399998）",
+        }
+    )
+
+    assert coal["sector_match_kind"] == "tracking_exact"
+    assert coal["sector_identity_status"] == SECTOR_IDENTITY_VERIFIED
+    assert coal["tracking_reference_match"]["index_code"] == "399998"
+
+    distinct_theme = _with_exact_passive_tracking_match(
+        {
+            "fund_code": "021873",
+            "fund_name": "中欧黄金股指数A",
+            "fund_type": "股票型",
+            "sector_label": "黄金",
+            "sector_match_kind": "name",
+            "tracking_reference_text": "中证沪深港黄金产业股票指数（931238）",
+        }
+    )
+
+    assert distinct_theme["sector_match_kind"] == "name"
+    assert "tracking_reference_match" not in distinct_theme

@@ -25,6 +25,7 @@ from datetime import date, datetime, timezone
 from typing import Any
 
 from app.services.fund_benchmark_sector import parse_benchmark_index
+from app.services.fund_type_classification import has_positive_qdii_marker
 from app.services.fund_universe_sampler import canonical_portfolio_name
 
 
@@ -1022,6 +1023,8 @@ def _normalized_fund_type(fund: Mapping[str, Any]) -> str:
     if lowered in _TYPE_ALIASES:
         return lowered
     for token in ("qdii", "fof", "货币", "混合", "债券", "股票", "指数"):
+        if token == "qdii" and not has_positive_qdii_marker(lowered):
+            continue
         if token in lowered:
             return token
     return "unknown"
@@ -1071,7 +1074,11 @@ def _is_qdii(
         explicit_overseas = float(overseas) >= 50 if overseas is not None else False
     except (TypeError, ValueError):
         explicit_overseas = False
-    return normalized_type == "qdii" or "qdii" in text or explicit_overseas
+    return (
+        normalized_type == "qdii"
+        or has_positive_qdii_marker(text)
+        or explicit_overseas
+    )
 
 
 def _explicit_strategy(exposure: Mapping[str, Any]) -> str | None:
