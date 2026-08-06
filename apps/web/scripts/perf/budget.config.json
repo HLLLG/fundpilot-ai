@@ -1,6 +1,6 @@
 {
   "_comment": [
-    "首屏体积预算（单位：字节）。数值来自 2026-07-25 本轮优化后的实测产物再留约 3% 余量。",
+    "首屏体积预算（单位：字节）。数值来自实测产物再留约 3% 余量，向上取整到整 KiB。",
     "",
     "三个口径，各有分工：",
     "- firstScreenBytes（原始）= HTML 文档 + 首屏 JS + 首屏 CSS。挡住解析/执行成本回胖。",
@@ -8,49 +8,54 @@
     "  而浏览器实际下载量反而变多（实测 inlineCss 会让 HTML 从 9.9 KiB 涨到 262 KiB）。",
     "- firstScreenGzipBytes = 同一组资源的 gzip -9 传输量。这是**保底传输口径**：",
     "  所有浏览器都拿得到 gzip，生产 nginx 未启用自建 brotli 镜像时发送的也是 gzip。",
-    "  所以预算按 gzip 卡；brotli 只会让实际传输更小（实测 `/` 171.1 → 143.2 KiB），",
-    "  报告里另有 firstScreenBrotliBytes 一列供观察，但不作为门禁，避免生产没开 brotli 时",
-    "  预算却按 brotli 放宽，出现「指标好看、用户没受益」。",
+    "  所以预算按 gzip 卡；brotli 只会让实际传输更小，报告里另有 firstScreenBrotliBytes",
+    "  一列供观察，但不作为门禁，避免生产没开 brotli 时预算却按 brotli 放宽。",
     "- cssBytes 用来防止 globals.css 重新长回单体（曾经 148.9 KiB 单文件阻塞渲染）。",
     "",
     "注意：`/` 的 JS 里有 412.6 KiB 是 react-dom（195.2）+ Next App Router 客户端运行时（217.4），",
     "属于框架地板，应用代码只占约 56 KiB。所以 JS 预算的作用是拦住应用代码回胖，",
     "不是要求总量继续下降。",
-    "调整预算时必须同时更新 docs/perf/ 下的前后对比文档，说明为什么放宽。"
+    "调整预算时必须同时更新 docs/perf/ 下的前后对比文档，说明为什么放宽。",
+    "",
+    "基线沿革：",
+    "- 2026-07-25：首轮前端优化后标定（见 docs/perf/web_frontend_20260725.md）。",
+    "- 2026-08-06：运维监控面板引入错误边界与上报，首屏净增约 2.7 KiB gzip；",
+    "  已先把 error.tsx / global-error.tsx 各自压到 1.3 / 1.4 KiB gzip，余量耗尽后",
+    "  重新标定（见 docs/perf/web_ops_error_boundary_20260806.md）。"
   ],
   "routes": {
     "/": {
       "cssBytes": 135168,
-      "firstScreenBytes": 655360,
-      "firstScreenGzipBytes": 181248
+      "firstScreenBytes": 670720,
+      "firstScreenGzipBytes": 186368
     },
     "/login": {
       "cssBytes": 135168,
-      "firstScreenBytes": 649216,
-      "firstScreenGzipBytes": 178176
+      "firstScreenBytes": 659456,
+      "firstScreenGzipBytes": 183296
     },
     "/register": {
       "cssBytes": 135168,
-      "firstScreenBytes": 649216,
-      "firstScreenGzipBytes": 179200
+      "firstScreenBytes": 664576,
+      "firstScreenGzipBytes": 184320
     },
     "/reset-password": {
       "cssBytes": 135168,
-      "firstScreenBytes": 645120,
-      "firstScreenGzipBytes": 178176
+      "firstScreenBytes": 659456,
+      "firstScreenGzipBytes": 183296
     },
     "/settings": {
       "cssBytes": 135168,
-      "firstScreenBytes": 649216,
-      "firstScreenGzipBytes": 177152
+      "firstScreenBytes": 657408,
+      "firstScreenGzipBytes": 182272
     },
     "/admin/users": {
       "cssBytes": 135168,
-      "firstScreenBytes": 667648,
-      "firstScreenGzipBytes": 182272
+      "firstScreenBytes": 677888,
+      "firstScreenGzipBytes": 188416
     }
   },
   "output": {
-    "jsBytes": 1900544
+    "jsBytes": 1932288
   }
 }
