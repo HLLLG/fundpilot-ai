@@ -473,13 +473,29 @@ def _stub_market_data_fetches(monkeypatch):
         "app.services.akshare_subprocess.run_akshare_json_script",
         lambda *_args, **_kwargs: None,
     )
-    # market_breadth_signal.py 用 `from ... import run_akshare_json_script`（直接导入
-    # 绑定），只 patch 上面的源模块符号够不到它自己模块内的引用，需要单独再 patch 一次
-    # （同 sector_flow_divergence_backtest.fetch_canonical_daily_kline_series 的坑）。
-    monkeypatch.setattr(
-        "app.services.market_breadth_signal.run_akshare_json_script",
-        lambda *_args, **_kwargs: None,
-    )
+    # 下面这些模块用的是 `from ... import run_akshare_json_script`（模块级直接导入
+    # 绑定），名字在 import 时就已经复制到各自模块的命名空间里，只 patch 上面的源模块
+    # 符号够不到它们自己的引用（同 sector_flow_divergence_backtest 的坑）。
+    #
+    # 漏一个的代价很实际：sector_intraday_provider 曾因此在 CI 上偶发失败——它的东财
+    # 路径已被 stub（见 fetch_eastmoney_intraday_trends），返回空后会继续落到 akshare
+    # 兜底分支，于是 recommendation_guard 的反转信号判定真的去起子进程，单个用例卡满
+    # 60s 子进程超时，撞上 pytest.ini 的 `timeout = 30` 直接判失败。本地没装
+    # pytest-timeout 时不会暴露，只在 CI 上以"随机红叉"的形式出现。
+    #
+    # 因此这里按模块枚举、整类封死；新增此类直接绑定的调用方时一并加进来即可。
+    for _akshare_binder in (
+        "akshare_spot_client",
+        "fund_diagnostics_cache",
+        "fund_return_distribution",
+        "fund_tradeability",
+        "market_breadth_signal",
+        "sector_intraday_provider",
+    ):
+        monkeypatch.setattr(
+            f"app.services.{_akshare_binder}.run_akshare_json_script",
+            lambda *_args, **_kwargs: None,
+        )
     monkeypatch.setattr(
         "app.services.market_flow_client._fetch_stock_connect_flow_summary_uncached",
         lambda _anchor: None,
