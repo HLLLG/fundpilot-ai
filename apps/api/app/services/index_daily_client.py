@@ -73,7 +73,8 @@ def _eastmoney_quote_ref(index_symbol: str) -> tuple[str, str] | None:
     raw = index_symbol.strip()
     if not raw:
         return None
-    if "." in raw and raw.split(".", 1)[0] in {"0", "1", "2", "90"}:
+    # 118 = 上金所现货/延期（黄金 Au99.99 等），与股票/指数/板块同走东财 kline。
+    if "." in raw and raw.split(".", 1)[0] in {"0", "1", "2", "90", "118"}:
         return raw, raw.split(".", 1)[1]
 
     code = raw.upper()

@@ -122,6 +122,48 @@ python scripts/precompute_fund_primary_sectors.py --mode auto --limit 80
 python scripts/precompute_fund_primary_sectors.py --mode holdings --limit 32
 ```
 
+### 中基协指数库离线重算
+
+指数库需要中基协 API + 东财指数名表两个上游。规则改动后要确定性复算、或上游不可达时，
+可以用仓库里已缓存的东财 `code → name` 表和现有库文件重建，不联网：
+
+```bash
+python scripts/sync_amac_benchmark_index_library.py \
+  --em-lookup-cache var/amac/em_index_lookup.json \
+  --amac-cache app/data/amac_benchmark_index_library.json
+```
+
+同名指数（东财对深证 `399262` 与中证 `931582` 都显示简称"数字经济"）按发布机构的原生
+命名空间收敛，仍不唯一就记为 `unresolved`；模糊匹配只接受「东财简称是 AMAC 全称的前缀」
+单方向，避免父子/跨市场指数族混作同一代码。缓存表与实时接口可能漂移（`930601` 曾被
+当成中证环保产业，实为"中证软件"），涉及行情身份的改动仍需对实时接口复核。
+
+### 失效已站不住的存量板块映射
+
+解析规则修订后，存量派生行的 TTL 未到不会自动重算。该脚本按 (板块, 跟踪码) 重放每行存的
+基准原文、或按新的行业→板块归并规则重放持仓 exposure，与存量比对后**只删派生缓存**让后台
+用新规则重算，不手改标签；`manual` / `ocr_detail` 沉淀一律跳过，追加式 PIT 证据
+`fund_sector_exposure_snapshots` 不删。默认 dry-run，`--apply` 才写且自动备份数据库。
+
+```bash
+# 只看报告（默认 dry-run，只查业绩基准链路）
+python scripts/invalidate_stale_benchmark_sectors.py
+
+# 基准链路实际执行
+python scripts/invalidate_stale_benchmark_sectors.py --apply
+
+# 持仓链路：只处理决策级 verified 行
+# （pending 是研究线索、不参与展示，重算要为每只股票联网取行业分类，交给 TTL 自然刷新）
+python scripts/invalidate_stale_benchmark_sectors.py --chain holdings --verified-only --apply
+
+# 两条链路一起
+python scripts/invalidate_stale_benchmark_sectors.py --chain all --verified-only --apply
+```
+
+失效方式是**删除** `fund_sector_resolution_status` 行让基金变成 `missing`——
+`_bulk_resolution_candidates` 把 `queued` 排除在候选之外，所以不能用 `queued` 触发重算，
+而 `missing` 在候选队列里优先级最高。
+
 schema v22 的 `fund_sector_resolution_status` 保存每只基金的解析状态、失败原因与
 下次重试时间；旧 `pending` 会在后台启动时迁移为明确状态。`queued` 表示等待持仓核验，
 `research_only` 表示线索不具备执行资格，两者都不能进入金额分配；`fund_sector_current`

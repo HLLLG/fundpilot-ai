@@ -2,8 +2,27 @@
   "version": "2026-06-10",
   "source": "amac",
   "total": 154,
-  "resolved": 154,
-  "unresolved": [],
+  "resolved": 136,
+  "unresolved": [
+    "中证国有企业综合指数",
+    "中证民营企业综合指数",
+    "中证500成长指数",
+    "中证500质量指数",
+    "中证1000质量指数",
+    "中证500等权重指数",
+    "中证1000等权重指数",
+    "中证信息技术指数",
+    "中证沪港深数字经济主题指数",
+    "中证沪港深互联网指数",
+    "中证主要消费指数",
+    "中证可选消费指数",
+    "中证香港内地国有企业指数",
+    "中证地方国有企业综合指数",
+    "沪深300金融地产指数",
+    "中证金融地产指数",
+    "中证文体指数",
+    "上证红利指数"
+  ],
   "entries": [
     {
       "tier": "oneClass",
@@ -59,11 +78,11 @@
       "market_type": "境内跨市场",
       "index_full_name": "沪深300指数",
       "update_time": "2026-06-10",
-      "source_code": "399300",
-      "eastmoney_secid": "0.399300",
+      "source_code": "000300",
+      "eastmoney_secid": "1.000300",
       "eastmoney_name": "沪深300",
       "theme_label": null,
-      "resolution": "auto"
+      "resolution": "manual"
     },
     {
       "tier": "oneClass",
@@ -95,11 +114,11 @@
       "market_type": "境内跨市场",
       "index_full_name": "中证1000指数",
       "update_time": "2026-06-10",
-      "source_code": "399852",
-      "eastmoney_secid": "0.399852",
+      "source_code": "000852",
+      "eastmoney_secid": "1.000852",
       "eastmoney_name": "中证1000",
       "theme_label": null,
-      "resolution": "auto"
+      "resolution": "manual"
     },
     {
       "tier": "oneClass",
@@ -131,11 +150,11 @@
       "market_type": "境内单市场及特定板块",
       "index_full_name": "上证综合指数",
       "update_time": "2026-06-10",
-      "source_code": "000008",
-      "eastmoney_secid": "1.000008",
-      "eastmoney_name": "综合指数",
+      "source_code": "000001",
+      "eastmoney_secid": "1.000001",
+      "eastmoney_name": "上证指数",
       "theme_label": null,
-      "resolution": "auto"
+      "resolution": "manual"
     },
     {
       "tier": "oneClass",
@@ -155,11 +174,11 @@
       "market_type": "境内单市场及特定板块",
       "index_full_name": "深证综合指数",
       "update_time": "2026-06-10",
-      "source_code": "000008",
-      "eastmoney_secid": "1.000008",
-      "eastmoney_name": "综合指数",
+      "source_code": "399106",
+      "eastmoney_secid": "0.399106",
+      "eastmoney_name": "深证综指",
       "theme_label": null,
-      "resolution": "auto"
+      "resolution": "manual"
     },
     {
       "tier": "oneClass",
@@ -167,11 +186,11 @@
       "market_type": "境内单市场及特定板块",
       "index_full_name": "深证成份指数",
       "update_time": "2026-06-10",
-      "source_code": "399003",
-      "eastmoney_secid": "0.399003",
-      "eastmoney_name": "成份Ｂ指",
+      "source_code": "399001",
+      "eastmoney_secid": "0.399001",
+      "eastmoney_name": "深证成指",
       "theme_label": null,
-      "resolution": "auto_fuzzy"
+      "resolution": "manual"
     },
     {
       "tier": "oneClass",
@@ -219,7 +238,7 @@
       "eastmoney_secid": "0.399102",
       "eastmoney_name": "创业板综",
       "theme_label": null,
-      "resolution": "auto_fuzzy"
+      "resolution": "auto_prefix"
     },
     {
       "tier": "oneClass",
@@ -227,11 +246,11 @@
       "market_type": "境内单市场及特定板块",
       "index_full_name": "创业板指数",
       "update_time": "2026-06-10",
-      "source_code": "395004",
-      "eastmoney_secid": "2.395004",
-      "eastmoney_name": "创业板",
+      "source_code": "399006",
+      "eastmoney_secid": "0.399006",
+      "eastmoney_name": "创业板指",
       "theme_label": null,
-      "resolution": "auto"
+      "resolution": "manual"
     },
     {
       "tier": "oneClass",
@@ -278,7 +297,7 @@
       "source_code": "000987",
       "eastmoney_secid": "1.000987",
       "eastmoney_name": "中证全指原材料",
-      "theme_label": "有色金属",
+      "theme_label": null,
       "resolution": "manual"
     },
     {
@@ -290,7 +309,7 @@
       "source_code": "000988",
       "eastmoney_secid": "1.000988",
       "eastmoney_name": "全指工业",
-      "theme_label": "机械设备",
+      "theme_label": null,
       "resolution": "auto"
     },
     {
@@ -302,8 +321,8 @@
       "source_code": "000989",
       "eastmoney_secid": "1.000989",
       "eastmoney_name": "全指可选",
-      "theme_label": "食品饮料",
-      "resolution": "auto_fuzzy"
+      "theme_label": null,
+      "resolution": "auto_prefix"
     },
     {
       "tier": "oneClass",
@@ -314,7 +333,7 @@
       "source_code": "000990",
       "eastmoney_secid": "1.000990",
       "eastmoney_name": "中证全指主要消费",
-      "theme_label": "食品饮料",
+      "theme_label": null,
       "resolution": "manual"
     },
     {
@@ -327,7 +346,7 @@
       "eastmoney_secid": "1.000991",
       "eastmoney_name": "全指医药",
       "theme_label": "医药",
-      "resolution": "auto_fuzzy"
+      "resolution": "auto_prefix"
     },
     {
       "tier": "oneClass",
@@ -339,7 +358,7 @@
       "eastmoney_secid": "1.000993",
       "eastmoney_name": "全指信息",
       "theme_label": "计算机",
-      "resolution": "auto_fuzzy"
+      "resolution": "auto_prefix"
     },
     {
       "tier": "oneClass",
@@ -351,7 +370,7 @@
       "eastmoney_secid": "1.000994",
       "eastmoney_name": "全指通信",
       "theme_label": "通信技术",
-      "resolution": "auto_fuzzy"
+      "resolution": "auto_prefix"
     },
     {
       "tier": "oneClass",
@@ -359,8 +378,8 @@
       "market_type": "行业类",
       "index_full_name": "中证全指金融指数",
       "update_time": "2026-06-10",
-      "source_code": "000992",
-      "eastmoney_secid": "1.000992",
+      "source_code": "932075",
+      "eastmoney_secid": "2.932075",
       "eastmoney_name": "全指金融",
       "theme_label": null,
       "resolution": "auto"
@@ -374,7 +393,7 @@
       "source_code": "000891",
       "eastmoney_secid": "1.000891",
       "eastmoney_name": "战略新兴",
-      "theme_label": "电子",
+      "theme_label": null,
       "resolution": "manual"
     },
     {
@@ -386,7 +405,7 @@
       "source_code": "000998",
       "eastmoney_secid": "1.000998",
       "eastmoney_name": "中证TMT",
-      "theme_label": "电子",
+      "theme_label": null,
       "resolution": "manual"
     },
     {
@@ -419,11 +438,11 @@
       "market_type": "主题类",
       "index_full_name": "中证数字经济主题指数",
       "update_time": "2026-06-10",
-      "source_code": "399262",
-      "eastmoney_secid": "0.399262",
+      "source_code": "931582",
+      "eastmoney_secid": "2.931582",
       "eastmoney_name": "数字经济",
-      "theme_label": "信创",
-      "resolution": "auto_fuzzy"
+      "theme_label": "数字经济",
+      "resolution": "auto_prefix"
     },
     {
       "tier": "oneClass",
@@ -443,10 +462,10 @@
       "market_type": "主题类",
       "index_full_name": "中证科技100指数",
       "update_time": "2026-06-10",
-      "source_code": "399608",
-      "eastmoney_secid": "0.399608",
+      "source_code": "931187",
+      "eastmoney_secid": "2.931187",
       "eastmoney_name": "科技100",
-      "theme_label": "电子",
+      "theme_label": null,
       "resolution": "auto"
     },
     {
@@ -455,11 +474,11 @@
       "market_type": "主题类",
       "index_full_name": "中证港股通科技指数",
       "update_time": "2026-06-10",
-      "source_code": "987008",
-      "eastmoney_secid": "2.987008",
+      "source_code": "931573",
+      "eastmoney_secid": "2.931573",
       "eastmoney_name": "港股通科技",
-      "theme_label": "电子",
-      "resolution": "auto"
+      "theme_label": null,
+      "resolution": "manual"
     },
     {
       "tier": "oneClass",
@@ -482,8 +501,8 @@
       "source_code": "000942",
       "eastmoney_secid": "1.000942",
       "eastmoney_name": "内地消费",
-      "theme_label": "食品饮料",
-      "resolution": "auto_fuzzy"
+      "theme_label": null,
+      "resolution": "auto_prefix"
     },
     {
       "tier": "oneClass",
@@ -494,8 +513,8 @@
       "source_code": "000806",
       "eastmoney_secid": "1.000806",
       "eastmoney_name": "消费服务",
-      "theme_label": "食品饮料",
-      "resolution": "auto_fuzzy"
+      "theme_label": null,
+      "resolution": "auto_prefix"
     },
     {
       "tier": "oneClass",
@@ -503,11 +522,11 @@
       "market_type": "主题类",
       "index_full_name": "中证港股通消费主题指数",
       "update_time": "2026-06-10",
-      "source_code": "987024",
-      "eastmoney_secid": "2.987024",
+      "source_code": "931454",
+      "eastmoney_secid": "2.931454",
       "eastmoney_name": "港股通消费",
-      "theme_label": "食品饮料",
-      "resolution": "auto_fuzzy"
+      "theme_label": null,
+      "resolution": "auto_prefix"
     },
     {
       "tier": "oneClass",
@@ -518,7 +537,7 @@
       "source_code": "HSCGSI",
       "eastmoney_secid": "2.HSCGSI",
       "eastmoney_name": "恒生消费",
-      "theme_label": "食品饮料",
+      "theme_label": null,
       "resolution": "manual"
     },
     {
@@ -554,7 +573,7 @@
       "source_code": "H30178",
       "eastmoney_secid": "2.H30178",
       "eastmoney_name": "医疗保健",
-      "theme_label": "医疗",
+      "theme_label": null,
       "resolution": "auto"
     },
     {
@@ -567,7 +586,7 @@
       "eastmoney_secid": "2.930850",
       "eastmoney_name": "智能制造",
       "theme_label": "机械设备",
-      "resolution": "auto_fuzzy"
+      "resolution": "auto_prefix"
     },
     {
       "tier": "oneClass",
@@ -591,7 +610,7 @@
       "eastmoney_secid": "1.000097",
       "eastmoney_name": "高端装备",
       "theme_label": "机械设备",
-      "resolution": "auto_fuzzy"
+      "resolution": "auto_prefix"
     },
     {
       "tier": "oneClass",
@@ -602,7 +621,7 @@
       "source_code": "930962",
       "eastmoney_secid": "2.930962",
       "eastmoney_name": "港股通工业",
-      "theme_label": "机械设备",
+      "theme_label": null,
       "resolution": "manual"
     },
     {
@@ -614,7 +633,7 @@
       "source_code": "399976",
       "eastmoney_secid": "0.399976",
       "eastmoney_name": "CS新能车",
-      "theme_label": "新能源",
+      "theme_label": "新能源车",
       "resolution": "manual"
     },
     {
@@ -639,7 +658,7 @@
       "eastmoney_secid": "1.000977",
       "eastmoney_name": "内地低碳",
       "theme_label": "环保",
-      "resolution": "auto_fuzzy"
+      "resolution": "auto_prefix"
     },
     {
       "tier": "oneClass",
@@ -647,10 +666,10 @@
       "market_type": "主题类",
       "index_full_name": "国证港股通新能源指数",
       "update_time": "2026-06-10",
-      "source_code": "987008",
-      "eastmoney_secid": "2.987008",
+      "source_code": "987026",
+      "eastmoney_secid": "2.987026",
       "eastmoney_name": "港股通新能源",
-      "theme_label": "新能源",
+      "theme_label": null,
       "resolution": "manual"
     },
     {
@@ -659,11 +678,11 @@
       "market_type": "主题类",
       "index_full_name": "中证国有企业综合指数",
       "update_time": "2026-06-10",
-      "source_code": "000827",
-      "eastmoney_secid": "1.000827",
-      "eastmoney_name": "中证国企",
+      "source_code": null,
+      "eastmoney_secid": null,
+      "eastmoney_name": null,
       "theme_label": null,
-      "resolution": "manual"
+      "resolution": "unresolved"
     },
     {
       "tier": "oneClass",
@@ -671,11 +690,11 @@
       "market_type": "主题类",
       "index_full_name": "中证民营企业综合指数",
       "update_time": "2026-06-10",
-      "source_code": "000828",
-      "eastmoney_secid": "1.000828",
-      "eastmoney_name": "中证民企",
+      "source_code": null,
+      "eastmoney_secid": null,
+      "eastmoney_name": null,
       "theme_label": null,
-      "resolution": "manual"
+      "resolution": "unresolved"
     },
     {
       "tier": "oneClass",
@@ -698,8 +717,8 @@
       "source_code": "000944",
       "eastmoney_secid": "1.000944",
       "eastmoney_name": "内地资源",
-      "theme_label": "有色金属",
-      "resolution": "auto_fuzzy"
+      "theme_label": null,
+      "resolution": "auto_prefix"
     },
     {
       "tier": "oneClass",
@@ -710,7 +729,7 @@
       "source_code": "980106",
       "eastmoney_secid": "0.980106",
       "eastmoney_name": "港股通资源",
-      "theme_label": "有色金属",
+      "theme_label": null,
       "resolution": "manual"
     },
     {
@@ -722,7 +741,7 @@
       "source_code": "H30597",
       "eastmoney_secid": "2.H30597",
       "eastmoney_name": "新材料",
-      "theme_label": "化工",
+      "theme_label": null,
       "resolution": "manual"
     },
     {
@@ -743,11 +762,11 @@
       "market_type": "成长",
       "index_full_name": "中证500成长指数",
       "update_time": "2026-06-10",
-      "source_code": "931590",
-      "eastmoney_secid": "2.931590",
-      "eastmoney_name": "500成长创新",
+      "source_code": null,
+      "eastmoney_secid": null,
+      "eastmoney_name": null,
       "theme_label": null,
-      "resolution": "auto_fuzzy"
+      "resolution": "unresolved"
     },
     {
       "tier": "oneClass",
@@ -866,8 +885,8 @@
       "source_code": "930914",
       "eastmoney_secid": "2.930914",
       "eastmoney_name": "港股通高股息",
-      "theme_label": "红利",
-      "resolution": "auto_fuzzy"
+      "theme_label": null,
+      "resolution": "auto_prefix"
     },
     {
       "tier": "oneClass",
@@ -879,7 +898,7 @@
       "eastmoney_secid": "2.931463",
       "eastmoney_name": "300 ESG",
       "theme_label": null,
-      "resolution": "auto_fuzzy"
+      "resolution": "auto_prefix"
     },
     {
       "tier": "oneClass",
@@ -911,11 +930,11 @@
       "market_type": "质量",
       "index_full_name": "中证500质量指数",
       "update_time": "2026-06-10",
-      "source_code": "930939",
-      "eastmoney_secid": "2.930939",
-      "eastmoney_name": "500质量成长",
+      "source_code": null,
+      "eastmoney_secid": null,
+      "eastmoney_name": null,
       "theme_label": null,
-      "resolution": "auto_fuzzy"
+      "resolution": "unresolved"
     },
     {
       "tier": "oneClass",
@@ -935,11 +954,11 @@
       "market_type": "质量",
       "index_full_name": "中证1000质量指数",
       "update_time": "2026-06-10",
-      "source_code": "399011",
-      "eastmoney_secid": "0.399011",
-      "eastmoney_name": "深证1000",
+      "source_code": null,
+      "eastmoney_secid": null,
+      "eastmoney_name": null,
       "theme_label": null,
-      "resolution": "auto_fuzzy"
+      "resolution": "unresolved"
     },
     {
       "tier": "oneClass",
@@ -951,7 +970,7 @@
       "eastmoney_secid": "1.000984",
       "eastmoney_name": "300等权",
       "theme_label": null,
-      "resolution": "auto_fuzzy"
+      "resolution": "auto_prefix"
     },
     {
       "tier": "oneClass",
@@ -959,11 +978,11 @@
       "market_type": "等权重",
       "index_full_name": "中证500等权重指数",
       "update_time": "2026-06-10",
-      "source_code": "399982",
-      "eastmoney_secid": "0.399982",
-      "eastmoney_name": "500等权",
+      "source_code": null,
+      "eastmoney_secid": null,
+      "eastmoney_name": null,
       "theme_label": null,
-      "resolution": "auto_fuzzy"
+      "resolution": "unresolved"
     },
     {
       "tier": "oneClass",
@@ -983,11 +1002,11 @@
       "market_type": "等权重",
       "index_full_name": "中证1000等权重指数",
       "update_time": "2026-06-10",
-      "source_code": "399011",
-      "eastmoney_secid": "0.399011",
-      "eastmoney_name": "深证1000",
+      "source_code": null,
+      "eastmoney_secid": null,
+      "eastmoney_name": null,
       "theme_label": null,
-      "resolution": "auto_fuzzy"
+      "resolution": "unresolved"
     },
     {
       "tier": "twoClass",
@@ -1130,7 +1149,7 @@
       "source_code": "932076",
       "eastmoney_secid": "2.932076",
       "eastmoney_name": "战略新兴100",
-      "theme_label": "电子",
+      "theme_label": null,
       "resolution": "manual"
     },
     {
@@ -1155,7 +1174,7 @@
       "eastmoney_secid": "0.399970",
       "eastmoney_name": "移动互联",
       "theme_label": "互联网",
-      "resolution": "auto_fuzzy"
+      "resolution": "auto_prefix"
     },
     {
       "tier": "twoClass",
@@ -1163,11 +1182,11 @@
       "market_type": "行业主题类",
       "index_full_name": "中证信息技术指数",
       "update_time": "2026-06-10",
-      "source_code": "483028",
-      "eastmoney_secid": "2.483028",
-      "eastmoney_name": "深港通信息技术R（港币）",
+      "source_code": null,
+      "eastmoney_secid": null,
+      "eastmoney_name": null,
       "theme_label": "计算机",
-      "resolution": "auto_fuzzy"
+      "resolution": "unresolved"
     },
     {
       "tier": "twoClass",
@@ -1190,7 +1209,7 @@
       "source_code": "H30318",
       "eastmoney_secid": "2.H30318",
       "eastmoney_name": "科技传媒通信150",
-      "theme_label": "电子",
+      "theme_label": null,
       "resolution": "auto"
     },
     {
@@ -1199,11 +1218,11 @@
       "market_type": "行业主题类",
       "index_full_name": "中证沪港深数字经济主题指数",
       "update_time": "2026-06-10",
-      "source_code": "399262",
-      "eastmoney_secid": "0.399262",
-      "eastmoney_name": "数字经济",
-      "theme_label": "信创",
-      "resolution": "auto_fuzzy"
+      "source_code": null,
+      "eastmoney_secid": null,
+      "eastmoney_name": null,
+      "theme_label": null,
+      "resolution": "unresolved"
     },
     {
       "tier": "twoClass",
@@ -1211,11 +1230,11 @@
       "market_type": "行业主题类",
       "index_full_name": "中证沪港深互联网指数",
       "update_time": "2026-06-10",
-      "source_code": "399675",
-      "eastmoney_secid": "0.399675",
-      "eastmoney_name": "深互联网",
-      "theme_label": "互联网",
-      "resolution": "auto_fuzzy"
+      "source_code": null,
+      "eastmoney_secid": null,
+      "eastmoney_name": null,
+      "theme_label": null,
+      "resolution": "unresolved"
     },
     {
       "tier": "twoClass",
@@ -1226,7 +1245,7 @@
       "source_code": "H30552",
       "eastmoney_secid": "2.H30552",
       "eastmoney_name": "互联互通TMT",
-      "theme_label": "电子",
+      "theme_label": null,
       "resolution": "manual"
     },
     {
@@ -1238,7 +1257,7 @@
       "source_code": "931026",
       "eastmoney_secid": "2.931026",
       "eastmoney_name": "港股通TMT",
-      "theme_label": "电子",
+      "theme_label": null,
       "resolution": "manual"
     },
     {
@@ -1247,11 +1266,11 @@
       "market_type": "行业主题类",
       "index_full_name": "中证主要消费指数",
       "update_time": "2026-06-10",
-      "source_code": "483022",
-      "eastmoney_secid": "2.483022",
-      "eastmoney_name": "深港通主要消费R（港币）",
-      "theme_label": "食品饮料",
-      "resolution": "auto_fuzzy"
+      "source_code": null,
+      "eastmoney_secid": null,
+      "eastmoney_name": null,
+      "theme_label": null,
+      "resolution": "unresolved"
     },
     {
       "tier": "twoClass",
@@ -1259,11 +1278,11 @@
       "market_type": "行业主题类",
       "index_full_name": "中证可选消费指数",
       "update_time": "2026-06-10",
-      "source_code": "483020",
-      "eastmoney_secid": "2.483020",
-      "eastmoney_name": "深港通可选消费R（港币）",
-      "theme_label": "食品饮料",
-      "resolution": "auto_fuzzy"
+      "source_code": null,
+      "eastmoney_secid": null,
+      "eastmoney_name": null,
+      "theme_label": null,
+      "resolution": "unresolved"
     },
     {
       "tier": "twoClass",
@@ -1298,7 +1317,7 @@
       "source_code": "000103",
       "eastmoney_secid": "1.000103",
       "eastmoney_name": "申万消费",
-      "theme_label": "食品饮料",
+      "theme_label": null,
       "resolution": "manual"
     },
     {
@@ -1310,7 +1329,7 @@
       "source_code": "817001",
       "eastmoney_secid": "2.817001",
       "eastmoney_name": null,
-      "theme_label": "食品饮料",
+      "theme_label": null,
       "resolution": "manual"
     },
     {
@@ -1322,8 +1341,8 @@
       "source_code": "931027",
       "eastmoney_secid": "2.931027",
       "eastmoney_name": "港股通大消费",
-      "theme_label": "食品饮料",
-      "resolution": "auto_fuzzy"
+      "theme_label": null,
+      "resolution": "auto_prefix"
     },
     {
       "tier": "twoClass",
@@ -1383,7 +1402,7 @@
       "eastmoney_secid": "1.000808",
       "eastmoney_name": "医药生物",
       "theme_label": "医药",
-      "resolution": "auto_fuzzy"
+      "resolution": "auto_prefix"
     },
     {
       "tier": "twoClass",
@@ -1455,7 +1474,7 @@
       "eastmoney_secid": "1.000097",
       "eastmoney_name": "高端装备",
       "theme_label": "机械设备",
-      "resolution": "auto_fuzzy"
+      "resolution": "auto_prefix"
     },
     {
       "tier": "twoClass",
@@ -1511,8 +1530,8 @@
       "market_type": "行业主题类",
       "index_full_name": "中证环保产业指数",
       "update_time": "2026-06-10",
-      "source_code": "930601",
-      "eastmoney_secid": "2.930601",
+      "source_code": "000827",
+      "eastmoney_secid": "1.000827",
       "eastmoney_name": "中证环保",
       "theme_label": "环保",
       "resolution": "manual"
@@ -1539,7 +1558,7 @@
       "eastmoney_secid": "0.399432",
       "eastmoney_name": "智能汽车",
       "theme_label": "汽车",
-      "resolution": "auto_fuzzy"
+      "resolution": "auto_prefix"
     },
     {
       "tier": "twoClass",
@@ -1583,11 +1602,11 @@
       "market_type": "行业主题类",
       "index_full_name": "中证香港内地国有企业指数",
       "update_time": "2026-06-10",
-      "source_code": "H11153",
-      "eastmoney_secid": "2.H11153",
-      "eastmoney_name": "内地国有",
-      "theme_label": "港股",
-      "resolution": "auto_fuzzy"
+      "source_code": null,
+      "eastmoney_secid": null,
+      "eastmoney_name": null,
+      "theme_label": null,
+      "resolution": "unresolved"
     },
     {
       "tier": "twoClass",
@@ -1595,11 +1614,11 @@
       "market_type": "行业主题类",
       "index_full_name": "中证地方国有企业综合指数",
       "update_time": "2026-06-10",
-      "source_code": "932066",
-      "eastmoney_secid": "2.932066",
-      "eastmoney_name": "地方国企",
+      "source_code": null,
+      "eastmoney_secid": null,
+      "eastmoney_name": null,
       "theme_label": null,
-      "resolution": "manual"
+      "resolution": "unresolved"
     },
     {
       "tier": "twoClass",
@@ -1607,11 +1626,11 @@
       "market_type": "行业主题类",
       "index_full_name": "沪深300金融地产指数",
       "update_time": "2026-06-10",
-      "source_code": "399914",
-      "eastmoney_secid": "0.399914",
-      "eastmoney_name": "300 金融",
+      "source_code": null,
+      "eastmoney_secid": null,
+      "eastmoney_name": null,
       "theme_label": null,
-      "resolution": "auto_fuzzy"
+      "resolution": "unresolved"
     },
     {
       "tier": "twoClass",
@@ -1619,8 +1638,8 @@
       "market_type": "行业主题类",
       "index_full_name": "中证800金融指数",
       "update_time": "2026-06-10",
-      "source_code": "000974",
-      "eastmoney_secid": "1.000974",
+      "source_code": "H30086",
+      "eastmoney_secid": "2.H30086",
       "eastmoney_name": "800金融",
       "theme_label": null,
       "resolution": "auto"
@@ -1631,11 +1650,11 @@
       "market_type": "行业主题类",
       "index_full_name": "中证金融地产指数",
       "update_time": "2026-06-10",
-      "source_code": "H50007",
-      "eastmoney_secid": "2.H50007",
-      "eastmoney_name": "180金融地产",
+      "source_code": null,
+      "eastmoney_secid": null,
+      "eastmoney_name": null,
       "theme_label": null,
-      "resolution": "auto_fuzzy"
+      "resolution": "unresolved"
     },
     {
       "tier": "twoClass",
@@ -1655,11 +1674,11 @@
       "market_type": "行业主题类",
       "index_full_name": "中证文体指数",
       "update_time": "2026-06-10",
-      "source_code": "H11049",
-      "eastmoney_secid": "2.H11049",
-      "eastmoney_name": "AMAC文体",
+      "source_code": null,
+      "eastmoney_secid": null,
+      "eastmoney_name": null,
       "theme_label": null,
-      "resolution": "auto_fuzzy"
+      "resolution": "unresolved"
     },
     {
       "tier": "twoClass",
@@ -1694,7 +1713,7 @@
       "source_code": "931802",
       "eastmoney_secid": "2.931802",
       "eastmoney_name": "中证龙头",
-      "theme_label": "机械设备",
+      "theme_label": null,
       "resolution": "manual"
     },
     {
@@ -1718,7 +1737,7 @@
       "source_code": "931381",
       "eastmoney_secid": "2.931381",
       "eastmoney_name": "长三角龙头",
-      "theme_label": "机械设备",
+      "theme_label": null,
       "resolution": "manual"
     },
     {
@@ -1803,7 +1822,7 @@
       "eastmoney_secid": "2.H30269",
       "eastmoney_name": "红利低波",
       "theme_label": null,
-      "resolution": "auto_fuzzy"
+      "resolution": "auto_prefix"
     },
     {
       "tier": "twoClass",
@@ -1811,11 +1830,11 @@
       "market_type": "红利",
       "index_full_name": "上证红利指数",
       "update_time": "2026-06-10",
-      "source_code": "399324",
-      "eastmoney_secid": "0.399324",
-      "eastmoney_name": "深证红利",
+      "source_code": null,
+      "eastmoney_secid": null,
+      "eastmoney_name": null,
       "theme_label": null,
-      "resolution": "auto"
+      "resolution": "unresolved"
     },
     {
       "tier": "twoClass",
@@ -1826,7 +1845,7 @@
       "source_code": "HSHDYI",
       "eastmoney_secid": "2.HSHDYI",
       "eastmoney_name": "恒生高股息率",
-      "theme_label": "红利",
+      "theme_label": null,
       "resolution": "manual"
     },
     {
@@ -1839,7 +1858,7 @@
       "eastmoney_secid": "2.930914",
       "eastmoney_name": "港股通高股息",
       "theme_label": null,
-      "resolution": "auto_fuzzy"
+      "resolution": "auto_prefix"
     },
     {
       "tier": "twoClass",
