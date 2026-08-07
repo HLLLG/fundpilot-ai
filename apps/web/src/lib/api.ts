@@ -2570,6 +2570,48 @@ export async function streamDiscoveryChat(
   }
 }
 
+/**
+ * 列表接口按 `_REPORT_SUMMARY_FIELDS` 投影时被丢掉的正文数组字段。
+ *
+ * 它们在 `Report` 里声明为必填，但 `GET /api/reports` 的响应里**根本不存在** ——
+ * 后端有意只下发历史列表 / hero / 导航需要的字段，避免一次性下发数十份 27 KB 正文。
+ */
+type ReportBodyArrayField =
+  | "holdings"
+  | "snapshots"
+  | "market_news"
+  | "fund_recommendations"
+  | "recommendations";
+
+/** 列表接口的真实形状：正文数组一律可能缺失。 */
+type ReportSummaryPayload = Omit<Report, ReportBodyArrayField> &
+  Partial<Pick<Report, ReportBodyArrayField>>;
+
+/**
+ * 把列表摘要补齐成结构合法的 `Report`。
+ *
+ * Dashboard 的 `hydrateReport` 会先把摘要当占位渲染、再按 id 拉正文。占位期间
+ * `ReportPanel` → `scopeReportToCurrentHoldings` 会直接读
+ * `report.fund_recommendations.length`，而摘要里没有这个字段，于是整页崩溃
+ * （线上 `TypeError: Cannot read properties of undefined (reading 'length')`）。
+ *
+ * 在边界上补空数组，占位期间就只是"正文区暂空"，正文到达后被真实数据覆盖 ——
+ * 这也正是 `hydrateReport` 注释里一直声称的行为。
+ *
+ * 只补列表投影。详情接口（`fetchReportDetail`）真缺字段时不该静默变空白，
+ * 那是需要暴露出来的故障。
+ */
+function completeReportSummary(summary: ReportSummaryPayload): Report {
+  return {
+    ...summary,
+    holdings: summary.holdings ?? [],
+    snapshots: summary.snapshots ?? [],
+    market_news: summary.market_news ?? [],
+    fund_recommendations: summary.fund_recommendations ?? [],
+    recommendations: summary.recommendations ?? [],
+  };
+}
+
 export async function listReports(): Promise<Report[]> {
   return dedupeConcurrentGet(listReportsRequests, authenticatedRequestScope(), async () => {
     const response = await apiFetch(`${API_BASE}/api/reports`, {
@@ -2578,7 +2620,8 @@ export async function listReports(): Promise<Report[]> {
     if (!response.ok) {
       throw new Error(await response.text());
     }
-    return response.json();
+    const payload = (await response.json()) as ReportSummaryPayload[];
+    return payload.map(completeReportSummary);
   });
 }
 

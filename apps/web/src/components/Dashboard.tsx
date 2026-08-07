@@ -768,9 +768,11 @@ export function Dashboard() {
   }, []);
 
   // 先用列表摘要占位切换 UI，同时按 id 异步拉完整正文。
-  // 完整正文里的 analysis_facts / topic_briefs / market_news / holdings / snapshots /
-  // fund_recommendations 等在 ReportPanel / ReportDetailsHub 里都用可选链读取，
-  // 所以摘要占位期间只是"证据/新闻区暂空"，不会崩溃。
+  // 列表投影不下发 holdings / snapshots / market_news / fund_recommendations /
+  // recommendations，所以摘要在 listReports 里就已被 completeReportSummary 补成空数组，
+  // reportPresentation 也不再假设这些字段存在。占位期间只是"证据/新闻区暂空"。
+  // 早期版本以为这些字段在下游都用可选链读取，实际并没有，
+  // 结果摘要占位期间 ReportPanel 会读到 undefined.length 而整页崩溃。
   //
   // hydrateReport 内部记录 lastHydratedId，避免"详情合并 setReports → orderedReports
   // 变化 → useEffect 重跑 → 又 hydrateReport(todayReport)"这条链形成无限循环。

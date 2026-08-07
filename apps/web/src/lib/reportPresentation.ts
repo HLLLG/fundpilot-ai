@@ -20,6 +20,19 @@ function normalizedFundName(value?: string | null): string {
 }
 
 /**
+ * 运行时形状兜底。
+ *
+ * `Report` 把正文数组声明为必填，但实际到达这里的对象不一定完整：列表投影
+ * (`GET /api/reports`) 不下发 holdings / snapshots / market_news /
+ * fund_recommendations / recommendations，旧版本写下的缓存也可能缺字段。
+ * 这一层是日报的渲染入口，读到 undefined 就是整页白屏，所以不假设、只收敛形状。
+ * 数组存在时原样返回，正常报告的行为与身份都不变。
+ */
+function asArray<T>(value: T[] | undefined | null): T[] {
+  return Array.isArray(value) ? value : [];
+}
+
+/**
  * The latest report can outlive a portfolio edit. Keep the stored report intact
  * for audit/export, but scope its active on-screen view to today's holdings so
  * deleted profile rows cannot still look like current positions.
@@ -28,7 +41,8 @@ export function scopeReportToCurrentHoldings(
   report: Report,
   currentHoldings?: Holding[],
 ): CurrentPortfolioReportView {
-  if (!currentHoldings?.length || !report.fund_recommendations.length) {
+  const allRecommendations = asArray(report.fund_recommendations);
+  if (!currentHoldings?.length || !allRecommendations.length) {
     return { report, hiddenRecommendationCount: 0 };
   }
 
@@ -48,9 +62,9 @@ export function scopeReportToCurrentHoldings(
     return names.has(normalizedFundName(item.fund_name));
   };
 
-  const fundRecommendations = report.fund_recommendations.filter(isCurrent);
+  const fundRecommendations = allRecommendations.filter(isCurrent);
   const hiddenRecommendationCount =
-    report.fund_recommendations.length - fundRecommendations.length;
+    allRecommendations.length - fundRecommendations.length;
   if (hiddenRecommendationCount <= 0) {
     return { report, hiddenRecommendationCount: 0 };
   }
@@ -70,8 +84,8 @@ export function scopeReportToCurrentHoldings(
   return {
     report: {
       ...report,
-      holdings: report.holdings.filter(isCurrent),
-      snapshots: report.snapshots.filter(isCurrent),
+      holdings: asArray(report.holdings).filter(isCurrent),
+      snapshots: asArray(report.snapshots).filter(isCurrent),
       fund_recommendations: fundRecommendations,
       analysis_facts: analysisFacts,
     },
@@ -90,9 +104,10 @@ export function meaningfulNewsLines(values?: string[]): string[] {
 }
 
 export function displayFundRecommendations(report: Report): FundRecommendation[] {
-  if (report.fund_recommendations.length > 0) return report.fund_recommendations;
+  const fundRecommendations = asArray(report.fund_recommendations);
+  if (fundRecommendations.length > 0) return fundRecommendations;
   const byCode = new Map<string, FundRecommendation>();
-  for (const line of report.recommendations) {
+  for (const line of asArray(report.recommendations)) {
     const match = line.match(/^\[(\d{6})\s*[·｜|]\s*([^\]]+)\]\s*(.*)$/);
     if (!match) continue;
     const [, fundCode, action, rest] = match;
@@ -113,8 +128,9 @@ export function displayFundRecommendations(report: Report): FundRecommendation[]
 }
 
 export function portfolioRecommendationLines(report: Report): string[] {
-  if (report.fund_recommendations.length > 0) return report.recommendations;
-  return report.recommendations.filter((line) => !/^\[\d{6}\s*[·｜|]/.test(line.trim()));
+  const lines = asArray(report.recommendations);
+  if (asArray(report.fund_recommendations).length > 0) return lines;
+  return lines.filter((line) => !/^\[\d{6}\s*[·｜|]/.test(line.trim()));
 }
 
 export function groupFundRecommendations(items: FundRecommendation[]) {

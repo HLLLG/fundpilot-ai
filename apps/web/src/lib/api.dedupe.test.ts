@@ -68,8 +68,12 @@ describe("bootstrap API dedupe", () => {
     const { listReports } = await import("@/lib/api");
     const [first, second] = await Promise.all([listReports(), listReports()]);
 
-    expect(first).toEqual(payload);
-    expect(second).toEqual(payload);
+    // 列表投影不下发正文数组，listReports 会用 completeReportSummary 补成空数组。
+    // 所以这里断言"两次调用结果一致 + 摘要字段原样保留 + 缺失数组已补齐"。
+    expect(first).toEqual(second);
+    expect(first[0]).toMatchObject({ id: "r1", title: "日报" });
+    expect(first[0].fund_recommendations).toEqual([]);
+    expect(first[0].recommendations).toEqual([]);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
