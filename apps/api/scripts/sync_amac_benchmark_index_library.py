@@ -32,27 +32,46 @@ _MANUAL_INDEX_CODES: dict[str, tuple[str, str | None]] = {
     "恒生指数": ("HSI", "恒生指数"),
     "恒生综合指数": ("HSCI", "恒生综合"),
     "恒生科技指数": ("HSTECH", "恒生科技"),
-    "恒生消费指数": ("HSCGSI", "恒生消费"),
-    "恒生中国企业指数": ("HSCEI", "恒生中国企业"),
+    # 东财对这两只用的是另一套写法：HSCGSI 显示全称"恒生消费品制造及服务业指数"，
+    # HSCEI 显示"国企指数"。按实况写，否则对账会判 manual_conflict。
+    "恒生消费指数": ("HSCGSI", "恒生消费品制造及服务业指数"),
+    "恒生中国企业指数": ("HSCEI", "国企指数"),
     "恒生高股息率指数": ("HSHDYI", "恒生高股息率"),
-    "中证全指原材料指数": ("000987", "中证全指原材料"),
-    "中证全指主要消费指数": ("000990", "中证全指主要消费"),
-    "中证医药卫生指数": ("000933", "800医卫"),
-    "中国战略新兴产业成份指数": ("000891", "战略新兴"),
-    "中国战略新兴产业综合指数": ("932076", "战略新兴100"),
-    "中证新兴产业指数": ("930050", "中证新兴"),
-    "中证全指软件指数": ("932094", "中证软件"),
-    "中证服务业指数": ("931008", "中证服务"),
-    "申银万国消费品指数": ("000103", "申万消费"),
+    # 下面这批简称统一按东财实况写（2026-08-07 全表对账）。原值是手写的近似名，
+    # 与实况不符会被 _resolve_code 的对账判为 manual_conflict 而整条丢弃。
+    "中证全指原材料指数": ("000987", "全指材料"),
+    "中证全指主要消费指数": ("000990", "全指消费"),
+    "中证医药卫生指数": ("000933", "中证医药"),
+    "中证全指软件指数": ("932094", "软件开发"),
+    # 以下 5 条经实测代码指向完全无关的标的（不是改名，是抄错），且东财指数全集里
+    # 找不到能唯一对上 AMAC 全称的候选，故显式登记为查不到：
+    #   中国战略新兴产业成份指数 -> 000891  实际是"新兴综指"
+    #   中国战略新兴产业综合指数 -> 932076  实际是"全指地产"
+    #   中证新兴产业指数        -> 930050  实际是"中证A50"
+    #   中证服务业指数          -> 931008  实际是"汽车指数"（该码是"汽车"板的正身）
+    #   申银万国消费品指数      -> 000103  实际是"沪消费品"
+    # 五者 theme_label 恒为 None，登记为查不到不影响任何板块解析。
+    "中国战略新兴产业成份指数": (None, None),
+    "中国战略新兴产业综合指数": (None, None),
+    "中证新兴产业指数": (None, None),
+    "中证服务业指数": (None, None),
+    "申银万国消费品指数": (None, None),
     "中信消费风格指数": ("817001", None),
-    "中证高端制造主题指数": ("931066", "制造龙头"),
-    "中证中游制造产业指数": ("931468", "中游制造"),
+    # 931066 实际是"军工龙头"、931468 实际是"红利质量"，都不是这两只指数。
+    "中证高端制造主题指数": (None, None),
+    "中证中游制造产业指数": (None, None),
     "申银万国制造业指数": ("801130", None),
     "申万国防军工指数": ("801740", None),
     # 930601 在东财实际是"中证软件"，与环保无关（缓存表与实时接口一致）。
     # 中证环保产业指数的真实行情码是 000827，东财简称"中证环保"。
     "中证环保产业指数": ("000827", "中证环保"),
-    "中证智能电动汽车指数": ("930997", "智能电车"),
+    # 930997 的东财实况简称是"新能源车"，既对不上"中证智能电动汽车指数"、也对不上
+    # 下面那条"中证新能源产业指数"——同一个码被两条 AMAC 全称抢用，至多一条能对。
+    # 无法从东财全集里唯一确定谁是谁，两条都登记为查不到。
+    # 注意：「新能源车」板块自身的行情身份写在 THEME_BOARD_INDEX 基础表里
+    # （930997，与实况简称一致），不依赖这里，改动不影响板块取数。
+    "中证智能电动汽车指数": (None, None),
+    "中证新能源产业指数": (None, None),
     "中信汽车指数": ("817018", None),
     # 以下三条曾人工写死，但实测代码都指向别的标的，已移除（宁可 unresolved）：
     #   中证国有企业综合指数 -> 000827   实际是"中证环保"（与上面的环保产业撞码）
@@ -61,13 +80,19 @@ _MANUAL_INDEX_CODES: dict[str, tuple[str, str | None]] = {
     # 三者 base_type 都是宽基/策略，theme_label 恒为 None，移除不影响板块解析。
     "中证中央企业综合指数": ("000829", "中证央企"),
     "中证国有企业改革指数": ("399974", "国企改革"),
-    "中证新型基础设施建设主题指数": ("931248", "新基建"),
+    # 931248 实际是"油气资源"。这条曾带 theme_label="基建"，一旦被 merge 进
+    # THEME_BOARD_INDEX 就会把油气涨跌当成基建板涨跌。
+    "中证新型基础设施建设主题指数": (None, None),
     "中证龙头企业指数": ("931802", "中证龙头"),
     "中信成长风格指数": ("817002", None),
-    "华证价值优选50指数": ("931586", "华证价值50"),
-    "中证高股息精选指数": ("932305", "高股息精选"),
+    # 931586 实际是"300价值稳健"，与华证毫无关系。
+    "华证价值优选50指数": (None, None),
+    # 932305 实际是"智选高股息"。这条曾带 theme_label="红利"。
+    "中证高股息精选指数": (None, None),
     "中证国有企业红利指数": ("000824", "国企红利"),
-    "中证港股通医药卫生综合指数": ("931787", "港股通医药"),
+    # 旧值 931787 是「港股创新药」，与这里记的期望简称「港股通医药」自相矛盾——
+    # 是一次抄错。综合指数的东财代码是 930965（简称「港股通医药C」，C 即综合）。
+    "中证港股通医药卫生综合指数": ("930965", "港股通医药C"),
     # 987008 是"港股通科技"，不是港股通新能源；旧值让 22 只跟踪中证港股通科技
     # 指数的基金被错标成"新能源"。国证港股通新能源的东财代码是 987026。
     "国证港股通新能源指数": ("987026", "港股通新能源"),
@@ -88,17 +113,20 @@ _MANUAL_INDEX_CODES: dict[str, tuple[str, str | None]] = {
     "中证TMT产业主题指数": ("000998", "中证TMT"),
     # 东财搜索“人工智能”会优先返回 931071（产业指数），但 AMAC 此处是
     # 中证人工智能主题指数 930713，必须固定精确身份，避免后续同步回归。
-    "中证人工智能主题指数": ("930713", "中证人工智能"),
+    # 东财对 930713 的简称是"CS人工智"（不是"中证人工智能"）。
+    "中证人工智能主题指数": ("930713", "CS人工智"),
     "中证新能源汽车指数": ("399976", "CS新能车"),
     "中证新材料主题指数": ("H30597", "新材料"),
     "中证中小盘700指数": ("000907", "中证700"),
     "中证全指半导体产品与设备指数": ("H30184", "半导体"),
     "中证沪港深创新药产业指数": ("931409", "SHS创新药"),
     "沪深300碳中和指数": ("931755", "SEEE碳中和"),
-    "中证内地新能源主题指数": ("000941", "内地新能源"),
-    "中证新能源产业指数": ("930997", "CS新能车"),
-    "中证长三角领先指数": ("931559", "长三角领先"),
-    "中证长三角龙头企业指数": ("931381", "长三角龙头"),
+    "中证内地新能源主题指数": ("000941", "新能源"),
+    # 长三角两条：931559 实际是"苏银理财长三角"（银行理财指数，与中证无关），
+    # 931381 实际是"中证长三角"——对不上"领先"也对不上"龙头企业"，两条谁是谁
+    # 无法从东财全集唯一确定。theme_label 恒为 None，登记为查不到无影响。
+    "中证长三角领先指数": (None, None),
+    "中证长三角龙头企业指数": (None, None),
     "中证粤港澳大湾区发展主题指数": ("931000", "大湾区"),
     # 东财 clist 未收录、需对照中证/国证官网（2026-06 核对）
     "中证港股通工业综合指数": ("930962", "港股通工业"),
@@ -106,7 +134,8 @@ _MANUAL_INDEX_CODES: dict[str, tuple[str, str | None]] = {
     "中证800成长指数": ("H30355", "800成长"),
     "中证800质量指数": ("932433", "800质量"),
     "中证800等权重指数": ("000842", "800等权"),
-    "中证沪港深互联互通TMT指数": ("H30552", "互联互通TMT"),
+    # 东财对 H30552 的简称是"沪港深通TMT"（沪港深通 = 沪港深互联互通，同一只）。
+    "中证沪港深互联互通TMT指数": ("H30552", "沪港深通TMT"),
     "中证港股通TMT主题指数": ("931026", "港股通TMT"),
     "中证800相对成长指数": ("H30357", "800R成长"),
     "中证800 ESG基准指数": ("931650", "800ESG"),
@@ -225,29 +254,68 @@ _CROSS_MARKET_NATIVE_LABELS: frozenset[str] = frozenset(
 )
 
 
+# 恒生系列的东财市场号不统一：旗舰指数（恒生指数 / 国企指数）在 100，
+# 其余子指数在 124。用错市场号不会报错，只会让 stock/get 返回空——于是这条
+# 映射静默失去行情，而调用方看到的是"没数据"而不是"配置错了"。
+_HANG_SENG_MARKET_OVERRIDES: dict[str, str] = {
+    "HSI": "100",     # 恒生指数
+    "HSCEI": "100",   # 东财简称"国企指数"
+}
+
+
 def _secid_for(code: str) -> str:
     c = code.strip().upper()
     if re.fullmatch(r"\d{6}", c):
-        if c.startswith("980") or c.startswith("981") or c.startswith("982"):
+        # 国证系列（98xxxx）挂在深交所命名空间。原先只列了 980/981/982，
+        # 987xxx（港股通系列）漏掉后落到 2.987026，实测取不到行情。
+        if c.startswith("98"):
             return f"0.{c}"
         if c.startswith("93") or c.startswith("95"):
             return f"2.{c}"
         if c.startswith("399"):
             return f"0.{c}"
+        # 北证指数（899xxx）同样在深交所命名空间。
+        if c.startswith("899"):
+            return f"0.{c}"
         if c.startswith("0"):
             return f"1.{c}"
         return f"2.{c}"
+    if c in _HANG_SENG_MARKET_OVERRIDES:
+        return f"{_HANG_SENG_MARKET_OVERRIDES[c]}.{c}"
+    # HS 前缀必须先于 H 前缀判断：恒生在 124，中证的 H30xxx / H11xxx 在 2。
+    if re.fullmatch(r"HS[A-Z0-9]*", c):
+        return f"124.{c}"
     if re.fullmatch(r"H[A-Z0-9]+", c):
         return f"2.{c}"
     return f"2.{c}"
 
 
 def _norm(name: str) -> str:
+    """名→码**匹配**用的宽归一化：连发布机构前缀一起剥掉。
+
+    只适合用来找候选，不能用来判身份：它会把"上证环保"与"中证环保"归成同一个键，
+    而那是两只不同的指数。判身份请用 `norm_security_name`。
+    """
     s = re.sub(r"\s+", "", name or "")
     s = s.replace("指数", "").replace("成份", "成分")
     for prefix in ("沪深", "上证", "深证", "中证", "国证", "恒生", "申银万国", "申万", "中信"):
         s = s.replace(prefix, "")
     return s
+
+
+def norm_security_name(name: str) -> str:
+    """证券**身份**比对用的窄归一化：只吸收写法差异，保留发布机构。
+
+    东财对同一只指数有时带"指数"后缀有时不带（HSTECH 时而"恒生科技"时而
+    "恒生科技指数"），这类差异必须忽略；但机构前缀承载身份，一律保留。
+    构建期的手工映射校验与 `scripts/reconcile_em_index_lookup.py` 的对账
+    共用这一个定义——两边口径若不一致，门槛就会变成噪音。
+    """
+    s = re.sub(r"\s+", "", name or "")
+    s = s.replace("成份", "成分")
+    while s.endswith("指数"):
+        s = s[: -len("指数")]
+    return s.upper()
 
 
 def _fetch_amac_entries() -> list[dict]:
@@ -377,11 +445,23 @@ def _fetch_eastmoney_index_lookup() -> tuple[
     return by_name, by_norm
 
 
+def _code_to_name(
+    by_name: dict[str, list[tuple[str, str]]],
+) -> dict[str, str]:
+    """反向索引 code → 东财简称，用于校验手工映射。"""
+    out: dict[str, str] = {}
+    for candidates in by_name.values():
+        for code, name in candidates:
+            out.setdefault(str(code).upper(), name)
+    return out
+
+
 def _resolve_code(
     full_name: str,
     *,
     by_name: dict[str, list[tuple[str, str]]],
     by_norm: dict[str, list[tuple[str, str]]],
+    by_code: dict[str, str] | None = None,
 ) -> tuple[str | None, str | None, str]:
     """指数全称 → 东财代码；无法唯一确定时返回 unresolved（fail-closed）。
 
@@ -394,7 +474,24 @@ def _resolve_code(
     """
     if full_name in _MANUAL_INDEX_CODES:
         code, em_name = _MANUAL_INDEX_CODES[full_name]
-        return code, em_name, "manual"
+        if code is None:
+            # 显式登记为"查不到"：这些名字用自动匹配一定抓错码，必须挡在这里，
+            # 不能让它掉进下面的 auto / auto_prefix 分支。
+            return None, None, "manual_unresolvable"
+        # 手工映射必须与东财实况对账。旧实现直接 return 手写的 (code, em_name)，
+        # 于是 22 条抄错/过期的条目静默生效多年——写错了不会报错，只会让某只基金
+        # 挂到另一只指数上。凡是手写简称与实况不符的，一律 fail-closed：
+        # 不符往往说明 code 本身就错了（931787 记着"港股通医药"，实况是"港股创新药"）。
+        actual = (by_code or {}).get(str(code).upper())
+        if actual is None:
+            # 东财指数全集里没有这个码（恒生/北证系列走别的分区），无从校验，
+            # 只能沿用手写值。
+            return code, em_name, "manual"
+        if em_name is not None and norm_security_name(em_name) != norm_security_name(
+            actual
+        ):
+            return None, None, "manual_conflict"
+        return code, actual, "manual"
 
     for cand in (full_name, full_name.replace("指数", "")):
         for key in (cand, cand + "指数"):
@@ -524,6 +621,8 @@ def build_library(
     elif fetch_eastmoney:
         by_name, by_norm = _fetch_eastmoney_index_lookup()
 
+    by_code = _code_to_name(by_name)
+
     entries: list[dict] = []
     unresolved: list[str] = []
     update_time = entries_raw[0].get("update_time") if entries_raw else None
@@ -531,7 +630,7 @@ def build_library(
     for item in entries_raw:
         full_name = item["index_full_name"]
         code, em_name, resolution = _resolve_code(
-            full_name, by_name=by_name, by_norm=by_norm
+            full_name, by_name=by_name, by_norm=by_norm, by_code=by_code
         )
         theme_label = _infer_theme_label(full_name, item["base_type"])
         if code is None:

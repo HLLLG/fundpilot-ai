@@ -135,8 +135,43 @@ python scripts/sync_amac_benchmark_index_library.py \
 
 同名指数（东财对深证 `399262` 与中证 `931582` 都显示简称"数字经济"）按发布机构的原生
 命名空间收敛，仍不唯一就记为 `unresolved`；模糊匹配只接受「东财简称是 AMAC 全称的前缀」
-单方向，避免父子/跨市场指数族混作同一代码。缓存表与实时接口可能漂移（`930601` 曾被
-当成中证环保产业，实为"中证软件"），涉及行情身份的改动仍需对实时接口复核。
+单方向，避免父子/跨市场指数族混作同一代码。
+
+`_MANUAL_INDEX_CODES` 里手写的 `(代码, 东财简称)` 会与东财名表**双向对账**：简称与实况
+不符即判 `manual_conflict` 并整条丢弃（不符往往说明代码本身就抄错了）。确知查不到的
+条目登记为 `(None, None)` → `manual_unresolvable`，挡住自动匹配去抓一个错码。
+2026-08-07 首次启用这道校验时查出 22 条：14 条代码指向完全无关的标的（`931248` 记着
+"新基建"、实为"油气资源"；`931787` 记着"港股通医药"、实为"港股创新药"），6 条只是东财
+改了简称，1 条是抄错（港股通医药卫生综合的正确代码是 `930965`）。
+
+### 指数身份对账（与东财实时数据核对）
+
+板块名 → 行情标的写错了不会报错，只会让页面上的涨跌幅静默变成另一只指数的涨跌幅。
+离线单测只能锁住"表内自洽"，锁不住"表与市场一致"，所以这层必须联网对账：
+
+```bash
+python scripts/reconcile_em_index_lookup.py                  # 三层全量对账
+python scripts/reconcile_em_index_lookup.py --check registry
+python scripts/reconcile_em_index_lookup.py --refresh-cache  # 刷新离线重算的输入
+python scripts/reconcile_em_index_lookup.py --write-baseline  # 人工复核后固化基线
+python scripts/reconcile_em_index_lookup.py --json var/reconcile.json
+```
+
+三层的严格程度不同，刻意不一致：
+
+| 层 | 对象 | 判定 |
+| --- | --- | --- |
+| `cache` | `var/amac/em_index_lookup.json` ↔ 实时指数全集 | 只告警。这张表只在离线重建时读，运行时不参与取数 |
+| `library` | 库里每条记的 `eastmoney_name` ↔ 按 secid 取回的实时名称 | 不一致即失败 |
+| `registry` | `THEME_BOARD_INDEX` 各 label 的实时名称 ↔ `app/data/sector_quote_identity_baseline.json` | 变动即失败，必须人工看过再 `--write-baseline` |
+
+退出码 0 = 无失败项，1 = 有失败项（可直接当定时任务/CI 门槛），2 = 取数失败。
+
+`library` 层长期会有一批 `no-quote`：中证 800 系列、港股通工业/资源/TMT、ESG 基准等
+东财根本不挂行情，这些条目 `theme_label` 恒为 `None`，不影响任何板块，属于预期告警。
+
+`--refresh-cache` 会原地重写缓存，而 `var/` 不在版本控制里——刷新前先自己备份一份，
+否则离线重算的输入就回不去了。
 
 ### 失效已站不住的存量板块映射
 

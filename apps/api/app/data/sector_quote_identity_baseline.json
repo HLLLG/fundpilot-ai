@@ -1,0 +1,396 @@
+{
+  "generated_at": "2026-08-07T10:48:50.205385+00:00",
+  "labels": {
+    "5G": {
+      "live_name": "5G通信",
+      "secid": "2.931079",
+      "source_code": "931079"
+    },
+    "AI医疗": {
+      "live_name": "AI制药（医疗）",
+      "secid": "90.BK1170",
+      "source_code": "BK1170"
+    },
+    "CPO": {
+      "live_name": "CPO概念",
+      "secid": "90.BK1128",
+      "source_code": "BK1128"
+    },
+    "MLCC": {
+      "live_name": "MLCC",
+      "secid": "90.BK0890",
+      "source_code": "BK0890"
+    },
+    "PCB": {
+      "live_name": "PCB",
+      "secid": "90.BK0877",
+      "source_code": "BK0877"
+    },
+    "中药": {
+      "live_name": "中证中药",
+      "secid": "2.930641",
+      "source_code": "930641"
+    },
+    "云计算": {
+      "live_name": "云计算",
+      "secid": "2.930851",
+      "source_code": "930851"
+    },
+    "互联网": {
+      "live_name": "互联网",
+      "secid": "2.H30535",
+      "source_code": "H30535"
+    },
+    "交通运输": {
+      "live_name": "AMAC交运",
+      "secid": "2.H11043",
+      "source_code": "H11043"
+    },
+    "人工智能": {
+      "live_name": "CS人工智",
+      "secid": "2.930713",
+      "source_code": "930713"
+    },
+    "人工智能产业": {
+      "live_name": "人工智能",
+      "secid": "2.931071",
+      "source_code": "931071"
+    },
+    "传媒": {
+      "live_name": "文娱传媒",
+      "secid": "2.H30365",
+      "source_code": "H30365"
+    },
+    "低空经济": {
+      "live_name": "低空经济",
+      "secid": "90.BK1166",
+      "source_code": "BK1166"
+    },
+    "体育": {
+      "live_name": "体育产业",
+      "secid": "90.BK0708",
+      "source_code": "BK0708"
+    },
+    "保险": {
+      "live_name": "保险主题",
+      "secid": "0.399809",
+      "source_code": "399809"
+    },
+    "信创": {
+      "live_name": "中证信创",
+      "secid": "2.931247",
+      "source_code": "931247"
+    },
+    "储能": {
+      "live_name": "储能产业",
+      "secid": "2.931746",
+      "source_code": "931746"
+    },
+    "光伏": {
+      "live_name": "光伏产业",
+      "secid": "2.931151",
+      "source_code": "931151"
+    },
+    "军工": {
+      "live_name": "中证军工",
+      "secid": "0.399967",
+      "source_code": "399967"
+    },
+    "农业": {
+      "live_name": "大农业",
+      "secid": "0.399814",
+      "source_code": "399814"
+    },
+    "创新药": {
+      "live_name": "CS创新药",
+      "secid": "2.931152",
+      "source_code": "931152"
+    },
+    "动漫游戏": {
+      "live_name": "动漫游戏",
+      "secid": "2.930901",
+      "source_code": "930901"
+    },
+    "化工": {
+      "live_name": "基础化工",
+      "secid": "90.BK1206",
+      "source_code": "BK1206"
+    },
+    "医疗": {
+      "live_name": "中证医疗",
+      "secid": "0.399989",
+      "source_code": "399989"
+    },
+    "医疗器械": {
+      "live_name": "医疗器械",
+      "secid": "2.H30217",
+      "source_code": "H30217"
+    },
+    "医药": {
+      "live_name": "AMAC医药",
+      "secid": "2.H30054",
+      "source_code": "H30054"
+    },
+    "半导体": {
+      "live_name": "半导体",
+      "secid": "2.H30184",
+      "source_code": "H30184"
+    },
+    "半导体材料": {
+      "live_name": "半导体材料设备",
+      "secid": "2.931743",
+      "source_code": "931743"
+    },
+    "可控核聚变": {
+      "live_name": "可控核聚变",
+      "secid": "90.BK1163",
+      "source_code": "BK1163"
+    },
+    "商业航天": {
+      "live_name": "商业航天",
+      "secid": "90.BK0963",
+      "source_code": "BK0963"
+    },
+    "固态电池": {
+      "live_name": "固态电池",
+      "secid": "90.BK0968",
+      "source_code": "BK0968"
+    },
+    "国企改革": {
+      "live_name": "国企改革",
+      "secid": "0.399974",
+      "source_code": "399974"
+    },
+    "基建": {
+      "live_name": "中证基建",
+      "secid": "2.930608",
+      "source_code": "930608"
+    },
+    "存储芯片": {
+      "live_name": "存储芯片",
+      "secid": "90.BK1137",
+      "source_code": "BK1137"
+    },
+    "家电": {
+      "live_name": "家电龙头",
+      "secid": "2.931021",
+      "source_code": "931021"
+    },
+    "建材": {
+      "live_name": "建筑材料",
+      "secid": "2.931009",
+      "source_code": "931009"
+    },
+    "恒生科技": {
+      "live_name": "恒生科技指数",
+      "secid": "124.HSTECH",
+      "source_code": "HSTECH"
+    },
+    "房地产": {
+      "live_name": "房地产",
+      "secid": "2.931775",
+      "source_code": "931775"
+    },
+    "数字经济": {
+      "live_name": "数字经济",
+      "secid": "2.931582",
+      "source_code": "931582"
+    },
+    "新能源": {
+      "live_name": "新能源",
+      "secid": "1.000941",
+      "source_code": "000941"
+    },
+    "新能源车": {
+      "live_name": "新能源车",
+      "secid": "2.930997",
+      "source_code": "930997"
+    },
+    "智能家居": {
+      "live_name": "智能家居",
+      "secid": "0.399996",
+      "source_code": "399996"
+    },
+    "有色金属": {
+      "live_name": "有色金属",
+      "secid": "1.000819",
+      "source_code": "000819"
+    },
+    "机器人": {
+      "live_name": "机器人",
+      "secid": "2.H30590",
+      "source_code": "H30590"
+    },
+    "机械设备": {
+      "live_name": "机械设备",
+      "secid": "90.BK1205",
+      "source_code": "BK1205"
+    },
+    "氢能": {
+      "live_name": "氢能源",
+      "secid": "90.BK0864",
+      "source_code": "BK0864"
+    },
+    "汽车": {
+      "live_name": "汽车指数",
+      "secid": "2.931008",
+      "source_code": "931008"
+    },
+    "消费电子": {
+      "live_name": "消费电子",
+      "secid": "2.931494",
+      "source_code": "931494"
+    },
+    "港股": {
+      "live_name": "香港100",
+      "secid": "2.H11100",
+      "source_code": "H11100"
+    },
+    "港股医药": {
+      "live_name": "港股通医药C",
+      "secid": "2.930965",
+      "source_code": "930965"
+    },
+    "港股通": {
+      "live_name": "港股通",
+      "secid": "2.H50069",
+      "source_code": "H50069"
+    },
+    "港股银行": {
+      "live_name": "HK银行",
+      "secid": "2.930792",
+      "source_code": "930792"
+    },
+    "煤炭": {
+      "live_name": "煤炭",
+      "secid": "90.BK0437",
+      "source_code": "BK0437"
+    },
+    "环保": {
+      "live_name": "中证环保",
+      "secid": "1.000827",
+      "source_code": "000827"
+    },
+    "电力": {
+      "live_name": "电力指数",
+      "secid": "2.H30199",
+      "source_code": "H30199"
+    },
+    "电子": {
+      "live_name": "CS电子",
+      "secid": "2.930652",
+      "source_code": "930652"
+    },
+    "电网设备": {
+      "live_name": "电网设备主题",
+      "secid": "2.931994",
+      "source_code": "931994"
+    },
+    "畜牧养殖": {
+      "live_name": "畜牧养殖",
+      "secid": "2.931946",
+      "source_code": "931946"
+    },
+    "白酒": {
+      "live_name": "CSSW白酒",
+      "secid": "2.930622",
+      "source_code": "930622"
+    },
+    "稀土": {
+      "live_name": "稀土产业",
+      "secid": "2.930598",
+      "source_code": "930598"
+    },
+    "算力租赁": {
+      "live_name": "算力概念",
+      "secid": "90.BK1134",
+      "source_code": "BK1134"
+    },
+    "红利": {
+      "live_name": "中证红利",
+      "secid": "1.000922",
+      "source_code": "000922"
+    },
+    "脑机接口": {
+      "live_name": "人脑工程",
+      "secid": "90.BK0706",
+      "source_code": "BK0706"
+    },
+    "计算机": {
+      "live_name": "CS计算机",
+      "secid": "2.930651",
+      "source_code": "930651"
+    },
+    "证券": {
+      "live_name": "证券公司30",
+      "secid": "2.931412",
+      "source_code": "931412"
+    },
+    "证券保险": {
+      "live_name": "证券Ⅱ",
+      "secid": "90.BK0473",
+      "source_code": "BK0473"
+    },
+    "贵金属": {
+      "live_name": "贵金属",
+      "secid": "90.BK0732",
+      "source_code": "BK0732"
+    },
+    "软件": {
+      "live_name": "软件指数",
+      "secid": "2.H30202",
+      "source_code": "H30202"
+    },
+    "通信技术": {
+      "live_name": "通信技术",
+      "secid": "90.BK1650",
+      "source_code": "BK1650"
+    },
+    "金融科技": {
+      "live_name": "金融科技",
+      "secid": "2.930986",
+      "source_code": "930986"
+    },
+    "钢铁": {
+      "live_name": "中证钢铁",
+      "secid": "2.930606",
+      "source_code": "930606"
+    },
+    "银行": {
+      "live_name": "800银行",
+      "secid": "2.H30022",
+      "source_code": "H30022"
+    },
+    "锂电池": {
+      "live_name": "锂电池",
+      "secid": "90.BK1303",
+      "source_code": "BK1303"
+    },
+    "锂矿": {
+      "live_name": "锂矿概念",
+      "secid": "90.BK1173",
+      "source_code": "BK1173"
+    },
+    "风电": {
+      "live_name": "风电产业",
+      "secid": "2.931672",
+      "source_code": "931672"
+    },
+    "食品饮料": {
+      "live_name": "CS食品饮",
+      "secid": "2.930653",
+      "source_code": "930653"
+    },
+    "黄金": {
+      "live_name": "黄金9999",
+      "secid": "118.AU9999",
+      "source_code": "AU9999"
+    },
+    "黄金股": {
+      "live_name": "SSH黄金股票",
+      "secid": "2.931238",
+      "source_code": "931238"
+    }
+  },
+  "note": "THEME_BOARD_INDEX 各 label 行情标的的实时名称基线。由 scripts/reconcile_em_index_lookup.py --write-baseline 生成，变动必须人工复核后再更新。"
+}
