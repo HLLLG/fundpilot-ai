@@ -144,6 +144,10 @@ python scripts/sync_amac_benchmark_index_library.py \
 "新基建"、实为"油气资源"；`931787` 记着"港股通医药"、实为"港股创新药"），6 条只是东财
 改了简称，1 条是抄错（港股通医药卫生综合的正确代码是 `930965`）。
 
+登记 `(None, None)` 前必须确认下游会不会**退化**而不是 fail-closed：`parse_benchmark_index`
+拿不到库里代码时会退回按名字做子串匹配。`中证智能电动汽车指数` 因此从"新能源车"掉到更粗的
+`931008 汽车`，两只 ETF 联接受影响。只在"下游确实 fail-closed"或"没有基金跟踪"时才登记查不到。
+
 ### 指数身份对账（与东财实时数据核对）
 
 板块名 → 行情标的写错了不会报错，只会让页面上的涨跌幅静默变成另一只指数的涨跌幅。
@@ -195,9 +199,23 @@ python scripts/invalidate_stale_benchmark_sectors.py --chain holdings --verified
 python scripts/invalidate_stale_benchmark_sectors.py --chain all --verified-only --apply
 ```
 
+持仓链路的重放走**股票级**证据（`detail.evidence[*].industry` → 生产函数
+`assess_sector_from_portfolio_stocks`），不是把已归并的板块名再折叠一遍。后者看着等价其实
+会漏判：`sector_name` 已经是归并结果，一旦归并规则在股票那一层改了（如 `军工电子Ⅱ` 从
+"电子"改到"军工"），从"电子"这个名字再也还原不回去，该基金会被判成"主板块不变"而逃过失效。
+报告里的「重放路径分布」就是用来确认这一点的：`stock_industry` 才可信，
+`sector_name_refold` 说明该行证据缺失、只能退化重放。
+
 失效方式是**删除** `fund_sector_resolution_status` 行让基金变成 `missing`——
 `_bulk_resolution_candidates` 把 `queued` 排除在候选之外，所以不能用 `queued` 触发重算，
 而 `missing` 在候选队列里优先级最高。
+
+失效后补算大批基金时，**用 `--codes` 分片喂**，不要指望通用队列：被失效的基金证据都还在、
+行业分类缓存（`stock-classification:industry:v1:`，TTL 30 天）是热的，`--mode holdings
+--limit 250 --codes <250个代码>` 约 1.05 秒/只；而不带 `--codes` 的队列会把没见过的基金
+也捞进来联网抓持仓快照，200 只能跑掉 25 分钟以上。注意 `--mode holdings` 不给 `--limit`
+时默认每批只处理 32 只。计数里的 `miss` 不是失败，是"没产出决策级身份"——分散型基金过不了
+60% 主导度门槛属正常，实测比例约 6~8%。
 
 schema v22 的 `fund_sector_resolution_status` 保存每只基金的解析状态、失败原因与
 下次重试时间；旧 `pending` 会在后台启动时迁移为明确状态。`queued` 表示等待持仓核验，
