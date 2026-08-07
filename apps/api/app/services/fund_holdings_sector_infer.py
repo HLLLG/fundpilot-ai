@@ -296,7 +296,17 @@ def assess_sector_from_portfolio_stocks(
                 "reason_codes": ["mapped_industry_evidence_missing"],
             },
         }
-    sector_name = max(scores, key=lambda key: scores[key])
+    # 平票必须按确定规则裁决，不能落到字典插入顺序上。
+    #
+    # 原实现是 `max(scores, key=lambda k: scores[k])`：`max` 遇到相等值取先出现的，
+    # 而 scores 的插入顺序跟着 stocks 的行顺序走——也就是跟着数据源返回持仓的顺序走。
+    # 行顺序不在证据契约里（`evidence_snapshot_id` / `source_ref` 都不含它），于是
+    # 同一份证据换个顺序就可能算出另一个主板块。实测把存量持仓证据打乱重放，
+    # 002862 会在「军工」和「电子」之间翻。这类不可复现会直接废掉
+    # `is_current_identity_row_reproducibly_verified` 的意义。
+    # 按 (权重降序, label 升序) 取第一个，与下面 `dict(sorted(scores.items()))`
+    # 的存储顺序同源。
+    sector_name = min(scores, key=lambda key: (-scores[key], key))
     dominant_mass = scores[sector_name]
     classified_ratio = (
         classified_mass / disclosed_mass if disclosed_mass > 0 else None

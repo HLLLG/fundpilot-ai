@@ -2,7 +2,7 @@
   "version": "2026-06-10",
   "source": "amac",
   "total": 154,
-  "resolved": 122,
+  "resolved": 123,
   "unresolved": [
     "中国战略新兴产业成份指数",
     "中证国有企业综合指数",
@@ -24,7 +24,6 @@
     "中证高端制造主题指数",
     "中证中游制造产业指数",
     "中证新能源产业指数",
-    "中证智能电动汽车指数",
     "中证香港内地国有企业指数",
     "中证地方国有企业综合指数",
     "沪深300金融地产指数",
@@ -1580,11 +1579,11 @@
       "market_type": "行业主题类",
       "index_full_name": "中证智能电动汽车指数",
       "update_time": "2026-06-10",
-      "source_code": null,
-      "eastmoney_secid": null,
-      "eastmoney_name": null,
+      "source_code": "930997",
+      "eastmoney_secid": "2.930997",
+      "eastmoney_name": "新能源车",
       "theme_label": "新能源车",
-      "resolution": "manual_unresolvable"
+      "resolution": "manual"
     },
     {
       "tier": "twoClass",

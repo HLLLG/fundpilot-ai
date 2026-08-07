@@ -33,6 +33,7 @@ import sys
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 API_ROOT = Path(__file__).resolve().parents[1]
 if str(API_ROOT) not in sys.path:
@@ -112,27 +113,40 @@ def _classify_holdings(
     *,
     verified_only: bool = False,
 ) -> dict[str, list[dict]]:
-    """按当前的行业→板块归并规则重放持仓链路的主板块。
+    """按当前规则重放持仓链路的主板块。
 
-    不需要股票级证据：`fund_sector_current` 已经按板块存了 exposure_percent，
-    把这些板块名再过一遍 `map_industry_to_theme_label` 折叠后重新取最大值，
-    就等价于用新规则重算了一次主导主题。
+    走**股票级**证据，不是把已归并的板块名再折叠一遍。后者曾是本函数的实现，
+    看着等价其实会漏判：`detail` 里存的 `sector_name` 已经是归并结果，一旦归并
+    规则在股票那一层改了（如 军工电子Ⅱ 从"电子"改到"军工"），从"电子"这个名字
+    再也还原不回 军工电子Ⅱ，于是该基金被判成"主板块不变"而逃过失效。
+    实测 015945 易方达国防军工就是这种情况：按板块名重放得"电子"（不变），
+    按股票行业重放得"军工"（该失效）。
+
+    `detail.evidence` 每条带原始 `industry` 与 `weight`，直接喂给生产函数
+    `assess_sector_from_portfolio_stocks`，dry-run 的结论才与真实重算一致。
+    证据缺失（老版本写入的行）才退回板块名折叠。
     """
+    from app.services.fund_holdings_sector_infer import (
+        HoldingStockRow,
+        assess_sector_from_portfolio_stocks,
+    )
     from app.services.fund_industry_theme_map import map_industry_to_theme_label
 
     placeholders = ",".join("?" * len(_HOLDINGS_SOURCES))
     rows = connection.execute(
-        f"""SELECT fund_code, sector_name, exposure_percent, is_primary, identity_status
+        f"""SELECT fund_code, sector_name, exposure_percent, is_primary,
+                   identity_status, detail
             FROM fund_sector_current
             WHERE source IN ({placeholders})
             ORDER BY fund_code""",
         _HOLDINGS_SOURCES,
     ).fetchall()
 
-    by_fund: dict[str, dict[str, object]] = {}
+    by_fund: dict[str, dict[str, Any]] = {}
     for row in rows:
         entry = by_fund.setdefault(
-            row["fund_code"], {"primary": None, "status": None, "exposures": {}}
+            row["fund_code"],
+            {"primary": None, "status": None, "exposures": {}, "stocks": {}},
         )
         try:
             exposure = float(row["exposure_percent"])
@@ -141,9 +155,32 @@ def _classify_holdings(
         if row["is_primary"]:
             entry["primary"] = row["sector_name"]
             entry["status"] = row["identity_status"]
-        buckets = entry["exposures"]
-        assert isinstance(buckets, dict)
-        buckets[row["sector_name"]] = exposure
+        entry["exposures"][row["sector_name"]] = exposure
+
+        # `_row_detail` 按板块过滤 evidence 并截断到 8 条。季报只披露前十大，
+        # 单个板块极少超过 8 只，所以把该基金各行的 evidence 取并集通常就是全集；
+        # 按 stock_code 去重避免同一只股票被重复计权。
+        detail = _load_detail(row["detail"])
+        for item in detail.get("evidence") or []:
+            if not isinstance(item, dict):
+                continue
+            try:
+                weight = float(item.get("weight"))
+            except (TypeError, ValueError):
+                continue
+            key = str(item.get("stock_code") or item.get("stock") or "")
+            if not key:
+                continue
+            entry["stocks"][key] = HoldingStockRow(
+                name=str(item.get("stock") or ""),
+                weight=weight,
+                industry=item.get("industry"),
+                stock_code=item.get("stock_code"),
+                coverage=item.get("coverage"),
+                industry_pit_qualified=bool(item.get("industry_pit_qualified")),
+                theme=item.get("refined_theme") or None,
+                theme_pit_qualified=bool(item.get("theme_pit_qualified")),
+            )
 
     out: dict[str, list[dict]] = {"unchanged": [], "relabeled": [], "unclassifiable": []}
     for fund_code, entry in by_fund.items():
@@ -154,20 +191,34 @@ def _classify_holdings(
             # pending 行只是研究线索，不会成为持仓页展示的板块；重算它们要为每只股票
             # 联网取行业分类，代价远大于收益，交给 TTL 自然刷新。
             continue
-        folded: dict[str, float] = {}
-        for label, exposure in entry["exposures"].items():  # type: ignore[union-attr]
-            mapped = map_industry_to_theme_label(label)
-            if mapped is None:
-                continue
-            folded[mapped] = folded.get(mapped, 0.0) + exposure
+
+        stocks = list(entry["stocks"].values())
+        if stocks:
+            assessed = assess_sector_from_portfolio_stocks(stocks)
+            new_sector = assessed.get("sector_name")
+            replay = "stock_industry"
+        else:
+            folded: dict[str, float] = {}
+            for label, exposure in entry["exposures"].items():
+                mapped = map_industry_to_theme_label(label)
+                if mapped is None:
+                    continue
+                folded[mapped] = folded.get(mapped, 0.0) + exposure
+            # 与生产路径同一个确定性裁决：权重降序、同权重取 label 升序。
+            new_sector = (
+                min(folded, key=lambda key: (-folded[key], key)) if folded else None
+            )
+            replay = "sector_name_refold"
+
         item = {
             "fund_code": fund_code,
             "stored_sector": stored,
-            "new_sector": max(folded, key=lambda key: folded[key]) if folded else None,
+            "new_sector": new_sector,
+            "replay": replay,
         }
-        if not folded:
+        if new_sector is None:
             out["unclassifiable"].append(item)
-        elif item["new_sector"] == stored:
+        elif new_sector == stored:
             out["unchanged"].append(item)
         else:
             out["relabeled"].append(item)
@@ -209,7 +260,15 @@ def _report_holdings(buckets: dict[str, list[dict]]) -> list[str]:
         ).most_common(30):
             print(f"   {str(old):<14} {count:>5} 只")
 
+    # 重放路径必须看得见：stock_industry 是按股票级行业走生产函数（可信），
+    # sector_name_refold 是证据缺失时退回板块名折叠（会漏判股票层的规则变化）。
+    replays = Counter(
+        item.get("replay") or "unknown"
+        for name in ("unchanged", "relabeled", "unclassifiable")
+        for item in buckets[name]
+    )
     print()
+    print(f"重放路径分布: {dict(replays)}")
     print(f"待失效基金数: {len(codes)}")
     return codes
 

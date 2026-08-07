@@ -123,10 +123,62 @@ _INDUSTRY_TO_THEME: dict[str, str] = {
     "股份制银行Ⅱ": "银行",
     "城商行Ⅱ": "银行",
     "农商行Ⅱ": "银行",
+    "银行Ⅱ": "银行",
     "证券Ⅱ": "证券",
     "保险Ⅱ": "保险",
     "多元金融": "证券保险",
+    # ---- 以下 6 条原先靠"裸子串兜底"命中，2026-08-07 逐条核实后登记为显式条目 ----
+    # 兜底那条规则是对整张白名单做双向子串匹配，答案对不对全凭巧合，而且不留痕迹。
+    # 这 6 条实测都是对的（核实方式是查板块成分，不是看名字像不像），但必须写明，
+    # 否则下一个上游新增的行业名会继续走同一条不可审计的路径。
+    "煤炭开采": "煤炭",          # 潞安环能 / 陕西煤业 / 兖矿能源
+    "计算机设备": "计算机",       # 海康威视 / 浪潮信息 / 中科曙光 / 大华股份
+    "家电零部件Ⅱ": "家电",       # 三花智控 / 盾安环境 / 和而泰
+    "其他电子Ⅱ": "电子",         # 洁美科技 / 香农芯创 / 民德电子，申万电子一级下
+    # 电子化学品Ⅱ 属申万「电子」一级（与 半导体/元件/光学光电子/消费电子/其他电子Ⅱ
+    # 同级），不属基础化工——东财 BK1206 基础化工 全量 454 只成分里一只都没有它们，
+    # 而东财另有专属板 BK1039 电子化学品Ⅱ（37 只，含 鼎龙/安集科技/华特气体/江化微）。
+    # 也不能归半导体材料：BK1325+BK1326 的 55 只成分全部报 f127=半导体，无一为电子
+    # 化学品（雅克科技是在 BK1325 且报半导体，所以它不在这批里）。
+    "电子化学品Ⅱ": "电子",
+    # ---- 刻意不登记：互联网电商 ----
+    # 若羽臣 / 壹网壹创 / 华凯易佰 / 吉宏股份 等电商代运营，属申万商贸零售一级，
+    # 与已 fail-closed 的 一般零售 / 专业连锁Ⅱ / 旅游零售Ⅱ 同级。中证互联网 H30535
+    # 的成分里没有它们，映射到"互联网"板只是名字里都有"互联网"三个字。
 }
+
+# 上游把层级号改一位（银行Ⅱ→银行Ⅲ、其他电子Ⅱ→其他电子Ⅲ）时的唯一容错。
+# 只接受"去掉尾部层级号后恰好命中"，不做任何模糊猜测——这是从原来那条对整张
+# 白名单做双向子串匹配的兜底收窄来的。
+_INDUSTRY_LEVEL_SUFFIXES = ("\u2163", "\u2162", "\u2161", "\u2160")
+
+
+def _strip_level_suffix(name: str) -> str:
+    for suffix in _INDUSTRY_LEVEL_SUFFIXES:
+        if name.endswith(suffix):
+            return name[: -len(suffix)]
+    return name
+
+
+def _build_stem_index() -> dict[str, str]:
+    """去掉层级号后的词干 → 板块，用于容忍上游改层级号。
+
+    词干冲突（同一词干的不同层级指向不同板块）时两边都不登记：宁可 fail-closed，
+    也不要在两个都说得通的答案里蒙一个。
+    """
+    stems: dict[str, str] = {}
+    conflicting: set[str] = set()
+    for industry, theme in _INDUSTRY_TO_THEME.items():
+        stem = _strip_level_suffix(industry)
+        if stem in stems and stems[stem] != theme:
+            conflicting.add(stem)
+        stems[stem] = theme
+    for stem in conflicting:
+        stems.pop(stem, None)
+    return stems
+
+
+_INDUSTRY_STEM_TO_THEME = _build_stem_index()
 
 
 def map_industry_to_theme_label(industry: str | None) -> str | None:
@@ -146,15 +198,21 @@ def map_industry_to_theme_label(industry: str | None) -> str | None:
     if canon is not None:
         return canon.label
 
-    best: str | None = None
-    best_len = 0
-    for label in THEME_BOARD_WHITELIST:
-        if label in normalized or normalized in label:
-            if len(label) > best_len:
-                best = label
-                best_len = len(label)
-    if best is not None:
-        return best
+    # 唯一容错：剥掉尾部层级号（Ⅰ/Ⅱ/Ⅲ/Ⅳ）后恰好等于某个白名单 label。
+    #
+    # 原实现在这里对整张白名单做**双向**裸子串匹配（`label in normalized or
+    # normalized in label`），取最长命中。它当时正好把 7 个行业名都判对了，但那是
+    # 巧合：判据是"名字里有没有这几个字"，而不是"这只股票到底跟哪个板块一起动"。
+    # 同一条规则也会把"互联网电商"（商贸零售系电商代运营）判给互联网板，而中证互联网
+    # 成分里根本没有它们。已核实的条目全部上移到 _INDUSTRY_TO_THEME 显式登记，
+    # 这里只保留一条零猜测的规则应对上游改层级号。
+    stem = _strip_level_suffix(normalized)
+    if stem != normalized:
+        if stem in THEME_BOARD_WHITELIST:
+            return stem
+        mapped = _INDUSTRY_STEM_TO_THEME.get(stem)
+        if mapped is not None:
+            return mapped
 
     # 归并不到任何可交易板块时返回 None（fail-closed）。
     #
