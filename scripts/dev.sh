@@ -5,6 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 API_DIR="$ROOT/apps/api"
 WEB_DIR="$ROOT/apps/web"
 API_PYTHON="$API_DIR/.venv/Scripts/python.exe"
+PIP_INDEX_URL="${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}"
 
 port_is_listening() {
   local port="$1"
@@ -33,7 +34,7 @@ stop_process_tree() {
 if [[ ! -f "$API_PYTHON" ]]; then
   echo "Creating backend virtual environment..."
   python -m venv "$API_DIR/.venv"
-  "$API_PYTHON" -m pip install -r "$API_DIR/requirements.txt"
+  "$API_PYTHON" -m pip install --index-url "$PIP_INDEX_URL" -r "$API_DIR/requirements.txt"
 fi
 
 # A node_modules directory can exist while its package binaries are missing
