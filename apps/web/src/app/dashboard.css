@@ -830,10 +830,13 @@
 }
 
 .app-masthead { min-height:4.25rem; background:rgba(236,238,234,.95); backdrop-filter:blur(12px); }
-.app-page-heading { display:grid; grid-template-columns:minmax(13rem,.6fr) 1.4fr; gap:2rem; align-items:end; margin:1.25rem 0 2rem; padding:1.5rem 0 1.75rem; border-bottom:1px solid var(--line-strong); }
-.app-page-heading > div > p { color:var(--accent-strong); font-size:.625rem; font-weight:800; letter-spacing:.18em; }
-.app-page-heading h1 { margin-top:.45rem; color:var(--brand-deep); font-size:clamp(2rem,4vw,3.25rem); font-weight:650; }
-.app-page-heading > p { max-width:40rem; color:var(--muted); font-size:.8125rem; line-height:1.75; }
+/* 页头是语义地标，不是视觉主角 —— 主角是它下面的总资产 / 当日收益 / 结论。
+   原来这里是 2 列网格（大标题 + 一段描述），clamp 到 3.25rem 的 h1 加上 1.5/1.75rem
+   内边距和 2rem 外边距，在 390px 屏上单独吃掉约 200px 首屏高度。改成基线对齐的单行：
+   眉标与标题同排，总高度约 3rem。 */
+.app-page-heading { display:flex; flex-wrap:wrap; align-items:baseline; gap:.2rem .6rem; margin:.5rem 0 1rem; padding-bottom:.7rem; border-bottom:1px solid var(--line-strong); }
+.app-page-heading > p { color:var(--accent-strong); font-size:.5625rem; font-weight:800; letter-spacing:.18em; }
+.app-page-heading h1 { color:var(--brand-deep); font-size:1.375rem; font-weight:650; letter-spacing:-.02em; }
 .workflow-rail { display:grid; grid-template-columns:repeat(3,1fr); padding:0 1.25rem; border-bottom:1px solid var(--line); background:var(--surface-muted); }
 .workflow-rail li { position:relative; display:flex; gap:.5rem; align-items:center; min-height:3.25rem; color:var(--muted); font-size:.6875rem; }
 .workflow-rail li::after { content:""; position:absolute; right:1rem; bottom:-1px; left:0; height:2px; background:transparent; }
@@ -974,8 +977,9 @@
 }
 
 @media (max-width: 767px) {
-  .app-page-heading { grid-template-columns:1fr; gap:.75rem; margin-bottom:1.25rem; padding:1rem 0 1.25rem; }
-  .app-page-heading h1 { font-size:2.2rem; }
+  /* 手机上标题区更要克制：这块每多 1rem，总资产就往下沉 1rem。 */
+  .app-page-heading { margin:.35rem 0 .8rem; padding-bottom:.6rem; }
+  .app-page-heading h1 { font-size:1.25rem; }
   /* 拆分前与 .settings-danger-row 共用一条规则，声明逐字不变。 */
   .workflow-completion { align-items:flex-start; flex-direction:column; }
   .workflow-completion .btn-ghost { width:100%; }

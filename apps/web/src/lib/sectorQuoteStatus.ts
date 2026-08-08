@@ -5,13 +5,9 @@ export function isEstimateFallbackMeta(meta?: SectorQuoteMeta | null): boolean {
 }
 
 /** 板块行情拉取时间（后端 UTC ISO → 本地 HH:mm，供持仓校对展示） */
-/** 后台自动/手动刷新成功后的统计文案，无需打扰用户。 */
-export function isRoutineSectorRefreshMessage(message: string | null | undefined): boolean {
-  if (!message?.trim()) {
-    return false;
-  }
-  return message.startsWith("已刷新 ") || message.startsWith("已用上次快照更新 ");
-}
+// 曾经这里有 isRoutineSectorRefreshMessage()，用来判断"这条刷新统计文案是否例行、
+// 可以不打扰用户"。现在刷新结果一律不再弹全局提示（失败走行内 refreshError，
+// 成功侧的口径说明由持仓看板的披露承载），这个过滤器已无调用方。
 
 export function buildSectorRefreshNotice(
   result?: RefreshSectorQuotesResult | null,

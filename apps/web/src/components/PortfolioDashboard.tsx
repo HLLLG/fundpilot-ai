@@ -15,6 +15,7 @@ import { PortfolioEvidenceOverviewPanel } from "@/components/PortfolioEvidenceOv
 import { FactorIcStatusBadge } from "@/components/FactorIcStatusBadge";
 import { EvidenceMaturityPanel } from "@/components/EvidenceMaturityPanel";
 import { InlineNotice } from "@/components/InlineNotice";
+import { MethodologyNote } from "@/components/MethodologyNote";
 
 // 空数组提到模块作用域：原来的 `?? []` 每次渲染都造新引用，会让 memo 永远失效。
 const EMPTY_ALLOCATION_ROWS: PortfolioAllocationRow[] = [];
@@ -330,7 +331,7 @@ export function PortfolioDashboard({
       ) : currentData != null && !hasCurrentContent ? (
         <InlineNotice
           tone="info"
-          message="暂无可分析的持仓收益数据。添加持仓并积累至少一份收益快照后，这里会展示趋势、贡献与风险。"
+          message="暂无可分析的收益数据，需先添加持仓并积累至少一份收益快照。"
           className="mt-3"
         />
       ) : null}
@@ -395,22 +396,24 @@ export function PortfolioDashboard({
         data-testid="professional-quant-evidence"
         aria-labelledby={`${professionalDetailsId}-title`}
       >
+        {/* 「不影响上方的日常盈亏阅读」是在替用户判断该不该读这一段。
+            标题已经写着「专业」，两块内容也都默认收起，行为本身就是提示。 */}
         <div className="pl-panel-head">
-          <div>
-            <h2 id={`${professionalDetailsId}-title`} className="pl-panel-title">
-              专业量化依据
-            </h2>
-            <p className="mt-1 text-xs leading-5 text-slate-500">
-              因子评分与证据覆盖用于进一步复核，不影响上方的日常盈亏阅读。
-            </p>
-          </div>
+          <h2 id={`${professionalDetailsId}-title`} className="pl-panel-title">
+            专业量化依据
+          </h2>
         </div>
 
         <div className="grid gap-3">
           <div className="rounded-xl border border-[var(--line)] bg-slate-50/60 p-3">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0 space-y-1">
-                <h3 className="text-sm font-bold text-slate-900">持仓因子体检</h3>
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="text-sm font-bold text-slate-900">持仓因子体检</h3>
+                  <MethodologyNote label="看什么">
+                    横向比较动量、风险调整收益、回撤控制和规模，识别可能拖累组合的持仓。
+                  </MethodologyNote>
+                </div>
                 <FactorIcStatusBadge />
               </div>
               <button
@@ -420,12 +423,9 @@ export function PortfolioDashboard({
                 aria-controls={`${professionalDetailsId}-factor`}
                 onClick={() => setShowFactorScores((value) => !value)}
               >
-                {showFactorScores ? "收起因子评分" : "展开因子评分"}
+                {showFactorScores ? "收起" : "展开"}
               </button>
             </div>
-            <p className="mt-2 text-xs leading-5 text-slate-500">
-              横向比较动量、风险调整收益、回撤控制和规模，识别可能拖累组合的持仓。
-            </p>
             {showFactorScores ? (
               <div id={`${professionalDetailsId}-factor`} className="mt-3">
                 <PortfolioFactorScoresPanel enabled />
@@ -435,8 +435,11 @@ export function PortfolioDashboard({
 
           <div className="rounded-xl border border-[var(--line)] bg-slate-50/60 p-3">
             <div className="flex flex-wrap items-start justify-between gap-3">
-              <div className="min-w-0">
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <h3 className="text-sm font-bold text-slate-900">组合证据总览</h3>
+                <MethodologyNote label="看什么">
+                  聚合因子 IC、板块信号和风险样本，说明当前建议有多少量化证据覆盖。
+                </MethodologyNote>
               </div>
               <button
                 type="button"
@@ -445,12 +448,9 @@ export function PortfolioDashboard({
                 aria-controls={`${professionalDetailsId}-evidence`}
                 onClick={() => setShowEvidenceOverview((value) => !value)}
               >
-                {showEvidenceOverview ? "收起证据总览" : "展开证据总览"}
+                {showEvidenceOverview ? "收起" : "展开"}
               </button>
             </div>
-            <p className="mt-2 text-xs leading-5 text-slate-500">
-              聚合因子 IC、板块信号和风险样本，说明当前建议有多少量化证据覆盖。
-            </p>
             {showEvidenceOverview ? (
               <div id={`${professionalDetailsId}-evidence`} className="mt-3">
                 <PortfolioEvidenceOverviewPanel enabled />
@@ -468,13 +468,13 @@ export function PortfolioDashboard({
         aria-labelledby={`${professionalDetailsId}-maturity-title`}
       >
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
             <h2 id={`${professionalDetailsId}-maturity-title`} className="pl-panel-title">
               证据成熟度与采集健康
             </h2>
-            <p className="mt-1 max-w-2xl text-xs leading-5 text-slate-500">
+            <MethodologyNote label="包含什么">
               查看后台采集、PIT 基金池、DecisionScore 与前向标签的真实进度；缺证据不会显示成 0 分。
-            </p>
+            </MethodologyNote>
           </div>
           <button
             type="button"
@@ -483,7 +483,7 @@ export function PortfolioDashboard({
             aria-controls={`${professionalDetailsId}-maturity`}
             onClick={() => setShowEvidenceMaturity((value) => !value)}
           >
-            {showEvidenceMaturity ? "收起成熟度" : "查看成熟度"}
+            {showEvidenceMaturity ? "收起" : "查看"}
           </button>
         </div>
         {showEvidenceMaturity ? (

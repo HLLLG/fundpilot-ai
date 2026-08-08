@@ -46,9 +46,13 @@ export function ReportNavigator({
           <p className="truncate text-sm font-extrabold text-slate-950">
             {currentReport?.title ?? "尚未生成今日日报"}
           </p>
-          <p className="mt-0.5 text-xs text-slate-500">
-            {historyLoading ? "正在同步日报索引…" : historyError ?? currentStatus}
-          </p>
+          {/* 第三行只在真的有增量信息时出现。原来它恒定占一行，内容却常是
+              「当前报告已选中」这种复述当前视觉状态的话。 */}
+          {historyLoading || historyError || currentStatus ? (
+            <p className="mt-0.5 text-xs text-slate-500">
+              {historyLoading ? "正在同步日报索引…" : historyError ?? currentStatus}
+            </p>
+          ) : null}
         </div>
       </div>
 

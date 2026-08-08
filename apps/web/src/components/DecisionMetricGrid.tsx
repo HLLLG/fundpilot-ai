@@ -12,6 +12,7 @@ import type {
   OutcomeMetricStats,
   OutcomeMetricSummary,
 } from "@/lib/api";
+import { MethodologyNote } from "@/components/MethodologyNote";
 
 const METRIC_CARDS: Array<{
   key: OutcomeMetricName;
@@ -136,14 +137,21 @@ export function FeeBenchmarkMethodNote({ feePercent }: { feePercent?: number | n
     ? "默认 1.5%（若未修改）"
     : `${feePercent}%`;
   return (
-    <div className="rounded-2xl border border-[var(--warn-border)] bg-[linear-gradient(135deg,#fffbeb_0%,#ffffff_58%,#eff6ff_100%)] px-4 py-3 text-[11px] leading-5 text-slate-600">
-      <div className="flex items-start gap-2">
-        <ReceiptText size={15} className="mt-0.5 shrink-0 text-[var(--warn-icon)]" aria-hidden="true" />
+    // 结论先给一行：这个费率是"你的假设"而不是"平台实收"。剩下两句解释
+    // （管理费为何不重复扣、什么样的基准才算正式）收进口径披露。
+    <div className="rounded-2xl border border-[var(--warn-border)] bg-[linear-gradient(135deg,#fffbeb_0%,#ffffff_58%,#eff6ff_100%)] px-4 py-2.5 text-[11px] leading-5 text-slate-600">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <ReceiptText size={15} className="shrink-0 text-[var(--warn-icon)]" aria-hidden="true" />
         <p>
-          <strong className="text-slate-900">费用口径：</strong>{feeText} 是你设置的买卖合计费用假设，
-          <strong className="text-[var(--warn-fg)]">不是平台实际扣费</strong>；管理费、托管费等已反映在基金净值中，不会重复扣除。
-          只有决策时冻结且组成完整的<strong className="text-[var(--info-fg)]">基金合同基准</strong>进入正式超额，跟踪指数和类别代理只作参考。
+          <strong className="text-slate-900">费用口径：</strong>{feeText} 是你的费用假设，
+          <strong className="text-[var(--warn-fg)]">不是平台实际扣费</strong>
         </p>
+        <MethodologyNote label="详细说明">
+          <p>管理费、托管费等已反映在基金净值中，不会重复扣除。</p>
+          <p>
+            只有决策时冻结且组成完整的<strong>基金合同基准</strong>进入正式超额，跟踪指数和类别代理只作参考。
+          </p>
+        </MethodologyNote>
       </div>
     </div>
   );
@@ -180,10 +188,14 @@ export function LegacyReferenceStrip({
           已排除正式 V2 统计
         </span>
       </div>
+      {/* 数字留在外面，「为什么不计入」这句解释收起来 —— 右上角的
+          「已排除正式 V2 统计」徽标已经把结论说了。 */}
       <p className="mt-2 text-[11px] leading-5 text-slate-600 tabular-nums">
-        {reportCount ? `${reportCount} 份旧报告 · ` : ""}成熟 {mature}/{eligible} · 方向命中 {percent(hitRate)}。
-        这些记录仍可复核，但缺少审计合格的持久化 DecisionEvent v2，不会混入上方四项指标。
+        {reportCount ? `${reportCount} 份旧报告 · ` : ""}成熟 {mature}/{eligible} · 方向命中 {percent(hitRate)}
       </p>
+      <MethodologyNote label="为什么不计入" className="mt-1">
+        这些记录仍可复核，但缺少审计合格的持久化 DecisionEvent v2，不会混入上方四项指标。
+      </MethodologyNote>
     </aside>
   );
 }

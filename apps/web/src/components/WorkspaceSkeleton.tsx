@@ -45,16 +45,15 @@ export function WorkspaceSkeleton({ message }: { message: string }) {
           </div>
         </header>
 
-        {/* 页头标题区：与 app-page-heading 的移动端/桌面端排布一致 */}
+        {/* 页头标题区：与 app-page-heading 的紧凑单行排布一致（标题 + 英文眉标，
+            无描述段）。尺寸必须跟着 dashboard.css 里那三条规则一起改，否则
+            骨架被真实内容替换时又会引入一次位移。 */}
         <section
-          className="mb-5 grid gap-3 pb-5 pt-4 lg:mb-6 lg:grid-cols-[minmax(13rem,.6fr)_1.4fr] lg:items-end lg:gap-8"
+          className="mt-2 mb-4 flex flex-wrap items-baseline gap-x-2.5 gap-y-1 pb-2.5"
           aria-hidden="true"
         >
-          <div>
-            <span className="block h-3 w-24 animate-pulse rounded bg-slate-200/70" />
-            <span className="mt-3 block h-9 w-48 animate-pulse rounded bg-slate-200/70 lg:h-12 lg:w-64" />
-          </div>
-          <span className="block h-4 w-full max-w-[34rem] animate-pulse rounded bg-slate-200/60" />
+          <span className="block h-6 w-28 animate-pulse rounded bg-slate-200/70" />
+          <span className="block h-2.5 w-16 animate-pulse rounded bg-slate-200/60" />
         </section>
 
         {/* 主内容：一张与持仓看板同宽的卡片骨架 */}

@@ -13,7 +13,6 @@ import {
   refreshSectorQuotes,
   type RefreshSectorQuotesResult,
 } from "@/lib/api";
-import { isRoutineSectorRefreshMessage } from "@/lib/sectorQuoteStatus";
 import { userFacingErrorMessage } from "@/lib/userFacingError";
 
 type MappingQueueItem = {
@@ -28,7 +27,6 @@ type UseSectorQuoteRefreshOptions = {
   onChange: (holdings: Holding[]) => void;
   warnings?: HoldingFieldWarning[];
   onWarningsChange?: (warnings: HoldingFieldWarning[]) => void;
-  onMessage?: (message: string) => void;
 };
 
 export function useSectorQuoteRefresh({
@@ -36,7 +34,6 @@ export function useSectorQuoteRefresh({
   onChange,
   warnings = [],
   onWarningsChange,
-  onMessage,
 }: UseSectorQuoteRefreshOptions) {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [sectorMetaByFundCode, setSectorMetaByFundCode] = useState<Record<string, SectorQuoteMeta>>({});
@@ -98,12 +95,14 @@ export function useSectorQuoteRefresh({
       if (pending.length) {
         setMappingQueue((queue) => [...queue, ...pending]);
       }
-      if (result.message && !isRoutineSectorRefreshMessage(result.message)) {
-        onMessage?.(result.message);
-      }
+      // 刷新结果不再往外推任何提示：
+      //  · 失败已经由 `refreshError` 渲染在总资产下方，也就是它真正描述的那些数字
+      //    旁边。两处同时出现时用户会在一屏里读到两遍同一句话。
+      //  · "成功但有话要说"的那类信息（走哪条链路取到的行情之类）属于口径说明，
+      //    现在由持仓看板上的口径披露承载，不必弹提示。
       return result;
     },
-    [onChange, onWarningsChange, onMessage],
+    [onChange, onWarningsChange],
   );
 
   const refresh = useCallback(
@@ -118,9 +117,8 @@ export function useSectorQuoteRefresh({
         return applyRefreshResult(result, generation);
       } catch (error) {
         if (generation === refreshGenerationRef.current) {
-          const message = userFacingErrorMessage(error, "刷新板块涨跌失败。");
-          setRefreshError(message);
-          onMessage?.(message);
+          // 同上：只走行内 refreshError，不再重复弹全局提示。
+          setRefreshError(userFacingErrorMessage(error, "刷新板块涨跌失败。"));
         }
         return undefined;
       } finally {
@@ -129,7 +127,7 @@ export function useSectorQuoteRefresh({
         }
       }
     },
-    [applyRefreshResult, onMessage],
+    [applyRefreshResult],
   );
 
   const selectMapping = useCallback(
@@ -151,15 +149,16 @@ export function useSectorQuoteRefresh({
         if (generation === refreshGenerationRef.current) {
           setMappingQueue((queue) => queue.slice(1));
         }
-      } catch (error) {
-        onMessage?.(userFacingErrorMessage(error, "保存板块映射失败。"));
+      } catch {
+        // 保存失败时刻意不推进 mappingQueue：映射弹窗因此保持打开、停在同一只基金上，
+        // 这本身就是"没成功"的反馈，不需要再叠一条文案。
       } finally {
         if (generation === refreshGenerationRef.current) {
           setIsRefreshing(false);
         }
       }
     },
-    [applyRefreshResult, mappingQueue, onMessage],
+    [applyRefreshResult, mappingQueue],
   );
 
   const dismissMapping = useCallback(() => {

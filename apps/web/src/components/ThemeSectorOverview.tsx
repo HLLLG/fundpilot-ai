@@ -11,6 +11,7 @@ import type {
 } from "@/lib/api";
 import { fetchBoardFlowHistory } from "@/lib/api";
 import { useMediaQuery } from "@/lib/useMediaQuery";
+import { MethodologyNote } from "@/components/MethodologyNote";
 import {
   boardKindClass,
   formatBoardKindLabel,
@@ -70,7 +71,9 @@ function FlowTierGrid({ item }: { item: MarketThemeBoardItem }) {
           );
         })}
       </div>
-      <p className="text-[10px] text-slate-500">主力净流入 = 超大单 + 大单；涨幅与资金可能来自不同口径（指数 vs 东财板块）。</p>
+      <MethodologyNote>
+        主力净流入 = 超大单 + 大单；涨幅与资金可能来自不同口径（指数 vs 东财板块）。
+      </MethodologyNote>
     </div>
   );
 }

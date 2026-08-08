@@ -2,6 +2,7 @@
 
 import { Crosshair, ShieldCheck } from "lucide-react";
 import type { DiscoveryStrategy } from "@/lib/api";
+import { MethodologyNote } from "@/components/MethodologyNote";
 
 type DiscoveryStrategySelectorProps = {
   value: DiscoveryStrategy;
@@ -79,9 +80,10 @@ export function DiscoveryStrategySelector({
           );
         })}
       </div>
-      <p className="mt-2 text-[11px] leading-5 text-slate-500">
+      {/* 两张卡片各自的描述已经说明了策略差异，这条脚注讲的是共同的评分口径。 */}
+      <MethodologyNote className="mt-2">
         机会分不扣历史回撤；买入仍须通过趋势、资金、修复、组合风险和明确退出条件。
-      </p>
+      </MethodologyNote>
     </fieldset>
   );
 }

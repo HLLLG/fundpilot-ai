@@ -10,6 +10,7 @@ import {
   FeeBenchmarkMethodNote,
 } from "@/components/DecisionMetricGrid";
 import { userFacingErrorMessage } from "@/lib/userFacingError";
+import { MethodologyNote } from "@/components/MethodologyNote";
 
 type ReportOutcomesPanelProps = {
   reportId: string;
@@ -167,10 +168,11 @@ export function ReportOutcomesPanel({ reportId, embedded = false }: ReportOutcom
 
       {outcomes ? (
         <>
-          <InlineNotice
-            tone="info"
-            message="结果按基金自身估值日和总收益率计算；观察/复核动作单列。缺少费用假设、完整基金合同基准或冻结仓位变化时，对应指标显示未覆盖，不会被算成命中或失败。"
-          />
+          {/* 原来是一条常驻的蓝底 InlineNotice。它讲的是统计口径，不是需要用户
+              响应的通知 —— 用 info 色块承载会和真正的告警抢注意力。 */}
+          <MethodologyNote label="统计口径">
+            结果按基金自身估值日和总收益率计算；观察/复核动作单列。缺少费用假设、完整基金合同基准或冻结仓位变化时，对应指标显示未覆盖，不会被算成命中或失败。
+          </MethodologyNote>
           {outcomes.message ? <p className="text-sm leading-6 text-slate-700">{outcomes.message}</p> : null}
           {horizonEntries.length ? (
             <div className="grid gap-2 sm:grid-cols-3">

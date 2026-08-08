@@ -17,6 +17,7 @@ import { hydrateTradingSession } from "@/lib/tradingSessionClient";
 import { readTradingSessionCache } from "@/lib/holdingDetailCache";
 import { SectorMappingModal } from "@/components/SectorMappingModal";
 import { InlineNotice } from "@/components/InlineNotice";
+import { MethodologyNote } from "@/components/MethodologyNote";
 import {
   cnProfitClass,
   formatSignedMoney,
@@ -210,7 +211,7 @@ function formatHoldingsRefreshedLabel(
   if (isRefreshing) {
     return "刷新中…";
   }
-  return "尚未刷新板块行情";
+  return "未刷新行情";
 }
 
 export function YangjibaoHoldingsBoard({
@@ -295,9 +296,7 @@ export function YangjibaoHoldingsBoard({
             <div className="px-5 py-12 text-center">
               <p className="text-sm font-bold text-slate-500">账户汇总</p>
               <p className="mt-6 text-3xl font-black text-slate-300">—</p>
-              <p className="mt-6 text-sm leading-6 text-slate-500">
-                正在恢复上次持仓，并尝试刷新真实板块涨跌…
-              </p>
+              <p className="mt-6 text-sm text-slate-500">正在加载持仓…</p>
             </div>
           ) : effectiveLoadState === "error" || effectiveLoadState === "stale" ? (
             <div className="empty-state" role="alert">
@@ -305,8 +304,11 @@ export function YangjibaoHoldingsBoard({
                 <RefreshCw size={24} strokeWidth={2.2} />
               </span>
               <h3 className="text-lg font-black text-slate-900">暂时无法确认账户持仓</h3>
+              {/* 只保留可执行信息。原来这里还有一句"为避免把故障误认成空账户，当前不
+                  展示空持仓结论"——那是在解释系统的内部设计取舍，用户此刻只需要知道
+                  加载失败、可以重试。 */}
               <p className="max-w-sm text-sm leading-6 text-slate-600">
-                {loadError ?? "服务暂时不可用。为避免把故障误认成空账户，当前不展示空持仓结论。"}
+                {loadError ?? "服务暂时不可用，请稍后重试。"}
               </p>
               {onRetryLoad ? (
                 <button type="button" onClick={onRetryLoad} className="btn-primary !min-h-11 !px-5 !text-sm">
@@ -320,11 +322,9 @@ export function YangjibaoHoldingsBoard({
                 <ScanLine size={26} strokeWidth={2.2} />
               </span>
               <h3 className="text-lg font-black text-slate-900">录入第一笔持仓</h3>
-              <p className="max-w-xs text-sm leading-6 text-slate-500">
-                上传支付宝或养基宝截图，或直接手动添加。确认后保存到你的账户。
-              </p>
+              {/* 两个按钮已经说清了「上传截图」和「手动添加」两条路，描述段不必再复述。 */}
               {onAddHolding ? (
-                <div className="mt-2 flex flex-wrap items-center justify-center gap-2.5">
+                <div className="mt-1 flex flex-wrap items-center justify-center gap-2.5">
                   <button type="button" onClick={onAddHolding} className="btn-primary !min-h-11 !px-5 !py-2.5 !text-sm">
                     <Plus size={16} />
                     上传截图 / 新增持有
@@ -341,9 +341,8 @@ export function YangjibaoHoldingsBoard({
                   ) : null}
                 </div>
               ) : null}
-              <p className="mt-1 max-w-md text-xs leading-5 text-slate-500">
-                {OCR_PRIVACY_COPY.uploadNotice}
-              </p>
+              {/* 隐私声明必须可达，但不必在空状态里占三行 —— 收进口径披露。 */}
+              <MethodologyNote label="截图如何处理">{OCR_PRIVACY_COPY.uploadNotice}</MethodologyNote>
             </div>
           )}
         </div>
@@ -411,11 +410,12 @@ export function YangjibaoHoldingsBoard({
                   {refreshError}
                 </div>
               ) : refreshNotice?.tone === "amber" ? (
-                <div className="mt-2 text-xs leading-5 text-amber-700">
-                  部分基金无真实关联板块，已用「
-                  <span className="font-bold">估值</span>
-                  」标签的基金代替展示天天基金净值估值
-                </div>
+                // 每一行已经带「估值」角标了，这里再用两行文字复述一遍同一件事纯属噪音。
+                // 收成一个可展开的口径说明：需要知道来源的人点开就有，其他人不被打扰。
+                <MethodologyNote label="部分为估值" className="mt-2">
+                  这些基金没有匹配到真实关联板块行情，当日涨跌改用天天基金净值估值补位，
+                  行内以「估值」角标标出。估值刷新更快但不等同于真实板块行情。
+                </MethodologyNote>
               ) : null}
             </div>
             <button
@@ -447,11 +447,9 @@ export function YangjibaoHoldingsBoard({
           </div>
         </div>
 
-        {quoteTradeDate ? (
-          <div className="border-b border-slate-100 bg-slate-50/60 px-3 py-1 text-[10px] font-semibold text-slate-500 sm:px-4">
-            行情日 {quoteTradeDate}
-          </div>
-        ) : null}
+        {/* 这里曾经有一条通栏「行情日 {quoteTradeDate}」。同一个日期在上方
+            「当日收益 {quoteTradeDate}」里已经出现过一次，通栏条只是把它重复一遍，
+            还额外吃掉一行高度和一道分隔线。删掉。 */}
 
         <div
           className="flex items-center gap-2 border-b border-slate-100 bg-slate-50/80 px-3 py-2 sm:hidden"

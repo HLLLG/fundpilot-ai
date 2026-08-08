@@ -30,6 +30,7 @@ import { DiscoveryReportPanel } from "@/components/DiscoveryReportPanel";
 import { DiscoverySkeleton } from "@/components/DiscoverySkeleton";
 import { FocusSectorPicker } from "@/components/FocusSectorPicker";
 import { DiscoveryStrategySelector } from "@/components/DiscoveryStrategySelector";
+import { MethodologyNote } from "@/components/MethodologyNote";
 import { RolePromptEditor } from "@/components/RolePromptEditor";
 import { YangjibaoFundDetail } from "@/components/YangjibaoFundDetail";
 import { displayableHoldings } from "@/lib/holdingMetrics";
@@ -686,9 +687,12 @@ export function FundDiscoveryPanel({
                 </span>
                 <div className="min-w-0">
                   <h2 className="font-display text-lg font-extrabold text-slate-950">发现基金机会</h2>
-                  <p className="mt-1 text-sm leading-6 text-slate-600">
+                  {/* 原来这里是一段 59 字的策略自述。它讲的内容与下面「荐基决策策略」
+                      两张卡片高度重合，而用户打开这一屏是为了发起扫描，不是先读一段
+                      产品说明。收进口径披露。 */}
+                  <MethodologyNote label="扫描逻辑与免责" className="mt-1">
                     优先寻找高波动、高动量与回撤修复机会，再用交易条件、持仓相关性和退出信号控制风险；没有合格基金时不会凑数。仅供参考，不构成投资建议。
-                  </p>
+                  </MethodologyNote>
                 </div>
               </div>
               <button
@@ -814,11 +818,10 @@ export function FundDiscoveryPanel({
                   }}
                 />
               </div>
-            ) : (
-              <p className="border-t border-[var(--line)] px-3 py-2 text-[11px] leading-5 text-slate-500">
-                普通扫描无需填写；附录只能补充表达风格和关注角度，不能修改系统决策约束。
-              </p>
-            )}
+            ) : null}
+            {/* 折叠态原来还挂一句"普通扫描无需填写；附录只能……"。这是一个标了
+                「（高级）」、状态显示「未添加」的可选项，折叠时再解释一遍它的边界，
+                只会给不打算用它的人增加阅读量。展开后 RolePromptEditor 里本来就有说明。 */}
           </div>
 
           <fieldset className="mt-4">
@@ -876,11 +879,11 @@ export function FundDiscoveryPanel({
             ) : null}
           </div>
 
-          <div className="mt-4 rounded-xl border border-slate-100 bg-slate-50/80 px-3 py-2.5">
+          <div className="mt-4 flex flex-wrap items-center gap-2 rounded-xl border border-slate-100 bg-slate-50/80 px-3 py-2">
             <p className="text-xs font-black text-slate-800">系统自动选基</p>
-            <p className="mt-1 text-[11px] leading-5 text-slate-500">
+            <MethodologyNote label="核验哪些项">
               自动核验申购状态、首次起购额与单日限额；费用可得时按未折扣标准费率估算上限，下单前仍需复核。
-            </p>
+            </MethodologyNote>
           </div>
 
           <div className="mt-4 max-w-md">
@@ -898,10 +901,11 @@ export function FundDiscoveryPanel({
                 placeholder="按计划投入余额自动计算"
                 className="mt-1 min-h-11 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-[var(--brand)]"
               />
-              <span className="mt-1 block text-[11px] font-normal leading-5 text-slate-500">
-                默认按计划投入总额减当前持仓动态计算；手工修改后，本次扫描保留你的输入。
-              </span>
             </label>
+            {/* placeholder 已经写着「按计划投入余额自动计算」，这段只补充口径细节。 */}
+            <MethodologyNote label="怎么算的" className="mt-1.5">
+              默认按计划投入总额减当前持仓动态计算；手工修改后，本次扫描保留你的输入。
+            </MethodologyNote>
           </div>
 
           <div className="mt-4 flex flex-wrap items-center gap-2">

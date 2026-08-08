@@ -12,6 +12,7 @@ import {
   LegacyReferenceStrip,
 } from "@/components/DecisionMetricGrid";
 import { userFacingErrorMessage } from "@/lib/userFacingError";
+import { MethodologyNote } from "@/components/MethodologyNote";
 
 const STYLE_LABELS: Record<string, string> = {
   tactical: "战术短线",
@@ -100,21 +101,28 @@ export function RecommendationAccuracyPanel() {
             <h3 className="text-lg font-black text-slate-950">T+N 决策复盘</h3>
             <StatusPill tone="amber">仅人工复盘</StatusPill>
           </div>
-          <p className="mt-1 text-xs leading-5 text-slate-600">
+          {/* 带数字的那半句（份数、报告日）是真信息，留下；评价口径收进披露。 */}
+          {data ? (
+            <p className="mt-1 text-xs leading-5 text-slate-600 tabular-nums">
+              正式 V2 报告 {data.formal_v2_report_count ?? 0} 份 · 选取{" "}
+              {data.selected_report_count ?? data.report_count ?? 0} 个报告日
+            </p>
+          ) : null}
+          <MethodologyNote label="评价口径" className="mt-1">
             按基金自身估值日的 T+5/T+20/T+60 总收益率评价；同日多份日报只保留最后一版。
-            {data ? ` 当前正式 V2 报告 ${data.formal_v2_report_count ?? 0} 份，选取 ${data.selected_report_count ?? data.report_count ?? 0} 个报告日。` : ""}
-          </p>
+          </MethodologyNote>
         </div>
       </div>
 
-      <InlineNotice
-        tone="warning"
-        message={
-          data?.warning ??
-          "当前已拆分方向、用户假设费后和正式基金合同基准超额；真实交易费用与样本量达标前，不会用于自动调参。"
-        }
-        className="mb-4"
-      />
+      {/* 后端下发的 warning 是真告警，保留色块；缺省那句是固定口径说明，
+          不该长期占用告警样式。 */}
+      {data?.warning ? (
+        <InlineNotice tone="warning" message={data.warning} className="mb-4" />
+      ) : (
+        <MethodologyNote label="当前不参与自动调参" className="mb-4">
+          当前已拆分方向、用户假设费后和正式基金合同基准超额；真实交易费用与样本量达标前，不会用于自动调参。
+        </MethodologyNote>
+      )}
 
       {error ? (
         <InlineNotice

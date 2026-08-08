@@ -4,6 +4,7 @@ import { useId, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import type { SectorOpportunity, SectorSignalBacktestSector } from "@/lib/api";
 import { divergenceBacktestLines, formatMetric, patternLabel, trackLabel } from "@/lib/decisionText";
+import { MethodologyNote } from "@/components/MethodologyNote";
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (
@@ -318,12 +319,7 @@ export function SectorOpportunityCard({
             >
               {isEntryV3 ? (
                 <>
-                  {formationProbability != null ? (
-                    <p className="text-[10px] leading-4 text-slate-500">
-                      这是当前多维信号对趋势形成的估计，不是收益概率；概率越高才逐步增加仓位。
-                    </p>
-                  ) : null}
-                  <div className="mt-2 grid grid-cols-3 gap-1.5 text-xs text-slate-600">
+                  <div className="grid grid-cols-3 gap-1.5 text-xs text-slate-600">
                     <Metric
                       label={`趋势强度 ${weightLabel(blockWeights.trend_strength)}`}
                       value={`${formatMetric(item.trend_strength_score)} 分`}
@@ -337,10 +333,19 @@ export function SectorOpportunityCard({
                       value={`${formatMetric(item.position_risk_score)} 分`}
                     />
                   </div>
-                  <p className="mt-1.5 text-[10px] leading-4 text-slate-500">
-                    三项是互不重叠的独立维度，按括号内权重合成为方向分 {formatMetric(item.direction_score)}；
-                    它们不是三重确认。
-                  </p>
+                  {/* 原来这里是两段分开的灰字（"概率含义" + "如何合成"），讲的是同
+                      一个评分模型，而且卡片本身只有半栏宽 —— 合成一个口径入口，
+                      免得一张小卡上排出好几个折叠触发器。权重本来就印在上面三个
+                      指标的标签里（如「趋势强度 (70%)」）。 */}
+                  <MethodologyNote label="评分口径" className="mt-1.5">
+                    {formationProbability != null ? (
+                      <p>这是当前多维信号对趋势形成的估计，不是收益概率；概率越高才逐步增加仓位。</p>
+                    ) : null}
+                    <p>
+                      三项是互不重叠的独立维度，按括号内权重合成为方向分 {formatMetric(item.direction_score)}；
+                      它们不是三重确认。
+                    </p>
+                  </MethodologyNote>
                   {probabilityEarlyPath || flowInflectionPath || highElasticity ? (
                     <div
                       data-testid="sector-selection-priority"
@@ -363,7 +368,9 @@ export function SectorOpportunityCard({
                           横截面 {formatMetric(item.sector_elasticity_percentile)} 分位。
                         </p>
                       ) : null}
-                      <p className="mt-1 text-slate-500">提前试仓仍须具体基金信号通过，不会因为排序靠前自动买入。</p>
+                      <MethodologyNote label="边界" className="mt-1">
+                        提前试仓仍须具体基金信号通过，不会因为排序靠前自动买入。
+                      </MethodologyNote>
                     </div>
                   ) : null}
                 </>
@@ -390,9 +397,10 @@ export function SectorOpportunityCard({
                       · {line}
                     </p>
                   ))}
-                  <p className="mt-1 text-[10px] leading-4 text-slate-500">
+                  {/* 上面一行已经写明「本次金额按 X% 计算」，这句只解释为什么。 */}
+                  <MethodologyNote label="影响" className="mt-1">
                     过热不否决当前机会，但会缩小本次参考金额；买入后由日报继续跟踪。
-                  </p>
+                  </MethodologyNote>
                 </div>
               ) : null}
               <div className="mt-2 grid grid-cols-3 gap-1.5 text-[11px] text-slate-600">

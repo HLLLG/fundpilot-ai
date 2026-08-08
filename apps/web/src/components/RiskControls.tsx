@@ -195,9 +195,10 @@ export function RiskControls({
             <RolePromptEditor value={rolePrompt} onChange={onRolePromptChange} />
           </div>
         ) : (
-          <p id="report-role-prompt-settings" className="border-t border-slate-100 px-3 py-2 text-[11px] leading-5 text-slate-500">
-            普通日报无需填写；附录只能补充表达风格和关注角度，不能修改系统决策约束。
-          </p>
+          // 折叠态不再解释这个可选高级项的边界 —— 触发器上已经标了「（高级）」
+          // 和「未添加 / 已添加」，展开后编辑器里也有完整说明。
+          // id 必须保留：触发器的 aria-controls 指向它。
+          <span id="report-role-prompt-settings" hidden />
         )}
       </div>
 

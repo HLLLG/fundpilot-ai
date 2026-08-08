@@ -4,13 +4,13 @@ import { useMemo, useState } from "react";
 import {
   BarChart3,
   ChevronDown,
-  CircleHelp,
   Layers,
   Scale,
   ShieldAlert,
 } from "lucide-react";
 import type { DiscoveryCandidatePoolItem, EliminatedCandidate } from "@/lib/api";
 import { translateEvidenceText } from "@/lib/decisionText";
+import { MethodologyNote } from "@/components/MethodologyNote";
 
 const CORE_FIELD_LABELS: Record<string, string> = {
   return_3m_percent: "近3月收益",
@@ -754,13 +754,15 @@ export function DiscoveryCandidatePoolPanel({
       </button>
       {open ? (
         <div id="discovery-candidate-pool-content" className="border-t border-slate-100">
-          <div className="mx-3 mt-3 flex items-start gap-2 rounded-xl bg-slate-50 px-3 py-2.5 text-xs leading-5 text-slate-600">
-            <CircleHelp size={15} aria-hidden="true" className="mt-0.5 shrink-0 text-slate-500" />
-            <p>
+          {/* 这块原来是打开候选池后第一眼看到的四行灰字，讲的全是评级口径。
+              候选池本身就是给要深挖的人看的，但"深挖"的意思是看候选，不是先读一段
+              规则。收进口径披露，卡片列表直接顶上来。 */}
+          <div className="px-3 pt-2.5">
+            <MethodologyNote label="评级口径">
               核心字段缺失会触发质量降级，候选仅作研究观察；已剔除项不会进入推荐。
               “字段完整”也不等于必然买入，仍需通过策略与风险守卫。同类分位只作描述性研究，
               不参与金额；只有通过合同核验的正式基准才能用于超额收益判断。
-            </p>
+            </MethodologyNote>
           </div>
 
           {eliminatedCandidates.length ? (

@@ -26,6 +26,7 @@ import {
 } from "@/components/DiscoveryCandidatePoolPanel";
 import { DiscoveryChatDrawer } from "@/components/DiscoveryChatDrawer";
 import { DiscoveryOutcomesPanel } from "@/components/DiscoveryOutcomesPanel";
+import { MethodologyNote } from "@/components/MethodologyNote";
 import {
   SectorOpportunityCard,
   isEntryMaturityPolicy,
@@ -461,6 +462,13 @@ function DiscoveryAllocationPlanPanel({ report }: { report: FundDiscoveryReport 
   const holdingCoverage = finiteAmount(
     risk?.current_holdings_nav_amount_coverage_percent,
   );
+  // 只有真正带数字的部分才值得常驻；没有数字时不要用一句套话填坑。
+  const riskFacts = [
+    riskSampleDays != null ? `候选共同收益样本 ${riskSampleDays} 日` : null,
+    holdingCoverage != null ? `当前持仓净值金额覆盖 ${holdingCoverage}%` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
     <section
@@ -474,10 +482,12 @@ function DiscoveryAllocationPlanPanel({ report }: { report: FundDiscoveryReport 
               <CircleDollarSign size={17} aria-hidden="true" className="text-[var(--brand)]" />
               本次资金安排
             </h3>
+            {/* 「展开查看…」这类指路语删掉：右边就有一个会旋转的 chevron，
+                而且整块 summary 本身可点。 */}
             <p className="mt-1 text-[11px] leading-5 text-slate-500">
               {plan.status === "allocated" || plan.status === "partial"
-                ? `本次参考 ${formatYuan(budget.allocated_current_tranche_yuan, "¥0")}，展开查看预算与风控明细。`
-                : "本次未形成参考金额，展开查看原因。"}
+                ? `本次参考 ${formatYuan(budget.allocated_current_tranche_yuan, "¥0")}`
+                : "本次未形成参考金额"}
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-2">
@@ -507,6 +517,9 @@ function DiscoveryAllocationPlanPanel({ report }: { report: FundDiscoveryReport 
         ))}
       </dl>
 
+      {/* 风控状态行：第一行是结论（通过 / 未通过），第二行原来永远是一段解释。
+          有具体数字（样本天数、覆盖率）时那是真信息，留着；纯解释性的兜底句
+          （"风险证据不合格时不生成本次参考金额。"之类）收进口径。 */}
       <div className={`flex items-start gap-2 px-4 py-3 text-xs leading-5 ${
         riskQualified ? "bg-[var(--success-bg)]/70 text-[var(--success-fg)]" : "bg-[var(--warn-bg)] text-[var(--warn-fg)]"
       }`}>
@@ -523,22 +536,21 @@ function DiscoveryAllocationPlanPanel({ report }: { report: FundDiscoveryReport 
                 ? "暂无进入金额分配的买入候选"
                 : "组合风险上下文未通过或未记录"}
           </p>
-          <p className="mt-0.5 opacity-80">
-            {riskQualified
-              ? [
-                  riskSampleDays != null ? `候选共同收益样本 ${riskSampleDays} 日` : null,
-                  holdingCoverage != null ? `当前持仓净值金额覆盖 ${holdingCoverage}%` : null,
-                ].filter(Boolean).join(" · ") || "已完成风险协方差与持仓相关性核验"
-              : allocationNotEvaluated
-                ? "候选筛选阶段已止步，组合风险分配未运行；这不表示风险校验失败。"
-                : "风险证据不合格时不生成本次参考金额。"}
-          </p>
+          {riskQualified && riskFacts ? (
+            <p className="mt-0.5 opacity-80">{riskFacts}</p>
+          ) : null}
+          <MethodologyNote label="口径" className="mt-1">
+            <p>
+              {riskQualified
+                ? "已完成风险协方差与持仓相关性核验。"
+                : allocationNotEvaluated
+                  ? "候选筛选阶段已止步，组合风险分配未运行；这不表示风险校验失败。"
+                  : "风险证据不合格时不生成本次参考金额。"}
+            </p>
+            <p>买入并录入持仓后，后续加减仓由日报基于最新持仓与风险重新分析。</p>
+          </MethodologyNote>
         </div>
       </div>
-
-      <p className="border-t border-slate-100 px-4 py-2.5 text-[11px] font-semibold leading-5 text-slate-600">
-        买入并录入持仓后，后续加减仓由日报基于最新持仓与风险重新分析。
-      </p>
       </details>
     </section>
   );
@@ -547,7 +559,7 @@ function DiscoveryAllocationPlanPanel({ report }: { report: FundDiscoveryReport 
 function RecommendationGroup({
   id,
   title,
-  description,
+  note,
   recommendations,
   candidateByCode,
   onOpenFund,
@@ -555,7 +567,8 @@ function RecommendationGroup({
 }: {
   id: string;
   title: string;
-  description: string;
+  /** 分组口径说明，默认收起。原来这里是一段常驻描述文字。 */
+  note: string;
   recommendations: DiscoveryRecommendation[];
   candidateByCode: Map<string, DiscoveryCandidatePoolItem>;
   onOpenFund?: (recommendation: DiscoveryRecommendation) => void;
@@ -567,10 +580,13 @@ function RecommendationGroup({
   }
   return (
     <section className="grid gap-3" aria-labelledby={id}>
-      <div className="flex items-end justify-between gap-3 px-1">
-        <div>
-          <h3 id={id} className="text-base font-black text-slate-950">{title}</h3>
-          <p className="mt-1 text-xs leading-5 text-slate-500">{description}</p>
+      {/* 标题 / 数量 / 口径同一行。原来是「标题 + 一段描述」两行，而描述讲的是
+          分组规则，读一次就够，不必每次扫描都占两行。 */}
+      <div className="panel-header px-1">
+        <div className="panel-header-main">
+          <h3 id={id} className="panel-header-title !text-base">{title}</h3>
+          <span className="panel-header-count">{recommendations.length} 只</span>
+          <MethodologyNote>{note}</MethodologyNote>
         </div>
         {collapsible ? (
           <button
@@ -583,9 +599,7 @@ function RecommendationGroup({
             {open ? "收起" : `查看 ${recommendations.length} 只`}
             <ChevronDown size={14} aria-hidden="true" className={`transition ${open ? "rotate-180" : ""}`} />
           </button>
-        ) : (
-          <span className="shrink-0 text-xs font-bold text-slate-500">{recommendations.length} 只</span>
-        )}
+        ) : null}
       </div>
       {open ? (
         <div id={`${id}-content`} className="grid gap-3">
@@ -721,11 +735,20 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
   const decisionHeadline = groupedRecommendations.actionable.length
     ? `${groupedRecommendations.actionable.length} 只形成买入建议`
     : "本次暂无买入建议";
+  // 「下一步」是这一屏最该被读到的一句话，所以保留在可见位置 —— 但只留动作，
+  // 把"为什么"交给下面的口径披露。原文各带一句解释性尾巴（"后续加减仓由日报分析"
+  // 之类），那些在「本次资金安排」里已经讲过一遍。
   const nextStep = groupedRecommendations.actionable.length
-    ? "先查看推荐基金和本次参考金额；确认可申购后，买入并录入持仓，后续加减仓由日报分析。"
+    ? "先看推荐基金与参考金额，确认可申购后买入并录入持仓。"
     : groupedRecommendations.decisionCounts.conditional_wait
-      ? "先等待设定条件出现，下一次扫描会重新判断；现在无需买入。"
-      : "把这些基金加入观察即可；关键资料补齐前，不需要采取买入动作。";
+      ? "先等待设定条件出现，下一次扫描会重新判断。"
+      : "先加入观察，关键资料补齐前不必买入。";
+  // 判断依据：解释为什么是这个结论。有价值但不必常驻 —— 收进口径。
+  const decisionBasis = blockedCount > 0
+    ? `有 ${blockedCount} 只候选的关键资料不完整或不够新，系统已保守列为“观察”；资料补齐前不会建议买入。`
+    : groupedRecommendations.actionable.length
+      ? "以下候选已通过方向、入场时机、数据时点、基金质量与组合风险校验。"
+      : "候选尚未同时通过方向、入场时机、数据质量和组合风险校验，因此不建议直接买入。";
 
   return (
     <div className="grid min-w-0 gap-5">
@@ -769,19 +792,18 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
               }`}>
                 {groupedRecommendations.actionable.length ? <ShieldCheck size={19} /> : <ShieldAlert size={19} />}
               </span>
-              <div>
+              <div className="min-w-0">
                 <h3 className="text-base font-black text-slate-950">{decisionHeadline}</h3>
-                <p className="mt-1 text-sm leading-6 text-slate-600">
-                  {blockedCount > 0
-                    ? `有 ${blockedCount} 只候选的关键资料不完整或不够新，系统已保守列为“观察”；资料补齐前不会建议买入。`
-                    : groupedRecommendations.actionable.length
-                      ? "以下候选已通过方向、入场时机、数据时点、基金质量与组合风险校验。"
-                      : "候选尚未同时通过方向、入场时机、数据质量和组合风险校验，因此不建议直接买入。"}
+                {/* 结论下面直接给动作。判断依据（哪几道校验过了/没过）移进口径披露：
+                    它解释的是同一件事，而右侧的「建议买入 / 等条件 / 仅观察」三格
+                    已经把结果量化过一遍了。 */}
+                <p className="mt-1 text-sm leading-6 text-slate-700">
+                  <span className="font-black text-slate-950">下一步：</span>{nextStep}
                 </p>
+                <MethodologyNote label="判断依据" className="mt-1.5">
+                  {decisionBasis}
+                </MethodologyNote>
               </div>
-            </div>
-            <div className="mt-3 rounded-xl bg-slate-50 px-3 py-2.5 text-xs leading-5 text-slate-700">
-              <span className="font-black text-slate-950">下一步：</span>{nextStep}
             </div>
           </div>
 
@@ -818,7 +840,7 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
       <RecommendationGroup
         id="discovery-actionable-title"
         title="推荐基金"
-        description="优先看本次参考金额、核心理由和主要风险；买入后的加减仓交给持仓日报。"
+        note="优先看本次参考金额、核心理由和主要风险；买入后的加减仓交给持仓日报。"
         recommendations={groupedRecommendations.actionable}
         candidateByCode={candidateByCode}
         onOpenFund={onOpenFund}
@@ -826,7 +848,7 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
       <RecommendationGroup
         id="discovery-conditional-title"
         title="等待条件"
-        description="条件未满足前不执行，等待回调或下一次数据验证。"
+        note="条件未满足前不执行，等待回调或下一次数据验证。"
         recommendations={groupedRecommendations.conditionalWait}
         candidateByCode={candidateByCode}
         onOpenFund={onOpenFund}
@@ -836,11 +858,11 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
         <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="border-b border-slate-200 px-4 py-3.5">
             <div className="flex flex-wrap items-end justify-between gap-2">
-              <div>
-                <h3 className="text-sm font-black text-slate-950">今日可布局方向</h3>
-                <p className="mt-1 text-xs leading-5 text-slate-500">
+              <div className="panel-header-main">
+                <h3 className="panel-header-title">今日可布局方向</h3>
+                <MethodologyNote>
                   同时展示成熟方向与概率提前试仓方向；后者只开放更小的本次金额，并须基金自身信号通过。
-                </p>
+                </MethodologyNote>
               </div>
               <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
                 <span className="rounded-full bg-slate-950 px-2.5 py-1 text-[11px] font-black text-white">
@@ -883,11 +905,11 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
                 ))}
               </div>
             ) : directionGroups.early.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-4">
+              <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-3.5">
                 <div className="text-sm font-black text-slate-800">今天没有方向通过当前入场线</div>
-                <p className="mt-1 text-xs leading-5 text-slate-500">
+                <MethodologyNote label="为什么" className="mt-1.5">
                   系统不会拿当日热门板块凑数。可以继续查看等待条件，但在触发前不生成本次买入动作。
-                </p>
+                </MethodologyNote>
               </div>
             ) : null}
 
@@ -898,9 +920,11 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
                     <div className="text-xs font-black text-[var(--info-fg)]">
                       提前试仓方向 · {directionGroups.early.length} 个
                     </div>
-                    <p className="mt-0.5 text-[11px] leading-4 text-slate-500">
+                    {/* 具体仓位比例每张方向卡上都写着（「计划仓位的 40%」），
+                        这里只保留口径入口，不再复述区间。 */}
+                    <MethodologyNote label="仓位口径" className="mt-1">
                       趋势尚未完全确认，按形成概率配置计划仓位的25%～40%，失效即停止新增。
-                    </p>
+                    </MethodologyNote>
                   </div>
                 </div>
                 <div className="grid gap-2 sm:grid-cols-2">
@@ -920,18 +944,23 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
                 data-testid="discovery-direction-fund-scope"
                 className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5"
               >
+                {/* 这一块原来是三段常驻文字，讲的全是筛选规则。规则收进口径；
+                    只有「哪些方向没找到合格基金」是一次性的具体事实，留在可见处。 */}
                 <div className="flex items-start gap-2">
                   <ShieldCheck size={16} aria-hidden="true" className="mt-0.5 shrink-0 text-[var(--success-icon)]" />
                   <div className="min-w-0 text-xs leading-5 text-slate-600">
                     <p className="font-black text-slate-800">方向与基金已联动筛选</p>
-                    <p>
-                      推荐基金只从可布局或满足提前试仓条件的方向中产生，并继续校验基金质量、载体质量和板块身份；等待方向不会用于补位。
-                    </p>
                     {unmatchedActionableSectors.length ? (
-                      <p className="mt-1 font-bold text-[var(--warn-fg)]">
-                        暂无合格基金载体：{unmatchedActionableSectors.join("、")}。系统保留方向机会，但不会拿其他等待方向的基金凑数。
+                      <p className="mt-0.5 font-bold text-[var(--warn-fg)]">
+                        暂无合格基金载体：{unmatchedActionableSectors.join("、")}
                       </p>
                     ) : null}
+                    <MethodologyNote label="筛选规则" className="mt-1">
+                      <p>
+                        推荐基金只从可布局或满足提前试仓条件的方向中产生，并继续校验基金质量、载体质量和板块身份；等待方向不会用于补位。
+                      </p>
+                      <p>系统保留方向机会，但不会拿其他等待方向的基金凑数。</p>
+                    </MethodologyNote>
                   </div>
                 </div>
               </div>
@@ -979,11 +1008,11 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
         <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 className="text-sm font-black text-slate-950">本次主方向</h3>
-            <span className="text-xs font-medium text-slate-500">
-              {mainlineSnapshot?.schema_version
-                ? "主线雷达仅参与研究排序 · 默认展示前 2 个方向"
-                : "默认只展示评分最高的 2 个方向"}
-            </span>
+            {/* 原来这里整句解释「默认展示前 2 个方向」——下面就摆着 2 张卡，
+                外加一个「查看另外 N 个研究方向」的展开器，不需要再讲一遍。 */}
+            {mainlineSnapshot?.schema_version ? (
+              <MethodologyNote>主线雷达仅参与研究排序，不直接决定买入。</MethodologyNote>
+            ) : null}
           </div>
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
             {sectorOpportunities.slice(0, 2).map((item, opportunityIndex) => (
@@ -1009,7 +1038,7 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
       <RecommendationGroup
         id="discovery-watch-title"
         title="研究观察"
-        description="仅保留研究线索，不构成买入建议；默认收起以减少干扰。"
+        note="仅保留研究线索，不构成买入建议。"
         recommendations={groupedRecommendations.watchOnly}
         candidateByCode={candidateByCode}
         onOpenFund={onOpenFund}
@@ -1017,13 +1046,12 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
       />
 
       <section className="grid gap-3" aria-labelledby="discovery-research-library-title">
-        <div className="px-1">
-          <h3 id="discovery-research-library-title" className="flex items-center gap-2 text-base font-black text-slate-950">
-            <BookOpenCheck size={18} aria-hidden="true" className="text-[var(--brand)]" />
-            专业研究资料
-          </h3>
-          <p className="mt-1 text-xs leading-5 text-slate-500">用于复核结论的专业资料，平时无需逐项阅读。</p>
-        </div>
+        {/* 删掉「用于复核结论的专业资料，平时无需逐项阅读。」——这句话在描述本区域
+            该怎么读，而它下面每一块本来就是默认收起的，行为已经说明了一切。 */}
+        <h3 id="discovery-research-library-title" className="flex items-center gap-2 px-1 text-base font-black text-slate-950">
+          <BookOpenCheck size={18} aria-hidden="true" className="text-[var(--brand)]" />
+          专业研究资料
+        </h3>
 
         {report.candidate_pool?.length ? (
           <DiscoveryCandidatePoolPanel
@@ -1048,7 +1076,8 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
                 <BarChart3 size={17} aria-hidden="true" className="text-[var(--brand)]" />
                 历史效果复盘
               </span>
-              <span className="mt-1 block text-xs text-slate-500">按 T+5 / T+20 / T+60 检查历史推荐表现，展开后再加载。</span>
+              {/* 「展开后再加载」是实现细节，用户不需要知道。 */}
+              <span className="mt-0.5 block text-xs text-slate-500">T+5 / T+20 / T+60 表现</span>
             </span>
             <ChevronDown size={17} aria-hidden="true" className={`shrink-0 text-slate-500 transition ${outcomesOpen ? "rotate-180" : ""}`} />
           </button>

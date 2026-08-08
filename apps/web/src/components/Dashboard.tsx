@@ -107,7 +107,7 @@ import { FocusSectorToast } from "@/components/FocusSectorToast";
 import { UserMenu } from "@/components/UserMenu";
 import { BrandMark } from "@/components/BrandMark";
 import { DashboardNav } from "@/components/DashboardNav";
-import { InlineNotice, type NoticeTone } from "@/components/InlineNotice";
+import { InlineNotice } from "@/components/InlineNotice";
 import { activeAnalysisRolePrompt } from "@/lib/analysisPrompt";
 import { resolveReportProviderStatus } from "@/lib/reportPresentation";
 import { userFacingErrorMessage } from "@/lib/userFacingError";
@@ -270,10 +270,13 @@ export function Dashboard() {
   const [reportHistoryOpen, setReportHistoryOpen] = useState(false);
   const [portfolioSummary, setPortfolioSummary] = useState<PortfolioSummary | null>(null);
   const [holdingWarnings, setHoldingWarnings] = useState<HoldingFieldWarning[]>([]);
-  const [notice, setNotice] = useState<{ message: string; tone: NoticeTone } | null>(null);
-  const setMessage = useCallback((message: string | null, tone: NoticeTone = "info") => {
-    setNotice(message ? { message, tone } : null);
-  }, []);
+  // 工作台不再有任何全局提示位。成功类文案（已移除 X / 已添加 X / 已停止生成…）
+  // 由界面自身承载：行消失、列表更新、浮层收起。写入失败则改为「让界面回到真相」
+  // 而不是「弹一句话解释」—— 失败路径统一回滚乐观更新，屏幕上不会留下服务端
+  // 并未接受的状态。
+  //
+  // 可诊断性不依赖 UI：apiFetch 已经通过 reportApiFailure 上报网络层失败与网关
+  // 错误，普通 500 也在后端连同 traceback 记录过，所以去掉提示不会丢失线索。
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [activeTab, setActiveTabState] = useState<TabId>("holdings");
   const [profileReady, setProfileReady] = useState(false);
@@ -381,7 +384,6 @@ export function Dashboard() {
     onChange: setHoldings,
     warnings: holdingWarnings,
     onWarningsChange: setHoldingWarnings,
-    onMessage: setMessage,
   });
 
   const swingAlerts = useSwingAlerts({
@@ -1038,8 +1040,8 @@ export function Dashboard() {
     userLeftReportDuringStreamRef.current = false;
     setStreamingReport(null);
     setIsSubmitting(false);
-    setMessage("已停止生成。");
-  }, [setMessage]);
+    // 不再提示"已停止生成。"：流式浮层与骨架屏同时消失，界面已经说明了。
+  }, []);
 
   const handleStreamFollowup = useCallback(
     async (message: string) => {
@@ -1059,12 +1061,12 @@ export function Dashboard() {
 
   const runAnalyze = async (targetHoldings: Holding[]) => {
     if (!targetHoldings.length) {
-      setMessage("请先上传截图或录入至少一条持仓。", "warning");
+      // 文案省略：workflowBlockers 的 no-holdings 已由 RiskControls 行内展示，
+      // 且该状态下生成按钮本身是禁用的。
       return;
     }
     const systemRolePrompt = activeAnalysisRolePrompt(analysisPrompt);
     setIsSubmitting(true);
-    setMessage(null);
     try {
       try {
         void ensureNotificationPermission();
@@ -1201,24 +1203,11 @@ export function Dashboard() {
         if (streamError instanceof DOMException && streamError.name === "AbortError") {
           setStreamingReport(null);
           lastAnalysisStageRef.current = null;
-          setMessage("已停止生成。");
           return;
         }
-        setMessage(
-          streamError instanceof Error
-            ? `${streamError.message}，已切换到后台分析。`
-            : "流式分析失败，已切换到后台分析。",
-        );
+        // 降级到后台分析时不再弹提示：下面会挂起 JobStatusFloat，
+        // 而 markStreamingReportBackgroundFallback 也会把中断阶段写进浮层。
       }
-
-      const lastStage = lastAnalysisStageRef.current;
-      const elapsedText = lastStage
-        ? `${Math.max(0, Math.round((streamTimestamp() - lastStage.startedAt) / 1000))}s`
-        : "";
-      const stageText = lastStage
-        ? `停在「${stageShortLabel(lastStage.stage)}」：${lastStage.label}${elapsedText ? `，累计 ${elapsedText}` : ""}`
-        : "未能定位最后阶段";
-      setMessage(`${stageText}，已切换到后台分析。`);
 
       const jobId = await startAnalyzeJob(
         targetHoldings,
@@ -1236,8 +1225,9 @@ export function Dashboard() {
             : "流式生成中断",
         ),
       );
-    } catch (error) {
-      setMessage(userFacingErrorMessage(error, "提交分析任务失败。"), "error");
+    } catch {
+      // 不提示：按钮从"生成中"回到可用态即表示这次没成功，
+      // 失败本身已由 apiFetch 的 reportApiFailure 上报。
     } finally {
       setIsSubmitting(false);
     }
@@ -1283,7 +1273,7 @@ export function Dashboard() {
         : `${BRAND.name}日报已降级生成`,
       { body: providerStatus.modelBacked ? completedReport.title : providerStatus.message },
     );
-    setMessage(providerStatus.message, providerStatus.tone);
+    // 不再额外弹提示：桌面通知已带同样信息，报告正文也会标注降级来源。
   };
 
   const handleJobClose = () => {
@@ -1330,8 +1320,8 @@ export function Dashboard() {
     discoveryStreamAbortRef.current = null;
     userLeftDiscoveryDuringStreamRef.current = false;
     setStreamingDiscovery(null);
-    setMessage("已停止扫描。");
-  }, [setMessage]);
+    // 同上：扫描浮层与骨架屏消失即反馈。
+  }, []);
 
   const handleDiscoveryJobClose = () => {
     setDiscoveryJobId(null);
@@ -1353,7 +1343,6 @@ export function Dashboard() {
   const handleOcrUpload = async (selectedFile: File) => {
     setIsOcrUploading(true);
     setAddHoldingError(null);
-    setMessage(null);
     try {
       const formData = new FormData();
       formData.append("file", selectedFile);
@@ -1373,9 +1362,8 @@ export function Dashboard() {
       setShowAddHoldingModal(false);
       setActiveTab("holdings");
     } catch (error) {
-      const errorMessage = userFacingErrorMessage(error, "截图识别失败。");
-      setAddHoldingError(errorMessage);
-      setMessage(errorMessage, "error");
+      // 只走弹窗内的行内错误：原来同一句话还会再推一条全局提示。
+      setAddHoldingError(userFacingErrorMessage(error, "截图识别失败。"));
     } finally {
       setIsOcrUploading(false);
     }
@@ -1390,7 +1378,6 @@ export function Dashboard() {
     invalidatePortfolioHoldingsRequest();
     setIsManualAdding(true);
     setAddHoldingError(null);
-    setMessage(null);
     try {
       // The server owns membership. Submit only the explicit upserts so a
       // stale browser tab cannot replace newer holdings it has never seen.
@@ -1406,19 +1393,12 @@ export function Dashboard() {
       }
       refreshAfterApplyRef.current = "sector";
       setShowAddHoldingModal(false);
-      setMessage(
-        newHoldings.length === 1
-          ? `已添加 ${newHoldings[0].fund_name} 到账户汇总。`
-          : `已添加 ${newHoldings.length} 只基金到账户汇总。`,
-        "success",
-      );
+      // 不再提示"已添加…"：弹窗关闭 + 新持仓出现在列表里就是反馈。
     } catch (error) {
       if (mutationVersion !== holdingsMutationVersionRef.current) {
         return;
       }
-      const errorMessage = userFacingErrorMessage(error, "手动添加失败。");
-      setAddHoldingError(errorMessage);
-      setMessage(errorMessage, "error");
+      setAddHoldingError(userFacingErrorMessage(error, "手动添加失败。"));
     } finally {
       setIsManualAdding(false);
     }
@@ -1435,7 +1415,6 @@ export function Dashboard() {
     const previousHoldings = holdings;
     setIsApplyingOcrHoldings(true);
     setOcrApplyError(null);
-    setMessage(null);
 
     try {
       const applied = await enqueuePortfolioMutation(() => applyPortfolioHoldings(toApply));
@@ -1475,14 +1454,12 @@ export function Dashboard() {
       setPendingOcrSource(null);
       setActiveTab("holdings");
       setOcrCompletionCount(toApply.length);
-      setMessage(`已确认并保存 ${toApply.length} 只基金。`, "success");
+      // 不再提示：上方 workflow-completion 横幅已经写了"已写入 N 只基金"。
     } catch (error) {
       if (mutationVersion !== holdingsMutationVersionRef.current) {
         return;
       }
-      const errorMessage = userFacingErrorMessage(error, "确认更新失败。");
-      setOcrApplyError(errorMessage);
-      setMessage(errorMessage, "error");
+      setOcrApplyError(userFacingErrorMessage(error, "确认更新失败。"));
     } finally {
       setIsApplyingOcrHoldings(false);
     }
@@ -1529,7 +1506,6 @@ export function Dashboard() {
         portfolio_summary: optimisticSummary,
         refreshed_at: holdingsRefreshedAt,
       });
-      setMessage(`已从列表移除 ${target.fund_name}，正在同步。`);
 
       sectorRefresh.invalidatePendingRefresh();
 
@@ -1548,9 +1524,8 @@ export function Dashboard() {
              portfolio_summary: result.portfolio_summary ?? optimisticSummary,
              refreshed_at: holdingsRefreshedAt,
            });
-           setMessage(`已移除 ${target.fund_name}`, "success");
         })
-        .catch((error) => {
+        .catch(() => {
           if (mutationVersion !== holdingsMutationVersionRef.current) {
             return;
           }
@@ -1561,7 +1536,7 @@ export function Dashboard() {
             portfolio_summary: rollbackSummary,
             refreshed_at: holdingsRefreshedAt,
           });
-          setMessage(userFacingErrorMessage(error, "删除失败，已恢复列表"), "error");
+          // 不提示：上面几行已经把列表与汇总回滚到删除前，界面重新与服务端一致。
         });
     },
     [
@@ -1572,7 +1547,6 @@ export function Dashboard() {
       user?.id,
       enqueuePortfolioMutation,
       markPortfolioCacheWriteReady,
-      setMessage,
     ],
   );
 
@@ -1597,7 +1571,6 @@ export function Dashboard() {
   const handleBatchUpload = async (selectedFile: File) => {
     setIsBatchUploading(true);
     setBatchUploadError(null);
-    setMessage(null);
     try {
       const result = await transactionsOcr(selectedFile);
       if (!result.transactions.length) {
@@ -1606,9 +1579,7 @@ export function Dashboard() {
       setShowBatchModal(false);
       setPendingTransactions((prev) => mergeTransactions(prev ?? [], result.transactions));
     } catch (error) {
-      const errorMessage = userFacingErrorMessage(error, "交易记录识别失败。");
-      setBatchUploadError(errorMessage);
-      setMessage(errorMessage, "error");
+      setBatchUploadError(userFacingErrorMessage(error, "交易记录识别失败。"));
     } finally {
       setIsBatchUploading(false);
     }
@@ -1620,9 +1591,7 @@ export function Dashboard() {
     }
     const toApply = pendingTransactions.filter((tx) => Boolean(tx.fund_code));
     if (!toApply.length) {
-      const errorMessage = "没有可应用的交易，请先为交易匹配基金代码。";
-      setTransactionApplyError(errorMessage);
-      setMessage(errorMessage, "warning");
+      setTransactionApplyError("没有可应用的交易，请先为交易匹配基金代码。");
       return;
     }
     holdingsMutationVersionRef.current += 1;
@@ -1630,7 +1599,6 @@ export function Dashboard() {
     invalidatePortfolioHoldingsRequest();
     setIsApplyingTransactions(true);
     setTransactionApplyError(null);
-    setMessage(null);
     try {
       const result = await enqueuePortfolioMutation(() => applyTransactions(toApply));
       if (mutationVersion !== holdingsMutationVersionRef.current) {
@@ -1640,15 +1608,12 @@ export function Dashboard() {
       setHoldings(result.holdings);
       void loadPortfolioSummary();
       setPendingTransactions(null);
-      const pendingNote = result.pending > 0 ? `，${result.pending} 笔待净值确认` : "";
-      setMessage(`已应用 ${result.inserted} 笔交易${pendingNote}，持仓已更新。`, "success");
+      // 不再提示"已应用 N 笔交易"：确认弹窗关闭、持仓列表随即更新。
     } catch (error) {
       if (mutationVersion !== holdingsMutationVersionRef.current) {
         return;
       }
-      const errorMessage = userFacingErrorMessage(error, "应用交易失败。");
-      setTransactionApplyError(errorMessage);
-      setMessage(errorMessage, "error");
+      setTransactionApplyError(userFacingErrorMessage(error, "应用交易失败。"));
     } finally {
       setIsApplyingTransactions(false);
     }
@@ -1720,13 +1685,16 @@ export function Dashboard() {
     return { holdings: result.holdings, portfolioSummary: nextSummary };
   };
 
+  // 只留「英文眉标 + 中文标题」。原来每个 tab 还挂一句描述（"看清资产与收益，再决定
+  // 下一步。"之类），但导航高亮已经说明了当前在哪一屏，这句话不提供新信息，却把真正的
+  // 主角（总资产 / 当日收益 / 结论）挤到首屏之外。标题本身保留为 h1 语义地标，字号收小。
   const activePageMeta = {
-    holdings: ["账户持仓", "看清资产与收益，再决定下一步。", "PORTFOLIO"],
-    dashboard: ["盈亏分析", "围绕关键数字、趋势与异常变化组织个人投研视图。", "PERFORMANCE"],
-    market: ["市场观察", "查看市场温度、板块资金与数据日期。", "MARKET"],
-    discovery: ["发现基金", "从投资方向到候选依据，按决策节奏完成扫描。", "DISCOVERY"],
-    report: ["投研日报", "结论先行，风险、行动与专业证据渐进展开。", "DAILY BRIEF"],
-    history: ["历史日报", "按日期回看判断、证据和后续变化。", "ARCHIVE"],
+    holdings: ["账户持仓", "PORTFOLIO"],
+    dashboard: ["盈亏分析", "PERFORMANCE"],
+    market: ["市场观察", "MARKET"],
+    discovery: ["发现基金", "DISCOVERY"],
+    report: ["投研日报", "DAILY BRIEF"],
+    history: ["历史日报", "ARCHIVE"],
   }[activeTab];
 
   return (
@@ -1759,38 +1727,14 @@ export function Dashboard() {
           </div>
         </header>
 
-        {/* 提示条改为吸附在顶栏下方的固定条，不再插在顶栏与页头之间。
-            原来它在挂载后才出现时会把 .app-page-heading 连同整个 <main> 向下推
-            66px（实测 CLS 0.033，位移源已由 scripts/perf/ui-interaction-benchmark.mjs
-            的 layout-shift sources 捕获确认）。固定定位后完全不参与文档流，
-            位移归零；顺带得到一个更合适的行为 —— 金融告警在滚动时不会划走。
-            top 与 .app-masthead 的 min-height（4.25rem）对齐，宽度与外层
-            max-w-[1240px] 容器一致，所以视觉上仍然贴着内容列。 */}
-        {notice ? (
-          <div
-            className="pointer-events-none fixed inset-x-0 top-[4.25rem] z-30 flex justify-center px-4 sm:px-6"
-          >
-            <div className="pointer-events-auto w-full max-w-[1240px]">
-              <InlineNotice
-                tone={notice.tone}
-                message={notice.message}
-                onDismiss={() => setMessage(null)}
-              />
-            </div>
-          </div>
-        ) : null}
-
         <section className="app-page-heading" aria-labelledby="app-page-title">
-          <div>
-            <p>{activePageMeta[2]}</p>
-            <h1 id="app-page-title" className="font-display">{activePageMeta[0]}</h1>
-          </div>
+          <h1 id="app-page-title" className="font-display">{activePageMeta[0]}</h1>
           <p>{activePageMeta[1]}</p>
         </section>
 
         {ocrCompletionCount !== null ? (
           <section className="workflow-completion" role="status" aria-live="polite">
-            <div><span aria-hidden="true">✓</span><p><strong>持仓恢复完成</strong>已写入 {ocrCompletionCount} 只基金，接下来可查看组合状态或进入基金详情。</p></div>
+            <div><span aria-hidden="true">✓</span><p><strong>持仓恢复完成</strong>已写入 {ocrCompletionCount} 只基金。</p></div>
             <button type="button" onClick={() => setOcrCompletionCount(null)} className="btn-ghost min-h-11">知道了</button>
           </section>
         ) : null}
@@ -1842,13 +1786,9 @@ export function Dashboard() {
                       : `历史日报 · ${reportDateKey(report.created_at) ?? "日期未知"}`
                     : "今日"
                 }
-                currentStatus={
-                  report
-                    ? `风险等级 ${report.risk.level} · 当前报告已选中`
-                    : orderedReports.length
-                      ? "可生成今日判断，或直接回看最近一份历史日报"
-                      : "生成第一份日报后，这里会建立连续日期导航"
-                }
+                // 只留真正的增量信息：风险等级。"当前报告已选中"复述视觉状态，
+                // 无报告时的两句话则是在向用户解释导航器自己怎么用。
+                currentStatus={report ? `风险等级 ${report.risk.level}` : ""}
                 hasPrevious={Boolean(previousReport)}
                 hasNext={Boolean(nextReport)}
                 canReturnToday={!viewingToday}
@@ -2039,6 +1979,7 @@ export function Dashboard() {
             holdingsMutationVersionRef.current += 1;
             const mutationVersion = holdingsMutationVersionRef.current;
             invalidatePortfolioHoldingsRequest();
+            const rollbackHoldings = holdings;
             const next = holdings.map((item, itemIndex) => (itemIndex === index ? updated : item));
             markPortfolioCacheWriteReady();
             setHoldings(next);
@@ -2049,12 +1990,14 @@ export function Dashboard() {
               }
               setHoldings(applied.holdings);
               setHoldingWarnings(applied.holding_warnings ?? []);
-              setMessage(`基金代码已更新为 ${updated.fund_code}`, "success");
-            } catch (error) {
+              // 不再提示：详情页当场显示的就是新代码。
+            } catch {
               if (mutationVersion !== holdingsMutationVersionRef.current) {
                 return;
               }
-              setMessage(userFacingErrorMessage(error, "持仓持久化失败，请刷新后重试"), "error");
+              // 服务端拒绝了改码，就把乐观更新撤回去。既然不弹提示，界面至少不能
+              // 继续显示一个服务端并不存在的代码 —— 否则用户会以为已经改好了。
+              setHoldings(rollbackHoldings);
             }
           }}
           onHoldingResolved={(_index, resolved) => {

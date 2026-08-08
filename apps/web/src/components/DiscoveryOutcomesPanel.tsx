@@ -12,6 +12,7 @@ import {
 import type { DiscoveryOutcomeItem, DiscoveryOutcomesPayload } from "@/lib/api";
 import { fetchDiscoveryOutcomes } from "@/lib/api";
 import { userFacingErrorMessage } from "@/lib/userFacingError";
+import { MethodologyNote } from "@/components/MethodologyNote";
 
 type DiscoveryOutcomesPanelProps = { reportId: string };
 const HORIZONS = [5, 20, 60] as const;
@@ -120,10 +121,10 @@ export function DiscoveryOutcomesPanel({ reportId }: DiscoveryOutcomesPanelProps
 
       {payload ? (
         <div className="mt-4 space-y-3">
-          <InlineNotice
-            tone="info"
-            message="只评价明确买入动作，并按日增长率优先的总收益率复盘；关注、观察、等待回调均单列。费用、正式基金合同基准或候选基线缺失时只降低覆盖率，不会被算成失败。"
-          />
+          {/* 同上：统计口径不该占一条常驻通知色块。 */}
+          <MethodologyNote label="统计口径">
+            只评价明确买入动作，并按日增长率优先的总收益率复盘；关注、观察、等待回调均单列。费用、正式基金合同基准或候选基线缺失时只降低覆盖率，不会被算成失败。
+          </MethodologyNote>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {[
               ["可评价", payload.eligible_count ?? 0],
