@@ -109,6 +109,7 @@ import { BrandMark } from "@/components/BrandMark";
 import { DashboardNav } from "@/components/DashboardNav";
 import { InlineNotice, type NoticeTone } from "@/components/InlineNotice";
 import { activeAnalysisRolePrompt } from "@/lib/analysisPrompt";
+import { resolveReportProviderStatus } from "@/lib/reportPresentation";
 import { userFacingErrorMessage } from "@/lib/userFacingError";
 // 工作台专属样式：Dashboard 本身是 next/dynamic 懒加载的，样式随它一起按需到达，
 // 不会进入匿名首屏与登录/注册/设置/管理员路由的阻塞 CSS。
@@ -124,8 +125,10 @@ function DashboardTabLoading({ label }: { label: string }) {
 
 function DeferredInteractionLoading({ label }: { label: string }) {
   return (
+    // bottom 要避开移动端底栏（`--bottom-nav-h` + 安全区），否则这条加载提示会盖住
+    // 导航按钮；桌面没有底栏，回到贴底 1rem。
     <div
-      className="pointer-events-none fixed inset-x-0 bottom-4 z-[70] flex justify-center px-4"
+      className="pointer-events-none fixed inset-x-0 bottom-[calc(var(--bottom-nav-h,3.25rem)+env(safe-area-inset-bottom,0px)+0.5rem)] z-[70] flex justify-center px-4 lg:bottom-4"
       role="status"
       aria-live="polite"
       aria-atomic="true"
@@ -1271,8 +1274,16 @@ export function Dashboard() {
       setReportTabUnread(true);
     }
 
-    notifyDesktop(`${BRAND.name}日报已生成`, { body: completedReport.title });
-    setMessage("深度分析日报已生成（Pro + 有界扩展证据 + 可选风控审校）。", "success");
+    // provider 失败时后端会 fail-closed 换成离线兜底（每条建议降为观察、金额阻断）。
+    // 提示语必须跟着走，否则顶部说"已生成 Pro 深度分析"、正文却写"模型服务不可用"。
+    const providerStatus = resolveReportProviderStatus(completedReport);
+    notifyDesktop(
+      providerStatus.modelBacked
+        ? `${BRAND.name}日报已生成`
+        : `${BRAND.name}日报已降级生成`,
+      { body: providerStatus.modelBacked ? completedReport.title : providerStatus.message },
+    );
+    setMessage(providerStatus.message, providerStatus.tone);
   };
 
   const handleJobClose = () => {

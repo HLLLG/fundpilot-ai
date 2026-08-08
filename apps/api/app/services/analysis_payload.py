@@ -74,6 +74,8 @@ OUTPUT_REQUIREMENTS_SYSTEM = (
     "以上字段缺失时后端会兜底补全，但能给出真实依据时必须给，不得编造未提供的数字。"
     "news_bullish 与 news_bearish 必须是字符串 JSON 数组（如 [\"标题\"]），禁止写成单个字符串；"
     "无则写 [\"暂无明确利好\"] 或 [\"暂无明确利空\"]。"
+    "caveats 与 recommendations 同样必须是字符串 JSON 数组（如 [\"提示\"]），"
+    "即使只有一条也要写成单元素数组，禁止写成单个字符串。"
     "利好/利空标题须能在 news_titles 或 topic_briefs.points.source_titles 中找到对应。"
     "须遵循 analysis_facts.session.decision_window 与 session_kind 调整措辞，"
     "非 trading_day_pre_close 时不要写「收盘前必须今日下单」。"

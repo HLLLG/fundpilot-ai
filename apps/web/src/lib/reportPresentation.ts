@@ -93,6 +93,106 @@ export function scopeReportToCurrentHoldings(
   };
 }
 
+/**
+ * 一份日报到底是模型产出的，还是 provider 失败后的确定性兜底。
+ *
+ * 后端在 provider 调用失败时会 fail-closed：整份报告换成 `_offline_report`，
+ * 每条建议被降为「观察 / 风险复核」、金额与仓位动作全部阻断，`provider` 记为
+ * `offline-fallback`，失败分类写进 `analysis_facts.pipeline`。
+ * 前端历史实现在生成完成时无条件提示「深度分析日报已生成」，从不看这些字段，
+ * 于是出现过顶部说"已生成 Pro 深度分析"、正文每张卡片都写"模型服务不可用"的自相矛盾，
+ * 让人以为是展示 bug 而不是模型没跑成。
+ */
+export type ReportProviderStatus = {
+  /** 正文是否真的来自模型。 */
+  modelBacked: boolean;
+  /** provider 是否尝试过调用（未配置模型时为 false）。 */
+  attempted: boolean;
+  /** `provider_failure_category`，仅兜底时有值。 */
+  failureCategory: string | null;
+  /** 是否值得直接重试（限流/超时可重试；认证/余额需要先改配置）。 */
+  retryable: boolean;
+  message: string;
+  /** 与 `NoticeTone` 兼容的子集，避免 lib 反向依赖组件层的类型。 */
+  tone: "success" | "warning";
+};
+
+/** 失败分类 → 面向用户的短语。未知分类走通用兜底，不至于漏出内部标识。 */
+const PROVIDER_FAILURE_PHRASES: Record<string, string> = {
+  authentication: "模型服务认证失败",
+  account_balance: "模型服务账户不可用",
+  rate_limited: "模型服务触发限流",
+  timeout: "模型调用超时",
+  provider_5xx: "模型服务暂时异常",
+  provider_4xx: "模型请求未被服务接受",
+  connection: "无法连接模型服务",
+  stream_error: "模型流式传输中断",
+  transport_error: "模型网络请求失败",
+  empty_content: "模型返回空内容",
+  invalid_json: "模型返回内容未通过结构校验",
+};
+
+const SUCCESS_MESSAGE = "深度分析日报已生成（Pro + 有界扩展证据 + 可选风控审校）。";
+
+function reportPipeline(report: Report): Record<string, unknown> {
+  const facts = report.analysis_facts;
+  if (!facts || typeof facts !== "object") return {};
+  const pipeline = (facts as { pipeline?: unknown }).pipeline;
+  return pipeline && typeof pipeline === "object" ? (pipeline as Record<string, unknown>) : {};
+}
+
+export function resolveReportProviderStatus(report: Report): ReportProviderStatus {
+  const pipeline = reportPipeline(report);
+  const provider = (report.provider ?? "").trim();
+  const providerStatus = String(pipeline.provider_status ?? "").trim();
+
+  // `provider_status` 是后端权威字段；旧报告可能没有，回退到 provider 名字判断。
+  const isFallback =
+    providerStatus === "fallback" || provider === "offline-fallback";
+  const isOffline = providerStatus === "offline" || provider === "offline";
+  if (!isFallback && !isOffline) {
+    return {
+      modelBacked: true,
+      attempted: true,
+      failureCategory: null,
+      retryable: false,
+      message: SUCCESS_MESSAGE,
+      tone: "success",
+    };
+  }
+
+  if (isOffline && !isFallback) {
+    return {
+      modelBacked: false,
+      attempted: false,
+      failureCategory: null,
+      retryable: false,
+      message: "未配置模型服务，本次仅按本地规则输出观察与风险提示；配置后重新生成可获得模型分析。",
+      tone: "warning",
+    };
+  }
+
+  const rawCategory = pipeline.provider_failure_category;
+  const failureCategory =
+    typeof rawCategory === "string" && rawCategory.trim() ? rawCategory.trim() : null;
+  const phrase =
+    (failureCategory && PROVIDER_FAILURE_PHRASES[failureCategory]) || "模型调用失败";
+  // 后端只在明确可重试时写 true；缺字段按"可重试"处理，避免把偶发问题说成配置错误。
+  const retryable = pipeline.provider_failure_retryable !== false;
+  const nextStep = retryable
+    ? "稍后重新生成即可。"
+    : "请先检查模型服务配置或账户状态，再重新生成。";
+
+  return {
+    modelBacked: false,
+    attempted: true,
+    failureCategory,
+    retryable,
+    message: `${phrase}，本次日报已降级为观察与风险提示，未产出可执行建议。${nextStep}`,
+    tone: "warning",
+  };
+}
+
 export function meaningfulNewsLines(values?: string[]): string[] {
   const result: string[] = [];
   for (const raw of values ?? []) {

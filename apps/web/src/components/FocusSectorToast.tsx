@@ -35,7 +35,8 @@ export function FocusSectorToast() {
   return (
     <div
       role="status"
-      className="pointer-events-none fixed bottom-20 left-1/2 z-[60] max-w-[min(92vw,24rem)] -translate-x-1/2 rounded-xl border border-slate-200 bg-slate-900 px-4 py-2.5 text-center text-sm font-medium text-white shadow-lg"
+      // 与底栏共用 `--bottom-nav-h`，避免硬编码的 bottom 值和导航/任务浮层抢位置。
+      className="pointer-events-none fixed bottom-[calc(var(--bottom-nav-h,3.25rem)+env(safe-area-inset-bottom,0px)+0.5rem)] left-1/2 z-[60] max-w-[min(92vw,24rem)] -translate-x-1/2 rounded-xl border border-slate-200 bg-slate-900 px-4 py-2.5 text-center text-sm font-medium text-white shadow-lg lg:bottom-6"
     >
       {message}
     </div>

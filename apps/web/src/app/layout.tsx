@@ -1,3 +1,4 @@
+import type { Viewport } from "next";
 import { Sora } from "next/font/google";
 import { AuthProvider } from "@/components/AuthProvider";
 import { ClientErrorReporter } from "@/components/ClientErrorReporter";
@@ -15,6 +16,17 @@ const sora = Sora({
 });
 
 export const metadata = SITE_METADATA;
+
+// Next 默认只发 `width=device-width, initial-scale=1`，缺 `viewport-fit=cover`。
+// 而 `.dashboard-bottom-nav` / `.dashboard-shell` / `.landing-sticky-cta` 都依赖
+// `env(safe-area-inset-bottom)` 给全屏刘海屏留出底部安全区；没有 cover 时 iOS 上
+// 这些 env() 一律解析为 0，底栏会压在 Home 指示条上。
+// 刻意不设 maximum-scale / user-scalable：禁止缩放会破坏可访问性。
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+};
 
 export default function RootLayout({
   children,

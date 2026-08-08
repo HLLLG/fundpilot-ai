@@ -210,12 +210,12 @@ async function enterDashboard(page: Page, url = "/") {
 }
 
 async function openPrimary(page: Page, destination: "discovery" | "report") {
-  if ((page.viewportSize()?.width ?? 1440) >= 1024) {
-    await page.getByRole("button", { name: destination === "discovery" ? "发现" : "日报", exact: true }).click();
-    return;
-  }
-  await page.getByRole("button", { name: /更多导航/ }).click();
-  await page.getByRole("menuitem", { name: destination === "discovery" ? "发现基金" : "生成日报" }).click();
+  // 桌面顶栏与移动端底栏现在是同一份扁平标签表，两端都是一次点击。
+  const selector =
+    (page.viewportSize()?.width ?? 1440) >= 1024
+      ? page.getByRole("button", { name: destination === "discovery" ? "发现" : "日报", exact: true })
+      : page.getByTestId(`bottom-nav-${destination}`);
+  await selector.click();
 }
 
 test("100 条发现历史保持有界，并在统一历史抽屉内连续切换", async ({ page }, testInfo) => {
@@ -224,7 +224,9 @@ test("100 条发现历史保持有界，并在统一历史抽屉内连续切换"
   await openPrimary(page, "discovery");
   await expect(page.getByRole("heading", { level: 1, name: "发现基金" })).toBeVisible();
 
-  const trigger = page.getByRole("button", { name: /历史推荐/ });
+  // 发现页现在会自动载入最近一份报告，正文里的「历史效果复盘」折叠按钮描述中也带
+  // 「历史推荐」三个字，所以这里必须锚定开头，只匹配抽屉触发器。
+  const trigger = page.getByRole("button", { name: /^历史推荐/ });
   await expect(trigger).toBeVisible();
   await trigger.focus();
   await trigger.click();

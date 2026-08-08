@@ -1242,7 +1242,10 @@ button:disabled {
 .settings-danger-row p { max-width:38rem; margin-top:.4rem; color:#765d5e; font-size:.75rem; line-height:1.7; }
 
 @media (max-width: 1023px) {
-  .landing-editorial-hero { grid-template-columns:1fr; grid-template-areas:"copy" "preview" "proof"; min-height:auto; padding:4rem 0; }
+  /* `minmax(0,1fr)` 而不是 `1fr`：后者的自动最小值是 min-content，任何一段不可断行
+     的长内容（CJK 大标题、长代码、URL）都会把整列撑出视口。显式给 0 下界后，列宽
+     永远不超过容器，溢出被限制在那个元素自身。 */
+  .landing-editorial-hero { grid-template-columns:minmax(0,1fr); grid-template-areas:"copy" "preview" "proof"; min-height:auto; padding:4rem 0; }
   .research-desk-preview { max-width:46rem; }
   .editorial-heading { grid-template-columns:1fr; gap:.65rem; }
   .decision-track,.editorial-ledger,.use-case-lines,.trust-manifesto { margin-left:0; }
@@ -1257,8 +1260,15 @@ button:disabled {
 @media (max-width: 767px) {
   .landing-masthead { height:4rem; }
   .landing-editorial-hero { gap:2.5rem; padding:3.25rem 0 3.5rem; }
-  .landing-title { max-width:100%; font-size:clamp(2.65rem,13vw,4.1rem); line-height:1.04; word-break:keep-all; overflow-wrap:normal; }
-  .landing-title span { display:inline; }
+  /* 标题必须允许 CJK 换行。曾经这里写 `word-break:keep-all; overflow-wrap:normal`
+     并把 span 改回 inline，于是"截个图，就懂你的基金"成为一整段不可断行的文字：
+     WebKit（iOS Safari / 各家国产浏览器内核）严格执行 keep-all，连表意逗号后也不
+     断行，13vw 字号下 min-content 宽度约 494px。父级 `.landing-editorial-hero`
+     在手机上是 `1fr` 单列，而 `1fr` 的自动最小值是 min-content，于是整列被撑到
+     494px，把 CTA、正文、预览卡一起带出 390px 视口；`<main>` 上的 overflow-x:clip
+     又把溢出裁掉而不产生滚动条，所以现象是"整页右侧被切掉"而不是可横向滚动。
+     Chromium 允许在逗号后断行，因此桌面调试完全看不出问题。 */
+  .landing-title { max-width:100%; font-size:clamp(2.65rem,12vw,4.1rem); line-height:1.06; }
   .landing-deck { font-size:.9375rem; line-height:1.8; }
   .desk-window-head { grid-template-columns:auto 1fr; }
   .desk-window-head small { display:none; }
