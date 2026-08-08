@@ -14,6 +14,7 @@ import {
   selectPrimaryReason,
 } from "@/lib/reportPresentation";
 import { DecisionEvidenceGrid } from "@/components/DecisionEvidenceGrid";
+import { MethodologyNote } from "@/components/MethodologyNote";
 import { QuantEvidenceSummary } from "@/components/QuantEvidenceSummary";
 import { SectorOpportunityCard } from "@/components/SectorOpportunityCard";
 import { FundTradeabilityEvidence } from "@/components/FundTradeabilityEvidence";
@@ -173,11 +174,9 @@ function FactorIcNotice({ status }: { status: FactorIcEvidenceStatus | null }) {
 
 function PositionChangeBadge({
   percent,
-  basis,
   estimatedAmountYuan,
 }: {
   percent: number;
-  basis?: string;
   estimatedAmountYuan?: number | null;
 }) {
   const isAdd = percent > 0;
@@ -201,14 +200,10 @@ function PositionChangeBadge({
           ) : null}
         </div>
         {estimatedAmountYuan != null && estimatedAmountYuan > 0 ? (
-          <p className="mt-0.5 text-[11px] leading-4 opacity-70">
-            按报告生成时持仓估值折算
-          </p>
-        ) : null}
-        {basis ? (
-          <p className="mt-0.5 break-words text-xs leading-5 opacity-80 [overflow-wrap:anywhere]">
-            {translateEvidenceText(basis)}
-          </p>
+          // 折算口径不该挤在金额下面 —— 用户先要的是"减多少钱"。
+          <MethodologyNote label="金额口径" className="mt-1">
+            按报告生成时持仓估值折算。
+          </MethodologyNote>
         ) : null}
       </div>
     </div>
@@ -418,7 +413,6 @@ export function FundRecommendationCard({
           {item.suggested_position_change_percent != null ? (
             <PositionChangeBadge
               percent={item.suggested_position_change_percent}
-              basis={positionChangeBasis}
               estimatedAmountYuan={estimatedAdjustmentAmount}
             />
           ) : visibleAmountDetail ? (
@@ -443,6 +437,13 @@ export function FundRecommendationCard({
             onToggle={() => setWhyOpen((value) => !value)}
           >
             <ul className="space-y-2 text-sm leading-6 text-slate-700">
+              {/* 仓位比例的依据原本紧贴在金额下面，和上方的核心理由并列成第二段
+                  说明文字。它属于"为什么"，放到这里首位更合适。 */}
+              {positionChangeBasis ? (
+                <li className="break-words [overflow-wrap:anywhere]">
+                  {translateEvidenceText(positionChangeBasis)}
+                </li>
+              ) : null}
               {reasons.map((point) => (
                 <li key={point} className="break-words [overflow-wrap:anywhere]">{point}</li>
               ))}

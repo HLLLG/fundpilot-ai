@@ -360,9 +360,10 @@ function DiscoveryRecommendationCard({
             </strong>
           </div>
           {rec.amount_note ? (
-            <p className="mt-1 break-words text-[11px] leading-5 text-slate-600 [overflow-wrap:anywhere]">
+            // 金额本身是重点，"这个金额怎么来的"是口径。
+            <MethodologyNote label="金额口径" className="mt-1.5">
               {translateEvidenceText(rec.amount_note)}
-            </p>
+            </MethodologyNote>
           ) : null}
         </div>
       ) : null}

@@ -71,10 +71,12 @@ export function ReportRecommendationList({
       <DecisionReadinessNotice report={report} />
       {needsAction.length ? (
         <div className="min-w-0">
-          <h3 className="text-base font-black text-slate-950">需要处理</h3>
-          <p className="mt-1 text-xs text-slate-500">
-            {needsAction.length} 只基金存在明确仓位动作
-          </p>
+          <h3 className="flex items-baseline gap-2 text-base font-black text-slate-950">
+            需要处理
+            <span className="text-xs font-bold text-slate-500 tabular-nums">
+              {needsAction.length} 只
+            </span>
+          </h3>
           <div className="mt-3 min-w-0 space-y-3">
             {needsAction.map((item) => {
               const recommendationIndex = items.indexOf(item);
@@ -93,10 +95,12 @@ export function ReportRecommendationList({
       ) : null}
       {observing.length ? (
         <div className={`min-w-0 ${needsAction.length ? "mt-6" : ""}`}>
-          <h3 className="text-base font-black text-slate-950">继续观察</h3>
-          <p className="mt-1 text-xs text-slate-500">
-            {observing.length} 只基金暂无立即交易动作
-          </p>
+          <h3 className="flex items-baseline gap-2 text-base font-black text-slate-950">
+            继续观察
+            <span className="text-xs font-bold text-slate-500 tabular-nums">
+              {observing.length} 只
+            </span>
+          </h3>
           <div className="mt-3 min-w-0 space-y-2">
             {observing.map((item) => {
               const recommendationIndex = items.indexOf(item);

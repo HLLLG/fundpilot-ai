@@ -105,7 +105,15 @@ type YangjibaoFundDetailProps = {
   onNavigate: (target: HoldingIdentity) => void;
   onHoldingResolved?: (index: number, holding: Holding) => void;
   onFundCodeUpdated?: (index: number, holding: Holding) => void | Promise<void>;
-  onDeleteHolding?: (index: number) => void;
+  /**
+   * 必须返回 Promise 并在失败时 reject。
+   *
+   * 早期签名是 `(index) => void`：确认框点下去就把两层弹窗一起关掉、乐观地把那一行
+   * 从列表里抹掉，然后 fire-and-forget 地发 DELETE。服务端拒绝（例如主库不可用返回
+   * 503）时列表会静默回滚 —— 用户看到的现象是"行闪了一下又回来了"，读起来就是
+   * 「点击无反应」。现在改成等服务端确认再关闭，失败留在确认框里说明原因。
+   */
+  onDeleteHolding?: (index: number) => Promise<void>;
   onAdjustHolding?: (
     fundCode: string,
     patch: HoldingAdjustmentPatch,
@@ -218,6 +226,8 @@ export function YangjibaoFundDetail({
   const [fundCodeSaving, setFundCodeSaving] = useState(false);
   const [fundCodeError, setFundCodeError] = useState<string | null>(null);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [modifyOpen, setModifyOpen] = useState(false);
   const [txDirection, setTxDirection] = useState<"buy" | "sell" | null>(null);
   const [intradayForceSeq, setIntradayForceSeq] = useState(0);
@@ -446,13 +456,24 @@ export function YangjibaoFundDetail({
   const needsCodeAttention =
     activeHolding.fund_code === "000000" || isProvisionalFundCode(activeHolding.fund_code);
 
-  function handleDeleteHolding() {
-    if (!onDeleteHolding) {
+  async function handleDeleteHolding() {
+    if (!onDeleteHolding || deleting) {
       return;
     }
-    setDeleteConfirmOpen(false);
-    onDeleteHolding(holdingIndex);
-    onClose();
+    setDeleteError(null);
+    setDeleting(true);
+    try {
+      await onDeleteHolding(holdingIndex);
+      // 只有服务端确认删除成功才收起确认框与详情页。
+      setDeleteConfirmOpen(false);
+      onClose();
+    } catch (error) {
+      // 留在确认框里说明失败原因（与本文件里改码 / 改购入日期 / 改持仓的处理方式一致），
+      // 用户可以直接重试或取消，不会以为"点了没反应"。
+      setDeleteError(userFacingErrorMessage(error, "删除失败，请稍后重试。"));
+    } finally {
+      setDeleting(false);
+    }
   }
 
   async function refreshDetailAfterPortfolioMutation(
@@ -1052,8 +1073,10 @@ export function YangjibaoFundDetail({
           <div
             className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/40 p-4"
             onMouseDown={(event) => {
-              if (event.target === event.currentTarget) {
+              // 删除请求在飞时不允许点遮罩关闭：那会让用户以为已经取消了。
+              if (event.target === event.currentTarget && !deleting) {
                 setDeleteConfirmOpen(false);
+                setDeleteError(null);
               }
             }}
             role="presentation"
@@ -1070,23 +1093,36 @@ export function YangjibaoFundDetail({
                 删除该基金？
               </h3>
               <p className="mt-2 text-sm leading-6 text-slate-600">
-                将从当前账户汇总移除「{activeHolding.fund_name}」，并删除该基金档案。重新添加时将作为新持仓录入。
+                将移除「{activeHolding.fund_name}」并删除该基金档案，重新添加时作为新持仓录入。
               </p>
+              {deleteError ? (
+                <p
+                  role="alert"
+                  className="mt-3 rounded-xl border border-[var(--danger-border)] bg-[var(--danger-bg)] px-3 py-2 text-xs font-semibold leading-5 text-[var(--danger-fg)]"
+                >
+                  {deleteError}
+                </p>
+              ) : null}
               <div className="mt-4 flex gap-2">
                 <button
                   ref={deleteCancelButtonRef}
                   type="button"
-                  onClick={() => setDeleteConfirmOpen(false)}
-                  className="btn-secondary min-h-11 flex-1 !py-2.5"
+                  disabled={deleting}
+                  onClick={() => {
+                    setDeleteConfirmOpen(false);
+                    setDeleteError(null);
+                  }}
+                  className="btn-secondary min-h-11 flex-1 !py-2.5 disabled:opacity-60"
                 >
                   取消
                 </button>
                 <button
                   type="button"
-                  onClick={handleDeleteHolding}
-                  className="min-h-11 flex-1 rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-rose-700"
+                  disabled={deleting}
+                  onClick={() => void handleDeleteHolding()}
+                  className="min-h-11 flex-1 rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  确认删除
+                  {deleting ? "删除中…" : deleteError ? "重试删除" : "确认删除"}
                 </button>
               </div>
             </div>

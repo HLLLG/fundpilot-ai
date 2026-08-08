@@ -888,13 +888,8 @@
 .report-metric { border-left:1px solid var(--line); }
 .report-metric:first-child { border-left:0; }
 .report-metric.is-emphasis { color:var(--brand-deep); background:var(--accent-soft); }
-.report-decision-track { display:grid; grid-template-columns:repeat(6,1fr); margin-top:1.5rem; border-block:1px solid var(--line-strong); }
-.report-decision-track li { position:relative; min-width:0; padding:1rem .75rem 1rem 0; }
-.report-decision-track li::after { content:""; position:absolute; top:-2px; right:.65rem; left:0; height:3px; background:var(--brand-soft); }
-.report-decision-track .is-active::after { background:var(--accent); }
-.report-decision-track span { display:block; color:var(--accent-strong); font-size:.5625rem; font-weight:800; letter-spacing:.1em; }
-.report-decision-track strong { display:block; margin-top:.35rem; color:var(--brand-deep); font-size:.6875rem; }
-.report-decision-track small { display:block; margin-top:.25rem; overflow:hidden; color:var(--muted); font-size:.625rem; text-overflow:ellipsis; white-space:nowrap; }
+/* .report-decision-track 已随 ReportSummaryHero 里那条 6 格决策轨道一起删除：
+   每格都在复述本屏已有的风险 / 收益 / 动作，另有两格只是在解释界面怎么用。 */
 .report-panel { border-radius:var(--radius-control); box-shadow:none; }
 .history-archive { border-block:1px solid var(--line-strong); background:var(--panel); }
 .history-archive-row { border-radius:0; }
@@ -956,9 +951,6 @@
   .analysis-hero .pl-hero-value { font-size:clamp(2.6rem,15vw,4rem); }
   .discovery-decision-rail { padding:0 .75rem; }
   .discovery-decision-rail li { align-items:flex-start; flex-direction:column; justify-content:center; gap:.1rem; }
-  .report-decision-track { grid-template-columns:repeat(3,1fr); }
-  .report-decision-track li:nth-child(n+4) { border-top:1px solid var(--line); }
-  .report-decision-track li:nth-child(n+4)::after { top:-1px; }
   .report-navigator { grid-template-columns:1fr; gap:.75rem; padding:.85rem; }
   .report-navigator-actions { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); }
   .report-navigator-actions button { width:100%; padding-inline:.4rem; }

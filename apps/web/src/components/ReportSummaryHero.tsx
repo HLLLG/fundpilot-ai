@@ -87,8 +87,9 @@ export function ReportSummaryHero({
           <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">{report.summary}</p>
         </div>
 
+        {/* 「组合风险」那一格删掉了：左上角的风险胶囊已经写着同一个值。 */}
         <dl
-          className="grid min-w-0 grid-cols-3 gap-2"
+          className="grid min-w-0 grid-cols-2 gap-2"
           data-testid="report-summary-metrics"
         >
           <Metric
@@ -96,19 +97,17 @@ export function ReportSummaryHero({
             value={`${report.risk.weighted_return_percent}%`}
             emphasis
           />
-          <Metric label="组合风险" value={riskLabel[report.risk.level]} />
           <Metric label="需要处理" value={`${needsActionCount} 只`} />
         </dl>
       </div>
 
-      <ol className="report-decision-track" aria-label="日报决策轨道">
-        <li><span>01</span><strong>数据时间</strong><small>{report.created_at.slice(0, 10)}</small></li>
-        <li><span>02</span><strong>组合变化</strong><small>累计 · {report.risk.weighted_return_percent}%</small></li>
-        <li><span>03</span><strong>风险判断</strong><small>{riskLabel[report.risk.level]}</small></li>
-        <li className="is-active"><span>04</span><strong>建议动作</strong><small>动作 · {actionLabel[report.risk.suggested_action]}</small></li>
-        <li><span>05</span><strong>支撑证据</strong><small>按需展开</small></li>
-        <li><span>06</span><strong>后续追问</strong><small>保持上下文</small></li>
-      </ol>
+      {/* 这里原来是一条 6 格的「日报决策轨道」，逐格与本屏已有内容重复：
+            02 组合变化 = 上面的「组合收益」
+            03 风险判断 = 左上角的风险胶囊 + 原「组合风险」格
+            04 建议动作 = 左上角的动作胶囊
+            01 数据时间 = 下面「报告信息」里的生成时间
+          剩下两格更彻底 —— 05「支撑证据 / 按需展开」和 06「后续追问 / 保持上下文」
+          不是信息，是在向用户解释这个界面怎么用。整条删除。 */}
 
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-3">
         <div className="flex flex-wrap gap-1">

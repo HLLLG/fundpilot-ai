@@ -80,8 +80,6 @@ import {
   withApplyDisplayFields,
   dedupeHoldingsByCode,
   patchHoldingRecord,
-  sumDailyProfit,
-  sumPortfolioTotalAssets,
   type HoldingIdentity,
 } from "@/lib/holdingMetrics";
 import {
@@ -278,6 +276,8 @@ export function Dashboard() {
   // 可诊断性不依赖 UI：apiFetch 已经通过 reportApiFailure 上报网络层失败与网关
   // 错误，普通 500 也在后端连同 traceback 记录过，所以去掉提示不会丢失线索。
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // 生成日报失败的原因，交给 RiskControls 挨着「生成」按钮展示。
+  const [analyzeError, setAnalyzeError] = useState<string | null>(null);
   const [activeTab, setActiveTabState] = useState<TabId>("holdings");
   const [profileReady, setProfileReady] = useState(false);
   const [promptReady, setPromptReady] = useState(false);
@@ -1067,6 +1067,7 @@ export function Dashboard() {
     }
     const systemRolePrompt = activeAnalysisRolePrompt(analysisPrompt);
     setIsSubmitting(true);
+    setAnalyzeError(null);
     try {
       try {
         void ensureNotificationPermission();
@@ -1225,9 +1226,10 @@ export function Dashboard() {
             : "流式生成中断",
         ),
       );
-    } catch {
-      // 不提示：按钮从"生成中"回到可用态即表示这次没成功，
-      // 失败本身已由 apiFetch 的 reportApiFailure 上报。
+    } catch (error) {
+      // 生成是这一屏的主操作，失败必须说一句 —— 否则按钮弹回可用态，用户无法
+      // 区分"失败了"和"点了没反应"。文案就近展示在按钮旁，不走全局提示。
+      setAnalyzeError(userFacingErrorMessage(error, "提交分析任务失败，请稍后重试。"));
     } finally {
       setIsSubmitting(false);
     }
@@ -1466,7 +1468,7 @@ export function Dashboard() {
   };
 
   const handleDeleteHolding = useCallback(
-    (index: number) => {
+    async (index: number) => {
       const target = holdings[index];
       if (!target) {
         return;
@@ -1475,74 +1477,36 @@ export function Dashboard() {
       holdingsMutationVersionRef.current += 1;
       const mutationVersion = holdingsMutationVersionRef.current;
       invalidatePortfolioHoldingsRequest();
-      const rollbackHoldings = holdings;
-      const rollbackSummary = portfolioSummary;
-      const remaining = holdings.filter((_, itemIndex) => itemIndex !== index);
-      const display = displayableHoldings(remaining);
-      const totalAssets = sumPortfolioTotalAssets(display) || null;
-      const dailyProfit = display.length > 0 ? sumDailyProfit(display) : null;
-      let dailyReturnPercent: number | null = null;
-      if (totalAssets != null && dailyProfit != null && totalAssets > dailyProfit) {
-        const previousAssets = totalAssets - dailyProfit;
-        if (previousAssets > 0) {
-          dailyReturnPercent = Math.round((dailyProfit / previousAssets) * 10000) / 100;
-        }
-      }
-      const optimisticSummary: PortfolioSummary = {
-        ...portfolioSummary,
-        total_assets: totalAssets,
-        daily_profit: dailyProfit,
-        daily_return_percent: dailyReturnPercent,
-        holding_count: display.length,
-        updated_at: new Date().toISOString(),
-      };
-
-      markPortfolioCacheWriteReady();
-      setHoldings(remaining);
-      setPortfolioSummary(optimisticSummary);
-      setSelectedHoldingKey(null);
-      saveCachedPortfolioHoldings(user?.id, {
-        holdings: remaining,
-        portfolio_summary: optimisticSummary,
-        refreshed_at: holdingsRefreshedAt,
-      });
-
       sectorRefresh.invalidatePendingRefresh();
 
-      void enqueuePortfolioMutation(() => deletePortfolioHolding(target.fund_code, target.fund_name))
-        .then((result) => {
-          if (mutationVersion !== holdingsMutationVersionRef.current) {
-            return;
-          }
-          setHoldings(result.holdings);
-          if (result.portfolio_summary) {
-            setPortfolioSummary(result.portfolio_summary);
-          }
-          markPortfolioCacheWriteReady();
-           saveCachedPortfolioHoldings(user?.id, {
-             holdings: result.holdings,
-             portfolio_summary: result.portfolio_summary ?? optimisticSummary,
-             refreshed_at: holdingsRefreshedAt,
-           });
-        })
-        .catch(() => {
-          if (mutationVersion !== holdingsMutationVersionRef.current) {
-            return;
-          }
-          setHoldings(rollbackHoldings);
-          setPortfolioSummary(rollbackSummary);
-          saveCachedPortfolioHoldings(user?.id, {
-            holdings: rollbackHoldings,
-            portfolio_summary: rollbackSummary,
-            refreshed_at: holdingsRefreshedAt,
-          });
-          // 不提示：上面几行已经把列表与汇总回滚到删除前，界面重新与服务端一致。
-        });
+      // 删除刻意不做乐观移除。
+      //
+      // 原实现先把该行从列表抹掉、把详情页关掉，再 fire-and-forget 发 DELETE，失败时
+      // 静默回滚。于是服务端返回 503（主库不可用）时的现象是"行闪一下又回来了"，
+      // 用户读作「点击无反应」。删除本身是不可逆动作，等服务端确认再落地才是对的：
+      // 失败时列表从头到尾没动过，不需要回滚，也不会出现一份服务端并不存在的状态。
+      // 异常向上抛给确认框，由它就地展示原因（见 YangjibaoFundDetail）。
+      const result = await enqueuePortfolioMutation(() =>
+        deletePortfolioHolding(target.fund_code, target.fund_name),
+      );
+      if (mutationVersion !== holdingsMutationVersionRef.current) {
+        return;
+      }
+      markPortfolioCacheWriteReady();
+      setHoldings(result.holdings);
+      if (result.portfolio_summary) {
+        setPortfolioSummary(result.portfolio_summary);
+      }
+      saveCachedPortfolioHoldings(user?.id, {
+        holdings: result.holdings,
+        portfolio_summary: result.portfolio_summary ?? null,
+        refreshed_at: holdingsRefreshedAt,
+      });
+      setSelectedHoldingKey(null);
     },
     [
       holdings,
       holdingsRefreshedAt,
-      portfolioSummary,
       sectorRefresh,
       user?.id,
       enqueuePortfolioMutation,
@@ -1814,6 +1778,7 @@ export function Dashboard() {
                 isBusy={isSubmitting}
                 hasBlockingErrors={blockingErrors}
                 blockingMessage={blockingMessage}
+                errorMessage={analyzeError}
                 readingModeKey={report?.id ?? null}
               />
               {report || streamingReport ? (
@@ -1990,14 +1955,18 @@ export function Dashboard() {
               }
               setHoldings(applied.holdings);
               setHoldingWarnings(applied.holding_warnings ?? []);
-              // 不再提示：详情页当场显示的就是新代码。
-            } catch {
+              // 成功不提示：详情页当场显示的就是新代码。
+            } catch (error) {
               if (mutationVersion !== holdingsMutationVersionRef.current) {
                 return;
               }
-              // 服务端拒绝了改码，就把乐观更新撤回去。既然不弹提示，界面至少不能
-              // 继续显示一个服务端并不存在的代码 —— 否则用户会以为已经改好了。
+              // 撤回乐观更新，别让界面继续显示一个服务端并不存在的代码。
               setHoldings(rollbackHoldings);
+              // 然后必须把异常抛回去：调用方 handleFundCodeSave 会 catch 它并写进
+              // FundCodeEditModal 的 error（那套 saving/error 插槽本来就有）。
+              // 早先在这里吞掉异常，等于让改码弹窗"保存成功似地"关闭 —— 和删除
+              // 那个 bug 是同一个形状。
+              throw error;
             }
           }}
           onHoldingResolved={(_index, resolved) => {

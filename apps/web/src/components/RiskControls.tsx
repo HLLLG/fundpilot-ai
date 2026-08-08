@@ -48,6 +48,11 @@ type RiskControlsProps = {
   isBusy: boolean;
   hasBlockingErrors?: boolean;
   blockingMessage?: string | null;
+  /**
+   * 上一次点击「生成」失败的原因。挨着触发它的按钮展示 —— 生成日报是这一屏的
+   * 主操作，失败时按钮只是恢复可用态，没有文字用户无法区分"失败了"和"没反应"。
+   */
+  errorMessage?: string | null;
   readingModeKey?: string | null;
 };
 
@@ -62,6 +67,7 @@ export function RiskControls({
   isBusy,
   hasBlockingErrors = false,
   blockingMessage = null,
+  errorMessage = null,
   readingModeKey = null,
 }: RiskControlsProps) {
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -84,6 +90,10 @@ export function RiskControls({
             {hasBlockingErrors && blockingMessage ? (
               <p className="mt-1 text-xs font-semibold text-[var(--danger-fg)]" role="alert">
                 {blockingMessage}
+              </p>
+            ) : errorMessage ? (
+              <p className="mt-1 text-xs font-semibold text-[var(--danger-fg)]" role="alert">
+                {errorMessage}
               </p>
             ) : null}
           </div>
@@ -208,6 +218,13 @@ export function RiskControls({
           role="alert"
         >
           {blockingMessage}
+        </p>
+      ) : errorMessage ? (
+        <p
+          className="mt-3 rounded-xl border border-[var(--danger-border)] bg-[var(--danger-bg)] px-3 py-2 text-xs font-semibold leading-5 text-[var(--danger-fg)]"
+          role="alert"
+        >
+          {errorMessage}
         </p>
       ) : null}
 
