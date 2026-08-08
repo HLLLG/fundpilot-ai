@@ -67,6 +67,10 @@ _SOURCE_PRIORITY = {
 # 仅 OCR 详情 / 手动沉淀的板块可挡住业绩基准；总览推断的 alipay_overview 不可靠。
 _HIGH_TRUST_SECTOR_SOURCES = frozenset({"ocr_detail", "manual"})
 
+# 由业绩基准/跟踪标的解析出来的来源。这类行的板块名依赖指数身份表，指数身份被
+# 修正后必须重新校验，否则旧标签会一直挡住正确结果（用户行没有 TTL）。
+_BENCHMARK_DERIVED_SOURCES = frozenset({"benchmark_index", "precompute_benchmark"})
+
 
 from app.services.fund_primary_sector_types import PrimarySectorRecord
 
@@ -179,16 +183,21 @@ def _is_passive_index_fund_name(fund_name: str | None) -> bool:
     return any(marker in normalized for marker in ("指数", "ETF", "联接", "LOF"))
 
 
-def _benchmark_row_is_price_proxy_eligible(
-    row: Mapping[str, Any], fund_name: str | None
-) -> bool:
+def _row_detail(row: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    """Decode the persisted ``detail`` blob (SQLite stores it as JSON text)."""
     detail = row.get("detail")
     if isinstance(detail, str):
         try:
-            parsed_detail = json.loads(detail)
+            detail = json.loads(detail)
         except json.JSONDecodeError:
-            parsed_detail = None
-        detail = parsed_detail if isinstance(parsed_detail, Mapping) else None
+            return None
+    return detail if isinstance(detail, Mapping) else None
+
+
+def _benchmark_row_is_price_proxy_eligible(
+    row: Mapping[str, Any], fund_name: str | None
+) -> bool:
+    detail = _row_detail(row)
     if isinstance(detail, Mapping):
         explicit = detail.get("price_proxy_eligible")
         if isinstance(explicit, bool):
@@ -196,6 +205,136 @@ def _benchmark_row_is_price_proxy_eligible(
         if str(detail.get("benchmark_text_kind") or "") == "tracking_target":
             return True
     return _is_passive_index_fund_name(fund_name)
+
+
+def _benchmark_row_identity_is_current(row: Mapping[str, Any]) -> bool:
+    """存量基准派生行的板块名，在**当前**身份规则下是否仍然成立。
+
+    指数身份表会被修正（同名指数撞码、AMAC 主题标签错配等），但已经落库的行会
+    一直用写入当时的规则算出来的板块名：全局行要等 TTL 过期才重算，而用户行
+    根本没有 TTL。于是"代码已经修好了、页面还是旧板块"——这正是
+    015788 鹏扬中证数字经济主题ETF发起联接C 明明跟踪 931582（数字经济）
+    却一直显示"信创"（931247）的原因。
+
+    这里只做一次纯内存的字典查找：把行里存的跟踪指数代码重新过一遍身份表，
+    看它现在是否还映射到同一个板块名。没有存代码的老行无从校验，一律放行。
+    """
+    detail = _row_detail(row)
+    index_code = str((detail or {}).get("index_code") or "").strip()
+    if not index_code:
+        return True
+
+    from app.services.fund_benchmark_sector import _index_code_to_sector_label
+
+    current_label = _index_code_to_sector_label(index_code)
+    if current_label is None:
+        return False
+    return normalize_sector_label(current_label) == normalize_sector_label(
+        str(row.get("sector_name") or "")
+    )
+
+
+def _replay_benchmark_row(
+    row: Mapping[str, Any],
+    code: str,
+    *,
+    persist: bool,
+    batch_context: PrimarySectorBatchContext | None = None,
+) -> PrimarySectorRecord | None:
+    """用当前规则重放行里存的基准原文，就地修正已失效的板块名。
+
+    `detail.benchmark_text` 是写入时抓到的原始基准文案，重放它不需要联网，
+    所以纠正可以在下一次读取时立刻生效，不必等 TTL、也不必跑运维脚本
+    （`scripts/invalidate_stale_benchmark_sectors.py` 只能连 SQLite，
+    线上 MySQL 部署根本跑不了，这正是修复迟迟没落地的原因）。
+
+    重放不出可核验身份时返回 None：宁可"暂无可用关联板块"，也不继续展示一个
+    身份门槛已经不认的板块名及其涨跌幅。
+    """
+    detail = _row_detail(row)
+    benchmark_text = str((detail or {}).get("benchmark_text") or "").strip()
+    if not benchmark_text:
+        return None
+
+    from app.services.fund_benchmark_sector import resolve_sector_from_benchmark
+
+    resolved = resolve_sector_from_benchmark(benchmark_text)
+    if resolved is None:
+        return None
+    sector_name, intraday_index_name, match = resolved
+    intraday_index_name = _usable_intraday_index_name(intraday_index_name, sector_name)
+    repaired_detail = {
+        **{
+            key: value
+            for key, value in (detail or {}).items()
+            if key not in {"index_code", "index_name"}
+        },
+        "index_code": match.index_code,
+        "index_name": match.index_name,
+        "benchmark_text": match.benchmark_text,
+        "price_proxy_eligible": True,
+        "remapped_from_sector_name": str(row.get("sector_name") or ""),
+    }
+    record = PrimarySectorRecord(
+        fund_code=code,
+        sector_name=sector_name,
+        intraday_index_name=intraday_index_name,
+        source="benchmark_index",
+        confidence=0.68,
+        detail=repaired_detail,
+    )
+    logger.info(
+        "primary sector remapped by current benchmark identity rules: "
+        "fund_code=%s stored=%s current=%s index_code=%s",
+        code,
+        row.get("sector_name"),
+        sector_name,
+        match.index_code,
+    )
+    if persist and try_get_request_user_id() is not None:
+        saved = save_fund_primary_sector(
+            fund_code=code,
+            sector_name=sector_name,
+            intraday_index_name=intraday_index_name,
+            source="benchmark_index",
+            confidence=record.confidence,
+            detail=repaired_detail,
+        )
+        if batch_context is not None:
+            batch_context.remember_user_row(saved)
+    return record
+
+
+def _benchmark_row_identity_is_verifiable(row: Mapping[str, Any]) -> bool:
+    """行里是否存了足以复核身份的溯源信息（跟踪指数代码）。"""
+    detail = _row_detail(row) or {}
+    return bool(str(detail.get("index_code") or "").strip())
+
+
+def _usable_benchmark_row_record(
+    row: Mapping[str, Any],
+    code: str,
+    *,
+    persist: bool = False,
+    trust_unverifiable: bool = True,
+    batch_context: PrimarySectorBatchContext | None = None,
+) -> PrimarySectorRecord | None:
+    """把存量基准派生行转成记录，顺带按当前身份规则自愈已失效的板块名。
+
+    `trust_unverifiable=False` 留给"调用方还能重新抓一次基准"的场合：detail 里没存
+    跟踪指数代码的行根本无法复核（历史上 `upsert_primary_sector_from_holding` 会把
+    detail 覆盖成只剩 fund_name），与其继续采信一个来源不明的板块名，不如让它走一次
+    重新解析。读路径拿不到网络，仍然沿用旧值，不引入额外时延。
+    """
+    if not _benchmark_row_identity_is_verifiable(row):
+        if not trust_unverifiable:
+            return None
+        return _record_from_row({**dict(row), "fund_code": code})
+    if _benchmark_row_identity_is_current(row):
+        return _record_from_row({**dict(row), "fund_code": code})
+    return _replay_benchmark_row(
+        row, code, persist=persist, batch_context=batch_context
+    )
 
 
 def _is_fund_name_residue_label(fund_name: str | None, sector_name: str | None) -> bool:
@@ -422,6 +561,7 @@ def upsert_primary_sector_from_holding(
     holding: Holding,
     *,
     source: str,
+    detail: Mapping[str, Any] | None = None,
     batch_context: PrimarySectorBatchContext | None = None,
 ) -> None:
     if not holding.fund_code or holding.fund_code == "000000":
@@ -442,13 +582,17 @@ def upsert_primary_sector_from_holding(
     index_name = holding.intraday_index_name
     if not index_name:
         index_name = infer_intraday_index_from_fund_name(holding.fund_name)
+    # 解析来源自带的溯源信息（基准原文、跟踪指数代码）必须保留：历史实现无条件写
+    # `{"fund_name": ...}`，把 `_resolve_from_benchmark_index` 刚存好的
+    # index_code / benchmark_text 覆盖掉，于是这条行再也无法被身份规则复核，
+    # 指数身份修正后旧板块名就永久留在页面上。
     saved = save_fund_primary_sector(
         fund_code=holding.fund_code,
         sector_name=holding.sector_name or "",
         intraday_index_name=index_name,
         source=source,
         confidence=0.88,
-        detail={"fund_name": holding.fund_name},
+        detail={**dict(detail or {}), "fund_name": holding.fund_name},
     )
     if batch_context is not None:
         batch_context.remember_user_row(saved)
@@ -535,17 +679,21 @@ def resolve_primary_sector(
 
     if global_row:
         global_source = str(global_row.get("source") or "")
-        if global_source not in {"benchmark_index", "precompute_benchmark"} or (
-            _benchmark_row_is_price_proxy_eligible(global_row, fund_name)
-        ):
+        if global_source not in _BENCHMARK_DERIVED_SOURCES:
             return _record_from_row({**global_row, "fund_code": code})
+        if _benchmark_row_is_price_proxy_eligible(global_row, fund_name):
+            repaired = _usable_benchmark_row_record(global_row, code)
+            if repaired is not None:
+                return repaired
 
     if row and _is_trustworthy_sector_label(fund_name, row.get("sector_name")):
         row_source = str(row.get("source") or "")
-        if row_source not in {"benchmark_index", "precompute_benchmark"} or (
-            _benchmark_row_is_price_proxy_eligible(row, fund_name)
-        ):
+        if row_source not in _BENCHMARK_DERIVED_SOURCES:
             return _record_from_row(row)
+        if _benchmark_row_is_price_proxy_eligible(row, fund_name):
+            repaired = _usable_benchmark_row_record(row, code)
+            if repaired is not None:
+                return repaired
 
     # 存量行是名称残留（如"中航机遇领航"），且规则/持仓穿透都推不出更好结果时，
     # 再给 LLM 兜底一次机会——否则残留标签会在没有 fetch_holdings_infer 的
@@ -698,6 +846,7 @@ def _apply_primary_sector_to_holding_impl(
             upsert_primary_sector_from_holding(
                 updated,
                 source=record.source,
+                detail=record.detail,
                 batch_context=batch_context,
             )
             return updated
@@ -767,6 +916,9 @@ def refresh_benchmark_sectors_for_holdings(
             row
             and str(row.get("source") or "") == "benchmark_index"
             and not fetch_holdings_infer
+            # 身份无从复核的存量行（detail 被覆盖成只剩 fund_name）不能再走"已有
+            # 基准板块就不必重拉"的快路径，否则指数身份修正后它永远刷不出新板块。
+            and _benchmark_row_identity_is_verifiable(row)
         ):
             refreshed.append(
                 apply_primary_sector_to_holding(
@@ -1087,7 +1239,15 @@ def _resolve_from_benchmark_index(
             and str(existing.get("source") or "") == "benchmark_index"
             and _benchmark_row_is_price_proxy_eligible(existing, fund_name)
         ):
-            return _record_from_row(existing)
+            repaired = _usable_benchmark_row_record(
+                existing,
+                fund_code.strip().zfill(6),
+                persist=True,
+                trust_unverifiable=not fetch,
+                batch_context=batch_context,
+            )
+            if repaired is not None:
+                return repaired
 
     global_row = (
         batch_context.fresh_global_row(fund_code)
@@ -1101,10 +1261,18 @@ def _resolve_from_benchmark_index(
     if global_row:
         global_source = str(global_row.get("source") or "")
         if (
-            (not fetch or global_source in {"benchmark_index", "precompute_benchmark"})
+            (not fetch or global_source in _BENCHMARK_DERIVED_SOURCES)
             and _benchmark_row_is_price_proxy_eligible(global_row, fund_name)
         ):
-            return _record_from_row({**global_row, "fund_code": fund_code.strip().zfill(6)})
+            repaired = _usable_benchmark_row_record(
+                global_row,
+                fund_code.strip().zfill(6),
+                persist=persist_user,
+                trust_unverifiable=not fetch,
+                batch_context=batch_context,
+            )
+            if repaired is not None:
+                return repaired
 
     if not fetch:
         return None
