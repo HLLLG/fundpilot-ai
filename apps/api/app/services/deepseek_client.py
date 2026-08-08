@@ -446,7 +446,7 @@ class DeepSeekClient:
         if not isinstance(final_content, str):
             raise ProviderOutputError("invalid_json")
 
-        parsed = _parse_model_json(final_content)
+        parsed = normalize_daily_report_payload(_parse_model_json(final_content))
         if _daily_provider_response_incomplete(parsed):
             retry_messages = messages + [
                 {
@@ -471,7 +471,7 @@ class DeepSeekClient:
                 raise ProviderOutputError("invalid_json")
             if not retry_content.strip():
                 raise ProviderOutputError("empty_content")
-            parsed = _parse_model_json(retry_content)
+            parsed = normalize_daily_report_payload(_parse_model_json(retry_content))
             if _daily_provider_response_incomplete(parsed):
                 raise ProviderOutputError("invalid_json")
 
@@ -1041,6 +1041,60 @@ def _response_incomplete(parsed: dict) -> bool:
     if not parse_fund_recommendations_raw(parsed.get("fund_recommendations")):
         return bool(parsed.get("summary"))
     return False
+
+
+def _coerce_advisory_string_list(value: object) -> list[str] | None:
+    """把提示类字段收敛成 list[str]；形状确实无法采信时返回 None（交给准入校验拒绝）。"""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        text = value.strip()
+        return [text] if text else []
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return [str(value)]
+    if isinstance(value, list):
+        items: list[str] = []
+        for entry in value:
+            if isinstance(entry, str):
+                text = entry.strip()
+            elif isinstance(entry, (int, float)) and not isinstance(entry, bool):
+                text = str(entry)
+            else:
+                # 嵌套对象说明模型套用的是另一套 schema，不做猜测式改写。
+                return None
+            if text:
+                items.append(text)
+        return items
+    return None
+
+
+def normalize_daily_report_payload(parsed: dict) -> dict:
+    """就地收敛日报输出里可容忍的类型偏差，避免整份报告被判成“模型不可用”。
+
+    `caveats` 与 `recommendations` 是提示文案和组合级说明，不是决策事实：服务端
+    随后会用 `_user_facing_caveats` 过滤，再追加新闻与流水线提示，缺失时还有本地
+    兜底文案，取值处 `_non_empty_list` 本来就容忍任意形状。唯独准入校验
+    `_is_valid_daily_report_payload` 要求它们必须是 `list[str]`，于是模型把
+    caveats 写成一个字符串（而不是单元素数组）时，一份 title / summary /
+    fund_recommendations 全部完整、逐只都能解析出建议的报告会被整份丢弃，替换成
+    “模型服务不可用”的离线兜底——实测 deepseek-v4-pro 在 HTTP 200、
+    finish_reason=stop、内容完整的情况下就会这样。
+
+    只收敛文案字段：`title` / `summary` / `fund_recommendations` 仍然严格校验，
+    真正被截断的响应依旧会被挡在门外。
+    """
+    if not isinstance(parsed, dict):
+        return parsed
+    # caveats 缺失同样不该否决整份报告：服务端有本地兜底文案，并会继续追加提示。
+    caveats = _coerce_advisory_string_list(parsed.get("caveats"))
+    if caveats is not None:
+        parsed["caveats"] = caveats
+    # recommendations 在日报 schema 里本就可省略，只在给出时才收敛类型。
+    if "recommendations" in parsed:
+        legacy = _coerce_advisory_string_list(parsed.get("recommendations"))
+        if legacy is not None:
+            parsed["recommendations"] = legacy
+    return parsed
 
 
 def _daily_provider_response_incomplete(parsed: dict) -> bool:

@@ -8,6 +8,7 @@ import {
   meaningfulNewsLines,
   portfolioRecommendationLines,
   safeDiagnosticMetrics,
+  resolveReportProviderStatus,
   scopeReportToCurrentHoldings,
   selectNextTradingPlan,
   selectPrimaryReason,
@@ -227,5 +228,121 @@ describe("summary-only report placeholder", () => {
     expect(scoped.report.fund_recommendations.map((item) => item.fund_code)).toEqual([
       "010236",
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// provider 兜底的可见性。
+//
+// 后端 provider 调用失败时是 fail-closed 的：整份报告换成离线兜底，每条建议降为
+// 「观察 / 风险复核」，金额与仓位动作全部阻断。前端历史实现在生成完成时无条件提示
+// 「深度分析日报已生成（Pro + …）」，于是顶部宣布成功、正文每张卡片都写
+// 「模型服务不可用」——用户会以为是展示 bug，而不是模型压根没跑成。
+// ---------------------------------------------------------------------------
+
+function reportWithPipeline(
+  provider: string,
+  pipeline?: Record<string, unknown>,
+): Report {
+  return {
+    id: "r-provider",
+    created_at: "2026-08-08T06:40:00Z",
+    title: "每日基金操作日报",
+    summary: "摘要",
+    provider,
+    caveats: [],
+    market_context: [],
+    ...(pipeline ? { analysis_facts: { pipeline } } : {}),
+  } as unknown as Report;
+}
+
+describe("report provider status", () => {
+  it("reports a model-backed run as success", () => {
+    const status = resolveReportProviderStatus(
+      reportWithPipeline("deepseek-v4-pro", {
+        provider_status: "success",
+        attempted_model: "deepseek-v4-pro",
+      }),
+    );
+
+    expect(status.modelBacked).toBe(true);
+    expect(status.tone).toBe("success");
+    expect(status.message).toContain("深度分析日报已生成");
+  });
+
+  it("never claims success for a provider fallback", () => {
+    const status = resolveReportProviderStatus(
+      reportWithPipeline("offline-fallback", {
+        provider_status: "fallback",
+        provider_failure_category: "invalid_json",
+        provider_failure_retryable: true,
+      }),
+    );
+
+    expect(status.modelBacked).toBe(false);
+    expect(status.tone).toBe("warning");
+    expect(status.message).not.toContain("已生成");
+    expect(status.message).toContain("模型返回内容未通过结构校验");
+    expect(status.message).toContain("稍后重新生成");
+  });
+
+  it("tells the user to fix configuration when a retry cannot help", () => {
+    const status = resolveReportProviderStatus(
+      reportWithPipeline("offline-fallback", {
+        provider_status: "fallback",
+        provider_failure_category: "authentication",
+        provider_failure_retryable: false,
+      }),
+    );
+
+    expect(status.retryable).toBe(false);
+    expect(status.message).toContain("模型服务认证失败");
+    expect(status.message).toContain("检查模型服务配置");
+  });
+
+  it("distinguishes an unconfigured model from a failed call", () => {
+    const status = resolveReportProviderStatus(
+      reportWithPipeline("offline", { provider_status: "offline", provider_attempted: false }),
+    );
+
+    expect(status.attempted).toBe(false);
+    expect(status.message).toContain("未配置模型服务");
+    expect(status.tone).toBe("warning");
+  });
+
+  it("falls back to the provider name when pipeline metadata is missing", () => {
+    // 旧报告没有 pipeline.provider_status，只能靠 provider 字段判断。
+    expect(resolveReportProviderStatus(reportWithPipeline("offline-fallback")).modelBacked).toBe(
+      false,
+    );
+    expect(resolveReportProviderStatus(reportWithPipeline("deepseek-v4-pro")).modelBacked).toBe(
+      true,
+    );
+  });
+
+  it("keeps an unknown failure category out of the user-facing copy", () => {
+    const status = resolveReportProviderStatus(
+      reportWithPipeline("offline-fallback", {
+        provider_status: "fallback",
+        provider_failure_category: "some_future_category",
+      }),
+    );
+
+    expect(status.failureCategory).toBe("some_future_category");
+    expect(status.message).toContain("模型调用失败");
+    expect(status.message).not.toContain("some_future_category");
+  });
+
+  it("treats a missing retryable flag as retryable", () => {
+    // 缺字段时不该把偶发问题说成配置错误。
+    const status = resolveReportProviderStatus(
+      reportWithPipeline("offline-fallback", {
+        provider_status: "fallback",
+        provider_failure_category: "timeout",
+      }),
+    );
+
+    expect(status.retryable).toBe(true);
+    expect(status.message).toContain("稍后重新生成");
   });
 });

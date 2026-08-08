@@ -24,6 +24,7 @@ from app.services.deepseek_client import (
     _is_valid_daily_report_payload,
     _offline_report,
     _parse_model_json,
+    normalize_daily_report_payload,
     build_analysis_prompt_provenance,
     build_analysis_chat_messages,
 )
@@ -285,11 +286,13 @@ def stream_analysis(
                 # Do not emit raw model partials.  Title, summary, caveats, and
                 # recommendation items can all carry unguarded trade advice;
                 # the complete report is emitted only after judge + guards.
-            parsed = _parse_model_json("".join(all_chunks))
+            parsed = normalize_daily_report_payload(_parse_model_json("".join(all_chunks)))
         except (httpx.StreamError, httpx.ReadTimeout, httpx.HTTPError) as exc:
             if all_chunks:
                 interrupted_content = "".join(all_chunks)
-                candidate = _parse_model_json(interrupted_content)
+                candidate = normalize_daily_report_payload(
+                    _parse_model_json(interrupted_content)
+                )
                 if _is_usable_interrupted_response(
                     interrupted_content,
                     candidate,
