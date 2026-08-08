@@ -1504,14 +1504,183 @@ def _qdii_region_label(value: str | None) -> str:
     }.get(value, str(value or "地域暴露未知"))
 
 
+# ---------------------------------------------------------------------------
+# 目录口径对齐
+# ---------------------------------------------------------------------------
+#
+# 这两个辅助原本是 `discovery_candidate_pool` 的私有函数。日报要给持仓算同类分位，
+# 需要**完全同一份**分桶与目标对齐口径——否则两条链路对同一只基金会落进不同的同类组，
+# 「同类分位」在两个界面上不可比。抽到本模块（它已经拥有同类成员资格的词汇表，且明确
+# 保持纯函数、不读网络/DB/时钟），荐基侧改为委托，不留第二份实现。
+#
+# 对齐这一步不是可选的：直接把原始目录行当 target 传给 `build_peer_rank` 会得到
+# `insufficient` / `mixed_risk_exposure_unavailable`，因为决定同类成员资格的分类字段
+# 由这一步从目录行派生。
+PEER_CATALOGUE_CLASSIFICATION_FIELDS: tuple[str, ...] = (
+    "fund_name",
+    "fund_type",
+    "fund_category",
+    "investment_style",
+    "risk_exposure",
+)
+
+
+def peer_catalogue_bucket(row: Mapping[str, Any]) -> str:
+    """Build a stable coarse bucket across universe and profile providers.
+
+    The universe uses compact labels such as ``zs`` while the research profile
+    may overwrite the same fund with ``股票型``. Exact-string bucketing made
+    those two observations invisible to each other and produced an artificial
+    zero-peer result. The strict peer module still performs the final strategy,
+    region, subtype, and exact tracking-index split inside this coarse bucket.
+    """
+
+    fund_type = str(row.get("fund_type") or row.get("fund_category") or "")
+    name = str(row.get("fund_name") or "")
+    text = f"{fund_type} {name}".strip().casefold()
+    if has_positive_qdii_marker(text):
+        return "qdii"
+    if "fof" in text or "基金中基金" in text:
+        return "fof"
+    if "货币" in text:
+        return "money"
+    if "债" in text or fund_type.casefold() in {"zq", "bond"}:
+        return "bond"
+    if "混合" in text or fund_type.casefold() in {"hh", "mixed"}:
+        return "mixed"
+    if (
+        "指数" in text
+        or "etf" in text
+        or fund_type.casefold() in {"zs", "index", "passive_index", "enhanced_index"}
+    ):
+        return "equity_index"
+    if "股票" in text or fund_type.casefold() in {"gp", "equity", "stock"}:
+        return "equity_active"
+    return "unknown"
+
+
+def catalogue_aligned_peer_target(
+    candidate: Mapping[str, Any],
+    *,
+    source_target: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Use one classification vocabulary for the target and its universe.
+
+    Research-profile enrichment can replace the catalogue's compact ``hh``
+    type with a detailed label such as ``混合型-偏股``. Applying that detail to
+    the target alone creates an artificial subgroup because the other ~20k
+    catalogue rows were never enriched to the same taxonomy. Metrics and
+    benchmark evidence still come from the enriched candidate; only fields
+    that determine peer membership are aligned to the frozen catalogue row.
+    """
+
+    if not source_target:
+        return dict(candidate)
+    target = {**dict(source_target), **dict(candidate)}
+    for field in PEER_CATALOGUE_CLASSIFICATION_FIELDS:
+        source_value = source_target.get(field)
+        if source_value not in (None, "", [], {}):
+            target[field] = source_value
+        elif field != "fund_name":
+            target.pop(field, None)
+    return target
+
+
+def _compact_scalar(value: object) -> object | None:
+    """Drop nested containers; keep scalars (including explicit ``None``)."""
+    return value if value is None or isinstance(value, (str, int, float, bool)) else None
+
+
+def compact_peer_research_for_llm(item: Mapping[str, Any]) -> dict[str, Any]:
+    """把 `peer_rank` / `peer_group` 收成喂给模型的有界投影。
+
+    日报与荐基共用这一份，避免两处各自挑字段、随 schema 演进而漂移（与第一批把基准
+    投影抽到 `fund_benchmark_research` 同一做法）。
+
+    刻意保留 `not_applicable_metrics`：把不适用的维度整段删掉，会让"这个指标对该类型
+    基金本就不适用"和"这个指标算出来是空"变得无法区分，模型于是可能把缺席读成利空。
+    同样保留 `execution_tilt_eligible`（恒为 False）与 `status`——分位是**描述性**证据，
+    不是执行白名单。
+    """
+    peer_rank = item.get("peer_rank") if isinstance(item.get("peer_rank"), Mapping) else {}
+    peer_group = item.get("peer_group") if isinstance(item.get("peer_group"), Mapping) else {}
+    metrics = peer_rank.get("metrics") if isinstance(peer_rank.get("metrics"), Mapping) else {}
+    applicable_metrics: dict[str, dict[str, Any]] = {}
+    not_applicable_metrics: dict[str, dict[str, Any]] = {}
+    for key, value in metrics.items():
+        if not isinstance(value, Mapping):
+            continue
+        applicable = value.get("applicable") is True
+        available = value.get("available") is True
+        metric = {
+            "applicable": applicable,
+            "available": available,
+        }
+        for field in (
+            "label",
+            "orientation",
+            "role",
+            "applicability",
+            "availability",
+            "value",
+            "percentile",
+            "sample_count",
+            "coverage_rate",
+            "qualified",
+            "qualification_required",
+            "reason",
+        ):
+            scalar = _compact_scalar(value.get(field))
+            if scalar is not None:
+                metric[field] = scalar
+        if applicable:
+            applicable_metrics[key] = metric
+        else:
+            # Keep the explicit absence semantics so a removed null-heavy
+            # metric can never be mistaken for a valid comparison dimension.
+            not_applicable = {
+                "applicable": False,
+                "available": False,
+            }
+            for field in ("applicability", "availability", "reason"):
+                scalar = _compact_scalar(value.get(field))
+                if scalar is not None:
+                    not_applicable[field] = scalar
+            not_applicable_metrics[key] = not_applicable
+    result = {
+        "schema_version": peer_rank.get("schema_version"),
+        "status": peer_rank.get("status"),
+        "execution_tilt_eligible": peer_rank.get("execution_tilt_eligible") is True,
+        "reason": peer_rank.get("reason"),
+        "group_key": peer_group.get("group_key"),
+        "group_label": peer_group.get("group_label"),
+        "classification_confidence": peer_group.get("classification_confidence"),
+        "metric_registry_version": peer_rank.get("metric_registry_version"),
+        "metric_profile": peer_rank.get("metric_profile"),
+        "descriptive_performance_percentile": peer_rank.get(
+            "descriptive_performance_percentile"
+        ),
+        "independent_peer_family_count": (
+            peer_rank.get("universe") or {}
+        ).get("independent_peer_family_count"),
+        "metrics": applicable_metrics,
+        "not_applicable_metrics": not_applicable_metrics,
+    }
+    return {key: value for key, value in result.items() if value is not None}
+
+
 __all__ = [
     "MIN_INDEPENDENT_PEER_FAMILIES",
     "MIN_METRIC_COVERAGE",
+    "PEER_CATALOGUE_CLASSIFICATION_FIELDS",
     "PEER_GROUP_SCHEMA_VERSION",
     "PEER_METRIC_REGISTRY_VERSION",
     "PEER_RANK_SCHEMA_VERSION",
     "build_fund_peer_group",
     "build_peer_rank",
+    "catalogue_aligned_peer_target",
+    "compact_peer_research_for_llm",
     "fund_family_key",
+    "peer_catalogue_bucket",
     "resolve_benchmark_comparison",
 ]

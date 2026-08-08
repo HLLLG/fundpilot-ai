@@ -299,6 +299,42 @@ export type SectorRotationFacts = {
   market_top: SectorOpportunity[];
 };
 
+/** 穿透暴露行：披露范围内的下界，label 键随维度不同（证券/行业/上市地）。 */
+export type LookthroughExposureRow = {
+  security_key?: string | null;
+  security_name?: string | null;
+  industry?: string | null;
+  listing_market?: string | null;
+  exposure_lower_bound_percent?: number | null;
+};
+
+/**
+ * 基金定期报告披露口径的持仓穿透。
+ *
+ * 服务端在 `prepare_analysis_bundle` 里已把完整载荷收敛为该契约自带的有界摘要
+ * （`compact_fund_lookthrough_for_llm`）后才落库，所以落库、prompt 与这里读到的
+ * 是同一份形状——暴露列表带 `top_` 前缀。全部数值都是披露范围内的**下界**，
+ * unknown 质量必须当作真实未知展示，不得让用户以为"没列出来就是没有"。
+ */
+export type FundLookthroughFacts = {
+  schema_version?: string;
+  status?: string | null;
+  scope?: string | null;
+  research_qualified?: boolean;
+  execution_qualified?: boolean;
+  reason_codes?: string[];
+  portfolio?: {
+    scope?: string | null;
+    portfolio_positions_complete?: boolean;
+    disclosed_security_mass_lower_bound_percent?: number | null;
+    identity_known_security_mass_lower_bound_percent?: number | null;
+    unknown_account_mass_percent?: number | null;
+    top_security_exposure_lower_bounds?: LookthroughExposureRow[];
+    top_industry_exposure_lower_bounds?: LookthroughExposureRow[];
+    top_listing_market_exposure_lower_bounds?: LookthroughExposureRow[];
+  };
+};
+
 export type OutcomeHorizonStats = {
   horizon_trading_days: number;
   eligible_count: number;

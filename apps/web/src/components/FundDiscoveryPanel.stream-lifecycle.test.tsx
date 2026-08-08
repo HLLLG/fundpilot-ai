@@ -275,12 +275,14 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
     await waitFor(() => expect(saveDiscoveryPromptRemote).toHaveBeenCalledWith("changed prompt"));
   }, 15_000);
 
-  it("keeps only the two high-value recommendation goals in the main entry", () => {
+  it("drops the retired recommendation-goal and strategy switches from the main entry", () => {
     renderPanel();
 
-    expect(screen.getByRole("group", { name: "推荐目标" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "市场优选" })).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByRole("button", { name: "组合补缺" })).toBeInTheDocument();
+    // 推荐目标固定为市场优选、策略固定为机会优先，两个选择器都不再出现。
+    expect(screen.queryByRole("group", { name: "推荐目标" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "市场优选" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "组合补缺" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /稳健筛选/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "选基策略" })).not.toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "基金类型偏好" })).not.toBeInTheDocument();
     expect(screen.getByText("系统自动选基")).toBeInTheDocument();
@@ -335,37 +337,29 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
     });
   });
 
-  it("sends the fixed automatic quality and share-class policies for normal scans", async () => {
+  it("sends the fixed scan goal, strategy and share-class policies for normal scans", async () => {
     renderPanel();
 
-    fireEvent.click(screen.getByRole("button", { name: "组合补缺" }));
     fireEvent.click(screen.getByRole("button", { name: "扫描今日机会" }));
 
     await waitFor(() => expect(streamDiscovery).toHaveBeenCalled());
     const options = vi.mocked(streamDiscovery).mock.calls[0]?.[3];
     expect(options).toMatchObject({
-      scanMode: "portfolio_gap",
+      scanMode: "full_market",
       selectionStrategy: "balanced",
       fundTypePreference: "any",
       discoveryStrategy: "opportunity_first",
     });
   });
 
-  it("defaults to opportunity-first and can explicitly request the legacy risk-first guard", async () => {
+  it("states the fixed opportunity-first strategy without offering a switch", () => {
     renderPanel();
 
     expect(screen.getByRole("group", { name: "荐基决策策略" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /机会优先/ })).toHaveAttribute(
-      "aria-pressed",
-      "true",
+    expect(screen.getByTestId("discovery-strategy-opportunity_first")).toHaveTextContent(
+      "机会优先",
     );
-    fireEvent.click(screen.getByRole("button", { name: /稳健筛选/ }));
-    fireEvent.click(screen.getByRole("button", { name: "扫描今日机会" }));
-
-    await waitFor(() => expect(streamDiscovery).toHaveBeenCalled());
-    expect(vi.mocked(streamDiscovery).mock.calls[0]?.[3]).toMatchObject({
-      discoveryStrategy: "risk_first",
-    });
+    expect(screen.queryByRole("button", { name: /机会优先/ })).not.toBeInTheDocument();
   });
 
   it("labels reports from a retired scan goal as a generic historical mode", async () => {
@@ -403,7 +397,7 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
     expect(await screen.findByTestId("discovery-config-summary")).toHaveTextContent(
       "组合补缺 · 历史稳健策略 · 自动质量优选 · 同基金份额自动去重（费用待核对） · 深度分析 · 关注：医药",
     );
-    expect(screen.queryByRole("group", { name: "推荐目标" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "荐基决策策略" })).not.toBeInTheDocument();
     expect(screen.getByTestId("discovery-report-stub")).toHaveTextContent("上一份机会报告");
     expect(screen.getByRole("button", { name: "调整条件" })).toHaveClass("min-h-11");
 
@@ -416,7 +410,7 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
     expect(screen.getByTestId("discovery-report-stub")).toHaveTextContent("上一份机会报告");
 
     fireEvent.click(screen.getByRole("button", { name: "调整条件" }));
-    expect(screen.getByRole("group", { name: "推荐目标" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "荐基决策策略" })).toBeInTheDocument();
   });
 
   it("keeps the previous report visible while a new stream is running", async () => {

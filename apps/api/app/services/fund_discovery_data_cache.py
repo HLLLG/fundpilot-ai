@@ -65,6 +65,23 @@ def fetch_discovery_fund_universe_cached(*, limit: int = 20_000) -> list[dict]:
     return _refresh_discovery_universe_blocking(limit=limit, force=False)
 
 
+def fetch_discovery_fund_universe_cache_only() -> list[dict]:
+    """只读缓存地取全目录快照；没有缓存就返回空列表，**绝不触发拉源**。
+
+    日报给持仓算同类分位要用同一份目录，但不能走
+    `fetch_discovery_fund_universe_cached`——冷启动时它会做一次有界但阻塞的全量拉取
+    （`_refresh_discovery_universe_blocking`），那属于荐基扫描可以承受、日报请求路径
+    不能承受的代价。缓存缺席时上层 fail closed 到"同类分位不可用"，不猜、不拉源。
+
+    与 `theme_board_snapshot.get_theme_board_snapshot_cache_only` 同一约定：
+    函数名里的 `cache_only` 就是"不会有网络副作用"的承诺。
+    """
+    payload = get_spot_snapshot_any_age(_UNIVERSE_CACHE_KEY)
+    if not _valid_universe_snapshot(payload):
+        return []
+    return _universe_rows_with_snapshot_contract(payload)
+
+
 def _valid_universe_snapshot(payload: object) -> bool:
     return (
         isinstance(payload, dict)

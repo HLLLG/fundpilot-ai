@@ -104,6 +104,8 @@ def apply_recommendation_guards(
     tuning = guard_policy
     today_signal = has_today_market_signal(market_news, topic_briefs)
     ic_status = _factor_ic_status_from_facts(facts)
+    # 组合级判定，逐只持仓复用同一个结论，不必每条重算。
+    drawdown_cap_reason = _portfolio_drawdown_cap_reason(facts, risk, request.profile)
     portfolio_snapshot = (facts or {}).get("portfolio_snapshot")
     portfolio_execution_reasons: list[str] = []
     if isinstance(portfolio_snapshot, dict):
@@ -177,13 +179,22 @@ def apply_recommendation_guards(
             normalized = conservative_action_text(normalized, offline.action)
 
         max_bucket = _max_allowed_bucket(
-            risk, holding, request, tactical=tactical, aggressive=aggressive
+            risk,
+            holding,
+            request,
+            tactical=tactical,
+            aggressive=aggressive,
+            portfolio_drawdown_capped=drawdown_cap_reason is not None,
         )
+        drawdown_note = None
         if _action_bucket(normalized) > max_bucket:
+            if drawdown_cap_reason is not None and _action_bucket(normalized) >= ACTION_BUCKET_ADD:
+                drawdown_note = drawdown_cap_reason
             normalized = _BUCKET_TO_LABEL[max_bucket]
 
         sector_opportunity = (facts_row or {}).get("sector_opportunity")
         evidence = (facts_row or {}).get("evidence")
+        vehicle_quality = (facts_row or {}).get("vehicle_quality")
 
         weak_note = None
         if not reversal_note and _action_bucket(normalized) >= ACTION_BUCKET_ADD:
@@ -277,6 +288,8 @@ def apply_recommendation_guards(
             profile=request.profile,
             weight_denominator=weight_denominator,
             sector_opportunity=sector_opportunity,
+            evidence=evidence,
+            vehicle_quality=vehicle_quality,
         )
         if (
             _execution_direction(normalized) == "add"
@@ -333,6 +346,7 @@ def apply_recommendation_guards(
             or snapshot_note
             or reversal_note
             or weak_note
+            or drawdown_note
         )
         if (
             not note
@@ -396,8 +410,15 @@ def apply_recommendation_guards(
                 *copy.validation_notes,
                 "交易条件或逐笔持有期仍需在实际操作前核对；建议比例仅用于风险规划。",
             ]
-        _backfill_decision_fields(copy, holding, sector_opportunity, evidence, ic_status)
-        _enforce_public_ic_evidence(copy, evidence, ic_status)
+        _backfill_decision_fields(
+            copy,
+            holding,
+            sector_opportunity,
+            evidence,
+            ic_status,
+            vehicle_quality,
+        )
+        _enforce_public_ic_evidence(copy, evidence, ic_status, vehicle_quality)
         if shadow_note is not None:
             # M6：灰度提示须始终可见（不受 `_backfill_decision_fields` 只在为空时才
             # 回填的规则影响），追加到 validation_notes 末尾，与其它校验备注共存。
@@ -508,6 +529,158 @@ _ADD_POSITION_PERCENT_TIERS = (
     (float("-inf"), 5.0, "小机会试探档"),
 )
 
+# 只有基金自身拿到「高」正向量化支持时，才允许用满板块机会分对应的档位；否则沿同一
+# 档位阶梯下调一级。
+#
+# 加仓比例此前完全由板块机会分决定，于是同一板块里两只基金——一只因子分位靠前、一路
+# 证据都指向正向，另一只只有中等支持——会拿到完全相同的比例。板块负责回答「这个方向
+# 值不值得加」，基金自身证据负责回答「加在这只上靠不靠得住」，不该由一个分数同时承担。
+#
+# 三个设计选择：
+#
+# * **只下调不提额**：`evidence.composite` 的 level 表示"正向收益支持"，按既有契约量化
+#   证据「只可增加置信度」，不得作为提额依据。
+# * **下调一级而不是绝对封顶**：`evidence` 为 None（`build_holding_evidence` 一个分量都
+#   凑不出）在因子 IC 未就绪、组合历史不足 20 交易日时很常见，新用户几乎必然如此。
+#   按绝对值封到最小档会把所有人的加仓砍到 5%，那是"证据缺失"而非"基金更弱"，超出了
+#   本次要解决的问题。沿阶梯降一级是单步收紧，且复用了既有档位语言。
+# * **缺失与「不足」同档处理**：两者都表示拿不到正向支持，把"没算出来"排到"算出来但
+#   不足"之后会让更差的证据反而拿到更大仓位。绝大多数「低/不足」本就已被
+#   `_weak_evidence_reasons` 降级为观察，走不到分档这一步，残留人群很小。
+_FUND_EVIDENCE_FULL_TIER_LEVEL = "高"
+
+
+def _tier_percent_one_step_down(percent: float) -> float:
+    """沿 `_ADD_POSITION_PERCENT_TIERS` 的档位阶梯取更低一级；已在最低档则不变。"""
+    lower = [
+        tier_percent
+        for _threshold, tier_percent, _label in _ADD_POSITION_PERCENT_TIERS
+        if tier_percent < percent
+    ]
+    return max(lower) if lower else percent
+
+
+def _fund_evidence_add_percent(
+    sector_percent: float,
+    evidence: dict | None,
+) -> tuple[float, str | None]:
+    """按基金自身正向量化支持决定是否把板块档位下调一级。"""
+    level = _composite_level(evidence)
+    if str(level or "") == _FUND_EVIDENCE_FULL_TIER_LEVEL:
+        return sector_percent, None
+    stepped = _tier_percent_one_step_down(sector_percent)
+    if stepped >= sector_percent:
+        return sector_percent, None
+    reason = (
+        f"基金自身正向量化支持{level}"
+        if level
+        else "基金自身量化支持暂缺"
+    )
+    return stepped, f"{reason}，档位下调至 {stepped:g}%"
+
+
+# 方向成熟度（`sector_entry_maturity.2026-08.v3`）在日报侧的两处消费。
+#
+# 这一层此前在日报**完全不存在**：`describe_sector_opportunity` 的 `entry_policy_enabled`
+# 默认 False，所以日报一直只拿旧版机会分。接入后同一份方向数据在荐基和日报有了同一个口径
+# ——此前荐基对一个过热方向只会按 40% 试仓，日报却给满档加仓，两个界面对同一天同一板块
+# 给出互相矛盾的仓位。
+_ENTRY_STATE_READY = "ready_to_start"
+#: 这些档位不构成"现在可以加"的方向依据。`forming` 是"条件形成中，暂不下单"，
+#: `invalid` 是"趋势或资金未通过"，`ready_on_pullback` 是"方向成立但当前位置不宜追"。
+#: 三者在荐基侧都不给执行资格，日报同样不应据此加仓。
+_ENTRY_STATES_BLOCKING_ADD = {
+    "forming": "板块方向条件仍在形成中",
+    "invalid": "板块趋势或资金未通过入场线",
+    "ready_on_pullback": "板块方向成立但当前位置不宜追高",
+}
+
+
+def _entry_state_add_block_reason(sector_opportunity: dict | None) -> str | None:
+    """方向成熟度档位是否拦住加仓。快照缺席（无 entry_state）时返回 None，不拦。"""
+    if not isinstance(sector_opportunity, dict):
+        return None
+    state = str(sector_opportunity.get("entry_state") or "")
+    if not state or state == _ENTRY_STATE_READY:
+        return None
+    # 荐基对这两类"早期试仓"开了口子（资金刚转强 / 趋势形成概率够），日报沿用同一判定，
+    # 否则同一天同一板块两个界面结论相反。它们仍会通过 first_tranche_scale 缩小比例。
+    if sector_opportunity.get("flow_improving_probe_eligible") is True:
+        return None
+    if sector_opportunity.get("probability_early_probe_eligible") is True:
+        return None
+    return _ENTRY_STATES_BLOCKING_ADD.get(state)
+
+
+def _first_tranche_scaled_percent(
+    current_percent: float,
+    sector_opportunity: dict | None,
+) -> tuple[float, str | None]:
+    """按方向成熟度的 `first_tranche_scale` 缩小本次加仓比例。
+
+    与 `_fund_evidence_add_percent` / `_vehicle_quality_add_percent` 的"沿档位阶梯降一级"
+    不同，这里是**乘法缩放**——因为它本身就是荐基定义的"本次投入占计划仓位的比例"
+    （过热 0.6、拥挤 0.4、概率不足按概率档）。把它转成档位下调会丢掉这个语义，
+    也会与荐基对同一方向给出的金额不一致。
+
+    同样只降不升：`scale >= 1` 时原样返回。
+    """
+    if not isinstance(sector_opportunity, dict):
+        return current_percent, None
+    scale = _num(sector_opportunity.get("first_tranche_scale"))
+    if scale is None or scale >= 1.0 or scale <= 0.0:
+        return current_percent, None
+    scaled = floor(max(current_percent * scale, 0.0) * 10) / 10
+    if scaled >= current_percent:
+        return current_percent, None
+    overheat = [
+        str(item).strip()
+        for item in sector_opportunity.get("overheat_flags") or []
+        if str(item).strip()
+    ]
+    detail = f"（{'、'.join(overheat[:2])}）" if overheat else ""
+    return scaled, (
+        f"方向分段试仓系数 {scale:.0%}{detail}，本次比例缩至 {scaled:g}%"
+    )
+
+
+def _vehicle_quality_add_percent(
+    current_percent: float,
+    vehicle_quality: dict | None,
+) -> tuple[float, str | None]:
+    """被动载体质量未达标时再把档位下调一级。
+
+    与 `_fund_evidence_add_percent` 是两个独立维度：量化证据回答"这只基金接下来的收益
+    支持强不强"，载体质量回答"这只工具本身合不合格"（规模、费率、跟没跟住基准）。两者
+    都不达标就各降一级，下限仍是既有阶梯的最低档。
+
+    三条纪律与加仓分档一致：
+
+    * **只对 `applicable=True` 生效**。主动持仓拿到的是 `not_applicable`（日报没有经理
+      业绩证据），缺失同样不触发——两者都是"没有可判断的证据"，不是"载体更差"。
+    * **只下调不提额**：`eligible` 不会换来比板块档位更大的仓位。
+    * **不做硬拦**。荐基侧对 `vehicle_quality_status != eligible` 是直接剔除候选的
+      （`discovery_guard.py`），但那条硬门与 `sector_match_kind` 绑在一起，而日报持仓行
+      没有该字段；在缺身份核验的前提下照搬硬拦等于禁掉所有指数持仓的加仓。降一级是与
+      现有档位语言一致的比例收紧，硬门留给后续单独论证。
+    """
+    if not isinstance(vehicle_quality, dict):
+        return current_percent, None
+    if vehicle_quality.get("applicable") is not True:
+        return current_percent, None
+    if str(vehicle_quality.get("status") or "") != "watch_only":
+        return current_percent, None
+    stepped = _tier_percent_one_step_down(current_percent)
+    if stepped >= current_percent:
+        return current_percent, None
+    penalties = [
+        str(item).strip()
+        for item in vehicle_quality.get("penalties") or []
+        if str(item).strip()
+    ]
+    detail = f"（{'、'.join(penalties[:2])}）" if penalties else ""
+    return stepped, f"被动载体质量未达标{detail}，档位下调至 {stepped:g}%"
+
 
 def _resolve_deterministic_position_change(
     action: str,
@@ -516,6 +689,8 @@ def _resolve_deterministic_position_change(
     profile: InvestorProfile,
     weight_denominator: float,
     sector_opportunity: dict | None,
+    evidence: dict | None = None,
+    vehicle_quality: dict | None = None,
 ) -> tuple[float | None, str, str | None]:
     """Return a server-owned percentage relative to the estimated holding value.
 
@@ -550,8 +725,19 @@ def _resolve_deterministic_position_change(
         )
 
     opportunity_score = _opportunity_score(sector_opportunity)
-    base_percent, opportunity_tier = _add_position_percent_for_score(
+    sector_percent, opportunity_tier = _add_position_percent_for_score(
         opportunity_score
+    )
+    # 板块决定机会档位，基金自身证据与被动载体质量各自只能把它往下调一级，不能提额。
+    base_percent, evidence_basis = _fund_evidence_add_percent(sector_percent, evidence)
+    base_percent, vehicle_basis = _vehicle_quality_add_percent(
+        base_percent,
+        vehicle_quality,
+    )
+    # 方向成熟度的分段试仓系数最后作用（乘法缩放，语义是"本次投入占计划仓位的比例"）。
+    base_percent, tranche_basis = _first_tranche_scaled_percent(
+        base_percent,
+        sector_opportunity,
     )
     limit_ratio = max(min(float(profile.concentration_limit_percent), 100.0), 0.0) / 100
     max_add_amount: float | None
@@ -591,13 +777,19 @@ def _resolve_deterministic_position_change(
     if opportunity_score is None:
         basis = (
             f"相对当前估算持仓计算；板块机会分暂缺，采用{opportunity_tier} "
-            f"{base_percent:g}%"
+            f"{sector_percent:g}%"
         )
     else:
         basis = (
             f"相对当前估算持仓计算；板块机会分 {opportunity_score:g}，"
-            f"对应{opportunity_tier} {base_percent:g}%"
+            f"对应{opportunity_tier} {sector_percent:g}%"
         )
+    if evidence_basis:
+        basis += f"；{evidence_basis}"
+    if vehicle_basis:
+        basis += f"；{vehicle_basis}"
+    if tranche_basis:
+        basis += f"；{tranche_basis}"
     if capped:
         basis += "；已按单只集中度上限收紧"
     return resolved_percent, basis, None
@@ -899,6 +1091,68 @@ def _match_holding(rec: FundRecommendation, holdings: list[Holding]) -> Holding 
     return None
 
 
+_DRAWDOWN_GUARD_CONFIDENCE_LEVELS = frozenset({"高", "中"})
+
+
+def _num(value: object) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if isfinite(parsed) else None
+
+
+def _portfolio_drawdown_cap_reason(
+    facts: dict | None,
+    risk: RiskAssessment,
+    profile: InvestorProfile,
+) -> str | None:
+    """真实峰谷最大回撤已验证超出容忍线、且当前仍在浮亏时，禁止继续加仓。
+
+    此前只有「成本浮亏线」是硬约束（`risk.py` 的 `PORTFOLIO_COST_BASIS_LOSS`，代码里
+    自己注明"不是组合历史峰值到谷值的最大回撤"）。`portfolio_risk_metrics` 早就算出了
+    真实峰谷回撤，但没有接进任何封顶逻辑——一个从高点回撤 30% 却仍略有浮盈的组合，
+    过去不会触发任何限制。
+
+    两个条件必须同时成立，缺一不可：
+
+    * **样本门槛**：`risk_metrics` 可用且置信为高/中。这与 facts instruction 里
+      「风险指标按 confidence.level 表述，低/不足须声明样本有限、不得据此下强结论」
+      同一口径，也与 `market_breadth` 要求 `decision_eligible` 的既有约定一致。
+    * **不与浮亏线混用同一含义**：峰谷回撤衡量的是"这个组合回吐过多少"，浮亏线衡量
+      "现在亏了多少"，两者量纲不同。一个曾经 +20% 回落到 +2% 的组合峰谷回撤有 -15%
+      但仍在赚钱，若直接套用同一阈值几乎任何有历史的组合都会触发。因此额外要求当前
+      确实处于浮亏——即"回撤能力已验证超限，而且现在正在亏"。完全跌破浮亏线的情形
+      本就由 `risk.level=="high"` 封顶，这里补的是中间那段缺口。
+    """
+
+    metrics = (facts or {}).get("risk_metrics")
+    if not isinstance(metrics, dict) or metrics.get("available") is not True:
+        return None
+    confidence = metrics.get("confidence")
+    level = (
+        str(confidence.get("level") or "")
+        if isinstance(confidence, dict)
+        else ""
+    )
+    if level not in _DRAWDOWN_GUARD_CONFIDENCE_LEVELS:
+        return None
+    drawdown = _num(metrics.get("max_drawdown_percent"))
+    if drawdown is None:
+        return None
+    limit = abs(float(profile.max_drawdown_percent))
+    if limit <= 0 or drawdown > -limit:
+        return None
+    if (risk.weighted_return_percent or 0) >= 0:
+        return None
+    return (
+        f"组合真实峰谷回撤 {drawdown:.2f}% 已超过 {limit:.1f}% 容忍线，"
+        f"且当前仍处于浮亏（{risk.weighted_return_percent:.2f}%），已限制加仓类动作。"
+    )
+
+
 def _max_allowed_bucket(
     risk: RiskAssessment,
     holding,
@@ -906,10 +1160,15 @@ def _max_allowed_bucket(
     *,
     tactical: bool = False,
     aggressive: bool = False,
+    portfolio_drawdown_capped: bool = False,
 ) -> int:
     if risk.suggested_action == "risk_review":
         return 2
     if risk.level == "high":
+        return 2
+    # 峰谷回撤封顶对短线风格同样生效：它衡量的是这个组合实际回吐过多少，
+    # 与「是否愿意追当日涨幅」无关。
+    if portfolio_drawdown_capped:
         return 2
     if (
         not tactical
@@ -1057,6 +1316,11 @@ def _weak_evidence_reasons(
     weak_quantitative_reason = _weak_quantitative_evidence_reason(evidence, ic_status)
     if weak_quantitative_reason:
         reasons.append(weak_quantitative_reason)
+    # 方向成熟度档位。只在当天有主线快照（因此存在 entry_state）时才可能拦，
+    # 缺席不拦——那是"没有这层证据"，不是"方向不成立"。
+    entry_state_reason = _entry_state_add_block_reason(sector_opportunity)
+    if entry_state_reason:
+        reasons.append(entry_state_reason)
     return _append_unique([], reasons, limit=4)
 
 
@@ -1066,6 +1330,7 @@ def _backfill_decision_fields(
     sector_opportunity: dict | None,
     evidence: dict | None,
     ic_status: dict | None = None,
+    vehicle_quality: dict | None = None,
 ) -> None:
     if not rec.decision_path:
         rec.decision_path = _build_decision_path(
@@ -1080,7 +1345,7 @@ def _backfill_decision_fields(
     if not rec.fund_evidence:
         rec.fund_evidence = _append_unique(
             [],
-            _build_fund_evidence(evidence, ic_status),
+            _build_fund_evidence(evidence, ic_status, vehicle_quality),
             limit=4,
         )
     if not rec.validation_notes:
@@ -1148,13 +1413,49 @@ def _build_sector_evidence(sector_opportunity: dict | None) -> list[str]:
     return evidence
 
 
+def _vehicle_quality_evidence_text(vehicle_quality: dict | None) -> str | None:
+    """把载体质量判断转成「基金依据」栏里的一行人话。
+
+    只在 `applicable=True` 时输出。主动持仓拿到的 `not_applicable` 不进这一栏——
+    给每只主动基金都挂一句"载体质量不适用"是噪声，而且容易被读成某种缺陷。
+    """
+    if not isinstance(vehicle_quality, dict):
+        return None
+    if vehicle_quality.get("applicable") is not True:
+        return None
+    status = str(vehicle_quality.get("status") or "")
+    if status == "watch_only":
+        penalties = [
+            str(item).strip()
+            for item in vehicle_quality.get("penalties") or []
+            if str(item).strip()
+        ]
+        detail = f"：{'、'.join(penalties[:2])}" if penalties else ""
+        return f"被动载体质量未达标{detail}"
+    if status == "eligible":
+        reasons = [
+            str(item).strip()
+            for item in vehicle_quality.get("reasons") or []
+            if str(item).strip()
+        ]
+        detail = f"：{'、'.join(reasons[:2])}" if reasons else ""
+        return f"被动载体质量合格{detail}"
+    return None
+
+
 def _build_fund_evidence(
     evidence: dict | None,
     ic_status: dict | None = None,
+    vehicle_quality: dict | None = None,
 ) -> list[str]:
     result: list[str] = []
     if evidence:
         result.append(_evidence_composite_summary(evidence, ic_status))
+    # 排在分量之前：载体质量是对"这只工具本身"的总体判断，与 composite 同级；放到末尾会
+    # 被 `_append_unique(limit=4)` 挤掉，等于对被动持仓白算一遍。
+    vehicle_text = _vehicle_quality_evidence_text(vehicle_quality)
+    if vehicle_text:
+        result.append(vehicle_text)
     for component in _validated_evidence_components(evidence, ic_status):
         basis = component.get("basis")
         if basis:
@@ -1243,6 +1544,7 @@ def _enforce_public_ic_evidence(
     rec: FundRecommendation,
     evidence: dict | None,
     ic_status: dict | None,
+    vehicle_quality: dict | None = None,
 ) -> None:
     validated_components = _validated_evidence_components(evidence, ic_status)
     route_wording = f"{len(validated_components)}路已参与量化证据"
@@ -1271,9 +1573,11 @@ def _enforce_public_ic_evidence(
     )
 
     if evidence is not None or ic_status is not None:
+        # 这里是无条件重建，会盖掉 `_backfill_decision_fields` 的结果，所以载体质量
+        # 必须同样传到这一层，否则它只在"既无量化证据也无 IC 状态"的少数路径下才活着。
         rec.fund_evidence = _append_unique(
             [],
-            _build_fund_evidence(evidence, ic_status),
+            _build_fund_evidence(evidence, ic_status, vehicle_quality),
             limit=4,
         )
     else:

@@ -304,10 +304,16 @@ class Settings(BaseSettings):
     market_breadth_live_guard_delay_minutes: int = 5
     # 量价背离信号回测（M1.3）
     flow_divergence_backtest_enabled: bool = True
-    # M6：双向 guard 灰度开关。shadow（默认）——M2.1/M4 的升级判定只标注"若启用会被
-    # 升级为 XX"，不真正改变最终 action/剔除候选；enforced——真正生效。观察约 1 个月
-    # （20 个交易日）后由用户本人决定是否切换，见设计文档第 10 节。
-    decision_escalation_mode: Literal["shadow", "enforced"] = "shadow"
+    # M6：双向 guard 生效开关。灰度观察期已于 2026-08 结束，默认切到 enforced。
+    # enforced 同时打开三件事（不只是"动作会被改写"）：
+    #   1. M2.1/M4 的升级判定真正改写最终 action/剔除候选，不再只写 validation_notes；
+    #   2. analysis_facts 的 allowed_actions 放出"大幅减仓评估""清仓评估"两个强动作词，
+    #      LLM 从此可以主动选它们（shadow 下模型连选项都看不到）；
+    #   3. 深度模式启用二次 LLM 审校（report_judge / discovery_judge），每份报告多一次
+    #      模型调用与延迟。该审校有独立预算，超时可降级；确定性 guard 始终是硬约束。
+    # shadow 保留为回滚开关：升级判定照算并落 escalation_hints，但不改动作、不扩动作
+    # 词表、不发二次审校。回滚只需设 FUND_AI_DECISION_ESCALATION_MODE=shadow。
+    decision_escalation_mode: Literal["shadow", "enforced"] = "enforced"
 
     @field_validator("risk_free_rate", mode="before")
     @classmethod

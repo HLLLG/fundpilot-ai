@@ -39,8 +39,19 @@ from app.services.benchmark_mapping_service import (
 )
 from app.services.fund_benchmark_research import (
     BENCHMARK_RESEARCH_SCHEMA_VERSION,
+    attach_compact_fund_benchmark_metrics,
     build_fund_benchmark_research_batch,
     summarize_benchmark_research,
+)
+from app.services.fund_lookthrough_context import build_fund_lookthrough_context
+from app.services.fund_lookthrough_research import (
+    LOOKTHROUGH_RESEARCH_SCHEMA_VERSION,
+    compact_fund_lookthrough_for_llm,
+)
+from app.services.fund_vehicle_quality import attach_holding_vehicle_quality
+from app.services.report_peer_ranking import (
+    attach_holding_peer_research,
+    resolve_holding_peer_research,
 )
 from app.services.fund_tradeability import (
     build_tradeability_gate,
@@ -52,6 +63,19 @@ AnalysisPayloadPhase = Literal[1, 2, 3]
 
 FACTOR_SCORE_TIMEOUT_SECONDS = 4.0
 RISK_METRICS_TIMEOUT_SECONDS = 3.0
+# 穿透内部是两段预算：先 store-only 扫描（封顶 `fund_holdings_context_fast_timeout_seconds`，
+# 默认 2s），deep 模式再用剩余额度（默认合计 18s）对 aging/stale 的披露做现场刷新。
+#
+# 日报不能等 18s，所以这里额外套一层 8s 外层预算：store 阶段总能跑完，现场刷新则可能被
+# 中途放弃。这是有意的取舍——`future.cancel()` 对已运行的任务无效，被放弃的刷新会继续跑完
+# 自己的预算并把结果写进披露存储，所以本次报告标记 unavailable、下一份报告直接命中。
+# 换句话说外层预算裁的是"等待"，不是"刷新"本身。
+LOOKTHROUGH_TIMEOUT_SECONDS = 8.0
+
+# 同类分位：实测本地加载 20,000 行目录快照约 4.07 s（DB 读 + 反序列化），逐只
+# `build_peer_rank` 只有 8~14 ms。所以预算按"目录读得动就行"给，超时即 fail closed
+# 到"同类分位不可用"——它是描述性证据，缺席不影响任何确定性结论，不值得让日报多等。
+PEER_RESEARCH_TIMEOUT_SECONDS = 6.0
 
 # 迁入 system 的完整输出约束（不再每条请求在 user JSON 重复）
 OUTPUT_REQUIREMENTS_SYSTEM = (
@@ -141,16 +165,53 @@ BENCHMARK_OUTPUT_REQUIREMENTS_SYSTEM = (
     "Only tier=fund_contract_exact with formal_excess_eligible=true is a formal performance "
     "benchmark. tracked_index_exact is reference-only; unavailable benchmark identity must "
     "never be guessed or upgraded. Benchmark identity alone never proves outperformance. "
-    "Use numeric fund-versus-benchmark claims only from qualified analysis_facts.benchmark_research; "
-    "formal_excess values require comparison_role=formal_excess, while tracking_reference values "
-    "must be described only as reference/tracking differences."
+    "analysis_facts.holdings[].benchmark_metrics is the only place to read fund-versus-benchmark "
+    "numbers; it is already joined to that holding, so never try to match a separate table by "
+    "fund_code. Cite it only when status=qualified. formal_excess values require "
+    "comparison_role=formal_excess, while tracking_reference values must be described only as "
+    "reference/tracking differences. Every benchmark number stays descriptive and must never "
+    "tilt the position change. analysis_facts.benchmark_research_contract is a portfolio-level "
+    "count summary only and carries no per-fund claim."
+)
+LOOKTHROUGH_OUTPUT_REQUIREMENTS_SYSTEM = (
+    "analysis_facts.fund_lookthrough 是基金定期报告披露口径的持仓穿透研究，用来发现"
+    "「几只基金其实重仓同一批股票」这类按基金市值算不出来的重复暴露。它的边界是硬性的："
+    "所有数字都是**下界**（lower bound），只覆盖 as_of 报告期的披露范围，既不是当前持仓"
+    "也不是完整持仓；unknown_account_mass_percent 与各 unknown_mass 字段必须当作真实未知"
+    "保留，不得按 0 处理或推断成「其余部分没有重叠」。"
+    "可引用的具体数字只有 portfolio.top_security_exposure_lower_bounds、"
+    "top_industry_exposure_lower_bounds、top_listing_market_exposure_lower_bounds，"
+    "且必须表述为「组合暴露下界」或「合并集中度下界」并带上「≥」或「至少」的限定；"
+    "禁止把它们改写成任意两只基金之间的重合度百分比——日报的穿透范围是 portfolio_only，"
+    "没有逐对候选事实，任何成对重合百分比都无法核验，服务端会在事后校验中删除。"
+    "披露范围内未发现共同证券**不能**说成组合分散、风险更低，也不能作为加仓或买入理由；"
+    "execution_qualified 恒为 false，穿透只能收紧结论（提示集中度与重复暴露风险），"
+    "永远不能放宽结论或用于调整仓位比例。"
+    "status 非 qualified/partial 时不得引用任何穿透数字；capabilities 与 decision_use 里"
+    "research_eligible=false 的维度同样不得引用。"
+    "引用穿透时须同时说明它来自定期报告披露、有滞后。"
 )
 OUTPUT_REQUIREMENTS_SYSTEM = (
-    OUTPUT_REQUIREMENTS_SYSTEM + "\n" + BENCHMARK_OUTPUT_REQUIREMENTS_SYSTEM
+    OUTPUT_REQUIREMENTS_SYSTEM
+    + "\n"
+    + BENCHMARK_OUTPUT_REQUIREMENTS_SYSTEM
+    + "\n"
+    + LOOKTHROUGH_OUTPUT_REQUIREMENTS_SYSTEM
 )
 OUTPUT_REQUIREMENTS_USER.append(
     "benchmark_specs 仅用于其声明的角色：正式合同基准可评估超额，"
     "跟踪指数仅作参照，unavailable 不得猜测；没有 qualified benchmark_research 时不得声称跑赢或跟踪良好"
+)
+OUTPUT_REQUIREMENTS_USER.append(
+    "该基金与基准的对比数字只读 holdings[].benchmark_metrics（已按持仓对齐，无需按代码关联），"
+    "仅 status=qualified 可引用；正式超额须 comparison_role=formal_excess，"
+    "tracking_reference 只能说成跟踪差异，且基准指标一律只作描述、不得用于调整仓位比例"
+)
+OUTPUT_REQUIREMENTS_USER.append(
+    "fund_lookthrough 是定期报告披露口径的穿透下界：只引用 portfolio.top_* 三个暴露列表，"
+    "表述为「组合暴露下界≥X%」或「合并集中度下界≥X%」，不得写成两只基金之间的重合度百分比；"
+    "unknown 部分必须保留为未知；未发现共同证券不等于组合分散，不得作为加仓理由；"
+    "status 非 qualified/partial 时不得引用任何穿透数字"
 )
 _HOLDING_LLM_DROP_KEYS = frozenset(
     {
@@ -666,8 +727,16 @@ def trim_analysis_facts_for_llm(
         )
     # Internal report orchestration evidence; never expose it to an LLM/public payload.
     trimmed.pop("sector_flow_by_label", None)
-    trimmed.pop("fund_lookthrough", None)
+    # 声明审计是对模型自己叙述的事后检查，不能回喂给模型。
     trimmed.pop("fund_lookthrough_claim_audit", None)
+    # `fund_lookthrough` 在 `prepare_analysis_bundle` 里已经收敛成有界摘要（不含原始
+    # 持仓行与解析审计），这里不再二次投影——再投一次反而会因为字段名已改而丢空。
+    #
+    # 基准研究则相反：完整载荷带 `fund_series` / `components` 的序列审计，而每只基金的
+    # 描述性指标已经按 `benchmark_metrics` 挂到 holdings 行上，顶层这份对模型是纯重复。
+    # 留着它还会让"读行内那份"的契约自相矛盾：同一事实两个位置、其中一个没有
+    # `descriptive_only` / `execution_tilt_eligible` 的结构性约束。摘要契约仍然保留。
+    trimmed.pop("benchmark_research", None)
     holdings = []
     has_management_fee = False
     for row in facts.get("holdings") or []:
@@ -758,6 +827,16 @@ def trim_analysis_facts_for_llm(
                             "five_day_available",
                             "five_day_source",
                             "history_point_count",
+                            # 方向成熟度：服务端会按 first_tranche_scale 确定性地缩小加仓
+                            # 比例、按 entry_state 拦截加仓。这几个键必须穿过 fast 投影，
+                            # 否则模型看不到依据却要解释一个被缩过的比例，叙述必然与
+                            # 服务端结论冲突（instruction 里正要求两者一致）。
+                            "entry_state",
+                            "entry_reason",
+                            "first_tranche_scale",
+                            "trend_formation_probability",
+                            "waiting_reason_code",
+                            "overheat_flags",
                         )
                         if k in opportunity_copy
                     }
@@ -929,6 +1008,8 @@ class AnalysisFactsBundle:
 TradeabilityResolver = Callable[..., dict[str, dict[str, Any]]]
 BenchmarkResolver = Callable[..., dict[str, dict[str, Any]]]
 BenchmarkResearchResolver = Callable[..., dict[str, dict[str, Any]]]
+LookthroughResolver = Callable[..., dict[str, Any]]
+PeerResearchResolver = Callable[..., dict[str, dict[str, Any]]]
 
 
 def _unavailable_holding_benchmark(*, reason: str) -> dict[str, Any]:
@@ -1125,6 +1206,67 @@ def _enhancement_unavailable(reason: str) -> dict[str, Any]:
     return {"available": False, "reason": reason}
 
 
+def _unavailable_fund_lookthrough(
+    *,
+    decision_at: datetime | None,
+    reason: str,
+) -> dict[str, Any]:
+    """穿透缺席时也要留下同形状的 fail-closed 事实，而不是让键直接消失。
+
+    键存在且 `status=unavailable`，下游才能区分"这只组合拿不到披露证据"与"这条链路
+    忘了算穿透"；`decision_data_evidence` 也据此产出 confidence=none 的证据项。
+    """
+
+    return {
+        "schema_version": LOOKTHROUGH_RESEARCH_SCHEMA_VERSION,
+        "status": "unavailable",
+        "scope": "portfolio_only",
+        "decision_at": (
+            normalize_news_now(decision_at).isoformat() if decision_at is not None else None
+        ),
+        "research_qualified": False,
+        "execution_qualified": False,
+        "reason_codes": [reason],
+        "portfolio": {},
+        "existing_funds": [],
+        "candidates": [],
+        "raw_holdings_included": False,
+        "raw_snapshots_included": False,
+    }
+
+
+def _await_within_budget(
+    future,
+    *,
+    timeout_seconds: float,
+    on_timeout: Callable[[], dict[str, Any]],
+    on_error: Callable[[], dict[str, Any]],
+    stop_event: threading.Event | None = None,
+) -> dict[str, Any]:
+    """给一个已提交的 future 套外层预算，超时与异常分别落到各自的兜底事实。
+
+    与 `_run_budgeted_enhancement` 的区别是它不负责提交——调用方需要先并发提交多个
+    future、再逐个按各自预算收口，而不是提交完立刻串行等待。超时与异常不合并成同一个
+    原因码，否则运维分不清"数据源慢"和"数据源坏"。
+    """
+
+    deadline = time.monotonic() + timeout_seconds
+    try:
+        while True:
+            raise_if_stream_cancelled(stop_event)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                future.cancel()
+                return on_timeout()
+            try:
+                return future.result(timeout=min(0.25, remaining))
+            except FutureTimeoutError:
+                continue
+    except Exception:  # noqa: BLE001 - 研究性增强，失败不阻塞日报
+        raise_if_stream_cancelled(stop_event)
+        return on_error()
+
+
 def _run_budgeted_enhancement(
     func,
     *,
@@ -1226,6 +1368,8 @@ def prepare_analysis_bundle(
     tradeability_resolver: TradeabilityResolver | None = None,
     benchmark_resolver: BenchmarkResolver | None = None,
     benchmark_research_resolver: BenchmarkResearchResolver | None = None,
+    lookthrough_resolver: LookthroughResolver | None = None,
+    peer_research_resolver: PeerResearchResolver | None = None,
     stop_event: threading.Event | None = None,
 ) -> AnalysisFactsBundle:
     """构建完整 analysis_facts（未 trim），供 LLM prompt 与最终存档各用一次。"""
@@ -1236,6 +1380,8 @@ def prepare_analysis_bundle(
     resolve_benchmark_research = (
         benchmark_research_resolver or build_fund_benchmark_research_batch
     )
+    resolve_lookthrough = lookthrough_resolver or build_fund_lookthrough_context
+    resolve_peer = peer_research_resolver or resolve_holding_peer_research
     user_id = try_get_request_user_id()
     raise_if_stream_cancelled(stop_event)
 
@@ -1279,12 +1425,39 @@ def prepare_analysis_bundle(
 
         return work() if user_id is None else run_with_request_user(user_id, work)
 
+    def resolve_portfolio_lookthrough() -> dict[str, Any]:
+        def work() -> dict[str, Any]:
+            raise_if_stream_cancelled(stop_event)
+            # 日报只穿透已持仓，没有候选基金，因此 candidate_pool 传 None：
+            # `build_fund_lookthrough_context` 会把 scope 定为 portfolio_only。
+            return resolve_lookthrough(
+                request.holdings,
+                None,
+                decision_at=normalize_news_now(decision_at),
+                analysis_mode=analysis_mode,
+                portfolio_context=request.portfolio_snapshot_context,
+            )
+
+        return work() if user_id is None else run_with_request_user(user_id, work)
+
     # Tradeability I/O runs alongside the existing context computation, while
     # the latter stays on the request thread so database/request context behavior
     # is unchanged.
+    def resolve_peer_research() -> dict[str, Any]:
+        def work() -> dict[str, Any]:
+            raise_if_stream_cancelled(stop_event)
+            return resolve_peer(
+                request.holdings,
+                decision_at=normalize_news_now(decision_at),
+            )
+
+        return work() if user_id is None else run_with_request_user(user_id, work)
+
     executor = get_shared_io_executor()
     tradeability_future = executor.submit(resolve_tradeability)
     benchmark_future = executor.submit(resolve_benchmark_context)
+    lookthrough_future = executor.submit(resolve_portfolio_lookthrough)
+    peer_research_future = executor.submit(resolve_peer_research)
     try:
         raise_if_stream_cancelled(stop_event)
         session, factor_scores, risk_metrics, portfolio_trend = _compute_analysis_context(
@@ -1311,9 +1484,31 @@ def prepare_analysis_bundle(
                 break
             except FutureTimeoutError:
                 continue
+        fund_lookthrough = _await_within_budget(
+            lookthrough_future,
+            timeout_seconds=LOOKTHROUGH_TIMEOUT_SECONDS,
+            on_timeout=lambda: _unavailable_fund_lookthrough(
+                decision_at=decision_at,
+                reason="lookthrough_context_timeout",
+            ),
+            on_error=lambda: _unavailable_fund_lookthrough(
+                decision_at=decision_at,
+                reason="lookthrough_context_error",
+            ),
+            stop_event=stop_event,
+        )
+        peer_research = _await_within_budget(
+            peer_research_future,
+            timeout_seconds=PEER_RESEARCH_TIMEOUT_SECONDS,
+            on_timeout=lambda: {},
+            on_error=lambda: {},
+            stop_event=stop_event,
+        )
     finally:
+        peer_research_future.cancel()
         tradeability_future.cancel()
         benchmark_future.cancel()
+        lookthrough_future.cancel()
     raise_if_stream_cancelled(stop_event)
     facts = build_analysis_facts(
         request.holdings,
@@ -1339,11 +1534,52 @@ def prepare_analysis_bundle(
     facts["benchmark_research_contract"] = summarize_benchmark_research(
         benchmark_research
     )
+    # 把紧凑基准投影挂回持仓行。此前 `benchmark_research` 只以代码为 key 平铺在顶层，
+    # 模型必须自己按 fund_code 做一次 join 才能把"这只基金 vs 它的基准"对上——这类
+    # 跨表关联正是最容易串行的地方。挂到行内后与荐基候选行同形，也让后续接入
+    # `fund_vehicle_quality` 的被动跟踪质量分不必再改这条链路。
+    facts["holdings"] = attach_compact_fund_benchmark_metrics(
+        facts.get("holdings") or [],
+        benchmark_research,
+    )
+    # 载体质量：必须排在基准挂载之后——被动载体分的跟踪质量分量读的就是行内
+    # `benchmark_metrics.tracking_metrics`，提前调用会让每只指数持仓都拿到"样本未形成"
+    # 的中性分。这是日报第一次对"这只基金作为投资工具本身合不合格"给出判断（此前只有
+    # 板块方向与基金量化证据两个维度）。主动持仓在这里显式返回 not_applicable，
+    # 不是低分，理由见 assess_holding_vehicle_quality 的 docstring。
+    facts["holdings"] = attach_holding_vehicle_quality(facts["holdings"])
+    # 同类分位：严格描述性证据，只进 prompt 与展示，不参与仓位比例、不参与动作拦截
+    # （`execution_tilt_eligible` 恒为 False）。超时/缺缓存时逐只标记不可用，
+    # 让模型能区分"同类里不占优"与"同类分位算不出来"。
+    facts["holdings"] = attach_holding_peer_research(
+        facts["holdings"],
+        peer_research if isinstance(peer_research, dict) else {},
+    )
+    # 基金持仓穿透：日报唯一能看到"跨基金重复暴露"的地方。按基金市值算的集中度看不出
+    # 三只名字/板块标签都不同的基金其实重仓同一批股票。
+    #
+    # 完整载荷只在此处短暂存在，供 `attach_analysis_data_evidence` 逐只披露快照生成
+    # 时点证据（它需要 `resolution_audit.rows` 与 `existing_funds[].snapshot`）。
+    facts["fund_lookthrough"] = (
+        fund_lookthrough
+        if isinstance(fund_lookthrough, dict)
+        else _unavailable_fund_lookthrough(
+            decision_at=decision_at,
+            reason="lookthrough_context_unavailable",
+        )
+    )
     facts = attach_analysis_data_evidence(
         facts,
         holdings=request.holdings,
         snapshots=snapshots,
         portfolio_context=request.portfolio_snapshot_context,
+    )
+    # 证据取完后收敛为该契约自带的有界摘要，落库、回传前端、喂 LLM 全部用这一份形状。
+    # 保留完整载荷会有两个代价：`resolution_audit.rows` 与逐只 snapshot 随每份日报持久化
+    # 并整体回传；以及"落库形状"与"prompt 形状"字段名不同（`security_exposure_lower_bounds`
+    # vs `top_security_exposure_lower_bounds`），任何消费方都得先判断自己拿到的是哪一种。
+    facts["fund_lookthrough"] = compact_fund_lookthrough_for_llm(
+        facts["fund_lookthrough"]
     )
     return AnalysisFactsBundle(
         session=session,

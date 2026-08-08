@@ -2,7 +2,12 @@
 
 import { useState } from "react";
 import { AlertTriangle, ChevronDown, TrendingDown, TrendingUp } from "lucide-react";
-import type { AnalysisFactsHoldingRow, FactorIcEvidenceStatus, Report } from "@/lib/api";
+import type {
+  AnalysisFactsHoldingRow,
+  DecisionEscalation,
+  FactorIcEvidenceStatus,
+  Report,
+} from "@/lib/api";
 import { actionBadgeClass, actionTone, isExtremeAction } from "@/lib/actionStyles";
 import { translateEvidenceText } from "@/lib/decisionText";
 import {
@@ -153,6 +158,15 @@ function reportIcStatus(report: Report): FactorIcEvidenceStatus | null {
   return facts?.factor_scores?.ic_status ?? null;
 }
 
+/** 双向守卫是否真正生效由本次运行的模式决定，逐报告冻结在 pipeline 里。 */
+function reportEscalationMode(report: Report): string | null {
+  const facts = report.analysis_facts as
+    | { pipeline?: { decision_escalation_mode?: string } }
+    | undefined;
+  const mode = facts?.pipeline?.decision_escalation_mode;
+  return typeof mode === "string" && mode ? mode : null;
+}
+
 function FactorIcNotice({ status }: { status: FactorIcEvidenceStatus | null }) {
   if (!status || status.state === "available") {
     return null;
@@ -168,6 +182,58 @@ function FactorIcNotice({ status }: { status: FactorIcEvidenceStatus | null }) {
     <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-700">
       <h4 className="font-bold text-slate-900">量化回测未接入</h4>
       当前建议主要依据持仓风险、行情与新闻；IC 不参与本次结论。
+    </div>
+  );
+}
+
+/**
+ * 双向守卫的风险升级判定（`decision_guard_shared.resolve_escalation_floor`）。
+ *
+ * 这个结果一直算着但前端从不展示。展示时必须区分是否真正生效：生产默认
+ * `decision_escalation_mode=shadow`，此时最终动作**不会**被改写，只在校验备注里留
+ * 灰度提示。如果不加说明地写出「系统建议减仓」，会和卡头显示的「观察」直接矛盾。
+ */
+function EscalationEvidence({
+  escalation,
+  escalationMode,
+}: {
+  escalation: DecisionEscalation;
+  escalationMode: string | null;
+}) {
+  if (escalation.min_bucket == null || !escalation.min_action_label) {
+    return null;
+  }
+  // 用逐报告落库的守卫模式判定，而不是比较动作文案。`min_bucket` 有值只说明算出了
+  // 一个保守下限，不代表它比模型给的动作更保守；而动作文案比较有三种翻错：enforced
+  // 下模型本身已更保守、REDUCE 档被 normalize 成「风控复核」而 label 是「减仓评估」、
+  // 以及 shadow 下动作恰好相等。
+  const enforced = escalationMode === "enforced";
+  const reasons = (escalation.reasons ?? []).filter((line) => line.trim());
+  return (
+    <div
+      data-testid="report-escalation-evidence"
+      className="mt-3 rounded-xl border border-[var(--warn-border)] bg-[var(--warn-bg)]/60 px-3 py-2.5"
+    >
+      <div className="flex flex-wrap items-baseline gap-x-2 text-[11px] font-black text-[var(--warn-fg)]">
+        风险升级判定
+        <span className="font-bold">
+          对应更保守动作：{escalation.min_action_label}
+        </span>
+      </div>
+      {reasons.length ? (
+        <ul className="mt-1.5 space-y-1 text-xs leading-5 text-[var(--warn-fg)]">
+          {reasons.map((reason, index) => (
+            <li key={`${reason}-${index}`} className="break-words [overflow-wrap:anywhere]">
+              {translateEvidenceText(reason)}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      <p className="mt-1.5 text-[11px] leading-4 text-slate-600">
+        {enforced
+          ? "该判定已参与本次最终动作的收紧。"
+          : "升级机制处于观察期，本次最终动作未按该判定收紧，仅作风险提示。"}
+      </p>
     </div>
   );
 }
@@ -315,6 +381,7 @@ export function FundRecommendationCard({
   const evidence = holdingFacts?.evidence ?? null;
   const sectorOpportunity = holdingFacts?.sector_opportunity ?? null;
   const divergenceBacktest = holdingFacts?.flow_divergence_backtest ?? null;
+  const escalation = holdingFacts?.escalation ?? null;
   const tradeability = item.tradeability ?? holdingFacts?.tradeability;
   const transactionExecution =
     item.transaction_execution ?? holdingFacts?.transaction_execution;
@@ -491,6 +558,12 @@ export function FundRecommendationCard({
             ) : null}
             {sectorOpportunity ? (
               <SectorOpportunityCard item={sectorOpportunity} divergenceBacktest={divergenceBacktest} />
+            ) : null}
+            {escalation ? (
+              <EscalationEvidence
+                escalation={escalation}
+                escalationMode={reportEscalationMode(report)}
+              />
             ) : null}
             {evidence ? (
               <div className="mt-3 rounded-xl border border-slate-200/80 bg-slate-50/70 p-3">

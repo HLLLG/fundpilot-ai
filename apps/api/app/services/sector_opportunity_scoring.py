@@ -451,6 +451,7 @@ def select_scored_sector_opportunities(
         str, Sequence[float] | Mapping[str, float]
     ] | None = None,
     max_correlation: float = MAX_DIRECTION_CORRELATION,
+    pinned_labels: Sequence[str] | None = None,
 ) -> list[dict[str, Any]]:
     """在已打分的行上执行排序、双轨名额与相关性去重（v2/v3 通用）。
 
@@ -458,6 +459,12 @@ def select_scored_sector_opportunities(
     进行，而不是只靠手写的 `_SECTOR_GROUPS`。手写映射只覆盖 76 个白名单标签里的约 21 个，
     储能 / 锂电池 / 固态电池 / 锂矿 各自成组，完全可以同时输出 4 个高度相关的新能源方向，
     "分散"只是名义上的。手写映射保留为序列不可得时的兜底。
+
+    ``pinned_labels`` 是用户显式指定的关注方向：它们**不参与名额竞争，也不受相关性
+    与分组去重约束**。自动筛选的目的是替用户挑方向，用户已经点名的方向不该再被"更热
+    的方向挤掉"或"与已入选方向相关性太高"淘汰——那等于把用户的输入当噪声丢掉。
+    pin 只保证入选，不保证排序：返回顺序仍按入场状态与分数，不可布局的关注方向自然
+    落到末尾。
     """
     entry_policy_enabled = any(
         str(row.get("score_policy_version") or "") in MATURITY_POLICY_VERSIONS for row in rows
@@ -468,37 +475,70 @@ def select_scored_sector_opportunities(
         max_correlation=max_correlation,
     )
 
+    pinned_rows = _pinned_rows(rows, pinned_labels)
+    pinned_ids = {id(row) for row in pinned_rows}
+    contested = [row for row in rows if id(row) not in pinned_ids]
+
     if entry_policy_enabled:
         # 入场状态优先于分数：证据完整且可布局的方向必须排在热门但不可执行的
         # 方向之前；缺少 mainline 证据的方向不能再因为跳过混合评分而占便宜。
-        ordered = sorted(rows, key=_entry_sort_score, reverse=True)
-        return limiter.take(ordered, max_total, [])[:max_total]
+        ordered = sorted(contested, key=_entry_sort_score, reverse=True)
+        selected = list(pinned_rows)
+        selected.extend(
+            limiter.take(ordered, max(0, max_total - len(selected)), selected)
+        )
+        return sorted(selected, key=_entry_sort_score, reverse=True)[:max_total]
 
     momentum = sorted(
-        [row for row in rows if row["track"] == MOMENTUM_TRACK],
+        [row for row in contested if row["track"] == MOMENTUM_TRACK],
         key=_research_sort_score,
         reverse=True,
     )
     setup = sorted(
-        [row for row in rows if row["track"] == SETUP_TRACK],
+        [row for row in contested if row["track"] == SETUP_TRACK],
         key=_research_sort_score,
         reverse=True,
     )
 
-    selected: list[dict[str, Any]] = []
-    selected.extend(limiter.take(momentum, momentum_slots, selected))
-    selected.extend(limiter.take(setup, setup_slots, selected))
+    selected: list[dict[str, Any]] = list(pinned_rows)
+    selected.extend(
+        limiter.take(momentum, min(momentum_slots, max_total - len(selected)), selected)
+    )
+    selected.extend(
+        limiter.take(setup, min(setup_slots, max_total - len(selected)), selected)
+    )
 
     remaining = max_total - len(selected)
     if remaining > 0:
         selected_labels = {item["sector_label"] for item in selected}
         fallback = sorted(
-            [row for row in rows if row["sector_label"] not in selected_labels],
+            [row for row in contested if row["sector_label"] not in selected_labels],
             key=_research_sort_score,
             reverse=True,
         )
         selected.extend(limiter.take(fallback, remaining, selected))
     return selected[:max_total]
+
+
+def _pinned_rows(
+    rows: list[dict[str, Any]],
+    pinned_labels: Sequence[str] | None,
+) -> list[dict[str, Any]]:
+    if not pinned_labels:
+        return []
+    row_by_label: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        label = str(row.get("sector_label") or "").strip()
+        if label and label not in row_by_label:
+            row_by_label[label] = row
+    picked: list[dict[str, Any]] = []
+    for raw in dict.fromkeys(
+        str(label).strip() for label in pinned_labels if str(label).strip()
+    ):
+        row = row_by_label.get(raw)
+        if row is not None:
+            picked.append(row)
+    return picked
 
 
 def build_sector_flow_map_for_opportunities(
@@ -626,6 +666,8 @@ def describe_sector_opportunity(
     *,
     focus: set[str] | None = None,
     divergence_backtest: dict | None = None,
+    mainline: dict | None = None,
+    entry_policy_enabled: bool = False,
 ) -> dict[str, Any] | None:
     """给单个板块的方向判断，即使该板块暂不构成「机会」也会返回结果。
 
@@ -638,8 +680,22 @@ def describe_sector_opportunity(
     `sector_flow_divergence_backtest.build_sector_flow_divergence_backtest`），传入时若
     证据极强（distribution 规则 significant=True 且 edge_percent>=10）confidence 可升至
     「高」；不传入时行为与此前完全一致（confidence 上限仍为「中」）。
+
+    `mainline` + `entry_policy_enabled`：传入当天已冻结的该板块主线 regime 行并显式开启
+    时，才会附加 `sector_entry_maturity` 那一层（`entry_state` / `first_tranche_scale` /
+    `trend_formation_probability` 等）。两者刻意都是可选、默认关闭——日报长期只拿到旧版
+    机会分就是因为这里默认 `entry_policy_enabled=False`，而成熟度需要主线快照才有意义
+    （没有 regime 就没有横截面相对强度，`classify_entry_state_v3` 会一律判 forming/invalid，
+    给出一个看起来是结论、实际只反映"没数据"的档位）。
     """
-    return _compute_opportunity_row(row, flow, focus or set(), divergence_backtest)
+    return _compute_opportunity_row(
+        row,
+        flow,
+        focus or set(),
+        divergence_backtest,
+        mainline=mainline,
+        entry_policy_enabled=entry_policy_enabled,
+    )
 
 
 def _score_row(

@@ -46,7 +46,10 @@ from app.services.mainline_regime import (
     build_mainline_regime_snapshot,
     mainline_regime_by_label,
 )
-from app.services.discovery_target_sectors import select_target_sectors
+from app.services.discovery_target_sectors import (
+    resolve_focus_sector_labels,
+    select_target_sectors,
+)
 from app.services.fund_discovery_data_cache import (
     fetch_discovery_fund_universe_cached,
 )
@@ -80,6 +83,14 @@ from app.services.trading_session import build_trading_session
 
 logger = logging.getLogger(__name__)
 ProgressCallback = Callable[[str, str], None]
+
+# 自动扫描的方向名额。用户手选的关注方向在此之外额外占位，见
+# `_score_select_and_persist_directions`。
+_AUTO_DIRECTION_SLOTS = 8
+# 每个方向的最终候选配额，以及候选池基础容量。每个关注方向按 `per_sector` 额外扩容，
+# 避免新增的关注方向把排序靠后的自动方向挤出板块配额。
+_PER_SECTOR_CANDIDATES = 3
+_BASE_CANDIDATE_POOL_CAP = 28
 
 DISCOVERY_JOB_STAGES: dict[str, str] = {
     "queued": "排队中…",
@@ -203,10 +214,11 @@ def run_discovery(
         focus_sectors=list(request.focus_sectors),
         effective_trade_date=effective_trade_date,
     )
-    if request.scan_mode == "full_market" and sector_opportunities:
-        target_sectors = [str(item["sector_label"]) for item in sector_opportunities]
-    per_sector = 3
-    pool_cap = 28
+    target_sectors, per_sector, pool_cap = resolve_scan_scope(
+        request,
+        target_sectors,
+        sector_opportunities,
+    )
     # Opportunity-first needs enough candidates to measure real 20/60-day
     # volatility before pruning.  The former 4-per-sector quality prescreen
     # could discard high-elasticity funds before NAV enrichment.
@@ -556,6 +568,34 @@ def _expand_high_elasticity_evidence(
     return list(dict.fromkeys([*flow_labels, *extra_labels]))
 
 
+def resolve_scan_scope(
+    request: DiscoveryRequest,
+    target_sectors: list[str],
+    sector_opportunities: list[dict],
+) -> tuple[list[str], int, int]:
+    """确定最终召回方向、每方向配额与候选池容量（同步/流式共用一份实现）。
+
+    以前这里是 `target_sectors = [方向打分存活的板块]`，**整体覆盖**了
+    `select_target_sectors` 精心排在最前面的用户关注方向。默认就是 full_market，
+    所以用户选的板块只要当日没通过方向门槛（判为 invalid、或被相关性去重/名额挤掉），
+    就在候选召回之前彻底消失：报告里既没有这个方向，也没有任何说明。
+
+    现在改成"关注方向在前 + 打分方向在后"的保序合并，并按关注方向数量扩容候选池，
+    这样关注方向一定拿到板块配额，而排序靠后的自动方向也不会被挤掉。方向本身能否
+    买入仍由方向成熟度门槛决定，这里只保证它被分析到。
+    """
+    focus_labels = resolve_focus_sector_labels(list(request.focus_sectors))
+    if request.scan_mode == "full_market" and sector_opportunities:
+        opportunity_labels = [
+            label
+            for item in sector_opportunities
+            if (label := str(item.get("sector_label") or "").strip())
+        ]
+        target_sectors = list(dict.fromkeys([*focus_labels, *opportunity_labels]))
+    pool_cap = _BASE_CANDIDATE_POOL_CAP + _PER_SECTOR_CANDIDATES * len(focus_labels)
+    return target_sectors, _PER_SECTOR_CANDIDATES, pool_cap
+
+
 def _score_select_and_persist_directions(
     sector_heat: list[dict],
     *,
@@ -603,12 +643,36 @@ def _score_select_and_persist_directions(
         previous_states=load_previous_direction_states(previous_trade_date),
     )
     record_direction_states(rows, trade_date=effective_trade_date)
+    scored_labels = {
+        label
+        for row in rows
+        if (label := str(row.get("sector_label") or "").strip())
+    }
+    pinned_labels = [
+        label
+        for label in resolve_focus_sector_labels(focus_sectors)
+        if label in scored_labels
+    ]
+    pinned = set(pinned_labels)
+    # 关注方向即使当日判定为 invalid 也保留在方向集合里。用户点名一个板块就是想知道
+    # "它现在有没有机会"，静默剔除会让报告里既没有该方向、也没有任何说明。不可布局的
+    # 行不会打开任何入场路径（见 discovery_recommendation_scope._candidate_entry_path），
+    # 因此只会产出「等待条件 / 仅观察」的候选结论，不会变成买入建议。
+    selectable = [
+        row
+        for row in rows
+        if row.get("opportunity_available")
+        or str(row.get("sector_label") or "").strip() in pinned
+    ]
     return select_scored_sector_opportunities(
-        [row for row in rows if row.get("opportunity_available")],
-        max_total=8,
+        selectable,
+        # 关注方向是**额外**分析，不占用自动扫描的方向名额，否则选满 3 个关注方向就会
+        # 把市场自动覆盖面从 8 个压到 5 个。
+        max_total=_AUTO_DIRECTION_SLOTS + len(pinned_labels),
         momentum_slots=4,
         setup_slots=4,
         return_series_by_label=_return_series_from_positions(sector_position_by_label),
+        pinned_labels=pinned_labels,
     )
 
 

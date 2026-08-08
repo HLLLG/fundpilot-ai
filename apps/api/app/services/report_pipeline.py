@@ -36,6 +36,16 @@ def build_pipeline_metadata(
         "rule_judge": bool(judge.get("rule_judge", True)),
         "llm_judge_attempted": bool(judge.get("llm_judge_attempted", False)),
         "llm_judge_applied": bool(judge.get("llm_judge_applied", False)),
+        # 这两个字段此前只写进 prompt contract（`prompt_provenance.with_judge_result`），
+        # 没有落到 pipeline，于是"审校到底跑没跑、是不是每次都超时降级"在报告层面查不到。
+        # 切 enforced 之后二次审校才第一次真正执行（shadow 期一直在发请求前短路），
+        # 没有这两个字段就无法判断它是在工作还是每次白花一笔调用。
+        "llm_judge_timeout": bool(judge.get("llm_judge_timeout", False)),
+        "llm_judge_skipped_reason": (
+            str(judge["llm_judge_skipped_reason"])
+            if judge.get("llm_judge_skipped_reason")
+            else None
+        ),
         # M6：记录生成本报告时的双向 guard 灰度模式，供 shadow_escalation_digest.py
         # 判断该报告是否属于"灰度观察期"样本（历史报告可能在 shadow/enforced 切换
         # 前后跨越，不能假设全部报告都是同一模式）。

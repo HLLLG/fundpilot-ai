@@ -25,7 +25,7 @@ OUTPUT_DISCOVERY_REQUIREMENTS = """
 - title: 报告标题
 - summary: 2-4 句市场与配置总结
 - market_view: 对大盘/板块的简短看法
-- recommendations: 数组，0~6 项；每个板块最多 2 项；没有合格候选时允许为空；每项含 fund_code, fund_name, sector_name, action,
+- recommendations: 数组，0~4 项；每个板块最多 1 项；没有合格候选时允许为空；每项含 fund_code, fund_name, sector_name, action,
   suggested_amount_yuan, amount_note, hold_horizon, confidence, decision_path,
   sector_evidence, fund_evidence, validation_notes, points, risks, news_bullish
 - caveats: 字符串数组，须含风险提示
@@ -103,7 +103,7 @@ recommendations 字段约束：
 """
 
 _COMMON_REQUIREMENTS = [
-    "仅从 discovery_facts.candidate_pool 推荐白名单选 0~6 只，每个板块最多 2 只；不得推荐 holdings_slim 中已有 fund_code；无合格候选时允许空数组",
+    "仅从 discovery_facts.candidate_pool 推荐白名单选 0~4 只，每个板块最多 1 只（同方向只取综合质量最优的那一只）；不得推荐 holdings_slim 中已有 fund_code；无合格候选时允许空数组",
     "等待/研究方向不得占用推荐名额；不得跨方向凑数，也不得恢复 recommendation_candidate_scope 未列出的基金",
     "quality_gate=eligible 才可分批买入；watch_only 只能观察/等待，excluded 禁止推荐；不得为凑数降门槛",
     "每只 recommendations 须含 hold_horizon、risks（至少 1 条）、points（引用 candidate_pool 具体字段）",

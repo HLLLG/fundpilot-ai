@@ -64,6 +64,9 @@ from app.services.decision_time_call import (
     prefetch_fund_announcements_compat,
 )
 from app.services.retired_market_evidence import sanitize_retired_market_evidence
+from app.services.fund_lookthrough_claim_validator import (
+    validate_fund_lookthrough_claims,
+)
 from app.services.recommendations import (
     build_offline_fund_recommendation,
     build_offline_fund_recommendations,
@@ -717,6 +720,13 @@ def _build_final_report(
     announcement_meta: dict | None = None,
 ) -> Report:
     parsed = sanitize_retired_market_evidence(parsed)
+    # 穿透证据一旦进入 prompt，模型就可能写出"两只基金几乎没有重合，组合很分散"这类
+    # 披露口径不支持的断言。校验器在守卫链之前先清洗叙述字段（只动白名单里的文本，
+    # 不碰动作与金额），并留下确定性审计供 decision_quality_artifacts 复盘。
+    parsed, lookthrough_claim_audit = validate_fund_lookthrough_claims(
+        parsed,
+        analysis_bundle.facts.get("fund_lookthrough"),
+    )
     fallback = _offline_report(
         request,
         risk,
@@ -766,6 +776,7 @@ def _build_final_report(
     )
     if announcement_meta is not None:
         facts["fund_announcements"] = deepcopy(announcement_meta)
+    facts["fund_lookthrough_claim_audit"] = lookthrough_claim_audit
     caveats = _user_facing_caveats(
         _non_empty_list(parsed.get("caveats"), fallback.caveats)
     )

@@ -1044,6 +1044,84 @@ def test_correlated_directions_are_deduplicated_by_measured_correlation() -> Non
     assert [item["sector_label"] for item in with_series] == ["储能", "银行"]
 
 
+def _ready_direction_row(label: str, score: float) -> dict:
+    return {
+        "sector_label": label,
+        "score_policy_version": ENTRY_POLICY_VERSION,
+        "entry_state": ENTRY_READY_TO_START,
+        "evidence_quality": "complete",
+        "research_score": score,
+        "entry_readiness_score": score,
+        "track": "momentum",
+        "sector_group": label,
+    }
+
+
+def test_pinned_focus_direction_is_kept_without_consuming_auto_slots() -> None:
+    """用户点名的关注方向额外占位：既不被名额挤掉，也不挤掉自动方向。"""
+    from app.services.sector_opportunity_scoring import (
+        select_scored_sector_opportunities,
+    )
+
+    rows = [
+        _ready_direction_row(label, score)
+        for label, score in (("甲", 90.0), ("乙", 88.0), ("丙", 86.0), ("冷门", 5.0))
+    ]
+
+    auto_only = select_scored_sector_opportunities(rows, max_total=3)
+    with_focus = select_scored_sector_opportunities(
+        rows,
+        # 生产链路按 `_AUTO_DIRECTION_SLOTS + len(pinned)` 传入，关注方向不占自动名额。
+        max_total=3 + 1,
+        pinned_labels=["冷门"],
+    )
+
+    assert [item["sector_label"] for item in auto_only] == ["甲", "乙", "丙"]
+    # pin 只保证入选，不改变展示排序：分数最低的关注方向仍排在末尾。
+    assert [item["sector_label"] for item in with_focus] == ["甲", "乙", "丙", "冷门"]
+
+
+def test_pinned_focus_direction_survives_correlation_dedup() -> None:
+    """关注方向不参与相关性去重：用户已经点名，就不该再被"和别的方向太像"淘汰。
+
+    去重本身仍然生效，只是被去掉的换成与它高度相关的那个自动方向——用户拿到的
+    仍然是一笔独立暴露，而不是两条几乎相同的曲线。
+    """
+    from app.services.sector_opportunity_scoring import (
+        select_scored_sector_opportunities,
+    )
+
+    base = [0.4, -0.9, 1.3, 0.2, -0.6, 1.1, -0.3, 0.8, -1.2, 0.5,
+            0.7, -0.4, 0.9, -1.1, 0.3, 0.6, -0.8, 1.0, -0.2, 0.1]
+    rows = [
+        _ready_direction_row(label, score)
+        for label, score in (("储能", 90.0), ("锂电池", 88.0), ("银行", 60.0))
+    ]
+    series = {
+        "储能": base,
+        "锂电池": [value * 1.02 + 0.01 for value in base],
+        "银行": list(reversed(base)),
+    }
+
+    # 不 pin：分数更高的储能入选，锂电池作为近似重复被去掉。
+    assert [
+        item["sector_label"]
+        for item in select_scored_sector_opportunities(
+            rows, max_total=2, return_series_by_label=series
+        )
+    ] == ["储能", "银行"]
+    # pin 锂电池：它必定入选，储能作为近似重复让位，不相关的银行仍然保留。
+    assert [
+        item["sector_label"]
+        for item in select_scored_sector_opportunities(
+            rows,
+            max_total=2 + 1,
+            return_series_by_label=series,
+            pinned_labels=["锂电池"],
+        )
+    ] == ["锂电池", "银行"]
+
+
 def test_spot_gold_and_gold_equities_remain_independent_directions() -> None:
     """现货黄金与黄金产业股票可以同时布局，不能被短期相关性改写为同一板块。"""
     from app.services.sector_opportunity_scoring import (

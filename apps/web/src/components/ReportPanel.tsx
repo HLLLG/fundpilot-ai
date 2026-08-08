@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 
+import { ReportCaveatsNotice } from "@/components/ReportCaveatsNotice";
 import { ReportChatDrawer } from "@/components/ReportChatDrawer";
 import { ReportDetailsHub } from "@/components/ReportDetailsHub";
 import { ReportRecommendationList } from "@/components/ReportRecommendationList";
@@ -119,6 +120,7 @@ export function ReportPanel({
           recommendations={fundRecommendations}
         />
         <ReportDetailsHub report={viewReport} diagnostics={diagnostics} />
+        <ReportCaveatsNotice caveats={viewReport.caveats} />
       </section>
       <ReportChatDrawer reportId={viewReport.id} reportTitle={viewReport.title} />
     </div>

@@ -27,7 +27,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.config import get_settings
-from app.database import list_discovery_reports, list_reports
+from app.database import (
+    list_discovery_report_decision_diagnostics,
+    list_report_decision_diagnostics,
+)
 
 DEFAULT_LOOKBACK_DAYS = 7
 
@@ -41,7 +44,14 @@ def build_shadow_escalation_digest(
     """聚合近 `lookback_days` 天内、日报 + 荐基两条链路的 shadow 升级触发情况。
 
     `reports`/`discovery_reports` 可注入（便于离线测试），未注入时读取当前请求用户的
-    历史记录（`list_reports()`/`list_discovery_reports()` 均已按 `userId` 隔离）。
+    历史记录（两个 `list_*_decision_diagnostics()` 均已按 `userId` 隔离）。
+
+    **不能改回 `list_reports()`/`list_discovery_reports()`**：那两个函数按
+    `_REPORT_SUMMARY_FIELDS` / `_DISCOVERY_SUMMARY_FIELDS` 投影，`analysis_facts`、
+    `discovery_facts`、`candidate_pool` 全部被刻意排除（体积原因，见 `database.py` 注释）。
+    本模块最初就是走那条路，于是两侧 `facts` 恒为空、`trigger_count` 恒为 0——摘要长期在
+    如实汇报"未触发任何灰度升级判定"，而它根本读不到判定结果。这是本函数最容易被改坏的
+    地方，`test_shadow_escalation_digest_data_source.py` 专门锁住它。
 
     响应带 `escalation_mode` 字段（当前 `FUND_AI_DECISION_ESCALATION_MODE` 取值），
     供前端 `ShadowEscalationDigestCard.tsx` 判断是否渲染——设计文档要求"仅
@@ -49,9 +59,13 @@ def build_shadow_escalation_digest(
     判断依据。
     """
     escalation_mode = get_settings().decision_escalation_mode
-    all_reports = reports if reports is not None else list_reports()
+    all_reports = (
+        reports if reports is not None else list_report_decision_diagnostics()
+    )
     all_discovery_reports = (
-        discovery_reports if discovery_reports is not None else list_discovery_reports()
+        discovery_reports
+        if discovery_reports is not None
+        else list_discovery_report_decision_diagnostics()
     )
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=lookback_days)

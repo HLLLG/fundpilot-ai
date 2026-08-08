@@ -469,6 +469,134 @@ def attach_fund_benchmark_metrics(
     return output
 
 
+_LLM_HORIZON_LABELS = frozenset({"3m", "6m", "1y"})
+
+
+def compact_fund_benchmark_metrics_for_llm(
+    metrics: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """把一只基金的基准研究载荷压成只含描述性事实的投影。
+
+    完整载荷带序列审计（`fund_series` / `components`）与配置回显，逐只挂到持仓行或
+    候选行上会成倍放大 prompt 与落库体积，而可引用的只有基准身份、角色资格、对齐
+    窗口以及各期收益/回撤/跟踪差。日报与荐基共用这一份投影，避免两处各自挑字段、
+    随 schema 演进而漂移；`tracking_metrics` 保持完整键名，`fund_vehicle_quality`
+    直接读它做被动载体的跟踪质量分。
+    """
+
+    row = metrics if isinstance(metrics, Mapping) else {}
+    horizons = _mapping(row.get("horizons"))
+    rolling = _mapping(row.get("rolling_comparison"))
+    tracking = _mapping(row.get("tracking_metrics"))
+    alignment = _mapping(row.get("alignment"))
+    result: dict[str, Any] = {
+        "schema_version": row.get("schema_version"),
+        "status": row.get("status"),
+        "qualified": row.get("qualified") is True,
+        "descriptive_only": True,
+        "execution_tilt_eligible": False,
+        "comparison_role": row.get("comparison_role"),
+        "formal_excess_eligible": row.get("formal_excess_eligible") is True,
+        "benchmark_code": row.get("benchmark_code"),
+        "benchmark_name": row.get("benchmark_name"),
+        "effective_trade_date": row.get("effective_trade_date"),
+        "reason_codes": list(row.get("reason_codes") or []),
+        "alignment": _present_scalars(
+            alignment,
+            (
+                "common_return_sample_days",
+                "first_common_date",
+                "last_common_date",
+            ),
+        ),
+        "horizons": {
+            key: _present_scalars(
+                value,
+                (
+                    "status",
+                    "start_date",
+                    "end_date",
+                    "fund_return_percent",
+                    "benchmark_return_percent",
+                    "formal_excess_return_percent",
+                    "reference_difference_percent",
+                    "fund_max_drawdown_percent",
+                    "benchmark_max_drawdown_percent",
+                    "drawdown_advantage_percent",
+                ),
+            )
+            for key, value in horizons.items()
+            if key in _LLM_HORIZON_LABELS and isinstance(value, Mapping)
+        },
+        "rolling_comparison": _present_scalars(
+            rolling,
+            (
+                "window_days",
+                "window_count",
+                "formal_excess_win_rate_percent",
+                "reference_outperformance_rate_percent",
+                "difference_stability_percent",
+            ),
+        ),
+        "tracking_metrics": {
+            "applicable": tracking.get("applicable") is True,
+            "available": tracking.get("available") is True,
+            **_present_scalars(
+                tracking,
+                (
+                    "tracking_difference_percent",
+                    "tracking_error_annualized_percent",
+                    "annualized_tracking_error_percent",
+                ),
+            ),
+        },
+    }
+    return {key: value for key, value in result.items() if value is not None}
+
+
+def attach_compact_fund_benchmark_metrics(
+    funds: Sequence[Mapping[str, Any]],
+    metrics_by_code: Mapping[str, Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """按代码把紧凑基准投影挂回每一行，缺失时留空字典而不是省略键。
+
+    留空键而非省略，是为了让下游能区分"这只基金没有可用基准"与"这条链路忘了挂"。
+    """
+
+    output: list[dict[str, Any]] = []
+    for raw in funds:
+        row = dict(raw)
+        code = _fund_code(row.get("fund_code"))
+        metrics = metrics_by_code.get(code or "")
+        row["benchmark_metrics"] = (
+            compact_fund_benchmark_metrics_for_llm(metrics)
+            if isinstance(metrics, Mapping)
+            else {}
+        )
+        output.append(row)
+    return output
+
+
+def _mapping(value: object) -> Mapping[str, Any]:
+    return value if isinstance(value, Mapping) else {}
+
+
+def _scalar(value: object) -> object | None:
+    return value if value is None or isinstance(value, (str, int, float, bool)) else None
+
+
+def _present_scalars(
+    value: Mapping[str, Any],
+    keys: tuple[str, ...],
+) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key in keys:
+        scalar = _scalar(value.get(key))
+        if scalar is not None:
+            result[key] = scalar
+    return result
+
+
 def summarize_benchmark_research(
     metrics_by_code: Mapping[str, Mapping[str, Any]],
 ) -> dict[str, Any]:
@@ -1066,8 +1194,10 @@ def _unique(values: Sequence[str] | Any) -> list[str]:
 
 __all__ = [
     "BENCHMARK_RESEARCH_SCHEMA_VERSION",
+    "attach_compact_fund_benchmark_metrics",
     "attach_fund_benchmark_metrics",
     "build_fund_benchmark_research",
     "build_fund_benchmark_research_batch",
+    "compact_fund_benchmark_metrics_for_llm",
     "summarize_benchmark_research",
 ]

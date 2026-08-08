@@ -29,6 +29,79 @@ const actionLabel = {
   risk_review: "减仓/风控复核",
 } as const;
 
+const ALERT_CODE_LABELS: Record<string, string> = {
+  PORTFOLIO_COST_BASIS_LOSS: "组合浮亏触线",
+  HOLDING_COST_BASIS_LOSS: "单只浮亏触线",
+  CONCENTRATION: "集中度超限",
+};
+
+function alertCodeLabel(code: string): string {
+  return ALERT_CODE_LABELS[code] ?? code;
+}
+
+/**
+ * 风险告警此前只被压缩成一个「低/中/高」徽标，`code` / `severity` / `evidence`
+ * 三个已经算好的结构化字段在整个前端没有任何消费点——用户看不到究竟是哪条线被触发、
+ * 依据是什么。high 一定直出，medium 收进折叠（`HOLDING_COST_BASIS_LOSS` 会逐只触发，
+ * 全展开会淹没摘要区）。
+ */
+function RiskAlertList({ alerts }: { alerts: Report["risk"]["alerts"] }) {
+  const [expanded, setExpanded] = useState(false);
+  const listId = useId();
+  if (!alerts?.length) {
+    return null;
+  }
+  const high = alerts.filter((alert) => alert.severity === "high");
+  const rest = alerts.filter((alert) => alert.severity !== "high");
+  const visible = expanded ? [...high, ...rest] : high;
+
+  return (
+    <div className="mt-3" data-testid="report-risk-alerts">
+      <ul id={listId} className="space-y-1.5">
+        {visible.map((alert, index) => (
+          <li
+            key={`${alert.code}-${index}`}
+            className={`rounded-xl border px-3 py-2 text-xs leading-5 ${
+              alert.severity === "high"
+                ? "border-[var(--danger-border)] bg-[var(--danger-bg)] text-[var(--danger-fg)]"
+                : "border-[var(--warn-border)] bg-[var(--warn-bg)] text-[var(--warn-fg)]"
+            }`}
+          >
+            <span className="flex flex-wrap items-baseline gap-x-2">
+              <strong className="font-black">{alertCodeLabel(alert.code)}</strong>
+              <span className="min-w-0 break-words [overflow-wrap:anywhere]">{alert.message}</span>
+            </span>
+            {alert.evidence ? (
+              <span className="mt-0.5 block break-words opacity-75 [overflow-wrap:anywhere]">
+                依据：{alert.evidence}
+              </span>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+      {rest.length ? (
+        <button
+          type="button"
+          aria-controls={listId}
+          aria-expanded={expanded}
+          onClick={() => setExpanded((value) => !value)}
+          className="mt-1.5 inline-flex min-h-11 items-center gap-1 rounded-lg px-2.5 text-xs font-bold text-slate-500 transition hover:bg-slate-50 hover:text-[var(--brand-strong)]"
+        >
+          {expanded
+            ? "收起风险提醒"
+            : high.length
+              ? `另有 ${rest.length} 条中等风险提醒`
+              : `查看 ${rest.length} 条中等风险提醒`}
+          <ChevronDown
+            aria-hidden="true"
+            className={`size-3.5 transition-transform ${expanded ? "rotate-180" : ""}`}
+          />
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 function Metric({ label, value, emphasis = false }: MetricProps) {
   return (
     <div
@@ -85,6 +158,7 @@ export function ReportSummaryHero({
             {report.title}
           </h2>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">{report.summary}</p>
+          <RiskAlertList alerts={report.risk.alerts} />
         </div>
 
         {/* 「组合风险」那一格删掉了：左上角的风险胶囊已经写着同一个值。 */}

@@ -126,20 +126,25 @@ export function FocusSectorPicker({
   return (
     <div ref={containerRef} className="space-y-2">
       {selected.length > 0 ? (
-        <div className="flex flex-wrap gap-2">
-          {selected.map((label) => (
-            <button
-              key={label}
-              type="button"
-              aria-label={`取消关注 ${label}`}
-              onClick={() => removeLabel(label)}
-              className="inline-flex min-h-11 items-center gap-1 rounded-full border border-[var(--brand)] bg-[var(--brand-soft)] px-3 text-xs font-medium text-[var(--brand-strong)] hover:bg-[var(--info-bg)]"
-            >
-              {label}
-              <X className="h-3 w-3" aria-hidden="true" />
-            </button>
-          ))}
-        </div>
+        <>
+          <div className="flex flex-wrap gap-2">
+            {selected.map((label) => (
+              <button
+                key={label}
+                type="button"
+                aria-label={`取消关注 ${label}`}
+                onClick={() => removeLabel(label)}
+                className="inline-flex min-h-11 items-center gap-1 rounded-full border border-[var(--brand)] bg-[var(--brand-soft)] px-3 text-xs font-medium text-[var(--brand-strong)] hover:bg-[var(--info-bg)]"
+              >
+                {label}
+                <X className="h-3 w-3" aria-hidden="true" />
+              </button>
+            ))}
+          </div>
+          <p className="text-[11px] leading-5 text-slate-500">
+            已选方向会在自动扫描的方向之外额外分析；即使当前不可布局，也会给出等待或仅观察的结论与原因。
+          </p>
+        </>
       ) : (
         <p className="text-[11px] text-slate-500">未选择时将按板块热度自动扫描</p>
       )}

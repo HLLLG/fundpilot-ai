@@ -520,9 +520,9 @@ def _auth_env(monkeypatch, tmp_path):
     monkeypatch.setenv("FUND_AI_OPS_WRITER_THREAD_ENABLED", "false")
     # M6：绝大多数既有测试（M2~M4 阶段编写）验证的是双向 guard 升级机制本身的正确性
     # （触发条件对不对、升级到哪一档对不对），这些断言隐含假设"升级判定会真正生效"。
-    # 生产默认值是更保守的 shadow（见 config.py），但测试套件默认切到 enforced，
-    # 让历史测试的原始意图（验证机制本身）保持不变；shadow 模式"只提示不生效"的
-    # 行为由专门的 test_decision_escalation_mode.py 显式 monkeypatch 覆盖验证。
+    # 自 2026-08 灰度结束后生产默认值也是 enforced（见 config.py），这里显式写死是为了
+    # 让套件不随该默认值漂移；shadow 回滚模式"只提示不生效"的行为由专门的
+    # test_decision_escalation_mode.py 显式 monkeypatch 覆盖验证。
     monkeypatch.setenv("FUND_AI_DECISION_ESCALATION_MODE", "enforced")
     refresh_settings()
     yield

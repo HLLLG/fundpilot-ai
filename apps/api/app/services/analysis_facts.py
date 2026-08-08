@@ -44,7 +44,9 @@ from app.services.analysis_prompt import (
 )
 from app.services.shared_executors import get_shared_io_executor
 from app.services.streaming_heartbeat import raise_if_stream_cancelled
-from app.services.report_sector_opportunity import build_holding_sector_opportunity_context
+from app.services.report_sector_opportunity import (
+    build_holding_sector_opportunity_context,
+)
 from app.services.sector_signal_context import (
     build_signal_backtest_context,
     sector_labels_from_holdings,
@@ -340,42 +342,6 @@ def _sector_flow_unavailable_map(
     return result
 
 
-def _build_budget_holding_display_metrics(holding: Holding) -> dict[str, float | bool | None]:
-    settled = (
-        holding.holding_return_percent
-        if holding.holding_return_percent is not None
-        else holding.return_percent
-    )
-    intraday = holding.daily_return_percent
-    if intraday is None:
-        intraday = holding.sector_return_percent
-
-    if holding.daily_return_percent_source == "official_nav":
-        estimated_return = settled if settled is not None else intraday
-    elif settled is not None and intraday is not None:
-        estimated_return = round(float(settled) + float(intraday), 4)
-    elif settled is not None:
-        estimated_return = float(settled)
-    else:
-        estimated_return = 0.0
-
-    amount = holding.settled_holding_amount or holding.holding_amount
-    estimated_profit = holding.holding_profit
-    if holding.daily_return_percent_source != "official_nav":
-        if estimated_profit is not None and intraday is not None and amount > 0:
-            estimated_profit = round(float(estimated_profit) + amount * float(intraday) / 100, 2)
-        elif estimated_profit is None and amount > 0 and estimated_return is not None:
-            estimated_profit = round(amount * float(estimated_return) / (100 + float(estimated_return)), 2)
-
-    return {
-        "holding_return_percent_settled": settled,
-        "estimated_holding_return_percent": estimated_return,
-        "estimated_holding_profit": estimated_profit,
-        "holding_return_is_estimated": holding.daily_return_percent_source != "official_nav"
-        and intraday is not None,
-    }
-
-
 def build_analysis_facts(
     holdings: list[Holding],
     risk: RiskAssessment,
@@ -465,6 +431,9 @@ def build_analysis_facts(
             enhancement_futures.append(stock_connect_flow_future)
             sector_opportunity_future = _submit_enhancement(
                 executor,
+                # 主线 regime 的取数与快照构建都在这个 context builder 内部完成（它顺带
+                # 复用同一次热度与资金流，不重复拉取），所以这里不必新开第 7 个并发项
+                # ——共享 IO 池是全进程共用的，日报/荐基/嵌套 fan-out 都在里面抢。
                 lambda: build_holding_sector_opportunity_context(
                     holdings,
                     trade_date=effective_trade_date,
@@ -555,11 +524,13 @@ def build_analysis_facts(
             else 0.0
         )
         estimated_daily = compute_estimated_daily_return_percent(holding)
-        display = (
-            _build_budget_holding_display_metrics(holding)
-            if budget_enhancements
-            else build_holding_display_metrics(holding, profile=holding_profile)
-        )
+        # 必须走带 profile 的权威实现（与界面「持有」列同一口径）。这里曾有一份
+        # 无 profile 的简化重写版，用于避开每只持仓一次的 profile 单点查询；
+        # `resolve_matched_profiles` 引入批量读之后该开销已不存在，而简化版会丢掉
+        # 三个真实行为：收益计提递延（新买入份额待确认时不应叠加当日板块估算）、
+        # 支付宝 OCR 持有收益已含当日（简化版会把当日涨跌重复加一次）、以及份额
+        # 同步误写持有收益的档案修复。
+        display = build_holding_display_metrics(holding, profile=holding_profile)
         effective_return = float(display["estimated_holding_return_percent"] or 0)
         snapshot = snapshot_by_code.get(holding.fund_code)
         daily_return_source = _daily_return_data_source(holding)
@@ -664,6 +635,11 @@ def build_analysis_facts(
             "组合风险指标(risk_metrics：夏普/回撤/Beta/HHI)为系统计算事实，"
             "按 confidence.level 表述：「高/中」可作风险论据；"
             "「低/不足」须声明样本有限、不得据此下强结论。"
+            "risk_metrics.max_drawdown_percent 是组合历史峰值到谷值的**真实回撤**，"
+            "与 portfolio.weighted_return_percent（相对持仓成本的当前浮亏）量纲不同，"
+            "不得混用或互相替代；当它在 confidence 高/中 的前提下超过 "
+            "portfolio.max_drawdown_limit_percent 且组合当前处于浮亏时，"
+            "服务端会确定性地封禁加仓类动作，叙述不得与该结论冲突。"
             f"{IC_EVIDENCE_INSTRUCTION}"
             f"{COMPOSITE_EVIDENCE_INSTRUCTION}"
             "evidence_overview 是组合级证据质量体检：backed_weight_percent 仅表示"
@@ -671,6 +647,17 @@ def build_analysis_facts(
             "风险样本只作守卫。该占比不能单独触发更积极动作，仍须结合风险、估值与时效。"
             "sector_fund_flow.today_main_force_net_yi 正数=净流入、负数=净流出；"
             "仅当 flow_date 与 trade_date 对齐（date_aligned=true）时方可与 sector_return_percent 做背离判断。"
+            "sector_direction_maturity.available=true 时，持仓的 sector_opportunity 会额外带上"
+            "方向成熟度字段（复用当天已冻结的主线快照）：entry_state 是方向动作边界——"
+            "ready_to_start=趋势、资金参与度与价格位置已同时通过，可作为分批加仓的方向依据；"
+            "ready_on_pullback=方向成立但当前位置不宜追，通常等待；forming=条件形成中，不得下单；"
+            "invalid=趋势或资金未通过，不得参与。first_tranche_scale 是本次投入的缩放系数"
+            "（过热/拥挤/概率不足时小于 1），服务端已按它确定性地缩小加仓比例，叙述不得与之冲突；"
+            "trend_formation_probability 是趋势形成概率估计，不是收益预测。"
+            "sector_direction_maturity.available=false 表示当天没有可复用的主线快照，"
+            "此时 entry_state 等字段不存在，**不得**据此认为方向不成立或方向已成熟，"
+            "只能按旧版机会分与资金面叙述。该层不含滞回平滑（hysteresis_applied=false），"
+            "是当日原始档位，不得描述为「已连续多日满足」。"
             "持仓的 sector_opportunity 是该持仓所属板块当前方向判断（track=momentum顺势/setup蓄势，"
             "confidence=高/中/低/不足）：opportunity_available=false 表示该方向当前不构成机会"
             "（例如资金持续流出、涨幅透支），须在分析中提示、不得据此建议加仓；"
@@ -688,6 +675,27 @@ def build_analysis_facts(
             "sector_fund_flow 的定性提示）：按各规则 significant 与 edge_percent 表述，"
             "significant=true 且 edge_percent 越高，可信度越高；未显著或触发次数不足时"
             "只能作提示，不得主导追涨或减仓建议。"
+            "fund_lookthrough 是基金定期报告披露口径的持仓穿透：portfolio 下的"
+            "top_security_exposure_lower_bounds / top_industry_exposure_lower_bounds 用于发现"
+            "「多只基金重仓同一批证券」的重复暴露，这是按基金市值计算的 weight_percent 看不到的。"
+            "全部数值均为披露范围内的**下界**，unknown_account_mass_percent 等未知质量必须保留；"
+            "未发现共同证券不代表完整组合无重合，更不能据此说组合分散或支持加仓；"
+            "execution_qualified 恒为 false，它只能收紧集中度结论，不参与仓位比例计算。"
+            "持仓的 peer_research 是该基金在**同类基金**里的分位（同类组由基金类型/策略/"
+            "地区/跟踪标的严格划分）：metrics 里每项含 percentile（越高越好，已按指标方向归一）、"
+            "sample_count、coverage_rate。它是**描述性证据**，execution_tilt_eligible 恒为 false，"
+            "**不得**作为加仓或减仓的独立理由，也不得说成「同类领先所以应该买入」；"
+            "只能用于说明该基金在同类中的相对位置。available=false 或 status=insufficient 表示"
+            "同类分位算不出来（目录缓存缺席、该基金不在目录、或同类组本身欠定义——例如混合型"
+            "缺少风险暴露分类时按设计 fail closed），这**不是**「同类里表现差」，不得当作负面证据。"
+            "not_applicable_metrics 列出的是对该类型基金本就不适用的指标，同样不是缺陷。"
+            "持仓的 vehicle_quality 是「这只基金作为投资工具本身合不合格」，与 evidence 的"
+            "收益证据是两件事：applicable=false 表示该基金是主动管理型、日报数据链路不含"
+            "经理业绩证据，**不得**据此说它质量偏低或有缺陷，也不得当作减仓理由；"
+            "applicable=true（被动/指数载体）时 status=eligible 或 watch_only，依据只有规模、"
+            "管理费率与相对基准的跟踪质量三项，watch_only 时须在分析中点明 penalties 里的"
+            "具体短板，服务端已据此确定性下调加仓档位。该判断刻意不含板块匹配度，"
+            "不得用它替代 sector_opportunity 的方向结论。"
         ),
         "portfolio": {
             "total_amount": round(total_amount, 2),
@@ -758,6 +766,13 @@ def build_analysis_facts(
         "reason": sector_opportunity.get("reason"),
         "market_top": sector_opportunity.get("market_top", []),
     }
+    # 方向成熟度这一层是否生效必须单独可见：`entry_state` 在主线快照缺席时压根不出现，
+    # 下游要能区分"方向尚未成熟"与"今天没有主线快照可复用"。
+    facts["sector_direction_maturity"] = (
+        sector_opportunity.get("mainline")
+        if isinstance(sector_opportunity.get("mainline"), dict)
+        else {"available": False, "reason": "unavailable"}
+    )
     facts["guard_policy"] = {
         "enforce_reversal_block": guard_policy.get("enforce_reversal_block", True),
         "enforce_pullback_block": guard_policy.get("enforce_pullback_block", True),

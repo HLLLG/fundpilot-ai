@@ -94,10 +94,10 @@ type DiscoveryFeedback = {
   message: string;
 };
 
-const PRIMARY_SCAN_MODE_OPTIONS: { id: DiscoveryScanMode; label: string; hint: string }[] = [
-  { id: "full_market", label: "市场优选", hint: "跨方向比较后，只保留证据与质量门通过的候选" },
-  { id: "portfolio_gap", label: "组合补缺", hint: "优先未重仓、热度靠前的缺口板块" },
-];
+// 推荐目标固定为「市场优选」，「组合补缺」已下线，所以不再有可选项。
+// 标签表保留是为了正确回显历史报告里记录的 scan_goal。
+const SCAN_MODE: DiscoveryScanMode = "full_market";
+const DISCOVERY_STRATEGY: DiscoveryStrategy = "opportunity_first";
 
 const SCAN_MODE_LABELS: Record<DiscoveryScanMode, string> = {
   full_market: "市场优选",
@@ -165,10 +165,6 @@ export function FundDiscoveryPanel({
   );
 
   const [focusSectors, setFocusSectors] = useState<string[]>(() => loadDiscoveryFocusSectors());
-  const [scanMode, setScanMode] = useState<DiscoveryScanMode>("full_market");
-  const [discoveryStrategy, setDiscoveryStrategy] = useState<DiscoveryStrategy>(
-    "opportunity_first",
-  );
   const dynamicBudgetYuan = useMemo(
     () => resolveDynamicDiscoveryBudgetYuan(holdings, profile.expected_investment_amount),
     [holdings, profile.expected_investment_amount],
@@ -333,8 +329,8 @@ export function FundDiscoveryPanel({
           : null,
       fundTypePreference: "any" as const,
       selectionStrategy: "balanced" as const,
-      scanMode,
-      discoveryStrategy,
+      scanMode: SCAN_MODE,
+      discoveryStrategy: DISCOVERY_STRATEGY,
       systemRolePrompt: discoveryPrompt.is_custom ? discoveryPrompt.role_prompt : null,
     };
 
@@ -457,7 +453,6 @@ export function FundDiscoveryPanel({
     budgetYuan,
     discoveryPrompt.is_custom,
     discoveryPrompt.role_prompt,
-    discoveryStrategy,
     discoveryStreamAbortRef,
     focusSectors,
     historyReports,
@@ -467,7 +462,6 @@ export function FundDiscoveryPanel({
     onDiscoveryStreamStart,
     onStreamingDiscoveryChange,
     profile,
-    scanMode,
     refreshReports,
     report,
   ]);
@@ -500,7 +494,7 @@ export function FundDiscoveryPanel({
       ? SCAN_MODE_LABELS[reportedScanGoal]
       : report
         ? "历史模式"
-        : SCAN_MODE_LABELS[scanMode];
+        : SCAN_MODE_LABELS[SCAN_MODE];
   const summaryAnalysisMode = report?.analysis_mode ?? "deep";
   const reportedDiscoveryStrategy =
     report?.discovery_facts?.effective_configuration?.discovery_strategy;
@@ -510,9 +504,7 @@ export function FundDiscoveryPanel({
       : reportedDiscoveryStrategy === "risk_first"
         ? "稳健筛选"
         : "历史稳健策略"
-    : discoveryStrategy === "opportunity_first"
-      ? "机会优先（20～60交易日）"
-      : "稳健筛选";
+    : "机会优先（20～60交易日）";
   const summaryFocusSectors = report ? report.focus_sectors : focusSectors;
   const reportedSelectionPolicy =
     report?.discovery_facts?.effective_configuration?.selection_policy ??
@@ -758,10 +750,7 @@ export function FundDiscoveryPanel({
                 </button>
               ) : null}
             </div>
-            <DiscoveryStrategySelector
-              value={discoveryStrategy}
-              onChange={setDiscoveryStrategy}
-            />
+            <DiscoveryStrategySelector />
           </div>
 
           <div className="mt-4 overflow-hidden rounded-xl border border-[var(--line)]">
@@ -823,28 +812,6 @@ export function FundDiscoveryPanel({
                 「（高级）」、状态显示「未添加」的可选项，折叠时再解释一遍它的边界，
                 只会给不打算用它的人增加阅读量。展开后 RolePromptEditor 里本来就有说明。 */}
           </div>
-
-          <fieldset className="mt-4">
-            <legend className="mb-2 text-xs font-semibold text-slate-700">推荐目标</legend>
-            <div className="flex flex-wrap gap-2">
-              {PRIMARY_SCAN_MODE_OPTIONS.map((option) => (
-                <button
-                  key={option.id}
-                  type="button"
-                  title={option.hint}
-                  onClick={() => setScanMode(option.id)}
-                  aria-pressed={scanMode === option.id}
-                  aria-describedby="discovery-scan-mode-hint"
-                  className={`chip-btn min-h-11 ${scanMode === option.id ? "chip-btn-active" : ""}`}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-            <p id="discovery-scan-mode-hint" className="mt-1.5 text-[11px] leading-5 text-slate-500">
-              {PRIMARY_SCAN_MODE_OPTIONS.find((item) => item.id === scanMode)?.hint}
-            </p>
-          </fieldset>
 
           <div className="mt-4">
             <div className="mb-2 text-xs font-semibold text-slate-700">

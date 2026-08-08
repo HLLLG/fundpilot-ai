@@ -29,12 +29,14 @@ from app.services.fund_discovery_data_cache import (
 from app.services.fund_name_utils import extract_share_class_letter
 from app.services.fund_rank_cache import fetch_open_fund_rank_cached
 from app.services.fund_peer_ranking import (
+    PEER_CATALOGUE_CLASSIFICATION_FIELDS,
     build_fund_peer_group,
     build_peer_rank,
+    catalogue_aligned_peer_target,
+    peer_catalogue_bucket,
     resolve_benchmark_comparison,
 )
 from app.services.fund_sector_identity import is_current_identity_row_fresh
-from app.services.fund_type_classification import has_positive_qdii_marker
 from app.services.fund_vehicle_quality import assess_candidate_vehicle_quality
 from app.services.news_freshness import normalize_news_now
 from app.services.sector_canonical import get_canonical_sector
@@ -81,13 +83,9 @@ _CORE_QUALITY_FIELDS = (
     "fund_manager",
     "nav_date",
 )
-_PEER_CATALOGUE_CLASSIFICATION_FIELDS = (
-    "fund_name",
-    "fund_type",
-    "fund_category",
-    "investment_style",
-    "risk_exposure",
-)
+# 已随 `catalogue_aligned_peer_target` 一并移到 `fund_peer_ranking`，此处保留别名供既有
+# 引用（如有）继续可用。
+_PEER_CATALOGUE_CLASSIFICATION_FIELDS = PEER_CATALOGUE_CLASSIFICATION_FIELDS
 
 
 def build_candidate_pool(
@@ -454,38 +452,11 @@ def _populate_recall_audit_sink(
     )
 
 
+# 目录分桶与目标对齐已抽到 `fund_peer_ranking`（日报给持仓算同类分位要用**完全同一份**
+# 口径，否则同一只基金在两条链路会落进不同的同类组、「同类分位」两个界面不可比）。
+# 这里保留原私有名作为薄委托，既有调用点与测试无需改动。
 def _peer_catalogue_bucket(row: dict) -> str:
-    """Build a stable coarse bucket across universe and profile providers.
-
-    The universe uses compact labels such as ``zs`` while the research profile
-    may overwrite the same fund with ``股票型``. Exact-string bucketing made
-    those two observations invisible to each other and produced an artificial
-    zero-peer result. The strict peer module still performs the final strategy,
-    region, subtype, and exact tracking-index split inside this coarse bucket.
-    """
-
-    fund_type = str(row.get("fund_type") or row.get("fund_category") or "")
-    name = str(row.get("fund_name") or "")
-    text = f"{fund_type} {name}".strip().casefold()
-    if has_positive_qdii_marker(text):
-        return "qdii"
-    if "fof" in text or "基金中基金" in text:
-        return "fof"
-    if "货币" in text:
-        return "money"
-    if "债" in text or fund_type.casefold() in {"zq", "bond"}:
-        return "bond"
-    if "混合" in text or fund_type.casefold() in {"hh", "mixed"}:
-        return "mixed"
-    if (
-        "指数" in text
-        or "etf" in text
-        or fund_type.casefold() in {"zs", "index", "passive_index", "enhanced_index"}
-    ):
-        return "equity_index"
-    if "股票" in text or fund_type.casefold() in {"gp", "equity", "stock"}:
-        return "equity_active"
-    return "unknown"
+    return peer_catalogue_bucket(row)
 
 
 def _catalogue_aligned_peer_target(
@@ -493,26 +464,7 @@ def _catalogue_aligned_peer_target(
     *,
     source_target: dict | None,
 ) -> dict:
-    """Use one classification vocabulary for the target and its universe.
-
-    Research-profile enrichment can replace the catalogue's compact ``hh``
-    type with a detailed label such as ``混合型-偏股``. Applying that detail to
-    the target alone creates an artificial subgroup because the other ~20k
-    catalogue rows were never enriched to the same taxonomy. Metrics and
-    benchmark evidence still come from the enriched candidate; only fields
-    that determine peer membership are aligned to the frozen catalogue row.
-    """
-
-    if not source_target:
-        return dict(candidate)
-    target = {**dict(source_target), **candidate}
-    for field in _PEER_CATALOGUE_CLASSIFICATION_FIELDS:
-        source_value = source_target.get(field)
-        if source_value not in (None, "", [], {}):
-            target[field] = source_value
-        elif field != "fund_name":
-            target.pop(field, None)
-    return target
+    return catalogue_aligned_peer_target(candidate, source_target=source_target)
 
 
 def enrich_candidates(

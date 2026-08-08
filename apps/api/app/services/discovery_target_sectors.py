@@ -38,6 +38,22 @@ def select_target_sectors(
     )
 
 
+def resolve_focus_sector_labels(focus_sectors: list[str] | None) -> list[str]:
+    """把用户关注方向归一为板块白名单标签，保留用户选择顺序并去重。
+
+    候选召回、方向打分和方向选择都需要用同一份归一结果比对，否则用户选的
+    「国防军工」在热度表里叫「军工」时，会在其中某一步静默失配、方向就此消失。
+    """
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for raw in focus_sectors or []:
+        label = _resolve_sector_label(raw)
+        if label and label not in seen:
+            seen.add(label)
+            ordered.append(label)
+    return ordered
+
+
 def _select_full_market_sectors(
     focus_sectors: list[str] | None,
     heat_ranking: list[dict],
@@ -45,14 +61,8 @@ def _select_full_market_sectors(
     max_sectors: int,
 ) -> list[str]:
     """全市场模式：用户关注方向优先，其余按热度降序，不限于持仓缺口。"""
-    ordered: list[str] = []
-    seen: set[str] = set()
-
-    for raw in focus_sectors or []:
-        label = _resolve_sector_label(raw)
-        if label and label not in seen:
-            seen.add(label)
-            ordered.append(label)
+    ordered = resolve_focus_sector_labels(focus_sectors)
+    seen: set[str] = set(ordered)
 
     for row in sorted(heat_ranking, key=lambda item: float(item.get("heat_score") or -999), reverse=True):
         label = str(row.get("sector_label", "")).strip()
@@ -82,14 +92,8 @@ def _select_portfolio_gap_sectors(
     gap_weight_threshold: float,
 ) -> list[str]:
     """缺口模式：热度靠前且未重仓的板块 ∪ 用户 focus_sectors。"""
-    ordered: list[str] = []
-    seen: set[str] = set()
-
-    for raw in focus_sectors or []:
-        label = _resolve_sector_label(raw)
-        if label and label not in seen:
-            seen.add(label)
-            ordered.append(label)
+    ordered = resolve_focus_sector_labels(focus_sectors)
+    seen: set[str] = set(ordered)
 
     held_weights = _sector_weights(holdings, profile)
     for row in heat_ranking:

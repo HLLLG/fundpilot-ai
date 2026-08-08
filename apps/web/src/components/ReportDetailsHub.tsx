@@ -4,18 +4,20 @@ import { useMemo, useState } from "react";
 import {
   ChevronDown,
   ClipboardCheck,
+  Layers,
   Newspaper,
   RefreshCw,
   SlidersHorizontal,
 } from "lucide-react";
 
 import { RebalanceSimulationPanel } from "@/components/RebalanceSimulationPanel";
+import { ReportLookthroughPanel } from "@/components/ReportLookthroughPanel";
 import { ReportNewsBriefPanel } from "@/components/ReportNewsBriefPanel";
 import { ReportOutcomesPanel } from "@/components/ReportOutcomesPanel";
 import { SectorOpportunityCard } from "@/components/SectorOpportunityCard";
-import type { Report, SectorRotationFacts } from "@/lib/api";
+import type { FundLookthroughFacts, Report, SectorRotationFacts } from "@/lib/api";
 
-type ReportTool = "news" | "rotation" | "rebalance" | "review";
+type ReportTool = "news" | "rotation" | "lookthrough" | "rebalance" | "review";
 
 type ReportToolSelection = {
   reportId: string;
@@ -39,6 +41,12 @@ const TOOLS = [
     title: "板块轮动参考",
     hint: "查看未持有的强势方向",
     icon: RefreshCw,
+  },
+  {
+    id: "lookthrough",
+    title: "组合穿透重复暴露",
+    hint: "看多只基金是否重仓同一批股票",
+    icon: Layers,
   },
   {
     id: "rebalance",
@@ -65,6 +73,16 @@ function sectorRotationFacts(report: Report): SectorRotationFacts | null {
   return rotation?.available ? rotation : null;
 }
 
+function fundLookthroughFacts(report: Report): FundLookthroughFacts | null {
+  const facts = report.analysis_facts as
+    | { fund_lookthrough?: FundLookthroughFacts }
+    | undefined;
+  const lookthrough = facts?.fund_lookthrough;
+  // 历史报告没有这个键；键存在（哪怕 unavailable）才展示入口，让"拿不到披露"
+  // 与"这份报告还没算过穿透"在界面上可区分。
+  return lookthrough && typeof lookthrough === "object" ? lookthrough : null;
+}
+
 export function ReportDetailsHub({ report, diagnostics }: ReportDetailsHubProps) {
   const [selection, setSelection] = useState<ReportToolSelection>(() => ({
     reportId: report.id,
@@ -77,12 +95,16 @@ export function ReportDetailsHub({ report, diagnostics }: ReportDetailsHubProps)
     [diagnostics, openTool],
   );
   const rotation = sectorRotationFacts(report);
+  const lookthrough = fundLookthroughFacts(report);
   const availableTools = TOOLS.filter((tool) => {
     if (tool.id === "news") {
       return Boolean(report.topic_briefs?.length);
     }
     if (tool.id === "rotation") {
       return Boolean(rotation?.market_top.length);
+    }
+    if (tool.id === "lookthrough") {
+      return Boolean(lookthrough);
     }
     return true;
   });
@@ -159,6 +181,12 @@ export function ReportDetailsHub({ report, diagnostics }: ReportDetailsHubProps)
               item={item}
             />
           ))}
+        </div>
+      ) : null}
+
+      {openTool === "lookthrough" && lookthrough ? (
+        <div id="report-tool-lookthrough" className="mt-4 min-w-0">
+          <ReportLookthroughPanel lookthrough={lookthrough} />
         </div>
       ) : null}
 

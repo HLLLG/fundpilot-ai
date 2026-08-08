@@ -243,8 +243,6 @@ def _stream_discovery(
             effective_trade_date=effective_trade_date,
         )
         news_service = NewsService()
-        per_sector = 3
-        pool_cap = 28
         held_codes = {h.fund_code.strip().zfill(6) for h in holdings if h.fund_code}
 
         selection_strategy = "balanced"
@@ -342,8 +340,11 @@ def _stream_discovery(
                 focus_sectors=list(request.focus_sectors),
                 effective_trade_date=effective_trade_date,
             )
-            if request.scan_mode == "full_market" and sector_opportunities:
-                target_sectors = [str(item["sector_label"]) for item in sector_opportunities]
+            target_sectors, per_sector, pool_cap = _resolve_scan_scope(
+                request,
+                target_sectors,
+                sector_opportunities,
+            )
             prescreen_per_sector = per_sector + (
                 3 if request.discovery_strategy == "opportunity_first" else 1
             )
@@ -973,6 +974,17 @@ def _score_select_and_persist_directions(*args: Any, **kwargs: Any) -> list[dict
     )
 
     return _impl(*args, **kwargs)
+
+
+def _resolve_scan_scope(
+    request: DiscoveryRequest,
+    target_sectors: list[str],
+    sector_opportunities: list[dict],
+) -> tuple[list[str], int, int]:
+    """与同步 pipeline 共用"召回方向 + 候选池容量"的确定逻辑。"""
+    from app.services.discovery_pipeline import resolve_scan_scope as _impl
+
+    return _impl(request, target_sectors, sector_opportunities)
 
 
 def _opportunity_flow_labels(

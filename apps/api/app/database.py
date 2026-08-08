@@ -708,6 +708,76 @@ def _project_report_summary(payload: dict[str, Any]) -> dict[str, Any]:
     return {key: payload[key] for key in _REPORT_SUMMARY_FIELDS if key in payload}
 
 
+# 诊断摘要（shadow escalation / LLM 审校）需要的字段恰好全在上面那份列表投影之外：
+# `analysis_facts.pipeline` 与 `analysis_facts.holdings[].escalation`。
+#
+# 这里不是"再加几个字段到 _REPORT_SUMMARY_FIELDS"能解决的——那份投影存在的理由就是
+# 别让 /api/reports 一次下发数十份 27 KB payload。诊断是完全不同的访问模式：调用频率
+# 低、只要极少数字段、可以承受一次逐份解析。因此单开一条读路径，逐份解析 payload 但
+# 只保留诊断切片，峰值内存是一份 payload 而不是全部。
+#
+# 回归背景：`shadow_escalation_digest` 原本走 `list_reports()`，于是
+# `report.get("analysis_facts")` 恒为空 → 报告侧恒报"未触发任何灰度升级判定"，
+# 无论真实情况如何。返回形状刻意与完整 payload 同构（`analysis_facts.holdings` /
+# `analysis_facts.pipeline`），让消费方只换数据源、不改投影逻辑。
+_REPORT_DIAGNOSTIC_HOLDING_FIELDS: tuple[str, ...] = (
+    "fund_code",
+    "sector_name",
+    "escalation",
+    "estimated_daily_return_percent",
+)
+
+
+def _project_report_diagnostics(payload: dict[str, Any]) -> dict[str, Any]:
+    facts = payload.get("analysis_facts")
+    facts_map = facts if isinstance(facts, dict) else {}
+    pipeline = facts_map.get("pipeline")
+    holdings = [
+        {
+            key: row[key]
+            for key in _REPORT_DIAGNOSTIC_HOLDING_FIELDS
+            if key in row
+        }
+        for row in facts_map.get("holdings") or []
+        if isinstance(row, dict)
+    ]
+    return {
+        "analysis_mode": payload.get("analysis_mode"),
+        "analysis_facts": {
+            "pipeline": pipeline if isinstance(pipeline, dict) else {},
+            "holdings": holdings,
+        },
+    }
+
+
+def list_report_decision_diagnostics(*, limit: int = 50) -> list[dict[str, Any]]:
+    """按当前用户返回近 `limit` 份日报的诊断切片（不是列表投影）。"""
+    user_id = _uid()
+    bounded = max(1, min(int(limit), 200))
+    results: list[dict[str, Any]] = []
+    with _connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT id, created_at, payload FROM reports
+            WHERE userId = ?
+            ORDER BY created_at DESC LIMIT ?
+            """,
+            (user_id, bounded),
+        ).fetchall()
+        for row in rows:
+            try:
+                payload = json.loads(row["payload"])
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if not isinstance(payload, dict):
+                continue
+            slice_ = _project_report_diagnostics(payload)
+            slice_["id"] = str(row["id"])
+            slice_["created_at"] = str(row["created_at"])
+            results.append(slice_)
+    return results
+
+
 def _parse_stored_summary(raw: Any) -> dict[str, Any] | None:
     if not isinstance(raw, str) or not raw.strip():
         return None
@@ -2345,6 +2415,66 @@ _DISCOVERY_SUMMARY_FIELDS: tuple[str, ...] = (
 
 def _project_discovery_report_summary(payload: dict[str, Any]) -> dict[str, Any]:
     return {key: payload[key] for key in _DISCOVERY_SUMMARY_FIELDS if key in payload}
+
+
+def _project_discovery_report_diagnostics(payload: dict[str, Any]) -> dict[str, Any]:
+    """荐基侧诊断切片。与 `_project_report_diagnostics` 同理：`discovery_facts` 与
+    `candidate_pool` 都被列表投影明确排除（见上方注释里的体积说明），诊断只能自己读。
+
+    只保留 `escalation_hints` / `decision_escalation_mode` / `pipeline`，以及候选池里
+    「代码 → 板块标签」这一列——摘要要用它给触发项标注板块，但不需要整份候选行。
+    """
+    facts = payload.get("discovery_facts")
+    facts_map = facts if isinstance(facts, dict) else {}
+    hints = facts_map.get("escalation_hints")
+    pipeline = facts_map.get("pipeline")
+    return {
+        "analysis_mode": payload.get("analysis_mode"),
+        "discovery_facts": {
+            "escalation_hints": hints if isinstance(hints, dict) else {},
+            "decision_escalation_mode": facts_map.get("decision_escalation_mode"),
+            "pipeline": pipeline if isinstance(pipeline, dict) else {},
+        },
+        "candidate_pool": [
+            {
+                "fund_code": item.get("fund_code"),
+                "sector_label": item.get("sector_label"),
+            }
+            for item in payload.get("candidate_pool") or []
+            if isinstance(item, dict)
+        ],
+    }
+
+
+def list_discovery_report_decision_diagnostics(
+    *,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    """按当前用户返回近 `limit` 份荐基报告的诊断切片（不是列表投影）。"""
+    user_id = _uid()
+    bounded = max(1, min(int(limit), 200))
+    results: list[dict[str, Any]] = []
+    with _connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT id, created_at, payload FROM fund_discovery_reports
+            WHERE userId = ?
+            ORDER BY created_at DESC LIMIT ?
+            """,
+            (user_id, bounded),
+        ).fetchall()
+        for row in rows:
+            try:
+                payload = json.loads(row["payload"])
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if not isinstance(payload, dict):
+                continue
+            slice_ = _project_discovery_report_diagnostics(payload)
+            slice_["id"] = str(row["id"])
+            slice_["created_at"] = str(row["created_at"])
+            results.append(slice_)
+    return results
 
 
 def get_discovery_report(report_id: str) -> dict[str, Any] | None:

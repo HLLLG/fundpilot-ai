@@ -26,9 +26,12 @@ from app.services.sector_opportunity_scoring import (
     MATURITY_POLICY_VERSIONS,
 )
 
-RECOMMENDATION_SCOPE_VERSION = "discovery_recommendation_scope.2026-08.v4"
-MAX_DISCOVERY_RECOMMENDATIONS = 6
-MAX_RECOMMENDATIONS_PER_SECTOR = 2
+RECOMMENDATION_SCOPE_VERSION = "discovery_recommendation_scope.2026-08.v5"
+# 一次扫描最多给出四个买入建议，且每个方向只保留质量最好的那一只。六个建议里
+# 有一半是同方向的第二只载体，用户拿到的其实是重复的方向暴露，而不是四个独立
+# 判断；收敛到"每方向最优 1 只"后，剩余同方向候选仍留在 alternate 名单里可查。
+MAX_DISCOVERY_RECOMMENDATIONS = 4
+MAX_RECOMMENDATIONS_PER_SECTOR = 1
 
 _ENTRY_PATH_PRIORITY = {
     "confirmed_entry": 4,
@@ -162,10 +165,11 @@ def build_recommendation_candidate_scope(
         ),
         reverse=True,
     )
-    # Keep at most two independently selected fund families per direction. The
-    # first pass exposes the best-quality vehicle from each open sector before
-    # a second vehicle is added, preserving cross-sector diversity under the
-    # global six-recommendation cap.
+    # Keep at most ``MAX_RECOMMENDATIONS_PER_SECTOR`` independently selected fund
+    # families per direction.  The depth loop walks every open sector once before
+    # it adds a second vehicle anywhere, so the global cap is spent on distinct
+    # directions first.  With the per-sector cap at 1 this collapses to "one best
+    # vehicle per direction", ranked by direction, then truncated to the global cap.
     ranked_codes: list[str] = []
     for depth in range(MAX_RECOMMENDATIONS_PER_SECTOR):
         for sector in ranked_sectors:
@@ -225,7 +229,9 @@ def build_recommendation_candidate_scope(
         "watch_only_fund_codes": watch_only_codes,
         "instruction": (
             "candidate_pool 仅保留通过方向动作边界、基金质量、载体质量与板块身份门槛的推荐白名单；"
-            "每个方向最多推荐两个综合质量最优的独立基金家族；等待/研究方向不得占用推荐名额，也不得跨方向补位。"
+            f"每个方向只推荐 {MAX_RECOMMENDATIONS_PER_SECTOR} 个综合质量最优的独立基金家族，"
+            f"全局最多 {MAX_DISCOVERY_RECOMMENDATIONS} 只；"
+            "等待/研究方向不得占用推荐名额，也不得跨方向补位。"
         ),
     }
 

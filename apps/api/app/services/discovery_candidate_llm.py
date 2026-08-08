@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from app.services.fund_nav_service import get_cached_official_nav_return
+from app.services.fund_peer_ranking import compact_peer_research_for_llm
 from app.services.sector_labels import normalize_sector_label
 
 _NAV_TREND_LLM_KEYS = (
@@ -292,71 +293,9 @@ def slim_candidate_pool_for_llm(
 
 
 def _compact_peer_research(item: dict) -> dict:
-    peer_rank = item.get("peer_rank") if isinstance(item.get("peer_rank"), dict) else {}
-    peer_group = item.get("peer_group") if isinstance(item.get("peer_group"), dict) else {}
-    metrics = peer_rank.get("metrics") if isinstance(peer_rank.get("metrics"), dict) else {}
-    applicable_metrics: dict[str, dict[str, Any]] = {}
-    not_applicable_metrics: dict[str, dict[str, Any]] = {}
-    for key, value in metrics.items():
-        if not isinstance(value, dict):
-            continue
-        applicable = value.get("applicable") is True
-        available = value.get("available") is True
-        metric = {
-            "applicable": applicable,
-            "available": available,
-        }
-        for field in (
-            "label",
-            "orientation",
-            "role",
-            "applicability",
-            "availability",
-            "value",
-            "percentile",
-            "sample_count",
-            "coverage_rate",
-            "qualified",
-            "qualification_required",
-            "reason",
-        ):
-            scalar = _scalar(value.get(field))
-            if scalar is not None:
-                metric[field] = scalar
-        if applicable:
-            applicable_metrics[key] = metric
-        else:
-            # Keep the explicit absence semantics so a removed null-heavy
-            # metric can never be mistaken for a valid comparison dimension.
-            not_applicable = {
-                "applicable": False,
-                "available": False,
-            }
-            for field in ("applicability", "availability", "reason"):
-                scalar = _scalar(value.get(field))
-                if scalar is not None:
-                    not_applicable[field] = scalar
-            not_applicable_metrics[key] = not_applicable
-    result = {
-        "schema_version": peer_rank.get("schema_version"),
-        "status": peer_rank.get("status"),
-        "execution_tilt_eligible": peer_rank.get("execution_tilt_eligible") is True,
-        "reason": peer_rank.get("reason"),
-        "group_key": peer_group.get("group_key"),
-        "group_label": peer_group.get("group_label"),
-        "classification_confidence": peer_group.get("classification_confidence"),
-        "metric_registry_version": peer_rank.get("metric_registry_version"),
-        "metric_profile": peer_rank.get("metric_profile"),
-        "descriptive_performance_percentile": peer_rank.get(
-            "descriptive_performance_percentile"
-        ),
-        "independent_peer_family_count": (
-            peer_rank.get("universe") or {}
-        ).get("independent_peer_family_count"),
-        "metrics": applicable_metrics,
-        "not_applicable_metrics": not_applicable_metrics,
-    }
-    return {key: value for key, value in result.items() if value is not None}
+    # 投影本体已抽到 `fund_peer_ranking.compact_peer_research_for_llm`，日报给持仓算
+    # 同类分位时复用同一份，避免两处各自挑字段而漂移。
+    return compact_peer_research_for_llm(item)
 
 
 def _compact_benchmark_research(item: dict) -> dict:
@@ -379,86 +318,12 @@ def _compact_benchmark_research(item: dict) -> dict:
 
 
 def _compact_benchmark_metrics(item: dict) -> dict:
-    metrics = (
-        item.get("benchmark_metrics")
-        if isinstance(item.get("benchmark_metrics"), dict)
-        else {}
+    # 投影本身随基准 schema 演进，实现放在契约所属模块，日报持仓行与荐基候选行共用。
+    from app.services.fund_benchmark_research import (
+        compact_fund_benchmark_metrics_for_llm,
     )
-    horizons = metrics.get("horizons") if isinstance(metrics.get("horizons"), dict) else {}
-    rolling = (
-        metrics.get("rolling_comparison")
-        if isinstance(metrics.get("rolling_comparison"), dict)
-        else {}
-    )
-    tracking = (
-        metrics.get("tracking_metrics")
-        if isinstance(metrics.get("tracking_metrics"), dict)
-        else {}
-    )
-    alignment = metrics.get("alignment") if isinstance(metrics.get("alignment"), dict) else {}
-    result = {
-        "schema_version": metrics.get("schema_version"),
-        "status": metrics.get("status"),
-        "qualified": metrics.get("qualified") is True,
-        "descriptive_only": True,
-        "execution_tilt_eligible": False,
-        "comparison_role": metrics.get("comparison_role"),
-        "formal_excess_eligible": metrics.get("formal_excess_eligible") is True,
-        "benchmark_code": metrics.get("benchmark_code"),
-        "benchmark_name": metrics.get("benchmark_name"),
-        "effective_trade_date": metrics.get("effective_trade_date"),
-        "reason_codes": list(metrics.get("reason_codes") or []),
-        "alignment": _present_scalars(
-            alignment,
-            (
-                "common_return_sample_days",
-                "first_common_date",
-                "last_common_date",
-            ),
-        ),
-        "horizons": {
-            key: _present_scalars(
-                value,
-                (
-                    "status",
-                    "start_date",
-                    "end_date",
-                    "fund_return_percent",
-                    "benchmark_return_percent",
-                    "formal_excess_return_percent",
-                    "reference_difference_percent",
-                    "fund_max_drawdown_percent",
-                    "benchmark_max_drawdown_percent",
-                    "drawdown_advantage_percent",
-                ),
-            )
-            for key, value in horizons.items()
-            if key in {"3m", "6m", "1y"} and isinstance(value, dict)
-        },
-        "rolling_comparison": _present_scalars(
-            rolling,
-            (
-                "window_days",
-                "window_count",
-                "formal_excess_win_rate_percent",
-                "reference_outperformance_rate_percent",
-                "difference_stability_percent",
-            ),
-        ),
-        "tracking_metrics": {
-            "applicable": tracking.get("applicable") is True,
-            "available": tracking.get("available") is True,
-            **_present_scalars(
-                tracking,
-                (
-                    "tracking_difference_percent",
-                    "tracking_error_annualized_percent",
-                    "annualized_tracking_error_percent",
-                ),
-            ),
-        },
-    }
-    return {key: value for key, value in result.items() if value is not None}
+
+    return compact_fund_benchmark_metrics_for_llm(item.get("benchmark_metrics"))
 
 
 def _present_scalars(

@@ -129,7 +129,7 @@ def test_reconciliation_drops_waiting_pick_and_backfills_actionable_direction() 
         "backfilled_fund_codes": ["000001"],
         "final_fund_codes": ["000001"],
         "cross_direction_fallback_allowed": False,
-        "maximum_recommendations_per_sector": 2,
+        "maximum_recommendations_per_sector": 1,
     }
     assert caveats
 
@@ -155,7 +155,7 @@ def test_probability_direction_requires_the_fund_early_repair_signal() -> None:
     assert funnel["rejected_reason_counts"]["direction_entry_not_open"] == 1
 
 
-def test_scope_keeps_two_best_quality_vehicles_per_sector() -> None:
+def test_scope_keeps_only_the_best_quality_vehicle_per_sector() -> None:
     preferred = _candidate("000013", "煤炭", opportunity_score=40)
     second = _candidate("000014", "煤炭", opportunity_score=60)
     hotter_but_lower_quality = _candidate("000015", "煤炭", opportunity_score=200)
@@ -171,9 +171,11 @@ def test_scope_keeps_two_best_quality_vehicles_per_sector() -> None:
         [_opportunity("煤炭", "ready_to_start", priority=90)],
     )
 
-    assert scope["ordered_eligible_fund_codes"] == ["000013", "000014"]
-    assert scope["alternate_eligible_fund_codes"] == ["000015"]
-    assert scope["maximum_recommendations_per_sector"] == 2
+    # 同方向只推荐综合质量最优的那一只；其余仍留在 alternate 名单里可查，
+    # 也仍然出现在逐只决策里，不会被静默丢弃。
+    assert scope["ordered_eligible_fund_codes"] == ["000013"]
+    assert scope["alternate_eligible_fund_codes"] == ["000014", "000015"]
+    assert scope["maximum_recommendations_per_sector"] == 1
     assert {
         item["fund_code"]: item["status"] for item in scope["candidate_decisions"]
     } == {
@@ -183,8 +185,8 @@ def test_scope_keeps_two_best_quality_vehicles_per_sector() -> None:
     }
 
 
-def test_scope_caps_global_recommendation_whitelist_at_six() -> None:
-    sectors = ["sector-a", "sector-b", "sector-c", "sector-d"]
+def test_scope_caps_global_recommendation_whitelist_at_four_distinct_directions() -> None:
+    sectors = ["sector-a", "sector-b", "sector-c", "sector-d", "sector-e"]
     candidates = []
     opportunities = []
     for sector_index, sector in enumerate(sectors):
@@ -206,17 +208,24 @@ def test_scope_caps_global_recommendation_whitelist_at_six() -> None:
 
     scope = build_recommendation_candidate_scope(candidates, opportunities)
 
-    assert scope["max_recommendations"] == 6
-    assert scope["maximum_recommendations_per_sector"] == 2
+    assert scope["max_recommendations"] == 4
+    assert scope["maximum_recommendations_per_sector"] == 1
+    # 五个可布局方向，每个方向只出最优的一只，再按方向排序截断到 4 个：
+    # 名额全部花在不同方向上，不会出现同方向的第二只载体。
     assert scope["ordered_eligible_fund_codes"] == [
         "000100",
         "000110",
         "000120",
         "000130",
+    ]
+    assert scope["alternate_eligible_fund_codes"] == [
+        "000140",
         "000101",
         "000111",
+        "000121",
+        "000131",
+        "000141",
     ]
-    assert scope["alternate_eligible_fund_codes"] == ["000121", "000131"]
 
 
 def test_actionable_direction_without_verified_vehicle_is_reported_not_cross_filled() -> None:

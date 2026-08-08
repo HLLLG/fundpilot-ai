@@ -101,6 +101,55 @@ def persist_discovery_mainline_snapshot(
     )
 
 
+def load_mainline_snapshot_for_trade_date(
+    *,
+    user_id: int,
+    trade_date: str | None,
+    connection: Any | None = None,
+    scan_limit: int = 20,
+) -> dict[str, Any] | None:
+    """取该用户在 `trade_date` 这一交易日已冻结的主线快照；没有则返回 None。
+
+    这个模块此前**只有写没有读**——荐基落库时写入，然后没人取用。日报要复用主线判断
+    就必须走这里，原因是自己重算的代价不可接受：
+
+    * 每个板块一次日线序列请求（`build_sector_position_map_for_opportionities` 默认
+      45 秒预算），放到日报请求路径上不现实；
+    * 只对"用户持有的那几个板块"算，横截面分位的分母就只有 3~5 个样本——
+      `build_mainline_regime_snapshot` 的 docstring 明确警告过这个失真（荐基当初就是
+      靠新增 `percentile_position_by_label` 把分母扩到全白名单才修掉的）；
+    * 纯缓存零网络路径拿不到基准腿（它靠 `reference_positions` 反推），
+      `relative_return_*` 会全空，而相对强度是 regime 打分的核心。
+
+    所以日报只消费当天已经算好的那一份。取不到时上层 fail closed 回退到旧版机会分，
+    并如实说明原因，不猜、不用过期快照顶替。
+    """
+    normalized_date = str(trade_date or "").strip()
+    if not normalized_date:
+        return None
+    try:
+        rows = list_decision_quality_input_artifacts(
+            user_id=user_id,
+            artifact_type=MAINLINE_SNAPSHOT_ARTIFACT_TYPE,
+            source_type="discovery",
+            limit=max(1, int(scan_limit)),
+            connection=connection,
+        )
+    except Exception:  # noqa: BLE001 - 主线复用是增强项，读不到只回退，不拖垮日报
+        return None
+    for row in rows:
+        wrapper = _artifact_payload(row)
+        snapshot = wrapper.get("snapshot")
+        if not isinstance(snapshot, Mapping):
+            continue
+        if str(snapshot.get("effective_trade_date") or "").strip() != normalized_date:
+            continue
+        if snapshot.get("schema_version") != MAINLINE_SNAPSHOT_SCHEMA_VERSION:
+            continue
+        return dict(snapshot)
+    return None
+
+
 def _existing_for_report(
     *,
     user_id: int,
@@ -145,6 +194,7 @@ def _as_datetime(value: str) -> datetime:
 
 
 __all__ = [
+    "load_mainline_snapshot_for_trade_date",
     "MAINLINE_SNAPSHOT_ARTIFACT_SCHEMA_VERSION",
     "MAINLINE_SNAPSHOT_ARTIFACT_TYPE",
     "persist_discovery_mainline_snapshot",

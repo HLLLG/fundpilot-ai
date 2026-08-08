@@ -432,6 +432,15 @@ def test_add_percentage_tracks_opportunity_score_without_style_cap(
     assert "板块机会分" in rec.suggested_position_change_basis
 
 
+def _strong_fund_evidence() -> dict:
+    """基金自身正向量化支持为「高」——用满板块档位的前置条件。
+
+    这些用例考察的是板块档位选择本身，所以显式给出强证据，把「基金侧下调一级」这条
+    独立维度隔离出去（由 `test_fund_evidence_steps_the_sector_tier_down` 覆盖）。
+    """
+    return {"composite": {"level": "高", "score": 3.0}}
+
+
 def test_conservative_profile_does_not_cap_opportunity_percentage() -> None:
     request = _request(decision_style="conservative")
 
@@ -441,6 +450,7 @@ def test_conservative_profile_does_not_cap_opportunity_percentage() -> None:
         profile=request.profile,
         weight_denominator=100_000,
         sector_opportunity={"score": 85},
+        evidence=_strong_fund_evidence(),
     )
 
     assert percent == 20
@@ -469,10 +479,78 @@ def test_add_percentage_prefers_research_score_and_falls_back_safely(
         profile=request.profile,
         weight_denominator=100_000,
         sector_opportunity=sector_opportunity,
+        evidence=_strong_fund_evidence(),
     )
 
     assert percent == expected_percent
     assert note is None
+
+
+@pytest.mark.parametrize(
+    ("evidence", "expected_percent", "expected_basis_fragment"),
+    [
+        pytest.param(_strong_fund_evidence(), 20.0, None, id="high_keeps_sector_tier"),
+        pytest.param(
+            {"composite": {"level": "中", "score": 2.0}},
+            15.0,
+            "基金自身正向量化支持中，档位下调至 15%",
+            id="medium_steps_down_one_tier",
+        ),
+        pytest.param(
+            None,
+            15.0,
+            "基金自身量化支持暂缺，档位下调至 15%",
+            id="missing_evidence_steps_down_one_tier",
+        ),
+        pytest.param(
+            {"composite": {"level": "不足", "score": 0}},
+            15.0,
+            "基金自身正向量化支持不足，档位下调至 15%",
+            id="insufficient_matches_missing",
+        ),
+    ],
+)
+def test_fund_evidence_steps_the_sector_tier_down(
+    evidence: dict | None,
+    expected_percent: float,
+    expected_basis_fragment: str | None,
+) -> None:
+    """同一板块档位下，基金自身证据决定是否降一级——这是此前完全缺失的区分维度。"""
+    request = _request(decision_style="conservative")
+
+    percent, basis, note = _resolve_deterministic_position_change(
+        "分批加仓",
+        holding=request.holdings[0],
+        profile=request.profile,
+        weight_denominator=100_000,
+        sector_opportunity={"research_score": 90.0},
+        evidence=evidence,
+    )
+
+    assert percent == expected_percent
+    assert note is None
+    # 板块依据始终保留，便于用户看出"档位从哪来、又为什么被调低"。
+    assert "强机会档 20%" in basis
+    if expected_basis_fragment is None:
+        assert "档位下调" not in basis
+    else:
+        assert expected_basis_fragment in basis
+
+
+def test_fund_evidence_never_raises_the_sector_tier() -> None:
+    """量化证据只能增加置信度，不得作为提额依据：最低档不会因证据强而上调。"""
+    request = _request(decision_style="conservative")
+
+    percent, _basis, _note = _resolve_deterministic_position_change(
+        "分批加仓",
+        holding=request.holdings[0],
+        profile=request.profile,
+        weight_denominator=100_000,
+        sector_opportunity={"research_score": 10.0},
+        evidence=_strong_fund_evidence(),
+    )
+
+    assert percent == 5.0
 
 
 def test_unconfirmed_share_ledger_keeps_direction_and_uses_estimated_percentage() -> None:
