@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ComponentProps, MutableRefObject } from "react";
 import "@testing-library/jest-dom/vitest";
@@ -17,6 +17,7 @@ import {
 } from "@/components/FundDiscoveryPanel";
 import {
   fetchDiscoveryPrompt,
+  fetchDiscoveryReportDetail,
   listDiscoveryReports,
   saveDiscoveryPromptRemote,
   startDiscoveryJob,
@@ -31,6 +32,19 @@ vi.mock("@/lib/api", () => ({
   }),
   fetchDiscoverySectors: vi.fn().mockResolvedValue([]),
   listDiscoveryReports: vi.fn().mockResolvedValue([]),
+  // 列表接口只给摘要，选中某份后要按 id 再拉正文。这里回一个能认出来源 id 的标题，
+  // 断言"详情确实被拉回并应用了"就不必依赖摘要占位的时序。
+  fetchDiscoveryReportDetail: vi.fn(async (reportId: string) => ({
+    id: reportId,
+    created_at: "2026-07-11T08:00:00Z",
+    title: `detail:${reportId}`,
+    summary: "正文已载入。",
+    focus_sectors: [],
+    target_sectors: [],
+    recommendations: [],
+    caveats: [],
+    provider: "test",
+  })),
   saveDiscoveryPromptRemote: vi.fn().mockResolvedValue({}),
   startDiscoveryJob: vi.fn().mockResolvedValue("job-1"),
 }));
@@ -212,7 +226,13 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
     expect(accountATrigger).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(accountATrigger);
     expect(accountATrigger).toHaveAttribute("aria-expanded", "true");
-    await screen.findByText("Account A private discovery report");
+    // 标题会同时出现在历史抽屉列表和自动载入的正文区，所以必须限定在抽屉里查。
+    const accountADrawer = screen.getByRole("dialog", { name: "历史推荐" });
+    await waitFor(() =>
+      expect(
+        within(accountADrawer).getByText("Account A private discovery report"),
+      ).toBeInTheDocument(),
+    );
     accountA.unmount();
 
     renderPanel({ userId: 9_202 });
@@ -420,5 +440,92 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
     const message = screen.getByText("已停止扫描，当前条件与页面中的已有结果均已保留。");
     expect(message.closest('[role="status"]')).toHaveClass("inline-notice-info");
     expect(message.closest('[role="alert"]')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 打开「发现」页要像日报页一样默认展示上一份报告。历史实现让 report 停在 null，
+// 用户每次都得先打开「历史推荐」抽屉手动点一次才看得到上次结果。
+// ---------------------------------------------------------------------------
+describe("FundDiscoveryPanel latest-report autoload", () => {
+  it("loads the newest report body on open", async () => {
+    vi.mocked(listDiscoveryReports).mockResolvedValue([
+      { ...discoveryReport(), id: "older", created_at: "2026-08-01T00:00:00Z" },
+      { ...discoveryReport(), id: "newest", created_at: "2026-08-08T00:00:00Z" },
+    ]);
+
+    renderPanel({ userId: 501 });
+
+    // 摘要占位先切进来，随后按 id 拉回的正文替换掉它。
+    await waitFor(() =>
+      expect(screen.getByTestId("discovery-report-stub")).toHaveTextContent("detail:newest"),
+    );
+    expect(fetchDiscoveryReportDetail).toHaveBeenCalledWith("newest");
+  });
+
+  it("does not steal focus or scroll when autoloading", async () => {
+    // 自动载入必须是安静的：抢焦点 / 自动滚动都会让刚进页面的用户莫名其妙。
+    vi.mocked(listDiscoveryReports).mockResolvedValue([
+      { ...discoveryReport(), id: "newest", created_at: "2026-08-08T00:00:00Z" },
+    ]);
+    const activeBefore = document.activeElement;
+
+    renderPanel({ userId: 502 });
+    await waitFor(() =>
+      expect(screen.getByTestId("discovery-report-stub")).toHaveTextContent("detail:newest"),
+    );
+    await new Promise((resolve) => window.setTimeout(resolve, 10));
+
+    expect(document.activeElement).toBe(activeBefore);
+  });
+
+  it("leaves an in-flight scan alone", async () => {
+    vi.mocked(listDiscoveryReports).mockResolvedValue([
+      { ...discoveryReport(), id: "newest", created_at: "2026-08-08T00:00:00Z" },
+    ]);
+
+    renderPanel({ userId: 503, streamingDiscovery: streamingDiscovery() });
+    await waitFor(() => expect(listDiscoveryReports).toHaveBeenCalled());
+    await new Promise((resolve) => window.setTimeout(resolve, 10));
+
+    expect(fetchDiscoveryReportDetail).not.toHaveBeenCalled();
+  });
+
+  it("defers to a just-completed report waiting to be applied", async () => {
+    vi.mocked(listDiscoveryReports).mockResolvedValue([
+      { ...discoveryReport(), id: "newest", created_at: "2026-08-08T00:00:00Z" },
+    ]);
+
+    renderPanel({
+      userId: 504,
+      pendingDiscoveryReport: { ...discoveryReport(), id: "fresh-scan", title: "刚扫完的报告" },
+    });
+    await waitFor(() => expect(listDiscoveryReports).toHaveBeenCalled());
+    await new Promise((resolve) => window.setTimeout(resolve, 10));
+
+    expect(fetchDiscoveryReportDetail).not.toHaveBeenCalled();
+  });
+
+  it("offers a stop control while a scan is running so the user is never trapped", () => {
+    // 手机切走再回来时流可能已被系统挂起，主按钮是禁用态；没有这个出口页面就死住。
+    renderPanel({ userId: 505, streamingDiscovery: streamingDiscovery() });
+
+    expect(screen.getByTestId("discovery-scan-button")).toBeDisabled();
+    expect(screen.getByTestId("discovery-stop-button")).toBeEnabled();
+  });
+
+  it("clears the background job id when the user stops a scan", () => {
+    // `isRunning` 把 discoveryJobId 也算在内，只清流式状态按钮仍然是禁用的。
+    const onDiscoveryJobIdChange = vi.fn();
+    renderPanel({
+      userId: 506,
+      discoveryJobId: "job-9",
+      streamingDiscovery: streamingDiscovery(),
+      onDiscoveryJobIdChange,
+    });
+
+    fireEvent.click(screen.getByTestId("discovery-stop-button"));
+
+    expect(onDiscoveryJobIdChange).toHaveBeenCalledWith(null);
   });
 });

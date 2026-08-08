@@ -677,6 +677,13 @@
   background: rgba(27, 75, 95, 0.04);
 }
 
+/* 底栏高度是个布局常量：后台任务浮层必须停在它上方，两处只能共用一个值，
+   各自硬编码迟早会漂移（这正是浮层曾经压住「市场 / 更多」按钮的原因）。
+   底栏内容高度本来是内蕴的，这里固定下来才能被别人引用。 */
+:root {
+  --bottom-nav-h: 3.25rem;
+}
+
 /* ── Dashboard 移动端底栏（lg 以下显示；勿用 Tailwind hidden，会被 display:flex 覆盖） ── */
 .dashboard-bottom-nav {
   position: fixed;
@@ -687,6 +694,7 @@
   display: flex;
   align-items: stretch;
   gap: 2px;
+  min-height: calc(var(--bottom-nav-h) + env(safe-area-inset-bottom, 0px));
   padding: 0.35rem 0.5rem calc(0.35rem + env(safe-area-inset-bottom, 0px));
   border-top: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.94);
@@ -706,10 +714,15 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 0.2rem;
+  gap: 0.15rem;
   min-width: 0;
+  /* 可点击区域必须 >= 44px。以前靠内边距凑出来，实测 43.98px 刚好差一点被
+     e2e 的 expectMinimumTapTarget 拦下；这里写死高度，不再依赖字号/行高的舍入。 */
+  min-height: 2.75rem;
   border-radius: 12px;
-  padding: 0.35rem 0.15rem;
+  /* 五个标签平铺后横向余量变小：320px 屏上每格约 59px，标签统一 2 个字仍有富余，
+     所以只收紧左右内边距。 */
+  padding: 0.3rem 0.1rem;
   font-size: 0.625rem;
   font-weight: 700;
   line-height: 1.2;
@@ -722,39 +735,22 @@
   background: var(--brand-soft);
 }
 
-.dashboard-more-sheet {
+/* 未读点跟着图标走，而不是按钮的绝对右上角：按钮是 flex:1 等分的，固定 right 偏移在
+   不同屏宽下会飘到标签文字上方。 */
+.dashboard-bottom-nav-icon {
+  position: relative;
+  display: inline-flex;
+}
+
+.dashboard-bottom-nav-dot {
   position: absolute;
-  right: 0.25rem;
-  bottom: calc(100% + 0.5rem);
-  z-index: 60;
-  min-width: 10.5rem;
-  overflow: hidden;
-  border-radius: 1rem;
-  border: 1px solid var(--line);
-  background: var(--panel);
-  box-shadow: var(--shadow-lg);
-}
-
-.dashboard-more-item {
-  display: flex;
-  width: 100%;
-  min-height: 2.75rem;
-  align-items: center;
-  gap: 0.65rem;
-  padding: 0.75rem 1rem;
-  font-size: 0.875rem;
-  font-weight: 700;
-  color: var(--foreground);
-  text-align: left;
-  transition: background 0.15s ease;
-}
-
-.dashboard-more-item:hover {
-  background: var(--brand-soft);
-}
-
-.dashboard-more-item + .dashboard-more-item {
-  border-top: 1px solid var(--line);
+  top: -1px;
+  right: -3px;
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: 9999px;
+  background: var(--danger-icon);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.94);
 }
 
 .dashboard-shell {
@@ -764,6 +760,35 @@
 @media (min-width: 1024px) {
   .dashboard-shell {
     padding-bottom: 1.5rem;
+  }
+}
+
+/* ── 后台任务浮层容器 ──
+   手机/平板：贴在底栏正上方通栏一条，绝不与底栏重叠，z-index 也压在底栏之下，
+   这样即使内容超高也不会挡住导航。曾经它是 `fixed bottom-6 right-6 w-72 z-50`，
+   1.5rem 的 bottom 正好落在底栏那 3.25rem 里，加上同层 z-index 但 DOM 在后，
+   于是稳定地盖住「市场 / 更多」两个按钮。
+   桌面：回到右下角卡片堆叠，行为与以前一致。 */
+.background-jobs-stack {
+  position: fixed;
+  right: 0.75rem;
+  bottom: calc(var(--bottom-nav-h) + env(safe-area-inset-bottom, 0px) + 0.5rem);
+  left: 0.75rem;
+  z-index: 45;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 0.5rem;
+  pointer-events: none;
+}
+
+@media (min-width: 1024px) {
+  .background-jobs-stack {
+    right: 1.5rem;
+    bottom: 1.5rem;
+    left: auto;
+    z-index: 50;
+    width: 18rem;
+    gap: 0.75rem;
   }
 }
 

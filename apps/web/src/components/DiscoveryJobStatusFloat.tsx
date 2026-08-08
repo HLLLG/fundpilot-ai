@@ -5,6 +5,7 @@ import { CheckCircle, Loader2, XCircle } from "lucide-react";
 import type { FundDiscoveryReport } from "@/lib/api";
 import { fetchDiscoveryJob } from "@/lib/api";
 import { userFacingErrorMessage } from "@/lib/userFacingError";
+import { JobProgressCard } from "@/components/JobProgressCard";
 
 type JobState = "running" | "completed" | "failed";
 
@@ -86,74 +87,45 @@ export function DiscoveryJobStatusFloat({
 
   if (!jobId) return null;
 
+  if (state === "completed") {
+    return (
+      <JobProgressCard
+        tone="neutral"
+        testId="discovery-job-float"
+        icon={<CheckCircle size={18} className="text-[var(--success-icon)]" />}
+        title="推荐报告已生成"
+        primaryAction={{
+          label: "查看报告",
+          onClick: () => {
+            if (report) onComplete(report);
+          },
+        }}
+        secondaryAction={{ label: "关闭", onClick: onClose }}
+      />
+    );
+  }
+
+  if (state === "failed") {
+    return (
+      <JobProgressCard
+        tone="danger"
+        testId="discovery-job-float"
+        icon={<XCircle size={18} className="text-[var(--danger-fg)]" />}
+        title="扫描失败"
+        detail={error ? <span className="line-clamp-2">{error}</span> : undefined}
+        primaryAction={{ label: "重试", onClick: onRetry }}
+        secondaryAction={{ label: "关闭", onClick: onClose }}
+      />
+    );
+  }
+
   return (
-    <div className="w-full rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_8px_32px_rgba(0,0,0,0.12)]">
-      {state === "running" ? (
-        <div className="flex items-start gap-3">
-          <Loader2 size={20} className="mt-0.5 shrink-0 animate-spin text-[var(--brand)]" />
-          <div>
-            <div className="text-sm font-bold text-slate-900">{stageLabel}</div>
-            <div className="mt-0.5 text-xs text-slate-500">可继续浏览页面</div>
-          </div>
-        </div>
-      ) : null}
-
-      {state === "completed" ? (
-        <div>
-          <div className="flex items-start gap-3">
-            <CheckCircle size={20} className="mt-0.5 shrink-0 text-[var(--success-icon)]" />
-            <div className="text-sm font-bold text-slate-900">推荐报告已生成</div>
-          </div>
-          <div className="mt-3 flex gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                if (report) onComplete(report);
-              }}
-              className="min-h-11 flex-1 rounded-xl bg-[var(--brand)] px-3 py-2 text-xs font-bold text-white hover:bg-[var(--brand-strong)]"
-            >
-              查看报告
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              className="min-h-11 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50"
-            >
-              关闭
-            </button>
-          </div>
-        </div>
-      ) : null}
-
-      {state === "failed" ? (
-        <div>
-          <div className="flex items-start gap-3">
-            <XCircle size={20} className="mt-0.5 shrink-0 text-[var(--danger-fg)]" />
-            <div>
-              <div className="text-sm font-bold text-slate-900">扫描失败</div>
-              {error ? (
-                <div className="mt-0.5 line-clamp-2 text-xs text-slate-500">{error}</div>
-              ) : null}
-            </div>
-          </div>
-          <div className="mt-3 flex gap-2">
-            <button
-              type="button"
-              onClick={onRetry}
-              className="min-h-11 flex-1 rounded-xl bg-[var(--brand)] px-3 py-2 text-xs font-bold text-white hover:bg-[var(--brand-strong)]"
-            >
-              重试
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              className="min-h-11 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50"
-            >
-              关闭
-            </button>
-          </div>
-        </div>
-      ) : null}
-    </div>
+    <JobProgressCard
+      tone="neutral"
+      testId="discovery-job-float"
+      icon={<Loader2 size={18} className="animate-spin text-[var(--brand)]" />}
+      title={stageLabel}
+      detail="可继续浏览页面"
+    />
   );
 }

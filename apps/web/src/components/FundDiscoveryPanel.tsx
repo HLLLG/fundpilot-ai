@@ -51,6 +51,13 @@ import {
   setDiscoveryFocusSectors,
 } from "@/lib/discoveryFocusSectors";
 import { userFacingErrorMessage } from "@/lib/userFacingError";
+import { startVisibilityAwarePolling } from "@/lib/visibilityPolling";
+import {
+  DISCOVERY_RECOVERY_POLL_MS,
+  detectCompletedScan,
+  sortReportsByCreatedAtDesc,
+  streamLooksDead,
+} from "@/lib/discoveryScanRecovery";
 
 const DISCOVERY_SECTORS_CACHE_KEY = "discovery-panel:sectors";
 const DISCOVERY_REPORTS_CACHE_KEY = "discovery-panel:reports";
@@ -152,10 +159,7 @@ export function FundDiscoveryPanel({
 
   const rawSectors = useMemo(() => sectorRows ?? [], [sectorRows]);
   const historyReports = useMemo(
-    () =>
-      [...(historyReportsData ?? [])].sort(
-        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
-      ),
+    () => sortReportsByCreatedAtDesc(historyReportsData ?? []),
     [historyReportsData],
   );
 
@@ -178,6 +182,12 @@ export function FundDiscoveryPanel({
   // 通过递增的 request id 保证快速连点时只应用最后一次的详情。
   const historyDetailRequestId = useRef(0);
   const [historyDetailError, setHistoryDetailError] = useState<string | null>(null);
+  /** 打开页面时自动载入最近一份报告，每个账号只做一次。 */
+  const autoLoadedLatestForUserRef = useRef<number | null>(null);
+  /** 扫描开始那一刻最新报告的 id，用于判断后台是否已经又写了一份新的。 */
+  const latestKnownReportIdRef = useRef<string | null>(null);
+  /** 流最近一次有动静的时间；用来识别"连接已死但状态还挂着"。 */
+  const lastStreamActivityRef = useRef(0);
   const [discoveryPrompt, setDiscoveryPrompt] = useState<DiscoveryPromptConfig>(() =>
     loadDiscoveryPrompt(userId, DEFAULT_DISCOVERY_PROMPT),
   );
@@ -293,12 +303,15 @@ export function FundDiscoveryPanel({
     discoveryStreamAbortRef.current?.abort();
     discoveryStreamAbortRef.current = null;
     onStreamingDiscoveryChange(null);
+    // 也要清掉后台任务 id：`isRunning` 把它算在内，只清流式状态的话按钮仍是
+    // 「扫描进行中…」的禁用态，用户依旧走不出去。
+    onDiscoveryJobIdChange(null);
     setIsSubmitting(false);
     setFeedback({
       tone: "info",
       message: "已停止扫描，当前条件与页面中的已有结果均已保留。",
     });
-  }, [discoveryStreamAbortRef, onStreamingDiscoveryChange]);
+  }, [discoveryStreamAbortRef, onDiscoveryJobIdChange, onStreamingDiscoveryChange]);
 
   const handleScan = useCallback(async () => {
     setIsSubmitting(true);
@@ -306,6 +319,10 @@ export function FundDiscoveryPanel({
     if (report) {
       setConfigExpanded(false);
     }
+    // 记下"开扫之前最新的一份是哪个"。流断了之后就靠它判断后台有没有产出新报告，
+    // 比对时间戳可靠：created_at 是服务端时钟，startedAt 是浏览器时钟。
+    latestKnownReportIdRef.current = historyReports[0]?.id ?? null;
+    lastStreamActivityRef.current = streamTimestamp();
     const parsedBudget = budgetYuan.trim() ? Number(budgetYuan) : null;
     const scanOptions = {
       focusSectors,
@@ -442,6 +459,7 @@ export function FundDiscoveryPanel({
     discoveryStrategy,
     discoveryStreamAbortRef,
     focusSectors,
+    historyReports,
     holdings,
     onDiscoveryJobIdChange,
     onDiscoveryStreamComplete,
@@ -529,7 +547,13 @@ export function FundDiscoveryPanel({
     .filter((item): item is string => Boolean(item))
     .join(" · ");
 
-  const selectHistoryReport = useCallback((selected: FundDiscoveryReport) => {
+  const selectHistoryReport = useCallback((
+    selected: FundDiscoveryReport,
+    options?: { revealReport?: boolean },
+  ) => {
+    // 只有用户主动点选（历史抽屉、删除后切到相邻一份）才移动焦点并滚动过去；
+    // 打开页面时的自动载入必须保持安静，否则会抢走焦点、把页面自动滚下去。
+    const revealReport = options?.revealReport !== false;
     // 先用摘要占位切换视图，让用户马上看到标题/时间/方向而不是空白。
     // 关键正文（decision_events / discovery_facts / candidate_pool）稍后从
     // /reports/{id} 拉回后再合并；这段时间 DiscoveryReportPanel 里那些字段读到
@@ -550,9 +574,12 @@ export function FundDiscoveryPanel({
         );
       }
     })();
+    if (!revealReport) return;
     window.setTimeout(() => {
-      reportRegionRef.current?.focus();
-      reportRegionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      const region = reportRegionRef.current;
+      region?.focus();
+      // scrollIntoView 在 jsdom / 部分内嵌 WebView 里不存在。
+      region?.scrollIntoView?.({ behavior: "smooth", block: "start" });
     }, 0);
   }, []);
 
@@ -572,6 +599,80 @@ export function FundDiscoveryPanel({
     },
     [historyReports, report?.id, selectHistoryReport],
   );
+
+  // 打开页面就展示最近一份报告，与日报页一致。历史实现让 report 停在 null，用户每次
+  // 都得先打开「历史推荐」抽屉点一下才看得到上次结果。
+  // 只在本账号第一次拿到历史列表时做，之后用户手动选/删除/新扫描都不再干预。
+  useEffect(() => {
+    if (userId == null || autoLoadedLatestForUserRef.current === userId) return;
+    if (!historyReports.length) return;
+    // 正在扫描、或已有正文（含刚扫完待应用的那份）时不要抢。
+    if (report || pendingDiscoveryReport || streamingDiscovery) {
+      autoLoadedLatestForUserRef.current = userId;
+      return;
+    }
+    autoLoadedLatestForUserRef.current = userId;
+    selectHistoryReport(historyReports[0], { revealReport: false });
+  }, [historyReports, pendingDiscoveryReport, report, selectHistoryReport, streamingDiscovery, userId]);
+
+  // 每收到一个流事件就刷新"最近有动静"的时间戳（streamingDiscovery 每次事件都是新对象）。
+  useEffect(() => {
+    if (streamingDiscovery) {
+      lastStreamActivityRef.current = streamTimestamp();
+    }
+  }, [streamingDiscovery]);
+
+  const scanStartedAt = streamingDiscovery?.startedAt ?? null;
+
+  const recoverStuckScan = useCallback(async () => {
+    if (!streamLooksDead(lastStreamActivityRef.current, streamTimestamp())) return;
+    let reports: FundDiscoveryReport[];
+    try {
+      reports = await listDiscoveryReports();
+    } catch {
+      // 网络仍然不通，下一次可见时再试。
+      return;
+    }
+    const recovered = detectCompletedScan({
+      reports: sortReportsByCreatedAtDesc(reports),
+      knownLatestId: latestKnownReportIdRef.current,
+    });
+    if (!recovered) return;
+
+    // 后台其实已经跑完了：断掉那条死掉的流，接管结果。
+    discoveryStreamAbortRef.current?.abort();
+    discoveryStreamAbortRef.current = null;
+    onStreamingDiscoveryChange(null);
+    onDiscoveryJobIdChange(null);
+    setIsSubmitting(false);
+    latestKnownReportIdRef.current = recovered.id;
+    void refreshReports();
+    setFeedback({
+      tone: "info",
+      message: "扫描已在后台完成（页面切到后台时流式连接被系统挂起），已载入最新结果。",
+    });
+    selectHistoryReport(recovered);
+  }, [
+    discoveryStreamAbortRef,
+    onDiscoveryJobIdChange,
+    onStreamingDiscoveryChange,
+    refreshReports,
+    selectHistoryReport,
+  ]);
+
+  // 手机浏览器切走后会挂起 fetch 的 reader，`streamDiscovery` 那个 promise 可能永远不
+  // settle，于是 `finally` 不执行、`isSubmitting` 与 `streamingDiscovery` 永远留着，
+  // 页面就死在「扫描进行中…」。而流式路径从不登记 discoveryJobId，没有任何轮询兜底。
+  // 这里在页面重新可见时补一次核对：流已静默且后台确实产出了新报告，就直接接管。
+  useEffect(() => {
+    if (scanStartedAt === null || userId == null) return;
+    return startVisibilityAwarePolling({
+      intervalMs: DISCOVERY_RECOVERY_POLL_MS,
+      onTick: () => {
+        void recoverStuckScan();
+      },
+    });
+  }, [recoverStuckScan, scanStartedAt, userId]);
 
   return (
     <div className="discovery-workspace mx-auto grid min-w-0 max-w-6xl gap-6">
@@ -803,20 +904,34 @@ export function FundDiscoveryPanel({
             </label>
           </div>
 
-          <button
-            type="button"
-            data-testid="discovery-scan-button"
-            disabled={isRunning}
-            onClick={() => void handleScan()}
-            className="btn-primary mt-4 min-h-11 w-full !rounded-xl sm:w-auto"
-          >
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              data-testid="discovery-scan-button"
+              disabled={isRunning}
+              onClick={() => void handleScan()}
+              className="btn-primary min-h-11 w-full !rounded-xl sm:w-auto"
+            >
+              {isRunning ? (
+                <Loader2 size={16} className="animate-spin" />
+              ) : (
+                <Sparkles size={16} />
+              )}
+              {isRunning ? "扫描进行中…" : report ? "按当前条件重新扫描" : "扫描今日机会"}
+            </button>
+            {/* 扫描中必须永远留一个出口。手机切走再回来时流式连接可能已被系统挂起，
+                此时主按钮是禁用态，若这里没有「停止」，页面就彻底卡死在扫描进行中。 */}
             {isRunning ? (
-              <Loader2 size={16} className="animate-spin" />
-            ) : (
-              <Sparkles size={16} />
-            )}
-            {isRunning ? "扫描进行中…" : report ? "按当前条件重新扫描" : "扫描今日机会"}
-          </button>
+              <button
+                type="button"
+                data-testid="discovery-stop-button"
+                onClick={handleCancelStream}
+                className="btn-ghost min-h-11 w-full !rounded-xl border border-[var(--line)] sm:w-auto"
+              >
+                停止扫描
+              </button>
+            ) : null}
+          </div>
           </div>
           )}
         </section>
