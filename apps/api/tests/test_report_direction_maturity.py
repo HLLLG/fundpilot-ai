@@ -265,10 +265,13 @@ def test_context_threads_mainline_into_held_rows_and_reports_meta() -> None:
         mainline_meta={"available": True, "source": "discovery_frozen_snapshot"},
     )
 
-    assert context["mainline"] == {
-        "available": True,
-        "source": "discovery_frozen_snapshot",
-    }
+    # 传入的 meta 必须原样透出，同时补上跨日滞回的来源披露（日报只读那张状态账本，
+    # 所以 `hysteresis_applied` 是否为真取决于能否读到上一交易日的记录）。
+    mainline_meta = context["mainline"]
+    assert mainline_meta["available"] is True
+    assert mainline_meta["source"] == "discovery_frozen_snapshot"
+    assert mainline_meta["hysteresis"]["read_only"] is True
+    assert mainline_meta["hysteresis_applied"] == mainline_meta["hysteresis"]["applied"]
     held = context["held"]["半导体"]
     assert "entry_state" in held
     assert held["mainline_regime"]["status"] == "leading"

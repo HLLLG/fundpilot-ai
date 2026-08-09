@@ -31,8 +31,19 @@ from app.services.decision_guard_shared import (
     resolve_escalation_floor,
     track_label as _track_label,
 )
+from app.services.daily_action_proposal import (
+    DAILY_ACTION_PROPOSAL_SCHEMA_VERSION,
+    DailyActionProposal,
+    propose_daily_action,
+)
 from app.services.market_signal import has_today_market_signal
 from app.services.investment_presets import is_short_term_style
+from app.services.sector_labels import normalize_sector_label
+from app.services.sector_opportunity_scoring import (
+    ENTRY_POLICY_VERSION_V3,
+    V3_BLOCK_WEIGHTS,
+    V3_GATE_THRESHOLDS,
+)
 from app.services.signal_guard_policy import resolve_signal_guard_policy
 from app.services.recommendations import build_offline_fund_recommendation
 from app.services.risk import holding_weight_percent, resolve_weight_denominator
@@ -121,6 +132,7 @@ def apply_recommendation_guards(
 
     guarded: list[FundRecommendation] = []
     evidence_blocked_codes: dict[str, list[str]] = {}
+    proposal_audit: list[dict] = []
     for rec in fund_recs:
         original_action = rec.action
         rec = _strip_untrusted_execution_text(rec)
@@ -129,14 +141,56 @@ def apply_recommendation_guards(
         if holding is not None:
             offline = offline_map.get(holding.fund_code) or offline_map.get(holding.fund_name)
 
-        normalized = normalize_action_text(rec.action)
+        llm_action = normalize_action_text(rec.action)
         facts_row = _facts_row_for_holding(facts, holding) if holding is not None else None
 
+        # --- 确定性动作提议的输入：全部与"当前动作是什么"无关，因此可以先算 --------
+        #
+        # 这些门禁结果既喂给 `propose_daily_action()`，也被下面的 clamp 链原样复用，
+        # 所以提议与否决用的是**同一批判定**，不存在两处各算一份的漂移。
+        sector_opportunity = (facts_row or {}).get("sector_opportunity")
+        evidence = (facts_row or {}).get("evidence")
+        vehicle_quality = (facts_row or {}).get("vehicle_quality")
+        sector_absence_reason = _sector_direction_absence_reason(
+            sector_opportunity,
+            holding,
+        )
+        nav_trend = None
+        if holding is not None and nav_trends_by_code:
+            nav_trend = nav_trends_by_code.get(holding.fund_code)
+        reversal_blocked = holding is not None and _reversal_signal_block(
+            holding,
+            nav_trend,
+            enforce_reversal=bool(guard_policy.get("enforce_reversal_block", True)),
+            enforce_pullback=bool(guard_policy.get("enforce_pullback_block", True)),
+        )
+        max_bucket = _max_allowed_bucket(
+            risk,
+            holding,
+            request,
+            tactical=tactical,
+            aggressive=aggressive,
+            portfolio_drawdown_capped=drawdown_cap_reason is not None,
+        )
+        escalation = resolve_escalation_floor(
+            sector_opportunity=sector_opportunity,
+            evidence=evidence,
+            market_breadth=(facts or {}).get("market_breadth"),
+            over_concentration=bool((facts_row or {}).get("over_concentration")),
+            has_unrealized_gain=((facts_row or {}).get("estimated_holding_return_percent") or 0) > 0,
+            decision_style=decision_style,
+        )
+        today_news_required_missing = bool(
+            not short_term and settings.news_require_today_for_add and not today_signal
+        )
+
+        # `decision_evidence_allows_action` 只关心方向（add/reduce/none）。用 LLM 草案的
+        # 方向做这次探测：提议还没生成，而数据门禁本身不区分"谁提出的动作"。
         evidence_allowed, evidence_reasons = decision_evidence_allows_action(
             facts,
             scope="analysis",
             fund_code=(holding.fund_code if holding is not None else rec.fund_code),
-            direction=_execution_direction(normalized),
+            direction=_execution_direction(llm_action),
             allow_incomplete_position_for_direction=True,
         )
         execution_reasons = list(
@@ -148,22 +202,43 @@ def apply_recommendation_guards(
                 execution_reasons or ["decision_evidence_not_ready"]
             )
 
+        proposal = propose_daily_action(
+            risk_level=risk.level,
+            risk_suggested_action=risk.suggested_action,
+            escalation_min_bucket=escalation.get("min_bucket"),
+            max_allowed_bucket=max_bucket,
+            entry_state=str((sector_opportunity or {}).get("entry_state") or "") or None,
+            entry_state_block_reason=_entry_state_add_block_reason(sector_opportunity),
+            sector_absence_reason=sector_absence_reason,
+            opportunity_available=(sector_opportunity or {}).get("opportunity_available"),
+            weak_evidence_reasons=_weak_evidence_reasons(
+                sector_opportunity,
+                evidence,
+                ic_status,
+                sector_absence_reason=sector_absence_reason,
+            ),
+            reversal_blocked=reversal_blocked,
+            today_news_required_missing=today_news_required_missing,
+            execution_blocked=execution_blocked,
+        )
+        proposal_enforced = settings.daily_action_proposal_mode == "enforced"
+        # 动作链的输入**始终**是 LLM 草案：既有的每一道 clamp 与它对应的解释文案都建立在
+        # "模型提了什么、被什么规则改掉了"之上，直接把提议塞进来当输入会同时砸掉两件事——
+        #
+        #   1. `>= ACTION_BUCKET_ADD` 的那些分支不再触发，用户看不到"为什么不能加仓"；
+        #   2. 模型提出的风险动作（如「减仓评估」）会被提议的中性基线**放松**成「观察」。
+        #
+        # 提议因此改为在链尾做一次**收口的提升**（见下方 `_promote_to_proposed_add`）：
+        # 只把被动动作抬到加仓，绝不覆盖任何风险动作，也绝不绕过任何门禁。
+        normalized = llm_action
+
         snapshot_note = None
         if execution_blocked and _action_bucket(normalized) >= ACTION_BUCKET_ADD:
             normalized = "观察"
             snapshot_note = "关键持仓或行情数据未达到时点可用条件，因此暂不提供加减仓操作。"
 
-        nav_trend = None
-        if holding is not None and nav_trends_by_code:
-            nav_trend = nav_trends_by_code.get(holding.fund_code)
-
         reversal_note = None
-        if holding is not None and _reversal_signal_block(
-            holding,
-            nav_trend,
-            enforce_reversal=bool(guard_policy.get("enforce_reversal_block", True)),
-            enforce_pullback=bool(guard_policy.get("enforce_pullback_block", True)),
-        ):
+        if reversal_blocked:
             if _action_bucket(normalized) >= 3 or _action_bucket(rec.action) >= 3:
                 if tactical:
                     normalized = "观察"
@@ -175,30 +250,27 @@ def apply_recommendation_guards(
                 normalized = "观察"
                 reversal_note = "历史涨后回吐命中率偏低，战术模式已自动收紧：回吐场景优先观察。"
 
-        if offline is not None and not short_term and not reversal_note:
+        if (
+            offline is not None
+            and not reversal_note
+            and _offline_action_is_a_risk_veto(offline.action)
+        ):
             normalized = conservative_action_text(normalized, offline.action)
 
-        max_bucket = _max_allowed_bucket(
-            risk,
-            holding,
-            request,
-            tactical=tactical,
-            aggressive=aggressive,
-            portfolio_drawdown_capped=drawdown_cap_reason is not None,
-        )
         drawdown_note = None
         if _action_bucket(normalized) > max_bucket:
             if drawdown_cap_reason is not None and _action_bucket(normalized) >= ACTION_BUCKET_ADD:
                 drawdown_note = drawdown_cap_reason
             normalized = _BUCKET_TO_LABEL[max_bucket]
 
-        sector_opportunity = (facts_row or {}).get("sector_opportunity")
-        evidence = (facts_row or {}).get("evidence")
-        vehicle_quality = (facts_row or {}).get("vehicle_quality")
-
         weak_note = None
         if not reversal_note and _action_bucket(normalized) >= ACTION_BUCKET_ADD:
-            weak_reasons = _weak_evidence_reasons(sector_opportunity, evidence, ic_status)
+            weak_reasons = _weak_evidence_reasons(
+                sector_opportunity,
+                evidence,
+                ic_status,
+                sector_absence_reason=sector_absence_reason,
+            )
             if weak_reasons:
                 normalized = "观察"
                 max_bucket = min(max_bucket, ACTION_BUCKET_WATCH)
@@ -220,14 +292,7 @@ def apply_recommendation_guards(
         # 这里作为最终的保守下限强制继续拉低（甚至拉到"减仓评估/大幅减仓评估/清仓评估"）。
         # 这是本次升级要修的核心缺陷——旧 guard 只会把"分批加仓"降到"观察"，
         # 不会在证据极强时进一步升级到减仓类动作。
-        escalation = resolve_escalation_floor(
-            sector_opportunity=sector_opportunity,
-            evidence=evidence,
-            market_breadth=(facts or {}).get("market_breadth"),
-            over_concentration=bool((facts_row or {}).get("over_concentration")),
-            has_unrealized_gain=((facts_row or {}).get("estimated_holding_return_percent") or 0) > 0,
-            decision_style=decision_style,
-        )
+        # `escalation` 已在循环开头算过（提议与 clamp 复用同一份判定），此处不重算。
         escalation_note = None
         shadow_note = None
         min_bucket = escalation.get("min_bucket")
@@ -265,6 +330,30 @@ def apply_recommendation_guards(
             )
             escalation_note = None
             shadow_note = None
+
+        # 确定性提议的唯一生效点：把"系统规则支持加仓、但结论仍停在被动动作"的情况抬起来。
+        # 放在这里是因为上面所有 clamp 都已跑完（该拦的都拦了、该解释的都解释了），而下面
+        # 的动作词表、仓位比例与交易门禁还没跑——提升后仍要过它们。
+        proposal_note = None
+        promoted = _promote_to_proposed_add(
+            normalized,
+            proposal=proposal,
+            offline_action=offline.action if offline is not None else None,
+        )
+        if promoted is not None:
+            if proposal_enforced:
+                normalized = promoted
+                proposal_note = (
+                    f"系统按确定性规则（方向已就绪、量化证据与风险门禁均通过）提议"
+                    f"「{promoted}」，模型草案为「{llm_action}」，最终以系统提议为准。"
+                )
+            else:
+                # 标记刻意与 M2.1 escalation 的「灰度提示」区分开：两套灰度机制可能同时
+                # 在灰度期，共用一个标记会让用户（和聚合复盘）分不清是哪一层在提示。
+                proposal_note = (
+                    f"【动作提议灰度中，未生效】系统确定性规则本轮提议「{promoted}」，"
+                    f"当前采用模型草案「{llm_action}」。"
+                )
 
         allowed_actions = {
             str(value).strip()
@@ -357,12 +446,16 @@ def apply_recommendation_guards(
             and normalized != rec.action.strip()
         ):
             note = "无当日可引用要闻，已限制激进加仓类动作（更贴盘面、防幻觉）。"
-        elif not note and offline is not None and not short_term and normalized != rec.action.strip():
+        elif not note and proposal_enforced and proposal_note is not None:
+            # enforced 模式下"系统提议与模型草案不一致"本身就是最该让用户看到的一句。
+            note = proposal_note
+        elif (
+            not note
+            and offline is not None
+            and _offline_action_is_a_risk_veto(offline.action)
+            and normalized != rec.action.strip()
+        ):
             note = f"已按风控规则将「{rec.action.strip()}」调整为「{normalized}」（对照本地规则：{offline.action}）。"
-        elif not note and tactical and normalized != rec.action.strip():
-            note = f"战术模式下保留模型动作「{normalized}」（未与离线规则取更保守值）。"
-        elif not note and aggressive and normalized != rec.action.strip():
-            note = f"激进波段模式保留模型动作「{normalized}」（对照离线规则：{offline.action if offline else '—'}）。"
         elif not note and normalized != rec.action.strip():
             note = f"已规范动作表述为「{normalized}」。"
 
@@ -423,6 +516,10 @@ def apply_recommendation_guards(
             # M6：灰度提示须始终可见（不受 `_backfill_decision_fields` 只在为空时才
             # 回填的规则影响），追加到 validation_notes 末尾，与其它校验备注共存。
             copy.validation_notes = [*copy.validation_notes, shadow_note]
+        if proposal_note is not None and note is not proposal_note:
+            # 提议与模型草案的分歧必须留痕：shadow 期靠它复盘"该不该切 enforced"，
+            # enforced 期靠它说明"为什么最终动作和模型写的不一样"。
+            copy.validation_notes = [*copy.validation_notes, proposal_note]
         _sync_decision_path_with_final_action(copy)
         if execution_blocked:
             copy.points = safe_blocked_points(
@@ -445,6 +542,14 @@ def apply_recommendation_guards(
             holding=holding,
         )
         _humanize_recommendation_text(copy)
+        proposal_audit.append(
+            {
+                **proposal.to_dict(),
+                "fund_code": copy.fund_code,
+                "llm_action": llm_action,
+                "final_action": copy.action,
+            }
+        )
         guarded.append(copy)
 
     portfolio = _guard_portfolio_lines(portfolio_lines, risk)
@@ -482,6 +587,15 @@ def apply_recommendation_guards(
             "execution_blocked": bool(evidence_blocked_codes),
             "blocked_fund_codes": sorted(evidence_blocked_codes),
             "reasons_by_fund": evidence_blocked_codes,
+        }
+        # 灰度期要靠这份切片回答"切 enforced 会改变多少条结论、都是往哪个方向改"。
+        facts["daily_action_proposal"] = {
+            "schema_version": DAILY_ACTION_PROPOSAL_SCHEMA_VERSION,
+            "mode": settings.daily_action_proposal_mode,
+            "divergence_count": sum(
+                1 for row in proposal_audit if row["action"] != row["llm_action"]
+            ),
+            "by_fund": proposal_audit,
         }
     return portfolio, guarded
 
@@ -522,12 +636,118 @@ def _execution_direction(action: str) -> str:
     return "none"
 
 
+#: 四个加仓档位的**比例值**（相对当前估算持仓）。这四个数字是既有产品策略，本次不动——
+#: 动的是"用哪个分数、按哪些阈值落到这四档"。保持档位离散也让
+#: `_tier_percent_one_step_down`（基金证据/载体质量各降一级）语义不变。
+_ADD_TIER_PERCENTS: tuple[float, ...] = (20.0, 15.0, 10.0, 5.0)
+
+# 旧口径：阈值 85/70/50 手写，且作用在 `research_score` 上。两个问题：
+#
+# 1. **阈值没有回测依据**。仓库里唯一做过阈值标定的是荐基的方向门槛
+#    （`V3_GATE_THRESHOLDS`，`sector_direction_backtest` 网格实测），加仓分档没有。
+# 2. **分数本身奖励追涨**。没有主线快照时 `research_score == legacy_score`，那是一个
+#    不封顶的动量加权和（`max(change_1d,0)*5 + max(change_5d,0)*4 + 资金 + 热度*0.15`），
+#    只在读取时才被 clamp 到 100。一个当日 +4%、五日 +10% 的板块轻松越过 85 拿满档，
+#    而荐基 V3 恰恰因为实测 Rank IC 为 -0.011/-0.053 把整个价格结构块**删掉**了。
+#
+# 因此这份阶梯降级为**兜底**：只在拿不到 V3 方向成熟度层时使用（此时确实只有旧机会分
+# 可用）。主路径见 `_V3_ADD_TIER_THRESHOLDS`。
 _ADD_POSITION_PERCENT_TIERS = (
-    (85.0, 20.0, "强机会档"),
-    (70.0, 15.0, "较强机会档"),
-    (50.0, 10.0, "中等机会档"),
-    (float("-inf"), 5.0, "小机会试探档"),
+    (85.0, _ADD_TIER_PERCENTS[0], "强机会档"),
+    (70.0, _ADD_TIER_PERCENTS[1], "较强机会档"),
+    (50.0, _ADD_TIER_PERCENTS[2], "中等机会档"),
+    (float("-inf"), _ADD_TIER_PERCENTS[3], "小机会试探档"),
 )
+
+
+def _v3_gate_direction_score() -> float:
+    """三块**恰好卡在标定入场线**时的合成分（= 可加仓的下边界）。
+
+    `direction_score` 的合成方式与 `V3_BLOCK_WEIGHTS` 完全一致，所以把
+    `V3_GATE_THRESHOLDS` 代进同一组权重，得到的就是"刚好够格"对应的分数。当前取值
+    0.70*60 + 0.15*35 + 0.15*25 = 51.0。
+
+    两组常量都带实测出处：权重按 T+5 实测 Rank IC 比例（0.338 : 0.064 : 0.066）取整，
+    门槛经 `scan_entry_gate_thresholds` 在 v3 分数上网格选取。这里不引入任何新数字。
+    """
+    return (
+        V3_GATE_THRESHOLDS["trend"] * V3_BLOCK_WEIGHTS["trend_strength"]
+        + V3_GATE_THRESHOLDS["participation"] * V3_BLOCK_WEIGHTS["participation"]
+        + V3_GATE_THRESHOLDS["position"] * V3_BLOCK_WEIGHTS["position_risk"]
+    )
+
+
+#: 满档对应的合成分：三块都到 85 分。因为 `V3_BLOCK_WEIGHTS` 权重和为 1，三块同值时
+#: 合成分等于该值，所以这个上锚点就是 85.0——它是"强但可达"的水平，而不是理论上限 100
+#: （三块同时满分现实中不出现，拿 100 当上锚会让满档永远取不到）。
+_V3_ADD_TIER_TOP_SCORE = 85.0
+
+
+def _v3_add_tier_thresholds() -> tuple[float, ...]:
+    """把 (标定入场线 → 满档锚点) 这段区间**均分**成四档的下界。
+
+    刻意用等分而不是再写三个阈值：等分是"在标定合成分上均匀"，不引入新的主观数字。
+    当前取值约 (76.5, 68.0, 59.5, -inf)——注意这些数字作用在 `direction_score` 上，
+    量纲与旧的 85/70/50（作用在不封顶的动量和上）完全不同，不可互相套用。
+    """
+    gate = _v3_gate_direction_score()
+    span = _V3_ADD_TIER_TOP_SCORE - gate
+    rungs = len(_ADD_TIER_PERCENTS)
+    # 区间 [gate, top] 均分成 `rungs` 段，第 i 档（从高到低）的下界是上面第 rungs-1-i 个
+    # 分割点；最低档兜底，没有下界。
+    return tuple(
+        gate + span * (rungs - 1 - index) / rungs for index in range(rungs - 1)
+    ) + (float("-inf"),)
+
+
+#: 四档的展示名，与 `_ADD_TIER_PERCENTS` 一一对应（复用旧阶梯的用词，避免用户面前换词）。
+_ADD_TIER_LABELS: tuple[str, ...] = tuple(
+    label for _threshold, _percent, label in _ADD_POSITION_PERCENT_TIERS
+)
+
+
+def _resolve_sector_add_tier(sector_opportunity: dict | None) -> tuple[float, str]:
+    """板块层决定的加仓档位，返回 `(比例, 依据文案)`。
+
+    优先用荐基已标定的方向合成分（`direction_score`，按实测 Rank IC 定权的三块合成），
+    阈值也从标定入场线派生。拿不到 V3 层时才退回旧机会分阶梯——那条路上确实只有旧分数
+    可用，但它的阈值与量纲都没有回测支撑，所以只作兜底并在文案里说清楚。
+    """
+    direction_score = _v3_direction_score(sector_opportunity)
+    if direction_score is not None:
+        for threshold, percent, label in zip(
+            _v3_add_tier_thresholds(),
+            _ADD_TIER_PERCENTS,
+            _ADD_TIER_LABELS,
+        ):
+            if direction_score >= threshold:
+                return percent, (
+                    f"方向合成分 {direction_score:g}（趋势/资金参与度/价格位置按实测 "
+                    f"IC 定权），对应{label} {percent:g}%"
+                )
+    opportunity_score = _opportunity_score(sector_opportunity)
+    percent, label = _add_position_percent_for_score(opportunity_score)
+    if opportunity_score is None:
+        return percent, f"板块机会分暂缺，采用{label} {percent:g}%"
+    return percent, (
+        f"板块机会分 {opportunity_score:g}，对应{label} {percent:g}%（旧口径兜底）"
+    )
+
+
+def _v3_direction_score(sector_opportunity: dict | None) -> float | None:
+    """仅当该行真的带 V3 方向成熟度层时返回标定合成分，否则 None。
+
+    判据是 `score_policy_version`，不是"有没有 direction_score 这个键"——旧口径行也可能
+    因为其它原因带上同名键，用版本号判断才不会把两套量纲混起来。
+    """
+    if not isinstance(sector_opportunity, dict):
+        return None
+    if str(sector_opportunity.get("score_policy_version") or "") != ENTRY_POLICY_VERSION_V3:
+        return None
+    value = _num(sector_opportunity.get("direction_score"))
+    if value is None:
+        return None
+    return round(min(max(value, 0.0), 100.0), 2)
 
 # 只有基金自身拿到「高」正向量化支持时，才允许用满板块机会分对应的档位；否则沿同一
 # 档位阶梯下调一级。
@@ -594,6 +814,34 @@ _ENTRY_STATES_BLOCKING_ADD = {
     "invalid": "板块趋势或资金未通过入场线",
     "ready_on_pullback": "板块方向成立但当前位置不宜追高",
 }
+
+
+def _direction_continuity_evidence(sector_opportunity: dict | None) -> str | None:
+    """把跨日滞回的连续达标天数写成人话，供 `sector_evidence` 展示。
+
+    这是「今天刚满足」和「至少连续 3 天满足」的唯一区分点。日报此前完全拿不到它——
+    方向状态账本只被荐基读写，日报每天看到的都是当日原始档位，同一板块的方向结论会
+    随阈值边界上的一两分之差来回翻。
+
+    两条披露纪律：
+
+    * **天数是下界**。账本由荐基写入，荐基没跑的那天没有记录，streak 会从 1 重新起算
+      （见 `report_sector_opportunity._HYSTERESIS_READ_ONLY_NOTE`），所以措辞用「至少」。
+    * **滞回带内要说清楚**。`entry_state` 与 `raw_entry_state` 不一致时，是"此前已确认、
+      今日未跌破退出线"，不是"今日重新确认"。混为一谈会让用户以为方向今天又被验证了一次。
+    """
+    if not isinstance(sector_opportunity, dict):
+        return None
+    days = _num(sector_opportunity.get("consecutive_qualifying_days"))
+    entry_state = str(sector_opportunity.get("entry_state") or "")
+    raw_state = str(sector_opportunity.get("raw_entry_state") or "")
+    if raw_state and entry_state and raw_state != entry_state:
+        if entry_state == _ENTRY_STATE_READY:
+            return "方向此前已确认，今日未跌破退出线（滞回带内保留，非今日重新确认）"
+        return None
+    if days is None or days < 2:
+        return None
+    return f"方向已至少连续 {int(days)} 个交易日通过入场线"
 
 
 def _entry_state_add_block_reason(sector_opportunity: dict | None) -> str | None:
@@ -724,10 +972,7 @@ def _resolve_deterministic_position_change(
             None,
         )
 
-    opportunity_score = _opportunity_score(sector_opportunity)
-    sector_percent, opportunity_tier = _add_position_percent_for_score(
-        opportunity_score
-    )
+    sector_percent, sector_tier_basis = _resolve_sector_add_tier(sector_opportunity)
     # 板块决定机会档位，基金自身证据与被动载体质量各自只能把它往下调一级，不能提额。
     base_percent, evidence_basis = _fund_evidence_add_percent(sector_percent, evidence)
     base_percent, vehicle_basis = _vehicle_quality_add_percent(
@@ -774,16 +1019,7 @@ def _resolve_deterministic_position_change(
             "当前持仓已接近或达到单只集中度上限，本次不再增加仓位。",
         )
 
-    if opportunity_score is None:
-        basis = (
-            f"相对当前估算持仓计算；板块机会分暂缺，采用{opportunity_tier} "
-            f"{sector_percent:g}%"
-        )
-    else:
-        basis = (
-            f"相对当前估算持仓计算；板块机会分 {opportunity_score:g}，"
-            f"对应{opportunity_tier} {sector_percent:g}%"
-        )
+    basis = f"相对当前估算持仓计算；{sector_tier_basis}"
     if evidence_basis:
         basis += f"；{evidence_basis}"
     if vehicle_basis:
@@ -1049,6 +1285,65 @@ def _enforce_final_execution_projection(
     )
 
 
+#: 允许被确定性提议抬到「分批加仓」的起点动作。只有这两档是"没有风险结论、只是没有下文"
+#: 的被动状态；风险动作（减仓/清仓/风控复核）与已经是加仓的情况都不在其中。
+_PROMOTABLE_BUCKETS = frozenset({ACTION_BUCKET_WATCH, ACTION_BUCKET_PAUSE})
+
+
+def _promote_to_proposed_add(
+    current_action: str,
+    *,
+    proposal: DailyActionProposal,
+    offline_action: str | None,
+) -> str | None:
+    """确定性提议支持加仓、而当前结论仍停在被动动作时，返回应提升到的动作，否则 None。
+
+    这是整套提议机制**唯一**会让结论变得更积极的地方，因此条件收得很紧：
+
+    * `proposal.supports_add` 为真意味着方向成熟度、机会成立性、量化证据、风险升级下限、
+      风险上限、回吐信号、当日要闻九道门禁**全部**通过（见 `propose_daily_action`），
+      所以这里不是绕过门禁，而是补上"门都开着却没人推门"的那一步。
+    * **绝不覆盖风险动作**。当前动作只要是减仓/大幅减仓/清仓/风控复核，一律不动——
+      系统可以比模型更果断地买，但不能比模型或规则更轻率地放松风险结论。
+    * **尊重离线规则的风险否决**。离线引擎给出的非默认动作是它真的触发了条件，比加仓更
+      保守时不得提升。
+    * 提升后仍要过动作词表、仓位比例与交易门禁（调用点在它们之前）。
+    """
+    if not proposal.supports_add:
+        return None
+    if _action_bucket(current_action) not in _PROMOTABLE_BUCKETS:
+        return None
+    if (
+        offline_action is not None
+        and _offline_action_is_a_risk_veto(offline_action)
+        and _action_bucket(normalize_action_text(offline_action)) < ACTION_BUCKET_ADD
+    ):
+        return None
+    return _BUCKET_TO_LABEL[ACTION_BUCKET_ADD]
+
+
+def _offline_action_is_a_risk_veto(offline_action: str) -> bool:
+    """离线规则引擎这次是否真的**触发**了一条风险意见。
+
+    三个离线构建器（保守 / 战术 / 激进）结构相同：`action` 初值都是「观察」，只有命中
+    集中度超限、涨后回吐、追高、深亏等具体条件时才改写成别的动作。所以「观察」是它的
+    **无意见默认值**，不是一个结论。
+
+    此前这里的判定是 `not short_term`，导致两个方向都不对：
+
+    * 短线/激进风格**完全跳过**这道对照。可它们各有专门的离线构建器（会输出「减仓评估」
+      等真实风险意见），算了却整份丢掉，只在 points 里留一句"未与离线规则取更保守值"。
+    * 稳健风格反过来被无意见的「观察」**硬封顶**。`conservative_action_text` 取 min，
+      而「观察」的 bucket 低于「分批加仓」，于是只要离线没触发任何条件，加仓就被一个
+      "我没意见"的默认值否掉——这正是日报比荐基迟钝的原因之一。
+
+    现在改成：只要离线**给出了非默认动作**，就对所有风格生效（风险否决权）；离线停在
+    「观察」时不参与封顶（把判断交给方向层、证据层与风险层这些真正看得见证据的门禁）。
+    """
+    action = normalize_action_text(offline_action)
+    return _action_bucket(action) != ACTION_BUCKET_WATCH
+
+
 def conservative_action_text(llm_action: str, offline_action: str) -> str:
     llm_bucket = _action_bucket(normalize_action_text(llm_action))
     offline_bucket = _action_bucket(normalize_action_text(offline_action))
@@ -1297,13 +1592,54 @@ def _evidence_composite_summary(evidence: dict | None, ic_status: dict | None) -
     return f"{component_count}路已参与量化证据综合置信：{level}"
 
 
+# 方向证据**整层**缺席时的降级原因。区分两种缺席是为了让用户和运维能分辨"这只持仓压根
+# 没有板块"与"今天板块证据没取到"——前者要去补板块映射，后者等下一份日报就好。
+_SECTOR_DIRECTION_ABSENT_NO_SECTOR = "该持仓未识别到所属板块，无法做方向判断"
+_SECTOR_DIRECTION_ABSENT_UNAVAILABLE = "本轮板块方向证据未取到"
+
+
+def _sector_direction_absence_reason(
+    sector_opportunity: dict | None,
+    holding: Holding | None,
+) -> str | None:
+    """方向证据整层缺席时返回降级原因，否则 None。
+
+    这里补的是一个真实缺口：`analysis_facts` 的板块方向增强超时后 fallback 是
+    `held={}`，于是每个持仓行的 `sector_opportunity` 都是 `None`，而
+    `_weak_evidence_reasons` 里那一整块判定（机会不成立 / 置信偏低 / 资金流偏弱）都在
+    `if sector_opportunity:` 里面——**整层证据消失反而什么都不拦**，只要基金侧量化证据
+    凑合，加仓就能原样通过。
+
+    与 `_entry_state_add_block_reason`「快照缺席不拦」的取舍不冲突，两者不是一回事：
+    那里缺的是成熟度**子层**（旧版机会分仍在，方向问题仍能回答）；这里缺的是方向证据
+    **整层**，prompt 与 guard 反复要求的"先看板块方向 → 再看基金证据 → 给动作"第一步
+    直接无法执行。没有方向就不给加仓，是这套决策顺序的必然推论。
+
+    只拦加仓：`_weak_evidence_reasons` 本身只在 `bucket >= ACTION_BUCKET_ADD` 时被调用，
+    减仓与风控复核不受影响（风险动作不该因为少了一层证据就被放松）。
+    """
+    if isinstance(sector_opportunity, dict) and sector_opportunity:
+        return None
+    if holding is None or not normalize_sector_label(holding.sector_name):
+        return _SECTOR_DIRECTION_ABSENT_NO_SECTOR
+    return _SECTOR_DIRECTION_ABSENT_UNAVAILABLE
+
+
 def _weak_evidence_reasons(
     sector_opportunity: dict | None,
     evidence: dict | None,
     ic_status: dict | None = None,
+    *,
+    sector_absence_reason: str | None = None,
 ) -> list[str]:
-    """加仓类动作要求「板块方向」与「基金自身证据」至少有一路站得住，否则视为证据不足。"""
+    """加仓类动作要求「板块方向」与「基金自身证据」至少有一路站得住，否则视为证据不足。
+
+    `sector_absence_reason` 由调用方通过 `_sector_direction_absence_reason` 计算后传入
+    （它需要 `holding` 才能区分缺席原因，而本函数刻意只吃证据、不吃持仓）。
+    """
     reasons: list[str] = []
+    if sector_absence_reason:
+        reasons.append(sector_absence_reason)
     if sector_opportunity:
         if sector_opportunity.get("opportunity_available") is False:
             reasons.append("持仓板块当前不构成机会")
@@ -1405,6 +1741,9 @@ def _build_sector_evidence(sector_opportunity: dict | None) -> list[str]:
     pattern = sector_opportunity.get("pattern_label")
     if pattern:
         evidence.append(f"资金/价格信号：{_pattern_label(str(pattern))}")
+    continuity = _direction_continuity_evidence(sector_opportunity)
+    if continuity:
+        evidence.append(continuity)
     if sector_opportunity.get("opportunity_available") is False:
         evidence.append("当前不构成加仓机会，仅供方向参考")
     evidence.extend(

@@ -314,6 +314,20 @@ class Settings(BaseSettings):
     # shadow 保留为回滚开关：升级判定照算并落 escalation_hints，但不改动作、不扩动作
     # 词表、不发二次审校。回滚只需设 FUND_AI_DECISION_ESCALATION_MODE=shadow。
     decision_escalation_mode: Literal["shadow", "enforced"] = "enforced"
+    # 日报确定性动作提议（`daily_action_proposal.propose_daily_action`）。
+    #
+    # 这条开关决定"谁是决策来源"：
+    #   enforced（默认）—— 提议生效。九道门禁全过、而结论仍停在"观察/暂停追涨"这类被动
+    #                     动作时，系统把它抬到"分批加仓"（比例仍由服务端标定档位算）。
+    #                     它只让被动结论变积极：绝不覆盖任何风险动作（减仓/大幅减仓/清仓/
+    #                     风控复核），也绝不绕过动作词表、仓位比例与交易门禁——提升点刻意
+    #                     排在这三者之前，既有 clamp 链继续行使否决权。
+    #   shadow          —— 回滚用。提议照算但只写进 validation_notes，最终 action 仍以
+    #                     LLM 草案为输入，与接入前行为完全一致。
+    #
+    # 分歧留痕：analysis_facts.daily_action_proposal（mode / divergence_count / by_fund）。
+    # 回滚：FUND_AI_DAILY_ACTION_PROPOSAL_MODE=shadow
+    daily_action_proposal_mode: Literal["shadow", "enforced"] = "enforced"
 
     @field_validator("risk_free_rate", mode="before")
     @classmethod

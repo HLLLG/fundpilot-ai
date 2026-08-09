@@ -19,8 +19,30 @@ DECISION_EVENT_SCHEMA_VERSION = "decision_event.v2"
 OUTCOME_OBSERVATION_SCHEMA_VERSION = "outcome_observation.v2"
 POLICY_VERSION = "decision_policy.2026-07.v5"
 FEE_MODEL_VERSION = "fee_assumption.initial_principal_haircut.v1"
-ANALYSIS_PROMPT_VERSION = "analysis_prompt.2026-07.v4"
-DISCOVERY_PROMPT_VERSION = "discovery_prompt.2026-07.v4"
+# 报告**没有冻结 prompt 出处**时（A2 之前的历史报告，以及
+# `outcome_settlement._rebuild_report_from_frozen_events` 把 analysis_facts 清空后重建的
+# 报告）用的兜底标签。
+#
+# 这两个常量以前写的是当时的真实模板号（`analysis_prompt.2026-07.v4` /
+# `discovery_prompt.2026-07.v4`），于是长出两个毛病：
+#
+# 1. **看起来像漂移**。荐基模板早已走到 `discovery_prompt.2026-08.v14`，而这里还停在
+#    `2026-07.v4`，任何人读到都会以为是忘了同步，进而"修"成跟随实时模板——
+# 2. **而"修"成跟随是错的**。`_prompt_version()` 只在 `prompt_contract` 缺席时才回落到
+#    这里；一份根本没记录 prompt 出处的报告，被贴上今天的模板号是**伪造归因**，还会让两个
+#    真正不同的 variant 在 `variant_hash` 上撞成同一个。
+#
+# 正确的语义是"当时用的哪一版无从得知"。仓库里已有同一语义的哨兵——
+# `scripts/backfill_decision_events_v2.py` 回填历史决策事件时用的就是
+# `prompt_version="unknown_at_decision_time"`——这里与它对齐，既消掉假漂移，也不再有任何
+# 需要跟实时模板保持同步的东西。
+#
+# 因此：**不要**把它们改成 `ANALYSIS_PROMPT_TEMPLATE_VERSION` /
+# `DISCOVERY_PROMPT_TEMPLATE_VERSION`。带 provenance 的报告走的是 `prompt_contract`
+# 里的真实模板号，压根不会到这里。
+_UNKNOWN_PROMPT_VERSION = "unknown_at_decision_time"
+ANALYSIS_PROMPT_VERSION_FALLBACK = _UNKNOWN_PROMPT_VERSION
+DISCOVERY_PROMPT_VERSION_FALLBACK = _UNKNOWN_PROMPT_VERSION
 QUANT_EVIDENCE_SNAPSHOT_SCHEMA_VERSION = "quant_evidence.v2"
 DECISION_REPLAY_BUNDLE_SCHEMA_VERSION = "decision_replay_bundle.v1"
 DECISION_VARIANT_MANIFEST_SCHEMA_VERSION = "decision_variant_manifest.v1"
@@ -1123,10 +1145,11 @@ def _prompt_version(
         template_version = str(prompt_contract.get("template_version") or "").strip()
         if template_version:
             return template_version
+    # 没有冻结出处 → 如实标"无从得知"，不猜任何具体模板号。
     return (
-        ANALYSIS_PROMPT_VERSION
+        ANALYSIS_PROMPT_VERSION_FALLBACK
         if decision_kind == "daily"
-        else DISCOVERY_PROMPT_VERSION
+        else DISCOVERY_PROMPT_VERSION_FALLBACK
     )
 
 

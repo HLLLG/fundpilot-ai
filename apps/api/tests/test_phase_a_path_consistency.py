@@ -117,6 +117,7 @@ def daily_contract(
             sector_signal_backtest_days=0,
             news_require_today_for_add=False,
             decision_escalation_mode="shadow",
+            daily_action_proposal_mode="shadow",
         ),
     )
     monkeypatch.setattr(

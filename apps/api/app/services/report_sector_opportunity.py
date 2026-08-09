@@ -13,6 +13,7 @@ from __future__ import annotations
 """
 
 from concurrent.futures import ThreadPoolExecutor
+import time
 from typing import Any
 
 from app.models import Holding
@@ -21,7 +22,6 @@ from app.services.sector_opportunity_scoring import (
     build_sector_divergence_map_for_opportunities,
     build_sector_flow_map_for_opportunities,
     describe_sector_opportunity,
-    select_sector_opportunities,
 )
 
 SECTOR_FLOW_BUDGET_SECONDS = 4.0
@@ -29,9 +29,59 @@ SECTOR_DIVERGENCE_BUDGET_SECONDS = 4.0
 # 主线 regime 只对"用户持有的那几个板块"联网取日线序列，实测 4 个板块 2.22 s；
 # 分位分母走零网络缓存（78 个白名单板块 0.18 s），快照构建本身 0.012 s。
 SECTOR_POSITION_BUDGET_SECONDS = 8.0
-PERCENTILE_UNIVERSE_BUDGET_SECONDS = 4.0
+#: 分位分母走零网络缓存，实测 78 个白名单板块 0.18 s。原值 4.0 是 22 倍余量，而它直接
+#: 计入总预算上限，等于让最坏墙钟为一个纯内存步骤多留 4 s。收到 2.0（11 倍余量）以压低
+#: 总上限；真超了也只是分位分母退回持仓板块，不影响 regime 本身。
+PERCENTILE_UNIVERSE_BUDGET_SECONDS = 2.0
+#: 打分、去重与快照构建都是纯内存运算（实测 0.012 s）；留 1 s 覆盖线程调度与 GC 抖动。
+_SCORING_MARGIN_SECONDS = 1.0
+
+#: 本函数最坏情况下的总墙钟：资金流 / 背离 / 价格结构三段并发（取最大值），分位分母
+#: 与打分在其后串行。
+#:
+#: **这个常量是给调用方的契约**——`analysis_facts` 的外层预算直接取它，两边因此不可能
+#: 再漂移。历史缺陷是外层写死 5 s 而内层最坏 12 s+：网络稍慢就把已经跑到一半的方向证据
+#: 整体丢掉，`held` 退化成 `{}`，日报当天彻底没有板块方向层。而且 `future.cancel()` 对
+#: 已运行任务无效，被放弃的请求仍会跑完自己的预算，只是结果没人要——裁掉的是"等待"，
+#: 不是"开销"，纯亏。
+#:
+#: 快乐路径不受影响（实测全链路约 3.6 s，`_enhancement_result` 一就绪就返回）；抬高的
+#: 只是慢路径的上限，换来的是慢路径不再静默丢掉整层证据。
+SECTOR_OPPORTUNITY_TOTAL_BUDGET_SECONDS = (
+    max(
+        SECTOR_FLOW_BUDGET_SECONDS,
+        SECTOR_DIVERGENCE_BUDGET_SECONDS,
+        SECTOR_POSITION_BUDGET_SECONDS,
+    )
+    + PERCENTILE_UNIVERSE_BUDGET_SECONDS
+    + _SCORING_MARGIN_SECONDS
+)
 MARKET_TOP_LIMIT = 5
 MARKET_TOP_CANDIDATE_LIMIT = 8
+
+
+class _StageBudget:
+    """把「一个总预算」翻译成各阶段可用的剩余时间。
+
+    每个阶段保留自己的默认上限（慢阶段不该因为总预算宽裕就无限等），但没有任何阶段
+    能越过总 deadline。这样调用方只需要认 `SECTOR_OPPORTUNITY_TOTAL_BUDGET_SECONDS`
+    一个数字，而不必自己去加总内层的四个常量——后者正是此前漂移的原因。
+    """
+
+    __slots__ = ("_deadline",)
+
+    def __init__(self, total_seconds: float) -> None:
+        self._deadline = time.monotonic() + max(0.0, float(total_seconds))
+
+    def remaining(self) -> float:
+        return max(0.0, self._deadline - time.monotonic())
+
+    def stage(self, default_seconds: float) -> float:
+        """该阶段实际可用预算：默认上限与总剩余取小。"""
+        return min(max(0.0, float(default_seconds)), self.remaining())
+
+    def exhausted(self) -> bool:
+        return self.remaining() <= 0.0
 
 
 def _build_holding_mainline(
@@ -41,6 +91,7 @@ def _build_holding_mainline(
     position_by_label: dict[str, dict],
     held_labels: list[str],
     trade_date: str | None,
+    percentile_budget_seconds: float = PERCENTILE_UNIVERSE_BUDGET_SECONDS,
 ) -> tuple[dict[str, dict], dict[str, Any]]:
     """按荐基同一套两段分工，为持仓板块算一份主线快照。
 
@@ -71,14 +122,16 @@ def _build_holding_mainline(
         str(row.get("sector_label") or "").strip() for row in sector_heat
     )
     percentile_by_label: dict[str, dict] = {}
-    if whitelist:
+    # 预算已经耗尽时不再发起分位分母查询：它是"把分母从持仓板块扩到全白名单"的增强，
+    # 缺席只会让分位失真一点，而硬撑着调用会让整段被外层判超时、连 regime 一起丢掉。
+    if whitelist and percentile_budget_seconds > 0:
         try:
             percentile_by_label = build_sector_percentile_universe_positions(
                 whitelist,
                 exclude_labels=held_labels,
                 reference_positions=position_by_label,
                 as_of_trade_date=trade_date,
-                total_timeout_seconds=PERCENTILE_UNIVERSE_BUDGET_SECONDS,
+                total_timeout_seconds=percentile_budget_seconds,
             )
         except Exception:  # noqa: BLE001 - 分母扩不了就用较小分母，不阻塞日报
             percentile_by_label = {}
@@ -105,12 +158,10 @@ def _build_holding_mainline(
         "sector_count": snapshot.get("sector_count"),
         "available_count": snapshot.get("available_count"),
         "percentile_universe_size": snapshot.get("percentile_universe_size"),
-        # 滞回（`sector_direction_states`）刻意保持由荐基单方拥有：那张表没有 userId
-        # 维度、是全局按 (交易日, 板块) 的账本且同键幂等覆盖。日报只知道用户持有的几个
-        # 板块，参与写入就会用一份窄得多的输入覆盖荐基对同一板块算好的状态；只读昨天、
-        # 从不记录今天又会让"连续达标天数"随荐基是否运行而含义漂移。所以日报这一份是
-        # **当日原始档位**，不含连续达标天数平滑。
+        # 滞回结果由 `_apply_read_only_hysteresis` 在打分之后统一覆盖这两个键，
+        # 这里给出的是"还没套滞回"的初值。
         "hysteresis_applied": False,
+        "hysteresis": {"applied": False, "reason": "not_resolved_yet"},
     }
 
 
@@ -157,7 +208,94 @@ def resolve_holding_mainline_context(
         "sector_count": snapshot.get("sector_count"),
         "percentile_universe_size": snapshot.get("percentile_universe_size"),
         "hysteresis_applied": False,
+        "hysteresis": {"applied": False, "reason": "not_resolved_yet"},
     }
+
+
+#: 日报对方向状态账本是**只读**的。写入必须继续由荐基单方负责：那张表没有 userId 维度、
+#: 是全局按 (交易日, 板块) 幂等覆盖的账本，而日报只看得见用户持有的 3～5 个板块——参与
+#: 写入就会用一份窄得多的输入覆盖荐基对同一板块算好的状态。
+#:
+#: 但"不能写"不等于"不能读"。此前这里连读都不读，于是日报拿到的永远是当日原始档位：
+#: 同一个板块今天 ready_to_start、明天掉回 forming、后天又上来，而这种抖动大多来自阈值
+#: 边界上的一两分之差。荐基靠滞回把它压掉了，日报没有，两个界面对同一天同一板块因此给出
+#: 不同的方向结论——这正是日报决策显得"善变"的来源之一。
+#:
+#: `apply_direction_state_hysteresis` 是纯函数（只读 rows + previous_states，返回新列表），
+#: 所以只读接入是安全的。代价是「连续达标天数」的语义依赖荐基是否在过去若干交易日运行过：
+#: 荐基停跑的那天没有记录，streak 会从 1 重新起算。因此它是一个**下界**，必须按下界披露，
+#: 不能说成"该方向确实只连续满足了 N 天"。
+_HYSTERESIS_READ_ONLY_NOTE = (
+    "连续达标天数来自荐基的全局方向状态账本，日报只读不写；"
+    "账本缺失某个交易日时该天数会从 1 重新起算，因此它是下界。"
+)
+
+
+def _load_direction_state_history(
+    previous_trade_date: str | None,
+) -> tuple[dict[str, Any] | None, str]:
+    """只读上一交易日的方向状态。返回 `(states, reason)`，states 为 None 表示无历史。"""
+    if not previous_trade_date:
+        return None, "no_previous_trade_date"
+    try:
+        from app.services.sector_direction_state import load_previous_direction_states
+
+        states = load_previous_direction_states(previous_trade_date)
+    except Exception:  # noqa: BLE001 - 滞回是增强项，读不到就退回当日原始档位
+        return None, "direction_state_read_error"
+    if states is None:
+        return None, "no_direction_state_history"
+    return states, "loaded"
+
+
+def _apply_read_only_hysteresis(
+    rows: list[dict[str, Any]],
+    *,
+    trade_date: str | None,
+    previous_trade_date: str | None,
+    previous_states: dict[str, Any] | None,
+    history_reason: str,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """对已打分的行套上滞回（纯函数，绝不落库），并返回可披露的来源元数据。"""
+    from app.services.sector_direction_state import (
+        EXIT_TREND_THRESHOLD,
+        READY_CONFIRMATION_DAYS,
+        SECTOR_DIRECTION_STATE_SCHEMA_VERSION,
+        apply_direction_state_hysteresis,
+    )
+
+    meta: dict[str, Any] = {
+        "applied": False,
+        "read_only": True,
+        "schema_version": SECTOR_DIRECTION_STATE_SCHEMA_VERSION,
+        "history_source": "discovery_global_direction_state_ledger",
+        "history_trade_date": previous_trade_date,
+        "history_status": history_reason,
+        "ready_confirmation_days": READY_CONFIRMATION_DAYS,
+        "exit_trend_threshold": EXIT_TREND_THRESHOLD,
+        "consecutive_days_is_lower_bound": True,
+        "note": _HYSTERESIS_READ_ONLY_NOTE,
+    }
+    if not rows:
+        meta["reason"] = "no_scored_rows"
+        return rows, meta
+    try:
+        smoothed = apply_direction_state_hysteresis(
+            rows,
+            trade_date=trade_date,
+            previous_trade_date=previous_trade_date,
+            previous_states=previous_states,
+        )
+    except Exception:  # noqa: BLE001 - best-effort，绝不阻塞日报
+        meta["reason"] = "hysteresis_error"
+        return rows, meta
+    # `previous_states is None` 时 `apply_direction_state_hysteresis` 只做标注、不做平滑，
+    # 所以「已套上滞回」必须以真的读到历史为条件，否则 hysteresis_applied 会撒谎。
+    meta["applied"] = previous_states is not None
+    meta["history_label_count"] = len(previous_states or {})
+    if previous_states is None:
+        meta["reason"] = history_reason
+    return smoothed, meta
 
 
 def build_holding_sector_opportunity_context(
@@ -168,13 +306,23 @@ def build_holding_sector_opportunity_context(
     fetch_sector_position=None,
     mainline_by_label: dict[str, dict] | None = None,
     mainline_meta: dict[str, Any] | None = None,
+    total_budget_seconds: float | None = None,
 ) -> dict[str, Any]:
     """返回 `{available, held: {sector_label: opportunity_row}, market_top: [opportunity_row]}`。
 
     `held` 按标准化后的板块 label 建索引，供 `analysis_facts.py` 按持仓行 `sector_name` 反查；
     `market_top` 是当前全市场机会分最高的若干方向（去掉已持有的，避免和 `held` 重复），
     用于日报叙述「相对更强的方向是哪些」（板块轮动参考）。
+
+    `total_budget_seconds` 是本函数的**总墙钟上限**，各阶段预算从它派生（见
+    `_StageBudget`）。默认 `SECTOR_OPPORTUNITY_TOTAL_BUDGET_SECONDS`，调用方应直接复用
+    该常量作为自己的外层超时，不要另写一个数字。
     """
+    budget = _StageBudget(
+        total_budget_seconds
+        if total_budget_seconds is not None
+        else SECTOR_OPPORTUNITY_TOTAL_BUDGET_SECONDS
+    )
     held_labels = _unique_labels(
         normalize_sector_label(holding.sector_name) for holding in holdings
     )
@@ -233,12 +381,12 @@ def build_holding_sector_opportunity_context(
             flow_heat,
             flow_labels,
             trade_date=trade_date,
-            total_timeout_seconds=SECTOR_FLOW_BUDGET_SECONDS,
+            total_timeout_seconds=budget.stage(SECTOR_FLOW_BUDGET_SECONDS),
         )
         divergence_future = executor.submit(
             build_sector_divergence_map_for_opportunities,
             held_labels,
-            total_timeout_seconds=SECTOR_DIVERGENCE_BUDGET_SECONDS,
+            total_timeout_seconds=budget.stage(SECTOR_DIVERGENCE_BUDGET_SECONDS),
         )
         # 主线 regime 的 20 日价格结构：只对持仓板块联网，与资金流/背离同批并发。
         # 它不依赖那两者，所以并发是安全的；分位分母与快照构建在三者都就位之后做。
@@ -247,6 +395,7 @@ def build_holding_sector_opportunity_context(
             held_labels,
             trade_date,
             fetch_sector_position,
+            budget_seconds=budget.stage(SECTOR_POSITION_BUDGET_SECONDS),
         )
         try:
             loaded_flow_by_label = flow_future.result()
@@ -271,6 +420,7 @@ def build_holding_sector_opportunity_context(
             position_by_label=position_by_label,
             held_labels=held_labels,
             trade_date=trade_date,
+            percentile_budget_seconds=budget.stage(PERCENTILE_UNIVERSE_BUDGET_SECONDS),
         )
         if not mainline_by_label:
             # 联网价格结构取不到时，退回复用荐基当天已冻结的快照（如果有）。
@@ -291,7 +441,12 @@ def build_holding_sector_opportunity_context(
             opportunity = describe_sector_opportunity(
                 heat_row,
                 flow,
-                focus={label},
+                # `focus` 的唯一作用是 +6 的 `focus_bonus`，语义是"用户点名要看的方向"。
+                # 这里曾经传 `{label}`，等于给**每一个持仓板块**都恒定加 6 分，而荐基只给
+                # 用户显式选择的关注方向加。同一个板块因此在日报里天然比在荐基里高 6 分，
+                # 两个界面对同一天同一方向给出不同分数、进而不同档位。持有一个板块不是看多
+                # 它的证据，不该换来分数加成。
+                focus=None,
                 divergence_backtest=divergence_by_label.get(label),
                 mainline=mainline_row,
                 entry_policy_enabled=mainline_row is not None,
@@ -308,12 +463,52 @@ def build_holding_sector_opportunity_context(
         if opportunity:
             held[label] = opportunity
 
+    previous_trade_date = _resolve_previous_trade_date(trade_date)
+    previous_states, history_reason = _load_direction_state_history(previous_trade_date)
+
+    # 持仓方向：滞回按 label 原地覆盖回 `held`。这是 guard 与 prompt 真正消费的那一份。
+    held_rows, hysteresis_meta = _apply_read_only_hysteresis(
+        [held[label] for label in held_labels if label in held],
+        trade_date=trade_date,
+        previous_trade_date=previous_trade_date,
+        previous_states=previous_states,
+        history_reason=history_reason,
+    )
+    held = {
+        str(row.get("sector_label") or ""): row
+        for row in held_rows
+        if str(row.get("sector_label") or "")
+    }
+
+    # 轮动参考：拆成「打分 → 滞回 → 选择」，与荐基 `_score_select_and_persist_directions`
+    # 同一顺序。此前这里用的是复合入口 `select_sector_opportunities`（内部打分即选择），
+    # 于是排序发生在滞回之前——而 `entry_state` 是 `_entry_sort_score` 的第一优先级，
+    # 排序依据和最终展示的状态会是两套东西。荐基那边专门为这点留了注释："滞回必须在
+    # **选择之前**生效"。
     try:
-        selected = select_sector_opportunities(
+        from app.services.sector_opportunity_scoring import (
+            score_sector_opportunity_rows,
+            select_scored_sector_opportunities,
+        )
+
+        scored_rows = score_sector_opportunity_rows(
             usable_sector_heat,
             sector_flow_by_label=flow_by_label,
             sector_divergence_by_label=divergence_by_label,
-            focus_sectors=held_labels,
+            mainline_by_label=mainline_by_label or {},
+            # 同上：`focus_sectors` 是"用户点名的方向"，不是"用户持有的方向"。轮动参考本来
+            # 就要把已持有的剔掉，给它们加分只会让它们占掉名额再被丢弃。
+            focus_sectors=None,
+        )
+        scored_rows, _ = _apply_read_only_hysteresis(
+            scored_rows,
+            trade_date=trade_date,
+            previous_trade_date=previous_trade_date,
+            previous_states=previous_states,
+            history_reason=history_reason,
+        )
+        selected = select_scored_sector_opportunities(
+            scored_rows,
             max_total=MARKET_TOP_LIMIT + len(held_labels),
         )
     except Exception:  # noqa: BLE001 - best-effort，绝不阻塞日报
@@ -323,6 +518,12 @@ def build_holding_sector_opportunity_context(
     market_top = [
         item for item in selected if item.get("sector_label") not in held_label_set
     ][:MARKET_TOP_LIMIT]
+
+    resolved_mainline_meta = dict(
+        mainline_meta or {"available": False, "reason": "mainline_snapshot_not_requested"}
+    )
+    resolved_mainline_meta["hysteresis"] = hysteresis_meta
+    resolved_mainline_meta["hysteresis_applied"] = bool(hysteresis_meta.get("applied"))
 
     result = {
         "available": bool(heat_by_label),
@@ -334,21 +535,33 @@ def build_holding_sector_opportunity_context(
         "divergence_backtest": divergence_by_label,
         # 主线复用的可用性必须显式披露：`entry_state` 在快照缺席时压根不会出现，
         # 下游（prompt / guard / 前端）需要能区分"方向尚未成熟"与"今天没有主线快照"。
-        "mainline": mainline_meta
-        or {"available": False, "reason": "mainline_snapshot_not_requested"},
+        "mainline": resolved_mainline_meta,
     }
     if heat_error_reason is not None:
         result["reason"] = heat_error_reason
     return result
 
 
+def _resolve_previous_trade_date(trade_date: str | None) -> str | None:
+    if not trade_date:
+        return None
+    try:
+        from app.services.trading_session import get_previous_trade_date
+
+        return get_previous_trade_date(trade_date)
+    except Exception:  # noqa: BLE001 - 交易日历不可用时退回"无历史"，不阻塞日报
+        return None
+
+
 def _fetch_sector_position_map(
     held_labels: list[str],
     trade_date: str | None,
     fetch_sector_position=None,
+    *,
+    budget_seconds: float = SECTOR_POSITION_BUDGET_SECONDS,
 ) -> dict[str, dict]:
     """持仓板块的 20 日价格结构与相对强度（联网，逐板块用各自正确基准）。"""
-    if not held_labels:
+    if not held_labels or budget_seconds <= 0:
         return {}
     try:
         if fetch_sector_position is not None:
@@ -361,7 +574,7 @@ def _fetch_sector_position_map(
             build_sector_position_map_for_opportunities(
                 held_labels,
                 as_of_trade_date=trade_date,
-                total_timeout_seconds=SECTOR_POSITION_BUDGET_SECONDS,
+                total_timeout_seconds=budget_seconds,
             )
             or {}
         )

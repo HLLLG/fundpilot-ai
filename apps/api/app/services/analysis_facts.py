@@ -45,6 +45,7 @@ from app.services.analysis_prompt import (
 from app.services.shared_executors import get_shared_io_executor
 from app.services.streaming_heartbeat import raise_if_stream_cancelled
 from app.services.report_sector_opportunity import (
+    SECTOR_OPPORTUNITY_TOTAL_BUDGET_SECONDS,
     build_holding_sector_opportunity_context,
 )
 from app.services.sector_signal_context import (
@@ -68,7 +69,19 @@ SIGNAL_BACKTEST_TIMEOUT_SECONDS = 5.0
 SECTOR_INTRADAY_TIMEOUT_SECONDS = 4.0
 STOCK_CONNECT_FLOW_TIMEOUT_SECONDS = 3.0
 GUARD_POLICY_TIMEOUT_SECONDS = 2.0
-SECTOR_OPPORTUNITY_TIMEOUT_SECONDS = 5.0
+# 板块方向证据的外层预算**必须**覆盖内层自己声明的总预算，否则会出现"内层还在预算内
+# 正常工作、外层已经判它超时并丢弃整层证据"。这里从内层常量派生而不是写死一个数字：
+# 曾经外层写死 5.0，而内层最坏 12 s+（价格结构 8 s 并发段 + 分位分母 4 s 串行段），
+# 网络稍慢就必然丢掉 `held`，日报当天彻底没有板块方向层——却没有任何地方报错。
+#
+# 内层现在按同一个总预算自截断（`report_sector_opportunity._StageBudget`）。额外的排队
+# 余量是必需的：内层的 deadline 从**任务真正开始执行**时起算，而外层从 `_enhancement_result`
+# 开始等待时起算；共享 IO 池饱和时任务可能晚于外层起等才被调度，两个 deadline 因此不同步。
+# 没有这份余量，池子一忙就会重演"外层先到点、把还在预算内的内层砍掉"。
+_ENHANCEMENT_QUEUE_MARGIN_SECONDS = 1.5
+SECTOR_OPPORTUNITY_TIMEOUT_SECONDS = (
+    SECTOR_OPPORTUNITY_TOTAL_BUDGET_SECONDS + _ENHANCEMENT_QUEUE_MARGIN_SECONDS
+)
 MARKET_BREADTH_TIMEOUT_SECONDS = 3.0
 FUND_SCALE_FRESH_DAYS = 120
 FUND_SCALE_AGING_DAYS = 240
@@ -656,8 +669,17 @@ def build_analysis_facts(
             "trend_formation_probability 是趋势形成概率估计，不是收益预测。"
             "sector_direction_maturity.available=false 表示当天没有可复用的主线快照，"
             "此时 entry_state 等字段不存在，**不得**据此认为方向不成立或方向已成熟，"
-            "只能按旧版机会分与资金面叙述。该层不含滞回平滑（hysteresis_applied=false），"
-            "是当日原始档位，不得描述为「已连续多日满足」。"
+            "只能按旧版机会分与资金面叙述。"
+            "sector_direction_maturity.hysteresis_applied=true 时，entry_state 已套上跨日滞回："
+            "此时持仓 sector_opportunity 上的 consecutive_qualifying_days 是该方向连续通过入场线的"
+            "交易日数，raw_entry_state 是未平滑的当日原始档位。两者不同（例如 entry_state="
+            "ready_to_start 而 raw_entry_state=ready_on_pullback）说明方向今天在滞回带内被保留，"
+            "叙述可以说「方向此前已确认、今日未跌破退出线」，但**不得**说成今日重新确认。"
+            "consecutive_qualifying_days 是**下界**（见 hysteresis.note：状态账本由荐基写入，"
+            "缺失某个交易日会让天数从 1 重新起算），可以说「至少连续 N 个交易日满足」，"
+            "不得说成「该方向恰好只满足了 N 天」。"
+            "hysteresis_applied=false 时没有跨日历史可用，entry_state 是当日原始档位，"
+            "不得描述为「已连续多日满足」，也不得引用 consecutive_qualifying_days。"
             "持仓的 sector_opportunity 是该持仓所属板块当前方向判断（track=momentum顺势/setup蓄势，"
             "confidence=高/中/低/不足）：opportunity_available=false 表示该方向当前不构成机会"
             "（例如资金持续流出、涨幅透支），须在分析中提示、不得据此建议加仓；"
