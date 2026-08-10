@@ -281,6 +281,41 @@ export type DecisionEscalation = {
   basis: string;
 };
 
+/** 已持仓方向的退出侧判定（sector_direction_exit.assess_direction_exit 的输出）。
+ *
+ * 入场由发现基金负责，已持仓的加/减/退由日报负责。`hold` 之外的每一档都已经确定性地
+ * 压过 `escalation`，所以卡片上的动作与这里必然一致。
+ */
+export type DirectionExit = {
+  policy_version?: string;
+  sector_label?: string;
+  /** hold=方向仍有效；pause_add=维持持有但禁止加仓；reduce/deep_reduce/exit=已产出减仓档位。 */
+  exit_state: "hold" | "pause_add" | "reduce" | "deep_reduce" | "exit" | "unavailable" | string;
+  min_bucket?: number | null;
+  min_action_label?: string;
+  suggested_position_change_percent?: number | null;
+  allows_add?: boolean;
+  /** relative_to_entry=能对齐买入当时的方向分；absolute=无发现基金买入事件（多为截图导入）。 */
+  basis?: "relative_to_entry" | "absolute" | "unavailable" | string;
+  consecutive_days_below_exit_line?: number;
+  exit_trend_threshold?: number | null;
+  persistent_breakdown_days?: number | null;
+  trend_strength?: number | null;
+  trend_decay_from_entry?: number | null;
+  reasons?: string[];
+  triggers?: string[];
+  entry_reference?: {
+    sector_label?: string | null;
+    entry_date?: string | null;
+    entry_state?: string | null;
+    entry_trend?: number | null;
+    entry_tranche_scale?: number | null;
+    thesis_event_id?: string | null;
+  } | null;
+  /** 连续跌破天数与相对回落门槛尚未回测；界面必须如实标注，不得宣称有历史胜率。 */
+  thresholds_validated?: boolean;
+};
+
 export type AnalysisFactsHoldingRow = {
   fund_code?: string;
   evidence?: HoldingEvidence | null;
@@ -291,6 +326,8 @@ export type AnalysisFactsHoldingRow = {
   flow_divergence_backtest?: SectorSignalBacktestSector | null;
   /** M2.1：该持仓的双向 guard 升级判定（未触发时 min_bucket 为 null）。 */
   escalation?: DecisionEscalation | null;
+  /** 2026-08：该持仓方向的退出侧判定（补上「什么时候该走」）。 */
+  direction_exit?: DirectionExit | null;
 };
 
 export type SectorRotationFacts = {

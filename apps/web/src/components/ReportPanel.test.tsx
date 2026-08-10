@@ -272,6 +272,183 @@ describe("ReportPanel 风险升级判定", () => {
   });
 });
 
+describe("ReportPanel 方向退出判定", () => {
+  function reportWithExit(
+    directionExit: Record<string, unknown>,
+    escalation: Record<string, unknown> | null = null,
+  ): Report {
+    const base = sampleReport();
+    return {
+      ...base,
+      fund_recommendations: [{ ...base.fund_recommendations[0], action: "观察" }],
+      analysis_facts: {
+        pipeline: { decision_escalation_mode: "enforced" },
+        holdings: [
+          {
+            fund_code: "519674",
+            direction_exit: directionExit,
+            ...(escalation ? { escalation } : {}),
+          },
+        ],
+      },
+    };
+  }
+
+  function openProfessionalEvidence() {
+    const expandCard = screen.queryByRole("button", { name: /^展开 银河创新成长$/ });
+    if (expandCard) {
+      fireEvent.click(expandCard);
+    }
+    fireEvent.click(screen.getByRole("button", { name: /专业依据/ }));
+  }
+
+  it("跌破退出线时给出方向诊断，且不重复风险升级已写过的理由", () => {
+    const sharedReason = "半导体材料趋势强度38.2已跌破退出线52，连续2个交易日";
+    render(
+      <ReportPanel
+        report={reportWithExit(
+          {
+            exit_state: "reduce",
+            min_bucket: 0,
+            min_action_label: "减仓评估",
+            suggested_position_change_percent: -25,
+            allows_add: false,
+            basis: "absolute",
+            consecutive_days_below_exit_line: 2,
+            exit_trend_threshold: 52,
+            trend_strength: 38.18,
+            reasons: [sharedReason],
+            triggers: ["趋势强度回到60以上并站稳"],
+            thresholds_validated: false,
+          },
+          {
+            min_bucket: 0,
+            min_action_label: "减仓评估",
+            reasons: [sharedReason],
+            suggested_position_change_percent: -25,
+            basis: sharedReason,
+          },
+        )}
+      />,
+    );
+    openProfessionalEvidence();
+
+    const block = screen.getByTestId("report-direction-exit");
+    expect(within(block).getByText(/方向已跌破退出线/)).toBeInTheDocument();
+    expect(within(block).getByText("38.2 / 52")).toBeInTheDocument();
+    expect(within(block).getByText("2 个交易日")).toBeInTheDocument();
+    expect(within(block).getByText(/趋势强度回到60以上并站稳/)).toBeInTheDocument();
+    expect(within(block).getByText(/本轮不加仓/)).toBeInTheDocument();
+
+    // 动作与减仓比例由「风险升级判定」统一给出，退出块不再重复一份，避免两个口径。
+    expect(within(block).queryByText(/减仓评估/)).not.toBeInTheDocument();
+    expect(within(block).queryByText(/25%/)).not.toBeInTheDocument();
+    // 同一句理由只出现一次：它已经在风险升级块里。
+    expect(within(block).queryByText(sharedReason)).not.toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("report-escalation-evidence")).getByText(sharedReason),
+    ).toBeInTheDocument();
+  });
+
+  it("截图导入的持仓如实说明只能按绝对退出线判定，并标注阈值未回测", () => {
+    render(
+      <ReportPanel
+        report={reportWithExit({
+          exit_state: "reduce",
+          min_bucket: 0,
+          basis: "absolute",
+          trend_strength: 36.15,
+          exit_trend_threshold: 52,
+          consecutive_days_below_exit_line: 2,
+          reasons: ["国防军工趋势强度36.2已跌破退出线52"],
+          thresholds_validated: false,
+        })}
+      />,
+    );
+    openProfessionalEvidence();
+
+    const block = screen.getByTestId("report-direction-exit");
+    expect(within(block).getByText(/没有对应的发现基金买入记录/)).toBeInTheDocument();
+    expect(within(block).getByText(/尚未经过历史回测/)).toBeInTheDocument();
+    // 没有风险升级块兜底时，理由必须自己完整展示出来。
+    expect(within(block).getByText(/国防军工趋势强度36.2已跌破退出线52/)).toBeInTheDocument();
+  });
+
+  it("有发现基金买入记录时对齐买入当时的方向条件", () => {
+    render(
+      <ReportPanel
+        report={reportWithExit({
+          exit_state: "pause_add",
+          min_bucket: 2,
+          basis: "relative_to_entry",
+          allows_add: false,
+          trend_strength: 57.1,
+          exit_trend_threshold: 52,
+          trend_decay_from_entry: 12.0,
+          reasons: ["电力方向趋势强度相对买入时回落12.0分"],
+          entry_reference: {
+            sector_label: "电力",
+            entry_date: "2026-08-08",
+            entry_state: "ready_to_start",
+            entry_trend: 69.09,
+          },
+          thresholds_validated: false,
+        })}
+      />,
+    );
+    openProfessionalEvidence();
+
+    const block = screen.getByTestId("report-direction-exit");
+    expect(within(block).getByText(/方向转弱，仅维持持有/)).toBeInTheDocument();
+    expect(within(block).getByText(/本轮不加仓/)).toBeInTheDocument();
+    expect(within(block).getByText(/69.1（2026-08-08）/)).toBeInTheDocument();
+    expect(within(block).getByText(/对齐了买入当时的方向条件/)).toBeInTheDocument();
+  });
+
+  it("方向仍然有效时不占版面", () => {
+    render(
+      <ReportPanel
+        report={reportWithExit({
+          exit_state: "hold",
+          min_bucket: null,
+          basis: "absolute",
+          allows_add: true,
+          trend_strength: 78.71,
+          exit_trend_threshold: 52,
+          reasons: ["煤炭趋势强度78.7仍在退出线52以上"],
+          thresholds_validated: false,
+        })}
+      />,
+    );
+    openProfessionalEvidence();
+    expect(screen.queryByTestId("report-direction-exit")).not.toBeInTheDocument();
+  });
+
+  it("趋势分取不到时不产减仓档位，但仍收回加仓资格", () => {
+    render(
+      <ReportPanel
+        report={reportWithExit({
+          exit_state: "unavailable",
+          min_bucket: null,
+          basis: "unavailable",
+          allows_add: false,
+          trend_strength: null,
+          exit_trend_threshold: 52,
+          reasons: ["未取到该方向的趋势强度，无法判定退出条件"],
+          thresholds_validated: false,
+        })}
+      />,
+    );
+    openProfessionalEvidence();
+
+    const block = screen.getByTestId("report-direction-exit");
+    expect(within(block).getByText(/方向信号不可得/)).toBeInTheDocument();
+    expect(within(block).getByText(/本轮不加仓/)).toBeInTheDocument();
+    // 缺数据不构成卖出理由，不能出现减仓档位。
+    expect(screen.queryByTestId("report-escalation-evidence")).not.toBeInTheDocument();
+  });
+});
+
 describe("ReportPanel 组合穿透", () => {
   function openLookthrough() {
     fireEvent.click(screen.getByRole("button", { name: "组合穿透重复暴露" }));

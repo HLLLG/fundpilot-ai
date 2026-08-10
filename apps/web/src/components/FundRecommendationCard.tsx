@@ -5,6 +5,7 @@ import { AlertTriangle, ChevronDown, TrendingDown, TrendingUp } from "lucide-rea
 import type {
   AnalysisFactsHoldingRow,
   DecisionEscalation,
+  DirectionExit,
   FactorIcEvidenceStatus,
   Report,
 } from "@/lib/api";
@@ -238,6 +239,129 @@ function EscalationEvidence({
   );
 }
 
+const EXIT_STATE_PRESENTATION: Record<
+  string,
+  { label: string; tone: "danger" | "warn" | "info" | "good" }
+> = {
+  exit: { label: "方向已失效", tone: "danger" },
+  deep_reduce: { label: "方向持续走坏", tone: "danger" },
+  reduce: { label: "方向已跌破退出线", tone: "warn" },
+  pause_add: { label: "方向转弱，仅维持持有", tone: "warn" },
+  hold: { label: "方向仍然有效", tone: "good" },
+  unavailable: { label: "方向信号不可得", tone: "info" },
+};
+
+const EXIT_TONE_CLASS: Record<string, string> = {
+  danger: "border-[var(--danger-border)] bg-[var(--danger-bg)]/60 text-[var(--danger-fg)]",
+  warn: "border-[var(--warn-border)] bg-[var(--warn-bg)]/60 text-[var(--warn-fg)]",
+  info: "border-[var(--info-border)] bg-[var(--info-bg)]/60 text-[var(--info-fg)]",
+  good: "border-[var(--success-border)] bg-[var(--success-bg)]/50 text-[var(--success-fg)]",
+};
+
+/** 已持仓方向的退出判定。
+ *
+ * 这块补的是整套方向成熟度长期缺失的一半：原来只有「什么时候进」，没有「什么时候走」，
+ * 于是浮盈会因为犹豫不决被拿回去。`hold` 不渲染——方向正常时不需要占版面。
+ *
+ * 刻意**不**在这里写动作档位和减仓比例：只要退出判定产出了档位，它就已经合并进
+ * `resolve_escalation_floor`，由上方「风险升级判定」统一给出动作与是否已生效。这块只回答
+ * 「方向为什么走坏」，两块因此各说一件事，不会同一句理由印两遍、也不会出现两个动作口径。
+ */
+function DirectionExitEvidence({
+  exit,
+  escalationReasons,
+}: {
+  exit: DirectionExit;
+  escalationReasons: string[];
+}) {
+  const state = String(exit.exit_state || "");
+  if (state === "hold") {
+    return null;
+  }
+  const presentation = EXIT_STATE_PRESENTATION[state] ?? {
+    label: "方向状态待确认",
+    tone: "info" as const,
+  };
+  // 风险升级判定合并了退出理由，同一句话不重复渲染。
+  const shown = new Set(escalationReasons.map((line) => line.trim()).filter(Boolean));
+  const reasons = (exit.reasons ?? [])
+    .map((line) => line.trim())
+    .filter((line) => line && !shown.has(line));
+  const triggers = (exit.triggers ?? []).filter((line) => line.trim());
+  const entry = exit.entry_reference;
+  const relative = exit.basis === "relative_to_entry";
+
+  return (
+    <div
+      data-testid="report-direction-exit"
+      className={`mt-3 rounded-xl border px-3 py-2.5 ${EXIT_TONE_CLASS[presentation.tone]}`}
+    >
+      <div className="flex flex-wrap items-baseline gap-x-2 text-[11px] font-black">
+        方向退出判定 · {presentation.label}
+      </div>
+
+      {reasons.length ? (
+        <ul className="mt-1.5 space-y-1 text-xs leading-5">
+          {reasons.map((reason, index) => (
+            <li key={`${reason}-${index}`} className="break-words [overflow-wrap:anywhere]">
+              {reason}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
+      <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] leading-4">
+        {exit.trend_strength != null && exit.exit_trend_threshold != null ? (
+          <div className="flex items-baseline gap-1">
+            <dt className="opacity-80">趋势/退出线</dt>
+            <dd className="font-mono font-bold tabular-nums">
+              {exit.trend_strength.toFixed(1)} / {exit.exit_trend_threshold}
+            </dd>
+          </div>
+        ) : null}
+        {exit.consecutive_days_below_exit_line ? (
+          <div className="flex items-baseline gap-1">
+            <dt className="opacity-80">连续跌破</dt>
+            <dd className="font-mono font-bold tabular-nums">
+              {exit.consecutive_days_below_exit_line} 个交易日
+            </dd>
+          </div>
+        ) : null}
+        {relative && entry?.entry_trend != null ? (
+          <div className="flex items-baseline gap-1">
+            <dt className="opacity-80">买入时趋势</dt>
+            <dd className="font-mono font-bold tabular-nums">
+              {entry.entry_trend.toFixed(1)}
+              {entry.entry_date ? `（${entry.entry_date}）` : ""}
+            </dd>
+          </div>
+        ) : null}
+        {exit.allows_add === false ? (
+          <div className="flex items-baseline gap-1">
+            <dt className="opacity-80">加仓资格</dt>
+            <dd className="font-bold">本轮不加仓</dd>
+          </div>
+        ) : null}
+      </dl>
+
+      {triggers.length ? (
+        <p className="mt-1.5 text-[11px] leading-4 opacity-90">
+          恢复条件：{triggers.join("；")}
+        </p>
+      ) : null}
+
+      <p className="mt-1.5 text-[11px] leading-4 text-slate-600">
+        {relative
+          ? "该判定对齐了买入当时的方向条件。"
+          : "该持仓没有对应的发现基金买入记录（多为截图导入），只能按绝对退出线判定。"}
+        {exit.thresholds_validated === false
+          ? "连续跌破天数与相对回落门槛尚未经过历史回测，可作动作依据但不代表历史胜率。"
+          : null}
+      </p>
+    </div>
+  );
+}
+
 function PositionChangeBadge({
   percent,
   estimatedAmountYuan,
@@ -382,6 +506,7 @@ export function FundRecommendationCard({
   const sectorOpportunity = holdingFacts?.sector_opportunity ?? null;
   const divergenceBacktest = holdingFacts?.flow_divergence_backtest ?? null;
   const escalation = holdingFacts?.escalation ?? null;
+  const directionExit = holdingFacts?.direction_exit ?? null;
   const tradeability = item.tradeability ?? holdingFacts?.tradeability;
   const transactionExecution =
     item.transaction_execution ?? holdingFacts?.transaction_execution;
@@ -558,6 +683,12 @@ export function FundRecommendationCard({
             ) : null}
             {sectorOpportunity ? (
               <SectorOpportunityCard item={sectorOpportunity} divergenceBacktest={divergenceBacktest} />
+            ) : null}
+            {directionExit ? (
+              <DirectionExitEvidence
+                exit={directionExit}
+                escalationReasons={escalation?.reasons ?? []}
+              />
             ) : null}
             {escalation ? (
               <EscalationEvidence
