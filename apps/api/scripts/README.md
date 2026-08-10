@@ -225,3 +225,59 @@ schema v22 的 `fund_sector_resolution_status` 保存每只基金的解析状态
 配置并发仍受 AkShare worker 池容量约束。环境变量见 `.env.example`：
 `FUND_AI_FUND_PRIMARY_SECTOR_GLOBAL_ENABLED`、`FUND_AI_FUND_PRIMARY_SECTOR_PRECOMPUTE_*`、
 TTL 天数等。
+
+---
+
+## 板块方向状态每日捕获 / 历史回填
+
+退出侧（`sector_direction_exit`）要回答「趋势连续跌破退出线几天了」，而
+`sector_direction_states` 原来**只在用户手动跑一次发现基金时才写**。实测线下库里整张表只有
+一天数据，于是「连续 N 个交易日才升级为大幅减仓」永远攒不出序列，
+`consecutive_days_below_exit_line` 长期卡在 1，−50% 那一档实际不可达。
+
+```bash
+# 每交易日捕获（生产由 .github/workflows/sector-direction-capture.yml 定时调用）
+python scripts/capture_sector_direction_states.py
+python scripts/capture_sector_direction_states.py --trade-date 2026-08-10
+python scripts/capture_sector_direction_states.py --json var/sector_direction_capture.json
+
+# 回填最近 6 个历史交易日的趋势轴（本地补数用）
+python scripts/capture_sector_direction_states.py --backfill-days 6
+```
+
+| 参数 | 默认 | 说明 |
+|------|------|------|
+| `--trade-date` | 按交易时段推导 | 目标交易日；回填模式下作为回溯起点 |
+| `--backfill-days` | 0 | 大于 0 即切换为回填模式，重算最近 N 个历史交易日 |
+| `--with-divergence` | 关 | 同时跑量价背离回测，默认关（见下） |
+| `--json` | 无 | 把摘要写到该路径（机读） |
+
+退出码 0 = 成功且**确实产出了趋势证据**；1 = 失败，或落库了但趋势证据为 0。后者要单独判
+是因为「行数满」不等于「有用」：证据不足时趋势分会被写成 ≤45 的占位值，行数照样是 78，而
+退出侧一行都用不上。
+
+**口径要点**（完整论证见 `app/services/sector_direction_capture.py` 的模块 docstring）：
+
+* **前台集合是全白名单（约 78 个板块）**，与发现基金那约 24 个预筛板块刻意不同。这张表没有
+  `userId`，一次捕获服务所有用户，而「谁持有哪个板块」是逐用户的——不在前台集合里的板块拿不到
+  mainline，趋势分会退化成 ≤45 的占位值。
+* **打分、滞回与落库复用 `discovery_pipeline._score_select_and_persist_directions`**。另写一份
+  会让同一板块同一天出现两个 `trend_strength_score`，而退出侧要把「今天实算的分」与「历史落库
+  的分」放在一条序列上比较。
+* **默认跳过量价背离回测**：它只流向 `confidence`，而 `confidence` 不在落库列里、也不是
+  `entry_state` 的输入。实测它占全流程 103.5 s 里的 90 s（跑满预算仍整段超时），关掉后
+  6.2 s（热缓存）/ 约 13.5 s（冷跑），落库结果逐项相同。
+* **回填只重算趋势轴**。趋势轴的输入全是日线纯函数（20 日收益、距 MA20/MA60、20 日上涨天数
+  占比、相对强度横截面分位），实测历史日期 6/6 命中、覆盖度 1.0、数值逐日真实变化。但历史资金流
+  拿不回来，所以回填行的 `participation_score` 只是中性填充、`entry_state` 由它派生因而**不可
+  当作历史入场判断**；这些行标 `source='backfilled'`，发现基金的滞回读取会过滤掉它们，只有退出
+  侧的趋势历史才收。
+* 回填**不会覆盖已有可用趋势证据的行**（判据是 `trend_evidence_coverage > 0`，不是「这天有没有
+  行」）。迁移之前写入的行该列为 NULL 且趋势分可能正是占位值，这种行必须允许被替换——否则因为
+  读取侧遇无证据日会停止回溯，它们会像路障一样把更早的回填整段挡住（实测踩过：回填了 5 天
+  390 行，历史序列仍读成空）。
+* 回填仍有 point-in-time 偏差：横截面分位的分母用的是**今天的**白名单集合。几天可以忽略，长历史
+  会有幸存者偏差——它是补数手段，**不是回测数据源**。
+
+诚实前提：本仓库沙箱到东财 `push2his` 的出站被阻断（与 `run_sector_direction_backtest.py` 同一
+处划界）。受限环境下捕获会以趋势证据 0 收场并返回非零退出码，而不是假装成功。
