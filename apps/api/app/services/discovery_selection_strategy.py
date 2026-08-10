@@ -319,7 +319,7 @@ def assess_fund_entry_position(row: Mapping[str, object]) -> dict[str, object]:
         "early_probe_reason": (
             "20日修复已达到45%，近5日未转弱且最近单日下跌仍在正常承接范围"
             if early_probe_ready
-            else "基金自身尚未达到概率试仓所需的早期修复条件"
+            else "基金自身尚未达到提前试仓所需的早期修复条件"
         ),
         "first_tranche_scale": first_tranche_scale,
         "high_elasticity": volatility is not None and volatility >= 24.0,

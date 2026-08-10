@@ -225,9 +225,12 @@ it("shows probability-sized early entry before full trend confirmation", () => {
   );
 
   expect(screen.getByText("可提前试仓")).toBeInTheDocument();
-  expect(screen.getByText("概率试仓")).toBeInTheDocument();
-  expect(screen.getByTestId("formation-probability")).toHaveTextContent("68%");
-  expect(screen.getByTestId("formation-probability")).toHaveTextContent("大概率形成");
+  expect(screen.getByText("提前试仓")).toBeInTheDocument();
+  // 数值不变，但单位是「分/100」而不是「%」：这个数没经过校准，不能当概率读。
+  expect(screen.getByTestId("formation-probability")).toHaveTextContent("68");
+  expect(screen.getByTestId("formation-probability")).toHaveTextContent("/100");
+  expect(screen.getByTestId("formation-probability")).toHaveTextContent("信号偏强");
+  expect(screen.getByTestId("formation-probability")).not.toHaveTextContent("大概率形成");
   expect(screen.getByTestId("formation-probability")).toHaveTextContent("计划仓位的 40%");
   expect(screen.getByText("18 亿")).toBeInTheDocument();
 });
@@ -258,7 +261,8 @@ it("keeps key direction facts visible while supporting details start collapsed",
 
   expect(screen.getByText("云计算")).toBeVisible();
   expect(screen.getByText("可以开始布局")).toBeVisible();
-  expect(screen.getByTestId("formation-probability")).toHaveTextContent("90%");
+  expect(screen.getByTestId("formation-probability")).toHaveTextContent("90");
+  expect(screen.getByTestId("formation-probability")).toHaveTextContent("/100");
   expect(screen.getByTestId("formation-probability")).toHaveTextContent("计划仓位的 100%");
   expect(screen.queryByTestId("sector-opportunity-details")).not.toBeInTheDocument();
   expect(screen.queryByText("28.70 亿")).not.toBeInTheDocument();

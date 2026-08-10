@@ -65,11 +65,20 @@ const ENTRY_STATE: Record<string, { label: string; className: string; cardClassN
   },
 };
 
-const PROBABILITY_BAND: Record<string, string> = {
+/** 趋势成形信号分的分档标签。
+ *
+ * 这里刻意不用「概率」和「大概率」这类措辞。后端那个数是
+ * `15 + 加权信号分 × 0.82` 的仿射变换，从未做过校准——没有人验证过标成 70% 的方向是否
+ * 真有约七成形成了趋势。一个各项都中性（全 50 分）的方向按该公式就会读出 56%，把它显示
+ * 成「56% 大概率形成」等于对用户宣称一件系统无法兑现的事。数值原样保留（信息量完全相同），
+ * 只把单位从「概率」改回「信号分」。校准（记录 N 日后是否真的进入 ready 并画可靠性曲线）
+ * 完成之后才配得上「概率」这个词。
+ */
+const SIGNAL_BAND: Record<string, string> = {
   low: "信号偏弱",
   watch: "接近试仓线",
-  early_probe: "早期形成",
-  building: "大概率形成",
+  early_probe: "早期成形",
+  building: "信号偏强",
   confirmed: "趋势较明确",
   strong: "强趋势",
 };
@@ -152,8 +161,8 @@ export function SectorOpportunityCard({
     item.sector_elasticity_percentile != null && item.sector_elasticity_percentile >= 70;
   const flowInflectionPath = item.selection_path === "flow_inflection_probe";
   const probabilityEarlyPath = item.selection_path === "probability_early_probe";
-  const formationProbability = item.trend_formation_probability;
-  const probabilityBand = PROBABILITY_BAND[item.formation_probability_band ?? ""] ?? "概率评估";
+  const formationSignalScore = item.trend_formation_probability;
+  const signalBand = SIGNAL_BAND[item.formation_probability_band ?? ""] ?? "信号评估";
   const canCollapseDetails = collapsibleDetails && hasEntryMaturity;
   const showDetails = !canCollapseDetails || detailsOpen;
   const detailsContentId = `sector-opportunity-details-${generatedId.replace(/:/g, "")}`;
@@ -188,7 +197,7 @@ export function SectorOpportunityCard({
             ) : null}
             {isEntryV3 && probabilityEarlyPath ? (
               <span className="rounded-full bg-[var(--success-bg)] px-2 py-0.5 text-[var(--success-fg)] ring-1 ring-[var(--success-border)]">
-                概率试仓
+                提前试仓
               </span>
             ) : null}
             {isEntryV3 && highElasticity ? (
@@ -267,7 +276,7 @@ export function SectorOpportunityCard({
       ) : null}
       {hasEntryMaturity ? (
         <>
-          {isEntryV3 && formationProbability != null ? (
+          {isEntryV3 && formationSignalScore != null ? (
             <div
               data-testid="formation-probability"
               className="mt-2 overflow-hidden rounded-xl border border-[var(--info-border)] bg-white/85"
@@ -275,13 +284,15 @@ export function SectorOpportunityCard({
               <div className="flex items-end justify-between gap-3 px-3 py-2.5">
                 <div>
                   <div className="text-[10px] font-black tracking-[0.08em] text-slate-500">
-                    未来3～5日趋势形成概率
+                    趋势成形信号分
                   </div>
                   <div className="mt-0.5 flex items-baseline gap-2">
-                    <span className="font-mono text-2xl font-black tabular-nums text-slate-950">
-                      {Math.round(formationProbability)}%
+                    {/* 单位是「分」不是「%」：这个数没有经过校准，不能当概率读。 */}
+                    <span className="font-mono text-xl font-black tabular-nums text-slate-950">
+                      {Math.round(formationSignalScore)}
+                      <span className="ml-0.5 text-[11px] font-bold text-slate-500">/100</span>
                     </span>
-                    <span className="text-[11px] font-bold text-[var(--info-fg)]">{probabilityBand}</span>
+                    <span className="text-[11px] font-bold text-[var(--info-fg)]">{signalBand}</span>
                   </div>
                 </div>
                 <div className="text-right">
@@ -294,12 +305,12 @@ export function SectorOpportunityCard({
               <div className="h-1.5 bg-slate-100" aria-hidden="true">
                 <div
                   className="h-full bg-[linear-gradient(90deg,var(--info-icon),var(--success-icon))] transition-[width]"
-                  style={{ width: `${Math.max(5, Math.min(95, formationProbability))}%` }}
+                  style={{ width: `${Math.max(5, Math.min(95, formationSignalScore))}%` }}
                 />
               </div>
             </div>
           ) : null}
-          {isEntryV3 && formationProbability == null && canCollapseDetails ? (
+          {isEntryV3 && formationSignalScore == null && canCollapseDetails ? (
             <div className="mt-2 grid grid-cols-2 gap-1.5 text-xs text-slate-600">
               <Metric label="方向评分" value={`${formatMetric(item.direction_score)} 分`} />
               <Metric label="本次比例" value={`计划仓位的 ${formatPercent(item.first_tranche_scale)}`} />
@@ -338,8 +349,13 @@ export function SectorOpportunityCard({
                       免得一张小卡上排出好几个折叠触发器。权重本来就印在上面三个
                       指标的标签里（如「趋势强度 (70%)」）。 */}
                   <MethodologyNote label="评分口径" className="mt-1.5">
-                    {formationProbability != null ? (
-                      <p>这是当前多维信号对趋势形成的估计，不是收益概率；概率越高才逐步增加仓位。</p>
+                    {formationSignalScore != null ? (
+                      <p>
+                        趋势成形信号分是趋势强度、资金参与度、结构修复、短期动量与资金加速度的
+                        加权合成（0～100），衡量「这个方向正在成形的信号有多强」。
+                        它<strong>不是概率、也不是收益预测</strong>：尚未用历史样本校准，
+                        因此不能读成「几成会涨」。仓位不由它决定。
+                      </p>
                     ) : null}
                     <p>
                       三项是互不重叠的独立维度，按括号内权重合成为方向分 {formatMetric(item.direction_score)}；

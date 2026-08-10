@@ -64,7 +64,7 @@ recommendations 字段约束：
 - 本功能不获取或判断具体销售平台的申购状态、起购额、限额和交易费率；不得臆造这些信息，也不得因其缺失把候选降为观察
 - full_market 模式须先判断板块方向，再在方向内选基金；不得只按基金近1年收益排序
 - 南向资金仅使用 stock_connect_flow，并只作港股资金面参考；板块主力使用 target_sector_context.sector_fund_flow
-- sector_opportunities 含 score_policy_version（sector_entry_maturity.2026-07.v2 或 2026-08.v3）时，须以 entry_state 与概率试仓字段共同判断方向动作：
+- sector_opportunities 含 score_policy_version（sector_entry_maturity.2026-07.v2 或 2026-08.v3）时，须以 entry_state 与提前试仓字段共同判断方向动作：
   ready_to_start 表示趋势、资金参与度与价格位置已同时通过，可在基金质量、数据与组合约束通过时使用分批买入；
   ready_on_pullback 通常等待；但 V3 若趋势与参与度已通过、唯一失败项是板块价格位置，且
   fund_entry_signal.entry_ready=true，可用基金自身20日修复替代价格位置项；或
@@ -72,13 +72,13 @@ recommendations 字段约束：
   probability_early_probe_eligible=true 且基金 fund_entry_signal.entry_ready/early_probe_ready=true 时，
   按 trend_formation_probability 对应的 first_tranche_scale 提前试仓；其余 forming 只能建议关注
 - V3 的 waiting_reason_code 用于解释等待：flow_confirmation=等待资金确认，fund_entry_confirmation=等待基金自身信号，
-  probability_fund_confirmation=趋势形成概率已达试仓线但仍等待基金早期信号，
+  probability_fund_confirmation=趋势成形信号分已达试仓线但仍等待基金早期信号，
   structure_repair=等待结构修复；不得把所有等待都描述成价格需要回调
 - v3 的 overheat_flags 是风险披露而非否决理由：命中时按 first_tranche_scale 缩小本次参考金额，
   文案须说明"短期加速、本次金额更小；买入后的加减仓由日报重新分析"，不得因此改写为不可买入
 - v3 没有"入场成熟度"这个分数；三个分块（趋势强度/资金参与度/价格位置）各自独立，
   权重见 block_weights，不得把它们描述为三重确认
-- mainline_regime 单独仍只参与研究排序；只有方向成熟度 V2/V3 的完整组合状态，或 V3 概率试仓与基金早期信号共同通过，才可生成本次参考金额，不构成收益保证
+- mainline_regime 单独仍只参与研究排序；只有方向成熟度 V2/V3 的完整组合状态，或 V3 提前试仓与基金早期信号共同通过，才可生成本次参考金额，不构成收益保证
 - signal_backtest / candidate_factor_scores 按 confidence.level / factor_reliability 表述
 - candidate_factor_scores.execution_qualified_fund_codes 只可作为量化加分证据；opportunity_first 下未覆盖不得单独否决买入，risk_first 下仍作为买入白名单；任何模式都不得把描述性覆盖写成量化背书
 - profile.account_loss_review_percent 只用于账户/现有持仓亏损复核，不得直接与候选基金近1年最大回撤比较
@@ -109,7 +109,7 @@ _COMMON_REQUIREMENTS = [
     "每只 recommendations 须含 hold_horizon、risks（至少 1 条）、points（引用 candidate_pool 具体字段）",
     "每只 recommendations 须含 decision_path、sector_evidence、fund_evidence、validation_notes",
     "先判断板块方向；基金质量只作硬准入，门内按机会分、波动弹性与修复信号排序，最后决定动作",
-    "方向成熟度 V2/V3 存在时按 entry_state；V3 ready_on_pullback 可在基金修复替代结构项，或资金同日改善且基金信号通过时缩小本次金额；forming 仅在 probability_early_probe_eligible=true 且基金早期信号通过时概率试仓；V3 过热仅缩小本次金额",
+    "方向成熟度 V2/V3 存在时按 entry_state；V3 ready_on_pullback 可在基金修复替代结构项，或资金同日改善且基金信号通过时缩小本次金额；forming 仅在 probability_early_probe_eligible=true 且基金早期信号通过时提前试仓；V3 过热仅缩小本次金额",
     "展示文本使用中文标签，不要原样输出 fund_quality_score/sector_fit_score/quality_penalties 等内部字段名",
     "sector_fit_score 仅是关联排序分，不得替代 sector_identity_status=verified 与 sector_identity_eligible=true 的代码级身份门槛",
     "estimated_daily_return_percent 且 daily_return_source=sector_estimate 时，points 须注明「估算」",

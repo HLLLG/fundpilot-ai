@@ -1648,8 +1648,11 @@ def test_probability_direction_and_fund_early_repair_open_reduced_probe():
     assert guarded[0].action == "分批买入"
     assert guarded[0].entry_path == "probability_early_probe"
     assert guarded[0].entry_tranche_scale == 0.4
-    assert any("形成概率已达到提前试仓线" in item for item in guarded[0].points)
-    assert any("概率试仓只开放" in item for item in guarded[0].validation_notes)
+    # 措辞改为「趋势成形信号分」：那个数是未校准的加权合成，叫「概率」等于对用户
+    # 宣称一件系统无法兑现的事（中性方向就会读出约 56）。数值本身不变。
+    assert any("趋势成形信号分已达到提前试仓线" in item for item in guarded[0].points)
+    assert not any("形成概率" in item for item in guarded[0].points)
+    assert any("提前试仓只开放" in item for item in guarded[0].validation_notes)
 
 
 def test_existing_wait_action_explains_flow_confirmation_instead_of_price_pullback():

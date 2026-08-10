@@ -94,7 +94,11 @@ def apply_direction_state_hysteresis(
         consecutive = prior_days + 1 if qualifies else 0
 
         entry_state = raw_state
-        if qualifies and previous_states is not None:
+        if qualifies and previous_states is not None and ready_confirmation_days > 1:
+            # `READY_CONFIRMATION_DAYS = 1` 下这一支恒不成立（consecutive 至少是 1），
+            # 因此生产里不会延迟确认——高弹性机会按当日确认是刻意的。这里显式加上
+            # `> 1` 的条件，让"这段只在把确认天数配成 ≥2 时才生效"写在代码里，而不是
+            # 留一段读起来像有保护、实际永不执行的分支。
             if consecutive < ready_confirmation_days:
                 was_ready = previous is not None and previous.entry_state == ENTRY_READY_TO_START
                 if not was_ready:
@@ -144,6 +148,7 @@ def apply_direction_state_hysteresis(
             item["waiting_reason_code"] = "fund_entry_confirmation"
         elif probability_probe_active:
             item["waiting_reason_code"] = "probability_fund_confirmation"
+        # 与上面的延迟确认成对：只有把 ready_confirmation_days 配成 ≥2 时才会走到这里。
         if entry_state == ENTRY_FORMING and qualifies:
             item["entry_reason"] = (
                 f"今日首次通过入场线（已满足 {consecutive} 天）；"

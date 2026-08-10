@@ -151,6 +151,25 @@ V3_PROBABILITY_TRANCHE_SCALES: tuple[tuple[float, float], ...] = (
     (65.0, 0.4),
     (55.0, 0.25),
 )
+#: 分段建仓的比例改按**趋势强度**分档（2026-08）。
+#:
+#: 原来这里用 `V3_PROBABILITY_TRANCHE_SCALES` 按趋势形成信号分（即那个未校准的
+#: `15 + 加权分 × 0.82` 仿射值）决定已成熟方向的首仓比例。分段建仓本身是对的，错的是
+#: 拿什么当刻度：那个数没有任何校准，而且它的中性点落在 56——一个各项都中性的方向就能
+#: 读出 56 分，直接落进"可投档"，等于让一个未验证的量表去决定真金白银。
+#:
+#: 趋势强度是这套模型里**唯一实测显著有效**的轴（`V3_BLOCK_WEIGHTS` 给它 0.70，
+#: `discovery_guard` 注释里也写明其余两轴 IC 为负已整块删除），而且 `V3_GATE_THRESHOLDS`
+#: 的注释记录了网格实测："趋势阈值越高、去均值超额越高（trend=70 时 T+20 达 +10.19%）"。
+#: 也就是说"趋势越强、仓位越大"这件事在自家回测里有方向性支撑，而"信号分越高、仓位越大"
+#: 没有。分档因此改挂在趋势强度上。
+#:
+#: 60 是入场线：刚过线只给 0.4，说明"够格买"不等于"够格买满"。
+V3_TREND_TRANCHE_SCALES: tuple[tuple[float, float], ...] = (
+    (80.0, 1.0),
+    (70.0, 0.65),
+    (60.0, 0.4),
+)
 
 _ENTRY_STATE_PRIORITY = {
     ENTRY_READY_TO_START: 4,
@@ -368,8 +387,8 @@ def _attach_v3_selection_priority(rows: list[dict[str, Any]]) -> list[dict[str, 
         if probability_probe:
             probability = _num(item.get("trend_formation_probability"))
             reasons.append(
-                "趋势尚未完全确认，但领先资金与短周期强度已达到概率试仓线"
-                + (f"（估计 {probability:.0f}%）" if probability is not None else "")
+                "趋势尚未完全确认，但领先资金与短周期强度已达到提前试仓线"
+                + (f"（信号分 {probability:.0f}/100）" if probability is not None else "")
             )
         elif flow_bonus > 0:
             reasons.append("今日资金转强且满足缩小本次投入条件")
@@ -1315,8 +1334,17 @@ def _probability_band(probability: float) -> str:
 
 
 def _probability_tranche_scale(probability: float) -> float:
+    """仅供观测与向后兼容：**不再**参与首仓比例计算（见 `V3_TREND_TRANCHE_SCALES`）。"""
     for threshold, scale in V3_PROBABILITY_TRANCHE_SCALES:
         if probability >= threshold:
+            return scale
+    return 0.0
+
+
+def _trend_tranche_scale(trend_strength: float) -> float:
+    """按趋势强度给分段建仓比例；低于入场线时返回 0（调用方另有门禁，不靠它拦）。"""
+    for threshold, scale in V3_TREND_TRANCHE_SCALES:
+        if trend_strength >= threshold:
             return scale
     return 0.0
 
@@ -1625,12 +1653,16 @@ def _entry_maturity_v3(
         if status == "crowded" or len(overheat_flags) >= 2
         else V3_FIRST_TRANCHE_SCALE.get(len(overheat_flags), V3_FIRST_TRANCHE_SCALE_CROWDED)
     )
+    # 观测用：保留在 payload 里便于对比新旧刻度，**不再参与**比例计算。
     probability_scale = float(formation["tranche_scale"])
+    trend_scale = _trend_tranche_scale(trend_strength)
     if entry_state == ENTRY_READY_TO_START:
-        # 已成熟方向也按概率分段，不再把“通过门槛”误解为一次性完成建仓。
+        # 已成熟方向也分段建仓，不把"通过门槛"误解为一次性建满。刻度改用趋势强度：
+        # 它是唯一实测有效的轴，而原来那个信号分未经校准（中性方向即读出 56），
+        # 不该由它决定投多少钱。
         first_tranche_scale = min(
             first_tranche_scale,
-            probability_scale if probability_scale > 0 else 0.25,
+            trend_scale if trend_scale > 0 else 0.25,
         )
     if flow_improving_probe_eligible:
         first_tranche_scale = min(
@@ -1638,9 +1670,10 @@ def _entry_maturity_v3(
             V3_IMPROVING_FLOW_FIRST_TRANCHE_SCALE,
         )
     if probability_early_probe_eligible:
+        # 提前试仓通道本身仍以信号分作为**门禁之一**（与趋势、结构、短期动量、资金分位
+        # 共同把关，是多条件而非单条件）；但比例只走趋势刻度与本通道的硬上限。
         first_tranche_scale = min(
             first_tranche_scale,
-            probability_scale if probability_scale > 0 else 0.25,
             V3_EARLY_PROBE_FIRST_TRANCHE_CAP,
         )
 
@@ -1685,7 +1718,7 @@ def _entry_maturity_v3(
         entry_hint = "资金刚转强；基金自身入场信号通过时可缩小本次试仓金额"
     if probability_early_probe_eligible:
         entry_hint = (
-            f"趋势形成概率估计 {formation_probability:.0f}%；"
+            f"趋势成形信号分 {formation_probability:.0f}/100；"
             f"基金早期信号通过时可按计划仓位的 {first_tranche_scale:.0%} 试仓"
         )
     entry_reason = {
@@ -1701,8 +1734,8 @@ def _entry_maturity_v3(
         )
     if probability_early_probe_eligible:
         entry_reason = (
-            f"中期趋势尚未完全确认，但未来3～5个交易日形成趋势的信号概率估计为"
-            f" {formation_probability:.0f}%；领先资金、短期强度与结构未破坏已形成共振，"
+            f"中期趋势尚未完全确认，但趋势成形信号分为 {formation_probability:.0f}/100；"
+            "领先资金、短期强度与结构未破坏已形成共振，"
             "仅在具体基金自身早期修复信号通过后开放试仓。"
         )
 
@@ -1856,13 +1889,13 @@ def _entry_triggers_v3(
     if probability_early_probe_eligible:
         return [
             (
-                f"当前趋势形成概率估计 {formation_probability:.0f}%；"
+                f"当前趋势成形信号分 {formation_probability:.0f}/100；"
                 if formation_probability is not None
-                else "当前趋势形成概率已通过提前试仓线；"
+                else "当前趋势成形信号分已通过提前试仓线；"
             )
-            + "具体基金的早期修复或温和回调信号通过后，仅执行概率对应的试仓比例",
+            + "具体基金的早期修复或温和回调信号通过后，仅执行趋势强度对应的试仓比例",
             (
-                f"趋势形成概率保持在 {V3_EARLY_PROBE_MIN_PROBABILITY:g}% 以上，"
+                f"趋势成形信号分保持在 {V3_EARLY_PROBE_MIN_PROBABILITY:g} 分以上，"
                 "且今日资金与上涨广度不转弱"
             ),
             "趋势强度升至60分后再进入成熟方向的后续加仓评估",
@@ -1931,7 +1964,7 @@ def _invalidation_signals_v3(
     ]
     if probability_early_probe_eligible:
         values = [
-            f"趋势形成概率跌破 {V3_EARLY_PROBE_MIN_PROBABILITY:g}% 或今日资金转为明显流出",
+            f"趋势成形信号分跌破 {V3_EARLY_PROBE_MIN_PROBABILITY:g} 分或今日资金转为明显流出",
             "趋势强度跌破早期形成区间且上涨广度同步收缩",
             "价格结构跌破20日均线并失去本轮修复低点",
         ]
@@ -2074,7 +2107,7 @@ def _entry_sort_score(row: dict[str, Any]) -> tuple[float, float, float, float, 
     entry_state = str(row.get("entry_state") or "")
     state_priority = float(_ENTRY_STATE_PRIORITY.get(entry_state, 0))
     if row.get("probability_early_probe_eligible") is True:
-        # 概率试仓已经有领先资金、短周期强度和结构共振，并且仍需基金自身信号复核；
+        # 提前试仓已经有领先资金、短周期强度和结构共振，并且仍需基金自身信号复核；
         # 它排在普通等待/资金拐点之前、成熟方向之后。
         state_priority = 3.7
     elif (

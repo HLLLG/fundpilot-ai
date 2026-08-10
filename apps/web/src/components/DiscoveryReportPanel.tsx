@@ -924,7 +924,7 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
                     {/* 具体仓位比例每张方向卡上都写着（「计划仓位的 40%」），
                         这里只保留口径入口，不再复述区间。 */}
                     <MethodologyNote label="仓位口径" className="mt-1">
-                      趋势尚未完全确认，按形成概率配置计划仓位的25%～40%，失效即停止新增。
+                      趋势尚未完全确认，按趋势强度配置计划仓位的25%～40%，失效即停止新增。
                     </MethodologyNote>
                   </div>
                 </div>

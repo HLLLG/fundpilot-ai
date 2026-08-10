@@ -629,7 +629,7 @@ def apply_discovery_guards(
                 copy.confidence = "中"
             promotion_reason = (
                 (
-                    "板块趋势尚未完全确认，但形成概率已达到提前试仓线；"
+                    "板块趋势尚未完全确认，但趋势成形信号分已达到提前试仓线；"
                     "该基金自身早期修复信号同步通过"
                 )
                 if fund_probability_probe
@@ -668,7 +668,7 @@ def apply_discovery_guards(
             copy.validation_notes = [
                 *copy.validation_notes,
                 (
-                    "概率试仓只开放当前计划仓位的一小部分；形成概率跌破早期线、资金转弱或基金修复失效时停止新增。"
+                    "提前试仓只开放当前计划仓位的一小部分；信号分跌破早期线、资金转弱或基金修复失效时停止新增。"
                     if fund_probability_probe
                     else (
                         "基金级修复已替代板块结构修复门槛；趋势、参与度、基金质量和数据门仍全部保留。"
@@ -1463,9 +1463,9 @@ def _waiting_reason_intro(
             (opportunity or {}).get("trend_formation_probability")
         )
         prefix = (
-            f"趋势形成概率估计 {probability:.0f}%，已达到提前试仓线，"
+            f"趋势成形信号分 {probability:.0f}/100，已达到提前试仓线，"
             if probability is not None
-            else "趋势形成概率已达到提前试仓线，"
+            else "趋势成形信号分已达到提前试仓线，"
         )
         return prefix + "但候选基金自身早期修复信号尚未通过；等待基金条件："
     if code == "structure_repair":

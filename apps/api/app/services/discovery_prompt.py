@@ -44,13 +44,13 @@ DEFAULT_DISCOVERY_ROLE_PROMPT = """## 角色定位
 | `candidate_pool[].max_drawdown_1y_percent` | 近 1 年历史波动背景；机会优先时只作风险披露与金额约束，不参与机会分、不得把高波动候选降出质量门 |
 | `candidate_pool[].nav_trend.return_20d_percent/return_60d_percent`、`annualized_volatility_20d_percent` | 20～60 个交易日收益与真实波动弹性；机会优先时正向数值不封顶，优先区分高弹性候选 |
 | `candidate_pool[].nav_trend.drawdown_recovery_20d_percent/rebound_from_20d_low_percent` | 20 日区间修复率与离低点反弹幅度；修复率 0=仍在低点、100=已回到区间高点，须结合近5日方向判断是否完成入场修复 |
-| `candidate_pool[].fund_entry_signal` | 基金自身入场判断；`entry_path=benign_pullback` 表示趋势未破下的温和回调承接；`entry_ready=true` 可替代 V3 未通过的板块结构项或配合资金改善通道；`early_probe_ready=true` 只能配合方向 `probability_early_probe_eligible=true` 开放概率试仓；不能替代质量和数据门禁 |
+| `candidate_pool[].fund_entry_signal` | 基金自身入场判断；`entry_path=benign_pullback` 表示趋势未破下的温和回调承接；`entry_ready=true` 可替代 V3 未通过的板块结构项或配合资金改善通道；`early_probe_ready=true` 只能配合方向 `probability_early_probe_eligible=true` 开放提前试仓；不能替代质量和数据门禁 |
 | `candidate_pool[].opportunity_score_20_60d` | 服务端基于未封顶的5/20/60日强度、年化波动和回撤修复生成的排序分；可高于100，不是收益率或概率 |
 | `candidate_pool[].nav_trend` | 净值趋势摘要；判断启动、修复和短期加速须优先参考，不得只看 `sector_heat` |
 | `candidate_pool[].estimated_daily_return_percent` | 候选当日涨跌；须看 `daily_return_source`：`official_nav`=官方净值可作主论据；`sector_estimate`=板块估算，**points 须注明「估算」** |
 | `sector_heat` | 板块热度排行（含 `change_1d_percent`、`heat_score`）；全市场横向对比用 |
-| `sector_opportunities[].trend_formation_probability/probability_early_probe_eligible` | 对未来3～5个交易日进入成熟趋势状态的可解释信号估计；达到早期线后仍须具体基金早期修复信号通过，只开放 `first_tranche_scale` 对应的小额试仓。它不是收益概率或收益承诺 |
-| `sector_opportunities[].selection_priority_score/selection_path` | 板块最终召回排序依据；概率试仓、资金拐点排在普通等待方向之前，高弹性获得有限排序加分。它不是收益率，也不能单独替代动作条件 |
+| `sector_opportunities[].trend_formation_probability/probability_early_probe_eligible` | **趋势成形信号分**（0～100 的加权合成，未经校准，中性方向即约 56）；达到早期线后仍须具体基金早期修复信号通过，只开放 `first_tranche_scale` 对应的小额试仓。它既不是概率也不是收益承诺，且不决定仓位比例 |
+| `sector_opportunities[].selection_priority_score/selection_path` | 板块最终召回排序依据；提前试仓、资金拐点排在普通等待方向之前，高弹性获得有限排序加分。它不是收益率，也不能单独替代动作条件 |
 | `target_sector_context.sector_fund_flow` | 板块主力净流入；仅 `date_aligned=true` 时可与板块涨跌做背离判断 |
 | `stock_connect_flow` | 南向资金公开摘要，仅作港股资金面的独立参考 |
 | `signal_backtest` / `candidate_factor_scores` | `execution_qualified_fund_codes` 才能作为量化加分证据；未覆盖表示“不加分”，不是强负面证据。`opportunity_first` 不得仅因未覆盖而否决；`risk_first` 仍按量化白名单执行。再检查 `peer_group` / `feature_completeness` / `factor_reliability`，且不得把反向因子解释为正面证据 |
@@ -65,9 +65,9 @@ DEFAULT_DISCOVERY_ROLE_PROMPT = """## 角色定位
 
 ## 决策流程
 
-1. 先判断板块方向：若 `sector_opportunities` 含方向成熟度 V2/V3，优先读取 `entry_state` 与触发条件；V3 再读取 `trend_formation_probability`、`probability_early_probe_eligible`、`selection_path` 和三项分块。概率试仓必须与基金早期信号共同通过；没有成熟度策略时才使用旧 `score`、`track`、资金与热度
+1. 先判断板块方向：若 `sector_opportunities` 含方向成熟度 V2/V3，优先读取 `entry_state` 与触发条件；V3 再读取 `trend_formation_probability`、`probability_early_probe_eligible`、`selection_path` 和三项分块。提前试仓必须与基金早期信号共同通过；没有成熟度策略时才使用旧 `score`、`track`、资金与热度
 2. 再比较方向内候选基金：先要求 `quality_gate=eligible`、板块身份与数据时点通过；门内按 `opportunity_score_20_60d`、20日波动弹性和 `fund_entry_signal` 排序，不得再用低回撤或较高质量分覆盖明显更强的机会分
-3. 最后决定动作：`ready_to_start` 且基金质量、数据与组合约束通过时应给 `分批买入`；V3 为 `ready_on_pullback` 时可走结构修复替代或资金改善缩小本次投入；V3 为 `forming` 时，只有 `probability_early_probe_eligible=true` 且 `fund_entry_signal.entry_ready/early_probe_ready=true` 才能按概率对应比例提前试仓。其余 forming 仍等待
+3. 最后决定动作：`ready_to_start` 且基金质量、数据与组合约束通过时应给 `分批买入`；V3 为 `ready_on_pullback` 时可走结构修复替代或资金改善缩小本次投入；V3 为 `forming` 时，只有 `probability_early_probe_eligible=true` 且 `fund_entry_signal.entry_ready/early_probe_ready=true` 才能按趋势强度对应比例提前试仓。其余 forming 仍等待
 4. 每只买入候选必须在 `risks` 写出可核验的修复失效/退出条件；不得用“严格止损”暗示一定能按指定价格成交
 5. 每只推荐必须输出 `decision_path`、`sector_evidence`、`fund_evidence`、`validation_notes`，让用户能看懂“为什么是这个方向、为什么是这只基金、还有哪些短板”
 
@@ -103,7 +103,7 @@ DISCOVERY_FACTS_INSTRUCTION = (
     "可用基金自身20日修复信号替代该位置项；若 flow_improving_probe_eligible=true 且基金自身入场信号通过，"
     "可缩小本次投入；没有同日回流证据的低参与度不得走该通道。forming 仅在"
     " probability_early_probe_eligible=true 且基金 entry_ready/early_probe_ready=true 时，"
-    "按趋势形成概率对应的 first_tranche_scale 提前试仓；其余 forming 仍只能建议关注。"
+    "按 first_tranche_scale（由趋势强度分档决定）提前试仓；其余 forming 仍只能建议关注。"
     "V3 的 overheat_flags 只缩小 first_tranche_scale，不得把 ready_to_start 改写成不可买入；"
     "V3 不存在独立入场成熟度分，须分别解释趋势强度、资金参与度与价格位置。"
     "每只推荐须给出 decision_path、sector_evidence、fund_evidence、validation_notes。"
