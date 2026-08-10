@@ -284,11 +284,13 @@ def _persisted_stats(trade_date: str) -> dict[str, Any]:
                 """,
                 (trade_date,),
             ).fetchone()
-    except Exception:  # noqa: BLE001 — 回读失败不改变捕获本身的成败
+    except Exception as exc:  # noqa: BLE001 — 回读失败不改变捕获本身的成败
+        # 必须与「落库 0 行」区分开：这次生产首跑就是因为 MySQL 侧缺列，落库与回读都
+        # 静默失败（两处都是 best-effort），摘要只显示 None，从输出完全看不出是缺列。
         logger.warning("回读方向状态落库结果失败", exc_info=True)
-        return {}
+        return {"persisted_readback_error": f"{type(exc).__name__}: {exc}"[:300]}
     if row is None:
-        return {}
+        return {"persisted_readback_error": "no_row"}
     persisted = int(row["persisted"] or 0)
     with_evidence = int(row["with_trend_evidence"] or 0)
     return {

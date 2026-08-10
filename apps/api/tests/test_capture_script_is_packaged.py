@@ -81,3 +81,49 @@ def test_capture_workflow_invokes_the_packaged_path() -> None:
     # 容器 WORKDIR 是 /app，脚本落在 /app/scripts/，因此调用侧必须是相对路径而不是
     # apps/api/scripts/...（后者在容器里不存在）。
     assert "apps/api/scripts/capture_sector_direction_states.py" not in workflow
+
+
+# ---------------------------------------------------------------------------
+# 同一张表的 schema 有**两处**维护点：SQLite 走 db_migrations，生产 MySQL 走
+# mysql_bootstrap。第二次生产实测踩的就是这个——脚本已在镜像里、取数各段都跑完，
+# 但 MySQL 缺列导致落库与回读双双静默失败（两处都是 best-effort try/except），
+# 摘要里只剩 None，从输出完全看不出是缺列。
+# ---------------------------------------------------------------------------
+
+#: 退出侧 2026-08 新增、两处 schema 都必须有的列。
+EXIT_SIDE_COLUMNS = ("trend_evidence_coverage", "source")
+
+
+@pytest.mark.parametrize("column", EXIT_SIDE_COLUMNS)
+def test_sqlite_migration_adds_the_column(column: str) -> None:
+    text = (API_ROOT / "app" / "db_migrations.py").read_text(encoding="utf-8")
+    assert (
+        f'ALTER TABLE sector_direction_states ADD COLUMN {column}' in text
+    ), f"SQLite 迁移没有加 {column}"
+
+
+@pytest.mark.parametrize("column", EXIT_SIDE_COLUMNS)
+def test_mysql_bootstrap_creates_and_backfills_the_column(column: str) -> None:
+    """新库靠 CREATE TABLE 带上，存量库靠 ALTER 补——两者都要有。
+
+    `CREATE TABLE IF NOT EXISTS` 对已存在的表什么都不做，所以只改建表语句对生产
+    （表早就存在）完全无效。
+    """
+    text = (API_ROOT / "app" / "mysql_bootstrap.py").read_text(encoding="utf-8")
+    create_index = text.find("CREATE TABLE IF NOT EXISTS sector_direction_states")
+    assert create_index > 0, "找不到 MySQL 侧的建表语句"
+    create_block = text[create_index : create_index + 2000]
+    assert column in create_block, f"MySQL 建表语句里没有 {column}"
+    assert (
+        '"sector_direction_states": {' in text
+    ), "MySQL 侧缺少 sector_direction_states 的 ALTER 补列配置，存量库不会加列"
+
+
+def test_mysql_bootstrap_backfills_source_for_existing_rows() -> None:
+    """存量行必须与 SQLite 侧同口径地标为 captured，否则发现基金的滞回会把它们过滤掉。"""
+    text = (API_ROOT / "app" / "mysql_bootstrap.py").read_text(encoding="utf-8")
+    normalized = " ".join(text.split())
+    assert (
+        "UPDATE sector_direction_states SET source = 'captured' WHERE source IS NULL"
+        in normalized
+    )

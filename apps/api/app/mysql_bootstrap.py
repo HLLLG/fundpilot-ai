@@ -1220,6 +1220,14 @@ def _ensure_mysql_schema_locked(
             position_risk_score DOUBLE NULL,
             direction_score DOUBLE NULL,
             recorded_at VARCHAR(64) NOT NULL,
+            -- 退出侧要靠这两列才能正确数「连续跌破退出线」的天数，口径见
+            -- app/services/sector_direction_exit.py 与 sector_direction_capture.py。
+            -- trend_evidence_coverage：区分「真实低分」与「证据不足时 ≤45 的兜底占位
+            -- 值」（占位值必然低于退出线 52，不过滤会让连续天数被没有证据的日子灌水）。
+            -- source：captured=当天真实捕获 / backfilled=事后按日线重算的趋势回填，
+            -- 发现基金的滞回只认前者。
+            trend_evidence_coverage DOUBLE NULL,
+            source VARCHAR(32) NULL,
             PRIMARY KEY (trade_date, sector_label),
             INDEX idx_sector_direction_state_label_date (sector_label, trade_date)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
@@ -1918,6 +1926,14 @@ def _ensure_mysql_schema_locked(
                 "active_dedup_key": "VARCHAR(64) NULL",
                 "heartbeat_at": "VARCHAR(64) NULL",
             },
+            # 2026-08 退出侧：`CREATE TABLE IF NOT EXISTS` 对已存在的表不会加列，
+            # 存量生产库必须走这条 ALTER。漏了它的后果实测过一次——捕获脚本各段取数
+            # 正常跑完，但落库与回读都静默失败（两处都是 best-effort try/except），
+            # 摘要里的行数读成 None。
+            "sector_direction_states": {
+                "trend_evidence_coverage": "DOUBLE NULL",
+                "source": "VARCHAR(32) NULL",
+            },
         }
         for table, columns in performance_columns.items():
             for column, definition in columns.items():
@@ -1941,6 +1957,14 @@ def _ensure_mysql_schema_locked(
                 WHERE heartbeat_at IS NULL
                 """
             )
+        # 存量行都是发现基金当天写的真实捕获（与 SQLite 侧迁移同一口径）。
+        cursor.execute(
+            """
+            UPDATE sector_direction_states
+            SET source = 'captured'
+            WHERE source IS NULL
+            """
+        )
         performance_indexes = (
             (
                 "analysis_jobs",

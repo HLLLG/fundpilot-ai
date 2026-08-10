@@ -172,6 +172,10 @@ def main() -> int:
     print(f"  交易日            {summary.get('trade_date')}")
     print(f"  白名单板块数       {summary.get('universe_size')}")
     print(f"  mainline 可用      {summary.get('mainline_available')}")
+    if summary.get("persisted_readback_error"):
+        # 回读失败与「落库 0 行」必须能分辨：前者多半是表结构没跟上（缺列），
+        # 而落库本身也是 best-effort，两处一起静默会让输出只剩 None。
+        print(f"  !! 落库结果回读失败：{summary['persisted_readback_error']}")
     print(f"  落库行数          {summary.get('persisted')}")
     print(f"  其中有趋势证据     {summary.get('with_trend_evidence')}")
     print(f"  证据不足（占位）   {summary.get('degraded')}")
