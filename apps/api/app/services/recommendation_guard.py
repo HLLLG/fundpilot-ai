@@ -179,6 +179,14 @@ def apply_recommendation_guards(
             over_concentration=bool((facts_row or {}).get("over_concentration")),
             has_unrealized_gain=((facts_row or {}).get("estimated_holding_return_percent") or 0) > 0,
             decision_style=decision_style,
+            # 方向退出必须在 guard 侧也生效，否则模型可以把它说没了。取值优先用板块机会行
+            # 上挂的那份（analysis_facts 透传过来的同一对象）。
+            direction_exit=(
+                sector_opportunity.get("direction_exit")
+                if isinstance(sector_opportunity, dict)
+                else None
+            )
+            or (facts_row or {}).get("direction_exit"),
         )
         today_news_required_missing = bool(
             not short_term and settings.news_require_today_for_add and not today_signal
@@ -851,7 +859,7 @@ def _entry_state_add_block_reason(sector_opportunity: dict | None) -> str | None
     state = str(sector_opportunity.get("entry_state") or "")
     if not state or state == _ENTRY_STATE_READY:
         return None
-    # 荐基对这两类"早期试仓"开了口子（资金刚转强 / 趋势形成概率够），日报沿用同一判定，
+    # 荐基对这两类"早期试仓"开了口子（资金刚转强 / 趋势成形信号分够），日报沿用同一判定，
     # 否则同一天同一板块两个界面结论相反。它们仍会通过 first_tranche_scale 缩小比例。
     if sector_opportunity.get("flow_improving_probe_eligible") is True:
         return None

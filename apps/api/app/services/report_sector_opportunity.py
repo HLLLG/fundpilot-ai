@@ -13,6 +13,7 @@ from __future__ import annotations
 """
 
 from concurrent.futures import ThreadPoolExecutor
+import logging
 import time
 from typing import Any
 
@@ -23,6 +24,8 @@ from app.services.sector_opportunity_scoring import (
     build_sector_flow_map_for_opportunities,
     describe_sector_opportunity,
 )
+
+logger = logging.getLogger(__name__)
 
 SECTOR_FLOW_BUDGET_SECONDS = 4.0
 SECTOR_DIVERGENCE_BUDGET_SECONDS = 4.0
@@ -479,6 +482,7 @@ def build_holding_sector_opportunity_context(
         for row in held_rows
         if str(row.get("sector_label") or "")
     }
+    _attach_direction_exit(held, holdings=holdings, trade_date=trade_date)
 
     # 轮动参考：拆成「打分 → 滞回 → 选择」，与荐基 `_score_select_and_persist_directions`
     # 同一顺序。此前这里用的是复合入口 `select_sector_opportunities`（内部打分即选择），
@@ -540,6 +544,79 @@ def build_holding_sector_opportunity_context(
     if heat_error_reason is not None:
         result["reason"] = heat_error_reason
     return result
+
+
+def _attach_direction_exit(
+    held: dict[str, dict],
+    *,
+    holdings: list[Holding],
+    trade_date: str | None,
+) -> None:
+    """给每个持仓方向挂上退出判定（key: `direction_exit`），原地修改。
+
+    只在**已持有**的方向上算：退出是持仓语义，轮动参考里那些没买的方向不需要它（也是
+    职责边界——发现基金负责能不能进，日报负责已持仓的加/减/退）。
+
+    整段 best-effort：退出判定是新增的增强项，任何一步失败都不能让日报生成不出来。
+    """
+    if not held:
+        return
+    try:
+        from app.services.sector_direction_exit import (
+            assess_direction_exit,
+            load_direction_entry_contracts,
+            load_direction_trend_history,
+        )
+        from app.services.sector_direction_state import EXIT_TREND_THRESHOLD
+
+        labels = list(held.keys())
+        # 生产链路（analysis_facts）总会传 trade_date；这里补一层兜底，否则调用方省略时
+        # 历史读不到、连续跌破天数恒为 1，「持续走坏」的升级会静默失效。
+        history_cutoff = str(trade_date or "").strip()
+        if not history_cutoff:
+            from app.services.trading_session import get_effective_trade_date
+
+            history_cutoff = get_effective_trade_date()
+        history_by_label = load_direction_trend_history(
+            labels,
+            before_trade_date=history_cutoff,
+        )
+        # 入场契约按「基金 → 方向」取：同一方向可能对应多只基金，取最早那笔买入作为
+        # 该方向的基线（先买的那笔才是"当初为什么进这个方向"）。
+        contracts_by_code = load_direction_entry_contracts(
+            [holding.fund_code for holding in holdings],
+        )
+        contract_by_label: dict[str, dict] = {}
+        for contract in contracts_by_code.values():
+            label = str(contract.get("sector_label") or "").strip()
+            if not label:
+                continue
+            existing = contract_by_label.get(label)
+            if existing is None or str(contract.get("entry_date") or "") < str(
+                existing.get("entry_date") or ""
+            ):
+                contract_by_label[label] = contract
+
+        gain_by_label: dict[str, bool] = {}
+        for holding in holdings:
+            label = normalize_sector_label(holding.sector_name)
+            if not label:
+                continue
+            if (holding.holding_profit or 0) > 0:
+                gain_by_label[label] = True
+
+        for label, row in held.items():
+            row["direction_exit"] = assess_direction_exit(
+                sector_label=label,
+                entry_state=row.get("entry_state"),
+                trend_strength=row.get("trend_strength_score"),
+                exit_trend_threshold=EXIT_TREND_THRESHOLD,
+                trend_history=history_by_label.get(label, []),
+                entry_contract=contract_by_label.get(label),
+                has_unrealized_gain=gain_by_label.get(label, False),
+            )
+    except Exception:  # noqa: BLE001 — 绝不阻塞日报
+        logger.warning("方向退出判定失败，本次跳过", exc_info=True)
 
 
 def _resolve_previous_trade_date(trade_date: str | None) -> str | None:

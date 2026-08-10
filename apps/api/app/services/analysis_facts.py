@@ -289,14 +289,26 @@ def _attach_escalation_to_holdings(
     docstring），这里不做额外短路，保持单一判定入口。
     """
     for row in per_fund:
+        sector_opportunity = row.get("sector_opportunity")
+        # 方向退出判定挂在板块机会行上（由 report_sector_opportunity 计算），这里透传给
+        # 升级下限：它是 2026-08 补上的"何时退场"来源，与既有的量价背离风险各判一次、
+        # 取更保守者。
+        direction_exit = (
+            sector_opportunity.get("direction_exit")
+            if isinstance(sector_opportunity, dict)
+            else None
+        )
         row["escalation"] = resolve_escalation_floor(
-            sector_opportunity=row.get("sector_opportunity"),
+            sector_opportunity=sector_opportunity,
             evidence=row.get("evidence"),
             market_breadth=market_breadth,
             over_concentration=bool(row.get("over_concentration")),
             has_unrealized_gain=(row.get("estimated_holding_return_percent") or 0) > 0,
             decision_style=profile.decision_style,
+            direction_exit=direction_exit,
         )
+        if isinstance(direction_exit, dict):
+            row["direction_exit"] = direction_exit
 
 
 def _extra_allowed_actions_for_escalation(per_fund: list[dict]) -> list[str]:
@@ -666,7 +678,19 @@ def build_analysis_facts(
             "ready_on_pullback=方向成立但当前位置不宜追，通常等待；forming=条件形成中，不得下单；"
             "invalid=趋势或资金未通过，不得参与。first_tranche_scale 是本次投入的缩放系数"
             "（过热/拥挤/概率不足时小于 1），服务端已按它确定性地缩小加仓比例，叙述不得与之冲突；"
-            "trend_formation_probability 是趋势形成概率估计，不是收益预测。"
+            "trend_formation_probability 实为**趋势成形信号分**（0～100，未经校准的加权合成，中性方向即读出约 56），既不是概率也不是收益预测；不得按「几成会涨」表述，也不再决定仓位比例（仓位按趋势强度分档）。"
+            "direction_exit 是**已持仓方向的退出侧判定**（入场由发现基金负责，已持仓的加/减/退由日报负责）："
+            "exit_state=hold 方向仍有效；pause_add=方向仍在退出线上方但当前未通过入场线或相对买入明显回落，"
+            "维持持有但本轮不得加仓；reduce/deep_reduce/exit=趋势已跌破退出线或方向作废，"
+            "服务端已把 escalation.min_bucket 与 suggested_position_change_percent 按它确定性地下调，"
+            "叙述必须与该档位一致，不得反过来劝继续持有或加仓。"
+            "allows_add=false 时禁止给出任何加仓类动作。basis=relative_to_entry 时"
+            "entry_reference 带着买入当时的方向分数，可在 points 里引用「买入时 X 分、现在 Y 分」；"
+            "basis=absolute 表示该持仓没有对应的发现基金买入事件（多为截图导入），"
+            "只能按绝对退出线表述，不得编造入场基线；basis=unavailable 表示趋势分取不到，"
+            "此时既不构成卖出理由、也不授权加仓。"
+            "注意 direction_exit 里的连续跌破天数门槛与相对回落门槛尚未经过回测验证"
+            "（thresholds_validated=false），可作为动作依据但不要宣称它有历史胜率支撑。"
             "sector_direction_maturity.available=false 表示当天没有可复用的主线快照，"
             "此时 entry_state 等字段不存在，**不得**据此认为方向不成立或方向已成熟，"
             "只能按旧版机会分与资金面叙述。"

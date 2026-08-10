@@ -325,6 +325,97 @@ def resolve_escalation_floor(
     over_concentration: bool,
     has_unrealized_gain: bool,
     decision_style: str,
+    direction_exit: dict | None = None,
+) -> dict[str, object]:
+    """升级下限 = max(保守程度) over {量价背离风险共振, 方向退出}。
+
+    `direction_exit` 是 `sector_direction_exit.assess_direction_exit()` 的输出（2026-08
+    新增）。加它是因为原来这条链路**听不见方向信号**：下面的风险判定开头两道早退要求
+    `opportunity_available is False` 且 `confidence == "高"`，于是一个机会仍然"可用"、
+    背离置信度只有"中"、但趋势已经从 69 掉到 41 的方向，产不出任何减仓档位——用户只能
+    自己判断该不该走，而这正是浮盈被拿回去的地方。
+
+    两个来源各自独立判定，最后取**更保守**的那一档（bucket 数值更小者胜），理由合并。
+    这样既不放松既有的风险升级，也让方向失效能真正落成动作。
+    """
+    risk = _resolve_risk_divergence_floor(
+        sector_opportunity=sector_opportunity,
+        evidence=evidence,
+        market_breadth=market_breadth,
+        over_concentration=over_concentration,
+        has_unrealized_gain=has_unrealized_gain,
+        decision_style=decision_style,
+    )
+    direction = _resolve_direction_exit_floor(direction_exit)
+    return _merge_escalation_floors(risk, direction)
+
+
+def _resolve_direction_exit_floor(direction_exit: dict | None) -> dict[str, object]:
+    """把方向退出判定翻译成升级下限；`hold`/`unavailable` 不升级动作档位。
+
+    注意 `unavailable`（趋势分取不到）刻意**不**升级：缺数据不构成卖出理由。它对加仓的
+    否决走 `allows_add`，不走这里。
+    """
+    if not isinstance(direction_exit, dict):
+        return dict(_NO_ESCALATION)
+    min_bucket = direction_exit.get("min_bucket")
+    if not isinstance(min_bucket, int):
+        return dict(_NO_ESCALATION)
+    reasons = [str(item) for item in (direction_exit.get("reasons") or []) if str(item).strip()]
+    percent = direction_exit.get("suggested_position_change_percent")
+    return {
+        "min_bucket": min_bucket,
+        "min_action_label": ACTION_BUCKET_LABELS[min_bucket],
+        "reasons": reasons,
+        "suggested_position_change_percent": (
+            float(percent) if isinstance(percent, (int, float)) and not isinstance(percent, bool) else None
+        ),
+        "basis": "；".join(reasons),
+    }
+
+
+def _merge_escalation_floors(
+    risk: dict[str, object],
+    direction: dict[str, object],
+) -> dict[str, object]:
+    """取更保守的一档；同档时保留风险侧的比例，理由两侧合并去重。"""
+    risk_bucket = risk.get("min_bucket")
+    direction_bucket = direction.get("min_bucket")
+    if not isinstance(risk_bucket, int):
+        return dict(direction) if isinstance(direction_bucket, int) else dict(_NO_ESCALATION)
+    if not isinstance(direction_bucket, int):
+        return dict(risk)
+
+    winner, loser = (
+        (risk, direction) if risk_bucket <= direction_bucket else (direction, risk)
+    )
+    reasons: list[str] = []
+    for source in (winner, loser):
+        for reason in source.get("reasons") or []:
+            text = str(reason)
+            if text and text not in reasons:
+                reasons.append(text)
+    percent = winner.get("suggested_position_change_percent")
+    if percent is None:
+        percent = loser.get("suggested_position_change_percent")
+    bucket = min(risk_bucket, direction_bucket)
+    return {
+        "min_bucket": bucket,
+        "min_action_label": ACTION_BUCKET_LABELS[bucket],
+        "reasons": reasons,
+        "suggested_position_change_percent": percent,
+        "basis": "；".join(reasons),
+    }
+
+
+def _resolve_risk_divergence_floor(
+    *,
+    sector_opportunity: dict | None,
+    evidence: dict | None,
+    market_breadth: dict | None,
+    over_concentration: bool,
+    has_unrealized_gain: bool,
+    decision_style: str,
 ) -> dict[str, object]:
     """双向 guard 的"升级下限"判定（M2.1）。
 
