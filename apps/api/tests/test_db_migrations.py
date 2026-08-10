@@ -169,6 +169,12 @@ def test_current_schema_still_ensures_sector_direction_state_table() -> None:
         "entry_state",
         "raw_entry_state",
         "consecutive_qualifying_days",
+        # 2026-08：退出侧要靠这两列才能正确数「连续跌破退出线」的天数。
+        # `trend_evidence_coverage` 区分「真实低分」与「证据不足时 ≤45 的兜底占位值」
+        # （占位值必然低于退出线 52，不过滤会让连续天数被没有证据的日子灌水）；
+        # `source` 区分当天真实捕获与事后按日线重算的回填，让发现基金的滞回只认前者。
+        "trend_evidence_coverage",
+        "source",
     } <= columns
 
 

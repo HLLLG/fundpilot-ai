@@ -194,6 +194,7 @@ def load_previous_direction_states(
                        qualifies_for_ready, consecutive_qualifying_days
                 FROM sector_direction_states
                 WHERE trade_date = ?
+                  AND (source IS NULL OR source = 'captured')
                 """,
                 (previous_trade_date,),
             ).fetchall()
@@ -202,6 +203,7 @@ def load_previous_direction_states(
                     """
                     SELECT 1 FROM sector_direction_states
                     WHERE trade_date <= ?
+                      AND (source IS NULL OR source = 'captured')
                     LIMIT 1
                     """,
                     (previous_trade_date,),
@@ -251,6 +253,9 @@ def record_direction_states(
             # 52）并把该覆盖度置 0。不存它，退出侧就分不出「真跌破」与「当天没数据」，
             # 连续跌破天数会被无证据的日子灌水。
             _num((row.get("component_coverage") or {}).get("trend")),
+            # 发现基金链路与每日捕获都是「当天真实算出来的」。回填走
+            # `sector_direction_capture` 里独立的写入器并标 'backfilled'。
+            "captured",
         )
         for row in rows
         if str(row.get("score_policy_version") or "") == ENTRY_POLICY_VERSION_V3
@@ -269,8 +274,8 @@ def record_direction_states(
                     entry_state, raw_entry_state, qualifies_for_ready,
                     consecutive_qualifying_days, trend_strength_score,
                     participation_score, position_risk_score, direction_score,
-                    recorded_at, trend_evidence_coverage
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    recorded_at, trend_evidence_coverage, source
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON DUPLICATE KEY UPDATE
                     schema_version = VALUES(schema_version),
                     policy_version = VALUES(policy_version),
@@ -283,7 +288,8 @@ def record_direction_states(
                     position_risk_score = VALUES(position_risk_score),
                     direction_score = VALUES(direction_score),
                     recorded_at = VALUES(recorded_at),
-                    trend_evidence_coverage = VALUES(trend_evidence_coverage)
+                    trend_evidence_coverage = VALUES(trend_evidence_coverage),
+                    source = VALUES(source)
                 """
             else:
                 statement = """
@@ -292,8 +298,8 @@ def record_direction_states(
                     entry_state, raw_entry_state, qualifies_for_ready,
                     consecutive_qualifying_days, trend_strength_score,
                     participation_score, position_risk_score, direction_score,
-                    recorded_at, trend_evidence_coverage
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    recorded_at, trend_evidence_coverage, source
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(trade_date, sector_label) DO UPDATE SET
                     entry_state = excluded.entry_state,
                     raw_entry_state = excluded.raw_entry_state,
@@ -304,7 +310,8 @@ def record_direction_states(
                     position_risk_score = excluded.position_risk_score,
                     direction_score = excluded.direction_score,
                     recorded_at = excluded.recorded_at,
-                    trend_evidence_coverage = excluded.trend_evidence_coverage
+                    trend_evidence_coverage = excluded.trend_evidence_coverage,
+                    source = excluded.source
                 """
             cursor = connection.executemany(statement, payload)
             close_cursor = getattr(cursor, "close", None)

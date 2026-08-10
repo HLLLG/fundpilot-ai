@@ -806,6 +806,25 @@ def _migrate_sector_direction_states(connection: sqlite3.Connection) -> None:
         connection.execute(
             "ALTER TABLE sector_direction_states ADD COLUMN trend_evidence_coverage REAL"
         )
+    # 来源标记，区分「当天真实捕获」与「事后按日线重算的回填」。
+    #
+    # 趋势轴（20日收益、距MA20/MA60、20日上涨天数占比、相对强度横截面分位）全是日线的
+    # 纯函数，历史可以如实重算——实测对 4 个历史交易日逐日取数，价格结构 6/6 命中、覆盖度
+    # 1.0，且数值逐日真实变化。但同一行里的 `participation_score` 依赖当日资金流（历史资金流
+    # 拿不回来），`entry_state` 与 `consecutive_qualifying_days` 又是从它派生且**路径依赖**
+    # 的。所以回填行的趋势轴可信、滞回三列不可信。
+    #
+    # 有了这一列，两个读取侧各取自己有资格用的部分：发现基金的滞回
+    # （`load_previous_direction_states`）只认 `captured`，绝不让重算值进入它的跨日链条；
+    # 退出侧的趋势历史（`load_direction_trend_history`）两者都收。
+    if not _column_exists(connection, "sector_direction_states", "source"):
+        connection.execute(
+            "ALTER TABLE sector_direction_states ADD COLUMN source TEXT"
+        )
+        # 存量行都是发现基金当天写的真实捕获。
+        connection.execute(
+            "UPDATE sector_direction_states SET source = 'captured' WHERE source IS NULL"
+        )
 
 
 def _migrate_factor_ic_snapshots(connection: sqlite3.Connection) -> None:

@@ -1,0 +1,90 @@
+name: Sector Direction Capture
+
+# 每交易日把全白名单的板块方向状态落库，供退出侧读「连续跌破退出线」的天数。
+#
+# 为什么必须是定时任务：`sector_direction_states` 原来只在用户手动跑一次发现基金时才写。
+# 实测线下库里整张表只有一天数据，于是「连续跌破 N 个交易日才升级为大幅减仓」在真实使用
+# 中永远攒不出序列，`consecutive_days_below_exit_line` 长期卡在 1，−50% 那一档实际不可达。
+#
+# 19:10（Asia/Shanghai）：收盘后 4 小时，指数日线与主力资金都已结算；同时避开 20:30 的
+# Factor IC Universe Capture，不与它抢上游配额。
+#
+# 落库按 (trade_date, sector_label) 幂等 upsert，重跑安全。节假日若落在周一到周五，
+# `build_trading_session` 会把有效交易日解析到上一个交易日，于是当晚这次运行会用同样的
+# 行情重写那一天的行——数值等价，不构成污染。
+on:
+  schedule:
+    - cron: "10 19 * * 1-5"
+      timezone: "Asia/Shanghai"
+  workflow_dispatch:
+    inputs:
+      trade_date:
+        description: "目标交易日 YYYY-MM-DD（留空则按当前交易时段推导）"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sector-direction-capture-production
+  cancel-in-progress: false
+
+jobs:
+  capture:
+    if: vars.LIGHTHOUSE_DEPLOY_ENABLED == 'true' && (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    steps:
+      - name: Configure Lighthouse SSH identity
+        env:
+          LIGHTHOUSE_HOST: ${{ secrets.LIGHTHOUSE_HOST }}
+          LIGHTHOUSE_USER: ${{ secrets.LIGHTHOUSE_USER }}
+          LIGHTHOUSE_SSH_PRIVATE_KEY: ${{ secrets.LIGHTHOUSE_SSH_PRIVATE_KEY }}
+          LIGHTHOUSE_KNOWN_HOSTS: ${{ secrets.LIGHTHOUSE_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          SSH_KEY_PATH=$RUNNER_TEMP/fundpilot-sector-direction-key
+          SSH_KNOWN_HOSTS_PATH=$RUNNER_TEMP/fundpilot-sector-direction-known-hosts
+          printf 'SSH_KEY_PATH=%s\nSSH_KNOWN_HOSTS_PATH=%s\n' \
+            "$SSH_KEY_PATH" "$SSH_KNOWN_HOSTS_PATH" >> "$GITHUB_ENV"
+          [[ -n "$LIGHTHOUSE_HOST" ]] || { echo "::error::LIGHTHOUSE_HOST is empty"; exit 1; }
+          [[ -n "$LIGHTHOUSE_USER" ]] || { echo "::error::LIGHTHOUSE_USER is empty"; exit 1; }
+          [[ -n "$LIGHTHOUSE_SSH_PRIVATE_KEY" ]] || { echo "::error::LIGHTHOUSE_SSH_PRIVATE_KEY is empty"; exit 1; }
+          [[ -n "$LIGHTHOUSE_KNOWN_HOSTS" ]] || { echo "::error::LIGHTHOUSE_KNOWN_HOSTS is empty"; exit 1; }
+          printf '%s\n' "$LIGHTHOUSE_SSH_PRIVATE_KEY" | tr -d '\r' > "$SSH_KEY_PATH"
+          printf '%s\n' "$LIGHTHOUSE_KNOWN_HOSTS" | tr -d '\r' > "$SSH_KNOWN_HOSTS_PATH"
+          chmod 600 "$SSH_KEY_PATH" "$SSH_KNOWN_HOSTS_PATH"
+          ssh-keygen -y -f "$SSH_KEY_PATH" >/dev/null
+
+      - name: Capture today's sector direction states
+        id: capture
+        env:
+          LIGHTHOUSE_HOST: ${{ secrets.LIGHTHOUSE_HOST }}
+          LIGHTHOUSE_USER: ${{ secrets.LIGHTHOUSE_USER }}
+          TRADE_DATE: ${{ inputs.trade_date }}
+        run: |
+          set -euo pipefail
+          target="${LIGHTHOUSE_USER}@${LIGHTHOUSE_HOST}"
+          ssh_options=(-i "$SSH_KEY_PATH" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$SSH_KNOWN_HOSTS_PATH")
+          # 只有 workflow_dispatch 会传交易日；空值时让脚本自己按交易时段推导。
+          # 用数组拼参数而不是字符串插值，避免输入被当成命令片段。
+          date_args=""
+          if [[ -n "${TRADE_DATE:-}" ]]; then
+            if [[ ! "$TRADE_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+              echo "::error::trade_date must be YYYY-MM-DD"; exit 1
+            fi
+            date_args="--trade-date $TRADE_DATE"
+          fi
+          ssh "${ssh_options[@]}" "$target" \
+            "cd /srv/fundpilot/repo && docker compose --env-file .env.production -f docker-compose.production.yml exec -T api python scripts/capture_sector_direction_states.py $date_args"
+
+      - name: Record capture contract
+        if: always()
+        run: |
+          echo "Capture step outcome: ${{ steps.capture.outcome }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "口径：全白名单（约 78 个板块）取联网证据，与发现基金那约 24 个预筛板块刻意不同——方向状态表没有 userId，一次捕获要服务所有用户，任何用户的持仓方向都不能落到证据不足的占位值上。" >> "$GITHUB_STEP_SUMMARY"
+          echo "口径：打分、跨日滞回与落库复用 discovery_pipeline 的同一个写入者，避免同一板块同一天出现两个 trend_strength_score。" >> "$GITHUB_STEP_SUMMARY"
+          echo "口径：默认跳过量价背离回测——它只影响 confidence，不落库也不参与 entry_state 判定，却占了实测耗时的绝大部分。" >> "$GITHUB_STEP_SUMMARY"
+          echo "失败判据：脚本在「落库了但趋势证据为 0」时也返回非零——那种行的趋势分是 ≤45 的占位值（低于退出线 52），退出侧一行都用不上。" >> "$GITHUB_STEP_SUMMARY"

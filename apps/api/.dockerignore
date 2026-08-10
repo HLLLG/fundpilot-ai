@@ -8,6 +8,7 @@ tests
 scripts/*
 !scripts/settle_pending_outcomes.py
 !scripts/evaluate_decision_quality.py
+!scripts/capture_sector_direction_states.py
 **/__pycache__
 **/*.py[cod]
 **/*.log

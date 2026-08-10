@@ -10,6 +10,10 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 COPY app /app/app
 COPY scripts/settle_pending_outcomes.py /app/scripts/settle_pending_outcomes.py
 COPY scripts/evaluate_decision_quality.py /app/scripts/evaluate_decision_quality.py
+# 每交易日的板块方向状态捕获（.github/workflows/sector-direction-capture.yml 通过
+# `docker compose exec api` 调用）。镜像逐个白名单拷贝脚本，漏了这行定时任务会直接
+# 报「找不到文件」。
+COPY scripts/capture_sector_direction_states.py /app/scripts/capture_sector_direction_states.py
 
 # 2026-07-04（方案 B，见 apps/api/var/factor_ic/.gitkeep 注释）：因子 IC 离线回测
 # 产物（scripts/run_factor_ic.py 生成，供 factor_confidence.py::load_ic_summary 读取，
