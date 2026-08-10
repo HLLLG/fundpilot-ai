@@ -1537,8 +1537,18 @@ export function Dashboard() {
     setBatchUploadError(null);
     try {
       const result = await transactionsOcr(selectedFile);
+      // 识别不可用/失败时后端返回 error 字段而不是 500；不透出的话用户只会看到
+      // 「未识别到交易记录」这种误导性提示。
+      if (result.error) {
+        throw new Error(result.error);
+      }
       if (!result.transactions.length) {
-        throw new Error("未识别到交易记录，请确认截图为支付宝「交易记录 / 交易分析」页。");
+        const isHoldingsPage = result.ocr_source === "alipay_holdings";
+        throw new Error(
+          isHoldingsPage
+            ? "这张是持仓总览截图。加减仓请传「交易记录」页；要同步持仓请用「上传截图 / 新增持有」。"
+            : "未识别到交易记录，请确认截图为支付宝「交易记录 / 交易分析」页。",
+        );
       }
       setShowBatchModal(false);
       setPendingTransactions((prev) => mergeTransactions(prev ?? [], result.transactions));

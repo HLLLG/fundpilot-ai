@@ -189,22 +189,21 @@ class Settings(BaseSettings):
     # 基金名称全集仅用于 OCR/模糊查码预热；受限网络、测试和只跑 API 的部署可关闭，
     # 实际查码时仍会按需加载，不改变业务契约。
     fund_name_preload_enabled: bool = True
-    ocr_preload: bool = True
-    ocr_use_mobile_models: bool = True
-    ocr_max_image_side: int = 1280
-    # 截图识别引擎：auto（有 key 走云 VLM 否则本地）/ vlm（强制云，失败回退本地）/ local（强制本地不外传）
-    ocr_provider: str = "auto"
+    # 截图识别只有云端 qwen-vl-ocr 一条路（本地 PaddleOCR 兜底已删除：冷加载 + CPU 推理
+    # 比云端慢一个数量级，却在云端出错时静默接管，把一次报错变成一次 60s 超时）。
     vlm_ocr_api_key: str | None = None
     vlm_ocr_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     vlm_ocr_model: str = "qwen-vl-ocr"
-    vlm_ocr_timeout_seconds: float = 20.0
+    vlm_ocr_timeout_seconds: float = 15.0
     # qwen-vl-ocr 图像缩放：min/max_pixels 作为 image_url 同级字段传入（每 1024 像素≈1 图像 token）
     vlm_ocr_min_pixels: int = 3072
-    vlm_ocr_max_pixels: int = 8388608
+    # 2.0M 像素是实测的安全下界：长截图（12 只基金 / 1087x3355）在 2.0M 仍 12/12 全对，
+    # 降到 1.2M 就开始认错字（鑫科技→华融科技、择时→时）。再往上只增 token 不增准确率。
+    vlm_ocr_max_pixels: int = 2_000_000
     # 上传前压缩（best-effort）：转 JPEG 减小上传体积/延迟；token 由 max_pixels 控制，与文件体积无关
     vlm_ocr_compress_enabled: bool = True
-    vlm_ocr_jpeg_quality: int = 85
-    vlm_ocr_max_image_side: int = 2000
+    vlm_ocr_jpeg_quality: int = 80
+    vlm_ocr_max_image_side: int = 1600
     jwt_secret: str = "fundpilot-dev-jwt-secret-change-me-32chars"
     jwt_access_expire_minutes: int = 43_200  # 30 days
     database_url: str | None = None

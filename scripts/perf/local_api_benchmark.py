@@ -365,7 +365,6 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 "FUND_AI_DB_PATH": str(db_path),
                 "FUND_AI_JWT_SECRET": "local-perf-only-secret-32-characters!!",
                 "FUND_AI_RUNTIME_ROLE": "api",
-                "FUND_AI_OCR_PRELOAD": "false",
                 "FUND_AI_FUND_NAME_PRELOAD_ENABLED": "false",
                 "FUND_AI_THEME_BOARD_REFRESH_ENABLED": "false",
                 "FUND_AI_FUND_PRIMARY_SECTOR_PRECOMPUTE_ENABLED": "false",

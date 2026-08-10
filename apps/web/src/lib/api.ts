@@ -2930,6 +2930,14 @@ export type FundCodeResolution = {
   resolved: boolean;
 };
 
+/** 截图识别的客户端预算。
+ *
+ * 服务端自己的上限约 30s（云端识别 connect 5 + read 15 + write 10），实测一次识别
+ * 2.5~3.7s。40s 留在服务端预算之上、默认 60s 之下：真出问题时先拿到服务端那条具体
+ * 错误，而不是让用户盯着「识别中...」等满一分钟再收到一句笼统的超时。
+ */
+const OCR_UPLOAD_TIMEOUT_MS = 40_000;
+
 export type OcrAmountSemantics = {
   source: string;
   holding_amount: string;
@@ -2965,6 +2973,7 @@ export async function parseOcrUpload(
   const response = await apiFetch(`${API_BASE}/api/ocr`, {
     method: "POST",
     body: formData,
+    timeoutMs: OCR_UPLOAD_TIMEOUT_MS,
   });
   if (!response.ok) {
     throw new Error(await response.text());
@@ -3197,6 +3206,8 @@ export type FundTransaction = {
 export type TransactionsOcrResult = {
   transactions: ParsedTransaction[];
   ocr_source: string;
+  cache_hit?: boolean;
+  error?: string;
 };
 
 export type ApplyTransactionsResult = {
@@ -3212,6 +3223,7 @@ export async function transactionsOcr(file: File): Promise<TransactionsOcrResult
   const response = await apiFetch(`${API_BASE}/api/transactions/ocr`, {
     method: "POST",
     body: formData,
+    timeoutMs: OCR_UPLOAD_TIMEOUT_MS,
   });
   if (!response.ok) {
     throw new Error(await response.text());

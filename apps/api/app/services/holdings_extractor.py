@@ -6,11 +6,11 @@ from typing import Callable
 
 from app.config import Settings, get_settings
 from app.models import Holding
+from app.services.ocr_text_service import OcrUnavailable, extract_text_from_image
 
 logger = logging.getLogger(__name__)
 
-VlmFn = Callable[[bytes, Settings], tuple[list[Holding], str]]
-LocalFn = Callable[[bytes | None, str], tuple[list[Holding], str]]
+TextFn = Callable[[bytes, Settings], tuple[str, bool]]
 
 
 @dataclass
@@ -18,30 +18,8 @@ class ExtractionResult:
     holdings: list[Holding] = field(default_factory=list)
     ocr_source: str = "unknown"
     raw_text: str = ""
-    provider: str = "local"
-
-
-def _default_local_fn(file_bytes: bytes | None, text: str) -> tuple[list[Holding], str]:
-    from app.services.ocr_engine import OcrEngine
-    from app.services.ocr_parser import parse_holdings_from_text
-
-    raw_text = text
-    if not raw_text and file_bytes is not None:
-        from app.config import get_settings as _gs
-
-        upload_dir = _gs().upload_dir
-        upload_dir.mkdir(parents=True, exist_ok=True)
-        tmp = upload_dir / "vlm-local-tmp.png"
-        tmp.write_bytes(file_bytes)
-        try:
-            raw_text = OcrEngine().extract_text(tmp)
-        finally:
-            for p in (tmp, tmp.with_name(f"{tmp.stem}.ocr-prepared.jpg")):
-                try:
-                    p.unlink()
-                except OSError:
-                    pass
-    return parse_holdings_from_text(raw_text), raw_text
+    provider: str = "vlm"
+    cache_hit: bool = False
 
 
 def extract_holdings(
@@ -49,48 +27,49 @@ def extract_holdings(
     file_bytes: bytes | None,
     text: str,
     settings: Settings | None = None,
-    vlm_fn: VlmFn | None = None,
-    local_fn: LocalFn | None = None,
+    text_fn: TextFn | None = None,
 ) -> ExtractionResult:
+    """截图或文本 → 结构化持仓。
+
+    识别只有云端 VLM 一条路：模型只做「图 → 纯文本」，结构化仍由
+    `parse_holdings_from_text` 完成，所以粘贴文本和上传截图共享同一个解析器。
+    之前的本地 PaddleOCR 兜底已删除——它比云端慢一个数量级（冷加载后仍 6~9s CPU 推理，
+    生产未预热时更久），却在云端失败时静默接管，把一次「云端出错」变成一次超时。
+    """
     resolved = settings or get_settings()
-    local = local_fn or _default_local_fn
 
-    def run_local() -> ExtractionResult:
-        holdings, raw_text = local(file_bytes, text)
-        return ExtractionResult(
-            holdings=holdings,
-            ocr_source="alipay_holdings" if holdings else "unknown",
-            raw_text=raw_text,
-            provider="local",
-        )
+    if text:
+        return _parse_text(text, provider="manual_text")
 
-    # 手动文本 / 无图片 / 强制本地 / 无 key → 本地
-    use_vlm = (
-        file_bytes is not None
-        and not text
-        and resolved.ocr_provider in ("auto", "vlm")
-        and bool(resolved.vlm_ocr_api_key)
+    if file_bytes is None:
+        return ExtractionResult(provider="none")
+
+    read_text = text_fn or _default_text_fn
+    raw_text, cache_hit = read_text(file_bytes, resolved)
+    result = _parse_text(raw_text, provider="vlm")
+    return ExtractionResult(
+        holdings=result.holdings,
+        ocr_source=result.ocr_source,
+        raw_text=result.raw_text,
+        provider="vlm",
+        cache_hit=cache_hit,
     )
-    if not use_vlm:
-        return run_local()
-
-    vlm = vlm_fn or _default_vlm_fn
-    try:
-        holdings, raw_text = vlm(file_bytes, resolved)
-        if not holdings:
-            raise ValueError("VLM 返回空持仓")
-        return ExtractionResult(
-            holdings=holdings,
-            ocr_source="alipay_holdings",
-            raw_text=raw_text,
-            provider="vlm",
-        )
-    except Exception:  # noqa: BLE001 — 云端失败软回退本地，绝不冒泡
-        logger.warning("VLM 识别失败，回退本地 OCR", exc_info=True)
-        return run_local()
 
 
-def _default_vlm_fn(file_bytes: bytes, settings: Settings) -> tuple[list[Holding], str]:
-    from app.services.vlm_holdings_provider import extract_holdings_via_vlm
+def _parse_text(raw_text: str, *, provider: str) -> ExtractionResult:
+    from app.services.ocr_parser import parse_holdings_from_text
 
-    return extract_holdings_via_vlm(file_bytes, settings=settings)
+    holdings = parse_holdings_from_text(raw_text)
+    return ExtractionResult(
+        holdings=holdings,
+        ocr_source="alipay_holdings" if holdings else "unknown",
+        raw_text=raw_text,
+        provider=provider,
+    )
+
+
+def _default_text_fn(file_bytes: bytes, settings: Settings) -> tuple[str, bool]:
+    return extract_text_from_image(file_bytes, settings=settings)
+
+
+__all__ = ["ExtractionResult", "OcrUnavailable", "extract_holdings"]

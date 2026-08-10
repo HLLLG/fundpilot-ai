@@ -242,6 +242,10 @@ def _merge_holdings_by_name(*groups: list[Holding]) -> list[Holding]:
 
 def parse_alipay_holdings_multi_strategy(lines: list[str]) -> list[Holding]:
     """并行多种解析策略，取得分最高结果；不足时按基金名并集补漏。"""
+    from app.services.alipay_grouped_holdings_parser import (
+        is_alipay_wealth_account_grouped_page,
+        parse_alipay_grouped_holdings,
+    )
     from app.services.alipay_holdings_parser import (
         _find_my_holdings_name_anchors,
         _parse_alipay_overview_holdings,
@@ -250,6 +254,15 @@ def parse_alipay_holdings_multi_strategy(lines: list[str]) -> list[Holding]:
         _reconcile_alipay_profit_signs,
         _split_fund_blocks,
     )
+
+    # 财富号分组版式的块边界是分组头而不是基金名，通用锚点会把跨行基金名截断
+    # （`新华鑫科技3个月滚动` + `持有灵活配置混合A` 只认到后半段）。这个版式有明确的
+    # 结构信号，命中就直接用专用解析器，不再和通用策略比分数——避免「名字截断但字段齐全」
+    # 的结果靠打分侥幸胜出。
+    if is_alipay_wealth_account_grouped_page(lines):
+        grouped = parse_alipay_grouped_holdings(lines)
+        if grouped:
+            return _reconcile_alipay_profit_signs(grouped)
 
     def parse_percent_blocks() -> list[Holding]:
         holdings: list[Holding] = []

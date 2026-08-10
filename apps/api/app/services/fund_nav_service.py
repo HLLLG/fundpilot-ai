@@ -185,7 +185,7 @@ def prime_official_nav_cache(
 
 
 def _fetch_nav_df(fund_code: str) -> pd.DataFrame:
-    """经子进程拉取净值，避免与 PaddleOCR 同进程加载 py_mini_racer 导致 crash。"""
+    """经子进程拉取净值，避免在 API 进程内加载 py_mini_racer 的原生 V8 导致整个 worker crash。"""
     payload = fetch_fund_nav_history(fund_code, trading_days=120)
     if payload is None or not payload.get("data"):
         return pd.DataFrame()

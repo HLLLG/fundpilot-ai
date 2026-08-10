@@ -1,0 +1,254 @@
+"""支付宝持有页 OCR 解析回归。
+
+`ALIPAY_OVERVIEW_OCR` 与 `ALIPAY_GROUPED_OCR` 是把两种版式截图送进 qwen-vl-ocr 后
+拿回的**真实**识别文本（不是手写的理想输入），所以行序、拆行位置、把多列读成一行的
+习惯都保留了云端模型的真实行为：
+
+* 「全部持有」总览页：4 列（金额 / 日收益 / 持有收益 / 累计收益），日收益等数字会被
+  读成 `0.00 +17.03 +17.03` 这样的一整行；
+* 「我的持有」财富号分组页：3 列 × 2 行，按财富号分组，长基金名被拆成两行，数字按列
+  读出 [金额, 昨日收益, 持有收益, 率]。
+
+两种版式必须解析出完全一致的四条持仓——这正是之前坏掉的地方：分组版式会把
+`新华鑫科技3个月滚动持有灵活配置混合A` 截断成 `持有灵活配置混合A`。
+"""
+from __future__ import annotations
+
+import pytest
+
+from app.services.ocr_parser import detect_ocr_source, parse_holdings_from_text
+
+ALIPAY_OVERVIEW_OCR = """11:15
+全部持有 收益分析 配置分析 交易分析
+本月变动(元)
+昨日变动(元)
++45,204.14
++5.53
+查看明细
+查看变动趋势
+清仓分析
+收益地图
+基金定投
+专项计划
+全部二
+名称/金额
+日收益 持有收益 累计收益
+万家宏观择时多策略灵活配置混合C
+基金 进阶理财
+1,017.03
+占比 0.40%
+0.00 +17.03 +17.03
++1.70%
+鹏扬中证数字经济主题ETF联接C
+基金 进阶理财
+509.09
+占比 0.20%
+0.00 +9.09 +9.09
++1.82%
+博时黄金ETF联接A
+基金 进阶理财
+1,004.41
+占比 0.39%
+0.00 +4.41 +4.41
++0.44%
+新华鑫科技3个月滚动持有灵活配置混合A
+基金 进阶理财
+2,229.22
+占比 0.87%
+0.00 -770.78 -770.78
+-25.69%
+以上按照持有收益排序
+"""
+
+ALIPAY_GROUPED_OCR = """11:18
+基金
+板块近一年涨幅+105.72%
+半导体
+我的持有
+更新时间排序
+全部 偏股 偏债 指数 黄金 全球
+名称 金额/昨日收益 持有收益/率
+新华基金财富号
+新华鑫科技3个月滚动
+持有灵活配置混合A
+2,229.22
+0.00
+-770.78
+-25.69%
+博时基金财富号
+博时黄金ETF联接A
+1,004.41
+0.00
++4.41
++0.44%
+鹏扬基金财富号
+鹏扬中证数字经济主题ETF联接C
+509.09
+0.00
++9.09
++1.82%
+万家基金财富号
+万家宏观择时多策略灵活配置混合C
+1,017.03
+0.00
++17.03
++1.70%
+基金市场
+排行
+自选
+持有
+"""
+
+# (持有金额, 持有收益, 持有收益率)
+EXPECTED_HOLDINGS = {
+    "新华鑫科技3个月滚动持有灵活配置混合A": (2229.22, -770.78, -25.69),
+    "博时黄金ETF联接A": (1004.41, 4.41, 0.44),
+    "鹏扬中证数字经济主题ETF联接C": (509.09, 9.09, 1.82),
+    "万家宏观择时多策略灵活配置混合C": (1017.03, 17.03, 1.70),
+}
+
+
+@pytest.mark.parametrize(
+    "ocr_text",
+    [
+        pytest.param(ALIPAY_OVERVIEW_OCR, id="overview_all_holdings"),
+        pytest.param(ALIPAY_GROUPED_OCR, id="grouped_by_wealth_account"),
+    ],
+)
+def test_both_alipay_layouts_yield_the_same_holdings(ocr_text: str) -> None:
+    assert detect_ocr_source(ocr_text) == "alipay_holdings"
+
+    holdings = parse_holdings_from_text(ocr_text)
+    parsed = {
+        holding.fund_name: (
+            holding.holding_amount,
+            holding.holding_profit,
+            holding.holding_return_percent,
+        )
+        for holding in holdings
+    }
+
+    assert parsed == EXPECTED_HOLDINGS
+
+
+def test_grouped_layout_keeps_yesterday_profit_out_of_holding_profit() -> None:
+    """分组版式的 0.00 是昨日收益，绝不能顶替持有收益。
+
+    回归点：曾经按「全部持有」的列序解读分组版式，把 -770.78 当成日收益，再用收益率
+    反算出 -770.67 写进持有收益——金额对、收益差一毛，账本悄悄错。
+    """
+    holdings = {h.fund_name: h for h in parse_holdings_from_text(ALIPAY_GROUPED_OCR)}
+
+    xinhua = holdings["新华鑫科技3个月滚动持有灵活配置混合A"]
+    assert xinhua.holding_profit == -770.78
+    assert xinhua.yesterday_profit == 0.0
+
+
+def test_grouped_layout_does_not_read_digits_inside_fund_names_as_metrics() -> None:
+    """`新华鑫科技3个月滚动` 里的 3 是名字的一部分，不是金额/收益列。"""
+    holdings = {h.fund_name: h for h in parse_holdings_from_text(ALIPAY_GROUPED_OCR)}
+
+    xinhua = holdings["新华鑫科技3个月滚动持有灵活配置混合A"]
+    assert xinhua.yesterday_profit == 0.0
+    assert xinhua.holding_amount == 2229.22
+
+
+def test_one_wealth_account_can_hold_several_funds() -> None:
+    """同一个财富号下的多只基金要各自成条，靠行尾的持有收益率切分。"""
+    text = """我的持有
+更新时间排序
+名称
+金额/昨日收益
+持有收益/率
+华夏基金财富号
+华夏中证电网设备主
+题ETF联接A
+9,618.51
+0.00
++335.68
++3.62%
+华夏人工智能ETF联接C
+8,152.78
+0.00
+-158.19
+-1.90%
+博时基金财富号
+博时黄金ETF联接A
+1,004.41
+0.00
++4.41
++0.44%
+基金市场
+"""
+
+    parsed = {
+        holding.fund_name: (holding.holding_amount, holding.holding_profit)
+        for holding in parse_holdings_from_text(text)
+    }
+
+    assert parsed == {
+        "华夏中证电网设备主题ETF联接A": (9618.51, 335.68),
+        "华夏人工智能ETF联接C": (8152.78, -158.19),
+        "博时黄金ETF联接A": (1004.41, 4.41),
+    }
+
+
+def test_grouped_layout_survives_row_major_number_order() -> None:
+    """OCR 有时按视觉行读出 [金额, 持有收益, 昨日收益, 率]。
+
+    列序变了结果不能变——持有收益是靠收益率反算认领的，不是靠下标。
+    """
+    text = """我的持有
+名称
+金额/昨日收益
+持有收益/率
+新华基金财富号
+新华鑫科技3个月滚动
+持有灵活配置混合A
+2,229.22
+-770.78
+0.00
+-25.69%
+万家基金财富号
+万家宏观择时多策略
+灵活配置混合C
+1,017.03
++17.03
+0.00
++1.70%
+"""
+
+    parsed = {
+        holding.fund_name: (holding.holding_profit, holding.yesterday_profit)
+        for holding in parse_holdings_from_text(text)
+    }
+
+    assert parsed == {
+        "新华鑫科技3个月滚动持有灵活配置混合A": (-770.78, 0.0),
+        "万家宏观择时多策略灵活配置混合C": (17.03, 0.0),
+    }
+
+
+def test_grouped_layout_survives_two_columns_merged_into_one_line() -> None:
+    text = """我的持有
+名称 金额/昨日收益 持有收益/率
+新华基金财富号
+新华鑫科技3个月滚动
+持有灵活配置混合A
+2,229.22 -770.78
+0.00 -25.69%
+博时基金财富号
+博时黄金ETF联接A
+1,004.41 +4.41
+0.00 +0.44%
+"""
+
+    parsed = {
+        holding.fund_name: (holding.holding_amount, holding.holding_profit)
+        for holding in parse_holdings_from_text(text)
+    }
+
+    assert parsed == {
+        "新华鑫科技3个月滚动持有灵活配置混合A": (2229.22, -770.78),
+        "博时黄金ETF联接A": (1004.41, 4.41),
+    }

@@ -12,7 +12,11 @@ from app.services.holding_validation import (
     enrich_portfolio_summary_source,
     validate_holdings,
 )
-from app.services.holdings_extractor import ExtractionResult, extract_holdings
+from app.services.holdings_extractor import (
+    ExtractionResult,
+    OcrUnavailable,
+    extract_holdings,
+)
 from app.services.fund_code_resolver import (
     UNRESOLVED_FUND_CODE_HINT,
     is_provisional_fund_code,
@@ -29,27 +33,6 @@ from app.services.portfolio_snapshot import get_previous_holdings_for_review, sa
 logger = logging.getLogger(__name__)
 
 
-def _cleanup_upload_artifacts(upload_path: Path | None) -> None:
-    """OCR 完成后删除落盘原图及 Paddle 预处理副本，避免 uploads 目录堆积。"""
-    if upload_path is None:
-        return
-
-    upload_dir = get_settings().upload_dir.resolve()
-    candidates = (
-        upload_path,
-        upload_path.with_name(f"{upload_path.stem}.ocr-prepared.jpg"),
-    )
-    for candidate in candidates:
-        try:
-            resolved = candidate.resolve()
-            if resolved.parent != upload_dir:
-                continue
-            if resolved.is_file():
-                resolved.unlink()
-        except OSError:
-            logger.warning("failed to delete upload artifact %s", candidate, exc_info=True)
-
-
 def run_ocr_upload_pipeline(
     *,
     text: str = "",
@@ -57,21 +40,24 @@ def run_ocr_upload_pipeline(
     filename: str | None = None,
     preview: bool = False,
 ) -> dict:
-    settings = get_settings()
-    upload_path: Path | None = None
-
-    if file_bytes and filename:
-        settings.upload_dir.mkdir(parents=True, exist_ok=True)
-        upload_path = settings.upload_dir / Path(filename).name
-        upload_path.write_bytes(file_bytes)
-
+    # 截图不再落盘：云端识别直接吃字节，之前那次写盘会在同一个请求里再删掉，
+    # 除了拖慢链路和留下一段短暂的明文截图footprint 之外没有用处。
+    _ = filename
     try:
         extraction: ExtractionResult = extract_holdings(file_bytes=file_bytes, text=text)
-    except Exception as exc:  # noqa: BLE001 — 识别异常不应让端点 500
-        _cleanup_upload_artifacts(upload_path)
+    except OcrUnavailable as exc:
         return {
             "raw_text": "",
-            "upload_path": str(upload_path) if upload_path else None,
+            "upload_path": None,
+            "holdings": [],
+            "error": str(exc),
+            "extraction_provider": "none",
+        }
+    except Exception as exc:  # noqa: BLE001 — 识别异常不应让端点 500
+        logger.warning("OCR 识别失败", exc_info=True)
+        return {
+            "raw_text": "",
+            "upload_path": None,
             "holdings": [],
             "error": f"OCR 识别失败：{exc}",
             "extraction_provider": "none",
@@ -158,9 +144,9 @@ def run_ocr_upload_pipeline(
 
     result = {
         "raw_text": text,
-        "upload_path": str(upload_path) if upload_path else None,
+        "upload_path": None,
         "holdings": [holding.model_dump() for holding in holdings],
-        "cache_hit": False,
+        "cache_hit": extraction.cache_hit,
         "extraction_provider": extraction.provider,
         "preview": preview,
         "ocr_source": ocr_source,
@@ -175,7 +161,6 @@ def run_ocr_upload_pipeline(
         **holding_review,
     }
 
-    _cleanup_upload_artifacts(upload_path)
     return result
 
 

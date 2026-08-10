@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import io
 import logging
+from functools import lru_cache
 from typing import Callable
 
 import httpx
@@ -15,7 +16,8 @@ logger = logging.getLogger(__name__)
 # qwen-vl-ocr 是文字识别专用模型：擅长「图→文本」，但做不了支付宝多列+纵向错位的字段归属推理
 # （让它直接吐结构化 JSON 会把金额/收益/占比错位、把数字当基金名）。因此本 provider 只让它做
 # 高质量纯文本识别（不传 prompt 用模型默认 OCR；传自定义「阅读顺序」prompt 反而会触发文字定位/坐标
-# 输出），再交给久经测试的本地 `parse_holdings_from_text` 做结构化——与本地 PaddleOCR 路径同一解析器。
+# 输出），再交给 `parse_holdings_from_text` 做结构化——粘贴文本和上传截图因此共享同一个解析器，
+# 解析规则只需要在一处维护和回归。
 
 CompletionFn = Callable[[list[dict], Settings], str]
 
@@ -93,14 +95,34 @@ def _dashscope_completion(messages: list[dict], settings: Settings) -> str:
         "Content-Type": "application/json",
     }
     payload = {"model": settings.vlm_ocr_model, "messages": messages}
+    # 整个预算收紧到 read + 少量握手时间：实测识别 2.5~3.7s，20s 读超时已是 5 倍余量，
+    # 而旧的 write=30/connect=10 会让一次坏连接拖到 40s+，正好撞上前端超时。
     timeout = httpx.Timeout(
-        connect=10, read=settings.vlm_ocr_timeout_seconds, write=30, pool=10
+        connect=5,
+        read=settings.vlm_ocr_timeout_seconds,
+        write=10,
+        pool=5,
     )
-    with httpx.Client(timeout=timeout) as client:
+    with _dashscope_client(timeout) as client:
         resp = client.post(url, headers=headers, json=payload)
         resp.raise_for_status()
         data = resp.json()
     return data["choices"][0]["message"]["content"]
+
+
+def _dashscope_client(timeout: httpx.Timeout) -> httpx.Client:
+    # TLS 握手对同一台机器每次都重做没有意义，但 OCR 是低频操作，保持每次新建客户端
+    # 的简单语义；HTTP/2 让大 body 的上传帧更快铺满带宽。
+    return httpx.Client(timeout=timeout, http2=_http2_available())
+
+
+@lru_cache(maxsize=1)
+def _http2_available() -> bool:
+    try:
+        import h2  # type: ignore[import-not-found]  # noqa: F401
+    except Exception:  # noqa: BLE001 — 没装 h2 就退回 HTTP/1.1
+        return False
+    return True
 
 
 def extract_text_via_vlm(

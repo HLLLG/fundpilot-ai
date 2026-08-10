@@ -2,22 +2,10 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-ARG INSTALL_LOCAL_OCR=true
-
-RUN if [ "$INSTALL_LOCAL_OCR" = "true" ]; then \
-      apt-get update \
-      && apt-get install -y --no-install-recommends \
-        libgl1 \
-        libglib2.0-0 \
-        libgomp1 \
-      && rm -rf /var/lib/apt/lists/*; \
-    fi
-
-COPY requirements.txt requirements-ocr.txt /app/
-RUN pip install --no-cache-dir -r /app/requirements.txt \
-    && if [ "$INSTALL_LOCAL_OCR" = "true" ]; then \
-      pip install --no-cache-dir -r /app/requirements-ocr.txt; \
-    fi
+# 截图识别只走云端 qwen-vl-ocr，镜像不再安装本地 PaddleOCR
+# （省掉约 550 MiB 依赖和 libgl1/libgomp1 等系统库）。
+COPY requirements.txt /app/
+RUN pip install --no-cache-dir -r /app/requirements.txt
 
 COPY app /app/app
 COPY scripts/settle_pending_outcomes.py /app/scripts/settle_pending_outcomes.py
@@ -38,8 +26,6 @@ COPY var/factor_ic /app/var/factor_ic
 
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
-ENV FUND_AI_OCR_PRELOAD=false
-ENV PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True
 ENV WEB_CONCURRENCY=2
 
 EXPOSE 8000

@@ -1,5 +1,0 @@
-# Optional OCR dependencies. Install only when you want local screenshot OCR.
-# This pair is pinned because paddlepaddle 3.3.x can raise oneDNN/PIR
-# runtime errors on Windows CPU when used through PaddleOCR.
-paddlepaddle==3.2.0
-paddleocr==3.3.3

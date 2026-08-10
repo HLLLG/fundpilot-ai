@@ -1,9 +1,12 @@
 "use client";
 
+import Image from "next/image";
 import { useRef } from "react";
-import { ArrowDownLeft, ArrowUpRight, ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { OCR_PRIVACY_COPY } from "@/lib/ocrPrivacy";
 import { useDialogA11y } from "@/lib/useDialogA11y";
+
+const TRANSACTION_GUIDE_IMAGE = "/guides/alipay-transaction-records.png";
 
 type BatchTransactionModalProps = {
   open: boolean;
@@ -78,6 +81,11 @@ export function BatchTransactionModal({
             <span className="font-bold text-[var(--brand-strong)]">「交易记录」</span>
             截图即可加减仓、同步买卖点
           </p>
+          <p className="mt-2 text-center text-[13px] leading-5 text-slate-500">
+            路径：支付宝 → 我的 → 总资产 → 基金 → 交易记录
+            <br />
+            持仓总览截图请走「上传截图 / 新增持有」
+          </p>
           <p className="mt-4 rounded-xl border border-[var(--info-border)] bg-[var(--info-bg)]/80 px-3 py-2 text-xs leading-5 text-slate-600">
             {OCR_PRIVACY_COPY.uploadNotice}
           </p>
@@ -119,58 +127,33 @@ export function BatchTransactionModal({
   );
 }
 
-/** 交易记录示意图：占位手机框，模拟支付宝交易记录列表（加仓红/减仓绿）。 */
+/** 交易记录示意图：真实版式截图。
+ *
+ * 原来是手绘的占位插图（几行「基金名 + ±金额」的胶囊），和支付宝真实的「交易记录」页
+ * 长得完全不一样：真实页每条是「买入/卖出 + 基金 | 名称 + 金额元 + 成交时间」，而解析器
+ * 正是靠买入/卖出锚点、`元` 金额和成交时间戳定位交易的。示意图缺这三样，照着它截图的
+ * 用户会传上来一张解析不出任何交易的图。这里换成按真实版式渲染并跑通识别的截图。
+ */
 function TransactionRecordGuide() {
   return (
     <div className="relative mx-auto w-[62%] min-w-[200px] max-w-[250px]">
       <div className="rounded-[2.25rem] border-[7px] border-slate-900 bg-slate-900 p-[5px] shadow-[0_24px_48px_rgba(15,23,42,0.18)]">
         <div className="relative overflow-hidden rounded-[1.65rem] bg-white">
           <div className="pointer-events-none absolute left-1/2 top-0 z-10 h-[22px] w-[34%] -translate-x-1/2 rounded-b-[14px] bg-slate-900" />
-          <div className="flex aspect-[390/844] w-full flex-col gap-2 bg-[#f5f7fa] px-3 pb-3 pt-8">
-            <div className="mb-1 text-center text-[11px] font-bold text-slate-700">交易记录</div>
-            <GuideRow direction="buy" name="易方达蓝筹精选" amount="+1,500.00" />
-            <GuideRow direction="sell" name="华夏中证500ETF" amount="-800.00" />
-            <GuideRow direction="buy" name="招商中证白酒" amount="+2,000.00" />
-            <GuideRow direction="sell" name="广发科技先锋" amount="-1,200.00" />
-            <GuideRow direction="buy" name="兴全合润" amount="+500.00" />
-          </div>
+          <Image
+            src={TRANSACTION_GUIDE_IMAGE}
+            alt="支付宝「交易记录」页面示意图：每条包含买入或卖出、基金名称、成交金额与成交时间"
+            width={472}
+            height={1021}
+            className="aspect-[390/844] h-auto w-full object-cover object-top"
+            draggable={false}
+          />
         </div>
       </div>
       <div
         className="pointer-events-none absolute -bottom-3 left-1/2 h-3 w-[70%] -translate-x-1/2 rounded-[100%] bg-slate-900/10 blur-md"
         aria-hidden
       />
-    </div>
-  );
-}
-
-function GuideRow({
-  direction,
-  name,
-  amount,
-}: {
-  direction: "buy" | "sell";
-  name: string;
-  amount: string;
-}) {
-  const isBuy = direction === "buy";
-  return (
-    <div className="flex items-center gap-1.5 rounded-lg bg-white px-2 py-1.5 shadow-[0_1px_4px_rgba(15,23,42,0.05)]">
-      <span
-        className={`inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-white ${
-          isBuy ? "bg-rose-500" : "bg-emerald-500"
-        }`}
-      >
-        {isBuy ? <ArrowUpRight size={10} strokeWidth={2.5} /> : <ArrowDownLeft size={10} strokeWidth={2.5} />}
-      </span>
-      <span className="min-w-0 flex-1 truncate text-[8px] font-medium text-slate-700">{name}</span>
-      <span
-        className={`shrink-0 text-[8px] font-bold tabular-nums ${
-          isBuy ? "profit-up" : "profit-down"
-        }`}
-      >
-        {amount}
-      </span>
     </div>
   );
 }

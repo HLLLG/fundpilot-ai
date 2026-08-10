@@ -38,7 +38,6 @@ export default defineConfig({
       FUND_AI_SECTOR_SIGNAL_BACKTEST_ENABLED: "false",
       FUND_AI_TACTICAL_PROMPT_TUNING_ENABLED: "false",
       FUND_AI_FUND_NAME_PRELOAD_ENABLED: "false",
-      FUND_AI_OCR_PRELOAD: "false",
       FUND_AI_SECTOR_QUOTES_ENABLED: "false",
       FUND_AI_THEME_BOARD_REFRESH_ENABLED: "false",
       FUND_AI_MARKET_BREADTH_ENABLED: "false",

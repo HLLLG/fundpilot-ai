@@ -7,7 +7,6 @@ import logging
 import re
 import threading
 from datetime import date, datetime
-from pathlib import Path
 
 from fastapi import (
     FastAPI,
@@ -40,7 +39,6 @@ from app.database import (
     get_analysis_role_prompt,
     get_discovery_role_prompt,
     get_most_recent_portfolio_snapshot,
-    get_ocr_text_cache,
     get_previous_discovery_report,
     get_previous_report,
     get_report,
@@ -52,7 +50,6 @@ from app.database import (
     save_analysis_role_prompt,
     save_discovery_role_prompt,
     save_investor_profile,
-    save_ocr_text_cache,
 )
 from app.lifespan import app_lifespan
 from app.database import list_report_chat_messages
@@ -406,25 +403,28 @@ def _build_transactions_ocr_response(
 ) -> dict:
     from app.services.alipay_transactions_parser import parse_alipay_transactions
     from app.services.fund_code_resolver import lookup_fund_code_by_name
-    from app.services.ocr_engine import OcrEngine
     from app.services.ocr_parser import detect_ocr_source
+    from app.services.ocr_text_service import OcrUnavailable, extract_text_from_image
     from app.services.trading_session import resolve_confirm_date
 
+    _ = filename
     text = raw_text
-    if not text and file_bytes and filename:
-        settings.upload_dir.mkdir(parents=True, exist_ok=True)
-        upload_path = settings.upload_dir / Path(filename).name
-        upload_path.write_bytes(file_bytes)
-        cache_key = hashlib.sha256(file_bytes).hexdigest()
-        cached_text = get_ocr_text_cache(cache_key)
-        if cached_text is not None:
-            text = cached_text
-        else:
-            try:
-                text = OcrEngine().extract_text(upload_path)
-                save_ocr_text_cache(cache_key, text)
-            except Exception as exc:  # noqa: BLE001
-                return {"transactions": [], "ocr_source": "unknown", "error": f"OCR 识别失败：{exc}"}
+    cache_hit = False
+    if not text and file_bytes:
+        # 这里以前只走本地 PaddleOCR：生产镜像未预热，冷加载 + CPU 推理稳定超过前端
+        # 60s 超时，于是「批量加减仓」上传必然报 TimeoutError。现在与持仓截图同源，
+        # 走云端识别 + 同一份 sha256 文本缓存。
+        try:
+            text, cache_hit = extract_text_from_image(file_bytes)
+        except OcrUnavailable as exc:
+            return {"transactions": [], "ocr_source": "unknown", "error": str(exc)}
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("交易记录 OCR 识别失败", exc_info=True)
+            return {
+                "transactions": [],
+                "ocr_source": "unknown",
+                "error": f"OCR 识别失败：{exc}",
+            }
 
     transactions = parse_alipay_transactions(text) if text else []
     enriched: list[dict] = []
@@ -440,6 +440,7 @@ def _build_transactions_ocr_response(
     return {
         "transactions": enriched,
         "ocr_source": detect_ocr_source(text) if text else "unknown",
+        "cache_hit": cache_hit,
     }
 
 

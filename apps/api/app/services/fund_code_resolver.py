@@ -84,6 +84,10 @@ class _FundNameIndex:
     by_normalized: dict[str, tuple[tuple[str, str], ...]]
     postings_by_name_bigram: dict[str, frozenset[str]]
     postings_by_norm_bigram: dict[str, frozenset[str]]
+    # (code, name, normalized_name)：精确命中落空后要全表线性扫一遍，而归一化本身是
+    # 十几次正则替换。建索引时已经算过一次，这里存下来复用——否则每次「查不到码」都要
+    # 把整张两万行的表重新归一化一遍，实测单只未命中基金要 ~890ms，比云端识别还贵。
+    normalized_table: tuple[tuple[str, str, str], ...] = ()
 
 
 def _text_bigrams(text: str) -> tuple[str, ...]:
@@ -121,9 +125,11 @@ def _build_fund_name_index(table: list[tuple[str, str]]) -> _FundNameIndex:
     by_normalized_lists: dict[str, list[tuple[str, str]]] = defaultdict(list)
     name_bigram_sets: dict[str, set[str]] = defaultdict(set)
     norm_bigram_sets: dict[str, set[str]] = defaultdict(set)
+    normalized_rows: list[tuple[str, str, str]] = []
     for code, name in table:
         by_code[code] = name
         normalized = normalize_fund_name_for_lookup(name)
+        normalized_rows.append((code, name, normalized))
         if normalized:
             by_normalized_lists[normalized].append((code, name))
             _add_bigram_postings(norm_bigram_sets, normalized, code)
@@ -142,6 +148,7 @@ def _build_fund_name_index(table: list[tuple[str, str]]) -> _FundNameIndex:
         postings_by_norm_bigram={
             key: frozenset(codes) for key, codes in norm_bigram_sets.items()
         },
+        normalized_table=tuple(normalized_rows),
     )
 
 
@@ -202,7 +209,12 @@ def preload_fund_name_table() -> None:
 
 
 def _fetch_fund_name_table_subprocess() -> list[tuple[str, str]] | None:
-    """在独立子进程拉取东财基金名称表，避免 py_mini_racer 与 PaddleOCR 同进程 crash。"""
+    """在独立子进程拉取东财基金名称表。
+
+    隔离动机是 AkShare 依赖的 py_mini_racer 会在 API 进程内加载原生 V8，崩起来会带走
+    整个 worker；放子进程里最差只是这一次取数失败。（历史上这里还要避开与 PaddleOCR
+    同进程的冲突，本地 OCR 已删除，但 py_mini_racer 这条理由本身依然成立。）
+    """
     script = """
 import akshare as ak
 import json
@@ -328,9 +340,12 @@ def lookup_fund_code_by_name(fund_name: str) -> tuple[str | None, str | None]:
         return exact_rows[0][0], "akshare"
 
     candidates: list[tuple[int, str]] = []
-    for code, name in table:
-        normalized = normalize_fund_name_for_lookup(name)
-        if not normalized or not is_fund_name_match(target, normalized):
+    for code, name, normalized in index.normalized_table:
+        # `is_fund_name_match` 只做「相等或互为子串」，先用 in 快速排除绝大多数行，
+        # 省掉每行两次 normalize_fund_name_for_lookup 的重复归一化开销。
+        if not normalized:
+            continue
+        if target not in normalized and normalized not in target:
             continue
         table_class = extract_share_class_letter(name)
         if target_class and table_class and target_class != table_class:

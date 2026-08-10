@@ -3,27 +3,11 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-ARG INSTALL_LOCAL_OCR=true
-
-RUN sed -i 's|deb.debian.org/debian|mirrors.tuna.tsinghua.edu.cn/debian|g' \
-      /etc/apt/sources.list.d/debian.sources \
-    && if [ "$INSTALL_LOCAL_OCR" = "true" ]; then \
-      apt-get update \
-      && apt-get install -y --no-install-recommends \
-        libgl1 \
-        libglib2.0-0 \
-        libgomp1 \
-      && rm -rf /var/lib/apt/lists/*; \
-    fi
-
-COPY apps/api/requirements.txt apps/api/requirements-ocr.txt /app/
+# 截图识别只走云端 qwen-vl-ocr，镜像不再安装本地 PaddleOCR
+# （省掉约 550 MiB 依赖和 libgl1/libgomp1 等系统库）。
+COPY apps/api/requirements.txt /app/
 ARG PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
-RUN pip install --no-cache-dir --index-url "$PIP_INDEX_URL" \
-      -r /app/requirements.txt \
-    && if [ "$INSTALL_LOCAL_OCR" = "true" ]; then \
-      pip install --no-cache-dir --index-url "$PIP_INDEX_URL" \
-        -r /app/requirements-ocr.txt; \
-    fi
+RUN pip install --no-cache-dir --index-url "$PIP_INDEX_URL" -r /app/requirements.txt
 
 COPY apps/api/app /app/app
 COPY apps/api/scripts/settle_pending_outcomes.py /app/scripts/settle_pending_outcomes.py
@@ -36,11 +20,9 @@ COPY apps/api/var/factor_ic /app/var/factor_ic
 
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
-ENV FUND_AI_OCR_PRELOAD=false
-ENV PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True
 # Uvicorn reads WEB_CONCURRENCY when --workers is omitted. Two workers are the
 # safe default for the 4-core Lighthouse host because each worker also owns
-# bounded OCR, market-data and analysis thread pools.
+# bounded market-data and analysis thread pools.
 ENV WEB_CONCURRENCY=2
 
 EXPOSE 8000

@@ -32,7 +32,6 @@ jobs:
         run: python -m pytest tests -q -n auto --dist loadscope
         env:
           FUND_AI_DATABASE_URL: ""
-          FUND_AI_OCR_PRELOAD: "false"
           FUND_AI_NEWS_ENABLED: "false"
           FUND_AI_NEWS_SUMMARIZE: "false"
           FUND_AI_SECTOR_SIGNAL_BACKTEST_ENABLED: "false"
@@ -101,5 +100,4 @@ jobs:
           FUND_AI_MARKET_BREADTH_ENABLED: "false"
           FUND_AI_SECTOR_SIGNAL_BACKTEST_ENABLED: "false"
           FUND_AI_TACTICAL_PROMPT_TUNING_ENABLED: "false"
-          FUND_AI_OCR_PRELOAD: "false"
           FUND_AI_NAV_TREND_DAYS: "20"

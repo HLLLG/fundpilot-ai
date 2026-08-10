@@ -22,8 +22,6 @@ services:
     build:
       context: apps/api
       dockerfile: Dockerfile
-      args:
-        INSTALL_LOCAL_OCR: ${INSTALL_LOCAL_OCR:-true}
     ports:
       - "8000:8000"
     environment:
@@ -46,8 +44,6 @@ services:
     build:
       context: apps/api
       dockerfile: Dockerfile
-      args:
-        INSTALL_LOCAL_OCR: ${INSTALL_LOCAL_OCR:-true}
     environment:
       FUND_AI_DATABASE_URL: mysql://fundpilot:fundpilot_pass@mysql:3306/fundpilot
       FUND_AI_JWT_SECRET: ${FUND_AI_JWT_SECRET:-fundpilot-dev-jwt-secret-change-me-32chars}

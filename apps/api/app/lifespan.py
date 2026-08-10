@@ -11,7 +11,6 @@ from app.config import get_settings
 from app.db_connect import initialize_database_connection, uses_mysql
 from app.services.db_backup import maybe_auto_import_database
 from app.services.fund_code_resolver import preload_fund_name_table
-from app.services.ocr_engine import schedule_ocr_preload
 from app.services.ops_error_logging import (
     install_ops_error_log_handler,
     uninstall_ops_error_log_handler,
@@ -36,7 +35,6 @@ def _initialize_runtime(app: FastAPI, shutdown_event: threading.Event) -> None:
     if shutdown_event.is_set():
         mark_ready()
         return
-    schedule_ocr_preload()
     if get_settings().fund_name_preload_enabled:
         threading.Thread(
             target=preload_fund_name_table,
