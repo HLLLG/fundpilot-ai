@@ -13,7 +13,7 @@
 ## 功能
 
 - 支持上传截图或粘贴 OCR 文本。
-- PaddleOCR 可选本地识别；未安装时仍可手动录入。
+- 截图识别走云端 qwen-vl-ocr（阿里云百炼），实测端到端 2~4 秒；未配置 key 时仍可手动录入。
 - 支持上传养基宝总览截图，以及**支付宝「我的基金」持有列表**截图（预览确认后更新账户汇总）。
 - 总览 OCR 缺少基金代码时，优先用 **AkShare 基金名称表**查码，本地 `fund_profiles` 元数据按名称兜底。
 - OCR 会自动维护估算金额、板块和购入日等元数据，并可直接用于方向与百分比建议；C 端不要求二次确认平台真实份额。实际份额、总成本、现金与费用若未录入仍保持 unknown，不按 0 猜测。
@@ -152,7 +152,7 @@ FUND_AI_JWT_SECRET=change-me-to-a-random-secret-at-least-32-chars
 |------|------|
 | `FUND_AI_JWT_SECRET` | JWT 签名密钥（本地开发也建议设置） |
 | `FUND_AI_JWT_ACCESS_EXPIRE_MINUTES` | JWT 有效期（分钟）；默认 43200（30 天） |
-| `FUND_AI_DATABASE_URL` | 设则使用 MySQL；省略则用 `data/app.db` |
+| `FUND_AI_DATABASE_URL` | 设则使用 MySQL；**本地开发请留空**（用 `data/app.db`），见下方「本地开发的数据库配置」|
 | `FUND_AI_MYSQL_SCHEMA_LOCK_TIMEOUT_SECONDS` | 多进程启动时 MySQL schema 锁等待秒数；默认 60，进程内并发自动合并 |
 | `WEB_CONCURRENCY` | Uvicorn worker 进程数；4 核轻量服务器生产默认 2，本地开发仍为 1 |
 | `FUND_AI_RUNTIME_ROLE` | `all`（本地默认）/`api`/`worker`；生产 Compose 已将请求与长期后台任务分离 |
@@ -163,6 +163,14 @@ FUND_AI_JWT_SECRET=change-me-to-a-random-secret-at-least-32-chars
 | `FUND_AI_CLOUDBASE_ENV_ID` | 旧 CloudBase 域名兼容变量；Lighthouse 同源部署不需要 |
 
 `.env` 已被 `.gitignore` 忽略，不会提交到 Git。
+
+### 本地开发的数据库配置
+
+**本地开发请把 `FUND_AI_DATABASE_URL` 留空**，让 `data/app.db`（SQLite）成为「配置的主库」。
+
+如果这里填了一个本机连不上的 MySQL（生产用的腾讯云地址是 VPC 内网域名，开发机 DNS 直接解析不到），连接层会按 `FUND_AI_DB_FALLBACK_SQLITE=true` 静默回退 SQLite，但 `_decision_store_authority()` 会因为「配置说 MySQL、实际是 SQLite」判定为 `fallback_non_audited`，于是**删除基金、确认份额、写交易账本这类「真值写入」会被 fail-closed 拒绝**，界面报「主数据库暂不可用，未写入份额/交易真值；请稍后重试」。这个保险是为了防止生产环境静默降级后把真值写进非审计库（MySQL 恢复即丢失），但在本地会表现为「明明连着可写的 SQLite 却删不掉东西」，而且提示里的「稍后重试」在本机永远不会成功。
+
+留空后跨进程锁自动改用数据库旁的 OS 文件锁（`cross_process_lock`），功能与线上一致；另一个好处是启动不再等待 MySQL 连接超时。需要临时连线上库时再填回该变量，并确认网络可达。
 
 DeepSeek 请求会复用进程级连接池；仅在 TCP/TLS 尚未建立时自动重试
 `ConnectError/ConnectTimeout`，不会重放已经开始响应的模型请求。流式读取与同步调用统一
@@ -201,16 +209,9 @@ cd /d/Code/HL_Project/fundpilot-ai/apps/web
 npm install
 ```
 
-可选 OCR：
+截图识别不需要额外依赖，只要在 `.env` 配好 `FUND_AI_VLM_OCR_API_KEY`（阿里云百炼）即可。未配置时截图识别不可用，界面会提示改用手动输入；文本粘贴和其他分析功能不受影响。
 
-```bash
-cd /d/Code/HL_Project/fundpilot-ai/apps/api
-./.venv/Scripts/python.exe -m pip install -r requirements-ocr.txt
-```
-
-PaddleOCR 依赖较大，首次安装和首次识别会比较慢。你也可以先用文本粘贴和手动校对跑完整流程。
-
-Docker 镜像默认仍安装本地 OCR 作为云端 VLM 的故障回退。如果部署环境已明确只使用云端 VLM、并接受 VLM 不可用时截图识别暂时失败，可在构建时传入 `--build-arg INSTALL_LOCAL_OCR=false`，省去约 550 MiB 的 PaddleOCR 及其传递依赖；Compose 可设置同名环境变量。该选项不会影响文本录入和其他分析功能。
+> 本地 PaddleOCR 兜底已移除：它冷加载 + CPU 推理比云端慢一个数量级，却会在云端出错时静默接管，把一次报错拖成一次 60 秒超时（「批量加减仓」的交易记录识别就是这样超时的）。镜像也因此少了约 550 MiB 依赖和 `libgl1`/`libgomp1` 等系统库。
 
 ## 启动
 
@@ -303,7 +304,6 @@ cd /d/Code/HL_Project/fundpilot-ai/apps/api
 ```bash
 export FUND_AI_DATABASE_URL=
 export FUND_AI_FUND_NAME_PRELOAD_ENABLED=false
-export FUND_AI_OCR_PRELOAD=false
 export FUND_AI_NEWS_ENABLED=false
 export FUND_AI_SECTOR_SIGNAL_BACKTEST_ENABLED=false
 ```
@@ -348,4 +348,4 @@ Windows 可执行文件路径也要用 `/d/...` 形式，或者使用已有虚�
 
 本项目面向个人自用。截图、数据库和上传文件默认保存在本地项目目录。DeepSeek 会收到你确认后的持仓、风控参数、净值摘要、主题新闻摘要（Flash 生成）、新闻标题/短摘要，以及已生成日报全文（追问时）。报告与对话只用于个人投研辅助，不构成投资建议，也不会执行任何交易。
 
-**截图识别引擎与外传说明：** 「新增持有」截图识别默认 `FUND_AI_OCR_PROVIDER=auto`——配置 `FUND_AI_VLM_OCR_API_KEY`（阿里云百炼）后，截图图片会发往云端视觉模型 `qwen3-vl-flash` 做识别（更快更准、QDII/截不全更鲁棒），失败自动回退本地 PaddleOCR；未配置 key 时仅走本地。若不希望截图外传，设 `FUND_AI_OCR_PROVIDER=local` 强制本地识别。无论何种引擎，发给 DeepSeek 的始终是结构化持仓而非原始截图。
+**截图识别与外传说明：** 截图识别只有一条路——配置 `FUND_AI_VLM_OCR_API_KEY`（阿里云百炼）后，「新增持有」和「批量加减仓」的截图都会先发到本应用服务端，再由服务端转发到云端 `qwen-vl-ocr` 做**纯图转文字**；识别文本按图片 sha256 缓存，重复上传同一张截图不再外发。未配置 key 时截图识别不可用，界面提示改用手动输入。**不希望截图外传就用手动输入**（本地 PaddleOCR 兜底已移除，不再提供「本地识别」选项）。无论哪条路，发给 DeepSeek 的始终是你确认后的结构化持仓，而不是原始截图。
