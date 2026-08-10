@@ -1,9 +1,16 @@
 from __future__ import annotations
 
+import logging
 import time
 from datetime import datetime, timezone
 
-from app.database import get_most_recent_portfolio_snapshot, get_portfolio_summary, list_fund_profiles, save_portfolio_summary
+from app.database import (
+    get_fund_primary_sectors_by_codes,
+    get_most_recent_portfolio_snapshot,
+    get_portfolio_summary,
+    list_fund_profiles,
+    save_portfolio_summary,
+)
 from app.models import FundProfile, Holding, PortfolioSummary
 from app.services.fund_code_resolver import reconcile_holding_fund_codes
 from app.services.fund_name_utils import is_fund_name_match
@@ -27,6 +34,8 @@ from app.services.sector_quote_service import refresh_holdings_sector_quotes
 from app.services.portfolio_snapshot import save_daily_snapshot
 from app.services.transaction_ledger import confirm_and_compute_overrides
 from app.services.trading_session import get_effective_trade_date
+
+logger = logging.getLogger(__name__)
 
 
 def _coerce_utc_datetime(value: object | None) -> datetime | None:
@@ -422,17 +431,80 @@ def holdings_from_profiles(
     )
 
 
-def _overlay_profile_onto_holding(base: Holding, profile: FundProfile) -> Holding:
-    """合并档案中的结构性字段；金额/收益由份额×净值与官方净值自动推算，不用 OCR 快照覆盖。"""
+def apply_authoritative_sector_labels(holdings: list[Holding]) -> list[Holding]:
+    """把持仓的板块标签对齐 `fund_primary_sectors`（按用户的权威身份表）。
+
+    快照和基金档案里的 `sector_name` 都只是权威身份表的反规范化副本。持仓穿透纠正
+    身份之后，这两份副本不会跟着变，于是界面会继续显示旧标签——典型的坏例子是名称
+    残留：「万家宏观择时多策略混合C」被切成「宏观择时多策略」当板块，而真实身份是
+    「煤炭」。此时行情取的是煤炭的涨跌，标签却写着一个不存在的板块，**标签和数字来自
+    两个不同的板块**，比干脆没有标签更容易误导。
+
+    只在权威标签本身是合法板块名时才覆盖：身份表里也存在「军工」这种当前板块表里
+    查不到的写法，那种情况保留副本里可用的「国防军工」。
+    """
+    if not holdings:
+        return holdings
+    codes = {
+        holding.fund_code
+        for holding in holdings
+        if holding.fund_code and holding.fund_code != "000000"
+    }
+    if not codes:
+        return holdings
+    try:
+        identity_rows = get_fund_primary_sectors_by_codes(codes)
+    except Exception:  # noqa: BLE001 — 身份表读失败不该让持仓列表打不开
+        logger.warning("批量读取主关联板块失败，保留快照/档案里的板块标签", exc_info=True)
+        return holdings
+    if not identity_rows:
+        return holdings
+
+    aligned: list[Holding] = []
+    for holding in holdings:
+        row = identity_rows.get(holding.fund_code or "")
+        label = str((row or {}).get("sector_name") or "").strip()
+        if (
+            label
+            and label != holding.sector_name
+            and _is_valid_sector_label(label)
+        ):
+            aligned.append(holding.model_copy(update={"sector_name": label}))
+            continue
+        aligned.append(holding)
+    return aligned
+
+
+def _overlay_profile_onto_holding(
+    base: Holding,
+    profile: FundProfile,
+    *,
+    identity_row: dict | None = None,
+) -> Holding:
+    """合并档案中的结构性字段；金额/收益由份额×净值与官方净值自动推算，不用 OCR 快照覆盖。
+
+    板块标签以 `fund_primary_sectors`（按用户的权威身份表）为准，档案与快照里的
+    `sector_name` 只是它的反规范化副本。两者不一致时必须信权威表：名称残留标签
+    （如「万家宏观择时多策略混合C」被切成「宏观择时多策略」）会被持仓穿透纠正并写回
+    权威表，但档案/快照的副本不会跟着变。此前这里无条件优先用档案副本，于是界面会
+    一直显示那个残留标签，而旁边的涨跌其实取自纠正后的真实板块——标签和数字来自
+    两个不同的板块，比没有标签更容易误导。
+    """
     patch: dict = {
         "fund_code": profile.fund_code,
         "fund_name": profile.fund_name,
     }
-    if _is_valid_sector_label(profile.sector_name):
+    identity_sector = str((identity_row or {}).get("sector_name") or "").strip()
+    if _is_valid_sector_label(identity_sector):
+        patch["sector_name"] = identity_sector
+    elif _is_valid_sector_label(profile.sector_name):
         patch["sector_name"] = profile.sector_name
     elif _is_valid_sector_label(base.sector_name):
         patch["sector_name"] = base.sector_name
-    if profile.intraday_index_name:
+    identity_index = str((identity_row or {}).get("intraday_index_name") or "").strip()
+    if identity_index:
+        patch["intraday_index_name"] = identity_index
+    elif profile.intraday_index_name:
         patch["intraday_index_name"] = profile.intraday_index_name
     if base.sector_return_percent is None and profile.sector_return_percent is not None:
         patch["sector_return_percent"] = profile.sector_return_percent
@@ -463,6 +535,19 @@ def merge_holdings_with_profiles(
         for row, profile in zip(snapshot_holdings, matched_profiles, strict=True)
         if profile is not None and (profile.holding_amount or 0) > 0
     }
+    # 一次批量读权威身份表，避免逐只查询；板块标签以它为准（见
+    # `_overlay_profile_onto_holding` 的说明）。读失败不该让持仓列表打不开。
+    try:
+        identity_rows = get_fund_primary_sectors_by_codes(
+            {
+                profile.fund_code
+                for profile in active_profiles
+                if profile.fund_code and profile.fund_code != "000000"
+            }
+        )
+    except Exception:  # noqa: BLE001 — 身份表不可用时退回档案副本
+        logger.warning("批量读取主关联板块失败，本次退回档案副本", exc_info=True)
+        identity_rows = {}
 
     merged: list[Holding] = []
     seen_codes: set[str] = set()
@@ -474,7 +559,11 @@ def merge_holdings_with_profiles(
             continue
         existing = snapshot_by_profile_code.get(profile.fund_code)
         if existing is not None:
-            holding = _overlay_profile_onto_holding(existing, profile)
+            holding = _overlay_profile_onto_holding(
+                existing,
+                profile,
+                identity_row=identity_rows.get(profile.fund_code),
+            )
             merged.append(holding)
             seen_codes.add(profile.fund_code)
             seen_names.add(holding.fund_name)
@@ -603,6 +692,9 @@ def load_persisted_holdings(
 
     if snapshot and "holdings" in snapshot:
         holdings = [Holding.model_validate(item) for item in snapshot.get("holdings") or []]
+        # 在分支之前统一对齐板块标签：fetch_benchmark=False 的快路径不走
+        # merge_holdings_with_profiles，若只在那里对齐，列表页仍会显示快照里的旧标签。
+        holdings = apply_authoritative_sector_labels(holdings)
         if holdings:
             # The daily snapshot is the authoritative membership list. Profiles
             # are mutable metadata and may retain funds that the user already
