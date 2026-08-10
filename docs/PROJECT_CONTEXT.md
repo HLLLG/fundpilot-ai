@@ -6,6 +6,8 @@
 
 **文档版本：** 2026-08-10（截图识别统一走云端并删除本地 PaddleOCR 兜底、交易记录 OCR 超时修复、支付宝财富号分组版式兼容、查码未命中提速、引导图换真实版式；本地删除 fail-closed 误伤说明、板块标签以权威身份表为准、板块补跑改按基金代码增量；**方向退出侧上线并已在日报卡片展示**、加仓要求方向仍通过入场线、首仓比例改挂趋势强度并与未校准信号分解耦、全链路「概率」称谓改为「趋势成形信号分」；**方向状态改为每交易日定时捕获 + 支持历史趋势回填**，退出侧的「连续跌破天数」这才真正可用）
 
+> **以下三条是历史验收快照，不代表现状。** 它们的「尚未提交/推送/部署」早已不成立（均已上线），测试计数（1492 / 1468 / 105 files·471）也是 2026-08-05 测试减半之前的数字，当前基线见「测试与 CI」一节。其中「方向形成概率与分段试仓」那条关于**用形成概率分档决定首批比例**的描述已于 2026-08-10 被推翻——首批比例改挂趋势强度，该数值也不再叫「概率」；**现行口径一律以「现行权威契约 / 7. 荐基质量门与方向成熟度」为准**。保留原文只为留住当时的验收证据。
+
 **方向形成概率与分段试仓本地验收（尚未提交/推送/部署）：** 不新增用户模式，继续使用 `sector_entry_maturity.2026-08.v3`，并以 `sector_trend_formation_probability.2026-08.v1` 给出未来 3～5 个交易日进入成熟趋势状态的规则信号估计。成熟线仍为趋势 60 分；52～60 分只有在趋势形成估计≥55、结构修复≥25、短期动量≥50、今日领先资金确认且具体基金早期修复同步通过时，才开放小额概率试仓。该数值不是收益概率或收益承诺，当前也不是用历史样本校准出的统计概率，后续只能通过 point-in-time 走样回放再校准。API 全量 **1492 passed**；Web 全量 **106 files / 483 passed**；Python `compileall`、TypeScript typecheck、变更文件 ESLint 与 production build 通过。
 
 **发现基金高弹性规则本地验收（尚未提交/推送/部署）：** API 全量 **1468 passed**；Web 全量 **106 files / 482 passed**；TypeScript typecheck、变更文件 ESLint、production build、Python `compileall` 与 `git diff --check` 通过。`data/app.db` 的同源 BK 缓存以零网络模式重放当前 V3：68 个 A 股方向、45 个决策日、2905 个观测；`ready_to_start` 桶 T+5/10/20 相对缓存板块等权基准的去均值超额为 **+0.91%（显著）/ +1.17%（显著）/ +1.11%（不显著）**，修复等待桶 T+5 共 56 个观测、命中率 **66.1%**、去均值超额 **+1.06%**。该回放使用重叠前瞻窗口，且缓存没有历史上涨广度与成交量，只能检验板块门槛方向，不能验证基金级高弹性机会分、不能等同可实现基金收益，也不取得自动调参或自动晋级资格。
@@ -308,6 +310,8 @@
 | 决策质量 shadow 运营 | `decision_replay_bundle.v1` + `decision_variant_manifest.v1` 冻结生产回放输入；schema v16 保留不可变 `required_from`、五本追加式质量账和两张 Prompt shadow 运营表，`decision_quality_input_manifest.v4` 闭合 artifact/post-commit receipt、live provider origin/delivery receipt 与 paired Prompt gate。显式 cutoff CLI 在 receipt reconcile 与两条 outcome settlement 后运行。常规 outcome、候选排序和 paired Prompt 分层各自累计 readiness，全部最多进入人工复核且永不自动晋级；当前仅 token-only 内部只读 API，无普通用户 UI |
 | 信号诊断 | `GET /api/diagnostics/sector-signal-backtest` — 板块短线规则历史命中率（东财日 K；失败时 relay/AkShare 兜底） |
 | 沪深市场情绪 / 基金涨跌分布 | `GET /api/diagnostics/market-breadth` 明确乐咕沪深股票池、停牌分母、交易/全样本与细粒度广度描述，过期/回退数据只展示、不进入 hard guard；`GET /api/diagnostics/fund-return-distribution` 请求只读后台预热缓存，交易日开盘后只接受当日新浪估算或达到覆盖门槛的当日东方财富官方净值，标明时间、来源、覆盖和缺失，绝不以昨日净值替代今日数据；估算不覆盖的债券、QDII、FOF 等份额明确计入缺失并提示 |
+| 方向退出判定（何时退场） | `sector_direction_exit.2026-08.v1` — 补上方向成熟度长期缺失的退出侧。趋势跌破退出线 52 即产出确定性减仓档位（首日 −25%、浮盈 −1/3、连续 3 个交易日 −50%、方向失效 −50% 并在同时连续跌破时升清仓评估）；仍在线上但明显转弱只收回加仓资格、不要求卖出。有 discovery 买入事件走 `relative_to_entry`（理由可追溯到那笔决策），否则走 `absolute`。合并进 `resolve_escalation_floor`，前端 `DirectionExitEvidence` 展示趋势/退出线、连续跌破天数、买入基线与恢复条件。`PERSISTENT_BREAKDOWN_DAYS=3` / `RELATIVE_TREND_DECAY_POINTS=12` **未回测**，`thresholds_validated=false` 一路带到 prompt 与界面 |
+| 方向状态定时捕获 | `sector_direction_capture.2026-08.v1` + `.github/workflows/sector-direction-capture.yml`（每交易日 19:10 Asia/Shanghai，无 LLM，生产实测约 6 s）。**退出侧的连续天数完全依赖它**：该表原来只在用户手动跑发现基金时才写，不跑定时任务则连续天数长期停在 1、−50% 那一档实际不可达。全白名单捕获（非荐基那约 24 个预筛板块，因为表无 `userId`）；复用 `discovery_pipeline._score_select_and_persist_directions` 单一写入者；`scripts/capture_sector_direction_states.py --backfill-days N` 可回填历史趋势轴（标 `source=backfilled`，滞回只认 `captured`） |
 | 双向决策 guard | `decision_guard_shared.resolve_escalation_floor()`（日报）/ `resolve_discovery_escalation()`（荐基）——证据强烈时可把“观察”升级为“暂停追涨/减仓评估/大幅减仓评估/清仓评估”（日报），或剔除/降级荐基候选；荐基正向共振仅作软信号，不能提高确定性金额硬上限。`resolve_discovery_amount_cap()` 取本次剩余预算、请求级板块集中度余额、既有持仓加本轮同板块余额的最小值；本次可投入预算是扫描唯一资金上限，历史持仓快照中的现金字段不参与荐基金额。持仓、板块敞口或其它关键真值不全时仍清空金额。灰度开关 `FUND_AI_DECISION_ESCALATION_MODE=shadow\|enforced` |
 | 灰度复盘摘要 | `GET /api/diagnostics/shadow-escalation-digest` — 近 N 天双向 guard 升级触发聚合（按板块/建议动作+当日走势对照）；`ShadowEscalationDigestCard.tsx` 仅 shadow 模式下展示。**数据源必须走 `database.list_report_decision_diagnostics()` / `list_discovery_report_decision_diagnostics()`，不得改回 `list_reports()` / `list_discovery_reports()`**——后两者按 `_REPORT_SUMMARY_FIELDS` / `_DISCOVERY_SUMMARY_FIELDS` 投影，`analysis_facts` / `discovery_facts` / `candidate_pool` 被刻意排除，走那条路会让触发次数恒为 0（2026-08-08 修复的真实缺陷） |
 | 二次审校可观测性 | `GET /api/diagnostics/llm-judge-digest` — 分母为深度模式报告数，输出发起/超时/改写比率与 `health` 结论；`report_pipeline.build_pipeline_metadata` 落 `llm_judge_timeout` 与 `llm_judge_skipped_reason`（此前只写进 prompt contract）。老报告缺该键时计入 `reports_without_judge_telemetry`，不当成"没超时" |
@@ -434,7 +438,7 @@
 - v3 删除了 v2 的“入场成熟度”与独立的价格结构评分：后者实测 Rank IC 为 -0.011 / +0.003 / -0.053（ICIR -0.33），且与 mainline 自己的 `market_structure` 方向相反（前者奖励“离20日高点2~8%”，后者奖励“越贴近高点越好”），两者同时进入入场成熟度互相抵消。v2 展开后趋势出现 2 次、市场结构出现 3 次，排序分只有约 1.5 个自由度。
 - v3 的过热是**风险披露而非否决**：命中时写入 `overheat_flags` 并按 `first_tranche_scale`（1.0 / 0.6 / 0.4）缩小首批，文案须说明“短期加速、首批更小、不预先承诺后续”。基金级 `opportunity_20_60d.v2` 按本轮产品目标明确加入高涨幅、年化波动和修复强度，不再沿用旧版“高位惩罚”；它只作候选排序，仍不能绕过方向、数据和交易硬门。
 - v3 的 `invalid` 改为横截面双弱判定（趋势 <40 且参与度 <35，或主线退潮，或价格结构破坏），不再用资金绝对符号。v2 只要命中单日 distribution/weak_outflow 或 5/20 日资金同时为负即判无效，实测把 91% 的观测（2440/2675）打成 `invalid`，而该桶前瞻超额与全市场平均完全一致（-0.06% vs 0）——拒绝了一切却没筛掉任何输家。根因是东财「主力净流入」对多数概念板块在多数交易日本身为负。
-- 成熟阈值 `V3_GATE_THRESHOLDS` 为趋势 60 / 参与度 35 / 结构修复度 25。参与度 35～55 的离线结果几乎无差，本轮按高弹性目标取35；position 只作结构破坏下限，并允许基金自身修复信号在严格条件下替代。60 分不再是唯一二元入口：`sector_trend_formation_probability.2026-08.v1` 对 52～60 分方向综合领先资金、短期动量、上涨广度和结构修复给出未来 3～5 日进入成熟状态的规则信号估计；估计≥55 且所有早期硬条件通过后，才可等待具体基金信号共同确认小额试仓。该数值不是收益概率，也不是已经过历史校准的统计概率。
+- 成熟阈值 `V3_GATE_THRESHOLDS` 为趋势 60 / 参与度 35 / 结构修复度 25。参与度 35～55 的离线结果几乎无差，本轮按高弹性目标取35；position 只作结构破坏下限，并允许基金自身修复信号在严格条件下替代。60 分不再是唯一二元入口：`sector_trend_formation_probability.2026-08.v1` 对 52～60 分方向综合领先资金、短期动量、上涨广度和结构修复给出一个 0～100 的加权合成分；该分≥55 且所有早期硬条件通过后，才可等待具体基金信号共同确认小额试仓（「提前试仓」通道）。**全链路称谓为「趋势成形信号分 X/100」，不是概率**：字段名 `trend_formation_probability` 因兼容保留，但 UI、Prompt、guard 文案、`entry_reason` / `triggers` / `invalidation_signals` 一律不得写成百分比或「几成会涨」，也不再由它决定仓位比例。它未经历史校准（各项中性即读出约 56），校准（记录 N 日后是否真进入 ready 并画可靠性曲线）完成前不配用「概率」这个词。
 - 跨分量聚合缺失分量按中性 50 分计入其原有权重，不做可得权重重归一化（此前指数型板块缺上涨广度时，资金权重会被从 0.50 悄悄放大到约 0.667 而覆盖率毫无变化）。分量内部的子特征聚合仍可重归一化。行内冻结 `component_coverage`，让“哪一维缺了”可观测。
 - `sector_entry_maturity.2026-07.v2` 保留且继续被测试覆盖：历史报告是按 v2 冻结的，用 v3 规则重新解读会改写既有结论。前端按 `score_policy_version` 分支渲染，Guard 两套版本都识别。
 - 资金横截面分位使用按板块自身体量归一化的 `normalized_today_net` / `normalized_5d_net` / `normalized_20d_net`（当日或累计净流入 ÷ 近20日 |日主力净流入| 均值 × 对应天数），并按 `flow_universe`（东财 BK 板块 vs 主题指数 f62 聚合）分池排名。当日分位只用于领先资金/加速度判断，多日分位继续承担参与度判断。禁止用绝对亿元做跨板块排名：那会让自由流通市值大一个量级的板块机械性占据资金分位榜首。离线回测实测此前 5/20 日归一化修正把资金分量的 Rank IC 由显著为负（-0.10/-0.08/-0.06）翻为正（+0.06/+0.08/+0.06）；新增当日分位仍需后续 walk-forward 单独验证。
@@ -442,9 +446,18 @@
 - 港股类板块（港股/港股通/恒生科技/港股医药/港股银行）对标恒生系列指数，不对标沪深300：跨市场跨货币跨交易日历的“超额”不可解释。价格与资金不同源时（生产常见：中证主题指数取价 + 东财 BK 板块取资金）必须写入 `source_dates.price_flow_identity_matched` 并进入 `risks`，不得当作同一篮子的证据组合。
 - 方向去重以实测相关性为准：近 20 日按日期交集对齐后的日收益相关系数 ≥0.85 视为同一笔风险暴露，只保留更强的一个；手写 `_SECTOR_GROUPS` 仅作序列不可得时的兜底（它只覆盖白名单的约四分之一，储能/锂电池/固态电池/锂矿 会各自成组）。共同交易日少于 15 个时不做相关性判断，禁止把两条不同交易日历的数组按尾部强行对齐。
 - v3 状态机：`ready_to_start` 要求趋势≥60、主线 forming/confirmed/crowded、参与度≥35、结构修复度≥25；`crowded` 只触发更低首批比例，不构成方向否决。趋势够但其余不够 → `ready_on_pullback`；趋势不够 → `forming`；双弱/退潮/结构破坏 → `invalid`。若 ready_on_pullback 的唯一失败项是板块结构修复度，基金自身 `fund_entry_signal.entry_ready=true` 可替代该项；资金或趋势失败时绝不可替代。`forming` 只有在趋势≥52、形成估计≥55、短期动量≥50、结构修复度≥25、今日领先资金确认，且基金 `entry_ready/early_probe_ready=true` 时，才取得 `probability_early_probe` 小额试仓资格；状态本身仍保留为 `forming`，不得冒充成熟确认。v2 状态机仅用于解读历史报告。
-- `sector_direction_state.v1` 保留退出滞回，但进入 `ready_to_start` 改为当日通过即可开放首批，不再额外等待第二个交易日；已确认方向只有跌破退出线才降级，`invalid` 永远立即生效。状态仍按 (trade_date, sector_label) 幂等落库，写失败只丢失滞回能力、不影响当次结论。
+- `sector_direction_state.v1` 保留退出滞回，但进入 `ready_to_start` 改为当日通过即可开放首批，不再额外等待第二个交易日；已确认方向只有跌破退出线才降级，`invalid` 永远立即生效。状态仍按 (trade_date, sector_label) 幂等落库，写失败只丢失滞回能力、不影响当次结论。`READY_CONFIRMATION_DAYS=1` 下「首次达标只观察」那一支恒不可达，代码里已显式加 `ready_confirmation_days > 1` 条件，让「只在配成 ≥2 时生效」写在代码里而不是留一段读起来像有保护、实际不执行的分支。
+- **职责边界：发现基金只管「能不能进」与首仓比例，日报只管已持仓的「加 / 减 / 退」。** 两侧共用同一份方向打分与同一条退出线，界面结论不得互相矛盾。
+- `sector_direction_exit.2026-08.v1` 是退出侧的唯一口径。此前整套方向成熟度只有入场：`invalidation_signals` 那三条只是展示文案、没有代码逐日跟踪；而确定性减仓总闸门 `resolve_escalation_floor` 开头两道早退要求「板块机会不可用」**且**「量价背离 confidence=高」，因此一个机会仍然可用、置信度只有中、但趋势已从 69 掉到 41 的方向产不出任何减仓档位。判定顺序：趋势分缺失 → `unavailable`（**不构成卖出理由，但收回加仓资格**，这个不对称是刻意的）→ `entry_state == invalid` → 大幅减仓 −50%（若同时已连续跌破退出线则升清仓评估 −100%）→ 趋势跌破退出线：连续 ≥`PERSISTENT_BREAKDOWN_DAYS` 天 → −50%，否则 −25%（有浮盈时 −1/3）→ 趋势仍在线上但相对入场回落 ≥`RELATIVE_TREND_DECAY_POINTS` → 暂停追涨 → `entry_state != ready_to_start` → 暂停追涨 → 否则 `hold` 且允许加仓。任何一档退出信号都同时取消加仓资格：不能一边说方向在走坏、一边允许加。
+- **退出侧刻意复用而非新造**：退出线沿用既有 `EXIT_TREND_THRESHOLD=52`（入场线 60 − 8，原本只用于 ready→forming 滞回），全代码库因此只有一条退出线；`invalid` 沿用 `ENTRY_INVALID`；浮盈提档到 −1/3 沿用 `resolve_escalation_floor` 既有先例；入场契约复用 `decision_events`（`source_type='discovery'` / `action_category='buy'`）而不新建表。`invalid` 不直接给清仓：既有标定把清仓留给「多重信号极端共振」，且方向失效是**板块**信号、基金不等于板块，仅凭板块信号砍光仓位是越权。
+- **双模式**：拿到发现基金买入事件 → `basis='relative_to_entry'`，理由可追溯到那笔决策（「买入时 69 分、现在 41 分」）；没有 → `basis='absolute'`，只按绝对退出线表述、不得编造入场基线。强依赖入场契约不可行：真实账户里绝大多数持仓来自截图导入，实测用户 6 只持仓**零个**有 discovery 买入事件。
+- 接线只改 `resolve_escalation_floor` 一处：原风险逻辑整体挪进 `_resolve_risk_divergence_floor`（内容未改），新增 `_resolve_direction_exit_floor` + `_merge_escalation_floors`（取 bucket 更小者胜、理由合并去重），下游 5 个消费者自动生效。前端 `DirectionExitEvidence` 只答「方向为什么走坏」，动作档位与「是否已生效（shadow/enforced）」仍由既有「风险升级判定」统一给出，且理由要对 `escalation.reasons` 去重——实测 6 只持仓的退出理由 100% 已出现在合并后的 escalation 里，两块都渲染会让同一句话印两遍。
+- **`PERSISTENT_BREAKDOWN_DAYS=3` 与 `RELATIVE_TREND_DECAY_POINTS=12` 是本模块唯二新设参数，都没有回测支撑**，返回值里 `thresholds_validated=false` 一路带到 prompt 与界面，不得宣称它们有历史胜率。回测需先攒够逐日 `sector_direction_states` 数据，单独排期。
+- **连续跌破天数只数「有趋势证据」的日子。** `trend_strength_score` 单看数值分不出「真实低分」与「无证据占位」：证据不足时 v3 把趋势分兜底成 `35 + 5日涨跌×1.5` 并 clamp 到 **≤45**，而退出线是 52 —— 每个占位值都长得像已跌破（实测落库里黄金记着 35.0，真实值 90.52）。因此 `sector_direction_states` 增列 `trend_evidence_coverage`（取打分行的 `component_coverage.trend`，兜底分支里与占位值同时置 0，是精确判别式），读取侧过滤掉覆盖度为 0/NULL 的行，并且遇到这种日子**停止回溯而不是跳过**——跳过会把空缺日两侧接成连续序列，等于用没有证据的日子把 −25% 推到 −50%。
+- **方向状态必须每交易日捕获，否则退出侧的连续天数机制形同虚设。** 该表原来只在用户手动跑发现基金时才写（实测线下库只有一天数据），`consecutive_days_below_exit_line` 会长期停在 1、−50% 那一档实际不可达。`sector_direction_capture.2026-08.v1` + `.github/workflows/sector-direction-capture.yml`（每交易日 19:10 Asia/Shanghai）负责这件事：打分/滞回/落库复用 `discovery_pipeline._score_select_and_persist_directions`（**单一写入者**，另写一份会让同一板块同一天出现两个 `trend_strength_score`，而退出侧要把今天实算的分与历史落库的分放在一条序列上比较）；前台集合**刻意用全白名单**而非发现基金那约 24 个预筛板块——该表没有 `userId`、一次捕获服务所有用户，不在预筛集合里的板块会拿到 ≤45 的占位值；默认跳过量价背离回测，它只流向 `confidence`，而 `confidence` 不在落库列里、也不是 `classify_entry_state_v3` / `_entry_maturity_v3` 的入参，却占实测耗时的绝大部分。判定「这次捕获有没有用」看 `with_trend_evidence` 而不是行数：证据不足时行数照样是满的。
+- 历史趋势**可以**回填，资金流不行。趋势轴输入全是日线纯函数（20 日收益、距 MA20/MA60、20 日上涨天数占比、相对强度横截面分位），实测历史日期取数 6/6 命中、覆盖度 1.0、数值逐日真实变化；而资金流只进 participation 轴。`backfill_sector_direction_trend` 因此只重算趋势轴并**显式传空资金流**（`date_aligned = flow.get("date_aligned") is not False`，整体缺失不会打成 False，而喂一份日期错位的资金流会让趋势分被兜底成占位值，比不喂更糟）。代价是回填行的 `participation_score` 只是中性填充、`entry_state` 由它派生因而**不可当作历史入场判断**，滞回三列显式置零。为此增列 `source`（`captured` / `backfilled`）：发现基金的滞回（`load_previous_direction_states`）**只认 `captured`**，退出侧的趋势历史两者都收。回填不覆盖「已有可用趋势证据」的行（判据是 `trend_evidence_coverage > 0` 而非「这天有没有行」——覆盖度为 NULL 的存量行会像路障一样挡住更早的回填）。**残留 PIT 偏差**：横截面分位的分母用的是今天的白名单集合，几天可忽略、长历史有幸存者偏差，所以回填是补数手段、**不是回测数据源**。
 - 方向状态必须在**选择之前**套上滞回：`entry_state` 是排序的第一优先级，先选 8 个再改状态会让展示状态与入选依据变成两套东西。
-- 只有 `ready_to_start`、严格满足基金修复替代结构项，或“方向概率早期通道 + 基金早期修复”双层同时通过，且基金质量、净值数据、预算、集中度和组合风险全部通过时，Guard 才能校正为分批买入。v3 的确定性分配上限仍为 `20% × min(direction_scale, fund_scale)`；形成估计 55/65/75/85 分别映射 0.25/0.40/0.65/1.00 的方向缩放，早期通道另封顶 0.40，并与过热缩放取更小值。每只高弹性买入候选必须附确定性修复失效退出复核条件；这不是成交价保证。这些阈值是产品策略参数，不是已证明的收益最优参数。
+- 只有 `ready_to_start`、严格满足基金修复替代结构项，或“方向提前试仓通道 + 基金早期修复”双层同时通过，且基金质量、净值数据、预算、集中度和组合风险全部通过时，Guard 才能校正为分批买入。v3 的确定性分配上限仍为 `20% × min(direction_scale, fund_scale)`；方向缩放（`first_tranche_scale`）自 2026-08 起挂**趋势强度**分档（`V3_TREND_TRANCHE_SCALES`：80/70/60 → 1.0/0.65/0.4，60 是入场线，刚过线只给 0.4），早期通道另封顶 0.40，并与过热缩放取更小值。**它不再由趋势成形信号分决定**：那个数是 `15 + 加权信号分 × 0.82` 的仿射变换、从未校准，各项都中性即读出 56 而旧档位表最低可投档是 55，等于让一个未验证的量表决定投多少钱；趋势强度是这套模型里唯一实测显著有效的轴（权重 0.70），且自家网格记录了「趋势阈值越高、去均值超额越高」。`probability_tranche_scale` 保留在 payload 里仅供观测，不参与计算。每只高弹性买入候选必须附确定性修复失效退出复核条件；这不是成交价保证。这些阈值是产品策略参数，不是已证明的收益最优参数。
 - 入场线阈值集中在 `ENTRY_GATE_THRESHOLDS` / `PULLBACK_GATE_THRESHOLDS` / `V3_GATE_THRESHOLDS`，同日原始判定只有 `classify_entry_state` 与 `classify_entry_state_v3` 两份纯函数实现（各对应一个 policy version）；离线敏感性扫描复用这两份函数，不允许再写第三份门禁。扫描结果只代表同日原始门槛，V3 未为每一组候选阈值重建完整跨日滞回路径，必须写明 `state_hysteresis_applied=false`，不得冒充完整线上状态机回放。扫描的阈值维度名必须与该 policy 自己的 threshold 键一致，传错维度名要报错而不是静默沿用默认值。
 - `sector_direction_backtest.v1` 是方向模型的唯一标尺：逐日 point-in-time 重放生产打分器，V3 在选择前逐交易日应用同一份跨日滞回（`step` 只控制统计抽样，不跳过中间交易日的状态更新），建仓价固定为 D+1 收盘，统计 T+5/10/20 相对基准超额。主指标是按日横截面去均值后的超额，显著性在决策日层面检验；分桶对照全板块等权、当日涨幅前 5 与生产实际展示三个基准。上涨广度无历史、日线无成交量、资金四档结构无历史、盘中实时资金流不可重建这四项缺口必须原样出现在结论里，不插值、不补中性值。跨市场板块按各自基准分组重放，不混入同一横截面；`--sqlite-cache` 使用缓存板块等权基准，保持真正零网络。产出 `shadow_record_only`、`auto_tuning_eligible=false`，永不自动改动权重、阈值、Prompt、Guard 或仓位。
 - 标尺另有组合层指标（`summarize_group_portfolio`）：每日等权开仓、持有 h 日的重叠窗口组合，输出年化超额、年化波动、信息比、最大回撤、日均持仓与日均两两相关。它**必须相对等权全市场**计量（`relative_to_universe=True`），否则整批概念板块相对沪深300 的系统性偏离会支配指标，各分组之间无法比较；`baseline_all_sectors` 在该口径下恒为 0，可作自校验。没有这一层就无法评价“分散”：相关性去重在只看平均超额时必然表现为退化（实测 v1 阶段一度据此误判），而组合层显示它把日均两两相关压到 0.13、最大回撤压到最低。
@@ -547,6 +560,8 @@ fundpilot-ai/
 │       ├── deepseek_http.py / fund_profile.py / risk.py / fund_data.py
 │       ├── recommendation_guard.py / analysis_facts.py / news_citation.py
 │       ├── decision_guard_shared.py  # 日报+荐基共用：resolve_escalation_floor / resolve_discovery_escalation / classify_action_bucket（AI 决策升级 M2/M4）
+│       ├── sector_direction_exit.py  # 退出侧：assess_direction_exit 纯函数 + 趋势历史/入场契约读取（2026-08）
+│       ├── sector_direction_capture.py  # 方向状态每交易日捕获 + 历史趋势回填（退出侧连续天数的数据来源）
 │       ├── market_breadth_signal.py  # 大盘情绪温度计（M1.1，新高低家数自校准 + 涨跌停/炸板 + 两融环比）
 │       ├── sector_flow_divergence_backtest.py  # 量价背离信号 T→T+1 回测（M1.3）
 │       ├── discovery_judge.py  # 荐基 deep 模式风控复核角色（M4，同构 report_judge.py）
@@ -586,6 +601,10 @@ fundpilot-ai/
 │       ├── job_status_service.py    # GET /api/jobs/{id} 单连接查询 discovery/analysis
 │       └── recommendations.py
 ├── apps/api/scripts/settle_pending_outcomes.py    # 常规 T+N + 前向候选 T+20；坏租户汇总后非零退出
+├── apps/api/scripts/capture_sector_direction_states.py  # 每交易日方向状态捕获 / --backfill-days N 回填历史趋势
+│                                                  # 新增这类由 `docker compose exec` 调用的脚本时，必须同时改
+│                                                  # 根 Dockerfile（生产用的那份）、apps/api/Dockerfile 与两份
+│                                                  # .dockerignore 白名单；test_capture_script_is_packaged.py 会锁住
 ├── apps/api/scripts/evaluate_decision_quality.py  # 默认追加质量快照；必须显式传带时区 evaluation cutoff
 ├── apps/web/src/
 │   ├── app/login/ register/ settings/   # 认证与账号设置
@@ -613,6 +632,7 @@ fundpilot-ai/
 ├── .github/workflows/deploy-lighthouse.yml  # CI 通过后部署同一 commit 到 Lighthouse
 ├── .github/workflows/factor-ic-refresh.yml  # 周度/手动生成并发布因子 IC 快照
 ├── .github/workflows/factor-ic-universe-capture.yml  # 工作日追加 PIT 研究成员
+├── .github/workflows/sector-direction-capture.yml  # 每交易日 19:10 捕获全白名单方向状态（退出侧连续天数依赖它）
 ├── .github/workflows/outcome-settlement.yml  # 常规/候选结算后追加显式 UTC cutoff 的决策质量快照
 ├── docker-compose.local.yml
 ├── deploy/lighthouse/deploy.sh  # 串行发布、健康检查、dry-run 与回滚
@@ -1268,7 +1288,7 @@ cd apps/web && npm run test:e2e         # 发布前按需跑完整七视口
 
 | 项 | 说明 |
 |----|------|
-| 规模 | 当前单元测试基线为 API 772 条、Web 48 files / 244 条，CI 均全量执行；Playwright API E2E 保留 3 条，日常 CI 跑 desktop-1440、tablet-768、mobile-320 三个代表视口（36 次执行），完整七视口 84 条保留为 `npm run test:e2e` 手动验收 |
+| 规模 | 当前单元测试基线为 API **1302** 条、Web **52 files / 297** 条（2026-08-10 实测），CI 均全量执行；Playwright API E2E 保留 3 条，日常 CI 跑 desktop-1440、tablet-768、mobile-320 三个代表视口（36 次执行），完整七视口 84 条保留为 `npm run test:e2e` 手动验收 |
 | 离线 | `conftest.py` autouse stub：交易日历、基金名称表、东财 spot/K 线、板块刷新、`build_sector_heat_ranking` 等 |
 | 数据库 | 测试强制 `FUND_AI_DATABASE_URL=""` → SQLite 文件库；勿在 pytest 期间连生产 MySQL |
 | 超时 | `pytest.ini`：`timeout = 30` |

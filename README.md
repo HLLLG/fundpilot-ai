@@ -43,6 +43,8 @@
 - **页面缓存：** 持有 localStorage 优先、Dashboard/市场子 Tab sessionStorage 记忆；盈亏分析、业绩走势、持仓详情等 SWR 缓存；板块涨跌后台轻量轮询，手动刷新走精确模式。
 - **日报数据口径**：AI 分析使用 `estimated_holding_return_percent`，与持有页「持有」列一致（盘中含板块估算）。
 - **动态仓位建议**：加仓按板块机会强度映射为当前持仓的 5% / 10% / 15% / 20%，再由交易与集中度门禁收紧；减仓固定使用 1/4 / 1/3 / 1/2 / 1/1。金额只作持仓估值折算展示。
+- **方向退出判定（什么时候该走）**：发现基金负责「什么时候进」，日报负责已持仓的「加 / 减 / 退」。持仓方向的趋势强度跌破退出线即产出确定性减仓档位（首日 1/4、有浮盈时 1/3、连续跌破 3 个交易日升为 1/2、方向判定为不具备参与条件时 1/2 并在同时连续跌破时升为清仓评估）；趋势仍在线上但已明显转弱时只收回加仓资格、不要求卖出。判定结果在日报卡片「专业依据」里展示趋势与退出线、连续跌破天数、买入时的方向基线与恢复条件。**连续跌破天数与相对回落幅度这两个门槛尚未回测**，界面与 Prompt 都如实标注，不宣称历史胜率。
+- **方向状态每交易日自动落库**：退出判定要数「连续跌破几个交易日」，这依赖逐日的方向状态账本。`.github/workflows/sector-direction-capture.yml` 每交易日 19:10（Asia/Shanghai）对全白名单板块捕获一次并写入 `sector_direction_states`（无 LLM 调用，生产实测约 6 秒）。**不跑这个定时任务，连续天数会长期停在 1，「大幅减仓」那一档实际不可达。** 补历史用 `python scripts/capture_sector_direction_states.py --backfill-days N`，口径见 `apps/api/scripts/README.md`。
 - **决策准确性 V2**：日报与荐基会冻结决策时点持仓、数据证据、费用假设和基准映射，并按基金自身估值日分别评价毛方向、假设费后正收益、合同基准毛超额和合同基准假设费后超额；legacy 报告只作参考，不进入正式分母。完整契约见 [项目上下文](docs/PROJECT_CONTEXT.md#现行权威契约)。
 - **候选排序 D4（内部 shadow）**：冻结荐基 `prescreen` 全集、K=3 与保守次日入场的共同 T+20 路径；audit/outcome 使用数据库可见后的独立 receipt，日历/NAV 使用 live adapter stdout、请求参数、版本、解析与规范化 hash 绑定的追加式来源 receipt，只有完整 source-verified 标签才计算 Precision/NDCG/regret。它不同于报告 UI 的单基金 T+5/T+20/T+60 复盘，无普通用户界面，也不会自动修改 Prompt、权重、Guard 或交易。边界见 [项目上下文](docs/PROJECT_CONTEXT.md#8-决策质量-shadow-与晋级边界)。
 - **配对 Prompt D5（默认关闭、当前冻结休眠）**：旧实验只覆盖“全市场 + 快速 + 默认角色”；主扫描统一深度后不再产生新 eligible 请求，既有样本不迁移、不冒充深度样本。边界同见 [项目上下文](docs/PROJECT_CONTEXT.md#8-决策质量-shadow-与晋级边界)。
@@ -108,7 +110,16 @@ data            SQLite 数据库（云端可迁 MySQL）
 uploads         本地上传截图
 scripts         dev.sh / dev.ps1 / migrate_sqlite_to_mysql.py / diagnose-sector-quotes.sh
 docs            项目上下文与 Lighthouse / 安全运维手册
+.github/workflows  CI、前端性能、部署，以及三个数据类定时任务：
+                   方向状态每交易日捕获（退出判定的连续天数依赖它）、
+                   Factor IC 研究池捕获与刷新、决策结果 T+N 结算
 ```
+
+> 新增由定时任务通过 `docker compose exec api python scripts/<name>` 调用的脚本时，
+> 必须同时更新**四处**：根目录 `Dockerfile`（生产真正使用的那份）、`apps/api/Dockerfile`、
+> 以及两份 `.dockerignore` 的白名单——镜像刻意不整目录拷 `scripts/`。漏掉任何一处，
+> 定时任务只会每晚在 Actions 日志里静默失败，界面上看不出任何异常。
+> `apps/api/tests/test_capture_script_is_packaged.py` 会把这四处一起锁住。
 
 面向 AI 或新开发者的架构与业务说明见 **[docs/PROJECT_CONTEXT.md](docs/PROJECT_CONTEXT.md)**，可在新对话开头 `@` 该文件，避免重复扫描全仓库。
 
@@ -285,7 +296,7 @@ docker compose -f docker-compose.local.yml up --build
 
 ## 验证
 
-后端单元测试（本轮 **1319 passed**；默认离线 stub，不访问东财/AkShare/MySQL）：
+后端单元测试（本轮 **1302 passed**；默认离线 stub，不访问东财/AkShare/MySQL）：
 
 ```bash
 cd /d/Code/HL_Project/fundpilot-ai/apps/api
