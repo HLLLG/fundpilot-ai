@@ -12,6 +12,12 @@ RUN pip install --no-cache-dir --index-url "$PIP_INDEX_URL" -r /app/requirements
 COPY apps/api/app /app/app
 COPY apps/api/scripts/settle_pending_outcomes.py /app/scripts/settle_pending_outcomes.py
 COPY apps/api/scripts/evaluate_decision_quality.py /app/scripts/evaluate_decision_quality.py
+# 每交易日的板块方向状态捕获（.github/workflows/sector-direction-capture.yml 通过
+# `docker compose exec api` 调用）。**这份根目录 Dockerfile 才是生产用的那份**
+# （docker-compose.production.yml 里 `context: .` + `dockerfile: Dockerfile`），
+# apps/api/Dockerfile 是另一条路径。镜像逐个白名单拷贝脚本，漏了这行定时任务会
+# 直接报「No such file or directory」——已经实测踩过一次。
+COPY apps/api/scripts/capture_sector_direction_states.py /app/scripts/capture_sector_direction_states.py
 
 # 因子 IC 离线回测产物由 scripts/run_factor_ic.py 生成，供
 # factor_confidence.py::load_ic_summary 读取。`.gitkeep` 保证干净 checkout 中目录存在；
