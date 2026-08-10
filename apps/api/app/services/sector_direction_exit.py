@@ -33,6 +33,16 @@ ready→forming 的滞回；这里让它同时承担持仓退出，全代码库�
 **都没有回测支撑**（`thresholds_validated=False` 会如实写进返回值）。天数计数器刻意只用来
 做**升级**、不当准入门槛：抗抖动已经由滞回带（60 进 / 52 出）承担，不需要再叠一层。
 
+## 连续天数只数「有证据」的日子
+
+趋势分单看数值分不出「真实低分」与「无证据占位」：证据不足时 v3 把趋势分兜底成
+`35 + 5日涨跌×1.5` 并 clamp 到 **≤45**，而退出线是 52 —— 每个占位值都长得像已跌破。
+落库里实测到过这种行（08-07 的国防军工/电网设备恰为 45.0、黄金恰为 35.0，而同批真实
+实算值是 36.15 / 48.08 / 90.52）。因此 `load_direction_trend_history` 用
+`trend_evidence_coverage`（打分行的 `component_coverage.trend`，兜底分支里与占位值同时
+置 0）过滤，并且遇到无证据的日子**停止回溯**而不是跳过——跳过会把空缺日两侧接成连续
+序列，等于用没有证据的日子把 −25% 推到 −50%。
+
 ## 双模式与降级
 
 线上真实账户里绝大多数持仓来自截图导入，**没有**对应的发现基金买入事件。若退出强依赖
@@ -378,6 +388,12 @@ def load_direction_trend_history(
 
     该表由发现基金链路按交易日写入（单写者），这里只读。读不到就返回空 dict，让退出
     判定退化为"只看今天"，不阻塞日报。
+
+    **只取有趋势证据的那些日子。** 证据不足时 v3 会把趋势分兜底成 `35 + 5日涨跌×1.5`
+    并 clamp 到 ≤45，而退出线是 52 —— 每一个占位值都长得像「已跌破退出线」。
+    `trend_evidence_coverage`（即打分行的 `component_coverage.trend`）为 0 或 NULL 就是
+    这种"当天没有趋势证据"的行，必须当成历史空缺跳过，否则连续跌破天数会被没有证据的
+    日子灌水，把 −25% 一路推到 −50%。存量行该列为 NULL，因此按无证据处理。
     """
     labels = [str(label).strip() for label in sector_labels if str(label or "").strip()]
     if not labels or not str(before_trade_date or "").strip():
@@ -390,7 +406,8 @@ def load_direction_trend_history(
 
         with _connect() as connection:
             rows = connection.execute(
-                "SELECT trade_date, sector_label, trend_strength_score "
+                "SELECT trade_date, sector_label, trend_strength_score, "
+                "trend_evidence_coverage "
                 "FROM sector_direction_states "
                 f"WHERE sector_label IN ({placeholders}) AND trade_date < ? "
                 "ORDER BY trade_date DESC",
@@ -400,16 +417,31 @@ def load_direction_trend_history(
         logger.warning("读取方向趋势历史失败，退出判定退化为只看今日", exc_info=True)
         return {}
 
+    # 遇到"这天没有可用趋势证据"就**停止**该方向的回溯，而不是跳过它。跳过会把空缺日
+    # 两侧的日子接成连续序列（例：08-08 在线下、08-07 无证据、08-06 在线下，跳过后读成
+    # 连续 3 天），正是 `_consecutive_days_below` 的契约明确要避免的。行按交易日全局倒序
+    # 返回、多方向交错，因此用一个 per-label 的停止集合，不能直接 break。
+    stopped: set[str] = set()
     for row in rows:
         label = str(row["sector_label"])
         bucket = rows_by_label.get(label)
-        if bucket is None or len(bucket) >= lookback_days:
+        if bucket is None or label in stopped or len(bucket) >= lookback_days:
             continue
         score = _num(row["trend_strength_score"])
-        if score is None:
+        coverage = _num(_row_value(row, "trend_evidence_coverage"))
+        if score is None or coverage is None or coverage <= 0:
+            stopped.add(label)
             continue
         bucket.append((str(row["trade_date"]), score))
     return {label: values for label, values in rows_by_label.items() if values}
+
+
+def _row_value(row: Any, key: str) -> Any:
+    """按列名取值，列不存在时返回 None（迁移尚未跑到的库不能因此抛错）。"""
+    try:
+        return row[key]
+    except (KeyError, IndexError, TypeError):
+        return None
 
 
 def load_direction_entry_contracts(

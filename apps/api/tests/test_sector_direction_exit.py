@@ -24,6 +24,7 @@ from app.services.sector_direction_exit import (
     EXIT_STATE_REDUCE,
     EXIT_STATE_UNAVAILABLE,
     assess_direction_exit,
+    load_direction_trend_history,
 )
 from app.services.sector_direction_state import EXIT_TREND_THRESHOLD
 
@@ -306,3 +307,152 @@ def test_no_signal_on_either_side_still_returns_no_escalation() -> None:
     assert merged["min_bucket"] is None
     assert merged["reasons"] == []
     assert merged["basis"] == ""
+
+
+# ---------------------------------------------------------------------------
+# 读取侧：连续跌破天数只能数「有趋势证据」的日子
+#
+# 回归背景（真实缺陷，已由落库数据证实）：证据不足时 v3 把趋势分兜底成
+# `35 + 5日涨跌×1.5` 并 clamp 到 ≤45，而退出线是 52 —— 每个占位值都长得像「已跌破退出
+# 线」。08-07 的落库里国防军工/电网设备恰为 45.0、黄金恰为 35.0，而同批真实实算值是
+# 36.15 / 48.08 / 90.52。不过滤这些行，连续跌破天数会被没有证据的日子灌水，把 −25%
+# 一路推到 −50%。
+# ---------------------------------------------------------------------------
+
+
+class _FakeRow(dict):
+    """模拟 sqlite3.Row：按列名下标取值，缺列抛 KeyError。"""
+
+
+def _install_fake_history_rows(monkeypatch, rows: list[dict]) -> None:
+    import contextlib
+
+    class _Connection:
+        def execute(self, _sql, _params):  # noqa: ANN001
+            class _Cursor:
+                @staticmethod
+                def fetchall():
+                    return [_FakeRow(row) for row in rows]
+
+            return _Cursor()
+
+    @contextlib.contextmanager
+    def _connect():
+        yield _Connection()
+
+    import app.database as database_module
+
+    monkeypatch.setattr(database_module, "_connect", _connect)
+
+
+def test_history_skips_days_without_trend_evidence(monkeypatch) -> None:
+    """覆盖度为 0 的行是无证据占位，不得计入历史。"""
+    _install_fake_history_rows(
+        monkeypatch,
+        [
+            {
+                "trade_date": "2026-08-07",
+                "sector_label": "黄金",
+                "trend_strength_score": 35.0,
+                "trend_evidence_coverage": 0.0,
+            }
+        ],
+    )
+    history = load_direction_trend_history(["黄金"], before_trade_date="2026-08-10")
+    assert history == {}
+
+
+def test_history_keeps_days_with_partial_trend_evidence(monkeypatch) -> None:
+    """部分覆盖仍然是证据，只有 0 才算没有。"""
+    _install_fake_history_rows(
+        monkeypatch,
+        [
+            {
+                "trade_date": "2026-08-07",
+                "sector_label": "国防军工",
+                "trend_strength_score": 40.0,
+                "trend_evidence_coverage": 0.35,
+            }
+        ],
+    )
+    history = load_direction_trend_history(
+        ["国防军工"], before_trade_date="2026-08-10"
+    )
+    assert history == {"国防军工": [("2026-08-07", 40.0)]}
+
+
+def test_history_stops_at_evidence_gap_instead_of_skipping_it(monkeypatch) -> None:
+    """空缺日必须**截断**回溯，不能跳过——否则两侧的日子被接成连续序列。
+
+    这是本次修复的核心：08-08 在线下、08-07 无证据、08-06 在线下，若跳过 08-07 则
+    连续天数读成 3 天并触发 −50%，而实际只有 1 天有证据支持。
+    """
+    _install_fake_history_rows(
+        monkeypatch,
+        [
+            {
+                "trade_date": "2026-08-08",
+                "sector_label": "半导体材料",
+                "trend_strength_score": 44.0,
+                "trend_evidence_coverage": 0.8,
+            },
+            {
+                "trade_date": "2026-08-07",
+                "sector_label": "半导体材料",
+                "trend_strength_score": 45.0,
+                "trend_evidence_coverage": 0.0,
+            },
+            {
+                "trade_date": "2026-08-06",
+                "sector_label": "半导体材料",
+                "trend_strength_score": 43.0,
+                "trend_evidence_coverage": 0.9,
+            },
+        ],
+    )
+    history = load_direction_trend_history(
+        ["半导体材料"], before_trade_date="2026-08-10"
+    )
+    assert history == {"半导体材料": [("2026-08-08", 44.0)]}
+
+    # 端到端：今日也在线下，连续天数应为 2（今日 + 08-08），不是 4。
+    result = assess_direction_exit(
+        sector_label="半导体材料",
+        entry_state="forming",
+        trend_strength=38.18,
+        exit_trend_threshold=EXIT_TREND_THRESHOLD,
+        trend_history=history["半导体材料"],
+    )
+    assert result["consecutive_days_below_exit_line"] == 2
+    assert result["exit_state"] == "reduce"
+
+
+def test_history_treats_legacy_rows_without_the_column_as_no_evidence(
+    monkeypatch,
+) -> None:
+    """迁移前写入的行没有该列，必须按无证据处理而不是抛错。"""
+    _install_fake_history_rows(
+        monkeypatch,
+        [
+            {
+                "trade_date": "2026-08-07",
+                "sector_label": "电网设备",
+                "trend_strength_score": 45.0,
+            }
+        ],
+    )
+    history = load_direction_trend_history(
+        ["电网设备"], before_trade_date="2026-08-10"
+    )
+    assert history == {}
+
+
+def test_persisted_state_carries_trend_evidence_coverage() -> None:
+    """落库时必须把 `component_coverage.trend` 存下来，否则读取侧无从分辨。"""
+    import inspect
+
+    from app.services import sector_direction_state
+
+    source = inspect.getsource(sector_direction_state.record_direction_states)
+    assert "trend_evidence_coverage" in source
+    assert '(row.get("component_coverage") or {}).get("trend")' in source

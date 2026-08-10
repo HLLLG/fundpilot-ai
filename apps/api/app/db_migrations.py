@@ -793,6 +793,19 @@ def _migrate_sector_direction_states(connection: sqlite3.Connection) -> None:
         ON sector_direction_states (sector_label, trade_date DESC)
         """
     )
+    # `trend_strength_score` 单看数值无法区分「真实低分」与「无证据占位」：证据不足时
+    # v3 会把趋势分兜底成 `35 + 5日涨跌×1.5` 并 clamp 到 ≤45，而退出线是 52 —— 也就是
+    # 每一个占位值都长得像「已跌破退出线」。退出侧读历史算连续跌破天数时会被这些没有
+    # 证据的日子灌水（实测 08-07 落库里国防军工/电网设备恰为 45.0、黄金恰为 35.0，
+    # 而同批真实实算值分别是 36.15/48.08/90.52）。
+    #
+    # 判别式用 `component_coverage.trend`：兜底分支里 `trend_coverage = 0.0` 与占位值
+    # 同时赋值，因此覆盖度为 0 等价于「这天没有趋势证据」。存量行为 NULL，读取侧按
+    # 「无证据」处理，不会把历史当成达标。
+    if not _column_exists(connection, "sector_direction_states", "trend_evidence_coverage"):
+        connection.execute(
+            "ALTER TABLE sector_direction_states ADD COLUMN trend_evidence_coverage REAL"
+        )
 
 
 def _migrate_factor_ic_snapshots(connection: sqlite3.Connection) -> None:

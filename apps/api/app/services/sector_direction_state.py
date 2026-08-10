@@ -247,6 +247,10 @@ def record_direction_states(
             _num(row.get("position_risk_score")),
             _num(row.get("direction_score")),
             datetime.now(timezone.utc).isoformat(),
+            # 趋势证据覆盖度：证据不足时 v3 把趋势分兜底成 ≤45 的占位值（必然低于退出线
+            # 52）并把该覆盖度置 0。不存它，退出侧就分不出「真跌破」与「当天没数据」，
+            # 连续跌破天数会被无证据的日子灌水。
+            _num((row.get("component_coverage") or {}).get("trend")),
         )
         for row in rows
         if str(row.get("score_policy_version") or "") == ENTRY_POLICY_VERSION_V3
@@ -265,8 +269,8 @@ def record_direction_states(
                     entry_state, raw_entry_state, qualifies_for_ready,
                     consecutive_qualifying_days, trend_strength_score,
                     participation_score, position_risk_score, direction_score,
-                    recorded_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    recorded_at, trend_evidence_coverage
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON DUPLICATE KEY UPDATE
                     schema_version = VALUES(schema_version),
                     policy_version = VALUES(policy_version),
@@ -278,7 +282,8 @@ def record_direction_states(
                     participation_score = VALUES(participation_score),
                     position_risk_score = VALUES(position_risk_score),
                     direction_score = VALUES(direction_score),
-                    recorded_at = VALUES(recorded_at)
+                    recorded_at = VALUES(recorded_at),
+                    trend_evidence_coverage = VALUES(trend_evidence_coverage)
                 """
             else:
                 statement = """
@@ -287,8 +292,8 @@ def record_direction_states(
                     entry_state, raw_entry_state, qualifies_for_ready,
                     consecutive_qualifying_days, trend_strength_score,
                     participation_score, position_risk_score, direction_score,
-                    recorded_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    recorded_at, trend_evidence_coverage
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(trade_date, sector_label) DO UPDATE SET
                     entry_state = excluded.entry_state,
                     raw_entry_state = excluded.raw_entry_state,
@@ -298,7 +303,8 @@ def record_direction_states(
                     participation_score = excluded.participation_score,
                     position_risk_score = excluded.position_risk_score,
                     direction_score = excluded.direction_score,
-                    recorded_at = excluded.recorded_at
+                    recorded_at = excluded.recorded_at,
+                    trend_evidence_coverage = excluded.trend_evidence_coverage
                 """
             cursor = connection.executemany(statement, payload)
             close_cursor = getattr(cursor, "close", None)
